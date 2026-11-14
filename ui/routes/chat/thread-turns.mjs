@@ -21,7 +21,6 @@ import { designBuildModels, designIdForThread, designScope } from '../../../src/
 import { getDesign } from '../../../src/core/design/store.mjs';
 import { DIRECTION_MAX_CHARS } from '../../../src/core/directions.mjs';
 import { chatDescriptor, chatEngineGate } from '../../../src/core/engines/chat.mjs';
-import { flagEnabled } from '../../../src/core/flags.mjs';
 import { ASK_ENGINES } from '../../../src/core/model-env.mjs';
 import { CLAUDE_SIGNED_OUT_CODE, CLAUDE_SIGNED_OUT_MESSAGE } from '../../../src/core/preflight.mjs';
 import { changesCard, landingFacts, landingFactsOfFeature } from '../../../src/core/shape/changes.mjs';
@@ -331,7 +330,7 @@ app.post('/api/ask/threads/:id/changes', async (req, res) => {
     if (facts && facts.run && facts.run.finished === false) return res.status(409).json({ error: 'the run is still going' });
     const halted = facts && facts.feature && facts.feature.slices.find((s) => ['stopped', 'error', 'failed', 'paused'].includes(s.state));
     if (halted) return res.status(409).json({ error: `Run ${halted.index} stopped: resume or re-plan it first` });
-    const card = facts && changesCard({ text, facts, requirementsOn: flagEnabled('shapeRequirements') });
+    const card = facts && changesCard({ text, facts });
     if (!card) return res.status(409).json({ error: 'this run has no single branch to change' });
     const message = postThreadExchange(id, text.trim(), card);
     res.status(201).json({ message });

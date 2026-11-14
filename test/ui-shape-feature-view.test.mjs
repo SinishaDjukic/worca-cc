@@ -89,6 +89,23 @@ test('the Plans tab and the group page render the same card with the same ⋯ it
   assert.deepEqual(menuA, ['Re-plan the rest', 'Cancel the rest', 'Ask before each run', 'Open the plan']);
 });
 
+test('Plans tab and group page draw the same held row, once', () => {
+  const f = feature({ slices: [slice(1, 'done', { pipelineId: 'p1' }), slice(2, 'held', { ticketId: 't2' }), slice(3, 'planned')],
+    held: { index: 2, ticketId: 't2' }, originPipelineId: 'p0', log: [], ask: null });
+  const row = (el) => {
+    const r = el.querySelectorAll('.shape-feature-held');
+    assert.equal(r.length, 1);
+    return { text: r[0].textContent, start: el.querySelectorAll('[data-act="feature-start"]').length,
+      needs: el.textContent.split('Needs you').length - 1, why: el.textContent.split('for you to start').length - 1 };
+  };
+  const { el: plans } = mount(f, PLANS());
+  const a = row(plans);
+  assert.deepEqual(a, { text: 'Needs youRun 2 waits for you to startStart now', start: 1, needs: 1, why: 1 });
+  const { el: page } = mount(f, GROUP({ inGroup: true, omit: ['start-now', 'cancel'] }));
+  assert.deepEqual(row(page), a);
+  assert.equal(page.querySelector('[data-act="feature-more"]'), null, 'the group page header owns ⋯');
+});
+
 test('group page: the open step (server pointer) mounts in the card; the Plans tab mounts none', () => {
   mounted.length = 0;
   const f = feature({ slices: [slice(1, 'done'), slice(2, 'approval', { pipelineId: 'p2' })], originPipelineId: 'p0', log: [],

@@ -252,6 +252,12 @@ test('requirements spend shows in totals, prev, all-time, series and the budget 
   assert.equal(budget.allTimeSpendUsd, all.totals.spentUsd, 'the spend card and the all-time tile agree');
 });
 
+test("9c: an 'unknown' $0 row leaves the feature count alone", () => {
+  const before = getStats({ requirementsEnabled: true, range: 'all', now: NOW }).totals.requirements;
+  recordRequirementsCostDelta({ featureSeq: 977, amountUsd: 0, costKind: 'unknown', tsMs: +new Date(2026, 7, 4, 12) });
+  assert.deepEqual(getStats({ requirementsEnabled: true, range: 'all', now: NOW }).totals.requirements, before);
+});
+
 test('a brief look counts in requirements spend but not in the feature count', () => {
   const before = getStats({ requirementsEnabled: true, range: 'all', now: NOW }).totals.requirements;
   recordRequirementsCostDelta({ briefId: 9, amountUsd: 0.5, tsMs: +new Date(2026, 7, 4, 11) });

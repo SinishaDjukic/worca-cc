@@ -1,28 +1,32 @@
-// test/db-migrate-v91.test.mjs — Design pictures: designs.pictures (the design's Pictures switch, on for old rows) and
-// design_pictures (one row per picture ask, D10).
+// test/db-migrate-v91.test.mjs — pipelines.cost_cap_usd (Stillhet's Raise the cap).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { migrate, SCHEMA_VERSION } from '../src/core/db.mjs';
 
 const cols = (db, t) => db.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
-const version = (db) => db.prepare('PRAGMA user_version').get().user_version;
-const indexes = (db) => db.prepare("SELECT name FROM sqlite_master WHERE type = 'index'").all().map((r) => r.name);
+const seed = (db) => db.prepare(`INSERT INTO pipelines (id, project_key, status, total_cost_usd)
+  VALUES ('p-1', 'k', 'paused', 2.5)`).run();
 
-test('a v90 DB gains designs.pictures (on for old rows) and design_pictures, stamped current', () => {
-  const db = new DatabaseSync(':memory:'); migrate(db); assert.ok(SCHEMA_VERSION >= 91);
-  db.exec('DROP TABLE design_pictures; ALTER TABLE designs DROP COLUMN pictures; PRAGMA user_version = 90');
-  db.prepare("INSERT INTO designs (id, title, kind, created_at, updated_at) VALUES ('d_000000000001', 'T', 'web', 'x', 'x')").run();
+test('a DB stamped 90 without pipelines.cost_cap_usd gains it, keeps its runs (cap NULL) and is stamped current', () => {
+  const db = new DatabaseSync(':memory:');
   migrate(db);
-  assert.equal(version(db), SCHEMA_VERSION);
-  assert.equal(db.prepare("SELECT pictures FROM designs WHERE id = 'd_000000000001'").get().pictures, 1);
-  assert.deepEqual(cols(db, 'design_pictures'), ['id', 'design_id', 'build_id', 'round', 'name', 'shape', 'prompt', 'model', 'state', 'file', 'w', 'h', 'cost_usd', 'ms', 'reason', 'created_at']);
-  assert.ok(indexes(db).includes('design_pictures_design'));
+  db.exec('ALTER TABLE pipelines DROP COLUMN cost_cap_usd; PRAGMA user_version = 90');
+  seed(db);
+  migrate(db);
+  assert.ok(SCHEMA_VERSION >= 91);
+  assert.equal(db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
+  assert.ok(cols(db, 'pipelines').includes('cost_cap_usd'));
+  assert.deepEqual({ ...db.prepare("SELECT status, total_cost_usd, cost_cap_usd FROM pipelines WHERE id = 'p-1'").get() },
+    { status: 'paused', total_cost_usd: 2.5, cost_cap_usd: null });
 });
-test('stamped current without them: healed on open, the stamp untouched', () => {
-  const db = new DatabaseSync(':memory:'); migrate(db);
-  db.exec('DROP TABLE design_pictures; ALTER TABLE designs DROP COLUMN pictures');
+
+test('a DB stamped 90 that already has the column opens with no error and no data change', () => {
+  const db = new DatabaseSync(':memory:');
   migrate(db);
-  assert.ok(cols(db, 'designs').includes('pictures')); assert.ok(cols(db, 'design_pictures').length);
-  assert.equal(version(db), SCHEMA_VERSION);
+  seed(db);
+  db.exec("UPDATE pipelines SET cost_cap_usd = 12 WHERE id = 'p-1'");
+  const before = { ...db.prepare("SELECT * FROM pipelines WHERE id = 'p-1'").get() };
+  migrate(db);
+  assert.deepEqual({ ...db.prepare("SELECT * FROM pipelines WHERE id = 'p-1'").get() }, before);
 });

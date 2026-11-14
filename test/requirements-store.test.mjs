@@ -11,6 +11,7 @@ import {
   createStart, listStarts, latestStart, startByRunId, linkPipeline, recentLookCosts,
   getBrief, usableBrief, listBriefs, listMakingBriefs, beginBrief, saveBriefResult, failBrief, setBriefSections,
   addBriefCost, deleteBrief, briefUsers, recentBriefCosts,
+  recentStepCosts, recentStepTokens, featureCostRows, unknownCostCount, insertAttachment, getAttachment, updateAttachment, mintAttachmentId,
 } from '../src/core/requirements/store.mjs';
 
 import { recordRequirementsCostDelta } from '../src/core/cost-budget.mjs';
@@ -257,4 +258,76 @@ test('recentLookCosts: with a model, only the looks made on that model', () => {
   assert.deepEqual(recentLookCosts(1, { model: 'rl-model-x' }), [0.25]);
   assert.deepEqual(recentLookCosts(10, { model: 'rl-model-none' }), []);
   assert.ok(recentLookCosts(10).includes(0.7), 'without a model, every model counts');
+});
+
+// ---- 9c (schema v89): the harness a feature and each step ran on ----
+
+test('9c: a feature round-trips its model; none (a feature from before 9c) reads null', () => {
+  const none = createFeature({ scopeType: 'project', scopeKey: '9c1', title: 'A', description: 'd' });
+  assert.equal(none.model, null);
+  const m = { engine: 'codex', model: 'gpt-5', effort: 'high' };
+  const f = createFeature({ scopeType: 'project', scopeKey: '9c1', title: 'B', description: 'd', model: m });
+  assert.deepEqual(getFeature(f.seq).model, m);
+  const m2 = { engine: 'claude', model: 'opus', effort: null };
+  assert.deepEqual(updateFeature(f.seq, { model: m2 }).model, m2);
+  assert.equal(updateFeature(f.seq, { model: null }).model, null);
+});
+
+test("9c: TURN_KINDS has 'model' and a turn round-trips engine and notices ([] when NULL)", () => {
+  const f = createFeature({ scopeType: 'project', scopeKey: '9c2', title: 'A', description: 'd' });
+  const plain = appendTurn(f.seq, { kind: 'round', payload: {} });
+  const sw = appendTurn(f.seq, { kind: 'model', payload: { engine: 'codex', model: 'm', effort: null, from: { engine: 'claude', model: 'opus', effort: null } } });
+  const note = "Repo not read: Gemini CLI can't read the repo.";
+  const noted = appendTurn(f.seq, { kind: 'round', engine: 'gemini', notices: [note] });
+  const byId = Object.fromEntries(listTurns(f.seq).map((t) => [t.id, t]));
+  assert.deepEqual([byId[plain].engine, byId[plain].notices], [null, []]);
+  assert.equal(byId[sw].kind, 'model');
+  assert.deepEqual([byId[noted].engine, byId[noted].notices], ['gemini', [note]]);
+});
+
+test('9c: an attachment takes readEngine', () => {
+  const id = mintAttachmentId();
+  insertAttachment({ id, ownerType: 'feature', ownerId: 1, name: 'a.md', kind: 'text', mime: 'text/markdown', bytes: 1, sha256: 'x' });
+  assert.equal(getAttachment(id).readEngine, null);
+  assert.equal(updateAttachment(id, { readEngine: 'claude' }).readEngine, 'claude');
+});
+
+test('9c: recentStepCosts reads one step on one model, newest first, only above $0', () => {
+  const f = createFeature({ scopeType: 'project', scopeKey: '9c3', title: 'A', description: 'd' });
+  appendTurn(f.seq, { kind: 'orientation', model: 'sc-x', costUsd: 0.5 });
+  appendTurn(f.seq, { kind: 'orientation', model: 'sc-y', costUsd: 0.7 });
+  appendTurn(f.seq, { kind: 'orientation', model: 'sc-x', costUsd: 0.25 });
+  appendTurn(f.seq, { kind: 'orientation', model: 'sc-x', costUsd: 0 });
+  appendTurn(f.seq, { kind: 'round', model: 'sc-x', costUsd: 0.4 });
+  appendTurn(f.seq, { kind: 'round', model: 'sc-x', costUsd: 0.6 });
+  assert.deepEqual(recentStepCosts('look', { model: 'sc-x' }), [0.25, 0.5]);
+  assert.deepEqual(recentStepCosts('look', { model: 'sc-x', limit: 1 }), [0.25]);
+  assert.deepEqual(recentStepCosts('round', { model: 'sc-x' }), [0.6, 0.4]);
+  assert.deepEqual(recentStepCosts('look', { model: 'sc-none' }), []);
+  recordRequirementsCostDelta({ briefId: 31, amountUsd: 0.1, model: 'sc-b' });
+  recordRequirementsCostDelta({ briefId: 32, amountUsd: 0.3, model: 'sc-b' });
+  recordRequirementsCostDelta({ briefId: 33, amountUsd: 0.9, model: 'sc-other' });
+  recordRequirementsCostDelta({ featureSeq: f.seq, amountUsd: 0.8, model: 'sc-b' });   // a feature row is not a brief step
+  assert.deepEqual(recentStepCosts('brief', { model: 'sc-b' }), [0.3, 0.1]);
+  assert.throws(() => recentStepCosts('nope', { model: 'sc-b' }));
+});
+
+test('9c: recentStepTokens, featureCostRows and unknownCostCount read the ledger', () => {
+  const f = createFeature({ scopeType: 'project', scopeKey: '9c4', title: 'A', description: 'd' });
+  const t1 = appendTurn(f.seq, { kind: 'round', payload: { n: 1 }, model: 'tk', costUsd: 0.2 });
+  const t0 = Date.now() + 10 * 60 * 1000;   // after every row an earlier test wrote
+  recordRequirementsCostDelta({ featureSeq: f.seq, turnId: t1, amountUsd: 0.2, model: 'tk', engine: 'claude', step: 'round', inputTokens: 100, outputTokens: 40, tsMs: t0 });
+  recordRequirementsCostDelta({ featureSeq: f.seq, turnId: t1, amountUsd: 0, model: 'tk', engine: 'gemini', step: 'round', costKind: 'unknown', inputTokens: 7, outputTokens: 3, tsMs: t0 + 1 });
+  recordRequirementsCostDelta({ featureSeq: f.seq, amountUsd: 0.1, model: 'tk', step: 'round', tsMs: t0 + 2 });   // no tokens
+  assert.deepEqual(recentStepTokens('round').slice(0, 2), [{ input: 7, output: 3 }, { input: 100, output: 40 }]);
+  assert.deepEqual(recentStepTokens('round', 1), [{ input: 7, output: 3 }]);
+  const rows = featureCostRows(f.seq);
+  assert.equal(rows.length, 3);
+  assert.deepEqual(rows.map((r) => r.costKind), ['billed', 'unknown', 'billed']);
+  assert.deepEqual(rows.map((r) => r.amountUsd), [0.2, 0, 0.1]);
+  assert.equal(rows[0].turnKind, 'round');
+  assert.deepEqual(rows[0].turnPayload, { n: 1 });
+  assert.equal(rows[2].turnKind, null);
+  assert.equal(unknownCostCount(t0), 1);
+  assert.equal(unknownCostCount(t0 + 2), 0);
 });

@@ -67,6 +67,7 @@ Start with the [project README](../README.md) for what Worca is and a quick star
 - [Deploy on Railway](deploy-railway.md) — the container as a hosted service behind Cloudflare Access
 - [Remote access](remote-access.md) — opt-in, behind Cloudflare Access, with Worca checking the token
 - [Credential broker](credential-broker.md) — model keys stay out of Worca's container behind short-lived tokens
+- [Instance contract](instance-contract.md) — the containers, variables, identity token and heartbeat a hosting platform relies on
 - [Network proxy](network-proxy.md) — Worca behind a corporate proxy that asks for a login
 - [Setup assistant](setup-assistant.md) — the server API behind the machine check and setup dialog
 

@@ -27,7 +27,7 @@ export const ALIGN = () => {
     if (head) {
       const h = textBox(head.querySelector('.set-sec-h'));
       if (!near(h.left, L)) out.push(`the head starts ${Math.round(h.left - L)}px off its rows: ${head.textContent.trim().slice(0, 30)}`);
-      const act = head.querySelector(':scope > .btn');
+      const act = head.querySelector(':scope > .btn, :scope > .tip-wrap > .btn');
       if (act) { const r = act.matches('.btn-quiet') ? textBox(act).right : act.getBoundingClientRect().right; if (!near(r, R)) out.push(`the head's action ends ${Math.round(R - r)}px off the right edge: ${head.textContent.trim().slice(0, 30)}`); }
     }
     for (const row of rows) {
@@ -43,11 +43,34 @@ export const ALIGN = () => {
       if (!stacked) {
         const y = base(name);
         if (text.textContent.trim() && !near(base(text), y)) out.push(`the sentence is ${Math.round(base(text) - y)}px off the name's baseline: ${label(row)}`);
-        for (const it of items) if ((it.matches('.btn') || it.matches('.set-changed')) && it.textContent.trim() && !near(base(it), y)) out.push(`${it.textContent.trim().slice(0, 16)} is ${Math.round(base(it) - y)}px off the name's baseline: ${label(row)}`);
+        for (const it of items) if (it.matches('.btn') && it.textContent.trim() && !near(base(it), y)) out.push(`${it.textContent.trim().slice(0, 16)} is ${Math.round(base(it) - y)}px off the name's baseline: ${label(row)}`);
       }
     }
     const sl = rows.filter((r) => !stacked && r.querySelector('.set-text').textContent.trim()).map((r) => textBox(r.querySelector('.set-text')).left);
     if (sl.some((x) => !near(x, sl[0]))) out.push(`the sentences start on ${new Set(sl.map(Math.round)).size} edges: ${label(rows[0])}…`);
+  }
+  // One rail, one end: in every list of rows, on one edge each: the marks, the text, and the end's left and right.
+  const edges = (rows, name, sel) => { const xs = rows.map((r) => r.querySelector(sel)).filter((e) => e && e.offsetParent).map((e) => e.getBoundingClientRect()); return { xs, name }; };
+  const ROWS = [['.list-rows', ':scope > .list-row', { mark: '.lr-rail', text: '.lr-main', end: '.lr-end' }], ['.sc-subs', ':scope > .sc-row', { mark: '.rd-route-dot', text: '.sc-name' }], ['.pz-list', ':scope > .pz-row', { mark: '.pz-rail', text: '.pz-row-main', endR: '.pz-row-time' }]];
+  for (const [box, sel, parts] of ROWS) for (const list of document.querySelectorAll(box)) {
+    const rows = [...list.querySelectorAll(sel)].filter((r) => r.offsetParent); if (rows.length < 2) continue;
+    for (const [what, s] of Object.entries(parts)) {
+      const { xs } = edges(rows, what, s); if (xs.length < 2) continue;
+      if (what !== 'endR' && xs.some((x) => !near(x.left, xs[0].left))) out.push(`${box}: its rows' ${what} start on ${new Set(xs.map((x) => Math.round(x.left))).size} edges`);
+      if ((what === 'end' || what === 'endR') && xs.some((x) => !near(x.right, xs[0].right))) out.push(`${box}: its rows' ends stop on ${new Set(xs.map((x) => Math.round(x.right))).size} edges`);
+    }
+  }
+  // The end's columns: in a list, its switches stand on one edge, and so do its ⋯ and its chips; nothing in an end overlaps.
+  for (const list of document.querySelectorAll('.list-rows')) {
+    if (getComputedStyle(list).gridTemplateColumns.split(' ').length < 6) continue;
+    for (const [what, sel] of [['switches', ':scope > .list-row > .lr-end > .switch'], ['⋯', ':scope > .list-row > .lr-end > .rc-pop']]) {
+      const xs = [...list.querySelectorAll(sel)].filter((e) => e.offsetParent).map((e) => e.getBoundingClientRect().right);
+      if (xs.some((x) => !near(x, xs[0]))) out.push(`a list's ${what} stop on ${new Set(xs.map(Math.round)).size} edges`);
+    }
+    for (const end of list.querySelectorAll(':scope > .list-row > .lr-end')) {
+      const kids = [...end.children].filter((e) => e.offsetParent).map((e) => e.getBoundingClientRect());
+      for (let i = 1; i < kids.length; i++) if (kids[i].left < kids[i - 1].right - 1 && kids[i].right > kids[i - 1].left + 1) out.push(`two things overlap in a row's end: ${end.textContent.trim().slice(0, 30)}`);
+    }
   }
   // a record's title starts on its section's text edge: its mark hangs left of it
   for (const sec of document.querySelectorAll('.set-sec')) {

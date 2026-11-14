@@ -8,7 +8,7 @@
 // Flag: --scratch (`npm start --scratch`) = a temp WORCA_HOME and a free port; see scratch-start.mjs
 
 import '../src/core/scratch-start.mjs'; // first: sets env before any module reads it
-import express from 'express';
+import express from 'express'; import { onUsageLimitsChanged } from '../src/core/usage-limits.mjs';   // the profile's usage rings: a reported limit changed
 import { WebSocketServer } from 'ws';
 import http from 'node:http';
 import path from 'node:path';
@@ -188,7 +188,7 @@ import { cancelSuggestion } from '../src/core/ask/suggest.mjs';
 import { validateMcpOff, resolveAskMcp, askMcpPromptInput, askMcpPreview, askMcpJoinNotice, resolveAskSkills } from '../src/core/ask/mcp.mjs';
 import { attachRunFollower } from '../src/core/ask/follow.mjs';
 import { mockEnabled, MOCK_WRITER_ROLES } from '../src/core/claude-runner.mjs';
-import { budgetStatus, readCostCapOverride, setCostCapOverride, recordUtilityCost } from '../src/core/cost-budget.mjs';
+import { budgetStatus, readCostCapOverride, readRunCostCap, setCostCapOverride, raiseRunCostCap, runCostCapCheck, recordUtilityCost } from '../src/core/cost-budget.mjs';
 import { resolveNamingModel, suggestNames, mockSuggestion, estimateNamingUsd, legacyBranchHint, suggestGroupName } from '../src/core/naming.mjs';
 import { createCommandSummariser, summariseCommandCard, commandSummariesWanted } from '../src/core/ask/command-summary.mjs';
 import { getStats, budgetWindowSavings, shapingGroups } from '../src/core/stats.mjs';
@@ -452,7 +452,7 @@ import { savePlanToCheckout } from '../src/core/shape/save.mjs';
 import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, cancelRest, resumeFeature,
   rechainWaiting, replanRest, setApproveEach, recordShapePlan, listShapePlans, chainFeature,
   sliceOfPipeline, slicePrPreamble, featureShipSuggestion, recordSliceDraft, recordShip, clearShip, featureShipInput,
-  liveSliceFrom, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf, acceptanceRefusal } from '../src/core/shape/features.mjs';
+  liveSliceFrom, shaperCard, featureThread, addFeatureNote, appendFeatureRun, liveRoundOf, acceptanceRefusal, featureHoldsTicket } from '../src/core/shape/features.mjs';
 import { roundsOf, roundOrigin, nextRound, setRoundOutcome } from '../src/core/shape/rounds.mjs';
 import { changesCard, applyChanges, applyRoute, landingFacts, landingFactsOfFeature, shapeToolCheck, threadWork, shapeThreadFacts } from '../src/core/shape/changes.mjs';
 import { defaultShapeToolDeps } from '../src/core/ask/shape-tool-deps.mjs';
@@ -1290,7 +1290,7 @@ policyEvents.on('changed', (e) => emitChanged('team-policy-changed', e && e.acti
 projectSyncEvents.on('changed', (e) => emitChanged('project-sync-changed', e && e.projectKey ? e.projectKey : null));
 watchReadiness({ projectSyncEvents, policyEvents, emitChanged, broadcast });
 // D6: every open tab rewrites <html data-flags> and #flag-gates, without a reload.
-flagEvents.on('changed', (flags) => broadcast({ type: 'flags', flags }));
+flagEvents.on('changed', (flags) => broadcast({ type: 'flags', flags })); onUsageLimitsChanged(() => emitChanged('usage-limits-changed'));
 
 // Every comment mutation in THIS process (the REST routes below) pokes the open
 // Diff tabs. A poke carries ids only — no payload, so it is idempotent and has no
@@ -2230,9 +2230,9 @@ async function pinUiLevel() {
   if (!shell.includes(INDEX_THEME_ANCHOR)) throw new Error(`ui/public/index.html lost its theme anchor ${INDEX_THEME_ANCHOR}`);
   if (!shell.includes(FLAG_GATES_ANCHOR)) throw new Error(`ui/public/index.html lost its flag-gates anchor ${FLAG_GATES_ANCHOR}`);
 }
-function sendIndex(res) {
+async function sendIndex(res) {   // with `rail` on: Stillhet's shell (src/core/stillhet-shell.mjs)
   let html;
-  try { html = renderIndexHtml(readIndexHtml(PUBLIC_DIR), storedTheme(), effectiveUiLevel(), allFlags(), { git: gitAvailable() }); }
+  try { html = allFlags().rail ? await stillhetShellHtml(PUBLIC_DIR, storedTheme(), effectiveUiLevel(), gitAvailable(), { railLocked: !!listFlags().find((f) => f.key === 'rail')?.locked }) : renderIndexHtml(readIndexHtml(PUBLIC_DIR), storedTheme(), effectiveUiLevel(), allFlags(), { git: gitAvailable() }); }
   catch (err) { return res.status(500).json({ error: err && err.message ? err.message : 'shell unavailable' }); }
   res.set('Content-Type', 'text/html; charset=utf-8');
   res.set('Cache-Control', 'no-store');
@@ -2248,7 +2248,7 @@ function sendIndex(res) {
 // file system would otherwise reach the raw file: route every spelling here.
 app.use((req, res, next) => {
   if (req.method !== 'GET') return next();
-  if (req.path === '/' || /^\/index(\.html)?$/i.test(req.path)) return sendIndex(res);
+  if (req.path === '/' || /^\/index(\.html)?$/i.test(req.path) || isStillhetShellRel(publicRelPath(req.path))) return sendIndex(res);
   return next();
 });
 
@@ -2278,7 +2278,7 @@ app.use(function servePublic(req, res, next) {
   let part = false;
   // A broken parts.json must not take every static file down with it: log once and serve static.
   try { part = isPublicPart(req.path, PUBLIC_DIR); } catch (err) { warnAssetOnce('ui/public/parts.json', err); }
-  return part ? next() : serveStatic(req, res, next);
+  return part || isStillhetShellRel(publicRelPath(req.path)) ? next() : serveStatic(req, res, next);   // the shell template only through sendIndex
 });
 
 function badRequest(res, message) {
@@ -2896,7 +2896,7 @@ const startRunHandler = async (req, res) => {
     // plan at run start; here we only normalize + reject an unknown id up front
     // so the client gets a clean 400 instead of a mid-run error event.
     // Shape it first (spec D9/D12): `shape` and the shape workflows.
-    const shapeReq = resolveShapeRequest({ shape: body.shape, workflowId: body.workflowId }, { internal: !!internal, requirementsOn: flagEnabled('shapeRequirements') });
+    const shapeReq = resolveShapeRequest({ shape: body.shape, workflowId: body.workflowId }, { internal: !!internal });
     if (!shapeReq.ok) return badRequest(res, shapeReq.error);
     const { shape: askedShape } = shapeReq;
     // L7: a sliced Shape-it-first run chains tickets per slice, and a run without a project cannot be scheduled. So with
@@ -2942,7 +2942,7 @@ const startRunHandler = async (req, res) => {
     const noMemory = body.noMemory === true;
     if (noMemory && memoryScope) return badRequest(res, 'noMemory cannot be set on a Memory defragment run');
     const prBody = checkRunPrBody(body.pr);   // before any side effect: a refused pr creates no run and no ticket
-    if (!prBody.ok) return badRequest(res, prBody.error);
+    if (!prBody.ok) return badRequest(res, prBody.error); const startCap = runCostCapCheck(body.costCapUsd); if (startCap.error) return badRequest(res, startCap.error); if (startCap.cap != null) req._runCostCapUsd = startCap.cap;   // New task's Cost cap: pipelines.cost_cap_usd, as Raise the cap writes it; the same check
     // Settings › Memory: a defragment run may name its model/effort PAIR at start — tier 1, above
     // the setting (memory-defrag-model.mjs). Defragment runs only: every other workflow picks its
     // models per node, and a body model there stays ignored exactly as before. The shape here; the
@@ -3143,7 +3143,7 @@ const startRunHandler = async (req, res) => {
         claude: { permissionMode: 'acceptEdits', ...(startPair ? { model: startPair.model, ...(startPair.effort ? { effort: startPair.effort } : {}) } : {}), mock, ...runEngine },
         ...(nightMode ? { nightMode: true } : {}),
         tags,
-        ...(shape ? { shape } : {}),
+        ...(shape ? { shape } : {}), ...(Number(req._runCostCapUsd) > 0 ? { runCostCapUsd: Number(req._runCostCapUsd) } : {}),
       });
       entry = {
         id: runId, orch, projectDir, projectKey: NO_PROJECT_KEY, workMode: 'none', kind: 'run', pipelineId,
@@ -3281,7 +3281,7 @@ const startRunHandler = async (req, res) => {
         ...(mcpOptOut.length ? { mcpOptOut } : {}),
         startedBy,
         ...(req._prWatchRunId ? { prWatchRunId: req._prWatchRunId } : {}),
-        ...(reportTo ? { reportTo } : {}),   // A6 D15: the pipeline row names the ticket, so write-back reports to it
+        ...(reportTo ? { reportTo } : {}), ...(Number(req._runCostCapUsd) > 0 ? { runCostCapUsd: Number(req._runCostCapUsd) } : {}),   // A6 D15: the row names the ticket; Restart Build: the origin's cap
         branch,
         ...(titleLocked ? { titleLocked: true } : {}),
         sync,
@@ -3451,7 +3451,7 @@ const startRunHandler = async (req, res) => {
         ...(mcpOptOut.length ? { mcpOptOut } : {}),
         startedBy,
         ...(req._prWatchRunId ? { prWatchRunId: req._prWatchRunId } : {}),
-        ...(reportTo ? { reportTo } : {}),   // A6 D15: the pipeline row names the ticket, so write-back reports to it
+        ...(reportTo ? { reportTo } : {}), ...(Number(req._runCostCapUsd) > 0 ? { runCostCapUsd: Number(req._runCostCapUsd) } : {}),   // A6 D15: the row names the ticket; Restart Build: the origin's cap
         branch,
         ...(titleLocked ? { titleLocked: true } : {}),
         sync,
@@ -3592,7 +3592,7 @@ import * as runSkillPolicy from '../src/core/policy/effective.mjs';
 import { ROUTE_SEGMENTS } from './routes/index.mjs';
 import { askCardRoute } from './routes/chat/thread-cards.mjs';
 import { isPublicPart, publicRelPath } from '../src/core/public-assets.mjs';
-import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readIndexHtml, stillhetShellHtml, isStillhetShellRel } from '../src/core/read-index-html.mjs';
 import { readStyleCssEntry } from '../src/core/read-style-css.mjs';
 
 /** `mcpOptOut` (D16): at most 100 '<setId>|<serverId>' or '<setId>|<skillId>' entries (the membership
@@ -3926,7 +3926,7 @@ async function invokeAskCard({ threadId, cardId, body, actor }) {
   return out;
 }
 
-async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null, extrasFiles = null, reportTo = null, automation = false } = {}) {
+async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null, extrasFiles = null, reportTo = null, automation = false, runCostCapUsd = null } = {}) {
   const files = Array.isArray(extrasFiles) && extrasFiles.length ? extrasFiles : null;
   const id = files ? (runId || randomUUID()) : runId;   // the extras folder is named by the run id
   const run = async (extrasPaths, staged = null) => {
@@ -3938,7 +3938,7 @@ async function invokeStartRun(body, internal, { startedBy = null, runId = null, 
     };
     await startRunHandler({ body, headers: {}, _internal: internal, _startedBy: startedBy, _runId: id,
       _prWatchRunId: prWatchRunId, ...(roundOf ? { _roundOf: roundOf } : {}), ...(extrasPaths ? { _extrasPaths: extrasPaths } : {}),
-      ...(reportTo ? { _reportTo: reportTo } : {}), ...(automation ? { _automation: true } : {}) }, res);
+      ...(reportTo ? { _reportTo: reportTo } : {}), ...(automation ? { _automation: true } : {}), ...(Number(runCostCapUsd) > 0 ? { _runCostCapUsd: Number(runCostCapUsd) } : {}) }, res);
     if (staged && out.status >= 200 && out.status <= 299) dropStagedOnceCopied(id, staged.drop);
     return out;
   };
@@ -4173,6 +4173,7 @@ let _schedulerBusy = false;
 let _schedulerLastTickAt = 0;   // ms of the last finished pass; the platform heartbeat reports a stall (W3)
 let _lastNotificationId = -1;
 let _lastScheduleSig = null;
+let _schedulerHeld = new Set();   // the last tick's held ticket ids (runDueTickets out.held)
 
 /** One scheduler pass. Exported for tests; the server calls it on a 30 s timer. */
 export async function schedulerTick({ now = Date.now() } = {}) {
@@ -4184,10 +4185,12 @@ export async function schedulerTick({ now = Date.now() } = {}) {
       now,
       start: fireTicket,
       isLive: liveProbe,
-      staggerMs: SCHEDULER_STAGGER_MS,
+      staggerMs: SCHEDULER_STAGGER_MS, hold: featureHoldsTicket, // hold: "Ask me before each run" waits for Start now
     });
     for (const id of [...out.failed, ...out.missed, ...out.skipped]) releaseAskCard(getTicket(id));
-    broadcastFeaturesOf(() => featuresOfTickets([...out.fired, ...out.missed, ...out.failed, ...out.skipped]));
+    const newlyHeld = out.held.filter((id) => !_schedulerHeld.has(id)); // a held card repaints once, when it becomes held
+    _schedulerHeld = new Set(out.held);
+    broadcastFeaturesOf(() => featuresOfTickets([...out.fired, ...out.missed, ...out.failed, ...out.skipped, ...newlyHeld]));
     if (out.fired.length || out.missed.length || out.skipped.length || out.failed.length || out.retried.length) {
       emitChanged('schedules-changed', 'tick');
     }
@@ -5039,7 +5042,7 @@ async function shipFeatureNow(id, mode, { actor = null, release = null, watch = 
   }
   if (!view.ship.ready) return { status: 409, body: { code: 'NOT_READY', error: 'every slice must be done before the feature ships' } };
   // Shaper requirements s3 (D8): every agreed requirement is marked before any PR, changelog, push or forge call.
-  const unmarked = flagEnabled('shapeRequirements') && acceptanceRefusal(view);
+  const unmarked = acceptanceRefusal(view);
   if (unmarked) return { status: 409, body: unmarked };
   SHIPPING.add(id);
   try {
@@ -5223,7 +5226,7 @@ async function offerShipCard(pipelineId) {
   const ctx = shipCtxOf(view);
   const release = ctx.error ? null : await releaseVersionHint(ctx.target.repoDir);
   const card = { type: 'ship', featureId: fid, title: view.title, runs: view.total, files: stats.files,
-    added: stats.linesAdded, deleted: stats.linesRemoved, suggested: stats.suggested, release, ...(flagEnabled('shapeRequirements') && view.ship.acceptance ? { acceptance: view.ship.acceptance } : {}) };
+    added: stats.linesAdded, deleted: stats.linesRemoved, suggested: stats.suggested, release, ...(view.ship.acceptance ? { acceptance: view.ship.acceptance } : {}) };
   const message = askAppendMessage(th.threadId, { role: 'assistant', text: '', status: 'done',
     blocks: [{ kind: 'card', id: newAskId('card'), state: 'proposed', card }] });
   broadcast({ type: 'ask-message', threadId: th.threadId, message });
@@ -5247,7 +5250,7 @@ function syncShipCard(featureId) {
     const view = featureView(featureId, { live: liveSliceOf });
     const th = view && view.ship.result ? featureThread(featureId) : null;
     const found = th ? findShipCardIn(th.threadId, featureId) : null;
-    if (found) flipCard(th.threadId, found.block.id, { state: 'applied', card: { result: view.ship.result, ...(flagEnabled('shapeRequirements') && view.ship.acceptance ? { acceptance: view.ship.acceptance } : {}) } });
+    if (found) flipCard(th.threadId, found.block.id, { state: 'applied', card: { result: view.ship.result, ...(view.ship.acceptance ? { acceptance: view.ship.acceptance } : {}) } });
   } catch (err) { console.error(`[worca-ui] ship card sync failed: ${err?.message || err}`); }
 }
 
@@ -5368,12 +5371,12 @@ async function resumeTargetDirs(saved) {
   return { projectDir, workspace: undefined };
 }
 
-async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null, by = 'local', baseCheck = false, baseAck = false, engine = null, allowUnguardedEngine = undefined, model = null, effort = null, autoLimitResume = false, auto = false, resumeCause = null } = {}) {
+async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null, by = 'local', baseCheck = false, baseAck = false, engine = null, allowUnguardedEngine = undefined, model = null, effort = null, autoLimitResume = false, auto = false, resumeCause = null, costCapUsd = undefined } = {}) {
   if (!pipelineId || typeof pipelineId !== 'string') throw new ResumeError(400, { error: 'pipelineId is required' });
   if (DRAIN.on) throw new ResumeError(503, DRAIN_REFUSAL);
   const engineOpts = resumeEngineOpts(engine, allowUnguardedEngine);
   const saved = readPipelineForResume(pipelineId);
-  if (!saved) throw new ResumeError(404, { error: 'pipeline not found' });
+  if (!saved) throw new ResumeError(404, { error: 'pipeline not found' }); const capCheck = runCostCapCheck(costCapUsd, { ignoreCostCap, spent: saved.row.total_cost_usd }); if (capCheck.error) throw new ResumeError(400, { error: capCheck.error }); costCapUsd = capCheck.cap;   // Raise the cap: written once every gate passed
   if (workModeOfRow(saved.row) === 'git' && !(await gitState()).available) throw new ResumeError(409, { error: GIT_MISSING.message, code: GIT_MISSING.code });
   // Resume with another model (a usage limit spent on one provider): every remaining step runs on it. It must be a
   // catalog model the run's harness — the one it resumes on — can run (src/shared/connections.mjs).
@@ -5410,7 +5413,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
     setCostCapOverride(pipelineId);            // persistent per-pipeline override (F7)
     appendAuditById(pipelineId, `Pipeline cost limit override set${byActor(by)}.`, { actor: by });
   }
-  const pipeCap = budget.pipelineLimitUsd;
+  const pipeCap = costCapUsd ?? readRunCostCap(pipelineId) ?? budget.pipelineLimitUsd;
   const spentSoFar = Number(saved.row.total_cost_usd || 0);
   if (pipeCap != null && spentSoFar >= pipeCap && ignoreCostCap !== true && !readCostCapOverride(pipelineId)) {
     throw new ResumeError(403, {
@@ -5517,7 +5520,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
   const fresh = readPipelineForResume(pipelineId);
   if (!fresh || (fresh.row.status !== 'paused' && fresh.row.status !== 'interrupted')) {
     throw new ResumeError(409, { error: `pipeline is "${fresh ? fresh.row.status : 'gone'}", not resumable` });
-  }
+  } else if (costCapUsd != null) { raiseRunCostCap(orch, pipelineId, costCapUsd); appendAuditById(pipelineId, `Pipeline cost limit raised to $${costCapUsd.toFixed(2)} for this run${byActor(by)}.`, { actor: by }); }
   const entry = {
     id: runId,
     orch,
@@ -9467,7 +9470,7 @@ function askGroupFor(req, res) {
 const factDeps = { readPrState, findPipelineRowById, readRunTags, readRunLabels, featureView: (fid) => featureView(fid, { live: liveSliceOf }) };
 /** Shaper (ordinary stays ordinary, D6): propose_changes / route_message, applied in the parent. Re-checked NOW with the
  *  live runs overlay (an open step the classic MCP child cannot see, D7); a refusal is a notice in the reply. */
-const shapeToolFactDeps = { live: (id) => liveSliceOf(id), readPrState, findPipelineRowById, readRunTags, readRunLabels, requirementsOn: () => flagEnabled('shapeRequirements') };
+const shapeToolFactDeps = { live: (id) => liveSliceOf(id), readPrState, findPipelineRowById, readRunTags, readRunLabels };
 function askShapeAction(req, threadId) {
   if (!threadId) return { ok: false, notice: 'Not applied: no chat to post to' };
   let r;
@@ -10497,7 +10500,7 @@ if (isMain) {
 }
 
 export { app, server, runs };
-export { AGENTS_DIR, APP_INFO, APP_REPO_URL, ASK_DEFERRED_REPLIES_MAX, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STORE_ERROR_CODES, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askChatEngineGate, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askCredentialGate, askDeferred, askDeferredReplies, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSignedIn, askSwitchTranscript, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatNotifier, chatRefusals, checkoutRecOf, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, designBuilds, designChatActions, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, featureShipping, findScheduleItem, findShipCardIn, flipCard, followCloneCard, forkPrRefusal, fsAllowedRoots, fsLimitedHere, gitMissing, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendPolicyError, sendPresetError, serveAskFile, serverMockMode, settleShipped, setupJobs, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, soundCards, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy };
+export { AGENTS_DIR, invokeStartRun, prWatcherDeps, APP_INFO, APP_REPO_URL, ASK_DEFERRED_REPLIES_MAX, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STORE_ERROR_CODES, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askChatEngineGate, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askCredentialGate, askDeferred, askDeferredReplies, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSignedIn, askSwitchTranscript, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatNotifier, chatRefusals, checkoutRecOf, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, designBuilds, designChatActions, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, featureShipping, findScheduleItem, findShipCardIn, flipCard, followCloneCard, forkPrRefusal, fsAllowedRoots, fsLimitedHere, gitMissing, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendPolicyError, sendPresetError, serveAskFile, serverMockMode, settleShipped, setupJobs, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, soundCards, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy };
 export const _testing = {
   chatBridge, invokeAskCard, askBus, chatAgentModeFor, chatTurnIdentity,
   updateChecker,

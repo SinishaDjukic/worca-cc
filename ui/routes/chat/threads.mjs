@@ -7,7 +7,7 @@ import { validateModelEffort } from '../../../src/core/ask/models.mjs';
 import { chatScopeOf, sameScope } from '../../../src/core/ask/scope.mjs';
 import { revealTargetFor as askRevealTargetFor } from '../../../src/core/ask/show-files-deps.mjs';
 import { isSurfaceMode } from '../../../src/core/ask/thread-modes.mjs';
-import { THREAD_SORTS, attachmentPath as askAttachmentPath, countThreads as askCountThreads, createThread as askCreateThread, getAttachment as askGetAttachment, getThread as askGetThread, listAttachments as askListAttachments, listMessages as askListMessages, listRunLinks as askListRunLinks, listThreadIds as askListThreadIds, listThreads as askListThreads, listThreadsPage as askListThreadsPage, readAttachmentText as askReadAttachmentText, setArchived as askSetArchived, setPinned as askSetPinned, updateThread as askUpdateThread } from '../../../src/core/ask/store.mjs';
+import { THREAD_SORTS, attachmentPath as askAttachmentPath, countThreads as askCountThreads, createThread as askCreateThread, getAttachment as askGetAttachment, getThread as askGetThread, listAttachments as askListAttachments, listMessages as askListMessages, listRunLinks as askListRunLinks, runLinksForViewer as askRunLinksForViewer, listThreadIds as askListThreadIds, listThreads as askListThreads, listThreadsPage as askListThreadsPage, readAttachmentText as askReadAttachmentText, setArchived as askSetArchived, setPinned as askSetPinned, setThreadLabels as askSetThreadLabels, chatLabelVocabulary as askChatLabelVocabulary, updateThread as askUpdateThread } from '../../../src/core/ask/store.mjs';
 import { removeAskWorktree as askRemoveWorktree } from '../../../src/core/ask/worktrees.mjs';
 import { chatOrigins } from '../../../src/core/chat/conversations.mjs';
 import { createDesignThread } from '../../../src/core/design/chat-thread.mjs';
@@ -48,6 +48,15 @@ function askWaitingCount(threadId) {
   }
   return n;
 }
+
+/** Stillhet's run → chat lookup: every run the viewer's chats started (`started`, the link has its card) or follow. */
+app.get('/api/ask/run-links', (req, res) => {
+  try {
+    res.json({ links: askRunLinksForViewer({ visibleTo: askViewer(req) }) });
+  } catch (err) {
+    res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
 
 app.get('/api/ask/threads', (req, res) => {
   try {
@@ -192,6 +201,24 @@ app.get('/api/ask/threads/:id', (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
+});
+
+/** Stillhet chat labels: the labels in use on the viewer's chats, for the chat head's picker. */
+app.get('/api/ask/labels', (req, res) => {
+  res.json({ labels: askChatLabelVocabulary({ visibleTo: askViewer(req) }) });
+});
+
+/** Stillhet chat labels: replace a chat's labels, with PUT /api/runs/:id/labels's validation (src/shared/run-labels.mjs).
+ *  Never bumps the chat's Last activity. Another tab re-reads its chats on `ask-labels-changed`. */
+app.put('/api/ask/threads/:id/labels', (req, res) => {
+  const id = askIdParam(res, req.params.id, 'thread');
+  if (!id) return;
+  if (!Array.isArray(req.body?.labels)) return badRequest(res, 'labels must be a list of strings');
+  let out;
+  try { out = askSetThreadLabels(id, req.body.labels); } catch (e) { if (e?.code === 'BAD_LABELS') return badRequest(res, e.message); throw e; }
+  if (!out) return res.status(404).json({ error: 'thread not found' });
+  if (out.changed) emitChanged('ask-labels-changed', 'labels');
+  res.json(out);
 });
 
 app.patch('/api/ask/threads/:id', async (req, res) => {

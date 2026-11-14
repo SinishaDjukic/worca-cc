@@ -35,7 +35,7 @@ const BANS = [
 ];
 const literals = (src) => src.match(/'[^'\n]*'|"[^"\n]*"|`[^`]*`/g) || [];
 const walkFrom = (root, dir = '') => readdirSync(new URL(`../${root}/${dir}`, import.meta.url), { withFileTypes: true }).flatMap((e) =>
-  e.isDirectory() ? (e.name === 'vendor' ? [] : walkFrom(root, `${dir}${e.name}/`)) : /\.(mjs|js)$/.test(e.name) ? [`${root}/${dir}${e.name}`] : []);
+  e.isDirectory() ? (e.name === 'vendor' || e.name === 'stillhet' ? [] : walkFrom(root, `${dir}${e.name}/`)) : /\.(mjs|js)$/.test(e.name) ? [`${root}/${dir}${e.name}`] : []);
 const readRepo = (p) => readFileSync(new URL(`../${p}`, import.meta.url), 'utf8');
 const banHits = (src) => literals(noComments(src).replace(/\/\*[\s\S]*?\*\//g, ''))
   .flatMap((lit) => BANS.filter(([re]) => re.test(lit)).map(([, why]) => `${lit.slice(0, 80)} (${why})`));

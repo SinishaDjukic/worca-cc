@@ -3,7 +3,10 @@
   "version": "1.19.0-rc.1",
   "description": "Worca turns a task into reviewed, merge-ready work. A deterministic multi-agent pipeline that plans, implements and reviews in isolated git worktrees, with quality gates, budgets and a human in the loop. Web UI, CLI and chat.",
   "license": "MIT",
-  "author": "Sinisha Djukic",
+  "author": "Bosch Digital EOOD, Atanas Atanasov, Emil Angelov",
+  "contributors": [
+    "Worca Contributors (https://github.com/SinishaDjukic/worca-cc/graphs/contributors)"
+  ],
   "type": "module",
   "engines": {
     "node": ">=22.19.0"
@@ -59,6 +62,7 @@
   ],
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning ui/server.mjs",
+    "rail": "node tools/rail-open.mjs",
     "stop": "node --disable-warning=ExperimentalWarning src/cli/worca-cc.mjs ui stop",
     "cli": "node --disable-warning=ExperimentalWarning src/cli/worca-cc.mjs",
     "install:agents": "node tools/install.mjs",
@@ -81,6 +85,11 @@
     "verify:scripts": "node --disable-warning=ExperimentalWarning tools/verify-scripts-cdp.mjs",
     "verify:ask-forms": "node --disable-warning=ExperimentalWarning tools/verify-ask-forms-cdp.mjs",
     "verify:workspace-map": "node --disable-warning=ExperimentalWarning tools/verify-workspace-map-cdp.mjs",
+    "stillhet:build": "node tools/stillhet-build.mjs",
+    "stillhet:compare": "node tools/stillhet-compare.mjs",
+    "stillhet:gates": "node tools/stillhet-gates.mjs",
+    "stillhet:style-diff": "node tools/stillhet-style-diff.mjs",
+    "stillhet:wiring": "node tools/stillhet-wiring.mjs",
     "verify:flags": "node --disable-warning=ExperimentalWarning tools/verify-flags-cdp.mjs",
     "verify:feature-page": "node --disable-warning=ExperimentalWarning tools/verify-feature-page-cdp.mjs",
     "verify:runs-list": "node --disable-warning=ExperimentalWarning tools/verify-runs-list-cdp.mjs",
@@ -103,7 +112,7 @@
     "ext:zip": "node tools/build-extension.mjs --zip",
     "ext:try": "node tools/try-extension.mjs",
     "demo:extension-video": "node tools/demo/extension-video/record.mjs",
-    "prepack": "node tools/build-extension.mjs --pack",
+    "prepack": "node tools/build-extension.mjs --pack && node tools/stillhet-build.mjs",
     "ext:lint:firefox": "node tools/build-extension.mjs --browser firefox && web-ext lint --source-dir extension/dist/firefox",
     "e2e:extension": "node tools/build-extension.mjs --test --browser chrome && playwright test -c e2e/extension/playwright.config.mjs",
     "e2e:extension:update-linux": "docker run --rm --platform linux/amd64 -v worca-e2e-node-modules:/nm mcr.microsoft.com/playwright:v1.64.1-noble chown \"$(id -u):$(id -g)\" /nm && docker run --rm --platform linux/amd64 --ipc=host --user \"$(id -u):$(id -g)\" -e HOME=/tmp -v \"$PWD\":/work -v worca-e2e-node-modules:/work/node_modules -w /work mcr.microsoft.com/playwright:v1.64.1-noble bash -lc \"npm ci && npm run e2e:extension -- --update-snapshots\"",

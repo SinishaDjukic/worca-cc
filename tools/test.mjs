@@ -82,6 +82,10 @@ export function parseArgs(argv, env = process.env) {
   }
   if (!['fast', 'slow', 'all'].includes(o.tier)) throw new Error(`bad --tier "${o.tier}" (want fast|slow|all)`);
   if (o.concurrency !== null && !(Number.isInteger(o.concurrency) && o.concurrency > 0)) throw new Error('--concurrency needs a positive integer');
+  // Worca sets WORCA_TEST_CONCURRENCY in every agent's env (Settings › Runs › Machine load). This is its only
+  // reader: the cap travels to test-run.mjs in files.json, never to the test files. A bad value is ignored.
+  const envCap = Number(env.WORCA_TEST_CONCURRENCY);
+  if (o.concurrency === null && Number.isInteger(envCap) && envCap > 0) o.concurrency = envCap;
   if (o.base && !o.related) throw new Error('--base needs --related');
   if (o.related && o.files.length) throw new Error('--related picks its own files: drop the file list');
   // CI's shard env splits the selected suite; it never applies to an explicit file list or --related.
@@ -206,6 +210,7 @@ async function main() {
     NODE_OPTIONS: [process.env.NODE_OPTIONS, '--disable-warning=ExperimentalWarning'].filter(Boolean).join(' ') };
   delete env.WORCA_HOST_PID; // a test run is never a worca-hosted child
   delete env.WORCA_FLAGS; // feature flags (docs/feature-flags.md): a developer's shell flags never reach the suite
+  delete env.WORCA_TEST_CONCURRENCY; // the worker cap travels in files.json (parseArgs); a test file never sees the runner's value
   env.WORCA_GIT ??= '1'; // P0 (S1): git forced on (no probe) unless the caller set it; rows that need "missing" use test/helpers/git-off.mjs
   delete env.CLAUDE_CONFIG_DIR; // skillHostFacts reads it (skills registry §4.1): a test never sees the developer's Claude config
   delete env.NODE_TEST_CONTEXT; // set inside a node:test file; run() would then skip every file

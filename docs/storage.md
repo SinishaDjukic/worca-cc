@@ -100,8 +100,8 @@ project's working tree, so nothing is ever committed to your repo.
                                         which worca's server makes, land in work/assets/sound/), dist/ (assembled,
                                         no bridge), versions/<n>/ (copy of work/ after each finished round, last 20),
                                         made/ (a kept copy of each made picture, by its row). Rows: designs (the
-                                        sound choice in designs.sound_json, v92), design_builds, design_agents (v89),
-                                        design_pictures (v91). Spend: design_cost_ledger (ElevenLabs' too), which
+                                        sound choice in designs.sound_json, v95), design_builds, design_agents (v92),
+                                        design_pictures (v94). Spend: design_cost_ledger (ElevenLabs' too), which
                                         keeps its rows after a design is deleted.
   tmp/requirements/att-read-<8 hex>/    one file read's folder: a copy of that one file (a text file's copy is its
                                         redacted text), mode 0700 / 0600, removed when the read ends (a restart's

@@ -300,6 +300,7 @@ export function scriptResultNote(name, text, isError = false) {
  */
 export function createTurnReducer({
   onFrame,
+  onLimit = null,   // the CLI's plan-limit reading (a `limit` event, D7): kept for the usage rings, never rendered
   redact = redactAskText,
   now = Date.now,
   setTimeout: setT = globalThis.setTimeout,
@@ -906,6 +907,7 @@ export function createTurnReducer({
     if (!evt || typeof evt !== 'object') return;
     if (!isNormalized(evt)) { for (const n of normalize(evt)) handle(n); return; }
     if (evt.type === 'compact' || evt.type === 'toolInput') return;       // Run telemetry's and Design's, never a chat's
+    if (evt.type === 'limit') { if (onLimit) onLimit(evt); return; }      // the usage rings' reading, never a chat line
     if (!labels.length) label('Thinking');
     const isMain = (evt.parentId ?? null) === null;
     switch (evt.type) {

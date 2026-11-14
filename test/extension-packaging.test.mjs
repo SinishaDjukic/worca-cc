@@ -18,7 +18,7 @@ test('files lists exactly the three built extension folders, never source, e2e, 
   const ext = PKG.files.filter((f) => /^(extension|e2e)\b/.test(f));
   assert.deepEqual(ext, ['extension/dist/chrome/', 'extension/dist/edge/', 'extension/dist/firefox/']);
   assert.ok(!PKG.files.includes('tools/build-extension.mjs'));
-  assert.equal(PKG.scripts.prepack, 'node tools/build-extension.mjs --pack', 'npm pack/publish build the production extension');
+  assert.equal(PKG.scripts.prepack, 'node tools/build-extension.mjs --pack && node tools/stillhet-build.mjs', 'npm pack/publish build the production extension');
   assert.match(readFileSync(join(ROOT, '.gitignore'), 'utf8'), /^extension\/dist\/$/m, 'builds stay out of git');
 });
 

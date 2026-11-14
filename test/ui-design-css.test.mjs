@@ -70,8 +70,9 @@ test('crew labels read at 4.5:1 on every crew colour', () => {
 });
 test('the guide names the exceptions, and no stage rule has an accent edge', () => {
   const g = readFileSync(new URL('../docs/design-system.md', import.meta.url), 'utf8');
+  const m = readFileSync(new URL('../docs/rail/motion.md', import.meta.url), 'utf8');
   assert.match(g, /### Design stage exceptions/);
-  assert.match(g, /The named exceptions are the away screensaver .* and the Design stage/);
+  assert.match(m, /The named exceptions are the away screensaver[\s\S]*? and the Design stage/);
   for (const r of ALL.filter((x) => /\.dz-|\.overlay-doc|\.frame-box/.test(x.sel))) assert.doesNotMatch(r.body, /border-left/, r.sel);
 });
 

@@ -263,6 +263,17 @@ test('retry shows retrying, the next usage clears it', () => {
   assert.equal(calls.usage, 3);
 });
 
+test("a limit event (the usage rings' reading) changes nothing on the stage", () => {
+  const { calls, stream, splices, drafts, send } = setup();
+  send(usage('start'));
+  send(text('Working on the hero.'));
+  const state = () => JSON.stringify({ calls, summary: stream.summary(), sawResult: stream.sawResult(), splices, drafts: drafts.snapshot() });
+  const before = state();
+  send({ type: 'limit', status: 'allowed', windows: [] });
+  send({ type: 'limit', status: 'rejected', windows: [{ window: 'five_hour', utilization: 1, resetsAt: 1763100000000 }] });
+  assert.equal(state(), before, 'no status, no tool, no file, no usage tick, no booking, no summary');
+});
+
 test('result books through the meter and records the subtype', () => {
   const { stream, calls, send } = setup();
   assert.deepEqual([stream.sawResult(), stream.resultSubtype()], [false, null]);

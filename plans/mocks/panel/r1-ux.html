@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Quiet sentence</title>
+<style>
+@font-face{font-family:P;font-weight:400;src:url(../../../ui/public/fonts/poppins-latin-400-normal.woff2)}
+@font-face{font-family:P;font-weight:500;src:url(../../../ui/public/fonts/poppins-latin-500-normal.woff2)}
+@font-face{font-family:P;font-weight:600;src:url(../../../ui/public/fonts/poppins-latin-600-normal.woff2)}
+:root{--bg:#161614;--panel:#222220;--field:#2C2C29;--ink:#ECECE8;--ink-2:#B4B4AE;--ink-3:#9E9E98;--line:#30302D;--line-2:#3d3d39;--hover:#2a2a27;--red:#e0645a}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--ink);font:400 13px/1.5 P,sans-serif;padding:28px 24px 36px;width:1240px}
+h1{font-size:20px;font-weight:600;letter-spacing:-.02em}
+.sub{color:var(--ink-2);margin:4px 0 22px;font-size:13px}
+.grid{display:grid;grid-template-columns:64px minmax(0,.8fr) minmax(0,1.1fr) minmax(0,1.1fr);gap:18px 22px}
+.lab{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);padding-top:2px}
+.col h3{font-size:13px;font-weight:600;margin-bottom:8px}.col h3 span{font-weight:400;color:var(--ink-2)}
+.note{color:var(--ink-2);font-size:12px;margin-top:10px;line-height:1.5}
+.sep{grid-column:1/-1;height:1px;background:var(--line);margin:6px 0}
+svg{display:inline-block;vertical-align:middle}
+/* composer */
+.comp{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 12px 10px}
+.ph{color:var(--ink-3);font-size:14px;margin-bottom:12px}
+.foot{display:flex;align-items:center;gap:8px}
+.plus{color:var(--ink-2);flex:none;width:18px;text-align:center;font-size:17px;line-height:1}
+.send{margin-left:auto;flex:none;width:28px;height:28px;border-radius:6px;background:var(--ink);color:#161614;display:grid;place-items:center}
+.today .s{font-size:14px;color:var(--ink-3);line-height:1.75}
+.today b{color:var(--ink);font-weight:600}
+.chev{font-size:10px;color:var(--ink-2);margin:0 4px 0 2px;display:inline-block;transform:scaleX(1.4)}
+/* proposal sentence */
+.q{font-size:12px;color:var(--ink-3);white-space:nowrap;overflow:hidden;min-width:0}
+.q .m{font-size:13px;color:var(--ink);font-weight:500;margin-right:4px}
+.q u{text-decoration:none;color:var(--ink-2);border-bottom:1px dotted #5c5c57;padding-bottom:1px}
+.q u.ch{color:var(--ink);font-weight:500;border-bottom-color:var(--ink-3)}
+.q u.hov{background:var(--hover);box-shadow:0 0 0 3px var(--hover);border-radius:4px}
+/* menu */
+.menu{margin:6px 0 0 110px;width:230px;background:var(--field);border:1px solid var(--line-2);border-radius:8px;padding:4px 0;box-shadow:0 8px 24px #0007}
+.mh{font-size:11px;color:var(--ink-3);padding:4px 12px 2px}
+.mr{display:flex;justify-content:space-between;padding:5px 12px;font-size:12px;color:var(--ink-2)}
+.mr span:last-child{color:var(--ink)}
+.mr+.mr{border-top:1px solid var(--line)}
+.mf{border-top:1px solid var(--line-2);padding:6px 12px 3px;font-size:11px;color:var(--ink-3)}
+/* sidebar */
+.side{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px 12px;width:286px}
+.hd{display:flex;align-items:center;gap:8px;height:28px}
+.logo{width:20px;height:20px;border-radius:50%;background:var(--ink-2);color:#161614;font-size:11px;font-weight:600;display:grid;place-items:center}
+.hd .t{font-size:18px;font-weight:600;letter-spacing:-.02em}
+.hd .ic{color:var(--ink-2);margin-left:auto;display:flex;gap:14px;align-items:center}
+.ls{font-size:14px;color:var(--ink-3);line-height:1.75;margin:10px 0 8px}
+.ls b{color:var(--ink);font-weight:600}
+.grp{font-weight:600;margin:6px 0 4px}.grp span{color:var(--ink-3);font-weight:400;margin-left:4px}
+.row{display:grid;grid-template-columns:20px 1fr auto;gap:12px;align-items:center;height:30px;color:var(--ink)}
+.row .e{color:var(--ink-3);font-size:12px}
+.row.sub2{padding-left:20px}
+.mk{width:14px;height:14px;display:grid;place-items:center;color:var(--ink-2)}
+.ring{width:14px;height:14px;border-radius:50%;border:1.5px solid var(--red);color:var(--red);font-size:9px;display:grid;place-items:center}
+.nc{display:grid;grid-template-columns:20px 1fr auto;gap:12px;align-items:center;height:30px;margin:8px -6px 0;padding:0 6px;border-radius:6px;color:var(--ink-2)}
+.nc.cur{background:var(--hover);color:var(--ink)}
+.nc .k{font-size:11px;color:var(--ink-3)}
+.lq{margin:8px 0 6px;padding-top:8px;border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:baseline}
+.rs{font-size:12px;color:var(--ink-2)}
+</style></head><body>
+<h1>Quiet sentence: keep the words, drop the weight</h1>
+<p class="sub">The sentence stays the control. It drops to meta size and plain weight, says only what is not the default, and fits on one line. New chat becomes the first row of the list.</p>
+
+<div class="grid">
+  <div class="lab">Composer</div>
+  <div class="col today">
+    <h3>Today <span>· 7 bold pickers, 7 chevrons, wraps</span></h3>
+    <div class="comp"><div class="ph">Describe the task…</div>
+      <div class="foot" style="align-items:flex-start"><div class="plus" style="padding-top:5px">+</div>
+        <div class="s"><b>Task</b><i class="chev">⌄</i> on <b>billing-api</b><i class="chev">⌄</i> with <b>Default</b><i class="chev">⌄</i> on <b>Opus 5.5</b><i class="chev">⌄</i> <b>high</b><i class="chev">⌄</i> from <b>origin · latest</b><i class="chev">⌄</i> then <b>open a PR</b><i class="chev">⌄</i></div>
+      </div></div>
+    <p class="note">Every value shouts the same: the repo you must check weighs as much as "Default". Three of seven say only "as always". Model and effort are two pickers for one choice.</p>
+  </div>
+  <div class="col">
+    <h3>Proposal <span>· resting, one line</span></h3>
+    <div class="comp"><div class="ph">Describe the task…</div>
+      <div class="foot"><div class="plus">+</div>
+        <div class="q"><span class="m">Task</span> on <u>billing-api</u>, <u>Opus 5.5 high</u>, <u class="hov">as usual</u></div>
+        <div class="send"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M7 12V2M3 6l4-4 4 4" stroke="#161614" stroke-width="1.6" fill="none"/></svg></div>
+      </div></div>
+    <div class="menu"><div class="mh">As usual</div>
+      <div class="mr"><span>Workflow</span><span>Default</span></div>
+      <div class="mr"><span>From</span><span>origin · latest</span></div>
+      <div class="mr"><span>Then</span><span>open a PR</span></div>
+      <div class="mf">Change one and it joins the sentence</div></div>
+  </div>
+  <div class="col">
+    <h3>Proposal <span>· two values changed</span></h3>
+    <div class="comp"><div class="ph">Describe the task…</div>
+      <div class="foot"><div class="plus">+</div>
+        <div class="q"><span class="m">Task</span> on <u>billing-api</u>, <u class="ch">Opus 5.5 max</u>, then <u class="ch">push only</u></div>
+        <div class="send"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M7 12V2M3 6l4-4 4 4" stroke="#161614" stroke-width="1.6" fill="none"/></svg></div>
+      </div></div>
+    <p class="note">A changed value takes ink and 500, never violet (violet means Worca is writing). A folded default you change leaves "as usual" and joins the sentence with its own word. No chevrons: the dotted line under a value says it opens; hover fills it, without reflow.</p>
+  </div>
+
+  <div class="sep"></div>
+
+  <div class="lab">Chat list</div>
+  <div class="col">
+    <h3>Today <span>· + among the bar's tools</span></h3>
+    <div class="side">
+      <div class="hd"><div class="logo">W</div><div class="t">Chat</div><span class="chev" style="font-size:12px">⌄</span>
+        <div class="ic"><span style="font-size:18px;line-height:1">+</span><svg width="15" height="15" viewBox="0 0 15 15"><rect x="1.5" y="2" width="12" height="11" rx="1.5" stroke="#B4B4AE" fill="none"/><path d="M5.5 2v11" stroke="#B4B4AE"/></svg></div></div>
+      <div class="ls">Showing <b>all</b><i class="chev">⌄</i> from <b>all projects</b><i class="chev">⌄</i><br>by <b>date</b><i class="chev">⌄</i> &nbsp;···</div>
+      <div class="grp">Needs you<span>2</span></div>
+      <div class="row"><div class="mk">▭</div><div>Node 24</div><div class="e">12:40</div></div>
+      <div class="row sub2"><div class="ring">✕</div><div>Update Node to 24</div><div class="e">⑂</div></div>
+    </div>
+    <p class="note">The + is a 15px glyph between the title's ⌄ and the hide toggle: three tools at one weight, far from the chats it adds to, and it does not say what it makes.</p>
+  </div>
+  <div class="col">
+    <h3>Proposal <span>· New chat is the first row</span></h3>
+    <div class="side">
+      <div class="hd"><div class="logo">W</div><div class="t">Chat</div><span class="chev" style="font-size:12px">⌄</span>
+        <div class="ic"><svg width="15" height="15" viewBox="0 0 15 15"><rect x="1.5" y="2" width="12" height="11" rx="1.5" stroke="#B4B4AE" fill="none"/><path d="M5.5 2v11" stroke="#B4B4AE"/></svg></div></div>
+      <div class="nc cur"><div class="mk" style="color:var(--ink)"><svg width="13" height="13" viewBox="0 0 13 13"><path d="M6.5 1v11M1 6.5h11" stroke="currentColor" stroke-width="1.4"/></svg></div><div>New chat</div><div class="k">⌘N</div></div>
+      <div class="lq"><div class="q">Showing <u>all</u> by <u>date</u></div><div class="rs">···</div></div>
+      <div class="grp">Needs you<span>2</span></div>
+      <div class="row"><div class="mk">▭</div><div>Node 24</div><div class="e">12:40</div></div>
+      <div class="row sub2"><div class="ring">✕</div><div>Update Node to 24</div><div class="e">⑂</div></div>
+    </div>
+    <p class="note">New chat sits on the rail where chats are, names what it makes, and is lit while you are on Chat home (the empty composer is that new chat). The sentence is one meta line; "from all projects" folds away at its default.</p>
+  </div>
+  <div class="col">
+    <h3>Proposal <span>· list narrowed</span></h3>
+    <div class="side">
+      <div class="hd"><div class="logo">W</div><div class="t">Chat</div><span class="chev" style="font-size:12px">⌄</span>
+        <div class="ic"><svg width="15" height="15" viewBox="0 0 15 15"><rect x="1.5" y="2" width="12" height="11" rx="1.5" stroke="#B4B4AE" fill="none"/><path d="M5.5 2v11" stroke="#B4B4AE"/></svg></div></div>
+      <div class="nc"><div class="mk"><svg width="13" height="13" viewBox="0 0 13 13"><path d="M6.5 1v11M1 6.5h11" stroke="currentColor" stroke-width="1.4"/></svg></div><div>New chat</div><div class="k">⌘N</div></div>
+      <div class="lq"><div class="q">Showing <u class="ch">needs you</u> from <u class="ch">billing-api</u></div><div class="rs">Reset</div></div>
+      <div class="row"><div class="mk">▭</div><div>Node 24</div><div class="e">12:40</div></div>
+      <div class="row sub2"><div class="ring">✕</div><div>Update Node to 24</div><div class="e">⑂</div></div>
+    </div>
+    <p class="note">The same rule as the composer: changed words take ink, a folded clause returns when it differs, and Reset takes the ⋯'s place while the list is narrowed. The group head goes; the sentence says it.</p>
+  </div>
+</div>
+</body></html>

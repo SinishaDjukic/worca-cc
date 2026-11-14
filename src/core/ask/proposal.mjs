@@ -366,7 +366,7 @@ export function createProposalValidator({
         && (shapeIn === undefined || (shapeIn && typeof shapeIn === 'object' && !Array.isArray(shapeIn) && !('perspectives' in shapeIn)))) {
         shapeIn = { ...(shapeIn || {}), perspectives: [...DEFAULT_PERSPECTIVES, 'ux'] };
       }
-      const r = resolveShapeRequest({ shape: shapeIn, workflowId: inp.workflowId });
+      const r = resolveShapeRequest({ shape: shapeIn, workflowId: inp.workflowId }, { proposal: true });
       if (!r.ok) errors.push(r.error);
       else { shape = { ...r.shape, perspectives: withProjectFit(r.shape.perspectives, await briefOn()) }; shapedWorkflowId = r.workflowId; }
       // L7: a run without a project is never planned in slices (POST /api/run refuses 'auto' the same); its shaped run
@@ -553,8 +553,8 @@ export function createProposalValidator({
     if (nudgeBase && !errors.length) {
       let estimates = { asIs: null, shaped: null };
       // The shaped run would be wf_shape_ux when the nudge picks UX (resolveShapeRequest); it has the manual-test agents.
-      // With the requirements stage on, a medium or large task runs its variant: its estimate counts those agents.
-      const req = shapeRequirementsEligible({ size: nudgeBase.size }, flagEnabled('shapeRequirements'));
+      // A medium or large task runs its requirements variant: its estimate counts those agents.
+      const req = shapeRequirementsEligible({ size: nudgeBase.size });
       const ux = nudgeBase.perspectives.includes('ux');
       const shapedWf = req ? (ux ? GRAPH_SHAPE_UX_REQ_WORKFLOW : GRAPH_SHAPE_REQ_WORKFLOW) : (ux ? GRAPH_SHAPE_UX_WORKFLOW : GRAPH_SHAPE_WORKFLOW);
       if (typeof estimate === 'function') {

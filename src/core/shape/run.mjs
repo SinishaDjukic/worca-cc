@@ -33,13 +33,14 @@ export const isShapeWorkflowId = (id) => id === SHAPE_WORKFLOW_ID || id === SHAP
 
 /**
  * The `shape` field and workflow of a run request. A shaped run always runs wf_shape — wf_shape_ux when UX is a
- * perspective — or, with `requirementsOn` (Labs flag shapeRequirements) for a medium or large task that is not a slice
+ * perspective — or, for a medium or large task that is not a slice
  * ticket, its requirements variant. A request that names a requirements id it cannot take is refused, never downgraded.
  * `shape.lead` is the person's lead perspective; it joins the perspectives when missing.
- * `internal` (a fired ticket) also admits the `slice` and `replaces` fields.
+ * `internal` (a fired ticket) also admits the `slice` and `replaces` fields. `proposal` (a run card) stays on the plain
+ * Shaper workflow: the requirements variant is chosen when the run starts.
  * @returns {{ok:true, shape:null|{perspectives:string[], slices?:string, size?:string, slice?:object, replaces?:string}, workflowId:string|null}|{ok:false, error:string}}
  */
-export function resolveShapeRequest({ shape, workflowId }, { internal = false, requirementsOn = false } = {}) {
+export function resolveShapeRequest({ shape, workflowId }, { internal = false, proposal = false } = {}) {
   const named = typeof workflowId === 'string' && workflowId.trim() ? workflowId.trim() : null;
   if (shape === undefined && !isShapeWorkflowId(named)) return { ok: true, shape: null, workflowId: named };
   if (shape !== undefined && (shape === null || typeof shape !== 'object' || Array.isArray(shape))) {
@@ -81,19 +82,18 @@ export function resolveShapeRequest({ shape, workflowId }, { internal = false, r
   };
   const ux = p.perspectives.includes('ux');
   if (SHAPE_REQ_WORKFLOW_IDS.includes(named)) {
-    if (!requirementsOn) return { ok: false, error: 'the requirements stage is off (Labs flag shapeRequirements)' };
+    if (proposal) return { ok: false, error: `a card proposes the Shaper workflow (${SHAPE_WORKFLOW_ID}); the requirements stage is chosen at start` };
     if (resolved.slice && !resolved.requirementsFirst) return { ok: false, error: `a slice ticket runs the Shaper workflow (${SHAPE_WORKFLOW_ID})` };
-    if (!shapeRequirementsEligible(resolved, true)) return { ok: false, error: 'the requirements stage needs a medium or large task' };
+    if (!shapeRequirementsEligible(resolved)) return { ok: false, error: 'the requirements stage needs a medium or large task' };
   }
-  // A slice of a feature with agreed requirements runs the slice variant, chosen when its ticket fires: the flag off
-  // picks plain wf_shape (the rollback), whatever the stored request named.
+  // A slice of a feature with agreed requirements runs the slice variant, chosen when its ticket fires.
   const sliceIds = resolved.slice ? sliceRequirementIds(resolved.slice) : [];
   if (SHAPE_SLICE_REQ_WORKFLOW_IDS.includes(named) && !sliceIds.length) {
     return { ok: false, error: `${named} runs only as a slice of a feature with agreed requirements` };
   }
-  const req = shapeRequirementsEligible(resolved, requirementsOn);
+  const req = !proposal && shapeRequirementsEligible(resolved);
   // s3 (D13): a requirements-first Changes run updates the requirements before it plans, a slice included.
-  const sliceReq = requirementsOn && sliceIds.length > 0 && !resolved.requirementsFirst;
+  const sliceReq = sliceIds.length > 0 && !resolved.requirementsFirst;
   return {
     ok: true,
     shape: resolved,

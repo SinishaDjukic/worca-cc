@@ -581,6 +581,12 @@ export async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resu
 
   await emitLog(onEvent, `[mock] starting role=${role || 'unknown'} cycle=${cycle}`);
   abortIfNeeded(signal);
+  // WORCA_MOCK_FAIL_STEP=<role> (the Tasks walk's seed): that step fails for real, with test-shaped lines, so dev's failure
+  // policy handles it as it would a real one (it pauses the run on that step).
+  if (role && String(process.env.WORCA_MOCK_FAIL_STEP || '').split(',').map((x) => x.trim()).includes(role)) {
+    await emitLog(onEvent, '[mock] failing as asked (WORCA_MOCK_FAIL_STEP)');
+    throw Object.assign(new Error('3 tests failed\n✗ test/a.test.mjs: timeout\n✗ test/b.test.mjs: expected 2\n✗ test/c.test.mjs: ENOENT'), { mockFailure: true });
+  }
 
   // Ask-then-resume (spec 2026-07-11): asking replaces the role side effects
   // for this invocation; the orchestrator gates the user and resumes. The
@@ -699,7 +705,10 @@ export async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resu
   // No model was called, so the truthful spend is $0. Emit a result event the
   // orchestrator attributes to the current phase, so mock/demo runs still show
   // a (zero) per-phase and total cost in the UI.
-  safeEmit(onEvent, { type: 'result', costUsd: 0, raw: { mock: true, type: 'result', total_cost_usd: 0 } });
+  // WORCA_MOCK_STEP_COST_USD (the Tasks walk's seed): each step reports that spend, so a low cap really pauses the run.
+  const stepCost = Number(process.env.WORCA_MOCK_STEP_COST_USD);
+  const cost = Number.isFinite(stepCost) && stepCost > 0 ? stepCost : 0;
+  safeEmit(onEvent, { type: 'result', costUsd: cost, raw: { mock: true, type: 'result', total_cost_usd: cost } });
   await emitLog(onEvent, `[mock] done role=${role}`);
   return { text, exitCode: 0 };
 }
@@ -1013,8 +1022,17 @@ async function mockPlannerPlan(m, onEvent, prompt = '') {
   const base = m.MOCK_BASE || 'feature';
   await emitLog(onEvent, '[mock] planner writing initial plan with code snippet');
   // §3.8: a slicing prompt whose task says "plan this in slices" gets a two-slice outline and no plan (the real
-  // Planner STOPs after the outline). The resumed spawn carries no MOCK_SLICES, so it writes the plan below.
+  // Planner STOPs after the outline). A spawn after the outline is approved carries no MOCK_SLICES, so it writes the
+  // plan below. A revise (the outline feedback block) edits the outline in place, as the real Planner is told to (D12).
   if (m.MOCK_SLICES && /\bplan this in (3 )?slices\b/i.test(prompt)) {
+    const feedback = /## Changes asked for the outline\n\n[^\n]*\n\n([\s\S]*?)\n\n/.exec(prompt);
+    const existing = feedback ? await readFile(m.MOCK_SLICES, 'utf8').then((t) => JSON.parse(t), () => null) : null;
+    if (existing && typeof existing === 'object') {
+      const why = `${String(existing.why || '').trim()} Changed: ${feedback[1].trim()}`.trim();
+      await writeFile(m.MOCK_SLICES, JSON.stringify({ ...existing, why }, null, 2) + '\n', 'utf8');
+      safeEmit(onEvent, { type: 'tool_use', text: `edited ${m.MOCK_SLICES}`, raw: { mock: true, file: m.MOCK_SLICES } });
+      return `[mock] planner-plan: outline edited at ${m.MOCK_SLICES}`;
+    }
     const fixed = /\bplan this in 3 slices\b/i.test(prompt) ? MOCK_OUTLINE_3 : MOCK_OUTLINE;
     const outline = m.MOCK_REQUIREMENTS ? mockOutlineRequirements(fixed, await readFile(m.MOCK_REQUIREMENTS, 'utf8').catch(() => '')) : fixed;
     await ensureDir(m.MOCK_SLICES);
@@ -1102,12 +1120,12 @@ function mockRequirementsMarkdown(spec = []) {
   return `# Requirements\n\n${rows.map(([id, text]) => `- **${id}** ${text}`).join('\n')}\n`;
 }
 
-/** One `Delivers:` line per criterion of the bound requirements, except the ids in WORCA_MOCK_UNCOVERED. */
+/** One `Covers:` line per criterion of the bound requirements, except the ids in WORCA_MOCK_UNCOVERED. */
 function mockDeliveryLines(requirementsText) {
   const skip = new Set(String(process.env.WORCA_MOCK_UNCOVERED || '').split(',').map((x) => x.trim()).filter(Boolean));
   const ids = [...String(requirementsText).matchAll(/^- \*\*(R-[a-z]+-\d+)\*\*/gm)].map((x) => x[1]).filter((id) => !skip.has(id));
   if (!ids.length) return '';
-  return `\n## Delivery\n\n${ids.map((id) => `- Step 1 · Delivers: ${id}`).join('\n')}\n`;
+  return `\n## Delivery\n\n${ids.map((id) => `- Step 1 · Covers: ${id}`).join('\n')}\n`;
 }
 
 async function mockRequirementsDraft(m, onEvent) {

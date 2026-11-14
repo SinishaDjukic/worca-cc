@@ -558,7 +558,7 @@ test('corporate proxy end to end: a child process fetch with the child env reach
   try {
     const envProxy = pathToFileURL(fileURLToPath(new URL('../src/core/env-proxy.mjs', import.meta.url))).href;
     const script = `import { useEnvProxy } from ${JSON.stringify(envProxy)}; useEnvProxy();
-      const res = await fetch('http://example.test/x'); console.log(res.status, await res.text());`;
+      const res = await fetch('http://example.test/x'); console.log(\`\${res.status} \${await res.text()}\`);`;
     // async execFile, never spawnSync: the local proxy runs on THIS process's event loop.
     const out = await new Promise((resolve, reject) => {
       execFile(process.execPath, ['--input-type=module', '-e', script],

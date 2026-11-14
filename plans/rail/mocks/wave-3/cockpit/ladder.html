@@ -1,0 +1,67 @@
+<!doctype html><!-- Mock (Dark cockpit proposal): the alert ladder, the icon table, the tokens. Rendered by capture.mjs. -->
+<html lang="en"><head><meta charset="utf-8"><title>Dark cockpit ladder</title>
+<link rel="stylesheet" href="../../../prototype/app.css"><link rel="stylesheet" href="../../../prototype/design-system/rail-look.css"><link rel="stylesheet" href="cockpit.css">
+<style>
+html,body{margin:0;background:var(--bg);color:var(--ink);font:400 13px/1.45 var(--sans);overflow:auto}
+#m{width:1440px;box-sizing:border-box;padding:40px 56px 48px}
+h1{font:600 22px/1.3 var(--sans);letter-spacing:-.02em;margin:0 0 4px}
+h2{font:600 15px/1.3 var(--sans);letter-spacing:-.01em;margin:32px 0 10px}
+.sub{color:var(--ink-2);font-size:12px;margin:0}
+table{border-collapse:collapse;width:100%}
+th{font:400 12px var(--sans);color:var(--ink-2);text-align:left;padding:0 16px 8px 0;border-bottom:1px solid var(--line)}
+td{padding:9px 16px 9px 0;border-bottom:1px solid var(--line);vertical-align:top}
+td.m,th.m{color:var(--ink-2);font-size:12px}
+.lv{font-weight:600;white-space:nowrap}
+.mk{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;box-sizing:border-box;border:1.2px solid currentColor;flex:none}
+.mk svg{display:block}
+.mk.fill{background:var(--red);border-color:var(--red);color:var(--on-signal)}
+.mk.nb{border:0}
+.c-r{color:var(--red)}.c-a{color:var(--amber)}.c-i{color:var(--ink)}.c-q{color:var(--ink-2)}.c-g{color:var(--green)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:0 48px}
+.look{display:flex;align-items:center;gap:10px;white-space:nowrap}
+.sw{display:inline-block;width:64px;padding:3px 8px;font:500 11px var(--mono,monospace);border-radius:3px;box-sizing:content-box}
+.cell{display:inline-flex;align-items:center;gap:8px}
+td.mono,.mono{font-family:var(--mono,monospace);font-size:12px}
+.ic{display:inline-flex;width:20px;justify-content:center;color:var(--ink)}
+.nope{color:var(--ink-2);font-size:12px}
+</style></head><body><div id="m">
+<h1>Dark cockpit: normal is off, only what needs you is lit</h1>
+<p class="sub">One ladder, ranked the same on every page. Each step down drops a channel. Every Needs you count equals its rows.</p>
+<h2>Alert levels</h2>
+<table><thead><tr><th style="width:150px">Level</th><th style="width:330px">Means</th><th>Rail states</th><th style="width:260px">Looks like</th><th class="m" style="width:220px">Channels</th></tr></thead><tbody id="ladder"></tbody></table>
+<div class="two">
+<div><h2>One icon, one meaning</h2><table><thead><tr><th style="width:36px"></th><th style="width:170px">Means only</th><th>The sweep found</th></tr></thead><tbody id="ic1"></tbody></table></div>
+<div><h2 style="visibility:hidden">.</h2><table><thead><tr><th style="width:36px"></th><th style="width:170px">Means only</th><th>The sweep found</th></tr></thead><tbody id="ic2"></tbody></table></div>
+</div>
+<h2>Counts and costs on demand</h2>
+<table><thead><tr><th style="width:280px">Fact</th><th>Where it appears</th></tr></thead><tbody>
+<tr><td>Section counts in the sidebar</td><td class="nope">Always shown, as today</td></tr>
+<tr><td>A page's totals (60 tasks, $94.77 this week)</td><td class="nope">Figures, at the end of the page's sentence; the line opens under it</td></tr>
+<tr><td>A task's cost, time, agents, files</td><td class="nope">Figures, beside Show its stages on the card</td></tr>
+<tr><td>A schedule's cost per run; context used</td><td class="nope">The card's tooltip; the context meter returns from 70%</td></tr>
+<tr><td>A cost that stops work</td><td class="nope">Never hidden: it is a Warning, with its figure in the words</td></tr>
+</tbody></table>
+<h2>Colour: states only, muted, both themes</h2>
+<table><thead><tr><th style="width:110px">Token</th><th>Light (on #FFFFFF, #F4F4F5)</th><th>Dark (on #141416, #1F1F23)</th><th class="m" style="width:360px">Used for</th></tr></thead><tbody id="tok"></tbody></table>
+<p class="sub" style="margin-top:12px" id="note"></p>
+</div>
+<script>
+const svg=(p,s=13)=>`<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+const P={play:'<path d="M8 5.5v13l10.5-6.5z"/>',fail:'<path d="M12 5.5v8.5"/><path d="M12 18.5h.01"/>',ask:'<path d="M8.8 9a3.2 3.2 0 1 1 5 2.7c-1.2.8-1.8 1.4-1.8 2.8"/><path d="M12 18.5h.01"/>',act:'<path d="M4.5 19.5l4.2-1 10-10-3.2-3.2-10 10z"/>',ok:'<path d="M5.5 12.5l4.3 4.3L18.5 8"/>',merged:'<circle cx="7" cy="5.5" r="2"/><circle cx="7" cy="18.5" r="2"/><circle cx="17" cy="12" r="2"/><path d="M7 7.5v9"/><path d="M7 8.5c.8 2.6 3.8 3.5 8 3.5"/>',wait:'<path d="M7.5 12h.01"/><path d="M12 12h.01"/><path d="M16.5 12h.01"/>',pause:'<path d="M9 6v12"/><path d="M15 6v12"/>',stop:'<rect x="7" y="7" width="10" height="10" rx="1"/>',clock:'<circle cx="12" cy="12" r="8"/><path d="M12 7.5V12l3 2"/>',glass:'<path d="M7 4h10M7 20h10M8 4c0 5 8 6 8 12v4M16 4c0 5-8 6-8 12v4"/>',coin:'<circle cx="12" cy="12" r="8"/><path d="M14.5 9.2c-.6-1-1.5-1.4-2.6-1.4-1.5 0-2.7.8-2.7 2.1 0 3 5.7 1.3 5.7 4.3 0 1.3-1.3 2.1-2.8 2.1-1.2 0-2.3-.5-2.9-1.5"/><path d="M12 6.2v11.6"/>',plug:'<path d="M9 3v5M15 3v5M7 8h10v3a5 5 0 0 1-10 0zM12 16v5"/>',brand:'<rect x="5" y="5" width="6" height="6" rx="1.5"/><rect x="13" y="13" width="6" height="6" rx="1.5"/><path d="M13 8h6M8 13v6"/>',x:'<path d="M7 7l10 10M17 7L7 17"/>',globe:'<circle cx="12" cy="12" r="8"/><path d="M4 12h16M12 4c-3 2.5-3 13.5 0 16M12 4c3 2.5 3 13.5 0 16"/>'};
+const mk=(c,p)=>`<span class="mk ${c}">${svg(p)}</span>`;
+document.getElementById('ladder').innerHTML=[
+['<span class="c-r">3 Warning</span>','It stopped and will not continue without you','Failed; checks failing with no fix left; interrupted; cost or usage cap that stops work; lost sign-in or connection',`<span class="look">${mk('fill',P.fail)}<b class="c-r">Failed</b></span>`,'Filled red mark · red word · breath in red · counted · the only primary button'],
+['<span class="c-a">2 Caution</span>','Work waits on you; nothing is broken','Question; needs approval; merge conflict; schedule missed; a stalled task (no progress)',`<span class="look">${mk('c-a',P.ask)}<b class="c-a">Question</b></span>`,'Amber ring · amber word · breath in amber · counted · outlined button'],
+['<span class="c-i">1 Advisory</span>','Worth a look when you have a moment','Ready to merge: last in Needs you, counted, with Merge. Elsewhere, in place and uncounted: plugin update, unsaved draft, near budget, a reply in a chat you left (dot on Ask), just landed (green, until seen)',`<span class="look">${mk('c-i',P.ok)}<b class="c-i">Ready to merge</b></span>`,'Full-ink ring · ink word · no breath'],
+['<span class="c-q">0 Normal</span>','Off: nothing to say','Running, loop, checking, waiting, scheduled, paused by you, stopped, finished, merged, a past failure a later run fixed',`<span class="look">${mk('c-q',P.play)}<span class="c-q">Running</span></span>`,'Ink-2 ring, glyph and state word on cards; a list drops the word only where the glyph tells the states apart. Merged: full ink, no ring'],
+].map(r=>`<tr><td class="lv">${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td><td class="m">${r[4]}</td></tr>`).join('');
+const I=[['play','A task, running','Every task showed play, differing only by colour; Per task used it for cost'],['fail','Failed','Where it fails used the stop square; failing checks used ×'],['ask','A question to you','Waiting on you used pause; orange stood for question and update'],['act','Your approval','Amber carried act along with loop, checking and draft'],['ok','Done or ready','Ready and outcome squares were green'],['merged','Merged, full ink, no ring','Purple branch icons beside the state mark; now one mark per row'],['wait','Waiting to start','Was play in a faint ring'],['pause','Paused','Also used for Waiting on you'],['stop','Stop, stopped','Also used for Where it fails'],['clock','A schedule','Also used for Time saved'],['glass','Time, duration','Time saved takes this'],['coin','Cost','Per task takes this'],['plug','A plugin, always','Marks mixed brand logos with a generic plug; Web access also used it'],['globe','Web access','Was the plug'],['brand','Came from this service, one ink','Brand logos stood in for plugins and in colour'],['x','Close or remove only','Also marked failed checks']];
+const row=([p,a,b])=>`<tr><td><span class="ic">${svg(P[p],15)}</span></td><td>${a}</td><td class="nope">${b}</td></tr>`;
+document.getElementById('ic1').innerHTML=I.slice(0,8).map(row).join('');document.getElementById('ic2').innerHTML=I.slice(8).map(row).join('');
+const lum=h=>{const v=[1,3,5].map(i=>parseInt(h.substr(i,2),16)/255).map(x=>x<=.03928?x/12.92:((x+.055)/1.055)**2.4);return .2126*v[0]+.7152*v[1]+.0722*v[2]};
+const cr=(a,b)=>{const x=lum(a),y=lum(b);return ((Math.max(x,y)+.05)/(Math.min(x,y)+.05)).toFixed(1)};
+const T=[['--amber','#94640F','#CFA265','#C96512','#EE8A2C','Caution only: ring, word, step, breath'],['--red','#A9463C','#DB8378','#D2473A','#E76A5A','Warning only: filled mark, word, breath'],['--green','#3F7349','#86B38C','#3C8C40','#5BAE5B','Advisory: just landed, until seen; then ink'],['--violet','#6F60BE','#A99FE0','#7464CC','#8C7FD6','Worca writing in a field; no longer Merged']];
+const cell=(v,old,bg,f)=>`<span class="cell"><span class="sw" style="background:${v.endsWith('F1')||v.endsWith('1A')?v:bg};color:${v.endsWith('F1')?'#18181B':v.endsWith('1A')?'#EDEDEF':v};box-shadow:inset 0 0 0 1px ${f}">${v}</span>${v.endsWith('F1')||v.endsWith('1A')?'':`<span class="mono">${cr(v,bg)} · ${cr(v,f)}</span><span class="nope">was ${old}</span>`}</span>`;
+document.getElementById('tok').innerHTML=T.map(([t,l,d,ol,od,u])=>`<tr><td class="mono">${t}</td><td>${cell(l,ol,'#FFFFFF','#F4F4F5')}</td><td>${cell(d,od,'#141416','#1F1F23')}</td><td class="m">${u}</td></tr>`).join('');
+const ink2=['#63636B','#A1A1A9'];document.getElementById('note').textContent=`Contrast is measured on page and field: every value holds 4.5:1 as text, so 3:1 as a ring. Rings and run squares use --ink-2: ${cr(ink2[0],'#FFFFFF')}:1 in light, ${cr(ink2[1],'#141416')}:1 in dark. A failed run cell is a "!". One value per colour replaces the separate mark and ink tokens.`;
+</script></body></html>

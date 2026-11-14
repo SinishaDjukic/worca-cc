@@ -1,4 +1,4 @@
-// Motion (docs/design-system.md › Worca Rail › Motion): a page that draws itself again after every change updates the
+// Motion (docs/rail/motion.md): a page that draws itself again after every change updates the
 // DOM in place with morph(), so what stays is the same element and what changed can ease in. A component says how it
 // moves with data-motion; a page never animates by hand.
 //   data-motion="in"      fades in over --motion-quick when it appears (a menu, a popover, a dialog)
@@ -29,10 +29,11 @@ function patch(a, b, out) {
   const mode = b.getAttribute('data-motion');
   const before = mode === 'change' || mode === 'swap' ? a.innerHTML : null;
   patchAttrs(a, b);
+  const text = a.tagName === 'TEXTAREA' ? b.value : null;   // read first: its text node may move across below
   patchChildren(a, b, out);
   // what the user sees, as a fresh innerHTML would set it
   if (a.tagName === 'INPUT') { if (a.value !== b.value) a.value = b.value; if (a.checked !== b.checked) a.checked = b.checked; }
-  else if (a.tagName === 'TEXTAREA') { if (a.value !== b.value) a.value = b.value; }
+  else if (a.tagName === 'TEXTAREA') { if (a.value !== text) a.value = text; }
   else if (a.tagName === 'SELECT') { if (a.selectedIndex !== b.selectedIndex) a.selectedIndex = b.selectedIndex; }
   if (before !== null && a.innerHTML !== before) out.changed.push(a);
 }
@@ -99,6 +100,43 @@ export function morph(target, html, { motion = true } = {}) {
 }
 
 /**
+ * The stage line's advance (motion.stage-advance): when a keyed StageBar reaches a later stage, the last notch fills, the
+ * notches pulse once, the line travels, the next knot pops once. Once per change, whichever way the page redraws; first
+ * sight never plays; nothing under reduced motion.
+ * @param {Document} doc
+ * @returns {MutationObserver|null}
+ */
+export function watchStageAdvance(doc) {
+  const view = doc.defaultView; if (!view?.MutationObserver) return null;
+  const seen = new Map(), ease = 'cubic-bezier(.2, 0, 0, 1)';
+  const play = (el, from, notches) => {
+    const sl = el.querySelector('.sl'), to = +el.dataset.stage, n = el.querySelectorAll('.sl-knot').length; if (!sl || !sl.animate || !n) return;
+    const ghosts = notches.map((html, i) => { const t = doc.createElement('template'); t.innerHTML = html; const g = t.content.firstChild; g.classList.remove('is-now'); g.classList.add('is-done', 'sl-ghost'); sl.appendChild(g);
+      if (i === notches.length - 1) g.animate([{ opacity: 0.25 }, { opacity: 1 }], { duration: 200, easing: ease });
+      g.animate([{ opacity: 1, transform: 'scaleY(1)' }, { opacity: 1, transform: 'scaleY(1.8)' }, { opacity: 1, transform: 'scaleY(1)' }], { duration: 250, delay: 200, easing: ease });
+      return g; });
+    const line = sl.querySelector('.sl-done');
+    line?.animate([{ width: `${(from / n) * 100}%` }, { width: line.style.width }], { duration: 350, delay: 450, easing: ease, fill: 'backwards' });
+    const end = ghosts.length ? ghosts[0].animate([{ opacity: 1 }, { opacity: 0 }], { duration: 150, delay: 650, fill: 'forwards' }) : null;
+    ghosts.slice(1).forEach((g) => g.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 150, delay: 650, fill: 'forwards' }));
+    if (end) end.onfinish = () => ghosts.forEach((g) => g.remove());
+    sl.querySelectorAll('.sl-knot')[Math.min(to, n - 1)]?.animate([{ transform: 'scale(1)' }, { transform: 'scale(1.5)' }, { transform: 'scale(1)' }], { duration: 1000, delay: 750, easing: ease });
+  };
+  const scan = () => {
+    for (const el of doc.querySelectorAll('.stage-bar[data-advance]')) {
+      const key = el.dataset.advance, stage = +el.dataset.stage, was = seen.get(key);
+      const notches = [...el.querySelectorAll('.sl-step:not(.sl-ghost)')].map((x) => x.outerHTML);
+      seen.set(key, { stage, notches });
+      if (was && stage > was.stage && !view.matchMedia?.('(prefers-reduced-motion: reduce)').matches) play(el, was.stage, was.notches);
+    }
+  };
+  const mo = new view.MutationObserver(scan);
+  mo.observe(doc.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-stage'] });
+  scan();
+  return mo;
+}
+
+/**
  * Lands on a thing a link or a search pointed at: it comes into view and lights once over --motion-flash (Motion:
  * "A link lands on a fact's home"); under reduced motion it is outlined instead, and the page jumps.
  * @param {Element} el
@@ -109,7 +147,60 @@ export function land(el) {
   const reduced = !!view?.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
   el.setAttribute('data-landed', '');
   el.scrollIntoView?.({ block: 'center', behavior: reduced ? 'auto' : 'smooth' });
+  if (!el.hasAttribute('tabindex') && !el.matches?.('a[href],button,input,select,textarea')) el.setAttribute('tabindex', '-1');
+  el.focus?.({ preventScroll: true });   // the scroll above is the only movement
   const css = view?.getComputedStyle ? view.getComputedStyle(el) : { getPropertyValue: () => '' };
   view?.setTimeout?.(() => el.removeAttribute('data-landed'), ms(css, '--motion-flash', 1200) + 100);
 }
 
+
+// Folds (motion.fold): every toggle that opens something in place moves the same way, whether its page morphs or draws
+// itself whole. Opening, the new part fades in as its space opens; closing, a copy of what was there fades as its space
+// closes; the chevron turns. Pages do nothing: a toggle is a button with aria-expanded, and what it opens is the part its
+// kind of row holds (or what its data-folds selector names).
+const FOLD_PARTS = [['.cmd-row', '.cmd-detail'], ['.cmd-group', '.cmd-rows'], ['.list-row', '.lr-after'], ['.stage-line', '.td-body'], ['.turn-row', '.tr-body'], ['.task-card', '.tc-stream']];
+const FOLD_TOGGLE = '[aria-expanded]:not([aria-haspopup]):not([data-menu]):not([data-fold-section])';
+
+/** What finds a toggle again after its page has drawn itself: its data attributes. */
+export function foldKey(toggle) {
+  const data = [...toggle.attributes].filter((a) => a.name.startsWith('data-')).map((a) => `[${a.name}="${a.value.replace(/["\\]/g, '\\$&')}"]`).join('');
+  return `${data}[aria-expanded]`;
+}
+function foldPart(root, toggle) {
+  if (toggle.dataset.folds) return { part: root.querySelector(toggle.dataset.folds), named: true };
+  for (const [scope, part] of FOLD_PARTS) { const s = toggle.closest(scope); if (s) return { scope: s, part: s.querySelector(part) }; }
+  return {};
+}
+
+/** Watches root for toggles and moves what they open and close (motion.fold). */
+export function watchFolds(root, { win = globalThis } = {}) {
+  let was = null;
+  const timing = () => ({ duration: 200, easing: 'cubic-bezier(.2,0,0,1)' });
+  const still = () => !!win.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  const move = (el, h, open, done) => {
+    const prior = el.style.overflow; el.style.overflow = 'hidden';
+    const a = el.animate([{ height: `${open ? 0 : h}px`, opacity: open ? 0 : 1 }, { height: `${open ? h : 0}px`, opacity: open ? 1 : 0 }], timing());
+    a.onfinish = () => { el.style.overflow = prior; done?.(); };
+  };
+  root.addEventListener('click', (e) => {
+    was = null;
+    const t = e.target.closest?.(FOLD_TOGGLE); if (!t || t.disabled || still()) return;
+    const sel = foldKey(t); if (sel === '[aria-expanded]') return;
+    const { part } = foldPart(root, t);
+    was = { sel, at: [...root.querySelectorAll(sel)].indexOf(t), open: t.getAttribute('aria-expanded') === 'true', part, h: part ? part.getBoundingClientRect().height : 0, copy: part ? part.cloneNode(true) : null };
+  }, true);
+  root.addEventListener('click', () => {   // after the page's own handlers have drawn it
+    const w = was; was = null; if (!w) return;
+    const t = root.querySelectorAll(w.sel)[w.at]; if (!t) return;
+    const open = t.getAttribute('aria-expanded') === 'true'; if (open === w.open) return;
+    const { scope, part, named } = foldPart(root, t);
+    if (open && part && part !== w.part && part.animate && !part.hasAttribute('data-motion')) move(part, part.getBoundingClientRect().height, true);
+    if (!open && w.copy && !part && w.h && w.copy.animate) {
+      const g = w.copy; g.setAttribute('aria-hidden', 'true'); g.setAttribute('inert', ''); g.style.pointerEvents = 'none';
+      if (named) t.parentElement.before(g); else scope?.append(g);
+      if (g.isConnected) move(g, w.h, false, () => g.remove());
+    }
+    const icon = t.matches('.lr-mark-fold, .stage-part-b') ? null : t.querySelector('svg');
+    icon?.animate?.([{ transform: `rotate(${open ? -90 : 90}deg)` }, { transform: 'none' }], timing());
+  });
+}

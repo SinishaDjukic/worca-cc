@@ -30,6 +30,7 @@ export const PAGE_TITLES = Object.freeze({
   'team-policy': 'Team policy',
   'workspace-create': 'New workspace',
   settings: 'Settings',
+  profile: 'Profile',
   feature: 'Runs',
   group: 'Runs',
 });

@@ -32,5 +32,7 @@
   { "file": "ui/server.mjs", "from": 10538, "to": 10540, "commit": "cb05722e4",
     "why": "Design P8 Task 7: frames for a missing design go to no viewer; measured with grep -c" },
   { "file": "ui/server.mjs", "from": 10540, "to": 10541, "commit": "157c8d210",
-    "why": "Design sound P3 Task C1: the sound cards' wiring; measured with grep -c" }
+    "why": "Design sound P3 Task C1: the sound cards' wiring; measured with grep -c" },
+  { "file": "ui/server.mjs", "from": 10541, "to": 10544, "commit": "d6f6475b8",
+    "why": "dev's own growth: Stillhet feature 1 (#1205 to #1243, merged from d6f6475b8) added a net 3 lines to the residual ui/server.mjs (10456 to 10459 on dev); measured with wc -l on this merge" }
 ]

@@ -204,9 +204,22 @@ export function createClaudeNormalizer({ rootParentId = null } = {}) {
       case 'user': return user(raw, parentId, e);
       case 'stream_event': return streamEvent(raw, parentId);
       case 'result': return result(raw, e);
+      case 'rate_limit_event': return parentId === null ? [limitOf(raw.rate_limit_info)] : otherText();
       default: return otherText();
     }
   };
+}
+
+/** The CLI's plan-limit reading (the usage rings' source, D7): rate_limit_info carries either `unifiedWindows`
+ *  ({five_hour: {utilization, resetsAt}, seven_day: …}) or one window (`rateLimitType`, `utilization`, `resetsAt`).
+ *  resetsAt is in seconds; the event's is in ms. A window without a numeric utilization keeps it null. */
+function limitOf(info) {
+  const i = info && typeof info === 'object' ? info : {};
+  const win = (window, w) => ({ window, utilization: Number.isFinite(w?.utilization) ? w.utilization : null,
+    resetsAt: Number.isFinite(w?.resetsAt) ? w.resetsAt * 1000 : null });
+  const unified = i.unifiedWindows && typeof i.unifiedWindows === 'object' ? Object.entries(i.unifiedWindows) : null;
+  const windows = unified ? unified.map(([k, w]) => win(k, w)) : typeof i.rateLimitType === 'string' ? [win(i.rateLimitType, i)] : [];
+  return { type: 'limit', status: typeof i.status === 'string' ? i.status : null, windows };
 }
 
 /** Wrap a consumer so it only ever sees normalized events (one normalizer per wrapper = per stream). */

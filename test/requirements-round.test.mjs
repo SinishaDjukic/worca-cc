@@ -274,7 +274,7 @@ test('with a brief the round prompt has one <product_brief> block between <proje
   assert.match(p, /<product_brief>\nMade from main @ abc1234 on 2026-10-01\./, 'the provenance is the first line inside the block');
 });
 
-test('the closer look: the brief block after <project_context>, the brief line right before the reply line', () => {
+test('the code look: the brief block after <project_context>, the brief line right before the reply line', () => {
   assert.equal(buildOrientationPrompt({ feature: A2_FEATURE(), context: 'Terms: order' }), A2_ORIENTATION_TEXT);
   assert.equal(buildOrientationPrompt({ feature: A2_FEATURE(), context: 'Terms: order', brief: null }), A2_ORIENTATION_TEXT);
   const o = buildOrientationPrompt({ feature: A2_FEATURE(), context: 'Terms: order', brief: BRIEF_TEXT });
@@ -296,7 +296,7 @@ test('the system prompts name <product_brief> as data; the round rule names the 
   assert.equal(look.at(-1), 'Reply with ONLY this JSON object, no prose, no code fence: { "summary": "...", "files": ["each path you read"], "area": "only when asked: the product area" }');
 });
 
-test('normalizeOrientation keeps the area the closer look named (80 characters)', () => {
+test('normalizeOrientation keeps the area the code look named (80 characters)', () => {
   assert.equal(normalizeOrientation({ summary: 'S', files: [], area: ' Orders ' }).area, 'Orders');
   assert.equal(normalizeOrientation({ summary: 'S', area: 'x'.repeat(200) }).area.length, 80);
   assert.equal(normalizeOrientation({ summary: 'S', area: ['not text'] }).area, '');
@@ -463,7 +463,7 @@ test('with a brief: rounds 2 and 3 share a stable part that holds <product_brief
   assert.equal(buildRoundPrompt({ feature: PIN_FEATURE(), context: 'Terms: order', turns: PIN_TURNS(), round: 2, brief: null }), A2_ROUND_PROMPT);
 });
 
-test('the closer look with the directory: one working-directory line, in design §9 order', () => {
+test('the code look with the directory: one working-directory line, in design §9 order', () => {
   const dir = join(tmpdir(), 'look-abc123');
   const order = (p, wd) => ['<feature>', '<description>', '<project_context>', '<product_brief>', wd, BRIEF_LINE, 'Reply with ONLY the JSON object described in the system prompt.']
     .map((m) => p.indexOf(m));
