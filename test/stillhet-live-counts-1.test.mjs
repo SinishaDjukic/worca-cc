@@ -3,7 +3,7 @@
 // nothing and says so; the mode is dev's uiLevel. The host is test/helpers/stillhet-live-counts-host.mjs.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { BELL, DEMO_NAMES, MISSED, NOW, SOURCES, TASK_NEEDS, bellN, clone, countNeedsYou, liveHost, settle, store, closeHosts } from './helpers/stillhet-live-counts-host.mjs';
+import { BELL, DEMO_NAMES, MISSED, NOW, SOURCES, TASK_NEEDS, bellN, clone, countNeedsYou, liveHost, settle, store, closeHosts, WS_QUESTIONS, mapRead, withWorkspaces } from './helpers/stillhet-live-counts-host.mjs';
 
 afterEach(closeHosts);   // each test's window closes when the test ends
 test('before the first snapshot: no rows, the loading look in the bar and Pulse, no number on the bell', async () => {
@@ -131,4 +131,16 @@ test('Projects: titled by dev\'s name, no seeded workspaces; Schedules: the next
   w.Date.now = () => NOW + 86400000;
   assert.ok(day(NOW + 86400000), 'past midnight, today moves on without a reload');
   w.Date.now = () => NOW;
+});
+
+test('the bell counts each unsure workspace link once (GET /api/workspaces/:id/map); exact and verified links ask nothing; a failed map read keeps the bell drawn (D10)', async () => {
+  const { w, d, gets, hello } = await liveHost({ sources: withWorkspaces(), read: mapRead(), level: 'advanced' });
+  await hello(); await settle(60);
+  assert.ok(gets.includes('/api/workspaces/w1/map') && gets.includes('/api/workspaces/w2/map'), 'each workspace\'s map, read after the list');
+  const qs = w.RailProjects.needItems().filter((x) => x.kind === 'workspace');
+  assert.deepEqual(Array.from(qs, (x) => x.key), ['q:w1:web-1:api-2', 'q:w1:api-2:web-1'], 'heuristic and inferred auto links; never exact or verified, never the failed map');
+  assert.ok(qs.every((x) => x.go === 'projects/ws:w1' && x.title === 'Shop'));
+  assert.equal(WS_QUESTIONS, qs.length);
+  assert.equal(bellN(d), BELL + WS_QUESTIONS, 'one per unsure link, counted once');
+  assert.deepEqual(Array.from(w.RailSpaces.list(), (x) => [x.id, x.title]), [['w1', 'Shop'], ['w2', 'Broken map']], 'the live workspaces, never the demo\'s');
 });

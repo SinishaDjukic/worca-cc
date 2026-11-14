@@ -93,12 +93,12 @@ const savedItem = (row) => ({ kind: 'hist', id: row.id, status: row.status, prNe
 /** A live run: a `hello.runs` entry or a `run-created` frame, patched by its frames (live-adapter.mjs). */
 export function taskOfLive(run = {}, { now = 0, projects = [], needs, checks = null } = {}) {
   const item = liveItem(run), it = needs === undefined ? item : { ...item, needs }, c = caseOf(it, { checks });
-  return pick('task', { id: str(run.runId), case: c, ...(overOf(it, c) ? { over: true } : {}), title: str(run.title) || 'Untitled task', project: str(run.projectName) || projectName(run.projectDir, projects), detail: detailOf(run, item.ask), time: timeOf(run.startedAt, now), day: dayOf(run.startedAt, now), labels: labelsOf(run), cost: num(run.totalCostUsd), archived: false, unread: !!run.unread, pr: '', group: '', kind: kindOf(run), by: byOf(run), workflow: '' });
+  return pick('task', { id: str(run.runId), case: c, ...(overOf(it, c) ? { over: true } : {}), ...(lc(run.status) === 'interrupted' ? { interrupted: true } : {}), title: str(run.title) || 'Untitled task', project: str(run.projectName) || projectName(run.projectDir, projects), detail: detailOf(run, item.ask), time: timeOf(run.startedAt, now), day: dayOf(run.startedAt, now), labels: labelsOf(run), cost: num(run.totalCostUsd), archived: false, unread: !!run.unread, pr: '', group: '', kind: kindOf(run), by: byOf(run), workflow: '' });
 }
 /** A saved run: a `GET /api/history` row. */
 export function taskOfSaved(row = {}, { now = 0, needs, checks = null } = {}) {
   const item = savedItem(row), at = Number.isFinite(ms(row.mtime)) ? row.mtime : row.startedAt, it = needs === undefined ? item : { ...item, needs }, c = caseOf(it, { checks });
-  return pick('task', { id: str(row.id), case: c, ...(overOf(it, c) ? { over: true } : {}), title: str(row.title) || 'Untitled task', project: str(row.projectName), detail: lc(row.status) === 'paused' ? str(row.pauseDetail) || str(row.pauseReason) || DETAIL.paused : DETAIL[lc(row.status)] || '', time: timeOf(at, now), day: dayOf(at, now), labels: labelsOf(row), cost: num(row.totalCostUsd), archived: !!row.archived, unread: false, pr: prUrlOf(row.pr), group: '', kind: kindOf(row), by: byOf(row), workflow: '' });
+  return pick('task', { id: str(row.id), case: c, ...(overOf(it, c) ? { over: true } : {}), ...(lc(row.status) === 'interrupted' ? { interrupted: true } : {}), title: str(row.title) || 'Untitled task', project: str(row.projectName), detail: lc(row.status) === 'paused' ? str(row.pauseDetail) || str(row.pauseReason) || DETAIL.paused : DETAIL[lc(row.status)] || '', time: timeOf(at, now), day: dayOf(at, now), labels: labelsOf(row), cost: num(row.totalCostUsd), archived: !!row.archived, unread: false, pr: prUrlOf(row.pr), group: '', kind: kindOf(row), by: byOf(row), workflow: '' });
 }
 
 // ---- chats ----
@@ -182,15 +182,29 @@ export function projectOf(project = {}, sync = null) {
 // ---- costs ----
 const HARNESS = ['claude', 'codex', 'gemini', 'copilot', 'openrouter'];
 /** Spend and budget from `GET /api/budget`; usage only as dev reports it: a limit pause draws its harness's ring full (D15). */
-export function costsOf(budget = null, runs = [], { now = 0 } = {}) {
+// The usage rings (D8): GET /api/usage-limits' readings, the harness CLI's own plan limits (a session and a week window);
+// a window with no numeric percent, or whose reset has passed, draws nothing. A limit pause still fills its session ring.
+const RING = ['session', 'week'];
+export function costsOf(budget = null, runs = [], { now = 0, limits = null } = {}) {
   const b = budget && typeof budget === 'object' ? budget : null;
   const resets = b && Number.isFinite(b.windowEndMs) && b.windowEndMs > 0 ? dateWord(b.windowEndMs) : '';
   const usage = [];
+  for (const h of Array.isArray(limits?.harnesses) ? limits.harnesses : []) {
+    const p = lc(h?.engine);
+    if (!HARNESS.includes(p) || usage.some((u) => u.p === p)) continue;
+    const win = (Array.isArray(h.windows) ? h.windows : []).filter((w) => RING.includes(w?.kind) && Number.isFinite(w.pct) && !(Number.isFinite(w.resetsAt) && w.resetsAt <= now))
+      .map((w) => ({ k: w.kind, pct: Math.min(100, Math.max(0, Math.round(w.pct))), resets: Number.isFinite(w.resetsAt) ? nextWord(w.resetsAt, now) : '' }));
+    if (win.length) usage.push({ p, plan: '', asOf: clock(Number.isFinite(h.observedAt) ? h.observedAt : now), win });
+  }
   for (const r of runs) {
     const p = lc(r?.limitEngine);
-    if (lc(r?.status) !== 'paused' || !HARNESS.includes(p) || usage.some((u) => u.p === p)) continue;
-    usage.push({ p, plan: '', asOf: clock(now), win: [{ k: 'session', pct: 100, resets: Number.isFinite(ms(r.limitResetAt)) ? nextWord(r.limitResetAt, now) : '' }] });
+    if (lc(r?.status) !== 'paused' || !HARNESS.includes(p)) continue;
+    const session = { k: 'session', pct: 100, resets: Number.isFinite(ms(r.limitResetAt)) ? nextWord(r.limitResetAt, now) : '' };
+    const had = usage.find((u) => u.p === p);
+    if (had) { if (!had.paused) { had.win = [session, ...had.win.filter((w) => w.k !== 'session')]; had.paused = true; } continue; }
+    usage.push({ p, plan: '', asOf: clock(now), win: [session], paused: true });
   }
+  for (const u of usage) delete u.paused;
   return { budget: b ? { period: PERIOD[b.resetPeriod] || 'all time', spent: num(b.windowSpendUsd) ?? 0, limit: num(b.totalLimitUsd), saved: num(b.windowSavedUsd), resets } : null, usage };
 }
 
@@ -270,7 +284,8 @@ export function foldRounds(runs, liveRuns = [], saved = [], needs = new Set()) {
     list.sort((a, b) => b.n - a.n);
     // a round that is live or needs you keeps its origin's row lit: the row reads the newest such round's case
     const lit = list.find((x) => needs.has(x.task.id) || LIVE_CASES.has(x.task.case));
-    if (lit) { t.case = lit.task.case; if (lit.task.over) t.over = true; else delete t.over; }
+    // ...and opens that round, so the row's case and the page it opens are the same task's
+    if (lit) { t.case = lit.task.case; t.opens = lit.task.id; if (lit.task.over) t.over = true; else delete t.over; } else delete t.opens;
     for (const x of list) delete x.task;
     t.rounds = { line: `Round ${list[0].n} · ${list[0].words}`, list };
   }
@@ -311,11 +326,12 @@ export function snapshotOf(src = {}, { now = 0, unread = [], checksOf = null } =
     chatGroups: arr(src.groups?.groups).map((g) => ({ id: str(g.id), name: str(g.name), total: num(g.count) ?? 0 })),
     schedules: items.filter((x) => x.kind === 'recurring' ? x.status !== 'ended' : ['missed', 'scheduled', 'firing'].includes(x.status)).map((x) => scheduleOf(x, { now, projects: projectsRaw })),
     projects: projectsRaw.map((p) => projectOf(p, syncs[p.key] || null)),
-    costs: costsOf(src.budget, liveRuns, { now }),
+    costs: costsOf(src.budget, liveRuns, { now, limits: src.usageLimits }),
     updates: [...notes, ...outcomes],
     actions: arr(src.actions).filter((a) => ['starting', 'running', 'ready'].includes(a?.status)).map((a) => ({ id: str(a.instanceId), runId: str(a.runId), run: str(a.runTitle) || 'A removed run', label: str(a.label), go: a.runId ? 'run' : '' })),
     away: awayOf(away),
     keep: src.settings?.keepAwake !== false,   // dev's rule: on unless turned off
+    spaces: spacesOf(src.workspaces),
   };
 }
 
@@ -344,10 +360,27 @@ export function runGroupsOf(src, runs, { now = 0, rowIdOf = new Map() } = {}) {
   return { groups, inGroup };
 }
 
+/** dev's workspaces (GET /api/workspaces; `maps`: each one's GET /api/workspaces/:id/map, absent when its read failed) →
+ *  the prototype's spaces (D10): its members by project key, and its map's effective edges as links. A link's `sure` is
+ *  the scan's confidence; an `auto` heuristic or inferred link is a question (workspaces.js `unsure`). */
+// dev's live edges (src/shared/workspace-map/overrides.mjs LIVE_STATES: auto, confirmed, manual) plus a rejected one, which the
+// page keeps only to offer its Undo; stale and missing edges never draw, order or ask (dev's eval.mjs drops them too)
+const LINK_STATES = new Set(['auto', 'confirmed', 'manual', 'rejected']);
+export function spacesOf(src = null) {
+  const maps = src?.maps && typeof src.maps === 'object' ? src.maps : {};
+  return arr(src?.workspaces).filter((w) => w && str(w.id)).map((w) => {
+    const exists = arr(w.exists), scannedAt = ms(w.mapSummary?.scannedAt);
+    const links = arr(maps[w.id]?.edges).filter((e) => e && str(e.id) && str(e.from) && str(e.to) && LINK_STATES.has(str(e.state) || 'auto'))
+      .map((e) => ({ id: str(e.id), from: str(e.from), to: str(e.to), kind: str(e.kind), how: 'connects to', sure: str(e.confidence), state: str(e.state) || 'auto' }));
+    return pick('space', { id: str(w.id), title: str(w.name) || 'A workspace', home: '', runs: null, scanned: Number.isFinite(scannedAt) ? dateWord(scannedAt) : 'never', model: '', about: str(w.description),
+      projects: arr(w.projectKeys).map((k, i) => [str(k), exists[i] === false ? 'missing' : 'ok']), links });
+  });
+}
+
 // What each source feeds: a refetch of one source replaces only these parts (D11).
 export const SOURCE_PARTS = Object.freeze({
   hello: ['runs', 'costs', 'chats', 'groups'], history: ['runs', 'updates', 'chats', 'groups'], threads: ['chats', 'chatsNeeds'], runLinks: ['chats'], groups: ['chatGroups'], runGroups: ['groups', 'runs'], schedules: ['schedules', 'runs'],
-  projects: ['projects', 'runs'], sync: ['projects'], budget: ['costs'], actions: ['actions'], notifications: ['updates'], away: ['away'], settings: ['keep'],
+  projects: ['projects', 'runs'], sync: ['projects'], budget: ['costs'], usageLimits: ['costs'], workspaces: ['spaces'], actions: ['actions'], notifications: ['updates'], away: ['away'], settings: ['keep'],
 });
 /** The parts a single-source refetch replaces: `answer` stands for `source` among the last answers `sources`. */
 export function partOf(source, answer, sources = {}, { now = 0, unread = [], checksOf = null } = {}) {

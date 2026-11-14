@@ -2,7 +2,7 @@
 // boot.js's order, data-adapter="live"); the host and its helpers are test/helpers/stillhet-chat-live-host.mjs.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { DISABLED_OK, RUN_STATE, SOURCES, THREAD, clone, go, liveHost, menuPick, posts, settle, stoppedRun, store, toastText, walk, withRun, closeHosts } from './helpers/stillhet-chat-live-host.mjs';
+import { DISABLED_OK, RUN_STATE, SOURCES, THREAD, clone, go, liveHost, menuPick, posts, settle, stoppedRun, savedRun, store, toastText, walk, withRun, closeHosts } from './helpers/stillhet-chat-live-host.mjs';
 
 afterEach(closeHosts);   // each test's window closes when the test ends
 test('chatOfTask: the starting chat for a started run, none for a run a chat only follows (R-qa-9)', async () => {
@@ -143,6 +143,15 @@ test('a live TaskCard draws only its run\'s facts (no demo PR, branch, base or c
   assert.equal(steps.length, 4, 'Plan, Build, Review, Ready');
   assert.equal(steps.findIndex((e) => e.classList.contains('is-now')), 1, 'on Build: step 2 of 4');
   assert.doesNotMatch(card.textContent, /agents?\b/i, 'never an agents ratio');
+  // a card whose PR's base is unknown never draws the placeholder: its Merge confirm says "its base"
+  const { TASK_DETAILS, PR_URL } = await import('./helpers/stillhet-live-fixture.mjs');
+  const checks = { ...TASK_DETAILS.approved.checks, base: '' };
+  const r = await liveHost({ sources: savedRun({ status: 'done', pr: { url: PR_URL, state: 'OPEN' } }), read: (u) => (u.startsWith('/api/pr/checks?id=pa') ? [200, checks] : null) });
+  await go(r.w, '#chat/ask_1', 400);
+  const approved = r.d.querySelector('#route-chat [data-anchor="card_run"]');
+  assert.ok(approved, 'the approved TaskCard');
+  const now = approved;
+  assert.ok(!now.innerHTML.includes('{'), 'no {base} or {pr} placeholder in a live card');
 });
 
 test('a live card\'s ⋯ offers only what dev can do; Archive asks, then posts dev\'s archive', async () => {

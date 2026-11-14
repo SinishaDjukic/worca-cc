@@ -345,7 +345,7 @@ function formDialogHtml() {
   const def = F.def;
   const body = (def.text ? `<p class="pd-hint">${esc(R.fill(def.text, F.ctx || {}))}</p>` : '') + (def.options ? R.optionList({ label: def.title, options: def.options, selected: F.pick, recommended: -1, optAttrs: (i) => ({ 'data-fopt': i, 'data-key': 'fopt:' + i }) })
     : R.field({ id: 'fd-value', label: def.field.label, value: F.value, hint: F.hint ?? (def.field.hint || ''), error: F.fieldErr || '', multiline: !!def.field.multiline, attrs: { 'data-key': 'fd-value' } }))
-    + (F.err ? `<div class="pd-alert" role="alert"><b>${esc(F.err.title)}</b><span>${esc(F.err.detail)}</span></div>` : '');
+    + (F.err ? `<p class="rc-confirm-t is-err" role="alert">${esc(F.err.title)}<span class="rc-confirm-why">${esc(F.err.detail)}</span></p>` : '');   // a refusal is one line, as the ConfirmStrip's row
   return R.dialog({ title: def.title, id: 'fd-h', close: svg('x', 14), body, yes: def.yes, busy: !!ui.busy, busyLabel: 'Working…', hooks: { close: { 'data-fd': 'cancel', 'data-key': 'fd-close' }, cancel: { 'data-fd': 'cancel', 'data-key': 'fd-cancel' }, yes: { 'data-fd': 'ok', 'data-key': 'fd-ok' } } });
 }
 function decisionsPanel(v) {
@@ -747,9 +747,10 @@ function failed(err) {
   if (!ui.confirm && !(ui.form && ui.dialog === ui.form.id) && ui.dialog !== 'pr') { pendingFocus = 'act-main'; return; }   // live, unasked: the toast already said it
   if (ui.form && ui.dialog === ui.form.id) { ui.form.err = err; pendingFocus = 'fd-ok'; return; }
   if (ui.dialog === 'pr') {
-    // a stack fails part-way: the PRs already opened stay opened, and a retry opens only the rest
+    // a stack fails part-way (the demo kind only: live keeps dev's plain refusal, it has no partial-success answer and
+    // never marks a PR as made before the server says so): the PRs already opened stay opened, a retry opens the rest
     const left = (ui.pr.prs || []).filter((x) => !x.made);
-    if (ui.pr.prs && left.length > 1) { left[0].made = '#' + (959 + ui.pr.prs.indexOf(left[0])); left[0].open = false; ui.dialogLabel = 'Create ' + (left.length - 1) + ' PRs';
+    if (!LIVE_PAGE() && ui.pr.prs && left.length > 1) { left[0].made = '#' + (959 + ui.pr.prs.indexOf(left[0])); left[0].open = false; ui.dialogLabel = 'Create ' + (left.length - 1) + ' PRs';
       err.title = R.failureOf('Create ' + (left.length - 1) + ' of ' + ui.pr.prs.length + ' PRs').title; err.detail = 'Opened ' + left[0].made + '; the next one failed: ' + why + '. A retry opens only the rest.'; }
     ui.pr.err = err; pendingFocus = 'pd-ok';
   } else { ui.confirm.err = err; ui.confirm.ok = false; pendingFocus = 'confirm:yes'; }
@@ -1073,11 +1074,11 @@ document.addEventListener('click', (e) => {
     const F = ui.form;
     if (d.fd === 'cancel') { ui.form = null; ui.dialog = ''; ui.busy = null; pendingFocus = 'act-main'; render(); return; }
     const val = F.def.options ? F.def.options[F.pick] : String(F.value).trim();
-    if (F.def.field && F.def.field.required && !val) { F.fieldErr = F.def.field.label + ' is needed'; pendingFocus = 'fd-value'; render(); return; }
-    if (F.def.field?.time && !/^([01]?\d|2[0-3]):[0-5]\d$/.test(val)) { F.fieldErr = 'Write a time of day, like 15:30'; pendingFocus = 'fd-value'; render(); return; }
-    if (F.id === 'cap' && LIVE_PAGE() && !(/^\d+(\.\d+)?$/.test(val.replace(/[$,\s]/g, '')) && parseFloat(val.replace(/[$,\s]/g, '')) > 0)) { F.fieldErr = 'Write the new cap in dollars, like $180'; pendingFocus = 'fd-value'; render(); return; }
+    if (F.def.field && F.def.field.required && !val) { F.err = null; F.fieldErr = F.def.field.label + ' is needed'; pendingFocus = 'fd-value'; render(); return; }
+    if (F.def.field?.time && !/^([01]?\d|2[0-3]):[0-5]\d$/.test(val)) { F.err = null; F.fieldErr = 'Write a time of day, like 15:30'; pendingFocus = 'fd-value'; render(); return; }
+    if (F.id === 'cap' && LIVE_PAGE() && !(/^\d+(\.\d+)?$/.test(val.replace(/[$,\s]/g, '')) && parseFloat(val.replace(/[$,\s]/g, '')) > 0)) { F.err = null; F.fieldErr = 'Write the new cap in dollars, like $180'; pendingFocus = 'fd-value'; render(); return; }
     // live: a dialog's step always waits for its route (a `say`-only step would otherwise end without calling it)
-    F.fieldErr = ''; const f = ui.dialogF; follow(Object.assign({}, f, { dialog: '', fromDialog: true, value: val, say: String(f.say || '').replace('{value}', val) }, LIVE_PAGE() && !f.run ? { run: () => {} } : {}), ui.dialogLabel); render(); return;
+    F.fieldErr = ''; F.err = null; const f = ui.dialogF; follow(Object.assign({}, f, { dialog: '', fromDialog: true, value: val, say: String(f.say || '').replace('{value}', val) }, LIVE_PAGE() && !f.run ? { run: () => {} } : {}), ui.dialogLabel); render(); return;
   }
   if (d.fopt !== undefined) { ui.form.pick = +d.fopt; pendingFocus = 'fopt:' + d.fopt; render(); return; }
   if (d.crumbto !== undefined && LIVE_PAGE()) { window.RailRunsList?.filter?.({ project: d.crumbto }); SHELL.go('runs'); return; }

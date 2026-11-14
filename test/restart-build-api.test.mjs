@@ -1,6 +1,7 @@
 // test/restart-build-api.test.mjs — POST /api/runs/:id/restart-build (Stillhet's Restart Build on a stopped or errored
 // task): one wf_pr_fix run on the kept branch with the saved plan as its brief, folded under its origin as a
-// `by: 'restart'` round, keeping the origin's raised cap. Each refusal starts nothing.
+// `by: 'restart'` round, keeping the origin's raised cap. Each refusal starts nothing. An unapproved plan refuses
+// PLAN_NOT_APPROVED (an approval newer than the newest plan, or a branch that already built past the plan gate).
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -28,6 +29,7 @@ before(async () => {
   _resetForTests();
   repo = gitDir('restart');
   execSync('git branch -M main && git branch worca-cc/pager', { cwd: repo });
+  execSync('git checkout -q -b worca-cc/ahead && git -c user.name=test -c user.email=test@example.invalid commit -q --allow-empty -m built && git checkout -q main', { cwd: repo });
   await addProject({ name: 'restart-repo', path: repo });
   ({ app, runs } = await import('../ui/server.mjs'));
   srv = http.createServer(app);
@@ -47,7 +49,11 @@ after(async () => {
 });
 
 const post = (path, body = {}) => fetch(`${base}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-async function seedTask({ status = 'stopped', plan = true, feature = 'worca-cc/pager' } = {}) {
+// decisions: audit lines, each [text, msFromNow] (a plan's approval is 1 s after the plan by default).
+const APPROVED = [['Plan approval **approve** by ann.', 1000]];
+const event = (id, text, at) => getDb().prepare('INSERT INTO pipeline_events (pipeline_id, ts, text) VALUES (?, ?, ?)')
+  .run(id, new Date(Date.now() + at).toISOString(), text);
+async function seedTask({ status = 'stopped', plan = true, feature = 'worca-cc/pager', decisions = APPROVED } = {}) {
   const s = await seedPipeline(repo, { title: 'Audit pager', status, branch: { source: 'main', feature, branchKept: true },
     resumePoint: { version: 2, kind: 'boundary', mock: true } });
   if (plan) {
@@ -56,6 +62,7 @@ async function seedTask({ status = 'stopped', plan = true, feature = 'worca-cc/p
     writeFileSync(join(projectStorePath(s.key), rel), PLAN);
     recordArtifact(s.id, 'plan', rel);
   }
+  for (const [text, at] of decisions) event(s.id, text, at);
   return s;
 }
 const started = () => runs.size;
@@ -81,6 +88,10 @@ test('a stopped and an errored task each start one wf_pr_fix round on the kept b
     assert.equal(getDb().prepare('SELECT cost_cap_usd FROM pipelines WHERE id = ?').get(entry.pipelineId).cost_cap_usd, 9, 'the cap is on the new row');
     const branchRow = () => getDb().prepare('SELECT branch FROM pipelines WHERE id = ?').get(entry.pipelineId)?.branch;
     for (let i = 0; i < 400 && !branchRow(); i++) await new Promise((res) => setTimeout(res, 25));
+    // the inherited cap is no decision of this round: its audit line says it was kept (code review r1)
+    const capLines = () => getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ?').all(entry.pipelineId).map((e) => e.text).filter((t) => /^Pipeline cost limit/.test(t));
+    for (let i = 0; i < 200 && !capLines().length; i++) await new Promise((res) => setTimeout(res, 25));
+    assert.deepEqual(capLines(), ['Pipeline cost limit $9.00 kept from the first round.']);
     try { entry.orch.stop('test'); } catch { /* already settled */ }
     for (let i = 0; i < 200 && !runs.get(out.runId)?.settled; i++) await new Promise((res) => setTimeout(res, 50));
     // The round folds under its origin and reads as a restart.
@@ -165,4 +176,51 @@ test('a run still finishing on the branch (done, pushing or opening its PR) refu
     assert.deepEqual([r.status, (await r.json()).code], [409, 'BUSY']);
     assert.equal(started(), n, 'no run started');
   } finally { runs.delete(fake); }
+});
+
+test('planApproved: the newest plan or concern decision after the newest plan wins; none, then a branch past the gate', async () => {
+  const { planApproved } = await import('../ui/routes/runs/control.mjs');   // after before(): it loads the server
+  const at = (s) => `2026-11-13T10:00:0${s}.000Z`;
+  const d = (s, kind, decision) => ({ ts: at(s), kind, decision });
+  assert.deepEqual(planApproved({ decisions: [d(2, 'plan', 'approve')], planAt: at(1), aheadCount: 0 }), { ok: true, via: 'approval' });
+  assert.deepEqual(planApproved({ decisions: [d(2, 'concern', 'overridden')], planAt: at(1), aheadCount: 0 }), { ok: true, via: 'approval' });
+  assert.deepEqual(planApproved({ decisions: [d(2, 'plan', 'approve'), d(3, 'plan', 'reject')], planAt: at(1), aheadCount: 5 }), { ok: false });
+  assert.deepEqual(planApproved({ decisions: [d(2, 'concern', 'accepted')], planAt: at(1), aheadCount: 0 }), { ok: false });
+  assert.deepEqual(planApproved({ decisions: [d(1, 'plan', 'approve')], planAt: at(2), aheadCount: 0 }), { ok: false }, 'older than the plan');
+  assert.deepEqual(planApproved({ decisions: [d(3, 'gate', 'approve')], planAt: at(2), aheadCount: 0 }), { ok: false }, 'a gate is not a plan approval');
+  assert.deepEqual(planApproved({ decisions: [], planAt: at(1), aheadCount: 1 }), { ok: true, via: 'built' });
+  assert.deepEqual(planApproved({ decisions: [], planAt: at(1), aheadCount: null }), { ok: false }, 'an unread branch counts as 0 ahead');
+  assert.deepEqual(planApproved({ decisions: [d(3, 'plan', 'approve')], planAt: null, aheadCount: 0 }), { ok: true, via: 'approval' }, 'a legacy plan row with no time');
+});
+
+test('PLAN_NOT_APPROVED: no approval and 0 ahead, a later reject, an approval older than a -v2 plan; none starts and none keeps the lock', async () => {
+  const n = started();
+  const refused = async (task, why) => {
+    const r = await post(`/api/runs/${task.id}/restart-build`);
+    const out = await r.json();
+    assert.deepEqual([r.status, out.code], [409, 'PLAN_NOT_APPROVED'], `${why}: ${JSON.stringify(out)}`);
+    return out;
+  };
+  const none = await seedTask({ decisions: [] });
+  const out = await refused(none, 'no approval, 0 ahead');
+  assert.equal(out.error, 'This task\'s plan was never approved, so Build cannot restart from it; approve the plan first.');
+  await refused(none, 'a second press is refused the same way, not RESTART_BUSY: the lock was released');
+  await refused(await seedTask({ decisions: [['Plan approval **approve** by ann.', 1000], ['Plan approval **reject** by bo.', 2000]] }), 'a later reject');
+  await refused(await seedTask({ feature: 'worca-cc/ahead', decisions: [['Plan approval **reject** by bo.', 1000]] }), 'a reject with 1 ahead');
+  const v2 = await seedTask({ decisions: [['Plan approval **approve** by ann.', -60000]] });
+  await refused(v2, 'an approval older than the plan');
+  const gone = await seedTask({ feature: 'worca-cc/gone', decisions: [] });
+  const g = await post(`/api/runs/${gone.id}/restart-build`);
+  assert.equal((await g.json()).code, 'NO_BRANCH', 'a gone branch answers NO_BRANCH first');
+  assert.equal(started(), n, 'no run started');
+});
+
+test('a branch already past the plan gate (1 commit ahead, no decision line) restarts', async () => {
+  const s = await seedTask({ feature: 'worca-cc/ahead', decisions: [] });
+  const r = await post(`/api/runs/${s.id}/restart-build`);
+  const out = await r.json();
+  assert.equal(r.status, 200, JSON.stringify(out));
+  const entry = runs.get(out.runId);
+  try { entry.orch.stop('test'); } catch { /* already settled */ }
+  for (let i = 0; i < 200 && !runs.get(out.runId)?.settled; i++) await new Promise((res) => setTimeout(res, 50));
 });

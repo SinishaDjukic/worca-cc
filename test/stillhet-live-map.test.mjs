@@ -4,7 +4,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { shapeErrors, SHAPES } from '../ui/public/stillhet/live/model-shape.mjs';
-import { caseOf, overOf, taskOfLive, taskOfSaved, chatOf, unreadOf, scheduleOf, projectOf, costsOf, updateOf, updateOfOutcome, snapshotOf, partOf, dayOf, runGroupsOf } from '../ui/public/stillhet/live/live-map.mjs';
+import { caseOf, overOf, taskOfLive, taskOfSaved, chatOf, unreadOf, scheduleOf, projectOf, costsOf, updateOf, updateOfOutcome, snapshotOf, partOf, dayOf, runGroupsOf, spacesOf } from '../ui/public/stillhet/live/live-map.mjs';
 import { dayBucket } from '../ui/public/runs-list.mjs';
 import { needsYouItems } from '../src/shared/needs-you.mjs';
 import { RUN_STATES } from '../src/shared/run-model.mjs';
@@ -287,6 +287,7 @@ test('an origin whose round is live or needs you takes that round\'s case, so th
   let top = s.runs.find((r) => r.id === 'h3');
   assert.notEqual(round.case, calm);
   assert.equal(top.case, round.case, 'the origin reads its needy round\'s case');
+  assert.equal(top.opens, 'h3r2', 'and its row opens that round');
   assert.equal(!!top.over, !!round.over);
   // a live round (running now): the origin reads Working
   src.history.pipelines = src.history.pipelines.filter((p) => p.id !== 'h3r2');
@@ -295,9 +296,36 @@ test('an origin whose round is live or needs you takes that round\'s case, so th
   s = snapshotOf(src, { now: NOW });
   top = s.runs.find((r) => r.id === 'h3');
   assert.equal(top.case, 'working');
+  assert.equal(top.opens, 'live-r3', 'the live round');
   assert.equal(top.over, undefined);
   // a finished, calm round leaves the origin's own case
   src.hello.runs = [];
   src.history.pipelines.push({ id: 'h3r4', title: 'Fix', status: 'stopped', projectName: 'web', startedAt: origin.startedAt, mtime: origin.mtime, roundOf: { pipelineId: 'h3', round: 4, request: '', by: 'restart' } });
   assert.equal(snapshotOf(src, { now: NOW }).runs.find((r) => r.id === 'h3').case, calm);
+});
+
+test('costsOf: the usage rings are the harnesses\' own readings (D8); a limit pause still draws its session at 100', () => {
+  const at = NOW + 2 * 3600e3;   // two hours on: today's clock
+  const limits = { harnesses: [{ engine: 'claude', observedAt: NOW - 60e3, windows: [{ kind: 'session', pct: 28, resetsAt: at }, { kind: 'week', pct: 48, resetsAt: NOW + 3 * 86400e3 }] }] };
+  const u = costsOf(null, [], { now: NOW, limits }).usage;
+  assert.deepEqual(u.map((x) => [x.p, x.win.map((w) => [w.k, w.pct])]), [['claude', [['session', 28], ['week', 48]]]]);
+  assert.equal(u[0].win[0].resets, '17:00', 'the reset word names the reset time');
+  assert.equal(u[0].asOf, '14:59');
+  assert.deepEqual(shapeErrors('costs', costsOf(null, [], { now: NOW, limits })), []);
+  const paused = [{ status: 'paused', limitEngine: 'claude', limitResetAt: at }];
+  assert.deepEqual(costsOf(null, paused, { now: NOW, limits }).usage.map((x) => x.win.map((w) => [w.k, w.pct])), [[['session', 100], ['week', 48]]], 'the pause wins the session ring');
+  assert.deepEqual(costsOf(null, [], { now: NOW, limits: { harnesses: [{ engine: 'claude', windows: [{ kind: 'session', pct: null, resetsAt: at }] }] } }).usage, [], 'no utilisation, no ring');
+  assert.deepEqual(costsOf(null, [], { now: NOW, limits: { harnesses: [{ engine: 'claude', windows: [{ kind: 'session', pct: 9, resetsAt: NOW - 1 }] }] } }).usage, [], 'an expired reading draws nothing');
+  assert.deepEqual(costsOf(null, [], { now: NOW, limits: { harnesses: [] } }).usage, [], 'empty readings, 0 rings');
+  assert.deepEqual(costsOf(null, [{ status: 'done', engine: 'codex' }], { now: NOW, limits }).usage.map((x) => x.p), ['claude'], 'a Codex run with no reading draws no Codex ring');
+  assert.deepEqual(snapshotOf({ ...SOURCES, usageLimits: limits }, { now: NOW }).costs.usage.map((x) => x.p), ['claude'], 'the snapshot reads the usageLimits source');
+  assert.deepEqual(partOf('usageLimits', limits, SOURCES, { now: NOW }).costs.usage.map((x) => x.p), ['claude'], 'a usage-limits-changed refetch redraws the rings');
+});
+
+test('spacesOf: only the scan\'s answerable edges and dev\'s live ones become links; stale and missing never order or ask (code review r1)', () => {
+  const edge = (id, state, confidence = 'heuristic') => ({ id, from: 'a', to: 'b', kind: 'http', confidence, state });
+  const [w] = spacesOf({ workspaces: [{ id: 'w1', name: 'W', projectKeys: ['a', 'b'] }],
+    maps: { w1: { edges: [edge('e1', 'auto'), edge('e2', 'confirmed'), edge('e3', 'rejected'), edge('e4', 'manual', undefined), edge('e5', 'stale'), edge('e6', 'missing')] } } });
+  assert.deepEqual(w.links.map((l) => [l.id, l.state]), [['e1', 'auto'], ['e2', 'confirmed'], ['e3', 'rejected'], ['e4', 'manual']]);
+  assert.deepEqual(shapeErrors('space', w), []);
 });

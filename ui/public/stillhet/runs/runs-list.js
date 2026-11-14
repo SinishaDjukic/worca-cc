@@ -63,7 +63,7 @@
   // ---- the row ----
   const has = (need) => R.shows(need);
   const hint = (...keys) => R.keyHint(keys, R.isMac(window));
-  const targetOf = (r) => { const w = wordOf(r), waiting = sectionOfRun(r) === 'scheduled'; return { id: r.id, title: r.title, state: R.bulkStateOf(w), status: /^interrupted/.test(r.case) ? 'interrupted' : '', prNeeds: w === NEEDS() && !!r.pr, pipelineId: waiting ? null : r.id, ticketId: waiting ? r.id : null }; };
+  const targetOf = (r) => { const w = wordOf(r), waiting = sectionOfRun(r) === 'scheduled' && !r.interrupted; return { id: r.id, title: r.title, state: R.bulkStateOf(w), status: /^interrupted/.test(r.case) || r.interrupted ? 'interrupted' : '', prNeeds: w === NEEDS() && !!r.pr, pipelineId: waiting ? null : r.id, ticketId: waiting ? r.id : null }; };
   const targets = (rows) => rows.map((x) => (x.g ? { id: x.key, members: membersOf(x.g).map(targetOf) } : targetOf(x.r)));
   const plan = (a, rows) => R.planBulk(a, targets(rows));
   const n = (p) => p.apply.length + p.cancel.length;
@@ -177,11 +177,19 @@
     if (id === 'stop') { ctl.confirm({ text: `Stop ${rows.length === 1 ? names : plural(ids.length, 'task')}? Its branch and changes stay.`, yes: `Stop ${ids.length}`, danger: true, back: backTo, run: () => each('stop', (c) => `Stopped ${plural(c, 'task')}`) }); return; }
     if (id === 'archive') {
       if (view.show === 'archived' || runRows(rows).every((r) => r.archived)) { each('restore', (c) => `Restored ${plural(c, 'task')}`); return; }
-      const res = await T().list('archive', { ids }); ctl.clear(); ctl.paint();
-      if (res?.ok) say(`Archived ${plural(ids.length, 'task')}`, { tip: 'Puts them back', run: () => each('restore', () => 'Undone') });
+      // dev's answer says what it archived: the toast counts that, never what was asked
+      const go = async () => {
+        const res = await T().list('archive', { ids }); ctl.clear(); ctl.paint();
+        const c = Array.isArray(res?.data?.done) ? res.data.done.length : 0;
+        if (res?.ok) say(`Archived ${plural(c, 'task')}`, { tip: 'Puts them back', run: () => each('restore', () => 'Undone') });   // none done is task-live's refusal
+      };
+      // a task that could still resume asks first (dev's rule, run-bulk.mjs bulkConfirm), in the library's Archive words
+      if (R.bulkConfirm('archive', plan('archive', rows))) { ctl.confirm({ text: R.actionFlow('interrupted', {}).Archive.confirm, yes: `Archive ${ids.length}`, danger: true, back: backTo, run: go }); return; }
+      await go();
       return;
     }
-    if (id === 'delete') { ctl.confirm({ text: `Delete ${rows.length === 1 ? names : plural(ids.length, 'task')}? This cannot be taken back.`, yes: `Delete ${ids.length}`, danger: true, back: '', run: () => each('delete', (c) => `Deleted ${plural(c, 'task')}`) }); return; }
+    // dev's Delete confirm words (run-bulk.mjs bulkConfirm): what goes and what stays
+    if (id === 'delete') { ctl.confirm({ text: `Delete ${rows.length === 1 ? names : plural(ids.length, 'task')}? ${R.bulkConfirm('delete', plan('delete', rows)).message}`, yes: `Delete ${ids.length}`, danger: true, back: '', run: () => each('delete', (c) => `Deleted ${plural(c, 'task')}`) }); return; }
     if (id === 'leave-group') { const r = rows[0].r, g = data.groups.find((x) => x.id === r.group); const res = await T().list('leave-group', { ids: [r.id] }); if (res?.ok) say(`Removed from ${g?.title || 'the group'}`, res.data?.undo ? { tip: 'Puts it back in the group', run: () => T().list('undo-group', { token: res.data.undo }) } : undefined); return; }
     if (id === 'view-pr') { const r = rows[0].r || membersOf(rows[0].g).find((m) => m.pr); if (r?.pr && window.open(r.pr, '_blank') === null) say('Could not open the PR: the browser blocked the new tab'); return; }
   }
@@ -251,7 +259,7 @@
     if (x.m) { if (has('advanced')) window.RailShell.openSchedule(x.m.id.replace(/^sch-/, '')); else filterTo(x.m.project); return; }
     // live: only the adapter writes the store (D8), so opening goes through it
     if (x.r) { if (W.live) window.RailAdapter.seenRun(x.r.id); else x.r.unread = false; openId = x.r.id; }
-    window.RailShell.openRun(`run/${x.g ? (W.live ? `group:${x.g.id}` : x.g.case) : openCase(x.r)}`, x.g ? x.g.title : x.r.title, x.g ? window.RailWorld.membersOf(x.g)[0]?.id : x.r.id);   // the task itself, so its own chat opens
+    window.RailShell.openRun(`run/${x.g ? (W.live ? `group:${x.g.id}` : x.g.case) : openCase(x.r)}`, x.g ? x.g.title : x.r.title, x.g ? window.RailWorld.membersOf(x.g)[0]?.id : x.r.opens || x.r.id);   // the task itself (a lit origin: its needy round), so its own chat opens
   }
 
   const centers = () => window.RailCenters?.paint();   // the page beside this list reads the same project

@@ -58,7 +58,7 @@ test('actionIds: every `would` action of the library\'s run-state flow is an act
   assert.ok(lib.includes('design-system/components/run-state.mjs › open Settings › Tasks › Budget'));
 });
 
-test('the bar, the bell, the sidebar, the profile menu, Pulse and the world are wired, with no "Would"; partial only on the two named rows', () => {
+test('the bar, the bell, the sidebar, the profile menu, Pulse and the world are wired, with no "Would" and no partial row (the final check wired the last two)', () => {
   const live = doc.split('\n').filter((l) => /^\| `(bar|bell|sidebar|profile|pulse\/pulse\.js|pulse\/pulse-model\.js|shell\/world\.js) › /.test(l));
   assert.ok(live.length >= 30, 'the rows are read');
   for (const r of live) {
@@ -66,7 +66,8 @@ test('the bar, the bell, the sidebar, the profile menu, Pulse and the world are 
     assert.doesNotMatch(r, /Would/, r.slice(0, 90));
   }
   const partial = live.filter((r) => /\| wired \(partial\) \|/.test(r)).map((r) => r.match(/^\| `([^`]+)`/)[1]);
-  assert.deepEqual(partial.sort(), ['bell › the Needs you rows', 'profile › the usage rings per harness']);
+  assert.deepEqual(partial, []);
+  for (const id of ['bell › the Needs you rows', 'profile › the usage rings per harness']) assert.ok(doc.includes('| `' + id + '` | wired |'), id);
   for (const id of ['live/live-adapter.mjs › every source and frame', 'live/live-map.mjs › the shapes', 'profile › the interface mode', 'profile › Keep awake', 'profile › Away']) assert.ok(doc.includes('| `' + id + '` | wired |'), id);
 });
 

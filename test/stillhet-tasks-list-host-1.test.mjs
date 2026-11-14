@@ -34,6 +34,34 @@ test('a row\'s Archive posts dev\'s bulk archive; its Undo restores through the 
   const undo = [...d.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Undo');
   assert.ok(undo, 'the toast carries Undo'); undo.click(); await settle(80);
   assert.deepEqual(sent(calls).at(-1), ['POST', '/api/runs/bulk', { action: 'restore', targets: [{ pipelineId: 'h3' }] }]);
+  // the toast counts what dev archived, not what was asked
+  const h = await liveHost({ sources: sources(), write: () => [200, { done: [], skipped: [{ pipelineId: 'h3', reason: 'running' }] }] });
+  await go(h.w, '#runs', 150);
+  await rowPick(h.w, h.d, 'h3', 'archive');
+  assert.doesNotMatch(h.d.body.textContent, /Archived 1/, 'nothing archived, nothing claimed');
+  assert.match(h.d.body.textContent, /Could not archive/, 'dev\'s refusal instead');
+  // an interrupted task can still be resumed: Archive asks first, in the library's Archive words
+  const ps = sources(); ps.history.pipelines.find((x) => x.id === 'h1').status = 'interrupted';
+  const p = await liveHost({ sources: ps, write: () => [200, { done: [{ pipelineId: 'h1' }], skipped: [] }] });
+  await go(p.w, '#runs', 150);
+  await rowPick(p.w, p.d, 'h1', 'archive');
+  assert.deepEqual(sent(p.calls), [], 'nothing before the confirm');
+  assert.match(p.d.body.textContent, /It cannot be resumed after this/);
+  [...p.d.querySelectorAll('button')].find((x) => /^Archive 1$/.test(x.textContent.trim())).click(); await settle(80);
+  assert.deepEqual(sent(p.calls), [['POST', '/api/runs/bulk', { action: 'archive', targets: [{ pipelineId: 'h1' }] }]]);
+  assert.match(p.d.body.textContent, /Archived 1 task/);
+});
+
+test('Bulk Label follows dev\'s runLabels flag (the hello and flags frames)', async () => {
+  const { w, d, sockets } = await liveHost({ sources: sources() });
+  await go(w, '#runs', 150);
+  // the bulk bar's actions, with every row picked
+  // the bulk bar's actions, with a row picked (Ctrl-click, as the chat list's bulk test)
+  const labelItem = async () => { if (!d.querySelector('[data-bulk]')) { d.querySelector('[data-open="run:h3"]').dispatchEvent(new w.MouseEvent('click', { bubbles: true, ctrlKey: true, metaKey: true })); await settle(40); } assert.ok(d.querySelector('[data-bulk]'), 'the bulk bar is up'); return !!d.querySelector('[data-bulk="label"]'); };
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'flags', flags: { runLabels: true } }) }); await settle(40);
+  assert.equal(await labelItem(), true);
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'flags', flags: { runLabels: false } }) }); await settle(40);
+  assert.equal(await labelItem(), false, 'runLabels off: no Label');
 });
 
 test('a row\'s Delete asks first, then sends dev\'s bulk delete (its purge; DELETE /api/runs/:id only archives)', async () => {
@@ -41,6 +69,7 @@ test('a row\'s Delete asks first, then sends dev\'s bulk delete (its purge; DELE
   await go(w, '#runs', 150);
   await rowPick(w, d, 'h3', 'delete');
   assert.deepEqual(sent(calls), [], 'nothing before the confirm');
+  assert.match(d.body.textContent, /Deletes the task records, their files and local branches\. Keeps remote branches, pull requests/, 'it says what goes and what stays, in dev\'s words');
   await confirmYes(d);
   assert.deepEqual(sent(calls), [['POST', '/api/runs/bulk', { action: 'delete', targets: [{ pipelineId: 'h3' }] }]]);
 });

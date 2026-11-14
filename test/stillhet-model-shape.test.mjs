@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { SHAPES, shapeErrors } from '../ui/public/stillhet/live/model-shape.mjs';
 import { stillhetHost } from './helpers/stillhet-host.mjs';
 
-test('every demo seed of the 7 kinds meets its shape', () => {
+test('every demo seed of the 8 kinds meets its shape', () => {
   const w = stillhetHost({ after });
   const W = w.RailWorld, seen = Object.fromEntries(Object.keys(SHAPES).map((k) => [k, 0]));
   const check = (kind, list) => { for (const x of list) { assert.deepEqual(shapeErrors(kind, x), [], `${kind} ${x.id || ''}`); seen[kind]++; } };
@@ -14,6 +14,7 @@ test('every demo seed of the 7 kinds meets its shape', () => {
   check('chat', w.ChatsListModel.seed().chats);
   check('schedule', w.SchedulesModel.seed().schedules);
   check('project', w.RailProjects.all());
+  check('space', w.RailSpaces.list());   // the live adapter's spacesOf draws the same shape (D10)
   for (const c of w.PulseModel.CASES) { check('update', c.updates); check('costs', [{ budget: c.budget, usage: c.usage }]); }
   for (const [k, n] of Object.entries(seen)) assert.ok(n > 0, `${k}: seeds checked`);
 });

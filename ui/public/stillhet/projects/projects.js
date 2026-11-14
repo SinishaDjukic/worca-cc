@@ -172,10 +172,11 @@
   const needCount = () => data.projects.filter(needs).length + loneSpaces().length;
   // what needs you beyond tasks and missed times, each once: the bell and Pulse's Needs you read this list (small-rules)
   function needItems() {
-    // live: a missing folder or out of sync (D22); workspace link questions have no live source in this slice
-    if (W?.live) return data.projects.filter((p) => p.needs).map((p) => ({ key: `p:${p.id}`, title: nameOf(p), meta: wordOf(p), kind: 'project', tone: o(p).tone === 'fail' ? 'fail' : 'ask', go: `projects/${p.id}`, project: p.id, tip: `Opens ${nameOf(p)}` }));
-    return [...data.projects.filter((p) => o(p).tone === 'fail' || p.origin === 'diverged').map((p) => ({ key: `p:${p.id}`, title: p.id, meta: wordOf(p), kind: 'project', tone: o(p).tone === 'fail' ? 'fail' : 'ask', go: `projects/${p.id}`, project: p.id, tip: `Opens ${p.id}` })),
-      ...spaces().flatMap((w) => window.RailSpaces.questions(w).map((l) => ({ key: `q:${w.id}:${l.from}:${l.to}`, title: w.title, meta: `Does ${l.from} ${l.how.replace(/s\b/, '')} ${l.to}?`, kind: 'workspace', tone: 'ask', go: `projects/ws:${w.id}`, project: '', tip: `Opens ${w.title} at its question` })))];
+    // each workspace link Worca is unsure of; live, from dev's workspaces and their maps (D10)
+    const asks = spaces().flatMap((w) => window.RailSpaces.questions(w).map((l) => ({ key: `q:${w.id}:${l.from}:${l.to}`, title: w.title, meta: `Does ${l.from} ${l.how.replace(/s\b/, '')} ${l.to}?`, kind: 'workspace', tone: 'ask', go: `projects/ws:${w.id}`, project: '', tip: `Opens ${w.title} at its question` })));
+    // live: a missing folder or out of sync (D22)
+    if (W?.live) return [...data.projects.filter((p) => p.needs).map((p) => ({ key: `p:${p.id}`, title: nameOf(p), meta: wordOf(p), kind: 'project', tone: o(p).tone === 'fail' ? 'fail' : 'ask', go: `projects/${p.id}`, project: p.id, tip: `Opens ${nameOf(p)}` })), ...asks];
+    return [...data.projects.filter((p) => o(p).tone === 'fail' || p.origin === 'diverged').map((p) => ({ key: `p:${p.id}`, title: p.id, meta: wordOf(p), kind: 'project', tone: o(p).tone === 'fail' ? 'fail' : 'ask', go: `projects/${p.id}`, project: p.id, tip: `Opens ${p.id}` })), ...asks];
   }
   // a workspace's link Worca is unsure of, as a card
   const qCard = (w, l) => R.pluginCard({ mark: R.kindMark({ kind: 'workspace', tone: 'ask', breathe: true }), word: R.needsReason('question'), tone: 'ask', title: w.title,
@@ -241,11 +242,11 @@
       const loud = (sh) => !!sh.w;   // a quiet workspace folds; a quiet "On their own" keeps its shelf, it is no workspace
       const fold = still.filter(loud), open = quietOpen.has('spaces');
       const stillRow = fold.length ? `<div class="center-shelf">${R.quietLine({ n: fold.length, noun: 'workspace', names: fold.map((sh) => sh.name).join(', '), open, hook: { 'data-pc-quiet': 'spaces' } })}</div>${open ? fold.map((sh) => shelfHtml(sh, ctx)).join('') : ''}` : '';
-      return wrap(`${head}${sent}${way}${say2}${hand}${[...busy, ...still.filter((sh) => !loud(sh))].map((sh) => shelfHtml(sh, ctx)).join('')}${stillRow}`);
+      return wrap(`${head}${C()?.askStrip?.() || ''}${sent}${way}${say2}${hand}${[...busy, ...still.filter((sh) => !loud(sh))].map((sh) => shelfHtml(sh, ctx)).join('')}${stillRow}`);
     }
     const flat = ctx.sort([...all.filter((s) => !s.quiet).map((s) => ({ rank: s.rank, name: s.p.id, html: cardOf(s, adv() ? homesOf(s.p.id).map((w) => w.title) : []) })), ...(adv() ? spaces().flatMap((w) => window.RailSpaces.questions(w).map((l) => ({ rank: 2.7, name: `${w.title} ${l.from}`, html: qCard(w, l) }))) : [])]);
     const quiet = all.filter((s) => s.quiet);
-    return wrap(`${head}${sent}${way}${say2}${hand}<div class="pg-grid center-flat">${flat.map((c) => c.html).join('')}</div>${quietOf('flat', quiet)}`);
+    return wrap(`${head}${C()?.askStrip?.() || ''}${sent}${way}${say2}${hand}<div class="pg-grid center-flat">${flat.map((c) => c.html).join('')}</div>${quietOf('flat', quiet)}`);
   }
   const here = () => (location.hash.slice(1) || '').split('/')[0] === 'projects';   // the page area is shared by every place: draw only while this one is open
   function draw() {
@@ -287,6 +288,7 @@
     page.addEventListener('click', (e) => {
       if (!here()) return;   /* another place's page is showing */
       const on = (q) => e.target.closest(q); let hit;
+      if (on('[data-c-ask]')) return;   /* the center card's ConfirmStrip answers in centers.js */
       if ((hit = on('[data-pj-home-act]'))) { const x = data.projects.find((y) => y.id === hit.dataset.pjHomeAct); if (x) originAct(x); return; }
       if (on('[data-pc-figs]')) { figures = !figures; draw(); return; }
       if ((hit = on('[data-pc-quiet]'))) { const k = hit.dataset.pcQuiet; if (quietOpen.has(k)) quietOpen.delete(k); else quietOpen.add(k); draw(); return; }
@@ -334,6 +336,6 @@
   if (window.RailFirstRun) data.projects = [];   // the first run: nothing added yet
   window.RailPlaces = window.RailPlaces || {};
   window.RailPlaces.projects = { has: (a) => (a.startsWith('ws:') ? (window.RailSpaces?.list() || []).some((w) => w.id === a.slice(3)) : data.projects.some((p) => p.id === a.split('@')[0])), defaults: defaultsRows, defaultsClick, defaultsKey, redraw: () => draw(), get newMenu() { return adv() ? newMenuItems : null; }, get newAct() { return adv() ? () => window.RailConversation?.starter('project') : null; }, get newLabel() { return adv() ? 'Add project' : ''; }, newPick: (id) => { if (id === 'project' || id === 'workspace') { window.RailConversation?.starter(id); return; } if (id === 'hand-project' && notLive(null, 'Adding a project by hand')) return; form = id === 'hand-project' ? 'project' : 'space'; if (current) window.RailShell.go('projects'); setTimeout(() => { draw(); page?.querySelector('#pj-hand-v')?.focus(); }, 60); }, search: (q) => [...data.projects.filter((p) => `${nameOf(p)} ${p.path}`.toLowerCase().includes(q)).map((p) => ({ label: nameOf(p), where: wordOf(p), hash: `projects/${p.id}` })), ...spaces().filter((w) => w.title.toLowerCase().includes(q)).map((w) => ({ label: w.title, where: 'Workspace', hash: `projects/ws:${w.id}` }))], sample: 'billing-api',
-    show: ({ bar: b, page: pg, arg }) => { window.RailCenters?.wire(); if (b !== bar) wire(b, pg); if (current !== arg) { menu = ''; if (confirm?.p?.id !== arg) confirm = null; if (form === 'locate' && (arg || '').split('@')[0] !== locating) { form = ''; formTyped = ''; formErr = ''; } } current = arg || ''; draw(); } };
+    show: ({ bar: b, page: pg, arg }) => { window.RailCenters?.wire(); if (b !== bar) wire(b, pg); if (current !== arg) { menu = ''; window.RailCenters?.unask?.(); if (confirm?.p?.id !== arg) confirm = null; if (form === 'locate' && (arg || '').split('@')[0] !== locating) { form = ''; formTyped = ''; formErr = ''; } } current = arg || ''; draw(); } };
   const newMenuItems = () => [{ header: 'Ask in chat' }, { id: 'bar-new|project', text: 'Add a project' }, ...(adv() ? [{ id: 'bar-new|workspace', text: 'Make a workspace' }] : []), { sep: true }, { header: 'Legacy approach' }, { id: 'bar-new|hand-project', text: 'Add a project…' }, ...(adv() ? [{ id: 'bar-new|hand-space', text: 'Make a workspace…' }] : [])];
 })();

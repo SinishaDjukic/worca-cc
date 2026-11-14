@@ -34,6 +34,7 @@ const sent = (calls) => posts(calls).filter(([m, u]) => m !== 'GET' && !/^\/api\
 test('merge: Merge PR, confirmed in its strip, posts /api/pr/merge with the task\'s scope', async () => {
   const { d, calls } = await page('h2');
   assert.equal(main(d).dataset.label, 'Merge PR');
+  assert.doesNotMatch(d.querySelector('#card').textContent, /What broke/, 'a passing PR broke nothing');
   main(d).click(); await settle(40);
   assert.match(d.querySelector('#card').textContent, /Merge #959 into dev\?/);
   await yes(d);
@@ -49,6 +50,7 @@ test('rerun-checks: Re-run checks posts /api/pr/rerun-checks', async () => {
 test('fix-checks: Fix checks, confirmed, posts /api/pr/fix-checks', async () => {
   const { d, calls } = await page('h5');
   assert.equal(main(d).dataset.label, 'Fix checks');
+  assert.match(d.querySelector('#card').textContent, /What broke/, 'failing checks: what broke');
   main(d).click(); await settle(40); await yes(d);
   assert.deepEqual(sent(calls), [['POST', '/api/pr/fix-checks', { id: 'h5', projectKey: 'web-1' }]]);
 });

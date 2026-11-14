@@ -68,7 +68,7 @@ function fakeGh(over = {}) {
     if (gh.refuse[verb]) return no(gh.refuse[verb]);
     if (verb === 'pr merge' && gh.hold) await gh.hold;
     if (args[0] === '--version') return ok('gh version 2');
-    if (verb === 'pr view') return ok({ mergeable: gh.mergeable, mergeStateStatus: 'CLEAN', reviewDecision: 'APPROVED', isDraft: false,
+    if (verb === 'pr view') return ok({ mergeable: gh.mergeable, mergeStateStatus: 'CLEAN', reviewDecision: 'reviewDecision' in gh ? gh.reviewDecision : 'APPROVED', isDraft: gh.isDraft === true,
       statusCheckRollup: gh.checks.map((c) => ({ __typename: 'CheckRun', name: c.name, status: c.status, conclusion: c.conclusion })),
       latestReviews: [{ author: { login: 'maya' }, state: 'APPROVED' }], headRefOid: gh.noHead ? null : 'h1' });
     if (verb === 'api graphql') return ok({ data: { repository: { pullRequest: {
@@ -162,6 +162,8 @@ test('Merge PR: each refusal code with its status and message, and no gh pr merg
   const cases = [
     [{ refuse: { 'pr view': 'boom' } }, 502, 'READ_FAILED', 'Could not read the pull request from GitHub.'],
     [{ mergeable: 'CONFLICTING' }, 409, 'CONFLICTS', 'GitHub reports merge conflicts on this pull request; fix them first.'],
+    [{ isDraft: true }, 409, 'DRAFT', 'This pull request is a draft; mark it ready for review first.'],
+    [{ reviewDecision: 'CHANGES_REQUESTED' }, 409, 'CHANGES_REQUESTED', 'A reviewer asked for changes; push the changes or get a new review first.'],
     [{ checks: [failingCheck('unit', 11)] }, 409, 'CHECKS_FAILING', 'Some checks are failing on this pull request; fix them first.'],
     [{ checks: [{ name: 'unit', status: 'IN_PROGRESS', conclusion: null, runId: 11 }] }, 409, 'CHECKS_PENDING', 'The checks are still running; merge once they pass.'],
     [{ refuse: { 'pr merge': 'HTTP 401: Bad credentials (authentication)' } }, 409, 'AUTH', 'GitHub refused Worca\'s credentials for this merge.'],
@@ -175,6 +177,12 @@ test('Merge PR: each refusal code with its status and message, and no gh pr merg
     assert.deepEqual([r.status, await r.json()], [status, { error, code }], code);
     assert.equal(readPrState(seeded.id).state, 'OPEN', `${code}: nothing persisted`);
     if (!['AUTH', 'RATE_LIMITED', 'REFUSED'].includes(code)) assert.ok(!seen.some((s) => s.startsWith('pr merge')), code);
+  }
+  for (const reviewDecision of ['REVIEW_REQUIRED', null, 'SOMETHING_NEW']) {
+    fakeGh({ reviewDecision, refuse: { 'pr merge': 'stop here' } });
+    const r = await post('/api/pr/merge', scope());
+    assert.equal((await r.json()).code, 'REFUSED', `${reviewDecision}: not refused before gh pr merge`);
+    assert.ok(seen.some((s) => s.startsWith('pr merge')), `${reviewDecision}: gh pr merge was asked`);
   }
   setWatch({ prUrl: GH, pipelineId: seeded.id, enabled: false });
   updateWatch(GH, { status: 'fixing' });

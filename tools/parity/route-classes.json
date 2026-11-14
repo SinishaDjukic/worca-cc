@@ -73,6 +73,7 @@
   "GET /api/away-mode": {"class": "probe", "reason": "reads settings only"},
   "GET /api/branches": {"class": "probe", "reason": "400 without a projectDir query; local git only"},
   "GET /api/budget": {"class": "probe", "reason": "local budget snapshot"},
+  "GET /api/usage-limits": {"class": "probe", "reason": "local usage-limit readings"},
   "GET /api/answerer": {"class": "probe", "reason": "local read"},
   "GET /api/chat-home/pins": {"class": "probe", "reason": "local read"},
   "GET /api/chat/status": {"class": "probe", "reason": "local channel status rows"},

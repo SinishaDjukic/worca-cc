@@ -13,17 +13,19 @@ export const SOURCES = Object.freeze({
   projects: '/api/projects', sync: '/api/sync/projects', budget: '/api/budget', actions: '/api/actions/running',
   notifications: '/api/notifications', away: '/api/away-mode', settings: '/api/settings', runLinks: '/api/ask/run-links',
   runGroups: '/api/run-groups',   // Tasks: a group's tasks fold under it in the bar; its page is #run/group:GID
+  usageLimits: '/api/usage-limits',   // the profile's usage rings: the harness CLIs' own plan-limit readings (D7)
+  workspaces: '/api/workspaces',   // the bell's and the workspace page's questions; each map is read after the list (D10)
 });
 // A `*-changed` frame re-fetches only its own sources (D11); a chat's turn re-reads the threads.
 const CHANGED = {
   'pipelines-changed': ['history', 'runLinks'], 'ask-run-status': ['runLinks'], 'schedules-changed': ['schedules'], 'notifications-changed': ['notifications'], 'projects-changed': ['projects'],
-  'project-sync-changed': ['sync'], 'budget-changed': ['budget'], 'actions-changed': ['actions'], 'settings-changed': ['settings', 'away'], 'ask-groups-changed': ['groups'], 'run-groups-changed': ['runGroups'], 'ask-labels-changed': ['threads'],
+  'project-sync-changed': ['sync'], 'budget-changed': ['budget'], 'actions-changed': ['actions'], 'settings-changed': ['settings', 'away'], 'ask-groups-changed': ['groups'], 'run-groups-changed': ['runGroups'], 'usage-limits-changed': ['usageLimits'], 'workspaces-changed': ['workspaces'], 'ask-labels-changed': ['threads'],
   'ask-start': ['threads', 'runLinks'], 'ask-done': ['threads', 'runLinks'], 'ask-error': ['threads'], 'ask-title': ['threads'], 'ask-message': ['threads', 'runLinks'],
 };
 const RUN_FRAMES = new Set(['run-created', 'state', 'question', 'question-resolved', 'done', 'error', 'title']);
 const DEBOUNCE_MS = 250, BACKOFF_MS = 1000, BACKOFF_MAX_MS = 30000, TOKEN_EXPIRED = 4001;
 
-export function startLive({ fetch, WebSocket, location, world, host = {}, setTimeout, clearTimeout = () => {}, now = Date.now, openChat = () => '', hidden = () => false, toast = () => {}, open = undefined, go = () => {} }) {
+export function startLive({ fetch, WebSocket, location, world, host = {}, prefs = null, setTimeout, clearTimeout = () => {}, now = Date.now, openChat = () => '', hidden = () => false, toast = () => {}, open = undefined, go = () => {} }) {
   let sources = {}, loaded = false, listFailed = false, stopped = false, sock = null, backoff = BACKOFF_MS, reconnect = 0, queue = [], unread = [], asked = 0;
   const live = new Map(), timers = {}, stamp = {}, stale = new Set();
   const progress = new Map();   // R-ux-12: each live run's place among its stages, from its `state` frames (runProgress)
@@ -43,7 +45,10 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, setTim
   // runs, the store and the first-load signal, and passes its frames on. It keeps no cache of its own.
   const str0 = (v) => (typeof v === 'string' ? v : '');
   const liveRun = (id) => live.get(id) || [...live.values()].find((r) => r.pipelineId === id);
-  const task = startTaskLive({ fetch, now, toast, chat, ...(open ? { open } : {}), runOf: (id) => chat.runOf(id), rowOf: (id) => world.find?.(id) || null,
+  // dev's server flags (the hello and `flags` frames) are the pages' Labs flags (D11): Bulk Label follows runLabels, the
+  // task page reads telemetry only with runTelemetry on
+  const copyFlags = (flags) => { if (!prefs || !flags || typeof flags !== 'object') return; for (const [k, v] of Object.entries(flags)) if (typeof v === 'boolean' && prefs.flag(k) !== v) prefs.setFlag(k, v); };
+  const task = startTaskLive({ fetch, now, toast, chat, flag: (k) => !!prefs?.flag(k), ...(open ? { open } : {}), runOf: (id) => chat.runOf(id), rowOf: (id) => world.find?.(id) || null,
     listLoaded: () => loaded, listFailed: () => listFailed, retryList: () => retry(), retryPrs: () => { if (prsFailed) askPrs(); }, projectDirOf: (x) => str0(projects().find((p) => p && (p.key === x || p.name === x))?.path),
     liveOf: (id) => {
       const l = liveRun(id); if (!l) return null;
@@ -90,8 +95,17 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, setTim
     sources = { ...sources, history: { ...h, pipelines: h.pipelines.map((p) => (p && known.has(prKey(p.projectKey, p.id)) ? { ...p, pr: known.get(prKey(p.projectKey, p.id)) } : p)) } };
     draw(() => partOf('history', sources.history, { ...sources, hello: { runs: [...live.values()] } }, { now: now(), unread, checksOf: task.checks }), undefined, { list: 'refresh' });
   }
+  // A source's read: the workspaces list, then every workspace's map in parallel (a failed map read leaves that
+  // workspace without questions, never the list unread); any other source is its one GET.
+  async function load(name) {
+    if (name !== 'workspaces') return get(SOURCES[name]);
+    const list = await get(SOURCES.workspaces), maps = {};
+    await Promise.all((Array.isArray(list?.workspaces) ? list.workspaces : []).filter((x) => x && typeof x.id === 'string')
+      .map((x) => get(`/api/workspaces/${encodeURIComponent(x.id)}/map`).then((m) => { maps[x.id] = m; }, () => {})));
+    return { ...list, maps };
+  }
   async function fetchAll() {
-    const n = ++asked, names = Object.keys(SOURCES), answers = await Promise.all(names.map((x) => get(SOURCES[x])));
+    const n = ++asked, names = Object.keys(SOURCES), answers = await Promise.all(names.map((x) => load(x)));
     names.forEach((x, i) => keep(x, answers[i], n));
   }
   const snapshot = () => snapshotOf({ ...sources, hello: { runs: [...live.values()] } }, { now: now(), unread, checksOf: task.checks });
@@ -168,6 +182,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, setTim
     for (const r of Array.isArray(f.runs) ? f.runs : []) if (r && r.runId) next.set(r.runId, { ...r, ...(was.get(r.runId)?.opened ? { opened: true, unread: false } : {}) });
     live.clear(); for (const [k, v] of next) live.set(k, v);
     helloSeen = true;
+    copyFlags(f.flags);
     // the first hello draws the first snapshot, even after a drop before it (a socket that closed before its hello)
     if (!loaded) { firstLoad(); return; }
     // back after a drop: rail turned off meanwhile reaches the host; offline clears only once every source is read again
@@ -220,7 +235,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, setTim
       return;
     }
     if (f.type === 'ask-done' || f.type === 'ask-error') unread = unreadOf(unread, f, { openChat: openChat(), hidden: hidden() });
-    if (f.type === 'flags') { host.flagsChanged?.(f.flags || {}); return; }
+    if (f.type === 'flags') { copyFlags(f.flags); host.flagsChanged?.(f.flags || {}); return; }
     if (f.type === 'history-pr') { onPrs(f); return; }
     // an archived or deleted paused run leaves the live runs (dev's app.js drops the same ids), so its row goes now
     if (f.type === 'pipelines-changed' && Array.isArray(f.removedRunIds) && f.removedRunIds.length) {
@@ -238,7 +253,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, setTim
       timers[source] = 0;
       const n = ++asked;
       let a;
-      try { a = await get(SOURCES[source]); } catch { stale.add(source); world.setState({ list: 'refresh' }); return; }
+      try { a = await load(source); } catch { stale.add(source); world.setState({ list: 'refresh' }); return; }
       if (!keep(source, a, n)) return;
       if (source === 'history') askPrs();
       // the out-of-date look clears only once every source that failed has been read again

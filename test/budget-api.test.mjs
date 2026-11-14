@@ -289,3 +289,17 @@ test('POST /api/resume costCapUsd: its 400s, no write on any refused gate, the w
   getDb().exec('DELETE FROM cost_ledger');
   await rm(liveWt, { recursive: true, force: true }); await rm(projDir, { recursive: true, force: true });
 });
+
+test('POST /api/run costCapUsd: the cap set at the start gets one audit line once the pipeline row exists', async () => {
+  const res = await fetch(`${base}/api/run`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ projectDir: seededProjectDir, prompt: 'x', mock: true, costCapUsd: 2 }) });
+  const { runId } = await res.json();
+  assert.equal(res.status, 200);
+  const entry = runs.get(runId);
+  const lines = () => (entry?.pipelineId ? getDb().prepare('SELECT text FROM pipeline_events WHERE pipeline_id = ?').all(entry.pipelineId).map((e) => e.text) : [])
+    .filter((t) => /^Pipeline cost limit set/.test(t));
+  for (let i = 0; i < 200 && !lines().length; i++) await new Promise((r) => setTimeout(r, 25));
+  try { entry.orch.stop('test'); } catch { /* already settled */ }
+  for (let i = 0; i < 200 && !runs.get(runId)?.settled; i++) await new Promise((r) => setTimeout(r, 25));
+  assert.deepEqual(lines(), ['Pipeline cost limit set to $2.00 for this run.']);
+});
