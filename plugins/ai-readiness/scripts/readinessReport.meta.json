@@ -1,0 +1,25 @@
+{
+  "key": "readinessReport",
+  "metaVersion": 2,
+  "displayName": "Readiness scorecard",
+  "description": "Computes the baseline score from the judgement and the probe, and writes the scorecard (markdown, JSON, HTML).",
+  "domain": "readiness",
+  "color": "amber",
+  "order": 32,
+  "runtime": "node",
+  "file": "readiness-report.mjs",
+  "timeoutMs": 60000,
+  "inputs": [
+    { "id": "judgement", "type": "json" },
+    { "id": "probe", "type": "json" },
+    { "id": "map", "type": "json", "required": false }
+  ],
+  "outputs": [
+    { "id": "card", "type": "md", "filename": "readiness-baseline.md", "artifactKind": "readiness-card",
+      "extraFiles": [
+        { "kind": "readiness-json", "glob": "readiness/baseline.json" },
+        { "kind": "readiness-scorecard", "glob": "readiness/baseline.html" }
+      ] },
+    { "id": "profile", "type": "json", "filename": "readiness-profile-baseline.json", "artifactKind": "project-profile" }
+  ]
+}

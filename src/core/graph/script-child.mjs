@@ -42,6 +42,7 @@ async function main() {
     params: envelope.params || {},
     ctx: envelope.ctx || {},
     verdictPath: envelope.verdictPath ?? null,
+    readiness: envelope.readiness ?? null,
     node: envelope.node || {},
     execution: envelope.execution || {},
     log: (level, msg) => { errWrite(`[${String(level)}] ${String(msg)}\n`); },

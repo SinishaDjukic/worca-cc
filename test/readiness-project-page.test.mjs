@@ -3,85 +3,13 @@
 // "View report" opens it, and a readiness change repaints the header chip.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
-import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import {
+  makeBoot, WSStub, NOT_READY, READY, KEY, settle, click, goHash, headChip, openPops, wait, cardOf,
+} from './helpers/readiness-project-boot.mjs';
 
 const trackDom = useDomRelease(afterEach);
-
-const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
-const NOT_READY = JSON.parse(readFileSync(new URL('./fixtures/readiness-report-not-ready.json', import.meta.url), 'utf8'));
-const READY = {
-  ...NOT_READY,
-  level: 'ready',
-  engines: { ...NOT_READY.engines, claude: { ...NOT_READY.engines.claude, level: 'ready', failing: [] } },
-  counts: { ...NOT_READY.counts, mustFix: 0, shouldFix: 0 },
-};
-const KEY = 'alpha-00000001';
-const summary = (r) => ({ level: r.level, failingCount: r.counts.mustFix + r.counts.shouldFix, ...r.counts });
-
-class WSStub {
-  constructor() { WSStub.last = this; this.readyState = 0; this._listeners = {}; }
-  send() {} close() {}
-  addEventListener(type, fn) { (this._listeners[type] = this._listeners[type] || []).push(fn); }
-  _open() { this.readyState = 1; (this._listeners.open || []).forEach((fn) => fn({})); }
-  _frame(msg) { (this._listeners.message || []).forEach((fn) => fn({ data: JSON.stringify(msg) })); }
-}
-
-async function boot(state) {
-  const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4321/' }));
-  const { window } = dom;
-  window.Element.prototype.scrollIntoView = function () {};
-  window.WebSocket = WSStub;
-  window.requestAnimationFrame = (fn) => setTimeout(fn, 0);
-  const ok = (body) => Promise.resolve({ ok: true, status: 200, json: async () => body });
-  const fail = () => Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'boom' }) });
-  // The project settings layer: GET reads `state.own`, PATCH replaces the keys it names (null removes one), as the server does.
-  state.own = state.own || {};
-  state.patches = [];
-  window.fetch = async (url, opts = {}) => {
-    const u = String(url);
-    if (u.includes(`/api/projects/${KEY}/readiness`)) return ok({ readiness: state.report });
-    if (u.includes(`/api/projects/${KEY}/settings`)) {
-      if (opts.method === 'PATCH') {
-        state.patches.push(JSON.parse(opts.body));
-        if (state.patchFails) return fail();
-        for (const [k, v] of Object.entries(JSON.parse(opts.body))) { if (v === null) delete state.own[k]; else state.own[k] = v; }
-        return ok({ ok: true });
-      }
-      const own = JSON.parse(JSON.stringify(state.own));   // read now, answered after the delay (a slow server)
-      if (state.getDelayMs) await new Promise((r) => setTimeout(r, state.getDelayMs));
-      return state.getFails ? fail() : ok({ own, effective: {} });
-    }
-    if (u.includes('/api/projects')) {
-      return ok({ projects: [{ name: 'alpha', path: '/Users/me/dev/alpha', exists: true, key: KEY, readiness: summary(state.report) }] });
-    }
-    if (u.includes('/api/history')) return ok({ pipelines: [], ghAvailable: false });
-    return ok({ config: { steps: {}, customModels: [] }, models: [], efforts: [], branches: [], workspaces: [], agents: [], channels: [] });
-  };
-  for (const k of ['window', 'document', 'location', 'localStorage', 'WebSocket', 'fetch', 'navigator', 'requestAnimationFrame']) {
-    try { Object.defineProperty(globalThis, k, { value: window[k], configurable: true, writable: true }); } catch {}
-  }
-  globalThis.window = window; globalThis.document = window.document;
-  await import(pathToFileURL(appPath).href + `?b=${Date.now()}_${Math.random()}`);
-  await new Promise((r) => setTimeout(r, 0));
-  if (WSStub.last) WSStub.last._open();
-  return { window };
-}
-
-const tick = () => new Promise((r) => setTimeout(r, 0));
-const settle = async () => { for (let i = 0; i < 6; i++) await tick(); };
-const click = (window, node) => node.dispatchEvent(new window.MouseEvent('click', { bubbles: true, detail: 1 }));
-
-async function goHash(window, hash) {
-  window.location.hash = hash;
-  await settle();
-}
-
-const headChip = (doc) => doc.querySelector('#proj-detail .pd-row1 .pd-rd-slot .pl-rd');
-const openPops = (doc) => [...doc.querySelectorAll('.readiness-pop')].filter((m) => !m.hidden);
+const boot = makeBoot(trackDom);
 
 test('the project page header shows the readiness chip after the name', async () => {
   const { window } = await boot({ report: NOT_READY });
@@ -195,8 +123,6 @@ test('the × closes the header chip popover and stays on the project page', asyn
   assert.equal(window.location.hash, `#projects/${KEY}`, 'still on the project page');
 });
 
-const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-const cardOf = (doc) => doc.querySelector(`.readiness-settings-card[data-key="${KEY}"]`);
 const segOf = (doc, label) => [...cardOf(doc).querySelectorAll('.rs-row')].find((r) => r.querySelector('.rs-name').textContent === label);
 
 // A focused button that the browser blurs when it is disabled (jsdom does not): blur FIRST, then set.

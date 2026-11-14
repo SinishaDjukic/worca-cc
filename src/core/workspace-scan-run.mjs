@@ -280,3 +280,19 @@ export async function finalizeWorkspaceScan({ workspaceId, name, projectPaths, p
     return { outcome: 'failed', workspaceId, error: (err && err.message) || String(err), code: (err && err.code) || null };
   }
 }
+
+// What a Workspace scan run tells every open client when it ends (called from the server's run
+// wiring). Workspace scan: the run just created or updated its workspace (run-harness
+// _finalizeWorkspaceScan, which ran before this event) — refresh every open list (D13).
+export function broadcastScanFinish(broadcast, entry, scanOutcome) {
+  if (scanOutcome === 'created' || scanOutcome === 'updated') {
+    broadcast({ type: 'workspaces-changed', action: `scan-${scanOutcome}`, workspaceId: entry.workspaceId || null });
+  }
+  // An automatic re-scan (afterMembersChanged) tells its workspace page how it ended; one a
+  // newer member change superseded says nothing — its successor reports instead.
+  if (entry.autoRescan && !entry.superseded) {
+    const how = entry.status === 'done' ? (scanOutcome === 'updated' ? 'description' : 'rescan-failed')
+      : entry.status === 'stopped' ? 'rescan-stopped' : entry.status === 'paused' ? 'rescan-paused' : 'rescan-failed';
+    broadcast({ type: 'workspaces-changed', action: how, workspaceId: entry.workspaceId, runId: entry.id });
+  }
+}

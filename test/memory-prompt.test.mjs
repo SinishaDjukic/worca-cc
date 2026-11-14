@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildSystemPrompt, _runOptsForTests as runOpts } from '../src/core/phases.mjs';
+import { WORKSPACE_CONTEXT_WINS, buildSystemPrompt, _runOptsForTests as runOpts } from '../src/core/phases.mjs';
 import { buildClaudeArgs, memoryDirsFromPrompt } from '../src/core/claude-runner.mjs';
 
 const BLOCK = '## Worca memory\nintro\nGlobal — /m/global:\n';
@@ -13,7 +13,7 @@ test('buildSystemPrompt: the memory block sits after the workspace block and bef
   assert.ok(at('## Workspace Context') < at('## Worca memory'));
   assert.ok(at('## Worca memory') < at('BODY'));
   // workspaceContextBlock ends with one newline of its own and the joiner adds two.
-  assert.equal(sp, 'TOOL\n\n## Workspace Context\n\nA workspace.\n\nMember projects: A.\n\n\n' + BLOCK.trim() + '\n\nBODY');
+  assert.equal(sp, 'TOOL\n\n## Workspace Context\n\nA workspace.\n\nMember projects: A.\n\n' + WORKSPACE_CONTEXT_WINS + '\n\n\n' + BLOCK.trim() + '\n\nBODY');
 });
 
 test('runOpts: ctx.memoryBlock becomes appendSubagentSystemPrompt and ctx.memoryMount becomes addDirs; absent ⇒ both undefined (argv unchanged)', () => {

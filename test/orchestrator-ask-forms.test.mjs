@@ -18,6 +18,7 @@ import { readStepQuestions } from '../src/core/artifacts.mjs';
 import { getDb } from '../src/core/db.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 import { execSync } from 'node:child_process';
+import { setNightMode } from '../src/core/settings.mjs';
 
 useTempHome(after);
 
@@ -371,4 +372,65 @@ test('USER FLOW: a REAL-mock form refused twice downgrades, the free-text answer
   assert.equal(rounds.length, 1, 'the repair consumed no round (E5)');
   assert.equal(rounds[0].ask, undefined, 'a downgraded round is a LEGACY row (E20)');
   assert.deepEqual(rounds[0].answers, [{ id: rounds[0].questions[0].id, question: 'Review mockups', choice: 'do the safe thing' }]);
+});
+
+/** A clock the night-mode grace timer runs on (test/night-mode-integration.test.mjs). */
+function fakeClock(start = Date.parse('2026-09-27T12:00:00Z')) {
+  let t = start; let seq = 0; const timers = new Map();
+  return {
+    now: () => t,
+    setTimeout: (fn, ms) => { const id = ++seq; timers.set(id, { at: t + ms, fn }); return id; },
+    clearTimeout: (id) => { timers.delete(id); },
+    async tick(ms) {
+      t += ms;
+      for (const [id, tm] of [...timers].sort((a, b) => a[1].at - b[1].at)) if (tm.at <= t) { timers.delete(id); tm.fn(); }
+      await new Promise((r) => setImmediate(r));
+    },
+  };
+}
+
+test('a form Away mode answered is stored and resumed with answeredBy "away"; a user answer is not',
+  { timeout: 60000 }, async () => {
+  const askOnce = async (ctx, calls, seen) => {
+    if (calls === 1) {
+      graftForm(ctx);
+      await mkdir(join(ctx.projectDir, 'mockups'), { recursive: true });
+      await writeFile(join(ctx.projectDir, 'mockups', 'a.png'), PNG);
+      ctx.onEvent({ type: 'session', sessionId: 'sess-away-1' });
+      await writeFile(ctx.questionsFile, JSON.stringify({
+        form: 'review-mockups', data: { images: [{ id: 'a', file: 'mockups/a.png' }] },
+      }), 'utf8');
+    } else {
+      seen.push(ctx.formAnswers);
+    }
+    return { outputs: outsOf(ctx), verdict: null, summary: 'x' };
+  };
+
+  // Away mode: nobody answers, so the grace deadline passes and night mode gives the form's defaults.
+  await setNightMode({ enabled: false, graceMinutes: 5, window: null, strategy: 'weights' });
+  await writeGraphWorkflow(G);
+  const clock = fakeClock();
+  let calls = 0; const seen = [];
+  const orch = createOrchestrator({
+    projectDir: gitDir('af-away'), workflowId: G.id, prompt: 'demo', claude: { mock: true },
+    runners: { producer: async (ctx) => askOnce(ctx, ++calls, seen) }, nightMode: true, nightClock: clock,
+  });
+  orch.on('question', () => setImmediate(async () => { await clock.tick(6 * 60_000); }));
+  const res = await orch.run();
+  assert.equal(res.status, 'done', res.error);
+  const [row] = readStepQuestions(orch.pipeline.id).filter((r) => r.nodeId === 'n_ask');
+  assert.equal(row.answeredBy, 'night-mode', 'the row names night mode as who answered');
+  assert.deepEqual(row.formAnswer, { form: 'review-mockups', version: 1, values: { verdict: 'approve' }, answeredBy: 'away' });
+  assert.deepEqual(seen, [[row.formAnswer]], 'the resumed agent gets the same marked answer');
+
+  // The user answers: no marker anywhere.
+  await setNightMode({ enabled: false, graceMinutes: 5, window: null, strategy: 'weights' });
+  let ucalls = 0; const useen = [];
+  const user = await orchWithForm(async (ctx) => askOnce(ctx, ++ucalls, useen), { tag: 'af-user' });
+  user.on('question', (q) => setImmediate(() => user.answer(q.id, { values: { verdict: 'changes' } })));
+  const ures = await user.run();
+  assert.equal(ures.status, 'done', ures.error);
+  const [urow] = readStepQuestions(user.pipeline.id).filter((r) => r.nodeId === 'n_ask');
+  assert.deepEqual(urow.formAnswer, { form: 'review-mockups', version: 1, values: { verdict: 'changes' } });
+  assert.deepEqual(useen, [[urow.formAnswer]]);
 });

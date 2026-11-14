@@ -28,9 +28,11 @@
   .house-brief .hb-list>li{flex-wrap:wrap;}
 }
 
-/* Agent readiness: the Settings card. Its head holds the title and "View report" (the header chip's popover) on the right. */
+/* Agent readiness: the Settings card. Its head holds the title and, together on the right, "View report" (the header
+   chip's popover) and "Set up with AI" when it is offered. */
 .rs-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;}
 .rs-head h3{margin:0;}
+.rs-acts{display:flex;align-items:baseline;flex-wrap:wrap;justify-content:flex-end;gap:8px;margin-left:auto;}
 .rs-view{flex:none;}
 .readiness-settings-card{padding:16px;border:1px solid var(--line);border-radius:var(--r-card);margin-bottom:16px;
   scroll-margin-top:90px;}   /* the pinned .pd-tabs (~74px) plus air: the popover's Settings link lands the head below them */

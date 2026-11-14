@@ -485,7 +485,7 @@ test('automatic re-scans: an ending one tells its page how (superseded says noth
         end('auto-4', { status: 'stopped', superseded: true });
         end('auto-5', { status: 'error' });
         const seen = await waitFor(async () => {
-          const got = msgs.filter((m) => m.type === 'workspaces-changed' && m.workspaceId === 'wks-shop-0000abcd');
+          const got = msgs.filter((m) => m.type === 'workspaces-changed' && m.workspaceId === 'wks-shop-0000abcd' && m.runId);   // runId: the page-follow family; scan-updated (list refresh) carries none
           return got.length >= 4 ? got : null;
         });
         assert.deepEqual(seen.map((m) => [m.runId, m.action]), [

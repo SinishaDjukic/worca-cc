@@ -60,3 +60,10 @@ test('actorLabel / byActor: the name an audit line shows, nothing for local or j
     assert.equal(byActor(none), '');
   }
 });
+
+test('the --yes auto-answer actor is recorded but never shown as a person', async () => {
+  const { actorLabel, byActor, AUTO_ACTOR } = await import('../src/core/identity.mjs');
+  assert.equal(AUTO_ACTOR, 'auto');
+  assert.equal(actorLabel(AUTO_ACTOR), '');
+  assert.equal(byActor(AUTO_ACTOR), '');
+});

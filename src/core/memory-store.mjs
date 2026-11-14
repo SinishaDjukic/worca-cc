@@ -571,6 +571,33 @@ export function renderDefragBrief(health, caps) {
   return `${lines.join('\n')}\n`;
 }
 
+/** The project's instruction files a PROJECT-scope defragment compares notes against — only these two (the owner's
+ *  read-only grant), read from the project's base branch into the run's own folder (run-harness.mjs
+ *  _defragInstructionFiles); a file over DEFRAG_INSTRUCTION_MAX_BYTES is skipped. */
+export const DEFRAG_INSTRUCTION_FILES = Object.freeze(['CLAUDE.md', 'AGENTS.md']);
+export const DEFRAG_INSTRUCTION_MAX_BYTES = 256 * 1024;
+export const DEFRAG_INSTRUCTIONS_HEADING = '## Instruction files';
+
+/**
+ * Pure. The section a PROJECT-scope defragment appends after the health brief: the base branch and commit the
+ * files were read at, and the read-only copies by absolute path. '' with no files (global scope never calls it).
+ * @param {{branch:string, sha:string, files:{name:string, path:string}[]}|null} src
+ */
+export function renderInstructionFilesBrief(src) {
+  const list = (Array.isArray(src?.files) ? src.files : []).filter((f) => f && typeof f.path === 'string' && f.path);
+  if (!list.length) return '';
+  return `${[
+    '', DEFRAG_INSTRUCTIONS_HEADING, '',
+    `Read-only copies of the project's instruction files, read from the base branch \`${flattenLine(src.branch)}\` at \`${flattenLine(src.sha)}\` ` +
+      'when this run started. The project\'s coding agents read these files already, so they are evidence: a project note whose ' +
+      'fact one of them already states is redundant.',
+    '',
+    ...list.map((f) => `- ${flattenLine(f.name)}: \`${flattenLine(f.path)}\``),
+    '',
+    'Read them; never edit them, and never touch the project\'s own copies.',
+  ].join('\n')}\n`;
+}
+
 /** Everything a scope view or route needs in one read: the listing, the counters and the health. */
 export async function memoryScopeReport(root, scope, caps, { onError } = {}) {
   const entries = await listMemory(root, scope, { onError });

@@ -179,6 +179,37 @@ test('a --yes run that is not night-eligible answers directly, as today', async 
   assert.equal(orch.answeredBy('c6d'), null);
 });
 
+test('a --yes form auto-answer records the auto actor, so its stored row names nobody', async () => {
+  const orch = createOrchestrator({ projectDir: '/tmp/night-h6e', auto: true, nightClock: fakeClock() });
+  const out = await orch._ask({ id: 'f6e', kind: 'form', origin: 'questions', form: 'readiness-confirm', version: 1, autoValues: { looksRight: 'correct' } });
+  assert.deepEqual(out, { form: 'readiness-confirm', version: 1, values: { looksRight: 'correct' } });
+  assert.equal(orch.answeredBy('f6e'), 'auto');
+});
+
+// _primeQuestions and _ask must agree on whether Away mode owns an agent's questions in a --yes run: when it does
+// not, the run must not open the ask-then-resume loop (the --yes branch would answer a form with nobody's values).
+async function primedQuestions(neverDecide) {
+  await setNightMode({ enabled: true, graceMinutes: 1, neverDecide });
+  const dir = await mkdtemp(join(tmpdir(), 'worca-night-prime-'));
+  const { id } = await seedPipeline(dir);
+  const orch = createOrchestrator({ projectDir: dir, auto: true, nightClock: fakeClock() });
+  orch.pipeline = { id, dir };
+  const ctx = { nodeId: 'n_map', ordinal: 1 };
+  orch._primeQuestions({ askQuestions: true, runnerType: 'agent', meta: {} }, ctx);
+  await rm(dir, { recursive: true, force: true });
+  return ctx.questionsEnabled;
+}
+
+test('a night-owned --yes run hands an agent\'s questions to Away mode', async () => {
+  assert.equal(await primedQuestions([]), true);
+});
+
+for (const kind of ['questions', 'form']) {
+  test(`neverDecide ${kind}: a --yes run does not hand an agent's questions to Away mode`, async () => {
+    assert.equal(await primedQuestions([kind]), false);
+  });
+}
+
 test('a question armed while an earlier decision is still running is decided afterwards', async () => {
   await setNightMode({ enabled: true, strategy: 'weights', graceMinutes: 1 });
   await setNightModeToggle('on');

@@ -381,6 +381,7 @@ test('questions arm: the agent banner renders and the answer resumes the same se
       { cue: /Choose \[number or text\]/, send: '1\n' },   // clarify q2
       { cue: /Choose \[number or text\]/, send: '2\n' },   // the implementer's question
     ],
+    env: { WORCA_IDENTITY_NAME: 'ada' },   // the terminal answers as this machine's operator
   });
   assert.equal(r.timedOut, false, r.stdout);
   assert.equal(r.sent, 3, `only ${r.sent} prompt(s) rendered:\n${r.stdout}`);
@@ -400,6 +401,8 @@ test('questions arm: the agent banner renders and the answer resumes the same se
   const round = readStepQuestions(id).find((q) => q.nodeId === 'n_impl');
   assert.ok(round, `no n_impl round for ${id}`);
   assert.deepEqual(round.answers.map((a) => [a.id, a.choice]), [['q1', 'Option B']]);
+  // The terminal records who answered (a person), so a stored answer never reads as unattended.
+  assert.equal(round.answeredBy, 'ada');
 });
 
 // ── MAJ-7: an unanswerable stdin must never look like a successful run ─────────

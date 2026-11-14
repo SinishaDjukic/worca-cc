@@ -63,6 +63,7 @@ import {
 import { useEnvProxy, reinstallEnvProxy, proxyNotice } from '../core/env-proxy.mjs';
 import { startLiveEgress, egressNotice } from '../core/egress-policy.mjs';
 import { gitState, GIT_MISSING } from '../core/git-available.mjs';
+import { actorOf } from '../core/identity.mjs';
 import { workModeOfRow, workModeForStart, effectiveWorkMode } from '../core/project-kind.mjs';
 // Static on purpose (issue #841): after `npm i -g` the files on disk are the new version's.
 import { superviseUi } from '../core/ui-supervisor.mjs';
@@ -749,6 +750,9 @@ async function attachAndDrive(orch, flags, start) {
       return;
     }
     if (flags.auto || !rl) return; // auto mode resolves internally
+    // A person answers at this terminal: record who (WORCA_IDENTITY_NAME, else 'local'), like the UI, so a stored
+    // answer never reads as unattended (the readiness probe runs memory commands only on a person's card A).
+    const terminalActor = actorOf(null);
     answering = true;
     const ctrl = new AbortController();
     promptAbort = ctrl;
@@ -756,7 +760,7 @@ async function attachAndDrive(orch, flags, start) {
     try {
       if (kind === 'clarify') {
         const answer = await askClarify(rl, questions || []);
-        orch.answer(id, answer);
+        orch.answer(id, answer, terminalActor);
       } else if (kind === 'gate') {
         // One engine: every gate question is a graph question, so the header is
         // built unconditionally. (The `graphRun()` gate that used to guard this
@@ -764,17 +768,17 @@ async function attachAndDrive(orch, flags, start) {
         // waiting for the first interactive gate.)
         const answer = await askGate(rl, issues || [],
           formatGateHeader(payload, orch.state && orch.state.stepper));
-        orch.answer(id, answer);
+        orch.answer(id, answer, terminalActor);
       } else if (kind === 'recovery') {
         const payload = await askRecovery(rl, recovery);
-        orch.answer(id, payload);
+        orch.answer(id, payload, terminalActor);
       } else if (kind === 'workflow') {
         const answer = await askWorkflow(rl, payload.workflow);
-        orch.answer(id, answer);
+        orch.answer(id, answer, terminalActor);
       } else if (kind === 'questions') {
         out(c('yellow', c('bold', `${agent || 'Agent'} has questions:`)));
         const payload = await askClarify(rl, questions || []);
-        orch.answer(id, payload);
+        orch.answer(id, payload, terminalActor);
       } else if (kind === 'form') {
         if (payload.surface === 'web') {
           // Spec §8 (as corrected by ruling X11) lets a form declare that a text
@@ -795,7 +799,7 @@ async function attachAndDrive(orch, flags, start) {
           for (let attempt = 1; ; attempt++) {
             const answer = await askForm(rl, payload);
             try {
-              orch.answer(id, answer);
+              orch.answer(id, answer, terminalActor);
               break;
             } catch (err) {
               if (!err || err.code !== 'INVALID_ANSWER') throw err;
@@ -1210,6 +1214,7 @@ async function cmdAddClone(clone, positionalName) {
       await m.discoverProject(project.path, { force: true });
     } catch { /* metrics never block `worca add` */ }
     await teamMemoryHint(project.path);
+    await readinessAfterAdd(project.path);
     return 0;
   } catch (err) {
     process.stderr.write(`worca: ${err?.message || err}${err?.code ? ` (${err.code})` : ''}\n`);
@@ -1234,11 +1239,64 @@ async function cmdAdd(argv) {
       await m.discoverProject(target, { force: true });
     } catch { /* metrics never block `worca add` */ }
     await teamMemoryHint(target);
+    await readinessAfterAdd(target);
     return 0;
   } catch (err) {
     process.stderr.write(`worca: ${err?.message || err}\n`);
     return 1;
   }
+}
+
+/**
+ * The readiness evaluation `worca readiness` and `worca add` share: the base report for a project (or the `engines`
+ * given), the tools it uses and the report judged on them. Throws on an evaluation failure or an unknown engine.
+ * @returns {Promise<{report: object, judged: string[]}>}
+ */
+async function readinessReportOf({ dir, key, vcs = null, engines = [] }) {
+  const { evaluateReadiness } = await import('../core/repo-readiness/evaluate.mjs');
+  const { buildReport } = await import('../core/repo-readiness/report.mjs');
+  const { usedEngines } = await import('../core/repo-readiness/used.mjs');
+  const { usageInputs } = await import('../core/repo-readiness/cache.mjs');
+  // A registered Folder project runs on a copy of the folder: no git runs in it (an unregistered folder keeps git mode).
+  const { effectiveWorkMode } = await import('../core/project-kind.mjs');
+  const { gitState } = await import('../core/git-available.mjs');
+  const folder = vcs !== null && effectiveWorkMode(vcs, (await gitState()).available) === 'folder';
+  const base = await evaluateReadiness({ dir, projectKey: key, ignore: readinessIgnore({ projectDir: dir, projectKey: key }), timeoutMs: 8000, folder });
+  const engineNames = Object.keys(base.engines);
+  const unknownEngine = engines.find((e) => !engineNames.includes(e));
+  if (unknownEngine) throw new Error(`unknown engine "${unknownEngine}" (known: ${engineNames.join(', ')})`);
+  const usage = engines.length
+    ? Object.fromEntries(engineNames.map((n) => [n, { used: engines.includes(n), setting: 'used', detected: false, reasons: [{ kind: 'setting', text: '--engine' }] }]))
+    : usedEngines({
+      engines: engineNames, files: base.files,
+      ...usageInputs({ projectKey: key, projectDir: dir, runEngine: resolveRunEngine({ projectDir: dir, projectKey: key }).engine || 'claude' }),
+    });
+  const report = buildReport(base, usage);
+  return { report, judged: engineNames.filter((n) => report.engines[n].used) };
+}
+
+/** `worca add` / `worca add --clone`: one readiness line, and when the project has code and the ai-readiness workflows are installed, the commands. WORCA_READINESS=0 prints nothing; never fails the add. */
+async function readinessAfterAdd(dir) {
+  try {
+    const { readinessEnabled } = await import('../core/repo-readiness/evaluate.mjs');
+    if (!readinessEnabled()) return;
+    const { engineLabel } = await import('../shared/engine-switch.mjs');
+    const { listWorkflows } = await import('../core/workflows.mjs');
+    const { projectHasCode } = await import('../core/repo-readiness/has-code.mjs');
+    const reg = getProjectByPath(dir);
+    const key = reg ? reg.key : projectKey(dir);
+    const { report, judged } = await readinessReportOf({ dir, key, vcs: reg ? reg.vcs : null });
+    const word = { ready: 'Agent-ready', partial: 'Partly ready', 'not-ready': 'Not agent-ready' }[report.level];
+    if (!word) return;
+    out(`Readiness: ${word} (${judged.length ? judged.map(engineLabel).join(', ') : 'no tool'}).`);
+    if (!projectHasCode(dir)) return;
+    const ids = new Set((await listWorkflows()).map((w) => w.id));
+    // Quoted for the shell when it needs it (a space, a quote), so the printed command copy-pastes as is.
+    const { shellQuote } = await import('../core/actions/launcher.mjs');
+    const proj = /^[\w@%+=:,./-]+$/.test(dir) ? dir : shellQuote(dir);
+    if (ids.has('wfp_ai-readiness_check')) out(`  Evaluate: worca --project ${proj} --workflow wfp_ai-readiness_check --prompt check`);
+    if (ids.has('wfp_ai-readiness_setup')) out(`  Set up:   worca --project ${proj} --workflow wfp_ai-readiness_setup --prompt "set up"`);
+  } catch { /* a readiness line never blocks `worca add` */ }
 }
 
 /**
@@ -1261,14 +1319,12 @@ async function cmdReadiness(argv) {
     } else return err(`unknown option "${a}". Usage: worca readiness [--project <key|path>] [--engine <name>]... [--json] [--force]`);
   }
 
-  const { evaluateReadiness, readinessEnabled } = await import('../core/repo-readiness/evaluate.mjs');
+  const { readinessEnabled } = await import('../core/repo-readiness/evaluate.mjs');
   if (!opts.force && !readinessEnabled()) {
     out('Agent readiness checks are disabled (WORCA_READINESS=0). Use --force to run them anyway.');
     return 0;
   }
-  const { buildReport, summaryOf } = await import('../core/repo-readiness/report.mjs');
-  const { usedEngines } = await import('../core/repo-readiness/used.mjs');
-  const { usageInputs } = await import('../core/repo-readiness/cache.mjs');
+  const { summaryOf } = await import('../core/repo-readiness/report.mjs');
   const { engineLabel } = await import('../shared/engine-switch.mjs');
 
   let dir = process.cwd();
@@ -1289,28 +1345,13 @@ async function cmdReadiness(argv) {
   name = name || basename(dir);
   key = key || projectKey(dir);
 
-  let base;
+  let r;
   try {
-    // A registered Folder project runs on a copy of the folder: no git runs in it (an unregistered folder keeps git mode).
-    const { effectiveWorkMode } = await import('../core/project-kind.mjs');
-    const { gitState } = await import('../core/git-available.mjs');
-    const folder = vcs !== null && effectiveWorkMode(vcs, (await gitState()).available) === 'folder';
-    base = await evaluateReadiness({ dir, projectKey: key, ignore: readinessIgnore({ projectDir: dir, projectKey: key }), timeoutMs: 8000, folder });
+    r = await readinessReportOf({ dir, key, vcs, engines: opts.engines });
   } catch (e) {
     return err(e?.message || String(e));
   }
-
-  const engineNames = Object.keys(base.engines);
-  const unknownEngine = opts.engines.find((e) => !engineNames.includes(e));
-  if (unknownEngine) return err(`unknown engine "${unknownEngine}" (known: ${engineNames.join(', ')})`);
-  const usage = opts.engines.length
-    ? Object.fromEntries(engineNames.map((n) => [n, { used: opts.engines.includes(n), setting: 'used', detected: false, reasons: [{ kind: 'setting', text: '--engine' }] }]))
-    : usedEngines({
-      engines: engineNames, files: base.files,
-      ...usageInputs({ projectKey: key, projectDir: dir, runEngine: resolveRunEngine({ projectDir: dir, projectKey: key }).engine || 'claude' }),
-    });
-  const report = buildReport(base, usage);
-  const judged = engineNames.filter((n) => report.engines[n].used);
+  const { report, judged } = r;
   const inScope = (row) => row.scope === 'repository' || judged.includes(row.engine);
   const failing = report.checks.filter((r) => r.status === 'fail' && inScope(r));
   const code = report.level === 'not-ready' || failing.some((r) => r.severity === 'blocker') ? 2 : report.level === 'unknown' ? 1 : 0;

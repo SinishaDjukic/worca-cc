@@ -299,6 +299,7 @@ export function normalizeScriptMeta(raw, opts = {}) {
     portSummary: '',
   };
   if (exitCodes) meta.exitCodes = exitCodes;
+  if (raw.readiness === true) meta.readiness = true;   // a node script that reads the chip's view of the run (api.readiness)
   if (configPorts) {
     meta.ports = 'config';
     meta.defaultPorts = defaultPorts || { inputs: [], outputs: [] };
