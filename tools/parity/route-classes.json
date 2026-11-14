@@ -359,6 +359,7 @@
   "POST /api/models/export-plugin": {"class": "probe", "reason": "400 name must be kebab-case"},
   "POST /api/models/promote": {"class": "probe", "reason": "400 projectDir is required"},
   "POST /api/naming/suggest": {"class": "probe", "reason": "400 prompt is required"},
+  "POST /api/prompt-check/grade": {"class": "probe", "reason": "400 requestId is required, checked before the setting and any model call"},
   "POST /api/notifications/:id/read": {"class": "probe", "reason": "NaN id, so 400 invalid notification id"},
   "POST /api/notifications/read-all": {"class": "skip", "reason": "marks every notification read (ui/server.mjs:4583)"},
   "POST /api/onboarding": {"class": "skip", "reason": "rewrites onboarding/global state (ui/server.mjs:6568)"},

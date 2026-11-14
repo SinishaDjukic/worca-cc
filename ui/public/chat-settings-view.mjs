@@ -175,6 +175,25 @@ export function collectSummariesToggle(root) {
   return { summariseCommands: cb ? cb.checked : true };
 }
 
+/** Settings › Chat "Check how clear a task prompt is" (docs/prompt-check.md): grades a task prompt's kind and clarity.
+ *  Default OFF: only a stored `true` turns it on. Saved with the Ask Worca card. */
+export function renderPromptCheckToggle({ prefs } = {}, { doc = globalThis.document } = {}) {
+  const wrap = doc.createElement('div');
+  const { row, input } = makeSwitch(doc, { label: 'Check how clear a task prompt is', checked: prefs?.promptCheck === true, inputClass: 'ask-prompt-check' });
+  input.id = 'askPromptCheck';
+  const hint = doc.createElement('small');
+  hint.className = 'hint drow-help';
+  hint.textContent = 'Detects the kind (requirement, implementation task, bug, plan…) and grades it Clear or Needs detail. A cheap model call when you pause typing; short replies and questions are skipped.';
+  wrap.append(row, hint);
+  return wrap;
+}
+
+/** collectPromptCheckToggle(root) -> the {chat} patch part for the switch (a host with no control means OFF). */
+export function collectPromptCheckToggle(root) {
+  const cb = root && typeof root.querySelector === 'function' ? root.querySelector('input.ask-prompt-check') : null;
+  return { promptCheck: cb ? cb.checked : false };
+}
+
 /** Ask Worca → Web access (docs/guardrails.md "Web access"): off by default; the allowlist is enforced by worca's server. */
 export function renderAskWebFields({ askWeb } = {}, { doc = globalThis.document } = {}) {
   const w = askWeb || { enabled: false, anyHost: false, allowedDomains: [], search: null };

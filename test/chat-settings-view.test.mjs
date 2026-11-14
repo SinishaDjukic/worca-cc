@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields } from '../ui/public/chat-settings-view.mjs';
+import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderPromptCheckToggle, collectPromptCheckToggle, renderAskWebFields } from '../ui/public/chat-settings-view.mjs';
 import { applyFlags } from '../ui/public/flags.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
@@ -84,6 +84,25 @@ test('chat settings render and round-trip, including the Chat script toggle', as
       off.querySelector('input#askSuggestions').checked = true;
       assert.deepEqual(collectSuggestionsToggle(off), { suggestions: true });
       assert.deepEqual(collectSuggestionsToggle(doc.createElement('div')), { suggestions: true }, 'a host with no control means ON');
+    } },
+    { name: 'the prompt check toggle: default off, stored true honored, label and hint, round-trips', run: () => {
+      const off = renderPromptCheckToggle({ prefs: {} }, { doc });
+      const cb = off.querySelector('input#askPromptCheck');
+      assert.ok(cb && cb.matches('input.sw-input.ask-prompt-check'), 'a switch input');
+      assert.equal(cb.checked, false, 'an absent pref is OFF');
+      assert.equal(off.querySelector('label.switch-row').textContent.trim(), 'Check how clear a task prompt is');
+      const hint = off.querySelector('small.hint.drow-help');
+      assert.equal(hint.textContent, 'Detects the kind (requirement, implementation task, bug, plan…) and grades it Clear or Needs detail. A cheap model call when you pause typing; short replies and questions are skipped.');
+      assert.doesNotMatch(off.textContent, /Improve/);
+      assert.deepEqual(collectPromptCheckToggle(off), { promptCheck: false });
+      cb.checked = true;
+      assert.deepEqual(collectPromptCheckToggle(off), { promptCheck: true });
+      const on = renderPromptCheckToggle({ prefs: { promptCheck: true } }, { doc });
+      assert.equal(on.querySelector('input#askPromptCheck').checked, true);
+      assert.equal(renderPromptCheckToggle({ prefs: { promptCheck: 'yes' } }, { doc }).querySelector('input').checked, false, 'only true is on');
+      assert.deepEqual(collectPromptCheckToggle(on), { promptCheck: true });
+      assert.deepEqual(collectPromptCheckToggle(doc.createElement('div')), { promptCheck: false }, 'a host with no control means OFF');
+      assert.deepEqual(collectPromptCheckToggle(null), { promptCheck: false });
     } },
     { name: 'commands off: the hint names the Installed tab and the plugin\'s Settings', run: () => {
       const el = renderChatSettings({ prefs: { notify: {}, channels: {} },
