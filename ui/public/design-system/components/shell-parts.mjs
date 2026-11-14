@@ -141,7 +141,8 @@ export function intentChip({ icon: ic, label, clear = {} }) {
  * @param {object} o
  * @param {{label:string, icon:string, n:number, tone?:string, attrs?:object}[]} o.items
  * @param {string} [o.label]
- * @param {boolean} [o.news]  something new just arrived: its icon shakes once (never while reduced motion is on)
+ * @param {boolean} [o.news]  something new just arrived: it carries is-news and the look shakes its icon, again every 3.5 s,
+ *   for as long as Settings › Notifications › Pulse icon says (never while reduced motion is on)
  */
 export function barStrip({ items, label = 'Your work' }) {
   return `<nav class="bar-strip"${attrs({ 'aria-label': label })}>${items.map((x) => `<button type="button" class="bar-strip-i"${attrs({ ...(x.attrs || {}), title: x.label, 'aria-label': x.label })}>${x.icon}${x.n ? countBadge({ n: x.n, tone: x.tone, corner: true }) : ''}</button>`).join('')}</nav>`;
