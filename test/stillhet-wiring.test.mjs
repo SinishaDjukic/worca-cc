@@ -211,7 +211,7 @@ test('Projects and Workspaces (slice 9): every row is wired, or not offered live
     }
     assert.match(r, /\| wired \|/, id(r));
   }
-  assert.equal(pj.filter((r) => /\| not offered live \|/.test(r)).length, 2, 'Branch names (slice 12) and the spend fact (slice 10)');
+  assert.equal(pj.filter((r) => /\| not offered live \|/.test(r)).length, 1, 'Branch names (slice 12); the spend fact is wired since slice 10 (D19)');
   for (const r of pj.filter((x) => id(x).startsWith('projects/dev-tab-'))) assert.match(r, /stopgap: lands on the project page; slice 12 gives it a home/);
 });
 
@@ -223,4 +223,31 @@ test('the prompt check Moves rows: the chip and Improve stay open, waiting for t
     assert.equal(cells.length, 4, name);
     assert.match(cells[1], /^open: waits for the owner/, name);
   }
+});
+
+test('Insights (slice 10): every Insights row is wired, or not offered live with its missing dev field and the Insights measures owner', () => {
+  const lines = doc.split('\n'), id = (r) => /^\| `([^`]*)`/.exec(r)?.[1];
+  const ins = lines.filter((l) => /^\| `(ui\/public\/stillhet\/insights\/|insights\/)/.test(l));
+  const PAGES = ['spend', 'per-task', 'budget', 'time-saved', 'value', 'ends', 'fails', 'shipped', 'throughput', 'team', 'untagged', 'shaping', 'heat'];
+  const NOT = ['why', 'review', 'autonomy', 'cache', 'merge', 'waiting'];
+  const want = [
+    'ui/public/stillhet/insights/insights.js', 'ui/public/stillhet/insights/insights-model.js',
+    ...['STANDS', 'SUBS', 'SUB', 'DIM', 'DIM_GROUPS', 'TIME', 'FILTERS', 'WHEN'].map((k) => `insights/insights-model.js › RailInsightsModel.${k}`),
+    ...['copy a link to this page', 'Download CSV', 'Tag these N tasks', 'Set a default for a project', 'Save this view', 'the team scope'].map((a) => `insights/insights.js › ${a}`),
+    ...[...PAGES, ...NOT].map((p) => `insights/insights.js › page insights/${p}`),
+  ];
+  assert.deepEqual(ins.map(id).sort(), [...want].sort(), 'the pinned Insights rows, no more and no fewer');
+  for (const r of ins) {
+    if (/\| not offered live \|/.test(r)) {
+      const m = /\| not offered live \| ([^|]*) \|$/.exec(r);
+      assert.ok(m && m[1].trim().length > 40 && /Insights measures/.test(m[1]), `${id(r)} says why and names the Insights measures owner`);
+      continue;
+    }
+    assert.match(r, /\| wired \|/, id(r));
+  }
+  assert.deepEqual(ins.filter((r) => /\| not offered live \|/.test(r)).map(id).sort(), ['insights/insights-model.js › RailInsightsModel.STANDS', ...NOT.map((p) => `insights/insights.js › page insights/${p}`)].sort());
+  for (const p of PAGES) assert.match(lines.find((l) => id(l) === `insights/insights.js › page insights/${p}`), /FIGURE_SOURCE/, p);
+  assert.match(lines.find((l) => id(l) === "projects/projects.js › This month's spend"), /\| wired \|/);
+  for (const l of lines.filter((x) => x.includes('insights/'))) assert.doesNotMatch(l, /\| (wire to|wired \(partial\)|add to the design first|new: build it) \|/, l.slice(0, 100));
+  assert.doesNotMatch(doc, /^- add to the design first: .*Insights/m, 'the four design-first lines are built');
 });

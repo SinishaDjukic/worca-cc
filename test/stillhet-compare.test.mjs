@@ -19,7 +19,8 @@ test('PARTS lists the invitation, the design switch, one whole-page cell per she
     'mk-way-updates', 'mk-way-installed', 'mk-way-for-you', 'mk-way-all', 'mk-way-shelf', 'mk-way-shelf-new-empty', 'mk-way-source', 'mk-list-loading', 'mk-list-failed',
     'mk-install-form', 'mk-remove-confirm', 'mk-setup-form', 'mk-needs-setup', 'mk-update-asks', 'mk-add-error', 'mk-not-found',
     'pj-list-loading', 'pj-list-failed', 'pj-by-project', 'pj-rename-form', 'pj-remove-confirm', 'pj-remove-owned', 'pj-locate-form', 'pj-link-remote',
-    'pj-hand-project', 'pj-hand-project-error', 'ws-hand-form', 'ws-fresh-draft', 'ws-edit', 'ws-delete-confirm', 'ws-links-open', 'pj-not-found']);
+    'pj-hand-project', 'pj-hand-project-error', 'ws-hand-form', 'ws-fresh-draft', 'ws-edit', 'ws-delete-confirm', 'ws-links-open', 'pj-not-found',
+    'in-list-loading', 'in-list-failed', 'in-team-empty', 'in-spend-person', 'in-spend-quarter', 'in-spend-year', 'in-heat-workflow', 'in-team-scope', 'in-link-copied', 'in-spend-link']);
   assert.deepEqual(PAGES, ['components.html', 'run-page.html', 'pulse.html']);
 });
 
@@ -434,4 +435,22 @@ test('Projects (slice 9): its own cells, each the same route on both sides; a ty
   const deep = deepRoutes();
   delete globalThis.window;
   assert.deepEqual(projectsCellIds(deep), [...PROJECTS_CELL_IDS, 'route-projects-billing-api', 'route-projects-ws-web-shop']);
+});
+
+test('Insights (slice 10): its own cells, each the same route on both sides; the copy-link cell has the clipboard; the deep insights/ routes are derived', async () => {
+  const { INSIGHTS_STATES, INSIGHTS_CELL_IDS, insightsCellIds, seedsOf } = await import('../tools/stillhet-compare.mjs');
+  const want = ['in-list-loading', 'in-list-failed', 'in-team-empty', 'in-spend-person', 'in-spend-quarter', 'in-spend-year', 'in-heat-workflow', 'in-team-scope', 'in-link-copied', 'in-spend-link'];
+  assert.deepEqual(INSIGHTS_STATES.map(([id]) => id), want);
+  assert.deepEqual(INSIGHTS_CELL_IDS, ['route-insights', ...want]);
+  for (const id of INSIGHTS_CELL_IDS) { const p = PARTS.find((x) => x.id === id); assert.ok(p, id); assert.equal(p.route, true, id); assert.equal(p.app.route, p.proto.route, id); }
+  const ids = PARTS.map((p) => p.id);
+  assert.equal(new Set(ids).size, ids.length, 'no id twice');
+  assert.deepEqual(seedsOf(PARTS.find((p) => p.id === 'in-spend-person'), 1280), ['[data-menu="in-of"]', '[data-pick="in-of|person:Maya"]']);
+  assert.deepEqual(seedsOf(PARTS.find((p) => p.id === 'in-link-copied'), 1280), ['[data-menu="in-more"]', '[data-menu-pick="in-more|link"]']);
+  assert.equal(PARTS.find((p) => p.id === 'in-link-copied').clipboard, true);
+  assert.equal(PARTS.find((p) => p.id === 'in-spend-link').app.route, '#insights/spend?by=client&when=this%20quarter');
+  globalThis.window = { RailShell: { routes: () => ['insights', 'insights/spend', 'insights/shaping', 'insights/heat', 'projects/billing-api', 'run/ready'] } };
+  const deep = deepRoutes();
+  delete globalThis.window;
+  assert.deepEqual(insightsCellIds(deep), [...INSIGHTS_CELL_IDS, 'route-insights-spend', 'route-insights-shaping', 'route-insights-heat']);
 });
