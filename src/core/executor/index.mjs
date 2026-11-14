@@ -1,7 +1,7 @@
 // src/core/executor/index.mjs
 // Where harness processes run. `local` (the default, and the only kind the CLI, the tests and a
 // worker itself ever have) spawns them in this process exactly as before. A remote kind
-// (`docker`, `kubernetes`) is INSTALLED by the UI server at boot — never read from the
+// (`docker`, `kubernetes`, `ecs`) is INSTALLED by the UI server at boot — never read from the
 // environment by a spawn — and routes every spawn that carries an executor scope
 // (scope.mjs) to a worker session the registry acquired for that run or chat.
 //
@@ -17,7 +17,7 @@ import { worcaHome } from '../projects.mjs';
 import { currentExecutorScope, normalizeScope } from './scope.mjs';
 import { reclaimClaudeLogin } from './login-seed.mjs';
 
-export const EXECUTOR_KINDS = Object.freeze(['local', 'docker', 'kubernetes']);
+export const EXECUTOR_KINDS = Object.freeze(['local', 'docker', 'kubernetes', 'ecs']);
 
 /** The configured executor kind: WORCA_EXECUTOR, `local` when unset or unknown. */
 export function executorKind(env = process.env) {

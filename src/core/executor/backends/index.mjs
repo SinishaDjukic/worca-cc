@@ -3,6 +3,7 @@
 //   docker       the controller talks to the Docker Engine (its own container's mounts are the
 //                template for every worker)                           — docker.mjs
 //   kubernetes   the controller creates a Pod per worker from a template — kubernetes.mjs
+//   ecs          the controller runs an ECS task per worker from a task definition — ecs.mjs
 // WORCA_EXECUTOR_BACKEND=in-process swaps in the test backend for any kind: the worker runs
 // inside the server process over a real socket, with no container at all. For trying the
 // controller/worker path on one machine, and for the server's own tests.
@@ -21,6 +22,10 @@ export async function createBackend(kind, { env = process.env, log = () => {}, h
   if (kind === 'kubernetes') {
     const mod = await import('./kubernetes.mjs').catch((err) => { throw new Error(`the kubernetes executor backend could not be loaded: ${err?.message || err}`, { cause: err }); });
     return mod.createKubernetesBackend({ env, log, ...(bootId ? { bootId } : {}) });
+  }
+  if (kind === 'ecs') {
+    const mod = await import('./ecs.mjs').catch((err) => { throw new Error(`the ecs executor backend could not be loaded: ${err?.message || err}`, { cause: err }); });
+    return mod.createEcsBackend({ env, log, ...(bootId ? { bootId } : {}) });
   }
   throw new Error(`no backend for executor kind ${kind}`);
 }

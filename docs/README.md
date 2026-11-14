@@ -66,6 +66,7 @@ Start with the [project README](../README.md) for what Worca is and a quick star
 - [Worca in a container](docker.md) — Worca and every `claude` it spawns in a disposable Linux container
 - [Worker containers](workers.md) — one controller, and a container of its own for every run and chat thread
 - [Worca on Kubernetes](kubernetes.md) — the Helm chart: a controller pod and a worker pod per run and chat thread
+- [Worca on Amazon ECS](ecs.md) — the `ecs` executor: a worker task per run and chat thread, on EC2 or Fargate
 - [Deploy on Railway](deploy-railway.md) — the container as a hosted service behind Cloudflare Access
 - [Remote access](remote-access.md) — opt-in, behind Cloudflare Access, with Worca checking the token
 - [Sign-in with your own identity provider](auth.md) — oauth2-proxy in front, Entra ID, Keycloak, Okta or Google; access by group or role; Helm and Compose

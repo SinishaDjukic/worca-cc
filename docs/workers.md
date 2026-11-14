@@ -70,10 +70,10 @@ gets one worker per image, and they end together.
 
 | Variable | Where | Meaning |
 | --- | --- | --- |
-| `WORCA_EXECUTOR` | controller | `local` (default), `docker`, `kubernetes` |
+| `WORCA_EXECUTOR` | controller | `local` (default), `docker`, `kubernetes`, `ecs` |
 | `WORCA_EXECUTOR_BACKEND=in-process` | controller | the worker runs inside the server process over a real socket, no container, with the engines installed on this machine: for trying the path on one machine, and for tests |
 | `WORCA_WORKER_PORT` | controller | the worker listener (default 4319); never publish it to people |
-| `WORCA_CONTROLLER_URL` | controller | the URL workers are told to connect to (`ws://<service>:4319`). **Required** with `docker` and `kubernetes` (the Compose overlay and the chart set it): a worker in another container cannot dial the controller's loopback, and the server refuses to start without it |
+| `WORCA_CONTROLLER_URL` | controller | the URL workers are told to connect to (`ws://<service>:4319`). **Required** with every remote executor (the Compose overlay and the chart set it): a worker in another container cannot dial the controller's loopback, and the server refuses to start without it |
 | `WORCA_WORKER_MAX` | controller | how many scopes may hold workers at once (default 20); runs are also bounded by Settings › Runs. A run's second worker (a helper job on another engine's image) never waits for the cap. When it is reached, an idle chat worker gives way; otherwise the newcomer waits `WORCA_WORKER_CAP_WAIT_MS` (10 min) and then fails as a start failure, which the run's failure policy pauses or retries |
 | `WORCA_WORKER_RELAY_PORT` | controller | the loopback port of a worker's chat relay (default 4320). Set it on the controller: it writes the port into the chat's tool configuration and hands the same value to every worker |
 | `WORCA_WORKER_ENGINE` | controller | the engine a worker gets when a spawn names none and the scope has none (default: the `run.engine` setting) |
@@ -226,3 +226,5 @@ is not implemented.
   container's mounts and user so paths match, on the network it shares with them (never the Docker
   API network; the internal one when the egress allowlist is on). See `docs/docker.md`.
 - `kubernetes` — the controller creates a Pod per worker from a template. See `docs/kubernetes.md`.
+- `ecs` — the controller runs an Amazon ECS task per worker (`RunTask`) from a task definition per engine, on EC2
+  or Fargate. See `docs/ecs.md`.

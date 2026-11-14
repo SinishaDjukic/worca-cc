@@ -32,7 +32,7 @@ async function claudeSignIn() {
  * WORCA_MOCK=0 a mock and miss ORCH_MOCK=1.
  * @param {{force?:boolean, now?:number, mock?:boolean, preflights?:Record<string,()=>Promise<object>>}} [o]
  *   preflights: a test seam replacing adapters' preflight by name. mock: every engine ready, nothing spawned.
- * Under a remote executor (WORCA_EXECUTOR=docker|kubernetes) the engines run on per-engine worker images, not
+ * Under a remote executor (WORCA_EXECUTOR=docker|kubernetes|ecs) the engines run on per-engine worker images, not
  * here: a non-Claude engine's preflight on the controller would only say the controller image lacks it. Those
  * entries read ready with `worker: true` and a reason naming the image; a worker that lacks the binary refuses the
  * spawn itself (engines/spawn.mjs missingOnWorker). Claude's sign-in is still the controller's own (its aux calls).
