@@ -12,6 +12,8 @@ import { defragSlotPair } from '../../../src/core/settings-cascade.mjs';
 import { ON_CONFLICT_MODES, RESOLUTION_CHOICES, exportWorkflow, exportWorkflowPlugin } from '../../../src/core/workflow-export.mjs';
 import { exportGraphJson, importGraphWorkflow, nodeDefaultsError, saveGraphWorkflow, workflowFileSlug } from '../../../src/core/workflow-share.mjs';
 import { GRAPH_DEFAULT_WORKFLOW, GRAPH_LEAN_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, LEAN_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, assertRunnableWorkflow, deleteWorkflow, graphNeedsRepo, listWorkflows, setWorkflowNodeDefaults, workflowNodeDefaults } from '../../../src/core/workflows.mjs';
+import { getDb } from '../../../src/core/db.mjs';
+import { workflowUsage } from '../../../src/core/workflow-usage.mjs';
 import { runsOn } from '../../../src/shared/connections.mjs';
 import { ENGINE_NAMES } from '../../../src/shared/engine-switch.mjs';
 import { AGENTS_DIR, MARKETPLACE_ID_RE, badRequest, gitMissing, isTruthy, resolveProjectDir } from '../../server.mjs';
@@ -75,6 +77,13 @@ app.get('/api/workflows', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
+});
+
+// Stillhet's Workflows figures (slice 7 D13): per workflow its tasks, merged share and running count, per node its average
+// cost and minutes. Read-only; not under /api/workflows/ so the /:id route never swallows it.
+app.get('/api/workflow-usage', (req, res) => {
+  try { res.json({ usage: workflowUsage(getDb()) }); }
+  catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err) }); }
 });
 
 app.get('/api/workflows/:id', async (req, res) => {

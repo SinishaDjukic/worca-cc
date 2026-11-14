@@ -302,6 +302,7 @@ The instance then runs an unreleased image until you `upgrade` it to a release a
 | GitHub App key, new or rotated | `base64 < key.pem \| tr -d '\n' \| node tools/railway/worca-railway.mjs set mydeploy WORCA_GH_APP_KEY_B64 --yes` |
 | Tokens instead of an App | `set … GH_TOKEN` (or the read/write pair), then `unset … WORCA_GH_APP_ID` and the other `WORCA_GH_APP_*` |
 | Limit what can be cloned | `printf %s 'github.com/acme/*' \| node tools/railway/worca-railway.mjs set mydeploy WORCA_CLONE_ALLOW --yes` |
+| Design's limits and previews | `set … WORCA_DESIGN_MAX_BUILDERS` (Build fast's agents, `up to 6` here), `WORCA_DESIGN_MAX_AGENTS` (the server's agents, 24) or `WORCA_DESIGN_PREVIEW_INLINE` (`0` stops the preview embedding its files); see [Design → Hosted](design.md#hosted) |
 | Several changes, one restart | `--skip-deploys` on each `set` / `unset`, then `redeploy mydeploy --yes` |
 
 After setting a secret, **seal** it in the Railway dashboard (the variable's menu). `status` marks a

@@ -87,9 +87,12 @@ export function agentIdentityFor(person, env = process.env, { file = null } = {}
 
 /** Give one run's own folder (its store pipelines/<run> dir, runs/<id>) to the agent user of the
  *  work it belongs to: `currentOwner()` inside a run (agent-user.mjs claimForAgent). Throws when `dir` is a link or a
- *  folder another user made first (1.1): the run must not go on in it. */
-export function claimRunDir(dir, { owner = currentOwner(), env = process.env, file = null } = {}) {
-  claimForAgent(dir, agentIdentityFor(owner, env, { file }));
+ *  folder another user made first (1.1): the run must not go on in it. `mode` and `sharedFallback` are for a design's
+ *  folders (runs pass neither). `sharedFallback` takes effect only when no pool is configured (`agentPool(env)` is
+ *  null: every agent is the one shared agent user). Under a pool, an identity without a run group (no owner, 'local',
+ *  a pool without run groups) is left as it is: the shared group would hand the folder to every pool user's agent. */
+export function claimRunDir(dir, { owner = currentOwner(), env = process.env, file = null, mode, sharedFallback = false } = {}) {
+  claimForAgent(dir, agentIdentityFor(owner, env, { file }), { mode, sharedFallback: sharedFallback && !agentPool(env) });
 }
 
 /** A log-safe reason for a failed share: the error's string `code`, else 'UNKNOWN'. Never the message, which can carry

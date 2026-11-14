@@ -141,3 +141,17 @@ test('Tasks (slice 5): every Tasks row is wired, new: built, or not offered live
     assert.match(cap, new RegExp('\\| ' + what.replace(/[()]/g, '\\$&') + '[^\\n]*\\| wired \\|'), what);
   }
 });
+
+test('Workflows (slice 7): every Workflows row is wired, except the Team way, which says why it is not offered live', () => {
+  const wf = doc.split('\n').filter((l) => /^\| `(ui\/public\/stillhet\/workflows\/|workflows\/)/.test(l));
+  assert.ok(wf.length >= 6, `the Workflows rows are read (${wf.length})`);
+  for (const r of wf) {
+    if (r.includes('› the Team way`')) {
+      const m = /\| not offered live \| ([^|]*) \|$/.exec(r);
+      assert.ok(m && m[1].trim().length > 40, `the Team way says why: ${r.slice(0, 100)}`);
+      continue;
+    }
+    assert.match(r, /\| wired \|/, r.slice(0, 100));
+  }
+  assert.ok(doc.includes('| `design-system/components/run-state.mjs › open the workflow` | wired |'), 'open the workflow from a task');
+});

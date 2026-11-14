@@ -5,7 +5,7 @@
 | `gate.pages` | Every Rail page passes its sweeps in every case, at its widths, in both themes | A page is checked by running it | worca-sweep |
 | `gate.controls` | Every control acts, or is disabled and says why | No dead controls | click-check |
 | `gate.new-code` | New UI code that skips the library fails npm test; old pages shrink by a ratchet | The design system has force | rail-gate |
-| `gate.docs` | Docs, catalog, library and gallery agree | One source, no drift | rail-docs |
+| `gate.docs` | Docs, catalog, library and gallery agree; every public export is a component, logic, an element found by need, or internal | One source, no drift | rail-docs |
 | `gate.colour` | Nothing wears a colour Rail does not have (no blue, no gold: running is ink); readable text holds 4.5:1 (3:1 large); every state's ring holds 3:1, in both themes | Colour means state, and everyone can read it | colour-check |
 
 ## The checks
@@ -18,6 +18,8 @@ The one table: each check, its command, when it runs and the widths it owes. Fro
 | `rail-gate` | `node --test test/rail-gate.test.mjs` | Every change to UI code; in `npm test` | none |
 | `rail-docs` | `node --test test/rail-docs.test.mjs` | Every change to a rule, the catalog or the library; in `npm test` | none |
 | Run page's model | `node --test test/run-page-model.test.mjs` | A change to the run page's cases; in `npm test` | none |
+| `rail-default` | `node --test test/rail-default.test.mjs` | A change to a pattern, `featureKinds` or `build.md`; in `npm test` | none |
+| `rail-look-options` | `node --test test/rail-look-options.test.mjs` | Every change to the library; in `npm test` | none |
 | `settings-sentences` | `node G/settings-sentences.mjs` | A change to Settings' model | none |
 | `ds-check`, with `align-check` | `node G/ds-check.mjs` | A change to a Rail page, inside its run | 900, 400 |
 | `handover-check` | `node G/handover-check.mjs` | A change to anything that sends to Chat | 1280 |
@@ -33,7 +35,7 @@ The one table: each check, its command, when it runs and the widths it owes. Fro
 | The audit by looking | No command: open every control and judge the page as a person would | Once per page, after it is built, before review | wide, narrow |
 | A person's review | The step a gate cannot do: nothing pushes or merges without it | After the audit by looking | wide, narrow |
 
-`npm test` holds only the first four. A sweep runs in both themes: no sideways scroll, no clipped text without a tooltip,
+`npm test` holds the library tests, `rail-gate`, `rail-docs`, the run page's model, `rail-default` and `rail-look-options` (the first six), and the wiring test. A sweep runs in both themes: no sideways scroll, no clipped text without a tooltip,
 no overlaps, every section on the text edge, contrast 4.5:1, every menu and dialog inside the window, no page jump on any
 click, the top bar one row, one way back at a time (`‹ Settings` only while the side menu is hidden); and every control does
 something. `ds-check`: everything on the page comes from the design system. `align-check`, on a settings tab: one left edge

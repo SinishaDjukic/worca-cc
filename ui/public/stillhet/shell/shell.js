@@ -28,7 +28,7 @@
   const placeMod = (v) => window.RailPlaces[v];
   // The live kind (D23): a place not yet on live data draws its empty look, never seeded rows, until its slice wires it.
   const LIVE = !!window.RailWorld?.live;
-  const NOT_LIVE = { insights: 'insights', workflows: 'workflows', marketplace: 'plugins', requirements: 'requirements' };
+  const NOT_LIVE = { insights: 'insights', marketplace: 'plugins', requirements: 'requirements' };   // Workflows is live since slice 7
   let liveTask = { title: '' };   // the live task a row opened: its page shows its title and no task details yet
   const el = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
 

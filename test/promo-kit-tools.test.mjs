@@ -88,6 +88,15 @@ test('browser proxy: flag on -> proxy.server is the local proxy URL; flag off ->
   assert.equal(chromeProxy({ WORCA_CORPORATE_PROXY_URL: 'http://127.0.0.1:5', NO_PROXY: '*' }), null, 'NO_PROXY=* means everything goes direct');
 });
 
+test('chromeArgs: a caller can drop file access and add its own flags (the Design MP4 capture)', async () => {
+  const { chromeArgs } = await import('../assets/promo-kit/tools/cdp.mjs');
+  const FILES = '--allow-file-access-from-files';
+  assert.ok(chromeArgs({ dir: '/tmp/x', platform: 'linux' }).includes(FILES), 'the promo film still reads its own files');
+  const held = chromeArgs({ dir: '/tmp/x', platform: 'linux', fileAccess: false, extra: ['--host-resolver-rules=MAP * ~NOTFOUND'] });
+  assert.equal(held.includes(FILES), false);
+  assert.ok(held.includes('--host-resolver-rules=MAP * ~NOTFOUND'));
+});
+
 test('kit.js F.SFX and tools/sfx.mjs list the same sound names', () => {
   const kit = readFileSync(fileURLToPath(new URL('../assets/promo-kit/film/kit.js', import.meta.url)), 'utf8');
   const m = /F\.SFX = \[([\s\S]*?)\];/.exec(kit);
@@ -257,6 +266,19 @@ test('exportFilm renders every frame to an H.264 MP4 at 60 fps and muxes the aud
     const probe = spawnSync(FFMPEG, ['-hide_banner', '-i', out], { encoding: 'utf8' }).stderr;
     assert.match(probe, /Audio: aac/);
     assert.ok(progress.length >= 1 && progress.at(-1).done === 60);
+  } finally { rmSync(promo, { recursive: true, force: true }); }
+});
+
+test('exportFilm stops at its signal with an AbortError and no file; every browser goes through the caller\'s hook', { skip: noBoth }, async () => {
+  const promo = fixtureFilm(3, SLIDE);
+  try {
+    const out = join(promo, 'video', 'stopped.mp4');
+    const ac = new AbortController();
+    const hooked = [];
+    await assert.rejects(exportFilm({ html: join(promo, 'film', 'index.html'), out, scale: 1, workers: 2, crf: 30, preset: 'ultrafast',
+      chrome: CHROME, ffmpeg: FFMPEG, signal: ac.signal, onBrowser: (b) => { hooked.push(typeof b.on); }, onProgress: () => ac.abort() }), { name: 'AbortError' });
+    assert.equal(existsSync(out), false);
+    assert.ok(hooked.length >= 2 && hooked.every((t) => t === 'function'), `the probe and each worker: ${hooked}`);
   } finally { rmSync(promo, { recursive: true, force: true }); }
 });
 

@@ -1380,10 +1380,11 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 /* A quiet icon button that stays on (Keep in view on a task's head) shows it. */
 .btn.btn-quiet.btn-icon[aria-pressed="true"]{color:var(--ink);background:var(--hover);}
 
-/* A top-bar action with news (Pulse, when something new arrives): its icon shakes once, its badge stays. */
-@keyframes tb-shake{0%,100%{transform:rotate(0);}15%{transform:rotate(-14deg);}30%{transform:rotate(12deg);}45%{transform:rotate(-9deg);}60%{transform:rotate(6deg);}75%{transform:rotate(-3deg);}}
-.topnav-act.is-news > svg{transform-origin:50% 20%;animation:tb-shake 700ms var(--ease) 1;}
-@media (prefers-reduced-motion: reduce){ .topnav-act.is-news > svg{animation:none;} }
+/* Pulse with news (something new arrived): its icon shakes (700 ms), again every 3.5 s, for as long as
+   Settings › Notifications › Pulse icon says (pulse.js ends is-news); its badge stays. Only Pulse loops. */
+@keyframes tb-shake{0%,20%,100%{transform:rotate(0);}3%{transform:rotate(-14deg);}6%{transform:rotate(12deg);}9%{transform:rotate(-9deg);}12%{transform:rotate(6deg);}15%{transform:rotate(-3deg);}}
+.pz-pulse-b.is-news > svg{transform-origin:50% 20%;animation:tb-shake 3.5s var(--ease) infinite;}
+@media (prefers-reduced-motion: reduce){ .pz-pulse-b.is-news > svg{animation:none;} }
 
 /* ---- small motion (docs/rail/motion.md): each says what changed, none under reduced motion ---- */
 /* a changed mark's ring fills to its stage in turn, then the mark pulses once */

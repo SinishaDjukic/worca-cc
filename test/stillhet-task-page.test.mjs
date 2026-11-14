@@ -194,3 +194,9 @@ test('the PR\'s own facts reach the page: its checks entry\'s counts', () => {
 test('a plan waiting for approval has no reason line under its word (the prototype\'s plan case), and its row line stays the list\'s', () => {
   assert.equal(taskPageOf({ ...TASK_DETAILS.plan, row: { ...TASK_DETAILS.plan.row, detail: 'Waits for your OK on the plan' } }).detail, '');
 });
+
+test('slice 7 D17: taskPageOf names the task\'s workflow from stepper.template, and null without one', () => {
+  const input = { ...TASK_DETAILS.approved, state: { ...TASK_DETAILS.approved.state, stepper: { template: { id: 'wf_full', name: 'Full' } } } };
+  assert.deepEqual(taskPageOf(input, { now: NOW }).workflow, { id: 'wf_full', name: 'Full' });
+  assert.equal(taskPageOf({ ...TASK_DETAILS.approved, state: { ...TASK_DETAILS.approved.state, stepper: null } }, { now: NOW }).workflow, null);
+});

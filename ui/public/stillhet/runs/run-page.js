@@ -336,7 +336,9 @@ function viewDialogHtml(v) {
   const node = ui.graphNode && g.stages.flatMap((st) => st.nodes).find((n) => n.key === ui.graphNode);
   const step = node ? v.logs.filter((l) => l.step === node.name || l.step.endsWith(' · ' + node.name)) : [];
   const drawer = node ? `<div class="wg-drawer"><div class="wg-drawer-h"><span>${esc(node.name)}</span><span>${logsShow() ? R.button({ label: 'Open in Logs', attrs: { 'data-logstep': step[0] ? step[0].step : node.name, 'data-key': 'drawer-logs' } }) : ''}${R.button({ label: 'Close the log', kind: 'quiet', attrs: { 'data-node': node.key, 'data-key': 'drawer-close' } })}</span></div>${step.length ? R.logLines({ label: node.name + ' log', lines: step.map((l) => ({ t: l.t, from: l.from, lvl: l.lvl, text: l.sum })) }) : R.emptyState({ title: 'Nothing here yet', text: 'This step has not started.' })}</div>` : '';
-  const tools = `<div class="wg-tools">${R.segmented({ label: 'Zoom', hook: 'zoom', items: [{ id: 'small', label: 'Small', pressed: ui.graphZoom === 'small' }, { id: 'normal', label: 'Normal', pressed: !ui.graphZoom }, { id: 'large', label: 'Large', pressed: ui.graphZoom === 'large' }] })}</div>`;
+  // the task's workflow opens in Workflows (slice 7 D17): a quiet way from what ran to what it ran on
+  const open = v.workflow ? R.button({ label: 'Open in Workflows', kind: 'quiet', attrs: { 'data-open-wf': v.workflow.id, 'data-key': 'graph-open-wf', title: `${v.workflow.name}, in Workflows` } }) : '';
+  const tools = `<div class="wg-tools">${R.segmented({ label: 'Zoom', hook: 'zoom', items: [{ id: 'small', label: 'Small', pressed: ui.graphZoom === 'small' }, { id: 'normal', label: 'Normal', pressed: !ui.graphZoom }, { id: 'large', label: 'Large', pressed: ui.graphZoom === 'large' }] })}${open}</div>`;
   return viewDialog('Workflow', tools + R.workflowGraph({ stages, end: g.end, zoom: ui.graphZoom }) + drawer);
 }
 // A step's form (docs/rail/forms.md): its sentence, one field or choice, a foot that names what happens.
@@ -1092,6 +1094,7 @@ document.addEventListener('click', (e) => {
   if (d.stack && LIVE_PAGE()) { const x = (v0().tabData.stacks || []).find((y) => y.id === d.stack); if (!x) return; ui.svcBusy = 'stack:' + x.id; pendingFocus = 'stack:' + x.id; render(); liveTool(/^(starting|running)$/.test(x.status) ? 'stack-stop' : 'stack-start', { stackId: x.id, name: x.name }, 'stack:' + x.id); return; }
   if (d.stack) { const k = 'stack:' + d.stack; const on = !ui.services[k]; const x = (v0().tabData.stacks || []).find((y) => y.id === d.stack); ui.svcBusy = k; pendingFocus = k; render(); setTimeout(() => { ui.svcBusy = ''; ui.services = Object.assign({}, ui.services, { [k]: on }); toast((on ? 'Started ' : 'Stopped ') + (x ? x.name : 'the stack')); pendingFocus = k; render(); }, 500); return; }
   if (d.viewclose !== undefined) { ui.dialog = ''; ui.doc = null; ui.graphNode = null; pendingFocus = 'act-main'; render(); return; }
+  if (d.openWf !== undefined) { ui.dialog = ''; ui.graphNode = null; render(); window.RailShell?.go('workflows/workflow:' + d.openWf); return; }   // D17
   if (d.node !== undefined) { ui.graphNode = ui.graphNode === d.node ? null : d.node; pendingFocus = 'node:' + d.node; render(); document.querySelector('.wg-drawer')?.scrollIntoView({ block: 'nearest' }); return; }
   if (d.zoom) { ui.graphZoom = d.zoom === 'normal' ? '' : d.zoom; pendingFocus = 'zoom:' + d.zoom; render(); return; }
   if (d.graph !== undefined) { ui.dialog = 'graph'; ui.graphNode = null; pendingFocus = 'vd-close'; render(); return; }

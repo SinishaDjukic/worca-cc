@@ -927,7 +927,7 @@
       flow: flowOf(c, stateId, liveCtx), state: stateId, event: EVENT_OF(c, stateId, liveCtx), runFlow: R.runFlow(liveCtx), liveRun: runStages.findIndex((x) => stageState(x.subs) === 'live' && x.member && /^(Working|Starting)$/.test(x.member.word)), formCtx: liveCtx,
       hasSetup: LP ? !!LP.setup : !c.noSetup && !runStages.length, dependents: c.dependents || 0, heldBy: c.heldBy || '', hosted: LP ? !!(LP.actions && !LP.actions.enabled) : !!c.hosted, baseMoved: !!c.baseMoved, independent: !!c.independent, reqsLeft: left, reqsCheck: !!c.reqsCheck, holdIndex: c.k ? c.k - 1 : -1,
       // live: the log, agents, sessions and step usage are the task's own (its log, steps, sessions and telemetry)
-      logs: logsGone ? [] : LP ? LP.log || [] : logsOf(c), agents: logsGone ? [] : LP ? LP.agents || [] : agentsOf(c), sessions: logsGone ? [] : LP ? LP.sessions || [] : sessionsOf(c), usage: LP ? LP.usage || [] : usageOf(c), graph: graphOf(c, ui), agentsUnknown: !!c.agentsUnknown, isWorkspace: !!(c.repos && c.repos.length), docsHere: !hasChanges, outlineN, outlineRuns: ui.outline || RUNS, rounds: c.liveId ? {} : DETAIL.rounds,
+      logs: logsGone ? [] : LP ? LP.log || [] : logsOf(c), agents: logsGone ? [] : LP ? LP.agents || [] : agentsOf(c), sessions: logsGone ? [] : LP ? LP.sessions || [] : sessionsOf(c), usage: LP ? LP.usage || [] : usageOf(c), graph: graphOf(c, ui), workflow: c.workflow || null, agentsUnknown: !!c.agentsUnknown, isWorkspace: !!(c.repos && c.repos.length), docsHere: !hasChanges, outlineN, outlineRuns: ui.outline || RUNS, rounds: c.liveId ? {} : DETAIL.rounds,
       tabData: Object.assign({}, DETAIL, seed ? { plan: seed.plan, docBody: Object.assign({}, DETAIL.docBody, { 'plan.md': '## The plan\n' + seed.plan.map((t) => '- ' + t).join('\n') }) } : {}, { files, decisions: decisionsOf(c, runStages) },
         LP ? { fileMeta: LP.changes?.fileMeta || {}, hunks: LP.changes?.hunks || {}, comments: LP.comments || {}, artifacts: LP.docs || [], services: LP.actions?.services || [], builtins: LP.actions?.builtins || [], stacks: LP.actions?.stacks || [], members: [], noChangeMembers: [] } : {},
         // live: what dev does not give the page yet is empty, so its row hides (never the design's skills, memory, worktree or cost lines)
@@ -1000,7 +1000,7 @@
       startedWord: at ? 'Started ' + at.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ', ' + at.toTimeString().slice(0, 5) : '',
       detail: page.detail || '', why: page.why || [], failure: page.failure || null, review: page.review || { roles: [], issues: [] }, stages, spent: { mins: page.mins || 0, cost: page.cost || 0 }, budget: page.cap || null, movedFrom: base.id, liveId: page.id,
       // no live decisions source yet: the design's sample decisions never reach a real task
-      decisions: [], failedChecks: page.failedChecks || 0, stageCost: Object.fromEntries((page.stages || []).map((x) => [x.key, x.costUsd || 0])) });
+      decisions: [], failedChecks: page.failedChecks || 0, workflow: page.workflow || null, stageCost: Object.fromEntries((page.stages || []).map((x) => [x.key, x.costUsd || 0])) });
   }
   // The live kind's group page (#run/group:GID, D5): dev's run group (GET /api/run-groups), its members in stack order,
   // each drawn as its own store task's case. Its one action merges the next PR in order, or fixes the first failing one,

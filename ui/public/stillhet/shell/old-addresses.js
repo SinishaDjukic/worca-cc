@@ -22,7 +22,18 @@
     ['plugins', 'marketplace'],
     ['guardrails', 'settings/guardrails'],
     ['composer', 'workflows'], ['agents', 'workflows', 'way', '', '~agents'], ['scripts', 'workflows', 'way', '', '~scripts'], ['agent-create', 'workflows', 'way', '', '~agents'],
+    ['workflows', 'workflows', 'dev-workflows'],   // dev's own Workflows forms (app.js routeWorkflows); Stillhet's are never touched
   ];
+  // 'dev-workflows' (slice 7 D18): dev's ten forms, to fixed places (it never asks `has`). A bare #workflows, a ~way and a
+  // kind:id route are Stillhet's own and stay as they are.
+  var STILLHET_WF = /^(~|(workflow|agent|script|edit):)/;
+  function devWorkflows(segs) {
+    if (!segs.length || STILLHET_WF.test(segs[0])) return null;
+    var head = segs[0], key = segs[1];
+    if (head === 'agents') return !key || key === 'new' ? 'workflows/~agents' : 'workflows/agent:' + key;
+    if (head === 'scripts') return !key || key === 'new' ? 'workflows/~scripts' : 'workflows/script:' + key;
+    return 'workflows/workflow:' + head;
+  }
   var dec = function (x) { try { return decodeURIComponent(x); } catch (e) { return x; } };
   var workflowsHas = function (a) { var w = typeof window !== 'undefined' && window.RailPlaces && window.RailPlaces.workflows; return !!(w && w.has && w.has(a)); };
 
@@ -41,6 +52,7 @@
       // dev's #group/ID is a run group, or a Run-after chain keyed by its first run (p:PID) or its ticket (t:ID)
       if (row[2] === 'group' && segs.length) { var gid = dec(segs[0]); to = /^p:/.test(gid) ? 'run/' + gid.slice(2) : /^t:/.test(gid) ? 'schedules' : 'run/group:' + gid; }
       if (row[2] === 'way' && has(row[4])) to += '/' + row[4];
+      if (row[2] === 'dev-workflows') { to = devWorkflows(segs); if (!to) return null; }
       return { hash: '#' + to, pulse: row[3] || '' };
     }
     return null;

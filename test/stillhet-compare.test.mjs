@@ -13,7 +13,9 @@ test('countDiffPixels: 0 for equal buffers, 1 for one changed channel, w*h for a
 
 test('PARTS lists the invitation, the design switch, one whole-page cell per shell route and one per non-default state', () => {
   assert.deepEqual(PARTS.map((p) => p.id), ['invitation', 'design-switch', ...ROUTES.map((r) => `route-${r}`), ...STATES.map(([s]) => `state-${s}`), ...PULSE_STATES.map(([s]) => `state-${s}`), ...CHAT_STATES.map(([s]) => `state-${s}`),
-    'state-task-loading-run', 'state-task-failed-run', 'state-task-gone-run', 'action-failed-run', 'terminal-chat']);
+    'state-task-loading-run', 'state-task-failed-run', 'state-task-gone-run', 'action-failed-run', 'terminal-chat',
+    'wf-way-agents', 'wf-way-scripts', 'wf-way-drafts-empty', 'wf-way-for-you', 'wf-way-team-empty', 'wf-list-loading', 'wf-list-failed', 'wf-canvas', 'wf-canvas-picked', 'wf-draft',
+    'wf-delete-confirm', 'wf-export-form', 'wf-export-plugin', 'wf-import-scripts', 'wf-agent-draft', 'wf-not-found', 'wf-fresh', 'run-graph-open-workflow']);
   assert.deepEqual(PAGES, ['components.html', 'run-page.html', 'pulse.html']);
 });
 
@@ -361,4 +363,29 @@ test('TASKS_CELL_IDS (Stillhet Tasks): every Tasks cell is a part or a shown dee
   const all = TASKS_CELL_IDS.flatMap((part) => CELLS.map(([theme, width]) => ({ part, theme, width })));
   assert.deepEqual(tasksCoverage(all), []);
   assert.deepEqual(tasksCoverage(all.filter((c) => !(c.part === 'route-chat-c18' && c.width === 360))), ['route-chat-c18 light 360']);
+});
+
+test('Workflows (slice 7): WORKFLOWS_CELL_IDS lists every Workflows state and the whole page; the deep workflows/ routes are derived; no id collides', async () => {
+  const { WORKFLOWS_STATES, WORKFLOWS_CELL_IDS, workflowsCellIds } = await import('../tools/stillhet-compare.mjs');
+  const want = ['wf-way-agents', 'wf-way-scripts', 'wf-way-drafts-empty', 'wf-way-for-you', 'wf-way-team-empty', 'wf-list-loading', 'wf-list-failed', 'wf-canvas', 'wf-canvas-picked', 'wf-draft',
+    'wf-delete-confirm', 'wf-export-form', 'wf-export-plugin', 'wf-import-scripts', 'wf-agent-draft', 'wf-not-found', 'wf-fresh', 'run-graph-open-workflow'];
+  assert.deepEqual(WORKFLOWS_STATES.map(([id]) => id), want);
+  assert.deepEqual(WORKFLOWS_CELL_IDS, ['route-workflows', ...want]);
+  for (const id of WORKFLOWS_CELL_IDS) {
+    const p = PARTS.find((x) => x.id === id);
+    assert.ok(p, id); assert.equal(p.route, true, id); assert.equal(p.app.route, p.proto.route, id);
+  }
+  const ids = PARTS.map((p) => p.id);
+  assert.equal(new Set(ids).size, ids.length, 'no id twice');
+  assert.ok(!WORKFLOWS_CELL_IDS.some((id) => id.startsWith('state-')), 'no Workflows id collides with a state- id');
+  globalThis.window = { RailShell: { routes: () => ['workflows', 'workflows/workflow:default', 'workflows/~agents', 'run/ready', 'workflows/agent:planner'] } };
+  const deep = deepRoutes();
+  delete globalThis.window;
+  assert.deepEqual(workflowsCellIds(deep), [...WORKFLOWS_CELL_IDS, 'route-workflows-workflow-default', 'route-workflows-agents', 'route-workflows-agent-planner']);
+  assert.match(PARTS.find((p) => p.id === 'wf-list-failed').app.route, /^\?state=failed#workflows$/);
+  const { seedsOf } = await import('../tools/stillhet-compare.mjs');
+  const fresh = PARTS.find((p) => p.id === 'wf-fresh');
+  assert.deepEqual(seedsOf(fresh, 360), ['#mbar-menu', '#bar-head [data-bar-new="place"]', '[data-menu-pick="bar-new|hand"]'], 'narrow: the drawer opens first');
+  assert.deepEqual(seedsOf(fresh, 1280), ['#bar-head [data-bar-new="place"]', '[data-menu-pick="bar-new|hand"]']);
+  assert.deepEqual(seedsOf(PARTS.find((p) => p.id === 'terminal-chat'), 360), ['#route-chat [data-terminal]'], 'a plain seed is the same at every width');
 });

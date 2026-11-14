@@ -5,6 +5,8 @@
 // SANITISED (home paths, uuids, message/tool/agent ids, timestamps, secrets) and
 // written to test/fixtures/ask/<name>.jsonl + <name>.meta.json. Re-running
 // replaces the set. Spends money (haiku, < $0.30) and needs `claude` 2.1.239.
+// Design P2 probes (recipe 'design': R1 long Write chunking, R17 overwrite, R18
+// edit splitting) run only by name with --only, and default to test/fixtures/design.
 //
 //   node --disable-warning=ExperimentalWarning tools/ask-capture-fixtures.mjs [--only <name>] [--model <id>] [--out <dir>]
 //
@@ -81,6 +83,111 @@ const mainToolUses = (frames) => frames.filter((f) => f.type === 'assistant' && 
 const toolResult = (frames, id) => frames.find((f) => f.type === 'user' && (f.parent_tool_use_id ?? null) === null
   && Array.isArray(f.message?.content) && f.message.content.some((c) => c?.type === 'tool_result' && c.tool_use_id === id));
 const lastResult = (frames) => [...frames].reverse().find((f) => f.type === 'result');
+const resultText = (content) => (typeof content === 'string' ? content
+  : Array.isArray(content) ? content.filter((x) => x?.type === 'text').map((x) => x.text).join('') : null);
+
+// ── Design P2 probe (R1, R17, R18) ─────────────────────────────────────────
+// recipe 'design': a builder-shaped spawn in a scratch folder, never part of a bare capture (selectScenarios).
+// The six C-2 builder rules, as the design-many-edits probe gives them (a failed R18 probe tightens rule 1 here first).
+const DESIGN_BUILDER_RULES = [
+  '1. Write `index.html` in one `Write`, top-down in visual order, one root.',
+  '2. Then `style.css`.',
+  '3. Then `script.js` if the plan asks.',
+  '4. Asset URLs relative to work/ (`assets/x.png`).',
+  '5. No external URLs.',
+  '6. End with one line, used as the `.crew.json` summary.',
+];
+const DESIGN_TOOLS = ['Read', 'Write', 'Edit', 'Glob', 'Grep'];
+const DESIGN_SYSTEM_PROMPT = 'You build one web page section. Follow the request exactly.';
+// The input field whose first byte is "first content" for the R1 latency.
+const CONTENT_FIELD = { Write: 'content', Edit: 'new_string' };
+
+/** Whole Write/Edit calls per `file_path` on the main thread (R18), each tool_use id counted once. */
+function writesPerPathOf(frames) {
+  const out = {};
+  const seen = new Set();
+  for (const t of mainToolUses(frames)) {
+    if ((t.name !== 'Write' && t.name !== 'Edit') || seen.has(t.id)) continue;
+    seen.add(t.id);
+    const p = t.input?.file_path;
+    if (typeof p !== 'string' || !p) continue;
+    const row = (out[p] ??= { write: 0, edit: 0 });
+    if (t.name === 'Write') row.write += 1; else row.edit += 1;
+  }
+  return out;
+}
+
+/**
+ * How each main-thread tool_use block's input streamed in (R1). `arrivals[i]` is the ms at which `frames[i]` arrived.
+ * `spreadRatio = (t90 - t10) / blockMs`, where t10 and t90 are the arrivals by which 10% and 90% of the block's BYTES
+ * had arrived: byte weighting, because an early `file_path` chunk followed by a held value looks gradual by chunk
+ * count (L2.18). Empty chunks do not count. `firstContentMs` is the arrival of the first byte of the content value
+ * (`Write.content`, `Edit.new_string`). A block cut off before its stop ends at its last chunk.
+ * @param {object[]} frames  raw stream-json frames
+ * @param {number[]} [arrivals]
+ * @returns {{tools:{toolUseId:string|null,name:string|null,chunks:number,bytes:number,blockMs:number|null,largestGapMs:number|null,spreadRatio:number|null,firstContentMs:number|null}[], writesPerPath:Record<string,{write:number,edit:number}>}}
+ */
+export function toolInputChunkStats(frames, arrivals = []) {
+  const tools = [];
+  const open = new Map();                                            // content-block index → its block, while it streams
+  const at = (i) => (Number.isFinite(arrivals[i]) ? arrivals[i] : null);
+  const finish = ({ rec, startMs, chunks }, endMs) => {
+    const bytes = chunks.reduce((n, c) => n + c.bytes, 0);
+    rec.chunks = chunks.length;
+    rec.bytes = bytes;
+    const marks = [startMs, ...chunks.map((c) => c.ms), endMs];
+    if (!marks.every(Number.isFinite)) return;                       // no arrival times: counts only
+    rec.blockMs = endMs - startMs;
+    rec.largestGapMs = marks.slice(1).reduce((g, ms, i) => Math.max(g, ms - marks[i]), 0);
+    if (bytes > 0) {
+      let cum = 0;
+      let t10 = null;
+      let t90 = null;
+      for (const c of chunks) {
+        cum += c.bytes;
+        if (t10 === null && cum * 10 >= bytes) t10 = c.ms;
+        if (t90 === null && cum * 10 >= bytes * 9) t90 = c.ms;
+      }
+      rec.spreadRatio = rec.blockMs > 0 ? (t90 - t10) / rec.blockMs : 0;
+    }
+    const field = CONTENT_FIELD[rec.name];
+    if (field) {
+      const re = new RegExp(`"${field}"\\s*:\\s*"[^"]`);
+      let text = '';
+      for (const c of chunks) { text += c.text; if (re.test(text)) { rec.firstContentMs = c.ms; break; } }
+    }
+  };
+  frames.forEach((f, i) => {
+    if (f?.type !== 'stream_event' || (f.parent_tool_use_id ?? null) !== null) return;
+    const ev = f.event;
+    if (ev?.type === 'content_block_start' && ev.content_block?.type === 'tool_use') {
+      const rec = { toolUseId: ev.content_block.id ?? null, name: ev.content_block.name ?? null, chunks: 0, bytes: 0, blockMs: null, largestGapMs: null, spreadRatio: null, firstContentMs: null };
+      tools.push(rec);
+      open.set(ev.index, { rec, startMs: at(i), chunks: [] });
+    } else if (ev?.type === 'content_block_delta' && ev.delta?.type === 'input_json_delta') {
+      const b = open.get(ev.index);
+      const s = typeof ev.delta.partial_json === 'string' ? ev.delta.partial_json : '';
+      if (b && s) b.chunks.push({ ms: at(i), bytes: Buffer.byteLength(s, 'utf8'), text: s });
+    } else if (ev?.type === 'content_block_stop' && open.has(ev.index)) {
+      finish(open.get(ev.index), at(i));
+      open.delete(ev.index);
+    }
+  });
+  for (const b of open.values()) finish(b, b.chunks.length ? b.chunks[b.chunks.length - 1].ms : b.startMs);
+  return { tools, writesPerPath: writesPerPathOf(frames) };
+}
+
+/** R1 verdict for one tool's stats: spread 0.5 or more is gradual, less is coarse, no bytes is unknown. */
+export function probeVerdict(toolStat) {
+  const r = toolStat?.spreadRatio;
+  if (typeof r !== 'number' || !Number.isFinite(r)) return 'unknown';
+  return r >= 0.5 ? 'gradual' : 'coarse';
+}
+
+/** `--only` picks that one scenario; a bare capture takes every scenario but the paid design probes. */
+export function selectScenarios(all, { only = null } = {}) {
+  return only ? all.filter((s) => s.name === only) : all.filter((s) => s.recipe !== 'design');
+}
 
 export const SCENARIOS = [
   { name: 'plain-text', prompt: 'Reply with exactly the single word: pong',
@@ -112,16 +219,34 @@ export const SCENARIOS = [
     check: (f, meta) => { const r = lastResult(f); if (!r || !/No conversation found/.test((r.errors || []).join(' '))) throw new Error('expected the No-conversation-found result');
       if (meta.exitCode !== 1 || !meta.error) throw new Error('expected a rejection with exit code 1');
       if (f.some((x) => x.type === 'assistant')) throw new Error('an assistant frame means a model call was made'); } },
+  // R1: does a long Write.content arrive gradually? The verdict is in meta.toolInput.
+  { name: 'design-long-write', recipe: 'design', timeoutMs: 300_000, maxBudgetUsd: 2,
+    prompt: 'Use the Write tool once to create page.html in the current folder: a complete landing page of at least 20000 characters with one root element and no external URLs. Then reply with one line.',
+    check: (f) => { const sizes = mainToolUses(f).filter((t) => t.name === 'Write' && typeof t.input?.content === 'string').map((t) => t.input.content.length);
+      if (!sizes.some((n) => n >= 15000)) throw new Error(`expected a Write whose content has at least 15000 characters, got [${sizes}]`); } },
+  // R17: is a Write over an existing, unread file refused? Recorded, never thrown.
+  { name: 'design-overwrite-no-read', recipe: 'design', timeoutMs: 300_000, maxBudgetUsd: 2, seed: { 'page.html': '<p>old</p>\n' },
+    prompt: 'Use the Write tool to replace page.html in the current folder with the text: new. Do not use any other tool first. Then reply with one line.',
+    check: (f, meta) => { const w = mainToolUses(f).find((t) => t.name === 'Write'); const r = w ? toolResult(f, w.id) : null;
+      const c = r?.message.content.find((x) => x?.tool_use_id === w.id);
+      meta.overwrite = c ? { isError: c.is_error === true, text: resultText(c.content) } : { isError: null, text: null }; } },
+  // R18: does a builder following C-2 split one file into many edits? Recorded, never thrown.
+  { name: 'design-many-edits', recipe: 'design', timeoutMs: 300_000, maxBudgetUsd: 2,
+    prompt: [...DESIGN_BUILDER_RULES, 'Section id: pricing. Build a three-tier pricing band in this folder.'].join('\n'),
+    check: (f, meta) => { meta.writesPerPath = writesPerPathOf(f); } },
 ];
 
 // ── main ───────────────────────────────────────────────────────────────────
 function parseArgs(argv) {
-  const out = { only: null, model: 'claude-haiku-4-5', out: join(REPO, 'test', 'fixtures', 'ask') };
+  const out = { only: null, model: 'claude-haiku-4-5', out: null };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--only') out.only = argv[++i];
     else if (argv[i] === '--model') out.model = argv[++i];
     else if (argv[i] === '--out') out.out = resolve(argv[++i]);
   }
+  // A design probe's fixtures stay out of fixtures/ask, which test/event-golden-replay.test.mjs replays whole.
+  const design = SCENARIOS.some((s) => s.name === out.only && s.recipe === 'design');
+  out.out ??= join(REPO, 'test', 'fixtures', design ? 'design' : 'ask');
   return out;
 }
 
@@ -143,19 +268,24 @@ export function assertLiveClaudeAllowed(env = process.env) {
  * One capture turn: spawn through the Claude adapter's RAW entry point, the
  * credential broker included when it is on (runClaude emits the normalized
  * vocabulary; the fixtures are raw stream-json)
- * and record every frame and stderr line. Rejections propagate. With no `bin` it
+ * and record every frame and stderr line, and per frame the ms since the spawn
+ * (`arrivals[i]` belongs to `frames[i]`). Rejections propagate. With no `bin` it
  * spawns what runClaude would: WORCA_CLAUDE_BIN / ORCH_CLAUDE_BIN, else `claude`.
  * @param {object} options  runClaude-shaped options (buildAskSpawnOptions)
- * @returns {Promise<{frames:object[], stderr:string[], result:{text:string, exitCode:number}}>}
+ * @returns {Promise<{frames:object[], stderr:string[], arrivals:number[], result:{text:string, exitCode:number}}>}
  */
-export async function runCaptureTurn(options, { frames = [], stderr = [] } = {}) {
+export async function runCaptureTurn(options, { frames = [], stderr = [], arrivals = [] } = {}) {
   const { runClaudeAdapter, DEFAULT_BIN } = await import('../src/core/engines/claude.mjs');   // lazily: main() sets WORCA_HOME first
+  const t0 = Date.now();
   const result = await runClaudeAdapter({
     ...options,
     bin: options.bin ?? DEFAULT_BIN,
-    onEvent: (e) => { if (e.type === 'stderr') stderr.push(e.text); else if (e.raw && typeof e.raw === 'object') frames.push(e.raw); },
+    onEvent: (e) => {
+      if (e.type === 'stderr') stderr.push(e.text);
+      else if (e.raw && typeof e.raw === 'object') { frames.push(e.raw); arrivals.push(Date.now() - t0); }
+    },
   });
-  return { frames, stderr, result };
+  return { frames, stderr, arrivals, result };
 }
 
 async function main() {
@@ -201,31 +331,58 @@ async function main() {
   /** One claude turn through the real recipe → { frames, stderr, meta }. Never throws on a runner rejection (recorded in meta). */
   async function captureOnce(sc) {
     const prompt = sc.promptFor ? sc.promptFor(ctx) : sc.prompt;
+    const design = sc.recipe === 'design';
     const frames = [];
     const stderr = [];
+    const arrivals = [];
     const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), 120_000);
+    const timer = setTimeout(() => ac.abort(), sc.timeoutMs ?? 120_000);
     const meta = { scenario: sc.name, prompt, model: args.model, exitCode: null, error: null, stderr, flags: { maxTurns: sc.maxTurns ?? 6, maxBudgetUsd: sc.maxBudgetUsd ?? 1, resume: sc.resume ?? null }, captured: new Date().toISOString(), claudeVersion: null };
-    const options = buildAskSpawnOptions({
-      thread: { id: thread.id, sessionId: sc.resume ?? null },
-      turn: { prompt, systemPrompt, model: args.model, effort: 'medium', modelEnv: resolveModelEnv(args.model), signal: ac.signal },
-      limits: { maxTurns: meta.flags.maxTurns, maxBudgetUsd: meta.flags.maxBudgetUsd },
-      mcpConfigPath, scratchDir,
-    });
+    let cwd = null;
+    let options;
+    if (design) {                                                    // a builder-shaped spawn in its own scratch folder
+      cwd = mkdtempSync(join(tmpdir(), 'worca-design-probe-'));
+      for (const [rel, text] of Object.entries(sc.seed ?? {})) writeFileSync(join(cwd, rel), text, 'utf8');
+      options = {
+        cwd, prompt, model: args.model, tools: DESIGN_TOOLS, allowedTools: DESIGN_TOOLS, permissionMode: 'acceptEdits',
+        includePartialMessages: true, strictMcpConfig: true, settingSources: ['project'], disableSlashCommands: true,
+        envScrub: true, envAllowlist: [], maxTurns: meta.flags.maxTurns, maxBudgetUsd: meta.flags.maxBudgetUsd,
+        systemPrompt: DESIGN_SYSTEM_PROMPT, signal: ac.signal,
+      };
+    } else {
+      options = buildAskSpawnOptions({
+        thread: { id: thread.id, sessionId: sc.resume ?? null },
+        turn: { prompt, systemPrompt, model: args.model, effort: 'medium', modelEnv: resolveModelEnv(args.model), signal: ac.signal },
+        limits: { maxTurns: meta.flags.maxTurns, maxBudgetUsd: meta.flags.maxBudgetUsd },
+        mcpConfigPath, scratchDir,
+      });
+    }
     try {
-      const { result: r } = await runCaptureTurn(options, { frames, stderr });
+      const { result: r } = await runCaptureTurn(options, { frames, stderr, arrivals });
       meta.exitCode = r.exitCode;
     } catch (err) {
       const m = /exited with code (\d+)/.exec(err.message);
       meta.exitCode = m ? Number(m[1]) : 1;
       meta.error = err.message;
-    } finally { clearTimeout(timer); }
+    } finally {
+      clearTimeout(timer);
+      if (cwd) rmSync(cwd, { recursive: true, force: true });
+    }
+    if (design) {                                                    // R1: how each tool input streamed, with its verdict
+      const stats = toolInputChunkStats(frames, arrivals);
+      meta.toolInput = { ...stats, tools: stats.tools.map((t) => ({ ...t, verdict: probeVerdict(t) })) };
+    }
     return { frames, stderr, meta };
   }
 
   /** The recipe assertions (an automated slice of the manual gate) + the scenario's own check. Throws on violation. */
   function verify(sc, frames, meta) {
     const init = frames.find((f) => f.type === 'system' && f.subtype === 'init');
+    if (sc.recipe === 'design') {                                    // not the Ask recipe: only the scenario's own check
+      meta.claudeVersion = init?.claude_code_version ?? null;
+      sc.check(frames, meta);
+      return;
+    }
     if (init) {
       meta.claudeVersion = init.claude_code_version ?? null;
       meta.initTools = init.tools; meta.initMcpServers = init.mcp_servers;
@@ -238,10 +395,10 @@ async function main() {
   }
 
   try {
-    for (const sc of SCENARIOS) {
-      if (args.only && sc.name !== args.only) continue;
+    for (const sc of selectScenarios(SCENARIOS, { only: args.only })) {
       let captured = null;
-      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      const attempts = sc.recipe === 'design' ? 1 : MAX_ATTEMPTS;    // a paid design attempt can last 300 s
+      for (let attempt = 1; attempt <= attempts; attempt++) {
         const c = await captureOnce(sc);
         const r = lastResult(c.frames);
         if (r && typeof r.total_cost_usd === 'number') totalCost += r.total_cost_usd;   // every attempt is paid for
@@ -250,8 +407,8 @@ async function main() {
           captured = c;
           break;
         } catch (err) {
-          if (FATAL.test(err.message) || attempt === MAX_ATTEMPTS) throw err;          // recipe problems never retry; model flakiness does
-          console.warn(`[ask-capture] ${sc.name}: ${err.message} — retrying (${attempt}/${MAX_ATTEMPTS})`);
+          if (FATAL.test(err.message) || attempt === attempts) throw err;              // recipe problems never retry; model flakiness does
+          console.warn(`[ask-capture] ${sc.name}: ${err.message} — retrying (${attempt}/${attempts})`);
         }
       }
       const { frames, stderr, meta } = captured;
@@ -261,6 +418,9 @@ async function main() {
       writeFileSync(join(args.out, `${sc.name}.jsonl`), lines.join('\n') + '\n', 'utf8');
       meta.stderr = stderr.map((l) => JSON.parse(sanitize(JSON.stringify(l))));
       if (meta.error) meta.error = JSON.parse(sanitize(JSON.stringify(meta.error)));
+      for (const k of ['toolInput', 'overwrite', 'writesPerPath']) {  // design probe fields carry tool ids and scratch paths
+        if (meta[k] !== undefined) meta[k] = JSON.parse(sanitize(JSON.stringify(meta[k])));
+      }
       writeFileSync(join(args.out, `${sc.name}.meta.json`), JSON.stringify(meta, null, 2) + '\n', 'utf8');
       rows.push([sc.name, frames.length, meta.exitCode, r?.subtype ?? '-', r?.total_cost_usd ?? '-']);
       console.log(`captured ${sc.name}: ${frames.length} frames, exit ${meta.exitCode}, ${r?.subtype ?? '-'}`);
