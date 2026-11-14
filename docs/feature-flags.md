@@ -36,6 +36,8 @@ remote flags.
 
 `shapeRequirements` has graduated: it is always on, see [Requirements first](shape-it-first.md#requirements-first).
 
+`shapeRequirements` has graduated: it is always on, see [Requirements first](shape-it-first.md#requirements-first).
+
 `corporateProxy` has graduated: an install with it on gets `networkProxy.enabled: true` on first start. The corporate proxy is now a setting, see [Network proxy](network-proxy.md).
 
 `shapeFirst` ([Shaper](shape-it-first.md)), `runPresets` ([Run presets](run-presets.md)) and `runTags` (cost tags, see [Statistics](statistics.md)) have graduated: they are always on. `keepAwake` has graduated into a setting: the account menu's Keep awake switch, see [Keep awake](keep-awake.md).
