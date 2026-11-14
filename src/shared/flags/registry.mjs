@@ -135,6 +135,20 @@ export const FLAGS = Object.freeze([
     reviewBy: '2027-02-08',
     docs: 'docs/feature-flags.md',
   }),
+  entry({
+    key: 'design',
+    title: 'Design',
+    description: 'A Design page: describe a web page, a deck or an HTML video in its own chat and real agents build it in front of you, one cursor per running agent. Its spend counts toward your limits and shows in Statistics. Off: the page is hidden and /api/design answers 404.',
+    stage: 'beta',
+    default: true,
+    owner: 'denislavprinov',
+    since: '1.18.0',
+    added: '2026-11-05',
+    extendedOn: '2026-11-09',
+    extendReason: 'Moved to beta when Design reached every engine and hosted.',
+    reviewBy: '2027-02-07',
+    docs: 'docs/design.md',
+  }),
 ]);
 
 const BY_KEY = new Map(FLAGS.map((f) => [f.key, f]));

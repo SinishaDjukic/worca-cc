@@ -14,6 +14,7 @@
 | `comp.sentence-block` | A sentence that holds a picker is a block (`div`), never a `<p>`: a menu cannot live in a paragraph, and the parser throws it out of place | The menu opens where the sentence is | rail-gate |
 | `comp.row` | A row in a list is row(): rail, text, end, ⋯; a changed file and a stacked PR are their own rows | One rail and one end on every list | rail-gate |
 | `comp.end-column` | A list's ends share one column, as wide as the widest, capped; the title gives way first | Figures and buttons line up down a list | ds-check |
+| `comp.look-options` | No component takes a size, colour or class of its own: called with its required options it draws its full look; the few that still do are listed in the catalog and only go down | One look per role, never a page's | rail-look-options |
 
 A Rail page is built by naming needs, not looks. Find the need, use its component as the gallery
 (`plans/rail/prototype/components.html`) shows it; sizes, colours and spacing come with the component.
@@ -38,7 +39,7 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | Ask worca in the top bar | AskWorcaMark: a boxy chat bubble with the W for its text; three dots while Worca writes, filled with the W cut out while its column is open; an unread reply is its dot | Ask worca |
 | Starting anything | Composer: the words, then one line with +, the Ask/Task/Schedule sentence, voice and send | Start task |
 | **Choosing** | | |
-| A choice that changes a step | SentencePicker: a picker in the sentence it changes, opening a CompactMenu (in the app, wired to `toggleMenu`, so the menu has keys); groups of choices open as sub-menus (comp.menu-sub) | `Send [what needs you ▾] to [desktop ▾]` |
+| A choice that changes a step | SentencePicker: a picker in the sentence it changes, opening a CompactMenu (in the app, wired to `toggleMenu`, so the menu has keys); groups of choices open as sub-menus (comp.menu-sub); the model picker's items come from `makerItems`, its closed chip's words from `modelText` | `Send [what needs you ▾] to [desktop ▾]` |
 | A choice among a form's or a panel's words | WordPicker, opening a CompactMenu | `dev ▾` base branch, `One PR ▾` |
 | Answering Worca's question | OptionList: one line per answer, a radio dot, Worca's pick marked, your own answer under it (in the app, `buildChatQuestion` takes `preset` for Worca's pick and `recommended` on an option) | the asking step's answers |
 | How much of a limit is used | UsageRing, its tooltip on what holds it | the rings around the avatar |
@@ -105,6 +106,101 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | A part of the page cannot be drawn | EmptyState's error, in that part only, with Reload this part | Could not show the changes |
 | Something broke that nothing handles | Toast, error: stays until closed, a repeat counts on it | Something went wrong |
 | The connection dropped | a quiet line at the end of the top bar, grey dot, until it reconnects | Offline · retrying |
+
+**Elements, found by need.** A part of a component that a page calls on its own (an action in ⋯, a confirm with a
+form, an undo, a figure) is not a component of its own: it is found here by its need, under its family's entry in the
+catalog (`also`), and it arrives with its look, words, states and behaviour. A need with no row in either table is a
+question for a person, then `build.teach`. Options named `body`, `end`, `actions` and `close` take markup from
+other library calls, never a person's text: a person's text goes through the library's own components, which escape it.
+| Need | Element | Family |
+|---|---|---|
+| A limit's tooltip: what, whose, how much, when it resets | `usageTip` | UsageRing |
+| A limit's window in words: Session, Weekly | `usageWindow` | UsageRing |
+| Only the providers that count: one signed out has no ring | `connectedUsage` | UsageRing |
+| What holds the rows of the profile menu | `navFlyout` | AccountItem |
+| One of Appearance's choices: light, dark, system | `themeChoice` | AccountItem |
+| A card's title that opens what it sums up | `cardTitleLink` | AccountItem |
+| Whether the away screen shows now | `awayShows` | AwayScreen |
+| A state's dot on the rail, without its words | `statusDot` | StatusLine |
+| One main action with alternatives under ▾ | `splitButton` | Button |
+| A line icon from the library's one set, at its one weight | `icon` | Button |
+| One item of a menu: its name, its tick or its reason when off | `menuItem` | CompactMenu |
+| Supporting actions behind ⋯, danger last | `moreMenu` | CompactMenu |
+| A one-step confirm that holds a short form | `confirmForm` | ConfirmStrip |
+| The confirm's two buttons: yes and no | `confirmActions` | ConfirmStrip |
+| One picker word of a list's sentence, with its menu | `listWord` | ListSentence |
+| Select every row shown, or none | `selectAllBox` | SelectionBar |
+| A long press on a row starts selecting, on touch | `bindLongPress` | SelectionBar |
+| A view in a Dialog without a form: its head, its body | `dialogFrame` | Dialog |
+| A document's name that opens it | `documentLink` | Text link |
+| The tick after something was copied | `copied` | CopyButton |
+| Ask Worca to write a field | `suggestButton` | SuggestionField |
+| Text Worca wrote, not yet yours | `suggestedChip` | SuggestionField |
+| Worca could not write it: the text stays, Try again | `suggestionFail` | SuggestionField |
+| Stop Worca while it writes | `stopWriting` | SuggestionField |
+| The way on from a failure's line: Try again, Details | `failureLink` | SuggestionField |
+| Write or preview a description | `previewToggle` | SuggestionField |
+| A field's text as it will read | `suggestionPreview` | SuggestionField |
+| A step's mark on the rail and the word a screen reader hears | `stepDot` | Stepper |
+| A PR or a slice of a stack, in a list of its stack | `stackRow` | Stepper |
+| One figure: its name, its value, of what | `figure` | Figures |
+| What a figure is made of, opened from it | `figureBreakdown` | Figures |
+| Labels that fit their line, the rest folded into +N | `fitTags` | TagGroup |
+| Search results under their area's head | `searchResults` | Search |
+| A failure that can be read whole, until it is closed | `errorToast` | Toast |
+| Undo right after a step | `toastUndo` | Toast |
+| What a toast says, two lines at most, the whole text in its tooltip | `toastText` | Toast |
+| The head of a group of commands: how many, how many failed, how long | `commandHead` | CommandGroup |
+| A redraw that moves what changed instead of jumping | `morph` | What a toggle opens, moving |
+| The flash on what you just went to | `land` | What a toggle opens, moving |
+| Esc or a click outside takes a strip back | `watchStrips` | Closing what lies over a page |
+| A tool beside the page that closes nothing when clicked | `neverOutside` | Closing what lies over a page |
+| A menu kept inside the window | `fitMenu` | A list page's behaviour |
+| A state's words filled with the task's facts | `fill` | States |
+| Every state there is | `stateIds` | States |
+| The section of a list a state goes in | `sectionOf` | States |
+| Whether a step is done | `isDone` | States |
+| A stage's state from its steps: live, done or next | `stageState` | States |
+| The one state that speaks for a stage's steps | `subState` | States |
+| A step as StepRow draws it | `stepLook` | States |
+| The stage a task opens on | `defaultStage` | States |
+| How long a stage took, said under it | `stageMeta` | States |
+| A duration in words as minutes | `toMin` | States |
+| Minutes as a duration in words | `fmtMin` | States |
+| A turn's time in words, without its element | `turnTimeText` | TurnTime |
+| One line on what an action does, in its tooltip | `actionHelp` | Actions |
+| The interface mode an action needs | `actionLevel` | Actions |
+| An action as a state offers it | `makeAction` | Actions |
+| Whether a group member keeps an action on its own page | `memberKeeps` | Actions |
+| What Pause, Stop and the like lead to on a live task | `runFlow` | Actions |
+| The Try it step's items in a task's ⋯ | `tryStep` | Actions |
+| The strip's words for a step that asks first | `confirmOf` | Step flow |
+| A failure in Rail's words: Could not …, the reason, Nothing changed | `failureOf` | Step flow |
+| What a step's button says while it works | `workingWord` | Step flow |
+| The person's interface mode, read and set | `prefs` | Interface modes |
+| Whether a part shows in the current interface mode | `shows` | Interface modes |
+| Whether a part of the task page shows in a mode | `runPartShows` | Interface modes |
+| Stop selecting: nothing ticked | `selectClear` | Selection |
+| Start selecting from a list's menu | `selectStart` | Selection |
+| Tick or untick one row | `selectToggle` | Selection |
+| Tick every row from the last one ticked | `selectRange` | Selection |
+| Tick every row shown | `selectAll` | Selection |
+| Keep only the ticked rows still shown | `selectPrune` | Selection |
+| How many of the rows shown are ticked | `selectCount` | Selection |
+| The Select all box: none, some or all | `selectAllState` | Selection |
+| Shift and an arrow add the next row | `selectExtend` | Selection |
+| Apply a toggle, a range, all or clear | `selectApply` | Selection |
+| A key or a click on a selecting list: the selection and where the focus goes | `selectStep` | Selection |
+| Where the focus goes after a redraw | `keepFocus` | Selection |
+| Which run a Stop or an Archive applies to, from a task's state word | `bulkStateOf` | Selection |
+| What a bulk action does to each selected row, and what it skips | `planBulk` | Selection |
+| The line that says which selected rows a bulk action skips | `skipText` | Selection |
+| The confirm's words for a bulk action | `bulkConfirm` | Selection |
+| A shortcut in a line of text: ⌘K on a Mac, Ctrl+K elsewhere | `keyHint` | Shortcuts |
+| What a key press says, for shortcutAction | `keyFacts` | Shortcuts |
+| The next or previous row of a list, by arrow keys | `listMove` | Shortcuts |
+| Whether keys read ⌘ ⌥ ⇧ or Ctrl, Alt, Shift | `isMac` | Shortcuts |
+| Open the shortcuts sheet with this page's keys | `openShortcutsSheet` | Shortcuts |
 
 **Rows.** Every row on a Rail page is `row()`: its mark on the rail, its text, its end, its ⋯. A list lays its rows on one grid, so every end shares one left and one right edge, as wide as the widest end (capped at 45% of the list) and the title gives way first. Inside a list's end there are four columns, in order: facts (a figure, a chip), actions, a Switch, the ⋯, each on one edge whichever a row has. ListRow, StepRow, SettingsRow, Pulse rows and stack rows are built on it; a page never sets a row's columns.
 

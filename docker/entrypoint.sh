@@ -56,19 +56,21 @@ if [ -n "${WORCA_DATA_DIR:-}" ]; then
     chown worca:worca "$data" "$data/worca" "$data/projects" "$data/home" "$data/home/.claude"
     # Agents under their own uid (src/core/agent-user.mjs), unless WORCA_AGENT_ISOLATION=0.
     # Shared with worca-agent through the worca-share group: the projects, the run checkouts
-    # (runs/) and the run store (store/). Private to worca: everything else in its home (the
-    # database, settings, plugin secrets), HOME with Claude Code's login, and its environment.
+    # (runs/), the run store (store/) and the design library (design/). Private to worca:
+    # everything else in its home (the database, settings, plugin secrets), HOME with Claude
+    # Code's login, and its environment.
     if [ "${WORCA_AGENT_ISOLATION:-1}" != 0 ] && id worca-agent >/dev/null 2>&1; then
       wh="$data/worca/.worca-cc"; ah="$data/agent-home"
-      mkdir -p "$wh/store" "$wh/runs" "$ah"
+      mkdir -p "$wh/store" "$wh/runs" "$wh/design" "$ah"
       chown worca:worca "$wh"
-      chown worca:worca-share "$wh/store" "$wh/runs" "$data/projects"
+      chown worca:worca-share "$wh/store" "$wh/runs" "$wh/design" "$data/projects"
       chown worca-agent:worca-share "$ah"
       chmod 0711 "$data" "$data/worca" "$wh"
-      # store/ and runs/ are sticky too: an agent cannot rename or delete another run's folder.
-      # Each run's own folder gets its owner's pool group (agent-pool.mjs claimRunDir).
+      # store/, runs/ and design/ are sticky too: an agent cannot rename or delete another run's
+      # or design's folder. Each run's and design's own folder gets its owner's pool group
+      # (agent-pool.mjs claimRunDir).
       chmod 2770 "$data/projects"
-      chmod 3770 "$wh/store" "$wh/runs"
+      chmod 3770 "$wh/store" "$wh/runs" "$wh/design"
       chmod 0700 "$ah"
       # Once per volume: existing files join the boundary (new ones get it from umask + setgid).
       if [ ! -e "$wh/.agent-isolation" ]; then
@@ -81,6 +83,16 @@ if [ -n "${WORCA_DATA_DIR:-}" ]; then
         done
         touch "$wh/.agent-isolation"
         chown worca:worca "$wh/.agent-isolation"
+      fi
+      # The design library joined the share after some volumes were prepared, so it has its own marker.
+      # Each existing design closes to worca alone until its owner's next claim (agent-pool.mjs claimRunDir).
+      if [ ! -e "$wh/.design-share" ]; then
+        chgrp -R worca-share "$wh/design"
+        chmod -R g+rwX "$wh/design"
+        find "$wh/design" -type d -exec chmod g+s {} +
+        find "$wh/design" -mindepth 1 -maxdepth 1 -type d -exec chmod 0700 {} +
+        touch "$wh/.design-share"
+        chown worca:worca "$wh/.design-share"
       fi
       # MCP registry (§14): plugin stdio servers run as the agent users, so plugin code is shared
       # read-only — plugins/ and plugins/<p>/ traverse only, versions/** readable, never group-writable;

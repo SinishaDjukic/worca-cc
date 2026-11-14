@@ -229,8 +229,10 @@ test('taskHeader: single-project under LEGACY is BYTE-identical to today (§10 r
 });
 
 test('taskHeader: single-project under DETACHED differs by EXACTLY the skills-hint sentence', () => {
-  const detached = withMode('detached', () =>
+  const withScratch = withMode('detached', () =>
     taskHeader({ ...baseCtx, node: { key: 'planner' }, inputs: { userPrompt: {} }, runRoot: RUN_ROOT }, 'Plan'));
+  assert.match(withScratch, /^Scratch folder: .*\/\.scratch /m, 'a detached run names its scratch folder');
+  const detached = withScratch.replace(/^Scratch folder: .*\n/m, '');
   // The new sentence is truthful only under detached: project + root skills are
   // MOUNTED at <cwd>/.claude/skills for the run (§5.7), which legacy never does.
   assert.match(detached, /mounted at `?\.claude\/skills`? for this run/);

@@ -212,7 +212,7 @@ test('renderTeamCard: the switch, the branch line, a push error with 1a\'s hint,
   assert.deepEqual(pressed(on), [['local', 'false'], ['team', 'false'], ['both', 'true']], 'on without a load (an older server) is Both');
   const only = renderTeamCard({ ...TEAM, load: 'team', caps: { teamMaxFiles: 30 } }, { doc });
   assert.deepEqual(pressed(only), [['local', 'false'], ['team', 'true'], ['both', 'false']]);
-  assert.match(only.querySelector('.hint').textContent, /^Runs and chats load the team's notes only — your shared notes and teammates', newest 30/);
+  assert.match(only.querySelector('.hint').textContent, /^Runs and chats load the team's notes only — your shared notes and teammates' \(every note scoped to files, and the newest 30 that always load\)/);
   assert.match(on.querySelector('.mem-team-sync-text').textContent, /^Branch worca-memory at abcdef1 · fetched \d{4}-\d\d-\d\d \d\d:\d\d$/);
   assert.match(on.querySelector('.mem-team-error').textContent, /Last push failed \(.+\): remote: error: GH006/);
   assert.match(on.querySelector('.mem-team-hint').textContent, /^To fix: exempt `worca-memory` from branch protection/);

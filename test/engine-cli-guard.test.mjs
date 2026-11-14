@@ -12,7 +12,8 @@ const files = readdirSync(DIR).filter((f) => f.endsWith('.mjs')).map((f) => [f, 
 
 // spawn.mjs: the one run spawn (+ taskkill). exec-cli.mjs: the one probe execFile.
 // project-files.mjs: `git` via execFileSync — not an engine CLI.
-const ALLOWED = new Set(['spawn.mjs', 'exec-cli.mjs', 'project-files.mjs']);
+// mock-design.mjs: the mock lead runs the picture kit with `process.execPath` (node) — not an engine CLI.
+const ALLOWED = new Set(['spawn.mjs', 'exec-cli.mjs', 'project-files.mjs', 'mock-design.mjs']);
 
 test('no engine file imports child_process except the allowlist', () => {
   const offenders = files.filter(([f, src]) => !ALLOWED.has(f) && /from 'node:child_process'|from "node:child_process"|require\('child_process'\)/.test(src)).map(([f]) => f);
