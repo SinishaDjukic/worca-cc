@@ -461,10 +461,12 @@ function render() {
 // In the one Worca a task reads down like a conversation: finished stages one line, the open one in full, what is to come quiet.
 const PART_STAGE = { decisions: 'plan', changes: 'build', activity: 'review' };
 // What a part holds, said before it opens: the files and lines, the decisions and the one open, the steps.
+// a task that ended adds no steps (a failed one only through a restart, which makes it run again); idle is also an unknown state's tone, so it keeps "so far"
+const ENDED = ['done', 'ok', 'merged', 'stop', 'closed', 'fail'];
 function partSays(v, t) {
   if (t.id === 'changes') { const [files, docs] = String(t.n || '').split(' · '), diff = (v.figs.find((f) => f.k === 'Changes') || {}).v || ''; return [files ? `${files} files ${diff}`.trim() : diff, docs].filter(Boolean).join(' · '); }
   if (t.id === 'decisions') return t.n ? `${t.n}${v.ask ? ' · 1 open' : ''}` : '';
-  if (t.id === 'activity') { const n = v.activity.reduce((a, st) => a + st.rows.filter((r) => !/\bis-next\b/.test(r.rowCls)).length, 0); return n ? `${n} ${n === 1 ? 'step' : 'steps'} so far` : ''; }
+  if (t.id === 'activity') { const n = v.activity.reduce((a, st) => a + st.rows.filter((r) => !/\bis-next\b/.test(r.rowCls)).length, 0); return n ? `${n} ${n === 1 ? 'step' : 'steps'}${ENDED.includes(R.markTone(v)) ? '' : ' so far'}` : ''; }
   return t.n || '';
 }
 // The part that matters now opens by itself: Decisions while Plan waits on you, Changes once the task is ready.
@@ -1007,7 +1009,7 @@ function goMember(group, i) {
   const m = M.memberAt(group, i, ui);
   Object.assign(ui, { caseId: m.id, run: m, parent: { caseId: group, index: i }, open: null, tab: '', focus: '', menu: '', titleOpen: false });
   pick.value = ui.caseId; pendingFocus = 'crumb:' + (M.view(ui.caseId, ui).crumbs.length - 1);
-  if (/^#run\//.test(location.hash)) location.hash = 'run/' + ui.caseId;   // the address follows the page; the picker already says it, so the shell does not reopen
+  if (/^#run\//.test(location.hash)) location.hash = 'run/' + (LIVE_PAGE() ? m.pipelineId || ui.taskId : ui.caseId);   // the address follows the page (live: its own id, never a case); the picker already says it, so the shell does not reopen
 }
 function addChip(text, kind) {
   const t = String(text).trim();
@@ -1217,7 +1219,7 @@ document.addEventListener('click', (e) => {
     const go = M.view(ui.caseId, ui).crumbs[+d.crumb].go;
     const back = ui.back && ui.back.caseId === go.caseId ? ui.back : { caseId: go.caseId, open: go.open, tab: '' };
     Object.assign(ui, { caseId: back.caseId, run: ui.groupRun && ui.groupRun.id === back.caseId ? ui.groupRun : null, open: back.open, tab: back.tab, parent: null, back: null, menu: '' });
-    pick.value = ui.caseId; pendingFocus = 'open-run'; if (/^#run\//.test(location.hash)) location.hash = 'run/' + ui.caseId;
+    pick.value = ui.caseId; pendingFocus = 'open-run'; if (/^#run\//.test(location.hash)) location.hash = 'run/' + (LIVE_PAGE() ? ui.taskId : ui.caseId);
   }
   else if (d.stage) { ui.open = d.stage; ui.menu = ''; }
   else if (d.tab) { ui.tab = d.tab; ui.focus = ''; if (t.classList.contains('rc-fig-link')) pendingFocus = 'tab:' + d.tab; }

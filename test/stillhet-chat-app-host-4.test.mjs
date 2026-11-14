@@ -142,7 +142,7 @@ test('Pulse and search open a live task at its card in its starting chat; a task
   assert.ok(d.querySelector('#route-chat [data-anchor="card_run"]'), 'the TaskCard is drawn');
   w.RailShell.openRun('run/question', 'B task', 'run-b');   // ask_2 only follows run-b: no starting chat
   await settle(40);
-  assert.equal(w.location.hash, '#run/question');
+  assert.equal(w.location.hash, '#run/run-b', 'its own page, by its id, never the case (#1266)');
 });
 
 test('Show its stages opens the live TaskCard in place, and Hide its stages folds it', async () => {
