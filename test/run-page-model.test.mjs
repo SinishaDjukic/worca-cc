@@ -129,3 +129,47 @@ test('failureOf: a reason that ends its own sentence gets no second period (web-
   assert.equal(R.failureOf('Raise the cap', 'the new cap is below what the task already spent ($0.80).').detail, 'The new cap is below what the task already spent ($0.80). Nothing changed.');
   assert.equal(R.failureOf('Merge', 'GitHub refused').detail, 'GitHub refused. Nothing changed.');
 });
+
+// The live kind (feature 1 audit fix pass, D9, D10): liveRun keeps the prototype's step shape and gives each step the line
+// dev's own data says, never the design's sample.
+const page = (o) => Object.assign({ id: 'p1', case: 'working', title: 'T', project: 'web', branch: 'feat/x', base: 'dev', pr: '', detail: '', why: [], cost: 1, mins: 3, stages: [], review: { roles: [], issues: [] }, checks: null, failure: null }, o);
+const subsOf = (run, key) => (run.stages.find((x) => x.key === key) || { subs: [] }).subs;
+const J = (x) => JSON.parse(JSON.stringify(x));   // the model lives in its own vm realm
+test('liveRun: a stopped step is the paused look, Stopped by you; never a "stopped" step state', () => {
+  const run = M.liveRun(page({ case: 'stopped', stages: [{ key: 'plan', state: 'done', steps: [{ name: 'Plan', state: 'done' }] }, { key: 'build', state: 'stopped', steps: [{ name: 'implementer', state: 'stopped' }] }] }));
+  assert.deepEqual(J(subsOf(run, 'build').map((x) => [x.name, x.state, x.live])), [['implementer', 'paused', 'Stopped by you']]);
+  assert.ok(subsOf(run, 'plan').length, 'its Plan stays');
+  assert.ok(!run.stages.flatMap((x) => x.subs).some((x) => x.state === 'stopped'));
+});
+test('liveRun: a plan waiting for approval opens on a step that asks, "Waiting for your approval"; its findings are the run\'s own', () => {
+  const roles = [{ role: 'QA', n: 1, t: '1 finding', findings: ['qa: mock finding'] }];
+  const run = M.liveRun(page({ case: 'plan', stages: [{ key: 'plan', state: 'done', steps: [{ name: 'Clarify', state: 'done' }, { name: 'Plan', state: 'done' }, { name: 'Refine plan', state: 'done' }] }] , review: { roles, issues: [] } }));
+  const asks = subsOf(run, 'plan').filter((x) => x.state === 'ask');
+  assert.deepEqual(J(asks.map((x) => x.live)), ['Waiting for your approval']);
+  const v = M.view('plan', { run });
+  assert.deepEqual(J(v.under.roles), roles);
+  assert.notDeepEqual(J(M.view('plan', { run: M.liveRun(page({ case: 'plan', stages: [{ key: 'plan', state: 'now', steps: [{ name: 'Plan', state: 'now' }] }] })) }).under.roles), J(M.view('plan', {}).under.roles), 'never DETAIL.roles');
+  assert.deepEqual(J(M.view('plan', { run: M.liveRun(page({ case: 'plan', stages: [{ key: 'plan', state: 'now', steps: [{ name: 'Plan', state: 'now' }] }] })) }).under), { issues: [], roles: [] });
+});
+test('liveRun: a capped task\'s paused step reads Paused at its cap; Create PR and Checks read the PR\'s own facts', () => {
+  const capped = M.liveRun(page({ case: 'capped', stages: [{ key: 'build', state: 'paused', steps: [{ name: 'implementer', state: 'paused' }] }] }));
+  assert.equal(subsOf(capped, 'build')[0].live, 'Paused at its cap');
+  const done = [{ key: 'build', state: 'done', steps: [{ name: 'implementer', state: 'done' }] }];
+  const failing = M.liveRun(page({ case: 'failing', pr: '#43', checks: { total: 3, failed: 2, pending: 0 }, stages: done }));
+  assert.deepEqual(J(subsOf(failing, 'pr').slice(0, 2).map((x) => x.live)), ['Opened #43', '2 failed']);
+  const approved = M.liveRun(page({ case: 'approved', pr: '#42', checks: { total: 3, failed: 0, pending: 0 }, stages: done }));
+  assert.deepEqual(J(subsOf(approved, 'pr').slice(0, 2).map((x) => x.live)), ['Opened #42', '3 of 3 passed']);
+});
+test('liveRun: a failure is the prototype\'s bold title and its rows, and the head keeps no failure text', () => {
+  const run = M.liveRun(page({ case: 'failed', failure: { head: 'Build · 3 tests failed', rows: ['a', 'b', 'c'] }, why: ['✗ a', '✗ b', '✗ c'], stages: [{ key: 'build', state: 'failed', steps: [{ name: 'implementer', state: 'failed' }] }] }));
+  window.RailTaskLive = { parts: () => ({}) };   // the live kind's parts (task-live.mjs), empty here
+  const v = M.view('failed', { run });
+  delete window.RailTaskLive;
+  assert.equal(v.over.focus.kind, 'broke');
+  assert.deepEqual(J([v.over.focus.ev.title, v.over.focus.ev.lines]), ['Build · 3 tests failed', ['a', 'b', 'c']]);
+  assert.equal(run.detail, '');
+});
+test('liveRun: a failed task\'s held step wears the failed look, with what broke as its line', () => {
+  const run = M.liveRun(page({ case: 'failed', failure: { head: 'Build · 3 tests failed', rows: ['a'] }, stages: [{ key: 'build', state: 'paused', steps: [{ name: 'Implementation', state: 'paused' }] }] }));
+  assert.deepEqual(J(subsOf(run, 'build').map((x) => [x.state, x.live])), [['failed', '3 tests failed']]);
+});

@@ -459,7 +459,10 @@
   }
   // One filled button on the screen (rail.one-action): only the newest card still asking keeps its primary; the rest go
   // quiet, so what waits on you is the loudest thing here.
-  const taskWaits = (y) => { if (y.t !== 'task') return false; const t = taskOf(y.task), r = t?.run && window.RailWorld.find(t.run); return !!r && window.RailWorld.section(r) === 'needs'; };
+  // a live task that needs you by its own state (a question, a plan, a failure) waits too, though a saved failed run sits in
+  // Recent: its own turn is the one that breathes (one attention path)
+  const liveWaits = (t) => LIVE() && !!t?.run && ['ask', 'act', 'fail'].includes(R.markTone(stOf(t)));
+  const taskWaits = (y) => { if (y.t !== 'task') return false; const t = taskOf(y.task), r = t?.run && window.RailWorld.find(t.run); return (!!r && window.RailWorld.section(r) === 'needs') || liveWaits(t); };
   const ASKING = (y) => taskWaits(y) || (y.t === 'proposal' && !y.later) || (y.t === 'change' && y.state === 'proposed' && !y.done) || (y.t === 'plan' && !y.approved) || (y.t === 'feature' && y.split) || ((y.t === 'gate' || y.t === 'ship' || y.t === 'act') && !y.done) || (y.t === 'question' && !y.answered);
   function calmCards(l) {
     let last = -1; l.forEach((y, k) => { if (ASKING(y)) last = k; });
@@ -564,7 +567,7 @@
     // itself; no marks, the words say how each went; one fold opens the command and its output, each with Copy
     const TERMINAL = { 'data-terminal': String(i) };   // panel.terminal: the TerminalPane under the command, in both kinds
     if (x.t === 'cmd') {   // one command running now: its seconds count, Stop beside it; done, it folds like any command
-      const state = x.stopped ? 'stopped' : x.done ? 'ok' : 'run';
+      const state = x.stopped ? 'stopped' : x.done ? (x.failed ? 'fail' : 'ok') : 'run';
       const under = x.term ? termPane(x, String(i))
         : x.shellClosed ? R.turnRow({ mark: '', text: 'Shell closed', attrs: { title: x.shellClosed } }) : '';   // the tip is the library's SHELL_CLOSED (terminal-live.mjs)
       if (LIVE()) return R.commandRow({ summary: x.sum || x.cmd, cmd: x.cmd, state, end: x.stopped ? 'stopped by you' : x.done ? x.end || '' : '1s', open: !!x.open, dir: x.dir || '', out: x.out || '', hooks: { toggle: { 'data-cmdx': String(i) }, stop: { 'data-cmd-stop': String(i) }, ...(x.shellClosed ? {} : { terminal: TERMINAL }) }, attrs: state === 'run' ? { 'data-think-at': String(x.at || (x.at = Date.now())) } : {} }) + under;
@@ -670,7 +673,7 @@
       if (x.answered) return R.turnRow({ mark: R.icon('check', 14), text: `<b>${esc(x.text)}</b> ${esc(x.answered)}` });
       return `<div data-anchor="${x.id}">${R.turnRow({ mark: R.kindMark({ kind: 'task', tone: 'ask', stage: -1, size: 16 }), text: `<b>${esc(x.text)}</b>` })}<div class="convo-answer">${R.optionList({ label: x.text, options: x.options, selected: x.pick, recommended: x.rec ?? x.pick ?? 0, optAttrs: (n) => ({ 'data-answer': `${i}|${n}` }), own: `${R.field({ id: `own-${x.id}`, label: 'Your own answer', quietLabel: true, placeholder: 'Or write your own answer', attrs: { 'data-own': String(i) } })}<div class="convo-answer-go">${R.button({ label: 'Answer', attrs: { 'data-answer-go': String(i) } })}${x.many ? R.button({ label: 'Use Worca’s picks', kind: 'quiet', attrs: { 'data-answer-picks': String(i), title: 'Takes Worca’s pick for this and the next question' } }) : ''}</div>` })}</div></div>`;
     }
-    const st = stOf(t), tone = R.markTone(st), all = turns(), at = all.findIndex((y) => y === x || (x.id && y.id === x.id && y.t === x.t)), below = tone === 'ask' && all.some((y, j) => j > at && ((y.t === 'question' && !y.answered) || (y.t === 'plan' && !y.approved)));   // a question or a plan waiting under it speaks for it
+    const st = stOf(t), tone = R.markTone(st), all = turns(), at = all.findIndex((y) => y === x || (x.id && y.id === x.id && y.t === x.t)), below = ((tone === 'ask' || tone === 'act') && all.some((y, j) => j > at && ((y.t === 'question' && !y.answered) || (y.t === 'plan' && !y.approved)))) || (LIVE() && !!t.run && !!CL().ask(t.run));   // a question or a plan waiting under it (or drawn in its own turn, live) speaks for it
     const word = tone === 'ok' && STAGES[t.stage] === 'PR' ? R.needsReason('approved') : R.needsReason(RM.stateOf(t.case));   // one state, one word (Question, Ready to merge), as Tasks says it; a Ready card reads what its stage rail shows
     if (tone === 'wait' && !x.open) return openCard(x, t);   // one line until opened in place
     // Its one action and ⋯ are its state's own, as on its page; a question is answered under the card.
@@ -678,7 +681,7 @@
     const live = tone === 'run' && !st.action && offers(t, 'Pause');
     // live: a task that waits on you (a question, a pause) can be stopped from its card too; only a real failure (its
     // state's ✗, never a pause drawn as a warning) offers the fixes
-    const stoppable = live || (LIVE() && ['ask', 'pause', 'fail'].includes(tone) && st.sym !== 'x' && offers(t, 'Stop'));
+    const stoppable = live || (LIVE() && ['ask', 'act', 'pause', 'fail'].includes(tone) && st.sym !== 'x' && offers(t, 'Stop'));
     const failed = tone === 'fail' && (!LIVE() || st.sym === 'x');
     const fixFirst = failed && !t.fixing && offers(t, st.action?.label || '');
     if (st.action && !offers(t, st.action.label)) st.action = null;   // live: its state's step is offered only where dev has it   // Retry, the same verb as on Tasks; Ask Worca to fix it heads the card's ⋯
@@ -1360,7 +1363,7 @@
   root.addEventListener('input', (e) => { if (e.target.matches('[data-composer-t]')) { comp.text = e.target.value; size(e.target); const at = /@[^@\s]*$/.test(comp.text); if (at !== (menu === 'cp-mention')) { menu = at ? 'cp-mention' : ''; paint(); } else if (at) { const list = root.querySelector('.composer-at'); if (list) list.outerHTML = mentionMenu(); } } if (e.target.matches('[data-pp-brief]')) { const x = turns().find((y) => y.id === e.target.dataset.ppBrief); if (x) x.brief = e.target.value; } if (e.target.matches('[data-pp-feature]')) { const x = turns().find((y) => y.id === e.target.dataset.ppFeature); if (x) x.feature = e.target.value; } if (e.target.matches('[data-pp-src]')) { const x = turns().find((y) => y.id === e.target.dataset.ppSrc); if (x) x.src = e.target.value; } if (e.target.matches('[data-direction]')) { const x = turns().find((y) => y.id === e.target.dataset.direction); if (x) x.dirValue = e.target.value; } if (e.target.matches('[data-ask-changes]')) { const x = turns().find((y) => y.id === e.target.dataset.askChanges); if (x) x.askValue = e.target.value; } if (e.target.matches('[data-pp-title]')) { const x = turns().find((y) => y.id === e.target.dataset.ppTitle); if (x) x.title = e.target.value; } });
   // motion.attention: what needs you in this chat glows once, when you arrive and when it starts to wait
   const asksBelow = (y) => { const l = turns(), at = l.indexOf(y); return l.some((z, j) => j > at && ((z.t === 'question' && !z.answered) || (z.t === 'plan' && !z.approved))); };   // a question under a card speaks for it: one thing breathes
-  const waitsOnYou = (y) => (y.t === 'question' && !y.answered) || (y.t === 'form' && !y.answered) || (y.t === 'plan' && !y.approved) || (y.t === 'gate' && !y.done) || ((y.t === 'task') && !asksBelow(y) && (() => { const t = taskOf(y.task), r = t?.run && window.RailWorld.find(t.run); return !!r && window.RailWorld.section(r) === 'needs'; })());
+  const waitsOnYou = (y) => (y.t === 'question' && !y.answered) || (y.t === 'form' && !y.answered) || (y.t === 'plan' && !y.approved) || (y.t === 'gate' && !y.done) || ((y.t === 'task') && !asksBelow(y) && (() => { const t = taskOf(y.task), r = t?.run && window.RailWorld.find(t.run); return (!!r && window.RailWorld.section(r) === 'needs') || liveWaits(t); })());
   // it breathes until you focus it or act on it, like an unread mark; seen ones stay quiet across redraws
   const seenAttn = new Set();
   function attention() {

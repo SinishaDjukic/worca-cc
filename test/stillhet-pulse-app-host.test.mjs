@@ -65,3 +65,15 @@ test('the account menu closes when the page moves on (a hashchange): it never st
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(w.document.querySelector('#app .acct-menu'), null, 'closed on navigation');
 });
+
+test('with no usage reading, Usage and costs wears an empty ring glyph and the dollar spend, never a percent (small.usage-rings)', () => {
+  const { w } = appHost();
+  w.PulseModel.rings = () => [];   // no provider reading: the same acctMenu draws demo and live
+  w.document.querySelector('[data-acct]').click();
+  const row = w.document.querySelector('[data-sub="usage"]');
+  const ring = row.querySelector('.pz-mi-ring');
+  assert.ok(ring, 'the ring glyph is drawn');
+  assert.match(ring.getAttribute('style'), /--p:0;/, 'an empty track, no arc');
+  assert.doesNotMatch(row.textContent, /%/);
+  assert.match(row.textContent, /\$/);
+});

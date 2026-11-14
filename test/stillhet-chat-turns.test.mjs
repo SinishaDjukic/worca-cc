@@ -106,3 +106,62 @@ test('panel.answer-refs: Worca\'s words split into words and dev\'s refs (a run 
   assert.ok(done.parts && turnErrors(done).length === 0);
   assert.equal(turnsOf(msg('streaming')).find((x) => x.t === 'words').parts, undefined);
 });
+
+test('a PR shows on its TaskCard alone: an applied PR card whose run\'s card is in the thread is no turn; an orphan one reads "PR opened #N", never its URL (D4)', () => {
+  const url = 'https://github.com/acme/web/pull/43';
+  assert.equal(cardTurn(block({ type: 'pull-request', title: 'T', runId: 'run-a', result: { url } }, 'applied'), ctx), null);
+  assert.equal(cardTurn(block({ type: 'pull-request', title: 'T', pipelineId: 'pa', result: { url } }, 'applied'), { ...ctx, tasks: [{ id: 'pa', run: 'pa', pid: 'pa' }] }), null);
+  const orphan = cardTurn(block({ type: 'pull-request', title: 'T', runId: 'run-z', result: { url } }, 'applied'), ctx);
+  assert.equal(orphan.t, 'act'); assert.equal(orphan.done, 'PR opened #43');
+  assert.doesNotMatch(JSON.stringify(orphan), /https:/);
+  const pending = cardTurn(block({ type: 'pull-request', title: 'T', runId: 'run-a' }), ctx);
+  assert.equal(pending.t, 'act'); assert.ok(!pending.done);
+  const turns = turnsOf({ messages: [{ id: 'm', role: 'assistant', text: '', blocks: [block({ type: 'pull-request', title: 'T', runId: 'run-a', result: { url } }, 'applied')] }] }, ctx);
+  assert.deepEqual(turns, [], 'turnsOf drops it');
+});
+
+test('D12 (a): every seeded change type shows at least one row, from its own fields', () => {
+  const cards = {
+    'scope-switch': { reason: 'Which project?', summary: 'web / api', candidates: [{ projectKey: 'web', name: 'web', path: '/src/web' }, { projectKey: 'api', name: 'api', path: '/src/api' }] },
+    schedule: { action: 'move', title: 'Nightly', summary: 'Move Nightly', before: { when: 'Mon 09:00' }, after: { when: 'Tue 10:00' } },
+    away: { summary: 'Away on weekends', set: { mode: 'weekends' } , before: 'Never', after: 'Weekends' },
+    proxy: { kind: 'settings', summary: 'Use a proxy', patch: { upstream: 'http://proxy:8080' } },
+    web: { kind: 'web', summary: 'Read example.com', host: 'example.com', url: 'https://example.com/x' },
+    clone: { kind: 'clone', summary: 'Clone acme/web', url: 'https://github.com/acme/web', branch: 'main', dir: '/src/web' },
+    project: { kind: 'add', summary: 'Add web', name: 'web', path: '/src/web' },
+    workspace: { kind: 'create', summary: 'Make a workspace', name: 'Shop', members: ['web', 'api'] },
+    actions: { kind: 'project', summary: 'Add dev server', changes: [{ op: 'add', label: 'Dev server', before: '', after: 'npm run dev' }] },
+    metrics: { kind: 'enable', summary: 'Turn on team metrics', projectName: 'web' },
+    policy: { kind: 'enable', summary: 'Turn on a team policy', projectName: 'web' },
+    workflow: { name: 'Lean', manifest: { steps: [{ kind: 'agents', nodes: [{ id: 'n1', key: 'planner', label: 'Plan' }, { id: 'n2', key: 'implementer', label: 'Build' }] }] } },
+    'workflow-build': { name: 'Mine', workflow: { nodes: [{ id: 'a', label: 'Plan' }] } },
+  };
+  for (const [type, card] of Object.entries(cards)) {
+    const turn = cardTurn(block({ type, ...card }), ctx);
+    assert.equal(turn.t, 'change', type);
+    assert.ok(turn.rows.length >= 1, type);
+    assert.ok(turn.rows.every((r) => r.name && (r.after || r.before)), `${type}: ${JSON.stringify(turn.rows)}`);
+  }
+  assert.deepEqual(cardTurn(block({ type: 'scope-switch', ...cards['scope-switch'] }), ctx).rows.map((r) => r.name), ['web', 'api']);
+  assert.deepEqual(cardTurn(block({ type: 'schedule', ...cards.schedule }), ctx).rows[0], { name: 'When', before: 'Mon 09:00', after: 'Tue 10:00' });
+});
+
+test('D12 (b, c): a finished command is done with no Stop; consecutive commands in one answer are one commands turn', () => {
+  const cmd = (seq, extra = {}) => ({ kind: 'card', id: `c${seq}`, state: 'command', textAt: 0, card: { type: 'command', blockId: `t-1:${seq}`, sessionId: 's1', seq, command: `ls ${seq}`, summary: `List ${seq}`, folder: '/src/web', ...extra } });
+  const views = { 't-1:1': { status: 'exited', exitCode: 0 }, 't-1:2': { status: 'exited', exitCode: 2 } };
+  const one = cardTurn(cmd(1), { ...ctx, commandOf: (id) => views[id] || null });
+  assert.equal(one.t, 'cmd'); assert.equal(one.done, true);
+  assert.ok(!cardTurn(cmd(3), { ...ctx, commandOf: () => ({ status: 'running', exitCode: null }) }).done, 'a running one keeps its Stop');
+  assert.ok(!cardTurn(cmd(4), ctx).done, 'unknown: as dev stored it');
+  const l = turnsOf({ messages: [{ id: 'm', role: 'assistant', status: 'done', text: 'ok', blocks: [cmd(1), cmd(2)] }] }, { ...ctx, commandOf: (id) => views[id] || null });
+  const g = l.filter((x) => x.t === 'commands');
+  assert.equal(g.length, 1); assert.equal(l.filter((x) => x.t === 'cmd').length, 0);
+  assert.deepEqual(g[0].rows.map((r) => [r.cmd, r.state]), [['ls 1', 'ok'], ['ls 2', 'fail']]);
+  assert.deepEqual(turnErrors(g[0]), []);
+});
+
+test('a project switch: dev writes its divider as a system message; it is the prototype\'s divider turn', () => {
+  const l = turnsOf({ messages: [{ id: 's1', role: 'system', text: 'Switched to web', blocks: [{ kind: 'divider', text: 'Switched to web', scope: { projectKey: 'web' } }] }] }, ctx);
+  assert.deepEqual(l, [{ t: 'divider', text: 'Switched to web' }]);
+  assert.deepEqual(turnsOf({ messages: [{ id: 's2', role: 'system', text: 'x', blocks: [{ kind: 'notice', text: 'quiet', quiet: true }] }] }, ctx), [], 'nothing else of a system message is drawn');
+});

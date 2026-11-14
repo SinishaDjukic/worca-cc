@@ -209,6 +209,7 @@ export function startChatLive({ fetch, send = () => {}, toast = () => {}, now = 
   function frame(f) {
     if (typeof f?.type === 'string' && f.type.startsWith('term-')) { term.frame(f); return; }
     const id = str(f?.threadId), e = id && threads.get(id);
+    if (f?.type === 'ask-command' && str(f.command?.blockId)) { cmds.set(f.command.blockId, f.command); if (e) notify(id); }
     if (!e) return;
     if (e.state === 'loading' || e.reloading) { e.buffer.push(f); return; }
     if (e.state !== 'ready' || !e.model) return;
@@ -257,11 +258,28 @@ export function startChatLive({ fetch, send = () => {}, toast = () => {}, now = 
     return { title: str(g.title), usd: typeof g.cost?.usd === 'number' ? g.cost.usd : null, ms: Number.isFinite(from) && Number.isFinite(to) && to >= from ? to - from : null, runs: arr(g.members).length };
   }
   const linksOf = (m) => [...m.runLinks().entries()].map(([runId, l]) => ({ runId, ...l }));
+  // D12 (b): a command's end lives on dev's terminal block, not its card: read once (GET …/commands/:blockId), then kept
+  // by its ask-command frames; unknown until read, so it draws as dev stored it
+  const cmds = new Map();
+  function commandOf(threadId, blockId) {
+    if (!blockId) return null;
+    if (!cmds.has(blockId)) {
+      cmds.set(blockId, null);
+      // dev answers the block's view itself (src/core/ask/commands.mjs commandView; its `command` is the command line);
+      // a refused read is not kept, so the next paint asks again
+      request('GET', `${T(threadId)}/commands/${enc(blockId)}`).then((r) => {
+        const v = r.ok && r.data && typeof r.data === 'object' ? r.data : r.status === 404 ? { status: 'gone', exitCode: null } /* no block: its shell is gone, so it is not running */ : null;
+        if (!v) { if (cmds.get(blockId) === null) cmds.delete(blockId); return; }
+        if (!cmds.get(blockId)) { cmds.set(blockId, v); notify(threadId); }
+      });
+    }
+    return cmds.get(blockId);
+  }
   function turns(id) {
     const e = threads.get(id);
     if (!e || e.state !== 'ready') return [];
     const messages = e.model.messages().filter((m) => !e.hidden.has(m.id));
-    return turnsOf({ messages, runLinks: linksOf(e.model), inFlight: e.model.inFlight() }, { tasks: tasksOf(id), now: now() });
+    return turnsOf({ messages, runLinks: linksOf(e.model), inFlight: e.model.inFlight() }, { tasks: tasksOf(id), now: now(), commandOf: (b) => commandOf(id, b) });
   }
 
   // D10: a send on Chat home makes the thread first; a refused message deletes it again, and a failed delete keeps it

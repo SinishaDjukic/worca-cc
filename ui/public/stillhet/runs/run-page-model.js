@@ -593,7 +593,10 @@
   // sample plan, checklist, outcome and evidence are not this task's, so they are left out. A failed task's What broke lists
   // the same items its card does (taskPageOf `why`).
   function liveOver(over, LP, files, c) {
-    const broke = over.focus && over.focus.kind === 'broke' && (c.why || []).length ? { kind: 'broke', ev: over.focus.ev, own: c.why } : null;
+    // c17: the task's own failure through the prototype's bold-title path, one row per failure (taskPageOf `failure`)
+    const log = (over.focus && over.focus.ev && over.focus.ev.log) || 'Show the log';
+    const broke = c.failure ? { kind: 'broke', ev: { title: c.failure.head, lines: c.failure.rows, log }, rows: true }
+      : over.focus && over.focus.kind === 'broke' && (c.why || []).length ? { kind: 'broke', ev: over.focus.ev, own: c.why } : null;
     return Object.assign({}, over, { focus: broke, checklist: null, outcome: [], ask: null, evidence: '', task: c.task || '', artifacts: LP.docs || [], areas: over.areas.length ? areasOf(files) : [] });
   }
   // A feature reads from the task that holds it up: failed first, then one that asks, one paused, one stopped.
@@ -920,7 +923,7 @@
       // A group's next run, under the task it follows: whether it starts by itself or asks first is set right there.
       then: c.independent || hold ? null : (() => { const k = runStages.findIndex((x) => stageState(x.subs) === 'live'); const nx = k >= 0 && runStages[k + 1]; return nx && nx.subs.every((y) => y.state === 'next') && open === runStages[k].key ? { n: k + 2, title: nx.title } : null; })(),
       planHead: runStages.length > 0 && open === 'plan',
-      runCases: c.runCases || [], parent: par, over, ask: clarifying ? Object.assign({}, clarifying[qIndex], { n: (qIndex + 1) + ' of ' + clarifying.length }) : (c.id === 'question' && seed?.question) || DETAIL.asks[c.id] || null, under: /^(gate|plan|outline)$/.test(c.id) ? { issues: c.id === 'gate' ? DETAIL.issues : [], roles: DETAIL.roles } : null,
+      runCases: c.runCases || [], parent: par, over, ask: clarifying ? Object.assign({}, clarifying[qIndex], { n: (qIndex + 1) + ' of ' + clarifying.length }) : (c.id === 'question' && seed?.question) || DETAIL.asks[c.id] || null, under: /^(gate|plan|outline)$/.test(c.id) ? (c.liveId ? { issues: (c.review && c.review.issues) || [], roles: (c.review && c.review.roles) || [] } : { issues: c.id === 'gate' ? DETAIL.issues : [], roles: DETAIL.roles }) : null,   // live: the run's own review, never the design's sample
       flow: flowOf(c, stateId, liveCtx), state: stateId, event: EVENT_OF(c, stateId, liveCtx), runFlow: R.runFlow(liveCtx), liveRun: runStages.findIndex((x) => stageState(x.subs) === 'live' && x.member && /^(Working|Starting)$/.test(x.member.word)), formCtx: liveCtx,
       hasSetup: LP ? !!LP.setup : !c.noSetup && !runStages.length, dependents: c.dependents || 0, heldBy: c.heldBy || '', hosted: LP ? !!(LP.actions && !LP.actions.enabled) : !!c.hosted, baseMoved: !!c.baseMoved, independent: !!c.independent, reqsLeft: left, reqsCheck: !!c.reqsCheck, holdIndex: c.k ? c.k - 1 : -1,
       // live: the log, agents, sessions and step usage are the task's own (its log, steps, sessions and telemetry)
@@ -956,7 +959,22 @@
   const stageOf = (id) => { const c = CASES.find((x) => x.id === id), st = c?.stages; if (!st?.length || !st[0].subs) return {}; const live = st.findIndex((x) => R.stageState(x.subs) === 'live'); let done = -1; st.forEach((x, i) => { if (R.stageState(x.subs) === 'done') done = i; }); return { stage: live >= 0 ? live : done, stages: st.length }; };
   // The live kind (Stillhet Tasks, D3): a task's page is its case's design with this task's own facts (live/task-page.mjs
   // taskPageOf), handed to view() as the run it draws (ui.run), so the prototype draws it and nothing is copied.
-  const STAGE_SUB = { done: 'done', now: 'now', failed: 'failed', paused: 'paused', stopped: 'stopped', next: 'next' };
+  const STAGE_SUB = { done: 'done', now: 'now', failed: 'failed', paused: 'paused', next: 'next' };
+  // a step of dev's in the prototype's shape: a stopped one is the design's stopped look (paused, Stopped by you), a
+  // capped task's paused one says it is at its cap
+  const liveSub = (page, x) => (x.state === 'stopped' ? s(x.name, 'paused', '', { live: 'Stopped by you' })
+    : x.state === 'paused' && page.case === 'capped' ? s(x.name, 'paused', '', { live: 'Paused at its cap' })
+    // dev's failure policy holds a failed step paused: on a failed task it is the step that broke, its line what broke
+    : x.state === 'paused' && page.failure ? s(x.name, 'failed', '', { live: String(page.failure.head || '').replace(/^[^·]*·\s*/, '') })
+    : s(x.name, STAGE_SUB[x.state] || 'next'));
+  // the PR stage's lines from the PR's own facts: Create PR "Opened #N", Checks "2 failed" or "3 of 3 passed"
+  const checksLine = (k) => (!k || !k.total ? '' : k.failed ? k.failed + ' failed' : (k.total - k.pending) + ' of ' + k.total + ' passed');
+  const prSub = (page, x) => (x.name === 'Create PR' && page.pr ? Object.assign({}, x, { live: 'Opened ' + page.pr }) : x.name === 'Checks' && page.pr && checksLine(page.checks) ? Object.assign({}, x, { live: checksLine(page.checks) }) : x);
+  // a plan waiting for approval: its stage opens on the step that waits (the one working, else the last that ran)
+  function planWaits(subs) {
+    const k = subs.findIndex((x) => x.state === 'now'), at = k >= 0 ? k : subs.map((x) => x.state).lastIndexOf('done');
+    return subs.map((x, i) => (i === (at >= 0 ? at : subs.length - 1) ? Object.assign({}, x, { state: 'ask', live: 'Waiting for your approval' }) : x));
+  }
   function liveRun(page) {
     const base = caseFor(page.case) || CASES[1];
     // the design's step names stay; its sample times, notes and rounds never reach a real task
@@ -967,11 +985,12 @@
     const stages = (base.stages || []).filter((st0) => !WORK.test(st0.key) || (page.stages || []).some((x) => x.key === st0.key)).map((st0) => {
       const st = Object.assign({}, st0, { subs: (st0.subs || []).map(bare) });
       const own = (page.stages || []).find((x) => x.key === st.key);
+      if (st.key === 'pr') return Object.assign({}, st, { subs: st.subs.map((x) => prSub(page, x)) });
       if (!own || st.run || SHIP.test(st.key)) return st;
       // its steps are the task's workflow's own, named and marked by dev (taskPageOf stages[].steps); a stage whose steps
       // are not known yet (Auto still deciding) is one step under its own name, in its own state
-      const subs = (own.steps || []).length ? own.steps.map((x) => s(x.name, STAGE_SUB[x.state] || 'next')) : [s(st.label, STAGE_SUB[own.state] || 'next')];
-      return Object.assign({}, st, { subs });
+      const subs = (own.steps || []).length ? own.steps.map((x) => liveSub(page, x)) : [liveSub(page, { name: st.label, state: own.state })];
+      return Object.assign({}, st, { subs: page.case === 'plan' && st.key === 'plan' ? planWaits(subs) : subs });
     });
     // the task's own facts only: an empty branch, time or cost stays empty, never the design's sample (BRANCH, the case's figures)
     const at = page.startedAt ? new Date(page.startedAt) : null;
@@ -979,7 +998,7 @@
     const going = (page.stages || []).some((x) => x.state === 'now' || x.state === 'paused');
     return Object.assign({}, base, { id: base.id, title: page.title, project: page.project || '', over: !going, branch: page.branch || '', base: page.base || '', pr: page.pr || '', diff: '', task: page.prompt || '', figs,
       startedWord: at ? 'Started ' + at.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ', ' + at.toTimeString().slice(0, 5) : '',
-      detail: page.detail || '', why: page.why || [], stages, spent: { mins: page.mins || 0, cost: page.cost || 0 }, budget: page.cap || null, movedFrom: base.id, liveId: page.id,
+      detail: page.detail || '', why: page.why || [], failure: page.failure || null, review: page.review || { roles: [], issues: [] }, stages, spent: { mins: page.mins || 0, cost: page.cost || 0 }, budget: page.cap || null, movedFrom: base.id, liveId: page.id,
       // no live decisions source yet: the design's sample decisions never reach a real task
       decisions: [], failedChecks: page.failedChecks || 0, stageCost: Object.fromEntries((page.stages || []).map((x) => [x.key, x.costUsd || 0])) });
   }

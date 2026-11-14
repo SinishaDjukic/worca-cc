@@ -80,9 +80,50 @@ export function caseOf(item = {}, { checks = null } = {}) {
 /** A calm task whose state word would sort it into Needs you (Failed, Ready) is `over`: it sorts into Recent, as the
  *  demo's over runs (world.js sectionRaw), so its section stays dev's needsYouItems (D7). */
 export const overOf = (item = {}, c = caseOf(item)) => c === 'failed' || c === 'ready' ? !('needs' in item ? !!item.needs : needsYou(item)) : false;
+// ---- one short line (D6): Pulse's, the bell's and a task row's detail, at most 2 parts after the project ----
+/** A step's stage on the page and the card: Plan (clarify, plan, refine), Build (implement, test), else Review. */
+export function stageOfStep(step = {}) {
+  const k = lc(step.agentKey || step.key || step.nodeId);
+  if (/clarif|plan|refin|shape|outline/.test(k)) return 'plan';
+  if (/review|verif|check|audit/.test(k)) return 'review';
+  return 'build';
+}
+export const STAGE_LABEL = { plan: 'Plan', build: 'Build', review: 'Review' };
+/** The ✗ items of dev's error text, trimmed and without the mark; [] when it has none. dev's core stores a paused run's
+ *  error on one line (run-harness clipMiddle folds the whitespace), so an item ends at the next ✗ or line break. */
+export function failureItems(text) {
+  const parts = str(text).split(/\r?\n|\s*(?=✗)/).map((l) => l.trim());
+  return parts.filter((l) => l.startsWith('✗')).map((l) => l.replace(/^✗\s*/, '').trim()).filter(Boolean);
+}
+// the pause reasons dev's Runs list names (ui/public/runs-list.mjs PAUSE_WORDS); every other reads plain Paused
+const PAUSE_WORDS = { cost_pipeline: 'Cost limit', cost_total: 'Total budget', cost_pipeline_policy: 'Team cap', cost_total_policy: 'Team total', usage_limit: 'Usage limit', drain: 'Restart' };
+const COST = /^cost/;
+const capOf = (text) => (/>=\s*\$([\d.]+)/.exec(str(text)) || [])[1] || '';
+const clip = (t, n = 60) => (t.length > n ? `${t.slice(0, n - 1).trimEnd()}…` : t);
+const stepOf = (row) => (row.step && typeof row.step === 'object' ? row.step : typeof row.step === 'string' ? { key: row.step } : row.stepper?.current && typeof row.stepper.current === 'object' ? row.stepper.current : null);
+/** A run row's one detail line: { status, pauseReason, pauseDetail, error, step | stepper } → "Cost cap · reached $0.50",
+ *  "Build · 3 tests failed", "Build · FIRST LINE", a pause's word, or "Paused". '' only for a row neither paused nor failed. */
+export function shortDetail(row = {}) {
+  const s = lc(row.status), reason = lc(row.pauseReason), text = str(row.error) || str(row.pauseDetail);
+  const paused = s === 'paused', failed = FAILED.has(s);
+  if (!paused && !failed) return '';
+  if (COST.test(reason) || (!reason && /cost (limit|cap)/i.test(text))) { const cap = capOf(text); return cap ? `Cost cap · reached $${cap}` : 'Cost cap'; }
+  const word = paused && PAUSE_WORDS[reason];
+  if (word) return word;
+  const st = stepOf(row), stage = STAGE_LABEL[st ? stageOfStep(st) : 'build'];
+  const items = failureItems(text);
+  if (items.length) return `${stage} · ${items.length} test${items.length === 1 ? '' : 's'} failed`;
+  const first = text.split(/\r?\n/).map((l) => l.replace(/✗/g, '').replace(/\s*\([^()]*>=[^()]*\)/g, '').replace(/\s+/g, ' ').trim()).find(Boolean);
+  if (first) return `${stage} · ${clip(first)}`;
+  return paused ? 'Paused' : 'Failed';
+}
+
 const DETAIL = { created: 'Starting', starting: 'Starting', running: 'Working', pausing: 'Pausing', paused: 'Paused', interrupted: 'Worca was stopped', stopped: 'Stopped', aborted: 'Stopped', error: 'Failed', failed: 'Failed', done: 'Finished' };
-const questionOf = (q) => str(q?.questions?.[0]?.question) || str(q?.title) || 'Asks you something';
-const detailOf = (r, ask) => (ask ? questionOf(r.pendingQuestion) : lc(r.status) === 'paused' ? str(r.pauseDetail) || str(r.pauseReason) || DETAIL.paused : DETAIL[lc(r.status)] || '');
+// an ask's one line: a plan waits for your OK; a question is its own words, clipped to one short line
+const questionOf = (q) => (q?.kind === 'plan' ? 'Waits for your OK on the plan' : clip(str(q?.questions?.[0]?.question) || str(q?.title) || 'Asks you something'));
+const detailOf = (r, ask) => (ask ? questionOf(r.pendingQuestion) : lc(r.status) === 'paused' ? shortDetail(r) : DETAIL[lc(r.status)] || '');
+// a finished task whose PR needs you says why: its failing checks or its conflicts (prCaseOf), never Finished
+const prLine = (c, checks) => { const n = num(checks?.checks?.failed); return c === 'failing' ? (n ? `${n} ${n === 1 ? 'check' : 'checks'} failing` : 'Checks failing') : c === 'conflicts' ? 'Conflicts with its base' : ''; };
 const labelsOf = (r) => (Array.isArray(r.labels) ? r.labels : []).map((l) => (typeof l === 'string' ? l : str(l?.name))).filter(Boolean);
 const kindOf = (r) => (r.kind === 'workspace-run' || r.target === 'workspace' ? 'Workspace' : r.workMode === 'folder' ? 'Folder' : 'Git');
 const byOf = (r) => str(r.startedBy) || str(r.startedBy?.name);
@@ -98,7 +139,7 @@ export function taskOfLive(run = {}, { now = 0, projects = [], needs, checks = n
 /** A saved run: a `GET /api/history` row. */
 export function taskOfSaved(row = {}, { now = 0, needs, checks = null } = {}) {
   const item = savedItem(row), at = Number.isFinite(ms(row.mtime)) ? row.mtime : row.startedAt, it = needs === undefined ? item : { ...item, needs }, c = caseOf(it, { checks });
-  return pick('task', { id: str(row.id), case: c, ...(overOf(it, c) ? { over: true } : {}), ...(lc(row.status) === 'interrupted' ? { interrupted: true } : {}), title: str(row.title) || 'Untitled task', project: str(row.projectName), detail: lc(row.status) === 'paused' ? str(row.pauseDetail) || str(row.pauseReason) || DETAIL.paused : DETAIL[lc(row.status)] || '', time: timeOf(at, now), day: dayOf(at, now), labels: labelsOf(row), cost: num(row.totalCostUsd), archived: !!row.archived, unread: false, pr: prUrlOf(row.pr), group: '', kind: kindOf(row), by: byOf(row), workflow: '' });
+  return pick('task', { id: str(row.id), case: c, ...(overOf(it, c) ? { over: true } : {}), ...(lc(row.status) === 'interrupted' ? { interrupted: true } : {}), title: str(row.title) || 'Untitled task', project: str(row.projectName), detail: lc(row.status) === 'paused' ? shortDetail(row) : prLine(c, checks) || DETAIL[lc(row.status)] || '', time: timeOf(at, now), day: dayOf(at, now), labels: labelsOf(row), cost: num(row.totalCostUsd), archived: !!row.archived, unread: false, pr: prUrlOf(row.pr), group: '', kind: kindOf(row), by: byOf(row), workflow: '' });
 }
 
 // ---- chats ----
@@ -214,27 +255,37 @@ const EVENTS = {
   'schedule.missed': ['schedules', 'problem'], 'schedule.failed': ['schedules', 'problem'], 'schedule.run_error': ['schedules', 'problem'], 'schedule.run_paused': ['schedules', 'problem'],
   'schedule.self_paused': ['schedules', 'problem'], 'schedule.late': ['schedules', 'info'], 'schedule.retrying': ['schedules', 'info'], 'schedule.skipped': ['schedules', 'info'],
   'schedule.canceled': ['schedules', 'info'], 'schedule.ended': ['schedules', 'info'], 'schedule.completed': ['schedules', 'info'],
-  'run.done': ['runs', 'info'], 'run.failed': ['runs', 'problem'], 'run.paused_limit': ['runs', 'problem'], 'run.paused_error': ['runs', 'problem'],
+  'run.done': ['runs', 'info'], 'run.failed': ['runs', 'problem'], 'run.paused_limit': ['runs', 'problem'], 'run.paused_error': ['runs', 'problem'], 'run.cost_cap': ['runs', 'needs'],
 };
 const NOTIF_EVENT = { missed: 'schedule.missed', failed: 'schedule.failed', run_error: 'schedule.run_error', run_paused: 'schedule.run_paused', paused: 'schedule.self_paused', late: 'schedule.late', retrying: 'schedule.retrying', skipped: 'schedule.skipped', canceled: 'schedule.canceled', ended: 'schedule.ended', completed: 'schedule.completed' };
-const NAMES = { 'schedule.missed': 'Start missed', 'schedule.failed': 'Could not start', 'schedule.run_error': 'Scheduled run failed', 'schedule.run_paused': 'Run paused', 'schedule.self_paused': 'Series paused itself', 'schedule.late': 'Started late', 'schedule.retrying': 'Retrying a start', 'schedule.skipped': 'Start skipped', 'schedule.canceled': 'Start canceled', 'schedule.ended': 'Series ended', 'schedule.completed': 'Scheduled run finished', 'run.done': 'Run finished', 'run.failed': 'Task failed', 'run.paused_limit': 'Usage limit reached', 'run.paused_error': 'Paused on error' };
+const NAMES = { 'schedule.missed': 'Start missed', 'schedule.failed': 'Could not start', 'schedule.run_error': 'Scheduled run failed', 'schedule.run_paused': 'Run paused', 'schedule.self_paused': 'Series paused itself', 'schedule.late': 'Started late', 'schedule.retrying': 'Retrying a start', 'schedule.skipped': 'Start skipped', 'schedule.canceled': 'Start canceled', 'schedule.ended': 'Series ended', 'schedule.completed': 'Scheduled run finished', 'run.done': 'Run finished', 'run.failed': 'Task failed', 'run.paused_limit': 'Usage limit reached', 'run.paused_error': 'Paused on error', 'run.cost_cap': 'Cost cap reached' };
 const updDay = (at, now) => { const d = dayOf(at, now); return d === 'today' ? 'Today' : d === 'yesterday' ? 'Yesterday' : 'Earlier'; };
 const update = (id, e, title, meta, at, now, o = {}) => ({ id, e, g: EVENTS[e][0], sev: EVENTS[e][1], title, meta, time: timeOf(at, now) || '', day: updDay(at, now), unread: EVENTS[e][1] !== 'info' && !o.read, go: o.go || 'runs', to: o.to || 'Tasks', ...(o.run ? { run: o.run } : {}), ...(o.fix ? { fix: o.fix } : {}) });
 
+// a scheduler pause's message (src/core/scheduler.mjs: `paused (cost pipeline): DETAIL. HINT`) as the one short line
+const noteMeta = (n) => {
+  // a missed start: dev's message names the due time as a raw timestamp; the line says it as a clock
+  const due = n.kind === 'missed' && /\d{4}-\d\d-\d\dT[\d:.]+Z?/.exec(str(n.message));
+  if (due && Number.isFinite(Date.parse(due[0]))) return `Worca was not running at ${clock(Date.parse(due[0]))}`;
+  const m = /^paused \(([^)]*)\)(?::\s*([\s\S]*))?/.exec(str(n.message));
+  return m ? shortDetail({ status: 'paused', pauseReason: m[1].replace(/ /g, '_'), pauseDetail: str(m[2]) }) : str(n.message).split(/\r?\n/)[0];
+};
 /** A `GET /api/notifications` row, or null when Pulse's catalogue has no event for its kind. */
 export function updateOf(n = {}, { now = 0 } = {}) {
   const e = NOTIF_EVENT[n.kind];
   if (!e) return null;
   // a missed start can be run now from its row (the ticket's waiting row in the store, live-map's `sched:` id)
   const missed = e === 'schedule.missed' && n.ticketId ? { run: `sched:${n.ticketId}`, fix: 'Run now' } : {};
-  return update(`n${n.id}`, e, str(n.title) ? `${NAMES[e]} · ${n.title}` : NAMES[e], str(n.message), n.createdAt, now, { read: !!n.readAt || n.unread === false, go: 'schedules', to: 'Schedules', ...missed });
+  return update(`n${n.id}`, e, str(n.title) ? `${NAMES[e]} · ${n.title}` : NAMES[e], noteMeta(n), n.createdAt, now, { read: !!n.readAt || n.unread === false, go: 'schedules', to: 'Schedules', ...missed });
 }
 /** A run's outcome, from its History row: finished, failed or paused. */
 export function updateOfOutcome(row = {}, { now = 0 } = {}) {
   const s = lc(row.status), at = Number.isFinite(ms(row.mtime)) ? row.mtime : row.startedAt;
-  const e = s === 'done' ? 'run.done' : FAILED.has(s) ? 'run.failed' : s === 'paused' ? (row.limitEngine ? 'run.paused_limit' : 'run.paused_error') : '';
+  const capped = s === 'paused' && COST.test(lc(row.pauseReason));
+  const e = s === 'done' ? 'run.done' : FAILED.has(s) ? 'run.failed' : capped ? 'run.cost_cap' : s === 'paused' ? (row.limitEngine ? 'run.paused_limit' : 'run.paused_error') : '';
   if (!e) return null;
-  return update(`o${row.id}`, e, `${NAMES[e]} · ${str(row.title) || 'Untitled task'}`, [str(row.projectName), str(row.pauseDetail)].filter(Boolean).join(' · '), at, now, { go: 'run', to: 'the run page', run: str(row.id), fix: FAILED.has(s) ? 'Try again' : s === 'paused' ? 'Resume' : '' });
+  const cap = capOf(row.pauseDetail), line = capped ? (cap ? `paused at $${cap}` : 'paused at its cap') : shortDetail(row);
+  return update(`o${row.id}`, e, `${NAMES[e]} · ${str(row.title) || 'Untitled task'}`, [str(row.projectName), line].filter(Boolean).join(' · '), at, now, { go: 'run', to: 'the run page', run: str(row.id), fix: FAILED.has(s) ? 'Try again' : s === 'paused' ? 'Resume' : '' });
 }
 
 // Away, as the profile menu's row reads it (pulse-model.js awayRow): away now, or here with or without away hours

@@ -409,6 +409,32 @@ test('Delete all chats (Settings): dev\'s counts, then dev\'s DELETE; a refusal 
   assert.ok(!Object.values(ACTIONS).some((a) => { try { return a[1]({})[1] === '/api/ask/threads' && a[1]({})[0] === 'DELETE'; } catch { return false; } }), 'no act() id reaches it');
 });
 
+test('D12 (b): a command\'s end is read from dev\'s block once; ended or gone (404) it is done with no Stop; an ask-command frame updates it', async () => {
+  const cmd = (seq) => ({ kind: 'card', id: `c${seq}`, state: 'command', card: { type: 'command', blockId: `t-1:${seq}`, sessionId: 's1', seq, command: `ls ${seq}`, summary: `List ${seq}`, folder: '/src' } });
+  const msg = { id: 'm9', role: 'assistant', status: 'done', text: '', createdAt: '2026-11-14T10:00:00Z', blocks: [cmd(1)] };
+  const msg2 = { id: 'm10', role: 'assistant', status: 'done', text: 'and', createdAt: '2026-11-14T10:01:00Z', blocks: [cmd(2)] };
+  const r = rig({ answer: (url) => (url === '/api/ask/threads/ask_1' ? [200, snap({ messages: [msg, msg2] })] : url.endsWith('/commands/t-1%3A1') ? [200, { blockId: 't-1:1', sessionId: 's1', seq: 1, command: 'ls 1', status: 'exited', exitCode: 0, startedAt: 1, endedAt: 2, durationMs: 1, stoppedBy: null, runBy: 'agent', tail: '', truncated: false }] : url.endsWith('/commands/t-1%3A3') ? [500, { error: 'busy' }] : [404, { error: 'block not found' }]) });
+  await r.live.open('ask_1');
+  assert.deepEqual(r.live.turns('ask_1').filter((x) => x.t === 'cmd').map((x) => !!x.done), [false, false], 'unknown until read');
+  await tick();
+  assert.deepEqual(r.live.turns('ask_1').filter((x) => x.t === 'cmd').map((x) => !!x.done), [true, true]);
+  assert.equal(r.calls.filter((c) => c.url.includes('/commands/')).length, 2, 'read once each');
+  r.live.frame({ type: 'ask-command', threadId: 'ask_1', command: { blockId: 't-1:1', status: 'running', exitCode: null } });
+  assert.equal(r.live.turns('ask_1').find((x) => x.id === 'c1').done, undefined, 'a frame says it runs again');
+});
+
+test('D12 (b): a refused command read (neither ok nor 404) is not kept: the next paint asks again', async () => {
+  const card = { kind: 'card', id: 'c3', state: 'command', card: { type: 'command', blockId: 't-1:3', sessionId: 's1', seq: 3, command: 'ls 3', summary: 'List 3', folder: '/src' } };
+  const msg = { id: 'm11', role: 'assistant', status: 'done', text: '', createdAt: '2026-11-14T10:00:00Z', blocks: [card] };
+  const r = rig({ answer: (url) => (url === '/api/ask/threads/ask_1' ? [200, snap({ messages: [msg] })] : [500, { error: 'busy' }]) });
+  await r.live.open('ask_1');
+  r.live.turns('ask_1');
+  await tick();
+  assert.equal(r.live.turns('ask_1').find((x) => x.id === 'c3').done, undefined, 'unknown, drawn as dev stored it');
+  await tick();
+  assert.equal(r.calls.filter((c) => c.url.includes('/commands/')).length, 2, 'asked again after the refusal');
+});
+
 test('card-apply saves a workflow or workflow-build card (dev answers 400 to applied) and applies every other card', () => {
   const body = (a) => ACTIONS['card-apply'][1](a)[2];
   assert.deepEqual(body({ threadId: 'ask_1', cardId: 'c1', cardType: 'workflow' }), { state: 'saved' });

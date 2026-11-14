@@ -38,7 +38,7 @@ test('open: loading, then ready; a 500 is failed and Try again with a 200 is rea
   fail = false;
   await t.open('h3');
   assert.equal(t.state('h3'), 'ready');
-  assert.equal(t.detail('h3').detail, 'Build · 3 tests failed');
+  assert.equal(t.detail('h3').failure.head, 'Build · 3 tests failed', 'the failure is the page\'s What broke, never its head (D9)');
   const g = host({ rows: { h9: { id: 'h9', case: 'stopped' } }, routes: { 'GET /api/history/': [404, { error: 'pipeline not found' }] } });
   await g.t.open('h9');
   assert.equal(g.t.state('h9'), 'gone');
