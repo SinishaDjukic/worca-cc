@@ -60,7 +60,7 @@ test('the Chat row leads the sidebar (simple, "Chat", an unread dot that starts 
   assert.equal(first.dataset.nav, 'chat');
   assert.equal(first.dataset.minLevel, 'simple');
   assert.equal(first.querySelector(':scope > span:not(.nav-count)').textContent, 'Chat');
-  assert.equal(first.nextElementSibling.dataset.nav, 'runs', 'right above Runs');
+  assert.equal(first.nextElementSibling.dataset.nav, 'design', 'right above Design');
   const dot = first.querySelector('#nav-chat-unread');
   assert.ok(dot && dot.hidden, 'the unread dot starts hidden');
   assert.ok(dot.classList.contains('nav-count') && dot.classList.contains('nav-dot'), 'a nav-count: never the row label, rides the rail corner');

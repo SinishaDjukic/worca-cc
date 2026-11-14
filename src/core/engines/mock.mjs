@@ -16,6 +16,8 @@ import { writeMockSurvey, writeMockUsage, writeMockSynthesis } from '../workspac
 import { safeEmit } from './spawn.mjs';
 import { writeMockC4 } from '../c4-mock.mjs';
 import { demoAskReply, demoChunks } from '../demo-scenario.mjs';
+import { runMockDesign } from './mock-design.mjs';
+import { validateDesignQuestions } from '../ask/design-payload.mjs';
 
 export const MOCK_SPAWN_LOG_MAX = 500;
 export const mockSpawnLog = [];
@@ -200,6 +202,10 @@ const ASK_HANDOFF_BLOCK_RE = /^Conversation so far in this chat\.[^\n]*\n(`{4,})
 // Freeform chat context (ask/prompt.mjs renderChatContextPrompt): someone else's quoted messages after the user's words;
 // the mock answers the user's own words (forged delimiters inside are neutralised, so the first end is its own).
 const ASK_CHAT_CONTEXT_BLOCK_RE = /\s*\[chat context\][\s\S]*?\[\/chat context\]/;
+// Design chat (ask/design-payload.mjs renderDesignBlock): the open design's state and pins. A turn carrying it takes
+// the design arm; the mock answers the person's words, so the block is stripped from them (forged markers inside are
+// rewritten, so the first end is its own).
+const DESIGN_CHAT_BLOCK_RE = /\[design chat\][\s\S]*?\[\/design chat\]\s*/;
 
 /** Test seam: holdFrame(frame, index) may return a promise that holds a MOCK_SLOW turn after that
  *  frame until it settles (or the turn is aborted). Unset = the real 300 ms per frame. */
@@ -226,7 +232,8 @@ function untilSettledOrAborted(p, signal) {
  * `result` frame and then REJECT exactly like the real CLI (exit 1, empty stderr).
  */
 async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId }) {
-  const userText = String(prompt ?? '').replace(ASK_HANDOFF_BLOCK_RE, '').replace(ASK_CONTEXT_BLOCK_RE, '').replace(COMPOSER_CANVAS_BLOCK_RE, '').replace(ASK_CHAT_CONTEXT_BLOCK_RE, '');
+  const userText = String(prompt ?? '').replace(ASK_HANDOFF_BLOCK_RE, '').replace(ASK_CONTEXT_BLOCK_RE, '').replace(COMPOSER_CANVAS_BLOCK_RE, '').replace(ASK_CHAT_CONTEXT_BLOCK_RE, '').replace(DESIGN_CHAT_BLOCK_RE, '');
+  const designBlock = (DESIGN_CHAT_BLOCK_RE.exec(String(prompt ?? '')) || [''])[0];
   let card = {};
   try { card = markers.MOCK_ASK_CARD ? JSON.parse(markers.MOCK_ASK_CARD) : {}; } catch { card = {}; }
   if (!card || typeof card !== 'object' || Array.isArray(card)) card = {};
@@ -301,6 +308,54 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
     usage: USAGE, modelUsage: {}, permission_denials: [], terminal_reason: 'completed', result: ANSWER, ...over });
   const MSG1 = 'msg_mock_ask_1';
   const MSG2 = 'msg_mock_ask_2';
+  // The turn's reply. Every arm answers ANSWER except the design arm, which sets its own.
+  let replyText = ANSWER;
+
+  // Design chat (P5): chosen on the person's words; the status and the pins are read from the block, since the
+  // words have it stripped. An answered questions card's event turn on a design with no plan shows `sections: none
+  // yet`, so it starts the build too. The mock writes each tool's result itself; it never runs the MCP child.
+  const designCall = () => {
+    if (/\bMOCK_DESIGN_CHAT\b/.test(userText)) return null;
+    if (/\bMOCK_DESIGN_ASK\b/.test(userText)) {
+      const input = { heading: 'Your turn: pick a tone', questions: [{ id: 'tone', text: 'Which tone?', why: 'It sets the copy.',
+        options: [{ label: 'Plain', value: 'plain' }, { label: 'Playful', value: 'playful' }] }] };
+      return { name: 'mcp__worca__design_questions', input, out: { ok: true, ...input, note: 'end your turn' } };
+    }
+    // MOCK_DESIGN_FIELDS: the card's second shape, one of each kind of component, compiled as the real tool does.
+    if (/\bMOCK_DESIGN_FIELDS\b/.test(userText)) {
+      const input = { heading: 'A few things before the crew starts', fields: [
+        { id: 'name', widget: 'text', label: 'What is the product called?', placeholder: 'Acme' },
+        { id: 'tone', widget: 'select', label: 'Which tone fits?', help: 'It sets the copy and the type.', options: [
+          { label: 'Plain', value: 'plain', description: 'Short sentences, no jokes.', recommended: true },
+          { label: 'Playful', value: 'playful', description: 'Lighter, with a wink.' }] },
+        { id: 'parts', widget: 'multiselect', label: 'Which parts should the page have?', style: 'chips', options: [
+          { label: 'Pricing', value: 'pricing' }, { label: 'FAQ', value: 'faq' }, { label: 'Team', value: 'team' }] },
+        { id: 'density', widget: 'slider', label: 'How dense should it be?', min: 1, max: 5, step: 1, default: 2, minLabel: 'Airy', maxLabel: 'Dense' },
+        { id: 'dark', widget: 'toggle', label: 'Dark theme' },
+        { id: 'jokes', widget: 'textarea', label: 'Anything it must not joke about?', required: false, showWhen: { tone: 'playful' } },
+        { id: 'note', widget: 'note', text: 'You can change any of this after the first build.' }] };
+      const checked = validateDesignQuestions(input);
+      return { name: 'mcp__worca__design_questions', input, out: checked.ok ? { ok: true, ...checked.value, note: 'end your turn' } : checked };
+    }
+    if (/^sections: none yet$/m.test(designBlock)) {
+      return { name: 'mcp__worca__start_design_build', input: { brief: firstLine },
+        out: { ok: true, requested: { kind: 'design-start', brief: firstLine }, note: 'n' } };
+    }
+    const pin = (/^- pin 1: section "([^"]+)"/m.exec(designBlock) || [])[1] || null;
+    const input = { instruction: firstLine, sections: pin ? [pin] : [], needsLead: !pin };
+    return { name: 'mcp__worca__change_design', input, out: { ok: true, requested: { kind: 'design-change', ...input }, note: 'n' } };
+  };
+  const designFrames = () => {
+    const status = (/ status (\S+) · version/.exec(designBlock) || [])[1] || 'unknown';
+    const pins = (designBlock.match(/^- pin \d+:/gm) || []).length;
+    const call = designCall();
+    replyText = `[mock] design status=${status} pins=${pins}`;
+    const out = call
+      ? [atool(MSG1, 'toolu_mock_design', call.name, call.input), uresult('toolu_mock_design', JSON.stringify(call.out)), mstart(MSG2)]
+      : [];
+    out.push(delta('[mock] '), delta(replyText.slice('[mock] '.length)), atext(call ? MSG2 : MSG1, replyText), mdelta, result({ result: replyText }));
+    return out;
+  };
 
   // Demo video (tools/demo/extension-video): a scripted answer instead of "[mock] …", only under WORCA_DEMO_SCENARIO.
   const demo = demoAskReply(userText);
@@ -335,6 +390,9 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
     frames.push(maxTurns
       ? result({ subtype: 'error_max_turns', is_error: true, errors: ['Reached maximum number of turns (1)'], terminal_reason: 'max_turns', num_turns: 2, stop_reason: 'tool_use', result: undefined })
       : result({ subtype: 'error_max_budget_usd', is_error: true, errors: ['Reached maximum budget ($0.0001)'], terminal_reason: 'budget_exhausted', result: undefined }));
+  } else if (designBlock) {
+    // L5.13: before every other arm, so words in a brief ("run", "agents", "workflow") cannot trip them.
+    frames.push(...designFrames());
   } else {
     let answerMsg = MSG1;
     if (agents) {
@@ -478,7 +536,7 @@ async function mockAsk({ markers, prompt, cwd, onEvent, signal, resumeSessionId 
     err.errorClass = null;
     throw err;
   }
-  return { text: ANSWER, exitCode: 0 };
+  return { text: replyText, exitCode: 0 };
 }
 
 function abortIfNeeded(signal) {
@@ -505,6 +563,11 @@ export async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resu
   const sysMarkers = parseMarkers('', systemPrompt);
   if (sysMarkers.MOCK_ROLE === 'ask' || permissionMode === 'dontAsk') {
     return mockAsk({ markers: sysMarkers, prompt, cwd, onEvent, signal, resumeSessionId });
+  }
+  // The Design roles (mock-design.mjs), the same way: from the system prompt only, before the writer switch, so they
+  // stay out of MOCK_WRITER_ROLES and a chat message can never pick one.
+  if (String(sysMarkers.MOCK_ROLE || '').startsWith('design-')) {
+    return runMockDesign({ role: sysMarkers.MOCK_ROLE, cwd, prompt, onEvent, signal, resumeSessionId, emit: (f) => emitRaw(onEvent, f) });
   }
   const m = parseMarkers(prompt, systemPrompt);
   const role = m.MOCK_ROLE || inferRole(prompt, systemPrompt);

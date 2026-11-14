@@ -164,6 +164,7 @@ When it starts in remote mode it logs
 | Missing or invalid Access token | 401 `unauthorized: sign in through the identity proxy (Cloudflare Access)` |
 | Access's public keys can't be fetched (and none are cached) | 503 |
 | `GET /api/health` from outside the box | 200, `{ name, version }` only, no token needed (for platform healthchecks) |
+| `GET /design-preview/<token>/…` from outside the box | Served on the token in the path, with no Access token checked by worca (your proxy's own sign-in still applies). The token opens that design's preview files and nothing else; a wrong `Host` is still 403. Behind an identity proxy, the doc embeds its CSS, fonts and images, so the frame requests nothing else. An image that lands during a build shows once the round ends. Set `WORCA_DESIGN_PREVIEW_INLINE=0` to turn it off. |
 
 ### Callers inside the box
 
