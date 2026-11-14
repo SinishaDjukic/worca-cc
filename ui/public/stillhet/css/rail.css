@@ -1164,8 +1164,12 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .cw-pair{display:inline-flex;align-items:center;gap:5px;white-space:nowrap;}
 .lr-pin{display:inline-flex;vertical-align:-1px;margin-right:4px;color:var(--ink-3);}
 .convo-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:var(--fs-meta);color:var(--ink-2);}
-.convo-you{align-self:flex-end;max-width:72%;padding:6px 12px;border-radius:var(--r-md);background:var(--field);}
-.convo-words{margin:0 0 0 32px;}
+.convo-you{position:relative;align-self:flex-end;max-width:72%;padding:6px 12px;border-radius:var(--r-md);background:var(--field);}
+.convo-words{position:relative;margin:0 0 0 32px;}
+/* panel.turn-time: a turn's time sits in the column's 14px gap under it, at its right edge; showing it changes only its opacity, so nothing moves */
+.turn-time{position:absolute;top:100%;right:0;line-height:14px;font-size:var(--fs-meta);color:var(--ink-3);white-space:nowrap;user-select:none;-webkit-user-select:none;pointer-events:none;opacity:0;transition:opacity var(--motion-quick) var(--ease);}
+:is(.convo-you,.convo-words):is(:hover,:focus-within,.is-time-shown) .turn-time{opacity:1;}
+@media (prefers-reduced-motion: reduce){.turn-time{transition:none;}}
 .convo-words b{font-weight:600;}
 .convo-words code,.convo-code pre{font-family:var(--mono,'JetBrains Mono',ui-monospace,monospace);font-size:12px;}
 .convo-words code{padding:1px 4px;border-radius:var(--r-xs);background:var(--field);}
@@ -1376,10 +1380,11 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 /* A quiet icon button that stays on (Keep in view on a task's head) shows it. */
 .btn.btn-quiet.btn-icon[aria-pressed="true"]{color:var(--ink);background:var(--hover);}
 
-/* A top-bar action with news (Pulse, when something new arrives): its icon shakes once, its badge stays. */
-@keyframes tb-shake{0%,100%{transform:rotate(0);}15%{transform:rotate(-14deg);}30%{transform:rotate(12deg);}45%{transform:rotate(-9deg);}60%{transform:rotate(6deg);}75%{transform:rotate(-3deg);}}
-.topnav-act.is-news > svg{transform-origin:50% 20%;animation:tb-shake 700ms var(--ease) 1;}
-@media (prefers-reduced-motion: reduce){ .topnav-act.is-news > svg{animation:none;} }
+/* Pulse with news (something new arrived): its icon shakes (700 ms), again every 3.5 s, for as long as
+   Settings › Notifications › Pulse icon says (pulse.js ends is-news); its badge stays. Only Pulse loops. */
+@keyframes tb-shake{0%,20%,100%{transform:rotate(0);}3%{transform:rotate(-14deg);}6%{transform:rotate(12deg);}9%{transform:rotate(-9deg);}12%{transform:rotate(6deg);}15%{transform:rotate(-3deg);}}
+.pz-pulse-b.is-news > svg{transform-origin:50% 20%;animation:tb-shake 3.5s var(--ease) infinite;}
+@media (prefers-reduced-motion: reduce){ .pz-pulse-b.is-news > svg{animation:none;} }
 
 /* ---- small motion (docs/rail/motion.md): each says what changed, none under reduced motion ---- */
 /* a changed mark's ring fills to its stage in turn, then the mark pulses once */
@@ -1931,3 +1936,6 @@ button.fr-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .list-row:has(> .lr-rail > :is(.kind-mark.is-ask,.kind-mark.is-act,.kind-mark.is-fail):not(.is-adv)){position:relative;}
 .list-row:has(> .lr-rail > :is(.kind-mark.is-ask,.kind-mark.is-act,.kind-mark.is-fail):not(.is-adv))::before{content:'';position:absolute;grid-column:1 / -1;grid-row:1;inset:1px -4px;-webkit-mask-image:linear-gradient(to right,transparent,#000 10px,#000 calc(100% - 10px),transparent);mask-image:linear-gradient(to right,transparent,#000 10px,#000 calc(100% - 10px),transparent);border-radius:var(--r-md);z-index:-1;pointer-events:none;background:light-dark(color-mix(in srgb,var(--amber) 7%,transparent),color-mix(in srgb,var(--amber) 10%,transparent));}
 .list-row:has(> .lr-rail > .kind-mark.is-fail:not(.is-adv))::before{background:light-dark(color-mix(in srgb,var(--red) 11%,transparent),color-mix(in srgb,var(--red) 17%,transparent));}
+/* comp.menu-sub: a group's opener ends in its ›; the open group's back row holds its ‹ where a choice holds its tick */
+.menu-sub-chev{display:inline-flex;margin-left:auto;padding-left:8px;color:var(--ink-2);}
+.menu-back-i{display:inline-flex;margin-right:4px;vertical-align:-1px;color:var(--ink-2);}

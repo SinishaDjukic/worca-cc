@@ -16,6 +16,8 @@ Before you build or change a page, read [docs/rail/README.md](docs/rail/README.m
 - **The gate:** `npm test` fails new UI code that skips the library (`test/rail-gate.test.mjs`); old pages are frozen by a
   ratchet that can only shrink. Don't raise the baseline; use the library. The page checks are not in `npm test`: each
   check, its command and when it runs are in [docs/rail/gate.md](docs/rail/gate.md).
+- **Every UI change reaches the prototype:** CI's `prototype` job fails a PR that changes today's UI without a prototype
+  change, an added `wire to` row under `## Dev surfaces`, or the `no-ui-change` label with a "No UI change:" line (`gate.prototype`).
 
 With `rail` off, today's pages keep `docs/design-system.md`. Feature flags: `docs/feature-flags.md`. Interface
 modes: `docs/ui-levels.md`.

@@ -4,6 +4,7 @@ import { loadAgentRegistry } from '../../../src/core/agent-registry.mjs';
 import { applyActionsChange } from '../../../src/core/ask/actions-deps.mjs';
 import { applyAwayChange } from '../../../src/core/ask/away-deps.mjs';
 import { composerCardPatch, isComposerCard } from '../../../src/core/ask/composer-payload.mjs';
+import { designAnswersEventPrompt, validateDesignAnswers } from '../../../src/core/ask/design-payload.mjs';
 import { applyMetricsChange } from '../../../src/core/ask/metrics-deps.mjs';
 import { applyModelChange } from '../../../src/core/ask/model-deps.mjs';
 import { chatEngine as askChatEngineOf } from '../../../src/core/ask/models.mjs';
@@ -21,6 +22,7 @@ import { applyWorkspaceChange } from '../../../src/core/ask/workspace-deps.mjs';
 import { mintAutoWorkflowId, sanitizeProposalAnswer } from '../../../src/core/auto/proposal.mjs';
 import { listModels } from '../../../src/core/config.mjs';
 import { clearPendingCardComments } from '../../../src/core/diff-comments.mjs';
+import { flagEnabled } from '../../../src/core/flags.mjs';
 import { FS_OUTSIDE_ALLOWED, checkInside, outsideAllowedMessage } from '../../../src/core/fs-scope.mjs';
 import { actorOf } from '../../../src/core/identity.mjs';
 import { displayPath, listProjects, normalizeProjectPath } from '../../../src/core/projects.mjs';
@@ -36,7 +38,7 @@ import { readWorkflow, writeGraphWorkflow } from '../../../src/core/workflows.mj
 import { RESCAN_CHOICES, memoGitProbe, readWorkspace, removeWorkspaceMember } from '../../../src/core/workspaces.mjs';
 import { formatInstant } from '../../../src/shared/schedule/recurrence.mjs';
 import { changesCardVerb, routeCardVerb } from '../../../src/shared/shape/route.mjs';
-import { AGENTS_DIR, ASK_DEFERRED_REPLIES_MAX, afterMembersChanged, afterProjectRegistered, agentMayBeCaller, askChatActions, askDeferred, askDeferredReplies, askEventPick, askIdParam, askInFlight, askViewer, askWebAccessFor, badRequest, broadcast, broadcastFeature, emitChanged, failedEventTurn, flipCard, followCloneCard, fsAllowedRoots, fsLimitedHere, pinUiLevel, postAskSystemNotice, proxyHost, prunedNote, refuseAgentCaller, removeRecommendation, runs, scheduleVerb, schedulerTick, shipFeatureNow, startAskTurn, startCloneJob, startMetricsEventTurn, startRunAs, startScopeEventTurn, workspaceMembersBusy } from '../../server.mjs';
+import { AGENTS_DIR, ASK_DEFERRED_REPLIES_MAX, afterMembersChanged, afterProjectRegistered, agentMayBeCaller, askChatActions, askDeferred, askDeferredReplies, askEventPick, askIdParam, askInFlight, askViewer, askWebAccessFor, badRequest, broadcast, broadcastFeature, emitChanged, failedEventTurn, flipCard, followCloneCard, fsAllowedRoots, fsLimitedHere, pinUiLevel, postAskSystemNotice, proxyHost, prunedNote, refuseAgentCaller, removeRecommendation, runs, scheduleVerb, schedulerTick, shipFeatureNow, soundCards, startAskTurn, startCloneJob, startMetricsEventTurn, startRunAs, startScopeEventTurn, workspaceMembersBusy } from '../../server.mjs';
 
 /** The cards route's handler, set by register(): the chat bridge applies a chat channel's card actions through it
  *  in-process (ui/server.mjs invokeAskCard, with req._chatOrigin set). */
@@ -203,9 +205,40 @@ async function askCardHandler(req, res) {
     const body = req.body || {};
     const found = askFindCard(id, cardId);
     if (!found) return res.status(404).json({ error: 'card not found' });
-   if (req._chatOrigin === true && found.block.card && (found.block.card.type === 'script-approval' || found.block.card.type === 'actions')) {
+   if (req._chatOrigin === true && found.block.card && (found.block.card.type === 'script-approval' || found.block.card.type === 'actions' || found.block.card.type === 'design-sound')) {
      return res.status(403).json({ error: 'scripts and Actions are decided in worca, not from a chat channel', code: 'CHAT_REMOTE_REFUSED' });
    }
+    // Design chat (P5): with Design off the design cards answer 404, as the message route does, so no paid event turn
+    // starts. A round receipt follows its build and takes no action here. A clarifying card (state `asking`) answers
+    // once, every question with one of its options; a typed message closes it first (L5.9), so a late answer is a 409.
+    if (['design-round', 'design-questions', 'design-sound'].includes(found.block.card?.type) && !flagEnabled('design')) return res.status(404).json({ error: 'not found' });
+    if (found.block.card && found.block.card.type === 'design-round') return res.status(409).json({ error: 'a round receipt has no action here' });
+    if (found.block.card && found.block.card.type === 'design-questions') {
+      const v = validateDesignAnswers(found.block.card, body.answers);
+      // A `fields` card's refusal names each field (422, as a form ask's): the card marks them.
+      if (!v.ok && Array.isArray(v.errors)) return res.status(422).json({ error: v.error, errors: v.errors });
+      if (!v.ok) return badRequest(res, v.error);
+      if (found.block.state !== 'asking') return res.status(409).json({ error: `card is ${found.block.state}` });
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      askCardBusy.add(cardId);
+      try {
+        const block = flipCard(id, cardId, { state: 'answered', card: { answers: v.value } });
+        if (!block) return res.status(409).json({ error: 'card vanished' });
+        const turn = await startScopeEventTurn(id, { text: designAnswersEventPrompt({ cardId, card: found.block.card, answers: v.value }), notice: 'Answered' });
+        return res.json({ block, turn });
+      } finally { askCardBusy.delete(cardId); }
+    }
+    // Design sound (D4): worca's own sound card acts itself and starts no chat model turn. Its key never passes through
+    // a chat platform (the 403 above). A refused field rides as `errors[].path`, as a fields card's does.
+    if (found.block.card && found.block.card.type === 'design-sound') {
+      if (askCardBusy.has(cardId)) return res.status(409).json({ error: 'card is being applied' });
+      askCardBusy.add(cardId);
+      try {
+        const r = await soundCards.answer({ threadId: id, block: found.block, body, by: askViewer(req) || thread.createdBy || 'local' });
+        if (r.status === 200) return res.json({ block: r.block });
+        return res.status(r.status).json({ error: r.error, ...(r.path ? { errors: [{ path: r.path, message: r.error }] } : {}) });
+      } finally { askCardBusy.delete(cardId); }
+    }
     // Ask Worca's graph card (a workflow-build card on an ASK chat, which has no canvas): Save writes the workflow, and
     // Save and Decline start the workflow-card event turn (rule 12) — a paid turn, as the Auto workflow card's. The
     // Workflows chat's build cards keep the composer branch below (Apply / Undo in the browser, no event turn).

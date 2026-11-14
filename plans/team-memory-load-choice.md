@@ -23,11 +23,11 @@ every mode. No other control is added.
 | mode | `project/` (both copies) | `team/` (rules copy) | fetch / push |
 |---|---|---|---|
 | Local | every local note (as off today) | none | none (Q2 option a) |
-| Both (default when on) | every local note | team notes not shadowed by a local one, newest `teamMaxFiles` (today) | yes |
+| Both (default when on) | every local note | team notes not shadowed by a local one: the newest `teamMaxFiles` always-on (no `paths:`, or a glob that matches anywhere) and up to 4× as many with `paths:` | yes |
 | Team | local notes that ARE team notes: state `shared` (tracked copy, in sync or behind) and `pending` (Q1 option a) | the other team notes; a local note that is not loaded never shadows one | yes |
 
-Team mode cap: `teamMaxFiles` applies to the union of `project/` and `team/`, newest `updated` first, so "Team" means at
-most 50 notes, not 50 + 50. `maxFilesPerScope` keeps capping store writes as today (hidden notes still count: a new
+Team mode cap: `teamMaxFiles` applies to the always-on notes (no `paths:`) of the union of `project/` and `team/`, newest
+`updated` first; notes with `paths:` load up to 4× that. So "Team" means at most 50 always-on notes, not 50 + 50. `maxFilesPerScope` keeps capping store writes as today (hidden notes still count: a new
 note can be refused "scope is full" while the agent sees fewer files; the existing message stands).
 
 Why tracked copies go into `project/` and not into `team/`: they are files an agent edits in place in the writable copy,

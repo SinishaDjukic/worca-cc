@@ -80,6 +80,7 @@ export const SETTINGS_FIELD_LABELS = Object.freeze({
   ...Object.fromEntries(Object.entries(AWAY_LABELS).map(([k, v]) => [`nightMode.${k}`, v.label])),
   nightModeToggle: 'Away mode',
   theme: 'Theme',
+  pulseFor: 'Pulse icon',
   uiLevel: 'Interface mode',
   flags: 'Labs features',
   hideBuiltinModels: 'Hide built-in models',

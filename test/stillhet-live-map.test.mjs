@@ -23,7 +23,15 @@ test('mapper output meets the shapes for projects, tasks, chats, schedules and c
   assert.equal(updateOfOutcome({ status: 'stopped' }), null);
 });
 
-test('snapshotOf: no field outside SHAPES, no archived row, a live-and-saved pipeline once, settings only keepAwake', () => {
+test('a notification with a pipelineId carries it as `about` (Pulse reads its siblings by it); one without has no `about`', () => {
+  const u = updateOf({ id: 9, kind: 'run_paused', pipelineId: 'h1', title: 'Old pause', createdAt: '2026-11-12T09:31:00Z' }, { now: NOW });
+  assert.equal(u.about, 'h1');
+  assert.equal(u.run, undefined, 'not `run`: that drives Resume and stillWaits');
+  assert.deepEqual(shapeErrors('update', u), []);
+  assert.equal('about' in updateOf({ id: 10, kind: 'failed', pipelineId: null }, { now: NOW }), false);
+});
+
+test('snapshotOf: no field outside SHAPES, no archived row, a live-and-saved pipeline once, settings only keepAwake and pulseFor', () => {
   const s = snapshotOf(SOURCES, { now: NOW });
   const flat = JSON.stringify(s);
   for (const secret of ['SECRET', '/secret/', 'S1', '"sessionId"', '"context"', '"worktrees"', '"dir"', 'uiLevel', 'flags']) assert.ok(!flat.includes(secret), secret);
@@ -33,6 +41,7 @@ test('snapshotOf: no field outside SHAPES, no archived row, a live-and-saved pip
   assert.equal(s.runs.find((r) => r.title === 'Ask me').id, 'run-a', 'the live one');
   assert.ok(!s.runs.some((r) => r.title === 'Gone') && !s.chats.some((c) => c.title === 'Archived'));
   assert.equal(s.keep, true);
+  assert.equal(s.pulseFor, 'until-read');
   assert.deepEqual(s.actions.map((a) => a.id), ['i1']);
   assert.deepEqual(s.chatGroups, [{ id: 'g1', name: 'Release', total: 2 }]);
   const c = s.chats.find((x) => x.id === 'ask_1');
@@ -85,6 +94,20 @@ test('unreadOf mirrors dev\'s ask-done rule: a hidden page lights, the open chat
   assert.deepEqual(unreadOf(['a'], null, { openChat: 'a' }), [], 'opening clears');
   assert.deepEqual(unreadOf(['a'], { type: 'ask-start', threadId: 'c' }, { openChat: '' }), ['a']);
   assert.equal(snapshotOf(SOURCES, { now: NOW, unread: ['ask_2'] }).chats.find((c) => c.id === 'ask_2').unread, true);
+});
+
+test('snapshotOf: pulseFor follows settings, an unknown value is until-read', () => {
+  assert.equal(snapshotOf({ ...SOURCES, settings: { ...SOURCES.settings, pulseFor: '1m' } }, { now: NOW }).pulseFor, '1m');
+  assert.equal(snapshotOf({ ...SOURCES, settings: {} }, { now: NOW }).pulseFor, 'until-read');
+  assert.equal(snapshotOf({ ...SOURCES, settings: undefined }, { now: NOW }).pulseFor, 'until-read');
+  assert.equal(snapshotOf({ ...SOURCES, settings: { pulseFor: 'x' } }, { now: NOW }).pulseFor, 'until-read');
+});
+
+test("partOf('settings') replaces keep and pulseFor", () => {
+  const p = partOf('settings', { pulseFor: 'never' }, SOURCES, { now: NOW });
+  assert.deepEqual(Object.keys(p), ['keep', 'chatPrefs', 'pulseFor']);
+  assert.equal(p.pulseFor, 'never');
+  assert.equal(p.keep, true);
 });
 
 test('partOf replaces only the parts its source feeds', () => {

@@ -51,6 +51,24 @@ export function screenshotArgs({ htmlPath, pngPath, width, height, noSandbox = f
   ];
 }
 
+/** The argv for one deck PDF. Pure. The recipe is the deck kit's (CONTRACT.md, scripts/deck-pdf.py): no margins, no
+ *  header or footer, and a 10 s virtual-time budget so the kit's `@page` rule is in place before the print. NO
+ *  `--user-data-dir`, for the reason `screenshotArgs` gives. */
+export function pdfArgs({ htmlPath, pdfPath, noSandbox = false }) {
+  return [
+    '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--use-mock-keychain',
+    '--no-pdf-header-footer', '--virtual-time-budget=10000', `--print-to-pdf=${pdfPath}`,
+    ...(noSandbox ? ['--no-sandbox', '--disable-dev-shm-usage'] : []),
+    pathToFileURL(htmlPath).href,
+  ];
+}
+
+/** Whether Chrome must run without its sandbox: asked for with `CHROME_NO_SANDBOX=1`, or forced as root, where
+ *  Chrome refuses to start sandboxed. */
+export function chromeNoSandbox(env = process.env) {
+  return env.CHROME_NO_SANDBOX === '1' || (typeof process.getuid === 'function' && process.getuid() === 0);
+}
+
 /** Shoot `htmlPath` into `pngPath`. → { ok: true } | { ok: false, reason }. Never throws.
  *  Success is judged by the FILE, not the exit: the PNG is deleted first, so a non-empty PNG
  *  afterwards is this run's, even when Chrome had to be killed at the timeout. */
@@ -59,7 +77,7 @@ export function screenshot(chrome, { htmlPath, pngPath, width, height }, {
 } = {}) {
   try {
     rmSync(pngPath, { force: true });
-    const noSandbox = env.CHROME_NO_SANDBOX === '1' || (typeof process.getuid === 'function' && process.getuid() === 0);
+    const noSandbox = chromeNoSandbox(env);
     const r = run(chrome, screenshotArgs({ htmlPath, pngPath, width, height, noSandbox }), { stdio: 'ignore', timeout: timeoutMs });
     if (existsSync(pngPath) && statSync(pngPath).size > 0) return { ok: true };
     return { ok: false, reason: r && r.error ? r.error.message : `no PNG written (exit ${r ? r.status : '?'})` };

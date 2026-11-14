@@ -1,0 +1,2556 @@
+// src/core/design/build.mjs
+// One Design round (P2): `DesignBuild` spawns every agent of the round through `runClaude`, one AbortController per
+// process, and turns what they do into C-5 frames (`'frame'` events) and P1 rows. The lead writes the shared files and
+// plan.json; a valid plan becomes the round's section records, `.crew.json` and a `design-plan` frame. Then exactly one
+// builder per section (M5), in plan order under the build cap (M6), never beside the lead; then the lead's integrate
+// pass with at most one rework cycle; then `dist` and the version snapshot. `run()` never rejects: it resolves the
+// round's end state `{status, reason}`, reasons per Contract issue 5. Nothing is recorded for playback (M1): frames go
+// to listeners only. Every `startedAt`/`endedAt` the build writes is an ISO string. Design has no spending limit of its
+// own (M13): the round pauses with `total-limit` at worca's total limit or per-run cap, as runs do. A round that
+// ended short of `done` comes back with `DesignBuild.rehydrate` (from the P1 rows and the disk, after a pause or a
+// restart alike, L2.6) and `continue({sections})`, which re-enters only the stages and sections still owed. A change
+// round (`kind: 'change'`, SPEC §4, C-3) runs on the same engine: named sections alone, or a lead whose round.json
+// `applyRound` applies; each section it selects carries a `todo` in the build row only (L2.35, L2.37). P8: every spawn,
+// agent row, meter and model resolve runs on the design's engine (`_engine`, `_engineRow`); a builder off the hook row
+// reads `.ctx` copies staged before each of its processes and asks through `<section>/.asks` (L8.7, L8.8). An engine
+// without token streaming (`live: 'watch'`) draws from the disk alone: a work-folder watcher (`watch.mjs`) is its only
+// lander, re-read at every tool result and process exit, closed before dist and before the row leaves an open status
+// (L8.5, L8.23); Claude opens none (L8.6).
+
+import { randomBytes } from 'node:crypto';
+import { EventEmitter } from 'node:events';
+import { existsSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { musicLabel, musicPrompt } from '../../shared/sound-services.mjs';
+import { bridgeCostFor, forgetBridgeTag } from '../bridge/telemetry.mjs';
+import { runClaude } from '../claude-runner.mjs';
+import { bridgedModelInfo } from '../config.mjs';
+import { budgetStatus, recordDesignCostDelta } from '../cost-budget.mjs';
+import { chatDescriptor } from '../engines/chat.mjs';
+import { teamRunDiscover } from '../git-free/team-repo.mjs';
+import { generatePicture, imagesReady } from '../images.mjs';
+import { compose, soundReady, speak } from '../sound.mjs';
+import { writeJsonAtomic } from '../json-atomic.mjs';
+import { checkTeamTotalGate } from '../policy/gate.mjs';
+import { listProjects } from '../projects.mjs';
+import { classifyError } from '../recoverable-error.mjs';
+import { createAgentStream } from './agent-stream.mjs';
+import { assembleDesign, lintDesign, readConfined } from './assemble.mjs';
+import { designBuildModels } from './chat-thread.mjs';
+import { createAgentMeter, isListPriced, processBudgetUsd, readDesignCaps } from './cost.mjs';
+import { classifyDraftPath, countLayers, createDraftStore } from './draft.mjs';
+import { designEngineFor, designEngineRow } from './engines.mjs';
+import { createFrameEmitter } from './frames.mjs';
+import { boundedParser, scanShellSlots } from './html-scan.mjs';
+import { isBoardKind, isDocKind, isFilmKind, stagesKitEachDrive } from './kinds.mjs';
+import { stageDesignKit, stagePictureKit, stageWorcaLook, unstagePictureKit } from './kit.mjs';
+import { readLookSource } from './look-source.mjs';
+import { designCaps } from './limits.mjs';
+import { CAPTURE_KIT, LOOK_KIT, crewFile, designWorkDir, ensureDesignFolders, kitDir, realSectionDir, removeSectionDir, sectionDir } from './paths.mjs';
+import { PICTURE_CALL_MS, createPictureDesk, keepPicture, savePicture } from './pictures.mjs';
+import { validateIntegration, validatePlan, validateRound } from './plan.mjs';
+import {
+  answersPrompt, builderChangePrompt, builderPrompt, continuePrompt, integratePrompt, leadChangePrompt, leadPlanPrompt,
+  noMoreQuestionsPrompt, pinsBlock, planFixPrompt, reworkPrompt, roundFixPrompt,
+} from './prompts.mjs';
+import { ASK_ROUNDS, asksFileFor, newAskId, readAskFile, removeAskFile, validateAnswers } from './questions.mjs';
+import { removeReadBundle, stageReadBundle } from './read-bundle.mjs';
+import { closeBuildRow } from './recover.mjs';
+import { createSemaphore } from './semaphore.mjs';
+import { makeSound, readSoundManifest, removeSound } from './sound.mjs';
+import { designDenyRules, designSpawnOptions, resolveDesignModel } from './spawn-options.mjs';
+import {
+  OPEN_BUILD_STATUSES, addPicture, createAgent, createBuild, getBuild, getDesign, latestBuild, listAgents, listPictures,
+  requireDesign, updateAgent, updateBuild,
+} from './store.mjs';
+import { createWorkWatcher } from './watch.mjs';
+
+/** The most errors one plan gate hands the lead, as `validatePlan` caps its own. */
+const MAX_PLAN_ERRORS = 20;
+/** A `--resume` whose session the CLI no longer has (the text of session-host.mjs `VANISHED_RE`, copied to keep this
+ *  module off the session host). */
+const LOST_SESSION_RE = /No conversation found/i;
+/** The line an adapter logs when the session it was told to resume is gone and it starts a fresh one on the same
+ *  prompt (Gemini, Qwen, OpenCode, Cursor): on a resumed spawn that outcome is a lost session (L8.30). */
+const FRESH_START_RE = /^\[worca\] [a-z]+: (session|chat) .* is gone — starting a fresh one$/;
+/** Error classes that hit every agent alike: the whole build pauses (L2.7). */
+const HALT_CLASSES = new Set(['usage_limit', 'auth', 'quota', 'model']);
+/** Transient error classes: that agent resumes once after `retryDelayMs` (L2.7). */
+const RETRY_CLASSES = new Set(['rate_limit', 'network']);
+const TERMINAL_AGENT = new Set(['done', 'stopped', 'error', 'interrupted']);
+/** Build statuses a Continue picks up; `done` too, but only with reason `partial`. */
+const CONTINUABLE = new Set(['paused', 'interrupted', 'stopped', 'error']);
+/** Section statuses a Continue with no `sections` field selects again. */
+const UNFINISHED = new Set(['writing', 'stopped', 'failed', 'planned']);
+const ERROR_MAX = 300;
+/** The relative kit line the lead is given while the round's picture desk is open: the command lives in work/.kit/. */
+const PICTURE_KIT_LINE = '.kit/picture.mjs';
+
+/** The sound stage's own reasons (SPEC §7); every other reason is a `SoundError`'s message, from `makeSound`. */
+const SOUND_NOT_SET_UP = 'ElevenLabs is not set up';
+const SOUND_NOT_SAVED = 'the sound could not be saved';
+
+/** SPEC §7: the brief of a built scene that grew so its voice fits (`grown` of `makeSound`, `from` and `to` in seconds). */
+const grownBrief = ({ from, to }) => `This scene is now ${to}s long (it was ${from}s) so its voice fits. Stretch its timeline to the new length and change nothing else.`;
+
+/** The prompt a builder in a session is owed for its scene that grew (`regrow` on its record, `_growScenes`): a built
+ *  scene reworks with SPEC §7's brief; one cut off mid-build finishes its build at the new length. */
+const regrowPrompt = (mark) => (mark.rework
+  ? reworkPrompt({ why: grownBrief(mark) })
+  : [continuePrompt({ role: 'builder' }), grownBrief(mark)].join('\n'));
+
+/** A record's `regrow` while its builder has not received it yet, else null (`_regrowReceived`). */
+const unsent = (rec) => (rec.regrow && !rec.regrow.received ? rec.regrow : null);
+
+/** SPEC §7: the lead's task line for a film with sound. */
+const soundLineOf = (sound) => `Sound: voice "${sound.voice.name}"; music: ${musicLabel(sound.music).toLowerCase()}`;
+
+/** A copy of a `design-sound` frame's fields, so a frame or a snapshot never shares `voice` or `reasons` with them. */
+function copySound(f) {
+  const out = { ...f };
+  if (f.voice) out.voice = { ...f.voice };
+  if (f.reasons) out.reasons = [...f.reasons];
+  return out;
+}
+
+/** What the picture desk's `generate` throws when the round halted or a spend limit is reached before the call: the
+ *  desk answers the ask `the round stopped` and books nothing. */
+function abortError() {
+  return Object.assign(new Error('a spend limit is reached'), { name: 'AbortError' });
+}
+
+/** A refused request: `status` is the HTTP status a route answers with (M10). */
+export class DesignRefusal extends Error {
+  constructor(status, message, code) {
+    super(message);
+    this.name = 'DesignRefusal';
+    this.status = status;
+    if (code !== undefined) this.code = code;
+  }
+}
+
+const iso = (ms) => new Date(ms).toISOString();
+const messageOf = (err) => (err && typeof err.message === 'string' ? err.message : String(err));
+
+/** The CLI's running total of the session `r` (an agent row) resumes next (M3): the `sessionUsd` the engine keeps in the
+ *  row's `tokens`, else the row's cost (no process has ended yet). A lost session's `--resume` ends on a $0 result, so
+ *  once it is replaced the kept figure is the fresh session's alone. */
+function sessionUsdOf(r) {
+  const kept = r.tokens?.sessionUsd;
+  return Number.isFinite(kept) ? kept : (r.costUsd ?? 0);
+}
+
+/** At most `ERROR_MAX` characters, never half a surrogate pair. */
+function capError(text) {
+  const t = String(text).trim();
+  if (t.length <= ERROR_MAX) return t;
+  const c = t.charCodeAt(ERROR_MAX - 1);
+  return t.slice(0, c >= 0xd800 && c <= 0xdbff ? ERROR_MAX - 1 : ERROR_MAX);
+}
+
+/** The section record of a plan section (C-5 `design-plan.sections`, `snapshot().sections`). `estHeight` only when the
+ *  plan has it (a web page), `band` only when given, `duration` only on a video: frames copy keys as they are, so an
+ *  absent field must be an absent key. */
+function sectionRecord(s) {
+  const rec = {
+    id: s.id, job: s.job, status: 'planned', ...(s.estHeight !== undefined ? { estHeight: s.estHeight } : {}),
+    parts: [...s.parts], agentId: null, summary: '',
+  };
+  if (s.band !== undefined) rec.band = s.band;
+  if (s.duration !== undefined) rec.duration = s.duration;
+  return rec;
+}
+
+/** A copy of a section record, so a frame or a snapshot never shares the live object. A change round's `todo`, an
+ *  add's `unbuiltAdd` and a grown scene's `regrow` live in the build row only and never leave the engine (L2.35). */
+function copySection(s) {
+  const out = { ...s, parts: [...s.parts] };
+  delete out.todo;
+  delete out.unbuiltAdd;
+  delete out.regrow;
+  return out;
+}
+
+/** The files a section's builder writes, by part (C-2). */
+const SECTION_FILES = Object.freeze(['index.html', 'style.css', 'script.js']);
+const SECTIONS_MARKER = 'worca:sections';
+
+/** True when `shell` holds a `<!--worca:sections-->` comment as the parser reads it, found as assemble.mjs's
+ *  `shellMap` finds it, never by a text search: the same characters inside a script or an attribute are no marker. */
+function hasSectionsMarker(shell) {
+  const raw = `<!--${SECTIONS_MARKER}-->`;
+  let found = false;
+  const { parser, read } = boundedParser(shell, {
+    oncomment(data) {
+      const end = parser.endIndex + 1;
+      if (data === SECTIONS_MARKER && shell.startsWith(raw, end - raw.length)) found = true;
+    },
+  });
+  read();
+  return found;
+}
+
+/** The `ok` slots of `shell`, scanned now: every edit re-scans, since an insert or a cut moves the later offsets. */
+const okSlots = (shell) => scanShellSlots(shell).filter((s) => s.ok);
+
+/** `shell` with a slot for the added section `id` (M5): right after `anchor`'s slot, a sibling in the same parent;
+ *  with none, the shell is left alone when it has the sections marker (the assembler places the section there in
+ *  plan order), else the slot goes right after the last slot, since a strict assembly refuses a section with neither.
+ *  An `id` that already has a slot (the lead placed it) is left alone: a second one would be lint's duplicate. */
+function placeSlot(shell, id, anchor, marker) {
+  const slots = okSlots(shell);
+  if (slots.some((s) => s.id === id)) return shell;
+  const own = anchor === null ? undefined : slots.find((s) => s.id === anchor);
+  const at = own ? own.end : (!marker && slots.length ? slots.at(-1).end : -1);
+  return at < 0 ? shell : `${shell.slice(0, at)}<div data-worca-slot="${id}"></div>${shell.slice(at)}`;
+}
+
+/** `shell` without any slot of the removed section `id`, so lint never reports `shell-slot-unknown`. */
+function cutSlots(shell, id) {
+  let out = shell;
+  for (let slot = okSlots(out).find((s) => s.id === id); slot; slot = okSlots(out).find((s) => s.id === id)) {
+    out = out.slice(0, slot.start) + out.slice(slot.end);
+  }
+  return out;
+}
+
+/**
+ * A valid, normalized round applied to the plan and the shell (Contract issue 1: the one owner of applying
+ * round.json). Pure. A `touch` changes nothing here but `say`: its brief is this round's text only, and a `say` it
+ * carries replaces the section's words (`''` removes the key). Each `add` goes right after
+ * its `after` (after any add this round already placed there, so two adds naming one `after` keep round order, in the
+ * plan and the shell), or at the end without one; it keeps its `band` and drops `after`. Adds go before removes, so a
+ * shell whose only slot belongs to a removed section still anchors the add. Each `remove` drops the section and its
+ * slots. Shell edits go through `scanShellSlots`, re-scanned for each edit.
+ * @param {{ plan: object, round: { touch: object[], add: object[], remove: string[] }, shellHtml: string }} opts
+ * @returns {{ plan: object, shellHtml: string, removed: string[] }}
+ */
+export function applyRound({ plan, round, shellHtml }) {
+  const says = new Map(round.touch.filter((t) => t.say !== undefined).map((t) => [t.id, t.say]));
+  const sections = plan.sections.map((s) => {
+    const copy = { ...s, parts: [...s.parts] };
+    if (says.has(s.id)) {
+      if (says.get(s.id) === '') delete copy.say;
+      else copy.say = says.get(s.id);
+    }
+    return copy;
+  });
+  let shell = String(shellHtml ?? '');
+  const marker = hasSectionsMarker(shell);
+  /** Anchor id -> the last add this round placed right after it: the next add naming that anchor follows it. */
+  const tail = new Map();
+  for (const { after, ...add } of round.add) {
+    let anchor = after ?? null;
+    while (anchor !== null && tail.has(anchor)) anchor = tail.get(anchor);
+    const i = anchor === null ? -1 : sections.findIndex((s) => s.id === anchor);
+    sections.splice(i < 0 ? sections.length : i + 1, 0, { ...add, parts: [...add.parts] });
+    if (anchor !== null) tail.set(anchor, add.id);
+    shell = placeSlot(shell, add.id, anchor, marker);
+  }
+  const removed = [...round.remove];
+  for (const id of removed) shell = cutSlots(shell, id);
+  const gone = new Set(removed);
+  return { plan: { ...plan, sections: sections.filter((s) => !gone.has(s.id)) }, shellHtml: shell, removed };
+}
+
+/**
+ * What a change round starts from, read before its row exists: the plan on disk (`validatePlan`), the named
+ * `sections` (plan section ids), whether a lead runs (by default when no section is named; a round with no section
+ * named always has one) and the pins block (`pinsBlock`, not persisted). 422 when there is no valid plan, a name is
+ * not a plan section, or the pins are refused.
+ * @throws {DesignRefusal}
+ */
+function changeStart(design, { sections, pins, needsLead }) {
+  // work/ is agent-writable: a link or a FIFO planted as plan.json reads as no plan (readConfined), never blocking.
+  const text = readConfined(designWorkDir(design.id), 'plan.json');
+  const check = text === null ? null : validatePlan(text, { kind: design.kind });
+  if (!check?.ok) throw new DesignRefusal(422, 'A change round needs a valid plan');
+  const ids = check.plan.sections.map((s) => s.id);
+  const named = sections == null ? [] : sections;
+  if (!Array.isArray(named) || named.some((id) => typeof id !== 'string' || !ids.includes(id))) {
+    throw new DesignRefusal(422, 'sections must list sections of the plan');
+  }
+  let pinBlock;
+  try { pinBlock = pinsBlock(pins, { planIds: ids }); } catch (err) { throw new DesignRefusal(422, messageOf(err)); }
+  const lead = needsLead === undefined ? !named.length : Boolean(needsLead) || !named.length;
+  return { plan: check.plan, named: [...new Set(named)], needsLead: lead, pinBlock };
+}
+
+/** The stretch (`{from, to}`, in seconds) a record holds for its scene, else null: its change todo's `grown`, else its
+ *  `regrow`, received or not. A record holding both takes the todo's: its `from` is the length the files were last
+ *  built for, and `_growScenes` gives both the same `to`. */
+function stretchOf(rec) {
+  const mark = rec?.todo?.grown ?? rec?.regrow;
+  return mark ? { from: mark.from, to: mark.to } : null;
+}
+
+/** The stretch a previous round's record still owes its scene, else null: one it holds while the scene is not `done`.
+ *  A builder told it and then cut (a Stop, its agent stopped, a drain) still owes it; a scene built at its length
+ *  holds none (`_judgeSection`). */
+function owedStretch(old) {
+  return old && old.status !== 'done' ? stretchOf(old) : null;
+}
+
+/** A change round's section records: one per plan section, keeping its status, summary and agentId from the previous
+ *  round's row, and its `unbuiltAdd` while that add still has no builder, never its `todo` (a todo belongs to one
+ *  round, L2.37). A lead-less round's named sections are `planned` with `todo:{stage:'change'}`. A scene still owed a
+ *  stretch (`owedStretch`: a round that grew it closed before it was built at that length) is `planned` too, its change
+ *  todo carrying `grown`, so its builder is told SPEC §7's brief beside any brief the round gives it; only while
+ *  plan.json still holds that length (a restored version puts back the old one; should the scene grow again in this
+ *  round, `_growScenes` gives it the stretch anew). */
+function carriedRecords(plan, prevRecords, { named, needsLead }) {
+  const prev = new Map((Array.isArray(prevRecords) ? prevRecords : []).map((r) => [r?.id, r]));
+  const selected = new Set(needsLead ? [] : named);
+  return plan.sections.map((s) => {
+    const rec = sectionRecord(s);
+    const old = prev.get(s.id);
+    if (old) Object.assign(rec, { status: old.status, summary: old.summary ?? '', agentId: old.agentId ?? null });
+    if (old?.unbuiltAdd === true) rec.unbuiltAdd = true;
+    const owed = owedStretch(old);
+    const grown = owed && owed.to === s.duration ? owed : null;
+    if (selected.has(s.id) || grown) Object.assign(rec, { status: 'planned', todo: { stage: 'change', ...(grown ? { grown } : {}) } });
+    return rec;
+  });
+}
+
+/**
+ * A round's start, either kind, before its row: the folder of every `unbuiltAdd` in the latest round's `records`
+ * goes. Such an add's round ended before its builder started (a drain, a limit, a Stop, a restart), so its folder can
+ * hold only what a removed section of the same id left there (`_tidyRound`), and dist would assemble those files as
+ * the add's content. A first build's records never carry the mark, so this is the last round that knows it. A folder
+ * that cannot be cleared refuses the round (409) with the folder named; nothing was written yet.
+ * @throws {DesignRefusal}
+ */
+function clearUnbuiltAdds(designId, records) {
+  for (const rec of Array.isArray(records) ? records : []) {
+    if (rec?.unbuiltAdd !== true) continue;
+    try {
+      removeSectionDir(designId, rec.id);
+    } catch (err) {
+      throw new DesignRefusal(409, `sections/${rec.id} still holds the files of a removed section and could not be cleared `
+        + `(${messageOf(err)}): close the program using that folder, then start the round again`);
+    }
+  }
+}
+
+/**
+ * The engine a build of `design` spawns on (P8): its stored engine, else the resolved one. A stored `mock` builds as
+ * Claude did before P8 (its table row is the hook row, and `runClaude` refuses a write guard off `claude`; the runner
+ * runs the mock under `WORCA_MOCK` anyway). A resolve that throws falls back to Claude, so a rehydrate for Stop or a
+ * paused build's restore never fails on it; the registry's engine gate still refuses a Continue properly.
+ */
+function buildEngine(design) {
+  let engine;
+  try {
+    engine = designEngineFor(design).engine;
+  } catch {
+    engine = 'claude';
+  }
+  return engine === 'mock' ? 'claude' : engine;
+}
+
+/** The registered project's folder for a design's `projectKey`, matched by key (Contract issue 9), else null. */
+export async function projectDirFor(key) {
+  if (!key) return null;
+  return (await listProjects()).find((p) => p.key === key)?.path ?? null;
+}
+
+function realDir(dir) {
+  try { return realpathSync(dir); } catch { return undefined; }
+}
+
+/** Writes `text` as `<workDir>/<name>` through a new dot temp file (`wx`) renamed over it (P8): work/ is the owner's
+ *  agents' to write, and a rename replaces a link or a FIFO planted at the name, never writing through it. */
+function replaceWorkFile(workDir, name, text) {
+  const tmp = join(workDir, `.${name}.${randomBytes(4).toString('hex')}.tmp`);
+  try {
+    writeFileSync(tmp, text, { flag: 'wx' });
+    renameSync(tmp, join(workDir, name));
+  } catch (err) {
+    rmSync(tmp, { force: true });
+    throw err;
+  }
+}
+
+/** The injectable dependencies; a key given as `undefined` keeps its default, and unknown keys pass through. */
+function withDefaults(deps = {}) {
+  const out = {
+    runClaude,
+    now: Date.now,
+    staggerMs: 250,
+    retryDelayMs: 5000,
+    maxBuildersFor: (fast) => designCaps()[fast ? 'fast' : 'calm'],
+    acquireGlobal: async () => {},
+    releaseGlobal: () => {},
+    snapshotVersion: async () => {},
+    onLiveChange: () => {},
+    budgetStatus,
+    teamTotalGate: checkTeamTotalGate,
+    readCaps: readDesignCaps,
+    isListPriced,
+    stageKit: stageDesignKit,
+    stageLook: stageWorcaLook,
+    createWorkWatcher,
+    imagesReady,
+    generatePicture,
+    createPictureDesk,
+    stagePictureKit,
+    speak,
+    compose,
+    soundReady,
+    mock: undefined,
+  };
+  for (const [k, v] of Object.entries(deps || {})) if (v !== undefined) out[k] = v;
+  return out;
+}
+
+export class DesignBuild extends EventEmitter {
+  /**
+   * A new round of `design` (a row or an id): `createBuild` assigns `round` and makes it the design's current build.
+   * `instruction` is an alias of `brief`. A change round reads the plan on disk and the previous round's section
+   * records through `latestBuild` before `createBuild` makes it the latest, then writes them to its own row (which
+   * `createBuild` leaves empty) with every `todo` dropped but a stretch still owed (`carriedRecords`), and `.crew.json`
+   * follows. Either kind, before the row, the folder of each add the latest round left with no build goes
+   * (`clearUnbuiltAdds`). Its draft store runs with
+   * `landFirst`. Emits nothing, so a listener attached right after misses no frame. Throws the store's `DesignError`,
+   * and a `DesignRefusal` before any row: 409 for an add's folder that cannot be cleared, and for a change round 422
+   * (`changeStart`). A throw once the row exists closes it `error`, `engine-error` first (M6): no build would hold it,
+   * and an open row refuses every later Start.
+   * @param {{ design: object|string, kind?: 'first'|'change', brief?: string, instruction?: string, sections?: unknown,
+   *   pins?: unknown, needsLead?: boolean, by?: string|null, deps?: object }} opts
+   */
+  static create({ design, kind = 'first', brief, instruction, sections, pins, needsLead, by, deps } = {}) {
+    const d = requireDesign(typeof design === 'string' ? design : design?.id);
+    const text = brief ?? instruction;
+    const start = kind === 'change' ? changeStart(d, { sections, pins, needsLead }) : null;
+    const prev = latestBuild(d.id);
+    clearUnbuiltAdds(d.id, prev?.sections);
+    const created = createBuild({ designId: d.id, kind, brief: text, fast: d.fast }, { by });
+    try {
+      if (!start) return new DesignBuild({ design: d, row: created, deps: withDefaults(deps) });
+      const records = carriedRecords(start.plan, prev?.sections, start);
+      const row = updateBuild(created.id, { sections: records });
+      const b = new DesignBuild({ design: d, row, deps: withDefaults(deps), start, landFirst: true });
+      b._plan = start.plan;
+      b._planRev = 1;
+      b._sections = records;
+      b._seedLayers();
+      b._writeCrew();
+      return b;
+    } catch (err) {
+      try {
+        updateBuild(created.id, { status: 'error', reason: 'engine-error' });
+      } catch (e) {
+        console.error(`[design] build ${created.id}: row not closed after a failed start: ${messageOf(e)}`);
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * The build `buildId` rebuilt from its rows and the disk, for a Continue or a Stop after a pause or a restart alike
+   * (L2.6); null only for an unknown build. Build fast comes from the design row (M7). `seq` and every path's `rev`
+   * restart from `Date.now()`, and each path's first frame is a `design-file` base (L2.21). The instance starts
+   * settled: `pauseForDrain` answers false, `stop` closes a `paused` build (L2.34) and `run()` drives nothing.
+   * Emits nothing, so a listener attached right after misses no frame.
+   * @param {{ buildId: string, deps?: object }} opts
+   * @returns {DesignBuild|null}
+   */
+  static rehydrate({ buildId, deps } = {}) {
+    const row = getBuild(buildId);
+    if (!row) return null;
+    const b = new DesignBuild({
+      design: requireDesign(row.designId), row, deps: withDefaults(deps), landFirst: true, seqStart: Date.now(), revBase: Date.now(),
+    });
+    b._restore();
+    return b;
+  }
+
+  /** @private Use `DesignBuild.create`. */
+  constructor({ design, row, deps, start = {}, landFirst = false, seqStart = 0, revBase = 0 }) {
+    super();
+    this._deps = deps;
+    this._design = design;
+    this._row = row;
+    /** The engine every spawn, agent row, meter and model resolve of this round runs on (P8), and its table row. */
+    this._engine = buildEngine(design);
+    this._engineRow = designEngineRow(this._engine, { models: designBuildModels({ ...design, engine: this._engine }) });
+    /** A change round's start (`changeStart`): `{plan, named, needsLead, pinBlock}`; empty on a rehydrate, since
+     *  none of it is persisted (a Continue resumes sessions that already hold it). */
+    this._start = start;
+    this._status = row.status;
+    this._reason = row.reason ?? null;
+    this._workDir = designWorkDir(design.id);
+    this._realWorkDir = undefined;
+    this._projectDir = null;
+    this._denyRules = [];
+    /** Every agent of the round, in creation order. */
+    this._agents = [];
+    /** Agents whose process runs now. */
+    this._running = new Set();
+    this._lastLive = 0;
+    this._plan = null;
+    this._planRev = 0;
+    this._sections = [];
+    /** Section `index.html` path -> its layer count, from the latest `design-file`. */
+    this._layers = new Map();
+    /** A watch row's work-folder watcher while a drive runs (`_drive` to `_finish` or `_settle`), else null. */
+    this._watcher = null;
+    /** Path -> the text `_landFile` last landed for it: the watcher never sends that text again, and a `gone` lands
+     *  only for a path in here. */
+    this._landedText = new Map();
+    this._costUsd = Number(row.costUsd) || 0;
+    /** worca's per-run cap for this round (Settings or the team), read at the start of each drive; null: none (M13). */
+    this._cap = null;
+    /** The first halt's end state `{status, reason}`; the drive settles on it. */
+    this._end = null;
+    this._settled = false;
+    this._endedMs = null;
+    /** The round's picture desk while a drive runs with pictures on (`_openDesk` to `_closeDesk`), else null. */
+    this._desk = null;
+    /** The last desk's close; resolved while none closes, and it never rejects. */
+    this._deskClosed = Promise.resolve();
+    /** The design's sound choice (`design.sound`) and whether this round's film has sound (SPEC D8), read at each
+     *  drive's start and by `_restore`. */
+    this._sound = null;
+    this._soundOn = false;
+    /** The clips the builders are told, by section id (`_soundStage`, `_loadClips`). */
+    this._clips = new Map();
+    /** The last `design-sound` frame's fields, for `snapshot().sound`; null before any. */
+    this._soundFields = null;
+    /** Aborts every queue and slot wait of this build. */
+    this._haltCtl = new AbortController();
+    /** The build slots: builders on stage at once (M6), a waiting one included (L2.28). Sized by the design's Build
+     *  fast, then by `setFast` (M7). */
+    this._slots = createSemaphore(deps.maxBuildersFor(Boolean(design.fast)));
+    this._nextSpawnAt = 0;
+    this._runP = null;
+    this._frames = createFrameEmitter({
+      designId: design.id, buildId: row.id, seqStart, now: () => this._deps.now(), emit: (f) => this._send(f),
+    });
+    this._drafts = createDraftStore({
+      readDisk: (rel) => this._readWork(rel),
+      landFirst,
+      revBase,
+      onSplice: ({ agentId, path, rev, splice }) => {
+        const c = classifyDraftPath(path);
+        if (c) this._frames.delta({ agentId, path, sectionId: c.sectionId, part: c.part, rev, splice });
+      },
+      onLand: ({ path, rev, text }) => this._fileFrame(path, text, rev),
+    });
+  }
+
+  get id() { return this._row.id; }
+  get designId() { return this._row.designId; }
+  get round() { return this._row.round; }
+  get kind() { return this._row.kind; }
+  get status() { return this._status; }
+  get reason() { return this._reason; }
+  get createdBy() { return this._row.createdBy; }
+  get title() { return this._design.title; }
+  /** Agents waiting on an answer. */
+  get waitingCount() { return this._agents.filter((a) => a.status === 'waiting').length; }
+  /** Processes running now. */
+  get runningCount() { return this._running.size; }
+
+  /** Runs the round once; later calls return the same promise. Never rejects: a throw ends `error`, `engine-error`. */
+  run() {
+    if (!this._runP) this._runP = this._guarded(() => this._drive({ fresh: true }));
+    return this._runP;
+  }
+
+  /** Halts the round: every queue wait, every running process and every parked waiter is aborted. Idempotent, and the
+   *  first end state wins. Resolves with the drive's end state. On a settled `paused` build, this instance or a
+   *  rehydrated one, it closes the build (L2.34): the end state `stopped`, its waiting agents stopped and the terminal
+   *  frame, so Stop then Delete works; a close the store cannot write ends `error`, `engine-error` (`_settleSafely`),
+   *  never a throw. On a terminal build it has no effect. */
+  stop(reason = 'user') {
+    if (this._settled) {
+      if (this._status === 'paused') this._settleSafely('stopped', reason);
+      return Promise.resolve({ status: this._status, reason: this._reason });
+    }
+    this._halt('stopped', reason);
+    return this._runP ?? Promise.resolve({ status: this._status, reason: this._reason });
+  }
+
+  /**
+   * Picks a round up again (M8, L2.11): allowed while it is the design's current build and has settled `paused`,
+   * `interrupted`, `stopped` or `error`, or `done` with reason `partial`. `sections` names plan sections that are not
+   * `done`, and only those are retried; without it every `writing`, `stopped`, `failed` and `planned` section is. An
+   * agent whose question file exists always re-enters and asks again under a fresh `askId`, whatever `sections` says
+   * (U3: it is written `waiting`, no process runs). The lead stage re-enters on its own row while no plan is held
+   * (L2.1), or in a change round while its round is unapplied, and the build then reads `planning`; integrate runs
+   * when integration.json is missing. With nothing else to do, integration is owed only then and only before the round
+   * finished: a `done` round (reason `partial`) reached its finish, so its integrate pass ran though L2.10 lets a pass
+   * write no file, and that Continue is a 409 (L2.38), never a second pass and version. In a change round only sections with a `todo` count, for `sections` and for
+   * the default selection alike (L2.37). `startedAt` moves forward by the pause, so `elapsedMs`
+   * leaves it out. No limit of its own (M13): the drive reads worca's caps again, and a cap still reached pauses the
+   * round with `total-limit` before any spawn. A second call on the same instance drives again.
+   * @param {{ sections?: string[] }} [opts]
+   * @returns {Promise<{ status: string, reason: string|null }>} the drive's end state; never rejects
+   * @throws {DesignRefusal} synchronously: 409 while it runs, for a build that is not the design's current one, for an
+   *   end state Continue does not pick up, and when nothing is left to do; 422 for a bad `sections`; 403 at worca's
+   *   total cost limit
+   */
+  continue({ sections } = {}) {
+    if (!this._settled) throw new DesignRefusal(409, 'This build is running');
+    if (getDesign(this.designId)?.currentBuild !== this.id) throw new DesignRefusal(409, 'A newer round of this design exists');
+    if (!CONTINUABLE.has(this._status) && !(this._status === 'done' && this._reason === 'partial')) {
+      throw new DesignRefusal(409, 'This build has nothing left to continue');
+    }
+    // Only a valid question file is an open question: one an engine left invalid (a link or a file as `.asks`) reopens
+    // nothing, as `_readAsk` ignores it.
+    const asking = this._plan
+      ? this._agents.filter((a) => a.role === 'builder' && this._sections.some((s) => s.id === a.sectionId) && readAskFile(this._questionFile(a))?.questions)
+      : [];
+    const ids = this._selection(sections);
+    for (const a of asking) ids.add(a.sectionId);
+    const integrated = this._status === 'done';
+    const integrateDue = Boolean(this._plan) && this._agents.some((a) => a.role === 'lead') && !integrated && !existsSync(this._integrationFile());
+    const leadDue = this._leadStageDue();
+    if (this._plan && !ids.size && !integrateDue && !leadDue) throw new DesignRefusal(409, 'Nothing to continue');
+    if (this._deps.budgetStatus().blocked) throw new DesignRefusal(403, 'total cost limit reached');
+
+    const now = this._deps.now();
+    const row = getBuild(this.id) ?? this._row;
+    // L2.11: active time only. A row paused without endedAt (paused is open, so the store never set it) shifts by 0.
+    const startedAt = iso(now - ((Date.parse(row.endedAt) || now) - Date.parse(row.startedAt)));
+    for (const s of this._sections) if (ids.has(s.id)) s.status = 'planned';
+    const status = leadDue ? 'planning' : 'building';
+    this._row = updateBuild(this.id, { status, reason: null, startedAt, endedAt: null, sections: this._sections });
+    this._status = status;
+    this._reason = null;
+    this._settled = false;
+    this._end = null;
+    this._endedMs = null;
+    this._haltCtl = new AbortController();
+    for (const a of this._agents) {
+      a.stopKind = null;
+      a.stopCtl = new AbortController();
+      a.waiter = null;
+      a.lostOnce = false;
+      a.retried = false;
+    }
+    this._writeCrew();
+    this._emitBuild();
+    this._frames.flush();
+    for (const s of this._sections) if (ids.has(s.id)) this._sectionFrame(s);
+    this._runP = this._guarded(() => this._drive({ selection: this._plan ? ids : null }));
+    return this._runP;
+  }
+
+  /** The ids a Continue retries: `sections` checked (422 unless a non-empty list of plan sections not `done`, and in
+   *  a change round each with a `todo`), else every unfinished one (in a change round, of those with a `todo`). */
+  _selection(sections) {
+    if (sections === undefined) {
+      return new Set(this._sections.filter((s) => UNFINISHED.has(s.status) && this._inRound(s)).map((s) => s.id));
+    }
+    const bad = () => new DesignRefusal(422, 'sections must list sections of the plan that are not done');
+    if (!Array.isArray(sections) || !sections.length) throw bad();
+    for (const id of sections) {
+      const s = typeof id === 'string' ? this._sections.find((x) => x.id === id) : undefined;
+      if (!s || s.status === 'done' || !this._inRound(s)) throw bad();
+    }
+    return new Set(sections);
+  }
+
+  /** Whether this round owns section record `s`: every section of a first build; in a change round only those it
+   *  selected, which carry a `todo` (L2.37). */
+  _inRound(s) { return this.kind !== 'change' || Boolean(s.todo); }
+
+  /**
+   * Whether a drive starts with a lead stage: the plan stage while no plan is held; in a change round, on `run()`
+   * (`fresh`) when the round needs a lead, and later only while its round is unapplied: a lead row not `done` whose
+   * `job` is not `Integrate` (the lead goes `done` once the round's files are written, and integrate persists
+   * `Integrate`). Re-running an applied round would re-add and re-remove ids, which `validateRound` refuses.
+   */
+  _leadStageDue(fresh = false) {
+    if (this.kind !== 'change') return !this._plan;
+    if (fresh) return this._start.needsLead === true;
+    const lead = this._agents.find((a) => a.role === 'lead');
+    return Boolean(lead) && lead.status !== 'done' && lead.job !== 'Integrate';
+  }
+
+  /**
+   * The person stopped one agent: only its own process, wait or waiter is aborted. A builder's section then ends
+   * `stopped` and the round goes on (L2.22). The lead while it plans stops the round; the lead while it integrates
+   * only skips integration, and the round still finishes. False for an id this round does not have; true with no
+   * effect for an agent that already ended, or once the round has settled.
+   */
+  stopAgent(id) {
+    const agent = this._agents.find((a) => a.id === id);
+    if (!agent) return false;
+    if (this._settled || agent.stopKind || TERMINAL_AGENT.has(agent.status)) return true;
+    agent.stopKind = 'stopped';
+    if (agent.role === 'lead' && this._status !== 'integrating') {
+      void this.stop('user');
+      return true;
+    }
+    agent.stopCtl?.abort();
+    agent.controller?.abort();
+    this._wake(agent, null);
+    return true;
+  }
+
+  /**
+   * The person's answers to the question an agent waits on (C-8 `answer`). 409 unless `askId` names a question that
+   * waits now: an unknown or stale id, a second answer, a build halted or paused (L2.25; a Continue asks again under a
+   * fresh id). 422 unless `answers` answers every question once with one of its option values; the question then
+   * stays open. On success the agent leaves `waiting` at once and its loop resumes the session with the answers.
+   * @param {string} askId
+   * @param {{ id: string, value: string }[]} answers
+   * @throws {DesignRefusal}
+   */
+  answer(askId, answers) {
+    const agent = this._agents.find((a) => a.ask && a.ask.askId === askId);
+    if (!agent || !agent.waiter) throw new DesignRefusal(409, 'This question is no longer open');
+    const check = validateAnswers(agent.ask.questions, answers);
+    if (!check.ok) throw new DesignRefusal(422, check.error);
+    agent.ask = null;
+    this._setAgentStatus(agent, 'starting');
+    this._wake(agent, answers.map(({ id, value }) => ({ id, value })));
+  }
+
+  /** The server is stopping: the round pauses with reason `drain`, as `orch.pauseForDrain()` does for a run. True
+   *  only for the call that paused it; false once a halt is under way (its own end state stands) or settled. */
+  pauseForDrain() {
+    if (this._settled || this._end) return false;
+    this._halt('paused', 'drain');
+    return true;
+  }
+
+  /** Build fast changed (M7): the cap for the next spawn. No running agent is touched, no plan changes, no frame is
+   *  sent; persisting the setting is the route's job. */
+  setFast(fast) {
+    this._slots.resize(this._deps.maxBuildersFor(Boolean(fast)));
+  }
+
+  /**
+   * The C-5 `design-snapshot` a late joiner starts from (M1: nothing is replayed). The drafts are taken first, which
+   * sends any pending text as deltas, and `seq` is read after: a client drops every frame at or below `seq`, so no
+   * text arrives twice. No drafts once the build has settled. `questions` holds every question an agent waits on now,
+   * in agent order; none once settled, since `askId` lives in memory (a paused build's Continue asks again). `sound`
+   * holds the last `design-sound` frame's fields, or null before any (SPEC §5).
+   */
+  snapshot() {
+    const drafts = this._settled ? [] : this._drafts.snapshot();
+    return {
+      type: 'design-snapshot',
+      designId: this.designId,
+      buildId: this.id,
+      seq: this._frames.lastSeq(),
+      ts: this._deps.now(),
+      build: this._buildFields(),
+      plan: { planRev: this._planRev, canvas: this._plan ? { ...this._plan.canvas } : null, sections: this._sections.map(copySection) },
+      agents: this._agents.map((a) => this._agentFields(a)),
+      sections: this._sections.map(copySection),
+      questions: this._agents.filter((a) => a.ask).map((a) => this._questionFields(a)),
+      drafts,
+      sound: this._soundFields ? copySound(this._soundFields) : null,
+    };
+  }
+
+  /** Runs one drive; a throw ends the round `error`, `engine-error`. Either way the round answers only once its picture
+   *  desk's close resolved: a throw closes the desk (`_abortAll`) and settles after that close, so its terminal frame
+   *  follows the desk's last frame and the row closes with no desk still writing. */
+  async _guarded(drive) {
+    try {
+      await drive();
+    } catch (err) {
+      console.error(`[design] build ${this.id} failed: ${messageOf(err)}`);
+      this._abortAll();
+      await this._deskClosed;
+      if (!this._settled) this._settleSafely('error', 'engine-error');
+    }
+    await this._deskClosed;
+    return { status: this._status, reason: this._reason };
+  }
+
+  /**
+   * `_settle`, never a throw. When it throws (a store error), the build ends `error`, `engine-error` in memory, and its
+   * row too, closed the way boot recovery closes one (M6): its live agents and `writing` sections `stopped`. Else the
+   * registry would drop a settled build whose row stays open, and that row would refuse every Start, Continue and
+   * Delete until the next restart.
+   */
+  _settleSafely(status, reason) {
+    this._closeDesk();
+    try {
+      this._settle(status, reason);
+      return;
+    } catch (err) {
+      console.error(`[design] build ${this.id}: end state not saved: ${messageOf(err)}`);
+    }
+    this._closeWatcher();
+    this._status = 'error';
+    this._reason = 'engine-error';
+    this._settled = true;
+    try {
+      const row = getBuild(this.id);
+      if (row && OPEN_BUILD_STATUSES.includes(row.status)) closeBuildRow(row, { status: 'error', reason: 'engine-error', agentStatus: 'stopped' });
+    } catch (err) {
+      console.error(`[design] build ${this.id}: row not closed: ${messageOf(err)}`);
+    }
+  }
+
+  /**
+   * Walks the round's stages, each one only when it is still owed, so a later drive can re-enter it: the lead unless
+   * a valid plan is held; the builders over every `planned` section; the verdict on the sections; the integrate pass
+   * unless integration.json exists, with its one rework cycle and a second verdict; then the finish. A halt settles
+   * on its own end state after any stage. `fresh` is `run()`'s first drive: a stale `integration.json` from an
+   * earlier round is removed. `selection` (a Continue's section ids) limits the builder stage; the verdicts still
+   * judge every section. A halt or a throw from the integrate pass through its rework cycle removes integration.json,
+   * so a Continue integrates again rather than losing the `rework` list. worca's per-run cap is read once, here, and a
+   * deck's, a video's or a document's kit is staged on every drive.
+   * A change round sends `design-plan` right after its first `design-build` (carried statuses, the selection
+   * `planned`); its lead stage is the `change` stage (`_leadStageDue`), a stale round.json goes at `run()`, and its
+   * builder stage and verdicts take only the sections with a `todo`. A lead stage that applied a round lifts the
+   * selection: the round's own sections are all owed. A video's round runs its sound stage (`_soundStage`) between the
+   * lead stage and the builders, every drive, and a halt during it settles there; the builders it sends back take its
+   * prompts.
+   */
+  async _drive({ fresh = false, selection = null } = {}) {
+    this._emitBuild();
+    if (fresh && this.kind === 'change') this._planFrame();
+    ensureDesignFolders(this.designId);
+    // P8 L8.23: on a watch row the disk is the only lander. Every drive opens the watcher (run and Continue; a
+    // rehydrate never drives until its Continue), its baseline taken now, so a Continue re-sends no file.
+    if (this._engineRow.live === 'watch') {
+      this._closeWatcher();
+      this._watcher = this._deps.createWorkWatcher({ workDir: this._workDir, onLand: (rel, o) => this._onWatchLand(rel, o) });
+      this._watcher.start();
+    }
+    // L7.12: a deck or a video inlines its runtime from work/.kit/, so every drive stages it, a Continue too: a round
+    // whose staging threw, or one paused before P7, has no kit, and its end would fail every time. A document's lead
+    // reads its contract and worca's look there, however the round started. A web page keeps P5's chat staging alone.
+    // A throw is the round's `engine-error` through `_guarded`.
+    if (stagesKitEachDrive(this._design.kind)) await this._deps.stageKit({ kind: this._design.kind, workDir: designWorkDir(this.designId) });
+    if (fresh) {
+      this._dropIntegration();
+      if (this.kind === 'change') this._dropRound();
+    }
+    this._realWorkDir = realDir(this._workDir);
+    this._projectDir = await projectDirFor(this._design.projectKey);
+    this._denyRules = await designDenyRules({ projectDir: this._projectDir });
+    const caps = await this._deps.readCaps({ projectDir: this._projectDir });
+    this._cap = Number.isFinite(caps?.perRunCapUsd) ? caps.perRunCapUsd : null;
+    this._readSound();
+    // `snapshot().sound` is this drive's line: none until its stage sends one.
+    this._soundFields = null;
+    await this._openDesk();
+    let pick = selection;
+    if (this._leadStageDue(fresh)) {
+      const failed = this.kind === 'change' ? await this._leadChange() : await this._leadPass();
+      if (this._end) { await this._shutDesk(); return this._settleHalt(); }
+      if (failed) {
+        await this._shutDesk();
+        if (this._end) return this._settleHalt();
+        return this._settle('error', failed);
+      }
+      pick = null;
+    }
+    let rework = new Map();
+    if (isFilmKind(this._design.kind) && this._plan) {
+      rework = await this._soundStage(pick);
+      if (this._end) { await this._shutDesk(); return this._settleHalt(); }
+    }
+    this._setStatus('building');
+    const queued = this._sections.filter((s) => s.status === 'planned' && (!pick || pick.has(s.id)) && this._inRound(s));
+    await this._runBuilders(queued.map((section) => ({ section, prompt: rework.get(section.id) ?? null })));
+    if (this._end) { await this._shutDesk(); return this._settleHalt(); }
+    const open = this._afterBuilders();
+    if (open) {
+      await this._shutDesk();
+      if (this._end) return this._settleHalt();
+      return this._settle('paused', open);
+    }
+    if (!existsSync(this._integrationFile())) {
+      let rework;
+      try {
+        rework = await this._integrate();
+        if (this._end) { this._dropIntegration(); await this._shutDesk(); return this._settleHalt(); }
+        if (rework.length) {
+          this._setStatus('building');
+          await this._runBuilders(rework);
+          if (this._end) { this._dropIntegration(); await this._shutDesk(); return this._settleHalt(); }
+        }
+      } catch (err) {
+        this._dropIntegration();
+        throw err;
+      }
+      if (rework.length) {
+        const again = this._afterBuilders();
+        if (again) {
+          await this._shutDesk();
+          if (this._end) return this._settleHalt();
+          return this._settle('paused', again);
+        }
+      }
+    }
+    return this._finish();
+  }
+
+  /**
+   * Opens the round's picture desk (SPEC §5, D8) once the drive read worca's caps, after the last desk's close
+   * resolved, so a Continue right after a Stop never meets the old desk still writing. On while the design's switch is
+   * on and the image service is ready: the kit command is staged in work/.kit/ (every kind) and the desk polls
+   * work/.pictures/, its round's 40 counted from this build's `made` rows. Off: the command and work/.pictures/ go, so
+   * no prompt names a kit. A halt that landed during the drive's awaits opens nothing. Never throws: a kit or desk
+   * that fails to open is logged and the round runs with pictures off.
+   */
+  async _openDesk() {
+    await this._deskClosed;
+    if (this._end) return;
+    const designId = this.designId;
+    const allowed = () => getDesign(designId)?.pictures !== false && Boolean(this._deps.imagesReady());
+    let on = false;
+    try {
+      on = allowed();
+    } catch (err) {
+      console.error(`[design] build ${this.id}: pictures off for this round: ${messageOf(err)}`);
+    }
+    if (!on) {
+      unstagePictureKit({ designId });
+      return;
+    }
+    let desk = null;
+    try {
+      this._deps.stagePictureKit({ workDir: this._workDir });
+      const madeBefore = listPictures(designId).filter((p) => p.buildId === this.id && p.state === 'made').length;
+      desk = this._deps.createPictureDesk({
+        designId,
+        buildId: this.id,
+        madeBefore,
+        allowed,
+        generate: async (o) => {
+          const open = await this._spendOpen();
+          if (o.signal.aborted) throw abortError();
+          if (!open) {
+            this._halt('paused', 'total-limit');
+            throw abortError();
+          }
+          return this._deps.generatePicture({ ...o, timeoutMs: PICTURE_CALL_MS, mock: this._deps.mock });
+        },
+        save: (o) => savePicture({ designId, ...o }),
+        keep: (o) => keepPicture({ designId, ...o }),
+        record: (r) => addPicture({ ...r, designId, buildId: this.id, round: this.round }),
+        emit: (f) => this._frames.send('design-picture', { round: this.round, ...f }),
+        book: (o) => this._bookPicture(o),
+      });
+      this._desk = desk;
+      desk.start();
+    } catch (err) {
+      console.error(`[design] build ${this.id}: pictures off for this round: ${messageOf(err)}`);
+      if (desk) await this._shutDesk();
+      unstagePictureKit({ designId });
+    }
+  }
+
+  /** Closes the picture desk, if one is open, without waiting: it stops looking and aborts its calls at once, and
+   *  `_deskClosed` resolves once its last answer, row and frame are out. Idempotent and never throws, so a halt may
+   *  call it from inside a desk handler. */
+  _closeDesk() {
+    const d = this._desk;
+    if (!d) return;
+    this._desk = null;
+    try {
+      this._deskClosed = d.close().catch((err) => {
+        console.error(`[design] build ${this.id}: picture desk not closed: ${messageOf(err)}`);
+      });
+    } catch (err) {
+      console.error(`[design] build ${this.id}: picture desk not closed: ${messageOf(err)}`);
+    }
+  }
+
+  /** Closes the picture desk and waits for it: every way the drive settles runs this first. */
+  async _shutDesk() {
+    this._closeDesk();
+    await this._deskClosed;
+  }
+
+  /** The kit line the lead is given: while the round's desk is open, else null (no prompt names a kit). */
+  _pictureKit() {
+    return this._desk ? PICTURE_KIT_LINE : null;
+  }
+
+  /** The design's sound choice now (`design.sound`), and whether this round's film has sound: a video whose choice is
+   *  on. Read at each drive's start and by `_restore`. */
+  _readSound() {
+    this._sound = getDesign(this.designId)?.sound ?? null;
+    this._soundOn = isFilmKind(this._design.kind) && this._sound?.on === true;
+  }
+
+  /** The manifest's clips whose words the plan held now still says, by section id: a builder is never told words its
+   *  scene no longer holds (a clip plays only for the words the plan holds, SPEC §5). */
+  _loadClips() {
+    const sayOf = (id) => this._plan?.sections.find((s) => s.id === id)?.say;
+    return new Map((readSoundManifest(this._workDir)?.clips ?? []).filter((c) => sayOf(c.id) === c.text).map((c) => [c.id, c]));
+  }
+
+  /**
+   * The round's sound stage (SPEC D8, D9, D16, D17; LEAD-CALLS L4, L10, L11): worca's own step, on every drive of a
+   * video round once a plan is held, between the lead stage and the builders. Sound off: `work/assets/sound/` goes (a
+   * removal that fails is only logged) and no builder is told a clip, with no frame. ElevenLabs not ready: one `failed`
+   * line, and the builders are told the clips already made. Otherwise `making`, then `makeSound` with P1's calls behind
+   * worca's spend limits (`_soundCall`) and each answer booked (`_bookSound`); the scenes that grew are written to
+   * plan.json and their records (`_growScenes`) before any builder is told `S.dur`; every builder gets its first prompt
+   * anew; then `made`, or `failed` with each reason once. Nothing here fails the round: an abort
+   * (the halt that caused it set the end state; the drive settles) or any other throw ends the stage with no prompt of
+   * its own, a throw sent as `failed` with `the sound could not be saved` and the builders told the clips already made.
+   * @param {Set<string>|null} pick the drive's selection, if any: every scene that grew joins it
+   * @returns {Promise<Map<string, string>>} the explicit prompt of each builder sent back, by section id
+   */
+  async _soundStage(pick) {
+    if (this._end) return new Map();
+    try {
+      if (!this._soundOn) {
+        this._clips = new Map();
+        // A builder not yet in a session starts on its first prompt again, told no clip.
+        for (const a of this._agents) if (a.role === 'builder' && !a.sessionId) a.firstPrompt = null;
+        try {
+          removeSound(this.designId);
+        } catch (err) {
+          console.error(`[design] build ${this.id}: work/assets/sound not removed: ${messageOf(err)}`);
+        }
+        return new Map();
+      }
+      if (!this._deps.soundReady()) {
+        this._soundFrame({ state: 'failed', reasons: [SOUND_NOT_SET_UP] });
+        this._clips = this._loadClips();
+        return new Map();
+      }
+      this._soundFrame({ state: 'making', music: musicPrompt(this._sound.music) !== null });
+      const r = await makeSound({
+        designId: this.designId,
+        workDir: this._workDir,
+        plan: this._plan,
+        sound: this._sound,
+        speak: this._soundCall('speak'),
+        compose: this._soundCall('compose'),
+        signal: this._haltCtl.signal,
+        book: (usd, model) => this._bookSound(usd, model),
+      });
+      const prompts = r.grown.length ? this._growScenes(r, pick) : new Map();
+      this._clips = r.clips;
+      // Every builder's first prompt is built again by `_runSection`, with this drive's `S.dur` and clip: one with no
+      // session starts on it, and one in a session restarts on it should that session be lost.
+      for (const a of this._agents) if (a.role === 'builder') a.firstPrompt = null;
+      const fields = { voice: { made: r.made.voice, reused: r.made.reused }, music: r.music !== null, grown: r.grown.length };
+      if (!r.failed.length) this._soundFrame({ state: 'made', ...fields });
+      else this._soundFrame({ state: 'failed', ...fields, reasons: [...new Set(r.failed.map((f) => f.reason))] });
+      return prompts;
+    } catch (err) {
+      if (err?.name === 'AbortError') return new Map();
+      console.error(`[design] build ${this.id}: the sound stage failed: ${messageOf(err)}`);
+      this._soundFrame({ state: 'failed', reasons: [SOUND_NOT_SAVED] });
+      this._clips = this._loadClips();
+      return new Map();
+    }
+  }
+
+  /**
+   * The scenes `makeSound` grew (SPEC D9), before any builder is told `S.dur`: each grown record given its new
+   * `duration`, and a scene already built sent back with SPEC §7's brief. Its builder of this build, with a session,
+   * reworks a `done` scene and finishes one it was cut off in at the new length: the record keeps that as `regrow`
+   * (`{from, to, rework}`) until the scene is built at that length (`_judgeSection`), sent until its builder received
+   * it (`_runSection`), so a halt, a restart or a Continue that leaves the scene out loses nothing. `from` is the
+   * length the files were last built for: a stretch the record still holds (a todo's `grown` first, else its `regrow`)
+   * keeps its `from` and takes the new `to`, and a `regrow` keeps its `rework`. With no session, its `done` scene goes
+   * `planned`, and a `regrow` it holds is owed anew at the new length. Every builder of a grown scene starts again,
+   * should it start fresh, on a first prompt with the new `S.dur` (`_runSection` renews it). A scene with no builder in
+   * this build (a change round's carried scene) that is not `planned`, or that no round owns (`_inRound`: `planned` with
+   * no todo, as when a restored version put back a length its owed stretch no longer matched) once a builder worked on
+   * it (`agentId`: never an add or a scene whose first build never started, with no files to change), goes `planned`
+   * with a `change` todo whose `grown` (`{from, to}`) gives it the brief (`_builderFirstPrompt`). A selection gains
+   * every grown scene. The build row is
+   * written before plan.json, so a plan.json write that fails leaves a plan the next drive grows again; the plan and
+   * the records held change only once both are written; then the frames and `.crew.json` follow. A round that closes
+   * before a grown scene was built at its length hands the stretch to the next round (`carriedRecords`).
+   * @param {{ plan: object, grown: { id: string, from: number, to: number }[] }} r what `makeSound` returned
+   * @param {Set<string>|null} pick
+   * @returns {Map<string, string>} the explicit builder prompts, by section id
+   */
+  _growScenes(r, pick) {
+    const grown = new Map(r.grown.map((g) => [g.id, g]));
+    const prompts = new Map();
+    const changed = [];
+    const renew = [];
+    const sections = this._sections.map((s) => {
+      const g = grown.get(s.id);
+      if (!g) return s;
+      const rec = { ...s, parts: [...s.parts], duration: g.to };
+      const from = stretchOf(s)?.from ?? g.from;
+      if (s.todo?.grown) rec.todo = { ...s.todo, grown: { from, to: g.to } };
+      const builder = this._agents.find((a) => a.role === 'builder' && a.sectionId === s.id);
+      if (builder?.sessionId) {
+        const rework = s.regrow?.rework === true || rec.status === 'done';
+        rec.regrow = { from, to: g.to, rework };
+        if (rec.status === 'done') rec.status = 'planned';
+        prompts.set(s.id, regrowPrompt(rec.regrow));
+      } else if (builder) {
+        if (rec.status === 'done') rec.status = 'planned';
+        if (s.regrow) rec.regrow = { from, to: g.to, rework: s.regrow.rework === true };
+      } else if (rec.status !== 'planned' || (!this._inRound(s) && s.agentId)) {
+        Object.assign(rec, { status: 'planned', todo: { stage: 'change', grown: { from, to: g.to } } });
+      }
+      if (builder) renew.push(builder);
+      changed.push(rec);
+      return rec;
+    });
+    updateBuild(this.id, { sections });
+    writeJsonAtomic(this._planFile(), r.plan);
+    this._plan = r.plan;
+    this._sections = sections;
+    for (const b of renew) b.firstPrompt = null;
+    if (pick instanceof Set) for (const id of grown.keys()) pick.add(id);
+    for (const rec of changed) this._sectionFrame(rec);
+    this._emitBuild();
+    this._writeCrew();
+    this._planFrame();
+    return prompts;
+  }
+
+  /** P1's `speak` or `compose` (`name`) behind worca's spend limits, as the picture desk's `generate`: the limits are
+   *  checked before each call (`_spendOpen`), and a halt meanwhile, or a limit reached (which pauses the round with
+   *  `total-limit`), aborts the call before it starts, so it books nothing. */
+  _soundCall(name) {
+    return async (o) => {
+      const open = await this._spendOpen();
+      if (o.signal?.aborted) throw abortError();
+      if (!open) {
+        this._halt('paused', 'total-limit');
+        throw abortError();
+      }
+      return this._deps[name]({ ...o, mock: this._deps.mock });
+    };
+  }
+
+  /** A `design-sound` frame (SPEC §5); its fields are kept for `snapshot().sound`. */
+  _soundFrame(fields) {
+    this._soundFields = copySound(fields);
+    this._frames.send('design-sound', fields);
+  }
+
+  _dropIntegration() { rmSync(this._integrationFile(), { force: true, maxRetries: 10, retryDelay: 100 }); }
+
+  _roundFile() { return join(this._workDir, 'round.json'); }
+
+  _dropRound() { rmSync(this._roundFile(), { force: true, maxRetries: 10, retryDelay: 100 }); }
+
+  /**
+   * A lead stage on the round's one lead row (L2.1): a Continue re-enters on the same row and session (`waiting` on
+   * its question file), never a second lead; otherwise the row is created before the first spawn. `read` checks the
+   * file the stage writes; an invalid one gets one resume with its errors (`fixPrompt`).
+   * @returns {Promise<{ failed: 'lead-failed' }|{ agent: object, check: { ok: boolean, errors: string[] } }>}
+   */
+  async _leadStage({ stage, firstPrompt, read, fixPrompt }) {
+    let agent = this._agents.find((a) => a.role === 'lead');
+    let prompt;
+    if (agent) {
+      this._reopenAgent(agent, agent.job, this._readAsk(agent) ? 'waiting' : 'starting');
+      agent.firstPrompt = firstPrompt(agent);
+      prompt = agent.sessionId ? continuePrompt({ role: 'lead' }) : agent.firstPrompt;
+    } else {
+      const { model, effort } = resolveDesignModel('lead', { engine: this._engine, design: this._design });
+      agent = this._newAgent({ role: 'lead', sectionId: null, job: 'Lead', model, effort, cwd: this._workDir });
+      agent.firstPrompt = firstPrompt(agent);
+      prompt = agent.firstPrompt;
+    }
+    let outcome = await this._runAgentLoop(agent, prompt, { stage });
+    let check = outcome === 'done' ? read() : null;
+    if (check && !check.ok) {
+      outcome = await this._runAgentLoop(agent, fixPrompt({ errors: check.errors }), { stage });
+      check = outcome === 'done' ? read() : null;
+    }
+    if (outcome !== 'done') {
+      if (outcome === 'failed') this._endAgent(agent, 'error');
+      return { failed: 'lead-failed' };
+    }
+    return { agent, check };
+  }
+
+  /** The lead ends `error` with `message`; the round fails `plan-invalid`. */
+  _leadInvalid(agent, message) {
+    agent.error = capError(message);
+    this._endAgent(agent, 'error');
+    return 'plan-invalid';
+  }
+
+  /** The lead writes the shared files and plan.json; an invalid plan (a document's brand.md too) gets one resume with
+   *  its errors. A document whose look is worca's gets the fonts before any builder starts.
+   *  @returns {Promise<null|'lead-failed'|'plan-invalid'>} null once a valid plan is held */
+  async _leadPass() {
+    const r = await this._leadStage({
+      stage: 'plan', firstPrompt: (a) => this._leadPlanPrompt(a), read: () => this._readLeadPlan(), fixPrompt: planFixPrompt,
+    });
+    if (r.failed) return r.failed;
+    if (!r.check.ok) return this._leadInvalid(r.agent, `plan.json is not valid: ${r.check.errors.join('; ')}`);
+    await this._stageLookIfWorca();
+    this._takePlan(r.check.plan);
+    this._endAgent(r.agent, 'done');
+    return null;
+  }
+
+  /** A change round's lead (stage `change`, C-3): round.json, checked by `validateRound` against the plan held, one
+   *  resume with its errors, then applied (`_applyRound`). The lead row goes `done` only once the round's files are
+   *  written, so a later drive re-enters this stage only while the round is unapplied (L2.37).
+   *  @returns {Promise<null|'lead-failed'|'plan-invalid'>} null once the round is applied */
+  async _leadChange() {
+    const r = await this._leadStage({
+      stage: 'change', firstPrompt: (a) => this._leadChangePrompt(a), read: () => this._readRound(), fixPrompt: roundFixPrompt,
+    });
+    if (r.failed) return r.failed;
+    if (!r.check.ok) return this._leadInvalid(r.agent, `round.json is not valid: ${r.check.errors.join('; ')}`);
+    const errors = this._applyRound(r.check.round);
+    if (errors) return this._leadInvalid(r.agent, `the plan after round.json is not valid: ${errors.join('; ')}`);
+    this._endAgent(r.agent, 'done');
+    // A change of look to worca's needs the fonts before the builders: lint would flag them missing otherwise. Staged
+    // only once the lead row is `done`: a throw here is the round's `engine-error`, and its Continue builds the
+    // applied round's sections (`_finish` stages again) rather than re-running a round `validateRound` now refuses.
+    await this._stageLookIfWorca();
+    return null;
+  }
+
+  _readRound() {
+    const text = this._readWork('round.json');
+    if (text === null) return { ok: false, errors: ['round.json was not written'], round: null };
+    return validateRound(text, { plan: this._plan });
+  }
+
+  /**
+   * Applies a valid round: `applyRound` over the plan held and shell.html, given the NORMALIZED round (a web add
+   * without `estHeight` gets 240), and the result must pass `validatePlan` before anything is written; else the
+   * plan's errors come back and nothing changed. Then plan.json and shell.html, each renamed over its name (P8: a link
+   * an agent swaps in after the read is replaced, never written through, replaceWorkFile), the records (a touch `planned` with
+   * `todo:{stage:'change',brief}`, an add `planned` with `todo:{stage:'first'}` and `unbuiltAdd`, every other section
+   * as it was, a removed one gone), `design-section` `removed` per removed section and `design-plan` at planRev 2.
+   * Last, and only best-effort (M5), round.json and each removed section's folder go: a Windows program holding one
+   * makes the remove throw, and the round is already applied by then, so a throw would leave it half done for every
+   * Continue. A leftover round.json is never read again: the lead row goes `done` next. A leftover folder is named by
+   * no plan until a later round adds a section of the same id. That add keeps `unbuiltAdd` in its record, carried from
+   * round to round, until its builder row exists, and the folder goes before that: in the adding round before its
+   * first build (`_clearAdded`), in any later change round before that round's row (`clearUnbuiltAdds`). So its files
+   * never land as a base, pass as the new section's build or reach dist.
+   * @returns {string[]|null} null once applied
+   */
+  _applyRound(round) {
+    const shell = this._readWork('shell.html');
+    const out = applyRound({ plan: this._plan, round, shellHtml: shell ?? '' });
+    const check = validatePlan(out.plan, { kind: this._design.kind });
+    if (!check.ok) return check.errors;
+    writeJsonAtomic(this._planFile(), check.plan);
+    if (typeof shell === 'string' && out.shellHtml !== shell) replaceWorkFile(this._workDir, 'shell.html', out.shellHtml);
+    const before = new Map(this._sections.map((s) => [s.id, s]));
+    const touched = new Map(round.touch.map((t) => [t.id, t.brief]));
+    this._plan = check.plan;
+    this._planRev = 2;
+    this._sections = check.plan.sections.map((s) => {
+      const rec = before.get(s.id);
+      if (!rec) return { ...sectionRecord(s), todo: { stage: 'first' }, unbuiltAdd: true };
+      // A scene still owed a stretch (`carriedRecords`) keeps it beside the touch's brief.
+      if (touched.has(s.id)) {
+        Object.assign(rec, { status: 'planned', todo: { stage: 'change', brief: touched.get(s.id), ...(rec.todo?.grown ? { grown: rec.todo.grown } : {}) } });
+      }
+      return rec;
+    });
+    for (const id of out.removed) this._layers.delete(`sections/${id}/index.html`);
+    updateBuild(this.id, { sections: this._sections });
+    this._writeCrew();
+    for (const id of out.removed) {
+      const rec = before.get(id);
+      this._frames.send('design-section', { sectionId: id, status: 'removed', agentId: rec?.agentId ?? null, summary: rec?.summary ?? '' });
+    }
+    this._planFrame();
+    this._emitBuild();
+    this._tidyRound(out.removed);
+    return null;
+  }
+
+  /** An applied round's leftovers, each removed on its own and logged when it cannot be (`_applyRound`, M5). */
+  _tidyRound(removed) {
+    const tidy = (what, fn) => {
+      try { fn(); } catch (err) { console.error(`[design] build ${this.id}: ${what} not removed: ${messageOf(err)}`); }
+    };
+    tidy('round.json', () => this._dropRound());
+    for (const id of removed) {
+      // Its watch goes first: on Windows a watched folder deleted raises EPERM, and a delete-pending one refuses the
+      // folder of a section added again under that id.
+      this._watcher?.drop(id);
+      tidy(`the folder of removed section ${id}`, () => removeSectionDir(this.designId, id));
+    }
+  }
+
+  _planFile() { return join(this._workDir, 'plan.json'); }
+
+  _kitContract() {
+    const contract = join(kitDir(this.designId), 'CONTRACT.md');
+    return existsSync(contract) ? contract : null;
+  }
+
+  /** Whether this round's engine is off the hook row: no write guard, so a builder reads `.ctx` copies and asks in
+   *  its own folder (L8.7, L8.8). */
+  _offHook() { return this._engineRow.confine !== 'hook'; }
+
+  /** Where `agent` writes its questions (`asksFileFor`): `work/.asks/`, or a builder's own folder off the hook row. */
+  _questionFile(agent) {
+    return asksFileFor({
+      row: this._engineRow, designId: this.designId, sectionId: agent.role === 'builder' ? agent.sectionId : null, agentId: agent.id,
+    });
+  }
+
+  /** A builder's read bundle (`<section>/.ctx`) off the hook row, else undefined. */
+  _readRoot(agent) {
+    return agent.role === 'builder' && this._offHook() ? join(agent.cwd, '.ctx') : undefined;
+  }
+
+  /** The plan stage's first prompt for the lead `agent`, from the build's brief. A film with sound is told so: its kind
+   *  line (with the music or not) and its `Sound:` task line (SPEC §7); without sound neither is passed. */
+  _leadPlanPrompt(agent) {
+    return leadPlanPrompt({
+      brief: this._row.brief,
+      kind: this._design.kind,
+      fast: this._row.fast,
+      projectDir: this._projectDir,
+      captureKit: CAPTURE_KIT,
+      kitContract: this._kitContract(),
+      pictureKit: this._pictureKit(),
+      questionFile: this._questionFile(agent),
+      planFile: this._planFile(),
+      row: this._engineRow,
+      ...(this._soundOn ? { sound: { music: musicPrompt(this._sound.music) !== null }, soundLine: soundLineOf(this._sound) } : {}),
+    });
+  }
+
+  /** A rehydrated lead's first prompt: the change round's for a `change` build, else the plan stage's. */
+  _leadFirstPrompt(agent) {
+    if (this.kind !== 'change') return this._leadPlanPrompt(agent);
+    return this._leadChangePrompt(agent);
+  }
+
+  /** The change stage's first prompt for the lead `agent`: the round's instruction (the build's brief), the named
+   *  sections and the pins block (neither persisted: empty after a rehydrate). A film with sound gets its `Sound:` task
+   *  line (SPEC §7). */
+  _leadChangePrompt(agent) {
+    return leadChangePrompt({
+      instruction: this._row.brief,
+      kind: this._design.kind,
+      sections: this._start.named,
+      projectDir: this._projectDir,
+      captureKit: CAPTURE_KIT,
+      kitContract: this._kitContract(),
+      pictureKit: this._pictureKit(),
+      questionFile: this._questionFile(agent),
+      roundFile: this._roundFile(),
+      pinBlock: this._start.pinBlock,
+      row: this._engineRow,
+      ...(this._soundOn ? { soundLine: soundLineOf(this._sound) } : {}),
+    });
+  }
+
+  /** A builder's first prompt, from its plan section; null while no plan is held. A section whose `todo` is a
+   *  `change` gets the change round's prompt (Read then Edit, its `todo.brief` and then the brief of the stretch its
+   *  record holds, `stretchOf`, the pins when it was named), so a rehydrate or a fresh restart rebuilds it from the row
+   *  (L2.35); any other the first-build prompt. A video scene with a clip is told when its voice speaks (`this._clips`). */
+  _builderFirstPrompt(agent) {
+    const section = this._plan?.sections.find((s) => s.id === agent.sectionId) ?? this._sections.find((s) => s.id === agent.sectionId);
+    if (!this._plan || !section) return null;
+    const rec = this._sections.find((s) => s.id === agent.sectionId);
+    const todo = rec?.todo;
+    const clip = this._clips.get(section.id) ?? null;
+    if (todo?.stage === 'change') {
+      const stretch = stretchOf(rec);
+      return builderChangePrompt({
+        section,
+        instruction: this._row.brief,
+        brief: [todo.brief, stretch ? grownBrief(stretch) : null].filter(Boolean).join('\n'),
+        notes: this._plan.notes,
+        sectionDir: agent.cwd,
+        questionFile: this._questionFile(agent),
+        pinBlock: this._start.named?.includes(section.id) ? this._start.pinBlock : '',
+        kind: this._design.kind,
+        plan: this._plan,
+        projectDir: this._projectDir,
+        row: this._engineRow,
+        clip,
+      });
+    }
+    return builderPrompt({
+      section,
+      notes: this._plan.notes,
+      sectionDir: agent.cwd,
+      tokensCss: join(this._workDir, 'tokens.css'),
+      globalCss: join(this._workDir, 'global.css'),
+      crewJson: crewFile(this.designId),
+      questionFile: this._questionFile(agent),
+      kitContract: this._kitContract(),
+      kind: this._design.kind,
+      plan: this._plan,
+      readRoot: this._readRoot(agent),
+      projectDir: this._projectDir,
+      row: this._engineRow,
+      clip,
+    });
+  }
+
+  /**
+   * `rehydrate`'s second half: the round's state from its rows and the disk. The disk plan is kept only when the
+   * row has section records; otherwise the lead stage runs again on the existing lead row. Each agent gets the full
+   * `_newAgent` shape, its meter seeded with the row's cost (`priorUsd`) and with its current session's running total
+   * (`sessionUsd`, M3: less than the cost once a lost session was replaced), its known flag kept beside the meter. A
+   * film with sound loads its clips first, so a builder's first prompt carries its clip.
+   */
+  _restore() {
+    this._settled = true;
+    const ended = Date.parse(this._row.endedAt);
+    this._endedMs = Number.isFinite(ended) ? ended : null;
+    this._runP = Promise.resolve({ status: this._status, reason: this._reason });
+    const records = Array.isArray(this._row.sections) ? this._row.sections : [];
+    const check = records.length ? this._readPlan() : null;
+    if (check?.ok) {
+      this._plan = check.plan;
+      this._sections = records.map((s) => ({ ...s, parts: Array.isArray(s.parts) ? [...s.parts] : [] }));
+    }
+    const rows = listAgents(this.id);
+    const lead = rows.find((r) => r.role === 'lead');
+    const applied = this.kind === 'change' && lead && (lead.status === 'done' || lead.job === 'Integrate');
+    this._planRev = this._plan ? (applied ? 2 : 1) : 0;
+    this._seedLayers();
+    this._readSound();
+    if (this._soundOn) this._clips = this._loadClips();
+    for (const r of rows) {
+      const isLead = r.role === 'lead';
+      const agent = {
+        id: r.id, role: r.role, sectionId: r.sectionId, job: r.job, model: r.model, effort: r.effort,
+        cwd: isLead ? this._workDir : sectionDir(this.designId, r.sectionId), status: r.status,
+        sessionId: r.sessionId, sessionModel: null, tool: null, error: r.error, asks: r.asks, ask: null, noMoreQuestions: false,
+        firstPrompt: null, summary: isLead ? '' : (this._sections.find((s) => s.id === r.sectionId)?.summary ?? ''), extraUsd: 0,
+        seedUsd: r.costUsd, knownBefore: r.costKnown !== false,
+        stopKind: null, stopCtl: new AbortController(), waiter: null, lostOnce: false, retried: false, controller: null,
+        // `row.costUsd` is null until a first booking; a destructuring default would not replace it.
+        meter: createAgentMeter({ model: r.model, engine: this._engine, priorUsd: r.costUsd ?? 0, sessionUsd: sessionUsdOf(r) }),
+      };
+      agent.firstPrompt = isLead ? this._leadFirstPrompt(agent) : this._builderFirstPrompt(agent);
+      this._agents.push(agent);
+    }
+  }
+
+  /** `_layers` from each section's index.html on disk (L2.13): a round that starts over sections already built. An
+   *  add with no build yet (`unbuiltAdd`) counts none: what its folder holds is a removed section's. */
+  _seedLayers() {
+    for (const s of this._sections) {
+      if (s.unbuiltAdd === true) continue;
+      const path = `sections/${s.id}/index.html`;
+      const html = this._readWork(path);
+      if (typeof html === 'string') this._layers.set(path, countLayers(html));
+    }
+  }
+
+  _readPlan() {
+    const text = this._readWork('plan.json');
+    if (text === null) return { ok: false, errors: ['plan.json was not written'], plan: null };
+    return validatePlan(text, { kind: this._design.kind });
+  }
+
+  /**
+   * The lead's plan gate (`_leadPass` only; `_restore` keeps `_readPlan`): plan.json, and for a document the
+   * `Look source:` line of brand.md too, read even when plan.json failed, so one fix resume carries both lists.
+   * `project` passes only when the lead was given a Project line (the rule of `leadProjectLines`).
+   * @returns {{ ok: boolean, errors: string[], plan: object|null }}
+   */
+  _readLeadPlan() {
+    const check = this._readPlan();
+    if (!isDocKind(this._design.kind)) return check;
+    const hasProject = Boolean(this._projectDir) && this._engineRow?.readsOutsideCwd !== false;
+    const look = readLookSource(this._readWork('brand.md'), { hasProject });
+    if (check.ok && look.ok) return check;
+    return { ok: false, errors: [...(check.errors ?? []), ...(look.errors ?? [])].slice(0, MAX_PLAN_ERRORS), plan: null };
+  }
+
+  /** A document whose brand.md says `Look source: worca` gets worca's fonts in `assets/worca/` (`deps.stageLook`); any
+   *  other look, or kind, nothing. A throw after the plan or the round is the round's `engine-error` through
+   *  `_guarded`; `_finish` only logs one. */
+  async _stageLookIfWorca() {
+    if (!isDocKind(this._design.kind)) return;
+    if (readLookSource(this._readWork('brand.md')).source !== 'worca') return;
+    await this._deps.stageLook({ workDir: this._workDir });
+  }
+
+  /** A valid plan: every section `planned`, persisted, listed in `.crew.json` and sent as `design-plan`. */
+  _takePlan(plan) {
+    this._plan = plan;
+    this._planRev = 1;
+    this._sections = plan.sections.map(sectionRecord);
+    updateBuild(this.id, { sections: this._sections });
+    this._writeCrew();
+    this._planFrame();
+    this._emitBuild();
+  }
+
+  /** `design-plan` for the plan held: its `canvas` and copies of the section records, never a `todo`. */
+  _planFrame() {
+    this._frames.send('design-plan', {
+      planRev: this._planRev,
+      canvas: { ...this._plan.canvas },
+      sections: this._sections.map(copySection),
+    });
+  }
+
+  /** `.crew.json` as `[{id, status, summary}]`. A failed write (EPERM or EBUSY on Windows while a builder reads it)
+   *  is logged; the next section change writes it again. */
+  _writeCrew() {
+    try {
+      writeJsonAtomic(crewFile(this.designId), this._sections.map(({ id, status, summary }) => ({ id, status, summary })));
+    } catch (err) {
+      console.error(`[design] .crew.json of ${this.designId} not written: ${messageOf(err)}`);
+    }
+  }
+
+  /**
+   * A builder stage over `items` (`{section, prompt}` in plan order; `prompt` null for a section's first build): one
+   * loop per section, started in plan order so the build slots serve them in that order, and every loop awaited. A
+   * loop that throws aborts the others; the first throw then ends the drive. In a change round the folder of each
+   * add with no builder yet is cleared first (`_clearAdded`), and a section whose folder cannot be cleared does not
+   * build; then every other selected section's base lands (`_landBases`).
+   */
+  async _runBuilders(items) {
+    if (this.kind === 'change') {
+      items = items.filter((item) => this._clearAdded(item.section));
+      this._landBases(items.map((item) => item.section));
+    }
+    const builder = resolveDesignModel('builder', { engine: this._engine, design: this._design });
+    const loops = items.map((item) => this._runSection(item, builder).catch((err) => { this._abortAll(); throw err; }));
+    const failure = (await Promise.allSettled(loops)).find((r) => r.status === 'rejected');
+    if (failure) throw failure.reason;
+  }
+
+  /**
+   * An add before its first build (`unbuiltAdd`: no builder row yet, whichever round added it): an earlier round that
+   * removed a section of the same id may have left its folder (`_tidyRound`), and those files would land as this
+   * section's base and pass as its build. The folder goes, and its old index.html stops counting layers. One that
+   * cannot go fails the section, logged, with no agent row, so a Continue clears it again. A section whose builder row
+   * exists is never cleared, `unbuiltAdd` or not (a crash between that row and the record write keeps the mark): the
+   * row's folder was cleared before it was made, and its process may have written there. True when the section may
+   * build.
+   */
+  _clearAdded(section) {
+    if (section.unbuiltAdd !== true || this._agents.some((a) => a.role === 'builder' && a.sectionId === section.id)) return true;
+    this._layers.delete(`sections/${section.id}/index.html`);
+    this._watcher?.drop(section.id);
+    try {
+      removeSectionDir(this.designId, section.id);
+    } catch (err) {
+      console.error(`[design] build ${this.id}: added section ${section.id} not built: its folder holds a removed section's files and could not be cleared: ${messageOf(err)}`);
+      this._setSection(section, 'failed');
+      return false;
+    }
+    return true;
+  }
+
+  /** A change round's builder stage, before any spawn: the existing files of every section in `sections` land as
+   *  `design-file`s with text, so a client that reset its drafts for this build holds each base before the first
+   *  deleting splice, and a section queued behind the cap shows its old content, not an empty slot (Contract issue 22). */
+  _landBases(sections) {
+    for (const s of sections) {
+      for (const file of SECTION_FILES) {
+        const path = `sections/${s.id}/${file}`;
+        const text = this._readWork(path);
+        if (typeof text === 'string') this._landFile(path, text);
+      }
+    }
+  }
+
+  /** `text` as `rel`'s disk text: the draft store lands it (its rev) and a `design-file` goes out; the text is kept as
+   *  the last one landed for `rel` when the store landed it (a path no stage draws gets no rev and sends nothing). */
+  _landFile(rel, text) {
+    const rev = this._drafts.landed(rel, text);
+    if (rev != null) this._landedText.set(rel, text);
+    this._fileFrame(rel, text, rev);
+  }
+
+  /**
+   * The watcher's landing of `rel` on a watch row: any current-plan section's file, whoever wrote it, and the two
+   * global files (L8.24: dist is assembled from the plan's sections on the same disk). Nothing once settled; nothing
+   * for a section the plan lacks or one still `unbuiltAdd` (a removed section's leftovers never land or count layers,
+   * M5); a `gone` only for a path this build landed (a leftover folder's files, removed before their debounce fired,
+   * must not land `''`); and never the text last landed for `rel` (a stat during a truncate-then-write, or coarse
+   * mtimes, would send it twice). The text is read through `readConfined` (`_readWork`): a link or a FIFO reads null.
+   */
+  _onWatchLand(rel, { gone = false } = {}) {
+    if (this._settled) return;
+    const c = classifyDraftPath(rel);
+    if (!c) return;
+    if (c.sectionId !== null) {
+      const s = this._sections.find((x) => x.id === c.sectionId);
+      if (!s || s.unbuiltAdd === true) return;
+    }
+    const last = this._landedText.get(rel);
+    if (gone && last === undefined) return;
+    const text = gone ? '' : this._readWork(rel);
+    if (typeof text !== 'string' || text === last) return;
+    this._landFile(rel, text);
+  }
+
+  /** Closes the work-folder watcher, if one is open; never throws. */
+  _closeWatcher() {
+    const w = this._watcher;
+    this._watcher = null;
+    try {
+      w?.close();
+    } catch (err) {
+      console.error(`[design] build ${this.id}: watcher not closed: ${messageOf(err)}`);
+    }
+  }
+
+  /**
+   * One section's loop. It takes a build slot and holds it to its end, waits included (L2.28). A section's first
+   * build then takes the global slot and the stagger, and only then gets its folder and its agent row: a queued
+   * section stays `planned` and `agentsTotal` counts real agents. A section that has its agent (a rework) reuses that
+   * agent, its row, its session and its cwd (M5, L2.1, R11).
+   */
+  async _runSection({ section, prompt }, builder) {
+    const signal = this._haltCtl.signal;
+    try {
+      await this._slots.acquire({ signal });
+    } catch (err) {
+      if (signal.aborted) return;
+      throw err;
+    }
+    try {
+      let agent = this._agents.find((a) => a.role === 'builder' && a.sectionId === section.id);
+      let slotHeld = false;
+      if (agent) {
+        if (signal.aborted) return;
+        // A question file means no process runs until the answer (U3): the agent re-enters `waiting`.
+        this._reopenAgent(agent, agent.job, this._readAsk(agent) ? 'waiting' : 'starting');
+        section.agentId = agent.id;
+        // Its builder row exists (`_clearAdded`): a mark a crash left behind goes with this record write.
+        delete section.unbuiltAdd;
+        this._setSection(section, 'writing');
+        // A rehydrate found no plan for it: the lead's new plan gives it its first prompt (a lost session's restart).
+        agent.firstPrompt ??= this._builderFirstPrompt(agent);
+        // A Continue: the session resumes, told what a scene that grew is owed unless it already received it; an agent
+        // that never got one starts on its first prompt.
+        const owed = unsent(section);
+        if (prompt == null) prompt = agent.sessionId ? (owed ? regrowPrompt(owed) : continuePrompt({ role: 'builder' })) : agent.firstPrompt;
+      } else {
+        if (!(await this._globalSlot())) return;
+        // A halt that landed while this loop resumed from the slot (M7): no row for a process that never starts.
+        if (signal.aborted) { this._releaseGlobal(); return; }
+        try {
+          agent = this._newBuilder(section, builder);
+          section.agentId = agent.id;
+          // Its builder row exists: from here on the folder holds that builder's work, never cleared (`_clearAdded`,
+          // `clearUnbuiltAdds`).
+          delete section.unbuiltAdd;
+          this._setSection(section, 'writing');
+        } catch (err) {
+          this._releaseGlobal();
+          throw err;
+        }
+        slotHeld = true;
+      }
+      // A change round's section runs as its `todo` says: a touch `change`, an add `first`.
+      const stage = section.todo?.stage ?? 'first';
+      const mark = unsent(section);
+      const regrow = mark ? { brief: grownBrief(mark), received: () => this._regrowReceived(section) } : null;
+      const outcome = await this._runAgentLoop(agent, prompt ?? agent.firstPrompt, { stage, slotHeld, regrow });
+      this._judgeSection(section, agent, outcome);
+    } finally {
+      this._slots.release();
+    }
+  }
+
+  /** A section's builder: its folder first (M10), and off the hook row its `.asks` in it (L8.8), then its row, then its
+   *  first prompt, every path absolute. Both folders are made through no link an agent planted (realSectionDir): a
+   *  `sections` or section link planted during the lead stage is removed, never becoming the builder's folder, and a
+   *  link, file or FIFO standing as `.asks` is replaced, so a planted one cannot fail every later round. */
+  _newBuilder(section, { model, effort }) {
+    const cwd = realSectionDir(this.designId, section.id, { create: true, asks: this._offHook() });
+    const agent = this._newAgent({ role: 'builder', sectionId: section.id, job: section.job, model, effort, cwd });
+    agent.firstPrompt = this._builderFirstPrompt(agent);
+    return agent;
+  }
+
+  /** A grown scene's `regrow` is marked `received` once its builder received it, written at once (as `_takeQuestion`
+   *  writes `asks`), so no later drive of its session sends it again; the scene still owes it until it is built. */
+  _regrowReceived(section) {
+    if (!section.regrow || section.regrow.received) return;
+    section.regrow = { ...section.regrow, received: true };
+    updateBuild(this.id, { sections: this._sections });
+  }
+
+  /** A section's verdict from its loop: `done` needs a non-empty index.html, and a scene built at its length then owes
+   *  no stretch (its `regrow` and its todo's `grown` go, and its builder's first prompt is built again without the
+   *  brief, should a later rework restart fresh); an agent the person stopped ends `stopped` with its section now, so
+   *  the rest of the round already sees it; a halted loop leaves the section `writing`, and the settle decides;
+   *  anything else is `failed`. */
+  _judgeSection(section, agent, outcome) {
+    if (outcome === 'done') {
+      const html = this._readWork(`sections/${section.id}/index.html`);
+      if (typeof html === 'string' && html.trim()) {
+        this._endAgent(agent, 'done');
+        if (stretchOf(section)) {
+          delete section.regrow;
+          if (section.todo?.grown) {
+            section.todo = { ...section.todo };
+            delete section.todo.grown;
+          }
+          agent.firstPrompt = null;
+        }
+        this._setSection(section, 'done', { summary: agent.summary || section.summary });
+        return;
+      }
+      agent.error = `sections/${section.id}/index.html was not written`;
+    } else if (outcome === 'stopped') {
+      this._endAgent(agent, 'stopped');
+      this._setSection(section, 'stopped');
+      return;
+    } else if (outcome !== 'failed') return;
+    this._endAgent(agent, 'error');
+    this._setSection(section, 'failed');
+  }
+
+  /** A section's new status: `.crew.json`, the build row's records, a `design-section` frame and fresh stats. */
+  _setSection(section, status, { summary } = {}) {
+    section.status = status;
+    if (summary !== undefined) section.summary = summary;
+    this._writeCrew();
+    updateBuild(this.id, { sections: this._sections });
+    this._sectionFrame(section);
+    this._emitBuild();
+  }
+
+  _sectionFrame(s) {
+    this._frames.send('design-section', { sectionId: s.id, status: s.status, agentId: s.agentId, summary: s.summary });
+  }
+
+  /** After a builder stage (M8), over every section of the round, not only a Continue's selection (in a change round,
+   *  every section with a `todo`, whichever drive ran it, so a carried section never holds it): a failed section
+   *  pauses the round as `failed`, a section still `planned` or `writing` (an open question a subset left) as
+   *  `unfinished` (L2.24). A section the person stopped does not hold the round (L2.22).
+   *  @returns {null|'failed'|'unfinished'} */
+  _afterBuilders() {
+    const judged = this._sections.filter((s) => this._inRound(s));
+    if (judged.some((s) => s.status === 'failed')) return 'failed';
+    if (judged.some((s) => s.status === 'planned' || s.status === 'writing')) return 'unfinished';
+    return null;
+  }
+
+  _integrationFile() { return join(this._workDir, 'integration.json'); }
+
+  /**
+   * The lead's integrate pass, on its own row and session: `lintDesign` with no AI, its findings in the prompt, then
+   * the `rework` of integration.json, never its `done` (M10). A pass that failed or that the person stopped, or a file
+   * that is missing or invalid, sends nothing back (L2.10). A lost session starts the lead fresh on the same
+   * integrate prompt.
+   * @returns {Promise<{ section: object, prompt: string }[]>} the `done` sections to rework, in plan order
+   */
+  async _integrate() {
+    const lead = this._agents.find((a) => a.role === 'lead');
+    if (!lead) return [];
+    this._setStatus('integrating');
+    const { findings } = lintDesign({ workDir: this._workDir, plan: this._plan });
+    // The Look kit lives where worca is installed: only an engine that reads outside its folder can run it (P8 L8.9).
+    const lookKit = this._engineRow?.readsOutsideCwd === false ? null : LOOK_KIT;
+    // The picture kit lives in work/.kit/: every engine can run it, one that reads only its own folder too.
+    const prompt = integratePrompt({ findings, integrationFile: this._integrationFile(), lookKit, pictureKit: this._pictureKit() });
+    // A question file means no process runs until the answer (U3): the lead re-enters `waiting`.
+    this._reopenAgent(lead, 'Integrate', this._readAsk(lead) ? 'waiting' : 'starting');
+    const outcome = await this._runAgentLoop(lead, prompt, { stage: 'integrate', restart: prompt });
+    if (outcome === 'failed') this._endAgent(lead, 'error');
+    else if (outcome === 'stopped') this._endAgent(lead, 'stopped');
+    if (outcome !== 'done') return [];
+    this._endAgent(lead, 'done');
+    return this._reworkItems();
+  }
+
+  _reworkItems() {
+    const text = this._readWork('integration.json');
+    if (text === null) return [];
+    const { ok, errors, integration } = validateIntegration(text, { plan: this._plan });
+    if (!ok) {
+      console.error(`[design] build ${this.id}: integration.json ignored: ${errors.join('; ')}`);
+      return [];
+    }
+    const why = new Map(integration.rework.map((r) => [r.id, r.why]));
+    let touched = false;
+    const items = this._sections.filter((s) => why.has(s.id) && s.status === 'done').map((section) => {
+      const note = why.get(section.id);
+      // A change round's section with no agent this round: a new builder with the change prompt, `brief` the why, so
+      // it is judged and rehydrates like a touch (L2.37). A bare rework prompt would reach a session with no section.
+      if (this.kind === 'change' && !this._agents.some((a) => a.role === 'builder' && a.sectionId === section.id)) {
+        section.todo = { stage: 'change', brief: note };
+        touched = true;
+        return { section, prompt: null };
+      }
+      return { section, prompt: reworkPrompt({ why: note }) };
+    });
+    if (touched) updateBuild(this.id, { sections: this._sections });
+    return items;
+  }
+
+  /** The done path, in this order (M10): `dist`, the version snapshot, then the end state with the terminal frame
+   *  last. A shell the assembler refuses ends `error`, `assemble-failed`; a failed snapshot is only logged. Off the
+   *  hook row a lead can write work/.kit/, so a deck's or a video's kit is staged again first (P8): a lead's edit never
+   *  reaches the result, and a staging that throws is the round's `engine-error` through `_guarded`. A watch row's
+   *  watcher re-reads once more and closes before all of it, so no file lands after dist (L8.23). */
+  async _finish() {
+    if (this._watcher) {
+      await this._watcher.rescan();
+      this._closeWatcher();
+    }
+    // No picture lands after dist: the desk closes and its last answer is out before the assembler reads work/.
+    await this._shutDesk();
+    if (this._offHook() && isBoardKind(this._design.kind)) await this._deps.stageKit({ kind: this._design.kind, workDir: this._workDir });
+    // Any agent can write over assets/worca/ (Bash is open to every engine), so worca's fonts are put back before dist.
+    // Best-effort: every section is done and integration.json written, so a throw here would leave a round no Continue
+    // picks up and no dist; the fonts staged after the plan or the round are still there in the normal case.
+    try {
+      await this._stageLookIfWorca();
+    } catch (err) {
+      console.error(`[design] build ${this.id}: worca's look not staged again: ${messageOf(err)}`);
+    }
+    try {
+      assembleDesign({ workDir: this._workDir, plan: this._plan, mode: 'dist' });
+    } catch (err) {
+      console.error(`[design] build ${this.id}: assembly failed: ${messageOf(err)}`);
+      return this._settle('error', 'assemble-failed');
+    }
+    try {
+      await this._deps.snapshotVersion({ designId: this.designId });
+    } catch (err) {
+      console.error(`[design] build ${this.id}: version snapshot failed: ${messageOf(err)}`);
+    }
+    return this._settle('done', this._sections.every((s) => s.status === 'done') ? null : 'partial');
+  }
+
+  /**
+   * One agent's session, process after process, until it is done, failed or halted (L2.7, L2.9, L2.31). A lost
+   * session starts fresh once from `restart` (default `agent.firstPrompt`), and a second loss fails the agent: a resume
+   * the CLI refuses (`_lostSession`), or one the adapter restarted fresh on the same prompt (`restarted`, L8.30), which
+   * carries no task. A transient error resumes once. A process
+   * that ends with a valid ask file asks the person: while the agent has rounds left (`ASK_ROUNDS`) it waits for the
+   * answer and the session resumes with it (L2.8); past them it gets one "no more questions" resume, and asking again
+   * fails it, the file removed (L2.9). The file goes, and `asks` moves, only once a process shows it received that
+   * prompt (M1, `_spawnOnce`'s `onReceive`): a halt, a refused spawn or an error before that keeps the question, and an
+   * answered agent goes back to `waiting`, so a paused settle keeps it (L2.29) and a Continue asks again; a transient
+   * error retries the same prompt. A lost session takes its question with it: the fresh session starts over. A
+   * transient error's retry resumes with the continue prompt only when the failed process reported a session; else it
+   * sends its own prompt again. An ask file already there when the loop starts (a Continue) is asked
+   * before any spawn. `slotHeld`: the caller already holds the global slot for the first process
+   * (a builder's first build takes it before its folder and row exist). Every wait between two processes, the wait on
+   * an answer included, also ends when the person stops this agent (`stopAgent`). `regrow`: a builder's scene grew and
+   * `firstPrompt` carries its brief (`_runSection`); every prompt this loop sends carries it until a process received
+   * one (the answers to a question asked first get the brief as their last line, a fresh start's first prompt holds the
+   * new `S.dur`, and a change round's the brief too), and then `regrow.received` runs once.
+   * @returns {Promise<'done'|'failed'|'halted'|string>} `agent.stopKind` when the person stopped the agent
+   */
+  async _runAgentLoop(agent, firstPrompt, { stage, slotHeld = false, restart = null, regrow = null }) {
+    let prompt = firstPrompt;
+    let owed = regrow;
+    let held = slotHeld;
+    let ask = this._readAsk(agent);
+    /** The question `prompt` answers ('answered') or closes ('last'), its file still on disk until a process shows it
+     *  received the prompt; null once taken. */
+    let taken = null;
+    /** No process received the answer: the agent waits on its question again. */
+    const keepQuestion = () => {
+      if (taken === 'answered' && !agent.stopKind) this._setAgentStatus(agent, 'waiting');
+      return agent.stopKind ?? 'halted';
+    };
+    for (;;) {
+      if (ask) {
+        if (agent.asks < ASK_ROUNDS[agent.role]) {
+          const answers = await this._waitAnswer(agent, ask.questions);
+          if (answers === null) return agent.stopKind ?? 'halted';
+          prompt = answersPrompt({ questions: ask.questions, answers });
+          taken = 'answered';
+        } else if (agent.noMoreQuestions) {
+          removeAskFile(this._questionFile(agent));
+          agent.error = 'Asked again after its last question round';
+          return 'failed';
+        } else {
+          prompt = noMoreQuestionsPrompt();
+          taken = 'last';
+        }
+        // The prompt that carried a grown scene's brief is never sent: the brief goes with this one.
+        if (owed) prompt = [prompt, owed.brief].join('\n');
+        ask = null;
+      }
+      if (!held && !(await this._globalSlot(agent))) return keepQuestion();
+      held = false;
+      const pending = taken;
+      const carried = owed;
+      const onReceive = pending || carried ? () => {
+        if (pending) { this._takeQuestion(agent, pending); taken = null; }
+        if (carried) { owed = null; carried.received(); }
+      } : null;
+      const outcome = await this._spawnOnce(agent, prompt, stage, onReceive);
+      if (outcome.aborted) return keepQuestion();
+      if (outcome.subtype === 'error_max_budget_usd') { this._halt('paused', 'total-limit'); return keepQuestion(); }
+      if (outcome.restarted || (outcome.err && this._lostSession(outcome.err))) {
+        if (!agent.lostOnce) {
+          agent.lostOnce = true;
+          // The session that asked is gone, and its question with it: the fresh session starts over.
+          if (taken) { this._takeQuestion(agent, taken); taken = null; }
+          this._setSession(agent, null);
+          prompt = restart ?? agent.firstPrompt;
+          continue;
+        }
+        if (!outcome.err) {
+          agent.error = 'Its session was lost again after a fresh start';
+          return 'failed';
+        }
+      }
+      if (outcome.err) {
+        const message = messageOf(outcome.err);
+        const c = classifyError(outcome.err);
+        if (HALT_CLASSES.has(c)) { this._halt('paused', c); return keepQuestion(); }
+        if (RETRY_CLASSES.has(c) && !agent.retried) {
+          agent.retried = true;
+          this._setAgentStatus(agent, 'retrying');
+          if (!(await this._sleep(this._deps.retryDelayMs, this._waitSignal(agent)))) return keepQuestion();
+          // A process that reported a session resumes it. One that never did received nothing: the same prompt goes
+          // again (the brief, or the answers it never got), on whatever session the agent resumes.
+          if (outcome.session) prompt = continuePrompt({ role: agent.role });
+          continue;
+        }
+        agent.error = capError(message);
+        return 'failed';
+      }
+      ask = this._readAsk(agent);
+      if (!ask) return 'done';
+    }
+  }
+
+  /** True when `err` is a resume of a session the engine no longer has: Claude's words, or the adapter's own
+   *  (`resumeNotFound`: Codex and Copilot fail with words `LOST_SESSION_RE` misses, L8.30). */
+  _lostSession(err) {
+    return LOST_SESSION_RE.test(messageOf(err)) || chatDescriptor(this._engine)?.resumeNotFound?.(err) === true;
+  }
+
+  /** The question a process received the answers to (`taken` 'answered') or was told it has no more of ('last'): its
+   *  file removed, and the agent's question rounds moved on (L2.8, L2.9). */
+  _takeQuestion(agent, taken) {
+    removeAskFile(this._questionFile(agent));
+    if (taken === 'last') {
+      agent.noMoreQuestions = true;
+      return;
+    }
+    agent.asks += 1;
+    updateAgent(agent.id, { asks: agent.asks });
+  }
+
+  /** `agent`'s ask file, or null. An invalid one is removed and ignored, so the agent is judged by its output. */
+  _readAsk(agent) {
+    const file = this._questionFile(agent);
+    const ask = readAskFile(file);
+    if (!ask || ask.invalid === undefined) return ask;
+    console.error(`[design] build ${this.id}: question file of ${agent.id} ignored: ${ask.invalid}`);
+    removeAskFile(file);
+    return null;
+  }
+
+  /**
+   * Asks the person `questions` for `agent`, then parks it until `answer` wakes it. No slot is released here: the
+   * global slot went at the process's exit, and a builder keeps its build slot through the wait (L2.28). The agent
+   * turns `waiting` and one `design-question` goes out under a fresh `askId`; nothing is sent once the build is
+   * halted or the agent stopped. Resolves the answers, or null on a halt or a stop, which leaves the agent `waiting`
+   * for the settle to judge (a `paused` settle keeps it so, L2.29).
+   * @returns {Promise<{ id: string, value: string }[]|null>}
+   */
+  async _waitAnswer(agent, questions) {
+    if (this._waitClosed(agent)) return null;
+    // Parked before the frame, so a listener that answers inside it finds the waiter.
+    const wait = this._park(agent);
+    agent.ask = { askId: newAskId(), questions };
+    this._setAgentStatus(agent, 'waiting');
+    this._frames.send('design-question', this._questionFields(agent));
+    try {
+      return await wait;
+    } finally {
+      agent.ask = null;
+    }
+  }
+
+  /** C-5 `design-question` fields of the question `agent` waits on; a copy, so no frame shares the live question. */
+  _questionFields(agent) {
+    return {
+      agentId: agent.id,
+      askId: agent.ask.askId,
+      job: agent.job,
+      heading: `${agent.job} needs a decision`,
+      questions: structuredClone(agent.ask.questions),
+    };
+  }
+
+  /** The global (machine) slot, then the stagger, both under the halt signal and, for an `agent`, its stop signal,
+   *  then worca's spend limits (`_spendOpen`), the one gate before every spawn. False when halted or stopped, or when
+   *  a limit is reached, which pauses the round with `total-limit`; the slot is then not held. On true the slot is
+   *  held until `_spawnOnce` releases it. A builder's first build calls this before its row exists, so a refused
+   *  spawn leaves no row. */
+  async _globalSlot(agent = null) {
+    const signal = this._waitSignal(agent);
+    if (signal.aborted) return false;
+    try {
+      await this._deps.acquireGlobal({ signal });
+    } catch (err) {
+      if (signal.aborted) return false;
+      throw err;
+    }
+    if (signal.aborted) { this._releaseGlobal(); return false; }
+    const t = performance.now();
+    const wait = this._nextSpawnAt - t;
+    this._nextSpawnAt = Math.max(t, this._nextSpawnAt) + this._deps.staggerMs;
+    if (wait > 0 && !(await this._sleep(wait, signal))) { this._releaseGlobal(); return false; }
+    let open;
+    try {
+      open = await this._spendOpen();
+    } catch (err) {
+      this._releaseGlobal();
+      throw err;
+    }
+    if (signal.aborted) { this._releaseGlobal(); return false; }
+    if (!open) {
+      this._releaseGlobal();
+      this._halt('paused', 'total-limit');
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * worca's spend limits before a spawn, as `_checkCostLimits` gates every step of a run (M13, L2.27, L2.33): the
+   * local total limit (`budgetStatus`), a team-bound total cap (`checkTeamTotalGate`, which passes a `warn` cap and an
+   * acknowledged window, as at a run's entry; asked with the discovery `readDesignCaps` uses, never its default
+   * `'if-missing'`), then the per-run cap against the round's spend. False once any is reached.
+   */
+  async _spendOpen() {
+    if (this._deps.budgetStatus().blocked) return false;
+    const projectDir = this._projectDir;
+    const gate = await this._deps.teamTotalGate({ projectDir }, { discover: projectDir ? teamRunDiscover(null, projectDir) : false });
+    if (gate?.blocked) return false;
+    return !this._capReached();
+  }
+
+  /** True once the round's spend, live estimates included, has reached worca's per-run cap. */
+  _capReached() {
+    return this._cap != null && this._spent() >= this._cap;
+  }
+
+  /** The round's spend: every booking (bridged ones included) plus each running process's live estimate. */
+  _spent() {
+    let live = 0;
+    for (const a of this._running) {
+      const est = a.meter.snapshot().estimatedUsd;
+      if (Number.isFinite(est)) live += est;
+    }
+    return this._costUsd + live;
+  }
+
+  /** What ends a wait of `agent`: the build's halt, or the person stopping that agent. */
+  _waitSignal(agent) {
+    const halt = this._haltCtl.signal;
+    return agent?.stopCtl ? AbortSignal.any([halt, agent.stopCtl.signal]) : halt;
+  }
+
+  _releaseGlobal() {
+    try { this._deps.releaseGlobal(); } catch (err) { console.error(`[design] global slot release failed: ${messageOf(err)}`); }
+  }
+
+  /** Resolves true after `ms`, false at once or as soon as `signal` (default: the build's halt) aborts. */
+  _sleep(ms, signal = this._haltCtl.signal) {
+    if (signal.aborted) return Promise.resolve(false);
+    if (!(ms > 0)) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const onAbort = () => { clearTimeout(timer); resolve(false); };
+      const timer = setTimeout(() => { signal.removeEventListener('abort', onAbort); resolve(true); }, ms);
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+  }
+
+  /**
+   * One process of `agent`. At every exit: the stream lands the disk, a process killed before its `result` books its
+   * priced usage, a bridged upstream's figure is booked (`_bookUpstream`), and the global slot is released. A throw
+   * while building the options is `err` too. Every main-thread `usage` runs `_afterCost`, so a live estimate past the
+   * per-run cap halts the round before any `result` (a hung process sends none). `--max-budget-usd` is the per-run
+   * cap's remainder plus the session's own total (L2.2), only under a per-run cap and only for a list-priced model.
+   * A halt or a stop that landed after the slot's last check, while the caller resumed, starts no process (M7): this
+   * runs in the same tick as `_running.add`, and from there `_abortAll` reaches the process's own controller.
+   * `onReceive` runs once, when the process shows it received `prompt`: its main thread's first `session` or
+   * `message_start`, before the abort (the question it answers, M1). Calling `runClaude` is no receipt: the CLI can
+   * be killed while it starts, and the broker path awaits the network first. A throw from `onReceive` stops the
+   * process and is thrown here once the exit is booked: a store that cannot take the question ends the round.
+   * A builder off the hook row gets its read bundle staged right before the process (so `crew.json` is current) and
+   * removed at its exit, a failed removal only logged (L8.7); a staging that throws is `err`.
+   * @returns {Promise<{ aborted: boolean, subtype: string|null, err: unknown, session: boolean, restarted: boolean }>}
+   *   `aborted`: the signal fired before any result; an abort after the result keeps the result's outcome (L2.31).
+   *   `session`: this process reported a main-thread session, so a retry can resume it. `restarted`: this process
+   *   resumed a session and its adapter said that session is gone and started a fresh one (`FRESH_START_RE`, L8.30).
+   */
+  async _spawnOnce(agent, prompt, stage, onReceive = null) {
+    const bookedBefore = agent.meter.snapshot().costUsd ?? 0;
+    const controller = new AbortController();
+    agent.controller = controller;
+    this._running.add(agent);
+    this._liveChanged();
+    let session = false;
+    let received = false;
+    let receiveErr = null;
+    const resumed = Boolean(agent.sessionId);
+    let restarted = false;
+    const onFresh = () => { if (resumed) restarted = true; };
+    const bundle = agent.role === 'builder' && this._offHook();
+    let staged = false;
+    const receive = () => {
+      if (received || controller.signal.aborted) return;
+      received = true;
+      try {
+        onReceive?.();
+      } catch (e) {
+        receiveErr = e;
+        controller.abort();
+      }
+    };
+    const stream = createAgentStream({
+      agentId: agent.id,
+      role: agent.role,
+      sectionId: agent.sectionId,
+      cwd: agent.cwd,
+      workDir: this._workDir,
+      realWorkDir: this._realWorkDir,
+      live: this._engineRow.live,
+      drafts: this._drafts,
+      meter: agent.meter,
+      readDisk: (rel) => this._readWork(rel),
+      on: {
+        status: (s) => this._setAgentStatus(agent, s),
+        tool: (t) => { agent.tool = t; this._emitAgent(agent); },
+        file: (path, text, rev) => this._fileFrame(path, text, rev),
+        usage: () => this._afterCost(agent),
+        book: (usd) => this._book(agent, usd),
+        session: (id) => { session = true; this._setSession(agent, id); },
+      },
+    });
+    let err = null;
+    try {
+      if (this._waitSignal(agent).aborted) controller.abort();
+      else {
+        if (bundle) {
+          staged = true;
+          stageReadBundle({ designId: this.designId, sectionId: agent.sectionId });
+        }
+        await this._deps.runClaude(this._processOptions(agent, prompt, stage, controller.signal, stream, receive, onFresh));
+      }
+    } catch (e) {
+      err = e;
+    } finally {
+      try {
+        stream.finish();
+        if (!stream.sawResult()) this._book(agent, agent.meter.settleCut());
+        this._bookUpstream(agent, (agent.meter.snapshot().costUsd ?? 0) - bookedBefore);
+      } finally {
+        // A booking that throws, or a bundle a Windows handle keeps, still frees the slot and the running count.
+        if (staged) {
+          try {
+            removeReadBundle({ designId: this.designId, sectionId: agent.sectionId });
+          } catch (e) {
+            console.error(`[design] build ${this.id}: read bundle of ${agent.sectionId} not removed: ${messageOf(e)}`);
+          }
+        }
+        agent.controller = null;
+        this._running.delete(agent);
+        this._releaseGlobal();
+        this._liveChanged();
+      }
+    }
+    const m = this._costOf(agent);
+    updateAgent(agent.id, { costUsd: m.costUsd, costKnown: m.costKnown, tokens: this._rowTokens(agent, m) });
+    // A watch row's re-read at the exit (L8.23): every file the process left lands before its section is judged. Its
+    // controller is gone by now, so a stop during this rescan does not cut it short.
+    await this._watcher?.rescan();
+    if (receiveErr) throw receiveErr;
+    const line = stream.summary();
+    if (line) agent.summary = line;
+    const subtype = stream.resultSubtype();
+    if (controller.signal.aborted && !stream.sawResult()) return { aborted: true, subtype, err: null, session, restarted };
+    // The abort landed after the result (a halt that result's own booking raised, a stop a moment too late): the
+    // outcome is the result's, whatever its subtype, so a builder that finished is judged by its output (L2.31).
+    if (controller.signal.aborted && err?.name === 'AbortError') err = null;
+    return { aborted: false, subtype, err, session, restarted };
+  }
+
+  /** The runClaude options of one process of `agent` (C-3), its `--max-budget-usd` read now (L2.2, M13), on the
+   *  round's engine and row with the model's bridge info. `receive` hears every main-thread `session` and
+   *  `message_start` (`usage` phase `start`), before the stream does; `onFresh` the adapter's `FRESH_START_RE` line
+   *  (the stream has no `stderr` case). */
+  _processOptions(agent, prompt, stage, signal, stream, receive = null, onFresh = null) {
+    const maxBudgetUsd = processBudgetUsd({
+      remainingUsd: this._cap == null ? null : this._cap - this._spent(),
+      sessionTotalUsd: agent.meter.sessionTotalUsd(),
+      listPriced: this._deps.isListPriced(agent.model),
+    });
+    const opts = designSpawnOptions({
+      role: agent.role,
+      stage,
+      engine: this._engine,
+      row: this._engineRow,
+      bridgedInfo: bridgedModelInfo(agent.model),
+      kind: this._design.kind,
+      pictures: agent.role === 'lead' && Boolean(this._desk),
+      sound: agent.role === 'lead' && this._soundOn,
+      agentId: agent.id,
+      buildId: this.id,
+      designId: this.designId,
+      sectionId: agent.sectionId,
+      projectDir: this._projectDir,
+      prompt,
+      model: agent.model,
+      effort: agent.effort,
+      resumeSessionId: agent.sessionId,
+      maxBudgetUsd,
+      denyRules: this._denyRules,
+      signal,
+      onEvent: (evt) => {
+        if (receive && evt?.parentId == null && (evt?.type === 'session' || (evt?.type === 'usage' && evt.phase === 'start'))) receive();
+        if (onFresh && evt?.type === 'stderr' && typeof evt.text === 'string' && FRESH_START_RE.test(evt.text)) onFresh();
+        if (evt?.type === 'session' && evt.init === true && evt.parentId == null && typeof evt.model === 'string' && evt.model) {
+          agent.sessionModel = evt.model;
+        }
+        stream.onEvent(evt);
+        // A watch row re-reads the disk at every main-thread tool result: the file that tool wrote lands now.
+        if (evt?.type === 'toolResult' && evt.parentId == null) void this._watcher?.rescan();
+      },
+      mock: this._deps.mock,
+    });
+    return opts;
+  }
+
+  /** Books what the meter booked for one result or one cut, or (`upstream`) what a bridge's upstream reported beyond
+   *  it, which the meter never saw and so goes to `agent.extraUsd`. Above $0: one ledger row, the agent row's cost and
+   *  the build row's total, together, so no row lags the ledger and a rehydrate after a host kill seeds the right
+   *  figure. Then `_afterCost`. */
+  _book(agent, usd, { upstream = false } = {}) {
+    if (usd > 0) {
+      if (upstream) agent.extraUsd += usd;
+      this._costUsd += usd;
+      recordDesignCostDelta({
+        designId: this.designId, buildId: this.id, agentId: agent.id, amountUsd: usd,
+        model: agent.model ?? agent.sessionModel ?? null, tsMs: this._deps.now(),
+      });
+      const m = this._costOf(agent);
+      updateAgent(agent.id, { costUsd: m.costUsd, costKnown: m.costKnown, tokens: this._rowTokens(agent, m) });
+      updateBuild(this.id, { costUsd: this._costUsd });
+    }
+    this._afterCost(agent);
+  }
+
+  /** Books one made picture, once, from the desk's handler (browser open or not): above $0 one ledger row with no
+   *  agent (a picture counts in its round's cost and the design's total, D9, D14) and the build row's total. Then, as
+   *  `_afterCost`, the build's fresh figures and the per-run cap. */
+  _bookPicture({ costUsd, model } = {}) {
+    if (typeof costUsd === 'number' && costUsd > 0) {
+      this._costUsd += costUsd;
+      recordDesignCostDelta({
+        designId: this.designId, buildId: this.id, agentId: null, amountUsd: costUsd, model: model ?? null, tsMs: this._deps.now(),
+      });
+      updateBuild(this.id, { costUsd: this._costUsd });
+    }
+    this._emitBuild();
+    if (this._capReached()) this._halt('paused', 'total-limit');
+  }
+
+  /** Books one ElevenLabs answer when its bytes arrive (SPEC D16) as a made picture is booked (`_bookPicture`): above
+   *  $0 one ledger row with no agent and model `elevenlabs/<model>`, and the build row's total; then the build's
+   *  figures, and the per-run cap reached pauses the round with `total-limit`. */
+  _bookSound(usd, model) {
+    this._bookPicture({ costUsd: usd, model });
+  }
+
+  /**
+   * A bridged model's process exit: the CLI prices an id it does not know at $0, so the bridge's figure for this
+   * agent's tag (`modelEnv` tags its calls with the agent id) is booked where it exceeds what this process booked
+   * (`bookedHere`), and the tag is forgotten at every exit, so the next process of the session starts from zero
+   * (run-harness.mjs books the upstream figure the same way). The tag goes before the booking, so a booking that
+   * throws never books it twice.
+   */
+  _bookUpstream(agent, bookedHere) {
+    const up = bridgeCostFor(agent.id);
+    forgetBridgeTag(agent.id);
+    if (!up) return;
+    const extra = Number(up.costUsd) - (Number.isFinite(bookedHere) ? bookedHere : 0);
+    if (extra > 0) this._book(agent, extra, { upstream: true });
+  }
+
+  /** After a booking or a live usage: the agent's and the build's fresh figures, then the per-run cap: the round's
+   *  spend at or past it pauses the round with `total-limit` (M13). */
+  _afterCost(agent) {
+    this._emitAgent(agent);
+    this._emitBuild();
+    if (this._capReached()) this._halt('paused', 'total-limit');
+  }
+
+  /** `agent`'s meter snapshot, with what was booked beside the meter (`extraUsd`) added to `costUsd`. A rehydrated
+   *  agent keeps its row's figures where the meter has no seed: a booked $0 (`seedUsd`; the meter counts a seed as
+   *  booked only above 0) and an unknown cost (`knownBefore`). */
+  _costOf(agent) {
+    const m = agent.meter.snapshot();
+    let costUsd = m.costUsd ?? agent.seedUsd ?? null;
+    if (agent.extraUsd > 0) costUsd = (costUsd ?? 0) + agent.extraUsd;
+    const costKnown = m.costKnown && agent.knownBefore !== false;
+    return costUsd === m.costUsd && costKnown === m.costKnown ? m : { ...m, costUsd, costKnown };
+  }
+
+  /** The agent row's `tokens`: the meter's counts, and the running total of the session the next `--resume`
+   *  continues (`sessionUsd`, which a rehydrate seeds the meter with, M3). Written with every cost, so a row never
+   *  pairs a new cost with an old total. */
+  _rowTokens(agent, m = this._costOf(agent)) {
+    return { ...m.tokens, sessionUsd: agent.meter.sessionTotalUsd() };
+  }
+
+  _setSession(agent, id) {
+    const next = id || null;
+    if (next === agent.sessionId) return;
+    agent.sessionId = next;
+    updateAgent(agent.id, { sessionId: next });
+  }
+
+  _newAgent({ role, sectionId, job, model, effort, cwd }) {
+    const row = createAgent({ buildId: this.id, role, sectionId, job, engine: this._engine, model, effort });
+    const agent = {
+      id: row.id, role, sectionId, job, model, effort, cwd, status: row.status,
+      sessionId: null, sessionModel: null, tool: null, error: null, asks: 0, ask: null, noMoreQuestions: false,
+      firstPrompt: null, summary: '', extraUsd: 0,
+      /** A rehydrated agent's row figures the meter takes no seed for (`_costOf`). */
+      seedUsd: null, knownBefore: true,
+      stopKind: null, stopCtl: new AbortController(), waiter: null, lostOnce: false, retried: false, controller: null,
+      meter: createAgentMeter({ model, engine: this._engine }),
+    };
+    this._agents.push(agent);
+    this._emitAgent(agent);
+    return agent;
+  }
+
+  /** An agent's row back in play for another pass of its session (L2.1): `starting` (or `waiting`, for an agent that
+   *  re-enters on its question file), as `job`, no error, open. */
+  _reopenAgent(agent, job, status = 'starting') {
+    const prev = agent.status;
+    agent.job = job;
+    agent.status = status;
+    agent.error = null;
+    agent.tool = null;
+    updateAgent(agent.id, { job, status, error: null, endedAt: null });
+    this._emitAgent(agent);
+    this._waitingChanged(prev, status);
+  }
+
+  _setAgentStatus(agent, status) {
+    if (!status || agent.status === status) return;
+    const prev = agent.status;
+    agent.status = status;
+    updateAgent(agent.id, { status });
+    this._emitAgent(agent);
+    this._waitingChanged(prev, status);
+  }
+
+  /** A terminal status for `agent`, with its cost and `error`, written and sent. */
+  _endAgent(agent, status) {
+    const prev = agent.status;
+    agent.status = status;
+    agent.tool = null;
+    const m = this._costOf(agent);
+    updateAgent(agent.id, {
+      status, error: agent.error, costUsd: m.costUsd, costKnown: m.costKnown, tokens: this._rowTokens(agent, m),
+      endedAt: iso(this._deps.now()),
+    });
+    this._emitAgent(agent);
+    this._waitingChanged(prev, status);
+  }
+
+  /** Entering or leaving `waiting` moves `design-build.waiting`: the agent's frame and that one go out at once, past
+   *  the 2 Hz hold, so the count is current and the agent's status reaches the client before its question. */
+  _waitingChanged(prev, next) {
+    if ((prev === 'waiting') === (next === 'waiting')) return;
+    this._emitBuild();
+    this._frames.flush();
+  }
+
+  _agentFields(agent) {
+    const m = this._costOf(agent);
+    return {
+      agentId: agent.id,
+      role: agent.role,
+      job: agent.job,
+      sectionId: agent.sectionId,
+      status: agent.status,
+      engine: this._engine,
+      model: agent.model ?? agent.sessionModel ?? null,
+      tool: agent.tool ? { ...agent.tool } : null,
+      tokens: m.tokens,
+      costUsd: m.costUsd,
+      estimatedUsd: m.estimatedUsd,
+      costKnown: m.costKnown,
+      error: agent.error,
+    };
+  }
+
+  _emitAgent(agent) { this._frames.agent(agent.id, this._agentFields(agent)); }
+
+  _stats() {
+    let estimatedUsd = 0;
+    let costKnown = true;
+    for (const a of this._agents) {
+      const m = this._costOf(a);
+      if (Number.isFinite(m.estimatedUsd)) estimatedUsd += m.estimatedUsd;
+      if (!m.costKnown) costKnown = false;
+    }
+    const started = Date.parse(this._row.startedAt);
+    const now = this._endedMs ?? this._deps.now();
+    return {
+      agentsNow: this._running.size,
+      agentsTotal: this._agents.length,
+      sectionsDone: this._sections.filter((s) => s.status === 'done').length,
+      sectionsPlanned: this._sections.length,
+      failed: this._sections.filter((s) => s.status === 'failed').length,
+      layers: this._layerCount(),
+      costUsd: this._costUsd,
+      estimatedUsd,
+      costKnown,
+      elapsedMs: Number.isFinite(started) ? Math.max(0, now - started) : 0,
+    };
+  }
+
+  _layerCount() {
+    let n = 0;
+    for (const v of this._layers.values()) n += v;
+    return n;
+  }
+
+  /** The `design-build` fields without the common ones; `snapshot().build` is the same set. */
+  _buildFields() {
+    return { status: this._status, round: this.round, kind: this.kind, reason: this._reason, waiting: this.waitingCount, stats: this._stats() };
+  }
+
+  _emitBuild() { this._frames.build(this._buildFields()); }
+
+  /** A new stage of the round, in memory and on the row. What the throttle still holds goes out first, so a stage
+   *  is never folded into the next one: every status reaches the client. */
+  _setStatus(status) {
+    if (this._status === status) return;
+    this._status = status;
+    updateBuild(this.id, { status });
+    this._frames.flush();
+    this._emitBuild();
+  }
+
+  /** A landed file as `design-file`; a path no stage draws, or one the store did not land, sends nothing. */
+  _fileFrame(path, text, rev) {
+    const c = classifyDraftPath(path);
+    if (!c || rev == null) return;
+    const t = typeof text === 'string' ? text : '';
+    if (c.sectionId && c.part === 'html') this._layers.set(path, countLayers(t));
+    this._frames.file({ path, sectionId: c.sectionId, part: c.part, rev, text: t });
+  }
+
+  /** A work/ file's text, or null: read through `readConfined`, so a link out of work/ or a FIFO an engine with a shell
+   *  planted reads null instead of leaking a server-readable file or blocking the server (P8). */
+  _readWork(rel) {
+    return readConfined(this._workDir, rel);
+  }
+
+  /** A listener that throws never breaks the build. */
+  _send(frame) {
+    try { this.emit('frame', frame); } catch (err) {
+      console.error(`[design] ${frame.type} listener of ${this.id} failed: ${messageOf(err)}`);
+    }
+  }
+
+  _liveChanged() {
+    const n = this._running.size;
+    if (n === this._lastLive) return;
+    this._lastLive = n;
+    try { this._deps.onLiveChange(); } catch (err) { console.error(`[design] onLiveChange failed: ${messageOf(err)}`); }
+  }
+
+  /** Records the first end state and aborts every queue wait, every running process and every parked waiter. No
+   *  effect once settled. */
+  _halt(status, reason) {
+    if (this._settled) return;
+    if (!this._end) this._end = { status, reason };
+    this._abortAll();
+  }
+
+  /** Every halt (Stop, pause, drain, limit) and a thrown drive: the picture desk closes too, never awaited here, since
+   *  a halt can come from inside a desk handler; the drive's settle awaits it. */
+  _abortAll() {
+    this._haltCtl.abort();
+    for (const a of this._running) a.controller?.abort();
+    for (const a of this._agents) this._wake(a, null);
+    this._closeDesk();
+  }
+
+  /**
+   * Parks `agent` until `_wake(agent, value)` and resolves that value: what a question waits on, so the answer wakes
+   * it and the build never holds a process meanwhile. A halt, a stop or `stopAgent` wakes it with `null`; a park once
+   * the build is halted or the agent stopped resolves `null` at once, since nothing would wake it: a stop that lands
+   * before the loop parks (after a result, L2.31) would otherwise hang the build. One waiter per agent: only its own
+   * loop parks.
+   * @returns {Promise<unknown>}
+   */
+  _park(agent) {
+    if (this._waitClosed(agent)) return Promise.resolve(null);
+    return new Promise((resolve) => { agent.waiter = resolve; });
+  }
+
+  /** True once nothing would wake a park of `agent`: the build halted, or the agent stopped. */
+  _waitClosed(agent) {
+    return this._haltCtl.signal.aborted || Boolean(agent.stopKind) || Boolean(agent.stopCtl?.signal.aborted);
+  }
+
+  /** Resolves `agent`'s parked waiter with `value`. False when nothing was parked: a waiter wakes once. */
+  _wake(agent, value) {
+    const resolve = agent.waiter;
+    if (!resolve) return false;
+    agent.waiter = null;
+    resolve(value);
+    return true;
+  }
+
+  /** Settles on the end state the first halt recorded. */
+  _settleHalt() { return this._settle(this._end.status, this._end.reason); }
+
+  /**
+   * Writes the round's end state, then sends the terminal `design-build` frame last. `endedAt` is always in the
+   * patch, `paused` included (an open status, which the store leaves alone). An agent still open ends `stopped`, and
+   * so does a section still `writing`; a queued section stays `planned`. Under a `paused` settle a waiting agent
+   * stays `waiting`, its section `writing` and its ask file kept (M12, L2.29): a Continue asks again. A watch row's
+   * watcher closes first: on Windows each watch holds a folder handle, and restore and delete refuse an open build.
+   * The picture desk closes first too, only as a fallback: every way the drive settles closed it and waited already.
+   */
+  _settle(status, reason) {
+    this._closeDesk();
+    this._closeWatcher();
+    const endedMs = this._deps.now();
+    const kept = new Set();
+    for (const a of this._agents) {
+      if (TERMINAL_AGENT.has(a.status)) continue;
+      if (status === 'paused' && a.status === 'waiting') {
+        if (a.sectionId) kept.add(a.sectionId);
+        continue;
+      }
+      this._endAgent(a, 'stopped');
+    }
+    const cut = this._sections.filter((s) => s.status === 'writing' && !kept.has(s.id));
+    for (const s of cut) { s.status = 'stopped'; this._sectionFrame(s); }
+    if (cut.length) this._writeCrew();
+    this._drafts.flush();
+    updateBuild(this.id, {
+      status, reason, sections: this._sections, costUsd: this._costUsd, layers: this._layerCount(), endedAt: iso(endedMs),
+    });
+    this._status = status;
+    this._reason = reason;
+    this._endedMs = endedMs;
+    this._settled = true;
+    this._frames.flush();
+    this._emitBuild();
+  }
+}

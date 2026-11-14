@@ -197,9 +197,9 @@
   .pz-side{flex-basis:60px;}
   .pz-brand{padding:0;justify-content:center;}
   .pz-word{font-size:0;} .pz-word::before{content:"W";font-size:var(--fs-section);}
-  .pz-nav{padding:11px 8px;}
-  .pz-nav-i{justify-content:center;padding:0;}
-  .pz-nav-l,.pz-side .pz-acct-name,.pz-side .pz-updown{display:none;}
+  .pz-side .pz-nav{padding:11px 8px;}   /* only pulse.html's rail is icons alone: the app's drawer (#side-rail) names each place */
+  .pz-side .pz-nav-i{justify-content:center;padding:0;}
+  .pz-side .pz-nav-l,.pz-side .pz-acct-name,.pz-side .pz-updown{display:none;}
   .pz-foot{padding:8px 4px 10px;}
   .pz-side .pz-acct{justify-content:center;padding:0;}
   .pz-top{padding:0 8px 0 16px;}

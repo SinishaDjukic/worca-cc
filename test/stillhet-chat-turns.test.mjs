@@ -3,7 +3,7 @@
 // meets TURN_SHAPES, an unknown type is a notice naming it, and a run's TaskCard counts stages, never agents.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { turnsOf, turnOfBlock, cardTurn, taskOfRunCard, CARD_TURN, partsOf } from '../ui/public/stillhet/live/chat-turns.mjs';
+import { turnsOf, turnOfBlock, cardTurn, taskOfRunCard, CARD_TURN, partsOf, oneStageRun } from '../ui/public/stillhet/live/chat-turns.mjs';
 import { turnErrors } from '../ui/public/stillhet/live/model-shape.mjs';
 import { ASK_CARD_TYPES } from '../src/shared/ask-card-types.mjs';
 import { snapshotFromState } from '../src/shared/ask-run-snapshot.mjs';
@@ -164,4 +164,56 @@ test('a project switch: dev writes its divider as a system message; it is the pr
   const l = turnsOf({ messages: [{ id: 's1', role: 'system', text: 'Switched to web', blocks: [{ kind: 'divider', text: 'Switched to web', scope: { projectKey: 'web' } }] }] }, ctx);
   assert.deepEqual(l, [{ t: 'divider', text: 'Switched to web' }]);
   assert.deepEqual(turnsOf({ messages: [{ id: 's2', role: 'system', text: 'x', blocks: [{ kind: 'notice', text: 'quiet', quiet: true }] }] }, ctx), [], 'nothing else of a system message is drawn');
+});
+
+test('panel.turn-time: a user turn and every words turn of an answer carry the message\'s createdAt as `at`; words are keyed messageId:k', () => {
+  const created = new Date(2026, 10, 12, 13, 0).toISOString(), reply = new Date(2026, 10, 12, 13, 1).toISOString();
+  const l = turnsOf({ messages: [
+    { id: 'u1', role: 'user', text: 'Hi', status: 'done', createdAt: created, blocks: [] },
+    { id: 'm2', role: 'assistant', status: 'done', text: 'First part. Second part.', createdAt: reply, blocks: [{ kind: 'card', id: 'c1', state: 'applied', textAt: 11, card: { type: 'route', title: 'R' } }] },
+  ] }, ctx);
+  const you = l.find((x) => x.t === 'you'), words = l.filter((x) => x.t === 'words');
+  assert.equal(you.at, Date.parse(created));
+  assert.equal(words.length, 2);
+  assert.deepEqual(words.map((x) => [x.at, x.key]), [[Date.parse(reply), 'm2:0'], [Date.parse(reply), 'm2:1']]);
+  for (const x of l) assert.deepEqual(turnErrors(x), [], x.t);
+});
+
+test('panel.turn-time: a local echo with createdAt null has no `at` (never a made-up time)', () => {
+  const [you] = turnsOf({ messages: [{ id: '', role: 'user', text: 'Sending', status: 'done', createdAt: null, blocks: [] }] }, ctx);
+  assert.equal(you.t, 'you'); assert.ok(!('at' in you));
+  assert.deepEqual(turnErrors(you), []);
+});
+
+test('the live workflow and workflow-build cards save: their primary reads Save workflow, never Apply', () => {
+  for (const type of ['workflow', 'workflow-build']) {
+    const t = cardTurn(block({ type, name: 'Quick fix', thenRun: false }), ctx);
+    assert.equal(t.t, 'change', type);
+    assert.equal(t.apply, 'Save workflow', type);
+  }
+});
+
+test('oneStageRun: only a proposed, thenRun workflow card with exactly one stage runs with it', () => {
+  const wf = (over = {}, state = 'proposed') => block({ type: 'workflow', thenRun: true, name: 'Quick fix', shape: { stages: [{ key: 'fix' }] }, ...over }, state);
+  const agents = (n) => ({ shape: undefined, manifest: { steps: [{ kind: 'agents', nodes: Array.from({ length: n }, (_, k) => ({ key: `a${k}`, label: `A${k}` })) }, { kind: 'gate', nodes: [{ key: 'g' }] }] } });
+  assert.equal(oneStageRun(wf()), true, 'shape.stages of 1');
+  assert.equal(oneStageRun(wf({ shape: { stages: [{ key: 'a' }, { key: 'b' }] } })), false, 'shape.stages of 2');
+  assert.equal(oneStageRun(wf(agents(1))), true, 'no shape, one keyed agent node');
+  assert.equal(oneStageRun(wf(agents(2))), false, 'no shape, two keyed agent nodes');
+  assert.equal(oneStageRun(wf({ thenRun: false })), false, 'thenRun false');
+  assert.equal(oneStageRun(wf({}, 'saved')), false, 'already saved');
+  assert.equal(oneStageRun({ kind: 'card', id: 'x', state: 'proposed' }), false, 'a missing card');
+  assert.equal(oneStageRun(null), false);
+  assert.equal(oneStageRun(block({ type: 'workflow-build', thenRun: true, shape: { stages: [{ key: 'fix' }] } })), false, 'only a workflow card');
+});
+
+test('a one-stage thenRun workflow card is one run-with turn; it falls back to A workflow; saved, it reads as a saved change', () => {
+  const card = { type: 'workflow', thenRun: true, name: 'Quick fix', note: 'Fixes it', shape: { stages: [{ key: 'fix' }] }, manifest: { steps: [{ kind: 'agents', nodes: [{ key: 'fix', label: 'Fix' }] }] } };
+  const t = cardTurn(block(card, 'proposed', 'cw'), ctx);
+  assert.deepEqual(t, { t: 'runwith', id: 'cw', card: 'cw', cardType: 'workflow', title: 'Quick fix', workflow: 'Quick fix', why: 'Fixes it', rows: [{ name: 'Steps', before: '', after: 'Fix' }], state: 'proposed' });
+  assert.deepEqual(turnErrors(t), []);
+  const unnamed = cardTurn(block({ ...card, name: '' }, 'proposed', 'cw'), ctx);
+  assert.equal(unnamed.title, 'A workflow'); assert.equal(unnamed.workflow, 'A workflow');
+  const saved = cardTurn(block(card, 'saved', 'cw'), ctx);
+  assert.equal(saved.t, 'change'); assert.equal(saved.state, 'applied'); assert.equal(saved.apply, 'Save workflow');
 });

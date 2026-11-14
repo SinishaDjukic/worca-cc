@@ -47,7 +47,8 @@ function storeOf(doc) {
     if (!l) return;
     e.preventDefault(); e.stopImmediatePropagation();
     if (l.dialog && l.typed) return;
-    if (l.esc?.()) { l.paint(); return; }   // a step before it closes: Esc ends selecting first
+    const to = l.esc?.();   // a step before it closes: Esc ends selecting first, or leaves a sub-menu for its opener
+    if (to) { l.paint(); if (to !== true) (typeof to === 'string' ? doc.querySelector(to) : to)?.focus?.({ preventScroll: true }); return; }
     const back = l.back?.();
     l.close(); l.typed = false; l.paint();
     const el = typeof back === 'string' ? doc.querySelector(back) : back;
@@ -89,7 +90,8 @@ export function neverOutside(doc, selector) { const s = storeOf(doc); s.never +=
  * @param {() => string|Element} [layer.back]  the control that opened it: the focus returns there
  * @param {number} [layer.rank]     what lies on top goes first on Esc: a menu 3, a Dialog 2, a panel 1
  * @param {boolean} [layer.dialog]  a Dialog: its scrim closes it only when nothing was typed; so does Esc
- * @param {() => boolean} [layer.esc]  a step Esc takes before it closes (true: taken)
+ * @param {() => boolean|string|Element} [layer.esc]  a step Esc takes before it closes (true: taken; a selector or an element:
+ *   taken, and the focus goes there after the repaint)
  * @returns {() => void} removes it
  */
 export function dismissOnOutside(doc, layer) {

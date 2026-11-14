@@ -119,6 +119,8 @@ export function mockEnabled(opts) {
  *   `disableSkillShellExecution`); never replaces `permissions` / `hooks`. Absent ⇒ unchanged.
  * @param {string} [o.readGuard] A8: the one file a Requirements read may open (file-read-guard.mjs); absent ⇒ argv unchanged.
  *   Claude only: any other engine throws rather than run unguarded. The result then carries `readGuardDecisions`.
+ * @param {{allowedDirs:string[]}} [o.writeGuard] Design: the folders a Design agent may write (design/write-guard.mjs, a
+ *   fail-closed PreToolUse hook on the write tools); absent ⇒ argv unchanged. Claude only: any other engine throws.
  * @param {boolean} [o.noSessionPersistence] A8: true ⇒ --no-session-persistence (Claude Code saves no session
  *   transcript of the call; Requirements file reads, asks and the brief look). Claude only; absent ⇒ argv unchanged.
  * @param {Record<string,string>} [o.spawnEnv]  run-level spawn env (wsmap D9: runOpts sets
@@ -187,6 +189,8 @@ export async function runClaude(o = {}) {
     extraSettings,
     // Requirements A8: the one file a read may open (file-read-guard.mjs). Claude only, like memoryLoadLog.
     readGuard,
+    // Design: the folders a Design agent may write ({ allowedDirs }, design/write-guard.mjs). Claude only, like readGuard.
+    writeGuard,
     // Requirements A8: no Claude Code session transcript of a file read. Claude only.
     noSessionPersistence,
     // Memory usage (memory-usage.mjs): this execution's hook file; set only when the mounted rules hold a note
@@ -218,6 +222,10 @@ export async function runClaude(o = {}) {
   if (readGuard != null && (engineName || 'claude') !== 'claude') {
     throw new Error(`runClaude: readGuard needs the claude engine, not ${JSON.stringify(engineName)}`);
   }
+  // Design: the write guard is a Claude Code hook too; another engine would write anywhere, so it never runs at all.
+  if (writeGuard != null && (engineName || 'claude') !== 'claude') {
+    throw new Error(`runClaude: writeGuard needs the claude engine, not ${JSON.stringify(engineName)}`);
+  }
 
   if (signal?.aborted) {
     const err = new Error('aborted');
@@ -233,8 +241,8 @@ export async function runClaude(o = {}) {
     // named HERE too, or the mock implementer never sees it (this call is a gate, not
     // a pass-through; test/spawn-args.test.mjs asserts the forwarding end to end).
     // systemPromptMode is not named here on purpose: the mock has no Claude Code system
-    // prompt to replace, so it is a real-spawn-only option (the call below carries it). readGuard is not named either:
-    // the mock spawns nothing, so there is no tool call to guard.
+    // prompt to replace, so it is a real-spawn-only option (the call below carries it). readGuard and writeGuard are
+    // not named either: the mock spawns nothing, so there is no tool call to guard.
     return engine.run({ cwd, systemPrompt, prompt, onEvent, signal, resumeSessionId, workspaceWriteTargets, permissionMode });
   }
 
@@ -298,6 +306,7 @@ export async function runClaude(o = {}) {
     pluginDirs,
     extraSettings: settings,
     readGuard,
+    writeGuard,
     noSessionPersistence,
     memoryLoadLog,
     argvInlineLimit,

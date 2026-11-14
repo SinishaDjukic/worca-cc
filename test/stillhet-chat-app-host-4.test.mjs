@@ -1,8 +1,8 @@
-// test/stillhet-chat-app-host-4.test.mjs — Chat in the app host, live kind, part 4 of 4 (jsdom, the app's scripts in
+// test/stillhet-chat-app-host-4.test.mjs — Chat in the app host, live kind, part 4 of 5 (jsdom, the app's scripts in
 // boot.js's order, data-adapter="live"); the host and its helpers are test/helpers/stillhet-chat-live-host.mjs.
 import { test, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { SOURCES, THREAD, cardItems, clone, go, liveHost, posts, saidText, savedRun, settle, store, toastText, withRun, closeHosts } from './helpers/stillhet-chat-live-host.mjs';
+import { SOURCES, THREAD, blurOnDisable, cardItems, clone, go, liveHost, menuPick, posts, saidText, savedRun, settle, store, toastText, withRun, closeHosts } from './helpers/stillhet-chat-live-host.mjs';
 
 afterEach(closeHosts);   // each test's window closes when the test ends
 test('Follow a task: a new chat asks Worca to follow the run by its id (dev\'s track_run); the toast and the chat wait for dev\'s ok', async () => {
@@ -142,17 +142,5 @@ test('Pulse and search open a live task at its card in its starting chat; a task
   assert.ok(d.querySelector('#route-chat [data-anchor="card_run"]'), 'the TaskCard is drawn');
   w.RailShell.openRun('run/question', 'B task', 'run-b');   // ask_2 only follows run-b: no starting chat
   await settle(40);
-  assert.equal(w.location.hash, '#run/question');
-});
-
-test('Show its stages opens the live TaskCard in place, and Hide its stages folds it', async () => {
-  const { w, d } = await liveHost();
-  await go(w, '#chat/ask_1', 80);
-  const btn = () => d.querySelector('#route-chat [data-anchor="card_run"] [data-open-task]');
-  assert.equal(btn().getAttribute('aria-expanded'), 'false');
-  btn().click(); await settle(20);
-  assert.equal(btn().getAttribute('aria-expanded'), 'true', 'Show its stages opens it');
-  assert.match(btn().textContent, /Hide its stages/);
-  btn().click(); await settle(20);
-  assert.equal(btn().getAttribute('aria-expanded'), 'false', 'Hide its stages folds it');
+  assert.equal(w.location.hash, '#run/run-b', 'its own page, by its id, never the case (#1266)');
 });
