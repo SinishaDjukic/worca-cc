@@ -16,7 +16,9 @@ One map, from the prototype's own code (the places list in `shell/shell.js`, the
 | Providers | Settings | the providers routes | `#providers`, `#settings/providers` |
 | Team policy | Settings | the team policy routes | `#team-policy`, `#team-policy/…` |
 | Workspaces | Projects (by workspace from Advanced) | the workspaces routes | `#workspaces`, `#workspaces/…`, `#workspace-create` |
-| Check how clear a task prompt is (chat pref `promptCheck`, `docs/prompt-check.md`) | Settings › Chat › Assistant › Abilities › Prompt check (the prototype row waits for the owner's answer; until then Stillhet has no row) | `src/core/settings.mjs` `chatPrefs` and `src/shared/prompt-check/assessment.mjs` | none |
+| Check how clear a task prompt is (chat pref `promptCheck`, `docs/prompt-check.md`) | Settings › Chat › Assistant › Abilities › Prompt check (wired) | `src/core/settings.mjs` `chatPrefs` and `src/shared/prompt-check/assessment.mjs` | none |
+| Prompt check chip (composer) | open: waits for the owner (Chat › composer sentence row, after the intent chip) | `ui/public/prompt-check/grader.mjs`, `POST /api/prompt-check/grade`, `POST /api/prompt-check/kind-correction` | none |
+| Prompt check Improve (composer) | open: waits for the owner, with the chip row | `ui/public/prompt-check/improve-view.mjs`, `POST /api/prompt-check/improve` | none |
 
 With Stillhet on, every old address lands through one table, `ui/public/stillhet/shell/old-addresses.js` (`docs/rail/navigation.md` `nav.old-address`), in place; with it off they stay dev's.
 
@@ -42,7 +44,7 @@ Every action the prototype answers with a "Would…" sentence is `window.RailWou
 | `ui/public/stillhet/runs/run-page-model.js` | the try-it command, instance links | wired | Try it is `RailTaskLive.flow('Try it')`: `POST /api/runs/:id/checkout`, then the first service's `POST /api/runs/:id/actions/:actionId/start` (dev's `ui/public/app.js` tryItFlow); the workspace instance links are their own rows |
 | `ui/public/stillhet/settings/settings-model.js` | open a Settings link in a new tab, send a test to a model, report a bug, suggest an improvement, copy the policy for a PR, the Labs guide | wire to | the models and engines routes, the team policy routes, the Labs guide in `docs/feature-flags.md` |
 | `ui/public/stillhet/settings/settings.js` | copy a setting's value | wire to | the clipboard and the settings routes |
-| `ui/public/stillhet/pulse/pulse.js` | ask Chat from a page, send a test notification; on pulse.html only (no shell): open a search result, open Statistics, open what a Pulse row names, a place that is off, New run's start and schedule | wired | dev's routes with dev's bodies: `POST /api/resume` (Resume, Try again, Restart Build; a confirm opens the task), `POST /api/schedules/:id/run-now`, `POST /api/actions/instances/:instanceId/stop`, `POST /api/notifications/:id/read` and `/read-all`, `POST /api/settings` (`uiLevel`, `keepAwake`, `nightModeToggle`); a refusal toasts `Could not ACTION: REASON` and changes nothing |
+| `ui/public/stillhet/pulse/pulse.js` | ask Chat from a page, send a test notification; on pulse.html only (no shell): open a search result, open Statistics, open what a Pulse row names, a place that is off, New run's start and schedule | wired | dev's routes with dev's bodies: `POST /api/resume` (Resume, Try again, Restart Build; a confirm opens the task), `POST /api/schedules/:id/run-now`, `POST /api/actions/instances/:instanceId/stop`, `POST /api/notifications/:id/read` and `/read-all` (the read of run-outcome updates kept in `worca-rail.pulse-read`, this browser, shared across tabs), `POST /api/settings` (`uiLevel`, `keepAwake`, `nightModeToggle`); a refusal toasts `Could not ACTION: REASON` and changes nothing |
 | `ui/public/stillhet/workflows/workflows.js` | import a workflow, export a workflow, run the saved cases | wired | slice 7: `live/workflow-live.mjs` (its `WORKFLOW_ACTIONS` table) on dev's workflow, agent, script and pin routes; the graph from dev's template (`graph-entry.mjs` `fromTpl`) |
 | `ui/public/stillhet/requirements/requirements.js` | copy a requirement as Markdown, save specs | wire to | the requirements routes |
 | `ui/public/stillhet/marketplace/marketplace.js` | open a plugin's source, open a market on GitHub | wired | slice 8: `live/market-live.mjs` (its `MARKET_ACTIONS` table) on dev's plugin and marketplace routes (`ui/routes/marketplace/plugins.mjs`): install, update (preview, then apply), update all, remove, set it up (`GET`/`PUT /api/plugins/:name/config`), sync, add and remove a source; the records from `live/market-map.mjs` |
@@ -280,11 +282,13 @@ One row per surface of today's UI that Stillhet must carry (gate.prototype in `d
 
 | Surface | Status | Where in Stillhet, or why not yet |
 |---|---|---|
-| `route › /api/prompt-check/grade` | wire to | The prompt check's grade; Stillhet's composer chip that calls it is Shaper Tracks slice 2 (the chip and kind picker), building now |
-| `ui/public/app.js` | wire to | Starts the prompt check's grader in today's UI; Stillhet's composer gets it with the chip in Shaper Tracks slice 2 |
-| `ui/public/chat-settings-view.mjs` | wire to | The "Check how clear a task prompt is" row in today's Settings › Chat; Stillhet's Settings row is built in Shaper Tracks slice 2 (owner approved) |
-| `ui/public/prompt-check/` | wire to | The browser grader (cheapest-first check); Stillhet's composer uses it from Shaper Tracks slice 2 |
-| `ui/public/settings/settings.html` | wire to | The setting's place in today's Settings page; Stillhet's Settings row is Shaper Tracks slice 2 |
+| `route › /api/prompt-check/grade` | wire to | The prompt check's grade; today's Chat, New run and run card chip calls it (Shaper Tracks slice 2). Stillhet's composer chip waits for the owner (the Prompt check chip row above) |
+| `route › /api/prompt-check/kind-correction` | wire to | A person's kind pick on the chip (ids only, schema v96); Stillhet records it once its composer chip is built (waits for the owner, the Prompt check chip row above) |
+| `route › /api/prompt-check/improve` | wire to | The prompt check's Improve: a grounded rewrite into the kind's template with perspective-labelled gaps; today's Chat composer calls it (Shaper Tracks slice 3). Stillhet calls it once its composer chip is built (waits for the owner, the Prompt check Improve row above) |
+| `ui/public/app.js` | wire to | Starts the prompt check's grader in today's UI; Stillhet's composer gets it with its chip, which waits for the owner (the Prompt check chip row above) |
+| `ui/public/chat-settings-view.mjs` | wired | The "Check how clear a task prompt is" row: Stillhet's Settings › Chat › Assistant › Abilities › Prompt check (`stillhet/settings/settings-model.js`, a live switch on `chat.promptCheck` through `live/live-map.mjs` `chatPrefs`) |
+| `ui/public/prompt-check/` | wire to | The browser grader and the chip's controller (`chip-host.mjs`); Stillhet's composer uses them once its chip is built (waits for the owner, the Prompt check chip row above) |
+| `ui/public/settings/settings.html` | wired | The setting's place in today's Settings page: Stillhet's Settings › Chat › Assistant › Abilities › Prompt check (`stillhet/settings/settings-model.js`) |
 | `setting › pulseFor` | wired | Settings › Notifications, the Pulse animation row (`pulse.js` reads it through the live map; #1258) |
 
 ## Opt-in

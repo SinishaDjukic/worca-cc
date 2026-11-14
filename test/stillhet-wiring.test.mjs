@@ -214,3 +214,13 @@ test('Projects and Workspaces (slice 9): every row is wired, or not offered live
   assert.equal(pj.filter((r) => /\| not offered live \|/.test(r)).length, 2, 'Branch names (slice 12) and the spend fact (slice 10)');
   for (const r of pj.filter((x) => id(x).startsWith('projects/dev-tab-'))) assert.match(r, /stopgap: lands on the project page; slice 12 gives it a home/);
 });
+
+test('the prompt check Moves rows: the chip and Improve stay open, waiting for the owner, as 4-column rows', () => {
+  for (const name of ['Prompt check chip (composer)', 'Prompt check Improve (composer)']) {
+    const row = doc.split('\n').find((l) => l.startsWith(`| ${name} |`));
+    assert.ok(row, name);
+    const cells = row.split('|').slice(1, -1).map((c) => c.trim());
+    assert.equal(cells.length, 4, name);
+    assert.match(cells[1], /^open: waits for the owner/, name);
+  }
+});

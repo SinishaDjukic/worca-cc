@@ -336,3 +336,31 @@ test('New chat hands the add-ons the empty chat at once (update(null)), before a
   ctx.doc.querySelector('.chat-head [data-ask-new-btn]').click();
   assert.equal(seen.at(-1), null, 'the add-ons see the new (empty) chat');
 });
+
+test('optional hooks: a mount-only add-on still mounts; input and sent receive the raw text; holdsSend sets answering', async () => {
+  let mounted = 0;
+  registerComposerAddon({ id: 'bare', mount() { mounted += 1; } });
+  const log = [];
+  let hold = false;
+  registerComposerAddon({ id: 'hooks', mount: () => ({ input: (text, o) => log.push(['input', text, o.answering]), sent: (text) => log.push(['sent', text]) }) });
+  registerComposerAddon({ id: 'holder', mount: () => ({ holdsSend: () => hold, transformSend: (t) => `PREFIX ${t}` }) });
+  const rec = {};
+  const ctx = await openThread(rec);
+  assert.equal(mounted, 1);
+  const input = ctx.doc.querySelector('.ask-input');
+  input.value = 'fix the  login';
+  input.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+  hold = true;
+  input.value = 'fix it';
+  input.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+  hold = false;
+  input.value = 'fix the login  ';
+  input.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
+  ctx.doc.querySelector('.ask-send').click();
+  await ctx.tick(); await ctx.tick(); await ctx.tick();
+  assert.deepEqual(log.slice(0, 3), [['input', 'fix the  login', false], ['input', 'fix it', true], ['input', 'fix the login  ', false]]);
+  assert.deepEqual(log.find(([k]) => k === 'sent'), ['sent', 'fix the login'], 'the draft before transformSend');
+  assert.equal(rec.messageBodies.at(-1).text, 'PREFIX fix the login');
+  ctx.panel.destroy();
+  ctx.window.close();
+});

@@ -53,12 +53,19 @@ two lists twice). On a narrow screen the panel is the window's width.
   Scheduled groups its rows: Missed, Today, Tomorrow, This week, Later, After a run. No selection: Vitals's rows are states and
   leave by themselves, so there is nothing to mark read or clear. Empty: "Nothing needs you. Nothing is running.";
   narrowed: "Nothing here right now."
+  Each Needs-you row ends its meta line with what clears it ("Clears when you answer it", "Clears once you open it"):
+  one table, `PulseModel.clearsWhen`, keyed by the state's id, never its word.
 - **Updates**: a divided list grouped by day (Today, Yesterday, Earlier), on the 20px rail: the unread dot, a title
   line, a meta line (group · project · detail), the time at the right. A `needs` row still open has the amber dot; once
   answered it reads Resolved.
 - **The log's rules.** Updates are kept 90 days. Info rows arrive read; only what needs you and problems count as
   unread. A problem clears when it is acted on: its step (Run now, Resume, Try again) sits on the row, and taking it
-  marks the row Resolved. On a shared sign-in, read and cleared belong to each person.
+  marks the row Resolved. On a shared sign-in, read and cleared belong to each person. Opening an update marks it and
+  every update about the same task read at once, in every tab and after a reload; it stays in its list, read, and only
+  the unread view drops it (`panel.pulse-read`). A notification's read is the server's, per person; a run outcome's
+  lives in this browser, kept for that one outcome (its event and its time), so the run's next outcome is news even
+  when this browser never saw it working. Reading the update
+  that raised the icon's news ends the news, even while its task still needs you.
 - The list's sentence picks what it shows: `Showing [unread ▾] from [all groups ▾]`. Shows: Unread, All, Needs you,
   Problems, Cleared. The Updates tab's count follows this sentence, as Vitals' does. Empty: "You are up to date."
 - Selection works exactly as in Runs and Chats: ⋯ › Select, ⌘ or Ctrl-click, Shift-click for a range, Space on a

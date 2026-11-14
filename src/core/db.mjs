@@ -64,7 +64,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 95;
+export const SCHEMA_VERSION = 96;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -1478,6 +1478,24 @@ CREATE TABLE IF NOT EXISTS req_briefs (
 );
 `;
 
+// v96 (prompt check s2, docs/prompt-check.md): a person's correction of the prompt check's kind, ids and kinds only —
+// never prompt text. No FK: a row stays after its thread or run is deleted, so deleting one never fails here.
+// Reconcile-safe: IF NOT EXISTS + INCREMENTAL_TABLES.
+const PROMPT_KIND_CORRECTIONS_DDL = `
+CREATE TABLE IF NOT EXISTS prompt_kind_corrections (
+  id            INTEGER PRIMARY KEY,
+  surface       TEXT NOT NULL,
+  thread_id     TEXT,
+  card_id       TEXT,
+  run_id        TEXT,
+  proposed_kind TEXT NOT NULL,
+  chosen_kind   TEXT NOT NULL,
+  at            TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_prompt_kind_corrections_thread ON prompt_kind_corrections (thread_id);
+CREATE INDEX IF NOT EXISTS idx_prompt_kind_corrections_run ON prompt_kind_corrections (run_id);
+`;
+
 // v76 (#948 s3): the Chats column's topic groups. A chat names its group in ask_threads.group_id (one at most); a
 // group is never empty (the store deletes it with its last chat). name_source: 'suggested' | 'user'.
 const ASK_CHAT_GROUPS_DDL = `
@@ -1685,6 +1703,7 @@ const INCREMENTAL_TABLES = {
   design_agents:      DESIGN_DDL,  // v92
   design_cost_ledger: DESIGN_DDL,  // v92
   design_pictures:    DESIGN_PICTURES_DDL,  // v94
+  prompt_kind_corrections: PROMPT_KIND_CORRECTIONS_DDL,  // v96 (prompt check s2)
 };
 
 /**
@@ -2888,6 +2907,7 @@ export function migrate(db) {
     if (current < 94) db.exec(DESIGN_PICTURES_DDL);
     // v95 Design sound: designs.sound_json (the design's sound choice, D2) — INCREMENTAL_COLUMNS, added by the hoisted
     // repairSchemaGaps (a v92+ DB) or by the v92 DDL above (an older DB). First written as v92.
+    if (current < 96) db.exec(PROMPT_KIND_CORRECTIONS_DDL);   // v96 prompt check kind corrections (ids only)
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

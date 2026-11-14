@@ -46,3 +46,28 @@ export async function checkPaths(markdown, projectDir, { fs = { realpath: fsReal
   }
   return [...byKey.values()];
 }
+
+/**
+ * Prompt check Improve (docs/prompt-check.md): is each path a file or directory inside the project? The same guard as
+ * checkPaths (shape refusal, realpath, isInside against the realpath'd root) and a stat; it never reads a file. No
+ * root (null, or a failed realpath) answers every path false.
+ * @returns {Promise<Array<{path:string, inRepo:boolean}>>}
+ */
+export async function pathsInRepo(paths, projectDir, { fs = { realpath: fsRealpath, stat: fsStat }, fold = FOLD } = {}) {
+  const root = projectDir ? await fs.realpath(projectDir).catch(() => null) : null;
+  const out = [];
+  for (const path of Array.isArray(paths) ? paths : []) {
+    let inRepo = false;
+    if (root && typeof path === 'string' && !refusePathShape(path)) {
+      try {
+        const real = await fs.realpath(resolve(root, ...path.split('/').filter(Boolean)));
+        if (isInside(root, real, { fold })) {
+          const st = await fs.stat(real);
+          inRepo = st.isFile() || st.isDirectory();
+        }
+      } catch { inRepo = false; }
+    }
+    out.push({ path, inRepo });
+  }
+  return out;
+}

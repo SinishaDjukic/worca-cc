@@ -109,6 +109,13 @@ test('a plan grade is the shape check, whatever the model says', async (t) => {
   assert.equal(r.assessment.taskKind, 'plan-partial');
 });
 
+test('open gap marks left by Use this keep the grade needs-detail, whatever the model says', async (t) => {
+  const used = ['Who: finance [Product · decide: who uses it?]', ...Array.from({ length: 8 }, (_, i) => `Line ${i}: the weekly cost export as CSV for every report`)].join('\n');
+  withRunner(t, reply({ kind: 'requirement', grade: 'clear', confidence: 0.9 }));
+  assert.equal((await gradePrompt({ text: used }, { model: MODEL })).assessment.grade, 'needs-detail');
+  assert.equal((await gradePrompt({ text: used.replace(' [Product · decide: who uses it?]', '') }, { model: MODEL })).assessment.grade, 'clear');
+});
+
 test('the deterministic plan kind replaces the model kind only under 0.5 confidence', async (t) => {
   const plan = '## Goal\nShip it\n## Steps\nDo it\n## Risks\nNone';
   withRunner(t, reply({ kind: 'idea', grade: 'clear', confidence: 0.4 }));
@@ -195,4 +202,33 @@ test('claimGrade: a second claim on one key aborts the first; other keys are unt
   assert.equal(c.signal.aborted, false, 'a released controller is not aborted by a later claim');
   releaseGrade('chat:t1', d);
   releaseGrade('chat:t2', other);
+});
+
+test('a forced kind: the prompt lists only its rubric and fixes the kind; the result carries it; the mock honours it', async (t) => {
+  const p = gradingPrompt({ text: SECRET, kind: 'bug' });
+  assert.match(p, /- bug \(Bug report\): steps, expected, actual, where, logs, frequency/);
+  assert.doesNotMatch(p, /- implementation \(/);
+  assert.doesNotMatch(p, /- deliverable \(/);
+  assert.match(p, /The kind is fixed: bug/);
+  assert.doesNotMatch(gradingPrompt({ text: SECRET }), /The kind is fixed/);
+  withRunner(t, reply({ kind: 'implementation', grade: 'clear', confidence: 0.9 }));
+  const r = await gradePrompt({ text: 'What does the review step do?', kind: 'bug' }, { model: MODEL });
+  assert.equal(r.source, 'model');
+  assert.equal(r.assessment.kind, 'bug');
+  assert.equal(r.assessment.isTask, true);
+  assert.equal(r.assessment.grade, 'clear');
+  assert.equal(mockGrade(SECRET, { kind: 'deliverable' }).kind, 'deliverable');
+  assert.equal(mockGrade(SECRET, { kind: 'nope' }).kind, mockGrade(SECRET).kind);
+  _setGradeRunnerForTest(async () => ({ text: '{}' }), () => null);
+  const det = await gradePrompt({ text: SECRET, kind: 'requirement' }, { model: null });
+  assert.equal(det.source, 'deterministic');
+  assert.equal(det.assessment.kind, 'requirement');
+});
+
+test('a forced plan kind still gets the shape-check grade', async (t) => {
+  const plan = '## Goal\nShip it\n## Steps\n1. a';
+  withRunner(t, reply({ kind: 'idea', grade: 'clear', confidence: 0.9 }));
+  const r = await gradePrompt({ text: plan, kind: 'plan' }, { model: MODEL });
+  assert.equal(r.assessment.kind, 'plan');
+  assert.equal(r.assessment.grade, checkShape(plan).ok ? 'clear' : 'needs-detail');
 });

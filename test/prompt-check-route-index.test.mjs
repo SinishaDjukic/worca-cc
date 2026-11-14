@@ -16,3 +16,18 @@ test('ROUTE_SEGMENTS[0] lists the grade-route module exactly once; segments 1–
   assert.equal(ROUTE_SEGMENTS[0].filter((m) => m === gradeRoute).length, 1);
   for (let i = 1; i < ROUTE_SEGMENTS.length; i++) assert.equal(ROUTE_SEGMENTS[i].filter((m) => m === gradeRoute).length, 0, `segment ${i}`);
 });
+
+test('ROUTE_SEGMENTS[0] lists the correction-route module once, after the grade route; segments 1–4 list it 0 times', async () => {
+  const corr = await import('../ui/routes/prompt-check/correction-route.mjs');
+  assert.equal(ROUTE_SEGMENTS[0].filter((m) => m === corr).length, 1);
+  assert.ok(ROUTE_SEGMENTS[0].indexOf(corr) > ROUTE_SEGMENTS[0].indexOf(gradeRoute));
+  for (let i = 1; i < ROUTE_SEGMENTS.length; i++) assert.equal(ROUTE_SEGMENTS[i].filter((m) => m === corr).length, 0, `segment ${i}`);
+});
+
+test('ROUTE_SEGMENTS[0] lists the improve-route module once, after the correction route; segments 1–4 list it 0 times', async () => {
+  const corr = await import('../ui/routes/prompt-check/correction-route.mjs');
+  const imp = await import('../ui/routes/prompt-check/improve-route.mjs');
+  assert.equal(ROUTE_SEGMENTS[0].filter((m) => m === imp).length, 1);
+  assert.ok(ROUTE_SEGMENTS[0].indexOf(imp) > ROUTE_SEGMENTS[0].indexOf(corr));
+  for (let i = 1; i < ROUTE_SEGMENTS.length; i++) assert.equal(ROUTE_SEGMENTS[i].filter((m) => m === imp).length, 0, `segment ${i}`);
+});

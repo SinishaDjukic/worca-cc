@@ -324,6 +324,8 @@ import { pageTitle } from './topnav.mjs';
 import { activityCounts } from './activity-model.mjs';
 import { createChatHome, findFollowingThread } from './chat/home.mjs';
 import { installIntentAddon } from './chat/intent.mjs';
+import { installPromptCheckAddon } from './chat/prompt-check.mjs';
+import { mountPromptCheckChip, setPromptCheckPref } from './prompt-check/chip-host.mjs';
 import { needsYouItems as chatNeedsYouItems } from './runs-list.mjs';
 import { createActivityMenu } from './activity-menu.mjs';
 import { createAwayScreensaver } from './away-screensaver.mjs';
@@ -430,6 +432,8 @@ let askHistoryOnChat = false;  // the column's "Open History in Chat": the Chat 
 let askEntryThread = null;     // openChat({ threadId }) on a hidden column: the chat it opens on (askSide onShow), never the stored one first
 let chatSummariesPref = true;    // Settings › Chat › Summarise commands (#911): GET /api/settings chat.summariseCommands
 function setChatSummariesPref(chat) {
+  // The prompt check chip (docs/prompt-check.md) reads the same chat prefs, on every path that brings them.
+  setPromptCheckPref(!!(chat && chat.promptCheck === true));
   const on = !(chat && chat.summariseCommands === false);
   if (on === chatSummariesPref) return;
   chatSummariesPref = on;
@@ -7489,9 +7493,24 @@ function snapshotTask() {
 }
 const sameTask = (a, b) => a.title === b.title && a.prompt === b.prompt && a.markdown === b.markdown
   && a.extras.length === b.extras.length && a.extras.every((f, i) => f === b.extras[i]);
+// The prompt check chip under the New run prompt (docs/prompt-check.md "The chip"). A kind correction is held until
+// POST /api/run answers with the run id; an abandoned form records nothing.
+const newRunCheck = mountPromptCheckChip({
+  doc: document, host: el.promptPane,   // under the prompt (its mention overlay wraps the field later)
+  surface: { kind: 'new-run', id: 'form' }, deferCorrection: true, fetchImpl: (...a) => fetch(...a),
+  timers: window.__worcaTestHooks?.promptCheckTimers,   // tests only: fake timers for the debounce
+  field: {   // Improve writes through the prompt's own input path (the re-check)
+    read: () => el.prompt.value,
+    write: (text) => { el.prompt.value = text; el.prompt.dispatchEvent(new window.Event('input', { bubbles: true })); },
+    focus: () => el.prompt.focus(),
+  },
+  project: () => ({ projectDir: selectedProjectPath() }),
+});
+el.prompt.addEventListener('input', () => newRunCheck.input(el.prompt.value));
 function setTask(t) {
   el.title.value = t.title;
   el.prompt.value = t.prompt;
+  newRunCheck.input(t.prompt);
   el.promptMarkdown.value = t.markdown;
   el.mdFileName.textContent = t.mdFileName;
   el.mdFile.value = '';
@@ -15862,6 +15881,7 @@ el.form.addEventListener('submit', async (e) => {
     return { ok: false };
   };
   const submittedTask = snapshotTask();   // #687: cleared once the server accepts it
+  const heldCorrection = newRunCheck.pendingCorrection();   // the kind correction of THIS draft; a later pick stays held
 
   await withButton(el.startBtn, async () => {
     // Guard the whole in-flight window: applyBudgetToNewView also drives
@@ -15954,6 +15974,8 @@ el.form.addEventListener('submit', async (e) => {
         const picked = pendingSchedule;   // read before the form resets
         const line = `${title || 'Untitled run'} · ${picked ? scheduleWhenText(picked) : 'Starts later'}`;
         setPendingSchedule(null);   // the form is a plain Start run form again
+        void newRunCheck.flushCorrection({ runId: data.runId }, heldCorrection);
+        newRunCheck.sent(submittedTask.prompt);
         resetSyncChoice();
         showEngineRefusal(null);
         clearTask(submittedTask);
@@ -15972,6 +15994,8 @@ el.form.addEventListener('submit', async (e) => {
       // Re-enable the form so more runs can be started concurrently — unless the
       // budget just went over, in which case idleDisabled keeps Start disabled.
       startSubmitInFlight = false;
+      void newRunCheck.flushCorrection({ runId: data.runId }, heldCorrection);   // a held kind correction, now with its run id
+      newRunCheck.sent(submittedTask.prompt);
       resetSyncChoice();
       showEngineRefusal(null);
       clearTask(submittedTask);
@@ -41644,6 +41668,7 @@ const chatHomeTimers = {
   clearTimeout: (t) => clearTimeout(t),
 };
 const chatIntent = installIntentAddon({ win: chatHomeTimers, onSend: () => { chatHome?.armFlip(); } });
+installPromptCheckAddon({ intent: chatIntent });   // the prompt check chip, after the intent chip (Chat and the Shaper task)
 
 // ── Chat home (worca Chat P6) ──────────────────────────────────────────────────────────────────────────────
 // The hero, quick actions, Needs you / Running / Recent chats / Workflows and the promos, inside the Chat page's

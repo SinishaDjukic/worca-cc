@@ -362,6 +362,15 @@ test('sentencePicker: the words in the sentence, a CompactMenu only when open, e
   assert.deepEqual([...open.querySelectorAll('[data-menu-pick]')].map((x) => x.dataset.menuPick), ['badge|needs', 'badge|none']);
 });
 
+test('sentencePicker: an optional label names the button (aria-label); without it the markup is unchanged', () => {
+  const items = [{ id: 'bug', text: 'Bug report', checked: true }];
+  const plain = C.sentencePicker({ id: 'k', text: 'Bug report', items, tip: 'Pick another' });
+  assert.equal(plain, '<span class="spick"><button type="button" class="spick-b" data-menu="k" data-key="pick:k" aria-haspopup="menu" aria-expanded="false" title="Pick another">Bug report</button></span>');
+  assert.equal(C.sentencePicker({ id: 'k', text: 'Bug report', items, tip: 'Pick another', label: '' }), plain);
+  const named = dom(C.sentencePicker({ id: 'k', text: 'Bug report', items, label: 'Prompt kind: Bug "report"' }));
+  assert.equal(named.querySelector('.spick-b').getAttribute('aria-label'), 'Prompt kind: Bug "report"');
+});
+
 test('switchButton, settingsRow and settingsSection: the row owns its parts, the section its head and action', () => {
   const sw = dom(C.switchButton({ on: true, label: 'Desktop notifications', why: 'On', attrs: { 'data-desk': '' } }));
   assert.equal(sw.getAttribute('role'), 'switch');
@@ -602,6 +611,35 @@ test('suggestionField: the shimmer and read only while it writes; the text stays
   assert.equal(ta.value, 'a<b');
   assert.match(C.suggestionFail({ model: 'Haiku' }), /The text is as it was/);
   assert.match(C.suggestButton({ tip: 'Draft' }), /title="Draft"/);
+});
+
+test('rewriteSuggestion, gapMark, rewriteFail: every text escaped; busy, ready, used and failed states', () => {
+  const bad = '<b>&"x"</b>';
+  const g = dom(C.gapMark({ perspective: 'Product', decide: bad }));
+  assert.equal(g.tagName, 'MARK'); assert.ok(g.classList.contains('pd-gap'));
+  assert.equal(g.textContent, `Product · decide: ${bad}`); assert.equal(g.querySelector('b'), null);
+  const ready = dom(C.rewriteSuggestion({ kind: 'Change to a run', state: 'ready', model: bad, notInRepo: [bad, 'a'.repeat(90)],
+    sections: [{ label: bad, text: bad, gaps: [{ label: 'QA', decide: bad }] }], actions: { use: { 'data-act': 'use' }, keep: { 'data-act': 'keep' } } }));
+  assert.equal(ready.querySelector('.pd-rewrite-head').textContent, 'Suggested rewrite: change to a run');
+  assert.equal(ready.querySelectorAll('b').length, 0);
+  assert.ok(ready.querySelector('.pd-rewrite-sec').textContent.startsWith(`${bad}: ${bad}`));
+  assert.equal(ready.querySelector('.pd-rewrite-foot span').textContent, `Rewritten by ${bad} · your language and intent kept`);
+  assert.equal(ready.querySelectorAll('.pd-rewrite-missing code')[1].textContent, `${'a'.repeat(80)}…`);
+  assert.equal(ready.querySelector('[data-act="use"]').textContent.trim(), 'Use this');
+  assert.ok(ready.querySelector('[data-act="use"]').classList.contains('btn-primary'));
+  assert.equal(ready.querySelector('[data-act="keep"]').textContent.trim(), 'Keep mine');
+  const busy = dom(C.rewriteSuggestion({ kind: 'Requirement', state: 'busy' }));
+  assert.equal(busy.querySelector('[tabindex="-1"]').textContent, 'Rewriting…');
+  const used = dom(C.rewriteSuggestion({ kind: 'Requirement', state: 'used', actions: { undo: { 'data-act': 'undo' } } }));
+  assert.match(used.textContent, /Rewrite used\./); assert.ok(used.querySelector('[data-act="undo"]'));
+  const t = dom(C.rewriteFail({ model: 'Sonnet 5.5', reason: 'timeout', retry: { 'data-act': 'retry' } }));
+  assert.equal(t.textContent, 'Could not rewrite it: no answer from Sonnet 5.5 in 60s. Your text is as it was. Try again');
+  assert.equal(t.getAttribute('tabindex'), '-1'); assert.equal(t.getAttribute('role'), null);
+  assert.equal(dom(C.rewriteFail({ reason: 'unreadable reply', retry: {} })).textContent, 'Could not rewrite it. Your text is as it was. Try again');
+  assert.equal(dom(C.rewriteFail({ model: 'S', reason: 'model unavailable' })).textContent, 'Could not rewrite it: no model is available. Your text is as it was.');
+  assert.equal(dom(C.rewriteFail({ reason: 'total cost limit reached' })).querySelector('button'), null);
+  const failed = dom(C.rewriteSuggestion({ kind: 'Bug report', state: 'failed', model: bad, fail: { reason: 'timeout' } }));
+  assert.equal(failed.querySelectorAll('b').length, 0);
 });
 
 test('tagGroup and listEditor: one button, one editor; a name escaped; many or one pick', () => {
