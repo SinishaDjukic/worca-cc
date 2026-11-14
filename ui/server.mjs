@@ -448,8 +448,7 @@ import {
 import { latestChecklist, checklistMarkdown, CHECKLIST_PR_MARKER } from '../src/shared/shape/review-checklist.mjs';
 import { attachRoleReviews } from '../src/shared/shape/role-review.mjs';
 import { resolveShapeRequest, PLAN_ASK_KIND, planFileOf } from '../src/core/shape/run.mjs';
-import { normalizePerspectives } from '../src/shared/shape/perspectives.mjs';
-import { recordPerspectiveChoice, perspectiveProposalOf, PROPOSAL_ERROR } from '../src/core/prompt-check/perspective-choices.mjs';
+import { runPerspectivesOf, recordRunCardChoice } from '../src/core/prompt-check/perspective-choices.mjs';
 import { savePlanToCheckout } from '../src/core/shape/save.mjs';
 import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, cancelRest, resumeFeature,
   rechainWaiting, replanRest, setApproveEach, recordShapePlan, listShapePlans, chainFeature,
@@ -2729,13 +2728,10 @@ const startRunHandler = async (req, res) => {
   if (DRAIN.on) return res.status(503).json(DRAIN_REFUSAL);
   try {
     const body = req.body || {};
-    // Proposed perspectives (flag proposedPerspectives), read once per start. Off: the run's perspective fields are
-    // dropped before any check, so the run is today's run whatever the body (or a replayed ticket) carries.
-    const proposedOn = flagEnabled('proposedPerspectives');
+    const proposedOn = flagEnabled('proposedPerspectives'); // read once per start; off: drop the perspective fields first
     if (!proposedOn) { delete body.perspectives; delete body.perspectiveProposal; }
-    // Scheduled runs: `internal` is set ONLY by fireTicket() (never from HTTP) — the
-    // due ticket being started through this same gate. It carries the ticket, whose id
-    // IS the runId, plus the CLI-only options a stored request may hold.
+    // Scheduled runs: `internal` is set ONLY by fireTicket() (never from HTTP) — the due ticket being started through
+    // this same gate. It carries the ticket, whose id IS the runId, plus the CLI-only options a stored request may hold.
     const internal = req._internal && typeof req._internal === 'object' ? req._internal : null;
     // Workspace scan (wf_workspace_scan): scanRequest hands the target in-process — a workspace
     // that may not exist yet ({ id, name, projectPaths, description:'' }, D3). Never from HTTP.
@@ -2882,45 +2878,26 @@ const startRunHandler = async (req, res) => {
 
     // prompt OR promptMarkdown. promptMarkdown is treated as the prompt text.
     const prompt = typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt : undefined;
-    const promptMarkdown =
-      typeof body.promptMarkdown === 'string' && body.promptMarkdown.trim() ? body.promptMarkdown : undefined;
+    const promptMarkdown = typeof body.promptMarkdown === 'string' && body.promptMarkdown.trim() ? body.promptMarkdown : undefined;
     const effectivePrompt = prompt || promptMarkdown;
     if (source && effectivePrompt) return badRequest(res, 'provide source OR prompt/promptMarkdown, not both');
     if (!source && !effectivePrompt) return badRequest(res, 'prompt or promptMarkdown is required');
 
-    // UI Markdown runs carry provenance (spec §10): absent an explicit
-    // body.source, a promptMarkdown-only body maps to the markdown source type.
-    // prompt.md bytes and every legacy guard/message stay identical; only the
-    // new source_type column differs ('markdown' instead of the default).
-    const effectiveSource = source
-      || (promptMarkdown && !prompt ? { type: 'markdown', promptText: promptMarkdown } : null);
+    // UI Markdown runs carry provenance (spec §10): absent an explicit body.source, a promptMarkdown-only body maps to the
+    // markdown source type. prompt.md bytes and every legacy guard/message stay identical; only the new source_type
+    // column differs ('markdown' instead of the default).
+    const effectiveSource = source || (promptMarkdown && !prompt ? { type: 'markdown', promptText: promptMarkdown } : null);
 
     const mock = !!body.mock || serverMockMode();
 
-    // Optional workflowId selects a saved (or built-in default) topology. The
-    // orchestrator resolves topology + per-project run-config into an executable
-    // plan at run start; here we only normalize + reject an unknown id up front
-    // so the client gets a clean 400 instead of a mid-run error event.
-    // Shape it first (spec D9/D12): `shape` and the shape workflows.
+    // Optional workflowId selects a saved (or built-in default) topology. The orchestrator resolves topology + per-project
+    // run-config into an executable plan at run start; here we only normalize + reject an unknown id up front so the
+    // client gets a clean 400 instead of a mid-run error event. Shape it first (spec D9/D12): `shape` and its workflows.
     const shapeReq = resolveShapeRequest({ shape: body.shape, workflowId: body.workflowId }, { internal: !!internal, compliance: proposedOn });
     if (!shapeReq.ok) return badRequest(res, shapeReq.error);
     const { shape: askedShape } = shapeReq;
-    // The run's chosen perspective set (flag on only): a shaped run's `shape.perspectives`, else the top-level
-    // `perspectives`; without either the run is today's run. It drives Clarify and the code review roles.
-    let perspectiveSet = null;
-    let perspectiveProposal = null;
-    if (proposedOn) {
-      if (askedShape) perspectiveSet = { chosen: [...askedShape.perspectives] };
-      else if (body.perspectives !== undefined) {
-        const p = normalizePerspectives(body.perspectives, { compliance: true });
-        if (!p.ok) return badRequest(res, p.error);
-        perspectiveSet = { chosen: p.perspectives };
-      }
-      if (body.perspectiveProposal !== undefined) {
-        perspectiveProposal = perspectiveProposalOf(body.perspectiveProposal);
-        if (!perspectiveProposal) return badRequest(res, PROPOSAL_ERROR);
-      }
-    }
+    const { perspectiveSet = null, perspectiveProposal = null, error: perspectivesError } = proposedOn ? runPerspectivesOf(body, askedShape) : {};
+    if (perspectivesError) return badRequest(res, perspectivesError); // the chosen set drives Clarify and the review roles
     // L7: a sliced Shape-it-first run chains tickets per slice, and a run without a project cannot be scheduled. So with
     // no project a shaped run is never sliced: `slices: 'off'` unless 'auto' was asked for, which is refused (U13: the
     // Shaper itself still runs with No project).
@@ -3315,8 +3292,7 @@ const startRunHandler = async (req, res) => {
         ...(nightMode ? { nightMode: true } : {}),
         tags,
         labels,
-        ...(shape ? { shape } : {}),
-        ...(perspectiveSet ? { perspectiveSet } : {}),
+        ...(shape ? { shape } : {}), ...(perspectiveSet ? { perspectiveSet } : {}),
         ...(runSetup ? { runSetup } : {}),
       });
 
@@ -3493,8 +3469,7 @@ const startRunHandler = async (req, res) => {
         ...(nightMode ? { nightMode: true } : {}),
         tags,
         labels,
-        ...(shape ? { shape } : {}),
-        ...(perspectiveSet ? { perspectiveSet } : {}),
+        ...(shape ? { shape } : {}), ...(perspectiveSet ? { perspectiveSet } : {}),
         ...(runSetup ? { runSetup } : {}),
       });
 
@@ -3574,13 +3549,7 @@ const startRunHandler = async (req, res) => {
         console.error(`[worca-ui] ask run link failed: ${err && err.message ? err.message : err}`);
       }
     }
-    // The proposal and what the person changed (ids only), once the run exists. Never fails the start.
-    if (perspectiveSet && perspectiveProposal) {
-      try {
-        recordPerspectiveChoice({ runId, surface: 'run-card', kind: perspectiveProposal.kind,
-          proposed: perspectiveProposal.proposed, chosen: perspectiveSet.chosen });
-      } catch (err) { console.error(`[worca-ui] perspective choice record failed: ${err?.message || err}`); }
-    }
+    recordRunCardChoice(runId, perspectiveSet, perspectiveProposal); // the proposal and what changed (ids only)
     announceRun(entry);
 
     // Fire-and-forget; all progress is surfaced through events. Kept on the entry: a Stop of the

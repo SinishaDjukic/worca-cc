@@ -62,3 +62,32 @@ export function perspectiveProposalOf(raw) {
   if (kind !== null && kind !== undefined && !PROMPT_KINDS.includes(kind)) return null;
   return { proposed: ORDER.filter((k) => proposed.includes(k)), kind: kind ?? null };
 }
+
+/** POST /api/run (flag on): the run's chosen set — a shaped run's `shape.perspectives`, else the top-level `perspectives`;
+ *  without either it is null and the run is today's run — and the proposal it came from (or null).
+ *  → `{ perspectiveSet, perspectiveProposal }`, or `{ error }` for a 400. */
+export function runPerspectivesOf(body, askedShape) {
+  let perspectiveSet = null;
+  if (askedShape) perspectiveSet = { chosen: [...askedShape.perspectives] };
+  else if (body.perspectives !== undefined) {
+    const p = normalizePerspectives(body.perspectives, { compliance: true });
+    if (!p.ok) return { error: p.error };
+    perspectiveSet = { chosen: p.perspectives };
+  }
+  let perspectiveProposal = null;
+  if (body.perspectiveProposal !== undefined) {
+    perspectiveProposal = perspectiveProposalOf(body.perspectiveProposal);
+    if (!perspectiveProposal) return { error: PROPOSAL_ERROR };
+  }
+  return { perspectiveSet, perspectiveProposal };
+}
+
+/** The run card's proposal and what the person changed, stored once the run exists (both given). Never throws: a failed
+ *  record never fails the start. */
+export function recordRunCardChoice(runId, perspectiveSet, perspectiveProposal) {
+  if (!perspectiveSet || !perspectiveProposal) return;
+  try {
+    recordPerspectiveChoice({ runId, surface: 'run-card', kind: perspectiveProposal.kind,
+      proposed: perspectiveProposal.proposed, chosen: perspectiveSet.chosen });
+  } catch (err) { console.error(`[worca-ui] perspective choice record failed: ${err?.message || err}`); }
+}
