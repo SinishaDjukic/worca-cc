@@ -22,13 +22,14 @@ test('a fresh DB has the C-9 tables and indexes', () => {
   for (const i of ['designs_updated', 'design_builds_design', 'design_agents_build', 'design_cost_ledger_ts']) assert.ok(indexes(db).includes(i), i);
 });
 
-test('a v91 DB gains them, keeps its rows and is stamped current', () => {
+test('a v91 DB (dev\'s: no Design table at all) gains them, keeps its rows and is stamped current', () => {
   const db = fresh();
-  db.exec(`${TABLES.map((t) => `DROP TABLE ${t};`).join(' ')} PRAGMA user_version = 91`);
+  db.exec(`${TABLES.map((t) => `DROP TABLE ${t};`).join(' ')} DROP TABLE design_pictures; PRAGMA user_version = 91`);
   db.prepare("INSERT INTO store_meta (key, kind, data) VALUES ('k', 'setting', '1')").run();
   migrate(db);
   assert.equal(version(db), SCHEMA_VERSION);
-  for (const t of TABLES) assert.ok(cols(db, t).length, t);
+  for (const t of [...TABLES, 'design_pictures']) assert.ok(cols(db, t).length, t);
+  for (const c of ['models_json', 'pictures', 'sound_json']) assert.ok(cols(db, 'designs').includes(c), c);
   assert.equal(db.prepare("SELECT data FROM store_meta WHERE key = 'k'").get().data, '1');
 });
 
