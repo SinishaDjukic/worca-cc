@@ -434,3 +434,11 @@ test('D12 (b): a refused command read (neither ok nor 404) is not kept: the next
   await tick();
   assert.equal(r.calls.filter((c) => c.url.includes('/commands/')).length, 2, 'asked again after the refusal');
 });
+
+test('card-apply saves a workflow or workflow-build card (dev answers 400 to applied) and applies every other card', () => {
+  const body = (a) => ACTIONS['card-apply'][1](a)[2];
+  assert.deepEqual(body({ threadId: 'ask_1', cardId: 'c1', cardType: 'workflow' }), { state: 'saved' });
+  assert.deepEqual(body({ threadId: 'ask_1', cardId: 'c1', cardType: 'workflow-build' }), { state: 'saved' });
+  assert.deepEqual(body({ threadId: 'ask_1', cardId: 'c1', cardType: 'model' }), { state: 'applied' });
+  assert.deepEqual(body({ threadId: 'ask_1', cardId: 'c1', cardType: 'model', scope: 'project' }), { state: 'applied', scope: 'project' });
+});
