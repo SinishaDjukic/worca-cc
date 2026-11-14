@@ -48,3 +48,12 @@ test('nudgeFor: open decisions are trimmed and capped at 6 items of 160 chars', 
   assert.equal(got.openDecisions[1].length, 160);
   assert.deepEqual(got.openDecisions.slice(2), ['c', 'd', 'e', 'f']);
 });
+
+test('nudgeFor reads the shared assessment: very-large nudges as large, legacy string perspectives still work', () => {
+  const got = nudgeFor({ size: 'very-large' });
+  assert.equal(got.reason, 'large');
+  assert.equal(got.size, 'large');
+  assert.equal(nudgeFor({ size: 'very-large', openDecisions: ['a', 'b'] }).reason, 'both');
+  assert.deepEqual(nudgeFor({ size: 'large', perspectives: ['security'] }).perspectives, ['product', 'security']);
+  assert.deepEqual(nudgeFor({ size: 'large', perspectives: [{ id: 'ux', reason: 'screens' }] }).perspectives, ['product', 'ux']);
+});

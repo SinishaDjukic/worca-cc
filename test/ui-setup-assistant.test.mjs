@@ -981,12 +981,65 @@ test('Model access › Claude: Sign in again shows the terminal steps; Check aga
     assert.match(h.$('.sa-claude').textContent, /run claude, then \/logout and \/login/);
     await h.click('.sa-recheck');
     assert.ok(h.log.some((r) => r.url === '/api/setup/detect?recheck=1'));
-    assert.match(h.$('.sa-claude').textContent, /Checked again just now\./);
+    assert.match(h.$('.sa-claude').textContent, /Checked just now: signed in\./);
     assert.equal(h.$('.sa-recheck'), null, 'the steps close once it is signed in');
     signedIn = false;
     await h.click('.sa-claude-relogin');
     await h.click('.sa-recheck');
     assert.match(h.$('.sa-claude').textContent, /Run claude, then \/login, in a terminal/, 'signed out now: the usual Check row');
+    assert.match(h.$('.sa-claude').textContent, /Checked just now: still not signed in\./);
+  } finally { h.close(); }
+});
+
+test('Model access › Claude: Check again is busy while it checks, then says what it found every time, and why when it fails', async () => {
+  const dir = '/tmp/scratch-home/.claude';
+  const signedOut = { checks: [check('claude', 'no', { facts: { configDirectory: dir } }), check('git', 'ok'), check('direct', 'ok')] };
+  let gate = null; let fail = false;
+  const answer = async () => { if (gate) await gate.promise; return fail ? reply({ error: 'detect broke' }, 500) : reply(signedOut); };
+  const h = await open({ entry: 'rerun', detect: signedOut, routes: { '/api/setup/detect?recheck=1': () => answer() } });
+  try {
+    await h.goTo('access');
+    const where = () => h.$('.sa-claude .sa-claude-where')?.textContent;
+    assert.equal(where(), `Worca checked ${dir}. If your terminal is signed in, Worca may be running with a different HOME or CLAUDE_CONFIG_DIR.`);
+    gate = deferred();
+    const b = h.$('.sa-recheck'); b.focus();
+    await h.click(b);
+    assert.equal(b.textContent, 'Checking…');
+    assert.equal(b.disabled, true, 'busy while the detect runs');
+    assert.equal(h.doc.activeElement, b, 'the pressed button keeps the focus');
+    b.dispatchEvent(new h.window.Event('click', { bubbles: true }));   // a press on the disabled button still dispatches
+    await h.settle();
+    await h.goTo('access');                                             // a repaint while it checks
+    assert.equal(h.$('.sa-recheck').textContent, 'Checking…', 'a repaint keeps it busy');
+    assert.equal(h.$('.sa-recheck').disabled, true);
+    gate.resolve(); gate = null; await h.settle();
+    assert.equal(h.log.filter((r) => r.url === '/api/setup/detect?recheck=1').length, 1, 'one check for the two presses');
+    assert.equal(h.$('.sa-recheck').textContent, 'Check again');
+    assert.equal(h.$('.sa-recheck').disabled, false);
+    assert.match(h.$('.sa-claude').textContent, /Checked just now: still not signed in\./, 'an unchanged answer still shows it was asked');
+    assert.ok(where(), 'still signed out: where it was checked stays');
+    fail = true;
+    await h.click('.sa-recheck');
+    assert.match(h.$('.sa-claude').textContent, /Couldn't check just now: detect broke/);
+    assert.doesNotMatch(h.$('.sa-claude').textContent, /Checked just now/, 'the old answer is replaced');
+    assert.equal(h.$('.sa-recheck').disabled, false, 'usable again after a failure');
+    fail = false;
+    const signedIn = { checks: [check('claude', 'ok'), check('git', 'ok'), check('direct', 'ok')] };
+    signedOut.checks = signedIn.checks;
+    await h.click('.sa-recheck');
+    assert.match(h.$('.sa-claude').textContent, /Claude Code is signed in.*Checked just now: signed in\./);
+    assert.equal(where(), undefined, 'signed in: no folder line');
+  } finally { h.close(); }
+});
+
+test('Model access › Claude: a Check row that names no folder (CLI not found) shows no "Worca checked" line', async () => {
+  const notFound = { checks: [check('claude', 'no'), check('git', 'ok'), check('direct', 'ok')] };
+  const h = await open({ entry: 'rerun', detect: notFound });
+  try {
+    await h.goTo('access');
+    assert.ok(h.$('.sa-claude .sa-recheck'), 'the Check row is shown');
+    assert.equal(h.$('.sa-claude .sa-claude-where'), null);
+    assert.doesNotMatch(h.$('.sa-claude').textContent, /Worca checked/);
   } finally { h.close(); }
 });
 

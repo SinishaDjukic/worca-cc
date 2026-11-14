@@ -80,6 +80,17 @@ export const WORKFLOWS_STATES = [
 /** A part's clicks at one width: a list, or a function of the width (the bar's + sits in the drawer at 360). */
 export const seedsOf = (part, width) => [].concat((typeof part.seed === 'function' ? part.seed(width) : part.seed) || []);
 for (const [id, q, seed] of WORKFLOWS_STATES) PARTS.push({ id, route: true, ...(seed ? { seed } : {}), app: { route: q }, proto: { route: q } });
+// Marketplace's own cells (slice 8): its ways, its list states, the install, remove, set-up and update-asks forms, the Needs
+// set-up word, the Add error and a plugin not found. Compared in Expert, demo against demo.
+export const MARKETPLACE_STATES = [
+  ['mk-way-updates', '#marketplace/~updates'], ['mk-way-installed', '#marketplace/~installed'], ['mk-way-for-you', '#marketplace/~for-you'], ['mk-way-all', '#marketplace/~all'],
+  ['mk-way-shelf', '#marketplace/~shelf-0'], ['mk-way-shelf-new-empty', '#marketplace/~shelf-3-new'], ['mk-way-source', '#marketplace/~src-official'],
+  ['mk-list-loading', '?state=loading#marketplace'], ['mk-list-failed', '?state=failed#marketplace'],
+  ['mk-install-form', '#marketplace/slack-chat', ['[data-mk-step]']], ['mk-remove-confirm', '#marketplace/telegram-chat', ['[data-menu="mk-more"]', '[data-menu-pick="mk-more|remove"]']],
+  ['mk-setup-form', '#marketplace/telegram-chat', ['[data-mk-step]']], ['mk-needs-setup', '#marketplace/notion-mcp'],
+  ['mk-update-asks', '?state=update-asks#marketplace/jira-source', ['[data-mk-step]']], ['mk-add-error', '#marketplace', ['[data-mk-addgo]']], ['mk-not-found', '#marketplace/nope'],
+];
+for (const [id, q, seed] of MARKETPLACE_STATES) PARTS.push({ id, route: true, ...(seed ? { seed } : {}), app: { route: q }, proto: { route: q } });
 export const PAGES = ['components.html', 'run-page.html', 'pulse.html'];
 // The deep routes, read from the prototype's own route list once it has drawn (it runs inside the page): RailShell.routes()
 // (ui/public/stillhet/shell/shell.js) less the top-level places, which ROUTES compares as whole pages.
@@ -99,6 +110,10 @@ export const TASKS_CELL_IDS = Object.freeze(['route-runs', ...STATES.filter(([s,
 // deep route under workflows/.
 export const WORKFLOWS_CELL_IDS = Object.freeze(['route-workflows', ...WORKFLOWS_STATES.map(([id]) => id)]);
 export const workflowsCellIds = (deep = []) => [...WORKFLOWS_CELL_IDS, ...deep.filter((h) => h.startsWith('workflows/')).map((h) => deepPart(h).id)];
+// Every Marketplace cell: its whole page, its own states above, and (derived from the prototype's routes, never a count)
+// every deep route under marketplace/.
+export const MARKETPLACE_CELL_IDS = Object.freeze(['route-marketplace', ...MARKETPLACE_STATES.map(([id]) => id)]);
+export const marketplaceCellIds = (deep = []) => [...MARKETPLACE_CELL_IDS, ...deep.filter((h) => h.startsWith('marketplace/')).map((h) => deepPart(h).id)];
 /** The Tasks cells a run's cells lack: one line per id, theme and width of CELLS that has no compared cell. */
 export function tasksCoverage(cells, ids = TASKS_CELL_IDS) {
   const have = new Set(cells.map((c) => `${c.part}|${c.theme}|${c.width}`));

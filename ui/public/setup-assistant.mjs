@@ -14,6 +14,7 @@ import { LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { ROLE_LABELS, MODEL_ROLES, ROLE_HARNESSES } from '../../src/shared/model-roles.mjs';
 import { CHAT_ENGINE_NAMES, engineLabel } from '../../src/shared/engine-switch.mjs';
 import { UPSTREAM_TIMEOUTS } from '../../src/shared/proxy-timeouts.mjs';
+import { claudeCheckedWhere } from '../../src/shared/claude-sign-in.mjs';
 
 export const SETUP_STEPS = Object.freeze([
   { id: 'check', label: 'Check this machine' },
@@ -345,7 +346,10 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     netJob: false, netRetry: null, netPending: null, netSaved: '',
     // Model access with the credential broker: cpChecking while a /api/providers read is in flight, cpChecked the line
     // a manual Check again leaves, provSeq a counter that drops an answer a newer load or read has overtaken.
-    cpChecking: false, cpChecked: '', provSeq: 0 };
+    cpChecking: false, cpChecked: '', provSeq: 0,
+    // Model access › Claude › Check again: claudeChecking while /api/setup/detect?recheck=1 is in flight,
+    // claudeChecked the line every answer leaves (signed in, still not signed in, or why it failed).
+    claudeChecking: false, claudeChecked: '' };
 
   const stepOf = el('span', 'sa-step-of'); const title = el('h2', null); title.id = 'setup-title'; const sub = el('p', 'sa-sub');
   // One segment per step, above "Step N of 7". Decorative: the step line says the same to a screen reader.
@@ -644,6 +648,13 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     body.append(list);
   }
 
+  /** Claude's Check again: "Checking…" and disabled while the detect is in flight. */
+  function claudeRecheckBtn(relogin) {
+    const b = btn(S.claudeChecking ? 'Checking…' : 'Check again', 'btn btn-sm sa-recheck', (e) => { void recheck({ relogin, button: e.currentTarget }); });
+    b.disabled = S.claudeChecking;
+    return b;
+  }
+
   function paintAccess() {
     const a = S.answers.access; const broker = !!S.saved.providers?.broker?.enabled; const pv = S.saved.providers || {};
     const toggle = (name) => (on) => { a[name] = on; paint(); };
@@ -657,14 +668,17 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
       const list = rows('sa-claude', li);
       if (S.claudeRelogin) {
         const steps = row(null, 'In a terminal, run claude, then /logout and /login. Then check again here.');
-        steps.append(btn('Check again', 'btn btn-sm sa-recheck', () => { void recheck({ relogin: true }); }),
+        steps.append(claudeRecheckBtn(true),
           btn('Cancel', 'btn btn-sm btn-quiet sa-claude-relogin-cancel', () => { S.claudeRelogin = false; paint(); }));
         list.append(steps);
       }
       body.append(list);
     } else if (a.claude && claude && claude.state !== 'ok') {
-      const list = rows('sa-claude'); const li = row(badge('amber', 'Check'), 'Run claude, then /login, in a terminal');
-      li.append(btn('Check again', 'btn btn-sm sa-recheck', () => { void recheck(); }));
+      const list = rows('sa-claude'); const li = row(badge('amber', 'Check'), 'Run claude, then /login, in a terminal', S.claudeChecked || '');
+      // Signed out: say which config folder the CLI read; a server with another HOME reads another sign-in.
+      const dir = claude.facts?.configDirectory;
+      if (dir) li.querySelector('.sa-row-main').append(el('div', 'sa-row-line sa-claude-where', claudeCheckedWhere(dir)));
+      li.append(claudeRecheckBtn(false));
       list.append(li); body.append(list);
     }
     body.append(sw('GitHub Copilot', a.copilot, toggle('copilot'), 'sa-src-copilot'));
@@ -1031,16 +1045,26 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
     if (changed || manual) paint();
   }
 
-  // Model access › Claude › Check again: detect once more, past its cache. After "Sign in again", a signed-in answer
-  // closes the steps and says it was checked; any other answer shows the usual Check row.
-  async function recheck({ relogin = false } = {}) {
+  // Model access › Claude › Check again: detect once more, past its cache. The button reads "Checking…" meanwhile, and
+  // every answer leaves a line, so an unchanged answer still shows it was asked. After "Sign in again", a signed-in
+  // answer closes the steps; any other answer shows the usual Check row. A failed request keeps the rows and says so.
+  async function recheck({ relogin = false, button = null } = {}) {
+    if (S.claudeChecking) return;
+    S.claudeChecking = true;
+    // In place, not a repaint: the pressed button keeps the focus while it is busy (paintBody puts it back after).
+    if (button) { button.disabled = true; button.textContent = 'Checking…'; }
     const r = await call('/api/setup/detect?recheck=1');
+    S.claudeChecking = false;
     if (closed) return;
-    if (r.ok) S.detect = r.data;
-    const ok = (S.detect?.checks || []).find((c) => c.id === 'claude')?.state === 'ok';
-    if (relogin) {
-      S.claudeRelogin = !ok; S.claudeChecked = ok ? 'Checked again just now.' : '';
-      if (!ok) { S.answers.found.claude = false; S.answers.access.claude = true; }   // shows the Check row with its steps
+    if (!r.ok) S.claudeChecked = `Couldn't check just now: ${r.data?.error || `HTTP ${r.status}`}`;
+    else {
+      S.detect = r.data;
+      const ok = (S.detect?.checks || []).find((c) => c.id === 'claude')?.state === 'ok';
+      S.claudeChecked = ok ? 'Checked just now: signed in.' : 'Checked just now: still not signed in.';
+      if (relogin) {
+        S.claudeRelogin = !ok;
+        if (!ok) { S.answers.found.claude = false; S.answers.access.claude = true; }   // shows the Check row with its steps
+      }
     }
     paint();
   }

@@ -20,6 +20,7 @@ Settings › **Chat** (Advanced) sets:
 - the turn limit and a cost cap per turn
 - whether Chat may change and test-run your scripts
 - opt-in web access, with a list of allowed domains
+- opt-in prompt check: the kind of a task prompt and whether it says enough (see [Prompt check](prompt-check.md))
 
 Chat spend counts toward the total budget. A team policy can preset these limits or narrow web access, but never
 widen it.

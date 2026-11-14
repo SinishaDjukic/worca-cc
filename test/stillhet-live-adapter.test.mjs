@@ -400,3 +400,24 @@ test('Workflows (slice 7): its lists load when the place asks; workflows-changed
   r.frame(r.sockets[0], { type: 'scripts-changed', action: 'updated' }); await r.tick(300);
   assert.deepEqual(wfGets().slice(n), ['/api/scripts']);
 });
+
+test('Marketplace (slice 8): its lists load when the place asks; plugins-changed reads plugins, markets, workflows and scripts again, no other frame does', async () => {
+  const MK = { '/api/plugins': { plugins: [], orphans: [] }, '/api/marketplaces': { marketplaces: [] } };
+  const WF = { '/api/workflows': { workflows: [] }, '/api/agents': { agents: [] }, '/api/scripts': { scripts: [] }, '/api/workflow-usage': { usage: {} }, '/api/chat-home/pins': { pins: [] } };
+  const r = rig({ answer: (u) => MK[u] ?? WF[u] ?? ANSWER[u] ?? {} });
+  await r.tick();
+  assert.ok(!gets(r.calls).some((u) => u in MK), 'nothing of Marketplace on the first load');
+  r.frame(r.sockets[0], hello); await r.tick();
+  assert.equal(r.live.market.status(), 'loading');
+  r.live.workflow.status();   // Workflows started too: its lists are read again on the same frame
+  await r.tick();
+  assert.equal(r.live.market.status(), 'ready');
+  const mkGets = () => gets(r.calls).filter((u) => u in MK || u === '/api/workflows' || u === '/api/scripts');
+  let n = mkGets().length;
+  for (const type of ['pipelines-changed', 'schedules-changed', 'settings-changed', 'workflows-changed', 'marketplace-add-changed']) r.frame(r.sockets[0], { type });
+  await r.tick(300);
+  assert.deepEqual(gets(r.calls).filter((u) => u in MK).length, 2, 'a frame of another kind reads no Marketplace list');
+  n = mkGets().length;
+  r.frame(r.sockets[0], { type: 'plugins-changed', action: 'install' }); await r.tick(300);
+  assert.deepEqual(mkGets().slice(n).sort(), ['/api/marketplaces', '/api/plugins', '/api/scripts', '/api/workflows']);
+});

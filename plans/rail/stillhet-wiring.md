@@ -16,6 +16,7 @@ One map, from the prototype's own code (the places list in `shell/shell.js`, the
 | Providers | Settings | the providers routes | `#providers`, `#settings/providers` |
 | Team policy | Settings | the team policy routes | `#team-policy`, `#team-policy/…` |
 | Workspaces | Projects (by workspace from Advanced) | the workspaces routes | `#workspaces`, `#workspaces/…`, `#workspace-create` |
+| Check how clear a task prompt is (chat pref `promptCheck`, `docs/prompt-check.md`) | Settings › Chat › Assistant › Abilities › Prompt check (the prototype row waits for the owner's answer; until then Stillhet has no row) | `src/core/settings.mjs` `chatPrefs` and `src/shared/prompt-check/assessment.mjs` | none |
 
 With Stillhet on, every old address lands through one table, `ui/public/stillhet/shell/old-addresses.js` (`docs/rail/navigation.md` `nav.old-address`), in place; with it off they stay dev's.
 
@@ -44,7 +45,7 @@ Every action the prototype answers with a "Would…" sentence is `window.RailWou
 | `ui/public/stillhet/pulse/pulse.js` | ask Chat from a page, send a test notification; on pulse.html only (no shell): open a search result, open Statistics, open what a Pulse row names, a place that is off, New run's start and schedule | wired | dev's routes with dev's bodies: `POST /api/resume` (Resume, Try again, Restart Build; a confirm opens the task), `POST /api/schedules/:id/run-now`, `POST /api/actions/instances/:instanceId/stop`, `POST /api/notifications/:id/read` and `/read-all`, `POST /api/settings` (`uiLevel`, `keepAwake`, `nightModeToggle`); a refusal toasts `Could not ACTION: REASON` and changes nothing |
 | `ui/public/stillhet/workflows/workflows.js` | import a workflow, export a workflow, run the saved cases | wired | slice 7: `live/workflow-live.mjs` (its `WORKFLOW_ACTIONS` table) on dev's workflow, agent, script and pin routes; the graph from dev's template (`graph-entry.mjs` `fromTpl`) |
 | `ui/public/stillhet/requirements/requirements.js` | copy a requirement as Markdown, save specs | wire to | the requirements routes |
-| `ui/public/stillhet/marketplace/marketplace.js` | open a plugin's source, open a market on GitHub | wire to | the Marketplace routes |
+| `ui/public/stillhet/marketplace/marketplace.js` | open a plugin's source, open a market on GitHub | wired | slice 8: `live/market-live.mjs` (its `MARKET_ACTIONS` table) on dev's plugin and marketplace routes (`ui/routes/marketplace/plugins.mjs`): install, update (preview, then apply), update all, remove, set it up (`GET`/`PUT /api/plugins/:name/config`), sync, add and remove a source; the records from `live/market-map.mjs` |
 | `ui/public/stillhet/centers/centers.js` | attach files | new: built | New task… › More options › Add files…: the system file picker; the files go as dev's New run sends them (`POST /api/run` `extras`, `[{name, dataBase64}]`) |
 | `ui/public/stillhet/insights/insights.js` | copy a link to this page | new: build it | page links with the new Insights addresses |
 | `ui/public/stillhet/workspaces/workspaces.js` | open a workspace in your editor | wire to | the workspaces routes |
@@ -119,8 +120,8 @@ One row per action: `npm run stillhet:wiring` lists every `window.RailWould(...)
 | `design-system/components/run-state.mjs › open {pr}, {pr2} and {pr3} on GitHub` | wired | a live group page lists each member with its PR; each member's page opens it (View PR, `pr.url`); the three-at-once stand-in is not drawn |
 | `design-system/components/run-state.mjs › save plans/unified-page-navigation.md` | wired | on a chat TaskCard (`RailChatLive.flow`, `ui/public/stillhet/live/chat-live.mjs` FLOW): Save to plans/ posts `POST /api/runs/:id/plan/save` (also in the live PlanCard's ⋯) |
 | `insights/insights.js › copy a link to this page` | new: build it | page links with the new Insights addresses |
-| `marketplace/marketplace.js › open it on GitHub` | wire to | the Marketplace routes |
-| `marketplace/marketplace.js › open … at … on GitHub` | wire to | the Marketplace routes |
+| `marketplace/marketplace.js › open it on GitHub` | wired | `GET /api/plugins/:name` `webUrl` (the pinned commit) for an installed plugin, else the market snapshot's commit (`githubWebUrl`), opened in a new tab; a plugin from a local folder offers no View its source (slice 8 D15) |
+| `marketplace/marketplace.js › open … at … on GitHub` | wired | the market's URL in Where plugins come from is a text link to its synced commit on GitHub (`githubWebUrl` of `GET /api/marketplaces` `url` and `lastSync.sha`), opened in a new tab (slice 8 D15) |
 | `pulse/pulse.js › (a phrase built from data)` | wired | in the app host each reaches its real target: Chat hand-over (`RailConversation.handOver`), `RailShell.go` / `openRun` / `openSchedule` (`insights/spend` for Statistics), New run is Chat's `RailConversation.start('task')`, and Send test is the browser `Notification` API after permission (D16); the demo sentences stay on the standalone `pulse.html` only |
 | `pulse/pulse.js › ask Chat: …` | wired | in the app host each reaches its real target: Chat hand-over (`RailConversation.handOver`), `RailShell.go` / `openRun` / `openSchedule` (`insights/spend` for Statistics), New run is Chat's `RailConversation.start('task')`, and Send test is the browser `Notification` API after permission (D16); the demo sentences stay on the standalone `pulse.html` only |
 | `pulse/pulse.js › open Statistics` | wired | in the app host each reaches its real target: Chat hand-over (`RailConversation.handOver`), `RailShell.go` / `openRun` / `openSchedule` (`insights/spend` for Statistics), New run is Chat's `RailConversation.start('task')`, and Send test is the browser `Notification` API after permission (D16); the demo sentences stay on the standalone `pulse.html` only |
@@ -167,6 +168,7 @@ One row per action: `npm run stillhet:wiring` lists every `window.RailWould(...)
 | `workflows/workflows.js › export … as …` | wired | a JSON file: `GET /api/workflows/:id/json`; a Claude Code skill: `POST /api/workflows/:id/export` `{destination:'global', dryRun:true}`, then the apply when nothing conflicts; a Worca plugin: `{destination:'plugin', pluginDir}` |
 | `workflows/workflows.js › run the … saved … of …` | wired | `POST /api/scripts/bench` `{key, all:true}`, read from its `scriptbench-done` or `scriptbench-error` frame |
 | `workflows/workflows.js › the Team way` | not offered live | dev has no workflow sharing with a team (no route under `ui/routes/workflows/`), so the Team way stays the design's empty state until the owner decides (slice 7 Open question 3) |
+| `marketplace/marketplace.js › the For you way` | not offered live | dev has no plugin suggestion source (no route under `ui/routes/marketplace/` says which plugin fits how you work, nor why), and each For you card must name its reason, so the shelf and its bar way stay empty live until the owner decides (slice 8 Open question 1) |
 | `workspaces/workspaces.js › open … in your editor` | wire to | the workspaces routes |
 
 ## Figure rows
@@ -190,6 +192,7 @@ One row per seeded figure: each data key and seed getter of the globals a model 
 | `shell/world.js › RailDemoState.conn` | wired | `ui/public/stillhet/live/live-adapter.mjs`: `list` is loading until the first snapshot, failed, or refresh after a failed refetch; `conn` is offline while the socket is down and session on a 401 or close code 4001, through `RailWorld.setState` / `load` (D8, D20) |
 | `shell/world.js › RailDemoState.task` | wired | `ui/public/stillhet/live/task-live.mjs`: a task page is loading until the list's first load and `GET /api/history/:key/:id` answer, failed on a 5xx or no answer, gone when neither the runs nor the store hold it or History answers 404 (`RailTaskLive.state`); the demo reads it from `?state=task-…` (fail.task-page) |
 | `shell/world.js › RailDemoState.thread` | wired | `ui/public/stillhet/live/chat-live.mjs`: an open chat is loading while `GET /api/ask/threads/:id` is out, failed on a 5xx or no answer, gone on a 404 (`RailChatLive.state`); the demo reads it from `?state=thread-…` |
+| `shell/world.js › RailDemoState.market` | wired | a demo-kind input only (`?state=update-asks`: the demo Jira's update asks for something new, form.update-asks); live, the same confirm comes from dev's update preview `access` (`live/market-live.mjs`, slice 8 D9) |
 | `shell/world.js › RailWorld.data` | wired | `ui/public/stillhet/live/live-adapter.mjs`: `GET /api/history`, `hello.runs` and the run frames (`run-created`, `state`, `question`, `question-resolved`, `done`, `error`, `title`), mapped by `live/live-map.mjs`; Needs you is dev's rule (`src/shared/needs-you.mjs`) |
 | `pulse/pulse-model.js › PulseModel.BUDGET_RESETS` | wired | `GET /api/budget` `windowEndMs`, through `RailWorld.part('costs')` |
 | `pulse/pulse-model.js › PulseModel.FINDS` | wired | the places, then the store's projects, schedules and chats (`GET /api/projects`, `GET /api/schedules`, `GET /api/ask/threads?show=all`) |
@@ -240,6 +243,19 @@ One row per seeded figure: each data key and seed getter of the globals a model 
 | `profile › the interface mode` | wired | dev's `uiLevel`: the `data-level` stamp at start, `POST /api/settings {uiLevel}` on a person's pick only |
 | `profile › Keep awake` | wired | `keepAwake` of `GET /api/settings`; `POST /api/settings {keepAwake}` |
 | `profile › Away` | wired | `GET /api/away-mode`; `POST /api/settings {nightModeToggle}` with dev's Away switch body |
+
+## Dev surfaces
+
+One row per surface of today's UI that Stillhet must carry (gate.prototype in `docs/rail/gate.md`). An id is a Settings key (`setting › keepAwake`, a top-level key of `GET /api/settings`), a path today's UI fetches (`route › /api/runs/:param/artifacts`), or a today's-UI file or folder (`ui/public/app.js`, `ui/public/chat/`). The status is one of `wired` (then where in Stillhet), `wire to` or `not offered live` (then why not yet); the third cell is never empty and each id has one row. `npm test` fails a new Settings key or fetched path with no row (`tools/stillhet-surfaces.mjs`); every surface that existed when the gate came in is frozen in `test/fixtures/stillhet-surfaces-baseline.json`, which only shrinks: add a row, then lower it with `npm run stillhet:surfaces -- --update`. In CI, a PR that changes today's UI and no prototype file passes only with a `wire to` row it adds or changes here for each changed file (`tools/prototype-pr-check.mjs`).
+
+| Surface | Status | Where in Stillhet, or why not yet |
+|---|---|---|
+| `route › /api/prompt-check/grade` | wire to | The prompt check's grade; Stillhet's composer chip that calls it is Shaper Tracks slice 2 (the chip and kind picker), building now |
+| `ui/public/app.js` | wire to | Starts the prompt check's grader in today's UI; Stillhet's composer gets it with the chip in Shaper Tracks slice 2 |
+| `ui/public/chat-settings-view.mjs` | wire to | The "Check how clear a task prompt is" row in today's Settings › Chat; Stillhet's Settings row is built in Shaper Tracks slice 2 (owner approved) |
+| `ui/public/prompt-check/` | wire to | The browser grader (cheapest-first check); Stillhet's composer uses it from Shaper Tracks slice 2 |
+| `ui/public/settings/settings.html` | wire to | The setting's place in today's Settings page; Stillhet's Settings row is Shaper Tracks slice 2 |
+| `setting › pulseFor` | wired | Settings › Notifications, the Pulse animation row (`pulse.js` reads it through the live map; #1258) |
 
 ## Opt-in
 
