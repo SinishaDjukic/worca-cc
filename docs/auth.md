@@ -34,6 +34,9 @@ Access is decided per Worca instance: `allowedGroups` lists the groups or roles 
 - **One instance per team**: install the chart once per team (a release per namespace, or a
   Compose project per host), each with its own `allowedGroups`.
 - **Teams sharing an instance**: list several groups.
+- **Everyone the provider signs in**: leave `allowedGroups` empty. With a single-tenant Entra app
+  that is everyone in the tenant (guests included), whether or not they hold a role. People
+  without roles or groups have no teams in worca.
 - **Groups or roles**: `teamsClaim` names the claim to read: `groups`, `roles`, or a dotted path
   such as `realm_access.roles`. The proxy decides access from it, and worca reads its teams from
   the same claim.
@@ -120,6 +123,19 @@ docker compose -f compose.yml -f compose.auth.yml up -d
 - The proxy listens on `127.0.0.1:4180`. Put your TLS reverse proxy (Caddy, Traefik, nginx) in
   front of it at `https://$WORCA_AUTH_HOST`. The callback is
   `https://$WORCA_AUTH_HOST/oauth2/callback`, or `WORCA_AUTH_REDIRECT_URL`.
+- worca's own port (`WORCA_PORT`) isn't published: every request goes through the proxy. Run
+  the CLI with `docker compose exec worca worca ...`. Needs Docker Compose 2.18 or newer.
+- **`WORCA_AUTH_HOST` is never `localhost`.** A localhost host keeps worca local-only, and it
+  refuses the proxy, which reaches it from another container (403, "an identity proxy is in
+  front of worca but WORCA_ALLOWED_HOSTS names no host").
+- **To try it on one machine** without TLS or DNS: Entra ID and most providers accept an `http`
+  callback on `localhost`. Register `http://localhost:4180/oauth2/callback` and set:
+  ```bash
+  WORCA_AUTH_HOST=worca.test        # any name that isn't localhost; nothing resolves it
+  WORCA_AUTH_REDIRECT_URL=http://localhost:4180/oauth2/callback
+  WORCA_AUTH_COOKIE_SECURE=false    # plain http
+  ```
+  Then open `http://localhost:4180`.
 - It combines with `compose.workers.yml`.
 - **With `compose.egress.yml`**, worca sits only on the `internal` network. Join the proxy to it
   in a `compose.override.yml`, and add the provider's host to `WORCA_EGRESS_ALLOW`, because worca
@@ -144,7 +160,8 @@ The audience worca checks is the client id, which is the `aud` of the provider's
 
 ### Microsoft Entra ID
 
-Not yet checked against a live tenant. The values below follow Entra's documented token format.
+Checked against a live tenant with the Compose overlay: sign-in, `preferred_username` as the
+email, and a person with no role assignment admitted when `allowedGroups` is empty.
 
 1. **App registration**: Entra admin center → App registrations → New registration.
    - **Supported account types:** *this organizational directory only* (single tenant). Worca
@@ -157,6 +174,11 @@ Not yet checked against a live tenant. The values below follow Entra's documente
 
    Then, in Enterprise applications → your app → Users and groups, assign people or groups to
    each role. The ID token carries the assigned roles in `roles`.
+
+   **To let everyone in the tenant in**, skip the roles: leave Enterprise applications → your
+   app → Properties → *Assignment required?* at **No** (the default) and `allowedGroups` empty.
+   If the first sign-in asks for admin approval, the tenant has user consent turned off: an
+   admin grants consent for the app once (`openid profile email offline_access`).
 4. Values:
 
    | Setting | Value |
@@ -243,5 +265,7 @@ variables ([credential-broker.md](credential-broker.md)).
 | 403 from the proxy after sign-in | The person holds none of `allowedGroups` in `teamsClaim`. The proxy's log names the user. Decode the ID token (jwt.io, offline) to see the claims. |
 | 401 from worca after a successful sign-in | The worca log says why: issuer mismatch (compare `iss` exactly), audience (must be the client id), the keys couldn't be loaded (JWKS URL, CA), or no email in `WORCA_IDENTITY_EMAIL_CLAIM`. |
 | 403 `host not allowed` | `WORCA_ALLOWED_HOSTS` must be the host the browser uses, which the proxy passes on. |
+| 403 `an identity proxy is in front of worca but WORCA_ALLOWED_HOSTS names no host` | `WORCA_ALLOWED_HOSTS` (Compose: `WORCA_AUTH_HOST`) is empty or `localhost`. Set it to the host people open; see "To try it on one machine" above. |
+| "Need admin approval" from Entra ID | The tenant has user consent off: an admin grants consent for the app once. |
 | Signed out every few minutes | No refresh token: add `offline_access` to the scope (Entra ID), or raise the provider's session length. |
 | Cookie too large, or 431 or 502 from the Ingress | Large ID tokens: set `auth.redisUrl`, or raise the Ingress's header buffer. |

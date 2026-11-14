@@ -9,11 +9,17 @@
 # .env values) and records who did what by the token's email and teams. No Cloudflare.
 #
 # The proxy listens on 127.0.0.1:4180 (WORCA_AUTH_BIND / WORCA_AUTH_PORT). Put your TLS reverse
-# proxy (Caddy, Traefik, nginx) in front of it at https://WORCA_AUTH_HOST; worca itself stays
-# unpublished to the network. Required in .env: WORCA_AUTH_HOST, WORCA_OIDC_ISSUER_URL,
-# WORCA_OIDC_JWKS_URL, WORCA_OIDC_CLIENT_ID, WORCA_OIDC_CLIENT_SECRET, WORCA_AUTH_COOKIE_SECRET.
+# proxy (Caddy, Traefik, nginx) in front of it at https://WORCA_AUTH_HOST. worca's own port is not
+# published: every request comes through the proxy (the CLI still works through `docker compose
+# exec worca ...`). Needs Docker Compose 2.18 or newer (the !reset tag).
+#
+# Required in .env: WORCA_AUTH_HOST, WORCA_OIDC_ISSUER_URL, WORCA_OIDC_JWKS_URL,
+# WORCA_OIDC_CLIENT_ID, WORCA_OIDC_CLIENT_SECRET, WORCA_AUTH_COOKIE_SECRET. WORCA_AUTH_HOST is the
+# host people open, never localhost: worca treats a localhost host as local-only and refuses the
+# proxy, which reaches it from another container. To try it on one machine, see docs/auth.md.
 services:
   worca:
+    ports: !reset []
     environment:
       WORCA_ALLOWED_HOSTS: ${WORCA_AUTH_HOST:?set WORCA_AUTH_HOST to the public host name, e.g. worca.example.com}
       WORCA_IDENTITY_ISSUER: ${WORCA_OIDC_ISSUER_URL:?set WORCA_OIDC_ISSUER_URL (docs/auth.md)}

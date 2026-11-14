@@ -46,6 +46,7 @@ test('compose.auth.yml: worca verifies the same issuer, client and claims the pr
   assert.match(c, /WORCA_OIDC_TEAMS_CLAIM: \$\{WORCA_OIDC_TEAMS_CLAIM:-groups\}/, 'the proxy gets the same default');
   assert.match(c, /image: quay\.io\/oauth2-proxy\/oauth2-proxy:\$\{WORCA_OAUTH2_PROXY_TAG:-v\d+\.\d+\.\d+\}/, 'pinned');
   assert.match(c, /"\$\{WORCA_AUTH_BIND:-127\.0\.0\.1\}:/, 'loopback by default');
+  assert.match(c, /\n  worca:\n    ports: !reset \[\]\n/, "compose.yml's published port is dropped");
   assert.doesNotMatch(c, /OAUTH2_PROXY_(CLIENT_|PROVIDER\b|SCOPE|ALLOWED_|UPSTREAMS|OIDC_)/, 'no option --alpha-config refuses');
   const helm = read('deploy/helm/worca/values.yaml').match(/repository: oauth2-proxy\/oauth2-proxy\n\s+tag: (v[\d.]+)/)[1];
   assert.match(c, new RegExp(`WORCA_OAUTH2_PROXY_TAG:-${helm.replaceAll('.', '\\.')}\\}`), 'Compose and Helm pin the same proxy');
@@ -80,6 +81,7 @@ test('docker compose renders compose.yml + compose.auth.yml (when Docker is usab
   assert.equal(svc['oauth2-proxy'].environment.WORCA_OIDC_TEAMS_CLAIM, 'roles');
   assert.equal(svc['oauth2-proxy'].environment.OAUTH2_PROXY_REDIRECT_URL, 'https://worca.example.com/oauth2/callback');
   assert.equal(svc['oauth2-proxy'].ports[0].host_ip, '127.0.0.1');
+  assert.equal(svc.worca.ports, undefined, "worca's own port is not published: the proxy is the only way in");
   const missing = spawnSync('docker', ['compose', '-f', 'compose.yml', '-f', 'compose.auth.yml', 'config'], { cwd: join(ROOT, 'docker'), encoding: 'utf8', env: { ...env, WORCA_OIDC_CLIENT_ID: '' }, timeout: 60000 });
   assert.notEqual(missing.status, 0);
   assert.match(missing.stderr, /WORCA_OIDC_CLIENT_ID/);
