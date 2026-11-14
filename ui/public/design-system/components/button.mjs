@@ -1,4 +1,4 @@
-// Button (docs/design-system.md › Worca Rail › Button): one look per role, never a size or colour of its own.
+// Button (docs/rail/components.md): one look per role, never a size or colour of its own.
 // `kind` is the role: '' (secondary), 'primary' (the one main step of a state), 'quiet' (a step among many), 'danger'
 // (only inside the confirm of a step that cannot be taken back). An icon-only button names itself in `label`, which
 // becomes its aria-label; its tooltip is `title` (the label when not given).
@@ -13,14 +13,15 @@ const KIND = { primary: 'btn-primary', quiet: 'btn-quiet', danger: 'btn-danger',
  * @param {string} [o.icon]       an icon's SVG markup, before the words
  * @param {boolean} [o.iconOnly]  a square icon button: `label` goes to aria-label
  * @param {string} [o.title]      the tooltip
+ * @param {string|number} [o.count]  how many it applies to, after the words (a bulk action's count)
  * @param {string} [o.cls]        the page's hook class (never a look)
  * @param {object} [o.attrs]      data-*, aria-* and disabled, written as given
  */
-export function button({ label, kind = '', icon = '', iconOnly = false, title, cls: extra = '', attrs: a = {} }) {
+export function button({ label, kind = '', icon = '', iconOnly = false, title, count, cls: extra = '', attrs: a = {} }) {
   if (!(kind in KIND)) throw new Error(`button: unknown kind "${kind}"`);
   const tip = title ?? (iconOnly ? label : undefined);
   const name = iconOnly ? { 'aria-label': label } : {};
-  return `<button type="button" class="${cls('btn btn-sm', KIND[kind], iconOnly && 'btn-icon', extra)}"${attrs({ ...name, title: tip, ...a })}>${icon}${iconOnly ? '' : esc(label)}</button>`;
+  return `<button type="button" class="${cls('btn btn-sm', KIND[kind], iconOnly && 'btn-icon', extra)}"${attrs({ ...name, title: tip, ...a })}>${icon}${iconOnly ? '' : esc(label)}${count === undefined ? '' : ` <span class="runs-bulk-c">${esc(count)}</span>`}</button>`;
 }
 
 /**

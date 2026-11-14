@@ -10,7 +10,7 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const OLD = /Shape it first|Plan it with me|while shaping/i;
 const REFUSED = /\bRun anyway\b/;   // D32: a button names its outcome (case-sensitive: prose "to run anyway" is no label)
 const bad = (l) => OLD.test(l) || REFUSED.test(l);
-const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'coverage', 'vendor']);
+const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'coverage', 'vendor', 'stillhet']);   // stillhet: the prototype's code, moved from plans/rail/prototype/ (never read by this scan); it has its own gates (docs/rail/gate.md)
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
     if (SKIP_DIRS.has(name)) continue;

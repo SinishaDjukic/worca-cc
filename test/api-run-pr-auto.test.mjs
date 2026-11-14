@@ -92,6 +92,20 @@ test('POST /api/run saves pr_auto with source project, or run when the body chos
   } finally { K.writeProjectSettings({ projectDir }, { 'pr.open': null }); }
 });
 
+test('POST /api/run costCapUsd: the run keeps its own cap (pipelines.cost_cap_usd); a refused cap starts nothing', async () => {
+  const id = await startAndStop({ costCapUsd: 7 });
+  assert.equal(K.getDb().prepare('SELECT cost_cap_usd FROM pipelines WHERE id = ?').get(id).cost_cap_usd, 7);
+  const none = await startAndStop({});
+  assert.equal(K.getDb().prepare('SELECT cost_cap_usd FROM pipelines WHERE id = ?').get(none).cost_cap_usd, null, 'no cap sent: none stored');
+  const before = runs.size;
+  for (const bad of [-1, 0, '5']) {
+    const r = await post('/api/run', BODY({ costCapUsd: bad }));
+    assert.equal(r.status, 400, String(bad));
+    assert.match((await r.json()).error, /costCapUsd must be a number above 0/);
+  }
+  assert.equal(runs.size, before, 'a refused cap creates no run');
+});
+
 test('exempt starts save open none and the kind, even when the project setting would open a PR', async () => {
   K.writeProjectSettings({ projectDir }, { 'pr.open': 'ready' });
   try {

@@ -279,7 +279,7 @@ test('v5 — done and result carry every field the SessionHost reads (Tasks 40, 
   assert.equal(run([okTurn()[1]]).facts.sawInit, false);
 });
 
-test('v5 — stderr lines reach said too (C20); host frames with no row of their own reach nobody (rows 2, 6b)', () => {
+test('v5 — stderr lines reach said too (C20); host frames with no row of their own reach nobody (rows 2, 6b), but a rate-limit reading does', () => {
   const seen = { member: [], host: [] };
   const d = createTurnDemux({ agentType: TYPE, onMember: (e) => seen.member.push(e), onHostText: (t) => seen.host.push(t) });
   d.feed({ type: 'stderr', stream: 'err', text: 'No conversation found with session ID: H0' });
@@ -288,7 +288,7 @@ test('v5 — stderr lines reach said too (C20); host frames with no row of their
     { type: 'system', subtype: 'task_notification', task_id: 'k1', tool_use_id: 'T1', status: 'completed', usage: { total_tokens: 5, duration_ms: 9 } },
     { type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'auto', pre_tokens: 9 } }]) d.feed(env(f));
   assert.deepEqual(d.facts().said, ['No conversation found with session ID: H0']);
-  assert.deepEqual(seen.member.map((e) => e.type), ['stderr', 'session']);
+  assert.deepEqual(seen.member.map((e) => e.type), ['stderr', 'session', 'limit'], 'the host\'s rate-limit reading is forwarded as a limit event');
   assert.deepEqual(seen.host, []);
 });
 

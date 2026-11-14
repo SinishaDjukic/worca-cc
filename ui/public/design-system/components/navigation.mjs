@@ -1,4 +1,4 @@
-// Trail and Pager (docs/design-system.md › Worca Rail › Navigation: one model). The trail goes one depth up (a thing to
+// Trail and Pager (docs/rail/navigation.md). The trail goes one depth up (a thing to
 // its place, a run to its group): it never names the page itself, and on a narrow screen it is its parent alone,
 // ‹ Parent. The pager goes sideways, to a sibling (the next run in a group); one that has not started yet is disabled
 // and says why. Both sit in the top bar; the trail is the one way back on screen.
@@ -13,10 +13,12 @@ import { button } from './button.mjs';
  * @param {string} [o.label]   aria-label
  */
 export function trail({ items, label = 'Breadcrumb' }) {
-  const step = (it) => (it.button
+  const step = (it) => (it.current
+    ? `<span class="rc-crumb" aria-current="page"${attrs({ title: it.label })}>${esc(it.label)}</span>`
+    : it.button
     ? `<button type="button" class="rc-crumb"${attrs({ ...(it.attrs || {}), title: it.label })}>${esc(it.label)}</button>`
-    : `<a class="rc-crumb" href="#"${attrs({ ...(it.attrs || {}), title: it.label })}>${esc(it.label)}</a>`);
-  return `<nav class="rc-crumbs"${attrs({ 'aria-label': label })}><ol>${items.map((it, i) => `<li${i === items.length - 1 ? ' class="is-parent"' : ''}>${step(it)}</li>`).join('')}</ol></nav>`;
+    : `<a class="rc-crumb"${attrs({ href: it.href || '#', ...(it.attrs || {}), title: it.label })}>${esc(it.label)}</a>`);
+  return `<nav class="rc-crumbs"${attrs({ 'aria-label': label })}><ol>${items.map((it, i) => `<li${i === items.filter((x) => !x.current).length - 1 ? ' class="is-parent"' : ''}>${step(it)}</li>`).join('')}</ol></nav>`;
 }
 
 /**

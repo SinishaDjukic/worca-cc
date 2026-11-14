@@ -308,7 +308,7 @@ test('Marketplace is a page of its own: its loader and background refresh, its t
 // off them, so no click lands on an old address (and no branch waits for a tab that is gone).
 test('no in-app link, route call or tab check names an old address', () => {
   const pub = fileURLToPath(new URL('../ui/public/', import.meta.url));
-  const files = readdirSync(pub, { recursive: true }).map(String).filter((f) => /\.(m?js|html)$/.test(f));
+  const files = readdirSync(pub, { recursive: true }).map(String).filter((f) => /\.(m?js|html)$/.test(f) && !/^stillhet[\\/]/.test(f));   // stillhet: the prototype's code has its own gates (docs/rail/gate.md)
   assert.ok(files.includes('app.js'));
   assert.ok(files.some((f) => /^graph[\\/]/.test(f)) && files.some((f) => /^ask[\\/]/.test(f)), 'the sweep reads ui/public/graph and ui/public/ask too');
   const offenders = [];
@@ -331,7 +331,7 @@ test('no in-app link, route call or tab check names an old address', () => {
 function copyFiles() {
   const root = fileURLToPath(new URL('../', import.meta.url));
   const walk = (dir) => readdirSync(root + dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory()
-    ? (e.name === 'vendor' ? [] : walk(`${dir}/${e.name}`)) : [`${dir}/${e.name}`]));
+    ? (e.name === 'vendor' || e.name === 'stillhet' ? [] : walk(`${dir}/${e.name}`)) : [`${dir}/${e.name}`]));
   const docs = ['README.md', 'THIRD_PARTY_NOTICES.md', '.claude/skills/creating-worca-cc-plugins/SKILL.md',
     ...readdirSync(root + 'docs').filter((f) => f.endsWith('.md')).map((f) => `docs/${f}`),
     ...readdirSync(root + 'plugins').map((d) => `plugins/${d}/README.md`).filter((f) => { try { readFileSync(root + f); return true; } catch { return false; } })];

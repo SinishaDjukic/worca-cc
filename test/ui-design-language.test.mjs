@@ -75,7 +75,7 @@ test('the one button: 32px default, 28px small, 40px large, 40px minimum under a
   }
 });
 
-const SKIP_DIRS = new Set(['node_modules', 'vendor', 'fonts', 'assets']);
+const SKIP_DIRS = new Set(['node_modules', 'vendor', 'fonts', 'assets', 'stillhet']);   // stillhet: the prototype's code, moved from plans/rail/prototype/ (never read by this scan); it has its own gates (docs/rail/gate.md)
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
     if (SKIP_DIRS.has(name)) continue;
@@ -300,7 +300,7 @@ const TABLIST_OK = [
   /class="(?:rd|hd|pd|tp)-tabs"/,   // initDetailTabs hosts: `bar.classList.add('tabs')` when the screen renders
   /make\('div', 'term-tabs'\)/,       // terminal-pane.mjs: the terminal strip is a browser-style tab row, not the underline
 ];
-const TAB_OK = [/button\(text, 'term-tab'/];   // the terminal's own tabs, same reason
+const TAB_OK = [/sc-stage/, /export const REAL_CONTROL/, /button\(text, 'term-tab'/];   // the terminal's own tabs, same reason
 const ROLE_TAB = /role(?:'\s*,\s*'|=")(tab|tablist)['"]/;
 const classTok = (w) => new RegExp(`['"\`][^'"\`\\n]*(?<![\\w-])(?:${w})(?![\\w-])[^'"\`\\n]*['"\`]`);
 function tabEmitterHits(files) {

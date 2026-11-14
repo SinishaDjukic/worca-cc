@@ -5,6 +5,8 @@ import { resolveNightConfig } from '../../../src/core/night/config.mjs';
 import { nightLayers } from '../../../src/core/night/effective.mjs';
 import { listNotifications, markAllRead, markRead, unreadCount } from '../../../src/core/notifications.mjs';
 import { onboardingStatus } from '../../../src/core/onboarding.mjs';
+import { BUGS_URL } from '../../../src/core/run-report.mjs';
+import { stillhetAskOpen } from '../../../src/core/stillhet.mjs';
 import { nightModeHereSince, nightModeHereSinceFor, nightModeSettings, nightModeToggle, nightModeToggleFor, onboardingPrefs, setOnboardingPrefs } from '../../../src/core/settings.mjs';
 import { awayPersonOf, badRequest, emitChanged, isFreshInstall, isTruthy, notifReader, pinUiLevel, resolveProjectDir } from '../../server.mjs';
 
@@ -78,7 +80,7 @@ app.get('/api/away-mode', (req, res) => {
 // ---------------------------------------------------------------------------
 // ?recheck=1 skips the remembered Claude sign-in answer (the dialog's Check again).
 app.get('/api/onboarding', async (req, res) => {
-  try { res.json({ ...(await onboardingStatus({ recheck: isTruthy(req.query.recheck) })), fresh: isFreshInstall() }); }
+  try { res.json({ ...(await onboardingStatus({ recheck: isTruthy(req.query.recheck) })), fresh: isFreshInstall(), stillhetAsk: stillhetAskOpen(), bugsUrl: BUGS_URL }); }
   catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err) }); }
 });
 app.post('/api/onboarding', async (req, res) => {
@@ -88,7 +90,7 @@ app.post('/api/onboarding', async (req, res) => {
   }
   catch (err) { return badRequest(res, err && err.message ? err.message : String(err)); }
   emitChanged('onboarding-changed');
-  try { res.json({ ...(await onboardingStatus()), fresh: isFreshInstall() }); }
+  try { res.json({ ...(await onboardingStatus()), fresh: isFreshInstall(), stillhetAsk: stillhetAskOpen(), bugsUrl: BUGS_URL }); }
   catch (err) { res.status(500).json({ error: err && err.message ? err.message : String(err), ...onboardingPrefs() }); }
 });
 }
