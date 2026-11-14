@@ -21,6 +21,7 @@ import { designBuildModels, designIdForThread, designScope } from '../../../src/
 import { getDesign } from '../../../src/core/design/store.mjs';
 import { DIRECTION_MAX_CHARS } from '../../../src/core/directions.mjs';
 import { chatDescriptor, chatEngineGate } from '../../../src/core/engines/chat.mjs';
+import { flagEnabled } from '../../../src/core/flags.mjs';
 import { ASK_ENGINES } from '../../../src/core/model-env.mjs';
 import { CLAUDE_SIGNED_OUT_CODE, CLAUDE_SIGNED_OUT_MESSAGE } from '../../../src/core/preflight.mjs';
 import { changesCard, landingFacts, landingFactsOfFeature } from '../../../src/core/shape/changes.mjs';
