@@ -159,8 +159,11 @@ test('improvePrompt: failed with timeout, unreadable reply and model call failed
   assert.deepEqual(await improvePrompt({ text: 'x', kind: 'bug' }, { model: 'm' }), { source: 'failed', error: 'unreadable reply' });
   _setImproveRunnerForTest(async () => { throw new Error('boom'); }, () => null);
   assert.deepEqual(await improvePrompt({ text: 'x', kind: 'bug' }, { model: 'm' }), { source: 'failed', error: 'model call failed' });
+  // AbortSignal.timeout's timer does not hold the event loop open: keep one ref'd timer while the runner hangs (Node 22 ends the test otherwise)
+  const hold = setTimeout(() => {}, 5000);
   _setImproveRunnerForTest(() => new Promise(() => {}), () => null);
   assert.deepEqual(await improvePrompt({ text: 'x', kind: 'bug' }, { model: 'm', timeoutMs: 20 }), { source: 'failed', error: 'timeout' });
+  clearTimeout(hold);
   const ctl = new AbortController();
   const p = improvePrompt({ text: 'x', kind: 'bug' }, { model: 'm', signal: ctl.signal });
   ctl.abort();
