@@ -64,7 +64,11 @@ Its own run, after the owner approves the mock, before the end of feature 3. Des
 6. **Kept.** Settings › Labs keeps the `rail` row (`stillhetLabsRow`), `STILLHET_ASK_ON` stays `false`, and there is no
    migration. `test/stillhet-switch.test.mjs` keeps guarding both.
 
-## Open questions for the owner
+## Owner decision (2026-11-14)
+
+Approved as shown: the sun-on-water Stillhet icon, the toothed gear and the Pulse row mark. The menu keeps "Try Stillhet" (checked while on) and "Back to today's UI". Build next, per the plan above.
+
+## Open questions for the owner (answered above)
 
 - The Stillhet glyph: is a still sun on water calm and clear enough beside `sun` and the new gear? Considered and set
   aside: a plain horizon line (too close to a minus), a half sun on the line (reads as sunrise, a weather mark), a leaf
