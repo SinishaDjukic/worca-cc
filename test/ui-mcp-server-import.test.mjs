@@ -2,7 +2,7 @@
 // docs/mcp-servers.md "From the Servers view"): the list step (files, masked rows, pickable rule, cap, project re-scan,
 // home note), the review step, Import with its digest, Review again after a 409, Back, the late-answer guards, and no
 // secret in the DOM over the real server-side view.
-import { test, after } from 'node:test';
+import { test, after, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -13,7 +13,10 @@ import { openMcpImport, pickable, targetText, IMPORT_MAX, IMPORT_HINT, HOME_NOTE
 
 useTempHome(after, 'worca-ui-mcp-import-');
 
-const doc = new JSDOM('<!doctype html><body></body>').window.document;
+// One window per test, closed after it.
+let dom; let doc;
+beforeEach(() => { dom = new JSDOM('<!doctype html><body></body>'); doc = dom.window.document; });
+afterEach(() => { dom.window.close(); });
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const settle = async () => { for (let i = 0; i < 6; i++) await tick(); };
 const click = (el) => el.dispatchEvent(new doc.defaultView.Event('click', { bubbles: true }));
@@ -80,7 +83,7 @@ const msgOf = (m) => body(m).querySelector('.form-msg');
 const rowOf = (m, id) => body(m).querySelector(`.mcp-imp-row[data-id="${id}"]`);
 const rowsOf = (m) => [...body(m).querySelectorAll('.mcp-imp-row')];
 
-test('pure helpers: the pickable rule is discoveryView\'s importable; the target is the command line or the URL', () => {
+test('pure helpers and source: the pickable rule is discoveryView\'s importable; the target is the command line or the URL', () => {
   assert.equal(pickable({ importable: true }), true);
   for (const r of [{ importable: false }, {}, { importable: 'yes' }, null]) assert.equal(pickable(r), false);
   assert.equal(targetText(ROWS[0]), `/opt/homebrew/bin/npx -y @modelcontextprotocol/server-filesystem /Users/me/My Documents ${M}`);
@@ -89,6 +92,10 @@ test('pure helpers: the pickable rule is discoveryView\'s importable; the target
   assert.equal(IMPORT_MAX, 10);
   assert.equal(IMPORT_HINT, 'Imported servers join no set: turn them on in a set on Connectors › MCP servers.');
   assert.equal(HOME_NOTE, 'This worca does not read the home-folder configs of the machine it runs on. Pick a project to scan its files.');
+  // Source scan: no quoted string ending in the word that names a module load, and text goes in with textContent only.
+  const src = readFileSync(new URL('../ui/public/mcp-server-import.mjs', import.meta.url), 'utf8');
+  assert.equal(/\bimport\s*\(?\s*['"]/.test(src), false);
+  assert.equal(/innerHTML/.test(src), false, 'text goes in with textContent only');
 });
 
 test('list rendering: files with their status, every row\'s source, name, transport, full target, masked values, flags, problems and notes', async () => {
@@ -127,7 +134,7 @@ test('list rendering: files with their status, every row\'s source, name, transp
   assert.equal(b.querySelector('.mcp-imp-empty'), null);
 });
 
-test('moreServers and the empty state', async () => {
+test('moreServers, the empty state and the home note', async () => {
   const more = harness({ over: { 'GET /api/mcp/discover': ok({ ...DISC, moreServers: 7 }) } });
   await settle();
   assert.ok([...body(more.modal).querySelectorAll('p.hint')].some((p) => p.textContent === '7 more servers not listed'));
@@ -135,6 +142,9 @@ test('moreServers and the empty state', async () => {
   await settle();
   assert.equal(body(none.modal).querySelector('.mcp-imp-empty').textContent, 'No MCP servers found in other tools\' files.');
   assert.equal(rowsOf(none.modal).length, 0);
+  const noHome = harness({ over: { 'GET /api/mcp/discover': ok({ ...DISC, homeConfigs: false, servers: [] }) } });
+  await settle();
+  assert.equal(body(noHome.modal).querySelector('p.hint.mcp-imp-home-note').textContent, HOME_NOTE, 'the home note only when the server reads no home configs');
 });
 
 test('pickable rule: in-worca and problem rows are disabled; a taken name and a nameless row can be picked; the name input follows the tick', async () => {
@@ -203,13 +213,7 @@ test('project change: the select re-scans with ?project= and clears the picks; a
   assert.equal(msgOf(m.modal).textContent, 'Pick at least one server', 'the project change cleared the earlier pick');
 });
 
-test('home note: only when the server reads no home configs', async () => {
-  const m = harness({ over: { 'GET /api/mcp/discover': ok({ ...DISC, homeConfigs: false, servers: [] }) } });
-  await settle();
-  assert.equal(body(m.modal).querySelector('p.hint.mcp-imp-home-note').textContent, HOME_NOTE);
-});
-
-test('Review: no picks → a message and no POST; picks POST exactly { projectKey, servers }; the review step renders the card', async () => {
+test('Review: no picks → a message and no POST; picks POST exactly { projectKey, servers }; the review step renders the card; Back keeps the picks; a 400 stays on the list', async () => {
   const m = harness();
   await settle();
   await act(m.modal, 'Review');
@@ -232,18 +236,25 @@ test('Review: no picks → a message and no POST; picks POST exactly { projectKe
   assert.equal(b.querySelector('.mcp-imp-present').textContent, 'Already in worca, not added again: github (Cursor · ~/.cursor/mcp.json)');
   assert.ok([...b.querySelectorAll('p.hint')].some((p) => p.textContent === IMPORT_HINT));
   assert.deepEqual(labels(m.modal), ['Back', 'Cancel', 'Import']);
-});
-
-test('Review: a 400 stays on the list with the error; nothing to import names the present servers', async () => {
-  const m = harness({ over: { 'POST /api/mcp/import': { ok: false, status: 400, data: { error: 'nothing to import: every picked server is already in worca or cannot be imported',
-    code: 'NOTHING_TO_IMPORT', errors: [], alreadyPresent: [{ id: 'cursor:user:files', name: 'files', from: 'Cursor · ~/.cursor/mcp.json' }], skipped: [] } } } });
-  await settle();
-  tickBox(rowOf(m.modal, 'cursor:user:files'));
-  await act(m.modal, 'Review');
+  // Back keeps the picks and the typed names, with no new scan.
+  const scans = m.calls.filter(([, p]) => p.startsWith('/api/mcp/discover')).length;
+  await act(m.modal, 'Back');
   await settle();
   assert.equal(m.modal.opened.title, 'Import from other tools');
-  assert.match(msgOf(m.modal).textContent, /^nothing to import: .*files/);
-  assert.equal(rowOf(m.modal, 'cursor:user:files').querySelector('.mcp-imp-pick').checked, true, 'the picks stay');
+  const again = rowOf(m.modal, 'cursor:user:docs');
+  assert.equal(again.querySelector('.mcp-imp-pick').checked, true);
+  assert.deepEqual([again.querySelector('.mcp-imp-name').value, again.querySelector('.mcp-imp-name').disabled], ['  docs-2 ', false]);
+  assert.equal(m.calls.filter(([, p]) => p.startsWith('/api/mcp/discover')).length, scans);
+  // A 400 stays on the list with the error; nothing to import names the present servers, and the picks stay.
+  const bad = harness({ over: { 'POST /api/mcp/import': { ok: false, status: 400, data: { error: 'nothing to import: every picked server is already in worca or cannot be imported',
+    code: 'NOTHING_TO_IMPORT', errors: [], alreadyPresent: [{ id: 'cursor:user:files', name: 'files', from: 'Cursor · ~/.cursor/mcp.json' }], skipped: [] } } } });
+  await settle();
+  tickBox(rowOf(bad.modal, 'cursor:user:files'));
+  await act(bad.modal, 'Review');
+  await settle();
+  assert.equal(bad.modal.opened.title, 'Import from other tools');
+  assert.match(msgOf(bad.modal).textContent, /^nothing to import: .*files/);
+  assert.equal(rowOf(bad.modal, 'cursor:user:files').querySelector('.mcp-imp-pick').checked, true, 'the picks stay');
 });
 
 test('Import: the body adds apply and the digest; a double click sends one POST; success closes and hands detail to onDone', async () => {
@@ -309,24 +320,6 @@ test('Import failures: a 500 (or a partial "Added …") calls onChanged; a 400 d
     assert.deepEqual(m.done, []);
     assert.equal(m.modal.opened.title, 'Import · review');
   }
-});
-
-test('Back keeps the picks and the typed names, with no new scan', async () => {
-  const m = harness();
-  await settle();
-  const docs = rowOf(m.modal, 'cursor:user:docs');
-  tickBox(docs);
-  type(docs.querySelector('.mcp-imp-name'), 'docs-2');
-  await act(m.modal, 'Review');
-  await settle();
-  const scans = m.calls.filter(([, p]) => p.startsWith('/api/mcp/discover')).length;
-  await act(m.modal, 'Back');
-  await settle();
-  assert.equal(m.modal.opened.title, 'Import from other tools');
-  const again = rowOf(m.modal, 'cursor:user:docs');
-  assert.equal(again.querySelector('.mcp-imp-pick').checked, true);
-  assert.deepEqual([again.querySelector('.mcp-imp-name').value, again.querySelector('.mcp-imp-name').disabled], ['docs-2', false]);
-  assert.equal(m.calls.filter(([, p]) => p.startsWith('/api/mcp/discover')).length, scans);
 });
 
 test('Cancel or Close before an answer lands: nothing opens, nothing is handed on', async () => {
@@ -424,10 +417,4 @@ test('no secret in the DOM: the real discovery view and review over a fixture ho
     assert.equal(m.modal.opened.title, 'Import · review', msgOf(m.modal)?.textContent);
     leaks('review');
   } finally { rmSync(home, { recursive: true, force: true }); }
-});
-
-test('source scan: no quoted string ending in the word that names a module load', () => {
-  const src = readFileSync(new URL('../ui/public/mcp-server-import.mjs', import.meta.url), 'utf8');
-  assert.equal(/\bimport\s*\(?\s*['"]/.test(src), false);
-  assert.equal(/innerHTML/.test(src), false, 'text goes in with textContent only');
 });
