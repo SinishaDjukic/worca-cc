@@ -451,3 +451,161 @@ test('a created PR asks for the PR states again (afterPr), so its card reads the
   assert.equal((await mk(409).act('pr', { pipelineId: 'p1', projectKey: 'k' })).ok, false);
   assert.equal(asked, 1);
 });
+
+// Run with (D4, D5): a one-stage workflow Worca proposes only to run a task is saved, then the run proposal dev's event
+// turn makes is started, linked to the chat; that proposal is never drawn as a second card
+const WF = { kind: 'card', id: 'cw', state: 'proposed', card: { type: 'workflow', thenRun: true, name: 'Quick fix', projectKey: 'web', shape: { stages: [{ key: 'fix' }] } } };
+const RUNP = { kind: 'card', id: 'cp', state: 'proposed', card: { title: 'Fix it', workflowId: 'wf_x', target: 'project', projectKey: 'web', projectDir: '/p', brief: 'b', guardrailsId: 'normal' } };
+const wfSnap = ({ saved = false, proposal = false, inFlight = null, ended = false } = {}) => snap({ inFlight, messages: [...THREAD.messages.slice(0, 1),
+  { id: 'm8', role: 'assistant', text: '', status: 'done', createdAt: THREAD.messages[0].createdAt, blocks: [saved ? { ...WF, state: 'saved' } : WF] },
+  ...(proposal || inFlight || ended ? [{ id: 'm9', role: 'assistant', text: 'Here is the task.', status: inFlight ? 'streaming' : 'done', createdAt: THREAD.messages[0].createdAt, blocks: proposal ? [RUNP] : [] }] : [])] });
+function runWithRig({ save = () => [200, { block: { state: 'saved', workflowId: 'wf_x' }, turn: { assistantMessageId: 'm9' } }], first = wfSnap(), reads = [], start = () => [200, { runId: 'r1' }] } = {}) {
+  let n = 0;
+  return rig({ answer: (url, method) => {
+    if (method === 'GET' && url === '/api/ask/threads/ask_1') { const s = n === 0 ? first : reads[Math.min(n - 1, reads.length - 1)] || wfSnap({ saved: true, proposal: true }); n++; return [200, s]; }
+    if (url === '/api/ask/threads/ask_1/cards/cw') return save();
+    if (url === '/api/run') return start();
+    return [200, {}];
+  } });
+}
+const order = (calls) => calls.filter((c) => c.method !== 'GET').map((c) => `${c.method} ${c.url}`);
+
+test('run-with: it saves the card, then starts the event turn\'s run proposal with the chat link, in that order', async () => {
+  const r = runWithRig();
+  await r.live.open('ask_1');
+  assert.deepEqual(r.live.turns('ask_1').filter((x) => x.t === 'runwith').map((x) => x.id), ['cw']);
+  const res = await r.live.act('run-with', { threadId: 'ask_1', cardId: 'cw' });
+  assert.equal(res.ok, true); assert.equal(res.data.waiting, true);
+  await tick();
+  assert.deepEqual(order(r.calls), ['POST /api/ask/threads/ask_1/cards/cw', 'POST /api/run']);
+  assert.deepEqual(r.calls.find((c) => c.url === '/api/ask/threads/ask_1/cards/cw').body, { state: 'saved' });
+  const run = r.calls.find((c) => c.url === '/api/run').body;
+  assert.equal(run.workflowId, 'wf_x'); assert.equal(run.askThreadId, 'ask_1'); assert.equal(run.askCardId, 'cp');
+  assert.deepEqual(r.toasts, []);
+  assert.equal(r.live.runWith('ask_1'), null, 'cleared once started');
+});
+
+test('run-with: a refused save posts nothing more', async () => {
+  const r = runWithRig({ save: () => [409, { error: 'name taken' }] });
+  await r.live.open('ask_1');
+  const res = await r.live.act('run-with', { threadId: 'ask_1', cardId: 'cw' });
+  await tick();
+  assert.equal(res.ok, false);
+  assert.deepEqual(order(r.calls), ['POST /api/ask/threads/ask_1/cards/cw']);
+  assert.deepEqual(r.toasts, ['Could not save the workflow: name taken']);
+  assert.equal(r.live.runWith('ask_1'), null);
+  assert.equal(r.live.turns('ask_1').find((x) => x.id === 'cw').t, 'runwith', 'still proposed, Run with stays');
+});
+
+test('run-with: a save whose reply has no turn refuses with the saved-but-no-task words and starts nothing', async () => {
+  const r = runWithRig({ save: () => [200, { block: { state: 'saved', workflowId: 'wf_x' }, turn: null }] });
+  await r.live.open('ask_1');
+  const res = await r.live.act('run-with', { threadId: 'ask_1', cardId: 'cw' });
+  await tick();
+  assert.equal(res.ok, false);
+  assert.match(r.toasts.join('|'), /^Could not start the task: Worca saved Quick fix but could not propose its task/);
+  assert.ok(!r.calls.some((c) => c.url === '/api/run'));
+  assert.equal(r.live.runWith('ask_1'), null);
+});
+
+test('run-with: an event turn that ends with no matching proposal refuses once and clears the wait', async () => {
+  const r = runWithRig({ reads: [wfSnap({ saved: true, inFlight: { messageId: 'm9' } }), wfSnap({ saved: true, ended: true })] });
+  await r.live.open('ask_1');
+  await r.live.act('run-with', { threadId: 'ask_1', cardId: 'cw' });
+  await tick();
+  assert.deepEqual(r.live.runWith('ask_1'), { cardId: 'cw', workflowId: 'wf_x' }, 'waiting while the turn is in flight');
+  assert.equal(r.live.turns('ask_1').filter((x) => x.t === 'runwith').length, 1, 'the card still reads Run with while it waits');
+  await r.live.open('ask_1', { force: true });
+  await tick();
+  assert.deepEqual(r.toasts, ['Could not start the task: Worca saved Quick fix but did not propose its task']);
+  assert.equal(r.live.runWith('ask_1'), null);
+  assert.ok(!r.calls.some((c) => c.url === '/api/run'));
+});
+
+test('run-with: two loads holding the proposal start it once; the proposal is not drawn while it starts', async () => {
+  let release; const held = new Promise((ok) => { release = ok; });
+  const r = runWithRig({ start: async () => { await held; return [200, { runId: 'r1' }]; } });
+  await r.live.open('ask_1');
+  await r.live.act('run-with', { threadId: 'ask_1', cardId: 'cw' });
+  await tick();
+  await r.live.open('ask_1', { force: true }); await tick();
+  assert.equal(r.calls.filter((c) => c.url === '/api/run').length, 1);
+  assert.ok(!r.live.turns('ask_1').some((x) => x.t === 'proposal'), 'the event turn\'s proposal is folded into Run with');
+  assert.equal(r.live.turns('ask_1').filter((x) => x.t === 'runwith').length, 1);
+  release(); await tick();
+  assert.equal(r.calls.filter((c) => c.url === '/api/run').length, 1);
+});
+
+test('run-with: a refused start leaves the proposal visible with its Start', async () => {
+  const r = runWithRig({ start: () => [409, { error: 'no project' }] });
+  await r.live.open('ask_1');
+  await r.live.act('run-with', { threadId: 'ask_1', cardId: 'cw' });
+  await tick();
+  assert.deepEqual(r.toasts, ['Could not start the task: no project']);
+  assert.equal(r.live.runWith('ask_1'), null);
+  assert.deepEqual(r.live.turns('ask_1').filter((x) => x.t === 'proposal').map((x) => x.id), ['cp']);
+});
+
+// the event turn is the save reply's: an older open proposal for the same workflow is never the one started
+const OLDP = { ...RUNP, id: 'cp_old', card: { ...RUNP.card, title: 'An older one' } };
+const msg = (id, blocks, status = 'done') => ({ id, role: 'assistant', text: '', status, createdAt: THREAD.messages[0].createdAt, blocks });
+const wfThread = (rest, inFlight = null, saved = true) => snap({ inFlight, messages: [...THREAD.messages.slice(0, 1), msg('m6', [OLDP]), msg('m8', [saved ? { ...WF, state: 'saved' } : WF]), ...rest] });
+
+test('run-with: an older open proposal with the same workflow is not started; the event turn\'s is', async () => {
+  const r = runWithRig({ reads: [wfThread([msg('m9', [RUNP])])] });
+  r.live.open('ask_1'); await tick();
+  await r.live.act('run-with', { threadId: 'ask_1', cardId: 'cw' });
+  await tick();
+  assert.deepEqual(r.calls.filter((c) => c.url === '/api/run').map((c) => c.body.askCardId), ['cp']);
+});
+
+test('run-with: an event turn that already ended with no proposal before the reload refuses at once (no stuck wait)', async () => {
+  const r = runWithRig({ reads: [wfThread([msg('m9', [])])] });
+  await r.live.open('ask_1');
+  await r.live.act('run-with', { threadId: 'ask_1', cardId: 'cw' });
+  await tick();
+  assert.deepEqual(r.toasts, ['Could not start the task: Worca saved Quick fix but did not propose its task']);
+  assert.equal(r.live.runWith('ask_1'), null);
+  assert.ok(!r.calls.some((c) => c.url === '/api/run'), 'the older proposal is not started either');
+});
+
+test('run-with: a deferred event turn waits past the turn already running, then starts its own proposal', async () => {
+  const r = runWithRig({ save: () => [200, { block: { state: 'saved', workflowId: 'wf_x' }, turn: { deferred: true } }],
+    first: wfThread([msg('m7', [], 'streaming')], { messageId: 'm7' }, false),
+    reads: [wfThread([msg('m7', [], 'streaming')], { messageId: 'm7' }), wfThread([msg('m7', [])]), wfThread([msg('m7', []), msg('m9', [RUNP])])] });
+  await r.live.open('ask_1');
+  await r.live.act('run-with', { threadId: 'ask_1', cardId: 'cw' });
+  await tick();
+  await r.live.open('ask_1', { force: true }); await tick();
+  assert.deepEqual(r.toasts, [], 'the turn that ended is not the event turn: no refusal');
+  assert.deepEqual(r.live.runWith('ask_1'), { cardId: 'cw', workflowId: 'wf_x' }, 'still waiting');
+  await r.live.open('ask_1', { force: true }); await tick();
+  assert.deepEqual(r.calls.filter((c) => c.url === '/api/run').map((c) => c.body.askCardId), ['cp']);
+  assert.equal(r.live.runWith('ask_1'), null);
+});
+
+test('run-with: a proposal for another project, or with its own guardrails, engine or branch, is not started: it stays a Start', async () => {
+  for (const over of [{ projectKey: 'other', projectDir: '/o' }, { guardrailsId: 'strict' }, { engine: 'codex' }, { featureBranch: 'x' }, { source: { plugin: 'p', sourceId: 's', taskId: 't' } }]) {
+    const p = { ...RUNP, card: { ...RUNP.card, ...over } };
+    const r = runWithRig({ reads: [wfThread([msg('m9', [p])])] });
+    await r.live.open('ask_1');
+    await r.live.act('run-with', { threadId: 'ask_1', cardId: 'cw' });
+    await tick();
+    assert.ok(!r.calls.some((c) => c.url === '/api/run'), JSON.stringify(over));
+    assert.equal(r.live.runWith('ask_1'), null);
+    assert.ok(r.live.turns('ask_1').some((x) => x.t === 'proposal' && x.id === 'cp'), 'shown with its own Start');
+  }
+});
+
+test('first send: the new chat loads the thread dev\'s PATCH answered, so its project is known with no GET', async () => {
+  const r = rig({ answer: (url, method) => {
+    if (url === '/api/ask/threads' && method === 'POST') return [201, { thread: { id: 'ask_new' } }];
+    if (method === 'PATCH') return [200, { thread: { id: 'ask_new', context: { pinned: true, projectKey: 'web' } } }];
+    if (url.endsWith('/messages')) return [202, { userMessageId: 'u1' }];
+    return [200, {}];
+  } });
+  const res = await r.live.act('send', { text: 'hello', model: 'opus', effort: 'high', scope: { pinned: true, projectKey: 'web' } });
+  assert.equal(res.ok, true);
+  assert.equal(r.live.projectKey('ask_new'), 'web');
+  assert.ok(!r.calls.some((c) => c.method === 'GET'), 'no thread GET');
+});
