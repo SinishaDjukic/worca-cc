@@ -34,3 +34,10 @@ test('every demo turn of every demo chat meets TURN_SHAPES (D18)', async () => {
   assert.deepEqual(turnErrors({ t: 'question', id: 'q', text: 'Q', options: 'a' }), ['turn.question.options: expected array']);
   assert.deepEqual(turnErrors({ t: 'nope' }), ['turn.t: unknown kind "nope"']);
 });
+
+test('panel.turn-time: a turn\'s `at` is a number (ms) when present', async () => {
+  const { turnErrors } = await import('../ui/public/stillhet/live/model-shape.mjs');
+  assert.deepEqual(turnErrors({ t: 'you', id: 'a', text: 'b', at: 'x' }), ['turn.you.at: expected number']);
+  assert.deepEqual(turnErrors({ t: 'you', id: 'a', text: 'b', at: 1 }), []);
+  assert.deepEqual(turnErrors({ t: 'words', html: 'h', at: 'x', key: 2 }), ['turn.words.at: expected number', 'turn.words.key: expected string']);
+});

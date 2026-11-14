@@ -1430,6 +1430,7 @@ test('planCard, filesCard, youTurn: the Shaper plan folds its roles; files as ti
   assert.match(f, /fc-tile[\s\S]*a\.png/); assert.match(f, /<b>b\.txt<\/b> 2 KB/); assert.match(f, /aria-label="Download b\.txt"/);
   const y = C.youTurn({ text: 'Same bug?', quote: 'Off by a cent', files: ['x.pdf'] });
   assert.match(y, /you-quote">Off by a cent/); assert.match(y, /x\.pdf/);
+  assert.match(C.youTurn({ text: 'Hi', time: C.turnTime({ at: Date.now() }) }), /<time class="turn-time"[^>]*>\d\d:\d\d<\/time><\/div>$/);   // turnTime: its time is the turn's last child
   assert.doesNotMatch(C.changeProposal({ kind: 'Agent', title: 'New', rows: [{ name: 'Reads', before: '', after: 'PRs' }] }), /→/);
 });
 

@@ -1636,6 +1636,18 @@
       ]
     },
     {
+      "name": "TurnTime",
+      "code": "ui/public/design-system/components/turn-time.mjs#turnTime",
+      "kind": "showing",
+      "needs": [
+        "when a turn in a conversation was said"
+      ],
+      "rules": [
+        "panel.turn-time"
+      ],
+      "example": "14:32; Yesterday 14:32; Nov 3, 14:32"
+    },
+    {
       "name": "StagePart",
       "code": "ui/public/design-system/components/kind-mark.mjs#stagePart",
       "kind": "moving",

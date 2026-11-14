@@ -165,3 +165,22 @@ test('a project switch: dev writes its divider as a system message; it is the pr
   assert.deepEqual(l, [{ t: 'divider', text: 'Switched to web' }]);
   assert.deepEqual(turnsOf({ messages: [{ id: 's2', role: 'system', text: 'x', blocks: [{ kind: 'notice', text: 'quiet', quiet: true }] }] }, ctx), [], 'nothing else of a system message is drawn');
 });
+
+test('panel.turn-time: a user turn and every words turn of an answer carry the message\'s createdAt as `at`; words are keyed messageId:k', () => {
+  const created = new Date(2026, 10, 12, 13, 0).toISOString(), reply = new Date(2026, 10, 12, 13, 1).toISOString();
+  const l = turnsOf({ messages: [
+    { id: 'u1', role: 'user', text: 'Hi', status: 'done', createdAt: created, blocks: [] },
+    { id: 'm2', role: 'assistant', status: 'done', text: 'First part. Second part.', createdAt: reply, blocks: [{ kind: 'card', id: 'c1', state: 'applied', textAt: 11, card: { type: 'route', title: 'R' } }] },
+  ] }, ctx);
+  const you = l.find((x) => x.t === 'you'), words = l.filter((x) => x.t === 'words');
+  assert.equal(you.at, Date.parse(created));
+  assert.equal(words.length, 2);
+  assert.deepEqual(words.map((x) => [x.at, x.key]), [[Date.parse(reply), 'm2:0'], [Date.parse(reply), 'm2:1']]);
+  for (const x of l) assert.deepEqual(turnErrors(x), [], x.t);
+});
+
+test('panel.turn-time: a local echo with createdAt null has no `at` (never a made-up time)', () => {
+  const [you] = turnsOf({ messages: [{ id: '', role: 'user', text: 'Sending', status: 'done', createdAt: null, blocks: [] }] }, ctx);
+  assert.equal(you.t, 'you'); assert.ok(!('at' in you));
+  assert.deepEqual(turnErrors(you), []);
+});
