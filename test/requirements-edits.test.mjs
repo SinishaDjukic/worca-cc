@@ -210,7 +210,7 @@ function briefFor(scopeType, scopeKey, { areas = [ORDERS], edited = {}, sources 
 let briefScopes = 0;
 /** What runOrientation stamps on a look: the scope it was made for and the brief it was made against. */
 const stampOf = (f) => ({ scopeType: f.scopeType, scopeKey: f.scopeKey, briefId: getBrief(f.scopeType, f.scopeKey).id });
-/** A feature in a fresh scope with a brief, after a closer look whose paths are the temp checkout's, absolute. */
+/** A feature in a fresh scope with a brief, after a code look whose paths are the temp checkout's, absolute. */
 function closerLooked({ scopeType = 'project', orientation = {}, brief = {} } = {}) {
   briefScopes += 1;
   const scopeKey = `brief-scope-${briefScopes}`;
@@ -282,10 +282,10 @@ test('addToBrief refusals write nothing', async () => {
   assert.throws(() => addToBrief(mf.seq), (e) => e.code === 'CONFLICT' && e.message === 'This project has no product brief.');
 
   const skipped = closerLooked({ orientation: { summary: '', files: [], skipped: 'brief', area: undefined } });
-  assert.throws(() => addToBrief(skipped.f.seq), (e) => e.code === 'CONFLICT' && e.message === 'There is no closer look to add.');
+  assert.throws(() => addToBrief(skipped.f.seq), (e) => e.code === 'CONFLICT' && e.message === 'There is no code look to add.');
   const noLook = closerLooked();
   updateFeature(noLook.f.seq, { orientation: null });
-  assert.throws(() => addToBrief(noLook.f.seq), (e) => e.code === 'CONFLICT' && e.message === 'There is no closer look to add.');
+  assert.throws(() => addToBrief(noLook.f.seq), (e) => e.code === 'CONFLICT' && e.message === 'There is no code look to add.');
 
   const full = closerLooked({ brief: { areas: Array.from({ length: 20 }, (_, i) => ({ ...ORDERS, name: `Area ${i}` })) } });
   assert.throws(() => addToBrief(full.f.seq), (e) => e.code === 'CONFLICT' && e.message === 'The brief already has 20 areas.');
@@ -313,7 +313,7 @@ test('addToBrief refusals write nothing', async () => {
   assert.equal(getBrief('project', busy.scopeKey).sections.areas.length, 1);
 });
 
-test('addToBrief again after a new closer look updates the feature\'s own area in place; Worca\'s areas are never replaced', () => {
+test('addToBrief again after a new code look updates the feature\'s own area in place; Worca\'s areas are never replaced', () => {
   const { f, scopeKey } = closerLooked();
   const first = getBrief('project', scopeKey).sections.areas;
   addToBrief(f.seq);
@@ -356,7 +356,7 @@ test('addToBrief: with 20 areas a re-add of the feature\'s own area succeeds; a 
   assert.throws(() => addToBrief(other.seq), (e) => e.code === 'CONFLICT' && e.message === 'The brief already has 20 areas.');
 });
 
-test('addToBrief refuses a closer look made for another scope, or before the brief (no brief id, or an earlier brief), writing nothing', () => {
+test('addToBrief refuses a code look made for another scope, or before the brief (no brief id, or an earlier brief), writing nothing', () => {
   const unchanged = (x) => {
     assert.equal(getBrief(x.scopeType, x.scopeKey).sections.areas.length, 1);
     assert.equal(getFeature(x.f.seq).orientation.addedToBrief, undefined);
@@ -366,23 +366,23 @@ test('addToBrief refuses a closer look made for another scope, or before the bri
   const there = closerLooked();
   updateHeader(moved.f.seq, { scopeType: 'project', scopeKey: there.scopeKey });
   assert.throws(() => addToBrief(moved.f.seq),
-    (e) => e.code === 'CONFLICT' && e.message === 'This closer look was made for another project or workspace. Look again first.');
+    (e) => e.code === 'CONFLICT' && e.message === 'This code look was made for another project or workspace. Look again first.');
   unchanged(there);
   // a look made before the brief existed carries no brief id
   const early = closerLooked({ orientation: { briefId: null } });
   assert.throws(() => addToBrief(early.f.seq),
-    (e) => e.code === 'CONFLICT' && e.message === 'This closer look was made before the product brief. Look again first.');
+    (e) => e.code === 'CONFLICT' && e.message === 'This code look was made before the product brief. Look again first.');
   unchanged(early);
   // ... and a look without any stamp (made before looks were stamped) is refused the same way
   const legacy = closerLooked();
   const { scopeType: _t, scopeKey: _k, briefId: _b, ...bare } = getFeature(legacy.f.seq).orientation;
   updateFeature(legacy.f.seq, { orientation: bare });
-  assert.throws(() => addToBrief(legacy.f.seq), (e) => e.code === 'CONFLICT' && /^This closer look was made /.test(e.message));
+  assert.throws(() => addToBrief(legacy.f.seq), (e) => e.code === 'CONFLICT' && /^This code look was made /.test(e.message));
   unchanged(legacy);
   // a look made against an earlier brief of the scope (deleted and made again since)
   const old = closerLooked({ orientation: { briefId: -1 } });
   assert.throws(() => addToBrief(old.f.seq),
-    (e) => e.code === 'CONFLICT' && e.message === 'This closer look was made before the product brief. Look again first.');
+    (e) => e.code === 'CONFLICT' && e.message === 'This code look was made before the product brief. Look again first.');
   unchanged(old);
 });
 

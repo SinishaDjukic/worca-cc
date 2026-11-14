@@ -157,9 +157,9 @@ export function revertToStart(seq, version, { by = null } = {}) {
 }
 
 /**
- * **Add this to the brief** (A7 D11): the feature's closer look becomes an area of its scope's brief, named after
+ * **Add this to the brief** (A7 D11): the feature's code look becomes an area of its scope's brief, named after
  * the feature and filed under the area the look named. The feature's own added area, if any (from an earlier
- * closer look), is updated in place; any other area, and every area Worca wrote (`added` null), is never
+ * code look), is updated in place; any other area, and every area Worca wrote (`added` null), is never
  * replaced. "What exists today" is not marked edited (D6), so the area survives a refresh as an added one.
  * The look's paths are the temporary checkout's, absolute: they are made relative. A workspace keeps
  * `repos/<member>/…` of the brief's own members (its `sources`), on purpose: files of a member added after
@@ -173,14 +173,14 @@ export function addToBrief(seq, { by = null } = {}) {
   const b = usableBrief(f.scopeType, f.scopeKey);
   if (!b) throw new RequirementsError('CONFLICT', `This ${where} has no product brief.`);
   const o = f.orientation;
-  if (!o || !o.summary) throw new RequirementsError('CONFLICT', 'There is no closer look to add.');
+  if (!o || !o.summary) throw new RequirementsError('CONFLICT', 'There is no code look to add.');
   if (o.addedToBrief) throw new RequirementsError('CONFLICT', 'Already added to the brief.');
   // The look must be of this scope and of this brief: runOrientation stamps both (a look without a stamp, or one
   // made before the brief or against a brief deleted since, has no say in this brief).
   if (o.scopeType !== f.scopeType || o.scopeKey !== f.scopeKey) {
-    if (o.scopeType != null || o.scopeKey != null) throw new RequirementsError('CONFLICT', 'This closer look was made for another project or workspace. Look again first.');
+    if (o.scopeType != null || o.scopeKey != null) throw new RequirementsError('CONFLICT', 'This code look was made for another project or workspace. Look again first.');
   }
-  if (o.briefId == null || o.briefId !== b.id) throw new RequirementsError('CONFLICT', 'This closer look was made before the product brief. Look again first.');
+  if (o.briefId == null || o.briefId !== b.id) throw new RequirementsError('CONFLICT', 'This code look was made before the product brief. Look again first.');
   const areas = b.sections.areas || [];
   const own = areas.findIndex((a) => a && a.added && a.added.feature === f.id);
   if (own < 0 && areas.length >= BRIEF_LIMITS.areas) throw new RequirementsError('CONFLICT', `The brief already has ${BRIEF_LIMITS.areas} areas.`);

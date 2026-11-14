@@ -7,7 +7,10 @@ prototype side by side: same route, Expert, dark 1280, light 1280, light 360.
 - **Data.** The app ran on real seeded records: `tools/stillhet-seed-tasks.mjs`, `tools/stillhet-seed-chat-cards.mjs`
   and one user group made through `POST /api/run-groups`. The prototype ran on its demo data.
 - **First score.** The same walk on a copy of the base `fc2285049`.
-- **Re-score.** The walk on this branch.
+- **Re-score.** The walk on this branch. The fix pass (feature 1 audit fix pass) re-walked every cell once more, in
+  Expert, on a sandbox seeded by both seed tools (chat first, tasks last). The Re-score column is that walk. Its
+  evidence is the walk log `audit-fix/rescore-walk.log` in the pipeline's screenshots folder: one line per cell with
+  the area, the cell, the score, the app PNG and the prototype PNG, and a side-by-side pair for each.
 - **Scale.** 10 means the design is indistinguishable, 9 means only trivial differences remain, and below 9 means a
   real visible gap. Different records (names, counts, rows) are not gaps.
 - **Screenshots.** The re-score shots are in `out/stillhet-audit/feature-1/`. The first-score, prototype and coverage
@@ -51,158 +54,165 @@ avatar.
 
 | Cell | First score | Re-score | Screenshot |
 |---|---|---|---|
-| dark 1280 | 8 | 8 | `out/stillhet-audit/feature-1/pulse-dark-1280.png` |
-| light 1280 | 8 | 8 | `out/stillhet-audit/feature-1/pulse-light-1280.png` |
-| light 360 | 8 | 8 | `out/stillhet-audit/feature-1/pulse-light-360.png` |
+| dark 1280 | 8 | 9 | `out/stillhet-audit/feature-1/pulse-dark-1280.png` |
+| light 1280 | 8 | 9 | `out/stillhet-audit/feature-1/pulse-light-1280.png` |
+| light 360 | 8 | 9 | `out/stillhet-audit/feature-1/pulse-light-360.png` |
 
-Reasons: The popover on Updates matches the prototype. Its place and width, tabs and counts, filter sentence, group
-heads, row grid and both themes are right, and the 360 layout holds. The one gap is a live row's detail line, which
-is dev's raw failure text.
-Open row: Audit gap (Pulse and bell rows)
+Reasons: The popover on Updates matches the prototype: its place and width, tabs and counts, filter sentence, group heads,
+row grid, both themes and the 360 layout. Each live row's detail is now one short line after the project, from one rule
+(`live-map.mjs` `shortDetail`): "billing · Build · 3 tests failed", a capped run "Cost cap reached · paused at $0.50", a
+missed start "Worca was not running at 21:58". No line carries a newline, a `✗` or a `>=` comparison. What differs is the
+data: other titles, projects and times.
 
 | Prototype | App | Outcome |
 |---|---|---|
-| One short detail line naming the step ("web-app · Build · 3 tests failed") | Each failing test inline, 3–4 lines; a raw `$0.80 >= $0.50` | Open row |
+| One short detail line naming the step ("web-app · Build · 3 tests failed") | "billing · Build · 3 tests failed" | Fixed in this PR |
+| "Cost cap reached", "paused at $5.00" | "Cost cap reached · Big refactor", "billing · paused at $0.50" | Fixed in this PR |
+| "Worca was not running at 03:00" | "Worca was not running at 21:58" (was dev's raw timestamp) | Fixed in this PR |
 
 ## Area: Bell
 
 | Cell | First score | Re-score | Screenshot |
 |---|---|---|---|
-| dark 1280 | 7 | 7 | `out/stillhet-audit/feature-1/bell-dark-1280.png` |
-| light 1280 | 7 | 7 | `out/stillhet-audit/feature-1/bell-light-1280.png` |
-| light 360 | 7 | 7 | `out/stillhet-audit/feature-1/bell-light-360.png` |
+| dark 1280 | 7 | 9 | `out/stillhet-audit/feature-1/bell-dark-1280.png` |
+| light 1280 | 7 | 9 | `out/stillhet-audit/feature-1/bell-light-1280.png` |
+| light 360 | 7 | 9 | `out/stillhet-audit/feature-1/bell-light-360.png` |
 
-Reasons: The popover frame, tabs, rows and icons match. Two gaps remain:
-- The Needs you head shows only its count; the prototype adds the breakdown.
-- The rows carry the same raw detail lines as Pulse (Open row "Audit gap (Pulse and bell rows)").
-
-This PR adds the workspace questions to the bell. None were seeded, so the cell does not show them;
-`test/stillhet-live-counts-1.test.mjs` and `test/stillhet-live-counts-3.test.mjs` pin them.
-Open row: Audit gap (bell head)
+Reasons: The popover frame, tabs, rows and icons match. The Needs you head now reads the count and its breakdown, as the
+prototype's does: "12 · 9 tasks, 1 missed schedule, 1 project, 1 question" on the walk (both seeds together; the tasks seed
+alone gives "7 · 4 tasks, 1 missed schedule, 1 project, 1 question", pinned by `test/stillhet-live-counts-1.test.mjs` and
+`test/stillhet-seed-tasks.test.mjs`). Its rows carry Pulse's short lines; a plan run says "Waits for your OK on the plan",
+a failing PR "1 check failing", and a long question is clipped to one line. The seeded missed schedule, the "Moved folder"
+project and the unsure workspace link each have their row.
 
 | Prototype | App | Outcome |
 |---|---|---|
-| "Needs you 10 · 4 tasks, 1 missed schedule, 3 projects, 2 questions" | "Needs you 4" | Open row |
-| Short detail lines | Raw failure text, 3–4 lines | Open row (Pulse and bell rows) |
+| "Needs you 10 · 4 tasks, 1 missed schedule, 3 projects, 2 questions" | "Needs you 12 · 9 tasks, 1 missed schedule, 1 project, 1 question" | Fixed in this PR (counts are data) |
+| Short detail lines | Short detail lines | Fixed in this PR |
+| A row per project that needs you and per workspace question | "Moved folder · Folder missing"; one workspace question | Fixed in this PR (seeded) |
 
 ## Area: Profile menu
 
 | Cell | First score | Re-score | Screenshot |
 |---|---|---|---|
-| dark 1280 | 8 | 8 | `out/stillhet-audit/feature-1/profile-dark-1280.png` |
-| light 1280 | 8 | 8 | `out/stillhet-audit/feature-1/profile-light-1280.png` |
-| light 360 | 8 | 8 | `out/stillhet-audit/feature-1/profile-light-360.png` |
+| dark 1280 | 8 | 9 | `out/stillhet-audit/feature-1/profile-dark-1280.png` |
+| light 1280 | 8 | 9 | `out/stillhet-audit/feature-1/profile-light-1280.png` |
+| light 360 | 8 | 9 | `out/stillhet-audit/feature-1/profile-light-360.png` |
 
-Reasons: The menu's items, order, toggles and dividers match, and at 360 it opens inside the drawer. With no usage
-reading, the Usage and costs row falls back to the Pulse glyph and a dollar figure, where the prototype draws its
-ring glyph. The real rings (D7, D8) are pinned by `test/usage-limits.test.mjs` and `test/stillhet-live-map.test.mjs`.
-Open row: Audit gap (profile usage row)
+Reasons: The menu's items, order, toggles and dividers match, and at 360 it opens inside the drawer. With no usage reading,
+the Usage and costs row now wears the ring glyph as an empty track (`small.usage-rings`), its value the dollar spend. The
+prototype's ring is filled and reads "71%" because its demo has a reading: data.
 
 | Prototype | App | Outcome |
 |---|---|---|
-| A ring glyph and "71%" on Usage and costs | The Pulse glyph and "$0.80" (no reading) | Open row |
+| A ring glyph and "71%" on Usage and costs | The ring glyph, an empty track, and "$0.80" (no reading) | Fixed in this PR (the figure is data) |
 | "away at 22:00" under Away | No hint (no away schedule set) | Data, not a gap |
 
 ## Area: Chat
 
 | Cell | First score | Re-score | Screenshot |
 |---|---|---|---|
-| dark 1280 | 8 | 8 | `out/stillhet-audit/feature-1/chat-dark-1280.png` |
-| light 1280 | 7 | 7 | `out/stillhet-audit/feature-1/chat-light-1280.png` |
+| dark 1280 | 8 | 9 | `out/stillhet-audit/feature-1/chat-dark-1280.png` |
+| light 1280 | 7 | 9 | `out/stillhet-audit/feature-1/chat-light-1280.png` |
 | light 360 | 9 | 9 | `out/stillhet-audit/feature-1/chat-light-360.png` |
 
-Reasons: Chat home has the prototype's structure, with clean wrapping at 360. The gaps are in how the live cards are
-drawn:
-- A card that needs you is not tinted, and a failed card's Retry is not the main button (c17).
-- Branch names are in monospace.
-- A run's question shows twice, and Approve and build shows on both the TaskCard and the PlanCard.
-- A finished task with a PR shows a raw URL line, not Ready to merge with its checks and Merge PR (c18).
-
-The light 1280 cell includes the conversations. This PR's `{base}` fix shows only inside a confirm, which no cell
-opens; `test/stillhet-chat-app-host-1.test.mjs` pins it.
-Open row: Audit gap (chat cards)
+Reasons: Chat home has the prototype's structure, with clean wrapping at 360, and the live cards are now drawn as the
+prototype draws them. The three cells walk c17 (failed), c1 (a question) and c18 (ready to merge):
+- A card that needs you breathes with its tone (`data-attn` fail for c17, ask for c1); a failed card's Retry is its one
+  filled button.
+- Branch names are in the text face. This is a design change (D5): `rail.css:30` drew `.rc-mid` in `--mono`, and
+  `docs/rail/look.md` now says a branch on a card is in the text face, for the demo and the app alike.
+- A run's question shows once, in its OptionList; Approve and build once, on the PlanCard.
+- A finished task whose PR is approved, passing and mergeable reads Ready to merge, its checks and Merge PR (c18); the PR
+  card itself is no turn of its own.
+What differs is the data: the seeded failed run has no failing tests to list, and other names and counts.
 
 | Prototype | App | Outcome |
 |---|---|---|
-| A needs-you card tinted (c1 amber, c17 red) | No tint | Open row |
-| Retry as the main button (c17) | An outline Retry | Open row |
-| Branch line in the text face | Monospace | Open row |
-| The question only in the OptionList | Also the TaskCard's status line | Open row |
-| One Approve and build | On the TaskCard and the PlanCard | Open row |
-| Ready to merge, its checks and Merge PR (c18) | "The pull request is open." and a raw URL | Open row |
+| A needs-you card tinted (c1 amber, c17 red) | Tinted with its tone | Fixed in this PR |
+| Retry as the main button (c17) | Retry filled | Fixed in this PR |
+| Branch line in the text face | Text face (the design changed: D5) | Fixed in this PR |
+| The question only in the OptionList | Only in the OptionList | Fixed in this PR |
+| One Approve and build | On the PlanCard only | Fixed in this PR |
+| Ready to merge, its checks and Merge PR (c18) | Ready to merge, "All 3 checks pass", "Approved by maya", Merge PR | Fixed in this PR |
 
-**Coverage: every dev chat card** (`plans/rail/stillhet-wiring.md`, "Every dev chat card"). 13 kinds have no live
-record in the seed and were judged on the demo only. That gap is its own Open row, "Audit gap (chat seed coverage)".
+**Coverage: every dev chat card** (`plans/rail/stillhet-wiring.md`, "Every dev chat card"). Every kind now has a live
+record (`tools/stillhet-seed-chat-cards.mjs`, 27 new `SEEDED_CARDS` keys), walked at light 1280 against its prototype pair
+(`audit-fix/cov-chat-*-app.png` beside `audit-fix/proto-chat-*.png` in the pipeline's screenshots folder).
 
 | Dev card | Live pair | Note |
 |---|---|---|
-| question | `cov-chat-question` | OptionList, Answer, Use Worca's picks |
-| progress (the run card) | `cov-chat-question`, `cov-chat-plan`, `cov-chat-failed`, `cov-chat-pr` | The question, needs-you, failed and finished states; a running state is not seeded |
+| question | `cov-chat-question` | OptionList, Answer, Use Worca's picks; the question only there |
+| progress (the run card) | `cov-chat-question`, `cov-chat-plan`, `cov-chat-failed`, `cov-chat-pr`, `cov-chat-prs` | Question, needs approval, failed, finished and Ready to merge (c18); a running state is not seeded |
 | the run's own questions | `cov-chat-question` | Two OptionLists under the TaskCard |
-| the Shaper plan (plan approval) | `cov-chat-plan` | PlanCard: Reviewed by, Approve and build, Ask for changes, Read the plan |
-| run proposal (no type) | no live record | Demo only (TaskProposal) |
-| workflow, workflow-build | no live record | Demo only |
-| run-stop | no live record | Demo only |
-| pull-request | `cov-chat-pr` (done state only) | The pending Create PR row is not seeded |
-| ship | no live record | Demo only |
-| changes | no live record | Demo only |
-| route | no live record | Demo only |
-| scope-switch, model, schedule, away, proxy, web, clone, project, workspace, actions, metrics, policy | `cov-chat-change` (model only) | The other 11 kinds have no live record |
-| receipt | no live record | Demo only |
-| script-approval | no live record | Demo only |
-| command, command group | no live record | Demo only (c2) |
-| files | no live record | Demo only |
-| notice, divider | `cov-chat-pr` (notice) | No divider is seeded |
+| the Shaper plan (plan approval) | `cov-chat-plan` | PlanCard with the one Approve and build |
+| run proposal (no type) | `cov-chat-flows` (`proposal`) | From a real mock turn; TaskProposal, Start, Not now |
+| workflow, workflow-build | `cov-chat-flows` (`workflow`, `workflow-build`) | ChangeProposal with its Steps row (c9 w9) |
+| run-stop | `cov-chat-actions` (`run-stop`) | Stop run, Keep running (c9 a6) |
+| pull-request | `cov-chat-prs` (`pr-pending`, `ready`) | Create PR row; an opened PR shows on its TaskCard alone |
+| ship | `cov-chat-actions` (`ship`) | Its agreed requirements, Ships as one PR, Create PR (c6 a6) |
+| changes | `cov-chat-actions` (`changes`) | Start the follow-up, Not now (c6 a5) |
+| route | `cov-chat-actions` (`route`) | Worca's guess first, the other two, Not now; no prototype pair |
+| scope-switch, model, schedule, away, proxy, web, clone, project, workspace, actions, metrics, policy | `cov-chat-changes`, `cov-chat-change` (model) | One ChangeProposal each, every one with its rows (c11 a2, c7 a4, c12 a2, c9 p9, c7 a2, c21 a2, c0 g2, c21 a3) |
+| receipt | `cov-chat-actions` (`receipt`) | Applied, Revert (c9 a4) |
+| script-approval | `cov-chat-actions` (`script-approval`) | Run it, Not now (c10 a3) |
+| command, command group | `cov-chat-commands` (`command`, `commands`) | A finished command folds with no Stop (c3); two in one answer are one group (c2 a2) |
+| files | `cov-chat-commands` (`files`) | A real attachment: View, download (c2) |
+| notice, divider | `cov-chat-divider` (`divider`), `cov-chat-actions` (`unknown`) | The divider from answering a scope switch (c11) |
 | a failed reply | `cov-chat-failed` | Details, Try again |
-| an unknown card type | no live record | Demo only |
+| an unknown card type | `cov-chat-actions` (`unknown`) | A notice from its own title; no prototype pair |
+
+The walk of the new kinds found two gaps that do not hold Chat below 9; each is a new Open row of
+`plans/rail/findings.md`, owner decision: a metrics or policy proposal shows dev's raw kind word ("enable") as its row, and
+an answered scope switch lists its project's full path. Route, actions, metrics, policy and the unknown type have no
+prototype pair, so they are logged, not designed.
 
 ## Area: Tasks
 
 | Cell | First score | Re-score | Screenshot |
 |---|---|---|---|
-| dark 1280 | 7 | 8 | `out/stillhet-audit/feature-1/tasks-dark-1280.png` |
-| light 1280 | 6 | 6 | `out/stillhet-audit/feature-1/tasks-light-1280.png` |
-| light 360 | 4 | 8 | `out/stillhet-audit/feature-1/tasks-light-360.png` |
+| dark 1280 | 7 | 9 | `out/stillhet-audit/feature-1/tasks-dark-1280.png` |
+| light 1280 | 6 | 9 | `out/stillhet-audit/feature-1/tasks-light-1280.png` |
+| light 360 | 4 | 9 | `out/stillhet-audit/feature-1/tasks-light-360.png` |
 
-Reasons: The center card's actions now stay inside the card. On the base the second button ran past the column at
-1280 and off the screen at 360. The card frame, head and filters match. The light 1280 cell includes the task pages,
-which still lose design detail:
-- the plan page's step marks;
-- the stopped page's subtitle and earlier stages;
-- the plain failure box;
-- the checks sub-lines;
-- the capped page's repeated Plan.
+Reasons: The center card's actions stay inside the card, and the card frame, head and filters match. The task pages now
+keep the design's detail, from dev's own data:
+- A plan waiting for your approval reads Needs approval with the pencil, and its Plan stage opens on the step that waits,
+  "Waiting for your approval", with the run's own findings under it (its shape check and role reviews; none without a
+  review). This is a design change (D1): the prototype had Needs approval and the pencil on `gate` only; the library's
+  `plan` state now has them too.
+- A stopped task reads "Stopped by you · the branch and changes stay" and keeps every stage it ran.
+- A failure is a bold head and one row per failure; the page head does not repeat it, and the step that broke wears the
+  failed look.
+- Create PR reads "Opened #43" and Checks "1 failed" or "3 of 3 passed"; a capped task's paused step reads "Paused at its cap".
+What differs is the data: dev has no check names and no PR open date, so the lines read counts.
 
-The approved page no longer shows a "What broke" box, and the group head shows a state word and its member titles.
-Open row: Audit gap (task pages)
-
-**The 360 wrap (R-qa-6).** In the live light 360 cell, the failed card holds two actions. "Retry Update Node to 24"
-is the primary; "Open CSV export for billing" wraps under it, about 228 px of the card's 344 px, with nothing
-clipped. On the base the second button ran off the screen.
+**The 360 wrap (R-qa-6).** In the live light 360 cell, a card with two actions wraps the second under the first inside
+the card, with nothing clipped.
 
 | Prototype | App | Outcome |
 |---|---|---|
-| Needs approval, with a pencil, for a plan waiting for you | Needs you, with a ? | Open row |
-| The plan stage open and waiting, its findings listed | The Plan stage marked done | Open row |
-| Stopped by you, the branch and changes stay, all stages | No subtitle, from PR on | Open row |
-| A bold failure head and rows per failure | Monospace lines; the head repeats it | Open row |
-| Create PR and Checks sub-lines | None | Open row |
-| Paused at its cap under the step | Plan repeated, no cap line | Open row |
-| Two actions side by side, clipped at 360 (base) | Wrapped inside the card | Fixed in this PR |
+| Needs approval, with a pencil, for a plan waiting for you | Needs approval, the pencil | Fixed in this PR (design first: D1) |
+| The plan stage open and waiting, its findings listed | Opens on "Waiting for your approval", the run's findings | Fixed in this PR |
+| Stopped by you, the branch and changes stay, all stages | The same | Fixed in this PR |
+| A bold failure head and rows per failure | The same; the head omits it | Fixed in this PR |
+| Create PR and Checks sub-lines | "Opened #N", "N failed" / "N of M passed" | Fixed in this PR |
+| Paused at its cap under the step | "Paused at its cap" | Fixed in this PR |
+| Two actions side by side, clipped at 360 (base) | Wrapped inside the card | Fixed earlier |
 
-**Coverage: every task state** (light 1280, `cov-task-*` in the pipeline's screenshots).
+**Coverage: every task state** (light 1280; the fix pass's shots are in the pipeline's screenshots folder, `audit-fix/`: the three cells and `cov-task-capped`, `cov-task-failing`, `cov-task-approved`; the group page's is the first audit's).
 
 | State | Live pair | Prototype | Verdict |
 |---|---|---|---|
-| failed | `cov-task-failed` | `route-run-failed` | Unchanged; failure box and step marks differ |
-| capped | `cov-task-capped` | `deep/route-run-capped` | Unchanged; Plan repeated, no cap line |
-| plan | `cov-task-plan` | `deep/route-run-plan` | Unchanged; step marks, subtitle |
-| stopped | `cov-task-stopped` | `deep/route-run-stopped` | Unchanged; subtitle and stages |
-| approved | `cov-task-approved` | `route-run-approved` | Improved: no false failure box; #42 |
-| failing | `cov-task-failing` | `deep/route-run-failing` | Unchanged; no sub-lines |
+| failed | `tasks-dark-1280-app` | `route-run-failed` | Bold head, a row per failure, the step that broke |
+| capped | `cov-task-capped` | `deep/route-run-capped` | Paused at its cap under the step |
+| plan | `tasks-light-1280-app` | `deep/route-run-plan` | Needs approval, the pencil, the waiting step and the run's own findings |
+| stopped | `tasks-light-360-app` | `deep/route-run-stopped` | The subtitle and every stage |
+| approved | `cov-task-approved` | `route-run-approved` | No false failure box; Opened #42, 3 of 3 passed |
+| failing | `cov-task-failing` | `deep/route-run-failing` | Opened #43, 1 failed |
 | group page | `cov-task-group` | `deep/route-run-group-shipped` | Improved: a state word and member titles |
-| c17 (failed, in chat) | `cov-chat-failed` | `route-chat-c17` | Tint, main Retry and failure lines missing (Chat Open row) |
-| c18 (ready to merge, in chat) | none: the seed has no ready-to-merge chat card | `route-chat-c18` | Gap; Chat Open rows |
+| c17 (failed, in chat) | `chat-dark-1280-app` | `route-chat-c17` | Tint and main Retry |
+| c18 (ready to merge, in chat) | `chat-light-360-app` | `route-chat-c18` | Ready to merge, its checks, Merge PR |
 
 ## Area: Settings › Labs and opt-out
 

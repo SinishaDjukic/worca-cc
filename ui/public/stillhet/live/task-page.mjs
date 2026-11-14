@@ -4,21 +4,16 @@
 //     `state`, patched by the live run's `state` frames), checks: the task's checks entry (task-live.mjs, GET /api/pr/checks),
 //     group, plan, diff }.
 // A field dev cannot fill is left out, so the part that draws it hides (D3).
-import { prCaseOf } from './live-map.mjs';
+import { prCaseOf, stageOfStep, STAGE_LABEL, failureItems, shortDetail } from './live-map.mjs';
+import { currentPass } from '../../../../src/shared/shape/role-review.mjs';
+
+export { stageOfStep };
 
 const str = (v) => (typeof v === 'string' ? v : '');
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 const arr = (v) => (Array.isArray(v) ? v : []);
 const lc = (v) => str(v).toLowerCase();
 
-/** A step's stage on the page and the card: Plan (clarify, plan, refine), Build (implement, test), else Review. */
-export function stageOfStep(step = {}) {
-  const k = lc(step.agentKey || step.key || step.nodeId);
-  if (/clarif|plan|refin|shape|outline/.test(k)) return 'plan';
-  if (/review|verif|check|audit/.test(k)) return 'review';
-  return 'build';
-}
-const STAGE_LABEL = { plan: 'Plan', build: 'Build', review: 'Review' };
 const FAILED_STEP = /^(error|failed)$/;
 // a ledger row in flight reads `start` (dev's ledger never writes `running` there)
 const STEP_STATE = { done: 'done', start: 'now', running: 'now', paused: 'paused', error: 'failed', failed: 'failed', stopped: 'stopped' };
@@ -70,7 +65,8 @@ export function failureOf(state = {}) {
   const lines = text.split(/\r?\n|\s+(?=✗)/).map((l) => l.trim()).filter(Boolean);
   // an error that starts with its first ✗ item has no reason line of its own: 'Failed', and that item stays an item
   const head = lines[0] && !lines[0].startsWith('✗') ? 1 : 0;
-  return { stage: STAGE_LABEL[failed ? stageOfStep(failed) : 'build'], reason: head ? lines[0] : 'Failed', items: lines.slice(head, head + 3).map((l) => `✗ ${l.replace(/^[✗x×]\s*/, '')}`) };
+  const marked = failureItems(text), items = marked.length ? marked : lines.slice(head).map((l) => l.replace(/^[x×]\s*/, ''));
+  return { stage: STAGE_LABEL[failed ? stageOfStep(failed) : 'build'], reason: head ? lines[0] : 'Failed', items: items.slice(0, 3).map((l) => `✗ ${l}`) };
 }
 
 const prOf = (row, state) => {
@@ -117,7 +113,9 @@ export function taskCardOf(input = {}) {
   const base = str(checks?.base) || str(state.branch?.source);
   const fail = failureOf(state);
   const why = fail ? fail.items : /^(approved|failing|conflicts|checks)$/.test(c) ? checksWhy(checks) : [];
-  const detail = fail ? `${fail.stage} · ${fail.reason}` : '';
+  // R-arch-3: the card's failure line is the one Pulse and the bell draw (live-map.mjs shortDetail)
+  const failed = fail ? arr(state.steps).filter((s) => FAILED_STEP.test(lc(s?.status))).at(-1) : null;
+  const detail = fail ? shortDetail({ status: 'failed', error: str(failed?.error) || str(state.error) || str(state.pauseDetail), step: failed || null }) : '';
   const git = gitOf(c, pr, branch);
   const w = checks?.watch;
   const watch = w && typeof w === 'object' ? (w.status === 'fixing' || w.status === 'starting' ? 'fix' : w.watching ? 'idle' : '') : '';
@@ -130,12 +128,37 @@ export function taskCardOf(input = {}) {
 // numbers are the Cost figure's ("$0.80 of $0.50"), never repeated in the sentence
 const STATE_WORDS = /^(starting|working|pausing|paused|stopped|failed|finished|worca was stopped)$/i;
 const CAP_REASON = { cost_pipeline: 'Reached this task\u2019s cost cap', cost_total: 'Reached the total cost limit' };
+const STOPPED = 'Stopped by you · the branch and changes stay';
 function reasonOf(row = {}, state = {}) {
   const why = CAP_REASON[str(state.pauseReason) || str(row.pauseReason)];
   if (why && /^(paused|capped)$/i.test(str(state.status) || str(row.case))) return why;
+  // a stopped task says what stays, as the design's stopped case does
+  if (/^(stopped|aborted)$/.test(lc(state.status)) || row.case === 'stopped') return STOPPED;
+  if (row.case === 'plan') return '';   // the design's plan case says it all with Needs approval and its waiting step
   const d = str(row.detail);
-  return STATE_WORDS.test(d.trim()) || /cost limit reached \(/.test(d) ? '' : d;
+  // a failing PR's row word (live-map.mjs prLine) is the why list's '✗ 2 of 5 checks failing', said once there
+  return STATE_WORDS.test(d.trim()) || /cost limit reached \(/.test(d) || /^(\d+ checks? failing|checks failing)$/i.test(d.trim()) ? '' : d;
 }
+
+// D10: the plan's findings are the run's own: its role reviews (dev's state, or the plan question's current pass), its
+// plan shape check and its concern; none of them, no finding. Shaped as the page's role and issue rows.
+const FIXED = /^(fixed|resolved|withdrawn)$/;
+function reviewOf(state = {}) {
+  const q = state.pendingQuestion && typeof state.pendingQuestion === 'object' ? state.pendingQuestion : null;
+  const p = q?.plan && typeof q.plan === 'object' ? q.plan : {};
+  const last = currentPass(state.roleReviews || p.roleReviews)?.rounds?.at(-1);
+  const roles = arr(last?.roles).filter((r) => r && !r.skipped).map((r) => {
+    const findings = arr(r.findings).filter((f) => f && !FIXED.test(lc(f.status))).map((f) => str(f.title) || str(f.id)).filter(Boolean);
+    return { role: str(r.label) || str(r.key), n: findings.length, t: findings.length ? `${findings.length} ${findings.length === 1 ? 'finding' : 'findings'}` : 'Passed · no findings', findings };
+  });
+  const issues = arr((p.check || state.plan?.check)?.items).filter((it) => it && !it.pass).map((it) => ({ sev: 'To fix', t: str(it.label) || str(it.id), at: str(it.detail) }));
+  const concern = q?.concern || state.concern;
+  const said = typeof concern === 'string' ? concern : str(concern?.text) || str(concern?.title) || str(concern?.summary);
+  if (said) issues.push({ sev: 'Concern', t: said, at: '' });
+  return { roles, issues };
+}
+// the PR's checks as counts (dev gives no check names): Checks reads "2 failed" or "3 of 3 passed"
+const checksOf = (checks) => { const c = checks?.checks; return c && typeof c === 'object' && num(c.total) ? { total: num(c.total), failed: num(c.failed) || 0, pending: num(c.pending) || 0 } : null; };
 
 const ENDED = /^(done|complete|completed|stopped|aborted|error|failed)$/;
 /** The task page's live view (D3): the instance facts run-page-model.js view() draws over the prototype's case. */
@@ -149,6 +172,9 @@ export function taskPageOf(input = {}, { now = 0 } = {}) {
   const cap = num(state.costCapUsd) ?? num(state.pipelineCapUsd) ?? num(state.capUsd);
   const failedChecks = num(input.checks?.checks?.failed);
   const started = Date.parse(str(state.startedAt));
+  // c17 on the page: a bold head and one row per failure; the page's head then says nothing of it (each fact once)
+  const fail = failureOf(state);
+  const failure = fail ? { head: card.detail, rows: fail.items.map((l) => l.replace(/^✗\s*/, '')) } : null;
   return {
     id: str(row.id) || str(state.id),
     case: card.case,
@@ -157,7 +183,10 @@ export function taskPageOf(input = {}, { now = 0 } = {}) {
     base: card.base || '',
     pr: pr.url ? `#${prNumber(pr.url)}` : '',
     prUrl: pr.url,
-    detail: card.detail || reasonOf(row, state),
+    detail: failure ? '' : card.detail || reasonOf(row, state),
+    failure,
+    review: reviewOf(state),
+    checks: checksOf(input.checks),
     why: card.why || [],
     git: card.git || '',
     cost,

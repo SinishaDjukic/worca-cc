@@ -79,6 +79,7 @@
     let engAsk = null;   // live: an engine switch dev asked to confirm, as it drops the chat's oldest turns
   const where = opts.where || (side ? '#ask-convo' : '#route-chat');
   let chatId = '', comp = fresh(opts.mode), menu = '', hover = null, opened = new Set(), timer = 0;
+  let timeShown = '';   // panel.turn-time: the key of the turn whose time a tap showed (its data-anchor or data-words-turn)
   const drafts = new Map();   // what is typed in each chat's composer, kept while another chat is open
   const sendingIn = new Set();   // the chats ('' is Chat home) whose message is on its way: a send's answer lands only there
   // live: a chat just made by a send is open before the list's refetch brings its row
@@ -365,7 +366,7 @@
   const formPick = (t, items) => R.sentencePicker({ id: `cf-${t.id}`, text: t.form.value, items: items.map((v) => (typeof v === 'string' ? { id: v, text: v, checked: v === t.form.value } : v.id ? { ...v, checked: v.id === t.form.value } : v)), open: menu === `cf-${t.id}`, chevron: R.icon('chevron', 10) });
   const formField = (t, label, o = {}) => R.field({ id: `cf-${t.id}-f`, label, quietLabel: true, value: o.value || '', placeholder: o.placeholder || '', multiline: !!o.multiline, hint: o.max ? `Up to ${o.max} characters` : '', attrs: { 'data-cf-field': t.id, maxlength: o.max || null } });
   const FORMS = {
-    pr: { value: () => 'ready for review', text: (t) => `Open the PR for ${t.title}`, body: (t) => formField(t, 'PR title', { value: t.title }) + `<span class="tp-sentence">as ${formPick(t, ['ready for review', 'a draft'])} into dev</span>`, say: (t, f) => `${f.say}${t.form.value === 'a draft' ? ' as a draft' : ''}` },
+    pr: { value: () => 'ready for review', text: (t) => `Open the PR for ${t.title}`, body: (t) => formField(t, 'PR title', { value: t.title }) + `<span class="tp-sentence">as ${formPick(t, ['ready for review', 'a draft'])} into ${esc(LIVE() ? t.base || 'its base' : 'dev')}</span>`, say: (t, f) => `${f.say}${t.form.value === 'a draft' ? ' as a draft' : ''}` },
     model: { value: () => 'Sonnet 5.5', text: () => 'Resume on another model', body: (t) => `<span class="tp-sentence">Every remaining step runs on ${formPick(t, ENGINE_ITEMS)}</span>` },
     'resume-at': { value: () => '17:00', text: () => 'When it resumes', body: (t) => `<span class="tp-sentence">Resume at ${formPick(t, R.TIMES_OF_DAY)} today</span>` },
     cap: { value: () => '$40', text: () => 'Raise the cost cap', body: (t) => `<span class="tp-sentence">Raise it to ${formPick(t, ['$20', '$40', '$80', '$160'])} for this task</span>` },
@@ -459,7 +460,10 @@
   }
   // One filled button on the screen (rail.one-action): only the newest card still asking keeps its primary; the rest go
   // quiet, so what waits on you is the loudest thing here.
-  const taskWaits = (y) => { if (y.t !== 'task') return false; const t = taskOf(y.task), r = t?.run && window.RailWorld.find(t.run); return !!r && window.RailWorld.section(r) === 'needs'; };
+  // a live task that needs you by its own state (a question, a plan, a failure) waits too, though a saved failed run sits in
+  // Recent: its own turn is the one that breathes (one attention path)
+  const liveWaits = (t) => LIVE() && !!t?.run && ['ask', 'act', 'fail'].includes(R.markTone(stOf(t)));
+  const taskWaits = (y) => { if (y.t !== 'task') return false; const t = taskOf(y.task), r = t?.run && window.RailWorld.find(t.run); return (!!r && window.RailWorld.section(r) === 'needs') || liveWaits(t); };
   const ASKING = (y) => taskWaits(y) || (y.t === 'proposal' && !y.later) || (y.t === 'change' && y.state === 'proposed' && !y.done) || (y.t === 'plan' && !y.approved) || (y.t === 'feature' && y.split) || ((y.t === 'gate' || y.t === 'ship' || y.t === 'act') && !y.done) || (y.t === 'question' && !y.answered);
   function calmCards(l) {
     let last = -1; l.forEach((y, k) => { if (ASKING(y)) last = k; });
@@ -559,12 +563,14 @@
   const termPane = (x, key) => R.terminalPane({ title: x.term.title || x.cmd, lines: x.term.lines, closed: x.term.closed, hooks: { stop: { 'data-term-stop': key }, close: { 'data-terminal': key }, send: { 'data-term-input': key } } });
   function turnHtml(x, i) {
     const fold = () => ({ 'data-fold-turn': String(i), ...(x.id ? { 'data-anchor': x.id } : {}) });
-    if (x.t === 'you') return R.youTurn({ text: x.text, quote: x.quote || '', files: x.files || [], refs: (x.refs || []).map((r) => ({ text: r.title, mark: R.kindMark({ kind: 'task', tone: 'idle', size: 14 }), attrs: { 'data-open-ref': r.case } })), attrs: { 'data-anchor': x.id || '' } });
+    // panel.turn-time: a you or words turn takes the focus and carries its time, shown on hover, focus or a tap; its first
+    // data-* attribute is its key, so focusMark finds it again after a repaint
+    if (x.t === 'you') { const html = R.youTurn({ text: x.text, quote: x.quote || '', files: x.files || [], refs: (x.refs || []).map((r) => ({ text: r.title, mark: R.kindMark({ kind: 'task', tone: 'idle', size: 14 }), attrs: { 'data-open-ref': r.case } })), attrs: { 'data-anchor': x.id || '', tabindex: '0' }, time: R.turnTime({ at: x.at, now: Date.now() }) }); return x.id && timeShown === x.id ? html.replace('class="convo-you"', 'class="convo-you is-time-shown"') : html; }
     // commands are dev's on Rail's rail (CommandRow, CommandGroup): a group folded to its head, a failure opening it and
     // itself; no marks, the words say how each went; one fold opens the command and its output, each with Copy
     const TERMINAL = { 'data-terminal': String(i) };   // panel.terminal: the TerminalPane under the command, in both kinds
     if (x.t === 'cmd') {   // one command running now: its seconds count, Stop beside it; done, it folds like any command
-      const state = x.stopped ? 'stopped' : x.done ? 'ok' : 'run';
+      const state = x.stopped ? 'stopped' : x.done ? (x.failed ? 'fail' : 'ok') : 'run';
       const under = x.term ? termPane(x, String(i))
         : x.shellClosed ? R.turnRow({ mark: '', text: 'Shell closed', attrs: { title: x.shellClosed } }) : '';   // the tip is the library's SHELL_CLOSED (terminal-live.mjs)
       if (LIVE()) return R.commandRow({ summary: x.sum || x.cmd, cmd: x.cmd, state, end: x.stopped ? 'stopped by you' : x.done ? x.end || '' : '1s', open: !!x.open, dir: x.dir || '', out: x.out || '', hooks: { toggle: { 'data-cmdx': String(i) }, stop: { 'data-cmd-stop': String(i) }, ...(x.shellClosed ? {} : { terminal: TERMINAL }) }, attrs: state === 'run' ? { 'data-think-at': String(x.at || (x.at = Date.now())) } : {} }) + under;
@@ -617,7 +623,7 @@
       return askChanges(x) ? R.planCard({ menu: planMenu, extra, check: 'shape check passed', title: x.title, summary: x.summary, version, roles: x.roles, open: !!x.open, hooks: { roles: { 'data-plan-roles': x.id }, approve: { 'data-plan-approve': x.id }, changes: { 'data-plan-changes': x.id }, full: { 'data-plan-full': x.id } }, full, fullOpen: !!x.fullOpen, attrs: { 'data-anchor': x.id } }) + askChanges(x) : R.planCard({ menu: planMenu, extra, check: 'shape check passed', title: x.title, summary: x.summary, version, roles: x.roles, open: !!x.open, hooks: { roles: { 'data-plan-roles': x.id }, approve: { 'data-plan-approve': x.id }, changes: { 'data-plan-changes': x.id }, full: { 'data-plan-full': x.id } }, full, fullOpen: !!x.fullOpen, attrs: { 'data-anchor': x.id } });
     }
     if (x.t === 'filesgrid') return R.filesCard({ label: x.label || 'Files', files: x.files.map((f) => ({ ...f, view: doOr(`open ${f.name}`, 'file', { threadId: chatId, attId: f.att }), download: doOr(`download ${f.name}`, 'file', { threadId: chatId, attId: f.att }) })) });
-    if (x.t === 'words') return `<p class="convo-words">${x.parts && LIVE() ? x.parts.map(refPart).join('') : x.html}</p>`;
+    if (x.t === 'words') { const key = x.key || String(i); return `<p class="convo-words${timeShown === key ? ' is-time-shown' : ''}"${R.attrs({ 'data-words-turn': key, tabindex: '0' })}>${x.parts && LIVE() ? x.parts.map(refPart).join('') : x.html}${R.turnTime({ at: x.at, now: Date.now() })}</p>`; }   // no data-anchor: a timeline tick is a you turn or a card, never a paragraph
     if (x.t === 'failed') return R.turnRow({ mark: R.kindMark({ kind: 'chat', tone: 'fail', size: 16 }), text: `<b>${esc(x.text)}</b>${x.details ? ` ${esc(x.detail)}` : ''}`, end: R.button({ label: x.details ? 'Hide details' : 'Details', kind: 'quiet', attrs: { 'data-failed-details': x.id, 'aria-expanded': String(!!x.details) } }) + R.button({ label: 'Try again', kind: 'quiet', attrs: { 'data-failed-retry': x.id } }), attrs: { 'data-anchor': x.id } });   // fail.no-raw: the raw error behind Details
     if (x.t === 'proposal') return proposalHtml(x);
     if (x.t === 'divider') return R.turnDivider({ text: x.text });
@@ -670,7 +676,7 @@
       if (x.answered) return R.turnRow({ mark: R.icon('check', 14), text: `<b>${esc(x.text)}</b> ${esc(x.answered)}` });
       return `<div data-anchor="${x.id}">${R.turnRow({ mark: R.kindMark({ kind: 'task', tone: 'ask', stage: -1, size: 16 }), text: `<b>${esc(x.text)}</b>` })}<div class="convo-answer">${R.optionList({ label: x.text, options: x.options, selected: x.pick, recommended: x.rec ?? x.pick ?? 0, optAttrs: (n) => ({ 'data-answer': `${i}|${n}` }), own: `${R.field({ id: `own-${x.id}`, label: 'Your own answer', quietLabel: true, placeholder: 'Or write your own answer', attrs: { 'data-own': String(i) } })}<div class="convo-answer-go">${R.button({ label: 'Answer', attrs: { 'data-answer-go': String(i) } })}${x.many ? R.button({ label: 'Use Worca’s picks', kind: 'quiet', attrs: { 'data-answer-picks': String(i), title: 'Takes Worca’s pick for this and the next question' } }) : ''}</div>` })}</div></div>`;
     }
-    const st = stOf(t), tone = R.markTone(st), all = turns(), at = all.findIndex((y) => y === x || (x.id && y.id === x.id && y.t === x.t)), below = tone === 'ask' && all.some((y, j) => j > at && ((y.t === 'question' && !y.answered) || (y.t === 'plan' && !y.approved)));   // a question or a plan waiting under it speaks for it
+    const st = stOf(t), tone = R.markTone(st), all = turns(), at = all.findIndex((y) => y === x || (x.id && y.id === x.id && y.t === x.t)), below = ((tone === 'ask' || tone === 'act') && all.some((y, j) => j > at && ((y.t === 'question' && !y.answered) || (y.t === 'plan' && !y.approved)))) || (LIVE() && !!t.run && !!CL().ask(t.run));   // a question or a plan waiting under it (or drawn in its own turn, live) speaks for it
     const word = tone === 'ok' && STAGES[t.stage] === 'PR' ? R.needsReason('approved') : R.needsReason(RM.stateOf(t.case));   // one state, one word (Question, Ready to merge), as Tasks says it; a Ready card reads what its stage rail shows
     if (tone === 'wait' && !x.open) return openCard(x, t);   // one line until opened in place
     // Its one action and ⋯ are its state's own, as on its page; a question is answered under the card.
@@ -678,7 +684,7 @@
     const live = tone === 'run' && !st.action && offers(t, 'Pause');
     // live: a task that waits on you (a question, a pause) can be stopped from its card too; only a real failure (its
     // state's ✗, never a pause drawn as a warning) offers the fixes
-    const stoppable = live || (LIVE() && ['ask', 'pause', 'fail'].includes(tone) && st.sym !== 'x' && offers(t, 'Stop'));
+    const stoppable = live || (LIVE() && ['ask', 'act', 'pause', 'fail'].includes(tone) && st.sym !== 'x' && offers(t, 'Stop'));
     const failed = tone === 'fail' && (!LIVE() || st.sym === 'x');
     const fixFirst = failed && !t.fixing && offers(t, st.action?.label || '');
     if (st.action && !offers(t, st.action.label)) st.action = null;   // live: its state's step is offered only where dev has it   // Retry, the same verb as on Tasks; Ask Worca to fix it heads the card's ⋯
@@ -718,7 +724,7 @@
       const tone = x?.t === 'question' ? 'ask' : x?.t === 'fail' ? 'fail' : t && t.kind !== 'schedule' ? R.markTone(stOf(t)) : '';
       const words = (s) => String(s || '').replace(/<[^>]+>/g, '');   // every tick names its turn: an act's text is markup
       const title = x?.t === 'you' ? x.text : x?.t === 'question' ? x.text : x?.t === 'fail' ? x.cmd : t?.title || x?.title || words(x?.text) || (x?.t === 'commands' ? x.rows[0]?.summary : '') || '';
-      const line = x?.t === 'you' ? `You · ${x.when || ''}` : x?.t === 'question' ? `Waiting for you · ${x.when || ''}` : x?.t === 'fail' ? `Failed · ${x.when || ''}` : t?.detail || (x?.t === 'commands' ? `${x.rows.length} commands` : x?.kind || (x?.t === 'plan' ? 'Plan' : x?.t === 'feature' ? 'Feature' : x?.t === 'ship' ? 'Ship' : x?.t === 'proposal' ? 'Proposed' : ''));
+      const line = x?.t === 'you' ? `You · ${x.when || R.turnTimeText(x.at, Date.now())}` : x?.t === 'question' ? `Waiting for you · ${x.when || ''}` : x?.t === 'fail' ? `Failed · ${x.when || ''}` : t?.detail || (x?.t === 'commands' ? `${x.rows.length} commands` : x?.kind || (x?.t === 'plan' ? 'Plan' : x?.t === 'feature' ? 'Feature' : x?.t === 'ship' ? 'Ship' : x?.t === 'proposal' ? 'Proposed' : ''));
       const mark = x?.t === 'you' ? R.icon('you', 16) : x?.t === 'question' ? R.kindMark({ kind: 'task', tone: 'ask', stage: -1, size: 18 }) : x?.t === 'fail' ? R.kindMark({ kind: 'task', tone: 'fail', stage: -1, size: 18 }) : t ? taskMark(t, 18) : '';
       const top = e.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
       return { id: e.dataset.anchor, at: Math.min(0.98, top / H), kind, tone, title, line, mark };
@@ -1096,7 +1102,7 @@
   }
   // `had`: the control, or its redrawn twin (a repaint between the press and here keeps the focus by its hook), has the focus
   const busyBtn = (btn, p) => { const sel = selOf(btn), a = document.activeElement, had = !!btn && (a === btn || (!!sel && root.contains(a) && selOf(a) === sel)); return busyFor(sel, p, had); };
-  const cardArgs = (x) => ({ threadId: chatId, cardId: x.card });
+  const cardArgs = (x) => ({ threadId: chatId, cardId: x.card, ...(x.cardType ? { cardType: x.cardType } : {}) });
   // live turns are read again on every paint: after an answer, change the turn as it is now, found by its id
   const now = (x, fn) => { const y = turns().find((z) => z.id === x.id && z.t === x.t); if (y) fn(y); };
   // the plan's open choices as its answer carries them: your picks, Worca's where you made none
@@ -1342,7 +1348,19 @@
     if ((hit = on('[data-slice-open]'))) { const [id, k] = hit.dataset.sliceOpen.split('|'), all = turns(), x = all.find((y) => y.id === id); if (x) { const was = x.openSlice === +k; all.forEach((y) => { y.open = false; y.openSlice = -1; }); x.openSlice = was ? -1 : +k; paint(); } return; }   // one thing open at a time: the lent page goes to the slice
     if ((hit = on('[data-open-ref]'))) { window.RailShell.openTask(hit.dataset.openRef, '', hit.textContent.trim()); return; }
     if ((hit = on('[data-say]'))) say(hit.dataset.say);
+    timeTap(e);
   });
+  // panel.turn-time: a tap on a turn's words shows its time (a touch screen has no hover) and hides any other; a second tap
+  // or a tap outside every turn hides it. A control inside the turn, or a click that ends a selection, never toggles it.
+  function timeTap(e) {
+    const turn = e.target.closest('.convo-you, .convo-words');
+    if (turn && (e.target.closest('a, button, [data-open-ref], .kind-chip, input, textarea') || String(window.getSelection?.() || ''))) return;
+    const key = turn ? turn.dataset.anchor ?? turn.dataset.wordsTurn ?? '' : '', next = key && key !== timeShown ? key : '';
+    if (next === timeShown) return;
+    timeShown = next;
+    root.querySelectorAll('.is-time-shown').forEach((el) => el.classList.remove('is-time-shown'));   // only the class: nothing is redrawn, nothing moves
+    if (next) turn.classList.add('is-time-shown');
+  }
   root.addEventListener('submit', (e) => { e.preventDefault(); });
   // A hover only draws its card: the strip under the pointer stays the same elements.
   function paintTimelineHover() {
@@ -1360,7 +1378,7 @@
   root.addEventListener('input', (e) => { if (e.target.matches('[data-composer-t]')) { comp.text = e.target.value; size(e.target); const at = /@[^@\s]*$/.test(comp.text); if (at !== (menu === 'cp-mention')) { menu = at ? 'cp-mention' : ''; paint(); } else if (at) { const list = root.querySelector('.composer-at'); if (list) list.outerHTML = mentionMenu(); } } if (e.target.matches('[data-pp-brief]')) { const x = turns().find((y) => y.id === e.target.dataset.ppBrief); if (x) x.brief = e.target.value; } if (e.target.matches('[data-pp-feature]')) { const x = turns().find((y) => y.id === e.target.dataset.ppFeature); if (x) x.feature = e.target.value; } if (e.target.matches('[data-pp-src]')) { const x = turns().find((y) => y.id === e.target.dataset.ppSrc); if (x) x.src = e.target.value; } if (e.target.matches('[data-direction]')) { const x = turns().find((y) => y.id === e.target.dataset.direction); if (x) x.dirValue = e.target.value; } if (e.target.matches('[data-ask-changes]')) { const x = turns().find((y) => y.id === e.target.dataset.askChanges); if (x) x.askValue = e.target.value; } if (e.target.matches('[data-pp-title]')) { const x = turns().find((y) => y.id === e.target.dataset.ppTitle); if (x) x.title = e.target.value; } });
   // motion.attention: what needs you in this chat glows once, when you arrive and when it starts to wait
   const asksBelow = (y) => { const l = turns(), at = l.indexOf(y); return l.some((z, j) => j > at && ((z.t === 'question' && !z.answered) || (z.t === 'plan' && !z.approved))); };   // a question under a card speaks for it: one thing breathes
-  const waitsOnYou = (y) => (y.t === 'question' && !y.answered) || (y.t === 'form' && !y.answered) || (y.t === 'plan' && !y.approved) || (y.t === 'gate' && !y.done) || ((y.t === 'task') && !asksBelow(y) && (() => { const t = taskOf(y.task), r = t?.run && window.RailWorld.find(t.run); return !!r && window.RailWorld.section(r) === 'needs'; })());
+  const waitsOnYou = (y) => (y.t === 'question' && !y.answered) || (y.t === 'form' && !y.answered) || (y.t === 'plan' && !y.approved) || (y.t === 'gate' && !y.done) || ((y.t === 'task') && !asksBelow(y) && (() => { const t = taskOf(y.task), r = t?.run && window.RailWorld.find(t.run); return (!!r && window.RailWorld.section(r) === 'needs') || liveWaits(t); })());
   // it breathes until you focus it or act on it, like an unread mark; seen ones stay quiet across redraws
   const seenAttn = new Set();
   function attention() {

@@ -1430,6 +1430,7 @@ test('planCard, filesCard, youTurn: the Shaper plan folds its roles; files as ti
   assert.match(f, /fc-tile[\s\S]*a\.png/); assert.match(f, /<b>b\.txt<\/b> 2 KB/); assert.match(f, /aria-label="Download b\.txt"/);
   const y = C.youTurn({ text: 'Same bug?', quote: 'Off by a cent', files: ['x.pdf'] });
   assert.match(y, /you-quote">Off by a cent/); assert.match(y, /x\.pdf/);
+  assert.match(C.youTurn({ text: 'Hi', time: C.turnTime({ at: Date.now() }) }), /<time class="turn-time"[^>]*>\d\d:\d\d<\/time><\/div>$/);   // turnTime: its time is the turn's last child
   assert.doesNotMatch(C.changeProposal({ kind: 'Agent', title: 'New', rows: [{ name: 'Reads', before: '', after: 'PRs' }] }), /→/);
 });
 
@@ -1533,6 +1534,22 @@ test('workspaceMap: links leaving one box turn at their own place', () => {
 });
 test('needsReason: a task under Needs you says why in a word or two', () => {
   assert.equal(C.needsReason('question'), 'Question'); assert.equal(C.needsReason('failed'), 'Failed');
+  assert.equal(C.needsReason('plan'), 'Needs approval');
+});
+test('runState plan: a plan waiting for your approval wears the pencil, as a gate does (list.kind-mark)', () => {
+  const st = C.runState('plan');
+  assert.equal(st.word, 'Needs approval'); assert.equal(st.sym, 'q'); assert.equal(st.approval, true);
+  assert.equal(C.markTone(st), 'act');
+  assert.equal(C.alertLevel(C.markTone(st)), C.alertLevel('ask'), 'the badge tone holds');
+  assert.equal(C.sectionOf(st.word, 'plan'), 'needs', 'it stays under Needs you'); assert.equal(C.bulkStateOf(st.word), 'needs-you');
+  assert.match(readFileSync('plans/rail/prototype/components.html', 'utf8'), /runState\('plan'\)/, 'the gallery shows a plan-state TaskCard');
+});
+test('a branch on a card is in the text face, not the mono (look.md)', () => {
+  const css = readFileSync('ui/public/stillhet/css/rail.css', 'utf8');
+  for (const sel of ['.rc-mid', '.rc-base']) {
+    const rule = css.match(new RegExp(`^\\${sel}\\{[^}]*\\}`, 'm'))[0];
+    assert.doesNotMatch(rule, /--mono/, sel);
+  }
 });
 test('roundRows: one line, one end', () => {
   const shut = dom(C.roundRows({ line: 'Round 2', n: 1, open: false, toggle: { 'data-rounds': 'r' } }));

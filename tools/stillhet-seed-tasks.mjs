@@ -9,7 +9,7 @@
 //
 // Run: PORT=4937 node tools/stillhet-seed-tasks.mjs   (pin a PORT: an agent inherits the host app's 4317)
 import { execFileSync } from 'node:child_process';
-import { chmod, mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,6 +27,10 @@ export const SEEDED_TASKS = Object.freeze([
   { key: 'stopped', what: 'a stopped run with a saved plan and a kept branch: Restart Build, Start a new task' },
   { key: 'approved', what: 'a finished run with an approved PR whose checks pass: Merge PR (STUB_GH_REFUSE=merge refuses it)' },
   { key: 'failing', what: 'a finished run whose PR has failing checks: Fix checks, Re-run checks' },
+  // the bell's other kinds, so its head reads the count and the breakdown (feature 1 audit fix pass, D7)
+  { key: 'missed', what: 'a schedule whose start passed while Worca was off: Run now' },
+  { key: 'project-need', what: 'a project whose folder was moved away (Moved folder): Needs you' },
+  { key: 'question', what: 'a workspace link Worca is unsure of: a question' },
 ]);
 
 /** The stub `gh` (a node script): answers the PR calls the Tasks routes make, from the PR's number. A PR's head is its
@@ -86,6 +90,16 @@ async function until(what, fn, { timeoutMs = 90000, every = 50 } = {}) {
   }
 }
 
+// a git repository with one commit on main, in a fresh temp folder
+async function gitRepo(prefix) {
+  const dir = await mkdtemp(path.join(tmpdir(), prefix));
+  for (const a of [['init', '-q', '-b', 'main'], ['config', 'user.email', 'seed@worca.local'], ['config', 'user.name', 'seed']]) execFileSync('git', a, { cwd: dir });
+  await writeFile(path.join(dir, 'README.md'), '# seed\n');
+  execFileSync('git', ['add', '-A'], { cwd: dir });
+  execFileSync('git', ['commit', '-qm', 'init'], { cwd: dir });
+  return dir;
+}
+
 /**
  * Seeds the six tasks into the running server at `base` (this process's ui/server.mjs, so `runs` is its live map).
  * `projectDir` is a git repository with one commit on `main`. → { project, threads: {key → threadId}, runs: {plan},
@@ -94,7 +108,7 @@ async function until(what, fn, { timeoutMs = 90000, every = 50 } = {}) {
 export async function seedTasks({ base, runs, projectDir, projectName = 'Seed project' }) {
   const { getDb } = await import('../src/core/db.mjs');
   const { projectKey, projectStorePath } = await import('../src/core/store.mjs');
-  const { writeStoreMeta, recordArtifact } = await import('../src/core/artifacts.mjs');
+  const { writeStoreMeta, recordArtifact, persistPrState } = await import('../src/core/artifacts.mjs');
   const ask = await import('../src/core/ask/store.mjs');
   const call = async (method, p, body) => {
     const r = await fetch(`${base}${p}`, { method, headers: { 'content-type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
@@ -133,8 +147,13 @@ export async function seedTasks({ base, runs, projectDir, projectName = 'Seed pr
 
   // plan: a Shaper run answered up to its plan, waiting for Approve and build
   threads.plan = chat('Seed · plan to approve');
-  live.plan = await startFromCard(threads.plan, { title: 'CSV export for billing', brief: 'Shape a CSV export for the billing page', workflowId: 'wf_shape', extra: { shape: { slices: 'off' } } });
-  await drive(live.plan, (e) => e?.pendingQuestion?.kind === 'plan', 'the Shaper plan');
+  // with perspectives on, dev's role reviews write the plan's findings (state.roleReviews); its shape check and concern are
+  // read too. None of them: the seed throws, never invents a finding (D10, D11)
+  live.plan = await startFromCard(threads.plan, { title: 'CSV export for billing', brief: 'Shape a CSV export for the billing page', workflowId: 'wf_shape', extra: { shape: { slices: 'off', perspectives: ['product', 'qa'] } } });
+  const pe = await drive(live.plan, (e) => e?.pendingQuestion?.kind === 'plan', 'the Shaper plan');
+  const pq = pe.pendingQuestion, rr = pe.orch?.state?.roleReviews || pq?.plan?.roleReviews;
+  const found = (rr?.rounds || []).some((r) => (r.roles || []).some((x) => (x.findings || []).length)) || (pq?.plan?.check?.items || []).some((i) => i && !i.pass) || !!pq?.concern;
+  if (!found) throw new Error('the plan run has no role-review finding, plan check item or concern: dev\'s Shaper with perspectives product, qa wrote none');
 
   // stopped: a saved run with a plan artifact and its kept branch
   const now = new Date().toISOString();
@@ -143,8 +162,18 @@ export async function seedTasks({ base, runs, projectDir, projectName = 'Seed pr
     .run(id, key, 'project', title, status, status, 0, now, now, 0.42, 61000, JSON.stringify({ source: 'main', feature: `worca/${id}`, branchKept: true }),
       extra.pr || null, extra.pr ? Number(extra.pr.split('/').pop()) : null, extra.pr ? 'OPEN' : null);
   const linked = (threadId, pid, title) => { const cardId = ask.newAskId('card'); ask.appendMessage(threadId, { role: 'assistant', text: 'Started it.', status: 'done', model: MODEL, blocks: [{ kind: 'card', id: cardId, state: 'started', runId: pid, card: { target: 'project', projectKey: key, projectDir, projectName, workflowId: 'wf_default', workflowName: 'Default', brief: title, title, sourceBranch: 'main' } }] }); ask.linkRun(threadId, { runId: pid, pipelineId: pid, cardId, status: null }); };
+  // the steps the run went through, as dev's ledger writes them (artifacts.mjs writeState: x:<node>:<n> rows), with its
+  // workflow's graph so each step is named as the workflow names it
+  const insStep = getDb().prepare(`INSERT INTO pipeline_steps (pipeline_id, key, node_id, phase, cycle, status, started_at, updated_at, active_ms, cost_usd,
+    execution_id, exec_kind, agent_key, ended_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  const NODES = [['n_clarify', 'clarify', 'Clarify'], ['n_plan', 'planner', 'Plan'], ['n_refine', 'refiner', 'Refine plan'], ['n_impl', 'implementer', 'Implementation'], ['n_review', 'reviewer', 'Review implementation']];
+  const steps = (pid, states) => {
+    states.forEach((st, i) => { const [node, agent] = NODES[i]; insStep.run(pid, `x:${node}:1`, node, agent, 1, st, now, now, 20000, 0.05, `x:${node}:1`, 'cycle', agent, st === 'done' ? now : null); });
+    getDb().prepare('UPDATE pipelines SET stepper = ? WHERE id = ?').run(JSON.stringify({ graph: { nodes: NODES.map(([id, key, label]) => ({ id, kind: 'agent', key, label })) } }), pid);
+  };
   pipelines.stopped = '5eed0011';
   row(pipelines.stopped, 'stopped', 'Add pager to the audit log');
+  steps(pipelines.stopped, ['done', 'done', 'done', 'stopped']);
   execFileSync('git', ['branch', `worca/${pipelines.stopped}`], { cwd: projectDir });
   const rel = `plans/${now.slice(0, 10)}-seed-pager.md`;
   await mkdir(path.join(projectStorePath(key), 'plans'), { recursive: true });
@@ -155,7 +184,9 @@ export async function seedTasks({ base, runs, projectDir, projectName = 'Seed pr
   // approved and failing: finished runs with open PRs on the stub gh
   pipelines.approved = '5eed0012'; row(pipelines.approved, 'done', 'Add pager to the audit log', { pr: PR_APPROVED });
   pipelines.failing = '5eed0013'; row(pipelines.failing, 'done', 'Fix the invoice date format', { pr: PR_FAILING });
-  for (const id of [pipelines.approved, pipelines.failing]) execFileSync('git', ['branch', `worca/${id}`], { cwd: projectDir });   // the PRs' heads
+  for (const id of [pipelines.approved, pipelines.failing]) { execFileSync('git', ['branch', `worca/${id}`], { cwd: projectDir }); steps(id, ['done', 'done', 'done', 'done', 'done']); }   // the PRs' heads
+  // the failing PR's verdict, as dev's PR lookup stores it (persistPrState): its failing checks make it need you
+  persistPrState(pipelines.failing, { url: PR_FAILING, number: 43, state: 'OPEN', verdict: { mergeable: 'MERGEABLE', reviewDecision: '', checks: { state: 'failing', total: 3, failed: 1, pending: 0 } } });
   // a bare `origin` holding main and the runs' branches: dev's Fix checks and Watch fetch it before a round starts, and the
   // stub gh reports each PR's head as its branch's real commit there
   const originDir = await mkdtemp(path.join(tmpdir(), 'worca-seed-tasks-origin-'));
@@ -178,7 +209,38 @@ export async function seedTasks({ base, runs, projectDir, projectName = 'Seed pr
   pipelines.capped = ce.pipelineId;
   delete process.env.WORCA_MOCK_STEP_COST_USD;
 
-  return { project: key, threads, runs: live, pipelines };
+  // missed: a one-off start that passed while Worca was off; dev's scheduler marks it missed on its next tick
+  const { createTicket } = await import('../src/core/scheduler.mjs');
+  const { schedulerTick } = await import('../ui/server.mjs');
+  const ticket = createTicket({ title: 'Nightly dependency bump', projectDir, runAtMs: Date.now() - 7 * 3600_000, request: { projectDir, prompt: 'Bump the dependencies' } });
+  await schedulerTick();
+  if ((await call('GET', '/api/schedules')).tickets?.find((t) => t.id === ticket.id)?.status !== 'missed') throw new Error('the seeded schedule was not marked missed by dev\'s scheduler');
+  const other = {};
+  other.missed = ticket.id;
+
+  // question: a workspace of this project and a second one, whose one link Worca is unsure of (an auto, heuristic edge)
+  const second = await gitRepo('worca-seed-tasks-api-');
+  const { workspace } = await call('POST', '/api/workspaces', { name: 'Billing and API', projectPaths: [projectDir, second] });
+  const { saveWorkspaceScanResult } = await import('../src/core/workspaces.mjs');
+  const { edgeId } = await import('../src/shared/workspace-map/ids.mjs');
+  const [from, to] = [key, projectKey(second)];
+  const norm = 'http:GET /invoices/{}';
+  const member = (k, name) => ({ key: k, name, role: `Serves ${name}`, roleSource: 'static', aliases: [], stack: ['node'],
+    coverage: { level: 'rich', files: 1, scannedFiles: 1, truncated: false, factsStatic: 1, factsLlm: 0, unresolved: 0, rejected: 0, surveyed: 'skipped', usageStatus: 'investigated', graph: null } });
+  const map = { version: 1, workspace: { name: 'Billing and API' }, scannedAt: now, runId: 'seed0001', members: [member(from, projectName), member(to, 'api')],
+    edges: [{ id: edgeId(from, to, 'http', norm), from, to, kind: 'http', norm, display: 'GET /invoices/{id}', label: null, detail: '', confidence: 'heuristic', sources: ['static'],
+      evidence: { from: [{ file: 'src/client.js', line: 3, match: 'GET /invoices/{id}' }], to: [{ file: 'src/server.js', line: 7, match: 'GET /invoices/{id}' }] } }],
+    order: [[to], [from]], cycles: [], graph: { mode: 'none', file: null, nodes: 0, bridges: 0 }, stats: { edges: 1, byKind: { http: 1 }, byConfidence: {}, candidates: 0, candidatesConfirmed: 0, factsRejected: 0 }, errors: [] };
+  await saveWorkspaceScanResult(workspace.id, { map, synthesis: { version: 1, overview: 'Billing calls the API for invoices.', roles: {}, coordination: [], orderNotes: '' } });
+  other.question = workspace.id;
+
+  // project-need: registered last (walks that pick the first project keep the seed project), then its folder moves away
+  const moved = await gitRepo('worca-seed-tasks-moved-');
+  await call('POST', '/api/projects', { name: 'Moved folder', path: moved });
+  await rm(moved, { recursive: true, force: true });
+  other['project-need'] = projectKey(moved);
+
+  return { project: key, threads, runs: live, pipelines, other };
 }
 
 async function main() {
@@ -202,7 +264,7 @@ async function main() {
   const base = `http://127.0.0.1:${port}`;
   const out = await seedTasks({ base, runs, projectDir: proj });
   console.log(`Seeded ${base}  (HOME ${home}, project ${proj})`);
-  for (const t of SEEDED_TASKS) console.log(`  ${base}/#run/${out.pipelines[t.key] || out.runs[t.key]}  ${t.what}`);
+  for (const t of SEEDED_TASKS) console.log(`  ${out.other[t.key] ? `${t.key} ${out.other[t.key]}` : `${base}/#run/${out.pipelines[t.key] || out.runs[t.key]}`}  ${t.what}`);
   console.log('The server stays up for the walk; Ctrl-C ends it.');
   await new Promise(() => {});
   return 0;

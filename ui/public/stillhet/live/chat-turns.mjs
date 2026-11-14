@@ -36,7 +36,27 @@ const STATE = { proposed: 'proposed', building: 'proposed', applied: 'applied', 
 const stateOf = (s) => STATE[s] || 'proposed';
 
 // what a proposal changes: dev's own rows (`changes` / `rows`, label or field, before, after)
-const rowsOf = (card) => arr(card.changes).concat(arr(card.rows)).map((r) => ({ name: str(r.label) || str(r.field), before: str(r.before ?? ''), after: str(r.after ?? '') })).filter((r) => r.name);
+const own = (card) => arr(card.changes).concat(arr(card.rows)).map((r) => ({ name: str(r.label) || str(r.field), before: str(r.before ?? ''), after: str(r.after ?? '') })).filter((r) => r.name);
+// D12 (a): a proposal dev sends with no rows of its own shows its own fields as rows, so no card is a bare title
+const row = (name, after, before = '') => ({ name, before: str(before), after: str(after) });
+const whenOf = (v) => (v && typeof v === 'object' ? [str(v.sentence), str(v.when)].filter(Boolean).join(' · ') : str(v));
+const setWords = (o) => (o && typeof o === 'object' ? Object.entries(o).map(([k, v]) => row(k, typeof v === 'string' ? v : JSON.stringify(v))) : []);
+const TYPE_ROWS = {
+  'scope-switch': (c) => arr(c.candidates).map((x) => row(str(x?.name) || str(x?.projectKey), str(x?.displayPath) || str(x?.path))),
+  schedule: (c) => [row('When', whenOf(c.after), whenOf(c.before))],
+  away: (c) => [row('Away', str(c.after) || whenOf(c.set), str(c.before))],
+  proxy: (c) => setWords(c.patch),
+  web: (c) => [row('Host', str(c.host) || str(c.change?.host))],
+  clone: (c) => [row('From', c.url), row('Branch', c.branch), row('Into', c.dir)],
+  project: (c) => [row('Name', c.name), row('Folder', str(c.displayPath) || str(c.path))],
+  workspace: (c) => [row('Members', arr(c.members).map((m) => (typeof m === 'string' ? m : str(m?.name) || str(m?.projectKey))).filter(Boolean).join(', ') || arr(c.added).join(', '))],
+  // a workflow names its steps: its agents in the order they run (dev's manifest), or the nodes built in Chat
+  workflow: (c) => [row('Steps', arr(c.manifest?.steps).flatMap((x) => arr(x?.nodes)).filter((n) => n && n.key).map((n) => str(n.label) || str(n.key)).join(', '))],
+  'workflow-build': (c) => [row('Steps', arr(c.workflow?.nodes).map((n) => str(n?.label) || str(n?.key) || str(n?.id)).filter(Boolean).join(', '))],
+  metrics: (c) => [row('Change', c.kind), row('Where', str(c.projectName) || str(c.workspaceName))],
+  policy: (c) => [row('Change', c.kind), row('Where', str(c.projectName) || str(c.workspaceName))],
+};
+const rowsOf = (card) => { const l = own(card); return l.length ? l : (TYPE_ROWS[card.type]?.(card) || []).filter((r) => r.name && (r.after || r.before)); };
 // The change kinds, in the prototype's words (chat/chats-model.js demo kinds)
 const KIND = { 'scope-switch': 'Project', model: 'Model', schedule: 'Schedule', away: 'Away', proxy: 'Settings', web: 'Web access', clone: 'Project', project: 'Project', workspace: 'Workspace', actions: 'Settings', metrics: 'Settings', policy: 'Settings', workflow: 'Workflow', 'workflow-build': 'Workflow', receipt: 'Settings' };
 const change = (b, ctx, o = {}) => ({ t: 'change', id: str(b.id), kind: KIND[b.card.type] || 'Settings', title: str(b.card.summary) || str(b.card.label) || str(b.card.name) || str(b.card.title) || KIND[b.card.type] || 'A change', why: str(b.card.note), rows: rowsOf(b.card), state: stateOf(b.state), card: str(b.id), cardType: str(b.card.type), ...o });
@@ -69,7 +89,18 @@ export const CARD_TURN = Object.freeze({
   'workflow-build': (b, ctx) => change(b, ctx, { graph: true }),
   // the words are dev's own cards' (ui/public/chat/action-cards.mjs, ui/public/shape/changes-card.mjs, route-card.mjs)
   'run-stop': (b) => act(b, `<b>Stop ${esc(str(b.card.title) || 'the task')}?</b> A stopped run can't be resumed. Its work so far stays on its branch.`, [['Stop run', 'danger', 'Stopped', 'card-apply'], [b.card.status === 'paused' ? 'Keep paused' : 'Keep running', 'quiet', 'Not now', 'card-later']]),
-  'pull-request': (b) => act(b, `<b>${esc(str(b.card.title))}</b>${b.card.branch ? ` ${esc(b.card.branch)}` : ''}`, [['Create PR', 'primary', 'PR opened', 'pr'], ['Not now', 'quiet', 'Not now', 'card-later']], b.card.result?.url ? { done: `PR opened: ${b.card.result.url}` } : {}),
+  // D4: an opened PR shows on its run's TaskCard alone (Ready to merge, its checks, Merge PR); with no TaskCard in the
+  // thread it is one row naming its number, never the URL (one fact, one place)
+  'pull-request': (b, ctx) => {
+    const url = str(b.card.result?.url);
+    if (url || b.state === 'applied') {
+      const ids = [str(b.card.runId), str(b.card.pipelineId)].filter(Boolean);
+      if (arr(ctx.tasks).some((x) => x && ids.some((id) => x.run === id || x.id === id || x.pid === id))) return null;
+      const n = (/\/(?:pull|pullrequest|pull-requests)\/(\d+)/.exec(url) || [])[1];
+      return act(b, `<b>${esc(str(b.card.title))}</b>`, [['Create PR', 'primary', 'PR opened', 'pr'], ['Not now', 'quiet', 'Not now', 'card-later']], { done: n ? `PR opened #${n}` : 'PR opened' });
+    }
+    return act(b, `<b>${esc(str(b.card.title))}</b>${b.card.branch ? ` ${esc(b.card.branch)}` : ''}`, [['Create PR', 'primary', 'PR opened', 'pr'], ['Not now', 'quiet', 'Not now', 'card-later']]);
+  },
   // panel.ship-card: a feature's ship (dev's ship-card.mjs): its agreed requirements with their marks, one PR or stacked,
   // Create PR (POST /api/shape/features/:id/ship) and Not now (dev's `{verb: 'not-now'}`)
   ship: (b) => {
@@ -88,7 +119,15 @@ export const CARD_TURN = Object.freeze({
   actions: change, metrics: change, policy: change,
   receipt: (b, ctx) => change(b, ctx, { state: b.state === 'reverted' ? 'declined' : 'applied', revert: !!b.card.revertible && b.state !== 'reverted', rows: [{ name: str(b.card.label) || 'Setting', before: str(b.card.before ?? ''), after: str(b.card.after ?? '') }] }),
   'script-approval': (b) => act(b, `<b>${b.card.kind === 'run' ? 'Run' : 'Save'} ${esc(str(b.card.displayName) || 'the script')}?</b> ${esc(str(b.card.summary))}`, [[b.card.kind === 'run' ? 'Run it' : 'Save it', 'primary', 'Done', 'card-apply'], ['Not now', 'quiet', 'Not now', 'card-later']]),
-  command: (b) => ({ t: 'cmd', id: str(b.id), cmd: str(b.card.command), sum: str(b.card.summary), dir: str(b.card.folder), block: str(b.card.blockId), session: str(b.card.sessionId) }),
+  // D12 (b): dev keeps a command's end on its terminal block, not the card (GET …/commands/:blockId, ask-command frames):
+  // `ctx.commandOf(blockId)` answers that view; ended, the command is done and offers no Stop
+  command: (b, ctx) => {
+    const v = typeof ctx.commandOf === 'function' ? ctx.commandOf(str(b.card.blockId)) : null;
+    const exit = typeof b.card.exitCode === 'number' ? b.card.exitCode : typeof v?.exitCode === 'number' ? v.exitCode : null;
+    const ended = exit != null || (!!v && !!str(v.status) && v.status !== 'running');
+    return { t: 'cmd', id: str(b.id), cmd: str(b.card.command), sum: str(b.card.summary), dir: str(b.card.folder), block: str(b.card.blockId), session: str(b.card.sessionId),
+      ...(ended ? { done: true, end: exit ? `exit ${exit}` : '', ...(exit ? { failed: true } : {}), ...(str(v?.tail) ? { out: str(v.tail) } : {}) } : {}) };
+  },
   files: (b) => ({ t: 'filesgrid', id: str(b.id), label: str(b.card.title) || 'Files', files: arr(b.card.items).map((i) => ({ name: str(i.name), ...(i.kind === 'image' ? { image: true } : { meta: kb(i.bytes) }), att: str(i.attId) })) }),
 });
 
@@ -116,15 +155,28 @@ export function turnOfBlock(b, ctx = {}) {
   return null;
 }
 
+// D12 (c): commands one after another in one answer are the prototype's one `commands` turn (CommandGroup), as dev groups them
+function groupCommands(out) {
+  for (let k = 0; k < out.length; k++) {
+    if (out[k].t !== 'cmd' || out[k + 1]?.t !== 'cmd') continue;
+    let n = k; while (out[n + 1]?.t === 'cmd') n++;
+    const list = out.slice(k, n + 1);
+    const rows = list.map((c) => ({ summary: c.sum || c.cmd, cmd: c.cmd, state: c.done ? (c.failed ? 'fail' : 'ok') : 'run', end: c.done ? c.end || '' : '', dir: c.dir, out: c.out || '' }));
+    out.splice(k, list.length, { t: 'commands', id: list[0].id, rows, dir: list[0].dir, session: list[0].session });
+  }
+}
 const FAILED_TEXT = 'Worca could not answer this time.';
 const secs = (ms) => Math.max(1, Math.round((Number(ms) || 0) / 1000));
+// panel.turn-time: a turn's time is its message's own createdAt, never a made-up one (an echo has none until dev's row lands)
+const atOf = (m) => { const t = Date.parse(str(m.createdAt)); return Number.isFinite(t) ? { at: t } : {}; };
 function assistantTurns(m, ctx) {
   const out = [], blocks = arr(m.blocks), steps = blocks.filter((b) => b && (b.kind === 'tool' || b.kind === 'agent')).map((b) => str(b.label) || str(b.name)).filter(Boolean);
   if (steps.length && m.status !== 'streaming') out.push({ t: 'think', text: `Thought for ${secs(m.durationMs)}s`, steps });
   const text = str(m.text), cards = blocks.filter((b) => b && b.kind !== 'tool' && b.kind !== 'agent'), tail = [];
   // a card placed mid-answer (`textAt`) sits after the words before it; one without stands after the whole answer
-  let from = 0;
-  const words = (to) => { const w = text.slice(from, to).trim(); if (w) { const parts = m.status === 'streaming' ? null : partsOf(w); out.push({ t: 'words', html: wordsHtml(w), ...(parts ? { parts } : {}) }); } from = to; };   // refs once the answer is done, as dev's chips
+  let from = 0, k = 0;
+  const at = atOf(m);   // each words turn keyed by its message, so a row inserted above it never moves its time or its focus
+  const words = (to) => { const w = text.slice(from, to).trim(); if (w) { const parts = m.status === 'streaming' ? null : partsOf(w); out.push({ t: 'words', html: wordsHtml(w), ...(parts ? { parts } : {}), ...at, key: `${str(m.id)}:${k++}` }); } from = to; };   // refs once the answer is done, as dev's chips
   for (const b of cards) {
     const turn = turnOfBlock(b, ctx);
     if (!Number.isInteger(b.textAt)) { if (turn) tail.push(turn); continue; }
@@ -133,6 +185,7 @@ function assistantTurns(m, ctx) {
   }
   words(text.length);
   out.push(...tail);
+  groupCommands(out);
   if (m.status === 'streaming' && ctx.inFlight?.messageId === m.id) out.push({ t: 'working', at: Date.parse(str(m.createdAt)) || ctx.now || 0, ...(steps.length ? { steps } : {}) });
   if (m.status === 'error' || m.errorMessage) out.push({ t: 'failed', id: str(m.id), text: FAILED_TEXT, detail: str(m.errorMessage) || str(m.reason) || 'No reason was given' });
   return out;
@@ -141,18 +194,20 @@ function userTurn(m) {
   const blocks = arr(m.blocks), synthetic = blocks.find((b) => b && b.kind === 'notice' && b.synthetic);
   if (synthetic) return { t: 'notice', text: str(synthetic.text) };
   const files = blocks.filter((b) => b && b.kind === 'attachment').map((b) => str(b.name)).filter(Boolean);
-  return { t: 'you', id: str(m.id), text: str(m.text), ...(files.length ? { files } : {}) };
+  return { t: 'you', id: str(m.id), text: str(m.text), ...(files.length ? { files } : {}), ...atOf(m) };
 }
 
 /** Every turn of a thread, in order. `thread`: the GET answer's parts (`messages`, `runLinks`, `inFlight`); `ctx.tasks`: the
  *  chat's tasks (live-map.mjs chatOf), so a run card names its store task. */
-export function turnsOf({ messages = [], runLinks = [], inFlight = null } = {}, { tasks = [], now = 0, runLinks: links } = {}) {
-  const ctx = { tasks, now, inFlight, runLinks: links || runLinks };
+export function turnsOf({ messages = [], runLinks = [], inFlight = null } = {}, { tasks = [], now = 0, runLinks: links, commandOf = null } = {}) {
+  const ctx = { tasks, now, inFlight, runLinks: links || runLinks, commandOf };
   const out = [];
   for (const m of arr(messages)) {
     if (!m) continue;
     if (m.role === 'user') out.push(userTurn(m));
     else if (m.role === 'assistant') out.push(...assistantTurns(m, ctx));
+    // dev writes a project switch as a system message with its divider block (ui/server.mjs switchThreadScope)
+    else if (m.role === 'system') for (const b of arr(m.blocks)) if (b && b.kind === 'divider') out.push({ t: 'divider', text: str(b.text) });
   }
   return out;
 }

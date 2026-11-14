@@ -7,6 +7,7 @@ import { readServerSource } from '../src/core/read-server-source.mjs';
 import { taskPageOf, taskCardOf, newTaskBodyOf, NEW_TASK_KEYS, stagesOf, stageOfStep, patchFiles, docsOf, logLinesOf, actionsOf, groupOf, commentsByPath, DIFF_PREVIEW } from '../ui/public/stillhet/live/task-page.mjs';
 import { taskPageErrors } from '../ui/public/stillhet/live/model-shape.mjs';
 import { TASK_DETAILS, NOW, PR_URL } from './helpers/stillhet-live-fixture.mjs';
+import { shortDetail } from '../ui/public/stillhet/live/live-map.mjs';
 
 test('taskPageOf meets the page shape for every fixture state', () => {
   for (const [name, input] of Object.entries(TASK_DETAILS)) {
@@ -21,15 +22,23 @@ test('the failed task (c17): branch into base, "Build · REASON", its failing it
   assert.deepEqual(card, { case: 'failed', branch: 'chore/node-24', base: 'dev', detail: 'Build · 3 tests failed',
     why: ['✗ test/a.test.mjs: timeout', '✗ test/b.test.mjs: expected 2', '✗ test/c.test.mjs: ENOENT'], git: 'branch' });
   const page = taskPageOf(TASK_DETAILS.failed, { now: NOW });
-  assert.deepEqual([page.case, page.branch, page.base, page.detail, page.why], [card.case, card.branch, card.base, card.detail, card.why]);
+  // the page's head never repeats the failure: its bold head and one row per failure are the page's What broke
+  assert.deepEqual([page.case, page.branch, page.base, page.why], [card.case, card.branch, card.base, card.why]);
+  assert.equal(page.detail, '');
+  assert.deepEqual(page.failure, { head: 'Build · 3 tests failed', rows: ['test/a.test.mjs: timeout', 'test/b.test.mjs: expected 2', 'test/c.test.mjs: ENOENT'] });
+  assert.equal(taskPageOf(TASK_DETAILS.approved).failure, null);
   assert.deepEqual([page.cost, page.mins], [4.2, 31]);
   // dev's core stores a paused run's error on one line (run-harness clipMiddle folds the whitespace): the items still split
   const oneLine = { ...TASK_DETAILS.failed, state: { ...TASK_DETAILS.failed.state, steps: [{ key: 'x:n_impl:1', status: 'paused' }], error: null,
     status: 'paused', pauseReason: 'error', pauseDetail: '3 tests failed ✗ test/a.test.mjs: timeout ✗ test/b.test.mjs: expected 2 ✗ test/c.test.mjs: ENOENT' } };
   assert.deepEqual([taskCardOf(oneLine).detail, taskCardOf(oneLine).why], [card.detail, card.why]);
-  // an error that starts with its first ✗ keeps that item: the reason reads Failed (code review r9)
+  // an error that starts with its first ✗ keeps that item (code review r9); the card's line is Pulse's and the bell's
+  // (R-arch-3: live-map.mjs shortDetail), so it counts the items
   const bare = { ...oneLine, state: { ...oneLine.state, pauseDetail: '✗ test/a.test.mjs: timeout ✗ test/b.test.mjs: expected 2' } };
-  assert.deepEqual([taskCardOf(bare).detail, taskCardOf(bare).why], ['Build · Failed', ['✗ test/a.test.mjs: timeout', '✗ test/b.test.mjs: expected 2']]);
+  assert.deepEqual([taskCardOf(bare).detail, taskCardOf(bare).why], ['Build · 2 tests failed', ['✗ test/a.test.mjs: timeout', '✗ test/b.test.mjs: expected 2']]);
+  const free = { ...oneLine, state: { ...oneLine.state, pauseDetail: 'npm ci exited 1 (code >= 1)\nsee the log' } };
+  assert.equal(taskCardOf(free).detail, shortDetail({ status: 'failed', error: 'npm ci exited 1 (code >= 1)\nsee the log' }));
+  assert.equal(taskCardOf(free).detail, 'Build · npm ci exited 1');
 });
 
 test('the approved PR (c18): its case from the checks entry, the checks list and the approvals, the pass mark', () => {
@@ -102,9 +111,11 @@ test('the head\'s reason never repeats the state word or the cap\'s numbers; the
   assert.equal(capped.cap, 0.5);
   assert.doesNotMatch(capped.detail, /\$|>=/);
   assert.notEqual(capped.detail, '');
-  assert.equal(taskPageOf(TASK_DETAILS.stopped).detail, '');
+  assert.equal(taskPageOf(TASK_DETAILS.stopped).detail, 'Stopped by you · the branch and changes stay', 'a stopped task says what stays');
   assert.equal(taskPageOf({ row: { ...TASK_DETAILS.capped.row, case: 'paused', detail: 'Paused' }, state: { ...TASK_DETAILS.capped.state, pauseReason: null } }).detail, '');
   assert.equal(taskPageOf({ ...TASK_DETAILS.failing }).failedChecks, 2);
+  // the row's '2 checks failing' (live-map.mjs prLine) is the why list's '✗ 2 of 5 checks failing': the head says it once
+  assert.equal(taskPageOf({ ...TASK_DETAILS.failing, row: { ...TASK_DETAILS.failing.row, detail: '2 checks failing' } }).detail, '');
 });
 
 test('newTaskBodyOf copies the project, prompt, workflow, guardrails, labels and tags, and only keys startRunHandler reads', () => {
@@ -162,4 +173,24 @@ test('groupOf: dev\'s run group in stack order, each member\'s case and cost rea
     { position: 2, title: 'Two', pipelineId: 'p2', pr: { url: 'https://github.com/o/r/pull/960' } }, { position: 1, title: '', pipelineId: 'p1', pr: null }] }, (id) => rows[id]);
   assert.deepEqual(g, { id: 'G', title: 'Pager', kind: 'Feature', cost: 1.7, members: [
     { pipelineId: 'p1', title: 'One', case: 'merged', pr: '', prUrl: '', cost: 1.2 }, { pipelineId: 'p2', title: 'Two', case: 'approved', pr: '#960', prUrl: 'https://github.com/o/r/pull/960', cost: 0.5 }] });
+});
+
+test('the page\'s plan review is the run\'s own: its role findings, its shape check and its concern, else none', () => {
+  const roleReviews = { rounds: [{ pass: 1, round: 1, target: 'plan', roles: [{ key: 'product', label: 'Product', findings: [] }, { key: 'qa', label: 'QA', findings: [{ id: 'qa-1-1', severity: 'minor', title: 'qa: mock finding', status: 'open' }] }] }] };
+  const page = taskPageOf({ ...TASK_DETAILS.plan, state: { ...TASK_DETAILS.plan.state, roleReviews } });
+  assert.deepEqual(page.review.roles.map((r) => [r.role, r.n, r.findings]), [['Product', 0, []], ['QA', 1, ['qa: mock finding']]]);
+  const viaAsk = taskPageOf({ ...TASK_DETAILS.plan, state: { ...TASK_DETAILS.plan.state, pendingQuestion: { id: 'q', kind: 'plan', plan: { roleReviews, check: { items: [{ id: 'tests', label: 'Has a test plan', pass: false }] } } } } });
+  assert.equal(viaAsk.review.roles.length, 2);
+  assert.deepEqual(viaAsk.review.issues.map((x) => x.t), ['Has a test plan']);
+  assert.deepEqual(taskPageOf(TASK_DETAILS.plan).review, { roles: [], issues: [] }, 'no review, no findings');
+});
+
+test('the PR\'s own facts reach the page: its checks entry\'s counts', () => {
+  assert.deepEqual(taskPageOf(TASK_DETAILS.approved).checks, { total: 12, failed: 0, pending: 0 });
+  assert.deepEqual(taskPageOf(TASK_DETAILS.failing).checks, { total: 5, failed: 2, pending: 0 });
+  assert.equal(taskPageOf(TASK_DETAILS.stopped).checks, null);
+});
+
+test('a plan waiting for approval has no reason line under its word (the prototype\'s plan case), and its row line stays the list\'s', () => {
+  assert.equal(taskPageOf({ ...TASK_DETAILS.plan, row: { ...TASK_DETAILS.plan.row, detail: 'Waits for your OK on the plan' } }).detail, '');
 });
