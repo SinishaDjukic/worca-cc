@@ -68,7 +68,7 @@
   const PROPOSAL_KEYS = ['title', 'brief'];   // what a person edits on a proposal before Start
   function liveTurns(id) {
     const was = threads.get(id) || [], next = CL().turns(id);
-    for (const x of next) { const y = x.id && was.find((z) => z.id === x.id && z.t === x.t); if (y) for (const k of [...UI_KEYS, ...(x.t === 'proposal' ? PROPOSAL_KEYS : [])]) if (y[k] !== undefined) x[k] = y[k]; }
+    for (const x of next) { const y = x.id && was.find((z) => z.id === x.id && z.t === x.t); if (y) for (const k of [...UI_KEYS, ...(x.t === 'proposal' || x.t === 'runwith' ? PROPOSAL_KEYS : [])]) if (y[k] !== undefined) x[k] = y[k]; }
     threads.set(id, next);
     return next;
   }
@@ -101,6 +101,9 @@
   const cardRead = new Set();
   // task-page.mjs taskCardOf's optional fields the store's task does not carry itself (its `detail` is the store's own)
   const CARD_FACTS = ['branch', 'base', 'why', 'git', 'watch', 'prUrl', 'failedChecks'];
+  // D6: a Create PR dev took, per run, until the run's PR comes back (`was`: the button's label; `token`: the PR lookup it
+  // waits on, 0 while the POST is out). D8: a PR step's failure, said once on its card until the next action there.
+  const opening = new Map(), prError = new Map();
   const liveCard = (t) => {
     const T = window.RailTaskLive, id = t.run || t.id;
     if (!T) return t;
@@ -108,7 +111,11 @@
     // in place: the card's own state (its confirm, its form) lives on this object; the facts taskCardOf leaves out once
     // they clear (a Retry that worked: no failure, no failing items) go too, never kept from the last draw
     for (const k of CARD_FACTS) delete t[k];
-    return Object.assign(t, T.card(id));
+    Object.assign(t, T.card(id));
+    const o = opening.get(id);
+    if (o && t.prUrl) opening.delete(id);   // the PR is the one the server sent, never the POST's url
+    else if (o && o.token) { const l = T.prLookup?.(); if (l && l.ended && l.token >= o.token) { opening.delete(id); prError.set(id, 'Could not read the PR back. Open Tasks to see it.'); } }
+    return t;
   };
   const taskOf = (id) => { const t = allTasks(chat()).find((x) => x.id === id); return t && LIVE() ? liveCard(t) : t; };
   const stOf = (t) => R.runState(RM.stateOf(t.case), ctxOf(t));
@@ -415,9 +422,21 @@
     // D12: the live kind carries the flow out through dev's routes; the card moves when the run's frame does (one store).
     // It says what was done only once dev has answered ok; a link that opens or a page it goes to says nothing.
     if (LIVE()) {
-      const fl = (taskFlow(label, t) ? window.RailTaskLive.flow : CL().flow)(label, { taskId: t.run || t.id, ...flowArgs(t), value: given.value ?? t.form?.value, ...(given.typed ? { title: given.typed } : {}), ...(given.value === 'a draft' ? { draft: true } : {}) });
+      const rid = t.run || t.id, pr = /^Create PR/.test(label);
+      prError.delete(rid);
+      const asked = window.RailTaskLive?.prLookup?.().token || 0;   // the lookup before the click: a later one is the PR's
+      if (pr) opening.set(rid, { was: label, token: 0 });   // D6: Opening the PR… from here until its PR arrives
+      const fl = (taskFlow(label, t) ? window.RailTaskLive.flow : CL().flow)(label, { taskId: rid, ...flowArgs(t), value: given.value ?? t.form?.value, ...(given.typed ? { title: given.typed } : {}), ...(given.value === 'a draft' ? { draft: true } : {}), ...(pr ? { quiet: true } : {}) });
       t.form = null; t.confirm = null; paint();
-      busyFor(`[data-card-act="${t.id}|${label}"]`, fl.then((r) => { if (r.ok && !/^(View|Open|Download)/.test(label)) say(label === 'Copy PR link' ? 'Copied the PR link' : (f.say || label).replace('{value}', given.value || '').replace(/\{[a-z]+\}/g, '').trim()); return r; }));
+      busyFor(`[data-card-act="${t.id}|${label}"]`, fl.then((r) => {
+        if (pr) {   // D8: a refused create says why once, on its card; a taken one waits for the lookup afterPr just asked
+          if (!r.ok) { const fail = R.failureOf('Create the PR', r.error); opening.delete(rid); prError.set(rid, `${fail.title}: ${fail.detail}`); }
+          else if (opening.has(rid)) opening.get(rid).token = Math.max(window.RailTaskLive?.prLookup?.().token || 0, asked + 1);   // no lookup asked (no socket): wait for the next one
+          return r;
+        }
+        if (r.ok && !/^(View|Open|Download)/.test(label)) say(label === 'Copy PR link' ? 'Copied the PR link' : (f.say || label).replace('{value}', given.value || '').replace(/\{[a-z]+\}/g, '').trim());
+        return r;
+      }));
       return;
     }
     if (f.to === 'paused-you' && !t.was) { t.was = t.case; t.wasDetail = t.detail; }   // Resume goes back to where it was
@@ -466,7 +485,7 @@
   // Recent: its own turn is the one that breathes (one attention path)
   const liveWaits = (t) => LIVE() && !!t?.run && ['ask', 'act', 'fail'].includes(R.markTone(stOf(t)));
   const taskWaits = (y) => { if (y.t !== 'task') return false; const t = taskOf(y.task), r = t?.run && window.RailWorld.find(t.run); return (!!r && window.RailWorld.section(r) === 'needs') || liveWaits(t); };
-  const ASKING = (y) => taskWaits(y) || (y.t === 'proposal' && !y.later) || (y.t === 'change' && y.state === 'proposed' && !y.done) || (y.t === 'plan' && !y.approved) || (y.t === 'feature' && y.split) || ((y.t === 'gate' || y.t === 'ship' || y.t === 'act') && !y.done) || (y.t === 'question' && !y.answered);
+  const ASKING = (y) => taskWaits(y) || (y.t === 'proposal' && !y.later) || (y.t === 'runwith' && y.state === 'proposed') || (y.t === 'change' && y.state === 'proposed' && !y.done) || (y.t === 'plan' && !y.approved) || (y.t === 'feature' && y.split) || ((y.t === 'gate' || y.t === 'ship' || y.t === 'act') && !y.done) || (y.t === 'question' && !y.answered);
   function calmCards(l) {
     let last = -1; l.forEach((y, k) => { if (ASKING(y)) last = k; });
     return l.map((y, k) => { const h = turnHtml(y, k); return k === last ? h : h.replace(/ btn-primary"/g, '"'); }).join('');
@@ -520,6 +539,15 @@
       + row('Guardrails', pp('guard', guardText, liveGuards || [], 'Applies to every agent in this task'));
     const ppMenu = R.moreMenu({ id: `ppm:${x.id}`, label: `More for ${x.title}`, icon: R.icon('more', 16), open: menu === `ppm:${x.id}`, items: [{ id: 'composer', text: 'Edit in the composer', help: 'Puts all of it in the box to change; this card stays until you send' }] });
     return R.taskProposal({ menu: ppMenu, title: x.title, why: x.why, sentence, more: brief + more, open: x.open, nudge: '', hooks: { title: { 'data-pp-title': x.id }, more: { 'data-pp-more': x.id }, start: { 'data-pp-start': x.id }, later: { 'data-pp-later': x.id } }, start: 'Start', alts: null, kicker: 'Proposed', attrs: { 'data-anchor': x.id } });
+  }
+  // Run with (D3): a one-stage workflow Worca proposed only to run a task is one TaskProposal; Start saves it and starts its
+  // task (RailChatLive 'run-with'), Customise holds its steps and a plain Save workflow (dev's save, no start)
+  function runWithHtml(x) {
+    const waiting = CL().runWith(chatId)?.cardId === x.card, pend = waiting ? { disabled: '', 'aria-busy': 'true' } : {};
+    const steps = (x.rows || []).find((r) => r.name === 'Steps')?.after || '';
+    const sentence = W('Runs') + W(`<b>${esc(x.workflow)}</b>${steps ? `: ${esc(steps)}` : ''}`);
+    const more = (x.rows || []).map((r) => R.settingsRow({ name: r.name, sentence: esc(r.after) })).join('') + R.button({ label: 'Save workflow', kind: 'quiet', attrs: { 'data-cp-apply': x.id, ...pend } });
+    return R.taskProposal({ title: x.title, why: x.why, sentence, more, open: x.open, nudge: '', hooks: { title: { 'data-pp-title': x.id, readonly: '' }, more: { 'data-pp-more': x.id }, start: { 'data-rw-start': x.id, ...pend }, later: { 'data-cp-decline': x.id } }, start: waiting ? R.workingWord('Run with') : `Run with ${x.workflow}`, alts: null, kicker: 'Proposed', attrs: { 'data-anchor': x.id } });
   }
   function proposalHtml(x) {
     if (LIVE() && x.raw) return liveProposalHtml(x);
@@ -628,6 +656,7 @@
     if (x.t === 'words') { const key = x.key || String(i); return `<p class="convo-words${timeShown === key ? ' is-time-shown' : ''}"${R.attrs({ 'data-words-turn': key, tabindex: '0' })}>${x.parts && LIVE() ? x.parts.map(refPart).join('') : x.html}${R.turnTime({ at: x.at, now: Date.now() })}</p>`; }   // no data-anchor: a timeline tick is a you turn or a card, never a paragraph
     if (x.t === 'failed') return R.turnRow({ mark: R.kindMark({ kind: 'chat', tone: 'fail', size: 16 }), text: `<b>${esc(x.text)}</b>${x.details ? ` ${esc(x.detail)}` : ''}`, end: R.button({ label: x.details ? 'Hide details' : 'Details', kind: 'quiet', attrs: { 'data-failed-details': x.id, 'aria-expanded': String(!!x.details) } }) + R.button({ label: 'Try again', kind: 'quiet', attrs: { 'data-failed-retry': x.id } }), attrs: { 'data-anchor': x.id } });   // fail.no-raw: the raw error behind Details
     if (x.t === 'proposal') return proposalHtml(x);
+    if (x.t === 'runwith') return runWithHtml(x);
     if (x.t === 'divider') return R.turnDivider({ text: x.text });
     if (x.t === 'notice') return R.turnRow({ mark: R.icon('check', 14), text: esc(x.text) });
     if (x.t === 'act') {
@@ -690,7 +719,8 @@
     const failed = tone === 'fail' && (!LIVE() || st.sym === 'x');
     const fixFirst = failed && !t.fixing && offers(t, st.action?.label || '');
     if (st.action && !offers(t, st.action.label)) st.action = null;   // live: its state's step is offered only where dev has it   // Retry, the same verb as on Tasks; Ask Worca to fix it heads the card's ⋯
-    const main = below || t.confirm ? '' : fixFirst && st.action ? R.button({ label: R.cardAction(RM.stateOf(t.case)).label, kind: 'primary', attrs: { 'data-card-act': `${t.id}|${st.action.label}`, title: 'Runs it again as it is' } }) : st.action ?   /* while a confirm asks, its row holds the one button */ R.button({ label: st.action.label, kind: tone === 'fail' && !t.confirm && !t.form ? 'primary' : '', attrs: { 'data-card-act': `${t.id}|${st.action.label}` } })
+    const op = LIVE() ? opening.get(t.run || t.id) : null;   // D6: the one place that says it
+    const main = below || t.confirm ? '' : op ? R.button({ label: 'Opening the PR…', kind: 'primary', attrs: { 'data-card-act': `${t.id}|${op.was}`, disabled: '', 'aria-busy': 'true' } }) : fixFirst && st.action ? R.button({ label: R.cardAction(RM.stateOf(t.case)).label, kind: 'primary', attrs: { 'data-card-act': `${t.id}|${st.action.label}`, title: 'Runs it again as it is' } }) : st.action ?   /* while a confirm asks, its row holds the one button */ R.button({ label: st.action.label, kind: tone === 'fail' && !t.confirm && !t.form ? 'primary' : '', attrs: { 'data-card-act': `${t.id}|${st.action.label}` } })
       : live ? R.button({ label: 'Pause', attrs: { 'data-card-act': `${t.id}|Pause`, title: 'Stops at once; Resume starts the current step again' } }) : '';
     // the card's ⋯: its state's own steps, then what any task can do, named as on its page (one ⋯, the same words)
     const done = ['ok', 'merged', 'stop', 'closed', 'idle'].includes(tone);
@@ -713,7 +743,7 @@
     const line = LIVE() ? (pg.detail || (STATE_WORDS.has(t.detail) ? '' : t.detail || '')) : (t.detail || '').replace(/^Ready · /, '');
     // a live task's bar is ink up to its PR; Merged is lit only once it is merged
     const bar = LIVE() && t.case !== 'merged' && ['ok', 'done'].includes(tone) ? { stage: STAGES.indexOf('PR'), tone: 'run' } : { stage, tone };
-    return R.taskCard({ rows: x.open ? '' : why, figures: facts + featFacts + changed, title: t.title, place: `${t.branch ? `<span class="rc-mid"><span class="rc-mid-a">${esc(t.branch)}</span></span>` : ''}${LIVE() ? (t.branch && t.base ? `<span>into ${esc(t.base)}</span>` : '') : '<span>into dev</span>'}${gitOf(t)}${t.inGroup ? `<span>in ${esc(t.inGroup)}</span>` : ''}${(t.labels || []).map((l) => R.chip({ text: l })).join('')}`, mark: taskMark(t), word, detail: below ? '' : line, /* rail.one-place: the question below says what it asks */ action: main, menu: more, stages: R.stageBar({ labels: STAGES, stage: bar.stage, tone: bar.tone, step: LIVE() ? pg.step : t.step || R.stageStep(t.detail), key: t.id }), foot: R.button({ label: x.open ? 'Hide its stages' : 'Show its stages', kind: 'quiet', icon: R.icon(x.open ? 'chevron' : 'chevR', 12), attrs: { 'data-open-task': t.id, 'aria-expanded': String(!!x.open), title: x.open ? 'Folds its stages' : 'Opens its stages here, as its page has them' } }) + ((t.facts || ft) && !x.open ? R.figuresToggle({ card: true, open: !!x.figures, attrs: { 'data-figs': x.id } }) : ''), open: !!x.open, stream: own({ ...t, stage }), attrs: { 'data-anchor': x.id } }) + confirm + formHtml(t) + livePlanHtml(x, t) + liveAsksHtml(x, t) + askChanges(x) + directionHtml(x);
+    return R.taskCard({ rows: x.open ? '' : why, figures: facts + featFacts + changed, title: t.title, place: `${t.branch ? `<span class="rc-mid"><span class="rc-mid-a">${esc(t.branch)}</span></span>` : ''}${LIVE() ? (t.branch && t.base ? `<span>into ${esc(t.base)}</span>` : '') : '<span>into dev</span>'}${gitOf(t)}${t.inGroup ? `<span>in ${esc(t.inGroup)}</span>` : ''}${(t.labels || []).map((l) => R.chip({ text: l })).join('')}`, mark: taskMark(t), word, detail: below ? '' : (LIVE() && prError.get(t.run || t.id)) || line, /* rail.one-place: the question below says what it asks */ action: main, menu: more, stages: R.stageBar({ labels: STAGES, stage: bar.stage, tone: bar.tone, step: LIVE() ? pg.step : t.step || R.stageStep(t.detail), key: t.id }), foot: R.button({ label: x.open ? 'Hide its stages' : 'Show its stages', kind: 'quiet', icon: R.icon(x.open ? 'chevron' : 'chevR', 12), attrs: { 'data-open-task': t.id, 'aria-expanded': String(!!x.open), title: x.open ? 'Folds its stages' : 'Opens its stages here, as its page has them' } }) + ((t.facts || ft) && !x.open ? R.figuresToggle({ card: true, open: !!x.figures, attrs: { 'data-figs': x.id } }) : ''), open: !!x.open, stream: own({ ...t, stage }), attrs: { 'data-anchor': x.id } }) + confirm + formHtml(t) + livePlanHtml(x, t) + liveAsksHtml(x, t) + askChanges(x) + directionHtml(x);
   }
 
   // ---- the timeline: what is worth finding, where it really is ----
@@ -1163,6 +1193,7 @@
     if ((x = turn('data-failed-details'))) { x.details = !x.details; paint(); root.querySelector(`[data-failed-details="${CSS.escape(x.id)}"]`)?.focus(); return true; }
     if ((x = turn('data-failed-retry'))) { busyBtn(hit, CL().act('retry', { threadId: chatId, messageId: x.id })); return true; }
     if ((x = turn('data-act'))) { const k = +hit.dataset.act.split('|')[1], id = x.ids?.[k]; if (!id) return noId('answer the card'); busyBtn(hit, CL().act(id, { ...cardArgs(x), ...(x.args || {}), ...(x.bodies?.[k] ? { body: x.bodies[k] } : {}), ...(id === 'pr' ? { threadId: chatId, cardId: x.card } : {}) })); return true; }
+    if ((x = turn('data-rw-start'))) { if (!x.card) return noId('start the task'); busyBtn(hit, CL().act('run-with', cardArgs(x))); return true; }   // its TaskCard is the answer: nothing is said
     if ((hit = on('[data-cp-apply], [data-cp-decline], [data-cp-revert]'))) { x = turns().find((y) => y.id === (hit.dataset.cpApply || hit.dataset.cpDecline || hit.dataset.cpRevert)); if (!x?.card) return noId(hit.dataset.cpApply ? 'apply the change' : hit.dataset.cpRevert ? 'undo the change' : 'set the proposal aside'); busyBtn(hit, CL().act(hit.dataset.cpApply ? 'card-apply' : hit.dataset.cpRevert ? 'card-revert' : 'card-later', cardArgs(x))); return true; }
     if ((hit = on('[data-answer]'))) { const [i, n] = hit.dataset.answer.split('|'); x = turns()[+i]; if (!x?.card) return noId('answer the question'); x.pick = +n; paint(); return true; }
     if ((x = turn('data-answer-go'))) {
