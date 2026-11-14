@@ -106,6 +106,9 @@ export async function main(argv = process.argv.slice(2)) {
           const page = await ctx.newPage();
           await page.goto(s.base + '/' + route);
           await page.addStyleTag({ content: '*{animation:none!important;transition:none!important;caret-color:transparent!important}' });
+          // a loaded page, not a fixed time: under load a fixed 1.5 s caught either server mid-load (rows its fetches had not
+          // drawn yet), and which cells differed changed from run to run. A page that keeps polling ends the wait at 10 s.
+          await page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {});
           await page.waitForTimeout(1500);
           if (n === 1) await page.evaluate((sels) => { for (const s of sels) for (const e of document.querySelectorAll(s)) e.remove(); }, ACCEPTED.filter((a) => a.route === route).map((a) => a.selector));
           dumps[n][`${route}|${theme}|${width}`] = await page.evaluate(DUMP);

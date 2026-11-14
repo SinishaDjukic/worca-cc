@@ -68,7 +68,7 @@
   const PROPOSAL_KEYS = ['title', 'brief'];   // what a person edits on a proposal before Start
   function liveTurns(id) {
     const was = threads.get(id) || [], next = CL().turns(id);
-    for (const x of next) { const y = x.id && was.find((z) => z.id === x.id && z.t === x.t); if (y) for (const k of [...UI_KEYS, ...(x.t === 'proposal' ? PROPOSAL_KEYS : [])]) if (y[k] !== undefined) x[k] = y[k]; }
+    for (const x of next) { const y = x.id && was.find((z) => z.id === x.id && z.t === x.t); if (y) for (const k of [...UI_KEYS, ...(x.t === 'proposal' || x.t === 'runwith' ? PROPOSAL_KEYS : [])]) if (y[k] !== undefined) x[k] = y[k]; }
     threads.set(id, next);
     return next;
   }
@@ -78,7 +78,7 @@
     let wtAsk = null;   // live: the chat worktree whose removal is being asked
     let engAsk = null;   // live: an engine switch dev asked to confirm, as it drops the chat's oldest turns
   const where = opts.where || (side ? '#ask-convo' : '#route-chat');
-  let chatId = '', comp = fresh(opts.mode), menu = '', hover = null, opened = new Set(), timer = 0;
+  let chatId = '', comp = fresh(opts.mode), menu = '', menuSub = '', hover = null, opened = new Set(), timer = 0;
   let timeShown = '';   // panel.turn-time: the key of the turn whose time a tap showed (its data-anchor or data-words-turn)
   const drafts = new Map();   // what is typed in each chat's composer, kept while another chat is open
   const sendingIn = new Set();   // the chats ('' is Chat home) whose message is on its way: a send's answer lands only there
@@ -101,6 +101,9 @@
   const cardRead = new Set();
   // task-page.mjs taskCardOf's optional fields the store's task does not carry itself (its `detail` is the store's own)
   const CARD_FACTS = ['branch', 'base', 'why', 'git', 'watch', 'prUrl', 'failedChecks'];
+  // D6: a Create PR dev took, per run, until the run's PR comes back (`was`: the button's label; `token`: the PR lookup it
+  // waits on, 0 while the POST is out). D8: a PR step's failure, said once on its card until the next action there.
+  const opening = new Map(), prError = new Map();
   const liveCard = (t) => {
     const T = window.RailTaskLive, id = t.run || t.id;
     if (!T) return t;
@@ -108,9 +111,13 @@
     // in place: the card's own state (its confirm, its form) lives on this object; the facts taskCardOf leaves out once
     // they clear (a Retry that worked: no failure, no failing items) go too, never kept from the last draw
     for (const k of CARD_FACTS) delete t[k];
-    return Object.assign(t, T.card(id));
+    Object.assign(t, T.card(id));
+    const o = opening.get(id);
+    if (o && t.prUrl) opening.delete(id);   // the PR is the one the server sent, never the POST's url
+    else if (o && o.token) { const l = T.prLookup?.(); if (l && l.ended && l.token >= o.token) { opening.delete(id); prError.set(id, 'Could not read the PR back. Open Tasks to see it.'); } }
+    return t;
   };
-  const taskOf = (id) => { const t = allTasks(chat()).find((x) => x.id === id); return t && LIVE() ? liveCard(t) : t; };
+  const taskOf = (id) => { const t = allTasks(chat()).find((x) => x.id === id); return t && LIVE() && t.kind !== 'schedule' ? liveCard(t) : t; };   // a schedule's card reads RailSchedules, not a task's facts
   const stOf = (t) => R.runState(RM.stateOf(t.case), ctxOf(t));
   // a live card's facts are its taskCardOf's (its PR, base, failing checks), as the page reads them; a fact the data does
   // not have is left out, never the demo's (the failing count then reads 'failing checks', as the page says it)
@@ -141,9 +148,7 @@
   const liveProjects = () => (window.RailWorld?.part?.('projects') || []).filter((p) => p && p.id);
   let liveCat = null;
   const liveModels = () => liveCat?.models || [];
-  const ENGINE_NAME = { claude: 'Claude Code', codex: 'Codex', gemini: 'Gemini CLI', qwen: 'Qwen Code', copilot: 'Copilot' };
   const modelOf = (id) => liveModels().find((m) => m.id === id) || null;
-  const liveEngineItems = () => { const by = new Map(); for (const m of liveModels()) { const e = m.engine || 'claude'; if (!by.has(e)) by.set(e, []); by.get(e).push(m); } return [...by].flatMap(([e, ms], i) => [...(i ? [{ sep: true }] : []), { header: ENGINE_NAME[e] || e }, ...ms.map((m) => ({ id: m.id, text: m.label || m.id, checked: m.id === comp.engine }))]); };
   // dev's MCP off ("Sets", ask-panel.mjs; from Advanced, only when a set brings a server or a skill): each set in play is a
   // tick, its preview from POST /api/ask/mcp-preview; a change is dev's PATCH {mcpOff}, or, on Chat home, rides the send
   let liveSets = { key: null, sets: [], failed: false };
@@ -186,6 +191,10 @@
   const ENGINE_MODELS = [['Claude Code', ['Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5']], ['Codex', ['Codex 5', 'Codex mini']], ['Gemini CLI', ['Gemini Pro', 'Gemini Flash']]];
   const ENGINES = ENGINE_MODELS.flatMap(([, ms]) => ms);
   const ENGINE_ITEMS = ENGINE_MODELS.flatMap(([e, ms], i) => [...(i ? [{ sep: true }] : []), { header: e }, ...ms.map((m) => ({ id: m, text: m }))]);
+  // the composer's models by who makes them (comp.menu-sub): a demo row's id is its words, as a proposal prints comp.engine
+  const DEMO_ENGINE = { 'Claude Code': 'claude', Codex: 'codex', 'Gemini CLI': 'gemini' };
+  const DEMO_MODELS = [...ENGINE_MODELS.flatMap(([e, ms]) => ms.map((m) => ({ id: m, label: m, engine: DEMO_ENGINE[e] }))), { id: 'Sonnet 5.5 · Copilot', label: 'Sonnet 5.5', engine: 'copilot' }];
+  const modelPicker = (rows, text) => R.sentencePicker({ id: 'cp-engine', text, tip: 'Which model; grouped by who makes it', items: R.makerItems(rows, { chosen: comp.engine }), open: menu === 'cp-engine', openSub: menu === 'cp-engine' ? menuSub : '', chevron: R.icon('chevron', 10) });
   // one picker for where it runs: each project's state at choice time; workspaces (organizational, and a run target as in dev) from Advanced
   const scopes = () => [...PROJECTS.map((id) => ({ id, text: id, hint: window.RailProjects?.hint(id) || '' })), ...(R.shows('advanced') && window.RailSpaces?.list().length ? [{ sep: true }, { header: 'Workspaces · projects that work together' }, ...window.RailSpaces.list().map((w) => ({ id: w.title, text: w.title, hint: window.RailSpaces.hint(w) }))] : [])];
   function sentence() {
@@ -193,12 +202,12 @@
       const m = modelOf(comp.engine), efforts = (m?.efforts || []).filter((e) => e !== '-');
       const mode = comp.intent ? '' : pk('mode', comp.mode === 'ask' ? 'Ask' : comp.mode === 'task' ? 'Task' : 'Schedule', MODES, 'Ask, start a task, or schedule one');
       const project = WP('on', pk('project', comp.project, [...liveProjects().map((p) => ({ id: p.name, text: p.name })), { id: 'No project', text: 'No project' }], 'Where it runs: the project this chat works in'));
-      const model = R.sentencePicker({ id: 'cp-engine', text: m?.label || comp.engine || 'Model', tip: 'Which engine, then its model', items: liveEngineItems(), open: menu === 'cp-engine', chevron: R.icon('chevron', 10) });
+      const model = modelPicker(liveModels(), m ? R.modelText(m) : comp.engine || 'Model');
       return mode + project + model + (efforts.length ? pk('effort', comp.effort || efforts[0], efforts, 'How hard it thinks') : '') + setsPicker();
     }
     const mode = comp.intent ? '' : pk('mode', comp.mode === 'ask' ? 'Ask' : comp.mode === 'task' ? 'Task' : 'Schedule', MODES, 'Ask, start a task, or schedule one');   // an armed starter's chip says what it is
     const project = WP('on', pk('project', comp.project, scopes(), 'Where it runs: a project or, from Advanced, a workspace'));
-    const engine = pk('engine', comp.engine, ENGINE_ITEMS, 'Which engine, then its model') + pk('effort', comp.effort || 'high', ['low', 'medium', 'high'], 'How hard it thinks');
+    const engine = modelPicker(DEMO_MODELS, comp.engine) + pk('effort', comp.effort || 'high', ['low', 'medium', 'high'], 'How hard it thinks');
     if (comp.mode === 'ask') return mode + project + engine;
     if (comp.mode === 'schedule') return mode + project + pk('every', comp.every, R.REPEATS, 'When it repeats') + (comp.every === 'every hour' ? '' : WP('at', pk('at', comp.at, R.TIMES_OF_DAY, 'What time')));
     const preset = comp.preset ? W('·') + pk('preset', comp.preset, ['No preset', ...PRESETS], 'The preset that filled it') : '';
@@ -335,32 +344,40 @@
       ${R.field({ id: `dl-note-${u.id}`, label: 'Notes', quietLabel: true, value: u.depth.note || '', placeholder: 'Anything the next cycle should know (optional)', multiline: true, attrs: { 'data-dl-note': u.id } })}<div class="td-fx">${R.button({ label: n ? `Send ${n} to Review` : 'Send to Review', kind: 'primary', attrs: { 'data-dl-send': u.id, disabled: F.some((f) => !f.state) ? true : null, title: F.some((f) => !f.state) ? 'Confirm or dismiss each first' : 'Review starts its next cycle with them' } })}${F.some((f) => f.state !== 'confirmed') ? R.button({ label: 'Confirm all', kind: 'quiet', attrs: { 'data-dl-all': u.id } }) : ''}</div></div>`;
   }
   function own(u) {   // the task's own stages (panel.task-card: what it shows is this task's): done, the one it is on, still to come
-    const k = Math.max(0, u.stage ?? 0), st2 = R.runState(RM.stateOf(u.case)), tn = R.markTone(st2), merged = u.case === 'merged', D = u.depth, v = dv[u.id] || {};
+    const labels = labelsOf(u), k = Math.max(0, u.stage ?? 0), st2 = R.runState(RM.stateOf(u.case)), tn = R.markTone(st2), D = u.depth, v = dv[u.id] || {};
+    const merged = endsDone(u, labels, tn);   // every stage done: merged, or a task with no PR stage that finished at its page's last stage
     const partsOf = (i) => { const s = D?.steps[i]; if (!s || (i > k && !merged)) return ''; const lines = D.log.filter((l) => l.s === i).length, arts = (s.arts || []).length; return (lines ? R.stagePart({ label: 'Log', says: `${lines} lines`, open: v.open === `${i}|log`, attrs: { 'data-dl-open': `${u.id}|${i}|log` } }) : '') + (arts ? R.stagePart({ label: 'Artifacts', says: String(arts), open: v.open === `${i}|arts`, attrs: { 'data-dl-open': `${u.id}|${i}|arts` } }) : ''); };
     const metaOf = (i, name) => (D?.steps[i] && (merged || i <= k) ? D.steps[i].meta : merged || i < k ? 'done' : i === k ? (u.detail || st2.word).replace(new RegExp(`^${name} · `), '') : '');
-    return `<div class="own-stages">${STAGES.map((name, i) => R.stageLine({ mark: merged || i < k ? R.stepDot({ dotCls: 'is-done', word: 'Done', icon: 'check' }) : i === k ? R.kindMark({ kind: 'task', tone: tn, stage: k, size: 16 }) : R.stepDot({ dotCls: 'is-future', word: 'Not yet', icon: '' }), label: i === k && D && !merged ? `${name} · now` : name, meta: metaOf(i, name), parts: D ? partsOf(i) : '', next: !merged && i > k, body: (i === k && tn === 'fail' && u.why ? u.why.map((w) => `<p class="cmd-s">${esc(w)}</p>`).join('') : '') + (D ? depthBody(u, i) : '') + (D && i === k && !merged ? findingsHtml(u) : '') })).join('')}${R.shows('expert') ? R.textLink({ label: 'Open its full page', attrs: u.id ? { 'data-open-task-page': u.id } : { 'data-open-slice': `${u.case}|${u.title}` } }) : ''}</div>`;
+    return `<div class="own-stages">${labels.map((name, i) => R.stageLine({ mark: merged || i < k ? R.stepDot({ dotCls: 'is-done', word: 'Done', icon: 'check' }) : i === k ? R.kindMark({ kind: 'task', tone: tn, stage: k, size: 16 }) : R.stepDot({ dotCls: 'is-future', word: 'Not yet', icon: '' }), label: i === k && D && !merged ? `${name} · now` : name, meta: metaOf(i, name), parts: D ? partsOf(i) : '', next: !merged && i > k, body: (i === k && tn === 'fail' && u.why ? u.why.map((w) => `<p class="cmd-s">${esc(w)}</p>`).join('') : '') + (D ? depthBody(u, i) : '') + (D && i === k && !merged ? findingsHtml(u) : '') })).join('')}${R.shows('expert') ? R.textLink({ label: 'Open its full page', attrs: u.id ? { 'data-open-task-page': u.id } : { 'data-open-slice': `${u.case}|${u.title}`, 'data-open-slice-run': taskId(u) || null } }) : ''}</div>`;
   }
-  const taskMark = (t, size) => (t.kind === 'schedule' ? R.kindMark({ kind: 'schedule', size, title: t.detail }) : R.kindMark({ kind: 'task', tone: R.markTone(stOf(t)), stage: t.stage, size, title: `${stOf(t).word} · ${t.detail || ''}` }));
+  const schedWord = (t) => { const S = window.RailSchedules; return S?.find(t.id) ? [S.wordOf(t.id), S.nextOf(t.id)].filter(Boolean).join(' · ') : ''; };   // a schedule's own word and why, as its page and bar row say them
+  const taskMark = (t, size) => (t.kind === 'schedule' ? R.kindMark({ kind: 'schedule', size, title: schedWord(t) || t.detail }) : R.kindMark({ kind: 'task', tone: R.markTone(stOf(t)), stage: t.stage, size, title: `${stOf(t).word} · ${t.detail || ''}` }));
   const gitOf = (t) => (t.git ? R.gitMark({ status: t.git, watch: t.watch || '', title: t.watch ? `Watching · ${t.detail}` : `${t.branch || ''}` }) : '');
   const cardMore = (t, items) => R.moreMenu({ id: `card:${t.id}`, label: `More for ${t.title}`, icon: R.icon('more', 16), open: menu === `card:${t.id}`, items });
   const confirmRow = (t) => R.turnRow({ mark: R.kindMark({ kind: 'task', tone: 'ask', size: 16 }), text: `<b>${esc(t.confirm.label)}?</b> ${esc(t.confirm.text)}`, end: R.button({ label: t.confirm.label, kind: /discard|delete|stop|remove/i.test(t.confirm.label) ? 'quiet' : 'primary', cls: /discard|delete|stop|remove/i.test(t.confirm.label) ? 'is-danger' : '', attrs: { 'data-card-yes': t.id } }) + R.button({ label: 'Cancel', kind: 'quiet', attrs: { 'data-card-no': t.id, 'data-strip-no': '' } }), attrs: { 'data-strip': '' } });
   const openCard = (x, t) => {
     if (t.cancelled) return R.turnRow({ mark: R.icon('check', 14), text: `Cancelled: <b>${esc(t.title)}</b>` });
-    if (t.gone) return R.turnRow({ mark: R.icon('check', 14), text: `Deleted: <b>${esc(t.title)}</b> the tasks it ran stay` });
+    if (t.gone || (LIVE() && t.kind === 'schedule' && !window.RailSchedules?.find(t.id))) return R.turnRow({ mark: R.icon('check', 14), text: `Deleted: <b>${esc(t.title)}</b> the tasks it ran stay` });   // live: a Delete waiting out its Undo hides it from RailSchedules
     const sched = t.kind === 'schedule', paused = sched && window.RailSchedules?.find(t.id)?.state === 'paused', expert = R.shows('expert');
     const action = t.case === 'scheduled' ? R.button({ label: 'Start now', attrs: { 'data-start-now': t.id } }) + R.button({ label: 'Cancel', kind: 'quiet', attrs: { 'data-cancel-task': t.id } })
       : sched && t.gone ? ''   // deleted: the card says so, nothing left to run or open
       : sched ? (t.time === 'Paused' ? R.button({ label: 'Resume', attrs: { 'data-sched-card': `${t.id}|pause`, title: 'Runs again on its repeat' } }) : '') + (t.time === 'Paused' ? '' : R.button({ label: 'Run now', attrs: { 'data-sched-card': `${t.id}|run`, disabled: window.RailSchedules?.running(t.id), title: window.RailSchedules?.running(t.id) ? 'Its task is running; it can start again when that ends' : null } })) + (expert ? R.button({ label: 'Open', kind: 'quiet', attrs: { 'data-open-sched': t.id } }) : R.button({ label: x.open ? 'Hide its runs' : 'Show its runs', kind: 'quiet', attrs: { 'data-open-task': t.id, 'aria-expanded': String(!!x.open) } }))
-        + cardMore(t, [{ id: paused ? 'Resume' : 'Pause', text: paused ? 'Resume' : 'Pause', help: paused ? 'Runs at its times again' : 'Skips its times until you resume it' }, { id: 'Skip', ...window.RailSchedules?.skipItem(t.id) }, { sep: true }, { id: 'Delete', text: 'Delete', danger: true, help: 'Asks first; the tasks it ran stay' }])
+        + cardMore(t, [{ id: paused ? 'Resume' : 'Pause', text: paused ? 'Resume' : 'Pause', help: paused ? 'Runs at its times again' : 'Skips its times until you resume it' }, { id: 'Skip', ...window.RailSchedules?.skipItem(t.id) }, { sep: true }, { id: 'Delete', text: 'Delete', danger: true, help: 'Removes the schedule; the tasks it ran stay. Undo in the notice' }])
         : R.button({ label: 'Open', kind: 'quiet', attrs: { 'data-open-task': t.id } });
     const runs = sched && x.open && !expert ? window.RailSchedules?.find(t.id)?.runs || [] : [];   // rail.stay-in-chat: its runs under its card
-    return R.taskCard({ compact: true, title: t.title, mark: taskMark(t), word: t.title, detail: t.detail, action, attrs: { 'data-anchor': x.id } }) + (t.confirm ? confirmRow(t) : '') + (sched && x.open && !expert ? `<div class="tc-rows">${runs.length ? runs.map((r) => R.turnRow({ mark: R.kindMark({ kind: 'task', tone: R.markTone(R.runState(RM.stateOf(r.case))), stage: r.stage, size: 16 }), text: `<b>${esc(r.title)}</b> ${esc(r.meta || '')} · ${esc(r.day)}` })).join('') : R.turnRow({ mark: '', text: 'No runs yet' })}</div>` : '');
+    const S = sched && window.RailSchedules?.find(t.id) ? window.RailSchedules : null;   // a schedule's card reads its own word and why (wordOf / nextOf), as its page does
+    return R.taskCard({ compact: true, title: t.title, mark: taskMark(t), word: S ? S.wordOf(t.id) : t.title, detail: S ? S.nextOf(t.id) : t.detail, action, attrs: { 'data-anchor': x.id } }) + (t.confirm ? confirmRow(t) : '') + (sched && x.open && !expert ? `<div class="tc-rows">${runs.length ? runs.map((r) => R.turnRow({ mark: R.kindMark({ kind: 'task', tone: R.markTone(R.runState(RM.stateOf(r.case))), stage: r.stage, size: 16 }), text: `<b>${esc(r.title)}</b> ${esc(r.meta || '')} · ${esc(r.day)}` })).join('') : R.turnRow({ mark: '', text: 'No runs yet' })}</div>` : '');
   };
   // A task card's actions act here, from the same table the task page reads (run-state's actionFlow): a move to its next
   // state, a confirm under the card, or (a dialog) its page, which still holds the dialogs.
   // the demo's facts; a live card reads its own run's (ctxOf), never these
   const CTX_DEMO = { base: 'dev', pr: '#1180', reset: '17:00', branch: 'feat/billing-csv-export', at: '14:00', value: '$40' };
   const cardCtx = (t) => (LIVE() ? ctxOf(t) : CTX_DEMO);
+  const taskId = (t) => t.pid || t.run || '';   // a task's page is its own id (its pipeline id first), never its case
+  const labelsOf = (t) => RM.stageOf?.(t.case)?.labels || STAGES;   // panel.task-card: its page's stage list (a task with no PR ends at Done)
+  // every stage done: merged, or a task with no PR stage that finished (tone done) where its page's last stage is done.
+  // A no-PR case with tone ok (push, folder, a feature) still has its last stage to come, as on its page.
+  const endsDone = (t, labels, tn) => t.case === 'merged' || (!labels.includes('PR') && tn === 'done' && RM.stageOf?.(t.case)?.stage === labels.length - 1);
   // dev's dialogs, each a short form under its card: what it asks, its choices, its action and Cancel
   const taskList = () => (window.RailChats?.data().chats || []).flatMap((c) => c.tasks || []);
   const formPick = (t, items) => R.sentencePicker({ id: `cf-${t.id}`, text: t.form.value, items: items.map((v) => (typeof v === 'string' ? { id: v, text: v, checked: v === t.form.value } : v.id ? { ...v, checked: v.id === t.form.value } : v)), open: menu === `cf-${t.id}`, chevron: R.icon('chevron', 10) });
@@ -392,7 +409,7 @@
     const ANY = { 'Send a direction': {}, 'View changes': {}, Pause: live.pauseNow, Stop: live.stop, 'Report this task': live.report, Archive: live.archive, 'Save as preset': { dialog: 'preset', say: 'Saved as a preset: {value}' }, 'Run after…': { dialog: 'after', say: `{value} starts after ${t.title}` }, 'Start a follow-up': { followUp: true }, 'Tell Worca how to fix it': { followUp: true, fix: true }, 'Ask Worca to fix it': { autofix: true }, 'Show the log': { page: true }, 'Label…': { dialog: 'label', say: 'Labelled {value}' }, 'Move to group…': { dialog: 'group', say: 'Moved to {value}' } };
     const f = R.actionFlow(RM.stateOf(t.case), { ...ctx, would: LIVE() ? (p) => p : window.RailWould })[label] || ANY[label];   // D12: live, RailChatLive.flow carries it out (doAct)
     if (!f || !offers(t, label)) { if (!LIVE()) say(label); return; }   // live: a card offers only what it can do (FLOW)
-    if (f.page) { if (R.shows('expert')) window.RailShell.openTaskPage(t.case, chatId, t.title); else openHere(t, 'log'); return; }
+    if (f.page) { if (R.shows('expert')) window.RailShell.openTaskPage(t.case, chatId, t.title, taskId(t)); else openHere(t, 'log'); return; }
     if (f.autofix && LIVE()) { busyFor(`[data-card-act="${t.id}|${label}"]`, CL().act('changes', { threadId: chatId, pipelineId: t.pid || t.run, text: `Fix what failed: ${(t.why || []).map((w) => w.replace(/^✗\s*/, '')).join('; ') || t.detail}` }).then((r) => { if (r.ok) say('Sent to Worca: it fixes what failed'); return r; })); return; }   // dev's Ask for changes, with what failed
     if (f.autofix && !LIVE()) { fixTry(t, 1); return; }   /* the log lives on its page, under What broke */
     if (label === 'Send a direction') { const x = turns().find((y) => y.task === t.id && y.t === 'task'); if (x) { x.directing = true; paint(); root.querySelector(`[data-direction="${CSS.escape(x.id)}"]`)?.focus(); } return; }
@@ -413,9 +430,21 @@
     // D12: the live kind carries the flow out through dev's routes; the card moves when the run's frame does (one store).
     // It says what was done only once dev has answered ok; a link that opens or a page it goes to says nothing.
     if (LIVE()) {
-      const fl = (taskFlow(label, t) ? window.RailTaskLive.flow : CL().flow)(label, { taskId: t.run || t.id, ...flowArgs(t), value: given.value ?? t.form?.value, ...(given.typed ? { title: given.typed } : {}), ...(given.value === 'a draft' ? { draft: true } : {}) });
+      const rid = t.run || t.id, pr = /^Create PR/.test(label);
+      prError.delete(rid);
+      const asked = window.RailTaskLive?.prLookup?.().token || 0;   // the lookup before the click: a later one is the PR's
+      if (pr) opening.set(rid, { was: label, token: 0 });   // D6: Opening the PR… from here until its PR arrives
+      const fl = (taskFlow(label, t) ? window.RailTaskLive.flow : CL().flow)(label, { taskId: rid, ...flowArgs(t), value: given.value ?? t.form?.value, ...(given.typed ? { title: given.typed } : {}), ...(given.value === 'a draft' ? { draft: true } : {}), ...(pr ? { quiet: true } : {}) });
       t.form = null; t.confirm = null; paint();
-      busyFor(`[data-card-act="${t.id}|${label}"]`, fl.then((r) => { if (r.ok && !/^(View|Open|Download)/.test(label)) say(label === 'Copy PR link' ? 'Copied the PR link' : (f.say || label).replace('{value}', given.value || '').replace(/\{[a-z]+\}/g, '').trim()); return r; }));
+      busyFor(`[data-card-act="${t.id}|${label}"]`, fl.then((r) => {
+        if (pr) {   // D8: a refused create says why once, on its card; a taken one waits for the lookup afterPr just asked
+          if (!r.ok) { const fail = R.failureOf('Create the PR', r.error); opening.delete(rid); prError.set(rid, `${fail.title}: ${fail.detail}`); }
+          else if (opening.has(rid)) opening.get(rid).token = Math.max(window.RailTaskLive?.prLookup?.().token || 0, asked + 1);   // no lookup asked (no socket): wait for the next one
+          return r;
+        }
+        if (r.ok && !/^(View|Open|Download)/.test(label)) say(label === 'Copy PR link' ? 'Copied the PR link' : (f.say || label).replace('{value}', given.value || '').replace(/\{[a-z]+\}/g, '').trim());
+        return r;
+      }));
       return;
     }
     if (f.to === 'paused-you' && !t.was) { t.was = t.case; t.wasDetail = t.detail; }   // Resume goes back to where it was
@@ -464,7 +493,7 @@
   // Recent: its own turn is the one that breathes (one attention path)
   const liveWaits = (t) => LIVE() && !!t?.run && ['ask', 'act', 'fail'].includes(R.markTone(stOf(t)));
   const taskWaits = (y) => { if (y.t !== 'task') return false; const t = taskOf(y.task), r = t?.run && window.RailWorld.find(t.run); return (!!r && window.RailWorld.section(r) === 'needs') || liveWaits(t); };
-  const ASKING = (y) => taskWaits(y) || (y.t === 'proposal' && !y.later) || (y.t === 'change' && y.state === 'proposed' && !y.done) || (y.t === 'plan' && !y.approved) || (y.t === 'feature' && y.split) || ((y.t === 'gate' || y.t === 'ship' || y.t === 'act') && !y.done) || (y.t === 'question' && !y.answered);
+  const ASKING = (y) => taskWaits(y) || (y.t === 'proposal' && !y.later) || (y.t === 'runwith' && y.state === 'proposed') || (y.t === 'change' && y.state === 'proposed' && !y.done) || (y.t === 'plan' && !y.approved) || (y.t === 'feature' && y.split) || ((y.t === 'gate' || y.t === 'ship' || y.t === 'act') && !y.done) || (y.t === 'question' && !y.answered);
   function calmCards(l) {
     let last = -1; l.forEach((y, k) => { if (ASKING(y)) last = k; });
     return l.map((y, k) => { const h = turnHtml(y, k); return k === last ? h : h.replace(/ btn-primary"/g, '"'); }).join('');
@@ -519,6 +548,15 @@
     const ppMenu = R.moreMenu({ id: `ppm:${x.id}`, label: `More for ${x.title}`, icon: R.icon('more', 16), open: menu === `ppm:${x.id}`, items: [{ id: 'composer', text: 'Edit in the composer', help: 'Puts all of it in the box to change; this card stays until you send' }] });
     return R.taskProposal({ menu: ppMenu, title: x.title, why: x.why, sentence, more: brief + more, open: x.open, nudge: '', hooks: { title: { 'data-pp-title': x.id }, more: { 'data-pp-more': x.id }, start: { 'data-pp-start': x.id }, later: { 'data-pp-later': x.id } }, start: 'Start', alts: null, kicker: 'Proposed', attrs: { 'data-anchor': x.id } });
   }
+  // Run with (D3): a one-stage workflow Worca proposed only to run a task is one TaskProposal; Start saves it and starts its
+  // task (RailChatLive 'run-with'), Customise holds its steps and a plain Save workflow (dev's save, no start)
+  function runWithHtml(x) {
+    const waiting = CL().runWith(chatId)?.cardId === x.card, pend = waiting ? { disabled: '', 'aria-busy': 'true' } : {};
+    const steps = (x.rows || []).find((r) => r.name === 'Steps')?.after || '';
+    const sentence = W('Runs') + W(`<b>${esc(x.workflow)}</b>${steps ? `: ${esc(steps)}` : ''}`);
+    const more = (x.rows || []).map((r) => R.settingsRow({ name: r.name, sentence: esc(r.after) })).join('') + R.button({ label: 'Save workflow', kind: 'quiet', attrs: { 'data-cp-apply': x.id, ...pend } });
+    return R.taskProposal({ title: x.title, why: x.why, sentence, more, open: x.open, nudge: '', hooks: { title: { 'data-pp-title': x.id, readonly: '' }, more: { 'data-pp-more': x.id }, start: { 'data-rw-start': x.id, ...pend }, later: { 'data-cp-decline': x.id } }, start: waiting ? R.workingWord('Run with') : `Run with ${x.workflow}`, alts: null, kicker: 'Proposed', attrs: { 'data-anchor': x.id } });
+  }
   function proposalHtml(x) {
     if (LIVE() && x.raw) return liveProposalHtml(x);
     if (x.later) return R.turnRow({ mark: R.kindMark({ kind: 'task', tone: 'idle', size: 16 }), text: `Not now: <b>${esc(x.title)}</b>`, end: R.button({ label: 'Bring back', kind: 'quiet', attrs: { 'data-pp-back': x.id } }) });
@@ -565,7 +603,7 @@
     const fold = () => ({ 'data-fold-turn': String(i), ...(x.id ? { 'data-anchor': x.id } : {}) });
     // panel.turn-time: a you or words turn takes the focus and carries its time, shown on hover, focus or a tap; its first
     // data-* attribute is its key, so focusMark finds it again after a repaint
-    if (x.t === 'you') { const html = R.youTurn({ text: x.text, quote: x.quote || '', files: x.files || [], refs: (x.refs || []).map((r) => ({ text: r.title, mark: R.kindMark({ kind: 'task', tone: 'idle', size: 14 }), attrs: { 'data-open-ref': r.case } })), attrs: { 'data-anchor': x.id || '', tabindex: '0' }, time: R.turnTime({ at: x.at, now: Date.now() }) }); return x.id && timeShown === x.id ? html.replace('class="convo-you"', 'class="convo-you is-time-shown"') : html; }
+    if (x.t === 'you') { const html = R.youTurn({ text: x.text, quote: x.quote || '', files: x.files || [], refs: (x.refs || []).map((r) => ({ text: r.title, mark: R.kindMark({ kind: 'task', tone: 'idle', size: 14 }), attrs: { 'data-open-ref': r.case, 'data-open-ref-run': r.run || null } })), attrs: { 'data-anchor': x.id || '', tabindex: '0' }, time: R.turnTime({ at: x.at, now: Date.now() }) }); return x.id && timeShown === x.id ? html.replace('class="convo-you"', 'class="convo-you is-time-shown"') : html; }
     // commands are dev's on Rail's rail (CommandRow, CommandGroup): a group folded to its head, a failure opening it and
     // itself; no marks, the words say how each went; one fold opens the command and its output, each with Copy
     const TERMINAL = { 'data-terminal': String(i) };   // panel.terminal: the TerminalPane under the command, in both kinds
@@ -626,6 +664,7 @@
     if (x.t === 'words') { const key = x.key || String(i); return `<p class="convo-words${timeShown === key ? ' is-time-shown' : ''}"${R.attrs({ 'data-words-turn': key, tabindex: '0' })}>${x.parts && LIVE() ? x.parts.map(refPart).join('') : x.html}${R.turnTime({ at: x.at, now: Date.now() })}</p>`; }   // no data-anchor: a timeline tick is a you turn or a card, never a paragraph
     if (x.t === 'failed') return R.turnRow({ mark: R.kindMark({ kind: 'chat', tone: 'fail', size: 16 }), text: `<b>${esc(x.text)}</b>${x.details ? ` ${esc(x.detail)}` : ''}`, end: R.button({ label: x.details ? 'Hide details' : 'Details', kind: 'quiet', attrs: { 'data-failed-details': x.id, 'aria-expanded': String(!!x.details) } }) + R.button({ label: 'Try again', kind: 'quiet', attrs: { 'data-failed-retry': x.id } }), attrs: { 'data-anchor': x.id } });   // fail.no-raw: the raw error behind Details
     if (x.t === 'proposal') return proposalHtml(x);
+    if (x.t === 'runwith') return runWithHtml(x);
     if (x.t === 'divider') return R.turnDivider({ text: x.text });
     if (x.t === 'notice') return R.turnRow({ mark: R.icon('check', 14), text: esc(x.text) });
     if (x.t === 'act') {
@@ -677,7 +716,8 @@
       return `<div data-anchor="${x.id}">${R.turnRow({ mark: R.kindMark({ kind: 'task', tone: 'ask', stage: -1, size: 16 }), text: `<b>${esc(x.text)}</b>` })}<div class="convo-answer">${R.optionList({ label: x.text, options: x.options, selected: x.pick, recommended: x.rec ?? x.pick ?? 0, optAttrs: (n) => ({ 'data-answer': `${i}|${n}` }), own: `${R.field({ id: `own-${x.id}`, label: 'Your own answer', quietLabel: true, placeholder: 'Or write your own answer', attrs: { 'data-own': String(i) } })}<div class="convo-answer-go">${R.button({ label: 'Answer', attrs: { 'data-answer-go': String(i) } })}${x.many ? R.button({ label: 'Use Worca’s picks', kind: 'quiet', attrs: { 'data-answer-picks': String(i), title: 'Takes Worca’s pick for this and the next question' } }) : ''}</div>` })}</div></div>`;
     }
     const st = stOf(t), tone = R.markTone(st), all = turns(), at = all.findIndex((y) => y === x || (x.id && y.id === x.id && y.t === x.t)), below = ((tone === 'ask' || tone === 'act') && all.some((y, j) => j > at && ((y.t === 'question' && !y.answered) || (y.t === 'plan' && !y.approved)))) || (LIVE() && !!t.run && !!CL().ask(t.run));   // a question or a plan waiting under it (or drawn in its own turn, live) speaks for it
-    const word = tone === 'ok' && STAGES[t.stage] === 'PR' ? R.needsReason('approved') : R.needsReason(RM.stateOf(t.case));   // one state, one word (Question, Ready to merge), as Tasks says it; a Ready card reads what its stage rail shows
+    const labels = labelsOf(t), hasPr = labels.includes('PR');
+    const word = tone === 'ok' && labels[t.stage] === 'PR' ? R.needsReason('approved') : R.needsReason(RM.stateOf(t.case));   // one state, one word (Question, Ready to merge), as Tasks says it; a Ready card reads what its stage rail shows
     if (tone === 'wait' && !x.open) return openCard(x, t);   // one line until opened in place
     // Its one action and ⋯ are its state's own, as on its page; a question is answered under the card.
     // a live task with no step of its own to offer can always be paused or stopped from its card, as on dev's chat card
@@ -688,7 +728,8 @@
     const failed = tone === 'fail' && (!LIVE() || st.sym === 'x');
     const fixFirst = failed && !t.fixing && offers(t, st.action?.label || '');
     if (st.action && !offers(t, st.action.label)) st.action = null;   // live: its state's step is offered only where dev has it   // Retry, the same verb as on Tasks; Ask Worca to fix it heads the card's ⋯
-    const main = below || t.confirm ? '' : fixFirst && st.action ? R.button({ label: R.cardAction(RM.stateOf(t.case)).label, kind: 'primary', attrs: { 'data-card-act': `${t.id}|${st.action.label}`, title: 'Runs it again as it is' } }) : st.action ?   /* while a confirm asks, its row holds the one button */ R.button({ label: st.action.label, kind: tone === 'fail' && !t.confirm && !t.form ? 'primary' : '', attrs: { 'data-card-act': `${t.id}|${st.action.label}` } })
+    const op = LIVE() ? opening.get(t.run || t.id) : null;   // D6: the one place that says it
+    const main = below || t.confirm ? '' : op ? R.button({ label: 'Opening the PR…', kind: 'primary', attrs: { 'data-card-act': `${t.id}|${op.was}`, disabled: '', 'aria-busy': 'true' } }) : fixFirst && st.action ? R.button({ label: R.cardAction(RM.stateOf(t.case)).label, kind: 'primary', attrs: { 'data-card-act': `${t.id}|${st.action.label}`, title: 'Runs it again as it is' } }) : st.action ?   /* while a confirm asks, its row holds the one button */ R.button({ label: st.action.label, kind: tone === 'fail' && !t.confirm && !t.form ? 'primary' : '', attrs: { 'data-card-act': `${t.id}|${st.action.label}` } })
       : live ? R.button({ label: 'Pause', attrs: { 'data-card-act': `${t.id}|Pause`, title: 'Stops at once; Resume starts the current step again' } }) : '';
     // the card's ⋯: its state's own steps, then what any task can do, named as on its page (one ⋯, the same words)
     const done = ['ok', 'merged', 'stop', 'closed', 'idle'].includes(tone);
@@ -708,10 +749,12 @@
     const why = t.why && ['fail', 'ask', 'act', 'ok'].includes(tone) ? t.why.map((w) => R.turnRow({ mark: '', text: `<span class="cmd-s">${/^✗/.test(w) ? R.icon('alert', 13) : ''}${esc(w.replace(/^✗\s*/, ''))}</span>` })).join('') : '';   // why it failed, on the card: the failing tests by name
     const pg = LIVE() ? CL().progress(t.run) : {}, stage = pg.stage ?? t.stage;   // R-ux-12: live, its place from the run's own stages
     // live: the head says the state once; the line says where it is (its stage's words), never the state word again
-    const line = LIVE() ? (pg.detail || (STATE_WORDS.has(t.detail) ? '' : t.detail || '')) : (t.detail || '').replace(/^Ready · /, '');
+    const pgLine = STATE_WORDS.has(pg.detail) || (!hasPr && pg.detail === 'Ready') ? '' : pg.detail;   // a task with no PR stage is never "Ready"
+    const line = LIVE() ? (pgLine || (STATE_WORDS.has(t.detail) ? '' : t.detail || '')) : (t.detail || '').replace(/^Ready · /, '');
     // a live task's bar is ink up to its PR; Merged is lit only once it is merged
-    const bar = LIVE() && t.case !== 'merged' && ['ok', 'done'].includes(tone) ? { stage: STAGES.indexOf('PR'), tone: 'run' } : { stage, tone };
-    return R.taskCard({ rows: x.open ? '' : why, figures: facts + featFacts + changed, title: t.title, place: `${t.branch ? `<span class="rc-mid"><span class="rc-mid-a">${esc(t.branch)}</span></span>` : ''}${LIVE() ? (t.branch && t.base ? `<span>into ${esc(t.base)}</span>` : '') : '<span>into dev</span>'}${gitOf(t)}${t.inGroup ? `<span>in ${esc(t.inGroup)}</span>` : ''}${(t.labels || []).map((l) => R.chip({ text: l })).join('')}`, mark: taskMark(t), word, detail: below ? '' : line, /* rail.one-place: the question below says what it asks */ action: main, menu: more, stages: R.stageBar({ labels: STAGES, stage: bar.stage, tone: bar.tone, step: LIVE() ? pg.step : t.step || R.stageStep(t.detail), key: t.id }), foot: R.button({ label: x.open ? 'Hide its stages' : 'Show its stages', kind: 'quiet', icon: R.icon(x.open ? 'chevron' : 'chevR', 12), attrs: { 'data-open-task': t.id, 'aria-expanded': String(!!x.open), title: x.open ? 'Folds its stages' : 'Opens its stages here, as its page has them' } }) + ((t.facts || ft) && !x.open ? R.figuresToggle({ card: true, open: !!x.figures, attrs: { 'data-figs': x.id } }) : ''), open: !!x.open, stream: own({ ...t, stage }), attrs: { 'data-anchor': x.id } }) + confirm + formHtml(t) + livePlanHtml(x, t) + liveAsksHtml(x, t) + askChanges(x) + directionHtml(x);
+    const ended = LIVE() && t.case !== 'merged' && ['ok', 'done'].includes(tone);
+    const bar = ended && hasPr ? { stage: labels.indexOf('PR'), tone: 'run' } : ended && endsDone(t, labels, tone) ? { stage: labels.length - 1, tone: 'done', noStep: true } : { stage, tone };
+    return R.taskCard({ rows: x.open ? '' : why, figures: facts + featFacts + changed, title: t.title, place: `${t.branch ? `<span class="rc-mid"><span class="rc-mid-a">${esc(t.branch)}</span></span>` : ''}${LIVE() ? (t.branch && t.base ? `<span>into ${esc(t.base)}</span>` : '') : '<span>into dev</span>'}${gitOf(t)}${t.inGroup ? `<span>in ${esc(t.inGroup)}</span>` : ''}${(t.labels || []).map((l) => R.chip({ text: l })).join('')}`, mark: taskMark(t), word, detail: below ? '' : (LIVE() && prError.get(t.run || t.id)) || line, /* rail.one-place: the question below says what it asks */ action: main, menu: more, stages: R.stageBar({ labels, stage: bar.stage, tone: bar.tone, step: bar.noStep ? null : LIVE() ? pg.step : t.step || R.stageStep(t.detail), key: t.id }), foot: R.button({ label: x.open ? 'Hide its stages' : 'Show its stages', kind: 'quiet', icon: R.icon(x.open ? 'chevron' : 'chevR', 12), attrs: { 'data-open-task': t.id, 'aria-expanded': String(!!x.open), title: x.open ? 'Folds its stages' : 'Opens its stages here, as its page has them' } }) + ((t.facts || ft) && !x.open ? R.figuresToggle({ card: true, open: !!x.figures, attrs: { 'data-figs': x.id } }) : ''), open: !!x.open, stream: own({ ...t, stage }), attrs: { 'data-anchor': x.id } }) + confirm + formHtml(t) + livePlanHtml(x, t) + liveAsksHtml(x, t) + askChanges(x) + directionHtml(x);
   }
 
   // ---- the timeline: what is worth finding, where it really is ----
@@ -742,6 +785,7 @@
 
   // ---- the page ----
   function paint(keepText = true) {
+    if (menu !== 'cp-engine') menuSub = '';   // the sub-menu never outlives its picker (comp.menu-sub)
     window.RailShell?.unembedRun?.(root);   // the task page lent to an open card goes home before the chat redraws
     paintOnly(keepText);
     attention();   // what waits on you breathes after every redraw, until you have seen it
@@ -977,7 +1021,7 @@
       if (x && LIVE()) { const r = x.reqs[+sm[2]]; if (v === 'met') shipMark(x, { id: r.id, mark: 'met' }); else { x.shipMarking = { id: r.id, mark: v }; paint(); root.querySelector(`[data-ship-why="${CSS.escape(x.id)}"]`)?.focus(); } paint(); return; }
       if (x) x.reqs[+sm[2]].v = v; paint(); return;
     }
-    if (id === 'cp-mention') { const [cs, title] = v.split('|'); comp.refs = [...(comp.refs || []), { case: cs, title }]; comp.text = comp.text.replace(/@[^@\s]*$/, LIVE() ? `@${title} (${cs}) ` : `@${title} `); menu = ''; paint(false); const t = root.querySelector('[data-composer-t]'); if (t) { t.focus(); t.setSelectionRange(t.value.length, t.value.length); } return; }
+    if (id === 'cp-mention') { const [cs, title] = v.split('|'); comp.refs = [...(comp.refs || []), { case: cs, title, ...(LIVE() ? { run: cs } : {}) }];   /* live: cs is the task's run id */ comp.text = comp.text.replace(/@[^@\s]*$/, LIVE() ? `@${title} (${cs}) ` : `@${title} `); menu = ''; paint(false); const t = root.querySelector('[data-composer-t]'); if (t) { t.focus(); t.setSelectionRange(t.value.length, t.value.length); } return; }
     if (id === 'cp-voice') { comp.handsFree = !comp.handsFree; if (!comp.handsFree) comp.listening = false; const on = comp.handsFree; voiceOf().then((v) => v?.handsFree(on)); menu = ''; paint(); say(comp.handsFree ? 'Hands-free on' : 'Hands-free off'); return; }
     if (id === 'starter-more') { const [k, ...rest] = v.split('|'); pickMenu(k, rest.join('|')); return; }   // More's items carry its id first
     if (id === 'starter') { arm(v); return; }
@@ -1160,6 +1204,7 @@
     if ((x = turn('data-failed-details'))) { x.details = !x.details; paint(); root.querySelector(`[data-failed-details="${CSS.escape(x.id)}"]`)?.focus(); return true; }
     if ((x = turn('data-failed-retry'))) { busyBtn(hit, CL().act('retry', { threadId: chatId, messageId: x.id })); return true; }
     if ((x = turn('data-act'))) { const k = +hit.dataset.act.split('|')[1], id = x.ids?.[k]; if (!id) return noId('answer the card'); busyBtn(hit, CL().act(id, { ...cardArgs(x), ...(x.args || {}), ...(x.bodies?.[k] ? { body: x.bodies[k] } : {}), ...(id === 'pr' ? { threadId: chatId, cardId: x.card } : {}) })); return true; }
+    if ((x = turn('data-rw-start'))) { if (!x.card) return noId('start the task'); busyBtn(hit, CL().act('run-with', cardArgs(x))); return true; }   // its TaskCard is the answer: nothing is said
     if ((hit = on('[data-cp-apply], [data-cp-decline], [data-cp-revert]'))) { x = turns().find((y) => y.id === (hit.dataset.cpApply || hit.dataset.cpDecline || hit.dataset.cpRevert)); if (!x?.card) return noId(hit.dataset.cpApply ? 'apply the change' : hit.dataset.cpRevert ? 'undo the change' : 'set the proposal aside'); busyBtn(hit, CL().act(hit.dataset.cpApply ? 'card-apply' : hit.dataset.cpRevert ? 'card-revert' : 'card-later', cardArgs(x))); return true; }
     if ((hit = on('[data-answer]'))) { const [i, n] = hit.dataset.answer.split('|'); x = turns()[+i]; if (!x?.card) return noId('answer the question'); x.pick = +n; paint(); return true; }
     if ((x = turn('data-answer-go'))) {
@@ -1180,6 +1225,7 @@
   root.addEventListener('click', (e) => {
     if (e.target.closest('#card')) return;   // inside an open card's stages: the task page answers its own clicks
     const on = (q) => e.target.closest(q); let hit;
+    if ((hit = on('.spick [data-menu-sub]:not([aria-disabled="true"])'))) { menuSub = hit.dataset.menuSub; paint(); return; }   // a maker opens in place; the back row returns (comp.menu-sub)
     if (LIVE() && liveClick(e, on)) return;
     if ((hit = on('[data-failed-details]'))) { const x = turns().find((y) => y.id === hit.dataset.failedDetails); if (x) { x.details = !x.details; paint(); root.querySelector(`[data-failed-details="${CSS.escape(x.id)}"]`)?.focus(); } return; }
     if ((hit = on('[data-failed-retry]'))) { const l = turns(), k = l.findIndex((y) => y.id === hit.dataset.failedRetry); if (k >= 0) { l.splice(k, 1, { t: 'words', html: 'Ana is on call this weekend; Sam takes over on Monday.' }); paint(); } return; }   // the demo answers on the second try
@@ -1190,7 +1236,7 @@
     if ((hit = on('[data-tick]'))) { goTo(hit.dataset.tick); return; }
     if ((hit = on('[data-menu-pick^="dl-"]'))) { const [id, val] = hit.dataset.menuPick.split('|'), [, t, k] = id.split('-'); dv[t][k] = val; menu = ''; paint(); return; }
     if ((hit = on('[data-menu-pick^="wfs-"], [data-menu-pick^="wfl-"]'))) { const [id, v] = hit.dataset.menuPick.split('|'), parts = id.split('-'), x = turns().find((y) => y.id === parts[1]), was = x && (parts[0] === 'wfl' ? x.loop[2] : x.steps[+parts[2]][parts[3] === 'm' ? 2 : 3]); if (x) { if (parts[0] === 'wfl') x.loop[2] = v; else x.steps[+parts[2]][parts[3] === 'm' ? 2 : 3] = v; } menu = ''; paint(); if (was !== v) say('Changed: Save keeps it'); return; }
-    if ((hit = on('[data-menu-pick]'))) { const [id, ...r] = hit.dataset.menuPick.split('|'); if (id === 'tick') goTo(r.join('|')); else if (id.startsWith('cf-')) { const t = taskOf(id.slice(3)); if (t?.form) t.form.value = r.join('|'); menu = ''; paint(); } else if (id.startsWith('card:')) { menu = ''; const t = taskOf(id.slice(5)), label = r.join('|'); if (t?.kind === 'schedule') { if (label === 'Delete') { t.confirm = { label: 'Delete schedule', text: 'Its times end; the tasks it ran stay', flow: { schedule: true } }; paint(); return; } window.RailSchedules?.act(t.id, { Pause: 'pause', Resume: 'pause', Skip: 'skip', Delete: 'delete' }[label]); paint(); return; } if (t) { if (label === 'open' || !label) window.RailShell.openTaskPage(t.case, chatId, t.title); else cardAct(t, label); } } else pickMenu(id, r.join('|')); return; }
+    if ((hit = on('[data-menu-pick]'))) { const [id, ...r] = hit.dataset.menuPick.split('|'); if (id === 'tick') goTo(r.join('|')); else if (id.startsWith('cf-')) { const t = taskOf(id.slice(3)); if (t?.form) t.form.value = r.join('|'); menu = ''; paint(); } else if (id.startsWith('card:')) { menu = ''; const t = taskOf(id.slice(5)), label = r.join('|'); if (t?.kind === 'schedule') { window.RailSchedules?.act(t.id, { Pause: 'pause', Resume: 'pause', Skip: 'skip', Delete: 'delete' }[label]); paint(); return; } if (t) { if (label === 'open' || !label) window.RailShell.openTaskPage(t.case, chatId, t.title, taskId(t)); else cardAct(t, label); } } else pickMenu(id, r.join('|')); return; }
     if ((hit = on('[data-listtoggle^="label|"]'))) { const v = hit.dataset.listtoggle.slice(6), c = chat(); if (c && LIVE()) { liveLabel(c, ...toggledLabel(c, v)); return; } if (c) { c.labels = (c.labels || []).includes(v) ? c.labels.filter((l) => l !== v) : [...(c.labels || []), v]; window.RailChats.refresh(); refreshAll(); keepLabelQ(); } return; }
     if ((hit = on('[data-card-form] [data-confirm]'))) { e.preventDefault(); const t = taskOf(hit.closest('[data-card-form]').dataset.cardForm); if (!t?.form) return; const fm = t.form; t.form = null;
       if (hit.dataset.confirm !== 'yes') { paint(); return; }
@@ -1221,19 +1267,19 @@
     if ((hit = on('[data-dl-all]'))) { taskOf(hit.dataset.dlAll).depth.findings.forEach((f) => { f.state = 'confirmed'; }); paint(); return; }
     if ((hit = on('[data-dl-send]'))) { const t = taskOf(hit.dataset.dlSend), F = t.depth.findings, n = F.filter((f) => f.state === 'confirmed').length; t.depth.sent = `${n} ${n === 1 ? 'finding' : 'findings'}${t.depth.note ? ' and your notes' : ''} · cycle 3 starts with ${n === 1 ? 'it' : 'them'}`; paint(); say('Sent to Review: its next cycle starts'); return; }
     if ((hit = on('[data-cp-act]')) && hit.dataset.cpAct.endsWith('|1')) { const x = turns().find((y) => y.id === hit.dataset.cpAct.split('|')[0]); if (x?.diff) { x.diffOpen = !x.diffOpen; paint(); return; } }   // Show the diff opens under the card
-    if ((hit = on('[data-fact]'))) { const [k, id] = hit.dataset.fact.split('|'), t = taskOf(id); if (k === 'cost') window.RailShell.go('insights/spend'); else if (t) window.RailShell.openTaskPage(t.case, chatId, t.title); return; }
+    if ((hit = on('[data-fact]'))) { const [k, id] = hit.dataset.fact.split('|'), t = taskOf(id); if (k === 'cost') window.RailShell.go('insights/spend'); else if (t) window.RailShell.openTaskPage(t.case, chatId, t.title, taskId(t)); return; }
     if ((hit = on('[data-figs]'))) { const x = turns().find((y) => y.id === hit.dataset.figs); if (x) { x.figures = !x.figures; if (x.figures && LIVE()) { const t = taskOf(x.task); if (t?.run) CL().feature(t.run, chatId, { fresh: true }); } paint(); } return; }
     if ((hit = on('[data-fact-files]'))) { const x = turns().find((y) => y.id === hit.dataset.factFiles); if (x) { x.filesOpen = !x.filesOpen; paint(); } return; }
     if ((hit = on('[data-fact-arts]'))) { const t = taskOf(hit.dataset.factArts); if (t) openHere(t, 'arts'); return; }
-    if ((hit = on('[data-open-slice]'))) { const [cs, ...w] = hit.dataset.openSlice.split('|'); window.RailShell.openTaskPage(cs, chatId, w.join('|')); return; }
+    if ((hit = on('[data-open-slice]'))) { const [cs, ...w] = hit.dataset.openSlice.split('|'); window.RailShell.openTaskPage(cs, chatId, w.join('|'), hit.dataset.openSliceRun); return; }
     if ((hit = on('[data-chg-yes], [data-chg-no]'))) { const x = turns().find((y) => y.id === (hit.dataset.chgYes || hit.dataset.chgNo)); if (x) { const yes = !!hit.dataset.chgYes, what = x.confirmDelete; x.confirmDelete = ''; if (yes) { x.done = 'Deleted'; if (window.RailSchedules?.find(x.schedule)) window.RailSchedules.act(x.schedule, 'delete'); else say(`Deleted: ${what}`); } paint(); } return; }
-    if ((hit = on('[data-open-task-page]'))) { const t = taskOf(hit.dataset.openTaskPage); if (t) window.RailShell.openTaskPage(t.case, chatId, t.title); return; }
+    if ((hit = on('[data-open-task-page]'))) { const t = taskOf(hit.dataset.openTaskPage); if (t) window.RailShell.openTaskPage(t.case, chatId, t.title, taskId(t)); return; }
     if ((hit = on('[data-sched-card]'))) { const [id, how] = hit.dataset.schedCard.split('|'); window.RailSchedules?.act(id, how || 'run'); paint(); return; }
     if ((hit = on('[data-card-act]'))) { const [id, ...l] = hit.dataset.cardAct.split('|'), t = taskOf(id); if (t) cardAct(t, l.join('|')); return; }   // the button's own label, never its tone: View PR opens the PR
     if ((hit = on('[data-card-yes], [data-card-no]'))) { const t = taskOf(hit.dataset.cardYes || hit.dataset.cardNo); if (t) { const c = t.confirm; t.confirm = null; if (hit.dataset.cardYes && c?.flow.schedule) { window.RailSchedules?.act(t.id, 'delete'); paint(); } else if (hit.dataset.cardYes && c) doAct(t, c.label, c.flow); else paint(); } return; }
     if (on('[data-cp-unabout]')) { e.preventDefault(); const a = comp.about; if (a?.binds) comp[a.binds] = a.was; comp.about = null; paint(); return; }
     if ((hit = on('[data-cp-unfile]'))) { e.preventDefault(); comp.files = comp.files.filter((f) => f !== hit.dataset.cpUnfile); paint(); return; }
-    if ((hit = on('[data-menu]'))) { e.preventDefault(); menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; if (menu !== 'cl-label') labelQ = ''; paint(); if (menu === 'cl-label') { keepLabelQ(); if (LIVE()) readLabels(); } return; }
+    if ((hit = on('[data-menu]'))) { e.preventDefault(); menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; menuSub = ''; if (menu !== 'cl-label') labelQ = ''; paint(); if (menu === 'cl-label') { keepLabelQ(); if (LIVE()) readLabels(); } return; }
     if (on('[data-anchor-open]')) { menu = menu === 'anchors' ? '' : 'anchors'; paint(); return; }
     if (on('[data-cp-send]')) { e.preventDefault(); send(); return; }
     if (on('[data-cp-stop]')) { e.preventDefault(); clearTimeout(timer); const c = chat(), l = turns(), i = l.findIndex((x) => x.t === 'working'); if (i >= 0) l.splice(i, 1, { t: 'words', html: 'Stopped.' }); comp.busy = false; if (c) c.state = 'idle'; window.RailChats.refresh(); paint(); return; }
@@ -1346,7 +1392,7 @@
     if ((hit = on('[data-start-now]'))) { const t = taskOf(hit.dataset.startNow); if (t) { t.case = 'starting'; t.stage = 0; t.detail = 'Plan is under way'; put(chat(), t); window.RailChats.refresh(); paint(); say('Started now'); } return; }
     if ((hit = on('[data-cancel-task]'))) { const t = taskOf(hit.dataset.cancelTask); if (t) { t.cancelled = true; paint(); say('Cancelled'); } return; }
     if ((hit = on('[data-slice-open]'))) { const [id, k] = hit.dataset.sliceOpen.split('|'), all = turns(), x = all.find((y) => y.id === id); if (x) { const was = x.openSlice === +k; all.forEach((y) => { y.open = false; y.openSlice = -1; }); x.openSlice = was ? -1 : +k; paint(); } return; }   // one thing open at a time: the lent page goes to the slice
-    if ((hit = on('[data-open-ref]'))) { window.RailShell.openTask(hit.dataset.openRef, '', hit.textContent.trim()); return; }
+    if ((hit = on('[data-open-ref]'))) { window.RailShell.openTask(hit.dataset.openRef, '', hit.textContent.trim(), hit.dataset.openRefRun); return; }
     if ((hit = on('[data-say]'))) say(hit.dataset.say);
     timeTap(e);
   });
@@ -1419,6 +1465,7 @@
     labelQ = ''; window.RailChats.refresh(); refreshAll(); keepLabelQ(); if (isNew) say(`Labelled ${v}`);   // already on it: nothing happened, nothing to say
   });
   root.addEventListener('keydown', (e) => { if (e.key === 'Escape' && e.target.matches('[data-composer-t]') && comp.intent && !menu) { e.stopPropagation(); comp.intent = ''; paint(); root.querySelector('[data-composer-t]')?.focus(); } });   // Esc takes the armed starter off, as its ×
+  root.addEventListener('keydown', (e) => R.menuKeys(e, { openSub: (id) => { menuSub = id; paint(); }, closeSub: () => { menuSub = ''; paint(); } }));   // a picker's keys (comp.menu-sub), before Enter-to-send
   root.addEventListener('keydown', (e) => { if (e.target.matches('[data-composer-t]') && e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
   root.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.matches('[data-card-form] input')) { e.preventDefault(); e.target.closest('[data-card-form]').querySelector('[data-confirm="yes"]')?.click(); } });   // a form under a card: Enter is its action
   document.addEventListener('keydown', (e) => {
@@ -1428,7 +1475,7 @@
     const next = e.key === ']' ? list.find((t) => t.at > now + 0.01) : [...list].reverse().find((t) => t.at < now - 0.01);
     if (next) { e.preventDefault(); goTo(next.id); }
   });
-  R.dismissOnOutside(document, { open: () => !!menu, inside: `${where} .spick, ${where} .rc-pop, ${where} [data-anchor-menu], ${where} .composer-at`, back: () => null, close: () => { menu = ''; }, paint: () => paint() });
+  R.dismissOnOutside(document, { open: () => !!menu, inside: `${where} .spick, ${where} .rc-pop, ${where} [data-anchor-menu], ${where} .composer-at`, back: () => null, close: () => { menu = ''; menuSub = ''; }, paint: () => paint(), esc: () => { if (!menuSub) return false; const was = menuSub; menuSub = ''; return `${where} [data-menu-sub="${was}"]`; } });
 
   const api = {
     isSide: side,

@@ -16,6 +16,7 @@ test('PARTS lists the invitation, the design switch, one whole-page cell per she
     'state-task-loading-run', 'state-task-failed-run', 'state-task-gone-run', 'action-failed-run', 'terminal-chat',
     'wf-way-agents', 'wf-way-scripts', 'wf-way-drafts-empty', 'wf-way-for-you', 'wf-way-team-empty', 'wf-list-loading', 'wf-list-failed', 'wf-canvas', 'wf-canvas-picked', 'wf-draft',
     'wf-delete-confirm', 'wf-export-form', 'wf-export-plugin', 'wf-import-scripts', 'wf-agent-draft', 'wf-not-found', 'wf-fresh', 'run-graph-open-workflow',
+    'schedules-empty', 'schedules-loading', 'schedules-failed', 'schedule-skipped', 'schedule-draft', 'schedule-deleted-undo',
     'mk-way-updates', 'mk-way-installed', 'mk-way-for-you', 'mk-way-all', 'mk-way-shelf', 'mk-way-shelf-new-empty', 'mk-way-source', 'mk-list-loading', 'mk-list-failed',
     'mk-install-form', 'mk-remove-confirm', 'mk-setup-form', 'mk-needs-setup', 'mk-update-asks', 'mk-add-error', 'mk-not-found']);
   assert.deepEqual(PAGES, ['components.html', 'run-page.html', 'pulse.html']);
@@ -410,4 +411,13 @@ test('Marketplace (slice 8): its own cells, each the same route on both sides; t
   delete globalThis.window;
   assert.deepEqual(marketplaceCellIds(deep), [...MARKETPLACE_CELL_IDS, 'route-marketplace-slack-chat', 'route-marketplace-all']);
   assert.match(PARTS.find((p) => p.id === 'mk-update-asks').app.route, /^\?state=update-asks#marketplace\/jira-source$/);
+});
+
+test('SCHEDULES_CELL_IDS (Stillhet Schedules, D14): the six Schedules cells, each opened by the same address (and clicks) in both hosts', async () => {
+  const { SCHEDULES_CELL_IDS, SHOWN } = await import('../tools/stillhet-compare.mjs');
+  const ids = new Set([...PARTS.map((p) => p.id), ...SHOWN.map((h) => deepPart(h).id)]);
+  for (const id of SCHEDULES_CELL_IDS) assert.ok(ids.has(id), id);
+  const six = ['schedules-empty', 'schedules-loading', 'schedules-failed', 'schedule-draft', 'schedule-deleted-undo', 'schedule-skipped'];
+  for (const id of six) { const p = PARTS.find((x) => x.id === id); assert.ok(p, id); assert.equal(p.app.route, p.proto.route, id); }
+  assert.deepEqual(PARTS.find((x) => x.id === 'schedule-draft').seed, ['#route-schedule [data-menu="sc-at"]', '#route-schedule [data-menu-pick="sc-at|10:00"]']);
 });

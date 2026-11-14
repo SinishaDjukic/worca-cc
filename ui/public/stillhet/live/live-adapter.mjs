@@ -6,6 +6,7 @@ import { snapshotOf, partOf, taskOfLive, unreadOf, inPlay, chatOfRun } from './l
 import { startChatLive } from './chat-live.mjs';
 import { startTaskLive } from './task-live.mjs';
 import { startWorkflowLive } from './workflow-live.mjs';
+import { startScheduleLive } from './schedule-live.mjs';
 import { startMarketLive } from './market-live.mjs';
 import { progressOfState } from './chat-turns.mjs';
 import { workModeOf } from '../../../../src/shared/ask-run-snapshot.mjs';
@@ -31,7 +32,7 @@ const MARKET_SOURCES = new Set(['plugins', 'markets']);
 const RUN_FRAMES = new Set(['run-created', 'state', 'question', 'question-resolved', 'done', 'error', 'title']);
 const DEBOUNCE_MS = 250, BACKOFF_MS = 1000, BACKOFF_MAX_MS = 30000, TOKEN_EXPIRED = 4001;
 
-export function startLive({ fetch, WebSocket, location, world, host = {}, prefs = null, setTimeout, clearTimeout = () => {}, now = Date.now, openChat = () => '', hidden = () => false, toast = () => {}, open = undefined, go = () => {}, download = () => {}, workflowsChanged = () => {}, marketChanged = () => {}, openSource = undefined }) {
+export function startLive({ fetch, WebSocket, location, world, host = {}, prefs = null, setTimeout, clearTimeout = () => {}, now = Date.now, openChat = () => '', hidden = () => false, toast = () => {}, open = undefined, go = () => {}, download = () => {}, workflowsChanged = () => {}, marketChanged = () => {}, openSource = undefined, on = () => {} }) {
   let sources = {}, loaded = false, listFailed = false, stopped = false, sock = null, backoff = BACKOFF_MS, reconnect = 0, queue = [], unread = [], asked = 0;
   const live = new Map(), timers = {}, stamp = {}, stale = new Set();
   const progress = new Map();   // R-ux-12: each live run's place among its stages, from its `state` frames (runProgress)
@@ -60,13 +61,16 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
   // task page reads telemetry only with runTelemetry on
   const copyFlags = (flags) => { if (!prefs || !flags || typeof flags !== 'object') return; for (const [k, v] of Object.entries(flags)) if (typeof v === 'boolean' && prefs.flag(k) !== v) prefs.setFlag(k, v); };
   const task = startTaskLive({ fetch, now, toast, chat, flag: (k) => !!prefs?.flag(k), ...(open ? { open } : {}), runOf: (id) => chat.runOf(id), rowOf: (id) => world.find?.(id) || null,
-    listLoaded: () => loaded, listFailed: () => listFailed, retryList: () => retry(), retryPrs: () => { if (prsFailed) askPrs(); }, projectDirOf: (x) => str0(projects().find((p) => p && (p.key === x || p.name === x))?.path),
+    listLoaded: () => loaded, listFailed: () => listFailed, retryList: () => retry(), retryPrs: () => { if (prsFailed) askPrs(); }, prLookup: () => ({ token: prToken, ended: prsEnded === prToken || prsFailed }), projectDirOf: (x) => str0(projects().find((p) => p && (p.key === x || p.name === x))?.path),
     liveOf: (id) => {
       const l = liveRun(id); if (!l) return null;
       return { runId: l.runId, pipelineId: l.pipelineId || '', status: l.status, projectKey: l.projectKey || '', projectDir: l.projectDir || '', pendingQuestion: l.pendingQuestion || null,
         state: { status: l.status, title: l.title, branch: l.branch || null, steps: l.steps || [], totalCostUsd: l.totalCostUsd, totalActiveMs: l.totalActiveMs, pipelineCapUsd: l.pipelineCapUsd,
           pauseReason: l.pauseReason, pauseDetail: l.pauseDetail, startedAt: l.startedAt, stepper: l.stepper, ...(l.pauseAfterStep ? { pauseAfterStep: true } : {}) } };
     } });
+
+  // Schedules (D4): schedule-live owns every Schedules request; the store still moves only on the server's frames
+  const schedule = startScheduleLive({ fetch, setTimeout, clearTimeout, on, now, tasksOf: () => world.part?.('runs') || [] });
 
   async function get(url) {
     const r = await fetch(url, { headers: { Accept: 'application/json' } });
@@ -85,6 +89,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
   // already known (app.js carryHistoryPr), so an open PR never reads Ready (Create PR) in between.
   const prs = new Map();
   let prToken = 0, prsFailed = false;   // a failed lookup is asked again by a task page's Try again (retryPrs)
+  let prsEnded = 0;   // D7: the last lookup whose `done` frame came (the server ends each one with `{token, done: true, items: []}`)
   const prKey = (projectKey, id) => `${projectKey || ''}|${id}`;
   function withPrs(h) {
     if (!h || !Array.isArray(h.pipelines) || !prs.size) return h;
@@ -97,8 +102,9 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
       .then((r) => { if (token === prToken) prsFailed = !(r && r.ok); }, () => { if (token === prToken) prsFailed = true; });
   }
   function onPrs(f) {
+    if (f.token === prToken && f.done === true) prsEnded = f.token;
     const items = f.token === prToken && Array.isArray(f.items) ? f.items : [];
-    if (!items.length) return;
+    if (!items.length) { if (f.token === prToken) task.listChanged(); return; }   // a card waiting on its PR reads that the lookup ended
     for (const it of items) if (it && it.id) { if (it.pr) prs.set(prKey(it.projectKey, it.id), it.pr); else prs.delete(prKey(it.projectKey, it.id)); }
     const known = new Map(items.filter((it) => it && it.id).map((it) => [prKey(it.projectKey, it.id), it.pr || null]));
     const h = sources.history;
@@ -174,6 +180,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
     if (typeof f.type === 'string' && (f.type.startsWith('ask-') || f.type.startsWith('term-'))) chat.frame(f);
     if (typeof f.type === 'string' && f.type.startsWith('scriptbench-')) workflow.frame(f);   // a script bench's answer (D12)
     task.frame(f);
+    schedule.frame(f);
     if (!loaded) { queue.push(f); return; }
     apply(f);
   }
@@ -287,7 +294,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
   function retry() { listFailed = false; world.setState({ list: 'loading' }); return begin(); }
   begin();
   return {
-    chat, task, workflow, market,
+    chat, task, workflow, schedule, market,
     stop: () => { stopped = true; clearTimeout(reconnect); for (const k of Object.keys(timers)) clearTimeout(timers[k]); sock?.close(); },
     refresh,
     retry,

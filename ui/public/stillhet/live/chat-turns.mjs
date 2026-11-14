@@ -76,6 +76,18 @@ const taskTurn = (b, ctx) => {
   return { t: 'task', id: str(b.id), task: str(t?.id) || run };
 };
 
+/** A workflow Worca proposes only to run a task (`propose_workflow` with `thenRun`) whose one stage is the task: proposed,
+ *  it is one Run with card (D2). One stage is `shape.stages` of one, else exactly one keyed agent node in its manifest. */
+export function oneStageRun(block) {
+  const c = block?.card;
+  if (!c || c.type !== 'workflow' || c.thenRun !== true || block.state !== 'proposed') return false;
+  if (Array.isArray(c.shape?.stages)) return c.shape.stages.length === 1;
+  return arr(c.manifest?.steps).filter((x) => x?.kind === 'agents').flatMap((x) => arr(x.nodes)).filter((n) => n && n.key).length === 1;
+}
+const SAVE = 'Save workflow';   // dev's card says what it does (ask-panel.mjs "Save as workflow"): a workflow card saves
+/** The Run with turn of a workflow card; `state` is forced while chat-live waits on its saved card (D5). */
+export const runWithTurn = (b, state = stateOf(b.state)) => { const name = str(b.card.name) || 'A workflow'; return { t: 'runwith', id: str(b.id), card: str(b.id), cardType: 'workflow', title: name, workflow: name, why: str(b.card.note), rows: rowsOf(b.card), state }; };
+
 /** Each dev card type's turn (Step 4's table). The keys are exactly src/shared/ask-card-types.mjs ASK_CARD_TYPES. */
 export const CARD_TURN = Object.freeze({
   question: (b) => {
@@ -85,8 +97,8 @@ export const CARD_TURN = Object.freeze({
       ...(b.state === 'answered' ? { answered: picked >= 0 ? labels[picked] : str(c.answerText) || str(c.text) || 'Answered' } : {}) };
   },
   progress: taskTurn,
-  workflow: (b, ctx) => change(b, ctx, { graph: true }),
-  'workflow-build': (b, ctx) => change(b, ctx, { graph: true }),
+  workflow: (b, ctx) => (oneStageRun(b) ? runWithTurn(b) : change(b, ctx, { graph: true, apply: SAVE })),
+  'workflow-build': (b, ctx) => change(b, ctx, { graph: true, apply: SAVE }),
   // the words are dev's own cards' (ui/public/chat/action-cards.mjs, ui/public/shape/changes-card.mjs, route-card.mjs)
   'run-stop': (b) => act(b, `<b>Stop ${esc(str(b.card.title) || 'the task')}?</b> A stopped run can't be resumed. Its work so far stays on its branch.`, [['Stop run', 'danger', 'Stopped', 'card-apply'], [b.card.status === 'paused' ? 'Keep paused' : 'Keep running', 'quiet', 'Not now', 'card-later']]),
   // D4: an opened PR shows on its run's TaskCard alone (Ready to merge, its checks, Merge PR); with no TaskCard in the
@@ -138,6 +150,8 @@ export function cardTurn(b, ctx = {}) {
   if (!c.type) {
     if (b.state === 'started') return taskTurn(b, ctx);
     if (b.state === 'dismissed') return { t: 'notice', text: `Not started: ${str(c.title) || 'the task'}` };
+    // scheduled from the chat (server.mjs flipCard): the schedule's own card, its series or its one-off ticket
+    if (b.state === 'scheduled' && (str(c.scheduleId) || str(c.runId))) return { t: 'schedule', id: str(b.id), task: str(c.scheduleId) || str(c.runId) };
     return { t: 'proposal', id: str(b.id), title: str(c.title) || 'A task', brief: str(c.brief), why: str(c.note), workflow: str(c.workflowName) || 'Default', project: str(c.projectName) || str(c.workspaceName) || 'No project', card: str(b.id), raw: c };
   }
   const f = CARD_TURN[c.type];

@@ -5,6 +5,7 @@
 import { needsYou, needsYouItems, prNeedsOf, FAILED, roundMarkerOf } from '../../../../src/shared/needs-you.mjs';
 import { dayBucket } from '../../../../src/shared/day-buckets.mjs';
 import { pick } from './model-shape.mjs';
+import { repeatOf, atOf } from './schedule-rule.mjs';
 
 const lc = (v) => String(v || '').toLowerCase();
 const str = (v) => (typeof v === 'string' ? v : '');
@@ -152,11 +153,11 @@ export function projectKeyOf(thread = {}) {
   const c = thread && typeof thread.context === 'object' ? thread.context : null;
   return c && c.pinned !== false ? str(c.projectKey) : '';
 }
-export function chatOf(thread = {}, { now = 0, unread = [], links = [], tasks = [], projects = [], livePids = new Map() } = {}) {
+export function chatOf(thread = {}, { now = 0, unread = [], links = [], tasks = [], projects = [], livePids = new Map(), schedules = [] } = {}) {
   const key = projectKeyOf(thread), project = key ? str(arr(projects).find((p) => p && p.key === key)?.name) || key : '';
   const state = thread.waiting ? 'needs-you' : thread.inFlight ? 'replying' : 'idle';
   const o = thread.origin && typeof thread.origin === 'object' ? { platform: str(thread.origin.platform) || str(thread.origin.plugin), label: str(thread.origin.label) } : null;
-  return pick('chat', { id: str(thread.id), title: str(thread.title) || 'New chat', state, kind: (thread.startedRuns || 0) > 0 ? 'started' : (thread.runLinks || 0) > 0 ? 'tracks' : 'chat', project, time: timeOf(thread.updatedAt, now), day: dayOf(thread.updatedAt, now), cost: num(thread.totals?.costUsd), pinned: !!thread.pinnedAt, archived: !!thread.archivedAt, unread: unread.includes(thread.id), group: str(thread.groupId), origin: o, rank: 0, labels: arr(thread.labels).filter((l) => typeof l === 'string'), tasks: chatTasks(str(thread.id), links, tasks, livePids) });
+  return pick('chat', { id: str(thread.id), title: str(thread.title) || 'New chat', state, kind: (thread.startedRuns || 0) > 0 ? 'started' : (thread.runLinks || 0) > 0 ? 'tracks' : 'chat', project, time: timeOf(thread.updatedAt, now), day: dayOf(thread.updatedAt, now), cost: num(thread.totals?.costUsd), pinned: !!thread.pinnedAt, archived: !!thread.archivedAt, unread: unread.includes(thread.id), group: str(thread.groupId), origin: o, rank: 0, labels: arr(thread.labels).filter((l) => typeof l === 'string'), tasks: [...chatTasks(str(thread.id), links, tasks, livePids), ...chatSchedules(str(thread.id), schedules)] });
 }
 // A chat's task: the store's task (its id is the run id live, the pipeline id saved), as chats-model.js's chat tasks read.
 // Resume gives a run a new run id while its link keeps the first one: the live run holding the link's pipeline id
@@ -176,6 +177,9 @@ function chatTasks(threadId, links, tasks, livePids = new Map()) {
   }
   return out;
 }
+// A schedule made from the chat (its `askThreadId`, scheduleOf's `chat`) is the chat's schedule task, as chats-model.js's
+// are; its card reads its word and why from RailSchedules
+const chatSchedules = (threadId, schedules) => arr(schedules).filter((s) => s && s.chat && s.chat === threadId).map((s) => ({ id: s.id, kind: 'schedule', title: s.title, time: s.time, detail: s.every }));
 /** The chat that started a run, by its run id or pipeline id: the first started link (the route answers oldest first);
  *  '' for a run a chat only follows or no chat linked. */
 export function chatOfRun(links = [], id = '') {
@@ -194,12 +198,36 @@ export function unreadOf(prev = [], frame = null, { openChat = '', hidden = fals
 
 // ---- schedules ----
 const PERIOD = { daily: 'today', weekly: 'this week', monthly: 'this month' };
-/** A schedule: a ticket (once) or a series (recurring) of `GET /api/schedules`. */
+/** A schedule: a ticket (once) or a series (recurring) of `GET /api/schedules`, with the D10 fields the page reads. */
 export function scheduleOf(item = {}, { now = 0, projects = [] } = {}) {
-  const once = item.kind === 'once', missed = once && item.status === 'missed', paused = !once && item.status === 'paused';
-  const at = once ? item.runAt || item.scheduledFor : item.nextRunAt;
+  const once = item.kind === 'once', missed = once && item.status === 'missed', paused = !once && item.status === 'paused', ended = !once && item.status === 'ended';
+  const afterTitle = once && item.after ? str(item.after.title) || 'the run before it' : '';
+  const at = once ? (afterTitle ? null : item.runAt || item.scheduledFor) : item.nextRunAt;
+  const skip = !once && !paused && !ended && Number.isFinite(ms(item.skippedRunAt)) ? str(item.skippedRunAt) || new Date(item.skippedRunAt).toISOString() : '';
   const name = projects.find((p) => p && (p.key === item.projectKey || p.path === item.projectDir))?.name || baseName(item.projectDir);
-  return pick('schedule', { id: str(item.id), title: str(item.title) || 'A schedule', project: name, chat: str(item.askThreadId), every: once ? 'Once' : str(item.sentence), at: Number.isFinite(ms(at)) ? clock(ms(at)) : '', next: missed ? `Missed ${timeOf(at, now)}` : paused ? 'Paused' : at ? `Next ${nextWord(at, now)}` : '', ...(missed || paused ? {} : { day: whenOf(at, now) }), state: missed ? 'diverged' : paused ? 'paused' : 'scheduled', time: missed ? timeOf(at, now) : nextWord(at, now), section: missed ? 'needs' : paused ? 'paused' : 'next', labels: [], what: str(item.summary), cost: null, started: Number.isFinite(ms(item.createdAt)) ? dateWord(ms(item.createdAt)) : '', runs: [], ...(missed ? { missed: dateWord(ms(at)), missedWhy: str(item.failReason) || 'Worca was not running' } : {}), nextAt: missed || !Number.isFinite(ms(at)) ? null : ms(at) });
+  const word = once ? 'Once' : repeatOf(item.rule) || str(item.sentence);
+  // dev's own pause is 'user' (Paused by you); a series that paused itself says after how many failures
+  const streak = num(item.failureStreak) || num(item.maxFailures) || 0;
+  const why = !paused || !item.pauseReason || item.pauseReason === 'user' ? '' : item.pauseReason === 'failure_streak' ? `paused itself after ${streak} failure${streak === 1 ? '' : 's'} in a row` : str(item.pauseReason);
+  const next = missed ? `Missed ${timeOf(at, now)}` : paused ? (why ? 'Paused' : 'Paused by you') : ended ? '' : afterTitle ? `after ${afterTitle}` : skip ? 'Skips next time, then as usual' : at ? `Next ${nextWord(at, now)}` : '';
+  return pick('schedule', { id: str(item.id), title: str(item.title) || 'A schedule', project: name, chat: str(item.askThreadId), every: word, at: (!once && atOf(item.rule)) || (Number.isFinite(ms(at)) ? clock(ms(at)) : ''), next, ...(missed || paused || ended ? {} : { day: whenOf(at, now) }), state: missed ? 'diverged' : paused ? 'paused' : ended ? 'ended' : 'scheduled', time: missed ? timeOf(at, now) : afterTitle ? 'after' : nextWord(at, now), section: missed ? 'needs' : paused ? 'paused' : ended ? 'ended' : 'next', labels: [], what: str(item.summary), cost: null, started: Number.isFinite(ms(item.createdAt)) ? dateWord(ms(item.createdAt)) : '', runs: [], ...(missed ? { missed: dateWord(ms(at)), missedWhy: str(item.failReason) || 'Worca was not running' } : {}), nextAt: missed || ended || !Number.isFinite(ms(at)) ? null : ms(at),
+    skip, overlap: str(item.overlap), fails: num(item.maxFailures), ifMissed: str(item.ifMissed), tz: str(item.tz || item.rule?.tz), pauseWhy: why,
+    preset: item.presetId ? str(item.presetName) || 'preset deleted' : '', after: afterTitle, ended,
+    rule: !once && item.rule && typeof item.rule === 'object' ? item.rule : null, grace: num(item.graceMin) ?? null,
+    afterRef: once && item.after?.id ? { kind: str(item.after.kind), id: str(item.after.id), policy: str(item.after.policy) || 'done' } : null });
+}
+// a fire that never became a task reads as its ticket's case (run-page-model.js "A scheduled run before it is a run")
+const TICKET_CASE = { firing: 'ticket-firing', failed: 'ticket-failed', missed: 'ticket-missed', skipped: 'ticket-skipped', canceled: 'ticket-canceled' };
+/** A series' fires (the `history` of `GET /api/schedules/:id`, newest first) as the page's runs: a started fire is the
+ *  store's task with its pipeline id (its case, its words); one that never started, its ticket's case. A pending ticket is no fire. */
+export function runsOf(history = [], tasks = [], { now = 0 } = {}) {
+  const byId = new Map(arr(tasks).filter(Boolean).map((t) => [t.id, t]));
+  return arr(history).filter((t) => t && t.status !== 'scheduled').map((t) => {
+    const task = t.status === 'fired' ? byId.get(t.pipelineId) || byId.get(t.id) : null, when = ms(t.runAt);
+    const kase = task ? str(task.case) : t.status === 'fired' ? 'finished-nogit' : TICKET_CASE[t.status] || 'ticket-ended';
+    return { day: Number.isFinite(when) ? dayOf(when, now) : 'older', date: Number.isFinite(when) ? dateWord(when) : '', time: timeOf(when, now), title: str(t.title) || 'A schedule', case: kase, stage: 0,
+      git: kase === 'merged' ? 'merged' : /fail/.test(kase) ? 'fail' : 'branch', meta: task ? str(task.detail) : str(t.failReason), wid: task ? str(task.id) : str(t.id) };
+  });
 }
 // A ticket or series still to come, and a missed one, are rows of the store too (world.js `when`, `missed`): Pulse's
 // Scheduled and Needs you read them there, as the demo's waiting rows.
@@ -369,13 +397,14 @@ export function snapshotOf(src = {}, { now = 0, unread = [], checksOf = null } =
   const rowIdOf = new Map([...savedOnly.map((r) => [str(r.id), str(r.id)]), ...liveRuns.filter((r) => r.pipelineId).map((r) => [str(r.pipelineId), str(r.runId)])]);
   const { groups, inGroup } = runGroupsOf(src.runGroups, runs, { now, rowIdOf });
   for (const r of runs) { const gid = inGroup.get(r.id); if (gid) r.group = gid; }
+  const schedules = items.filter((x) => x.kind === 'recurring' || ['missed', 'scheduled', 'firing'].includes(x.status)).map((x) => scheduleOf(x, { now, projects: projectsRaw }));
   return {
     runs, groups, userGroups: [],
     // the Chats Needs-you number: the server's count over every thread, not the first page's rows
     chatsNeeds: num(src.threads?.counts?.needs),
-    chats: arr(src.threads?.threads).filter((t) => t && !t.archivedAt && !t.archived).map((t) => chatOf(t, { now, unread, links: arr(src.runLinks?.links), tasks: runs, projects: projectsRaw, livePids: new Map(liveRuns.filter((r) => r.pipelineId).map((r) => [r.pipelineId, str(r.runId)])) })),
+    chats: arr(src.threads?.threads).filter((t) => t && !t.archivedAt && !t.archived).map((t) => chatOf(t, { now, unread, links: arr(src.runLinks?.links), tasks: runs, projects: projectsRaw, livePids: new Map(liveRuns.filter((r) => r.pipelineId).map((r) => [r.pipelineId, str(r.runId)])), schedules })),
     chatGroups: arr(src.groups?.groups).map((g) => ({ id: str(g.id), name: str(g.name), total: num(g.count) ?? 0 })),
-    schedules: items.filter((x) => x.kind === 'recurring' ? x.status !== 'ended' : ['missed', 'scheduled', 'firing'].includes(x.status)).map((x) => scheduleOf(x, { now, projects: projectsRaw })),
+    schedules,
     projects: projectsRaw.map((p) => projectOf(p, syncs[p.key] || null)),
     costs: costsOf(src.budget, liveRuns, { now, limits: src.usageLimits }),
     updates: [...notes, ...outcomes],

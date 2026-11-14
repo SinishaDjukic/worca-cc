@@ -15,7 +15,7 @@ const EXPECT = {
   '#team-metrics': '#insights/team', '#team-metrics/q3': '#insights/team',
   '#pipelines': '#runs', '#pipelines/abc': '#runs', '#running': '#runs', '#running/r1': '#run/r1', '#history': '#runs', '#history/k/p': '#run/p', '#history/k/p/details': '#run/p', '#history/k/p/details/logs': '#run/p', '#history/k': '#runs',
   // a feature's or group's page is not on live data yet: dev's bookmark lands on Tasks, never on "This task no longer exists"
-  '#feature': '#runs', '#feature/f1': '#run/group:f1', '#group': '#runs', '#group/g1': '#run/group:g1', '#group/p%3Ap-77': '#run/p-77', '#group/t:t-5': '#schedules',
+  '#feature': '#runs', '#feature/f1': '#run/group:f1', '#group': '#runs', '#group/g1': '#run/group:g1', '#group/p%3Ap-77': '#run/p-77', '#group/t:t-5': '#schedules', '#schedules/once': '#schedules', '#schedules/repeating': '#schedules', '#schedules/activity': '#schedules',
   '#activity': '#chat',
   '#connectors': '#settings/connectors', '#settings/mcp': '#settings/connectors',
   '#models': '#settings/models', '#providers': '#settings/models', '#settings/providers': '#settings/models',

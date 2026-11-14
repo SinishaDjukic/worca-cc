@@ -587,3 +587,19 @@ test('GET /api/schedules carries the open "Run after" chains, and drops a chain 
   const settledChains = await get('/api/schedules');
   assert.equal(settledChains.chains.some((c) => c.id === 'p:ch000001'), false);
 });
+
+test('skippedRunAt: the slot Keep next time restores, on the list and the item; null when nothing is skipped; a GET cycle with no request is deep-equal', async () => {
+  const rule = { freq: 'daily', time: '03:00', tz: 'UTC' };
+  const made = await (await post('/api/run', { projectDir: dir, prompt: 'Skippy', title: 'Skippy', mock: true, repeat: { rule } })).json();
+  const listed = async () => (await get('/api/schedules')).schedules.find((s) => s.id === made.scheduleId);
+  assert.equal((await listed()).skippedRunAt, null);
+  assert.equal((await get(`/api/schedules/${made.scheduleId}`)).item.skippedRunAt, null);
+  const first = (await get(`/api/schedules/${made.scheduleId}`)).item.nextRunAt;
+  await post(`/api/schedules/${made.scheduleId}/skip-next`);
+  assert.equal((await listed()).skippedRunAt, first);
+  const a = await get(`/api/schedules/${made.scheduleId}`);
+  assert.equal(a.item.skippedRunAt, first);
+  // a Stillhet draft that is discarded sends nothing: the item reads the same before and after
+  assert.deepEqual(await get(`/api/schedules/${made.scheduleId}`), a);
+  assert.equal((await call('DELETE', `/api/schedules/${made.scheduleId}`)).status, 200);
+});

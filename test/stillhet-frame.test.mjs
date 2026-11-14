@@ -59,3 +59,10 @@ test('shell.js no longer reads window.Today and the capture is gone', () => {
   assert.doesNotMatch(read('ui/public/stillhet/shell/shell.js'), /window\.Today|T\.pages|T\.sidebar|T\.topBar/);
   assert.ok(existsSync(new URL('../ui/public/stillhet/shell/frame.js', import.meta.url)));
 });
+
+test('every sidebar place row carries its name (the ☰ drawer shows icon and name, #1266)', () => {
+  const w = world();
+  const side = w.RailFrame.sidebar(PLACES), rows = [...side.querySelectorAll('[data-nav]')];
+  assert.ok(rows.length > 5, 'the sidebar lists its places');
+  for (const r of rows) assert.ok(r.querySelector('.pz-nav-l')?.textContent.trim(), `${r.dataset.nav} has a name`);
+});
