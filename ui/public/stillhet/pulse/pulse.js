@@ -160,7 +160,7 @@ function vitalsSections() {
     { word: 'from', id: 'vitalsFrom', text: ui.vitalsFrom === 'all' ? 'all projects' : ui.vitalsFrom, items: [{ id: 'all', text: 'all projects', checked: ui.vitalsFrom === 'all', hint: String(vitalsN(vitalsShown(ui.vitalsShow, 'all'))) }, { sep: true }].concat(vitalsProjects().map((p) => ({ id: p, text: p, checked: ui.vitalsFrom === p, hint: String(vitalsN(vitalsShown(ui.vitalsShow, p))) }))), tip: 'Which project\'s runs it shows; limits belong to a harness and show for every project' }])}</span></div>`;
   const sec = (h, n, rows, note) => (n ? `<section class="pz-sec"><h3 class="pz-h">${h} <span class="n">${n}${note ? ` · ${note}` : ''}</span></h3><div class="pz-list">${rows}</div></section>` : '');
   const levelOfRun = (r) => (r.missed ? 2 : R.alertLevel(R.markTone(R.runState(window.RunCardModel.stateOf(r.case)))));
-  const needRows = [...c.needs.map((r) => [levelOfRun(r), r.missed ? row({ mark: R.kindMark({ kind: 'schedule', tone: 'act', size: 16 }), title: r.title, meta: metaOf(r), time: r.time, key: 'r:' + r.id, tip: 'A missed time never started: it needs you and is not a task' }) : runRow(r, 'Opens the run page at what it asks')]), ...c.places.map((x) => [R.alertLevel(x.tone), row({ mark: R.kindMark({ kind: x.kind, tone: x.tone, size: 16 }), title: x.title, meta: x.meta, key: `np:${x.go}`, tip: x.tip })])].sort((a, b) => b[0] - a[0]);   // highest level first (look.alert-ladder)
+  const needRows = [...c.needs.map((r) => [levelOfRun(r), r.missed ? row({ mark: R.kindMark({ kind: 'schedule', tone: 'act', size: 16 }), title: r.title, meta: metaOf(r, schedWords(r) || undefined), time: r.time, key: 'r:' + r.id, tip: 'A missed time never started: it needs you and is not a task' }) : runRow(r, 'Opens the run page at what it asks')]), ...c.places.map((x) => [R.alertLevel(x.tone), row({ mark: R.kindMark({ kind: x.kind, tone: x.tone, size: 16 }), title: x.title, meta: x.meta, key: `np:${x.go}`, tip: x.tip })])].sort((a, b) => b[0] - a[0]);   // highest level first (look.alert-ladder)
   const out = sec(R.runState('question').word, needRows.length, needRows.map(([, h]) => h).join(''), needsWords().includes('(') ? needsWords().replace(/^\d+ needs? you \((.*)\)$/, '$1') : '')
     + sec('Limits', lim.length, lim.map((l, i) => row({ mark: R.kindMark({ kind: 'event', tone: l.tone === 'over' ? 'fail' : 'act', size: 16 }), title: l.title, meta: l.detail, time: l.time, key: 'lim' + i, tip: `${l.tip} · opens Usage and costs` })).join(''))
     + sec('Running', c.running.length, c.running.map((r) => runRow(r, 'Opens the live run')).join(''))
@@ -171,10 +171,16 @@ function vitalsSections() {
   return bar + (out || `<p class="pz-empty">${all ? 'Nothing needs you. Nothing is running.' : 'Nothing here right now.'}</p>`);
 }
 
+// a schedule's waiting row (demo `ticket`, live `sched:ID`) reads the schedule's own word and why (RailSchedules.wordOf /
+// nextOf), as its page, card and bar row do; one deleted inside its Undo window is no row any more
+const schedIdOf = (r) => r.ticket || (/^sched:/.test(r.id || '') ? r.id.slice(6) : '');
+const schedGone = (r) => { const id = schedIdOf(r), S = window.RailSchedules; return !!(id && S && !S.find(id)); };
+const schedWords = (r) => { const id = schedIdOf(r), S = window.RailSchedules; return id && S?.find(id) ? [S.wordOf(id), S.nextOf(id)].filter(Boolean).join(' · ') : ''; };
 // Scheduled, by when: Missed, Today, Tomorrow, This week, Later, After a run; a group with nothing has no head.
-function scheduledSection(list) {
+function scheduledSection(all) {
+  const list = all.filter((r) => !schedGone(r));
   if (!list.length) return '';
-  const rowOf = (r) => row({ mark: R.kindMark({ kind: 'schedule', tone: r.when === 'missed' ? 'act' : 'idle', size: 16 }), title: r.title, meta: metaOf(r, r.on && !r.resumes ? startDetail(r) : r.detail), time: r.time, key: 'r:' + r.id, tip: r.resumes ? 'Opens the run: it resumes by itself' : r.queued ? 'Opens the run: it waits for a free slot' : 'Opens the run' });
+  const rowOf = (r) => row({ mark: R.kindMark({ kind: 'schedule', tone: r.when === 'missed' ? 'act' : 'idle', size: 16 }), title: r.title, meta: metaOf(r, schedWords(r) || (r.on && !r.resumes ? startDetail(r) : r.detail)), time: r.time, key: 'r:' + r.id, tip: r.resumes ? 'Opens the run: it resumes by itself' : r.queued ? 'Opens the run: it waits for a free slot' : 'Opens the run' });
   const groups = M.SCHED.filter(([id]) => list.some((r) => r.when === id)).map(([id, name]) => `<h4 class="pz-h pz-day">${name}</h4><div class="pz-list">${list.filter((r) => r.when === id).map(rowOf).join('')}</div>`).join('');
   return `<section class="pz-sec"><h3 class="pz-h">Scheduled <span class="n">${list.length}</span></h3>${groups}</section>`;
 }
@@ -527,7 +533,7 @@ function searchHits() {
   const own = [];
   if (SHELL && window.RailChats) for (const c of window.RailChats.data().chats) {
     if (plain(c.title).includes(q)) own.push({ label: c.title, where: c.project || 'No project', area: 'Chats', hash: `chat/${c.id}` });
-    const walk = (t) => { if (plain(t.title).includes(q)) own.push({ label: t.title, where: `in ${c.title}`, area: t.kind === 'schedule' ? 'Schedules' : 'Tasks', hash: t.kind === 'schedule' ? 'schedule/s1' : `run/${t.case}`, chat: c.id }); (t.after || []).forEach(walk); };
+    const walk = (t) => { if (plain(t.title).includes(q)) own.push({ label: t.title, where: `in ${c.title}`, area: t.kind === 'schedule' ? 'Schedules' : 'Tasks', hash: t.kind === 'schedule' ? `schedule/${t.id}` : `run/${t.case}`, chat: c.id }); (t.after || []).forEach(walk); };
     (c.tasks || []).forEach(walk);
   }
   const page = [];
@@ -784,6 +790,7 @@ function paintToast() {
   const t = toastEl(); t.innerHTML = ui.toast ? R.toastText(ui.toast, undo ? R.toastUndo({ title: undo.tip }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
 }
 function toast(text, canUndo) {
+  window.RailScheduleLive?.pending?.()?.flush();   // a schedule's Delete waiting out its Undo: this notice replaces its Undo, so it is sent now (Schedules D8)
   toastSaid++; ui.toast = text; undo = typeof canUndo === 'function' ? { tip: 'Undo', run: canUndo } : canUndo || null; clearTimeout(toastTimer);   // a place's Undo is a function, or { tip, run }
   toastTimer = setTimeout(() => { ui.toast = ''; undo = null; const el = toastEl(); if (el) { el.classList.remove('is-on'); el.textContent = ''; } }, 5000);
 }
@@ -949,7 +956,7 @@ function liveStep(u) {
     if (!ticket && asksConfirm(res) && r) { ui.pop = false; SHELL?.openRun(`run/${r.case}`, r.title, r.id); render(); return; }
     refused(u.fix.toLowerCase(), res);
   };
-  if (ticket) A.post(`/api/schedules/${encodeURIComponent(ticket)}/run-now`).then(done);
+  if (ticket) (window.RailScheduleLive?.act('run', { id: ticket }) ?? Promise.resolve({ ok: false, error: 'Worca is not answering' })).then(done);   // Schedules D15: the one Schedules I/O module
   else A.post('/api/resume', { pipelineId: u.run, baseCheck: true }).then(done);
 }
 // A mode a person picks: in the live kind it is dev's uiLevel, written first (D21)

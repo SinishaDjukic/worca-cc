@@ -54,16 +54,8 @@ test('R-arch-10: every action of an area this slice does not wire goes through t
   const acts = [];
   const act = w.RailAdapter.act; w.RailAdapter.act = (id, args) => { const r = act(id, args); acts.push(`${id}: ${r.ok ? 'done' : r.text}`); return r; };
   const html = (id) => d.getElementById(id)?.innerHTML ?? '';
-  const pickIn = (root, menu, v) => { d.querySelector(`${root} [data-menu="${menu}"]`).click(); const b = d.querySelector(`${root} [data-menu-pick="${menu}|${v}"]`); assert.ok(b, `${menu}|${v} is offered`); b.click(); };
-  const sched = async () => { w.location.hash = '#chat'; await settle(); w.location.hash = '#schedule/sr1'; await settle(); };
   const cases = [
-    // Schedules (slice 6): the page's Run now, its ⋯ menu and its time pickers; the API other pages call
-    ['schedules.run', sched, () => d.querySelector('#route-schedule [data-sched-now]').click(), 'route-schedule'],
-    ...['pause', 'skip', 'delete'].map((v) => [`schedules.${v}`, sched, () => pickIn('#route-schedule', 'sc-more', v), 'route-schedule']),
-    ['schedules.sc-at', sched, () => { d.querySelector('#route-schedule [data-menu="sc-at"]').click(); [...d.querySelectorAll('#route-schedule [data-menu-pick^="sc-at|"]')].find((b) => !b.dataset.menuPick.endsWith('|02:00')).click(); }, 'route-schedule'],
-    ['schedules.add', null, () => w.RailSchedules.add({ id: 'x1', title: 'Made up', every: 'every day', at: '03:00', runs: [] }), 'bar-schedules'],
-    // the Tasks center's Run now on a missed schedule (the reviewer's path to RailWorld.add)
-    ['schedules.run', async () => { w.location.hash = '#runs'; await settle(); }, () => d.querySelector('[data-c-sact="run|tk1"]').click(), 'app'],
+    // Schedules: wired by the Schedules slice (test/stillhet-schedules-actions-host.test.mjs), so none of its actions refuses here
     // the Tasks center's New task… form is wired by the Tasks slice (D12b, test/stillhet-tasks-list-host.test.mjs)
     // Chat (slice 4): the composer, the dock under a schedule, the chat list's row menu
     // Projects' workspaces (the Projects slice)

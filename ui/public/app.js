@@ -185,7 +185,7 @@ import {
   channelBadge, renderNeedsGit,
 } from './plugins-view.mjs';
 import { mountMarketplace, tabFromParam, targetFromParam } from './marketplace/index.mjs';
-import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
+import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderPromptCheckToggle, collectPromptCheckToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
 import { mountNetworkProxyCard } from './settings-network-proxy.mjs';
@@ -17456,6 +17456,8 @@ function paintAskSettings(data) {
   if (scriptHost) scriptHost.replaceChildren(renderScriptToolsToggle({ prefs: data.chat || {} }, { doc: document }));
   const suggestHost = document.getElementById('ask-suggestions-host');
   if (suggestHost) suggestHost.replaceChildren(renderSuggestionsToggle({ prefs: data.chat || {} }, { doc: document }));
+  const promptCheckHost = document.getElementById('ask-prompt-check-host');
+  if (promptCheckHost) promptCheckHost.replaceChildren(renderPromptCheckToggle({ prefs: data.chat || {} }, { doc: document }));
   const summariesHost = document.getElementById('ask-summaries-host');
   if (summariesHost) summariesHost.replaceChildren(renderSummariesToggle({ prefs: data.chat || {} }, { doc: document }));
   setChatSummariesPref(data.chat);
@@ -17510,10 +17512,12 @@ function saveAskLimits(e) {
   const askWebBody = webHost ? collectAskWebFields(webHost) : null;   // null = the web fields were not touched
   const suggestHost = document.getElementById('ask-suggestions-host');
   const summariesHost = document.getElementById('ask-summaries-host');
+  const promptCheckHost = document.getElementById('ask-prompt-check-host');
   const chat = {
     ...(scriptHost ? collectScriptToolsToggle(scriptHost) : {}),
     ...(suggestHost ? collectSuggestionsToggle(suggestHost) : {}),
     ...(summariesHost ? collectSummariesToggle(summariesHost) : {}),
+    ...(promptCheckHost ? collectPromptCheckToggle(promptCheckHost) : {}),
   };
   postAskLimits({ askMaxTurns, askMaxBudgetUsd,
     ...(Object.keys(chat).length ? { chat } : {}),

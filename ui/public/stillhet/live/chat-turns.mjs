@@ -138,6 +138,8 @@ export function cardTurn(b, ctx = {}) {
   if (!c.type) {
     if (b.state === 'started') return taskTurn(b, ctx);
     if (b.state === 'dismissed') return { t: 'notice', text: `Not started: ${str(c.title) || 'the task'}` };
+    // scheduled from the chat (server.mjs flipCard): the schedule's own card, its series or its one-off ticket
+    if (b.state === 'scheduled' && (str(c.scheduleId) || str(c.runId))) return { t: 'schedule', id: str(b.id), task: str(c.scheduleId) || str(c.runId) };
     return { t: 'proposal', id: str(b.id), title: str(c.title) || 'A task', brief: str(c.brief), why: str(c.note), workflow: str(c.workflowName) || 'Default', project: str(c.projectName) || str(c.workspaceName) || 'No project', card: str(b.id), raw: c };
   }
   const f = CARD_TURN[c.type];

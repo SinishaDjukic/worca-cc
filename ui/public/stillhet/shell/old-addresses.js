@@ -6,7 +6,7 @@
 (function () {
   // [old place, new address, what the tail becomes]. The old place matches itself and anything under it (`old/…`).
   // tail: 'root' drops it; 'ws' carries it as a workspace in Projects; 'way' carries a Workflows way when it has one;
-  // 'task' keeps the task id (the first segment, or History's KEY/PID's PID, before any tab): the task page. A History address without
+  // 'tab' matches only the old tabs under a place that kept its name; 'task' keeps the task id (the first segment, or History's KEY/PID's PID, before any tab): the task page. A History address without
   // its PID names no task, so it lands on Tasks. 'group' keeps a feature's or group's id: its group page, #run/group:ID (a
 // re-planned feature follows to its newest there, task-live.mjs group); a Run-after chain lands on its first task or Schedules.
   var TABLE = [
@@ -21,6 +21,7 @@
     ['new', 'chat'], ['getting-started', 'chat'], ['chat/new', 'chat'],
     ['plugins', 'marketplace'],
     ['guardrails', 'settings/guardrails'],
+    ['schedules', 'schedules', 'tab'],   // dev's Schedules tabs (#schedules/once, /repeating, /activity): the one Schedules place (D12); bare #schedules is Stillhet's own
     ['composer', 'workflows'], ['agents', 'workflows', 'way', '', '~agents'], ['scripts', 'workflows', 'way', '', '~scripts'], ['agent-create', 'workflows', 'way', '', '~agents'],
     ['workflows', 'workflows', 'dev-workflows'],   // dev's own Workflows forms (app.js routeWorkflows); Stillhet's are never touched
   ];
@@ -45,6 +46,7 @@
     for (var i = 0; i < TABLE.length; i++) {
       var row = TABLE[i], from = row[0];
       if (path !== from && path.indexOf(from + '/') !== 0) continue;
+      if (row[2] === 'tab' && path === from) continue;   // only the old tabs under it, never the place itself
       var tail = path.slice(from.length + 1), to = row[1];
       if (row[2] === 'ws' && tail) to += '/ws:' + tail.split('/')[0];
       var segs = tail.split('/').filter(Boolean);

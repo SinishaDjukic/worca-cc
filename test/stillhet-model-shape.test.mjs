@@ -35,6 +35,7 @@ test('the live Workflows records (workflow-map.mjs) meet the same shapes (slice 
 test('a seeded wrong type is named once', () => {
   assert.deepEqual(shapeErrors('task', { id: 'r1', case: 'working', title: 't', project: '', detail: '', time: '', day: 'today', labels: [], cost: '3', archived: false, unread: false, pr: '', group: '', kind: 'Git', by: '', workflow: '' }), ['task.cost: expected number|null']);
   assert.deepEqual(shapeErrors('schedule', { id: 's', title: '', project: '', chat: '', every: '', at: '', next: '', state: '', time: '', section: '', labels: [], what: '', cost: null, started: '', runs: [] }), [], 'day may be absent');
+  assert.deepEqual(['skip', 'overlap', 'fails', 'ifMissed', 'tz', 'pauseWhy', 'preset', 'after', 'ended'].filter((k) => !(k in SHAPES.schedule)), [], 'the D10 fields');
 });
 
 test('every demo turn of every demo chat meets TURN_SHAPES (D18)', async () => {
