@@ -1,8 +1,8 @@
 {
   "about": "The Worca Rail design system as data: what a page can be built from, for a tool or an agent. The rules are docs/rail/; when this file and those differ, the file there wins and this one is fixed in the same change. Each component is drawn in the gallery (plans/rail/prototype/components.html) and on the generated Worca Rail page.",
   "howToBuild": [
-    "Pick the page's pattern.",
-    "For each thing the person must see or do, find its need below; use that component in that pattern's slot.",
+    "Pick the page's pattern from `featureKinds`: what the feature is picks it (docs/rail/build.md › build.default).",
+    "For each thing the person must see or do, find its need below (a component, a logic entry, or an element under its family's `also`); use it in that pattern's slot. A need with no entry is a question for a person, then build.teach.",
     "A component or logic with `code` is built in code: import it from ui/public/design-system/components/index.mjs and call it; never write its markup. A need with no component in code: add the component there first, with its test and its `code` entry.",
     "Write the words by the rules in docs/rail/: state words, labels of 1–3 words, failures as `Could not …`, the reason, `Nothing changed.`",
     "Draw every state: empty, loading, could not load, a failed step, an unexpected break, a lost connection, and 375px.",
@@ -11,6 +11,59 @@
     "Name every page, menu item, section head and row by Small rules › Names: the thing, 1–3 words, one thing one name; ds-check reads them.",
     "What a page needed and the design system did not have is added to it first: the rule, the catalog entry, the component in code with its test and gallery example",
     "Pass the gate: plans/rail/prototype/gates/ds-check.mjs and the page's sweep."
+  ],
+  "featureKinds": [
+    {
+      "is": "A place: a kind of work you browse, set up and come back to",
+      "examples": [
+        "Marketplace",
+        "Workflows",
+        "a place to keep prompt snippets"
+      ],
+      "pattern": "A place"
+    },
+    {
+      "is": "Things you track one by one",
+      "examples": [
+        "schedules",
+        "features"
+      ],
+      "pattern": "A list",
+      "where": "the bar",
+      "opens": "A thing's page",
+      "except": "a task (run) or a group opens A task's page"
+    },
+    {
+      "is": "How Worca behaves",
+      "examples": [
+        "a new setting",
+        "Notifications"
+      ],
+      "pattern": "A settings tab"
+    },
+    {
+      "is": "Something you ask Worca for",
+      "examples": [
+        "Build workflow",
+        "Explain this run"
+      ],
+      "pattern": "A conversation",
+      "where": "a starter in Chat's composer (IntentChip), never a new page"
+    },
+    {
+      "is": "Something you start with a few fields",
+      "examples": [
+        "New run",
+        "Create PR"
+      ],
+      "pattern": "A form"
+    },
+    {
+      "is": "None of these",
+      "examples": [],
+      "pattern": null,
+      "then": "a question for a person, then build.teach: the pattern goes into the design system first"
+    }
   ],
   "components": [
     {
@@ -180,7 +233,27 @@
         "its tooltip is its holder's (`usageTip`)",
         "used up: full and solid red"
       ],
-      "example": "the rings around the avatar"
+      "example": "the rings around the avatar",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/usage.mjs#usageTip",
+          "needs": [
+            "A limit's tooltip: what, whose, how much, when it resets"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/usage.mjs#usageWindow",
+          "needs": [
+            "A limit's window in words: Session, Weekly"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/usage.mjs#connectedUsage",
+          "needs": [
+            "Only the providers that count: one signed out has no ring"
+          ]
+        }
+      ]
     },
     {
       "name": "PanelFrame",
@@ -211,7 +284,27 @@
       "rules": [
         "a side menu holds them in navFlyout"
       ],
-      "example": "Interface mode, Expert ›"
+      "example": "Interface mode, Expert ›",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/account-menu.mjs#navFlyout",
+          "needs": [
+            "What holds the rows of the profile menu"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/account-menu.mjs#themeChoice",
+          "needs": [
+            "One of Appearance's choices: light, dark, system"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/account-menu.mjs#cardTitleLink",
+          "needs": [
+            "A card's title that opens what it sums up"
+          ]
+        }
+      ]
     },
     {
       "name": "TopBarAction",
@@ -237,7 +330,15 @@
         "Away, Keep awake, focused, 5 idle minutes (awayShows); off under reduced motion",
         "any input hides it and does not reach the page"
       ],
-      "example": "Worca · Everything is under control."
+      "example": "Worca · Everything is under control.",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/shell-parts.mjs#awayShows",
+          "needs": [
+            "Whether the away screen shows now"
+          ]
+        }
+      ]
     },
     {
       "name": "StatusLine",
@@ -255,7 +356,15 @@
         "⋯ CompactMenu"
       ],
       "example": "Ready to merge · Merge PR ▾ ⋯",
-      "notFor": "a second primary; buttons for the page in the top bar"
+      "notFor": "a second primary; buttons for the page in the top bar",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/status-line.mjs#statusDot",
+          "needs": [
+            "A state's dot on the rail, without its words"
+          ]
+        }
+      ]
     },
     {
       "name": "Button",
@@ -270,7 +379,21 @@
         "quiet",
         "danger (solid only inside a confirm)"
       ],
-      "notFor": "going somewhere (Text link); on or off (Switch)"
+      "notFor": "going somewhere (Text link); on or off (Switch)",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/button.mjs#splitButton",
+          "needs": [
+            "One main action with alternatives under ▾"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/icons.mjs#icon",
+          "needs": [
+            "A line icon from the library's one set, at its one weight"
+          ]
+        }
+      ]
     },
     {
       "name": "CompactMenu",
@@ -288,7 +411,21 @@
         "a disabled item never acts, shows no pointer, and says why (comp.menu-off)",
         "a choice with a mark shows its tick at the row's end (comp.menu-tick)"
       ],
-      "example": "Terminal, Copy link, Archive"
+      "example": "Terminal, Copy link, Archive",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/compact-menu.mjs#menuItem",
+          "needs": [
+            "One item of a menu: its name, its tick or its reason when off"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/list.mjs#moreMenu",
+          "needs": [
+            "Supporting actions behind ⋯, danger last"
+          ]
+        }
+      ]
     },
     {
       "name": "ResetView",
@@ -324,7 +461,21 @@
         "Esc takes back a strip whose quiet side is an answer without one (`back`, keys.esc-strip)"
       ],
       "example": "Merge #959 into dev?",
-      "notFor": "a step that needs fields (Dialog); a step that can be undone (act, then Undo in a Toast)"
+      "notFor": "a step that needs fields (Dialog); a step that can be undone (act, then Undo in a Toast)",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/confirm-strip.mjs#confirmForm",
+          "needs": [
+            "A one-step confirm that holds a short form"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/confirm-strip.mjs#confirmActions",
+          "needs": [
+            "The confirm's two buttons: yes and no"
+          ]
+        }
+      ]
     },
     {
       "name": "Invitation",
@@ -360,7 +511,15 @@
         "each choice in its menu with its count",
         "one for every list"
       ],
-      "example": "Showing all from all projects by state"
+      "example": "Showing all from all projects by state",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/list-parts.mjs#listWord",
+          "needs": [
+            "One picker word of a list's sentence, with its menu"
+          ]
+        }
+      ]
     },
     {
       "name": "GroupRow",
@@ -459,7 +618,21 @@
         "Select all is its own: selectAllBox, drawn by the `all` state",
         "only for a list whose rows a person can act on together"
       ],
-      "example": "Select all · 2 selected · Cancel, then Mark read 2 · Clear 2"
+      "example": "Select all · 2 selected · Cancel, then Mark read 2 · Clear 2",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/selection-bar.mjs#selectAllBox",
+          "needs": [
+            "Select every row shown, or none"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/selection-bar.mjs#bindLongPress",
+          "needs": [
+            "A long press on a row starts selecting, on touch"
+          ]
+        }
+      ]
     },
     {
       "name": "ShortcutsSheet",
@@ -495,7 +668,15 @@
         "a name field that stops at its limit and says so (small.name-short)"
       ],
       "example": "Create PR",
-      "notFor": "a yes or no (ConfirmStrip)"
+      "notFor": "a yes or no (ConfirmStrip)",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/dialog.mjs#dialogFrame",
+          "needs": [
+            "A view in a Dialog without a form: its head, its body"
+          ]
+        }
+      ]
     },
     {
       "name": "Text link",
@@ -505,7 +686,15 @@
         "going to another page or place",
         "a fact's detail"
       ],
-      "example": "Changes +358 −144"
+      "example": "Changes +358 −144",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/text-link.mjs#documentLink",
+          "needs": [
+            "A document's name that opens it"
+          ]
+        }
+      ]
     },
     {
       "name": "SentencePicker",
@@ -647,7 +836,15 @@
         "a tick for 1.2s, Copied in its tooltip and the live region",
         "its width never changes"
       ],
-      "example": "a branch, a command, an id"
+      "example": "a branch, a command, an id",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/copy-button.mjs#copied",
+          "needs": [
+            "The tick after something was copied"
+          ]
+        }
+      ]
     },
     {
       "name": "WorkflowGraph",
@@ -811,7 +1008,51 @@
         "violet shimmer while it writes",
         "grey line when it could not"
       ],
-      "example": "PR title and description"
+      "example": "PR title and description",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/suggestion-field.mjs#suggestButton",
+          "needs": [
+            "Ask Worca to write a field"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/suggestion-field.mjs#suggestedChip",
+          "needs": [
+            "Text Worca wrote, not yet yours"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/suggestion-field.mjs#suggestionFail",
+          "needs": [
+            "Worca could not write it: the text stays, Try again"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/suggestion-field.mjs#stopWriting",
+          "needs": [
+            "Stop Worca while it writes"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/suggestion-field.mjs#failureLink",
+          "needs": [
+            "The way on from a failure's line: Try again, Details"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/suggestion-field.mjs#previewToggle",
+          "needs": [
+            "Write or preview a description"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/suggestion-field.mjs#suggestionPreview",
+          "needs": [
+            "A field's text as it will read"
+          ]
+        }
+      ]
     },
     {
       "name": "Stepper",
@@ -824,7 +1065,21 @@
         "one segment per stage",
         "StepRows of the open stage on the rail"
       ],
-      "example": "Plan · Build · Review"
+      "example": "Plan · Build · Review",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/stepper.mjs#stepDot",
+          "needs": [
+            "A step's mark on the rail and the word a screen reader hears"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/stepper.mjs#stackRow",
+          "needs": [
+            "A PR or a slice of a stack, in a list of its stack"
+          ]
+        }
+      ]
     },
     {
       "name": "StepRow",
@@ -949,7 +1204,21 @@
         "each opens its own detail",
         "numbers only"
       ],
-      "example": "Cost $84.10 of $120"
+      "example": "Cost $84.10 of $120",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/figures.mjs#figure",
+          "needs": [
+            "One figure: its name, its value, of what"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/figures.mjs#figureBreakdown",
+          "needs": [
+            "What a figure is made of, opened from it"
+          ]
+        }
+      ]
     },
     {
       "name": "TagGroup",
@@ -962,7 +1231,15 @@
         "one line, the rest in +N",
         "one button opens the ListEditor"
       ],
-      "example": "ui, team: web, +2"
+      "example": "ui, team: web, +2",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/tag-group.mjs#fitTags",
+          "needs": [
+            "Labels that fit their line, the rest folded into +N"
+          ]
+        }
+      ]
     },
     {
       "name": "ListRow",
@@ -1058,7 +1335,15 @@
       "rules": [
         "a pick lands on the thing (land): it comes into view and lights once"
       ],
-      "example": "proxy → Proxy · Runs › Network"
+      "example": "proxy → Proxy · Runs › Network",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/side-menu.mjs#searchResults",
+          "needs": [
+            "Search results under their area's head"
+          ]
+        }
+      ]
     },
     {
       "name": "Trail",
@@ -1170,7 +1455,27 @@
         "Undo for a step that can be taken back (`toastUndo`)",
         "at most 480px and two lines, the whole text in its tooltip (comp.toast-clamp)"
       ],
-      "example": "PR merged; Something went wrong"
+      "example": "PR merged; Something went wrong",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/toast.mjs#errorToast",
+          "needs": [
+            "A failure that can be read whole, until it is closed"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/toast.mjs#toastUndo",
+          "needs": [
+            "Undo right after a step"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/toast.mjs#toastText",
+          "needs": [
+            "What a toast says, two lines at most, the whole text in its tooltip"
+          ]
+        }
+      ]
     },
     {
       "name": "EmptyState",
@@ -1349,6 +1654,14 @@
       ],
       "rules": [
         "panel.conversation-rail"
+      ],
+      "also": [
+        {
+          "code": "ui/public/design-system/components/commands.mjs#commandHead",
+          "needs": [
+            "The head of a group of commands: how many, how many failed, how long"
+          ]
+        }
       ]
     },
     {
@@ -1645,7 +1958,15 @@
       "rules": [
         "panel.turn-time"
       ],
-      "example": "14:32; Yesterday 14:32; Nov 3, 14:32"
+      "example": "14:32; Yesterday 14:32; Nov 3, 14:32",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/turn-time.mjs#turnTimeText",
+          "needs": [
+            "A turn's time in words, without its element: 14:32, Yesterday 14:32, Nov 3, 14:32"
+          ]
+        }
+      ]
     },
     {
       "name": "StagePart",
@@ -1840,7 +2161,21 @@
       "needs": [
         "a toggle (aria-expanded) that opens something in place, on a page that draws itself whole"
       ],
-      "example": "watchFolds(document), once, in the shell"
+      "example": "watchFolds(document), once, in the shell",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/motion.mjs#morph",
+          "needs": [
+            "A redraw that moves what changed instead of jumping"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/motion.mjs#land",
+          "needs": [
+            "The flash on what you just went to"
+          ]
+        }
+      ]
     },
     {
       "name": "Finding a toggle after a redraw",
@@ -1864,7 +2199,21 @@
       "needs": [
         "a menu, picker, popover, flyout, panel, search result, editor or Dialog that closes on a click outside or Esc"
       ],
-      "example": "dismissOnOutside(document, { open, inside, close, paint, back })"
+      "example": "dismissOnOutside(document, { open, inside, close, paint, back })",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/dismiss.mjs#watchStrips",
+          "needs": [
+            "Esc or a click outside takes a strip back"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/dismiss.mjs#neverOutside",
+          "needs": [
+            "A tool beside the page that closes nothing when clicked"
+          ]
+        }
+      ]
     },
     {
       "name": "The sound of a new event",
@@ -1889,7 +2238,15 @@
         "a list with its sentence, selecting, keys and states",
         "selected counted in the actions' unit where a row stands for several (spec.count)"
       ],
-      "example": "listController({ root, spec })"
+      "example": "listController({ root, spec })",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/list-page.mjs#fitMenu",
+          "needs": [
+            "A menu kept inside the window"
+          ]
+        }
+      ]
     },
     {
       "name": "A chat's state",
@@ -1906,7 +2263,75 @@
         "a thing's state word, colour and one action",
         "where a state sorts in a list"
       ],
-      "example": "runState('paused'); sectionOf('Paused')"
+      "example": "runState('paused'); sectionOf('Paused')",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/run-state.mjs#fill",
+          "needs": [
+            "A state's words filled with the task's facts"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/run-state.mjs#stateIds",
+          "needs": [
+            "Every state there is"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/run-state.mjs#sectionOf",
+          "needs": [
+            "The section of a list a state goes in"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/run-state.mjs#isDone",
+          "needs": [
+            "Whether a step is done"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/run-state.mjs#stageState",
+          "needs": [
+            "A stage's state from its steps: live, done or next"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/run-state.mjs#subState",
+          "needs": [
+            "The one state that speaks for a stage's steps"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/run-state.mjs#stepLook",
+          "needs": [
+            "A step as StepRow draws it"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/run-state.mjs#defaultStage",
+          "needs": [
+            "The stage a task opens on"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/run-state.mjs#stageMeta",
+          "needs": [
+            "How long a stage took, said under it"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/run-state.mjs#toMin",
+          "needs": [
+            "A duration in words as minutes"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/run-state.mjs#fmtMin",
+          "needs": [
+            "Minutes as a duration in words"
+          ]
+        }
+      ]
     },
     {
       "name": "Task on a card",
@@ -1947,7 +2372,45 @@
         "where an action leads",
         "what an action does, in one line"
       ],
-      "example": "actionFlow('approved')['Merge PR']; actionHelp('Merge PR')"
+      "example": "actionFlow('approved')['Merge PR']; actionHelp('Merge PR')",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/run-state.mjs#actionHelp",
+          "needs": [
+            "One line on what an action does, in its tooltip"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/run-state.mjs#actionLevel",
+          "needs": [
+            "The interface mode an action needs"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/run-state.mjs#makeAction",
+          "needs": [
+            "An action as a state offers it"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/run-state.mjs#memberKeeps",
+          "needs": [
+            "Whether a group member keeps an action on its own page"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/run-state.mjs#runFlow",
+          "needs": [
+            "What Pause, Stop and the like lead to on a live task"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/run-state.mjs#tryStep",
+          "needs": [
+            "The Try it step's items in a task's ⋯"
+          ]
+        }
+      ]
     },
     {
       "name": "Step flow",
@@ -1955,7 +2418,27 @@
       "needs": [
         "a step that confirms, works, then moves on or fails"
       ],
-      "example": "stepFlow(hooks)(flow, 'Merge PR')"
+      "example": "stepFlow(hooks)(flow, 'Merge PR')",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/step-flow.mjs#confirmOf",
+          "needs": [
+            "The strip's words for a step that asks first"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/step-flow.mjs#failureOf",
+          "needs": [
+            "A failure in Rail's words: Could not …, the reason, Nothing changed"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/step-flow.mjs#workingWord",
+          "needs": [
+            "What a step's button says while it works"
+          ]
+        }
+      ]
     },
     {
       "name": "Where the work goes",
@@ -1971,7 +2454,27 @@
       "needs": [
         "whether a part shows in a mode"
       ],
-      "example": "runPartShows('logs', mode)"
+      "example": "runPartShows('logs', mode)",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/levels.mjs#prefs",
+          "needs": [
+            "The person's interface mode, read and set"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/levels.mjs#shows",
+          "needs": [
+            "Whether a part shows in the current interface mode"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/levels.mjs#runPartShows",
+          "needs": [
+            "Whether a part of the task page shows in a mode"
+          ]
+        }
+      ]
     },
     {
       "name": "Selection",
@@ -1980,7 +2483,105 @@
         "what a click, a long-press or a key means for a list's selection",
         "toggling, a range from the anchor, all, clear, a count"
       ],
-      "example": "selectApply(pick, selectionAction({ click: true, shiftKey: true }), { id, shown })"
+      "example": "selectApply(pick, selectionAction({ click: true, shiftKey: true }), { id, shown })",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/selection.mjs#selectClear",
+          "needs": [
+            "Stop selecting: nothing ticked"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/selection.mjs#selectStart",
+          "needs": [
+            "Start selecting from a list's menu"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/selection.mjs#selectToggle",
+          "needs": [
+            "Tick or untick one row"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/selection.mjs#selectRange",
+          "needs": [
+            "Tick every row from the last one ticked"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/selection.mjs#selectAll",
+          "needs": [
+            "Tick every row shown"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/selection.mjs#selectPrune",
+          "needs": [
+            "Keep only the ticked rows still shown"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/selection.mjs#selectCount",
+          "needs": [
+            "How many of the rows shown are ticked"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/selection.mjs#selectAllState",
+          "needs": [
+            "The Select all box: none, some or all"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/selection.mjs#selectExtend",
+          "needs": [
+            "Shift and an arrow add the next row"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/selection.mjs#selectApply",
+          "needs": [
+            "Apply a toggle, a range, all or clear"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/selection.mjs#selectStep",
+          "needs": [
+            "A key or a click on a selecting list: the selection and where the focus goes"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/selection.mjs#keepFocus",
+          "needs": [
+            "Where the focus goes after a redraw"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/run-state.mjs#bulkStateOf",
+          "needs": [
+            "Which run a Stop or an Archive applies to, from a task's state word"
+          ]
+        },
+        {
+          "code": "src/shared/run-bulk.mjs#planBulk",
+          "needs": [
+            "What a bulk action does to each selected row, and what it skips"
+          ]
+        },
+        {
+          "code": "src/shared/run-bulk.mjs#skipText",
+          "needs": [
+            "The line that says which selected rows a bulk action skips"
+          ]
+        },
+        {
+          "code": "src/shared/run-bulk.mjs#bulkConfirm",
+          "needs": [
+            "The confirm's words for a bulk action"
+          ]
+        }
+      ]
     },
     {
       "name": "Shortcuts",
@@ -1989,7 +2590,39 @@
         "what a key does here",
         "⌘ or Ctrl in the words"
       ],
-      "example": "shortcutAction(keyFacts(e, rowSelector), { scopes: ['selecting', 'list', 'anywhere'], selecting })"
+      "example": "shortcutAction(keyFacts(e, rowSelector), { scopes: ['selecting', 'list', 'anywhere'], selecting })",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/shortcuts.mjs#keyHint",
+          "needs": [
+            "A shortcut in a line of text: ⌘K on a Mac, Ctrl+K elsewhere"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/shortcuts.mjs#keyFacts",
+          "needs": [
+            "What a key press says, for shortcutAction"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/shortcuts.mjs#listMove",
+          "needs": [
+            "The next or previous row of a list, by arrow keys"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/shortcuts.mjs#isMac",
+          "needs": [
+            "Whether keys read ⌘ ⌥ ⇧ or Ctrl, Alt, Shift"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/shortcuts.mjs#openShortcutsSheet",
+          "needs": [
+            "Open the shortcuts sheet with this page's keys"
+          ]
+        }
+      ]
     },
     {
       "name": "markTone",
@@ -2152,8 +2785,50 @@
   ],
   "patterns": [
     {
+      "name": "A place",
+      "for": "a kind of work you browse, set up and come back to: Marketplace, Workflows, a new place",
+      "example": "ui/public/stillhet/marketplace/marketplace.js",
+      "uses": [
+        "PlaceHead",
+        "PluginCard",
+        "CenterShelf",
+        "SettingsSection",
+        "SettingsRow",
+        "EmptyState",
+        "NotFound",
+        "SentencePicker",
+        "ConfirmStrip",
+        "Button",
+        "A list page's behaviour"
+      ],
+      "rules": [
+        "panel.place-head",
+        "nav.center-home",
+        "list.bar-model",
+        "list.ways-in",
+        "panel.plugin-card"
+      ],
+      "slots": [
+        "bar: ways in, not items (listController): Yours and Browse, each way counting on its row; the + makes a thing; an action is never a row",
+        "home: PlaceHead with its title and facts; a state word, one action and ⋯ only when something needs you; then For you (PluginCards, Worca's reason first), then shelves named for what you want (CenterShelf, PluginCards two to a row, each thing once); then what the place keeps, as a SettingsSection",
+        "way page: PlaceHead with the center crumb; `Showing [sort ▾] first` (SentencePicker); six cards, then Show N more; an empty way is an EmptyState with its next step",
+        "item page: PlaceHead with the center crumb, its state word, one action and ⋯; one step at a time under the head (ConfirmStrip, or confirmForm when it holds a short form); then what it holds, as SettingsSections of SettingsRows; an unknown id is NotFound",
+        "states: all five, even where the example skips one: empty (emptyState with its next step), loading (one emptyState line after 300ms, never a spinner), could not load (emptyState with error and Reload this part), not found (notFound for an id that names nothing, never the home instead), 375px (narrow.md)"
+      ]
+    },
+    {
       "name": "A thing's page",
-      "for": "any page about one thing with a state: a run, a group",
+      "for": "any page about one thing that is not a task: a schedule, a project, a workflow, a feature, a workspace",
+      "slots": [
+        "top bar: trail, its first crumb the center's home; at its right nothing about the thing",
+        "PlaceHead: title, its facts on one line, then its state on the cards' rail with one action and ⋯ (panel.place-head)",
+        "what it holds: cards, rows and SettingsSections",
+        "its composer, as the page's last line"
+      ]
+    },
+    {
+      "name": "A task's page",
+      "for": "a task (run) and a group: the one exception; its card is the model",
       "slots": [
         "top bar: trail; at its right nothing about the thing: the pager, the connection line, the shell's own search, Pulse and New run",
         "title",
@@ -2166,7 +2841,7 @@
     },
     {
       "name": "A list page",
-      "for": "Runs, Schedules",
+      "for": "Runs; never for a new tracked thing, which is A list in its place (build.default)",
       "slots": [
         "top bar: trail",
         "title row with the page's one action at its right (New schedule)",
@@ -2289,7 +2964,7 @@
       "slot": "opens in place under the row, › right when closed and down when open; a problem opens by itself, once (a failing test, a failed command in Chat with its output), and stays folded once the person folds it; a fact with a home elsewhere links there instead; sections never collapse"
     },
     {
-      "kind": "a list on a thing's page that is part of a step (checks, a plan)",
+      "kind": "a list on a task's page that is part of a step (checks, a plan)",
       "slot": "one line on its StepRow (a count and the names that matter); the whole list in Overview's first section, the state's focus (What broke, The plan)"
     },
     {
@@ -2331,5 +3006,490 @@
       "the sidebar becomes another menu: its content fades over change, the page changes at once"
     ],
     "reducedMotion": "every timing 0; breathing and shimmer still"
-  }
+  },
+  "internal": [
+    {
+      "name": "esc",
+      "kind": "html",
+      "why": "Escapes text for markup; every component calls it, a page only for its own text"
+    },
+    {
+      "name": "attrs",
+      "kind": "html",
+      "why": "Writes a page's hooks onto a component's element"
+    },
+    {
+      "name": "cls",
+      "kind": "html",
+      "why": "Joins class names inside the library"
+    },
+    {
+      "name": "toElement",
+      "kind": "html",
+      "why": "Turns a component's markup into an element for a page that builds elements"
+    },
+    {
+      "name": "AWAY_IDLE_MS",
+      "kind": "constant",
+      "why": "The idle time awayShows reads"
+    },
+    {
+      "name": "BURST_MS",
+      "kind": "constant",
+      "why": "The burst window the event sound reads"
+    },
+    {
+      "name": "CHAT_KINDS",
+      "kind": "constant",
+      "why": "The kinds of chat ChatKindIcon and chatState know"
+    },
+    {
+      "name": "COPIED_MS",
+      "kind": "constant",
+      "why": "How long CopyButton keeps its tick"
+    },
+    {
+      "name": "FIELD",
+      "kind": "constant",
+      "why": "Where shortcuts never fire: typing stays typing"
+    },
+    {
+      "name": "ICONS",
+      "kind": "constant",
+      "why": "The one icon set icon() draws from"
+    },
+    {
+      "name": "LIST_SHOWN",
+      "kind": "constant",
+      "why": "How many rows a list section shows before Show N more"
+    },
+    {
+      "name": "MODES",
+      "kind": "constant",
+      "why": "The three interface modes, in order"
+    },
+    {
+      "name": "PRESS_MS",
+      "kind": "constant",
+      "why": "How long a touch holds a row before selecting starts"
+    },
+    {
+      "name": "REAL_CONTROL",
+      "kind": "constant",
+      "why": "What a click still does once what lay over it closed"
+    },
+    {
+      "name": "RESERVED",
+      "kind": "constant",
+      "why": "The browser's own key combos no shortcut may take"
+    },
+    {
+      "name": "RUN_PAGE_LEVELS",
+      "kind": "constant",
+      "why": "The level of each part of the task page, read by runPartShows"
+    },
+    {
+      "name": "SCROLL_SHOW_MS",
+      "kind": "constant",
+      "why": "How long a scrollbar shows after a scroll"
+    },
+    {
+      "name": "SHORTCUTS",
+      "kind": "constant",
+      "why": "The one table of shortcuts"
+    },
+    {
+      "name": "SOUND_CHOICES",
+      "kind": "constant",
+      "why": "The choices of Notifications › Sound"
+    },
+    {
+      "name": "STAGE_WORD",
+      "kind": "constant",
+      "why": "A stage state's word for a screen reader"
+    },
+    {
+      "name": "TRACKER_MOVES",
+      "kind": "constant",
+      "why": "The statuses a task can move its ticket to, per tracker"
+    },
+    {
+      "name": "USAGE_REFRESH_MS",
+      "kind": "constant",
+      "why": "How often the usage rings refresh"
+    },
+    {
+      "name": "commandLine",
+      "kind": "part",
+      "why": "CommandRow's own line: the command, its operators dimmed"
+    },
+    {
+      "name": "chordId",
+      "kind": "part",
+      "why": "Shortcuts compare chords with RESERVED through it"
+    },
+    {
+      "name": "keyGlyph",
+      "kind": "part",
+      "why": "ShortcutsSheet and keyHint draw a key token through it"
+    },
+    {
+      "name": "shortcutSections",
+      "kind": "part",
+      "why": "ShortcutsSheet's sections; only the gallery (plans/rail/prototype/components.html) calls it, to draw the sheet's example"
+    },
+    {
+      "name": "foldMiddle",
+      "kind": "part",
+      "why": "workPlace folds a branch or path through it"
+    },
+    {
+      "name": "workParts",
+      "kind": "part",
+      "why": "workPlace's phrase as parts"
+    },
+    {
+      "name": "workPhrase",
+      "kind": "part",
+      "why": "workPlace's phrase in plain words"
+    },
+    {
+      "name": "isLiveStep",
+      "kind": "part",
+      "why": "subState and stageState read a live step through it"
+    },
+    {
+      "name": "menuShift",
+      "kind": "part",
+      "why": "watchMenus keeps a menu inside the window through it"
+    },
+    {
+      "name": "menuUp",
+      "kind": "part",
+      "why": "watchMenus opens a menu upwards through it"
+    },
+    {
+      "name": "scrollEdges",
+      "kind": "part",
+      "why": "watchScrollFades reads where there is more through it"
+    },
+    {
+      "name": "statusDotClass",
+      "kind": "part",
+      "why": "statusDot's class, for a captured page that repaints a dot"
+    },
+    {
+      "name": "thumbBox",
+      "kind": "part",
+      "why": "watchScrollbars places a thumb through it"
+    }
+  ],
+  "lookOptions": [
+    {
+      "code": "ui/public/design-system/components/account-menu.mjs#accountItem",
+      "option": "cls",
+      "status": "deprecated",
+      "why": "pages pass classes that set a look here (a width, a gap, columns, a colour); removed in the final cleanup PR"
+    },
+    {
+      "code": "ui/public/design-system/components/account-menu.mjs#navFlyout",
+      "option": "cls",
+      "status": "deprecated",
+      "why": "pages pass classes that set a look here (a width, a gap, columns, a colour); removed in the final cleanup PR"
+    },
+    {
+      "code": "ui/public/design-system/components/button.mjs#button",
+      "option": "cls",
+      "status": "deprecated",
+      "why": "a class pages use as a look (is-danger on a quiet button, chat/conversation.js); a danger step is the button's own kind; removed in the final cleanup PR"
+    },
+    {
+      "code": "ui/public/design-system/components/button.mjs#splitButton",
+      "option": "cls",
+      "status": "allowed",
+      "why": "a hook class a page's script finds the element by; it carries no look of its own"
+    },
+    {
+      "code": "ui/public/design-system/components/center.mjs#centerShelf",
+      "option": "tone",
+      "status": "allowed",
+      "why": "a closed set of state levels (markTone, alertLevel), never a free colour"
+    },
+    {
+      "code": "ui/public/design-system/components/chart.mjs#barChart",
+      "option": "height",
+      "status": "deprecated",
+      "why": "a free pixel height; the chart brings its height; removed in the final cleanup PR"
+    },
+    {
+      "code": "ui/public/design-system/components/chart.mjs#lineChart",
+      "option": "height",
+      "status": "deprecated",
+      "why": "a free pixel height; the chart brings its height; removed in the final cleanup PR"
+    },
+    {
+      "code": "ui/public/design-system/components/chart.mjs#mixChart",
+      "option": "height",
+      "status": "deprecated",
+      "why": "a free pixel height; the chart brings its height; removed in the final cleanup PR"
+    },
+    {
+      "code": "ui/public/design-system/components/checkbox.mjs#checkbox",
+      "option": "cls",
+      "status": "allowed",
+      "why": "a hook class a page's script finds the element by; it carries no look of its own"
+    },
+    {
+      "code": "ui/public/design-system/components/chip.mjs#chip",
+      "option": "cls",
+      "status": "allowed",
+      "why": "a hook class a page's script finds the element by; it carries no look of its own"
+    },
+    {
+      "code": "ui/public/design-system/components/compact-menu.mjs#compactMenu",
+      "option": "cls",
+      "status": "deprecated",
+      "why": "pages pass classes that set a look here (a width, a gap, columns, a colour); removed in the final cleanup PR"
+    },
+    {
+      "code": "ui/public/design-system/components/copy-button.mjs#copyButton",
+      "option": "cls",
+      "status": "allowed",
+      "why": "a hook class a page's script finds the element by; it carries no look of its own"
+    },
+    {
+      "code": "ui/public/design-system/components/dialog.mjs#dialog",
+      "option": "cls",
+      "status": "deprecated",
+      "why": "pages pass classes that set a look here (a width, a gap, columns, a colour); removed in the final cleanup PR"
+    },
+    {
+      "code": "ui/public/design-system/components/dialog.mjs#dialog",
+      "option": "scrimCls",
+      "status": "allowed",
+      "why": "a hook class a page's script finds the element by; it carries no look of its own"
+    },
+    {
+      "code": "ui/public/design-system/components/dialog.mjs#dialogFrame",
+      "option": "cls",
+      "status": "deprecated",
+      "why": "pages pass classes that set a look here (a width, a gap, columns, a colour); removed in the final cleanup PR"
+    },
+    {
+      "code": "ui/public/design-system/components/dialog.mjs#dialogFrame",
+      "option": "scrimCls",
+      "status": "allowed",
+      "why": "a hook class a page's script finds the element by; it carries no look of its own"
+    },
+    {
+      "code": "ui/public/design-system/components/icons.mjs#icon",
+      "option": "size",
+      "status": "deprecated",
+      "why": "a free pixel size; the component brings its one size; removed in the final cleanup PR"
+    },
+    {
+      "code": "ui/public/design-system/components/icons.mjs#icon",
+      "option": "cls",
+      "status": "allowed",
+      "why": "a hook class a page's script finds the element by; it carries no look of its own"
+    },
+    {
+      "code": "ui/public/design-system/components/kind-mark.mjs#alertLevel",
+      "option": "tone",
+      "status": "allowed",
+      "why": "a closed set of state levels (markTone, alertLevel), never a free colour"
+    },
+    {
+      "code": "ui/public/design-system/components/kind-mark.mjs#kindMark",
+      "option": "tone",
+      "status": "allowed",
+      "why": "a closed set of state levels (markTone, alertLevel), never a free colour"
+    },
+    {
+      "code": "ui/public/design-system/components/kind-mark.mjs#kindMark",
+      "option": "size",
+      "status": "deprecated",
+      "why": "a free pixel size; the component brings its one size; removed in the final cleanup PR"
+    },
+    {
+      "code": "ui/public/design-system/components/kind-mark.mjs#gitMark",
+      "option": "size",
+      "status": "deprecated",
+      "why": "a free pixel size; the component brings its one size; removed in the final cleanup PR"
+    },
+    {
+      "code": "ui/public/design-system/components/kind-mark.mjs#taskCard",
+      "option": "compact",
+      "status": "allowed",
+      "why": "a closed state of the card: compact before its task starts"
+    },
+    {
+      "code": "ui/public/design-system/components/kind-mark.mjs#placeHead",
+      "option": "tone",
+      "status": "allowed",
+      "why": "a closed set of state levels (markTone, alertLevel), never a free colour"
+    },
+    {
+      "code": "ui/public/design-system/components/kind-mark.mjs#pluginCard",
+      "option": "tone",
+      "status": "allowed",
+      "why": "a closed set of state levels (markTone, alertLevel), never a free colour"
+    },
+    {
+      "code": "ui/public/design-system/components/kind-mark.mjs#stageBar",
+      "option": "tone",
+      "status": "allowed",
+      "why": "a closed set of state levels (markTone, alertLevel), never a free colour"
+    },
+    {
+      "code": "ui/public/design-system/components/list-parts.mjs#listWord",
+      "option": "menuCls",
+      "status": "allowed",
+      "why": "a motion state on the menu (its fade), set by the menu code, never a look"
+    },
+    {
+      "code": "ui/public/design-system/components/list-parts.mjs#listSentence",
+      "option": "menuCls",
+      "status": "allowed",
+      "why": "a motion state on the menu (its fade), set by the menu code, never a look"
+    },
+    {
+      "code": "ui/public/design-system/components/menu-place.mjs#menuUp",
+      "option": "height",
+      "status": "allowed",
+      "why": "a measurement the menu placement reads (watchMenus), not a look"
+    },
+    {
+      "code": "ui/public/design-system/components/orb.mjs#orbMark",
+      "option": "size",
+      "status": "deprecated",
+      "why": "a free pixel size; the component brings its one size; removed in the final cleanup PR"
+    },
+    {
+      "code": "ui/public/design-system/components/row.mjs#row",
+      "option": "cls",
+      "status": "deprecated",
+      "why": "a class pages use as a look (is-done on a route row, runs/run-page.js); a row's state comes from its mark; removed in the final cleanup PR"
+    },
+    {
+      "code": "ui/public/design-system/components/settings-row.mjs#wordPicker",
+      "option": "cls",
+      "status": "allowed",
+      "why": "a hook class a page's script finds the element by; it carries no look of its own"
+    },
+    {
+      "code": "ui/public/design-system/components/settings-row.mjs#wordPicker",
+      "option": "wrapCls",
+      "status": "allowed",
+      "why": "a hook class a page's script finds the element by; it carries no look of its own"
+    },
+    {
+      "code": "ui/public/design-system/components/shell-parts.mjs#sideColumn",
+      "option": "width",
+      "status": "deprecated",
+      "why": "a free pixel width; the column brings its width and the person drags it; removed in the final cleanup PR"
+    },
+    {
+      "code": "ui/public/design-system/components/shell-parts.mjs#countBadge",
+      "option": "tone",
+      "status": "allowed",
+      "why": "a closed set of state levels (markTone, alertLevel), never a free colour"
+    },
+    {
+      "code": "ui/public/design-system/components/shell-parts.mjs#askWorcaMark",
+      "option": "size",
+      "status": "deprecated",
+      "why": "a free pixel size; the component brings its one size; removed in the final cleanup PR"
+    },
+    {
+      "code": "ui/public/design-system/components/shell-parts.mjs#topBarAction",
+      "option": "labelCls",
+      "status": "allowed",
+      "why": "a hook class a page's script finds the element by; it carries no look of its own"
+    },
+    {
+      "code": "ui/public/design-system/components/shell-parts.mjs#topBarAction",
+      "option": "cls",
+      "status": "allowed",
+      "why": "a hook class a page's script finds the element by; it carries no look of its own"
+    },
+    {
+      "code": "ui/public/design-system/components/shell-parts.mjs#panelFrame",
+      "option": "cls",
+      "status": "allowed",
+      "why": "a hook class a page's script finds the element by; it carries no look of its own"
+    },
+    {
+      "code": "ui/public/design-system/components/side-menu.mjs#sideMenu",
+      "option": "cls",
+      "status": "allowed",
+      "why": "a hook class a page's script finds the element by; it carries no look of its own"
+    },
+    {
+      "code": "ui/public/design-system/components/status-line.mjs#statusDotClass",
+      "option": "tone",
+      "status": "allowed",
+      "why": "a closed set of state levels (markTone, alertLevel), never a free colour"
+    },
+    {
+      "code": "ui/public/design-system/components/status-line.mjs#statusDot",
+      "option": "tone",
+      "status": "allowed",
+      "why": "a closed set of state levels (markTone, alertLevel), never a free colour"
+    },
+    {
+      "code": "ui/public/design-system/components/stepper.mjs#stepDot",
+      "option": "dotCls",
+      "status": "allowed",
+      "why": "a closed set of step states (is-done, is-future, is-problem), the same as StepRow's"
+    },
+    {
+      "code": "ui/public/design-system/components/stepper.mjs#stepDot",
+      "option": "size",
+      "status": "deprecated",
+      "why": "pages never pass a size; stepper.mjs passes one itself, so the cleanup keeps an internal size and removes only the option"
+    },
+    {
+      "code": "ui/public/design-system/components/suggestion-field.mjs#suggestionFail",
+      "option": "cls",
+      "status": "allowed",
+      "why": "a hook class a page's script finds the element by; it carries no look of its own"
+    },
+    {
+      "code": "ui/public/design-system/components/suggestion-field.mjs#suggestionField",
+      "option": "inputCls",
+      "status": "deprecated",
+      "why": "a class pages use as a look (input-sm sets the field's size); removed in the final cleanup PR"
+    },
+    {
+      "code": "ui/public/design-system/components/suggestion-field.mjs#suggestionField",
+      "option": "cls",
+      "status": "deprecated",
+      "why": "a class pages use as a look (pd-wide sets the field's width); removed in the final cleanup PR"
+    },
+    {
+      "code": "ui/public/design-system/components/suggestion-field.mjs#stopWriting",
+      "option": "size",
+      "status": "deprecated",
+      "why": "a free pixel size; the component brings its one size; removed in the final cleanup PR"
+    },
+    {
+      "code": "ui/public/design-system/components/tabs.mjs#tabs",
+      "option": "cls",
+      "status": "allowed",
+      "why": "a hook class a page's script finds the element by; it carries no look of its own"
+    },
+    {
+      "code": "ui/public/design-system/components/usage.mjs#usageRing",
+      "option": "tone",
+      "status": "allowed",
+      "why": "a closed set of state levels (markTone, alertLevel), never a free colour"
+    },
+    {
+      "code": "ui/public/design-system/components/usage.mjs#usageRing",
+      "option": "cls",
+      "status": "deprecated",
+      "why": "pages pass classes that set a look here (a width, a gap, columns, a colour); removed in the final cleanup PR"
+    }
+  ]
 }
