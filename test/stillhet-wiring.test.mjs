@@ -191,3 +191,26 @@ test('Marketplace (slice 8): every Marketplace row is wired, except the For you 
   }
   assert.ok(mk.some((r) => r.includes('› the For you way`')), 'the For you row is there');
 });
+
+test('Projects and Workspaces (slice 9): every row is wired, or not offered live with its reason and owner slice', () => {
+  const pj = doc.split('\n').filter((l) => /^\| `(ui\/public\/stillhet\/(projects|workspaces)\/|projects\/|workspaces\/)/.test(l));
+  const id = (r) => /^\| `([^`]*)`/.exec(r)[1];
+  const TABS = ['team', 'settings', 'mcp', 'actions', 'automations', 'away', 'memory', 'memory/NAME'];
+  const want = [
+    'ui/public/stillhet/projects/projects.js', 'ui/public/stillhet/workspaces/workspaces.js', 'workspaces/workspaces.js › open … in your editor',
+    ...['Sync', 'Check origin now', 'Retry', 'Use git', 'Link a repository… and Link a remote…', 'Rename…', 'Locate folder…', 'Remove…', 'Add a project by hand', 'How its tasks run', 'Team memory', 'Cost tags, Who pays and Labels', 'Branch names', 'This month\'s spend'].map((a) => `projects/projects.js › ${a}`),
+    ...['Make a workspace by hand', 'Edit by hand', 'Scan again', 'Sync what is behind', 'Delete…', 'Is this right (a question\'s answer)', 'Cost tags and Labels'].map((a) => `workspaces/workspaces.js › ${a}`),
+    ...TABS.map((t) => `projects/dev-tab-${t.replace('/NAME', '-note')} › #projects/KEY/${t}`),
+  ];
+  assert.deepEqual(pj.map(id).sort(), [...want].sort(), 'the pinned Projects and Workspaces rows, no more and no fewer');
+  for (const r of pj) {
+    if (/\| not offered live \|/.test(r)) {
+      const m = /\| not offered live \| ([^|]*) \|$/.exec(r);
+      assert.ok(m && m[1].trim().length > 40 && /slice 1[02]/.test(m[1]), `${id(r)} says why and names its owner slice`);
+      continue;
+    }
+    assert.match(r, /\| wired \|/, id(r));
+  }
+  assert.equal(pj.filter((r) => /\| not offered live \|/.test(r)).length, 2, 'Branch names (slice 12) and the spend fact (slice 10)');
+  for (const r of pj.filter((x) => id(x).startsWith('projects/dev-tab-'))) assert.match(r, /stopgap: lands on the project page; slice 12 gives it a home/);
+});

@@ -8,6 +8,7 @@ import { startTaskLive } from './task-live.mjs';
 import { startWorkflowLive } from './workflow-live.mjs';
 import { startScheduleLive } from './schedule-live.mjs';
 import { startMarketLive } from './market-live.mjs';
+import { startProjectsLive } from './projects-live.mjs';
 import { progressOfState } from './chat-turns.mjs';
 import { workModeOf } from '../../../../src/shared/ask-run-snapshot.mjs';
 
@@ -32,7 +33,8 @@ const MARKET_SOURCES = new Set(['plugins', 'markets']);
 const RUN_FRAMES = new Set(['run-created', 'state', 'question', 'question-resolved', 'done', 'error', 'title']);
 const DEBOUNCE_MS = 250, BACKOFF_MS = 1000, BACKOFF_MAX_MS = 30000, TOKEN_EXPIRED = 4001;
 
-export function startLive({ fetch, WebSocket, location, world, host = {}, prefs = null, setTimeout, clearTimeout = () => {}, now = Date.now, openChat = () => '', hidden = () => false, toast = () => {}, open = undefined, go = () => {}, download = () => {}, workflowsChanged = () => {}, marketChanged = () => {}, openSource = undefined, on = () => {} }) {
+const PROJECT_FRAMES = new Set(['clone-changed', 'settings-changed', 'projects-changed', 'workspaces-changed']);
+export function startLive({ fetch, WebSocket, location, world, host = {}, prefs = null, setTimeout, clearTimeout = () => {}, now = Date.now, openChat = () => '', hidden = () => false, toast = () => {}, open = undefined, go = () => {}, download = () => {}, workflowsChanged = () => {}, marketChanged = () => {}, projectsChanged = () => {}, openSource = undefined, on = () => {} }) {
   let sources = {}, loaded = false, listFailed = false, stopped = false, sock = null, backoff = BACKOFF_MS, reconnect = 0, queue = [], unread = [], asked = 0;
   const live = new Map(), timers = {}, stamp = {}, stale = new Set();
   const progress = new Map();   // R-ux-12: each live run's place among its stages, from its `state` frames (runProgress)
@@ -52,6 +54,9 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
   const workflow = startWorkflowLive({ fetch, toast, go, download, setTimeout, clearTimeout, on: () => workflowsChanged() });
   // Marketplace (slice 8 D2): market-live owns every plugin and marketplace request; its lists are read when the place first asks
   const market = startMarketLive({ fetch, toast, setTimeout, clearTimeout, now, ...(openSource ? { open: openSource } : {}), on: () => marketChanged() });
+  // Projects and Workspaces (slice 9 D3): its writes; the lists stay the store's mapped parts, read again through refresh
+  const projectsLive = startProjectsLive({ fetch, toast, go, setTimeout, clearTimeout, on: () => projectsChanged(),
+    world: () => ({ projects: world.part?.('projects') || [], spaces: world.part?.('spaces') || [] }), refresh: (...names) => names.forEach((n) => refresh(n)) });
 
   // Tasks (D4): task-live owns every task fetch, the checks cache and the Tasks actions; this adapter only hands it the
   // runs, the store and the first-load signal, and passes its frames on. It keeps no cache of its own.
@@ -179,6 +184,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
     if (f.type === 'hello') { hello(f); return; }
     if (typeof f.type === 'string' && (f.type.startsWith('ask-') || f.type.startsWith('term-'))) chat.frame(f);
     if (typeof f.type === 'string' && f.type.startsWith('scriptbench-')) workflow.frame(f);   // a script bench's answer (D12)
+    if (PROJECT_FRAMES.has(f.type)) projectsLive.frame(f);   // a clone this tab started, a project page's settings read again (slice 9)
     task.frame(f);
     schedule.frame(f);
     if (!loaded) { queue.push(f); return; }
@@ -294,7 +300,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
   function retry() { listFailed = false; world.setState({ list: 'loading' }); return begin(); }
   begin();
   return {
-    chat, task, workflow, schedule, market,
+    chat, task, workflow, schedule, market, projects: projectsLive,
     stop: () => { stopped = true; clearTimeout(reconnect); for (const k of Object.keys(timers)) clearTimeout(timers[k]); sock?.close(); },
     refresh,
     retry,

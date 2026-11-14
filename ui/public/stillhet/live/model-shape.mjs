@@ -15,9 +15,9 @@ export const SHAPES = Object.freeze({
     // the saved rule (Save keeps its end), the grace window in minutes, and the run-after ref ({kind, id, policy}) a change starts from
     skip: 'string?', overlap: 'string?', fails: 'number|null?', ifMissed: 'string?', tz: 'string?', pauseWhy: 'string?', preset: 'string?', after: 'string?', ended: 'boolean?',
     rule: 'object|null?', grace: 'number|null?', afterRef: 'object|null?' },
-  project: { id: 'string', name: 'string?', kind: 'string', path: 'string', branch: 'string?', base: 'string?', origin: 'string', ahead: 'number|null?', behind: 'number|null?', checked: 'string?', needs: 'boolean?' },
+  project: { id: 'string', name: 'string?', kind: 'string', path: 'string', branch: 'string?', base: 'string?', origin: 'string', ahead: 'number|null?', behind: 'number|null?', checked: 'string?', needs: 'boolean?', devPath: 'string?', ownedFolder: 'boolean?', vcs: 'string?' },   // slice 9 D5: dev's raw path (what writes send), a folder Worca made, git or none
   costs: { budget: 'object|null', usage: 'array' },
-  space: { id: 'string', title: 'string', home: 'string', runs: 'number|null', scanned: 'string', model: 'string', about: 'string', projects: 'array', links: 'array' },   // a workspace (D10)
+  space: { id: 'string', title: 'string', home: 'string', runs: 'number|null', scanned: 'string', model: 'string', about: 'string', projects: 'array', links: 'array', paths: 'array?', fresh: 'boolean?', draft: 'object|null?' },   // a workspace (D10); slice 9: its members' folders, a fresh draft, an edit draft. A link may carry `at` (file:line of its evidence)
   update: { id: 'string', e: 'string', g: 'string', sev: 'string', title: 'string', meta: 'string', time: 'string', day: 'string', unread: 'boolean', go: 'string', to: 'string', run: 'string?', about: 'string?', fix: 'string?', work: 'number|null?' },
   // Workflows (slice 7): workflows/workflows.js data, and live/workflow-map.mjs workflowOf, agentOf and scriptOf
   workflow: { id: 'string', title: 'string', own: 'boolean', domain: 'string', what: 'string', tasks: 'number|null', merged: 'number|null', from: 'string', steps: 'array', loops: 'array', team: 'boolean?', running: 'boolean?', pinned: 'boolean?', plugin: 'string?' },

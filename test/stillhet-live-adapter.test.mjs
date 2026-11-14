@@ -421,3 +421,18 @@ test('Marketplace (slice 8): its lists load when the place asks; plugins-changed
   r.frame(r.sockets[0], { type: 'plugins-changed', action: 'install' }); await r.tick(300);
   assert.deepEqual(mkGets().slice(n).sort(), ['/api/marketplaces', '/api/plugins', '/api/scripts', '/api/workflows']);
 });
+
+test('Projects (slice 9 D3): clone-changed, settings-changed, projects-changed and workspaces-changed reach projects.frame; other frames do not', async () => {
+  const r = rig();
+  await r.tick();
+  r.frame(r.sockets[0], hello); await r.tick();
+  r.live.projects.detail('k-1111aaaa');   // an open page's detail: read again on settings-changed
+  await r.tick();
+  const reads = () => gets(r.calls).filter((u) => u.startsWith('/api/projects/k-1111aaaa/')).length;
+  const n = reads();
+  for (const type of ['pipelines-changed', 'schedules-changed', 'plugins-changed', 'marketplace-add-changed']) r.frame(r.sockets[0], { type });
+  await r.tick(300);
+  assert.equal(reads(), n, 'a frame of another kind reads no project detail');
+  r.frame(r.sockets[0], { type: 'settings-changed' }); await r.tick(300);
+  assert.equal(reads(), n + 2, 'settings-changed reads the open page\'s settings and defaults again');
+});

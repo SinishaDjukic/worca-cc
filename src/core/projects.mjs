@@ -134,8 +134,9 @@ export function runOnboarded(row) {
     return dirs.every((d) => inWs.has(d));
   }
   const rows = readRows();
-  if (rows.some((r) => r.key === row.project_key)) return true;
-  return rows.some((r) => { try { return projectKey(r.path) === row.project_key; } catch { return false; } });
+  const keys = new Set([row.project_key, currentKey(row.project_key)]);   // a run from before a Locate folder (D9)
+  if (rows.some((r) => keys.has(r.key))) return true;
+  return rows.some((r) => { try { return keys.has(projectKey(r.path)); } catch { return false; } });
 }
 
 /**
@@ -156,6 +157,163 @@ export function markProjectGit(key) {
   let changes = 0;
   tx(() => { changes = Number(prepare("UPDATE projects SET vcs = 'git' WHERE key = ? AND vcs = 'none'").run(key).changes); });
   return changes === 1;
+}
+
+/** The longest project name a rename takes (Stillhet `form.rename-project`, docs/rail/forms.md). */
+export const NAME_MAX = 80;
+const projectError = (code, message) => Object.assign(new Error(message), { code });
+
+/**
+ * The key a project has now: an old key follows project_moves (each Locate folder writes old → new), chains included,
+ * and stops at a registered key (a folder registered again owns its key) or on a cycle. A key that never moved answers itself. Sync; never throws.
+ * @param {string} key
+ * @returns {string}
+ */
+export function currentKey(key) {
+  if (typeof key !== 'string' || !key) return key;
+  getDb();
+  const seen = new Set([key]);
+  let at = key;
+  for (;;) {
+    if (prepare('SELECT 1 FROM projects WHERE key = ?').get(at)) return at;   // a registered key wins over any alias
+    const next = prepare('SELECT new_key FROM project_moves WHERE old_key = ?').get(at)?.new_key;
+    if (!next || seen.has(next)) return at;
+    seen.add(next); at = next;
+  }
+}
+
+/**
+ * Rename a project (Stillhet slice 9 D7, D9). The key never changes. The same name rules as insertProject (required,
+ * trimmed, unique ignoring case) plus NAME_MAX. One transaction also rewrites the name in the project's store meta
+ * (and in the meta of every key that moved to it), which History reads a run's project name from.
+ * @throws {Error} code INVALID | EXISTS | NOT_FOUND
+ * @returns {{key:string, name:string, path:string, vcs:'git'|'none'}}
+ */
+export function updateProject(key, { name: raw } = {}) {
+  const name = typeof raw === 'string' ? raw.trim() : '';
+  if (!name) throw projectError('INVALID', 'project name is required');
+  if (name.length > NAME_MAX) throw projectError('INVALID', `the name may be up to ${NAME_MAX} characters`);
+  getDb();
+  let row = null;
+  tx(() => {
+    row = prepare('SELECT key, name, path, vcs FROM projects WHERE key = ?').get(key);
+    if (!row) throw projectError('NOT_FOUND', 'project not found');
+    if (prepare('SELECT 1 FROM projects WHERE name = ? COLLATE NOCASE AND key <> ?').get(name, key)) {
+      throw projectError('EXISTS', `a project named "${name}" already exists`);
+    }
+    prepare('UPDATE projects SET name = ? WHERE key = ?').run(name, key);
+    const keys = [key, ...prepare('SELECT old_key FROM project_moves WHERE new_key = ?').all(key).map((r) => r.old_key)];
+    for (const k of keys) {
+      prepare(`UPDATE store_meta SET data = json_set(data, '$.name', ?) WHERE key = ? AND kind = 'project' AND json_valid(data)`).run(name, k);
+    }
+  });
+  return { key: row.key, name, path: row.path, vcs: normalizeVcs(row.vcs) };
+}
+
+/**
+ * What a relocate (Locate folder, D9) does with each table holding a project's key, folder or member path.
+ * RELOCATE_MOVES: configuration and future work, moved to the new key and folder in the same statement.
+ *   `key`: the project key column; `dir`: the project folder column; `paths`: member-path columns (matched by the old
+ *   folder); `request`: a JSON request whose `projectDir` follows; `where`: the rows that move (a ticket still to fire).
+ *   Tables whose primary key holds the project key (`pk`) first drop any stale row under the new key (within `where`).
+ * RELOCATE_KEEPS: history, which stays under the old key and folder (a pre-move run reaches the project through
+ *   project_moves). A fired, canceled or missed ticket of scheduled_runs is history too: `where` leaves it.
+ * A new table with a key or folder column belongs in exactly one list (test/api-project-update.test.mjs).
+ */
+export const RELOCATE_MOVES = Object.freeze({
+  project_config: Object.freeze({ key: 'project_key', pk: true }),
+  config_workflow_nodes: Object.freeze({ key: 'project_key', pk: true }),
+  config_workflow_feedbacks: Object.freeze({ key: 'project_key', pk: true }),
+  config_workflow_wires: Object.freeze({ key: 'project_key', pk: true }),
+  automation_rules: Object.freeze({ key: 'project_key', dir: 'project_dir' }),
+  automation_cursors: Object.freeze({ key: 'project_key', pk: true }),
+  schedules: Object.freeze({ key: 'project_key', dir: 'project_dir', request: 'request' }),
+  scheduled_runs: Object.freeze({ key: 'project_key', dir: 'project_dir', request: 'request', where: "status = 'scheduled'" }),
+  // scope tables: a project-scoped row names the project key; a workspace-scoped one names a workspace id and stays
+  source_bindings: Object.freeze({ key: 'scope_key', pk: true, where: "scope_type = 'project'" }),
+  run_presets: Object.freeze({ key: 'scope_ref', where: "scope_kind = 'project'" }),
+  req_features: Object.freeze({ key: 'scope_key', where: "scope_type = 'project'" }),
+  req_contexts: Object.freeze({ key: 'scope_key', pk: true, where: "scope_type = 'project'" }),
+  req_briefs: Object.freeze({ key: 'scope_key', pk: true, where: "scope_type = 'project'" }),
+  req_export_setups: Object.freeze({ key: 'scope_key', pk: true, where: "scope_type = 'project'" }),
+  shape_features: Object.freeze({ paths: Object.freeze(['project_dir']) }),
+  workspace_projects: Object.freeze({ paths: Object.freeze(['project_key']) }),   // holds a member's folder, not a key
+  workspaces: Object.freeze({ paths: Object.freeze(['metrics_project', 'policy_project']) }),
+});
+export const RELOCATE_KEEPS = Object.freeze({
+  pipelines: Object.freeze(['project_key']),
+  ask_worktrees: Object.freeze(['project_key', 'project_dir']),
+  ask_attachments: Object.freeze(['source_project_key']),
+  diff_comments: Object.freeze(['project_key']),
+  notifications: Object.freeze(['project_dir']),
+  terminal_sessions: Object.freeze(['project_key']),
+  terminal_worktrees: Object.freeze(['project_key']),
+  automation_events: Object.freeze(['project_key']),
+  run_groups: Object.freeze(['project_key']),
+  designs: Object.freeze(['project_key']),
+});
+/** On-disk state named by a project key; all of it is history and stays under the old key (the runs that made it keep it). */
+export const RELOCATE_DISK_KEEPS = Object.freeze(['store/KEY', 'memory/projects/KEY', 'team-memory/projects/KEY', 'ask/memory/KEY', 'runs/RUN/repos/KEY', 'branch worktrees/KEY']);
+/**
+ * Runs still starting (POST /api/run between its first line and its runs entry): each holds its target so a relocate
+ * cannot slip in between a start's checks and its run row (security, slice 9). An entry is { projectDir } or
+ * { workspaceId }; it is taken synchronously, before the handler's first await, and dropped when the handler answers.
+ */
+const STARTING = new Set();
+export const startingTargets = () => [...STARTING];
+/** Hold a start's target (its request body) now; answers the release, which is safe to call more than once. */
+export function holdStart(req) {
+  const b = req && req.body && typeof req.body === 'object' ? req.body : {};
+  const hold = typeof b.workspaceId === 'string' && b.workspaceId.trim() ? { workspaceId: b.workspaceId.trim() }
+    : typeof b.projectDir === 'string' && b.projectDir.trim() ? { projectDir: normalizeProjectPath(b.projectDir) } : null;
+  if (hold) STARTING.add(hold);
+  return () => { if (hold) STARTING.delete(hold); };
+}
+// A project with one of these runs, or a resume ticket, cannot move: its worktrees point at the old folder.
+const MOVE_HOLD_STATUSES = ['created', 'starting', 'running', 'pausing', 'paused', 'interrupted'];
+
+/**
+ * Point a project at a moved folder (Locate folder, D8/D9). Its key is derived from its folder, so this re-keys it: in
+ * ONE transaction the row is inserted under projectKey(path) with the same name and created_at, the old row is deleted,
+ * every RELOCATE_MOVES table follows and project_moves records old → new. All or nothing.
+ * @throws {Error} code INVALID | EXISTS | NOT_FOUND | PROJECT_BUSY
+ * @returns {{key:string, previousKey:string, name:string, path:string, vcs:'git'|'none'}}
+ */
+export function relocateProject(key, input, { gitOn = gitAvailable() } = {}) {
+  const path = normalizeProjectPath(input);
+  if (!path) throw projectError('INVALID', 'project path is required');
+  getDb();
+  const row = prepare('SELECT key, name, path, created_at, vcs FROM projects WHERE key = ?').get(key);
+  if (!row) throw projectError('NOT_FOUND', 'project not found');
+  if (!isDir(path)) throw projectError('INVALID', 'path is not a directory');
+  if (isNoProjectWorkDir(path)) throw projectError('INVALID', NO_PROJECT_ERRORS.register);
+  const nested = nestedRepoOf(path, { gitOn });
+  if (nested) throw projectError('INVALID', nested.partOf ? `Part of ${nested.partOf}` : 'Inside a git repository');
+  const newKey = projectKey(path);
+  const vcs = detectVcs(path);
+  tx(() => {
+    if (prepare('SELECT 1 FROM projects WHERE key = ?').get(newKey)) throw projectError('EXISTS', 'this project path is already registered');
+    const marks = MOVE_HOLD_STATUSES.map(() => '?').join(', ');
+    const busy = prepare(`SELECT 1 FROM pipelines WHERE project_key = ? AND archived_at IS NULL AND status IN (${marks})`).get(key, ...MOVE_HOLD_STATUSES)
+      || prepare("SELECT 1 FROM scheduled_runs WHERE project_key = ? AND status = 'scheduled' AND resume_pipeline_id IS NOT NULL").get(key);
+    if (busy) throw projectError('PROJECT_BUSY', 'finish or stop its tasks first');
+    prepare('DELETE FROM projects WHERE key = ?').run(key);   // first: the name is unique
+    prepare('INSERT INTO projects (key, name, path, created_at, vcs) VALUES (?, ?, ?, ?, ?)').run(newKey, row.name, path, row.created_at, vcs);
+    prepare('DELETE FROM project_moves WHERE old_key = ?').run(newKey);   // the key is live again: no alias points it away
+    for (const [table, s] of Object.entries(RELOCATE_MOVES)) {
+      if (s.key) {
+        if (s.pk) prepare(`DELETE FROM ${table} WHERE ${s.key} = ?${s.where ? ` AND ${s.where}` : ''}`).run(newKey);
+        const sets = [`${s.key} = ?`, ...(s.dir ? [`${s.dir} = ?`] : []),
+          ...(s.request ? [`${s.request} = CASE WHEN json_valid(${s.request}) AND json_extract(${s.request}, '$.projectDir') IS NOT NULL THEN json_set(${s.request}, '$.projectDir', ?) ELSE ${s.request} END`] : [])];
+        const args = [newKey, ...(s.dir ? [path] : []), ...(s.request ? [path] : [])];
+        prepare(`UPDATE ${table} SET ${sets.join(', ')} WHERE ${s.key} = ?${s.where ? ` AND ${s.where}` : ''}`).run(...args, key);
+      }
+      for (const col of s.paths || []) prepare(`UPDATE ${table} SET ${col} = ? WHERE ${col} = ?`).run(path, row.path);
+    }
+    prepare('INSERT INTO project_moves (old_key, new_key, moved_at) VALUES (?, ?, ?) ON CONFLICT(old_key) DO UPDATE SET new_key = excluded.new_key, moved_at = excluded.moved_at')
+      .run(key, newKey, new Date().toISOString());
+  });
+  return { key: newKey, previousKey: key, name: row.name, path, vcs };
 }
 
 /**
@@ -203,6 +361,7 @@ export function insertProject(input, { gitOn = gitAvailable() } = {}) {
     prepare(
       'INSERT INTO projects (key, name, path, created_at, vcs) VALUES (?, ?, ?, ?, ?)'
     ).run(key, name, path, createdAt, vcs);
+    prepare('DELETE FROM project_moves WHERE old_key = ?').run(key);   // a vacated folder registered again owns its key (D9)
   });
   return { key, name, path, vcs };
 }

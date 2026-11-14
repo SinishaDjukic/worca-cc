@@ -146,3 +146,31 @@ test('Stillhet off: dev\'s Workflows forms are dev\'s (MOVED_ROUTES has no workf
   }
   assert.match(app, /async function routeWorkflows\(param = ''\)/, 'dev routes them itself');
 });
+
+// Projects (slice 9 D17): dev's workspace forms (app.js WS_TABS, routeWsDetail) and project tabs (PROJ_TABS, routeProjectDetail)
+const DEV_WORKSPACE_FORMS = [
+  ['#workspaces', '#projects'], ['#workspaces/w1', '#projects/ws:w1'], ['#workspaces/w1/map', '#projects/ws:w1'], ['#workspaces/w1/team', '#projects/ws:w1'],
+  ['#workspaces/w1/actions', '#projects/ws:w1'], ['#workspaces/w1/automations', '#projects/ws:w1'], ['#workspace-create', '#projects'],
+];
+const DEV_PROJECT_FORMS = ['team', 'settings', 'mcp', 'actions', 'automations', 'away', 'memory', 'memory/house-rules'].map((t) => [`#projects/web-1/${t}`, '#projects/web-1']);
+
+test('Stillhet on: each of dev\'s 7 workspace forms and 8 project-tab forms lands on its Projects route (never asking has); Stillhet\'s own Projects routes stay', () => {
+  assert.equal(DEV_WORKSPACE_FORMS.length, 7);
+  assert.equal(DEV_PROJECT_FORMS.length, 8);
+  const has = () => { throw new Error('the Projects rules never ask has'); };
+  for (const [from, to] of [...DEV_WORKSPACE_FORMS, ...DEV_PROJECT_FORMS]) { const r = resolve(from, { has }); assert.equal(r?.hash, to, from); assert.equal(r.pulse, '', from); }
+  for (const r of ['#projects', '#projects/web-1', '#projects/ws:w1', '#projects/web-1@w1', '#projects/web-1/bogus']) assert.equal(resolve(r, { has }), null, r);
+});
+
+test('Stillhet off: dev\'s workspace and project-tab forms are dev\'s (no MOVED_ROUTES key or prefix moves them; dev routes them itself)', () => {
+  const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
+  const block = app.slice(app.indexOf('const MOVED_ROUTES'), app.indexOf('});', app.indexOf('const MOVED_ROUTES')));
+  const keys = [...block.matchAll(/^\s*'?([a-z/-]+)'?:\s*'/gm)].map((m) => m[1]);
+  assert.ok(keys.length >= 10);
+  for (const [from] of [...DEV_WORKSPACE_FORMS, ...DEV_PROJECT_FORMS]) {
+    const path = from.slice(1);
+    assert.ok(!keys.some((k) => path === k || path.startsWith(`${k}/`)), `${from} is not moved by dev`);
+  }
+  assert.match(app, /function routeWsDetail\(param/, 'dev routes its workspaces itself');
+  assert.match(app, /function routeProjectDetail\(param/, 'dev routes its project tabs itself');
+});

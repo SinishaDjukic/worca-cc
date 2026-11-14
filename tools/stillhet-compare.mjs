@@ -99,6 +99,26 @@ export const MARKETPLACE_STATES = [
   ['mk-update-asks', '?state=update-asks#marketplace/jira-source', ['[data-mk-step]']], ['mk-add-error', '#marketplace', ['[data-mk-addgo]']], ['mk-not-found', '#marketplace/nope'],
 ];
 for (const [id, q, seed] of MARKETPLACE_STATES) PARTS.push({ id, route: true, ...(seed ? { seed } : {}), app: { route: q }, proto: { route: q } });
+// Projects' and Workspaces' own cells (slice 9): the list states, the by-project cards, the design-first forms (Rename, the
+// owned-folder Remove, Link a remote, a workspace's Name row), Locate folder, Remove, Add and Make by hand, a fresh draft,
+// a workspace's Delete and its links, and a project not found. Compared in Expert, demo against demo. A seed is the clicks
+// (and a typed { fill, text }) that open it; the bar's + sits in the drawer at 360, which is closed again over the form. A
+// strip's seed ends on its own sentence, so the pointer rests on no row and no row's tooltip races the shot.
+const barNew = (pick) => (w) => [...(w <= 760 ? ['#mbar-menu'] : []), '#bar-head [data-bar-new="place"]', `[data-menu-pick="bar-new|${pick}"]`, ...(w <= 760 ? ['#side-close'] : [])];
+const pjMore = (v) => ['[data-menu="pj-more"]', `[data-menu-pick="pj-more|${v}"]`], wsMore = (v) => ['[data-menu="ws-more"]', `[data-menu-pick="ws-more|${v}"]`];
+export const PROJECTS_STATES = [
+  ['pj-list-loading', '?state=loading#projects'], ['pj-list-failed', '?state=failed#projects'],
+  ['pj-by-project', '#projects', ['[data-menu="pc-by"]', '[data-menu-pick="pc-by|project"]']],
+  ['pj-rename-form', '#projects/worca-cc', pjMore('rename')], ['pj-remove-confirm', '#projects/worca-cc', [...pjMore('remove'), '.rc-confirm-t']], ['pj-remove-owned', '#projects/docs-site', [...pjMore('remove'), '.rc-confirm-t']],
+  ['pj-locate-form', '#projects/legacy-billing', ['[data-pj-act]']], ['pj-link-remote', '#projects/firmware-sdk', ['[data-pj-act]']],
+  ['pj-hand-project', '#projects', barNew('hand-project')], ['pj-hand-project-error', '#projects', (w) => [...barNew('hand-project')(w), '[data-confirm="yes"]']],
+  ['ws-hand-form', '#projects', barNew('hand-space')], ['ws-fresh-draft', '#projects', (w) => [...barNew('hand-space')(w), { fill: '#pj-hand-v', text: 'Web store' }, '[data-confirm="yes"]']],
+  ['ws-edit', '#projects/ws:web-shop', wsMore('edit')], ['ws-delete-confirm', '#projects/ws:web-shop', wsMore('delete')], ['ws-links-open', '#projects/ws:web-shop', ['[data-ws-links]']],
+  ['pj-not-found', '#projects/nope'],
+];
+for (const [id, q, seed] of PROJECTS_STATES) PARTS.push({ id, route: true, ...(seed ? { seed } : {}), app: { route: q }, proto: { route: q } });
+/** One seed step: a click on a selector, or { fill, text } typed into a field. */
+const seedStep = (page, sel) => (typeof sel === 'string' ? page.locator(sel).first().click() : page.locator(sel.fill).first().fill(sel.text));
 export const PAGES = ['components.html', 'run-page.html', 'pulse.html'];
 // The deep routes, read from the prototype's own route list once it has drawn (it runs inside the page): RailShell.routes()
 // (ui/public/stillhet/shell/shell.js) less the top-level places, which ROUTES compares as whole pages.
@@ -122,6 +142,10 @@ export const workflowsCellIds = (deep = []) => [...WORKFLOWS_CELL_IDS, ...deep.f
 // every deep route under marketplace/.
 export const MARKETPLACE_CELL_IDS = Object.freeze(['route-marketplace', ...MARKETPLACE_STATES.map(([id]) => id)]);
 export const marketplaceCellIds = (deep = []) => [...MARKETPLACE_CELL_IDS, ...deep.filter((h) => h.startsWith('marketplace/')).map((h) => deepPart(h).id)];
+// Every Projects and Workspaces cell: the whole page, its own states above, and (derived from the prototype's routes, never
+// a count) every deep route under projects/.
+export const PROJECTS_CELL_IDS = Object.freeze(['route-projects', ...PROJECTS_STATES.map(([id]) => id)]);
+export const projectsCellIds = (deep = []) => [...PROJECTS_CELL_IDS, ...deep.filter((h) => h.startsWith('projects/')).map((h) => deepPart(h).id)];
 /** The Tasks cells a run's cells lack: one line per id, theme and width of CELLS that has no compared cell. */
 export function tasksCoverage(cells, ids = TASKS_CELL_IDS) {
   const have = new Set(cells.map((c) => `${c.part}|${c.theme}|${c.width}`));
@@ -428,7 +452,7 @@ export async function shootCell(browser, app, part, theme, width, outRoot) {
     if (part.route) { await freezeClock(a); await a.addInitScript(setLook, theme); }
     await a.goto(app.base + '/' + part.app.route);
     await a.evaluate((t) => { document.documentElement.dataset.theme = t; }, theme);
-    for (const sel of seedsOf(part, width)) { await a.locator(sel).first().click(); await a.waitForTimeout(part.wait || 300); }   // a part opened by a click (terminal-chat)
+    for (const sel of seedsOf(part, width)) { await seedStep(a, sel); await a.waitForTimeout(part.wait || 300); }   // a part opened by a click (terminal-chat)
     const A = await shoot(a, part.id, join(out, `${part.id}-${theme}-${width}-app.png`), part.route);
     const p = await ctx.newPage();
     watch(p, 'prototype', errors);
@@ -438,7 +462,7 @@ export async function shootCell(browser, app, part, theme, width, outRoot) {
     if (!part.route) await p.goto(protoUrl);
     if (!part.route) await p.evaluate((t) => { localStorage.setItem('worca-rail.mode', 'expert'); localStorage.setItem('worca-rail.appearance', t); localStorage.removeItem('worca-rail.stillhetAsked'); }, theme);
     await p.goto(protoUrl.replace(/index\.html.*$/, 'index.html') + part.proto.route);
-    for (const sel of seedsOf(part, width)) { await p.locator(sel).first().click(); await p.waitForTimeout(part.wait || 300); }
+    for (const sel of seedsOf(part, width)) { await seedStep(p, sel); await p.waitForTimeout(part.wait || 300); }
     const P = await shoot(p, part.id, join(out, `${part.id}-${theme}-${width}-proto.png`), part.route);
     const diff = A.box.w === P.box.w && A.box.h === P.box.h ? countDiffPixels(A.rgba, P.rgba, A.w, A.h) : A.w * A.h;
     cell = { part: part.id, theme, width, appBox: A.box, protoBox: P.box, diff, errors };

@@ -82,6 +82,8 @@
         // Marketplace (slice 8): its lists read again, or an action's pending label, redraw the place
         marketChanged: function () { var p = window.RailPlaces && window.RailPlaces.marketplace; if (p && p.changed) p.changed(); },
         openSource: function (url) { window.open(url, '_blank', 'noopener'); },   // a plugin's or a market's commit on GitHub (slice 8 D15)
+        // Projects and Workspaces (slice 9): an action's pending label, a page's settings read, a draft: redraw the place
+        projectsChanged: function () { var p = window.RailPlaces && window.RailPlaces.projects; if (p && p.redraw) p.redraw(); },
         on: function (ev, fn) { window.addEventListener(ev, fn); }
       });
       window.RailChatLive = live.chat;   // the live chat's reads and actions (D5): chat/conversation.js and chats-column.js
@@ -90,6 +92,8 @@
       window.RailScheduleLive = live.schedule;   // the live Schedules actions, a schedule's runs and Delete's Undo window (Schedules D4)
       window.RailMarketLive = live.market;   // the live Marketplace reads and actions (slice 8 D2): marketplace/marketplace.js
       var mp = window.RailPlaces && window.RailPlaces.marketplace; if (mp && mp.changed) mp.changed();   // a page drawn before the live layer was up (a reload on #marketplace) reads its lists now
+      window.RailProjectsLive = live.projects;   // the live Projects and Workspaces writes (slice 9 D3): projects/projects.js and workspaces/workspaces.js
+      var pj = window.RailPlaces && window.RailPlaces.projects; if (pj && pj.redraw) pj.redraw();   // a page drawn before the live layer was up shows its live actions now
       window.addEventListener('hashchange', function () { live.seen(); });
       readyDone(live);
     }, function () { if (W) W.setState({ list: 'failed' }); readyDone(null); });

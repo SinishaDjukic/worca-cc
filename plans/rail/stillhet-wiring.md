@@ -49,7 +49,8 @@ Every action the prototype answers with a "Would…" sentence is `window.RailWou
 | `ui/public/stillhet/marketplace/marketplace.js` | open a plugin's source, open a market on GitHub | wired | slice 8: `live/market-live.mjs` (its `MARKET_ACTIONS` table) on dev's plugin and marketplace routes (`ui/routes/marketplace/plugins.mjs`): install, update (preview, then apply), update all, remove, set it up (`GET`/`PUT /api/plugins/:name/config`), sync, add and remove a source; the records from `live/market-map.mjs` |
 | `ui/public/stillhet/centers/centers.js` | attach files | new: built | New task… › More options › Add files…: the system file picker; the files go as dev's New run sends them (`POST /api/run` `extras`, `[{name, dataBase64}]`) |
 | `ui/public/stillhet/insights/insights.js` | copy a link to this page | new: build it | page links with the new Insights addresses |
-| `ui/public/stillhet/workspaces/workspaces.js` | open a workspace in your editor | wire to | the workspaces routes |
+| `ui/public/stillhet/projects/projects.js` | add, rename, locate a moved folder, remove, sync, check origin, use git, link a remote, its settings, team memory, cost tags and Labels | wired | slice 9: `live/projects-live.mjs` (its `PROJECT_ACTIONS` table) on dev's project routes (`POST /api/projects`, `/api/projects/clone`, `PATCH /api/projects/:key`, `DELETE /api/projects`, `POST /api/projects/:key/sync`, `/git-init`, `GET`/`PATCH /api/projects/:key/settings`, `GET`/`PUT /api/projects/:key/tags/defaults`); the records from `live/live-map.mjs` and `live/projects-map.mjs` |
+| `ui/public/stillhet/workspaces/workspaces.js` | open a question's file in your editor, make a workspace and edit it by hand, scan again, sync what is behind, delete, answer a question, cost tags and Labels | wired | slice 9: `live/projects-live.mjs` (its `PROJECT_ACTIONS` table) on dev's workspace routes (`POST /api/workspaces`, `PATCH /api/workspaces/:id`, `POST /api/workspaces/:id/members`, `DELETE /api/workspaces/:id`, `POST /api/workspaces/:id/scan`, `PUT /api/workspaces/:id/map/edges/:edgeId`, `POST /api/workspaces/:id/open-in-editor`, `GET`/`PUT /api/workspaces/:id/defaults`) |
 
 ## Seeded figures
 
@@ -170,7 +171,36 @@ One row per action: `npm run stillhet:wiring` lists every `window.RailWould(...)
 | `workflows/workflows.js › run the … saved … of …` | wired | `POST /api/scripts/bench` `{key, all:true}`, read from its `scriptbench-done` or `scriptbench-error` frame |
 | `workflows/workflows.js › the Team way` | not offered live | dev has no workflow sharing with a team (no route under `ui/routes/workflows/`), so the Team way stays the design's empty state until the owner decides (slice 7 Open question 3) |
 | `marketplace/marketplace.js › the For you way` | not offered live | dev has no plugin suggestion source (no route under `ui/routes/marketplace/` says which plugin fits how you work, nor why), and each For you card must name its reason, so the shelf and its bar way stay empty live until the owner decides (slice 8 Open question 1) |
-| `workspaces/workspaces.js › open … in your editor` | wire to | the workspaces routes |
+| `workspaces/workspaces.js › open … in your editor` | wired | slice 9 D15: the question's `at` link (`file:line` of the edge's first evidence) sends `POST /api/workspaces/:id/open-in-editor` `{projectKey, file}`; dev opens the member's file in the editor (the file, not its line) |
+| `projects/projects.js › Sync` | wired | slice 9 D6: `POST /api/projects/:key/sync` `{mode:'ff'}`; RailProjects.sync and a workspace's Sync what is behind use the same call |
+| `projects/projects.js › Check origin now` | wired | slice 9 D6: `POST /api/projects/:key/sync` `{mode:'fetch'}` |
+| `projects/projects.js › Retry` | wired | slice 9 D6: `POST /api/projects/:key/sync` `{mode:'fetch'}` |
+| `projects/projects.js › Use git` | wired | slice 9 D6: `POST /api/projects/:key/git-init` `{}` |
+| `projects/projects.js › Link a repository… and Link a remote…` | wired | slice 9 D6: a one-field form asks its repository address (`form.link-remote`), then `POST /api/projects/:key/git-init` `{remoteUrl}` |
+| `projects/projects.js › Rename…` | wired | slice 9 D7: `PATCH /api/projects/:key` `{name}` (`form.rename-project`); the key never changes |
+| `projects/projects.js › Locate folder…` | wired | slice 9 D8: `PATCH /api/projects/:key` `{path}`, which re-keys the project and answers the new key; the page goes to it |
+| `projects/projects.js › Remove…` | wired | slice 9 D10: `DELETE /api/projects?name=` once the undo window closes, `&deleteFolder=1` for a folder Worca made (`form.remove-owned`) |
+| `projects/projects.js › Add a project by hand` | wired | slice 9 D11: a path is `POST /api/projects` `{name, path}`; a repository address is `POST /api/projects/clone` `{url}`, followed by its `clone-changed` frames |
+| `projects/projects.js › How its tasks run` | wired | slice 9 D16: read with `GET /api/projects/:key/settings`; a pick is `PATCH /api/projects/:key/settings` `{settingId: value}`, Use yours sends null |
+| `projects/projects.js › Team memory` | wired | slice 9 D16: `PATCH /api/projects/:key/settings` `{'memory.team': on}`; a refusal keeps the switch |
+| `projects/projects.js › Cost tags, Who pays and Labels` | wired | slice 9 D16, D19: `GET`/`PUT /api/projects/:key/tags/defaults` `{tags, labels}` |
+| `projects/projects.js › Branch names` | not offered live | dev's runs carry no `{type}` or `{ticket}` and branch naming is the engine's; Settings › Projects (slice 12) owns this setting, so the live page does not draw the row (Open question 1) |
+| `projects/projects.js › This month's spend` | not offered live | the project and workspace pages' spend fact needs Insights' per-project spend; slice 10 fills it, so the live pages do not draw it |
+| `workspaces/workspaces.js › Make a workspace by hand` | wired | slice 9 D12: a client draft until Save, then `POST /api/workspaces` `{name, projectPaths}` |
+| `workspaces/workspaces.js › Edit by hand` | wired | slice 9 D13: Save sends `PATCH /api/workspaces/:id` `{name}`, one `POST /api/workspaces/:id/members` `{add}`, then one `{remove, rescan:'none'}` per member taken out; it stops at the first refusal |
+| `workspaces/workspaces.js › Scan again` | wired | slice 9 D14: `POST /api/workspaces/:id/scan` `{}` |
+| `workspaces/workspaces.js › Sync what is behind` | wired | slice 9 D14: `POST /api/projects/:key/sync` `{mode:'ff'}` for each member that is behind, in turn |
+| `workspaces/workspaces.js › Delete…` | wired | slice 9 D14: `DELETE /api/workspaces/:id` once the undo window closes |
+| `workspaces/workspaces.js › Is this right (a question's answer)` | wired | slice 9 D3: `PUT /api/workspaces/:id/map/edges/:edgeId` `{state}` through the live module |
+| `workspaces/workspaces.js › Cost tags and Labels` | wired | slice 9 D19: `GET`/`PUT /api/workspaces/:id/defaults` `{tags, labels}` |
+| `projects/dev-tab-team › #projects/KEY/team` | wired | stopgap: lands on the project page; slice 12 gives it a home (`shell/old-addresses.js` `dev-projects`) |
+| `projects/dev-tab-settings › #projects/KEY/settings` | wired | stopgap: lands on the project page; slice 12 gives it a home (`shell/old-addresses.js` `dev-projects`) |
+| `projects/dev-tab-mcp › #projects/KEY/mcp` | wired | stopgap: lands on the project page; slice 12 gives it a home (`shell/old-addresses.js` `dev-projects`) |
+| `projects/dev-tab-actions › #projects/KEY/actions` | wired | stopgap: lands on the project page; slice 12 gives it a home (`shell/old-addresses.js` `dev-projects`) |
+| `projects/dev-tab-automations › #projects/KEY/automations` | wired | stopgap: lands on the project page; slice 12 gives it a home (`shell/old-addresses.js` `dev-projects`) |
+| `projects/dev-tab-away › #projects/KEY/away` | wired | stopgap: lands on the project page; slice 12 gives it a home (`shell/old-addresses.js` `dev-projects`) |
+| `projects/dev-tab-memory › #projects/KEY/memory` | wired | stopgap: lands on the project page; slice 12 gives it a home (`shell/old-addresses.js` `dev-projects`) |
+| `projects/dev-tab-memory-note › #projects/KEY/memory/NAME` | wired | stopgap: lands on the project page; slice 12 gives it a home (`shell/old-addresses.js` `dev-projects`) |
 
 ## Figure rows
 

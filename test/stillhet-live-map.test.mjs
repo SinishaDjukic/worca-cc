@@ -406,3 +406,18 @@ test('spacesOf: only the scan\'s answerable edges and dev\'s live ones become li
   assert.deepEqual(w.links.map((l) => [l.id, l.state]), [['e1', 'auto'], ['e2', 'confirmed'], ['e3', 'rejected'], ['e4', 'manual']]);
   assert.deepEqual(shapeErrors('space', w), []);
 });
+
+test('slice 9 D5: projectOf carries devPath, ownedFolder and vcs; spacesOf carries paths in member order and a link at from its evidence', () => {
+  const p = projectOf({ key: 'k', name: 'n', path: '/real/n', displayPath: '~/n', vcs: 'none', ownedFolder: true, exists: true });
+  assert.deepEqual([p.devPath, p.path, p.ownedFolder, p.vcs], ['/real/n', '~/n', true, 'none']);
+  assert.equal(projectOf({ key: 'k', path: '/x', vcs: 'git' }).ownedFolder, false);
+  assert.equal(projectOf({ key: 'k', path: '/x', vcs: 'git' }).vcs, 'git');
+  const edge = (id, evidence) => ({ id, from: 'a', to: 'b', kind: 'http', confidence: 'heuristic', state: 'auto', ...(evidence ? { evidence } : {}) });
+  const [w] = spacesOf({ workspaces: [{ id: 'w1', name: 'W', projectKeys: ['a', 'b'], projectPaths: ['/p/a', '/p/b'] }],
+    maps: { w1: { edges: [edge('e1', { from: [{ file: 'src/client.js', line: 3 }, { file: 'src/other.js', line: 9 }], to: [] }), edge('e2'), edge('e3', { from: [] })] } } });
+  assert.deepEqual(w.paths, ['/p/a', '/p/b']);
+  assert.equal(w.links[0].at, 'src/client.js:3');
+  assert.ok(!('at' in w.links[1]) && !('at' in w.links[2]), 'no evidence, no at');
+  assert.deepEqual(shapeErrors('space', w), []);
+  assert.deepEqual(shapeErrors('project', p), []);
+});
