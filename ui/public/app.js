@@ -7499,6 +7499,12 @@ const newRunCheck = mountPromptCheckChip({
   doc: document, host: el.promptPane,   // under the prompt (its mention overlay wraps the field later)
   surface: { kind: 'new-run', id: 'form' }, deferCorrection: true, fetchImpl: (...a) => fetch(...a),
   timers: window.__worcaTestHooks?.promptCheckTimers,   // tests only: fake timers for the debounce
+  field: {   // Improve writes through the prompt's own input path (the re-check)
+    read: () => el.prompt.value,
+    write: (text) => { el.prompt.value = text; el.prompt.dispatchEvent(new window.Event('input', { bubbles: true })); },
+    focus: () => el.prompt.focus(),
+  },
+  project: () => ({ projectDir: selectedProjectPath() }),
 });
 el.prompt.addEventListener('input', () => newRunCheck.input(el.prompt.value));
 function setTask(t) {

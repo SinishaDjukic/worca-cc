@@ -1,12 +1,12 @@
 // test/ui-chat-prompt-check-2.test.mjs — the prompt check chip in the Chat composer and the Shaper task
-// (ui/public/chat/prompt-check.mjs through ui/public/prompt-check/chip-host.mjs) inside the real Ask panel, part 2: refused sends, held sends, keyboard, announcements.
+// (ui/public/chat/prompt-check.mjs through ui/public/prompt-check/chip-host.mjs) inside the real Ask panel, part 2: refused sends, held sends, keyboard, announcements, Improve.
 // Shared setup: test/helpers/ui-chat-prompt-check.mjs. Each window is closed when its test ends.
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { _resetChatExtensions } from '../ui/public/chat/extensions.mjs';
 import { PROMPT_CHECK_DEBOUNCE_MS } from '../src/shared/prompt-check/filter.mjs';
-import { TID, NEW_TID, TASK, OTHER, open, chips, lead, promptCheckCalls, pickKind } from './helpers/ui-chat-prompt-check.mjs';
+import { TID, NEW_TID, TASK, REWRITE, OTHER, open, chips, lead, promptCheckCalls, pickKind } from './helpers/ui-chat-prompt-check.mjs';
 
 beforeEach(() => _resetChatExtensions());
 
@@ -121,4 +121,26 @@ test('a re-check never empties the lead row: typing a new task keeps the chip un
   await s.settle();
   assert.equal(chips(s)[0], node);
   assert.equal(node.querySelector('.pcheck-grade').textContent, 'Clear');
+});
+
+test('Improve: Use this writes into the composer through its input path (re-check) with Undo shown; Undo restores it', async (t) => {
+  const s = await open(t);
+  await s.graded();
+  s.doc.querySelector('[data-prompt-improve-open]').click();
+  await s.settle();
+  assert.equal(s.rec.improves.length, 1);
+  assert.equal(s.rec.improves[0].text, TASK);
+  s.doc.querySelector('[data-improve-act="use"]').click();
+  await s.settle();
+  assert.equal(s.input.value, REWRITE);
+  assert.ok(s.input.style.height.endsWith('px'), 'fitInput ran');
+  assert.equal(s.doc.activeElement, s.input);
+  s.timers.advance(PROMPT_CHECK_DEBOUNCE_MS);
+  assert.equal(s.rec.grades.at(-1).body.text, REWRITE, 'the rewrite is re-checked');
+  s.rec.grades.at(-1).reply();
+  await s.settle();
+  assert.ok(s.doc.querySelector('[data-improve-act="undo"]'), 'Undo still shown');
+  s.doc.querySelector('[data-improve-act="undo"]').click();
+  await s.settle();
+  assert.equal(s.input.value, TASK);
 });

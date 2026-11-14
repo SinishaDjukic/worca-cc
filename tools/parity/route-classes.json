@@ -393,6 +393,7 @@
   "POST /api/models/promote": {"class": "probe", "reason": "400 projectDir is required"},
   "POST /api/naming/suggest": {"class": "probe", "reason": "400 prompt is required"},
   "POST /api/prompt-check/grade": {"class": "probe", "reason": "400 requestId is required, checked before the setting and any model call"},
+  "POST /api/prompt-check/improve": {"class": "probe", "reason": "400 requestId is required, checked before the setting and any model call"},
   "POST /api/prompt-check/kind-correction": {"class": "probe", "reason": "400 surface is required, checked before the setting and any write"},
   "POST /api/notifications/:id/read": {"class": "probe", "reason": "NaN id, so 400 invalid notification id"},
   "POST /api/notifications/read-all": {"class": "skip", "reason": "marks every notification read (ui/server.mjs:4583)"},

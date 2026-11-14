@@ -12,6 +12,7 @@ export const TID = 'ask_00000001';
 export const NEW_TID = 'ask_00000777';
 export const THREAD = { id: TID, title: 'T', createdAt: 't', updatedAt: 't', model: null, effort: null, sessionId: null, context: null, totals: {} };
 export const TASK = 'Add a CSV export button to the Insights page so that a team lead can share the weekly cost with finance.';
+export const REWRITE = 'Change: Add the export.\nWhere: [Architect · decide: which files or modules?]';
 export const OTHER = 'Build a Slack notifier that posts a message when a run fails, with the run title, the step and a link.';
 
 export function fakeTimers() {
@@ -45,6 +46,12 @@ export function api(rec) {
         }) });
         rec.grades.push(call);
       });
+    }
+    if (url === '/api/prompt-check/improve') {
+      const b = JSON.parse(opts.body);
+      (rec.improves ||= []).push(b);
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ requestId: b.requestId, source: 'model', kind: b.kind, model: 'Sonnet 5.5',
+        rewrite: { kind: b.kind, sections: [{ id: 'change', label: 'Change', text: 'Add the export.', gaps: [] }] }, text: REWRITE, paths: [] }) });
     }
     if (url === '/api/prompt-check/kind-correction') {
       rec.corrections.push(JSON.parse(opts.body));

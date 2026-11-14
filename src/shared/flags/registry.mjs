@@ -64,6 +64,18 @@ export const FLAGS = Object.freeze([
     docs: 'docs/feature-flags.md',
   }),
   entry({
+    key: 'proposedPerspectives',
+    title: 'Proposed perspectives',
+    description: 'The run card proposes perspectives from the prompt check, Compliance becomes a perspective, and the chosen set drives Clarify (3 questions at most), the plan role reviews on Shaper and one code reviewer per perspective. Off: today\'s chips and reviewers.',
+    stage: 'experimental',
+    default: false,
+    owner: 'e-angelov',
+    since: '1.19.0-rc.1',
+    added: '2026-11-14',
+    reviewBy: '2027-02-11',
+    docs: 'docs/feature-flags.md',
+  }),
+  entry({
     key: 'requirements',
     title: 'Requirements',
     description: 'A Requirements page where a product owner turns an idea into a testable feature spec through a short interview with Worca, before any run starts.',

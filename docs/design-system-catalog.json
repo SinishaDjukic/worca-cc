@@ -1061,6 +1061,24 @@
       ]
     },
     {
+      "name": "RewriteSuggestion",
+      "code": "ui/public/design-system/components/suggestion-field.mjs#rewriteSuggestion",
+      "kind": "entering",
+      "needs": [
+        "a whole-text rewrite Worca suggests"
+      ],
+      "parts": [
+        "head",
+        "sections",
+        "gap marks",
+        "not-in-repo line",
+        "foot",
+        "Use this / Keep mine / Undo",
+        "grey line"
+      ],
+      "example": "Prompt check Improve"
+    },
+    {
       "name": "Stepper",
       "code": "ui/public/design-system/components/stepper.mjs#stepper",
       "kind": "showing",
@@ -3158,6 +3176,16 @@
       "name": "commandLine",
       "kind": "part",
       "why": "CommandRow's own line: the command, its operators dimmed"
+    },
+    {
+      "name": "gapMark",
+      "kind": "part",
+      "why": "RewriteSuggestion's own gap mark: the perspective and what it must decide"
+    },
+    {
+      "name": "rewriteFail",
+      "kind": "part",
+      "why": "RewriteSuggestion's own grey line when it could not rewrite: the text stays, Try again"
     },
     {
       "name": "chordId",

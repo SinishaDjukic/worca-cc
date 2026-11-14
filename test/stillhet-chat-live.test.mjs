@@ -452,6 +452,14 @@ test('a created PR asks for the PR states again (afterPr), so its card reads the
   assert.equal(asked, 1);
 });
 
+test('startBodyOf sends no perspective set while the TaskProposal picker waits for the owner (proposedPerspectives)', () => {
+  const card = { title: 'CSV', brief: 'Add CSV', workflowId: 'wf_default', guardrailsId: 'g', target: 'project', projectDir: '/src/web',
+    perspectives: ['product', 'compliance'], perspectiveProposal: { proposed: ['product'], kind: 'bug' }, shape: { perspectives: ['qa'] } };
+  for (const body of [startBodyOf(card), startBodyOf(card, { perspectives: ['product', 'qa'] })]) {
+    for (const k of ['perspectives', 'perspectiveProposal', 'shape']) assert.equal(k in body, false, k);
+  }
+});
+
 // Run with (D4, D5): a one-stage workflow Worca proposes only to run a task is saved, then the run proposal dev's event
 // turn makes is started, linked to the chat; that proposal is never drawn as a second card
 const WF = { kind: 'card', id: 'cw', state: 'proposed', card: { type: 'workflow', thenRun: true, name: 'Quick fix', projectKey: 'web', shape: { stages: [{ key: 'fix' }] } } };
