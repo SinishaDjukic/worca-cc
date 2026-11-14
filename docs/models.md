@@ -645,6 +645,174 @@ work. For an npm install worca runs the package's native `claude.exe` next to np
 or the Bedrock / Vertex switch in worca's environment counts as signed in. When a chat turn or a model test fails
 because the CLI is signed out, worca says so instead of showing the bare error.
 
+### Model add-ons
+
+Every pipeline agent gets the same system prompt whatever engine and model run it. The vendors' prompting guides ask
+for different corrections per model family, and some engines name their tools differently, so worca appends a short
+**prompt add-on** after the agent's prompt. It has two layers: **harness notes** for the engine, then **model notes**
+for the model family. The texts are starting points taken from the sources below; their effect is not measured yet.
+
+- **Engines.** All eight: Claude Code, Codex, GitHub Copilot CLI, Cursor, Gemini CLI, Goose, OpenCode and Qwen Code.
+  The harness layer applies whatever the model is, even with no model or an unknown one (Cursor's account default).
+  The model layer follows the model, not the engine: `claude-opus-5-5` gets the same model notes on Claude Code and
+  on Copilot. Engines that have no system-prompt channel (Cursor, Gemini CLI, and long prompts on Codex, Qwen Code
+  and Goose) carry the add-on as the last text of the folded `=== SYSTEM ===` block. Chats get none yet.
+- **Lookup order.** The files live in `agents/addons/`. worca reads the harness layer from `agents/addons/harness/`:
+  `<engine>.md` (every step), `<engine>.unattended.md` (unattended steps only), `<engine>.<agentKey>.md` (that agent
+  only). Then the model layer: `<family>.md`, `<family>.unattended.md`, `<family>.<agentKey>.md` (for example
+  `opus-5.implementer.md`). The files that exist are joined by a blank line, so model notes come last. When no file
+  exists, the prompt is byte-for-byte the prompt without the feature.
+- **Model ids.** worca lower-cases the id, drops a trailing `[1m]` and keeps the text after its last `/`, so
+  `copilot/claude-opus-4.8`, `anthropic/claude-opus-4-8` and `openrouter/openai/gpt-6.1-sol` resolve like the bare id.
+  A `claude-*` id resolves by its version (a dated id such as `claude-sonnet-5-20261001` and Copilot's `-fast`
+  variants too: `copilot/claude-opus-4.8-fast` is `opus-4-8`). Any other id resolves only through an explicit table,
+  one family per vendor guide. Bare aliases (`opus`, `sonnet`, …) get none: the version an alias names changes with
+  the CLI. Effort intents do not use this rule (see Effort intents).
+- **Families.**
+
+  | Family | Ids | Source | Files |
+  |---|---|---|---|
+  | `fable-5-2`, `fable-5-1`, `fable-5`, `opus-5-5`, `opus-5`, `opus-4-8`, `sonnet-5-5`, `sonnet-5`, `haiku-5-5` | `claude-<family>` | [Anthropic prompting best practices](https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices) | as shipped in `agents/addons/` |
+  | `opus-4-6` | `claude-opus-4-6` | Anthropic, "Overeagerness", "Subagent orchestration", "Overthinking and excessive thoroughness", "Balancing autonomy and safety" | `opus-4-6.md` |
+  | `sonnet-4-6`, `haiku-4-5` | `claude-sonnet-4-6`, `claude-haiku-4-5` (also `copilot/claude-sonnet-4.6`, `copilot/claude-haiku-4.5`) | Anthropic, "Context awareness and multiwindow workflows" (names Sonnet 5, Sonnet 4.6 and Haiku 4.5) | `sonnet-4-6.unattended.md`, `haiku-4-5.unattended.md` (identical to `sonnet-5.unattended.md`) |
+  | `gpt-6` | `gpt-6-astra`, `gpt-6.1-sol`, `gpt-6.1-terra`, `gpt-6-sol`, `gpt-6-luna` | [OpenAI "Using GPT-6"](https://developers.openai.com/api/docs/guides/latest-model) | `gpt-6.md`, `gpt-6.unattended.md` |
+  | `gpt-5-codex` | `gpt-5.3-codex` | [OpenAI Codex prompting guide](https://developers.openai.com/cookbook/examples/gpt-5/codex_prompting_guide) | `gpt-5-codex.unattended.md` |
+  | `gemini-3` | `gemini-3-pro-preview`, `gemini-3.1-pro-preview`, `gemini-3-flash-preview`, `gemini-3.5-flash`, `gemini-3.6-flash`, `gemini-3.7-flash`, `gemini-3.8-flash` | [Google "Prompt design strategies"](https://aistudio.google.com/docs/prompting-strategies), section "Gemini 3" | `gemini-3.unattended.md` |
+  | `kimi-k3` | `kimi-k3` | [Kimi "How to fix repeated tool calls"](https://platform.kimi.ai/docs/guide/tool-call-repeat) | `kimi-k3.md` |
+
+  The Gemini 3 section names no model ids ("Gemini 3 models"), and the Kimi page is written for the Kimi API, not one
+  model: both id lists are worca's mapping.
+- **No guidance found.** These ids get no model file:
+  - `claude-opus-4-7`: Anthropic's page names it only in model lists, with no behaviour guidance.
+  - `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini`, `gpt-5-mini`: no OpenAI guide
+    names these versions. The GPT-5, 5.1 and 5.2 guides name only those models, and their habits disagree with each
+    other, so none can be carried over.
+  - `gpt-5.3-codex-spark`: the Codex guide names only `gpt-5.3-codex`.
+  - `gemini-4-argon`: the "Gemini 3" section does not cover Gemini 4, and the Argon page gives API and thinking-level
+    guidance only (effort, not prompt habits).
+  - `grok-4.7`, `grok-4.6`, `grok-4.5`: xAI documents sampling, `reasoning_effort` and reasoning items only, which are
+    API parameters, not prompt habits.
+  - `mai-code-1.1-flash`: Microsoft publishes no prompting guide for it.
+- **Harness files.** The agent prompts name Claude Code's tools (Read, Write, Edit, Bash, Grep, Glob). An engine whose
+  tools have other names gets one line that maps them, taken from worca's own adapter maps:
+  - Codex (`harness/codex.md`): the shell tool and `apply_patch` (`src/core/engines/codex.mjs:596-600`, the `command_execution` and `file_change` items).
+    It also says that uncommitted changes from earlier pipeline steps are expected, because the
+    [Codex prompting guide](https://developers.openai.com/cookbook/examples/gpt-5/codex_prompting_guide)'s base prompt
+    tells the model to stop and ask about changes it did not make.
+  - GitHub Copilot CLI (`harness/copilot.md`): `TOOL_NAMES` in `src/core/engines/copilot.mjs:380`.
+  - Gemini CLI (`harness/gemini.md`) and Qwen Code (`harness/qwen.md`): `TOOL_NAMES` in
+    `src/core/engines/gemini-family.mjs:34` and `QWEN_BUILTIN_TOOLS` in `src/core/engines/qwen.mjs:74`.
+  - Goose (`harness/goose.md`): `TOOL_NAMES` in `src/core/engines/goose.mjs:214`.
+  - Claude Code, Cursor and OpenCode: no difference found (Cursor and OpenCode use the same names in lower case), so
+    no file.
+- **Modes.** A Clarify step, or a step that may stop to ask you questions, is *interactive*: it never gets the
+  `.unattended.md` text of either layer (keep going, don't ask). Every other step is *unattended*.
+- **Resume.** The add-on is chosen once, when a step's session starts, and saved on the step with its engine. A resumed
+  step (after a pause, a restart, answered questions or a plan concern) sends exactly that text again, even if the
+  files changed since, but only on the same engine. A step resumed on another engine starts a fresh session there, and
+  that session gets no add-on (a known gap). A step saved before the harness layer resumes as before: its add-on only
+  on Claude Code, or Copilot on a `claude-*` model. A step started before add-ons resumes with none. A session that
+  starts fresh (a fix cycle, or a resume that fell back to a new session) chooses again. The run's
+  `executions.ndjson` records the engine, harness, family, mode, files and sha256 of the add-on each spawn carried.
+  A saved add-on holds at most 12800 characters (six files of 2048 bytes).
+- **Adding a file.** Plain markdown, no frontmatter, at most 15 lines and 2048 bytes, starting with `## Model notes`
+  (`## Model notes for this step` for a per-agent file) or, in `harness/`, `## Harness notes` (`## Harness notes for
+  this step`). Cite the source in the table above. State each prohibition's reason and scope, and put keep-going text
+  only in `.unattended.md` files. Every `.unattended.md` file carries this line, so keep-going text never turns a
+  refusal into a workaround: `- A refused tool call, a permission denial or a host-guard block is not an obstacle: do
+  not retry it by another tool or route; report it.` The `sonnet-5-5` and `haiku-5-5` files are identical on purpose,
+  and so are `sonnet-5.unattended.md`, `sonnet-4-6.unattended.md` and `haiku-4-5.unattended.md` (tests pin them equal):
+  edit them together. A file that is a symlink, not a regular file or over the size limit is skipped with a warning
+  on the run log, and so is a `harness` folder that is a symlink or a file. Update the snapshots with
+  `UPDATE_ADDON_SNAPSHOTS=1 node tools/test.mjs test/model-addons.test.mjs`.
+- **Session groups.** In `shared` mode the member's system prompt moves into the user turn, and its add-on moves with
+  it. The session host's own prompt has none.
+- **Known gaps.** A resumed step reloads its agent `.md` from disk, so an edited agent file still changes a resumed
+  step's system prompt. Fable 5.2 can reject such a resume. A bridged Claude handle (`copilot-<id>`) does not resolve
+  through its upstream id, investigator sub-agents get no add-on, and an id shape an engine invents (for example a
+  Cursor `-thinking` id) gets no model file until a table row names it.
+
+### Effort intents
+
+Every agent step carries an **effort intent**: `light`, `standard` or `deep`. When a step has no effort of its own,
+worca turns its intent into the effort its model family runs that kind of work best at. The values are starting values
+taken from Anthropic's per-model prompting guides, to be measured.
+
+- **Steps.** Judgement steps (Plan, Plan Review, Refine Plan, Review Implementation, the deck and requirements
+  reviews, Architect) are `deep`. Producers (Implementation, Clarify, Deck Builder, the Workspace scan, …) are
+  `standard`. Mechanical steps (Decompose, Manual Tests Checklist, Deck Export, Memory defragment) are `light`. A
+  plugin or user agent is matched by its display name (Bug Root Cause is `deep`; Bug Report Analysis and Bug Triage
+  Report are `light`); any other step is `standard`.
+- **Families.**
+
+  | family | light | standard | deep |
+  |---|---|---|---|
+  | `fable-5-2` | low | medium | high |
+  | `opus-5-5` | low | medium | high |
+  | `sonnet-5-5` | low | medium | high |
+  | `opus-4-8` | medium | high | xhigh |
+  | `haiku-5-5` | low | medium | high |
+
+  Any other family, an alias (`opus`, `sonnet`, …), a model with no family and every non-Anthropic model get no
+  intent effort: the step runs at the model's own default, as before.
+- **Clamp.** The mapped effort is used only when the model lists it; otherwise worca takes the nearest effort the model
+  lists (a tie goes to the lower one). So `light` runs at `medium` on Claude Code, because pipeline steps are not
+  offered `low` there (#422). On Copilot, whose Claude models list low/medium/high, `light` runs at `low` and
+  Opus 4.8's `deep` at `high`.
+- **Engines.** Claude Code (`--effort`), and GitHub Copilot CLI when its model is a `claude-*` model
+  (`--reasoning-effort`). Codex, Cursor, OpenCode, Gemini CLI, Qwen Code and Goose are not covered.
+- **Precedence.** An effort that anything names always wins: the template, the project's step picks, a role, a team
+  default, the run's own picks, or a helper job's model and effort (Memory defragment, Workspace scan). The intent fills
+  only an effort left empty. It is filled when a run starts, recorded on the run, and a resume runs the same effort. A
+  saved run setup and an exported workflow keep the effort empty.
+- **Behaviour change.** A step whose effort is **Model default** now means "the step's intent for this model family,
+  else the model's default". A step on a mapped family that was left on Model default now runs at its intent effort,
+  not at the CLI's own default.
+- **Cost.** On Opus 4.8 a Model default step now runs at `high` (producers) or `xhigh` (judgement), which uses more
+  tokens per step than the CLI's default.
+- **Known gaps.** A role-review step's role that names its own model and no effort, and a run resumed with another
+  model for every step, keep their old effort (none filled).
+
+### Refusals and thinking blocks
+
+**Refusals.** When the model declines a request, Claude Code ends the turn with `stop_reason: "refusal"`.
+
+- **A pipeline step** fails with `Model refusal (MODEL_REFUSAL): The model declined this request. Change the prompt or
+  pick another model.`, plus the first line of the model's own decline text (redacted, up to 200 characters). The run log
+  shows `execution failed: Model refusal (MODEL_REFUSAL): …` and the run pauses as an error. It is never retried: the
+  same prompt would be refused again. Change the prompt or the step's model, then resume.
+- **A chat (Ask) turn** ends with the notice "The model declined this request. Change the prompt or pick another model."
+  and the full message under Details, not with an empty answer.
+- Only the main agent's stop reason counts. A sub-agent's refusal goes back to the main agent as a tool result. When
+  the turn's final result names another stop reason (for example `end_turn`), the step finishes normally.
+- **Known gaps (follow-ups).** GitHub Copilot CLI reports no stop reason in its JSON output, so a refusal there still
+  looks like a short answer. Members of a session group (`src/core/session-host.mjs`) are not covered yet: their
+  demuxed frames would need the same `claudeStopReason` check.
+
+**Thinking blocks (findings, no behaviour change).** A lead said the live log goes silent because status notes arrive
+as empty thinking blocks. What we found:
+
+1. Claude Code streams thinking as `assistant` content blocks `{type:'thinking', thinking, signature}` and, with
+   `--include-partial-messages`, as `content_block_start` (`thinking: ""`) plus `thinking_delta` events. The captures
+   in `test/fixtures/ask/` (`plain-text`, `max-turns`, `max-budget`; CLI 2.1.239, claude-haiku-4-5) carry real
+   thinking text, not empty blocks.
+2. worca's normalizer drops every thinking block and delta: `assistant()` keeps only `tool_use` and `text`, and
+   `streamEvent()` keeps only `text_delta` (`src/core/engines/claude-events.mjs`). So a status note the model writes as
+   thinking never reaches the live log, whatever the CLI sends.
+3. Pipeline steps do not pass `--include-partial-messages` (only chats and pinpoint do), so a step sees only whole
+   `assistant` frames.
+4. CLI 2.1.322 (`claude --version`, 2026-11-12) has no thinking-display flag. Its help lists only `--effort`,
+   `--include-partial-messages` and `--forward-subagent-text` ("Forward subagent text and thinking"). worca sends no
+   thinking setting (`buildClaudeArgs` in `src/core/engines/claude.mjs`; no `MAX_THINKING_TOKENS`).
+5. What the CLI asks the API for, captured once against a local stub (`ANTHROPIC_BASE_URL` pointed at a server that
+   logs the request body and answers 400, scratch `HOME`, dummy key; no billed call): `claude --model claude-opus-5-5
+   -p ping` on 2.1.322 sends `"thinking": {"type": "adaptive", "display": "omitted"}`. A retry sent
+   `{"type": "adaptive"}`. So on 5.x models the CLI asks for omitted thinking: the thinking block arrives with an empty
+   `thinking` and only a signature. Those are the "empty thinking blocks" of the lead.
+
+Conclusion: the silence has two causes. The CLI asks for omitted thinking on 5.x models (5), and worca's normalizer
+drops thinking anyway (2). Changing either is a follow-up.
+
 ## Codex
 
 worca can run pipelines and chats on OpenAI's Codex CLI.
@@ -752,7 +920,7 @@ Engine & models.
 **How a node runs.**
 
 - The prompt goes on stdin.
-- The system prompt goes in a custom agent that worca writes for each call to a scratch folder handed over with `--add-dir`. It reaches the model as the agent's instructions.
+- The system prompt goes in a custom agent that worca writes for each call to a scratch folder handed over with `--add-dir`. It reaches the model as the agent's instructions. The prompt ends with the add-on (harness notes, then model notes; see Model add-ons).
 - Files can be read and written in the run checkout, the memory folder and the node's output folders. Copilot refuses any other path, and in a non-interactive run nothing can approve one.
 - Copilot's built-in GitHub MCP server is turned off, so it never acts with your GitHub identity. So are the servers in your own `~/.copilot/mcp-config.json`, which worca's guardrails never saw.
 - Copilot also reads the checkout's `AGENTS.md`, `CLAUDE.md` and `.github/copilot-instructions.md`, as Claude Code reads `CLAUDE.md`.
@@ -1081,12 +1249,14 @@ When Chat proposes a run of a saved workflow it can also pick a model and effort
 agent step (`propose_run` `nodes`), from the models the run's engine runs:
 
 - **The picking policy** — judgement steps (Plan, Plan Review, Refine Plan, Review
-  Implementation, Bug Root Cause, Deck Review) take the top price tier at high effort, never the
-  premium tier; producers that design (Implementation, Bug Fix, Deck Builder) the strong tier at
-  medium or high effort; mechanical producers (Decompose, Manual Tests Checklist, Bug Report
-  Analysis, Deck Export, Bug Triage Report) the cheapest capable tier at medium effort;
-  tool-driven checks (Manual web UI testing, visual checks) the mid tier with tool calls and
-  vision; any other step (Clarify included) the strong tier at medium effort. Within a tier the
+  Implementation, Bug Root Cause, Deck Review) take the top price tier at the deep intent, never
+  the premium tier; producers that design (Implementation, Bug Fix, Deck Builder) the strong tier
+  at the standard intent, with a higher effort named only for a large task; mechanical producers
+  (Decompose, Manual Tests Checklist, Bug Report Analysis, Deck Export, Bug Triage Report) the
+  cheapest capable tier at the light intent; tool-driven checks (Manual web UI testing, visual
+  checks) the mid tier at the standard intent, with tool calls and vision; any other step (Clarify
+  included) the strong tier at the standard intent. The effort is left empty so each step's
+  intent applies (see Effort intents); an effort is named only to depart from it. Within a tier the
   cheapest capable model is picked. A premium-tier model (Fable 5.1 today) is picked only when
   you name that model: it does the work of the top tier at about 2.5× Opus 5.5's list price. A
   small task scales the tiers down. Anthropic

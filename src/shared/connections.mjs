@@ -94,6 +94,13 @@ export function effortOn(effort, engine) {
   const list = HARNESS_EFFORTS[engine || 'claude'];
   if (!effort || !list) return effort || null;
   if (!list.length) return null;
+  return nearestEffort(effort, list);
+}
+
+/** `effort` when `list` holds it, else the nearest entry on the shared rank scale (a tie keeps the earlier entry), or
+ *  null for an empty/non-array list or a falsy/off-scale effort. effortOn and the effort intents (core/effort-intents.mjs) share it. */
+export function nearestEffort(effort, list) {
+  if (!Array.isArray(list) || !list.length || !effort) return null;
   if (list.includes(effort)) return effort;
   const rank = { none: -1, minimal: 0, low: 1, medium: 2, high: 3, xhigh: 4, max: 5 };
   if (!(effort in rank)) return null;

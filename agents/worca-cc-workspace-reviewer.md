@@ -26,7 +26,7 @@ The task prompt also carries the `## Workspace Context` block (the frozen, point
 3. If NO project changed (every diff empty), emit a clean verdict: `{ "issues": [], "summary": "..." }` — do not crash on an empty fan-out set.
 
 ## Anti-explosion rule (binding)
-Sub-agents are strictly single-level: a reviewer sub-agent MUST NOT re-fan-out (it must never spawn its own Task/Agent sub-agents). YOU synthesize the merged review markdown + verdict JSON yourself.
+Sub-agents are strictly single-level: a reviewer sub-agent MUST NOT re-fan-out (it must never spawn its own sub-agents). YOU synthesize the merged review markdown + verdict JSON yourself.
 
 ## review-cycleN.json contract (consumed by protocol.readReview / hasBlocking)
 

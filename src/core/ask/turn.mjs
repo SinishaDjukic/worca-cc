@@ -17,6 +17,7 @@ import { mkdir, writeFile, unlink, rm, readdir, lstat } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 
 import { runClaude } from '../claude-runner.mjs';
+import { REFUSAL_TEXT } from '../engines/claude-events.mjs';
 import { CLAUDE_SIGNED_OUT_CODE } from '../preflight.mjs';
 import { failedBecauseSignedOut } from '../claude-auth.mjs';
 import { resolveModelEnv, resolveModelCost, estimateCost, isPriceableUsage, liveCostRates as defaultLiveCostRates } from '../config.mjs';
@@ -134,6 +135,7 @@ export function humanErrorText(errorClass) {
     case 'rate_limit': return 'The endpoint is rate-limiting — try again shortly.';
     case 'quota': return 'A quota/billing problem was reported — check the account behind this model.';
     case 'network': return 'The endpoint was unreachable — check your connection and retry.';
+    case 'refusal': return REFUSAL_TEXT;
     default: return null;
   }
 }

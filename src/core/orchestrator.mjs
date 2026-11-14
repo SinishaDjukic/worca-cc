@@ -218,7 +218,7 @@ export class GraphOrchestrator extends RunHarness {
     const hasWires = Object.keys(overlayWires).length > 0;
     const overlay = hasNodes || hasWires ? { ...(hasNodes ? { nodes: overlayNodes } : {}), ...(hasWires ? { wires: overlayWires } : {}) } : null;
     const resolved = await resolveGraph(this.projectDir, this.workflowId, registry, this.agentsDir, {
-      engine: this.claude.engine || 'claude', runModel: this.claude.model || null, isWorkspace: this.isWorkspace, scripts: this.scriptRegistry, ...(overlay ? { overlay } : {}), ...(defrag && defrag.pair ? { agentPair: defrag.pair } : {}),
+      engine: this.claude.engine || 'claude', runModel: this.claude.model || null, fillIntents: true, isWorkspace: this.isWorkspace, scripts: this.scriptRegistry, ...(overlay ? { overlay } : {}), ...(defrag && defrag.pair ? { agentPair: defrag.pair } : {}),
       ...(scan ? { agentPair: scan.agentPair, subagentPin: scan.subagentPin } : {}), claudeAuth: this._resolveClaudeAuth(),
     });
     this._adoptResolvedGraph(resolved);
@@ -648,7 +648,7 @@ export class GraphOrchestrator extends RunHarness {
     for (const [nodeId, sel] of Object.entries(tunables || {})) overlayNodes[nodeId] = { ...sel };
     for (const [nodeId, sel] of Object.entries(answer.nodes || {})) overlayNodes[nodeId] = { ...(overlayNodes[nodeId] || {}), ...sel };
     const resolved = await resolveGraph(this.projectDir, workflowId, registry, this.agentsDir, {
-      engine: this.claude.engine || 'claude', runModel: this.claude.model || null, isWorkspace: this.isWorkspace, overlay: { nodes: overlayNodes }, ignoreProjectOverrides: true, scripts: this.scriptRegistry,
+      engine: this.claude.engine || 'claude', runModel: this.claude.model || null, fillIntents: true, isWorkspace: this.isWorkspace, overlay: { nodes: overlayNodes }, ignoreProjectOverrides: true, scripts: this.scriptRegistry,
       claudeAuth: this._resolveClaudeAuth(),
     });
     if (!this.humanInLoop) {
@@ -1962,7 +1962,7 @@ export class GraphOrchestrator extends RunHarness {
     ctx.planConcern = null;                          // the re-run cannot raise a second concern (D5)
     ctx.planConcernOverride = concern;
     const step = this.state.steps.find((s) => s.key === ctx.executionId);
-    if (step?.sessionId) ctx.resumeSessionId = step.sessionId;
+    this._resumeStepSession(ctx, step);
     return this._runNodeAttempts(nc, ctx);
   }
 
@@ -1994,7 +1994,7 @@ export class GraphOrchestrator extends RunHarness {
     ctx.shapeOutlineNote = d === 'flat' ? { decision: 'flat' } : d === 'revise' ? { decision: 'revise', feedback: payload.feedback } : null;
     if (d === 'approve') ctx.shapeSliceScope = await this._shapeSliceScope();
     const step = this.state.steps.find((s) => s.key === ctx.executionId);
-    if (step?.sessionId) ctx.resumeSessionId = step.sessionId;
+    this._resumeStepSession(ctx, step);
     return this._runNodeAttempts(nc, ctx);
   }
 
@@ -2372,7 +2372,7 @@ export class GraphOrchestrator extends RunHarness {
     const engineOpts = this._engineNodeOpts(nc);
     // P1 (v3, defence in depth): a Folder run's nodes never start on the REAL folder, whatever reattach path left runCwd unset.
     if (this.workMode === 'folder' && !this.runCwd) throw new Error('a Folder run has no copy to work on');
-    const { resumeSessionId, coldRedispatch } = this._reattachFor(executionId, node.id);
+    const { resumeSessionId, coldRedispatch, pinnedAddon } = this._reattachFor(executionId, node.id);
     // The agent's TMPDIR points here, and a TMPDIR that does not exist fails every tool that reads it.
     const scratch = runScratchDir(this.runRoot);
     if (scratch) mkdirSync(scratch, { recursive: true });
@@ -2475,6 +2475,8 @@ export class GraphOrchestrator extends RunHarness {
         : undefined,
       runners: this._runners,             // P3's injection seam (runExecution reads ctx.runners)
       resumeSessionId,
+      // The model add-on the paused session was started with (executor.mjs prepare sends it, never re-resolves).
+      pinnedAddon,
       ...(coldRedispatch ? { coldRedispatch: true } : {}),
       ...this._sessionCtx(node.id, slice),
       ask: (q) => this._enqueueAsk(() => this._ask(q)).then((payload) => {
@@ -2546,20 +2548,30 @@ export class GraphOrchestrator extends RunHarness {
    * kill switch) re-attaches only when its session's host is live in a session mode on this run. Otherwise it starts
    * fresh and cold (`coldRedispatch` → COLD_REDISPATCH_HEADER), never `--resume <host>` as a plain spawn. A degraded
    * member's own plain session stays its own (C30: its plain run may resume it). Every other row re-attaches as today.
-   * @returns {{ resumeSessionId: string|undefined, coldRedispatch: boolean }}
+   * Every arm that re-attaches also hands back the row's pinned model add-on (`pinnedAddon`, null when it has none).
+   * @returns {{ resumeSessionId: string|undefined, coldRedispatch: boolean, pinnedAddon: object|null }}
    */
   _reattachFor(executionId, nodeId) {
     const resumeSessionId = this._takeResumeSession(executionId);
-    if (!resumeSessionId) return { resumeSessionId, coldRedispatch: false };
+    if (!resumeSessionId) return { resumeSessionId, coldRedispatch: false, pinnedAddon: null };
     const row = (this.resumeOpts?.steps || []).find((s) => s.key === executionId) || null;
+    const pinnedAddon = row?.addon ?? null;
     const hostIds = new Set(Object.values(this._sessionRestore || {}).map((h) => h?.hostSessionId).filter(Boolean));
     const host = this._sessions?.hostFor(nodeId) ?? null;
     if (row?.session?.hostSessionId !== resumeSessionId && !hostIds.has(resumeSessionId)) {
       if (host?.mode === 'separate') host.keepPlainSession(resumeSessionId);   // a member that only ran plain has no step.session
-      return { resumeSessionId, coldRedispatch: false };
+      return { resumeSessionId, coldRedispatch: false, pinnedAddon };
     }
-    if (host && (host.mode === 'subagents' || host.mode === 'shared')) return { resumeSessionId, coldRedispatch: false };
-    return { resumeSessionId: undefined, coldRedispatch: true };
+    if (host && (host.mode === 'subagents' || host.mode === 'shared')) return { resumeSessionId, coldRedispatch: false, pinnedAddon };
+    return { resumeSessionId: undefined, coldRedispatch: true, pinnedAddon: null };
+  }
+
+  /** D8c: the ONE in-run way to re-attach a step's session: its session id and the model add-on that session was
+   *  started with (null when it has none), so a resumed spawn sends the same system prompt as its first turn. */
+  _resumeStepSession(ctx, step) {
+    if (!step?.sessionId) return;
+    ctx.resumeSessionId = step.sessionId;
+    ctx.pinnedAddon = step.addon ?? null;
   }
 
   /** ONE-SHOT session re-attach: an executionId is consumed the first time it is
@@ -2790,6 +2802,7 @@ export class GraphOrchestrator extends RunHarness {
           { nodeId: ctx.nodeId, executionId: ctx.executionId, cycle: ctx.ordinal, ...(err?.stream ? { stream: err.stream } : {}) });
         await appendAudit(this.pipeline.dir, `Resume fallback: ${ctx.executionId} re-ran fresh (session resume failed).`).catch(() => {});
         ctx.resumeSessionId = undefined;
+        ctx.pinnedAddon = undefined;                 // a fresh session resolves its add-on fresh
         return await runExecution(ctx, { runners: this._runners });
       }
       throw err;
@@ -3112,7 +3125,7 @@ export class GraphOrchestrator extends RunHarness {
       };
       await rm(qPath, { force: true }).catch(() => {});
       const step = this.state.steps.find((s) => s.key === ctx.executionId);
-      if (step?.sessionId) ctx.resumeSessionId = step.sessionId;
+      this._resumeStepSession(ctx, step);
       try {
         result = await this._runNodeAttempts(nc, ctx);
       } finally {
@@ -3219,7 +3232,7 @@ export class GraphOrchestrator extends RunHarness {
         await appendAudit(this.pipeline.dir, `${agentLabel}: form "${formAsk.form}" answered${byActor(formBy)} (round ${round}).`, { actor: formBy }).catch(() => {});
         await rm(qPath, { force: true }).catch(() => {});
         const step = this.state.steps.find((s) => s.key === stepKey);
-        if (step?.sessionId) ctx.resumeSessionId = step.sessionId;
+        this._resumeStepSession(ctx, step);
         ctx.formAnswers = [...(ctx.formAnswers || []), { form: formAsk.form, version: formAsk.version, values }];
         ctx.questionsFile = round < MAX_QUESTION_ROUNDS
           ? this._questionsPath(ctx.nodeId, ctx.ordinal, round + 1)
@@ -3255,7 +3268,7 @@ export class GraphOrchestrator extends RunHarness {
       // surviving file would re-gate the user on a crash/pause-resumed re-run.
       await rm(qPath, { force: true }).catch(() => {});
       const step = this.state.steps.find((s) => s.key === stepKey);
-      if (step?.sessionId) ctx.resumeSessionId = step.sessionId;
+      this._resumeStepSession(ctx, step);
       ctx.questionsAnswered = [...(ctx.questionsAnswered || []), ...enriched];
       ctx.questionsFile = round < MAX_QUESTION_ROUNDS
         ? this._questionsPath(ctx.nodeId, ctx.ordinal, round + 1)

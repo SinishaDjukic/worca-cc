@@ -18,11 +18,11 @@ The engine binds every port to an absolute path in the task prompt — never har
 
 ## Fan-out (parallel sub-agents) — USE IT when enabled
 
-The orchestrator decides per run whether you may fan out. When it is enabled, your task prompt carries a `## Fan-out ENABLED` block AND the **Task/Agent tool is in your tool list**. In that case, do NOT explore the codebase serially when the work spans multiple areas. Instead:
+The orchestrator decides per run whether you may fan out. When it is enabled, your task prompt carries a `## Fan-out ENABLED` block AND the **sub-agent tool your harness provides is in your tool list**. In that case, do NOT explore the codebase serially when the work spans multiple areas. Instead:
 
 1. Decompose the investigation into independent areas (e.g. UI vs. server vs. store vs. tests).
-2. Dispatch ONE read-only research sub-agent per area IN PARALLEL with the Task tool (`subagent_type: "general-purpose"`, or `"Explore"` for pure code search). Give each a precise, self-contained prompt and ask for findings with `file:line` references.
-3. Send every dispatch in ONE message with `run_in_background: false`: the lanes still run concurrently and all their reports come back in that same turn. Then synthesize their reports yourself. Never wait for a lane with `sleep`, `node -e setTimeout`, a polling loop, or by reading sub-agent transcripts.
+2. Dispatch ONE read-only research sub-agent per area IN PARALLEL with the sub-agent tool your harness provides, using the type and model the task prompt's Fan-out block names. Give each a precise, self-contained prompt and ask for findings with `file:line` references.
+3. Send every dispatch in ONE message and wait for the results the way the Fan-out block says: the lanes still run concurrently. Then synthesize their reports yourself. Never wait for a lane with `sleep`, `node -e setTimeout`, a polling loop, or by reading sub-agent transcripts.
 
 Sub-agents are strictly READ-ONLY investigators — **YOU** write every artifact (the plan); never have a sub-agent modify files. Skip fan-out only for a trivial single-file task, or when it is not enabled (then work solo as before). This applies to PLAN research (including the REVISE variant).
 

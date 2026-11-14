@@ -662,7 +662,7 @@ export function buildSystemPrompt(toolInstruction, agentBody, role, workspace, m
   if (ws) parts.push(ws);
   // Agent memory (§4.3): the pointer block — the files themselves load natively from the
   // cwd's .claude/rules/worca. Between the workspace preamble and the role body so the body
-  // (the contract) stays last. Trimmed: the renderer ends with one newline.
+  // (the contract) stays last (then the model add-on, appended by executor.mjs prepare()). Trimmed: the renderer ends with one newline.
   const mem = (typeof memoryBlock === 'string' ? memoryBlock : '').trim();
   if (mem) parts.push(mem);
   const body = (agentBody || '').trim();

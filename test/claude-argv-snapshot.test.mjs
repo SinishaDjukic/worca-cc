@@ -38,6 +38,8 @@ import { runClaude } from '../src/core/claude-runner.mjs';
 import { generateTitle } from '../src/core/title.mjs';
 import { addGlobalModel, updateProvider } from '../src/core/settings.mjs';
 import { stopBridge } from '../src/core/bridge/server.mjs';
+import { addonMode, appendAddon, resolveAddon } from '../src/core/model-addons.mjs';
+import { planClaudeInvocation } from '../src/core/engines/claude.mjs';
 
 const POSIX = process.platform === 'win32'
   ? { skip: 'the fake claude is a node script with a shebang (no .exe stand-in on Windows)' } : {};
@@ -200,9 +202,12 @@ function envDelta(childEnv, scrub, secrets = []) {
   return out;
 }
 
-function snapshotOf(rec, { prompt, systemPrompt, secrets = [] }) {
+function snapshotOf(rec, { prompt, systemPrompt, addon = null, secrets = [] }) {
   const replacements = [];
   if (systemPrompt) replacements.push([systemPrompt, '<SYSTEM_PROMPT>']);
+  // A prompt add-on (model-addons.mjs) rides after the agent body: the assembled prompt scrubs to one marker naming its
+  // harness and family (whichever it has, so a harness-only add-on never prints `null`).
+  if (systemPrompt && addon) replacements.push([appendAddon(systemPrompt, addon), `<SYSTEM_PROMPT>+ADDON:${[addon.harness, addon.family].filter(Boolean).join('+')}`]);
   if (prompt) replacements.push([prompt, '<PROMPT>']);
   const scrub = scrubber(replacements);
   return {
@@ -238,7 +243,9 @@ async function spawnNode(key, opts = {}) {
   try { await run(ctx); } catch { /* post-spawn reads may miss the files a real agent would write */ }
   const rec = readRecord();
   const systemPrompt = buildSystemPrompt(ctx.toolInstruction, resolveAgentBody(ctx, key), key, ctx.workspace, ctx.memoryBlock);
-  return { rec, prompt: buildAgentPrompt(ctx), systemPrompt };
+  const { addon } = resolveAddon({ model: ctx.claudeOpts?.model, engine: ctx.claudeOpts?.engine, agentKey: key,
+    mode: addonMode({ runnerType: REGISTRY[key].runnerType, questionsEnabled: ctx.questionsEnabled }) });
+  return { rec, prompt: buildAgentPrompt(ctx), systemPrompt, addon };
 }
 
 // ── the cases ────────────────────────────────────────────────────────────────
@@ -283,6 +290,27 @@ test('implementer with every pipeline option set', POSIX, async () => {
   const snap = snapshotOf(rec, { prompt, systemPrompt });
   const scrubMem = (s) => s.split(memoryMount).join('<MEMORY_MOUNT>');
   assertSnapshot('implementer-all-options', JSON.parse(scrubMem(JSON.stringify(snap))));
+});
+
+test('implementer on claude-opus-5-5: the model add-on follows the agent body', POSIX, async () => {
+  cleanEnv();
+  const { rec, prompt, systemPrompt, addon } = await spawnNode('implementer', { claudeOpts: { model: 'claude-opus-5-5' } });
+  assert.equal(addon?.family, 'opus-5-5');
+  const snap = snapshotOf(rec, { prompt, systemPrompt, addon });
+  assert.ok(snap.args.some((a) => a.endsWith('<SYSTEM_PROMPT>+ADDON:opus-5-5')), 'the add-on is the last part of the system prompt');
+  assertSnapshot('implementer-addon-opus-5-5', snap);
+});
+
+test('the staged system-prompt.md (--append-system-prompt-file) ends with the model add-on', () => {
+  const dir = tmp('worca-argv-addon-stage-');
+  const { addon } = resolveAddon({ model: 'claude-opus-5-5', engine: 'claude', agentKey: 'implementer', mode: 'unattended' });
+  const assembled = appendAddon('TOOLS\n\nYou are the implementer.', addon);
+  const plan = planClaudeInvocation({ prompt: 'x'.repeat(30000), systemPrompt: assembled, permissionMode: 'acceptEdits' }, { dir });
+  assert.equal(plan.staged, true);
+  const file = plan.files.find((x) => x.path === join(dir, 'system-prompt.md'));
+  assert.ok(file, 'the system prompt is staged');
+  assert.ok(file.content.endsWith(`You are the implementer.\n\n${addon.text}`));
+  assert.ok(plan.args.includes('--append-system-prompt-file'));
 });
 
 test('reviewer with sub-agent hook telemetry on', POSIX, async () => {

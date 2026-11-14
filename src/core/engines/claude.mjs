@@ -26,6 +26,7 @@ import { modelSlot } from '../broker-routing.mjs';
 import { pluginModelRoute, syncPluginSlots } from '../plugin-broker-slots.mjs';
 import { superviseSpawn, composeSpawnEnv, cleanRunEnv, safeEmit } from './spawn.mjs';
 import { CAPABILITY_KEYS } from './capabilities.mjs';
+import { claudeStopReason, REFUSAL_STOP, REFUSAL_TEXT } from './claude-events.mjs';
 
 export const DEFAULT_BIN = process.env.WORCA_CLAUDE_BIN || process.env.ORCH_CLAUDE_BIN || 'claude';
 
@@ -693,6 +694,10 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
 
     let resultText = '';
     let assistantText = '';
+    // A main-stream refusal (stop_reason "refusal"): `refused` is set by any main frame and decided by the
+    // main result's own string stop_reason; `refusalRaised` once the result frame has returned the error.
+    let refused = false;
+    let refusalRaised = false;
     // In stream-json mode claude reports failures (auth, unknown/unavailable
     // model, API errors) as a terminal `result` event with is_error:true on
     // STDOUT and exits non-zero with EMPTY stderr. Capture that text so a
@@ -737,6 +742,9 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
           return;
         }
         const text = extractText(evt);
+        const sr = claudeStopReason(evt);
+        if (evt?.type === 'result') { if (sr !== null) refused = sr === REFUSAL_STOP; }
+        else if (sr === REFUSAL_STOP) refused = true;
         // Pause/Resume: surface the session id from the init event so the
         // orchestrator can persist it per step (claude --resume needs it).
         if (evt?.type === 'system' && evt?.subtype === 'init' && typeof evt.session_id === 'string') {
@@ -769,6 +777,11 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
           text: text || undefined,
           ...(cost != null ? { costUsd: cost } : {}),
         });
+        // A refusal fails the step once its result (and cost) is out; superviseSpawn stops a lingering CLI.
+        if (evt?.type === 'result' && refused) {
+          refusalRaised = true;
+          return refusalError(evt.result, redactor ? redactor.text : null);
+        }
         // Claude Code can announce a spent subscription allowance as a
         // synthetic assistant frame while an async Bash/tool process keeps the
         // CLI alive indefinitely. Waiting for process exit in that case leaves
@@ -784,8 +797,26 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
           return err;
         }
       },
-    }).then(resolveP, rejectP);
+    }).then(
+      (r) => (refused && !refusalRaised ? rejectP(refusalError(resultText || assistantText, redactor ? redactor.text : null, null)) : resolveP(r)),
+      (err) => (refused && !refusalRaised && err?.name !== 'AbortError' && err?.errorClass !== 'usage_limit'
+        ? rejectP(refusalError(resultText || assistantText, redactor ? redactor.text : null, err))
+        : rejectP(err)),
+    );
   });
+}
+
+/** The step error for a model refusal: `MODEL_REFUSAL`, class `refusal`. The decline text is redacted BEFORE the
+ *  200-char clip, so a secret the clip would cut cannot survive as an unmatched fragment. */
+function refusalError(text, redact, cause = null) {
+  let detail = typeof text === 'string' ? text : '';
+  if (redact) detail = redact(detail);
+  detail = (detail.trim().split('\n')[0] || '').trim().slice(0, 200);
+  const err = new Error(`Model refusal (MODEL_REFUSAL): ${REFUSAL_TEXT}${detail ? ` — ${detail}` : ''}`, cause ? { cause } : undefined);
+  err.code = 'MODEL_REFUSAL';
+  err.errorClass = 'refusal';
+  err.stopReason = REFUSAL_STOP;
+  return err;
 }
 
 /**

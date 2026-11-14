@@ -445,6 +445,7 @@ export function resolveMockRole({ meta, expandsPort = null }) {
 
 import { readVerdict, checkVerdict, clearAllocated, assertOutputsWritten, publishable } from './exec-io.mjs';
 import { createScopeWatch, outsideWarning, writeExecManifest } from './exec-manifest.mjs';
+import { addonMode, appendAddon, pinFitsSpawn, resolveAddon } from '../model-addons.mjs';
 export { readVerdict, publishable };
 
 // ── prompt assembly ───────────────────────────────────────────────────────────
@@ -720,7 +721,18 @@ async function prepare(ctx) {
   if (!String(body || '').trim()) {
     console.warn(`[executor] node "${node?.id}": no agent .md body resolved — running with an empty system prompt`);
   }
-  const systemPrompt = buildSystemPrompt(ctx.toolInstruction, body, role, ctx.workspace, ctx.memoryBlock);
+  // The prompt add-on (model-addons.mjs: harness notes, then model notes), resolved ONCE per spawn session and appended
+  // last. A resume never re-resolves: it sends the add-on its first turn pinned (ctx.pinnedAddon, checked), or none, so
+  // the session's prompt stays stable. A pin is sent only on the engine it was chosen for (pinFitsSpawn): a claude step
+  // resumed on codex starts a fresh codex session, which gets no add-on.
+  const mode = addonMode({ runnerType: meta?.runnerType, questionsEnabled: ctx.questionsEnabled });
+  let addon = null;
+  let addonWarnings = [];
+  if (ctx.resumeSessionId) {
+    addon = pinFitsSpawn(ctx.pinnedAddon, { engine: ctx.claudeOpts?.engine, model: ctx.claudeOpts?.model }) ? ctx.pinnedAddon : null;
+  }
+  else ({ addon, warnings: addonWarnings } = resolveAddon({ model: ctx.claudeOpts?.model, engine: ctx.claudeOpts?.engine, agentKey: node?.key, mode }));
+  const systemPrompt = appendAddon(buildSystemPrompt(ctx.toolInstruction, body, role, ctx.workspace, ctx.memoryBlock), addon);
   const full = { ...ctx, ports, meta, outputs, verdict, expandsPort, mockRole, priorAnswers };
   const prompt = buildAgentPrompt(full);
   const allowedTools = toolsForMeta(meta);
@@ -733,7 +745,7 @@ async function prepare(ctx) {
     ? `sub-agent model pin "${storedPin}" ignored: ${node?.key || node?.id || 'agent'} runs on an ` +
       `endpoint-routed model (${JSON.stringify(ctx.claudeOpts?.model ?? '')}) — children run without an explicit model`
     : null;
-  return { full, ports, meta, outputs, verdict, role, systemPrompt, prompt, allowedTools, pinIgnoredWarning };
+  return { full, ports, meta, outputs, verdict, role, systemPrompt, prompt, allowedTools, pinIgnoredWarning, addon, addonWarnings };
 }
 
 /** Test seam: `runClaude` stands in for the runner on every agent spawn (the sideload safety net's tests). */
@@ -752,7 +764,8 @@ export function memberInfo(full) {
 /**
  * Spawn through `runOpts` and capture the session id off the `session` event —
  * `runClaude` resolves `{ text, exitCode }` only. The wrapper forwards every event to
- * the caller's `onEvent` unchanged (runOpts already stamps `role` on it).
+ * the caller's `onEvent` unchanged (runOpts already stamps `role` on it), except that a `session` event carries the
+ * spawn's model add-on as `addon` when there is one: the run harness pins it on the step beside the session id.
  *
  * Skills registry safety net (design §4.1, §4.3): a spawn that carried set plugins and exited
  * non-zero BEFORE its init, naming `--plugin-dir` / sideloading (in its error, or in a plain line it
@@ -761,7 +774,7 @@ export function memberInfo(full) {
  * once more without `--plugin-dir` — every other option (`--agents` included) unchanged, the same
  * resume session (it was never reached). A second failure is the run's.
  */
-async function spawnAgent(full, { role, prompt, systemPrompt, allowedTools }) {
+async function spawnAgent(full, { role, prompt, systemPrompt, allowedTools, addon = null }) {
   const opts = runOpts(full, { role, prompt, systemPrompt, allowedTools });
   let sessionId = null;
   let sawInit = false;
@@ -781,7 +794,7 @@ async function spawnAgent(full, { role, prompt, systemPrompt, allowedTools }) {
     if (e?.type === 'session' && e.sessionId) sessionId = String(e.sessionId);
     if (e?.type === 'session' || (e?.type === 'system' && e.raw?.subtype === 'init')) sawInit = true;
     if (e?.type === 'log' && typeof e.text === 'string' && said.length < 20) said.push(e.text.slice(0, 500));
-    if (typeof inner === 'function') inner(e);
+    if (typeof inner === 'function') inner(addon && e?.type === 'session' ? { ...e, addon } : e);
   };
   // The seam (Task 45): a session member's unchanged runOpts go to its SessionHost, which runs them as one host turn.
   const run = full.sessionHost ? (o) => full.sessionHost.run(o, memberInfo(full)) : (_testing.runClaude || runClaude);
@@ -803,7 +816,7 @@ async function spawnAgent(full, { role, prompt, systemPrompt, allowedTools }) {
     const outside = scope.paths();
     // Telemetry sees the outside paths as one event per spawn (the recorder's `outside` record).
     if (outside.length && typeof inner === 'function') { try { inner({ type: 'scope', paths: outside }); } catch { /* listener */ } }
-    await writeExecManifest(full, { opts, prompt, systemPrompt, sessionId, initModel, startedAt, outcome, error: failure, outside });
+    await writeExecManifest(full, { opts, prompt, systemPrompt, sessionId, initModel, startedAt, outcome, error: failure, outside, addon });
   }
 }
 
@@ -866,14 +879,14 @@ function timeLimitGuard({ wallMs, idleMs }, outer, nodeId) {
  * `kind:'agent'` with any `runnerType` other than clarifier.
  */
 export async function runAgentExecution(ctx) {
-  const { full, ports, meta, outputs, verdict, role, systemPrompt, prompt, allowedTools, pinIgnoredWarning } = await prepare(ctx);
+  const { full, ports, meta, outputs, verdict, role, systemPrompt, prompt, allowedTools, pinIgnoredWarning, addon, addonWarnings } = await prepare(ctx);
   // E6: a fresh attempt starts from no outputs, so a retry or a resume never publishes the failed
   // attempt's files. A resumed SESSION continues the same attempt: its own earlier writes stand.
   if (!ctx.resumeSessionId) await clearAllocated({ outputs, verdict, bindings: ctx.bindings });
-  const { text, sessionId, outside = [] } = await spawnAgent(full, { role, prompt, systemPrompt, allowedTools });
+  const { text, sessionId, outside = [] } = await spawnAgent(full, { role, prompt, systemPrompt, allowedTools, addon });
   const review = verdict?.path ? withRecheck(await readVerdict(verdict.path), ctx.ordinal ?? 1) : null;
   // Non-fatal problems the scheduler folds into state.warnings + the run log.
-  const warnings = [];
+  const warnings = [...addonWarnings];
   const away = outsideWarning(ctx, outside);                       // E9: on the run log, not only in the manifest
   if (away) warnings.push(away);
   // An agent that stopped to ask (the questions loop resumes it with the answers), or a slicing Planner
@@ -981,7 +994,7 @@ async function prepareClarifierForm({ full, meta, node, ordinal, answersPath, pa
  */
 export async function runClarifierExecution(ctx) {
   const { node, ordinal = 1 } = ctx;
-  const { full, ports, meta, outputs, role, systemPrompt, prompt, allowedTools, pinIgnoredWarning } = await prepare(ctx);
+  const { full, ports, meta, outputs, role, systemPrompt, prompt, allowedTools, pinIgnoredWarning, addon, addonWarnings } = await prepare(ctx);
   const answersPort = answersPortOf(ports);
   const answersPath = outputs[answersPort?.id]?.path;
   if (!answersPath) throw new Error(`clarifier node "${node?.id}": no json output port to write the questions to`);
@@ -989,14 +1002,14 @@ export async function runClarifierExecution(ctx) {
 
   let sessionId;
   if (!ctx.resumeSessionId) await clearAllocated({ outputs, bindings: ctx.bindings });   // E6
-  ({ sessionId } = await spawnAgent(full, { role, prompt, systemPrompt, allowedTools }));
+  ({ sessionId } = await spawnAgent(full, { role, prompt, systemPrompt, allowedTools, addon }));
 
   // Tolerant parse (a fenced file still asks), as every other ask path reads its file.
   const payload = await readAskFile(answersPath);
   // Non-interactive default (v1 `_ask` auto): no gate ⇒ every question takes its first
   // option (normalizeAnswers' fallback). The scheduler's onAsk never sees clarify asks.
   const ask = typeof ctx.ask === 'function' ? ctx.ask : null;
-  const warnings = pinIgnoredWarning ? [pinIgnoredWarning] : [];
+  const warnings = [...addonWarnings, ...(pinIgnoredWarning ? [pinIgnoredWarning] : [])];
   // A file that exists but yields neither questions nor a form must not pass as "no questions".
   if (payload.malformed || (payload.kind === 'none' && existsSync(answersPath))) {
     warnings.push(`${node.id}: the clarifier wrote ${basename(answersPath)}, but no questions could be read from it — continuing without asking`);
@@ -1008,7 +1021,7 @@ export async function runClarifierExecution(ctx) {
     // a clarifier has no _questionsLoop, so the repair is a resumed spawn here.
     const gate = await prepareClarifierForm({
       full, meta, node, ordinal, answersPath, payload, warnings,
-      spawn: { role, systemPrompt, allowedTools, prompt },
+      spawn: { role, systemPrompt, allowedTools, prompt, addon },
       sessionId,                                // E6: the repair RESUMES the first spawn's session
     });
     if (gate.ask) {
