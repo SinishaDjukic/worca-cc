@@ -109,6 +109,13 @@ test('a plan grade is the shape check, whatever the model says', async (t) => {
   assert.equal(r.assessment.taskKind, 'plan-partial');
 });
 
+test('open gap marks left by Use this keep the grade needs-detail, whatever the model says', async (t) => {
+  const used = ['Who: finance [Product · decide: who uses it?]', ...Array.from({ length: 8 }, (_, i) => `Line ${i}: the weekly cost export as CSV for every report`)].join('\n');
+  withRunner(t, reply({ kind: 'requirement', grade: 'clear', confidence: 0.9 }));
+  assert.equal((await gradePrompt({ text: used }, { model: MODEL })).assessment.grade, 'needs-detail');
+  assert.equal((await gradePrompt({ text: used.replace(' [Product · decide: who uses it?]', '') }, { model: MODEL })).assessment.grade, 'clear');
+});
+
 test('the deterministic plan kind replaces the model kind only under 0.5 confidence', async (t) => {
   const plan = '## Goal\nShip it\n## Steps\nDo it\n## Risks\nNone';
   withRunner(t, reply({ kind: 'idea', grade: 'clear', confidence: 0.4 }));

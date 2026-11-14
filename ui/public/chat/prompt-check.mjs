@@ -50,6 +50,10 @@ export function createPromptCheckAddon({ intent = null, timers } = {}) {
           announce: typeof ctx.announce === 'function' ? ctx.announce : undefined,
           fetchImpl: typeof ctx.fetch === 'function' ? ctx.fetch : undefined,
           timers,
+          // Improve: the composer's text, written back through its input path (ask-panel addonCtx).
+          field: typeof ctx.text === 'function' && typeof ctx.setText === 'function'
+            ? { read: () => ctx.text(), write: (t2) => ctx.setText(t2), focus: () => ctx.focus?.() } : null,
+          project: typeof ctx.projectKey === 'function' ? () => ctx.projectKey() : null,
         });
         if (text.trim()) chip.input(text, { silent: true });
       }

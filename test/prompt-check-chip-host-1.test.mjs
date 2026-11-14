@@ -20,7 +20,7 @@ test('a graded task shows one chip: the kind picker (named Prompt kind: …) and
   assert.equal(picker(s.m.el).getAttribute('aria-label'), 'Prompt kind: Implementation task');
   assert.equal(badge(s.m.el).textContent, 'Needs detail');
   assert.ok(badge(s.m.el).classList.contains('is-needs-detail'));
-  assert.equal(s.m.el.querySelectorAll('button').length, 1, 'no Improve button in this slice');
+  assert.equal(s.m.el.querySelectorAll('button').length, 1, 'no Improve button on a mount without a field');
 });
 
 test('a re-check keeps the same node, label and badge while it is pending and in flight; the reply patches in place', async (t) => {

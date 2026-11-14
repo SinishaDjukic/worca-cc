@@ -163,3 +163,13 @@ test('check: a bad Dev surfaces row is not its business (it reads only the Actio
   const doc = '# x\n\n## Action rows\n\n| `a › open` | wire to | y |\n\n## Figure rows\n\n## Dev surfaces\n\n| `route › /api/x` | maybe | |\n';
   assert.deepEqual(W.check(doc, ['a › open'], []).badStatus, []);
 });
+
+test('the prompt check Moves rows: the chip and Improve stay open, waiting for the owner, as 4-column rows', () => {
+  for (const name of ['Prompt check chip (composer)', 'Prompt check Improve (composer)']) {
+    const row = doc.split('\n').find((l) => l.startsWith(`| ${name} |`));
+    assert.ok(row, name);
+    const cells = row.split('|').slice(1, -1).map((c) => c.trim());
+    assert.equal(cells.length, 4, name);
+    assert.match(cells[1], /^open: waits for the owner/, name);
+  }
+});

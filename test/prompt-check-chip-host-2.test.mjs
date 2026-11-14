@@ -137,4 +137,28 @@ test('narrow widths: no .pcheck rule clips or ellipsizes a label or fixes a widt
     assert.match(body, /flex-wrap:\s*wrap/, sel);
     assert.doesNotMatch(body, /overflow\s*:\s*hidden/, sel);
   }
+  // Chat's lead row orders the chip after the intent chips; the Improve view follows it, on its own full-width line.
+  const lead = css('ui/public/chat/chat-shell.css');
+  const order = (sel) => Number(new RegExp(`\\.chat-composer-lead > \\.${sel}\\{[^}]*order:\\s*(\\d+)`).exec(lead)?.[1]);
+  assert.ok(order('pcheck-improve') > order('pcheck'), 'the view comes after the chip');
+  assert.match(/\.chat-composer-lead > \.pcheck-improve\{([^}]*)\}/.exec(lead)[1], /flex:\s*1 0 100%/);
+});
+
+test('Improve: a mount without a field never shows it; with one it follows needs-detail, and the chip stays the same node', async (t) => {
+  const bare = setup(t);
+  await bare.graded();
+  await bare.graded(OTHER, { grade: 'needs-detail', kind: 'bug' });
+  assert.equal(bare.m.el.querySelector('[data-prompt-improve-open]'), null);
+  const s = setup(t, { mount: { field: { read: () => '', write: () => {} } } });
+  await s.graded();
+  const node = s.m.el;
+  const btn = node.querySelector('[data-prompt-improve-open]');
+  assert.ok(btn, 'shown for needs-detail');
+  assert.equal(btn.textContent.trim(), 'Improve');
+  assert.equal(btn.previousElementSibling, badge(node), 'after the badge');
+  await s.graded(THIRD, { grade: 'clear' });
+  assert.equal(node.querySelector('[data-prompt-improve-open]'), null, 'gone on a clear regrade');
+  assert.equal(chips(s)[0], node);
+  await s.graded(OTHER, { grade: null });
+  assert.equal(node.querySelector('[data-prompt-improve-open]'), null, 'none without a grade');
 });

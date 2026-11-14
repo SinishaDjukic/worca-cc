@@ -7,6 +7,7 @@ import { bootApp } from './helpers/run-page-boot.mjs';
 import { textHash, PROMPT_CHECK_DEBOUNCE_MS } from '../src/shared/prompt-check/filter.mjs';
 
 const TASK = 'Add a CSV export button to the Insights page so that a team lead can share the weekly cost with finance.';
+const REWRITE = 'Change: Add the export.\nWhere: [Architect · decide: which files or modules?]';
 const OTHER = 'Build a Slack notifier that posts a message when a run fails, with the run title, the step and a link.';
 const PROJECTS = [{ name: 'web', path: '/a/web', exists: true, key: 'web-00000001' }];
 const ok = (body, status = 200) => Promise.resolve({ ok: status < 400, status, json: async () => body, text: async () => JSON.stringify(body) });
@@ -43,6 +44,12 @@ async function boot({ on = true, runResponse = null } = {}) {
           }) });
           rec.grades.push(call);
         });
+      }
+      if (u === '/api/prompt-check/improve') {
+        const b = JSON.parse(opts.body);
+        (rec.improves ||= []).push(b);
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ requestId: b.requestId, source: 'model', kind: b.kind, model: 'Sonnet 5.5',
+          rewrite: { kind: b.kind, sections: [{ id: 'change', label: 'Change', text: 'Add the export.', gaps: [] }] }, text: REWRITE, paths: [] }) });
       }
       if (u === '/api/prompt-check/kind-correction') { rec.corrections.push(JSON.parse(opts.body)); return ok({ ok: true, at: 't' }, 201); }
       if (u.includes('/api/settings') && method === 'GET') return ok({ chat: { promptCheck: rec.on }, app: {}, theme: {} });
@@ -236,4 +243,24 @@ test('the kind label appears only inside the chip (no other kind text in the New
   const outside = [...form.querySelectorAll('*')].filter((n) => !n.closest('[data-prompt-check]')
     && [...n.childNodes].some((c) => c.nodeType === 3 && c.textContent.includes('Implementation task')));
   assert.deepEqual(outside, []);
+});
+
+test('Improve: Use this writes into #prompt through its input path (re-check) with Undo shown; Undo restores it', async () => {
+  const s = await boot();
+  await s.graded();
+  s.doc.querySelector('[data-prompt-improve-open]').click();
+  await s.ctx.settle(4);
+  assert.equal(s.rec.improves.length, 1);
+  assert.equal(s.rec.improves[0].projectDir, '/a/web');
+  s.doc.querySelector('[data-improve-act="use"]').click();
+  await s.ctx.settle(4);
+  assert.equal(s.prompt.value, REWRITE);
+  s.timers.advance(PROMPT_CHECK_DEBOUNCE_MS);
+  assert.equal(s.rec.grades.at(-1).body.text, REWRITE, 'the rewrite is re-checked');
+  s.rec.grades.at(-1).reply();
+  await s.ctx.settle(4);
+  assert.ok(s.doc.querySelector('[data-improve-act="undo"]'), 'Undo still shown');
+  s.doc.querySelector('[data-improve-act="undo"]').click();
+  await s.ctx.settle(4);
+  assert.equal(s.prompt.value, TASK);
 });

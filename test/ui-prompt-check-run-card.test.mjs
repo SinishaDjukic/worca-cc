@@ -12,6 +12,7 @@ import { textHash, PROMPT_CHECK_DEBOUNCE_MS } from '../src/shared/prompt-check/f
 const TID = 'ask_00000001';
 const MID = 'askm_00000001';
 const CARD_ID = 'card_00000001';
+const REWRITE = 'Change: Add the export.\nWhere: [Architect · decide: which files or modules?]';
 const CARD = {
   target: 'project', projectKey: 'proj-00000001', projectName: 'proj', projectDir: '/repos/proj',
   workspaceId: null, workspaceName: null, members: null,
@@ -60,6 +61,12 @@ async function open(t, { card = CARD, state = 'proposed', on = true, extra = {} 
           }) });
           rec.grades.push(call);
         });
+      }
+      if (url === '/api/prompt-check/improve') {
+        const b = JSON.parse(opts.body);
+        (rec.improves ||= []).push(b);
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ requestId: b.requestId, source: 'model', kind: b.kind, model: 'Sonnet 5.5',
+          rewrite: { kind: b.kind, sections: [{ id: 'change', label: 'Change', text: 'Add the export.', gaps: [] }] }, text: REWRITE, paths: [] }) });
       }
       if (url === '/api/prompt-check/kind-correction') { rec.corrections.push(JSON.parse(opts.body)); return { ok: true, status: 201, json: async () => ({ ok: true }) }; }
       if (url === `/api/ask/threads/${TID}` && method === 'GET') return { ok: true, status: 200, json: async () => snap };
@@ -204,4 +211,24 @@ test('the card removed disposes its chip and aborts the in-flight check', async 
   s.ctx.panel.destroy();                              // the card's cache entry is pruned: its dispose runs
   assert.equal(live.aborted, true);
   assert.equal(chips(s).length, 0);
+});
+
+test('Improve: Use this writes into the brief through its input path (count, re-check) with Undo shown; Undo restores it', async (t) => {
+  const s = await open(t);
+  await s.graded();
+  s.doc.querySelector('[data-prompt-improve-open]').click();
+  await s.settle();
+  assert.equal(s.rec.improves.length, 1);
+  assert.equal(s.rec.improves[0].text, 'Fix the login bug');
+  s.doc.querySelector('[data-improve-act="use"]').click();
+  await s.settle();
+  assert.equal(s.brief().value, REWRITE);
+  assert.equal(s.doc.querySelector('.ask-rp-count').textContent, `${REWRITE.length} chars`);
+  assert.equal(s.doc.activeElement, s.brief());
+  await s.graded();
+  assert.equal(s.rec.grades.at(-1).body.text, REWRITE, 'the rewrite is re-checked');
+  assert.ok(s.doc.querySelector('[data-improve-act="undo"]'), 'Undo still shown');
+  s.doc.querySelector('[data-improve-act="undo"]').click();
+  await s.settle();
+  assert.equal(s.brief().value, 'Fix the login bug');
 });
