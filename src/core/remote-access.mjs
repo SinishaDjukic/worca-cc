@@ -157,6 +157,19 @@ export function checkRemoteAccessConfig(cfg, { bindHost = '127.0.0.1', gateways 
   return { errors, warnings };
 }
 
+/**
+ * The 403 text for a request the host or peer guard refused. In local mode a request carrying an identity
+ * proxy's token header came through a proxy on another host (another container, for one): worca refuses it
+ * because WORCA_ALLOWED_HOSTS names no host, so say that rather than "localhost-only tool".
+ */
+export function hostForbiddenMessage(cfg, headers = {}) {
+  if (isRemoteMode(cfg)) return 'forbidden: host not allowed (see WORCA_ALLOWED_HOSTS)';
+  if (headers[ISSUER_TOKEN_HEADER] || headers['cf-access-jwt-assertion']) {
+    return 'forbidden: an identity proxy is in front of worca but WORCA_ALLOWED_HOSTS names no host: set it to the host people open (not localhost); see docs/auth.md';
+  }
+  return 'forbidden: worca is a localhost-only tool';
+}
+
 /** "a Cloudflare Access check" | "an identity issuer check": for log lines and messages. */
 export function identityLabel(identity) {
   if (!identity) return 'no identity check';

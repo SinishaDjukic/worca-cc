@@ -4,7 +4,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -92,6 +92,24 @@ test('initDir copies every compose file, seeds .env once (0600) and never overwr
     const r2 = await initDir(dir, { projects: '/elsewhere', exec });
     assert.equal(r2.envCreated, false);
     assert.equal(readFileSync(join(dir, '.env'), 'utf8'), env, '.env is the user\'s file');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('up --with auth prints the sign-in address, not worca\'s unpublished port', async () => {
+  const dir = tmp();
+  try {
+    const { exec } = fakeExec();
+    await initDir(dir, { projects: '/Users/me/dev', exec });
+    const env = join(dir, '.env');
+    appendFileSync(env, '\nWORCA_AUTH_HOST=worca.example.com\n');
+    let o = io();
+    assert.equal(await cmdContainer(['up', '--with', 'auth'], { ...o, exec, dir }), 0);
+    assert.ok(o.lines.some((l) => l.includes('https://worca.example.com')), o.lines.join('\n'));
+    assert.ok(!o.lines.some((l) => l.includes('4317')));
+    appendFileSync(env, 'WORCA_AUTH_REDIRECT_URL=http://localhost:4180/oauth2/callback\n');
+    o = io();
+    assert.equal(await cmdContainer(['up'], { ...o, exec, dir }), 0);
+    assert.ok(o.lines.some((l) => l.includes('http://localhost:4180   overlays: auth')), o.lines.join('\n'));
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

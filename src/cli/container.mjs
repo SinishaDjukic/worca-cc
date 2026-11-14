@@ -229,6 +229,16 @@ export function dotenvValue(raw) {
   return q ? q[2] : s.replace(/\s+#.*$/, '').trim();
 }
 
+/** Where people open worca after `up`: through the sign-in proxy with the auth overlay (worca's own port is
+ *  not published then), else worca's port on localhost. */
+function worcaUrl(dir, overlays) {
+  if (!overlays.includes('auth')) return `http://localhost:${readEnvValue(dir, 'WORCA_PORT') || '4317'}`;
+  const redirect = readEnvValue(dir, 'WORCA_AUTH_REDIRECT_URL');
+  if (redirect) { try { return new URL(redirect).origin; } catch { /* compose reports the bad value */ } }
+  const host = readEnvValue(dir, 'WORCA_AUTH_HOST');
+  return host ? `https://${host}` : `http://localhost:${readEnvValue(dir, 'WORCA_AUTH_PORT') || '4180'}`;
+}
+
 function readEnvValue(dir, key) {
   try {
     const m = new RegExp(`^\\s*(?:export\\s+)?${key}\\s*=(.*)$`, 'm').exec(readFileSync(join(dir, '.env'), 'utf8'));
@@ -367,11 +377,10 @@ export async function cmdContainer(argv, { out, c, fail, exec = defaultExec, dir
         overlays = parsed;
       }
       if (a.with !== null || (tag && tag !== state.tag)) writeState(dir, { ...state, with: overlays, ...(tag ? { tag } : {}) });
-      const port = readEnvValue(dir, 'WORCA_PORT') || '4317';
       const code = compose(['up', '-d']);
       if (code !== 0) return code;
       const shown = [...overlays, ...extra];
-      out(`${c('bold', 'Worca')}  http://localhost:${port}${shown.length ? `   overlays: ${shown.join(', ')}` : ''}`);
+      out(`${c('bold', 'Worca')}  ${worcaUrl(dir, shown)}${shown.length ? `   overlays: ${shown.join(', ')}` : ''}`);
       out(`  Log in once:  ${c('bold', 'worca container login')}`);
       out(`  Stop:         ${c('bold', 'worca container down')}`);
       return 0;

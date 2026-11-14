@@ -221,7 +221,7 @@ import { policyCatalogModels, cachedPolicyHomes } from '../src/core/policy/cache
 import { pickFolderNative, pickAppNative, nativeDialogAvailable } from '../src/core/folder-dialog.mjs';
 import {
   readRemoteAccessConfig, checkRemoteAccessConfig, isRemoteMode, createHostGuard, createIdentityCheck, isInContainer,
-  isThisBox, LOCAL_HOSTNAMES, hostnameOf, createPeerGuard, readRouteGateways,
+  isThisBox, LOCAL_HOSTNAMES, hostnameOf, createPeerGuard, readRouteGateways, hostForbiddenMessage,
 } from '../src/core/remote-access.mjs';
 import { identityHeaderTrust } from '../src/core/trusted-proxies.mjs';
 import {
@@ -760,9 +760,7 @@ const SEEN_SIGN_INS = new Set();
 const SIGN_IN_HINT = REMOTE_ACCESS.identity?.provider === 'issuer'
   ? 'unauthorized: sign in through the identity proxy (your sign-in has expired or is missing)'
   : 'unauthorized: sign in through the identity proxy (Cloudflare Access)';
-const HOST_FORBIDDEN = REMOTE_MODE
-  ? 'forbidden: host not allowed (see WORCA_ALLOWED_HOSTS)'
-  : 'forbidden: worca is a localhost-only tool';
+const hostForbidden = (req) => hostForbiddenMessage(REMOTE_ACCESS, req.headers);
 
 // Browser extension pairings (docs/browser-extension.md). The path resolves per use.
 const extensionPairing = createExtensionPairing({ file: () => path.join(worcaHome(), 'extension-pairings.json') });
@@ -1849,7 +1847,7 @@ function setExtensionCors(req, res, origin) {
   if (req.headers['access-control-request-private-network'] === 'true') res.setHeader('Access-Control-Allow-Private-Network', 'true');
 }
 app.use((req, res, next) => {
-  if (!isTrustedPeer(req)) return res.status(403).json({ error: HOST_FORBIDDEN });   // G4: a loopback Host from the network
+  if (!isTrustedPeer(req)) return res.status(403).json({ error: hostForbidden(req) });   // G4: a loopback Host from the network
   dropUntrustedIdentityHeader(req);
   const d = decideExtensionRequest(req, { remoteMode: REMOTE_MODE, verify: extensionPairing.verify });
   if (d.kind === 'pass') return next();
@@ -1864,7 +1862,7 @@ app.use((req, res, next) => {
 
 app.use((req, res, next) => {
   if (!req.worcaExtensionRoute && !isLocalRequest(req)) {   // S1 itself is unchanged for every other request
-    return res.status(403).json({ error: HOST_FORBIDDEN });
+    return res.status(403).json({ error: hostForbidden(req) });
   }
   next();
 });

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import {
   parseAllowedHosts, readRemoteAccessConfig, checkRemoteAccessConfig, isRemoteMode,
   createHostGuard, isInContainer, isPeerThisMachine, isThisBox, createIdentityCheck, hostnameOf,
-  createPeerGuard, isLoopbackPeer, routeGateways, readRouteGateways,
+  createPeerGuard, isLoopbackPeer, routeGateways, readRouteGateways, hostForbiddenMessage,
 } from '../src/core/remote-access.mjs';
 import { TEAM, AUD, makeAccessKey, signAccessJwt, certsFetch } from './helpers/access-jwt.mjs';
 
@@ -205,4 +205,14 @@ test('hostnameOf handles Host values and Origin URLs', () => {
   assert.equal(hostnameOf('https://example.com'), 'example.com');
   assert.equal(hostnameOf('[::1]:4317'), '[::1]');
   assert.equal(hostnameOf(''), null);
+});
+
+test('hostForbiddenMessage names WORCA_ALLOWED_HOSTS when a proxy token arrives in local mode', () => {
+  const local = readRemoteAccessConfig({ WORCA_ALLOWED_HOSTS: 'localhost', WORCA_IDENTITY_ISSUER: 'https://idp.example.com' });
+  assert.equal(hostForbiddenMessage(local, {}), 'forbidden: worca is a localhost-only tool');
+  for (const h of ['x-worca-identity', 'cf-access-jwt-assertion']) {
+    assert.match(hostForbiddenMessage(local, { [h]: 'a.b.c' }), /identity proxy is in front .* WORCA_ALLOWED_HOSTS names no host/);
+  }
+  const remote = readRemoteAccessConfig({ WORCA_ALLOWED_HOSTS: 'w.example.com' });
+  assert.equal(hostForbiddenMessage(remote, { 'x-worca-identity': 'a.b.c' }), 'forbidden: host not allowed (see WORCA_ALLOWED_HOSTS)');
 });
