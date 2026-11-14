@@ -29,7 +29,7 @@ before(async () => {
   _resetForTests();
   repo = gitDir('restart');
   execSync('git branch -M main && git branch worca-cc/pager', { cwd: repo });
-  execSync('git checkout -q -b worca-cc/ahead && git commit -q --allow-empty -m built && git checkout -q main', { cwd: repo });
+  execSync('git checkout -q -b worca-cc/ahead && git -c user.name=test -c user.email=test@example.invalid commit -q --allow-empty -m built && git checkout -q main', { cwd: repo });
   await addProject({ name: 'restart-repo', path: repo });
   ({ app, runs } = await import('../ui/server.mjs'));
   srv = http.createServer(app);
