@@ -79,3 +79,15 @@ test('search: a chat\'s schedule opens its own card (Schedules D15), never the d
   hit.click(); await new Promise((r) => setTimeout(r, 60));
   assert.deepEqual(opened, [['s5', 'c1']], 'its own card in its chat');
 });
+
+test('with no usage reading, Usage and costs wears an empty ring glyph and the dollar spend, never a percent (small.usage-rings)', () => {
+  const { w } = appHost();
+  w.PulseModel.rings = () => [];   // no provider reading: the same acctMenu draws demo and live
+  w.document.querySelector('[data-acct]').click();
+  const row = w.document.querySelector('[data-sub="usage"]');
+  const ring = row.querySelector('.pz-mi-ring');
+  assert.ok(ring, 'the ring glyph is drawn');
+  assert.match(ring.getAttribute('style'), /--p:0;/, 'an empty track, no arc');
+  assert.doesNotMatch(row.textContent, /%/);
+  assert.match(row.textContent, /\$/);
+});

@@ -82,6 +82,35 @@ test('the stub gh answers merge, re-run and checks, and refuses a merge under ST
   assert.deepEqual([view(PR_APPROVED), view(PR_FAILING)], ['MERGED', 'OPEN']);
 });
 
+test('the stopped and both PR runs carry their ledger steps; the plan run has the run\'s own role-review finding (D10, D11)', async () => {
+  const { getDb } = await import('../src/core/db.mjs');
+  const steps = (id) => getDb().prepare('SELECT agent_key, status FROM pipeline_steps WHERE pipeline_id = ? ORDER BY rowid').all(id).map((r) => `${r.agent_key}:${r.status}`);
+  assert.deepEqual(steps(seeded.pipelines.stopped), ['clarify:done', 'planner:done', 'refiner:done', 'implementer:stopped']);
+  for (const k of ['approved', 'failing']) assert.equal(steps(seeded.pipelines[k]).length, 5);
+  const e = mod.runs.get(seeded.runs.plan), rr = e.orch?.state?.roleReviews || e.pendingQuestion?.plan?.roleReviews;
+  assert.ok((rr?.rounds || []).some((r) => (r.roles || []).some((x) => (x.findings || []).length)), 'at least one role finding');
+});
+
+test('the bell\'s sources: 4 tasks need you, 1 missed schedule, 1 project, 1 workspace question (D7)', async () => {
+  const { needsYouItems } = await import('../src/shared/needs-you.mjs');
+  const { inPlay } = await import('../ui/public/stillhet/live/live-map.mjs');
+  const get = async (p) => (await fetch(`${base}${p}`)).json();
+  const live = [...mod.runs.entries()].map(([runId, e]) => ({ runId, pipelineId: e.pipelineId, status: e.status, pendingQuestion: e.pendingQuestion ?? null, kind: e.kind })).filter(inPlay);
+  const pids = new Set(live.map((r) => r.pipelineId));
+  const { readPrState } = await import('../src/core/artifacts.mjs');
+  // GET /api/history is a skeleton without PR verdicts; the live adapter fills each row's PR through dev's POST
+  // /api/history/pr (its stored verdict, here read directly)
+  const hist = (await get('/api/history')).pipelines.filter((r) => !r.archived && !pids.has(r.id)).map((r) => ({ ...r, pr: readPrState(r.id) || r.pr }));
+  const ny = needsYouItems({ live: live.map((r) => ({ kind: 'live', status: r.status, ask: !!r.pendingQuestion, askKind: r.pendingQuestion?.kind || '', runId: r.runId, pipelineId: r.pipelineId })), history: hist.map((r) => ({ kind: 'hist', id: r.id, status: r.status, pr: r.pr })) });
+  assert.equal(ny.live.length + ny.history.length, 4, JSON.stringify({ live: ny.live.map((x) => x.status), hist: ny.history.map((x) => x.id) }));
+  assert.equal((await get('/api/schedules')).tickets.filter((t) => t.status === 'missed').length, 1);
+  assert.equal((await get('/api/projects')).projects.filter((p) => p.exists === false).length, 1);
+  const ws = (await get('/api/workspaces')).workspaces;
+  const maps = await Promise.all(ws.map((w) => get(`/api/workspaces/${w.id}/map`)));
+  assert.equal(maps.flatMap((m) => m.edges || []).filter((x) => (x.state || 'auto') === 'auto' && /^(heuristic|inferred)$/.test(x.confidence)).length, 1);
+});
+
+// last: it starts a fix round on the failing PR, which takes that PR out of Needs you (dev's D5)
 test('the seeded failing PR can be fixed: its branch is on a real origin at the PR\'s head, so Fix checks starts a round (web-UI review cycle 1)', async () => {
   const r = await fetch(`${base}/api/pr/fix-checks`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: seeded.pipelines.failing, projectKey: seeded.project }) });
   const body = await r.json();

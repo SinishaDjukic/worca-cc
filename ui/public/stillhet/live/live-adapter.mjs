@@ -32,7 +32,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
   const progress = new Map();   // R-ux-12: each live run's place among its stages, from its `state` frames (runProgress)
   const projects = () => sources.projects?.projects || [];
   // the live chat (D5): its threads are read and subscribed over this adapter's fetch and socket
-  const chat = startChatLive({ fetch, now, toast, send: (m) => { if (sock && sock.readyState === 1) sock.send(JSON.stringify(m)); }, tasksOf: (id) => (world.part?.('chats') || []).find((c) => c.id === id)?.tasks || [], progressOf: (id) => progress.get(id) || {}, askOf: (id) => (live.get(id) || [...live.values()].find((r) => r.pipelineId === id))?.pendingQuestion || null, ...(open ? { open } : {}), go });
+  const chat = startChatLive({ fetch, now, toast, afterPr: () => askPrs(), send: (m) => { if (sock && sock.readyState === 1) sock.send(JSON.stringify(m)); }, tasksOf: (id) => (world.part?.('chats') || []).find((c) => c.id === id)?.tasks || [], progressOf: (id) => progress.get(id) || {}, askOf: (id) => (live.get(id) || [...live.values()].find((r) => r.pipelineId === id))?.pendingQuestion || null, ...(open ? { open } : {}), go });
   chat.chatOfRun = (id) => chatOfRun(sources.runLinks?.links || [], id);   // a task's starting chat, archived ones too (D7)
   // a run by its run or pipeline id: its pipeline id, when it started and ended (a live run has not ended), and its scope
   // (store key, project folder, whether it worked on a folder copy) for dev's routes that need one (POST /api/pr, recovery-patch)

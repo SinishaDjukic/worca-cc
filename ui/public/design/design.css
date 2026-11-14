@@ -1,0 +1,408 @@
+/* ---------- Design ---------- */
+body.view-design .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}
+.view[data-view="design"]{flex:1 1 auto;min-height:0;position:relative;}
+#design-host{height:100%;display:flex;min-height:0;}
+.dz-spacer{flex:1 1 auto;}
+.dz-meta{color:var(--ink-2);font-size:var(--fs-meta);}
+
+/* The plan card in the chat */
+.dz-plan{gap:8px;padding:12px 8px 8px;border-width:1px;}
+.dz-plan-head{display:flex;align-items:baseline;gap:8px;padding:0 8px;}
+.dz-plan-head b{font-weight:600;}
+.dz-plan-list{display:flex;flex-direction:column;}
+.dz-plan-row{display:flex;align-items:center;gap:10px;height:26px;padding:0 8px;border-radius:var(--r-sm);color:var(--ink-2);}
+.dz-plan-row.is-active{color:var(--ink);font-weight:500;}
+.dz-plan-row.is-done{color:var(--ink);}
+.dz-plan-row.is-failed{color:var(--red-ink-strong);font-weight:500;}
+.dz-sdot{flex:none;width:8px;height:8px;border-radius:50%;box-shadow:inset 0 0 0 1.5px var(--seq);}
+.is-active > .dz-sdot{background:var(--peach);box-shadow:none;}
+.is-done > .dz-sdot{background:var(--green);box-shadow:none;}
+.is-failed > .dz-sdot{background:var(--red);box-shadow:none;}
+.is-waiting > .dz-sdot{background:var(--amber);box-shadow:none;}
+.is-stopped > .dz-sdot{background:var(--seq);box-shadow:none;}
+.dz-plan-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.dz-who{display:flex;gap:3px;}
+.dz-who-dot{display:block;width:8px;height:8px;border-radius:50%;color-scheme:dark;}
+.dz-plan-n{min-width:14px;text-align:right;color:var(--ink-2);font-size:var(--fs-meta);font-weight:400;font-variant-numeric:tabular-nums;}
+
+.dz-retry-row{display:flex;align-items:center;gap:8px;min-height:32px;padding:0 8px;color:var(--ink);}
+.dz-retry-row span{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.dz-retry-row small{color:var(--ink-2);font-size:var(--fs-meta);}
+.dz-retry-row small.dz-retry-err, p.dz-retry-err{color:var(--red-ink);}
+.dz-plan-wrap{display:flex;flex-direction:column;gap:14px;}
+.dz-chat-slot > .dz-plan-wrap{padding:14px;}
+
+/* The stage */
+.dz-stage{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--panel);}
+.dz-stage-head{flex:none;display:flex;align-items:center;gap:10px;height:52px;padding:0 14px;border-bottom:1px solid var(--line);position:relative;z-index:3;}
+.dz-state{display:inline-flex;align-items:center;gap:8px;font-weight:600;white-space:nowrap;}
+.dz-state-dot{width:8px;height:8px;border-radius:50%;background:var(--seq);}
+.dz-state.is-work .dz-state-dot{background:var(--peach);}
+.dz-state.is-need .dz-state-dot{background:var(--amber);}
+.dz-state.is-fail .dz-state-dot{background:var(--red);}
+.dz-state.is-ok .dz-state-dot{background:var(--green);}
+.dz-seg button{display:inline-flex;align-items:center;justify-content:center;width:34px;padding:0;}
+.dz-seg svg{width:16px;height:16px;}
+.dz-wrap{position:relative;flex:1;min-height:0;background:var(--stage-well);overflow:hidden;}
+.dz-menu-anchor{position:relative;}
+
+/* The Export menu (board 6a) and its dialogs. The flyout writes the menu's viewport left and top, so it is fixed;
+   its z-index stays inside the stage head's stacking context, under the HUD and the Agents popover */
+.dz-export{position:fixed;width:244px;z-index:6;}
+.dz-export .menu-item svg{flex:none;width:16px;height:16px;color:var(--ink-2);}
+.dz-export .menu-item small{margin-left:auto;color:var(--ink-3);font-size:var(--fs-caption);}
+.dlg-status{margin:0;font-size:var(--fs-body);}
+.dlg-status.is-err{color:var(--red-ink);}
+.dsx-list{margin:0 0 12px;padding:4px 0;max-height:180px;overflow-y:auto;list-style:none;border:1px solid var(--line);border-radius:var(--r-sm);font-size:var(--fs-meta);}
+.dsx-list li{display:flex;align-items:baseline;gap:10px;padding:3px 10px;}
+.dsx-ref{min-width:0;font-family:var(--mono);overflow-wrap:anywhere;}
+.dsx-list small{flex:none;margin-left:auto;color:var(--ink-2);white-space:nowrap;}
+.dsx-more{margin:8px 0 0;color:var(--ink-2);font-size:var(--fs-meta);}
+.dsx-list .dsx-more{margin:0;}
+/* A video's render (Video (MP4)): one bar from 0 to 100 %, its number beside it. */
+.dsx-progress{display:flex;align-items:center;gap:12px;}
+.dsx-bar{flex:1 1 auto;min-width:0;height:6px;border-radius:var(--r-xs);background:var(--line-2);overflow:hidden;}
+.dsx-bar i{display:block;width:0;height:100%;border-radius:var(--r-xs);background:var(--ink);transition:width .4s ease;}
+.dsx-pct{flex:none;min-width:4ch;text-align:right;color:var(--ink-2);font-size:var(--fs-meta);font-variant-numeric:tabular-nums;}
+@media (forced-colors:active){.dsx-bar{background:Canvas;border:1px solid CanvasText;}.dsx-bar i{background:CanvasText;}}
+/* The engine gate's dialog (engine-gate-dialog.mjs): Cancel, Use Claude and Allow unguarded do not fit one row on a
+   phone, and `.confirm-actions` does not wrap, so the row ran out of the card on the left (390 px, Chrome) */
+.dz-gate-modal .confirm-actions{flex-wrap:wrap;}
+
+/* The HUD */
+.dz-hud{position:absolute;left:50%;bottom:20px;transform:translateX(-50%);z-index:4;display:flex;align-items:center;gap:12px;height:44px;max-width:calc(100% - 16px);padding:0 6px 0 14px;color-scheme:dark;border:1px solid var(--glass-line);border-radius:var(--r-md);background:var(--panel-veil);-webkit-backdrop-filter:blur(18px) saturate(1.5);backdrop-filter:blur(18px) saturate(1.5);box-shadow:var(--shadow-pop);color:var(--ink);white-space:nowrap;font-size:var(--fs-meta);font-weight:500;font-variant-numeric:tabular-nums;}
+.dz-hud.is-none{display:none;}
+.dz-hud.is-confirm{padding-left:14px;}
+.dz-hud-text{min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.dz-dots{display:flex;align-items:center;gap:3px;flex:0 1 auto;min-width:0;overflow:hidden;padding:3px;margin:-3px;}
+.dz-dots button{display:block;width:12px;height:18px;padding:0;border:0;background:none;cursor:pointer;position:relative;}
+.dz-dots button::after{content:"";position:absolute;left:2px;top:5px;width:8px;height:8px;border-radius:50%;background:var(--dot);transition:transform .1s;}
+.dz-dots button:hover::after{transform:scale(1.35);}
+.dz-dots button:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+.dz-dots button.is-wait::after{box-shadow:0 0 0 2px var(--amber);}
+.dz-line{position:relative;display:block;width:96px;flex:0 1 96px;min-width:24px;height:2px;border-radius:var(--r-xs);background:var(--line-2);overflow:hidden;}
+.dz-line i{position:absolute;left:0;top:0;bottom:0;background:var(--blue);transition:width .2s;}
+.dz-hud-cost{flex:none;color:var(--ink-2);}
+.dz-hud-acts{flex:none;display:flex;align-items:center;gap:4px;}
+.dz-hud .btn-icon svg{width:15px;height:15px;}
+.dz-hud .btn-icon.is-off{color:var(--ink-3);}
+
+/* The tooltip on a HUD dot */
+.dz-tip{position:absolute;left:50%;bottom:72px;transform:translateX(-50%);z-index:5;color-scheme:dark;display:flex;align-items:center;gap:8px;height:30px;padding:0 10px;border:1px solid var(--glass-line);border-radius:var(--r-sm);background:var(--panel);box-shadow:var(--shadow-pop);color:var(--ink);font-size:var(--fs-meta);white-space:nowrap;}
+.dz-tip-dot{width:8px;height:8px;border-radius:50%;background:var(--dot);}
+.dz-tip b{font-weight:600;}
+.dz-tip span{color:var(--ink-2);}
+
+/* The Agents popover */
+.dz-pop{position:absolute;left:50%;bottom:74px;transform:translateX(-50%);z-index:5;width:min(640px,calc(100% - 16px));max-height:calc(100% - 96px);display:flex;flex-direction:column;color-scheme:dark;border:1px solid var(--glass-line);border-radius:var(--r-md);background:var(--panel);box-shadow:var(--shadow-sheet);color:var(--ink);}
+.dz-pop-head{flex:none;display:flex;align-items:center;gap:8px;height:44px;padding:0 6px 0 14px;border-bottom:1px solid var(--line);}
+.dz-pop-head b{font-weight:600;}
+.dz-pop-list{flex:1;min-height:0;overflow-y:auto;padding:4px 6px 6px;scrollbar-width:thin;}
+.dz-arow{display:grid;grid-template-columns:8px 112px 78px minmax(0,1fr) 52px 28px;align-items:center;column-gap:10px;height:34px;padding:0 4px 0 8px;border-radius:var(--r-sm);font-size:var(--fs-meta);font-variant-numeric:tabular-nums;}
+.dz-arow:hover,.dz-arow.is-picked{background:var(--hover);}
+.dz-arow.is-gone{color:var(--ink-3);}
+.dz-adot{display:block;width:8px;height:8px;border-radius:50%;}
+.dz-aname{font-size:var(--fs-body);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.dz-astat{color:var(--ink-2);white-space:nowrap;}
+.dz-astat.is-need{color:var(--amber-ink);}
+.dz-astat.is-fail{color:var(--red-ink);}
+.dz-aact{min-width:0;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.dz-acost{text-align:right;color:var(--ink-2);}
+.dz-arow .btn svg{width:13px;height:13px;}
+
+/* The chat ask card at the column's width: the failed card sits in the chat column */
+.dz-chat .chat-rc-q{margin-top:0;}
+.dz-chat .chat-q .chat-rc-q-head{font-size:15px;margin-bottom:10px;}
+.dz-chat .chat-rc-q .qblock{padding:14px;}
+.dz-chat .chat-rc-q .qtext{font-size:var(--fs-body);}
+.dz-chat .qpanel-foot .btn{flex:none;}
+/* A fields card's footer wears the neutral line, as the questions card's (chat-scope.css): never the amber one. */
+.dz-chat .chat-q.chat-rc-q .qpanel[data-kind="form"] .qpanel-foot{border-color:var(--line);}
+
+/* The chat dock (chat.mjs): the mockup's chat column on the Ask classes; only the thread scrolls, so the composer stays in view */
+.dsc-root{position:relative;flex:1;min-height:0;display:flex;flex-direction:column;}
+.dz-chat .ask-transcript{flex:1 1 auto;min-height:0;overflow-y:auto;padding:14px 14px 12px;scrollbar-width:thin;}
+.dz-chat .ask-transcript-col{gap:14px;}
+.dz-reply{margin:0;color:var(--ink);font-size:var(--fs-body);line-height:1.6;}
+/* The reply renders as markdown (.ask-md p has 6px margins): flush at its edges, as the mockup's one paragraph */
+.dsc-text>:first-child{margin-top:0;}
+.dsc-text>:last-child{margin-bottom:0;}
+.dz-reply-meta{color:var(--ink-2);font-size:var(--fs-meta);}
+.dz-chat .ask-user-bubble{max-width:88%;}
+.dz-chat .ask-composer{padding:8px 12px 12px;}
+.dz-chat .ask-composer-box{border-color:var(--line-2);border-radius:var(--r-lg);background:var(--panel);}
+.dz-input{width:100%;display:block;min-height:0;resize:none;border:0;background:transparent;color:var(--ink);font:400 var(--fs-body)/1.6 var(--sans);padding:6px 6px 8px;outline:none;}
+.dz-input:focus,.dz-input:focus-visible{outline:none;background:transparent;}
+.dz-input::placeholder{color:var(--ink-2);}
+.dz-pin-chip{display:inline-flex;align-items:center;gap:6px;height:28px;max-width:100%;padding:0 3px 0 8px;border-radius:var(--r-xs);background:var(--slate-bg);color:var(--slate-ink);font:500 12px/1 var(--sans);}
+.dz-pin-chip svg{flex:none;}
+.dz-pin-chip span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.dz-pin-x{display:grid;place-items:center;width:20px;height:20px;padding:0;border:0;border-radius:var(--r-xs);background:none;color:inherit;cursor:pointer;}
+.dz-pin-x:hover{background:var(--quiet-hover);}
+.dz-fast{display:inline-flex;align-items:center;gap:8px;height:28px;padding:0 4px;color:var(--ink);font:500 var(--fs-meta)/1 var(--sans);white-space:nowrap;}
+.dz-fast-n{color:var(--ink-2);font-weight:400;}
+.dz-fast .switch-label{order:-1;font:inherit;color:inherit;}
+/* The lead's and the builders' model pickers (model-pills.mjs) wear the Chat picker's .ask-model-btn and .ask-pop-model;
+   only where the menu sits is Design's: a fixed popup placed by side-flyout.mjs beside its button. */
+.dz-models{display:inline-flex;align-items:center;gap:2px;min-width:0;}
+.dz-model-btn{flex:none;white-space:nowrap;}
+.ask-pop.dz-model-pop{position:fixed;right:auto;bottom:auto;z-index:6;max-height:min(420px,70vh);}
+/* The composer's settings popup (composer-settings.mjs): the two pickers as rows, then Build fast. The flyout writes its
+   viewport left and top, so it is fixed; a picker's menu opens beside it as its submenu. */
+.dz-set{display:inline-flex;}
+.dz-set-pop{position:fixed;width:264px;z-index:6;}
+.dz-set-pop .dz-models{display:flex;flex-direction:column;align-items:stretch;gap:0;}
+.dz-set-pop .dz-model-btn{justify-content:flex-start;width:100%;height:32px;padding:0 9px;border-radius:var(--r-sm);font-size:inherit;}
+.dz-set-pop .dz-model-btn .ask-model-btn-engine{flex:none;min-width:58px;text-align:left;color:var(--ink);}
+.dz-set-pop .dz-model-btn .ask-model-btn-label{min-width:0;overflow:hidden;text-overflow:ellipsis;font-weight:400;}
+.dz-set-pop .dz-model-btn > :last-child{flex:none;margin-left:auto;transform:rotate(-90deg);color:var(--ink-3);}
+.dz-set-pop .dz-fast{display:flex;width:100%;height:32px;padding:0 9px;font-size:inherit;cursor:pointer;}
+.dz-set-pop .dz-fast-n{font-size:var(--fs-meta);}
+.dz-set-pop .dz-fast .switch{order:2;margin-left:auto;}
+.dsc-user{align-items:flex-end;}
+.dsc-sent-pins{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;max-width:100%;}
+.dsc-sent-pin{padding-right:8px;}
+.dsc-tool{min-width:0;font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.dsc-tool.is-error,.dsc-err,.dsc-round-err{color:var(--red-ink);}
+/* A reply's tool calls, folded into one sentence (stepsRow); the build's milestones as sentences (buildFeed). */
+.dsc-steps{display:flex;flex-direction:column;gap:4px;min-width:0;}
+.dsc-steps-head{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:0;border:0;background:none;color:inherit;font:inherit;text-align:left;}
+button.dsc-steps-head{cursor:pointer;}
+button.dsc-steps-head:hover{color:var(--ink);}
+.dsc-steps-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dsc-steps-chev{flex:none;transition:transform .15s;}
+.dsc-steps-head[aria-expanded="true"] .dsc-steps-chev{transform:rotate(90deg);}
+.dsc-steps-body{display:flex;flex-direction:column;gap:2px;padding-left:10px;}
+.dsc-build{display:flex;flex-direction:column;align-items:flex-start;gap:6px;color:var(--ink-2);}
+.dsc-build-line{margin:0;line-height:1.5;}
+.dsc-build-line.is-fail{color:var(--red-ink);}
+.dsc-build-more{padding:0;border:0;background:none;color:var(--ink-3,var(--ink-2));font:inherit;font-size:var(--fs-meta);cursor:pointer;}
+.dsc-build-more:hover{color:var(--ink);}
+.dsc-round{display:flex;flex-wrap:wrap;align-items:center;gap:4px 10px;border-radius:var(--r-sm);}
+.dsc-round-text{flex:1 1 auto;min-width:0;}
+.dsc-round-err{flex-basis:100%;}
+.dsc-cost{align-self:flex-start;font-variant-numeric:tabular-nums;}
+.dsc-act{display:flex;align-items:center;gap:8px;padding:0 4px 6px;color:var(--ink-2);font-size:var(--fs-meta);}
+.dsc-note{margin:0 0 6px;padding:0 4px;color:var(--ink-2);font-size:var(--fs-meta);}
+.dsc-point[aria-pressed="true"]{background:var(--slate-bg);color:var(--slate-ink);}
+.dsc-drop{position:absolute;inset:8px;z-index:2;display:flex;align-items:center;justify-content:center;border:1px dashed var(--line-2);border-radius:var(--r-md);background:var(--panel);color:var(--ink-2);font-size:var(--fs-body);pointer-events:none;}
+/* Made pictures (pictures.mjs) */
+.dsc-pics{display:flex;flex-wrap:wrap;align-items:flex-end;gap:7px;}
+.dsc-pic{display:flex;flex-direction:column;gap:4px;min-width:0;padding:0;border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);font:inherit;font-size:var(--fs-meta);line-height:1.4;text-align:left;}
+button.dsc-pic{cursor:pointer;}
+button.dsc-pic:hover{color:var(--ink);}
+button.dsc-pic:hover .dsc-pic-box{border-color:var(--hover-outline);}
+.dsc-pic:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.dsc-pic.is-wide{width:180px;}
+.dsc-pic.is-tall{width:87px;}
+.dsc-pic.is-square{width:130px;}
+.dsc-pic-box{display:block;width:100%;overflow:hidden;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--field);}
+.dsc-pic.is-wide .dsc-pic-box{height:120px;}
+.dsc-pic.is-tall .dsc-pic-box{height:130px;}
+.dsc-pic.is-square .dsc-pic-box{height:130px;}
+.dsc-pic-box > img{display:block;width:100%;height:100%;object-fit:cover;}
+.dsc-pic.is-missing .dsc-pic-box > img{visibility:hidden;}
+.dsc-pic-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.dsc-pic.is-making .dsc-pic-box{border-style:dashed;border-color:var(--line-2);}
+.dsc-pic-line.is-error{white-space:normal;overflow-wrap:anywhere;}
+.dz-pics-model{min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.dz-set-pop .dz-pics-off{cursor:default;}
+.dz-pics-off .dz-pics-setup{margin-left:auto;color:var(--blue-ink-strong);font-weight:500;text-decoration:none;}
+/* The chat dock's Sound row (createSoundRow): no switch, as the Pictures row's Set up. The label lines the summary up
+   with the pickers' model names; the quiet Change sits at the edge, its own padding in place of the row's. */
+.dz-set-pop .dz-sound-row{padding-right:2px;cursor:default;}
+.dz-sound-row .switch-label{flex:none;min-width:58px;}
+.dz-sound-sum{min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--ink-2);font-weight:400;}
+.dz-sound-change{flex:none;margin-left:auto;}
+.dz-pic-modal .dz-pic-card{width:min(770px,100%);}
+.dz-pic-card.dlg > .dlg-head::after{opacity:1;}
+.dz-pic-head{display:flex;align-items:center;gap:8px;}
+.dz-pic-head h2{flex:1;min-width:0;margin:0;font-size:var(--fs-body);font-weight:600;overflow-wrap:anywhere;}
+.dz-pic-full{display:block;max-width:100%;max-height:60vh;margin:0 auto 16px;border-radius:var(--r-sm);background:var(--field);object-fit:contain;}
+.dz-pic-h{margin:0 0 4px;font-size:var(--fs-body);font-weight:600;}
+.dz-pic-desc{margin:0;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;}
+.dz-pic-facts{margin:8px 0 0;color:var(--ink-2);font-size:var(--fs-meta);font-variant-numeric:tabular-nums;}
+/* The sound cards (sound-card.mjs), the white ask card: a voice tile and its sample button side by side in one row.
+   In rows every tile is a first child and `.qopt.sel + .qopt` never matches, so the dividers are restated. */
+.dsc-sound-voice{display:flex;align-items:center;gap:4px;min-width:0;}
+.dsc-sound-voice > .qopt{flex:1;min-width:0;}
+.dsc-sound-play{flex:none;}
+.dsc-sound-voice + .dsc-sound-voice > .qopt{border-top-color:var(--line);}
+.dsc-sound-voice > .qopt.sel,.dsc-sound-voice:has(> .qopt.sel) + .dsc-sound-voice > .qopt{border-top-color:transparent;}
+/* A field under the tiles (the key, the music's words): the label, the input and the help line in the column of the
+   tiles, with the free-text answer's look (run-detail.css .qblock > .qfree). */
+.dsc-sound-field{grid-column:1;display:flex;flex-direction:column;gap:6px;margin-top:8px;}
+@container chat-q (min-width:640px){.chat-q.chat-rc-q .dsc-sound-field{grid-column:2;}}
+.dsc-sound-label{color:var(--ink);font-size:var(--fs-meta);font-weight:600;}
+input.dsc-sound-key,input.dsc-sound-music{width:100%;height:32px;padding:6px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--field);color:var(--ink);font-family:inherit;font-size:var(--fs-body);line-height:1.5;transition:border-color .15s,background .15s;}
+input.dsc-sound-key::placeholder,input.dsc-sound-music::placeholder{color:var(--ink-2);}
+input.dsc-sound-key:focus,input.dsc-sound-music:focus{outline:none;border-color:var(--ink);background:var(--field);}
+input.dsc-sound-key:focus-visible,input.dsc-sound-music:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.dsc-sound-help{margin:0;color:var(--ink-2);font-size:var(--fs-meta);line-height:1.5;}
+.dsc-sound-said{margin:0;padding:0 4px;color:var(--ink-2);font-size:var(--fs-meta);line-height:1.5;}
+
+/* The page, the frame and the overlay */
+.dz-studio{flex:1;min-width:0;min-height:0;display:flex;background:var(--panel);}
+.dz-chat{flex:0 0 360px;width:360px;min-height:0;display:flex;flex-direction:column;border-right:1px solid var(--line);background:var(--panel);--ask-col-max:100%;--ask-col-inset:14px;--ask-box-top:calc(100% - 10px);}
+.dz-chat .chat-head{gap:6px;}
+.dz-chat-title{min-width:0;font-size:var(--fs-body);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.dz-kind{height:20px;padding:0 6px;border-radius:var(--r-xs);background:var(--field);color:var(--ink-2);font-size:var(--fs-caption);font-weight:500;line-height:20px;white-space:nowrap;}
+.dz-chat-slot{flex:1;min-height:0;display:flex;flex-direction:column;overflow-y:auto;}
+.frame-box{position:absolute;left:0;top:0;transform-origin:0 0;background:var(--stage-page);transition:transform var(--cam-ms,0ms) cubic-bezier(.65,0,.35,1);}
+.frame-box.is-zoomed{box-shadow:0 0 0 1px var(--stage-edge);}
+.dz-frame{position:absolute;inset:0;display:block;width:100%;height:100%;border:0;background:var(--stage-page);}
+.dz-frame.is-next{visibility:hidden;}
+.frame-box.is-narrow .dz-frame{border-radius:var(--r-md);}
+.overlay-clip{position:absolute;inset:0;overflow:hidden;pointer-events:none;}
+.overlay-doc{position:absolute;left:0;top:0;width:100%;pointer-events:none;color-scheme:dark;--k:calc(1 / var(--s,1));}
+.dz-cursor{--c:var(--crew);position:absolute;left:0;top:0;transform:translate(var(--x),var(--y)) scale(var(--k));transform-origin:0 0;transition:transform var(--glide,120ms) cubic-bezier(.65,0,.35,1);pointer-events:auto;cursor:pointer;}
+.dz-cursor.is-waiting{--c:var(--amber);}
+.dz-cursor.is-leaving{pointer-events:none;transition-timing-function:cubic-bezier(.55,.085,.68,.53);}
+.overlay-doc.is-pass .dz-cursor{pointer-events:none;}
+.dz-cursor > svg{display:block;width:16px;height:17px;fill:var(--c);stroke:var(--stage-chip-ink);stroke-width:1;stroke-linejoin:round;filter:drop-shadow(0 1px 2.5px var(--stage-cursor-shadow));}
+.dz-cursor-label{position:absolute;left:12px;top:13px;height:18px;padding:0 6px;border-radius:var(--r-xs);display:inline-flex;align-items:center;gap:2px;background:var(--c);color:var(--stage-chip-ink);font:500 11px/1 var(--sans);white-space:nowrap;}
+.dz-trail{position:absolute;left:0;top:0;height:calc(1.6px * var(--k));transform-origin:0 50%;background:linear-gradient(90deg,transparent,var(--crew));opacity:.67;animation:dz-fade var(--glide,340ms) linear forwards;}
+.dz-box{position:absolute;box-sizing:border-box;border:calc(1.5px * var(--k)) solid var(--stage-blue);--mc:var(--stage-blue);}
+.dz-box.is-orange{border-color:var(--stage-orange);--mc:var(--stage-orange);}
+.dz-box.is-red{border-color:var(--stage-red);--mc:var(--stage-red);}
+.dz-box.is-failed{border-style:dashed;border-color:var(--stage-red);--mc:var(--stage-red);}
+.dz-box.is-pin{border-width:calc(2px * var(--k));}
+.dz-h{position:absolute;width:calc(5px * var(--k));height:calc(5px * var(--k));background:var(--stage-handle);outline:calc(1px * var(--k)) solid var(--mc);transform:translate(-50%,-50%);}
+.dz-box.is-pin .dz-h{width:calc(7px * var(--k));height:calc(7px * var(--k));}
+.dz-h.tl{left:0;top:0;}.dz-h.tr{left:100%;top:0;}.dz-h.bl{left:0;top:100%;}.dz-h.br{left:100%;top:100%;}
+.dz-tag{position:absolute;left:50%;top:calc(100% + 7px * var(--k));height:17px;padding:0 5px;border-radius:var(--r-xs);background:var(--mc,var(--stage-blue));color:var(--stage-handle);font:500 11px/17px var(--mono);white-space:nowrap;transform-origin:50% 0;transform:translateX(-50%) scale(var(--k));}
+.dz-tag.is-ui{left:0;top:calc(-11px * var(--k));height:22px;padding:0 7px;font:500 11px/22px var(--sans);transform-origin:0 0;transform:scale(var(--k));}
+.dz-guide-v{position:absolute;width:calc(2px * var(--k));background:var(--stage-red);transform-origin:50% 0;animation:dz-sweep-v var(--d) cubic-bezier(.65,0,.35,1) both,dz-fade .5s linear var(--d) forwards;}
+.dz-guide-h{position:absolute;left:0;width:100%;height:calc(2px * var(--k));background:var(--stage-blue);--mc:var(--stage-blue);transform-origin:0 50%;animation:dz-sweep-h var(--d) cubic-bezier(.65,0,.35,1) both,dz-fade .5s linear var(--d) forwards;}
+.dz-plus{position:absolute;width:calc(10px * var(--k));height:calc(10px * var(--k));transform:translate(-50%,-50%);}
+.dz-plus::before,.dz-plus::after{content:"";position:absolute;background:var(--stage-mark);}
+.dz-plus::before{left:0;right:0;top:calc(50% - .6px * var(--k));height:calc(1.2px * var(--k));}
+.dz-plus::after{top:0;bottom:0;left:calc(50% - .6px * var(--k));width:calc(1.2px * var(--k));}
+.dz-slotline{position:absolute;left:0;width:100%;height:calc(1px * var(--k));background:var(--stage-slotline);}
+.dz-wire{position:absolute;box-sizing:border-box;background:var(--stage-wire);border:calc(1.2px * var(--k)) solid var(--stage-blue);--mc:var(--stage-blue);}
+.dz-wire.is-main{border-width:calc(2px * var(--k));}
+/* A deck's or a video's board (engine.js _renderTiles): each tile's edge, dashed until it starts, and its "N job" chip
+   lifted inside the tile's bottom left. A video's HUD, tip and popover sit above its 128px timeline. A fitted run doc
+   is ringed and rounded */
+.dz-tile-edge{position:absolute;box-sizing:border-box;border:1px solid var(--stage-tile-line);border-radius:var(--r-md);pointer-events:none;}
+.dz-tile-edge.is-planned{border:1px dashed var(--stage-tile-dash);}
+.dz-tile-chip{position:absolute;height:17px;padding:0 5px;border-radius:var(--r-xs);background:var(--stage-tag-bg);color:var(--stage-tag-ink);font:500 11px/17px var(--sans);white-space:nowrap;transform:translate(6px,-23px);pointer-events:none;}
+.dz-tile-chip.is-done{color:var(--stage-handle);}
+.dz-wrap.is-film .dz-hud{bottom:140px;}
+.dz-wrap.is-film .dz-tip{bottom:192px;}
+.dz-wrap.is-film .dz-pop{bottom:194px;max-height:calc(100% - 216px);}
+.frame-box.is-fitted{border-radius:var(--r-md);box-shadow:0 0 0 1px var(--stage-tile-line);}
+.frame-box.is-fitted .dz-frame{border-radius:var(--r-md);}
+/* A finished deck's rail (engine.js _renderDeck): one frame of thumbnails that takes no pointer events, the parent's
+   numbered buttons over it; the slide in view is ringed blue, a failed one red. Its focus ring is the stage's white */
+.dz-rail{position:absolute;left:0;top:0;bottom:0;width:148px;overflow-y:auto;scrollbar-width:thin;background:var(--stage-rail);border-right:1px solid var(--stage-edge);}
+.dz-rail-scroll{position:relative;}
+.dz-rail-frame-host{position:absolute;border-radius:var(--r-xs);overflow:hidden;}
+.dz-rail-frame-host iframe{display:block;width:100%;height:100%;border:0;pointer-events:none;}
+.dz-rail-tile{position:absolute;padding:0;border:0;border-radius:var(--r-xs);background:none;cursor:pointer;}
+.dz-rail-tile:disabled{cursor:default;}
+.dz-rail-tile[aria-current="true"]{outline:2px solid var(--stage-blue);outline-offset:0;}
+.dz-rail-tile.is-failed{outline:2px solid var(--stage-red);outline-offset:0;}
+.dz-rail-tile:focus-visible{outline:2px solid var(--stage-handle);outline-offset:2px;}
+.dz-rail-num{position:absolute;right:calc(100% + 7px);top:50%;transform:translateY(-50%);color:color-mix(in srgb,var(--stage-handle) 50%,transparent);font:500 11px/1 var(--sans);}
+.dz-rail-tile[aria-current="true"] .dz-rail-num{color:var(--stage-handle);}
+/* A video's timeline (engine.js _renderTimeline): one block per scene from the plan's durations, dashed with a plus
+   until it starts, tinted with its crew while it builds. Over the run doc it is a slider with a playhead, and the
+   transport sits above it at the left */
+.dz-film-timeline{position:absolute;left:0;right:0;bottom:0;height:128px;color-scheme:dark;background:var(--stage-rail);box-shadow:inset 0 1px 0 var(--stage-edge);touch-action:none;}
+.dz-film-timeline[role="slider"]{cursor:pointer;}
+.dz-tl-ticks{position:absolute;left:16px;right:16px;top:0;height:34px;}
+.dz-tl-tick{position:absolute;top:22px;width:1px;height:4px;background:var(--stage-tile-dash);}
+.dz-tl-tick.has-label{height:8px;}
+.dz-tl-tick span{position:absolute;left:4px;top:-12.5px;color:var(--stage-tick-ink);font:400 11px/1 var(--mono);}
+.dz-tl-lane{position:absolute;left:16px;right:16px;top:34px;height:66px;}
+.dz-tl-block{position:absolute;top:0;bottom:0;box-sizing:border-box;border-radius:var(--r-xs);background:color-mix(in srgb,var(--stage-handle) 6%,transparent);overflow:hidden;}
+.dz-tl-block.is-planned{background:none;outline:1px dashed color-mix(in srgb,var(--stage-handle) 22%,transparent);outline-offset:-1px;}
+.dz-tl-block.is-writing{background:color-mix(in srgb,var(--dz-crew,var(--stage-mark)) 30%,transparent);box-shadow:inset 0 3px 0 var(--dz-crew,var(--stage-mark));}
+.dz-tl-block.is-done{background:color-mix(in srgb,var(--dz-crew,var(--stage-handle)) 14%,transparent);box-shadow:inset 0 3px 0 var(--dz-crew,transparent);}
+.dz-tl-block.is-failed{outline:2px solid var(--stage-red);outline-offset:-1px;}
+.dz-tl-block.is-selected{outline:2px solid var(--stage-blue);outline-offset:-1px;}
+.dz-tl-plus{position:absolute;left:50%;top:33px;width:9px;height:9px;transform:translate(-50%,-50%);}
+.dz-tl-plus::before,.dz-tl-plus::after{content:"";position:absolute;background:var(--stage-tick-ink);}
+.dz-tl-plus::before{left:4px;top:0;width:1px;height:9px;}
+.dz-tl-plus::after{left:0;top:4px;width:9px;height:1px;}
+.dz-tl-name{position:absolute;left:4px;top:6px;height:17px;padding:0 5px;border-radius:var(--r-xs);background:var(--stage-tag-bg);color:var(--stage-tag-ink);font:500 11px/17px var(--sans);white-space:nowrap;}
+.dz-tl-block.is-done .dz-tl-name{color:var(--stage-handle);}
+.dz-tl-head{position:absolute;top:-18px;bottom:-20px;width:2px;margin-left:-1px;background:var(--stage-handle);pointer-events:none;}
+.dz-tl-head::before{content:"";position:absolute;left:-4px;top:-4px;width:0;height:0;border-style:solid;border-width:7px 5px 0;border-color:var(--stage-handle) transparent transparent;}
+.dz-transport{position:absolute;left:16px;bottom:140px;z-index:4;display:flex;align-items:center;gap:8px;height:36px;padding:0 10px 0 4px;color-scheme:dark;border:1px solid var(--glass-line);border-radius:var(--r-md);background:var(--panel-veil);color:var(--ink);font-size:var(--fs-meta);font-variant-numeric:tabular-nums;}
+.dz-transport .btn svg{width:14px;height:14px;}
+.dz-transport b{font-weight:500;}
+/* A finished film's transport and its end HUD share one row: the scene name stops short, and the HUD moves to the
+   right edge, no wider than the stage less the widest transport (286 px, a film under 100 minutes) and three 16 px
+   gaps. A phone's stage has no room for both: the HUD keeps its line and its buttons (224 px) there. */
+.dz-wrap.is-film .dz-transport b{max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.dz-wrap.is-film:has(> .dz-transport) .dz-hud{left:auto;right:16px;transform:none;max-width:max(224px,calc(100% - 334px));}
+/* A stage with nothing to show yet: the frame waits out of sight (it still loads and measures), and the well says
+   what is going on. It fades in with the plan's first slots. */
+.frame-box{transition:transform var(--cam-ms,0ms) cubic-bezier(.65,0,.35,1),opacity .35s ease;}
+.dz-wrap.is-blank .frame-box{opacity:0;pointer-events:none;}
+.dz-standby{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:24px;color-scheme:dark;color:var(--ink-2);font-size:var(--fs-body);text-align:center;pointer-events:none;}
+.dz-standby[hidden]{display:none;}
+.dz-standby-orb{color:var(--ink);margin-bottom:6px;}
+.dz-standby-title{color:var(--ink);font-size:var(--fs-section);font-weight:500;}
+.dz-standby-text{max-width:360px;line-height:1.5;}
+.dz-standby-doing{min-height:1.5em;font-size:var(--fs-meta);font-variant-numeric:tabular-nums;}
+@media (prefers-reduced-motion: reduce){.frame-box{transition:transform var(--cam-ms,0ms) cubic-bezier(.65,0,.35,1);}}
+.dz-lost,.dz-empty{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color-scheme:dark;color:var(--ink-2);font-size:var(--fs-body);}
+/* The Library (board 1, canvas design.css:138-160): just the items. It scrolls, its padding is the inner column's,
+   and the grid reflows below the mockup's 1240. The body is a flex column, so its [hidden] needs its own rule */
+.dz-lib{flex:1;min-width:0;min-height:0;overflow-y:auto;background:var(--panel);}
+.dz-lib-in{display:flex;flex-direction:column;align-items:center;padding:64px 32px 24px;}
+/* The start composer (canvas design.css:140-150), then what the mockup does not draw: the files, the refusal line, the
+   project menu, which the flyout places in the viewport, so it is fixed, and the kind chips wrapping on a phone, where
+   the centred row would spill past both edges and leave its first chip out of reach */
+.dz-hero{width:100%;max-width:760px;}
+.dz-hero .ask-composer{padding:0;--ask-col-max:100%;--ask-col-inset:0px;}
+.dz-hero .ask-composer-box{padding:12px 12px 10px;border-color:var(--line-2);}
+.dz-hero .dz-input{min-height:64px;font-size:15px;line-height:1.55;}
+.dz-kinds{display:flex;justify-content:center;gap:8px;margin-top:14px;}
+.dz-kind-btn{display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 10px;border:0;border-radius:var(--r-xs);background:var(--field);color:var(--ink);font:500 var(--fs-meta)/1 var(--sans);cursor:pointer;white-space:nowrap;}
+.dz-kind-btn:hover{background:var(--hover);}
+.dz-kind-btn svg{width:14px;height:14px;flex:none;color:var(--ink-2);}
+.dz-kind-btn.is-on{background:var(--ink);color:var(--on-ink);}
+.dz-kind-btn.is-on svg{color:var(--on-ink);}
+.dz-kind-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.dz-start-files{display:flex;flex-wrap:wrap;gap:6px;padding:2px 4px 4px;}
+.dz-start-files[hidden]{display:none;}
+.dz-start-file{display:inline-flex;align-items:center;gap:4px;max-width:240px;height:24px;padding:0 3px 0 8px;border-radius:var(--r-xs);background:var(--field);color:var(--ink);font:500 var(--fs-meta)/1 var(--sans);}
+.dz-start-file > span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.dz-start-file-x{display:grid;place-items:center;flex:none;width:18px;height:18px;padding:0;border:0;border-radius:var(--r-xs);background:none;color:var(--ink-2);cursor:pointer;}
+.dz-start-file-x:hover{background:var(--quiet-hover);color:var(--ink);}
+.dz-start-file-x:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.dz-start-err{margin:8px 0 0;padding:0 4px;color:var(--red-ink);font-size:var(--fs-meta);}
+.dz-start-menu{position:fixed;min-width:200px;max-width:320px;z-index:6;}
+.dz-start-menu .menu-item > span:first-child{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.dz-kinds{flex-wrap:wrap;}
+.dz-lib-body{width:100%;max-width:1240px;margin-top:44px;display:flex;flex-direction:column;gap:14px;}
+.dz-lib-body[hidden]{display:none;}
+.dz-lib-h{margin:0;font-size:var(--fs-section);font-weight:600;letter-spacing:-.01em;line-height:var(--lh-title);}
+.dz-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:20px;}
+.dz-tile{display:flex;flex-direction:column;gap:8px;min-width:0;padding:0;border:0;border-radius:var(--r-md);background:none;color:var(--ink);text-align:left;text-decoration:none;cursor:pointer;}
+.dz-tile:focus-visible{outline:2px solid var(--ink);outline-offset:3px;}
+.dz-thumb{position:relative;display:block;width:100%;aspect-ratio:16/10;overflow:hidden;border:1px solid var(--line);border-radius:var(--r-md);background:var(--field);}
+.dz-tile:hover .dz-thumb{border-color:var(--hover-outline);}
+.dz-thumb > img{display:block;width:100%;height:100%;object-fit:cover;object-position:top left;}
+.dz-thumb-none{display:flex;align-items:center;justify-content:center;height:100%;color:var(--ink-3);}
+.dz-thumb-none svg{width:28px;height:28px;}
+.dz-tile-t{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.dz-tile-m{margin-top:-6px;color:var(--ink-2);font-size:var(--fs-meta);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums;}
+.dz-lib-load,.dz-lib-err{width:100%;max-width:1240px;}
+/* The chat head's More (Rename, Delete): the flyout writes the menu's viewport left and top, so it is fixed */
+.dz-more{position:fixed;min-width:160px;z-index:6;}
+@keyframes dz-fade{to{opacity:0;}}
+@keyframes dz-sweep-v{from{transform:scaleY(0);}to{transform:scaleY(1);}}
+@keyframes dz-sweep-h{from{transform:scaleX(0);}to{transform:scaleX(1);}}
+@media (prefers-reduced-motion:reduce){
+.frame-box,.dz-cursor,.dz-box,.dz-line i,.dz-dots button::after,.dsx-bar i{transition:none;}
+.dz-guide-v,.dz-guide-h,.dz-trail{animation:none;}
+}
+@media (max-width:760px){
+.dz-studio{flex-direction:column;}
+.dz-chat{flex:0 0 45%;width:100%;border-right:0;border-top:1px solid var(--line);order:2;}
+}

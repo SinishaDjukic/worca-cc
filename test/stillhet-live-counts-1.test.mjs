@@ -3,7 +3,7 @@
 // nothing and says so; the mode is dev's uiLevel. The host is test/helpers/stillhet-live-counts-host.mjs.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { BELL, DEMO_NAMES, MISSED, NOW, SOURCES, TASK_NEEDS, bellN, clone, countNeedsYou, liveHost, settle, store, closeHosts, WS_QUESTIONS, mapRead, withWorkspaces } from './helpers/stillhet-live-counts-host.mjs';
+import { BELL, DEMO_NAMES, MISSED, NOW, SOURCES, TASK_NEEDS, bellN, clone, countNeedsYou, liveHost, settle, store, closeHosts, WS_QUESTIONS, MAPS, mapRead, withWorkspaces } from './helpers/stillhet-live-counts-host.mjs';
 
 afterEach(closeHosts);   // each test's window closes when the test ends
 test('before the first snapshot: no rows, the loading look in the bar and Pulse, no number on the bell', async () => {
@@ -143,4 +143,26 @@ test('the bell counts each unsure workspace link once (GET /api/workspaces/:id/m
   assert.equal(WS_QUESTIONS, qs.length);
   assert.equal(bellN(d), BELL + WS_QUESTIONS, 'one per unsure link, counted once');
   assert.deepEqual(Array.from(w.RailSpaces.list(), (x) => [x.id, x.title]), [['w1', 'Shop'], ['w2', 'Broken map']], 'the live workspaces, never the demo\'s');
+});
+
+test('the bell head: the count, then " · " and what needs you, when more than tasks do (D7); a plan run counts and tones as a question does (D1)', async () => {
+  // the seeded walk state: 4 tasks (h2 paused too), 1 missed schedule, 1 project (api-2 in sync), 1 workspace question
+  const src = withWorkspaces();
+  src.history.pipelines = src.history.pipelines.map((p) => (p.id === 'h2' ? { ...p, status: 'paused' } : p));
+  src.sync.projects['api-2'] = { ...src.sync.projects['api-2'], state: 'up-to-date', ahead: 0, behind: 0 };
+  const one = { w1: { edges: MAPS.w1.edges.filter((e) => e.id === 'x_000000000001' || e.confidence === 'exact') } };
+  const { d, hello } = await liveHost({ sources: src, read: mapRead(one), level: 'advanced' });
+  await hello(); await settle(60);
+  d.querySelector('[data-pop]').click();
+  const head = d.querySelector('#app .pz-popover .pz-sec .pz-h .n').textContent.replace(/\s+/g, ' ').trim();
+  assert.equal(head, '7 · 4 tasks, 1 missed schedule, 1 project, 1 question');
+  closeHosts();
+  // run-a held at its plan: Needs approval, the pencil; the bell's number and the badge's tone stay a question's
+  const asks = await liveHost(); await asks.hello();
+  const badge = (x) => [bellN(x.d), x.d.querySelector('#rail-pulse-slot .topnav-badge')?.className];
+  const before = badge(asks);
+  closeHosts();
+  const plan = clone(SOURCES); plan.hello.runs = plan.hello.runs.map((r) => (r.runId === 'run-a' ? { ...r, pendingQuestion: { id: 'q-plan', kind: 'plan', plan: { title: 'Ask me' } } } : r));
+  const held = await liveHost({ sources: plan }); await held.hello();
+  assert.deepEqual(badge(held), before);
 });

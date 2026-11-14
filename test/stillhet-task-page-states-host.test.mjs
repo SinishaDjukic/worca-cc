@@ -41,9 +41,10 @@ test('a failed task\'s What broke lists the same failing items as its card (R-ux
   await go(w, '#run/h3', 200); await settle(200);
   const broke = d.querySelector('#route-run:not([hidden]) #card #ov-focus');
   assert.ok(broke, 'the What broke part');
-  const lines = broke.querySelector('.rtab-ev-l').textContent.split('\n');
-  assert.deepEqual(lines, w.RailTaskLive.detail('h3').why, 'the card\'s own items');
-  assert.deepEqual(lines, ['✗ test/a.test.mjs: timeout', '✗ test/b.test.mjs: expected 2', '✗ test/c.test.mjs: ENOENT']);
+  // one row per failure under its bold title (D9): the card's own items, without their marks
+  const lines = [...broke.querySelectorAll('.rtab-ev-l')].map((e) => e.textContent);
+  assert.deepEqual(lines, w.RailTaskLive.detail('h3').why.map((l) => l.replace(/^✗ /, '')), 'the card\'s own items');
+  assert.deepEqual(lines, ['test/a.test.mjs: timeout', 'test/b.test.mjs: expected 2', 'test/c.test.mjs: ENOENT']);
 });
 
 test('a failed load says "Could not load this task" with Try again; Try again draws the page and focuses its heading', async () => {

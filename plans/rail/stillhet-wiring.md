@@ -298,29 +298,29 @@ Every dev chat capability (`ui/public/ask-panel.mjs`, `ui/public/chat/`, `ui/rou
 
 Each card kind dev draws in a conversation (`src/shared/ask-card-types.mjs` `ASK_CARD_TYPES`, its block kinds, the run card and
 Shaper's cards), its place in the prototype (`ui/public/stillhet/live/chat-turns.mjs` `CARD_TURN`, `conversation.js`) and its
-status. The prototype, docs/rail and the library decide the shape; `plans/rail/chat-cards.md` is only the list of dev flows.
+status, with the live record the chat seed (`tools/stillhet-seed-chat-cards.mjs` `SEEDED_CARDS`) holds for it. The prototype, docs/rail and the library decide the shape; `plans/rail/chat-cards.md` is only the list of dev flows.
 
 | Dev card | Dev module | Stillhet place | Status |
 |---|---|---|---|
-| question | `ui/public/chat/` question card | OptionList under the turn; your own answer | wired |
-| progress (the run card) | `ui/public/chat/run-card.mjs` | TaskCard: one status line, step n of m (`RailChatLive.progress`), its ⋯ from run-state (FLOW) | wired |
-| the run's own questions | run card | OptionLists under the TaskCard, Answer, Use Worca's picks (`POST /api/answer`) | wired |
-| the Shaper plan (plan approval) | `ui/public/shape/` plan card | PlanCard under the TaskCard: Approve and build, Ask for changes (`revise`), Read the plan, Save to plans/, Stop | wired |
-| run proposal (no type) | `ui/public/ask-panel.mjs` proposal card | TaskProposal: where it runs, branches, guardrails, Start, Not now | wired |
-| workflow, workflow-build | `ui/public/chat/action-cards.mjs` | ChangeProposal with its steps; Apply, Not now | wired |
-| run-stop | `ui/public/chat/action-cards.mjs` | TurnRow: Stop run, Keep running / Keep paused | wired |
-| pull-request | `ui/public/chat/action-cards.mjs` | TurnRow: Create PR (`POST /api/pr`), Not now | wired |
-| ship | `ui/public/shape/ship-card.mjs` | the prototype's Ship ChangeProposal (`panel.ship-card`) | wired: each agreed requirement's mark is dev's acceptance PUT (Met at once; Not met and Dropped with their words under the card); Ships as one PR or stacked PRs, Worca's suggestion first; Create PR is dev's `POST /api/shape/features/:id/ship {mode}`, off until every requirement is marked; Not now is dev's `{verb: 'not-now'}` |
-| changes | `ui/public/shape/changes-card.mjs` | TurnRow: dev's start verb (`{verb: 'start'}`), Not now | wired |
-| route | `ui/public/shape/route-card.mjs` | TurnRow: Worca's guess first, the other two routes, Not now (`{verb}`) | wired |
-| scope-switch, model, schedule, away, proxy, web, clone, project, workspace, actions, metrics, policy | `ui/routes/chat/thread-cards.mjs` | ChangeProposal: its rows (before → after), Apply, Not now | wired |
-| receipt | `ui/public/chat/action-cards.mjs` | ChangeProposal applied, Revert | wired |
-| script-approval | `ui/routes/chat/thread-cards.mjs` | TurnRow: Run it / Save it, Not now | wired |
-| command, command group | `ui/public/ask-command-card.mjs` | CommandRow / CommandGroup: Copy, Stop, Show in terminal (TerminalPane) | wired |
-| files | `ui/public/chat/files-card.mjs` | FilesCard: open, download (dev's GET in a new tab) | wired |
-| notice, divider | ask blocks | TurnRow, TurnDivider | wired |
-| a failed reply | `ask-error` | the failed TurnRow: Details, Try again | wired |
-| an unknown card type | none | a notice from its own title (never its type id) | wired |
+| question | `ui/public/chat/` question card | OptionList under the turn; your own answer | wired; live record (seed): `question` |
+| progress (the run card) | `ui/public/chat/run-card.mjs` | TaskCard: one status line, step n of m (`RailChatLive.progress`), its ⋯ from run-state (FLOW) | wired; live record (seed): `question`, `plan`, `failed`, `pr`, `ready` |
+| the run's own questions | run card | OptionLists under the TaskCard, Answer, Use Worca's picks (`POST /api/answer`) | wired; live record (seed): `question` |
+| the Shaper plan (plan approval) | `ui/public/shape/` plan card | PlanCard under the TaskCard: Approve and build, Ask for changes (`revise`), Read the plan, Save to plans/, Stop | wired; live record (seed): `plan` |
+| run proposal (no type) | `ui/public/ask-panel.mjs` proposal card | TaskProposal: where it runs, branches, guardrails, Start, Not now | wired; live record (seed): `proposal` (a real mock turn) |
+| workflow, workflow-build | `ui/public/chat/action-cards.mjs` | ChangeProposal with its steps; Apply, Not now | wired; live record (seed): `workflow` (a real mock turn), `workflow-build` |
+| run-stop | `ui/public/chat/action-cards.mjs` | TurnRow: Stop run, Keep running / Keep paused | wired; live record (seed): `run-stop` |
+| pull-request | `ui/public/chat/action-cards.mjs` | TurnRow: Create PR (`POST /api/pr`), Not now | wired; live record (seed): `pr-pending`; an opened PR on its TaskCard: `pr`, `ready` |
+| ship | `ui/public/shape/ship-card.mjs` | the prototype's Ship ChangeProposal (`panel.ship-card`) | wired: each agreed requirement's mark is dev's acceptance PUT (Met at once; Not met and Dropped with their words under the card); Ships as one PR or stacked PRs, Worca's suggestion first; Create PR is dev's `POST /api/shape/features/:id/ship {mode}`, off until every requirement is marked; Not now is dev's `{verb: 'not-now'}`; live record (seed): `ship` |
+| changes | `ui/public/shape/changes-card.mjs` | TurnRow: dev's start verb (`{verb: 'start'}`), Not now | wired; live record (seed): `changes` |
+| route | `ui/public/shape/route-card.mjs` | TurnRow: Worca's guess first, the other two routes, Not now (`{verb}`) | wired; live record (seed): `route` |
+| scope-switch, model, schedule, away, proxy, web, clone, project, workspace, actions, metrics, policy | `ui/routes/chat/thread-cards.mjs` | ChangeProposal: its rows (before → after), Apply, Not now | wired; live record (seed): `change` (model, a real mock turn) and one key per other kind |
+| receipt | `ui/public/chat/action-cards.mjs` | ChangeProposal applied, Revert | wired; live record (seed): `receipt` |
+| script-approval | `ui/routes/chat/thread-cards.mjs` | TurnRow: Run it / Save it, Not now | wired; live record (seed): `script-approval` |
+| command, command group | `ui/public/ask-command-card.mjs` | CommandRow / CommandGroup: Copy, Stop, Show in terminal (TerminalPane) | wired; live record (seed): `command`, `commands` |
+| files | `ui/public/chat/files-card.mjs` | FilesCard: open, download (dev's GET in a new tab) | wired; live record (seed): `files` (a real attachment) |
+| notice, divider | ask blocks | TurnRow, TurnDivider | wired; live record (seed): `divider` (answering a scope switch), `unknown` |
+| a failed reply | `ask-error` | the failed TurnRow: Details, Try again | wired; live record (seed): `failed` (a real mock turn) |
+| an unknown card type | none | a notice from its own title (never its type id) | wired; live record (seed): `unknown` |
 
 ### Shaper functions (owner-approved addition, 2026-11-12)
 

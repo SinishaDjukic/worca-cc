@@ -615,6 +615,32 @@ test('logLines: one line per entry, a problem in its colour, words escaped', () 
   assert.equal(l.querySelector('.lg-text').textContent, '<b>');
 });
 
+test('moreMenu: ⋯ names what it is for, and danger comes last after one rule', () => {
+  const m = dom(C.moreMenu({ id: 'm', label: 'More for X', icon: '', items: ['Delete', 'Copy link'], open: true }));
+  const b = m.querySelector('button'); assert.equal(b.getAttribute('aria-label'), 'More for X'); assert.equal(b.getAttribute('aria-haspopup'), 'menu');
+  assert.deepEqual([...m.querySelectorAll('[role=menu] > *')].map((x) => x.getAttribute('role')), ['menuitem', 'separator', 'menuitem']);
+  assert.match(m.querySelector('.menu-item.is-danger').dataset.menuPick, /^m\|Delete$/);
+  assert.equal(dom(C.moreMenu({ id: 'm', label: 'More', icon: '', items: ['Copy link'] })).querySelector('[role=menu]'), null, 'closed, no menu');
+});
+
+test('stepDot, stopWriting and suggestedChip: a mark a screen reader hears, a named stop, the Suggested chip', () => {
+  const d = dom(C.stepDot({ dotCls: 'is-done', word: 'Done', icon: 'check' }));
+  assert.equal(d.getAttribute('role'), 'img'); assert.equal(d.getAttribute('aria-label'), 'Done'); assert.match(d.className, /rd-route-dot is-done/);
+  const s = dom(C.stopWriting({})); assert.equal(s.className, 'pd-stop'); assert.equal(s.getAttribute('aria-label'), 'Stop writing');
+  const c = dom(C.suggestedChip()); assert.equal(c.className, 'pd-sug'); assert.equal(c.textContent, 'Suggested');
+});
+
+test('fitTags: what does not fit its line folds into +N; nothing drawn, nothing done', () => {
+  const doc = new JSDOM(`<body><div class="rc-facts">${C.tagGroup({ items: ['a', 'b', 'c'].map((text) => ({ kind: 'label', text })) })}</div></body>`).window.document;
+  const g = doc.querySelector('.rc-tags');
+  for (const c of g.children) c.getBoundingClientRect = () => { const i = [...g.children].filter((x) => !x.hidden).indexOf(c); return { width: i < 0 ? 0 : 40, right: 40 * (i + 1) }; };
+  doc.querySelector('.rc-facts').getBoundingClientRect = () => ({ right: 130 });
+  C.fitTags(doc);
+  assert.deepEqual([...g.querySelectorAll('.rc-tag')].map((t) => t.hidden), [false, true, true]);
+  assert.equal(g.querySelector('.rc-tag-more').textContent, '+2'); assert.equal(g.querySelector('.rc-tag-more').hidden, false);
+  assert.doesNotThrow(() => C.fitTags(new JSDOM('<body></body>').window.document));
+});
+
 test('stackRow: its own actions sit at its end', () => {
   const r = dom(C.stackRow({ num: '1', title: 'A', word: 'Small', sub: 'x', state: 'next', rowCls: 'is-next', dotCls: 'is-future', icon: '', end: '<button id="m"></button>' }));
   assert.ok(r.querySelector('#m'));
@@ -1430,6 +1456,8 @@ test('planCard, filesCard, youTurn: the Shaper plan folds its roles; files as ti
   assert.match(f, /fc-tile[\s\S]*a\.png/); assert.match(f, /<b>b\.txt<\/b> 2 KB/); assert.match(f, /aria-label="Download b\.txt"/);
   const y = C.youTurn({ text: 'Same bug?', quote: 'Off by a cent', files: ['x.pdf'] });
   assert.match(y, /you-quote">Off by a cent/); assert.match(y, /x\.pdf/);
+  assert.match(C.youTurn({ text: 'Hi', time: C.turnTime({ at: Date.now() }) }), /<time class="turn-time"[^>]*>\d\d:\d\d<\/time><\/div>$/);   // turnTime: its time is the turn's last child
+  assert.equal(C.turnTimeText(Date.now(), Date.now()), C.turnTime({ at: Date.now() }).match(/>([^<]+)<\/time>$/)[1]);   // turnTimeText: the words TurnTime shows
   assert.doesNotMatch(C.changeProposal({ kind: 'Agent', title: 'New', rows: [{ name: 'Reads', before: '', after: 'PRs' }] }), /→/);
 });
 
@@ -1533,6 +1561,22 @@ test('workspaceMap: links leaving one box turn at their own place', () => {
 });
 test('needsReason: a task under Needs you says why in a word or two', () => {
   assert.equal(C.needsReason('question'), 'Question'); assert.equal(C.needsReason('failed'), 'Failed');
+  assert.equal(C.needsReason('plan'), 'Needs approval');
+});
+test('runState plan: a plan waiting for your approval wears the pencil, as a gate does (list.kind-mark)', () => {
+  const st = C.runState('plan');
+  assert.equal(st.word, 'Needs approval'); assert.equal(st.sym, 'q'); assert.equal(st.approval, true);
+  assert.equal(C.markTone(st), 'act');
+  assert.equal(C.alertLevel(C.markTone(st)), C.alertLevel('ask'), 'the badge tone holds');
+  assert.equal(C.sectionOf(st.word, 'plan'), 'needs', 'it stays under Needs you'); assert.equal(C.bulkStateOf(st.word), 'needs-you');
+  assert.match(readFileSync('plans/rail/prototype/components.html', 'utf8'), /runState\('plan'\)/, 'the gallery shows a plan-state TaskCard');
+});
+test('a branch on a card is in the text face, not the mono (look.md)', () => {
+  const css = readFileSync('ui/public/stillhet/css/rail.css', 'utf8');
+  for (const sel of ['.rc-mid', '.rc-base']) {
+    const rule = css.match(new RegExp(`^\\${sel}\\{[^}]*\\}`, 'm'))[0];
+    assert.doesNotMatch(rule, /--mono/, sel);
+  }
 });
 test('roundRows: one line, one end', () => {
   const shut = dom(C.roundRows({ line: 'Round 2', n: 1, open: false, toggle: { 'data-rounds': 'r' } }));

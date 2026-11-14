@@ -335,7 +335,7 @@ const STATES = {
     }
   },
   plan: {
-    word: "Needs you",
+    word: "Needs approval",
     sym: "q",
     action: {
       label: "Approve and build",
@@ -754,7 +754,7 @@ export const stateIds = () => Object.keys(STATES);
 
 /** A state's word, dot, symbol and one action, with its names filled in. An unknown id throws: a state is never guessed. */
 /** Why a task is under Needs you, in a word or two: a row's one end (list.bar-model). */
-const NEEDS_REASON = { question: 'Question', gate: 'Needs approval', failed: 'Failed', approved: 'Ready to merge' };
+const NEEDS_REASON = { question: 'Question', gate: 'Needs approval', plan: 'Needs approval', failed: 'Failed', approved: 'Ready to merge' };
 export const needsReason = (id) => NEEDS_REASON[id] || runState(id).word;
 
 // Warning on the alert ladder though their word is Paused (look.alert-ladder): a cost or usage cap, a lost connection, an interruption
@@ -764,7 +764,7 @@ export function runState(id, ctx = {}) {
   const s = STATES[id];
   if (!s) throw new Error(`runState: unknown state ${id}`);
   const action = s.action ? { ...s.action, label: fill(s.action.label, ctx), items: [...(ctx.extraItems || []), ...s.action.items.map((x) => fill(x, ctx))], off: s.action.off || {} } : null;
-  return { word: (s.hostWord && HOST_WORD[ctx.host]) || s.word, dot: s.dot || '', sym: s.sym || '', action, ...(WARNING.has(id) ? { alert: 3 } : {}), ...(id === 'gate' ? { approval: true } : {}) };
+  return { word: (s.hostWord && HOST_WORD[ctx.host]) || s.word, dot: s.dot || '', sym: s.sym || '', action, ...(WARNING.has(id) ? { alert: 3 } : {}), ...(id === 'gate' || id === 'plan' ? { approval: true } : {}) };
 }
 
 /** One line on what an action does: the main button's tooltip, and each menu item's help. */
@@ -795,7 +795,7 @@ export const memberKeeps = (label) => !GROUP_OWNS.test(label);
 
 // A state's section in a list of things that wait on you (Pulse's Vitals; Chat's list later): waiting on a person first,
 // then working, then the rest. Paused and Stopped are never Ready.
-const SECTION = { 'Needs you': 'needs', Working: 'running', Starting: 'running', 'In review': 'running', Waiting: 'scheduled', Paused: 'needs', 'Ready to merge': 'needs', Ready: 'needs', Failed: 'needs' };
+const SECTION = { 'Needs you': 'needs', 'Needs approval': 'needs', Working: 'running', Starting: 'running', 'In review': 'running', Waiting: 'scheduled', Paused: 'needs', 'Ready to merge': 'needs', Ready: 'needs', Failed: 'needs' };
 // Paused by you or until a time you set holds on nobody: Normal, so it is not counted (look.alert-ladder). Give the state's id to know.
 const PAUSE_NORMAL = new Set(['paused', 'paused-you', 'paused-at', 'group-paused']);
 export const sectionOf = (word, id = '') => (PAUSE_NORMAL.has(id) ? 'scheduled' : SECTION[word] || 'recent');
@@ -837,7 +837,7 @@ export const CHAT_KINDS = Object.freeze({
 });
 
 // What a task's word is to the bulk table (src/shared/run-bulk.mjs): which run a Stop or an Archive applies to.
-const BULK_STATE = { Starting: 'starting', Working: 'working', Waiting: 'waiting', Paused: 'paused', Failed: 'failed', Stopped: 'stopped', Cancelled: 'stopped', Ready: 'ready', 'Ready to merge': 'in-review', 'In review': 'in-review', 'Needs you': 'needs-you' };
+const BULK_STATE = { Starting: 'starting', Working: 'working', Waiting: 'waiting', Paused: 'paused', Failed: 'failed', Stopped: 'stopped', Cancelled: 'stopped', Ready: 'ready', 'Ready to merge': 'in-review', 'In review': 'in-review', 'Needs you': 'needs-you', 'Needs approval': 'needs-you' };
 export const bulkStateOf = (word) => BULK_STATE[word] || 'merged';
 
 // A step's look: its mark on the rail, its icon, the word a screen reader hears, and its cell in the stepper.

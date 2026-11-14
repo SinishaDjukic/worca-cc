@@ -107,7 +107,7 @@ function focusHtml(v) {
     const own = f.own || (SHELL && M.whys?.[ui.caseId]);   /* a live task, or one lent from a chat: what broke in it, the same lines its card shows */
     if (own?.length) return `<section class="rtab ov-focus" id="ov-focus"><h2 class="rtab-h">What broke</h2><div class="rtab-ev"><pre class="rtab-ev-l">${own.map((w) => esc(typeof w === 'string' ? w : w.t || w.text || '')).join('\n')}</pre>${logsShow() && !logsGone ? R.button({ label: f.ev.log, attrs: { 'data-key': 'ov-log', 'data-logstep': 'all' } }) : ''}</div></section>`;
     return `<section class="rtab ov-focus" id="ov-focus"><h2 class="rtab-h">What broke</h2>
-      <div class="rtab-ev"><p class="rtab-ev-t">${esc(f.ev.title)}</p><pre class="rtab-ev-l">${f.ev.lines.map(esc).join('\n')}</pre>${logsShow() && !logsGone ? R.button({ label: f.ev.log, attrs: { 'data-key': 'ov-log', 'data-logstep': 'all' } }) : ''}</div></section>`;
+      <div class="rtab-ev"><p class="rtab-ev-t">${esc(f.ev.title)}</p>${f.rows ? f.ev.lines.map((l) => `<pre class="rtab-ev-l">${esc(l)}</pre>`).join('') /* a live task: one row per failure */ : `<pre class="rtab-ev-l">${f.ev.lines.map(esc).join('\n')}</pre>`}${logsShow() && !logsGone ? R.button({ label: f.ev.log, attrs: { 'data-key': 'ov-log', 'data-logstep': 'all' } }) : ''}</div></section>`;
   }
   const rows = f.items.map((x, i) => {
     const st = typeof x === 'string' ? (ui.ticks.includes(i) ? 'done' : 'next') : x.state;

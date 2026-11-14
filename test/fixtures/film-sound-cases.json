@@ -1,0 +1,11 @@
+{ "dur": 10,
+  "tracks": { "clips": [{ "id": "a", "file": "voice-a.mp3", "start": 0.35, "seconds": 2 }, { "id": "b", "file": "voice-b.mp3", "start": 5.35, "seconds": 3 }],
+              "music": { "file": "music.mp3", "seconds": 8, "gain": 0.16 } },
+  "cases": [
+    { "t": 0,    "clips": [[false, 0], [false, 0]],    "music": [true, 0, 0] },
+    { "t": 0.25, "clips": [[false, 0], [false, 0]],    "music": [true, 0.25, 0.08] },
+    { "t": 1,    "clips": [[true, 0.65], [false, 0]],  "music": [true, 1, 0.16] },
+    { "t": 2.35, "clips": [[false, 0], [false, 0]],    "music": [true, 2.35, 0.16] },
+    { "t": 6,    "clips": [[false, 0], [true, 0.65]],  "music": [true, 6, 0.16] },
+    { "t": 9,    "clips": [[false, 0], [false, 0]],    "music": [true, 1, 0.106667] },
+    { "t": 10,   "clips": [[false, 0], [false, 0]],    "music": [false, 0, 0] } ] }

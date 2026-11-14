@@ -69,7 +69,7 @@ export const ACTIONS = Object.freeze({
   'plan-read': ['read the plan', (a) => ['GET', `/api/runs/${enc(a.runId)}/plan`]],
   'plan-save': ['save the plan', (a) => ['POST', `/api/runs/${enc(a.runId)}/plan/save`, a.overwrite ? { overwrite: true } : {}]],
   start: ['start the task', (a) => ['POST', '/api/run', { ...startBodyOf(a.card, a.picks), askThreadId: a.threadId, askCardId: a.cardId }]],
-  'card-apply': ['apply the change', (a) => ['POST', `${T(a.threadId)}/cards/${enc(a.cardId)}`, { state: 'applied', ...(a.scope ? { scope: a.scope } : {}) }]],
+  'card-apply': ['apply the change', (a) => ['POST', `${T(a.threadId)}/cards/${enc(a.cardId)}`, { state: /^workflow(-build)?$/.test(a.cardType || '') ? 'saved' : 'applied', ...(a.scope ? { scope: a.scope } : {}) }]],   // dev saves a workflow card (thread-cards.mjs), it applies the rest
   'card-later': ['set the proposal aside', (a) => ['POST', `${T(a.threadId)}/cards/${enc(a.cardId)}`, { state: a.run ? 'dismissed' : 'declined' }]],
   'card-revert': ['undo the change', (a) => ['POST', `${T(a.threadId)}/cards/${enc(a.cardId)}`, { state: 'reverted' }]],
   'card-verb': ['answer the card', (a) => ['POST', `${T(a.threadId)}/cards/${enc(a.cardId)}`, { ...(a.body || {}) }]],
@@ -156,7 +156,7 @@ export function actionRunner({ fetch, toast = () => {}, notify = () => {} } = {}
 
 /** `doc`-free: the page's toast and clock come in. `send(msg)` writes a socket message; `tasksOf(threadId)` is the chat's
  *  tasks (live-map.mjs chatOf), so a run card names its store task. */
-export function startChatLive({ fetch, send = () => {}, toast = () => {}, now = Date.now, tasksOf = () => [], clipboard = null, open: openUrl = openTab, go = () => {}, progressOf = () => ({}), askOf = () => null } = {}) {
+export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toast = () => {}, now = Date.now, tasksOf = () => [], clipboard = null, open: openUrl = openTab, go = () => {}, progressOf = () => ({}), askOf = () => null } = {}) {
   const threads = new Map(), fns = new Set();
   const term = createTerminalLive({ fetch, send, now });   // D14: a command's TerminalPane
   let spare = '';   // D10: a new chat whose first message was refused and whose cleanup DELETE failed; the retry reuses it
@@ -209,6 +209,7 @@ export function startChatLive({ fetch, send = () => {}, toast = () => {}, now = 
   function frame(f) {
     if (typeof f?.type === 'string' && f.type.startsWith('term-')) { term.frame(f); return; }
     const id = str(f?.threadId), e = id && threads.get(id);
+    if (f?.type === 'ask-command' && str(f.command?.blockId)) { cmds.set(f.command.blockId, f.command); if (e) notify(id); }
     if (!e) return;
     if (e.state === 'loading' || e.reloading) { e.buffer.push(f); return; }
     if (e.state !== 'ready' || !e.model) return;
@@ -257,11 +258,28 @@ export function startChatLive({ fetch, send = () => {}, toast = () => {}, now = 
     return { title: str(g.title), usd: typeof g.cost?.usd === 'number' ? g.cost.usd : null, ms: Number.isFinite(from) && Number.isFinite(to) && to >= from ? to - from : null, runs: arr(g.members).length };
   }
   const linksOf = (m) => [...m.runLinks().entries()].map(([runId, l]) => ({ runId, ...l }));
+  // D12 (b): a command's end lives on dev's terminal block, not its card: read once (GET …/commands/:blockId), then kept
+  // by its ask-command frames; unknown until read, so it draws as dev stored it
+  const cmds = new Map();
+  function commandOf(threadId, blockId) {
+    if (!blockId) return null;
+    if (!cmds.has(blockId)) {
+      cmds.set(blockId, null);
+      // dev answers the block's view itself (src/core/ask/commands.mjs commandView; its `command` is the command line);
+      // a refused read is not kept, so the next paint asks again
+      request('GET', `${T(threadId)}/commands/${enc(blockId)}`).then((r) => {
+        const v = r.ok && r.data && typeof r.data === 'object' ? r.data : r.status === 404 ? { status: 'gone', exitCode: null } /* no block: its shell is gone, so it is not running */ : null;
+        if (!v) { if (cmds.get(blockId) === null) cmds.delete(blockId); return; }
+        if (!cmds.get(blockId)) { cmds.set(blockId, v); notify(threadId); }
+      });
+    }
+    return cmds.get(blockId);
+  }
   function turns(id) {
     const e = threads.get(id);
     if (!e || e.state !== 'ready') return [];
     const messages = e.model.messages().filter((m) => !e.hidden.has(m.id));
-    return turnsOf({ messages, runLinks: linksOf(e.model), inFlight: e.model.inFlight() }, { tasks: tasksOf(id), now: now() });
+    return turnsOf({ messages, runLinks: linksOf(e.model), inFlight: e.model.inFlight() }, { tasks: tasksOf(id), now: now(), commandOf: (b) => commandOf(id, b) });
   }
 
   // D10: a send on Chat home makes the thread first; a refused message deletes it again, and a failed delete keeps it
@@ -348,6 +366,7 @@ export function startChatLive({ fetch, send = () => {}, toast = () => {}, now = 
       // POST /api/runs/bulk answers 200 with its refusals in `skipped`: none done is a refusal
       if (res.ok && Array.isArray(res.data?.skipped) && res.data.skipped.length && !(res.data.done || []).length) res = { ok: false, status: 200, error: str(res.data.skipped[0]?.reason) || 'it was skipped' };
       if (!res.ok) return refuse(a[0], res, q);
+      if (id === 'pr') afterPr();   // a PR now exists: the task's card reads it without a reload (dev's history skeleton has no PRs)
       if (args.threadId && threads.get(args.threadId)?.state === 'ready' && url.startsWith(T(args.threadId))) open(args.threadId, { force: true });
       return res;
     } finally { pending.delete(key); notify(args.threadId || ''); }

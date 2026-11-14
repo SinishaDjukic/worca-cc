@@ -29,9 +29,18 @@ function readHead(path, max) {
 }
 const isBinary = (buf) => buf.subarray(0, 8192).includes(0);
 
-export function createAskFileReader({ roots = [], home = homedir(), rules = ASK_DENY_RULES, limits = ASK_FILE_LIMITS, redact = redactAskText, signal = null } = {}) {
+// outsideText: how a refusal names what this chat can read (file-deps.mjs picks it from the roots it kept; a design
+// chat's roots are not "worktrees, attachments and memory").
+// pinned: each root's real path when the reader was first built (the grep worker gets its parent's); by default taken
+// now, at the turn's start. A root that later resolves elsewhere (renamed, a link planted in its place: Design P8, a
+// project folder any agent can rename on a hosted volume) is dropped, never followed. A root missing then (a worktree
+// not opened yet) counts once it exists.
+export function createAskFileReader({ roots = [], home = homedir(), rules = ASK_DENY_RULES, limits = ASK_FILE_LIMITS, redact = redactAskText, signal = null,
+  outsideText = "outside this chat's worktrees, attachments and memory", pinned = null } = {}) {
   const real = (p) => { try { return realpathSync(p); } catch { return null; } };
-  const rootReals = () => roots.map(real).filter(Boolean);
+  const pins = Array.isArray(pinned) && pinned.length === roots.length ? pinned : roots.map(real);
+  const rootReal = (i) => { const now = real(roots[i]); return now !== null && (pins[i] == null || now === pins[i]) ? now : null; };
+  const rootReals = () => roots.map((_, i) => rootReal(i)).filter(Boolean);
   const inside = (p, r) => p === r || p.startsWith(r.endsWith(sep) ? r : r + sep);
   const denied = (p) => askPathDenied(p, { rules, home });
   function check(raw, tool) {
@@ -41,13 +50,13 @@ export function createAskFileReader({ roots = [], home = homedir(), rules = ASK_
     const abs = resolve(want);
     const rp = real(abs);
     if (!rp) throw new AskFileError(`${tool}: ${abs} does not exist`);
-    if (!rootReals().some((r) => inside(rp, r))) throw new AskFileError(`${tool}: ${abs} is outside this chat's worktrees, attachments and memory${roots.length > 3 ? " and this turn's skills" : ''}`);
+    if (!rootReals().some((r) => inside(rp, r))) throw new AskFileError(`${tool}: ${abs} is ${outsideText}`);
     const rule = denied(abs) || denied(rp);
     if (rule) throw new AskFileError(`${tool}: ${abs} is protected (${rule})`);
     return rp;
   }
   function defaultBase(tool) {
-    const wt = real(roots[0] || '');
+    const wt = roots.length ? rootReal(0) : null;
     if (!wt) throw new AskFileError(`${tool}: this chat has no worktree yet — call open_worktree first, or pass a path`);
     return wt;
   }
@@ -147,7 +156,7 @@ export function createAskFileReader({ roots = [], home = homedir(), rules = ASK_
   function grep(input = {}) {
     return new Promise((done, fail) => {
       if (signal && signal.aborted) { fail(new AskFileError('grep: the turn ended')); return; }
-      const worker = new Worker(new URL('./grep-worker.mjs', import.meta.url), { workerData: { roots, home, rules, limits, input } });
+      const worker = new Worker(new URL('./grep-worker.mjs', import.meta.url), { workerData: { roots, pinned: pins, home, rules, limits, outsideText, input } });
       let settled = false;
       const onAbort = () => finish(fail, new AskFileError('grep: the turn ended'));   // a stopped turn stops its search
       const finish = (fn, v) => {
