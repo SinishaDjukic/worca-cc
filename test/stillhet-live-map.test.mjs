@@ -4,7 +4,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { shapeErrors, SHAPES } from '../ui/public/stillhet/live/model-shape.mjs';
-import { caseOf, overOf, taskOfLive, taskOfSaved, chatOf, unreadOf, scheduleOf, projectOf, costsOf, updateOf, updateOfOutcome, snapshotOf, partOf, dayOf, runGroupsOf, spacesOf } from '../ui/public/stillhet/live/live-map.mjs';
+import { caseOf, overOf, taskOfLive, taskOfSaved, chatOf, unreadOf, scheduleOf, projectOf, costsOf, updateOf, updateOfOutcome, snapshotOf, partOf, dayOf, runGroupsOf, spacesOf, runsOf } from '../ui/public/stillhet/live/live-map.mjs';
 import { dayBucket } from '../ui/public/runs-list.mjs';
 import { needsYouItems } from '../src/shared/needs-you.mjs';
 import { RUN_STATES } from '../src/shared/run-model.mjs';
@@ -154,12 +154,66 @@ test('scheduleOf: nextAt is the server\'s next time; null when missed or unknown
   assert.equal(scheduleOf({ id: 'p', kind: 'recurring', status: 'paused', nextRunAt: null }, { now: NOW }).nextAt, null);
 });
 
+test('scheduleOf: the D10 fields (skip, overlap, fails, ifMissed, tz, pauseWhy, preset, after, ended) and the repeat\'s word', () => {
+  const t = new Date(2026, 10, 15, 2, 0).getTime(), skip = new Date(2026, 10, 14, 2, 0).toISOString();
+  const s = scheduleOf({ id: 'sch_1', kind: 'recurring', status: 'active', nextRunAt: new Date(t).toISOString(), skippedRunAt: skip, rule: { freq: 'daily', interval: 1, time: '02:00', tz: 'Europe/Berlin' }, sentence: 'Every day at 02:00',
+    overlap: 'queue', maxFailures: 2, ifMissed: 'skip', tz: 'Europe/Berlin', presetId: 'pr_1', presetName: 'Nightly preset' }, { now: NOW });
+  assert.deepEqual(shapeErrors('schedule', s), []);
+  assert.deepEqual({ every: s.every, at: s.at, skip: s.skip, next: s.next, overlap: s.overlap, fails: s.fails, ifMissed: s.ifMissed, tz: s.tz, preset: s.preset, ended: s.ended },
+    { every: 'every day', at: '02:00', skip, next: 'Skips next time, then as usual', overlap: 'queue', fails: 2, ifMissed: 'skip', tz: 'Europe/Berlin', preset: 'Nightly preset', ended: false });
+  assert.equal(scheduleOf({ id: 'x', kind: 'recurring', status: 'active', rule: { freq: 'daily', interval: 2, time: '02:00', tz: 'UTC' }, sentence: 'Every 2 days at 02:00' }, { now: NOW }).every, 'Every 2 days at 02:00', 'a rule with no word keeps dev\'s sentence');
+  assert.equal(scheduleOf({ id: 'x', kind: 'recurring', status: 'active', presetId: 'pr_2', presetName: null }, { now: NOW }).preset, 'preset deleted');
+  const p = scheduleOf({ id: 'p', kind: 'recurring', status: 'paused', pauseReason: 'failed 3 times in a row' }, { now: NOW });
+  assert.deepEqual([p.pauseWhy, p.skip, p.section], ['failed 3 times in a row', '', 'paused']);
+  assert.equal(scheduleOf({ id: 'q', kind: 'recurring', status: 'paused', pauseReason: 'failure_streak', failureStreak: 1, maxFailures: 1 }, { now: NOW }).pauseWhy, 'paused itself after 1 failure in a row');
+  assert.equal(scheduleOf({ id: 'u', kind: 'recurring', status: 'paused', pauseReason: 'user' }, { now: NOW }).next, 'Paused by you');
+  const e = scheduleOf({ id: 'e', kind: 'recurring', status: 'ended', nextRunAt: null }, { now: NOW });
+  assert.deepEqual([e.ended, e.section, e.next, e.nextAt], [true, 'ended', '', null]);
+  const a = scheduleOf({ id: 'tk', kind: 'once', status: 'scheduled', runAt: '9999-12-31T00:00:00.000Z', after: { kind: 'pipeline', id: 'p-1', title: 'Build the API' } }, { now: NOW });
+  assert.deepEqual([a.after, a.next], ['Build the API', 'after Build the API']);
+  assert.ok(snapshotOf({ ...SOURCES, schedules: { schedules: [{ id: 'e', kind: 'recurring', status: 'ended' }], tickets: [] } }, { now: NOW }).schedules.some((x) => x.id === 'e' && x.ended), 'an ended series is listed (its own section)');
+});
+
+test('scheduleOf keeps the saved rule (Save keeps its end), the grace window and the run-after ref', () => {
+  const rule = { freq: 'daily', interval: 1, time: '02:00', tz: 'UTC', end: { type: 'count', count: 10 } };
+  const s = scheduleOf({ id: 'sch_1', kind: 'recurring', status: 'active', rule, graceMin: 60 }, { now: NOW });
+  assert.deepEqual(shapeErrors('schedule', s), []);
+  assert.deepEqual([s.rule, s.grace], [rule, 60]);
+  const a = scheduleOf({ id: 'tk', kind: 'once', status: 'scheduled', runAt: '9999-12-31T00:00:00.000Z', graceMin: 360, after: { kind: 'ticket', id: 'tk_0', title: 'First', policy: 'done' } }, { now: NOW });
+  assert.deepEqual(shapeErrors('schedule', a), []);
+  assert.deepEqual([a.rule, a.afterRef], [null, { kind: 'ticket', id: 'tk_0', policy: 'done' }]);
+});
+
+test('runsOf: a done, failed, missed, skipped and running fire, newest first; a started fire takes its task\'s case', () => {
+  const at = (h) => new Date(NOW - h * 3600_000).toISOString();
+  const history = [
+    { id: 'tk5', status: 'firing', runAt: at(0), title: 'Nightly' },
+    { id: 'tk4', status: 'fired', runAt: at(1), pipelineId: 'p-4', title: 'Nightly' },
+    { id: 'tk3', status: 'failed', runAt: at(25), failReason: 'the project folder is gone', title: 'Nightly' },
+    { id: 'tk2', status: 'missed', runAt: at(49), failReason: 'Worca was off', title: 'Nightly' },
+    { id: 'tk1', status: 'skipped', runAt: at(73), failReason: 'skipped by user', title: 'Nightly' },
+    { id: 'tk0', status: 'fired', runAt: at(97), pipelineId: 'p-0', title: 'Nightly' },
+    { id: 'tk9', status: 'scheduled', runAt: at(-20), title: 'Nightly' },
+  ];
+  const tasks = [{ id: 'p-4', case: 'working', detail: 'Plan · writing the plan' }, { id: 'p-0', case: 'merged', detail: 'Merged #12' }];
+  const runs = runsOf(history, tasks, { now: NOW });
+  assert.deepEqual(runs.map((r) => r.case), ['ticket-firing', 'working', 'ticket-failed', 'ticket-missed', 'ticket-skipped', 'merged'], 'a pending ticket is no fire');
+  assert.deepEqual(runs.map((r) => r.wid), ['tk5', 'p-4', 'tk3', 'tk2', 'tk1', 'p-0']);
+  assert.equal(runs[2].meta, 'the project folder is gone');
+  for (const r of runs) for (const k of ['day', 'date', 'time', 'title', 'case', 'git', 'meta', 'wid']) assert.equal(typeof r[k], 'string', k);
+});
+
 test('chatOf names the chat\'s project from dev\'s thread context (pinned projectKey); unpinned, none, or a non-object context is no project', () => {
   const projects = [{ key: 'web-1', name: 'web' }];
   assert.equal(chatOf({ id: 'a', context: { pinned: true, projectKey: 'web-1' } }, { projects }).project, 'web');
   assert.equal(chatOf({ id: 'a', context: { pinned: true, projectKey: 'gone-9' } }, { projects }).project, 'gone-9', 'a key Worca no longer lists reads as itself');
   assert.equal(chatOf({ id: 'a', context: { pinned: false, projectKey: 'web-1' } }, { projects }).project, '');
   assert.equal(chatOf({ id: 'a', context: 'SECRET' }, { projects }).project, '');
+  // a schedule made from the chat (its askThreadId) is the chat's schedule task, as chats-model.js's are
+  const schedules = [scheduleOf({ id: 'sch_1', kind: 'recurring', title: 'Nightly', status: 'active', askThreadId: 'a', nextRunAt: new Date(NOW + 3600e3).toISOString(), rule: { freq: 'daily', interval: 1, time: '02:00', tz: 'UTC' } }, { now: NOW }), scheduleOf({ id: 'sch_2', kind: 'recurring', title: 'Other', status: 'paused', askThreadId: 'b' }, { now: NOW })];
+  const st = chatOf({ id: 'a' }, { schedules }).tasks;
+  assert.deepEqual(st.map((t) => [t.id, t.kind, t.title]), [['sch_1', 'schedule', 'Nightly']]);
+  assert.deepEqual(shapeErrors('chat', chatOf({ id: 'a' }, { schedules })), []);
   assert.equal(chatOf({ id: 'a', context: null }, { projects }).project, '');
 });
 

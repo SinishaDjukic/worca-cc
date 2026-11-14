@@ -927,7 +927,8 @@
       "code": "ui/public/design-system/components/draft-bar.mjs#draftBar",
       "kind": "acting",
       "needs": [
-        "a thing you changed by hand that is not saved yet: a draft, its changes, Discard and Save"
+        "a thing you changed by hand that is not saved yet: a draft, its changes, Discard and Save",
+        "a schedule's times and rules"
       ],
       "rules": [
         "rail.drafts"

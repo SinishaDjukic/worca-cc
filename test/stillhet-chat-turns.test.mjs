@@ -90,6 +90,12 @@ test('a started card whose run has ended names its task by the link\'s pipeline 
   assert.equal(turns.find((x) => x.id === 'card_run').task, 'pa');
 });
 
+test('a run proposal scheduled from the chat is the schedule\'s card: its series (scheduleId) or its one-off ticket (runId)', () => {
+  assert.deepEqual(cardTurn({ kind: 'card', id: 'c9', state: 'scheduled', card: { title: 'Nightly', scheduleId: 'sch_1' } }, ctx), { t: 'schedule', id: 'c9', task: 'sch_1' });
+  assert.deepEqual(cardTurn({ kind: 'card', id: 'c8', state: 'scheduled', card: { title: 'Once', runId: 'tk_1' } }, ctx), { t: 'schedule', id: 'c8', task: 'tk_1' });
+  assert.equal(cardTurn(block({ title: 'Nightly' }, 'scheduled'), ctx).t, 'proposal', 'a scheduled card that names nothing stays the proposal it was');
+});
+
 test('a resumed run (a new run id, same pipeline) still names the card\'s task: the chat task carries the pipeline id', () => {
   const turns = turnsOf(THREAD, { ...ctx, tasks: [{ id: 'run-new', run: 'run-new', pid: 'pa', title: 'Ask me', case: 'working' }] });
   assert.equal(turns.find((x) => x.id === 'card_run').task, 'run-new');

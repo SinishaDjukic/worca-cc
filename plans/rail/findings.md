@@ -21,6 +21,9 @@ Columns: **From** (the slice and where it was found), **Area**, **Finding** (one
 | feature 1 audit fix pass | Chat | A live metrics or policy ChangeProposal shows dev's raw kind word as its row ("Change: enable"); the prototype has no pair for these kinds, so the words need a design | `live/chat-turns.mjs` `rowsOf` | follow-up | open (owner: owner decision) |
 | feature 1 audit fix pass | Chat | An answered scope-switch ChangeProposal lists its project's full path as its row; the prototype's c11 says "This chat is on worca-cc now" | `live/chat-turns.mjs` scope-switch | follow-up | open (owner: owner decision) |
 | feature 1 real test | Chat | Right after the first send in a new chat, the composer's project picker reads "No project" while the chat is on its project; a reload shows it right | `#chat/ID` composer | minor | open (owner: feature 2 final check) |
+| slice 6 | Workflows | Workflows keeps its inline drafts until slice 7 adopts `RailDrafts` (`shell/drafts.js`), the one drafts store Schedules uses | `workflows/workflows.js` | deferred | open (owner: feature 3) |
+| slice 6 | Schedules | A failed ticket's Open project lands on the project page, where pointing it at the folder waits for the Projects slice | `#projects/KEY` | deferred | open (owner: Projects slice) |
+| slice 6 | Worca | Run now on a series made from a chat card fails at fire with "card is scheduled": the ticket's stored request replays the card link (dev's flag-off page too) | `ui/server.mjs` fireTicket | follow-up | open (owner: dev PR (owner to open the issue)) |
 
 ## Closed
 

@@ -63,6 +63,14 @@ export const TASK_STATES = [['task-loading-run', '?state=task-loading#run/workin
 for (const [id, q] of TASK_STATES) PARTS.push({ id: `state-${id}`, route: true, app: { route: q }, proto: { route: q } });
 PARTS.push({ id: 'action-failed-run', route: true, seed: ['#card [data-key="act-main"]', '#card [data-confirm="yes"]'], wait: 1400, app: { route: '?state=action-failed#run/approved' }, proto: { route: '?state=action-failed#run/approved' } });
 PARTS.push({ id: 'terminal-chat', route: true, seed: '#route-chat [data-terminal]', app: { route: '#chat/c2' }, proto: { route: '#chat/c2' } });   // c2: its failed command opens itself, so Show in terminal is in view
+// Schedules' own cells (Schedules D14): the bar's list states on the Schedules center, a skipped next time, and two that open by
+// a click in both hosts: a time picked (the DraftBar) and Delete (its notice with Undo).
+export const SCHEDULE_STATES = [['schedules-empty', '?state=empty#schedules'], ['schedules-loading', '?state=loading#schedules'], ['schedules-failed', '?state=failed#schedules'], ['schedule-skipped', '#schedule/s6']];
+for (const [id, q] of SCHEDULE_STATES) PARTS.push({ id, route: true, app: { route: q }, proto: { route: q } });
+PARTS.push({ id: 'schedule-draft', route: true, seed: ['#route-schedule [data-menu="sc-at"]', '#route-schedule [data-menu-pick="sc-at|10:00"]'], app: { route: '#schedule/s2' }, proto: { route: '#schedule/s2' } });
+PARTS.push({ id: 'schedule-deleted-undo', route: true, seed: ['#route-schedule [data-menu="sc-more"]', '#route-schedule [data-menu-pick="sc-more|delete"]'], app: { route: '#schedule/s2' }, proto: { route: '#schedule/s2' } });
+/** Every Schedules cell (the PR's pair table): the center, its states, the shown schedule page and the six above. */
+export const SCHEDULES_CELL_IDS = Object.freeze(['route-schedules', 'route-schedule-s1', ...SCHEDULE_STATES.map(([id]) => id), 'schedule-draft', 'schedule-deleted-undo']);
 export const PAGES = ['components.html', 'run-page.html', 'pulse.html'];
 // The deep routes, read from the prototype's own route list once it has drawn (it runs inside the page): RailShell.routes()
 // (ui/public/stillhet/shell/shell.js) less the top-level places, which ROUTES compares as whole pages.

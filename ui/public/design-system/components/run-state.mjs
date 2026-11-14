@@ -672,7 +672,7 @@ const FLOW = {
   'waiting-interrupted': WAITING,
   'ticket-missed': WAITING,
   'ticket-firing': { next: 'starting', event: 'The schedule fired; the task starts' },
-  'ticket-failed': { 'Open project': { would: 'open Settings › Projects; point it at the folder, then Start now' }, 'Start now': { to: 'starting', say: 'Started now' } },
+  'ticket-failed': { 'Open project': { go: 'projects/{project}', say: 'Opened its project' }, 'Start now': { to: 'starting', say: 'Started now' } },   // go: a real place (Schedules D16)
   'ticket-ended': { 'Start a new task': NEW_RUN },
   cancelled: { 'Start a new task': NEW_RUN },
   gate: { 'Accept as is': { to: 'working', say: 'Review accepted; manual tests start' }, 'Run another cycle': RESTART('One more Build and Review round'), Stop: STOP },
