@@ -156,6 +156,69 @@ test('compactMenu: a head and its options are one block (comp.menu-groups)', () 
   assert.equal(dom(C.compactMenu({ items: [{ text: 'a' }] })).querySelector('.menu-g'), null);
 });
 
+const MAKER_ITEMS = [
+  { id: 'anthropic', text: 'Anthropic', sub: [{ id: 'opus', text: 'Opus 5.5', checked: false }, { id: 'sonnet', text: 'Sonnet 5.5', checked: true }] },
+  { id: 'openai', text: 'OpenAI', sub: [{ id: 'gpt', text: 'Codex 5', checked: false }] },
+];
+
+test('compactMenu: an opener says it opens a menu and ticks the group holding the choice (comp.menu-sub)', () => {
+  const m = dom(C.compactMenu({ items: MAKER_ITEMS }));
+  const [a, o] = [...m.querySelectorAll('.menu-item')];
+  assert.deepEqual([a.getAttribute('role'), a.getAttribute('aria-haspopup'), a.getAttribute('aria-expanded'), a.dataset.menuSub], ['menuitem', 'menu', 'false', 'anthropic']);
+  assert.equal(a.hasAttribute('data-menu-pick'), false, 'an opener picks nothing');
+  assert.ok(a.querySelector('.menu-check svg'), 'the group holding the choice carries the tick');
+  assert.equal(o.querySelector('.menu-check'), null);
+  assert.ok(a.querySelector('.menu-sub-chev svg'), 'a › says it opens');
+  assert.equal(m.querySelectorAll('[data-menu-pick]').length, 0, 'closed: only openers');
+  assert.equal(m.hasAttribute('data-sub-of'), false);
+});
+
+test('compactMenu: openSub draws the group\'s items under a back row; sentencePicker reports a sub pick as id|ROWID', () => {
+  const m = dom(C.compactMenu({ items: MAKER_ITEMS, openSub: 'anthropic' }));
+  assert.equal(m.dataset.subOf, 'anthropic');
+  assert.equal(m.getAttribute('aria-label'), 'Anthropic');
+  const items = [...m.querySelectorAll('.menu-item')];
+  assert.ok(items[0].matches('.menu-back'));
+  assert.deepEqual([items[0].dataset.menuSub, items[0].getAttribute('role'), items[0].getAttribute('aria-label'), items[0].textContent], ['', 'menuitem', 'Back to every maker', 'Anthropic']);
+  assert.deepEqual(items.slice(1).map((x) => x.dataset.menuPick), ['opus', 'sonnet']);
+  assert.equal(items[2].getAttribute('aria-checked'), 'true');
+  const p = dom(C.sentencePicker({ id: 'cp-engine', text: 'Sonnet 5.5', items: MAKER_ITEMS, open: true, openSub: 'openai' }));
+  assert.deepEqual([...p.querySelectorAll('[data-menu-pick]')].map((x) => x.dataset.menuPick), ['cp-engine|gpt']);
+  assert.equal(p.querySelector('.menu').dataset.subOf, 'openai', 'the opener keeps its raw id');
+  const closed = dom(C.sentencePicker({ id: 'cp-engine', text: 'x', items: MAKER_ITEMS, open: true }));
+  assert.deepEqual([...closed.querySelectorAll('[data-menu-sub]')].map((x) => x.dataset.menuSub), ['anthropic', 'openai']);
+});
+
+test('menuKeys: arrows wrap, → and Space open, ← and the back row return, Enter clicks once', () => {
+  const win = new JSDOM('<body><div id="r"></div><input id="out"></body>', { pretendToBeVisual: true }).window, d = win.document, r = d.getElementById('r');
+  let sub = '', clicks = 0;
+  const calls = [];
+  const items = [...MAKER_ITEMS, { id: 'off', text: 'Off', off: true, sub: [{ id: 'x', text: 'x' }] }];
+  const paint = () => { r.innerHTML = C.sentencePicker({ id: 'cp-engine', text: 'Sonnet 5.5', items, open: true, openSub: sub }); };
+  const hooks = { openSub: (id) => { calls.push(['open', id]); sub = id; paint(); }, closeSub: () => { calls.push(['close']); sub = ''; paint(); } };
+  d.addEventListener('click', (e) => { if (e.target.closest('[data-menu-pick]')) clicks++; });
+  const key = (el, k) => { const e = new win.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }); const got = C.menuKeys(Object.defineProperty(e, 'target', { value: el }), hooks); return [got, e.defaultPrevented]; };
+  paint();
+  assert.deepEqual(key(r.querySelector('.spick-b'), 'ArrowDown'), [true, true]);
+  assert.equal(d.activeElement.dataset.menuSub, 'anthropic', 'the button\'s ArrowDown focuses the first item');
+  key(d.activeElement, 'ArrowDown'); assert.equal(d.activeElement.dataset.menuSub, 'openai');
+  key(d.activeElement, 'ArrowDown'); assert.equal(d.activeElement.dataset.menuSub, 'anthropic', 'the disabled item is skipped and it wraps');
+  key(d.activeElement, 'ArrowUp'); assert.equal(d.activeElement.dataset.menuSub, 'openai', 'and wraps back');
+  key(r.querySelector('[data-menu-sub="anthropic"]'), 'ArrowRight');
+  assert.equal(d.activeElement.dataset.menuPick, 'cp-engine|sonnet', 'the checked item takes the focus');
+  key(d.activeElement, 'ArrowLeft'); assert.equal(d.activeElement.dataset.menuSub, 'anthropic', 'back on its opener');
+  key(d.activeElement, ' '); assert.equal(d.querySelector('.menu').dataset.subOf, 'anthropic');
+  key(d.querySelector('.menu-back'), 'Enter'); assert.equal(d.activeElement.dataset.menuSub, 'anthropic');
+  key(r.querySelector('[data-menu-sub="openai"]'), 'Enter'); assert.equal(d.activeElement.dataset.menuPick, 'cp-engine|gpt', 'no choice here: the first item');
+  key(d.activeElement, 'Enter'); assert.equal(clicks, 1);
+  key(d.querySelector('.menu-back'), ' ');
+  assert.deepEqual(calls, [['open', 'anthropic'], ['close'], ['open', 'anthropic'], ['close'], ['open', 'openai'], ['close']]);
+  const off = r.querySelector('[data-menu-sub="off"]');
+  assert.deepEqual(key(off, 'Enter'), [true, true]); assert.equal(calls.length, 6, 'a disabled opener never opens');
+  assert.deepEqual(key(d.getElementById('out'), 'Enter'), [false, false], 'outside a .spick it touches nothing');
+  assert.deepEqual(key(r.querySelector('.menu-item'), 'a'), [false, false], 'a key it does not own');
+});
+
 test('notFound: names what was asked for, escapes it, and gives one way on (nav.not-found)', () => {
   const n = dom(C.notFound({ what: 'project', name: '<x>', back: 'Projects', attrs: { 'data-nav': 'projects' } }));
   assert.equal(n.querySelector('.el-t').textContent, 'There is no project called <x>');

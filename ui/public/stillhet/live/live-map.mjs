@@ -134,12 +134,12 @@ const savedItem = (row) => ({ kind: 'hist', id: row.id, status: row.status, prNe
 /** A live run: a `hello.runs` entry or a `run-created` frame, patched by its frames (live-adapter.mjs). */
 export function taskOfLive(run = {}, { now = 0, projects = [], needs, checks = null } = {}) {
   const item = liveItem(run), it = needs === undefined ? item : { ...item, needs }, c = caseOf(it, { checks });
-  return pick('task', { id: str(run.runId), case: c, ...(overOf(it, c) ? { over: true } : {}), ...(lc(run.status) === 'interrupted' ? { interrupted: true } : {}), title: str(run.title) || 'Untitled task', project: str(run.projectName) || projectName(run.projectDir, projects), detail: detailOf(run, item.ask), time: timeOf(run.startedAt, now), day: dayOf(run.startedAt, now), labels: labelsOf(run), cost: num(run.totalCostUsd), archived: false, unread: !!run.unread, pr: '', group: '', kind: kindOf(run), by: byOf(run), workflow: '' });
+  return pick('task', { id: str(run.runId), case: c, ...(overOf(it, c) ? { over: true } : {}), ...(lc(run.status) === 'interrupted' ? { interrupted: true } : {}), ...(lc(run.status) === 'paused' ? { paused: true } : {}), title: str(run.title) || 'Untitled task', project: str(run.projectName) || projectName(run.projectDir, projects), detail: detailOf(run, item.ask), time: timeOf(run.startedAt, now), day: dayOf(run.startedAt, now), labels: labelsOf(run), cost: num(run.totalCostUsd), archived: false, unread: !!run.unread, pr: '', group: '', kind: kindOf(run), by: byOf(run), workflow: '' });
 }
 /** A saved run: a `GET /api/history` row. */
 export function taskOfSaved(row = {}, { now = 0, needs, checks = null } = {}) {
   const item = savedItem(row), at = Number.isFinite(ms(row.mtime)) ? row.mtime : row.startedAt, it = needs === undefined ? item : { ...item, needs }, c = caseOf(it, { checks });
-  return pick('task', { id: str(row.id), case: c, ...(overOf(it, c) ? { over: true } : {}), ...(lc(row.status) === 'interrupted' ? { interrupted: true } : {}), title: str(row.title) || 'Untitled task', project: str(row.projectName), detail: lc(row.status) === 'paused' ? shortDetail(row) : prLine(c, checks) || DETAIL[lc(row.status)] || '', time: timeOf(at, now), day: dayOf(at, now), labels: labelsOf(row), cost: num(row.totalCostUsd), archived: !!row.archived, unread: false, pr: prUrlOf(row.pr), group: '', kind: kindOf(row), by: byOf(row), workflow: '' });
+  return pick('task', { id: str(row.id), case: c, ...(overOf(it, c) ? { over: true } : {}), ...(lc(row.status) === 'interrupted' ? { interrupted: true } : {}), ...(lc(row.status) === 'paused' ? { paused: true } : {}), title: str(row.title) || 'Untitled task', project: str(row.projectName), detail: lc(row.status) === 'paused' ? shortDetail(row) : prLine(c, checks) || DETAIL[lc(row.status)] || '', time: timeOf(at, now), day: dayOf(at, now), labels: labelsOf(row), cost: num(row.totalCostUsd), archived: !!row.archived, unread: false, pr: prUrlOf(row.pr), group: '', kind: kindOf(row), by: byOf(row), workflow: '' });
 }
 
 // ---- chats ----
@@ -260,7 +260,7 @@ const EVENTS = {
 const NOTIF_EVENT = { missed: 'schedule.missed', failed: 'schedule.failed', run_error: 'schedule.run_error', run_paused: 'schedule.run_paused', paused: 'schedule.self_paused', late: 'schedule.late', retrying: 'schedule.retrying', skipped: 'schedule.skipped', canceled: 'schedule.canceled', ended: 'schedule.ended', completed: 'schedule.completed' };
 const NAMES = { 'schedule.missed': 'Start missed', 'schedule.failed': 'Could not start', 'schedule.run_error': 'Scheduled run failed', 'schedule.run_paused': 'Run paused', 'schedule.self_paused': 'Series paused itself', 'schedule.late': 'Started late', 'schedule.retrying': 'Retrying a start', 'schedule.skipped': 'Start skipped', 'schedule.canceled': 'Start canceled', 'schedule.ended': 'Series ended', 'schedule.completed': 'Scheduled run finished', 'run.done': 'Run finished', 'run.failed': 'Task failed', 'run.paused_limit': 'Usage limit reached', 'run.paused_error': 'Paused on error', 'run.cost_cap': 'Cost cap reached' };
 const updDay = (at, now) => { const d = dayOf(at, now); return d === 'today' ? 'Today' : d === 'yesterday' ? 'Yesterday' : 'Earlier'; };
-const update = (id, e, title, meta, at, now, o = {}) => ({ id, e, g: EVENTS[e][0], sev: EVENTS[e][1], title, meta, time: timeOf(at, now) || '', day: updDay(at, now), unread: EVENTS[e][1] !== 'info' && !o.read, go: o.go || 'runs', to: o.to || 'Tasks', ...(o.run ? { run: o.run } : {}), ...(o.fix ? { fix: o.fix } : {}) });
+const update = (id, e, title, meta, at, now, o = {}) => ({ id, e, g: EVENTS[e][0], sev: EVENTS[e][1], title, meta, time: timeOf(at, now) || '', day: updDay(at, now), unread: EVENTS[e][1] !== 'info' && !o.read, go: o.go || 'runs', to: o.to || 'Tasks', ...(o.run ? { run: o.run } : {}), ...(o.about ? { about: o.about } : {}), ...(o.fix ? { fix: o.fix } : {}), ...(Number.isFinite(o.work) ? { work: o.work } : {}) });
 
 // a scheduler pause's message (src/core/scheduler.mjs: `paused (cost pipeline): DETAIL. HINT`) as the one short line
 const noteMeta = (n) => {
@@ -270,22 +270,25 @@ const noteMeta = (n) => {
   const m = /^paused \(([^)]*)\)(?::\s*([\s\S]*))?/.exec(str(n.message));
   return m ? shortDetail({ status: 'paused', pauseReason: m[1].replace(/ /g, '_'), pauseDetail: str(m[2]) }) : str(n.message).split(/\r?\n/)[0];
 };
-/** A `GET /api/notifications` row, or null when Pulse's catalogue has no event for its kind. */
+/** A `GET /api/notifications` row, or null when Pulse's catalogue has no event for its kind. `about`: the task it is about
+ *  (dev's pipelineId), so Pulse marks every update about that task read at once (#1268 D11). */
 export function updateOf(n = {}, { now = 0 } = {}) {
   const e = NOTIF_EVENT[n.kind];
   if (!e) return null;
   // a missed start can be run now from its row (the ticket's waiting row in the store, live-map's `sched:` id)
   const missed = e === 'schedule.missed' && n.ticketId ? { run: `sched:${n.ticketId}`, fix: 'Run now' } : {};
-  return update(`n${n.id}`, e, str(n.title) ? `${NAMES[e]} · ${n.title}` : NAMES[e], noteMeta(n), n.createdAt, now, { read: !!n.readAt || n.unread === false, go: 'schedules', to: 'Schedules', ...missed });
+  return update(`n${n.id}`, e, str(n.title) ? `${NAMES[e]} · ${n.title}` : NAMES[e], noteMeta(n), n.createdAt, now, { read: !!n.readAt || n.unread === false, go: 'schedules', to: 'Schedules', about: str(n.pipelineId), ...missed });
 }
-/** A run's outcome, from its History row: finished, failed or paused. */
+/** A run's outcome, from its History row: finished, failed or paused. `work`: the run's total active time (ms), which grows
+ *  only when an attempt runs, so Pulse's stored read of one outcome never matches the next outcome of the same run under the
+ *  same event, while a later write that is no new attempt (a smart title landing after the failure) keeps it (#1268). */
 export function updateOfOutcome(row = {}, { now = 0 } = {}) {
   const s = lc(row.status), at = Number.isFinite(ms(row.mtime)) ? row.mtime : row.startedAt;
   const capped = s === 'paused' && COST.test(lc(row.pauseReason));
   const e = s === 'done' ? 'run.done' : FAILED.has(s) ? 'run.failed' : capped ? 'run.cost_cap' : s === 'paused' ? (row.limitEngine ? 'run.paused_limit' : 'run.paused_error') : '';
   if (!e) return null;
   const cap = capOf(row.pauseDetail), line = capped ? (cap ? `paused at $${cap}` : 'paused at its cap') : shortDetail(row);
-  return update(`o${row.id}`, e, `${NAMES[e]} · ${str(row.title) || 'Untitled task'}`, [str(row.projectName), line].filter(Boolean).join(' · '), at, now, { go: 'run', to: 'the run page', run: str(row.id), fix: FAILED.has(s) ? 'Try again' : s === 'paused' ? 'Resume' : '' });
+  return update(`o${row.id}`, e, `${NAMES[e]} · ${str(row.title) || 'Untitled task'}`, [str(row.projectName), line].filter(Boolean).join(' · '), at, now, { go: 'run', to: 'the run page', run: str(row.id), fix: FAILED.has(s) ? 'Try again' : s === 'paused' ? 'Resume' : '', work: Number.isFinite(row.totalActiveMs) ? Math.round(row.totalActiveMs) : 0 });
 }
 
 // Away, as the profile menu's row reads it (pulse-model.js awayRow): away now, or here with or without away hours

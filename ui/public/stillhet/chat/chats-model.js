@@ -31,7 +31,7 @@
       chat('c6', 'Export columns', 'idle', 'chat', 'billing-api', '11:40', 'today', { cost: 0.5, group: 't-bill' }),
       chat('c7', 'Export email wording', 'idle', 'started', 'billing-api', '10:10', 'today', { cost: 1.1, group: 't-bill' }),
       chat('c8', 'Incident in the Telegram room', 'idle', 'chat', '', '09:15', 'today', { origin: { platform: 'telegram' } }),
-      chat('c9', 'Release checklist', 'idle', 'started', 'worca-cc', 'Yesterday', 'yesterday', { cost: 3.3, group: 't-rel', tasks: [{ id: 't9s', title: 'Bump dependencies', case: 'scheduled', stage: -1, detail: 'Starts at 17:00, after the release' }, { id: 't9', title: 'Write the notes', case: 'merged', stage: 4, git: 'merged', branch: 'docs/release-notes', detail: 'Merged #1101 into dev' }] }),
+      chat('c9', 'Release checklist', 'idle', 'started', 'worca-cc', 'Yesterday', 'yesterday', { cost: 3.3, group: 't-rel', tasks: [{ id: 't9s', title: 'Bump dependencies', case: 'scheduled', stage: -1, detail: 'Starts at 17:00, after the release' }, { id: 't9', title: 'Write the notes', case: 'merged', stage: 4, git: 'merged', branch: 'docs/release-notes', detail: 'Merged #1101 into dev' }, { id: 't9n', title: 'Summarise the incident notes', case: 'finished-nogit', stage: 3, detail: 'Git is not set up here, so there is no branch or PR' }] }),
       chat('c10', 'Changelog draft', 'idle', 'chat', 'docs-site', 'Yesterday', 'yesterday', { cost: 0.6, group: 't-rel' }),
       chat('c11', 'Who owns the cron parser', 'idle', 'tracks', 'worca-cc', 'Yesterday', 'yesterday', { origin: { platform: 'discord' }, group: 't-ops' }),
       chat('c12', 'Pager rota', 'idle', 'chat', 'web-app', 'Tue', 'week', { origin: { platform: 'teams' }, group: 't-ops' }),
@@ -132,6 +132,7 @@
       { t: 'you', id: 'a3', text: 'Bump the version to 1.20.0', when: '11:42' },
       { t: 'change', id: 'a4', kind: 'Version', title: 'Version bumped', rows: [{ name: 'package.json', before: '1.19.4', after: '1.20.0' }], state: 'applied' },
       { t: 'task', id: 'a4b', task: 't9s' },
+      { t: 'task', id: 'a4c', task: 't9n' },   // a task with no git: its card ends at Done, as its page does (panel.task-card)
       { t: 'you', id: 'a5', text: 'Stop the flaky login fix, it can wait', when: '11:44' },
       { t: 'you', id: 'a7', text: 'Plan the follow-ups for 1.20 with me', when: '11:50' },
       { t: 'form', id: 'f1', kind: 'slider', text: 'How many review rounds before a follow-up asks you?', min: 1, max: 6, value: 3, pick: 4, unit: 'rounds' },
