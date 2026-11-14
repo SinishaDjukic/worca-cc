@@ -80,6 +80,7 @@ export const TURN_SHAPES = Object.freeze({
   form: { id: 'string', text: 'string', kind: 'string' },
   change: { id: 'string', kind: 'string', state: 'string', rows: 'array?' },
   proposal: { id: 'string', title: 'string' },
+  runwith: { id: 'string', title: 'string', workflow: 'string' },
   craft: { id: 'string', label: 'string' },
   task: { id: 'string', task: 'string' },
   schedule: { id: 'string', task: 'string' },
