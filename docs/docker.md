@@ -374,8 +374,8 @@ volume it can't write, it exits 78 and names the fix. See
 [deploy-railway.md](deploy-railway.md).
 
 In that mode agents also run as their own user, `worca-agent`. It shares the projects,
-run checkouts and run store with `worca` through the `worca-share` group, but cannot
-read worca's settings, database, `HOME` or environment. Give Claude Code a token or key
+run checkouts, run store and design library with `worca` through the `worca-share` group,
+but cannot read worca's settings, database, `HOME` or environment. Give Claude Code a token or key
 as a variable (`CLAUDE_CODE_OAUTH_TOKEN` or `ANTHROPIC_API_KEY`); a login stored in
 worca's `HOME` is not visible to agents. `WORCA_AGENT_ISOLATION=0` turns it off. A
 bind-mount setup keeps one user, so files agents write on your disk keep your uid.

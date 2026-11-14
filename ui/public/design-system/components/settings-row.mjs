@@ -21,10 +21,12 @@ import { row } from './row.mjs';
  * @param {boolean} [o.right]  the menu opens to the left (a picker at the row's end)
  * @param {string} [o.body]    in place of a menu, what opens under it (a ListEditor: find or make one)
  * @param {string} [o.label]   the button's accessible name, when the words alone do not say what they choose
+ * @param {string} [o.openSub] the open group's id: a group's items open in place (comp.menu-sub); a sub pick reports `<id>|<value>` too
  */
-export function sentencePicker({ id, text, items = [], open = false, tip = '', chevron = '', right = false, body = '', label = '' }) {
-  const its = items.map((it) => (it.sep || it.header ? it : { ...it, id: `${id}|${it.id ?? it.text}` }));
-  const pop = body ? body.replace(/^<div class="menu /, `<div class="menu spick-menu${right ? ' is-right' : ''} `) : compactMenu({ items: its, cls: 'spick-menu' + (right ? ' is-right' : '') });
+export function sentencePicker({ id, text, items = [], open = false, tip = '', chevron = '', right = false, body = '', label = '', openSub = '' }) {
+  const prefix = (list) => list.map((it) => (it.sep || it.header ? it : it.sub ? { ...it, id: it.id ?? it.text, sub: prefix(it.sub) } : { ...it, id: `${id}|${it.id ?? it.text}` }));   // an opener keeps its raw id (comp.menu-sub)
+  const its = prefix(items);
+  const pop = body ? body.replace(/^<div class="menu /, `<div class="menu spick-menu${right ? ' is-right' : ''} `) : compactMenu({ items: its, cls: 'spick-menu' + (right ? ' is-right' : ''), openSub });
   return `<span class="spick"><button type="button" class="spick-b"${attrs({ 'data-menu': id, 'data-key': 'pick:' + id, 'aria-haspopup': body ? 'dialog' : 'menu', 'aria-expanded': String(open), title: tip || null, 'aria-label': label || null })}>${esc(text)}${chevron}</button>${open ? pop : ''}</span>`;
 }
 

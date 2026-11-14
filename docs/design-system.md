@@ -445,6 +445,15 @@ catalogue structure that was approved, drawn with this system's tokens:
   and as the rail's small kind dots. The update chip ("Update 0.3.0", "2 updates") is the page's blue status chip.
   Status chips there use `.badge.mk-chip-*` on the `-ink-strong` shades (4.5:1 or more); the global `.badge` tones do not change.
 
+### Design stage exceptions
+The Design page's stage (`ui/public/design/`) shows real agents at work, so it moves and colours what no other page does. These hold on the stage only.
+- **Motion:** a cursor travels between the real elements its agent writes (up to 950 ms) and leaves when its process ends. Guides sweep. The camera zooms and scrolls by itself, at most 400 ms, only when the crew changes, until the person scrolls or zooms. Reduced motion: no travel, no sweep, no ease, no ghost, and the page never moves slower than a jump.
+- **Crew colours:** agents wear the dark arms of the hue families (`--blue-ink`, `--teal-ink` …), with `--stage-lemon`, `--stage-coral` and `--stage-sky`, never violet. They identify, they do not mean a state, and they appear only on a cursor, its label, its HUD dot, its Agents row, its Plan row dot and, on a video, its scene's timeline block while the round builds. Waiting is `--amber`, as everywhere.
+- **Grammar colours:** `--stage-blue`, `--stage-red`, `--stage-orange` mark what is being written, a guide or overflow, and what is being read.
+- **HUD:** always dark, on any page or artifact. Its 2px line is `--blue`. A dot grows on hover.
+- **Mono:** size tags (`p 500×58`) are mono: they name an element and its measure.
+- **Decks and video:** while a deck or a video builds, every slide or scene is a tile carrying its number and job (`2 Problem`), its size tags read slide pixels, and a video also shows its timeline. A finished deck gets the rail and a finished video the transport.
+
 ## Do and don't
 | Do | Don't | Why |
 |---|---|---|

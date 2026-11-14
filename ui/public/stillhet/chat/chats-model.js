@@ -31,7 +31,7 @@
       chat('c6', 'Export columns', 'idle', 'chat', 'billing-api', '11:40', 'today', { cost: 0.5, group: 't-bill' }),
       chat('c7', 'Export email wording', 'idle', 'started', 'billing-api', '10:10', 'today', { cost: 1.1, group: 't-bill' }),
       chat('c8', 'Incident in the Telegram room', 'idle', 'chat', '', '09:15', 'today', { origin: { platform: 'telegram' } }),
-      chat('c9', 'Release checklist', 'idle', 'started', 'worca-cc', 'Yesterday', 'yesterday', { cost: 3.3, group: 't-rel', tasks: [{ id: 't9s', title: 'Bump dependencies', case: 'scheduled', stage: -1, detail: 'Starts at 17:00, after the release' }, { id: 't9', title: 'Write the notes', case: 'merged', stage: 4, git: 'merged', branch: 'docs/release-notes', detail: 'Merged #1101 into dev' }] }),
+      chat('c9', 'Release checklist', 'idle', 'started', 'worca-cc', 'Yesterday', 'yesterday', { cost: 3.3, group: 't-rel', tasks: [{ id: 't9s', title: 'Bump dependencies', case: 'scheduled', stage: -1, detail: 'Starts at 17:00, after the release' }, { id: 't9', title: 'Write the notes', case: 'merged', stage: 4, git: 'merged', branch: 'docs/release-notes', detail: 'Merged #1101 into dev' }, { id: 't9n', title: 'Summarise the incident notes', case: 'finished-nogit', stage: 3, detail: 'Git is not set up here, so there is no branch or PR' }] }),
       chat('c10', 'Changelog draft', 'idle', 'chat', 'docs-site', 'Yesterday', 'yesterday', { cost: 0.6, group: 't-rel' }),
       chat('c11', 'Who owns the cron parser', 'idle', 'tracks', 'worca-cc', 'Yesterday', 'yesterday', { origin: { platform: 'discord' }, group: 't-ops' }),
       chat('c12', 'Pager rota', 'idle', 'chat', 'web-app', 'Tue', 'week', { origin: { platform: 'teams' }, group: 't-ops' }),
@@ -78,8 +78,23 @@
     return d;
   };
   // A conversation's turns: what a person said, what Worca said, what it did. Work points at its task.
-  const thread = (c) => {
-    if (window.RailWorld?.live && window.RailChatLive) return window.RailChatLive.turns(c.id);   // live: dev's thread (live/chat-live.mjs)
+  // panel.turn-time: a demo turn's time, from its seed's words and the demo's now: '14:02' is today at 14:02, 'Yesterday',
+  // a weekday ('Mon') and a date ('Oct 2') are that day at 14:02, 'now' is now. Its `when` stays for the timeline's ticks.
+  const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const atOf = (when, now) => {
+    const w = String(when || ''), d = new Date(now), hm = w.match(/^(\d\d):(\d\d)$/), md = w.match(/^([A-Z][a-z]{2}) (\d{1,2})$/);
+    if (w === 'now') return now;
+    if (hm) { d.setHours(+hm[1], +hm[2], 0, 0); return d.getTime(); }
+    d.setHours(14, 2, 0, 0);
+    if (w === 'Yesterday') { d.setDate(d.getDate() - 1); return d.getTime(); }
+    if (DAYS.includes(w)) { d.setDate(d.getDate() - 2); while (DAYS[d.getDay()] !== w) d.setDate(d.getDate() - 1); return d.getTime(); }   // the last such day before yesterday
+    if (md && MONTHS.includes(md[1])) { d.setMonth(MONTHS.indexOf(md[1]), +md[2]); if (d.getTime() > now) d.setFullYear(d.getFullYear() - 1); return d.getTime(); }
+    return undefined;
+  };
+  // Worca's words take the time of what they answer; words before anything was said take now
+  const timed = (list) => { const now = Date.now(); let last = now; for (const x of list) { if (x.t === 'you') { const a = atOf(x.when, now); if (a !== undefined) x.at = last = a; } else if (x.t === 'words') x.at = last; } return list; };
+  const thread = (c) => (window.RailWorld?.live && window.RailChatLive ? window.RailChatLive.turns(c.id) : timed(seedThread(c)));   // live: dev's thread (live/chat-live.mjs), its times dev's own
+  const seedThread = (c) => {
     if (c.fromTask) return (c.tasks || []).map((x, i) => ({ t: 'task', id: `b${i}`, task: x.id }));   // opened from Tasks or Pulse: its card, nothing made up
     if (c.id === 'c0') return [   // the first minutes: a chat like any other, so nothing new to learn
       { t: 'words', html: 'Hi, I’m Worca. I run coding tasks for you: you say what to do, I plan it, build it, review it and open a pull request. Two things first, then your first task.' },
@@ -117,6 +132,7 @@
       { t: 'you', id: 'a3', text: 'Bump the version to 1.20.0', when: '11:42' },
       { t: 'change', id: 'a4', kind: 'Version', title: 'Version bumped', rows: [{ name: 'package.json', before: '1.19.4', after: '1.20.0' }], state: 'applied' },
       { t: 'task', id: 'a4b', task: 't9s' },
+      { t: 'task', id: 'a4c', task: 't9n' },   // a task with no git: its card ends at Done, as its page does (panel.task-card)
       { t: 'you', id: 'a5', text: 'Stop the flaky login fix, it can wait', when: '11:44' },
       { t: 'you', id: 'a7', text: 'Plan the follow-ups for 1.20 with me', when: '11:50' },
       { t: 'form', id: 'f1', kind: 'slider', text: 'How many review rounds before a follow-up asks you?', min: 1, max: 6, value: 3, pick: 4, unit: 'rounds' },

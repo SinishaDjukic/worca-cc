@@ -298,7 +298,7 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 |---|---|
 | `ui/public/models/engine-settings.css` | 46 |
 | `ui/public/models/engine-status.css` | 3 |
-| `ui/public/models/model-bridge.css` | 151 |
+| `ui/public/models/model-bridge.css` | 164 |
 | `ui/public/models/model-editor.html` | 49 |
 | `ui/public/models/models-view.css` | 58 |
 | `ui/public/models/models.html` | 47 |
@@ -311,6 +311,12 @@ and pinned routes). See [split-by-feature.md](split-by-feature.md).
 | File | Lines |
 |---|---|
 | `ui/routes/speech/speech.mjs` | 63 |
+
+## images ([image-generation.md](image-generation.md))
+
+| File | Lines |
+|---|---|
+| `ui/routes/images/images.mjs` | 30 |
 
 ## network-proxy ([network-proxy.md](network-proxy.md))
 

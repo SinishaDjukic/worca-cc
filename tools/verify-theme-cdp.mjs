@@ -809,7 +809,7 @@ const SLICE3_CHECKS = {
       return b && { bg: getComputedStyle(b).backgroundColor, built: probe('badge mk-chip mk-chip-built'), warn: probe('badge mk-chip mk-chip-warn') }; })()`);
     designChecks.push({ what: 'grey badge: the built-in marketplace chip is the built tone, not amber', ok: !!gb && gb.bg === gb.built && gb.bg !== gb.warn, got: gb });
   },
-  'settings-providers': dividedRows('Providers', '#providers-list .mv-pv-card', 4),
+  'settings-providers': dividedRows('Providers', '#providers-list .mv-pv-card', 6),
   'settings-models': quietChip('Models', '.mv-filters .filter-chip[aria-pressed="true"]'),
   'workflows-library-scripts': quietChip('Library', '.wfl .filter-chip[aria-pressed="true"]'),
   'team-policy': async () => {

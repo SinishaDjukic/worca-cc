@@ -101,6 +101,25 @@ test('a step reads its stage: live, done, next, and how long', () => {
   assert.equal(R.stepLook({ state: 'ask', name: 'x' }).word, 'Needs you');
 });
 
+test('a step\'s state and time in words: isDone, subState, toMin, fmtMin', () => {
+  assert.equal(R.isDone({ state: 'merged' }), true); assert.equal(R.isDone({ state: 'now' }), false);
+  assert.equal(R.subState([{ state: 'done' }, { state: 'ask' }]), 'ask'); assert.equal(R.subState([{ state: 'done' }]), 'done'); assert.equal(R.subState([{ state: 'next' }]), 'next');
+  assert.equal(R.toMin('1h 30m'), 90); assert.equal(R.fmtMin(90), '1h 30m'); assert.equal(R.fmtMin(0.5), '30s'); assert.equal(R.fmtMin(59.8), '1h');
+});
+
+test('makeAction and failureOf: an action as a state offers it; a failure in Rail\'s words', () => {
+  assert.deepEqual(R.makeAction('Merge', 'pr', 1), { label: 'Merge', icon: 'pr', primary: true, items: [] });
+  const f = R.failureOf('Merge PR', 'Checks failed.');
+  assert.equal(f.title, 'Could not merge PR'); assert.equal(f.detail, 'Checks failed. Nothing changed.');
+  assert.match(R.failureOf('Merge PR', 'x', { odd: true }).detail, /^Something went wrong on Worca’s side\. Nothing changed\.$/);
+});
+
+test('fitMenu: a menu stays 16px inside the window', () => {
+  const at = { left: 300, width: 200 }; const m = { style: {}, getBoundingClientRect: () => { const left = at.left + parseFloat(m.style.left || 0); return { left, right: left + at.width }; } };
+  R.fitMenu(m, 400); assert.equal(m.getBoundingClientRect().right, 384);
+  at.left = -50; m.style = {}; R.fitMenu(m, 400); assert.equal(m.getBoundingClientRect().left, 16);
+});
+
 test('act.archive: Archive says what goes and what stays', () => {
   const f = R.actionFlow('interrupted', CTX).Archive;
   assert.match(f.confirm, /local branch, worktree and logs are removed; the remote branch and any PR stay/);
@@ -366,6 +385,13 @@ test('chatState, bulkStateOf: a chat sorts Needs you, Running, Recent; an unknow
   assert.equal(R.planBulk('archive', [{ id: 'a', title: 'a', state: R.bulkStateOf('Merged') }]).apply.length, 1);
 });
 
+test('skipText and bulkConfirm: what a bulk action skips, and the one confirm it asks', () => {
+  const plan = R.planBulk('stop', [{ id: 'a', title: 'Fix login', state: 'waiting' }, { id: 'b', title: 'B', state: 'working' }]);
+  assert.equal(R.skipText(plan), 'Skipped 1 not started yet: Fix login.');
+  const c = R.bulkConfirm('stop', plan); assert.equal(c.title, 'Stop 1 run?'); assert.equal(c.danger, true); assert.match(c.message, /^Skipped 1 not started yet/);
+  assert.equal(R.bulkConfirm('restore', plan), null);
+});
+
 test('selectStep: a selection key as one step', () => {
   const shown = ['a', 'b', 'c'];
   assert.deepEqual(R.selectStep(R.selectClear(), 'toggle', { from: 'a', shown }).pick.ids, ['a']);
@@ -416,6 +442,22 @@ test('dismissOnOutside: a click outside closes; inside never; a real control als
   off();
 });
 
+test('dismissOnOutside: an esc that returns a selector focuses it after the repaint; one that returns true repaints and keeps the layer', async () => {
+  const { JSDOM } = await import('jsdom');
+  const win = new JSDOM('<body><div id="pane"></div><p id="page">p</p></body>', { pretendToBeVisual: true }).window, d = win.document;
+  const esc = () => d.getElementById('page').dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  let open = true, closed = 0, paints = 0, step = '[data-menu-sub="anthropic"]';
+  const pane = d.getElementById('pane');
+  R.dismissOnOutside(d, { open: () => open, inside: '#pane', close: () => { closed++; open = false; }, esc: () => step, paint: () => { paints++; pane.innerHTML = '<button data-menu-sub="anthropic">Anthropic</button>'; } });
+  esc();
+  assert.equal(d.activeElement, d.querySelector('[data-menu-sub="anthropic"]'), 'the element drawn by the repaint takes the focus');
+  assert.deepEqual([open, closed, paints], [true, 0, 1], 'the layer stays');
+  step = true; esc();
+  assert.deepEqual([open, closed, paints], [true, 0, 2], 'true: taken, repainted, kept');
+  step = false; esc();
+  assert.deepEqual([open, closed], [false, 1], 'nothing to take: it closes as before');
+});
+
 test('soundFor: what the choice says plays; info never; a burst once; never when away', () => {
   const needs = [{ sev: 'needs' }], problem = [{ sev: 'problem' }], info = [{ sev: 'info' }];
   assert.equal(R.soundFor({ events: needs }), true, 'what needs you is the default');
@@ -443,4 +485,12 @@ test('playChime: two notes; quiet with no error when the browser blocks or has n
     createGain() { return { gain: param(), connect() {} }; } }
   assert.equal(R.playChime({ AudioContext: Ctx, navigator: { userActivation: { hasBeenActive: true } } }), true);
   assert.equal(notes, 2);
+});
+
+test('makerItems groups models by maker and modelText names a model run off its maker\'s engine', () => {
+  const rows = [{ id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', engine: 'claude' }, { id: 'gpt-5', label: 'GPT-5', engine: 'codex' }, { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5', engine: 'copilot' }];
+  const items = R.makerItems(rows, { chosen: '' });
+  assert.ok(Array.isArray(items) && items.length >= 2, 'one opener per maker');
+  assert.match(R.modelText(rows[2]), /Copilot/);
+  assert.doesNotMatch(R.modelText(rows[0]), /Claude Code/);
 });

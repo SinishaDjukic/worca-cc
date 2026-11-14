@@ -76,6 +76,18 @@ const taskTurn = (b, ctx) => {
   return { t: 'task', id: str(b.id), task: str(t?.id) || run };
 };
 
+/** A workflow Worca proposes only to run a task (`propose_workflow` with `thenRun`) whose one stage is the task: proposed,
+ *  it is one Run with card (D2). One stage is `shape.stages` of one, else exactly one keyed agent node in its manifest. */
+export function oneStageRun(block) {
+  const c = block?.card;
+  if (!c || c.type !== 'workflow' || c.thenRun !== true || block.state !== 'proposed') return false;
+  if (Array.isArray(c.shape?.stages)) return c.shape.stages.length === 1;
+  return arr(c.manifest?.steps).filter((x) => x?.kind === 'agents').flatMap((x) => arr(x.nodes)).filter((n) => n && n.key).length === 1;
+}
+const SAVE = 'Save workflow';   // dev's card says what it does (ask-panel.mjs "Save as workflow"): a workflow card saves
+/** The Run with turn of a workflow card; `state` is forced while chat-live waits on its saved card (D5). */
+export const runWithTurn = (b, state = stateOf(b.state)) => { const name = str(b.card.name) || 'A workflow'; return { t: 'runwith', id: str(b.id), card: str(b.id), cardType: 'workflow', title: name, workflow: name, why: str(b.card.note), rows: rowsOf(b.card), state }; };
+
 /** Each dev card type's turn (Step 4's table). The keys are exactly src/shared/ask-card-types.mjs ASK_CARD_TYPES. */
 export const CARD_TURN = Object.freeze({
   question: (b) => {
@@ -85,8 +97,8 @@ export const CARD_TURN = Object.freeze({
       ...(b.state === 'answered' ? { answered: picked >= 0 ? labels[picked] : str(c.answerText) || str(c.text) || 'Answered' } : {}) };
   },
   progress: taskTurn,
-  workflow: (b, ctx) => change(b, ctx, { graph: true }),
-  'workflow-build': (b, ctx) => change(b, ctx, { graph: true }),
+  workflow: (b, ctx) => (oneStageRun(b) ? runWithTurn(b) : change(b, ctx, { graph: true, apply: SAVE })),
+  'workflow-build': (b, ctx) => change(b, ctx, { graph: true, apply: SAVE }),
   // the words are dev's own cards' (ui/public/chat/action-cards.mjs, ui/public/shape/changes-card.mjs, route-card.mjs)
   'run-stop': (b) => act(b, `<b>Stop ${esc(str(b.card.title) || 'the task')}?</b> A stopped run can't be resumed. Its work so far stays on its branch.`, [['Stop run', 'danger', 'Stopped', 'card-apply'], [b.card.status === 'paused' ? 'Keep paused' : 'Keep running', 'quiet', 'Not now', 'card-later']]),
   // D4: an opened PR shows on its run's TaskCard alone (Ready to merge, its checks, Merge PR); with no TaskCard in the
@@ -167,13 +179,16 @@ function groupCommands(out) {
 }
 const FAILED_TEXT = 'Worca could not answer this time.';
 const secs = (ms) => Math.max(1, Math.round((Number(ms) || 0) / 1000));
+// panel.turn-time: a turn's time is its message's own createdAt, never a made-up one (an echo has none until dev's row lands)
+const atOf = (m) => { const t = Date.parse(str(m.createdAt)); return Number.isFinite(t) ? { at: t } : {}; };
 function assistantTurns(m, ctx) {
   const out = [], blocks = arr(m.blocks), steps = blocks.filter((b) => b && (b.kind === 'tool' || b.kind === 'agent')).map((b) => str(b.label) || str(b.name)).filter(Boolean);
   if (steps.length && m.status !== 'streaming') out.push({ t: 'think', text: `Thought for ${secs(m.durationMs)}s`, steps });
   const text = str(m.text), cards = blocks.filter((b) => b && b.kind !== 'tool' && b.kind !== 'agent'), tail = [];
   // a card placed mid-answer (`textAt`) sits after the words before it; one without stands after the whole answer
-  let from = 0;
-  const words = (to) => { const w = text.slice(from, to).trim(); if (w) { const parts = m.status === 'streaming' ? null : partsOf(w); out.push({ t: 'words', html: wordsHtml(w), ...(parts ? { parts } : {}) }); } from = to; };   // refs once the answer is done, as dev's chips
+  let from = 0, k = 0;
+  const at = atOf(m);   // each words turn keyed by its message, so a row inserted above it never moves its time or its focus
+  const words = (to) => { const w = text.slice(from, to).trim(); if (w) { const parts = m.status === 'streaming' ? null : partsOf(w); out.push({ t: 'words', html: wordsHtml(w), ...(parts ? { parts } : {}), ...at, key: `${str(m.id)}:${k++}` }); } from = to; };   // refs once the answer is done, as dev's chips
   for (const b of cards) {
     const turn = turnOfBlock(b, ctx);
     if (!Number.isInteger(b.textAt)) { if (turn) tail.push(turn); continue; }
@@ -191,7 +206,7 @@ function userTurn(m) {
   const blocks = arr(m.blocks), synthetic = blocks.find((b) => b && b.kind === 'notice' && b.synthetic);
   if (synthetic) return { t: 'notice', text: str(synthetic.text) };
   const files = blocks.filter((b) => b && b.kind === 'attachment').map((b) => str(b.name)).filter(Boolean);
-  return { t: 'you', id: str(m.id), text: str(m.text), ...(files.length ? { files } : {}) };
+  return { t: 'you', id: str(m.id), text: str(m.text), ...(files.length ? { files } : {}), ...atOf(m) };
 }
 
 /** Every turn of a thread, in order. `thread`: the GET answer's parts (`messages`, `runLinks`, `inFlight`); `ctx.tasks`: the

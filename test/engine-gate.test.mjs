@@ -678,7 +678,7 @@ test('a legacy workspace node may write every member worktree; a detached one ha
   const legacy = runOpts({ ...base, runRoot: null }, { role: 'r', prompt: 'P', systemPrompt: 'S', allowedTools: [] });
   assert.deepEqual(legacy.writableDirs, ['/pipe', '/repo-a/.worca-cc/worktrees/p1', '/repo-b/.worca-cc/worktrees/p1']);
   const detached = runOpts({ ...base, runRoot: '/runs/p1', projectDir: '/runs/p1' }, { role: 'r', prompt: 'P', systemPrompt: 'S', allowedTools: [] });
-  assert.deepEqual(detached.writableDirs, ['/pipe']);
+  assert.deepEqual(detached.writableDirs, ['/pipe', '/runs/p1/.scratch']);
 });
 
 test('a codex catalog id is not a Claude model: kept on codex, dropped on Claude and for the Claude-only calls', () => {

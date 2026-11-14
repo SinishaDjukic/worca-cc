@@ -3,7 +3,8 @@
 export { esc, attrs, cls, toElement } from './html.mjs';
 export { button, splitButton } from './button.mjs';
 export { terminalPane } from './terminal-pane.mjs';
-export { compactMenu, menuItem } from './compact-menu.mjs';
+export { compactMenu, menuItem, menuKeys } from './compact-menu.mjs';
+export { MAKERS, ENGINE_WORDS, makerOf, modelText, modelMakers, makerItems } from './model-makers.mjs';
 export { statusDot, statusDotClass, statusLine } from './status-line.mjs';
 export { confirmStrip, confirmActions, confirmForm } from './confirm-strip.mjs';
 export { tabs } from './tabs.mjs';
@@ -60,6 +61,7 @@ export { barChart, lineChart, mixChart, figureRows, watchChart, diffWords } from
 export { sliderPick, rankList, pickRows, factsLine } from './question-forms.mjs';
 export { stageStep } from './kind-mark.mjs';
 export { runOutcomes, handedChip, expandFrame, markTone, alertLevel, kindMark, partsWord, gitMark, timeline, timelineCard, barHead, turnRow, composer, stageBar, cardHead, taskCard, taskProposal, changeProposal, turnDivider, planCard, filesCard, refChip, youTurn, stageLine, stagePart, thinkingRow, placeHead, pluginCard } from './kind-mark.mjs';
+export { turnTime, turnTimeText } from './turn-time.mjs';
 export { tipPlace, watchTooltips } from './tooltip.mjs';
 export { menuUp, menuShift, watchMenus } from './menu-place.mjs';
 export { secondClickIgnored, watchClickGuard } from './click-guard.mjs';
