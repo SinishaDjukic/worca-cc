@@ -21,6 +21,8 @@
 import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 import { createAskTools } from './tools.mjs';
+import { readProjectProfile } from '../project-profile.mjs';
+import { listProjects } from '../projects.mjs';
 import { createRpcServer } from './rpc-server.mjs';
 import { defaultToolDeps } from './tool-deps.mjs';
 import { defaultWorktreeDeps } from './worktree-deps.mjs';
@@ -96,6 +98,11 @@ export function createAskToolServer({ threadId, reader = null, signal, write, lo
       ...defaultWorkspaceDeps(),
       // Actions (docs/actions.md "Chat"): read the config, checkouts and running services; propose config.
       ...defaultActionsDeps(),
+      // The stored project profile (get_project_profile); a read failure is "no profile".
+      profile: {
+        known: async (key) => { try { return (await listProjects()).some((p) => p.key === key); } catch { return false; } },
+        read: (key) => { try { return readProjectProfile(key); } catch { return null; } },
+      },
       // Corporate proxy (docs/network-proxy.md "From Chat"): read + test over the per-turn bridge; two cards.
       ...defaultProxyDeps({ env }),
       // Branch reads + fetch-only (#527): list_branches, list_projects.sync, get_run.baseMoved.

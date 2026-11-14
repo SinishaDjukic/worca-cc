@@ -545,7 +545,7 @@ function markersFor({ role, ordinal, runCtx, outputs, verdict, bindings, ports, 
     markers.MOCK_OUT = paths[0];
     // The generic producer's further outputs (E8 requires each fired output to exist): '' for a
     // single-output node, which mockMarkers skips, so those prompts stay byte-identical.
-    if (role === 'generic-producer' || role === 'requirements-refine') markers.MOCK_OUTS = paths.slice(1).join('|');
+    if (role === 'generic-producer' || role === 'generic-approver' || role === 'requirements-refine') markers.MOCK_OUTS = paths.slice(1).join('|');
   }
   if (verdict?.path) markers.MOCK_JSON = verdict.path;
   const primaryIn = (ports?.inputs || [])

@@ -320,7 +320,7 @@ inside the view.
 | Element | Level |
 |---|---|
 | Projects list, add, project page Overview, remove, Use git (Folder projects) and Link remote (Git projects without origin) | S |
-| Agent readiness chip (Projects row, project page header) and its report, incl. Not used here / Undo and Recheck | S — status of the project a run starts in; its Settings links open the project Settings tab by deep link |
+| Agent readiness chip (Projects row, project page header) and its report, incl. Not used here / Undo, Recheck, Evaluate in depth and Set up with AI (also on the added-project toast), the "Evaluated: N/100" line | S — status of the project a run starts in; its Settings links open the project Settings tab by deep link |
 | Project Settings tab: Agent readiness card (Detect / Used / Not used per tool, skipped checks) | A — the tab's level |
 | Project Memory tab (view and edit files) | A |
 | Project Memory tab › Team view (Local · Team · Both choice, note states, share existing notes, Compare, Undo seeding); project Settings › Team memory | A |
@@ -329,6 +329,8 @@ inside the view.
 | Project page Automations tab (flag gitAutomations: Auto-handle switches with what each does and its limits, your own rules with Add / Turn off / Delete, each switch's and rule's limits with Edit limits, Waiting (the queue, in order, with Start now and Remove), Recent with Approve and Open run, Check now; a note naming the workspace whose rules take this repository's events over) | A — "Approve" waits on a person, but a `/worca approve` comment on GitHub or Azure DevOps answers it too |
 | Workspaces list, create wizard (with its Add… / paste-box import), workspace page Overview (projects, the Remove confirm's re-scan choice and recommendation, description, re-scan, delete) | A |
 | Workspace header "Scan model" control (view / change / clear the saved re-scan model); the choose-a-model window a re-scan opens when the workspace has no usable pick — it unblocks the re-scan, so it shows at any level | A |
+| Workspace Overview › Projects card: member readiness chips and "N of M agent-ready"; the after-scan readiness notice | S — as the project's chip |
+| Workspace page header: Evaluate with AI and Set up with AI | A — the page's level |
 | Workspace page Map tab (coverage, graph, edges, confirm / reject / clear, add / delete manual edges, Regenerate description) | A |
 | Workspace page Actions tab | A |
 | Workspace page Automations tab (flag gitAutomations: the project tab's switches, rules and Recent over every member's repository, the repositories watched, View PR, or View PRs ▾ listing each changed repository's PR) | A — as the project page's |

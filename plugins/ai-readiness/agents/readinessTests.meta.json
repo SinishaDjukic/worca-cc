@@ -1,0 +1,49 @@
+{
+  "key": "readinessTests",
+  "metaVersion": 2,
+  "runnerType": "producer",
+  "mockRole": "generic-producer",
+  "domain": "readiness",
+  "displayName": "Seed tests",
+  "description": "Sets up the chosen test tier and seeds passing tests over the pure units the Map step found.",
+  "color": "peach",
+  "scope": "project",
+  "workspaceFanOut": true,
+  "workspaceStrategy": "task",
+  "sideEffect": "code",
+  "agentFile": "readinessTests.md",
+  "order": 14,
+  "promptHints": "Cycle: {cycle}.",
+  "inputs": [
+    {
+      "id": "map",
+      "type": "json"
+    },
+    {
+      "id": "plan",
+      "type": "json"
+    },
+    {
+      "id": "generated",
+      "type": "json"
+    },
+    {
+      "id": "after",
+      "type": "void",
+      "required": false,
+      "as": "worktree"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "done",
+      "type": "void"
+    },
+    {
+      "id": "tests",
+      "type": "json",
+      "filename": "readiness-tests-cycle{cycle}.json",
+      "artifactKind": "readiness-tests"
+    }
+  ]
+}

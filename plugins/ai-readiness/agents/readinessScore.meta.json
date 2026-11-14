@@ -1,0 +1,36 @@
+{
+  "key": "readinessScore",
+  "metaVersion": 2,
+  "runnerType": "producer",
+  "mockRole": "generic-producer",
+  "domain": "readiness",
+  "displayName": "Score",
+  "description": "Judges the repository's AI-readiness against the confirmed map and the probe's measurements.",
+  "color": "amber",
+  "scope": "project",
+  "workspaceFanOut": true,
+  "workspaceStrategy": "explore",
+  "agentFile": "readinessScore.md",
+  "order": 12,
+  "requiresSkills": [
+    "readiness-rubric"
+  ],
+  "inputs": [
+    {
+      "id": "map",
+      "type": "json"
+    },
+    {
+      "id": "probe",
+      "type": "json"
+    }
+  ],
+  "outputs": [
+    {
+      "id": "judgement",
+      "type": "json",
+      "filename": "readiness-judgement.json",
+      "artifactKind": "readiness-judgement"
+    }
+  ]
+}

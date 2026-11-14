@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { seedPipeline } from './helpers/db-seed.mjs';
 import { RunHarness } from '../src/core/run-harness.mjs';
-import { listRunArtifacts } from '../src/core/artifacts.mjs';
+import { listRunArtifacts, recordArtifact } from '../src/core/artifacts.mjs';
+import { readProjectProfile } from '../src/core/project-profile.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 useTempHome(after);
@@ -141,4 +142,33 @@ test('_artifact persists nothing for a kind no one can open', async () => {
   h._artifact('questions', join(dir, 'questions.json'), {});
   h._artifact('live-log', join(dir, 'live-log.ndjson'), {});
   assert.deepEqual(pushed, []);
+});
+
+test('_landRunArtifacts: a mock run never lands a profile, whether mock comes from claude.mock or WORCA_MOCK/ORCH_MOCK', async () => {
+  const landHarness = async (mock) => {
+    const { id, dir, key } = await seedPipeline(process.cwd(), { title: 'L', status: 'done' });
+    writeFileSync(join(dir, 'profile.json'), JSON.stringify({ version: 1, summary: 'from a run', phase: 'baseline' }));
+    recordArtifact(id, 'project-profile', 'profile.json');
+    const h = Object.create(RunHarness.prototype);
+    h.pipeline = { id, dir };
+    h.claude = { mock };
+    h.isWorkspace = false;
+    h.members = [{ projectKey: key, projectName: 'repo' }];
+    h._log = () => {};
+    await h._landRunArtifacts();
+    return readProjectProfile(key);
+  };
+  const saved = { WORCA_MOCK: process.env.WORCA_MOCK, ORCH_MOCK: process.env.ORCH_MOCK };
+  const restore = () => { for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } };
+  try {
+    delete process.env.WORCA_MOCK; delete process.env.ORCH_MOCK;
+    assert.equal(await landHarness(true), null, 'claude.mock: nothing lands');
+    process.env.WORCA_MOCK = '1';
+    assert.equal(await landHarness(false), null, 'WORCA_MOCK only: nothing lands');
+    delete process.env.WORCA_MOCK; process.env.ORCH_MOCK = '1';
+    assert.equal(await landHarness(false), null, 'ORCH_MOCK only: nothing lands');
+    delete process.env.ORCH_MOCK;
+    // Control: the same setup without mock lands the profile, so the cases above are not vacuous.
+    assert.equal((await landHarness(false))?.summary, 'from a run');
+  } finally { restore(); }
 });

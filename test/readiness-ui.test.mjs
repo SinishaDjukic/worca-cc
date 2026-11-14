@@ -18,11 +18,11 @@ function fnSource(name) {
 
 describe('readiness UI: chips in the projects list', () => {
   it('imports the chip renderer statically', () => {
-    assert.match(app, /import \{ renderReadinessChip, readinessAddedToast, readinessMenuModel, renderLevelLabel, LEVEL_WORDS \} from '\.\/readiness-chip\.mjs';/);
+    assert.match(app, /import \{ renderReadinessChip, workspaceReadinessAggregate, readinessAddedToast, readinessMenuModel, renderLevelLabel, LEVEL_WORDS, READINESS_CHECK_WORKFLOW_ID, READINESS_SETUP_WORKFLOW_ID \} from '\.\/readiness-chip\.mjs';/);
   });
 
   it('turns a readiness-added frame into the one-time toast', () => {
-    assert.match(app, /msg\.type === 'readiness-added'[\s\S]{0,200}readinessAddedToast\(msg/);
+    assert.match(app, /msg\.type === 'readiness-added'[\s\S]{0,400}readinessAddedToast\(msg/);
     assert.match(app, /notify\(toast\)/);
   });
 
@@ -259,5 +259,15 @@ describe('readiness UI: one fact once (jsdom)', () => {
       assert.equal(pop.querySelector('.rp-count'), null);
       assert.equal(pop.querySelectorAll('a[href$="/settings"]').length, 1);
     } finally { window.close(); }
+  });
+});
+
+describe('readiness UI: run constants', () => {
+  it('startReadinessRun titles a check run "AI readiness check" and builds workflow ids from the shared constants', () => {
+    const src = fnSource('startReadinessRun');
+    assert.match(src, /'AI readiness check'/);
+    assert.doesNotMatch(src, /AI readiness evaluation/);
+    assert.doesNotMatch(src, /wfp_ai-readiness_\$\{/);
+    assert.match(src, /READINESS_CHECK_WORKFLOW_ID/);
   });
 });

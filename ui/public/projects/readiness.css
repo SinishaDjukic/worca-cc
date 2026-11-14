@@ -66,3 +66,7 @@
 .rp-foot{flex:none;display:flex;align-items:center;gap:10px;padding:10px 12px 10px 16px;border-top:1px solid var(--line);font-size:var(--fs-meta);color:var(--ink-2);}
 .rp-foot .rp-sp{flex:1;}
 .rp-foot a{color:var(--blue-ink-strong);text-decoration:none;font-weight:500;}
+.rp-foot{flex-wrap:wrap;row-gap:6px;}
+.rp-foot > span:first-child{white-space:nowrap;}
+.rp-foot .rp-run-line{white-space:nowrap;order:-1;flex-basis:100%;}
+.rp-foot .rp-acts{display:flex;flex-wrap:nowrap;align-items:center;justify-content:flex-end;gap:8px;margin-left:auto;}

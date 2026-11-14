@@ -200,9 +200,10 @@ export async function unbornBranch(projectDir) {
  * default branch whatever the operator happens to have checked out, so the order is
  * origin/HEAD, then init.defaultBranch (if it exists locally), and the checked-out branch last.
  * `timeout` (ms) bounds each git call (default: git()'s 30 s); a call that times out counts as "not there".
+ * `checkedOut: false` (baseBranchRef) tries a local `main` instead of the checked-out branch last.
  * @returns {Promise<{branch:string, ref:string}|null>} never throws; null = no usable branch
  */
-export async function defaultBranchRef(projectDir, { timeout } = {}) {
+export async function defaultBranchRef(projectDir, { timeout, checkedOut = true } = {}) {
   try {
     if (!projectDir) return null;
     const o = { timeout };
@@ -216,10 +217,22 @@ export async function defaultBranchRef(projectDir, { timeout } = {}) {
     const cfg = await git(projectDir, ['config', '--get', 'init.defaultBranch'], o);
     const c = cfg.ok ? cfg.stdout.trim() : '';
     if (c && await commitOf(projectDir, `refs/heads/${c}`, o)) return { branch: c, ref: `refs/heads/${c}` };
+    if (checkedOut === false) {
+      // The BASE branch (baseBranchRef): never whatever happens to be checked out — a feature branch is not the base.
+      if (await commitOf(projectDir, 'refs/heads/main', o)) return { branch: 'main', ref: 'refs/heads/main' };
+      return null;
+    }
     const cur = await currentBranch(projectDir, o);
     if (cur && await commitOf(projectDir, `refs/heads/${cur}`, o)) return { branch: cur, ref: `refs/heads/${cur}` };
     return null;
   } catch { return null; }
+}
+
+/** The project's base branch and the ref to read it at: defaultBranchRef's order (origin/HEAD, then init.defaultBranch)
+ *  with a local `main` instead of the checked-out branch last. A Memory defragment reads the project's instruction
+ *  files here, so a fact on a feature or run branch never retires branch-independent memory. Null = no base. */
+export function baseBranchRef(projectDir, { timeout } = {}) {
+  return defaultBranchRef(projectDir, { timeout, checkedOut: false });
 }
 
 /**

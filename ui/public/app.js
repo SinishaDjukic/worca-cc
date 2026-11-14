@@ -83,6 +83,8 @@ const state = {
 const GROUP_PAGE = { host: null, route: '', id: '', tab: 'runs', featureId: '', gone: false, failed: false, resolving: false, reentered: false, paintQueued: false, unmarked: 0 };
 
 import { icon } from './icons.mjs';
+import { button as railButton } from './design-system/components/button.mjs';
+import { toElement } from './design-system/components/html.mjs';
 import { subagentAliasLabel, subagentAliasTitle } from '../../src/shared/model-roles.mjs';
 import { telemetrySlotHtml, paintTelemetry } from './run-telemetry-view.mjs';
 import { copyButton, copyFromButton, flashCopy, writeClipboard } from './copy-button.mjs';
@@ -315,7 +317,7 @@ import { createFlagsView, bindFlagSwitch } from './flags-view.mjs';
 import { createSmartNaming } from './smart-naming.mjs';
 import { renderPattern, patternProblem, PRESET_TYPES, TYPE_RE } from '../../src/shared/naming/pattern.mjs';
 import { createFlyout } from './side-flyout.mjs';
-import { renderReadinessChip, readinessAddedToast, readinessMenuModel, renderLevelLabel, LEVEL_WORDS } from './readiness-chip.mjs';
+import { renderReadinessChip, workspaceReadinessAggregate, readinessAddedToast, readinessMenuModel, renderLevelLabel, LEVEL_WORDS, READINESS_CHECK_WORKFLOW_ID, READINESS_SETUP_WORKFLOW_ID } from './readiness-chip.mjs';
 import * as runPanel from './chat/run-panel.mjs';
 import { createTopnavSearch } from './topnav-search.mjs';
 import { createSearchUnlock } from './search-unlock.mjs';
@@ -1636,7 +1638,8 @@ function startBudgetTick() {
 // nobody in particular — null, or 'local' on a local install / the CLI.
 function attributedName(v) {
   const s = typeof v === 'string' ? v.trim() : '';
-  return s && s !== 'local' ? s : '';
+  // 'auto' is a --yes run's auto-answer (identity.mjs AUTO_ACTOR): nobody, like 'local'.
+  return s && s !== 'local' && s !== 'auto' ? s : '';
 }
 
 // Who is looking (GET /api/whoami, fetched once at boot). People are shown ONLY on a shared
@@ -1980,6 +1983,7 @@ function handleServerMessage(msg) {
       const changed = state.workspaces.map((w) => w.id).join('\n') !== before;
       if (changed && state.runTarget === 'workspace') void ensureWorkspaceOptions({ keepMembers: true });
     });
+    if ((msg.action === 'scan-created' || msg.action === 'scan-updated') && msg.workspaceId) void refreshed.then(() => wsScanReadinessNotice(msg.workspaceId));
     return;
   }
   if (msg.type === 'team-metrics-changed') {
@@ -2090,14 +2094,19 @@ function handleServerMessage(msg) {
     // Repaint whatever shows this project's readiness: the Projects list (chip, open popover) or a settings card.
     const key = msg.action;
     const shown = key && (currentView() === 'projects'
+      || (wsDetail && (workspaceById(wsDetail.id)?.projectKeys || []).includes(key))
       || [...document.querySelectorAll('.readiness-settings-card')].some((c) => c.dataset.key === key));
     if (shown) void refreshReadiness(key);
     return;
   }
   // A project just added evaluated not-ready: one nudge per project, opening its breakdown.
   if (msg.type === 'readiness-added') {
-    const toast = readinessAddedToast(msg, { run: () => openReadinessBreakdown(msg.projectKey) });
-    if (toast) notify(toast);
+    void (async () => {
+      if (!readinessRuns[msg.projectKey]) await fetchReadinessReport(msg.projectKey);   // the offer is the server's to know
+      const ri = readinessRuns[msg.projectKey];
+      const toast = readinessAddedToast(msg, { run: () => openReadinessBreakdown(msg.projectKey), setup: ri && { available: !!(ri.available && ri.available.setup && ri.hasCode), run: () => void startReadinessRun(msg.projectKey, 'setup') }, check: ri && { available: !!(ri.available && ri.available.check), run: () => void startReadinessRun(msg.projectKey, 'check') } });
+      if (toast) notify(toast);
+    })();
     return;
   }
 
@@ -7028,6 +7037,7 @@ function onDone(r, msg) {
     alerts.onResolved(alertRun(r));   // the pause no longer waits on anyone
   }
   finishRun(r, msg.status || 'done');
+  if (msg.status !== 'paused') refreshReadinessAfterRun(r);
   // After finishRun: the alert's body is the run's list-row status line (§5a.5), which reads the paused status.
   if (msg.status === 'paused') alerts.onPaused(alertRun(r), r.pauseReason);
   // Nothing else picks up the FINAL spend delta: a non-cost `done` broadcasts no
@@ -7039,6 +7049,7 @@ function onDone(r, msg) {
 
 function onError(r) {
   finishRun(r, 'error');
+  refreshReadinessAfterRun(r);
 }
 
 // ---------------------------------------------------------------------------
@@ -9561,6 +9572,15 @@ function openWsDetail(w, parsed, { instant = false } = {}) {
   screen.querySelector('.ws-rescan').addEventListener('click', () => { void rescanWorkspace(workspaceById(w.id)); });
   screen.querySelector('.ws-scan-model').addEventListener('click', () => { void changeWsScanModel(workspaceById(w.id)); });
   screen.querySelector('.ws-delete').addEventListener('click', () => { void deleteWorkspaceFromPage(w.id); });
+  // The two readiness buttons come from the library (the header's static markup holds only the spacer they sit before).
+  const wsSpacer = screen.querySelector('.pd-actions .pd-spacer');
+  for (const [cls, label, title] of [['ws-eval', 'Evaluate with AI', 'Run the AI readiness check over every member project'], ['ws-setup-ai', 'Set up with AI', 'Run the AI readiness setup over every member project']]) {
+    wsSpacer.before(toElement(document, railButton({ label, title, cls, attrs: { hidden: true } })));
+  }
+  for (const [sel, kind] of [['.ws-eval', 'check'], ['.ws-setup-ai', 'setup']]) {
+    screen.querySelector(sel).addEventListener('click', async (e) => { const b = e.currentTarget; b.disabled = true; if (!(await startWsReadinessRun(w.id, kind))) b.disabled = false; });
+  }
+  void refreshWsReadiness(w.id);
   paintWsHeader(screen, w);
   initWdTabs(screen, w);
   activateWsTab(parsed.tab);
@@ -9700,7 +9720,9 @@ function buildWdOverview(sec, id) {
   const mb = document.createElement('b'); mb.textContent = 'Projects';
   const mc = document.createElement('span'); mc.className = 'badge'; mc.textContent = String(paths.length);
   const madd = document.createElement('button'); madd.type = 'button'; madd.className = 'btn btn-sm wd-members-add'; madd.textContent = 'Add projects';
-  mh.append(mb, mc, madd);
+  const mrd = document.createElement('span');
+  mrd.className = 'wd-members-rd';
+  mh.append(mb, mc, mrd, madd);
   const mlist = document.createElement('div');
   mlist.className = 'wd-member-list';
   paths.forEach((path, i) => {
@@ -9730,13 +9752,19 @@ function buildWdOverview(sec, id) {
     rm.dataset.path = path;
     rm.disabled = paths.length <= 2;
     rm.title = rm.disabled ? 'A workspace keeps at least two projects' : `Remove ${name.firstChild ? name.firstChild.textContent : basenameOf(path)} from this workspace`;
-    item.append(row, rm);
+    // The readiness chip sits beside the row too (a button cannot hold one): it opens that project's report.
+    const rdSlot = document.createElement('span');
+    rdSlot.className = 'wd-member-rd';
+    if (proj && proj.key) rdSlot.dataset.key = proj.key;
+    item.append(row, rdSlot, rm);
     mlist.appendChild(item);
   });
   members.append(mh, mlist);
   const rescan = wsRescans.get(id);
   if (rescan) members.appendChild(renderWsRescan(rescan));
   sec.appendChild(members);
+  paintWsMemberReadiness(members, w);
+  void warmReadiness({ keys: Array.isArray(w.projectKeys) ? w.projectKeys : [] });   // a direct load has no summaries yet: members only
 
   // Description: markdown by contract (the scanner template), edited in place.
   const desc = document.createElement('section');
@@ -13156,9 +13184,11 @@ if (el.projectsSyncAll) {
 // popover with the final report (GET /api/projects/:key/readiness): only the tools the project uses are
 // judged. `readiness-changed` frames refetch it. Every string in a report is server data: textContent only.
 const readinessReports = {};        // projectKey → last full report
+const readinessRuns = {};           // projectKey → the GET's `run`: { available, hasCode, lastCheck, lastSetup, live } (the ai-readiness offers and their runs)
 const readinessHeadChips = new Map();   // projectKey → { chip, menu, fly }: the header chip's popover, reused across repaints
 /** The header chip record of one project, or of all projects. */
-const readinessRecs = (key) => (key ? [readinessHeadChips.get(key)] : [...readinessHeadChips.values()]).filter(Boolean);
+const readinessMemberChips = new Map();   // projectKey → { chip, menu, fly }: the workspace page's member chip, same popover
+const readinessRecs = (key) => (key ? [readinessHeadChips.get(key), readinessMemberChips.get(key)] : [...readinessHeadChips.values(), ...readinessMemberChips.values()]).filter(Boolean);
 const readinessTried = new Set();   // keys the cold-start warm-up already asked for
 let readinessOff = false;           // GET answered {disabled: true}: no chips, no more asking
 
@@ -13169,6 +13199,7 @@ async function fetchReadinessReport(key, { refresh = false } = {}) {
     if (data && data.disabled) { readinessOff = true; return null; }
     const report = res.ok && data && data.readiness ? data.readiness : null;
     if (report) readinessReports[key] = report;
+    if (res.ok && data && data.run) readinessRuns[key] = data.run;
     return report;
   } catch {
     return null;
@@ -13193,9 +13224,9 @@ async function syncReadinessSummaries() {
   } catch { /* keep the summaries we have */ }
 }
 
-async function warmReadiness() {
+async function warmReadiness({ keys = null } = {}) {
   if (readinessOff) return;
-  const cold = state.projects.filter((p) => p && p.key && p.exists && !p.readiness && !readinessTried.has(p.key));
+  const cold = state.projects.filter((p) => p && p.key && p.exists && !p.readiness && !readinessTried.has(p.key) && (!keys || keys.includes(p.key)));
   if (!cold.length) return;
   for (const p of cold) readinessTried.add(p.key);
   for (const p of cold) {
@@ -13204,6 +13235,7 @@ async function warmReadiness() {
   }
   if (!readinessOff) await syncReadinessSummaries();
   if (currentShownView === 'projects') paintReadinessChips();
+  paintWsReadiness();
 }
 
 // Re-read one project's report (`refresh` re-evaluates past the server cache) and repaint what shows it:
@@ -13214,8 +13246,53 @@ async function refreshReadiness(key, { refresh = false, cards = true } = {}) {
   applyReadinessReport(key, report);
   if (currentShownView === 'projects') paintReadinessChips();
   if (projDetail && projDetail.key === key) paintReadinessHeadChip(projDetail.screen, key);
+  paintWsReadiness();
   for (const rec of readinessRecs(key)) if (rec.fly.isOpen()) { paintReadinessMenu(key, rec); rec.fly.reposition(); }
   if (cards) for (const card of document.querySelectorAll('.readiness-settings-card')) if (card.dataset.key === key) void fillReadinessCard(card, key);
+}
+
+// The workspace page's Projects card: a chip per member (the project page chip's popover, one record per project) and
+// "N of M agent-ready" in the head, coloured by the lowest member level. Nothing shows while readiness is off.
+/** The workspace's readiness aggregate over its members' summaries (unknown while any member has none). */
+function wsReadinessAggregateOf(w) {
+  const keys = Array.isArray(w.projectKeys) ? w.projectKeys : [];
+  return workspaceReadinessAggregate((Array.isArray(w.projectPaths) ? w.projectPaths : []).map((path, i) => {
+    const p = (keys[i] && projectByKey(keys[i])) || state.projects.find((q) => q.path === path);
+    return readinessOff || !p ? null : p.readiness || null;
+  }));
+}
+function paintWsMemberReadiness(card, w) {
+  if (!card || !w) return;
+  const agg = wsReadinessAggregateOf(w);
+  const head = card.querySelector('.wd-members-rd');
+  if (head) {
+    // Neutral (no tint) while any member is unknown; empty while none has a summary.
+    head.className = agg.level === 'unknown' ? 'wd-members-rd' : `wd-members-rd pl-rd rd-${agg.level}`;
+    head.textContent = agg.known ? `${agg.ready} of ${agg.total} agent-ready` : '';
+  }
+  for (const slot of card.querySelectorAll('.wd-member-rd[data-key]')) {
+    const key = slot.dataset.key;
+    const p = projectByKey(key);
+    const fresh = readinessOff ? null : renderReadinessChip(p && p.readiness, { doc: document });
+    if (!fresh) { slot.replaceChildren(); continue; }
+    let rec = readinessMemberChips.get(key);
+    if (rec) {
+      rec.chip.className = fresh.className;
+      rec.chip.title = fresh.title;
+      rec.chip.setAttribute('aria-label', fresh.getAttribute('aria-label'));
+      rec.chip.replaceChildren(...fresh.childNodes);
+    } else {
+      rec = newReadinessChip(key, fresh);
+      readinessMemberChips.set(key, rec);
+    }
+    if (rec.chip.parentNode !== slot) slot.replaceChildren(rec.chip);
+  }
+}
+function paintWsReadiness() {
+  const w = wsDetail && workspaceById(wsDetail.id);
+  const card = wsDetail && wsDetail.screen && wsDetail.screen.querySelector('.wd-members');
+  if (card && w) paintWsMemberReadiness(card, w);
+  paintWsReadinessActions();   // the aggregate decides "Set up with AI"
 }
 
 // Show one project's page with its report open (the add-project toast's action): the header chip opens it once painted.
@@ -13305,6 +13382,101 @@ function openReadinessFromCard(key) {
   requestAnimationFrame(() => requestAnimationFrame(() => { if (rec.chip.isConnected) rec.fly.open({ focus: true }); }));
 }
 
+// "Evaluate in depth" and "Set up with AI": the two offers. Each starts the ai-readiness workflow of that kind for this
+// project and opens its run. Never started on its own (the buttons and the toast action only offer). Resolves true once
+// the run started.
+async function startReadinessRun(key, kind) {
+  const p = projectByKey(key);
+  const title = kind === 'check' ? 'AI readiness check' : 'AI readiness setup';
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(key)}/readiness-run`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind }) });
+    const data = await safeJson(res);
+    if (!res.ok || !data || !data.runId) { notify({ tone: 'err', title: (data && data.error) || `${title} could not be started` }); return false; }
+    // Both offers hide while it runs; data.runId is the live run (its pipeline id comes with the next GET).
+    const live = { runId: data.runId, pipelineId: data.pipelineId || null, status: 'running', title, workflowId: kind === 'check' ? READINESS_CHECK_WORKFLOW_ID : READINESS_SETUP_WORKFLOW_ID, workspaceId: null, score: null, at: null };
+    readinessRuns[key] = { ...(readinessRuns[key] || { available: { check: true, setup: true }, hasCode: true }), live, [kind === 'check' ? 'lastCheck' : 'lastSetup']: live };
+    beginRun(data.runId, (p && p.path) || '', title);
+    return true;
+  } catch {
+    notify({ tone: 'err', title: `${title} could not be started` });
+    return false;
+  }
+}
+
+// The workspace page's "Evaluate with AI" / "Set up with AI": the ai-readiness workflow of that kind over every member.
+// Offered only while the server says it is available and no readiness run is live for the workspace or a member.
+const wsReadiness = {};   // workspaceId -> GET /api/workspaces/:id/readiness
+async function refreshWsReadiness(id) {
+  try {
+    const res = await fetch(`/api/workspaces/${encodeURIComponent(id)}/readiness`);
+    const data = res.ok ? await safeJson(res) : null;
+    if (data && data.available) wsReadiness[id] = data; else delete wsReadiness[id];
+  } catch { delete wsReadiness[id]; }
+  paintWsReadinessActions();
+  return wsReadiness[id] || null;
+}
+function paintWsReadinessActions() {
+  if (!wsDetail || !wsDetail.screen) return;
+  const info = wsReadiness[wsDetail.id];
+  // As the project chip's rule: nothing to set up once every member is agent-ready; Evaluate stays offered.
+  const w = workspaceById(wsDetail.id);
+  const allReady = !!w && wsReadinessAggregateOf(w).level === 'ready';
+  for (const [sel, kind] of [['.ws-eval', 'check'], ['.ws-setup-ai', 'setup']]) {
+    const b = wsDetail.screen.querySelector(sel);
+    if (!b) continue;
+    b.hidden = !(info && info.available && info.available[kind] && !info.live) || readinessOff || (kind === 'setup' && allReady);
+    b.disabled = false;
+  }
+}
+async function startWsReadinessRun(id, kind) {
+  const w = workspaceById(id);
+  const title = kind === 'check' ? 'AI readiness check' : 'AI readiness setup';
+  try {
+    const res = await fetch(`/api/workspaces/${encodeURIComponent(id)}/readiness-run`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ kind }) });
+    const data = await safeJson(res);
+    if (!res.ok || !data || !data.runId) { notify({ tone: 'err', title: (data && data.error) || `${title} could not be started` }); return false; }
+    wsReadiness[id] = { ...(wsReadiness[id] || { available: { check: true, setup: true } }), live: { runId: data.runId, pipelineId: data.pipelineId || null, status: 'running', title, workspaceId: id } };
+    paintWsReadinessActions();
+    beginRun(data.runId, (w && w.projectPaths && w.projectPaths[0]) || '', title, { workspaceId: id, workspaceName: w && w.name, projectNames: ((w && w.projectPaths) || []).map((p) => p.split('/').pop()) });
+    return true;
+  } catch {
+    notify({ tone: 'err', title: `${title} could not be started` });
+    return false;
+  }
+}
+// After a scan saved the workspace the user is looking at: one nudge per workspace and browser when a member is not agent-ready.
+async function wsScanReadinessNotice(frameId) {
+  if (!wsDetail || readinessOff || wsDetail.id !== frameId) return;
+  const id = wsDetail.id;
+  const w = workspaceById(id);
+  if (!w) return;
+  const keys = Array.isArray(w.projectKeys) ? w.projectKeys : [];
+  const levels = keys.map((k) => { const p = projectByKey(k); return p && p.readiness ? p.readiness.level : null; });
+  if (!levels.some((l) => l && l !== 'ready' && l !== 'unknown')) return;
+  const info = await refreshWsReadiness(id);
+  if (!info || !info.available.check || info.live) return;
+  const seenKey = `readiness-ws-notice-seen:${id}`;
+  try {
+    if (localStorage.getItem(seenKey)) return;
+    localStorage.setItem(seenKey, '1');
+  } catch { /* no guard without storage */ }
+  notify({ tone: 'warn', title: `${w.name || id}: some projects are not agent-ready`, action: { label: 'Evaluate with AI', run: () => void startWsReadinessRun(id, 'check') }, key: `readiness-ws-${id}` });
+}
+
+// A readiness run that ends brings the offers back and moves the last-run lines: refetch the project's run info (with its
+// report) when the run this tab knows as one of the project's readiness runs finishes.
+function refreshReadinessAfterRun(r) {
+  if (wsDetail) void refreshWsReadiness(wsDetail.id);
+  for (const [key, ri] of Object.entries(readinessRuns)) {
+    for (const last of [ri && ri.live, ri && ri.lastCheck, ri && ri.lastSetup]) {
+      if (last && ((last.runId && last.runId === r.runId) || (last.pipelineId && last.pipelineId === r.pipelineId))) { void refreshReadiness(key); break; }
+    }
+  }
+}
+
+/** The model options every readiness view passes: the run info, the project key and a workspace's name. */
+const readinessModelOpts = (key) => ({ engineLabel, run: readinessRuns[key], projectKey: key, workspaceName: (id) => { const w = (state.workspaces || []).find((x) => x && x.id === id); return (w && w.name) || ''; } });
+
 async function openReadinessMenu(key, rec) {
   if (!readinessReports[key]) {
     rec.menu.replaceChildren(Object.assign(document.createElement('div'), { className: 'rp-head', textContent: 'Checking...' }));
@@ -13334,7 +13506,7 @@ function paintReadinessMenu(key, rec) {
 // the tools that are not judged; failing repository checks; the passed and ignored boxes; a fixed foot.
 // Every string from the report is server data: textContent only.
 function buildReadinessMenu(key, report) {
-  const m = readinessMenuModel(report, { engineLabel });
+  const m = readinessMenuModel(report, readinessModelOpts(key));
   const el = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text !== undefined) n.textContent = text; return n; };
   const frag = document.createDocumentFragment();
 
@@ -13444,7 +13616,29 @@ function buildReadinessMenu(key, report) {
   const recheck = el('button', 'btn btn-sm', 'Recheck');
   recheck.type = 'button';
   recheck.addEventListener('click', async () => { recheck.disabled = true; await refreshReadiness(key, { refresh: true }); recheck.disabled = false; });
-  foot.append(when, el('span', 'rp-sp'), settings, recheck);
+  foot.append(when, el('span', 'rp-sp'));
+  // Each line links: a live run to its run page, a finished one to its History page (a workspace run's, under the workspace).
+  for (const [line, cls] of [[m.run.live, 'rp-live-run'], [m.run.lastCheck, 'rp-check-run'], [m.run.lastSetup, 'rp-setup-run']]) {
+    if (!line) continue;
+    const a = el('a', `rp-run-line ${cls}`, line.text);
+    if (line.href) a.href = line.href;
+    foot.append(a);
+  }
+  foot.append(settings);
+  // The buttons travel as one group: it wraps below the text as a whole, never splitting across rows.
+  const acts = el('div', 'rp-acts');
+  if (m.run.evaluate.show) {
+    const evalBtn = toElement(document, railButton({ label: 'Evaluate in depth', cls: 'rp-evaluate' }));
+    evalBtn.addEventListener('click', async () => { evalBtn.disabled = true; if (!(await startReadinessRun(key, 'check'))) evalBtn.disabled = false; });
+    acts.append(evalBtn);
+  }
+  if (m.run.setup.show) {
+    const setupBtn = toElement(document, railButton({ label: 'Set up with AI', kind: 'primary', cls: 'rp-setup' }));
+    setupBtn.addEventListener('click', async () => { setupBtn.disabled = true; if (!(await startReadinessRun(key, 'setup'))) setupBtn.disabled = false; });
+    acts.append(setupBtn);
+  }
+  acts.append(recheck);
+  foot.append(acts);
   frag.append(foot);
   return frag;
 }
@@ -13536,7 +13730,10 @@ async function fillReadinessCard(card, key) {
   head.className = 'rs-head';
   const view = Object.assign(document.createElement('button'), { type: 'button', className: 'btn btn-sm btn-quiet rs-view', textContent: 'View report' });
   view.addEventListener('click', () => openReadinessFromCard(key));
-  head.append(Object.assign(document.createElement('h3'), { textContent: 'Agent readiness' }), view);
+  // Two items: the title, and the buttons together on the right (.rs-acts), whatever "Set up with AI" adds.
+  const acts = Object.assign(document.createElement('div'), { className: 'rs-acts' });
+  acts.append(view);
+  head.append(Object.assign(document.createElement('h3'), { textContent: 'Agent readiness' }), acts);
   const hint = Object.assign(document.createElement('small'), { className: 'hint', textContent: 'Which tools this project uses. Detect lets Worca decide from runs and files.' });
   const msg = Object.assign(document.createElement('small'), { className: 'hint' });
   card.replaceChildren(head, hint);
@@ -13545,6 +13742,17 @@ async function fillReadinessCard(card, key) {
     readinessReports[key] ? Promise.resolve(readinessReports[key]) : fetchReadinessReport(key),
   ]);
   if (mine !== card.rdSeq) return;
+  const rm = report && report.counts ? readinessMenuModel(report, readinessModelOpts(key)).run : null;
+  if (rm && rm.evaluate.show) {
+    const evalBtn = toElement(document, railButton({ label: 'Evaluate in depth', cls: 'rs-evaluate' }));
+    evalBtn.addEventListener('click', async () => { evalBtn.disabled = true; if (!(await startReadinessRun(key, 'check'))) evalBtn.disabled = false; });
+    acts.append(evalBtn);
+  }
+  if (rm && rm.setup.show) {
+    const setupBtn = toElement(document, railButton({ label: 'Set up with AI', cls: 'rs-setup' }));
+    setupBtn.addEventListener('click', async () => { setupBtn.disabled = true; if (!(await startReadinessRun(key, 'setup'))) setupBtn.disabled = false; });
+    acts.append(setupBtn);
+  }
   const CHOICES = [['detect', 'Detect'], ['used', 'Used'], ['unused', 'Not used']];
   for (const [name, e] of Object.entries((report && report.engines) || {})) {
     if (e.level === 'locked') continue;

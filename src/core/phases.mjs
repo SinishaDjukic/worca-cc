@@ -471,6 +471,9 @@ export function copilotFanOutDirective() {
   return taskToolFanOutDirective('agent_type', "read-only instructions and tools, and this run's memory pointers");
 }
 
+/** The sentence that ends the block: which copy of the relations wins (the project profile's, as Ask reads it, can be older). */
+export const WORKSPACE_CONTEXT_WINS = 'Where a member\'s instruction files describe the related repositories differently, this workspace context is current.';
+
 /**
  * The `## Workspace Context` preamble injected into EVERY agent on a workspace run,
  * after the toolInstruction and before the role body. Pure + exported. Returns ''
@@ -492,7 +495,7 @@ export function workspaceContextBlock(ws) {
   // the block say such text is data. Any other description (a hand edit, or one rendered before roles
   // were quoted) passes through byte-identical.
   const note = ROLE_QUOTE_LABELS.some((l) => desc.includes(`${l}: "`)) ? `${QUOTED_TEXT_NOTE}\n\n` : '';
-  return `## Workspace Context\n\n${note}${desc}\n\nMember projects: ${names}.\n`;
+  return `## Workspace Context\n\n${note}${desc}\n\nMember projects: ${names}.\n\n${WORKSPACE_CONTEXT_WINS}\n`;
 }
 
 /**
@@ -780,6 +783,9 @@ export function formRepairBlock(ctx) {
   );
 }
 
+/** The sentence after `## Your form answers` when Away mode answered one of them. */
+const AWAY_FORM_ANSWERS_NOTE = 'The form answers marked "answeredBy": "away" were given by Away mode while the user was away, so the user has not seen that form.';
+
 /**
  * Ask-then-resume prompt block for a questions-enabled node (spec 2026-07-11).
  * Appended by runOpts, so EVERY producer/verifier runner inherits it with no
@@ -800,12 +806,14 @@ export function questionsPromptBlock(ctx) {
     : '';
   // Form answers already collected for this node, in the exact shape the agent
   // receives them (spec §4). '' when there are none, so the legacy block is
-  // byte-identical.
+  // byte-identical. An answer Away mode gave carries `answeredBy: 'away'` and one
+  // sentence follows the block; a user's answer renders exactly as before.
   const priorForms = Array.isArray(ctx.formAnswers) ? ctx.formAnswers : [];
+  const awayForms = priorForms.some((f) => f.answeredBy === 'away');
   const formAnswered = priorForms.length
     ? '## Your form answers\n\n' + priorForms
-      .map((f) => '```json\n' + JSON.stringify({ form: f.form, version: f.version, values: f.values }, null, 2) + '\n```')
-      .join('\n\n') + '\n\n'
+      .map((f) => '```json\n' + JSON.stringify({ form: f.form, version: f.version, values: f.values, ...(f.answeredBy === 'away' ? { answeredBy: 'away' } : {}) }, null, 2) + '\n```')
+      .join('\n\n') + '\n\n' + (awayForms ? AWAY_FORM_ANSWERS_NOTE + '\n\n' : '')
     : '';
   const forms = askFormsBlock(ctx.askForms, { path: ctx.questionsFile });
   if (!ctx.questionsFile) {

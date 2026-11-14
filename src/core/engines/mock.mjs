@@ -107,7 +107,7 @@ async function emitLog(onEvent, text) {
 export const MOCK_WRITER_ROLES = new Set([
   'clarify', 'planner-plan', 'refiner', 'decomposer', 'implementer', 'reviewer', 'plan-review', 'code-review',
   'workspace-scan', 'agent-gen', 'workspace-reviewer', 'manual-tests-checklist', 'manual-web-ui-testing', 'memory-defrag',
-  'generic-producer', 'generic-verifier', 'deck-builder', 'deck-audit', 'deck-export',
+  'generic-producer', 'generic-verifier', 'generic-approver', 'deck-builder', 'deck-audit', 'deck-export',
   'workspace-usage', 'workspace-synth', 'c4-architect',
   'requirements-draft', 'requirements-review', 'requirements-refine',
 ]);
@@ -662,6 +662,9 @@ export async function runMock({ cwd, systemPrompt, prompt, onEvent, signal, resu
     case 'generic-producer':
       text = await mockGenericProducer(m, onEvent);
       break;
+    case 'generic-approver':
+      text = await mockGenericApprover(m, onEvent);
+      break;
     case 'generic-verifier':
       // Reuses the reviewer mock: writes MOCK_OUT md + MOCK_JSON verdict with the
       // standard cycle-decreasing severity, so generic loops terminate offline.
@@ -795,6 +798,19 @@ async function mockGenericProducer(m, onEvent) {
       : '# Mock artifact\n\nDeterministic generic producer output.\n', 'utf8');
   }
   return `[mock] generic artifact written to ${out}`;
+}
+
+/** The generic producer plus a CLEAN verdict (`issues: []`), written to MOCK_JSON: for a verifier whose offline
+ *  run should pass on the first round (a plugin whose real agent writes a verdict, like a plan card). The
+ *  verdict is written only here, so a producer mock that stays silent still pauses on a missing verdict. */
+async function mockGenericApprover(m, onEvent) {
+  const text = await mockGenericProducer(m, onEvent);
+  if (m.MOCK_JSON) {
+    await ensureDir(m.MOCK_JSON);
+    await writeFile(m.MOCK_JSON, JSON.stringify({ summary: '[mock] approved', issues: [] }, null, 2) + '\n', 'utf8');
+    safeEmit(onEvent, { type: 'tool_use', text: `wrote ${m.MOCK_JSON}`, raw: { mock: true, file: m.MOCK_JSON } });
+  }
+  return text;
 }
 
 /** The scope dirs the `## Worca memory` block of a system prompt names (memory-store.mjs

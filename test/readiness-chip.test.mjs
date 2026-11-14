@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { JSDOM } from 'jsdom';
-import { renderReadinessChip, chipTooltip, readinessMenuModel, renderLevelLabel, readinessAddedToast } from '../ui/public/readiness-chip.mjs';
+import { renderReadinessChip, chipTooltip, readinessMenuModel, renderLevelLabel, readinessAddedToast, workspaceReadinessAggregate } from '../ui/public/readiness-chip.mjs';
 
 
 const doc = () => new JSDOM().window.document;
@@ -104,7 +104,123 @@ describe('renderReadinessChip edge cases', () => {
   });
 });
 
+describe('readinessMenuModel run actions', () => {
+  const label = (n) => n;
+  const rep = (checks, level = 'partial') => ({ level, counts: { mustFix: 0, shouldFix: 1, passed: 1, applicable: 2 },
+    engines: { claude: { used: true, level, reasons: [], failing: [] } }, checks });
+  const row = (id, scope, status, engine) => ({ id, title: id, scope, status, severity: 'warn', fix: 'x', ...(engine ? { engine } : {}) });
+  const run = (o = {}) => ({ available: { check: true, setup: true }, hasCode: true, lastCheck: null, lastSetup: null, live: null, ...o });
+  const R = (o) => ({ runId: null, pipelineId: 'p1', status: 'done', title: 't', workflowId: 'wfp_ai-readiness_setup', workspaceId: null, score: null, at: null, ...o });
+  const fixable = rep([row('instructions.present', 'tool', 'fail', 'claude')]);
+  const m = (report, r, extra = {}) => readinessMenuModel(report, { engineLabel: label, run: r, projectKey: 'k', ...extra }).run;
+
+  it('evaluate shows for a ready project with code', () => {
+    assert.equal(m(rep([], 'ready'), run()).evaluate.show, true);
+    assert.equal(m(fixable, run()).evaluate.show, true);
+  });
+  it('nothing shows for a project without code', () => {
+    const r = m(fixable, run({ hasCode: false }));
+    assert.equal(r.evaluate.show, false);
+    assert.equal(r.setup.show, false);
+  });
+  it('nothing shows without the plugin, or without a run payload', () => {
+    assert.equal(m(fixable, run({ available: { check: false, setup: false } })).evaluate.show, false);
+    assert.equal(m(fixable, run({ available: { check: false, setup: false } })).setup.show, false);
+    assert.equal(m(fixable, null).evaluate.show, false);
+    assert.equal(m(fixable, undefined).setup.show, false);
+  });
+  it('setup shows when available, with code, and a judged tool, ignore.heavy-dirs or commands.test fails', () => {
+    for (const r of [fixable, rep([row('ignore.heavy-dirs', 'repository', 'fail')]), rep([row('commands.test', 'repository', 'fail')])]) {
+      assert.equal(m(r, run()).setup.show, true);
+    }
+  });
+  it('no setup when only deps.lockfile, git.repo or secrets.tracked-names fails', () => {
+    for (const id of ['deps.lockfile', 'git.repo', 'secrets.tracked-names']) {
+      assert.equal(m(rep([row(id, 'repository', 'fail'), row('instructions.present', 'tool', 'pass', 'claude')]), run()).setup.show, false, id);
+    }
+  });
+  it('a live run hides both and shows its line', () => {
+    for (const status of ['running', 'starting', 'paused']) {
+      const live = R({ runId: 'r1', status, workflowId: 'wfp_ai-readiness_check' });
+      const r = m(fixable, run({ live, lastCheck: live }));
+      assert.equal(r.evaluate.show, false, status);
+      assert.equal(r.setup.show, false, status);
+      assert.deepEqual(r.live, { ...live, words: 'running', href: '#running/r1', text: 'Evaluation: running' });
+      assert.equal(r.lastCheck, null, 'the live run is not listed twice');
+    }
+    assert.equal(m(fixable, run({ lastSetup: R() })).setup.show, true, 'a finished run does not hide the button');
+  });
+  it('the check line shows the score, else its words', () => {
+    const scored = m(fixable, run({ lastCheck: R({ workflowId: 'wfp_ai-readiness_check', score: 72 }) })).lastCheck;
+    assert.equal(scored.text, 'Evaluated: 72/100');
+    assert.equal(scored.score, 72);
+    assert.equal(m(fixable, run({ lastCheck: R({ workflowId: 'wfp_ai-readiness_check', status: 'failed' }) })).lastCheck.text, 'Evaluation: failed');
+  });
+  it('the setup line stays "Setup run: <words>" and carries its link', () => {
+    const l = m(fixable, run({ lastSetup: R({ pipelineId: 'p1' }) })).lastSetup;
+    assert.equal(l.text, 'Setup run: ready to ship');
+    assert.equal(l.href, '#history/k/p1');
+  });
+  it('a live run links to its run page, a finished one to its History page', () => {
+    const at = (last) => m(rep([]), run({ lastSetup: last })).lastSetup.href;
+    assert.equal(at(R({ runId: 'live-1', status: 'running' })), '#running/live-1');
+    assert.equal(at(R({ runId: 'live-1', status: 'paused' })), '#running/live-1');
+    assert.equal(at(R({ runId: null, status: 'running' })), '#history/k/p1', 'live in another process: its History page');
+    assert.equal(at(R({ runId: 'live-1', status: 'done' })), '#history/k/p1');
+    assert.equal(at(R({ runId: 'live-1', pipelineId: null, status: 'starting' })), '#running/live-1', 'just started: no pipeline yet');
+  });
+  it('the status reads as words', () => {
+    const words = (status) => m(rep([]), run({ lastSetup: R({ status }) })).lastSetup.words;
+    for (const s of ['starting', 'running', 'paused']) assert.equal(words(s), 'running', s);
+    for (const s of ['done', 'completed']) assert.equal(words(s), 'ready to ship', s);
+    for (const s of ['error', 'failed']) assert.equal(words(s), 'failed', s);
+    for (const s of ['stopped', 'interrupted']) assert.equal(words(s), 'stopped', s);
+  });
+  it('another plugin\'s check workflow is not labelled an evaluation', () => {
+    const live = R({ runId: 'r2', status: 'running', workflowId: 'wfp_other_check' });
+    assert.doesNotMatch(m(rep([]), run({ live })).live.text, /^Evaluation/);
+    assert.match(m(rep([]), run({ live: { ...live, workflowId: 'wfp_ai-readiness_check' } })).live.text, /^Evaluation/);
+  });
+  it('a live workspace run names its workspace and a finished one links to the workspace History page', () => {
+    const name = (id) => ({ w1: 'Platform' })[id];
+    const live = R({ runId: 'r9', status: 'running', workspaceId: 'w1', workflowId: 'wfp_ai-readiness_check' });
+    assert.equal(m(rep([]), run({ live }), { workspaceName: name }).live.text, 'Evaluation (workspace Platform): running');
+    assert.equal(m(rep([]), run({ live: { ...live, workflowId: 'wfp_ai-readiness_setup' } }), { workspaceName: name }).live.text, 'Setup run (workspace Platform): running');
+    assert.equal(m(rep([]), run({ live }), { workspaceName: name }).live.href, '#running/r9');
+    const done = R({ status: 'done', workspaceId: 'w1', pipelineId: 'p5' });
+    assert.equal(m(rep([]), run({ lastSetup: done })).lastSetup.href, '#history/workspaces/w1/p5');
+    assert.equal(m(rep([]), run({ live }), {}).live.text, 'Evaluation (workspace w1): running', 'an unknown workspace reads by its id');
+  });
+});
+
 describe('readinessAddedToast', () => {
+  it('toast has the action only when available', () => {
+    const msg = { type: 'readiness-added', projectKey: 'p-1', name: 'P', engine: 'codex' };
+    const store = () => ({ getItem: () => null, setItem() {} });
+    const run = () => {};
+    const on = readinessAddedToast(msg, { storage: store(), run: () => {}, setup: { available: true, run } });
+    assert.equal(on.extraAction.label, 'Set up with AI');
+    assert.equal(on.extraAction.run, run);
+    assert.equal(on.key, 'readiness-p-1');
+    assert.equal(on.action.label, 'See what to add');
+    assert.equal(readinessAddedToast(msg, { storage: store(), run: () => {}, setup: { available: false, run } }).extraAction, undefined);
+    assert.equal(readinessAddedToast(msg, { storage: store(), run: () => {} }).extraAction, undefined);
+  });
+});
+
+describe('readinessAddedToast (evaluate)', () => {
+  it('offers Evaluate in depth when only the check is available, Set up with AI first when both are', () => {
+    const msg = { type: 'readiness-added', projectKey: 'p-2', name: 'P', engine: 'codex' };
+    const store = () => ({ getItem: () => null, setItem() {} });
+    const run = () => {};
+    const ev = readinessAddedToast(msg, { storage: store(), run, setup: { available: false, run }, check: { available: true, run } });
+    assert.equal(ev.extraAction.label, 'Evaluate in depth');
+    const both = readinessAddedToast(msg, { storage: store(), run, setup: { available: true, run }, check: { available: true, run } });
+    assert.equal(both.extraAction.label, 'Set up with AI');
+  });
+});
+
+describe('readinessAddedToast (once)', () => {
   const memory = () => {
     const m = new Map();
     return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)) };
@@ -132,5 +248,22 @@ describe('readinessAddedToast', () => {
     assert.strictEqual(readinessAddedToast({ type: 'readiness-added' }, { storage: memory(), run() {} }), null);
     const broken = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); } };
     assert.ok(readinessAddedToast(msg, { storage: broken, run() {} }));
+  });
+});
+
+describe('workspaceReadinessAggregate', () => {
+  const lv = (level) => summary({ level });
+  it('aggregate is the lowest member', () => {
+    assert.equal(workspaceReadinessAggregate([lv('ready'), lv('partial'), lv('ready')]).level, 'partial');
+    assert.equal(workspaceReadinessAggregate([lv('ready'), lv('partial'), lv('not-ready')]).level, 'not-ready');
+    assert.equal(workspaceReadinessAggregate([lv('ready'), lv('ready')]).level, 'ready');
+  });
+  it('N of M counts ready members', () => {
+    assert.deepEqual(workspaceReadinessAggregate([lv('ready'), lv('partial'), lv('ready')]), { level: 'partial', ready: 2, total: 3, known: 3 });
+  });
+  it('a missing member counts as unknown', () => {
+    assert.deepEqual(workspaceReadinessAggregate([lv('ready'), null]), { level: 'unknown', ready: 1, total: 2, known: 1 });
+    assert.deepEqual(workspaceReadinessAggregate([null, undefined]), { level: 'unknown', ready: 0, total: 2, known: 0 });
+    assert.equal(workspaceReadinessAggregate([lv('ready'), { level: 'unknown' }]).ready, 1);
   });
 });

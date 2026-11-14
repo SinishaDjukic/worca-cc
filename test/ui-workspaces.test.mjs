@@ -787,3 +787,74 @@ test('a workspace with a Folder member: kind chips on the Projects card and in A
     } },
   ]);
 });
+
+test('workspace overview: each member shows its readiness chip, the head shows N of M agent-ready, the chip opens that project report', async () => {
+  const sum = (level, n) => ({ level, failingCount: n, mustFix: n, shouldFix: 0, passed: 3, applicable: 5 });
+  const projs = [{ ...PROJECTS[0], readiness: sum('ready', 0) }, { ...PROJECTS[1], readiness: sum('partial', 1) }];
+  const urls = [];
+  const fetchHandler = (u) => {
+    urls.push(u);
+    if (/\/api\/projects\/[^/]+\/readiness/.test(u)) return Promise.resolve({ ok: true, status: 200, json: async () => ({ readiness: { level: 'partial', counts: { mustFix: 0, shouldFix: 1, passed: 3, applicable: 5 }, engines: {}, checks: [] } }) });
+    if (u.includes('/api/projects')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: structuredClone(projs) }) });
+    return null;
+  };
+  const { window } = await boot({ fetchHandler });
+  await open(window, 'wks-alpha-00000001');
+  const doc = window.document;
+  const items = [...doc.querySelectorAll('#ws-detail .wd-member-item')];
+  assert.equal(items.length, 2);
+  assert.equal(items[0].querySelector('.pl-rd').textContent, 'Agent-ready');
+  assert.match(items[1].querySelector('.pl-rd').className, /rd-partial/);
+  assert.equal(items[0].querySelector('.wd-member .pl-rd'), null, 'the chip never nests in the member row button');
+  const head = doc.querySelector('#ws-detail .wd-members .wd-members-rd');
+  assert.equal(head.textContent, '1 of 2 agent-ready');
+  assert.match(head.className, /rd-partial/);
+  items[1].querySelector('.pl-rd').dispatchEvent(new window.MouseEvent('click', { bubbles: true, detail: 1 }));
+  const openPop = () => [...doc.querySelectorAll('.readiness-pop')].find((m) => !m.hidden && /svc-ui/.test(m.textContent));
+  for (let i = 0; i < 400 && !openPop(); i++) await new Promise((r) => setTimeout(r, 25));
+  assert.equal(window.location.hash, '#workspaces/wks-alpha-00000001', 'the chip does not navigate');
+  const pop = openPop();
+  assert.ok(pop, 'the report popover opens');
+  assert.match(pop.textContent, /svc-ui/);
+});
+
+const rdSum = (level, n = 0) => ({ level, failingCount: n, mustFix: n, shouldFix: 0, passed: 3, applicable: 5 });
+const untilTrue = async (fn) => { for (let i = 0; i < 400 && !fn(); i++) await new Promise((r) => setTimeout(r, 25)); };
+
+test('workspace overview: a readiness-changed frame for a member repaints its chip and the head count', async () => {
+  let k2 = rdSum('not-ready', 2);
+  const report = () => ({ readiness: { level: 'ready', counts: { mustFix: 0, shouldFix: 0, passed: 5, applicable: 5 }, engines: {}, checks: [] } });
+  const fetchHandler = (u) => {
+    if (/\/api\/projects\/k2\/readiness/.test(u)) return Promise.resolve({ ok: true, status: 200, json: async () => report() });
+    if (u.includes('/api/projects')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: [{ ...PROJECTS[0], readiness: rdSum('ready') }, { ...PROJECTS[1], readiness: k2 }] }) });
+    return null;
+  };
+  const { window, ws } = await boot({ fetchHandler });
+  await open(window, 'wks-alpha-00000001');
+  const doc = window.document;
+  const head = () => doc.querySelector('#ws-detail .wd-members-rd');
+  await untilTrue(() => head().textContent === '1 of 2 agent-ready');
+  assert.equal(head().textContent, '1 of 2 agent-ready');
+  ws().deliver({ type: 'readiness-changed', action: 'k2' });
+  await untilTrue(() => head().textContent === '2 of 2 agent-ready');
+  assert.equal(head().textContent, '2 of 2 agent-ready');
+  assert.match(head().className, /rd-ready/);
+  assert.equal(doc.querySelector('#ws-detail .wd-member-rd[data-key="k2"] .pl-rd').textContent, 'Agent-ready');
+});
+
+test('workspace overview: a direct load with no cached summaries fetches the members and paints the chips; an unknown member keeps the head neutral', async () => {
+  const asked = [];
+  const fetchHandler = (u) => {
+    const m = /\/api\/projects\/(k\d)\/readiness/.exec(u);
+    if (m) { asked.push(m[1]); return Promise.resolve({ ok: true, status: 200, json: async () => ({ readiness: { level: 'ready', counts: { mustFix: 0, shouldFix: 0, passed: 5, applicable: 5 }, engines: {}, checks: [] } }) }); }
+    if (u.includes('/api/projects')) return Promise.resolve({ ok: true, status: 200, json: async () => ({ projects: structuredClone(PROJECTS).map((p) => (asked.includes(p.key) ? { ...p, readiness: rdSum('ready') } : p)) }) });
+    return null;
+  };
+  const { window } = await boot({ fetchHandler });
+  await open(window, 'wks-alpha-00000001');
+  const doc = window.document;
+  await untilTrue(() => doc.querySelectorAll('#ws-detail .wd-member-rd .pl-rd').length === 2);
+  assert.equal(doc.querySelectorAll('#ws-detail .wd-member-rd .pl-rd').length, 2, 'both chips painted');
+  assert.deepEqual(asked.filter((k, i) => asked.indexOf(k) === i).sort(), ['k1', 'k2']);
+  assert.equal(doc.querySelector('#ws-detail .wd-members-rd').textContent, '2 of 2 agent-ready');
+});

@@ -20,7 +20,7 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { join, basename, dirname, resolve, sep, relative } from 'node:path';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { readFile, writeFile, copyFile, readdir, mkdir, realpath, rename, stat, rm } from 'node:fs/promises';
+import { readFile, writeFile, copyFile, readdir, mkdir, realpath, rename, stat, rm, chmod } from 'node:fs/promises';
 
 import { generateTitle } from './title.mjs';
 import { recordUsageLimit } from './usage-limits.mjs';
@@ -59,7 +59,7 @@ import { withRole, roleModelFor, jobSlot } from './model-roles.mjs';
 import { mountDirs, mountMemory, refreshMount, syncBack, memoryTotals, validateMemoryScope, withStoreLock, memoryRulesPath, memoryWorkPath, MEMORY_RULES_REL, MEMORY_INJECTED_ENTRY, memoryLoadedPath, readFrozenSet, frozenManifest, writeFrozenCopies, renderRoleNotes } from './memory-sync.mjs';
 import { captureProposals } from './memory-proposals.mjs';
 import { createUsageTally, drainMemoryLoads, memoryLoadLogPath, noteOfMemoryRel, recordMemoryUsage, rulesHaveScopedNote } from './memory-usage.mjs';
-import { memoryRoot, listMemory, renderMemoryBlock, bumpScopeState, readScopeState, memoryScopeReport, renderDefragBrief } from './memory-store.mjs';
+import { memoryRoot, listMemory, renderMemoryBlock, bumpScopeState, readScopeState, memoryScopeReport, renderDefragBrief, renderInstructionFilesBrief, DEFRAG_INSTRUCTION_FILES, DEFRAG_INSTRUCTION_MAX_BYTES } from './memory-store.mjs';
 import { isTeamMemoryOn, refreshTeamLayerWithin, mountTeamLayer, queueTeamChanges, teamChangesFromSync, teamClientText, memoryLoadPlans, loadFilteredDirs } from './memory-team.mjs';
 import { readCostCapOverride, readRunCostCap, setRunCostCap, totalWindowSpendUsd, costWindowStart, recordCostDelta } from './cost-budget.mjs';
 import {
@@ -90,7 +90,7 @@ import { loadAgentRegistry, DEFAULT_AGENTS_DIR } from './agent-registry.mjs';
 import {
   createWorktree, removeWorktree, suggestBranchName, sanitizeBranchName, resolveDefaultBranch,
   isValidSourceRef, snapshotWorktreePatch, listLocalBranches, worktreeHead, deleteBranchIfAt,
-  reusedBranchBase, isAncestor, withoutIgnored,
+  reusedBranchBase, isAncestor, withoutIgnored, baseBranchRef,
 } from './worktree.mjs';
 import { writeReadinessSnapshot } from './repo-readiness/snapshot.mjs';
 import { deriveBranchName, uniqueBranch } from './naming.mjs';
@@ -133,7 +133,7 @@ import { readSettings as readRawSettings, userTagDimensions, runUserClaudeSettin
 import { userClaudeSignIn } from './claude-user-settings.mjs';
 import { readRunTags } from './run-tags-store.mjs';
 import { missingRequired } from '../shared/tag-dimensions.mjs';
-import { byActor } from './identity.mjs';
+import { byActor, AUTO_ACTOR } from './identity.mjs';
 import { isWorkspaceScanWorkflow, WORKSPACE_RESYNTH_WORKFLOW_ID, MEMORY_DEFRAG_WORKFLOW_ID, AUTO_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 import { signInRefusalText } from './factory-models.mjs';
 import { agentIdentity } from './agent-user.mjs';
@@ -153,6 +153,8 @@ import * as policyEffective from './policy/effective.mjs';
 import { createRedactor } from './redact.mjs';
 import { buildRunCommitMessage, readCommitSummary, readStagedChanges } from './commit-message.mjs';
 import { finalizeWorkspaceScan, WORKSPACE_GRAPH_FILE } from './workspace-scan-run.mjs';
+import { landRunArtifacts } from './run-landings.mjs';
+import { rowRunSetup } from './run-presets-store.mjs';
 import { readWorkspaceMap, resynthBlocker } from './workspaces.mjs';
 import { STORED_MAP_FILE } from './workspace-map/join.mjs';
 import { redactSecrets } from '../shared/workspace-map/redact.mjs';
@@ -1677,7 +1679,7 @@ export class RunHarness extends EventEmitter {
         prWatchRunId: this.opts.prWatchRunId || null,
         tags: this.opts.tags || [],
         labels: this.opts.labels || [],
-        runSetup: typeof this.opts.runSetup === 'string' ? this.opts.runSetup : null,
+        runSetup: rowRunSetup(this.opts.runSetup, this.workflowId),   // the workflow id on every row (readiness runs)
         prAuto: this.opts.prAuto ?? null,
         ...(this.workMode === 'none' ? { id: this.opts.pipelineId } : {}),
         ...(this.isWorkspace ? {} : { projectKey: this.members[0].projectKey, ...(this.workMode !== 'git' ? { workMode: this.workMode } : {}) }),
@@ -1912,6 +1914,7 @@ export class RunHarness extends EventEmitter {
       await this._finalizeDirections();
       await this._persist();
       await appendAudit(this.pipeline.dir, `Pipeline finished with status **done**.`);
+      await this._landRunArtifacts();      // after the status is done: a landing never fails the run (never throws)
       await this._buildResults();          // refs + worktree still live here
       await this._stampDefrag();           // AFTER the final sync inside _buildResults counted the defragmenter's writes
       await this._reportToSource();        // task-source write-back (never throws, spec §7.5)
@@ -2254,6 +2257,7 @@ export class RunHarness extends EventEmitter {
       await this._finalizeDirections();
       await this._persist();
       await appendAudit(this.pipeline.dir, `Pipeline finished with status **done**.`);
+      await this._landRunArtifacts();      // after the status is done: a landing never fails the run (never throws)
       await this._buildResults();          // refs + worktree still live here
       await this._stampDefrag();           // AFTER the final sync inside _buildResults counted the defragmenter's writes
       await this._reportToSource();        // task-source write-back (never throws, spec §7.5)
@@ -5047,10 +5051,82 @@ export class RunHarness extends EventEmitter {
     try {
       const caps = memoryCaps(this._settingsScope());
       const { health } = await memoryScopeReport(memoryRoot(), this.memory.dirs[0].scope, caps, { onError: (p, err) => this._memoryReadWarn(p, err) });
-      return renderDefragBrief(health, caps);
+      return renderDefragBrief(health, caps) + renderInstructionFilesBrief(await this._defragInstructionFiles());
     } catch (err) {
       this._log('memory', 'warn', `memory: the defragment brief could not be built: ${err?.message || err}`);
       return '';
+    }
+  }
+
+  /** A PROJECT-scope defragment retires notes the project's instruction files already state (the owner granted
+   *  read-only access to CLAUDE.md and AGENTS.md, nothing else). Read from the project's BASE branch
+   *  (worktree.mjs baseBranchRef), never the checked-out one: a defragment starts on whatever branch the live
+   *  checkout is on, and a fact that exists only on a feature or run branch must not retire branch-independent
+   *  memory. No base branch: no files. Each blob is read through the guarded git env (`ls-tree` + `cat-file`, so the
+   *  working tree is never touched) and written ONCE into `<pipeline.dir>/instruction-files/` with a `.source.json`
+   *  (branch + commit), made read-only and named by path in the task; a resume reuses that record and those copies.
+   *  A regular file only (never a symlink) and at most DEFRAG_INSTRUCTION_MAX_BYTES. The agent never reads the checkout.
+   *  Global scope: none. Best-effort: a failure costs the agent that evidence, never the run.
+   *  @returns {Promise<{branch:string, sha:string, files:{name:string, path:string}[]}|null>} */
+  async _defragInstructionFiles() {
+    if (this.memoryScope !== 'project' || !this.pipeline?.dir) return null;
+    const dir = join(this.pipeline.dir, 'instruction-files');
+    const record = join(dir, '.source.json');
+    try {
+      if (existsSync(record)) {
+        const r = JSON.parse(await readFile(record, 'utf8'));
+        if (!r || !r.branch) return null;
+        return { branch: r.branch, sha: r.sha, files: (r.files || []).filter((n) => DEFRAG_INSTRUCTION_FILES.includes(n)).map((name) => ({ name, path: join(dir, name) })) };
+      }
+      await mkdir(dir, { recursive: true });
+      const base = await baseBranchRef(this.projectDir);
+      const head = base ? await this._git(['rev-parse', '--verify', '--quiet', `${base.ref}^{commit}`], { cwd: this.projectDir }) : null;
+      const commit = head?.ok ? head.stdout.trim() : '';
+      if (!commit) {
+        this._log('memory', 'info', 'memory: the project has no base branch to read CLAUDE.md and AGENTS.md from — the defragment compares notes against no instruction files');
+        await writeFile(record, `${JSON.stringify({ branch: null })}\n`);
+        return null;
+      }
+      const short = await this._git(['rev-parse', '--short', commit], { cwd: this.projectDir });
+      const sha = short.ok && short.stdout.trim() ? short.stdout.trim() : commit.slice(0, 12);
+      const tree = await this._git(['ls-tree', '-l', '-z', commit, '--', ...DEFRAG_INSTRUCTION_FILES], { cwd: this.projectDir });
+      if (!tree.ok) throw new Error(`git ls-tree: ${tree.stderr.trim() || `exit ${tree.code}`}`);
+      const files = [];
+      for (const entry of tree.stdout.split('\0').filter(Boolean)) {
+        const m = /^(\d+) (\w+) ([0-9a-f]+)\s+(-|\d+)\t(.+)$/s.exec(entry);
+        if (!m || !DEFRAG_INSTRUCTION_FILES.includes(m[5])) continue;
+        const [, mode, type, oid, size, name] = m;
+        if (type !== 'blob' || (mode !== '100644' && mode !== '100755')) { this._log('memory', 'warn', `memory: ${name} on ${base.branch} is not a regular file — the defragment does not read it`); continue; }
+        if (Number(size) > DEFRAG_INSTRUCTION_MAX_BYTES) { this._log('memory', 'warn', `memory: ${name} on ${base.branch} is over 256 KB (${size} bytes) — the defragment does not read it`); continue; }
+        const blob = await this._git(['cat-file', 'blob', oid], { cwd: this.projectDir });
+        if (!blob.ok) { this._log('memory', 'warn', `memory: ${name} on ${base.branch} could not be read: ${blob.stderr.trim() || `exit ${blob.code}`}`); continue; }
+        const copy = join(dir, name);
+        await writeFile(copy, blob.stdout, { flag: 'wx' });
+        if (process.platform !== 'win32') await chmod(copy, 0o444);
+        files.push({ name, path: copy });
+      }
+      files.sort((a, b) => DEFRAG_INSTRUCTION_FILES.indexOf(a.name) - DEFRAG_INSTRUCTION_FILES.indexOf(b.name));
+      await writeFile(record, `${JSON.stringify({ branch: base.branch, sha, files: files.map((f) => f.name) })}\n`);
+      return { branch: base.branch, sha, files };
+    } catch (err) {
+      this._log('memory', 'warn', `memory: the instruction files could not be copied for the defragment: ${err?.code || err?.message || err}`);
+      return null;
+    }
+  }
+
+  /** Artifacts a done run hands to worca's stores (run-landings.mjs). Never on a mock run. */
+  async _landRunArtifacts() {
+    // Mock mode is on from opts (claude.mock) or from WORCA_MOCK/ORCH_MOCK: a mock run never lands anything.
+    if (!this.pipeline || mockEnabled({ mock: this.claude?.mock })) return;
+    const res = await landRunArtifacts({
+      pipelineId: this.pipeline.id, pipelineDir: this.pipeline.dir, runId: this.pipeline.id,
+      members: this.members.map((m) => ({ projectKey: m.projectKey, projectName: m.projectName })),
+      isWorkspace: this.isWorkspace,
+    }).catch((err) => ({ landed: [], skipped: [`landing failed: ${String(err?.message ?? err).slice(0, 200)}`] }));
+    for (const l of res.landed) await appendAudit(this.pipeline.dir, `Saved to worca: ${l}.`).catch(() => {});
+    for (const s of res.skipped) {
+      this._log('orchestrator', 'warn', `Not saved to worca: ${s}`);
+      await appendAudit(this.pipeline.dir, `Not saved to worca: ${s}.`).catch(() => {});
     }
   }
 
@@ -6610,7 +6686,9 @@ export class RunHarness extends EventEmitter {
         if (kind === 'form') {
           // D10: a form ask is auto-answered with the form's AUTO ANSWER, which
           // gate 1 proved passes gate 3 — so an unattended run neither hangs nor
-          // produces an invalid answer. No pending question is installed.
+          // produces an invalid answer. No pending question is installed. Recorded as the
+          // auto actor, so the stored row says nobody answered (a person's row names them).
+          this._answeredBy.set(id, AUTO_ACTOR);
           this._log('orchestrator', 'info', `auto-answering form ${id} (${form})`);
           return { form, version, values: autoValues && typeof autoValues === 'object' ? autoValues : {} };
         }

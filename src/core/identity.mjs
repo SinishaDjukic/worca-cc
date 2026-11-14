@@ -11,6 +11,10 @@
 //
 // Pure: reads only the request and `env`.
 
+/** Who answered an ask a --yes run auto-answered (run-harness `_ask`): nobody. Recorded so a stored answer never
+ *  reads as a person's; never shown as one (actorLabel). */
+export const AUTO_ACTOR = 'auto';
+
 const HEADER_NAME_RE = /^[A-Za-z0-9-]{1,64}$/;
 // A display name or email: printable, one line, bounded. It lands in PR bodies and the UI.
 const VALUE_RE = /^[^\u0000-\u001f\u007f-\u009f\u2028\u2029<>]{1,200}$/;
@@ -55,7 +59,7 @@ export function actorOf(req, env = process.env) {
  *  unknown / invalid values — the caller then says nothing about who. */
 export function actorLabel(actor) {
   const who = clean(actor);
-  return who && who !== 'local' ? who : '';
+  return who && who !== 'local' && who !== AUTO_ACTOR ? who : '';
 }
 
 /** " by <name>" for an audit line, or '' when nobody in particular did it. */

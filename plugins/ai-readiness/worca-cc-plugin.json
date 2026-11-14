@@ -1,0 +1,8 @@
+{
+  "name": "ai-readiness",
+  "version": "0.1.0",
+  "description": "AI readiness check and setup pipelines: map the repository, confirm what we found, score it per AI tool, then write AGENTS.md, CLAUDE.md, tool files, recurring-task skills and tests on a branch.",
+  "author": "Bulibas",
+  "license": "MIT",
+  "engines": { "worca-cc-api": ">=5 <6" }
+}

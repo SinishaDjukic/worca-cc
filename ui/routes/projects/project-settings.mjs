@@ -9,10 +9,19 @@ import { enableTeamMetrics, projectMetricsStatus, setRecordMyRuns } from '../../
 import { enableTeamPolicy, projectPolicyStatus } from '../../../src/core/policy/sync.mjs';
 import { effectiveSyncSettings, projectSyncBlock, projectSyncEvents } from '../../../src/core/project-sync.mjs';
 import { readinessEnabled } from '../../../src/core/repo-readiness/evaluate.mjs';
-import { getReadiness } from '../../../src/core/repo-readiness/projects.mjs';
+import { liveReadinessEntryFor, reserveReadinessStart } from '../../../src/core/repo-readiness/run-guard.mjs';
+import { READINESS_CHECK_TITLE, READINESS_CHECK_WORKFLOW_ID, READINESS_SETUP_TITLE, READINESS_SETUP_WORKFLOW_ID, getReadiness, isLiveReadinessStatus, readinessRunInfo } from '../../../src/core/repo-readiness/projects.mjs';
 import { DEFAULT_SYNC_SETTINGS, assertSyncSettingsInput, syncDefaults } from '../../../src/core/settings.mjs';
 import { normaliseTags } from '../../../src/shared/run-tags.mjs';
-import { applyProjectSettingsPatch, badRequest, projectSettingsState, sendMetricsError, sendPolicyError, syncProjectAction, syncRoute, tmProject, unsyncableBlock } from '../../server.mjs';
+import { applyProjectSettingsPatch, badRequest, liveRunEntry, runs, startRunHandler, projectSettingsState, sendMetricsError, sendPolicyError, syncProjectAction, syncRoute, tmProject, unsyncableBlock } from '../../server.mjs';
+
+// The run this server drives for a pipeline while it is live (paused included: it stays on its run page), for the chip's
+// "Setup run" / "Check run" link; null once it is over.
+const liveReadinessRunId = (pipelineId) => {
+  const e = liveRunEntry(pipelineId);
+  return e && e.id && e.pipelineId === pipelineId && isLiveReadinessStatus(e.status) ? e.id : null;
+};
+
 
 export function register(app) {
 /** P6: the GitHub repository typed in the no-git setup dialog — used only for a Folder whose team repo is unknown. */
@@ -79,7 +88,35 @@ app.get('/api/projects/:key/readiness', async (req, res) => {
   if (!readinessEnabled()) return res.json({ disabled: true });
   const p = await tmProject(req, res); if (!p) return;
   if (!p.exists) return res.json({ readiness: null });          // missing folder: no chip
-  res.json({ readiness: await getReadiness(p, { refresh: req.query.refresh === '1' }) });
+  res.json({ readiness: await getReadiness(p, { refresh: req.query.refresh === '1' }), run: await readinessRunInfo(p, { liveRunId: liveReadinessRunId }) });
+});
+// "Check" / "Set up with AI": the chip's offers. Starts the ai-readiness plugin's check or setup workflow for THIS project
+// through the one run handler (the defragRequest pattern); 404 when that workflow is not there or the project has no code.
+// Never started by worca on its own.
+app.post('/api/projects/:key/readiness-run', async (req, res) => {
+  const p = await tmProject(req, res); if (!p) return;
+  if (!p.exists) return badRequest(res, `project path is missing: ${p.path}`);
+  const kind = req.body && req.body.kind;
+  if (kind !== 'check' && kind !== 'setup') return badRequest(res, 'kind must be "check" or "setup"');
+  const info = await readinessRunInfo(p, { liveRunId: liveReadinessRunId });
+  if (!info.available[kind]) return res.status(404).json({ error: `AI readiness ${kind} is not available` });
+  const busy = 'an AI readiness run is already live for this project';
+  if (info.live) return res.status(409).json({ error: busy, runId: info.live.runId, pipelineId: info.live.pipelineId });
+  // A project or workspace run started whose row is not written yet: only the live registry knows it.
+  const entry = liveReadinessEntryFor(runs, [p.path]);
+  if (entry) return res.status(409).json({ error: busy, runId: entry.id, pipelineId: entry.pipelineId || null });
+  const release = reserveReadinessStart([p.path]);   // a start in flight (here or on a workspace with this member)
+  if (!release) return res.status(409).json({ error: busy });
+  try {
+    const check = kind === 'check';
+    req.body = {
+      projectDir: p.path, prompt: check ? 'check' : 'set up',
+      title: check ? READINESS_CHECK_TITLE : READINESS_SETUP_TITLE,
+      workflowId: check ? READINESS_CHECK_WORKFLOW_ID : READINESS_SETUP_WORKFLOW_ID,
+      ...(req.body.mock === true ? { mock: true } : {}),
+    };
+    return await startRunHandler(req, res);
+  } finally { release(); }
 });
 app.put('/api/projects/:key/sync/settings', syncRoute(async (req, res) => {
   const p = await tmProject(req, res); if (!p) return;

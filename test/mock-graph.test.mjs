@@ -81,7 +81,7 @@ test('the 14 builtins pin roles the switch handles', () => {
   // and the two new deck roles, and architect pins c4-architect, so those are all claimed), and code-review, which
   // a diff-target role slice reaches through ROLE_REVIEW_TARGETS (src/shared/graph/role-review-step.mjs).
   const unclaimed = [...MOCK_WRITER_ROLES].filter((r) => !Object.values(pinned).includes(r));
-  assert.deepEqual(unclaimed.sort(), ['agent-gen', 'code-review'],
+  assert.deepEqual(unclaimed.sort(), ['agent-gen', 'code-review', 'generic-approver'],
     'the switch carries no case the chain can never reach');
 });
 
@@ -296,4 +296,49 @@ test('a verifier whose mock writes no verdict fails the node; verdictOptional ke
   assert.equal(r.result, 'done');
   assert.equal(r.state.endReached, true, 'the CLEAN side still fires — v1 parity, by opt-in');
   assert.deepEqual(r.state.warnings, ['verdict file missing: n_sil silent-verdict-c1.json — treated as clean']);
+});
+
+test('a verifier pinned to generic-approver writes a clean verdict: strict, no warning, the clean side fires', { timeout: 60000 }, async () => {
+  const REG = {
+    maker: {
+      displayName: 'Maker', runnerType: 'producer', promptHints: '',
+      inputs: [{ id: 'task', type: 'md', required: true }],
+      outputs: [{ id: 'plan', type: 'md', when: 'always', filename: 'maker-plan.md', store: 'run' }],
+    },
+    appr: {
+      displayName: 'Approver', runnerType: 'verifier', promptHints: '', mockRole: 'generic-approver',
+      inputs: [{ id: 'plan', type: 'md', required: true }],
+      outputs: [{ id: 'review', type: 'md', when: 'blocking', filename: 'appr-c{cycle}.md', store: 'run' },
+        { id: 'pass', type: 'void', when: 'clean' }],
+      verdict: { filename: 'appr-verdict-c{cycle}.json' },
+    },
+  };
+  const portsFn = (n) => (n.kind === 'agent'
+    ? {
+      ...REG[n.key],
+      inputs: [...(REG[n.key]?.inputs || []).map((p) => ({ ...p })), { ...AWAIT_PORT }],
+      outputs: (REG[n.key]?.outputs || []).map((p) => ({ ...p })),
+    }
+    : flowPorts(n));
+  const tpl = {
+    id: 'wf_appr', name: 'Approver', version: 2, domain: 'coding',
+    nodes: [
+      { id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+      { id: 'n_make', kind: 'agent', key: 'maker', x: 0, y: 0, config: {} },
+      { id: 'n_appr', kind: 'agent', key: 'appr', x: 0, y: 0, config: {} },
+      { id: 'n_end', kind: 'end', x: 0, y: 0, config: {} },
+    ],
+    wires: [
+      { id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_make', port: 'task' } },
+      { id: 'w2', from: { node: 'n_make', port: 'plan' }, to: { node: 'n_appr', port: 'plan' } },
+      { id: 'w3', from: { node: 'n_appr', port: 'pass' }, to: { node: 'n_end', port: 'result' } },
+    ],
+  };
+  const r = await runGraphOffline({
+    template: tpl, portsFn, registry: REG,
+    projectDir: tmp('worca-appr-proj-'), pipelineDir: tmp('worca-appr-pipe-'),
+  });
+  assert.equal(r.result, 'done');
+  assert.equal(r.state.endReached, true);
+  assert.deepEqual(r.state.warnings, []);
 });

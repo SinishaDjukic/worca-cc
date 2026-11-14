@@ -248,11 +248,19 @@ One row per surface of today's UI that Stillhet must carry (gate.prototype in `d
 | Surface | Status | Where in Stillhet, or why not yet |
 |---|---|---|
 | `route › /api/prompt-check/grade` | wire to | The prompt check's grade; Stillhet's composer chip that calls it is Shaper Tracks slice 2 (the chip and kind picker), building now |
-| `ui/public/app.js` | wire to | Starts the prompt check's grader in today's UI; Stillhet's composer gets it with the chip in Shaper Tracks slice 2 |
+| `ui/public/app.js` | wire to | Starts the prompt check's grader in today's UI; Stillhet's composer gets it with the chip in Shaper Tracks slice 2. Also draws the agent readiness actions (Evaluate in depth and Set up with AI on the project page's chip, the Settings card and a workspace's header; the added-project toast's two run actions); Stillhet's project and workspace pages get them in slice 9 (Projects) |
 | `ui/public/chat-settings-view.mjs` | wire to | The "Check how clear a task prompt is" row in today's Settings › Chat; Stillhet's Settings row is built in Shaper Tracks slice 2 (owner approved) |
 | `ui/public/prompt-check/` | wire to | The browser grader (cheapest-first check); Stillhet's composer uses it from Shaper Tracks slice 2 |
 | `ui/public/settings/settings.html` | wire to | The setting's place in today's Settings page; Stillhet's Settings row is Shaper Tracks slice 2 |
 | `setting › pulseFor` | wired | Settings › Notifications, the Pulse animation row (`pulse.js` reads it through the live map; #1258) |
+| `route › /api/projects/:param/readiness-run` | wire to | Starts a project's readiness run, `{kind: 'check'}` (Evaluate in depth) or `{kind: 'setup'}` (Set up with AI), one at a time per project (409 while one is live); Stillhet's project page offers both beside its readiness chip in slice 9 (Projects) |
+| `route › /api/workspaces/:param/readiness` | wire to | A workspace's readiness: each member's chip and the workspace's aggregate; Stillhet's workspace page shows them in slice 9 (Projects) |
+| `route › /api/workspaces/:param/readiness-run` | wire to | Starts one readiness run (check or setup) across a workspace's members; Stillhet's workspace page offers it in slice 9 (Projects) |
+| `ui/public/readiness-chip.mjs` | wire to | The readiness popover's foot: the last setup run's line and the Evaluate in depth and Set up with AI buttons (design-system `button()`); Stillhet's project page draws the chip and its popover in slice 9 (Projects) |
+| `ui/public/projects/readiness.css` | wire to | Lays out the popover foot's run line and buttons; Stillhet takes the popover from the library in slice 9 (Projects), with no page CSS of its own |
+| `ui/public/projects/project-settings.css` | wire to | Spaces the Settings readiness card's two buttons; Stillhet's project Settings section is slice 9 (Projects) |
+| `ui/public/workspace-map/workspace-pages.css` | wire to | Spaces a workspace header's readiness buttons and its member chips; Stillhet's workspace page is slice 9 (Projects) |
+| `ui/public/feedback.mjs` | wire to | A toast may carry a second action (`extraAction`): the added-project toast offers Evaluate in depth and Set up with AI; Stillhet's toast already takes several actions (`errorToast` `actions`), and the added-project toast is wired with the Projects slice (9) |
 
 ## Opt-in
 
