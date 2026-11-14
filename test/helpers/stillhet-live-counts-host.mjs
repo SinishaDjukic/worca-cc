@@ -19,7 +19,8 @@ export const clone = (x) => JSON.parse(JSON.stringify(x));
 // saved row does not count), the missed ticket, and two projects (gone-3's folder is missing, api-2 is out of sync).
 export const TASK_NEEDS = 3, MISSED = 1, PROJECT_NEEDS = 2, BELL = TASK_NEEDS + MISSED + PROJECT_NEEDS;
 
-export async function liveHost({ sources = SOURCES, getStatus = () => 200, post = () => [200, {}], level = 'expert', hash = '#chat', before } = {}) {
+// read(url) → [status, data] answers a GET no source names (a workspace's map); null falls through to the sources.
+export async function liveHost({ sources = SOURCES, getStatus = () => 200, post = () => [200, {}], read = () => null, level = 'expert', hash = '#chat', before } = {}) {
   const gets = [], posts = [], sockets = [];
   const fetch = async (u, o = {}) => {
     const url = String(u), method = o.method || 'GET';
@@ -31,6 +32,8 @@ export async function liveHost({ sources = SOURCES, getStatus = () => 200, post 
       return { ok: status < 300, status, json: async () => data };
     }
     gets.push(url);
+    const own = read(url);
+    if (own) return { ok: own[0] < 300, status: own[0], json: async () => clone(own[1]) };
     const s = getStatus(url), key = BY_URL[url];
     return { ok: s < 300, status: s, json: async () => clone(sources[key] ?? {}) };
   };
@@ -54,3 +57,15 @@ export async function refusalHost() {
   await h.hello();
   return h;
 }
+
+// Two live workspaces (D10): w1's map has one heuristic and one inferred auto link (2 questions), one exact and one verified
+// (no question), a manual one (no question, no Undo) and a stale and a missing one (never drawn); w2's map read fails, so it has none and the bell is still drawn.
+const EDGE = (id, from, to, confidence, state = 'auto') => ({ id, from, to, kind: 'http', display: `${from} → ${to}`, confidence, state });
+export const WORKSPACES = { workspaces: [{ id: 'w1', name: 'Shop', description: '', projectKeys: ['web-1', 'api-2'], exists: [true, true], mapSummary: { scannedAt: '2026-11-12T10:00:00Z' } },
+  { id: 'w2', name: 'Broken map', description: '', projectKeys: ['web-1'], exists: [true], mapSummary: null }] };
+export const MAPS = { w1: { edges: [EDGE('x_000000000001', 'web-1', 'api-2', 'heuristic'), EDGE('x_000000000002', 'api-2', 'web-1', 'inferred'),
+  EDGE('x_000000000003', 'web-1', 'gone-3', 'exact'), EDGE('x_000000000004', 'api-2', 'gone-3', 'verified'),
+  EDGE('x_000000000005', 'api-2', 'web-1', undefined, 'manual'), EDGE('x_000000000006', 'web-1', 'api-2', 'heuristic', 'stale'), EDGE('x_000000000007', 'web-1', 'api-2', 'inferred', 'missing')] } };
+export const WS_QUESTIONS = 2;
+export const mapRead = (maps = MAPS) => (u) => { const m = /^\/api\/workspaces\/([\w-]+)\/map$/.exec(u); return m ? (maps[m[1]] ? [200, maps[m[1]]] : [500, { error: 'boom' }]) : null; };
+export const withWorkspaces = () => ({ ...clone(SOURCES), workspaces: clone(WORKSPACES) });

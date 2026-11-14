@@ -2,10 +2,11 @@
 // Part 2 of 2: split to stay under CI's 300 s per file.
 // call dev's routes in the live kind; the center shows the list's loading and failed looks and never "No tasks yet." while
 // the first load is out. Live app host (jsdom).
-import { test, afterEach } from 'node:test';
+import { test, afterEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { liveHost, go, settle, closeHosts, clone, SOURCES, posts, toastText } from './helpers/stillhet-chat-live-host.mjs';
 import { URLS } from './helpers/stillhet-chat-live-host.mjs';
+import { stillhetHost } from './helpers/stillhet-host.mjs';
 
 afterEach(closeHosts);
 const sources = () => { const s = clone(SOURCES); for (const p of s.history.pipelines) p.projectKey = 'web-1'; return s; };
@@ -107,6 +108,11 @@ test('a saved task whose open PR the checks cache reads approved offers Merge on
   await go(w, '#runs', 900);
   assert.equal(w.RailWorld.find('h2').case, 'approved', 'the row reads the same entry as the page');
   assert.ok(d.querySelector('#route-runs [data-c-act="merge|h2"]'), 'the card offers Merge');
+  // at 360px the card's second action wraps inside the card instead of clipping (the shared rail.css rule)
+  const row = d.querySelector('#route-runs [data-c-act="merge|h2"]').closest('.pg-a');
+  const css = d.createElement('style'); css.textContent = (await import('node:fs')).readFileSync(new URL('../ui/public/stillhet/css/rail.css', import.meta.url), 'utf8').match(/^\.pg-a\{[^}]*\}/m)[0];
+  d.head.append(css);
+  assert.equal(w.getComputedStyle(row).flexWrap, 'wrap');
 });
 
 // h2's PR approved, h5's failing 2 of 5 (alone in its project, as the review's repro): the task page's own fixtures (test/stillhet-tasks-actions-host.test.mjs)
@@ -167,4 +173,55 @@ test('a user group\'s task offers Remove from group in the live list, and it sen
   const undo = [...d.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Undo');
   assert.ok(undo, 'the toast carries Undo'); undo.click(); await settle(80);
   assert.deepEqual(sent(calls).at(-1), ['POST', '/api/run-groups/undo', { token: 'u1' }]);
+});
+
+test('the demo center asks before Merge in a ConfirmStrip with the demo task\'s PR and base, as the live one does; only Yes moves the store; Create PR acts (panel.center)', async () => {
+  const w = stillhetHost({ hash: '#runs', after });
+  await settle(200);
+  const d = w.document, W = w.RailWorld;
+  const press = async (does, id) => { d.querySelector(`#route-runs [data-c-act="${does}|${id}"]`).click(); await settle(40); };
+  await press('merge', 'r9');
+  assert.match(strip(d).textContent, /Merge #959 into dev\?/, 'the demo task\'s own PR and base');
+  assert.equal(W.find('r9').case, 'approved', 'nothing moves before Yes');
+  strip(d).querySelector('[data-confirm="no"]').click(); await settle(40);
+  assert.equal(strip(d), null);
+  assert.equal(W.find('r9').case, 'approved', 'Cancel moves nothing');
+  await press('merge', 'r9');
+  strip(d).querySelector('[data-confirm="yes"]').click(); await settle(40);
+  assert.equal(W.find('r9').case, 'merged');
+  // a ready task's card action is Create PR (cardAction does: 'pr'); the default center draws no ready card, so press one
+  const ready = W.rows().find((r) => r.case === 'ready');
+  const b = d.createElement('button'); b.dataset.cAct = `pr|${ready.id}`; d.querySelector('#route-runs').append(b);
+  await press('pr', ready.id);
+  assert.equal(W.find(ready.id).case, 'checks', 'does: pr opens the PR (the demo move)');
+});
+
+test('the Projects center\'s cards ask before Merge in the same ConfirmStrip, under its head, demo and live; only Yes acts (code review r1)', async () => {
+  const placeStrip = (d) => d.querySelector('#route-place [data-c-ask]');
+  const w = stillhetHost({ hash: '#projects', after });
+  await settle(200);
+  const d = w.document, W = w.RailWorld;
+  const merge = () => d.querySelector('#route-place [data-c-act^="merge|"]');
+  assert.ok(merge(), 'the Projects home draws a card that offers Merge');
+  const id = merge().dataset.cAct.split('|')[1], was = W.find(id).case;
+  merge().click(); await settle(40);
+  assert.match(placeStrip(d)?.textContent || '', /^Merge .* into .*\?/, 'the demo task\'s own PR and base, under the Projects head');
+  assert.equal(d.activeElement, placeStrip(d).querySelector('[data-confirm="yes"]'));
+  assert.equal(W.find(id).case, was, 'nothing moves before Yes');
+  placeStrip(d).querySelector('[data-confirm="no"]').click(); await settle(40);
+  assert.equal(placeStrip(d), null);
+  assert.equal(W.find(id).case, was, 'Cancel moves nothing');
+  merge().click(); await settle(40);
+  placeStrip(d).querySelector('[data-confirm="yes"]').click(); await settle(40);
+  assert.equal(W.find(id).case, 'merged');
+  // the live kind: the same strip, and nothing is sent before its Yes
+  const h = await prCenter();
+  await go(h.w, '#projects', 300);
+  const lm = h.d.querySelector('#route-place [data-c-act="merge|h2"]');
+  assert.ok(lm, 'the live Projects home offers h2\'s Merge');
+  lm.click(); await settle(60);
+  assert.deepEqual(sent(h.calls), []);
+  assert.match(placeStrip(h.d)?.textContent || '', /Merge #959 into dev\?/);
+  placeStrip(h.d).querySelector('[data-confirm="yes"]').click(); await settle(120);
+  assert.deepEqual(sent(h.calls), [['POST', '/api/pr/merge', { id: 'h2', projectKey: 'web-1' }]]);
 });

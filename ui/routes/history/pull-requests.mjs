@@ -301,6 +301,8 @@ app.post('/api/pr/resolve', async (req, res) => {
 const prActionRefusals = (host) => ({
   ...resolveRefusals(host),
   CONFLICTS: [409, `${host} reports merge conflicts on this pull request; fix them first.`],
+  DRAFT: [409, 'This pull request is a draft; mark it ready for review first.'],
+  CHANGES_REQUESTED: [409, 'A reviewer asked for changes; push the changes or get a new review first.'],
   CHECKS_FAILING: [409, 'Some checks are failing on this pull request; fix them first.'],
   CHECKS_PENDING: [409, 'The checks are still running; merge once they pass.'],
   AUTH: [409, `${host} refused Worca's credentials for this merge.`],
@@ -348,6 +350,8 @@ app.post('/api/pr/merge', async (req, res) => {
     // No head SHA read means no pin: an unpinned merge could take commits nobody checked, so it is refused.
     if (!read || !read.headSha) return refuseAction(res, url, 'READ_FAILED');
     if (read.mergeable === 'CONFLICTING') return refuseAction(res, url, 'CONFLICTS');
+    if (read.draft === true) return refuseAction(res, url, 'DRAFT');
+    if (read.reviewDecision === 'CHANGES_REQUESTED') return refuseAction(res, url, 'CHANGES_REQUESTED');
     if (read.checks?.state === 'failing') return refuseAction(res, url, 'CHECKS_FAILING');
     if (read.checks?.state === 'pending') return refuseAction(res, url, 'CHECKS_PENDING');
     // A fix run started while the checks were read would push to the branch: refuse, and pin the head that was checked.

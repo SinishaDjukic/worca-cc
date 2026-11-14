@@ -16,7 +16,7 @@
   const count = (label, hook, tip) => link(label, hook, tip);   // a number that opens what it counts (quiet until hovered: rail.css)
   const filterHook = (f) => ({ 'data-c-filter': JSON.stringify(f) });
   let menu = '', tasksHost = null, schedHost = null, quietOpen = false;
-  let asking = null;   // a card's step that asks first (act.confirm), in a ConfirmStrip under the head: { does, id, label, f, busy }
+  let asking = null;   // a card's step that asks first (act.confirm), in a ConfirmStrip under the head of the center it was pressed in: { does, id, label, f, busy, where }
   let view = { sort: 'most urgent', by: 'project', sSort: 'most urgent', from: '' }, figs = { tasks: false, sched: false };
 
   // ---- what a task is on a card ----
@@ -105,10 +105,16 @@
     const quietFacts = (() => { return quiet.map((g) => g.name).join(', '); })();
     const quietRow = quiet.length ? `${R.quietLine({ n: quiet.length, noun, names: quietFacts, open: quietOpen, hook: { 'data-c-quiet': '' } })}${quietOpen ? `<div class="pg-grid">${quiet.map(cardOf).join('')}</div>` : ''}` : '';
     if (asking && !W.find(asking.id)) asking = null;
-    const askHtml = asking ? R.confirmStrip({ ...R.confirmOf(asking.f, asking.label), busy: asking.busy ? R.workingWord(asking.label) : '', id: 'c-confirm-t' }) : '';
+    const askHtml = asking?.where === 'tasks' ? stripOf(asking) : '';
     return wrap(`${R.placeHead({ title: 'Your tasks', say: calm ? 'Nothing needs you' : '' })}${askHtml}${sent}${way}<div class="pg-grid">${shown.map(cardOf).join('')}</div>${quietRow}`);
   }
   const wrap = (body) => `<div class="convo"><div class="convo-scroll"><div class="convo-col is-center">${body}</div></div></div>`;
+  const stripOf = (a) => R.confirmStrip({ ...R.confirmOf(a.f, a.label), busy: a.busy ? R.workingWord(a.label) : '', id: 'c-confirm-t', attrs: { 'data-c-ask': '' } });
+  // the center a card was pressed in: the Tasks center, or the Projects center (its home draws the same cards, projects.js)
+  const placeEl = () => document.getElementById('route-place');
+  const whereNow = () => (tasksHost && !tasksHost.hidden && location.hash.startsWith('#runs') ? 'tasks' : placeEl() && !placeEl().hidden && /^#projects\/?$/.test(location.hash) ? 'place' : '');
+  const hostOf = (where) => (where === 'place' ? placeEl() : tasksHost);
+  function startAsk(a) { asking = { ...a, where: whereNow() || 'tasks' }; paint(); hostOf(asking.where)?.querySelector('[data-c-ask] [data-confirm="yes"]')?.focus({ preventScroll: true }); }
 
   // ---- the Schedules center ----
   const OUT = (r) => { const t = RM.stateOf(r.case); return t === 'failed' ? 'fail' : R.sectionOf(R.runState(t).word) === 'running' ? 'run' : 'ok'; };
@@ -153,16 +159,21 @@
   const paint = () => { paintTasks(); paintSched(); window.RailPlaces?.projects?.redraw?.(); };
 
   // ---- a card's action, on the thing itself ----
-  function act(does, id, label = '') {
+  function act(does, id, label = '', confirmed = false) {
     const r = W.find(id); if (!r) return;
-    if (does === 'open' || does === 'answer') { if (!W.live) r.unread = false; window.RailShell.openRun(`run/${r.case}`, r.title, r.id); return; }   // the live kind: the shell acknowledges it through the adapter
+    if (does === 'open' || does === 'answer') { if (!W.live) r.unread = false; window.RailShell.openRun(`run/${r.case}`, r.title, r.opens || r.id); return; }   // a lit origin opens its needy round (foldRounds); the live kind: the shell acknowledges it through the adapter
     if (W.live) { liveAct(does, r); return; }   // Tasks D17: dev's route through RailTaskLive; the store moves only when dev's frames say so
+    // panel.center: a step that asks first (Merge, Fix checks) asks in a ConfirmStrip under the head, in the demo kind too,
+    // with the demo task's own facts (its case's flow, the task page's words); only its Yes moves the store
+    const asks = !confirmed && whereNow() && demoAsk(does, r);   // its strip draws under the head of the center it was pressed in
+    if (asks) { startAsk(asks); return; }
     const was = { case: r.case, detail: r.detail, time: r.time, day: r.day };
     const back = () => { W.move(id, was.case, was.detail, { time: was.time, day: was.day }); };
     if (does === 'retry') { W.move(id, 'starting', 'Plan is under way'); say(`Retrying ${r.title}`, back); }
     if (does === 'resume') { W.move(id, 'working', 'Picked up where it stopped'); say(`Resumed ${r.title}`, back); }
     if (does === 'approve') { W.move(id, 'approved', 'Approved · checks pass'); say(`Approved ${r.title}`, back); }
     if (does === 'merge') { W.move(id, 'merged', 'Merged'); say(`Merged ${r.title}`, back); }
+    if (does === 'pr') { W.move(id, 'checks', 'PR opened · checks running'); say(LIVE_SAY.pr(r.title), back); }
     if (does === 'fix-checks') { W.move(id, 'fixing-checks', 'Fixing the failing checks'); say(`A short task is fixing ${r.title}\u2019s checks`, back); }
   }
   // The live kind (Tasks, Step 8): a card's action is the same RailTaskLive id the task page runs; nothing moves here before
@@ -171,6 +182,10 @@
   const LIVE_SAY = { retry: (t) => `Retrying ${t}`, resume: (t) => `Resumed ${t}`, approve: (t) => `Approved ${t}`, merge: (t) => `Merged ${t}`, pr: (t) => `Created a PR for ${t}`, 'fix-checks': (t) => `A short task is fixing ${t}\u2019s checks` };
   // A step the task page confirms first (its state's flow in the library's table: Merge PR, Fix checks) asks here too, in
   // the same words, filled with the task's own PR, base and failing count (run-page-model.js liveFacts).
+  function demoAsk(does, r) {
+    const label = LIVE_LABEL[does], f = label ? RM.flow[r.case]?.[label] : null;
+    return f && f.confirm ? { does, id: r.id, label, f, busy: false } : null;
+  }
   function liveAsk(does, r) {
     const v = window.RailTaskLive?.detail?.(r.id), label = LIVE_LABEL[does];
     // the base: the page's (once its detail is in), else the PR's own from its checks entry
@@ -180,23 +195,26 @@
   function liveAct(does, r, confirmed = false) {
     const T = window.RailTaskLive;
     if (!T || !LIVE_LABEL[does]) return;
-    const asks = !confirmed && liveAsk(does, r);
-    if (asks) { asking = asks; paint(); tasksHost?.querySelector('.rc-confirm [data-confirm="yes"]')?.focus({ preventScroll: true }); return; }
+    const asks = !confirmed && liveAsk(does, r);   // the live kind never merges unasked
+    if (asks) { startAsk(asks); return; }
     const was = confirmed ? asking : null;
     if (was) { was.busy = true; paint(); }
     Promise.resolve(T.flow(LIVE_LABEL[does], { taskId: r.id, pr: r.pr, title: r.title })).then((res) => {
-      if (was && asking === was) { asking = null; paint(); tasksHost?.querySelector(`[data-c-act="${does}|${r.id}"]`)?.focus({ preventScroll: true }); }   // a refusal is the shell's one line; the card still offers it
+      if (was && asking === was) { asking = null; paint(); hostOf(was.where)?.querySelector(`[data-c-act="${does}|${r.id}"]`)?.focus({ preventScroll: true }); }   // a refusal is the shell's one line; the card still offers it
       if (res && res.ok) say(res.say || LIVE_SAY[does](r.title));
     });
   }
   function answerAsk(yes) {
     const a = asking; if (!a) return;
-    if (yes) { const r = W.find(a.id); if (r) { liveAct(a.does, r, true); return; } }
-    asking = null; paint(); tasksHost?.querySelector(`[data-c-act="${a.does}|${a.id}"]`)?.focus({ preventScroll: true });
+    if (yes && W.find(a.id)) {
+      if (W.live) { liveAct(a.does, W.find(a.id), true); return; }
+      asking = null; act(a.does, a.id, '', true); paint(); return;
+    }
+    asking = null; paint(); hostOf(a.where)?.querySelector(`[data-c-act="${a.does}|${a.id}"]`)?.focus({ preventScroll: true });
   }
   function onClick(e) {
     const on = (q) => e.target.closest(q); let hit;
-    if ((hit = on('#route-runs .rc-confirm [data-confirm]'))) { if (!hit.disabled) answerAsk(hit.dataset.confirm === 'yes'); return; }
+    if ((hit = on('[data-c-ask] [data-confirm]'))) { if (!hit.disabled) answerAsk(hit.dataset.confirm === 'yes'); return; }
     if ((hit = on('[data-c-retry]'))) { window.RailAdapter?.retry?.(); return; }
     if ((hit = on('[data-c-figs]'))) { figs[hit.dataset.cFigs] = !figs[hit.dataset.cFigs]; paint(); return; }
     if ((hit = on('[data-c-filter]'))) { List().filter(JSON.parse(hit.dataset.cFilter)); return; }
@@ -219,9 +237,9 @@
   function wire() {
     if (wired) return; wired = true;
     document.getElementById('route-runs').addEventListener('click', onClick);
-    document.getElementById('route-runs').addEventListener('keydown', (e) => { if (e.key === 'Escape' && asking && !asking.busy) { e.stopPropagation(); answerAsk(false); } });   // Esc is the strip's safe side
+    for (const [el, where] of [['route-runs', 'tasks'], ['route-place', 'place']]) document.getElementById(el).addEventListener('keydown', (e) => { if (e.key === 'Escape' && asking?.where === where && !asking.busy) { e.stopPropagation(); answerAsk(false); } });   // Esc is the strip's safe side
     document.getElementById('route-schedule').addEventListener('click', onClick);
-    document.getElementById('route-place').addEventListener('click', (e) => { if (e.target.closest('[data-c-filter], [data-c-open], [data-c-act], [data-c-sact], [data-c-sched]')) onClick(e); });   // the Projects center's cards act the same way
+    document.getElementById('route-place').addEventListener('click', (e) => { if (e.target.closest('[data-c-filter], [data-c-open], [data-c-act], [data-c-sact], [data-c-sched], [data-c-ask]')) onClick(e); });   // the Projects center's cards act the same way
     W.onMove(paint); W.onChange(paint); R.prefs.onChange(paint);
     R.dismissOnOutside(document, { open: () => !!menu && !form, inside: '#route-runs .spick, #route-schedule .spick', back: () => null, close: () => { menu = ''; }, paint });
   }
@@ -394,6 +412,8 @@
     tasks: (el) => { wire(); tasksHost = el; menu = ''; asking = null; paint(); },
     schedules: (el) => { wire(); schedHost = el; menu = ''; if (/^#schedules/.test(location.hash)) el.innerHTML = schedulesHtml(); },
     maker: (which) => (advanced() ? MAKERS[which] : null),
+    // the Projects center's strip, under its home's head; a strip asked there is dropped once its home is left
+    askStrip: () => (asking?.where === 'place' && W.find(asking.id) ? stripOf(asking) : ''), unask: () => { if (asking?.where === 'place') asking = null; },
     paint, wire, taskOf, stateOf, clause, actionsOf, schedLink, link, inWeek,
   };
 })();

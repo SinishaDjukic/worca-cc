@@ -118,7 +118,8 @@
   function ctxOf(t) {
     if (!LIVE()) return { base: 'dev', pr: '#1180', reset: '17:00' };
     const pr = prWord(t.prUrl || runOfT(t)?.pr), n = t.failedChecks;
-    return { ...(pr ? { pr } : {}), ...(t.base ? { base: t.base } : {}), failedChecks: n ? `${n} failing check${n === 1 ? '' : 's'}` : 'failing checks' };
+    // a card with no PR or base yet says so in words (liveFactsOf's), never a `{base}` placeholder
+    return { pr: pr || 'the PR', base: t.base || 'its base', failedChecks: n ? `${n} failing check${n === 1 ? '' : 's'}` : 'failing checks' };
   }
   // the run-state flow's args for a live card: dev's ids, the run's PR link and labels (chat-live.mjs FLOW)
   const flowArgs = (t) => { const r = runOfT(t); return { runId: t.run || t.id, pipelineId: t.pid || t.run || t.id, threadId: chatId, title: t.title, pr: r?.pr || '', labels: r?.labels || [], case: t.case || '' }; };

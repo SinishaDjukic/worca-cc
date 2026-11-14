@@ -5,7 +5,8 @@ import { engineLocks } from '../../../src/core/engines/readiness.mjs';
 import { actorOf, byActor } from '../../../src/core/identity.mjs';
 import { appendAuditById, findPipelineRowById, listArtifacts, resolveIndexedArtifactForRow, runEngineOfRow } from '../../../src/core/artifacts.mjs';
 import { readRunCostCap } from '../../../src/core/cost-budget.mjs';
-import { branchExists } from '../../../src/core/git-info.mjs';
+import { getDb } from '../../../src/core/db.mjs';
+import { branchExists, commitsAhead } from '../../../src/core/git-info.mjs';
 import { FIX_WORKFLOW_ID } from '../../../src/core/pr-watch.mjs';
 import { readRunLabels } from '../../../src/core/run-labels-store.mjs';
 import { readRunTags } from '../../../src/core/run-tags-store.mjs';
@@ -15,6 +16,7 @@ import { PLAN_ASK_KIND, planFileOf } from '../../../src/core/shape/run.mjs';
 import { savePlanToCheckout } from '../../../src/core/shape/save.mjs';
 import { StopPausedError } from '../../../src/core/stop-paused.mjs';
 import { engineRefusalFor } from '../../../src/shared/engine-switch.mjs';
+import { parseDecisionLine } from '../../../src/shared/shape/feature-log.mjs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { PLAN_TEXT_MAX, ResumeError, SETTLED_RUN, answerRun, badRequest, emitChanged, invokeStartRun, liveRunEntry, pauseRun, postDirection, prWatcherDeps, projectDirForKey, resumeRun, runs, startRunHandler, stopPausedPipeline, stopRun } from '../../server.mjs';
@@ -25,6 +27,28 @@ const restartBrief = (plan, feature) => [
   'The branch already holds the earlier attempt\'s commits: keep what is right, finish the rest, and run the tests.',
   '', plan].join('\n');
 const restartRefusal = (res, status, code, error) => res.status(status).json({ error, code });
+const APPROVED = { plan: 'approve', concern: 'overridden' };
+const timeOf = (ts) => { const t = Date.parse(ts || ''); return Number.isFinite(t) ? t : null; };
+/** Restart Build's plan gate. decisions: [{ ts, kind, decision }] from parseDecisionLine; planAt: the newest plan
+ *  artifact's time (null: a legacy row, every decision counts). The newest plan or concern decision after the plan wins:
+ *  an approval (or an overridden concern) passes, anything else refuses. With none, a branch already ahead of its base
+ *  built past the plan gate (a plan-review workflow) and passes; null ahead (a read failure) counts as 0. */
+export function planApproved({ decisions = [], planAt = null, aheadCount = null } = {}) {
+  const after = timeOf(planAt);
+  let newest = null;
+  for (const d of decisions) {
+    if (!d || !(d.kind in APPROVED)) continue;
+    const t = timeOf(d.ts);
+    if (t == null || (after != null && t <= after)) continue;
+    if (!newest || t >= newest.t) newest = { t, d };
+  }
+  if (newest) return APPROVED[newest.d.kind] === newest.d.decision ? { ok: true, via: 'approval' } : { ok: false };
+  return (aheadCount || 0) >= 1 ? { ok: true, via: 'built' } : { ok: false };
+}
+/** The plan and concern decision lines of a pipeline's audit, oldest first. */
+const decisionsOf = (pipelineId) => getDb().prepare('SELECT ts, text FROM pipeline_events WHERE pipeline_id = ? ORDER BY id').all(pipelineId)
+  .map((e) => { const d = parseDecisionLine(e.text); return d ? { ts: e.ts, kind: d.kind, decision: d.decision } : null; }).filter(Boolean);
+const planTimeOf = (pipelineId) => getDb().prepare("SELECT MAX(created_at) AS at FROM artifacts WHERE pipeline_id = ? AND kind = 'plan'").get(pipelineId)?.at || null;
 /** Pause after this step (Stillhet): the run keeps going until no step is in flight, then pauses as pauseRun does. */
 function pauseAfterStepRun(runId, by = 'local') {
   const entry = runs.get(runId);
@@ -64,6 +88,12 @@ app.post('/api/runs/:id/restart-build', async (req, res) => {
     const projectDir = await projectDirForKey(row.project_key);
     if (!projectDir || !branch?.feature || !(await branchExists(projectDir, branch.feature))) {
       return restartRefusal(res, 409, 'NO_BRANCH', 'This task\'s branch is gone, so Build cannot restart on it.');
+    }
+    // An unapproved plan never builds (D5): an approval newer than the newest plan, or a branch already past the gate.
+    const aheadCount = branch.source ? await commitsAhead(projectDir, branch.source, branch.feature) : null;
+    const decisions = decisionsOf(origin); const planAt = planTimeOf(row.id);   // read after the awaits: a decision written meanwhile counts
+    if (!planApproved({ decisions, planAt, aheadCount }).ok) {
+      return restartRefusal(res, 409, 'PLAN_NOT_APPROVED', 'This task\'s plan was never approved, so Build cannot restart from it; approve the plan first.');
     }
     // A run already on the branch (an earlier restart round, a PR fix run) holds it: a second start would fight over it.
     if (prWatcherDeps.liveOnBranch({ projectDir, branch: branch.feature })) {   // dev's rule: live, paused, finishing, or a terminal resolve

@@ -56,3 +56,12 @@ test('RailPulse.open(tab) shows the popover on that tab (the bell and #activity 
   w.RailPulse.open('updates');
   assert.equal(w.document.querySelector('#app .pz-popover [data-ptab="updates"]').getAttribute('aria-selected'), 'true');
 });
+
+test('the account menu closes when the page moves on (a hashchange): it never stays open over the next page', async () => {
+  const { w } = appHost();
+  w.document.querySelector('[data-acct]').click();
+  assert.ok(w.document.querySelector('#app .acct-menu'), 'open');
+  w.location.hash = '#runs';
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(w.document.querySelector('#app .acct-menu'), null, 'closed on navigation');
+});

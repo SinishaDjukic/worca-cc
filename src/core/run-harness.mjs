@@ -23,6 +23,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { readFile, writeFile, copyFile, readdir, mkdir, realpath, rename, stat, rm } from 'node:fs/promises';
 
 import { generateTitle } from './title.mjs';
+import { recordUsageLimit } from './usage-limits.mjs';
 import {
   createPipeline, updatePipelineTitle, appendAudit, writeState, artifactPaths, slugify, today,
   recordArtifact, writeClarify, readPipelineExtras, claimPipelineOwnership, touchHeartbeat,
@@ -1693,7 +1694,14 @@ export class RunHarness extends EventEmitter {
       });
       this.state.id = this.pipeline.id;
       this.state.pipelineDir = this.pipeline.dir;
-      if (this.runCostCapUsd != null) setRunCostCap(this.pipeline.id, this.runCostCapUsd);   // a Restart Build keeps its origin's cap
+      if (this.runCostCapUsd != null) {
+        setRunCostCap(this.pipeline.id, this.runCostCapUsd);   // a Restart Build keeps its origin's cap
+        // The cap set at the start is a decision worth an audit line (D12); it shows with `rail` off too.
+        const by = this.opts.startedBy || null;
+        // a Restart Build or PR-fix round inherits its origin's cap: nobody set it for this round, so it says so
+        const kept = validRoundOf(this.opts.branch && this.opts.branch.roundOf);
+        appendAudit(this.pipeline.dir, kept ? `Pipeline cost limit $${this.runCostCapUsd.toFixed(2)} kept from the first round.` : `Pipeline cost limit set to $${this.runCostCapUsd.toFixed(2)} for this run${byActor(by)}.`, { actor: by }).catch(() => {});
+      }
       // Replace the placeholder the client was shown at start with the task's title.
       if (ticketTitle) this._emit('title', { title: ticketTitle, provisional: false, pipelineId: this.pipeline.id });
       this.logWriter.bind(this.pipeline.dir);                  // start persisting (flushes buffered preflight lines)
@@ -8033,6 +8041,7 @@ export class RunHarness extends EventEmitter {
       case 'toolResult': this._onToolResultEvent(role, e, attr); return;
       case 'retry': this._onRetryEvent(role, e, attr); return;
       case 'usage': this._onUsageEvent(e, attr); return;
+      case 'limit': recordUsageLimit(this.claude?.engine || 'claude', e); return;   // the usage rings' reading (D7)
       default: return;
     }
   }

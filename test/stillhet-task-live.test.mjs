@@ -7,7 +7,7 @@ import { caseOf } from '../ui/public/stillhet/live/live-map.mjs';
 import { TASK_DETAILS, PR_URL } from './helpers/stillhet-live-fixture.mjs';
 
 const settle = (ms = 5) => new Promise((r) => setTimeout(r, ms));
-function host({ routes = {}, loaded = true, live = {}, rows = {}, clock = { t: 1_000_000 } } = {}) {
+function host({ routes = {}, loaded = true, live = {}, rows = {}, clock = { t: 1_000_000 }, flags = {} } = {}) {
   const calls = [], toasts = [];
   const fetch = async (url, init = {}) => {
     calls.push([init.method || 'GET', url, init.body ? JSON.parse(init.body) : undefined]);
@@ -20,7 +20,7 @@ function host({ routes = {}, loaded = true, live = {}, rows = {}, clock = { t: 1
     }
     return { ok: false, status: 404, json: async () => ({ error: 'not found' }) };
   };
-  const t = startTaskLive({ fetch, toast: (s) => toasts.push(s), now: () => clock.t, listLoaded: () => loaded,
+  const t = startTaskLive({ fetch, toast: (s) => toasts.push(s), now: () => clock.t, listLoaded: () => loaded, flag: (k) => !!flags[k],
     rowOf: (id) => rows[id] || null, liveOf: (id) => live[id] || null,
     runOf: (id) => (rows[id] ? { pipelineId: id, projectKey: 'web-1', projectDir: '/src/web' } : {}) });
   return { t, calls, toasts, clock };
@@ -119,6 +119,9 @@ test('act: each id\'s route and body; a second press is refused; a refusal says 
   assert.equal(res.ok, false);
   assert.deepEqual(calls.filter(([m]) => m === 'POST'), [['POST', '/api/pr/merge', { id: 'h2', projectKey: 'web-1' }]]);
   assert.deepEqual(toasts, ['Could not merge #959: it is already on its way', 'Could not merge #959: GitHub reports merge conflicts on this pull request; fix them first.']);
+  const draft = host({ rows: { h2: approvedRow }, routes: { 'POST /api/pr/merge': [409, { error: 'This pull request is a draft; mark it ready for review first.', code: 'DRAFT' }] } });
+  await draft.t.act('merge', { taskId: 'h2', pr: PR_URL });
+  assert.deepEqual(draft.toasts, ['Could not merge #959: This pull request is a draft; mark it ready for review first.'], 'the server\'s own refusal words');
   assert.equal(Object.keys(TASK_ACTIONS).length, 28, 'the ten Step 7 actions, the page\'s Check out, Apply and Discard, and its Terminal, service start and stop, built-in tool, preset, Switch model, Resume at…, Publish branch, away mode, a diff comment, labels and cost tags, a stack\'s start and stop, a group\'s Create PR');
 });
 
@@ -411,4 +414,43 @@ test('a failed group load reads failed and is not asked again on every paint; Tr
   await t.open('group:g1', { force: true }); await settle(10);
   assert.equal(asks(), 2);
   assert.equal(t.state('group:g1'), 'ready');
+});
+
+test('a round that ended reads its saved diff; a live or paused one its live patch, the saved diff only when that read fails (no 404 for a diff not saved yet); telemetry only with runTelemetry on; a removed run id leaves the cache', async () => {
+  const gets = (calls) => calls.filter(([m]) => m === 'GET').map(([, u]) => u);
+  const ended = { 'run-r': { runId: 'run-r', pipelineId: 'h3', status: 'done', projectKey: 'web-1', state: { branch: { feature: 'feat/x', source: 'dev' } } } };
+  const a = host({ live: ended, rows: { 'run-r': failedRow }, routes: { 'GET /api/history/web-1/h3$': [200, { state: TASK_DETAILS.failed.state }] } });
+  await a.t.open('run-r'); await settle(20);
+  assert.ok(gets(a.calls).includes('/api/history/web-1/h3/diff'), 'a round that ended: the saved diff');
+  assert.ok(!gets(a.calls).some((u) => /live-diff/.test(u)));
+  const paused = { 'run-r': { ...ended['run-r'], status: 'paused' } };
+  const p = host({ live: paused, rows: { 'run-r': failedRow }, routes: { 'GET /api/history/web-1/h3$': [200, { state: TASK_DETAILS.failed.state }], 'GET /api/runs/run-r/live-diff': [200, { patch: '' }] } });
+  await p.t.open('run-r'); await settle(20);
+  assert.ok(gets(p.calls).includes('/api/runs/run-r/live-diff'), 'a paused round: its live patch');
+  assert.ok(!gets(p.calls).includes('/api/history/web-1/h3/diff'), 'an empty live patch is the answer: no saved diff is asked for (it would be a 404)');
+  const gone = host({ live: paused, rows: { 'run-r': failedRow }, routes: { 'GET /api/history/web-1/h3$': [200, { state: TASK_DETAILS.failed.state }], 'GET /api/runs/run-r/live-diff': [404, { error: 'no worktree' }] } });
+  await gone.t.open('run-r'); await settle(20);
+  assert.ok(gets(gone.calls).includes('/api/history/web-1/h3/diff'), 'a live read that fails falls back to the saved diff');
+  assert.ok(!gets(a.calls).some((u) => /\/telemetry$/.test(u)), 'runTelemetry off: no telemetry read (no 404 in the console)');
+  const running = { 'run-r': { ...ended['run-r'], status: 'running' } };
+  const b = host({ live: running, rows: { 'run-r': failedRow }, flags: { runTelemetry: true }, routes: { 'GET /api/history/web-1/h3$': [200, { state: TASK_DETAILS.failed.state }],
+    'GET /api/runs/run-r/live-diff': [200, { patch: '' }] } });
+  await b.t.open('run-r'); await settle(20);
+  assert.ok(!gets(b.calls).includes('/api/history/web-1/h3/diff'), 'a running round with no changes yet asks for no saved diff');
+  assert.ok(gets(b.calls).includes('/api/runs/h3/telemetry'), 'runTelemetry on: asked');
+  assert.equal(b.t.state('run-r'), 'ready');
+  const told = []; b.t.onChange((id) => told.push(id));
+  b.t.frame({ type: 'pipelines-changed', removedRunIds: ['run-r'] });
+  assert.notEqual(b.t.state('run-r'), 'ready', 'the page cache drops a removed run id: nothing drawn from it any more');
+  assert.deepEqual(told, ['run-r'], 'an open page is told its run is gone');
+});
+
+test('a merge that succeeded drops the checks entry and reads no checks again', async () => {
+  const { t, calls } = host({ rows: { h2: approvedRow }, routes: { 'GET /api/history/web-1/h2': [200, { state: TASK_DETAILS.approved.state }],
+    'GET /api/pr/checks': [200, TASK_DETAILS.approved.checks], 'POST /api/pr/merge': [200, { merged: true, next: null }] } });
+  await t.open('h2'); await settle();
+  const before = calls.length;
+  const res = await t.act('merge', { taskId: 'h2', pr: PR_URL }); await settle();
+  assert.equal(res.ok, true);
+  assert.deepEqual(calls.slice(before).filter(([, u]) => /\/api\/pr\/checks/.test(u)), [], 'a merged PR has no checks to read');
 });

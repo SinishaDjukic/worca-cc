@@ -708,6 +708,7 @@ export async function ghPrChecks({ projectDir, prUrl }) {
     const reviews = (Array.isArray(v.latestReviews) ? v.latestReviews : [])
       .filter((x) => x?.author?.login && x.state).map((x) => ({ by: String(x.author.login), state: String(x.state) }));
     return { checks, mergeable, base: base.base, reviews, headSha: typeof v.headRefOid === 'string' ? v.headRefOid : null,
+      draft: v.isDraft === true, reviewDecision: v.reviewDecision || null,
       status: prMergeStatus({ checks, mergeable, mergeState: v.mergeStateStatus, reviewDecision: v.reviewDecision, draft: v.isDraft === true, base: base.base }) };
   } catch { return null; }
 }
@@ -1433,6 +1434,7 @@ export async function prChecks({ projectDir, prUrl } = {}) {
   if (!f) return null;
   const checks = rollupChecks(f.items, { baseFailing: f.baseFailing });
   return { checks, mergeable: f.mergeable, base: f.base, reviews: Array.isArray(f.reviews) ? f.reviews : [], headSha: f.headSha || null,
+    draft: f.draft === true, reviewDecision: f.reviewDecision || null,
     status: prMergeStatus({ checks, mergeable: f.mergeable, mergeState: f.mergeState, reviewDecision: f.reviewDecision, draft: f.draft, base: f.base }) };
 }
 

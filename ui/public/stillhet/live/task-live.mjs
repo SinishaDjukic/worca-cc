@@ -114,7 +114,7 @@ const FAILED_OR_STUCK = new Set(['failed', 'failed-kept', 'stopped', 'error', 'r
 const BASE_PROMPT = new Set(['base-moved', 'base-missing']);
 
 export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = openTab, runOf = () => ({}), rowOf = () => null,
-  liveOf = () => null, listLoaded = () => true, listFailed = () => false, retryList = null, retryPrs = () => {}, chat = null, clipboard = null, origin = '', projectDirOf = () => '' } = {}) {
+  liveOf = () => null, flag = () => false, listLoaded = () => true, listFailed = () => false, retryList = null, retryPrs = () => {}, chat = null, clipboard = null, origin = '', projectDirOf = () => '' } = {}) {
   const fns = new Set(), checkFns = new Set();   // checkFns: told only when a checks entry lands (the store's rows read it)
   const notify = (id) => { for (const fn of fns) { try { fn(id); } catch (e) { console.error(e); } } };
   const runner = actionRunner({ fetch, toast, notify });
@@ -264,6 +264,8 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
     // a run that ended: a page drawn from its frames reads its saved run and parts again (Changes, time, cost, its stages)
     const ended = (f.type === 'done' || f.type === 'error') && f.runId ? resolve(f.runId) : null;
     if (ended) for (const [id, e] of tasks) if (e.state === 'ready' && !e.loading && resolve(id)?.pipelineId === ended.pipelineId) openTask(id, { force: true });
+    // a deleted or superseded run: its page and parts are not kept (the adapter drops it from the store too)
+    if (f.type === 'pipelines-changed' && Array.isArray(f.removedRunIds)) for (const id of f.removedRunIds) { tasks.delete(id); parts.delete(id); notify(id); }
   }
 
   // ---- the page's parts (D4): Changes, documents, Logs and the worktree's actions, read once the task is ready ----
@@ -280,9 +282,12 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
     parts.set(id, p);
     const land = (k, ok, v) => { if (parts.get(id) !== p) return; if (ok || p[k] == null) p[k] = v; notify(id); };
     const key = r.projectKey, pid = r.pipelineId;
-    const running = r.live && r.runId && !/^(done|stopped|error|failed)$/.test(lc(r.live.status));
-    (running ? request('GET', `/api/runs/${enc(r.runId)}/live-diff`).then((x) => ({ ok: x.ok, text: x.data?.patch, status: x.status }))
-      : key ? text(`${runUrl(key, pid)}/diff`) : Promise.resolve({ ok: false, status: 404 }))
+    // a round that ended reads its saved diff (a Restart Build round's live patch is empty once it ends); a live or paused one
+    // reads its live patch, and the saved diff only when that read fails: a round with no saved diff yet would log a 404
+    const running = r.live && r.runId && !/^(done|stopped|error|failed|interrupted)$/.test(lc(r.live.status));
+    const saved = () => (key ? text(`${runUrl(key, pid)}/diff`) : Promise.resolve({ ok: false, status: 404 }));
+    (running ? request('GET', `/api/runs/${enc(r.runId)}/live-diff`).then((x) => (!x.ok && key ? saved() : { ok: x.ok, text: x.data?.patch, status: x.status }))
+      : saved())
       .then((x) => land('changes', x.ok, patchFiles(x.ok ? x.text : '')));
     request('GET', `/api/runs/${enc(pid)}/artifacts`).then((x) => land('docs', x.ok, x.ok ? docsOf(x.data?.artifacts) : []));
     (key ? text(`${runUrl(key, pid)}/log`) : Promise.resolve({ ok: false })).then((x) => land('log', x.ok, x.ok ? logLinesOf(x.text) : []));
@@ -290,7 +295,8 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
     request('GET', `/api/pipelines/${enc(pid)}/setup`).then((x) => land('setup', x.ok, x.ok && x.data?.setup ? x.data.setup : null));
     if (key) request('GET', `${runUrl(key, pid)}/comments`).then((x) => land('comments', x.ok, x.ok ? commentsByPath(x.data) : {}));
     request('GET', `/api/runs/${enc(pid)}/sessions`).then((x) => land('sessions', x.ok, x.ok ? sessionRowsOf(x.data) : []));
-    request('GET', `/api/runs/${enc(pid)}/telemetry`).then((x) => land('usage', x.ok, x.ok ? usageRowsOf(x.data) : []));   // 404 with Labs off, or none recorded
+    if (flag('runTelemetry')) request('GET', `/api/runs/${enc(pid)}/telemetry`).then((x) => land('usage', x.ok, x.ok ? usageRowsOf(x.data) : []));   // dev's Labs flag: off, the route is a 404
+    else land('usage', true, []);
   }
   /** A session's transcript: dev's raw trace (GET /api/runs/:id/sessions/:sid/trace), in a new tab. */
   function transcript(id, sid) {
@@ -418,7 +424,8 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
         const m = (res.data?.members || []).find((x) => x.state === 'checked-out' && x.worktreeDir);
         return { ...res, say: m ? `Checked out ${str(m.branch)} at ${str(m.worktreeDir)}` : 'Checked out on this machine' };
       }
-      if (/^(merge|rerun-checks|fix-checks)$/.test(id) && a.pipelineId) { invalidate(a.pipelineId); refreshChecks(args.taskId || a.pipelineId, { force: true }); }
+      // a merged PR has no checks to read again: its entry only goes; the others read their checks again
+      if (/^(merge|rerun-checks|fix-checks)$/.test(id) && a.pipelineId) { invalidate(a.pipelineId); if (id !== 'merge') refreshChecks(args.taskId || a.pipelineId, { force: true }); }
       if (id === 'merge' && res.data?.next && res.data.next.retargeted === false) {
         return { ...res, say: `Merged #${a.prNumber || prNum(a.pr)} into ${str(input.checks?.base) || str(input.state?.branch?.source) || 'its base'}; #${prNum(res.data.next.url)} still targets its old base: ${str(res.data.next.error)}` };
       }

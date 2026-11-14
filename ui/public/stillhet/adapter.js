@@ -38,6 +38,12 @@
         .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) { return { ok: r.ok, status: r.status, data: d, error: r.ok ? '' : (d && (d.error || d.message)) || 'HTTP ' + r.status }; }); })
         .catch(function () { return { ok: false, status: 0, data: {}, error: 'the server did not answer' }; });
     },
+    // the same, for dev's PUT routes (a workspace link's answer, D10)
+    put: function (url, body) {
+      return fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) })
+        .then(function (r) { return r.json().catch(function () { return {}; }).then(function (d) { return { ok: r.ok, status: r.status, data: d, error: r.ok ? '' : (d && (d.error || d.message)) || 'HTTP ' + r.status }; }); })
+        .catch(function () { return { ok: false, status: 0, data: {}, error: 'the server did not answer' }; });
+    },
     importLive: function () { return import('/stillhet/live/live-adapter.mjs'); },
     host: host,
     NOT_CONNECTED: NOT_CONNECTED,
@@ -64,7 +70,7 @@
     var W = window.RailWorld;
     adapter.importLive().then(function (m) {
       live = m.startLive({
-        fetch: window.fetch.bind(window), WebSocket: window.WebSocket, location: location, world: W, host: window.RailHost || {},
+        fetch: window.fetch.bind(window), WebSocket: window.WebSocket, location: location, world: W, host: window.RailHost || {}, prefs: window.RailUI && window.RailUI.prefs,
         setTimeout: window.setTimeout.bind(window), clearTimeout: window.clearTimeout.bind(window), now: Date.now,
         openChat: function () { var h = location.hash.match(/^#chat\/([^/]+)/); if (!h) return ''; try { return decodeURIComponent(h[1]); } catch (e) { return h[1]; } },
         hidden: function () { return document.hidden; },

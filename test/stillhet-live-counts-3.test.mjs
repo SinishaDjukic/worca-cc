@@ -3,7 +3,7 @@
 // nothing and says so; the mode is dev's uiLevel. The host is test/helpers/stillhet-live-counts-host.mjs.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { BELL, SOURCES, URLS, bellN, liveHost, settle, store, toastText, closeHosts } from './helpers/stillhet-live-counts-host.mjs';
+import { BELL, SOURCES, URLS, bellN, liveHost, settle, store, toastText, closeHosts, WS_QUESTIONS, mapRead, withWorkspaces } from './helpers/stillhet-live-counts-host.mjs';
 
 afterEach(closeHosts);   // each test's window closes when the test ends
 test('a failed first load: failed in the bar and in Pulse; Try again in Pulse and in the bar list retry and then show the rows', async () => {
@@ -94,4 +94,31 @@ test('the Tasks center in the live kind: a card\'s step writes nothing to the st
   assert.doesNotMatch(toastText(d), /is not in Stillhet yet/, 'Tasks D17: a card\'s step is dev\'s route (test/stillhet-tasks-list-host.test.mjs), never the stand-in');
   d.querySelector('[data-c-open="run-b"], [data-c-act="open|run-b"], [data-c-act="answer|run-b"]').click(); await settle();
   assert.equal(bellN(d), BELL, 'Open acknowledges it through the adapter');
+});
+
+test('a workspace question\'s Yes sends dev\'s edge PUT and the page changes only on its 200; a 500 keeps the question with a refusal (D10)', async () => {
+  let status = 500;
+  const { w, d, posts, hello } = await liveHost({ sources: withWorkspaces(), read: mapRead(), level: 'advanced', post: () => [status, status < 300 ? { edge: {} } : { error: 'the map is being written' }] });
+  await hello(); await settle(60);
+  w.location.hash = '#projects/ws:w1'; await settle(60);
+  const yes = () => d.querySelector('#route-place [data-ws-yes]');
+  const asked = () => d.querySelectorAll('#route-place [data-ws-yes]').length;
+  assert.equal(asked(), WS_QUESTIONS);
+  yes().click(); await settle(60);
+  assert.deepEqual(posts.map((p) => [p.method, p.url, p.body]), [['PUT', '/api/workspaces/w1/map/edges/x_000000000001', { state: 'confirmed' }]]);
+  assert.equal(asked(), WS_QUESTIONS, 'a refusal keeps the question');
+  assert.match(toastText(d), /Could not .*the map is being written/);
+  status = 200;
+  yes().click();
+  assert.equal(asked(), WS_QUESTIONS, 'nothing changes before the server answers');
+  await settle(60);
+  assert.equal(asked(), WS_QUESTIONS - 1, 'answered: the question is gone');
+  assert.equal(bellN(d), BELL + WS_QUESTIONS - 1);
+  for (const gone of ['Delete…', 'Edit by hand', 'Start a task across all']) assert.ok(!d.querySelector('#route-place').textContent.includes(gone), `${gone}: the Projects slice's`);
+  // dev's manual edge is a link of its own with no Undo; a stale or missing edge is never drawn (code review r1)
+  d.querySelector('#route-place [data-ws-links]').click(); await settle(30);
+  const rows = [...d.querySelectorAll('#route-place .ws-links .set-row')].filter((r) => r.textContent.includes('Added by hand'));
+  assert.equal(rows.length, 1, 'the manual link is named as added by hand');
+  assert.equal(rows[0].querySelector('button'), null, 'a manual link offers no Undo');
+  assert.equal(d.querySelectorAll('#route-place .ws-links .set-row').length, 5, '2 questions, exact, verified and manual; no stale, no missing');
 });

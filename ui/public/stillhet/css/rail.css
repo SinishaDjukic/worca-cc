@@ -1622,7 +1622,7 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .pg-f,.pg-why{grid-column:2;font-size:var(--fs-meta);color:var(--ink-2);}
 .pg-why{display:flex;gap:6px;align-items:center;}
 .pg-card{grid-template-rows:repeat(5,auto) 1fr;}   /* panel.plugin-card: the actions end a card, so they line up across a row */
-.pg-a{grid-column:2;grid-row:6;align-self:end;display:flex;gap:6px;align-items:center;margin-top:8px;}
+.pg-a{grid-column:2;grid-row:6;align-self:end;display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px;}   /* a second action wraps at 360px, never clips */
 @media (max-width: 760px){.pg-grid{grid-template-columns:minmax(0,1fr);}}
 /* panel.center: a card in a center */
 .convo-col.is-center{max-width:720px;}

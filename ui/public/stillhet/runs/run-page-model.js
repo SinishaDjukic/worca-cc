@@ -555,7 +555,7 @@
     const planDone = c.stages.some((x) => x.key === 'plan' && x.subs.every(isDone));
     const buildLive = c.stages.some((x) => x.key === 'build' && x.subs.some((y) => LIVE[y.state]));
     const clean = c.stages.filter((x) => !SHIP.test(x.key)).every((x) => x.subs.every(isDone));
-    const ev = c.ev ? c.ev : c.liveId ? (c.why && c.why.length ? { log: 'Open the log' } : null) : c.id === 'kept' ? EVIDENCE['review/Manual web UI testing'] : c.id === 'failed' ? EVIDENCE['build/Implementation'] : c.id === 'failing' ? EVIDENCE['pr/Checks'] : /^(conflicts|workspace)$/.test(c.id) ? EVIDENCE['pr/Conflicts with dev'] : null;
+    const ev = c.ev ? c.ev : c.liveId ? ((c.why || []).some((w) => /^✗/.test(typeof w === 'string' ? w : w?.t || w?.text || '')) ? { log: 'Open the log' } : null) : c.id === 'kept' ? EVIDENCE['review/Manual web UI testing'] : c.id === 'failed' ? EVIDENCE['build/Implementation'] : c.id === 'failing' ? EVIDENCE['pr/Checks'] : /^(conflicts|workspace)$/.test(c.id) ? EVIDENCE['pr/Conflicts with dev'] : null;
     let focus = null;
     if (c.id === 'plan') focus = { kind: 'plan', items: PLAN_ITEMS.map((t) => ({ t, state: 'next' })), issues: ui && ui.fixed && ui.fixed.plan ? [] : DETAIL.planIssues };
     else if (c.reqsCheck) focus = { kind: 'reqs', items: DETAIL.criteria, left: reqLeft(ui) };
@@ -1003,14 +1003,17 @@
       reason: rec === 'one' ? 'one review for the whole feature.' : feature ? 'each task lands on top of the one before.' : 'independent tasks, so each gets its own review.' } : null;
     const flow = ship ? { 'Create PR': { confirm: 'Create one PR for the ' + ms.length + ' tasks? Their branches combine into one branch for one review.', live: 'Ship group', ship: 'one', say: 'Created the PR' },
       ['Create ' + toOpen + ' PRs']: { confirm: 'Create ' + toOpen + ' ' + word + ' PRs? ' + (feature ? 'Each goes into the one before.' : 'Each goes into its base.'), live: 'Ship group', ship: word, say: 'Created ' + toOpen + ' PRs' } } : {};
-    return { id: 'group:' + g.id, liveId: 'group:' + g.id, liveGroup: g, project: '', group: 'Groups', label: g.title, kind: g.kind, title: g.title, task: g.title, branch: '', over: true, follows: g.kind === 'Feature', independent: g.kind !== 'Feature',
-      state: merged ? 'merged' : ms.some((m) => m.pr) ? 'ship-applied' : 'feature', decisions: [], noDiff: true,
+    // its head's word and mark are its state's (a member that failed needs you: chain), as every task page's
+    const state = merged ? 'merged' : ms.some((m) => m.case === 'failed') ? 'chain' : ms.some((m) => m.pr) ? 'ship-applied' : 'feature';
+    const look = R.runState(state, {});
+    return { word: look.word, dot: look.dot, sym: look.sym, id: 'group:' + g.id, liveId: 'group:' + g.id, liveGroup: g, project: '', group: 'Groups', label: g.title, kind: g.kind, title: g.title, task: g.title, branch: '', over: true, follows: g.kind === 'Feature', independent: g.kind !== 'Feature',
+      state, decisions: [], noDiff: true,
       runCases: ms.map((m) => m.case), runTitles: ms.map((m) => m.title), runPRs: ms.map((m) => m.pr), sizes: ms.map(() => ''), tabs: GROUP_TABS,
       figs: [['Time', '—'], ['Cost', '$' + (g.cost || 0).toFixed(2)]], spent: { mins: 0, cost: g.cost || 0 },
       detail: merged ? 'Every PR is merged' : fix ? fix.pr + ' checks failing' : up && up.case === 'approved' ? up.pr + ' ready to merge' : '',
       action: labels.length ? A(labels[0], labels[0].startsWith('Merge') ? 'merge' : 'refresh', true, labels.slice(1)) : ship ? A('Create PR', 'pr', true, []) : null,
       ...(ship ? { stack: ship, flow } : {}),
-      stages: ms.map((m, i) => member(i + 1, m.title, ['next', 'next', 'next', 'next'])).concat(ms.some((m) => m.pr) || ship ? [{ key: 'pr', label: 'PRs', subs: ms.map(prSub) }] : []) };   // Create PR opens what it will open
+      stages: ms.map((m, i) => ({ ...member(i + 1, m.title, ['next', 'next', 'next', 'next']), label: m.title || 'Task ' + (i + 1) })).concat(ms.some((m) => m.pr) || ship ? [{ key: 'pr', label: 'PRs', subs: ms.map(prSub) }] : []) };   // Create PR opens what it will open
   }
   window.RunCardModel = { liveRun, liveFacts: liveFactsOf, liveGroup, stageOf, move: moveIn, memberAt, moveMember, restored, caseGroups: CASE_GROUPS, stateOf: (id) => { const c = caseFor(id); if (!c) throw new Error(`no run case ${id}`); return c.state || c.id; }, forms: FORMS, titles: TITLES, chainStart: CHAIN_START, chainPrs: CHAIN_PRS.map((x) => x[0]), proposed: PROPOSED, isNew: (t) => NEW.has(t), flow: FLOW, runFlow: RUN_FLOW, cases: CASES.map((c) => ({ id: c.id, label: c.label, group: c.group, chips: c.chips || [] })), view, add: ADD };
 })();

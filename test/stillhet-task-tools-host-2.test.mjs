@@ -59,6 +59,10 @@ test('dev\'s #group/ID draws its group page: its members in order, and Merge #N 
   const { w, d, calls } = await page('#group/G1');
   assert.equal(w.location.hash, '#run/group:G1');
   assert.match(card(d).textContent, /Audit log/);
+  // its head says its state (a member failed: it needs you), and its members go by their own titles, not "Task 1 / Task 2"
+  assert.match(card(d).textContent, /Needs you/);
+  assert.match(card(d).textContent, /Shipped/); assert.match(card(d).textContent, /Broke/);
+  assert.doesNotMatch(card(d).textContent, /Task 1Task 2/);
   const main = card(d).querySelector('[data-key="act-main"]');
   assert.equal(main.dataset.label, 'Merge #959');
   main.click(); await settle(40);
@@ -103,6 +107,21 @@ test('a group whose tasks are all ready offers Create PR: dev\'s combine check f
   card(d).querySelector('[data-confirm="yes"]').click(); await settle(150);
   assert.deepEqual(sent(calls), [['POST', '/api/run-groups/G2/ship', { mode: 'separate' }]]);
   assert.match(toastText(d) + d.body.textContent, /Created 2 PRs/);
+});
+
+test('a failed live Create 2 PRs invents no PR: no #9…, no "Opened", dev\'s plain refusal', async () => {
+  const groups = { groups: [{ id: 'G2', kind: 'user', title: 'Pager pair', members: [{ position: 1, title: 'Shipped', pipelineId: 'h2', pr: null }, { position: 2, title: 'Old pause', pipelineId: 'h1', pr: null }], cost: { usd: 1 } }] };
+  const src = sources();
+  for (const p of src.history.pipelines.filter((x) => x.id === 'h1' || x.id === 'h2')) Object.assign(p, { status: 'done', branch: 'feat/' + p.id, survived: true, pr: null });
+  const r = (u) => (u === '/api/run-groups' ? [200, groups] : u === '/api/run-groups/G2/combine' ? [200, { n: 2, oneOff: '' }] : read(u));
+  const h = await liveHost({ sources: src, read: r, write: (u) => (/\/ship$/.test(u) ? [409, { error: 'git push was rejected' }] : [200, {}]) });
+  await go(h.w, '#run/group:G2', 200); await settle(400);
+  const { d } = h;
+  card(d).querySelector('[data-key="act-main"]').click(); await settle(40);
+  card(d).querySelector('[data-confirm="yes"]').click(); await settle(150);
+  const text = card(d).textContent + toastText(d);
+  assert.match(text, /Could not create the PRs.*git push was rejected/i, 'the server\'s refusal');
+  assert.doesNotMatch(text, /#9\d\d|Opened/, 'no invented PR');
 });
 
 test('a workspace\'s stack is a row under Actions: Start posts dev\'s stack start', async () => {

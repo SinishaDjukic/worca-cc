@@ -387,4 +387,5 @@ test('the PR card on Azure: reviewer votes become reviews (containers left out) 
   const r = await prChecks({ projectDir: '/p', prUrl: PR });
   assert.deepEqual(r.reviews, [{ by: 'Rev', state: 'CHANGES_REQUESTED' }, { by: 'Wait', state: 'CHANGES_REQUESTED' }, { by: 'Ok', state: 'APPROVED' }]);
   assert.equal(r.headSha, 'sha1');
+  assert.deepEqual([r.draft, r.reviewDecision], [false, 'CHANGES_REQUESTED'], 'the merge guard reads draft and review decision');
 }));

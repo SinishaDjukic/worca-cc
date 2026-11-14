@@ -729,6 +729,8 @@ function render() { stale = false; holdFocus(SHELL ? renderInShell : paintAlone)
 W.onMove?.(() => render());   // a task moved anywhere: the badge, Vitals and Updates read the store again
 // the live kind: a load or a list state changed the store (D20): Keep awake and Away are dev's, and the rows read it again
 window.addEventListener('rail-settings', () => render());   // a live Settings action answered (settings.js)
+// the account menu belongs to the page it was opened on: moving on closes it
+window.addEventListener('hashchange', () => { if (!ui.acct && !ui.sub) return; ui.acct = false; ui.sub = ''; render(); });
 if (LIVE) W.onChange(() => { ui.keep = !!W.part('keep'); ui.awayStatus = W.part('away').status; render(); });
 function paintAlone() {
   const sideNow = ui.page === 'settings'; swapCls = sideWas !== null && sideWas !== sideNow ? ' is-swap' : ''; sideWas = sideNow;

@@ -140,3 +140,25 @@ test('a live group\'s page draws its members\' own facts: no "worca-cc", sample 
   assert.match(t, /Audit log/);
   assert.doesNotMatch(t, /worca-cc|1h 57m|1h 26m|Into dev/);
 });
+
+test('the cap dialog\'s refusal is one line (the ConfirmStrip\'s row), and a field error on the next try clears it', async () => {
+  const s = clone(SOURCES);
+  for (const p of s.history.pipelines) p.projectKey = 'web-1';
+  s.history.pipelines.find((p) => p.id === 'h1').pauseReason = 'cost_pipeline';
+  const h1 = (u) => (u === '/api/history/web-1/h1' ? [200, { state: TASK_DETAILS.capped.state }] : null);
+  const { w, d } = await liveHost({ sources: s, read: h1, write: () => [409, { error: 'The new cap must be above what this task has spent ($2.00)' }] });
+  await go(w, '#run/h1', 150); await settle(400);
+  d.querySelector('#card [data-key="act-main"]').click(); await settle(40);
+  const field = () => d.querySelector('#fd-value');
+  const ok = () => d.querySelector('[data-key="fd-ok"]');
+  field().value = '$1'; field().dispatchEvent(new w.Event('input', { bubbles: true }));
+  ok().click(); await settle(80);
+  const alerts = d.querySelectorAll('#card [role="alert"]');
+  assert.equal(alerts.length, 1, 'one refusal');
+  assert.ok(alerts[0].classList.contains('rc-confirm-t') && alerts[0].classList.contains('is-err'), 'drawn as the ConfirmStrip\'s one row');
+  assert.doesNotMatch(alerts[0].textContent, /\.\./, 'no double full stop');
+  field().value = 'lots'; field().dispatchEvent(new w.Event('input', { bubbles: true }));
+  ok().click(); await settle(40);
+  assert.match(d.querySelector('#card').textContent, /Write the new cap in dollars/);
+  assert.equal(d.querySelector('#card .rc-confirm-t.is-err'), null, 'the field error replaces the refusal');
+});
