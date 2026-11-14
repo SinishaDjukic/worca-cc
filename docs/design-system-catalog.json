@@ -405,14 +405,16 @@
       "needs": [
         "supporting actions",
         "the alternatives of a split button",
-        "the choices of a SentencePicker"
+        "the choices of a SentencePicker",
+        "choices grouped by who makes them (a sub-menu per group)"
       ],
       "rules": [
         "opened from ⋯ or ▾",
         "danger last, after a rule",
         "a head and its options are one block; in columns they stay together, two columns at most, and a scrolling menu never ends on a head alone (comp.menu-groups)",
         "a disabled item never acts, shows no pointer, and says why (comp.menu-off)",
-        "a choice with a mark shows its tick at the row's end (comp.menu-tick)"
+        "a choice with a mark shows its tick at the row's end (comp.menu-tick)",
+        "a group of choices opens in place under a ‹ back row; → Enter Space open it, ← Esc and the back row return; its opener carries the tick (comp.menu-sub)"
       ],
       "example": "Terminal, Copy link, Archive",
       "also": [
@@ -2135,6 +2137,36 @@
   ],
   "logic": [
     {
+      "name": "Models by who makes them",
+      "code": "ui/public/design-system/components/model-makers.mjs#modelMakers",
+      "needs": [
+        "a model catalog grouped by its maker (Anthropic, OpenAI, Google, Local, Other), a row off its maker's own engine naming that engine (comp.menu-sub)"
+      ],
+      "example": "makerItems(rows, { chosen }) gives one opener per maker; modelText reads Sonnet 5.5 · Copilot",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/model-makers.mjs#makerItems",
+          "needs": [
+            "the model picker's items: one opener per maker, each maker's models in its sub-menu, the chosen one marked"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/model-makers.mjs#modelText",
+          "needs": [
+            "a model's name as the closed chip reads it, naming its engine when it runs off its maker's own"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Keys in a menu",
+      "code": "ui/public/design-system/components/compact-menu.mjs#menuKeys",
+      "needs": [
+        "a picker's keys: ↓ ↑ move and wrap, → Enter Space open a group, ← and the back row return, Enter Space take an item (comp.menu-sub)"
+      ],
+      "example": "root.addEventListener('keydown', (e) => menuKeys(e, { openSub, closeSub }))"
+    },
+    {
       "name": "How loud a state is",
       "code": "ui/public/design-system/components/kind-mark.mjs#alertLevel",
       "needs": [
@@ -3185,6 +3217,21 @@
       "name": "thumbBox",
       "kind": "part",
       "why": "watchScrollbars places a thumb through it"
+    },
+    {
+      "name": "makerOf",
+      "kind": "part",
+      "why": "Which maker a model row belongs to; only makerItems and modelText call it"
+    },
+    {
+      "name": "MAKERS",
+      "kind": "constant",
+      "why": "The makers in the picker's order, each with its own engine"
+    },
+    {
+      "name": "ENGINE_WORDS",
+      "kind": "constant",
+      "why": "How each engine reads in a model's name"
     }
   ],
   "lookOptions": [
