@@ -24,6 +24,7 @@
     ['composer', 'workflows'], ['agents', 'workflows', 'way', '', '~agents'], ['scripts', 'workflows', 'way', '', '~scripts'], ['agent-create', 'workflows', 'way', '', '~agents'],
     ['workflows', 'workflows', 'dev-workflows'],   // dev's own Workflows forms (app.js routeWorkflows); Stillhet's are never touched
     ['marketplace', 'marketplace', 'dev-marketplace'],   // dev's own Marketplace forms (app.js enterMarketplace); Stillhet's are never touched
+    ['projects', 'projects', 'dev-projects'],   // dev's project tabs (app.js PROJ_TABS); Stillhet's own Projects routes are never touched
   ];
   // 'dev-workflows' (slice 7 D18): dev's ten forms, to fixed places (it never asks `has`). A bare #workflows, a ~way and a
   // kind:id route are Stillhet's own and stay as they are.
@@ -43,6 +44,14 @@
     if (head === 'installed') return segs[1] ? 'marketplace/' + dec(segs[1]) : 'marketplace/~installed';
     if (head === 'browse') return segs[2] ? 'marketplace/' + dec(segs[2]) : 'marketplace/~all';
     return null;
+  }
+  // 'dev-projects' (slice 9 D17): dev's project tabs land on the project's page, a stopgap until Settings › Projects (slice 12)
+  // gives each a home. Only the tail after KEY is read; a bare #projects, #projects/KEY, ws:ID, KEY@ID and any other tail
+  // are Stillhet's own (it never asks `has`).
+  var DEV_PROJECT_TABS = ['team', 'settings', 'mcp', 'actions', 'automations', 'away', 'memory'];
+  function devProjects(segs) {
+    if (segs.length < 2 || /^ws:/.test(segs[0]) || DEV_PROJECT_TABS.indexOf(segs[1]) < 0) return null;
+    return 'projects/' + segs[0];
   }
   var dec = function (x) { try { return decodeURIComponent(x); } catch (e) { return x; } };
   var workflowsHas = function (a) { var w = typeof window !== 'undefined' && window.RailPlaces && window.RailPlaces.workflows; return !!(w && w.has && w.has(a)); };
@@ -64,6 +73,7 @@
       if (row[2] === 'way' && has(row[4])) to += '/' + row[4];
       if (row[2] === 'dev-workflows') { to = devWorkflows(segs); if (!to) return null; }
       if (row[2] === 'dev-marketplace') { to = devMarketplace(segs); if (!to) return null; }
+      if (row[2] === 'dev-projects') { to = devProjects(segs); if (!to) return null; }
       return { hash: '#' + to, pulse: row[3] || '' };
     }
     return null;

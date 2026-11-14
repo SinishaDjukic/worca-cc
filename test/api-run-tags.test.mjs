@@ -129,7 +129,7 @@ test('grandfathered bare keys: the run page edit, project defaults and an after-
   writeProjectDefaultTags(key, ['urgent']);
   const saved = await call('PUT', `/api/projects/${key}/tags/defaults`, { tags: ['urgent', 'team:web'] });
   assert.equal(saved.status, 200);
-  assert.deepEqual(await saved.json(), { tags: ['team:web', 'urgent'] });
+  assert.deepEqual(await saved.json(), { tags: ['team:web', 'urgent'], labels: [] });   // labels: the stored default Labels (Stillhet slice 9 D19), kept by a tags-only body
   assert.equal((await call('PUT', `/api/projects/${key}/tags/defaults`, { tags: ['urgent', 'spike'] })).status, 400);
   const withDefaults = await startTagged({ tags: ['urgent', 'team:web'] });
   assert.deepEqual(readRunTags(withDefaults.pipelineId), ['team:web', 'urgent']);
@@ -173,8 +173,8 @@ test('project default tags: PUT, GET and /api/run-defaults; changing them leaves
   const run = await startTagged({ tags: ['team:api'] });
   const put = await call('PUT', `/api/projects/${key}/tags/defaults`, { tags: ['Client: Acme', 'team:web'] });
   assert.equal(put.status, 200);
-  assert.deepEqual(await put.json(), { tags: ['client:acme', 'team:web'] });
-  assert.deepEqual(await get(`/api/projects/${key}/tags/defaults`), { tags: ['client:acme', 'team:web'] });
+  assert.deepEqual(await put.json(), { tags: ['client:acme', 'team:web'], labels: [] });   // labels: Stillhet slice 9 D19
+  assert.deepEqual(await get(`/api/projects/${key}/tags/defaults`), { tags: ['client:acme', 'team:web'], labels: [] });
   const d = await get(`/api/run-defaults?projectDir=${encodeURIComponent(repo)}`);
   assert.equal(d.projectKey, key);
   assert.deepEqual(d.tags, ['client:acme', 'team:web']);

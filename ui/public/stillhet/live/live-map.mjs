@@ -217,7 +217,7 @@ export function projectOf(project = {}, sync = null) {
   const git = project.vcs ? project.vcs === 'git' : project.workMode !== 'folder';
   const s = sync && typeof sync === 'object' ? sync : null, state = lc(s?.state);
   const origin = project.exists === false ? 'missing' : !git ? 'folder' : s?.fetchError ? 'offline' : ORIGIN_OF[state] || 'ok';
-  return pick('project', { id: str(project.key), name: str(project.name) || str(project.key), kind: git ? 'Git' : 'Folder', path: str(project.displayPath) || str(project.path), ...(s?.base ? { branch: str(s.base), base: `${str(s.remote) || 'origin'}/${str(s.base)}` } : {}), origin, ...(s ? { ahead: num(s.ahead), behind: num(s.behind) } : {}), ...(s?.fetchedAt ? { checked: timeOf(s.fetchedAt, Date.parse(s.fetchedAt)) } : {}), needs: project.exists === false || state === 'behind' || state === 'diverged' });
+  return pick('project', { id: str(project.key), name: str(project.name) || str(project.key), kind: git ? 'Git' : 'Folder', path: str(project.displayPath) || str(project.path), ...(s?.base ? { branch: str(s.base), base: `${str(s.remote) || 'origin'}/${str(s.base)}` } : {}), origin, ...(s ? { ahead: num(s.ahead), behind: num(s.behind) } : {}), ...(s?.fetchedAt ? { checked: timeOf(s.fetchedAt, Date.parse(s.fetchedAt)) } : {}), needs: project.exists === false || state === 'behind' || state === 'diverged', devPath: str(project.path), ownedFolder: project.ownedFolder === true, vcs: git ? 'git' : 'none' });
 }
 
 // ---- costs ----
@@ -422,14 +422,16 @@ export function runGroupsOf(src, runs, { now = 0, rowIdOf = new Map() } = {}) {
 // dev's live edges (src/shared/workspace-map/overrides.mjs LIVE_STATES: auto, confirmed, manual) plus a rejected one, which the
 // page keeps only to offer its Undo; stale and missing edges never draw, order or ask (dev's eval.mjs drops them too)
 const LINK_STATES = new Set(['auto', 'confirmed', 'manual', 'rejected']);
+// slice 9 D5/D15: where Worca read a link, `file:line` of its first evidence on the `from` side, or nothing
+const atOf = (e) => { const ev = arr(e.evidence?.from)[0]; return ev && str(ev.file) ? { at: Number.isFinite(ev.line) ? `${str(ev.file)}:${ev.line}` : str(ev.file) } : {}; };
 export function spacesOf(src = null) {
   const maps = src?.maps && typeof src.maps === 'object' ? src.maps : {};
   return arr(src?.workspaces).filter((w) => w && str(w.id)).map((w) => {
     const exists = arr(w.exists), scannedAt = ms(w.mapSummary?.scannedAt);
     const links = arr(maps[w.id]?.edges).filter((e) => e && str(e.id) && str(e.from) && str(e.to) && LINK_STATES.has(str(e.state) || 'auto'))
-      .map((e) => ({ id: str(e.id), from: str(e.from), to: str(e.to), kind: str(e.kind), how: 'connects to', sure: str(e.confidence), state: str(e.state) || 'auto' }));
+      .map((e) => ({ id: str(e.id), from: str(e.from), to: str(e.to), kind: str(e.kind), how: 'connects to', sure: str(e.confidence), state: str(e.state) || 'auto', ...atOf(e) }));
     return pick('space', { id: str(w.id), title: str(w.name) || 'A workspace', home: '', runs: null, scanned: Number.isFinite(scannedAt) ? dateWord(scannedAt) : 'never', model: '', about: str(w.description),
-      projects: arr(w.projectKeys).map((k, i) => [str(k), exists[i] === false ? 'missing' : 'ok']), links });
+      projects: arr(w.projectKeys).map((k, i) => [str(k), exists[i] === false ? 'missing' : 'ok']), links, paths: arr(w.projectPaths).map(str) });
   });
 }
 

@@ -2,16 +2,24 @@
 // the body of register() was moved verbatim from ui/server.mjs. Edit it here from now on.
 import { ActionConfigError, memberAliases, normalizeStacks } from '../../../src/core/actions/model.mjs';
 import { listModels, modelHasBaseUrlRouting, readProjectActions } from '../../../src/core/config.mjs';
+import { builtinLaunch } from '../../../src/core/actions/builtins.mjs';
+import { launchAndWatch } from '../../../src/core/actions/launcher.mjs';
+import { normaliseTags } from '../../../src/shared/run-tags.mjs';
+import { normaliseLabels } from '../../../src/shared/run-labels.mjs';
+import { spawn } from 'node:child_process';
+import { getProjectByPath } from '../../../src/core/projects.mjs';
+import { existsSync, realpathSync, statSync } from 'node:fs';
+import { basename, isAbsolute, relative, resolve as resolvePath, sep } from 'node:path';
 import { resetWorkspaceGuideIfNoWorkspaces } from '../../../src/core/onboarding.mjs';
 import { WORKSPACE_RESYNTH_WORKFLOW_ID } from '../../../src/core/graph/builtin-workflows.mjs';
 import { cancelForTarget } from '../../../src/core/scheduler.mjs';
 import { assertWorkspaceScanInput } from '../../../src/core/settings.mjs';
 import { createWorkspaceWithHomes, scanSignInMessage } from '../../../src/core/workspace-scan-run.mjs';
-import { RESCAN_CHOICES, WORKSPACE_KEY_RE, addWorkspaceManualEdge, addWorkspaceMembers, checkNewWorkspace, deleteWorkspace, listWorkspaces, memoGitProbe, readWorkspace, readWorkspaceMap, readWorkspaceStacks, regenerateWorkspaceDescription, removeWorkspaceManualEdge, removeWorkspaceMember, scanMemberProblems, setWorkspaceEdgeState, setWorkspaceScanPick, updateWorkspace, updateWorkspaceStacks, workspaceMembers } from '../../../src/core/workspaces.mjs';
+import { RESCAN_CHOICES, WORKSPACE_KEY_RE, addWorkspaceManualEdge, addWorkspaceMembers, checkNewWorkspace, deleteWorkspace, readWorkspaceDefaults, writeWorkspaceDefaults, listWorkspaces, memoGitProbe, readWorkspace, readWorkspaceMap, readWorkspaceStacks, regenerateWorkspaceDescription, removeWorkspaceManualEdge, removeWorkspaceMember, scanMemberProblems, setWorkspaceEdgeState, setWorkspaceScanPick, updateWorkspace, updateWorkspaceStacks, workspaceMembers } from '../../../src/core/workspaces.mjs';
 import { effectiveEdges } from '../../../src/shared/workspace-map/overrides.mjs';
 import { workspacePrView } from '../../../src/core/pr-auto.mjs';
 import { writeWorkspaceSettings } from '../../../src/core/workspace-settings.mjs';
-import { afterMembersChanged, agentMayBeCaller, badRequest, emitChanged, liveAutoRescan, ownsWorkspaceTarget, primaryMemberOf, prunedNote, refuseAgentCaller, refuseSignedOutClaude, removeRecommendation, resolveProjectDir, runs, scanModelsFor, scanRequest, workspaceMembersBusy } from '../../server.mjs';
+import { afterMembersChanged, agentMayBeCaller, badRequest, builtins, emitChanged, noRawCommand, requireActions, requireFsAllowed, liveAutoRescan, ownsWorkspaceTarget, primaryMemberOf, prunedNote, refuseAgentCaller, refuseSignedOutClaude, removeRecommendation, resolveProjectDir, runs, scanModelsFor, scanRequest, workspaceMembersBusy } from '../../server.mjs';
 import { personOf } from '../../../src/core/worca-levels/service.mjs';
 import { worcaLevelService } from '../worca-levels/worca-level.mjs';
 
@@ -247,6 +255,60 @@ app.post('/api/workspaces/:id/members', async (req, res) => {
   } catch (err) {
     return workspaceFail(res, err);
   }
+});
+
+// Open a workspace question's evidence file in the editor (Stillhet slice 9 D15). The guards of the run built-ins
+// (checkout-and-actions.mjs): actions on here, no raw command, the folder inside the allowed roots. Only a file that
+// exists inside one of the workspace's member folders (its realpath inside the member's) opens; every refusal comes
+// before any launch. The editor opens the file, not its line (builtinLaunch has no line variable).
+const insideOf = (root, p) => { const r = relative(root, p); return r === '' || (!!r && !r.startsWith('..') && !isAbsolute(r) && r.split(sep)[0] !== '..'); };
+app.post('/api/workspaces/:id/open-in-editor', async (req, res) => {
+  if (!requireActions(req, res) || !noRawCommand(req, res)) return;
+  if (!WORKSPACE_KEY_RE.test(req.params.id)) return res.status(404).json({ error: 'workspace not found', code: 'NOT_FOUND' });
+  const ws = await readWorkspace(req.params.id);
+  if (!ws) return res.status(404).json({ error: 'workspace not found', code: 'NOT_FOUND' });
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const invalid = (error) => res.status(400).json({ error, code: 'INVALID' });
+  const i = (ws.projectKeys || []).indexOf(body.projectKey);
+  if (i < 0) return invalid('that project is not in this workspace');
+  if (typeof body.file !== 'string' || !body.file.trim()) return invalid('file is required');
+  // a Windows custom editor command runs through cmd.exe, where % and ! expand
+  if (process.platform === 'win32' && /[%!]/.test(body.file)) return invalid('that file name cannot be opened on Windows');
+  const dir = ws.projectPaths[i], name = getProjectByPath(dir)?.name || basename(dir);
+  if (!(await requireFsAllowed(req, res, [dir]))) return;
+  const outside = () => invalid(`that file is outside ${name}`);
+  if (isAbsolute(body.file)) return outside();
+  const file = resolvePath(dir, body.file);
+  if (!insideOf(resolvePath(dir), file)) return outside();
+  if (!existsSync(file)) return res.status(404).json({ error: 'that file is not there any more', code: 'NOT_FOUND' });
+  let real;
+  try { real = realpathSync(file); if (!insideOf(realpathSync(dir), real)) return outside(); if (!statSync(real).isFile()) throw new Error('not a file'); }
+  catch { return res.status(404).json({ error: 'that file is not there any more', code: 'NOT_FOUND' }); }
+  if (readProjectActions(body.projectKey).builtins.editor === false) return res.status(409).json({ error: 'editor is turned off for this project', code: 'DISABLED' });
+  let l;
+  try { l = builtinLaunch('editor', real, builtins()); }
+  catch (e) { return res.status(409).json({ error: e.message, code: e.code || 'NOT_AVAILABLE' }); }
+  const r = await launchAndWatch(l, { spawn });
+  if (!r.ok) return res.status(409).json({ error: `Editor did not open: ${r.error}`, code: 'LAUNCH_FAILED' });
+  res.json({ ok: true });
+});
+
+// A workspace's own New run defaults (Stillhet slice 9 D19): cost tags (strict, as a project's) and Labels.
+app.get('/api/workspaces/:id/defaults', (req, res) => {
+  const d = WORKSPACE_KEY_RE.test(req.params.id) ? readWorkspaceDefaults(req.params.id) : null;
+  if (!d) return res.status(404).json({ error: 'workspace not found', code: 'NOT_FOUND' });
+  res.json(d);
+});
+app.put('/api/workspaces/:id/defaults', (req, res) => {
+  const have = WORKSPACE_KEY_RE.test(req.params.id) ? readWorkspaceDefaults(req.params.id) : null;
+  if (!have) return res.status(404).json({ error: 'workspace not found', code: 'NOT_FOUND' });
+  const invalid = (error) => res.status(400).json({ error, code: 'INVALID' });
+  const t = normaliseTags(req.body?.tags, { strict: true, keep: have.tags });
+  if (!Array.isArray(req.body?.tags) || t.errors.length) return invalid(t.errors[0] || 'tags must be a list of strings');
+  // absent labels keep the stored ones, as a project's defaults do (project-settings.mjs)
+  const l = req.body.labels === undefined ? { labels: have.labels, errors: [] } : normaliseLabels(req.body.labels);
+  if (req.body.labels === null || l.errors.length) return invalid(l.errors[0] || 'labels must be a list of strings');
+  res.json(writeWorkspaceDefaults(req.params.id, { tags: t.tags, labels: l.labels }));
 });
 
 app.delete('/api/workspaces/:id', async (req, res) => {

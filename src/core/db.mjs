@@ -930,7 +930,8 @@ const INCREMENTAL_COLUMNS = {
                             description_origin: 'TEXT',     // v40: 'generated' | 'edited'; NULL = before v40
                             actions_json: 'TEXT',           // v47: stack actions { stacks:[…] } (issue #529); NULL = none
                             scan_models_json: 'TEXT',       // v57: the scan pick captured at creation { scanModel, scanEffort, agentModel, agentEffort }; NULL = none
-                            settings_json: 'TEXT' },        // v87: the workspace's own settings { "pr.open"?: … } (src/core/workspace-settings.mjs); NULL = none
+                            settings_json: 'TEXT',          // v87: the workspace's own settings { "pr.open"?: … } (src/core/workspace-settings.mjs); NULL = none
+                            defaults: 'TEXT' },             // Stillhet slice 9 D19: New run prefills { tags, labels } (workspaces.mjs readWorkspaceDefaults); NULL = none
   schedules:              { ask_thread_id: 'TEXT', ask_card_id: 'TEXT',   // v31: the Ask Worca card a series came from
                             created_by: 'TEXT', updated_by: 'TEXT',   // v39: who made / last changed it (identity.mjs actor)
                             preset_id: 'TEXT' },   // v63: the run preset the series follows (read at fire time); NULL = none
@@ -1612,7 +1613,16 @@ CREATE TABLE IF NOT EXISTS design_pictures (
 CREATE INDEX IF NOT EXISTS design_pictures_design ON design_pictures(design_id, round, id);
 `;
 
+// Project moves (Stillhet slice 9 D9): Locate folder re-keys a project (its key is derived from its path); each move
+// writes old_key → new_key here, in the same transaction, so a pre-move run (pipelines keep their old key) still
+// resolves to the project (projects.mjs currentKey). Reconcile-safe: IF NOT EXISTS + INCREMENTAL_TABLES, so no ladder step.
+const PROJECT_MOVES_DDL = `
+CREATE TABLE IF NOT EXISTS project_moves (
+  old_key TEXT PRIMARY KEY, new_key TEXT NOT NULL, moved_at TEXT NOT NULL);
+`;
+
 const INCREMENTAL_TABLES = {
+  project_moves: PROJECT_MOVES_DDL,
   config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
   guardrail_sets:    GUARDRAIL_SETS_DDL,

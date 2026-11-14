@@ -19,33 +19,24 @@ test('Projects: a project whose key is not its name joins its tasks by name (api
   assert.ok(!titles.some((t) => t.includes('Busy')), 'and not another project\'s');
 });
 
-test('Projects in the live kind: its actions write nothing to the store and say they are not in Stillhet yet', async () => {
-  const { w, d, hello } = await liveHost({ hash: '#projects' });
+test('Projects in the live kind (slice 9): each action sends dev\'s route; the store moves only on a read', async () => {
+  const { w, d, posts, hello } = await liveHost({ hash: '#projects' });
   await hello();
   w.location.hash = '#projects/api-2'; await settle();
   const was = store(w);
   const page = () => d.getElementById('route-place');
-  const tried = [];
-  const clickIf = (q, label) => { const b = page().querySelector(q); if (b) { b.click(); tried.push(label); } };
-  const pick = (v) => { page().querySelector('[data-menu="pj-more"]')?.click(); const b = page().querySelector(`[data-menu-pick="pj-more|${v}"]`); if (b) { b.click(); tried.push(v); } };
-  pick('fetch'); pick('remove');
-  assert.equal(page().querySelector('[data-confirm="yes"]'), null, 'Remove asks nothing it cannot do');
-  clickIf('[data-pj-team]', 'team memory');
-  page().querySelector('[data-menu="pjs-pr"]')?.click(); clickIf('[data-menu-pick="pjs-pr|open no PR"]', 'a setting');
-  clickIf('[data-def-edit="tags"]', 'tags edit');
-  const f = d.getElementById('def-tags'); if (f) f.value = 'team: web';
-  clickIf('[data-def-edit="tags"]', 'tags done');
-  w.RailProjects.sync('api-2');
-  clickIf('[data-pj-act]', 'origin act');   // diverged: Bring together hands over to a chat, writing nothing
-  await settle();
-  for (const x of ['origin act', 'fetch', 'remove', 'team memory', 'a setting', 'tags done']) assert.ok(tried.includes(x), `reached ${x}`);
-  assert.deepEqual(store(w), was, 'no store write outside load');
-  assert.equal(w.RailProjects.list().find((p) => p.id === 'api-2').teamMemory, undefined);
+  const pick = (v) => { page().querySelector('[data-menu="pj-more"]').click(); page().querySelector(`[data-menu-pick="pj-more|${v}"]`).click(); };
+  pick('fetch'); await settle();
+  w.RailProjects.sync('api-2'); await settle();
+  page().querySelector('[data-pj-act]').click(); await settle();   // diverged: Bring together hands over to a chat, writing nothing
+  assert.deepEqual(posts.map((p) => [p.method, p.url, p.body]), [['POST', '/api/projects/api-2/sync', { mode: 'fetch' }], ['POST', '/api/projects/api-2/sync', { mode: 'ff' }]]);
+  assert.deepEqual(store(w), was, 'no store write outside a read');
   w.location.hash = '#projects/gone-3'; await settle();
-  page().querySelector('[data-pj-act]').click(); await settle();
-  assert.equal(page().querySelector('#pj-hand-v'), null, 'Locate folder opens no form that would fake a move');
-  assert.match(toastText(d), /not in Stillhet yet/);
-  assert.deepEqual(store(w), was);
+  page().querySelector('[data-pj-act]').click(); await settle(80);
+  page().querySelector('#pj-hand-v').value = '~/src/gone-3-here';
+  page().querySelector('[data-confirm="yes"]').click(); await settle();
+  assert.deepEqual(posts.at(-1), { url: '/api/projects/gone-3', method: 'PATCH', body: { path: '~/src/gone-3-here' } }, 'Locate folder sends dev\'s PATCH (D8)');
+  assert.doesNotMatch(toastText(d), /not in Stillhet yet/);
 });
 
 test('R-arch-10: every action of an area this slice does not wire goes through the adapter, refuses and changes nothing', async () => {
@@ -66,8 +57,6 @@ test('R-arch-10: every action of an area this slice does not wire goes through t
     ['schedules.run', async () => { w.location.hash = '#runs'; await settle(); }, () => d.querySelector('[data-c-sact="run|tk1"]').click(), 'app'],
     // the Tasks center's New task… form is wired by the Tasks slice (D12b, test/stillhet-tasks-list-host.test.mjs)
     // Chat (slice 4): the composer, the dock under a schedule, the chat list's row menu
-    // Projects' workspaces (the Projects slice)
-    ['workspaces.add', null, () => assert.equal(w.RailSpaces.add({ title: 'Made up' }), ''), 'app'],
     // Settings: a switch and an edit that would say "saved"
     ['settings.sync', async () => { w.location.hash = '#settings'; await settle(); }, () => d.querySelector('[data-svsw="sync"]').click(), 'app'],
     ['settings.save', async () => { w.location.hash = '#settings'; await settle(); }, () => { d.querySelector('[data-svdo="runs/Spending/Budget/Change…"]').click(); const f = d.querySelector('dialog input, .dlg input'); f.value = '5'; f.dispatchEvent(new w.Event('input', { bubbles: true })); d.querySelector('[data-dialog="yes"]').click(); }, 'app'],
@@ -175,6 +164,5 @@ test('a resume that dev answers with a confirm opens the task instead', async ()
   await hello();
   w.RailPulse.open('updates');
   d.querySelector('#app .pz-popover [data-fix="oh1"]').click(); await settle();
-  assert.equal(w.location.hash, '#run/paused-restart');
-  assert.match(d.getElementById('route-today').textContent, /Old pause/);
+  assert.equal(w.location.hash, '#run/h1', 'the task oh1 names (history row h1), by its id, never the case (#1266)');
 });

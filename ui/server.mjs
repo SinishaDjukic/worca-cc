@@ -63,7 +63,7 @@ import {
   deleteDiffComment, unresolvedCounts, onDiffCommentsChanged, stampSentRunId,
   peekPendingCardComments, clearPendingCardComments, DiffCommentError, DC_ID_RE,
 } from '../src/core/diff-comments.mjs';
-import { listProjects, runOnboarded, addProject, addProjects, removeProject, normalizeProjectPath, countProjects, worcaHome, getProjectByPath, displayPath,
+import { listProjects, runOnboarded, currentKey, holdStart, addProject, addProjects, removeProject, normalizeProjectPath, countProjects, worcaHome, getProjectByPath, displayPath,
   getProjectByName, ownsProjectFolder, removeProjectAndFolder, enclosingRepoOf, nestedInRepoMessage, worcaNestedRepoOf, worcaNestedRepoHint } from '../src/core/projects.mjs';
 import { effectiveWorkMode, workModeOfRow, workModeForStart, samePath } from '../src/core/project-kind.mjs';
 import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR, SHELL_CSP } from '../src/core/index-html.mjs';
@@ -2725,7 +2725,7 @@ const presetEngineMessage = (presetRow, runEngine, msg) => (presetRow ? `Preset 
 const startRunHandler = async (req, res) => {
   // B2: a draining server starts nothing new (the scan arm and the scheduler come through here too).
   if (DRAIN.on) return res.status(503).json(DRAIN_REFUSAL);
-  try {
+  const unhold = holdStart(req); try {   // the start holds its target until it answers: no relocate slips in (slice 9 D9)
     const body = req.body || {};
     // Scheduled runs: `internal` is set ONLY by fireTicket() (never from HTTP) — the
     // due ticket being started through this same gate. It carries the ticket, whose id
@@ -3572,7 +3572,7 @@ const startRunHandler = async (req, res) => {
       : noProject ? { runId, pipelineId: entry.pipelineId } : { runId });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
-  }
+  } finally { unhold(); }
 };
 
 // ---------------------------------------------------------------------------
@@ -3756,10 +3756,10 @@ function resumeTargetOf(ticket) {
 }
 
 /** The onboarded project dir for a pipelines.project_key, or null. */
-async function projectDirForKey(key) {
-  const list = await listProjects();
-  for (const p of list) if (p.key === key) return p.path;            // the stored key wins (S7)
-  for (const p of list) if (projectKey(p.path) === key) return p.path;
+async function projectDirForKey(raw) {
+  const list = await listProjects();   // the raw key first; currentKey only for a key no project holds (a Locate folder, slice 9 D9)
+  for (const key of new Set([raw, currentKey(raw)])) {   // per key, the stored key wins over the path's (S7)
+    const p = list.find((x) => x.key === key) || list.find((x) => projectKey(x.path) === key); if (p) return p.path; }
   return null;
 }
 

@@ -9,9 +9,9 @@ export const SHAPES = Object.freeze({
   group: { id: 'string', kind: 'string', case: 'string', title: 'string', project: 'string', time: 'string', day: 'string', cost: 'number|null' },
   chat: { id: 'string', title: 'string', state: 'string', kind: 'string', project: 'string', time: 'string', day: 'string', cost: 'number|null', pinned: 'boolean', archived: 'boolean', unread: 'boolean', group: 'string', origin: 'object|null', rank: 'number|null', labels: 'array', tasks: 'array' },
   schedule: { id: 'string', title: 'string', project: 'string', chat: 'string', every: 'string', at: 'string', next: 'string', day: 'string?', state: 'string', time: 'string', section: 'string', labels: 'array', what: 'string', cost: 'number|null', started: 'string', runs: 'array', missed: 'string?', missedWhy: 'string?', nextAt: 'number|null?' },
-  project: { id: 'string', name: 'string?', kind: 'string', path: 'string', branch: 'string?', base: 'string?', origin: 'string', ahead: 'number|null?', behind: 'number|null?', checked: 'string?', needs: 'boolean?' },
+  project: { id: 'string', name: 'string?', kind: 'string', path: 'string', branch: 'string?', base: 'string?', origin: 'string', ahead: 'number|null?', behind: 'number|null?', checked: 'string?', needs: 'boolean?', devPath: 'string?', ownedFolder: 'boolean?', vcs: 'string?' },   // slice 9 D5: dev's raw path (what writes send), a folder Worca made, git or none
   costs: { budget: 'object|null', usage: 'array' },
-  space: { id: 'string', title: 'string', home: 'string', runs: 'number|null', scanned: 'string', model: 'string', about: 'string', projects: 'array', links: 'array' },   // a workspace (D10)
+  space: { id: 'string', title: 'string', home: 'string', runs: 'number|null', scanned: 'string', model: 'string', about: 'string', projects: 'array', links: 'array', paths: 'array?', fresh: 'boolean?', draft: 'object|null?' },   // a workspace (D10); slice 9: its members' folders, a fresh draft, an edit draft. A link may carry `at` (file:line of its evidence)
   update: { id: 'string', e: 'string', g: 'string', sev: 'string', title: 'string', meta: 'string', time: 'string', day: 'string', unread: 'boolean', go: 'string', to: 'string', run: 'string?', fix: 'string?' },
   // Workflows (slice 7): workflows/workflows.js data, and live/workflow-map.mjs workflowOf, agentOf and scriptOf
   workflow: { id: 'string', title: 'string', own: 'boolean', domain: 'string', what: 'string', tasks: 'number|null', merged: 'number|null', from: 'string', steps: 'array', loops: 'array', team: 'boolean?', running: 'boolean?', pinned: 'boolean?', plugin: 'string?' },
@@ -79,6 +79,7 @@ export const TURN_SHAPES = Object.freeze({
   form: { id: 'string', text: 'string', kind: 'string' },
   change: { id: 'string', kind: 'string', state: 'string', rows: 'array?' },
   proposal: { id: 'string', title: 'string' },
+  runwith: { id: 'string', title: 'string', workflow: 'string' },
   craft: { id: 'string', label: 'string' },
   task: { id: 'string', task: 'string' },
   schedule: { id: 'string', task: 'string' },

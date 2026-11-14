@@ -114,7 +114,7 @@ const FAILED_OR_STUCK = new Set(['failed', 'failed-kept', 'stopped', 'error', 'r
 const BASE_PROMPT = new Set(['base-moved', 'base-missing']);
 
 export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = openTab, runOf = () => ({}), rowOf = () => null,
-  liveOf = () => null, flag = () => false, listLoaded = () => true, listFailed = () => false, retryList = null, retryPrs = () => {}, chat = null, clipboard = null, origin = '', projectDirOf = () => '' } = {}) {
+  liveOf = () => null, flag = () => false, listLoaded = () => true, listFailed = () => false, retryList = null, retryPrs = () => {}, prLookup = () => ({ token: 0, ended: false }), chat = null, clipboard = null, origin = '', projectDirOf = () => '' } = {}) {
   const fns = new Set(), checkFns = new Set();   // checkFns: told only when a checks entry lands (the store's rows read it)
   const notify = (id) => { for (const fn of fns) { try { fn(id); } catch (e) { console.error(e); } } };
   const runner = actionRunner({ fetch, toast, notify });
@@ -544,6 +544,8 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
     pending: (key) => runner.pending.has(key), keyOf: runner.keyOf,
     /** The list's first load failed (or was asked again): a task page waiting on it looks again. */
     listChanged: () => notify(null),
+    /** The adapter's PR lookup (D7): its token, and whether it ended (its `done` frame, or a refused POST). */
+    prLookup,
     onChange: (fn) => { fns.add(fn); return () => fns.delete(fn); },
     onChecks: (fn) => { checkFns.add(fn); return () => checkFns.delete(fn); },
   };
