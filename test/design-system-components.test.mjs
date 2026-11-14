@@ -310,6 +310,15 @@ test('the catalog names a module for every component built in code, and each mod
   }
 });
 
+test('slice 10: the catalog\'s HeatGrid code resolves to heatGrid, exported by the library (test/design-system-heat-grid.test.mjs draws it)', async () => {
+  const cat = JSON.parse(readFileSync(new URL('../docs/design-system-catalog.json', import.meta.url), 'utf8'));
+  const hg = cat.components.find((c) => c.name === 'HeatGrid');
+  assert.equal(hg.code, 'ui/public/design-system/components/heat-grid.mjs#heatGrid');
+  const C = await import(new URL('../ui/public/design-system/components/index.mjs', import.meta.url));
+  assert.equal(typeof C.heatGrid, 'function');
+  assert.match(C.heatGrid({ label: 'x', rows: [{ label: 'Maya' }], columns: [{ label: 'a' }], cells: [[{ value: 1, text: '$1, 1 task' }]], max: 1 }), /class="hg-cell is-h4"/);
+});
+
 test('morph keeps what stays, adds what is new, drops what left, and draws the same DOM as innerHTML', () => {
   const { document } = new JSDOM('<div id="t"></div>').window;
   const t = document.getElementById('t');

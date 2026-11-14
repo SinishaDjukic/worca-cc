@@ -58,6 +58,7 @@ export { planBulk, skipText, bulkConfirm } from '../../../../src/shared/run-bulk
 export { dismissOnOutside, neverOutside, watchStrips, REAL_CONTROL } from './dismiss.mjs';
 export { selectionBar, selectAllBox, bindLongPress } from './selection-bar.mjs';
 export { barChart, lineChart, mixChart, figureRows, watchChart, diffWords } from './chart.mjs';
+export { heatGrid } from './heat-grid.mjs';
 export { sliderPick, rankList, pickRows, factsLine } from './question-forms.mjs';
 export { stageStep } from './kind-mark.mjs';
 export { runOutcomes, handedChip, expandFrame, markTone, alertLevel, kindMark, partsWord, gitMark, timeline, timelineCard, barHead, turnRow, composer, stageBar, cardHead, taskCard, taskProposal, changeProposal, turnDivider, planCard, filesCard, refChip, youTurn, stageLine, stagePart, thinkingRow, placeHead, pluginCard } from './kind-mark.mjs';
