@@ -22,7 +22,9 @@ import { REQUIREMENTS_READ_DENY_RULES } from '../ask/deny-rules.mjs';
 import { extensionForAttachment, isGenericBinary } from '../ask/attachment-kind.mjs';
 import { guardDecisionsCover, toolCalls } from '../file-read-guard.mjs';
 import { downloadFilename } from '../download-filename.mjs';
+import { engineLabel } from '../../shared/engine-switch.mjs';
 import { RequirementsError, clip } from './spec.mjs';
+import { featureModel, briefDefault, scopeOf, engineDefault, dd } from './feature-model.mjs';
 import { RoundError } from './round.mjs';
 import {
   REQ_ATT_ID_RE, REQ_ATTACH_LIMITS, ATTACHMENT_SYSTEM_PROMPT, buildReadPrompt, buildAskPrompt, normalizeSummary, mockSummary, checkNewFiles,
@@ -31,9 +33,9 @@ import {
 } from './attachments.mjs';
 import {
   mintAttachmentId, insertAttachment, getAttachment, listAttachments, updateAttachment, addAttachmentCost, deleteAttachmentRow,
-  listReadingAttachments, listDownloadingAttachments, recentReadCosts, appendTurn, addFeatureCost, getFeature, usableBrief, listTurns,
+  listReadingAttachments, listDownloadingAttachments, recentReadCosts, appendTurn, addFeatureCost, getFeature, usableBrief, listTurns, getBriefById,
 } from './store.mjs';
-import { callModel, interviewModel, maybeFollowUpFiles } from './interview.mjs';
+import { callModel, maybeFollowUpFiles, bookable, ledgerExtra } from './interview.mjs';
 import { attachmentsDir, attachmentFile } from './attachment-paths.mjs';
 import { MAX_DOWNLOAD_JOBS, runDownload, downloadInterrupted } from './attachment-fetch.mjs';
 
@@ -181,19 +183,26 @@ export function stopJobs(ids) {
 /** A read's or ask's writes, inside the caller's transaction: a feature file gets its `file` turn (no thread line, §3),
  *  its cost on the feature, the file and the ledger; a document books under the brief (feature_seq 0), never on
  *  req_briefs.cost_usd. */
-function bookWrites(e, costUsd, model, action, row) {
+function bookWrites(e, costUsd, model, action, row, via = {}) {
+  // 9c D14: the ledger row names its harness, step ('read' for a read and an ask alike), cost kind and tokens. A caller that knows
+  // no kind (a skipped file, a cancel) leaves the pre-9c shape: money books, nothing else does.
+  const extra = via.costKind === undefined ? null : { engine: via.engine, step: 'read', costKind: via.costKind, inputTokens: via.inputTokens, outputTokens: via.outputTokens };
+  const book = bookable(costUsd, extra);
+  const cols = ledgerExtra(extra);
   if (e.owner.type === 'feature') {
     const turnId = appendTurn(e.owner.id, { kind: 'file', payload: { action, id: e.id, name: row ? row.name : e.name },
-      model: model || null, costUsd: costUsd > 0 ? costUsd : null }, { by: e.by });
-    if (!(costUsd > 0)) return;
-    addFeatureCost(e.owner.id, costUsd);
-    if (row) addAttachmentCost(row.id, costUsd);
-    recordRequirementsCostDelta({ featureSeq: e.owner.id, turnId, attachmentId: e.id, amountUsd: costUsd, model: model || null });
+      model: model || null, costUsd: costUsd > 0 ? costUsd : null, engine: via.engine || null, notices: via.notices || null }, { by: e.by });
+    if (!book) return;
+    if (costUsd > 0) {
+      addFeatureCost(e.owner.id, costUsd);
+      if (row) addAttachmentCost(row.id, costUsd);
+    }
+    recordRequirementsCostDelta({ featureSeq: e.owner.id, turnId, attachmentId: e.id, amountUsd: costUsd, model: model || null, ...cols });
     return;
   }
-  if (!(costUsd > 0)) return;
-  if (row) addAttachmentCost(row.id, costUsd);
-  recordRequirementsCostDelta({ briefId: e.owner.id, attachmentId: e.id, amountUsd: costUsd, model: model || null });
+  if (!book) return;
+  if (costUsd > 0 && row) addAttachmentCost(row.id, costUsd);
+  recordRequirementsCostDelta({ briefId: e.owner.id, attachmentId: e.id, amountUsd: costUsd, model: model || null, ...cols });
 }
 
 // ---------------------------------------------------------------- the call (D3)
@@ -225,7 +234,56 @@ function guardCovered(r) {
 }
 /** An inline read has no tools: a tool call on its stream means the call did not run as Worca built it. */
 const inlineClean = (r) => toolCalls(Array.isArray(r.events) ? r.events : []).length === 0;
-const unchecked = (costUsd) => Object.assign(new Error(UNCHECKED), { code: 'UNCHECKED', costUsd });
+const unchecked = (costUsd, r = {}) => Object.assign(new Error(UNCHECKED), { code: 'UNCHECKED', costUsd, costKind: r.costKind, inputTokens: r.inputTokens, outputTokens: r.outputTokens });
+
+/** 9c D12: who reads a file. A feature's file: the feature's harness. A brief document: the harness the brief was made on (its
+ *  stored engine and model), else the scope's brief default. A Claude brief reads as the interview always did. */
+async function readerOf(e, d) {
+  const o = e.owner;
+  if (o.type === 'feature') return featureModel(getFeature(o.id) || { model: null }, d);
+  const b = getBriefById(o.id);
+  if (b && b.madeAt) {
+    // The brief's own harness and model, as stored (NULL engine = Claude). A harness without a stored model takes its own default,
+    // never Claude's: a document is not silently read on another harness.
+    // A brief made before 9c (engine NULL) reads exactly as before: the interview pair. A Claude brief made in 9c keeps its stored model
+    // with the interview pair's effort (a brief stores no effort).
+    if (!b.engine) return featureModel({ model: null }, d);
+    if (b.engine === 'claude') {
+      const pair = await featureModel({ model: null }, d);
+      return b.model ? { ...pair, model: b.model } : pair;
+    }
+    if (b.model) return featureModel({ model: { engine: b.engine, model: b.model, effort: null } }, d);
+    return { ...(await engineDefault(b.engine, dd(d))), notice: null };
+  }
+  return briefScopeDefault(o, b, d);
+}
+
+async function briefScopeDefault(o, b, d) {
+  const scope = scopeOf({ scopeType: o.scopeType || (b && b.scopeType), scopeKey: o.scopeKey || (b && b.scopeKey) });
+  return { ...(await briefDefault(scope, d)).choice, notice: null };
+}
+
+/** The harness a file will be read on, decided as readerOf decides it but without the catalog lookup of a model. */
+async function readerEngine(e, d) {
+  const o = e.owner;
+  if (o.type === 'feature') return (getFeature(o.id)?.model?.engine) || 'claude';
+  const b = getBriefById(o.id);
+  if (b && b.madeAt) return b.engine || 'claude';
+  return (await briefScopeDefault(o, b, d)).engine || 'claude';
+}
+
+/** Mock mode makes no call, but it skips what a harness would skip, with the same words (the browser proof shows them). */
+async function mockSkip(e, row) {
+  const engine = await readerEngine(e, e.d);
+  if (engine !== 'claude' && !(row.kind === 'text' && row.bytes <= REQ_ATTACH_LIMITS.inlineBytes)) {
+    throw Object.assign(new Error(skipWords(row, engine)), { code: 'SKIPPED_ENGINE', costUsd: 0, engine });
+  }
+}
+
+/** 9c gap 8: why a file is not sent to a harness that gets text only. */
+const skipWords = (row, engine) => (row.kind === 'text'
+  ? `${row.name} skipped: it is too large for ${engineLabel(engine)}.`
+  : `${row.name} skipped: ${engineLabel(engine)} gets files as text only.`);
 
 /** One read-only call on the file: inline (a text of at most 24 KB, redacted, no tools at all) or opened with Read from a
  *  fresh private folder that holds only its copy (a text file's copy is its redacted text), removed when the call ends,
@@ -234,11 +292,15 @@ const unchecked = (costUsd) => Object.assign(new Error(UNCHECKED), { code: 'UNCH
  *  carrying the row's current summary and the question. Throws with `costUsd` (callModel's) and `model` on it. */
 async function readCall(e, row, { question = null } = {}) {
   const d = e.d;
-  const im = await interviewModel(d);
+  const im = await readerOf(e, d);
   const model = im.model || null;
+  const engine = im.engine || 'claude';
+  const notices = im.notice ? [im.notice] : [];
   const inline = row.kind === 'text' && row.bytes <= REQ_ATTACH_LIMITS.inlineBytes;
   let dir = null;
   try {
+    // 9c D12: another harness gets a file as inline text or not at all: no call is made for the rest.
+    if (engine !== 'claude' && !inline) throw Object.assign(new Error(skipWords(row, engine)), { code: 'SKIPPED_ENGINE', costUsd: 0 });
     const text = row.kind === 'text' ? redactAskText(readFileSync(attachmentFile(row), 'utf8')) : null;
     let path = null;
     if (!inline) {
@@ -257,13 +319,15 @@ async function readCall(e, row, { question = null } = {}) {
     const call = inline ? { kind: 'round', cwd: readBase(), prompt, tools: [], permissionRules: deny, noSessionPersistence: true }
       : { kind: 'look', cwd: dir, prompt, tools: ['Read'], allowedTools: [readRule(path)], maxTurns: READ_MAX_TURNS, permissionRules: deny, readGuard: path,
         noSessionPersistence: true };
-    const r = await callModel(d, { ...call, model: model || undefined, ...(im.effort ? { effort: im.effort } : {}),
+    const r = await callModel(d, { ...call, model: model || undefined, engine, ...(im.effort ? { effort: im.effort } : {}),
       systemPrompt: ATTACHMENT_SYSTEM_PROMPT, timeoutMs: d.readTimeoutMs, signal: e.ctrl.signal });
     const costUsd = Number(r.costUsd) || 0;
-    if (inline ? !inlineClean(r) : !guardCovered(r)) throw unchecked(costUsd);
-    return { text: r.text, costUsd, model };
+    if (inline ? !inlineClean(r) : !guardCovered(r)) throw unchecked(costUsd, r);
+    for (const n of r.notices || []) if (!notices.includes(n)) notices.push(n);
+    return { text: r.text, costUsd, model, engine, notices, costKind: r.costKind, inputTokens: r.inputTokens, outputTokens: r.outputTokens };
   } catch (err) {
-    throw Object.assign(err instanceof Error ? err : new Error(String(err)), { model });
+    const out = err instanceof Error ? err : new Error(String(err));
+    throw Object.assign(out, { model, engine, notices: out.notices || notices });
   } finally {
     if (dir) { try { rmSync(dir, { recursive: true, force: true }); } catch (x) { console.error('requirements: could not remove a read folder:', message(x)); } }
   }
@@ -275,6 +339,8 @@ function failureOf(err) {
   if (err instanceof RoundError) return { code: 'BAD_REPLY', message: `Worca's reply could not be read (${message(err)}).` };
   if (err && err.code === 'UNCHECKED') return { code: 'UNCHECKED', message: UNCHECKED };
   if (err && err.code === 'TIMEOUT') return { code: 'TIMEOUT', message: message(err) };   // callModel's own words
+  // 9c: a file the harness cannot take (gap 8) and a harness that is not ready (D13) keep their own words and codes
+  if (err && (err.code === 'SKIPPED_ENGINE' || err.code === 'NOT_READY' || err.code === 'NOT_OFFERED')) return { code: err.code, message: message(err) };
   const fs = !!err && (typeof err.syscall === 'string' || FS_CODES.has(err.code));
   return { code: 'FAILED', message: fs ? STORED_FILE : TRY_AGAIN };
 }
@@ -293,14 +359,15 @@ async function runRead(e) {
     if (d.mockEnabled()) {
       const ms = Number(process.env.WORCA_MOCK_READ_MS) || 0;   // the browser proof sees "Reading N files…" (D17)
       if (ms > 0) await new Promise((r) => setTimeout(r, ms));
+      await mockSkip(e, row);
       finishRead(e, { summary: mockSummary(row.name), costUsd: 0, model: null });
       return;
     }
     const r = await readCall(e, row);
     cost = r.costUsd;
     model = r.model;
-    if (e.cancelled) { tx(() => bookWrites(e, cost, model, 'read', null)); return; }
-    finishRead(e, { summary: normalizeSummary(r.text), costUsd: cost, model });
+    if (e.cancelled) { tx(() => bookWrites(e, cost, model, 'read', null, { engine: r.engine, notices: r.notices, costKind: r.costKind, inputTokens: r.inputTokens, outputTokens: r.outputTokens })); return; }
+    finishRead(e, { summary: normalizeSummary(r.text), costUsd: cost, model, engine: r.engine, notices: r.notices, costKind: r.costKind, inputTokens: r.inputTokens, outputTokens: r.outputTokens });
   } catch (err) {
     cost = cost || Number(err?.costUsd) || 0;
     model = model || err?.model || null;
@@ -309,23 +376,23 @@ async function runRead(e) {
     if (failure.code === 'FAILED') console.error(`requirements: reading file ${e.id} failed:`, message(err));
     tx(() => {
       if (now && !e.cancelled) updateAttachment(now.id, { status: 'failed', error: { ...failure, at: iso() } });
-      bookWrites(e, cost, model, 'read', e.cancelled ? null : now);
+      bookWrites(e, cost, model, 'read', e.cancelled ? null : now, { engine: err?.engine, notices: err?.notices, costKind: err?.costKind, inputTokens: err?.inputTokens, outputTokens: err?.outputTokens });
     });
   }
 }
 
 /** D4: a read writes the summary, unless the product owner's text stands: then its summary goes to the history. */
-function finishRead(e, { summary, costUsd, model }) {
+function finishRead(e, { summary, costUsd, model, engine = null, notices = null, costKind, inputTokens, outputTokens }) {
   const row = getAttachment(e.id);
   const at = iso();
   tx(() => {
     if (row) {
-      const patch = { status: 'done', error: null, readCostUsd: costUsd > 0 ? costUsd : null, readModel: model, readAt: at };
+      const patch = { status: 'done', error: null, readCostUsd: costUsd > 0 ? costUsd : null, readModel: model, readAt: at, ...(engine ? { readEngine: engine } : {}) };
       if (row.summaryEdited) patch.history = pushHistory(row.history, { at, by: null, reason: 'read', name: row.name, sha256: row.sha256, summary, edited: false, asks: [] });
       else patch.summary = summary;
       updateAttachment(row.id, patch);
     }
-    bookWrites(e, costUsd, model, 'read', row);
+    bookWrites(e, costUsd, model, 'read', row, { engine, notices, costKind, inputTokens, outputTokens });
   });
 }
 
@@ -345,18 +412,19 @@ async function runAsk(e) {
       const ms = Number(process.env.WORCA_MOCK_READ_MS) || 0;   // the browser proof sees "Asking…" too (D17)
       if (ms > 0) await new Promise((r) => setTimeout(r, ms));
       if (e.cancelled) return;
+      await mockSkip(e, row);
       finishAsk(e, { answer: mockAnswer(e.question), costUsd: 0, model: null });
       return;
     }
     const r = await readCall(e, row, { question: e.question });
     cost = r.costUsd;
     model = r.model;
-    if (e.cancelled) { tx(() => bookWrites(e, cost, model, 'asked', null)); return; }
-    finishAsk(e, { answer: normalizeAnswer(r.text), costUsd: cost, model });
+    if (e.cancelled) { tx(() => bookWrites(e, cost, model, 'asked', null, { engine: r.engine, notices: r.notices, costKind: r.costKind, inputTokens: r.inputTokens, outputTokens: r.outputTokens })); return; }
+    finishAsk(e, { answer: normalizeAnswer(r.text), costUsd: cost, model, engine: r.engine, notices: r.notices, costKind: r.costKind, inputTokens: r.inputTokens, outputTokens: r.outputTokens });
   } catch (err) {
     const failure = failureOf(err);
     if (failure.code === 'FAILED') console.error(`requirements: asking about file ${e.id} failed:`, message(err));
-    failAsk(e, failure, cost || Number(err?.costUsd) || 0, model || err?.model || null);
+    failAsk(e, failure, cost || Number(err?.costUsd) || 0, model || err?.model || null, { via: { engine: err?.engine, notices: err?.notices, costKind: err?.costKind, inputTokens: err?.inputTokens, outputTokens: err?.outputTokens } });
   }
 }
 
@@ -364,23 +432,23 @@ async function runAsk(e) {
 // a failed read's error stays until the file is read again.
 const askError = (row) => !row.error || row.error.job === 'ask';
 
-function failAsk(e, failure, costUsd, model, { book = true } = {}) {
+function failAsk(e, failure, costUsd, model, { book = true, via = {} } = {}) {
   tx(() => {
     const now = e.cancelled ? null : getAttachment(e.id);
     if (now && askError(now)) updateAttachment(now.id, { error: { ...failure, at: iso(), job: 'ask', question: e.question } });
-    if (book) bookWrites(e, costUsd, model, 'asked', now);
+    if (book) bookWrites(e, costUsd, model, 'asked', now, via);
   });
 }
 
 /** The answer under the summary, labelled with its question, apart from the summary (`asks`), so a read never overwrites it. */
-function finishAsk(e, { answer, costUsd, model }) {
+function finishAsk(e, { answer, costUsd, model, engine = null, notices = null, costKind, inputTokens, outputTokens }) {
   tx(() => {
     const row = getAttachment(e.id);
     if (row) {
       updateAttachment(row.id, { ...(row.error && askError(row) ? { error: null } : {}),
         asks: [...row.asks, { question: e.question, answer, by: e.by, at: iso(), costUsd }] });
     }
-    bookWrites(e, costUsd, model, 'asked', row);
+    bookWrites(e, costUsd, model, 'asked', row, { engine, notices, costKind, inputTokens, outputTokens });
   });
 }
 
@@ -605,6 +673,22 @@ export function queueUnread(seq, deps = {}) {
     enqueue({ id: r.id, name: r.name, owner, kind: 'read', by: null, d });
   }
   return waiting.length;
+}
+
+/** 9c gap 8: when the feature switches to `engine`, the files a harness skipped that `engine` can read are read again (Claude: all
+ *  of them; the others: a text of at most 24 KB). Returns how many were queued. */
+export function queueSkippedReads(seq, engine, deps = {}) {
+  const d = { ...DEFAULTS, ...deps };
+  const owner = { type: 'feature', id: Number(seq) };
+  const canRead = (r) => !engine || engine === 'claude' || (r.kind === 'text' && r.bytes <= REQ_ATTACH_LIMITS.inlineBytes);
+  const rows = listAttachments('feature', Number(seq)).filter((r) => r.status === 'failed' && r.error && r.error.code === 'SKIPPED_ENGINE'
+    && !isReading(r.id) && canRead(r));
+  for (const r of rows) {
+    updateAttachment(r.id, { status: 'reading', error: null });
+    enqueue({ id: r.id, name: r.name, owner, kind: 'read', by: null, d });
+  }
+  if (rows.length) notifyOwner(owner, d);
+  return rows.length;
 }
 
 // ---------------------------------------------------------------- the run hand-off (D14)
