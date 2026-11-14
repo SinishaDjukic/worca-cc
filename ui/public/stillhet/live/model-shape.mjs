@@ -48,10 +48,10 @@ export function pick(kind, item) {
 // (chat/chats-model.js thread) and the live mapper (live/chat-turns.mjs) write them. `failed` is a reply that failed
 // (fail.chat-turn): its calm sentence, the raw error behind Details, and Try again.
 export const TURN_SHAPES = Object.freeze({
-  you: { id: 'string', text: 'string', files: 'array?', refs: 'array?', quote: 'string?', at: 'number?' },
+  you: { id: 'string', text: 'string', files: 'array?', refs: 'array?', quote: 'string?' },
   think: { text: 'string', steps: 'array?' },
   working: { at: 'number?', steps: 'array?' },
-  words: { html: 'string', parts: 'array?', at: 'number?', key: 'string?' },
+  words: { html: 'string', parts: 'array?' },
   ship: { id: 'string', title: 'string', reqs: 'array', how: 'string?', featureId: 'string?', done: 'string?' },   // the prototype's Ship card; live adds dev's feature id   // parts: words and the refs in them (panel.answer-refs)
   code: { file: 'string?', text: 'string' },
   commands: { id: 'string', rows: 'array' },
