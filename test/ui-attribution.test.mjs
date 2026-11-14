@@ -225,6 +225,10 @@ test('History Clarify attribution: answered by <name>/you/nobody, and Away mode 
       assert.equal(sec.querySelector('.hd-cl-by').title, 'Answered by grace@example.com');
       assert.equal((await clarifySec(clar(ME))).querySelector('.hd-cl-by')?.textContent, 'answered by you');
       assert.equal((await clarifySec(clar('local'))).querySelector('.hd-cl-by'), null);
+      // A --yes run's auto-answer (identity.mjs AUTO_ACTOR) is nobody: never "answered by auto".
+      assert.equal((await clarifySec(clar('auto'))).querySelector('.hd-cl-by'), null);
+      const auto = await clarifySec({ stepQuestions: [{ stepKey: 'x:n_map:1', round: 1, nodeId: 'n_map', agentKey: 'readinessMap', questions: Q, answers: A, answeredBy: 'auto' }] });
+      assert.equal(auto.querySelector('.hd-cl-by'), null);
       assert.equal((await clarifySec(clar(null))).querySelector('.hd-cl-by'), null);
       assert.equal((await clarifySec(clar('grace@example.com'), SOLO)).querySelector('.hd-cl-by'), null, 'not shared: nobody named');
       const step = await clarifySec({ stepQuestions: [{ stepKey: 'x:n_plan:1', round: 1, nodeId: 'n_plan', agentKey: 'planner', questions: Q, answers: A, answeredBy: 'ada via Slack' }] });

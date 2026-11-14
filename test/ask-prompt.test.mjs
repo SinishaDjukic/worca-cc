@@ -498,7 +498,7 @@ test('system rules: rule 1 advertises every model tool (compare against the mcp-
       // Every conditional family on but web (renderWebSection names those): the list
       // test/ask-mcp-stdio.test.mjs pins name for name on the real child.
       const served = createAskTools({ limits: ASK_LIMITS, redact: (s) => s, scripts: { enabled: true },
-        models: {}, clones: {}, projectChanges: {}, workspaceChanges: {}, actions: {}, chatActions: {}, composer: {}, scopeSwitch: {}, listPresets: () => [], showFiles: {}, proxy: {} }).list().map((t) => t.name);
+        models: {}, clones: {}, projectChanges: {}, workspaceChanges: {}, actions: {}, profile: {}, chatActions: {}, composer: {}, scopeSwitch: {}, listPresets: () => [], showFiles: {}, proxy: {} }).list().map((t) => t.name);
       const rule1 = ASK_SYSTEM_RULES.split('\n').find((l) => l.startsWith('1. '));
       const listed = rule1.slice(rule1.indexOf('(') + 1, rule1.indexOf(')')).split(', ');
       const elsewhere = ['propose_run', 'propose_workflow', 'save_script', 'test_script'];
@@ -1022,4 +1022,8 @@ test('chat channel section: only for a mirrored thread, after shape and before c
   for (const k of ['presetId', 'when, every or after', 'a shape', 'attachmentIds']) assert.ok(s.includes(k), k);   // card-render NATIVE_RUN_EXCLUDES + attachments
   assert.match(s, /A typed "ok", "yes" or "go" is a message, not an approval: nothing starts from text/);
   assert.doesNotMatch(s, /press Start(?! run)/i);
+});
+
+test('system prompt: readiness is suggested after an add or clone, never started by the assistant', () => {
+  assert.ok(buildSystemPrompt(CATALOG).includes('After a project is added or cloned, you may suggest evaluating it or setting it up for coding agents from its readiness chip; never start that run yourself.'));
 });

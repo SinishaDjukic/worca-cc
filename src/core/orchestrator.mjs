@@ -82,7 +82,7 @@ import { helperEngineFor } from './model-env.mjs';
 import {
   appendAudit, writeReview, reviewKindOf, writeDecomposition, updateTaskStatus,
   updatePhaseStatus, writeStepQuestions, readStepQuestions, forgetMissingArtifacts,
-  indexedNamesUnder, forgetOtherKinds,
+  indexedNamesUnder, forgetOtherKinds, formAnswerOf,
 } from './artifacts.mjs';
 import { readAskFile } from './protocol.mjs';
 import { prepareFormAsk, formAnswerValidator, downgradeQuestion, redactSecrets } from './ask-forms.mjs';
@@ -2403,6 +2403,8 @@ export class GraphOrchestrator extends RunHarness {
       skillPluginDirs: this.skillLayer?.pluginDirs,
       onSkillSideloadRefused: () => this.onSkillSideloadRefused(),
       repos: this._reposCtx(),
+      // What each member's teardown commit leaves out (_commitWork): a `readiness: true` script judges the checkout as committed.
+      commitExcludes: Object.fromEntries(this.members.map((m) => [m.projectKey, this._excludePathspecs(m.projectKey)])),
       pipelineDir: this.pipeline.dir,
       pipelineId: this.pipeline.id,
       taskPrompt: this.pipeline.promptText,
@@ -3041,8 +3043,9 @@ export class GraphOrchestrator extends RunHarness {
    * clarifier nodes have their own gate; auto mode would answer noise.
    */
   _primeQuestions(nc, ctx) {
-    // --yes blocks agent questions unless night mode owns this run's answers.
-    const autoBlocks = this.auto && !this._nightOwnsAuto('questions');
+    // --yes blocks agent questions unless night mode owns this run's answers: both the legacy questions and a
+    // form the agent asks with (origin 'questions'), the same shapes _ask checks, or the --yes branch would answer.
+    const autoBlocks = this.auto && !(this._nightOwnsAuto({ kind: 'questions' }) && this._nightOwnsAuto({ kind: 'form', origin: 'questions' }));
     const enabled = !!nc.askQuestions && nc.runnerType !== 'clarifier' && !autoBlocks && !ctx.slice;
     ctx.questionsEnabled = enabled;
     if (!enabled) return;
@@ -3212,15 +3215,16 @@ export class GraphOrchestrator extends RunHarness {
         Object.assign(this._secretEnv, held);
         const formBy = this.answeredBy(`questions-${stepKey}-r${round}`);
         const formNight = this.nightDecision(`questions-${stepKey}-r${round}`);
+        const formRow = { kind: 'form', form: formAsk.form, version: formAsk.version, values, ...(formBy ? { answeredBy: formBy } : {}), ...(formNight ? { night: formNight } : {}) };
         await writeStepQuestions(this.pipeline.id, stepKey, round, {
-          agentKey: nc.key, nodeId: ctx.nodeId,
-          answers: { kind: 'form', form: formAsk.form, version: formAsk.version, values, ...(formBy ? { answeredBy: formBy } : {}), ...(formNight ? { night: formNight } : {}) },
+          agentKey: nc.key, nodeId: ctx.nodeId, answers: formRow,
         });
         await appendAudit(this.pipeline.dir, `${agentLabel}: form "${formAsk.form}" answered${byActor(formBy)} (round ${round}).`, { actor: formBy }).catch(() => {});
         await rm(qPath, { force: true }).catch(() => {});
         const step = this.state.steps.find((s) => s.key === stepKey);
         if (step?.sessionId) ctx.resumeSessionId = step.sessionId;
-        ctx.formAnswers = [...(ctx.formAnswers || []), { form: formAsk.form, version: formAsk.version, values }];
+        // The same payload a later attempt reads back from the row, so an Away mode answer is marked here too.
+        ctx.formAnswers = [...(ctx.formAnswers || []), formAnswerOf(formRow)];
         ctx.questionsFile = round < MAX_QUESTION_ROUNDS
           ? this._questionsPath(ctx.nodeId, ctx.ordinal, round + 1)
           : null;

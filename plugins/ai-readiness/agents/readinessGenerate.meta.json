@@ -1,0 +1,56 @@
+{
+  "key": "readinessGenerate",
+  "metaVersion": 2,
+  "runnerType": "producer",
+  "mockRole": "generic-producer",
+  "domain": "readiness",
+  "displayName": "Generate",
+  "description": "Writes the instruction files and recurring-task skills you approved on the plan card.",
+  "color": "green",
+  "scope": "project",
+  "workspaceFanOut": true,
+  "workspaceStrategy": "task",
+  "sideEffect": "code",
+  "agentFile": "readinessGenerate.md",
+  "order": 13,
+  "requiresSkills": [
+    "readiness-rubric"
+  ],
+  "inputs": [
+    {
+      "id": "map",
+      "type": "json"
+    },
+    {
+      "id": "plan",
+      "type": "json",
+      "directive": "Write exactly the files in plan.files, following plan.existing for files that already exist, and never change anything named in plan.offLimits or plan.offLimitsNote."
+    },
+    {
+      "id": "fixes",
+      "type": "md",
+      "required": false,
+      "loop": true,
+      "as": "fix-review",
+      "directive": "## Fix cycle\n\nAddress every critical and major finding in the report below whose location is NOT a test file. Findings on test files belong to the Seed tests step, which runs right after you. Change only what the findings name; keep every other generated file byte-identical."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "done",
+      "type": "void"
+    },
+    {
+      "id": "generated",
+      "type": "json",
+      "filename": "readiness-generated.json",
+      "artifactKind": "readiness-generated"
+    },
+    {
+      "id": "worcaSkills",
+      "type": "json",
+      "filename": "readiness-worca-skills.json",
+      "artifactKind": "project-skills"
+    }
+  ]
+}

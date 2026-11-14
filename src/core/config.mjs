@@ -1620,6 +1620,22 @@ function writeExtraKey(key, name, value) {
   });
 }
 
+// ── Project profile (project_config.extra.projectProfile) ──────────────────
+// What a readiness run learned about the project (src/core/project-profile.mjs owns the shape).
+export const PROJECT_PROFILE_KEY = 'projectProfile';
+
+export function readProjectProfileRaw(key) {
+  assertProjectKey(key);
+  const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
+  const v = row ? parseJson(row.extra, {})[PROJECT_PROFILE_KEY] : null;
+  return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+}
+
+export function writeProjectProfileRaw(key, value) {
+  assertProjectKey(key);
+  writeExtraKey(key, PROJECT_PROFILE_KEY, value);
+}
+
 // ── Team-policy preferences (project_config.extra.teamPolicy) ──────────────
 // The discovery cache for the worca-policy branch (team-policy design §9): the last
 // verdict, the document read from origin, the delegate marker, and the per-window

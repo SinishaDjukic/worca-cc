@@ -200,3 +200,14 @@ test('the shipped defragmenter is a memory agent: no Bash, no Skill, no MultiEdi
   assert.deepEqual(tools, ['Read', 'Write', 'Edit', 'Glob', 'Grep']);
   for (const banned of ['Bash', 'Skill', 'MultiEdit', 'Task', 'Agent']) assert.ok(!tools.includes(banned), banned);
 });
+
+test('the defragmenter reads the project\'s CLAUDE.md and AGENTS.md as read-only evidence and retires notes they already state', async () => {
+  const body = await readFile(join(AGENTS_DIR, 'worca-cc-memory-defragmenter.md'), 'utf8');
+  assert.match(body, /## Instruction files/, 'it names the task section worca appends on a project scope');
+  assert.match(body, /`CLAUDE\.md` and `AGENTS\.md`/);
+  assert.match(body, /read-only/i);
+  assert.match(body, /\*\*Retire what the instruction files already state\.\*\*/, 'the removal rule');
+  assert.match(body, /Never edit, create or delete an instruction file/, 'never edits them');
+  assert.match(body, /global scope[^.]*never/i, 'a global defragment never uses them');
+  assert.match(body, /stated in `CLAUDE\.md`|stated in CLAUDE\.md/, 'the report names the file a removal relied on');
+});

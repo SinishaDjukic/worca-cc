@@ -12,7 +12,7 @@ import { extractWorkspace } from '../src/core/workspace-map/extract.mjs';
 import { buildCatalog } from '../src/core/workspace-map/catalog.mjs';
 import { joinMap, synthBrief } from '../src/core/workspace-map/join.mjs';
 import * as render from '../src/shared/workspace-map/render.mjs';
-import { workspaceContextBlock } from '../src/core/phases.mjs';
+import { workspaceContextBlock, WORKSPACE_CONTEXT_WINS } from '../src/core/phases.mjs';
 import { makeRepos } from './helpers/wsmap-p1-repos.mjs';
 
 const { renderWorkspaceDescription } = render;
@@ -59,11 +59,11 @@ test('end to end: a README instruction reaches the system prompt only quoted, un
 test('a description without a quoted role passes through byte-identical: a hand edit, or agent-written roles only', () => {
   const projects = [{ projectName: 'web' }, { projectName: 'api' }];
   const hand = '# Workspace: W\n\nAlways run the billing contract tests before touching web.\n- web: the storefront';
-  assert.equal(workspaceContextBlock({ workspaceDescription: hand, projects }), `## Workspace Context\n\n${hand}\n\nMember projects: web, api.\n`);
+  assert.equal(workspaceContextBlock({ workspaceDescription: hand, projects }), `## Workspace Context\n\n${hand}\n\nMember projects: web, api.\n\n${WORKSPACE_CONTEXT_WINS}\n`);
   const map = labelled();
   map.members = map.members.filter((m) => m.key === 'd' || m.key === 'e');
   const agentOnly = renderWorkspaceDescription({ name: 'W', map, synthesis: SYNTH, budget: 300 });
-  assert.equal(workspaceContextBlock({ workspaceDescription: agentOnly, projects }), `## Workspace Context\n\n${agentOnly}\n\nMember projects: web, api.\n`);
+  assert.equal(workspaceContextBlock({ workspaceDescription: agentOnly, projects }), `## Workspace Context\n\n${agentOnly}\n\nMember projects: web, api.\n\n${WORKSPACE_CONTEXT_WINS}\n`);
 });
 
 test('render: README / manifest / repo labels, agent-written roles unquoted, the clip inside the quotes', () => {
@@ -109,6 +109,6 @@ test('every label frames the block: a description quoting only a manifest role, 
     const map = labelled();
     map.members = map.members.filter((m) => m.key === key);
     const desc = renderWorkspaceDescription({ name: 'W', map, synthesis: SYNTH, budget: 300 });
-    assert.equal(workspaceContextBlock({ workspaceDescription: desc, projects }), `## Workspace Context\n\n${NOTE}\n\n${desc}\n\nMember projects: x.\n`, key);
+    assert.equal(workspaceContextBlock({ workspaceDescription: desc, projects }), `## Workspace Context\n\n${NOTE}\n\n${desc}\n\nMember projects: x.\n\n${WORKSPACE_CONTEXT_WINS}\n`, key);
   }
 });

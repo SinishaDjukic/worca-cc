@@ -88,6 +88,11 @@ describe('readiness CSS', () => {
     assert.match(ruleBody('.readiness-settings-card .qtune-sw') ?? '', /display:flex/);
   });
 
+  it('the settings card head keeps its buttons together on the right', () => {
+    assert.match(ruleBody('.rs-acts') ?? '', /display:flex/);
+    assert.match(ruleBody('.rs-acts') ?? '', /margin-left:auto/);
+  });
+
   it('styles the settings card', () => {
     assert.ok(ruleBody('.readiness-settings-card'), '.readiness-settings-card rule missing');
   });

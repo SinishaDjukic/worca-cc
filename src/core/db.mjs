@@ -865,7 +865,7 @@ const INCREMENTAL_COLUMNS = {
                             shape_stats: 'TEXT',  // JSON: the shaped run's measurements; NULL = not a shaped run
                             run_size: 'TEXT',     // small|medium|large from the run's changed lines/files; NULL = unknown
                             review_stats: 'TEXT', // #990 s6, no version of its own: JSON RunSummary of src/shared/review/quality.mjs; NULL = no role reviews
-                            run_setup: 'TEXT',  // v62 (#712): the run's normalized setup (src/shared/run-presets.mjs keys, full picks); NULL = before v62, a CLI start or a scan
+                            run_setup: 'TEXT',  // v62 (#712): the run's normalized setup (src/shared/run-presets.mjs keys, full picks); {workflowId, idOnly} = a CLI start or a scan; NULL = older
                             deleted_at: 'TEXT',   // v65: Delete (runs redesign §3.2) keeps an anonymised row for Statistics
                             pr_verdict: 'TEXT',   // v65: the PR chip's CI verdict (JSON), runs redesign §2.1a
                             release_version: 'TEXT',  // v66 (Shaper s4): the Ship it dialog's draft release tag; NULL = none

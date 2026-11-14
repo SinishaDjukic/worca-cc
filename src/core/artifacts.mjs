@@ -32,6 +32,7 @@ import { readPolicyState } from './policy/state.mjs';
 import { runReviewStats } from '../shared/review/quality.mjs';
 import { memoryTotals } from './memory-sync.mjs';
 import { actorLabel } from './identity.mjs';
+import { NIGHT_ACTOR } from './night/config.mjs';
 import { attachWatchPipeline, getWatch, watchActive } from './pr-watch.mjs';
 import { insertRunTags, readRunTags, readTagsFor } from './run-tags-store.mjs';
 import { insertRunLabels, readLabelsFor, readRunLabels } from './run-labels-store.mjs';
@@ -526,10 +527,15 @@ function formFieldsOf(qWrap, aWrap) {
   return ask ? { ask, formAnswer: formAnswerOf(aWrap) } : {};
 }
 
-/** The `{form, version, values}` payload the agent was resumed with, or null. */
-function formAnswerOf(aWrap) {
+/** The `{form, version, values}` payload the agent was resumed with, or null. A row Away mode
+ *  answered (its writer stored `answeredBy: NIGHT_ACTOR`) adds `answeredBy: 'away'`, so the agent
+ *  can tell the user never saw that form; a user's answer gains no key. */
+export function formAnswerOf(aWrap) {
   if (!aWrap || aWrap.kind !== 'form') return null;
-  return { form: aWrap.form, version: aWrap.version, values: aWrap.values && typeof aWrap.values === 'object' ? aWrap.values : {} };
+  return {
+    form: aWrap.form, version: aWrap.version, values: aWrap.values && typeof aWrap.values === 'object' ? aWrap.values : {},
+    ...(aWrap.answeredBy === NIGHT_ACTOR ? { answeredBy: 'away' } : {}),
+  };
 }
 
 /**

@@ -74,6 +74,24 @@ test('questionsPromptBlock: prior FORM answers come back as the exact resume pay
   assert.doesNotMatch(b, /^MOCK_ASK:/m, 'a resumed round drops MOCK_ASK exactly as a legacy resume does');
 });
 
+test('questionsPromptBlock: an Away mode form answer is marked and explained; a user answer is byte-identical', () => {
+  const user = { form: 'review-mockups', version: 2, values: { verdict: 'changes' } };
+  const ctx = { questionsEnabled: true, questionsFile: '/pd/q-r2.json', askForms: FORMS };
+  const sentence = 'The form answers marked "answeredBy": "away" were given by Away mode while the user was away, so the user has not seen that form.';
+  // Today's exact bytes for a user-answered form (pinned literally, not derived from the code).
+  const userBlock = '## Your form answers\n\n```json\n' + JSON.stringify(user, null, 2) + '\n```\n\n## Asking the user (enabled)';
+  const b = questionsPromptBlock({ ...ctx, formAnswers: [user] });
+  assert.ok(b.startsWith('\n\n' + userBlock), 'a user answer renders exactly as before');
+  assert.doesNotMatch(b, /answeredBy/);
+  assert.equal(b.includes('Away mode'), false, 'no Away mode sentence when the user answered');
+  const away = questionsPromptBlock({ ...ctx, formAnswers: [user, { ...user, values: { verdict: 'approve' }, answeredBy: 'away' }] });
+  assert.match(away, /"answeredBy": "away"/);
+  assert.equal(away.match(/"answeredBy": "away"\n\}/g).length, 1, 'only the Away mode answer\'s JSON carries the marker');
+  assert.ok(away.includes('```\n\n' + sentence + '\n\n## Asking the user (enabled)'), 'one sentence right after the block');
+  const closing = questionsPromptBlock({ ...ctx, questionsFile: null, formAnswers: [{ ...user, answeredBy: 'away' }] });
+  assert.ok(closing.includes(sentence + '\n\n## Asking the user\n'), 'the closing note gets the sentence too');
+});
+
 test('formRepairBlock renders errors/schema/file and rides runOpts\' prompt; empty when there is nothing to repair', async () => {
   await checkRows([
     { name: 'formRepairBlock: absent => empty; present => the errors, the schema and the SAME file', run: () => {

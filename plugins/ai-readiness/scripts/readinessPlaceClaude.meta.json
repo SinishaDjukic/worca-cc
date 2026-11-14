@@ -1,0 +1,20 @@
+{
+  "key": "readinessPlaceClaude",
+  "metaVersion": 2,
+  "displayName": "Place Claude files",
+  "description": "Copies the Claude Code skills and rules Generate staged in the run folder into the checkout's .claude/ folder, only the ones the plan card approved, and only under skills/ and rules/.",
+  "domain": "readiness",
+  "color": "teal",
+  "order": 13,
+  "runtime": "node",
+  "file": "readiness-place.mjs",
+  "timeoutMs": 60000,
+  "inputs": [
+    { "id": "after", "type": "void", "required": false },
+    { "id": "plan", "type": "json" }
+  ],
+  "outputs": [
+    { "id": "done", "type": "void" },
+    { "id": "placed", "type": "json", "filename": "readiness-claude-placed.json", "artifactKind": "readiness-claude-placed" }
+  ]
+}

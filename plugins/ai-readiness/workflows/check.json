@@ -1,0 +1,27 @@
+{
+  "name": "AI readiness check",
+  "version": 2,
+  "domain": "readiness",
+  "nodes": [
+    { "id": "n_task", "kind": "task", "x": 40, "y": 200, "config": {} },
+    { "id": "n_chip", "kind": "script", "key": "readinessChip", "x": 160, "y": 380, "config": {} },
+    { "id": "n_map", "kind": "agent", "key": "readinessMap", "x": 300, "y": 200, "config": {} },
+    { "id": "n_probe", "kind": "script", "key": "readinessProbe", "x": 560, "y": 80, "config": { "awaitAll": true } },
+    { "id": "n_score", "kind": "agent", "key": "readinessScore", "x": 820, "y": 200, "config": { "awaitAll": true } },
+    { "id": "n_report", "kind": "script", "key": "readinessReport", "x": 1080, "y": 200, "config": { "awaitAll": true } },
+    { "id": "n_end", "kind": "end", "x": 1340, "y": 200, "config": {} }
+  ],
+  "wires": [
+    { "id": "w1", "from": { "node": "n_task", "port": "task" },        "to": { "node": "n_map", "port": "task" } },
+    { "id": "w2", "from": { "node": "n_map", "port": "map" },          "to": { "node": "n_probe", "port": "map" } },
+    { "id": "w3", "from": { "node": "n_map", "port": "map" },          "to": { "node": "n_score", "port": "map" } },
+    { "id": "w4", "from": { "node": "n_probe", "port": "probe" },      "to": { "node": "n_score", "port": "probe" } },
+    { "id": "w5", "from": { "node": "n_score", "port": "judgement" },  "to": { "node": "n_report", "port": "judgement" } },
+    { "id": "w6", "from": { "node": "n_probe", "port": "probe" },      "to": { "node": "n_report", "port": "probe" } },
+    { "id": "w7", "from": { "node": "n_report", "port": "card" },      "to": { "node": "n_end", "port": "result" } },
+    { "id": "w8", "from": { "node": "n_map", "port": "map" },          "to": { "node": "n_report", "port": "map" } },
+    { "id": "w60", "from": { "node": "n_task", "port": "task" }, "to": { "node": "n_chip", "port": "task" } },
+    { "id": "w61", "from": { "node": "n_chip", "port": "view" }, "to": { "node": "n_map", "port": "view" } },
+    { "id": "w62", "from": { "node": "n_chip", "port": "view" }, "to": { "node": "n_probe", "port": "view" } }
+  ]
+}

@@ -58,6 +58,11 @@ function globRe(glob) {
 }
 
 const sourcesOf = (name) => SOURCES[name] ?? NO_SOURCES;
+/** What the chip reads for an engine: `{ files, globs, firstNonEmpty? }` (an engine with no sources: empty lists). */
+export function engineSources(name) {
+  const { files, globs, firstNonEmpty } = sourcesOf(name);
+  return { files, globs, ...(firstNonEmpty ? { firstNonEmpty: true } : {}) };
+}
 const hasSources = (src) => src.files.length + src.globs.length > 0;
 
 function globMatches(src, facts) {

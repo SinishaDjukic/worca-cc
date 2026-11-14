@@ -8,6 +8,8 @@ import { rm } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { WebSocket } from 'ws';
 
 import { templateRepo } from './helpers/git-dir.mjs';
@@ -20,6 +22,7 @@ useTempHome(after);
 let srv, base, wsBase, prevMock, prevKill;
 const JSONH = { 'Content-Type': 'application/json' };
 const created = [];
+const createdPaths = [];
 
 before(async () => {
   prevMock = process.env.WORCA_MOCK;
@@ -37,7 +40,7 @@ after(async () => {
   if (srv) await new Promise((r) => { srv.close(r); srv.closeAllConnections?.(); });
   if (prevMock === undefined) delete process.env.WORCA_MOCK; else process.env.WORCA_MOCK = prevMock;
   if (prevKill === undefined) delete process.env.WORCA_READINESS; else process.env.WORCA_READINESS = prevKill;
-  await Promise.all(created.map((d) => rm(d, { recursive: true, force: true, maxRetries: 3 })));
+  await Promise.all([...created, ...createdPaths].map((d) => rm(d, { recursive: true, force: true, maxRetries: 3 })));
 });
 
 const call = (method, p, body) => fetch(`${base}${p}`, { method, headers: JSONH, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -156,7 +159,7 @@ test('adding a project evaluates it in the background: a readiness-changed frame
   const c = openWs();
   await c.opened;
   try {
-    const p = await addProject(freshRepo());
+    const p = await addProject(freshRepo({ 'index.js': 'export {};\n' }));
     const frame = await waitFor(() => c.msgs.find((m) => m.type === 'readiness-changed' && m.action === p.key));
     assert.equal(frame.action, p.key);
     const list = await (await call('GET', '/api/projects')).json();
@@ -233,4 +236,43 @@ test('changing the project Run engine re-judges readiness: a readiness-changed f
   } finally {
     c.ws.close();
   }
+});
+
+test('POST /api/projects/create emits a readiness evaluation for the new project', async () => {
+  const c = openWs();
+  await c.opened;
+  try {
+    const res = await call('POST', '/api/projects/create', { name: 'rd-created-1' });
+    assert.equal(res.status, 201);
+    const { project } = await res.json();
+    createdPaths.push(project.path);
+    await waitFor(() => c.msgs.find((m) => m.type === 'readiness-changed' && m.action === project.key));
+  } finally { c.ws.close(); }
+});
+
+test('an empty new project gets no readiness-added toast', async () => {
+  const c = openWs();
+  await c.opened;
+  try {
+    const res = await call('POST', '/api/projects/create', { name: 'rd-created-empty' });
+    const { project } = await res.json();
+    createdPaths.push(project.path);
+    await waitFor(() => c.msgs.find((m) => m.type === 'readiness-changed' && m.action === project.key));
+    await new Promise((r) => setTimeout(r, 300));
+    assert.equal(c.msgs.some((m) => m.type === 'readiness-added' && m.projectKey === project.key), false);
+  } finally { c.ws.close(); }
+});
+
+test('POST /api/projects useGit:true is evaluated', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worca-cc-rd-usegit-'));
+  created.push(dir);
+  writeFileSync(join(dir, 'index.js'), 'export {};\n');
+  const c = openWs();
+  await c.opened;
+  try {
+    const res = await call('POST', '/api/projects', { name: 'rd-usegit', path: dir, useGit: true });
+    assert.equal(res.status, 200, await res.clone().text());
+    const { project } = await res.json();
+    await waitFor(() => c.msgs.find((m) => m.type === 'readiness-added' && m.projectKey === project.key));
+  } finally { c.ws.close(); }
 });

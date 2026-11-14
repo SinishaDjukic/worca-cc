@@ -124,6 +124,13 @@ test('POST /api/agents/generate: missing name -> 400; missing purpose without us
   assert.equal((await post('/api/agents/generate', { name: 'X', userMarkdown: '# body' })).status, 200);
 });
 
+test('POST /api/agents/generate: an unknown projectKey -> 400; no projectKey -> 200', async () => {
+  const bad = await post('/api/agents/generate', { name: 'X', purpose: 'p', projectKey: 'no-such-00000000' });
+  assert.equal(bad.status, 400);
+  assert.match((await bad.json()).error, /unknown projectKey/);
+  assert.equal((await post('/api/agents/generate', { name: 'X', purpose: 'p' })).status, 200);
+});
+
 // ── WS subscribe/replay (?genId=) ───────────────────────────────────────────
 
 test('WS ?genId= replays buffered agentgen events tagged with genId', async () => {
