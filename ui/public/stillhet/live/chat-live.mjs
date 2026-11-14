@@ -156,7 +156,7 @@ export function actionRunner({ fetch, toast = () => {}, notify = () => {} } = {}
 
 /** `doc`-free: the page's toast and clock come in. `send(msg)` writes a socket message; `tasksOf(threadId)` is the chat's
  *  tasks (live-map.mjs chatOf), so a run card names its store task. */
-export function startChatLive({ fetch, send = () => {}, toast = () => {}, now = Date.now, tasksOf = () => [], clipboard = null, open: openUrl = openTab, go = () => {}, progressOf = () => ({}), askOf = () => null } = {}) {
+export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toast = () => {}, now = Date.now, tasksOf = () => [], clipboard = null, open: openUrl = openTab, go = () => {}, progressOf = () => ({}), askOf = () => null } = {}) {
   const threads = new Map(), fns = new Set();
   const term = createTerminalLive({ fetch, send, now });   // D14: a command's TerminalPane
   let spare = '';   // D10: a new chat whose first message was refused and whose cleanup DELETE failed; the retry reuses it
@@ -366,6 +366,7 @@ export function startChatLive({ fetch, send = () => {}, toast = () => {}, now = 
       // POST /api/runs/bulk answers 200 with its refusals in `skipped`: none done is a refusal
       if (res.ok && Array.isArray(res.data?.skipped) && res.data.skipped.length && !(res.data.done || []).length) res = { ok: false, status: 200, error: str(res.data.skipped[0]?.reason) || 'it was skipped' };
       if (!res.ok) return refuse(a[0], res, q);
+      if (id === 'pr') afterPr();   // a PR now exists: the task's card reads it without a reload (dev's history skeleton has no PRs)
       if (args.threadId && threads.get(args.threadId)?.state === 'ready' && url.startsWith(T(args.threadId))) open(args.threadId, { force: true });
       return res;
     } finally { pending.delete(key); notify(args.threadId || ''); }

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const doc = readFileSync(new URL('../plans/rail/findings.md', import.meta.url), 'utf8');
-const OWNERS = ['feature 3', 'Projects slice', 'final cleanup PR', 'owner decision', 'dev PR (owner to open the issue)'];
+const OWNERS = ['feature 3', 'Projects slice', 'final cleanup PR', 'owner decision', 'dev PR (owner to open the issue)', 'feature 2 final check'];
 /** The rows of the table under `## title`: each a list of its cells. */
 function rows(title) {
   const at = doc.indexOf(`\n## ${title}\n`);
@@ -16,7 +16,7 @@ function rows(title) {
     .map((l) => l.slice(1, l.lastIndexOf('|')).split(' | ').map((c) => c.trim()));
 }
 
-test('every Open row reads open (owner: X), X one of the five owners', () => {
+test('every Open row reads open (owner: X), X one of the owners', () => {
   const open = rows('Open');
   assert.ok(open.length > 0, 'the rows are read');
   for (const r of open) {
