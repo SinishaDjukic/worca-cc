@@ -78,7 +78,7 @@
     let wtAsk = null;   // live: the chat worktree whose removal is being asked
     let engAsk = null;   // live: an engine switch dev asked to confirm, as it drops the chat's oldest turns
   const where = opts.where || (side ? '#ask-convo' : '#route-chat');
-  let chatId = '', comp = fresh(opts.mode), menu = '', hover = null, opened = new Set(), timer = 0;
+  let chatId = '', comp = fresh(opts.mode), menu = '', menuSub = '', hover = null, opened = new Set(), timer = 0;
   let timeShown = '';   // panel.turn-time: the key of the turn whose time a tap showed (its data-anchor or data-words-turn)
   const drafts = new Map();   // what is typed in each chat's composer, kept while another chat is open
   const sendingIn = new Set();   // the chats ('' is Chat home) whose message is on its way: a send's answer lands only there
@@ -141,9 +141,7 @@
   const liveProjects = () => (window.RailWorld?.part?.('projects') || []).filter((p) => p && p.id);
   let liveCat = null;
   const liveModels = () => liveCat?.models || [];
-  const ENGINE_NAME = { claude: 'Claude Code', codex: 'Codex', gemini: 'Gemini CLI', qwen: 'Qwen Code', copilot: 'Copilot' };
   const modelOf = (id) => liveModels().find((m) => m.id === id) || null;
-  const liveEngineItems = () => { const by = new Map(); for (const m of liveModels()) { const e = m.engine || 'claude'; if (!by.has(e)) by.set(e, []); by.get(e).push(m); } return [...by].flatMap(([e, ms], i) => [...(i ? [{ sep: true }] : []), { header: ENGINE_NAME[e] || e }, ...ms.map((m) => ({ id: m.id, text: m.label || m.id, checked: m.id === comp.engine }))]); };
   // dev's MCP off ("Sets", ask-panel.mjs; from Advanced, only when a set brings a server or a skill): each set in play is a
   // tick, its preview from POST /api/ask/mcp-preview; a change is dev's PATCH {mcpOff}, or, on Chat home, rides the send
   let liveSets = { key: null, sets: [], failed: false };
@@ -186,6 +184,10 @@
   const ENGINE_MODELS = [['Claude Code', ['Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5']], ['Codex', ['Codex 5', 'Codex mini']], ['Gemini CLI', ['Gemini Pro', 'Gemini Flash']]];
   const ENGINES = ENGINE_MODELS.flatMap(([, ms]) => ms);
   const ENGINE_ITEMS = ENGINE_MODELS.flatMap(([e, ms], i) => [...(i ? [{ sep: true }] : []), { header: e }, ...ms.map((m) => ({ id: m, text: m }))]);
+  // the composer's models by who makes them (comp.menu-sub): a demo row's id is its words, as a proposal prints comp.engine
+  const DEMO_ENGINE = { 'Claude Code': 'claude', Codex: 'codex', 'Gemini CLI': 'gemini' };
+  const DEMO_MODELS = [...ENGINE_MODELS.flatMap(([e, ms]) => ms.map((m) => ({ id: m, label: m, engine: DEMO_ENGINE[e] }))), { id: 'Sonnet 5.5 · Copilot', label: 'Sonnet 5.5', engine: 'copilot' }];
+  const modelPicker = (rows, text) => R.sentencePicker({ id: 'cp-engine', text, tip: 'Which model; grouped by who makes it', items: R.makerItems(rows, { chosen: comp.engine }), open: menu === 'cp-engine', openSub: menu === 'cp-engine' ? menuSub : '', chevron: R.icon('chevron', 10) });
   // one picker for where it runs: each project's state at choice time; workspaces (organizational, and a run target as in dev) from Advanced
   const scopes = () => [...PROJECTS.map((id) => ({ id, text: id, hint: window.RailProjects?.hint(id) || '' })), ...(R.shows('advanced') && window.RailSpaces?.list().length ? [{ sep: true }, { header: 'Workspaces · projects that work together' }, ...window.RailSpaces.list().map((w) => ({ id: w.title, text: w.title, hint: window.RailSpaces.hint(w) }))] : [])];
   function sentence() {
@@ -193,12 +195,12 @@
       const m = modelOf(comp.engine), efforts = (m?.efforts || []).filter((e) => e !== '-');
       const mode = comp.intent ? '' : pk('mode', comp.mode === 'ask' ? 'Ask' : comp.mode === 'task' ? 'Task' : 'Schedule', MODES, 'Ask, start a task, or schedule one');
       const project = WP('on', pk('project', comp.project, [...liveProjects().map((p) => ({ id: p.name, text: p.name })), { id: 'No project', text: 'No project' }], 'Where it runs: the project this chat works in'));
-      const model = R.sentencePicker({ id: 'cp-engine', text: m?.label || comp.engine || 'Model', tip: 'Which engine, then its model', items: liveEngineItems(), open: menu === 'cp-engine', chevron: R.icon('chevron', 10) });
+      const model = modelPicker(liveModels(), m ? R.modelText(m) : comp.engine || 'Model');
       return mode + project + model + (efforts.length ? pk('effort', comp.effort || efforts[0], efforts, 'How hard it thinks') : '') + setsPicker();
     }
     const mode = comp.intent ? '' : pk('mode', comp.mode === 'ask' ? 'Ask' : comp.mode === 'task' ? 'Task' : 'Schedule', MODES, 'Ask, start a task, or schedule one');   // an armed starter's chip says what it is
     const project = WP('on', pk('project', comp.project, scopes(), 'Where it runs: a project or, from Advanced, a workspace'));
-    const engine = pk('engine', comp.engine, ENGINE_ITEMS, 'Which engine, then its model') + pk('effort', comp.effort || 'high', ['low', 'medium', 'high'], 'How hard it thinks');
+    const engine = modelPicker(DEMO_MODELS, comp.engine) + pk('effort', comp.effort || 'high', ['low', 'medium', 'high'], 'How hard it thinks');
     if (comp.mode === 'ask') return mode + project + engine;
     if (comp.mode === 'schedule') return mode + project + pk('every', comp.every, R.REPEATS, 'When it repeats') + (comp.every === 'every hour' ? '' : WP('at', pk('at', comp.at, R.TIMES_OF_DAY, 'What time')));
     const preset = comp.preset ? W('·') + pk('preset', comp.preset, ['No preset', ...PRESETS], 'The preset that filled it') : '';
@@ -744,6 +746,7 @@
 
   // ---- the page ----
   function paint(keepText = true) {
+    if (menu !== 'cp-engine') menuSub = '';   // the sub-menu never outlives its picker (comp.menu-sub)
     window.RailShell?.unembedRun?.(root);   // the task page lent to an open card goes home before the chat redraws
     paintOnly(keepText);
     attention();   // what waits on you breathes after every redraw, until you have seen it
@@ -1182,6 +1185,7 @@
   root.addEventListener('click', (e) => {
     if (e.target.closest('#card')) return;   // inside an open card's stages: the task page answers its own clicks
     const on = (q) => e.target.closest(q); let hit;
+    if ((hit = on('.spick [data-menu-sub]:not([aria-disabled="true"])'))) { menuSub = hit.dataset.menuSub; paint(); return; }   // a maker opens in place; the back row returns (comp.menu-sub)
     if (LIVE() && liveClick(e, on)) return;
     if ((hit = on('[data-failed-details]'))) { const x = turns().find((y) => y.id === hit.dataset.failedDetails); if (x) { x.details = !x.details; paint(); root.querySelector(`[data-failed-details="${CSS.escape(x.id)}"]`)?.focus(); } return; }
     if ((hit = on('[data-failed-retry]'))) { const l = turns(), k = l.findIndex((y) => y.id === hit.dataset.failedRetry); if (k >= 0) { l.splice(k, 1, { t: 'words', html: 'Ana is on call this weekend; Sam takes over on Monday.' }); paint(); } return; }   // the demo answers on the second try
@@ -1235,7 +1239,7 @@
     if ((hit = on('[data-card-yes], [data-card-no]'))) { const t = taskOf(hit.dataset.cardYes || hit.dataset.cardNo); if (t) { const c = t.confirm; t.confirm = null; if (hit.dataset.cardYes && c?.flow.schedule) { window.RailSchedules?.act(t.id, 'delete'); paint(); } else if (hit.dataset.cardYes && c) doAct(t, c.label, c.flow); else paint(); } return; }
     if (on('[data-cp-unabout]')) { e.preventDefault(); const a = comp.about; if (a?.binds) comp[a.binds] = a.was; comp.about = null; paint(); return; }
     if ((hit = on('[data-cp-unfile]'))) { e.preventDefault(); comp.files = comp.files.filter((f) => f !== hit.dataset.cpUnfile); paint(); return; }
-    if ((hit = on('[data-menu]'))) { e.preventDefault(); menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; if (menu !== 'cl-label') labelQ = ''; paint(); if (menu === 'cl-label') { keepLabelQ(); if (LIVE()) readLabels(); } return; }
+    if ((hit = on('[data-menu]'))) { e.preventDefault(); menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; menuSub = ''; if (menu !== 'cl-label') labelQ = ''; paint(); if (menu === 'cl-label') { keepLabelQ(); if (LIVE()) readLabels(); } return; }
     if (on('[data-anchor-open]')) { menu = menu === 'anchors' ? '' : 'anchors'; paint(); return; }
     if (on('[data-cp-send]')) { e.preventDefault(); send(); return; }
     if (on('[data-cp-stop]')) { e.preventDefault(); clearTimeout(timer); const c = chat(), l = turns(), i = l.findIndex((x) => x.t === 'working'); if (i >= 0) l.splice(i, 1, { t: 'words', html: 'Stopped.' }); comp.busy = false; if (c) c.state = 'idle'; window.RailChats.refresh(); paint(); return; }
@@ -1421,6 +1425,7 @@
     labelQ = ''; window.RailChats.refresh(); refreshAll(); keepLabelQ(); if (isNew) say(`Labelled ${v}`);   // already on it: nothing happened, nothing to say
   });
   root.addEventListener('keydown', (e) => { if (e.key === 'Escape' && e.target.matches('[data-composer-t]') && comp.intent && !menu) { e.stopPropagation(); comp.intent = ''; paint(); root.querySelector('[data-composer-t]')?.focus(); } });   // Esc takes the armed starter off, as its ×
+  root.addEventListener('keydown', (e) => R.menuKeys(e, { openSub: (id) => { menuSub = id; paint(); }, closeSub: () => { menuSub = ''; paint(); } }));   // a picker's keys (comp.menu-sub), before Enter-to-send
   root.addEventListener('keydown', (e) => { if (e.target.matches('[data-composer-t]') && e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
   root.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.matches('[data-card-form] input')) { e.preventDefault(); e.target.closest('[data-card-form]').querySelector('[data-confirm="yes"]')?.click(); } });   // a form under a card: Enter is its action
   document.addEventListener('keydown', (e) => {
@@ -1430,7 +1435,7 @@
     const next = e.key === ']' ? list.find((t) => t.at > now + 0.01) : [...list].reverse().find((t) => t.at < now - 0.01);
     if (next) { e.preventDefault(); goTo(next.id); }
   });
-  R.dismissOnOutside(document, { open: () => !!menu, inside: `${where} .spick, ${where} .rc-pop, ${where} [data-anchor-menu], ${where} .composer-at`, back: () => null, close: () => { menu = ''; }, paint: () => paint() });
+  R.dismissOnOutside(document, { open: () => !!menu, inside: `${where} .spick, ${where} .rc-pop, ${where} [data-anchor-menu], ${where} .composer-at`, back: () => null, close: () => { menu = ''; menuSub = ''; }, paint: () => paint(), esc: () => { if (!menuSub) return false; const was = menuSub; menuSub = ''; return `${where} [data-menu-sub="${was}"]`; } });
 
   const api = {
     isSide: side,
