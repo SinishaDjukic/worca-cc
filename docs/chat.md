@@ -57,6 +57,9 @@ A started run becomes a live card. It shows the status, elapsed time, cost, the 
 **Open run**. From the card you **Pause**, **Resume** or **Stop** the run and answer its questions. Once it ends, the
 card shows the result, the top changed files, the artifacts and **Create PR**.
 
+With **Check how clear a task prompt is** on, a task typed in the composer shows its kind and grade in a chip in the
+lead row; pick another kind to check it again ([prompt-check.md](prompt-check.md#the-chip)).
+
 While the chat follows a live run, the composer's **→** chip, named after the run, sends a direction to the run
 instead of a message to the chat. The chat still posts when the run waits for an answer, pauses, fails or finishes.
 

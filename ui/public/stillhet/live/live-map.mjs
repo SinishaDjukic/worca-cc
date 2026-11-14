@@ -5,6 +5,7 @@
 import { needsYou, needsYouItems, prNeedsOf, FAILED, roundMarkerOf } from '../../../../src/shared/needs-you.mjs';
 import { dayBucket } from '../../../../src/shared/day-buckets.mjs';
 import { pick } from './model-shape.mjs';
+import { repeatOf, atOf } from './schedule-rule.mjs';
 
 const lc = (v) => String(v || '').toLowerCase();
 const str = (v) => (typeof v === 'string' ? v : '');
@@ -134,12 +135,12 @@ const savedItem = (row) => ({ kind: 'hist', id: row.id, status: row.status, prNe
 /** A live run: a `hello.runs` entry or a `run-created` frame, patched by its frames (live-adapter.mjs). */
 export function taskOfLive(run = {}, { now = 0, projects = [], needs, checks = null } = {}) {
   const item = liveItem(run), it = needs === undefined ? item : { ...item, needs }, c = caseOf(it, { checks });
-  return pick('task', { id: str(run.runId), case: c, ...(overOf(it, c) ? { over: true } : {}), ...(lc(run.status) === 'interrupted' ? { interrupted: true } : {}), title: str(run.title) || 'Untitled task', project: str(run.projectName) || projectName(run.projectDir, projects), detail: detailOf(run, item.ask), time: timeOf(run.startedAt, now), day: dayOf(run.startedAt, now), labels: labelsOf(run), cost: num(run.totalCostUsd), archived: false, unread: !!run.unread, pr: '', group: '', kind: kindOf(run), by: byOf(run), workflow: '' });
+  return pick('task', { id: str(run.runId), case: c, ...(overOf(it, c) ? { over: true } : {}), ...(lc(run.status) === 'interrupted' ? { interrupted: true } : {}), ...(lc(run.status) === 'paused' ? { paused: true } : {}), title: str(run.title) || 'Untitled task', project: str(run.projectName) || projectName(run.projectDir, projects), detail: detailOf(run, item.ask), time: timeOf(run.startedAt, now), day: dayOf(run.startedAt, now), labels: labelsOf(run), cost: num(run.totalCostUsd), archived: false, unread: !!run.unread, pr: '', group: '', kind: kindOf(run), by: byOf(run), workflow: '' });
 }
 /** A saved run: a `GET /api/history` row. */
 export function taskOfSaved(row = {}, { now = 0, needs, checks = null } = {}) {
   const item = savedItem(row), at = Number.isFinite(ms(row.mtime)) ? row.mtime : row.startedAt, it = needs === undefined ? item : { ...item, needs }, c = caseOf(it, { checks });
-  return pick('task', { id: str(row.id), case: c, ...(overOf(it, c) ? { over: true } : {}), ...(lc(row.status) === 'interrupted' ? { interrupted: true } : {}), title: str(row.title) || 'Untitled task', project: str(row.projectName), detail: lc(row.status) === 'paused' ? shortDetail(row) : prLine(c, checks) || DETAIL[lc(row.status)] || '', time: timeOf(at, now), day: dayOf(at, now), labels: labelsOf(row), cost: num(row.totalCostUsd), archived: !!row.archived, unread: false, pr: prUrlOf(row.pr), group: '', kind: kindOf(row), by: byOf(row), workflow: '' });
+  return pick('task', { id: str(row.id), case: c, ...(overOf(it, c) ? { over: true } : {}), ...(lc(row.status) === 'interrupted' ? { interrupted: true } : {}), ...(lc(row.status) === 'paused' ? { paused: true } : {}), title: str(row.title) || 'Untitled task', project: str(row.projectName), detail: lc(row.status) === 'paused' ? shortDetail(row) : prLine(c, checks) || DETAIL[lc(row.status)] || '', time: timeOf(at, now), day: dayOf(at, now), labels: labelsOf(row), cost: num(row.totalCostUsd), archived: !!row.archived, unread: false, pr: prUrlOf(row.pr), group: '', kind: kindOf(row), by: byOf(row), workflow: '' });
 }
 
 // ---- chats ----
@@ -152,11 +153,11 @@ export function projectKeyOf(thread = {}) {
   const c = thread && typeof thread.context === 'object' ? thread.context : null;
   return c && c.pinned !== false ? str(c.projectKey) : '';
 }
-export function chatOf(thread = {}, { now = 0, unread = [], links = [], tasks = [], projects = [], livePids = new Map() } = {}) {
+export function chatOf(thread = {}, { now = 0, unread = [], links = [], tasks = [], projects = [], livePids = new Map(), schedules = [] } = {}) {
   const key = projectKeyOf(thread), project = key ? str(arr(projects).find((p) => p && p.key === key)?.name) || key : '';
   const state = thread.waiting ? 'needs-you' : thread.inFlight ? 'replying' : 'idle';
   const o = thread.origin && typeof thread.origin === 'object' ? { platform: str(thread.origin.platform) || str(thread.origin.plugin), label: str(thread.origin.label) } : null;
-  return pick('chat', { id: str(thread.id), title: str(thread.title) || 'New chat', state, kind: (thread.startedRuns || 0) > 0 ? 'started' : (thread.runLinks || 0) > 0 ? 'tracks' : 'chat', project, time: timeOf(thread.updatedAt, now), day: dayOf(thread.updatedAt, now), cost: num(thread.totals?.costUsd), pinned: !!thread.pinnedAt, archived: !!thread.archivedAt, unread: unread.includes(thread.id), group: str(thread.groupId), origin: o, rank: 0, labels: arr(thread.labels).filter((l) => typeof l === 'string'), tasks: chatTasks(str(thread.id), links, tasks, livePids) });
+  return pick('chat', { id: str(thread.id), title: str(thread.title) || 'New chat', state, kind: (thread.startedRuns || 0) > 0 ? 'started' : (thread.runLinks || 0) > 0 ? 'tracks' : 'chat', project, time: timeOf(thread.updatedAt, now), day: dayOf(thread.updatedAt, now), cost: num(thread.totals?.costUsd), pinned: !!thread.pinnedAt, archived: !!thread.archivedAt, unread: unread.includes(thread.id), group: str(thread.groupId), origin: o, rank: 0, labels: arr(thread.labels).filter((l) => typeof l === 'string'), tasks: [...chatTasks(str(thread.id), links, tasks, livePids), ...chatSchedules(str(thread.id), schedules)] });
 }
 // A chat's task: the store's task (its id is the run id live, the pipeline id saved), as chats-model.js's chat tasks read.
 // Resume gives a run a new run id while its link keeps the first one: the live run holding the link's pipeline id
@@ -176,6 +177,9 @@ function chatTasks(threadId, links, tasks, livePids = new Map()) {
   }
   return out;
 }
+// A schedule made from the chat (its `askThreadId`, scheduleOf's `chat`) is the chat's schedule task, as chats-model.js's
+// are; its card reads its word and why from RailSchedules
+const chatSchedules = (threadId, schedules) => arr(schedules).filter((s) => s && s.chat && s.chat === threadId).map((s) => ({ id: s.id, kind: 'schedule', title: s.title, time: s.time, detail: s.every }));
 /** The chat that started a run, by its run id or pipeline id: the first started link (the route answers oldest first);
  *  '' for a run a chat only follows or no chat linked. */
 export function chatOfRun(links = [], id = '') {
@@ -194,12 +198,36 @@ export function unreadOf(prev = [], frame = null, { openChat = '', hidden = fals
 
 // ---- schedules ----
 const PERIOD = { daily: 'today', weekly: 'this week', monthly: 'this month' };
-/** A schedule: a ticket (once) or a series (recurring) of `GET /api/schedules`. */
+/** A schedule: a ticket (once) or a series (recurring) of `GET /api/schedules`, with the D10 fields the page reads. */
 export function scheduleOf(item = {}, { now = 0, projects = [] } = {}) {
-  const once = item.kind === 'once', missed = once && item.status === 'missed', paused = !once && item.status === 'paused';
-  const at = once ? item.runAt || item.scheduledFor : item.nextRunAt;
+  const once = item.kind === 'once', missed = once && item.status === 'missed', paused = !once && item.status === 'paused', ended = !once && item.status === 'ended';
+  const afterTitle = once && item.after ? str(item.after.title) || 'the run before it' : '';
+  const at = once ? (afterTitle ? null : item.runAt || item.scheduledFor) : item.nextRunAt;
+  const skip = !once && !paused && !ended && Number.isFinite(ms(item.skippedRunAt)) ? str(item.skippedRunAt) || new Date(item.skippedRunAt).toISOString() : '';
   const name = projects.find((p) => p && (p.key === item.projectKey || p.path === item.projectDir))?.name || baseName(item.projectDir);
-  return pick('schedule', { id: str(item.id), title: str(item.title) || 'A schedule', project: name, chat: str(item.askThreadId), every: once ? 'Once' : str(item.sentence), at: Number.isFinite(ms(at)) ? clock(ms(at)) : '', next: missed ? `Missed ${timeOf(at, now)}` : paused ? 'Paused' : at ? `Next ${nextWord(at, now)}` : '', ...(missed || paused ? {} : { day: whenOf(at, now) }), state: missed ? 'diverged' : paused ? 'paused' : 'scheduled', time: missed ? timeOf(at, now) : nextWord(at, now), section: missed ? 'needs' : paused ? 'paused' : 'next', labels: [], what: str(item.summary), cost: null, started: Number.isFinite(ms(item.createdAt)) ? dateWord(ms(item.createdAt)) : '', runs: [], ...(missed ? { missed: dateWord(ms(at)), missedWhy: str(item.failReason) || 'Worca was not running' } : {}), nextAt: missed || !Number.isFinite(ms(at)) ? null : ms(at) });
+  const word = once ? 'Once' : repeatOf(item.rule) || str(item.sentence);
+  // dev's own pause is 'user' (Paused by you); a series that paused itself says after how many failures
+  const streak = num(item.failureStreak) || num(item.maxFailures) || 0;
+  const why = !paused || !item.pauseReason || item.pauseReason === 'user' ? '' : item.pauseReason === 'failure_streak' ? `paused itself after ${streak} failure${streak === 1 ? '' : 's'} in a row` : str(item.pauseReason);
+  const next = missed ? `Missed ${timeOf(at, now)}` : paused ? (why ? 'Paused' : 'Paused by you') : ended ? '' : afterTitle ? `after ${afterTitle}` : skip ? 'Skips next time, then as usual' : at ? `Next ${nextWord(at, now)}` : '';
+  return pick('schedule', { id: str(item.id), title: str(item.title) || 'A schedule', project: name, chat: str(item.askThreadId), every: word, at: (!once && atOf(item.rule)) || (Number.isFinite(ms(at)) ? clock(ms(at)) : ''), next, ...(missed || paused || ended ? {} : { day: whenOf(at, now) }), state: missed ? 'diverged' : paused ? 'paused' : ended ? 'ended' : 'scheduled', time: missed ? timeOf(at, now) : afterTitle ? 'after' : nextWord(at, now), section: missed ? 'needs' : paused ? 'paused' : ended ? 'ended' : 'next', labels: [], what: str(item.summary), cost: null, started: Number.isFinite(ms(item.createdAt)) ? dateWord(ms(item.createdAt)) : '', runs: [], ...(missed ? { missed: dateWord(ms(at)), missedWhy: str(item.failReason) || 'Worca was not running' } : {}), nextAt: missed || ended || !Number.isFinite(ms(at)) ? null : ms(at),
+    skip, overlap: str(item.overlap), fails: num(item.maxFailures), ifMissed: str(item.ifMissed), tz: str(item.tz || item.rule?.tz), pauseWhy: why,
+    preset: item.presetId ? str(item.presetName) || 'preset deleted' : '', after: afterTitle, ended,
+    rule: !once && item.rule && typeof item.rule === 'object' ? item.rule : null, grace: num(item.graceMin) ?? null,
+    afterRef: once && item.after?.id ? { kind: str(item.after.kind), id: str(item.after.id), policy: str(item.after.policy) || 'done' } : null });
+}
+// a fire that never became a task reads as its ticket's case (run-page-model.js "A scheduled run before it is a run")
+const TICKET_CASE = { firing: 'ticket-firing', failed: 'ticket-failed', missed: 'ticket-missed', skipped: 'ticket-skipped', canceled: 'ticket-canceled' };
+/** A series' fires (the `history` of `GET /api/schedules/:id`, newest first) as the page's runs: a started fire is the
+ *  store's task with its pipeline id (its case, its words); one that never started, its ticket's case. A pending ticket is no fire. */
+export function runsOf(history = [], tasks = [], { now = 0 } = {}) {
+  const byId = new Map(arr(tasks).filter(Boolean).map((t) => [t.id, t]));
+  return arr(history).filter((t) => t && t.status !== 'scheduled').map((t) => {
+    const task = t.status === 'fired' ? byId.get(t.pipelineId) || byId.get(t.id) : null, when = ms(t.runAt);
+    const kase = task ? str(task.case) : t.status === 'fired' ? 'finished-nogit' : TICKET_CASE[t.status] || 'ticket-ended';
+    return { day: Number.isFinite(when) ? dayOf(when, now) : 'older', date: Number.isFinite(when) ? dateWord(when) : '', time: timeOf(when, now), title: str(t.title) || 'A schedule', case: kase, stage: 0,
+      git: kase === 'merged' ? 'merged' : /fail/.test(kase) ? 'fail' : 'branch', meta: task ? str(task.detail) : str(t.failReason), wid: task ? str(task.id) : str(t.id) };
+  });
 }
 // A ticket or series still to come, and a missed one, are rows of the store too (world.js `when`, `missed`): Pulse's
 // Scheduled and Needs you read them there, as the demo's waiting rows.
@@ -260,7 +288,7 @@ const EVENTS = {
 const NOTIF_EVENT = { missed: 'schedule.missed', failed: 'schedule.failed', run_error: 'schedule.run_error', run_paused: 'schedule.run_paused', paused: 'schedule.self_paused', late: 'schedule.late', retrying: 'schedule.retrying', skipped: 'schedule.skipped', canceled: 'schedule.canceled', ended: 'schedule.ended', completed: 'schedule.completed' };
 const NAMES = { 'schedule.missed': 'Start missed', 'schedule.failed': 'Could not start', 'schedule.run_error': 'Scheduled run failed', 'schedule.run_paused': 'Run paused', 'schedule.self_paused': 'Series paused itself', 'schedule.late': 'Started late', 'schedule.retrying': 'Retrying a start', 'schedule.skipped': 'Start skipped', 'schedule.canceled': 'Start canceled', 'schedule.ended': 'Series ended', 'schedule.completed': 'Scheduled run finished', 'run.done': 'Run finished', 'run.failed': 'Task failed', 'run.paused_limit': 'Usage limit reached', 'run.paused_error': 'Paused on error', 'run.cost_cap': 'Cost cap reached' };
 const updDay = (at, now) => { const d = dayOf(at, now); return d === 'today' ? 'Today' : d === 'yesterday' ? 'Yesterday' : 'Earlier'; };
-const update = (id, e, title, meta, at, now, o = {}) => ({ id, e, g: EVENTS[e][0], sev: EVENTS[e][1], title, meta, time: timeOf(at, now) || '', day: updDay(at, now), unread: EVENTS[e][1] !== 'info' && !o.read, go: o.go || 'runs', to: o.to || 'Tasks', ...(o.run ? { run: o.run } : {}), ...(o.fix ? { fix: o.fix } : {}) });
+const update = (id, e, title, meta, at, now, o = {}) => ({ id, e, g: EVENTS[e][0], sev: EVENTS[e][1], title, meta, time: timeOf(at, now) || '', day: updDay(at, now), unread: EVENTS[e][1] !== 'info' && !o.read, go: o.go || 'runs', to: o.to || 'Tasks', ...(o.run ? { run: o.run } : {}), ...(o.about ? { about: o.about } : {}), ...(o.fix ? { fix: o.fix } : {}), ...(Number.isFinite(o.work) ? { work: o.work } : {}) });
 
 // a scheduler pause's message (src/core/scheduler.mjs: `paused (cost pipeline): DETAIL. HINT`) as the one short line
 const noteMeta = (n) => {
@@ -270,22 +298,25 @@ const noteMeta = (n) => {
   const m = /^paused \(([^)]*)\)(?::\s*([\s\S]*))?/.exec(str(n.message));
   return m ? shortDetail({ status: 'paused', pauseReason: m[1].replace(/ /g, '_'), pauseDetail: str(m[2]) }) : str(n.message).split(/\r?\n/)[0];
 };
-/** A `GET /api/notifications` row, or null when Pulse's catalogue has no event for its kind. */
+/** A `GET /api/notifications` row, or null when Pulse's catalogue has no event for its kind. `about`: the task it is about
+ *  (dev's pipelineId), so Pulse marks every update about that task read at once (#1268 D11). */
 export function updateOf(n = {}, { now = 0 } = {}) {
   const e = NOTIF_EVENT[n.kind];
   if (!e) return null;
   // a missed start can be run now from its row (the ticket's waiting row in the store, live-map's `sched:` id)
   const missed = e === 'schedule.missed' && n.ticketId ? { run: `sched:${n.ticketId}`, fix: 'Run now' } : {};
-  return update(`n${n.id}`, e, str(n.title) ? `${NAMES[e]} · ${n.title}` : NAMES[e], noteMeta(n), n.createdAt, now, { read: !!n.readAt || n.unread === false, go: 'schedules', to: 'Schedules', ...missed });
+  return update(`n${n.id}`, e, str(n.title) ? `${NAMES[e]} · ${n.title}` : NAMES[e], noteMeta(n), n.createdAt, now, { read: !!n.readAt || n.unread === false, go: 'schedules', to: 'Schedules', about: str(n.pipelineId), ...missed });
 }
-/** A run's outcome, from its History row: finished, failed or paused. */
+/** A run's outcome, from its History row: finished, failed or paused. `work`: the run's total active time (ms), which grows
+ *  only when an attempt runs, so Pulse's stored read of one outcome never matches the next outcome of the same run under the
+ *  same event, while a later write that is no new attempt (a smart title landing after the failure) keeps it (#1268). */
 export function updateOfOutcome(row = {}, { now = 0 } = {}) {
   const s = lc(row.status), at = Number.isFinite(ms(row.mtime)) ? row.mtime : row.startedAt;
   const capped = s === 'paused' && COST.test(lc(row.pauseReason));
   const e = s === 'done' ? 'run.done' : FAILED.has(s) ? 'run.failed' : capped ? 'run.cost_cap' : s === 'paused' ? (row.limitEngine ? 'run.paused_limit' : 'run.paused_error') : '';
   if (!e) return null;
   const cap = capOf(row.pauseDetail), line = capped ? (cap ? `paused at $${cap}` : 'paused at its cap') : shortDetail(row);
-  return update(`o${row.id}`, e, `${NAMES[e]} · ${str(row.title) || 'Untitled task'}`, [str(row.projectName), line].filter(Boolean).join(' · '), at, now, { go: 'run', to: 'the run page', run: str(row.id), fix: FAILED.has(s) ? 'Try again' : s === 'paused' ? 'Resume' : '' });
+  return update(`o${row.id}`, e, `${NAMES[e]} · ${str(row.title) || 'Untitled task'}`, [str(row.projectName), line].filter(Boolean).join(' · '), at, now, { go: 'run', to: 'the run page', run: str(row.id), fix: FAILED.has(s) ? 'Try again' : s === 'paused' ? 'Resume' : '', work: Number.isFinite(row.totalActiveMs) ? Math.round(row.totalActiveMs) : 0 });
 }
 
 // Away, as the profile menu's row reads it (pulse-model.js awayRow): away now, or here with or without away hours
@@ -369,19 +400,21 @@ export function snapshotOf(src = {}, { now = 0, unread = [], checksOf = null } =
   const rowIdOf = new Map([...savedOnly.map((r) => [str(r.id), str(r.id)]), ...liveRuns.filter((r) => r.pipelineId).map((r) => [str(r.pipelineId), str(r.runId)])]);
   const { groups, inGroup } = runGroupsOf(src.runGroups, runs, { now, rowIdOf });
   for (const r of runs) { const gid = inGroup.get(r.id); if (gid) r.group = gid; }
+  const schedules = items.filter((x) => x.kind === 'recurring' || ['missed', 'scheduled', 'firing'].includes(x.status)).map((x) => scheduleOf(x, { now, projects: projectsRaw }));
   return {
     runs, groups, userGroups: [],
     // the Chats Needs-you number: the server's count over every thread, not the first page's rows
     chatsNeeds: num(src.threads?.counts?.needs),
-    chats: arr(src.threads?.threads).filter((t) => t && !t.archivedAt && !t.archived).map((t) => chatOf(t, { now, unread, links: arr(src.runLinks?.links), tasks: runs, projects: projectsRaw, livePids: new Map(liveRuns.filter((r) => r.pipelineId).map((r) => [r.pipelineId, str(r.runId)])) })),
+    chats: arr(src.threads?.threads).filter((t) => t && !t.archivedAt && !t.archived).map((t) => chatOf(t, { now, unread, links: arr(src.runLinks?.links), tasks: runs, projects: projectsRaw, livePids: new Map(liveRuns.filter((r) => r.pipelineId).map((r) => [r.pipelineId, str(r.runId)])), schedules })),
     chatGroups: arr(src.groups?.groups).map((g) => ({ id: str(g.id), name: str(g.name), total: num(g.count) ?? 0 })),
-    schedules: items.filter((x) => x.kind === 'recurring' ? x.status !== 'ended' : ['missed', 'scheduled', 'firing'].includes(x.status)).map((x) => scheduleOf(x, { now, projects: projectsRaw })),
+    schedules,
     projects: projectsRaw.map((p) => projectOf(p, syncs[p.key] || null)),
     costs: costsOf(src.budget, liveRuns, { now, limits: src.usageLimits }),
     updates: [...notes, ...outcomes],
     actions: arr(src.actions).filter((a) => ['starting', 'running', 'ready'].includes(a?.status)).map((a) => ({ id: str(a.instanceId), runId: str(a.runId), run: str(a.runTitle) || 'A removed run', label: str(a.label), go: a.runId ? 'run' : '' })),
     away: awayOf(away),
     keep: src.settings?.keepAwake !== false,   // dev's rule: on unless turned off
+    chatPrefs: { promptCheck: src.settings?.chat?.promptCheck === true },   // Settings' live switches (sw.live: 'chat.…'); off unless on
     // Settings › Notifications › Pulse icon (until-read | 10s | 1m | never); anything else is the default
     pulseFor: PULSE_FOR_IDS.includes(src.settings?.pulseFor) ? src.settings.pulseFor : 'until-read',
     spaces: spacesOf(src.workspaces),
@@ -423,13 +456,13 @@ export function runGroupsOf(src, runs, { now = 0, rowIdOf = new Map() } = {}) {
 // page keeps only to offer its Undo; stale and missing edges never draw, order or ask (dev's eval.mjs drops them too)
 const LINK_STATES = new Set(['auto', 'confirmed', 'manual', 'rejected']);
 // slice 9 D5/D15: where Worca read a link, `file:line` of its first evidence on the `from` side, or nothing
-const atOf = (e) => { const ev = arr(e.evidence?.from)[0]; return ev && str(ev.file) ? { at: Number.isFinite(ev.line) ? `${str(ev.file)}:${ev.line}` : str(ev.file) } : {}; };
+const evidenceAtOf = (e) => { const ev = arr(e.evidence?.from)[0]; return ev && str(ev.file) ? { at: Number.isFinite(ev.line) ? `${str(ev.file)}:${ev.line}` : str(ev.file) } : {}; };
 export function spacesOf(src = null) {
   const maps = src?.maps && typeof src.maps === 'object' ? src.maps : {};
   return arr(src?.workspaces).filter((w) => w && str(w.id)).map((w) => {
     const exists = arr(w.exists), scannedAt = ms(w.mapSummary?.scannedAt);
     const links = arr(maps[w.id]?.edges).filter((e) => e && str(e.id) && str(e.from) && str(e.to) && LINK_STATES.has(str(e.state) || 'auto'))
-      .map((e) => ({ id: str(e.id), from: str(e.from), to: str(e.to), kind: str(e.kind), how: 'connects to', sure: str(e.confidence), state: str(e.state) || 'auto', ...atOf(e) }));
+      .map((e) => ({ id: str(e.id), from: str(e.from), to: str(e.to), kind: str(e.kind), how: 'connects to', sure: str(e.confidence), state: str(e.state) || 'auto', ...evidenceAtOf(e) }));
     return pick('space', { id: str(w.id), title: str(w.name) || 'A workspace', home: '', runs: null, scanned: Number.isFinite(scannedAt) ? dateWord(scannedAt) : 'never', model: '', about: str(w.description),
       projects: arr(w.projectKeys).map((k, i) => [str(k), exists[i] === false ? 'missing' : 'ok']), links, paths: arr(w.projectPaths).map(str) });
   });
@@ -438,7 +471,7 @@ export function spacesOf(src = null) {
 // What each source feeds: a refetch of one source replaces only these parts (D11).
 export const SOURCE_PARTS = Object.freeze({
   hello: ['runs', 'costs', 'chats', 'groups'], history: ['runs', 'updates', 'chats', 'groups'], threads: ['chats', 'chatsNeeds'], runLinks: ['chats'], groups: ['chatGroups'], runGroups: ['groups', 'runs'], schedules: ['schedules', 'runs'],
-  projects: ['projects', 'runs'], sync: ['projects'], budget: ['costs'], usageLimits: ['costs'], workspaces: ['spaces'], actions: ['actions'], notifications: ['updates'], away: ['away'], settings: ['keep', 'pulseFor'],
+  projects: ['projects', 'runs'], sync: ['projects'], budget: ['costs'], usageLimits: ['costs'], workspaces: ['spaces'], actions: ['actions'], notifications: ['updates'], away: ['away'], settings: ['keep', 'chatPrefs', 'pulseFor'],
 });
 /** The parts a single-source refetch replaces: `answer` stands for `source` among the last answers `sources`. */
 export function partOf(source, answer, sources = {}, { now = 0, unread = [], checksOf = null } = {}) {

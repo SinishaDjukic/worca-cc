@@ -66,6 +66,20 @@ test('the account menu closes when the page moves on (a hashchange): it never st
   assert.equal(w.document.querySelector('#app .acct-menu'), null, 'closed on navigation');
 });
 
+test('search: a chat\'s schedule opens its own card (Schedules D15), never the demo\'s s1', async () => {
+  const { stillhetHost } = await import('./helpers/stillhet-host.mjs');
+  const w = stillhetHost({ hash: '#chat', after }); await new Promise((r) => setTimeout(r, 200));
+  const d = w.document, c = w.RailChats.data().chats.find((x) => x.id === 'c1');
+  c.tasks = [...(c.tasks || []), { id: 's5', kind: 'schedule', title: 'Zebra digest', time: '14:30', detail: 'Every weekday at 14:30' }];
+  const box = d.querySelector('[data-search]');
+  box.value = 'zebra'; box.dispatchEvent(new w.Event('input', { bubbles: true }));
+  const hit = [...d.querySelectorAll('[data-search-res] [data-menu-pick]')].find((e) => /Zebra digest/.test(e.textContent));
+  assert.ok(hit, 'the schedule is found');
+  const opened = []; const open = w.RailShell.openTask; w.RailShell.openTask = (...a) => { opened.push(a.slice(0, 2)); return open(...a); };
+  hit.click(); await new Promise((r) => setTimeout(r, 60));
+  assert.deepEqual(opened, [['s5', 'c1']], 'its own card in its chat');
+});
+
 test('with no usage reading, Usage and costs wears an empty ring glyph and the dollar spend, never a percent (small.usage-rings)', () => {
   const { w } = appHost();
   w.PulseModel.rings = () => [];   // no provider reading: the same acctMenu draws demo and live
@@ -148,6 +162,21 @@ test('Pulse icon until read: is-news stays after 5 minutes and goes when the new
   w.document.querySelector('.pz-popover [data-menu="more"]').click();
   w.document.querySelector('[data-pick="more|allread"]').click();
   assert.equal(isNews(w), false, 'marked read: the news ends');
+});
+
+test('the demo kind keeps read in memory: opening an update writes nothing under worca-rail.pulse-read (#1268 D7)', () => {
+  const { w } = appHost();
+  w.RailPulse.newEvent('problem');
+  w.RailPulse.open('updates');
+  // a seeded unread update (not the newEvent's own row), so the click reaches the read path
+  const unreadRows = () => [...w.document.querySelectorAll('.pz-popover [data-open]:not([data-open^="try-"])')].filter((r) => r.querySelector('.pz-row-t.is-unread'));
+  const row = unreadRows()[0];
+  assert.ok(row, 'a seeded update is unread');
+  const id = row.dataset.open;
+  row.click();
+  w.RailPulse.open('updates');
+  assert.ok(!unreadRows().some((r) => r.dataset.open === id), 'it is read now, in memory');
+  assert.equal(w.localStorage.getItem('worca-rail.pulse-read'), null);
 });
 
 test('Settings › Notifications › Pulse icon: picking never removes is-news from the running icon without a reload', () => {

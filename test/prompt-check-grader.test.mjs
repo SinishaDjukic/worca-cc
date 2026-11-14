@@ -279,3 +279,50 @@ test('a task sent before its grade arrives still joins the window (before the de
   c.g.sent('Thanks!');
   assert.deepEqual(c.g.state().window, []);
 });
+
+test('regrade(kind): sends at once with kind and forceTask, aborts the in-flight check, skips the skip rules', async () => {
+  const { g, timers, calls } = make();
+  g.input(TASK);
+  timers.advance(PROMPT_CHECK_DEBOUNCE_MS);
+  assert.equal(calls.length, 1);
+  g.regrade('bug');
+  assert.equal(calls[0].aborted, true, 'the older check is aborted');
+  assert.equal(calls.length, 2, 'no debounce');
+  assert.equal(calls[1].body.kind, 'bug');
+  assert.equal(calls[1].body.forceTask, true);
+  assert.equal(calls[1].body.text, TASK);
+  assert.equal(g.state().chosenKind, 'bug');
+  const q = make();
+  q.g.input('What does the review step do?');
+  q.g.regrade('idea');
+  assert.equal(q.calls.length, 1, 'a short question is graded when a person picks its kind');
+  assert.equal(q.calls[0].body.kind, 'idea');
+});
+
+test('regrade: a reply to the older check is dropped; the chosen kind sticks for later input; sent() and empty text clear it', async () => {
+  const { g, timers, calls, results } = make();
+  g.input(TASK);
+  timers.advance(PROMPT_CHECK_DEBOUNCE_MS);
+  g.regrade('bug');
+  calls[0].reply(modelReply(calls[0]));
+  await flush();
+  assert.equal(results.length, 0, 'the older reply is stale');
+  calls[1].reply(modelReply(calls[1], { kind: 'bug' }));
+  await flush();
+  assert.equal(results.length, 1);
+  g.input(OTHER);
+  timers.advance(PROMPT_CHECK_DEBOUNCE_MS);
+  assert.equal(calls[2].body.kind, 'bug', 'the chosen kind rides every later check');
+  g.sent(OTHER);
+  assert.equal(g.state().chosenKind, null);
+  g.input(THIRD);
+  timers.advance(PROMPT_CHECK_DEBOUNCE_MS);
+  assert.equal('kind' in calls.at(-1).body, false);
+  g.regrade('plan');
+  g.input('');
+  assert.equal(g.state().chosenKind, null);
+  g.dispose();
+  const n = calls.length;
+  g.regrade('bug');
+  assert.equal(calls.length, n, 'a disposed grader sends nothing');
+});

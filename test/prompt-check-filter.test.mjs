@@ -114,3 +114,15 @@ test('deterministicAssessment: source deterministic, no model grade (a plan gets
   assert.equal(deterministicAssessment('What now?').isTask, false);
   assert.equal(deterministicAssessment('What now?', { forceTask: true }).kind, 'requirement');
 });
+
+test('deterministicAssessment: a valid forced kind pins the kind (a task, no grade); an invalid one is ignored', () => {
+  const q = 'What does the review step do?';
+  const pinned = deterministicAssessment(q, { kind: 'bug' });
+  assert.equal(pinned.kind, 'bug');
+  assert.equal(pinned.isTask, true);
+  assert.equal(pinned.grade, null);
+  assert.equal(pinned.confidence, deterministicAssessment(q).confidence);
+  assert.equal(deterministicAssessment(TASK, { kind: 'deliverable' }).kind, 'deliverable');
+  assert.deepEqual(deterministicAssessment(TASK, { kind: 'nope' }), deterministicAssessment(TASK));
+  assert.deepEqual(deterministicAssessment(TASK, { kind: 'question' }), deterministicAssessment(TASK));
+});

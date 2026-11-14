@@ -148,9 +148,9 @@ test('live, the page holds no stand-in: no "not in Stillhet yet", no RailWould, 
   assert.deepEqual(h.w.__would, []);
 });
 
-test('the demo kind sends nothing: Remove, Rename and a setting change only the demo', async () => {
+test('the demo kind sends nothing: Remove, Rename and a setting change only the demo', async (t) => {
   const calls = [];
-  const w = stillhetHost({ hash: '#projects/worca-cc', fetch: async (u, o = {}) => { calls.push([o.method || 'GET', String(u)]); return { ok: true, status: 200, json: async () => ({}) }; } });
+  const w = stillhetHost({ hash: '#projects/worca-cc', after: (fn) => t.after(fn), fetch: async (u, o = {}) => { calls.push([o.method || 'GET', String(u)]); return { ok: true, status: 200, json: async () => ({}) }; } });
   await settle(120);
   const d = w.document;
   pickMore(d, 'rename'); await settle(80);

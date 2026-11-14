@@ -6,6 +6,7 @@ import { snapshotOf, partOf, taskOfLive, unreadOf, inPlay, chatOfRun } from './l
 import { startChatLive } from './chat-live.mjs';
 import { startTaskLive } from './task-live.mjs';
 import { startWorkflowLive } from './workflow-live.mjs';
+import { startScheduleLive } from './schedule-live.mjs';
 import { startMarketLive } from './market-live.mjs';
 import { startProjectsLive } from './projects-live.mjs';
 import { progressOfState } from './chat-turns.mjs';
@@ -33,7 +34,7 @@ const RUN_FRAMES = new Set(['run-created', 'state', 'question', 'question-resolv
 const DEBOUNCE_MS = 250, BACKOFF_MS = 1000, BACKOFF_MAX_MS = 30000, TOKEN_EXPIRED = 4001;
 
 const PROJECT_FRAMES = new Set(['clone-changed', 'settings-changed', 'projects-changed', 'workspaces-changed']);
-export function startLive({ fetch, WebSocket, location, world, host = {}, prefs = null, setTimeout, clearTimeout = () => {}, now = Date.now, openChat = () => '', hidden = () => false, toast = () => {}, open = undefined, go = () => {}, download = () => {}, workflowsChanged = () => {}, marketChanged = () => {}, projectsChanged = () => {}, openSource = undefined }) {
+export function startLive({ fetch, WebSocket, location, world, host = {}, prefs = null, setTimeout, clearTimeout = () => {}, now = Date.now, openChat = () => '', hidden = () => false, toast = () => {}, open = undefined, go = () => {}, download = () => {}, workflowsChanged = () => {}, marketChanged = () => {}, projectsChanged = () => {}, openSource = undefined, on = () => {} }) {
   let sources = {}, loaded = false, listFailed = false, stopped = false, sock = null, backoff = BACKOFF_MS, reconnect = 0, queue = [], unread = [], asked = 0;
   const live = new Map(), timers = {}, stamp = {}, stale = new Set();
   const progress = new Map();   // R-ux-12: each live run's place among its stages, from its `state` frames (runProgress)
@@ -72,6 +73,9 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
         state: { status: l.status, title: l.title, branch: l.branch || null, steps: l.steps || [], totalCostUsd: l.totalCostUsd, totalActiveMs: l.totalActiveMs, pipelineCapUsd: l.pipelineCapUsd,
           pauseReason: l.pauseReason, pauseDetail: l.pauseDetail, startedAt: l.startedAt, stepper: l.stepper, ...(l.pauseAfterStep ? { pauseAfterStep: true } : {}) } };
     } });
+
+  // Schedules (D4): schedule-live owns every Schedules request; the store still moves only on the server's frames
+  const schedule = startScheduleLive({ fetch, setTimeout, clearTimeout, on, now, tasksOf: () => world.part?.('runs') || [] });
 
   async function get(url) {
     const r = await fetch(url, { headers: { Accept: 'application/json' } });
@@ -182,6 +186,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
     if (typeof f.type === 'string' && f.type.startsWith('scriptbench-')) workflow.frame(f);   // a script bench's answer (D12)
     if (PROJECT_FRAMES.has(f.type)) projectsLive.frame(f);   // a clone this tab started, a project page's settings read again (slice 9)
     task.frame(f);
+    schedule.frame(f);
     if (!loaded) { queue.push(f); return; }
     apply(f);
   }
@@ -295,7 +300,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
   function retry() { listFailed = false; world.setState({ list: 'loading' }); return begin(); }
   begin();
   return {
-    chat, task, workflow, market, projects: projectsLive,
+    chat, task, workflow, schedule, market, projects: projectsLive,
     stop: () => { stopped = true; clearTimeout(reconnect); for (const k of Object.keys(timers)) clearTimeout(timers[k]); sock?.close(); },
     refresh,
     retry,

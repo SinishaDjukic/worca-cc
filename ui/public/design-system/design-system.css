@@ -80,4 +80,9 @@
 :is(.badge,.flag-chip,.issue-sev,.artifact-kind,.tp-kind,.sk-kind,.team-chip .kind,.hd-ov-file-kind,.ask-mcard-kind,.wf-log-live,.kind-chip,.tag-chip,.ps-pill,.ask-cmd-pill,.tp-tab-badge){
   display:inline-flex;align-items:center;height:18px;padding-top:0;padding-bottom:0;
   border-radius:var(--r-xs);font:500 11px/1 var(--sans);letter-spacing:0;text-transform:none;white-space:nowrap;}
+/* The prompt check chip (docs/prompt-check.md "The chip"): a SentencePicker (the kind) and a Chip (the grade). It wraps
+   as a whole onto its own line at narrow widths, and the badge drops under the picker; no label is ever cut. */
+.pcheck{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;max-width:100%;font-size:var(--fs-caption);}
+.pcheck-grade{padding:0 6px;background:var(--hover);color:var(--ink-2);}
+.pcheck-grade.is-needs-detail{background:var(--amber-bg);color:var(--amber-ink);}
 

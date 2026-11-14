@@ -8,7 +8,7 @@ import { budgetStatus, recordUtilityCost } from '../../../src/core/cost-budget.m
 import { chatPrefs } from '../../../src/core/settings.mjs';
 import { chatDescriptor } from '../../../src/core/engines/chat.mjs';
 import { claimGrade, releaseGrade, gradeModel, gradePrompt } from '../../../src/core/prompt-check/grade.mjs';
-import { PROMPT_CHECK_WINDOW } from '../../../src/shared/prompt-check/assessment.mjs';
+import { PROMPT_CHECK_WINDOW, PROMPT_KINDS } from '../../../src/shared/prompt-check/assessment.mjs';
 import { skipReason, textHash, deterministicAssessment } from '../../../src/shared/prompt-check/filter.mjs';
 import { badRequest } from '../../server.mjs';
 
@@ -37,21 +37,25 @@ function validate(b) {
   const engine = b.engine == null ? 'claude' : b.engine;
   if (engine !== 'claude' && (typeof engine !== 'string' || !chatDescriptor(engine))) return { error: 'unknown engine' };
   if (b.chatModel != null && (typeof b.chatModel !== 'string' || !CHAT_MODEL_RE.test(b.chatModel))) return { error: 'chatModel is invalid' };
+  // A person's kind pick (D10): pins the kind and makes the text a task on every surface, so no skip rule applies.
+  if (b.kind != null && !PROMPT_KINDS.includes(b.kind)) return { error: 'kind is invalid' };
+  const kind = b.kind ?? null;
   return {
     requestId: b.requestId,
     surfaceKind: s.kind,
     surfaceKey: `${s.kind}:${s.id}`,
     text: b.text,
     window: win.filter((w) => typeof w === 'string').map((w) => w.slice(0, WINDOW_ITEM_MAX)),
-    forceTask: FORCE_TASK_SURFACES.has(s.kind) && b.forceTask !== false,
+    forceTask: kind !== null || (FORCE_TASK_SURFACES.has(s.kind) && b.forceTask !== false),
+    kind,
     engine,
     chatModel: b.chatModel ?? null,
   };
 }
 
 /** The one log line of a request: fixed fields only (never text, window, an error message or the reply). */
-function logLine({ source, skip = null, error = null, surface, startedMs }) {
-  console.log(`[worca] prompt-check ${source}${skip ? ` skip=${skip}` : ''}${error ? ` error=${error}` : ''} surface=${surface} ${Date.now() - startedMs}ms`);
+function logLine({ source, skip = null, error = null, surface, forced = false, startedMs }) {
+  console.log(`[worca] prompt-check ${source}${skip ? ` skip=${skip}` : ''}${error ? ` error=${error}` : ''} surface=${surface}${forced ? ' kind=forced' : ''} ${Date.now() - startedMs}ms`);
 }
 
 export function register(app) {
@@ -63,6 +67,7 @@ app.post('/api/prompt-check/grade', async (req, res) => {
     const v = validate(req.body || {});
     if (v.error) return badRequest(res, v.error);
     surface = v.surfaceKind;
+    const forced = v.kind !== null;
     const { requestId } = v;
     if (chatPrefs().promptCheck !== true) return res.json({ requestId, source: 'off' });
     const hash = textHash(v.text);
@@ -70,8 +75,8 @@ app.post('/api/prompt-check/grade', async (req, res) => {
     if (skip) return res.json({ requestId, textHash: hash, source: 'skipped', skip });
     if (!bucket.tryConsume()) return res.status(429).json({ error: 'too many checks, try again in a moment' });
     const fallback = (error) => {
-      logLine({ source: 'deterministic', error, surface, startedMs });
-      return res.json({ requestId, textHash: hash, source: 'deterministic', assessment: deterministicAssessment(v.text, { forceTask: v.forceTask }), error });
+      logLine({ source: 'deterministic', error, surface, forced, startedMs });
+      return res.json({ requestId, textHash: hash, source: 'deterministic', assessment: deterministicAssessment(v.text, { forceTask: v.forceTask, kind: v.kind }), error });
     };
     if (budgetStatus().blocked) return fallback('total cost limit reached');
     const model = gradeModel(v.engine, { chatModel: v.chatModel });
@@ -79,14 +84,14 @@ app.post('/api/prompt-check/grade', async (req, res) => {
     res.on('close', () => { if (!res.writableEnded) closed.abort(); });
     const ctl = claimGrade(v.surfaceKey);
     try {
-      const r = await gradePrompt({ text: v.text, window: v.window, forceTask: v.forceTask }, {
+      const r = await gradePrompt({ text: v.text, window: v.window, forceTask: v.forceTask, kind: v.kind }, {
         model, engine: v.engine, signal: AbortSignal.any([ctl.signal, closed.signal]),
         onCost: (c) => { try { recordUtilityCost('prompt-check', c); } catch { /* a ledger write never fails a check */ } },
       });
       if (res.headersSent || closed.signal.aborted) return undefined;
       if (r.source === 'aborted') return res.json({ requestId, source: 'superseded' });
       if (r.source === 'deterministic') {
-        logLine({ source: r.source, error: r.error, surface, startedMs });
+        logLine({ source: r.source, error: r.error, surface, forced, startedMs });
         return res.json({ requestId, textHash: hash, source: r.source, assessment: r.assessment, error: r.error });
       }
       return res.json({ requestId, textHash: hash, source: r.source, assessment: r.assessment });
