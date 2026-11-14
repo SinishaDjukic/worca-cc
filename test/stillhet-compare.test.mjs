@@ -13,7 +13,8 @@ test('countDiffPixels: 0 for equal buffers, 1 for one changed channel, w*h for a
 
 test('PARTS lists the invitation, the design switch, one whole-page cell per shell route and one per non-default state', () => {
   assert.deepEqual(PARTS.map((p) => p.id), ['invitation', 'design-switch', ...ROUTES.map((r) => `route-${r}`), ...STATES.map(([s]) => `state-${s}`), ...PULSE_STATES.map(([s]) => `state-${s}`), ...CHAT_STATES.map(([s]) => `state-${s}`),
-    'state-task-loading-run', 'state-task-failed-run', 'state-task-gone-run', 'action-failed-run', 'terminal-chat']);
+    'state-task-loading-run', 'state-task-failed-run', 'state-task-gone-run', 'action-failed-run', 'terminal-chat',
+    'schedules-empty', 'schedules-loading', 'schedules-failed', 'schedule-skipped', 'schedule-draft', 'schedule-deleted-undo']);
   assert.deepEqual(PAGES, ['components.html', 'run-page.html', 'pulse.html']);
 });
 
@@ -361,4 +362,13 @@ test('TASKS_CELL_IDS (Stillhet Tasks): every Tasks cell is a part or a shown dee
   const all = TASKS_CELL_IDS.flatMap((part) => CELLS.map(([theme, width]) => ({ part, theme, width })));
   assert.deepEqual(tasksCoverage(all), []);
   assert.deepEqual(tasksCoverage(all.filter((c) => !(c.part === 'route-chat-c18' && c.width === 360))), ['route-chat-c18 light 360']);
+});
+
+test('SCHEDULES_CELL_IDS (Stillhet Schedules, D14): the six Schedules cells, each opened by the same address (and clicks) in both hosts', async () => {
+  const { SCHEDULES_CELL_IDS, SHOWN } = await import('../tools/stillhet-compare.mjs');
+  const ids = new Set([...PARTS.map((p) => p.id), ...SHOWN.map((h) => deepPart(h).id)]);
+  for (const id of SCHEDULES_CELL_IDS) assert.ok(ids.has(id), id);
+  const six = ['schedules-empty', 'schedules-loading', 'schedules-failed', 'schedule-draft', 'schedule-deleted-undo', 'schedule-skipped'];
+  for (const id of six) { const p = PARTS.find((x) => x.id === id); assert.ok(p, id); assert.equal(p.app.route, p.proto.route, id); }
+  assert.deepEqual(PARTS.find((x) => x.id === 'schedule-draft').seed, ['#route-schedule [data-menu="sc-at"]', '#route-schedule [data-menu-pick="sc-at|10:00"]']);
 });

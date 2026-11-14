@@ -31,3 +31,25 @@ test('a brief look books feature_seq 0 with its brief id and counts toward the w
   const row = prepare('SELECT feature_seq, brief_id FROM req_cost_ledger WHERE ts = ?').get(t0 + 1);
   assert.deepEqual({ ...row }, { feature_seq: 0, brief_id: 4 });
 });
+
+test("9c: an 'unknown' cost kind books a $0 row that leaves the window spend unchanged; a billed $0 still books nothing", () => {
+  const t0 = Date.UTC(2027, 2, 1);
+  recordRequirementsCostDelta({ featureSeq: 5, amountUsd: 0.25, model: 'm', engine: 'claude', step: 'round', tsMs: t0 + 1 });
+  const before = requirementsWindowedSpendUsd(t0);
+  recordRequirementsCostDelta({ featureSeq: 5, amountUsd: 0, model: 'm', engine: 'gemini', step: 'look', costKind: 'unknown',
+    inputTokens: 12, outputTokens: 5, tsMs: t0 + 2 });
+  recordRequirementsCostDelta({ featureSeq: 5, amountUsd: 0, costKind: 'billed', tsMs: t0 + 3 });
+  recordRequirementsCostDelta({ featureSeq: 5, amountUsd: 0, costKind: 'estimated', tsMs: t0 + 4 });
+  assert.equal(requirementsWindowedSpendUsd(t0), before);
+  const rows = prepare('SELECT amount_usd, engine, step, cost_kind, input_tokens, output_tokens FROM req_cost_ledger WHERE ts >= ? AND ts < ? ORDER BY ts')
+    .all(t0, t0 + 10);
+  assert.equal(rows.length, 2);
+  assert.deepEqual({ ...rows[0] }, { amount_usd: 0.25, engine: 'claude', step: 'round', cost_kind: 'billed', input_tokens: null, output_tokens: null });
+  assert.deepEqual({ ...rows[1] }, { amount_usd: 0, engine: 'gemini', step: 'look', cost_kind: 'unknown', input_tokens: 12, output_tokens: 5 });
+});
+
+test('9c: an estimated row counts toward the window like a billed one', () => {
+  const t0 = Date.UTC(2027, 3, 1);
+  recordRequirementsCostDelta({ featureSeq: 6, amountUsd: 0.04, costKind: 'estimated', tsMs: t0 + 1 });
+  assert.equal(requirementsWindowedSpendUsd(t0, t0 + 10), 0.04);
+});

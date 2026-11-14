@@ -60,7 +60,7 @@ Each model file seeds figures the live adapter replaces. One row per file here; 
 | `ui/public/stillhet/runs/run-page-model.js` | a run's stages, times, cost, loops and PR | wired | the live page's stages, cost, cap, time and PR are `ui/public/stillhet/live/task-page.mjs` taskPageOf (`GET /api/history/:key/:id`, state frames, `GET /api/pr/checks`); Changes, documents, Logs, Agents, Sessions and Step usage are `RailTaskLive.parts` (the diff, `GET /api/runs/:id/artifacts`, the log, the steps, `GET /api/runs/:id/sessions`, `GET /api/runs/:id/telemetry`); the design's sample step times and notes are blanked (M.liveRun); a group's page is `M.liveGroup` over `GET /api/run-groups` |
 | `ui/public/stillhet/chat/chats-model.js` | the chats and their turns | wired | `ui/public/stillhet/live/live-adapter.mjs`: `GET /api/ask/threads?show=all` and `GET /api/ask/run-links` (each chat's started and followed tasks, `live-map.mjs` `chatOf`); a thread's turns from `GET /api/ask/threads/:id` and the `ask-*` frames (`live/chat-live.mjs`, `live/chat-turns.mjs`) |
 | `ui/public/stillhet/pulse/pulse-model.js` | the Pulse updates, away and budget figures | wired | `ui/public/stillhet/live/live-adapter.mjs`: `GET /api/notifications` and run outcomes (updates), `GET /api/budget` (spend), limit pauses (usage), `GET /api/actions/running`, `GET /api/away-mode` |
-| `ui/public/stillhet/schedules/schedules-model.js` | the schedules and their next times | wire to | the schedules API |
+| `ui/public/stillhet/schedules/schedules-model.js` | the schedules and their next times | wired | `ui/public/stillhet/live/live-map.mjs` `scheduleOf` over `GET /api/schedules` (with `skippedRunAt`, the Expert facts, preset, run-after, ended); each schedule's runs from `GET /api/schedules/:id` `history` (`live/schedule-live.mjs` `runs`, `runsOf`) |
 | `ui/public/stillhet/settings/settings-model.js` | every Settings value and model list | wire to | the settings, models and providers routes |
 | `ui/public/stillhet/insights/insights-model.js` | spend, runs and team figures | wire to | the statistics and team-metrics APIs; the person filter, Shaper spend, Quarter and Year ranges and the team heat grid are "add to the design first" |
 
@@ -100,7 +100,7 @@ One row per action: `npm run stillhet:wiring` lists every `window.RailWould(...)
 | `design-system/components/run-state.mjs › copy the link to {pr}` | wired | on a chat TaskCard (`RailChatLive.flow`, `ui/public/stillhet/live/chat-live.mjs` FLOW): Copy PR link writes the run's `pr.url` (runs API) to the clipboard; a run with no PR does not offer it |
 | `design-system/components/run-state.mjs › copy: git switch {groupBranch}` | not offered live | a feature's one branch exists only once dev's ship-group combine made it (`ui/public/ship-group-dialog.mjs`); the live group page (`M.liveGroup`) offers Merge #N and Fix checks on #N, and each member's page its own Copy git commands (for the controller: Check out the whole feature needs dev's combine run first) |
 | `design-system/components/run-state.mjs › download the patch` | wired | on a chat TaskCard (`RailChatLive.flow`, `ui/public/stillhet/live/chat-live.mjs` FLOW): Download patch opens `GET /api/runs/:id/recovery-patch` (a folder run: `GET /api/runs/:id/changes/patch`) in a new tab |
-| `design-system/components/run-state.mjs › open Settings › Projects; point it at the folder, then Start now` | not offered live | a missed ticket's project is the Schedules slice's; the Tasks live map never draws the ticket-failed case |
+| `design-system/components/run-state.mjs › open Settings › Projects; point it at the folder, then Start now` | wired | a failed ticket's Open project is now a real step (`go: 'projects/{project}'`): the schedule page's ticket card opens `projects/KEY` through `RailShell.go`, and its Start now posts `POST /api/schedules/:id/run-now` for that ticket; pointing it at the folder is the Projects slice's (`plans/rail/findings.md`) |
 | `design-system/components/run-state.mjs › open Settings › Tasks › Budget` | wired | on a chat TaskCard (`RailChatLive.flow`, `ui/public/stillhet/live/chat-live.mjs` FLOW): Open budget settings goes to `settings/runs` (Budget) through `RailShell.go` |
 | `design-system/components/run-state.mjs › open Settings › Tasks › Budget; Resume opens once there is room` | wired | on a chat TaskCard (`RailChatLive.flow`, `ui/public/stillhet/live/chat-live.mjs` FLOW): Open Settings goes to `settings/runs` (Budget) through `RailShell.go` |
 | `design-system/components/run-state.mjs › open Settings › Team › Policy` | wired | on a chat TaskCard (`RailChatLive.flow`, `ui/public/stillhet/live/chat-live.mjs` FLOW): Open Team policy goes to `settings/team` through `RailShell.go` |
@@ -207,8 +207,8 @@ One row per seeded figure: each data key and seed getter of the globals a model 
 | `runs/runs-model.js › RunsListModel.DAYS` | wired | the demo days; a live row's day is `dayOf` from its start |
 | `chat/chats-model.js › ChatsListModel.seed` | wired | in the live kind the chats, their groups and their tasks come from `RailWorld.part('chats')` and `part('chatGroups')` (`live/live-map.mjs` `chatOf`: `GET /api/ask/threads?show=all`, `GET /api/ask/groups`, `GET /api/ask/run-links`); the day sections are dev's `dayBucket` |
 | `chat/chats-model.js › ChatsListModel.DAYS` | wired | in the live kind the chats, their groups and their tasks come from `RailWorld.part('chats')` and `part('chatGroups')` (`live/live-map.mjs` `chatOf`: `GET /api/ask/threads?show=all`, `GET /api/ask/groups`, `GET /api/ask/run-links`); the day sections are dev's `dayBucket` |
-| `schedules/schedules-model.js › SchedulesModel.seed` | wire to | the schedules API |
-| `schedules/schedules-model.js › SchedulesModel.TODAY` | wire to | the schedules API |
+| `schedules/schedules-model.js › SchedulesModel.seed` | wired | the demo's seed; live, the store's schedules (`RailWorld.part('schedules')`, `GET /api/schedules`) with each one's runs (`RailScheduleLive.runs`) |
+| `schedules/schedules-model.js › SchedulesModel.TODAY` | wired | the demo's fixed today; live, the local midnight of the real today, and every next time is the server's `nextRunAt` |
 | `settings/settings-model.js › SettingsModel.ICONS` | wire to | the models and engines routes, the team policy routes, the Labs guide in `docs/feature-flags.md` |
 | `settings/settings-model.js › SettingsModel.SECTION_ICONS` | wire to | the models and engines routes, the team policy routes, the Labs guide in `docs/feature-flags.md` |
 | `settings/settings-model.js › SettingsModel.GROUPS` | wire to | the models and engines routes, the team policy routes, the Labs guide in `docs/feature-flags.md` |
@@ -330,6 +330,32 @@ status. The prototype, docs/rail and the library decide the shape; `plans/rail/c
 | Fix all on a plan with open findings | `POST /api/runs/:id/answer` `{decision: 'revise', feedback, source: 'check'}` | the PlanCard's ⋯ (`panel.plan-folds`) | wired: offered when a shape check or a requirement fails and the plan can be revised; its words are dev's `fixAllFeedback` (`src/shared/shape/plan-fix.mjs`) |
 | Per-requirement coverage of the plan | `plan.coverage`, `plan.check` | at the head of the PlanCard's Read the plan (`planCard` `coverage`) | wired: one row per requirement, covered by which step or not covered, and the review line counts what is still to fix |
 | Per-role review verdicts and open decisions with their options | `plan.roleReviews`, `plan.decisions` | the PlanCard's Reviewed by fold; the decisions as OptionLists under the card | wired: each role's findings fixed, disputed and open (`roleSummaries`); a criteria hold's decisions or the last round's conflicts are OptionLists set to Worca's pick, and Approve and build, Ask for changes and Fix all carry the picks (`POST /api/runs/:id/answer` now passes `conflicts` and `decisions` to dev's validator) |
+
+## Schedules capabilities
+
+Every Schedules action and figure, live (slice 6). Each action goes through `ui/public/stillhet/live/schedule-live.mjs` (`RailScheduleLive.act`) and the screen moves only on the frame named here.
+
+| Capability (dev's Schedules page, `ui/public/schedules-view.mjs`) | Stillhet home | Status | Route and frame |
+|---|---|---|---|
+| Run now (a series or a missed ticket) | page head, bar row ⋯, center card, Chat card, Pulse's missed ticket | wired | `POST /api/schedules/:id/run-now`; `schedules-changed` run-now, then the task's run frames |
+| Stop the running fire | page head | wired | `POST /api/stop` `{ pipelineId }`; the task's run frames and `pipelines-changed` |
+| Pause / Resume | page head and ⋯, bar row ⋯, center card, Chat card | wired | `POST /api/schedules/:id/pause` / `resume`; `schedules-changed` |
+| Skip next time | page ⋯, bar row ⋯, Chat card | wired | `POST /api/schedules/:id/skip-next`; `schedules-changed` |
+| Keep next time (new) | the same item while a time is skipped | wired | `POST /api/schedules/:id/keep-next` (`ui/routes/scheduled-runs/keep-next.mjs`); `schedules-changed` keep-next |
+| Delete (a series) and cancel (a one-off) | page ⋯, bar row ⋯, Chat card More; Undo in the notice | wired | `DELETE /api/schedules/:id` once the Undo window ends (`deferDelete`); `schedules-changed` deleted; a refusal brings the row back |
+| Edit the repeat and time; Expert: overlap, failures before pause, if missed; a one-off's time | the page's sentence and its Expert line, as a draft (`RailDrafts`, DraftBar) | wired | `PATCH /api/schedules/:id` on Save (`schedule-rule.mjs` `ruleOf`, keeping the saved rule's end; a time-only change moves the saved rule's time); `schedules-changed` updated |
+| New schedule | the Schedules +: Ask in chat, or the legacy form (its zone is the browser's) | wired | `POST /api/run` `{ projectDir, prompt, title, workflowId, engine, sourceBranch, repeat: { rule (with its end), overlap, maxFailures } }`; `schedules-changed` created |
+| One-off tickets | listed as `Once` schedules; Missed in Needs you | wired | `GET /api/schedules` `tickets` |
+| Run-after chains | a ticket that waits says `after TITLE` | wired | `GET /api/schedules` `tickets[].after` |
+| Presets | `from PRESET` or `preset deleted` in the facts | wired | `GET /api/schedules` `presetName` |
+| Alarms (missed, failed, paused itself) | the bell and Pulse's rows | wired | `GET /api/notifications` |
+| History of a series | the page's TaskCards, one per fire | wired | `GET /api/schedules/:id` `history` (last 50) |
+| An ended series | its own section, Ended | wired | `GET /api/schedules` status ended |
+| Grace window (how late a missed time may still start) | the Expert line, after "run late if missed", as a picker in the same draft | wired | `PATCH /api/schedules/:id` `{ graceMin }` on Save; `schedules-changed` updated |
+| Change what a one-off waits for (dev's Change… on a chained ticket) | the page's `after TITLE` picker, in the draft | wired | `PATCH /api/schedules/:id` `{ after: { kind, id } }` on Save; `schedules-changed` updated |
+| Dependents note (the runs that wait for this one) | Delete's notice names them: "Deleted X · Y was waiting for it" (they are marked missed) | wired | the store's one-offs whose `after.id` is this one (`GET /api/schedules` `tickets[].after`, the same set as `GET /api/schedules/dependents`) |
+| Schedule next… (a run that starts after this one) | **Run after this** on a one-off still to come (page ⋯, bar row ⋯): the New task form, "It starts once TITLE ends" | wired | `POST /api/run` `{ …, after: { kind: 'ticket', id }, afterPolicy: 'done' }`; `schedules-changed` created |
+| Dev's Schedules tabs (`#schedules/once`, `/repeating`, `/activity`) | the Schedules place, with Stillhet on | wired | `ui/public/stillhet/shell/old-addresses.js` |
 
 ## Tasks capabilities
 

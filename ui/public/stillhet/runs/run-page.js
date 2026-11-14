@@ -718,6 +718,14 @@ async function liveDirect(label, say, extra, onOk) {
   if (res && res.ok) { if (onOk) onOk(); toast(res.say || say || ''); }
   render();
 }
+// a flow's go: with {project} opens that task's own project (projects/KEY), and its toast names it; a project the store
+// does not know opens the Projects list and says so
+function placeOf(go) {
+  if (!/\{project\}/.test(go)) return { go, say: '' };
+  const name = M.view(ui.caseId, ui).crumbs?.[1]?.t || '', W = window.RailWorld, ps = [...(window.RailProjects?.all?.() || []), ...(W?.part?.('projects') || [])];
+  const key = name ? ps.find((p) => p && (p.name === name || p.id === name))?.id || '' : '';
+  return key ? { go: go.replace('{project}', key), say: `Opened ${name}` } : { go: 'projects', say: 'Opened Projects: its project is not in the list' };
+}
 function done(f, label) {
   ui.dialog = ''; ui.confirm = null; ui.menu = ''; ui.form = null;
   if (LIVE_PAGE()) {   // dev's state moves it: read the task again, and say what happened
@@ -729,6 +737,7 @@ function done(f, label) {
   }
   // Done on a group's page, it happens to the task it names, and the group reads from that run.
   if (f.member !== undefined) { const v = M.view(ui.caseId, ui); const i = f.index !== undefined ? f.index : v.holdIndex; ui.over = Object.assign({}, ui.over, { [ui.caseId + ':' + i]: M.moveMember(ui.caseId, i, ui, f.member, f) }); toast(f.say); pendingFocus = 'act-main'; return; }
+  if (f.go) { const to = placeOf(f.go); if (SHELL) { SHELL.go(to.go); window.RailPulse?.say(to.say || f.say); } else toast(to.say || f.say); return; }   // a step that opens a place (Schedules D16: a failed ticket's Open project)
   if (f.leave) { if (SHELL) { window.RailShell.taskGone?.(ui.caseId, M.titles?.[ui.caseId]); ui = fresh('starting'); SHELL.go('runs'); window.RailPulse?.say(f.say); } else { goCase('deleted', {}); toast(f.say); } return; }
   if (f.fix) { ui.fixed = Object.assign({}, ui.fixed, { [f.fix]: true }); toast(f.say); pendingFocus = 'act-main'; return; }
   if (f.run) { f.run(); toast(f.say); pendingFocus = 'act-main'; }
