@@ -1096,7 +1096,7 @@
   }
   // `had`: the control, or its redrawn twin (a repaint between the press and here keeps the focus by its hook), has the focus
   const busyBtn = (btn, p) => { const sel = selOf(btn), a = document.activeElement, had = !!btn && (a === btn || (!!sel && root.contains(a) && selOf(a) === sel)); return busyFor(sel, p, had); };
-  const cardArgs = (x) => ({ threadId: chatId, cardId: x.card });
+  const cardArgs = (x) => ({ threadId: chatId, cardId: x.card, ...(x.cardType ? { cardType: x.cardType } : {}) });
   // live turns are read again on every paint: after an answer, change the turn as it is now, found by its id
   const now = (x, fn) => { const y = turns().find((z) => z.id === x.id && z.t === x.t); if (y) fn(y); };
   // the plan's open choices as its answer carries them: your picks, Worca's where you made none
