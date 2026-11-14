@@ -1,4 +1,4 @@
-// test/stillhet-chat-app-host-1.test.mjs — Chat in the app host, live kind, part 1 of 4 (jsdom, the app's scripts in
+// test/stillhet-chat-app-host-1.test.mjs — Chat in the app host, live kind, part 1 of 5 (jsdom, the app's scripts in
 // boot.js's order, data-adapter="live"); the host and its helpers are test/helpers/stillhet-chat-live-host.mjs.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
