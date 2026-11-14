@@ -110,6 +110,10 @@ export function createDirectionAddon() {
           lastThread = thread || (typeof ctx.thread === 'function' ? ctx.thread() : null);
           paint();
         },
+        /** CONTRACT §2: true while the next send goes to the run, not to Chat (the chip is on). */
+        holdsSend() {
+          return !!(on && run);
+        },
         async beforeSend(text) {
           if (!on || !run) return false;
           const body = String(text == null ? '' : text).trim();

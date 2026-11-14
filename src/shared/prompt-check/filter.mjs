@@ -3,7 +3,7 @@
 // The browser runs both before any request and the server re-checks the text-only rules. Browser-safe.
 import { hash64 } from '../workspace-map/ids.mjs';
 import { checkShape } from '../shape/shape.mjs';
-import { normalizeAssessment } from './assessment.mjs';
+import { PROMPT_KINDS, normalizeAssessment } from './assessment.mjs';
 
 export const PROMPT_CHECK_DEBOUNCE_MS = 1500;
 /** An edit smaller than this share of the text is not re-graded. */
@@ -114,8 +114,11 @@ export function signals(text) {
 /** Specific families in tie order; a task-like text with none of them is an idea. */
 const KIND_ORDER = Object.freeze(['plan', 'bug', 'implementation', 'requirement', 'deliverable']);
 
-/** Stage 1's assessment: a kind from the signals, no model grade (a plan gets the shape check, D15). */
-export function deterministicAssessment(text, { forceTask = false } = {}) {
+/**
+ * Stage 1's assessment: a kind from the signals, no model grade (a plan gets the shape check, D15). A valid `kind`
+ * (one of PROMPT_KINDS, a person's correction) pins the kind and makes it a task; an invalid one is ignored.
+ */
+export function deterministicAssessment(text, { forceTask = false, kind: forced = null } = {}) {
   const t = String(text ?? '');
   const s = signals(t);
   const total = Object.values(s).reduce((a, n) => a + n, 0);
@@ -124,12 +127,14 @@ export function deterministicAssessment(text, { forceTask = false } = {}) {
   let hits;
   if (ranked.length) { kind = ranked[0]; hits = s[kind]; } else if (t.trim().endsWith('?') && !s.task) { kind = 'question'; hits = 0; } else { kind = 'idea'; hits = s.task; }
   const confidence = total ? Math.min(DETERMINISTIC_CONFIDENCE_MAX, hits / total) : 0;
+  const pinned = PROMPT_KINDS.includes(forced) ? forced : null;
+  if (pinned) kind = pinned;
   return normalizeAssessment({
     isTask: kind !== 'question',
     kind,
-    minorKinds: ranked.slice(1),
+    minorKinds: ranked.filter((k) => k !== kind),
     confidence,
     grade: kind === 'plan' ? (checkShape(t).ok ? 'clear' : 'needs-detail') : null,
     source: 'deterministic',
-  }, { forceTask, text: t });
+  }, { forceTask: forceTask || Boolean(pinned), text: t });
 }

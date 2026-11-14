@@ -24,6 +24,7 @@ export function createPromptGrader({ surface, enabled, fetchImpl = (...a) => fet
   let lastAssessment = null;
   let lastAssessedHash = null;   // textHash of the text lastAssessment was graded for
   let windowTexts = [];
+  let chosenKind = null;         // a person's kind pick (regrade): rides every check of this draft until sent() or ''
   let disposed = false;
 
   const emit = (r) => { try { onResult?.(r); } catch { /* a view bug never breaks the grader */ } };
@@ -55,7 +56,9 @@ export function createPromptGrader({ surface, enabled, fetchImpl = (...a) => fet
     const mine = new AbortController();
     ctl = mine;
     const sentText = { hash: textHash(text), text };
-    const body = { requestId, surface, text, window: [...windowTexts], forceTask };
+    const body = chosenKind
+      ? { requestId, surface, text, window: [...windowTexts], forceTask: true, kind: chosenKind }
+      : { requestId, surface, text, window: [...windowTexts], forceTask };
     let sentReq;
     try {
       sentReq = Promise.resolve(fetchImpl(URL_GRADE, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: mine.signal }));
@@ -71,15 +74,24 @@ export function createPromptGrader({ surface, enabled, fetchImpl = (...a) => fet
     input(text, { answering = false } = {}) {
       currentText = String(text ?? '');
       cancel();
+      if (!currentText.trim()) chosenKind = null;
       if (disposed || !enabled()) return;
-      const skip = skipReason(currentText, { answering, last, forceTask });
+      const skip = skipReason(currentText, { answering, last, forceTask: forceTask || chosenKind !== null });
       if (skip) { emit({ skip }); return; }
       const t = currentText;
       timer = timers.setTimeout(() => check(t), PROMPT_CHECK_DEBOUNCE_MS);
     },
+    /** A person picked `kind`: check the current text now against that kind (no debounce, no skip rules). */
+    regrade(kind) {
+      cancel();
+      if (disposed || !enabled() || !currentText.trim()) return;
+      chosenKind = kind;
+      check(currentText);
+    },
     sent(text) {
       cancel();
       generation++;
+      chosenKind = null;
       const t = String(text ?? '');
       // A message sent before its grade arrived is judged by the free rules, so it still joins the window.
       const isTask = lastAssessment && lastAssessedHash === textHash(t)
@@ -94,12 +106,16 @@ export function createPromptGrader({ surface, enabled, fetchImpl = (...a) => fet
       windowTexts = baseText ? [String(baseText)] : [];
     },
     cancel,
+    /** The chip was hidden: the next text is checked even when it equals (or is close to) the last one checked. */
+    forget() {
+      last = null;
+    },
     dispose() {
       cancel();
       disposed = true;
     },
     state() {
-      return { window: [...windowTexts], last, lastAssessment, pending: timer !== null, inFlight: ctl !== null };
+      return { window: [...windowTexts], last, lastAssessment, chosenKind, pending: timer !== null, inFlight: ctl !== null };
     },
   };
 }
