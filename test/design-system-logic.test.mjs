@@ -416,6 +416,22 @@ test('dismissOnOutside: a click outside closes; inside never; a real control als
   off();
 });
 
+test('dismissOnOutside: an esc that returns a selector focuses it after the repaint; one that returns true repaints and keeps the layer', async () => {
+  const { JSDOM } = await import('jsdom');
+  const win = new JSDOM('<body><div id="pane"></div><p id="page">p</p></body>', { pretendToBeVisual: true }).window, d = win.document;
+  const esc = () => d.getElementById('page').dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  let open = true, closed = 0, paints = 0, step = '[data-menu-sub="anthropic"]';
+  const pane = d.getElementById('pane');
+  R.dismissOnOutside(d, { open: () => open, inside: '#pane', close: () => { closed++; open = false; }, esc: () => step, paint: () => { paints++; pane.innerHTML = '<button data-menu-sub="anthropic">Anthropic</button>'; } });
+  esc();
+  assert.equal(d.activeElement, d.querySelector('[data-menu-sub="anthropic"]'), 'the element drawn by the repaint takes the focus');
+  assert.deepEqual([open, closed, paints], [true, 0, 1], 'the layer stays');
+  step = true; esc();
+  assert.deepEqual([open, closed, paints], [true, 0, 2], 'true: taken, repainted, kept');
+  step = false; esc();
+  assert.deepEqual([open, closed], [false, 1], 'nothing to take: it closes as before');
+});
+
 test('soundFor: what the choice says plays; info never; a burst once; never when away', () => {
   const needs = [{ sev: 'needs' }], problem = [{ sev: 'problem' }], info = [{ sev: 'info' }];
   assert.equal(R.soundFor({ events: needs }), true, 'what needs you is the default');

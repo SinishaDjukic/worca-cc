@@ -282,14 +282,16 @@
       "needs": [
         "supporting actions",
         "the alternatives of a split button",
-        "the choices of a SentencePicker"
+        "the choices of a SentencePicker",
+        "choices grouped by who makes them (a sub-menu per group)"
       ],
       "rules": [
         "opened from ⋯ or ▾",
         "danger last, after a rule",
         "a head and its options are one block; in columns they stay together, two columns at most, and a scrolling menu never ends on a head alone (comp.menu-groups)",
         "a disabled item never acts, shows no pointer, and says why (comp.menu-off)",
-        "a choice with a mark shows its tick at the row's end (comp.menu-tick)"
+        "a choice with a mark shows its tick at the row's end (comp.menu-tick)",
+        "a group of choices opens in place under a ‹ back row; → Enter Space open it, ← Esc and the back row return; its opener carries the tick (comp.menu-sub)"
       ],
       "example": "Terminal, Copy link, Archive"
     },
@@ -1813,6 +1815,22 @@
     }
   ],
   "logic": [
+    {
+      "name": "Models by who makes them",
+      "code": "ui/public/design-system/components/model-makers.mjs#modelMakers",
+      "needs": [
+        "a model catalog grouped by its maker (Anthropic, OpenAI, Google, Local, Other), a row off its maker's own engine naming that engine (comp.menu-sub)"
+      ],
+      "example": "makerItems(rows, { chosen }) gives one opener per maker; modelText reads Sonnet 5.5 · Copilot"
+    },
+    {
+      "name": "Keys in a menu",
+      "code": "ui/public/design-system/components/compact-menu.mjs#menuKeys",
+      "needs": [
+        "a picker's keys: ↓ ↑ move and wrap, → Enter Space open a group, ← and the back row return, Enter Space take an item (comp.menu-sub)"
+      ],
+      "example": "root.addEventListener('keydown', (e) => menuKeys(e, { openSub, closeSub }))"
+    },
     {
       "name": "How loud a state is",
       "code": "ui/public/design-system/components/kind-mark.mjs#alertLevel",

@@ -9,6 +9,7 @@
 | `comp.click-guard` | A second click within 400 ms at the same spot is ignored when what is under the pointer is no longer the button just pressed (`watchClickGuard`, once for the page); the same button, even redrawn, can be pressed twice, and a keyboard's click always passes | A double click must never fire what swaps or moves under the pointer, such as Approve then Merge | design-system-components |
 | `comp.menu-off` | A disabled menu item never acts, in any menu: it stays open, shows no pointer or hover, and says why (`watchMenus`) | A control acts, or is disabled and says why | design-system-components |
 | `comp.menu-tick` | A choice whose item carries a mark shows its tick at the row's end (CompactMenu), in any menu: the mark holds the place a tick has elsewhere | Where you are must be visible, not only announced | design-system-components |
+| `comp.menu-sub` | A menu that holds groups of choices (the model picker's makers) opens a group in place: its items replace the list under a ‹ back row named for the group; → Enter Space open it, ← Esc and the back row return to the group; the opener of the group holding the choice carries the tick (CompactMenu `openSub`, `menuKeys`) | One layout fits every width and never leaves the window | design-system-components |
 | `comp.toast-clamp` | A toast is at most 480px wide and two lines; the whole text is in its tooltip (`toastText`) | A long name never runs over the composer | design-system-components |
 | `comp.sentence-block` | A sentence that holds a picker is a block (`div`), never a `<p>`: a menu cannot live in a paragraph, and the parser throws it out of place | The menu opens where the sentence is | rail-gate |
 | `comp.row` | A row in a list is row(): rail, text, end, ⋯; a changed file and a stacked PR are their own rows | One rail and one end on every list | rail-gate |
@@ -37,7 +38,7 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | Ask worca in the top bar | AskWorcaMark: a boxy chat bubble with the W for its text; three dots while Worca writes, filled with the W cut out while its column is open; an unread reply is its dot | Ask worca |
 | Starting anything | Composer: the words, then one line with +, the Ask/Task/Schedule sentence, voice and send | Start task |
 | **Choosing** | | |
-| A choice that changes a step | SentencePicker: a picker in the sentence it changes, opening a CompactMenu (in the app, wired to `toggleMenu`, so the menu has keys) | `Send [what needs you ▾] to [desktop ▾]` |
+| A choice that changes a step | SentencePicker: a picker in the sentence it changes, opening a CompactMenu (in the app, wired to `toggleMenu`, so the menu has keys); groups of choices open as sub-menus (comp.menu-sub) | `Send [what needs you ▾] to [desktop ▾]` |
 | A choice among a form's or a panel's words | WordPicker, opening a CompactMenu | `dev ▾` base branch, `One PR ▾` |
 | Answering Worca's question | OptionList: one line per answer, a radio dot, Worca's pick marked, your own answer under it (in the app, `buildChatQuestion` takes `preset` for Worca's pick and `recommended` on an option) | the asking step's answers |
 | How much of a limit is used | UsageRing, its tooltip on what holds it | the rings around the avatar |
