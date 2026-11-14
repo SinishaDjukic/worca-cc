@@ -184,23 +184,33 @@ function byStamp(by) {
   throw err('by must be "ui", "cli" or "ask:<threadId>"', 'BAD_REQUEST');
 }
 
-/** Read + normalize one `<key>.tests.json`. A missing or unreadable file is no
- *  cases; an invalid ROW is dropped by the normalizer (the store's write path is
- *  the hard gate, this one only reads). */
-async function readCasesAt(dir, key, meta, shipped) {
-  if (!dir) return [];
+/** Read + normalize one `<key>.tests.json`. A missing file is no cases; an
+ *  unreadable file is no cases, and an invalid ROW is dropped by the normalizer
+ *  (the store's write path is the hard gate, this one only reads). Both come back
+ *  as `problems`, so a reader that runs the cases can say what did not load
+ *  instead of running fewer of them. */
+async function readCasesAt(dir, key, meta, shipped, label = casesFileFor(key)) {
+  if (!dir) return { cases: [], problems: [] };
+  const file = casesFileFor(key);
   let raw;
-  try { raw = JSON.parse(await readFile(join(dir, casesFileFor(key)), 'utf8')); } catch { return []; }
+  try { raw = JSON.parse(await readFile(join(dir, file), 'utf8')); } catch (e) {
+    if (e?.code === 'ENOENT') return { cases: [], problems: [] };
+    return { cases: [], problems: [`${label}: ${e instanceof SyntaxError ? 'invalid JSON' : 'unreadable'} (${e.message})`] };
+  }
   // lenient: a case must survive an edit to its script's ports and params (see normalizeCases).
-  return normalizeCases(raw, meta, { shipped, lenient: true }).cases;
+  const { cases, errors } = normalizeCases(raw, meta, { shipped, lenient: true });
+  return { cases, problems: errors.map((m) => `${label}: ${m}`) };
 }
 
-/** The script's own cases + the W18 user overlay (empty on the user layer). */
+/** The script's own cases + the W18 user overlay (empty on the user layer), and
+ *  what either file dropped. The overlay shares the file name, so its problems say so. */
 async function bothCaseLists(meta) {
   const shipped = meta.origin !== 'user';
   const own = await readCasesAt(meta.scriptsDir, meta.key, meta, shipped);
-  const overlay = shipped ? await readCasesAt(userScriptsDir(), meta.key, meta, false) : [];
-  return { own, overlay };
+  const overlay = shipped
+    ? await readCasesAt(userScriptsDir(), meta.key, meta, false, `${casesFileFor(meta.key)} (your overlay)`)
+    : { cases: [], problems: [] };
+  return { own: own.cases, overlay: overlay.cases, problems: [...own.problems, ...overlay.problems] };
 }
 
 /** Merged registry list, each meta stamped with how many cases it has. */
@@ -283,7 +293,7 @@ export async function readScript(key) {
     if (read.truncated) sourceTruncated = true;
     if (read.unreadable) sourceUnreadable = true;
   }
-  const { own, overlay } = await bothCaseLists(meta);
+  const { own, overlay, problems } = await bothCaseLists(meta);
   return {
     meta,
     source,
@@ -293,6 +303,7 @@ export async function readScript(key) {
     sourceUnreadable,
     cases: own,
     userCases: overlay,
+    caseProblems: problems,     // what the cases files dropped: a runner reports these instead of running fewer cases
     casesWritable: true,
   };
 }
