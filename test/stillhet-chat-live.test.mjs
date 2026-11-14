@@ -408,3 +408,11 @@ test('Delete all chats (Settings): dev\'s counts, then dev\'s DELETE; a refusal 
   assert.equal(ACTIONS['delete-all'], undefined);
   assert.ok(!Object.values(ACTIONS).some((a) => { try { return a[1]({})[1] === '/api/ask/threads' && a[1]({})[0] === 'DELETE'; } catch { return false; } }), 'no act() id reaches it');
 });
+
+test('card-apply saves a workflow or workflow-build card (dev answers 400 to applied) and applies every other card', () => {
+  const body = (a) => ACTIONS['card-apply'][1](a)[2];
+  assert.deepEqual(body({ threadId: 'ask_1', cardId: 'c1', cardType: 'workflow' }), { state: 'saved' });
+  assert.deepEqual(body({ threadId: 'ask_1', cardId: 'c1', cardType: 'workflow-build' }), { state: 'saved' });
+  assert.deepEqual(body({ threadId: 'ask_1', cardId: 'c1', cardType: 'model' }), { state: 'applied' });
+  assert.deepEqual(body({ threadId: 'ask_1', cardId: 'c1', cardType: 'model', scope: 'project' }), { state: 'applied', scope: 'project' });
+});
