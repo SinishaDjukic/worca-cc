@@ -241,7 +241,7 @@ function acctMenu() {
       ${R.accountItem({ label: 'Keep awake', cls: 'sw-item', mark: svg('cup', 16, 'mi-ic'), sw: true, attrs: { role: 'menuitemcheckbox', 'aria-checked': String(!!ui.keep), 'data-sw': 'keep', title: 'Keeps the computer awake while runs are working. The display may still turn off.' } })}
     </div>
     <div class="msect" role="group" aria-label="Usage">${raise}
-      ${R.accountItem({ label: 'Usage and costs', mark: gone ? gring(100, 'pz-mi-ring', 'over') : top ? gring(top.pct, 'pz-mi-ring', top.tone) : svg('signal', 16, 'mi-ic'), value: val, valueAlways: true, chev: svg('chevR', 14, 'mi-chev'), attrs: { ...sub('usage'), title: gone ? `Budget of ${M.usd(c.budget.limit)} used up: runs stay paused until it resets or you raise it` : top ? `Closest to its limit: ${top.line}` : 'Limits per harness and the spend' } })}
+      ${R.accountItem({ label: 'Usage and costs', mark: gone ? gring(100, 'pz-mi-ring', 'over') : top ? gring(top.pct, 'pz-mi-ring', top.tone) : gring(0, 'pz-mi-ring', 'idle'), value: val, valueAlways: true, chev: svg('chevR', 14, 'mi-chev'), attrs: { ...sub('usage'), title: gone ? `Budget of ${M.usd(c.budget.limit)} used up: runs stay paused until it resets or you raise it` : top ? `Closest to its limit: ${top.line}` : 'Limits per harness and the spend' } })}
     </div>
   ` }) + usageFly() + lvlFly() + lookFly();
 }
