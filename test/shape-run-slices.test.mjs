@@ -145,3 +145,20 @@ test('initialShaping: with neither, the four keys are exactly as before', () => 
   assert.deepEqual(initialShaping(null), { perspectives: [...DEFAULT_PERSPECTIVES], rounds: [], approved: null, savedTo: null });
   assert.deepEqual(Object.keys(initialShaping({ perspectives: ['qa'] }, {})), ['perspectives', 'rounds', 'approved', 'savedTo']);
 });
+
+test('validatePlanAnswer revise: compliance is kept when the run already holds it, refused with today\'s message otherwise', async () => {
+  const { validatePlanAnswer } = await import('../src/core/shape/run.mjs');
+  const { normalizePerspectives } = await import('../src/shared/shape/perspectives.mjs');
+  const raw = { decision: 'revise', feedback: 'keep it', perspectives: ['product', 'qa', 'compliance'] };
+  const kept = validatePlanAnswer(raw, { revisable: true, perspectives: ['product', 'architect', 'compliance'] });
+  assert.equal(kept.ok, true);
+  assert.deepEqual(kept.payload.perspectives, ['product', 'qa', 'compliance']);
+  const refused = validatePlanAnswer(raw, { revisable: true, perspectives: ['product', 'architect'] });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.errors[0].message, normalizePerspectives(['compliance']).error);
+});
+
+test('resolveShapeRequest: compliance only with the gate\'s option', () => {
+  assert.equal(req({ perspectives: ['qa', 'compliance'] }).ok, false);
+  assert.deepEqual(req({ perspectives: ['qa', 'compliance'] }, { compliance: true }).shape.perspectives, ['product', 'qa', 'compliance']);
+});

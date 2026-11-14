@@ -19,6 +19,7 @@ One map, from the prototype's own code (the places list in `shell/shell.js`, the
 | Check how clear a task prompt is (chat pref `promptCheck`, `docs/prompt-check.md`) | Settings › Chat › Assistant › Abilities › Prompt check (wired) | `src/core/settings.mjs` `chatPrefs` and `src/shared/prompt-check/assessment.mjs` | none |
 | Prompt check chip (composer) | open: waits for the owner (Chat › composer sentence row, after the intent chip) | `ui/public/prompt-check/grader.mjs`, `POST /api/prompt-check/grade`, `POST /api/prompt-check/kind-correction` | none |
 | Prompt check Improve (composer) | open: waits for the owner, with the chip row | `ui/public/prompt-check/improve-view.mjs`, `POST /api/prompt-check/improve` | none |
+| Perspectives proposed on the run card (flag proposedPerspectives) | open: waits for the owner (TaskProposal reviewed by) | `ui/public/shape/chips.mjs`, `ui/public/shape/proposal.mjs`, `src/shared/prompt-check/perspectives.mjs`, `POST /api/run` `perspectives` | none |
 
 With Stillhet on, every old address lands through one table, `ui/public/stillhet/shell/old-addresses.js` (`docs/rail/navigation.md` `nav.old-address`), in place; with it off they stay dev's.
 
@@ -242,6 +243,22 @@ One row per seeded figure: each data key and seed getter of the globals a model 
 | `profile › the interface mode` | wired | dev's `uiLevel`: the `data-level` stamp at start, `POST /api/settings {uiLevel}` on a person's pick only |
 | `profile › Keep awake` | wired | `keepAwake` of `GET /api/settings`; `POST /api/settings {keepAwake}` |
 | `profile › Away` | wired | `GET /api/away-mode`; `POST /api/settings {nightModeToggle}` with dev's Away switch body |
+
+## Dev surfaces
+
+One row per surface of today's UI that Stillhet must carry (gate.prototype in `docs/rail/gate.md`). An id is a Settings key (`setting › keepAwake`, a top-level key of `GET /api/settings`), a path today's UI fetches (`route › /api/runs/:param/artifacts`), or a today's-UI file or folder (`ui/public/app.js`, `ui/public/chat/`). The status is one of `wired` (then where in Stillhet), `wire to` or `not offered live` (then why not yet); the third cell is never empty and each id has one row. `npm test` fails a new Settings key or fetched path with no row (`tools/stillhet-surfaces.mjs`); every surface that existed when the gate came in is frozen in `test/fixtures/stillhet-surfaces-baseline.json`, which only shrinks: add a row, then lower it with `npm run stillhet:surfaces -- --update`. In CI, a PR that changes today's UI and no prototype file passes only with a `wire to` row it adds or changes here for each changed file (`tools/prototype-pr-check.mjs`).
+
+| Surface | Status | Where in Stillhet, or why not yet |
+|---|---|---|
+| `route › /api/prompt-check/grade` | wire to | The prompt check's grade; today's Chat, New run and run card chip calls it (Shaper Tracks slice 2). Stillhet's composer chip waits for the owner (the Prompt check chip row above) |
+| `route › /api/prompt-check/kind-correction` | wire to | A person's kind pick on the chip (ids only, schema v96); Stillhet records it once its composer chip is built (waits for the owner, the Prompt check chip row above) |
+| `ui/public/app.js` | wire to | Starts the prompt check's grader in today's UI; Stillhet's composer gets it with its chip, which waits for the owner (the Prompt check chip row above) |
+| `ui/public/chat-settings-view.mjs` | wired | The "Check how clear a task prompt is" row: Stillhet's Settings › Chat › Assistant › Abilities › Prompt check (`stillhet/settings/settings-model.js`, a live switch on `chat.promptCheck` through `live/live-map.mjs` `chatPrefs`) |
+| `ui/public/prompt-check/` | wire to | The browser grader and the chip's controller (`chip-host.mjs`, whose `onAssessment` now hands the assessment's proposed perspectives to the run card); Stillhet's composer uses them once its chip is built (waits for the owner, the Prompt check chip row above and the Perspectives proposed on the run card row) |
+| `ui/public/settings/settings.html` | wired | The setting's place in today's Settings page: Stillhet's Settings › Chat › Assistant › Abilities › Prompt check (`stillhet/settings/settings-model.js`) |
+| `setting › pulseFor` | wired | Settings › Notifications, the Pulse animation row (`pulse.js` reads it through the live map; #1258) |
+| `ui/public/ask-panel.mjs` | wire to | Today's run card takes the prompt check's proposed perspectives and sends the chosen set with the run (flag proposedPerspectives); Stillhet's TaskProposal "reviewed by" picker waits for the owner (the Perspectives proposed on the run card row above) |
+| `ui/public/shape/` | wire to | The perspective chips, their proposed state and the plan's perspective sections (flag proposedPerspectives); Stillhet's TaskProposal "reviewed by" picker waits for the owner (the Perspectives proposed on the run card row above) |
 
 ## Opt-in
 

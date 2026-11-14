@@ -429,6 +429,8 @@ import {
 import { latestChecklist, checklistMarkdown, CHECKLIST_PR_MARKER } from '../src/shared/shape/review-checklist.mjs';
 import { attachRoleReviews } from '../src/shared/shape/role-review.mjs';
 import { resolveShapeRequest, PLAN_ASK_KIND, planFileOf } from '../src/core/shape/run.mjs';
+import { normalizePerspectives } from '../src/shared/shape/perspectives.mjs';
+import { recordPerspectiveChoice, perspectiveProposalOf, PROPOSAL_ERROR } from '../src/core/prompt-check/perspective-choices.mjs';
 import { savePlanToCheckout } from '../src/core/shape/save.mjs';
 import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, cancelRest, resumeFeature,
   rechainWaiting, replanRest, setApproveEach, recordShapePlan, listShapePlans, chainFeature,
@@ -2678,6 +2680,10 @@ const startRunHandler = async (req, res) => {
   if (DRAIN.on) return res.status(503).json(DRAIN_REFUSAL);
   try {
     const body = req.body || {};
+    // Proposed perspectives (flag proposedPerspectives), read once per start. Off: the run's perspective fields are
+    // dropped before any check, so the run is today's run whatever the body (or a replayed ticket) carries.
+    const proposedOn = flagEnabled('proposedPerspectives');
+    if (!proposedOn) { delete body.perspectives; delete body.perspectiveProposal; }
     // Scheduled runs: `internal` is set ONLY by fireTicket() (never from HTTP) — the
     // due ticket being started through this same gate. It carries the ticket, whose id
     // IS the runId, plus the CLI-only options a stored request may hold.
@@ -2847,9 +2853,25 @@ const startRunHandler = async (req, res) => {
     // plan at run start; here we only normalize + reject an unknown id up front
     // so the client gets a clean 400 instead of a mid-run error event.
     // Shape it first (spec D9/D12): `shape` and the shape workflows.
-    const shapeReq = resolveShapeRequest({ shape: body.shape, workflowId: body.workflowId }, { internal: !!internal });
+    const shapeReq = resolveShapeRequest({ shape: body.shape, workflowId: body.workflowId }, { internal: !!internal, compliance: proposedOn });
     if (!shapeReq.ok) return badRequest(res, shapeReq.error);
     const { shape: askedShape } = shapeReq;
+    // The run's chosen perspective set (flag on only): a shaped run's `shape.perspectives`, else the top-level
+    // `perspectives`; without either the run is today's run. It drives Clarify and the code review roles.
+    let perspectiveSet = null;
+    let perspectiveProposal = null;
+    if (proposedOn) {
+      if (askedShape) perspectiveSet = { chosen: [...askedShape.perspectives] };
+      else if (body.perspectives !== undefined) {
+        const p = normalizePerspectives(body.perspectives, { compliance: true });
+        if (!p.ok) return badRequest(res, p.error);
+        perspectiveSet = { chosen: p.perspectives };
+      }
+      if (body.perspectiveProposal !== undefined) {
+        perspectiveProposal = perspectiveProposalOf(body.perspectiveProposal);
+        if (!perspectiveProposal) return badRequest(res, PROPOSAL_ERROR);
+      }
+    }
     // L7: a sliced Shape-it-first run chains tickets per slice, and a run without a project cannot be scheduled. So with
     // no project a shaped run is never sliced: `slices: 'off'` unless 'auto' was asked for, which is refused (U13: the
     // Shaper itself still runs with No project).
@@ -3094,7 +3116,7 @@ const startRunHandler = async (req, res) => {
         claude: { permissionMode: 'acceptEdits', ...(startPair ? { model: startPair.model, ...(startPair.effort ? { effort: startPair.effort } : {}) } : {}), mock, ...runEngine },
         ...(nightMode ? { nightMode: true } : {}),
         tags,
-        ...(shape ? { shape } : {}), ...(Number(req._runCostCapUsd) > 0 ? { runCostCapUsd: Number(req._runCostCapUsd) } : {}),
+        ...(shape ? { shape } : {}), ...(perspectiveSet ? { perspectiveSet } : {}), ...(Number(req._runCostCapUsd) > 0 ? { runCostCapUsd: Number(req._runCostCapUsd) } : {}),
       });
       entry = {
         id: runId, orch, projectDir, projectKey: NO_PROJECT_KEY, workMode: 'none', kind: 'run', pipelineId,
@@ -3245,6 +3267,7 @@ const startRunHandler = async (req, res) => {
         tags,
         labels,
         ...(shape ? { shape } : {}),
+        ...(perspectiveSet ? { perspectiveSet } : {}),
         ...(runSetup ? { runSetup } : {}),
       });
 
@@ -3422,6 +3445,7 @@ const startRunHandler = async (req, res) => {
         tags,
         labels,
         ...(shape ? { shape } : {}),
+        ...(perspectiveSet ? { perspectiveSet } : {}),
         ...(runSetup ? { runSetup } : {}),
       });
 
@@ -3500,6 +3524,13 @@ const startRunHandler = async (req, res) => {
       } catch (err) {
         console.error(`[worca-ui] ask run link failed: ${err && err.message ? err.message : err}`);
       }
+    }
+    // The proposal and what the person changed (ids only), once the run exists. Never fails the start.
+    if (perspectiveSet && perspectiveProposal) {
+      try {
+        recordPerspectiveChoice({ runId, surface: 'run-card', kind: perspectiveProposal.kind,
+          proposed: perspectiveProposal.proposed, chosen: perspectiveSet.chosen });
+      } catch (err) { console.error(`[worca-ui] perspective choice record failed: ${err?.message || err}`); }
     }
     announceRun(entry);
 

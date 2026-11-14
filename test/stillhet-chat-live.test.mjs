@@ -451,3 +451,11 @@ test('a created PR asks for the PR states again (afterPr), so its card reads the
   assert.equal((await mk(409).act('pr', { pipelineId: 'p1', projectKey: 'k' })).ok, false);
   assert.equal(asked, 1);
 });
+
+test('startBodyOf sends no perspective set while the TaskProposal picker waits for the owner (proposedPerspectives)', () => {
+  const card = { title: 'CSV', brief: 'Add CSV', workflowId: 'wf_default', guardrailsId: 'g', target: 'project', projectDir: '/src/web',
+    perspectives: ['product', 'compliance'], perspectiveProposal: { proposed: ['product'], kind: 'bug' }, shape: { perspectives: ['qa'] } };
+  for (const body of [startBodyOf(card), startBodyOf(card, { perspectives: ['product', 'qa'] })]) {
+    for (const k of ['perspectives', 'perspectiveProposal', 'shape']) assert.equal(k in body, false, k);
+  }
+});

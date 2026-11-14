@@ -42,12 +42,14 @@ const sayOf = (kind, grade) => `Prompt check: ${KIND_LABELS[kind]}${grade ? `, $
  *   ids?:{threadId?:string, cardId?:string}, forceTask?:boolean, deferCorrection?:boolean|(()=>boolean),
  *   held?:{proposedKind:string, chosenKind:string}|null, announce?:(text:string)=>void, fetchImpl?:Function, timers?:object,
  *   field?:{read:()=>string, write:(text:string)=>void, focus?:()=>void}, project?:()=>(string|{projectDir:string}|null),
- *   engine?:()=>string|null, chatModel?:()=>string|null}} o
+ *   engine?:()=>string|null, chatModel?:()=>string|null, onAssessment?:(a:object)=>void}} o
  * `field` wires Improve (docs/prompt-check.md, "Improve"): without it the chip never shows the Improve button.
+ * `onAssessment` (the run card's proposed perspectives) is called once per accepted grade, never for a stale or failed one.
  */
 export function mountPromptCheckChip({
   doc, host, before = null, surface, ids = {}, forceTask = false, deferCorrection = false, held = null,
   announce = null, fetchImpl = (...a) => fetch(...a), timers, field = null, project = null, engine = null, chatModel = null,
+  onAssessment = null,
 }) {
   const say = typeof announce === 'function' ? announce : (text) => feedbackAnnounce(text, doc);
   const el = doc.createElement('span');
@@ -138,6 +140,8 @@ export function mountPromptCheckChip({
     const key = `${a.kind}|${g || ''}`;
     if (key !== lastSaid && !silent) say(sayOf(a.kind, g));
     lastSaid = key;
+    // The run card's proposed perspectives (flag proposedPerspectives): once per accepted grade, after the chip.
+    if (typeof onAssessment === 'function') { try { onAssessment(a); } catch { /* a proposal never breaks the chip */ } }
   }
 
   const grader = createPromptGrader({ surface, enabled: () => pref, fetchImpl, timers, onResult, forceTask });

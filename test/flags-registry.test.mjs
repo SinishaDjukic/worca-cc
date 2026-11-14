@@ -70,3 +70,9 @@ test('commandSummaries is a beta flag, on by default (#911)', () => {
   assert.equal(f.docs, 'docs/feature-flags.md');
 });
 
+
+test('proposedPerspectives: an experimental flag, off by default, reviewed within 90 days', () => {
+  const f = flagByKey('proposedPerspectives');
+  assert.deepEqual([f.title, f.stage, f.default, f.owner, f.added, f.reviewBy, f.docs],
+    ['Proposed perspectives', 'experimental', false, 'e-angelov', '2026-11-14', '2027-02-11', 'docs/feature-flags.md']);
+});
