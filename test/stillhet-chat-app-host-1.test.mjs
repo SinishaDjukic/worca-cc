@@ -40,14 +40,15 @@ test('a failed load says so with Try again, and Try again shows the turns', asyn
 });
 
 test('send: dev\'s message route; refused, one toast with its words, the text kept, nothing written', async () => {
-  const { w, d, calls } = await liveHost({ write: (url) => (url.endsWith('/messages') ? [409, { error: 'turn in flight' }] : [200, {}]) });
+  // a refusal that is not a turn in flight: in an open chat that one queues instead (F-a2-01, stillhet-chat-app-host-5)
+  const { w, d, calls } = await liveHost({ write: (url) => (url.endsWith('/messages') ? [409, { error: 'chat is archived' }] : [200, {}]) });
   await go(w, '#chat/ask_1');
   const before = store(w);
   const t = d.querySelector('#route-chat [data-composer-t]'); t.value = 'And the dates?';
   d.querySelector('#route-chat [data-cp-send]').click();
   await settle(60);
   assert.deepEqual(calls.filter((c) => c.method === 'POST').map((c) => [c.url, c.body?.text]), [['/api/ask/threads/ask_1/messages', 'And the dates?']]);
-  assert.equal(toastText(d), 'Could not send your message: turn in flight');
+  assert.equal(toastText(d), 'Could not send your message: chat is archived');
   assert.equal(d.querySelector('#route-chat [data-composer-t]').value, 'And the dates?', 'the text is kept');
   assert.deepEqual(store(w), before);
 });
