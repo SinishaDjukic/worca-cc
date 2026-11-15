@@ -460,6 +460,29 @@ test('F-6-18 review: after a DELETE dev answered ok, the hide timeout does not s
   assert.ok(!r.live.hidden().has('api-2222bbbb'), 'dropped by the store: no longer hidden');
 });
 
+test('F-b23m2-02: a projects-changed frame that lands before the Locate PATCH answer reads nothing under the old key; a refused move reads it again', async () => {
+  const held = gate();
+  const r = rig({ hold: (m) => (m === 'PATCH' ? held.p : null), answer: (m) => (m === 'PATCH' ? [200, { project: { key: 'shop-7777aaaa' } }] : null) });
+  r.live.detail('shop-1111aaaa'); await tick(); await tick();
+  const gets = () => r.calls.filter((c) => c.method === 'GET' && c.url.includes('shop-1111aaaa')).length, was = gets();
+  const mv = r.live.relocate('shop-1111aaaa', '/src/shop2'); await tick();
+  r.live.frame({ type: 'projects-changed' }); r.live.frame({ type: 'settings-changed' }); await tick();   // dev's frame before its answer
+  assert.equal(gets(), was, 'no GET under the old key while dev moves it');
+  held.open(); await tick(); await tick();
+  r.setWorld({ ...WORLD(), projects: WORLD().projects.map((p) => (p.id === 'shop-1111aaaa' ? { ...p, id: 'shop-7777aaaa' } : p)) });
+  await r.fire(); assert.equal((await mv).key, 'shop-7777aaaa');
+  assert.equal(gets(), was, 'nor after');
+  const held2 = gate(), r2 = rig({ hold: (m) => (m === 'PATCH' ? held2.p : null), answer: (m) => (m === 'PATCH' ? [409, { error: 'a run holds it' }] : null) });
+  r2.live.detail('api-2222bbbb'); await tick(); await tick();
+  const g2 = () => r2.calls.filter((c) => c.method === 'GET' && c.url.includes('api-2222bbbb')).length, was2 = g2();
+  const mv2 = r2.live.relocate('api-2222bbbb', '/src/api2'); await tick();
+  r2.live.frame({ type: 'settings-changed' }); await tick();
+  assert.equal(g2(), was2, 'nothing read while it waits');
+  held2.open(); assert.equal((await mv2).ok, false);
+  r2.live.frame({ type: 'settings-changed' }); await tick();
+  assert.equal(g2(), was2 + 2, 'refused: the project is read again');
+});
+
 test('source scan (R-arch-3): the pages hold none of dev\'s route or field names', () => {
   for (const f of ['projects/projects.js', 'workspaces/workspaces.js']) {
     const src = readFileSync(new URL(`../ui/public/stillhet/${f}`, import.meta.url), 'utf8');

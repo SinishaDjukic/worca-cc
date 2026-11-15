@@ -129,11 +129,14 @@ export function startProjectsLive({ fetch, toast = () => {}, refresh = () => {},
     return { ok: true, text: `Renamed ${was} to ${name}` };
   });
   const relocate = (key, path) => once(key, 'relocate', async () => {
+    // not read while dev moves it (its projects-changed frame can come before the answer, F-b23m2-02); never again once
+    // its key changed; its row stays (the Locate form with it) until the new key is listed
+    moving.add(key);
     const was = nameOf(key), a = await send('relocate', { key, path });
-    if (!a.ok) return a.status === 400 ? { ok: false, field: plainWhy(a) } : refused('relocate', was, a);
+    if (!a.ok) { moving.delete(key); return a.status === 400 ? { ok: false, field: plainWhy(a) } : refused('relocate', was, a); }
     refresh('projects', 'sync');
     const to = a.data.project?.key || key;
-    if (to !== key) { details.delete(key); moving.add(key); }   // the old key is never read again; its row stays (the Locate form with it) until the new key is listed
+    if (to !== key) details.delete(key); else moving.delete(key);
     gone.delete(to);
     const at = await listed('projects', to);
     if (to !== key) { moving.delete(key); gone.add(key); }
