@@ -140,7 +140,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
       if (f.token === prToken && f.done === true) task.listChanged();
       return;
     }
-    sources ={ ...sources, history: { ...h, pipelines: h.pipelines.map((p) => (p && known.has(prKey(p.projectKey, p.id)) ? { ...p, pr: known.get(prKey(p.projectKey, p.id)) } : p)) } };
+    sources = { ...sources, history: { ...h, pipelines: h.pipelines.map((p) => (p && known.has(prKey(p.projectKey, p.id)) ? { ...p, pr: known.get(prKey(p.projectKey, p.id)) } : p)) } };
     draw(() => partOf('history', sources.history, { ...sources, hello: { runs: [...live.values()] } }, { now: now(), unread, checksOf: task.checks }), undefined, { list: 'refresh' });
   }
   // A source's read: the workspaces list, then every workspace's map in parallel (a failed map read leaves that

@@ -43,6 +43,7 @@ test('F-a1-02 F-a1-10: a PR that turns MERGED draws once', async () => {
   const n = await h.measure({ ...OPEN, state: 'MERGED' });
   assert.equal(n.world, 1);
   assert.ok(n.shell >= 1, `the shell renders the change (${n.shell})`);
+  assert.ok(n.convo >= 1, `the conversation repaints the change, so its counter counts (${n.convo})`);
 });
 
 test('F-a1-02 F-a1-10: a PR whose checks turn failing draws once', async () => {
