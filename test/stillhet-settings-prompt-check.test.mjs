@@ -42,7 +42,7 @@ test('the row sits right after "Suggest a next prompt after each reply", reads "
 test('it is the library switch: role switch, with an accessible name and its tooltip', async () => {
   const { w } = await live();
   const sw = await openAbilities(w);
-  assert.equal(sw.getAttribute('title'), "Shows in today's Chat for now");
+  assert.doesNotMatch(sw.getAttribute('title') || '', /today's Chat/, 'Stillhet\'s composer shows the chip itself');
   assert.equal(sw.getAttribute('role'), 'switch');
   assert.ok(sw.classList.contains('switch'));
   assert.equal(sw.getAttribute('aria-label'), 'Prompt check');

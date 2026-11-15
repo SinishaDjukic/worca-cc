@@ -133,6 +133,17 @@ test('every component in code is tested and drawn in the gallery', () => {
   }
 });
 
+test('every gallery example sits under a catalog component in code: the gallery drops any other without a word', () => {
+  const gallery = read('plans/rail/prototype/components.html');
+  const names = new Set(catalog().components.filter((c) => c.code).map((c) => c.name));
+  const keys = [...gallery.matchAll(/^ {4}(?:'([^']+)'|([A-Za-z]+)):\s*\[\[/gm)].map((m) => m[1] || m[2]);
+  assert.ok(keys.length > 100, 'read the gallery examples');
+  // Frozen: these two predate the check and are not drawn; the list may only shrink.
+  const frozen = ['NamesWord', 'A list by date'];
+  assert.deepEqual(keys.filter((k) => !names.has(k) && !frozen.includes(k)), []);
+  assert.deepEqual(frozen.filter((k) => !keys.includes(k) || names.has(k)), [], 'a frozen key left the gallery or got a component: drop it from the list');
+});
+
 test('contributors and agents are pointed at the design system', () => {
   for (const f of ['CONTRIBUTING.md', 'CLAUDE.md', 'AGENTS.md']) assert.match(read(f), /docs\/rail\/README\.md/, `${f} does not point to the design system`);
   for (const a of readdirSync(join(ROOT, '.claude/agents'))) assert.match(read(`.claude/agents/${a}`), /docs\/rail\/README\.md/, `${a} does not point to the design system`);

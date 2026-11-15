@@ -1,6 +1,8 @@
 // The Chats column's mock: the chats and their topic groups. `state` is a chat state (R.chatState), `kind` what it did.
 (function () {
   const chat = (id, title, state, kind, project, time, day, o = {}) => ({ id, title, state, kind, project, time, day, cost: null, pinned: false, archived: false, unread: false, group: '', origin: null, rank: 0, labels: [], tasks: [], ...o });
+  // a demo words turn written in markdown also carries its plain form (escaped, its line breaks kept), as a live one does
+  const mdTurn = (x) => ({ ...x, html: x.md.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\r\n?|\n/g, '<br>') });
   const base = () => ({
     groups: [{ id: 't-bill', name: 'Billing export', total: 4 }, { id: 't-rel', name: 'Release 1.20', total: 2 }, { id: 't-ops', name: 'On call', total: 2 }],
     chats: [
@@ -148,6 +150,8 @@
       { t: 'divider', text: 'Switched to worca-cc' },
       { t: 'notice', text: 'Read CODEOWNERS and the last 20 commits on src/cron' },
       { t: 'words', html: 'Dana Ruiz owns <code>src/cron</code>: CODEOWNERS names her, and she wrote 14 of its last 20 commits.' },
+      // panel.rendered-prose: a reply written in markdown, drawn by Prose as a finished live one is; `html` is its plain form
+      mdTurn({ t: 'words', md: '**Her last two changes** to the parser:\n\n- Ranges like `1-5` in the day field\n- The jump at the clock change\n\n```\n0 3 * * 1-5\n```\n\n| File | Commits |\n|---|---|\n| parse.mjs | 9 |\n| next.mjs | 5 |' }),
     ];
     if (c.id === 'c12') return [
       { t: 'you', id: 'a1', text: 'Mute me on weekends, unless something needs me', when: 'Sun' },

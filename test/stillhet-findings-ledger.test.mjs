@@ -44,3 +44,16 @@ test('no row the final check fixed is still Open', () => {
     assert.ok(!open.includes(fixed), `still open: ${fixed}`);
   }
 });
+
+test('the owner\'s real-test rows (#1298) are Closed by this PR: the Pulse project item, the not-live places, the stale bar, the first Marketplace sync', () => {
+  const closed = rows('Closed'), open = rows('Open');
+  const at = (from, area, words) => closed.find((r) => r[0] === from && r[1] === area && r[2].includes(words));
+  for (const [from, area, words] of [['owner real test (4402)', 'Pulse', 'Your copy is older'], ['owner real test (4403)', 'Shell', 'not-live places drew No … yet'],
+    ['owner real test (4403)', 'Shell', 'the bar kept the last place\'s rows'], ['triage (fresh home)', 'Marketplace', 'a fresh install never synced the builtin']]) {
+    const r = at(from, area, words);
+    assert.ok(r, `Closed: ${from} | ${area} | ${words}`);
+    assert.equal(r.length, 4);
+    assert.equal(r[3], 'this PR');
+  }
+  assert.ok(!open.some((r) => r[0] === 'owner real test (4402)' && r[1] === 'Pulse'), 'no longer Open');
+});

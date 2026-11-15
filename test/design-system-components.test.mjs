@@ -73,6 +73,15 @@ test('listController: selected counts in the actions\' unit (list.select-bar)', 
   assert.match(root.querySelector('.runs-bulk-n').textContent, /^3 selected/);
 });
 
+test('listController: the arrows on a reply\'s code block or table scroll it, not the list', () => {
+  const d = new JSDOM('<body><div id="r"></div><div class="prose"><pre tabindex="0"><code>x</code></pre><div class="rt-wrap" tabindex="0"></div></div><p tabindex="0" id="other"></p></body>', { pretendToBeVisual: true }).window.document, root = d.getElementById('r');
+  const rows = [{ key: 'g', title: 'g', meta: '', members: [{ key: 'm', title: 'm' }] }, { key: 'c', title: 'c', meta: '' }];
+  C.listController({ root, spec: { noun: `scroll-${Math.random()}`, label: 'x', can: () => [], bulk: () => [], act: () => {}, word: () => false, say: () => {}, active: () => true, open: () => {}, view: () => ({ state: 'ready', parts: [], sections: [{ id: 's', title: 'S', rows }] }) } }).paint();
+  const press = (el, key) => { const e = new d.defaultView.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }); el.dispatchEvent(e); return e.defaultPrevented; };
+  for (const sel of ['.prose pre', '.prose .rt-wrap']) for (const key of ['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp']) assert.equal(press(d.querySelector(sel), key), false, `${sel} ${key}`);
+  assert.equal(press(d.getElementById('other'), 'ArrowDown'), true, 'elsewhere the list still owns the arrows');
+});
+
 test('compactMenu: two columns live inside what scrolls (comp.menu-groups)', () => {
   const m = dom(C.compactMenu({ cls: 'pz-menu is-two-cols', items: [{ header: 'One' }, { text: 'a' }] }));
   assert.ok(m.firstElementChild.matches('.menu-cols') && m.querySelector('.menu-cols > .menu-g'));
@@ -226,6 +235,19 @@ test('notFound: names what was asked for, escapes it, and gives one way on (nav.
   assert.equal(n.querySelector('button').dataset.nav, 'projects');
 });
 
+test('notInStillhet: names the place, where it is today, escapes both, one Back to Chat (nav.not-live)', () => {
+  const n = dom(C.notInStillhet({ place: '<Insights>', today: 'Statistics & <b>Team</b>', attrs: { 'data-nav': 'chat' } }));
+  assert.equal(n.querySelector('.el-t').textContent, '<Insights> is not in Stillhet yet');
+  assert.match(n.textContent, /With Stillhet off, it is Statistics & <b>Team<\/b>\./);
+  assert.equal(n.querySelector('b'), null, 'the words are escaped, never markup');
+  const bs = n.querySelectorAll('button');
+  assert.equal(bs.length, 1);
+  assert.equal(bs[0].textContent, 'Back to Chat');
+  assert.equal(bs[0].dataset.nav, 'chat');
+  assert.doesNotMatch(n.textContent, /No .* yet/);
+  assert.match(dom(C.notInStillhet({ place: 'Lab' })).textContent, /It has no Stillhet screen yet\./, 'with no today it says it has no screen yet');
+});
+
 test('resetViewTool: its tooltip is where it goes, or why it is off (list.reset-view)', () => {
   assert.deepEqual(C.resetViewTool({ changed: true, to: 'all tasks' }), { id: 'reset', text: 'Reset view', off: false, help: 'Back to all tasks' });
   const off = C.resetViewTool({ changed: false, to: 'all tasks' });
@@ -308,6 +330,15 @@ test('the catalog names a module for every component built in code, and each mod
     const mod = await import(new URL('../' + file, import.meta.url));
     assert.equal(typeof mod[name], 'function', `${c.name}: ${c.code}`);
   }
+});
+
+test('slice 10: the catalog\'s HeatGrid code resolves to heatGrid, exported by the library (test/design-system-heat-grid.test.mjs draws it)', async () => {
+  const cat = JSON.parse(readFileSync(new URL('../docs/design-system-catalog.json', import.meta.url), 'utf8'));
+  const hg = cat.components.find((c) => c.name === 'HeatGrid');
+  assert.equal(hg.code, 'ui/public/design-system/components/heat-grid.mjs#heatGrid');
+  const C = await import(new URL('../ui/public/design-system/components/index.mjs', import.meta.url));
+  assert.equal(typeof C.heatGrid, 'function');
+  assert.match(C.heatGrid({ label: 'x', rows: [{ label: 'Maya' }], columns: [{ label: 'a' }], cells: [[{ value: 1, text: '$1, 1 task' }]], max: 1 }), /class="hg-cell is-h4"/);
 });
 
 test('morph keeps what stays, adds what is new, drops what left, and draws the same DOM as innerHTML', () => {
@@ -1559,6 +1590,7 @@ test('planCard, filesCard, youTurn: the Shaper plan folds its roles; files as ti
   assert.match(y, /you-quote">Off by a cent/); assert.match(y, /x\.pdf/);
   assert.match(C.youTurn({ text: 'Hi', time: C.turnTime({ at: Date.now() }) }), /<time class="turn-time"[^>]*>\d\d:\d\d<\/time><\/div>$/);   // turnTime: its time is the turn's last child
   assert.equal(C.turnTimeText(Date.now(), Date.now()), C.turnTime({ at: Date.now() }).match(/>([^<]+)<\/time>$/)[1]);   // turnTimeText: the words TurnTime shows
+  assert.match(C.prose({ text: '**a**\nb' }), /^<div class="prose is-plain">\*\*a\*\*<br>b<\/div>$/); assert.equal(typeof C.loadProse, 'function');   // prose: plain until loadProse has loaded this document's renderer
   assert.doesNotMatch(C.changeProposal({ kind: 'Agent', title: 'New', rows: [{ name: 'Reads', before: '', after: 'PRs' }] }), /→/);
 });
 
@@ -1730,13 +1762,18 @@ test('finished is a plain check, ready a check in a ring, merged the branch; a p
   assert.match(R.kindMark({ kind: 'chat', tone: 'fail', outline: true }), /is-outline/);
 });
 
-test('stillhetInvitation and designSwitch render their roles and hooks', () => {
+test('stillhetInvitation and stillhetSwitch render their roles and hooks', () => {
   const inv = dom(C.stillhetInvitation({ bugsUrl: 'https://github.com/o/r/issues' }));
   assert.equal(inv.getAttribute('role'), 'alertdialog');
   assert.equal(inv.dataset.stillhet, 'invitation');
-  const sw = dom(C.designSwitch({ on: true }));
+  const sw = dom(C.stillhetSwitch({ on: true, open: true }));
   assert.equal(sw.dataset.stillhet, 'design-switch');
-  assert.equal(sw.querySelector('[role="switch"]').getAttribute('aria-checked'), 'true');
+  assert.equal(sw.querySelector('[role="menuitemradio"][aria-checked="true"]').textContent, 'Try Stillhet');
+  const page = new JSDOM(`<body>${C.stillhetSwitch({ on: true })}</body>`).window;   // watchStillhetSwitch: the menu opens on a click
+  const stop = C.watchStillhetSwitch(page.document, { pick: async () => ({ ok: true }) });
+  page.document.querySelector('[data-stillhet="ui-icon"]').click();
+  assert.equal(page.document.querySelectorAll('[role="menuitemradio"]').length, 2);
+  stop(); page.close();
 });
 
 test('frame parts (brandRow, navSection, barGrip, sidebarFrame, sideToggle, menuButton, topBarFrame, askButton): the sidebar and top bar landmarks', () => {

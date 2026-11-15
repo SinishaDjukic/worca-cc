@@ -117,6 +117,21 @@ export const PROJECTS_STATES = [
   ['pj-not-found', '#projects/nope'],
 ];
 for (const [id, q, seed] of PROJECTS_STATES) PARTS.push({ id, route: true, ...(seed ? { seed } : {}), app: { route: q }, proto: { route: q } });
+// Insights (slice 10): its list states, the design-first parts (the person filter, this quarter and this year, Who spends where
+// by workflow, the team scope choice), the copied-link toast and a link opened cold. Expert, demo against demo; the copy-link
+// cell has the clipboard permission on both hosts.
+const inPick = (menu, v) => [`[data-menu="${menu}"]`, `[data-pick="${menu}|${v}"]`];
+export const INSIGHTS_STATES = [
+  ['in-list-loading', '?state=loading#insights/spend'], ['in-list-failed', '?state=failed#insights/spend'],
+  ['in-team-empty', '?state=empty#insights/team'],
+  ['in-spend-person', '#insights/spend', inPick('in-of', 'person:Maya')],
+  ['in-spend-quarter', '#insights/spend', inPick('in-when', 'this quarter')], ['in-spend-year', '#insights/spend', inPick('in-when', 'this year')],
+  ['in-heat-workflow', '#insights/heat', inPick('in-by', 'workflow')],
+  ['in-team-scope', '#insights/team', ['[data-menu="in-of"]']],
+  ['in-link-copied', '#insights/spend', ['[data-menu="in-more"]', '[data-menu-pick="in-more|link"]']],
+  ['in-spend-link', '#insights/spend?by=client&when=this%20quarter'],
+];
+for (const [id, q, seed] of INSIGHTS_STATES) PARTS.push({ id, route: true, ...(seed ? { seed } : {}), ...(id === 'in-link-copied' ? { clipboard: true } : {}), app: { route: q }, proto: { route: q } });
 /** One seed step: a click on a selector, or { fill, text } typed into a field. */
 const seedStep = (page, sel) => (typeof sel === 'string' ? page.locator(sel).first().click() : page.locator(sel.fill).first().fill(sel.text));
 export const PAGES = ['components.html', 'run-page.html', 'pulse.html'];
@@ -146,6 +161,10 @@ export const marketplaceCellIds = (deep = []) => [...MARKETPLACE_CELL_IDS, ...de
 // a count) every deep route under projects/.
 export const PROJECTS_CELL_IDS = Object.freeze(['route-projects', ...PROJECTS_STATES.map(([id]) => id)]);
 export const projectsCellIds = (deep = []) => [...PROJECTS_CELL_IDS, ...deep.filter((h) => h.startsWith('projects/')).map((h) => deepPart(h).id)];
+// Every Insights cell: the whole page, its own states above, and (derived from the prototype's routes, never a count) every
+// deep route under insights/, Shaping and Who spends where included.
+export const INSIGHTS_CELL_IDS = Object.freeze(['route-insights', ...INSIGHTS_STATES.map(([id]) => id)]);
+export const insightsCellIds = (deep = []) => [...INSIGHTS_CELL_IDS, ...deep.filter((h) => h.startsWith('insights/')).map((h) => deepPart(h).id)];
 /** The Tasks cells a run's cells lack: one line per id, theme and width of CELLS that has no compared cell. */
 export function tasksCoverage(cells, ids = TASKS_CELL_IDS) {
   const have = new Set(cells.map((c) => `${c.part}|${c.theme}|${c.width}`));
@@ -303,7 +322,7 @@ export async function verifyApp({ base, proj, child, log, phase }) {
 // The page typeface is the one thing the two shells do not share until slice 2 serves Stillhet (the app is Poppins, the prototype Inter),
 // so both are pinned to one family here: what is compared is structure, spacing and colour.
 const ISOLATE = (id) => `*{font-family:Arial,Helvetica,sans-serif!important}html,body{background:var(--bg,#fff)!important}body *{visibility:hidden!important}[data-stillhet="${id}"],[data-stillhet="${id}"] *{visibility:visible!important}*{animation:none!important;transition:none!important;caret-color:transparent!important}`
-  + (id === 'design-switch' ? '[data-stillhet="design-switch"]{position:fixed!important;top:0!important;left:0!important;z-index:2147483647!important;background:var(--bg)!important}' : '')
+  + (id === 'design-switch' ? '[data-stillhet="design-switch"]{position:fixed!important;top:0!important;right:0!important;left:auto!important;z-index:2147483647!important;background:var(--bg)!important}' : '')   // the icon, and its menu right-aligned under it when open
   + (id === 'invitation' ? '#rail-strip{position:fixed!important;top:0!important;left:0!important;right:0!important;z-index:2147483647!important}' : '');
 
 async function playwright() {
@@ -328,7 +347,7 @@ export async function freePort() {
 export async function startApp(home, env, { lockRail = false, serverArgs = ['ui/server.mjs'] } = {}) {
   const port = await freePort();
   await mkdir(join(home, '.worca-cc'), { recursive: true });
-  // a locked flag draws the top-bar switch disabled (nav.design-switch), which the prototype's switch is not
+  // a locked flag draws the top-bar icon's menu rows disabled (nav.design-switch), which the prototype's are not
   await writeFile(join(home, '.worca-cc', 'settings.json'), JSON.stringify({ onboarding: { welcomeSeen: true }, ...(lockRail ? {} : { flags: { rail: true } }) }));
   let log = '';
   const child = spawn(process.execPath, serverArgs, { cwd: ROOT, env: { ...process.env, ...env, WORCA_FLAGS: lockRail ? 'rail' : '', WORCA_STILLHET_DEMO: '1', PORT: String(port), HOME: home, USERPROFILE: home, WORCA_HOME: join(home, 'worca-home'), WORCA_MOCK: '1', WORCA_TEST_ALLOW_HOME_FALLBACK: '1', FORCE_COLOR: '0', WORCA_HOST: '127.0.0.1' }, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -443,7 +462,7 @@ async function pagesMain() {
  *  shows, a page that hangs) fails alone; the rest still run. */
 export async function shootCell(browser, app, part, theme, width, outRoot) {
   const out = join(outRoot, part.dir || '');
-  const ctx = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: theme, reducedMotion: 'reduce' });
+  const ctx = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: theme, reducedMotion: 'reduce', ...(part.clipboard ? { permissions: ['clipboard-read', 'clipboard-write'] } : {}) });
   const errors = [];
   let cell;
   try {

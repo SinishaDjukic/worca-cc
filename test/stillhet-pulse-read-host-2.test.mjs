@@ -201,7 +201,7 @@ test('Now rows say how they clear, and a task opens by its own id', async () => 
   const TABLE = { question: 'Clears when you answer it', clarify: 'Clears when you answer it', recovery: 'Clears when you retry or stop it', gate: 'Clears when you approve it or ask for changes', plan: 'Clears when you approve it or ask for changes', outline: 'Clears when you approve it or ask for changes',
     'paused-limit': 'Clears when you resume or stop it', paused: 'Clears when you resume or stop it', interrupted: 'Clears when you resume or stop it', capped: 'Clears when you resume or stop it', failed: 'Clears once you open it',
     'pr-changes': 'Clears when its pull request no longer needs you', failing: 'Clears when its pull request no longer needs you', conflicts: 'Clears when its pull request no longer needs you', checks: 'Clears when its pull request no longer needs you', approved: 'Clears when its pull request no longer needs you', 'pr-behind': 'Clears when its pull request no longer needs you', 'pr-blocked': 'Clears when its pull request no longer needs you',
-    ready: 'Clears when you create its pull request or discard it', 'no-remote': 'Clears when you create its pull request or discard it', missed: 'Clears when you run it or cancel it', project: 'Clears when the project is fixed', workspace: 'Clears when you answer it' };
+    ready: 'Clears when you create its pull request or discard it', 'no-remote': 'Clears when you create its pull request or discard it', missed: 'Clears when you run it or cancel it', 'project-behind': 'Clears when you sync it', 'project-diverged': 'Clears when you bring them together', 'project-missing': 'Clears when you locate its folder', project: '', workspace: 'Clears when you answer it' };
   for (const [k, v] of Object.entries(TABLE)) assert.equal(M.clearsWhen(k), v, `clearsWhen(${k})`);
   assert.equal(M.clearsWhen('working'), '', 'a key not in the table says nothing');
 
@@ -236,4 +236,22 @@ test('the profile spend figure changes after a pipelines-changed that names its 
   await settle(400);
   assert.match(d.querySelector('.spend-card').textContent, /\$14\.25/, 'read again, with no reload');
   assert.ok(h.gets.includes('/api/history/web-00000001/pa?row=1'), 'its one row, not the whole history');
+});
+
+test('Updates and Limits rows draw the Pulse mark (signal) in their tones, never the event bolt', async () => {
+  const { icon } = await import('../ui/public/design-system/components/index.mjs');
+  const h = await loaded(), { w, d } = h;
+  const inner = (html) => { const t = d.createElement('template'); t.innerHTML = html; return t.content.querySelector('svg').innerHTML; };
+  const signal = inner(icon('signal')), bolt = inner(icon('kind-event'));
+  const marks = (sel) => [...pop(d).querySelectorAll(sel)].map((m) => ({ tone: [...m.classList].find((c) => c.startsWith('is-')), glyph: m.querySelector('svg').innerHTML }));
+  showAll(w, d);
+  const updates = marks('.pz-list .kind-mark');
+  assert.ok(updates.length > 0, 'Updates has rows');
+  assert.ok(updates.every((m) => ['is-ask', 'is-idle'].includes(m.tone) && m.glyph === signal && m.glyph !== bolt), JSON.stringify(updates));
+  w.RailPulse.open('vitals');
+  const lim = [...pop(d).querySelectorAll('.pz-sec')].find((s) => s.querySelector('.pz-h').textContent.startsWith('Limits'));
+  assert.ok(lim, 'Vitals shows its Limits section');
+  const limits = [...lim.querySelectorAll('.kind-mark')].map((m) => ({ tone: [...m.classList].find((c) => c.startsWith('is-')), glyph: m.querySelector('svg').innerHTML }));
+  assert.ok(limits.length > 0);
+  assert.ok(limits.every((m) => ['is-fail', 'is-act'].includes(m.tone) && m.glyph === signal), JSON.stringify(limits));
 });

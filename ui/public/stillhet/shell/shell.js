@@ -28,7 +28,8 @@
   const placeMod = (v) => window.RailPlaces[v];
   // The live kind (D23): a place not yet on live data draws its empty look, never seeded rows, until its slice wires it.
   const LIVE = !!window.RailWorld?.live;
-  const NOT_LIVE = { insights: 'insights', requirements: 'requirements' };   // Workflows is live since slice 7, Marketplace since slice 8
+  const NOT_LIVE = { requirements: 'Requirements, under Build' };   // where each lives with Stillhet off (nav.not-live); Workflows is live since slice 7, Marketplace since slice 8, Insights since slice 10
+  const notLiveOf = (view) => LIVE && !!NOT_LIVE[view];
   let liveTask = { title: '' };   // the live task a row opened: its page shows its title and no task details yet
   const el = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
 
@@ -154,7 +155,7 @@
   const quickItems = () => [...document.querySelectorAll('#side-rail nav.nav [data-nav]')].filter((b) => !b.hidden && !b.closest('[hidden]') && b.style.display !== 'none').map((b) => ({ id: `bar-go|${b.dataset.nav}`, text: b.querySelector('.nav-label, span')?.textContent.trim() || b.textContent.trim(), checked: b.dataset.nav === routed.view, hint: b.dataset.flag ? 'Labs' : undefined, mark: R.icon(`nav-${b.dataset.nav}`, 14) }));   /* nav.labs: the word follows the row */
   let barMenu = false;   // the + as a menu, where a place makes things more than one way (list.bar-model)
   let homeNext = false, homeOpen = false, taskChat = '', lastThing = null, visited = [], pinsAll = false;
-  const barOf = (view) => (routed.locked ? 'home' : placeMod(view) ? 'place' : view === 'chat' ? 'chat' : view === 'runs' ? 'tasks' : view === 'run' ? (taskChat ? 'chat' : 'tasks') : view === 'schedules' || view === 'schedule' ? 'schedules' : view === 'settings' ? 'settings' : 'home');
+  const barOf = (view) => (routed.locked || notLiveOf(view) ? 'home' : placeMod(view) ? 'place' : view === 'chat' ? 'chat' : view === 'runs' ? 'tasks' : view === 'run' ? (taskChat ? 'chat' : 'tasks') : view === 'schedules' || view === 'schedule' ? 'schedules' : view === 'settings' ? 'settings' : 'home');
   // who makes things from this bar's +: a place, or Tasks and Schedules from Advanced up (rail.chat-first)
   const makerOf = (which) => (which === 'place' ? placeMod(routed.view) : which === 'tasks' || which === 'schedules' ? window.RailCenters?.maker(which) : null);
   function drawBar() {
@@ -296,7 +297,7 @@
     homeOpen = homeNext; homeNext = false;
     const pane = { today: document.getElementById('route-today'), chat: document.getElementById('route-chat'), schedule: document.getElementById('route-schedule'), place: document.getElementById('route-place'), run: document.getElementById('route-run'), settings: document.getElementById('route-settings'), runs: document.getElementById('route-runs') };
     const lock = !gone && (view === 'schedule' || !!TITLES[view] && view !== 'chat') && lockHere(view, arg);   // nav.locked: every place, by the bar's own data
-    const notLive = LIVE && !gone && !lock && !!NOT_LIVE[view];
+    const notLive = !gone && !lock && notLiveOf(view);
     // the live task page (D1, D15): loading until the list and the task's detail are in, failed with Try again, gone with Tasks
     const taskState = view === 'run' && !gone && !lock ? (LIVE ? liveTaskState(arg) : window.RailDemoState?.task || 'ready') : 'ready';   // the prototype's ?state=task-… shows the same looks
     const ownPage = !notLive && (!!placeMod(view) || view === 'run' || view === 'settings' || view === 'runs' || view === 'chat' || view === 'schedules' || view === 'schedule');
@@ -327,17 +328,17 @@
       pane.today.innerHTML = `<div class="rail-locked">${R.placeHead({ title: liveTask.title || 'Task' })}${look}</div>`;
       if (retryFocus === arg && taskState === 'failed') pane.today.querySelector('[data-task-retry]')?.focus({ preventScroll: true });   // still failing: the new Try again
       scrollTo(0, 0);
-    } else if (notLive) {   // D23: its existing empty look; a task opened from a row keeps its live title
+    } else if (notLive) {   // nav.not-live: it says so and where it lives today, never an empty look; a task opened from a row keeps its live title
       document.body.className = 'view-place';
       const title = view === 'run' ? liveTask.title || 'Task' : TITLES[view];
-      pane.today.innerHTML = `<div class="rail-locked">${R.placeHead({ title })}${R.listState({ state: 'empty', noun: view === 'run' ? 'task details' : NOT_LIVE[view] })}</div>`;
+      pane.today.innerHTML = `<div class="rail-locked">${R.placeHead({ title })}${R.notInStillhet({ place: TITLES[view], today: NOT_LIVE[view], attrs: { 'data-nav': 'chat' } })}</div>`;
       scrollTo(0, 0);
     } else if (!pane.today.hidden && SOON[view]) {   // nav.locked: a place not yet in Rail draws a true page, never a blank one, and the bar stays
       document.body.className = 'view-place';
       pane.today.innerHTML = `<div class="rail-locked">${R.emptyState({ title: SOON[view][0], text: SOON[view][1], actions: R.button({ label: 'Back to Chat', kind: 'quiet', attrs: { 'data-nav': 'chat' } }) })}</div>`;
       scrollTo(0, 0);
     } else if (!pane.today.hidden) {
-      pane.today.innerHTML = `<div class="rail-locked">${R.emptyState({ title: `${TITLES[view] || 'This page'} is not in Stillhet yet`, text: 'It has no Stillhet screen. It is on the wiring list.', actions: R.button({ label: 'Back to Chat', kind: 'quiet', attrs: { 'data-nav': 'chat' } }) })}</div>`;
+      pane.today.innerHTML = `<div class="rail-locked">${R.notInStillhet({ place: TITLES[view] || 'This page', attrs: { 'data-nav': 'chat' } })}</div>`;
       scrollTo(0, 0);
     } else pane.today.innerHTML = '';
     if (view === 'chat') {

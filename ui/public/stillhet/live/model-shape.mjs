@@ -15,7 +15,7 @@ export const SHAPES = Object.freeze({
     // the saved rule (Save keeps its end), the grace window in minutes, and the run-after ref ({kind, id, policy}) a change starts from
     skip: 'string?', overlap: 'string?', fails: 'number|null?', ifMissed: 'string?', tz: 'string?', pauseWhy: 'string?', preset: 'string?', after: 'string?', ended: 'boolean?',
     rule: 'object|null?', grace: 'number|null?', afterRef: 'object|null?' },
-  project: { id: 'string', name: 'string?', kind: 'string', path: 'string', branch: 'string?', base: 'string?', origin: 'string', ahead: 'number|null?', behind: 'number|null?', checked: 'string?', needs: 'boolean?', devPath: 'string?', ownedFolder: 'boolean?', vcs: 'string?' },   // slice 9 D5: dev's raw path (what writes send), a folder Worca made, git or none
+  project: { id: 'string', name: 'string?', kind: 'string', path: 'string', branch: 'string?', base: 'string?', origin: 'string', ahead: 'number|null?', behind: 'number|null?', checked: 'string?', needs: 'boolean?', autoSync: 'boolean?', devPath: 'string?', ownedFolder: 'boolean?', vcs: 'string?' },   // slice 9 D5: dev's raw path (what writes send), a folder Worca made, git or none
   costs: { budget: 'object|null', usage: 'array' },
   space: { id: 'string', title: 'string', home: 'string', runs: 'number|null', scanned: 'string', model: 'string', about: 'string', projects: 'array', links: 'array', paths: 'array?', fresh: 'boolean?', draft: 'object|null?' },   // a workspace (D10); slice 9: its members' folders, a fresh draft, an edit draft. A link may carry `at` (file:line of its evidence)
   update: { id: 'string', e: 'string', g: 'string', sev: 'string', title: 'string', meta: 'string', time: 'string', day: 'string', unread: 'boolean', go: 'string', to: 'string', run: 'string?', about: 'string?', fix: 'string?', work: 'number|null?' },
@@ -26,6 +26,8 @@ export const SHAPES = Object.freeze({
   // Marketplace (slice 8): marketplace/marketplace.js data, and live/market-map.mjs pluginsOf and marketOf
   plugin: { id: 'string', name: 'string', ver: 'string', kind: 'string', market: 'string', what: 'string', adds: 'array', asks: 'array', installed: 'boolean', brand: 'string?', update: 'string?', needsSetup: 'boolean?', source: 'object|null?', uses: 'number|null?', why: 'string?', parts: 'array?', gives: 'object|null?', row: 'object|null?' },
   market: { id: 'string', name: 'string', url: 'string', branch: 'string', sha: 'string', synced: 'string', builtin: 'boolean?', webUrl: 'string|null?', error: 'string?' },
+  // Insights (slice 10 D5): a live source, live/insights-map.mjs statsSource and teamSource (the demo's are insights-model.js source())
+  insight: { live: 'boolean', fields: 'array', labels: 'array', series: 'object', totals: 'object', prev: 'object|null', rows: 'object', kids: 'object?' },
 });
 
 const is = {
@@ -35,6 +37,7 @@ const is = {
   array: (v) => Array.isArray(v),
   'object|null': (v) => v === null || (typeof v === 'object' && !Array.isArray(v)),
   'string|null': (v) => v === null || typeof v === 'string',
+  object: (v) => v !== null && typeof v === 'object' && !Array.isArray(v),
 };
 
 /** [] when `item` has every field of `kind` with its type, else one line per wrong field ("task.cost: expected number|null"). */
@@ -65,8 +68,8 @@ export const TURN_SHAPES = Object.freeze({
   you: { id: 'string', text: 'string', files: 'array?', refs: 'array?', quote: 'string?', at: 'number?' },
   think: { text: 'string', steps: 'array?' },
   working: { at: 'number?', steps: 'array?' },
-  words: { html: 'string', parts: 'array?', at: 'number?', key: 'string?' },
-  ship: { id: 'string', title: 'string', reqs: 'array', how: 'string?', featureId: 'string?', done: 'string?' },   // the prototype's Ship card; live adds dev's feature id   // parts: words and the refs in them (panel.answer-refs)
+  words: { html: 'string', md: 'string?', at: 'number?', key: 'string?' },   // md: a finished answer's words, drawn by Prose (panel.rendered-prose)
+  ship: { id: 'string', title: 'string', reqs: 'array', how: 'string?', featureId: 'string?', done: 'string?' },   // the prototype's Ship card; live adds dev's feature id
   code: { file: 'string?', text: 'string' },
   commands: { id: 'string', rows: 'array' },
   cmd: { cmd: 'string', sum: 'string?', dir: 'string?' },

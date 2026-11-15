@@ -121,6 +121,10 @@ const RESTART_NOTICE = 'interrupted by restart';
 const cutByRestart = (m) => m.status === 'error' && Array.isArray(m.blocks) && m.blocks.some((b) => b && b.kind === 'notice' && b.text === RESTART_NOTICE);
 const idsOf = (r) => r?.detail?.messageIds || r?.messageIds || [];
 
+/** Test seams (read at call time). statusClock: { now(), setInterval(fn, ms), clearInterval(id) } drives the live status
+ *  message's elapsed time and ticker instead of deps; null = deps. */
+export const _testing = { statusClock: null };
+
 export function createConversationBridge(deps) {
   const buckets = new Map();
   const rate = deps.ratePerMin ?? FREEFORM_RATE_PER_MIN;
@@ -155,8 +159,10 @@ export function createConversationBridge(deps) {
   // follow-up is queued: waits by card id) or 'bound' (waits for assistantId). The row in chat_deliveries survives a
   // restart; sweepStatuses finishes any it finds without a record here.
   const statuses = new Map();   // platform message id -> status record
-  const setI = deps.setInterval || globalThis.setInterval;
-  const clearI = deps.clearInterval || globalThis.clearInterval;
+  // The status clock: _testing.statusClock when a test set it (read at call time), else deps.
+  const sNow = () => (_testing.statusClock ? _testing.statusClock.now() : deps.now());
+  const setI = (fn, ms) => (_testing.statusClock ? _testing.statusClock.setInterval(fn, ms) : (deps.setInterval || globalThis.setInterval)(fn, ms));
+  const clearI = (id) => (_testing.statusClock ? _testing.statusClock.clearInterval(id) : (deps.clearInterval || globalThis.clearInterval)(id));
   const liveOn = (c) => { try { return deps.liveStatus?.(c.plugin, c.channelId) === true; } catch { return false; } };
   const activeIn = (c) => [...statuses.values()].filter((st) => st.c.id === c.id);
 
@@ -174,7 +180,7 @@ export function createConversationBridge(deps) {
     try { id = idsOf(await send(c, statusMessage(WORKING))).at(-1); }
     catch (err) { log('warn', `status message not posted: ${err?.message || err}`); return null; }
     if (!id) return null;
-    const st = { c, id: String(id), phase: 'starting', assistantId: null, cardId: null, startedAt: deps.now(), activity: null,
+    const st = { c, id: String(id), phase: 'starting', assistantId: null, cardId: null, startedAt: sNow(), activity: null,
       shown: WORKING, done: false, lost: false, used: false, editing: false, pauseUntil: 0, chain: Promise.resolve(), timer: null };
     try { conv.recordStatus({ conversationId: c.id, platformMessageId: st.id }, { now: deps.now() }); }
     catch (err) { log('warn', `status message not recorded: ${err?.message || err}`); }
@@ -187,15 +193,15 @@ export function createConversationBridge(deps) {
 
   /** One progress edit: only when the text changed, never while one is in flight or a 429 asked to wait. */
   function tickStatus(st) {
-    if (st.done || st.lost || st.editing || deps.now() < st.pauseUntil) return;
-    const text = statusText({ elapsedMs: deps.now() - st.startedAt, activity: st.activity });
+    if (st.done || st.lost || st.editing || sNow() < st.pauseUntil) return;
+    const text = statusText({ elapsedMs: sNow() - st.startedAt, activity: st.activity });
     if (text === st.shown) return;
     st.editing = true;
     st.chain = st.chain.then(async () => {
       if (st.done) return;
       try { await send(st.c, statusMessage(text), { edit: { messageId: st.id } }); st.shown = text; }
       catch (err) {
-        if (Number.isFinite(err?.retryAfterMs)) st.pauseUntil = deps.now() + err.retryAfterMs;
+        if (Number.isFinite(err?.retryAfterMs)) st.pauseUntil = sNow() + err.retryAfterMs;
         else if (err?.permanent) st.lost = true;          // deleted or no access: no more progress; the reply posts anew
         log('warn', `status update failed: ${err?.message || err}`);
       }
