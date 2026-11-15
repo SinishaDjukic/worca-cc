@@ -27,6 +27,11 @@ export function writeComponentsJs() {
     globalName: 'RailUI', outfile: COMPONENTS_JS, legalComments: 'none', logLevel: 'error' });
   // dev's graph renderer and its auto-layout, for the workflows' graph (window.RailGraph); generated beside components.js
   buildSync({ entryPoints: [here('../../../../ui/public/stillhet/graph/graph-entry.mjs')], bundle: true, format: 'iife', outfile: here('../../../../ui/public/stillhet/graph.js'), legalComments: 'none', logLevel: 'error' });
+  // panel.rendered-prose: dev's markdown modules (marked, dompurify) travel in the bundle, so a file:// page renders Prose
+  // too; loadProse settles in microtasks, before the next <script> runs
+  const md = buildSync({ stdin: { contents: "import { marked } from 'marked';\nimport createDOMPurify from 'dompurify';\nwindow.RailMarkdown = { marked, createDOMPurify };\nwindow.RailUI.loadProse();\n", resolveDir: here('../../../..'), loader: 'js' },
+    bundle: true, format: 'iife', minify: true, write: false, legalComments: 'none', logLevel: 'error' });
+  appendFileSync(COMPONENTS_JS, `${md.outputFiles[0].text.trim()}\n`);
   appendFileSync(COMPONENTS_JS, `window.RailCatalog = ${readFileSync(here('../../../../docs/design-system-catalog.json'), 'utf8').trim()};\nwindow.RailStamp = ${JSON.stringify(railStamp())};\n`);
 }
 

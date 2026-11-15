@@ -78,6 +78,7 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | Files Worca shows you | FilesCard: pictures as tiles, files as rows, Download | invoice-4411.png |
 | What you said | YouTurn: your words, the quote you answered, your files | This is what the customer sent |
 | When a turn was said | TurnTime: under the turn at its right edge, on hover, focus or a tap; today a time, then Yesterday and a time, older a date and a time | 14:32, Yesterday 14:32, Nov 3, 14:32 |
+| Worca's finished words, with their formatting | Prose: dev's markdown rendered calm; lists, code, links, tables, ref chips in the words | Two changes fix it, a list and a code block |
 | Worca at work | OrbMark: the app's sphere of dots with Worca's W facing you, a hairline ring around it in light, lit while the sphere turns under it; still at rest; think, tool and write move it; `watchOrbs` brings every one to life | Thinking |
 | Moving through a long conversation or a task | Timeline on the right edge, its TimelineCard on hover | You · 14:32 (its time is TurnTime's) |
 | What hangs under a row | the rounded tree under it (`tree` on a list's row) | a chat's tasks |
@@ -169,6 +170,7 @@ other library calls, never a person's text: a person's text goes through the lib
 | A duration in words as minutes | `toMin` | States |
 | Minutes as a duration in words | `fmtMin` | States |
 | A turn's time in words, without its element | `turnTimeText` | TurnTime |
+| Load the renderer once, then redraw | `loadProse` | Prose |
 | One line on what an action does, in its tooltip | `actionHelp` | Actions |
 | The interface mode an action needs | `actionLevel` | Actions |
 | An action as a state offers it | `makeAction` | Actions |

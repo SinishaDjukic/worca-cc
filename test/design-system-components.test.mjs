@@ -73,6 +73,15 @@ test('listController: selected counts in the actions\' unit (list.select-bar)', 
   assert.match(root.querySelector('.runs-bulk-n').textContent, /^3 selected/);
 });
 
+test('listController: the arrows on a reply\'s code block or table scroll it, not the list', () => {
+  const d = new JSDOM('<body><div id="r"></div><div class="prose"><pre tabindex="0"><code>x</code></pre><div class="rt-wrap" tabindex="0"></div></div><p tabindex="0" id="other"></p></body>', { pretendToBeVisual: true }).window.document, root = d.getElementById('r');
+  const rows = [{ key: 'g', title: 'g', meta: '', members: [{ key: 'm', title: 'm' }] }, { key: 'c', title: 'c', meta: '' }];
+  C.listController({ root, spec: { noun: `scroll-${Math.random()}`, label: 'x', can: () => [], bulk: () => [], act: () => {}, word: () => false, say: () => {}, active: () => true, open: () => {}, view: () => ({ state: 'ready', parts: [], sections: [{ id: 's', title: 'S', rows }] }) } }).paint();
+  const press = (el, key) => { const e = new d.defaultView.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }); el.dispatchEvent(e); return e.defaultPrevented; };
+  for (const sel of ['.prose pre', '.prose .rt-wrap']) for (const key of ['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp']) assert.equal(press(d.querySelector(sel), key), false, `${sel} ${key}`);
+  assert.equal(press(d.getElementById('other'), 'ArrowDown'), true, 'elsewhere the list still owns the arrows');
+});
+
 test('compactMenu: two columns live inside what scrolls (comp.menu-groups)', () => {
   const m = dom(C.compactMenu({ cls: 'pz-menu is-two-cols', items: [{ header: 'One' }, { text: 'a' }] }));
   assert.ok(m.firstElementChild.matches('.menu-cols') && m.querySelector('.menu-cols > .menu-g'));
@@ -1559,6 +1568,7 @@ test('planCard, filesCard, youTurn: the Shaper plan folds its roles; files as ti
   assert.match(y, /you-quote">Off by a cent/); assert.match(y, /x\.pdf/);
   assert.match(C.youTurn({ text: 'Hi', time: C.turnTime({ at: Date.now() }) }), /<time class="turn-time"[^>]*>\d\d:\d\d<\/time><\/div>$/);   // turnTime: its time is the turn's last child
   assert.equal(C.turnTimeText(Date.now(), Date.now()), C.turnTime({ at: Date.now() }).match(/>([^<]+)<\/time>$/)[1]);   // turnTimeText: the words TurnTime shows
+  assert.match(C.prose({ text: '**a**\nb' }), /^<div class="prose is-plain">\*\*a\*\*<br>b<\/div>$/); assert.equal(typeof C.loadProse, 'function');   // prose: plain until loadProse has loaded this document's renderer
   assert.doesNotMatch(C.changeProposal({ kind: 'Agent', title: 'New', rows: [{ name: 'Reads', before: '', after: 'PRs' }] }), /→/);
 });
 
