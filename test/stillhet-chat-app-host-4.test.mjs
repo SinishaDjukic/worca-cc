@@ -207,3 +207,23 @@ test('F-a1-04: an open Stop confirm goes when the run ends under it; nothing is 
   assert.equal(stopRow(d), null, 'a finished run offers no Stop, so its confirm is gone');
   assert.ok(!posts(calls).some(([, u]) => u === '/api/stop'), 'no stop request');
 });
+
+// F-a1-04: Stop sends classic's body (app.js stopRun): a live run's runId, with its pipeline id once paused; a paused run
+// this server does not hold live (a saved row) by its pipeline id alone, never as a runId
+const stopOn = async (w, d, calls, id) => {
+  await go(w, '#chat/ask_1');
+  assert.ok((await cardItems(d, id)).includes('Stop'));
+  d.querySelector(`#route-chat [data-menu-pick="card:${id}|Stop"]`).click(); await settle(10);
+  d.querySelector(`#route-chat [data-card-yes="${id}"]`).click(); await settle(40);
+  return posts(calls).filter(([, u]) => u === '/api/stop');
+};
+
+test('F-a1-04: a paused card\'s Stop sends classic\'s body: its runId and its pipeline id', async () => {
+  const { w, d, calls } = await liveHost({ sources: withRun({ status: 'paused', pendingQuestion: null }) });
+  assert.deepEqual(await stopOn(w, d, calls, 'run-a'), [['POST', '/api/stop', { runId: 'run-a', pipelineId: 'pa' }]]);
+});
+
+test('F-a1-04: a paused saved run\'s Stop sends its pipeline id alone, never as a runId', async () => {
+  const { w, d, calls } = await liveHost({ sources: savedRun({ status: 'paused' }) });
+  assert.deepEqual(await stopOn(w, d, calls, 'pa'), [['POST', '/api/stop', { pipelineId: 'pa' }]]);
+});

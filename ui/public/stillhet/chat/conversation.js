@@ -166,6 +166,8 @@
   // whether the card still offers a confirm's label: Stop as above, a state's own action while the card is in that state;
   // Archive and Report this task are offered on any card
   const stillAsks = (t, label) => (label === 'Stop' ? canStop(t) : ['Archive', 'Report this task'].includes(label) || label in R.actionFlow(RM.stateOf(t.case), cardCtx(t)));
+  // Stop's ids as classic sends them: runId only for a run this server holds live (task-live's resolve), never a pipeline id
+  const stopArgs = (t) => { const r = window.RailTaskLive?.resolve?.(t.run || t.id); return { runId: r?.runId || '', pipelineId: r?.pipelineId || t.pid || '', paused: !!runOfT(t)?.paused }; };
   const tidy = (items) => items.filter((it, k, l) => !it?.sep || (k > 0 && k < l.length - 1 && !l[k - 1]?.sep));
 
   // ---- the composer ----
@@ -548,7 +550,7 @@
       prError.delete(rid);
       const asked = window.RailTaskLive?.prLookup?.().token || 0;   // the lookup before the click: a later one is the PR's
       if (pr) opening.set(rid, { was: label, token: 0 });   // D6: Opening the PR… from here until its PR arrives
-      const fl = (taskFlow(label, t) ? window.RailTaskLive.flow : CL().flow)(label, { taskId: rid, ...flowArgs(t), value: given.value ?? t.form?.value, ...(given.typed ? { title: given.typed } : {}), ...(given.value === 'a draft' ? { draft: true } : {}), ...(pr ? { quiet: true } : {}) });
+      const fl = (taskFlow(label, t) ? window.RailTaskLive.flow : CL().flow)(label, { taskId: rid, ...flowArgs(t), ...(label === 'Stop' ? stopArgs(t) : {}), value: given.value ?? t.form?.value, ...(given.typed ? { title: given.typed } : {}), ...(given.value === 'a draft' ? { draft: true } : {}), ...(pr ? { quiet: true } : {}) });
       setCardAsk(t, { confirm: null, form: null }); paint();
       busyFor(`[data-card-act="${t.id}|${label}"]`, fl.then((r) => {
         if (pr) {   // D8: a refused create says why once, on its card; a taken one waits for the lookup afterPr just asked
