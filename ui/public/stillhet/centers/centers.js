@@ -323,16 +323,27 @@
   }
   const hooksOf = () => ({ close: {}, cancel: {}, yes: {} });
   const cap = (t) => t[0].toUpperCase() + t.slice(1);
-  const host = () => { let h = document.getElementById('center-dlg'); if (!h) { h = document.createElement('div'); h.id = 'center-dlg'; h.className = 'pz-app rail-page'; document.getElementById('app').append(h); h.addEventListener('click', dlgClick); h.addEventListener('input', dlgInput); h.addEventListener('keydown', dlgKey); h.addEventListener('mousedown', (e) => { if (e.target.classList.contains('viewer-modal')) closeForm(); }); } return h; };
+  // the forms' host sits beside #app, never in it: Pulse rewrites #app on every draw (live loads, frames), which would drop an
+  // open form. rail-layer gives it #app's fixed full-window box, so the scrim still covers the window and an empty host takes no clicks.
+  const host = () => { let h = document.getElementById('center-dlg'); if (!h) { h = document.createElement('div'); h.id = 'center-dlg'; h.className = 'pz-app rail-page rail-layer'; document.body.append(h); h.addEventListener('click', dlgClick); h.addEventListener('input', dlgInput); h.addEventListener('keydown', dlgKey); h.addEventListener('mousedown', (e) => { if (e.target.classList.contains('viewer-modal')) closeForm(); }); } return h; };
+  // F-gb21-01: a repaint with no focus target (a live load landing) keeps the field that had the focus, its caret and selection
+  const focusOf = (h) => { const a = document.activeElement; if (!a || a === h || !h.contains(a)) return null; const sel = a.id ? `#${a.id}` : a.dataset.menu ? `[data-menu="${a.dataset.menu}"]` : a.dataset.f ? `[data-f="${a.dataset.f}"]` : ''; let at = null; try { at = [a.selectionStart, a.selectionEnd, a.selectionDirection]; } catch { /* no caret on a button */ } return sel ? { sel, at } : null; };
   function paintForm(focus) {
-    const h = host(), scroll = h.querySelector('.dlg-body')?.scrollTop || 0;
+    const h = host(), scroll = h.querySelector('.dlg-body')?.scrollTop || 0, had = focus ? null : focusOf(h);
     h.innerHTML = form ? formHtml() : '';
     if (!form) return;
     const b = h.querySelector('.dlg-body'); if (b) b.scrollTop = scroll;
-    (focus ? h.querySelector(focus) : null)?.focus();
+    if (focus) { h.querySelector(focus)?.focus(); return; }
+    const el = had && h.querySelector(had.sel); if (!el) return;
+    el.focus(); if (had.at && had.at[0] != null) try { el.setSelectionRange(...had.at); } catch { /* not a text field */ }
   }
-  function openForm(kind, keep) { menu = ''; opener = document.activeElement; form = blank(kind, keep); loadFlows(); loadBranches(); paintForm(kind === 'schedule' ? '#cc-name' : '#cc-text'); }
-  function closeForm() { form = null; menu = ''; paintForm(); (opener?.isConnected && opener !== document.body ? opener : document.querySelector('#bar-head [data-bar-new]'))?.focus(); }   // a menu's item is gone by now: back to its +
+  // Esc closes the open form wherever the focus is (F-gb21-01): the host's own listener only hears keys from inside it
+  const escAnywhere = (e) => { if (e.key === 'Escape' && form && !host().contains(e.target)) dlgKey(e); };
+  const formOff = () => { form = null; menu = ''; document.removeEventListener('keydown', escAnywhere, true); };
+  function openForm(kind, keep) { menu = ''; opener = document.activeElement; form = blank(kind, keep); document.addEventListener('keydown', escAnywhere, true); loadFlows(); loadBranches(); paintForm(kind === 'schedule' ? '#cc-name' : '#cc-text'); }
+  // a route change closes the form, as the account menu does (pulse.js): only a redraw of the same page keeps it; the next page owns the focus
+  addEventListener('hashchange', () => { if (!form) return; formOff(); opener = null; paintForm(); });
+  function closeForm() { formOff(); paintForm(); (opener?.isConnected && opener !== document.body ? opener : document.querySelector('#bar-head [data-bar-new]'))?.focus(); }   // a menu's item is gone by now: back to its +
   function check() {
     const words = form.src === 'write' ? form.text.trim() : form.path.trim();
     if (form.kind === 'schedule' && !form.name.trim()) return ['Name it first', '#cc-name'];
