@@ -65,6 +65,7 @@ export { turnTime, turnTimeText } from './turn-time.mjs';
 export { tipPlace, watchTooltips } from './tooltip.mjs';
 export { menuUp, menuShift, watchMenus } from './menu-place.mjs';
 export { secondClickIgnored, watchClickGuard } from './click-guard.mjs';
+export { patchKeyed, frameBatch } from './keyed-list.mjs';
 export { scrollEdges, watchScrollFades } from './scroll-fade.mjs';
 export { commandHead, commandLine, commandRow, commandGroup } from './commands.mjs';
 export { orbMark, watchOrbs } from './orb.mjs';
