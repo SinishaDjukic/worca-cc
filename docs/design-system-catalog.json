@@ -2386,6 +2386,23 @@
       ]
     },
     {
+      "name": "Patching a list by key",
+      "code": "ui/public/design-system/components/keyed-list.mjs#patchKeyed",
+      "needs": [
+        "a list redrawn on live data, where an item whose drawing did not change keeps its node, its focus, caret and scroll",
+        "an orb in a redrawn item that keeps turning instead of starting again"
+      ],
+      "example": "patchKeyed(col, turns.map((t) => ({ key: t.id, html: t.html })), { carry: 'canvas[data-orb]' })",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/keyed-list.mjs#frameBatch",
+          "needs": [
+            "live redraws asked many times within one frame draw once, at the next frame"
+          ]
+        }
+      ]
+    },
+    {
       "name": "The sound of a new event",
       "code": "ui/public/design-system/components/sound.mjs#soundFor",
       "needs": [
