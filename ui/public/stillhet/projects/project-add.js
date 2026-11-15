@@ -89,7 +89,7 @@
       if (paths.length === 1) { s.way = 'folder'; s.typed = s.shown = paths[0]; s.err = ''; ctx.draw(); probeNow(paths[0]); focus('#pj-hand-v'); return; }
       const abs = (q) => (q && b.home && /^~(\/|$)/.test(q) ? b.home + q.slice(1) : q);   // a ~/ path the store keeps, as the folder browser gives it (absolute)
       const known = (p) => ctx.projects().find((x) => [x.path, x.devPath].some((q) => q === p || abs(q) === p));
-      s.review = paths.map((path) => { const k = known(path); return { path, name: R.folderName(path), include: !k, status: '', reason: k ? `already registered as “${ctx.nameOf(k)}”` : '' }; });
+      s.review = paths.map((path) => { const k = known(path); const name = R.folderName(path); return { path, name, shown: name, include: !k, status: '', reason: k ? `already registered as “${ctx.nameOf(k)}”` : '' }; });
       s.reviewErr = '';
       ctx.draw();
     }
@@ -143,7 +143,7 @@
     }
     async function addSeveral() {
       const rows = s.review;
-      rows.forEach((r, i) => { const el = document.querySelector(`[data-fr-name="${i}"]`); if (el && r.status !== 'added') r.name = el.value.trim(); });
+      rows.forEach((r, i) => { const el = document.querySelector(`[data-fr-name="${i}"]`); if (el && r.status !== 'added') r.name = r.shown = el.value.trim(); });
       const sent = rows.filter((r) => r.include && r.status !== 'added');
       if (!sent.length) { s.reviewErr = R.REVIEW_EMPTY; ctx.draw(); return; }
       if (down()) { ctx.say(NOT_ANSWERING); return; }
@@ -173,7 +173,7 @@
       }
       if (s.way === 'many') {
         if (!s.review) return R.folderWay({ pick: { label: 'Browse folders…', hook: 'data-pa-browse', title: 'Pick folders on this computer' } }) + R.confirmActions({ yes: 'Browse folders…' });
-        return R.folderReview({ rows: s.review, saving: !!b, error: s.reviewErr });
+        return R.folderReview({ rows: s.review.map((r) => ({ ...r, name: r.shown })), saving: !!b, error: s.reviewErr });
       }
       const m = model();
       return R.field({ id: 'pj-hand-v', label: 'Folder or repository', placeholder: '~/src/your-project', value: s.shown, error: s.err, attrs: { maxlength: 200, 'data-keep': 'pj-hand:project:' } })

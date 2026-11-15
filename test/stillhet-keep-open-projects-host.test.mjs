@@ -35,6 +35,25 @@ test('F-6-01: Add by hand keeps its text, caret and focus through a live redraw'
   await kept(h, 'pj-hand:project:');
 });
 
+test('F-6-01 COV-1: a Several folders review name keeps its text, caret and focus through a live redraw', async () => {
+  const dirs = { path: '/src', parent: '/', home: '/home/me', dirs: [{ name: 'a', path: '/src/a' }, { name: 'b', path: '/src/b' }] };
+  const h = await projectsHost({ read: (u) => (u.startsWith('/api/fs/dirs') ? [200, dirs] : null) });
+  h.w.RailPlaces.projects.newPick('hand-project'); await settle(100);
+  page(h.d).querySelector('[data-pa-way="many"]').click(); await settle(60);
+  page(h.d).querySelector('[data-pa-browse]').click(); await settle(150);
+  for (const p of ['/src/a', '/src/b']) { page(h.d).querySelector(`[data-fb-pick="${p}"]`).click(); await settle(30); }
+  page(h.d).querySelector('.fb [data-dialog="yes"]').click(); await settle(100);
+  const before = page(h.d).querySelector('[data-fr-name="1"]');
+  assert.equal(before.getAttribute('data-keep'), 'fr:1');
+  type(h.w, before, 'bee');
+  await redraw(h.w);
+  const after = page(h.d).querySelector('[data-fr-name="1"]');
+  assert.equal(after, before, 'B2.7: the redraw kept the review name field');
+  assert.equal(after.value, 'bee');
+  assert.deepEqual([after.selectionStart, after.selectionEnd], [1, 1]);
+  assert.equal(h.d.activeElement, after);
+});
+
 test('F-6-01: Make a workspace keeps its text, caret and focus through a live redraw', async () => {
   const h = await projectsHost();
   h.w.RailPlaces.projects.newPick('hand-space'); await settle(100);
