@@ -11,6 +11,7 @@ import { startMarketLive } from './market-live.mjs';
 import { startProjectsLive } from './projects-live.mjs';
 import { progressOfState } from './chat-turns.mjs';
 import { workModeOf } from '../../../../src/shared/ask-run-snapshot.mjs';
+import { USAGE_REFRESH_MS } from '../../design-system/components/usage.mjs';
 
 export const SOURCES = Object.freeze({
   history: '/api/history', threads: '/api/ask/threads?show=all', groups: '/api/ask/groups', schedules: '/api/schedules',
@@ -20,13 +21,14 @@ export const SOURCES = Object.freeze({
   usageLimits: '/api/usage-limits',   // the profile's usage rings: the harness CLIs' own plan-limit readings (D7)
   workspaces: '/api/workspaces',   // the bell's and the workspace page's questions; each map is read after the list (D10)
 });
-// A `*-changed` frame re-fetches only its own sources (D11); a chat's turn re-reads the threads.
+// A `*-changed` frame re-fetches only its own sources (D11); a chat's turn re-reads the threads. A `pipelines-changed` that
+// names its run (`pipelineId`) reads that run's one row instead of the whole history, and the spend it may have moved.
 const CHANGED = {
   'pipelines-changed': ['history', 'runLinks'], 'ask-run-status': ['runLinks'], 'schedules-changed': ['schedules'], 'notifications-changed': ['notifications'], 'projects-changed': ['projects'],
   'project-sync-changed': ['sync'], 'budget-changed': ['budget'], 'actions-changed': ['actions'], 'settings-changed': ['settings', 'away'], 'ask-groups-changed': ['groups'], 'run-groups-changed': ['runGroups'], 'usage-limits-changed': ['usageLimits'], 'workspaces-changed': ['workspaces'], 'ask-labels-changed': ['threads'],
   'workflows-changed': ['workflows'], 'scripts-changed': ['scripts'],   // Workflows (slice 7 D20): workflow-live.mjs reads its own lists again
   'plugins-changed': ['plugins', 'markets', 'workflows', 'scripts'],   // Marketplace (slice 8 D17): a plugin's workflows and agents show in Workflows too
-  'ask-start': ['threads', 'runLinks'], 'ask-done': ['threads', 'runLinks'], 'ask-error': ['threads'], 'ask-title': ['threads'], 'ask-message': ['threads', 'runLinks'],
+  'ask-start': ['threads', 'runLinks'], 'ask-done': ['threads', 'runLinks', 'budget'], 'ask-error': ['threads'], 'ask-title': ['threads'], 'ask-message': ['threads', 'runLinks'],
 };
 const WORKFLOW_SOURCES = new Set(['workflows', 'scripts']);
 const MARKET_SOURCES = new Set(['plugins', 'markets']);
@@ -258,6 +260,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
         if (raw.status === 'paused') Object.assign(raw, { pauseReason: f.reason ?? raw.pauseReason, pauseDetail: f.detail ?? raw.pauseDetail, limitEngine: f.limitEngine ?? raw.limitEngine, limitResetAt: f.limitResetAt ?? raw.limitResetAt });
         if (raw.status === 'error' || raw.status === 'failed') { raw.unread = true; raw.opened = false; }   // dev's lingering rule: failed while watched, until opened
       }
+      if (f.type === 'done' || f.type === 'error' || (f.type === 'state' && !inPlay({ kind: raw.kind, status: raw.status }))) settleRow(raw);
       place(raw);
       return;
     }
@@ -270,7 +273,58 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
       for (const id of f.removedRunIds) if (live.delete(id)) { progress.delete(id); gone = true; }
       if (gone) draw(() => { const x = snapshot(); return { runs: x.runs, groups: x.groups }; }, undefined, { list: 'refresh' });
     }
+    if (f.type === 'pipelines-changed' && f.pipelineId) { runRead(f); refresh('runLinks'); refresh('budget'); return; }
     for (const s of CHANGED[f.type] || []) refresh(s);
+  }
+
+  // One run's row (GET /api/history/KEY/ID?row=1), debounced per pipeline, merged into the saved rows. The full read covers
+  // it: a row read asked while one is pending or out is dropped, and a row read older than a landed list is not applied.
+  const runTimers = {};
+  let historyOut = false, historyDirty = false;
+  const historyDue = () => !!timers.history || historyOut;
+  function runRead(f) {
+    const key = str0(f.key) || str0((sources.history?.pipelines || []).find((p) => p && p.id === f.pipelineId)?.projectKey);
+    if (!key || key.startsWith('workspaces/')) { refresh('history'); return; }   // a workspace key fails the route's check
+    refreshRun(key, f.pipelineId);
+  }
+  function refreshRun(key, id) {
+    if (historyDue()) return;
+    clearTimeout(runTimers[id]);
+    runTimers[id] = setTimeout(async () => {
+      delete runTimers[id];
+      if (historyDue()) return;
+      const n = ++asked;
+      let row;
+      try { row = (await get(`/api/history/${encodeURIComponent(key)}/${encodeURIComponent(id)}?row=1`))?.pipeline; } catch { refresh('history'); return; }
+      if (!row || typeof row !== 'object') { refresh('history'); return; }
+      const h = sources.history || {}, list = Array.isArray(h.pipelines) ? h.pipelines : [];
+      const i = list.findIndex((p) => p && p.id === row.id);
+      if (!keep('history', { ...h, pipelines: i < 0 ? [...list, row] : list.map((p, j) => (j === i ? row : p)) }, n)) return;
+      drawSource('history');
+    }, DEBOUNCE_MS);
+  }
+  // A settled run's status reaches its saved row from its own frame, before any read: every later snapshot draw shows it.
+  function settleRow(raw) {
+    const h = sources.history, list = Array.isArray(h?.pipelines) ? h.pipelines : [];
+    const i = raw.pipelineId ? list.findIndex((p) => p && p.id === raw.pipelineId) : -1;
+    if (i < 0) return;
+    const p = list[i], row = { ...p, status: raw.status, totalCostUsd: raw.totalCostUsd ?? p.totalCostUsd,
+      ...(raw.status === 'paused' ? { pauseReason: raw.pauseReason ?? null, pauseDetail: raw.pauseDetail ?? null, limitEngine: raw.limitEngine ?? null, limitResetAt: raw.limitResetAt ?? null } : {}) };
+    sources = { ...sources, history: { ...h, pipelines: list.map((x, j) => (j === i ? row : x)) } };
+  }
+  // Spend while a run runs: a run accrues cost with no settle, so its figure is read again once a minute
+  let budgetTick = 0;
+  const armBudgetTick = () => {
+    budgetTick = setTimeout(() => {
+      if (stopped) return;
+      if (sock && sock.readyState === 1 && [...live.values()].some((r) => r.status === 'running')) refresh('budget');
+      armBudgetTick();
+    }, USAGE_REFRESH_MS);
+  };
+  function drawSource(source) {
+    // the out-of-date look clears only once every source that failed has been read again
+    const was = stale.size; stale.delete(source);
+    if (!draw(() => partOf(source, sources[source], { ...sources, hello: { runs: [...live.values()] } }, { now: now(), unread, checksOf: task.checks }), was && !stale.size ? { list: '' } : undefined, { list: 'refresh' })) stale.add(source);   // a mapper throw: the look clears once it maps again
   }
 
   const marketDue = new Set();
@@ -286,22 +340,26 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
     clearTimeout(timers[source]);
     timers[source] = setTimeout(async () => {
       timers[source] = 0;
+      const full = source === 'history';
+      if (full && historyOut) { historyDirty = true; return; }   // one /api/history read at a time; one more after it lands
+      if (full) historyOut = true;
       const n = ++asked;
-      let a;
-      try { a = await load(source); } catch { stale.add(source); world.setState({ list: 'refresh' }); return; }
+      let a, failed = false;
+      try { a = await load(source); } catch { failed = true; }
+      if (full) { historyOut = false; if (historyDirty) { historyDirty = false; refresh('history'); } }
+      if (failed) { stale.add(source); world.setState({ list: 'refresh' }); return; }
       if (!keep(source, a, n)) return;
-      if (source === 'history') askPrs();
-      // the out-of-date look clears only once every source that failed has been read again
-      const was = stale.size; stale.delete(source);
-      if (!draw(() => partOf(source, sources[source], { ...sources, hello: { runs: [...live.values()] } }, { now: now(), unread, checksOf: task.checks }), was && !stale.size ? { list: '' } : undefined, { list: 'refresh' })) stale.add(source);   // a mapper throw: the look clears once it maps again
+      if (full) askPrs();
+      drawSource(source);
     }, DEBOUNCE_MS);
   }
 
   function retry() { listFailed = false; world.setState({ list: 'loading' }); return begin(); }
   begin();
+  armBudgetTick();
   return {
     chat, task, workflow, schedule, market, projects: projectsLive,
-    stop: () => { stopped = true; clearTimeout(reconnect); for (const k of Object.keys(timers)) clearTimeout(timers[k]); sock?.close(); },
+    stop: () => { stopped = true; clearTimeout(reconnect); clearTimeout(budgetTick); for (const t of [...Object.values(timers), ...Object.values(runTimers)]) clearTimeout(t); sock?.close(); },
     refresh,
     retry,
     // opening a chat clears its dot (D14)

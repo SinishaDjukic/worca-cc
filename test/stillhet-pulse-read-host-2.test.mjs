@@ -223,3 +223,17 @@ test('Now rows say how they clear, and a task opens by its own id', async () => 
   w.RailPulse.open('now');
   assert.equal(pop(d).querySelector('[data-open="r:run-f"]'), null, 'it leaves Now');
 });
+
+test('the profile spend figure changes after a pipelines-changed that names its run, once the run\'s cost moved', async () => {
+  const sources = clone(SOURCES);
+  const h = await liveHost({ sources }), { d } = h;
+  await h.hello();
+  d.querySelector('[data-acct]').click();
+  d.querySelector('[data-sub="usage"]').click();
+  assert.match(d.querySelector('.spend-card').textContent, /\$12\.50/);
+  sources.budget.windowSpendUsd = 14.25;   // the run settled with its cost
+  frame(h, { type: 'pipelines-changed', action: 'updated', runId: 'run-a', pipelineId: 'pa', key: 'web-00000001' });
+  await settle(400);
+  assert.match(d.querySelector('.spend-card').textContent, /\$14\.25/, 'read again, with no reload');
+  assert.ok(h.gets.includes('/api/history/web-00000001/pa?row=1'), 'its one row, not the whole history');
+});
