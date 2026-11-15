@@ -290,9 +290,17 @@
     const engine = engines().find((e) => e.label === form.agent)?.id || 'claude';
     return liveModels.filter((m) => m.engine === engine).map((m) => ({ text: `${m.label} for every step`, model: m.id }));
   }
-  const projects = () => [...new Set(W.rows().map((r) => r.project).filter(Boolean)), 'No project'];
+  // live: dev's GET /api/projects (the store's projects part, less a Remove's undo window), never task rows (F-a4-06)
+  const liveProjects = () => { const gone = window.RailProjectsLive?.hidden?.() || new Set(); return (W.part('projects') || []).filter((p) => p.id && !gone.has(p.id)).map((p) => ({ name: p.name || p.id, missing: p.origin === 'missing' })); };
+  const projects = () => [...new Set([...(W.live ? liveProjects().map((p) => p.name) : W.rows().map((r) => r.project).filter(Boolean)), 'No project'])];
+  // the project used last: the newest task's (a waiting schedule is not used yet) if listed and its folder is there; a missing folder is never preselected
+  function defaultProject() {
+    if (!W.live) return projects().includes('billing-api') ? 'billing-api' : projects()[0];
+    const ok = liveProjects().filter((p) => !p.missing).map((p) => p.name);
+    return W.rows().find((r) => !String(r.id).startsWith('sched:') && ok.includes(r.project))?.project ?? ok[0] ?? 'No project';
+  }
   const LISTS = () => ({ project: projects(), workflow: flows().map((w) => w.title), agent: W.live ? [LIVE_AGENT, ...engines().map((e) => e.label)] : ['Claude', 'Codex', 'Gemini'], base: W.live ? [LIVE_BASE, ...liveBranches.list] : ['main', 'dev'], source: W.live ? [LIVE_SETUP, ...Object.keys(LIVE_SOURCE)] : ['the latest version from origin', 'my local copy'], then: W.live ? [LIVE_SETUP, ...Object.keys(LIVE_THEN)] : Object.keys(THEN), every: R.REPEATS.filter((x) => x !== 'once' && x !== 'every hour').map((x) => x.replace(/^every /, '')), at: R.TIMES_OF_DAY, tz: [...new Set([homeTz(), 'Europe/Sofia', 'UTC', 'Europe/Berlin', 'America/New_York'])], ends: ['no end date', 'after 10 runs', 'after 30 days'], overlap: ['skip if still going', 'queue if still going'], fails: ['pause after 3 failures', 'pause after 5 failures', 'never pause'], cap: ['the workflow\'s own', 'at $5', 'at $20'], agents: W.live ? [AGENTS_OWN, ...liveAgentPicks().map((x) => x.text)] : [AGENTS_OWN, 'Sonnet for every step', 'Opus for every step'] });
-  const blank = (kind, keep = {}) => ({ kind, project: projects().includes('billing-api') ? 'billing-api' : projects()[0], workflow: 'Default', agent: W.live ? LIVE_AGENT : 'Claude', base: W.live ? LIVE_BASE : 'main', source: W.live ? LIVE_SETUP : 'the latest version from origin', then: W.live ? LIVE_SETUP : 'open a PR', text: '', path: '', src: 'write', name: '', more: false, title: '', branch: '', tags: '', files: [], agents: 'the workflow\'s own', cap: 'the workflow\'s own', every: 'weekday', at: '09:00', tz: homeTz(), ends: 'no end date', overlap: 'skip if still going', fails: 'pause after 3 failures', err: '', ...keep });
+  const blank = (kind, keep = {}) => ({ kind, project: defaultProject(), workflow: 'Default', agent: W.live ? LIVE_AGENT : 'Claude', base: W.live ? LIVE_BASE : 'main', source: W.live ? LIVE_SETUP : 'the latest version from origin', then: W.live ? LIVE_SETUP : 'open a PR', text: '', path: '', src: 'write', name: '', more: false, title: '', branch: '', tags: '', files: [], agents: 'the workflow\'s own', cap: 'the workflow\'s own', every: 'weekday', at: '09:00', tz: homeTz(), ends: 'no end date', overlap: 'skip if still going', fails: 'pause after 3 failures', err: '', ...keep });
   const fPick = (k, tip) => R.sentencePicker({ id: `f-${k}`, text: form[k], tip, items: LISTS()[k].map((v) => ({ id: v, text: v, checked: v === form[k] })), open: menu === `f-${k}`, chevron: chev });
   const proof = () => { const w = flows().find((x) => x.title === form.workflow), s = (w?.steps || []).map((x) => VERB[x] || x.toLowerCase()), last = s.pop(); return `${form.workflow} ${[s.join(', '), last].filter(Boolean).join(' and ')}, then ${THEN[form.then] || 'does what the project is set up to do'}.`.replace(' and , ', ' ').replace(' , ', ', '); };
   const errOf = (at) => (form.errAt === at ? form.err : '');   // the line sits under the field it is about
@@ -439,7 +447,7 @@
     tasks: (el) => { wire(); tasksHost = el; menu = ''; asking = null; paint(); },
     schedules: (el) => { wire(); schedHost = el; menu = ''; if (/^#schedules/.test(location.hash)) el.innerHTML = schedulesHtml(); },
     maker: (which) => (advanced() ? MAKERS[which] : null),
-    newTask: (keep = {}) => { wire(); openForm('task', { ...keep, ...(keep.project && !projects().includes(keep.project) ? { project: projects()[0] } : {}) }); },   // Run after this: the New task form, waiting for that one
+    newTask: (keep = {}) => { wire(); openForm('task', { ...keep, ...(keep.project && !projects().includes(keep.project) ? { project: defaultProject() } : {}) }); },   // Run after this: the New task form, waiting for that one
     // the Projects center's strip, under its home's head; a strip asked there is dropped once its home is left
     askStrip: () => (asking?.where === 'place' && W.find(asking.id) ? stripOf(asking) : ''), unask: () => { if (asking?.where === 'place') asking = null; },
     paint, wire, taskOf, stateOf, clause, actionsOf, schedLink, link, inWeek,

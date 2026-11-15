@@ -173,3 +173,41 @@ test('liveRun: a failed task\'s held step wears the failed look, with what broke
   const run = M.liveRun(page({ case: 'failed', failure: { head: 'Build · 3 tests failed', rows: ['a'] }, stages: [{ key: 'build', state: 'paused', steps: [{ name: 'Implementation', state: 'paused' }] }] }));
   assert.deepEqual(J(subsOf(run, 'build').map((x) => [x.state, x.live])), [['failed', '3 tests failed']]);
 });
+
+// B1.6 (#1318): a live task at its review gate, and a review forced on with open issues
+const GATE_ISSUES = [{ sev: 'Major', t: 'The pager loses its place', at: 'ui/pager.mjs:42' }];
+const gatePage = (o) => page(Object.assign({ case: 'gate', detail: 'Review implementation reached its cycle limit',
+  gate: { id: 'gate-w5-3', nodeId: 'n_rev', issues: GATE_ISSUES, count: 1, line: '1 open issue: accept as is, or run another cycle?' },
+  review: { roles: [], issues: GATE_ISSUES },
+  stages: [{ key: 'plan', state: 'done', steps: [{ name: 'Plan', state: 'done' }] }, { key: 'build', state: 'done', steps: [{ name: 'Implementation', state: 'done' }] },
+    { key: 'review', state: 'ask', steps: [{ name: 'Review implementation', state: 'ask' }, { name: 'Manual tests checklist', state: 'next' }] }] }, o));
+test('O1, O4: liveRun draws the asking step in Review with the gate\'s line, and the page opens on Review', () => {
+  const run = M.liveRun(gatePage());
+  assert.deepEqual(J(subsOf(run, 'review').map((x) => [x.name, x.state, x.live])), [['Review implementation', 'ask', '1 open issue: accept as is, or run another cycle?'], ['Manual tests checklist', 'next', '']]);
+  assert.ok(!subsOf(run, 'plan').some((x) => x.state === 'ask'), 'Plan asks nothing');
+  assert.equal(run.over, false, 'a task waiting at its gate is not over');
+  const v = M.view('gate', { run });
+  assert.equal(v.open.key, 'review');
+  assert.deepEqual(J(v.under), { issues: GATE_ISSUES, roles: [] }, 'the gate\'s own rows, never DETAIL.issues');
+  assert.deepEqual(J([v.over.focus.issues, v.over.focus.roles]), [GATE_ISSUES, []], 'the Overview focus reads the run\'s own review (D8)');
+  assert.equal(v.ask, null, 'no design sample question');
+  window.RailTaskLive = { parts: () => ({}) };   // with the live kind's parts the focus is the task's own failure only (liveOver)
+  const lp = M.view('gate', { run });
+  delete window.RailTaskLive;
+  assert.equal(lp.over.focus, null);
+  // a stage with no known steps draws its ask as one asking step
+  const bare = M.liveRun(gatePage({ stages: [{ key: 'review', state: 'ask', steps: [] }] }));
+  assert.deepEqual(J(subsOf(bare, 'review').map((x) => [x.state, x.live])), [['ask', '1 open issue: accept as is, or run another cycle?']]);
+});
+test('O2: a blocked live step is a problem step with its open-issue line, not a tick', () => {
+  const run = M.liveRun(page({ case: 'working', stages: [{ key: 'build', state: 'done', steps: [{ name: 'Implementation', state: 'done' }] },
+    { key: 'review', state: 'done', steps: [{ name: 'Review implementation', state: 'blocked', open: 2 }, { name: 'Manual tests checklist', state: 'done' }] }] }));
+  assert.deepEqual(J(subsOf(run, 'review').map((x) => [x.state, x.live])), [['problem', 'Blocked · accepted with 2 open issues'], ['done', '']]);
+  const one = M.liveRun(page({ stages: [{ key: 'review', state: 'done', steps: [{ name: 'Review implementation', state: 'blocked', open: 1 }] }] }));
+  assert.equal(subsOf(one, 'review')[0].live, 'Blocked · accepted with 1 open issue');
+  assert.notEqual(R.stageState(subsOf(run, 'review')), 'done', 'the Review stage is not ticked');
+});
+test('O2: the prototype\'s ready-issues case draws its blocked review as a problem', () => {
+  const y = stepsOf(M.view('ready-issues', {}), 'review')[0];
+  assert.deepEqual(J([y.name, y.rowCls, y.live, y.loops]), ['Review implementation', 'is-problem', 'Blocked · accepted with 2 open issues', 3]);
+});
