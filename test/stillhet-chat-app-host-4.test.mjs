@@ -196,3 +196,14 @@ test('F-a1-04: Cancel after a redraw closes the confirm and sends nothing', asyn
   assert.equal(stopRow(d), null, 'the confirm does not come back');
   assert.deepEqual(posts(calls), [], 'no request of any kind');
 });
+
+test('F-a1-04: an open Stop confirm goes when the run ends under it; nothing is sent', async () => {
+  const { w, d, calls, sockets } = await liveHost({ sources: withRun({ pendingQuestion: null }) });
+  await openStop(w, d);
+  assert.ok(stopRow(d), 'the confirm is up while it runs');
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'done', runId: 'run-a', status: 'done' }) });
+  await settle(60);
+  await go(w, '#chat/ask_1');
+  assert.equal(stopRow(d), null, 'a finished run offers no Stop, so its confirm is gone');
+  assert.ok(!posts(calls).some(([, u]) => u === '/api/stop'), 'no stop request');
+});

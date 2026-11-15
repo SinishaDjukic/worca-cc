@@ -128,8 +128,11 @@
     // failing items) go too, never kept from the last draw
     for (const k of CARD_FACTS) delete t[k];
     Object.assign(t, T.card(id));
+    // a stored confirm whose label the card no longer offers (an open Stop on a run that has since ended) is dropped, so
+    // a yes never sends what the card cannot do
     const ask = cardAsk.get(id);
-    t.confirm = ask?.confirm || null; t.form = ask?.form || null;
+    if (ask?.confirm && !stillAsks(t, ask.confirm.label)) setCardAsk(t, { confirm: null });
+    t.confirm = cardAsk.get(id)?.confirm || null; t.form = cardAsk.get(id)?.form || null;
     const o = opening.get(id);
     if (o && t.prUrl) opening.delete(id);   // the PR is the one the server sent, never the POST's url
     else if (o && o.token) { const l = T.prLookup?.(); if (l && l.ended && l.token >= o.token) { opening.delete(id); prError.set(id, 'Could not read the PR back. Open Tasks to see it.'); } }
@@ -154,6 +157,15 @@
   // Tasks D13: a card offers the Tasks actions (Retry, Restart Build, Merge PR, Fix checks, …) through the same path as the page
   const taskFlow = (label, t) => !!window.RailTaskLive?.canFlow(label, flowArgs(t)) && !CL().canFlow(label, flowArgs(t));
   const offers = (t, label) => !LIVE() || LIVE_ANY.has(label) || CL().canFlow(label, flowArgs(t)) || taskFlow(label, t);
+  // the card's Stop: a running task with no step of its own, or one that waits on you (a question, a pause); never a done
+  // or a failed one (its state's ✗)
+  function canStop(t) {
+    const st = stOf(t), tone = R.markTone(st);
+    return (tone === 'run' && !st.action && offers(t, 'Pause')) || (LIVE() && ['ask', 'act', 'pause', 'fail'].includes(tone) && st.sym !== 'x' && offers(t, 'Stop'));
+  }
+  // whether the card still offers a confirm's label: Stop as above, a state's own action while the card is in that state;
+  // Archive and Report this task are offered on any card
+  const stillAsks = (t, label) => (label === 'Stop' ? canStop(t) : ['Archive', 'Report this task'].includes(label) || label in R.actionFlow(RM.stateOf(t.case), cardCtx(t)));
   const tidy = (items) => items.filter((it, k, l) => !it?.sep || (k > 0 && k < l.length - 1 && !l[k - 1]?.sep));
 
   // ---- the composer ----
@@ -857,7 +869,7 @@
     const live = tone === 'run' && !st.action && offers(t, 'Pause');
     // live: a task that waits on you (a question, a pause) can be stopped from its card too; only a real failure (its
     // state's ✗, never a pause drawn as a warning) offers the fixes
-    const stoppable = live || (LIVE() && ['ask', 'act', 'pause', 'fail'].includes(tone) && st.sym !== 'x' && offers(t, 'Stop'));
+    const stoppable = canStop(t);
     const failed = tone === 'fail' && (!LIVE() || st.sym === 'x');
     const fixFirst = failed && !t.fixing && offers(t, st.action?.label || '');
     if (st.action && !offers(t, st.action.label)) st.action = null;   // live: its state's step is offered only where dev has it   // Retry, the same verb as on Tasks; Ask Worca to fix it heads the card's ⋯
