@@ -235,3 +235,16 @@ test('a one-stage thenRun workflow card is one run-with turn; it falls back to A
   const saved = cardTurn(block(card, 'saved', 'cw'), ctx);
   assert.equal(saved.t, 'change'); assert.equal(saved.state, 'applied'); assert.equal(saved.apply, 'Save workflow');
 });
+
+test('F-a2-03: a started feature member\'s card draws right after the card the chat started, an unstarted member draws none', () => {
+  const tasks = [{ id: 'p1', run: 'p1', title: 'Store tags', case: 'working', group: 'F', pos: 1 }, { id: 't3', run: 't3', title: 'Tag chips', case: 'scheduled', group: 'F', pos: 3 },
+    { id: 'p2', run: 'p2', title: 'Filter by tag', case: 'working', group: 'F', pos: 2 }];
+  const thread = { messages: [{ id: 'm1', role: 'user', text: 'Run tags' }, { id: 'm2', role: 'assistant', status: 'done', text: '', blocks: [block({ type: 'progress', runId: 'p1', pipelineId: 'p1' }, 'started', 'card_run')] }, { id: 'm3', role: 'user', text: 'Thanks' }],
+    runLinks: [{ runId: 'p1', pipelineId: 'p1', cardId: 'card_run', started: true }] };
+  const turns = turnsOf(thread, { tasks, now: NOW });
+  assert.deepEqual(turns.filter((x) => x.t === 'task'), [{ t: 'task', id: 'card_run', task: 'p1' }, { t: 'task', id: 'card_run:p2', task: 'p2' }]);
+  assert.equal(turns.findIndex((x) => x.id === 'card_run:p2'), turns.findIndex((x) => x.id === 'card_run') + 1, 'right after the card the chat started');
+  assert.ok(!turns.some((x) => x.task === 't3'), 'an unstarted member has no card');
+  assert.deepEqual(turnsOf(thread, { tasks, now: NOW }), turns, 'stable across repaints');
+  for (const x of turns) assert.deepEqual(turnErrors(x), [], x.t);
+});

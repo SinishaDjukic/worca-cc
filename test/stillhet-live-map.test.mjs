@@ -545,6 +545,20 @@ test('F-3-06: through snapshotOf, the group\'s members are 3 tasks with group F,
   assert.deepEqual(Object.keys(partOf('schedules', src.schedules, src, { now: NOW })).sort(), ['groups', 'runs', 'schedules'], 'a schedules refetch rebuilds the groups its rows join');
 });
 
+test('F-a2-03: a chat that started a feature member lists the feature\'s other members (started and unstarted) as its tasks, in position order, with group and pos', () => {
+  const src = JSON.parse(JSON.stringify(SOURCES));
+  src.history.pipelines.push({ id: 'p1', title: 'Store tags', status: 'done', projectName: 'web', startedAt: NOW - 7200000, mtime: NOW - 3600000 },
+    { id: 'p2', title: 'Filter by tag', status: 'running', projectName: 'web', startedAt: NOW - 1800000, mtime: NOW - 600000 });
+  src.schedules = { schedules: [], tickets: [] };
+  src.runGroups = FEATURE(SLICES);
+  src.runLinks = { links: [{ threadId: 'ask_1', runId: 'p1', pipelineId: 'p1', started: true }] };
+  const c = snapshotOf(src, { now: NOW }).chats.find((x) => x.id === 'ask_1');
+  assert.deepEqual(c.tasks.map((t) => [t.id, t.group, t.pos, !!t.followed]), [['p1', 'F', 1, false], ['p2', 'F', 2, false], ['member:F:3', 'F', 3, false]]);
+  assert.deepEqual(shapeErrors('chat', c), []);
+  // a chat of no feature member lists none
+  assert.deepEqual(snapshotOf(src, { now: NOW }).chats.find((x) => x.id === 'ask_2').tasks.map((t) => t.id), []);
+});
+
 test('F-6-03: a git project whose sync block has remote:null reads origin local (Only on this computer, Link a remote), without an origin/ base, and does not need you', () => {
   const p = { key: 'a', exists: true, vcs: 'git' };
   const local = projectOf(p, { state: 'unknown', remote: null, base: 'main' });

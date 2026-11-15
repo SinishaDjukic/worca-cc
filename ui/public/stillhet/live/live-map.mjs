@@ -162,11 +162,12 @@ export function projectKeyOf(thread = {}) {
   const c = thread && typeof thread.context === 'object' ? thread.context : null;
   return c && c.pinned !== false ? str(c.projectKey) : '';
 }
-export function chatOf(thread = {}, { now = 0, unread = [], links = [], tasks = [], projects = [], livePids = new Map(), schedules = [] } = {}) {
+export function chatOf(thread = {}, { now = 0, unread = [], links = [], tasks = [], projects = [], livePids = new Map(), schedules = [], groups = [] } = {}) {
+  const featureIds = new Set(arr(groups).filter((g) => g && g.kind === 'feature').map((g) => g.id));
   const key = projectKeyOf(thread), project = key ? str(arr(projects).find((p) => p && p.key === key)?.name) || key : '';
   const state = thread.waiting ? 'needs-you' : thread.inFlight ? 'replying' : 'idle';
   const o = thread.origin && typeof thread.origin === 'object' ? { platform: str(thread.origin.platform) || str(thread.origin.plugin), label: str(thread.origin.label) } : null;
-  return pick('chat', { id: str(thread.id), title: str(thread.title) || 'New chat', state, kind: (thread.startedRuns || 0) > 0 ? 'started' : (thread.runLinks || 0) > 0 ? 'tracks' : 'chat', project, time: timeOf(thread.updatedAt, now), day: dayOf(thread.updatedAt, now), cost: num(thread.totals?.costUsd), pinned: !!thread.pinnedAt, archived: !!thread.archivedAt, unread: unread.includes(thread.id), group: str(thread.groupId), origin: o, rank: 0, labels: arr(thread.labels).filter((l) => typeof l === 'string'), tasks: [...chatTasks(str(thread.id), links, tasks, livePids), ...chatSchedules(str(thread.id), schedules)] });
+  return pick('chat', { id: str(thread.id), title: str(thread.title) || 'New chat', state, kind: (thread.startedRuns || 0) > 0 ? 'started' : (thread.runLinks || 0) > 0 ? 'tracks' : 'chat', project, time: timeOf(thread.updatedAt, now), day: dayOf(thread.updatedAt, now), cost: num(thread.totals?.costUsd), pinned: !!thread.pinnedAt, archived: !!thread.archivedAt, unread: unread.includes(thread.id), group: str(thread.groupId), origin: o, rank: 0, labels: arr(thread.labels).filter((l) => typeof l === 'string'), tasks: [...chatTasks(str(thread.id), links, tasks, livePids, featureIds), ...chatSchedules(str(thread.id), schedules)] });
 }
 // A chat's task: the store's task (its id is the run id live, the pipeline id saved), as chats-model.js's chat tasks read.
 // Resume gives a run a new run id while its link keeps the first one: the live run holding the link's pipeline id
@@ -175,14 +176,23 @@ const taskOfLink = (l, tasks, livePids) => {
   const now = l.pipelineId ? livePids.get(l.pipelineId) : '';
   return (now && tasks.find((t) => t.id === now)) || tasks.find((t) => t.id === l.runId || (l.pipelineId && t.id === l.pipelineId));
 };
-function chatTasks(threadId, links, tasks, livePids = new Map()) {
-  const out = [];
+// an open PR offers Watch (chats-column.js); whether it is watched is dev's GET /api/pr/watch, read when it is toggled
+const chatTaskOf = (t, pid, o = {}) => ({ id: t.id, run: t.id, pid, title: t.title, case: t.case, detail: t.detail, project: t.project, ...(t.pr && t.case !== 'merged' ? { git: 'open' } : {}), ...o });
+// F-a2-03: a feature's other members are started by the scheduler, with no link: a chat holding one member lists them all
+function chatTasks(threadId, links, tasks, livePids = new Map(), featureIds = new Set()) {
+  const out = [], feats = [];
   for (const l of arr(links)) {
     if (!l || l.threadId !== threadId) continue;
     const t = taskOfLink(l, tasks, livePids);
     if (!t || out.some((x) => x.run === t.id)) continue;
-    // an open PR offers Watch (chats-column.js); whether it is watched is dev's GET /api/pr/watch, read when it is toggled
-    out.push({ id: t.id, run: t.id, pid: str(l.pipelineId) || t.id, title: t.title, case: t.case, detail: t.detail, project: t.project, ...(t.pr && t.case !== 'merged' ? { git: 'open' } : {}), ...(l.started ? {} : { followed: true }) });
+    const inFeature = featureIds.has(t.group);
+    out.push(chatTaskOf(t, str(l.pipelineId) || t.id, { ...(inFeature ? { group: t.group, pos: t.pos } : {}), ...(l.started ? {} : { followed: true }) }));
+    if (inFeature && !feats.includes(t.group)) feats.push(t.group);
+  }
+  for (const gid of feats) {
+    for (const t of arr(tasks).filter((x) => x && x.group === gid).sort((a, b) => (a.pos ?? 0) - (b.pos ?? 0))) {
+      if (!out.some((x) => x.run === t.id)) out.push(chatTaskOf(t, t.id, { group: gid, pos: t.pos }));
+    }
   }
   return out;
 }
@@ -422,7 +432,7 @@ export function snapshotOf(src = {}, { now = 0, unread = [], checksOf = null } =
     runs, groups, userGroups: [],
     // the Chats Needs-you number: the server's count over every thread, not the first page's rows
     chatsNeeds: num(src.threads?.counts?.needs),
-    chats: arr(src.threads?.threads).filter((t) => t && !t.archivedAt && !t.archived).map((t) => chatOf(t, { now, unread, links: arr(src.runLinks?.links), tasks: runs, projects: projectsRaw, livePids: new Map(liveRuns.filter((r) => r.pipelineId).map((r) => [r.pipelineId, str(r.runId)])), schedules })),
+    chats: arr(src.threads?.threads).filter((t) => t && !t.archivedAt && !t.archived).map((t) => chatOf(t, { now, unread, links: arr(src.runLinks?.links), tasks: runs, projects: projectsRaw, livePids: new Map(liveRuns.filter((r) => r.pipelineId).map((r) => [r.pipelineId, str(r.runId)])), schedules, groups })),
     chatGroups: arr(src.groups?.groups).map((g) => ({ id: str(g.id), name: str(g.name), total: num(g.count) ?? 0 })),
     schedules,
     projects: projectsRaw.map((p) => projectOf(p, syncs[p.key] || null)),
