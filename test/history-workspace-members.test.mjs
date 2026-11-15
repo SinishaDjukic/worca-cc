@@ -164,3 +164,36 @@ test('a live Watch PR fix round marks that member PR fixing, in the enrich batch
   const row = (await listAllPipelines({ withPr: true })).find((p) => p.id === runId);
   assert.equal(prOf(row.members, 'web-00000002').fixing, true, 'the History row reads the same');
 });
+
+test('a failed member lookup resends its stored PR stale and never clears it (F-3-01, F-7a-01)', async () => {
+  const WEB9 = 'https://github.com/o/web/pull/9';
+  persistMemberPrState(runId, 'web-00000002', { url: WEB9, number: 9, state: 'MERGED' });
+  const before = readMemberPrStates(runId);
+  const fresh = await seedWorkspacePipeline(await mkdtemp(join(tmpdir(), 'worca-cc-wsm-fresh-')), WK, {
+    title: 'WS fresh', status: 'done', workspaceName: 'Team', projects: M, projectKeys: M.map((m) => m.projectKey), branches: BR,
+    branch: { ...BR['api-00000001'] },
+  }, M);
+  // Quota: git answers, every `gh pr …` call fails.
+  gitInfo.setRunner((cmd, args) => {
+    const ok = (stdout) => Promise.resolve({ ok: true, stdout, stderr: '', code: 0 });
+    if (cmd === 'gh' && args[0] === '--version') return ok('gh 2');
+    if (cmd === 'gh' && args[0] === 'pr') return Promise.resolve({ ok: false, stdout: '', stderr: 'GraphQL: API rate limit exceeded', code: 1 });
+    if (cmd === 'git' && args[0] === 'rev-parse') return ok('abc\n');
+    if (cmd === 'git' && args[0] === 'for-each-ref') return ok(['f-api', 'f-web', 'f-doc'].map((b) => `refs/heads/${b} abc`).join('\n'));
+    return ok('');
+  });
+  const batches = [];
+  await enrichPipelinesPr(async (items, done) => { batches.push({ items, done }); });
+  const items = batches.flatMap((b) => b.items);
+  const it = items.find((x) => x.id === runId);
+  const prOf = (key) => it.members.find((m) => m.memberKey === key).pr;
+  assert.equal(prOf('web-00000002').state, 'MERGED');
+  assert.equal(prOf('web-00000002').url, WEB9);
+  assert.equal(prOf('web-00000002').stale, true);
+  assert.equal(prOf('api-00000001'), null, 'nothing stored for this member: null');
+  assert.equal(it.pr.state, 'MERGED');
+  assert.equal(it.pr.stale, true);
+  assert.deepEqual(readMemberPrStates(runId), before, 'a failed lookup writes nothing');
+  assert.equal(items.find((x) => x.id === fresh.id), undefined, 'every member failed, nothing stored: the row is omitted');
+  assert.equal(batches.at(-1).done, true);
+});

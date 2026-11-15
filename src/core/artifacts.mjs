@@ -22,7 +22,7 @@ import { harvestWork, WORK_ARTIFACT_KIND } from './no-project-work.mjs';
 import { updateRunManifest } from './run-manifest.mjs';
 import { listProjects, worcaHome, runOnboarded } from './projects.mjs';
 import { claimRunDir, claimRunExtras, shareFailureReason } from './agent-pool.mjs';
-import { branchExists, diffShortstat, anyPrHost, findPrForBranch, commitsAhead, withRefSnapshot } from './git-info.mjs';
+import { branchExists, diffShortstat, anyPrHost, findPrForBranch, lookupPrForBranch, commitsAhead, withRefSnapshot } from './git-info.mjs';
 import { getDb, tx } from './db.mjs';
 import { cleanOutcome } from './shape/rounds.mjs';
 import { rollupMemberPrs, workspaceMembers, changedFileCount } from './workspace-prs.mjs';
@@ -2765,6 +2765,9 @@ export function countPipelines({ archived = false } = {}) {
   return row ? Number(row.n) : 0;
 }
 
+// enrichPipelinesPr's marker for a row left out of its batch (a failed lookup with nothing stored).
+const OMIT = Symbol('omit');
+
 /**
  * Re-walk the skeleton and resolve live PR state per branch, pushed to `onBatch`
  * in parallel batches. Each item sends ONLY `pr`: findPrForBranch's
@@ -2777,6 +2780,11 @@ export function countPipelines({ archived = false } = {}) {
  * spinner provably clears. A workspace item (a row WITH member facts) also carries
  * `members: [{ memberKey, pr }]`, each `pr` in the same shape; its `pr` is the rollup
  * of the open and merged ones.
+ * `null` means a lookup that succeeded and found no PR, never a failure (F-3-01). On a failed lookup
+ * (lookupPrForBranch ok:false: quota, network, gh error) nothing is persisted: the row resends its stored PR with
+ * `stale: true`, or is left out of the batch when nothing is stored. A failed member resends its stored PR stale
+ * (null when none); the rollup is then `stale` too, and a row whose every member failed with nothing stored is left
+ * out. `stale` is only ever present as `true`. A batch may hence be shorter than its slice, even empty.
  */
 export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
   if (!(await anyPrHost())) { await onBatch([], true); return; } // no PR host: one empty final batch
@@ -2792,18 +2800,34 @@ export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
       if (isWs(r)) {
         // Per member: pr_url-first lookup, positive observations persisted (+ rollup).
         const known = readMemberPrStates(r.id);
+        let failed = 0;
         const members = await Promise.all(r.members.map(async (m) => {
-          const pr = m.projectDir && m.branch
-            ? (await findPrForBranch({ projectDir: m.projectDir, head: m.branch, prUrl: known[m.memberKey]?.url || null, includeClosed: true })) || null
-            : null;
+          const res = m.projectDir && m.branch
+            ? await lookupPrForBranch({ projectDir: m.projectDir, head: m.branch, prUrl: known[m.memberKey]?.url || null, includeClosed: true })
+            : { ok: true, pr: null };
+          if (!res.ok) {
+            // A failed member lookup resends its stored PR stale (null when nothing is stored) and writes nothing.
+            failed++;
+            const stored = known[m.memberKey];
+            return { memberKey: m.memberKey, pr: stored ? withFixing({ ...stored, stale: true }) : null };
+          }
+          const pr = res.pr || null;
           if (pr && pr.state !== 'CLOSED') persistMemberPrState(r.id, m.memberKey, pr);   // a closed PR is shown, never recorded
           return { memberKey: m.memberKey, pr: withFixing(pr) };
         }));
-        const pr = rollupMemberPrs(Object.fromEntries(members.filter((m) => m.pr).map((m) => [m.memberKey, m.pr])));
+        if (failed === members.length && !members.some((m) => m.pr)) return OMIT;
+        const rollup = rollupMemberPrs(Object.fromEntries(members.filter((m) => m.pr).map((m) => [m.memberKey, m.pr])));
+        const pr = rollup && failed ? { ...rollup, stale: true } : rollup;
         return { projectKey: r.projectKey, id: r.id, pr, members };
       }
       const prUrl = readPrState(r.id)?.url || null;
-      const found = (await findPrForBranch({ projectDir: r.projectDir, head: r.branch, prUrl, withVerdict: true, includeClosed: true })) || null;
+      const res = await lookupPrForBranch({ projectDir: r.projectDir, head: r.branch, prUrl, withVerdict: true, includeClosed: true });
+      if (!res.ok) {
+        // A failed lookup is no evidence of "no PR": resend the last known PR stale, or omit the row. Writes nothing.
+        const known = readPrState(r.id);
+        return known ? { projectKey: r.projectKey, id: r.id, pr: { ...known, stale: true } } : OMIT;
+      }
+      const found = res.pr || null;
       // Positive observations only (null never clears). A closed PR is shown, never
       // recorded: pr_url keeps naming the open or merged PR the other readers act on.
       // The recorded PR itself closing is recorded, so it stops counting as open (a chain's ship ends, Create PR again).
@@ -2816,7 +2840,7 @@ export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
         ...(watchActive(getWatch(fresh.url)) ? { fixing: true } : {}) };
       return { projectKey: r.projectKey, id: r.id, pr };
     }));
-    await onBatch(items, i + batchSize >= targets.length); // (items, isFinal)
+    await onBatch(items.filter((it) => it !== OMIT), i + batchSize >= targets.length); // (items, isFinal)
   }
 }
 

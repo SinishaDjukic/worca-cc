@@ -165,3 +165,79 @@ test('enrichPipelinesPr batches {projectKey,id,pr} with a final done; one empty 
     } },
   ]);
 });
+
+// Quota stub: gh is present, but every `gh pr …` call fails as an exhausted GraphQL quota does.
+function stubQuota() {
+  gitInfo.setRunner((cmd, args) => {
+    if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
+    if (cmd === 'gh' && args[0] === 'pr') return Promise.resolve({ ok: false, stdout: '', stderr: 'GraphQL: API rate limit exceeded', code: 1 });
+    return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
+  });
+}
+
+test('enrichPipelinesPr: a failed lookup never clears a known PR (F-3-01, F-7a-01, C-2)', async () => {
+  const { enrichPipelinesPr, readPrState, persistPrState, writeStoreMeta } = await import('../src/core/artifacts.mjs');
+  const { projectKey } = await import('../src/core/store.mjs');
+  writeStoreMeta(projectKey(repo), 'project', { key: projectKey(repo), path: repo, name: 'Repo' });
+  const url = 'https://gh/x/pull/5';
+  const run = async () => {
+    const batches = [];
+    await enrichPipelinesPr((items, done) => batches.push({ items, done }), { batchSize: 1 });
+    return batches;
+  };
+  const itemOf = (batches, id) => batches.flatMap((b) => b.items).find((x) => x.id === id);
+  await checkRows([
+    { name: 'a stored MERGED PR comes back stale on a quota failure, and the DB keeps it', run: async () => {
+      gitInfo.reset();
+      const id = await seed();
+      persistPrState(id, { url, number: 5, state: 'MERGED' });
+      stubQuota();
+      const it = itemOf(await run(), id);
+      assert.ok(it, 'the row is sent');
+      assert.equal(it.pr.state, 'MERGED');
+      assert.equal(it.pr.url, url);
+      assert.equal(it.pr.stale, true);
+      assert.equal(readPrState(id).state, 'MERGED');
+    } },
+    { name: 'a failed lookup with nothing stored omits the row; the final batch still says done', run: async () => {
+      gitInfo.reset();
+      const id = await seed();
+      stubQuota();
+      const batches = await run();
+      assert.equal(itemOf(batches, id), undefined, 'never a null for a failed lookup');
+      assert.equal(batches.at(-1).done, true);
+      assert.equal(batches.filter((b) => b.done).length, 1, 'exactly one final batch');
+    } },
+    { name: 'a successful empty list after a stored MERGED PR still sends null', run: async () => {
+      gitInfo.reset();
+      const id = await seed();
+      persistPrState(id, { url, number: 5, state: 'MERGED' });
+      gitInfo.setRunner((cmd, args) => {
+        if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
+        if (cmd === 'gh' && args[0] === 'pr' && args[1] === 'view') return Promise.resolve({ ok: true, stdout: JSON.stringify({ number: 5, state: 'CLOSED', url }), stderr: '', code: 0 });
+        if (cmd === 'gh' && args[0] === 'pr') return Promise.resolve({ ok: true, stdout: '[]', stderr: '', code: 0 });
+        return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
+      });
+      const it = itemOf(await run(), id);
+      assert.ok(it);
+      // includeClosed: the recorded PR, now closed, is the last resort — a known answer, never stale.
+      assert.equal(it.pr?.state ?? null, 'CLOSED');
+      assert.equal('stale' in it.pr, false);
+      gitInfo.setRunner((cmd, args) => {
+        if (cmd === 'gh' && args[0] === '--version') return Promise.resolve({ ok: true, stdout: 'gh 2.x', stderr: '', code: 0 });
+        if (cmd === 'gh' && args[0] === 'pr') return Promise.resolve({ ok: true, stdout: '[]', stderr: '', code: 0 });
+        return Promise.resolve({ ok: true, stdout: '', stderr: '', code: 0 });
+      });
+      const fresh = await seed();
+      assert.equal(itemOf(await run(), fresh).pr, null, 'a genuine no PR still clears');
+    } },
+    { name: 'a successful lookup carries no stale key (classic unchanged)', run: async () => {
+      gitInfo.reset();
+      const id = await seed();
+      stubGh({ state: 'MERGED', url, number: 5 });
+      const it = itemOf(await run(), id);
+      assert.equal(it.pr.state, 'MERGED');
+      assert.equal('stale' in it.pr, false);
+    } },
+  ]);
+});
