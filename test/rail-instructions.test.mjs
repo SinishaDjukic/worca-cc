@@ -100,7 +100,7 @@ test('nothing outside history names a retired companion file; the wiring map hol
   assert.match(w, /\| Dev feature \| New name and place \| Dev data or module reused \| Old address \|/);
   const moves = w.split('## Moves')[1].split('\n\n')[1].split('\n').slice(2).filter((l) => l.startsWith('|'));
   assert.ok(moves.length >= 9, `${moves.length} moves`);
-  assert.equal((w.match(/add to the design first/g) || []).length >= 4, true);
+  assert.equal((w.match(/add to the design first|built in slice \d+ \(D\d+\)/g) || []).length >= 4, true);   // a design-first item, still to add or built by its slice
   const optin = w.split('## Opt-in')[1];
   assert.match(optin, /\|/);
   assert.doesNotMatch(optin, /Would/);
