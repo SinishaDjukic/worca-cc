@@ -204,7 +204,11 @@ One row per action: `npm run stillhet:wiring` lists every `window.RailWould(...)
 | `projects/projects.js › Rename…` | wired | slice 9 D7: `PATCH /api/projects/:key` `{name}` (`form.rename-project`); the key never changes |
 | `projects/projects.js › Locate folder…` | wired | slice 9 D8: `PATCH /api/projects/:key` `{path}`, which re-keys the project and answers the new key; the page goes to it |
 | `projects/projects.js › Remove…` | wired | slice 9 D10: `DELETE /api/projects?name=` once the undo window closes, `&deleteFolder=1` for a folder Worca made (`form.remove-owned`) |
-| `projects/projects.js › Add a project by hand` | wired | slice 9 D11: a path is `POST /api/projects` `{name, path}`; a repository address is `POST /api/projects/clone` `{url}`, followed by its `clone-changed` frames |
+| `projects/projects.js › Add a project by hand` | wired | slice 9 D11: a path is `POST /api/projects` `{name, path}`, plus `useGit:true` when Use git is on for a plain folder (COV-1); a repository address is `POST /api/projects/clone` `{url}`, followed by its `clone-changed` frames |
+| `projects/project-add.js › Choose folder…` | wired | COV-1: the FolderBrowser reads `GET /api/fs/dirs?path=` (a seed that fails opens at the top); `GET /api/git` says whether Use git is offered |
+| `projects/project-add.js › New folder` | wired | COV-1: `POST /api/projects/create` `{name, useGit?, dryRun:true}` says where it is made; Create sends `{name, useGit?}` and opens the project once listed |
+| `projects/project-add.js › Several folders…` | wired | COV-1: the FolderBrowser in multi mode (`GET /api/fs/dirs?path=`), then the review list sends `POST /api/projects/bulk` `{projects:[{name, path}]}`; skipped rows keep their reasons to rename and retry |
+| `projects/project-add.js › the probe line` | wired | COV-1: `GET /api/projects/probe?path=` under the One folder field (classic's detectModel rules); a refused probe blocks Add |
 | `projects/projects.js › How its tasks run` | wired | slice 9 D16: read with `GET /api/projects/:key/settings`; a pick is `PATCH /api/projects/:key/settings` `{settingId: value}`, Use yours sends null |
 | `projects/projects.js › Team memory` | wired | slice 9 D16: `PATCH /api/projects/:key/settings` `{'memory.team': on}`; a refusal keeps the switch |
 | `projects/projects.js › Cost tags, Who pays and Labels` | wired | slice 9 D16, D19: `GET`/`PUT /api/projects/:key/tags/defaults` `{tags, labels}` |

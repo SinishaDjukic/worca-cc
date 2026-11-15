@@ -1551,6 +1551,26 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .ask-changes{display:flex;flex-direction:column;align-items:stretch;gap:8px;margin:8px 0 0 32px;}   /* the card's width, on its text edge */
 .ask-changes .tp-actions{align-self:flex-start;}
 .card-form{margin:8px 0 0 32px;}
+/* FolderBrowser (form.add-project): the folder list in its Dialog, the probe line under a path, the review list of picked folders */
+.fb .dlg-body{display:flex;flex-direction:column;gap:8px;}
+.fb-nav{display:flex;align-items:center;gap:4px;}
+.fb-path{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:12px/18px var(--mono);color:var(--ink-2);}
+.fb-note{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
+.fb-list,.fb-review{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px;}
+.fb-row{display:flex;align-items:center;gap:8px;}
+.fb-none{margin:0;color:var(--ink-3);}
+.fb-probe{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;flex:1 1 100%;font-size:var(--fs-meta);}
+.fb-warn{display:inline-flex;align-items:center;gap:4px;color:var(--red-ink-strong);}
+.fb-probe-note{flex:1 1 100%;color:var(--ink-2);}
+.fb-way{flex:1 1 100%;display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.fb-review{flex:1 1 100%;gap:6px;}
+.fb-rev{display:grid;grid-template-columns:auto minmax(0,14em) minmax(0,1fr) auto;align-items:center;gap:8px;}
+.fb-rev .fld{flex:none;}
+.fb-rev-path{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:12px/18px var(--mono);color:var(--ink-2);}
+.fb-st{font-size:var(--fs-meta);}
+.fb-st.is-ok{color:var(--ink-2);}
+.fb-st.is-fail{color:var(--red-ink-strong);}
+.fb-err{flex:1 1 100%;margin:0;font-size:var(--fs-meta);color:var(--red-ink-strong);}
 /* commands (CommandRow, CommandGroup): no mark, the words say how it went; one fold opens the command and its output */
 .cmd-line{display:flex;align-items:center;gap:8px;}
 .cmd-line > .tr-line{flex:1 1 auto;min-width:0;}

@@ -6,11 +6,18 @@
 // (hidden), what was removed until the store drops it (gone), a fresh workspace's draft until Save, each project's and
 // workspace's page detail, and clone jobs. An action answers a key to go to only once the store lists it (listed).
 import { SET_KEYS, setsOf, patchOf, defaultsOf } from './projects-map.mjs';
+import { folderName, reviewSummary } from '../../design-system/components/folder-browser.mjs';
 
 const enc = encodeURIComponent;
 // id → [the words a refusal starts with, the pending label its control shows while dev answers (D22), args → [method, url, body?]]
 export const PROJECT_ACTIONS = Object.freeze({
-  add: ['add', 'Adding…', ({ name, path }) => ['POST', '/api/projects', { name, path }]],
+  add: ['add', 'Adding…', ({ name, path, useGit }) => ['POST', '/api/projects', { name, path, ...(useGit === true ? { useGit: true } : {}) }]],
+  // COV-1: the ways classic adds a project (the folder browser, the probe line, New folder, Several folders…)
+  dirs: ['open', '', ({ path }) => ['GET', `/api/fs/dirs?path=${enc(path || '')}`]],
+  probe: ['check', '', ({ path }) => ['GET', `/api/projects/probe?path=${enc(path)}`]],
+  'git-available': ['read', '', () => ['GET', '/api/git']],
+  create: ['create', 'Creating…', ({ name, useGit, dryRun }) => ['POST', '/api/projects/create', { name, ...(useGit ? { useGit: true } : {}), ...(dryRun ? { dryRun: true } : {}) }]],
+  bulk: ['add', 'Adding…', ({ rows }) => ['POST', '/api/projects/bulk', { projects: rows.map(({ name, path }) => ({ name, path })) }]],
   clone: ['clone', 'Adding…', ({ url }) => ['POST', '/api/projects/clone', { url }]],
   rename: ['rename', 'Renaming…', ({ key, name }) => ['PATCH', `/api/projects/${enc(key)}`, { name }]],
   relocate: ['move', 'Moving…', ({ key, path }) => ['PATCH', `/api/projects/${enc(key)}`, { path }]],
@@ -104,7 +111,7 @@ export function startProjectsLive({ fetch, toast = () => {}, refresh = () => {},
   }
 
   // ---- projects ----
-  function addProject(input) {
+  function addProject(input, { useGit } = {}) {
     const v = String(input || '').trim();
     return once('add', REPO.test(v) ? 'clone' : 'add', async () => {
       const name = lastSeg(v);
@@ -114,7 +121,7 @@ export function startProjectsLive({ fetch, toast = () => {}, refresh = () => {},
         clones.set(a.data.jobId || a.data.job?.id, { name: a.data.job?.name || name, from: at() });   // where the person was: it routes only if they still are
         return { ok: true, text: `Cloning ${a.data.job?.name || name}…` };
       }
-      const a = await send('add', { name, path: v });
+      const a = await send('add', { name, path: v, useGit });
       if (!a.ok) return a.status === 400 ? { ok: false, field: plainWhy(a) } : refused('add', name, a);
       refresh('projects', 'sync');
       const key = (a.data.projects || []).find((p) => p.name === name)?.key;
@@ -122,6 +129,62 @@ export function startProjectsLive({ fetch, toast = () => {}, refresh = () => {},
       return { ok: true, text: `Added ${name}`, ...(key && await listed('projects', key) ? { key } : {}) };
     });
   }
+  // ---- COV-1: the folder browser, the probe line, New folder and Several folders… (classic's routes and bodies) ----
+  const down = { ok: false, text: NOT_ANSWERING };
+  /** One folder's listing (GET /api/fs/dirs); nothing is cached. */
+  async function folders(path = '') {
+    const a = await send('dirs', { path });
+    if (a.status === 0) return down;
+    if (!a.ok) return { ok: false, text: `Could not open ${folderName(path) || 'the folder'}: ${plainWhy(a)}` };
+    const d = a.data;
+    return { ok: true, path: d.path || '', parent: d.parent ?? null, home: d.home || '', dirs: d.dirs || [], limited: !!d.limited, roots: d.roots || [] };
+  }
+  /** What a typed folder is (GET /api/projects/probe). A stale answer is the caller's to drop. */
+  async function probe(path) {
+    const a = await send('probe', { path });
+    if (a.status === 0) return down;
+    return a.ok ? { ok: true, probe: a.data } : { ok: false, field: plainWhy(a) };
+  }
+  /** Whether git is installed (GET /api/git): any failure counts as installed, as classic does. */
+  async function gitAvailable() {
+    const a = await send('git-available');
+    return a.ok && a.data?.available === false ? false : true;
+  }
+  const whereOf = (d = {}) => d.displayPath || d.path || d.rootDisplay || d.root || '';
+  /** New folder's dry run: where the folder will be made; a refusal is the field's error (an empty name: the root). */
+  async function checkNew({ name, useGit } = {}) {
+    const n = String(name || '').trim(), a = await send('create', { name: n, useGit, dryRun: true });
+    if (a.status === 0) return down;
+    if (a.ok || !n) return { ok: true, where: whereOf(a.data) };
+    return { ok: false, field: plainWhy(a), where: whereOf(a.data) };
+  }
+  /** New folder: POST /api/projects/create; its key once the store lists it. */
+  const createProject = ({ name, useGit } = {}) => once('add', 'create', async () => {
+    const n = String(name || '').trim(), a = await send('create', { name: n, useGit });
+    if (a.status === 0) return down;
+    if (!a.ok) return a.status < 500 && a.data?.code !== 'FAILED' ? { ok: false, field: plainWhy(a) } : refused('create', n, a);
+    refresh('projects', 'sync');
+    const key = a.data.project?.key;
+    if (key) gone.delete(key);
+    return { ok: true, text: `Created ${n}`, ...(key && await listed('projects', key) ? { key } : {}) };
+  });
+  /** Several folders: POST /api/projects/bulk; results keep the server's index into the sent rows. */
+  const addMany = (rows) => once('add', 'bulk', async () => {
+    const a = await send('bulk', { rows });
+    if (a.status === 0) return down;
+    if (!a.ok) return { ok: false, text: `Could not add ${plural(rows.length, 'project')}: ${plainWhy(a)}` };
+    const results = a.data.results || [];
+    const added = results.filter((x) => x.status === 'added').map(({ key, name }) => ({ key, name }));
+    const skipped = results.filter((x) => x.status === 'skipped').map(({ index, name, path, reason }) => ({ index, name, path, reason }));
+    let key;
+    if (added.length) {
+      refresh('projects', 'sync');
+      added.forEach((x) => gone.delete(x.key));
+      const seen = await Promise.all(added.map((x) => listed('projects', x.key)));
+      if (added.length === 1 && !skipped.length && seen[0]) key = added[0].key;
+    }
+    return { ok: true, results, added, skipped, text: reviewSummary({ added: added.map((x) => x.name), skipped }), ...(key ? { key } : {}) };
+  });
   const rename = (key, name) => once(key, 'rename', async () => {
     const was = nameOf(key), a = await send('rename', { key, name });
     if (!a.ok) return a.status === 400 ? { ok: false, field: plainWhy(a) } : refused('rename', was, a);   // a name dev refuses is the field's error
@@ -354,6 +417,7 @@ export function startProjectsLive({ fetch, toast = () => {}, refresh = () => {},
 
   return {
     addProject, rename, relocate, origin, linkRemote, deferRemove,
+    folders, probe, gitAvailable, checkNew, createProject, addMany,
     detail, setSet, resetSet, teamMemory, saveDefaults,
     fresh: fresh_, drafts: () => [...fresh.values()], discardFresh, saveSpace, spaceDetail, saveSpaceDefaults, deferDeleteSpace, scan, syncBehind, answer, openInEditor,
     hidden, pending: (id) => busy.get(id) || '', frame,

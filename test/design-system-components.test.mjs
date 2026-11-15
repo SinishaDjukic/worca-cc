@@ -1882,3 +1882,94 @@ test('composerQueueButton (F-gb235-03): a quiet text button named Queue, data-cp
   assert.equal(b.getAttribute('data-cp-queue'), '');
   assert.equal(b.getAttribute('title'), 'Sends it when the reply finishes');
 });
+
+test('COV-1 folderName: the last segment, without a trailing slash', () => {
+  assert.equal(C.folderName('/a/b/'), 'b');
+  assert.equal(C.folderName('~/src/web-app'), 'web-app');
+  assert.equal(C.folderName(''), '');
+});
+
+test('COV-1 folderBrowser: single and multi titles and steps, Up off at the top, No subfolders., a failed load keeps the list', () => {
+  const one = dom(C.folderBrowser({ path: '/src', parent: '/', dirs: [{ name: 'a', path: '/src/a' }] }));
+  assert.equal(one.querySelector('.dlg-title').textContent, 'Select a folder');
+  assert.equal(one.querySelector('[data-dialog="yes"]').textContent, 'Select this folder');
+  assert.equal(one.querySelector('[data-dialog="yes"]').disabled, false);
+  assert.equal(one.querySelector('[data-fb-pick]'), null, 'single: no checkboxes');
+  assert.equal(one.querySelector('[data-fb-go="/src/a"]').textContent, 'a');
+  assert.equal(one.querySelector('.fb-nav [data-fb-go="/"]').textContent, 'Up');
+  assert.ok(one.querySelector('[data-fb-home]'));
+  assert.equal(one.querySelector('.fb-path').title, '/src');
+  const top = dom(C.folderBrowser({ path: '/', parent: null, dirs: [] }));
+  const up = [...top.querySelectorAll('button')].find((b) => b.textContent === 'Up');
+  assert.equal(up.disabled, true);
+  assert.match(top.textContent, /No subfolders\./);
+  const many = dom(C.folderBrowser({ multiple: true, path: '/src', dirs: [{ name: 'a', path: '/src/a' }, { name: 'b', path: '/src/b' }], picked: ['/src/a', '/x'] }));
+  assert.equal(many.querySelector('.dlg-title').textContent, 'Select folders');
+  assert.equal(many.querySelector('[data-dialog="yes"]').textContent, 'Add 2 selected');
+  assert.equal(many.querySelector('.dlg-status').textContent, '2 folders selected');
+  assert.equal(many.querySelector('[data-fb-pick="/src/a"]').checked, true);
+  assert.equal(many.querySelector('[data-fb-pick="/src/b"]').checked, false);
+  assert.equal(many.querySelector('[data-fb-pick="/src/b"]').getAttribute('aria-label'), 'Select b');
+  const none = dom(C.folderBrowser({ multiple: true, path: '/src', dirs: [] }));
+  assert.equal(none.querySelector('[data-dialog="yes"]').disabled, true, 'multi yes is off at 0 picks');
+  const failed = dom(C.folderBrowser({ path: '/src', dirs: [{ name: 'a', path: '/src/a' }], error: 'permission denied <x>' }));
+  assert.equal(failed.querySelector('.dlg-status').textContent, 'permission denied <x>');
+  assert.ok(failed.querySelector('[data-fb-go="/src/a"]'), 'the last listing stays');
+  assert.match(dom(C.folderBrowser({ path: '/src', state: 'loading' })).textContent, /Loading folders/);
+  const lim = dom(C.folderBrowser({ path: '/a', note: 'Only these folders', roots: ['/a', '/b'] }));
+  assert.match(lim.querySelector('.fb-note').textContent, /Only these folders/);
+  assert.ok(lim.querySelector('.fb-note [data-fb-go="/b"]'));
+});
+
+test('COV-1 folderProbe: every detectModel row, the #693 action, unknown is no refusal', () => {
+  const words = (p, o) => [...dom(`<div>${C.folderProbe(p, o).html}</div>`).querySelectorAll('.kind-chip')].map((c) => c.textContent);
+  assert.deepEqual(C.folderProbe(null), { html: '', refused: false, useGit: false });
+  assert.deepEqual(C.folderProbe({ path: '/x' }), { html: '', refused: false, useGit: false });
+  assert.deepEqual(words({ exists: false }), ['Not found']);
+  assert.equal(C.folderProbe({ exists: false }).refused, true);
+  assert.ok(dom(`<div>${C.folderProbe({ exists: false }).html}</div>`).querySelector('.fb-warn svg'), 'a warn chip has the warn icon');
+  assert.deepEqual(words({ exists: true, isDir: false }), ['Not a folder']);
+  assert.equal(C.folderProbe({ exists: true, isDir: false }).refused, true);
+  const part = C.folderProbe({ exists: true, isDir: true, insideRepo: true, partOf: 'web-app', repoRoot: '/src/web-app' });
+  assert.deepEqual(words({ exists: true, isDir: true, insideRepo: true, partOf: 'web-app' }), ['Git', 'Part of web-app']);
+  assert.equal(part.refused, true);
+  assert.deepEqual(part.action, { kind: 'open', name: 'web-app' });
+  assert.equal(dom(`<div>${part.html}</div>`).querySelector('[data-fb-root]').textContent, 'Open web-app');
+  const inside = C.folderProbe({ exists: true, isDir: true, insideRepo: true, repoRoot: '/src/mono/' });
+  assert.deepEqual(words({ exists: true, isDir: true, insideRepo: true }), ['Git', 'Inside a git repository']);
+  assert.deepEqual(inside.action, { kind: 'add', path: '/src/mono/' });
+  assert.equal(dom(`<div>${inside.html}</div>`).querySelector('[data-fb-root="/src/mono/"]').textContent, 'Add mono');
+  const nested = C.folderProbe({ exists: true, isDir: true, nestedHint: 'Remove its .git' });
+  assert.deepEqual(words({ exists: true, isDir: true, nestedHint: 'x' }), ['Git', 'Nested repository']);
+  assert.equal(nested.refused, false);
+  assert.equal(nested.note, 'Remove its .git');
+  assert.deepEqual(words({ exists: true, isDir: true, vcs: 'git' }), ['Git']);
+  assert.equal(C.folderProbe({ exists: true, isDir: true, vcs: 'git' }).useGit, false);
+  assert.deepEqual(words({ exists: true, isDir: true, vcs: 'none', files: 1 }), ['Folder', 'No git', '1 file']);
+  assert.deepEqual(words({ exists: true, isDir: true, vcs: 'none', files: 214 }), ['Folder', 'No git', '214 files']);
+  assert.deepEqual(words({ exists: true, isDir: true, vcs: 'none', files: 5000, filesCapped: true }), ['Folder', 'No git', '5000+ files']);
+  assert.equal(C.folderProbe({ exists: true, isDir: true, vcs: 'none' }).useGit, true);
+  assert.deepEqual(words({ exists: true, isDir: true, vcs: 'none' }, { git: false }), ['Folder'], 'no No git without git');
+  assert.equal(C.folderProbe({ exists: true, isDir: true, vcs: 'none' }, { git: false }).useGit, false);
+});
+
+test('COV-1 folderReview: Added locks, a reason stays, the pending count names the step; reviewSummary and REVIEW_EMPTY', () => {
+  const rows = [{ path: '/s/a', name: 'a', include: true, status: 'added' }, { path: '/s/b', name: 'b', include: true, status: 'skipped', reason: 'already registered' }, { path: '/s/c', name: 'c', include: false }];
+  const r = dom(`<div>${C.folderReview({ rows })}</div>`);
+  assert.equal(r.querySelector('[data-fr-name="0"]').disabled, true);
+  assert.match(r.querySelector('[data-fr-row="0"]').textContent, /Added/);
+  assert.match(r.querySelector('[data-fr-row="1"]').textContent, /already registered/);
+  assert.equal(r.querySelector('[data-fr-name="1"]').disabled, false);
+  assert.equal(r.querySelector('[data-fr-name="1"]').getAttribute('maxlength'), '80');
+  assert.equal(r.querySelector('[data-fr-pick="2"]').checked, false);
+  assert.equal(r.querySelector('[data-fr-pick="1"]').getAttribute('aria-label'), 'Add b');
+  assert.equal(r.querySelector('[data-confirm="yes"]').textContent, 'Add 1 project');
+  const none = dom(`<div>${C.folderReview({ rows: [{ path: '/s/c', name: 'c', include: false }] })}</div>`);
+  assert.equal(none.querySelector('[data-confirm="yes"]').disabled, true);
+  const saving = dom(`<div>${C.folderReview({ rows: rows.slice(1), saving: true })}</div>`);
+  assert.equal(saving.querySelector('[data-confirm="yes"]').textContent, 'Adding…');
+  assert.equal(saving.querySelector('[data-confirm="yes"]').disabled, true);
+  assert.equal(C.reviewSummary({ added: ['a', 'b', 'c'], skipped: [{ name: 'beta', reason: 'already registered' }] }), 'Added 3 projects. Skipped 1: beta (already registered).');
+  assert.equal(C.reviewSummary({ added: ['a'], skipped: [] }), 'Added “a”.');
+  assert.equal(C.REVIEW_EMPTY, 'Tick at least one folder to add.');
+});

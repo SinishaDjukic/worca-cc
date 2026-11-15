@@ -60,6 +60,7 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | One pick from a long list, or a new one | ListEditor, single pick: find or create, recent first | Add to group |
 | **Entering** | | |
 | Text or a number in a form | Field | Branch, Budget |
+| Picking folders on this computer | FolderBrowser, in a Dialog (single, or multi with checkboxes) | Choose folder…, Several folders… |
 | Text Worca writes for you | SuggestionField | PR title and description, a drafted answer |
 | A field or menu that stays open while its page redraws | `data-keep` on its control, `watchKeepOpen` once for the page | Rename, Move to group…, Label |
 | A whole-text rewrite Worca suggests | RewriteSuggestion | Prompt check Improve |
@@ -145,6 +146,10 @@ other library calls, never a person's text: a person's text goes through the lib
 | Select every row shown, or none | `selectAllBox` | SelectionBar |
 | A long press on a row starts selecting, on touch | `bindLongPress` | SelectionBar |
 | A view in a Dialog without a form: its head, its body | `dialogFrame` | Dialog |
+| A folder's name from its path | `folderName` | FolderBrowser |
+| What a typed folder is, under its field: Git, Folder, Not found | `folderProbe` | FolderBrowser |
+| Picked folders reviewed before they are added: a name each, Added or why skipped | `folderReview` | FolderBrowser |
+| What a bulk add did, in one line | `reviewSummary` | FolderBrowser |
 | A document's name that opens it | `documentLink` | Text link |
 | The tick after something was copied | `copied` | CopyButton |
 | Ask Worca to write a field | `suggestButton` | SuggestionField |
