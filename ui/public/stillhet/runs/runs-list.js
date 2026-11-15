@@ -266,7 +266,7 @@
   ctl = R.listController({ root, spec: {
     noun: 'tasks', label: 'Selected tasks',
     tool: (v) => { if (v === 'reset') { view = { ...FRESH }; store.set(view); centers(); say('View reset'); } },
-    view: () => ({ state: listCase === 'loading' ? (ctl?.state.waited ? 'loading' : 'waiting') : ['offline', 'failed'].includes(listCase) ? listCase : 'ready', parts: parts(), tools: [...([{ id: 'select', text: 'Select', hint: `${R.keyHint(['mod'], R.isMac(window))} click`, help: 'Tick tasks to act on several at once' }]), R.resetViewTool({ changed: !(view.show === FRESH.show && view.from === FRESH.from && !view.day && !view.range && !view.person && view.by === FRESH.by && !view.labels.length && !view.workflow && !view.schedule), to: 'all tasks, from all projects, by date' }), { id: 'keys', text: 'Keyboard shortcuts', hint: '?', help: 'The keys of this list' }],
+    view: () => ({ state: listCase === 'loading' ? (ctl?.state.waited ? 'loading' : 'waiting') : ['offline', 'failed'].includes(listCase) ? listCase : archivedFailed() ? 'failed' : 'ready', parts: parts(), tools: [...([{ id: 'select', text: 'Select', hint: `${R.keyHint(['mod'], R.isMac(window))} click`, help: 'Tick tasks to act on several at once' }]), R.resetViewTool({ changed: !(view.show === FRESH.show && view.from === FRESH.from && !view.day && !view.range && !view.person && view.by === FRESH.by && !view.labels.length && !view.workflow && !view.schedule), to: 'all tasks, from all projects, by date' }), { id: 'keys', text: 'Keyboard shortcuts', hint: '?', help: 'The keys of this list' }],
       sections: sections(), empty: noTasks() ? { text: 'No tasks yet.', action: 'Start a task' } : { text: view.from !== 'all' || view.day || view.range || view.person || view.labels.length || view.workflow || view.schedule ? 'No tasks in this view.' : EMPTY[view.show] || 'No tasks yet.', action: 'Show all tasks' } }),
     // Tasks D17: the same menu, keys and bulk bar in both kinds; the live kind's act calls dev's routes
     can: () => ['menu', 'fold', 'stop', 'archive', ...(has('advanced') ? ['group', 'delete'] : [])],
@@ -275,13 +275,16 @@
     word: (id, v) => {
       if (id === 'labels') { if (!v) { view.labels = []; return false; } view.labels = view.labels.includes(v) ? view.labels.filter((l) => l !== v) : [...view.labels, v]; store.set(view); return view.labels.length > 0; }
       if (id === 'range') { if (!v) { view = { ...view, range: null }; store.set(view); } return false; }
+      if (id === 'show' && v === 'archived' && W.live) window.RailAdapter?.refresh?.('archived');   // F-a4-07: the Archived view reads its rows again
       view = { ...view, [id]: v }; store.set(view); centers(); return false;
     },
     say, active: () => !root.closest('[hidden]') && !document.querySelector('.pz-popover, .keys-modal, #app .viewer-modal, #center-dlg .viewer-modal, #app .nav-fly'),
-    retry: () => { if (W.live) window.RailAdapter.retry(); else setCase('full'); }, emptyAct: () => { if (noTasks()) { if (W.live) window.RailConversation?.start?.('task'); return; }   /* D12c: Start a task hands over to Chat */ view = { ...FRESH }; store.set(view); ctl.clear(); ctl.paint(); centers(); },
+    retry: () => { if (archivedFailed()) window.RailAdapter.refresh('archived'); else if (W.live) window.RailAdapter.retry(); else setCase('full'); }, emptyAct: () => { if (noTasks()) { if (W.live) window.RailConversation?.start?.('task'); return; }   /* D12c: Start a task hands over to Chat */ view = { ...FRESH }; store.set(view); ctl.clear(); ctl.paint(); centers(); },
   } });
 
   // no task at all: the demo's ?state=empty, or a live store whose load answered with none (the adapter keeps the list '')
+  // the Archived view's own read failed (the rest of the list drew): that view says it could not load, and Try again reads it alone
+  const archivedFailed = () => W.live && view.show === 'archived' && window.RailDemoState?.archived === 'failed';
   const noTasks = () => listCase === 'empty' || (W.live && listCase === 'full' && !data.runs.length);
   function setCase(c) {
     listCase = c; data = c === 'empty' ? { groups: [], runs: [], userGroups: [] } : M.seed(); ctl.clear();

@@ -72,7 +72,7 @@
   const view = { show: 'all', by: 'workspace' }, showAll = new Set();   // a workspace in Needs you lists its trouble first; its other projects are one click away
   const pid = () => current.split('@')[0];   // the address may say through which workspace: billing-api@legacy
   const firstHome = (id) => window.RailSpaces?.list().find((w) => w.projects.some(([p]) => p === id))?.id;
-  let bellHeard = -1, drawn = '', current = '', menu = '', confirm = null, ctl = null, bar = null, page = null, form = '', formTyped = '', formErr = '', setsOpen = false, locating = '', formAt = '';   // formAt: the route arg the open form belongs to
+  let notFoundSoon = false, bellHeard = -1, drawn = '', current = '', menu = '', confirm = null, ctl = null, bar = null, page = null, form = '', formTyped = '', formErr = '', setsOpen = false, locating = '', formAt = '';   // formAt: the route arg the open form belongs to
   const NAME_MAX = 80, TAG_MAX = 40;   // form.name-limit; small.label-short
   // what Worca can go and look at: a full path, or (adding) a repository's address; nothing else leaves this form
   const pathWrong = (v, repo) => (/[<>"`|*?\x00-\x1f]/.test(v) ? 'A path has no < > " ` | * or ?' : (repo && /^(https?:\/\/|ssh:\/\/|git@)\S+$/.test(v)) || /^~?(\/[^/]+)+\/?$/.test(v) ? '' : `Give its full path, such as ~/src/your-project${repo ? ', or a repository address' : ''}`);
@@ -311,7 +311,12 @@
     ctl?.paint({ ifChanged: true });   // B2.8: an idle draw leaves the bar's rows as they are
     const scrolled = drawn === current ? page.querySelector('.convo-scroll')?.scrollTop || 0 : 0, keep = () => { drawn = current; const s = page.querySelector('.convo-scroll'); if (s) s.scrollTop = scrolled; };   // a menu opening leaves the page where it was, its picker in view
     if (current.startsWith('ws:')) { if (!adv()) { window.RailShell.go('projects'); return; } frameKey = ''; window.RailSpaces.render(page, current.slice(3)); keep(); return; }
-    const p = data.projects.find((x) => x.id === pid()), now = p ? { cls: '', parts: pageParts(p) } : homeParts();
+    const p = data.projects.find((x) => x.id === pid());
+    // nav.not-found: loaded and not listed, the shell's not-found page (never the home, never Loading); not while an action
+    // on it waits, and a turn later, so an action that just moved it routes first
+    const lost = () => !data.projects.some((x) => x.id === pid()) && pid() && !busyOf(pid()) && W?.live && listNow() === 'ready' && here() && !page.hidden;
+    if (!p && lost() && !notFoundSoon) { notFoundSoon = true; const at = location.hash; setTimeout(() => { notFoundSoon = false; if (location.hash === at && lost()) window.RailShell.go(at.slice(1)); }, 0); }
+    const now = p ? { cls: '', parts: pageParts(p) } : homeParts();
     // the frame is built once per page (D7); another place or a workspace that wrote the shared page means a new one
     const key = p ? `p:${p.id}|${nameOf(p)}` : 'home';
     let col = page.querySelector(':scope > .convo > .convo-scroll > .convo-col');
@@ -335,11 +340,12 @@
         : (!v ? 'It needs its repository address' : REPO_RE.test(v) ? '' : 'Give its repository address, such as git@github.com:you/your-project.git');
     if (wrong) { formErr2(v, wrong); return; }
     if (kind === 'rename' && v === nameOf(p)) { closeForm(); return; }
-    const done = (text, to) => { form = ''; formTyped = ''; formErr = ''; say(text); if (to) window.RailShell.go(`projects/${to}`); else draw(); };
+    const done = (text, to) => { form = ''; formTyped = ''; formErr = ''; say(text); if (to) window.RailShell.go(to); else draw(); };
     if (LIVE()) {
       formTyped = v; formErr = '';
-      const run = kind === 'locate' ? LIVE().relocate(p.id, v) : kind === 'rename' ? LIVE().rename(p.id, v) : LIVE().linkRemote(p.id, v);
-      run.then((a) => { if (a.ok) done(a.text, a.key && a.key !== p.id ? a.key : ''); else if (a.field) formErr2(v, a.field); else said(a); });   // D8: Locate lands on the new key
+      const from = current, run = kind === 'locate' ? LIVE().relocate(p.id, v) : kind === 'rename' ? LIVE().rename(p.id, v) : LIVE().linkRemote(p.id, v);
+      // D8: Locate lands on the new key once the store lists it; not listed, the Projects list (the old key may be gone); only while the person is still here
+      run.then((a) => { if (a.ok) { const to = a.key && a.key !== p.id ? `projects/${a.key}` : kind === 'locate' && !a.key ? 'projects' : ''; done(a.text, current === from && here() ? to : ''); } else if (a.field) formErr2(v, a.field); else said(a); });
       draw(); return;
     }
     if (kind === 'locate') { Object.assign(p, { path: v, origin: 'ok', checked: 'just now' }); done(`${p.id} now uses ${v}`); return; }
@@ -385,7 +391,7 @@
       if (current.startsWith('ws:')) return;   // the workspace has its own
       if (PAGE_FORMS[form] && (hit = on('[data-confirm]'))) { pageFormYes(hit.dataset.confirm === 'yes'); return; }
       if (form && (hit = on('[data-confirm]'))) { const v = page.querySelector('#pj-hand-v')?.value.trim() || '', kind = form; if (hit.dataset.confirm !== 'yes') { closeForm(); return; } if (busyOf('add')) return; const id = kind === 'project' ? (v.split(/[/:]/).filter(Boolean).pop() || '').replace(/\.git$/, '') : '', wrong = !v || (kind === 'project' && !id) ? (kind === 'project' ? 'It needs a folder or a repository' : 'It needs a name') : kind === 'project' ? (pathWrong(v, true) || (id.length > NAME_MAX ? `A project's name holds ${NAME_MAX} characters; this folder's has ${id.length}` : data.projects.some((x) => nameOf(x) === id) ? `${id} is already a project` : '')) : (window.RailSpaces.named(v) ? `${window.RailSpaces.named(v).title} already exists` : ''); if (wrong) { formErr2(v, wrong); return; }
-        if (kind === 'project' && LIVE()) { formTyped = v; formErr = ''; LIVE().addProject(v).then((a) => { if (!a.ok) { if (a.field) formErr2(v, a.field); else said(a); return; } form = ''; formTyped = ''; formErr = ''; say(a.text); if (a.key) window.RailShell.go(`projects/${a.key}`); else draw(); }); draw(); return; }   // D11: a path, or a repository to clone
+        if (kind === 'project' && LIVE()) { formTyped = v; formErr = ''; const from = current; LIVE().addProject(v).then((a) => { if (!a.ok) { if (a.field) formErr2(v, a.field); else said(a); return; } form = ''; formTyped = ''; formErr = ''; say(a.text); if (a.key && current === from && here()) window.RailShell.go(`projects/${a.key}`); else draw(); }); draw(); return; }   // D11: a path, or a repository to clone; its page once the store lists it, while the person is still here
         form = ''; formTyped = ''; formErr = ''; if (kind === 'project') { window.RailProjects.add({ id, path: v, kind: 'Git', origin: 'local', branch: 'main' }); say(`Added ${id}`); window.RailShell.go(`projects/${id}`); return; } const wsId = window.RailSpaces.add({ title: v, fresh: true }); window.RailShell.go(`projects/ws:${wsId}`); return; }
       const p0 = data.projects.find((x) => x.id === pid()); if (!p0 || !page.querySelector('#pj-dock')) return;
       const p = withDetail(p0);

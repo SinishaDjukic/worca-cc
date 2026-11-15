@@ -142,12 +142,17 @@ test('the demo threads carry times too: the first you turn of Billing CSV export
 });
 
 test('F-a2-01 prototype: while the demo reply runs, Enter queues at most 3 with the line; Stop pauses with Send now; each row has Remove and no Edit', async (t) => {
-  const w = stillhetHost({ hash: '#chat/c1', after: (fn) => t.after(fn) });
+  // the demo reply ends on a 1400 ms wall-clock timer and then sends the oldest queued row: under CI load the steps below
+  // outlast it. Its timer is held (never fires), so the reply runs until Stop, and the counts read the queue, not the clock.
+  let held = 0;
+  const hold = (win) => { const real = win.setTimeout; win.setTimeout = (fn, ms, ...a) => (ms === 1400 ? (held++, real(() => {}, 0)) : real(fn, ms, ...a)); };
+  const w = stillhetHost({ hash: '#chat/c1', after: (fn) => t.after(fn), beforeScripts: hold });
   await settle(40);
   const d = w.document, q = (s) => d.querySelector(`#route-chat ${s}`), box = () => q('[data-composer-t]');
   const enter = async (text) => { box().value = text; box().dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await settle(10); };
   await enter('Add a totals row');
   assert.ok(q('[data-cp-stop]'), 'the demo reply runs');
+  assert.equal(held, 1, 'the demo reply\'s timer is the one held');
   await enter('one');
   assert.match([...d.querySelectorAll('body > .rc-toast')].map((e) => e.textContent).join(' | '), /(^| \| )Queued: 1 of 3($| \| )/, 'the toast never repeats the line');
   await enter('two');
@@ -167,6 +172,7 @@ test('F-a2-01 prototype: while the demo reply runs, Enter queues at most 3 with 
   q('[data-q-send]').click(); await settle(10);
   assert.equal(d.querySelectorAll('#route-chat .composer-queue [data-q-drop]').length, 2, 'Send now sends the oldest');
   assert.ok(q('[data-cp-stop]'), 'its reply runs');
+  assert.equal(held, 2, 'and its timer is held too');
   assert.equal(q('[data-q-note]').textContent, 'Sends when the reply finishes');
 });
 
