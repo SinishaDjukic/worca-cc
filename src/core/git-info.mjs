@@ -92,6 +92,16 @@ async function ghRead(resource, args, opts) {
 async function noteGhRateLimit(resource, env = null) {
   const now = _now();
   if (!quotaTracking() || quotaBlocked(resource, { now })) return;
+  // Lookups that hit the limit together share one probe (one per resource in flight).
+  const running = _rateProbes.get(resource);
+  if (running) return running;
+  const probe = probeRateLimit(resource, env, now).finally(() => _rateProbes.delete(resource));
+  _rateProbes.set(resource, probe);
+  return probe;
+}
+const _rateProbes = new Map();
+
+async function probeRateLimit(resource, env, now) {
   const p = await _run('gh', ['api', 'rate_limit'], env ? { env } : {});
   let resetAt = null, source = null;
   try {

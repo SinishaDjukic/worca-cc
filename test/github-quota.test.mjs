@@ -140,6 +140,28 @@ test('F-X-02/C-2: a quota error keeps the last state and schedules no burst of r
   assert.equal(gh.filter((c) => c === 'api rate_limit').length, 0);
 });
 
+test('F-X-02 (I-2): lookups that hit the limit together send one rate_limit probe', async () => {
+  const gh = [];
+  let releaseProbe;
+  const probeGate = new Promise((r) => { releaseProbe = r; });
+  gitInfo.setRunner((cmd, args) => {
+    if (cmd === 'git' && args[0] === 'remote') return ok('origin\tgit@ghe.corp:o/r.git (fetch)\norigin\tgit@ghe.corp:o/r.git (push)\n');
+    if (cmd !== 'gh') return ok('');
+    gh.push(args.join(' '));
+    if (args[0] === 'api' && args[1] === 'rate_limit') return probeGate.then(() => ok(RATE));
+    if (args[1] === 'list') return Promise.resolve(LIMITED);
+    return ok('');
+  });
+  gitInfo.setNow(() => NOW);
+  optIn();
+  const runs = ['c1', 'c2', 'c3', 'c4'].map((head) => lookupPrForBranch({ projectDir: '/r', head }));
+  await new Promise((r) => setTimeout(r, 20));   // every lookup is limited and waits on the probe
+  releaseProbe();
+  for (const r of await Promise.all(runs)) assert.equal(r.reason, 'quota');
+  assert.equal(gh.filter((c) => c === 'api rate_limit').length, 1, 'one probe for the four lookups');
+  assert.deepEqual(quotaBlocked('graphql', { now: NOW }), { until: NOW + 40 * MIN });
+});
+
 test('while graphql is blocked: prChecks, prMergeable, prLifecycleState, prWatchSnapshot (class rate-limit, today\'s wording), ghItemSummaries spawn nothing', async () => {
   const gh = [];
   gitInfo.setRunner((cmd, args) => { if (cmd === 'gh') gh.push(args.join(' ')); return ok(args[0] === '--version' ? 'gh 2.x' : ''); });
