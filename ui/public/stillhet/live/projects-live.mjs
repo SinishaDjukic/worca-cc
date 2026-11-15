@@ -65,7 +65,7 @@ const slug = (t) => String(t).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(
 const lastSeg = (v) => (String(v).split(/[/:]/).filter(Boolean).pop() || '').replace(/\.git$/, '');
 const plural = (n, one) => `${n} ${n === 1 ? one : `${one}s`}`;
 
-export function startProjectsLive({ fetch, toast = () => {}, refresh = () => {}, world = () => ({ projects: [], spaces: [] }), go = () => {}, on = () => {}, setTimeout: later = globalThis.setTimeout, clearTimeout: cancel = globalThis.clearTimeout }) {
+export function startProjectsLive({ fetch, toast = () => {}, refresh = () => {}, world = () => ({ projects: [], spaces: [] }), go = () => {}, at = () => globalThis.location?.hash || '', on = () => {}, setTimeout: later = globalThis.setTimeout, clearTimeout: cancel = globalThis.clearTimeout }) {
   const busy = new Map(), hide = new Map(), gone = new Set(), moving = new Set(), fresh = new Map(), details = new Map(), spaceDetails = new Map(), clones = new Map();
 
   async function send(id, args = {}) {
@@ -111,7 +111,7 @@ export function startProjectsLive({ fetch, toast = () => {}, refresh = () => {},
       if (REPO.test(v)) {
         const a = await send('clone', { url: v });
         if (!a.ok) return a.status === 400 || a.status === 409 ? { ok: false, field: plainWhy(a) } : refused('clone', name, a);
-        clones.set(a.data.jobId || a.data.job?.id, a.data.job?.name || name);
+        clones.set(a.data.jobId || a.data.job?.id, { name: a.data.job?.name || name, from: at() });   // where the person was: it routes only if they still are
         return { ok: true, text: `Cloning ${a.data.job?.name || name}…` };
       }
       const a = await send('add', { name, path: v });
@@ -239,6 +239,9 @@ export function startProjectsLive({ fetch, toast = () => {}, refresh = () => {},
     return clash ? `there is already a workspace called ${clash.title}` : '';
   }
   function saveSpace(id, draft) {
+    // a saved draft leaves once its caller has the answer, not before: the redraw that ends its pending label keeps the
+    // draft's page, so the caller can still tell whether the person is on it
+    const drop = (a) => { if (a.ok && id.startsWith('draft:')) fresh.delete(id); return a; };
     return once(id, id.startsWith('draft:') ? 'space-create' : 'space-rename', async () => {
       const w = space(id); if (!w) return { ok: false, text: '' };
       const ids = (draft?.projects || []).map(([k]) => k);
@@ -249,7 +252,7 @@ export function startProjectsLive({ fetch, toast = () => {}, refresh = () => {},
       if (id.startsWith('draft:')) {
         const title = name || w.title, a = await send('space-create', { name: title, paths: ids.map(pathOf) });
         if (!a.ok) return refused('space-create', title, a);
-        fresh.delete(id); refresh('workspaces');
+        refresh('workspaces');
         const made = a.data.workspace?.id || '';
         return { ok: true, text: `Saved ${title}; a short scan maps what changed`, ...(await listed('spaces', made) ? { id: made } : {}) };
       }
@@ -272,7 +275,7 @@ export function startProjectsLive({ fetch, toast = () => {}, refresh = () => {},
         : stop[0] === 'space-add' ? { ...named, projects: draft.projects, changes: n + added.length + removed.length }
           : { ...named, projects: draft.projects, changes: n + left.length };
       return { ok: false, text: `Could not save ${w.title}: ${plainWhy(stop[1])}${saidDone}`, keep };
-    });
+    }).then(drop);
   }
   async function readSpaceDetail(id) {
     if (!readable(id)) return;
@@ -326,9 +329,9 @@ export function startProjectsLive({ fetch, toast = () => {}, refresh = () => {},
    *  changed elsewhere: read the open pages' detail again. Pending labels hold until dev answers. */
   function frame(f = {}) {
     if (f.type === 'clone-changed' && f.job && clones.has(f.job.id) && f.job.state !== 'running') {
-      const name = clones.get(f.job.id); clones.delete(f.job.id);
+      const { name, from } = clones.get(f.job.id); clones.delete(f.job.id);
       const key = f.job.project?.key;
-      if (f.job.state === 'done') { refresh('projects', 'sync'); listed('projects', key).then((ok) => ok && go(`projects/${key}`)); }   // only once the store lists it
+      if (f.job.state === 'done') { refresh('projects', 'sync'); listed('projects', key).then((ok) => ok && at() === from && go(`projects/${key}`)); }   // only once the store lists it, while the person is still where they started it
       else toast(`Could not clone ${name}: ${f.job.error ? plainWhy({ status: 200, error: f.job.error }) : 'it failed'}`);
       return;
     }

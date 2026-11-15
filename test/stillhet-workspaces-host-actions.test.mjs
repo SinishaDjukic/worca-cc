@@ -39,6 +39,21 @@ test('Make a workspace by hand: a draft in the bar until Save; Save sends POST /
   assert.deepEqual(h.w.__would, []);
 });
 
+test('F-5-05 review: a new workspace opens once the store lists it only while the person is still on its draft', async () => {
+  let made = false;
+  const held = gate();
+  const spaces = () => ({ workspaces: [...clone(PJ_SOURCES.workspaces.workspaces), ...(made ? [{ id: 'wks-web-store-1234abcd', name: 'Web store', projectKeys: [KEYS.ok, KEYS.local], projectPaths: ['/src/seed-ok', '/src/seed-local'], exists: [true, true], mapSummary: null }] : [])] });
+  const h = await projectsHost({ hold: (u) => (made && u === '/api/workspaces' ? held.p : null), read: (u) => (u === '/api/workspaces' ? [200, spaces()] : null), write: (u) => (u === '/api/workspaces' ? (made = true, [201, { workspace: { id: 'wks-web-store-1234abcd' } }]) : [200, { ok: true }]) });
+  h.w.RailPlaces.projects.newPick('hand-space'); await settle(100);
+  page(h.d).querySelector('#pj-hand-v').value = 'Web store'; page(h.d).querySelector('[data-confirm="yes"]').click(); await settle(150);
+  addMember(h.d, KEYS.ok); await settle(60); addMember(h.d, KEYS.local); await settle(60);
+  page(h.d).querySelector('[data-draft-save]').click(); await settle(200);
+  assert.equal(h.w.location.hash, '#projects/ws:draft:web-store', 'the draft stays open while the store has not listed it');
+  await go(h.w, '#projects', 200);   // the person moves on before the store reads it
+  held.open(); await settle(600);
+  assert.equal(h.w.location.hash, '#projects', 'no route once they left');
+});
+
 test('Edit by hand: the Name row and Take out, then Save, send the members, then PATCH, in order; a refused removal keeps the name and it in the draft', async () => {
   const h = await projectsHost({ hash: HERE, write: (u, b) => (b?.remove ? [409, { error: 'a run holds it' }] : [200, { ok: true }]) });
   assert.ok(page(h.d).querySelector('[data-menu="ws-more"]'), 'its ⋯ menu is drawn live');

@@ -23,7 +23,7 @@ const WORLD = () => ({
   ],
   spaces: [{ id: 'wks-pair-4444dddd', title: 'Pair', projects: [['shop-1111aaaa', 'behind'], ['api-2222bbbb', 'ok']], paths: ['/src/shop', '/src/api'], links: [] }],
 });
-function rig({ answer = () => null, hold = () => null } = {}) {
+function rig({ answer = () => null, hold = () => null, at = () => '' } = {}) {
   const calls = [], toasts = [], refreshed = [], went = [], timers = [];
   let world = WORLD(), changes = 0;
   const fetch = async (url, o = {}) => {
@@ -35,7 +35,7 @@ function rig({ answer = () => null, hold = () => null } = {}) {
     const [status, data] = a || [200, method === 'GET' ? {} : { ok: true }];
     return { ok: status < 400, status, json: async () => structuredClone(data) };
   };
-  const live = startProjectsLive({ fetch, toast: (t) => toasts.push(t), refresh: (...s) => { refreshed.push(...s); }, world: () => world, go: (h) => went.push(h), on: () => { changes += 1; },
+  const live = startProjectsLive({ fetch, toast: (t) => toasts.push(t), refresh: (...s) => { refreshed.push(...s); }, world: () => world, go: (h) => went.push(h), at, on: () => { changes += 1; },
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: (n) => { if (timers[n - 1]) timers[n - 1].fn = null; } });
   const writes = () => calls.filter((c) => c.method !== 'GET').map((c) => [c.method, c.url, c.body]);
   return { live, calls, writes, toasts, refreshed, went, timers, setWorld: (w) => { world = w; }, world: () => world, changes: () => changes, fire: async () => { for (const t of timers.splice(0)) await t.fn?.(); } };
@@ -428,6 +428,22 @@ test('F-6-18 review: a move keeps the old key\'s row (and its Locate form) until
   await r.fire();
   assert.equal((await mv).key, 'shop-7777aaaa');
   assert.ok(r.live.hidden().has('shop-1111aaaa'), 'once the new key is listed the old one is hidden until the store drops it');
+});
+
+test('F-5-05 review: a finished clone goes to its project only while the person is still where they started it', async () => {
+  let hash = '#projects';
+  const r = rig({ at: () => hash, answer: (m, u) => (u === '/api/projects/clone' ? [202, { jobId: 'cln_1', job: { id: 'cln_1', name: 'repo', state: 'running' } }] : null) });
+  await r.live.addProject('https://github.com/o/repo.git');
+  hash = '#projects/api-2222bbbb';   // the person moved on while it cloned
+  r.live.frame({ type: 'clone-changed', job: { id: 'cln_1', name: 'repo', state: 'done', project: { key: 'repo-6666ffff' } } });
+  r.setWorld(withProject({ id: 'repo-6666ffff', name: 'repo', devPath: '/src/repo' }));
+  await drain(r, 3);
+  assert.deepEqual(r.went, [], 'elsewhere now: no route');
+  hash = '#projects';
+  await r.live.addProject('https://github.com/o/repo.git');
+  r.live.frame({ type: 'clone-changed', job: { id: 'cln_1', name: 'repo', state: 'done', project: { key: 'repo-6666ffff' } } });
+  await drain(r, 3);
+  assert.deepEqual(r.went, ['projects/repo-6666ffff'], 'still there: it goes to the project');
 });
 
 test('source scan (R-arch-3): the pages hold none of dev\'s route or field names', () => {
