@@ -122,7 +122,7 @@ test('act: each id\'s route and body; a second press is refused; a refusal says 
   const draft = host({ rows: { h2: approvedRow }, routes: { 'POST /api/pr/merge': [409, { error: 'This pull request is a draft; mark it ready for review first.', code: 'DRAFT' }] } });
   await draft.t.act('merge', { taskId: 'h2', pr: PR_URL });
   assert.deepEqual(draft.toasts, ['Could not merge #959: This pull request is a draft; mark it ready for review first.'], 'the server\'s own refusal words');
-  assert.equal(Object.keys(TASK_ACTIONS).length, 28, 'the ten Step 7 actions, the page\'s Check out, Apply and Discard, and its Terminal, service start and stop, built-in tool, preset, Switch model, Resume at…, Publish branch, away mode, a diff comment, labels and cost tags, a stack\'s start and stop, a group\'s Create PR');
+  assert.equal(Object.keys(TASK_ACTIONS).length, 30, 'the ten Step 7 actions, the page\'s Check out, Apply and Discard, and its Terminal, service start and stop, built-in tool, preset, Switch model, Resume at…, Publish branch, away mode, a diff comment, labels and cost tags, a stack\'s start and stop, a group\'s Create PR, a review gate\'s two answers');
 });
 
 test('retry on a moved base is a prompt, not a refusal; Resume anyway posts baseAck', async () => {
@@ -453,4 +453,50 @@ test('a merge that succeeded drops the checks entry and reads no checks again', 
   const res = await t.act('merge', { taskId: 'h2', pr: PR_URL }); await settle();
   assert.equal(res.ok, true);
   assert.deepEqual(calls.slice(before).filter(([, u]) => /\/api\/pr\/checks/.test(u)), [], 'a merged PR has no checks to read');
+});
+
+// B1.6 (#1318): a review gate's two answers, on dev's answer API (D2), only to the gate that is pending now (D3)
+const GATE_Q = { id: 'gate-w5-3', kind: 'gate', wireId: 'w5', nodeId: 'n_rev', issues: [] };
+const gateLive = (pendingQuestion, over = {}) => ({ 'run-g': { runId: 'run-g', pipelineId: 'pg', projectKey: 'web-1', status: 'running', state: {}, pendingQuestion, ...over } });
+
+test('O1: Accept as is and Run another cycle post /api/answer with the pending gate\'s id and decision continue / another', async () => {
+  const { t, calls } = host({ live: gateLive(GATE_Q), routes: { 'POST /api/answer': [200, { ok: true }] } });
+  assert.equal((await t.flow('Accept as is', { taskId: 'run-g', questionId: 'stale-id' })).ok, true);
+  assert.equal((await t.flow('Run another cycle', { taskId: 'run-g' })).ok, true);
+  assert.deepEqual(calls.filter(([m]) => m === 'POST'), [
+    ['POST', '/api/answer', { runId: 'run-g', id: 'gate-w5-3', payload: { decision: 'continue' } }],
+    ['POST', '/api/answer', { runId: 'run-g', id: 'gate-w5-3', payload: { decision: 'another' } }]], 'the id is the pending gate\'s, never a caller\'s');
+  // a double click sends one request
+  const two = host({ live: gateLive(GATE_Q), routes: { 'POST /api/answer': [200, { ok: true }] } });
+  await Promise.all([two.t.act('gate-continue', { taskId: 'run-g' }), two.t.act('gate-continue', { taskId: 'run-g' })]);
+  assert.equal(two.calls.filter(([m]) => m === 'POST').length, 1);
+  // dev's refusal is said once
+  const bad = host({ live: gateLive(GATE_Q), routes: { 'POST /api/answer': [400, { error: 'unknown runId' }] } });
+  const r = await bad.t.act('gate-another', { taskId: 'run-g' });
+  assert.deepEqual([r.ok, bad.toasts.length], [false, 1]);
+});
+
+test('O1: with no pending gate (none, or a plan question) a gate action sends nothing and refuses', async () => {
+  for (const pq of [null, { id: 'q-plan', kind: 'plan' }, { kind: 'gate', id: '' }]) {
+    const { t, calls, toasts } = host({ live: gateLive(pq), routes: { 'POST /api/answer': [200, { ok: true }] } });
+    const r = await t.flow('Accept as is', { taskId: 'run-g' });
+    assert.deepEqual([r.ok, r.error], [false, 'the review is no longer waiting for you'], JSON.stringify(pq));
+    assert.equal(calls.filter(([m]) => m === 'POST').length, 0, 'nothing posted');
+    assert.equal(toasts.length, 1, 'said once');
+  }
+  // a saved task (no live run id) whose state still holds a gate: no answer
+  const saved = host({ rows: { pg: { id: 'pg', case: 'question' } }, routes: { 'GET /api/history/web-1/pg': [200, { state: { status: 'paused', pendingQuestion: GATE_Q } }], 'POST /api/answer': [200, {}] } });
+  await saved.t.open('pg');
+  const r = await saved.t.act('gate-another', { taskId: 'pg', quiet: true });
+  assert.deepEqual([r.ok, r.error], [false, 'the task is not running']);
+  assert.equal(saved.calls.filter(([m]) => m === 'POST').length, 0);
+});
+
+test('O1: canFlow offers Accept as is and Run another cycle on the gate case only', () => {
+  const { t } = host();
+  for (const label of ['Accept as is', 'Run another cycle']) {
+    assert.equal(t.canFlow(label, { case: 'gate' }), true, `${label} on the chat TaskCard (no page)`);
+    assert.equal(t.canFlow(label, { case: 'gate', page: true }), true, label);
+    for (const c of ['question', 'working', 'plan', 'paused', 'ready']) assert.equal(t.canFlow(label, { case: c, page: true }), false, `${label} on ${c}`);
+  }
 });

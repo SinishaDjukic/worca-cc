@@ -55,6 +55,10 @@ export const TASK_ACTIONS = Object.freeze({
   // a group's Create PR (dev's Ship it): a user group's one PR or separate PRs, a feature's one PR or stacked PRs
   'ship-group': [(a) => (a.ship === 'one' ? 'create the PR' : 'create the PRs'), (a) => ['POST', a.groupKind === 'Feature' ? `/api/shape/features/${enc(a.groupId)}/ship` : `/api/run-groups/${enc(a.groupId)}/ship`, { mode: a.ship }]],
   'stack-stop': [(a) => `stop ${a.name || 'the stack'}`, (a) => ['POST', `/api/runs/${enc(a.pipelineId)}/stacks/${enc(a.stackId)}/stop?${scopeQ(a)}`, {}]],
+  // a review gate's two answers, as the classic gate card sends them (ui/public/shape/step-card.mjs renderGateCard); the
+  // id is the pending gate's, read at act time (B1.6 D3)
+  'gate-continue': ['accept the review as is', (a) => ['POST', '/api/answer', { runId: a.runId, id: a.gateId, payload: { decision: 'continue' } }]],
+  'gate-another': ['run another cycle', (a) => ['POST', '/api/answer', { runId: a.runId, id: a.gateId, payload: { decision: 'another' } }]],
 });
 // a workspace task's store key is `workspaces/ID`: its saved run, log, diff and comments are dev's workspace routes
 // (ui/routes/workspace-map/runs.mjs, run-comments.mjs); a project's are History's
@@ -106,6 +110,8 @@ const TASK_FLOW = Object.freeze({
   'Ask for changes': { act: 'plan-changes', cases: ['plan'] },
   Terminal: { act: 'terminal' }, 'Save as preset': { act: 'preset' }, 'Switch model…': { act: 'switch-model' }, 'Resume at…': { act: 'resume-at' },
   'Try it': { act: 'try-it' }, 'Publish branch': { act: 'publish' }, 'Ship group': { act: 'ship-group' },
+  // a task waiting at its review gate (B1.6): dev's answer API, on the gate case only
+  'Accept as is': { act: 'gate-continue', cases: ['gate'] }, 'Run another cycle': { act: 'gate-another', cases: ['gate'] },
 });
 const NEEDS_PR = new Set(['Merge PR', 'Merge', 'Fix checks', 'Re-run checks']);
 // the page's own: a card has no TerminalPane to draw the shell in and no model list for Switch model…
@@ -385,6 +391,12 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
     if (id === 'switch-model' && !a.model) return refuse(wordsOf(id, a), { ok: false, error: 'pick a model first' }, args.quiet);
     if (id === 'resume-at') { a.scheduledFor = nextAt(args.value, now()); if (!a.scheduledFor) return refuse(wordsOf(id, a), { ok: false, error: 'write the time as HH:MM, like 15:30' }, args.quiet); }
     if (id === 'try-it') return tryIt(a, args);
+    // dev answers 200 even to a gate that is gone (run-harness answer only warns): post only to the one pending now (D3)
+    if (id === 'gate-continue' || id === 'gate-another') {
+      if (pq?.kind !== 'gate' || !str(pq.id)) return refuse(wordsOf(id, a), { ok: false, error: 'the review is no longer waiting for you' }, args.quiet);
+      if (!a.runId) return refuse(wordsOf(id, a), { ok: false, error: 'the task is not running' }, args.quiet);
+      a.gateId = pq.id;
+    }
     if (MEMBER_ACTS.has(id) && wsOf(a.projectKey)) {
       const tid = args.taskId || a.pipelineId;
       if (!tasks.get(tid)?.detail) await openTask(tid);   // a group's member: its projects are on its saved run
