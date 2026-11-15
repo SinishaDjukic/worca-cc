@@ -138,3 +138,44 @@ test('F-a4-10: morph keeps a kept field\'s node and leaves its typed value and c
   assert.deepEqual([k.selectionStart, k.selectionEnd], [1, 1]);
   assert.equal(doc.getElementById('u').value, '', 'morph still draws an unmarked field as a fresh innerHTML would');
 });
+
+test('a side panel opened on the same route (#place/item/…) or another way in (@…) still carries the text', async () => {
+  const { doc, win, c } = page('#chat/ask_1');
+  draw(c);
+  type(win, doc.getElementById('f'), 'abc');
+  win.location.hash = '#chat/ask_1/run/run-a/logs';
+  draw(c); await tick();
+  assert.equal(doc.getElementById('f').value, 'abc', 'the side panel is the same route');
+  win.location.hash = '#chat/ask_1@side';
+  draw(c); await tick();
+  assert.equal(doc.getElementById('f').value, 'abc', 'a way in after @ is the same item');
+  win.location.hash = '#chat/ask_2/run/run-a';
+  draw(c); await tick();
+  assert.equal(doc.getElementById('f').value, '', 'another item is another route');
+});
+
+test('F-a4-02: what the page means wins: a field the page clears in place, or draws with a new value, is not given the old text back', async () => {
+  const { doc, win, c } = page();
+  draw(c);
+  const f = doc.getElementById('f');
+  type(win, f, 'bugfix');
+  f.value = '';   // the page added the label and clears the field for the next one
+  draw(c); await tick();
+  assert.equal(doc.getElementById('f').value, '');
+  assert.equal(doc.activeElement, doc.getElementById('f'), 'the field keeps the focus for the next one');
+  type(win, doc.getElementById('f'), 'abc');
+  c.innerHTML = '<input id="f" data-keep="k1" value="Billing API">'; await tick();
+  assert.equal(doc.getElementById('f').value, 'Billing API', 'a value the page set wins');
+});
+
+test('F-a4-02: morph gives a kept field the page\'s new value when the drawn value changed, and keeps the typed text when it did not', async () => {
+  const { doc, win, c } = page();
+  const html = (v) => `<div class="m"><input id="k" data-keep="k" value="${v}"></div>`;
+  morph(c, html(''));
+  const k = doc.getElementById('k');
+  type(win, k, 'abc');
+  morph(c, html('')); await tick();
+  assert.equal(k.value, 'abc');
+  morph(c, html('Billing API')); await tick();
+  assert.equal(doc.getElementById('k').value, 'Billing API');
+});

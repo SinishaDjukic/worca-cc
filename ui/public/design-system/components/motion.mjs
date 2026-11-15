@@ -28,11 +28,12 @@ function patch(a, b, out) {
   if (a.nodeType !== 1) { if (a.nodeValue !== b.nodeValue) a.nodeValue = b.nodeValue; return; }
   const mode = b.getAttribute('data-motion');
   const before = mode === 'change' || mode === 'swap' ? a.innerHTML : null;
+  // a kept control keeps what was typed while the page draws the same value; a new drawn value is the page's and wins
+  const typed = a.hasAttribute('data-keep') && b.hasAttribute('data-keep') && a.defaultValue === b.defaultValue;
   patchAttrs(a, b);
   const text = a.tagName === 'TEXTAREA' ? b.value : null;   // read first: its text node may move across below
   patchChildren(a, b, out);
   // what the user sees, as a fresh innerHTML would set it; an open control marked data-keep keeps what was typed (comp.keep-open)
-  const typed = a.hasAttribute('data-keep');
   if (a.tagName === 'INPUT') { if (!typed && a.value !== b.value) a.value = b.value; if (a.checked !== b.checked) a.checked = b.checked; }
   else if (a.tagName === 'TEXTAREA') { if (!typed && a.value !== text) a.value = text; }
   else if (a.tagName === 'SELECT') { if (a.selectedIndex !== b.selectedIndex) a.selectedIndex = b.selectedIndex; }

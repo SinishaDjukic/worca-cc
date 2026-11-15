@@ -3,6 +3,9 @@
 // document: it remembers each marked control the user focused or typed into, and when a draw removes that element it moves
 // what the user had onto the new element with the same key, in the observer's microtask, before the browser paints.
 // A route change carries nothing; a key that no longer exists after a draw is forgotten, so a reopen starts empty.
+// The route is the place and its item (#place/item, the item without its '@…' way in), as the pages read it: a side
+// panel opened after them (#chat/ask_1/run/run-a/logs) is the same route. What the page means wins: a control whose drawn
+// value changed (the page set a new one) takes the page's value; a page clears a kept field in place before it redraws.
 const watched = new WeakSet();
 
 export function watchKeepOpen(doc) {
@@ -11,7 +14,7 @@ export function watchKeepOpen(doc) {
   const win = doc.defaultView;
   const kept = new Map();   // KEY -> { el, hash }
   let focused = null;       // the KEY that held the focus last, until a control without one takes it
-  const hash = () => win.location.hash;
+  const hash = () => win.location.hash.split('/').slice(0, 2).map((s) => s.split('@')[0]).join('/');
   const remember = (e) => {
     const el = e.target?.closest?.('[data-keep]');
     if (!el) { if (e.type === 'focusin') focused = null; return; }
@@ -36,8 +39,8 @@ export function watchKeepOpen(doc) {
     if (!next || hash() !== k.hash) { kept.delete(key); if (focused === key) focused = null; return; }
     const old = k.el; k.el = next;
     if ('value' in next && 'value' in old) {
-      next.value = old.value;
-      try {
+      if (next.defaultValue === old.defaultValue) next.value = old.value;   // a new drawn value is the page's: it wins
+      if (next.value === old.value) try {
         const end = next.value.length, at = (n) => Math.min(n ?? end, end);
         next.setSelectionRange(at(old.selectionStart), at(old.selectionEnd), old.selectionDirection || 'none');
       } catch { /* a control without a text selection */ }

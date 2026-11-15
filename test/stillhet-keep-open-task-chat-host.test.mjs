@@ -87,6 +87,18 @@ test('F-a4-02: a chat card\'s form field (Label…) keeps its text through a cha
   await keeps(h, '#route-chat [data-cf-field]', chatPaint(h));
 });
 
+test('a side panel is not a route change: a chat card\'s form field keeps its text when the run panel opens', async () => {
+  const h = await chat();
+  await menuPick(h.d, 'card:run-a', 'Label…');
+  const f = h.d.querySelector('#route-chat [data-cf-field]');
+  type(h.w, f, 'abc');
+  h.w.location.hash = '#chat/ask_1/run/run-a/logs'; await settle(200);
+  chatPaint(h)(); await settle(0);
+  const after = h.d.querySelector('#route-chat [data-cf-field]');
+  assert.ok(after, 'the form is still open');
+  assert.equal(after.value, 'abc');
+});
+
 test('route change closes Move to group… and the Label menu: back on the page, both are closed', async () => {
   const h = await taskPage();
   await openGroups(h);
