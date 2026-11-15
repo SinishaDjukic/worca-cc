@@ -395,11 +395,13 @@ export function snapshotOf(src = {}, { now = 0, unread = [], checksOf = null } =
   // Needs you is dev's rule over the same inputs the Runs badge counts (D6, D7)
   const ny = needsYouItems({ live: liveRuns.map(liveItem).map((x, i) => ({ ...x, runId: liveRuns[i].runId })), history: savedOnly.map((r) => savedItem(r)) });
   const needLive = new Set(ny.live.map((x) => x.runId)), needSaved = new Set(ny.history.map((x) => x.id));
-  const sched = src.schedules || {}, items = [...arr(sched.tickets), ...arr(sched.schedules)];
+  // F-a4-05: a series' own tickets (scheduleId set) are its next fires, which its series row already stands for: never a
+  // Schedules row, never a waiting row; a missed one stays a waiting row, as Pulse's Run now names it (updateOf)
+  const sched = src.schedules || {}, ownTickets = arr(sched.tickets).filter((t) => t && !t.scheduleId), items = [...ownTickets, ...arr(sched.schedules)];
   const runs = [
     ...liveRuns.map((r) => taskOfLive(r, { now, projects: projectsRaw, needs: needLive.has(r.runId) })),
     ...savedOnly.map((r) => taskOfSaved(r, { now, needs: needSaved.has(r.id), sync: syncs[r.projectKey] || null, checks: checksOf && openPrOf(r) ? checksOf(str(r.id), { pr: str(r.pr.url), projectKey: str(r.projectKey), projectDir: str(r.projectDir) }) || null : null })),
-    ...arr(sched.tickets).filter((t) => ['missed', 'scheduled', 'firing'].includes(t.status)).map((t) => waitingTask(t, now, projectsRaw)),
+    ...arr(sched.tickets).filter((t) => t && (t.scheduleId ? t.status === 'missed' : ['missed', 'scheduled', 'firing'].includes(t.status))).map((t) => waitingTask(t, now, projectsRaw)),
     ...arr(sched.schedules).filter((x) => x.status === 'active' && x.nextRunAt).map((x) => waitingTask(x, now, projectsRaw)),
   ];
   const outcomes = saved.filter((r) => now - ms(Number.isFinite(ms(r.mtime)) ? r.mtime : r.startedAt) < OUTCOME_DAYS * DAY).slice(0, OUTCOMES_MAX).map((r) => updateOfOutcome(r, { now })).filter(Boolean);

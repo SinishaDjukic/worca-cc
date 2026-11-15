@@ -486,3 +486,18 @@ test('slice 9 D5: projectOf carries devPath, ownedFolder and vcs; spacesOf carri
   assert.deepEqual(shapeErrors('space', w), []);
   assert.deepEqual(shapeErrors('project', p), []);
 });
+
+// ---- B3.2 (#1355): five wrong-data findings of the real-data walk ----
+test('F-a4-05: a series\' own ticket is neither a Schedules row nor a waiting task; a one-off ticket still is', () => {
+  const next = new Date(NOW + 3600000).toISOString();
+  const src = { ...SOURCES, schedules: { schedules: [{ id: 'S', kind: 'recurring', status: 'active', title: 'Nightly', nextRunAt: next, rule: null }],
+    tickets: [{ id: 'T1', kind: 'once', scheduleId: 'S', status: 'scheduled', title: 'Nightly', runAt: next }, { id: 'T2', kind: 'once', scheduleId: null, status: 'scheduled', title: 'Once', runAt: next },
+      { id: 'T3', kind: 'once', scheduleId: 'S', status: 'missed', title: 'Nightly', runAt: new Date(NOW - 3600000).toISOString() }] } };
+  const snap = snapshotOf(src, { now: NOW });
+  assert.deepEqual(snap.schedules.map((x) => x.id).sort(), ['S', 'T2'], 'one row per series, the one-off ticket kept');
+  const ids = snap.runs.map((r) => r.id);
+  for (const id of ['sched:S', 'sched:T2', 'sched:T3']) assert.ok(ids.includes(id), id);
+  assert.ok(!ids.includes('sched:T1'), 'the series\' pending ticket is its series row, never a second one');
+  assert.equal(updateOf({ id: 1, kind: 'missed', ticketId: 'T3' }, { now: NOW }).run, 'sched:T3', 'Pulse\'s Run now still names a row the store holds');
+});
+
