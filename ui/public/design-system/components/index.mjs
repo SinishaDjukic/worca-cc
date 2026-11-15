@@ -62,7 +62,7 @@ export { barChart, lineChart, mixChart, figureRows, watchChart, diffWords } from
 export { heatGrid } from './heat-grid.mjs';
 export { sliderPick, rankList, pickRows, factsLine } from './question-forms.mjs';
 export { stageStep } from './kind-mark.mjs';
-export { runOutcomes, handedChip, expandFrame, markTone, alertLevel, kindMark, partsWord, gitMark, timeline, timelineCard, barHead, turnRow, composer, stageBar, cardHead, taskCard, taskProposal, changeProposal, turnDivider, planCard, filesCard, refChip, youTurn, stageLine, stagePart, thinkingRow, placeHead, pluginCard } from './kind-mark.mjs';
+export { runOutcomes, handedChip, expandFrame, markTone, alertLevel, kindMark, partsWord, gitMark, timeline, timelineCard, barHead, turnRow, composer, composerQueue, stageBar, cardHead, taskCard, taskProposal, changeProposal, turnDivider, planCard, filesCard, refChip, youTurn, stageLine, stagePart, thinkingRow, placeHead, pluginCard } from './kind-mark.mjs';
 export { turnTime, turnTimeText } from './turn-time.mjs';
 export { prose, loadProse } from './prose.mjs';
 export { tipPlace, watchTooltips } from './tooltip.mjs';

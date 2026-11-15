@@ -1833,3 +1833,38 @@ test('frame parts (brandRow, navSection, barGrip, sidebarFrame, sideToggle, menu
   const top = dom(C.topBarFrame({ title: 'Tasks', left: C.menuButton() + C.sideToggle() }));
   assert.equal(top.tagName, 'HEADER'); assert.equal(top.querySelectorAll('#mbar-menu[aria-expanded="false"], #side-toggle[aria-expanded="true"]').length, 2);
 });
+
+test('composerQueue (F-a2-01): nothing without items; waiting, full and each paused line; Remove per row with its key; Send now only when paused; text escaped', () => {
+  assert.equal(C.composerQueue({ items: [] }), '');
+  const q = (o) => dom(`<div>${C.composerQueue(o)}</div>`);
+  const one = q({ items: [{ key: 'q1', text: 'Add <b>CSV</b>' }] }), list = one.firstElementChild;
+  assert.equal(list.className, 'composer-queue');
+  assert.equal(list.getAttribute('role'), 'list');
+  assert.equal(list.getAttribute('aria-label'), 'Queued messages');
+  assert.equal(list.nextElementSibling.dataset.qNote, '', 'the line sits under the rows, right above the composer');
+  const rows = one.querySelectorAll('.turn-row[role="listitem"]');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].querySelector('.tr-text').textContent, 'Queued Add <b>CSV</b>', 'the text is escaped');
+  assert.equal(rows[0].querySelector('[data-q-drop]').getAttribute('data-q-drop'), 'q1');
+  assert.equal(rows[0].querySelector('[data-q-drop]').getAttribute('aria-label'), 'Remove queued message 1');
+  assert.equal(one.querySelector('[data-q-edit]'), null, 'removable only');
+  const note = one.querySelector('[data-q-note]');
+  assert.equal(note.className, 'composer-note');
+  assert.equal(note.getAttribute('aria-live'), 'polite');
+  assert.equal(note.textContent, 'Sends when the reply finishes');
+  assert.equal(one.querySelector('[data-q-send]'), null, 'no Send now while it waits');
+  const three = [1, 2, 3].map((k) => ({ key: `q${k}`, text: `m${k}` }));
+  const full = q({ items: three });
+  assert.deepEqual([...full.querySelectorAll('[data-q-drop]')].map((b) => [b.dataset.qDrop, b.getAttribute('aria-label')]), [['q1', 'Remove queued message 1'], ['q2', 'Remove queued message 2'], ['q3', 'Remove queued message 3']]);
+  assert.equal(full.querySelector('[data-q-note]').textContent, 'Queue full: sends when the reply finishes');
+  const said = { stopped: 'Queue paused: the reply was stopped', failed: 'Queue paused: the reply failed', away: 'Queue paused: the reply ended while this chat was closed', refused: 'Queue paused: could not send it: chat is <busy>' };
+  for (const [paused, words] of Object.entries(said)) {
+    const p = q({ items: three.slice(0, 1), paused, why: 'chat is <busy>' });
+    const n = p.querySelector('[data-q-note]');
+    assert.equal(n.firstChild.textContent.trim(), words, paused);
+    const go = n.querySelector('[data-q-send]');
+    assert.ok(go, `${paused}: Send now`);
+    assert.equal(go.textContent, 'Send now');
+    assert.match(go.className, /btn-quiet/);
+  }
+});

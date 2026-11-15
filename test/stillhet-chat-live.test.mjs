@@ -649,3 +649,178 @@ test('first send: the new chat loads the thread dev\'s PATCH answered, so its pr
   assert.equal(r.live.projectKey('ask_new'), 'web');
   assert.ok(!r.calls.some((c) => c.method === 'GET'), 'no thread GET');
 });
+
+// ---- F-a2-01: a send while a reply streams is queued (C1) ----
+const START = (id = 'a1') => ({ type: 'ask-start', threadId: 'ask_1', messageId: id, userMessageId: `u${id}`, seq: 1, startedAt: '2026-11-12T13:01:00Z' });
+const DONE = (id = 'a1', status = 'done', seq = 2) => ({ type: 'ask-done', threadId: 'ask_1', messageId: id, seq, status, text: 'ok' });
+const qPosts = (r) => r.calls.filter((c) => c.method === 'POST' && c.url === '/api/ask/threads/ask_1/messages');
+// an open ask_1 with a turn in flight and a viewer: `msg(n)` answers the n-th message POST
+async function queued({ msg = () => [202, { userMessageId: 'u' }], thread = () => [200, snap()] } = {}) {
+  let n = 0;
+  const r = rig({ answer: (url, method) => {
+    if (url === '/api/ask/threads/ask_1' && method === 'GET') return thread();
+    if (url.endsWith('/messages')) { n += 1; return msg(n, url); }
+    return [200, {}];
+  } });
+  await r.live.open('ask_1');
+  r.live.look({}, 'ask_1');
+  r.live.frame(START());
+  assert.ok(r.live.model('ask_1').inFlight(), 'a turn is in flight');
+  return r;
+}
+
+test('F-a2-01: a queue:true send while a turn is in flight makes no POST; a clean ask-done sends exactly one POST with the text; a second ask-done sends nothing more', async () => {
+  const r = await queued();
+  const res = await r.live.act('send', { threadId: 'ask_1', text: 'and the totals', model: 'opus', effort: 'high', queue: true });
+  assert.deepEqual(res, { ok: true, queued: true, data: { threadId: 'ask_1', position: 1 } });
+  assert.equal(qPosts(r).length, 0, 'no POST while the turn runs');
+  assert.deepEqual(r.live.queue('ask_1'), { items: [{ key: r.live.queue('ask_1').items[0].key, text: 'and the totals' }], max: 3, paused: '', why: '', draining: false });
+  r.live.frame(DONE()); await tick();
+  assert.equal(qPosts(r).length, 1);
+  assert.deepEqual([qPosts(r)[0].body.text, qPosts(r)[0].body.model, qPosts(r)[0].body.effort], ['and the totals', 'opus', 'high'], 'the snapshot goes');
+  assert.deepEqual(r.live.queue('ask_1').items, [], 'it left the queue after the ok');
+  r.live.frame(DONE()); await tick();
+  assert.equal(qPosts(r).length, 1, 'a second end sends nothing more');
+  assert.deepEqual(r.toasts, []);
+  const other = r.live.queue('ask_unknown');
+  assert.deepEqual(other, { items: [], max: 3, paused: '', why: '', draining: false });
+  other.items.push('x'); assert.deepEqual(r.live.queue('ask_unknown').items, [], 'a fresh object each call');
+});
+
+test('F-a2-01: three wait; a fourth is refused QUEUE_FULL with one toast, and nothing is posted', async () => {
+  const r = await queued();
+  for (const t of ['one', 'two', 'three']) assert.equal((await r.live.act('send', { threadId: 'ask_1', text: t, queue: true })).queued, true);
+  const res = await r.live.act('send', { threadId: 'ask_1', text: 'four', queue: true });
+  assert.deepEqual([res.ok, res.code], [false, 'QUEUE_FULL']);
+  assert.deepEqual(r.toasts, ['Could not send your message: 3 messages already wait for this reply']);
+  assert.deepEqual(r.live.queue('ask_1').items.map((x) => x.text), ['one', 'two', 'three']);
+  assert.equal(qPosts(r).length, 0);
+});
+
+test('F-a2-01: a stopped ask-done and an ask-error pause it (no POST, paused stopped/failed); sendQueued posts it once', async () => {
+  const r = await queued();
+  await r.live.act('send', { threadId: 'ask_1', text: 'after stop', queue: true });
+  r.live.frame(DONE('a1', 'stopped')); await tick();
+  assert.equal(qPosts(r).length, 0, 'a stop sends nothing');
+  assert.equal(r.live.queue('ask_1').paused, 'stopped');
+  r.live.frame(START('a2')); r.live.frame({ type: 'ask-error', threadId: 'ask_1', messageId: 'a2', seq: 2, message: 'boom', blocks: [] }); await tick();
+  assert.equal(r.live.queue('ask_1').paused, 'failed');
+  assert.equal(qPosts(r).length, 0, 'a failure sends nothing');
+  assert.deepEqual(await r.live.sendQueued('ask_1'), { ok: true });
+  await tick();
+  assert.equal(qPosts(r).length, 1, 'Send now posts it once');
+  assert.equal(qPosts(r)[0].body.text, 'after stop');
+  assert.deepEqual(r.live.queue('ask_1'), { items: [], max: 3, paused: '', why: '', draining: false });
+});
+
+test('F-a2-01: a 409 turn in flight on a queue:true send is queued, not toasted, and the thread is read again; the next clean end posts it once', async () => {
+  let gets = 0;
+  const r = rig({ answer: (url, method) => {
+    if (url === '/api/ask/threads/ask_1' && method === 'GET') { gets += 1; return [200, gets > 1 ? snap({ inFlight: { messageId: 'a1' } }) : snap()]; }   // the re-read learns dev's turn
+    if (url.endsWith('/messages')) return qPosts(r).length === 1 ? [409, { error: 'turn in flight' }] : [202, { userMessageId: 'u' }];
+    return [200, {}];
+  } });
+  await r.live.open('ask_1'); r.live.look({}, 'ask_1');
+  const res = await r.live.act('send', { threadId: 'ask_1', text: 'raced', queue: true });
+  assert.deepEqual([res.ok, res.queued], [true, true]);
+  assert.deepEqual(r.toasts, [], 'no "Could not send" toast');
+  assert.equal(gets, 2, 'the thread is read again');
+  r.live.frame(START()); await tick();
+  assert.equal(qPosts(r).length, 1, 'the event turn runs: nothing more yet');
+  assert.deepEqual(r.live.queue('ask_1').items.map((x) => x.text), ['raced']);
+  r.live.frame(DONE()); await tick();
+  assert.equal(qPosts(r).length, 2, 'the next clean end posts it once');
+  assert.equal(qPosts(r)[1].body.text, 'raced');
+  assert.deepEqual(r.live.queue('ask_1').items, []);
+});
+
+test('F-a2-01: a 409 on a drained item keeps it first and unpaused; the next clean end posts it', async () => {
+  let gets = 0;
+  const r = await queued({ msg: (n) => (n === 1 ? [409, { error: 'turn in flight' }] : [202, { userMessageId: 'u' }]), thread: () => [200, ++gets > 1 ? snap({ inFlight: { messageId: 'a2' } }) : snap()] });
+  await r.live.act('send', { threadId: 'ask_1', text: 'first', queue: true });
+  await r.live.act('send', { threadId: 'ask_1', text: 'second', queue: true });
+  r.live.frame(DONE()); await tick();
+  assert.equal(qPosts(r).length, 1);
+  assert.deepEqual(r.live.queue('ask_1').items.map((x) => x.text), ['first', 'second'], 'kept first');
+  assert.equal(r.live.queue('ask_1').paused, '');
+  assert.deepEqual(r.toasts, []);
+  assert.equal(gets, 2, 'the thread is read again');
+  r.live.frame(START('a2')); r.live.frame(DONE('a2')); await tick();
+  assert.equal(qPosts(r).length, 2);
+  assert.equal(qPosts(r)[1].body.text, 'first');
+  assert.deepEqual(r.live.queue('ask_1').items.map((x) => x.text), ['second']);
+});
+
+test('F-a2-01: a turn that ends while the drained POST is out drains the next item after the 202 (FIFO, one each)', async () => {
+  let release; const gate = new Promise((ok) => { release = ok; });
+  const r = await queued({ msg: async (n) => { if (n === 1) await gate; return [202, { userMessageId: `u${n}` }]; } });
+  await r.live.act('send', { threadId: 'ask_1', text: 'first', queue: true });
+  await r.live.act('send', { threadId: 'ask_1', text: 'second', queue: true });
+  r.live.frame(DONE()); await tick();
+  assert.equal(r.live.queue('ask_1').draining, true, 'its POST is out');
+  const typed = await r.live.act('send', { threadId: 'ask_1', text: 'third', queue: true });
+  assert.equal(typed.queued, true, 'a send typed during the drain joins the queue');
+  r.live.frame(START('a2')); r.live.frame(DONE('a2')); await tick();
+  assert.equal(qPosts(r).length, 1, 'never a second POST while one is out');
+  release(); await tick();
+  assert.deepEqual(qPosts(r).map((c) => c.body.text), ['first', 'second'], 'the end that came meanwhile sends the next, once');
+  assert.deepEqual(r.live.queue('ask_1').items.map((x) => x.text), ['third']);
+});
+
+test('F-a2-01: a clean end with no viewer pauses away; dropQueued removes by key and a stale key changes nothing; a 500 on a drain pauses refused with its reason and keeps the item', async () => {
+  const solo = rig({ answer: (url, method) => (url === '/api/ask/threads/ask_1' && method === 'GET' ? [200, snap()] : url.endsWith('/messages') ? [500, { error: 'disk full' }] : [200, {}]) });
+  await solo.live.open('ask_1');
+  const me = {}; solo.live.look(me, 'ask_1');
+  solo.live.frame(START());
+  for (const t of ['one', 'two']) await solo.live.act('send', { threadId: 'ask_1', text: t, queue: true });
+  solo.live.look(me, '');
+  solo.live.frame(DONE()); await tick();
+  assert.equal(qPosts(solo).length, 0, 'nothing is sent in a chat no mount shows');
+  assert.equal(solo.live.queue('ask_1').paused, 'away');
+  const [k1, k2] = solo.live.queue('ask_1').items.map((x) => x.key);
+  assert.equal(solo.live.dropQueued('ask_1', k2), true);
+  assert.equal(solo.live.dropQueued('ask_1', k2), false, 'a stale key changes nothing');
+  assert.deepEqual(solo.live.queue('ask_1').items.map((x) => x.key), [k1]);
+  solo.live.look(me, 'ask_1');
+  await solo.live.sendQueued('ask_1'); await tick();
+  assert.equal(qPosts(solo).length, 1);
+  assert.deepEqual(solo.live.queue('ask_1'), { items: [{ key: k1, text: 'one' }], max: 3, paused: 'refused', why: 'disk full', draining: false }, 'kept, paused with its reason');
+  assert.deepEqual(solo.toasts, [], 'the line says it, no toast');
+  assert.equal(solo.live.dropQueued('ask_1', k1), true);
+  assert.deepEqual(solo.live.queue('ask_1'), { items: [], max: 3, paused: '', why: '', draining: false }, 'the last one gone: the pause resets');
+});
+
+test('F-a2-01: a stop whose end lands during a re-read pauses stopped, not away; a missed end reads its reason from the chat', async () => {
+  let release = () => {}, gets = 0, last = snap();
+  const r = rig({ answer: async (url, method) => {
+    if (url === '/api/ask/threads/ask_1' && method === 'GET') { gets += 1; if (gets === 2) await new Promise((ok) => { release = ok; }); return [200, last]; }
+    return [200, {}];
+  } });
+  await r.live.open('ask_1'); r.live.look({}, 'ask_1');
+  r.live.frame(START());
+  await r.live.act('send', { threadId: 'ask_1', text: 'waits', queue: true });
+  const p = r.live.open('ask_1', { force: true });
+  last = snap({ inFlight: { messageId: 'a1' } });
+  r.live.frame(DONE('a1', 'stopped'));   // buffered: the re-read is out
+  release(); await p; await tick();
+  assert.equal(r.live.queue('ask_1').paused, 'stopped');
+  assert.equal(qPosts(r).length, 0);
+  const m = rig({ answer: (url, method) => (url === '/api/ask/threads/ask_1' && method === 'GET' ? [200, snap({ messages: [THREAD.messages[0], { id: 'a1', role: 'assistant', text: '', status: 'stopped', createdAt: THREAD.messages[0].createdAt, blocks: [] }] })] : [200, {}]) });
+  await m.live.open('ask_1'); m.live.look({}, 'ask_1');
+  m.live.frame(START('a2'));
+  await m.live.act('send', { threadId: 'ask_1', text: 'waits', queue: true });
+  await m.live.open('ask_1', { force: true }); await tick();   // the end frame was never seen
+  assert.equal(m.live.queue('ask_1').paused, 'stopped');
+  assert.equal(qPosts(m).length, 0, 'a missed end sends nothing');
+});
+
+test('F-a2-01: dev answers 409 turn in flight to every POST while its read shows no turn: one queue, one drain, then paused refused; never a loop', async () => {
+  const r = rig({ answer: (url, method) => (url === '/api/ask/threads/ask_1' && method === 'GET' ? [200, snap()] : url.endsWith('/messages') ? [409, { error: 'turn in flight' }] : [200, {}]) });
+  await r.live.open('ask_1'); r.live.look({}, 'ask_1');
+  const res = await r.live.act('send', { threadId: 'ask_1', text: 'stuck', queue: true });
+  assert.equal(res.queued, true);
+  for (let i = 0; i < 5; i++) await tick();
+  assert.equal(qPosts(r).length, 2, 'the send, then one drain after the re-read: no more');
+  assert.deepEqual(r.live.queue('ask_1'), { items: [{ key: r.live.queue('ask_1').items[0].key, text: 'stuck' }], max: 3, paused: 'refused', why: 'turn in flight', draining: false }, 'kept, with Send now');
+  assert.deepEqual(r.toasts, []);
+});

@@ -126,6 +126,9 @@ export const ACTIONS = Object.freeze({
   pins: ['pin the starter', (a) => ['PUT', '/api/chat-home/pins', { pins: a.pins }]],
 });
 const SEND_WORDS = 'send your message';
+/** F-a2-01: how many messages may wait for a reply (classic ask-panel.mjs QUEUE_MAX). */
+export const QUEUE_MAX = 3;
+const ENDS = new Set(['ask-done', 'ask-error']);
 // Read ids whose answer is a file or a page: opened in a new tab on dev's own GET (D11), never fetched and dropped
 export const OPENS = Object.freeze({
   artifact: ['open the file', (a) => `/api/runs/${enc(a.pipelineId)}/artifact-raw/${String(a.name || '').split('/').map(enc).join('/')}${a.download ? '?download=1' : ''}`],
@@ -202,7 +205,7 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
         // a re-read of an open conversation that fails keeps what is shown; its waiting frames are applied as they came
         // 404, or 400 for an id dev can never hold ('invalid thread id'): the chat is gone, and Try again could never work
         const gone = !!r && (r.status === 404 || r.status === 400);
-        if (e.model && e.state === 'ready' && !gone) { const q = e.buffer; e.buffer = []; for (const f of q) e.model.apply(f); notify(id); return; }
+        if (e.model && e.state === 'ready' && !gone) { const q = e.buffer; e.buffer = []; const end = applyAll(e, q); notify(id); settle(id, end || 'load'); return; }
         e.state = gone ? 'gone' : 'failed'; e.buffer = []; notify(id); return;
       }
       e.model = createThreadModel({ threadId: id });
@@ -211,12 +214,19 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
       const q = e.buffer.map((f, i) => [f, i]).sort((a, b) => ((a[0].seq ?? 0) - (b[0].seq ?? 0)) || a[1] - b[1]).map(([f]) => f);
       e.buffer = [];
       e.state = 'ready';
-      for (const f of q) e.model.apply(f);
+      const end = applyAll(e, q);
       notify(id);
       checkRunWith(id);
+      settle(id, end || 'load');
     })();
     e.loading = p;
     return p;
+  }
+  // frames applied in order; the last turn end among them that the model took (the queue settles on it)
+  function applyAll(e, q) {
+    let end = null;
+    for (const f of q) { const r = e.model.apply(f); if (!r?.dropped && !r?.gap && ENDS.has(f?.type)) end = f; }
+    return end;
   }
   /** A socket frame (live-adapter.mjs passes every `ask-*` one). A frame for an open thread is reduced; one that comes
    *  while the thread is read waits for it; a seq gap reads the thread again. */
@@ -229,7 +239,7 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
     if (e.state !== 'ready' || !e.model) return;
     const r = e.model.apply(f);
     if (r?.gap) { open(id, { force: true }); return; }
-    if (!r?.dropped) { notify(id); checkRunWith(id); }
+    if (!r?.dropped) { notify(id); checkRunWith(id); if (ENDS.has(f.type)) settle(id, f); }
   }
   // the lists a Chat control picks from, read once from dev's own GET routes (the person's choices come from these, never
   // from the demo's): a failed read is not kept, so the next look asks again
@@ -357,8 +367,64 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
     refuse(RUN_WORDS, { ok: false, error: `Worca saved ${rw.name} but did not propose its task` });
   }
 
+  // F-a2-01 (D1): what the composer sent while a reply runs, per chat, kept here so no redraw or second mount loses it.
+  // An item leaves only after its POST answers ok; at most one queue POST is out per chat (`draining`); a paused queue
+  // sends nothing until Send now; nothing is sent in a chat no mount shows.
+  const queues = new Map(), viewers = new Map();
+  let qSeq = 0;
+  const qOf = (id) => { if (!queues.has(id)) queues.set(id, { items: [], paused: '', why: '', draining: false, ended: null, recheck: false }); return queues.get(id); };   // recheck: true after a send's 409, 'drain' after a drained item's
+  const isBusy = (id) => !!threads.get(id)?.model?.inFlight?.() || !!queues.get(id)?.draining;
+  const viewed = (id) => [...viewers.values()].includes(id);
+  const IN_FLIGHT = (res) => res.status === 409 && res.error === 'turn in flight';
+  function enqueue(id, a) {
+    const q = qOf(id);
+    if (q.items.length >= QUEUE_MAX) return refuse(SEND_WORDS, { ok: false, code: 'QUEUE_FULL', error: `${QUEUE_MAX} messages already wait for this reply` }, a.quiet);
+    q.items.push({ key: `q${++qSeq}`, text: a.text, attachments: a.attachments, model: a.model, effort: a.effort, context: a.context });
+    notify(id);
+    return { ok: true, queued: true, data: { threadId: id, position: q.items.length } };
+  }
+  // a turn ended (`f`: its ask-done or ask-error) or the thread was read again ('load'): send the next, pause, or wait
+  function settle(id, f) {
+    const q = queues.get(id);
+    if (!q || !q.items.length) return;
+    if (q.draining) { if (f !== 'load') q.ended = f; return; }
+    if (f === 'load') {
+      if (isBusy(id)) return;
+      if (q.recheck === 'drain') { q.recheck = false; q.paused = 'refused'; q.why = 'turn in flight'; notify(id); return; }   // dev refused a drained item yet runs no turn: Send now, never a loop
+      if (!q.recheck) {   // the end was missed (classic loadThread): paused, with the reason the chat shows
+        const last = [...(threads.get(id)?.model?.messages?.() || [])].reverse().find((m) => m.role === 'assistant');
+        if (!q.paused) q.paused = last?.status === 'error' ? 'failed' : last?.status === 'stopped' ? 'stopped' : 'away';
+        notify(id); return;
+      }
+    }
+    q.recheck = false;
+    if (f !== 'load' && f.type === 'ask-error') q.paused = 'failed';
+    else if (f !== 'load' && f.status && f.status !== 'done') q.paused = 'stopped';
+    else if (!q.paused) { if (!viewed(id)) q.paused = 'away'; else drain(id); }
+    notify(id);
+  }
+  // the oldest item, posted once; never through act(), so the composer's pending send key does not block it
+  async function drain(id) {
+    const q = queues.get(id);
+    if (!q || q.draining || q.paused || !q.items.length || threads.get(id)?.model?.inFlight?.()) return { ok: true };
+    const it = q.items[0];
+    q.draining = true; notify(id);
+    const res = await sendMessage({ threadId: id, text: it.text, attachments: it.attachments, model: it.model, effort: it.effort, context: it.context, quiet: true });
+    q.draining = false;
+    const ended = q.ended; q.ended = null;
+    if (res.ok) {
+      q.items = q.items.filter((x) => x.key !== it.key);
+      if (ended) settle(id, ended);
+    } else if (IN_FLIGHT(res)) { q.recheck = 'drain'; open(id, { force: true }); }   // kept first, unpaused: the next end sends it
+    else { q.paused = 'refused'; q.why = res.error; }
+    notify(id);
+    return res.ok ? { ok: true } : { ok: false, error: res.error };
+  }
+
   // D10: a send on Chat home makes the thread first; a refused message deletes it again, and a failed delete keeps it
   async function sendMessage(a) {
+    const queueing = a.queue === true && !!a.threadId;
+    if (queueing && isBusy(a.threadId)) return enqueue(a.threadId, a);   // F-a2-01: while a reply runs, it waits
     let id = a.threadId, made = '', created = null;
     if (!id) {
       if (spare) id = spare;
@@ -384,6 +450,12 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
     }
     const body = { text: a.text, ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(a.mcpOff ? { mcpOff: a.mcpOff } : {}), ...(a.attachments?.length ? { attachments: a.attachments } : {}), ...(a.context ? { context: a.context } : {}) };
     const res = scoped.ok ? await request('POST', `${T(id)}/messages`, body) : scoped;
+    // F-a2-01 (D7): dev's turn runs and we had not seen it: the message waits, and the thread is read to learn the turn
+    if (!res.ok && queueing && IN_FLIGHT(res) && threads.get(id)?.state === 'ready') {
+      const r = enqueue(id, a);
+      if (r.ok) { qOf(id).recheck = true; open(id, { force: true }); }
+      return r;
+    }
     if (!res.ok) {
       if (fresh) threads.delete(id);
       if (made || id === spare) { const d = await request('DELETE', T(id)); spare = d.ok ? '' : id; }
@@ -496,6 +568,23 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
     projectKey: (id) => projectKeyOf(threads.get(id)?.model?.thread?.() || {}),   // the project the chat works in
     flow, canFlow: (label, a = {}) => !!FLOW[label] && (!FLOW[label].needsPr || !!a.pr),
     keyOf,
+    // F-a2-01: the composer's queue (a copy), Remove, Send now, and which chat each mount shows
+    queue: (id) => { const q = queues.get(id); return { items: (q?.items || []).map((x) => ({ key: x.key, text: x.text })), max: QUEUE_MAX, paused: q?.paused || '', why: q?.why || '', draining: !!q?.draining }; },
+    dropQueued: (id, key) => {
+      const q = queues.get(id), k = q ? q.items.findIndex((x) => x.key === key) : -1;
+      if (k < 0) return false;
+      q.items.splice(k, 1);
+      if (!q.items.length) { q.paused = ''; q.why = ''; }
+      notify(id);
+      return true;
+    },
+    sendQueued: (id) => {
+      const q = queues.get(id);
+      if (!q) return Promise.resolve({ ok: true });
+      q.paused = ''; q.why = ''; notify(id);
+      return isBusy(id) ? Promise.resolve({ ok: true }) : drain(id);   // busy: the next clean end sends it
+    },
+    look: (viewer, id) => { if (id) viewers.set(viewer, id); else viewers.delete(viewer); },
   };
   return api;
 }

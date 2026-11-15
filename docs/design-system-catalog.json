@@ -1695,6 +1695,18 @@
       ]
     },
     {
+      "name": "ComposerQueue",
+      "code": "ui/public/design-system/components/kind-mark.mjs#composerQueue",
+      "kind": "telling",
+      "needs": [
+        "what you sent while Worca replies, waiting for the reply to end"
+      ],
+      "rules": [
+        "form.composer-queue"
+      ],
+      "example": "Sends when the reply finishes"
+    },
+    {
       "name": "StageBar",
       "code": "ui/public/design-system/components/kind-mark.mjs#stageBar",
       "kind": "telling",
