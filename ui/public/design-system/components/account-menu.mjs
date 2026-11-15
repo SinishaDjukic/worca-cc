@@ -33,3 +33,27 @@ export function themeChoice({ label, icon, on = false, attrs: a = {} }) {
 export function cardTitleLink({ label, attrs: a = {} }) {
   return `<button type="button" class="mc-title pz-mc-link" role="menuitem"${attrs(a)}>${esc(label)}</button>`;
 }
+
+/** Up to two initials: an email's local part (or a display name) split on . _ - and spaces. */
+function personInitials(name) {
+  const base = String(name || '').trim().split('@')[0];
+  const parts = base.split(/[\s._-]+/).filter(Boolean);
+  const ini = parts.slice(0, 2).map((w) => w[0]).join('').toUpperCase();
+  return /^[A-Z0-9]{1,2}$/.test(ini) ? ini : (ini ? ini.replace(/[^A-Z0-9]/g, '').slice(0, 2) || '?' : '?');
+}
+
+const VIA = Object.freeze({ access: 'via Cloudflare Access', header: 'via your sign-in proxy' });
+
+/** Who the account corner names, from GET /api/whoami's answer (null when the call failed); dev's rule
+ *  (ui/public/account-menu.mjs describeAccount), the same here so a live page never shows a demo name.
+ *  shared (a real per-person sign-in): initials, the name up to "@", and the identity card with its `via`;
+ *  operator (WORCA_IDENTITY_NAME, one person): initials and the name, no card;
+ *  local, nobody, a failed call or an older server with no `shared` field: "P" and "Profile". */
+export function describeAccount(who) {
+  const raw = who && typeof who.name === 'string' ? who.name.trim() : '';
+  const name = raw && raw !== 'local' ? raw : '';
+  const short = name.split('@')[0] || name;
+  if (name && who.shared === true) return { kind: 'shared', name, short, initials: personInitials(name), via: VIA[who.source] || '' };
+  if (name && who.shared === false && who.source === 'operator') return { kind: 'operator', name, short, initials: personInitials(name), via: '' };
+  return { kind: 'local', name: '', short: 'Profile', initials: 'P', via: '' };
+}
