@@ -383,8 +383,10 @@ test('runGroupsOf: dev\'s run groups fold their tasks (by pipeline id, or its li
   assert.deepEqual(runs.map((r) => [r.adhoc, r.pos]), [[true, 1], [true, 2]], 'a user group\'s members were added by hand: the list offers Remove from group');
   // a feature's slice is the feature's own; a task added to it by hand is adhoc (dev's member `adhoc`), at its own position
   const fr = [{ id: 's1', case: 'working', project: 'web' }, { id: 'x9', case: 'working', project: 'web' }];
-  runGroupsOf({ groups: [{ id: 'F', kind: 'feature', title: 'Feat', members: [{ pipelineId: 's1', position: 1, adhoc: false }, { pipelineId: 'gone', position: 2, adhoc: false }, { pipelineId: 'x9', position: 3, adhoc: true }] }] }, fr, { now: NOW });
+  const f = runGroupsOf({ groups: [{ id: 'F', kind: 'feature', title: 'Feat', members: [{ pipelineId: 's1', position: 1, adhoc: false }, { pipelineId: 'gone', position: 2, adhoc: false }, { pipelineId: 'x9', position: 3, adhoc: true }] }] }, fr, { now: NOW });
   assert.deepEqual(fr.map((r) => [r.adhoc, r.pos]), [[false, 1], [true, 3]], 'adhoc per member, from dev, not by the group\'s kind');
+  // F-3-06: only a member that has run and whose row the store lacks (archived) is left out; one not started yet is a task
+  assert.deepEqual([[...f.inGroup.keys()], f.members], [['s1', 'x9'], []], 'the archived member `gone` is left out, no task made for it');
   assert.deepEqual(shapeErrors('group', groups[0]), []);
   assert.deepEqual(partOf('runGroups', { groups: [] }, SOURCES, { now: NOW }).groups, [], 'a refetch of the groups rebuilds the groups and the rows');
 });
@@ -499,6 +501,48 @@ test('F-a4-05: a series\' own ticket is neither a Schedules row nor a waiting ta
   for (const id of ['sched:S', 'sched:T2', 'sched:T3']) assert.ok(ids.includes(id), id);
   assert.ok(!ids.includes('sched:T1'), 'the series\' pending ticket is its series row, never a second one');
   assert.equal(updateOf({ id: 1, kind: 'missed', ticketId: 'T3' }, { now: NOW }).run, 'sched:T3', 'Pulse\'s Run now still names a row the store holds');
+});
+
+const FEATURE = (members) => ({ groups: [{ id: 'F', kind: 'feature', title: 'Run tags', cost: { usd: 3 }, members }] });
+const SLICES = [{ position: 1, pipelineId: 'p1', title: 'Store tags', adhoc: false }, { position: 2, pipelineId: 'p2', title: 'Filter by tag', adhoc: false },
+  { position: 3, pipelineId: null, ticketId: 't3', title: 'Tag chips', ticket: { id: 't3', status: 'scheduled' }, after: 2, adhoc: false }];
+test('F-3-06: runGroupsOf keeps a member without a run: it adopts its ticket\'s sched: row, else a member task, and a native slice reads its slice title', () => {
+  const task = (id, title, c) => ({ id, case: c, title, project: 'web', detail: '', time: '10:00', day: 'today', labels: [], cost: null, archived: false, unread: false, pr: '', group: '', kind: 'Git', by: '', workflow: '' });
+  const runs = [task('p1', 'Run tags · 1/3: Store tags', 'merged'), task('p2', 'Run tags · 2/3: Filter by tag', 'working')];
+  const r = runGroupsOf(FEATURE([...SLICES, { position: 4, pipelineId: null, ticketId: 't4', title: 'Docs', ticket: { id: 't4', status: 'missed' }, after: null, adhoc: false }]), runs, { now: NOW });
+  assert.deepEqual([...r.inGroup.keys()], ['p1', 'p2', 'member:F:3', 'member:F:4'], 'every member, in position order');
+  assert.deepEqual(r.members.map((m) => [m.id, m.case, m.title, m.detail, m.day, m.when, m.pos]), [
+    ['member:F:3', 'scheduled', 'Tag chips', 'Starts when “Filter by tag” finishes', 'upcoming', 'after', 3],
+    ['member:F:4', 'ticket-missed', 'Docs', 'Not started yet', 'upcoming', 'after', 4]]);
+  for (const m of r.members) assert.deepEqual(shapeErrors('task', m), [], m.id);
+  assert.deepEqual(runs.map((x) => x.title), ['Store tags', 'Filter by tag'], 'a native slice reads its slice title, not its run title');
+  assert.equal(r.groups[0].case, 'feature', 'one still works');
+  // the ticket's own waiting row is the member: adopted, never a second row
+  const sched = { ...task('sched:t3', 'Tag chips', 'scheduled'), day: 'upcoming', when: 'today' };
+  const withRow = [...runs, sched], a = runGroupsOf(FEATURE(SLICES), withRow, { now: NOW });
+  assert.deepEqual(a.members, []);
+  assert.equal(a.inGroup.get('sched:t3'), 'F');
+  assert.deepEqual([sched.detail, sched.when, sched.pos], ['Starts when “Filter by tag” finishes', 'after', 3]);
+  // an ad-hoc member keeps its run's title
+  const adhoc = [task('p1', 'My own run', 'working')];
+  runGroupsOf(FEATURE([{ position: 1, pipelineId: 'p1', title: 'My own run', adhoc: true }]), adhoc, { now: NOW });
+  assert.equal(adhoc[0].title, 'My own run');
+});
+
+test('F-3-06: through snapshotOf, the group\'s members are 3 tasks with group F, sorted by pos, two started and one scheduled', () => {
+  const src = JSON.parse(JSON.stringify(SOURCES));
+  src.history.pipelines.push({ id: 'p1', title: 'Run tags · 1/3: Store tags', status: 'done', projectName: 'web', startedAt: NOW - 7200000, mtime: NOW - 3600000 },
+    { id: 'p2', title: 'Run tags · 2/3: Filter by tag', status: 'running', projectName: 'web', startedAt: NOW - 1800000, mtime: NOW - 600000 });
+  src.schedules = { schedules: [], tickets: [{ id: 't3', kind: 'once', scheduleId: null, status: 'scheduled', title: 'Run tags · 3/3: Tag chips', after: { kind: 'run', id: 'p2', policy: 'done' } }] };
+  src.runGroups = FEATURE(SLICES);
+  const snap = snapshotOf(src, { now: NOW });
+  const ms = snap.runs.filter((r) => r.group === 'F').sort((a, b) => a.pos - b.pos);
+  assert.deepEqual(ms.map((m) => [m.id, m.title]), [['p1', 'Store tags'], ['p2', 'Filter by tag'], ['sched:t3', 'Tag chips']]);
+  assert.equal(ms.filter((m) => m.case !== 'scheduled').length, 2);
+  const ids = snap.runs.map((r) => r.id);
+  assert.equal(new Set(ids).size, ids.length, 'one id per store row');
+  for (const r of snap.runs) assert.deepEqual(shapeErrors('task', r), [], r.id);
+  assert.deepEqual(Object.keys(partOf('schedules', src.schedules, src, { now: NOW })).sort(), ['groups', 'runs', 'schedules'], 'a schedules refetch rebuilds the groups its rows join');
 });
 
 test('F-6-03: a git project whose sync block has remote:null reads origin local (Only on this computer, Link a remote), without an origin/ base, and does not need you', () => {

@@ -414,7 +414,8 @@ export function snapshotOf(src = {}, { now = 0, unread = [], checksOf = null } =
   const away = src.away || {};
   foldRounds(runs, liveRuns, saved, new Set([...needLive, ...needSaved]));
   const rowIdOf = new Map([...savedOnly.map((r) => [str(r.id), str(r.id)]), ...liveRuns.filter((r) => r.pipelineId).map((r) => [str(r.pipelineId), str(r.runId)])]);
-  const { groups, inGroup } = runGroupsOf(src.runGroups, runs, { now, rowIdOf });
+  const { groups, inGroup, members } = runGroupsOf(src.runGroups, runs, { now, rowIdOf });
+  runs.push(...members);
   for (const r of runs) { const gid = inGroup.get(r.id); if (gid) r.group = gid; }
   const schedules = items.filter((x) => x.kind === 'recurring' || ['missed', 'scheduled', 'firing'].includes(x.status)).map((x) => scheduleOf(x, { now, projects: projectsRaw }));
   return {
@@ -442,27 +443,51 @@ const PULSE_FOR_IDS = ['until-read', '10s', '1m', 'never'];
 
 /** dev's run groups (GET /api/run-groups) → the store's groups, and which task each member is (by its pipeline id, or
  *  the live run of it). A group's case is its tasks' (below); its page is
- *  #run/group:GID (task-live.mjs). A group none of whose members the store holds is left out. */
+ *  #run/group:GID (task-live.mjs). A group none of whose members the store holds is left out.
+ *  F-3-06: a member not started yet (no pipeline id) is a task too: its ticket's `sched:` row when the store holds it, else a
+ *  new one (`members`, which the caller adds to the store), as the demo's waiting slice (world.js `wait`). A feature's own
+ *  slice reads its slice title (dev's member `title`), never its run title. */
 const GROUP_WORKS = new Set(['starting', 'working']);
 export function runGroupsOf(src, runs, { now = 0, rowIdOf = new Map() } = {}) {
-  const inGroup = new Map(), groups = [];
+  const inGroup = new Map(), groups = [], members = [];
   const byPid = new Map(runs.map((r) => [r.id, r]));
   for (const g of arr(src?.groups)) {
-    const held = arr(g.members).map((m) => [m, rowIdOf.get(str(m.pipelineId)) || str(m.pipelineId)]).filter(([, id]) => byPid.has(id));
-    if (!held.length) continue;
-    for (const [, id] of held) inGroup.set(id, str(g.id));
+    const gid = str(g.id), list = arr(g.members).filter(Boolean);
+    const started = list.filter((m) => m.pipelineId).map((m) => [m, rowIdOf.get(str(m.pipelineId)) || str(m.pipelineId)]).filter(([, id]) => byPid.has(id));
+    const waiting = list.filter((m) => !m.pipelineId);
+    if (!started.length && !waiting.length) continue;
+    // a native member reads its slice title; an ad-hoc one (or one with none) keeps its run's
+    for (const [m, id] of started) if (!m.adhoc && str(m.title)) byPid.get(id).title = str(m.title);
+    const titleAt = (pos) => { const m = list.find((x) => num(x.position) === pos); const id = m?.pipelineId && (rowIdOf.get(str(m.pipelineId)) || str(m.pipelineId)); return (m && !m.adhoc && str(m.title)) || (id && byPid.get(id)?.title) || str(m?.title); };
+    const project = started.map(([, id]) => str(byPid.get(id).project)).find(Boolean) || '';
+    const held = [...started];
+    for (const m of waiting) {
+      const prev = num(m.after) != null ? titleAt(num(m.after)) : '';
+      const detail = prev ? `Starts when “${prev}” finishes` : 'Not started yet';
+      const row = m.ticketId ? byPid.get(`sched:${str(m.ticketId)}`) : null;
+      if (row) {
+        Object.assign(row, { title: str(m.title) || row.title, detail, when: 'after' });
+        held.push([m, row.id]);
+        continue;
+      }
+      const t = pick('task', { id: `member:${gid}:${num(m.position) ?? held.length + 1}`, case: TICKET_CASE[lc(m.ticket?.status)] || 'scheduled', title: str(m.title) || 'Untitled task', project, detail, time: '', day: 'upcoming', labels: [], cost: null, archived: false, unread: false, pr: '', group: '', kind: 'Git', by: '', workflow: '', when: 'after' });
+      members.push(t); byPid.set(t.id, t); held.push([m, t.id]);
+    }
+    held.sort(([a], [b]) => (num(a.position) ?? 0) - (num(b.position) ?? 0));
+    for (const [, id] of held) inGroup.set(id, gid);
     const ms = held.map(([, id]) => byPid.get(id));
     // a member put there by hand (dev's member `adhoc`): the list offers Remove from group (runs-list.js `adhoc`), at dev's position
     held.forEach(([src, id]) => { const m = byPid.get(id); m.adhoc = !!src.adhoc; m.pos = num(src.position) ?? 0; });
-    const at = arr(g.members).map((m) => m.startedAt).find(Boolean) || '';
+    const at = list.map((m) => m.startedAt).find(Boolean) || '';
     // the group reads as its tasks: 'feature' (Working) while one starts or works, else its first unmerged one's case in
     // stack order (an approved task alone in a group is Ready to merge, never Working), 'merged' once all merged
-    const next = held.slice().sort(([a], [b]) => (num(a.position) ?? 0) - (num(b.position) ?? 0)).map(([, id]) => byPid.get(id)).find((m) => m.case !== 'merged');
+    const next = ms.find((m) => m.case !== 'merged');
     const kase = !next ? 'merged' : ms.some((m) => GROUP_WORKS.has(m.case)) ? 'feature' : next.case;
-    groups.push(pick('group', { id: str(g.id), kind: g.kind === 'feature' ? 'feature' : 'user', case: kase, title: str(g.title) || 'Untitled group',
-      project: str(ms[0].project), time: ms[0].time || timeOf(at, now), day: ms[0].day || dayOf(at, now), cost: num(g.cost?.usd) }));
+    const first = ms.find((m) => m.project) || ms[0];
+    groups.push(pick('group', { id: gid, kind: g.kind === 'feature' ? 'feature' : 'user', case: kase, title: str(g.title) || 'Untitled group',
+      project: str(first.project), time: first.time || timeOf(at, now), day: first.day || dayOf(at, now), cost: num(g.cost?.usd) }));
   }
-  return { groups, inGroup };
+  return { groups, inGroup, members };
 }
 
 /** dev's workspaces (GET /api/workspaces; `maps`: each one's GET /api/workspaces/:id/map, absent when its read failed) →
@@ -486,7 +511,7 @@ export function spacesOf(src = null) {
 
 // What each source feeds: a refetch of one source replaces only these parts (D11).
 export const SOURCE_PARTS = Object.freeze({
-  hello: ['runs', 'costs', 'chats', 'groups'], history: ['runs', 'updates', 'chats', 'groups'], threads: ['chats', 'chatsNeeds'], runLinks: ['chats'], groups: ['chatGroups'], runGroups: ['groups', 'runs'], schedules: ['schedules', 'runs'],
+  hello: ['runs', 'costs', 'chats', 'groups'], history: ['runs', 'updates', 'chats', 'groups'], threads: ['chats', 'chatsNeeds'], runLinks: ['chats'], groups: ['chatGroups'], runGroups: ['groups', 'runs'], schedules: ['schedules', 'runs', 'groups'],
   projects: ['projects', 'runs'], sync: ['projects', 'runs', 'chats', 'groups'], budget: ['costs'], usageLimits: ['costs'], workspaces: ['spaces'], actions: ['actions'], notifications: ['updates'], away: ['away'], settings: ['keep', 'chatPrefs', 'pulseFor'],
 });
 /** The parts a single-source refetch replaces: `answer` stands for `source` among the last answers `sources`. */
