@@ -2,8 +2,12 @@
 // (New task…, New schedule…, Run after this) reads the store's projects part (dev's GET /api/projects) in the live kind, never
 // task rows: a project with no tasks is offered, a removed one is neither offered nor defaulted, a missing folder is listed
 // but never preselected. The demo keeps its task-row list. Live app host (jsdom).
+// F-a4-02 / F-gb2-01 (batch B2.1): the forms' host #center-dlg sits outside #app, so an #app redraw (a live load, a frame)
+// never removes an open form: its fields, typed text and focus stay, and + › New task… opens at once while data loads.
 import { test, afterEach, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { JSDOM } from 'jsdom';
 import { liveHost, go, settle, closeHosts, clone, SOURCES, posts } from './helpers/stillhet-chat-live-host.mjs';
 import { stillhetHost } from './helpers/stillhet-host.mjs';
 
