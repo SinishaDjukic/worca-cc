@@ -49,9 +49,8 @@ test('R-arch-10: every action of an area this slice does not wire goes through t
     // Schedules: wired by the Schedules slice (test/stillhet-schedules-actions-host.test.mjs), so none of its actions refuses here
     // the Tasks center's New task… form is wired by the Tasks slice (D12b, test/stillhet-tasks-list-host.test.mjs)
     // Chat (slice 4): the composer, the dock under a schedule, the chat list's row menu
-    // Settings: a switch and an edit that would say "saved"
-    ['settings.sync', async () => { w.location.hash = '#settings'; await settle(); }, () => d.querySelector('[data-svsw="sync"]').click(), 'app'],
-    ['settings.save', async () => { w.location.hash = '#settings'; await settle(); }, () => { d.querySelector('[data-svdo="runs/Spending/Budget/Change…"]').click(); const f = d.querySelector('dialog input, .dlg input'); f.value = '5'; f.dispatchEvent(new w.Event('input', { bubbles: true })); d.querySelector('[data-dialog="yes"]').click(); }, 'app'],
+    // Settings: settings.sync left with #1324: on a live instance the sample Sync row reads "Not in Stillhet yet" with no switch (B1.2, F-7b-03…F-7b-13), so there is nothing to refuse (test/stillhet-settings-not-live-rows.test.mjs)
+    // settings.save (Spending › Budget › Change…) left with #1315: on a live instance the sample Budget row is not drawn at all (B1.1), so there is nothing to refuse
   ];
   for (const [id, go, run, root] of cases) {
     if (go) await go();
@@ -66,6 +65,8 @@ test('R-arch-10: every action of an area this slice does not wire goes through t
     assert.equal(posts.length, p, `${id}: nothing sent to Worca`);
     w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   }
+  w.location.hash = '#settings'; await settle();
+  assert.equal(d.querySelector('[data-svsw="sync"]'), null, 'live Settings draws no Sync switch to refuse (B1.2)');
   assert.equal(w.RailSpaces.list().length, 0);
 });
 

@@ -222,7 +222,7 @@
       stages: run({ build: [s('Implementation', 'now', '12m', { live: 'Editing app.js', when: '3s ago' })], review: [next('Not in this workflow')] }) },
 
     // Finished, with something to say
-    { id: 'ready-issues', state: 'ready', group: 'Ready', label: 'Ready, open issues', detail: '2 open issues · not in dev yet', figs: DONE_FIGS, stages: run({ review: [ok('Review implementation', '37m 21s', { loops: 3, live: 'Ran out of cycles · 2 open issues' }), REVIEW[1], REVIEW[2]] }), issues: true, shaped: true, evidence: 'Tests pass · Review ran out of cycles · Manual test passed' },
+    { id: 'ready-issues', state: 'ready', group: 'Ready', label: 'Ready, open issues', detail: '2 open issues · not in dev yet', figs: DONE_FIGS, stages: run({ review: [s('Review implementation', 'problem', '37m 21s', { loops: 3, live: 'Blocked · accepted with 2 open issues' }), REVIEW[1], REVIEW[2]] }), issues: true, shaped: true, evidence: 'Tests pass · Review ran out of cycles · Manual test passed' },
     { id: 'ready-end', state: 'ready', group: 'Ready', label: 'Ready, end not reached', detail: 'End not reached · part of the workflow did not run', over: true, figs: DONE_FIGS, stages: run({ review: [REVIEW[0], REVIEW[1], next('Manual web UI testing', { live: 'Did not run' })] }), evidence: 'Tests pass · Review passed on round 3 · Manual test did not run' },
     { id: 'ready-moved', state: 'ready-moved', group: 'Ready', label: 'Ready, base moved', detail: 'Not in dev yet · dev moved while it ran', figs: DONE_FIGS, stages: run({}), baseMoved: true },
     { id: 'ready-held', state: 'ready', group: 'Ready', label: 'Ready, branch held', figs: DONE_FIGS, stages: run({}), heldBy: 'Breadcrumb tests for saved runs' },
@@ -560,7 +560,8 @@
     if (c.id === 'plan') focus = { kind: 'plan', items: PLAN_ITEMS.map((t) => ({ t, state: 'next' })), issues: ui && ui.fixed && ui.fixed.plan ? [] : DETAIL.planIssues };
     else if (c.reqsCheck) focus = { kind: 'reqs', items: DETAIL.criteria, left: reqLeft(ui) };
     else if (c.id === 'requirements') focus = { kind: 'criteria', items: DETAIL.criteria };
-    else if (c.id === 'gate') focus = { kind: 'findings', title: 'What Review still holds open', issues: DETAIL.issues, roles: DETAIL.roles };
+    // live: the run's own review (the gate's rows, B1.6 D8), never the design's sample
+    else if (c.id === 'gate') focus = { kind: 'findings', title: 'What Review still holds open', issues: c.liveId ? (c.review && c.review.issues) || [] : DETAIL.issues, roles: c.liveId ? (c.review && c.review.roles) || [] : DETAIL.roles };
     else if (c.requested) focus = { kind: 'findings', title: 'What the reviewer asked', issues: DETAIL.requested, roles: [] };
     else if (c.issues) focus = { kind: 'findings', title: '2 open issues', note: 'A review ran out of cycles with these open, and the task went on past them', issues: DETAIL.issues, roles: DETAIL.roles };
     else if (ev) focus = { kind: 'broke', ev };
@@ -963,6 +964,9 @@
   // a step of dev's in the prototype's shape: a stopped one is the design's stopped look (paused, Stopped by you), a
   // capped task's paused one says it is at its cap
   const liveSub = (page, x) => (x.state === 'stopped' ? s(x.name, 'paused', '', { live: 'Stopped by you' })
+    // a review gate's asking step says what you pick (B1.6 D7); a review forced on with open issues is a problem, never a tick (D5)
+    : x.state === 'ask' ? s(x.name, 'ask', '', { live: (page.gate && page.gate.line) || '' })
+    : x.state === 'blocked' ? s(x.name, 'problem', '', { live: 'Blocked · accepted with ' + x.open + ' open issue' + (x.open === 1 ? '' : 's') })
     : x.state === 'paused' && page.case === 'capped' ? s(x.name, 'paused', '', { live: 'Paused at its cap' })
     // dev's failure policy holds a failed step paused: on a failed task it is the step that broke, its line what broke
     : x.state === 'paused' && page.failure ? s(x.name, 'failed', '', { live: String(page.failure.head || '').replace(/^[^·]*·\s*/, '') })
@@ -995,7 +999,7 @@
     // the task's own facts only: an empty branch, time or cost stays empty, never the design's sample (BRANCH, the case's figures)
     const at = page.startedAt ? new Date(page.startedAt) : null;
     const figs = (base.figs || [['Time', ''], ['Cost', '']]).map(([k, v]) => [k, k === 'Time' ? fmtMin(page.mins || 0) : k === 'Cost' ? '$' + (page.cost || 0).toFixed(2) : v]);
-    const going = (page.stages || []).some((x) => x.state === 'now' || x.state === 'paused');
+    const going = (page.stages || []).some((x) => x.state === 'now' || x.state === 'paused' || x.state === 'ask');
     return Object.assign({}, base, { id: base.id, title: page.title, project: page.project || '', over: !going, branch: page.branch || '', base: page.base || '', pr: page.pr || '', diff: '', task: page.prompt || '', figs,
       startedWord: at ? 'Started ' + at.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ', ' + at.toTimeString().slice(0, 5) : '',
       detail: page.detail || '', why: page.why || [], failure: page.failure || null, review: page.review || { roles: [], issues: [] }, stages, spent: { mins: page.mins || 0, cost: page.cost || 0 }, budget: page.cap || null, movedFrom: base.id, liveId: page.id,

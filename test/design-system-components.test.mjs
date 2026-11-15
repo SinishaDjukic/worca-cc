@@ -248,6 +248,22 @@ test('notInStillhet: names the place, where it is today, escapes both, one Back 
   assert.match(dom(C.notInStillhet({ place: 'Lab' })).textContent, /It has no Stillhet screen yet\./, 'with no today it says it has no screen yet');
 });
 
+test('notLiveRow: a named row is its name and the exact sentence with nothing to click; with no name it is the section\'s one line (set.not-live)', () => {
+  const SENTENCE = 'Not in Stillhet yet: turn Stillhet off from the top-bar switch to use it';
+  const r = dom(C.notLiveRow({ name: 'Hourly <rate>', help: 'Time saved' }));
+  assert.ok(r.matches('.set-row'));
+  assert.equal(r.querySelector('.set-name').textContent, 'Hourly <rate>');
+  assert.equal(r.querySelector('.set-name b'), null, 'the name is escaped');
+  assert.equal(r.querySelector('.set-text').textContent, SENTENCE);
+  for (const sel of ['button', '[role=switch]', '.spick', '.set-dot', '.set-detail']) assert.equal(r.querySelectorAll(sel).length, 0, sel);
+  const line = dom(C.notLiveRow({}));
+  assert.ok(line.matches('.empty-line'));
+  assert.equal(line.querySelector('.el-t').textContent, SENTENCE);
+  assert.equal(line.querySelectorAll('button').length, 0);
+  assert.equal(line.querySelector('.el-acts'), null);
+  assert.doesNotMatch(line.textContent, /No .* yet/);
+});
+
 test('resetViewTool: its tooltip is where it goes, or why it is off (list.reset-view)', () => {
   assert.deepEqual(C.resetViewTool({ changed: true, to: 'all tasks' }), { id: 'reset', text: 'Reset view', off: false, help: 'Back to all tasks' });
   const off = C.resetViewTool({ changed: false, to: 'all tasks' });
