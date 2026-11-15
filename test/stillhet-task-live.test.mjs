@@ -500,3 +500,52 @@ test('O1: canFlow offers Accept as is and Run another cycle on the gate case onl
     for (const c of ['question', 'working', 'plan', 'paused', 'ready']) assert.equal(t.canFlow(label, { case: c, page: true }), false, `${label} on ${c}`);
   }
 });
+
+// B1.9 (#1329): a running task opened by its run id before the run names its pipeline (F-a1-09, F-a4-03)
+const pidless = () => ({ 'run-c': { runId: 'run-c', pipelineId: '', status: 'running', state: {}, pendingQuestion: null } });
+const pidRoutes = { 'GET /api/runs/run-c/live-diff': [200, { patch: '' }], 'GET /api/runs/pc/': [200, {}], 'GET /api/pipelines/pc/setup': [200, {}] };
+
+test('F-a1-09: a running task opened by its run id before its pipeline id is known reads no pipeline route; learned() then reads its parts by the pipeline id, once', async () => {
+  const gets = (calls) => calls.filter(([m]) => m === 'GET').map(([, u]) => u);
+  const live = pidless();
+  const { t, calls } = host({ live, routes: pidRoutes });
+  await t.open('run-c'); await settle(20);
+  assert.equal(t.state('run-c'), 'ready');
+  assert.deepEqual(gets(calls), ['/api/runs/run-c/live-diff'], 'only the run-id route: no artifacts, setup, sessions or history keyed by the run id');
+  assert.equal(t.parts('run-c').docs, null, 'not read yet, never [] from a failed read');
+  assert.equal(t.detail('run-c').liveRunning, false, 'no Pause or Stop before the pipeline id is known');
+  const heard = []; t.onChange((x) => heard.push(x));
+  live['run-c'].pipelineId = 'pc';
+  t.learned('run-c', 'pc'); t.learned('run-c', 'pc'); await settle(20);
+  for (const u of ['/api/runs/pc/artifacts', '/api/pipelines/pc/setup', '/api/runs/pc/sessions']) assert.equal(gets(calls).filter((x) => x === u).length, 1, u);
+  assert.ok(!gets(calls).some((u) => /\/(runs|pipelines)\/run-c\/(?!live-diff)/.test(u)), 'never the run id in place of the pipeline id');
+  assert.ok(heard.includes('run-c'), 'the page hears it');
+  assert.equal(t.detail('run-c').liveRunning, true, 'a running task whose pipeline is known is not over');
+  t.learned('run-x', 'px');   // a task nobody opened: nothing
+  // learned() while the first open is still loading: the parts are read with the pipeline id, once
+  const live2 = pidless();
+  const b = host({ live: live2, routes: pidRoutes });
+  const p = b.t.open('run-c');
+  live2['run-c'].pipelineId = 'pc';
+  b.t.learned('run-c', 'pc');
+  await p; await settle(20);
+  assert.equal(gets(b.calls).filter((x) => x === '/api/runs/pc/artifacts').length, 1);
+  assert.ok(!gets(b.calls).some((u) => /\/(runs|pipelines)\/run-c\/(?!live-diff)/.test(u)));
+});
+
+test('F-a1-09: before the pipeline id is known a pipeline-keyed action refuses with no request, its control is not offered; Pause and Stop are', async () => {
+  const { t, calls, toasts } = host({ live: pidless(), routes: { ...pidRoutes, 'POST /api/pause': [200, { ok: true }] } });
+  await t.open('run-c'); await settle(20);
+  const before = calls.length;
+  for (const id of ['labels', 'preset']) {
+    const r = await t.act(id, { taskId: 'run-c', labels: ['x'], value: 'p' });
+    assert.deepEqual([r.ok, r.error], [false, 'the task is still starting; try again in a moment'], id);
+  }
+  assert.equal(calls.length, before, 'nothing sent');
+  assert.deepEqual(toasts, ['Could not change the labels: the task is still starting; try again in a moment', 'Could not save the preset: the task is still starting; try again in a moment']);
+  assert.equal(t.canFlow('Save as preset', { page: true, taskId: 'run-c' }), false);
+  assert.equal(t.canFlow('Report this task', { page: true, taskId: 'run-c' }), false);
+  for (const label of ['Stop', 'Pause', 'Copy link', 'Pause after this step']) assert.equal(t.canFlow(label, { page: true, taskId: 'run-c' }), true, label);
+  assert.equal((await t.act('pause-after-step', { taskId: 'run-c' })).ok, true);
+  assert.deepEqual(calls.slice(before), [['POST', '/api/pause', { runId: 'run-c', afterStep: true }]]);
+});
