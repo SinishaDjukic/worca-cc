@@ -11,6 +11,8 @@ export const TRACKER_MOVES = { jira: ['In review', 'Resolved', 'Done'], azure: [
 
 const STATES = {
   'no-remote': { word: 'Ready', dot: 'is-green', action: { label: 'Link remote', icon: 'up', primary: true, items: ['How to merge', 'Discard'] } },
+  // a finished task whose base Worca cannot tell (no branch recorded, or a commit): no PR to open, no merge commands to give
+  'no-base': { word: 'Ready', dot: 'is-green', action: { label: 'Publish branch', icon: 'up', primary: false, items: ['Discard'] } },
   'mock-run': { word: 'Mock task', dot: 'is-grey' },
   starting: {
     word: "Starting",
@@ -651,6 +653,7 @@ const REST = { 'Re-plan the rest': REPLAN, 'Cancel the rest': CANCEL_REST };
 
 const FLOW = {
   'no-remote': { 'Link remote': { to: 'ready', confirm: 'Add origin as this project’s remote? Worca pushes there from now on.', say: 'Linked origin; Create PR is now the next step' }, 'How to merge': HOW_TO_MERGE, Discard: DISCARD },
+  'no-base': { 'Publish branch': PUBLISH, Discard: DISCARD },
   'mock-run': {},
   starting: { next: 'working' },
   working: { next: 'ready' },

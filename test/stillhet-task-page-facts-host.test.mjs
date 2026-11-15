@@ -164,6 +164,64 @@ test('the cap dialog\'s refusal is one line (the ConfirmStrip\'s row), and a fie
   assert.equal(d.querySelector('#card .rc-confirm-t.is-err'), null, 'the field error replaces the refusal');
 });
 
+// B1.7 (#1321): a finished task with its branch and no PR. F-3-02 named the source branch (or `dev`) as its base; F-3-03
+// offered Create PR on a project with no git remote.
+const PATCH = 'diff --git a/src/pager.mjs b/src/pager.mjs\n--- a/src/pager.mjs\n+++ b/src/pager.mjs\n@@ -1,1 +1,2 @@\n const a = 1;\n+const b = 2;\n';
+async function finished({ source = 'docs/rail-agreed', remote = 'origin' } = {}) {
+  const s = sources();
+  const row = s.history.pipelines.find((p) => p.id === 'h2');
+  Object.assign(row, { branch: 'feat/x', sourceBranch: source, survived: true, projectName: 'web' });
+  s.sync.projects['web-1'].remote = remote;
+  const state = { ...TASK_DETAILS.approved.state, projectKey: 'web-1', pr: null, branch: { source, feature: 'feat/x', branchKept: true } };
+  const h = await liveHost({ sources: s, read: (u) => (u === '/api/history/web-1/h2' ? [200, { state }] : u === '/api/history/web-1/h2/diff' ? [200, PATCH] : null) });
+  h.w.RailUI.prefs.setMode('expert');
+  await go(h.w, '#run/h2', 200); await settle(400);
+  return h;
+}
+const labelsOf = async (d) => {
+  const main = card(d).querySelector('[data-key="act-main"]')?.textContent.trim() || '';
+  card(d).querySelector('[data-menu="act"]')?.click(); await settle(30);
+  const items = [...card(d).querySelectorAll('[data-menu-pick]')].map((x) => x.textContent.trim());
+  card(d).querySelector('[data-menu="act"]')?.click(); await settle(20);
+  return [main, ...items];
+};
+
+test('F-3-02: a live task based on docs/rail-agreed shows that base in its head, PR stage and Changes label; no \'into dev\'', async () => {
+  const { w, d } = await finished();
+  assert.equal(w.RailTaskLive.detail('h2').base, 'docs/rail-agreed');
+  assert.match(card(d).querySelector('.rc-place')?.textContent || '', /feat\/x\s*into\s*docs\/rail-agreed/);
+  const v = pageView(w, 'h2');
+  assert.equal(v.place.base, 'docs/rail-agreed');
+  const tab = card(d).querySelector('[data-key="tab:changes"]');
+  if (tab.getAttribute('aria-expanded') !== 'true') { tab.click(); await settle(80); }
+  assert.match(card(d).querySelector('.ch-sum')?.textContent || '', /docs\/rail-agreed/, 'the Changes label names the base');
+  assert.doesNotMatch(card(d).textContent, /into dev\b|Into dev\b/);
+  const none = await finished({ source: '' });
+  assert.doesNotMatch(card(none.d).textContent, /into dev\b|Into dev\b/, 'no base: never the sample dev');
+});
+
+test('F-3-03: a no-remote project\'s finished task offers Link remote, no Create PR; Link remote opens #projects/KEY and writes nothing', async () => {
+  const { w, d, calls } = await finished({ remote: null });
+  assert.equal(w.RailTaskLive.detail('h2').case, 'no-remote');
+  assert.match(card(d).textContent, /This project has no git remote/);
+  const labels = await labelsOf(d);
+  assert.ok(!labels.some((l) => /Create PR/.test(l)), labels.join());
+  assert.match(labels[0], /Link remote/);
+  card(d).querySelector('[data-key="act-main"]').click(); await settle(200);
+  assert.equal(w.location.hash, '#projects/web-1');
+  assert.match(d.body.textContent, /Opened web: Link a remote… is in its More menu/);
+  assert.deepEqual(sent(calls), [], 'I7: Link remote writes nothing');
+});
+
+test('B1.7 unknown base: a finished task with a SHA source offers no Create PR and says why', async () => {
+  const { w, d } = await finished({ source: 'a1b2c3d4e5f6' });
+  assert.equal(w.RailTaskLive.detail('h2').case, 'no-base');
+  assert.match(card(d).textContent, /Base unknown: Worca cannot tell where to open a PR/);
+  const labels = await labelsOf(d);
+  assert.ok(!labels.some((l) => /Create PR|Link remote/.test(l)), labels.join());
+  assert.equal(w.RailTaskLive.detail('h2').base, '');
+});
+
 // #1266: an ended task's Activity says how many steps it took; one that can still add steps says "so far". The demo cases
 // hold every tone: finished (done), failed (fail), working (run) and archived (idle, also an unknown state's tone).
 const activityOf = async (id) => {

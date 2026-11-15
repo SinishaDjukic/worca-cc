@@ -95,7 +95,7 @@ test('Publish branch and a running task\'s away mode are dev\'s publish and nigh
 test('a group whose tasks are all ready offers Create PR: dev\'s combine check first, then its ship (separate PRs, or one when they combine)', async () => {
   const groups = { groups: [{ id: 'G2', kind: 'user', title: 'Pager pair', members: [{ position: 1, title: 'Shipped', pipelineId: 'h2', pr: null }, { position: 2, title: 'Old pause', pipelineId: 'h1', pr: null }], cost: { usd: 1 } }] };
   const src = sources();
-  for (const p of src.history.pipelines.filter((x) => x.id === 'h1' || x.id === 'h2')) Object.assign(p, { status: 'done', branch: 'feat/' + p.id, survived: true, pr: null });
+  for (const p of src.history.pipelines.filter((x) => x.id === 'h1' || x.id === 'h2')) Object.assign(p, { status: 'done', branch: 'feat/' + p.id, sourceBranch: 'main', survived: true, pr: null });
   const r = (u) => (u === '/api/run-groups' ? [200, groups] : u === '/api/run-groups/G2/combine' ? [200, { n: 2, oneOff: '' }] : read(u));
   const h = await liveHost({ sources: src, read: r, write: (u) => (/\/ship$/.test(u) ? [200, { ok: true, mode: 'separate', prs: ['u1', 'u2'] }] : [200, {}]) });
   await go(h.w, '#run/group:G2', 200); await settle(400);
@@ -112,7 +112,7 @@ test('a group whose tasks are all ready offers Create PR: dev\'s combine check f
 test('a failed live Create 2 PRs invents no PR: no #9…, no "Opened", dev\'s plain refusal', async () => {
   const groups = { groups: [{ id: 'G2', kind: 'user', title: 'Pager pair', members: [{ position: 1, title: 'Shipped', pipelineId: 'h2', pr: null }, { position: 2, title: 'Old pause', pipelineId: 'h1', pr: null }], cost: { usd: 1 } }] };
   const src = sources();
-  for (const p of src.history.pipelines.filter((x) => x.id === 'h1' || x.id === 'h2')) Object.assign(p, { status: 'done', branch: 'feat/' + p.id, survived: true, pr: null });
+  for (const p of src.history.pipelines.filter((x) => x.id === 'h1' || x.id === 'h2')) Object.assign(p, { status: 'done', branch: 'feat/' + p.id, sourceBranch: 'main', survived: true, pr: null });
   const r = (u) => (u === '/api/run-groups' ? [200, groups] : u === '/api/run-groups/G2/combine' ? [200, { n: 2, oneOff: '' }] : read(u));
   const h = await liveHost({ sources: src, read: r, write: (u) => (/\/ship$/.test(u) ? [409, { error: 'git push was rejected' }] : [200, {}]) });
   await go(h.w, '#run/group:G2', 200); await settle(400);

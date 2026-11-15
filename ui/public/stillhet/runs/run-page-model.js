@@ -58,6 +58,7 @@
       stages: run({ build: [s('Implementation', 'failed', '1h 30m', { loops: 3, live: 'Tests still failing after every retry' })], review: allNext(REVIEW) }) },
     { id: 'ready', group: 'Ready', label: 'Ready', figs: DONE_FIGS, stages: run({}) },
     { id: 'no-remote', group: 'Ready', label: 'Ready, no git remote', detail: 'This project has no git remote', figs: DONE_FIGS, stages: run({ pr: [next('Create PR', { live: 'Needs a git remote' }), next('Checks'), next('Approval')] }) },
+    { id: 'no-base', group: 'Ready', label: 'Ready, base unknown', detail: 'Base unknown: Worca cannot tell where to open a PR', figs: DONE_FIGS, stages: run({ pr: [next('Create PR', { live: 'Needs a known base' }), next('Checks'), next('Approval')] }) },
     { id: 'mock-run', group: 'Ready', label: 'Mock task', detail: 'No model was called; it adds nothing to Saved', mock: true, diff: '+1 \u22120', files: [['README.md', 1, 0]], figs: [['Time', '2m'], ['Cost', '$0.00']], stages: run({ pr: [next('Create PR', { live: 'A mock task’s change is a placeholder' }), next('Checks'), next('Approval')] }).map((st) => Object.assign({}, st, { subs: st.subs.map((y) => Object.assign({}, y, { time: '', loops: 0, cost: '$0.00' })) })) },
     { id: 'checks', group: 'Pull requests', label: 'Checks running', figs: DONE_FIGS,
       stages: run({ pr: PR_OPEN(s('Checks', 'now', '', { live: '3 of 7 passed', when: 'running' }), next('Approval')) }) },
@@ -860,7 +861,8 @@
       kind: runStages.length && c.kind ? c.kind : '',   // the stepper already counts the tasks
       crumbs, pager: g ? { index: par.index, n: g.stages.filter((x) => x.run).length, prev: sibling(par.index - 1), next: sibling(par.index + 1), group: g.id } : null,
       // The place line: where the code lives and where it goes, the PR once it exists. Each part once on the page.
-      place: { branch, copy: !!branch && branch !== 'main', base: c.base || (c.onSource ? 'origin' : branch === 'main' ? 'origin/main' : branch ? 'dev' : ''), onSource: !!c.onSource, hidden: seed ? '' : c.hidden || '',
+      // a live task's base is its own or none, never the demo's sample (B1.7 D10); the base-unknown case has none either
+      place: { branch, copy: !!branch && branch !== 'main', base: c.liveId || c.id === 'no-base' ? c.base || '' : c.base || (c.onSource ? 'origin' : branch === 'main' ? 'origin/main' : branch ? 'dev' : ''), onSource: !!c.onSource, hidden: seed ? '' : c.hidden || '',
         pr: c.pr !== undefined && c.pr !== '' ? c.pr : prOpen(c) && !c.liveId ? '#959' : '', folder: c.folder || '', repos: c.repos || [],
         merged: c.stages.some((x) => x.key === 'merged' && x.subs.length && x.subs.every((y) => y.state === 'merged')), applied: c.word === 'Applied' },
       chips: (ui.chips || []).filter((x) => x.kind !== 'group'), inGroup: !!g || runStages.length > 0, addedGroup: ((ui.chips || []).find((x) => x.kind === 'group') || {}).text || '',

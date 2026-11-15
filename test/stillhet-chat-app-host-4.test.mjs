@@ -104,7 +104,7 @@ test('a failed run reads Failed on its card, never Stopped', async () => {
 });
 
 test('a finished task with its branch is Ready: Create PR and View changes, and its stage bar stops at PR', async () => {
-  const { w, d, calls } = await liveHost({ sources: savedRun({ status: 'done', branch: 'feat/x', survived: true, projectKey: 'web-1a2b3c4d', projectDir: '/src/web' }) });
+  const { w, d, calls } = await liveHost({ sources: savedRun({ status: 'done', branch: 'feat/x', sourceBranch: 'main', survived: true, projectKey: 'web-1a2b3c4d', projectDir: '/src/web' }) });
   const opened = [], was = globalThis.open;
   globalThis.open = (u) => { opened.push(u); return {}; };   // chat-live.mjs openTab: the page's window.open (set once the host is up)
   after(() => { globalThis.open = was; });

@@ -211,3 +211,15 @@ test('O2: the prototype\'s ready-issues case draws its blocked review as a probl
   const y = stepsOf(M.view('ready-issues', {}), 'review')[0];
   assert.deepEqual(J([y.name, y.rowCls, y.live, y.loops]), ['Review implementation', 'is-problem', 'Blocked · accepted with 2 open issues', 3]);
 });
+
+test('B1.7: the prototype\'s "Ready, base unknown" offers no Create PR and names no base; a live page never takes the sample base', () => {
+  assert.ok(ids.includes('no-base'), 'the case is in the picker');
+  const v = M.view('no-base', {});
+  const labels = [v.action.label, ...v.action.items.map((x) => x.text)];
+  assert.ok(!labels.some((l) => /^Create/.test(l)), labels.join());
+  assert.equal(v.place.base, '');
+  assert.equal(v.detail, 'Base unknown: Worca cannot tell where to open a PR');
+  assert.equal(M.view('ready', {}).place.base, 'dev', 'I6: the demo keeps its sample base');
+  const live = M.liveRun({ id: 'pz', case: 'ready', title: 'Fin', branch: 'feat/x', base: '', stages: [], review: { roles: [], issues: [] } });
+  assert.equal(M.view(live.id, { run: live }).place.base, '', 'a live task with no base shows none');
+});
