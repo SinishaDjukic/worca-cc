@@ -74,6 +74,8 @@
       if (a.ok) Object.assign(b, { path: a.path, parent: a.parent, dirs: a.dirs, home: a.home, roots: a.roots, note: a.limited ? 'Worca may open only these folders here.' : '', state: 'ready', error: '' });
       else Object.assign(b, { state: 'ready', error: a.text });   // the last listing stays
       ctx.draw();
+      // the row that took the focus went with the old listing: the focus stays in the dialog, so Escape asks first (F-cov1-02)
+      if (!document.activeElement || document.activeElement === document.body) document.querySelector('.fb .fb-list [data-fb-go], .fb [data-dialog="cancel"]')?.focus();
     }
     function browse(multiple, seed = '') {
       if (down()) { ctx.say(NOT_ANSWERING); return; }
@@ -172,7 +174,7 @@
           + R.confirmActions({ yes: b || 'Create', busy: !!b || s.newRefused });
       }
       if (s.way === 'many') {
-        if (!s.review) return R.folderWay({ pick: { label: 'Browse folders…', hook: 'data-pa-browse', title: 'Pick folders on this computer' } }) + R.confirmActions({ yes: 'Browse folders…' });
+        if (!s.review) return R.confirmActions({ yes: 'Browse folders…' });   // one Browse folders…: the form's yes (F-cov1-03)
         return R.folderReview({ rows: s.review.map((r) => ({ ...r, name: r.shown })), saving: !!b, error: s.reviewErr });
       }
       const m = model();
@@ -208,7 +210,6 @@
       }
       if (on('[data-pa-way]')) { setWay(hit.dataset.paWay); return true; }
       if (on('[data-pa-choose]')) { browse(false, val('pj-hand-v')); return true; }
-      if (on('[data-pa-browse]')) { browse(true, ''); return true; }
       if (on('[data-pa-git]')) { s.useGit = !s.useGit; ctx.draw(); return true; }
       if (on('[data-pa-newgit]')) { s.newGit = !s.newGit; ctx.draw(); checkNow(); return true; }
       if (on('[data-fb-root]')) {

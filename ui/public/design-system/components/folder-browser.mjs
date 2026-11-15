@@ -37,7 +37,7 @@ export function folderBrowser({ multiple = false, path = '', parent = null, dirs
   const n = picked.length;
   const nav = `<div class="fb-nav">${button({ label: 'Up', kind: 'quiet', attrs: { 'data-fb-go': parent || null, disabled: parent == null, title: parent ? `Opens ${parent}` : 'This is the top' } })}${button({ label: 'Home', kind: 'quiet', attrs: { 'data-fb-home': '', title: 'Opens your home folder' } })}<span class="fb-path"${attrs({ title: path || null })}>${esc(path)}</span></div>`;
   const scope = note ? `<p class="fb-note">${esc(note)}${roots.length > 1 ? ` ${roots.map((r) => button({ label: folderName(r) || r, kind: 'quiet', attrs: { 'data-fb-go': r, title: r } })).join('')}` : ''}</p>` : '';
-  const row = (d) => `<li class="fb-row">${multiple ? checkbox({ checked: picked.includes(d.path), attrs: { 'aria-label': `Select ${d.name}`, 'data-fb-pick': d.path } }) : ''}${button({ label: d.name, kind: 'quiet', icon: icon('folder', 14), attrs: { 'data-fb-go': d.path, title: `Opens ${d.path}` } })}</li>`;
+  const row = (d) => `<li class="fb-row">${multiple ? checkbox({ checked: picked.includes(d.path), attrs: { 'aria-label': `Select ${d.name}`, 'data-fb-pick': d.path, 'data-keep': `fb:${d.path}` } }) : ''}${button({ label: d.name, kind: 'quiet', icon: icon('folder', 14), attrs: { 'data-fb-go': d.path, title: `Opens ${d.path}` } })}</li>`;
   const list = state === 'loading' ? listState({ state: 'loading', noun: 'folders' }) : dirs.length ? `<ul class="fb-list">${dirs.map(row).join('')}</ul>` : '<p class="fb-none">No subfolders.</p>';
   const asking = ask && n ? confirmStrip({ text: `Drop ${plural(n, 'picked folder')}?`, yes: 'Drop them', no: 'Keep picking', id: `${id}-ask` }) : '';
   return dialog({
@@ -111,7 +111,7 @@ export function folderReview({ rows = [], saving = false, error = '' } = {}) {
   const row = (r, i) => {
     const added = r.status === 'added';
     const status = added ? `<span class="fb-st is-ok">${icon('check', 12)} Added</span>` : r.reason ? `<span class="fb-st is-fail">${esc(r.reason)}</span>` : '';
-    return `<li class="fb-rev"${attrs({ 'data-fr-row': String(i) })}>${checkbox({ checked: !!r.include, disabled: added || saving, attrs: { 'aria-label': `Add ${r.name || folderName(r.path)}`, 'data-fr-pick': String(i) } })}${field({ id: `fr-name-${i}`, label: 'Its name', value: r.name, quietLabel: true, attrs: { maxlength: 80, 'data-fr-name': String(i), 'data-keep': `fr:${i}`, disabled: added || saving } })}<span class="fb-rev-path"${attrs({ title: r.path })}>${esc(r.path)}</span>${status}</li>`;
+    return `<li class="fb-rev"${attrs({ 'data-fr-row': String(i) })}>${checkbox({ checked: !!r.include, disabled: added || saving, attrs: { 'aria-label': `Add ${r.name || folderName(r.path)}`, 'data-fr-pick': String(i), 'data-keep': `frp:${i}` } })}${field({ id: `fr-name-${i}`, label: 'Its name', value: r.name, quietLabel: true, attrs: { maxlength: 80, 'data-fr-name': String(i), 'data-keep': `fr:${i}`, disabled: added || saving } })}<span class="fb-rev-path"${attrs({ title: r.path })}>${esc(r.path)}</span>${status}</li>`;
   };
   const acts = confirmActions({ yes: saving ? 'Adding…' : `Add ${plural(pending, 'project')}`, busy: saving || !pending });
   return `${error ? `<p class="fb-err" role="alert">${esc(error)}</p>` : ''}<ul class="fb-review">${rows.map(row).join('')}</ul>${acts}`;

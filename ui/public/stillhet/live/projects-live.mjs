@@ -151,18 +151,20 @@ export function startProjectsLive({ fetch, toast = () => {}, refresh = () => {},
     return a.ok && a.data?.available === false ? false : true;
   }
   const whereOf = (d = {}) => d.displayPath || d.path || d.rootDisplay || d.root || '';
+  // New folder's EXISTS in Stillhet's words, as One folder and the demo say it (F-cov1-07); never dev's path-laden text
+  const newWhy = (a, n) => (a.data?.code !== 'EXISTS' ? plainWhy(a) : /a project named/.test(a.error || '') ? `${n} is already a project` : `A folder called ${n} already exists`);
   /** New folder's dry run: where the folder will be made; a refusal is the field's error (an empty name: the root). */
   async function checkNew({ name, useGit } = {}) {
     const n = String(name || '').trim(), a = await send('create', { name: n, useGit, dryRun: true });
     if (a.status === 0) return down;
     if (a.ok || !n) return { ok: true, where: whereOf(a.data) };
-    return { ok: false, field: plainWhy(a), where: whereOf(a.data) };
+    return { ok: false, field: newWhy(a, n), where: whereOf(a.data) };
   }
   /** New folder: POST /api/projects/create; its key once the store lists it. */
   const createProject = ({ name, useGit } = {}) => once('add', 'create', async () => {
     const n = String(name || '').trim(), a = await send('create', { name: n, useGit });
     if (a.status === 0) return down;
-    if (!a.ok) return a.status < 500 && a.data?.code !== 'FAILED' ? { ok: false, field: plainWhy(a) } : refused('create', n, a);
+    if (!a.ok) return a.status < 500 && a.data?.code !== 'FAILED' ? { ok: false, field: newWhy(a, n) } : refused('create', n, a);
     refresh('projects', 'sync');
     const key = a.data.project?.key;
     if (key) gone.delete(key);

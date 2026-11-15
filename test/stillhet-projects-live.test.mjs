@@ -520,16 +520,17 @@ test('COV-1 folders, probe and gitAvailable: what dev answered, a refusal in pla
 });
 
 test('COV-1 checkNew: the dry run\'s where reads displayPath; a 400 is the field\'s error with the root', async () => {
-  const r = rig({ answer: (m, u, b) => (b?.name === 'taken' ? [400, { error: 'A folder called taken already exists', code: 'EXISTS', root: '/w/projects', rootDisplay: '~/worca/projects' }] : b?.name ? [200, { ok: true, root: '/w/projects', rootDisplay: '~/worca/projects', path: '/w/projects/alpha', displayPath: '~/worca/projects/alpha', name: 'alpha' }] : [400, { error: 'name is required', code: 'INVALID', root: '/w/projects', rootDisplay: '~/worca/projects' }]) });
+  const r = rig({ answer: (m, u, b) => (b?.name === 'taken' ? [400, { error: '/w/projects/taken already exists; pick another name', code: 'EXISTS', root: '/w/projects', rootDisplay: '~/worca/projects' }] : b?.name ? [200, { ok: true, root: '/w/projects', rootDisplay: '~/worca/projects', path: '/w/projects/alpha', displayPath: '~/worca/projects/alpha', name: 'alpha' }] : [400, { error: 'name is required', code: 'INVALID', root: '/w/projects', rootDisplay: '~/worca/projects' }]) });
   assert.deepEqual(await r.live.checkNew({ name: 'alpha', useGit: true }), { ok: true, where: '~/worca/projects/alpha' });
   assert.deepEqual(r.writes().at(-1), ['POST', '/api/projects/create', { name: 'alpha', useGit: true, dryRun: true }]);
   assert.deepEqual(await r.live.checkNew({ name: 'taken' }), { ok: false, field: 'A folder called taken already exists', where: '~/worca/projects' });
+  assert.ok(!/pick another name|\/w\//.test((await r.live.checkNew({ name: 'taken' })).field), 'F-cov1-07: never dev\'s raw text');
   assert.deepEqual(await r.live.checkNew({ name: '' }), { ok: true, where: '~/worca/projects' }, 'an empty name: the root, no field');
 });
 
 test('COV-1 createProject: 201 refreshes and answers the key once listed; 400 EXISTS is the field; 500 FAILED says Could not create; one at a time', async () => {
   const g = gate();
-  const r = rig({ hold: (m, u) => (u === '/api/projects/create' ? g.p : null), answer: (m, u, b) => (b.name === 'taken' ? [400, { error: 'A folder called taken already exists', code: 'EXISTS' }] : b.name === 'boom' ? [500, { error: 'disk full', code: 'FAILED' }] : [201, { project: { key: 'alpha-1234abcd', name: 'alpha' }, projects: [] }]) });
+  const r = rig({ hold: (m, u) => (u === '/api/projects/create' ? g.p : null), answer: (m, u, b) => (b.name === 'taken' ? [400, { error: '/w/projects/taken already exists; pick another name', code: 'EXISTS' }] : b.name === 'dup' ? [400, { error: 'a project named "dup" already exists', code: 'EXISTS' }] : b.name === 'boom' ? [500, { error: 'disk full', code: 'FAILED' }] : [201, { project: { key: 'alpha-1234abcd', name: 'alpha' }, projects: [] }]) });
   r.setWorld(withProject({ id: 'alpha-1234abcd', name: 'alpha', devPath: '/w/alpha' }));
   const one = r.live.createProject({ name: 'alpha', useGit: true });
   assert.equal(r.live.pending('add'), 'Creating…');
@@ -539,6 +540,7 @@ test('COV-1 createProject: 201 refreshes and answers the key once listed; 400 EX
   assert.ok(r.refreshed.includes('projects'));
   assert.deepEqual(r.writes(), [['POST', '/api/projects/create', { name: 'alpha', useGit: true }]]);
   assert.deepEqual(await r.live.createProject({ name: 'taken' }), { ok: false, field: 'A folder called taken already exists' });
+  assert.deepEqual(await r.live.createProject({ name: 'dup' }), { ok: false, field: 'dup is already a project' }, 'F-cov1-07: Stillhet\'s words');
   assert.deepEqual(await r.live.createProject({ name: 'boom' }), { ok: false, text: 'Could not create boom: disk full' });
   assert.deepEqual(r.writes().at(-1), ['POST', '/api/projects/create', { name: 'boom' }]);
 });

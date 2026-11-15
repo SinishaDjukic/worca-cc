@@ -1563,8 +1563,14 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .fb-warn{display:inline-flex;align-items:center;gap:4px;color:var(--red-ink-strong);}
 .fb-probe-note{flex:1 1 100%;color:var(--ink-2);}
 .fb-way{flex:1 1 100%;display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
-.fb-review{flex:1 1 100%;gap:6px;}
-.fb-rev{display:grid;grid-template-columns:auto minmax(0,14em) minmax(0,1fr) auto;align-items:center;gap:8px;}
+.fb-review{flex:1 1 100%;gap:6px;container-type:inline-size;}   /* its rows read their own width (F-cov1-05) */
+.fb-rev{display:grid;grid-template-columns:auto minmax(0,14em) minmax(8em,1fr) minmax(0,auto);align-items:center;gap:8px;}   /* F-cov1-05: a reason never squeezes the path to nothing */
+@container (max-width: 520px){   /* F-cov1-05: narrow, a row stacks: its tick, then its name, path and reason under each other */
+  .fb-rev{grid-template-columns:auto minmax(0,1fr);gap:2px 8px;}
+  .fb-rev > .fb-rev-path,.fb-rev > .fb-st{grid-column:2;}
+}
+.rc-confirm.is-form .seg{flex-wrap:wrap;max-width:100%;}   /* F-cov1-05: a form's Segmented wraps between its ways, never inside a label */
+.rc-confirm.is-form .seg button{white-space:nowrap;}
 .fb-rev .fld{flex:none;}
 .fb-rev-path{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:12px/18px var(--mono);color:var(--ink-2);}
 .fb-st{font-size:var(--fs-meta);}

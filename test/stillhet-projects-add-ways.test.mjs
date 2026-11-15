@@ -32,7 +32,7 @@ async function addHost(way, { write = () => [200, { ok: true }], read = () => nu
 }
 const create = (u, b, m, st) => {
   if (u !== '/api/projects/create') return [200, { ok: true }];
-  if (b.name === 'taken') return [400, { error: 'A folder called taken already exists', code: 'EXISTS', ...ROOT }];
+  if (b.name === 'taken') return [400, { error: '/w/projects/taken already exists; pick another name', code: 'EXISTS', ...ROOT }];   // dev's own text (F-cov1-07)
   if (!b.name) return [400, { error: 'name is required', code: 'INVALID', ...ROOT }];
   if (b.dryRun) return [200, { ok: true, ...ROOT, path: `/w/projects/${b.name}`, displayPath: `~/worca/projects/${b.name}`, name: b.name }];
   st.list = [...st.list, rec(`${b.name}-1234abcd`, b.name, `/w/projects/${b.name}`)];
@@ -46,6 +46,13 @@ test('COV-1: the add form offers the three ways as one Segmented', async () => {
   assert.equal(ways[0].getAttribute('aria-pressed'), 'true');
   assert.ok(page(h.d).querySelector('#pj-hand-v'), 'One folder: today\'s field');
   assert.ok(page(h.d).querySelector('[data-pa-choose]'), 'and Choose folder…');
+  // F-cov1-04: + › Add a project… closes the bar's drawer (390px) instead of leaving it over the form
+  h.d.body.classList.add('nav-open');
+  h.w.RailPlaces.projects.newPick('hand-project'); await settle(100);
+  assert.equal(h.d.body.classList.contains('nav-open'), false, 'the drawer is closed');
+  // F-cov1-03: before any pick, Several folders… shows one Browse folders…, the form's yes
+  page(h.d).querySelector('[data-pa-way="many"]').click(); await settle(60);
+  assert.equal([...page(h.d).querySelectorAll('.card-form button')].filter((b) => b.textContent.trim() === 'Browse folders…').length, 1);
 });
 
 test('COV-1 New folder: the dry run says where it is made (POST …/create {name, useGit, dryRun})', async () => {
