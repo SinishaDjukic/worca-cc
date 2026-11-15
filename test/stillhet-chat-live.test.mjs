@@ -692,7 +692,7 @@ test('F-a2-01: three wait; a fourth is refused QUEUE_FULL with one toast, and no
   for (const t of ['one', 'two', 'three']) assert.equal((await r.live.act('send', { threadId: 'ask_1', text: t, queue: true })).queued, true);
   const res = await r.live.act('send', { threadId: 'ask_1', text: 'four', queue: true });
   assert.deepEqual([res.ok, res.code], [false, 'QUEUE_FULL']);
-  assert.deepEqual(r.toasts, ['Could not send your message: 3 messages already wait for this reply']);
+  assert.deepEqual(r.toasts, ['Queue full: 3 messages wait for this reply']);
   assert.deepEqual(r.live.queue('ask_1').items.map((x) => x.text), ['one', 'two', 'three']);
   assert.equal(qPosts(r).length, 0);
 });

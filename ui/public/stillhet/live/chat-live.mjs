@@ -378,7 +378,8 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
   const IN_FLIGHT = (res) => res.status === 409 && res.error === 'turn in flight';
   function enqueue(id, a) {
     const q = qOf(id);
-    if (q.items.length >= QUEUE_MAX) return refuse(SEND_WORDS, { ok: false, code: 'QUEUE_FULL', error: `${QUEUE_MAX} messages already wait for this reply` }, a.quiet);
+    // the composer's own words for a full queue (form.composer-queue), not the generic `Could not …` refusal (F-gb235-01)
+    if (q.items.length >= QUEUE_MAX) { const error = `${QUEUE_MAX} messages wait for this reply`; if (!a.quiet) toast(`Queue full: ${error}`); return { ok: false, code: 'QUEUE_FULL', error }; }
     q.items.push({ key: `q${++qSeq}`, text: a.text, attachments: a.attachments, model: a.model, effort: a.effort, context: a.context });
     notify(id);
     return { ok: true, queued: true, data: { threadId: id, position: q.items.length } };
