@@ -175,6 +175,8 @@ test('a reader scrolled up keeps the same scrollTop across streamed frames', asy
   const sc = h.q('.convo-scroll');
   let top = 120;
   Object.defineProperty(sc, 'scrollTop', { configurable: true, get: () => top, set: (v) => { top = v; } });
+  Object.defineProperty(sc, 'scrollHeight', { configurable: true, get: () => 2000 });   // real geometry: jsdom's 0 heights read as at the end (motion.follow-end)
+  Object.defineProperty(sc, 'clientHeight', { configurable: true, get: () => 400 });
   h.stream(1); h.frame(); h.stream(2); h.frame();
   assert.equal(h.q('.convo-scroll'), sc);
   assert.equal(top, 120);

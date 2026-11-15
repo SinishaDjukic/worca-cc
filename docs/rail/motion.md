@@ -13,6 +13,7 @@
 | `motion.morph` | A page redraws with morph(), never raw innerHTML; a page whose parts are strings patches them with `patchParts`, and raw innerHTML is only for a frame built once | What stays keeps its element and focus | design-system-components |
 | `motion.reduced` | Under reduced motion every timing is 0 | Respects the person's setting | by hand |
 | `motion.live-holds` | A live update never moves what you are reading | You never lose your place | by hand |
+| `motion.follow-end` | A chat at its end (its last 80px in view) stays at its end as a reply grows or a live update lands. Scrolled further up, it holds its place and Latest shows. Opening a chat lands on its newest turn. A follow only moves the scroll box, at once, never animated and never a redraw (`pinnedToEnd`) | You read the reply as it is written, and never lose a place you scrolled to | design-system-components |
 
 Motion shows what changed, never decorates. Every change of state on the screen eases in, quickly and with one
 curve; everything else is still. Filmed from the run page: `plans/rail/mocks/motion-*.gif`.
