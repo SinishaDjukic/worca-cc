@@ -501,3 +501,14 @@ test('F-a4-05: a series\' own ticket is neither a Schedules row nor a waiting ta
   assert.equal(updateOf({ id: 1, kind: 'missed', ticketId: 'T3' }, { now: NOW }).run, 'sched:T3', 'Pulse\'s Run now still names a row the store holds');
 });
 
+test('F-6-03: a git project whose sync block has remote:null reads origin local (Only on this computer, Link a remote), without an origin/ base, and does not need you', () => {
+  const p = { key: 'a', exists: true, vcs: 'git' };
+  const local = projectOf(p, { state: 'unknown', remote: null, base: 'main' });
+  assert.deepEqual([local.origin, local.base, local.branch, local.needs], ['local', undefined, 'main', false]);
+  assert.ok(!('base' in local));
+  assert.equal(projectOf(p, null).origin, 'ok', 'a block not loaded yet stays ok (B1.7 D3)');
+  assert.equal(projectOf(p, { state: 'unknown', remote: 'origin', base: 'main' }).origin, 'ok');
+  assert.equal(projectOf(p, { state: 'unknown', remote: 'origin', base: 'main' }).base, 'origin/main');
+  assert.equal(projectOf({ key: 'a', exists: true, vcs: 'none' }, { state: 'unknown', remote: null }).origin, 'folder');
+  assert.equal(projectOf(p, { state: 'unknown', remote: null, fetchError: 'boom' }).origin, 'offline', 'a failed fetch is offline, not local');
+});

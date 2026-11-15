@@ -253,8 +253,11 @@ const ORIGIN_OF = { 'up-to-date': 'ok', ahead: 'ok', behind: 'behind', diverged:
 export function projectOf(project = {}, sync = null) {
   const git = project.vcs ? project.vcs === 'git' : project.workMode !== 'folder';
   const s = sync && typeof sync === 'object' ? sync : null, state = lc(s?.state);
-  const origin = project.exists === false ? 'missing' : !git ? 'folder' : s?.fetchError ? 'offline' : ORIGIN_OF[state] || 'ok';
-  return pick('project', { id: str(project.key), name: str(project.name) || str(project.key), kind: git ? 'Git' : 'Folder', path: str(project.displayPath) || str(project.path), ...(s?.base ? { branch: str(s.base), base: `${str(s.remote) || 'origin'}/${str(s.base)}` } : {}), origin, ...(s ? { ahead: num(s.ahead), behind: num(s.behind) } : {}), ...(s?.fetchedAt ? { checked: timeOf(s.fetchedAt, Date.parse(s.fetchedAt)) } : {}), needs: project.exists === false || state === 'behind' || state === 'diverged', autoSync: s ? s.settings?.beforeRun !== false : true, devPath: str(project.path), ownedFolder: project.ownedFolder === true, vcs: git ? 'git' : 'none' });
+  // F-6-03: dev's block names its remote, null when the repository has none (src/core/project-sync.mjs)
+  const noRemote = !!s && 'remote' in s && s.remote == null;
+  // F-6-03: a loaded block with no remote is a project only on this computer (the prototype's `local`: Link a remote…)
+  const origin = project.exists === false ? 'missing' : !git ? 'folder' : s?.fetchError ? 'offline' : noRemote ? 'local' : ORIGIN_OF[state] || 'ok';
+  return pick('project', { id: str(project.key), name: str(project.name) || str(project.key), kind: git ? 'Git' : 'Folder', path: str(project.displayPath) || str(project.path), ...(s?.base ? { branch: str(s.base), ...(noRemote ? {} : { base: `${str(s.remote) || 'origin'}/${str(s.base)}` }) } : {}), origin, ...(s ? { ahead: num(s.ahead), behind: num(s.behind) } : {}), ...(s?.fetchedAt ? { checked: timeOf(s.fetchedAt, Date.parse(s.fetchedAt)) } : {}), needs: project.exists === false || state === 'behind' || state === 'diverged', autoSync: s ? s.settings?.beforeRun !== false : true, devPath: str(project.path), ownedFolder: project.ownedFolder === true, vcs: git ? 'git' : 'none' });
 }
 
 // ---- costs ----
