@@ -55,3 +55,9 @@ test('every flag key used in code is in the registry, well-formed, and every reg
   const unused = FLAGS.map((f) => f.key).filter((k) => !uses.has(k));
   assert.deepEqual(unused, [], 'registry flags nothing uses: graduate or remove them (docs/feature-flags.md)');
 });
+
+test('proposedPerspectives is read by the server (flagEnabled) and by the run card (flagOn)', () => {
+  const uses = scanFlagUses([join(ROOT, 'ui/server.mjs'), join(ROOT, 'ui/public/ask-panel.mjs')]).get('proposedPerspectives') || [];
+  assert.ok(uses.some((at) => at.startsWith('ui/server.mjs:')), uses.join());
+  assert.ok(uses.some((at) => at.startsWith('ui/public/ask-panel.mjs:')), uses.join());
+});

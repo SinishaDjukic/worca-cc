@@ -7,6 +7,7 @@ import { createThreadModel } from '../../../../src/shared/ask-model.mjs';
 import { turnsOf, planView, planPicks, runWithTurn } from './chat-turns.mjs';
 import { createTerminalLive } from './terminal-live.mjs';
 import { projectKeyOf } from './live-map.mjs';
+import { perspectivesWith, chipsHiddenFor, DEFAULT_PERSPECTIVES } from '../../../../src/shared/shape/perspectives.mjs';
 
 const enc = encodeURIComponent;
 const T = (id) => `/api/ask/threads/${enc(id)}`;
@@ -31,8 +32,18 @@ function patchUrl(a) {
   return `/api/runs/${id}/recovery-patch${qs.size ? `?${qs}` : ''}`;
 }
 
+/** The TaskProposal's "reviewed by" picker (flag proposedPerspectives): dev's perspectives with Compliance, in list order,
+ *  Product locked on, Project fit offered only once picked (dev's chips.mjs chipsHiddenFor). `picked`: keys or nothing. */
+export function perspectiveChoices(picked) {
+  const all = perspectivesWith({ compliance: true }), keys = all.map((p) => p.key);
+  const on = new Set(['product', ...(Array.isArray(picked) && picked.length ? picked : DEFAULT_PERSPECTIVES).filter((k) => keys.includes(k))]);
+  const hidden = chipsHiddenFor([...on]);
+  return { picked: keys.filter((k) => on.has(k)), items: all.filter((p) => !hidden.includes(p.key)).map((p) => ({ key: p.key, label: p.label, help: p.locked ? 'Always reviews' : p.help, locked: !!p.locked })) };
+}
+
 /** POST /api/run's body for a TaskProposal's Start: the proposal card as dev's ask-panel.mjs collectCardBody reads it,
- *  with the person's `picks` (target, project folder, workflow, engine, guardrails, title, branches) over the card's own values. */
+ *  with the person's `picks` (target, project folder, workflow, engine, guardrails, title, branches) over the card's own values.
+ *  `picks.perspectives`: the "reviewed by" set (flag proposedPerspectives), sent as dev's run card sends it (`perspectives`). */
 export function startBodyOf(card = {}, picks = {}) {
   const c = card || {}, p = picks || {};
   const target = p.target || c.target || 'project';
@@ -41,6 +52,7 @@ export function startBodyOf(card = {}, picks = {}) {
   if (c.memoryScope && body.workflowId === 'wf_memory_defrag') body.memoryScope = c.memoryScope;
   if (Array.isArray(c.tags) && c.tags.length) body.tags = c.tags;
   if (p.engine || c.engine) body.engine = p.engine || c.engine;
+  if (Array.isArray(p.perspectives) && p.perspectives.length) body.perspectives = [...p.perspectives];
   if (c.source) { delete body.prompt; body.source = { type: 'plugin', plugin: c.source.plugin, sourceId: c.source.sourceId, taskId: c.source.taskId, ...(c.source.profile ? { profile: c.source.profile } : {}), ...(c.source.inputs ? { inputs: c.source.inputs } : {}) }; }
   if (target === 'none') { body.noProject = true; return body; }
   if (p.sameAsSource ?? c.sameAsSource) body.sameAsSource = true;
@@ -457,7 +469,7 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
   }
 
   const api = {
-    open, frame, turns, act, prBodyOf, startBodyOf, ref, feature,
+    open, frame, turns, act, prBodyOf, startBodyOf, perspectiveChoices, ref, feature,
     // Settings › Chat › Delete all chats (dev's app.js deleteAskHistory): the counts read fresh right before its confirm
     // (GET /api/ask/history), then dev's DELETE /api/ask/threads. Not an act() id: no card or chat control can reach it.
     chatHistory: async () => { const r = await request('GET', '/api/ask/history'); return r.ok ? r : refuse('read the chat history', r); },

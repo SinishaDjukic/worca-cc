@@ -17,8 +17,9 @@ One map, from the prototype's own code (the places list in `shell/shell.js`, the
 | Team policy | Settings | the team policy routes | `#team-policy`, `#team-policy/…` |
 | Workspaces | Projects (by workspace from Advanced) | the workspaces routes | `#workspaces`, `#workspaces/…`, `#workspace-create` |
 | Check how clear a task prompt is (chat pref `promptCheck`, `docs/prompt-check.md`) | Settings › Chat › Assistant › Abilities › Prompt check (wired) | `src/core/settings.mjs` `chatPrefs` and `src/shared/prompt-check/assessment.mjs` | none |
-| Prompt check chip (composer) | open: waits for the owner (Chat › composer sentence row, after the intent chip) | `ui/public/prompt-check/grader.mjs`, `POST /api/prompt-check/grade`, `POST /api/prompt-check/kind-correction` | none |
-| Prompt check Improve (composer) | open: waits for the owner, with the chip row | `ui/public/prompt-check/improve-view.mjs`, `POST /api/prompt-check/improve` | none |
+| Prompt check chip (composer) | Chat › composer sentence row, after the intent chip (wired: `stillhet/chat/prompt-check.mjs`) | `ui/public/prompt-check/grader.mjs`, `POST /api/prompt-check/grade`, `POST /api/prompt-check/kind-correction` | none |
+| Prompt check Improve (composer) | Chat › composer, a RewriteSuggestion above it (wired: `stillhet/chat/prompt-check.mjs`) | `ui/public/prompt-check/improve-view.mjs`, `POST /api/prompt-check/improve` | none |
+| Perspectives proposed on the run card (flag proposedPerspectives) | Chat › TaskProposal sentence, "reviewed by" (wired: `stillhet/chat/conversation.js` `perspPicker`, dev's perspectives with Compliance, Product always on; Start sends the set through `live/chat-live.mjs` `startBodyOf`). The prompt check's own proposal and its reasons are not drawn on the card yet | `ui/public/shape/chips.mjs`, `ui/public/shape/proposal.mjs`, `src/shared/prompt-check/perspectives.mjs`, `POST /api/run` `perspectives` | none |
 
 With Stillhet on, every old address lands through one table, `ui/public/stillhet/shell/old-addresses.js` (`docs/rail/navigation.md` `nav.old-address`), in place; with it off they stay dev's.
 
@@ -249,14 +250,16 @@ One row per surface of today's UI that Stillhet must carry (gate.prototype in `d
 
 | Surface | Status | Where in Stillhet, or why not yet |
 |---|---|---|
-| `route › /api/prompt-check/grade` | wire to | The prompt check's grade; today's Chat, New run and run card chip calls it (Shaper Tracks slice 2). Stillhet's composer chip waits for the owner (the Prompt check chip row above) |
-| `route › /api/prompt-check/kind-correction` | wire to | A person's kind pick on the chip (ids only, schema v96); Stillhet records it once its composer chip is built (waits for the owner, the Prompt check chip row above) |
-| `route › /api/prompt-check/improve` | wire to | The prompt check's Improve: a grounded rewrite into the kind's template with perspective-labelled gaps; today's Chat composer calls it (Shaper Tracks slice 3). Stillhet calls it once its composer chip is built (waits for the owner, the Prompt check Improve row above) |
-| `ui/public/app.js` | wire to | Starts the prompt check's grader in today's UI; Stillhet's composer gets it with its chip, which waits for the owner (the Prompt check chip row above) |
+| `route › /api/prompt-check/grade` | wired | Chat › composer sentence row: `stillhet/chat/prompt-check.mjs` grades the draft through dev's `prompt-check/grader.mjs` (the Prompt check chip row above) |
+| `route › /api/prompt-check/kind-correction` | wired | Chat › composer sentence row: a kind pick on the chip, ids and kinds only, posted by `stillhet/chat/prompt-check.mjs` (a new chat's after its first send) |
+| `route › /api/prompt-check/improve` | wired | Chat › composer: Improve on a Needs detail chip, through dev's `prompt-check/improve-view.mjs` in `stillhet/chat/prompt-check.mjs` (the Prompt check Improve row above) |
+| `ui/public/app.js` | wired | Starts the prompt check's grader in today's UI; Stillhet's composer starts its own in `stillhet/chat/prompt-check.mjs` (dev's `grader.mjs`), loaded by `stillhet/chat/conversation.js` when the setting is on |
 | `ui/public/chat-settings-view.mjs` | wired | The "Check how clear a task prompt is" row: Stillhet's Settings › Chat › Assistant › Abilities › Prompt check (`stillhet/settings/settings-model.js`, a live switch on `chat.promptCheck` through `live/live-map.mjs` `chatPrefs`) |
-| `ui/public/prompt-check/` | wire to | The browser grader and the chip's controller (`chip-host.mjs`); Stillhet's composer uses them once its chip is built (waits for the owner, the Prompt check chip row above) |
+| `ui/public/prompt-check/` | wired | Chat › composer sentence row: `stillhet/chat/prompt-check.mjs` reuses `grader.mjs` and `improve-view.mjs` (allowed in `tools/stillhet-import-guard.mjs`); `chip-host.mjs` stays today's UI only, as it draws dev's menu |
 | `ui/public/settings/settings.html` | wired | The setting's place in today's Settings page: Stillhet's Settings › Chat › Assistant › Abilities › Prompt check (`stillhet/settings/settings-model.js`) |
 | `setting › pulseFor` | wired | Settings › Notifications, the Pulse animation row (`pulse.js` reads it through the live map; #1258) |
+| `ui/public/ask-panel.mjs` | wired | Today's run card sends the chosen perspective set with the run (flag proposedPerspectives); Stillhet's TaskProposal "reviewed by" picker sends the same `perspectives` field (`stillhet/chat/conversation.js` `perspPicker`, `live/chat-live.mjs` `startBodyOf`; the Perspectives proposed on the run card row above). The prompt check's proposal (`chip-host.mjs` `onAssessment`) does not reach Stillhet's card yet: it starts from dev's default set |
+| `ui/public/shape/` | wired | The perspective chips and their Product lock, Compliance and held-back Project fit (flag proposedPerspectives): Stillhet's TaskProposal "reviewed by" picker, from `src/shared/shape/perspectives.mjs` through `live/chat-live.mjs` `perspectiveChoices` (the Perspectives proposed on the run card row above) |
 
 ## Opt-in
 

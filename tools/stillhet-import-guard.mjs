@@ -16,7 +16,7 @@ const PUBLIC = join(ROOT, 'ui/public');
 
 // Where a Stillhet file may reach: its own folder, the design system, fonts, assets, and the engine files the prototype already bundles.
 const ALLOWED_DIRS = ['stillhet', 'design-system', 'fonts', 'assets'];
-const ALLOWED_FILES = ['graph/view.mjs', 'graph/run-decor.mjs'];
+const ALLOWED_FILES = ['graph/view.mjs', 'graph/run-decor.mjs', 'prompt-check/grader.mjs', 'prompt-check/improve-view.mjs'];
 
 /** Ids both pages use by name; the reason says why that is not a reach into dev's DOM. */
 export const ALLOWED_IDS = {

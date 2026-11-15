@@ -35,7 +35,7 @@ import { ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64, carriesFiles, 
 import { notify } from './feedback.mjs';
 import { currentLevel, levelShows } from './ui-level.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
-import { mountPromptCheckChip } from './prompt-check/chip-host.mjs';
+import { mountPromptCheckChip, promptCheckOn } from './prompt-check/chip-host.mjs';
 import { keepFocus } from './chat/keep-focus.mjs';
 import { flagOn } from './flags.mjs';
 import { mountChatsColumn } from './chats-column.mjs';
@@ -5250,7 +5250,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     head.appendChild(tagRow);
     if (typeof card.note === 'string' && card.note) head.appendChild(make('p', 'ask-rp-why', card.note));
     // A shaped card follows card.shape; the nudge is advisory.
-    const shapeUi = card.shape || card.nudge ? shapeCardExtras(doc, card, { fetch }) : null;
+    // Proposed perspectives (flag): every card shows the chips, a plain one too, and the prompt check proposes them.
+    const proposedOn = flagOn('proposedPerspectives', doc);
+    const shapeUi = card.shape || card.nudge || proposedOn
+      ? shapeCardExtras(doc, card, { fetch, ...(proposedOn ? { proposedPerspectives: true } : {}) }) : null;
     local.shapeUi = shapeUi;
     // A direct Shaper card on the requirements workflow: Shape requirements is its only start button.
     const direct = !!(card.shape && shapeUi && shapeUi.requirements);
@@ -5371,6 +5374,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         focus: () => brief.focus(),
       },
       project: () => st.scope.projectKey,
+      ...(proposedOn && promptCheckOn() ? { onAssessment: (a) => local.shapeUi?.proposeFrom?.(a, brief.value) } : {}),
     });
     if (card.source) {
       // The task IS a tracker task (propose_run source): the run reads it when it starts, so the
@@ -5528,7 +5532,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
     // Shape it first: Start holds an icon and a text node, so only the text node is relabelled.
     let shapeBtn = null;
-    if (shapeUi) {
+    if (shapeUi && !shapeUi.plain) {
       const setLabel = (b, t) => { const n = [...b.childNodes].find((x) => x.nodeType === 3); if (n) n.textContent = t; else b.append(t); };
       if (card.shape && !shapeUi.requirements) {
         setLabel(startBtn, 'Start planning');            // a shaped card is never scheduled
@@ -5971,6 +5975,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       }
       const body = { ...collectCardBody(rootEl, local, block.card || {}), askThreadId: st.threadId, askCardId: block.id, ...(schedule || {}) };
       if (local.shapeUi && (shaped || (block.card || {}).shape)) Object.assign(body, local.shapeUi.body());
+      // Proposed perspectives (flag): an unshaped start sends the chosen set and the proposal, never the Shaper.
+      else if (local.shapeUi?.proposeFrom && flagOn('proposedPerspectives', doc)) Object.assign(body, local.shapeUi.body(false));
       if (overlay) body.overlay = overlay;
       // Run chains: "the branch of the run before it" is a flag, and the wire refuses it next to a branch name.
       // Keyed off the schedule being POSTED — a Start now on an after-proposal carries none and keeps the picked branch.

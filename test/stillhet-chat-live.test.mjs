@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { startChatLive, prBodyOf, startBodyOf, ACTIONS, FLOW, OPENS, openTab } from '../ui/public/stillhet/live/chat-live.mjs';
+import { startChatLive, prBodyOf, startBodyOf, perspectiveChoices, ACTIONS, FLOW, OPENS, openTab } from '../ui/public/stillhet/live/chat-live.mjs';
 import { actionFlow } from '../ui/public/design-system/components/run-state.mjs';
 import { THREAD } from './helpers/stillhet-live-fixture.mjs';
 
@@ -450,6 +450,31 @@ test('a created PR asks for the PR states again (afterPr), so its card reads the
   assert.equal(asked, 1);
   assert.equal((await mk(409).act('pr', { pipelineId: 'p1', projectKey: 'k' })).ok, false);
   assert.equal(asked, 1);
+});
+
+test('startBodyOf carries the reviewed-by picks as dev\'s perspectives field, never the card\'s own (proposedPerspectives)', () => {
+  const card = { title: 'CSV', brief: 'Add CSV', workflowId: 'wf_default', guardrailsId: 'g', target: 'project', projectDir: '/src/web',
+    perspectives: ['product', 'compliance'], perspectiveProposal: { proposed: ['product'], kind: 'bug' }, shape: { perspectives: ['qa'] } };
+  const none = startBodyOf(card);
+  for (const k of ['perspectives', 'perspectiveProposal', 'shape']) assert.equal(k in none, false, k);
+  const picks = ['product', 'qa', 'compliance'];
+  const body = startBodyOf(card, { perspectives: picks });
+  assert.deepEqual(body.perspectives, ['product', 'qa', 'compliance']);
+  assert.notEqual(body.perspectives, picks, 'a copy: a later tick never changes a sent body');
+  for (const k of ['perspectiveProposal', 'shape']) assert.equal(k in body, false, k);
+  assert.deepEqual(startBodyOf({ ...card, target: 'none' }, { target: 'none', perspectives: ['product'] }).perspectives, ['product'], 'no project too');
+  assert.equal('perspectives' in startBodyOf(card, { perspectives: [] }), false, 'an empty set sends nothing');
+});
+
+test('perspectiveChoices: dev\'s default set, Product always on, Compliance offered, Project fit only once picked', () => {
+  const d = perspectiveChoices();
+  assert.deepEqual(d.picked, ['product', 'architect', 'qa']);
+  assert.equal(d.items.at(-1).key, 'compliance');
+  assert.equal(d.items.some((i) => i.key === 'fit'), false);
+  assert.deepEqual(d.items[0], { key: 'product', label: 'Product', help: 'Always reviews', locked: true });
+  const f = perspectiveChoices(['qa', 'fit', 'nope']);
+  assert.deepEqual(f.picked, ['product', 'qa', 'fit'], 'list order, Product added, an unknown key dropped');
+  assert.ok(f.items.some((i) => i.key === 'fit'));
 });
 
 // Run with (D4, D5): a one-stage workflow Worca proposes only to run a task is saved, then the run proposal dev's event

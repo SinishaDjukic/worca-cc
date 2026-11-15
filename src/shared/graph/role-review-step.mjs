@@ -15,7 +15,7 @@ export const isRequirementConcern = (f) => !!f?.requirement;
 const blocks = (f) => BLOCKING.has(f.severity) && !isRequirementConcern(f);
 
 export const ROLE_KEY_RE = /^[a-z]{1,24}$/;   // finding ids are `key-round-n`: letters only keep them parseable
-const MAX_ROLES = 12;
+export const MAX_ROLES = 12;   // equals OVERLAY_MAX_ROLES (src/core/run-overlay.mjs), pinned by a test
 const LABEL_MAX = 60;
 const SPEC_KEYS = new Set(['roles', 'source', 'target', 'checklist', 'sink', 'secondOpinion']);
 const ROLE_KEYS = new Set(['key', 'label', 'model', 'effort']);
@@ -123,6 +123,9 @@ export function roleReviewOf(config) {
     : provider.roles();
   return { roles, source: rr.source || 'declared', target: rr.target, ...(rr.checklist ? { checklist: rr.checklist } : {}), sink: rr.sink, ...(rr.secondOpinion ? { secondOpinion: rr.secondOpinion } : {}) };
 }
+
+/** The roles a provider lets a chosen set add to a `picked` spec beyond the ones it declares; [] without optInRoles. */
+export const optInRolesOf = (provider) => (provider && typeof provider.optInRoles === 'function' ? provider.optInRoles() : []);
 
 /** The spec's checklist provider, or null. */
 export const roleChecklistOf = (spec) => (spec?.checklist ? ROLE_CHECKLISTS[spec.checklist] || null : null);
