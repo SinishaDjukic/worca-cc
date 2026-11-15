@@ -2,19 +2,24 @@
 // boot.js's order, data-adapter="live"); the host and its helpers are test/helpers/stillhet-chat-live-host.mjs.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { LISTS, SOURCES, THREAD, clone, go, liveHost, posts, saidText, settle, toastText, withRun, closeHosts } from './helpers/stillhet-chat-live-host.mjs';
+import { LISTS, SOURCES, THREAD, clone, go, liveHost, posts, saidText, settle, toastText, until, withRun, closeHosts } from './helpers/stillhet-chat-live-host.mjs';
 
 afterEach(closeHosts);   // each test's window closes when the test ends
-test('panel.answer-refs: a run Worca names is a RefChip once dev confirms it, and it lands on the card in the chat that started it; an unconfirmed id stays words', async () => {
+test('panel.answer-refs (F-refchip): a run Worca names is a RefChip once dev confirms it, and it lands on the card in the chat that started it; an unconfirmed id stays words', async () => {
   const said = { thread: { id: 'ask_2', title: 'Writing' }, messages: [{ id: 'w1', role: 'assistant', status: 'done', text: 'It is the same as 0a1b2c3d, not 9f9f9f9f.', createdAt: THREAD.messages[0].createdAt, blocks: [] }], runLinks: [], inFlight: null };
-  const { w, d, calls } = await liveHost({ thread: (url) => (url.endsWith('ask_2') ? [200, said] : [200, THREAD]), write: (url) => (url === '/api/ask/refs/resolve' ? [200, { refs: { 'run:0a1b2c3d': { ok: true, kind: 'run', id: 'pa', runId: 'run-a', title: 'Ask me', status: 'running' }, 'run:9f9f9f9f': { ok: false } } }] : [200, {}]) });
-  await go(w, '#chat/ask_2', 120);
-  assert.ok(calls.some((c) => c.url === '/api/ask/refs/resolve'), 'dev\'s resolve is asked');
-  const chip = d.querySelector('#route-chat .convo-words [data-ref-run]');
+  let release; const gate = new Promise((r) => { release = r; });
+  const { w, d, calls } = await liveHost({ hold: (url) => (url === '/api/ask/refs/resolve' ? gate : null), thread: (url) => (url.endsWith('ask_2') ? [200, said] : [200, THREAD]), write: (url) => (url === '/api/ask/refs/resolve' ? [200, { refs: { 'run:0a1b2c3d': { ok: true, kind: 'run', id: 'pa', runId: 'run-a', title: 'Ask me', status: 'running' }, 'run:9f9f9f9f': { ok: false } } }] : [200, {}]) });
+  await go(w, '#chat/ask_2');
+  assert.ok(await until(() => calls.some((c) => c.url === '/api/ask/refs/resolve')), 'dev\'s resolve is asked');
+  const words = d.querySelector('#route-chat .convo-words');
+  assert.equal(words.querySelector('[data-ref-run]'), null, 'no RefChip before dev confirms it');
+  assert.match(words.textContent, /0a1b2c3d/, 'the run id stays words while dev\'s answer is held');
+  release();
+  const chip = await until(() => d.querySelector('#route-chat .convo-words [data-ref-run]'));
   assert.ok(chip, 'a RefChip in Worca\'s words');
   assert.equal(chip.textContent, 'Ask me');
   assert.match(d.querySelector('#route-chat .convo-words').textContent, /not 9f9f9f9f\./, 'an unconfirmed id stays words');
-  chip.click(); await settle(60);
+  chip.click(); await until(() => w.location.hash === '#chat/ask_1');
   assert.equal(w.location.hash, '#chat/ask_1', 'the chat that started it');
 });
 

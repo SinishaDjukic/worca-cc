@@ -56,14 +56,14 @@ export { PRESS_MS, selectClear, selectStart, selectToggle, selectRange, selectAl
 export { scheduleDates, scheduleButton, DAY_SECTIONS, BY_CHOICES, BY_DEFAULT, byPart, dateSections, NEXT_RUN_SECTIONS, REPEATS, scheduleWords, TIMES_OF_DAY, listWord, namesWord, listSentence, groupRow, roundRows, listState, resetViewTool, originMark, chatKindIcon } from './list-parts.mjs';
 export { listController, LIST_SHOWN, BREATHE, calmMarks, fitMenu } from './list-page.mjs';
 export { planBulk, skipText, bulkConfirm } from '../../../../src/shared/run-bulk.mjs';
-export { watchKeepOpen } from './keep-open.mjs';
+export { watchKeepOpen, keptRoute } from './keep-open.mjs';
 export { dismissOnOutside, neverOutside, watchStrips, REAL_CONTROL } from './dismiss.mjs';
 export { selectionBar, selectAllBox, bindLongPress } from './selection-bar.mjs';
 export { barChart, lineChart, mixChart, figureRows, watchChart, diffWords } from './chart.mjs';
 export { heatGrid } from './heat-grid.mjs';
 export { sliderPick, rankList, pickRows, factsLine } from './question-forms.mjs';
 export { stageStep } from './kind-mark.mjs';
-export { runOutcomes, handedChip, expandFrame, markTone, alertLevel, kindMark, partsWord, gitMark, timeline, timelineCard, barHead, turnRow, composer, stageBar, cardHead, taskCard, taskProposal, changeProposal, turnDivider, planCard, filesCard, refChip, youTurn, stageLine, stagePart, thinkingRow, placeHead, pluginCard } from './kind-mark.mjs';
+export { runOutcomes, handedChip, expandFrame, markTone, alertLevel, kindMark, partsWord, gitMark, timeline, timelineCard, barHead, turnRow, composer, composerQueue, stageBar, cardHead, taskCard, taskProposal, changeProposal, turnDivider, planCard, filesCard, refChip, youTurn, stageLine, stagePart, thinkingRow, placeHead, pluginCard } from './kind-mark.mjs';
 export { turnTime, turnTimeText } from './turn-time.mjs';
 export { prose, loadProse } from './prose.mjs';
 export { tipPlace, watchTooltips } from './tooltip.mjs';

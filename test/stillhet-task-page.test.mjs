@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readServerSource } from '../src/core/read-server-source.mjs';
-import { taskPageOf, taskCardOf, newTaskBodyOf, NEW_TASK_KEYS, stagesOf, gateOf, stageOfStep, patchFiles, docsOf, logLinesOf, actionsOf, groupOf, commentsByPath, DIFF_PREVIEW } from '../ui/public/stillhet/live/task-page.mjs';
+import { taskPageOf, taskCardOf, newTaskBodyOf, NEW_TASK_KEYS, stagesOf, gateOf, stageOfStep, patchFiles, docsOf, logLinesOf, logStepsOf, stepNamesOf, actionsOf, groupOf, commentsByPath, DIFF_PREVIEW } from '../ui/public/stillhet/live/task-page.mjs';
 import { taskPageErrors } from '../ui/public/stillhet/live/model-shape.mjs';
 import { TASK_DETAILS, NOW, PR_URL } from './helpers/stillhet-live-fixture.mjs';
 import { shortDetail } from '../ui/public/stillhet/live/live-map.mjs';
@@ -152,8 +152,12 @@ test('the page\'s parts on dev\'s data (D4): a patch, artifacts, the log, the wo
   assert.match(ws.full['web/src/x.mjs'], /^\+c$/m);
   assert.deepEqual(commentsByPath({ comments: [{ projectKey: 'web', path: 'src/x.mjs', lineText: 'c', body: 'ok', author: 'user' }] }), { 'web/src/x.mjs': [{ who: 'You', line: 'c', t: 'ok' }] });
   assert.deepEqual(docsOf([{ relPath: 'docs/plan.md', stepKey: 'plan' }, { relPath: 'live-log.ndjson', kind: 'live-log' }, null]), [['plan.md', 'plan', 'docs/plan.md']]);
-  const log = logLinesOf([JSON.stringify({ source: 'sync', level: 'info', text: 'fetched', ts: '2026-11-12T08:00:01Z', executionId: 'x:sync:1' }), 'not json', JSON.stringify({ source: 'agent', level: 'warn', text: 'Bash ls', desc: 'List files', nodeId: 'n_impl', cycle: 2 })].join('\n'));
-  assert.deepEqual(log.map((l) => [l.t, l.step, l.lvl, l.cycle, l.sum, l.raw]), [['08:00:01', 'Sync', 'info', '1', 'fetched', 'fetched'], ['', 'n_impl', 'warn', '2', 'List files', 'Bash ls']]);
+  const prevTz = process.env.TZ;
+  process.env.TZ = 'UTC';
+  try {
+    const log = logLinesOf([JSON.stringify({ source: 'sync', level: 'info', text: 'fetched', ts: '2026-11-12T08:00:01Z', executionId: 'x:sync:1' }), 'not json', JSON.stringify({ source: 'agent', level: 'warn', text: 'Bash ls', desc: 'List files', nodeId: 'n_impl', cycle: 2 })].join('\n'));
+    assert.deepEqual(log.map((l) => [l.t, l.step, l.node, l.lvl, l.cycle, l.sum, l.raw]), [['08:00:01', 'Sync', '', 'info', '1', 'fetched', 'fetched'], ['', 'n_impl', 'n_impl', 'warn', '2', 'List files', 'Bash ls']]);
+  } finally { if (prevTz === undefined) delete process.env.TZ; else process.env.TZ = prevTz; }
   const a = actionsOf({ enabled: false, members: [{ projectKey: 'web', state: 'checked-out', actions: [{ id: 'dev', label: 'Dev server' }], builtins: [{ key: 'editor', label: 'Editor' }] }],
     instances: [{ actionId: 'dev', member: 'web', status: 'running', ports: { PORT: 4417 }, url: 'http://localhost:4417' }] });
   assert.deepEqual(a, { services: [{ key: 'web/dev', id: 'dev', name: 'Dev server', port: 4417, running: true, url: 'http://localhost:4417', member: 'web' }], builtins: [{ key: 'web/editor', id: 'editor', label: 'Editor', member: 'web' }], stacks: [], enabled: false, checkedOut: true });
@@ -169,6 +173,31 @@ test('the page\'s parts on dev\'s data (D4): a patch, artifacts, the log, the wo
   assert.deepEqual(w.stacks, [{ id: 's1', name: 'Both', steps: 2, status: 'starting', step: 1, error: '' }]);
   assert.deepEqual(commentsByPath({ comments: [{ path: 'a.mjs', lineText: 'new', body: 'why?', author: 'user', authorName: 'Maya' }, { path: 'a.mjs', parentId: 'c1', body: 'a reply' }] }), { 'a.mjs': [{ who: 'Maya', line: 'new', t: 'why?' }] });
 });
+
+const withTz = (tz, fn) => { const prev = process.env.TZ; process.env.TZ = tz; try { return fn(); } finally { if (prev === undefined) delete process.env.TZ; else process.env.TZ = prev; } };
+
+test('F-3-11: a log line\'s time is the browser\'s local time, HH:MM:SS', () => withTz('Asia/Kolkata', () => {
+  const at = '2026-11-12T08:00:01Z';
+  const log = logLinesOf([{ ts: at, text: 'a' }, { ts: Date.parse(at), text: 'b' }, { text: 'c' }, { ts: 'nonsense', text: 'd' }].map((e) => JSON.stringify(e)).join('\n'));
+  assert.deepEqual(log.map((l) => l.t), ['13:30:01', '13:30:01', '', ''], 'local (UTC+05:30), 24-hour with seconds; no time is blank, never now');
+}));
+
+test('F-3-11: a log line from n_plan names its step Plan, as the step list does; the id only when nothing names it', () => withTz('Asia/Kolkata', () => {
+  const nodes = [{ id: 'n_plan', kind: 'agent', key: 'planner', label: 'Plan', progressStage: 'plan' }, { id: 'n_impl', kind: 'agent', key: 'implementer', progressStage: 'build' }];
+  const state = { stepper: { graph: { nodes } }, steps: [{ nodeId: 'n_plan', agentKey: 'planner', status: 'done' }, { nodeId: 'n_x', agentKey: 'tester', status: 'done' }] };
+  const lines = logLinesOf([{ nodeId: 'n_plan', ts: '2026-11-12T08:00:01Z', text: 'p' }, { nodeId: 'n_impl', text: 'i' }, { nodeId: 'n_x', text: 'x' }, { nodeId: 'n_unknown', text: 'u' },
+    { executionId: 'x:sync:1', source: 'sync', text: 's' }].map((e) => JSON.stringify(e)).join('\n'));
+  const before = JSON.stringify(lines);
+  const named = logStepsOf(lines, state);
+  assert.deepEqual(named.map((l) => l.step), ['Plan', 'implementer', 'tester', 'n_unknown', 'Sync']);
+  assert.deepEqual([named[0].t, named[0].step], ['13:30:01', 'Plan'], 'the acceptance case: local time and the workflow\'s label');
+  const listed = stagesOf(state.steps, nodes).flatMap((s) => s.steps.map((x) => x.name));
+  for (const n of named.slice(0, 3)) assert.ok(listed.includes(n.step), `the step list names ${n.step} too, so its Log button finds the line`);
+  assert.equal(JSON.stringify(lines), before, 'the cached lines are never mutated');
+  assert.equal(logStepsOf(null, state), null, 'not read yet stays null');
+  assert.deepEqual(logStepsOf(lines, {}).map((l) => l.step), ['n_plan', 'n_impl', 'n_x', 'n_unknown', 'Sync'], 'no state yet: the ids');
+  assert.equal(stepNamesOf(null).size, 0);
+}));
 
 test('groupOf: dev\'s run group in stack order, each member\'s case and cost read from its store row', () => {
   const rows = { p1: { case: 'merged', cost: 1.2, title: 'One' }, p2: { case: 'approved', cost: 0.5 } };
