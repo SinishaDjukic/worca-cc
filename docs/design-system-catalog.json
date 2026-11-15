@@ -1554,6 +1554,19 @@
       "example": "Insights is not in Stillhet yet"
     },
     {
+      "name": "NotLiveRow",
+      "code": "ui/public/design-system/components/not-live-row.mjs#notLiveRow",
+      "kind": "telling",
+      "needs": [
+        "a Settings row still sample on a live Stillhet",
+        "a Settings section all sample on a live Stillhet"
+      ],
+      "rules": [
+        "a row is its name and the words, a section all sample its one line; no value and nothing to click; the demo keeps its sample (set.not-live)"
+      ],
+      "example": "Not in Stillhet yet: turn Stillhet off from the top-bar switch to use it"
+    },
+    {
       "name": "KindMark",
       "code": "ui/public/design-system/components/kind-mark.mjs#kindMark",
       "kind": "telling",

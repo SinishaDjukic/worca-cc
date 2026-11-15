@@ -34,6 +34,8 @@ async function live(opts = {}) {
 // Settings draws into its route's pane (shell.js); a place outside Settings is checked on the whole page
 const page = (d) => d.querySelector('#route-settings');
 async function go(w, hash, ms = 120) { w.location.hash = hash; await settle(ms); return (hash.startsWith('#settings') ? page(w.document) : w.document.body).textContent; }
+const NOT_LIVE = 'Not in Stillhet yet: turn Stillhet off from the top-bar switch to use it';
+const secLine = (d, title) => [...page(d).querySelectorAll('.set-sec')].find((s) => s.querySelector('.set-sec-h')?.textContent.trim() === title)?.querySelector('.el-t')?.textContent;
 const rowTitles = (d) => [...page(d).querySelectorAll('.lr-t')].map((x) => x.textContent.trim());
 
 test('F-5-01/F-7b-11: live Plugins lists exactly the /api/plugins rows', async () => {
@@ -97,17 +99,17 @@ test('F-5-01 (:70): live Chat channels show no demo channel', async () => {
 });
 
 test('F-5-02/F-7b-12: live General has no Setup assistant', async () => {
-  const { w } = await live();
+  const { w, d } = await live();
   const text = await go(w, '#settings/general');
-  assert.match(text, /Getting started/);
+  assert.equal(secLine(d, 'Setup'), NOT_LIVE);
   assert.doesNotMatch(text, /Setup assistant/);
   assert.doesNotMatch(text, /Run setup/);
 });
 
 test('F-7b-04: live Tasks › Spending shows no sample spend or caps', async () => {
-  const { w } = await live();
+  const { w, d } = await live();
   const text = await go(w, '#settings/runs');
-  assert.match(text, /Hourly rate/);
+  assert.equal(secLine(d, 'Spending'), NOT_LIVE);
   for (const re of [/Spent/, /\$1,000/, /Budget/, /Team caps/]) assert.doesNotMatch(text, re);
 });
 

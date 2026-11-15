@@ -554,17 +554,20 @@ function settingsFinds() {
   const out = [{ label: 'Settings', sset: SM.FIRST, where: 'Your menu' }, { label: SM.title('notifications'), sset: 'notifications', where: 'Settings' }, ...NOTIF_ROWS.map((n) => ({ label: n, sset: 'notifications', where: 'Notifications' })), ...RUNS_LIMIT_ROWS.map((n) => ({ label: n, sset: 'runs', where: 'Runs › Limits' }))];
   const text = (x) => (typeof x === 'function' ? x(ui.sv) : x);
   const shown = (x) => !x.only || (x.only === 'live') === !!W.live;   // a sample row the live kind does not draw is not found either
+  const sampleLive = (x) => !!x.sample && !!W.live;   // live, a sample section or row is found by its name only (set.not-live)
   for (const g of SM.GROUPS) for (const id of g.items) {
     const sec = SM.SECTIONS[id]; if (!sec) continue;
     out.push({ label: sec.title, sset: id, min: sec.min, flag: sec.flag, where: 'Settings › ' + g.title });
     if (!shown(sec)) continue;
     for (const s of sec.sections.filter(shown)) {
       const smin = strict(sec.min, s.min), sflag = sec.flag || s.flag, base = id + '/' + s.title, here = `${sec.title} › ${s.title}`;
-      if (s.title !== sec.title) out.push({ label: s.title, words: text(s.meta), sset: id, head: true, min: smin, flag: sflag, where: sec.title });
+      if (s.title !== sec.title) out.push({ label: s.title, words: sampleLive(s) ? '' : text(s.meta), sset: id, head: true, min: smin, flag: sflag, where: sec.title });
+      if (sampleLive(s)) continue;
       const rowsIn = (rows, where, at, min, flag) => { for (const r of (rows || []).filter(shown)) {
         const rmin = strict(min, r.min), rflag = flag || r.flag, open = 'more:' + at + '/' + r.name;
-        out.push({ label: r.name, words: text(r.say), sset: id, min: rmin, flag: rflag, where });
-        for (const m of (r.more || []).filter(shown)) out.push({ label: m.name, words: text(m.say), sset: id, open, parent: r.name, min: strict(rmin, m.min), flag: rflag, where: `${sec.title} › ${r.name}` });
+        out.push({ label: r.name, words: sampleLive(r) ? '' : text(r.say), sset: id, min: rmin, flag: rflag, where });
+        if (sampleLive(r)) continue;
+        for (const m of (r.more || []).filter(shown)) out.push({ label: m.name, words: sampleLive(m) ? '' : text(m.say), sset: id, open, parent: r.name, min: strict(rmin, m.min), flag: rflag, where: `${sec.title} › ${r.name}` });
         for (const it of (r.moreList || []).filter(shown)) out.push({ label: it.title, words: it.meta, sset: id, open, parent: r.name, list: true, min: rmin, flag: rflag, where: `${sec.title} › ${r.name}` });
       } };
       const recsIn = (list, where, at, min, flag, extra = {}) => { for (const it of (list || []).filter(shown)) {
