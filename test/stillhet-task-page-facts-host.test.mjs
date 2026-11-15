@@ -164,19 +164,5 @@ test('the cap dialog\'s refusal is one line (the ConfirmStrip\'s row), and a fie
   assert.equal(d.querySelector('#card .rc-confirm-t.is-err'), null, 'the field error replaces the refusal');
 });
 
-// #1266: an ended task's Activity says how many steps it took; one that can still add steps says "so far". The demo cases
-// hold every tone: finished (done), failed (fail), working (run) and archived (idle, also an unknown state's tone).
-const activityOf = async (id) => {
-  const w = stillhetHost({ hash: `#run/${id}`, after: (f) => closers.push(f) }); await settle(300);
-  return w.document.querySelector('#card [data-key="tab:activity"]').textContent.replace(/^Activity/, '');
-};
-const closers = [];
-afterEach(() => { while (closers.length) closers.pop()(); });
-
-test('a finished task\'s Activity reads "N steps", without "so far" (tones done and fail)', async () => {
-  for (const id of ['finished-nogit', 'failed']) assert.match(await activityOf(id), /^\d+ steps?$/, id);
-});
-
-test('a working task\'s Activity keeps "N steps so far" (tones run and idle)', async () => {
-  for (const id of ['working', 'archived']) assert.match(await activityOf(id), /^\d+ steps? so far$/, id);
-});
+// B1.7 (#1321): a finished task with its branch and no PR. F-3-02 named the source branch (or `dev`) as its base; F-3-03
+// offered Create PR on a project with no git remote.

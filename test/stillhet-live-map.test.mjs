@@ -4,7 +4,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { shapeErrors, SHAPES } from '../ui/public/stillhet/live/model-shape.mjs';
-import { caseOf, overOf, taskOfLive, taskOfSaved, chatOf, unreadOf, scheduleOf, projectOf, costsOf, updateOf, updateOfOutcome, snapshotOf, partOf, dayOf, runGroupsOf, spacesOf, runsOf } from '../ui/public/stillhet/live/live-map.mjs';
+import { caseOf, overOf, knownBase, taskOfLive, taskOfSaved, chatOf, unreadOf, scheduleOf, projectOf, costsOf, updateOf, updateOfOutcome, snapshotOf, partOf, dayOf, runGroupsOf, spacesOf, runsOf } from '../ui/public/stillhet/live/live-map.mjs';
 import { dayBucket } from '../ui/public/runs-list.mjs';
 import { needsYouItems } from '../src/shared/needs-you.mjs';
 import { RUN_STATES } from '../src/shared/run-model.mjs';
@@ -263,7 +263,7 @@ test('a calm failed run reads Failed and a finished run with its branch reads Re
   assert.equal(failed.case, 'failed', 'never Stopped: Pulse says Task failed');
   assert.equal(failed.over, true);
   assert.equal(w.RailWorld.section(failed), 'recent');
-  const ready = taskOfSaved({ id: 'pr', status: 'done', branch: 'feat/x', survived: true, mtime: NOW }, { now: NOW, needs: false });
+  const ready = taskOfSaved({ id: 'pr', status: 'done', branch: 'feat/x', sourceBranch: 'dev', survived: true, mtime: NOW }, { now: NOW, needs: false });
   assert.equal(ready.case, 'ready');
   assert.equal(w.RailWorld.section(ready), 'recent', 'D7: dev\'s Needs you does not list it');
   assert.equal(taskOfSaved({ id: 'pg', status: 'done', branch: 'feat/x', survived: false, mtime: NOW }, { now: NOW }).case, 'finished-nogit', 'its branch is gone');
@@ -272,11 +272,72 @@ test('a calm failed run reads Failed and a finished run with its branch reads Re
   const open = taskOfSaved({ id: 'po', status: 'done', branch: 'feat/x', survived: true, pr: { url: 'https://github.com/o/r/pull/7', state: 'open' }, mtime: NOW }, { now: NOW, needs: false });
   assert.equal(open.case, 'checks', 'its PR is open: In review, View PR, never Create PR');
   assert.equal(open.pr, 'https://github.com/o/r/pull/7');
-  const closedRow = { id: 'pc', status: 'done', branch: 'feat/x', survived: true, pr: { url: 'https://github.com/o/r/pull/8', state: 'CLOSED' }, mtime: NOW };
+  const closedRow = { id: 'pc', status: 'done', branch: 'feat/x', sourceBranch: 'dev', survived: true, pr: { url: 'https://github.com/o/r/pull/8', state: 'CLOSED' }, mtime: NOW };
   const closed = taskOfSaved(closedRow, { now: NOW, needs: false });
   assert.equal(closed.case, 'ready', 'its PR was closed unmerged: Ready, Create PR again');
   const c = chatOf({ id: 't1' }, { links: [{ threadId: 't1', runId: 'pc', started: true }], tasks: [closed] });
   assert.equal(c.tasks[0].git, undefined, 'a closed PR is not watched as open');
+});
+
+// B1.7 (#1321): a finished task with its branch and no PR offers Create PR only when a remote exists and its base is known
+const FIN = (extra = {}) => ({ id: 'pz', status: 'done', branch: 'feat/x', sourceBranch: 'docs/rail-agreed', survived: true, projectKey: 'web-1', mtime: NOW, ...extra });
+const NO_REMOTE = { base: 'main', remote: null, state: 'unknown' }, REMOTE = { base: 'main', remote: 'origin', state: 'up-to-date' };
+const srcWith = (rows, sync) => ({ ...SOURCES, history: { pipelines: rows }, hello: { runs: [] }, sync: { projects: sync } });
+
+test('F-3-03: a finished task whose project\'s sync block has no remote reads no-remote, never ready', () => {
+  assert.equal(taskOfSaved(FIN(), { now: NOW, needs: false, sync: NO_REMOTE }).case, 'no-remote');
+  assert.equal(taskOfSaved(FIN(), { now: NOW, needs: false, sync: REMOTE }).case, 'ready');
+  const s = snapshotOf(srcWith([FIN()], { 'web-1': NO_REMOTE }), { now: NOW });
+  assert.equal(s.runs.find((r) => r.id === 'pz').case, 'no-remote');
+  // no remote wins over an unknown base: linking a remote is the first fix
+  assert.equal(taskOfSaved(FIN({ sourceBranch: '' }), { now: NOW, needs: false, sync: NO_REMOTE }).case, 'no-remote');
+  // an open PR still reads its PR's case
+  assert.equal(taskOfSaved(FIN({ pr: { url: 'https://github.com/o/r/pull/7', state: 'open' } }), { now: NOW, needs: false, sync: NO_REMOTE }).case, 'checks');
+});
+
+test('B1.7 unknown base: a finished task whose sourceBranch is empty or a SHA reads no-base', () => {
+  for (const sourceBranch of ['', undefined, 'a1b2c3d', '0123456789abcdef0123456789abcdef01234567']) {
+    assert.equal(taskOfSaved(FIN({ sourceBranch }), { now: NOW, needs: false, sync: REMOTE }).case, 'no-base', String(sourceBranch));
+  }
+  assert.equal(taskOfSaved(FIN({ sourceBranch: 'main' }), { now: NOW, needs: false, sync: REMOTE }).case, 'ready');
+  assert.equal(knownBase('docs/rail-agreed'), 'docs/rail-agreed');
+  assert.equal(knownBase('deadbeef'), '', 'a SHA (or a hex-looking name) is no base');
+  assert.equal(knownBase('abc123'), 'abc123', 'shorter than a short SHA: a name');
+  assert.equal(knownBase(''), '');
+  assert.equal(knownBase(null), '');
+  assert.equal(knownBase(42), '');
+});
+
+test('B1.7: no-remote and no-base sort as ready does (overOf), Needs you unchanged', () => {
+  const w = stillhetHost({ after });
+  for (const [row, sync, c] of [[FIN(), NO_REMOTE, 'no-remote'], [FIN({ sourceBranch: '' }), REMOTE, 'no-base']]) {
+    const t = taskOfSaved(row, { now: NOW, needs: false, sync });
+    assert.equal(t.case, c);
+    assert.equal(t.over, true, c);
+    assert.equal(w.RailWorld.section(t), 'recent', c);
+    assert.equal(overOf({ ...row, needs: true }, c), false, `${c}: listed by dev's Needs you, it is not over`);
+  }
+  const rows = [FIN(), FIN({ id: 'py', sourceBranch: '' })];
+  const plain = needsYouItems({ live: [], history: rows.map((r) => ({ kind: 'hist', id: r.id, status: r.status })) });
+  const s = snapshotOf(srcWith(rows, { 'web-1': NO_REMOTE }), { now: NOW });
+  assert.deepEqual(s.runs.filter((r) => r.over).map((r) => r.id).sort(), ['py', 'pz']);
+  assert.equal(plain.history.length, 0, 'dev\'s Needs you lists neither');
+});
+
+test('F-3-03: a sync refetch re-decides the task\'s case (partOf sync replaces runs)', () => {
+  const src = srcWith([FIN()], { 'web-1': REMOTE });
+  assert.equal(snapshotOf(src, { now: NOW }).runs.find((r) => r.id === 'pz').case, 'ready');
+  const p = partOf('sync', { projects: { 'web-1': NO_REMOTE } }, src, { now: NOW });
+  assert.ok(p.runs, 'sync feeds the runs');
+  assert.equal(p.runs.find((r) => r.id === 'pz').case, 'no-remote');
+  assert.deepEqual(Object.keys(p).sort(), ['chats', 'groups', 'projects', 'runs']);
+});
+
+test('F-3-03: no sync block loaded keeps ready (classic\'s rule); a workspace task keeps ready', () => {
+  assert.equal(taskOfSaved(FIN(), { now: NOW, needs: false }).case, 'ready');
+  assert.equal(snapshotOf(srcWith([FIN()], {}), { now: NOW }).runs.find((r) => r.id === 'pz').case, 'ready');
+  const ws = { id: 'w1', status: 'done', branch: 'worca/ws0', survived: true, projectKey: 'workspaces/w1', mtime: NOW, members: [{ memberKey: 'api', survived: true }] };
+  assert.equal(taskOfSaved(ws, { now: NOW, needs: false, sync: NO_REMOTE }).case, 'ready', 'D14: per-member remotes are B3.2');
 });
 
 test('a chat\'s task keeps its link\'s pipeline id (Resume posts it), whatever id the store holds', () => {

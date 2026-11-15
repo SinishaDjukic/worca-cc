@@ -4,7 +4,8 @@
 //                 its fine-tuning folds under Customise (`more`);
 //   a record    → ListRow in a List: the row opens what it does not already show, or nothing; its one action a button, more in its ⋯;
 //   Change…     → a Dialog with Fields (`edit`), stepped when it has `steps`; a yes or no → the ConfirmStrip.
-// A value lives in `sv`, a Labs flag in R.prefs. Every control acts on them; nothing is saved (a prototype).
+// A value lives in `sv`, a Labs flag in R.prefs. Every control acts on them; nothing is saved (a prototype). Live, Labs
+// reads the server's flags (GET /api/flags) and changes none: its switches are disabled with the not-live sentence.
 (function () {
   const SM = window.SettingsModel, R = window.RailUI;
   for (const f of SM.FLAGS) R.prefs.setFlag(f.key, f.on);   // a Labs switch's default, for every page that reads a flag
@@ -83,7 +84,7 @@
     }
     for (const [k, v] of Object.entries(r.vals || {})) if (typeof v !== 'function') add(k, r.name, v);
     if (r.sw && r.sw.key) add(r.sw.key, r.name, !!r.sw.on, r.sw.on ? 'on' : 'off');
-    if (r.sw && r.sw.flag) { const on = !!(SM.FLAGS.find((f) => f.key === r.sw.flag) || {}).on; if (R.prefs.flag(r.sw.flag) !== on) out.push({ name: r.name, was: on ? 'on' : 'off' }); }
+    if (r.sw && r.sw.flag && !r.sw.real) { const on = !!(SM.FLAGS.find((f) => f.key === r.sw.flag) || {}).on; if (R.prefs.flag(r.sw.flag) !== on) out.push({ name: r.name, was: on ? 'on' : 'off' }); }
     return [...out, ...(r.more || []).filter((m) => vis(m, c)).flatMap((m) => changesOf(m, sv, c))];
   }
   // An action: a jump to another section (go), a Dialog (edit), a ConfirmStrip (confirm), a copy, a change (do), or a
@@ -100,6 +101,7 @@
   }
   function swOf(r, label, sv, c) {
     const s = r.sw; if (!s) return '';
+    if (s.real) return c.R.tooltip({ text: R.NOT_LIVE_SENTENCE, off: true, html: c.R.switchButton({ on: s.on, label, why: R.NOT_LIVE_SENTENCE, disabled: true, attrs: { 'data-svsw': 'flag:' + s.flag } }) });   // a server flag, read-only (B1.3)
     const off = c.locked || s.locked || (s.off && s.off(sv)) || '';
     return c.R.switchButton({ on: s.flag ? R.prefs.flag(s.flag) : sv[s.key], label, why: off || s.why || '', disabled: !!off, attrs: { 'data-svsw': s.flag ? 'flag:' + s.flag : s.key } });
   }
@@ -285,6 +287,7 @@
   }
   function toggle(sv, key) {
     if (key.startsWith('flag:')) {
+      if (liveOn()) return '';   // live Labs shows the server's flags and changes none: no write, no toast (B1.3)
       const k = key.slice(5), f = SM.FLAGS.find((x) => x.key === k);
       R.prefs.setFlag(k, !R.prefs.flag(k));
       const hidden = R.prefs.flag(k) && f.min && !R.shows(f.min, R.prefs.mode());   // on, but this mode does not draw what it adds: the toast says so
