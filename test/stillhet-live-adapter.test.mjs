@@ -243,6 +243,73 @@ test('history-pr: a row the server omits or marks stale keeps its PR (F-3-01, F-
   assert.equal(r.rows.get('hpr').case, 'ready', 'a genuine no PR still clears');
 });
 
+// F-a1-02, F-a1-10: a history-pr batch draws only when a row's PR really changed
+async function prRig() {
+  const done = { id: 'hpr', title: 'Shipped', status: 'done', branch: 'feat/x', sourceBranch: 'dev', survived: true, projectKey: 'web', projectName: 'web', mtime: new Date(NOW).toISOString() };
+  const r = rig({ answer: (u) => (u === URLS.history ? { pipelines: [...SOURCES.history.pipelines, done] } : ANSWER[u] ?? {}) });
+  await r.tick();
+  r.frame(r.sockets[0], hello);
+  await r.tick();
+  const token = () => r.calls.filter((c) => c.method === 'POST').at(-1).body.token;
+  const send = (items, done = false) => r.frame(r.sockets[0], { type: 'history-pr', token: token(), done, items });
+  return { ...r, token, send };
+}
+const loads = (log) => log.filter((x) => x[0] === 'load').length;
+
+test('history-pr (F-a1-02, F-a1-10): a frame that repeats the PR on screen makes 0 world changes', async () => {
+  const r = await prRig();
+  const pr = { url: 'https://x/pull/1', number: 1, state: 'OPEN', mergeable: 'MERGEABLE', checks: { state: 'pending', total: 2, pending: 2 } };
+  r.send([{ projectKey: 'web', id: 'hpr', pr }]);
+  assert.equal(r.rows.get('hpr').pr, 'https://x/pull/1', 'drawn once');
+  const reordered = { checks: { pending: 2, total: 2, state: 'pending' }, mergeable: 'MERGEABLE', state: 'OPEN', number: 1, url: 'https://x/pull/1' };
+  const cases = [
+    ['the identical item again', [{ projectKey: 'web', id: 'hpr', pr: { ...pr } }]],
+    ['the same PR, its keys in another order', [{ projectKey: 'web', id: 'hpr', pr: reordered }]],
+    ['pr: null for a row that has no PR', [{ projectKey: 'api', id: 'h2', pr: null }]],
+    ['an item for an id not in history', [{ projectKey: 'web', id: 'nope', pr }]],
+    ['a stale resend', [{ projectKey: 'web', id: 'hpr', pr: { ...pr, stale: true } }]],
+  ];
+  for (const [what, items] of cases) {
+    const c = changes(r.log), l = loads(r.log);
+    r.send(items);
+    assert.equal(changes(r.log) - c, 0, `${what}: 0 world changes`);
+    assert.equal(loads(r.log) - l, 0, `${what}: 0 loads`);
+  }
+  assert.equal(r.rows.get('hpr').pr, 'https://x/pull/1', 'the PR stays drawn');
+});
+
+test('history-pr (F-a1-02, F-a1-10): a real change draws once', async () => {
+  const r = await prRig();
+  const open = { url: 'https://x/pull/1', number: 1, state: 'OPEN' };
+  r.send([{ projectKey: 'web', id: 'hpr', pr: open }]);
+  const openCase = r.rows.get('hpr').case;
+  let c = changes(r.log);
+  r.send([{ projectKey: 'web', id: 'hpr', pr: { ...open, state: 'MERGED' } }]);
+  assert.equal(changes(r.log) - c, 1, 'MERGED: 1 world change');
+  assert.notEqual(r.rows.get('hpr').case, openCase, 'the merged PR is drawn');
+  r.send([{ projectKey: 'web', id: 'hpr', pr: open }]);
+  assert.equal(r.rows.get('hpr').case, openCase);
+  c = changes(r.log);
+  r.send([{ projectKey: 'web', id: 'hpr', pr: { ...open, checks: { state: 'failing', total: 2, failed: 1 } } }]);
+  assert.equal(changes(r.log) - c, 1, 'checks failing: 1 world change');
+  assert.notEqual(r.rows.get('hpr').case, openCase, 'the failing checks are drawn');
+  c = changes(r.log);
+  r.send([{ projectKey: 'web', id: 'hpr', pr: null }, { projectKey: 'api', id: 'h2', pr: null }]);
+  assert.equal(changes(r.log) - c, 1, 'null: 1 world change, once for the whole batch');
+  assert.equal(r.rows.get('hpr').case, 'ready', 'a genuine no PR clears');
+});
+
+test('history-pr (F-a1-02): a done frame that changes nothing still ends the task page\'s wait', async () => {
+  const r = await prRig();
+  const pr = { url: 'https://x/pull/1', number: 1, state: 'OPEN' };
+  r.send([{ projectKey: 'web', id: 'hpr', pr }]);
+  assert.equal(r.live.task.prLookup().ended, false);
+  const c = changes(r.log);
+  r.send([{ projectKey: 'web', id: 'hpr', pr: { ...pr } }], true);
+  assert.equal(r.live.task.prLookup().ended, true, 'the lookup ended');
+  assert.equal(changes(r.log) - c, 0, '0 world changes');
+});
+
 test('a failed PR lookup is asked again by the task page\'s Try again (open force), and only while it is failed', async () => {
   let prStatus = 500;
   const r = rig({ status: (u) => (u === '/api/history/pr' ? prStatus : 200) });
