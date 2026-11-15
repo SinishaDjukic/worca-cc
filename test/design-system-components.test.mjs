@@ -1608,6 +1608,19 @@ test('B2.8 ScrollFade: a column that leaves the page is no longer observed', asy
   window.close();
 });
 
+test('ScrollFade: pinnedToEnd — within 80px of the end is the end (#1381, motion.follow-end)', () => {
+  assert.equal(typeof C.pinnedToEnd, 'function', 'on the index');
+  assert.equal(C.pinnedToEnd({ scrollTop: 1520, scrollHeight: 2000, clientHeight: 400 }), true, '80px from the end');
+  assert.equal(C.pinnedToEnd({ scrollTop: 1519, scrollHeight: 2000, clientHeight: 400 }), false, '81px holds');
+  assert.equal(C.pinnedToEnd({ scrollTop: 1600, scrollHeight: 2000, clientHeight: 400 }), true, 'at the exact end');
+  assert.equal(C.pinnedToEnd({ scrollTop: 120, scrollHeight: 2000, clientHeight: 400 }), false, 'scrolled up');
+  assert.equal(C.pinnedToEnd({ scrollTop: 0, scrollHeight: 300, clientHeight: 400 }), true, 'content that fits');
+  assert.equal(C.pinnedToEnd(null), false);
+  assert.equal(C.pinnedToEnd(undefined), false);
+  assert.equal(C.pinnedToEnd({ scrollTop: 1599, scrollHeight: 2000, clientHeight: 400 }, 0), false, 'a custom near of 0');
+  assert.equal(C.pinnedToEnd({ scrollTop: 1600, scrollHeight: 2000, clientHeight: 400 }, 0), true);
+});
+
 test('commands: dev\'s group head, rows with no mark, Copy on the command and its output', () => {
   assert.equal(C.commandHead({ count: 3, failed: 1, dur: '5.4s' }), '<b>Ran 3 commands</b> · <span class="cmd-failed">1 failed</span> · 5.4s');
   assert.match(C.commandHead({ count: 3, running: true, current: 'Running the tests', dur: '2.1s' }), /^<b>Running the tests<\/b> · 3 commands · 2.1s$/);

@@ -164,6 +164,7 @@ other library calls, never a person's text: a person's text goes through the lib
 | Undo right after a step | `toastUndo` | Toast |
 | What a toast says, two lines at most, the whole text in its tooltip | `toastText` | Toast |
 | The head of a group of commands: how many, how many failed, how long | `commandHead` | CommandGroup |
+| A chat at its end follows what arrives; scrolled up, it holds | `pinnedToEnd` | ScrollFade |
 | A redraw that moves what changed instead of jumping | `morph` | What a toggle opens, moving |
 | The flash on what you just went to | `land` | What a toggle opens, moving |
 | Esc or a click outside takes a strip back | `watchStrips` | Closing what lies over a page |

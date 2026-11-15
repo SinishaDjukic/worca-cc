@@ -2,7 +2,7 @@
 // softens as it goes under the composer, and under the top bar once scrolled; at its end, nothing fades. One watcher
 // marks every `.convo-scroll` (or `[data-scroll-fade]`); the stylesheet fades.
 import { frameBatch } from './keyed-list.mjs';
-const SEL = '.convo-scroll, [data-scroll-fade], .menu.is-two-cols,.bar-list, .rail-side-settings, .rl-side-body, .side-menu, .pz-popover .panel-body, #card, body.view-settings .main, body.view-runs .main', EDGE = 4, FAR = 72;   // every column that scrolls under something: chats, the bars, Settings, Pulse, a task's page
+const SEL = '.convo-scroll, [data-scroll-fade], .menu.is-two-cols,.bar-list, .rail-side-settings, .rl-side-body, .side-menu, .pz-popover .panel-body, #card, body.view-settings .main, body.view-runs .main', EDGE = 4, FAR = 72, PIN = 80;   // every column that scrolls under something: chats, the bars, Settings, Pulse, a task's page
 const seen = new WeakSet();
 
 /**
@@ -12,6 +12,16 @@ const seen = new WeakSet();
  */
 export function scrollEdges({ scrollTop, scrollHeight, clientHeight }) {
   return { above: scrollTop > EDGE, below: scrollHeight - scrollTop - clientHeight > EDGE };
+}
+
+/**
+ * Whether a scrolling box sits at its end: its last `near` px are in view (docs/rail/motion.md › motion.follow-end).
+ * @param {{scrollTop:number, scrollHeight:number, clientHeight:number}|null|undefined} box
+ * @param {number} [near=PIN]
+ * @returns {boolean}
+ */
+export function pinnedToEnd(box, near = PIN) {
+  return !!box && box.scrollHeight - box.scrollTop - box.clientHeight <= near;
 }
 
 /**

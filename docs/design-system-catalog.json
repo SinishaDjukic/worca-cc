@@ -1777,8 +1777,17 @@
         "a chat softens where it goes under the composer or the top bar, only while there is more past that edge (scrollEdges says which)",
         "a column measured only when it scrolls, resizes or its content changes (and every column around that change): a draw that changes nothing measures nothing"
       ],
+      "also": [
+        {
+          "code": "ui/public/design-system/components/scroll-fade.mjs#pinnedToEnd",
+          "needs": [
+            "whether a chat sits at its end (its last PIN px in view), so a growing reply keeps it there"
+          ]
+        }
+      ],
       "rules": [
-        "motion.scroll-fade"
+        "motion.scroll-fade",
+        "motion.follow-end"
       ]
     },
     {
