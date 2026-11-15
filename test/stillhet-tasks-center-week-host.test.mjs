@@ -13,15 +13,15 @@ const WEEK_URL = '/api/stats?range=week&report=1';
 const LIVE_TIP = 'Opens this week\'s tasks in the list. The figure counts every run Worca recorded this week, so the two can differ';
 const fact = (id, project, usd) => ({ id, person: 'Maya', project, workflow: 'Default', status: 'finished', pr: null, tags: {}, usd, hours: 1, inCohort: true, startedMs: 1, hourBucket: 0, spend: [[0, usd]] });
 const WEEK = { bucket: 'day', windowStartMs: 0, windowEndMs: 1, humanRateUsd: 0, prev: null, series: [],
-  totals: { spentUsd: 2542.31, humanHours: 0, savedUsd: 0, runs: 49, finished: 49, failed: 0, stopped: 0, prsMerged: 0, prsOpened: 0 },
+  totals: { spentUsd: 6321.75, pipelineSpendUsd: 2551.75, humanHours: 0, savedUsd: 0, runs: 49, finished: 49, failed: 0, stopped: 0, prsMerged: 0, prsOpened: 0 },
   report: { buckets: [0], runs: [fact('x1', 'api', 10), fact('x2', 'api', 2.4), fact('x3', 'api', 0), fact('x4', 'ops', 7)], prevRuns: null } };
 const facts = (d) => { if (!d.querySelector('#route-runs .figs-line')) d.querySelector('#route-runs [data-c-figs="tasks"]').click(); return d.querySelector('#route-runs .figs-line')?.textContent || ''; };
 const sources = () => { const s = clone(SOURCES); for (const p of s.history.pipelines) p.projectKey = 'web-1'; return s; };
 
-test('F-3-10 live: the head equals GET /api/stats?range=week totals (49 tasks this week · $2542.31 this week) while the list holds more rows', async () => {
+test('F-3-10 live: the head equals GET /api/stats?range=week runs (49 tasks this week · $2,551.75 this week, F-fm-02: chat spend left out, thousands separated) while the list holds more rows', async () => {
   const { w, d, calls } = await liveHost({ sources: sources(), read: (u) => (u === WEEK_URL ? [200, WEEK] : null) });
   await go(w, '#runs', 200);
-  assert.equal(facts(d), '49 tasks this week · $2542.31 this week');
+  assert.equal(facts(d), '49 tasks this week · $2,551.75 this week');
   assert.notEqual(w.RailRunsList.rows().length, 49, 'the list itself holds another number of rows');
   assert.equal(calls.filter((c) => c.url === WEEK_URL).length, 1, 'one read');
   const n = d.querySelector('#route-runs .figs-line [data-c-filter]');
@@ -45,7 +45,7 @@ test('B3.6 review: a failed week read is read again when Tasks is opened again',
   status = 200;
   await go(w, '#chat', 60); await go(w, '#runs', 200);
   assert.equal(calls.filter((c) => c.url === WEEK_URL).length, 2, 'the visit re-reads the failed week');
-  assert.equal(facts(d), '49 tasks this week · $2542.31 this week');
+  assert.equal(facts(d), '49 tasks this week · $2,551.75 this week');
 });
 
 test('B3.6 review: an Insights read landing redraws the Projects center once', async () => {
@@ -64,7 +64,7 @@ test('F-3-10 live: while /api/stats is pending (hold) or 500, the head shows no 
   assert.equal(facts(d), '', 'pending: no figures');
   assert.doesNotMatch(d.querySelector('#route-runs').textContent, /tasks? this week|\$\d/);
   open(); await settle(80);
-  assert.equal(facts(d), '49 tasks this week · $2542.31 this week', 'the landed read repaints the center');
+  assert.equal(facts(d), '49 tasks this week · $2,551.75 this week', 'the landed read repaints the center');
   const bad = await liveHost({ sources: sources(), read: (u) => (u === WEEK_URL ? [500, { error: 'boom' }] : null) });
   await go(bad.w, '#runs', 200);
   assert.equal(facts(bad.d), '', 'failed: no figures');
@@ -85,12 +85,12 @@ test('F-3-10 live: a pipelines-changed frame re-reads the week and the head foll
   let answer = WEEK;
   const { w, d, calls, sockets } = await liveHost({ sources: sources(), read: (u) => (u === WEEK_URL ? [200, answer] : null) });
   await go(w, '#runs', 200);
-  assert.equal(facts(d), '49 tasks this week · $2542.31 this week');
-  answer = { ...WEEK, totals: { ...WEEK.totals, runs: 50, spentUsd: 2550 } };
+  assert.equal(facts(d), '49 tasks this week · $2,551.75 this week');
+  answer = { ...WEEK, totals: { ...WEEK.totals, runs: 50, spentUsd: 6330, pipelineSpendUsd: 2560 } };
   sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'pipelines-changed' }) });
   await settle(450);
   assert.equal(calls.filter((c) => c.url === WEEK_URL).length, 2);
-  assert.equal(facts(d), '50 tasks this week · $2550.00 this week');
+  assert.equal(facts(d), '50 tasks this week · $2,560.00 this week');
 });
 
 test('F-3-10 demo: a group counts each member once, by its own date and cost (no group × inWeek)', async () => {

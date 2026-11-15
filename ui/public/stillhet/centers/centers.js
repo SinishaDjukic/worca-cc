@@ -5,7 +5,7 @@
   const R = window.RailUI, W = window.RailWorld, RM = window.RunCardModel;
   const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const say = (t, undo) => window.RailPulse?.say(t, undo);
-  const usd = (n) => `$${n.toFixed(2)}`;
+  const usd = (n) => `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;   // F-fm-02: thousands separated ($2,551.75)
   const plural = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
   const advanced = () => R.shows('advanced');
   const List = () => window.RailRunsList, Sch = () => window.RailSchedules;
