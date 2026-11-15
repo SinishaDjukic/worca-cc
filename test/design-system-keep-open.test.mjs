@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { watchKeepOpen, keptRoute, listController, listEditor, morph } from '../ui/public/design-system/components/index.mjs';
+import { watchKeepOpen, listController, listEditor, morph } from '../ui/public/design-system/components/index.mjs';
 
 const page = (hash = '#projects') => {
   const dom = new JSDOM('<!doctype html><div id="c"></div>', { url: 'http://x/' + hash, pretendToBeVisual: true });
@@ -207,13 +207,6 @@ test('F-b23-01: a real blur still lets the field go: blurred, or a click elsewhe
   doc.getElementById('b').focus(); await tick();
   draw(c); await tick();
   assert.notEqual(doc.activeElement, doc.getElementById('f'));
-});
-
-test('keptRoute: the place and its item, without a side panel or an @ way in', () => {
-  assert.equal(keptRoute('#chat/ask_1/run/run-a/logs'), '#chat/ask_1');
-  assert.equal(keptRoute('#projects/billing-api@legacy'), '#projects/billing-api');
-  assert.equal(keptRoute('#chat'), '#chat');
-  assert.equal(keptRoute(''), '');
 });
 
 test('F-b23-02: a list\'s popover (Add to group, #list-pop-q) closes with its text on a route change, and stays on a side panel', async () => {

@@ -2442,7 +2442,15 @@
       "needs": [
         "an open menu, inline field or dialog whose typed text, caret and focus must survive a live redraw"
       ],
-      "example": "watchKeepOpen(document); R.field({ id, label, attrs: { 'data-keep': 'pj-hand:rename:billing-api' } })"
+      "example": "watchKeepOpen(document); R.field({ id, label, attrs: { 'data-keep': 'pj-hand:rename:billing-api' } })",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/keep-open.mjs#keptRoute",
+          "needs": [
+            "the route an open control belongs to, so a page or list closes it when you move to another place or item"
+          ]
+        }
+      ]
     },
     {
       "name": "The sound of a new event",
