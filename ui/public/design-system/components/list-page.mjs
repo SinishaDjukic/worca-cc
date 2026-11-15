@@ -44,12 +44,17 @@ export const LIST_SHOWN = 8;
 const ROUNDS_SHOWN = 5;
 const q = (v) => String(v).replace(/["\\]/g, '\\$&');   // a value inside an attribute selector
 
-/** Keeps a menu inside the window, 16px from its edges. */
+/**
+ * Keeps a menu inside the window, 16px from its edges. A kept menu (comp.patch-parts) is measured from where it would sit
+ * without its last shift, so a redraw never builds on that shift, a resize re-fits it, and nothing is written unless the
+ * shift changes.
+ */
 export function fitMenu(m, vw) {
-  const r = m.getBoundingClientRect();
-  if (r.right > vw - 16) m.style.left = `${Math.min(0, vw - 16 - r.right)}px`;
-  const r2 = m.getBoundingClientRect();
-  if (r2.left < 16) m.style.left = `${parseFloat(m.style.left || 0) + 16 - r2.left}px`;
+  const was = parseFloat(m.style.left || 0) || 0, r = m.getBoundingClientRect();
+  const left = r.left - was, right = r.right - was;
+  let dx = right > vw - 16 ? vw - 16 - right : 0;
+  if (left + dx < 16) dx = 16 - left;
+  if (dx !== was) m.style.left = dx ? `${dx}px` : '';
 }
 
 /**

@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { patchKeyed, frameBatch } from '../ui/public/design-system/components/index.mjs';
+import { patchKeyed, patchParts, frameBatch } from '../ui/public/design-system/components/index.mjs';
 
 const box = () => new JSDOM('<!doctype html><div id="c"></div>').window.document.getElementById('c');
 const li = (k, t = k) => ({ key: k, html: `<p data-k="${k}">${t}</p>` });
@@ -146,4 +146,37 @@ test('frameBatch falls back to a 16 ms timeout without requestAnimationFrame', (
   assert.equal(t[0][1], 16);
   t[0][0]();
   assert.equal(n, 1);
+});
+
+test('B2.7 comp.patch-parts: a redraw that changes one part leaves the other parts\' nodes identical (same objects), and an empty part draws nothing', () => {
+  const c = box();
+  const parts = (b, d = '') => ({ popover: '<div data-k="a">A</div>', 'new-run': b, account: d, session: '<p data-k="s">S</p>' });
+  assert.deepEqual(patchParts(c, parts('', null)), { kept: 0, replaced: 0, added: 4, removed: 0 });
+  assert.equal(c.innerHTML, '<div data-k="a">A</div><p data-k="s">S</p>', 'empty, null and undefined parts draw nothing');
+  const a = el(c, 'a'), s = el(c, 's');
+  patchParts(c, parts('<i data-k="b">B</i>'));
+  assert.equal(c.innerHTML, '<div data-k="a">A</div><i data-k="b">B</i><p data-k="s">S</p>', 'a part that comes back is inserted at its place');
+  assert.equal(el(c, 'a'), a);
+  assert.equal(el(c, 's'), s);
+  const b = el(c, 'b');
+  assert.deepEqual(patchParts(c, parts('<i data-k="b">B</i>', '<u data-k="d">D</u>')), { kept: 3, replaced: 1, added: 0, removed: 0 });
+  assert.equal(el(c, 'b'), b);
+  assert.deepEqual(patchParts(c, parts('', '<u data-k="d">D</u>')), { kept: 3, replaced: 1, added: 0, removed: 0 });
+  assert.equal(el(c, 'b'), null, 'a part that becomes empty is removed');
+  assert.equal(el(c, 'a'), a);
+  assert.equal(el(c, 's'), s);
+});
+
+test('B2.7 comp.patch-parts: a redraw that changes nothing replaces nothing and queues no mutation record', () => {
+  const dom = new JSDOM('<!doctype html><div id="c"></div>'), c = dom.window.document.getElementById('c');
+  const parts = { head: '<h2>Head</h2>', field: '<input value="x">', tail: 'text <b>tail</b>' };
+  patchParts(c, parts);
+  const nodes = [...c.childNodes];
+  const recs = [];
+  const mo = new dom.window.MutationObserver((l) => recs.push(...l));
+  mo.observe(c, { childList: true, subtree: true, attributes: true, characterData: true });
+  assert.deepEqual(patchParts(c, { ...parts }), { kept: 3, replaced: 0, added: 0, removed: 0 });
+  recs.push(...mo.takeRecords()); mo.disconnect();
+  assert.equal(recs.length, 0);
+  assert.deepEqual([...c.childNodes], nodes);
 });

@@ -133,7 +133,7 @@
         ofRun('q1', 'run.done', 'h1', '18 min · $1.42', '09:15', 'Today')] },
     // A shared sign-in with one of every kind: the card, the team's note, every Vitals section and event.
     { id: 'every', label: 'Every kind, shared sign-in', desktop: 'on', task: { title: 'Add rate limiting to the public API' },
-      identity: { people: ['Emil Angelov', 'Dana Ruiz'], via: 'Through your team\'s sign-in' }, teamSetup: true, newVersion: '1.20.0', chatUnread: true,
+      identity: { people: ['Sam Rivera', 'Dana Ruiz'], via: 'Through your team\'s sign-in' }, teamSetup: true, newVersion: '1.20.0', chatUnread: true,
       away: { status: 'away-hours', hours: ['18:00', '08:00'] },
       updates: [
         NEW_VERSION('e-upd'),

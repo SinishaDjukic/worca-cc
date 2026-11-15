@@ -1,4 +1,4 @@
-// Run: node plans/rail/prototype/gates/ds-check.mjs
+// Run: node plans/rail/prototype/gates/ds-check.mjs [--workers N]
 // The design-system gate: a Rail page is built only from what the design system has. Reports, in the prototype's CSS,
 // a colour, type size, corner or shadow that is not a token, and a token that does not exist; and, on every case of
 // every page, an inline style that sets a look (not layout or data), a class no stylesheet styles, and a control that
@@ -7,6 +7,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 import { indexUrl, pageUrl, buildBundles } from './target.mjs';
+import { runUnits, workerCount } from './pool.mjs';
 import { APP_CSS } from './app-css.mjs';
 import { ALIGN } from './align-check.mjs';
 import { scanText } from '../../../../tools/rail-gate.mjs';
@@ -111,8 +112,8 @@ const HEADS = () => {
 };
 
 // --- the pages ---
-const READ = ([CONTROL_SEL, known]) => {
-      const out = []; const known_ = new Set(known);
+const READ = (CONTROL_SEL) => {
+      const out = []; const known_ = new Set(window.__dsKnown);   // the styled classes, handed to the page once (addInitScript below)
       const root = document.querySelector('.mk-wrap, .pz-app') ? document.body : document.body;
       for (const e of root.querySelectorAll('*')) {
         if (e.closest('.mk-bar, .mk-intro, .mk-proposed, .mk-tools, #route-today, #side-rail, #topnav, svg')) continue;
@@ -127,9 +128,11 @@ const READ = ([CONTROL_SEL, known]) => {
     };
 const b = await chromium.launch({ channel: 'chrome' });
 const OPEN = ['break:part', 'break:background', 'break:offline', '[data-pop]', '[data-acct]', '[data-newrun]', '[data-key="act-main"]', '[data-menu]', '.rc-tabs .tab:nth-child(2)', '.rc-tabs .tab:nth-child(3)', '.rc-tabs .tab:nth-child(4)', '.rc-tabs .tab:nth-child(5)'];
-for (const page of readdirSync(here('.')).filter((f) => f.endsWith('.html') && f !== 'components.html')) {
+const units = [];   // each page, and the generated page: independent, so they run side by side (pool.mjs)
+for (const page of readdirSync(here('.')).filter((f) => f.endsWith('.html') && f !== 'components.html')) units.push(async (add) => {
   // reduced motion, as every other gate: a running row's breathing dot (rail.css `sc-breathe`) moves its edge mid-measure
   const p = await b.newPage({ viewport: { width: 900, height: 900 }, reducedMotion: 'reduce' });
+  await p.addInitScript((k) => { window.__dsKnown = k; }, [...classes]);   // every document this page loads knows the styled classes
   await p.addInitScript(() => { try { localStorage.setItem('worca-rail.mode', 'expert'); } catch { /* none */ } });   // the gates walk every place: Expert
   p.on('pageerror', (e) => add('script error', String(e)));
   await p.goto(pageUrl(page, here(page)));
@@ -138,7 +141,7 @@ for (const page of readdirSync(here('.')).filter((f) => f.endsWith('.html') && f
     await p.selectOption('#case', cases[(cases.indexOf(c) + 1) % cases.length]); await p.selectOption('#case', c);
     if (o && o.startsWith('break:')) { if (!(await p.$('#break'))) continue; await p.selectOption('#break', o.slice(6)); }   // the error cases
     else if (o) { const hit = await p.evaluate((s) => { const x = document.querySelector(s); x?.click(); return !!x; }, o); if (!hit) continue; }
-    const found = await p.evaluate(READ, [CONTROL_SEL, [...classes]]);
+    const found = await p.evaluate(READ, CONTROL_SEL);
     for (const [k, wh] of found) add(k, `${page}: ${wh}`);
     for (const m of await p.evaluate(ALIGN)) add('misaligned (the components own alignment)', `${page} ${c}: ${m}`);
     for (const m of await p.evaluate(NAMES)) add('a name against the naming rule', `${page}: ${m}`);
@@ -150,14 +153,14 @@ for (const page of readdirSync(here('.')).filter((f) => f.endsWith('.html') && f
     await p.goto(indexUrl('#' + route)); await p.waitForTimeout(80);
     for (const o of ['', '[data-menu="show"]', '[data-menu="tools"]', '[data-menu^="row:"]', '[data-fold]', '[data-rounds]', '[data-pick="tools|select"]']) {
       if (o) await p.evaluate((s) => document.querySelector(s)?.click(), `${root} ${o}`);
-      const found = await p.evaluate(READ, [CONTROL_SEL, [...classes]]);
+      const found = await p.evaluate(READ, CONTROL_SEL);
       for (const [k, wh] of found) add(k, `${page}#${route}: ${wh}`);
       for (const m of await p.evaluate(NAMES)) add('a name against the naming rule', `${page}#${route}: ${m}`);
       for (const m of await p.evaluate(HEADS)) add('a head smaller or weaker than what it heads', `${page}#${route}: ${m}`);
     }
     await p.evaluate((s) => { document.querySelector(`${s} [data-menu="tools"]`)?.click(); document.querySelector(`${s} [data-menu-pick="tools|select"]`)?.click(); }, root);
     await p.evaluate((s) => document.querySelector(`${s} [data-sel]`)?.click(), root);
-    for (const [k, wh] of await p.evaluate(READ, [CONTROL_SEL, [...classes]])) add(k, `${page}#${route} selecting: ${wh}`);
+    for (const [k, wh] of await p.evaluate(READ, CONTROL_SEL)) add(k, `${page}#${route} selecting: ${wh}`);
   }
   // every settings section, wide and narrow
   if (await p.$('[data-acct]')) {   // Settings opens from the profile menu
@@ -174,9 +177,9 @@ for (const page of readdirSync(here('.')).filter((f) => f.endsWith('.html') && f
     }
   }
   await p.close();
-}
+});
 // --- the generated Worca Rail page draws every component, as the gallery does ---
-{
+units.push(async (add) => {
   const { buildPage } = await import('../../../../tools/rail-artifact.mjs');
   const p = await b.newPage({ viewport: { width: 1280, height: 800 } });
   await p.addInitScript(() => { try { localStorage.setItem('worca-rail.mode', 'expert'); } catch { /* none */ } });   // the gates walk every place: Expert
@@ -185,7 +188,8 @@ for (const page of readdirSync(here('.')).filter((f) => f.endsWith('.html') && f
   const missing = await p.evaluate(() => [...document.querySelectorAll('.ra-tile')].filter((a) => !document.querySelector(a.getAttribute('href')) || !document.querySelector(a.getAttribute('href')).querySelector('.gl-show *')).map((a) => a.querySelector('b').textContent));
   for (const m of missing) add('a component on the generated Worca Rail page is not drawn', m);
   await p.close();
-}
+});
+await runUnits(units, add, workerCount());
 await b.close();
 console.log(issues.size ? [...issues].map(([k, v]) => `${k} (${v.size})\n   ${[...v].slice(0, 12).join('\n   ')}`).join('\n') : 'everything is from the design system');
 process.exitCode = issues.size ? 1 : 0;

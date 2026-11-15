@@ -36,6 +36,7 @@ The one table: each check, its command, when it runs and the widths it owes. Fro
 | `run-page-sweep` | `node G/run-page-sweep.mjs file://$PWD/plans/rail/prototype/run-page.html` | A change to the run or group page | 900, 375 |
 | `pulse-sweep` | `node G/pulse-sweep.mjs file://$PWD/plans/rail/prototype/pulse.html` | A change to Pulse or Settings | 900, 375 |
 | `click-check` | `node G/click-check.mjs --small` inside a run; without `--small` once per page | A change to a control | 1280, and 375 without `--small` |
+| The sweeps a change needs | `npm run stillhet:sweeps` (`-- --base REF` adds the commits since it; `--all`; `--list` names them without running) | Every change to a prototype page, instead of picking the four sweeps above by hand: it runs the ones this table's "When" names for the changed files, and all four for a file every page shares | theirs |
 | Prototype-vs-app comparison | Built in slice 2 by `npm run stillhet:compare`, every route, no list: the places, the states and every deep route the prototype's data names (each task case, chat, schedule, Settings section and place item; one pair of each kind stays in `out/stillhet-compare/`, the rest in the git-ignored `deep/`); the parts first: `npm run stillhet:compare -- --parts invitation,design-switch` | Once per slice, after it is built; never inside a fix round | 1280 both themes, 360 light |
 | Stillhet wiring rows | `npm run stillhet:wiring` (`--list` for every id); also `test/stillhet-wiring.test.mjs` | A change to an action or a model file of `ui/public/stillhet/` (the test also runs in `npm test`) | none |
 | `stillhet-surfaces` | `node --test test/stillhet-surfaces.test.mjs` (`npm run stillhet:surfaces`; after adding rows, `-- --update` lowers the baseline) | Every change to a Settings key or to a fetch in today's UI; in `npm test` | none |
@@ -46,6 +47,13 @@ The one table: each check, its command, when it runs and the widths it owes. Fro
 | Feature fidelity audit | No command: a live walk on the seeds (`tools/stillhet-seed-tasks.mjs`, `tools/stillhet-seed-chat-cards.mjs`) beside the prototype, scored per area in `plans/rail/audit-feature-1.md`; its shape is held by `test/stillhet-audit-report.test.mjs` | Once at the end of a feature, before it goes to dev | 1280 both themes, 360 light |
 | The audit by looking | No command: open every control and judge the page as a person would | Once per page, after it is built, before review | wide, narrow |
 | A person's review | The step a gate cannot do: nothing pushes or merges without it | After the audit by looking | wide, narrow |
+
+**Speed.** `ds-check`, `worca-sweep`, `run-page-sweep` and `pulse-sweep` run their units (a theme and a width, a page) side by
+side, each in its own browser context, and print the report a single walk prints (`G/pool.mjs`). From disk that is the CPU
+count less one, at most 8; against the app (`STILLHET_TARGET`) one at a time, since the app is shared. `--workers N` sets it.
+`click-check` splits its walk across worker processes with the same flag (`tools/stillhet-gates.mjs`).
+From disk `worca-sweep` waits for a route to be drawn (its hashchange handled, a frame painted), not a fixed time, and a
+journey step that already holds does not wait; against the app the fixed waits stay, as its data comes over the network.
 
 `npm test` holds the library tests, `rail-gate`, `rail-docs`, the run page's model, `rail-default` and `rail-look-options` (the first six), the wiring test, `stillhet-surfaces`, the performance budgets and `stillhet-no-demo-on-live`. A sweep runs in both themes: no sideways scroll, no clipped text without a tooltip,
 no overlaps, every section on the text edge, contrast 4.5:1, every menu and dialog inside the window, no page jump on any

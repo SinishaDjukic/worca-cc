@@ -4,6 +4,9 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { projectsHost, KEYS, settle, go, closeHosts } from './helpers/stillhet-projects-host.mjs';
+import { readBudgets, checkBudget, countMutations } from './helpers/stillhet-perf.mjs';
+
+const { budgets, exclusions } = readBudgets();
 
 afterEach(closeHosts);
 const page = (d) => d.getElementById('route-place');
@@ -20,7 +23,7 @@ const kept = async (h, key) => {
   type(h.w, before, 'abc');
   await redraw(h.w);
   const after = field(h.d);
-  assert.notEqual(after, before, 'the redraw rebuilt the field');
+  assert.equal(after, before, 'B2.7: the redraw kept the field');
   assert.equal(after.value, 'abc');
   assert.deepEqual([after.selectionStart, after.selectionEnd], [1, 1]);
   assert.equal(h.d.activeElement, after);
@@ -65,4 +68,83 @@ test('route change closes Add by hand: away to Chat and back, the form is gone, 
   assert.equal(field(h.d), null, 'closed on the way out');
   h.w.RailPlaces.projects.newPick('hand-project'); await settle(100);
   assert.equal(field(h.d).value, '');
+});
+
+// B2.7 (comp.patch-parts): the page is a frame built once, its column patched by part
+const nodes = (el) => [...el.querySelectorAll('*')];
+const col = (d) => page(d).querySelector(':scope > .convo > .convo-scroll > .convo-col');
+/** One task of seed-ok's, in a chat of its own, whose state the test sets (`state.now`). */
+function seedTask(w) {
+  const state = { now: 'working' };
+  const data = w.RailChats.data, stateOf = w.RunCardModel.stateOf;
+  const chat = { id: 'c-b27', title: 'B2.7', project: 'seed-ok', tasks: [{ title: 'Ship the change', case: 'b27-case', detail: '' }] };
+  w.RailChats.data = () => { const x = data(); return { ...x, chats: [...x.chats, chat] }; };
+  w.RunCardModel.stateOf = (id) => (id === 'b27-case' ? state.now : stateOf(id));
+  return state;
+}
+
+test('B2.7 F-6-01: a live redraw that changes nothing keeps every node of the project page (head, lists, form field, dock composer: same objects)', async () => {
+  const h = await projectsHost({ hash: `#projects/${KEYS.ok}` });
+  pickMore(h.d, 'rename'); await settle(80);
+  type(h.w, field(h.d), 'abc');
+  await redraw(h.w);
+  const before = nodes(page(h.d)), dock = page(h.d).querySelector('#pj-dock');
+  assert.ok(dock.children.length, 'the composer is docked');
+  await redraw(h.w);
+  assert.deepEqual(nodes(page(h.d)), before, 'every node kept');
+  assert.equal(field(h.d).value, 'abc');
+  assert.equal(h.d.activeElement, field(h.d));
+});
+
+test('B2.7 F-6-01: a redraw that changes one part (a task finishes: on-it and lately) leaves head, locate and the dock\'s nodes identical', async () => {
+  const h = await projectsHost({ hash: `#projects/${KEYS.ok}` });
+  const state = seedTask(h.w);
+  pickMore(h.d, 'rename'); await settle(80);
+  await redraw(h.w);
+  const c = col(h.d), onIt = c.querySelector(':scope > p.convo-head');
+  assert.match(onIt.textContent, /working/, 'the task is on it');
+  const head = nodes(c.querySelector('.place-head, header') || c.firstElementChild), form = field(h.d), dock = nodes(page(h.d).querySelector('#pj-dock'));
+  state.now = 'merged';
+  await redraw(h.w);
+  assert.equal(col(h.d), c, 'the same frame');
+  assert.notEqual(c.querySelector(':scope > p.convo-head'), onIt, 'on-it was redrawn');
+  assert.match(c.textContent, /Lately/, 'the finished task moved to Lately');
+  assert.deepEqual(nodes(c.querySelector('.place-head, header') || c.firstElementChild), head, 'head kept');
+  assert.equal(field(h.d), form, 'locate (the open form) kept');
+  assert.deepEqual(nodes(page(h.d).querySelector('#pj-dock')), dock, 'the dock kept');
+});
+
+test('B2.7 F-6-01: the home page\'s form field and card grid keep their nodes through an idle redraw; going home → project → home rebuilds the frame once', async () => {
+  const h = await projectsHost();
+  h.w.RailPlaces.projects.newPick('hand-project'); await settle(100);
+  const f = field(h.d), grid = page(h.d).querySelector('.pg-grid'), cards = nodes(grid), home = col(h.d);
+  assert.ok(grid, 'the card grid is drawn');
+  await redraw(h.w);
+  assert.equal(field(h.d), f, 'the field kept');
+  assert.equal(page(h.d).querySelector('.pg-grid'), grid, 'the grid kept');
+  assert.deepEqual(nodes(grid), cards);
+  await go(h.w, `#projects/${KEYS.ok}`, 120);
+  assert.notEqual(col(h.d), home, 'a project page is its own frame');
+  await go(h.w, '#projects', 120);
+  const again = col(h.d);
+  assert.notEqual(again, home, 'home again: its frame rebuilt');
+  await redraw(h.w);
+  assert.equal(col(h.d), again, 'once: the next redraw keeps it');
+  // another place wrote the shared page: a frame of the same shape is not this one's, so it is rebuilt
+  page(h.d).innerHTML = '<div class="convo"><div class="convo-scroll"><div class="convo-col is-center"></div></div></div>';
+  const foreign = col(h.d);
+  await redraw(h.w);
+  assert.notEqual(col(h.d), foreign);
+  assert.ok(page(h.d).querySelector('.pg-grid'), 'the home is drawn whole');
+});
+
+test('B2.7 C1 F-6-01: a no-change Projects redraw makes no more DOM mutations than its budget', async (t) => {
+  const h = await projectsHost({ hash: `#projects/${KEYS.ok}` });
+  await redraw(h.w);
+  const m = countMutations(h.w, h.d.body, exclusions);
+  await redraw(h.w);
+  const r = m.stop();
+  t.diagnostic(`budget projectsNoChangeMutations: measured ${r.counted}, pinned ${budgets.projectsNoChangeMutations?.value} (${r.total} records)`);
+  const c = checkBudget('projectsNoChangeMutations', r.counted, budgets);
+  assert.ok(c.ok, `${c.message}\n${r.sample.join('\n')}`);
 });
