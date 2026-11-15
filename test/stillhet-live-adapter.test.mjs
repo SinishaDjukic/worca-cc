@@ -6,7 +6,7 @@ import { startLive, SOURCES as URLS } from '../ui/public/stillhet/live/live-adap
 import { SOURCES, NOW } from './helpers/stillhet-live-fixture.mjs';
 const ANSWER = { [URLS.history]: SOURCES.history, [URLS.threads]: SOURCES.threads, [URLS.groups]: SOURCES.groups, [URLS.schedules]: SOURCES.schedules, [URLS.projects]: SOURCES.projects, [URLS.sync]: SOURCES.sync, [URLS.budget]: SOURCES.budget, [URLS.actions]: SOURCES.actions, [URLS.notifications]: SOURCES.notifications, [URLS.away]: SOURCES.away, [URLS.settings]: SOURCES.settings, [URLS.runLinks]: SOURCES.runLinks };
 
-function rig({ status = () => 200, answer = (u) => ANSWER[u] ?? {}, hold = () => null } = {}) {
+function rig({ status = () => 200, answer = (u) => ANSWER[u] ?? {}, hold = () => null, parts = null } = {}) {
   const calls = [], sockets = [], timers = [];
   const fetch = async (u, o = {}) => { calls.push({ u, method: o.method || 'GET', ...(o.body ? { body: JSON.parse(o.body) } : {}) }); const h = hold(u); if (h) await h; const s = status(u); const a = answer(u); return { ok: s < 300, status: s, json: async () => a }; };
   class FakeSocket { constructor(url) { this.url = url; sockets.push(this); } close() { this.closed = true; } send() {} }
@@ -17,6 +17,7 @@ function rig({ status = () => 200, answer = (u) => ANSWER[u] ?? {}, hold = () =>
     setState: (s) => { Object.assign(st, s); log.push(['setState', { ...s }]); log.push(['onChange']); },
     find: (id) => rows.get(id), add: (r) => { rows.set(r.id, { ...r }); log.push(['onMove', r.id]); return r; },
     move: (id, kase, detail, o = {}) => { const r = rows.get(id); if (!r) return; Object.assign(r, { case: kase, detail }, o); log.push(['onMove', id]); },
+    ...(parts ? { part: (n) => parts[n] } : {}),   // the store's mapped parts, when a test needs them
   };
   const host = { flags: [], flagsChanged: (f) => host.flags.push(f) };
   const location = { protocol: 'http:', host: 'localhost:4931', reload: () => calls.push('reload') };
@@ -513,7 +514,7 @@ test('Marketplace (slice 8): its lists load when the place asks; plugins-changed
 });
 
 test('Projects (slice 9 D3): clone-changed, settings-changed, projects-changed and workspaces-changed reach projects.frame; other frames do not', async () => {
-  const r = rig();
+  const r = rig({ parts: { projects: [{ id: 'k-1111aaaa', name: 'k' }] } });   // F-6-18: only a project the store lists is read
   await r.tick();
   r.frame(r.sockets[0], hello); await r.tick();
   r.live.projects.detail('k-1111aaaa');   // an open page's detail: read again on settings-changed
