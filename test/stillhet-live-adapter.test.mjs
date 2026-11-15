@@ -220,6 +220,29 @@ test('a finished run with an open PR: each history load asks dev\'s PR lookup, i
   assert.equal(posts().length, 2, 'the refetch asks again');
 });
 
+test('history-pr: a row the server omits or marks stale keeps its PR (F-3-01, F-7a-01)', async () => {
+  const done = { id: 'hpr', title: 'Shipped', status: 'done', branch: 'feat/x', survived: true, projectKey: 'web', projectName: 'web', mtime: new Date(NOW).toISOString() };
+  const r = rig({ answer: (u) => (u === URLS.history ? { pipelines: [...SOURCES.history.pipelines, done] } : ANSWER[u] ?? {}) });
+  await r.tick();
+  r.frame(r.sockets[0], hello);
+  await r.tick();
+  const token = () => r.calls.filter((c) => c.method === 'POST').at(-1).body.token;
+  const merged = { url: 'https://x/pull/1', number: 1, state: 'MERGED' };
+  r.frame(r.sockets[0], { type: 'history-pr', token: token(), done: false, items: [{ projectKey: 'web', id: 'hpr', pr: merged }] });
+  const mergedCase = r.rows.get('hpr').case;
+  assert.notEqual(mergedCase, 'ready', 'a merged PR is drawn');
+  assert.equal(r.rows.get('hpr').pr, 'https://x/pull/1');
+  r.frame(r.sockets[0], { type: 'history-pr', token: token(), done: true, items: [] });
+  r.frame(r.sockets[0], { type: 'pipelines-changed' });
+  await r.tick(250);
+  assert.equal(r.rows.get('hpr').case, mergedCase, 'a row the server left out keeps its PR, across a refetch');
+  r.frame(r.sockets[0], { type: 'history-pr', token: token(), done: true, items: [{ projectKey: 'web', id: 'hpr', pr: { ...merged, stale: true } }] });
+  assert.equal(r.rows.get('hpr').case, mergedCase, 'a stale resend keeps it');
+  assert.equal(r.rows.get('hpr').pr, 'https://x/pull/1');
+  r.frame(r.sockets[0], { type: 'history-pr', token: token(), done: true, items: [{ projectKey: 'web', id: 'hpr', pr: null }] });
+  assert.equal(r.rows.get('hpr').case, 'ready', 'a genuine no PR still clears');
+});
+
 test('a failed PR lookup is asked again by the task page\'s Try again (open force), and only while it is failed', async () => {
   let prStatus = 500;
   const r = rig({ status: (u) => (u === '/api/history/pr' ? prStatus : 200) });
