@@ -1,7 +1,8 @@
-// Run: node plans/rail/prototype/gates/run-page-sweep.mjs file://$PWD/plans/rail/prototype/run-page.html
+// Run: node plans/rail/prototype/gates/run-page-sweep.mjs file://$PWD/plans/rail/prototype/run-page.html [--workers N]
 // The glitch gate: every case × tab × width × system theme. Reports page overflow, clipped text with no tooltip,
 // overlapping siblings in rows, section edges off the text edge below the card, low-contrast text, mojibake.
 import { chromium } from 'playwright';
+import { runUnits, workerCount } from './pool.mjs';
 import { writeAppCss } from './app-css.mjs';
 import { writeComponentsJs } from './components-js.mjs';
 writeAppCss();   // the app's CSS, assembled from its parts
@@ -9,7 +10,8 @@ writeComponentsJs();   // the Rail components, bundled for file://
 const URL = process.argv[2];
 const b = await chromium.launch({ channel: 'chrome' });
 const issues = new Map(); const add = (k, where) => { if (!issues.has(k)) issues.set(k, []); if (issues.get(k).length < 4) issues.get(k).push(where); };
-for (const scheme of ['dark', 'light']) for (const w of [375, 900]) {
+const units = [];   // each theme and width, and Simple: independent, so they run side by side (pool.mjs)
+for (const scheme of ['dark', 'light']) for (const w of [375, 900]) units.push(async (add) => {
   const p = await b.newPage({ viewport: { width: w, height: 900 }, colorScheme: scheme, reducedMotion: 'reduce' });
   await p.goto(URL);
   await p.evaluate(() => { for (const k of ['runTelemetry', 'commandSummaries']) window.RailUI.prefs.setFlag(k, true); });   // what a flag shows passes too
@@ -89,9 +91,9 @@ for (const scheme of ['dark', 'light']) for (const w of [375, 900]) {
     }
   }
   await p.close();
-}
+});
 // Every case in Simple, narrow: the page keeps its shape with Logs, the graph and Agents gone (docs/rail/thing-page.md).
-{
+units.push(async (add) => {
   const p = await b.newPage({ viewport: { width: 375, height: 900 }, colorScheme: 'dark', reducedMotion: 'reduce' });
   await p.goto(URL);
   await p.evaluate(() => window.RailUI.prefs.setMode('simple'));
@@ -104,6 +106,7 @@ for (const scheme of ['dark', 'light']) for (const w of [375, 900]) {
     }
   }
   await p.close();
-}
+});
+await runUnits(units, add, workerCount());
 console.log(issues.size ? [...issues].map(([k, v]) => `${k}\n   ${v.join('\n   ')}`).join('\n') : 'no glitches found');
 await b.close();
