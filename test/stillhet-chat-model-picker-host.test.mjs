@@ -3,7 +3,7 @@
 // Esc the dismiss registry's; a pick is still livePick's (the same PATCH or first-send as before).
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { LISTS, go, liveHost, posts, settle, closeHosts } from './helpers/stillhet-chat-live-host.mjs';
+import { LISTS, go, liveHost, posts, settle, closeHosts, menuPick } from './helpers/stillhet-chat-live-host.mjs';
 
 afterEach(closeHosts);
 const CAT = LISTS['/api/ask/models'];
@@ -78,6 +78,31 @@ test('a pick in a chat posts one PATCH and no message', async () => {
   assert.deepEqual(p[0].slice(0, 2), ['PATCH', '/api/ask/threads/ask_1']);
   assert.equal(p[0][2].model, 'sonnet');
   assert.equal(calls.filter((c) => c.url.endsWith('/messages')).length, 0);
+});
+
+test('F-a1-01: a new chat sent on a non-default model keeps it on the chip, and the second message goes out on it', async () => {
+  const { w, d, calls } = await liveHost({ write: (url, body, method) => {
+    if (url === '/api/ask/threads' && method === 'POST') return [201, { thread: { id: 'ask_new' } }];   // dev's create: model null
+    if (url.endsWith('/messages')) return [202, { userMessageId: 'u1', assistantMessageId: 'a1' }];
+    return [200, {}];
+  } });
+  await go(w, '#chat/new');
+  chip(d).click(); await settle(5);
+  key(w, d.querySelector(`${R} [data-menu-sub="anthropic"]`), 'Enter');
+  const sonnet = d.querySelector(`${R} [data-menu-pick="cp-engine|sonnet"]`); sonnet.focus();
+  key(w, sonnet, 'Enter'); await settle(10);
+  await menuPick(d, 'cp-effort', 'low');
+  const effort = () => d.querySelector(`${R} [data-menu="cp-effort"]`).textContent.trim();
+  assert.deepEqual([chip(d).textContent.trim(), effort()], ['Sonnet 5.5', 'low'], 'picked before the send');
+  d.querySelector(`${R} [data-composer-t]`).value = 'Hello';
+  d.querySelector(`${R} [data-cp-send]`).click(); await settle(80);
+  assert.equal(w.location.hash, '#chat/ask_new');
+  await settle(40);
+  assert.deepEqual([chip(d).textContent.trim(), effort()], ['Sonnet 5.5', 'low'], 'not flipped to the catalogue\'s Opus 5.5 · high');
+  d.querySelector(`${R} [data-composer-t]`).value = 'And the dates?';
+  d.querySelector(`${R} [data-cp-send]`).click(); await settle(80);
+  const sent = calls.filter((c) => c.method === 'POST' && c.url === '/api/ask/threads/ask_new/messages').map((c) => [c.body.model, c.body.effort]);
+  assert.deepEqual(sent, [['sonnet', 'low'], ['sonnet', 'low']], 'both messages go out on the pick');
 });
 
 test('the New task composer shows the same makers', async () => {
