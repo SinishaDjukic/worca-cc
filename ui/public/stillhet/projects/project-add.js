@@ -21,7 +21,9 @@
 
   function make(ctx) {
     const { R } = ctx;
-    const fresh = () => ({ way: 'folder', typed: '', err: '', probe: null, probeFor: '', probeErr: '', gitOk: true, useGit: false, newName: '', newGit: true, where: '', newErr: '', newRefused: false, browser: null, review: null, reviewErr: '' });
+    // typed/newName follow the field; shown/newShown are what the page draws into it, changed only when the page sets the value,
+    // so a redraw while typing draws the same value and the field stays the same element (comp.keep-open, B2.7)
+    const fresh = () => ({ way: 'folder', typed: '', shown: '', newShown: '', err: '', probe: null, probeFor: '', probeErr: '', gitOk: true, useGit: false, newName: '', newGit: true, where: '', newErr: '', newRefused: false, browser: null, review: null, reviewErr: '' });
     let s = fresh(), probeSeq = 0, newSeq = 0, dirSeq = 0, probeT = 0, newT = 0;
     const live = () => ctx.live();
     // live but the module is not up yet: nothing fake, every action says so (D8)
@@ -84,7 +86,7 @@
     function picked() {
       const b = s.browser, paths = b.multiple ? [...b.picked.keys()] : [b.path];
       s.browser = null;
-      if (paths.length === 1) { s.way = 'folder'; s.typed = paths[0]; s.err = ''; ctx.draw(); probeNow(paths[0]); focus('#pj-hand-v'); return; }
+      if (paths.length === 1) { s.way = 'folder'; s.typed = s.shown = paths[0]; s.err = ''; ctx.draw(); probeNow(paths[0]); focus('#pj-hand-v'); return; }
       const abs = (q) => (q && b.home && /^~(\/|$)/.test(q) ? b.home + q.slice(1) : q);   // a ~/ path the store keeps, as the folder browser gives it (absolute)
       const known = (p) => ctx.projects().find((x) => [x.path, x.devPath].some((q) => q === p || abs(q) === p));
       s.review = paths.map((path) => { const k = known(path); return { path, name: R.folderName(path), include: !k, status: '', reason: k ? `already registered as “${ctx.nameOf(k)}”` : '' }; });
@@ -96,7 +98,7 @@
     const finish = (text, key, from) => { s = fresh(); ctx.end(); ctx.say(text); if (key && location.hash === from) ctx.go(`projects/${key}`); else ctx.draw(); };
     async function addOne() {
       const v = val('pj-hand-v'), id = nameOfPath(v);
-      s.typed = v;
+      s.typed = s.shown = v;
       const wrong = !v || !id ? 'It needs a folder or a repository' : ctx.pathWrong(v, true) || (id.length > NAME_MAX ? `A project's name holds ${NAME_MAX} characters; this folder's has ${id.length}` : ctx.projects().some((x) => ctx.nameOf(x) === id) ? `${id} is already a project` : '');
       if (wrong) { s.err = wrong; ctx.draw(); focus('#pj-hand-v'); return; }
       if (down()) { ctx.say(NOT_ANSWERING); return; }
@@ -121,7 +123,7 @@
     }
     async function createOne() {
       const name = val('pj-new-name');
-      s.newName = name;
+      s.newName = s.newShown = name;
       const wrong = !name ? 'It needs a name' : name.length > NAME_MAX ? `A name holds ${NAME_MAX} characters; this one has ${name.length}` : '';
       if (wrong) { s.newErr = wrong; ctx.draw(); focus('#pj-new-name'); return; }
       if (s.newRefused) return;
@@ -165,7 +167,7 @@
     function body() {
       const b = busy();
       if (s.way === 'new') {
-        return R.field({ id: 'pj-new-name', label: 'Its name', placeholder: 'my-project', value: s.newName, error: s.newErr, hint: s.where ? `Makes ${s.where}` : '', attrs: { maxlength: NAME_MAX, 'data-keep': 'pj-hand:new:' } })
+        return R.field({ id: 'pj-new-name', label: 'Its name', placeholder: 'my-project', value: s.newShown, error: s.newErr, hint: s.where ? `Makes ${s.where}` : '', attrs: { maxlength: NAME_MAX, 'data-keep': 'pj-hand:new:' } })
           + (s.gitOk ? R.folderWay({ git: { on: s.newGit, hook: 'data-pa-newgit', why: 'Runs git init in the new folder' } }) : '')
           + R.confirmActions({ yes: b || 'Create', busy: !!b || s.newRefused });
       }
@@ -174,7 +176,7 @@
         return R.folderReview({ rows: s.review, saving: !!b, error: s.reviewErr });
       }
       const m = model();
-      return R.field({ id: 'pj-hand-v', label: 'Folder or repository', placeholder: '~/src/your-project', value: s.typed, error: s.err, attrs: { maxlength: 200, 'data-keep': 'pj-hand:project:' } })
+      return R.field({ id: 'pj-hand-v', label: 'Folder or repository', placeholder: '~/src/your-project', value: s.shown, error: s.err, attrs: { maxlength: 200, 'data-keep': 'pj-hand:project:' } })
         + R.folderWay({ pick: { label: 'Choose folder…', hook: 'data-pa-choose', title: 'Pick a folder on this computer' } })
         + m.html
         + (m.useGit ? R.folderWay({ git: { on: s.useGit, hook: 'data-pa-git', why: 'Runs git init in it when it is added' } }) : '')
@@ -187,7 +189,7 @@
     const html = () => `<div class="card-form">${R.confirmForm({ form: 'hand', id: 'pj-hand-t', text: 'Add a project by hand', body: R.segmented({ label: 'How to add it', hook: 'pa-way', items: WAYS.map(([id, label]) => ({ id, label, pressed: s.way === id })) }) + body() })}${browserHtml()}</div>`;
 
     function setWay(w) {
-      s.way = w; s.reviewErr = '';
+      s.way = w; s.reviewErr = ''; s.shown = s.typed; s.newShown = s.newName;   // the way's field comes back with what was typed
       ctx.draw();
       if (w === 'new') { checkNow(); focus('#pj-new-name'); } else if (w === 'folder') focus('#pj-hand-v');
     }
@@ -212,7 +214,7 @@
       if (on('[data-fb-root]')) {
         const a = model().action;
         if (a?.kind === 'open') { const p = ctx.projects().find((x) => ctx.nameOf(x) === a.name); s = fresh(); ctx.end(); ctx.go(`projects/${p ? p.id : a.name}`); return true; }
-        if (a?.kind === 'add') { const el = document.getElementById('pj-hand-v'); if (el) el.value = a.path; s.typed = a.path; s.probe = null; addOne(); }
+        if (a?.kind === 'add') { const el = document.getElementById('pj-hand-v'); if (el) el.value = a.path; s.typed = s.shown = a.path; s.probe = null; addOne(); }
         return true;
       }
       if (on('[data-fr-pick]')) { const r = s.review?.[Number(hit.dataset.frPick)]; if (r && r.status !== 'added') { r.include = !r.include; s.reviewErr = ''; ctx.draw(); } return true; }
