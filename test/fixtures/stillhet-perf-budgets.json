@@ -49,6 +49,25 @@
       "findings": [
         "F-a1-02"
       ]
+    },
+    "shellNoChangeMutations": {
+      "value": 0,
+      "target": 0,
+      "test": "test/stillhet-perf-budgets-tasks-host.test.mjs",
+      "findings": [
+        "F-a1-02",
+        "F-a4-02",
+        "F-a4-10"
+      ]
+    },
+    "projectsNoChangeMutations": {
+      "value": 9,
+      "target": 0,
+      "test": "test/stillhet-keep-open-projects-host.test.mjs",
+      "findings": [
+        "F-6-01",
+        "F-a1-02"
+      ]
     }
   },
   "exclusions": [

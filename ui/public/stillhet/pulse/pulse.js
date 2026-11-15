@@ -774,23 +774,25 @@ function renderInShell() {
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
   const pageEl = document.querySelector('main.main'); const keepMain = pageEl?.scrollTop || 0;   // the page scrolls in main in the one Worca
   const keepP = document.querySelector('.panel-body')?.scrollTop || 0;
-  document.getElementById('rail-pulse-slot').innerHTML = pulseButton();
-  document.getElementById('side-foot').innerHTML = sideFoot();
-  document.getElementById('rail-strip').innerHTML = window.RailShell?.inviteStrip?.() || unlockStrip() || settingsStrip() || labsBack();
+  // each region is patched by part (comp.patch-parts): an unchanged one keeps its nodes, and a redraw that changes nothing writes nothing
+  R.patchParts(document.getElementById('rail-pulse-slot'), { slot: pulseButton() });
+  R.patchParts(document.getElementById('side-foot'), { slot: sideFoot() });
+  R.patchParts(document.getElementById('rail-strip'), { slot: window.RailShell?.inviteStrip?.() || unlockStrip() || settingsStrip() || labsBack() });
   // a reply in a chat you left: the dot on the Chat row and on Ask worca, until you open Chat
-  const chatDot = !!C().chatUnread && !ui.chatSeen;
-  for (const id of ['nav-chat-unread', 'topnav-ask-dot']) { const d = document.getElementById(id); if (d) { d.hidden = !chatDot; d.title = 'A reply in a chat you left'; } }
-  document.title = tabTitle();
+  const chatDot = !!C().chatUnread && !ui.chatSeen, dotTip = 'A reply in a chat you left';
+  for (const id of ['nav-chat-unread', 'topnav-ask-dot']) { const d = document.getElementById(id); if (d) { if (d.hidden !== !chatDot) d.hidden = !chatDot; if (d.title !== dotTip) d.title = dotTip; } }
+  const title = tabTitle(); if (document.title !== title) document.title = title;
   // Settings' menu takes the sidebar's place beside today's nav (shown instead of it on a wide screen; below 760px the
   // sidebar stays Worca's, and Settings opens on its menu as a list in the page)
   const side = document.querySelector('#side-rail'), nav = side.querySelector('nav.nav');
   let sm = side.querySelector('.rail-side-settings');
-  if (sideNow) { if (!sm) { sm = document.createElement('div'); sm.className = 'rail-side-settings'; nav.after(sm); } sm.innerHTML = settingsMenu(); side.classList.add('is-settings'); }
-  else { sm?.remove(); side.classList.remove('is-settings'); }
-  document.querySelector('#side-rail .brand')?.classList.toggle('is-settings', sideNow);
+  if (sideNow) { if (!sm) { sm = document.createElement('div'); sm.className = 'rail-side-settings'; nav.after(sm); } sm.innerHTML = settingsMenu(); }
+  else sm?.remove();
+  // a class is written only when it changes: a DOMTokenList add, remove or toggle writes the attribute even when it does not
+  for (const el of [side, side.querySelector('.brand')]) if (el && el.classList.contains('is-settings') !== sideNow) el.classList.toggle('is-settings', sideNow);
   if (sideNow) document.getElementById('route-settings').innerHTML = `<div class="pz-page">${settingsPage()}</div>`;
   const res = document.querySelector('[data-search-res]'); if (res) res.innerHTML = searchResults();
-  document.getElementById('app').innerHTML = `${popover()}${newRun()}${acctMenu()}${sessionDialog()}`;
+  R.patchParts(document.getElementById('app'), { popover: popover(), 'new-run': newRun(), account: acctMenu(), session: sessionDialog() });
   paintToast();
   for (const b of document.querySelectorAll('[data-mixed]')) b.indeterminate = true;
   const pb = document.querySelector('.panel-body'); if (pb && !opening) pb.scrollTop = keepP;
