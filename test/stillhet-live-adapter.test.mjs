@@ -65,6 +65,139 @@ test('a state frame moves one task: 1 onMove, 0 onChange; a frame before hello a
   assert.equal(r.rows.get('run-z').case, 'starting');
 });
 
+test('F-7a-03: run-created draws the started task at once (one load with runs, an onChange), and its later frames keep it one row', async () => {
+  let saved = false;
+  const FRESH = { id: 'pn', title: 'Fresh', status: 'running', projectName: 'web', startedAt: new Date(NOW).toISOString(), mtime: NOW };
+  const r = rig({ answer: (u) => (u === URLS.history && saved ? { ...SOURCES.history, pipelines: [FRESH, ...SOURCES.history.pipelines] } : ANSWER[u] ?? {}) });
+  await r.tick();
+  r.frame(r.sockets[0], hello);
+  await r.tick();
+  r.frame(r.sockets[0], { type: 'run-created', runId: 'run-n', title: 'Fresh', status: 'starting', projectDir: '/src/web', startedAt: new Date(NOW).toISOString() });
+  const [load, change] = r.log.slice(-2);
+  assert.equal(load[0], 'load');
+  assert.ok(load[1].includes('runs'), 'the runs part is drawn');
+  assert.deepEqual(change, ['onChange'], 'the Tasks list repaints');
+  assert.equal(r.rows.get('run-n').case, 'starting');
+  saved = true;
+  r.frame(r.sockets[0], { type: 'run-pipeline', runId: 'run-n', pipelineId: 'pn' });
+  r.frame(r.sockets[0], { type: 'state', runId: 'run-n', id: 'pn', status: 'running' });
+  r.frame(r.sockets[0], { type: 'pipelines-changed', action: 'updated', pipelineId: 'pn' });
+  await r.tick(250); await r.tick(250);
+  const fresh = [...r.rows.values()].filter((x) => x.title === 'Fresh');
+  assert.deepEqual(fresh.map((x) => x.id), ['run-n'], 'one row, the live run');
+});
+
+const arch = (id, over = {}) => ({ id, title: `Arch ${id}`, status: 'done', archived: true, projectName: 'web', startedAt: new Date(NOW - 7200000).toISOString(), mtime: NOW - 3600000, ...over });
+test('F-a4-07: the first load reads /api/history?archived=1 and the store holds its rows archived (count = the API\'s)', async () => {
+  const N = 3;
+  const r = rig({ answer: (u) => (u === URLS.archived ? { pipelines: Array.from({ length: N }, (_, i) => arch(`x${i}`)) } : ANSWER[u] ?? {}) });
+  await r.tick();
+  assert.equal(URLS.archived, '/api/history?archived=1');
+  assert.equal(gets(r.calls).filter((u) => u === URLS.archived).length, 1);
+  r.frame(r.sockets[0], hello);
+  await r.tick();
+  assert.equal([...r.rows.values()].filter((x) => x.archived === true).length, N);
+});
+
+test('F-a4-07: an archive, restore or Undo (pipelines-changed bulk-archive / bulk-restore / bulk-delete / deleted / restored) reads the archived feed again, debounced once; updated / labels / stopped do not; refresh(\'archived\') reads it once', async () => {
+  const r = rig();
+  await r.tick();
+  r.frame(r.sockets[0], hello);
+  await r.tick();
+  const count = (n) => gets(r.calls.slice(n)).filter((u) => u === URLS.archived).length;
+  for (const action of ['bulk-archive', 'bulk-restore', 'bulk-delete', 'deleted', 'restored']) {
+    const n = r.calls.length;
+    r.frame(r.sockets[0], { type: 'pipelines-changed', action, ...(action === 'deleted' || action === 'restored' ? { pipelineId: 'h1' } : {}) });
+    r.frame(r.sockets[0], { type: 'pipelines-changed', action });
+    await r.tick(250);
+    assert.equal(count(n), 1, action);
+  }
+  for (const action of ['updated', 'labels', 'stopped', 'tags']) {
+    const n = r.calls.length;
+    r.frame(r.sockets[0], { type: 'pipelines-changed', action, ...(action === 'stopped' ? { pipelineId: 'h1' } : {}) });
+    await r.tick(250);
+    assert.equal(count(n), 0, action);
+  }
+  const n = r.calls.length;
+  r.live.refresh('archived'); r.live.refresh('archived');
+  await r.tick(250);
+  assert.equal(count(n), 1, 'the Archived view opening');
+});
+
+test('F-a4-07: Undo after archiving a live run\'s row sends restore with its pipeline id and brings the row back, not archived', async () => {
+  let phase = 'live';
+  const PB = { id: 'pb', title: 'Busy', status: 'paused', projectName: 'web', startedAt: SOURCES.hello.runs[1].startedAt, mtime: NOW - 60000 };
+  const answer = (u) => {
+    if (u === '/api/runs/bulk') return { done: [{ pipelineId: 'pb' }] };
+    if (u === URLS.archived) return { pipelines: phase === 'archived' ? [{ ...PB, archived: true }] : [] };
+    if (u === URLS.history && phase === 'restored') return { ...SOURCES.history, pipelines: [PB, ...SOURCES.history.pipelines] };
+    return ANSWER[u] ?? {};
+  };
+  const r = rig({ answer });
+  await r.tick();
+  r.frame(r.sockets[0], hello);
+  await r.tick();
+  r.frame(r.sockets[0], { type: 'state', runId: 'run-b', id: 'pb', status: 'paused', pauseReason: 'paused by you' });
+  await r.live.task.list('archive', { ids: ['run-b'] });
+  assert.deepEqual(r.calls.filter((c) => c.method === 'POST' && c.u === '/api/runs/bulk').at(-1).body.targets, [{ pipelineId: 'pb' }]);
+  phase = 'archived';
+  r.frame(r.sockets[0], { type: 'pipelines-changed', action: 'bulk-archive', removedRunIds: ['run-b'] });
+  await r.tick(250);
+  assert.equal(r.rows.get('run-b'), undefined);
+  assert.equal(r.rows.get('pb')?.archived, true, 'the archived row is in the store');
+  await r.live.task.list('restore', { ids: ['run-b'] });
+  assert.deepEqual(r.calls.filter((c) => c.method === 'POST' && c.u === '/api/runs/bulk').at(-1).body, { action: 'restore', targets: [{ pipelineId: 'pb' }] });
+  phase = 'restored';
+  r.frame(r.sockets[0], { type: 'pipelines-changed', action: 'bulk-restore' });
+  await r.tick(250);
+  const rows = [...r.rows.values()].filter((x) => x.id === 'pb' || x.id === 'run-b');
+  assert.deepEqual(rows.map((x) => [x.id, x.archived]), [['pb', false]]);
+});
+
+test('F-a4-07 (review minor): a failing /api/history?archived=1 fails only the Archived view, at load and on reconnect; the rest of the list draws, and a refresh that answers clears it', async () => {
+  let fail = true;
+  const r = rig({ status: (u) => (fail && u === URLS.archived ? 500 : 200) });
+  await r.tick();
+  assert.equal(r.st.archived, 'failed', 'the Archived view reads failed');
+  assert.notEqual(r.st.list, 'failed', 'the list does not');
+  assert.equal(r.sockets.length, 1, 'the socket opens');
+  r.frame(r.sockets[0], hello);
+  await r.tick();
+  assert.equal(r.st.list, '');
+  assert.ok(r.rows.size > 0, 'the rest of the list draws');
+  // a reconnect whose archived read fails again: the list is not out of date, and the state is not set again
+  const sets = r.log.filter((x) => x[0] === 'setState').length;
+  r.sockets[0].onclose({}); await r.tick(1000);
+  r.frame(r.sockets[1], hello);
+  await r.tick();
+  assert.equal(r.st.list, '', 'the reconnect draws the list');
+  assert.equal(r.st.archived, 'failed');
+  assert.deepEqual(r.log.filter((x) => x[0] === 'setState').slice(sets).map((x) => x[1]), [{ conn: 'offline' }], 'no list or archived state on a reconnect that only repeats the failure');
+  // Try again: the archived read alone answers and the view clears
+  fail = false;
+  const n = r.calls.length;
+  r.live.refresh('archived'); await r.tick(250);
+  assert.deepEqual(gets(r.calls.slice(n)), [URLS.archived]);
+  assert.equal(r.st.archived, '');
+  // it fails again on its own: only the Archived view, never the list's out-of-date look
+  fail = true;
+  r.live.refresh('archived'); await r.tick(250);
+  assert.equal(r.st.archived, 'failed');
+  assert.equal(r.st.list, '');
+});
+
+test('F-a4-07 (review minor): an Undo sent right after archiving a live run (before its archived row is read) restores by its pipeline id', async () => {
+  const r = rig({ answer: (u) => (u === '/api/runs/bulk' ? { done: [{ pipelineId: 'pb' }] } : ANSWER[u] ?? {}) });
+  await r.tick();
+  r.frame(r.sockets[0], hello);
+  await r.tick();
+  r.frame(r.sockets[0], { type: 'state', runId: 'run-b', id: 'pb', status: 'paused', pauseReason: 'paused by you' });
+  await r.live.task.list('archive', { ids: ['run-b'] });
+  r.frame(r.sockets[0], { type: 'pipelines-changed', action: 'bulk-archive', removedRunIds: ['run-b'] });
+  await r.live.task.list('restore', { ids: ['run-b'] });   // no tick: the archived feed is not read yet
+  assert.deepEqual(r.calls.filter((c) => c.method === 'POST' && c.u === '/api/runs/bulk').at(-1).body, { action: 'restore', targets: [{ pipelineId: 'pb' }] });
+});
+
 test('failed on a 500 (a task page too); retry() says loading, fetches again and loads', async () => {
   let fail = true;
   const r = rig({ status: (u) => (fail && u === URLS.budget ? 500 : 200) });

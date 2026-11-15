@@ -142,6 +142,41 @@ test('D19: monthSpend reads the project row of this month\'s answer; null while 
   assert.equal(r.live.monthSpend('web-app'), 3);
 });
 
+test('F-3-10: weekTotals reads /api/stats?range=week&report=1 once, null while pending, survives prune, and re-reads on pipelines-changed', async () => {
+  const WEEK = '/api/stats?range=week&report=1';
+  const r = rig({ answers: { ...TAGS, [WEEK]: [200, stats(7)], [MONTH]: [200, stats(3)] } });
+  assert.equal(r.live.weekTotals(), null, 'pending');
+  r.live.weekTotals('billing-api');
+  await r.tick();
+  assert.deepEqual(r.calls.filter((c) => c.url === WEEK).length, 1, 'one read, whatever the project');
+  assert.deepEqual(r.live.weekTotals(), { runs: 2, spentUsd: 7 });
+  assert.deepEqual(r.live.weekTotals('web-app'), { runs: 1, spentUsd: 5 });
+  assert.deepEqual(r.live.weekTotals('nope'), { runs: 0, spentUsd: 0 });
+  r.live.page('spend', st()); await r.tick(); r.live.page('spend', st()); await r.tick();   // an Insights page prunes the keys it no longer wants
+  const n = r.calls.length;
+  assert.deepEqual(r.live.weekTotals(), { runs: 2, spentUsd: 7 }, 'kept through prune, not read again');
+  assert.equal(r.calls.length, n);
+  r.live.frame({ type: 'pipelines-changed' }); await r.tick(300);
+  assert.ok(r.calls.slice(n).some((c) => c.url === WEEK), 'the frame re-reads the week');
+});
+
+test('B3.6 review: retryWeek re-reads a failed week once (a center visit), and leaves a ready or pending one alone', async () => {
+  const WEEK = '/api/stats?range=week&report=1';
+  let status = 500;
+  const r = rig({ answers: (u) => (u === WEEK ? [status, status === 200 ? stats(7) : { error: 'boom' }] : u === '/api/tag-dimensions' ? [200, { dims: [] }] : null) });
+  r.live.weekTotals(); await r.tick();
+  assert.equal(r.live.weekTotals(), null, 'failed: no figures');
+  assert.equal(r.calls.filter((c) => c.url === WEEK).length, 1);
+  r.live.weekTotals(); await r.tick();
+  assert.equal(r.calls.filter((c) => c.url === WEEK).length, 1, 'a paint alone never re-reads a failed week');
+  status = 200;
+  r.live.retryWeek(); await r.tick();
+  assert.equal(r.calls.filter((c) => c.url === WEEK).length, 2, 'the visit re-reads it');
+  assert.deepEqual(r.live.weekTotals(), { runs: 2, spentUsd: 7 });
+  r.live.retryWeek(); await r.tick();
+  assert.equal(r.calls.filter((c) => c.url === WEEK).length, 2, 'a ready week is not read again');
+});
+
 test('D18: saved views are kept in this browser; a refusing storage says so', () => {
   const r = rig();
   assert.deepEqual(r.live.views(), []);

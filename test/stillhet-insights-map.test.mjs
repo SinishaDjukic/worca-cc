@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  statsQuery, teamQuery, paceOf, wordsOf, DIM_OF, statsSource, selectFacts, pooledOf, monthSpendOf, errorOf, scopesOf,
+  statsQuery, teamQuery, paceOf, wordsOf, DIM_OF, statsSource, selectFacts, pooledOf, monthSpendOf, weekTotalsOf, errorOf, scopesOf,
   budgetOf, ratioOf, LIVE_PAGES, NOT_LIVE_PAGES, FIGURE_SOURCE, tagKeysOf,
 } from '../ui/public/stillhet/live/insights-map.mjs';
 
@@ -161,6 +161,29 @@ test('monthSpendOf, errorOf, scopesOf', () => {
   assert.equal(errorOf(404, {}), 'HTTP 404');
   assert.deepEqual(scopesOf({ scopes: { projects: [{ id: 'project:a', label: 'acme/a' }, { id: 'project:b', label: 'b', enabled: false }], workspaces: [{ id: 'workspace:w', label: 'Shop' }] } }), [{ id: 'project:a', name: 'acme/a' }, { id: 'workspace:w', name: 'Shop' }]);
   assert.deepEqual(scopesOf({}), []);
+});
+
+test('F-3-10: weekTotalsOf reads totals for every project and the allocation row for one; 0 for a project with no row; null without totals', () => {
+  const runsUsd = Math.round(ANSWER.report.runs.reduce((a, f) => a + f.usd, 0) * 100) / 100;
+  assert.deepEqual(weekTotalsOf(ANSWER), { runs: 3, spentUsd: runsUsd }, 'F-fm-02: no pipelineSpendUsd: the runs\' own sum');
+  assert.deepEqual(weekTotalsOf(ANSWER, null), { runs: 3, spentUsd: runsUsd });
+  const row = weekTotalsOf(ANSWER, 'billing-api');
+  assert.equal(row.spentUsd, monthSpendOf(ANSWER, 'billing-api'), 'the same row monthSpendOf reads');
+  assert.equal(row.runs, FACTS.filter((f) => f.project === 'billing-api' && f.inCohort).length);
+  assert.deepEqual(weekTotalsOf(ANSWER, 'nope'), { runs: 0, spentUsd: 0 });
+  assert.equal(weekTotalsOf({}), null);
+  assert.equal(weekTotalsOf(null, 'billing-api'), null);
+  assert.equal(weekTotalsOf({ totals: { runs: 1, spentUsd: 1 } }, 'billing-api'), null, 'no report.runs: no project row');
+});
+
+test('F-fm-02: the all-projects week cost is the runs\' cost (pipelineSpendUsd), never totals.spentUsd with chat; the project rows add up to it', () => {
+  const runsUsd = ANSWER.report.runs.reduce((a, f) => a + f.usd, 0);
+  const withChat = { ...ANSWER, totals: { ...ANSWER.totals, spentUsd: runsUsd + 3770, pipelineSpendUsd: runsUsd } };
+  const all = weekTotalsOf(withChat);
+  assert.equal(all.spentUsd, runsUsd, 'chat spend stays out of the Tasks center');
+  const projects = [...new Set(ANSWER.report.runs.map((f) => f.project))];
+  const sum = projects.reduce((a, p) => a + weekTotalsOf(withChat, p).spentUsd, 0);
+  assert.equal(Math.round(sum * 100) / 100, Math.round(all.spentUsd * 100) / 100, 'each project\'s figure adds up to the all-projects one');
 });
 
 // ---- R-arch-2: dev field names are read only in insights-map.mjs ----

@@ -15,7 +15,7 @@ const FIRST_EXCLUSIONS = Object.freeze({
   'think-secs': '[data-think-at] .think-t',
   orb: 'canvas[data-orb]',
 });
-const KEYS = ['chatIdleMutations', 'prNoChangeWorldChanges', 'prNoChangeShellRenders', 'prNoChangeConvoPaints', 'liveUpdateTurnsReplaced', 'tasksIdleMutations', 'shellNoChangeMutations', 'projectsNoChangeMutations'];
+const KEYS = ['chatIdleMutations', 'prNoChangeWorldChanges', 'prNoChangeShellRenders', 'prNoChangeConvoPaints', 'liveUpdateTurnsReplaced', 'tasksIdleMutations', 'shellNoChangeMutations', 'projectsNoChangeMutations', 'settingsNoChangeMutations', 'tasksNoChangeMutations'];
 const B = { budgets: { a: { value: 5, target: 0 } } };
 
 test('B2.4 C1 D19: checkBudget fails a number that grew, with "budgets only go down"', () => {

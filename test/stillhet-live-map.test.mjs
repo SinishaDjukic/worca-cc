@@ -56,6 +56,28 @@ test('snapshotOf: no field outside SHAPES, no archived row, a live-and-saved pip
   assert.ok(s.runs.find((r) => r.id === 'sched:tk1').missed, 'a missed ticket is a Needs-you row of the store');
 });
 
+test('F-a4-07: snapshotOf maps src.archived as archived tasks, one per pipeline (live > active > archived), never in Needs you, updates, groups, rounds or chats; partOf(\'archived\') returns only runs', () => {
+  const arch = (id, over = {}) => ({ id, title: `Arch ${id}`, status: 'paused', archived: true, projectName: 'web', startedAt: '2026-11-12T08:00:00Z', mtime: NOW - 3600000, ...over });
+  const archived = { pipelines: [arch('x1'), arch('x2', { status: 'error' }), arch('pa', { title: 'Ask me' }), arch('h2', { title: 'Shipped' }),
+    arch('x3', { roundOf: { pipelineId: 'x1', round: 2 } })] };
+  const runGroups = { groups: [{ id: 'rg1', title: 'G', members: [{ pipelineId: 'x1', position: 0 }] }] };
+  const runLinks = { links: [...SOURCES.runLinks.links, { threadId: 'ask_2', runId: 'run-x2', pipelineId: 'x2', started: true }] };
+  const base = snapshotOf({ ...SOURCES, runGroups, runLinks }, { now: NOW });
+  const s = snapshotOf({ ...SOURCES, runGroups, runLinks, archived }, { now: NOW });
+  const a = s.runs.filter((r) => r.archived);
+  assert.deepEqual(a.map((r) => r.id).sort(), ['x1', 'x2', 'x3'], 'one row per pipeline: the live pa and the active h2 win');
+  assert.equal(s.runs.filter((r) => r.title === 'Ask me').length, 1);
+  assert.equal(s.runs.filter((r) => r.title === 'Shipped').length, 1);
+  assert.ok(!s.runs.find((r) => r.title === 'Shipped').archived, 'the active row wins over the archived one');
+  for (const r of a) { assert.equal(r.group, '', `${r.id} in no group`); assert.equal(r.roundOf, undefined, `${r.id} folds into no round`); assert.equal(r.rounds, undefined); assert.deepEqual(shapeErrors('task', r), []); }
+  assert.deepEqual(s.groups, base.groups, 'groups unchanged');
+  assert.deepEqual(s.updates, base.updates, 'no outcome updates');
+  assert.deepEqual(s.chats, base.chats, 'chats unchanged');
+  assert.deepEqual(s.runs.filter((r) => !r.archived), base.runs, 'every other row unchanged');
+  assert.deepEqual(Object.keys(partOf('archived', archived, SOURCES, { now: NOW })), ['runs']);
+  assert.deepEqual(snapshotOf(SOURCES, { now: NOW }), snapshotOf({ ...SOURCES, archived: undefined }, { now: NOW }), 'no archived source: today\'s output');
+});
+
 test('caseOf keeps D7 for every status: section is needs exactly when dev\'s needsYouItems lists the item', () => {
   const w = stillhetHost({ after });
   const W = w.RailWorld;

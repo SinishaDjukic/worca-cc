@@ -56,3 +56,16 @@ test('B2.7 C1 F-a1-02 F-a4-02: a no-change shell redraw with the Pulse popover o
   const c = checkBudget('shellNoChangeMutations', r.counted, budgets);
   assert.ok(c.ok, `${c.message}\n${r.sample.join('\n')}`);
 });
+
+test('B2.8 F-fm-01: a project-sync-changed frame that changes no task keeps every Tasks row and makes no more DOM mutations than its budget', async (t) => {
+  const h = await openTasks();
+  const rows = [...h.d.querySelectorAll(ROWS)];
+  const m = countMutations(h.w, h.d.getElementById('runs-root'), exclusions);   // the Tasks list; the other bars and the center are theirs
+  h.sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'project-sync-changed', projectKey: 'web-1' }) });
+  await new Promise((r) => setTimeout(r, 400)); await h.settleAll();   // the adapter reads a source 250 ms after its frame
+  const r = m.stop();
+  t.diagnostic(`budget tasksNoChangeMutations: measured ${r.counted}, pinned ${budgets.tasksNoChangeMutations?.value} (${r.total} records)`);
+  assert.ok(rows.length > 50 && rows.every((el) => el.isConnected), 'every row keeps its node');
+  const c = checkBudget('tasksNoChangeMutations', r.counted, budgets);
+  assert.ok(c.ok, `${c.message}\n${r.sample.join('\n')}`);
+});
