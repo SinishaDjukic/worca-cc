@@ -1,6 +1,9 @@
-// StatusLine (docs/design-system.md › Worca Rail › StatusLine): the rail mark, the state word, the action slot (its
+// StatusLine (docs/rail/components.md): the rail mark, the state word, the action slot (its
 // one next step, alternatives behind ▾, then ⋯), and a detail line under the word.
 import { attrs, esc } from './html.mjs';
+
+/** The class of a rail mark's dot, for a page that repaints a dot it did not draw (a captured page). */
+export const statusDotClass = (tone = '') => `status-dot ${tone}`;
 
 /**
  * The rail mark of a state: a dot in the state's tone, or a symbol for a state that needs you.
@@ -13,7 +16,7 @@ export function statusDot({ tone = '', sym, glyph = '' } = {}) {
   if (sym) {
     return `<span class="status-dot ${sym === 'q' ? 'is-amber' : 'is-red'} has-sym" aria-hidden="true"><svg class="status-sym" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="12" fill="currentColor" stroke="none"></circle><g fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${glyph}</g></svg></span>`;
   }
-  return `<span class="status-dot ${tone}" aria-hidden="true"></span>`;
+  return `<span class="${statusDotClass(tone)}" aria-hidden="true"></span>`;
 }
 
 /**

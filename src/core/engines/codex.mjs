@@ -249,6 +249,22 @@ function knownCodexHomes() {
 }
 
 /**
+ * Deletes the session file of that one thread id under every known codex home (9c D12: a helper call leaves no copy of
+ * a step in codex's history). Nothing else is touched. Never throws; true when at least one file was removed.
+ */
+export function removeCodexThread(thread, { homes } = {}) {
+  let removed = false;
+  try {
+    for (const h of homes ?? knownCodexHomes()) {
+      const f = findCodexRollout(h, thread);
+      if (!f) continue;
+      try { rmSync(f, { force: true }); removed = true; } catch { /* kept: the notice says so */ }
+    }
+  } catch { /* never throws */ }
+  return removed;
+}
+
+/**
  * Makes `thread` resumable under `home`. A thread lives in the home of the spawn that started it, and a guarded spawn's
  * home follows its rule set, so a rule change between pause and resume (or a move between guarded and unguarded) moves
  * the home. codex finds a thread by its session file anywhere under the home's sessions/ (checked on codex-cli 0.162),
@@ -840,6 +856,7 @@ export async function runCodexProcess({
   const { env } = composeSpawnEnv({ ...envOpts, ...(Object.keys(ownEnv).length ? { runEnv: ownEnv } : {}) });
   // P3-D20: the run env stays out of this child's env (its shell would read the registry secrets), but the git ceiling
   // of a run without a project is no secret and must reach the agent's own git.
+  if (typeof runSpawnEnv?.TMPDIR === 'string') env.TMPDIR = runSpawnEnv.TMPDIR;   // the run's scratch folder, no secret
   if (typeof runSpawnEnv?.GIT_CEILING_DIRECTORIES === 'string') env.GIT_CEILING_DIRECTORIES = runSpawnEnv.GIT_CEILING_DIRECTORIES;
   // Command rules live in a worca-managed CODEX_HOME.
   if (plan.prefixes.length) env.CODEX_HOME = guardedCodexHome(codexRulesFile(plan.prefixes));

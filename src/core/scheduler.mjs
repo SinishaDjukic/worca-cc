@@ -658,10 +658,26 @@ export function resumeWaitError(after, pipelineId) {
 
 /** The run whose feature branch `pipelineId` started from: its latest ticket's predecessor when that ticket
  *  started it "from its branch" (source_from_previous). null = no previous run (or its ticket was purged). */
-function chainPredecessorOf(pipelineId) {
+export function chainPredecessorOf(pipelineId) {
   const t = getDb().prepare('SELECT after_kind, after_id, source_from_previous FROM scheduled_runs WHERE pipeline_id = ? ORDER BY updated_at DESC LIMIT 1').get(String(pipelineId));
   if (!t || !t.source_from_previous || !t.after_id) return null;
   return (t.after_kind === 'ticket' ? getTicket(t.after_id)?.pipelineId : t.after_id) || null;
+}
+
+/** The runs started "from the branch" of `pipelineId` (Merge PR's retarget): every pipeline whose chainPredecessorOf is
+ *  it, through a `pipeline` after-link or a `ticket` after-link whose ticket started it. Oldest ticket first. */
+export function chainSuccessorsOf(pipelineId) {
+  const id = String(pipelineId || ''); if (!id) return [];
+  const db = getDb();
+  const tickets = db.prepare('SELECT id FROM scheduled_runs WHERE pipeline_id = ?').all(id).map((r) => r.id);
+  const rows = db.prepare(`SELECT pipeline_id, after_kind, after_id FROM scheduled_runs
+    WHERE source_from_previous = 1 AND pipeline_id IS NOT NULL AND after_id IS NOT NULL ORDER BY created_at ASC`).all();
+  const out = [];
+  for (const r of rows) {
+    const linked = r.after_kind === 'ticket' ? tickets.includes(r.after_id) : r.after_id === id;
+    if (linked && !out.includes(r.pipeline_id) && chainPredecessorOf(r.pipeline_id) === id) out.push(r.pipeline_id);
+  }
+  return out;
 }
 
 /**

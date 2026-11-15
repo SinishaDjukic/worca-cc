@@ -17,6 +17,8 @@ import { claimForAgent } from '../agent-user.mjs';
 import { currentOwner } from '../billing.mjs';
 import { extensionForAttachment } from './attachment-kind.mjs';
 import { mergeContexts } from './contexts.mjs';
+import { isSurfaceMode, SURFACE_MODES } from './thread-modes.mjs';
+import { normaliseLabels } from '../../shared/run-labels.mjs';
 
 export const ASK_ID_RE = /^[a-z]+_[0-9a-f]{8}$/;
 const ROLES = new Set(['user', 'assistant', 'system']);
@@ -88,6 +90,8 @@ function rowToThread(r) {
     pinnedAt: r.pinned_at ?? null,
     // #948 s3 (v76): the chat's topic group; null = ungrouped.
     groupId: r.group_id ?? null,
+    // Stillhet chat labels (v89): run labels' rules, in the order added; NULL reads as none.
+    labels: parse(r.labels, null) || [],
     // Workflows view (v54): a composer chat's mode and the canvas its last message carried. Absent on Ask chats.
     ...(r.mode ? { mode: r.mode } : {}),
     ...(r.composer ? { composer: parse(r.composer, null) } : {}),
@@ -129,7 +133,7 @@ export function createThread({ title = null, model = null, effort = null, create
   claimThreadDir(id);   // 1.4: before an attachment lands in it
   const t = now();
   prepare('INSERT INTO ask_threads (id, title, created_at, updated_at, model, effort, totals, created_by, mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(id, title, t, t, model, effort, JSON.stringify(emptyTotals()), createdBy || null, mode === 'composer' ? 'composer' : null);
+    .run(id, title, t, t, model, effort, JSON.stringify(emptyTotals()), createdBy || null, isSurfaceMode(mode) ? mode : null);
   return getThread(id);
 }
 
@@ -149,15 +153,22 @@ const searchText = (query) => (typeof query === 'string' ? query.trim() : '');
  *  blocks (a NULL here would drop every plain user message). */
 const SEARCHED_MESSAGE = `NOT (m.role = 'user' AND COALESCE(m.blocks, '') LIKE '%"synthetic":true%')`;
 
-/** WHERE for a thread list: the owner filter (shared deployments) AND the surface (D9). `mode: 'any'` (the History
- *  "Delete all" count, which deletes composer chats too) skips the surface filter. A `query` (the History search) also
+/** The surface modes as an SQL list for listWhere's "not in": built from constants, never from a request. */
+const SURFACE_LIST = SURFACE_MODES.map((m) => `'${m}'`).join(', ');
+
+/** WHERE for a thread list: the owner filter (shared deployments) AND the surface (D9): a surface mode (thread-modes.mjs)
+ *  lists only its own threads, any other mode only plain chats. `mode: 'any'` (the History "Delete all" count, which
+ *  deletes composer and design chats too) skips the surface filter. A `query` (the History search) also
  *  keeps only chats whose title OR any message's text holds it — case-insensitive (SQLite's LIKE folds ASCII only).
  *  `alias` must name the threads table: the message subquery has an `id` of its own. */
 function listWhere(visibleTo, mode, alias, query, { show = null, ids = null } = {}) {
   const where = [];
   const args = [];
   if (visibleTo) { where.push(`(${alias}created_by IS NULL OR ${alias}created_by = ?)`); args.push(visibleTo); }
-  if (mode !== 'any') where.push(mode === 'composer' ? `${alias}mode = 'composer'` : `(${alias}mode IS NULL OR ${alias}mode <> 'composer')`);
+  if (mode !== 'any') {
+    if (isSurfaceMode(mode)) { where.push(`${alias}mode = ?`); args.push(mode); }
+    else where.push(`(${alias}mode IS NULL OR ${alias}mode NOT IN (${SURFACE_LIST}))`);
+  }
   // #948 s2: 'all' = not archived, 'archived' = archived only; null (every caller before s2) = both.
   if (show === 'all') where.push(`${alias}archived_at IS NULL`);
   else if (show === 'archived') where.push(`${alias}archived_at IS NOT NULL`);
@@ -299,6 +310,28 @@ export function setPinned(id, on) {
     ? prepare('UPDATE ask_threads SET pinned_at = COALESCE(pinned_at, ?) WHERE id = ?').run(now(), id)
     : prepare('UPDATE ask_threads SET pinned_at = NULL WHERE id = ?').run(id);
   return info.changes ? getThread(id) : null;
+}
+
+/** Stillhet chat labels: replace a chat's set with run labels' rules (src/shared/run-labels.mjs). Throws
+ *  { code: 'BAD_LABELS' } on any invalid entry; never bumps updated_at (pin's rule). → { labels, changed }, or null when
+ *  the chat does not exist. */
+export function setThreadLabels(id, input) {
+  const n = normaliseLabels(input);
+  if (n.errors.length) throw Object.assign(new Error(n.errors[0]), { code: 'BAD_LABELS' });
+  const t = getThread(id);
+  if (!t) return null;
+  if (t.labels.length === n.labels.length && t.labels.every((l, i) => l === n.labels[i])) return { labels: t.labels, changed: false };
+  prepare('UPDATE ask_threads SET labels = ? WHERE id = ?').run(n.labels.length ? JSON.stringify(n.labels) : null, id);
+  return { labels: getThread(id).labels, changed: true };
+}
+
+/** The chat labels in use on chats that are not archived (and the viewer may see): [{ label, count }], most used, then
+ *  A–Z — the chat head's picker list, as labelVocabulary is the runs'. */
+export function chatLabelVocabulary({ visibleTo = null } = {}) {
+  getDb();
+  const w = listWhere(visibleTo, null, 't.', '', { show: 'all' });
+  return prepare(`SELECT j.value AS label, COUNT(*) AS count FROM ask_threads t, json_each(t.labels) j${w.sql}${w.sql ? ' AND' : ' WHERE'} t.labels IS NOT NULL
+    GROUP BY j.value ORDER BY count DESC, j.value`).all(...w.args).map((r) => ({ label: r.label, count: r.count }));
 }
 
 // ── chat topic groups (#948 s3, v76) ─────────────────────────────────────────
@@ -582,7 +615,8 @@ export function deleteThread(id) {
   return removed;
 }
 
-/** Boot sweep (spec §6.2.1): threads that never received a message and are older than the cutoff, except threads a chat conversation (v85) is bound to. */
+/** Boot sweep (spec §6.2.1): threads that never received a message and are older than the cutoff, except threads a chat conversation (v85) is bound to
+ *  and design threads (their design points at them, used or not). */
 export function sweepEmptyThreads({ olderThanMs = 24 * 60 * 60 * 1000, now: nowMs = Date.now() } = {}) {
   getDb();
   const cutoff = new Date(nowMs - olderThanMs).toISOString();
@@ -590,6 +624,7 @@ export function sweepEmptyThreads({ olderThanMs = 24 * 60 * 60 * 1000, now: nowM
     SELECT t.id FROM ask_threads t
     WHERE t.created_at < ? AND NOT EXISTS (SELECT 1 FROM ask_messages m WHERE m.thread_id = t.id)
       AND NOT EXISTS (SELECT 1 FROM chat_conversations c WHERE c.ask_thread_id = t.id)
+      AND (t.mode IS NULL OR t.mode <> 'design')
   `).all(cutoff).map((r) => r.id);
   let removed = 0;
   for (const id of ids) if (deleteThread(id)) removed += 1;   // a row deleteThread refuses is not counted as swept
@@ -724,7 +759,9 @@ const CARD_PATCH_KEYS = ['state', 'runId', 'error', 'workflowId', 'scheduledFor'
 
 /** Patch ⊆ {state, runId, error, workflowId} on one card block. A WORKFLOW card (card.type === 'workflow') and a
  *  METRICS, POLICY, SCHEDULE or MODEL card (card.type 'metrics' | 'policy' | 'schedule' | 'model', whose `result` lands at Apply),
- *  a COMMAND card (its helper-job `summary`, #911 slice 2), a QUESTION card (its `choice` / `answerText`), and a PR fix-run `progress` card, whose outcome lands later, also take a SHALLOW `card` sub-patch; a run
+ *  a COMMAND card (its helper-job `summary`, #911 slice 2), a QUESTION card (its `choice` / `answerText`), a PR fix-run `progress` card, whose outcome lands later,
+ *  and a Design chat card (`design-round`: its build's outcome; `design-questions`: its answers; `design-sound`: its answers, its kept
+ *  brief cleared, `keyNeeded`) also take a SHALLOW `card` sub-patch; a run
  *  card's `card` is never touched (its key set is pinned). The 'proposed' precondition is the caller's (route) business. */
 export function updateCardBlock(threadId, cardId, patch = {}) {
   return tx(() => {
@@ -742,7 +779,8 @@ export function updateCardBlock(threadId, cardId, patch = {}) {
         || b.card.type === 'changes' || b.card.type === 'route'
         || b.card.type === 'canvas-edit' || b.card.type === 'workflow-build' || b.card.type === 'agent-draft' || b.card.type === 'script-draft'
         || b.card.type === 'scope-switch' || b.card.type === 'project' || b.card.type === 'command' || b.card.type === 'script-approval'
-        || (b.card.type === 'progress' && !!b.card.fix) || b.card.type === 'question'));
+        || (b.card.type === 'progress' && !!b.card.fix) || b.card.type === 'question'
+        || b.card.type === 'design-round' || b.card.type === 'design-questions' || b.card.type === 'design-sound'));
       return { ...b, ...allowed, ...(sub && subPatchable ? { card: { ...(b.card || {}), ...sub } } : {}) };
     });
     prepare('UPDATE ask_messages SET blocks = ? WHERE id = ?').run(JSON.stringify(blocks), found.message.id);
@@ -765,6 +803,31 @@ export function sweepCloningCards({ text = 'interrupted by a restart; the clone 
         if (!(b && b.kind === 'card' && b.state === 'cloning' && b.card && b.card.type === 'clone')) return b;
         changed = true; n += 1;
         return { ...b, state: 'failed', error: text, card: { ...b.card, result: { ok: false, code: 'failed', error: text } } };
+      });
+      if (changed) prepare('UPDATE ask_messages SET blocks = ? WHERE id = ?').run(JSON.stringify(blocks), r.id);
+    }
+    return n;
+  });
+}
+
+/** Boot sweep for Design chat receipts: no frame tells a `design-round` card its build was cut short by a restart,
+ *  so each one still `running` or `paused` takes `stateOfBuild(card.buildId)` (the build row's receipt state) when
+ *  that is a string and differs; null leaves the card alone. The store imports nothing from design: the caller maps.
+ *  Returns the number of cards changed. */
+export function sweepDesignRoundCards(stateOfBuild) {
+  return tx(() => {
+    let n = 0;
+    const rows = prepare("SELECT id, blocks FROM ask_messages WHERE blocks LIKE '%\"type\":\"design-round\"%'").all();
+    for (const r of rows) {
+      const prev = parse(r.blocks, []);
+      if (!Array.isArray(prev)) continue;
+      let changed = false;
+      const blocks = prev.map((b) => {
+        if (!(b && b.kind === 'card' && (b.state === 'running' || b.state === 'paused') && b.card && b.card.type === 'design-round')) return b;
+        const state = stateOfBuild(b.card.buildId);
+        if (typeof state !== 'string' || state === b.state) return b;
+        changed = true; n += 1;
+        return { ...b, state };
       });
       if (changed) prepare('UPDATE ask_messages SET blocks = ? WHERE id = ?').run(JSON.stringify(blocks), r.id);
     }
@@ -960,6 +1023,17 @@ export function runLinkTarget(runId) {
   if (!r) return null;
   const historyKey = r.target === 'workspace' && r.workspace_key ? `workspaces/${r.workspace_key}` : r.project_key || null;
   return historyKey ? { pipelineId: r.id, historyKey } : null;
+}
+
+/** Every run a viewer's chats started or follow (Stillhet's run → chat lookup): `started` when the link carries its card
+ *  (only POST /api/run with askCardId writes one; track_run links without). Every thread mode, archived threads kept;
+ *  the owner filter is the thread list's (listWhere). Oldest first, so the first started row for a run is its chat. */
+export function runLinksForViewer({ visibleTo = null } = {}) {
+  getDb();
+  const { sql, args } = listWhere(visibleTo, 'any', 't.', '');
+  return prepare(`SELECT l.thread_id, l.run_id, l.pipeline_id, l.card_id FROM ask_run_links l
+    JOIN ask_threads t ON t.id = l.thread_id${sql} ORDER BY l.created_at ASC, l.run_id`).all(...args)
+    .map((r) => ({ threadId: r.thread_id, runId: r.run_id, pipelineId: r.pipeline_id ?? null, started: r.card_id != null }));
 }
 
 export function listRunLinks(threadId) {

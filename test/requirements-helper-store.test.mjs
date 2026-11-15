@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { useTempHome } from './helpers/temp-home.mjs';
 import {
   createFeature, insertHelperMessage, getHelperMessage, listHelperMessages, countHelperMessages, updateHelperMessage, deleteHelperMessages,
-  recentHelperCosts,
+  recentHelperCosts, recentBriefCosts,
 } from '../src/core/requirements/store.mjs';
 import { recordRequirementsCostDelta, requirementsWindowedSpendUsd } from '../src/core/cost-budget.mjs';
 import { prepare } from '../src/core/db.mjs';
@@ -70,4 +70,23 @@ test("clearing a feature's chat deletes its rows only and keeps the ledger rows"
   assert.deepEqual([countHelperMessages(a.seq), countHelperMessages(b.seq)], [0, 1]);
   assert.equal(listHelperMessages(b.seq).length, 1);
   assert.equal(recentHelperCosts(50).length, costs, 'the ledger keeps what the chat cost');
+});
+
+test('9c: a helper message round-trips engine and notices; $0 ledger rows are not in the composer or brief estimates', () => {
+  const f = feature();
+  const plain = insertHelperMessage({ featureSeq: f.seq, role: 'po', text: 'hi' });
+  assert.deepEqual([plain.engine, plain.notices], [null, []]);
+  const w = insertHelperMessage({ featureSeq: f.seq, role: 'worca', text: 'ok', engine: 'codex', notices: ['Cost estimated: Codex reports none.'] });
+  assert.deepEqual([w.engine, w.notices], ['codex', ['Cost estimated: Codex reports none.']]);
+  const again = getHelperMessage(w.id);
+  assert.deepEqual([again.engine, again.notices], ['codex', ['Cost estimated: Codex reports none.']]);
+  const before = recentHelperCosts(1000).length;
+  recordRequirementsCostDelta({ featureSeq: f.seq, helperMessageId: w.id, amountUsd: 0.07 });
+  recordRequirementsCostDelta({ featureSeq: f.seq, helperMessageId: w.id, amountUsd: 0, costKind: 'unknown', engine: 'gemini' });
+  assert.equal(recentHelperCosts(1000).length, before + 1);
+  assert.equal(recentHelperCosts(1)[0], 0.07);
+  const briefBefore = recentBriefCosts(1000).length;
+  recordRequirementsCostDelta({ briefId: 77, amountUsd: 0.2 });
+  recordRequirementsCostDelta({ briefId: 77, amountUsd: 0, costKind: 'unknown' });
+  assert.equal(recentBriefCosts(1000).length, briefBefore + 1);
 });

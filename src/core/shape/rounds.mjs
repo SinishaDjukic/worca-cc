@@ -17,7 +17,7 @@ export function roundsOf(pipelineIds) {
     if (!m || !Number.isInteger(m.round)) continue;
     const list = out.get(m.pipelineId) || [];
     list.push({ round: m.round, pipelineId: r.id, status: String(r.status || ''), request: String(m.request || ''),
-      ...(m.by === 'watch' ? { by: 'watch', kinds: Array.isArray(m.kinds) ? m.kinds : [] } : {}),
+      ...(m.by === 'watch' ? { by: 'watch', kinds: Array.isArray(m.kinds) ? m.kinds : [] } : m.by === 'restart' ? { by: 'restart' } : {}),
       ...(m.outcome ? { outcome: m.outcome } : {}) });
     out.set(m.pipelineId, list);
   }

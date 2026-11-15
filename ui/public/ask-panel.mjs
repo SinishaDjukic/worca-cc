@@ -35,6 +35,7 @@ import { ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 as attachBase64, carriesFiles, 
 import { notify } from './feedback.mjs';
 import { currentLevel, levelShows } from './ui-level.mjs';
 import { chatCardBuilder, composerAddons } from './chat/extensions.mjs';
+import { mountPromptCheckChip, promptCheckOn } from './prompt-check/chip-host.mjs';
 import { keepFocus } from './chat/keep-focus.mjs';
 import { flagOn } from './flags.mjs';
 import { mountChatsColumn } from './chats-column.mjs';
@@ -207,7 +208,7 @@ const HISTORY_KEY = 'worca-cc.chat.history';
 const HISTORY_OPEN_MIN_W = 1600;
 const HISTORY_OVERLAY_BELOW = 1100;
 
-export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null, composerActions = null, summariseCommands = () => true, getPageChips = () => [], getPageScope = () => null, sideActions = null }) {
+export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContext, openNewPipeline, openComposer = null, showTerminal = () => {}, openClaudeSetup = null, loadMarkdown, hljsLoader, storage, raf, now, runStore = null, createVoice = null, voiceLongPressMs = 500, chatDeps = null, onRoute = null, onUnread = null, composerActions = null, summariseCommands = () => true, getPageChips = () => [], getPageScope = () => null, sideActions = null, promptCheckTimers = undefined }) {
   const homePick = browserPick();         // hoisted declaration (defined below)
   const st = {
     open: false,
@@ -921,6 +922,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const cur = el.input.value;
     el.input.value = cur && !/\s$/.test(cur) ? `${cur} ${text}` : `${cur}${text}`;
     fitInput();                                   // a programmatic write fires no input event
+    addonsInput();
     if (!autoSend) { focusComposer(); return; }
     // While a reply runs (barge-in included) sendMessage() queues it like a typed send; the queue sends it after.
     voiceSend();
@@ -968,12 +970,22 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (st.quote === quoted) setQuote(null);
         el.input.value = '';
         fitInput();                                  // a programmatic clear fires no input event
+        addonsInput();
         updateSendStop();
         return true;
       }
     }
+    // The add-ons see the draft as sent once it is taken: queued behind a running reply, or the message accepted (202).
+    // A refused send keeps the draft, and the add-ons keep what they show for it (a new chat made for it included).
+    let told = false;
+    const tellSent = () => { if (!queued && !told && st.addons.length) { told = true; addonsSent(draft.text); } };
     // A reply is running (or loaded, not yet adopted): the composer's message waits in this chat's queue.
-    if (turnBusy()) return queued ? 'busy' : enqueueDraft(draft);
+    if (turnBusy()) {
+      if (queued) return 'busy';
+      const r = enqueueDraft(draft);
+      if (r) tellSent();
+      return r;
+    }
     // …or one the user started while an add-on decided (the same check, above the add-ons).
     if (typeof st.wantThread === 'string' && st.wantThread !== st.threadId) return false;
     if (st.addons.length) text = addonsTransform(text);
@@ -1002,6 +1014,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         id = body.thread.id;
         loadGen += 1;                     // a pending loadThread() must not replace this fresh model
         st.threadId = id;
+        madeThread = id;
         st.model = createThreadModel({ threadId: id });
         st.model.load({ thread: body.thread, messages: [], attachments: [], runLinks: [], inFlight: null });
         setContexts(body.thread && body.thread.contexts);
@@ -1059,6 +1072,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       // the ask-title frame lands (ask-model marks title dirty, flushExtra repaints).
       // A drained queue item leaves the composer alone: it holds whatever the user is typing now.
       if (!queued) {
+        tellSent();
         el.input.value = '';
         fitInput();                                    // a programmatic clear fires no input event
         st.pendingFiles = [];
@@ -1387,6 +1401,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     if (st.hist.idx >= 0) st.hist = { idx: -1, draft: '' };
     // Anything typed after a reply retires that reply's suggestion — also one still being written.
     if (el.input.value) st.suggestDismissed = newestAssistantId();
+    addonsInput();
     updateSendStop();
   }
 
@@ -1424,6 +1439,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
   function showHistory(text) {
     el.input.value = text;
     fitInput();                                      // a programmatic write fires no input event
+    addonsInput();
     try { el.input.selectionStart = el.input.selectionEnd = text.length; } catch { /* jsdom */ }
     updateSendStop();
   }
@@ -1761,6 +1777,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const cur = el.input.value;
     el.input.value = cur ? `${cur.replace(/\s*$/, '')}\n${add}` : add;
     fitInput();                                    // a programmatic write fires no input event
+    addonsInput();
     focusComposer();
     try { el.input.selectionStart = el.input.selectionEnd = el.input.value.length; } catch { /* jsdom */ }
     return true;
@@ -5236,7 +5253,10 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     head.appendChild(tagRow);
     if (typeof card.note === 'string' && card.note) head.appendChild(make('p', 'ask-rp-why', card.note));
     // A shaped card follows card.shape; the nudge is advisory.
-    const shapeUi = card.shape || card.nudge ? shapeCardExtras(doc, card, { fetch }) : null;
+    // Proposed perspectives (flag): every card shows the chips, a plain one too, and the prompt check proposes them.
+    const proposedOn = flagOn('proposedPerspectives', doc);
+    const shapeUi = card.shape || card.nudge || proposedOn
+      ? shapeCardExtras(doc, card, { fetch, ...(proposedOn ? { proposedPerspectives: true } : {}) }) : null;
     local.shapeUi = shapeUi;
     // A direct Shaper card on the requirements workflow: Shape requirements is its only start button.
     const direct = !!(card.shape && shapeUi && shapeUi.requirements);
@@ -5346,6 +5366,19 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const count = make('span', 'ask-rp-count');
     briefFoot.append(hint, count);
     briefSec.appendChild(briefFoot);
+    // The prompt check chip (docs/prompt-check.md "The chip"): a brief is always a task. A tracker task has no brief.
+    const pcheck = card.source ? null : mountPromptCheckChip({
+      doc, host: briefFoot, before: count,
+      surface: { kind: 'run-card', id: block.id }, ids: { threadId: st.threadId, cardId: block.id },
+      forceTask: true, fetchImpl: (...a) => fetch(...a), timers: promptCheckTimers,
+      field: {   // Improve writes through the brief's own input path (count, height, re-check)
+        read: () => brief.value,
+        write: (text) => { brief.value = text; brief.dispatchEvent(new win.Event('input', { bubbles: true })); },
+        focus: () => brief.focus(),
+      },
+      project: () => st.scope.projectKey,
+      ...(proposedOn && promptCheckOn() ? { onAssessment: (a) => local.shapeUi?.proposeFrom?.(a, brief.value) } : {}),
+    });
     if (card.source) {
       // The task IS a tracker task (propose_run source): the run reads it when it starts, so the
       // card shows the reference — never an editable copy that would silently go stale.
@@ -5385,6 +5418,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     };
     brief.addEventListener('input', () => {
       grow();
+      if (pcheck) pcheck.input(brief.value);
       const pos = typeof brief.selectionStart === 'number' ? brief.selectionStart : brief.value.length;
       if (brief.value[pos - 1] === '@') openAtPopover(brief, pos, local, renderPills);
       else if (st.popover && st.popover.trigger === brief) closePopover({ focusTrigger: false });   // typed past the @: the picker never filters, so it goes
@@ -5501,7 +5535,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     }
     // Shape it first: Start holds an icon and a text node, so only the text node is relabelled.
     let shapeBtn = null;
-    if (shapeUi) {
+    if (shapeUi && !shapeUi.plain) {
       const setLabel = (b, t) => { const n = [...b.childNodes].find((x) => x.nodeType === 3); if (n) n.textContent = t; else b.append(t); };
       if (card.shape && !shapeUi.requirements) {
         setLabel(startBtn, 'Start planning');            // a shaped card is never scheduled
@@ -5843,7 +5877,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       rootEl.__rp.refreshTagRules = refreshTagRules;
       refreshTagRules();
     }
-    return rootEl;
+    if (pcheck) pcheck.input(brief.value, { silent: true });   // graded once on mount; its first result is not announced
+    return { el: rootEl, dispose: pcheck ? () => pcheck.dispose() : null };
   }
 
   function collectCardBody(rootEl, local, card) {
@@ -5943,6 +5978,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       }
       const body = { ...collectCardBody(rootEl, local, block.card || {}), askThreadId: st.threadId, askCardId: block.id, ...(schedule || {}) };
       if (local.shapeUi && (shaped || (block.card || {}).shape)) Object.assign(body, local.shapeUi.body());
+      // Proposed perspectives (flag): an unshaped start sends the chosen set and the proposal, never the Shaper.
+      else if (local.shapeUi?.proposeFrom && flagOn('proposedPerspectives', doc)) Object.assign(body, local.shapeUi.body(false));
       if (overlay) body.overlay = overlay;
       // Run chains: "the branch of the run before it" is a flag, and the wire refuses it next to a branch name.
       // Keyed off the schedule being POSTED — a Start now on an after-proposal carries none and keeps the picked branch.
@@ -6299,7 +6336,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       : isScriptApproval ? buildScriptApprovalCard(block)
       : isProgress ? buildProgressCard(block)
         : custom ? { el: make('div', 'ask-card-stub', (block.card && (block.card.summary || block.card.title)) || 'Card unavailable') }
-        : { el: block.state === 'proposed' ? buildCardForm(block) : buildCardTerminal(block) };
+        : block.state === 'proposed' ? buildCardForm(block) : { el: buildCardTerminal(block) };
     st.cardEls.set(block.id, { el: built.el, state: block.state, view, rev, custom: custom || null, handle: built.handle || null, dispose: built.dispose || null, animate: !!built.animate, cancelAnim: null, lastW: -1, sum: summariesOn() });
     return built.el;
   }
@@ -7635,14 +7672,20 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       runLinks: [...st.model.runLinks()].map(([runId, l]) => ({ runId, ...l })),
     };
   }
+  let madeThread = null;
   const addonCtx = {
     doc, fetch,
     threadId: () => st.threadId,
+    madeThread: () => madeThread,         // the thread the composer's last first send created (null until one does)
     thread: () => threadSnapshot(),
     runStore,
     setPlaceholder: (text) => { st.basePlaceholder = typeof text === 'string' && text ? text : INPUT_PLACEHOLDER; updateSuggestion(); },
     focus: () => focusComposer(),
     announce: (text) => announce(text),
+    // Prompt check Improve (docs/prompt-check.md): the composer's text, a write through its input path, its project.
+    text: () => el.input.value,
+    setText: (text) => { el.input.value = text; fitInput(); addonsInput(); updateSendStop(); },
+    projectKey: () => st.scope.projectKey,
   };
   function mountAddons() {
     for (const addon of composerAddons()) {
@@ -7684,6 +7727,27 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
       } catch (err) { console.warn(`[worca] composer add-on "${a.id}" transformSend failed`, err); }
     }
     return out;
+  }
+  /** The optional input hook (CONTRACT §2): the composer's text after every edit, typed or programmatic. `answering`
+   *  is true while an add-on routes the send elsewhere (holdsSend, e.g. the direction chip). */
+  function addonsInput() {
+    if (!st.addons.length) return;
+    const text = el.input.value;
+    let answering = false;
+    for (const a of st.addons) {
+      try { if (typeof a.handle.holdsSend === 'function' && a.handle.holdsSend()) answering = true; } catch { /* a dead hook counts as not holding */ }
+    }
+    for (const a of st.addons) {
+      if (typeof a.handle.input !== 'function') continue;
+      try { a.handle.input(text, { answering }); } catch (err) { console.warn(`[worca] composer add-on "${a.id}" input failed`, err); }
+    }
+  }
+  /** The optional sent hook: the raw draft (never the transformSend result), once it is taken. */
+  function addonsSent(text) {
+    for (const a of st.addons) {
+      if (typeof a.handle.sent !== 'function') continue;
+      try { a.handle.sent(text); } catch (err) { console.warn(`[worca] composer add-on "${a.id}" sent failed`, err); }
+    }
   }
   function destroyAddons() {
     for (const a of st.addons.splice(0)) {

@@ -1,0 +1,50 @@
+/* Mock only (Dark cockpit proposal): layered over the real prototype by capture.mjs. Nothing here is the design system yet. */
+:root{
+  --amber:light-dark(#94640F,#CFA265); --amber-ink:var(--amber); --amber-ink-strong:var(--amber);
+  --red:light-dark(#A9463C,#DB8378); --red-ink:var(--red); --red-ink-strong:var(--red); --red-ink-soft:var(--red);
+  --green:light-dark(#3F7349,#86B38C); --green-ink:var(--green); --green-ink-strong:var(--green);
+  --violet:light-dark(#6F60BE,#A99FE0);
+  --on-signal:light-dark(#FFFFFF,#141416);
+}
+/* L0, normal: off */
+.kind-mark.is-ok,.kind-mark.is-wait,.kind-mark.is-idle,.kind-mark.is-pause,.kind-mark.is-stop,.kind-mark.is-closed{color:var(--ink-2);}
+.kind-mark .km-ring circle:first-child{stroke:currentColor;}
+/* Merged: full ink, no ring. Unmerged keeps an ink-2 ring. One mark per row: the state mark. */
+.kind-mark.is-merged{color:var(--ink);} .kind-mark.is-merged .km-ring{display:none;}
+.list-row .git-mark{display:none;}
+.kind-mark.is-run{color:var(--ink-2);}
+.git-mark .gm-i{color:var(--ink-2)!important;}
+.git-mark .gm-i.is-merged{color:var(--ink)!important;}
+.git-mark .gm-i.is-fail{color:var(--red)!important;} .git-mark .gm-i.is-conflict{color:var(--amber)!important;}
+.ro-sq.is-ok{background:var(--ink-2);}
+.ro-sq.is-fail{background:none;position:relative;}
+.ro-sq.is-fail::after{content:'!';position:absolute;inset:-3px 0;text-align:center;font:600 12px/15px var(--sans);color:var(--ink);}
+.sl-knot.is-done,.sl-done{background:var(--ink-2);}
+.stage-bar.is-ok,.stage-bar.is-merged{color:var(--ink-2);}
+.tl-tick.is-ok i,.tl-tick.is-merged i{background:var(--ink-2);}
+.pg-state.is-ok,.pg-state.is-merged{color:var(--ink-2);}
+.btn.btn-quiet.is-danger{color:var(--ink-2);}
+/* L1, advisory: full ink, no hue, no count */
+.kind-mark.ck-adv{color:var(--ink);}
+.list-row:has(> .lr-rail .ck-adv) .lr-t{font-weight:500;}
+.pg-up{color:var(--ink);}
+/* L2 and L3 both breathe, each in its colour (the owner's decision): the prototype's own breath, in the muted tokens */
+/* L3, warning: the only filled mark */
+.kind-mark.is-fail{background:var(--red);border-radius:50%;}
+.kind-mark.is-fail > svg:not(.km-ring){color:var(--on-signal);}
+.kind-mark.is-fail .km-ring{display:none;}
+.is-attn[data-attn="fail"]{--attn:var(--red);}
+/* The master light: Pulse wears the highest level */
+.topnav-badge[data-tone="need"]{background:var(--amber);color:var(--on-signal);}
+.ck-master-l3 .topnav-badge[data-tone="need"]{background:var(--red);}
+/* On demand: Figures on the card and the centre; section counts stay */
+.q-facts:not(.ck-open),.rc-watch,.composer-meter,.place-head .convo-head{display:none!important;}
+.place-head .ck-calm-line{display:block!important;font-size:var(--fs-body);font-weight:500;color:var(--ink);margin-top:3px;}
+/* Words on a card: the level's colour on the state word; lists keep it on the mark */
+.tp-kicker:has(> .kind-mark.is-fail) > span:not(.kind-mark):not(.tp-menu){color:var(--red);}
+.tp-kicker:has(> .kind-mark:is(.is-ask,.is-act)) > span:not(.kind-mark):not(.tp-menu){color:var(--amber);}
+.is-attn::before,.list-row:has(.kind-mark.is-breathe) > .lr-main::before{opacity:.5!important;}
+.ck-figs{font-size:var(--fs-meta);color:var(--ink-2);margin:-6px 0 12px;}
+.q-facts.ck-open{margin:6px 0 0 34px;}
+.ck-fig{margin-left:10px;}
+.ck-calm .topnav-ask-dot,.ck-calm #topnav-ask .ask-dot{display:none!important;}

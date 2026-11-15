@@ -28,8 +28,10 @@ import { paintProgressBar, renderRowLine } from './run-progress-bar.mjs';
 import { renderStatusDot } from './status-dot.mjs';
 import { fmtUsd } from './graph/run-decor.mjs';
 import { engineLabel } from '../../src/shared/engine-switch.mjs';
-import { runModel, groupModel, finishedNeedsYou, WATCH_WHY } from '../../src/shared/run-model.mjs';
+import { runModel, groupModel, WATCH_WHY } from '../../src/shared/run-model.mjs';
 import { kindChip } from './run-kind.mjs';
+import { FAILED, FIXING_ROUND, LIVE_ROUND, stampMs, prNeedsOf, memberPrsOf, roundMarkerOf, prUrlsOf, dedupeByPr, needsYou, needsYouItems } from '../../src/shared/needs-you.mjs';
+import { DAY_BUCKETS, dayBucket } from '../../src/shared/day-buckets.mjs';
 
 const pad2 = (n) => String(n).padStart(2, '0');
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -89,7 +91,6 @@ export function whenLabel(v, now = Date.now(), tz = '') {
 }
 
 const DONE = new Set(['done', 'complete', 'completed']);
-const FAILED = new Set(['error', 'failed']);
 const STOPPED = new Set(['stopped', 'aborted']);
 const PARKED = new Set(['paused', 'pausing', 'interrupted']);
 // A pause names its cause, like statusPill ("Paused · cost limit") but short enough for a row.
@@ -173,95 +174,8 @@ export function schedRowState(t) {
   return { icon: 'scheduled', word, detail: '' };
 }
 
-/** A workspace run's member PRs (#784): a run's `memberPrs`, else a History row's members[].pr (the history-pr
- *  batch fills them through app.js applyWsMemberPrs). Objects only; [] for any other run. */
-export function memberPrsOf(x) {
-  if (x && Array.isArray(x.memberPrs)) return x.memberPrs;
-  const ms = x && Array.isArray(x.members) ? x.members : [];
-  return ms.map((m) => m && m.pr).filter((p) => p && typeof p === 'object');
-}
-
-/** A run (History row, a row's raw run, a member's run) that a finished run's PR or Watch PR raises to Needs you
- *  (run-model.mjs finishedNeedsYou, D31 / D23); a workspace run's member PRs count too (#784). A glance string
- *  ('MERGED') carries no verdict. */
-const prNeedsOf = (x) => !!(x && typeof x === 'object')
-  && finishedNeedsYou({ pr: x.pr && typeof x.pr === 'object' ? x.pr : null, watch: x.watch || null, memberPrs: memberPrsOf(x),
-    prDeduped: !!x.prDeduped,
-    // D8: a round never needs you through its PR (a raw History row names its marker `roundOf`, a model run `round`).
-    round: x.round || x.roundOf || (x.branch && typeof x.branch === 'object' ? x.branch.roundOf : null) || null });
-
-/** A round's marker (D1) on an item, a row or a raw History row: { pipelineId, round ≥ 2, … }, else null. */
-export function roundMarkerOf(x) {
-  const m = x && x.roundOf;
-  return m && typeof m === 'object' && m.pipelineId && Number.isInteger(m.round) && m.round >= 2 ? m : null;
-}
-// D5: a round in one of these statuses is live; its run stands for the stack.
-const LIVE_ROUND = new Set(['created', 'starting', 'running', 'paused', 'pausing']);
-const FIXING_ROUND = new Set(['created', 'starting', 'running']);
-
-const normPrUrl = (u) => String(u || '').trim().toLowerCase().replace(/[?#].*$/, '').replace(/\/+$/, '');
-/** A run's PR urls, normalized: its own PR's, else each workspace member PR's (D8). */
-export function prUrlsOf(x) {
-  if (!x || typeof x !== 'object') return [];
-  const own = x.pr && typeof x.pr === 'object' && x.pr.url ? [x.pr.url] : [];
-  return [...new Set((own.length ? own : memberPrsOf(x).map((p) => p && p.url)).filter(Boolean).map(normPrUrl))];
-}
-// An epoch for "newest" with no clock: epoch ms, or an ISO stamp.
-const stampMs = (v) => (typeof v === 'number' ? (Number.isFinite(v) && v > 0 ? v : NaN) : Date.parse(String(v || '')));
-
-/** D8: one open PR raises one Needs-you item. Among `rows` that need you ONLY through their PR (`prOnly`), the newest
- *  (`at`) per normalized PR url (`urls`) counts; a row stays while any of its urls is still unclaimed. → { kept,
- *  dropped: Set }, `kept` in the input order. */
-export function dedupeByPr(rows, { prOnly = () => true, urls = prUrlsOf, at = () => 0 } = {}) {
-  const ms = (r) => { const t = at(r); return Number.isFinite(t) ? t : 0; };
-  const cands = rows.filter((r) => prOnly(r) && urls(r).length).sort((a, b) => ms(b) - ms(a));
-  const claimed = new Set();
-  const dropped = new Set();
-  for (const r of cands) {
-    const us = urls(r);
-    if (us.every((u) => claimed.has(u))) dropped.add(r);
-    else for (const u of us) claimed.add(u);
-  }
-  return { kept: rows.filter((r) => !dropped.has(r)), dropped };
-}
-
-/** Needs you: a question or gate, a pause (cost caps included), a failed run nobody opened yet, and a finished run
- *  whose PR has failing checks or conflicts with no fix run on it (`prNeeds`, D31). */
-export function needsYou({ kind = 'live', status = '', ask = false, unread = false, prNeeds = false } = {}) {
-  if (kind === 'sched') return false;
-  const s = String(status || '').toLowerCase();
-  if (s === 'paused') return true;
-  if (prNeeds && s === 'done') return true;
-  if (kind !== 'live') return false;
-  if (ask && s !== 'pausing' && s !== 'interrupted') return true;
-  return !!unread && FAILED.has(s);
-}
-
-/** The items Needs you holds: live items that need you, and History rows that do whose run is not
- *  listed live. countNeedsYou counts exactly these; the top bar's Activity lists them. */
-export function needsYouItems({ live = [], history = [] } = {}) {
-  const pids = new Set(live.map((r) => r && r.pipelineId).filter(Boolean));
-  // D5: while a round of a run is working, that run is Working, never Needs you through its PR. A paused round is not
-  // fixing anything: it counts for its pause, and its run for its PR (plan Task 3: 1 + 1).
-  const fixing = new Set([...live, ...history].map((x) => {
-    const m = roundMarkerOf(x);
-    return m && FIXING_ROUND.has(String(x.status || '').toLowerCase()) ? String(m.pipelineId) : '';
-  }).filter(Boolean));
-  const hist = history.filter((p) => p && !pids.has(p.id)
-    && needsYou({ kind: 'hist', status: p.status, prNeeds: prNeedsOf(p) && !fixing.has(String(p.id)) }));
-  return {
-    live: live.filter((r) => r && needsYou({ kind: 'live', status: r.status, ask: !!r.ask, unread: !!r.unread })),
-    // D8: a History row needs you through its PR only when done (a paused one for its pause); one item per open PR.
-    history: dedupeByPr(hist, { prOnly: (p) => String(p.status || '').toLowerCase() === 'done',
-      at: (p) => (Number.isFinite(stampMs(p.mtime)) ? stampMs(p.mtime) : stampMs(p.startedAt)) }).kept,
-  };
-}
-
-/** The Runs badge: the Needs you count without building the list (runs on every WS frame). */
-export function countNeedsYou(src = {}) {
-  const { live, history } = needsYouItems(src);
-  return live.length + history.length;
-}
+export { memberPrsOf, roundMarkerOf, prUrlsOf, dedupeByPr, needsYou, needsYouItems, countNeedsYou } from '../../src/shared/needs-you.mjs';
+export { DAY_BUCKETS, dayBucket } from '../../src/shared/day-buckets.mjs';
 
 function baseRow(kind, st, fields, when, now) {
   return {
@@ -333,25 +247,8 @@ export function schedRow(t, now = Date.now()) {
   }, t.after ? { at: now, time: '' } : { at: t.runAt }, now);   // an after-ticket's runAt is a far-future sentinel
 }
 
-/** The day sections both lists share (Runs and Chats Group by Date), top to bottom: Today, Yesterday, 2–7 days ago,
- *  8–30 days ago, then the rest. The boundaries are local midnights, stepped with setDate so a DST day is still one day. */
-export const DAY_BUCKETS = Object.freeze([
-  ['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'Previous 7 days'], ['month', 'Previous 30 days'], ['older', 'Older'],
-]);
 /** The View menu's Date segment title, for both lists. */
 export const DATE_GROUP_TITLE = DAY_BUCKETS.map(([, name]) => name).join(' · ');
-export function dayBucket(t, now = Date.now()) {
-  if (!Number.isFinite(t)) return 'older';
-  const day = new Date(now);
-  day.setHours(0, 0, 0, 0);
-  if (t >= day.getTime()) return 'today';
-  day.setDate(day.getDate() - 1);
-  if (t >= day.getTime()) return 'yesterday';
-  day.setDate(day.getDate() - 6);
-  if (t >= day.getTime()) return 'week';
-  day.setDate(day.getDate() - 23);
-  return t >= day.getTime() ? 'month' : 'older';
-}
 /** Older starts folded in both lists. `collapsed` (the person's record) holds the sections whose fold differs from
  *  their default, so a fold read or set goes through these two. */
 const FOLDED_FIRST = new Set(['date:older']);

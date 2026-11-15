@@ -427,7 +427,7 @@ export async function prCheckFacts({ prUrl, env = process.env } = {}) {
     const others = blocking.filter((ev) => !reviewerIds.has(ev.configuration.type?.id) && !checkIds.has(ev.configuration.type?.id));
     const mergeState = others.some((ev) => ev.status !== 'approved') ? 'BLOCKED' : r.pr.mergeStatus === 'succeeded' ? 'CLEAN' : null;
     return { items, mergeable: MERGE[r.pr.mergeStatus] || 'UNKNOWN', mergeState, reviewDecision, draft: r.pr.isDraft === true,
-      base: r.facts.base, baseFailing: r.baseRes.failing };
+      base: r.facts.base, baseFailing: r.baseRes.failing, reviews: reviewsOf(r.pr), headSha: r.facts.headSha || null };
   } catch { return null; }
 }
 
@@ -486,6 +486,34 @@ export async function prComment({ prUrl, body, env = process.env } = {}) {
       body: { comments: [{ parentCommentId: 0, content: String(body || ''), commentType: 1 }], status: 4 } });
     return { ok: true };
   } catch (e) { return watchFailure(e); }
+}
+
+/** The PR's reviewer votes as { by, state } (GitHub's words): a positive vote approves, a negative one asks for changes. */
+const reviewsOf = (pr) => (Array.isArray(pr?.reviewers) ? pr.reviewers : [])
+  .filter((x) => x && !x.isContainer && Number(x.vote) && (x.displayName || x.uniqueName))
+  .map((x) => ({ by: String(x.displayName || x.uniqueName), state: Number(x.vote) > 0 ? 'APPROVED' : 'CHANGES_REQUESTED' }));
+
+/** Merge PR: complete the PR at the source commit the caller checked (`headSha`, else the current one), with the
+ *  repository's default merge strategy. A source that moved past `headSha` is refused with class 'head-moved'. */
+export async function mergePr({ prUrl, headSha = null, env = process.env } = {}) {
+  const p = parseAzurePrUrl(prUrl);
+  if (!p) return { ok: false, class: 'failed', error: 'invalid Azure DevOps pull request URL' };
+  try {
+    const { json } = await adoFetch('read', prApi(p), { env });
+    const commitId = json?.lastMergeSourceCommit?.commitId;
+    if (!commitId) return { ok: false, class: 'failed', error: 'the pull request has no source commit' };
+    if (headSha && commitId !== headSha) return { ok: false, class: 'head-moved', error: 'the pull request has new commits' };
+    await adoFetch('write', prApi(p), { method: 'PATCH', body: { status: 'completed', lastMergeSourceCommit: { commitId } }, env });
+    return { ok: true, method: 'default' };
+  } catch (e) { return watchFailure(e); }
+}
+
+/** Point the PR at another target branch. */
+export async function retargetPr({ prUrl, base, env = process.env } = {}) {
+  const p = parseAzurePrUrl(prUrl);
+  if (!p || !base) return { ok: false, error: 'invalid retarget request' };
+  try { await adoFetch('write', prApi(p), { method: 'PATCH', body: { targetRefName: `refs/heads/${base}` }, env }); return { ok: true }; }
+  catch (e) { return watchFailure(e); }
 }
 
 /** D24: mark a draft PR ready for review. */

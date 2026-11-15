@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Worca Rail · Stillhet switch and icons (mock)</title>
+<!-- Worca's own stylesheet, the Rail layer, the shell's top bar, then Pulse's rows (spec: plans/rail/stillhet-switch.md). -->
+<link rel="stylesheet" href="../../../ui/public/stillhet/app.css">
+<link rel="stylesheet" href="../../../ui/public/stillhet/css/rail-look.css">
+<link rel="stylesheet" href="../../../ui/public/stillhet/css/rail.css">
+<link rel="stylesheet" href="../../../ui/public/stillhet/shell/shell.css">
+<link rel="stylesheet" href="../../../ui/public/stillhet/pulse/pulse.css">
+<style>
+  @font-face{font-family:'Poppins';font-weight:400;src:url('../../../ui/public/fonts/poppins-latin-400-normal.woff2') format('woff2');}
+  @font-face{font-family:'Poppins';font-weight:500;src:url('../../../ui/public/fonts/poppins-latin-500-normal.woff2') format('woff2');}
+  @font-face{font-family:'Poppins';font-weight:600;src:url('../../../ui/public/fonts/poppins-latin-600-normal.woff2') format('woff2');}
+  @font-face{font-family:'Poppins';font-weight:700;src:url('../../../ui/public/fonts/poppins-latin-700-normal.woff2') format('woff2');}
+  @font-face{font-family:'JetBrains Mono';font-weight:400;src:url('../../../ui/public/fonts/jetbrains-mono-latin-400-normal.woff2') format('woff2');}
+  html.mk-360{width:360px;overflow:hidden;}   /* headless Chrome never opens narrower than 500px */
+  .mk-wrap{max-width:1180px;margin:0 auto;}
+  .mk-bar{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between;margin-bottom:16px;}
+  .mk-note{margin:0 0 16px;font-size:var(--fs-meta);color:var(--ink-2);max-width:65ch;}
+  #mock{display:block;border:1px solid var(--line);border-radius:var(--r-card, 8px);background:var(--bg);min-height:320px;}   /* .pz-app lends the rows their rail and the menu its check; the mock lays itself out */
+  .mk-panels{display:grid;gap:16px;padding:16px;}
+  .mk-panel{display:grid;grid-template-columns:1fr 1fr;gap:8px 24px;}
+  .mk-title{grid-column:1 / -1;margin:0;font-size:var(--fs-body);font-weight:600;color:var(--ink);}
+  .mk-h{margin:0 0 8px;font-size:var(--fs-meta);color:var(--ink-2);}
+  .mk-half .mk-sample{display:inline-flex;flex-direction:column;align-items:center;gap:4px;margin-right:16px;color:var(--ink-2);}
+  .mk-cap{font-size:var(--fs-caption);color:var(--ink-3, var(--ink-2));}
+</style>
+</head>
+<body class="rc-board">
+<div class="mk-wrap">
+  <div class="mk-bar">
+    <label style="display:flex;align-items:center;gap:8px;font-size:var(--fs-meta);color:var(--ink-2)">Case <select class="select" id="case" style="width:160px"></select></label>
+    <div class="seg" role="group" aria-label="Theme">
+      <button type="button" data-theme-pick="light" aria-pressed="true">Light</button>
+      <button type="button" data-theme-pick="dark">Dark</button>
+    </div>
+  </div>
+  <p class="mk-note" data-mock-note></p>
+  <div id="mock" class="pz-app"></div>
+</div>
+<script src="../../../ui/public/stillhet/components.js"></script>
+<script src="stillhet-switch.js"></script>
+<script>window.StillhetSwitchMock.boot(document);</script>
+</body>
+</html>

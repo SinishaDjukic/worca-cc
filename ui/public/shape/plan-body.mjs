@@ -7,7 +7,7 @@ import { buildPerspectiveChips } from './chips.mjs';
 import { planStats, perspectiveChangeFeedback, fixAllFeedback, sectionOwners, planSummary, unmetLine,
   planApproveLabel, displayCoverage } from './plan-text.mjs';
 import { openBlocking } from '../../../src/shared/shape/role-review.mjs';
-import { perspectiveByKey, PERSPECTIVES, chipsHiddenFor } from '../../../src/shared/shape/perspectives.mjs';
+import { perspectiveByKey, chipsHiddenFor, COMPLIANCE, perspectivesWith } from '../../../src/shared/shape/perspectives.mjs';
 import { levelAtLeast } from '../ui-level.mjs';
 import { toggleMenu } from '../workflows/menu.mjs';
 import { icon } from '../icons.mjs';
@@ -117,7 +117,9 @@ export function renderPlanBody(panel, pq, deps) {
   if (decisions) body.appendChild(decisions.el);
 
   // perspectives as a line; "edit" opens today's chips + Update plan in place (D31) — the gate on only
-  const was = PERSPECTIVES.map((p) => p.key).filter((k) => k === 'product' || perspectives.includes(k));
+  // A run that holds Compliance (flag proposedPerspectives at start) lists it and keeps offering it, so a revise keeps it.
+  const hasCompliance = perspectives.includes(COMPLIANCE.key);
+  const was = perspectivesWith({ compliance: hasCompliance }).map((p) => p.key).filter((k) => k === 'product' || perspectives.includes(k));
   const pline = h('div', 'plan-persp-line');
   pline.appendChild(h('span', 'plan-persp-names', was.map(labelOf).join(' · ')));
   body.appendChild(pline);
@@ -125,6 +127,7 @@ export function renderPlanBody(panel, pq, deps) {
     const update = btn('plan-update', 'Update plan'); update.disabled = true;
     const same = (v) => v.length === was.length && v.every((k) => was.includes(k));   // order-free
     const chips = buildPerspectiveChips(doc, { picked: perspectives, fixed: ['ux'], hidden: chipsHiddenFor(perspectives), collapsed: false,
+      ...(hasCompliance ? { extra: [COMPLIANCE] } : {}),
       onChange: (v) => { update.disabled = same(v); } });
     afterSubmit = () => { update.disabled = same(chips.value()); };
     update.addEventListener('click', (e) => {

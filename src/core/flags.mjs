@@ -12,7 +12,8 @@
 import { EventEmitter } from 'node:events';
 import { FLAGS } from '../shared/flags/registry.mjs';
 import { resolveFlags } from '../shared/flags/resolve.mjs';
-import { storedFlags, writeStoredFlags } from './settings.mjs';
+import { storedFlags, writeStoredFlags, setOnboardingPrefs } from './settings.mjs';
+import { railAnswerHook } from './stillhet.mjs';
 
 export class FlagError extends Error {
   /** @param {'invalid'|'locked'} code  @param {string} message  @param {string|null} [key] */
@@ -28,10 +29,10 @@ function warnUnknownOnce(key, where) {
 
 /**
  * A flag service over an injectable registry, environment and store (tests inject all four).
- * @param {{registry?:ReadonlyArray<object>, env?:()=>string|undefined, read?:()=>object, write?:(m:object)=>Promise<void>, warn?:(key:string, where:string)=>void}} [o]
+ * @param {{registry?:ReadonlyArray<object>, env?:()=>string|undefined, read?:()=>object, write?:(m:object)=>Promise<void>, warn?:(key:string, where:string)=>void, afterSet?:(patch:object)=>Promise<void>|void}} [o]
  */
 export function createFlags({
-  registry = FLAGS, env = () => process.env.WORCA_FLAGS, read = storedFlags, write = writeStoredFlags, warn = warnUnknownOnce,
+  registry = FLAGS, env = () => process.env.WORCA_FLAGS, read = storedFlags, write = writeStoredFlags, warn = warnUnknownOnce, afterSet,
 } = {}) {
   const events = new EventEmitter();
   const byKey = new Map(registry.map((f) => [f.key, f]));
@@ -87,6 +88,10 @@ export function createFlags({
     const clean = plan(patch);
     if (!Object.keys(patch).length) return list();   // {} (the settings-api probe, a Reset with nothing unlocked): no write, no frame
     await write(clean);
+    if (afterSet) {
+      try { await afterSet(patch); }
+      catch (err) { console.warn('[worca] Stillhet answer not stored: ' + (err && err.message ? err.message : String(err))); }
+    }
     events.emit('changed', map());
     return list();
   }
@@ -136,7 +141,7 @@ export function createFlags({
 }
 
 // The process-wide instance (env WORCA_FLAGS + settings.json).
-const flags = createFlags();
+const flags = createFlags({ afterSet: railAnswerHook(setOnboardingPrefs) });
 export const flagEvents = flags.events;
 export const flagEnabled = (key) => flags.enabled(key);
 export const allFlags = () => flags.map();

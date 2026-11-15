@@ -528,6 +528,36 @@ test('createFlyout: a mouse click on its own trigger closes a keyboard-opened po
   assert.equal(doc.activeElement, doc.body, 'a pointer close: focus is not handed to the trigger');
 });
 
+test('createFlyout: destroy() closes it and removes every listener it added, by name and capture flag; the shared Escape listener stays', () => {
+  const { window, doc, $, fly, click, key } = setup();          // the first flyout made the shared Escape listener
+  const live = [];
+  const capture = (o) => (typeof o === 'boolean' ? o : !!o?.capture);
+  const track = (target) => {
+    const add = target.addEventListener.bind(target); const remove = target.removeEventListener.bind(target);
+    target.addEventListener = (t, fn, o) => { live.push({ target, t, fn, c: capture(o) }); add(t, fn, o); };
+    target.removeEventListener = (t, fn, o) => {
+      const i = live.findIndex((x) => x.target === target && x.t === t && x.fn === fn && x.c === capture(o));
+      if (i >= 0) live.splice(i, 1);
+      remove(t, fn, o);
+    };
+  };
+  $('menu2').closest('[hidden]');   // jsdom's selector engine adds its own window listeners on its first use
+  for (const target of [window, doc, $('trig2'), $('menu2'), $('aside')]) track(target);
+  const other = createFlyout({ doc, win: window, trigger: $('trig2'), menu: $('menu2'), closeOn: $('aside') });
+  assert.ok(live.length >= 9, `it listens: ${live.length}`);
+  other.open();
+  other.destroy();
+  assert.deepEqual(live.map((x) => `${x.t}:${x.c}`), [], 'none of its handlers is left');
+  assert.equal($('menu2').hidden, true, 'closed');
+  assert.equal($('trig2').getAttribute('aria-expanded'), 'false');
+  click($('trig2'));
+  assert.equal($('menu2').hidden, true, 'its trigger no longer opens it');
+  click($('trig'), 0);
+  assert.equal(fly.isOpen(), true);
+  key(doc.activeElement, 'Escape');
+  assert.equal(fly.isOpen(), false, 'the shared Escape listener still serves the others');
+});
+
 test('createFlyout: a right-click on the popup (its context menu takes the mouseup) does not leave a press in progress', () => {
   const { window, $, fly, click } = setup();
   click($('trig'), 0);

@@ -294,7 +294,7 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
     const probes = {
       projectsRoot: '', chat: {}, pipelineCostLimitUsd: '', totalCostLimitUsd: '', costLimitResetPeriod: '', humanRateUsdPerHour: '',
       askMaxTurns: '', askMaxBudgetUsd: '', askWeb: null, smartNaming: null, debugSpawnEnabled: false, keepAwake: true, resumeAfterUsageLimit: false, autoGeneratePrDescription: false, updateCheck: true,
-      titleModel: '', hideBuiltinModels: false, theme: '', uiLevel: '',
+      titleModel: '', hideBuiltinModels: false, theme: '', pulseFor: '', uiLevel: '',
       autoWorkflowModel: '',
       prDescriptionModel: '',
       memoryDefrag: null,
@@ -311,6 +311,7 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
       runLimits: null,
       actions: {},
       runEngine: null, stepModels: {}, utilityModels: {},   // cascading settings (Plan 2a): null / {} change nothing
+      designModels: {},                                      // Models › Engines › Design: {} changes nothing
       modelRoles: {},                                        // Models › Roles: {} changes nothing
       askEngine: null, askModels: {},                        // Chat's engine (Plan 2b, D17): null / {} change nothing
       flags: {},                                             // feature flags (docs/feature-flags.md): {} is a no-op
@@ -491,6 +492,22 @@ test('chat.summariseCommands defaults on, saves false, rejects a non-boolean (#9
   const body = await r.json();
   assert.equal(body.field, 'chat');
   assert.equal(typeof body.error, 'string');
+});
+
+test('chat.promptCheck defaults off, saves true, rejects a non-boolean', async () => {
+  let s = await (await fetch(`${base}/api/settings`)).json();
+  assert.equal(s.chat.promptCheck, false);
+  let r = await fetch(`${base}/api/settings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat: { promptCheck: true } }) });
+  assert.equal(r.status, 200);
+  s = await (await fetch(`${base}/api/settings`)).json();
+  assert.equal(s.chat.promptCheck, true);
+  r = await fetch(`${base}/api/settings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat: { promptCheck: 'yes' } }) });
+  assert.equal(r.status, 400);
+  const body = await r.json();
+  assert.equal(body.field, 'chat');
+  assert.equal(typeof body.error, 'string');
+  r = await fetch(`${base}/api/settings`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ chat: { promptCheck: false } }) });
+  assert.equal(r.status, 200);
 });
 
 test('POST modelRoles: a model outside the catalog or a bad effort is 400 and writes nothing; ids are stored canonical', async () => {

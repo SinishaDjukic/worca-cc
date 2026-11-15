@@ -258,3 +258,38 @@ test('the checks line says Merge conflicts on a conflicting Bitbucket PR (the Re
   bb._testing.setFetch(fakeFetch(routes({ conflicts: [{ path: 'CHANGELOG.md', scenario: 'content' }], headStatuses: [] })));
   assert.equal((await prChecks({ projectDir: '/p', prUrl: PR })).status.label, 'Merge conflicts');
 }));
+
+test('Merge PR and retarget on Bitbucket: POST merge, PUT the destination branch', () => withEnv(ENV, async () => {
+  const { prMerge, prRetarget } = await import('../src/core/git-info.mjs');
+  const f = fakeFetch([
+    { match: /\/pullrequests\/12\/merge$/, method: 'POST', reply: res(200, {}) },
+    { match: /\/pullrequests\/12$/, method: 'GET', reply: res(200, prBody()) },
+    { match: /\/pullrequests\/12$/, method: 'PUT', reply: res(200, {}) },
+  ]);
+  bb._testing.setFetch(f);
+  assert.deepEqual(await prMerge({ prUrl: PR }), { ok: true, method: 'default' });
+  assert.deepEqual(await prRetarget({ prUrl: PR, base: 'main' }), { ok: true });
+  assert.deepEqual(f.calls.at(-1).body.destination, { branch: { name: 'main' } });
+  assert.deepEqual(f.calls.at(-1).body.reviewers, [{ uuid: REV }], 'the retarget keeps the PR\'s reviewers');
+}));
+
+test('Merge PR on Bitbucket re-reads the head first: the checked head merges, a moved one is refused head-moved with no POST', () => withEnv(ENV, async () => {
+  const { prMerge } = await import('../src/core/git-info.mjs');
+  const f = fakeFetch([
+    { match: /\/pullrequests\/12\/merge$/, method: 'POST', reply: res(200, {}) },
+    { match: /\/pullrequests\/12$/, method: 'GET', reply: res(200, prBody()) },
+  ]);
+  bb._testing.setFetch(f);
+  assert.deepEqual(await prMerge({ prUrl: PR, headSha: HEAD }), { ok: true, method: 'default' });
+  const n = f.calls.length;
+  const moved = await prMerge({ prUrl: PR, headSha: 'c'.repeat(40) });
+  assert.deepEqual([moved.ok, moved.class], [false, 'head-moved']);
+  assert.ok(!f.calls.slice(n).some((c) => c.method === 'POST'), 'nothing merged');
+}));
+
+test('the PR card on Bitbucket: approving and change-asking participants become reviews, and the head is the branch tip', () => withEnv(ENV, async () => {
+  bb._testing.setFetch(fakeFetch(routes({ headStatuses: [] })));
+  const r = await prChecks({ projectDir: '/p', prUrl: PR });
+  assert.deepEqual(r.reviews, [{ by: 'Rev', state: 'CHANGES_REQUESTED' }]);
+  assert.equal(r.headSha, HEAD);
+}));

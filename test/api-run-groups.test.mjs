@@ -53,9 +53,24 @@ test('API: group routes answer 201 / 400 / 200 / 409 / 404 and GET lists the gro
   assert.deepEqual(got.members.map((m) => m.pipelineId), [a, b]);
   assert.equal(got.cost.usd, 2, 'the group total (D32)');
   assert.equal(got.planning, null, 'a user group has no planning run (slice 4, D8)');
-  assert.equal((await del(`/api/run-groups/members/${b}`)).status, 200);
+  const removed = await del(`/api/run-groups/members/${b}`);
+  assert.equal(removed.status, 200);
+  assert.equal(typeof removed.body.undo, 'string', 'Remove from group carries an Undo, as Add does');
+  assert.equal(removed.body.snap, undefined, 'the snapshot stays on the server');
   assert.equal((await del(`/api/run-groups/members/${b}`)).status, 404);
   assert.equal((await get('/api/run-groups')).body.groups.find((x) => x.id === g.body.group.id).members.length, 1);
+  assert.equal((await post('/api/run-groups/undo', { token: removed.body.undo })).status, 200);
+  assert.deepEqual((await get('/api/run-groups')).body.groups.find((x) => x.id === g.body.group.id).members.map((m) => m.pipelineId), [a, b]);
+  assert.equal((await post('/api/run-groups/undo', { token: removed.body.undo })).status, 410);
+  // the last member's removal deletes the group; its Undo brings the group back with its id
+  for (const p of [a, b]) {
+    const r = await del(`/api/run-groups/members/${p}`);
+    if (p === b) {
+      assert.equal((await get('/api/run-groups')).body.groups.find((x) => x.id === g.body.group.id), undefined, 'emptied, deleted');
+      assert.equal((await post('/api/run-groups/undo', { token: r.body.undo })).status, 200);
+    }
+  }
+  assert.deepEqual((await get('/api/run-groups')).body.groups.find((x) => x.id === g.body.group.id)?.members.map((m) => m.pipelineId), [b]);
 });
 
 test('API: a new group takes several runs and a name source, moves a grouped run, and Undo puts it back once', async () => {

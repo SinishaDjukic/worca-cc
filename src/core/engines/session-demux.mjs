@@ -214,7 +214,9 @@ export function createTurnDemux({ agentType, onMember = noop, onHostText = noop,
           subtype: typeof raw.subtype === 'string' ? raw.subtype : null, isError: !!raw.is_error,
           sessionId: typeof raw.session_id === 'string' ? raw.session_id : null };
         return;
-      default: return;                                                                        // row 6b
+      default:                                                                                // row 6b
+        for (const ev of plain(e)) if (ev.type === 'limit') onMember(ev);                       // the plan-limit reading (D7)
+        return;
     }
   }
 

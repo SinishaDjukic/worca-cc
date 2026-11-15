@@ -48,7 +48,7 @@ export function lexicalPath(p, { platform = process.platform } = {}) {
 }
 
 /** The path a lexically matching candidate is looked up by: Git Bash's `/c/…` as `c:/…` on Windows, else itself. */
-const nativeOf = (p, platform) => (platform === 'win32' && /^[/\\][a-zA-Z][/\\]/.test(p) ? `${p[1]}:${p.slice(2)}` : p);
+export const nativeOf = (p, platform) => (platform === 'win32' && /^[/\\][a-zA-Z][/\\]/.test(p) ? `${p[1]}:${p.slice(2)}` : p);
 
 /**
  * The pure decision: null allows; a string denies, and is what the model reads. Lexical first: the candidate must be,

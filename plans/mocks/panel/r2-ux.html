@@ -1,0 +1,128 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Quiet line r2</title><style>
+@font-face{font-family:P;font-weight:400;src:url(../../../ui/public/fonts/poppins-latin-400-normal.woff2)}
+@font-face{font-family:P;font-weight:500;src:url(../../../ui/public/fonts/poppins-latin-500-normal.woff2)}
+@font-face{font-family:P;font-weight:600;src:url(../../../ui/public/fonts/poppins-latin-600-normal.woff2)}
+:root{--bg:#161614;--panel:#222220;--field:#2C2C29;--ink:#ECECE8;--ink-2:#B4B4AE;--ink-3:#9E9E98;--line:#30302D;--line-2:#3d3d39;--hover:#2a2a27;--red:#e0645a}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--ink);font:400 13px/1.5 P,sans-serif;padding:28px 24px 36px;width:1440px}
+h1{font-size:20px;font-weight:600;letter-spacing:-.02em}
+.sub{color:var(--ink-2);margin:4px 0 22px;font-size:13px}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px 24px}
+.lab{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3);padding-top:2px}
+.col h3{font-size:13px;font-weight:600;margin-bottom:8px}.col h3 span{font-weight:400;color:var(--ink-2)}
+.note{color:var(--ink-2);font-size:12px;margin-top:10px;line-height:1.5}
+.sep{grid-column:1/-1;height:1px;background:var(--line);margin:6px 0}
+svg{display:inline-block;vertical-align:middle}
+/* composer */
+.comp{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 12px 10px}
+.ph{color:var(--ink-3);font-size:14px;margin-bottom:12px}
+.foot{display:flex;align-items:center;gap:8px}
+.plus{color:var(--ink-2);flex:none;width:18px;text-align:center;font-size:17px;line-height:1}
+.send{margin-left:auto;flex:none;width:28px;height:28px;border-radius:6px;background:var(--ink);color:#161614;display:grid;place-items:center}
+.today .s{font-size:14px;color:var(--ink-3);line-height:1.75}
+.today b{color:var(--ink);font-weight:600}
+.chev{font-size:10px;color:var(--ink-2);margin:0 4px 0 2px;display:inline-block;transform:scaleX(1.4)}
+/* proposal sentence */
+.q{font-size:12px;color:var(--ink-3);white-space:nowrap;overflow:hidden;min-width:0}
+.q .m{font-size:13px;color:var(--ink);font-weight:500;margin-right:4px}
+.q u{text-decoration:none;color:var(--ink-2);border-bottom:1px dotted #5c5c57;padding-bottom:1px}
+.q u.ch{color:var(--ink);font-weight:500;border-bottom-color:var(--ink-3)}
+.q u.hov{background:var(--hover);box-shadow:0 0 0 3px var(--hover);border-radius:4px}
+/* menu */
+.menu{margin:6px 0 0 110px;width:230px;background:var(--field);border:1px solid var(--line-2);border-radius:8px;padding:4px 0;box-shadow:0 8px 24px #0007}
+.mh{font-size:11px;color:var(--ink-3);padding:4px 12px 2px}
+.mr{display:flex;justify-content:space-between;padding:5px 12px;font-size:12px;color:var(--ink-2)}
+.mr span:last-child{color:var(--ink)}
+.mr+.mr{border-top:1px solid var(--line)}
+.mf{border-top:1px solid var(--line-2);padding:6px 12px 3px;font-size:11px;color:var(--ink-3)}
+/* sidebar */
+.side{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px 12px;width:300px}
+.hd{display:flex;align-items:center;gap:8px;height:28px}
+.logo{width:20px;height:20px;border-radius:50%;background:var(--ink-2);color:#161614;font-size:11px;font-weight:600;display:grid;place-items:center}
+.hd .t{font-size:18px;font-weight:600;letter-spacing:-.02em}
+.hd .ic{color:var(--ink-2);margin-left:auto;display:flex;gap:14px;align-items:center}
+.ls{font-size:14px;color:var(--ink-3);line-height:1.75;margin:10px 0 8px}
+.ls b{color:var(--ink);font-weight:600}
+.grp{font-weight:600;margin:6px 0 4px}.grp span{color:var(--ink-3);font-weight:400;margin-left:4px}
+.row{display:grid;grid-template-columns:20px 1fr auto;gap:12px;align-items:center;height:30px;color:var(--ink)}
+.row .e{color:var(--ink-3);font-size:12px}
+.row.sub2{padding-left:20px}
+.mk{width:14px;height:14px;display:grid;place-items:center;color:var(--ink-2)}
+.ring{width:14px;height:14px;border-radius:50%;border:1.5px solid var(--red);color:var(--red);font-size:9px;display:grid;place-items:center}
+.nc{display:grid;grid-template-columns:20px 1fr auto;gap:12px;align-items:center;height:30px;margin:8px -6px 0;padding:0 6px;border-radius:6px;color:var(--ink-2)}
+.nc.cur{background:var(--hover);color:var(--ink)}
+.nc .k{font-size:11px;color:var(--ink-3)}
+.lq{margin:8px 0 6px;padding-top:8px;border-top:1px solid var(--line);display:flex;justify-content:space-between;align-items:baseline}
+.rs{font-size:12px;color:var(--ink-2)}
+
+.lab{grid-column:1/-1;margin-top:4px}
+.q{font-size:12px;color:var(--ink-3)}
+.q .v{color:var(--ink)}
+.q .r{color:var(--ink);font-weight:500}
+.q .d{color:var(--ink-3);margin:0 5px}
+.q .hv{background:var(--hover);box-shadow:0 0 0 3px var(--hover);border-radius:4px}
+.cd{display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--ink-2);margin:0 0 2px 4px;vertical-align:middle}
+.mode{font-size:13px;font-weight:500;color:var(--ink);flex:none;padding-right:10px;border-right:1px solid var(--line)}
+.mode i{font-style:normal;color:var(--ink-2);font-size:10px;margin-left:3px}
+.clip{color:var(--ink-2);flex:none}
+.tip{display:inline-block;margin:8px 0 0 70px;background:var(--field);border:1px solid var(--line-2);border-radius:6px;padding:3px 8px;font-size:11px;color:var(--ink-2)}
+.menu{margin:6px 0 0 150px;width:210px}
+.mr.on span:first-child{color:var(--ink)}
+.mr .ck{color:var(--ink-3)}
+.msg{margin-left:auto;width:78%;background:var(--field);border-radius:8px;padding:8px 12px;font-size:13px}
+.card{margin-top:12px;border-left:2px solid var(--line-2);padding:2px 0 2px 14px}
+.card .k{font-size:11px;color:var(--ink-3);letter-spacing:.06em;text-transform:uppercase}
+.card .ti{font-size:15px;font-weight:600;margin:2px 0 2px}
+.card .ds{color:var(--ink-2);font-size:12px;margin-bottom:8px}
+.acts{display:flex;align-items:center;gap:14px;margin-top:12px}
+.btn{background:var(--ink);color:#161614;font-weight:500;border-radius:6px;padding:4px 14px;outline:2px solid var(--ink);outline-offset:2px}
+.qt{color:var(--ink-2)}
+.kh{margin-left:auto;font-size:11px;color:var(--ink-3)}
+.hd .t.n{font-size:15px;white-space:nowrap}
+.ring.a{border-color:#d9a441;color:#d9a441}
+.hd .t .x{color:var(--ink-3);font-size:14px;font-weight:400;margin-left:8px}
+.hd .t .sc{color:var(--ink-2)}
+.dd{margin:4px 0 0 18px;width:230px;background:var(--field);border:1px solid var(--line-2);border-radius:8px;padding:4px 0;box-shadow:0 8px 24px #0007;font-size:12px}
+.dd .o{display:flex;justify-content:space-between;padding:5px 12px;color:var(--ink)}
+.dd .o span{color:var(--ink-3)}
+.dd .o.sel{background:var(--hover)}
+.dd .h{padding:6px 12px 2px;font-size:11px;color:var(--ink-3);border-top:1px solid var(--line);margin-top:4px}
+.dd .f{border-top:1px solid var(--line);margin-top:4px;padding:6px 12px 3px;color:var(--ink-2)}
+</style></head><body>
+<h1>Round 2: one line you can trust, before or after you send</h1>
+<p class="sub">Values in ink, the repo brightest, plain effort words, a dot on what you changed. Send shows the proposal with Start focused, so Enter twice starts it. The list has no sentence at rest; its scope is the title.</p>
+<div class="grid">
+<div class="lab">Composer</div>
+<div class="col"><h3>Resting <span>· one line, values in ink</span></h3>
+<div class="comp"><div class="ph">Describe the task…</div><div class="foot"><svg class="clip" width="15" height="15" viewBox="0 0 16 16"><path d="M10.5 4.5 5.6 9.4a1.4 1.4 0 0 0 2 2l5-5a2.8 2.8 0 0 0-4-4l-5 5a4.2 4.2 0 0 0 6 6l4.4-4.4" stroke="#B4B4AE" stroke-width="1.3" fill="none"/></svg><div class="mode">Task<i>⌄</i></div>
+<div class="q"><span class="r hv">billing-api</span><span class="d">·</span><span class="v">Opus 5.5, thorough</span><span class="d">·</span><span class="v">opens a PR</span></div><div class="send"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M7 12V2M3 6l4-4 4 4" stroke="#161614" stroke-width="1.6" fill="none"/></svg></div></div></div>
+<div class="tip">Repo · Tab from the text, type to filter</div>
+<p class="note">Grey reads as status, so values are now ink; the repo, the one you check, is 500. Each value is its own picker, reached with Tab from the text. Effort says what it does: quick, standard, thorough, deepest. Workflow and base are not shown while they are your usual for this repo.</p></div>
+<div class="col"><h3>Changed <span>· a dot on what differs</span></h3>
+<div class="comp"><div class="ph">Bump Node to 24 in CI and the Dockerfile</div><div class="foot"><svg class="clip" width="15" height="15" viewBox="0 0 16 16"><path d="M10.5 4.5 5.6 9.4a1.4 1.4 0 0 0 2 2l5-5a2.8 2.8 0 0 0-4-4l-5 5a4.2 4.2 0 0 0 6 6l4.4-4.4" stroke="#B4B4AE" stroke-width="1.3" fill="none"/></svg><div class="mode">Task<i>⌄</i></div>
+<div class="q"><span class="r">billing-api</span><span class="d">·</span><span class="v">Sonnet 5.5, quick</span><span class="cd"></span><span class="d">·</span><span class="v hv">push only</span><span class="cd"></span></div><div class="send"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M7 12V2M3 6l4-4 4 4" stroke="#161614" stroke-width="1.6" fill="none"/></svg></div></div></div>
+<div class="menu"><div class="mh">Then</div>
+<div class="mr"><span>Open a PR</span><span class="ck">usual</span></div><div class="mr on"><span>Push only</span><span class="ck">✓</span></div><div class="mr"><span>Leave it on a branch</span><span></span></div>
+<div class="mf" style="color:var(--ink-2)">Workflow: Default · From: latest</div><div class="mf" style="color:var(--ink-2);border-top:1px solid var(--line)">Back to usual</div></div>
+<p class="note">The ChangedDot the DS already has, not violet. The last value's menu also holds workflow and base, so nothing hides behind a bare ⋯.</p></div>
+<div class="col"><h3>After Enter <span>· the proposal, Start focused</span></h3>
+<div class="msg">Bump Node to 24 in CI and the Dockerfile</div>
+<div class="card"><div class="k">Proposed task</div><div class="ti">Update Node to 24</div><div class="ds">CI image and the Dockerfile; one change.</div>
+<div class="q"><span class="r">billing-api</span><span class="d">·</span><span class="v">Sonnet 5.5, quick</span><span class="d">·</span><span class="v">push only</span></div>
+<div class="acts"><span class="btn">Start</span><span class="qt">Not now</span><span class="kh">↵ Start</span></div></div>
+<p class="note">One way to start, for both: Dana chose before and presses Enter again (no mouse); Marta reads the same line here and changes it in place. The line moved from the composer to the card, so it is shown once.</p></div>
+<div class="sep"></div>
+<div class="lab">Chat list</div>
+<div class="col"><h3>Resting <span>· no sentence, New chat first</span></h3>
+<div class="side"><div class="hd"><div class="logo">W</div><div class="t">Chat <i class="chev">⌄</i></div><div class="ic"><svg width="15" height="15" viewBox="0 0 15 15"><rect x="1.5" y="2" width="12" height="11" rx="1.5" stroke="#B4B4AE" fill="none"/><path d="M5.5 2v11" stroke="#B4B4AE"/></svg></div></div><div class="nc cur"><div class="mk" style="color:var(--ink)"><svg width="13" height="13" viewBox="0 0 13 13"><path d="M6.5 1v11M1 6.5h11" stroke="currentColor" stroke-width="1.4"/></svg></div><div>New chat</div><div class="k">⌘N</div></div><div style="height:10px"></div><div class="grp">Needs you<span>2</span></div><div class="row"><div class="mk">▭</div><div>Node 24</div><div class="e">12:40</div></div><div class="row sub2"><div class="ring a">?</div><div>Update Node to 24</div><div class="e">⑂</div></div></div>
+<p class="note">"New chat" with its word and ⌘N, where both users look; lit on Chat home, where the composer is that new chat. The header keeps one tool.</p></div>
+<div class="col"><h3>Title opens the scope <span>· with counts</span></h3>
+<div class="side" style="padding-bottom:14px"><div class="hd"><div class="logo">W</div><div class="t">Chat <i class="chev">⌄</i></div><div class="ic"><svg width="15" height="15" viewBox="0 0 15 15"><rect x="1.5" y="2" width="12" height="11" rx="1.5" stroke="#B4B4AE" fill="none"/><path d="M5.5 2v11" stroke="#B4B4AE"/></svg></div></div>
+<div class="dd"><div class="o sel">Everything<span>14</span></div><div class="o">Needs you<span>2</span></div><div class="o">Running<span>3</span></div>
+<div class="h">Project</div><div class="o">All projects<span>14</span></div><div class="o">billing-api<span>5</span></div><div class="o">worca-cc<span>9</span></div>
+<div class="f">Sort and group…</div></div></div>
+<p class="note">What and where in one menu, each with its count. Sort and grouping, rarely changed, sit at its foot.</p></div>
+<div class="col"><h3>Narrowed <span>· the title says why</span></h3>
+<div class="side"><div class="hd"><div class="logo">W</div><div class="t n"><span>Needs you</span> <span class="sc">· billing-api</span><span class="x">✕</span></div><div class="ic"><svg width="15" height="15" viewBox="0 0 15 15"><rect x="1.5" y="2" width="12" height="11" rx="1.5" stroke="#B4B4AE" fill="none"/><path d="M5.5 2v11" stroke="#B4B4AE"/></svg></div></div><div class="nc"><div class="mk"><svg width="13" height="13" viewBox="0 0 13 13"><path d="M6.5 1v11M1 6.5h11" stroke="currentColor" stroke-width="1.4"/></svg></div><div>New chat</div><div class="k">⌘N</div></div><div style="height:10px"></div><div class="row"><div class="mk">▭</div><div>Node 24</div><div class="e">12:40</div></div><div class="row sub2"><div class="ring a">?</div><div>Update Node to 24</div><div class="e">⑂</div></div></div>
+<p class="note">The list says why it is short and ✕ goes back to everything. The group head goes, since the title says it.</p></div>
+</div></body></html>

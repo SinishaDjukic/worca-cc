@@ -1,0 +1,48 @@
+/* The Rail look (docs/rail/look.md) and Motion, for every Rail page ahead of the app: one surface,
+   one cool neutral family, running (ink) and needs-you (amber) apart, a quiet step bar, a floating surface a step
+   lighter in dark with a hairline. Inter is not bundled yet: the system face stands in for it, as in the refined mocks. */
+:root{
+  --sans:Inter,-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;
+  --bg:light-dark(#FFFFFF,#141416); --panel:light-dark(#FFFFFF,#141416);   /* ds-ok: the Rail look's table */
+  --canvas-2:light-dark(#FAFAFA,#18181B); --side-bg:light-dark(#FAFAFA,#18181B);   /* ds-ok: the Rail look's table */
+  --field:light-dark(#F4F4F5,#1F1F23); --surface:light-dark(#F4F4F5,#1F1F23);   /* ds-ok: the Rail look's table */
+  --hover:light-dark(#F0F0F2,#222227); --side-sel-bg:light-dark(#F0F0F2,#26262B);   /* ds-ok: the Rail look's table */
+  --ink:light-dark(#18181B,#EDEDEF); --ink-2:light-dark(#63636B,#A1A1A9); --ink-3:light-dark(#A1A1A9,#6E6E76); --advisory:var(--ink);   /* ds-ok: the Rail look's table */
+  --line:light-dark(#EEEEF0,#26262B); --line-2:light-dark(#E2E2E6,#35353B);   /* ds-ok: the Rail look's table */
+  --float:light-dark(#FFFFFF,#1D1D21); --float-line:light-dark(#EEEEF0,#323238);   /* ds-ok: the Rail look's table */
+  /* running is ink, never a colour (look.running-needs-apart): the old working gold and the app's blue map to ink, so no page brings them back */
+  --peach-bg:var(--field); --peach-ink:var(--ink-2); --h-peach-ink:var(--ink);
+  --peach:var(--ink-2);
+  --blue:var(--ink-2); --blue-bg:var(--field); --blue-ink:var(--ink-2); --blue-ink-strong:var(--ink);   /* Rail has no blue */
+  /* the alert ladder's colours (look.alert-ladder): muted, one value per theme for a ring, a word and a fill, each 4.5:1 as text (look.state-contrast) */
+  --amber:light-dark(#94640F,#CFA265); --amber-ink:var(--amber); --amber-ink-strong:var(--amber);   /* ds-ok: the Rail look's table */
+  --red:light-dark(#A9463C,#DB8378); --red-ink:var(--red); --red-ink-strong:var(--red); --red-ink-soft:var(--red);   /* ds-ok: the Rail look's table */
+  --green:light-dark(#3F7349,#86B38C); --green-ink:var(--green); --green-ink-strong:var(--green);   /* ds-ok: the Rail look's table */
+  --violet:light-dark(#6F60BE,#A99FE0); --violet-ink:var(--violet); --violet-ink-strong:var(--violet);   /* ds-ok: the Rail look's table */
+  --on-signal:light-dark(#FFFFFF,#141416);   /* ds-ok: a mark's glyph on a filled colour */
+  --amber-bg:light-dark(#FDF1DD,#332715);   /* ds-ok: a tint the muted amber reads on at 4.5:1 */
+  --slate:light-dark(#6C7884,#8A96A3);   /* ds-ok: the Rail look's table */
+  --step-done:light-dark(#C9C9CF,#4A4A52);   /* ds-ok: the Rail look's table: a finished step, quiet */
+  /* Motion (docs/rail/motion.md): three timings on one curve */
+  --motion-quick:150ms; --motion-change:200ms; --motion-flash:1.2s; --ease:cubic-bezier(.2,0,0,1);
+}
+body{-webkit-font-smoothing:antialiased;}
+:is(.rc-board,.pz-app) .btn{font-weight:500;}
+/* A floating surface (menus, the Pulse panel, the account menu, a Dialog's card): --float with its hairline. */
+:is(.rc-board,.pz-app) :is(.menu,.pz-popover,.viewer-modal > .card){background:var(--float);border-color:var(--float-line);}
+/* A menu, panel or Dialog fades in over quick when it opens, and closes at once; nothing slides. */
+.is-in{animation:rl-in var(--motion-quick) var(--ease);}
+@keyframes rl-in{from{opacity:0;}}
+@media (prefers-reduced-motion: reduce){.is-in{animation:none;}}
+
+/* Scrollbars: the library draws them (watchScrollbars, docs/rail/look.md), since an operating system's overlay bars take no
+   styling and show only when it says so. The browser's own bar is hidden; scrolling itself is untouched. */
+*{scrollbar-width:none;}
+::-webkit-scrollbar{display:none;}
+.rail-thumb{position:fixed;z-index:30;border-radius:var(--r-xs);background:var(--line-2);opacity:0;transition:opacity var(--motion-quick) var(--ease),background-color 100ms var(--ease);}
+.rail-thumb.is-over{z-index:9000;}
+.rail-thumb.is-on{opacity:1;}
+.rail-thumb:hover,.rail-thumb:active{background:var(--ink-3);}
+.rail-thumb.is-v{width:6px;}
+.rail-thumb.is-h{height:6px;}
+@media (prefers-reduced-motion: reduce){.rail-thumb{transition:none;}}

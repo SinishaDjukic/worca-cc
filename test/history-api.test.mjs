@@ -12,7 +12,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _testing as gitInfo } from '../src/core/git-info.mjs';
-import { _resetForTests } from '../src/core/db.mjs';
+import { _resetForTests, getDb } from '../src/core/db.mjs';
 import { writeStoreMeta } from '../src/core/artifacts.mjs';
 import { writeClarify, writeReview } from '../src/core/artifacts.mjs';
 import { seedPipeline, seedWorkspacePipeline } from './helpers/db-seed.mjs';
@@ -197,4 +197,29 @@ test('workspace /diff route: key validation + concatenated patch round-trip', as
   const r = await fetch(`${base}/api/workspaces/${wk}/runs/${seeded.id}/diff`);
   assert.equal(r.status, 200);
   assert.equal(await r.text(), patch);
+});
+
+test('GET /api/history/:key/:id carries state.costCapUsd: null when unset, the raised cap once set', async () => {
+  const read = async () => (await (await fetch(`${base}/api/history/${alphaKey}/${alphaId}`)).json()).state.costCapUsd;
+  assert.equal(await read(), null);
+  const { setRunCostCap } = await import('../src/core/cost-budget.mjs');
+  setRunCostCap(alphaId, 12.5);
+  try { assert.equal(await read(), 12.5); }
+  finally { getDb().prepare('UPDATE pipelines SET cost_cap_usd = NULL WHERE id = ?').run(alphaId); }
+});
+
+test('GET /api/history/:key/:id carries state.capUsd: the cap the task is held to, Settings\' when it has none of its own', async () => {
+  const state = async () => (await (await fetch(`${base}/api/history/${alphaKey}/${alphaId}`)).json()).state;
+  const settings = (body) => fetch(`${base}/api/settings`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  assert.equal((await state()).capUsd, null, 'no cap anywhere');
+  assert.equal((await settings({ pipelineCostLimitUsd: 0.5 })).status, 200);
+  try {
+    assert.deepEqual([(await state()).costCapUsd, (await state()).capUsd], [null, 0.5]);
+    const { setRunCostCap } = await import('../src/core/cost-budget.mjs');
+    setRunCostCap(alphaId, 5);
+    assert.equal((await state()).capUsd, 5, 'a raised cap wins');
+  } finally {
+    getDb().prepare('UPDATE pipelines SET cost_cap_usd = NULL WHERE id = ?').run(alphaId);
+    await settings({ pipelineCostLimitUsd: '' });
+  }
 });

@@ -8,3 +8,5 @@ export const INDEX_HTML = 'ui/public/index.html';
 const PUBLIC_DIR = path.dirname(fileURLToPath(new URL('../../ui/public/index.html', import.meta.url)));
 
 export const readIndexHtml = (publicDir = PUBLIC_DIR) => assemble('html', 'index.html', publicDir).text;
+// Stillhet's shell sits beside the index here, so ui/server.mjs takes both from one import (its line ceiling).
+export { stillhetShellHtml, isStillhetShellRel } from './stillhet-shell.mjs';

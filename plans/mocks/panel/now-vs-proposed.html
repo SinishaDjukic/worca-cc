@@ -1,0 +1,174 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Now vs proposed</title><style>
+@font-face{font-family:P;font-weight:400;src:url(../../../ui/public/fonts/poppins-latin-400-normal.woff2)}
+@font-face{font-family:P;font-weight:500;src:url(../../../ui/public/fonts/poppins-latin-500-normal.woff2)}
+@font-face{font-family:P;font-weight:600;src:url(../../../ui/public/fonts/poppins-latin-600-normal.woff2)}
+:root{--bg:#161614;--panel:#222220;--field:#2C2C29;--ink:#ECECE8;--ink-2:#B4B4AE;--ink-3:#9E9E98;--line:#30302D;--line-2:#3d3d39;--hover:#2a2a27;--amber:#E6962A;--red:#E76A5A;--violet-wash:#262336}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--ink);font:400 13px/1.5 P,sans-serif;padding:28px 28px 36px;width:1560px}
+h1{font-size:20px;font-weight:600;letter-spacing:-.02em}
+.sub{color:var(--ink-2);margin:4px 0 18px}
+.row{display:grid;grid-template-columns:110px minmax(0,1fr) minmax(0,1fr);gap:28px;padding:22px 0;border-top:1px solid var(--line)}
+.row.head{border:0;padding:0 0 6px}
+.colh{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+.colh.p{color:var(--ink)}
+.lab{font-weight:600;font-size:13px}
+.lab small{display:block;font-weight:400;color:var(--ink-3);font-size:11.5px;margin-top:4px}
+.meas{font-size:11.5px;color:var(--ink-3);margin-top:10px}
+.meas b{color:var(--ink-2);font-weight:500}
+/* composer */
+.composer{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border:1px solid var(--line-2);border-radius:12px;background:var(--bg);max-width:680px}
+.ct{min-height:34px;font-size:14px}
+.cf{display:flex;align-items:flex-start;gap:10px}
+.ib{color:var(--ink-2);flex:none;width:20px;text-align:center;font-size:16px;line-height:24px}
+.send{flex:none;width:28px;height:28px;border-radius:6px;background:var(--ink);color:var(--bg);display:grid;place-items:center;font-weight:600}
+.btn{flex:none;background:var(--ink);color:var(--bg);border-radius:6px;padding:3px 12px;font-weight:500}
+.btn.o{background:none;color:var(--ink);box-shadow:0 0 0 1.5px var(--ink) inset}
+.lnk{color:var(--ink-2)}
+/* today's sentence */
+.old{font-size:15px;line-height:26px;color:var(--ink-3);flex:1}
+.old b{color:var(--ink);font-weight:600;white-space:nowrap}
+.old b::after{content:"⌄";font-weight:400;font-size:10px;color:var(--ink-2);margin-left:3px}
+/* quiet line */
+.line{display:flex;align-items:center;gap:12px;flex:1;min-width:0;white-space:nowrap;line-height:24px}
+.q{color:var(--ink)}.q.w{font-weight:500}
+.q::after{content:"⌄";font-size:10px;color:var(--ink-3);margin-left:3px}
+.q.m{font-weight:600}
+.cust{color:var(--ink-2);font-size:12px;flex:none;line-height:24px}
+.tip{margin-top:8px;max-width:420px;margin-left:auto;background:var(--field);border:1px solid var(--line-2);border-radius:6px;padding:6px 10px;font-size:11.5px;color:var(--ink-2);line-height:1.5}
+/* sidebar */
+.side{background:var(--panel);border:1px solid var(--line);border-radius:8px;width:290px;padding:10px 12px 12px}
+.bh{display:flex;align-items:center;gap:8px;font-size:16px;font-weight:600;margin-bottom:10px}
+.logo{width:20px;height:20px;border-radius:50%;background:#B4B4AE;color:#161614;font-size:11px;font-weight:600;display:grid;place-items:center;flex:none}
+.bh .sp{flex:1}.ic{color:var(--ink-2);font-weight:400;font-size:15px}
+.bh .nc{font-size:13px;font-weight:500;color:var(--ink)}
+.ls{font-size:14px;line-height:24px;color:var(--ink-3);margin-bottom:10px}
+.ls b{color:var(--ink);font-weight:600}
+.ls b::after{content:"⌄";font-weight:400;font-size:10px;color:var(--ink-2);margin-left:2px}
+.gh{display:flex;align-items:baseline;gap:6px;font-weight:600;margin:2px 0 4px}
+.gh span{color:var(--ink-3);font-weight:400}
+.gh .r{margin-left:auto;font-weight:400;color:var(--ink-2);font-size:12px}
+.gh .r::after{content:"⌄";font-size:9px;margin-left:2px}
+.nl{display:flex;align-items:center;gap:12px;margin:2px 0 6px;white-space:nowrap}
+.nl .v{font-weight:500}.nl .v::after{content:"⌄";font-weight:400;font-size:9px;color:var(--ink-3);margin-left:2px}
+.nl .c{color:var(--ink-3)}.nl .x{color:var(--ink-2)}
+.it{display:flex;align-items:center;gap:8px;height:26px}
+.it .t{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.it .m{color:var(--ink-3);font-size:12px;white-space:nowrap}
+.sub2{padding-left:22px}
+.bub{width:14px;height:12px;border:1.5px solid var(--ink-3);border-radius:2px;flex:none}
+.x0{width:14px;height:14px;border-radius:50%;border:1.5px solid var(--red);color:var(--red);font-size:8px;display:grid;place-items:center;flex:none}
+.qm{width:14px;height:14px;border-radius:50%;border:1.5px solid var(--amber);color:var(--amber);font-size:9px;font-weight:600;display:grid;place-items:center;flex:none}
+/* proposal */
+.msg{margin-left:auto;width:80%;background:var(--field);border-radius:8px;padding:7px 12px}
+.chd{display:grid;grid-template-columns:20px 1fr;gap:0 12px;align-items:center;margin-top:12px}
+.km{width:16px;height:16px;border-radius:50%;border:1.5px solid var(--ink-3)}
+.kick{font-size:12px;color:var(--ink-2)}
+.tpt{grid-column:2;font-size:15px;font-weight:600}
+.why{grid-column:2;color:var(--ink-3);font-size:12px}
+.rc{margin:8px 0 0 32px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.acts{display:flex;align-items:center;gap:12px;margin-top:12px}
+.acts .sp{flex:1}
+.sent{line-height:1.75;color:var(--ink-3)}
+.sent .q{color:var(--ink)}
+.sent .end{color:var(--ink-2)}
+</style></head><body>
+<h1>Now vs proposed</h1>
+<div class="sub">Same task, same chats. Left: Rail today (prototype). Right: the panel's final proposal (r6 menus, r8 card, last wording nits applied).</div>
+
+<div class="row head"><div></div><div class="colh">Now</div><div class="colh p">Proposed</div></div>
+
+<!-- composer -->
+<div class="row">
+  <div class="lab">Composer<small>Task mode, before you send</small></div>
+  <div>
+    <div class="composer"><div class="ct">Bump Node to 24 in CI and the Dockerfile</div>
+      <div class="cf"><span class="ib">+</span>
+        <div class="old"><b>Task</b> on <b>billing-api</b> with <b>Default</b> on <b>Opus 5.5</b> <b>high</b> from <b>origin · latest</b> then <b>open a PR</b></div>
+        <span class="send">↑</span></div></div>
+    <div class="meas"><b>7</b> bold pickers · <b>7</b> chevrons · <b>2</b> lines of choices · jargon: Default, origin · latest, high</div>
+  </div>
+  <div>
+    <div class="composer"><div class="ct">Bump Node to 24 in CI and the Dockerfile</div>
+      <div class="cf"><span class="ib">+</span>
+        <div class="line"><span class="q m">Task</span><span class="q w">billing-api</span><span class="q">Opus 5.5, thorough</span><span class="q">opens a PR</span></div><span class="cust">Customise</span>
+        <span class="ib">🎙</span><span class="btn">Propose</span></div></div>
+    <div class="tip">Worca will change billing-api with Opus 5.5, thinking longer than usual, starting now from the latest dev branch, then open a PR. Nothing starts until you press Start.</div>
+    <div class="meas"><b>1</b> line · values in plain weight · workflow and base in Customise · the sentence lives in the button's tooltip</div>
+  </div>
+</div>
+
+<!-- list at rest -->
+<div class="row">
+  <div class="lab">Chat list<small>at rest</small></div>
+  <div>
+    <div class="side">
+      <div class="bh"><span class="logo">W</span>Chat <span class="ic">⌄</span><span class="sp"></span><span class="ic">＋</span><span class="ic">◫</span></div>
+      <div class="ls">Showing <b>all</b> from <b>all projects</b><br>by <b>date</b> &nbsp;⋯</div>
+      <div class="gh">Needs you <span>2</span></div>
+      <div class="it"><span class="bub"></span><span class="t">Node 24</span><span class="m">12:40</span></div>
+      <div class="it sub2"><span class="x0">✕</span><span class="t">Update Node to 24</span><span class="m">12:40</span></div>
+      <div class="it"><span class="bub"></span><span class="t">CSV export</span><span class="m">11:02</span></div>
+      <div class="it sub2"><span class="x0">✕</span><span class="t">Add CSV export</span><span class="m">11:02</span></div>
+    </div>
+    <div class="meas">A bare <b>+</b> among the header's tools · <b>2</b> lines of sentence saying "nothing filtered" · red ✕ reads as failed</div>
+  </div>
+  <div>
+    <div class="side">
+      <div class="bh"><span class="logo">W</span>Chat <span class="ic">⌄</span><span class="sp"></span><span class="nc">＋ New chat</span><span class="ic">◫</span></div>
+      <div class="gh">Needs you <span>2</span><span class="r">Showing all</span></div>
+      <div class="it"><span class="bub"></span><span class="t">Node 24</span><span class="m">12:40</span></div>
+      <div class="it sub2"><span class="qm">?</span><span class="t">Update Node to 24</span><span class="m">Asks you</span></div>
+      <div class="it"><span class="bub"></span><span class="t">CSV export</span><span class="m">11:02</span></div>
+      <div class="it sub2"><span class="qm">?</span><span class="t">Add CSV export</span><span class="m">Needs your OK</span></div>
+    </div>
+    <div class="meas"><b>New chat</b> with its word (⌥⌘N) · no sentence line · the reason on the row · red only for Failed</div>
+  </div>
+</div>
+
+<!-- list narrowed -->
+<div class="row">
+  <div class="lab">Chat list<small>narrowed to one project</small></div>
+  <div>
+    <div class="side">
+      <div class="bh"><span class="logo">W</span>Chat <span class="ic">⌄</span><span class="sp"></span><span class="ic">＋</span><span class="ic">◫</span></div>
+      <div class="ls">Showing <b>needs you</b> from <b>billing-api</b><br>by <b>date</b> &nbsp;⋯</div>
+      <div class="gh">Needs you <span>1</span></div>
+      <div class="it"><span class="bub"></span><span class="t">Node 24</span><span class="m">12:40</span></div>
+      <div class="it sub2"><span class="x0">✕</span><span class="t">Update Node to 24</span><span class="m">12:40</span></div>
+    </div>
+    <div class="meas"><b>2</b> lines of sentence + a group head repeating it · reset in ⋯</div>
+  </div>
+  <div>
+    <div class="side">
+      <div class="bh"><span class="logo">W</span>Chat <span class="ic">⌄</span><span class="sp"></span><span class="nc">＋ New chat</span><span class="ic">◫</span></div>
+      <div class="nl"><span class="v">Needs you</span><span class="v">billing-api</span><span class="c">1</span><span class="x">✕</span></div>
+      <div class="it"><span class="bub"></span><span class="t">Node 24</span><span class="m">12:40</span></div>
+      <div class="it sub2"><span class="qm">?</span><span class="t">Update Node to 24</span><span class="m">Asks you</span></div>
+    </div>
+    <div class="meas"><b>1</b> line, only what differs · ✕ is Reset view · each word opens its own short menu (≤7 lines)</div>
+  </div>
+</div>
+
+<!-- proposal -->
+<div class="row">
+  <div class="lab">Proposal<small>after you send</small></div>
+  <div>
+    <div class="msg">Bump Node to 24 in CI and the Dockerfile</div>
+    <div class="chd"><span class="km"></span><span class="kick">Proposed task</span><span class="tpt">Update Node to 24</span><span class="why">From this chat: Bump Node to 24 in CI and the Dockerfile</span></div>
+    <div class="rc">
+      <div class="old" style="font-size:13.5px;line-height:24px"><b>Task</b> on <b>billing-api</b> with <b>Default</b> on <b>Opus 5.5</b> · <b>high</b> <b>now</b> then <b>open a PR</b></div>
+      <div class="acts"><span class="btn o">Start</span><span class="lnk">Not now</span><span class="sp"></span><span class="lnk">Customise</span></div>
+    </div>
+    <div class="meas">The same <b>7</b> bold pickers again · says how, not what will happen</div>
+  </div>
+  <div>
+    <div class="msg">Bump Node to 24 in CI and the Dockerfile</div>
+    <div class="chd"><span class="km"></span><span class="kick">Proposed task</span><span class="tpt">Update Node to 24</span></div>
+    <div class="rc">
+      <div class="sent">Worca will change <span class="q w">billing-api</span> with <span class="q">Opus 5.5, thinking longer</span>, starting <span class="q">now</span> from <span class="q">the latest dev branch</span>, then <span class="q">open a PR</span>. <span class="end">Nothing starts until you press Start.</span></div>
+      <div class="acts"><span class="btn o">Start</span><span class="lnk">Not now</span><span class="sp"></span><span class="lnk">Customise</span><span class="lnk">⋯</span></div>
+    </div>
+    <div class="meas">One plain sentence; its values are the pickers · each fact once · says what will and won't happen</div>
+  </div>
+</div>
+</body></html>

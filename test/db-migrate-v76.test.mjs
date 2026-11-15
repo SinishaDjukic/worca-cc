@@ -11,7 +11,7 @@ test('fresh DB: ask_threads.group_id is last and ask_chat_groups exists', () => 
   const db = new DatabaseSync(':memory:');
   migrate(db);
   assert.ok(SCHEMA_VERSION >= 76);
-  assert.equal(cols(db, 'ask_threads').at(-1), 'group_id');
+  assert.equal(cols(db, 'ask_threads')[cols(db, 'ask_threads').indexOf('pinned_at') + 1], 'group_id');
   assert.deepEqual(cols(db, 'ask_chat_groups'), ['id', 'name', 'name_source', 'created_by', 'created_at', 'updated_at']);
 });
 

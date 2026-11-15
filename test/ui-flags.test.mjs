@@ -345,3 +345,14 @@ test('bindFlagSwitch (a single flag\'s switch outside Labs, here a whole <button
     } },
   ]);
 });
+
+test('createFlagsView keep: Settings › Labs shows the Stillhet row in every case, off or on, asked or not', async () => {
+  const { stillhetLabsRow } = await import('../ui/public/stillhet.mjs');
+  const { flagRowsHtml } = await import('../ui/public/flags-view.mjs');
+  const rows = [{ key: 'rail', title: 'Stillhet', description: 'd', stage: 'experimental', on: false, locked: false }, { key: 'runLabels', title: 'Labels', description: 'd', stage: 'experimental', on: false, locked: false }];
+  const shown = (keep) => (flagRowsHtml(rows.filter(keep)).match(/data-flag-row="(\w+)"/g) || []).length;
+  assert.equal(shown(stillhetLabsRow()), 2, 'off, the ask switch off: the one way in');
+  rows[0].on = true;
+  assert.equal(shown(stillhetLabsRow()), 2, 'on: the way out');
+});
+

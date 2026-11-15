@@ -78,6 +78,27 @@ test('POST /api/resume without git: a paused Folder run whose project policy was
   assert.deepEqual([j.code, j.needsPolicyOverride, j.policy?.home], ['team_pipeline', true, 'acme/resume-gate']);
 });
 
+test('Raise the cap (POST /api/resume costCapUsd) never passes a team gate: team_pipeline and team_total refuse it and no cap is written', async (t) => {
+  withNoGit(t);
+  const { getDb } = await import('../src/core/db.mjs');
+  const capOf = (id) => getDb().prepare('SELECT cost_cap_usd FROM pipelines WHERE id = ?').get(id).cost_cap_usd;
+  const p = await project('raise-pipe');
+  onFake('raise-pipe', { 'cost.pipelineLimitUsd': soft(1) });
+  const { id: pid } = await pausedRun(p);
+  let r = await post('/api/resume', { pipelineId: pid, mock: true, costCapUsd: 9 });
+  let j = await r.json();
+  assert.deepEqual([r.status, j.code], [403, 'team_pipeline'], JSON.stringify(j));
+  assert.equal(capOf(pid), null, 'a team pipeline refusal writes no raised cap');
+  const tot = await project('raise-total');
+  onFake('raise-total', { 'cost.totalLimitUsd': soft(1) });
+  await spentOver(tot, 1.5);
+  const { id: tid } = await pausedRun(tot);
+  r = await post('/api/resume', { pipelineId: tid, mock: true, costCapUsd: 9 });
+  j = await r.json();
+  assert.deepEqual([r.status, j.code], [403, 'team_total'], JSON.stringify(j));
+  assert.equal(capOf(tid), null, 'a team total refusal writes no raised cap');
+});
+
 const CLI = fileURLToPath(new URL('../src/cli/worca-cc.mjs', import.meta.url));
 const PRELOAD = new URL('./helpers/fake-github-preload.mjs', import.meta.url).href;
 // WORCA_GIT=0 in the child; its GitHub is the preload's own fake. stdin closed: a run past a broken gate stops at its first prompt.

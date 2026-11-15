@@ -103,6 +103,7 @@ import { trailColumns, nowRows, glanceCopy, nodeLabel, preflightOpen, dotState }
 import { workModeOf, isGitRun, isFolderRun, isNoProjectRun, NO_PROJECT_KEY, projectKind, kindChip, RUN_KIND_CHIP, folderMembersOf } from './run-kind.mjs';
 import { changesCounts, filesWord, renderCountsNode, applyBarModel, paintApplyBar, runChangesUrl, openApplyDialog, discardChanges, CHANGE_SIGN, CHANGE_WORD } from './folder-changes.mjs';
 import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
+import { claudeCheckedWhere } from '../../src/shared/claude-sign-in.mjs';
 import { DEFAULT_HOME_PINS, isPinned, pinWorkflow, unpinWorkflow } from '../../src/shared/home-pins.mjs';
 import { outcomeNote } from './run-outcome.mjs';
 import { CREATE_PR_LABEL, CREATE_PR_FAILED, CREATING_PR, PR_CREATED, VIEW_PR_LABEL, VIEW_PRS_LABEL, createPrLabel, doneStatusWord } from './ship-words.mjs';
@@ -185,7 +186,7 @@ import {
   channelBadge, renderNeedsGit,
 } from './plugins-view.mjs';
 import { mountMarketplace, tabFromParam, targetFromParam } from './marketplace/index.mjs';
-import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
+import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderPromptCheckToggle, collectPromptCheckToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
 import { mountNetworkProxyCard } from './settings-network-proxy.mjs';
@@ -210,7 +211,7 @@ import {
 import {
   renderProvidersCard, collectProviderRow, collectSpeechRow, formatSpeechBytes, renderImportSheet, renderEndpointSheet, collectImportSheet, applyImportSelectAll,
   applyProviderPreset, endpointRowMatches, ENDPOINT_PRESETS,
-  setModelUpstream,
+  setModelUpstream, applyImagesPreset, collectImagesRow, showImagesTest, showImagesSaveError, collectSoundRow,
 } from './bridge-view.mjs';
 import {
   renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
@@ -251,7 +252,8 @@ import { createArtifactBrowser } from './artifacts/browser.mjs';
 import { baseName as artifactBaseName } from './artifacts/common.mjs';
 import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, buildGraphNodeRows as ntBuildGraphNodeRows, buildNodeConfigRows as ntBuildNodeConfigRows } from './node-tunables.mjs';
 import { buildFeedbackRows as ntBuildFeedbackRows } from './loop-rows.mjs';
-import { renderEngineSection, readEngineSection, enginePatchToSettingsBody, utilityId, renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody, renderRolesSection, readRolesValues, rolesPatchToSettingsBody, paintRoleFallbacks } from './engine-settings-view.mjs';
+import { renderEngineSection, readEngineSection, enginePatchToSettingsBody, utilityId, designRowId, renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody, renderRolesSection, readRolesValues, rolesPatchToSettingsBody, paintRoleFallbacks } from './engine-settings-view.mjs';
+import { DESIGN_ENGINE_NAMES } from '../../src/shared/design-names.mjs';
 import { mountProjectSettings } from './project-settings-view.mjs';
 import { mountHouseBrief } from './house-brief-view.mjs';
 import { appendModelGroups, modelOptionText } from './model-options.mjs';
@@ -293,6 +295,9 @@ import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/a
 import { createSchedulesView } from './schedules-view.mjs';
 import { createRunPrFields, mountWorkspacePrSetting, paintRunPrAuto } from './pr-auto-view.mjs';
 import { createRequirementsView } from './requirements-view.mjs';
+import { mountDesignView, pushDesignFrame, pushDesignAskFrame, repaintDesignChat, designHello, designNavCount, paintDesignNav } from './design/view.mjs';
+import { createDesignChat } from './design/chat.mjs';
+import { createDesignActivity } from './design/activity.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { applyFlags, currentFlags, decorateFlagChips, flagOn, onFlagChange } from './flags.mjs';
 import { gitOn, applyGit, onGitChange as onGitFlip, refreshGit, GIT_MISSING_TEXT } from './git-gate.mjs';
@@ -319,6 +324,8 @@ import { pageTitle } from './topnav.mjs';
 import { activityCounts } from './activity-model.mjs';
 import { createChatHome, findFollowingThread } from './chat/home.mjs';
 import { installIntentAddon } from './chat/intent.mjs';
+import { installPromptCheckAddon } from './chat/prompt-check.mjs';
+import { mountPromptCheckChip, setPromptCheckPref } from './prompt-check/chip-host.mjs';
 import { needsYouItems as chatNeedsYouItems } from './runs-list.mjs';
 import { createActivityMenu } from './activity-menu.mjs';
 import { createAwayScreensaver } from './away-screensaver.mjs';
@@ -345,6 +352,10 @@ import { openLabelPicker, closeLabelPickerFor, fetchLabels, labelChip } from './
 import { labelStates, applyLabelChange, normaliseLabel } from '../../src/shared/run-labels.mjs';
 import { renderLabelsSection, runCount } from './labels-settings.mjs';
 import { makeSwitch } from './switch.mjs';
+import { watchRailReload, mountDesignSwitch, mountStillhetAsk, shouldAskStillhet, stillhetLabsRow } from './stillhet.mjs';
+// Stillhet: the server-rendered value of `rail`, read before any flags frame or the boot re-read can change it.
+const RAIL_BOOT = flagOn('rail');
+import { createWorcaLevelWiring } from './worca-level/app-wiring.mjs';
 
 // With site data blocked, Chrome throws SecurityError on merely reading `localStorage`. Every bare `localStorage` in
 // this module resolves here: the browser's storage, else an in-memory stand-in, so the page boots and forgets on reload.
@@ -421,6 +432,8 @@ let askHistoryOnChat = false;  // the column's "Open History in Chat": the Chat 
 let askEntryThread = null;     // openChat({ threadId }) on a hidden column: the chat it opens on (askSide onShow), never the stored one first
 let chatSummariesPref = true;    // Settings › Chat › Summarise commands (#911): GET /api/settings chat.summariseCommands
 function setChatSummariesPref(chat) {
+  // The prompt check chip (docs/prompt-check.md) reads the same chat prefs, on every path that brings them.
+  setPromptCheckPref(!!(chat && chat.promptCheck === true));
   const on = !(chat && chat.summariseCommands === false);
   if (on === chatSummariesPref) return;
   chatSummariesPref = on;
@@ -650,6 +663,12 @@ async function featureThreadFor(ref) {
 if (typeof window !== 'undefined') window.__shapeFeature = { mount: mountShapeFeature, refresh: refreshShapeFeatures, paintAsk: (ref, host) => chatPaintQuestion(ref, host),
   shaperCard: shaperCardFor, threadForRun: featureThreadFor };   // test seam
 let activityMenu = null;       // the top bar's Activity (activity-menu.mjs) — assigned beside New run; updateNavCounts uses activityMenu?.
+// The open Design builds Activity lists (design/activity.mjs), from hello's list and the design-build frames. A build
+// first met in a frame reads "Design" until its title loads (asked once; a 404 or a bad body keeps "Design").
+const designActivity = createDesignActivity({
+  loadTitle: async (id) => (await safeJson(await fetch(`/api/design/${encodeURIComponent(id)}`))).design?.title,
+  onChange: () => updateNavCounts(),
+});
 let awayScreensaver = null;    // the away screensaver easter egg (away-screensaver.mjs) — assigned beside Activity; timerTick uses awayScreensaver?.
 let terminalPane = null;       // terminal pane (#573) — assigned by the boot mount; every seam uses terminalPane?.
 let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2 seam 7, consumed by Task 11)
@@ -1229,12 +1248,13 @@ function applySidebarCollapsed() {
   // `data-rail-title` marks the ones WE wrote, so expanding removes only those.
   // Runs is excluded — updateNavCounts owns its title (the needs-you/live
   // counts). It has not run yet at the boot call below; showView does.
+  // Design is excluded too: paintDesignNav (below) owns its title and live count.
   // `:scope >` mirrors the CSS rule exactly: only the label span is a direct child.
   // The dataset.nav fallback can only fire if a button ever loses its label
   // span; an empty title would otherwise leave the button both tooltip-less and
   // silently "handled".
   // The rail's own squares only (children of .nav).
-  for (const b of $$('.nav > button[data-nav]:not([data-nav="runs"])')) {
+  for (const b of $$('.nav > button[data-nav]:not([data-nav="runs"]):not([data-nav="design"])')) {
     if (collapsed) {
       if (!b.dataset.railTitle) {
         const t = b.querySelector(':scope > span:not(.nav-count):not(.nav-rollup)');
@@ -1246,6 +1266,8 @@ function applySidebarCollapsed() {
       delete b.dataset.railTitle;
     }
   }
+  // One call covers boot, repaintNavMode and the Ask side's onLayout: the rail state just moved.
+  paintDesignNav(document, designNavCount());
 }
 
 /** Everything that renders differently on the rail: one call after the rail state moves
@@ -1702,8 +1724,14 @@ const acctFly = createFlyout({ trigger: acctBtn, menu: acctMenu, mode: 'up', foc
 // Interface mode's side menu hangs off the menu (side-flyout closes it with the menu, and Escape
 // closes it first); ui-level.mjs fills it, and a pick there is a choose like a dialog card.
 createFlyout({ trigger: document.getElementById('acct-lvl'), menu: document.getElementById('lvl-menu'), mode: 'beside', parent: acctMenu });
+// The worca level (worca-level/app-wiring.mjs): the last served view feeds the corner avatar, the shelf and the menu row.
+const worca = createWorcaLevelWiring({ trigger: acctBtn, menu: acctMenu, repaint: () => { paintAccount(); paintShelf(); }, isSettled: () => gs.settled, setupOpen: () => !!setupDialog });
 function paintAccount() {
-  paintAccountCorner(acctBtn, acctState.account, { budget: budgetState.budget, away: acctState.away?.state === 'away', fmt: { usd: fmtUsd, usd4: fmtUsd4 } });
+  const level = worca.state.view && worca.state.view.level;
+  paintAccountCorner(acctBtn, acctState.account, {
+    budget: budgetState.budget, away: acctState.away?.state === 'away', fmt: { usd: fmtUsd, usd4: fmtUsd4 },
+    avatar: level ? { src: level.avatar, alt: level.name } : null,
+  });
 }
 paintAccount();                // the first paint: "Profile" until /api/whoami answers
 
@@ -1751,6 +1779,7 @@ function handleServerMessage(msg) {
     if (Array.isArray(msg.extensionPairs)) msg.extensionPairs.forEach((r) => void promptExtensionPair(r));
     return;
   }
+  worca.onServerMessage(msg.type);   // the level may have moved; the handlers below still run
   if (msg.type === 'flags') {                 // D6: a flag changed (Settings in any tab, or the API)
     applyFlags(msg.flags);
     if (flagsTabCtl && currentView() === 'settings' && currentSettingsTab === 'experimental') void flagsTabCtl.load();
@@ -1771,6 +1800,10 @@ function handleServerMessage(msg) {
     return;
   }
 
+  // Design frames are tagged by designId + buildId (no runId) and reach every socket: the Design view keeps the
+  // nav count and the open stage. Handle them BEFORE the !msg.runId early-return below.
+  if (typeof msg.type === 'string' && msg.type.startsWith('design-')) { pushDesignFrame(msg); if (msg.type === 'design-build' && designActivity.frame(msg)) updateNavCounts(); return; }
+
   // Ask Worca frames are tagged by threadId (job frames also carry messageId +
   // seq) and ride the same broadcast socket. Handle them BEFORE the
   // !msg.runId early-return below.
@@ -1779,6 +1812,7 @@ function handleServerMessage(msg) {
     awayScreensaver?.onAskFrame(msg);   // chat turns and proposals it counts
     askPanel?.pushServerFrame(msg);
     wfvChat?.pushFrame(msg);          // the Workflows chat keeps only its own composer thread's frames
+    pushDesignAskFrame(msg);          // the open design's chat keeps only its own thread's frames
     // D12: a settled chat turn moves the combined spend — repaint the sidebar
     // indicator and, when open, the Statistics view. ask-error included: an
     // error turn that saw a result frame carries recorded spend. refreshBudget
@@ -2308,6 +2342,8 @@ function onHello(msg) {
   pokeAskRuns(null, 'hello');
   askPanel?.onHello(msg.ask);
   wfvChat?.onHello();
+  designHello(msg.design ?? [], { rebooted });   // the live builds (an older server's hello has none)
+  designActivity.hello(msg.design);              // Activity's builds, paused ones too (refreshAllCounts below repaints)
 
   // diff-comments-changed is a plain global broadcast with no per-socket buffer
   // (ui/server.mjs:389-398), so any comment written while the socket was down is
@@ -7457,9 +7493,24 @@ function snapshotTask() {
 }
 const sameTask = (a, b) => a.title === b.title && a.prompt === b.prompt && a.markdown === b.markdown
   && a.extras.length === b.extras.length && a.extras.every((f, i) => f === b.extras[i]);
+// The prompt check chip under the New run prompt (docs/prompt-check.md "The chip"). A kind correction is held until
+// POST /api/run answers with the run id; an abandoned form records nothing.
+const newRunCheck = mountPromptCheckChip({
+  doc: document, host: el.promptPane,   // under the prompt (its mention overlay wraps the field later)
+  surface: { kind: 'new-run', id: 'form' }, deferCorrection: true, fetchImpl: (...a) => fetch(...a),
+  timers: window.__worcaTestHooks?.promptCheckTimers,   // tests only: fake timers for the debounce
+  field: {   // Improve writes through the prompt's own input path (the re-check)
+    read: () => el.prompt.value,
+    write: (text) => { el.prompt.value = text; el.prompt.dispatchEvent(new window.Event('input', { bubbles: true })); },
+    focus: () => el.prompt.focus(),
+  },
+  project: () => ({ projectDir: selectedProjectPath() }),
+});
+el.prompt.addEventListener('input', () => newRunCheck.input(el.prompt.value));
 function setTask(t) {
   el.title.value = t.title;
   el.prompt.value = t.prompt;
+  newRunCheck.input(t.prompt);
   el.promptMarkdown.value = t.markdown;
   el.mdFileName.textContent = t.mdFileName;
   el.mdFile.value = '';
@@ -15830,6 +15881,7 @@ el.form.addEventListener('submit', async (e) => {
     return { ok: false };
   };
   const submittedTask = snapshotTask();   // #687: cleared once the server accepts it
+  const heldCorrection = newRunCheck.pendingCorrection();   // the kind correction of THIS draft; a later pick stays held
 
   await withButton(el.startBtn, async () => {
     // Guard the whole in-flight window: applyBudgetToNewView also drives
@@ -15922,6 +15974,8 @@ el.form.addEventListener('submit', async (e) => {
         const picked = pendingSchedule;   // read before the form resets
         const line = `${title || 'Untitled run'} · ${picked ? scheduleWhenText(picked) : 'Starts later'}`;
         setPendingSchedule(null);   // the form is a plain Start run form again
+        void newRunCheck.flushCorrection({ runId: data.runId }, heldCorrection);
+        newRunCheck.sent(submittedTask.prompt);
         resetSyncChoice();
         showEngineRefusal(null);
         clearTask(submittedTask);
@@ -15940,6 +15994,8 @@ el.form.addEventListener('submit', async (e) => {
       // Re-enable the form so more runs can be started concurrently — unless the
       // budget just went over, in which case idleDisabled keeps Start disabled.
       startSubmitInFlight = false;
+      void newRunCheck.flushCorrection({ runId: data.runId }, heldCorrection);   // a held kind correction, now with its run id
+      newRunCheck.sent(submittedTask.prompt);
       resetSyncChoice();
       showEngineRefusal(null);
       clearTask(submittedTask);
@@ -17425,6 +17481,8 @@ function paintAskSettings(data) {
   if (scriptHost) scriptHost.replaceChildren(renderScriptToolsToggle({ prefs: data.chat || {} }, { doc: document }));
   const suggestHost = document.getElementById('ask-suggestions-host');
   if (suggestHost) suggestHost.replaceChildren(renderSuggestionsToggle({ prefs: data.chat || {} }, { doc: document }));
+  const promptCheckHost = document.getElementById('ask-prompt-check-host');
+  if (promptCheckHost) promptCheckHost.replaceChildren(renderPromptCheckToggle({ prefs: data.chat || {} }, { doc: document }));
   const summariesHost = document.getElementById('ask-summaries-host');
   if (summariesHost) summariesHost.replaceChildren(renderSummariesToggle({ prefs: data.chat || {} }, { doc: document }));
   setChatSummariesPref(data.chat);
@@ -17479,10 +17537,12 @@ function saveAskLimits(e) {
   const askWebBody = webHost ? collectAskWebFields(webHost) : null;   // null = the web fields were not touched
   const suggestHost = document.getElementById('ask-suggestions-host');
   const summariesHost = document.getElementById('ask-summaries-host');
+  const promptCheckHost = document.getElementById('ask-prompt-check-host');
   const chat = {
     ...(scriptHost ? collectScriptToolsToggle(scriptHost) : {}),
     ...(suggestHost ? collectSuggestionsToggle(suggestHost) : {}),
     ...(summariesHost ? collectSummariesToggle(summariesHost) : {}),
+    ...(promptCheckHost ? collectPromptCheckToggle(promptCheckHost) : {}),
   };
   postAskLimits({ askMaxTurns, askMaxBudgetUsd,
     ...(Object.keys(chat).length ? { chat } : {}),
@@ -18812,7 +18872,8 @@ function loadFlagsTab(sub = '') {
   if (!el.flagsHost) return;
   if (!flagsTabCtl) {
     flagsTabCtl = createFlagsView({ host: el.flagsHost, msgEl: el.flagsMsg, resetBtn: el.flagsReset,
-      api: (method, body) => mcpApi(method, '/api/flags', body), confirm: confirmModal });
+      api: (method, body) => mcpApi(method, '/api/flags', body), confirm: confirmModal,
+      keep: stillhetLabsRow() });
   }
   void flagsTabCtl.load(sub ? safeDecode(sub) : '');
 }
@@ -19803,6 +19864,9 @@ async function paintEngineSettings(data, { force = false } = {}) {
   for (const engine of HELPER_ENGINES.filter((e) => e !== 'claude')) {
     for (const job of CODEX_HELPER_JOBS) fields[utilityId(engine, job)] = { own: data.utilityModels?.[engine]?.[job], inherited: { value: undefined, source: 'default' } };
   }
+  // Design's lead and builders per engine (Engines card › Design), while the design flag is on.
+  const designEngines = flagOn('design') ? DESIGN_ENGINE_NAMES.filter((e) => ENGINE_NAMES.includes(e)) : [];
+  for (const engine of designEngines) for (const role of ['lead', 'builder']) fields[designRowId(engine, role)] = { own: data.designModels?.[engine]?.[role], inherited: { value: undefined, source: 'default' } };
   const claudeOwn = CLAUDE_USER_HELPER_OWN(data || {});
   const claudeJobs = claudeUserHelperJobs();
   for (const job of claudeJobs) fields[utilityId('claude', job)] = { own: claudeOwn[job], inherited: { value: undefined, source: 'default' } };
@@ -19837,7 +19901,7 @@ async function paintEngineSettings(data, { force = false } = {}) {
     renderEngineSection(root, { level: 'user', roles, catalog, fields, status: document.getElementById('engineSettingsMsg'), onTest: testModelRow,
       noEffort: ['title', 'classifier', 'prDescription'].map((job) => utilityId('claude', job)),
       defaultLabels: { claude: 'the default model' }, stepHints: { claude: claudeStepHints },
-      jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [], goose: [], opencode: [] }, modelRoles: data.modelRoles || {} });
+      jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [], goose: [], opencode: [] }, modelRoles: data.modelRoles || {}, designEngines });
   }
   lastEngineSettingsData = data;
   paintModelRoles(data);
@@ -19886,6 +19950,8 @@ async function paintEngineCardStatus(root) {
 // The flag flips while the Models page is open: the Engines card gains / loses the interview row. Refetched, since
 // GET /api/settings carries the row's stored pair and its default only while the flag is on.
 onFlagChange('requirements', () => { if (currentView() === 'models' && lastEngineSettingsData) void paintHelperModelCards({ force: true }); });
+// The design flag flips while the Models page is open: the Engines card gains / loses its Design rows.
+onFlagChange('design', () => { if (currentView() === 'models' && lastEngineSettingsData) void paintEngineSettings(lastEngineSettingsData, { force: true }); });
 document.getElementById('engineSettingsSave')?.addEventListener('click', async () => {
   const root = document.getElementById('engine-settings-root');
   const body = enginePatchToSettingsBody(readEngineSection(root));
@@ -19993,6 +20059,7 @@ function setProviderMsg(name, text, err, title = 'Something went wrong') {
   if (!row) return;
   row.textContent = text || '';
   row.className = 'hint mv-pv-msg';
+  row.removeAttribute('role');
 }
 
 async function reloadProviders() {
@@ -20063,7 +20130,8 @@ async function copilotSignOutFlow() {
 
 // #555: the row's Save button shows busy → "Saved"; the row's line carries only errors. A change
 // on a select (account type, concurrency) has no button, so its success is the new value itself.
-async function patchProviderFlow(name, body, { btn = null } = {}) {
+// `onError(message)`, when given, shows a refused Save in the row's own place instead of the card's alert.
+async function patchProviderFlow(name, body, { btn = null, onError = null } = {}) {
   setProviderMsg(name, '');
   const r = await withButton(btn, async () => {
     const res = await fetch(`/api/providers/${encodeURIComponent(name)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -20076,10 +20144,14 @@ async function patchProviderFlow(name, body, { btn = null } = {}) {
     return { ok: true };
   }, { done: 'Saved' });
   if (r.skipped) return;
-  if (!r.ok) { setProviderMsg(name, r.error, true, 'Not saved'); return; }
+  if (!r.ok) {
+    if (onError) onError(r.error);
+    else setProviderMsg(name, r.error, true, 'Not saved');
+    return;
+  }
   // The repaint replaced the clicked button: give its successor the "Saved" state.
   if (btn && !btn.isConnected) {
-    const cls = btn.classList.contains('mv-sp-save') ? 'mv-sp-save' : 'mv-pv-save';
+    const cls = ['mv-sp-save', 'mv-im-save', 'mv-so-save'].find((c) => btn.classList.contains(c)) || 'mv-pv-save';
     const next = providerRoot()?.querySelector(`.mv-pv-row[data-provider="${name}"] .${cls}`);
     if (next) await withButton(next, () => undefined, { done: 'Saved' });
   }
@@ -20126,6 +20198,44 @@ async function testSpeechFlow(btn) {
   if (r.skipped) return;
   if (r.ok) notify({ tone: 'ok', key: `speech-test-${kind}`, title: `${what} works`, detail: r.detail ? `${r.detail}.` : '' });
   else setProviderMsg('speech', r.error, true, `${what} test failed`);
+}
+
+/** The Image generation row's Test picture: makes one picture from what is on screen, like testSpeechFlow.
+ *  Testing… → Works on the button; the picture and its time, or the reason it failed, in the row itself. */
+async function testImagesFlow(btn) {
+  const typed = collectImagesRow(providerRoot()) || {};
+  setProviderMsg('images', '');
+  const r = await withButton(btn, async () => {
+    try {
+      const res = await fetch('/api/images/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(typed) });
+      const data = (await safeJson(res)) || {};
+      if (data.ok) return data;
+      return { ok: false, message: data.message || data.error || `The server answered ${res.status}.` };
+    } catch (e) { return { ok: false, message: `worca did not answer (${e.message}).` }; }
+  }, { busy: 'Testing…', done: 'Works' });
+  if (r.skipped) return;
+  showImagesTest(providerRoot(), r);
+}
+
+/** The Sound row's Test: lists the voices the key reaches. An unchanged key is not sent, so the saved one is tested.
+ *  Testing… → Works on the button; "Key works · n voices", or the reason it failed, in the row itself. */
+async function testSoundFlow(btn) {
+  const typed = collectSoundRow(providerRoot()) || {};
+  setProviderMsg('sound', '');
+  const r = await withButton(btn, async () => {
+    try {
+      const res = await fetch('/api/providers/sound/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(typed) });
+      const data = (await safeJson(res)) || {};
+      if (data.ok) return data;
+      return { ok: false, message: data.message || data.error || `The server answered ${res.status}.` };
+    } catch (e) { return { ok: false, message: `worca did not answer (${e.message}).` }; }
+  }, { busy: 'Testing…', done: 'Works' });
+  if (r.skipped) return;
+  const line = providerRoot()?.querySelector('.mv-pv-row[data-provider="sound"] .mv-so-result');
+  if (!line) return;
+  line.hidden = false;
+  line.className = r.ok ? 'hint mv-so-result' : 'hint err mv-so-result';
+  line.textContent = r.ok ? `Key works · ${r.voices} voices` : (r.message || '');
 }
 
 async function testProviderFlow(btn) {
@@ -20567,6 +20677,10 @@ if (el.providersList) {
       const body = collectSpeechRow(providerRoot());
       if (body) patchProviderFlow('speech', body, { btn: t });
     } else if (t.classList.contains('mv-sp-test')) testSpeechFlow(t);
+    else if (t.classList.contains('mv-im-save')) patchProviderFlow('images', collectImagesRow(providerRoot()), { btn: t, onError: (msg) => showImagesSaveError(providerRoot(), msg) });
+    else if (t.classList.contains('mv-im-test')) testImagesFlow(t);
+    else if (t.classList.contains('mv-so-save')) patchProviderFlow('sound', collectSoundRow(providerRoot()), { btn: t });
+    else if (t.classList.contains('mv-so-test')) testSoundFlow(t);
     else if (t.classList.contains('mv-sp-clear')) clearSpeechCacheFlow(t);
     else if (t.classList.contains('mv-pv-preset')) {
       // Fills the fields only; the row's Test / Save do the rest, exactly as for a typed URL.
@@ -20583,6 +20697,7 @@ if (el.providersList) {
     const t = ev.target;
     if (!t || !t.classList) return;
     if (t.classList.contains('mv-cp-account')) patchProviderFlow('copilot', { accountType: t.value });
+    else if (t.classList.contains('mv-im-service')) applyImagesPreset(providerRoot(), t.value);
     else if (t.classList.contains('mv-pv-conc') && t.dataset.provider === 'copilot') patchProviderFlow('copilot', { maxConcurrent: Number(t.value) });
   });
 }
@@ -33952,10 +34067,26 @@ const requirementsView = createRequirementsView({
   msgEl: $('#requirements-msg'),
   // who: the signed-in person on a shared deployment (the start-before-Ready dialog's "Recorded as"), else nobody
   // openRun: a started run is where the person goes next (the run page, #running/<runId>)
-  deps: { route: (p) => { location.hash = p ? `#requirements/${p}` : '#requirements'; }, who: () => viewer.name, openRun: (runId) => { location.hash = `#running/${runId}`; } },
+  // confirm: the model switch asks it (9c board 4), in the shared confirm modal
+  deps: { route: (p) => { location.hash = p ? `#requirements/${p}` : '#requirements'; }, who: () => viewer.name, openRun: (runId) => { location.hash = `#running/${runId}`; },
+    confirm: (o) => confirmModal(o) },
 });
 // Turning the flag off while the page is open leaves it for Chat (a hidden page must not stay up).
 onFlagChange('requirements', (on) => { if (!on && currentView() === 'requirements') showView('chat', ''); });
+
+// Design (behind the design flag): the page module owns #design-host and the nav row's live count; app.js routes and
+// relays the design-* frames and hello's design list.
+const designView = mountDesignView({ doc: document, win: window, host: $('#design-host'), fetch: (...a) => fetch(...a), sendWs: (obj) => { const s = state.ws; if (s && state.wsReady) { try { s.send(JSON.stringify(obj)); } catch { /* ignore */ } } }, route: (p) => { location.hash = p ? `#design/${p}` : '#design'; }, prompt: (o) => promptModal(o),
+  createChat: createDesignChat, confirm: (o) => confirmModal(o),
+  // As the Workflows chat's: once marked loads, the open design chat paints its replies again.
+  renderMarkdown: (text, mount) => {
+    const out = hdMarkdown.render(text);
+    if (out && out.kind === 'md') { mount.classList.add('ask-md'); mount.replaceChildren(out.frag); return; }
+    mount.textContent = text;
+    if (!hdMarkdown.isReady() && !hdMarkdown.isFailed()) void hdMarkdown.ensure().then((ok) => { if (ok) repaintDesignChat(); });
+  },
+});
+onFlagChange('design', (on) => { if (!on && currentView() === 'design') showView('chat', ''); updateNavCounts(); });
 
 /** The workspace read-model, loaded once: a scheduled run card names "Workspace · <name>", not an id. */
 function withWorkspaces() {
@@ -38640,14 +38771,18 @@ function renderPipelineTabs() {
 
 // Needs you, counted without building the list (this runs on every WS frame): the same rule
 // as the Runs list's Needs-you group, over the same rows (runs-list.mjs countNeedsYou). The top
-// bar's Activity badge reads the SAME items (activity-model.mjs activityCounts), so its amber
-// number is this one; `active` is every live run: the grey Runs number, Activity's running count.
+// bar's Activity badge reads the SAME items plus the Design builds (activity-model.mjs
+// activityCounts), so its amber number is this one plus the builds that need you, while the Runs
+// badge (countNeedsYou) stays runs only; `active` is every live run: the grey Runs number,
+// Activity's running count. `designs` only while the design flag is on: hello lists the builds
+// either way, and a #design/<id> row would then lead nowhere.
 function runsNeedsInput() {
   return {
     live: overviewRuns().map((r) => ({ runId: r.runId, pipelineId: r.pipelineId || '', status: r.status, ask: r.pendingQuestion != null, unread: isLingering(r),
       roundOf: runsRoundOf(r) })),   // a live fix round: its run is Working, not Needs you (runs-list needsYouItems, D5)
     history: Array.isArray(state.historyAll) ? state.historyAll : [],
     active: liveRuns().map((r) => ({ runId: r.runId })),
+    designs: flagOn('design') ? designActivity.items() : [],
   };
 }
 function runsNeedsCount() {
@@ -38749,7 +38884,9 @@ function paintScheduleCounts(c) {
 // and PATH — never written here); this block only paints it and runs guides.
 // A guide is transient state: a reload clears it, the shelf re-summons it.
 // ---------------------------------------------------------------------------
-const gs = { status: null, guide: null, spot: null, seq: 0, navigating: false, welcomeShown: false, setupShown: false, refreshTimer: 0, poll: 0, startedRunId: "" };
+const gs = { status: null, settled: false, guide: null, spot: null, seq: 0, navigating: false, welcomeShown: false, setupShown: false, refreshTimer: 0, poll: 0, startedRunId: "",
+  // Connect Claude Code › Check again: claudeChecking while it asks, claudeChecked the line every press leaves.
+  claudeChecking: false, claudeChecked: '' };
 let gsPillHost = null;
 let gsWelcomeUnbind = null;
 let setupDialog = null;
@@ -38759,6 +38896,7 @@ function openSetup({ entry = 'rerun', step = 'check', team = null, teamHash = nu
   setMobileNavOpen(false);
   setupDialog = openSetupAssistant({ doc: document, entry, step, team, onClose: (how, { applied = false } = {}) => {
     setupDialog = null;
+    queueMicrotask(worca.maybeDialog);   // after the branch below has shown (or not shown) the first-run welcome
     // A7: a first start always continues to the welcome; a finished re-run that applied something ends on the
     // doors, and a Finish with nothing applied goes back to the page; a fix-it run (entry 'fix') returns to
     // the page it came from (product-1-2).
@@ -38804,19 +38942,42 @@ function gsEnsurePillHost() {
   return gsPillHost;
 }
 
+/** Resolves `{ ok: true }`, or `{ ok: false, error }` when the request failed (Check again says why). */
 async function loadOnboarding({ recheck = false } = {}) {
   let data;
   try {
     const res = await fetch(recheck ? '/api/onboarding?recheck=1' : '/api/onboarding');
     data = await safeJson(res);
-    if (!res.ok) return;
-  } catch { return; }
+    if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}` };
+  } catch (e) { return { ok: false, error: e?.message || 'network error' }; }
   // The boot tests stub fetch with one generic payload: anything without a
   // `steps` object is not ours and paints nothing.
-  if (!data || !data.steps || typeof data.steps !== 'object') return;
+  if (!data || !data.steps || typeof data.steps !== 'object') return { ok: true };
   gs.status = data;
   paintOnboarding();
   maybeWelcome();
+  void stillhetBoot();
+  if (flagsTabCtl) void flagsTabCtl.load();   // the Labs row follows the ask switch
+  return { ok: true };
+}
+
+// Stillhet's opt-in and opt-out (ui/public/stillhet.mjs): idempotent, so a socket reconnect that reruns the boot path adds nothing.
+let railReloadWatch = null;
+async function stillhetBoot() {
+  const status = gs.status;
+  if (!status) return;
+  const toastText = (text) => notify({ tone: 'info', title: text });
+  if (!railReloadWatch) railReloadWatch = watchRailReload({ doc: document, win: window, bootOn: RAIL_BOOT, toast: toastText });
+  if (status.stillhetAsk !== true) return;
+  const r = await mcpApi('GET', '/api/flags');
+  const flag = r.ok && Array.isArray(r.data?.flags) ? r.data.flags.find((f) => f.key === 'rail') : null;
+  if (!flag) return;
+  mountDesignSwitch({ doc: document, status, flag, fetchJson: mcpApi, toast: toastText });
+  const dialogOpen = [...document.querySelectorAll('dialog[open], .viewer-modal:not(.hidden), .keys-modal')].some((d) => d.getClientRects().length > 0);   // a hidden modal keeps its node
+  if (shouldAskStillhet({ ask: true, asked: status.stillhetAsked === true, fresh: status.fresh === true, flagKnown: true, on: flag.on, locked: flag.locked,
+    welcomeThisLoad: gs.welcomeShown, setupOpen: !!setupDialog, dialogOpen })) {
+    mountStillhetAsk({ doc: document, status, fetchJson: mcpApi });
+  }
 }
 /** Coalesce the change broadcasts (a finished run fires several) into one refetch. */
 function scheduleOnboardingRefresh() {
@@ -38849,6 +39010,7 @@ function paintShelf({ entering = false } = {}) {
     hideLabel: gs.status.hidden ? 'Show in sidebar' : 'Hide from sidebar',
     animate: appearing,
     level: currentLevel(),
+    worcaLevel: worca.state.view,
   });
 }
 
@@ -38904,7 +39066,7 @@ function showWelcome({ force = false } = {}) {
   try { markWhatsNewSeen(localStorage); } catch { /* blocked storage: the note just shows */ }   // nothing is "new" to a new install
   if (gsWelcomeUnbind) { gsWelcomeUnbind(); gsWelcomeUnbind = null; }   // A6: never two sets of door listeners
   setMobileNavOpen(false);   // a phone drawer opened before the onboarding fetch landed must not stay up behind the dialog
-  const close = () => { modal.classList.add('hidden'); if (gsWelcomeUnbind) { gsWelcomeUnbind(); gsWelcomeUnbind = null; } };
+  const close = () => { modal.classList.add('hidden'); if (gsWelcomeUnbind) { gsWelcomeUnbind(); gsWelcomeUnbind = null; } worca.maybeDialog(); };
   gsWelcomeUnbind = bindWelcome(modal, {
     win: window,
     onDoor: (step) => { close(); setOnboardingPrefs({ welcomeSeen: true }); startGuide(step); },
@@ -38933,6 +39095,9 @@ function paintClaudeSetupStatus() {
   if (ok) box.textContent = c.auth === 'signed-in' ? `Found ${bin}, installed and signed in. You're set.` : `Found ${bin}. You're set.`;
   else if (c.auth === 'signed-out') box.textContent = `Found ${bin}, installed but not signed in yet. Run claude in a terminal, type /login, then check again.`;
   else box.textContent = c.hint || `"${bin}" is not on the PATH of the Worca server. Install it, then check again (restart the UI if PATH changed).`;
+  // Signed out: the folder the CLI read. A server with another HOME reads another sign-in than the terminal.
+  if (!ok && c.auth === 'signed-out' && c.configDirectory) box.append(lineEl('ob-claude-where', claudeCheckedWhere(c.configDirectory)));
+  if (gs.claudeChecked) box.append(lineEl('ob-claude-checked', gs.claudeChecked));
   // The wizards' signed-out lines are stale once the CLI checks out.
   if (ok) for (const restore of [...claudeSignedOutHints.values()]) restore();
 }
@@ -38944,13 +39109,25 @@ function openClaudeSetup() {
   claudeSetupGuard?.opened();
   document.getElementById('claude-setup-check')?.focus?.();
   // The page's status may predate a sign-in (or a transient signed-out probe):
-  // ask again on open instead of repeating it.
-  recheckClaudeSetup();
+  // ask again on open instead of repeating it. A fresh open starts with no "Checked just now" line.
+  gs.claudeChecked = '';
+  recheckClaudeSetup({ manual: false });
 }
-async function recheckClaudeSetup() {
+function lineEl(cls, text) { const n = document.createElement('span'); n.className = cls; n.textContent = text; return n; }
+/** Check again: "Checking…" and disabled while it asks; then a line every time (`manual`: the button, not the open). */
+async function recheckClaudeSetup({ manual = true } = {}) {
+  if (gs.claudeChecking) return;
   const btn = document.getElementById('claude-setup-check');
-  if (btn) btn.disabled = true;
-  try { await loadOnboarding({ recheck: true }); } finally { if (btn) btn.disabled = false; }
+  gs.claudeChecking = true;
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+  let r = { ok: false, error: 'network error' };
+  try { r = await loadOnboarding({ recheck: true }); } finally {
+    gs.claudeChecking = false;
+    if (btn) { btn.disabled = false; btn.textContent = 'Check again'; }
+  }
+  const c = gs.status?.claude || {};
+  if (!r.ok) gs.claudeChecked = `Couldn't check just now: ${r.error}`;
+  else if (manual) gs.claudeChecked = gs.status?.steps?.claude ? 'Checked just now: signed in.' : c.auth ? 'Checked just now: still not signed in.' : 'Checked just now: still not found.';
   paintClaudeSetupStatus();
 }
 function closeClaudeSetup() { document.getElementById('claude-setup-modal')?.classList.add('hidden'); }
@@ -38958,7 +39135,7 @@ function closeClaudeSetup() { document.getElementById('claude-setup-modal')?.cla
 const claudeSetupEl = document.getElementById('claude-setup-modal');
 const claudeSetupGuard = claudeSetupEl ? guardModal(claudeSetupEl, { kind: 'viewer', close: () => closeClaudeSetup() }) : null;
 document.getElementById('claude-setup-close')?.addEventListener('click', closeClaudeSetup);
-document.getElementById('claude-setup-check')?.addEventListener('click', recheckClaudeSetup);
+document.getElementById('claude-setup-check')?.addEventListener('click', () => { void recheckClaudeSetup(); });
 
 // ── Guides ──────────────────────────────────────────────────────────────────
 // Each hop is derived from REAL UI state at the moment it is needed (which view
@@ -39521,7 +39698,7 @@ function onboardingViewChanged(name) {
   document.querySelector('.gs-pill')?.classList.toggle('active', name === 'getting-started');
 }
 
-loadOnboarding();
+void loadOnboarding().finally(() => { gs.settled = true; worca.maybeDialog(); });   // the first answer (or its failure) lets the worca dialog know what the first-run welcome will do
 void paintTeamNotice();
 
 const views = $$('.view');
@@ -39532,7 +39709,7 @@ const navLinks = $$('.nav button[data-nav], #acct-settings');
 // guardrails LEFT this array: it is a Settings tab now, reached as #settings/guardrails
 // (old addresses redirect — see MOVED_ROUTES). The four Add-ons pages went the other way:
 // Settings tabs once, pages of their own now.
-const VIEW_NAMES = ['chat', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'requirements', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers', 'feature', 'group'];
+const VIEW_NAMES = ['chat', 'design', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'requirements', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers', 'profile', 'feature', 'group'];
 // One Runs page, five route names: the bare list (#runs), the two run routes every deep link already uses
 // (#running/<id>…, #history/<projectKey>/<id>…) and the group page's two (#feature/<id>…, #group/<id>…, run 3 D1).
 // All five render the `data-view="runs"` section and light the one Runs nav button.
@@ -39572,7 +39749,7 @@ const VIEW_TITLES = Object.freeze({
   guardrails: 'Guardrails', memory: 'Memory', ask: 'Chat', tags: 'Labels & cost tags',
   marketplace: 'Marketplace', connectors: 'Connectors', models: 'Models', providers: 'Providers',
   schedules: 'Schedules', presets: 'Presets',
-  requirements: 'Requirements',
+  requirements: 'Requirements', design: 'Design',
 });
 function pageMinLevel() {
   if (currentShownView === 'settings') return { key: currentSettingsTab, min: SETTINGS_TAB_MIN_LEVEL[currentSettingsTab] || 'simple' };
@@ -39713,6 +39890,8 @@ function showView(name, param = '') {
   }
   // Requirements is behind its flag (docs/feature-flags.md): a deep link while it is off lands on Chat.
   if (name === 'requirements' && !flagOn('requirements')) return showView('chat', '');
+  // Design too: a deep link while the design flag is off lands on Chat.
+  if (name === 'design' && !flagOn('design')) return showView('chat', '');
   // A bare #running / #history is the Runs list now (both lists merged into it). Replace the
   // entry rather than letting the hash sync below PUSH #runs: Back would land on #history
   // again, normalize again, and never get past it.
@@ -39859,6 +40038,7 @@ function showView(name, param = '') {
   document.body.classList.toggle('view-workspaces', name === 'workspaces');
   document.body.classList.toggle('view-workflows', name === 'workflows');
   document.body.classList.toggle('view-chat', name === 'chat');   // worca Chat: the page fills the column (style.css)
+  document.body.classList.toggle('view-design', name === 'design');   // Design: full-bleed, the stage fills the column
   if (RUNS_VIEWS.has(name)) {
     const entering = !RUNS_VIEWS.has(prevView);
     // The section is visible now (the toggle above): measure before anything opens, so the
@@ -39901,6 +40081,8 @@ function showView(name, param = '') {
   if (name === 'stats') loadStatsView();
   if (name === 'requirements') void requirementsView.show(param);
   else requirementsView.leave();   // the Feature chat phone sheet and an export dialog make the page inert; leaving the view puts it back
+  if (name === 'design') void designView.show(param);
+  else designView.leave();
   if (name === 'schedules') { schedulesView.showTab(param); void withWorkspaces().then(() => schedulesView.load()); }
   if (name === 'team-metrics') {
     // #team-metrics/timeline opens the Timeline tab. Switching tabs inside the page only repaints:
@@ -39944,6 +40126,8 @@ function showView(name, param = '') {
     void loadModelsView().then(() => { if (modelId) revealModelCard(modelId, param); });
   }
   if (name === 'providers') void loadProvidersView().then(() => revealProviderRow(param));
+  if (prevView !== name) worca.onViewShown(name);   // once per navigation, not per repaint: Statistics, Team metrics and Team policy feed the level
+  if (name === 'profile') worca.showProfile(document.getElementById('profile-level-host'), () => currentShownView === 'profile');   // #profile/level
   if (name === 'new') {
     loadTaskSources(); applyBudgetToNewView(); refreshMentionHighlights();
     paintNewRunAwayHint();
@@ -40058,7 +40242,7 @@ function revealModelCard(id, param) {
   const card = [...el.modelsList.querySelectorAll('.mv-card[data-id]')].find((n) => n.dataset.id === id);
   if (card) markFound(card, card.querySelector('button'));
 }
-// '#providers/<copilot|openai|anthropic|speech>': the provider's row, highlighted, with its sign-in or key field
+// '#providers/<copilot|openai|anthropic|speech|images|sound>': the provider's row, highlighted, with its sign-in or key field
 // focused (focusProviderRow's choice), else its first control.
 function revealProviderRow(param) {
   if (!param || currentView() !== 'providers' || parseHash()[1] !== param || !el.providersList) return;
@@ -40157,9 +40341,11 @@ $('#topnav-new')?.addEventListener('click', () => {
 
 // Activity (#topnav-activity, activity-menu.mjs): what needs you, what is running and what is
 // scheduled, a list with no actions. Its badge repaints with the Runs badge (updateNavCounts),
-// from the same items; the open popover reads the Runs list's full rows (live: the Runs list's
-// live runs, active: every live run, agent-generation jobs too) and fetches the schedules when it
-// opens. A row routes like any page link: the route hides the Chat page when it is the one showing.
+// from the same items plus the Design builds (designActivity, while the design flag is on), so its
+// amber number includes the builds that need you while the Runs badge stays runs only; the open
+// popover reads the Runs list's full rows (live: the Runs list's live runs, active: every live run,
+// agent-generation jobs too) and the builds, and fetches the schedules when it opens. A row routes
+// like any page link: the route hides the Chat page when it is the one showing.
 activityMenu = $('#topnav-activity') ? createActivityMenu({
   button: $('#topnav-activity'), badge: $('#topnav-activity-n'), pop: $('#activity-pop'),
   getCounts: () => activityCounts(runsNeedsInput()),
@@ -40167,6 +40353,7 @@ activityMenu = $('#topnav-activity') ? createActivityMenu({
     live: overviewRuns().map(runsLiveItem),
     history: (Array.isArray(state.historyAll) ? state.historyAll : []).filter(Boolean).map(runsHistItem),
     active: liveRuns().sort(cmpTabRuns).map(runsLiveItem),
+    designs: flagOn('design') ? designActivity.items() : [],
   }),
   loadSchedules: async () => {
     await withWorkspaces();                              // a workspace's ticket names its workspace
@@ -40345,8 +40532,9 @@ function chatRoute(threadId, { replace = false } = {}) {
   location.hash = target;
 }
 /** Ask worca beside the page: which host the ONE chat page has on this route (showView, after the leave-Chat block and
- *  before enterChatView). Chat: the page — the column and its button hide, the person's choice kept. Workflows: no
- *  column (no top bar). Every other page: the button, and the column when the person left it open. */
+ *  before enterChatView). Chat: the page — the column and its button hide, the person's choice kept. Workflows and
+ *  Design: no column (Workflows has no top bar, Design its own chat). Every other page: the button, and the column
+ *  when the person left it open. */
 function syncAskSide(name) {
   if (!askSide || !askPanel) return;
   const btn = $('#topnav-ask');
@@ -40360,8 +40548,9 @@ function syncAskSide(name) {
     return;
   }
   askHistoryOnChat = false;
-  if (btn) btn.hidden = name === 'workflows';
-  askSide.setAvailable(name !== 'workflows');
+  const noColumn = name === 'workflows' || name === 'design';
+  if (btn) btn.hidden = noColumn;
+  askSide.setAvailable(!noColumn);
 }
 /** Below 1081px the side column covers the main column: the page behind it is inert while it shows (with the phone drawer's). */
 function paintAskSideCover() {
@@ -41483,6 +41672,7 @@ const chatHomeTimers = {
   clearTimeout: (t) => clearTimeout(t),
 };
 const chatIntent = installIntentAddon({ win: chatHomeTimers, onSend: () => { chatHome?.armFlip(); } });
+installPromptCheckAddon({ intent: chatIntent });   // the prompt check chip, after the intent chip (Chat and the Shaper task)
 
 // ── Chat home (worca Chat P6) ──────────────────────────────────────────────────────────────────────────────
 // The hero, quick actions, Needs you / Running / Recent chats / Workflows and the promos, inside the Chat page's
@@ -41755,8 +41945,8 @@ askPanel = createAskPanel({
   },
 });
 ($('section.view[data-view="chat"]') || document.body).appendChild(askPanel.root);
-// Ask worca beside the page: the header toggle docks this same panel in aside#ask-side on every page but Chat and
-// Workflows (syncAskSide decides per route). Made here, after the panel and before the boot route below.
+// Ask worca beside the page: the header toggle docks this same panel in aside#ask-side on every page but Chat,
+// Workflows and Design (syncAskSide decides per route). Made here, after the panel and before the boot route below.
 if ($('#ask-side') && $('#topnav-ask')) {
   askSide = createAskSide({
     doc: document,
@@ -41854,7 +42044,7 @@ else showView(VIEW_NAMES.includes(bootView) ? bootView : 'chat', VIEW_NAMES.incl
 refreshAllCounts();
 refreshBudget();
 startBudgetTick();
-loadWhoami();
+void loadWhoami().then(worca.boot);
 void refreshVersionStatus();   // sidebar "Update available" marker (#841)
 // ...and again when the tab regains focus, so a tab left open for days still sees a new release. A GET
 // only: the server's cache decides whether npm is asked.

@@ -286,3 +286,8 @@ export function manifestTemplate(manifest) {
     ...(sessions ? { sessions } : {}),
   };
 }
+
+/** A v2 graph manifest (a run's `stepper`): what every run view draws from (ui/public/graph/run-decor.mjs re-exports it). */
+export function isGraphManifest(stepper) {
+  return !!(stepper && stepper.version === 2 && stepper.graph && Array.isArray(stepper.graph.nodes));
+}

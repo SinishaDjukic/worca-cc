@@ -56,6 +56,15 @@ export const ORIENTATION_SYSTEM_PROMPT = [
   'Reply with ONLY this JSON object, no prose, no code fence: { "summary": "...", "files": ["each path you read"], "area": "only when asked: the product area" }',
 ].join('\n');
 
+const CLAUDE_TOOLS_SENTENCE = 'You can only read: Glob finds files by name pattern, Grep searches file contents, Read reads one file (use paths under the working directory the message names). You cannot run commands or change anything, and you have only a few steps: answer before they run out.';
+const FILES_TOOLS_SENTENCE = 'You can only read, with the read_file, grep and glob tools (absolute paths under the folder the message names). You cannot run commands or change anything, and you have only a few steps: answer before they run out.';
+const OTHER_ORIENTATION_PROMPT = ORIENTATION_SYSTEM_PROMPT.replace(CLAUDE_TOOLS_SENTENCE, FILES_TOOLS_SENTENCE);
+
+/** 9c D16: the code look's system prompt for a harness. Claude: the same string as ever; the others read through the files server's tools. */
+export function orientationSystemPrompt(engine = 'claude') {
+  return !engine || engine === 'claude' ? ORIENTATION_SYSTEM_PROMPT : OTHER_ORIENTATION_PROMPT;
+}
+
 /** The latest answers per round turn: a later `answers` turn for the same round supersedes. */
 export function latestAnswers(turns) {
   const out = new Map();
@@ -221,7 +230,7 @@ export function buildOrientationPrompt({ feature, context = '', members = null, 
     `<feature>${asData(feature.title)}</feature>`,
     `<description>\n${asData(feature.description)}\n</description>`,
     `<project_context>\n${asData(context) || '(none)'}\n</project_context>`,
-    ...(brief ? [`<product_brief>\n${asData(brief)}\n</product_brief>`] : []),   // A7 D11: the closer look
+    ...(brief ? [`<product_brief>\n${asData(brief)}\n</product_brief>`] : []),   // A7 D11: the code look
     members && members.length
       ? (cwd
         ? `The working directory, ${asData(cwd)}, holds one checkout per project under repos/<project>: ${members.map(asData).join(', ')}.`

@@ -81,7 +81,7 @@ function requirementsBrief(key, text, { shape } = {}) {
 export const REQUIREMENTS_ROLE_CHECKLIST = Object.freeze({
   roles: () => REQUIREMENT_ROLES.map(({ key, label }) => ({ key, label })),
   normalizePicked(raw) {
-    const n = normalizePerspectives(raw === null || raw === undefined ? [...DEFAULT_PERSPECTIVES] : raw);
+    const n = normalizePerspectives(raw === null || raw === undefined ? [...DEFAULT_PERSPECTIVES] : raw, { compliance: true });
     return (n.ok ? n.perspectives : ['product']).filter((k) => k !== FIT_KEY && Object.hasOwn(REQUIREMENT_PREFIX, k));
   },
   items: (key, text) => itemsOf(key, text).map((c) => c.id),

@@ -114,3 +114,23 @@ test('DELETE of the LAST workspace clears workspaceGuideSeen; deleting one of tw
     } },
   ]);
 });
+
+test('Stillhet: GET carries the ask switch and the issues URL; POST stillhetAsked is a boolean, undoable, and touches nothing else', async () => {
+  const pkg = JSON.parse((await import('node:fs')).readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  let s = await (await get()).json();
+  assert.equal(s.stillhetAsk, false);
+  assert.equal(s.stillhetAsked, false);
+  assert.equal(s.bugsUrl, pkg.bugs.url);
+  const bad = await post({ stillhetAsked: 'yes' });
+  assert.equal(bad.status, 400);
+  s = await (await post({ stillhetAsked: true })).json();
+  assert.equal(s.stillhetAsked, true);
+  const { settingsFile } = await import('../src/core/settings.mjs');
+  const { readFileSync } = await import('node:fs');
+  assert.equal(JSON.parse(readFileSync(settingsFile(), 'utf8')).onboarding.stillhetAsked, true);
+  s = await (await post({ stillhetAsked: false })).json();
+  assert.equal(s.stillhetAsked, false);
+  assert.notEqual(JSON.parse(readFileSync(settingsFile(), 'utf8')).onboarding?.stillhetAsked, true);
+  process.env.WORCA_STILLHET_ASK = '1';
+  try { assert.equal((await (await get()).json()).stillhetAsk, true); } finally { delete process.env.WORCA_STILLHET_ASK; }
+});

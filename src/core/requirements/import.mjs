@@ -193,11 +193,11 @@ const importFields = (plan) => ({
  *  A file that cannot be stored never undoes the feature (A8): its name goes to filesNotStored. Accepted (plan review Minor 5): the
  *  turn's `comments` count (D14's "its comments are in …") is written with the feature, before the comments file is stored, so in the
  *  rare case that file lands in filesNotStored the thread line still names it and the round's <attachments> simply lacks it. */
-export function createImported(scope, { title, description } = {}, plan, { by = null } = {}, d = {}) {
+export function createImported(scope, { title, description, model = null } = {}, plan, { by = null } = {}, d = {}) {
   const linked = linkByTicket({ ...plan.conn, key: plan.key });   // D12: one ticket follows one feature
   const at = new Date().toISOString();
   const f = tx(() => {
-    const made = createFeature({ ...scope, title, description, criteria: plan.criteria }, { by });
+    const made = createFeature({ ...scope, title, description, criteria: plan.criteria, model }, { by });
     if (!linked) {
       saveExportLink(made.seq, { ...plan.conn, trackerProject: plan.meta.project || plan.key.split('-')[0], key: plan.key, url: plan.url, createdAt: at,
         exportedAt: at, spec: made.spec, fields: importFields(plan), fingerprint: plan.fingerprint, origin: 'import' }, { by });

@@ -3,6 +3,20 @@
 Notes on merged features that have no release page yet. `/worca-changelog` folds
 them into the next page and empties this file.
 
+## Choose who interviews, per feature
+
+**Pick the harness, model and effort for a feature's Requirements.**
+
+New feature has a **Who interviews** group: Harness, Model and Effort. Rounds, code looks, file reads and Feature chat run on the choice, on Claude, Codex, Copilot, Gemini CLI or another harness Worca can lock down. What a harness cannot do is skipped with a note, never sent to Claude: a code look on a harness that cannot read the repo, a PDF on one that takes text only. Each step names what ran it and its cost (billed, ≈ estimated or cost unknown), and the **so far** chip opens **Cost of this feature**. The model chip changes a running feature from the next step, with a confirm when the switch loses something. The code look shows as a step with **Show what it found**, and the Product brief has **Who makes it** and **⋯ › Refresh the brief**.
+
+Chips: harness, model and effort · Cursor never offered · skipped with a note · cost billed or ≈ · code look as a step · brief per choice
+
+Read it: [Requirements](../requirements.md#choosing-the-harness-and-model)
+
+Pull requests (add each number when it opens):
+
+- Requirements: choose the harness and model per feature and per Product brief (#1234)
+
 ## Shaper keeps going while you're away
 
 **You answer what to build. Away mode handles how to build it.**

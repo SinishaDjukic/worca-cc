@@ -6,8 +6,8 @@
 // logged in". So a failed run on a model the CLI serves itself (not routed to
 // an endpoint or the bridge) asks preflight's probeClaudeAuth, which is cheap
 // (remembered 60 s) and says 'signed-out' only when `claude auth status` does.
-import { isClaudeSignedOutError, probeClaudeAuth } from './preflight.mjs';
-import { listModels, modelHasBaseUrlRouting } from './config.mjs';
+import { isClaudeSignedOutError, probeClaudeAuth, claudeAuthFromEnv } from './preflight.mjs';
+import { listModels, modelHasBaseUrlRouting, resolveModelEnv } from './config.mjs';
 import { agentIdentity } from './agent-user.mjs';
 import { configuredClaudeBin } from './onboarding.mjs';
 
@@ -57,5 +57,23 @@ export async function claudeRunSignedOut(dir) {
     if ((await probeClaudeAuth({ bin })).state !== 'signed-out') return false;
     if ((await probeClaudeAuth({ bin, force: true })).state !== 'signed-out') return false;
     return !(await listModels(dir)).some((m) => m && !m.needsSignIn && modelHasBaseUrlRouting(m.id));
+  } catch { return false; }
+}
+
+/**
+ * Does `modelId` run on Claude Code without the CLI's own sign-in? Yes when it is routed to an endpoint or the bridge (as
+ * failedBecauseSignedOut reads it), or when its model profile env signs the CLI in by itself: an API key or auth token, or
+ * Bedrock / Vertex / Foundry (preflight's claudeAuthFromEnv, the keys `claude auth status` does not report). A company model
+ * profile on Vertex is such a model. Never throws (a bridged model whose provider is not ready: false).
+ * @param {string} modelId
+ * @param {{routed?:(id:string)=>boolean, envOf?:(id:string)=>Record<string,string>|undefined}} [o] injectable for tests
+ * @returns {boolean}
+ */
+export function claudeModelRunsSignedOut(modelId, { routed = modelHasBaseUrlRouting, envOf = resolveModelEnv } = {}) {
+  try {
+    if (typeof modelId !== 'string' || !modelId.trim()) return false;
+    const env = envOf(modelId);
+    if (routed(modelId)) return true;
+    return !!(env && typeof env === 'object' && claudeAuthFromEnv(env));
   } catch { return false; }
 }

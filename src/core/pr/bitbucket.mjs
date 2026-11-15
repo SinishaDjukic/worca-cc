@@ -252,6 +252,38 @@ export async function markReady({ prUrl, env = process.env } = {}) {
   } catch (e) { return watchFailure(e); }
 }
 
+/** Merge PR: merge with the repository's default merge strategy. Bitbucket's merge takes no head guard, so the PR's
+ *  source commit is re-read first and a head that moved past `headSha` is refused with class 'head-moved'.
+ *  Residual window: a push that lands between that re-read and the merge POST is merged unchecked. The two calls are
+ *  not atomic and Bitbucket's merge endpoint offers no expected-head field; pass one here if it ever does. */
+export async function mergePr({ prUrl, headSha = null, env = process.env } = {}) {
+  const p = parseBitbucketPrUrl(prUrl);
+  if (!p) return { ok: false, class: 'failed', error: 'invalid Bitbucket pull request URL' };
+  try {
+    if (headSha) {
+      const { json } = await bbFetch('read', prApi(p), { env });
+      const now = String(json?.source?.commit?.hash || '');   // Bitbucket abbreviates it here; the checked one is full
+      if (!now || !String(headSha).startsWith(now)) return { ok: false, class: 'head-moved', error: 'the pull request has new commits' };
+    }
+    await bbFetch('write', `${prApi(p)}/merge`, { method: 'POST', body: {}, env }); return { ok: true, method: 'default' };
+  } catch (e) { return watchFailure(e); }
+}
+
+/** Point the PR at another destination branch. */
+export async function retargetPr({ prUrl, base, env = process.env } = {}) {
+  const p = parseBitbucketPrUrl(prUrl);
+  if (!p || !base) return { ok: false, error: 'invalid retarget request' };
+  try {
+    const { json } = await bbFetch('read', prApi(p), { env });
+    await bbFetch('write', prApi(p), { method: 'PUT', env,
+      // A PUT replaces the PR's editable fields: send its description and reviewers back, or Bitbucket clears them.
+      body: { title: json?.title, description: typeof json?.description === 'string' ? json.description : '',
+        reviewers: (Array.isArray(json?.reviewers) ? json.reviewers : []).filter((r) => r?.uuid).map((r) => ({ uuid: r.uuid })),
+        destination: { branch: { name: String(base) } } } });
+    return { ok: true };
+  } catch (e) { return watchFailure(e); }
+}
+
 /** D24: close a PR (declined), after a PR-level comment saying why. */
 export async function closePr({ prUrl, comment = '', env = process.env } = {}) {
   const p = parseBitbucketPrUrl(prUrl);
@@ -462,8 +494,11 @@ export async function prCheckFacts({ prUrl, env = process.env } = {}) {
       ? { __typename: 'CheckRun', name: c.name, status: c.status, conclusion: c.conclusion }
       : { __typename: 'StatusContext', context: c.context, state: c.state }));
     const changes = (Array.isArray(r.pr.participants) ? r.pr.participants : []).some((x) => x?.state === 'changes_requested');
+    const reviews = (Array.isArray(r.pr.participants) ? r.pr.participants : [])
+      .filter((x) => (x?.state === 'approved' || x?.state === 'changes_requested') && (x.user?.display_name || x.user?.nickname))
+      .map((x) => ({ by: String(x.user.display_name || x.user.nickname), state: x.state === 'approved' ? 'APPROVED' : 'CHANGES_REQUESTED' }));
     return { items, mergeable: r.mergeable, mergeState: null, reviewDecision: changes ? 'CHANGES_REQUESTED' : null,
-      draft: r.pr.draft === true, base: r.facts.base, baseFailing: r.baseRes.failing };
+      draft: r.pr.draft === true, base: r.facts.base, baseFailing: r.baseRes.failing, reviews, headSha: r.facts.headSha || null };
   } catch { return null; }
 }
 

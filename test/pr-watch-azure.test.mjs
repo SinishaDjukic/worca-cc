@@ -351,3 +351,41 @@ test('reply and comment post with the write token: a reply on the thread, a comm
   assert.equal((await prWatchReply({ projectDir: '/p', prUrl: PR, threadId: 5, body: 'x' })).class, 'rate-limit');
   assert.equal((await prWatchReply({ projectDir: '/p', prUrl: PR, threadId: 'T_node', body: 'x' })).ok, false);
 }));
+
+test('Merge PR and retarget on Azure: complete at the source commit, PATCH the target ref; a refusal keeps its class', () => withEnv(ENV, async () => {
+  const { prMerge, prRetarget } = await import('../src/core/git-info.mjs');
+  const f = fakeFetch([
+    { match: /\/pullRequests\/12\?/, method: 'GET', reply: res(200, { pullRequestId: 12, lastMergeSourceCommit: { commitId: 'h9' } }) },
+    { match: /\/pullRequests\/12\?/, method: 'PATCH', reply: res(200, {}) },
+  ]);
+  az._testing.setFetch(f);
+  assert.deepEqual(await prMerge({ prUrl: PR }), { ok: true, method: 'default' });
+  assert.deepEqual(f.calls.at(-1).body, { status: 'completed', lastMergeSourceCommit: { commitId: 'h9' } });
+  assert.deepEqual(await prRetarget({ prUrl: PR, base: 'main' }), { ok: true });
+  assert.deepEqual(f.calls.at(-1).body, { targetRefName: 'refs/heads/main' });
+  az._testing.setFetch(fakeFetch([{ match: /\/pullRequests\/12\?/, reply: res(403, { message: 'no' }) }]));
+  const r = await prMerge({ prUrl: PR });
+  assert.deepEqual([r.ok, r.class], [false, 'auth']);
+}));
+
+test('Merge PR on Azure pins the checked head: the same commit completes, a moved one is refused head-moved with no PATCH', () => withEnv(ENV, async () => {
+  const { prMerge } = await import('../src/core/git-info.mjs');
+  const f = fakeFetch([
+    { match: /\/pullRequests\/12\?/, method: 'GET', reply: res(200, { pullRequestId: 12, lastMergeSourceCommit: { commitId: 'h9' } }) },
+    { match: /\/pullRequests\/12\?/, method: 'PATCH', reply: res(200, {}) },
+  ]);
+  az._testing.setFetch(f);
+  assert.deepEqual(await prMerge({ prUrl: PR, headSha: 'h9' }), { ok: true, method: 'default' });
+  const n = f.calls.length;
+  const moved = await prMerge({ prUrl: PR, headSha: 'h8' });
+  assert.deepEqual([moved.ok, moved.class], [false, 'head-moved']);
+  assert.ok(!f.calls.slice(n).some((c) => c.method === 'PATCH'), 'nothing completed');
+}));
+
+test('the PR card on Azure: reviewer votes become reviews (containers left out) and the head is the source commit', () => withEnv(ENV, async () => {
+  az._testing.setFetch(fakeFetch(snapshotRoutes({ prStatuses: [] })));
+  const r = await prChecks({ projectDir: '/p', prUrl: PR });
+  assert.deepEqual(r.reviews, [{ by: 'Rev', state: 'CHANGES_REQUESTED' }, { by: 'Wait', state: 'CHANGES_REQUESTED' }, { by: 'Ok', state: 'APPROVED' }]);
+  assert.equal(r.headSha, 'sha1');
+  assert.deepEqual([r.draft, r.reviewDecision], [false, 'CHANGES_REQUESTED'], 'the merge guard reads draft and review decision');
+}));

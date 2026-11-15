@@ -36,7 +36,7 @@ test('seed: settings, onboarding, project, thread, one finished run and one run 
   const f = fakeServer();
   const s = await seed({ base: 'http://x', projectPath: '/p' }, { fetchImpl: f.fetchImpl, helloImpl: f.helloImpl, pollMs: 1 });
   assert.deepEqual(s, { projectKey: 'k1', projectPath: '/p', runId: 'r1', pipelineId: 'p1', threadId: 't1', heldRunId: 'r2', heldPipelineId: 'p2' });
-  assert.deepEqual(f.calls.slice(0, 3), ['POST /api/settings', 'POST /api/onboarding', 'POST /api/projects']);
+  assert.deepEqual(f.calls.slice(0, 4), ['POST /api/settings', 'POST /api/onboarding', 'POST /api/worca-level/ack', 'POST /api/projects']);
   assert.ok(f.calls.includes('POST /api/ask/threads/t1/messages'), 'the thread gets one message, so #chat/t1 renders a thread');
   assert.equal(f.runs.get('r2').status, 'running');
   assert.equal(f.runs.get('r2').pq.kind, 'questions');

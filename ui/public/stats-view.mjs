@@ -694,8 +694,8 @@ export function renderGroupsCard(groups, rangeLabel, { doc = globalThis.document
   const thead = h(doc, 'thead', null); thead.appendChild(head); table.appendChild(thead);
   const tbody = h(doc, 'tbody', null);
   for (const r of groups.rows) {
-    // Chat and Requirements spend rows carry no runs (their spend is not per run)
-    const noRuns = r.kind === 'ask' || r.kind === 'requirements';
+    // Chat, Requirements and Design spend rows carry no runs (their spend is not per run)
+    const noRuns = r.kind === 'ask' || r.kind === 'requirements' || r.kind === 'design';
     const tr = h(doc, 'tr', r.kind === 'none' ? 'groups-row-none' : noRuns ? `groups-row-${r.kind}` : null);
     tr.appendChild(h(doc, 'td', 'people-name', r.label));
     const spend = h(doc, 'td', 'people-spend');

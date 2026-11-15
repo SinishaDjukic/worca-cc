@@ -238,7 +238,8 @@ export function runNameInputs(ids) {
   return ids.map((id) => ({ title: by.get(id).title || '', firstMessage: by.get(id).prompt || '' }));
 }
 
-/** ⋯ → Remove from group (ad-hoc members only). A user group left empty is deleted. */
+/** ⋯ → Remove from group (ad-hoc members only). A user group left empty is deleted. `snap`: what its Undo puts back
+ *  (restoreRunGroups), the group row included, so a group the remove deleted comes back with its id. */
 export function removeFromGroup({ pipelineId }) {
   const db = getDb();
   const m = db.prepare('SELECT group_id FROM run_group_members WHERE pipeline_id = ?').get(String(pipelineId));
@@ -246,12 +247,13 @@ export function removeFromGroup({ pipelineId }) {
     if (featureOfPipeline(pipelineId)) throw new RunGroupError('NATIVE_MEMBER', 'a Shaper slice cannot leave its feature');
     throw new RunGroupError('NOT_FOUND', 'the run is not in a group', 404);
   }
+  const snap = snapshotRuns(db, [String(pipelineId)]);
   tx(() => {
     db.prepare('DELETE FROM run_group_members WHERE pipeline_id = ?').run(String(pipelineId));
     const left = db.prepare('SELECT COUNT(*) AS n FROM run_group_members WHERE group_id = ?').get(m.group_id).n;
     if (!left) db.prepare('DELETE FROM run_groups WHERE id = ?').run(m.group_id);
   });
-  return { groupId: m.group_id };
+  return { groupId: m.group_id, snap };
 }
 
 /** The members a bulk action on a feature or user group expands to (src/core/run-bulk.mjs). */
