@@ -269,3 +269,18 @@ test('F-a4-03: a state frame that first names a run\'s pipeline id hands it to t
   y.frame({ ...hello, runs: [...hello.runs, run('py')] }); await y.tick();
   assert.ok(gets(y.calls).includes('/api/runs/py/artifacts'), 'read with the pipeline id after the hello');
 });
+
+test('F-7a-02: the live adapter ignores run-pipeline today (no draw, no read, the run record unchanged)', async () => {
+  const r = await ready();
+  r.frame({ type: 'run-created', runId: 'run-n', title: 'Fresh', status: 'starting', projectDir: '/src/web', startedAt: new Date(NOW).toISOString() });
+  r.frame({ type: 'state', runId: 'run-n', id: 'pn', status: 'running' });
+  await r.tick(250); await r.tick(250);
+  const before = { draws: r.log.length, calls: r.calls.length, rows: structuredClone([...r.rows]), run: structuredClone(r.live.chat.runOf('run-n')) };
+  assert.ok(before.run, 'the run is known before the frame');
+  r.frame({ type: 'run-pipeline', runId: 'run-n', pipelineId: 'pn' });
+  await r.tick(250); await r.tick(250);
+  assert.equal(r.log.length, before.draws, 'no draw');
+  assert.deepEqual(r.calls.slice(before.calls), [], 'nothing read (task.learned asks nothing again)');
+  assert.deepEqual([...r.rows], before.rows, 'the rows are unchanged');
+  assert.deepEqual(r.live.chat.runOf('run-n'), before.run, 'the live run record is unchanged');
+});
