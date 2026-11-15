@@ -177,3 +177,20 @@ test('F-3-09: the Tasks center by workflow groups tasks under their own workflow
   assert.equal(facts('Lean'), '2 finished');
   assert.equal(facts('Default'), '1 finished', 'a task with no workflow is under Default');
 });
+
+test('F-a4-07: the Showing menu\'s archived count is the API\'s archived rows; picking Archived lists them and reads /api/history?archived=1 again', async () => {
+  const s = sources(), h3 = s.history.pipelines.find((p) => p.id === 'h3');
+  s.archived = { pipelines: ['x1', 'x2', 'x3'].map((id) => ({ ...h3, id, title: `Arch ${id}`, archived: true })) };
+  const { w, d, calls } = await liveHost({ sources: s });
+  await go(w, '#runs', 150);
+  const root = d.querySelector('#runs-root');   // the bar's Tasks list
+  root.querySelector('[data-menu="show"]').click(); await settle(20);
+  const item = root.querySelector('[data-pick="show|archived"]');
+  assert.ok(item, 'the Showing menu offers Archived');
+  assert.match(item.textContent.trim(), /3$/, `the archived count is the API's (${item.textContent.trim()})`);
+  const n = calls.filter((c) => c.method === 'GET' && c.url === URLS.archived).length;
+  item.click(); await settle(400);
+  for (const id of ['x1', 'x2', 'x3']) assert.ok(root.querySelector(`[data-open="run:${id}"]`), `${id} is listed`);
+  assert.ok(!root.querySelector('[data-open="run:h3"]'), 'an active row is not');
+  assert.equal(calls.filter((c) => c.method === 'GET' && c.url === URLS.archived).length, n + 1, 'the view\'s opening reads the archived feed once');
+});

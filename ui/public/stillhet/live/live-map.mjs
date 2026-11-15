@@ -383,7 +383,8 @@ export function foldRounds(runs, liveRuns = [], saved = [], needs = new Set()) {
   return runs;
 }
 
-/** Every source's answer into the store's parts. Archived rows go; a pipeline both live and saved is kept once, live.
+/** Every source's answer into the store's parts. History's archived rows go (the `archived` source's stay, archived); a
+ *  pipeline both live and saved is kept once, live.
  *  `checksOf(pipelineId)`: task-live.mjs's checks entry (D5), asked only for a row whose PR is open, so a row reads the
  *  same case as its page and its card (R-arch-11). */
 export function snapshotOf(src = {}, { now = 0, unread = [], checksOf = null } = {}) {
@@ -409,9 +410,13 @@ export function snapshotOf(src = {}, { now = 0, unread = [], checksOf = null } =
   const rowIdOf = new Map([...savedOnly.map((r) => [str(r.id), str(r.id)]), ...liveRuns.filter((r) => r.pipelineId).map((r) => [str(r.pipelineId), str(r.runId)])]);
   const { groups, inGroup } = runGroupsOf(src.runGroups, runs, { now, rowIdOf });
   for (const r of runs) { const gid = inGroup.get(r.id); if (gid) r.group = gid; }
+  // F-a4-07: the Archived view's rows (GET /api/history?archived=1). A pipeline is one row: live, then active, then archived.
+  // They are plain rows: no Needs you, outcome, group, round or chat reads them.
+  const heldPids = new Set([...livePids, ...saved.map((r) => r.id)]);
+  const archivedRuns = arr(src.archived?.pipelines).filter((r) => r && !heldPids.has(r.id)).map((r) => taskOfSaved({ ...r, archived: true }, { now, needs: false, sync: syncs[r.projectKey] || null }));
   const schedules = items.filter((x) => x.kind === 'recurring' || ['missed', 'scheduled', 'firing'].includes(x.status)).map((x) => scheduleOf(x, { now, projects: projectsRaw }));
   return {
-    runs, groups, userGroups: [],
+    runs: archivedRuns.length ? [...runs, ...archivedRuns] : runs, groups, userGroups: [],
     // the Chats Needs-you number: the server's count over every thread, not the first page's rows
     chatsNeeds: num(src.threads?.counts?.needs),
     chats: arr(src.threads?.threads).filter((t) => t && !t.archivedAt && !t.archived).map((t) => chatOf(t, { now, unread, links: arr(src.runLinks?.links), tasks: runs, projects: projectsRaw, livePids: new Map(liveRuns.filter((r) => r.pipelineId).map((r) => [r.pipelineId, str(r.runId)])), schedules })),
@@ -479,7 +484,7 @@ export function spacesOf(src = null) {
 
 // What each source feeds: a refetch of one source replaces only these parts (D11).
 export const SOURCE_PARTS = Object.freeze({
-  hello: ['runs', 'costs', 'chats', 'groups'], history: ['runs', 'updates', 'chats', 'groups'], threads: ['chats', 'chatsNeeds'], runLinks: ['chats'], groups: ['chatGroups'], runGroups: ['groups', 'runs'], schedules: ['schedules', 'runs'],
+  hello: ['runs', 'costs', 'chats', 'groups'], archived: ['runs'], history: ['runs', 'updates', 'chats', 'groups'], threads: ['chats', 'chatsNeeds'], runLinks: ['chats'], groups: ['chatGroups'], runGroups: ['groups', 'runs'], schedules: ['schedules', 'runs'],
   projects: ['projects', 'runs'], sync: ['projects', 'runs', 'chats', 'groups'], budget: ['costs'], usageLimits: ['costs'], workspaces: ['spaces'], actions: ['actions'], notifications: ['updates'], away: ['away'], settings: ['keep', 'chatPrefs', 'pulseFor'],
 });
 /** The parts a single-source refetch replaces: `answer` stands for `source` among the last answers `sources`. */

@@ -275,6 +275,7 @@
     word: (id, v) => {
       if (id === 'labels') { if (!v) { view.labels = []; return false; } view.labels = view.labels.includes(v) ? view.labels.filter((l) => l !== v) : [...view.labels, v]; store.set(view); return view.labels.length > 0; }
       if (id === 'range') { if (!v) { view = { ...view, range: null }; store.set(view); } return false; }
+      if (id === 'show' && v === 'archived' && W.live) window.RailAdapter?.refresh?.('archived');   // F-a4-07: the Archived view reads its rows again
       view = { ...view, [id]: v }; store.set(view); centers(); return false;
     },
     say, active: () => !root.closest('[hidden]') && !document.querySelector('.pz-popover, .keys-modal, #app .viewer-modal, #center-dlg .viewer-modal, #app .nav-fly'),
