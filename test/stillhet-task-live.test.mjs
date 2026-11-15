@@ -598,6 +598,32 @@ test('restartOff (F-a4-11): an errored task with no plan needs a plan; with one,
   assert.equal(w.calls.length, 0);
 });
 
+test('restartOff (F-a4-11 review): a round that ends drops the cached answer, so a task that ran again and saved a plan is offered again; a read in flight across the end lands on nothing', async () => {
+  const NEEDS = 'Needs a plan: this task saved none to build from';
+  let artifacts = [];
+  const live = { 'run-z': { runId: 'run-z', pipelineId: 'pz', projectKey: 'web-1', status: 'error' } };
+  const { t, calls } = host({ live, routes: { 'GET /api/runs/pz/artifacts': () => [200, { artifacts }] } });
+  const arts = () => calls.filter((c) => c[1] === '/api/runs/pz/artifacts').length;
+  t.restartOff('run-z'); await settle(20);
+  assert.equal(t.restartOff('run-z'), NEEDS);
+  // it continues on the same pipeline, writes a plan and fails again: the round's end frame drops the false
+  artifacts = [{ kind: 'plan', relPath: 'plan.md' }];
+  t.frame({ type: 'error', runId: 'run-z', pipelineId: 'pz' });
+  assert.equal(t.restartOff('run-z'), '', 'unknown again: offered while it reads');
+  await settle(20);
+  assert.equal(t.restartOff('run-z'), '', 'it saved a plan: offered');
+  assert.equal(arts(), 2, 'read once more, after the end');
+  // a read started before a round ends lands on nothing: its stale answer is not kept
+  let release; const gate = new Promise((r) => { release = r; });
+  const b = host({ live, routes: { 'GET /api/runs/pz/artifacts': async () => { if (!release.done) { await gate; return [200, { artifacts: [] }]; } return [200, { artifacts: [{ kind: 'plan', relPath: 'plan.md' }] }]; } } });
+  b.t.restartOff('run-z');
+  b.t.frame({ type: 'done', runId: 'run-z', pipelineId: 'pz' });
+  release.done = true; release(); await settle(20);
+  assert.equal(b.t.restartOff('run-z'), '', 'the old read\'s false is not kept; a new read starts');
+  await settle(20);
+  assert.equal(b.t.restartOff('run-z'), '', 'the new read saw the plan');
+});
+
 test('F-3-11: the task page\'s log names each line\'s step from the task\'s workflow, even when the log was read before the state that names it', async () => {
   const named = { ...TASK_DETAILS.failed.state, stepper: { graph: { nodes: [{ id: 'n_plan', kind: 'agent', key: 'planner', label: 'Plan', progressStage: 'plan' }] } } };
   let state = { ...TASK_DETAILS.failed.state, stepper: undefined, steps: [] }, logReads = 0;

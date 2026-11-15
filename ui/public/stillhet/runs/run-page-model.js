@@ -1036,8 +1036,9 @@
     const known = (id) => { try { R.runState(id, {}); return true; } catch { return false; } };
     const done = (m) => !!m.pr || /^(merged|ready|approved)$/.test(m.case);
     const on = ms.find((m) => m.case && !done(m) && known(m.case)), end = (ms.find((m) => m.case !== 'merged') || {}).case;
-    const state = merged ? 'merged' : ms.some((m) => m.case === 'failed') ? 'chain' : ms.some((m) => /^(starting|working)$/.test(m.case)) ? 'feature'
-      : on ? on.case : ms.some((m) => !m.case) ? 'scheduled' : ms.some((m) => m.pr) ? 'ship-applied' : end && known(end) ? end : 'featureready';
+    const byPriority = [[merged, 'merged'], [ms.some((m) => m.case === 'failed'), 'chain'], [ms.some((m) => /^(starting|working)$/.test(m.case)), 'feature'],
+      [on, on && on.case], [ms.some((m) => !m.case), 'scheduled'], [ms.some((m) => m.pr), 'ship-applied'], [end && known(end), end]];
+    const state = (byPriority.find(([when]) => when) || [true, 'featureready'])[1];
     const look = R.runState(state, {});
     return { word: look.word, dot: look.dot, sym: look.sym, id: 'group:' + g.id, liveId: 'group:' + g.id, liveGroup: g, project: '', group: 'Groups', label: g.title, kind: g.kind, title: g.title, task: g.title, branch: '', over: true, follows: g.kind === 'Feature', independent: g.kind !== 'Feature',
       state, decisions: [], noDiff: true,

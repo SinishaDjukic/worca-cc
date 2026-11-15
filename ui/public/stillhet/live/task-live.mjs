@@ -276,6 +276,8 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
     if ((f.type === 'done' || f.type === 'error') && (f.pipelineId || f.id)) invalidate(f.pipelineId || f.id);
     // a run that ended: a page drawn from its frames reads its saved run and parts again (Changes, time, cost, its stages)
     const ended = (f.type === 'done' || f.type === 'error') && f.runId ? resolve(f.runId) : null;
+    // a round that ended may have saved a plan: Restart Build's answer is read again (F-a4-11)
+    if (f.type === 'done' || f.type === 'error') for (const p of [f.pipelineId, f.id, ended?.pipelineId]) if (p) plans.delete(p);
     if (ended) for (const [id, e] of tasks) if (e.state === 'ready' && !e.loading && resolve(id)?.pipelineId === ended.pipelineId) openTask(id, { force: true });
     // a deleted or superseded run: its page and parts are not kept (the adapter drops it from the store too)
     if (f.type === 'pipelines-changed' && Array.isArray(f.removedRunIds)) for (const id of f.removedRunIds) { tasks.delete(id); parts.delete(id); notify(id); }
@@ -286,7 +288,8 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
   // pipelineId → whether it saved a plan (planOf: true, false, null unknown) or 'reading': Restart Build's NO_PLAN, up front (F-a4-11)
   const plans = new Map();
   /** One artifacts read lands: its plan answer (a known answer outlives a failed re-read). */
-  const planLands = (pid, x) => { if (x.ok) plans.set(pid, planOf(x.data)); else if (typeof plans.get(pid) !== 'boolean') plans.set(pid, null); };
+  // a round that ends drops its answer (frame), and a read started before that lands on nothing: the next ask reads again
+  const planLands = (pid, x) => { if (!plans.has(pid)) return; if (x.ok) plans.set(pid, planOf(x.data)); else if (typeof plans.get(pid) !== 'boolean') plans.set(pid, null); };
   async function text(url) {
     let r; try { r = await fetch(url, { headers: { Accept: 'text/plain, application/x-ndjson, text/x-diff, application/json' } }); } catch (e) { return { ok: false, error: str(e?.message) || 'no connection' }; }
     let t = ''; try { t = await r.text(); } catch { t = ''; }
