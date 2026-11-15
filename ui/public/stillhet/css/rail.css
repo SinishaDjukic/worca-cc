@@ -1173,6 +1173,20 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .convo-words b{font-weight:600;}
 .convo-words code,.convo-code pre{font-family:var(--mono,'JetBrains Mono',ui-monospace,monospace);font-size:12px;}
 .convo-words code{padding:1px 4px;border-radius:var(--r-xs);background:var(--field);}
+/* panel.rendered-prose: Worca's finished words, rendered calm: headings at body size, code a plain monospace block, tables the Rail Table */
+.prose > :first-child{margin-top:0;}
+.prose > :last-child{margin-bottom:0;}
+.prose :is(p,ul,ol,pre,blockquote,.rt-wrap,hr){margin:8px 0;}
+.prose :is(ul,ol){padding-left:20px;}
+.prose li + li{margin-top:2px;}
+.prose :is(h1,h2,h3,h4,h5,h6){font-size:inherit;font-weight:600;margin:12px 0 4px;}
+.prose strong{font-weight:600;}
+.prose pre{font-family:var(--mono,'JetBrains Mono',ui-monospace,monospace);font-size:12px;line-height:18px;padding:10px;border:1px solid var(--line);border-radius:var(--r-md);overflow:auto;white-space:pre;overflow-wrap:normal;background:var(--field);color:var(--ink);}
+.prose pre code{padding:0;background:none;}
+.prose blockquote{border-left:2px solid var(--line);padding-left:10px;color:var(--ink-2);margin-left:0;margin-right:0;}
+.prose a{color:var(--ink);text-decoration:underline;text-underline-offset:3px;}   /* TextLink's look (.dc-link) */
+.prose .rt-wrap{overflow-x:auto;overflow-wrap:normal;}
+.prose :is(pre,.rt-wrap):focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .convo-code{margin-left:32px;border:1px solid var(--line);border-radius:var(--r-md);overflow:hidden;}
 .convo-code p{display:flex;justify-content:space-between;align-items:center;margin:0;padding:4px 10px;font-size:var(--fs-meta);color:var(--ink-2);border-bottom:1px solid var(--line);}
 .convo-code pre{margin:0;padding:10px;overflow:auto;line-height:18px;color:var(--ink);}
@@ -1505,6 +1519,7 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .home-starters .btn{color:var(--ink-2);}
 .composer-intent{display:inline-flex;align-items:center;gap:4px;padding-right:0;}
 .composer-intent .btn{height:18px;width:18px;min-height:0;padding:0;}
+.pcheck-grade.is-needs-detail{background:var(--amber-bg);color:var(--amber-ink);}   /* the prompt check's Needs detail, amber as dev's chip (design-system.css) */
 
 /* The composer: its context meter, what waits to be sent, and the tasks you can mention. */
 .composer-meter{font-size:var(--fs-caption);color:var(--ink-2);white-space:nowrap;font-variant-numeric:tabular-nums;margin-right:4px;}

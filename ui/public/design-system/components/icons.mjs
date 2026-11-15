@@ -1,6 +1,7 @@
 // The line icons of a Rail page (docs/rail/components.md): one set at one line weight, so no page keeps its own copy of a
 // path or its own weight. `nav-<view>` are the sidebar's places, the app's own paths (ui/public/shell/sidebar.html).
 const P = (d) => `<path d="${d}"></path>`;
+const GEAR = P('M10.34 4.79L10.66 2.49L13.34 2.49L13.66 4.79A7.4 7.4 0 0 1 15.92 5.72L17.78 4.33L19.67 6.22L18.28 8.08A7.4 7.4 0 0 1 19.21 10.34L21.51 10.66L21.51 13.34L19.21 13.66A7.4 7.4 0 0 1 18.28 15.92L19.67 17.78L17.78 19.67L15.92 18.28A7.4 7.4 0 0 1 13.66 19.21L13.34 21.51L10.66 21.51L10.34 19.21A7.4 7.4 0 0 1 8.08 18.28L6.22 19.67L4.33 17.78L5.72 15.92A7.4 7.4 0 0 1 4.79 13.66L2.49 13.34L2.49 10.66L4.79 10.34A7.4 7.4 0 0 1 5.72 8.08L4.33 6.22L6.22 4.33L8.08 5.72A7.4 7.4 0 0 1 10.34 4.79Z') + '<circle cx="12" cy="12" r="3"></circle>';
 export const ICONS = {
   workflow: '<rect x="3" y="9" width="6" height="6" rx="1.6"></rect><rect x="15" y="4" width="6" height="5.5" rx="1.6"></rect><rect x="15" y="14.5" width="6" height="5.5" rx="1.6"></rect><path d="M9 12h3m0 0V7h3m-3 5v5h3"></path>',
   track: P('M3 12h4l2.5-6 4 12 2.5-6H21'),
@@ -44,7 +45,10 @@ export const ICONS = {
   runs: P('M4 6h16M4 12h16M4 18h10'),
   chat: P('M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H10l-4 3v-3H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z'),
   clock: '<circle cx="12" cy="12" r="8"></circle>' + P('M12 8v4l3 2'),
-  gear: '<circle cx="12" cy="12" r="3"></circle>' + P('M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8'),
+  // Settings: an 8-toothed gear around its hub, one drawing for every Settings place (gear, nav-settings, set-general), never `sun`'s rays
+  gear: GEAR,
+  // the UI choice (nav.design-switch): a still sun resting on water, its reflection broken under it
+  'stillhet-ui': '<circle cx="12" cy="10" r="3.5"></circle>' + P('M2.5 16h19M6 19.5h4M14 19.5h4'),
   more: '<circle cx="5" cy="12" r="1.4" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none"></circle><circle cx="19" cy="12" r="1.4" fill="currentColor" stroke="none"></circle>',
   updown: P('M8 10l4-4 4 4M8 14l4 4 4-4'),
   script: P('M8 8l-4 4 4 4') + P('M16 8l4 4-4 4') + P('M13.5 5l-3 14'),
@@ -67,7 +71,7 @@ export const ICONS = {
   'nav-schedules': '<circle cx="12" cy="12" r="8"></circle>' + P('M12 7.5V12l3 2'),
   'nav-stats': P('M6 20v-7M12 20V4M18 20v-11'),
   'nav-insights': P('M6 20v-7M12 20V4M18 20v-11'),
-  'nav-settings': '<circle cx="12" cy="12" r="3"></circle>' + P('M12 3.5v3M12 17.5v3M3.5 12h3M17.5 12h3M6 6l2 2M16 16l2 2M6 18l2-2M16 8l2-2'),
+  'nav-settings': GEAR,
   'nav-team-metrics': '<circle cx="9" cy="8" r="3"></circle>' + P('M3.5 19.5a5.5 5.5 0 0 1 11 0') + P('M16 5.5a3 3 0 0 1 0 5.5M18 14.5a5.5 5.5 0 0 1 2.5 5'),
   'nav-workflows': '<circle cx="6" cy="12" r="2.2"></circle><circle cx="18" cy="6" r="2.2"></circle><circle cx="18" cy="18" r="2.2"></circle>' + P('M8.2 12H12V6h3.8M12 12v6h3.8'),
   'nav-requirements': P('M6 3.5h9l3 3v14H6z') + P('M9 12h6M9 16h4'),
@@ -93,7 +97,7 @@ export const ICONS = {
   'set-guardrails': P('M8 3.5v17M16 3.5v17M8 8h8M8 16h8'),
   'set-plugins': P('M9 3.5v5M15 3.5v5M6.5 8.5h11v3.5a5.5 5.5 0 0 1-11 0zM12 17.5v3'),
   'set-connectors': P('M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1') + P('M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1'),
-  'set-general': '<circle cx="12" cy="12" r="3"></circle>' + P('M12 3.5v3M12 17.5v3M3.5 12h3M17.5 12h3M6 6l2 2M16 16l2 2M6 18l2-2M16 8l2-2'),
+  'set-general': GEAR,
   'set-notifications': P('M6.5 16.5V11a5.5 5.5 0 0 1 11 0v5.5l1.5 1.5H5z') + P('M10 20.5h4'),
   'set-labs': P('M9.5 3.5h5M10.5 3.5v6L5 19a1 1 0 0 0 1 1.5h12a1 1 0 0 0 1-1.5l-5.5-9.5v-6'),
   // an Insights page's own mark (look.one-icon): never a state's sign

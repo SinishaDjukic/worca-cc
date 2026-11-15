@@ -64,7 +64,7 @@
   const THOUGHT = ['Read the chat', 'Looked through the project', 'Searched the code', 'Wrote the answer'];   // the same steps, done
   const thinkNow = (x) => { const ms = Date.now() - (x.at || Date.now()), steps = x.steps || THINKING, n = Math.min(steps.length, 1 + Math.floor(ms / 600)); return { step: steps[n - 1], secs: `${Math.max(1, Math.round(ms / 1000))}s`, n, phase: n === steps.length ? 'write' : n === 3 ? 'tool' : 'think' }; };   // searching is a tool; the last step writes
   // The live kind's turns: RailChatLive's, read again on its onChange; what a person opened or typed under a turn stays
-  const UI_KEYS = ['open', 'asking', 'askValue', 'rqPick', 'planPick', 'how', 'shipMarking', 'forPlan', 'planRoles', 'planFull', 'planText', 'savedAs', 'directing', 'figures', 'filesOpen', 'openSlice', 'pick', 'rowOpen', 'details', 'term', 'shellClosed', 'target', 'guard', 'src', 'feature', 'onSource', 'diffOpen'];
+  const UI_KEYS = ['open', 'asking', 'askValue', 'rqPick', 'planPick', 'how', 'shipMarking', 'forPlan', 'planRoles', 'planFull', 'planText', 'savedAs', 'directing', 'figures', 'filesOpen', 'openSlice', 'pick', 'rowOpen', 'details', 'term', 'shellClosed', 'target', 'guard', 'src', 'feature', 'onSource', 'diffOpen', 'pkeys'];
   const PROPOSAL_KEYS = ['title', 'brief'];   // what a person edits on a proposal before Start
   function liveTurns(id) {
     const was = threads.get(id) || [], next = CL().turns(id);
@@ -300,6 +300,90 @@
     return `<div class="home-starters" role="group" aria-label="Start something">${shownPins().map((w) => tile({ id: `pin:${w}`, label: w, icon: w === 'Shaper' ? 'kind-feature' : 'kind-workflow' }, true)).join('')}${STARTERS.map((x) => x.id === 'track' ? `<span class="rc-pop">${tile(x)}${trackMenu}</span>` : tile(x)).join('')}<span class="rc-pop">${more}</span></div>`;
   }
   const intentChip = () => { const x = comp.intent && intentOf(comp.intent); return x ? R.intentChip({ icon: R.icon(x.icon, 12), label: x.label, clear: { 'data-intent-clear': '' } }) : ''; };
+  // ---- the prompt check chip (docs/rail/panels.md panel.chat-composer; dev's grader and Improve, prompt-check.mjs) ----
+  // Live only, with Settings › Chat › Prompt check on. The module loads with import() the first time a draft is typed with
+  // the setting on. An async result patches [data-pc] alone (patchPc); a person's own pick paints like any picker.
+  const promptCheckOn = () => LIVE() && !opts.where && window.RailWorld?.part?.('chatPrefs')?.promptCheck === true;
+  let pcMod = null, pcLoading = null, pc = null, pcKey = '', pcLast = '', pcShown = false, pcFed = '';
+  const pcSurface = () => (comp.intent === 'pin:Shaper' || comp.workflow === 'Shaper' ? 'shaper' : 'chat');   // the Shaper intent armed, or Shape it first
+  const pcForce = () => pcSurface() === 'shaper' || comp.mode === 'task' || comp.mode === 'schedule';   // a Task or a Schedule starts work: always a task
+  const pcBox = () => root.querySelector('[data-composer-t]');
+  const pcField = {
+    read: () => pcBox()?.value ?? comp.text,
+    write: (t) => { comp.text = t; const b = pcBox(); if (b) b.value = t; pcFed = t; pc?.input(t); paint(false); },   // Use this and Undo: the composer's own input path
+    focus: () => { const b = pcBox(); if (b) { b.focus(); b.setSelectionRange(b.value.length, b.value.length); } },
+  };
+  const pcProject = () => (chatId ? CL().projectKey(chatId) : liveProjects().find((p) => p.name === comp.project)?.id) || null;
+  function pcDrop() { if (pc) pc.dispose(); pc = null; pcKey = ''; pcLast = ''; pcFed = ''; }
+  function pcLoad() {
+    if (pcMod || pcLoading) return;
+    pcLoading = Promise.resolve().then(() => window.RailConversation.importPromptCheck()).then((m) => { pcMod = m; if (pcheck()) patchPc(); }, () => { pcLoading = null; });   // a module that will not load: no chip now, and the next draft tries again
+  }
+  // the controller of this surface: re-keyed (disposed and made again) only when the chat, the surface kind or forceTask changes
+  function pcheck() {
+    if (!promptCheckOn()) { pcDrop(); return null; }
+    if (!pcMod) return null;
+    const kind = pcSurface(), forceTask = pcForce(), id = chatId || 'new', key = `${kind}|${id}|${forceTask}`;
+    if (pc && key === pcKey) { if (comp.text !== pcFed) { pcFed = comp.text; pc.input(comp.text); } return pc; }   // text set outside the input event (a preset, Edit in the composer) is checked too
+    if (pc) pc.dispose();   // a new chat's held correction already went with its first send (liveSend: sent with the new thread id)
+    pcKey = key; pcLast = ''; pcFed = comp.text;
+    pc = pcMod.createComposerCheck({ doc: document, surface: { kind, id }, forceTask, fetchImpl: (...a) => fetch(...a), timers: window.__worcaTestHooks?.promptCheckTimers, field: pcField, project: pcProject, onChange: () => patchPc() });
+    if (comp.text.trim()) pc.input(comp.text);   // comp's text, never the box: mid-paint the box can still hold the last chat's draft
+    return pc;
+  }
+  function pcInner() {
+    const s = pc?.state(); if (!s?.visible || !s.kind) return '';
+    const kinds = pc.kinds(), name = kinds.find((k) => k.id === s.kind)?.label || s.kind, g = s.grade ? pcMod.GRADE_LABELS[s.grade] : '';
+    const pick = R.sentencePicker({ id: 'cp-pcheck', text: name, label: `Prompt kind: ${name}${g ? `, ${g}` : ''}`, tip: 'What kind of task this is. Pick another to check it again', items: kinds.map((k) => ({ id: k.id, text: k.label, checked: k.id === s.kind })), open: menu === 'cp-pcheck', chevron: R.icon('chevron', 10) });
+    const say = `<span data-pc-say aria-live="polite">${g ? R.chip({ text: g, cls: s.grade === 'needs-detail' ? 'pcheck-grade is-needs-detail' : 'pcheck-grade' }) : ''}</span>`;
+    const improve = s.grade === 'needs-detail' && (s.improve === 'hidden' || s.improve === 'busy') ? R.button({ label: 'Improve', kind: 'quiet', attrs: { 'data-pc-improve-open': '', disabled: s.improve === 'busy' ? true : null, title: 'Suggests a clearer prompt; nothing changes until you use it' } }) : '';
+    return pick + say + improve;
+  }
+  // the chip in the sentence: a stable span while the setting is on, empty until a task is graded
+  function pcheckHtml() {
+    pcShown = promptCheckOn();
+    if (!pcShown) { pcDrop(); return ''; }
+    pcheck();
+    pcLast = pcInner();
+    return `<span class="pcheck" data-pc>${pcLast}</span>`;
+  }
+  // the Improve view's node is live: it is moved back under the composer after a paint, never rebuilt
+  function placeImprove() {
+    const slot = root.querySelector('[data-pc-improve]'), el = pc?.improveEl;
+    if (!el) return;
+    if (!slot || pc.state().improve === 'hidden') { el.remove(); return; }
+    if (el.parentNode !== slot) slot.appendChild(el);
+  }
+  // an async result (a grade, a re-grade): only [data-pc]'s children change, and only when what it draws changed
+  function patchPc() {
+    placeImprove();
+    const host = root.querySelector('[data-pc]'); if (!host) return;
+    const html = pcInner(); if (html === pcLast) return;
+    const a = document.activeElement, had = host.contains(a) ? (a.dataset.menu ? `[data-menu="${CSS.escape(a.dataset.menu)}"]` : a.hasAttribute('data-pc-improve-open') ? '[data-pc-improve-open]' : '') : null;   // read before the children go (focus-after-disable)
+    host.innerHTML = html; pcLast = html;
+    if (had === null) return;
+    const back = had && host.querySelector(had);
+    if (back && !back.disabled) back.focus(); else pcField.focus();   // the control is gone: the box, never <body>
+  }
+  function pcImprove() {
+    const c = pcheck(); if (!c) return;
+    const slot = root.querySelector('[data-pc-improve]');
+    if (slot && c.improveEl.parentNode !== slot) slot.appendChild(c.improveEl);   // attached first: the view moves the focus into itself
+    c.openImprove();
+  }
+  function pcInput(text) {
+    if (!promptCheckOn()) return;
+    if (text.trim()) pcLoad();
+    const c = pcheck();   // feeds comp.text, which the input listener set to this text first
+    if (c && text !== pcFed) { pcFed = text; c.input(text); }
+  }
+  // the setting turned on or off (Settings' switch, a settings-changed frame): the chip comes or goes at once
+  function pcSync() {
+    const on = promptCheckOn(); if (on === pcShown) return;
+    if (!on) pcDrop();
+    paint();
+    if (on && comp.text.trim()) pcLoad();
+  }
   // how full this chat's context is, and what waits to be sent
   const meter = () => { const c = chat(); if (!c) return ''; const pct = Math.min(96, 8 + turns().length * 3); if (pct < 70) return '';   /* look.figures-on-demand */ return `<span class="composer-meter" title="This chat has used ${pct}% of its context (200k tokens); older turns are summarised past 90%">${pct}% context</span>`; };   // a number says what it counts
   const queueHtml = () => ((comp.queue || []).length ? `<div class="composer-queue">${comp.queue.map((q, k) => R.turnRow({ mark: R.icon('clock', 14), text: `<b>Queued</b> ${esc(q)}`, end: R.button({ label: 'Edit', kind: 'quiet', attrs: { 'data-q-edit': String(k) } }) + R.button({ label: `Remove ${q}`, kind: 'quiet', iconOnly: true, icon: R.icon('x', 12), attrs: { 'data-q-drop': String(k) } }) })).join('')}</div>` : '');
@@ -316,7 +400,7 @@
       : comp.mode === 'ask' ? R.button({ label: 'Send', kind: sendKind, iconOnly: true, icon: R.icon('up', 14), attrs: { 'data-cp-send': '', title: 'Sends it to Worca' } })
         : R.button({ label: words, kind: sendKind, attrs: { 'data-cp-send': '', title: comp.mode === 'schedule' ? 'Saves the schedule' : 'Shows the task to check; you start it there' } });
     const hearing = comp.listening || comp.handsFree;   // the mic is on: the button stays pressed, the box says so
-    return queueHtml() + mentionMenu() + R.composer({ value: comp.text, placeholder: hearing ? 'Listening… press the mic to stop' : comp.intent ? intentOf(comp.intent)?.ph || 'Ask Worca…' : aboutNow()?.ph ? aboutNow().ph : comp.mode === 'schedule' ? 'What should run each time?' : comp.mode === 'task' ? 'What should the task do?' : 'Ask Worca…', sentence: intentChip() + chipsHtml() + sentence(), detail: detail(), tools: plus, send: meter() + R.button({ label: hearing ? 'Stop listening' : 'Speak', kind: 'quiet', iconOnly: true, icon: R.icon('mic', 15), attrs: { 'data-cp-mic': '', 'aria-pressed': String(!!hearing), disabled: comp.micOff ? true : null, title: comp.micOff || (hearing ? 'Stops listening' : 'Speak instead of typing') } }) + `<span class="rc-pop">${R.button({ label: 'Voice options', kind: 'quiet', iconOnly: true, icon: R.icon('sliders', 14), attrs: { 'data-menu': 'cp-voice', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'cp-voice') } })}${menu === 'cp-voice' ? R.compactMenu({ items: [{ id: 'cp-voice|hands', text: comp.handsFree ? 'Turn hands-free off' : 'Turn hands-free on', help: 'Listens and answers aloud until you stop it' }] }) : ''}</span>` + send, attrs: { 'data-composer': '' } });
+    return queueHtml() + mentionMenu() + (promptCheckOn() ? '<div data-pc-improve></div>' : '') + R.composer({ value: comp.text, placeholder: hearing ? 'Listening… press the mic to stop' : comp.intent ? intentOf(comp.intent)?.ph || 'Ask Worca…' : aboutNow()?.ph ? aboutNow().ph : comp.mode === 'schedule' ? 'What should run each time?' : comp.mode === 'task' ? 'What should the task do?' : 'Ask Worca…', sentence: intentChip() + pcheckHtml() + chipsHtml() + sentence(), detail: detail(), tools: plus, send: meter() + R.button({ label: hearing ? 'Stop listening' : 'Speak', kind: 'quiet', iconOnly: true, icon: R.icon('mic', 15), attrs: { 'data-cp-mic': '', 'aria-pressed': String(!!hearing), disabled: comp.micOff ? true : null, title: comp.micOff || (hearing ? 'Stops listening' : 'Speak instead of typing') } }) + `<span class="rc-pop">${R.button({ label: 'Voice options', kind: 'quiet', iconOnly: true, icon: R.icon('sliders', 14), attrs: { 'data-menu': 'cp-voice', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'cp-voice') } })}${menu === 'cp-voice' ? R.compactMenu({ items: [{ id: 'cp-voice|hands', text: comp.handsFree ? 'Turn hands-free off' : 'Turn hands-free on', help: 'Listens and answers aloud until you stop it' }] }) : ''}</span>` + send, attrs: { 'data-composer': '' } });
   }
 
   // ---- a turn ----
@@ -530,6 +614,16 @@
   // and guardrails, from the card (x.raw) and dev's guardrail sets. A row Start does not honour is not drawn.
   let liveGuards = null;
   const TARGETS = { none: 'No project', project: 'Project', workspace: 'Workspace' }, TARGET_OF = { 'No project': 'none', Project: 'project', Workspace: 'workspace' };
+  // the "reviewed by" picker in a TaskProposal's sentence (docs/rail/panels.md panel.conversation-cards): ticks, Product always reviews
+  const perspPicker = (x, text, items) => W('reviewed by') + R.sentencePicker({ id: `pp-${x.id}-persp`, text, tip: 'Who reviews the plan; Product always does', items, open: menu === `pp-${x.id}-persp`, chevron: R.icon('chevron', 10) });
+  // live (flag proposedPerspectives): dev's perspectives with Compliance; the ticked keys ride Start as dev's `perspectives`
+  function livePersp(x) {
+    if (!R.prefs.flag('proposedPerspectives')) return '';
+    const ps = CL().perspectiveChoices(x.pkeys || x.raw?.shape?.perspectives);
+    x.pkeys = ps.picked;
+    const text = ps.items.filter((i) => ps.picked.includes(i.key)).map((i) => i.label).join(', ');
+    return perspPicker(x, text, ps.items.map((i) => ({ id: i.key, text: i.label, checked: ps.picked.includes(i.key), off: i.locked, help: i.help })));
+  }
   function liveProposalHtml(x) {
     const r = x.raw || {};
     if (!liveGuards) { liveGuards = []; CL().catalog('guardrails').then((g) => { if (g.ok) { liveGuards = (g.data?.guardrails || []).filter((y) => y.id !== 'permissive').map((y) => ({ id: y.id, text: y.name || y.id })); paint(); } else liveGuards = null; }); }
@@ -546,7 +640,7 @@
         + row('Run on the source branch', R.switchButton({ on: !!x.onSource, label: 'Run on the source branch', attrs: { 'data-pp-onsource': x.id } })))
       + row('Guardrails', pp('guard', guardText, liveGuards || [], 'Applies to every agent in this task'));
     const ppMenu = R.moreMenu({ id: `ppm:${x.id}`, label: `More for ${x.title}`, icon: R.icon('more', 16), open: menu === `ppm:${x.id}`, items: [{ id: 'composer', text: 'Edit in the composer', help: 'Puts all of it in the box to change; this card stays until you send' }] });
-    return R.taskProposal({ menu: ppMenu, title: x.title, why: x.why, sentence, more: brief + more, open: x.open, nudge: '', hooks: { title: { 'data-pp-title': x.id }, more: { 'data-pp-more': x.id }, start: { 'data-pp-start': x.id }, later: { 'data-pp-later': x.id } }, start: 'Start', alts: null, kicker: 'Proposed', attrs: { 'data-anchor': x.id } });
+    return R.taskProposal({ menu: ppMenu, title: x.title, why: x.why, sentence: sentence + livePersp(x), more: brief + more, open: x.open, nudge: '', hooks: { title: { 'data-pp-title': x.id }, more: { 'data-pp-more': x.id }, start: { 'data-pp-start': x.id }, later: { 'data-pp-later': x.id } }, start: 'Start', alts: null, kicker: 'Proposed', attrs: { 'data-anchor': x.id } });
   }
   // Run with (D3): a one-stage workflow Worca proposed only to run a task is one TaskProposal; Start saves it and starts its
   // task (RailChatLive 'run-with'), Customise holds its steps and a plain Save workflow (dev's save, no start)
@@ -566,7 +660,7 @@
     const brief = `<div class="tp-brief">${R.field({ id: `pp-brief-${x.id}`, label: 'Brief: what the first agent reads · Markdown', value: x.brief ?? x.why.replace(/^From this chat: /, ''), multiline: true, hint: `${(x.brief ?? x.why.replace(/^From this chat: /, '')).length} characters`, attrs: { 'data-pp-brief': x.id } })}${(x.files || []).length ? `<span class="you-files">${x.files.map((f) => R.button({ label: f, kind: 'quiet', icon: R.icon('x', 11), attrs: { 'data-pp-unfile': `${x.id}|${f}`, title: `Removes ${f}` } })).join('')}</span>` : ''}</div>`;
     // Shaper's perspectives: a picker in the sentence ("reviewed by Product, Security"), each a tick; Product always reviews
     const pl = x.persp || ['Product'];
-    const persp = shaper ? W('reviewed by') + R.sentencePicker({ id: `pp-${x.id}-persp`, text: pl.join(', '), tip: 'Who reviews the plan; Product always does', items: PERSPECTIVES.map((v) => ({ id: v, text: v, checked: pl.includes(v), off: v === 'Product', help: v === 'Product' ? 'Always reviews' : '' })), open: menu === `pp-${x.id}-persp`, chevron: R.icon('chevron', 10) }) : '';
+    const persp = shaper ? perspPicker(x, pl.join(', '), PERSPECTIVES.map((v) => ({ id: v, text: v, checked: pl.includes(v), off: v === 'Product', help: v === 'Product' ? 'Always reviews' : '' }))) : '';
     const what = `<p class="tp-what">${esc(WORKFLOWS[x.workflow] || '')}${later ? ` · starts ${esc(x.when)}` : ''}</p>`;
     const row = (k, v) => `<div class="cr"><span>${k}</span><span>${v}</span></div>`;
     const target = pp('target', x.target || 'Project', ['No project', 'Project', 'Workspace'], 'Where it runs');
@@ -661,7 +755,7 @@
       return askChanges(x) ? R.planCard({ menu: planMenu, extra, check: 'shape check passed', title: x.title, summary: x.summary, version, roles: x.roles, open: !!x.open, hooks: { roles: { 'data-plan-roles': x.id }, approve: { 'data-plan-approve': x.id }, changes: { 'data-plan-changes': x.id }, full: { 'data-plan-full': x.id } }, full, fullOpen: !!x.fullOpen, attrs: { 'data-anchor': x.id } }) + askChanges(x) : R.planCard({ menu: planMenu, extra, check: 'shape check passed', title: x.title, summary: x.summary, version, roles: x.roles, open: !!x.open, hooks: { roles: { 'data-plan-roles': x.id }, approve: { 'data-plan-approve': x.id }, changes: { 'data-plan-changes': x.id }, full: { 'data-plan-full': x.id } }, full, fullOpen: !!x.fullOpen, attrs: { 'data-anchor': x.id } });
     }
     if (x.t === 'filesgrid') return R.filesCard({ label: x.label || 'Files', files: x.files.map((f) => ({ ...f, view: doOr(`open ${f.name}`, 'file', { threadId: chatId, attId: f.att }), download: doOr(`download ${f.name}`, 'file', { threadId: chatId, attId: f.att }) })) });
-    if (x.t === 'words') { const key = x.key || String(i); return `<p class="convo-words${timeShown === key ? ' is-time-shown' : ''}"${R.attrs({ 'data-words-turn': key, tabindex: '0' })}>${x.parts && LIVE() ? x.parts.map(refPart).join('') : x.html}${R.turnTime({ at: x.at, now: Date.now() })}</p>`; }   // no data-anchor: a timeline tick is a you turn or a card, never a paragraph
+    if (x.t === 'words') { const key = x.key || String(i); return `<div class="convo-words${timeShown === key ? ' is-time-shown' : ''}"${R.attrs({ 'data-words-turn': key, tabindex: '0' })}>${x.md ? R.prose({ text: x.md, doc: document, ...(LIVE() ? { refs: (t) => CL().partsOf(t), chip: chipOf } : {}) }) : x.html}${R.turnTime({ at: x.at, now: Date.now() })}</div>`; }   // panel.rendered-prose: finished words through Prose, in a div; no data-anchor: a timeline tick is a you turn or a card
     if (x.t === 'failed') return R.turnRow({ mark: R.kindMark({ kind: 'chat', tone: 'fail', size: 16 }), text: `<b>${esc(x.text)}</b>${x.details ? ` ${esc(x.detail)}` : ''}`, end: R.button({ label: x.details ? 'Hide details' : 'Details', kind: 'quiet', attrs: { 'data-failed-details': x.id, 'aria-expanded': String(!!x.details) } }) + R.button({ label: 'Try again', kind: 'quiet', attrs: { 'data-failed-retry': x.id } }), attrs: { 'data-anchor': x.id } });   // fail.no-raw: the raw error behind Details
     if (x.t === 'proposal') return proposalHtml(x);
     if (x.t === 'runwith') return runWithHtml(x);
@@ -842,23 +936,25 @@
       box.addEventListener('scroll', paintTimeline, { passive: true });
       paintTimeline();
     }
+    placeImprove();   // before the focus comes back: a focused Use this is found again in its moved view
     const mine = [...busy].filter(([, c]) => c === (chatId || '')).map(([sel]) => sel);   // another chat's pending control stays its own
     for (const sel of mine) root.querySelectorAll(sel).forEach((b) => { b.disabled = true; });
     if (!mine.length || !fm?.sel || !mine.includes(fm.sel)) focusBack(fm);
     const t = root.querySelector('[data-composer-t]');
-    if (t && caret) { t.focus(); t.setSelectionRange(t.value.length, t.value.length); }
+    const same = t && had && t.value === had.value, at = same ? [had.selectionStart, had.selectionEnd] : null;   // the rebuilt box keeps the caret of the same draft (a picker opened or picked); a new text puts it at the end
+    if (t && at) t.setSelectionRange(at[0], at[1]);
+    if (t && caret) { t.focus(); if (at) t.setSelectionRange(at[0], at[1]); else t.setSelectionRange(t.value.length, t.value.length); }
     size(t);
     root.querySelector('[data-menu="starter-more"] + .menu')?.setAttribute('data-scroll-fade', '');   // it scrolls: the fade says there is more
   }
-  // panel.answer-refs: a ref Worca named becomes a RefChip once dev's resolve confirms it; until then (or never) its words
-  const refPart = (p) => {
-    const words = esc(p.text).replace(/\r\n?|\n/g, '<br>');
-    if (!p.ref) return words;
+  // panel.answer-refs: a ref part's RefChip once dev confirms it, else null (Prose keeps its words, or its link)
+  const chipOf = (p) => {
+    if (!p.ref) return null;
     const r = CL().ref(p.ref.key, chatId);
-    if (!r?.ok) return words;
+    if (!r?.ok) return null;
     if (r.kind === 'run') return R.refChip({ text: r.title || `#${p.ref.id}`, mark: R.kindMark({ kind: 'task', tone: 'idle', size: 14 }), attrs: { 'data-ref-run': r.runId || r.id || p.ref.id } });
     if (r.kind === 'chat') return R.refChip({ text: r.title || 'A chat', mark: R.icon('chat', 14), title: 'Opens the chat', attrs: { 'data-ref-chat': p.ref.id } });
-    if (!/^https:\/\//.test(p.ref.url)) return words;
+    if (!/^https:\/\//.test(p.ref.url)) return null;
     return R.refChip({ text: `${p.ref.label || p.text}${r.title ? ` · ${r.title}` : ''}`, mark: R.icon('pr', 14), title: r.kind === 'pr' ? 'Opens the PR' : 'Opens it in a new tab', attrs: { 'data-ref-url': p.ref.url } });
   };
   const size = (t) => { if (t) { t.style.height = 'auto'; t.style.height = `${Math.max(t.scrollHeight, t.closest('.is-plain') ? 0 : 44)}px`; } };
@@ -920,8 +1016,10 @@
     sendingIn.add(from); comp.sending = true; paint();
     const handed = aboutNow(), ctx = context || (handed ? { view: String(handed.kind || 'page').toLowerCase().replace(/[^a-z0-9-]+/g, '-').slice(0, 32), ...(handed.ref || {}) } : null);   // D16: the page it came from
     const m = modelOf(comp.engine), pr = !chatId && comp.project !== 'No project' ? liveProjects().find((p) => p.name === comp.project) : null;
+    const checked = pc;   // the prompt check of the chat that sends: its held correction goes with this send's thread id
     CL().act('send', { threadId: chatId || '', text, attachments: comp.attachments || [], ...(m ? { model: m.id, effort: comp.effort || (m.efforts || [])[0] } : {}), ...(pr ? { scope: { pinned: true, projectKey: pr.id } } : {}), ...(!chatId && comp.mcpOff ? { mcpOff: comp.mcpOff } : {}), ...(ctx ? { context: ctx } : {}), key: `send:${chatId || 'new'}` }).then((r) => {
       sendingIn.delete(from);
+      if (r.ok) checked?.sent(text, { threadId: r.data?.threadId || from });   // a refused send posts nothing
       const here = (chatId || '') === from;
       if (!here) {   // another chat is open now: the answer belongs to the chat it was sent from, kept in its draft
         const d = drafts.get(from);
@@ -932,6 +1030,7 @@
       comp.sending = false;
       if (!r.ok) { paint(); return; }
       comp = { ...comp, text: '', files: [], attachments: [], intent: '', refs: [], about: null, mode: opts.mode || 'ask' };
+      if (pc && pc !== checked) pc.sent(text, { threadId: r.data?.threadId || from });   // switched away and back mid-send: this chat's newer controller is done with the draft too
       root.querySelectorAll('[data-composer-t]').forEach((t) => { t.value = ''; });
       const id = r.data.threadId;
       window.RailAdapter.refresh('threads');
@@ -1001,6 +1100,12 @@
     return false;
   }
   function pickMenu(id, v) {
+    if (id === 'cp-pcheck') {   // a kind pick checks again at once; the draft's caret stays where it was (choose()'s patch and the paint both move it to the end)
+      const b = pcBox(), at = b ? [b.selectionStart, b.selectionEnd, b.selectionDirection] : null;
+      pcheck()?.choose(v); menu = ''; paint();
+      const nb = pcBox(); if (at && nb && document.activeElement === nb) nb.setSelectionRange(...at);
+      return;
+    }
     if (id.startsWith('lplan:')) {   // the live plan's ⋯: dev's plan save and plan stop
       menu = ''; const x = turns().find((y) => y.id === id.slice(6)), t = x && taskOf(x.task), q = t && CL().ask(t.run);
       if (!q) { paint(); return; }
@@ -1032,7 +1137,7 @@
     const pv = /^pv-(.+)$/.exec(id); if (pv) { const x = turns().find((y) => y.id === pv[1]); if (x) x.v = +v; menu = ''; paint(); return; }
     const pm = /^pp-(.+?)-(project|workflow|engine|effort|when|then|target|src|base|guard|labels|memory|asks|pr|watch|rounds|mcp|tz|missed|overlap|fails|ends|(model|eff|sub|fan)(Plan|Build|Review))$/.exec(id);
     const pq = /^pp-(.+)-persp$/.exec(id);
-    if (pq) { const x = turns().find((y) => y.id === pq[1]); if (x && v !== 'Product') { const l = x.persp || ['Product']; x.persp = l.includes(v) ? l.filter((w) => w !== v) : [...l, v]; } paint(); return; }   // ticks stay open to pick several
+    if (pq) { const x = turns().find((y) => y.id === pq[1]); if (x && LIVE() && x.raw) { if (v !== 'product') { const l = x.pkeys || []; x.pkeys = CL().perspectiveChoices(l.includes(v) ? l.filter((w) => w !== v) : [...l, v]).picked; } } else if (x && v !== 'Product') { const l = x.persp || ['Product']; x.persp = l.includes(v) ? l.filter((w) => w !== v) : [...l, v]; } paint(); return; }   // ticks stay open to pick several
     if (id.startsWith('ppm:')) { menu = ''; const x = turns().find((y) => y.id === id.slice(4)); if (x && v === 'preset') { const name = clip(x.title, 39); if (PRESETS.includes(name)) say(`There is already a preset called ${name}`); else { PRESETS.push(name); SAVED[name] = { workflow: x.workflow, engine: x.engine, then: x.then }; say(`Saved as a preset: ${name}`); } paint(); return; }
       if (x && v === 'composer') { comp = { ...comp, mode: 'task', text: x.brief ?? x.title, project: x.project, workflow: x.workflow, engine: x.engine, then: x.then, more: true }; paint(); root.querySelector('[data-composer-t]')?.focus(); say('In the composer: change anything, then start it'); } else paint(); return; }
     if (pm) { const x = turns().find((y) => y.id === pm[1]); if (x) { if (pm[3]) { x.agents = x.agents || {}; const g = (x.agents[pm[4]] = x.agents[pm[4]] || {}); g[{ model: 'model', eff: 'effort', sub: 'sub', fan: 'fan' }[pm[3]]] = v; } else x[pm[2]] = v; } menu = ''; paint(); return; }
@@ -1213,7 +1318,7 @@
       busyBtn(hit, CL().act('answer', { ...cardArgs(x), ...(own ? { text: own } : { choice: x.optionIds?.[x.pick ?? 0] }) })); return true;
     }
     if ((hit = on('[data-pp-start]'))) { x = turns().find((y) => y.id === hit.dataset.ppStart); if (!x?.card) return noId('start the task'); const r = x.raw || {}, target = TARGET_OF[x.target] || r.target;
-      busyBtn(hit, CL().act('start', { ...cardArgs(x), card: r, picks: { title: x.title, brief: x.brief, target, guardrailsId: x.guard || r.guardrailsId, ...(target === 'none' ? {} : { sourceBranch: x.src ?? r.sourceBranch, featureBranch: x.feature ?? r.featureBranch, sameAsSource: x.onSource ?? !!r.sameAsSource }) } })); return true; }
+      busyBtn(hit, CL().act('start', { ...cardArgs(x), card: r, picks: { title: x.title, brief: x.brief, target, guardrailsId: x.guard || r.guardrailsId, ...(x.pkeys && R.prefs.flag('proposedPerspectives') ? { perspectives: x.pkeys } : {}), ...(target === 'none' ? {} : { sourceBranch: x.src ?? r.sourceBranch, featureBranch: x.feature ?? r.featureBranch, sameAsSource: x.onSource ?? !!r.sameAsSource }) } })); return true; }
     if ((hit = on('[data-pp-later]'))) { x = turns().find((y) => y.id === hit.dataset.ppLater); if (!x?.card) return noId('set the proposal aside'); busyBtn(hit, CL().act('card-later', { ...cardArgs(x), run: true })); return true; }
     if ((x = turn('data-cmd-stop'))) { if (!x.session) return noId('stop the command'); busyBtn(hit, CL().act('cmd-stop', { sessionId: x.session })); return true; }
     if ((x = turn('data-term-stop'))) { if (x.term) busyBtn(hit, x.term.stop()); return true; }
@@ -1225,6 +1330,7 @@
   root.addEventListener('click', (e) => {
     if (e.target.closest('#card')) return;   // inside an open card's stages: the task page answers its own clicks
     const on = (q) => e.target.closest(q); let hit;
+    if (on('[data-pc-improve-open]')) { e.preventDefault(); pcImprove(); return; }
     if ((hit = on('.spick [data-menu-sub]:not([aria-disabled="true"])'))) { menuSub = hit.dataset.menuSub; paint(); return; }   // a maker opens in place; the back row returns (comp.menu-sub)
     if (LIVE() && liveClick(e, on)) return;
     if ((hit = on('[data-failed-details]'))) { const x = turns().find((y) => y.id === hit.dataset.failedDetails); if (x) { x.details = !x.details; paint(); root.querySelector(`[data-failed-details="${CSS.escape(x.id)}"]`)?.focus(); } return; }
@@ -1421,7 +1527,7 @@
   root.addEventListener('keydown', (e) => { const p = e.target.closest?.('[data-pin]'); if (p && (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10'))) { e.preventDefault(); setPins(shownPins().filter((w) => w !== p.dataset.pin), `Unpinned ${p.dataset.pin}`); } });
   root.addEventListener('input', (e) => { if (e.target.matches('[data-dl-note]')) { const t = taskOf(e.target.dataset.dlNote); if (t) t.depth.note = e.target.value; return; } });
   root.addEventListener('input', (e) => { if (e.target.matches('[data-form-slide]')) { const x = turns()[+e.target.dataset.formSlide]; x.value = +e.target.value; const b = e.target.closest('.q-slide')?.querySelector('.q-slide-t b'); if (b) b.textContent = `${x.value} ${x.unit}`; return; } });
-  root.addEventListener('input', (e) => { if (e.target.matches('[data-composer-t]')) { comp.text = e.target.value; size(e.target); const at = /@[^@\s]*$/.test(comp.text); if (at !== (menu === 'cp-mention')) { menu = at ? 'cp-mention' : ''; paint(); } else if (at) { const list = root.querySelector('.composer-at'); if (list) list.outerHTML = mentionMenu(); } } if (e.target.matches('[data-pp-brief]')) { const x = turns().find((y) => y.id === e.target.dataset.ppBrief); if (x) x.brief = e.target.value; } if (e.target.matches('[data-pp-feature]')) { const x = turns().find((y) => y.id === e.target.dataset.ppFeature); if (x) x.feature = e.target.value; } if (e.target.matches('[data-pp-src]')) { const x = turns().find((y) => y.id === e.target.dataset.ppSrc); if (x) x.src = e.target.value; } if (e.target.matches('[data-direction]')) { const x = turns().find((y) => y.id === e.target.dataset.direction); if (x) x.dirValue = e.target.value; } if (e.target.matches('[data-ask-changes]')) { const x = turns().find((y) => y.id === e.target.dataset.askChanges); if (x) x.askValue = e.target.value; } if (e.target.matches('[data-pp-title]')) { const x = turns().find((y) => y.id === e.target.dataset.ppTitle); if (x) x.title = e.target.value; } });
+  root.addEventListener('input', (e) => { if (e.target.matches('[data-composer-t]')) { comp.text = e.target.value; size(e.target); pcInput(comp.text); const at = /@[^@\s]*$/.test(comp.text); if (at !== (menu === 'cp-mention')) { menu = at ? 'cp-mention' : ''; paint(); } else if (at) { const list = root.querySelector('.composer-at'); if (list) list.outerHTML = mentionMenu(); } } if (e.target.matches('[data-pp-brief]')) { const x = turns().find((y) => y.id === e.target.dataset.ppBrief); if (x) x.brief = e.target.value; } if (e.target.matches('[data-pp-feature]')) { const x = turns().find((y) => y.id === e.target.dataset.ppFeature); if (x) x.feature = e.target.value; } if (e.target.matches('[data-pp-src]')) { const x = turns().find((y) => y.id === e.target.dataset.ppSrc); if (x) x.src = e.target.value; } if (e.target.matches('[data-direction]')) { const x = turns().find((y) => y.id === e.target.dataset.direction); if (x) x.dirValue = e.target.value; } if (e.target.matches('[data-ask-changes]')) { const x = turns().find((y) => y.id === e.target.dataset.askChanges); if (x) x.askValue = e.target.value; } if (e.target.matches('[data-pp-title]')) { const x = turns().find((y) => y.id === e.target.dataset.ppTitle); if (x) x.title = e.target.value; } });
   // motion.attention: what needs you in this chat glows once, when you arrive and when it starts to wait
   const asksBelow = (y) => { const l = turns(), at = l.indexOf(y); return l.some((z, j) => j > at && ((z.t === 'question' && !z.answered) || (z.t === 'plan' && !z.approved))); };   // a question under a card speaks for it: one thing breathes
   const waitsOnYou = (y) => (y.t === 'question' && !y.answered) || (y.t === 'form' && !y.answered) || (y.t === 'plan' && !y.approved) || (y.t === 'gate' && !y.done) || ((y.t === 'task') && !asksBelow(y) && (() => { const t = taskOf(y.task), r = t?.run && window.RailWorld.find(t.run); return (!!r && window.RailWorld.section(r) === 'needs') || liveWaits(t); })());
@@ -1444,6 +1550,9 @@
   // live: a store load (the threads, the run links, the runs) redraws the open chat, so a chat opened by its address
   // draws its project and its cards once they are known, without a hash change
   window.RailWorld.onChange(() => { if (window.RailWorld.live && chatId) paint(); });
+  // Settings › Chat › Prompt check: read again when Settings' switch answers and when the store's settings change
+  window.addEventListener('rail-settings', () => pcSync());
+  window.RailWorld.onChange(() => pcSync());
   // a step taken inside a card's open stages moves the task itself: its card's head and bar, the bar's row, Pulse
   document.addEventListener('rail:task-moved', (e) => {
     const { from, to, ask } = e.detail || {}, t = (chat()?.tasks || []).find((y) => y.case === from && (!ask || y.title === ask)); if (!t) return;
@@ -1531,6 +1640,9 @@
   // the live chat starts after the first paint (adapter.js): Chat home then asks dev for its pins and draws them
   // a chat opened by its address (a reload, a bookmark, a link) was shown before RailChatLive existed: it is read now
   window.RailAdapter?.ready?.then?.((l) => { if (l && LIVE()) { mounted.forEach((m) => m.reopen()); refreshAll(); } });
+  // panel.rendered-prose: the page's markdown renderer, once (the bundle has already loaded it in the browser); a failure
+  // leaves the plain words, as dev's chat
+  R.loadProse({ doc: document }).then((ok) => { if (ok) refreshAll(); });
   // a seeded chat that was replying or running a command finishes a few seconds after you open it: no row works forever
   const settling = new WeakSet();
   function settle(id) {
@@ -1600,5 +1712,6 @@
       const allOf = (x) => { const out = []; const walk = (y) => { out.push(y); (y.after || []).forEach(walk); }; (x.tasks || []).filter((y) => !y.followed).forEach(walk); return out; };   /* a task's chat is where it began, not the chat that follows it */ const c = data().chats.find((x) => allOf(x).some((t) => (run && t.run === run) || (title && t.title === title))); return c?.id || ''; },
     chatOfCase: (cs) => { const allOf = (x) => { const out = []; const walk = (y) => { out.push(y); (y.after || []).forEach(walk); }; (x.tasks || []).filter((y) => !y.followed).forEach(walk); return out; }; const c = data().chats.find((x) => allOf(x).some((t) => t.case === cs)); return c?.id || ''; },
     chatTitle: (id) => data().chats.find((x) => x.id === id)?.title || '',
+    importPromptCheck: () => import('/stillhet/chat/prompt-check.mjs'),   // the composer's prompt check, loaded on its first use (a host test hands its own import)
   };
 })();

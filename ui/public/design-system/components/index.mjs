@@ -25,7 +25,7 @@ export { SOUND_CHOICES, BURST_MS, soundFor, playChime } from './sound.mjs';
 export { row, pulseRow } from './row.mjs';
 export { chip } from './chip.mjs';
 export { stillhetInvitation } from './invitation.mjs';
-export { designSwitch } from './design-switch.mjs';
+export { stillhetSwitch, watchStillhetSwitch, STILLHET_NAME, STILLHET_TIP, STILLHET_LOCKED, STILLHET_ITEMS } from './stillhet-switch.mjs';
 export { checkbox } from './checkbox.mjs';
 export { optionList } from './option-list.mjs';
 export { suggestionField, suggestionFail, suggestButton, suggestedChip, stopWriting, failureLink, previewToggle, suggestionPreview, gapMark, rewriteFail, rewriteSuggestion } from './suggestion-field.mjs';
@@ -63,6 +63,7 @@ export { sliderPick, rankList, pickRows, factsLine } from './question-forms.mjs'
 export { stageStep } from './kind-mark.mjs';
 export { runOutcomes, handedChip, expandFrame, markTone, alertLevel, kindMark, partsWord, gitMark, timeline, timelineCard, barHead, turnRow, composer, stageBar, cardHead, taskCard, taskProposal, changeProposal, turnDivider, planCard, filesCard, refChip, youTurn, stageLine, stagePart, thinkingRow, placeHead, pluginCard } from './kind-mark.mjs';
 export { turnTime, turnTimeText } from './turn-time.mjs';
+export { prose, loadProse } from './prose.mjs';
 export { tipPlace, watchTooltips } from './tooltip.mjs';
 export { menuUp, menuShift, watchMenus } from './menu-place.mjs';
 export { secondClickIgnored, watchClickGuard } from './click-guard.mjs';

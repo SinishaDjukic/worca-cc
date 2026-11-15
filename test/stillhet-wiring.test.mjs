@@ -215,13 +215,13 @@ test('Projects and Workspaces (slice 9): every row is wired, or not offered live
   for (const r of pj.filter((x) => id(x).startsWith('projects/dev-tab-'))) assert.match(r, /stopgap: lands on the project page; slice 12 gives it a home/);
 });
 
-test('the prompt check Moves rows: the chip and Improve stay open, waiting for the owner, as 4-column rows', () => {
+test('the prompt check Moves rows: the chip and Improve are wired in the composer, as 4-column rows', () => {
   for (const name of ['Prompt check chip (composer)', 'Prompt check Improve (composer)']) {
     const row = doc.split('\n').find((l) => l.startsWith(`| ${name} |`));
     assert.ok(row, name);
     const cells = row.split('|').slice(1, -1).map((c) => c.trim());
     assert.equal(cells.length, 4, name);
-    assert.match(cells[1], /^open: waits for the owner/, name);
+    assert.match(cells[1], /\(wired: `stillhet\/chat\/prompt-check\.mjs`\)$/, name);
   }
 });
 
@@ -255,11 +255,11 @@ test('Insights (slice 10): every Insights row is wired, or not offered live with
   assert.doesNotMatch(doc, /^- add to the design first: .*Insights/m, 'the four design-first lines are built');
 });
 
-test('the proposed perspectives Moves row stays open, waiting for the owner (TaskProposal reviewed by), as a 4-column row', () => {
+test('the proposed perspectives Moves row is wired to the TaskProposal\'s reviewed by picker, as a 4-column row', () => {
   const name = 'Perspectives proposed on the run card (flag proposedPerspectives)';
   const row = doc.split('\n').find((l) => l.startsWith(`| ${name} |`));
   assert.ok(row, name);
   const cells = row.split('|').slice(1, -1).map((c) => c.trim());
   assert.equal(cells.length, 4);
-  assert.equal(cells[1], 'open: waits for the owner (TaskProposal reviewed by)');
+  assert.match(cells[1], /^Chat › TaskProposal sentence, "reviewed by" \(wired: /);
 });

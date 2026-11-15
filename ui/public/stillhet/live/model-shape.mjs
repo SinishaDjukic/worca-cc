@@ -68,8 +68,8 @@ export const TURN_SHAPES = Object.freeze({
   you: { id: 'string', text: 'string', files: 'array?', refs: 'array?', quote: 'string?', at: 'number?' },
   think: { text: 'string', steps: 'array?' },
   working: { at: 'number?', steps: 'array?' },
-  words: { html: 'string', parts: 'array?', at: 'number?', key: 'string?' },
-  ship: { id: 'string', title: 'string', reqs: 'array', how: 'string?', featureId: 'string?', done: 'string?' },   // the prototype's Ship card; live adds dev's feature id   // parts: words and the refs in them (panel.answer-refs)
+  words: { html: 'string', md: 'string?', at: 'number?', key: 'string?' },   // md: a finished answer's words, drawn by Prose (panel.rendered-prose)
+  ship: { id: 'string', title: 'string', reqs: 'array', how: 'string?', featureId: 'string?', done: 'string?' },   // the prototype's Ship card; live adds dev's feature id
   code: { file: 'string?', text: 'string' },
   commands: { id: 'string', rows: 'array' },
   cmd: { cmd: 'string', sum: 'string?', dir: 'string?' },

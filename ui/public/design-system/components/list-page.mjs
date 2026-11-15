@@ -310,6 +310,7 @@ export function listController({ root, spec }) {
     if (!act || act === 'search' || act === 'close') return;
     if (act === 'clear') { e.preventDefault(); s.pick = selectClear(); paint(); return; }   // Esc ends selecting wherever the focus is
     if (e.target.closest?.('.ask-side:not(.chats-side), #app')) return;
+    if (e.target.closest?.('.prose pre, .prose .rt-wrap')) return;   // a reply's code block or table scrolls under the arrows
     e.preventDefault();
     const from = e.target.closest?.('[data-row]')?.dataset.row || s.focus, row = s.rows.get(from);
     if (act === 'help') { openSheet(); return; }

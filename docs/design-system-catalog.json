@@ -761,20 +761,29 @@
       "example": "Watch on a PR"
     },
     {
-      "name": "DesignSwitch",
-      "code": "ui/public/design-system/components/design-switch.mjs#designSwitch",
+      "name": "StillhetSwitch",
+      "code": "ui/public/design-system/components/stillhet-switch.mjs#stillhetSwitch",
       "kind": "choosing",
       "needs": [
-        "turning Stillhet on or off from the top bar"
+        "choosing Stillhet or today's UI from the top bar"
       ],
       "rules": [
-        "a Switch labelled Stillhet UI with a beta chip; only the switch at phone width",
-        "takes effect at once, then the page reloads once",
-        "locked by WORCA_FLAGS, it is disabled and says why",
-        "a failed change flips back and a Toast says why"
+        "nav.design-switch",
+        "one grey icon after Ask worca and Pulse, a 20px glyph in a 36px box; its tip names the new UI in beta",
+        "a click opens 2 rows, Try Stillhet and Back to today's UI; the current UI is checked",
+        "picking the other acts at once: busy until the call returns, then the page reloads once; a failure puts it back and a Toast says why",
+        "locked by WORCA_FLAGS, the tip and both rows say why"
       ],
-      "example": "Stillhet UI",
-      "notFor": "any other setting (Switch)"
+      "example": "Stillhet UI · beta",
+      "notFor": "a settings toggle (Switch)",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/stillhet-switch.mjs#watchStillhetSwitch",
+          "needs": [
+            "the Stillhet icon opens its menu, and a pick goes busy, calls the host and shows the outcome"
+          ]
+        }
+      ]
     },
     {
       "name": "Checkbox",
@@ -1553,7 +1562,8 @@
         "a Shaper task or a workflow run shows its type in the centre; only a question or a failure takes it"
       ],
       "rules": [
-        "list.kind-mark"
+        "list.kind-mark",
+        "an event row's mark is icon:'signal' in the row's tone"
       ]
     },
     {
@@ -2013,6 +2023,26 @@
           "code": "ui/public/design-system/components/turn-time.mjs#turnTimeText",
           "needs": [
             "A turn's time in words, without its element: 14:32, Yesterday 14:32, Nov 3, 14:32"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Prose",
+      "code": "ui/public/design-system/components/prose.mjs#prose",
+      "kind": "showing",
+      "needs": [
+        "Worca's finished words with their formatting: lists, code, links, tables"
+      ],
+      "rules": [
+        "panel.rendered-prose"
+      ],
+      "example": "Two changes fix it, a list and a code block",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/prose.mjs#loadProse",
+          "needs": [
+            "load the renderer once, then redraw"
           ]
         }
       ]
@@ -3148,6 +3178,26 @@
     "reducedMotion": "every timing 0; breathing and shimmer still"
   },
   "internal": [
+    {
+      "name": "STILLHET_NAME",
+      "kind": "constant",
+      "why": "The Stillhet icon's name, which StillhetSwitch writes"
+    },
+    {
+      "name": "STILLHET_TIP",
+      "kind": "constant",
+      "why": "The Stillhet icon's tip, which StillhetSwitch writes"
+    },
+    {
+      "name": "STILLHET_LOCKED",
+      "kind": "constant",
+      "why": "Why the Stillhet icon's rows are disabled, which StillhetSwitch writes"
+    },
+    {
+      "name": "STILLHET_ITEMS",
+      "kind": "constant",
+      "why": "The Stillhet icon's 2 menu rows, which StillhetSwitch draws"
+    },
     {
       "name": "esc",
       "kind": "html",

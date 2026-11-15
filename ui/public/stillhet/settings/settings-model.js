@@ -329,7 +329,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
       ] },
       { title: 'Credentials', rows: [
         { name: 'Model keys', help: 'With a team credential broker, keys come from it and this opens its key page', say: 'Each engine signs in by itself, in Models › Sign-ins', acts: [{ label: 'Open Models', min: 'expert', go: 'models', help: 'Models › Sign-ins' }] },
-        { name: 'GitHub', say: 'Signed in as **@emil-angelov**' },
+        { name: 'GitHub', say: 'Pull requests and issues use this machine\'s GitHub sign-in (`gh`)' },
       ] },
       { title: 'About', rows: [
         { name: 'Version', help: 'From a source checkout this says Source build and offers no Update', say: '**{verNow}** · {updNow}', vals: { verNow: (sv) => short(sv.ver), updNow: updWords },
@@ -531,7 +531,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
           chip: (sv) => (sv.claudeIn ? '' : 'Signed out'),
           acts: [{ label: 'Sign out', when: (sv) => sv.claudeIn, do: (sv) => { sv.claudeIn = false; window.RailUI.prefs.setConnected('claude', false); return 'Signed out of Claude Code'; } }, { label: 'Sign in', when: (sv) => !sv.claudeIn, do: (sv) => { sv.claudeIn = true; window.RailUI.prefs.setConnected('claude', true); return 'Signed in to Claude Code'; } }] },
       ], list: [
-        { title: 'GitHub Copilot', meta: 'Connected as @emil-angelov', mark: 'is-green', detail: 'Premium requests are read from GitHub, not counted by Worca, and reset on 1 Dec.',
+        { title: 'GitHub Copilot', meta: 'Your GitHub sign-in', mark: 'is-green', detail: 'Premium requests are read from GitHub, not counted by Worca, and reset on 1 Dec.',
           live: (sv, r) => (r.signedOut ? 'Not signed in' : `${r.account} · ${r.conc} at once · ${r.used} of 1,000 premium requests, from GitHub`), account: 'Business', conc: 4, used: 312,
           menu: (r) => (r.signedOut ? ['Sign in'] : ['Edit', 'Import models', 'Refresh usage', 'Sign out']),
           on: {
@@ -539,7 +539,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
             'Import models': (r, x) => (importable(x.sv).length ? x.dialog(importModels(x.sv)) : 'Nothing new to import: the catalogue has it all'),
             'Refresh usage': (r) => { r.used += 7; return `Copilot: ${r.used} of 1,000 used, from GitHub`; },
             'Sign out': (r) => { r.signedOut = true; r.mark = ''; window.RailUI.prefs.setConnected('copilot', false); return 'Signed out of Copilot'; },
-            'Sign in': (r) => { r.signedOut = false; r.mark = 'is-green'; window.RailUI.prefs.setConnected('copilot', true); return 'Signed in to Copilot as @emil-angelov'; },
+            'Sign in': (r) => { r.signedOut = false; r.mark = 'is-green'; window.RailUI.prefs.setConnected('copilot', true); return 'Signed in to Copilot'; },
           } },
         { title: 'Codex', meta: 'Your ChatGPT sign-in', mark: 'is-green', detail: 'Codex reports its own session and weekly usage.',
           live: (sv, r) => (r.signedOut ? 'Not signed in' : 'Your ChatGPT sign-in'), menu: (r) => (r.signedOut ? ['Sign in'] : ['Sign out']),
@@ -591,7 +591,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
           { name: 'Summaries', flag: 'commandSummaries', say: 'Show each command as one line saying what it does', sw: { key: 'summaries', on: true, why: 'With Labs › Command summaries on' } },
           { name: 'Suggestions', say: 'Suggest a next prompt after each reply', sw: { key: 'nextPrompt', on: true } },
           // docs/rail/settings.md: the chat pref `promptCheck` (docs/prompt-check.md), saved live in the app
-          { name: 'Prompt check', say: 'Check how clear a task prompt is', sw: { key: 'promptCheck', on: false, live: 'chat.promptCheck', why: "Shows in today's Chat for now" } },
+          { name: 'Prompt check', say: 'Check how clear a task prompt is', sw: { key: 'promptCheck', on: false, live: 'chat.promptCheck' } },
         ] },
         { name: 'Limits', help: 'On an engine other than Claude the cap is checked when a reply ends', say: 'One message may use **{turns}** turns, and a turn stops at **{capWords}**', vals: { turns: '400', cap: '', capWords: (sv) => (sv.cap ? `$${sv.cap}` : 'no cost cap') },
             acts: [edit('Change the chat limits', [{ key: 'turns', label: 'Turn limit', type: 'number', hint: '1 to 500, per message; empty restores 400', placeholder: '400' }, { key: 'cap', label: 'Per-turn cost cap (USD)', type: 'number', hint: '0.1 to 100; empty means no cap', placeholder: 'No cap' }], {
