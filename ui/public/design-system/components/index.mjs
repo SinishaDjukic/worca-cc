@@ -56,7 +56,7 @@ export { PRESS_MS, selectClear, selectStart, selectToggle, selectRange, selectAl
 export { scheduleDates, scheduleButton, DAY_SECTIONS, BY_CHOICES, BY_DEFAULT, byPart, dateSections, NEXT_RUN_SECTIONS, REPEATS, scheduleWords, TIMES_OF_DAY, listWord, namesWord, listSentence, groupRow, roundRows, listState, resetViewTool, originMark, chatKindIcon } from './list-parts.mjs';
 export { listController, LIST_SHOWN, BREATHE, calmMarks, fitMenu } from './list-page.mjs';
 export { planBulk, skipText, bulkConfirm } from '../../../../src/shared/run-bulk.mjs';
-export { watchKeepOpen } from './keep-open.mjs';
+export { watchKeepOpen, keptRoute } from './keep-open.mjs';
 export { dismissOnOutside, neverOutside, watchStrips, REAL_CONTROL } from './dismiss.mjs';
 export { selectionBar, selectAllBox, bindLongPress } from './selection-bar.mjs';
 export { barChart, lineChart, mixChart, figureRows, watchChart, diffWords } from './chart.mjs';

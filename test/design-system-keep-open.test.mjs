@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { watchKeepOpen, listEditor, morph } from '../ui/public/design-system/components/index.mjs';
+import { watchKeepOpen, keptRoute, listController, listEditor, morph } from '../ui/public/design-system/components/index.mjs';
 
 const page = (hash = '#projects') => {
   const dom = new JSDOM('<!doctype html><div id="c"></div>', { url: 'http://x/' + hash, pretendToBeVisual: true });
@@ -35,7 +35,7 @@ test('an unfocused typed field keeps its text', async () => {
   draw(c);
   const f = doc.getElementById('f');
   type(win, f, 'abc');
-  f.blur();
+  f.blur(); await tick();   // a real blur is its own task, before a later redraw
   draw(c); await tick();
   assert.equal(doc.getElementById('f').value, 'abc');
   assert.notEqual(doc.activeElement, doc.getElementById('f'));
@@ -178,4 +178,55 @@ test('F-a4-02: morph gives a kept field the page\'s new value when the drawn val
   assert.equal(k.value, 'abc');
   morph(c, html('Billing API')); await tick();
   assert.equal(doc.getElementById('k').value, 'Billing API');
+});
+
+test('F-b23-01: Chrome\'s removal blur (focusout while the old field is still attached, then its removal) keeps the focus on the new field', async () => {
+  const { doc, win, c } = page();
+  draw(c);
+  const f = doc.getElementById('f');
+  type(win, f, 'abc');
+  f.setSelectionRange(1, 1);
+  f.dispatchEvent(new win.FocusEvent('focusout', { bubbles: true }));   // Chrome blurs the node first, while it is connected
+  assert.ok(f.isConnected);
+  draw(c); await tick();
+  const g = doc.getElementById('f');
+  assert.equal(g.value, 'abc');
+  assert.deepEqual([g.selectionStart, g.selectionEnd], [1, 1]);
+  assert.equal(doc.activeElement, g, 'the next keystroke lands in the field');
+});
+
+test('F-b23-01: a real blur still lets the field go: blurred, or a click elsewhere, then a later redraw does not take the focus back', async () => {
+  const { doc, win, c } = page();
+  draw(c);
+  type(win, doc.getElementById('f'), 'abc');
+  doc.getElementById('f').blur(); await tick();
+  draw(c); await tick();
+  assert.notEqual(doc.activeElement, doc.getElementById('f'));
+  assert.equal(doc.getElementById('f').value, 'abc');
+  type(win, doc.getElementById('f'), 'abcd');
+  doc.getElementById('b').focus(); await tick();
+  draw(c); await tick();
+  assert.notEqual(doc.activeElement, doc.getElementById('f'));
+});
+
+test('keptRoute: the place and its item, without a side panel or an @ way in', () => {
+  assert.equal(keptRoute('#chat/ask_1/run/run-a/logs'), '#chat/ask_1');
+  assert.equal(keptRoute('#projects/billing-api@legacy'), '#projects/billing-api');
+  assert.equal(keptRoute('#chat'), '#chat');
+  assert.equal(keptRoute(''), '');
+});
+
+test('F-b23-02: a list\'s popover (Add to group, #list-pop-q) closes with its text on a route change, and stays on a side panel', async () => {
+  const dom = new JSDOM('<!doctype html><body><div id="r"></div></body>', { url: 'http://x/#chat/ask_1', pretendToBeVisual: true });
+  const d = dom.window.document, root = d.getElementById('r'), w = dom.window;
+  const ctl = listController({ root, spec: { noun: `pop-${Math.random()}`, label: 'x', can: () => [], bulk: () => [], act: () => {}, word: () => false, say: () => {}, active: () => true, open: () => {}, view: () => ({ state: 'ready', parts: [], sections: [{ id: 's', title: 'S', rows: [{ key: 'k', title: 'T' }] }] }) } });
+  const open = () => { ctl.picker({ label: 'Add to group', placeholder: 'Find or create a group', anchor: '#r', sections: () => [], pick: () => {} }); const q = d.getElementById('list-pop-q'); q.value = 'abc'; q.dispatchEvent(new w.Event('input', { bubbles: true })); };
+  const hop = async (h) => { w.location.hash = h; await new Promise((r) => w.setTimeout(r, 0)); ctl.paint(); };
+  open();
+  await hop('#chat/ask_1/run/run-a');
+  assert.ok(d.getElementById('list-pop-q'), 'the chat\'s own side panel is the same route');
+  await hop('#chat/ask_1');
+  open();
+  await hop('#workflows'); await hop('#chat/ask_1');
+  assert.equal(d.getElementById('list-pop-q'), null, 'away and back: the popover is closed');
 });

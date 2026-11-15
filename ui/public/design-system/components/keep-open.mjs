@@ -8,13 +8,16 @@
 // value changed (the page set a new one) takes the page's value; a page clears a kept field in place before it redraws.
 const watched = new WeakSet();
 
+/** The route a kept control belongs to: the place and its item, the item without its '@…' way in (`#chat/ask_1/run/run-a` → `#chat/ask_1`). */
+export const keptRoute = (h) => String(h || '').split('/').slice(0, 2).map((s) => s.split('@')[0]).join('/');
+
 export function watchKeepOpen(doc) {
   if (!doc || watched.has(doc)) return;
   watched.add(doc);
   const win = doc.defaultView;
   const kept = new Map();   // KEY -> { el, hash }
   let focused = null;       // the KEY that held the focus last, until a control without one takes it
-  const hash = () => win.location.hash.split('/').slice(0, 2).map((s) => s.split('@')[0]).join('/');
+  const hash = () => keptRoute(win.location.hash);
   const remember = (e) => {
     const el = e.target?.closest?.('[data-keep]');
     if (!el) { if (e.type === 'focusin') focused = null; return; }
@@ -25,9 +28,13 @@ export function watchKeepOpen(doc) {
   };
   doc.addEventListener('focusin', remember, true);
   doc.addEventListener('input', remember, true);
-  doc.addEventListener('focusout', (e) => {   // a real blur, not a removal: some browsers blur a removed node, some do not
+  // a real blur, not a removal: Chrome blurs a node a draw removes while it is still attached, other browsers do not blur
+  // it at all; so the blur is judged after the draw: a field still attached and not focused again was really left
+  doc.addEventListener('focusout', (e) => {
     const el = e.target?.closest?.('[data-keep]');
-    if (el?.isConnected && focused === el.getAttribute('data-keep')) focused = null;
+    if (!el) return;
+    const key = el.getAttribute('data-keep');
+    win.queueMicrotask(() => { if (el.isConnected && focused === key && doc.activeElement !== el) focused = null; });
   }, true);
   const find = (key) => {
     const q = win.CSS?.escape ? win.CSS.escape(key) : key.replace(/["\\]/g, '\\$&');
