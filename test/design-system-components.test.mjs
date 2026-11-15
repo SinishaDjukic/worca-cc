@@ -2088,3 +2088,15 @@ test('COV-1 folderReview: Added locks, a reason stays, the pending count names t
   assert.equal(C.reviewSummary({ added: ['a'], skipped: [] }), 'Added “a”.');
   assert.equal(C.REVIEW_EMPTY, 'Tick at least one folder to add.');
 });
+
+test('COV-1 folderBrowser ask, folderReview error and folderWay: the markup is the component\'s, not the page\'s', () => {
+  const ask = dom(C.folderBrowser({ multiple: true, path: '/s', dirs: [], picked: ['/s/a', '/s/b'], ask: true }));
+  assert.equal(ask.querySelector('.dlg-body').firstElementChild.getAttribute('role'), 'alertdialog', 'the strip leads the body');
+  assert.match(ask.querySelector('.rc-confirm').textContent, /Drop 2 picked folders\?.*Drop them.*Keep picking/s);
+  assert.equal(dom(C.folderBrowser({ multiple: true, path: '/s', picked: [], ask: true })).querySelector('.rc-confirm'), null, 'nothing picked: no ask');
+  const err = dom(`<div>${C.folderReview({ rows: [], error: C.REVIEW_EMPTY })}</div>`).querySelector('.fb-err');
+  assert.equal(err.getAttribute('role'), 'alert'); assert.equal(err.textContent, C.REVIEW_EMPTY);
+  const way = dom(`<div>${C.folderWay({ pick: { label: 'Choose folder…', hook: 'data-x-pick', title: 'Pick' }, git: { on: true, hook: 'data-x-git', why: 'Runs git init' } })}</div>`);
+  assert.equal(way.querySelector('.fb-way [data-x-pick]').textContent.trim(), 'Choose folder…');
+  assert.equal(way.querySelector('.fb-way [data-x-git]').getAttribute('aria-checked'), 'true');
+});

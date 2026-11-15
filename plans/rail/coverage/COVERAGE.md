@@ -6,10 +6,10 @@ Sources: a static scan of today's UI (204 files) and a read-only browser walk of
 
 | Status | Controls |
 |---|---|
-| wired | 947 (of them 805 view controls with no route or key, carried by their place) |
+| wired | 970 (of them 805 view controls with no route or key, carried by their place) |
 | planned | 444 (of them 425 view controls of a place still to be built) |
 | not offered (decision) | 0 |
-| MISSING | 478 |
+| MISSING | 455 |
 | total | 1869 |
 
 ## By page
@@ -23,52 +23,24 @@ Sources: a static scan of today's UI (204 files) and a read-only browser walk of
 | Getting started | Onboarding, wave 3 slice 13 (PLAN.md 4b, D13, B8.6) | 17 | 1 | 10 | 0 | 6 |
 | Marketplace | Marketplace | 84 | 68 | 0 | 0 | 16 |
 | Models | Settings › Models, wave 3 slice 12 (PLAN.md 4b, F-7b-08) | 51 | 0 | 42 | 0 | 9 |
-| New run | Chat and + › New task… | 74 | 36 | 1 | 0 | 37 |
+| New run | Chat and + › New task… | 74 | 38 | 1 | 0 | 35 |
 | Profile | D1 (B8.2): a home or retire, owner decision | 10 | 1 | 8 | 0 | 1 |
-| Projects | Projects | 91 | 51 | 1 | 0 | 39 |
+| Projects | Projects | 91 | 66 | 1 | 0 | 24 |
 | Providers | Settings › Models, wave 3 slice 12 (PLAN.md 4b) | 49 | 0 | 48 | 0 | 1 |
 | Requirements | Requirements, wave 3 slice 11 (PLAN.md 4b, D2, B8.7) | 88 | 0 | 29 | 0 | 59 |
 | Schedules | Schedules | 45 | 39 | 0 | 0 | 6 |
 | Settings | Settings, wave 3 slice 12 (PLAN.md 4b, D22/D24) | 277 | 12 | 184 | 0 | 81 |
 | Shell | the shell (top bar, Pulse, profile) | 160 | 146 | 0 | 0 | 14 |
 | Statistics | Insights | 27 | 26 | 0 | 0 | 1 |
-| Tasks | Tasks and the task page | 256 | 183 | 0 | 0 | 73 |
+| Tasks | Tasks and the task page | 256 | 188 | 0 | 0 | 68 |
 | Team metrics | Insights | 41 | 39 | 0 | 0 | 2 |
 | Team policy | Settings › Team, wave 3 slice 12 (PLAN.md 4b, F-7b-05) | 58 | 2 | 55 | 0 | 1 |
-| Workflows | Workflows | 197 | 144 | 0 | 0 | 53 |
+| Workflows | Workflows | 197 | 145 | 0 | 0 | 52 |
 | Workspaces | Projects (workspaces) | 42 | 28 | 0 | 0 | 14 |
 
 ## MISSING
 
 Each MISSING control, grouped by its finding (`plans/rail/findings.md`, PLAN.md B9). A finding closes when its controls are wired or decided.
-
-### COV-1: Add a project: New (make the folder), Several folders… (add many at once) and the in-app folder browser
-
-| Page | Control | Kind | Missing | Source |
-|---|---|---|---|---|
-| Tasks | (folder-item) | button | `route /api/fs/dirs` | ui/public/app.js:8892 |
-| Tasks | No subfolders. | button | `route /api/fs/dirs` | ui/public/app.js:8854 |
-| Tasks | Project name for … | field | `route /api/projects/bulk` | ui/public/app.js:15209 |
-| Tasks | Add … | toggle | `route /api/projects/bulk` | ui/public/app.js:15202 |
-| Tasks | Select … | toggle | `route /api/fs/dirs` | ui/public/app.js:8881 |
-| New run | Browse… | button | `route /api/fs/dirs` | ui/public/new-run/new.html:63 |
-| New run | Several folders… | button | `route /api/fs/dirs` | ui/public/new-run/new.html:64 |
-| Projects | &#8593; Up | button | `route /api/fs/dirs` | ui/public/projects/folder-browser.html:10 |
-| Projects | Home | button | `route /api/fs/dirs` | ui/public/projects/folder-browser.html:11 |
-| Projects | Add projects | button | `route /api/projects/bulk` | ui/public/projects/project-add.html:115 |
-| Projects | Choose folder… | button | `route /api/fs/dirs`, `route /api/git` | ui/public/projects/project-add.html:37 |
-| Projects | proj-add-root | button | `route /api/git`, `route /api/projects/create`, `route /api/projects/probe` | ui/public/projects/project-add.html:41 |
-| Projects | Several folders… | button | `route /api/fs/dirs` | ui/public/projects/project-add.html:38 |
-| Projects | Add projects | dialog | `route /api/projects/bulk` | ui/public/projects/project-add.html:100 |
-| Projects | Folder | field | `route /api/git`, `route /api/projects/create`, `route /api/projects/probe` | ui/public/projects/project-add.html:36 |
-| Projects | Location | field | `route /api/git`, `route /api/projects/create`, `route /api/projects/probe` | ui/public/projects/project-add.html:28 |
-| Projects | Name | field | `route /api/git`, `route /api/projects/create`, `route /api/projects/probe` | ui/public/projects/project-add.html:21 |
-| Projects | Clone from URL | tab | `route /api/projects/create`, `route /api/projects/probe` | ui/public/projects/project-add.html:15 |
-| Projects | Folder | tab | `route /api/projects/create`, `route /api/projects/probe` | ui/public/projects/project-add.html:14 |
-| Projects | New | tab | `route /api/projects/create`, `route /api/projects/probe` | ui/public/projects/project-add.html:13 |
-| Projects | proj-add-git | toggle | `route /api/git`, `route /api/projects/create`, `route /api/projects/probe` | ui/public/projects/project-add.html:44 |
-| Projects | Add project | button | `route /api/git` | ui/public/projects/projects.html:11 |
-| Workflows | Browse… | button | `route /api/fs/dirs` | ui/public/workflows/export.html:55 |
 
 ### COV-2: New run form: saved run defaults, presets (apply, check, duplicate, update), a workflow's defaults, a ticket source, sync before start, engine check, policy scope and notes
 
@@ -93,7 +65,7 @@ Each MISSING control, grouped by its finding (`plans/rail/findings.md`, PLAN.md 
 | New run | Start run | button | `route /api/sync` | ui/public/new-run/new.html:421 |
 | New run | Suggest again | button | `route /api/presets/:param`, `route /api/presets/:param/duplicate` | ui/public/new-run/new.html:100 |
 | New run | Update preset | button | `route /api/presets/:param`, `route /api/presets/:param/check` | ui/public/new-run/new.html:18 |
-| New run | /absolute/path/to/project | field | `route /api/engines`, `route /api/fs/dirs`, `route /api/naming/config`, `route /api/run-defaults`, `route /api/source-bindings` | ui/public/new-run/new.html:62 |
+| New run | /absolute/path/to/project | field | `route /api/engines`, `route /api/naming/config`, `route /api/run-defaults`, `route /api/source-bindings` | ui/public/new-run/new.html:62 |
 | New run | Branch type | field | `route /api/presets/:param`, `route /api/presets/:param/duplicate` | ui/public/new-run/new.html:259 |
 | New run | Engine | field | `route /api/mcp/preview`, `route /api/mcp/projects/:param/mcpjson`, `route /api/policy/notes`, `route /api/presets/:param/check` | ui/public/new-run/new.html:138 |
 | New run | Guardrails | field | `route /api/mcp/preview`, `route /api/mcp/projects/:param/mcpjson`, `route /api/policy/notes`, `route /api/presets/:param/check` | ui/public/new-run/new.html:356 |
@@ -108,11 +80,11 @@ Each MISSING control, grouped by its finding (`plans/rail/findings.md`, PLAN.md 
 | New run | Branch off the run before it | toggle | `route /api/chat/status`, `route /api/run-defaults`, `route /api/sync` | ui/public/new-run/new.html:252 |
 | New run | humanInLoop | toggle | `route /api/mcp/preview`, `route /api/mcp/projects/:param/mcpjson`, `route /api/policy/notes` | ui/public/new-run/new.html:314 |
 | Projects | Use git | button | `route /api/sync/all` | ui/public/projects/project-add.html:90 |
-| Projects | Add project | dialog | `route /api/git`, `route /api/naming/config`, `route /api/policy/scopes`, `route /api/projects/:param/readiness`, `route /api/projects/create`, `route /api/projects/probe`, `route /api/run-defaults`, `route /api/source-bindings`, `route /api/sync/all` | ui/public/projects/project-add.html:2 |
-| Projects | Branch (optional) | field | `route /api/git`, `route /api/projects/create`, `route /api/projects/probe`, `route /api/sync/all` | ui/public/projects/project-add.html:52 |
-| Projects | Folder name (optional) | field | `route /api/git`, `route /api/projects/create`, `route /api/projects/probe`, `route /api/sync/all` | ui/public/projects/project-add.html:56 |
+| Projects | Add project | dialog | `route /api/naming/config`, `route /api/policy/scopes`, `route /api/projects/:param/readiness`, `route /api/run-defaults`, `route /api/source-bindings`, `route /api/sync/all` | ui/public/projects/project-add.html:2 |
+| Projects | Branch (optional) | field | `route /api/sync/all` | ui/public/projects/project-add.html:52 |
+| Projects | Folder name (optional) | field | `route /api/sync/all` | ui/public/projects/project-add.html:56 |
 | Projects | Remote URL (optional) | field | `route /api/sync/all` | ui/public/projects/project-add.html:83 |
-| Projects | Repository URL | field | `route /api/git`, `route /api/projects/create`, `route /api/projects/probe`, `route /api/sync/all` | ui/public/projects/project-add.html:48 |
+| Projects | Repository URL | field | `route /api/sync/all` | ui/public/projects/project-add.html:48 |
 | Tasks | Reset to default | button | `route /api/presets/:param/check` | ui/public/run-presets-picker.mjs:74 |
 | Tasks | Cancel | button | `route /api/run-defaults` | ui/public/run-setup-overlay.mjs:114 |
 | Tasks | Start run | button | `route /api/run-defaults` | ui/public/run-setup-overlay.mjs:115 |
@@ -132,7 +104,7 @@ Each MISSING control, grouped by its finding (`plans/rail/findings.md`, PLAN.md 
 | Page | Control | Kind | Missing | Source |
 |---|---|---|---|---|
 | Tasks | (artifact-bulk-toggle) | button | `route /api/runs/:param/directions` | ui/public/app.js:33585 |
-| Shell | (button) | button | `route /api/config/workflow`, `route /api/git`, `route /api/pipelines/:param/pr-auto`, `route /api/policy/scopes`, `route /api/pr/remotes`, `route /api/projects/:param/readiness`, `route /api/run-groups/suggest-name`, `route /api/run-links/:param`, `route /api/runs/:param/ask-files/:param/:param`, `route /api/source-bindings`, `route /api/sources`, `route /api/sources/call`, `route /api/sync/all`, `route /api/terminal`, `route /api/workspaces/:param/runs/:param/log` | ui/public/app.js:5407 |
+| Shell | (button) | button | `route /api/config/workflow`, `route /api/pipelines/:param/pr-auto`, `route /api/policy/scopes`, `route /api/pr/remotes`, `route /api/projects/:param/readiness`, `route /api/run-groups/suggest-name`, `route /api/run-links/:param`, `route /api/runs/:param/ask-files/:param/:param`, `route /api/source-bindings`, `route /api/sources`, `route /api/sources/call`, `route /api/sync/all`, `route /api/terminal`, `route /api/workspaces/:param/runs/:param/log` | ui/public/app.js:5407 |
 | Chat | (hint) | button | `route /api/runs/:param/directions` | ui/public/app.js:33901 |
 | Shell | Resume on … | button | `route /api/engines`, `route /api/run-links/:param` | ui/public/app.js:31105 |
 | Shell | Switch model… | button | `route /api/engines`, `route /api/run-links/:param` | ui/public/app.js:31121 |
@@ -171,16 +143,16 @@ Each MISSING control, grouped by its finding (`plans/rail/findings.md`, PLAN.md 
 | Tasks | Remove project | menu item | `route /api/policy/scopes`, `route /api/workspaces/:param/members/remove-impact`, `route /api/workspaces/:param/scan-models` | ui/public/app.js:10413 |
 | Tasks | Preview | tab | `route /api/mcp/preview`, `route /api/mcp/sets`, `route /api/policy/scopes`, `route /api/workspaces/:param/settings` | ui/public/app.js:9777 |
 | Tasks | Text | tab | `route /api/mcp/preview`, `route /api/mcp/sets`, `route /api/policy/scopes`, `route /api/workspaces/:param/settings` | ui/public/app.js:9776 |
-| Tasks | (wd-member-name) | toggle | `route /api/git`, `route /api/policy/scopes`, `route /api/workspaces/:param/scan-models` | ui/public/app.js:10357 |
+| Tasks | (wd-member-name) | toggle | `route /api/policy/scopes`, `route /api/workspaces/:param/scan-models` | ui/public/app.js:10357 |
 | Feature (Shaper) | Preview | tab | `route /api/mcp/preview`, `route /api/mcp/sets`, `route /api/policy/scopes`, `route /api/workspaces/:param/settings` | ui/public/history/shipit.html:66 |
 | Feature (Shaper) | Write | tab | `route /api/mcp/preview`, `route /api/mcp/sets`, `route /api/policy/scopes`, `route /api/workspaces/:param/settings` | ui/public/history/shipit.html:65 |
 | Workspaces | Save | button | `route /api/workspaces/:param/settings` | ui/public/pr-auto-view.mjs:118 |
 | Workspaces | (select) | field | `route /api/workspaces/:param/settings` | ui/public/pr-auto-view.mjs:114 |
 | Workspaces | Add paths | button | `route /api/workspaces/import-candidates` | ui/public/workspace-map/workspace-create.html:36 |
-| Workspaces | Add… | button | `route /api/fs/dirs`, `route /api/workspaces/import-candidates` | ui/public/workspace-map/workspace-create.html:29 |
-| Workspaces | Scan interconnections | button | `route /api/projects/bulk`, `route /api/workspaces/scan` | ui/public/workspace-map/workspace-create.html:64 |
+| Workspaces | Add… | button | `route /api/workspaces/import-candidates` | ui/public/workspace-map/workspace-create.html:29 |
+| Workspaces | Scan interconnections | button | `route /api/workspaces/scan` | ui/public/workspace-map/workspace-create.html:64 |
 | Workspaces | Paths to add, one per line | field | `route /api/run-defaults`, `route /api/source-bindings`, `route /api/workspaces/import-candidates` | ui/public/workspace-map/workspace-create.html:33 |
-| Workspaces | Workspace name | field | `route /api/projects/bulk`, `route /api/run-defaults`, `route /api/source-bindings`, `route /api/workspaces/import-candidates`, `route /api/workspaces/scan` | ui/public/workspace-map/workspace-create.html:17 |
+| Workspaces | Workspace name | field | `route /api/run-defaults`, `route /api/source-bindings`, `route /api/workspaces/import-candidates`, `route /api/workspaces/scan` | ui/public/workspace-map/workspace-create.html:17 |
 | Workspaces | wiz-import-deep | toggle | `route /api/run-defaults`, `route /api/source-bindings`, `route /api/workspaces/import-candidates` | ui/public/workspace-map/workspace-create.html:31 |
 | Requirements | Archived | tab | `route /api/workspaces/:param/runs/:param/log` | walk #requirements |
 
@@ -194,14 +166,14 @@ Each MISSING control, grouped by its finding (`plans/rail/findings.md`, PLAN.md 
 | Tasks | Resolve in a terminal | button | `route /api/pr/remotes`, `route /api/terminal` | ui/public/app.js:27445 |
 | Tasks | Start one | button | `route /api/memory/team/:param/available/dismiss`, `route /api/policy/scopes`, `route /api/run-defaults`, `route /api/source-bindings` | ui/public/app.js:14092 |
 | Tasks | Update branch | button | `route /api/pr/remotes`, `route /api/terminal` | ui/public/app.js:27442 |
-| Tasks | (input) | field | `route /api/actions/launchers/browse`, `route /api/agents/generate/stop`, `route /api/fs/dirs`, `route /api/marketplaces/publish-targets`, `route /api/policy/scopes`, `route /api/projects/:param/policy/enable`, `route /api/projects/:param/sync/settings`, `route /api/projects/:param/team-metrics/enable`, `route /api/projects/bulk`, `route /api/projects/create`, `route /api/projects/probe`, `route /api/providers/copilot/login/:param`, `route /api/source-bindings`, `route /api/sources`, `route /api/sources/call`, `route /api/workspaces/:param/runs/:param/log` | ui/public/app.js:7398 |
+| Tasks | (input) | field | `route /api/actions/launchers/browse`, `route /api/agents/generate/stop`, `route /api/marketplaces/publish-targets`, `route /api/policy/scopes`, `route /api/projects/:param/policy/enable`, `route /api/projects/:param/sync/settings`, `route /api/projects/:param/team-metrics/enable`, `route /api/providers/copilot/login/:param`, `route /api/source-bindings`, `route /api/sources`, `route /api/sources/call`, `route /api/workspaces/:param/runs/:param/log` | ui/public/app.js:7398 |
 | Tasks | Details | menu item | `route /api/guardrails/:param` | ui/public/app.js:21027 |
 | Shell | Open feature | menu item | `route /api/run-groups/suggest-name` | ui/public/app.js:35188 |
 | Tasks | Publish … | toggle | `route /api/pr/remotes` | ui/public/app.js:26504 |
 | Tasks | Runs | menu item | `route /api/night-decisions` | ui/public/group-page.mjs:140 |
 | Feature (Shaper) | Create PR | dialog | `route /api/pr/crosslink`, `route /api/pr/mergeable`, `route /api/pr/remotes`, `route /api/runs/:param/base-check` | ui/public/history/shipit.html:6 |
 | Feature (Shaper) | Publish branch | dialog | `route /api/pr/remotes` | ui/public/history/shipit.html:111 |
-| Marketplace | Plugin | dialog | `route /api/git`, `route /api/guardrails/:param`, `route /api/policy/scopes`, `route /api/workspaces/:param/scan-models` | ui/public/marketplace/plugin.html:2 |
+| Marketplace | Plugin | dialog | `route /api/guardrails/:param`, `route /api/policy/scopes`, `route /api/workspaces/:param/scan-models` | ui/public/marketplace/plugin.html:2 |
 | Tasks | Cancel | button | `route /api/run-groups/suggest-name` | ui/public/runs/runs.html:32 |
 | Tasks | Group 0 | button | `route /api/run-groups/suggest-name` | ui/public/runs/runs.html:28 |
 | Tasks | Label | button | `route /api/run-groups/suggest-name` | ui/public/runs/runs.html:27 |
@@ -243,7 +215,7 @@ Each MISSING control, grouped by its finding (`plans/rail/findings.md`, PLAN.md 
 | Projects | Remove | button | `route /api/projects/:param/house-brief` | ui/public/house-brief-view.mjs:49 |
 | Projects | Add a line every rebuild keeps | field | `route /api/projects/:param/house-brief` | ui/public/house-brief-view.mjs:23 |
 | New run | New branch (optional) | field | `route /api/projects/:param/sync/settings` | ui/public/new-run/new.html:262 |
-| Projects | Add project | button | `route /api/projects/:param/team-metrics`, `route /api/projects/create`, `route /api/projects/probe` | ui/public/projects/project-add.html:64 |
+| Projects | Add project | button | `route /api/projects/:param/team-metrics` | ui/public/projects/project-add.html:64 |
 | Projects | Cancel | button | `route /api/projects/:param/team-metrics` | ui/public/projects/project-add.html:63 |
 | Tasks | + | button | `route /api/projects/:param/terminal` | ui/public/terminal-pane.mjs:578 |
 | Tasks | (term-member) | field | `route /api/projects/:param/terminal` | ui/public/terminal-pane.mjs:617 |
@@ -380,11 +352,11 @@ Each MISSING control, grouped by its finding (`plans/rail/findings.md`, PLAN.md 
 | Settings | titleModelEffective | setting | `setting titleModelEffective` | test/fixtures/settings-api-keys.json:undefined |
 | Settings | utilityModels | setting | `setting utilityModels` | test/fixtures/settings-api-keys.json:undefined |
 | Settings | workspaceScanFromRole | setting | `setting workspaceScanFromRole` | test/fixtures/settings-api-keys.json:undefined |
-| Settings | Browse… | button | `route /api/fs/dirs`, `setting projectsRoot` | ui/public/settings/settings.html:162 |
+| Settings | Browse… | button | `setting projectsRoot` | ui/public/settings/settings.html:162 |
 | Settings | Reset to default | button | `setting debugSpawnEnabled` | ui/public/settings/settings.html:168 |
 | Settings | Use defaults | button | `setting askMaxBudgetUsd`, `setting askMaxTurns` | ui/public/settings/settings.html:442 |
 | Settings | Per-turn cost cap (USD) | field | `setting askMaxBudgetUsd`, `setting askMaxTurns`, `setting askWeb` | ui/public/settings/settings.html:896 |
-| Settings | Projects root folder | field | `route /api/fs/dirs`, `setting projectsRoot` | ui/public/settings/settings.html:161 |
+| Settings | Projects root folder | field | `setting projectsRoot` | ui/public/settings/settings.html:161 |
 | Settings | Turn limit | field | `setting askMaxBudgetUsd`, `setting askMaxTurns`, `setting askWeb` | ui/public/settings/settings.html:887 |
 | Settings | debugSpawnEnabled | toggle | `setting debugSpawnEnabled` | ui/public/settings/settings.html:194 |
 | Settings | No cap | toggle | `setting askMaxBudgetUsd`, `setting askMaxTurns`, `setting askWeb` | ui/public/settings/settings.html:897 |
@@ -600,22 +572,22 @@ Each MISSING control, grouped by its finding (`plans/rail/findings.md`, PLAN.md 
 |---|---|---|---|---|
 | Marketplace | Install | button | `route /api/marketplaces/jobs/:param` | ui/public/marketplace/add-dialog.mjs:274 |
 | Marketplace | (input) | field | `route /api/marketplaces/jobs/:param` | ui/public/marketplace/add-dialog.mjs:77 |
-| Workflows | Cancel | button | `route /api/fs/dirs`, `route /api/marketplaces/publish-targets` | ui/public/workflows/export.html:99 |
+| Workflows | Cancel | button | `route /api/marketplaces/publish-targets` | ui/public/workflows/export.html:99 |
 | Workflows | Claude Code skill | button | `route /api/marketplaces/publish-targets` | ui/public/workflows/export.html:21 |
-| Workflows | Done | button | `route /api/fs/dirs`, `route /api/marketplaces/publish-targets` | ui/public/workflows/export.html:104 |
+| Workflows | Done | button | `route /api/marketplaces/publish-targets` | ui/public/workflows/export.html:104 |
 | Workflows | Export | button | `route /api/marketplaces/publish-targets` | ui/public/workflows/export.html:103 |
 | Workflows | JSON file | button | `route /api/marketplaces/publish-targets` | ui/public/workflows/export.html:20 |
 | Workflows | Marketplace | button | `route /api/marketplaces/publish-targets` | ui/public/workflows/export.html:39 |
 | Workflows | Preview | button | `route /api/marketplaces/publish-targets` | ui/public/workflows/export.html:102 |
 | Workflows | Project folder | button | `route /api/marketplaces/publish-targets` | ui/public/workflows/export.html:30 |
 | Workflows | Worca plugin | button | `route /api/marketplaces/publish-targets` | ui/public/workflows/export.html:22 |
-| Workflows | Export pipeline | dialog | `route /api/fs/dirs`, `route /api/marketplaces/publish-targets` | ui/public/workflows/export.html:2 |
-| Workflows | (defaults to the folder name) | field | `route /api/fs/dirs`, `route /api/marketplaces/publish-targets` | ui/public/workflows/export.html:60 |
-| Workflows | (defaults to the workflow name) | field | `route /api/fs/dirs`, `route /api/marketplaces/publish-targets` | ui/public/workflows/export.html:75 |
-| Workflows | /path/to/repo | field | `route /api/fs/dirs`, `route /api/marketplaces/publish-targets` | ui/public/workflows/export.html:54 |
-| Workflows | Marketplace | field | `route /api/fs/dirs`, `route /api/marketplaces/publish-targets` | ui/public/workflows/export.html:44 |
-| Workflows | export-include-agents | toggle | `route /api/fs/dirs`, `route /api/marketplaces/publish-targets` | ui/public/workflows/export.html:79 |
-| Workflows | export-keep-version | toggle | `route /api/fs/dirs`, `route /api/marketplaces/publish-targets` | ui/public/workflows/export.html:68 |
+| Workflows | Export pipeline | dialog | `route /api/marketplaces/publish-targets` | ui/public/workflows/export.html:2 |
+| Workflows | (defaults to the folder name) | field | `route /api/marketplaces/publish-targets` | ui/public/workflows/export.html:60 |
+| Workflows | (defaults to the workflow name) | field | `route /api/marketplaces/publish-targets` | ui/public/workflows/export.html:75 |
+| Workflows | /path/to/repo | field | `route /api/marketplaces/publish-targets` | ui/public/workflows/export.html:54 |
+| Workflows | Marketplace | field | `route /api/marketplaces/publish-targets` | ui/public/workflows/export.html:44 |
+| Workflows | export-include-agents | toggle | `route /api/marketplaces/publish-targets` | ui/public/workflows/export.html:79 |
+| Workflows | export-keep-version | toggle | `route /api/marketplaces/publish-targets` | ui/public/workflows/export.html:68 |
 | Workflows | Open as draft | toggle | `route /api/marketplaces/publish-targets` | ui/public/workflows/export.html:49 |
 | Marketplace | Add marketplace | button | `route /api/marketplaces/jobs/:param` | walk #marketplace |
 
@@ -688,18 +660,18 @@ None: no classic control reaches a `not offered live` or `not a dev capability` 
 
 ## Wired
 
-142 controls reach a route or key Stillhet carries; 805 are view controls (no route, no key) of a page whose place Stillhet has. Where they land:
+165 controls reach a route or key Stillhet carries; 805 are view controls (no route, no key) of a page whose place Stillhet has. Where they land:
 
 | Stillhet code or row | Controls |
 |---|---|
 | stillhet/live/chat-live.mjs | 61 |
 | stillhet/live/live-adapter.mjs | 26 |
+| stillhet/live/projects-live.mjs | 26 |
 | stillhet/live/market-live.mjs | 15 |
 | Stillhet live code reads it | 11 |
 | stillhet/live/workflow-live.mjs | 7 |
 | stillhet/live/insights-live.mjs | 6 |
 | stillhet/live/schedule-live.mjs | 3 |
-| stillhet/live/projects-live.mjs | 3 |
 | stillhet/live/task-live.mjs | 3 |
 | stillhet-wiring.md Chat capabilities: Directions to a followed run | 2 |
 | stillhet/host-app.js | 2 |

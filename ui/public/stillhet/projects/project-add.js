@@ -21,7 +21,7 @@
 
   function make(ctx) {
     const { R } = ctx;
-    const fresh = () => ({ way: 'folder', typed: '', err: '', probe: null, probeFor: '', gitOk: true, useGit: false, newName: '', newGit: true, where: '', newErr: '', newRefused: false, browser: null, review: null, reviewErr: '' });
+    const fresh = () => ({ way: 'folder', typed: '', err: '', probe: null, probeFor: '', probeErr: '', gitOk: true, useGit: false, newName: '', newGit: true, where: '', newErr: '', newRefused: false, browser: null, review: null, reviewErr: '' });
     let s = fresh(), probeSeq = 0, newSeq = 0, dirSeq = 0, probeT = 0, newT = 0;
     const live = () => ctx.live();
     // live but the module is not up yet: nothing fake, every action says so (D8)
@@ -35,10 +35,12 @@
     async function probeNow(v) {
       const n = ++probeSeq;
       clearTimeout(probeT);
-      if (!v || REPO.test(v) || ctx.pathWrong(v, true)) { s.probe = null; s.probeFor = v; return null; }
+      if (!v || REPO.test(v) || ctx.pathWrong(v, true)) { s.probe = null; s.probeFor = v; s.probeErr = ''; return null; }
       const a = ctx.onLive() ? (live() ? await live().probe(v) : { ok: false }) : { ok: true, probe: { path: v, exists: true, isDir: true, vcs: 'git' } };
       if (n !== probeSeq) return undefined;   // a newer path was typed: this answer is stale
       s.probe = a.ok ? a.probe : null; s.probeFor = v;
+      s.probeErr = !a.ok && a.field ? a.field : '';   // a refused probe: its words are the field's error, and Add stays off
+      if (s.probeErr) s.err = s.probeErr;
       ctx.draw();
       return s.probe;
     }
@@ -83,7 +85,8 @@
       const b = s.browser, paths = b.multiple ? [...b.picked.keys()] : [b.path];
       s.browser = null;
       if (paths.length === 1) { s.way = 'folder'; s.typed = paths[0]; s.err = ''; ctx.draw(); probeNow(paths[0]); focus('#pj-hand-v'); return; }
-      const known = (p) => ctx.projects().find((x) => x.path === p || x.devPath === p);
+      const abs = (q) => (q && b.home && /^~(\/|$)/.test(q) ? b.home + q.slice(1) : q);   // a ~/ path the store keeps, as the folder browser gives it (absolute)
+      const known = (p) => ctx.projects().find((x) => [x.path, x.devPath].some((q) => q === p || abs(q) === p));
       s.review = paths.map((path) => { const k = known(path); return { path, name: R.folderName(path), include: !k, status: '', reason: k ? `already registered as “${ctx.nameOf(k)}”` : '' }; });
       s.reviewErr = '';
       ctx.draw();
@@ -101,7 +104,7 @@
       if (!REPO.test(v)) {
         const p = s.probeFor === v && s.probe ? s.probe : await probeNow(v);
         if (p === undefined) return;   // a newer probe (a second press) carries on
-        const why = probeWhy(p);
+        const why = s.probeErr || probeWhy(p);
         if (why) { s.err = why; ctx.draw(); focus('#pj-hand-v'); return; }
       }
       const from = location.hash;
@@ -159,29 +162,27 @@
 
     // ---- the form ----
     const WAYS = [['folder', 'One folder'], ['new', 'New folder'], ['many', 'Several folders…']];
-    const gitSwitch = (on, hook, why) => `<span class="fb-way">${R.switchButton({ on, label: 'Use git', why, attrs: { [hook]: '' } })}<span>Use git</span></span>`;
     function body() {
       const b = busy();
       if (s.way === 'new') {
         return R.field({ id: 'pj-new-name', label: 'Its name', placeholder: 'my-project', value: s.newName, error: s.newErr, hint: s.where ? `Makes ${s.where}` : '', attrs: { maxlength: NAME_MAX, 'data-keep': 'pj-hand:new:' } })
-          + (s.gitOk ? gitSwitch(s.newGit, 'data-pa-newgit', 'Runs git init in the new folder') : '')
+          + (s.gitOk ? R.folderWay({ git: { on: s.newGit, hook: 'data-pa-newgit', why: 'Runs git init in the new folder' } }) : '')
           + R.confirmActions({ yes: b || 'Create', busy: !!b || s.newRefused });
       }
       if (s.way === 'many') {
-        if (!s.review) return `<span class="fb-way">${R.button({ label: 'Browse folders…', kind: 'quiet', icon: R.icon('folder', 14), attrs: { 'data-pa-browse': '', title: 'Pick folders on this computer' } })}</span>${R.confirmActions({ yes: 'Browse folders…' })}`;
-        return `${s.reviewErr ? `<p class="fb-err" role="alert">${R.esc(s.reviewErr)}</p>` : ''}${R.folderReview({ rows: s.review, saving: !!b })}`;
+        if (!s.review) return R.folderWay({ pick: { label: 'Browse folders…', hook: 'data-pa-browse', title: 'Pick folders on this computer' } }) + R.confirmActions({ yes: 'Browse folders…' });
+        return R.folderReview({ rows: s.review, saving: !!b, error: s.reviewErr });
       }
       const m = model();
       return R.field({ id: 'pj-hand-v', label: 'Folder or repository', placeholder: '~/src/your-project', value: s.typed, error: s.err, attrs: { maxlength: 200, 'data-keep': 'pj-hand:project:' } })
-        + `<span class="fb-way">${R.button({ label: 'Choose folder…', kind: 'quiet', icon: R.icon('folder', 14), attrs: { 'data-pa-choose': '', title: 'Pick a folder on this computer' } })}</span>`
+        + R.folderWay({ pick: { label: 'Choose folder…', hook: 'data-pa-choose', title: 'Pick a folder on this computer' } })
         + m.html
-        + (m.useGit ? gitSwitch(s.useGit, 'data-pa-git', 'Runs git init in it when it is added') : '')
-        + R.confirmActions({ yes: b || 'Add', busy: !!b || m.refused });
+        + (m.useGit ? R.folderWay({ git: { on: s.useGit, hook: 'data-pa-git', why: 'Runs git init in it when it is added' } }) : '')
+        + R.confirmActions({ yes: b || 'Add', busy: !!b || m.refused || !!(s.probeErr && s.probeFor === s.typed) });
     }
     function browserHtml() {
       const b = s.browser; if (!b) return '';
-      const html = R.folderBrowser({ multiple: b.multiple, path: b.path, parent: b.parent, dirs: b.dirs, picked: [...b.picked.keys()], state: b.state, error: b.error, note: b.note, roots: b.roots, id: 'fb-t' });
-      return b.ask ? html.replace('<div class="dlg-body">', `<div class="dlg-body">${R.confirmStrip({ text: `Drop ${b.picked.size} picked folder${b.picked.size === 1 ? '' : 's'}?`, yes: 'Drop them', no: 'Keep picking', id: 'fb-ask-t' })}`) : html;
+      return R.folderBrowser({ multiple: b.multiple, path: b.path, parent: b.parent, dirs: b.dirs, picked: [...b.picked.keys()], state: b.state, error: b.error, note: b.note, roots: b.roots, ask: b.ask, id: 'fb-t' });
     }
     const html = () => `<div class="card-form">${R.confirmForm({ form: 'hand', id: 'pj-hand-t', text: 'Add a project by hand', body: R.segmented({ label: 'How to add it', hook: 'pa-way', items: WAYS.map(([id, label]) => ({ id, label, pressed: s.way === id })) }) + body() })}${browserHtml()}</div>`;
 
@@ -245,7 +246,7 @@
     // typing: the probe and the dry run follow the field, after a short wait
     document.addEventListener('input', (e) => {
       const t = e.target;
-      if (t.id === 'pj-hand-v') { s.typed = t.value.trim(); s.err = ''; probeSoon(s.typed); }
+      if (t.id === 'pj-hand-v') { s.typed = t.value.trim(); s.err = ''; s.probeErr = ''; probeSoon(s.typed); }
       else if (t.id === 'pj-new-name') { s.newName = t.value.trim(); s.newErr = ''; s.newRefused = false; checkSoon(); }
       else if (t.dataset?.frName !== undefined) { const r = s.review?.[Number(t.dataset.frName)]; if (r && r.status !== 'added') r.name = t.value.trim(); }
     });

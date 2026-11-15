@@ -293,6 +293,12 @@
           "needs": [
             "what a bulk add did, in one line"
           ]
+        },
+        {
+          "code": "ui/public/design-system/components/folder-browser.mjs#folderWay",
+          "needs": [
+            "an add way's own controls on the form: Choose folder…, Browse folders…, Use git"
+          ]
         }
       ]
     },

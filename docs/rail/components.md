@@ -149,6 +149,7 @@ other library calls, never a person's text: a person's text goes through the lib
 | A folder's name from its path | `folderName` | FolderBrowser |
 | What a typed folder is, under its field: Git, Folder, Not found | `folderProbe` | FolderBrowser |
 | Picked folders reviewed before they are added: a name each, Added or why skipped | `folderReview` | FolderBrowser |
+| An add way's own controls on the form: Choose folder…, Browse folders…, Use git | `folderWay` | FolderBrowser |
 | What a bulk add did, in one line | `reviewSummary` | FolderBrowser |
 | A document's name that opens it | `documentLink` | Text link |
 | The tick after something was copied | `copied` | CopyButton |

@@ -28,11 +28,13 @@ export const PJ_LISTS = Object.freeze({
   ...Object.fromEntries(Object.values(KEYS).flatMap((k) => [[`/api/projects/${k}/settings`, SETTINGS], [`/api/projects/${k}/tags/defaults`, { tags: ['team:web'], labels: [] }]])),
 });
 
+// COV-1: Add probes a typed folder first, and a refused probe blocks Add (as classic): by default every folder is a git one
+const PROBE_GIT = { exists: true, isDir: true, vcs: 'git' };
 /** The live app host on Projects: `write(url, body, method)` answers a write, `hold(url)` holds any request back,
  *  `read(url)` answers a GET itself, `beforeScripts(win)` runs before the pages load (a timer the test fires itself). Returns liveHost's { w, d, calls, sockets }. */
 export async function projectsHost({ hash = '#projects', write = () => [200, { ok: true }], hold = () => null, read = () => null, sources = {}, beforeScripts = () => {} } = {}) {
   // jsdom's window has no structuredClone (a browser's has): the workspace draft copies its projects with it
-  const h = await liveHost({ hash: '#chat', sources: { ...clone(SOURCES), ...clone(PJ_SOURCES), ...sources }, lists: { ...LISTS, ...clone(PJ_LISTS) }, write, hold, read, beforeScripts: (win) => { win.structuredClone ||= structuredClone; beforeScripts(win); } });
+  const h = await liveHost({ hash: '#chat', sources: { ...clone(SOURCES), ...clone(PJ_SOURCES), ...sources }, lists: { ...LISTS, ...clone(PJ_LISTS) }, write, hold, read: (u) => read(u) ?? (u.startsWith('/api/projects/probe?') ? [200, PROBE_GIT] : null), beforeScripts: (win) => { win.structuredClone ||= structuredClone; beforeScripts(win); } });
   await go(h.w, hash, 200);
   await settle(120);
   return h;

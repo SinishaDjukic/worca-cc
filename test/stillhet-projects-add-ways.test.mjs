@@ -16,12 +16,13 @@ const ROOT = { root: '/w/projects', rootDisplay: '~/worca/projects' };
 const DIRS = {
   '': { path: '/src', parent: '/', home: '/home/me', dirs: [{ name: 'a', path: '/src/a' }, { name: 'b', path: '/src/b' }, { name: 'c', path: '/src/c' }] },
   '/src/a': { path: '/src/a', parent: '/src', home: '/home/me', dirs: [] },
+  '/home/me': { path: '/home/me', parent: '/home', home: '/home/me', dirs: [{ name: 'x', path: '/home/me/x' }, { name: 'y', path: '/home/me/y' }] },
 };
 const dirsOf = (u) => { const p = decodeURIComponent(u.split('path=')[1] || ''); return DIRS[p] ? [200, DIRS[p]] : [400, { error: 'no such directory' }]; };
 
 /** The live host on Projects with the add form open on `way`; `list` is the store's projects (it grows with each add). */
-async function addHost(way, { write = () => [200, { ok: true }], read = () => null, probe = () => [200, { exists: true, isDir: true, vcs: 'git' }] } = {}) {
-  const st = { list: clone(PJ_SOURCES.projects.projects) };
+async function addHost(way, { write = () => [200, { ok: true }], read = () => null, probe = () => [200, { exists: true, isDir: true, vcs: 'git' }], more = [] } = {}) {
+  const st = { list: [...clone(PJ_SOURCES.projects.projects), ...more] };
   const h = await projectsHost({ write: (u, b, m) => write(u, b, m, st),
     read: (u) => (u === '/api/projects' ? [200, { projects: st.list }] : u.startsWith('/api/fs/dirs') ? dirsOf(u) : u.startsWith('/api/projects/probe') ? probe(decodeURIComponent(u.split('path=')[1])) : read(u)) });
   h.st = st;
@@ -117,6 +118,18 @@ test('COV-1 the probe line: Not found blocks Add; a plain folder shows Use git a
   assert.deepEqual(sent(h.calls).at(-1), ['POST', '/api/projects', { name: 'plain', path: '/src/plain', useGit: true }]);
 });
 
+test('COV-1 the probe line: a refused probe (400) shows its words in the field and blocks Add', async () => {
+  const h = await addHost('folder', { probe: (p) => (p === '/etc/x' ? [400, { error: 'path is outside the allowed folders' }] : [200, { exists: true, isDir: true, vcs: 'git' }]) });
+  type(h, '#pj-hand-v', '/etc/x'); await settle(400);
+  assert.match(page(h.d).querySelector('.fld-err')?.textContent || '', /outside the allowed folders/);
+  assert.equal(yes(h.d).disabled, true, 'a refused probe blocks Add');
+  yes(h.d).click(); await settle(200);
+  assert.equal(sent(h.calls).filter(([m, u]) => m === 'POST' && u === '/api/projects').length, 0, 'nothing was added');
+  type(h, '#pj-hand-v', '/src/ok'); await settle(400);
+  assert.equal(page(h.d).querySelector('.fld-err'), null, 'a new path clears it');
+  assert.equal(yes(h.d).disabled, false);
+});
+
 const bulk = (skip = () => false) => (u, b, m, st) => {
   if (u !== '/api/projects/bulk') return [200, { ok: true }];
   const results = b.projects.map((p, index) => (skip(p) ? { index, status: 'skipped', name: p.name, path: p.path, reason: 'that name is taken' } : { index, status: 'added', key: `${p.name}-1234abcd`, name: p.name, path: p.path, vcs: 'git' }));
@@ -170,6 +183,17 @@ test('COV-1 Several folders: a skipped row keeps its reason; renamed and added a
   await until(() => h.w.location.hash === '#projects/b2-1234abcd');
   assert.deepEqual(sent(h.calls).at(-1), ['POST', '/api/projects/bulk', { projects: [{ name: 'b2', path: '/src/b' }] }]);
   assert.equal(h.w.location.hash, '#projects/b2-1234abcd', 'the one project added: its page');
+});
+
+test('COV-1 Several folders: a folder the store keeps as ~/x is matched by its absolute path and starts unticked', async () => {
+  const h = await addHost('many', { write: bulk(), more: [rec('x-1234abcd', 'x', '~/x')] });
+  yes(h.d).click(); await settle(150);
+  page(h.d).querySelector('.fb [data-fb-home]').click(); await settle(150);
+  for (const p of ['/home/me/x', '/home/me/y']) { page(h.d).querySelector(`[data-fb-pick="${p}"]`).click(); await settle(30); }
+  page(h.d).querySelector('.fb [data-dialog="yes"]').click(); await settle(100);
+  assert.equal(page(h.d).querySelector('[data-fr-pick="0"]').checked, false, '~/x is already registered');
+  assert.match(page(h.d).querySelector('[data-fr-row="0"]').textContent, /already registered as “x”/);
+  assert.equal(page(h.d).querySelector('[data-fr-pick="1"]').checked, true);
 });
 
 test('COV-1 the folder browser: a 400 shows its words in the dialog and the listing stays', async () => {

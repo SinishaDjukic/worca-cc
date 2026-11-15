@@ -8,7 +8,8 @@ import { checkbox } from './checkbox.mjs';
 import { field } from './field.mjs';
 import { chip } from './chip.mjs';
 import { textLink } from './text-link.mjs';
-import { confirmActions } from './confirm-strip.mjs';
+import { confirmActions, confirmStrip } from './confirm-strip.mjs';
+import { switchButton } from './settings-row.mjs';
 import { listState } from './list-parts.mjs';
 import { icon } from './icons.mjs';
 
@@ -29,19 +30,21 @@ const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
  * @param {string} [o.error]      the status line: why the last load failed (the listing stays)
  * @param {string} [o.note]       the limited-scope note
  * @param {string[]} [o.roots]    the folders it may open, when limited
+ * @param {boolean} [o.ask]      multi: Escape with picks asks first, in a ConfirmStrip at the top of the body
  * @param {string} [o.id]
  */
-export function folderBrowser({ multiple = false, path = '', parent = null, dirs = [], picked = [], state = 'ready', error = '', note = '', roots = [], id = 'fb-t' } = {}) {
+export function folderBrowser({ multiple = false, path = '', parent = null, dirs = [], picked = [], state = 'ready', error = '', note = '', roots = [], ask = false, id = 'fb-t' } = {}) {
   const n = picked.length;
   const nav = `<div class="fb-nav">${button({ label: 'Up', kind: 'quiet', attrs: { 'data-fb-go': parent || null, disabled: parent == null, title: parent ? `Opens ${parent}` : 'This is the top' } })}${button({ label: 'Home', kind: 'quiet', attrs: { 'data-fb-home': '', title: 'Opens your home folder' } })}<span class="fb-path"${attrs({ title: path || null })}>${esc(path)}</span></div>`;
   const scope = note ? `<p class="fb-note">${esc(note)}${roots.length > 1 ? ` ${roots.map((r) => button({ label: folderName(r) || r, kind: 'quiet', attrs: { 'data-fb-go': r, title: r } })).join('')}` : ''}</p>` : '';
   const row = (d) => `<li class="fb-row">${multiple ? checkbox({ checked: picked.includes(d.path), attrs: { 'aria-label': `Select ${d.name}`, 'data-fb-pick': d.path } }) : ''}${button({ label: d.name, kind: 'quiet', icon: icon('folder', 14), attrs: { 'data-fb-go': d.path, title: `Opens ${d.path}` } })}</li>`;
   const list = state === 'loading' ? listState({ state: 'loading', noun: 'folders' }) : dirs.length ? `<ul class="fb-list">${dirs.map(row).join('')}</ul>` : '<p class="fb-none">No subfolders.</p>';
+  const asking = ask && n ? confirmStrip({ text: `Drop ${plural(n, 'picked folder')}?`, yes: 'Drop them', no: 'Keep picking', id: `${id}-ask` }) : '';
   return dialog({
     title: multiple ? 'Select folders' : 'Select a folder',
     id,
     cls: 'fb',
-    body: `${nav}${scope}${list}`,
+    body: `${asking}${nav}${scope}${list}`,
     yes: multiple ? `Add ${n} selected` : 'Select this folder',
     status: esc(error || (multiple ? `${plural(n, 'folder')} selected` : '')),
     hooks: { yes: { disabled: (multiple && !n) || !path || state === 'loading' } },
@@ -72,6 +75,16 @@ export function folderProbe(probe, { git = true } = {}) {
   return { html, refused, useGit, ...(note ? { note } : {}), action };
 }
 
+/**
+ * One way's controls on the add form's row: a folder button (Choose folder…, Browse folders…) and/or the Use git switch.
+ * @param {{pick?:{label:string, hook:string, title:string}, git?:{on:boolean, hook:string, why:string}}} o  hook: a data- attribute
+ */
+export function folderWay({ pick = null, git = null } = {}) {
+  const p = pick ? button({ label: pick.label, kind: 'quiet', icon: icon('folder', 14), attrs: { [pick.hook]: '', title: pick.title } }) : '';
+  const g = git ? `${switchButton({ on: !!git.on, label: 'Use git', why: git.why, attrs: { [git.hook]: '' } })}<span>Use git</span>` : '';
+  return `<span class="fb-way">${p}${g}</span>`;
+}
+
 /** Words of the review list: nothing ticked, and what a bulk add did. */
 export const REVIEW_EMPTY = 'Tick at least one folder to add.';
 /**
@@ -91,8 +104,9 @@ export function reviewSummary({ added = [], skipped = [] } = {}) {
  * @param {object} o
  * @param {{path:string, name:string, include:boolean, status?:''|'added'|'skipped', reason?:string}[]} o.rows
  * @param {boolean} [o.saving]
+ * @param {string} [o.error]   why nothing was sent (REVIEW_EMPTY, a refusal), above the list
  */
-export function folderReview({ rows = [], saving = false } = {}) {
+export function folderReview({ rows = [], saving = false, error = '' } = {}) {
   const pending = rows.filter((r) => r.include && r.status !== 'added').length;
   const row = (r, i) => {
     const added = r.status === 'added';
@@ -100,5 +114,5 @@ export function folderReview({ rows = [], saving = false } = {}) {
     return `<li class="fb-rev"${attrs({ 'data-fr-row': String(i) })}>${checkbox({ checked: !!r.include, disabled: added || saving, attrs: { 'aria-label': `Add ${r.name || folderName(r.path)}`, 'data-fr-pick': String(i) } })}${field({ id: `fr-name-${i}`, label: 'Its name', value: r.name, quietLabel: true, attrs: { maxlength: 80, 'data-fr-name': String(i), 'data-keep': `fr:${i}`, disabled: added || saving } })}<span class="fb-rev-path"${attrs({ title: r.path })}>${esc(r.path)}</span>${status}</li>`;
   };
   const acts = confirmActions({ yes: saving ? 'Adding…' : `Add ${plural(pending, 'project')}`, busy: saving || !pending });
-  return `<ul class="fb-review">${rows.map(row).join('')}</ul>${acts}`;
+  return `${error ? `<p class="fb-err" role="alert">${esc(error)}</p>` : ''}<ul class="fb-review">${rows.map(row).join('')}</ul>${acts}`;
 }
