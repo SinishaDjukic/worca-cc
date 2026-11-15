@@ -2668,10 +2668,10 @@ async function listAllPipelinesNow(opts, { batchSize = 16 } = {}) {
            ${RUN_ENGINE_SQL} AS run_engine,
            ${OUTCOME_NOTE_SQL}
     FROM pipelines
-    WHERE archived_at IS ${opts.archived ? 'NOT NULL' : 'NULL'} AND deleted_at IS NULL
+    WHERE archived_at IS ${opts.archived ? 'NOT NULL' : 'NULL'} AND deleted_at IS NULL${opts.id ? ' AND id = ?' : ''}
     ORDER BY COALESCE(updated_at, started_at) DESC, project_key, id
     LIMIT ?
-  `).all(Number.isInteger(opts.limit) && opts.limit > 0 ? opts.limit : -1); // -1 = unlimited (SQLite)
+  `).all(...(opts.id ? [opts.id] : []), Number.isInteger(opts.limit) && opts.limit > 0 ? opts.limit : -1); // -1 = unlimited (SQLite); opts.id: one row
 
   const metaCache = new Map(); // store key -> meta object (or null)
   const meta = (k) => {

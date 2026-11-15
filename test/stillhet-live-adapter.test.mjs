@@ -176,8 +176,8 @@ test('ask-done for a chat that is not open lights its dot through a threads refe
   const n = r.calls.length;
   r.frame(r.sockets[0], { type: 'ask-done', threadId: 'ask_2', messageId: 'm', seq: 1 });
   await r.tick(250);
-  assert.deepEqual(r.calls.slice(n).map((c) => c.u), [URLS.threads, URLS.runLinks]);
-  assert.deepEqual(r.log.filter((x) => x[0] === 'load').slice(-2).map((x) => x[1]), [['chats', 'chatsNeeds'], ['chats']]);
+  assert.deepEqual(r.calls.slice(n).map((c) => c.u), [URLS.threads, URLS.runLinks, URLS.budget], 'a chat turn may have moved the spend');
+  assert.deepEqual(r.log.filter((x) => x[0] === 'load' && !x[1].includes('costs')).slice(-2).map((x) => x[1]), [['chats', 'chatsNeeds'], ['chats']]);
 });
 
 test('a socket that closes before its hello: the reconnect hello is the first load; frames apply and *-changed refetches', async () => {

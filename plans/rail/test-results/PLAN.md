@@ -301,7 +301,7 @@ Each is blocked by its decision. "Drop" closes it with its row in the gate basel
 
 **A. No action without backend**
 - **Rule:** a live control never shows demo data, a would-answer, or a success that was only local.
-- **A1 (B1.10):** a gate test reads every RailWould site (70 grep hits in 14 Stillhet files; the owner counts 66). It also reads the 19 `wire to` rows in `plans/rail/stillhet-wiring.md` § Dev surfaces.
+- **A1 (B1.10):** a gate test reads every demo-answer call site in Stillhet code (70 grep hits in 14 files; the owner counts 66), each of which must never reach a live control. It also reads the 19 `wire to` rows in `plans/rail/stillhet-wiring.md` § Dev surfaces.
   - It classifies each site as wired, refused with a reason, not in Stillhet yet (words only), or prototype-only.
   - The live instance fails on any site that is not classified.
   - The baseline can only shrink.
