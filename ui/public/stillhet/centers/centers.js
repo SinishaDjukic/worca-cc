@@ -279,7 +279,7 @@
   let liveModels = [];
   function loadFlows() {
     if (!W.live) return;
-    if (!liveFlows) window.RailChatLive?.catalog('workflows').then((r) => { if (!r?.ok) return; liveFlows = (r.data?.workflows || []).map((x) => ({ id: x.id, title: x.name || x.id, steps: [], auto: x.auto === true || x.id === 'wf_auto', agents: (Array.isArray(x.nodes) ? x.nodes : []).filter((n) => n && n.kind === 'agent' && n.id).map((n) => n.id) })); if (form) paintForm(); });
+    if (!liveFlows) window.RailChatLive?.catalog('workflows').then((r) => { if (!r?.ok) return; liveFlows = (r.data?.workflows || []).map((x) => ({ id: x.id, title: x.name || x.id, steps: [], auto: x.auto === true || x.id === 'wf_auto', agents: (Array.isArray(x.nodes) ? x.nodes : []).filter((n) => n && n.kind === 'agent' && n.id).map((n) => n.id) })); if (form) { applyActiveFlow(); paintForm(); } });
     if (!liveModels.length) window.RailChatLive?.catalog('models').then((r) => { if (!r?.ok) return; liveModels = (r.data?.models || []).filter((m) => m && m.id).map((m) => ({ id: m.id, label: m.label || m.id, engine: m.engine || 'claude' })); if (form) paintForm(); });
   }
   const AGENTS_OWN = 'the workflow\'s own';
@@ -290,6 +290,204 @@
     const engine = engines().find((e) => e.label === form.agent)?.id || 'claude';
     return liveModels.filter((m) => m.engine === engine).map((m) => ({ text: `${m.label} for every step`, model: m.id }));
   }
+  // ---- New task's run options (COV-2; docs/rail/forms.md form.run-options) ----
+  // Every read and write is RailRunOptionsLive's (dev's routes, live/run-options-live.mjs); its words are RailRunOptions'
+  // (the same module's helpers). The demo answers the same calls with sample data in dev's shapes, so one path draws both.
+  const RO = () => window.RailRunOptions || null;
+  const DEMO_PRESETS = [
+    { id: 'rp_bugfix', name: 'Bug fix', scope: { kind: 'global', ref: null }, setup: { workflowId: 'wf_fix', engine: 'claude', syncBeforeStart: true, tags: ['bugfix'] } },
+    { id: 'rp_docs', name: 'Docs pass', scope: { kind: 'project', ref: 'worca-cc' }, setup: { workflowId: 'wf_docs', engine: 'codex', sourceBranch: 'dev', guardrailsId: 'strict' } },
+    { id: 'rp_billing', name: 'Billing slice', scope: { kind: 'global', ref: null }, setup: { workflowId: 'wf_feature', engine: 'claude', guardrailsId: 'billing-ci' } },
+  ];
+  const DEMO_TICKETS = [{ id: 'BILL-212', title: 'BILL-212 Invoices export drops the VAT column', body: 'The CSV export of invoices leaves out the VAT column since the last release.' }, { id: 'BILL-219', title: 'BILL-219 Retry failed card payments once', body: 'A declined card payment is retried once, an hour later, before the invoice is marked unpaid.' }];
+  const ok = (data) => Promise.resolve({ ok: true, data });
+  const DEMO_OPT = {
+    defaults: (dir) => ok({ engine: { value: 'claude' }, tags: [], projectKey: dir.replace(/^\/demo\//, '') }),
+    config: () => ok({ config: {} }),
+    setActiveWorkflow: () => ok({}), resetWorkflow: () => ok({}), saveWorkflowDefaults: () => ok({}), saveTagDefaults: (k, tags) => ok({ tags }),
+    presets: () => ok({ presets: DEMO_PRESETS }),
+    checkPreset: (id) => ok({ broken: id === 'rp_billing' ? [{ item: 'guardrails', ref: 'billing-ci', message: 'Guardrail set billing-ci no longer exists', reset: true }] : [] }),
+    updatePreset: (id) => ok({ preset: DEMO_PRESETS.find((p) => p.id === id) }), duplicatePreset: (id) => ok({ preset: { ...DEMO_PRESETS.find((p) => p.id === id), id: `${id}_copy`, name: `${DEMO_PRESETS.find((p) => p.id === id).name} (copy)` } }),
+    sources: () => ok({ sources: [{ type: 'plugin', plugin: 'jira', sourceId: 'issues', displayName: 'Jira', inputs: [], multiProfile: false, profiles: [] }] }),
+    binding: () => ok({ profile: null, via: 'only' }), bind: () => ok({}),
+    call: (plugin, sourceId, op, args) => ok(op === 'getTask' ? DEMO_TICKETS.find((t) => t.id === args.id) : { tasks: DEMO_TICKETS.filter((t) => t.title.toLowerCase().includes((args.search || '').toLowerCase())) }),
+    policyNotes: () => ok({ policy: { home: 'acme/worca-policy', caps: { pipeline: { kind: 'hard', value: 20 } } }, notes: [{ level: 'warn', text: 'Guardrails Normal rank below the team minimum (Strict). The run proceeds and is recorded as off-policy.' }] }),
+  };
+  const OPT = () => (!RO() ? null : W.live ? window.RailRunOptionsLive || null : DEMO_OPT);
+  let presetList = null, sourceList = null;   // per form open: dev's presets and plugin task sources (null: not read, or refused)
+  const dirOf = (project = form.project) => (project === 'No project' ? '' : W.live ? window.RailTaskLive?.projectDirOf(project) || '' : `/demo/${project}`);
+  const engineLabelOf = (id) => (W.live ? engines().find((e) => e.id === id)?.label || '' : id ? id[0].toUpperCase() + id.slice(1) : '');
+  const engineIdOf = (label) => (W.live ? engines().find((e) => e.label === label)?.id || '' : String(label || '').toLowerCase());
+  const slugOf = (t) => `wf_${String(t).toLowerCase().replace(/[^a-z0-9]+/g, '_')}`;
+  const flowId = (title = form.workflow) => (W.live ? flows().find((x) => x.title === title)?.id || '' : title === 'Default' ? '' : slugOf(title));
+  const flowOfId = (id) => flows().find((x) => (W.live ? x.id : slugOf(x.title)) === id) || null;
+  // the project's own workflow (dev's activeWorkflowId) preselects the Workflow picker, once the list holds it
+  function applyActiveFlow() { const f = form; if (!f || f.workflowTouched || f.preset || !f.activeWf) return; const w = flowOfId(f.activeWf); if (w) f.workflow = w.title; }
+  const fits = () => (presetList || []).filter((p) => RO().presetFits(p, form.projectKey));
+  // the picks a preset holds, as the form shows them now (presetModified compares two of these)
+  function presetView() {
+    const live = runFields(form.project === 'No project');
+    return { workflowId: flowId() || '', engine: engineIdOf(form.agent) || '', sourceBranch: live.sourceBranch || '', syncBeforeStart: W.live ? (live.syncBeforeStart ?? null) : form.source !== 'my local copy', pr: live.pr || null, tags: form.tags.split(',').map((x) => x.trim()).filter(Boolean), sameAsSource: !!form.carried.sameAsSource };
+  }
+  function loadOptions() {
+    const o = OPT(), f = form; if (!o || !f || f.kind !== 'task') return;
+    presetList = null; sourceList = null;
+    o.presets().then((r) => { if (form !== f) return; presetList = r.ok && Array.isArray(r.data?.presets) ? r.data.presets : null; paintForm(); });
+    o.sources().then((r) => { if (form !== f) return; sourceList = r.ok && Array.isArray(r.data?.sources) ? r.data.sources.filter((s) => s && s.type === 'plugin' && s.plugin && s.sourceId) : null; paintForm(); });
+    loadProject();
+  }
+  // dev's saved run defaults and the project's own workflow, read on open and on every project pick; a read that lands after
+  // the form or its project changed is dropped, and a control the person touched is never overwritten
+  function loadProject() {
+    const o = OPT(), f = form; if (!o || !f || f.kind !== 'task') return;
+    const project = f.project, dir = dirOf(project);
+    Object.assign(f, { projectKey: '', defaultEngine: '', activeWf: '', policy: null, defaultsFor: project, policyGen: (f.policyGen || 0) + 1 });   // the old project's policy read is dropped
+    if (!dir) return;
+    o.defaults(dir).then((r) => {
+      if (form !== f || f.project !== project || !r.ok) return;
+      const d = RO().defaultsOf(r.data); f.projectKey = d.projectKey; f.defaultEngine = d.engine;
+      if (!f.agentTouched && !f.preset && d.engine && engineLabelOf(d.engine)) f.agent = engineLabelOf(d.engine);
+      if (!f.tagsTouched && !f.preset && d.tags.length) f.tags = d.tags.join(', ');
+      loadPolicy(); paintForm();
+    });
+    o.config(dir).then((r) => { if (form !== f || f.project !== project || !r.ok) return; f.activeWf = String(r.data?.config?.activeWorkflowId || ''); applyActiveFlow(); paintForm(); });
+  }
+  // the team policy notes for the project, its guardrails and the Agents pick; only the newest read paints
+  function loadPolicy() {
+    const o = OPT(), f = form; if (!o || !f) return;
+    const n = (f.policyGen = (f.policyGen || 0) + 1);
+    if (!f.projectKey) { f.policy = null; return; }
+    const model = agentModel();
+    o.policyNotes({ projectKey: f.projectKey, guardrailsId: f.carried.guardrailsId || '', models: model ? [model] : [] }).then((r) => { if (form !== f || f.policyGen !== n) return; f.policy = r.ok ? RO().policyNoteOf(r.data) : null; paintForm(); });
+  }
+  const agentModel = () => (W.live ? liveAgentPicks().find((x) => x.text === form.agents)?.model || '' : form.agents === AGENTS_OWN ? '' : form.agents.split(' ')[0].toLowerCase());
+  const agentIds = () => (W.live ? liveFlow()?.agents || [] : form.workflow === 'Default' ? [] : ['plan', 'build', 'review']);
+  const said = (k, text) => { const f = form; f[k] = text; paintForm(); setTimeout(() => { if (form === f && f[k] === text) { f[k] = ''; paintForm(); } }, 2000); };
+  const failWords = (r) => (/^HTTP \d+$/.test(r.error || '') ? `Could not save (${r.error})` : r.error || 'Could not save');
+  function saveTags() {
+    const o = OPT(), f = form; if (!o || !f.projectKey) return;
+    o.saveTagDefaults(f.projectKey, f.tags.split(',').map((x) => x.trim()).filter(Boolean)).then((r) => { if (form === f) said('tagsSaid', r.ok ? 'Saved' : failWords(r)); });
+  }
+  function saveFlow(reset) {
+    const o = OPT(), f = form, id = flowId(), dir = dirOf(); if (!o || !id || !dir) return;
+    const model = agentModel();
+    const p = reset ? o.resetWorkflow(dir, id) : o.saveWorkflowDefaults(id, Object.fromEntries(agentIds().map((n) => [n, { model }])), dir);
+    p.then((r) => { if (form === f) said('flowSaid', r.ok ? (reset ? 'Reset' : 'Saved') : `Could not ${r.step || 'reset to the workflow\'s defaults'}: ${r.error}`); });
+  }
+  // ---- presets (D7): picked, applied and checked here; Update and Duplicate in the same menu ----
+  function applyPreset(p) {
+    const pf = RO().presetFormOf(p), f = form;
+    Object.assign(f, { preset: p.id, presetObj: p, carried: { ...pf.carried, ...(pf.sameAsSource ? { sameAsSource: true } : {}) }, broken: [], resetDone: [], note: null });
+    const w = flowOfId(pf.workflowId); if (w) f.workflow = w.title;
+    if (pf.engine && engineLabelOf(pf.engine)) f.agent = engineLabelOf(pf.engine);
+    if (pf.sourceBranch) f.base = pf.sourceBranch;
+    if (pf.syncBeforeStart !== null) f.source = W.live ? Object.keys(LIVE_SOURCE).find((k) => LIVE_SOURCE[k] === pf.syncBeforeStart) : pf.syncBeforeStart ? 'the latest version from origin' : 'my local copy';
+    if (pf.pr?.open) f.then = W.live ? Object.keys(LIVE_THEN).find((k) => LIVE_THEN[k] === pf.pr.open) || f.then : pf.pr.open === 'none' ? 'leave it on the branch' : 'open a PR';
+    if (pf.tags.length) f.tags = pf.tags.join(', ');
+    if (pf.featureBranch) f.branch = pf.featureBranch;
+    f.presetBase = presetView();
+    checkPreset(); loadPolicy();
+  }
+  function clearPreset() { Object.assign(form, { preset: '', presetObj: null, presetBase: null, carried: {}, broken: [], resetDone: [] }); loadPolicy(); }
+  // dev's pick-time check; the items the form has reset since stay out (classic runPresetCheck)
+  function checkPreset() {
+    const o = OPT(), f = form, id = f.preset; if (!o || !id) return;
+    o.checkPreset(id, dirOf()).then((r) => {
+      if (form !== f || f.preset !== id) return;
+      if (!r.ok) { f.err = `Could not check the preset: ${r.error}`; f.errAt = '#cc-text'; paintForm(); return; }
+      f.broken = (Array.isArray(r.data?.broken) ? r.data.broken : []).filter((b) => !f.resetDone.includes(`${b.item}|${b.ref}`)); paintForm();
+    });
+  }
+  function resetBroken(i) {
+    const f = form, b = f.broken[i]; if (!b) return;
+    const setup = RO().resetSetup(f.presetObj.setup, b, { workflowId: f.activeWf || 'wf_default', engine: f.defaultEngine || 'claude' });
+    f.presetObj = { ...f.presetObj, setup }; f.resetDone = [...f.resetDone, `${b.item}|${b.ref}`];
+    const pf = RO().presetFormOf(f.presetObj);
+    f.carried = { ...pf.carried, ...(pf.sameAsSource ? { sameAsSource: true } : {}) };
+    if (b.item === 'workflow') { const w = flowOfId(pf.workflowId); f.workflow = w ? w.title : 'Default'; }
+    if (b.item === 'engine' && engineLabelOf(pf.engine)) f.agent = engineLabelOf(pf.engine);
+    f.broken = f.broken.filter((x) => x !== b); paintForm('#cc-text'); checkPreset();
+  }
+  function updatePreset() {
+    const o = OPT(), f = form; if (!o || !f.presetObj) return;
+    o.updatePreset(f.preset, RO().presetSetupOf(startBody(), f.presetObj), dirOf()).then((r) => {
+      if (form !== f) return;
+      if (!r.ok) { f.err = `Could not update the preset: ${r.error}`; f.errAt = '#cc-text'; paintForm(); return; }
+      f.presetObj = r.data?.preset || f.presetObj; f.presetBase = presetView(); presetList = (presetList || []).map((p) => (p.id === f.preset ? f.presetObj : p));
+      say(`Updated ${f.presetObj.name}`); paintForm();
+    });
+  }
+  function duplicatePreset() {
+    const o = OPT(), f = form; if (!o || !f.preset) return;
+    o.duplicatePreset(f.preset).then((r) => {
+      if (form !== f) return;
+      if (!r.ok || !r.data?.preset) { f.err = `Could not duplicate the preset: ${r.error || 'no answer'}`; f.errAt = '#cc-text'; paintForm(); return; }
+      const copy = r.data.preset;
+      o.presets().then((l) => { if (form !== f) return; presetList = l.ok && Array.isArray(l.data?.presets) ? l.data.presets : [...(presetList || []), copy]; applyPreset(presetList.find((p) => p.id === copy.id) || copy); say(`Duplicated as ${copy.name}`); paintForm(); });
+    });
+  }
+  // ---- a ticket source (D8): its profile gate, the search, the picked ticket ----
+  const pluginOf = () => (/^plugin:\d+$/.test(form.src) ? (sourceList || [])[+form.src.slice(7)] || null : null);
+  function pickSource() {
+    const o = OPT(), f = form, s = pluginOf(); if (!o || !s) return;
+    Object.assign(f, { profile: '', gate: null, gatePick: '', tickets: null, ticket: '', preview: null, ticketErr: '', search: '' });
+    const dir = dirOf();
+    if (!s.multiProfile) { searchTickets(); return; }
+    if (!dir) { f.gate = { text: 'Select a project first. The source profile is bound to it.', profiles: [] }; return; }
+    o.binding(dir, s.plugin, s.sourceId).then((r) => {
+      if (form !== f || pluginOf() !== s) return;
+      if (!r.ok) { f.gate = { text: `Could not resolve the source profile: ${r.error}`, profiles: [] }; paintForm(); return; }
+      const g = RO().gateOf(r.data, s, f.project);
+      if (g) { f.gate = g; f.gatePick = g.profiles[0] || ''; paintForm(); return; }
+      f.profile = String(r.data.profile || ''); searchTickets(); paintForm();
+    });
+  }
+  function bindProfile() {
+    const o = OPT(), f = form, s = pluginOf(), pick = f.gatePick; if (!o || !s || !pick) return;
+    o.bind(dirOf(), s.plugin, s.sourceId, pick).then((r) => {
+      if (form !== f) return;
+      if (!r.ok) { f.err = `Could not save the profile binding: ${r.error}`; f.errAt = '#cc-search'; paintForm(); return; }
+      f.gate = null; f.profile = pick; searchTickets(); paintForm('#cc-search');
+    });
+  }
+  let searchTimer = 0;
+  function searchTickets() {
+    const o = OPT(), f = form, s = pluginOf(); if (!o || !s) return;
+    const asked = f.search, n = (f.searchGen = (f.searchGen || 0) + 1);
+    const inputs = Object.fromEntries((s.inputs || []).filter((x) => x && x.key && x.type !== 'task-browser' && x.default !== undefined).map((x) => [x.key, x.default]));
+    o.call(s.plugin, s.sourceId, 'listTasks', { inputs, search: asked }, f.profile || undefined).then((r) => {
+      if (form !== f || f.searchGen !== n || f.search !== asked) return;   // a stale answer is dropped
+      f.ticketErr = r.ok ? '' : `search failed: ${r.error}`; f.tickets = r.ok ? (Array.isArray(r.data?.tasks) ? r.data.tasks : []) : null; paintForm();
+    });
+  }
+  function pickTicket(id) {
+    const o = OPT(), f = form, s = pluginOf(); if (!o || !s) return;
+    f.ticket = f.ticket === id ? '' : id; f.preview = null; paintForm(`[data-c-ticket="${CSS.escape(id)}"]`);
+    if (!f.ticket) return;
+    o.call(s.plugin, s.sourceId, 'getTask', { id }, f.profile || undefined).then((r) => { if (form !== f || f.ticket !== id) return; f.preview = r.ok ? { title: String(r.data?.title || id), body: String(r.data?.body || '') } : { title: id, body: `preview failed: ${r.error}` }; paintForm(); });
+  }
+  function sourceHtml(s) {
+    const name = s.displayName || s.sourceId;
+    if (form.gate) {
+      const pick = form.gate.profiles.length ? `<span>Profile ${R.sentencePicker({ id: 'f-gprofile', text: form.gatePick || 'pick one', items: form.gate.profiles.map((p) => ({ id: p, text: p, checked: p === form.gatePick })), open: menu === 'f-gprofile', chevron: chev })}</span>` : '';
+      return `${R.choiceNote({ text: form.gate.text, ways: form.gate.profiles.length ? [{ label: 'Use this profile', kind: 'primary', attrs: { 'data-c-bind': '' } }] : [] })}${pick}`;
+    }
+    const rows = (form.tickets || []).map((t) => R.listRow({ title: String(t.title || t.id), meta: Array.isArray(t.labels) ? t.labels.join(', ') : '', check: form.ticket === String(t.id), open: { 'data-c-ticket': String(t.id) }, boxAttrs: { 'data-c-ticket': String(t.id) } })).join('');
+    const empty = form.tickets && !form.tickets.length ? `<p class="cc-proof">${form.search ? 'No tasks matched.' : 'Type to search.'}</p>` : '';
+    const fail = form.ticketErr ? `<p class="cc-proof">${esc(form.ticketErr)}</p>` : '';
+    const prev = form.preview ? R.prose({ text: `${form.preview.title}\n\n${form.preview.body}` }) : '';
+    return `${R.field({ id: 'cc-search', label: `Search ${name}`, error: errOf('#cc-search'), value: form.search, placeholder: `Search ${name}…`, attrs: { 'data-f': 'search' } })}${rows ? `<div class="cc-tickets">${rows}</div>` : ''}${empty}${fail}${prev}`;
+  }
+  // the one note under the text (form.run-options): the newest refusal, else the broken preset, else the team policy
+  function noteHtml() {
+    const n = form.note, busy = form.busy ? { disabled: true } : {};
+    if (n?.kind === 'engine') return R.choiceNote({ text: n.error, means: n.overridable ? RO().ENGINE_TICK : '', end: n.overridable ? R.checkbox({ label: RO().ENGINE_ALLOW, checked: !!form.allow, attrs: { 'data-c-allow': '' } }) : '' });
+    if (n?.kind === 'sync') return R.choiceNote({ text: n.title, means: n.note || '', rows: n.rows.map((text) => ({ text })), ways: [{ label: 'Cancel', kind: 'quiet', attrs: { 'data-c-sync': 'cancel', ...busy } }, ...(n.primary ? [{ label: n.primary.label, kind: 'primary', attrs: { 'data-c-sync': n.primary.policy, ...busy } }] : [])] });
+    if (form.broken?.length) { const b = RO().brokenNoteOf(form.broken); return R.choiceNote({ text: b.title, means: 'Start waits until each item is fixed', rows: b.rows.map((x, i) => ({ text: x.reset ? x.text : `${x.text} · Edit the preset's scope in Settings › Presets`, ...(x.reset ? { way: { label: 'Reset to default', attrs: { 'data-c-preset-reset': String(i) } } } : {}) })) }); }
+    const p = form.policy;
+    return p ? R.choiceNote({ needsYou: p.tone === 'amber', text: p.head, rows: [...p.rows.map((x) => ({ text: x.text })), ...(p.caps ? [{ text: p.caps }] : [])] }) : '';
+  }
+
   // live: dev's GET /api/projects (the store's projects part, less a Remove's undo window), never task rows (F-a4-06)
   const liveProjects = () => { const gone = window.RailProjectsLive?.hidden?.() || new Set(); return (W.part('projects') || []).filter((p) => p.id && !gone.has(p.id)).map((p) => ({ name: p.name || p.id, missing: p.origin === 'missing' })); };
   const projects = () => [...new Set([...(W.live ? liveProjects().map((p) => p.name) : W.rows().map((r) => r.project).filter(Boolean)), 'No project'])];
@@ -300,16 +498,23 @@
     return W.rows().find((r) => !String(r.id).startsWith('sched:') && ok.includes(r.project))?.project ?? ok[0] ?? 'No project';
   }
   const LISTS = () => ({ project: projects(), workflow: flows().map((w) => w.title), agent: W.live ? [LIVE_AGENT, ...engines().map((e) => e.label)] : ['Claude', 'Codex', 'Gemini'], base: W.live ? [LIVE_BASE, ...liveBranches.list] : ['main', 'dev'], source: W.live ? [LIVE_SETUP, ...Object.keys(LIVE_SOURCE)] : ['the latest version from origin', 'my local copy'], then: W.live ? [LIVE_SETUP, ...Object.keys(LIVE_THEN)] : Object.keys(THEN), every: R.REPEATS.filter((x) => x !== 'once' && x !== 'every hour').map((x) => x.replace(/^every /, '')), at: R.TIMES_OF_DAY, tz: [...new Set([homeTz(), 'Europe/Sofia', 'UTC', 'Europe/Berlin', 'America/New_York'])], ends: ['no end date', 'after 10 runs', 'after 30 days'], overlap: ['skip if still going', 'queue if still going'], fails: ['pause after 3 failures', 'pause after 5 failures', 'never pause'], cap: ['the workflow\'s own', 'at $5', 'at $20'], agents: W.live ? [AGENTS_OWN, ...liveAgentPicks().map((x) => x.text)] : [AGENTS_OWN, 'Sonnet for every step', 'Opus for every step'] });
-  const blank = (kind, keep = {}) => ({ kind, project: defaultProject(), workflow: 'Default', agent: W.live ? LIVE_AGENT : 'Claude', base: W.live ? LIVE_BASE : 'main', source: W.live ? LIVE_SETUP : 'the latest version from origin', then: W.live ? LIVE_SETUP : 'open a PR', text: '', path: '', src: 'write', name: '', more: false, title: '', branch: '', tags: '', files: [], agents: 'the workflow\'s own', cap: 'the workflow\'s own', every: 'weekday', at: '09:00', tz: homeTz(), ends: 'no end date', overlap: 'skip if still going', fails: 'pause after 3 failures', err: '', ...keep });
+  const blank = (kind, keep = {}) => ({ kind, project: defaultProject(), workflow: 'Default', agent: W.live ? LIVE_AGENT : 'Claude', base: W.live ? LIVE_BASE : 'main', source: W.live ? LIVE_SETUP : 'the latest version from origin', then: W.live ? LIVE_SETUP : 'open a PR', text: '', path: '', src: 'write', name: '', more: false, title: '', branch: '', tags: '', files: [], agents: 'the workflow\'s own', cap: 'the workflow\'s own', every: 'weekday', at: '09:00', tz: homeTz(), ends: 'no end date', overlap: 'skip if still going', fails: 'pause after 3 failures', err: '', ...OPTS_BLANK(), ...keep });
+  // COV-2: what the run options keep while the form is open (form.run-options)
+  const OPTS_BLANK = () => ({ agentTouched: false, tagsTouched: false, workflowTouched: false, projectKey: '', defaultsFor: null, defaultEngine: '', activeWf: '', preset: '', presetObj: null, presetBase: null, carried: {}, broken: [], resetDone: [], profile: '', gate: null, gatePick: '', search: '', tickets: null, ticket: '', preview: null, ticketErr: '', note: null, allow: false, policy: null, tagsSaid: '', flowSaid: '' });
   const fPick = (k, tip) => R.sentencePicker({ id: `f-${k}`, text: form[k], tip, items: LISTS()[k].map((v) => ({ id: v, text: v, checked: v === form[k] })), open: menu === `f-${k}`, chevron: chev });
   const proof = () => { const w = flows().find((x) => x.title === form.workflow), s = (w?.steps || []).map((x) => VERB[x] || x.toLowerCase()), last = s.pop(); return `${form.workflow} ${[s.join(', '), last].filter(Boolean).join(' and ')}, then ${THEN[form.then] || 'does what the project is set up to do'}.`.replace(' and , ', ' ').replace(' , ', ', '); };
   const errOf = (at) => (form.errAt === at ? form.err : '');   // the line sits under the field it is about
   function formHtml() {
     const sched = form.kind === 'schedule';
     const after = form.after ? `<br> It starts once ${esc(form.after.title)} ends` : '';   // Run after this (dev's Schedule next…): it waits for that one
-    const frame = `<div class="cc-frame"><span>A task on ${fPick('project', 'The project you used last')} using the ${fPick('workflow')} workflow, run by ${fPick('agent')},<br> from ${fPick('base')}, ${fPick('source')}, then ${fPick('then')}${after}</span><span class="cc-proof">${esc(proof())}</span></div>`;
-    const src = R.segmented({ label: 'Task source', hook: 'c-src', items: [{ id: 'write', label: 'Write it', pressed: form.src === 'write' }, { id: 'file', label: 'From file', pressed: form.src === 'file' }] });
-    const what = `<div class="cc-lbl">${form.src === 'write' ? R.field({ id: 'cc-text', label: 'What should it do', multiline: true, error: errOf('#cc-text'), value: form.text, placeholder: sched ? 'What should each run do?' : 'Describe the software task to build…', attrs: { 'data-f': 'text', rows: 5 } }) : R.field({ id: 'cc-path', label: 'What should it do', error: errOf('#cc-path'), value: form.path, placeholder: 'A file in the project: docs/task.md', attrs: { 'data-f': 'path' } })}${src}</div>`;
+    const task = form.kind === 'task', fit = task && RO() && presetList ? fits() : [];
+    // a saved preset leads the frame once one exists for this project (D7); its menu: the presets, Update and Duplicate, No preset
+    const presetItems = [...fit.map((p) => ({ id: `p:${p.id}`, text: p.name, checked: p.id === form.preset })), ...(form.preset ? [{ sep: true }, ...(RO().presetModified(form.presetBase, presetView()) ? [{ id: 'update', text: 'Update preset', help: 'Saves these picks into the preset' }] : []), { id: 'duplicate', text: 'Duplicate', help: 'Saves a copy and starts from it' }] : []), { sep: true }, { id: 'none', text: 'No preset', checked: !form.preset }];
+    const from = fit.length || form.preset ? ` from ${R.sentencePicker({ id: 'f-preset', text: form.presetObj?.name || 'no preset', tip: 'A saved setup to start from', items: presetItems, open: menu === 'f-preset', chevron: chev })}` : '';
+    const frame = `<div class="cc-frame"><span>A task on ${fPick('project', 'The project you used last')}${from} using the ${fPick('workflow')} workflow, run by ${fPick('agent')},<br> from ${fPick('base')}, ${fPick('source')}, then ${fPick('then')}${after}</span><span class="cc-proof">${esc(proof())}</span></div>`;
+    const src = R.segmented({ label: 'Task source', hook: 'c-src', items: [{ id: 'write', label: 'Write it', pressed: form.src === 'write' }, { id: 'file', label: 'From file', pressed: form.src === 'file' }, ...(task ? (sourceList || []).map((x, i) => ({ id: `plugin:${i}`, label: x.displayName || x.sourceId, pressed: form.src === `plugin:${i}` })) : [])] });
+    const plugin = task ? pluginOf() : null;
+    const what = plugin ? `<div class="cc-lbl">${sourceHtml(plugin)}${src}</div>${noteHtml()}` : `<div class="cc-lbl">${form.src === 'write' ? R.field({ id: 'cc-text', label: 'What should it do', multiline: true, error: errOf('#cc-text'), value: form.text, placeholder: sched ? 'What should each run do?' : 'Describe the software task to build…', attrs: { 'data-f': 'text', rows: 5 } }) : R.field({ id: 'cc-path', label: 'What should it do', error: errOf('#cc-path'), value: form.path, placeholder: 'A file in the project: docs/task.md', attrs: { 'data-f': 'path' } })}${src}</div>${task ? noteHtml() : ''}`;
     const fold = (label, says) => `<div class="cc-fold">${R.button({ label, kind: 'quiet', icon: R.icon(form.more ? 'chevron' : 'chevR', 12), attrs: { 'data-c-more': '', 'aria-expanded': String(form.more) } })}<span>${esc(says)}</span></div>`;
     if (sched) {
       const body = `${frame}${R.field({ id: 'cc-name', label: 'Name', error: errOf('#cc-name'), value: form.name, placeholder: 'What to call this schedule', attrs: { 'data-f': 'name', maxlength: 80 } })}${what}
@@ -317,8 +522,12 @@
         ${fold('If something gets in the way', `${cap(form.ends)}; ${form.overlap}; ${form.fails}`)}${form.more ? `<div class="cc-more"><span>It ends with ${fPick('ends')}</span><span>A run still going means ${fPick('overlap')}</span><span>When runs fail, ${fPick('fails')}</span></div>` : ''}`;
       return R.dialog({ title: 'New schedule', body, yes: R.scheduleButton({ every: `every ${form.every}`, at: form.at }), close: R.icon('x', 15), id: 'cc-t', cls: 'cc-dlg', hooks: hooksOf() });
     }
-    const perStep = W.live && LISTS().agents.length < 2 ? `<span>Cost cap: ${fPick('cap')}</span>` : `<span>Agents: ${fPick('agents')}</span><span>Cost cap: ${fPick('cap')}</span>`;
-    const body = `${frame}${what}${fold('More options', W.live ? 'Title, branch, cost tags, agents, cost cap, files' : 'Title, branch, cost tags, agents, guardrails, files')}${form.more ? `<div class="cc-more">${R.field({ id: 'cc-title', label: 'Title', value: form.title, placeholder: 'Worca names it from what it should do', attrs: { 'data-f': 'title', maxlength: NAME_MAX } })}${R.field({ id: 'cc-branch', label: 'Branch', value: form.branch, placeholder: 'Worca makes one', attrs: { 'data-f': 'branch' } })}${R.field({ id: 'cc-tags', label: 'Cost tags', value: form.tags, placeholder: 'Comma separated', attrs: { 'data-f': 'tags' } })}${perStep}<span>${R.button({ label: 'Add files…', kind: 'quiet', attrs: { 'data-c-files': '', title: 'Attaches files to the task' } })}${form.files.length ? ` ${esc(form.files.map((x) => x.name).join(', '))}` : ''}</span></div>` : ''}`;
+    // Agents' quiet pair (D6): the one model saved as the workflow's defaults, or the project's picks reset to them
+    const id = flowId(), flowOwn = !!OPT() && !!id && !RO().RESERVED_WORKFLOWS.includes(id) && form.project !== 'No project' && agentIds().length;
+    const flowBtns = flowOwn ? `${agentModel() ? R.button({ label: form.flowSaid || 'Save as the workflow\'s defaults', kind: 'quiet', attrs: { 'data-c-flowsave': '', title: `Every agent of ${form.workflow} runs ${form.agents.replace(/ for every step$/, '')} unless a task picks another` } }) : ''}${R.button({ label: !agentModel() && form.flowSaid ? form.flowSaid : 'Reset to the workflow\'s defaults', kind: 'quiet', attrs: { 'data-c-flowreset': '', title: `Clears ${form.project}'s own agent picks for ${form.workflow}` } })}` : '';
+    const perStep = W.live && LISTS().agents.length < 2 ? `<span>Cost cap: ${fPick('cap')}</span>` : `<span>Agents: ${fPick('agents')}${flowBtns}</span><span>Cost cap: ${fPick('cap')}</span>`;
+    const tagsSave = form.projectKey && OPT() ? R.button({ label: form.tagsSaid || 'Save as default', kind: 'quiet', attrs: { 'data-c-tagsave': '', title: `New tasks in ${form.project} start with these tags` } }) : '';
+    const body = `${frame}${what}${fold('More options', `${W.live ? 'Title, branch, cost tags, agents, cost cap, files' : 'Title, branch, cost tags, agents, guardrails, files'}${form.preset ? ', preset' : ''}`)}${form.more ? `<div class="cc-more">${R.field({ id: 'cc-title', label: 'Title', value: form.title, placeholder: 'Worca names it from what it should do', attrs: { 'data-f': 'title', maxlength: NAME_MAX } })}${R.field({ id: 'cc-branch', label: 'Branch', value: form.branch, placeholder: 'Worca makes one', attrs: { 'data-f': 'branch' } })}${R.field({ id: 'cc-tags', label: 'Cost tags', value: form.tags, placeholder: 'Comma separated', attrs: { 'data-f': 'tags' } })}${tagsSave}${perStep}<span>${R.button({ label: 'Add files…', kind: 'quiet', attrs: { 'data-c-files': '', title: 'Attaches files to the task' } })}${form.files.length ? ` ${esc(form.files.map((x) => x.name).join(', '))}` : ''}</span></div>` : ''}`;
     return R.dialog({ title: 'New task', body, yes: form.after ? 'Start after it' : 'Start task', busy: !!form.busy, busyLabel: 'Starting…', status: `${R.button({ label: 'Schedule…', kind: 'quiet', attrs: { 'data-c-tosched': '', title: 'The same task, at a time' } })}`, close: R.icon('x', 15), id: 'cc-t', cls: 'cc-dlg', hooks: hooksOf() });
   }
   const hooksOf = () => ({ close: {}, cancel: {}, yes: {} });
@@ -340,11 +549,13 @@
   // Esc closes the open form wherever the focus is (F-gb21-01): the host's own listener only hears keys from inside it
   const escAnywhere = (e) => { if (e.key === 'Escape' && form && !host().contains(e.target)) dlgKey(e); };
   const formOff = () => { form = null; menu = ''; document.removeEventListener('keydown', escAnywhere, true); };
-  function openForm(kind, keep) { menu = ''; opener = document.activeElement; form = blank(kind, keep); document.addEventListener('keydown', escAnywhere, true); loadFlows(); loadBranches(); paintForm(kind === 'schedule' ? '#cc-name' : '#cc-text'); }
+  function openForm(kind, keep) { menu = ''; opener = document.activeElement; form = blank(kind, keep); document.addEventListener('keydown', escAnywhere, true); loadFlows(); loadBranches(); loadOptions(); paintForm(kind === 'schedule' ? '#cc-name' : '#cc-text'); }
   // a route change closes the form, as the account menu does (pulse.js): only a redraw of the same page keeps it; the next page owns the focus
   addEventListener('hashchange', () => { if (!form) return; formOff(); opener = null; paintForm(); });
   function closeForm() { formOff(); paintForm(); (opener?.isConnected && opener !== document.body ? opener : document.querySelector('#bar-head [data-bar-new]'))?.focus(); }   // a menu's item is gone by now: back to its +
   function check() {
+    if (form.kind === 'task' && pluginOf()) return form.ticket ? null : [RO().PICK_FIRST, '#cc-search'];   // a ticket source: the picked ticket is the task
+    if (form.kind === 'task' && form.broken?.length) return ['Reset each item the preset needs first', '#cc-text'];   // D7: broken items block Start
     const words = form.src === 'write' ? form.text.trim() : form.path.trim();
     if (form.kind === 'schedule' && !form.name.trim()) return ['Name it first', '#cc-name'];
     if (form.kind === 'schedule' && Sch().all().some((s) => s.title.toLowerCase() === form.name.trim().toLowerCase())) return ['A schedule already has that name', '#cc-name'];
@@ -357,7 +568,9 @@
     const bad = check(); if (bad) { form.err = bad[0]; form.errAt = bad[1]; paintForm(bad[1]); return; }
     if (W.live && form.kind === 'task') { liveStart(); return; }   // D12b: dev's POST /api/run
     if (W.live && form.kind === 'schedule') { liveSchedule(); return; }   // Schedules D9: dev's POST /api/run with repeat
-    const words = (form.src === 'write' ? form.text : `Follow ${form.path}`).trim(), project = form.project === 'No project' ? '' : form.project, k = Date.now().toString(36);
+    if (form.kind === 'task' && demoRefused()) return;   // the demo's engine and sync notes (D13), in the live kind's words
+    const ticket = pluginOf() && (form.tickets || []).find((t) => String(t.id) === form.ticket);
+    const words = (ticket ? String(ticket.title) : form.src === 'write' ? form.text : `Follow ${form.path}`).trim(), project = form.project === 'No project' ? '' : form.project, k = Date.now().toString(36);
     if (form.kind === 'task') {
       const title = form.title.trim() || (words.length > 56 ? `${words.slice(0, 54).trim()}…` : words);
       const f = form; closeForm();
@@ -379,9 +592,10 @@
       ...(form.source in LIVE_SOURCE ? { syncBeforeStart: LIVE_SOURCE[form.source] } : {}), ...(LIVE_THEN[form.then] ? { pr: { open: LIVE_THEN[form.then] } } : {}) };
     return { ...(wf ? { workflowId: wf } : {}), ...(engine ? { engine } : {}), ...git };
   }
-  async function liveStart() {
-    if (form.busy) return;
-    const words = (form.src === 'write' ? form.text : `Follow ${form.path}`).trim();
+  // the start's one body (R-arch-2): the frame's picks, More options, and the run options (COV-2) — a preset's id and what
+  // it carries, a picked ticket in place of the words, the engine consent; nothing extra when no option is used
+  function startBody() {
+    const words = (form.src === 'write' ? form.text : `Follow ${form.path}`).trim(), s = pluginOf();
     const none = form.project === 'No project', dir = none ? '' : window.RailTaskLive?.projectDirOf(form.project) || '';
     const usd = form.cap === LISTS().cap[0] ? null : capUsd(form.cap);
     const tags = form.tags.split(',').map((x) => x.trim()).filter(Boolean);
@@ -392,15 +606,50 @@
       ...(form.title.trim() ? { title: form.title.trim() } : {}),
       ...(tags.length ? { tags } : {}), ...(form.files.length ? { extras: form.files.map(({ name, dataBase64 }) => ({ name, dataBase64 })) } : {}),
       ...(form.after ? { after: { kind: form.after.kind, id: form.after.id }, afterPolicy: 'done' } : {}) };
+    if (form.preset) Object.assign(body, Object.fromEntries(Object.entries(form.carried).filter(([k]) => k !== 'overlay' || !overlay)), { presetId: form.preset });
+    if (s && form.ticket) { delete body.prompt; body.source = RO().sourceBodyOf({ plugin: s.plugin, sourceId: s.sourceId, taskId: form.ticket, inputs: Object.fromEntries((s.inputs || []).filter((x) => x && x.key && x.type !== 'task-browser' && x.default !== undefined).map((x) => [x.key, x.default])), profile: form.profile }); }
+    // dev's Claude default is not sent as a pick (classic startRun): the body stays as before the defaults were read
+    if (body.engine === 'claude' && form.defaultEngine === 'claude') delete body.engine;
+    if (form.allow && (body.engine || form.defaultEngine || 'claude') !== 'claude') body.allowUnguardedEngine = true;
+    return body;
+  }
+  // `extra`: a resend after a refusal, the form's body as it is now plus one key (syncPolicy): an edit made since is never lost
+  async function liveStart(extra) {
+    if (form.busy) return;
+    const body = { ...startBody(), ...extra };
+    const ticket = pluginOf() && (form.tickets || []).find((t) => String(t.id) === form.ticket);
+    const words = (ticket ? String(ticket.title) : form.src === 'write' ? form.text : `Follow ${form.path}`).trim();
     const f = form; f.busy = true; paintForm();
     const res = await window.RailTaskLive?.act('new-task', { body, quiet: true, key: 'new-task:form' });
     f.busy = false;
     if (form !== f) return;
+    if (!res?.ok && refused(res)) return;
     if (!res?.ok) { form.err = `Could not start the task: ${res?.error || 'no answer'}`; form.errAt = form.src === 'write' ? '#cc-text' : '#cc-path'; paintForm(form.errAt); return; }
     closeForm();
     if (f.after) { say(`Scheduled ${f.title.trim() || words}: it starts once ${f.after.title} ends`); return; }   // a waiting ticket, no task yet: Schedules lists it
     say(`Started ${f.title.trim() || words}`);
     if (res.data?.runId) window.RailShell?.go(`run/${res.data.runId}`);
+  }
+  // A refused start that has a note (D7, D9, D10): the note says it, under the text, and the form stays as it was
+  function refused(res) {
+    const r = RO()?.refusalOf(res); if (!r || r.kind === 'other') return false;
+    if (r.kind === 'engine') form.note = { kind: 'engine', error: r.error, overridable: r.overridable };
+    else if (r.kind === 'sync') form.note = { kind: 'sync', ...RO().syncNoteOf(r) };
+    else { if (!form.preset) return false; form.note = null; form.broken = r.broken.filter((b) => !form.resetDone.includes(`${b.item}|${b.ref}`)); }
+    form.err = ''; form.errAt = ''; paintForm(r.kind === 'sync' ? '[data-c-sync]:last-child' : r.kind === 'engine' && r.overridable ? '[data-c-allow]' : '#cc-text');
+    return true;
+  }
+  function syncWay(policy) {
+    if (policy === 'cancel') { form.note = null; paintForm('[data-dialog="yes"]'); say(RO().START_CANCELLED); return; }
+    if (W.live) { liveStart({ syncPolicy: policy }); return; }
+    form.note = null; form.synced = true; save();
+  }
+  // the demo (D13): a non-Claude Agent with no consent meets the engine refusal, a start from dev meets the diverged base
+  function demoRefused() {
+    if (W.live || !RO()) return false;
+    const res = form.agent !== 'Claude' && !form.allow ? { ok: false, status: 409, error: `${form.agent} cannot enforce the guardrails Strict`, code: 'engine-refused', data: { code: 'engine-refused', error: `${form.agent} cannot enforce the guardrails Strict`, overridable: true } }
+      : form.base === 'dev' && !form.synced ? { ok: false, status: 409, code: 'sync-diverged', data: { code: 'sync-diverged', options: ['origin', 'cancel'], members: [{ projectName: form.project, base: 'dev', remote: 'origin', ahead: 2, behind: 3 }] } } : null;
+    return !!res && refused(res);
   }
   // New schedule… in the live kind (Schedules D9): POST /api/run { projectDir | noProject, prompt, title, repeat: { rule } }, through
   // RailScheduleLive (the rule from its words, live/schedule-rule.mjs); a refusal stays in the form with what was typed.
@@ -419,12 +668,31 @@
   }
   function dlgClick(e) {
     const on = (q) => e.target.closest(q); let hit;
-    if ((hit = on('[data-menu-pick^="f-"]'))) { const [id, v] = hit.dataset.menuPick.split('|'); form[id.slice(2)] = v; menu = ''; if (id === 'f-project') { form.base = W.live ? LIVE_BASE : form.base; loadBranches(); } if (!LISTS().agents.includes(form.agents)) form.agents = AGENTS_OWN; paintForm(`[data-menu="${id}"]`); return; }
+    if ((hit = on('[data-menu-pick^="f-preset|"]'))) { const v = hit.dataset.menuPick.slice('f-preset|'.length); menu = ''; if (v === 'update') updatePreset(); else if (v === 'duplicate') duplicatePreset(); else if (v === 'none') clearPreset(); else { const p = (presetList || []).find((x) => `p:${x.id}` === v); if (p) applyPreset(p); } paintForm('[data-menu="f-preset"]'); return; }
+    if ((hit = on('[data-menu-pick^="f-gprofile|"]'))) { form.gatePick = hit.dataset.menuPick.slice('f-gprofile|'.length); menu = ''; paintForm('[data-menu="f-gprofile"]'); return; }
+    if ((hit = on('[data-menu-pick^="f-"]'))) {
+      const [id, v] = hit.dataset.menuPick.split('|'); form[id.slice(2)] = v; menu = '';
+      if (id === 'f-project') { form.base = W.live ? LIVE_BASE : form.base; loadBranches(); form.note = null; if (form.preset && form.presetObj?.scope?.kind !== 'global') clearPreset(); else checkPreset(); loadProject(); if (pluginOf()) pickSource(); }
+      if (id === 'f-base' || id === 'f-source') { form.note = null; form.synced = false; }   // a changed base or source is asked again
+      if (id === 'f-agent') { form.agentTouched = true; form.allow = false; if (form.note?.kind === 'engine') form.note = null; }   // the consent was for the engine refused
+      if (id === 'f-workflow') { form.workflowTouched = true; const wf = flowId(), dir = dirOf(); if (W.live && !form.preset && wf && dir) OPT()?.setActiveWorkflow(dir, wf).then((r) => { if (!r.ok) window.RailAdapter?.toast?.(`Could not select the workflow: ${r.error}`); }); }
+      if (!LISTS().agents.includes(form.agents)) form.agents = AGENTS_OWN;
+      if (id === 'f-agents' || id === 'f-workflow') loadPolicy();
+      paintForm(`[data-menu="${id}"]`); return;
+    }
     if ((hit = on('[data-menu^="f-"]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; paintForm(`[data-menu="${hit.dataset.menu}"]`); return; }
     if (menu) { menu = ''; paintForm(); }
-    if ((hit = on('[data-c-src]'))) { form.src = hit.dataset.cSrc; paintForm(form.src === 'write' ? '#cc-text' : '#cc-path'); return; }
+    if ((hit = on('[data-c-src]'))) { form.src = hit.dataset.cSrc; if (pluginOf()) { pickSource(); paintForm('#cc-search'); return; } paintForm(form.src === 'write' ? '#cc-text' : '#cc-path'); return; }
+    if (e.target.matches?.('input[data-c-allow]')) { form.allow = e.target.checked; paintForm('[data-c-allow]'); return; }
+    if ((hit = on('[data-c-sync]'))) { if (!hit.disabled) syncWay(hit.dataset.cSync); return; }
+    if ((hit = on('[data-c-preset-reset]'))) { resetBroken(+hit.dataset.cPresetReset); return; }
+    if (on('[data-c-bind]')) { bindProfile(); return; }
+    if ((hit = on('[data-c-ticket]'))) { if (hit.matches('input')) e.preventDefault(); pickTicket(hit.dataset.cTicket); return; }
+    if (on('[data-c-tagsave]')) { saveTags(); return; }
+    if (on('[data-c-flowsave]')) { saveFlow(false); return; }
+    if (on('[data-c-flowreset]')) { saveFlow(true); return; }
     if (on('[data-c-more]')) { form.more = !form.more; paintForm('[data-c-more]'); return; }
-    if (on('[data-c-tosched]')) { form = blank('schedule', { project: form.project, workflow: form.workflow, agent: form.agent, base: form.base, source: form.source, then: form.then, text: form.text, path: form.path, src: form.src, name: form.title }); paintForm('#cc-name'); return; }
+    if (on('[data-c-tosched]')) { form = blank('schedule', { project: form.project, workflow: form.workflow, agent: form.agent, base: form.base, source: form.source, then: form.then, text: form.text, path: form.path, src: /^plugin:/.test(form.src) ? 'write' : form.src, name: form.title }); paintForm('#cc-name'); return; }
     if (on('[data-c-files]')) { pickFiles(); return; }
     if ((hit = on('[data-dialog]'))) { if (hit.dataset.dialog === 'yes') save(); else closeForm(); }
   }
@@ -443,6 +711,8 @@
   }
   function dlgInput(e) {
     const k = e.target.dataset?.f; if (!k) return; form[k] = e.target.value;
+    if (k === 'tags') form.tagsTouched = true;
+    if (k === 'search') { clearTimeout(searchTimer); searchTimer = setTimeout(searchTickets, 300); }   // source-pane.mjs's debounce
     if (form.err && check()?.[1] !== form.errAt) { const f = document.querySelector(`#center-dlg ${form.errAt}`); form.err = ''; form.errAt = ''; document.querySelector(`#${f?.id}-note`)?.remove(); f?.removeAttribute('aria-invalid'); f?.removeAttribute('aria-describedby'); }   // once it is mended, the line goes
   }
   function dlgKey(e) {

@@ -11,6 +11,7 @@
   var kind = host === 'app' && root && root.getAttribute('data-adapter') === 'live' ? 'live' : 'demo';
   var live = null, readyDone = null;
   var announced = false;
+  var base = typeof document !== 'undefined' && document.currentScript && document.currentScript.src ? document.currentScript.src.replace(/adapter\.js(\?.*)?$/, '') : '/stillhet/';
   var toastTimer = null;   // one hide timer: a later toast gets its full 3 s
 
   function toast(text) {
@@ -45,6 +46,9 @@
         .catch(function () { return { ok: false, status: 0, data: {}, error: 'the server did not answer' }; });
     },
     importLive: function () { return import('/stillhet/live/live-adapter.mjs'); },
+    // the demo kind's run options words (COV-2): the same helpers the live kind reads, from beside this file (the prototype is
+    // served from the repo root, the app from /stillhet/)
+    importRunOptions: function () { return import(base + 'live/run-options-live.mjs'); },
     host: host,
     NOT_CONNECTED: NOT_CONNECTED,
     toast: toast,   // shows a sentence in the library's live toast for 3 s (host-app.js says a failed opt-out with it)
@@ -98,6 +102,8 @@
       var mp = window.RailPlaces && window.RailPlaces.marketplace; if (mp && mp.changed) mp.changed();   // a page drawn before the live layer was up (a reload on #marketplace) reads its lists now
       window.RailProjectsLive = live.projects;   // the live Projects and Workspaces writes (slice 9 D3): projects/projects.js and workspaces/workspaces.js
       var pj = window.RailPlaces && window.RailPlaces.projects; if (pj && pj.redraw) pj.redraw();   // a page drawn before the live layer was up shows its live actions now
+      window.RailRunOptions = m.runOptionsWords;   // their words (live/run-options-live.mjs helpers), the same in both kinds
+      window.RailRunOptionsLive = live.runOptions;   // New task's and the proposal's run options (COV-2): centers/centers.js and chat/conversation.js
       window.RailInsightsLive = live.insights;   // the live Insights reads (slice 10 D8): insights/insights.js, projects/projects.js
       var ins = window.RailPlaces && window.RailPlaces.insights; if (ins && ins.redraw) ins.redraw();   // a page drawn before the live layer was up reads now
       window.addEventListener('hashchange', function () { live.seen(); });
@@ -106,7 +112,11 @@
   }
   if (kind === 'live') {
     if (document.readyState === 'complete') setTimeout(startLive, 0); else if (window.addEventListener) window.addEventListener('load', startLive);
-  } else readyDone(null);
+  } else {
+    readyDone(null);
+    var words = function () { try { adapter.importRunOptions().then(function (m) { window.RailRunOptions = m; }, function () { /* no words: the form draws no run options */ }); } catch (e) { /* a host with no module loader */ } };
+    if (typeof document !== 'undefined' && document.readyState !== 'complete' && window.addEventListener) window.addEventListener('load', words); else if (typeof setTimeout === 'function') setTimeout(words, 0);
+  }
   // The sentence for an action a page cannot do yet: the demo sentence in the prototype host, the one refusal in the app host.
   window.RailWould = function (phrase) {
     var demo = window.RailDemoActions;

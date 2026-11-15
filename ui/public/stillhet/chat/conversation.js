@@ -679,6 +679,47 @@
     const text = ps.items.filter((i) => ps.picked.includes(i.key)).map((i) => i.label).join(', ');
     return perspPicker(x, text, ps.items.map((i) => ({ id: i.key, text: i.label, checked: ps.picked.includes(i.key), off: i.locked, help: i.help })));
   }
+  // COV-2 (D12): a live proposal's start-time options, kept per card beside its turn so a redraw keeps them: the project's
+  // saved engine and tags, the team policy notes, and a refused Start's engine or sync note (docs/rail/forms.md form.run-options)
+  const ppOpts = new Map();
+  const ppOf = (x) => { const k = `${chatId}|${x.card || x.id}`; if (!ppOpts.has(k)) ppOpts.set(k, { note: null, allow: false, read: false, engine: '', tags: [], policy: null }); return ppOpts.get(k); };
+  function ppRead(x) {
+    const o = ppOf(x), r = x.raw || {}, RO = window.RailRunOptions, L = window.RailRunOptionsLive;
+    if (o.read || !RO || !L || x.target !== 'Project' || !r.projectDir) return;
+    o.read = true;
+    L.defaults(r.projectDir).then((res) => {
+      if (!res.ok) return;
+      const d = RO.defaultsOf(res.data); o.engine = d.engine; o.tags = d.tags; paint();
+      if (d.projectKey) L.policyNotes({ projectKey: d.projectKey, guardrailsId: r.guardrailsId || '' }).then((p) => { o.policy = p.ok ? RO.policyNoteOf(p.data) : null; paint(); });
+    });
+  }
+  // the engine the card runs on when neither it nor the person named one: the project's saved one, unless it is Claude
+  const ppEngine = (x) => { const o = ppOf(x); return !x.raw?.engine && o.engine && o.engine !== 'claude' ? o.engine : ''; };
+  function ppNoteHtml(x) {
+    const o = ppOf(x), n = o.note, RO = window.RailRunOptions; if (!RO) return '';
+    if (n?.kind === 'engine') return R.choiceNote({ text: n.error, means: n.overridable ? RO.ENGINE_TICK : '', end: n.overridable ? R.checkbox({ label: RO.ENGINE_ALLOW, checked: o.allow, attrs: { 'data-pp-allow': x.id } }) : '' });
+    if (n?.kind === 'sync') return R.choiceNote({ text: n.title, means: n.note || '', rows: n.rows.map((text) => ({ text })), ways: [{ label: 'Cancel', kind: 'quiet', attrs: { 'data-pp-sync': `${x.id}|cancel` } }, ...(n.primary ? [{ label: n.primary.label, kind: 'primary', attrs: { 'data-pp-sync': `${x.id}|${n.primary.policy}` } }] : [])] });
+    const p = o.policy;
+    return p ? R.choiceNote({ needsYou: p.tone === 'amber', text: p.head, rows: [...p.rows.map((y) => ({ text: y.text })), ...(p.caps ? [{ text: p.caps }] : [])] }) : '';
+  }
+  // what Start sends from the card as it is now: a resend after a refusal reads it again, so an edit made since is never lost
+  function ppPicks(x) {
+    const r = x.raw || {}, target = TARGET_OF[x.target] || r.target, o = ppOf(x), eng = target === 'project' ? ppEngine(x) : '';
+    return { title: x.title, brief: x.brief, target, guardrailsId: x.guard || r.guardrailsId, ...(x.pkeys && R.prefs.flag('proposedPerspectives') ? { perspectives: x.pkeys } : {}), ...(target === 'none' ? {} : { sourceBranch: x.src ?? r.sourceBranch, featureBranch: x.feature ?? r.featureBranch, sameAsSource: x.onSource ?? !!r.sameAsSource }),
+      ...(eng ? { engine: eng } : {}), ...(target === 'project' && o.tags.length ? { tags: o.tags } : {}), ...(o.allow ? { allowUnguardedEngine: true } : {}) };
+  }
+  // Start, and a resend after a refusal: the note it may bring is the card's; any other refusal is the one toast
+  function ppStart(hit, x, picks) {
+    const o = ppOf(x), RO = window.RailRunOptions;
+    return busyBtn(hit, CL().act('start', { ...cardArgs(x), card: x.raw || {}, picks, quiet: true }).then((res) => {
+      if (res.ok) { o.note = null; o.allow = false; return res; }
+      const r = RO?.refusalOf(res);
+      if (r?.kind === 'engine') o.note = { kind: 'engine', error: r.error, overridable: r.overridable };
+      else if (r?.kind === 'sync') o.note = { kind: 'sync', ...RO.syncNoteOf(r) };
+      else window.RailAdapter?.toast?.(`Could not start the task: ${res.error}`);
+      return res;
+    }));
+  }
   function liveProposalHtml(x) {
     const r = x.raw || {};
     if (!liveGuards) { liveGuards = []; CL().catalog('guardrails').then((g) => { if (g.ok) { liveGuards = (g.data?.guardrails || []).filter((y) => y.id !== 'permissive').map((y) => ({ id: y.id, text: y.name || y.id })); paint(); } else liveGuards = null; }); }
@@ -686,7 +727,9 @@
     const pp = (f, text, items, tip) => R.sentencePicker({ id: `pp-${x.id}-${f}`, text, tip, items: items.map((v) => (typeof v === 'string' ? { id: v, text: v, checked: v === text } : { ...v, checked: v.id === x[f] })), open: menu === `pp-${x.id}-${f}`, chevron: R.icon('chevron', 10) });
     const row = (k, v) => `<div class="cr"><span>${k}</span><span>${v}</span></div>`;
     const targets = ['No project', ...(r.projectDir ? ['Project'] : []), ...(r.workspaceId ? ['Workspace'] : [])];
-    const sentence = W('Task') + W('on') + W(esc(x.target === 'No project' ? 'no project' : x.project)) + W('with') + W(esc(x.workflow));
+    ppRead(x);
+    const eng = ppEngine(x), engLabel = eng ? window.RailTaskLive?.engines?.().find((e) => e.id === eng)?.label || eng : '';
+    const sentence = W('Task') + W('on') + W(esc(x.target === 'No project' ? 'no project' : x.project)) + W('with') + W(esc(x.workflow)) + (engLabel ? W('run by') + W(esc(engLabel)) : '');
     const brief = `<div class="tp-brief">${R.field({ id: `pp-brief-${x.id}`, label: 'Brief: what the first agent reads · Markdown', value: x.brief ?? '', multiline: true, hint: `${(x.brief ?? '').length} characters`, attrs: { 'data-pp-brief': x.id } })}</div>`;
     const guardText = (liveGuards || []).find((g) => g.id === x.guard)?.text || x.guard;
     const more = row('Where it runs', pp('target', x.target, targets, 'Where it runs'))
@@ -695,7 +738,7 @@
         + row('Run on the source branch', R.switchButton({ on: !!x.onSource, label: 'Run on the source branch', attrs: { 'data-pp-onsource': x.id } })))
       + row('Guardrails', pp('guard', guardText, liveGuards || [], 'Applies to every agent in this task'));
     const ppMenu = R.moreMenu({ id: `ppm:${x.id}`, label: `More for ${x.title}`, icon: R.icon('more', 16), open: menu === `ppm:${x.id}`, items: [{ id: 'composer', text: 'Edit in the composer', help: 'Puts all of it in the box to change; this card stays until you send' }] });
-    return R.taskProposal({ menu: ppMenu, title: x.title, why: x.why, sentence: sentence + livePersp(x), more: brief + more, open: x.open, nudge: '', hooks: { title: { 'data-pp-title': x.id }, more: { 'data-pp-more': x.id }, start: { 'data-pp-start': x.id }, later: { 'data-pp-later': x.id } }, start: 'Start', alts: null, kicker: 'Proposed', attrs: { 'data-anchor': x.id } });
+    return R.taskProposal({ menu: ppMenu, title: x.title, why: x.why, sentence: sentence + livePersp(x), more: brief + more, open: x.open, nudge: '', hooks: { title: { 'data-pp-title': x.id }, more: { 'data-pp-more': x.id }, start: { 'data-pp-start': x.id }, later: { 'data-pp-later': x.id } }, start: 'Start', alts: null, kicker: 'Proposed', extra: ppNoteHtml(x), attrs: { 'data-anchor': x.id } });
   }
   // Run with (D3): a one-stage workflow Worca proposed only to run a task is one TaskProposal; Start saves it and starts its
   // task (RailChatLive 'run-with'), Customise holds its steps and a plain Save workflow (dev's save, no start)
@@ -986,7 +1029,7 @@
   const dimmed = new Set();   // controls a pending action disabled (busyFor): enabled again once it is answered, a kept node too
   function paintOnly(keepText = true) {
     const fm = focusMark();
-    const had = root.querySelector('[data-composer-t]'), caret = had && document.activeElement === had, y = root.querySelector('.convo-scroll')?.scrollTop;
+    const had = root.querySelector('[data-composer-t]'), caret = had && document.activeElement === had, was = root.querySelector('.convo-scroll'), y = was?.scrollTop, follow = R.pinnedToEnd(was);   // motion.follow-end: read before the patch, as the reader left it
     const sel = caret ? [had.selectionStart, had.selectionEnd, had.selectionDirection] : null, draft = had ? had.value : null;   // where the writer left the caret, in which draft
     if (had && keepText) comp.text = had.value;
     const c = chat();
@@ -1008,7 +1051,7 @@
       }
       R.patchKeyed(box.querySelector('.convo-col'), [{ key: 'head', html: `<div class="convo-head">${shown ? `${esc(c.project || 'No project')}${labels ? ` · ${labels}` : ''}` : ''}${labelPick}${worktreesHtml()}<span class="tl-list-btn rc-pop" data-anchor-menu>${R.button({ label: 'Move through this chat', kind: 'quiet', iconOnly: true, icon: R.icon('list', 15), attrs: { 'data-anchor-open': '', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'anchors') } })}${anchorsMenu}</span></div>` }, { key: 'wt-confirm', html: wtConfirm() }, { key: 'eng-confirm', html: engConfirm() }, ...body], { carry: 'canvas[data-orb]' });
       R.patchKeyed(root.querySelector('.convo-dock'), [{ key: 'latest', html: `${R.button({ label: 'Latest', kind: 'quiet', icon: R.icon('chevron', 12), cls: 'jump-latest', attrs: { 'data-jump-latest': '', title: 'Back to the newest turn' } })}` }, { key: 'composer', html: composerHtml() }]);
-      if (y != null) box.scrollTop = y;
+      if (follow) box.scrollTop = box.scrollHeight; else if (y != null) box.scrollTop = y;
       paintTimeline();
     }
     placeImprove();   // before the focus comes back: a focused Use this is found again in its moved view
@@ -1404,8 +1447,14 @@
       const own = root.querySelector(`[data-own="${hit.dataset.answerGo}"]`)?.value.trim();
       busyBtn(hit, CL().act('answer', { ...cardArgs(x), ...(own ? { text: own } : { choice: x.optionIds?.[x.pick ?? 0] }) })); return true;
     }
-    if ((hit = on('[data-pp-start]'))) { x = turns().find((y) => y.id === hit.dataset.ppStart); if (!x?.card) return noId('start the task'); const r = x.raw || {}, target = TARGET_OF[x.target] || r.target;
-      busyBtn(hit, CL().act('start', { ...cardArgs(x), card: r, picks: { title: x.title, brief: x.brief, target, guardrailsId: x.guard || r.guardrailsId, ...(x.pkeys && R.prefs.flag('proposedPerspectives') ? { perspectives: x.pkeys } : {}), ...(target === 'none' ? {} : { sourceBranch: x.src ?? r.sourceBranch, featureBranch: x.feature ?? r.featureBranch, sameAsSource: x.onSource ?? !!r.sameAsSource }) } })); return true; }
+    if ((hit = on('[data-pp-start]'))) { x = turns().find((y) => y.id === hit.dataset.ppStart); if (!x?.card) return noId('start the task'); ppStart(hit, x, ppPicks(x)); return true; }
+    if ((hit = on('input[data-pp-allow]'))) { x = turns().find((y) => y.id === hit.dataset.ppAllow); if (x) { ppOf(x).allow = hit.checked; paint(); root.querySelector(`[data-pp-allow="${CSS.escape(x.id)}"]`)?.focus(); } return true; }
+    if ((hit = on('[data-pp-sync]'))) {
+      const [id, policy] = hit.dataset.ppSync.split('|'); x = turns().find((y) => y.id === id); if (!x?.card) return noId('start the task');
+      const o = ppOf(x);
+      if (policy === 'cancel') { o.note = null; paint(); root.querySelector(`[data-pp-start="${CSS.escape(x.id)}"]`)?.focus(); say(window.RailRunOptions?.START_CANCELLED || 'Start cancelled'); return true; }
+      ppStart(hit, x, { ...ppPicks(x), syncPolicy: policy }); return true;   // the card as it is now, plus one key; the note stays, its button held, until dev answers
+    }
     if ((hit = on('[data-pp-later]'))) { x = turns().find((y) => y.id === hit.dataset.ppLater); if (!x?.card) return noId('set the proposal aside'); busyBtn(hit, CL().act('card-later', { ...cardArgs(x), run: true })); return true; }
     if ((x = turn('data-cmd-stop'))) { if (!x.session) return noId('stop the command'); busyBtn(hit, CL().act('cmd-stop', { sessionId: x.session })); return true; }
     if ((x = turn('data-term-stop'))) { if (x.term) busyBtn(hit, x.term.stop()); return true; }
@@ -1691,7 +1740,7 @@
       el.classList.remove('is-flash'); void el.offsetWidth; el.classList.add('is-flash');
       return true;
     },
-    show: (id) => { if (LIVE()) { listen(); CL().look(root, id || '', () => !hiddenNow()); if (id) CL().open(id); } setTimeout(() => settle(id), 0); const other = id !== chatId; if (other) { drafts.set(chatId, { ...comp, text: root.querySelector('[data-composer-t]')?.value ?? comp.text, busy: false, queue: [], listening: false, sending: false }); opened = new Set(); hover = null; menu = ''; const was = drafts.get(id || ''); comp = was && (id || was.text || was.intent || was.mode !== 'ask') ? { ...was } : { ...fresh(), project: id ? data().chats.find((c) => c.id === id)?.project || 'No project' : lastProject };   /* a new chat starts on the project you added last */ comp.sending = sendingIn.has(id || ''); } chatId = id || ''; paint(!other); if (id) { const box = root.querySelector('.convo-scroll'); if (box) { box.scrollTop = 0; paintTimeline(); } } },
+    show: (id) => { if (LIVE()) { listen(); CL().look(root, id || '', () => !hiddenNow()); if (id) CL().open(id); } setTimeout(() => settle(id), 0); const other = id !== chatId; if (other) { drafts.set(chatId, { ...comp, text: root.querySelector('[data-composer-t]')?.value ?? comp.text, busy: false, queue: [], listening: false, sending: false }); opened = new Set(); hover = null; menu = ''; const was = drafts.get(id || ''); comp = was && (id || was.text || was.intent || was.mode !== 'ask') ? { ...was } : { ...fresh(), project: id ? data().chats.find((c) => c.id === id)?.project || 'No project' : lastProject };   /* a new chat starts on the project you added last */ comp.sending = sendingIn.has(id || ''); } chatId = id || ''; paint(!other); if (id) { const box = root.querySelector('.convo-scroll'); if (box) { box.scrollTop = box.scrollHeight; paintTimeline(); } } },
     start: (mode, text, project) => { chatId = ''; comp = { ...fresh(mode), text: text || '', ...(project ? { project } : {}) }; if (!side) window.RailShell.go('chat'); paint(false); root.querySelector('[data-composer-t]')?.focus(); },   /* what another place hands over stays in the box, on its project */
     pin: (w, on) => { const next = on ? [...new Set([...shownPins(), w])] : shownPins().filter((x) => x !== w); if (LIVE()) setPins(next, on ? `Pinned ${w}` : `Unpinned ${w}`); else { pins = next; refreshAll(); } },
     handOver: ({ mode = 'ask', about, text = '', ph = '', project, workflow, ref = null }) => {   // ref: the page's own ids, posted as context (D16)   // rail.hand-to-chat: the one way a place sends something to Chat

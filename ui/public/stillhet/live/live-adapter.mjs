@@ -10,6 +10,8 @@ import { startScheduleLive } from './schedule-live.mjs';
 import { startMarketLive } from './market-live.mjs';
 import { startProjectsLive } from './projects-live.mjs';
 import { startInsightsLive } from './insights-live.mjs';
+import { startRunOptionsLive } from './run-options-live.mjs';
+export * as runOptionsWords from './run-options-live.mjs';   // its pure helpers: the words the New task form and the proposal draw (COV-2)
 import { progressOfState } from './chat-turns.mjs';
 import { workModeOf } from '../../../../src/shared/ask-run-snapshot.mjs';
 import { USAGE_REFRESH_MS } from '../../design-system/components/usage.mjs';
@@ -21,6 +23,7 @@ export const SOURCES = Object.freeze({
   runGroups: '/api/run-groups',   // Tasks: a group's tasks fold under it in the bar; its page is #run/group:GID
   usageLimits: '/api/usage-limits',   // the profile's usage rings: the harness CLIs' own plan-limit readings (D7)
   workspaces: '/api/workspaces',   // the bell's and the workspace page's questions; each map is read after the list (D10)
+  archived: '/api/history?archived=1',   // F-a4-07: the Archived view's rows; read at load, on the view's opening and after ARCHIVE_ACTIONS
 });
 // A `*-changed` frame re-fetches only its own sources (D11); a chat's turn re-reads the threads. A `pipelines-changed` that
 // names its run (`pipelineId`) reads that run's one row instead of the whole history, and the spend it may have moved.
@@ -31,9 +34,12 @@ const CHANGED = {
   'plugins-changed': ['plugins', 'markets', 'workflows', 'scripts'],   // Marketplace (slice 8 D17): a plugin's workflows and agents show in Workflows too
   'ask-start': ['threads', 'runLinks'], 'ask-done': ['threads', 'runLinks', 'budget'], 'ask-error': ['threads'], 'ask-title': ['threads'], 'ask-message': ['threads', 'runLinks'],
 };
+// F-a4-07: the pipelines-changed actions that move rows into or out of the archive (ui/routes/runs/runs.mjs)
+const ARCHIVE_ACTIONS = new Set(['bulk-archive', 'bulk-restore', 'bulk-delete', 'deleted', 'restored']);
 const WORKFLOW_SOURCES = new Set(['workflows', 'scripts']);
 const MARKET_SOURCES = new Set(['plugins', 'markets']);
-const RUN_FRAMES = new Set(['run-created', 'state', 'question', 'question-resolved', 'done', 'error', 'title']);
+const RUN_FRAMES = new Set(['run-created', 'run-pipeline', 'state', 'question', 'question-resolved', 'done', 'error', 'title']);
+const ARCHIVED_FAILED = Symbol('archived failed');
 const DEBOUNCE_MS = 250, BACKOFF_MS = 1000, BACKOFF_MAX_MS = 30000, TOKEN_EXPIRED = 4001;
 
 const PROJECT_FRAMES = new Set(['clone-changed', 'settings-changed', 'projects-changed', 'workspaces-changed']);
@@ -95,6 +101,9 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
         state: { status: l.status, title: l.title, branch: l.branch || null, steps: l.steps || [], totalCostUsd: l.totalCostUsd, totalActiveMs: l.totalActiveMs, pipelineCapUsd: l.pipelineCapUsd,
           pauseReason: l.pauseReason, pauseDetail: l.pauseDetail, startedAt: l.startedAt, stepper: l.stepper, ...(l.pauseAfterStep ? { pauseAfterStep: true } : {}) } };
     } });
+
+  // New task's run options (COV-2): run-options-live owns every read and write of the form's and the proposal's options
+  const runOptions = startRunOptionsLive({ fetch, toast });
 
   // Schedules (D4): schedule-live owns every Schedules request; the store still moves only on the server's frames
   const schedule = startScheduleLive({ fetch, setTimeout, clearTimeout, on, now, tasksOf: () => world.part?.('runs') || [] });
@@ -160,9 +169,17 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
     const n = ++asked, names = Object.keys(SOURCES);
     allOut++;   // a count: two reconnects' reads can be out at once, and the later one may still predate a settle
     let answers;
-    try { answers = await Promise.all(names.map((x) => load(x))); }
+    // the Archived view's read fails alone: the rest of the list still draws, and that view says it could not load
+    try { answers = await Promise.all(names.map((x) => (x === 'archived' ? load(x).catch(() => ARCHIVED_FAILED) : load(x)))); }
     finally { allOut--; if (!allOut && !historyOut && historyDirty) { historyDirty = false; refresh('history'); } }
-    names.forEach((x, i) => keep(x, answers[i], n));
+    names.forEach((x, i) => { if (answers[i] !== ARCHIVED_FAILED) keep(x, answers[i], n); });
+    archivedRead(answers[names.indexOf('archived')] !== ARCHIVED_FAILED);
+  }
+  // the world's `archived` state ('failed' or ''): set only when it changes, so a read on idle adds no redraw
+  let archivedFailed = false;
+  function archivedRead(ok) {
+    if (archivedFailed === !ok) return;
+    archivedFailed = !ok; world.setState({ archived: ok ? '' : 'failed' });
   }
   const snapshot = () => snapshotOf({ ...sources, hello: { runs: [...live.values()] } }, { now: now(), unread, checksOf: task.checks });
   // A checks entry landed (D5): the rows read their case from it, so the runs part is drawn again (debounced). Only then:
@@ -174,6 +191,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
     checksDraw = setTimeout(() => { checksDraw = 0; draw(() => { const x = snapshot(); return { runs: x.runs, groups: x.groups }; }, undefined, { list: 'refresh' }); }, DEBOUNCE_MS);
   });
   // A load the mapper cannot build fails the list's look (the first load) or marks it out of date (later), never spins.
+  const drawRuns = () => draw(() => { const x = snapshot(); return { runs: x.runs, groups: x.groups }; }, undefined, { list: 'refresh' });
   function draw(build, state, fail) {
     let parts;
     try { parts = build(); } catch (e) { console.error(e); world.setState(fail); return false; }
@@ -259,7 +277,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
   function moveTask(raw) {
     const t = taskOfLive(raw, { now: now(), projects: projects() });
     if (world.find(t.id)) world.move(t.id, t.case, t.detail, { title: t.title, cost: t.cost, unread: t.unread, over: !!t.over, workflow: t.workflow });   // a calm Failed sorts into Recent
-    else world.add(t);
+    else drawRuns();   // F-7a-03: a new row is a runs draw (onChange), so the Tasks list shows it at once
   }
   // A run frame moves its task; a run that is not one of dev's Needs-you inputs (an agent generation, a run already over)
   // gets no task of its own. When a live run names a pipeline the store holds as a saved row (a resumed run), the runs are
@@ -272,17 +290,38 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
     for (const [k, v] of live) if (k !== raw.runId && v.pipelineId === raw.pipelineId) { live.delete(k); progress.delete(k); gone = true; }
     return gone;
   }
+  // F-7a-02: a settled run is moved to its finished case at its own frame (out of Needs you at once), keeping its run id so
+  // a chat card or page on it reads the new case before any read; its saved row's read (settleRead) swaps in the saved row
   function place(raw) {
-    if (supersede(raw)) { draw(() => { const x = snapshot(); return { runs: x.runs, groups: x.groups }; }, undefined, { list: 'refresh' }); return; }
+    if (supersede(raw)) { drawRuns(); return; }
     if (!inPlay(raw) && !world.find(raw.runId)) return;
-    if (raw.pipelineId && raw.pipelineId !== raw.runId && world.find(raw.pipelineId)) { draw(() => { const x = snapshot(); return { runs: x.runs, groups: x.groups }; }, undefined, { list: 'refresh' }); return; }
+    if (raw.pipelineId && raw.pipelineId !== raw.runId && world.find(raw.pipelineId)) { drawRuns(); return; }
     moveTask(raw);
+  }
+  // F-7a-02: a settled run's saved row is read at its own frame (the server's later pipelines-changed for it shares the
+  // per-pipeline debounce); with no project key, or a workspace's, the whole history is read, as runRead does
+  function settleRead(raw) {
+    const pid = str0(raw.pipelineId);
+    if (!pid) return;
+    const key = str0((sources.history?.pipelines || []).find((p) => p && p.id === pid)?.projectKey) || str0(raw.projectKey) || str0(projects().find((p) => p && raw.projectDir && p.path === raw.projectDir)?.key);
+    if (!key || key.startsWith('workspaces/')) { refresh('history'); return; }
+    refreshRun(key, pid);
   }
   function apply(f) {
     if (RUN_FRAMES.has(f.type) && f.runId) {
       let raw = live.get(f.runId);
       if (f.type === 'run-created') { raw = { ...f, type: undefined }; live.set(f.runId, raw); place(raw); return; }
       if (!raw) return;
+      // F-7a-02: the server names a resumed run's pipeline in its own frame (#1358); a repeat changes nothing
+      if (f.type === 'run-pipeline') {
+        const pid = str0(f.pipelineId);
+        if (!pid || pid === str0(raw.pipelineId)) return;
+        const unnamed = !str0(raw.pipelineId);
+        raw.pipelineId = pid;
+        if (unnamed) task.learned(f.runId, pid);
+        place(raw);
+        return;
+      }
       const had = str0(raw.pipelineId);   // B1.9 D5: the first state frame that names the pipeline is handed to task-live below
       if (f.type === 'state') { const pg = progressOfState(f); if (pg.step) { progress.set(f.runId, pg); if (f.id) progress.set(f.id, pg); } }
       if (f.type === 'state') Object.assign(raw, { status: f.status ?? raw.status, title: f.title || raw.title, totalCostUsd: f.totalCostUsd ?? raw.totalCostUsd, pauseReason: f.pauseReason ?? null, pauseDetail: f.pauseDetail ?? null, limitEngine: f.limitEngine ?? null, limitResetAt: f.limitResetAt ?? null, pipelineId: f.id || raw.pipelineId,
@@ -297,8 +336,10 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
         if (raw.status === 'paused') Object.assign(raw, { pauseReason: f.reason ?? raw.pauseReason, pauseDetail: f.detail ?? raw.pauseDetail, limitEngine: f.limitEngine ?? raw.limitEngine, limitResetAt: f.limitResetAt ?? raw.limitResetAt });
         if (raw.status === 'error' || raw.status === 'failed') { raw.unread = true; raw.opened = false; }   // dev's lingering rule: failed while watched, until opened
       }
-      if (f.type === 'done' || f.type === 'error' || (f.type === 'state' && !inPlay({ kind: raw.kind, status: raw.status }))) settleRow(raw);
+      const settled = f.type === 'done' || f.type === 'error' || (f.type === 'state' && !inPlay({ kind: raw.kind, status: raw.status }));
+      if (settled) settleRow(raw);
       place(raw);
+      if (settled) settleRead(raw);
       if (f.type === 'state' && !had && str0(raw.pipelineId)) task.learned(f.runId, raw.pipelineId);
       return;
     }
@@ -309,8 +350,9 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
     if (f.type === 'pipelines-changed' && Array.isArray(f.removedRunIds) && f.removedRunIds.length) {
       let gone = false;
       for (const id of f.removedRunIds) if (live.delete(id)) { progress.delete(id); gone = true; }
-      if (gone) draw(() => { const x = snapshot(); return { runs: x.runs, groups: x.groups }; }, undefined, { list: 'refresh' });
+      if (gone) drawRuns();
     }
+    if (f.type === 'pipelines-changed' && ARCHIVE_ACTIONS.has(f.action)) refresh('archived');
     if (f.type === 'pipelines-changed' && f.pipelineId) { runRead(f); refresh('runLinks'); refresh('budget'); return; }
     for (const s of CHANGED[f.type] || []) refresh(s);
   }
@@ -392,7 +434,8 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
       let a, failed = false;
       try { a = await load(source); } catch { failed = true; }
       if (full) { historyOut = false; if (historyDirty) { historyDirty = false; refresh('history'); } }
-      if (failed) { stale.add(source); world.setState({ list: 'refresh' }); return; }
+      if (source === 'archived') archivedRead(!failed);
+      if (failed) { if (source !== 'archived') { stale.add(source); world.setState({ list: 'refresh' }); } return; }
       if (!keep(source, a, n)) return;
       if (full) askPrs();
       drawSource(source);
@@ -403,7 +446,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
   begin();
   armBudgetTick();
   return {
-    chat, task, workflow, schedule, market, projects: projectsLive, insights,
+    chat, task, workflow, schedule, market, projects: projectsLive, insights, runOptions,
     stop: () => { stopped = true; insights.stop(); clearTimeout(reconnect); clearTimeout(budgetTick); for (const t of [...Object.values(timers), ...runTimers.values()]) clearTimeout(t); sock?.close(); },
     refresh,
     retry,

@@ -1506,6 +1506,19 @@ test('ScrollFade: an edge fades only while there is more past it', () => {
   window.close();
 });
 
+test('ScrollFade: pinnedToEnd — within 80px of the end is the end (#1381, motion.follow-end)', () => {
+  assert.equal(typeof C.pinnedToEnd, 'function', 'on the index');
+  assert.equal(C.pinnedToEnd({ scrollTop: 1520, scrollHeight: 2000, clientHeight: 400 }), true, '80px from the end');
+  assert.equal(C.pinnedToEnd({ scrollTop: 1519, scrollHeight: 2000, clientHeight: 400 }), false, '81px holds');
+  assert.equal(C.pinnedToEnd({ scrollTop: 1600, scrollHeight: 2000, clientHeight: 400 }), true, 'at the exact end');
+  assert.equal(C.pinnedToEnd({ scrollTop: 120, scrollHeight: 2000, clientHeight: 400 }), false, 'scrolled up');
+  assert.equal(C.pinnedToEnd({ scrollTop: 0, scrollHeight: 300, clientHeight: 400 }), true, 'content that fits');
+  assert.equal(C.pinnedToEnd(null), false);
+  assert.equal(C.pinnedToEnd(undefined), false);
+  assert.equal(C.pinnedToEnd({ scrollTop: 1599, scrollHeight: 2000, clientHeight: 400 }, 0), false, 'a custom near of 0');
+  assert.equal(C.pinnedToEnd({ scrollTop: 1600, scrollHeight: 2000, clientHeight: 400 }, 0), true);
+});
+
 test('commands: dev\'s group head, rows with no mark, Copy on the command and its output', () => {
   assert.equal(C.commandHead({ count: 3, failed: 1, dur: '5.4s' }), '<b>Ran 3 commands</b> · <span class="cmd-failed">1 failed</span> · 5.4s');
   assert.match(C.commandHead({ count: 3, running: true, current: 'Running the tests', dur: '2.1s' }), /^<b>Running the tests<\/b> · 3 commands · 2.1s$/);
@@ -1881,4 +1894,35 @@ test('composerQueueButton (F-gb235-03): a quiet text button named Queue, data-cp
   assert.equal(b.getAttribute('aria-label'), null, 'its name is its visible word');
   assert.equal(b.getAttribute('data-cp-queue'), '');
   assert.equal(b.getAttribute('title'), 'Sends it when the reply finishes');
+});
+
+test('choiceNote (COV-2): an amber note, its rows with their ways, its ways as buttons, escaped, role=status', () => {
+  const n = dom(C.choiceNote({ text: 'This preset needs <attention>', means: 'Start waits until it is fixed', rows: [{ text: 'Workflow wf_gone is gone', way: { label: 'Reset to default', attrs: { 'data-x-reset': '0' } } }, { text: 'Guardrails <old>' }],
+    ways: [{ label: 'Start from origin/main', kind: 'primary', attrs: { 'data-x-go': '' } }, { label: 'Cancel', kind: 'quiet', attrs: { 'data-x-cancel': '' } }] }));
+  assert.equal(n.getAttribute('role'), 'status');
+  assert.match(n.className, /\bchoice-note\b/);
+  assert.match(n.className, /\bis-amber\b/, 'the tone class');
+  assert.ok(n.querySelector('.rc-rail > .status-dot.is-amber'), 'the dot is statusDot');
+  assert.equal(n.querySelector('.rc-word').textContent, 'This preset needs <attention>', 'text is escaped');
+  assert.equal(n.querySelector('.rc-detail').textContent, 'Start waits until it is fixed');
+  const rows = n.querySelectorAll('.choice-note-row');
+  assert.equal(rows.length, 2);
+  assert.match(rows[0].textContent, /Workflow wf_gone is gone/);
+  assert.equal(rows[0].querySelector('button.btn[data-x-reset="0"]').textContent, 'Reset to default', 'a row way is a button()');
+  assert.equal(rows[1].querySelector('button'), null);
+  assert.equal(rows[1].textContent, 'Guardrails <old>');
+  const ways = [...n.querySelectorAll('.choice-note-ways > button')];
+  assert.deepEqual(ways.map((b) => b.textContent), ['Start from origin/main', 'Cancel']);
+  assert.match(ways[0].className, /btn-primary/);
+  assert.match(ways[1].className, /btn-quiet/);
+});
+
+test('choiceNote (COV-2): a note that only tells is grey, no ways, and its end slot as given', () => {
+  const g = dom(C.choiceNote({ needsYou: false, text: 'team policy' }));
+  assert.match(g.className, /\bis-grey\b/);
+  assert.ok(g.querySelector('.status-dot.is-grey'));
+  assert.equal(g.querySelector('.choice-note-ways'), null, 'no ways, no button row');
+  assert.equal(g.querySelector('.rc-detail'), null, 'no means, no detail');
+  const e = dom(C.choiceNote({ text: 'Codex cannot enforce …', end: C.checkbox({ label: 'Allow unguarded', attrs: { 'data-x-allow': '' } }) }));
+  assert.ok(e.querySelector('.choice-note-end input[type="checkbox"][data-x-allow]'), 'end is not escaped');
 });
