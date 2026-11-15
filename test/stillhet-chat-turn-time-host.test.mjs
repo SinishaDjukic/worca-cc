@@ -5,6 +5,7 @@
 // browser measure.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { liveHost, go, settle, clone, THREAD } from './helpers/stillhet-chat-live-host.mjs';
 import { stillhetHost } from './helpers/stillhet-host.mjs';
 
@@ -138,4 +139,36 @@ test('the demo threads carry times too: the first you turn of Billing CSV export
   const time = w.document.querySelector('#route-chat .convo-you time.turn-time');
   assert.equal(time?.textContent, '14:02');
   assert.ok(w.document.querySelector('#route-chat .convo-words time.turn-time'), 'and Worca\'s words');
+});
+
+test('F-a2-01 prototype: while the demo reply runs, Enter queues at most 3 with the line; Stop pauses with Send now; each row has Remove and no Edit', async (t) => {
+  const w = stillhetHost({ hash: '#chat/c1', after: (fn) => t.after(fn) });
+  await settle(40);
+  const d = w.document, q = (s) => d.querySelector(`#route-chat ${s}`), box = () => q('[data-composer-t]');
+  const enter = async (text) => { box().value = text; box().dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await settle(10); };
+  await enter('Add a totals row');
+  assert.ok(q('[data-cp-stop]'), 'the demo reply runs');
+  await enter('one');
+  assert.match([...d.querySelectorAll('body > .rc-toast')].map((e) => e.textContent).join(' | '), /(^| \| )Queued: 1 of 3($| \| )/, 'the toast never repeats the line');
+  for (const m of ['two', 'three']) await enter(m);
+  assert.deepEqual([...d.querySelectorAll('#route-chat .composer-queue .tr-text')].map((e) => e.textContent), ['Queued one', 'Queued two', 'Queued three']);
+  assert.equal(q('[data-q-note]').textContent, 'Queue full: sends when the reply finishes');
+  await enter('four');
+  assert.equal(box().value, 'four', 'a fourth stays in the box');
+  assert.equal(d.querySelectorAll('#route-chat .composer-queue [data-q-drop]').length, 3, 'each row has Remove');
+  assert.equal(q('[data-q-edit]'), null, 'and no Edit');
+  q('[data-cp-stop]').click(); await settle(10);
+  assert.match(q('[data-q-note]').textContent, /^Queue paused: the reply was stopped/);
+  assert.equal(q('[data-q-send]').textContent, 'Send now');
+  await settle(1600);
+  assert.equal(d.querySelectorAll('#route-chat .composer-queue [data-q-drop]').length, 3, 'a paused queue sends nothing');
+  q('[data-q-send]').click(); await settle(10);
+  assert.equal(d.querySelectorAll('#route-chat .composer-queue [data-q-drop]').length, 2, 'Send now sends the oldest');
+  assert.ok(q('[data-cp-stop]'), 'its reply runs');
+  assert.equal(q('[data-q-note]').textContent, 'Sends when the reply finishes');
+});
+
+test('F-a2-01 review: no demo [data-cp-queue] path queues past the cap: the handler is gone', () => {
+  const src = readFileSync(new URL('../ui/public/stillhet/chat/conversation.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /data-cp-queue/);
 });
