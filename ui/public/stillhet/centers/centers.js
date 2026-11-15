@@ -5,7 +5,7 @@
   const R = window.RailUI, W = window.RailWorld, RM = window.RunCardModel;
   const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const say = (t, undo) => window.RailPulse?.say(t, undo);
-  const usd = (n) => `$${n.toFixed(2)}`;
+  const usd = (n) => `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;   // F-fm-02: thousands separated ($2,551.75)
   const plural = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
   const advanced = () => R.shows('advanced');
   const List = () => window.RailRunsList, Sch = () => window.RailSchedules;
@@ -20,7 +20,8 @@
   let view = { sort: 'most urgent', by: 'project', sSort: 'most urgent', from: '' }, figs = { tasks: false, sched: false };
 
   // ---- what a task is on a card ----
-  const costOf = (t) => (t.run ? t.run.cost || 0 : W.membersOf(t.group).reduce((a, m) => a + (m.cost || 0), 0));
+  // F-3-10: this week's runs among the rows, each once: a group row is its members, each dated by its own day and time
+  const weekOf = (rows) => { const runs = rows.flatMap((t) => (t.group ? W.membersOf(t.group).map((m) => ({ run: m, day: m.day })) : [t])).filter(inWeek); return { n: runs.length, cost: runs.reduce((a, t) => a + (t.run.cost || 0), 0) }; };
   // a group's task: one that waits on you, else the one the group reads as (its next unmerged task), else its first
   const taskOf = (t) => t.run || (t.group ? W.membersOf(t.group).find(W.raises) || W.membersOf(t.group).find((m) => m.case === t.group.case) || W.membersOf(t.group)[0] : null);
   const stateOf = (r) => RM.stateOf(r.case);
@@ -31,7 +32,10 @@
   const GIT_SAYS = { conflict: 'Conflicts', fail: 'Checks failing' };
   const liveSays = (r) => { const v = W.live ? window.RailTaskLive?.detail?.(r.id) : null; if (!v) return ''; const why = (v.why || []).find((x) => /^✗/.test(x)); return v.detail || (why ? why.replace(/^✗\s*/, '') : '') || GIT_SAYS[v.git] || ''; };
   const clause = (r) => R.taskClause({ state: stateOf(r), name: link(r.title, { 'data-c-open': r.id }, `Opens ${r.title} in its chat`), detail: liveSays(r) || r.detail || '' });
-  const actionsOf = (rs) => R.taskActions(rs.map((t) => ({ id: t.id, title: t.title, short: t.short, state: stateOf(t) })));
+  // V-TW-01: a button names its task in at most 24 characters, whole words, "…" when cut; its tooltip keeps the full title
+  const SHORT = 24;
+  const shortOf = (title) => { const s = String(title || '').trim(); if (s.length <= SHORT) return s; let out = ''; for (const w of s.split(/\s+/)) { const next = out ? `${out} ${w}` : w; if (next.length > SHORT) break; out = next; } return `${out || s.slice(0, SHORT - 1)}…`; };
+  const actionsOf = (rs) => R.taskActions(rs.map((t) => ({ id: t.id, title: t.title, short: t.short || shortOf(t.title), state: stateOf(t) })));
   const schedLink = (s) => (advanced() ? link(s.title, { 'data-c-sched': s.id }, `Opens ${s.title}`) : esc(s.title));   // Simple: Schedules is locked, so no links lead there
 
   // ---- the Tasks center ----
@@ -51,7 +55,7 @@
       const c = (sec) => g.rows.filter((t) => t.section === sec);
       const recent = c('recent').filter(inWeek);
       const needs = c('needs').filter((t) => taskOf(t)).sort((a, b) => RANK(stateOf(taskOf(a))) - RANK(stateOf(taskOf(b))));
-      return { ...g, needs, running: c('running'), waiting: c('scheduled'), recent, cost: g.rows.filter(inWeek).reduce((a, t) => a + costOf(t), 0), quiet: !needs.length && !g.missed.length && !c('running').length };
+      return { ...g, needs, running: c('running'), waiting: c('scheduled'), recent, cost: weekOf(g.rows).cost, quiet: !needs.length && !g.missed.length && !c('running').length };
     });
   }
   const urgency = (g) => (g.needs.length ? RANK(stateOf(taskOf(g.needs[0]))) : g.missed.length ? 2.5 : g.running.length || g.live.length ? 5 : 6);
@@ -86,7 +90,7 @@
     const facts = factsOf(g);
     const kind = top || g.running.length || g.live.length ? 'task' : g.missed.length ? 'schedule' : view.by === 'workflow' ? 'workflow' : 'project';   // the mark says how it stands (list.kind-mark)
     return R.pluginCard({ mark: R.kindMark({ kind, tone, advisory: tone === 'ok', breathe: !!(top || g.missed.length) }), word, tone, title: g.name,
-      whatHtml: what.join('; ') || (running ? `${link(running.title, { 'data-c-open': running.id })} is running` : 'Nothing is going on here.'), action: actionOf(g), attrs: { title: facts.tip } });
+      whatHtml: what.join('<br>') || (running ? `${link(running.title, { 'data-c-open': running.id })} is running` : 'Nothing is going on here.'), action: actionOf(g), attrs: { title: facts.tip } });
   }
   const picker = (id, text, items, tip) => R.sentencePicker({ id, text, tip, items: items.map((v) => ({ id: v, text: v, checked: v === text })), open: menu === id, chevron: chev });
   function tasksHtml() {
@@ -95,9 +99,12 @@
     if (ls === 'loading' || ls === 'failed') return wrap(`${R.placeHead({ title: 'Your tasks', facts: 'New work starts in Chat' })}${R.listState({ state: ls, noun: 'tasks', retry: ls === 'failed' ? { 'data-c-retry': '', 'data-key': 'c-retry' } : null })}`);
     const rows = fromRows(), all = groups().sort(SORTS[view.sort]);
     if (!rows.length) return wrap(`${R.placeHead({ title: 'Your tasks', facts: 'New work starts in Chat' })}${R.emptyState({ title: 'No tasks yet.', actions: R.button({ label: 'Go to Chat', kind: 'quiet', attrs: { 'data-c-chat': '' } }) })}`);
-    const cost = rows.filter(inWeek).reduce((a, t) => a + costOf(t), 0);
+    // F-3-10: live, the API's week (every project, or the chosen one's row), nothing while it is read; demo, the per-run sum
+    const week = W.live ? (() => { const f = List().from(), t = window.RailInsightsLive?.weekTotals?.(f === 'all' ? null : f); return t ? { n: t.runs, cost: t.spentUsd } : null; })() : weekOf(rows);
     const shown = all.filter((g) => !g.quiet).flatMap(partsOf).sort(SORTS[view.sort]), quiet = all.filter((g) => g.quiet);
-    const facts = `${count(plural(rows.length, 'task'), filterHook({}), 'Opens every task')}${cost > 0 ? ` · ${count(`${usd(cost)} this week`, filterHook({ range: WEEK }), 'Opens this week\'s tasks')}` : ''}`;
+    // the count opens the chosen project's week; live, the list can hold fewer than the API counted, and the tip says so
+    const f = List().from(), wk = filterHook({ range: WEEK, ...(f === 'all' ? {} : { project: f }) }), wTip = W.live ? 'Opens this week\'s tasks in the list. The figure counts every run Worca recorded this week, so the two can differ' : 'Opens this week\'s tasks';
+    const facts = week ? `${count(`${plural(week.n, 'task')} this week`, wk, wTip)}${week.cost > 0 ? ` · ${count(`${usd(week.cost)} this week`, wk, wTip)}` : ''}` : '';
     const sent = R.centerSentence({ words: `Showing ${picker('c-sort', view.sort, Object.keys(SORTS), 'How the cards are ordered')} by ${picker('c-by', view.by, ['project', 'workflow'], 'What a card is')}`, open: figs.tasks, attrs: { 'data-c-figs': 'tasks' }, facts });
     const calm = !all.some((g) => g.needs.length || g.missed.length);
     const way = advanced() ? '' : `<p class="center-way">New work starts in Chat. ${link('Go to Chat', { 'data-c-chat': '' })}</p>`;
@@ -455,7 +462,7 @@
   const maker = (noun, chatWord, formWord) => ({ newLabel: `New ${noun}`, newMenu: () => [{ header: 'Ask in chat' }, { id: 'bar-new|chat', text: chatWord }, { sep: true }, { header: 'Legacy approach' }, { id: 'bar-new|form', text: formWord }], newPick: (id) => { if (id === 'form') openForm(noun); else ask(noun); } });
   const MAKERS = { tasks: maker('task', 'Start a task', 'New task…'), schedules: maker('schedule', 'Schedule a task', 'New schedule…') };
   window.RailCenters = {
-    tasks: (el) => { wire(); tasksHost = el; menu = ''; asking = null; paint(); },
+    tasks: (el) => { wire(); tasksHost = el; menu = ''; asking = null; if (W.live) window.RailInsightsLive?.retryWeek?.(); paint(); },   // a visit reads a failed week again
     schedules: (el) => { wire(); schedHost = el; menu = ''; if (/^#schedules/.test(location.hash)) el.innerHTML = schedulesHtml(); },
     maker: (which) => (advanced() ? MAKERS[which] : null),
     newTask: (keep = {}) => { wire(); openForm('task', { ...keep, ...(keep.project && !projects().includes(keep.project) ? { project: defaultProject() } : {}) }); },   // Run after this: the New task form, waiting for that one
