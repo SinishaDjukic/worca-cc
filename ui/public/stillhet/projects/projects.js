@@ -325,11 +325,12 @@
         : (!v ? 'It needs its repository address' : REPO_RE.test(v) ? '' : 'Give its repository address, such as git@github.com:you/your-project.git');
     if (wrong) { formErr2(v, wrong); return; }
     if (kind === 'rename' && v === nameOf(p)) { closeForm(); return; }
-    const done = (text, to) => { form = ''; formTyped = ''; formErr = ''; say(text); if (to) window.RailShell.go(`projects/${to}`); else draw(); };
+    const done = (text, to) => { form = ''; formTyped = ''; formErr = ''; say(text); if (to) window.RailShell.go(to); else draw(); };
     if (LIVE()) {
       formTyped = v; formErr = '';
-      const run = kind === 'locate' ? LIVE().relocate(p.id, v) : kind === 'rename' ? LIVE().rename(p.id, v) : LIVE().linkRemote(p.id, v);
-      run.then((a) => { if (a.ok) done(a.text, a.key && a.key !== p.id ? a.key : ''); else if (a.field) formErr2(v, a.field); else said(a); });   // D8: Locate lands on the new key
+      const from = current, run = kind === 'locate' ? LIVE().relocate(p.id, v) : kind === 'rename' ? LIVE().rename(p.id, v) : LIVE().linkRemote(p.id, v);
+      // D8: Locate lands on the new key once the store lists it; not listed, the Projects list (the old key may be gone); only while the person is still here
+      run.then((a) => { if (a.ok) { const to = a.key && a.key !== p.id ? `projects/${a.key}` : kind === 'locate' && !a.key ? 'projects' : ''; done(a.text, current === from && here() ? to : ''); } else if (a.field) formErr2(v, a.field); else said(a); });
       draw(); return;
     }
     if (kind === 'locate') { Object.assign(p, { path: v, origin: 'ok', checked: 'just now' }); done(`${p.id} now uses ${v}`); return; }
@@ -375,7 +376,7 @@
       if (current.startsWith('ws:')) return;   // the workspace has its own
       if (PAGE_FORMS[form] && (hit = on('[data-confirm]'))) { pageFormYes(hit.dataset.confirm === 'yes'); return; }
       if (form && (hit = on('[data-confirm]'))) { const v = page.querySelector('#pj-hand-v')?.value.trim() || '', kind = form; if (hit.dataset.confirm !== 'yes') { closeForm(); return; } if (busyOf('add')) return; const id = kind === 'project' ? (v.split(/[/:]/).filter(Boolean).pop() || '').replace(/\.git$/, '') : '', wrong = !v || (kind === 'project' && !id) ? (kind === 'project' ? 'It needs a folder or a repository' : 'It needs a name') : kind === 'project' ? (pathWrong(v, true) || (id.length > NAME_MAX ? `A project's name holds ${NAME_MAX} characters; this folder's has ${id.length}` : data.projects.some((x) => nameOf(x) === id) ? `${id} is already a project` : '')) : (window.RailSpaces.named(v) ? `${window.RailSpaces.named(v).title} already exists` : ''); if (wrong) { formErr2(v, wrong); return; }
-        if (kind === 'project' && LIVE()) { formTyped = v; formErr = ''; LIVE().addProject(v).then((a) => { if (!a.ok) { if (a.field) formErr2(v, a.field); else said(a); return; } form = ''; formTyped = ''; formErr = ''; say(a.text); if (a.key) window.RailShell.go(`projects/${a.key}`); else draw(); }); draw(); return; }   // D11: a path, or a repository to clone
+        if (kind === 'project' && LIVE()) { formTyped = v; formErr = ''; const from = current; LIVE().addProject(v).then((a) => { if (!a.ok) { if (a.field) formErr2(v, a.field); else said(a); return; } form = ''; formTyped = ''; formErr = ''; say(a.text); if (a.key && current === from && here()) window.RailShell.go(`projects/${a.key}`); else draw(); }); draw(); return; }   // D11: a path, or a repository to clone; its page once the store lists it, while the person is still here
         form = ''; formTyped = ''; formErr = ''; if (kind === 'project') { window.RailProjects.add({ id, path: v, kind: 'Git', origin: 'local', branch: 'main' }); say(`Added ${id}`); window.RailShell.go(`projects/${id}`); return; } const wsId = window.RailSpaces.add({ title: v, fresh: true }); window.RailShell.go(`projects/ws:${wsId}`); return; }
       const p0 = data.projects.find((x) => x.id === pid()); if (!p0 || !page.querySelector('#pj-dock')) return;
       const p = withDetail(p0);
