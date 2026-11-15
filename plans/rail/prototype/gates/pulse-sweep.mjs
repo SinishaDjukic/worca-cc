@@ -1,43 +1,56 @@
-// Run: node plans/rail/prototype/gates/pulse-sweep.mjs file://$PWD/plans/rail/prototype/pulse.html
+// Run: node plans/rail/prototype/gates/pulse-sweep.mjs file://$PWD/plans/rail/prototype/pulse.html [--workers N]
 // The glitch gate for Pulse (as sweep.mjs for the run page): every case × view × width × system theme. Reports page
 // overflow, clipped text with no tooltip, overlaps, low contrast, menus or popovers outside the window, a click that
 // moves the page, and a control that does nothing.
 import { chromium } from 'playwright';
+import { runUnits, workerCount } from './pool.mjs';
 import { writeAppCss } from './app-css.mjs';
 writeAppCss();   // the app's CSS, assembled from its parts
 const URL = process.argv[2];
 const b = await chromium.launch({ channel: 'chrome' });
 const issues = new Map(); const add = (k, where) => { if (!issues.has(k)) issues.set(k, []); if (issues.get(k).length < 4) issues.get(k).push(where); };
-const click = (p, sel) => p.evaluate((s) => document.querySelector(s)?.click(), sel);
+// In the page, in one call: pick the case (as playwright's selectOption: the option, then input and change), then the view's
+// clicks, a task apart, as separate calls would leave them. A click's whole round (reset, tag, scroll, click, read) is one call.
+const OPEN = async ({ c, sels }) => {
+  const tick = () => new Promise((r) => setTimeout(r, 0));
+  const s = document.querySelector('#case');
+  for (const o of s.options) o.selected = o.value === c;
+  s.dispatchEvent(new Event('input', { bubbles: true })); s.dispatchEvent(new Event('change', { bubbles: true }));
+  for (const sel of sels) { await tick(); document.querySelector(sel)?.click(); }
+  await tick();
+};
 // every Settings section the model holds (but Notifications, swept above): read from settings-model.js, never listed by hand
-global.window = {}; await import('../../../../ui/public/stillhet/settings/settings-model.js');
+global.window = { RailWould: (p) => 'Would ' + p };   // the prototype host's demo sentence (as worca-sweep): the model calls it at load
+await import('../../../../ui/public/stillhet/settings/settings-model.js');
 const SECTION_IDS = window.SettingsModel.GROUPS.flatMap((g) => g.items).filter((id) => id !== 'notifications');
+// each view: the clicks that open it, in order
 const VIEWS = {
-  now: async () => {},
-  popVitals: async (p) => click(p, '[data-pop]'),
-  popUpdates: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-ptab="updates"]'); },
-  account: async (p) => click(p, '[data-acct]'),
-  usage: async (p) => { await click(p, '[data-acct]'); await click(p, '[data-sub="usage"]'); },
-  popSelect: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-ptab="updates"]'); await click(p, '[data-menu="more"]'); await click(p, '[data-pick="more|select"]'); await click(p, '[data-sel]'); },
-  popVitalsFiltered: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-menu="vitalsShow"]'); await click(p, '[data-pick="vitalsShow|running"]'); },
-  popActions: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-menu="vitalsShow"]'); await click(p, '[data-pick="vitalsShow|actions"]'); },
-  levelFly: async (p) => { await click(p, '[data-acct]'); await click(p, '[data-sub="lvl"]'); },
-  popMore: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-ptab="updates"]'); await click(p, '[data-menu="more"]'); },
-  newrun: async (p) => click(p, '[data-newrun]'),
-  settings: async (p) => { await click(p, '[data-acct]'); await click(p, '[data-go="settings"]'); await click(p, '[data-sset="notifications"]'); await click(p, '[data-custom="usage"]'); },
+  now: [],
+  popVitals: ['[data-pop]'],
+  popUpdates: ['[data-pop]', '[data-ptab="updates"]'],
+  account: ['[data-acct]'],
+  usage: ['[data-acct]', '[data-sub="usage"]'],
+  popSelect: ['[data-pop]', '[data-ptab="updates"]', '[data-menu="more"]', '[data-pick="more|select"]', '[data-sel]'],
+  popVitalsFiltered: ['[data-pop]', '[data-menu="vitalsShow"]', '[data-pick="vitalsShow|running"]'],
+  popActions: ['[data-pop]', '[data-menu="vitalsShow"]', '[data-pick="vitalsShow|actions"]'],
+  levelFly: ['[data-acct]', '[data-sub="lvl"]'],
+  popMore: ['[data-pop]', '[data-ptab="updates"]', '[data-menu="more"]'],
+  newrun: ['[data-newrun]'],
+  settings: ['[data-acct]', '[data-go="settings"]', '[data-sset="notifications"]', '[data-custom="usage"]'],
   // every other Settings section: their rows are the same components, each with its own pickers, switches and buttons
   ...Object.fromEntries(SECTION_IDS
-    .map((id) => ['settings-' + id, async (p) => { await click(p, '[data-acct]'); await click(p, '[data-go="settings"]'); await click(p, `[data-sset="${id}"]`); }])),
-  settingsWait: async (p) => { await click(p, '[data-acct]'); await click(p, '[data-go="settings"]'); await click(p, '[data-sset="runs"]'); await click(p, '[data-menu="auto"]'); await click(p, '[data-pick="auto|wait"]'); await click(p, '[data-menu="mine"]'); await click(p, '[data-pick="mine|wait"]'); await click(p, '[data-newrun]'); },
+    .map((id) => ['settings-' + id, ['[data-acct]', '[data-go="settings"]', `[data-sset="${id}"]`]])),
+  settingsWait: ['[data-acct]', '[data-go="settings"]', '[data-sset="runs"]', '[data-menu="auto"]', '[data-pick="auto|wait"]', '[data-menu="mine"]', '[data-pick="mine|wait"]', '[data-newrun]'],
 };
-let clicks = 0;
-for (const scheme of ['dark', 'light']) for (const w of [375, 900]) {
+const units = [];   // each theme and width: independent, so they run side by side (pool.mjs)
+for (const scheme of ['dark', 'light']) for (const w of [375, 900]) units.push(async (add) => { let clicks = 0;
   const p = await b.newPage({ viewport: { width: w, height: 900 }, colorScheme: scheme, reducedMotion: 'reduce' });
+  await p.addInitScript(`window.__open = ${OPEN}`);   // OPEN, in every document the page loads
   p.on('pageerror', (e) => add('script error', String(e)));
   await p.goto(URL);
   await p.evaluate((s) => { document.documentElement.dataset.theme = s; }, scheme);
   const cases = await p.evaluate(() => [...document.querySelectorAll('#case option')].map((o) => o.value));
-  const reset = async (c, v) => { await p.selectOption('#case', c); await VIEWS[v](p); };
+  const reset = (c, v) => p.evaluate((at) => window.__open(at), { c, sels: VIEWS[v] });
   for (const c of cases) for (const v of Object.keys(VIEWS)) {
     await reset(c, v);
     const found = await p.evaluate(() => {
@@ -83,10 +96,10 @@ for (const scheme of ['dark', 'light']) for (const w of [375, 900]) {
     // every control does something, and no click moves the page
     const keys = await p.evaluate(() => [...document.querySelectorAll('#app button, #app input[type=checkbox]')].filter((x) => x.offsetParent).map((x, i) => { x.dataset.k = 'k' + i; return x.matches('[aria-selected="true"], [aria-current="page"], [role="menuitemradio"][aria-checked="true"], :disabled') ? null : 'k' + i; }).filter(Boolean));   // a tab already open, or a choice already made, has nothing to do
     for (const k of keys) {
-      await reset(c, v);
-      await p.evaluate(() => [...document.querySelectorAll('#app button, #app input[type=checkbox]')].filter((x) => x.offsetParent).forEach((x, i) => { x.dataset.k = 'k' + i; }));
-      await p.evaluate(() => window.scrollTo(0, 200));
-      const r = await p.evaluate(async (key) => {
+      const r = await p.evaluate(async ({ key, at }) => {
+        await window.__open(at);   // the case and view afresh (OPEN)
+        [...document.querySelectorAll('#app button, #app input[type=checkbox]')].filter((x) => x.offsetParent).forEach((x, i) => { x.dataset.k = 'k' + i; });
+        window.scrollTo(0, 200); await new Promise((res) => setTimeout(res, 0));
         const el = document.querySelector(`[data-k="${key}"]`); if (!el) return null;
         const titleOf = () => [...document.querySelectorAll('.pz-title')].filter((t) => t.offsetParent).map((t) => t.textContent).join();
         const pageWas = titleOf();
@@ -98,15 +111,16 @@ for (const scheme of ['dark', 'light']) for (const w of [375, 900]) {
         const maxY = document.documentElement.scrollHeight - window.innerHeight;   // a page that got shorter may have to give some back
         const goes = el.matches('[data-sset], [data-go], [data-land], [data-team]') || titleOf() !== pageWas;   // to another page: it opens at its top
         return { label, moved: !goes && Math.abs(window.scrollY - Math.min(y, maxY)) > 1, dead: after === before.replace(/ data-k="k\d+"/g, ''), side: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1 };
-      }, k);
+      }, { key: k, at: { c, sels: VIEWS[v] } });
       if (!r) continue; clicks++;
       if (r.moved) add('page moved on click', `${scheme}/${w}/${c}/${v}: ${r.label}`);
       if (r.dead) add('control did nothing', `${scheme}/${w}/${c}/${v}: ${r.label}`);
       if (r.side) add('page scrolls sideways after a click', `${scheme}/${w}/${c}/${v}: ${r.label}`);
     }
   }
-  await p.close();
-}
+  await p.close(); return clicks;
+});
+const clicks = (await runUnits(units, add, workerCount())).reduce((a, n) => a + n, 0);
 // the catalogue reaches the page: every event of every group has a row in the case that holds them all
 const pc = await b.newPage(); await pc.goto(URL);
 for (const miss of await pc.evaluate(() => { const M = window.PulseModel, every = M.CASES.find((c) => c.id === 'every'); return Object.keys(M.EVENT).filter((e) => !every.updates.some((u) => u.e === e)); })) add('an event no case shows', miss);

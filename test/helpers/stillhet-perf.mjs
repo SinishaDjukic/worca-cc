@@ -145,12 +145,15 @@ export function countMutations(w, root, exclusions = []) {
   };
 }
 
-/** Pulse's shell renders (D4): renderInShell sets #rail-pulse-slot's innerHTML each time, one childList record a call. */
+/**
+ * Pulse's shell renders (D4): renderInShell patches #rail-pulse-slot with RailUI.patchParts once a call (B2.7 D8), so a
+ * render is counted even when it writes nothing. `stop()` puts the original back.
+ */
 export function shellRenders(w) {
   let n = 0;
-  const mo = new w.MutationObserver((l) => { n += l.filter((r) => r.type === 'childList').length; });
-  mo.observe(w.document.getElementById('rail-pulse-slot'), { childList: true });
-  return { stop() { n += mo.takeRecords().filter((r) => r.type === 'childList').length; mo.disconnect(); return n; } };
+  const orig = w.RailUI.patchParts, slot = w.document.getElementById('rail-pulse-slot');
+  w.RailUI.patchParts = (c, parts, opt) => { if (c === slot) n++; return orig(c, parts, opt); };
+  return { stop() { w.RailUI.patchParts = orig; return n; } };
 }
 
 const TURN = '[data-anchor], [data-words-turn], [data-fold-turn], [data-think-at]';

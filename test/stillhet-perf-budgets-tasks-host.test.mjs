@@ -43,3 +43,16 @@ test('B2.4 C1 F-a1-02: an idle Tasks page (300 tasks) for 10 s makes no more DOM
   const c = checkBudget('tasksIdleMutations', r.counted, budgets);
   assert.ok(c.ok, `${c.message}\n${r.sample.join('\n')}`);
 });
+
+test('B2.7 C1 F-a1-02 F-a4-02: a no-change shell redraw with the Pulse popover open makes no more DOM mutations than its budget', async (t) => {
+  const h = await perfHost({ hash: '#runs', sources: tasksScaleSources() });
+  h.w.RailPulse.open('updates'); h.w.RailPulse.refresh();   // open, then drawn once more: its opening fade is gone
+  await h.settleAll();
+  const m = countMutations(h.w, h.d.body, exclusions);
+  h.w.RailPulse.refresh(); h.w.RailPulse.refresh();
+  await h.settleAll();
+  const r = m.stop();
+  t.diagnostic(`budget shellNoChangeMutations: measured ${r.counted}, pinned ${budgets.shellNoChangeMutations?.value} (${r.total} records)`);
+  const c = checkBudget('shellNoChangeMutations', r.counted, budgets);
+  assert.ok(c.ok, `${c.message}\n${r.sample.join('\n')}`);
+});

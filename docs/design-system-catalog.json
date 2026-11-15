@@ -219,7 +219,7 @@
       "rules": [
         "its name for a screen reader says what the rings say"
       ],
-      "example": "Emil Angelov ⇅"
+      "example": "Sam Rivera ⇅"
     },
     {
       "name": "UsageRing",
@@ -2449,6 +2449,31 @@
       ]
     },
     {
+      "name": "Patching a region by part",
+      "code": "ui/public/design-system/components/keyed-list.mjs#patchParts",
+      "needs": [
+        "a region drawn from named parts (the shell's layers, a slot, a page's column), where a part whose string did not change keeps its nodes, its focus, caret, scroll and open menu",
+        "a redraw that changes nothing writes nothing"
+      ],
+      "example": "patchParts(app, { popover: popover(), 'new-run': newRun(), account: acctMenu(), session: sessionDialog() })"
+    },
+    {
+      "name": "Keeping an open control across a redraw",
+      "code": "ui/public/design-system/components/keep-open.mjs#watchKeepOpen",
+      "needs": [
+        "an open menu, inline field or dialog whose typed text, caret and focus must survive a live redraw"
+      ],
+      "example": "watchKeepOpen(document); R.field({ id, label, attrs: { 'data-keep': 'pj-hand:rename:billing-api' } })",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/keep-open.mjs#keptRoute",
+          "needs": [
+            "the route an open control belongs to, so a page or list closes it when you move to another place or item"
+          ]
+        }
+      ]
+    },
+    {
       "name": "The sound of a new event",
       "code": "ui/public/design-system/components/sound.mjs#soundFor",
       "needs": [
@@ -2476,7 +2501,8 @@
         {
           "code": "ui/public/design-system/components/list-page.mjs#fitMenu",
           "needs": [
-            "A menu kept inside the window"
+            "A menu kept inside the window",
+            "a kept menu re-fitted on a redraw or resize without drift"
           ]
         }
       ]
@@ -3004,6 +3030,14 @@
         "the named step of New schedule"
       ],
       "example": "scheduleButton({ every: 'every weekday', at: '09:00' })"
+    },
+    {
+      "name": "Who the account corner names",
+      "code": "ui/public/design-system/components/account-menu.mjs#describeAccount",
+      "needs": [
+        "the account button's name and initials and the identity card, from GET /api/whoami; never a demo name on a live page"
+      ],
+      "example": "describeAccount({ name: 'sam.rivera@acme.dev', shared: true, source: 'access' }) // { kind: 'shared', short: 'sam.rivera', initials: 'SR', via: 'via Cloudflare Access' }"
     }
   ],
   "telling": [

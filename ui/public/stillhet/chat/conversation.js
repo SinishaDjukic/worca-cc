@@ -499,7 +499,7 @@
   // dev's dialogs, each a short form under its card: what it asks, its choices, its action and Cancel
   const taskList = () => (window.RailChats?.data().chats || []).flatMap((c) => c.tasks || []);
   const formPick = (t, items) => R.sentencePicker({ id: `cf-${t.id}`, text: t.form.value, items: items.map((v) => (typeof v === 'string' ? { id: v, text: v, checked: v === t.form.value } : v.id ? { ...v, checked: v.id === t.form.value } : v)), open: menu === `cf-${t.id}`, chevron: R.icon('chevron', 10) });
-  const formField = (t, label, o = {}) => R.field({ id: `cf-${t.id}-f`, label, quietLabel: true, value: o.value || '', placeholder: o.placeholder || '', multiline: !!o.multiline, hint: o.max ? `Up to ${o.max} characters` : '', attrs: { 'data-cf-field': t.id, maxlength: o.max || null } });
+  const formField = (t, label, o = {}) => R.field({ id: `cf-${t.id}-f`, label, quietLabel: true, value: o.value || '', placeholder: o.placeholder || '', multiline: !!o.multiline, hint: o.max ? `Up to ${o.max} characters` : '', attrs: { 'data-cf-field': t.id, 'data-keep': `cf-${t.id}`, maxlength: o.max || null } });
   const FORMS = {
     pr: { value: () => 'ready for review', text: (t) => `Open the PR for ${t.title}`, body: (t) => formField(t, 'PR title', { value: t.title }) + `<span class="tp-sentence">as ${formPick(t, ['ready for review', 'a draft'])} into ${esc(LIVE() ? t.base || 'its base' : 'dev')}</span>`, say: (t, f) => `${f.say}${t.form.value === 'a draft' ? ' as a draft' : ''}` },
     model: { value: () => 'Sonnet 5.5', text: () => 'Resume on another model', body: (t) => `<span class="tp-sentence">Every remaining step runs on ${formPick(t, ENGINE_ITEMS)}</span>` },
@@ -878,7 +878,9 @@
     const fixFirst = failed && !t.fixing && offers(t, st.action?.label || '');
     if (st.action && !offers(t, st.action.label)) st.action = null;   // live: its state's step is offered only where dev has it   // Retry, the same verb as on Tasks; Ask Worca to fix it heads the card's ⋯
     const op = LIVE() ? opening.get(t.run || t.id) : null;   // D6: the one place that says it
-    const main = below || t.confirm ? '' : op ? R.button({ label: 'Opening the PR…', kind: 'primary', attrs: { 'data-card-act': `${t.id}|${op.was}`, disabled: '', 'aria-busy': 'true' } }) : fixFirst && st.action ? R.button({ label: R.cardAction(RM.stateOf(t.case)).label, kind: 'primary', attrs: { 'data-card-act': `${t.id}|${st.action.label}`, title: 'Runs it again as it is' } }) : st.action ?   /* while a confirm asks, its row holds the one button */ R.button({ label: st.action.label, kind: tone === 'fail' && !t.confirm && !t.form ? 'primary' : '', attrs: { 'data-card-act': `${t.id}|${st.action.label}` } })
+    // live: a Restart Build the server would refuse (no plan, a workspace task) is off with its reason, as on its page (F-a4-11)
+    const offWhy = LIVE() && st.action?.label === 'Restart Build' ? window.RailTaskLive?.restartOff?.(t.pid || t.run || t.id) || '' : '';
+    const main = below || t.confirm ? '' : op ? R.button({ label: 'Opening the PR…', kind: 'primary', attrs: { 'data-card-act': `${t.id}|${op.was}`, disabled: '', 'aria-busy': 'true' } }) : fixFirst && st.action ? R.button({ label: R.cardAction(RM.stateOf(t.case)).label, kind: 'primary', attrs: { 'data-card-act': `${t.id}|${st.action.label}`, title: offWhy || 'Runs it again as it is', disabled: offWhy ? '' : null } }) : st.action ?   /* while a confirm asks, its row holds the one button */ R.button({ label: st.action.label, kind: tone === 'fail' && !t.confirm && !t.form ? 'primary' : '', attrs: { 'data-card-act': `${t.id}|${st.action.label}`, ...(offWhy ? { disabled: '', title: offWhy } : {}) } })
       : live ? R.button({ label: 'Pause', attrs: { 'data-card-act': `${t.id}|Pause`, title: 'Stops at once; Resume starts the current step again' } }) : '';
     // the card's ⋯: its state's own steps, then what any task can do, named as on its page (one ⋯, the same words)
     const done = ['ok', 'merged', 'stop', 'closed', 'idle'].includes(tone);
@@ -1650,6 +1652,9 @@
   root.addEventListener('input', (e) => { const f = e.target.dataset?.cpField; if (f) comp[f] = e.target.value; });
   root.addEventListener('input', (e) => { const k = e.target.dataset?.pjField; if (!k) return; const [id, f] = k.split('|'), x = turns().find((y) => y.id === id); if (x) { x.f = x.f || {}; x.f[f] = e.target.value; } });   // Add project's fields keep what you type   // Customise's fields keep what you type
   root.addEventListener('input', (e) => { if (e.target.id === 'cl-label-q') { labelQ = e.target.value.slice(0, LABEL_MAX); paint(false); keepLabelQ(); } });
+  // an open menu belongs to the chat it was opened in: moving to another place or chat closes it, so its text never waits (comp.keep-open)
+  let routeAt = location.hash.split('/').slice(0, 2).join('/');
+  window.addEventListener('hashchange', () => { const now = location.hash.split('/').slice(0, 2).join('/'), moved = now !== routeAt; routeAt = now; if (side || !moved || !menu) return; menu = ''; menuSub = ''; labelQ = ''; });
   root.addEventListener('keydown', (e) => {
     if (e.target.id !== 'cl-label-q' || e.key !== 'Enter') return;
     e.preventDefault(); const v = labelQ.trim().toLowerCase(), c = chat(); if (!v || !c) return;

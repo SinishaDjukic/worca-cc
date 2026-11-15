@@ -235,3 +235,41 @@ test('F-a4-03: liveRun of a running task with no steps yet is not over when live
   assert.equal(before.over, true, 'without liveRunning (pipeline unknown, or waiting on a question) it reads as today');
   assert.equal(M.view(before.id, { run: before }).action, null);
 });
+
+const grp = (cases, o = {}) => M.liveGroup({ id: 'G', title: 'Pager', kind: 'Feature', cost: 0, members: cases.map((c, i) => ({ pipelineId: c ? 'p' + i : '', title: 'Task ' + (i + 1), case: c, pr: '', prUrl: '', cost: 0, ...(o[i] || {}) })) });
+test('liveGroup (F-a4-09): one ready member and two not started reads Waiting, never Working', () => {
+  const g = grp(['ready', '', '']);
+  assert.equal(g.word, 'Waiting');
+  assert.equal(g.state, 'scheduled');
+  assert.equal(g.action, null, 'the group\'s own action only: no Create PR before every task is ready');
+  window.RailTaskLive = { parts: () => ({}) };
+  const v = M.view(g.id, { run: g });
+  delete window.RailTaskLive;
+  assert.ok(!v.action || ![v.action.label, ...v.action.items.map((x) => x.text)].includes('Start now'), 'a waiting group never offers Start now');
+});
+test('liveGroup (F-a4-09): the head follows its members', () => {
+  const rows = [
+    [['ready', 'working', ''], 'Working'], [['starting', ''], 'Working', 'feature'],
+    [['ready', 'question', ''], 'Needs you', 'question'], [['ready', 'stopped', ''], 'Stopped'], [['ready', 'ready'], 'Ready'],
+    [['ready', 'failed', ''], 'Needs you', 'chain'], [['merged', 'merged'], 'Merged'], [['zzz-unknown'], 'Ready', 'featureready'],
+    [['merged', 'ready'], 'Ready', 'ready'],
+  ];
+  for (const [cases, word, state] of rows) {
+    const g = grp(cases);
+    if (state) assert.equal(g.state, state, J(cases));
+    assert.equal(g.word, word, J(cases));
+  }
+  assert.equal(grp(['approved', 'ready'], { 0: { pr: '#41', prUrl: 'u' } }).state, 'ship-applied', 'a member with a PR and none left to start: unchanged');
+});
+test('view (F-a4-11): a live failed task with restartOff: Restart Build is off and says why', () => {
+  const why = 'Needs a plan: this task saved none to build from';
+  const run = M.liveRun(page({ case: 'failed', restartOff: why, stages: [{ key: 'build', state: 'failed', steps: [{ name: 'implementer', state: 'failed' }] }] }));
+  assert.equal(run.restartOff, why);
+  window.RailTaskLive = { parts: () => ({}) };
+  const v = M.view('failed', { run });
+  const on = M.view('failed', { run: M.liveRun(page({ case: 'failed', stages: [{ key: 'build', state: 'failed', steps: [{ name: 'implementer', state: 'failed' }] }] })) });
+  delete window.RailTaskLive;
+  assert.equal(v.action.label, 'Restart Build');
+  assert.equal(v.action.offWhy, why);
+  assert.equal(on.action.offWhy, '', 'without a reason it is offered');
+});

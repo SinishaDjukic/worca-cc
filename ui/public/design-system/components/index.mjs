@@ -40,7 +40,7 @@ export { MODES, atLevel, RUN_PAGE_LEVELS, runPartShows, prefs, shows } from './l
 export { copyButton, copied, COPIED_MS } from './copy-button.mjs';
 export { brandRow, navSection, barGrip, sidebarFrame, sideToggle, menuButton, topBarFrame, askButton } from './shell-frame.mjs';
 export { offlineLine, sideColumn, awayScreen, awayShows, AWAY_IDLE_MS, navItem, accountButton, topBarAction, countBadge, barStrip, inView, askWorcaMark, intentChip, panelFrame } from './shell-parts.mjs';
-export { accountItem, navFlyout, themeChoice, cardTitleLink } from './account-menu.mjs';
+export { accountItem, navFlyout, themeChoice, cardTitleLink, describeAccount } from './account-menu.mjs';
 export { workflowGraph } from './workflow-graph.mjs';
 export { logLines } from './log-lines.mjs';
 export { artifactView } from './artifact-view.mjs';
@@ -56,6 +56,7 @@ export { PRESS_MS, selectClear, selectStart, selectToggle, selectRange, selectAl
 export { scheduleDates, scheduleButton, DAY_SECTIONS, BY_CHOICES, BY_DEFAULT, byPart, dateSections, NEXT_RUN_SECTIONS, REPEATS, scheduleWords, TIMES_OF_DAY, listWord, namesWord, listSentence, groupRow, roundRows, listState, resetViewTool, originMark, chatKindIcon } from './list-parts.mjs';
 export { listController, LIST_SHOWN, BREATHE, calmMarks, fitMenu } from './list-page.mjs';
 export { planBulk, skipText, bulkConfirm } from '../../../../src/shared/run-bulk.mjs';
+export { watchKeepOpen, keptRoute } from './keep-open.mjs';
 export { dismissOnOutside, neverOutside, watchStrips, REAL_CONTROL } from './dismiss.mjs';
 export { selectionBar, selectAllBox, bindLongPress } from './selection-bar.mjs';
 export { barChart, lineChart, mixChart, figureRows, watchChart, diffWords } from './chart.mjs';
@@ -68,7 +69,7 @@ export { prose, loadProse } from './prose.mjs';
 export { tipPlace, watchTooltips } from './tooltip.mjs';
 export { menuUp, menuShift, watchMenus } from './menu-place.mjs';
 export { secondClickIgnored, watchClickGuard } from './click-guard.mjs';
-export { patchKeyed, frameBatch } from './keyed-list.mjs';
+export { patchKeyed, patchParts, frameBatch } from './keyed-list.mjs';
 export { scrollEdges, watchScrollFades } from './scroll-fade.mjs';
 export { commandHead, commandLine, commandRow, commandGroup } from './commands.mjs';
 export { orbMark, watchOrbs } from './orb.mjs';

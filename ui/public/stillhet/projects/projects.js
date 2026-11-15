@@ -72,7 +72,7 @@
   const view = { show: 'all', by: 'workspace' }, showAll = new Set();   // a workspace in Needs you lists its trouble first; its other projects are one click away
   const pid = () => current.split('@')[0];   // the address may say through which workspace: billing-api@legacy
   const firstHome = (id) => window.RailSpaces?.list().find((w) => w.projects.some(([p]) => p === id))?.id;
-  let bellHeard = -1, drawn = '', current = '', menu = '', confirm = null, ctl = null, bar = null, page = null, form = '', formTyped = '', formErr = '', setsOpen = false, locating = '';
+  let notFoundSoon = false, bellHeard = -1, drawn = '', current = '', menu = '', confirm = null, ctl = null, bar = null, page = null, form = '', formTyped = '', formErr = '', setsOpen = false, locating = '', formAt = '';   // formAt: the route arg the open form belongs to
   const NAME_MAX = 80, TAG_MAX = 40;   // form.name-limit; small.label-short
   // what Worca can go and look at: a full path, or (adding) a repository's address; nothing else leaves this form
   const pathWrong = (v, repo) => (/[<>"`|*?\x00-\x1f]/.test(v) ? 'A path has no < > " ` | * or ?' : (repo && /^(https?:\/\/|ssh:\/\/|git@)\S+$/.test(v)) || /^~?(\/[^/]+)+\/?$/.test(v) ? '' : `Give its full path, such as ~/src/your-project${repo ? ', or a repository address' : ''}`);
@@ -137,7 +137,7 @@
     if (id === 'remove') { current = p.id; confirm = { what: 'remove', p }; window.RailShell.go(`projects/${p.id}`); }
   }
   // a page form under the head (Locate folder, Rename, Link a remote): one field, its own words (form.rename-project, form.link-remote)
-  function openForm(kind, p, typed) { confirm = null; form = kind; locating = p.id; formTyped = typed; formErr = ''; if (pid() !== p.id) window.RailShell.go(`projects/${p.id}`); else draw(); setTimeout(() => { page?.querySelector('#pj-hand-v')?.select(); }, 60); }
+  function openForm(kind, p, typed) { confirm = null; form = kind; locating = p.id; formAt = p.id; formTyped = typed; formErr = ''; if (pid() !== p.id) window.RailShell.go(`projects/${p.id}`); else draw(); setTimeout(() => { page?.querySelector('#pj-hand-v')?.select(); }, 60); }
   const ORIGIN_LIVE = { behind: 'sync', offline: 'fetch', folder: 'git' };   // D6: dev's sync and git-init routes
   function originAct(p) {
     if (busyOf(p.id)) return;
@@ -169,7 +169,8 @@
     rename: { text: (p) => `What should ${nameOf(p)} be called?`, label: 'Its name', ph: 'billing-api', yes: 'Rename', max: NAME_MAX },
     link: { text: (p) => `Where is the repository of ${nameOf(p)}?`, label: 'Its repository address', ph: 'git@github.com:you/your-project.git', yes: 'Link', max: 200 },
   };
-  function pageHtml(p) {
+  // a project's page, as its named parts (comp.patch-parts): draw() patches them into the frame's column
+  function pageParts(p) {
     withDetail(p);
     const live = LIVE()?.detail(p.id);
     const pick = (id, text, items, tip, off = []) => R.sentencePicker({ id, text, tip, items: items.map((x) => ({ id: x, text: x, checked: x === text, off: off.includes(x), help: off.includes(x) ? 'Team memory is off for this project' : '' })), open: menu === id, chevron: R.icon('chevron', 10) });
@@ -186,7 +187,7 @@
     const WORD = { run: 'working', ask: 'need you', fail: 'failed', ok: 'ready', merged: 'merged' };
     const tasks = list.length ? R.list({ groups: [{ rows: list.map(({ t, c }) => R.listRow({ title: t.title, meta: t.detail || '', mark: R.kindMark({ kind: 'task', tone: tone(t), stage: t.stage, title: t.detail }), open: { 'data-pj-open': `${c.id}|${t.title}`, title: `Opens ${t.title} in its chat` } })) }] })
       : R.emptyState({ title: p.origin === 'missing' ? 'Nothing can start here until its folder is back.' : 'Nothing is on it now.', actions: p.origin === 'missing' ? '' : R.button({ label: 'Start a task', kind: 'quiet', attrs: { 'data-pj-menu': 'task' } }) });
-    const F = PAGE_FORMS[form], locate = F && locating === p.id ? `<div class="card-form">${R.confirmForm({ form: 'hand', id: 'pj-hand-t', text: F.text(p), body: R.field({ id: 'pj-hand-v', label: F.label, placeholder: F.ph, value: formTyped, error: formErr, ...(form === 'rename' ? { hint: `Up to ${NAME_MAX} characters` } : {}), attrs: { maxlength: F.max } }) + R.confirmActions({ yes: busyOf(p.id) || F.yes, busy: !!busyOf(p.id) }) })}</div>` : '';
+    const F = PAGE_FORMS[form], locate = F && locating === p.id ? `<div class="card-form">${R.confirmForm({ form: 'hand', id: 'pj-hand-t', text: F.text(p), body: R.field({ id: 'pj-hand-v', label: F.label, placeholder: F.ph, value: formTyped, error: formErr, ...(form === 'rename' ? { hint: `Up to ${NAME_MAX} characters` } : {}), attrs: { maxlength: F.max, 'data-keep': `pj-hand:${form}:${p.id}` } }) + R.confirmActions({ yes: busyOf(p.id) || F.yes, busy: !!busyOf(p.id) }) })}</div>` : '';
     const done = tasksOf(nameOf(p)).filter(({ t }) => ['ok', 'merged'].includes(tone(t)) && !waitingOn(nameOf(p), t)).slice(0, 5);
     const lately = done.length ? R.list({ groups: [{ title: 'Lately', rows: done.map(({ t, c }) => R.listRow({ title: t.title, meta: t.detail || '', mark: R.kindMark({ kind: 'task', tone: tone(t), stage: t.stage, title: t.detail }), open: { 'data-pj-open': `${c.id}|${t.title}`, title: `Opens ${t.title} in its chat` } })) }] }) : '';
     // live (D16): each sentence reads dev's value and what it would inherit; Branch names is not offered live (D19, slice 12)
@@ -195,10 +196,13 @@
       return R.settingsRow({ name: x.name, sentence: `${esc(x.words)} ${pick(`pjs-${x.id}`, v, x.items, x.name, x.id === 'memory' && !p.teamMemory ? TEAM_NOTES : [])}`, changed: v !== def ? [{ name: x.name, was: def }] : false, end: busy ? R.button({ label: busy, kind: 'quiet', attrs: { disabled: true } }) : v !== def ? R.button({ label: 'Use yours', kind: 'quiet', attrs: { 'data-pj-reset': x.id, title: `Back to your ${def}` } }) : '' }); }).join('') });
     const setsNow = adv() || setsOpen ? sets : ''; const setsTog = adv() ? '' : `<div class="wf-acts open-line">${R.button({ label: setsOpen ? 'Hide how its tasks run' : 'How its tasks run', kind: 'quiet', icon: R.icon(setsOpen ? 'chevron' : 'chevR', 12), attrs: { 'data-pj-sets': '', 'aria-expanded': String(setsOpen), 'data-folds': '.pj-sets' } })}</div>`;
     const team = R.shows('expert') ? R.settingsSection({ title: 'Team', rows: R.settingsRow({ name: 'Team memory', sentence: p.teamMemory ? 'The team\'s notes for this project are on its worca-memory branch' : 'No team notes yet', end: R.switchButton({ on: !!p.teamMemory, label: 'Team memory', why: busyOf(`${p.id}#team`) || p.off || '', disabled: !!busyOf(`${p.id}#team`) || !!p.off, attrs: { 'data-pj-team': p.id } }) }) }) : '';
-    return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${crumb}${head}${strip}${locate}
-      <p class="convo-head">${list.length ? (counts.length === 1 && counts[0][0] === 'ask' ? '' : `On it now: ${counts.map(([k, n]) => `${n} ${k === 'ask' && n === 1 ? 'needs you' : WORD[k]}`).join(', ')}`) : ''}</p>${tasks}${spendOf(p) != null ? R.factsLine([{ n: `$${Math.round(spendOf(p)).toLocaleString('en-US')}`, word: 'this month', ...(adv() ? { attrs: { 'data-pj-spend': '', title: `Opens Insights › Spend, of ${nameOf(p)}` } } : {}) }, { n: String(taskCount(nameOf(p))), word: taskCount(nameOf(p)) === 1 ? 'task' : 'tasks', attrs: { 'data-pj-menu': 'tasks', title: 'Opens Tasks, from this project' } }]) : ''}${lately}${p.origin === 'missing' ? '' /* nothing can start here: what its tasks would get applies once the folder is back */ : `${defaults(p, homes)}${setsTog}${setsNow ? `<div class="pj-sets">${setsNow}</div>` : ''}${team}`}
-    </div></div><div class="convo-dock" id="pj-dock"></div></div>`;
+    return { head: `${crumb}${head}`, strip, locate, 'on-it': `
+      <p class="convo-head">${list.length ? (counts.length === 1 && counts[0][0] === 'ask' ? '' : `On it now: ${counts.map(([k, n]) => `${n} ${k === 'ask' && n === 1 ? 'needs you' : WORD[k]}`).join(', ')}`) : ''}</p>${tasks}${spendOf(p) != null ? R.factsLine([{ n: `$${Math.round(spendOf(p)).toLocaleString('en-US')}`, word: 'this month', ...(adv() ? { attrs: { 'data-pj-spend': '', title: `Opens Insights › Spend, of ${nameOf(p)}` } } : {}) }, { n: String(taskCount(nameOf(p))), word: taskCount(nameOf(p)) === 1 ? 'task' : 'tasks', attrs: { 'data-pj-menu': 'tasks', title: 'Opens Tasks, from this project' } }]) : ''}`, lately,
+      defaults: `${p.origin === 'missing' ? '' /* nothing can start here: what its tasks would get applies once the folder is back */ : `${defaults(p, homes)}${setsTog}${setsNow ? `<div class="pj-sets">${setsNow}</div>` : ''}${team}`}
+    ` };
   }
+  // a page's frame, built once per frame key (D7): its column takes the parts, a project's dock the composer
+  const frameHtml = (cls, dock) => `<div class="convo"><div class="convo-scroll"><div class="convo-col${cls ? ` ${cls}` : ''}"></div></div>${dock ? '<div class="convo-dock" id="pj-dock"></div>' : ''}</div>`;
 
   // the home: Simple the list; from Advanced each workspace one box (panel.workspace-map). Chat first: it ends with the composer; by hand stays, quiet
   const adv = () => R.shows('advanced'), spaces = () => (adv() ? window.RailSpaces?.list() || [] : []);
@@ -271,7 +275,8 @@
     const runs = shown.reduce((a, s) => a + s.running.length, 0), facts = figures && runs ? `${runs} running` : '';
     return R.centerShelf({ title: sh.name, count: figures ? `${sh.ids.length} ${sh.ids.length === 1 ? 'project' : 'projects'}` : '', link: sh.w ? link('Workspace map', { 'data-pj-go': `ws:${sh.w.id}` }, `Opens ${sh.w.title} and how its projects connect`) : '', word, tone, facts, cards: cards.map((c) => c.html).join(''), rest: `${elsewhere.map((s) => also(s, ctx.homeBy.get(s.p.id).name)).join('')}${quietOf(`sh:${sh.name}`, quiet)}`, attrs: { 'data-pc-shelf': sh.name } });
   }
-  function homeHtml() {
+  // the home, as its named parts in its column (comp.patch-parts)
+  function homeParts() {
     const ctx = shelvesOf(), { by } = center(), all = [...ctx.stand.values()], lit = all.filter((s) => standsOut(s)), questions = spaces().flatMap((w) => window.RailSpaces.questions(w));
     const says = (n, one, many = `${one}s`) => (n ? `${n} ${n === 1 ? one : many}` : '');
     const running = all.reduce((a, s) => a + s.running.length, 0), facts = [says(data.projects.length, 'project'), ...(adv() ? [says(spaces().length, 'workspace'), loose().length ? `${loose().length} on their own` : ''] : []), lit.length ? `${lit.length} need${lit.length === 1 ? 's' : ''} you` : '', adv() ? says(questions.length, 'question') : '', says(all.filter((s) => s.p.origin === 'diverged').length, 'out of sync', 'out of sync'), says(all.filter((s) => s.p.origin === 'behind').length, 'older copy', 'older copies'), running ? count(`${running} running`, { show: 'running' }, 'Opens what is running in Tasks') : ''].filter(Boolean).join(' · ');
@@ -280,35 +285,45 @@
     const head = R.placeHead({ title: 'Your projects', say: calm && data.projects.length ? 'Nothing needs you' : '' });
     const way = adv() ? '' : `<p class="center-way">New work starts in Chat. ${link('Go to Chat', { 'data-pj-chat': '' })}</p>`;
     const say2 = adv() && !spaces().length ? '<p class="ws-about">A workspace is projects that work together: Worca learns how they connect, and changes them in the right order.</p>' : '';
-    const fields =form === 'project' ? R.field({ id: 'pj-hand-v', label: 'Folder or repository', placeholder: '~/src/your-project', value: formTyped, error: formErr, attrs: { maxlength: 200 } }) : R.field({ id: 'pj-hand-v', label: 'Its name', placeholder: 'Web shop', value: formTyped, error: formErr, hint: `Up to ${NAME_MAX} characters`, attrs: { maxlength: NAME_MAX } });
+    const fields =form === 'project' ? R.field({ id: 'pj-hand-v', label: 'Folder or repository', placeholder: '~/src/your-project', value: formTyped, error: formErr, attrs: { maxlength: 200, 'data-keep': 'pj-hand:project:' } }) : R.field({ id: 'pj-hand-v', label: 'Its name', placeholder: 'Web shop', value: formTyped, error: formErr, hint: `Up to ${NAME_MAX} characters`, attrs: { maxlength: NAME_MAX, 'data-keep': 'pj-hand:space:' } });
     const hand = form ? `<div class="card-form">${R.confirmForm({ form: 'hand', id: 'pj-hand-t', text: form === 'project' ? 'Add a project by hand' : 'Make a workspace by hand', body: fields + R.confirmActions({ yes: form === 'project' ? busyOf('add') || 'Add' : 'Make it', busy: form === 'project' && !!busyOf('add') }) })}</div>` : '';
-    const wrap = (body) => `<div class="convo"><div class="convo-scroll"><div class="convo-col is-center">${body}</div></div></div>`;
+    const wrap = (parts) => ({ cls: 'is-center', parts });
     const ls = listNow();   // D18: loading and failed, in both kinds
-    if (ls !== 'ready') return wrap(`${R.placeHead({ title: 'Your projects' })}${R.listState({ state: ls, noun: 'projects', retry: ls === 'failed' ? { 'data-pj-retry': '' } : null })}`);
-    if (!data.projects.length) return wrap(`${R.placeHead({ title: 'Your projects' })}${way}${hand}${R.emptyState({ title: 'No projects yet.', actions: R.button({ label: 'Add project', kind: 'quiet', attrs: { 'data-pj-add': '' } }) })}`);
+    if (ls !== 'ready') return wrap({ head: R.placeHead({ title: 'Your projects' }), state: R.listState({ state: ls, noun: 'projects', retry: ls === 'failed' ? { 'data-pj-retry': '' } : null }) });
+    if (!data.projects.length) return wrap({ head: R.placeHead({ title: 'Your projects' }), way, hand, empty: R.emptyState({ title: 'No projects yet.', actions: R.button({ label: 'Add project', kind: 'quiet', attrs: { 'data-pj-add': '' } }) }) });
     if (by === 'workspace') {
       const shelves = ctx.sort(ctx.raw), busy = shelves.filter((sh) => sh.ids.some((id) => !ctx.stand.get(id).quiet && ctx.homeBy.get(id) === sh) || sh.qs.length || sh.ids.some((id) => ctx.homeBy.get(id) !== sh && !ctx.stand.get(id).quiet)), still = shelves.filter((sh) => !busy.includes(sh));
       const loud = (sh) => !!sh.w;   // a quiet workspace folds; a quiet "On their own" keeps its shelf, it is no workspace
       const fold = still.filter(loud), open = quietOpen.has('spaces');
       const stillRow = fold.length ? `<div class="center-shelf">${R.quietLine({ n: fold.length, noun: 'workspace', names: fold.map((sh) => sh.name).join(', '), open, hook: { 'data-pc-quiet': 'spaces' } })}</div>${open ? fold.map((sh) => shelfHtml(sh, ctx)).join('') : ''}` : '';
-      return wrap(`${head}${C()?.askStrip?.() || ''}${sent}${way}${say2}${hand}${[...busy, ...still.filter((sh) => !loud(sh))].map((sh) => shelfHtml(sh, ctx)).join('')}${stillRow}`);
+      return wrap({ head, ask: C()?.askStrip?.() || '', sent, way, say2, hand, shelves: [...busy, ...still.filter((sh) => !loud(sh))].map((sh) => shelfHtml(sh, ctx)).join(''), still: stillRow });
     }
     const flat = ctx.sort([...all.filter((s) => !s.quiet).map((s) => ({ rank: s.rank, name: s.p.id, html: cardOf(s, adv() ? homesOf(s.p.id).map((w) => w.title) : []) })), ...(adv() ? spaces().flatMap((w) => window.RailSpaces.questions(w).map((l) => ({ rank: 2.7, name: `${w.title} ${l.from}`, html: qCard(w, l) }))) : [])]);
     const quiet = all.filter((s) => s.quiet);
-    return wrap(`${head}${C()?.askStrip?.() || ''}${sent}${way}${say2}${hand}<div class="pg-grid center-flat">${flat.map((c) => c.html).join('')}</div>${quietOf('flat', quiet)}`);
+    return wrap({ head, ask: C()?.askStrip?.() || '', sent, way, say2, hand, cards: `<div class="pg-grid center-flat">${flat.map((c) => c.html).join('')}</div>`, quiet: quietOf('flat', quiet) });
   }
   const here = () => (location.hash.slice(1) || '').split('/')[0] === 'projects';   // the page area is shared by every place: draw only while this one is open
+  let frameKey = '', frameCol = null;   // the frame drawn last and its column (D7)
   function draw() {
     if (!bar || !page || !here()) return;
     const items = needItems().length; if (items !== bellHeard) { bellHeard = items; window.RailPulse?.refresh(); }   // the bell reads the same list
     if (current.includes('@') && !adv()) { window.RailShell.go(`projects/${pid()}`); return; }   // "through a workspace" is an Advanced address
     ctl?.paint();
     const scrolled = drawn === current ? page.querySelector('.convo-scroll')?.scrollTop || 0 : 0, keep = () => { drawn = current; const s = page.querySelector('.convo-scroll'); if (s) s.scrollTop = scrolled; };   // a menu opening leaves the page where it was, its picker in view
-    if (current.startsWith('ws:')) { if (!adv()) { window.RailShell.go('projects'); return; } window.RailSpaces.render(page, current.slice(3)); keep(); return; }
+    if (current.startsWith('ws:')) { if (!adv()) { window.RailShell.go('projects'); return; } frameKey = ''; window.RailSpaces.render(page, current.slice(3)); keep(); return; }
     const p = data.projects.find((x) => x.id === pid());
-    if (!p) { page.innerHTML = homeHtml(); keep(); return; }
-    page.innerHTML = pageHtml(p);
-    window.RailConversation?.dock(document.getElementById('pj-dock'), { kind: 'project', title: nameOf(p), chat: '', ref: { pageProjectKey: p.id } });   // D16: the page's project, as dev's context
+    // nav.not-found: loaded and not listed, the shell's not-found page (never the home, never Loading); not while an action
+    // on it waits, and a turn later, so an action that just moved it routes first
+    const lost = () => !data.projects.some((x) => x.id === pid()) && pid() && !busyOf(pid()) && W?.live && listNow() === 'ready' && here() && !page.hidden;
+    if (!p && lost() && !notFoundSoon) { notFoundSoon = true; const at = location.hash; setTimeout(() => { notFoundSoon = false; if (location.hash === at && lost()) window.RailShell.go(at.slice(1)); }, 0); }
+    const now = p ? { cls: '', parts: pageParts(p) } : homeParts();
+    // the frame is built once per page (D7); another place or a workspace that wrote the shared page means a new one
+    const key = p ? `p:${p.id}|${nameOf(p)}` : 'home';
+    let col = page.querySelector(':scope > .convo > .convo-scroll > .convo-col');
+    const rebuild = key !== frameKey || !col || col !== frameCol;
+    if (rebuild) { page.innerHTML = frameHtml(now.cls, !!p); col = frameCol = page.querySelector(':scope > .convo > .convo-scroll > .convo-col'); frameKey = key; }
+    R.patchParts(col, now.parts);
+    if (p && rebuild) window.RailConversation?.dock(document.getElementById('pj-dock'), { kind: 'project', title: nameOf(p), chat: '', ref: { pageProjectKey: p.id } });   // D16: the page's project, as dev's context
     keep();
   }
   // panel.dismiss: focus returns to what opened it: Locate on the page, the bar's + otherwise
@@ -325,11 +340,12 @@
         : (!v ? 'It needs its repository address' : REPO_RE.test(v) ? '' : 'Give its repository address, such as git@github.com:you/your-project.git');
     if (wrong) { formErr2(v, wrong); return; }
     if (kind === 'rename' && v === nameOf(p)) { closeForm(); return; }
-    const done = (text, to) => { form = ''; formTyped = ''; formErr = ''; say(text); if (to) window.RailShell.go(`projects/${to}`); else draw(); };
+    const done = (text, to) => { form = ''; formTyped = ''; formErr = ''; say(text); if (to) window.RailShell.go(to); else draw(); };
     if (LIVE()) {
       formTyped = v; formErr = '';
-      const run = kind === 'locate' ? LIVE().relocate(p.id, v) : kind === 'rename' ? LIVE().rename(p.id, v) : LIVE().linkRemote(p.id, v);
-      run.then((a) => { if (a.ok) done(a.text, a.key && a.key !== p.id ? a.key : ''); else if (a.field) formErr2(v, a.field); else said(a); });   // D8: Locate lands on the new key
+      const from = current, run = kind === 'locate' ? LIVE().relocate(p.id, v) : kind === 'rename' ? LIVE().rename(p.id, v) : LIVE().linkRemote(p.id, v);
+      // D8: Locate lands on the new key once the store lists it; not listed, the Projects list (the old key may be gone); only while the person is still here
+      run.then((a) => { if (a.ok) { const to = a.key && a.key !== p.id ? `projects/${a.key}` : kind === 'locate' && !a.key ? 'projects' : ''; done(a.text, current === from && here() ? to : ''); } else if (a.field) formErr2(v, a.field); else said(a); });
       draw(); return;
     }
     if (kind === 'locate') { Object.assign(p, { path: v, origin: 'ok', checked: 'just now' }); done(`${p.id} now uses ${v}`); return; }
@@ -375,7 +391,7 @@
       if (current.startsWith('ws:')) return;   // the workspace has its own
       if (PAGE_FORMS[form] && (hit = on('[data-confirm]'))) { pageFormYes(hit.dataset.confirm === 'yes'); return; }
       if (form && (hit = on('[data-confirm]'))) { const v = page.querySelector('#pj-hand-v')?.value.trim() || '', kind = form; if (hit.dataset.confirm !== 'yes') { closeForm(); return; } if (busyOf('add')) return; const id = kind === 'project' ? (v.split(/[/:]/).filter(Boolean).pop() || '').replace(/\.git$/, '') : '', wrong = !v || (kind === 'project' && !id) ? (kind === 'project' ? 'It needs a folder or a repository' : 'It needs a name') : kind === 'project' ? (pathWrong(v, true) || (id.length > NAME_MAX ? `A project's name holds ${NAME_MAX} characters; this folder's has ${id.length}` : data.projects.some((x) => nameOf(x) === id) ? `${id} is already a project` : '')) : (window.RailSpaces.named(v) ? `${window.RailSpaces.named(v).title} already exists` : ''); if (wrong) { formErr2(v, wrong); return; }
-        if (kind === 'project' && LIVE()) { formTyped = v; formErr = ''; LIVE().addProject(v).then((a) => { if (!a.ok) { if (a.field) formErr2(v, a.field); else said(a); return; } form = ''; formTyped = ''; formErr = ''; say(a.text); if (a.key) window.RailShell.go(`projects/${a.key}`); else draw(); }); draw(); return; }   // D11: a path, or a repository to clone
+        if (kind === 'project' && LIVE()) { formTyped = v; formErr = ''; const from = current; LIVE().addProject(v).then((a) => { if (!a.ok) { if (a.field) formErr2(v, a.field); else said(a); return; } form = ''; formTyped = ''; formErr = ''; say(a.text); if (a.key && current === from && here()) window.RailShell.go(`projects/${a.key}`); else draw(); }); draw(); return; }   // D11: a path, or a repository to clone; its page once the store lists it, while the person is still here
         form = ''; formTyped = ''; formErr = ''; if (kind === 'project') { window.RailProjects.add({ id, path: v, kind: 'Git', origin: 'local', branch: 'main' }); say(`Added ${id}`); window.RailShell.go(`projects/${id}`); return; } const wsId = window.RailSpaces.add({ title: v, fresh: true }); window.RailShell.go(`projects/ws:${wsId}`); return; }
       const p0 = data.projects.find((x) => x.id === pid()); if (!p0 || !page.querySelector('#pj-dock')) return;
       const p = withDetail(p0);
@@ -409,7 +425,10 @@
     R.dismissOnOutside(document, { open: () => here() && !!pickMenu, inside: '#route-place .spick', back: () => null, close: () => { pickMenu = ''; }, paint: draw });
   }
   // a half-typed cost tag or label does not wait for you on another page
-  window.addEventListener('hashchange', () => { [...data.projects, ...(window.RailSpaces?.list() || [])].forEach((x) => { delete x.editing; delete x.defErr; delete x.defTyped; }); });
+  window.addEventListener('hashchange', () => { [...data.projects, ...(window.RailSpaces?.list() || [])].forEach((x) => { delete x.editing; delete x.defErr; delete x.defTyped; });
+    // an open form belongs to its own route: moving anywhere else closes it, so its text never waits for you (comp.keep-open)
+    const [place, arg = ''] = location.hash.slice(1).split('/');
+    if (form && (place !== 'projects' || arg.split('@')[0] !== formAt)) { form = ''; formTyped = ''; formErr = ''; } });
   // a Pulse item opens its project with the fix in view: Locate folder's form, else the head's fix landed, else (a task
   // question holds the head) the More menu open on it; a project that no longer needs you only opens
   function openNeed(id) {
@@ -428,7 +447,7 @@
   window.RailProjects = { needItems, openNeed, all: () => data.projects, editTags: (id) => { window.RailShell.go(`projects/${id}`); setTimeout(() => { const p = data.projects.find((x) => x.id === id); if (!p) return; p.editing = 'tags'; draw(); document.getElementById('def-tags')?.focus(); }, 80); }, sync: (id) => { if (LIVE()) { LIVE().origin(id, 'sync').then(said); return; } const p = data.projects.find((x) => x.id === id); if (p?.origin === 'behind') Object.assign(p, { origin: 'ok', behind: 0, checked: 'just now' }); }, spend: (id) => { const p = data.projects.find((x) => x.id === id); return (p ? spendOf(p) : SPEND[id]?.[0]) || 0; }, hint: (id) => { const p = data.projects.find((x) => x.id === id); return p ? (p.origin === 'behind' ? `${p.behind} behind` : shortOf(p) || '') : ''; }, list: () => data.projects, add: (p) => { if (LIVE()) { LIVE().addProject(p.path || p.id).then(said); return; } if (!data.projects.some((x) => x.id === p.id)) data.projects.push({ kind: 'Git', origin: 'local', branch: 'main', ...p }); ctl?.paint(); } };
   if (window.RailFirstRun) data.projects = [];   // the first run: nothing added yet
   window.RailPlaces = window.RailPlaces || {};
-  window.RailPlaces.projects = { has: (a) => (!!W?.live && listNow() !== 'ready') || (a.startsWith('ws:') ? (window.RailSpaces?.list() || []).some((w) => w.id === a.slice(3)) : data.projects.some((p) => p.id === a.split('@')[0])), defaults: defaultsRows, defaultsClick, defaultsKey, redraw: () => draw(), get newMenu() { return adv() ? newMenuItems : null; }, get newAct() { return adv() ? () => window.RailConversation?.starter('project') : null; }, get newLabel() { return adv() ? 'Add project' : ''; }, newPick: (id) => { if (id === 'project' || id === 'workspace') { window.RailConversation?.starter(id); return; } form = id === 'hand-project' ? 'project' : 'space'; if (current) window.RailShell.go('projects'); setTimeout(() => { draw(); page?.querySelector('#pj-hand-v')?.focus(); }, 60); }, search: (q) => [...data.projects.filter((p) => `${nameOf(p)} ${p.path}`.toLowerCase().includes(q)).map((p) => ({ label: nameOf(p), where: wordOf(p), hash: `projects/${p.id}` })), ...spaces().filter((w) => w.title.toLowerCase().includes(q)).map((w) => ({ label: w.title, where: 'Workspace', hash: `projects/ws:${w.id}` }))], sample: 'billing-api',
+  window.RailPlaces.projects = { has: (a) => (!!W?.live && listNow() !== 'ready') || (a.startsWith('ws:') ? (window.RailSpaces?.list() || []).some((w) => w.id === a.slice(3)) : data.projects.some((p) => p.id === a.split('@')[0])), defaults: defaultsRows, defaultsClick, defaultsKey, redraw: () => draw(), get newMenu() { return adv() ? newMenuItems : null; }, get newAct() { return adv() ? () => window.RailConversation?.starter('project') : null; }, get newLabel() { return adv() ? 'Add project' : ''; }, newPick: (id) => { if (id === 'project' || id === 'workspace') { window.RailConversation?.starter(id); return; } form = id === 'hand-project' ? 'project' : 'space'; formAt = ''; if (current) window.RailShell.go('projects'); setTimeout(() => { draw(); page?.querySelector('#pj-hand-v')?.focus(); }, 60); }, search: (q) => [...data.projects.filter((p) => `${nameOf(p)} ${p.path}`.toLowerCase().includes(q)).map((p) => ({ label: nameOf(p), where: wordOf(p), hash: `projects/${p.id}` })), ...spaces().filter((w) => w.title.toLowerCase().includes(q)).map((w) => ({ label: w.title, where: 'Workspace', hash: `projects/ws:${w.id}` }))], sample: 'billing-api',
     show: ({ bar: b, page: pg, arg }) => { window.RailCenters?.wire(); if (b !== bar) wire(b, pg); if (current !== arg) { menu = ''; window.RailCenters?.unask?.(); if (confirm?.p?.id !== arg) confirm = null; if (PAGE_FORMS[form] && (arg || '').split('@')[0] !== locating) { form = ''; formTyped = ''; formErr = ''; } } current = arg || ''; draw(); } };
   const newMenuItems = () => [{ header: 'Ask in chat' }, { id: 'bar-new|project', text: 'Add a project' }, ...(adv() ? [{ id: 'bar-new|workspace', text: 'Make a workspace' }] : []), { sep: true }, { header: 'Legacy approach' }, { id: 'bar-new|hand-project', text: 'Add a project…' }, ...(adv() ? [{ id: 'bar-new|hand-space', text: 'Make a workspace…' }] : [])];
 })();
