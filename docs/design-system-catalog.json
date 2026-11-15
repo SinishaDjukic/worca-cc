@@ -1776,8 +1776,17 @@
       "needs": [
         "a chat softens where it goes under the composer or the top bar, only while there is more past that edge (scrollEdges says which)"
       ],
+      "also": [
+        {
+          "code": "ui/public/design-system/components/scroll-fade.mjs#pinnedToEnd",
+          "needs": [
+            "whether a chat sits at its end (its last PIN px in view), so a growing reply keeps it there"
+          ]
+        }
+      ],
       "rules": [
-        "motion.scroll-fade"
+        "motion.scroll-fade",
+        "motion.follow-end"
       ]
     },
     {
