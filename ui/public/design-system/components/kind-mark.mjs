@@ -208,6 +208,24 @@ export function composer({ value = '', placeholder, sentence, detail = '', tools
 }
 
 /**
+ * ComposerQueue: what you sent while Worca replies, waiting above the composer (form.composer-queue). Oldest first, one
+ * Queued row each with its Remove; one line under them says when they go, or why they wait, with Send now.
+ * @param {object} o
+ * @param {{key: string, text: string}[]} o.items   plain text, escaped here
+ * @param {number} [o.max]        how many may wait
+ * @param {''|'stopped'|'failed'|'away'|'refused'} [o.paused]
+ * @param {string} [o.why]        refused: the reason
+ */
+export function composerQueue({ items = [], max = 3, paused = '', why = '' } = {}) {
+  if (!items.length) return '';
+  const rows = items.map((q, k) => turnRow({ mark: icon('clock', 14), text: `<b>Queued</b> ${esc(q.text)}`, end: button({ label: `Remove queued message ${k + 1}`, kind: 'quiet', iconOnly: true, icon: icon('x', 12), attrs: { 'data-q-drop': q.key } }), attrs: { role: 'listitem' } })).join('');
+  const PAUSED = { stopped: 'Queue paused: the reply was stopped', failed: 'Queue paused: the reply failed', away: 'Queue paused: the reply ended while this chat was closed', refused: `Queue paused: could not send it: ${why}` };
+  const words = PAUSED[paused] || (items.length >= max ? 'Queue full: sends when the reply finishes' : 'Sends when the reply finishes');
+  const now = PAUSED[paused] ? ` ${button({ label: 'Send now', kind: 'quiet', attrs: { 'data-q-send': '' } })}` : '';
+  return `<div class="composer-queue" role="list" aria-label="Queued messages">${rows}</div><div class="composer-note" data-q-note aria-live="polite">${esc(words)}${now}</div>`;
+}
+
+/**
  * CardHead: the one head every chat card has: its kicker (its mark and one word: Proposed, Running, Plan), its title, at most
  * one line under it, and its facts (a branch, a place). TaskCard, TaskProposal, ChangeProposal and PlanCard all use it.
  * @param {object} o
