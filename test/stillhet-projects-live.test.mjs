@@ -446,6 +446,20 @@ test('F-5-05 review: a finished clone goes to its project only while the person 
   assert.deepEqual(r.went, ['projects/repo-6666ffff'], 'still there: it goes to the project');
 });
 
+test('F-6-18 review: after a DELETE dev answered ok, the hide timeout does not show the row again while the store still lists it, nor read it', async () => {
+  const r = rig();
+  r.live.deferRemove('api-2222bbbb', 5000);
+  await r.fire(); await tick();   // the window closes, DELETE answers ok; the store's frame was lost
+  assert.deepEqual(r.writes(), [['DELETE', '/api/projects?name=api', undefined]]);
+  const cap = r.timers.find((t) => t.fn && t.ms >= 10000); assert.ok(cap, 'the hide timeout is set');
+  await cap.fn();
+  assert.ok(r.live.hidden().has('api-2222bbbb'), 'removed by dev: hidden until the store drops it');
+  r.live.detail('api-2222bbbb'); r.live.frame({ type: 'projects-changed' }); await tick();
+  assert.equal(r.calls.filter((c) => c.method === 'GET' && c.url.includes('api-2222bbbb')).length, 0, 'no GET that would answer 404');
+  r.setWorld({ ...WORLD(), projects: WORLD().projects.filter((p) => p.id !== 'api-2222bbbb') });
+  assert.ok(!r.live.hidden().has('api-2222bbbb'), 'dropped by the store: no longer hidden');
+});
+
 test('source scan (R-arch-3): the pages hold none of dev\'s route or field names', () => {
   for (const f of ['projects/projects.js', 'workspaces/workspaces.js']) {
     const src = readFileSync(new URL(`../ui/public/stillhet/${f}`, import.meta.url), 'utf8');

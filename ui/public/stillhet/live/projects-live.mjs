@@ -37,7 +37,7 @@ export const PROJECT_ACTIONS = Object.freeze({
   'open-editor': ['open', 'Opening…', ({ id, projectKey, file }) => ['POST', `/api/workspaces/${enc(id)}/open-in-editor`, { projectKey, file }]],
 });
 export const NOT_ANSWERING = 'Worca is not answering';
-const HIDE_MAX_MS = 30000;   // a sent Remove or Delete that never hears back shows its row again after this
+const HIDE_MAX_MS = 30000;   // a sent Remove or Delete that never hears back shows its row again after this (one dev removed stays hidden)
 const LISTED_POLL_MS = 100, LISTED_MAX_MS = 10000;   // after an add or a move: how often, and how long, to look for the key in the store
 const MAX_MEMBERS = 40;
 // dev's refusal phrases → the plain reason of `Could not VERB NAME: REASON` (fail.task-action, fail.no-raw); first match wins
@@ -166,9 +166,11 @@ export function startProjectsLive({ fetch, toast = () => {}, refresh = () => {},
       if (!args) { toast(`Did not ${PROJECT_ACTIONS[action][0]} ${title}: it changed while you could undo`); unhide(h); return; }
       h.fired = true; h.frame = action === 'space-delete' ? 'workspaces-changed' : 'projects-changed';
       gone.add(id); details.delete(id); spaceDetails.delete(id);   // never read again, even when dev's frame comes before its answer
-      later(() => { if (!hide.has(id) || hide.get(id) === h) gone.delete(id); unhide(h); }, HIDE_MAX_MS);
+      // never answered: show it again; answered ok: it stays gone until the store drops it (hidden() clears it then)
+      later(() => { if (!h.removed && (!hide.has(id) || hide.get(id) === h)) gone.delete(id); unhide(h); }, HIDE_MAX_MS);
       const a = await send(action, args);
-      if (!a.ok) { gone.delete(id); toast(refused(action, title, a).text); }
+      if (a.ok) h.removed = true;
+      else { gone.delete(id); toast(refused(action, title, a).text); }
       unhide(h);
     }, ms);
     const handle = { undo: () => { const h = hide.get(id); if (!h || h.handle !== handle || h.fired) return false; cancel(t); hide.delete(id); on(); return true; } };
