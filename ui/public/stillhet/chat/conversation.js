@@ -67,7 +67,7 @@
   const thinkNow = (x) => { const ms = Date.now() - (x.at || Date.now()), steps = x.steps || THINKING, n = Math.min(steps.length, 1 + Math.floor(ms / 600)); return { step: steps[n - 1], secs: `${Math.max(1, Math.round(ms / 1000))}s`, n, phase: n === steps.length ? 'write' : n === 3 ? 'tool' : 'think' }; };   // searching is a tool; the last step writes
   // The live kind's turns: RailChatLive's, read again on its onChange; what a person opened or typed under a turn stays
   const UI_KEYS = ['open', 'asking', 'askValue', 'rqPick', 'planPick', 'how', 'shipMarking', 'forPlan', 'planRoles', 'planFull', 'planText', 'savedAs', 'directing', 'figures', 'filesOpen', 'openSlice', 'pick', 'rowOpen', 'details', 'term', 'shellClosed', 'target', 'guard', 'src', 'feature', 'onSource', 'diffOpen', 'pkeys'];
-  const PROPOSAL_KEYS = ['title', 'brief', 'ppFiles'];   // what a person edits on a proposal before Start (its files: COV-3 #6)
+  const PROPOSAL_KEYS = ['title', 'brief', 'ppFiles', 'ppCut'];   // what a person edits on a proposal before Start (its files: COV-3 #6)
   function liveTurns(id) {
     const was = threads.get(id) || [], next = CL().turns(id);
     for (const x of next) { const y = x.id && was.find((z) => z.id === x.id && z.t === x.t); if (y) for (const k of [...UI_KEYS, ...(x.t === 'proposal' || x.t === 'runwith' ? PROPOSAL_KEYS : [])]) if (y[k] !== undefined) x[k] = y[k]; }
@@ -700,8 +700,9 @@
     const targets = ['No project', ...(r.projectDir ? ['Project'] : []), ...(r.workspaceId ? ['Workspace'] : [])];
     const sentence = W('Task') + W('on') + W(esc(x.target === 'No project' ? 'no project' : x.project)) + W('with') + W(esc(x.workflow));
     // COV-3 #6: the files of the message it answers (the you-turn before it), under the brief as the design draws them; × drops one
-    if (x.ppFiles === undefined) { const all = threads.get(chatId) || [], k = all.findIndex((y) => y === x || (y.id === x.id && y.t === x.t)), you = all.slice(0, Math.max(0, k)).reverse().find((y) => y.t === 'you'); x.ppFiles = (you?.files || []).filter((f) => f && typeof f === 'object' && f.att); }
-    const brief = `<div class="tp-brief">${R.field({ id: `pp-brief-${x.id}`, label: 'Brief: what the first agent reads · Markdown', value: x.brief ?? '', multiline: true, hint: `${(x.brief ?? '').length} characters`, attrs: { 'data-pp-brief': x.id } })}${x.ppFiles.length ? `<span class="you-files">${x.ppFiles.map((f) => R.button({ label: f.name, kind: 'quiet', icon: R.icon('x', 11), attrs: { 'data-pp-unfile': `${x.id}|${f.name}`, title: `Removes ${f.name}` } })).join('')}</span>` : ''}</div>`;
+    // the files are read again while none have ids yet (an echo before the snapshot) and none were removed
+    if (x.ppFiles === undefined || (!x.ppFiles.length && !x.ppCut)) { const all = threads.get(chatId) || [], k = all.findIndex((y) => y === x || (y.id === x.id && y.t === x.t)), you = all.slice(0, Math.max(0, k)).reverse().find((y) => y.t === 'you'); x.ppFiles = (you?.files || []).filter((f) => f && typeof f === 'object' && f.att); }
+    const brief = `<div class="tp-brief">${R.field({ id: `pp-brief-${x.id}`, label: 'Brief: what the first agent reads · Markdown', value: x.brief ?? '', multiline: true, hint: `${(x.brief ?? '').length} characters`, attrs: { 'data-pp-brief': x.id } })}${x.ppFiles.length ? `<span class="you-files">${x.ppFiles.map((f) => R.button({ label: f.name, kind: 'quiet', icon: R.icon('x', 11), attrs: { 'data-pp-unfile': `${x.id}|${f.att}`, title: `Removes ${f.name}` } })).join('')}</span>` : ''}</div>`;
     const guardText = (liveGuards || []).find((g) => g.id === x.guard)?.text || x.guard;
     const more = row('Where it runs', pp('target', x.target, targets, 'Where it runs'))
       + (x.target === 'No project' ? '' : row('Source branch', R.field({ id: `pp-src-${x.id}`, label: 'Source branch', quietLabel: true, value: x.src, placeholder: 'The project’s default branch', attrs: { 'data-pp-src': x.id } }))
@@ -1574,7 +1575,7 @@
     if ((px = pp('data-pp-back'))) { px.later = false; paint(); return; }
     if ((px = pp('data-pp-asis'))) { px.nudge = false; paint(); say('Runs as is'); return; }
     if ((hit = on('[data-pp-persp]'))) { const [id, v] = hit.dataset.ppPersp.split('|'), x = turns().find((y) => y.id === id); if (x) { const l = x.persp || ['Product']; x.persp = l.includes(v) ? l.filter((z) => z !== v) : [...l, v]; paint(); } return; }
-    if ((hit = on('[data-pp-unfile]'))) { const [id, f] = hit.dataset.ppUnfile.split('|'), x = turns().find((y) => y.id === id); if (x) { if (x.ppFiles) x.ppFiles = x.ppFiles.filter((z) => z.name !== f); else x.files = (x.files || []).filter((z) => z !== f); paint(); } return; }
+    if ((hit = on('[data-pp-unfile]'))) { const v = hit.dataset.ppUnfile, cut = v.indexOf('|'), id = v.slice(0, cut), f = v.slice(cut + 1), x = turns().find((y) => y.id === id); if (x) { if (x.ppFiles) { x.ppFiles = x.ppFiles.filter((z) => z.att !== f); x.ppCut = true; } else x.files = (x.files || []).filter((z) => z !== f); paint(); } return; }
     if ((hit = on('[data-pp-target]'))) { const [id, v] = hit.dataset.ppTarget.split('|'), x = turns().find((y) => y.id === id); if (x) { x.target = v; paint(); } return; }
     if ((px = pp('data-pp-onsource'))) { px.onSource = !px.onSource; paint(); return; }
     if ((px = pp('data-pp-reset'))) { px.agents = {}; paint(); say('Agents back to the proposal'); return; }

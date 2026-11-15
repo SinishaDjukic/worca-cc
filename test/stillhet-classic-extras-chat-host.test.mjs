@@ -81,7 +81,7 @@ test('COV-3 #6: a proposal draws the files of the message it answers; × removes
   root(h.d).querySelector('[data-pp-more="card_prop"]').click(); await settle(30);
   const chips = () => [...root(h.d).querySelectorAll('[data-pp-unfile^="card_prop|"]')].map((b) => b.textContent.trim());
   assert.deepEqual(chips(), ['spec.md', 'logo.svg']);
-  root(h.d).querySelector('[data-pp-unfile="card_prop|logo.svg"]').click(); await settle(20);
+  root(h.d).querySelector('[data-pp-unfile="card_prop|att9"]').click(); await settle(20);
   assert.deepEqual(chips(), ['spec.md']);
   root(h.d).querySelector('[data-pp-start="card_prop"]').click(); await settle(80);
   const run = h.calls.find((c) => c.url === '/api/run');
@@ -102,4 +102,37 @@ test('COV-3 #3: a running task\'s card offers no Restore', async () => {
   await go(h.w, '#chat/ask_1', 150);
   root(h.d).querySelector('[data-menu^="card:"]').click(); await settle(10);
   assert.ok(![...root(h.d).querySelectorAll('[data-menu-pick]')].some((x) => /\|Restore$/.test(x.dataset.menuPick)), 'a running task offers no Restore');
+});
+
+test('COV-3 #6: × removes the file by its id: two files of one name, and a name with "|", each go alone', async () => {
+  const t = thread();
+  t.messages[0].blocks.push({ kind: 'attachment', id: 'att8', name: 'spec.md', bytes: 4, attKind: 'text' }, { kind: 'attachment', id: 'att9', name: 'a|b.txt', bytes: 4, attKind: 'text' });
+  const h = await liveHost({ thread: threadOf(t) });
+  await go(h.w, '#chat/ask_1', 150);
+  root(h.d).querySelector('[data-pp-more="card_prop"]').click(); await settle(30);
+  const chips = () => [...root(h.d).querySelectorAll('[data-pp-unfile^="card_prop|"]')].map((b) => `${b.dataset.ppUnfile}:${b.textContent.trim()}`);
+  assert.deepEqual(chips(), ['card_prop|att1:spec.md', 'card_prop|att8:spec.md', 'card_prop|att9:a|b.txt']);
+  root(h.d).querySelector('[data-pp-unfile="card_prop|att8"]').click(); await settle(20);
+  assert.deepEqual(chips(), ['card_prop|att1:spec.md', 'card_prop|att9:a|b.txt'], 'only the second spec.md goes');
+  root(h.d).querySelector('[data-pp-unfile="card_prop|att9"]').click(); await settle(20);
+  assert.deepEqual(chips(), ['card_prop|att1:spec.md'], 'a name with "|" goes too');
+});
+
+test('COV-3 #6: a proposal drawn before its message\'s files have ids picks them up when they arrive; a removed file stays removed', async () => {
+  const t = thread(), att = t.messages[0].blocks.find((b) => b.kind === 'attachment'), id = att.id;
+  delete att.id;   // the echo before the snapshot: the file has its name only
+  const h = await liveHost({ thread: threadOf(t) });
+  // back after a drop: the open chat is read again (the snapshot that brings the ids)
+  const reread = async () => { h.sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'hello', bootId: 'b', runs: SOURCES.hello.runs }) }); await settle(150); };
+  await go(h.w, '#chat/ask_1', 150);
+  root(h.d).querySelector('[data-pp-more="card_prop"]').click(); await settle(30);
+  const chips = () => [...root(h.d).querySelectorAll('[data-pp-unfile^="card_prop|"]')].map((b) => b.textContent.trim());
+  assert.deepEqual(chips(), [], 'no id yet, no chip');
+  att.id = id;
+  await reread();
+  assert.equal(h.calls.filter((c) => c.url === '/api/ask/threads/ask_1').length, 2, 'read again');
+  assert.deepEqual(chips(), ['spec.md'], 'the files arrive');
+  root(h.d).querySelector(`[data-pp-unfile="card_prop|${id}"]`).click(); await settle(20);
+  await reread();
+  assert.deepEqual(chips(), [], 'removed stays removed');
 });
