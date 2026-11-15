@@ -392,7 +392,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
             { name: 'Command', when: outdated, say: 'Or from a terminal: `{updCmd}`', vals: { updCmd: cmd }, acts: [{ label: 'Copy command', copy: cmd }] },
             { name: 'Last update', when: (sv) => sv.upd === 'failed', say: (sv) => { const f = updateFailed(sv); return `${f.title}. ${f.detail} Update from a terminal instead`; }, acts: [{ label: 'Dismiss', do: (sv) => { sv.upd = 'available'; return ''; } }] },
             { name: 'npm output', when: (sv) => sv.upd === 'failed', say: 'The last lines npm wrote', acts: [{ label: 'View', edit: { title: 'npm output', view: true, yes: 'Close', note: '`npm ERR! code EACCES` · `npm ERR! syscall rename` · `npm ERR! path /usr/local/lib/node_modules/@worca/app`' } }] },
-            { name: 'Repository', say: '`github.com/SinishaDjukic/worca-cc`', acts: [opens('the repository')] },
+            { name: 'Repository', say: '`github.com/acme/worca`', acts: [opens('the repository')] },
             { name: 'Report a bug', say: 'Opens a new issue, labelled bug', acts: [{ label: 'Open', id: 'bug', say: window.RailWould('open a new bug issue on GitHub in a new tab') }] },
             { name: 'Suggest an improvement', say: 'Opens a new issue, labelled enhancement', acts: [{ label: 'Open', id: 'idea', say: window.RailWould('open a new enhancement issue on GitHub in a new tab') }] },
           ] },

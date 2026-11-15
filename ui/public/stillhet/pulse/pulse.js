@@ -167,7 +167,7 @@ function avatar() {
   const tip = lines.length ? lines.join('\n\n') : !c.usage.length ? 'No provider connected' : c.usage.some((u) => u.noQuota) ? 'No quota set: see Usage and costs' : 'Billed per token: see Usage and costs';
   return `<span class="pz-ava-wrap" title="${esc(tip)}">${rs.map((r, i) => gring(r.pct, 'pz-ring-' + i, r.tone)).join('')}<span class="pz-ava">${esc(initials())}</span><i class="acct-dot pz-ava-dot" aria-hidden="true">${R.icon('away', 8)}</i></span>`;
 }
-const people = () => C().identity?.people || ['Emil Angelov'];
+const people = () => C().identity?.people || ['Sam Rivera'];
 const personName = () => people()[ui.person] || people()[0];
 const initials = () => personName().split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
 const awayRow = () => M.awayRow({ ...C().away, status: ui.awayStatus });
