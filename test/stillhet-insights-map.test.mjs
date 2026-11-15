@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
-  statsQuery, teamQuery, paceOf, wordsOf, DIM_OF, statsSource, selectFacts, pooledOf, monthSpendOf, errorOf, scopesOf,
+  statsQuery, teamQuery, paceOf, wordsOf, DIM_OF, statsSource, selectFacts, pooledOf, monthSpendOf, weekTotalsOf, errorOf, scopesOf,
   budgetOf, ratioOf, LIVE_PAGES, NOT_LIVE_PAGES, FIGURE_SOURCE, tagKeysOf,
 } from '../ui/public/stillhet/live/insights-map.mjs';
 
@@ -161,6 +161,18 @@ test('monthSpendOf, errorOf, scopesOf', () => {
   assert.equal(errorOf(404, {}), 'HTTP 404');
   assert.deepEqual(scopesOf({ scopes: { projects: [{ id: 'project:a', label: 'acme/a' }, { id: 'project:b', label: 'b', enabled: false }], workspaces: [{ id: 'workspace:w', label: 'Shop' }] } }), [{ id: 'project:a', name: 'acme/a' }, { id: 'workspace:w', name: 'Shop' }]);
   assert.deepEqual(scopesOf({}), []);
+});
+
+test('F-3-10: weekTotalsOf reads totals for every project and the allocation row for one; 0 for a project with no row; null without totals', () => {
+  assert.deepEqual(weekTotalsOf(ANSWER), { runs: 3, spentUsd: 21.75 });
+  assert.deepEqual(weekTotalsOf(ANSWER, null), { runs: 3, spentUsd: 21.75 });
+  const row = weekTotalsOf(ANSWER, 'billing-api');
+  assert.equal(row.spentUsd, monthSpendOf(ANSWER, 'billing-api'), 'the same row monthSpendOf reads');
+  assert.equal(row.runs, FACTS.filter((f) => f.project === 'billing-api' && f.inCohort).length);
+  assert.deepEqual(weekTotalsOf(ANSWER, 'nope'), { runs: 0, spentUsd: 0 });
+  assert.equal(weekTotalsOf({}), null);
+  assert.equal(weekTotalsOf(null, 'billing-api'), null);
+  assert.equal(weekTotalsOf({ totals: { runs: 1, spentUsd: 1 } }, 'billing-api'), null, 'no report.runs: no project row');
 });
 
 // ---- R-arch-2: dev field names are read only in insights-map.mjs ----

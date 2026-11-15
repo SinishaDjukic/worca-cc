@@ -1,6 +1,6 @@
 /* ConfirmStrip (docs/rail/components.md) and the text link: moved here once from the prototype's rail.css and shell.css,
    so the app and the prototype draw them from one rule. */
-.dc-link{padding:0;border:0;background:none;font:inherit;color:var(--ink);text-decoration:underline;text-underline-offset:3px;cursor:pointer;}
+.dc-link{padding:0;border:0;background:none;font:inherit;color:var(--ink);text-decoration:underline;text-underline-offset:3px;cursor:pointer;text-align:left;}
 .rc-confirm{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;padding:10px 12px;border:1px solid var(--line-2);border-radius:var(--r-md);background:var(--panel);font-size:var(--fs-body);}
 .pz-page > .rc-confirm{position:sticky;top:8px;z-index:6;}   /* a page with no shell: the strip stays on screen too */
 .rc-confirm-t{color:var(--ink);font-weight:500;}

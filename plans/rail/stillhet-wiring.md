@@ -320,6 +320,7 @@ One row per seeded figure: each data key and seed getter of the globals a model 
 | `profile › the interface mode` | wired | dev's `uiLevel`: the `data-level` stamp at start, `POST /api/settings {uiLevel}` on a person's pick only |
 | `profile › Keep awake` | wired | `keepAwake` of `GET /api/settings`; `POST /api/settings {keepAwake}` |
 | `profile › Away` | wired | `GET /api/away-mode`; `POST /api/settings {nightModeToggle}` with dev's Away switch body |
+| `centers/centers.js › this week's tasks and cost` | wired | B3.6 (F-3-10): GET /api/stats?range=week `totals.runs` and `totals.spentUsd` for every project, else the chosen project's `allocate(report.runs, by project)` row (`insights-map.mjs` `weekTotalsOf`); while the read is pending or failed the head draws no week figures. Demo: a per-run sum, each run by its own date |
 
 ## Dev surfaces
 
