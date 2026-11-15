@@ -224,6 +224,22 @@ export function turnsOf({ messages = [], runLinks = [], inFlight = null } = {}, 
     // dev writes a project switch as a system message with its divider block (ui/server.mjs switchThreadScope)
     else if (m.role === 'system') for (const b of arr(m.blocks)) if (b && b.kind === 'divider') out.push({ t: 'divider', text: str(b.text) });
   }
+  return withFeatureMembers(out, arr(tasks));
+}
+// F-a2-03: a feature's other members have no card of their own in the chat (the scheduler starts them, unlinked). Each
+// started one draws its TaskCard right after the card of the member the chat started, in position order, keyed
+// `cardId:memberId` so a repaint keeps it. A member not started yet has no stages and nothing to act on: no card.
+const notStarted = (t) => t.case === 'scheduled' || str(t.case).startsWith('ticket-');
+function withFeatureMembers(out, tasks) {
+  const drawn = new Set(out.filter((x) => x.t === 'task').map((x) => x.task));
+  for (let i = 0; i < out.length; i++) {
+    const turn = out[i], own = turn.t === 'task' ? tasks.find((x) => x && x.id === turn.task) : null;
+    if (!own || !own.group) continue;
+    const add = tasks.filter((x) => x && x.group === own.group && !drawn.has(x.id) && !notStarted(x)).sort((a, b) => (a.pos ?? 0) - (b.pos ?? 0))
+      .map((x) => { drawn.add(x.id); return { t: 'task', id: `${turn.id}:${x.id}`, task: x.id }; });
+    out.splice(i + 1, 0, ...add);
+    i += add.length;
+  }
   return out;
 }
 

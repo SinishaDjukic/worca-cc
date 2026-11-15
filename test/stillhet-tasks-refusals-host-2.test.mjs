@@ -21,6 +21,7 @@ function sources() {
 const read = (u) => {
   const m = /^\/api\/history\/web-1\/(\w+)$/.exec(u); if (m && DETAIL[m[1]]) return [200, { state: DETAIL[m[1]].state }];
   const c = /^\/api\/pr\/checks\?id=(\w+)/.exec(u); if (c && DETAIL[c[1]]?.checks) return [200, DETAIL[c[1]].checks];
+  if (u === '/api/runs/h3/artifacts') return [200, { runId: 'h3', artifacts: [{ kind: 'plan', relPath: 'plan.md' }], truncated: false }];   // a plan: a late NO_PLAN is still toasted (F-a4-11)
   return null;
 };
 async function refused(id, label, answer, args = {}) {

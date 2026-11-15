@@ -327,7 +327,7 @@ function viewDialogHtml(v) {
   // live: one file's whole diff, from the patch the page read (Changes › Open the whole diff)
   if (ui.dialog === 'diff') return viewDialog(ui.diff.path, `<pre class="rtab-ev-l">${esc(ui.diff.text)}</pre>`);
   // live: a shell in the task's worktree (dev's POST /api/runs/:id/terminal), drawn by the library's TerminalPane
-  if (ui.dialog === 'terminal' && ui.term) return viewDialog('Terminal', R.terminalPane({ title: M.view(ui.caseId, ui).place.branch || 'the worktree', lines: ui.term.lines, closed: ui.term.closed, hooks: { stop: { 'data-term-stop': '1', 'data-key': 'term-stop' }, close: { 'data-viewclose': true, 'data-key': 'term-close' }, send: { 'data-term-input': '1', 'data-key': 'term-in' } } }));
+  if (ui.dialog === 'terminal' && ui.term) return viewDialog('Terminal', R.terminalPane({ title: M.view(ui.caseId, ui).place.branch || 'the worktree', lines: ui.term.lines, closed: ui.term.closed, hooks: { stop: { 'data-term-stop': '1', 'data-key': 'term-stop' }, close: { 'data-viewclose': true, 'data-key': 'term-close' }, send: { 'data-term-input': '1', 'data-key': 'term-in', 'data-keep': 'term-in' } } }));
   // Commands you run yourself stay until you close them, with a copy button: never a toast that fades.
   if (ui.dialog === 'commands') return viewDialog('Git commands', `<p class="pd-hint">${esc(ui.cmd.label)}</p><div class="rl-tools">${R.copyButton({ text: ui.cmd.text, label: 'Copy the commands', attrs: { 'data-key': 'cmd-copy' } })}</div><pre class="rtab-ev-l">${esc(ui.cmd.text)}</pre>`);
   if (ui.dialog !== 'graph') return '';
@@ -1274,7 +1274,7 @@ document.addEventListener('keydown', (e) => {
   if (t.id === 'group-input' && e.key === 'Enter' && LIVE_PAGE()) { e.preventDefault(); const g = t.value.trim(); if (g) liveGroup(g); return; }
   if (t.matches && t.matches('[data-term-input]') && e.key === 'Enter') { e.preventDefault(); if (ui.term) { ui.term.send(t.value); t.value = ''; } return; }
   if (t.id === 'group-input' && e.key === 'Enter') { e.preventDefault(); const g = t.value.trim(); if (g) { ui.chips = ui.chips.filter((c) => c.kind !== 'group').concat({ kind: 'group', text: g }); ui.menu = ''; pendingFocus = 'menu:more'; toast((KNOWN.group.some(([x]) => x === g) ? 'Moved to ' : 'Created and moved to ') + g); } render(); return; }
-  if (t.id === 'tag-input' && e.key === 'Enter') { e.preventDefault(); addTag(t.value); render(); return; }
+  if (t.id === 'tag-input' && e.key === 'Enter') { e.preventDefault(); addTag(t.value); t.value = ''; render(); return; }   // a kept field (comp.keep-open): cleared before the redraw, for the next one
   if (act === 'labels' && document.querySelector('.rc-tags')) { e.preventDefault(); ui.menu = 'tags'; pendingFocus = 'tag-input'; render(); return; }
   if ((ui.confirm || ui.dialog) && act === 'close' && !ui.menu) { if (ui.term) { ui.term.close(); ui.term = null; } ui.form = null; ui.doc = null; ui.graphNode = null; if (ui.pr) { ui.pr.gen = false; ui.pr.genTitle = false; (ui.pr.prs || []).forEach((f) => { f.gen = false; f.genTitle = false; }); } ui.confirm = null; ui.dialog = ''; ui.busy = null; pendingFocus = 'act-main'; render(); return; }
   if (act === 'terminal') { e.preventDefault(); if (LIVE_PAGE()) { if (v0().has.worktree) openTerminal(); return; } toast(window.RailWould('open a terminal in the worktree')); render(); return; }
