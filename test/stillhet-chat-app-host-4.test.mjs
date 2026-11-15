@@ -145,3 +145,85 @@ test('Pulse and search open a live task at its card in its starting chat; a task
   await settle(40);
   assert.equal(w.location.hash, '#run/run-b', 'its own page, by its id, never the case (#1266)');
 });
+
+// F-a1-04: a running ("spending") run's ⋯ Stop. A live frame rebuilds the store's tasks (chats-model seed), so the card's
+// confirm must outlive the task object it was opened on.
+const runTask = (w) => w.RailChats.data().chats.flatMap((c) => c.tasks || []).find((t) => (t.run || t.id) === 'run-a');
+const redraw = async (w, sockets) => {
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'history-pr', token: w.RailTaskLive.prLookup().token, items: [{ id: 'pa', projectKey: 'web-1a2b3c4d', pr: null }] }) });
+  await settle(60);
+};
+const openStop = async (w, d) => {
+  await go(w, '#chat/ask_1');
+  assert.ok((await cardItems(d, 'run-a')).includes('Stop'));
+  d.querySelector('#route-chat [data-menu-pick="card:run-a|Stop"]').click(); await settle(10);
+};
+const stopRow = (d) => d.querySelector('#route-chat [data-card-yes="run-a"]');
+
+test('F-a1-04: ⋯ Stop on a running card shows its confirm and sends nothing yet', async () => {
+  const { w, d, calls } = await liveHost({ sources: withRun({ pendingQuestion: null }) });
+  await openStop(w, d);
+  assert.ok(stopRow(d), 'the confirm\'s Stop');
+  assert.ok(d.querySelector('#route-chat [data-card-no="run-a"]'), 'the confirm\'s Cancel');
+  assert.match(stopRow(d).closest('.turn-row').textContent, /Stop the task\? The branch and changes stay\./);
+  assert.ok(!posts(calls).some(([, u]) => u === '/api/stop'), 'nothing sent before the confirm');
+});
+
+test('F-a1-04: the confirm survives a redraw from a live frame; Confirm sends exactly one stop with the run\'s id', async () => {
+  const { w, d, calls, sockets } = await liveHost({ sources: withRun({ pendingQuestion: null }) });
+  await openStop(w, d);
+  const was = runTask(w);
+  await redraw(w, sockets);
+  assert.notEqual(runTask(w), was, 'the frame rebuilt the store\'s task');
+  assert.ok(stopRow(d), 'the confirm is still up after the redraw');
+  stopRow(d).click(); await settle(40);
+  assert.deepEqual(posts(calls).filter(([, u]) => u === '/api/stop'), [['POST', '/api/stop', { runId: 'run-a' }]]);
+  assert.equal(stopRow(d), null, 'the confirm is gone');
+});
+
+test('F-a1-04: Cancel after a redraw closes the confirm and sends nothing', async () => {
+  const { w, d, calls, sockets } = await liveHost({ sources: withRun({ pendingQuestion: null }) });
+  await openStop(w, d);
+  const was = runTask(w);
+  await redraw(w, sockets);
+  assert.notEqual(runTask(w), was, 'the frame rebuilt the store\'s task');
+  assert.ok(stopRow(d), 'the confirm is still up after the redraw');
+  d.querySelector('#route-chat [data-card-no="run-a"]').click(); await settle(20);
+  assert.equal(stopRow(d), null, 'Cancel closes it');
+  const again = runTask(w);
+  await redraw(w, sockets);
+  assert.notEqual(runTask(w), again, 'a second rebuild');
+  assert.equal(stopRow(d), null, 'the confirm does not come back');
+  assert.deepEqual(posts(calls), [], 'no request of any kind');
+});
+
+test('F-a1-04: an open Stop confirm goes when the run ends under it; nothing is sent', async () => {
+  const { w, d, calls, sockets } = await liveHost({ sources: withRun({ pendingQuestion: null }) });
+  await openStop(w, d);
+  assert.ok(stopRow(d), 'the confirm is up while it runs');
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'done', runId: 'run-a', status: 'done' }) });
+  await settle(60);
+  await go(w, '#chat/ask_1');
+  assert.equal(stopRow(d), null, 'a finished run offers no Stop, so its confirm is gone');
+  assert.ok(!posts(calls).some(([, u]) => u === '/api/stop'), 'no stop request');
+});
+
+// F-a1-04: Stop sends classic's body (app.js stopRun): a live run's runId, with its pipeline id once paused; a paused run
+// this server does not hold live (a saved row) by its pipeline id alone, never as a runId
+const stopOn = async (w, d, calls, id) => {
+  await go(w, '#chat/ask_1');
+  assert.ok((await cardItems(d, id)).includes('Stop'));
+  d.querySelector(`#route-chat [data-menu-pick="card:${id}|Stop"]`).click(); await settle(10);
+  d.querySelector(`#route-chat [data-card-yes="${id}"]`).click(); await settle(40);
+  return posts(calls).filter(([, u]) => u === '/api/stop');
+};
+
+test('F-a1-04: a paused card\'s Stop sends classic\'s body: its runId and its pipeline id', async () => {
+  const { w, d, calls } = await liveHost({ sources: withRun({ status: 'paused', pendingQuestion: null }) });
+  assert.deepEqual(await stopOn(w, d, calls, 'run-a'), [['POST', '/api/stop', { runId: 'run-a', pipelineId: 'pa' }]]);
+});
+
+test('F-a1-04: a paused saved run\'s Stop sends its pipeline id alone, never as a runId', async () => {
+  const { w, d, calls } = await liveHost({ sources: savedRun({ status: 'paused' }) });
+  assert.deepEqual(await stopOn(w, d, calls, 'pa'), [['POST', '/api/stop', { pipelineId: 'pa' }]]);
+});
