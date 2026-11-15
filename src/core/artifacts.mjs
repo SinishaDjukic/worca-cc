@@ -2558,15 +2558,22 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     // the unchanged primary-only lookup, pr_url first — never overwritten with null.
     // The fresh lookup wins over the stored row (a PR merged since the last refresh, or a newer PR for the branch);
     // stored fields (the CI verdict) are used only for the same URL. Persisting is the enrich path's job.
-    const found = (await anyPrHost())
-      ? await findPrForBranch({ projectDir: repoDir, head: feature, prUrl: row.pr_url || null, withVerdict: true })
-      : null;
+    // A failed lookup (quota, network) never reads as "no PR" (C-2): the stored PR, else the shared store's last, stale.
+    const res = (await anyPrHost())
+      ? await lookupPrForBranch({ projectDir: repoDir, head: feature, prUrl: row.pr_url || null, withVerdict: true,
+        runEndedAt: row.updated_at ? (Date.parse(row.updated_at) || null) : null })
+      : { ok: true, pr: null };
+    const found = keepMerged(res.ok ? res.pr : null, row.pr_url ? readPrState(row.id) : null);
     if (found) {
       const { verdict, ...fresh } = found;
       const stored = readPrState(row.id);
       entry.pr = { ...(stored && stored.url === fresh.url ? stored : {}), ...fresh, ...(verdict || {}),
         ...(watchActive(getWatch(fresh.url)) ? { fixing: true } : {}) };
-    } else entry.pr = null;
+    } else if (res.ok) entry.pr = null;
+    else {
+      const known = readPrState(row.id) || lastPr(res.last);
+      entry.pr = known ? { ...known, stale: true } : null;
+    }
   }
   return entry;
 }
@@ -2768,6 +2775,18 @@ export function countPipelines({ archived = false } = {}) {
 // enrichPipelinesPr's marker for a row left out of its batch (a failed lookup with nothing stored).
 const OMIT = Symbol('omit');
 
+/** A recorded MERGED is final (C1): a cached or late OPEN answer for the same PR URL never reopens it. */
+function keepMerged(found, stored) {
+  return found?.state === 'OPEN' && stored?.state === 'MERGED' && stored.url === found.url ? { ...found, state: 'MERGED' } : found;
+}
+
+/** A failed lookup's `last` (the shared PR-status store's answer) in the row shape: its verdict flattened, `fixing` added. */
+function lastPr(last) {
+  if (!last) return null;
+  const { verdict, ...pr } = last;
+  return { ...pr, ...(verdict || {}), ...(watchActive(getWatch(pr.url)) ? { fixing: true } : {}) };
+}
+
 /**
  * Re-walk the skeleton and resolve live PR state per branch, pushed to `onBatch`
  * in parallel batches. Each item sends ONLY `pr`: findPrForBranch's
@@ -2803,12 +2822,12 @@ export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
         let failed = 0;
         const members = await Promise.all(r.members.map(async (m) => {
           const res = m.projectDir && m.branch
-            ? await lookupPrForBranch({ projectDir: m.projectDir, head: m.branch, prUrl: known[m.memberKey]?.url || null, includeClosed: true })
+            ? await lookupPrForBranch({ projectDir: m.projectDir, head: m.branch, prUrl: known[m.memberKey]?.url || null, includeClosed: true, runEndedAt: r.mtime || null })
             : { ok: true, pr: null };
           if (!res.ok) {
-            // A failed member lookup resends its stored PR stale (null when nothing is stored) and writes nothing.
+            // A failed member lookup resends its stored PR (else the shared store's last) stale, null when neither, and writes nothing.
             failed++;
-            const stored = known[m.memberKey];
+            const stored = known[m.memberKey] || res.last || null;
             return { memberKey: m.memberKey, pr: stored ? withFixing({ ...stored, stale: true }) : null };
           }
           const pr = res.pr || null;
@@ -2821,13 +2840,14 @@ export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
         return { projectKey: r.projectKey, id: r.id, pr, members };
       }
       const prUrl = readPrState(r.id)?.url || null;
-      const res = await lookupPrForBranch({ projectDir: r.projectDir, head: r.branch, prUrl, withVerdict: true, includeClosed: true });
+      const res = await lookupPrForBranch({ projectDir: r.projectDir, head: r.branch, prUrl, withVerdict: true, includeClosed: true, runEndedAt: r.mtime || null });
       if (!res.ok) {
-        // A failed lookup is no evidence of "no PR": resend the last known PR stale, or omit the row. Writes nothing.
-        const known = readPrState(r.id);
+        // A failed lookup is no evidence of "no PR": resend the last known PR (the DB's, else the shared store's) stale,
+        // or omit the row. Writes nothing; `res.last` is never persisted.
+        const known = readPrState(r.id) || lastPr(res.last);
         return known ? { projectKey: r.projectKey, id: r.id, pr: { ...known, stale: true } } : OMIT;
       }
-      const found = res.pr || null;
+      const found = keepMerged(res.pr || null, prUrl ? readPrState(r.id) : null);
       // Positive observations only (null never clears). A closed PR is shown, never
       // recorded: pr_url keeps naming the open or merged PR the other readers act on.
       // The recorded PR itself closing is recorded, so it stops counting as open (a chain's ship ends, Create PR again).
