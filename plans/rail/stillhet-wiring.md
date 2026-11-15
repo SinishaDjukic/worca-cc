@@ -262,6 +262,10 @@ One row per surface of today's UI that Stillhet must carry (gate.prototype in `d
 | `setting › pulseFor` | wired | Settings › Notifications, the Pulse animation row (`pulse.js` reads it through the live map; #1258) |
 | `ui/public/ask-panel.mjs` | wired | Today's run card sends the chosen perspective set with the run (flag proposedPerspectives); Stillhet's TaskProposal "reviewed by" picker sends the same `perspectives` field (`stillhet/chat/conversation.js` `perspPicker`, `live/chat-live.mjs` `startBodyOf`; the Perspectives proposed on the run card row above). The prompt check's proposal (`chip-host.mjs` `onAssessment`) does not reach Stillhet's card yet: it starts from dev's default set |
 | `ui/public/shape/` | wired | The perspective chips and their Product lock, Compliance and held-back Project fit (flag proposedPerspectives): Stillhet's TaskProposal "reviewed by" picker, from `src/shared/shape/perspectives.mjs` through `live/chat-live.mjs` `perspectiveChoices` (the Perspectives proposed on the run card row above) |
+| `ui/public/app.js` | wire to | Gitea, Forgejo and Codeberg in the REST PR host flag, the Ship-it fork hint and the metrics status merge (#1238): Stillhet has no Ship-it or PR-host surface to carry them yet |
+| `ui/public/run-head.mjs` | wire to | the PR number parsed from a Gitea-family /pulls/N URL on the run head (#1238): Stillhet's run page PR chip is not built yet |
+| `ui/public/team-metrics-timeline.mjs` | wire to | the per-host Gitea, Forgejo and Codeberg token notices under the timeline (#1238): Stillhet's team metrics surface is not built yet |
+| `ui/public/ask-panel.mjs` | wire to | the clone card's host label for Gitea-family repository URLs (#1238): Stillhet's chat clone card is not built yet |
 
 ## Opt-in
 
