@@ -33,6 +33,7 @@ Columns: **From** (the slice and where it was found), **Area**, **Finding** (one
 | owner real test (4403) | Chat | The live composer has no workflow picker and live tasks carry `workflow: ''`, so "Select workflow" lists none and Tasks' "using workflow" filter is empty (`chat/conversation.js` composer, `live/live-map.mjs`) | `ui/public/stillhet/chat/`, `ui/public/stillhet/live/` | major | open (owner: feature 2 final check) |
 | slice 10 review | Insights | Minors left by the second code review: a copied link keeps `scope=`; `of=` filters and saved views are not checked against live keys; the copy-link rule id should read `act.copy-link`; a few comments sit away from their code | `ui/public/stillhet/insights/` | minor | open (owner: feature 2 final check) |
 | slice 10 review | Compare | Slice 10 re-shot the Schedules compare PNGs in `out/stillhet-compare/` (fit-1 to fit-4) though Schedules did not change; confirm they match their cells or restore them | `out/stillhet-compare/` | minor | open (owner: feature 2 final check) |
+| B1.3 (#1328) | Settings | Tasks › Limits (Warning line, Manual/Automatic starts) save nothing on live: the pickers change on screen only; B1.3 left them unchanged by the owner's answer (D22: wired in wave 3) | `ui/public/stillhet/pulse/pulse.js` `limitsRows` | follow-up | open (owner: feature 3) |
 
 ## Closed
 
