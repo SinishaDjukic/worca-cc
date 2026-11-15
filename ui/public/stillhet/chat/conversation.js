@@ -40,6 +40,7 @@
   // which writes nothing before the server answers ok and toasts a refusal; the demo kind keeps its sentence.
   const LIVE = () => !!(window.RailWorld?.live && window.RailChatLive);
   const CL = () => window.RailChatLive;
+  let proseReady = false;   // the markdown renderer answered: a cached words turn drawn as plain words is built again
   // a control that only says what it would do in the demo, and does it in the live kind (`data-live="id|{args}"`)
   const doOr = (phrase, id, args = {}) => (LIVE() ? { 'data-live': `${id}|${JSON.stringify(args)}` } : { 'data-say': window.RailWould(phrase) });
   // chat labels, live: the labels in use come from dev's GET /api/ask/labels (read each time the picker opens); a change is
@@ -587,8 +588,8 @@
   let turnCache = new Map();   // turn key -> { sig, html }
   function turnSig(x, i) {
     if (!(PURE.has(x.t) || (x.t === 'cmd' && (x.done || x.stopped)))) return '';
-    const refs = x.t === 'words' && LIVE() && x.parts ? x.parts.filter((p) => p.ref).map((p) => CL().ref(p.ref.key, chatId)) : null;
-    try { return JSON.stringify([x, i, chatId, !!timeShown && timeShown === (x.t === 'words' ? x.key || String(i) : x.id), opened.has(i), opened.has(`shut${i}`), new Date(Date.now()).toDateString(), R.shows('advanced'), R.shows('expert'), LIVE(), refs]); } catch { return ''; }
+    const refs = x.t === 'words' && x.md && LIVE() ? (CL().partsOf(x.md) || []).filter((p) => p.ref).map((p) => CL().ref(p.ref.key, chatId)) : null;   // its chips' answers (panel.answer-refs)
+    try { return JSON.stringify([x, i, chatId, proseReady, !!timeShown && timeShown === (x.t === 'words' ? x.key || String(i) : x.id), opened.has(i), opened.has(`shut${i}`), new Date(Date.now()).toDateString(), R.shows('advanced'), R.shows('expert'), LIVE(), refs]); } catch { return ''; }
   }
   function cachedTurn(x, i, key, next) {
     const sig = turnSig(x, i), was = turnCache.get(key);
@@ -1689,7 +1690,7 @@
   window.RailAdapter?.ready?.then?.((l) => { if (l && LIVE()) { mounted.forEach((m) => m.reopen()); refreshAll(); } });
   // panel.rendered-prose: the page's markdown renderer, once (the bundle has already loaded it in the browser); a failure
   // leaves the plain words, as dev's chat
-  R.loadProse({ doc: document }).then((ok) => { if (ok) refreshAll(); });
+  R.loadProse({ doc: document }).then((ok) => { if (ok) { proseReady = true; refreshAll(); } });
   // a seeded chat that was replying or running a command finishes a few seconds after you open it: no row works forever
   const settling = new WeakSet();
   function settle(id) {
