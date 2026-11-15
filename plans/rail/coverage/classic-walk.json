@@ -1,0 +1,7950 @@
+{
+ "base": "http://localhost:4501",
+ "mode": "expert",
+ "at": "2026-11-15",
+ "pages": [
+  {
+   "route": "chat",
+   "page": "Chat",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search chats or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "History"
+    },
+    {
+     "kind": "button",
+     "label": "Context window"
+    },
+    {
+     "kind": "field",
+     "label": "Message Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Attach files"
+    },
+    {
+     "kind": "button",
+     "label": "Voice input"
+    },
+    {
+     "kind": "button",
+     "label": "Voice options"
+    },
+    {
+     "kind": "button",
+     "label": "Send"
+    },
+    {
+     "kind": "button",
+     "label": "New run"
+    },
+    {
+     "kind": "button",
+     "label": "Shaper"
+    },
+    {
+     "kind": "button",
+     "label": "Build workflow"
+    },
+    {
+     "kind": "button",
+     "label": "Schedule a run"
+    },
+    {
+     "kind": "button",
+     "label": "Track a run"
+    },
+    {
+     "kind": "button",
+     "label": "Explain a diff"
+    },
+    {
+     "kind": "button",
+     "label": "More"
+    },
+    {
+     "kind": "tab",
+     "label": "Needs you",
+     "id": "chat-home-tab-needs"
+    },
+    {
+     "kind": "tab",
+     "label": "Running",
+     "id": "chat-home-tab-running"
+    },
+    {
+     "kind": "tab",
+     "label": "Recent chats",
+     "id": "chat-home-tab-chats"
+    },
+    {
+     "kind": "tab",
+     "label": "Plans",
+     "id": "chat-home-tab-plans"
+    },
+    {
+     "kind": "tab",
+     "label": "Workflows",
+     "id": "chat-home-tab-workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Step away"
+    }
+   ],
+   "menus": []
+  },
+  {
+   "route": "runs",
+   "page": "Tasks",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "View",
+     "id": "runs-view-btn"
+    },
+    {
+     "kind": "button",
+     "label": "Got it"
+    },
+    {
+     "kind": "button",
+     "label": "Show older"
+    }
+   ],
+   "menus": [
+    {
+     "trigger": "View",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "All165"
+      },
+      {
+       "kind": "menu item",
+       "label": "Needs you0"
+      },
+      {
+       "kind": "menu item",
+       "label": "Running0"
+      },
+      {
+       "kind": "menu item",
+       "label": "Archived28"
+      },
+      {
+       "kind": "menu item",
+       "label": "Date"
+      },
+      {
+       "kind": "menu item",
+       "label": "Project"
+      },
+      {
+       "kind": "menu item",
+       "label": "None"
+      }
+     ]
+    },
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "Open feature"
+      }
+     ]
+    },
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "Start now"
+      },
+      {
+       "kind": "menu item",
+       "label": "Cancel"
+      }
+     ]
+    },
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "Open feature"
+      }
+     ]
+    },
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "Start now"
+      },
+      {
+       "kind": "menu item",
+       "label": "Cancel"
+      }
+     ]
+    },
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "Open feature"
+      }
+     ]
+    },
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "Start now"
+      },
+      {
+       "kind": "menu item",
+       "label": "Cancel"
+      }
+     ]
+    },
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "Start now"
+      },
+      {
+       "kind": "menu item",
+       "label": "Cancel"
+      }
+     ]
+    },
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "Open feature"
+      }
+     ]
+    },
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "Open feature"
+      }
+     ]
+    },
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "Open feature"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "route": "new",
+   "page": "New run",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "Preset",
+     "id": "preset-btn"
+    },
+    {
+     "kind": "button",
+     "label": "No project"
+    },
+    {
+     "kind": "button",
+     "label": "Project"
+    },
+    {
+     "kind": "button",
+     "label": "Workspace"
+    },
+    {
+     "kind": "field",
+     "label": "Project",
+     "id": "projectSelect"
+    },
+    {
+     "kind": "field",
+     "label": "Title (optional)",
+     "id": "title"
+    },
+    {
+     "kind": "button",
+     "label": "Suggest again",
+     "id": "titleSnRetry"
+    },
+    {
+     "kind": "button",
+     "label": "Clear suggestion",
+     "id": "titleSnClear"
+    },
+    {
+     "kind": "field",
+     "label": "Cost tags"
+    },
+    {
+     "kind": "field",
+     "label": "Workflow",
+     "id": "workflowSelect"
+    },
+    {
+     "kind": "field",
+     "label": "Engine",
+     "id": "engineSelect"
+    },
+    {
+     "kind": "button",
+     "label": "Prompt"
+    },
+    {
+     "kind": "button",
+     "label": "Markdown"
+    },
+    {
+     "kind": "field",
+     "label": "Describe the software task to build…",
+     "id": "prompt"
+    },
+    {
+     "kind": "button",
+     "label": "Choose files"
+    },
+    {
+     "kind": "field",
+     "label": "—",
+     "id": "sourceBranch"
+    },
+    {
+     "kind": "field",
+     "label": "New branch (optional)",
+     "id": "featureBranch"
+    },
+    {
+     "kind": "button",
+     "label": "Suggest again",
+     "id": "branchSnRetry"
+    },
+    {
+     "kind": "button",
+     "label": "Clear suggestion",
+     "id": "branchSnClear"
+    },
+    {
+     "kind": "toggle",
+     "label": "sameAsSource",
+     "id": "sameAsSource"
+    },
+    {
+     "kind": "button",
+     "label": "Advanced"
+    },
+    {
+     "kind": "toggle",
+     "label": "nightMode",
+     "id": "nightMode"
+    },
+    {
+     "kind": "toggle",
+     "label": "noMemory",
+     "id": "noMemory"
+    },
+    {
+     "kind": "field",
+     "label": "Guardrails",
+     "id": "guardrailsSelect"
+    },
+    {
+     "kind": "toggle",
+     "label": "mock-switch",
+     "id": "mock-switch"
+    },
+    {
+     "kind": "button",
+     "label": "Start run",
+     "id": "start-btn"
+    },
+    {
+     "kind": "button",
+     "label": "More ways to start",
+     "id": "start-more"
+    }
+   ],
+   "menus": [
+    {
+     "trigger": "Preset",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "No presets yet"
+      },
+      {
+       "kind": "menu item",
+       "label": "Save as preset"
+      },
+      {
+       "kind": "menu item",
+       "label": "Manage presets…"
+      }
+     ]
+    },
+    {
+     "trigger": "More ways to start",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "Start run nowBegins immediately",
+       "id": "start-menu-now"
+      },
+      {
+       "kind": "menu item",
+       "label": "Schedule…Run once later, or on a repeat",
+       "id": "start-menu-schedule"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "route": "schedules",
+   "page": "Schedules",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "Schedule a run",
+     "id": "schedules-new"
+    },
+    {
+     "kind": "button",
+     "label": "Activity"
+    },
+    {
+     "kind": "button",
+     "label": "Once"
+    },
+    {
+     "kind": "button",
+     "label": "Repeating"
+    },
+    {
+     "kind": "button",
+     "label": "All"
+    },
+    {
+     "kind": "button",
+     "label": "Unread"
+    },
+    {
+     "kind": "button",
+     "label": "Problems"
+    },
+    {
+     "kind": "button",
+     "label": "Mark all read"
+    },
+    {
+     "kind": "button",
+     "label": "Open run"
+    }
+   ],
+   "menus": []
+  },
+  {
+   "route": "schedules/once",
+   "page": "Schedules",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "Schedule a run",
+     "id": "schedules-new"
+    },
+    {
+     "kind": "button",
+     "label": "Activity"
+    },
+    {
+     "kind": "button",
+     "label": "Once"
+    },
+    {
+     "kind": "button",
+     "label": "Repeating"
+    }
+   ],
+   "menus": []
+  },
+  {
+   "route": "schedules/repeating",
+   "page": "Schedules",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "Schedule a run",
+     "id": "schedules-new"
+    },
+    {
+     "kind": "button",
+     "label": "Activity"
+    },
+    {
+     "kind": "button",
+     "label": "Once"
+    },
+    {
+     "kind": "button",
+     "label": "Repeating"
+    }
+   ],
+   "menus": []
+  },
+  {
+   "route": "schedules/activity",
+   "page": "Schedules",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "Schedule a run",
+     "id": "schedules-new"
+    },
+    {
+     "kind": "button",
+     "label": "Activity"
+    },
+    {
+     "kind": "button",
+     "label": "Once"
+    },
+    {
+     "kind": "button",
+     "label": "Repeating"
+    },
+    {
+     "kind": "button",
+     "label": "All"
+    },
+    {
+     "kind": "button",
+     "label": "Unread"
+    },
+    {
+     "kind": "button",
+     "label": "Problems"
+    },
+    {
+     "kind": "button",
+     "label": "Mark all read"
+    },
+    {
+     "kind": "button",
+     "label": "Open run"
+    }
+   ],
+   "menus": []
+  },
+  {
+   "route": "projects",
+   "page": "Projects",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "Add project",
+     "id": "project-add-btn"
+    },
+    {
+     "kind": "button",
+     "label": "All 2"
+    },
+    {
+     "kind": "button",
+     "label": "Check origin now"
+    },
+    {
+     "kind": "button",
+     "label": "Open project details"
+    }
+   ],
+   "menus": []
+  },
+  {
+   "route": "workspaces",
+   "page": "Workspaces",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "How workspaces work",
+     "id": "ws-howto-btn"
+    },
+    {
+     "kind": "button",
+     "label": "Create workspace",
+     "id": "ws-create-btn"
+    }
+   ],
+   "menus": []
+  },
+  {
+   "route": "workspace-create",
+   "page": "Workspaces",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "Cancel",
+     "id": "wiz-close"
+    },
+    {
+     "kind": "field",
+     "label": "Workspace name",
+     "id": "wiz-name"
+    },
+    {
+     "kind": "toggle",
+     "label": "wiz-select-all",
+     "id": "wiz-select-all"
+    },
+    {
+     "kind": "toggle",
+     "label": ""
+    },
+    {
+     "kind": "button",
+     "label": "Add…",
+     "id": "wiz-import-add"
+    },
+    {
+     "kind": "toggle",
+     "label": "wiz-import-deep",
+     "id": "wiz-import-deep"
+    },
+    {
+     "kind": "field",
+     "label": "Paths to add, one per line",
+     "id": "wiz-import-paste"
+    },
+    {
+     "kind": "button",
+     "label": "Add paths",
+     "id": "wiz-import-paste-add"
+    },
+    {
+     "kind": "field",
+     "label": "Scan agent model",
+     "id": "wiz-scan-model"
+    },
+    {
+     "kind": "field",
+     "label": "Scan agent effort",
+     "id": "wiz-scan-effort"
+    },
+    {
+     "kind": "field",
+     "label": "Project agents model",
+     "id": "wiz-agent-model"
+    },
+    {
+     "kind": "field",
+     "label": "Project agents effort",
+     "id": "wiz-agent-effort"
+    },
+    {
+     "kind": "button",
+     "label": "Scan interconnections",
+     "id": "wiz-start-scan"
+    }
+   ],
+   "menus": []
+  },
+  {
+   "route": "workflows",
+   "page": "Workflows",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Back",
+     "id": "wfv-back"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows",
+     "id": "wfv-wf-menu"
+    },
+    {
+     "kind": "field",
+     "label": "Pipeline name",
+     "id": "wfv-name"
+    },
+    {
+     "kind": "button",
+     "label": "Library",
+     "id": "wfv-lib-toggle"
+    },
+    {
+     "kind": "button",
+     "label": "Save",
+     "id": "wfv-save"
+    },
+    {
+     "kind": "button",
+     "label": "Add",
+     "id": "wfv-add"
+    },
+    {
+     "kind": "field",
+     "label": "Message the composer chat",
+     "id": "wfc-input"
+    },
+    {
+     "kind": "button",
+     "label": "Attach files",
+     "id": "wfc-attach"
+    },
+    {
+     "kind": "button",
+     "label": "Send",
+     "id": "wfc-send"
+    },
+    {
+     "kind": "button",
+     "label": "Auto-layout",
+     "id": "wfv-autolayout"
+    },
+    {
+     "kind": "button",
+     "label": "Zoom",
+     "id": "wfv-zoom"
+    },
+    {
+     "kind": "button",
+     "label": "Search",
+     "id": "wfl-filter-btn"
+    },
+    {
+     "kind": "button",
+     "label": "Close library",
+     "id": "wfl-close"
+    },
+    {
+     "kind": "tab",
+     "label": "Workflows15",
+     "id": "wfl-tab-workflows"
+    },
+    {
+     "kind": "tab",
+     "label": "Scripts13",
+     "id": "wfl-tab-scripts"
+    },
+    {
+     "kind": "button",
+     "label": "Yours11"
+    },
+    {
+     "kind": "button",
+     "label": "video1"
+    },
+    {
+     "kind": "button",
+     "label": "Built-in4"
+    }
+   ],
+   "menus": [
+    {
+     "trigger": "Workflows",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "New canvas"
+      },
+      {
+       "kind": "menu item",
+       "label": "Open…"
+      },
+      {
+       "kind": "menu item",
+       "label": "Import…"
+      },
+      {
+       "kind": "menu item",
+       "label": "Export…"
+      },
+      {
+       "kind": "menu item",
+       "label": "Pin to Chat home"
+      }
+     ]
+    },
+    {
+     "trigger": "Add",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "AND"
+      },
+      {
+       "kind": "menu item",
+       "label": "OR"
+      },
+      {
+       "kind": "menu item",
+       "label": "Combine"
+      },
+      {
+       "kind": "menu item",
+       "label": "Agent…"
+      },
+      {
+       "kind": "menu item",
+       "label": "Script…"
+      },
+      {
+       "kind": "menu item",
+       "label": "New agent…"
+      },
+      {
+       "kind": "menu item",
+       "label": "New script…"
+      }
+     ]
+    },
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "No project"
+      }
+     ]
+    },
+    {
+     "trigger": "Zoom",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "Zoom in"
+      },
+      {
+       "kind": "menu item",
+       "label": "Zoom out"
+      },
+      {
+       "kind": "menu item",
+       "label": "Fit graph to view"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "route": "workflows/agents",
+   "page": "Workflows",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Back",
+     "id": "wfv-back"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows",
+     "id": "wfv-wf-menu"
+    },
+    {
+     "kind": "field",
+     "label": "Pipeline name",
+     "id": "wfv-name"
+    },
+    {
+     "kind": "button",
+     "label": "Library",
+     "id": "wfv-lib-toggle"
+    },
+    {
+     "kind": "button",
+     "label": "Save",
+     "id": "wfv-save"
+    },
+    {
+     "kind": "button",
+     "label": "Add",
+     "id": "wfv-add"
+    },
+    {
+     "kind": "field",
+     "label": "Message the composer chat",
+     "id": "wfc-input"
+    },
+    {
+     "kind": "button",
+     "label": "Attach files",
+     "id": "wfc-attach"
+    },
+    {
+     "kind": "button",
+     "label": "Send",
+     "id": "wfc-send"
+    },
+    {
+     "kind": "button",
+     "label": "Auto-layout",
+     "id": "wfv-autolayout"
+    },
+    {
+     "kind": "button",
+     "label": "Zoom",
+     "id": "wfv-zoom"
+    },
+    {
+     "kind": "button",
+     "label": "Search",
+     "id": "wfl-filter-btn"
+    },
+    {
+     "kind": "button",
+     "label": "Close library",
+     "id": "wfl-close"
+    },
+    {
+     "kind": "tab",
+     "label": "Workflows15",
+     "id": "wfl-tab-workflows"
+    },
+    {
+     "kind": "tab",
+     "label": "Scripts13",
+     "id": "wfl-tab-scripts"
+    },
+    {
+     "kind": "button",
+     "label": "New agent",
+     "id": "wfl-new-agent"
+    },
+    {
+     "kind": "button",
+     "label": "All"
+    },
+    {
+     "kind": "button",
+     "label": "Built-in"
+    },
+    {
+     "kind": "button",
+     "label": "Yours"
+    },
+    {
+     "kind": "button",
+     "label": "video9"
+    },
+    {
+     "kind": "button",
+     "label": "general1"
+    }
+   ],
+   "menus": [
+    {
+     "trigger": "Workflows",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "New canvas"
+      },
+      {
+       "kind": "menu item",
+       "label": "Open…"
+      },
+      {
+       "kind": "menu item",
+       "label": "Import…"
+      },
+      {
+       "kind": "menu item",
+       "label": "Export…"
+      },
+      {
+       "kind": "menu item",
+       "label": "Pin to Chat home"
+      }
+     ]
+    },
+    {
+     "trigger": "Add",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "AND"
+      },
+      {
+       "kind": "menu item",
+       "label": "OR"
+      },
+      {
+       "kind": "menu item",
+       "label": "Combine"
+      },
+      {
+       "kind": "menu item",
+       "label": "Agent…"
+      },
+      {
+       "kind": "menu item",
+       "label": "Script…"
+      },
+      {
+       "kind": "menu item",
+       "label": "New agent…"
+      },
+      {
+       "kind": "menu item",
+       "label": "New script…"
+      }
+     ]
+    },
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "No project"
+      }
+     ]
+    },
+    {
+     "trigger": "Zoom",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "Zoom in"
+      },
+      {
+       "kind": "menu item",
+       "label": "Zoom out"
+      },
+      {
+       "kind": "menu item",
+       "label": "Fit graph to view"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "route": "workflows/scripts",
+   "page": "Workflows",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Back",
+     "id": "wfv-back"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows",
+     "id": "wfv-wf-menu"
+    },
+    {
+     "kind": "field",
+     "label": "Pipeline name",
+     "id": "wfv-name"
+    },
+    {
+     "kind": "button",
+     "label": "Library",
+     "id": "wfv-lib-toggle"
+    },
+    {
+     "kind": "button",
+     "label": "Save",
+     "id": "wfv-save"
+    },
+    {
+     "kind": "button",
+     "label": "Add",
+     "id": "wfv-add"
+    },
+    {
+     "kind": "field",
+     "label": "Message the composer chat",
+     "id": "wfc-input"
+    },
+    {
+     "kind": "button",
+     "label": "Attach files",
+     "id": "wfc-attach"
+    },
+    {
+     "kind": "button",
+     "label": "Send",
+     "id": "wfc-send"
+    },
+    {
+     "kind": "button",
+     "label": "Auto-layout",
+     "id": "wfv-autolayout"
+    },
+    {
+     "kind": "button",
+     "label": "Zoom",
+     "id": "wfv-zoom"
+    },
+    {
+     "kind": "button",
+     "label": "Search",
+     "id": "wfl-filter-btn"
+    },
+    {
+     "kind": "button",
+     "label": "Close library",
+     "id": "wfl-close"
+    },
+    {
+     "kind": "tab",
+     "label": "Workflows15",
+     "id": "wfl-tab-workflows"
+    },
+    {
+     "kind": "tab",
+     "label": "Scripts13",
+     "id": "wfl-tab-scripts"
+    },
+    {
+     "kind": "button",
+     "label": "New script",
+     "id": "wfl-new-script"
+    },
+    {
+     "kind": "button",
+     "label": "All"
+    },
+    {
+     "kind": "button",
+     "label": "Built-in"
+    },
+    {
+     "kind": "button",
+     "label": "Yours"
+    },
+    {
+     "kind": "button",
+     "label": "video3"
+    },
+    {
+     "kind": "button",
+     "label": "general3"
+    }
+   ],
+   "menus": [
+    {
+     "trigger": "Workflows",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "New canvas"
+      },
+      {
+       "kind": "menu item",
+       "label": "Open…"
+      },
+      {
+       "kind": "menu item",
+       "label": "Import…"
+      },
+      {
+       "kind": "menu item",
+       "label": "Export…"
+      },
+      {
+       "kind": "menu item",
+       "label": "Pin to Chat home"
+      }
+     ]
+    },
+    {
+     "trigger": "Add",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "AND"
+      },
+      {
+       "kind": "menu item",
+       "label": "OR"
+      },
+      {
+       "kind": "menu item",
+       "label": "Combine"
+      },
+      {
+       "kind": "menu item",
+       "label": "Agent…"
+      },
+      {
+       "kind": "menu item",
+       "label": "Script…"
+      },
+      {
+       "kind": "menu item",
+       "label": "New agent…"
+      },
+      {
+       "kind": "menu item",
+       "label": "New script…"
+      }
+     ]
+    },
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "No project"
+      }
+     ]
+    },
+    {
+     "trigger": "Zoom",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "Zoom in"
+      },
+      {
+       "kind": "menu item",
+       "label": "Zoom out"
+      },
+      {
+       "kind": "menu item",
+       "label": "Fit graph to view"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "route": "marketplace",
+   "page": "Marketplace",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "Refresh marketplaces"
+    },
+    {
+     "kind": "button",
+     "label": "Add marketplace"
+    },
+    {
+     "kind": "field",
+     "label": "Search plugins",
+     "id": "mk-search"
+    },
+    {
+     "kind": "toggle",
+     "label": "mk-hide-installed",
+     "id": "mk-hide-installed"
+    }
+   ],
+   "menus": []
+  },
+  {
+   "route": "marketplace/installed",
+   "page": "Marketplace",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "Refresh marketplaces"
+    },
+    {
+     "kind": "button",
+     "label": "Update"
+    }
+   ],
+   "menus": [
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "Check health"
+      },
+      {
+       "kind": "menu item",
+       "label": "Check for update"
+      },
+      {
+       "kind": "menu item",
+       "label": "Remove…"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "route": "marketplace/browse",
+   "page": "Marketplace",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "Refresh marketplaces"
+    },
+    {
+     "kind": "button",
+     "label": "Add marketplace"
+    },
+    {
+     "kind": "field",
+     "label": "Search plugins",
+     "id": "mk-search"
+    },
+    {
+     "kind": "toggle",
+     "label": "mk-hide-installed",
+     "id": "mk-hide-installed"
+    }
+   ],
+   "menus": []
+  },
+  {
+   "route": "connectors",
+   "page": "Connectors",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "Sets"
+    },
+    {
+     "kind": "button",
+     "label": "Servers"
+    },
+    {
+     "kind": "button",
+     "label": "Skills"
+    },
+    {
+     "kind": "button",
+     "label": "New set"
+    },
+    {
+     "kind": "button",
+     "label": "Duplicate"
+    },
+    {
+     "kind": "button",
+     "label": "Add project"
+    },
+    {
+     "kind": "button",
+     "label": "Add server"
+    },
+    {
+     "kind": "button",
+     "label": "Add skill"
+    }
+   ],
+   "menus": []
+  },
+  {
+   "route": "models",
+   "page": "Models",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "Share as plugin…",
+     "id": "model-share-btn"
+    },
+    {
+     "kind": "button",
+     "label": "Import models…",
+     "id": "model-import-btn"
+    },
+    {
+     "kind": "button",
+     "label": "Add model",
+     "id": "model-create-btn"
+    },
+    {
+     "kind": "button",
+     "label": "Claude Code"
+    },
+    {
+     "kind": "button",
+     "label": "Save",
+     "id": "modelRolesSave"
+    },
+    {
+     "kind": "field",
+     "label": ""
+    },
+    {
+     "kind": "button",
+     "label": "Show all 32"
+    },
+    {
+     "kind": "button",
+     "label": "Show all 9"
+    },
+    {
+     "kind": "button",
+     "label": "Show all 2"
+    },
+    {
+     "kind": "button",
+     "label": "Save",
+     "id": "engineSettingsSave"
+    },
+    {
+     "kind": "field",
+     "label": "Search models"
+    },
+    {
+     "kind": "button",
+     "label": "All"
+    },
+    {
+     "kind": "button",
+     "label": "Yours"
+    },
+    {
+     "kind": "button",
+     "label": "Built-in"
+    },
+    {
+     "kind": "button",
+     "label": "Codex"
+    },
+    {
+     "kind": "button",
+     "label": "Plugin"
+    },
+    {
+     "kind": "button",
+     "label": "Team"
+    },
+    {
+     "kind": "button",
+     "label": "Needs setup"
+    },
+    {
+     "kind": "toggle",
+     "label": ""
+    }
+   ],
+   "menus": []
+  },
+  {
+   "route": "providers",
+   "page": "Providers",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "field",
+     "label": ""
+    },
+    {
+     "kind": "button",
+     "label": "Import models…"
+    },
+    {
+     "kind": "button",
+     "label": "Refresh usage"
+    },
+    {
+     "kind": "button",
+     "label": "Sign in…"
+    },
+    {
+     "kind": "field",
+     "label": "https://api.openai.com/v1"
+    },
+    {
+     "kind": "button",
+     "label": "OpenRouter"
+    },
+    {
+     "kind": "field",
+     "label": "sk-…, or ${VAR} to read your shell env"
+    },
+    {
+     "kind": "button",
+     "label": "Test connection"
+    },
+    {
+     "kind": "button",
+     "label": "Save"
+    },
+    {
+     "kind": "field",
+     "label": "https://api.anthropic.com"
+    },
+    {
+     "kind": "field",
+     "label": "auto, or an ISO code such as bg"
+    },
+    {
+     "kind": "field",
+     "label": "1.2 (raise it if you get cut off)"
+    },
+    {
+     "kind": "field",
+     "label": "af_heart, bf_emma, … (OpenAI: alloy, …)"
+    },
+    {
+     "kind": "field",
+     "label": "1"
+    },
+    {
+     "kind": "button",
+     "label": "Test picture"
+    },
+    {
+     "kind": "field",
+     "label": "sk_…"
+    },
+    {
+     "kind": "button",
+     "label": "Test"
+    }
+   ],
+   "menus": []
+  },
+  {
+   "route": "team-policy",
+   "page": "Team policy",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "Refresh"
+    },
+    {
+     "kind": "field",
+     "label": "Scope",
+     "id": "tp-scope"
+    },
+    {
+     "kind": "button",
+     "label": "Edit policy"
+    },
+    {
+     "kind": "tab",
+     "label": "Plugins",
+     "id": "tp-tab-plugins"
+    }
+   ],
+   "menus": []
+  },
+  {
+   "route": "stats",
+   "page": "Statistics",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "Today"
+    },
+    {
+     "kind": "button",
+     "label": "This week"
+    },
+    {
+     "kind": "button",
+     "label": "This month"
+    },
+    {
+     "kind": "button",
+     "label": "Last month"
+    },
+    {
+     "kind": "button",
+     "label": "All time"
+    },
+    {
+     "kind": "button",
+     "label": "Custom"
+    },
+    {
+     "kind": "field",
+     "label": "Cost tags"
+    },
+    {
+     "kind": "field",
+     "label": "Filter by person",
+     "id": "stats-person"
+    },
+    {
+     "kind": "button",
+     "label": "Overview"
+    },
+    {
+     "kind": "button",
+     "label": "By person"
+    },
+    {
+     "kind": "button",
+     "label": "Cost"
+    }
+   ],
+   "menus": []
+  },
+  {
+   "route": "team-metrics",
+   "page": "Team metrics",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "Refresh"
+    },
+    {
+     "kind": "field",
+     "label": "Scope",
+     "id": "tm-scope"
+    },
+    {
+     "kind": "tab",
+     "label": "Overview"
+    },
+    {
+     "kind": "tab",
+     "label": "Timeline"
+    },
+    {
+     "kind": "button",
+     "label": "This month"
+    },
+    {
+     "kind": "button",
+     "label": "Last month"
+    },
+    {
+     "kind": "button",
+     "label": "Quarter"
+    },
+    {
+     "kind": "button",
+     "label": "Year"
+    },
+    {
+     "kind": "button",
+     "label": "All time"
+    },
+    {
+     "kind": "button",
+     "label": "Custom"
+    },
+    {
+     "kind": "field",
+     "label": "Filter by cost tag",
+     "id": "tm-tag"
+    },
+    {
+     "kind": "button",
+     "label": "Overview"
+    },
+    {
+     "kind": "button",
+     "label": "By person"
+    },
+    {
+     "kind": "button",
+     "label": "Cost"
+    },
+    {
+     "kind": "field",
+     "label": "Stack Spend per week by",
+     "id": "tm-group"
+    },
+    {
+     "kind": "button",
+     "label": "Export CSV"
+    }
+   ],
+   "menus": []
+  },
+  {
+   "route": "team-metrics/timeline",
+   "page": "Team metrics",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "Refresh"
+    },
+    {
+     "kind": "field",
+     "label": "Scope",
+     "id": "tm-scope"
+    },
+    {
+     "kind": "tab",
+     "label": "Overview"
+    },
+    {
+     "kind": "tab",
+     "label": "Timeline"
+    },
+    {
+     "kind": "button",
+     "label": "Today"
+    },
+    {
+     "kind": "toggle",
+     "label": "tl-outside",
+     "id": "tl-outside"
+    },
+    {
+     "kind": "button",
+     "label": "Work items"
+    },
+    {
+     "kind": "button",
+     "label": "People"
+    },
+    {
+     "kind": "button",
+     "label": "44"
+    },
+    {
+     "kind": "button",
+     "label": "49"
+    }
+   ],
+   "menus": []
+  },
+  {
+   "route": "requirements",
+   "page": "Requirements",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "tab",
+     "label": "Archived"
+    },
+    {
+     "kind": "button",
+     "label": "New feature"
+    }
+   ],
+   "menus": []
+  },
+  {
+   "route": "design",
+   "page": "Design",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "field",
+     "label": "What should we design?"
+    },
+    {
+     "kind": "button",
+     "label": "Attach files"
+    },
+    {
+     "kind": "button",
+     "label": "Project: none"
+    },
+    {
+     "kind": "button",
+     "label": "Models and Build fast"
+    },
+    {
+     "kind": "button",
+     "label": "Send"
+    },
+    {
+     "kind": "button",
+     "label": "Video"
+    },
+    {
+     "kind": "button",
+     "label": "Document"
+    }
+   ],
+   "menus": [
+    {
+     "trigger": "Project: none",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "No project"
+      }
+     ]
+    },
+    {
+     "trigger": "Models and Build fast",
+     "items": [
+      {
+       "kind": "toggle",
+       "label": ""
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "route": "profile",
+   "page": "Profile",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    }
+   ],
+   "menus": []
+  },
+  {
+   "route": "getting-started",
+   "page": "Getting started",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "Show in sidebar"
+    }
+   ],
+   "menus": []
+  },
+  {
+   "route": "activity",
+   "page": "Shell",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search chats or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "History"
+    },
+    {
+     "kind": "button",
+     "label": "Context window"
+    },
+    {
+     "kind": "field",
+     "label": "Message Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Attach files"
+    },
+    {
+     "kind": "button",
+     "label": "Voice input"
+    },
+    {
+     "kind": "button",
+     "label": "Voice options"
+    },
+    {
+     "kind": "button",
+     "label": "Send"
+    },
+    {
+     "kind": "button",
+     "label": "New run"
+    },
+    {
+     "kind": "button",
+     "label": "Shaper"
+    },
+    {
+     "kind": "button",
+     "label": "Build workflow"
+    },
+    {
+     "kind": "button",
+     "label": "Schedule a run"
+    },
+    {
+     "kind": "button",
+     "label": "Track a run"
+    },
+    {
+     "kind": "button",
+     "label": "Explain a diff"
+    },
+    {
+     "kind": "button",
+     "label": "More"
+    },
+    {
+     "kind": "tab",
+     "label": "Needs you",
+     "id": "chat-home-tab-needs"
+    },
+    {
+     "kind": "tab",
+     "label": "Running",
+     "id": "chat-home-tab-running"
+    },
+    {
+     "kind": "tab",
+     "label": "Recent chats",
+     "id": "chat-home-tab-chats"
+    },
+    {
+     "kind": "tab",
+     "label": "Plans",
+     "id": "chat-home-tab-plans"
+    },
+    {
+     "kind": "tab",
+     "label": "Workflows",
+     "id": "chat-home-tab-workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Step away"
+    },
+    {
+     "kind": "button",
+     "label": "Dismiss"
+    }
+   ],
+   "menus": [
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "Details"
+      },
+      {
+       "kind": "menu item",
+       "label": "Interface modeExpert",
+       "id": "acct-lvl"
+      },
+      {
+       "kind": "menu item",
+       "label": "Settings",
+       "id": "acct-settings"
+      },
+      {
+       "kind": "menu item",
+       "label": "Away",
+       "id": "acct-away"
+      },
+      {
+       "kind": "menu item",
+       "label": "Keep awake",
+       "id": "acct-keepawake"
+      },
+      {
+       "kind": "menu item",
+       "label": "System"
+      },
+      {
+       "kind": "menu item",
+       "label": "Light"
+      },
+      {
+       "kind": "menu item",
+       "label": "Dark"
+      }
+     ]
+    },
+    {
+     "trigger": "Activity",
+     "items": [
+      {
+       "kind": "tab",
+       "label": "Needs you",
+       "id": "activity-tab-needs"
+      },
+      {
+       "kind": "tab",
+       "label": "Running",
+       "id": "activity-tab-running"
+      },
+      {
+       "kind": "tab",
+       "label": "Scheduled",
+       "id": "activity-tab-scheduled"
+      },
+      {
+       "kind": "button",
+       "label": "Schedule…"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "route": "settings/general",
+   "page": "Settings",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "General"
+    },
+    {
+     "kind": "button",
+     "label": "Labels & cost tags"
+    },
+    {
+     "kind": "button",
+     "label": "Presets"
+    },
+    {
+     "kind": "button",
+     "label": "Labs"
+    },
+    {
+     "kind": "button",
+     "label": "Guardrails"
+    },
+    {
+     "kind": "button",
+     "label": "Memory"
+    },
+    {
+     "kind": "button",
+     "label": "Run setup",
+     "id": "setupRunAgain"
+    },
+    {
+     "kind": "button",
+     "label": "About appearance"
+    },
+    {
+     "kind": "button",
+     "label": "System"
+    },
+    {
+     "kind": "button",
+     "label": "Light"
+    },
+    {
+     "kind": "button",
+     "label": "Dark"
+    },
+    {
+     "kind": "button",
+     "label": "About alerts"
+    },
+    {
+     "kind": "toggle",
+     "label": "alertsNotify",
+     "id": "alertsNotify"
+    },
+    {
+     "kind": "toggle",
+     "label": "alertsBadge",
+     "id": "alertsBadge"
+    },
+    {
+     "kind": "button",
+     "label": "Send test notification",
+     "id": "alertsTest"
+    },
+    {
+     "kind": "button",
+     "label": "About the browser extension"
+    },
+    {
+     "kind": "tab",
+     "label": "Chrome",
+     "id": "xi-tab-chrome"
+    },
+    {
+     "kind": "tab",
+     "label": "Edge",
+     "id": "xi-tab-edge"
+    },
+    {
+     "kind": "tab",
+     "label": "Firefox",
+     "id": "xi-tab-firefox"
+    },
+    {
+     "kind": "button",
+     "label": "About interface mode"
+    },
+    {
+     "kind": "button",
+     "label": "Interface mode: Expert. Change how much of Worca is shown",
+     "id": "modeSettingsChange"
+    },
+    {
+     "kind": "button",
+     "label": "About Worca root folder"
+    },
+    {
+     "kind": "field",
+     "label": "Worca root folder",
+     "id": "settingsRoot"
+    },
+    {
+     "kind": "button",
+     "label": "About Projects root folder"
+    },
+    {
+     "kind": "field",
+     "label": "Projects root folder",
+     "id": "settingsProjectsRoot"
+    },
+    {
+     "kind": "button",
+     "label": "Browse…",
+     "id": "settingsProjectsRootBrowse"
+    },
+    {
+     "kind": "button",
+     "label": "Reset to default",
+     "id": "settingsReset"
+    },
+    {
+     "kind": "button",
+     "label": "Save",
+     "id": "settingsSave"
+    },
+    {
+     "kind": "button",
+     "label": "About spawn diagnostics"
+    },
+    {
+     "kind": "toggle",
+     "label": "Log claude spawn details (binary, argv, routing env)",
+     "id": "debugSpawnEnabled"
+    },
+    {
+     "kind": "button",
+     "label": "Reset to default",
+     "id": "debugSpawnReset"
+    },
+    {
+     "kind": "button",
+     "label": "Save",
+     "id": "debugSpawnSave"
+    },
+    {
+     "kind": "button",
+     "label": "Show again",
+     "id": "gsShowAgain"
+    },
+    {
+     "kind": "toggle",
+     "label": "Check for new Worca versions",
+     "id": "aboutUpdateCheck"
+    }
+   ],
+   "menus": [
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "button",
+       "label": "Done",
+       "id": "mode-done"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "route": "settings/tags",
+   "page": "Settings",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "General"
+    },
+    {
+     "kind": "button",
+     "label": "Labels & cost tags"
+    },
+    {
+     "kind": "button",
+     "label": "Presets"
+    },
+    {
+     "kind": "button",
+     "label": "Labs"
+    },
+    {
+     "kind": "button",
+     "label": "Guardrails"
+    },
+    {
+     "kind": "button",
+     "label": "Memory"
+    },
+    {
+     "kind": "toggle",
+     "label": "Require mandatory cost tags to start a run",
+     "id": "tagsEnforce"
+    },
+    {
+     "kind": "button",
+     "label": "Add cost tag"
+    },
+    {
+     "kind": "button",
+     "label": "Save",
+     "id": "tagDimsSave"
+    }
+   ],
+   "menus": [
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "Rename"
+      },
+      {
+       "kind": "menu item",
+       "label": "Delete"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "route": "settings/presets",
+   "page": "Settings",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "General"
+    },
+    {
+     "kind": "button",
+     "label": "Labels & cost tags"
+    },
+    {
+     "kind": "button",
+     "label": "Presets"
+    },
+    {
+     "kind": "button",
+     "label": "Labs"
+    },
+    {
+     "kind": "button",
+     "label": "Guardrails"
+    },
+    {
+     "kind": "button",
+     "label": "Memory"
+    }
+   ],
+   "menus": []
+  },
+  {
+   "route": "settings/runs",
+   "page": "Settings",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "General"
+    },
+    {
+     "kind": "button",
+     "label": "Labels & cost tags"
+    },
+    {
+     "kind": "button",
+     "label": "Presets"
+    },
+    {
+     "kind": "button",
+     "label": "Labs"
+    },
+    {
+     "kind": "button",
+     "label": "Guardrails"
+    },
+    {
+     "kind": "button",
+     "label": "Memory"
+    },
+    {
+     "kind": "field",
+     "label": "Filter the Runs settings",
+     "id": "settings-runs-filter"
+    },
+    {
+     "kind": "button",
+     "label": "About budget costs"
+    },
+    {
+     "kind": "button",
+     "label": "About Per-pipeline cost limit"
+    },
+    {
+     "kind": "field",
+     "label": "Per-pipeline cost limit (USD)",
+     "id": "budgetPerPipeline"
+    },
+    {
+     "kind": "button",
+     "label": "About Total cost limit"
+    },
+    {
+     "kind": "field",
+     "label": "Total cost limit (USD)",
+     "id": "budgetTotal"
+    },
+    {
+     "kind": "button",
+     "label": "About Reset period"
+    },
+    {
+     "kind": "field",
+     "label": "Reset period",
+     "id": "budgetResetPeriod"
+    },
+    {
+     "kind": "field",
+     "label": "Developer rate (USD/h)",
+     "id": "budgetHumanRate"
+    },
+    {
+     "kind": "button",
+     "label": "About resuming after a usage limit"
+    },
+    {
+     "kind": "toggle",
+     "label": "Resume runs automatically when a usage limit resets iWhen a run pauses",
+     "id": "budgetLimitResume"
+    },
+    {
+     "kind": "button",
+     "label": "Clear limits",
+     "id": "budgetReset"
+    },
+    {
+     "kind": "button",
+     "label": "Save",
+     "id": "budgetSave"
+    },
+    {
+     "kind": "button",
+     "label": "About Away mode"
+    },
+    {
+     "kind": "button",
+     "label": "I'm away now"
+    },
+    {
+     "kind": "field",
+     "label": ""
+    },
+    {
+     "kind": "toggle",
+     "label": ""
+    },
+    {
+     "kind": "field",
+     "label": "30"
+    },
+    {
+     "kind": "button",
+     "label": "How worca picks an answer"
+    },
+    {
+     "kind": "field",
+     "label": "60"
+    },
+    {
+     "kind": "field",
+     "label": "25"
+    },
+    {
+     "kind": "field",
+     "label": "3"
+    },
+    {
+     "kind": "field",
+     "label": "2"
+    },
+    {
+     "kind": "field",
+     "label": "1"
+    },
+    {
+     "kind": "button",
+     "label": "Limits"
+    },
+    {
+     "kind": "field",
+     "label": "20"
+    },
+    {
+     "kind": "field",
+     "label": "0"
+    },
+    {
+     "kind": "button",
+     "label": "Use defaults",
+     "id": "nightModeReset"
+    },
+    {
+     "kind": "button",
+     "label": "Save",
+     "id": "nightModeSave"
+    },
+    {
+     "kind": "toggle",
+     "label": "Suggest a title and a branch name for new runsLabs",
+     "id": "smartNamingSwitch"
+    },
+    {
+     "kind": "toggle",
+     "label": "smartNamingTitle",
+     "id": "smartNamingTitle"
+    },
+    {
+     "kind": "toggle",
+     "label": "smartNamingBranch",
+     "id": "smartNamingBranch"
+    },
+    {
+     "kind": "field",
+     "label": "Branch pattern",
+     "id": "smartNamingPattern"
+    },
+    {
+     "kind": "button",
+     "label": "feat"
+    },
+    {
+     "kind": "button",
+     "label": "fix"
+    },
+    {
+     "kind": "button",
+     "label": "chore"
+    },
+    {
+     "kind": "button",
+     "label": "test"
+    },
+    {
+     "kind": "button",
+     "label": "ci"
+    },
+    {
+     "kind": "button",
+     "label": "Add type"
+    },
+    {
+     "kind": "field",
+     "label": "When to suggest",
+     "id": "smartNamingTrigger"
+    },
+    {
+     "kind": "toggle",
+     "label": "smartNamingRunId",
+     "id": "smartNamingRunId"
+    },
+    {
+     "kind": "button",
+     "label": "Use defaults",
+     "id": "smartNamingReset"
+    },
+    {
+     "kind": "button",
+     "label": "Save",
+     "id": "smartNamingSave"
+    },
+    {
+     "kind": "button",
+     "label": "About sync before run"
+    },
+    {
+     "kind": "toggle",
+     "label": "syncDefBeforeRun",
+     "id": "syncDefBeforeRun"
+    },
+    {
+     "kind": "button",
+     "label": "About diverged branches"
+    },
+    {
+     "kind": "field",
+     "label": "If the source branch has diverged",
+     "id": "syncDefOnDiverged"
+    },
+    {
+     "kind": "field",
+     "label": "Remote",
+     "id": "syncDefRemote"
+    },
+    {
+     "kind": "field",
+     "label": "Check remotes in the background",
+     "id": "syncDefRefresh"
+    },
+    {
+     "kind": "button",
+     "label": "Use defaults",
+     "id": "syncDefaultsReset"
+    },
+    {
+     "kind": "button",
+     "label": "Save",
+     "id": "syncDefaultsSave"
+    },
+    {
+     "kind": "button",
+     "label": "About scheduled run defaults"
+    },
+    {
+     "kind": "field",
+     "label": "If Worca is not running at that time",
+     "id": "schedIfMissed"
+    },
+    {
+     "kind": "field",
+     "label": "At most this late",
+     "id": "schedGraceMin"
+    },
+    {
+     "kind": "button",
+     "label": "About pausing after failures"
+    },
+    {
+     "kind": "field",
+     "label": "Pause a repeating schedule after failures in a row",
+     "id": "schedMaxFailures"
+    },
+    {
+     "kind": "button",
+     "label": "Use defaults",
+     "id": "schedDefaultsReset"
+    },
+    {
+     "kind": "button",
+     "label": "Save",
+     "id": "schedDefaultsSave"
+    },
+    {
+     "kind": "button",
+     "label": "About waiting for the network"
+    },
+    {
+     "kind": "toggle",
+     "label": "networkWaitEnabled",
+     "id": "networkWaitEnabled"
+    },
+    {
+     "kind": "field",
+     "label": "Longest wait",
+     "id": "networkWaitMaxMin"
+    },
+    {
+     "kind": "button",
+     "label": "Use defaults",
+     "id": "networkWaitReset"
+    },
+    {
+     "kind": "button",
+     "label": "Save",
+     "id": "networkWaitSave"
+    },
+    {
+     "kind": "button",
+     "label": "About machine load"
+    },
+    {
+     "kind": "field",
+     "label": "Runs at once",
+     "id": "runLimitsMaxRuns"
+    },
+    {
+     "kind": "field",
+     "label": "Test workers per run",
+     "id": "runLimitsTestWorkers"
+    },
+    {
+     "kind": "field",
+     "label": "Archive finished runs after",
+     "id": "runLimitsKeepDays"
+    },
+    {
+     "kind": "button",
+     "label": "Use defaults",
+     "id": "runLimitsReset"
+    },
+    {
+     "kind": "button",
+     "label": "Save",
+     "id": "runLimitsSave"
+    },
+    {
+     "kind": "button",
+     "label": "About the network proxy"
+    },
+    {
+     "kind": "toggle",
+     "label": "npEnabled",
+     "id": "npEnabled"
+    },
+    {
+     "kind": "field",
+     "label": "Proxy host",
+     "id": "npHost"
+    },
+    {
+     "kind": "field",
+     "label": "Port",
+     "id": "npPort"
+    },
+    {
+     "kind": "field",
+     "label": "Login",
+     "id": "npAuth"
+    },
+    {
+     "kind": "field",
+     "label": "Hosts that go direct",
+     "id": "npNoProxy"
+    },
+    {
+     "kind": "button",
+     "label": "More"
+    },
+    {
+     "kind": "field",
+     "label": "Local proxy port",
+     "id": "npFixedPort"
+    },
+    {
+     "kind": "field",
+     "label": "Connect timeout (s)",
+     "id": "npConnectS"
+    },
+    {
+     "kind": "field",
+     "label": "Login timeout (s)",
+     "id": "npAuthS"
+    },
+    {
+     "kind": "field",
+     "label": "Idle timeout (s)",
+     "id": "npIdleS"
+    },
+    {
+     "kind": "field",
+     "label": "Domain",
+     "id": "npDomain"
+    },
+    {
+     "kind": "field",
+     "label": "User name",
+     "id": "npUser"
+    },
+    {
+     "kind": "field",
+     "label": "Password",
+     "id": "npPassword"
+    },
+    {
+     "kind": "button",
+     "label": "Save",
+     "id": "npSave"
+    },
+    {
+     "kind": "button",
+     "label": "Log out",
+     "id": "npLogout"
+    },
+    {
+     "kind": "button",
+     "label": "Auto-detect",
+     "id": "npDetect"
+    },
+    {
+     "kind": "button",
+     "label": "Test",
+     "id": "npTest"
+    },
+    {
+     "kind": "button",
+     "label": "Log in",
+     "id": "npLogin"
+    },
+    {
+     "kind": "button",
+     "label": "About actions"
+    },
+    {
+     "kind": "field",
+     "label": "Keep checkouts",
+     "id": "act-keep"
+    },
+    {
+     "kind": "field",
+     "label": "Low port",
+     "id": "act-port-low"
+    },
+    {
+     "kind": "field",
+     "label": "High port",
+     "id": "act-port-high"
+    },
+    {
+     "kind": "button",
+     "label": "About the editor command"
+    },
+    {
+     "kind": "field",
+     "label": "Editor",
+     "id": "act-editor"
+    },
+    {
+     "kind": "field",
+     "label": "Pick an installed editor, or browse for one",
+     "id": "act-editor-choose"
+    },
+    {
+     "kind": "button",
+     "label": "Try",
+     "id": "act-editor-try"
+    },
+    {
+     "kind": "button",
+     "label": "About the terminal command"
+    },
+    {
+     "kind": "field",
+     "label": "Terminal",
+     "id": "act-terminal"
+    },
+    {
+     "kind": "field",
+     "label": "Pick an installed terminal, or browse for one",
+     "id": "act-terminal-choose"
+    },
+    {
+     "kind": "button",
+     "label": "Try",
+     "id": "act-terminal-try"
+    },
+    {
+     "kind": "field",
+     "label": "Keep at most",
+     "id": "act-max"
+    },
+    {
+     "kind": "button",
+     "label": "Reset",
+     "id": "act-reset"
+    },
+    {
+     "kind": "button",
+     "label": "Save",
+     "id": "act-save"
+    },
+    {
+     "kind": "button",
+     "label": "About drafting the PR description automatically"
+    },
+    {
+     "kind": "toggle",
+     "label": "Draft the PR description with AI automatically iEach time the Create P",
+     "id": "prAutoDescribe"
+    },
+    {
+     "kind": "button",
+     "label": "Save",
+     "id": "prSettingsSave"
+    },
+    {
+     "kind": "button",
+     "label": "About workspace scan models"
+    },
+    {
+     "kind": "field",
+     "label": "Scan agent model",
+     "id": "wsScanModel"
+    },
+    {
+     "kind": "field",
+     "label": "Scan agent effort",
+     "id": "wsScanEffort"
+    },
+    {
+     "kind": "field",
+     "label": "Project agents model",
+     "id": "wsAgentModel"
+    },
+    {
+     "kind": "field",
+     "label": "Project agents effort",
+     "id": "wsAgentEffort"
+    },
+    {
+     "kind": "button",
+     "label": "Use default",
+     "id": "wsScanModelsReset"
+    },
+    {
+     "kind": "button",
+     "label": "Save",
+     "id": "wsScanModelsSave"
+    },
+    {
+     "kind": "toggle",
+     "label": "Approval / question needed"
+    },
+    {
+     "kind": "toggle",
+     "label": "Run finished (done / stopped)"
+    },
+    {
+     "kind": "toggle",
+     "label": "Run failed"
+    },
+    {
+     "kind": "toggle",
+     "label": "Run paused (incl. cost limits)"
+    },
+    {
+     "kind": "toggle",
+     "label": "Away hours start or end"
+    },
+    {
+     "kind": "toggle",
+     "label": "Watched pull requests"
+    },
+    {
+     "kind": "button",
+     "label": "Save",
+     "id": "chatSettingsSave"
+    }
+   ],
+   "menus": []
+  },
+  {
+   "route": "settings/automations",
+   "page": "Settings",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "General"
+    },
+    {
+     "kind": "button",
+     "label": "Labels & cost tags"
+    },
+    {
+     "kind": "button",
+     "label": "Presets"
+    },
+    {
+     "kind": "button",
+     "label": "Labs"
+    },
+    {
+     "kind": "button",
+     "label": "Guardrails"
+    },
+    {
+     "kind": "button",
+     "label": "Memory"
+    },
+    {
+     "kind": "button",
+     "label": "Run setup",
+     "id": "setupRunAgain"
+    },
+    {
+     "kind": "button",
+     "label": "About appearance"
+    },
+    {
+     "kind": "button",
+     "label": "System"
+    },
+    {
+     "kind": "button",
+     "label": "Light"
+    },
+    {
+     "kind": "button",
+     "label": "Dark"
+    },
+    {
+     "kind": "button",
+     "label": "About alerts"
+    },
+    {
+     "kind": "toggle",
+     "label": "alertsNotify",
+     "id": "alertsNotify"
+    },
+    {
+     "kind": "toggle",
+     "label": "alertsBadge",
+     "id": "alertsBadge"
+    },
+    {
+     "kind": "button",
+     "label": "Send test notification",
+     "id": "alertsTest"
+    },
+    {
+     "kind": "button",
+     "label": "About the browser extension"
+    },
+    {
+     "kind": "tab",
+     "label": "Chrome",
+     "id": "xi-tab-chrome"
+    },
+    {
+     "kind": "tab",
+     "label": "Edge",
+     "id": "xi-tab-edge"
+    },
+    {
+     "kind": "tab",
+     "label": "Firefox",
+     "id": "xi-tab-firefox"
+    },
+    {
+     "kind": "button",
+     "label": "About interface mode"
+    },
+    {
+     "kind": "button",
+     "label": "Interface mode: Expert. Change how much of Worca is shown",
+     "id": "modeSettingsChange"
+    },
+    {
+     "kind": "button",
+     "label": "About Worca root folder"
+    },
+    {
+     "kind": "field",
+     "label": "Worca root folder",
+     "id": "settingsRoot"
+    },
+    {
+     "kind": "button",
+     "label": "About Projects root folder"
+    },
+    {
+     "kind": "field",
+     "label": "Projects root folder",
+     "id": "settingsProjectsRoot"
+    },
+    {
+     "kind": "button",
+     "label": "Browse…",
+     "id": "settingsProjectsRootBrowse"
+    },
+    {
+     "kind": "button",
+     "label": "Reset to default",
+     "id": "settingsReset"
+    },
+    {
+     "kind": "button",
+     "label": "Save",
+     "id": "settingsSave"
+    },
+    {
+     "kind": "button",
+     "label": "About spawn diagnostics"
+    },
+    {
+     "kind": "toggle",
+     "label": "Log claude spawn details (binary, argv, routing env)",
+     "id": "debugSpawnEnabled"
+    },
+    {
+     "kind": "button",
+     "label": "Reset to default",
+     "id": "debugSpawnReset"
+    },
+    {
+     "kind": "button",
+     "label": "Save",
+     "id": "debugSpawnSave"
+    },
+    {
+     "kind": "button",
+     "label": "Show again",
+     "id": "gsShowAgain"
+    },
+    {
+     "kind": "toggle",
+     "label": "Check for new Worca versions",
+     "id": "aboutUpdateCheck"
+    }
+   ],
+   "menus": [
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "button",
+       "label": "Done",
+       "id": "mode-done"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "route": "settings/experimental",
+   "page": "Settings",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "General"
+    },
+    {
+     "kind": "button",
+     "label": "Labels & cost tags"
+    },
+    {
+     "kind": "button",
+     "label": "Presets"
+    },
+    {
+     "kind": "button",
+     "label": "Labs"
+    },
+    {
+     "kind": "button",
+     "label": "Guardrails"
+    },
+    {
+     "kind": "button",
+     "label": "Memory"
+    },
+    {
+     "kind": "button",
+     "label": "Reset all",
+     "id": "flags-reset"
+    },
+    {
+     "kind": "toggle",
+     "label": "Command summaries"
+    },
+    {
+     "kind": "toggle",
+     "label": "Smart run naming"
+    },
+    {
+     "kind": "toggle",
+     "label": "Requirements"
+    },
+    {
+     "kind": "toggle",
+     "label": "One session"
+    },
+    {
+     "kind": "toggle",
+     "label": "Ticket updates"
+    },
+    {
+     "kind": "toggle",
+     "label": "Design"
+    }
+   ],
+   "menus": []
+  },
+  {
+   "route": "settings/ask",
+   "page": "Settings",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "General"
+    },
+    {
+     "kind": "button",
+     "label": "Labels & cost tags"
+    },
+    {
+     "kind": "button",
+     "label": "Presets"
+    },
+    {
+     "kind": "button",
+     "label": "Labs"
+    },
+    {
+     "kind": "button",
+     "label": "Guardrails"
+    },
+    {
+     "kind": "button",
+     "label": "Memory"
+    },
+    {
+     "kind": "field",
+     "label": ""
+    },
+    {
+     "kind": "button",
+     "label": "Save",
+     "id": "askEngineSave"
+    },
+    {
+     "kind": "button",
+     "label": "About Chat limits"
+    },
+    {
+     "kind": "button",
+     "label": "About Turn limit"
+    },
+    {
+     "kind": "field",
+     "label": "Turn limit",
+     "id": "askMaxTurns"
+    },
+    {
+     "kind": "button",
+     "label": "About Per-turn cost cap"
+    },
+    {
+     "kind": "field",
+     "label": "Per-turn cost cap (USD)",
+     "id": "askMaxBudgetUsd"
+    },
+    {
+     "kind": "toggle",
+     "label": "No cap",
+     "id": "askNoCap"
+    },
+    {
+     "kind": "toggle",
+     "label": "askScriptTools",
+     "id": "askScriptTools"
+    },
+    {
+     "kind": "toggle",
+     "label": "askSummaries",
+     "id": "askSummaries"
+    },
+    {
+     "kind": "toggle",
+     "label": "askSuggestions",
+     "id": "askSuggestions"
+    },
+    {
+     "kind": "toggle",
+     "label": "askPromptCheck",
+     "id": "askPromptCheck"
+    },
+    {
+     "kind": "toggle",
+     "label": "askWebEnabled",
+     "id": "askWebEnabled"
+    },
+    {
+     "kind": "toggle",
+     "label": "askWebAnyHost",
+     "id": "askWebAnyHost"
+    },
+    {
+     "kind": "field",
+     "label": "Allowed domains",
+     "id": "askWebDomains"
+    },
+    {
+     "kind": "field",
+     "label": "Search endpoint (optional)",
+     "id": "askWebSearchUrl"
+    },
+    {
+     "kind": "field",
+     "label": "Search key variable",
+     "id": "askWebSearchKey"
+    },
+    {
+     "kind": "field",
+     "label": "Key header",
+     "id": "askWebSearchHeader"
+    },
+    {
+     "kind": "field",
+     "label": "Key prefix",
+     "id": "askWebSearchPrefix"
+    },
+    {
+     "kind": "button",
+     "label": "Use defaults",
+     "id": "askLimitsReset"
+    },
+    {
+     "kind": "button",
+     "label": "Save",
+     "id": "askLimitsSave"
+    },
+    {
+     "kind": "button",
+     "label": "About Chat history"
+    },
+    {
+     "kind": "button",
+     "label": "Chat history",
+     "id": "askHistoryDelete"
+    }
+   ],
+   "menus": []
+  },
+  {
+   "route": "settings/guardrails",
+   "page": "Settings",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "General"
+    },
+    {
+     "kind": "button",
+     "label": "Labels & cost tags"
+    },
+    {
+     "kind": "button",
+     "label": "Presets"
+    },
+    {
+     "kind": "button",
+     "label": "Labs"
+    },
+    {
+     "kind": "button",
+     "label": "Guardrails"
+    },
+    {
+     "kind": "button",
+     "label": "Memory"
+    },
+    {
+     "kind": "button",
+     "label": "Create guardrails",
+     "id": "guardrail-create-btn"
+    },
+    {
+     "kind": "button",
+     "label": "Details"
+    }
+   ],
+   "menus": []
+  },
+  {
+   "route": "settings/memory",
+   "page": "Settings",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "General"
+    },
+    {
+     "kind": "button",
+     "label": "Labels & cost tags"
+    },
+    {
+     "kind": "button",
+     "label": "Presets"
+    },
+    {
+     "kind": "button",
+     "label": "Labs"
+    },
+    {
+     "kind": "button",
+     "label": "Guardrails"
+    },
+    {
+     "kind": "button",
+     "label": "Memory"
+    },
+    {
+     "kind": "button",
+     "label": "Defragment"
+    },
+    {
+     "kind": "button",
+     "label": "Reject"
+    },
+    {
+     "kind": "button",
+     "label": "Approve"
+    },
+    {
+     "kind": "button",
+     "label": "The note now"
+    },
+    {
+     "kind": "button",
+     "label": "New file"
+    },
+    {
+     "kind": "button",
+     "label": "Restore"
+    }
+   ],
+   "menus": []
+  },
+  {
+   "route": "projects/KEY",
+   "page": "Projects",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "Add project",
+     "id": "project-add-btn"
+    },
+    {
+     "kind": "button",
+     "label": "All 2"
+    },
+    {
+     "kind": "button",
+     "label": "Check origin now"
+    },
+    {
+     "kind": "button",
+     "label": "Open project details"
+    },
+    {
+     "kind": "button",
+     "label": "Back to projects"
+    },
+    {
+     "kind": "button",
+     "label": "Open the terminal"
+    },
+    {
+     "kind": "button",
+     "label": "Copy path"
+    },
+    {
+     "kind": "button",
+     "label": "New run"
+    },
+    {
+     "kind": "button",
+     "label": "Show in Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Remove"
+    },
+    {
+     "kind": "tab",
+     "label": "Overview",
+     "id": "pd-tab-overview"
+    },
+    {
+     "kind": "tab",
+     "label": "Team",
+     "id": "pd-tab-team"
+    },
+    {
+     "kind": "tab",
+     "label": "Memory",
+     "id": "pd-tab-memory"
+    },
+    {
+     "kind": "tab",
+     "label": "Settings",
+     "id": "pd-tab-settings"
+    },
+    {
+     "kind": "tab",
+     "label": "Sets",
+     "id": "pd-tab-mcp"
+    },
+    {
+     "kind": "tab",
+     "label": "Actions",
+     "id": "pd-tab-actions"
+    }
+   ],
+   "menus": [
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "button",
+       "label": "Close"
+      },
+      {
+       "kind": "button",
+       "label": "Ignore"
+      },
+      {
+       "kind": "button",
+       "label": "Recheck"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "route": "projects/KEY/team",
+   "page": "Projects",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "Add project",
+     "id": "project-add-btn"
+    },
+    {
+     "kind": "button",
+     "label": "All 2"
+    },
+    {
+     "kind": "button",
+     "label": "Check origin now"
+    },
+    {
+     "kind": "button",
+     "label": "Open project details"
+    },
+    {
+     "kind": "button",
+     "label": "Back to projects"
+    },
+    {
+     "kind": "button",
+     "label": "Open the terminal"
+    },
+    {
+     "kind": "button",
+     "label": "Copy path"
+    },
+    {
+     "kind": "button",
+     "label": "New run"
+    },
+    {
+     "kind": "button",
+     "label": "Show in Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Remove"
+    },
+    {
+     "kind": "tab",
+     "label": "Overview",
+     "id": "pd-tab-overview"
+    },
+    {
+     "kind": "tab",
+     "label": "Team",
+     "id": "pd-tab-team"
+    },
+    {
+     "kind": "tab",
+     "label": "Memory",
+     "id": "pd-tab-memory"
+    },
+    {
+     "kind": "tab",
+     "label": "Settings",
+     "id": "pd-tab-settings"
+    },
+    {
+     "kind": "tab",
+     "label": "Sets",
+     "id": "pd-tab-mcp"
+    },
+    {
+     "kind": "tab",
+     "label": "Actions",
+     "id": "pd-tab-actions"
+    },
+    {
+     "kind": "button",
+     "label": "Open"
+    }
+   ],
+   "menus": [
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "button",
+       "label": "Close"
+      },
+      {
+       "kind": "button",
+       "label": "Ignore"
+      },
+      {
+       "kind": "button",
+       "label": "Recheck"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "route": "projects/KEY/settings",
+   "page": "Projects",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "Add project",
+     "id": "project-add-btn"
+    },
+    {
+     "kind": "button",
+     "label": "All 2"
+    },
+    {
+     "kind": "button",
+     "label": "Check origin now"
+    },
+    {
+     "kind": "button",
+     "label": "Open project details"
+    },
+    {
+     "kind": "button",
+     "label": "Back to projects"
+    },
+    {
+     "kind": "button",
+     "label": "Open the terminal"
+    },
+    {
+     "kind": "button",
+     "label": "Copy path"
+    },
+    {
+     "kind": "button",
+     "label": "New run"
+    },
+    {
+     "kind": "button",
+     "label": "Show in Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Remove"
+    },
+    {
+     "kind": "tab",
+     "label": "Overview",
+     "id": "pd-tab-overview"
+    },
+    {
+     "kind": "tab",
+     "label": "Team",
+     "id": "pd-tab-team"
+    },
+    {
+     "kind": "tab",
+     "label": "Memory",
+     "id": "pd-tab-memory"
+    },
+    {
+     "kind": "tab",
+     "label": "Settings",
+     "id": "pd-tab-settings"
+    },
+    {
+     "kind": "tab",
+     "label": "Sets",
+     "id": "pd-tab-mcp"
+    },
+    {
+     "kind": "tab",
+     "label": "Actions",
+     "id": "pd-tab-actions"
+    },
+    {
+     "kind": "field",
+     "label": ""
+    },
+    {
+     "kind": "button",
+     "label": "Claude Code"
+    },
+    {
+     "kind": "button",
+     "label": "Show all 32"
+    },
+    {
+     "kind": "button",
+     "label": "Show all 5"
+    },
+    {
+     "kind": "button",
+     "label": "Save"
+    },
+    {
+     "kind": "field",
+     "label": "Add a line every rebuild keeps"
+    },
+    {
+     "kind": "button",
+     "label": "Pin line"
+    },
+    {
+     "kind": "button",
+     "label": "Refresh now"
+    },
+    {
+     "kind": "field",
+     "label": "Worca default"
+    },
+    {
+     "kind": "toggle",
+     "label": ""
+    },
+    {
+     "kind": "button",
+     "label": "How worca picks an answer"
+    },
+    {
+     "kind": "field",
+     "label": "3"
+    },
+    {
+     "kind": "field",
+     "label": "2"
+    },
+    {
+     "kind": "field",
+     "label": "1"
+    },
+    {
+     "kind": "button",
+     "label": "Limits"
+    },
+    {
+     "kind": "button",
+     "label": "Use my settings"
+    },
+    {
+     "kind": "button",
+     "label": "View report"
+    },
+    {
+     "kind": "button",
+     "label": "Detect"
+    },
+    {
+     "kind": "button",
+     "label": "Used"
+    },
+    {
+     "kind": "button",
+     "label": "Not used"
+    }
+   ],
+   "menus": [
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "button",
+       "label": "Close"
+      },
+      {
+       "kind": "button",
+       "label": "Ignore"
+      },
+      {
+       "kind": "button",
+       "label": "Recheck"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "route": "projects/KEY/mcp",
+   "page": "Projects",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "Add project",
+     "id": "project-add-btn"
+    },
+    {
+     "kind": "button",
+     "label": "All 2"
+    },
+    {
+     "kind": "button",
+     "label": "Check origin now"
+    },
+    {
+     "kind": "button",
+     "label": "Open project details"
+    },
+    {
+     "kind": "button",
+     "label": "Back to projects"
+    },
+    {
+     "kind": "button",
+     "label": "Open the terminal"
+    },
+    {
+     "kind": "button",
+     "label": "Copy path"
+    },
+    {
+     "kind": "button",
+     "label": "New run"
+    },
+    {
+     "kind": "button",
+     "label": "Show in Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Remove"
+    },
+    {
+     "kind": "tab",
+     "label": "Overview",
+     "id": "pd-tab-overview"
+    },
+    {
+     "kind": "tab",
+     "label": "Team",
+     "id": "pd-tab-team"
+    },
+    {
+     "kind": "tab",
+     "label": "Memory",
+     "id": "pd-tab-memory"
+    },
+    {
+     "kind": "tab",
+     "label": "Settings",
+     "id": "pd-tab-settings"
+    },
+    {
+     "kind": "tab",
+     "label": "Sets",
+     "id": "pd-tab-mcp"
+    },
+    {
+     "kind": "tab",
+     "label": "Actions",
+     "id": "pd-tab-actions"
+    },
+    {
+     "kind": "toggle",
+     "label": "Include General in runs"
+    }
+   ],
+   "menus": [
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "button",
+       "label": "Close"
+      },
+      {
+       "kind": "button",
+       "label": "Ignore"
+      },
+      {
+       "kind": "button",
+       "label": "Recheck"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "route": "projects/KEY/actions",
+   "page": "Projects",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "Add project",
+     "id": "project-add-btn"
+    },
+    {
+     "kind": "button",
+     "label": "All 2"
+    },
+    {
+     "kind": "button",
+     "label": "Check origin now"
+    },
+    {
+     "kind": "button",
+     "label": "Open project details"
+    },
+    {
+     "kind": "button",
+     "label": "Back to projects"
+    },
+    {
+     "kind": "button",
+     "label": "Open the terminal"
+    },
+    {
+     "kind": "button",
+     "label": "Copy path"
+    },
+    {
+     "kind": "button",
+     "label": "New run"
+    },
+    {
+     "kind": "button",
+     "label": "Show in Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Remove"
+    },
+    {
+     "kind": "tab",
+     "label": "Overview",
+     "id": "pd-tab-overview"
+    },
+    {
+     "kind": "tab",
+     "label": "Team",
+     "id": "pd-tab-team"
+    },
+    {
+     "kind": "tab",
+     "label": "Memory",
+     "id": "pd-tab-memory"
+    },
+    {
+     "kind": "tab",
+     "label": "Settings",
+     "id": "pd-tab-settings"
+    },
+    {
+     "kind": "tab",
+     "label": "Sets",
+     "id": "pd-tab-mcp"
+    },
+    {
+     "kind": "tab",
+     "label": "Actions",
+     "id": "pd-tab-actions"
+    },
+    {
+     "kind": "field",
+     "label": "e.g. npm ci"
+    },
+    {
+     "kind": "button",
+     "label": "Add action"
+    },
+    {
+     "kind": "toggle",
+     "label": ""
+    },
+    {
+     "kind": "button",
+     "label": "Save"
+    }
+   ],
+   "menus": [
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "button",
+       "label": "Close"
+      },
+      {
+       "kind": "button",
+       "label": "Ignore"
+      },
+      {
+       "kind": "button",
+       "label": "Recheck"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "route": "projects/KEY/automations",
+   "page": "Projects",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "Add project",
+     "id": "project-add-btn"
+    },
+    {
+     "kind": "button",
+     "label": "All 2"
+    },
+    {
+     "kind": "button",
+     "label": "Check origin now"
+    },
+    {
+     "kind": "button",
+     "label": "Open project details"
+    },
+    {
+     "kind": "button",
+     "label": "Back to projects"
+    },
+    {
+     "kind": "button",
+     "label": "Open the terminal"
+    },
+    {
+     "kind": "button",
+     "label": "Copy path"
+    },
+    {
+     "kind": "button",
+     "label": "New run"
+    },
+    {
+     "kind": "button",
+     "label": "Show in Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Remove"
+    },
+    {
+     "kind": "tab",
+     "label": "Overview",
+     "id": "pd-tab-overview"
+    },
+    {
+     "kind": "tab",
+     "label": "Team",
+     "id": "pd-tab-team"
+    },
+    {
+     "kind": "tab",
+     "label": "Memory",
+     "id": "pd-tab-memory"
+    },
+    {
+     "kind": "tab",
+     "label": "Settings",
+     "id": "pd-tab-settings"
+    },
+    {
+     "kind": "tab",
+     "label": "Sets",
+     "id": "pd-tab-mcp"
+    },
+    {
+     "kind": "tab",
+     "label": "Actions",
+     "id": "pd-tab-actions"
+    }
+   ],
+   "menus": [
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "button",
+       "label": "Close"
+      },
+      {
+       "kind": "button",
+       "label": "Ignore"
+      },
+      {
+       "kind": "button",
+       "label": "Recheck"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "route": "projects/KEY/away",
+   "page": "Projects",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "Add project",
+     "id": "project-add-btn"
+    },
+    {
+     "kind": "button",
+     "label": "All 2"
+    },
+    {
+     "kind": "button",
+     "label": "Check origin now"
+    },
+    {
+     "kind": "button",
+     "label": "Open project details"
+    },
+    {
+     "kind": "button",
+     "label": "Back to projects"
+    },
+    {
+     "kind": "button",
+     "label": "Open the terminal"
+    },
+    {
+     "kind": "button",
+     "label": "Copy path"
+    },
+    {
+     "kind": "button",
+     "label": "New run"
+    },
+    {
+     "kind": "button",
+     "label": "Show in Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Remove"
+    },
+    {
+     "kind": "tab",
+     "label": "Overview",
+     "id": "pd-tab-overview"
+    },
+    {
+     "kind": "tab",
+     "label": "Team",
+     "id": "pd-tab-team"
+    },
+    {
+     "kind": "tab",
+     "label": "Memory",
+     "id": "pd-tab-memory"
+    },
+    {
+     "kind": "tab",
+     "label": "Settings",
+     "id": "pd-tab-settings"
+    },
+    {
+     "kind": "tab",
+     "label": "Sets",
+     "id": "pd-tab-mcp"
+    },
+    {
+     "kind": "tab",
+     "label": "Actions",
+     "id": "pd-tab-actions"
+    },
+    {
+     "kind": "field",
+     "label": ""
+    },
+    {
+     "kind": "button",
+     "label": "Claude Code"
+    },
+    {
+     "kind": "button",
+     "label": "Show all 32"
+    },
+    {
+     "kind": "button",
+     "label": "Show all 5"
+    },
+    {
+     "kind": "button",
+     "label": "Save"
+    },
+    {
+     "kind": "field",
+     "label": "Add a line every rebuild keeps"
+    },
+    {
+     "kind": "button",
+     "label": "Pin line"
+    },
+    {
+     "kind": "button",
+     "label": "Refresh now"
+    },
+    {
+     "kind": "field",
+     "label": "Worca default"
+    },
+    {
+     "kind": "toggle",
+     "label": ""
+    },
+    {
+     "kind": "button",
+     "label": "How worca picks an answer"
+    },
+    {
+     "kind": "field",
+     "label": "3"
+    },
+    {
+     "kind": "field",
+     "label": "2"
+    },
+    {
+     "kind": "field",
+     "label": "1"
+    },
+    {
+     "kind": "button",
+     "label": "Limits"
+    },
+    {
+     "kind": "button",
+     "label": "Use my settings"
+    },
+    {
+     "kind": "button",
+     "label": "View report"
+    },
+    {
+     "kind": "button",
+     "label": "Detect"
+    },
+    {
+     "kind": "button",
+     "label": "Used"
+    },
+    {
+     "kind": "button",
+     "label": "Not used"
+    }
+   ],
+   "menus": [
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "button",
+       "label": "Close"
+      },
+      {
+       "kind": "button",
+       "label": "Ignore"
+      },
+      {
+       "kind": "button",
+       "label": "Recheck"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "route": "projects/KEY/memory",
+   "page": "Projects",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "Add project",
+     "id": "project-add-btn"
+    },
+    {
+     "kind": "button",
+     "label": "All 2"
+    },
+    {
+     "kind": "button",
+     "label": "Check origin now"
+    },
+    {
+     "kind": "button",
+     "label": "Open project details"
+    },
+    {
+     "kind": "button",
+     "label": "Back to projects"
+    },
+    {
+     "kind": "button",
+     "label": "Open the terminal"
+    },
+    {
+     "kind": "button",
+     "label": "Copy path"
+    },
+    {
+     "kind": "button",
+     "label": "New run"
+    },
+    {
+     "kind": "button",
+     "label": "Show in Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Remove"
+    },
+    {
+     "kind": "tab",
+     "label": "Overview",
+     "id": "pd-tab-overview"
+    },
+    {
+     "kind": "tab",
+     "label": "Team",
+     "id": "pd-tab-team"
+    },
+    {
+     "kind": "tab",
+     "label": "Memory",
+     "id": "pd-tab-memory"
+    },
+    {
+     "kind": "tab",
+     "label": "Settings",
+     "id": "pd-tab-settings"
+    },
+    {
+     "kind": "tab",
+     "label": "Sets",
+     "id": "pd-tab-mcp"
+    },
+    {
+     "kind": "tab",
+     "label": "Actions",
+     "id": "pd-tab-actions"
+    },
+    {
+     "kind": "tab",
+     "label": "Notes"
+    },
+    {
+     "kind": "tab",
+     "label": "Team"
+    },
+    {
+     "kind": "button",
+     "label": "Defragment"
+    },
+    {
+     "kind": "button",
+     "label": "The note now"
+    },
+    {
+     "kind": "button",
+     "label": "Reject"
+    },
+    {
+     "kind": "button",
+     "label": "Approve"
+    },
+    {
+     "kind": "button",
+     "label": "New file"
+    },
+    {
+     "kind": "button",
+     "label": "Restore"
+    }
+   ],
+   "menus": [
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "button",
+       "label": "Close"
+      },
+      {
+       "kind": "button",
+       "label": "Ignore"
+      },
+      {
+       "kind": "button",
+       "label": "Recheck"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "route": "history/KEY/ID",
+   "page": "Tasks",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Ask worca",
+     "id": "topnav-ask"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "View",
+     "id": "runs-view-btn"
+    },
+    {
+     "kind": "button",
+     "label": "Got it"
+    },
+    {
+     "kind": "button",
+     "label": "Show older"
+    },
+    {
+     "kind": "button",
+     "label": "Back to Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Start a follow-up run"
+    },
+    {
+     "kind": "button",
+     "label": "More for this run"
+    },
+    {
+     "kind": "button",
+     "label": "Add a label"
+    },
+    {
+     "kind": "button",
+     "label": "Add cost tags"
+    },
+    {
+     "kind": "button",
+     "label": "Add to group…"
+    },
+    {
+     "kind": "button",
+     "label": "Overview"
+    },
+    {
+     "kind": "button",
+     "label": "Diff"
+    },
+    {
+     "kind": "button",
+     "label": "Logs"
+    }
+   ],
+   "menus": [
+    {
+     "trigger": "View",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "All165"
+      },
+      {
+       "kind": "menu item",
+       "label": "Needs you0"
+      },
+      {
+       "kind": "menu item",
+       "label": "Running0"
+      },
+      {
+       "kind": "menu item",
+       "label": "Archived28"
+      },
+      {
+       "kind": "menu item",
+       "label": "Date"
+      },
+      {
+       "kind": "menu item",
+       "label": "Project"
+      },
+      {
+       "kind": "menu item",
+       "label": "None"
+      }
+     ]
+    },
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "Open feature"
+      }
+     ]
+    },
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "Start now"
+      },
+      {
+       "kind": "menu item",
+       "label": "Cancel"
+      }
+     ]
+    },
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "Open feature"
+      }
+     ]
+    },
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "Start now"
+      },
+      {
+       "kind": "menu item",
+       "label": "Cancel"
+      }
+     ]
+    },
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "Open feature"
+      }
+     ]
+    },
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "Start now"
+      },
+      {
+       "kind": "menu item",
+       "label": "Cancel"
+      }
+     ]
+    },
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "Start now"
+      },
+      {
+       "kind": "menu item",
+       "label": "Cancel"
+      }
+     ]
+    },
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "Open feature"
+      }
+     ]
+    },
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "Open feature"
+      }
+     ]
+    },
+    {
+     "trigger": "(a row's menu)",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "Open feature"
+      }
+     ]
+    },
+    {
+     "trigger": "More for this run",
+     "items": [
+      {
+       "kind": "menu item",
+       "label": "Save as preset"
+      },
+      {
+       "kind": "menu item",
+       "label": "Report this run"
+      },
+      {
+       "kind": "menu item",
+       "label": "Archive"
+      }
+     ]
+    },
+    {
+     "trigger": "Add a label",
+     "items": [
+      {
+       "kind": "field",
+       "label": "Find or create a label"
+      },
+      {
+       "kind": "toggle",
+       "label": ""
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "route": "chat/ID",
+   "page": "Chat",
+   "controls": [
+    {
+     "kind": "button",
+     "label": "Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Runs"
+    },
+    {
+     "kind": "button",
+     "label": "Statistics"
+    },
+    {
+     "kind": "button",
+     "label": "Team metrics"
+    },
+    {
+     "kind": "button",
+     "label": "Workflows"
+    },
+    {
+     "kind": "button",
+     "label": "Marketplace"
+    },
+    {
+     "kind": "button",
+     "label": "Connectors"
+    },
+    {
+     "kind": "button",
+     "label": "Models"
+    },
+    {
+     "kind": "button",
+     "label": "Providers"
+    },
+    {
+     "kind": "button",
+     "label": "Projects"
+    },
+    {
+     "kind": "button",
+     "label": "Workspaces"
+    },
+    {
+     "kind": "button",
+     "label": "Team policy"
+    },
+    {
+     "kind": "button",
+     "label": "Profile · Curious: spend, away mode, interface mode and settings",
+     "id": "side-acct"
+    },
+    {
+     "kind": "button",
+     "label": "Collapse menu",
+     "id": "side-toggle"
+    },
+    {
+     "kind": "field",
+     "label": "Search chats or ask",
+     "id": "tsearch-input"
+    },
+    {
+     "kind": "button",
+     "label": "Activity",
+     "id": "topnav-activity"
+    },
+    {
+     "kind": "button",
+     "label": "New run",
+     "id": "topnav-new"
+    },
+    {
+     "kind": "button",
+     "label": "History"
+    },
+    {
+     "kind": "button",
+     "label": "Context window"
+    },
+    {
+     "kind": "button",
+     "label": "Details"
+    },
+    {
+     "kind": "field",
+     "label": "Message Chat"
+    },
+    {
+     "kind": "button",
+     "label": "Attach files"
+    },
+    {
+     "kind": "button",
+     "label": "Voice input"
+    },
+    {
+     "kind": "button",
+     "label": "Voice options"
+    },
+    {
+     "kind": "button",
+     "label": "Send"
+    }
+   ],
+   "menus": []
+  }
+ ],
+ "aborted": 17
+}

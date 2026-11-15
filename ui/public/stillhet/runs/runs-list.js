@@ -291,7 +291,7 @@
     ctl.state.waited = false;
     if (c === 'loading') setTimeout(() => { ctl.state.waited = true; ctl.paint(); }, 300);
     if (c === 'refresh') { listCase = 'full'; ctl.paint(); say('Could not load the runs. The rows here may be out of date.'); return; }
-    ctl.paint();
+    ctl.paint({ ifChanged: true });   // B2.8 F-fm-01: an update that changes no task leaves the rows as they are
   }
   document.getElementById('list-case')?.addEventListener('change', (e) => setCase(e.target.value));
   if (window.RailDemoState?.list) setCase(window.RailDemoState.list);   // ?state=NAME (world.js)

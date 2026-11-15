@@ -317,6 +317,23 @@ export function monthSpendOf(answer, name) {
   return row ? row.spentUsd : null;
 }
 
+/** F-3-10: this week's task count and spend for the Tasks center's head: the answer's totals for every project, else the
+ *  project's allocation row (0 when it has none this week); null without totals, or without facts for a project.
+ *  F-fm-02: the Tasks center counts tasks, so its cost is the runs' only (pipelineSpendUsd, else the runs' facts summed),
+ *  never totals.spentUsd, which holds chat spend too: the project rows add up to it. Insights keeps the whole spend. */
+export function weekTotalsOf(answer, project = null) {
+  const t = answer?.totals;
+  if (!t) return null;
+  const facts = answer.report?.runs;
+  if (project == null) {
+    const runsUsd = Number.isFinite(t.pipelineSpendUsd) ? t.pipelineSpendUsd : Array.isArray(facts) ? Math.round(facts.reduce((a, f) => a + (f.usd || 0), 0) * 100) / 100 : null;
+    return runsUsd == null ? null : { runs: t.runs, spentUsd: runsUsd };
+  }
+  if (!Array.isArray(facts)) return null;
+  const row = allocate(facts, { by: 'project', top: Infinity }).rows.find((r) => r.kind === 'value' && r.label === project);
+  return row ? { runs: row.runs, spentUsd: row.spentUsd } : { runs: 0, spentUsd: 0 };
+}
+
 /** D8: the failed state's words. */
 export function errorOf(status, body) {
   if (!status) return NOT_ANSWERING;
