@@ -150,7 +150,9 @@ test('F-a2-01 prototype: while the demo reply runs, Enter queues at most 3 with 
   assert.ok(q('[data-cp-stop]'), 'the demo reply runs');
   await enter('one');
   assert.match([...d.querySelectorAll('body > .rc-toast')].map((e) => e.textContent).join(' | '), /(^| \| )Queued: 1 of 3($| \| )/, 'the toast never repeats the line');
-  for (const m of ['two', 'three']) await enter(m);
+  await enter('two');
+  assert.ok(q('[data-cp-queue]')?.nextElementSibling?.matches('[data-cp-stop]'), 'F-gb235-03: the demo draws Queue beside Stop');
+  box().value = 'three'; q('[data-cp-queue]').click(); await settle(10);   // Queue queues as Enter does
   assert.deepEqual([...d.querySelectorAll('#route-chat .composer-queue .tr-text')].map((e) => e.textContent), ['Queued one', 'Queued two', 'Queued three']);
   assert.equal(q('[data-q-note]').textContent, 'Queue full: sends when the reply finishes');
   await enter('four');
@@ -168,7 +170,9 @@ test('F-a2-01 prototype: while the demo reply runs, Enter queues at most 3 with 
   assert.equal(q('[data-q-note]').textContent, 'Sends when the reply finishes');
 });
 
-test('F-a2-01 review: no demo [data-cp-queue] path queues past the cap: the handler is gone', () => {
+test('F-a2-01 review, F-gb235-03: no [data-cp-queue] path queues past the cap: its one handler only calls send()', () => {
   const src = readFileSync(new URL('../ui/public/stillhet/chat/conversation.js', import.meta.url), 'utf8');
-  assert.doesNotMatch(src, /data-cp-queue/);
+  const hits = src.split('\n').filter((l) => l.includes('data-cp-queue'));
+  assert.equal(hits.length, 1, 'one handler');
+  assert.match(hits[0], /if \(on\('\[data-cp-queue\]'\)\) \{ e\.preventDefault\(\); send\(\); root\.querySelector\('\[data-composer-t\]'\)\?\.focus\(\); return; \}/);
 });

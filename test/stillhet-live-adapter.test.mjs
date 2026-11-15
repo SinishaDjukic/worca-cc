@@ -6,7 +6,7 @@ import { startLive, SOURCES as URLS } from '../ui/public/stillhet/live/live-adap
 import { SOURCES, NOW } from './helpers/stillhet-live-fixture.mjs';
 const ANSWER = { [URLS.history]: SOURCES.history, [URLS.threads]: SOURCES.threads, [URLS.groups]: SOURCES.groups, [URLS.schedules]: SOURCES.schedules, [URLS.projects]: SOURCES.projects, [URLS.sync]: SOURCES.sync, [URLS.budget]: SOURCES.budget, [URLS.actions]: SOURCES.actions, [URLS.notifications]: SOURCES.notifications, [URLS.away]: SOURCES.away, [URLS.settings]: SOURCES.settings, [URLS.runLinks]: SOURCES.runLinks };
 
-function rig({ status = () => 200, answer = (u) => ANSWER[u] ?? {}, hold = () => null, parts = null } = {}) {
+function rig({ status = () => 200, answer = (u) => ANSWER[u] ?? {}, hold = () => null, random, parts = null } = {}) {
   const calls = [], sockets = [], timers = [];
   const fetch = async (u, o = {}) => { calls.push({ u, method: o.method || 'GET', ...(o.body ? { body: JSON.parse(o.body) } : {}) }); const h = hold(u); if (h) await h; const s = status(u); const a = answer(u); return { ok: s < 300, status: s, json: async () => a }; };
   class FakeSocket { constructor(url) { this.url = url; sockets.push(this); } close() { this.closed = true; } send() {} }
@@ -21,7 +21,7 @@ function rig({ status = () => 200, answer = (u) => ANSWER[u] ?? {}, hold = () =>
   };
   const host = { flags: [], flagsChanged: (f) => host.flags.push(f) };
   const location = { protocol: 'http:', host: 'localhost:4931', reload: () => calls.push('reload') };
-  const live = startLive({ fetch, WebSocket: FakeSocket, location, world, host, setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: (i) => { if (timers[i - 1]) timers[i - 1].done = true; }, now: () => NOW });
+  const live = startLive({ fetch, WebSocket: FakeSocket, location, world, host, setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: (i) => { if (timers[i - 1]) timers[i - 1].done = true; }, now: () => NOW, ...(random ? { random } : {}) });
   const frame = (sock, f) => sock.onmessage({ data: JSON.stringify(f) });
   return { live, calls, sockets, tick, st, log, rows, host, frame };
 }
@@ -245,9 +245,9 @@ test('history-pr: a row the server omits or marks stale keeps its PR (F-3-01, F-
 });
 
 // F-a1-02, F-a1-10: a history-pr batch draws only when a row's PR really changed
-async function prRig() {
+async function prRig(opts = {}) {
   const done = { id: 'hpr', title: 'Shipped', status: 'done', branch: 'feat/x', sourceBranch: 'dev', survived: true, projectKey: 'web', projectName: 'web', mtime: new Date(NOW).toISOString() };
-  const r = rig({ answer: (u) => (u === URLS.history ? { pipelines: [...SOURCES.history.pipelines, done] } : ANSWER[u] ?? {}) });
+  const r = rig({ ...opts, answer: (u) => (u === URLS.history ? { pipelines: [...SOURCES.history.pipelines, done] } : ANSWER[u] ?? {}) });
   await r.tick();
   r.frame(r.sockets[0], hello);
   await r.tick();
@@ -298,6 +298,59 @@ test('history-pr (F-a1-02, F-a1-10): a real change draws once', async () => {
   r.send([{ projectKey: 'web', id: 'hpr', pr: null }, { projectKey: 'api', id: 'h2', pr: null }]);
   assert.equal(changes(r.log) - c, 1, 'null: 1 world change, once for the whole batch');
   assert.equal(r.rows.get('hpr').case, 'ready', 'a genuine no PR clears');
+});
+
+// F-3-01 (#1362): dev broadcasts every history-pr frame to every socket, so each page load starts its own random token
+const openPr = { url: 'https://x/pull/1', state: 'open' };
+const prFrame = (token) => ({ type: 'history-pr', token, done: true, items: [{ projectKey: 'web', id: 'hpr', pr: openPr }] });
+
+test('F-3-01: two adapters (two tabs) send different PR lookup tokens, and neither takes the other\'s history-pr frames', async () => {
+  const a = await prRig({ random: () => 0.25 }), b = await prRig({ random: () => 0.5 });
+  const ta = a.token(), tb = b.token();
+  for (const t of [ta, tb]) assert.ok(Number.isSafeInteger(t) && t >= 1, `a positive safe integer: ${t}`);
+  assert.notEqual(ta, tb, 'two tabs never share a token');
+  for (const [mine, theirs, tMine, tTheirs] of [[a, b, ta, tb], [b, a, tb, ta]]) {
+    const c = changes(mine.log);
+    mine.frame(mine.sockets[0], prFrame(tTheirs));
+    assert.equal(mine.rows.get('hpr').case, 'ready', 'the other tab\'s batch draws nothing here');
+    assert.equal(changes(mine.log) - c, 0, '0 world changes');
+    assert.equal(mine.live.task.prLookup().ended, false, 'the other tab\'s done frame does not end this lookup');
+    mine.frame(mine.sockets[0], prFrame(tMine));
+    assert.equal(mine.rows.get('hpr').case, 'checks', 'its own token draws the PR');
+    assert.equal(mine.rows.get('hpr').pr, openPr.url);
+    assert.equal(mine.live.task.prLookup().ended, true);
+    assert.equal(theirs.rows.get('hpr').case, theirs === b ? 'ready' : 'checks', 'the other tab is untouched');
+  }
+});
+
+test('F-3-01: a page\'s second lookup is its first token + 1, and the first lookup\'s late batch is dropped', async () => {
+  const r = await prRig({ random: () => 0.75 });
+  const t1 = r.token();
+  r.frame(r.sockets[0], { type: 'pipelines-changed' });
+  await r.tick(250);
+  const t2 = r.token();
+  assert.ok(t1 > 1, 'a random start, not 1');
+  assert.equal(t2, t1 + 1);
+  const c = changes(r.log);
+  r.frame(r.sockets[0], prFrame(t1));
+  assert.equal(r.rows.get('hpr').case, 'ready', 'the first lookup\'s late batch is dropped');
+  assert.equal(changes(r.log) - c, 0);
+  r.frame(r.sockets[0], prFrame(t2));
+  assert.equal(r.rows.get('hpr').case, 'checks');
+});
+
+test('F-3-01: with no injected random, two adapters start at different positive tokens, and lookup ended reads true before the first ask', async () => {
+  const [a, b] = [rig(), rig()];
+  await a.tick(); await b.tick();
+  for (const r of [a, b]) {
+    const l = r.live.task.prLookup();
+    assert.equal(l.ended, true, 'no lookup yet: nothing to wait for');
+    assert.ok(Number.isSafeInteger(l.token) && l.token >= 1, `a positive integer: ${l.token}`);
+    r.frame(r.sockets[0], hello);
+  }
+  await a.tick(); await b.tick();
+  const post = (r) => r.calls.filter((c) => c.method === 'POST').at(-1).body.token;
+  assert.notEqual(post(a), post(b));
 });
 
 test('history-pr (F-a1-02): a done frame that changes nothing still ends the task page\'s wait', async () => {
@@ -538,4 +591,15 @@ test('Insights (slice 10 D8): pipelines-changed, ask-done, ask-error, budget-cha
   await r.tick();
   assert.deepEqual(got, ['pipelines-changed', 'ask-done', 'ask-error', 'budget-changed', 'team-metrics-changed']);
   assert.ok(!gets(r.calls).some((u) => /^\/api\/(stats|team-metrics|tag-dimensions|policy)/.test(u)), 'no Insights read until a page asks');
+});
+
+test('F-3-09: a running task\'s workflow is set when its state frame brings the stepper', async () => {
+  const r = rig();
+  await r.tick();
+  r.frame(r.sockets[0], hello);
+  await r.tick();
+  r.frame(r.sockets[0], { type: 'run-created', runId: 'run-w', title: 'Lean one', status: 'starting', projectDir: '/src/web', startedAt: new Date(NOW).toISOString() });
+  assert.equal(r.rows.get('run-w').workflow, '', 'run-created carries no stepper: Default for now');
+  r.frame(r.sockets[0], { type: 'state', runId: 'run-w', status: 'running', stepper: { version: 2, template: { id: 'wf_lean', name: 'Lean' }, graph: { nodes: [], edges: [] } } });
+  assert.equal(r.rows.get('run-w').workflow, 'Lean');
 });
