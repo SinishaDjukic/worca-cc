@@ -223,3 +223,27 @@ test('GET /api/history/:key/:id carries state.capUsd: the cap the task is held t
     await settings({ pipelineCostLimitUsd: '' });
   }
 });
+
+test('GET /api/history/:key/:id?row=1 returns the same object as the list\'s element', async () => {
+  const list = await (await fetch(`${base}/api/history`)).json();
+  const el = list.pipelines.find((p) => p.id === alphaId);
+  assert.ok(el, 'the list holds the run');
+  const r = await fetch(`${base}/api/history/${alphaKey}/${alphaId}?row=1`);
+  assert.equal(r.status, 200);
+  assert.deepEqual(await r.json(), { pipeline: el });
+});
+
+test('GET /api/history/:key/:id?row=1 with a wrong key or an archived id is 404', async () => {
+  const other = await seedPipeline(proj, { title: 'Gone run', status: 'done', startedAt: '2026-06-02T00:00:00Z', updatedAt: '2026-06-02T00:00:00Z' });
+  assert.equal(other.key, alphaKey);
+  getDb().prepare('UPDATE pipelines SET archived_at = ? WHERE id = ?').run('2026-06-03T00:00:00Z', other.id);
+  await checkRows([
+    { name: 'a key that is not the row\'s', run: async () => {
+      const r = await fetch(`${base}/api/history/zeta-0000000a/${alphaId}?row=1`);
+      assert.equal(r.status, 404);
+      assert.deepEqual(await r.json(), { error: 'pipeline not found' });
+    } },
+    { name: 'an archived id', run: async () => assert.equal((await fetch(`${base}/api/history/${alphaKey}/${other.id}?row=1`)).status, 404) },
+    { name: 'an unknown id', run: async () => assert.equal((await fetch(`${base}/api/history/${alphaKey}/nope?row=1`)).status, 404) },
+  ]);
+});
