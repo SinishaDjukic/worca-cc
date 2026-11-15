@@ -328,8 +328,6 @@
   "route › /api/team-metrics",
   "route › /api/team-metrics/discover",
   "route › /api/team-metrics/flush",
-  "route › /api/team-metrics/pr-events",
-  "route › /api/team-metrics/prs",
   "route › /api/team-metrics/scopes",
   "route › /api/terminal",
   "route › /api/terminal/sessions/:param",

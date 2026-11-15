@@ -83,6 +83,8 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | Worca's finished words, with their formatting | Prose: dev's markdown rendered calm; lists, code, links, tables, ref chips in the words | Two changes fix it, a list and a code block |
 | Worca at work | OrbMark: the app's sphere of dots with Worca's W facing you, a hairline ring around it in light, lit while the sphere turns under it; still at rest; think, tool and write move it; `watchOrbs` brings every one to life | Thinking |
 | Moving through a long conversation or a task | Timeline on the right edge, its TimelineCard on hover | You · 14:32 (its time is TurnTime's) |
+| A person's tasks over the page's days | TimeTrack (its axis from `dayTicks`, each time placed by `trackX`), a WorkBar in each row's lane, a MarkLegend under it | Retry failed webhook deliveries · billing-api · #1418 |
+| A teammate's task, read only | TaskView: head, metadata, StatusLine with no action, Figures, runs, PR | Failed · The last attempt failed. |
 | What hangs under a row | the rounded tree under it (`tree` on a list's row) | a chat's tasks |
 | How far along, and its steps | Stepper, then StepRow on the rail | Plan · Build · Review |
 | One line that opens its detail in place | LineRow | Did all 3 parts you asked |
@@ -109,6 +111,7 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | Nothing here, loading, could not load | EmptyState: one line on the text edge; loading shows nothing for 300ms, then one line, never a spinner or skeleton | No runs yet |
 | A part of the page cannot be drawn | EmptyState's error, in that part only, with Reload this part | Could not show the changes |
 | A place that is not in Stillhet yet | NotInStillhet: says so, names where it lives today in words, and offers Back to Chat; never "No … yet" | Insights is not in Stillhet yet |
+| A Settings row or section still sample on a live Stillhet | NotLiveRow: its name, or the section's one line, and the words; nothing to click | Not in Stillhet yet: turn Stillhet off from the top-bar switch to use it |
 | Something broke that nothing handles | Toast, error: stays until closed, a repeat counts on it | Something went wrong |
 | The connection dropped | a quiet line at the end of the top bar, grey dot, until it reconnects | Offline · retrying |
 

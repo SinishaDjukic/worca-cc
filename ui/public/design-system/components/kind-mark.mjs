@@ -132,9 +132,13 @@ export function timeline({ ticks, view = [0, 1], label = 'Timeline' }) {
  * @param {string} o.title
  * @param {string} [o.line]
  * @param {number} [o.at]    how far down its strip, 0 to 1
+ * @param {number} [o.x]     on a TimeTrack (look.time-track): how far along its lane, 0 to 1; past 0.6 it opens to the left
+ * @param {string} [o.id]    the id its mark names in aria-describedby
  */
-export function timelineCard({ mark, title, line = '', at = 0 }) {
-  return `<div class="tline-card" role="status" style="top:${at * 100}%">${mark}<span><b>${esc(title)}</b>${line ? `<span>${esc(line)}</span>` : ''}</span></div>`;
+export function timelineCard({ mark, title, line = '', at = 0, x, id }) {
+  const body = `${mark}<span><b>${esc(title)}</b>${line ? `<span>${esc(line)}</span>` : ''}</span></div>`;
+  if (x == null) return `<div class="tline-card" role="status" style="top:${at * 100}%">${body}`;
+  return `<div class="tline-card is-track${x > 0.6 ? ' is-flip' : ''}"${attrs({ id, role: 'tooltip', style: `--tc-x:${+(x * 100).toFixed(2)}%` })}>${body}`;
 }
 
 /**
