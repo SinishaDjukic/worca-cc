@@ -40,6 +40,8 @@
   const words = (t, c) => c.esc(t || '').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`(.+?)`/g, '<code>$1</code>');
   // `only: 'demo' | 'live'`: a sample row the live kind does not draw, or a live row the demo does not
   const liveOn = () => !!window.RailWorld?.live;
+  // `sample: true` (docs/rail/settings.md `set.not-live`): a section or a row still sample data; live, it reads NotLiveRow
+  const notLive = (x) => !!x.sample && liveOn();
   const vis = (x, c) => R.shows(x.min, c.level) && (!x.flag || R.prefs.flag(x.flag)) && (!x.when || x.when(c.sv)) && (!x.only || (x.only === 'live') === liveOn());
   const textOf = (v, sv) => (typeof v === 'function' ? v(sv) : v);
 
@@ -70,6 +72,7 @@
   const same = (a, b) => String(a ?? '') === String(b ?? '');
   const defaultWords = (k, v, fallback) => (SM.VALUE_WORDS[k] ? SM.VALUE_WORDS[k](v, SM.STATE) : fallback ?? (v === '' || v == null ? 'none' : String(v)));
   function changesOf(r, sv, c) {
+    if (notLive(r)) return [];
     const out = [], seen = new Set();
     const add = (k, name, start, words) => { if (seen.has(k)) return; seen.add(k); if (!same(sv[k], start)) out.push({ name: SM.VALUE_NAMES[k] || name, was: defaultWords(k, start, words) }); };
     for (const [k, p] of Object.entries(r.picks || {})) add(k, p.name || r.name, p.value, optText(p, p.value, sv));
@@ -102,6 +105,7 @@
   }
   const chipOf = (x, sv, c) => { const t = x.chip && textOf(x.chip, sv); return t ? c.R.chip({ text: t, title: x.chipTip || '' }) : ''; };
   function row(r, sv, c, where) {
+    if (notLive(r)) return c.R.notLiveRow({ name: r.name, help: r.help || '' });   // before anything registers: nothing to click
     const key = 'more:' + where + '/' + r.name, open = sv.__open === key;
     const folds = !!r.moreList || (r.more || []).some((m) => vis(m, c));   // nothing to open, no Customise
     const inner = open ? (r.more || []).filter((m) => vis(m, c)).map((m) => row(m, sv, c, where + '/' + r.name)).join('') : '';
@@ -233,6 +237,7 @@
     }
     const locked = sec.lock && !R.atLevel(level, sec.lock.level) ? sec.lock.why : '';
     return dialogHtml(sv, c) + sec.sections.filter((s) => vis(s, c)).map((s) => {
+      if (notLive(s)) return c.R.settingsSection({ icon: '', title: s.bare ? '' : s.title, meta: '', action: '', rows: c.R.notLiveRow({}) });
       const where = id + '/' + s.title, cc = { ...c, locked };
       const head = (s.actions || []).filter((a) => vis(a, c)).map((a) => act(a, where, cc)).join('');
       const rows = ((c.extra && c.extra[s.title]) || '') + (s.rows || []).filter((r) => vis(r, c)).map((r) => row(r, sv, cc, where)).join('');
