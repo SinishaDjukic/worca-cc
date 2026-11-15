@@ -40,7 +40,7 @@ test('a failed load says so with Try again, and Try again shows the turns', asyn
 });
 
 test('send: dev\'s message route; refused, one toast with its words, the text kept, nothing written', async () => {
-  // a refusal that is not a turn in flight: in an open chat that one queues instead (F-a2-01, stillhet-chat-app-host-5)
+  // a refusal that is not a turn in flight: in an open chat that one queues instead (F-a2-01, stillhet-chat-queue-host)
   const { w, d, calls } = await liveHost({ write: (url) => (url.endsWith('/messages') ? [409, { error: 'chat is archived' }] : [200, {}]) });
   await go(w, '#chat/ask_1');
   const before = store(w);
