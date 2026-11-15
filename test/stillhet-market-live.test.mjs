@@ -301,3 +301,44 @@ test('refresh reads both lists again once started; nothing before', async () => 
   await r.live.refresh();
   assert.ok(r.calls.slice(n).some((c) => c.url === '/api/plugins'));
 });
+
+// the first sync (#1298): dev seeds the builtin with lastSync: null and never syncs it
+const fresh = (edit = (ms) => ms) => { const l = structuredClone(MK_LISTS); l['/api/marketplaces'].marketplaces = edit(l['/api/marketplaces'].marketplaces.map((m) => (m.builtin ? { ...m, lastSync: null, plugins: [] } : m))); return l; };
+const settleAll = async () => { for (let i = 0; i < 10; i++) await tick(); };
+
+test('a never-synced builtin is synced once after the first read: one POST to /api/marketplaces/:id/refresh, then a re-read', async () => {
+  const r = rig({ lists: fresh() });
+  await r.live.load();
+  assert.equal(r.live.firstSyncing(), true, 'the sync is in flight');
+  await settleAll();
+  assert.deepEqual(r.writes().map((c) => [c.method, c.url]), [['POST', '/api/marketplaces/worca-official/refresh']]);
+  const after = r.calls.slice(r.calls.findIndex((c) => c.method === 'POST') + 1).map((c) => c.url);
+  assert.ok(after.includes('/api/marketplaces') && after.includes('/api/plugins'), 'both lists read again after it');
+  await r.live.refresh(); await settleAll();
+  assert.equal(r.writes().length, 1, 'never a second time in the same page load');
+  assert.equal(r.live.firstSyncing(), false, 'tried and answered: the page draws the catalogue, or No plugins yet');
+  assert.deepEqual(r.toasts, [], 'no toast');
+});
+
+test('a synced builtin, a never-synced added source and a needsGit builtin send no sync', async () => {
+  const added = rig({ lists: fresh((ms) => ms.map((m) => (m.builtin ? { ...m, lastSync: { sha: SHA, at: '2026-11-14T10:00:00.000Z' } } : { ...m, lastSync: null }))) });
+  await added.live.load(); await settleAll();
+  assert.deepEqual(added.writes(), []);
+  assert.equal(added.live.firstSyncing(), false);
+  const git = rig({ lists: fresh((ms) => ms.map((m) => (m.builtin ? { ...m, needsGit: true } : m))) });
+  await git.live.load(); await settleAll();
+  assert.deepEqual(git.writes(), []);
+  assert.equal(git.live.firstSyncing(), false);
+});
+
+test('a failed first sync is not retried on the next refresh, and firstSyncing() is false after it', async () => {
+  const lists = fresh();
+  const r = rig({ lists, answer: (m, u) => { if (m === 'POST') { lists['/api/marketplaces'].marketplaces[0].lastError = { message: 'git clone failed', at: '2026-11-15T10:00:00.000Z' }; return [200, { marketplace: lists['/api/marketplaces'].marketplaces[0] }]; } return null; } });
+  await r.live.load(); await settleAll();
+  assert.equal(r.writes().length, 1);
+  assert.equal(r.live.firstSyncing(), false, 'tried and answered: no longer loading');
+  assert.equal(r.live.data().markets[0].error, 'git clone failed', 'the failure shows through the market');
+  await r.live.refresh(); await settleAll();
+  assert.equal(r.writes().length, 1, 'not retried');
+  assert.deepEqual(r.toasts, []);
+});

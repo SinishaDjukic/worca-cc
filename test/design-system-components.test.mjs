@@ -226,6 +226,19 @@ test('notFound: names what was asked for, escapes it, and gives one way on (nav.
   assert.equal(n.querySelector('button').dataset.nav, 'projects');
 });
 
+test('notInStillhet: names the place, where it is today, escapes both, one Back to Chat (nav.not-live)', () => {
+  const n = dom(C.notInStillhet({ place: '<Insights>', today: 'Statistics & <b>Team</b>', attrs: { 'data-nav': 'chat' } }));
+  assert.equal(n.querySelector('.el-t').textContent, '<Insights> is not in Stillhet yet');
+  assert.match(n.textContent, /With Stillhet off, it is Statistics & <b>Team<\/b>\./);
+  assert.equal(n.querySelector('b'), null, 'the words are escaped, never markup');
+  const bs = n.querySelectorAll('button');
+  assert.equal(bs.length, 1);
+  assert.equal(bs[0].textContent, 'Back to Chat');
+  assert.equal(bs[0].dataset.nav, 'chat');
+  assert.doesNotMatch(n.textContent, /No .* yet/);
+  assert.match(dom(C.notInStillhet({ place: 'Lab' })).textContent, /It has no Stillhet screen yet\./, 'with no today it says it has no screen yet');
+});
+
 test('resetViewTool: its tooltip is where it goes, or why it is off (list.reset-view)', () => {
   assert.deepEqual(C.resetViewTool({ changed: true, to: 'all tasks' }), { id: 'reset', text: 'Reset view', off: false, help: 'Back to all tasks' });
   const off = C.resetViewTool({ changed: false, to: 'all tasks' });
