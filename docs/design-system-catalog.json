@@ -1562,9 +1562,18 @@
         "a Settings section all sample on a live Stillhet"
       ],
       "rules": [
-        "a row is its name and the words, a section all sample its one line; no value and nothing to click; the demo keeps its sample (set.not-live)"
+        "a row is its name and the words, a section all sample its one line; no value and nothing to click; the demo keeps its sample (set.not-live)",
+        "a real control not wired yet is disabled, shows its value and gives NOT_LIVE_SENTENCE as its reason; its section's meta says it once (set.not-live)"
       ],
-      "example": "Not in Stillhet yet: turn Stillhet off from the top-bar switch to use it"
+      "example": "Not in Stillhet yet: turn Stillhet off from the top-bar switch to use it",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/not-live-row.mjs#NOT_LIVE_SENTENCE",
+          "needs": [
+            "a live Settings control not wired yet: its reason"
+          ]
+        }
+      ]
     },
     {
       "name": "KindMark",

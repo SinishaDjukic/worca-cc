@@ -139,6 +139,35 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     { key: 'shapeRequirements', name: 'Requirements first', stage: 'Experimental', on: false, say: 'A medium or large Shaper task first agrees what must be true, then plans', why: 'Adds a step to Shaper' },
   ];
   const flagsChanged = () => FLAGS.filter((f) => !f.locked && window.RailUI.prefs.flag(f.key) !== f.on);
+  // ---- Labs, live: exactly the flags GET /api/flags returns, read-only (B1.3). A switch shows the server's `on`; a flags
+  // frame (copied into prefs by the live adapter) reads the list again, and the old list stays drawn until it answers. ----
+  const liveOn = () => !!window.RailWorld?.live;
+  const labs = { status: 'loading', flags: [], busy: false, again: false, watching: false };
+  function readFlags() {
+    if (labs.busy) { labs.again = true; return; }
+    labs.busy = true;
+    const done = (status, flags) => {
+      labs.busy = false;
+      if (status === 'ready' || labs.status !== 'ready') Object.assign(labs, { status, flags: status === 'ready' ? flags : labs.flags });
+      window.dispatchEvent(new Event('rail-settings'));
+      if (labs.again) { labs.again = false; readFlags(); }
+    };
+    Promise.resolve().then(() => window.fetch('/api/flags'))
+      .then((r) => (r && r.ok ? r.json() : null))
+      .then((j) => (Array.isArray(j?.flags) ? done('ready', j.flags) : done('failed')), () => done('failed'));
+  }
+  function liveFlags() {
+    if (!labs.watching) { labs.watching = true; window.RailUI.prefs.onChange(() => readFlags()); readFlags(); }
+    return labs;
+  }
+  const STAGE_ORDER = ['beta', 'experimental'];
+  const stageRank = (st) => { const i = STAGE_ORDER.indexOf(st); return i < 0 ? STAGE_ORDER.length : i; };
+  function liveLabsGroups() {
+    const flags = liveFlags().flags, stages = [...new Set(flags.map((f) => String(f.stage || '')))].sort((a, b) => stageRank(a) - stageRank(b));
+    return stages.map((st) => ({ title: st ? st[0].toUpperCase() + st.slice(1) : '', rows: flags.filter((f) => String(f.stage || '') === st).map((f) => ({ name: f.title, say: f.description, sw: { flag: f.key, on: !!f.on, real: true } })) }));
+  }
+  const DEMO_LABS = ['Beta', 'Experimental'].map((stage) => ({ title: stage, rows: FLAGS.filter((f) => f.stage === stage).map((f) => ({ name: f.name, say: f.locked ? `${f.say}. ${f.locked}` : f.say, sw: { flag: f.key, on: f.on, why: f.why, locked: f.locked } })) }));
+  const liveLabsMeta = () => ({ loading: 'Loading the features', failed: 'Could not read the features' })[liveFlags().status] || window.RailUI.NOT_LIVE_SENTENCE;
 
   // ---- values that are not a row's own ----
   const STATE = { ver: '1.19.0', latest: '1.19.0', upd: 'latest', updTried: false, gsShown: false, proxyLogin: true, claudeIn: true, chats: 38, worktrees: 12, attach: '140 MB',
@@ -421,12 +450,12 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     ] },
 
     experimental: { title: 'Labs', meta: 'Features still being shaped. Each switch applies to everyone using this Worca.', sections: [
-      { title: 'Features', meta: () => `Labs features may change, break or disappear in any release.${flagsChanged().length ? '' : ' Reset all waits until you change one.'}`, actions: [
-        { label: 'Reset all', help: 'Every feature back to its default; asks first', off: () => (flagsChanged().length ? '' : 'Nothing to reset: every feature is at its default'),
+      { title: 'Features', meta: () => (liveOn() ? liveLabsMeta() : `Labs features may change, break or disappear in any release.${flagsChanged().length ? '' : ' Reset all waits until you change one.'}`), actions: [
+        { label: 'Reset all', help: 'Every feature back to its default; asks first', off: () => (liveOn() ? window.RailUI.NOT_LIVE_SENTENCE : flagsChanged().length ? '' : 'Nothing to reset: every feature is at its default'),
           confirm: { text: 'Turn every Labs feature back to its default?', yes: 'Reset all', then: () => { for (const f of flagsChanged()) window.RailUI.prefs.setFlag(f.key, f.on); return 'Labs: back to its defaults'; } } },
       ], rows: [
         { name: 'Guide', say: 'How Labs works, and what a stage means', acts: [{ label: 'Open', say: window.RailWould('open the Labs guide in a new tab') }] },
-      ], groups: ['Beta', 'Experimental'].map((stage) => ({ title: stage, rows: FLAGS.filter((f) => f.stage === stage).map((f) => ({ name: f.name, say: f.locked ? `${f.say}. ${f.locked}` : f.say, sw: { flag: f.key, on: f.on, why: f.why, locked: f.locked } })) })) },
+      ], get groups() { return liveOn() ? liveLabsGroups() : DEMO_LABS; } },
     ] },
 
     runs: { title: 'Tasks', meta: 'How tasks spend, start and wait.', sections: [
