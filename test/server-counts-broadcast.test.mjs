@@ -157,3 +157,28 @@ test('pipeline delete broadcasts pipelines-changed to EVERY client', async () =>
 
   a.ws.close(); b.ws.close();
 });
+
+test('a settled run\'s pipelines-changed carries runId, pipelineId and key', async () => {
+  const { runs } = await import('../ui/server.mjs');
+  const { projectKey } = await import('../src/core/store.mjs');
+  const dir = await freshRepo();
+  const add = await fetch(`${httpBase}/api/projects`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: `bcast-run-${Date.now()}`, path: dir }),
+  });
+  assert.ok(add.status < 300, `project add: ${add.status}`);
+  const a = connect();
+  await open(a.ws);
+  try {
+    const start = await fetch(`${httpBase}/api/run`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ projectDir: dir, prompt: 'x', mock: true }),
+    });
+    assert.equal(start.status, 200);
+    const { runId } = await start.json();
+    const pipelineId = await waitFor(() => runs.get(runId)?.orch?.state?.id, 30000);
+    await fetch(`${httpBase}/api/stop`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ runId }) });
+    const f = await waitFor(() => a.msgs.find((m) => m.type === 'pipelines-changed' && m.runId === runId), 30000);
+    assert.deepEqual({ ...f }, { type: 'pipelines-changed', action: 'updated', runId, pipelineId, key: projectKey(dir) });
+  } finally {
+    a.ws.close();
+  }
+});

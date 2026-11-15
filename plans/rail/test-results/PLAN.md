@@ -301,7 +301,7 @@ Each is blocked by its decision. "Drop" closes it with its row in the gate basel
 
 **A. No action without backend**
 - **Rule:** a live control never shows demo data, a would-answer, or a success that was only local.
-- **A1 (B1.10):** a gate test reads every RailWould site (70 grep hits in 14 Stillhet files; the owner counts 66). It also reads the 19 `wire to` rows in `plans/rail/stillhet-wiring.md` § Dev surfaces.
+- **A1 (B1.10):** a gate test reads every demo-answer call site in Stillhet code (70 grep hits in 14 files; the owner counts 66), each of which must never reach a live control. It also reads the 19 `wire to` rows in `plans/rail/stillhet-wiring.md` § Dev surfaces.
   - It classifies each site as wired, refused with a reason, not in Stillhet yet (words only), or prototype-only.
   - The live instance fails on any site that is not classified.
   - The baseline can only shrink.
@@ -411,6 +411,13 @@ These are the outcomes of this plan and the findings that wave 3 must take in. U
 - **Not-live rows replaced:** the hidden Setup assistant and Show again from B1.1 and B1.2 come back live.
 
 ---
+
+
+### Gate follow-ups (B1 combined gate, 2026-11-15)
+- **B3 add:** `/api/history` rows carry the stored `pr_url`/`pr_state`, so the first paint shows the known PR state instead of "Ready · Create PR" for 10–25 s until the PR batch arrives (classic Runs has the same lag) · S · `ui/routes/history/history.mjs`, `src/core/artifacts.mjs` listAllPipelines.
+- **B3 add (design call):** a stage head whose step ended blocked shows blocked, not a tick (`stagesOf` in `live/task-page.mjs` changes the head only for `ask`).
+- **Gate setup:** test instances need a way to answer a live review gate (a run stopped at the gate), and Claude CLI login under their own HOME, to cover O1/O4 and real replies.
+- **#1314:** wrong attribution (three people share one 229-item timeline) → fix run on #1314's branch before merge.
 
 ## 5. Timeline
 | Step | Lane S (server/live) | Lane U (UI/page) | Gate |
