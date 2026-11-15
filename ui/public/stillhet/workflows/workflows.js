@@ -4,6 +4,7 @@
 // workflow's page tells it as a WorkflowStory (Simple's drawing); Advanced and Expert show dev's real graph under it, one
 // pick from the story, and change a step's model and effort in place; Expert edits it by hand on dev's canvas (Rail's
 // skin, the bar becomes its Library, Auto-align is dev's auto-layout). Everything else is made and changed in a chat.
+// Edit a copy by hand opens a never-saved draft; Save creates it under a free name (F-5-08).
 (function () {
   const R = window.RailUI;
   const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -213,10 +214,27 @@
     const gEl = document.getElementById('wf-graph'); if (gEl) window.RailGraph?.mount(gEl, isLive() && x.tpl && x.draft ? { ...shown(x), tpl: LIVE().preview(x.id, x.draft) } : shown(x), { width: gEl.clientWidth || 900 });   // thing.one-telling: the story says what a step does
     window.RailConversation?.dock(document.getElementById('wf-dock'), { kind, title: x.title, chat: '' });
   }
+  // a copy's name (F-5-08, D2): "T copy", then "T copy N", the first no workflow (saved or a draft) nor a refused try has
+  const copyName = (title, tried = new Set()) => {
+    const taken = (t) => tried.has(t.toLowerCase()) || src().workflow.some((w) => w.title.toLowerCase() === t.toLowerCase());
+    let name = `${title} copy`; for (let n = 2; taken(name); n += 1) name = `${title} copy ${n}`; return name;
+  };
   function copyOf(kind, x) {   // each copy its own id and name: a second copy is "copy 2"
     let n = 1; while (src()[kind].some((y) => y.id === `${x.id}-copy${n > 1 ? `-${n}` : ''}`)) n += 1;
-    const s = n > 1 ? `-${n}` : '', c = { ...structuredClone(x), id: `${x.id}-copy${s}`, title: `${x.title} copy${n > 1 ? ` ${n}` : ''}`, own: true, team: false, pinned: false, tasks: 0, merged: 0, running: false, from: 'A copy of yours' }; src()[kind].push(c); return c;
+    const s = n > 1 ? `-${n}` : '', c = { ...structuredClone(x), id: `${x.id}-copy${s}`, title: kind === 'workflow' ? copyName(x.title) : `${x.title} copy${n > 1 ? ` ${n}` : ''}`, own: true, team: false, pinned: false, tasks: 0, merged: 0, running: false, from: 'A copy of yours' }; src()[kind].push(c); return c;
   }
+  // Edit a copy by hand (F-5-08, D1): a never-saved draft of the copy, as Build it by hand makes; nothing is sent until Save.
+  // In the live kind it keeps the source's graph (tpl, nodeIds, chain), so Save posts the copy, not a task→end stub.
+  function copyDraft(x) {
+    let n = 1; while (src().workflow.some((y) => y.id === `copy-${n}`)) n += 1;
+    const name = copyName(x.title);
+    const c = { id: `copy-${n}`, title: name, copyName: name, copyOf: x.id, copyFrom: x.title, own: true, team: false, pinned: false, domain: x.domain,
+      what: x.what, tasks: 0, merged: 0, running: false, from: 'A copy of yours', fresh: true, steps: structuredClone(x.steps), loops: structuredClone(x.loops),
+      ...(x.tpl ? { tpl: x.tpl, nodeIds: [...x.nodeIds], chain: x.chain, agentsByKey: x.agentsByKey, scriptsByKey: x.scriptsByKey } : {}),
+      draft: { title: name, steps: structuredClone(x.steps), loops: structuredClone(x.loops), changes: 0, ...(x.tpl ? { base: x.tpl } : {}) } };
+    src().workflow.push(c); return c;
+  }
+  const copyRename = (x) => (x.copyOf ? { rename: (tried) => copyName(x.copyFrom, tried) } : {});
   function act(id, kind, x) {
     if (id === 'use') { window.RailConversation?.handOver({ mode: 'task', workflow: x.title, about: { kind: 'Workflow', name: x.title } }); return; }
     if (id === 'copy' && LIVE()) { liveCopy(x, (nid) => `workflows/workflow:${nid}`); return; }
@@ -226,9 +244,10 @@
     if (id === 'export') { exporting = true; draw(); page.querySelector('[data-confirm="yes"]')?.focus(); return; }
     if (id === 'delete') { confirm = { kind, x }; draw(); }
   }
-  // Use as a template in the live kind (D16): POST /api/workflows with no id and the name "X copy", then open the copy
+  // Use as a template in the live kind (D16): POST /api/workflows with no id and the first free name, "X copy" or
+  // "X copy N" (F-5-08; a 409 from a race takes the next one), then open the copy
   function liveCopy(x, to) {
-    LIVE().act('copy-workflow', { tpl: x.tpl, name: `${x.title} copy`, id: x.id }).then((a) => {
+    LIVE().copy({ id: x.id, tpl: x.tpl, name: copyName(x.title), rename: (t) => copyName(x.title, t) }).then((a) => {
       if (!a.ok) { if (a.error !== 'busy') say(`Could not copy ${x.title}: ${a.error}`); return; }   // a second press while the copy runs says nothing
       const w = a.data?.workflow || {};
       LIVE().refresh('workflows').then(() => { window.RailShell.go(to(w.id)); say(`${w.name}: yours to change`); });
@@ -271,10 +290,9 @@
       if ((hit = on('[data-wf-edit]'))) { window.RailShell.go(`workflows/edit:${hit.dataset.wfEdit}`); return; }
       if (on('[data-wf-retry]')) { LIVE()?.load(); draw(); return; }
       if (importing && (hit = on('[data-wf-import] [data-confirm]'))) { const { resolve } = importing, yes = hit.dataset.confirm === 'yes'; importing = null; if (resolve) resolve(yes); else if (yes) say(window.RailWould('ask for a file to import')); draw(); return; }   // the demo's sample file says what the app does
-      if ((hit = on('[data-wf-copy-edit]')) && LIVE()) { liveCopy(src().workflow.find((w) => w.id === hit.dataset.wfCopyEdit), (nid) => `workflows/edit:${nid}`); return; }
-      if ((hit = on('[data-wf-copy-edit]'))) { const c = copyOf('workflow', src().workflow.find((w) => w.id === hit.dataset.wfCopyEdit)); window.RailShell.go(`workflows/edit:${c.id}`); say(`${c.title}: yours to change`); return; }
+      if ((hit = on('[data-wf-copy-edit]'))) { const x = src().workflow.find((w) => w.id === hit.dataset.wfCopyEdit); if (!x) return; const c = copyDraft(x); window.RailShell.go(`workflows/edit:${c.id}`); say(`${c.title}: a draft until you save it`); return; }   // F-5-08: nothing is sent
       if (current.startsWith('edit:') && ed) {
-        if (on('[data-draft-discard]')) { const x = src().workflow.find((w) => w.id === ed.id); const was = ed, before = x.draft; if (x.fresh) { const i = src().workflow.indexOf(x); src().workflow.splice(i, 1); ed = null; window.RailShell.go('workflows'); say(`Discarded ${x.title}`, () => { src().workflow.splice(i, 0, x); ed = was; window.RailShell.go(`workflows/edit:${x.id}`); }); return; } if (LIVE()) LIVE().discard('workflow', ed.id); else delete x.draft; ed = null; draw(); say(`Discarded the draft of ${x.title}`, () => { x.draft = before; if (!ed || ed.id === x.id) ed = was; draw(); }); return; }
+        if (on('[data-draft-discard]')) { const x = src().workflow.find((w) => w.id === ed.id); const was = ed, before = x.draft; if (x.fresh) { LIVE()?.abandon('workflow', x.id); const i = src().workflow.indexOf(x); src().workflow.splice(i, 1); ed = null; window.RailShell.go('workflows'); say(`Discarded ${x.title}`, () => { src().workflow.splice(i, 0, x); ed = was; window.RailShell.go(`workflows/edit:${x.id}`); }); return; } if (LIVE()) LIVE().discard('workflow', ed.id); else delete x.draft; ed = null; draw(); say(`Discarded the draft of ${x.title}`, () => { x.draft = before; if (!ed || ed.id === x.id) ed = was; draw(); }); return; }
         if (on('[data-ed-back]')) { window.RailShell.go(`workflows/workflow:${ed.id}`); return; }
         if (on('[data-ed-undo]')) { const s = ed.past.pop(); if (s) { ed.next.push(snap()); Object.assign(ed, s); edDraft(); draw(); } return; }
         if (on('[data-ed-redo]')) { const s = ed.next.pop(); if (s) { ed.past.push(snap()); Object.assign(ed, s); edDraft(); draw(); } return; }
@@ -284,7 +302,7 @@
         if (on('[data-ed-more]')) { edMore = !edMore; draw(); return; }   // remembered while you edit
         if (on('[data-ed-ask]')) { window.RailConversation?.handOver({ about: { kind: 'Workflow', name: ed.wf.title }, ph: `What should change in ${ed.wf.title}?` }); return; }
         if ((hit = on('[data-ed-try]'))) { window.RailConversation?.handOver({ mode: 'task', workflow: ed.wf.title, about: { kind: `Step ${ed.wf.steps[+hit.dataset.edTry][0]}`, name: ed.wf.title }, ph: `Which task should ${ed.wf.steps[+hit.dataset.edTry][0]} try?` }); return; }
-        if (on('[data-ed-save], [data-draft-save]') && LIVE()) { const x = src().workflow.find((w) => w.id === ed.id); x.draft ||= blank('workflow', ed.wf); LIVE().save('workflow', ed.id).then((a) => { if (a.ok) ed = null; draw(); if (a.text) say(a.text); }); return; }   // D6: checked here, then POST /api/workflows
+        if (on('[data-ed-save], [data-draft-save]') && LIVE()) { const x = src().workflow.find((w) => w.id === ed.id); x.draft ||= blank('workflow', ed.wf); LIVE().save('workflow', ed.id, copyRename(x)).then((a) => { if (a.ok) ed = null; if (location.hash === `#workflows/edit:${x.id}`) draw(); if (a.text) say(a.text); }); return; }   // a saved new one went to its page: a redraw here would send it back to the list   // D6: checked here, then POST /api/workflows
         if (on('[data-ed-save], [data-draft-save]')) { const x = src().workflow.find((w) => w.id === ed.id); x.draft ||= blank('workflow', ed.wf); saveDraft(x); ed.past = []; ed.next = []; ed.laid = false; draw(); say(`Saved ${x.title}`); return; }
         if ((hit = on('[data-ed-remove]'))) { const k = +hit.dataset.edRemove, name = ed.wf.steps[k][0];
           if (src().workflow.find((w) => w.id === ed.id)?.chain === false) { say(`Could not remove ${name}: ${BRANCHES}`); return; }   // D7
@@ -317,9 +335,9 @@
       if ((hit = on('[data-menu]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); return; }
       if (!x) return;
       if ((hit = on('[data-wf-sw]'))) { const k = hit.dataset.wfSw; touch(kind, x, (d) => { d[k] = !d[k]; }); draw(); say(x.draft ? `${x.title}: kept as a draft` : `${x.title}: back to what is saved`); return; }
-      if (on('[data-draft-save]') && LIVE()) { LIVE().save(kind, x.id).then((a) => { draw(); if (a.text) say(a.text); }); return; }   // D6, D15
+      if (on('[data-draft-save]') && LIVE()) { LIVE().save(kind, x.id, copyRename(x)).then((a) => { draw(); if (a.text) say(a.text); }); return; }   // D6, D15
       if (on('[data-draft-save]')) { saveDraft(x); draw(); say(`Saved ${x.title}: tasks run it from now`); return; }
-      if (on('[data-draft-discard]')) { const before = x.draft; if (x.fresh) { const l = src()[kind], i = l.indexOf(x); l.splice(i, 1); say(`Discarded ${x.title}`, () => { l.splice(i, 0, x); draw(); }); window.RailShell.go('workflows'); return; } if (LIVE()) LIVE().discard(kind, x.id); else delete x.draft; draw(); say(`Discarded the draft of ${x.title}`, () => { x.draft = before; draw(); }); return; }
+      if (on('[data-draft-discard]')) { const before = x.draft; if (x.fresh) { LIVE()?.abandon(kind, x.id); const l = src()[kind], i = l.indexOf(x); l.splice(i, 1); say(`Discarded ${x.title}`, () => { l.splice(i, 0, x); draw(); }); window.RailShell.go('workflows'); return; } if (LIVE()) LIVE().discard(kind, x.id); else delete x.draft; draw(); say(`Discarded the draft of ${x.title}`, () => { x.draft = before; draw(); }); return; }
       if ((hit = on('[data-wf-run]')) && LIVE()) { LIVE().runCases(x.id).then((a) => say(a.text === 'busy' ? `${x.title}: its cases are already running` : a.text)); return; }   // D12: dev's script bench
       if ((hit = on('[data-wf-run]'))) { say(window.RailWould(`run the ${x.cases} saved ${x.cases === 1 ? 'case' : 'cases'} of ${x.title}`)); return; }
       if ((hit = on('[data-confirm]'))) {

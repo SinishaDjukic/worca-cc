@@ -54,6 +54,8 @@
   const CHEV = P('M6 9.5l6 6 6-6'); const X = P('M7 7l10 10M17 7 7 17'); const MERGE = P('M6 7.7v8.6M6 7.7c0 2.4 2.5 4.3 9.8 4.3');
   const DOTS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg>';
   const card = (html) => `<section class="rc-card">${html}</section>`;
+  // form.composer-queue: while Worca replies, the rows above the composer on its rail, and Queue beside Stop
+  const queueDock = () => `<div class="convo-dock">${R.composerQueue({ items: [{ key: 'q1', text: 'And add the totals row' }] })}${R.composer({ placeholder: 'Ask Worca…', tools: '', send: R.composerQueueButton() + R.button({ label: 'Stop', kind: 'primary', iconOnly: true, icon: R.icon('stop', 14), attrs: { title: 'Stops the reply' } }) })}</div>`;
   const MODEL_ROWS = [{ id: 'opus', label: 'Opus 5.5' }, { id: 'sonnet', label: 'Sonnet 5.5' }, { id: 'gpt', label: 'Codex 5', engine: 'codex' }, { id: 'gemini-pro', label: 'Gemini Pro', engine: 'gemini' }, { id: 'copilot/claude-sonnet', label: 'Claude Sonnet 5.5', engine: 'copilot' }];   // comp.menu-sub's sample catalog   // a StatusLine lives in a card
   const more = R.button({ label: 'More for this run', iconOnly: true, title: false, icon: DOTS });
   const EX = {
@@ -127,6 +129,8 @@
     HandedChip: [['Sent to Chat from a page', R.handedChip({ kind: 'Workflow', name: 'Lean' })]],
     ExpandFrame: [['A drawing in its column', R.expandFrame({ name: 'the graph', body: '<div style="height:80px"></div>' })]],
     Composer: [['Ask, with its sentence', R.composer({ placeholder: 'Ask Worca…', sentence: 'Ask on billing-api', tools: '', send: R.button({ label: 'Send', kind: 'primary' }) })]],
+    ComposerQueue: [['On the composer\'s rail, while Worca replies', queueDock()], ['Waiting', R.composerQueue({ items: [{ key: 'q1', text: 'And add the totals row' }] })], ['Full', R.composerQueue({ items: [{ key: 'q1', text: 'And add the totals row' }, { key: 'q2', text: 'Name the file by date' }, { key: 'q3', text: 'Then open a PR' }] })], ['Paused after a Stop', R.composerQueue({ items: [{ key: 'q1', text: 'And add the totals row' }], paused: 'stopped' })]],
+    ComposerQueueButton: [['While Worca replies: Queue beside Stop; the rows on the composer\'s rail', queueDock()]],
     WatchStageAdvance: [['A keyed line: it plays once when it reaches a later stage (motion.stage-advance)', R.stageBar({ labels: ['Plan', 'Build', 'Review', 'PR', 'Merged'], stage: 1, key: 'gallery', step: [3, 3] })]],
     StageBar: [['Bare: the line alone, a stage list names the stages', R.stageBar({ labels: ['Plan', 'Build', 'Review', 'PR', 'Merged'], stage: 2, tone: 'ask', step: [2, 3], bare: true })], ['Deepens up to where it is',R.stageBar({ labels: ['Plan', 'Build', 'Review', 'PR', 'Merged'], stage: 2, tone: 'ask', step: [2, 3] })], ['Failed in Build', R.stageBar({ labels: ['Plan', 'Build', 'Review', 'PR', 'Merged'], stage: 1, tone: 'fail', step: [3, 4] })], ['Merged', R.stageBar({ labels: ['Plan', 'Build', 'Review', 'PR', 'Merged'], stage: 4, tone: 'merged' })]],
     StatusLine: [['Ready, its one step', card(R.statusLine({ dot: R.statusDot({ tone: 'is-green' }), word: 'Ready to merge', detail: 'Checks pass · a reviewer approved', action: `<div class="rc-side">${R.splitButton({ main: { label: 'Merge PR', kind: 'primary' }, moreLabel: 'More actions', chevron: CHEV })}${more}</div>` }))],

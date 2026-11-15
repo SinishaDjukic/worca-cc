@@ -1704,6 +1704,30 @@
       ]
     },
     {
+      "name": "ComposerQueue",
+      "code": "ui/public/design-system/components/kind-mark.mjs#composerQueue",
+      "kind": "telling",
+      "needs": [
+        "what you sent while Worca replies, waiting for the reply to end"
+      ],
+      "rules": [
+        "form.composer-queue"
+      ],
+      "example": "Sends when the reply finishes"
+    },
+    {
+      "name": "ComposerQueueButton",
+      "code": "ui/public/design-system/components/kind-mark.mjs#composerQueueButton",
+      "kind": "acting",
+      "needs": [
+        "queuing what you wrote while Worca replies, without Enter"
+      ],
+      "rules": [
+        "form.composer-queue"
+      ],
+      "example": "Queue"
+    },
+    {
       "name": "StageBar",
       "code": "ui/public/design-system/components/kind-mark.mjs#stageBar",
       "kind": "telling",
