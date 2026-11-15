@@ -47,13 +47,14 @@ function sameValue(a, b) {
   const ka = Object.keys(a), kb = Object.keys(b);
   return ka.length === kb.length && ka.every((k) => Object.prototype.hasOwnProperty.call(b, k) && sameValue(a[k], b[k]));
 }
+const PR_TOKEN_SPAN = 2 ** 40;   // a page's random start token; far below MAX_SAFE_INTEGER after any number of +1s
 function samePr(a, b) {
   if (a == null || b == null) return a == null && b == null;
   if (typeof a !== 'object' || typeof b !== 'object') return a === b;
   const { stale: _sa, ...ra } = a, { stale: _sb, ...rb } = b;
   return sameValue(ra, rb);
 }
-export function startLive({ fetch, WebSocket, location, world, host = {}, prefs = null, setTimeout, clearTimeout = () => {}, now = Date.now, openChat = () => '', hidden = () => false, toast = () => {}, open = undefined, go = () => {}, download = () => {}, workflowsChanged = () => {}, marketChanged = () => {}, projectsChanged = () => {}, insightsChanged = () => {}, insightsModel = () => globalThis.window?.RailInsightsModel, storage = null, openSource = undefined, on = () => {} }) {
+export function startLive({ fetch, WebSocket, location, world, host = {}, prefs = null, setTimeout, clearTimeout = () => {}, now = Date.now, openChat = () => '', hidden = () => false, toast = () => {}, open = undefined, go = () => {}, download = () => {}, workflowsChanged = () => {}, marketChanged = () => {}, projectsChanged = () => {}, insightsChanged = () => {}, insightsModel = () => globalThis.window?.RailInsightsModel, storage = null, openSource = undefined, on = () => {}, random = Math.random }) {
   let sources = {}, loaded = false, listFailed = false, stopped = false, sock = null, backoff = BACKOFF_MS, reconnect = 0, queue = [], unread = [], asked = 0;
   const live = new Map(), timers = {}, stamp = {}, stale = new Set();
   const progress = new Map();   // R-ux-12: each live run's place among its stages, from its `state` frames (runProgress)
@@ -114,8 +115,9 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
   // (app.js requestHistoryPr). Asked once per history load, after the socket is up; a new skeleton carries the PRs
   // already known (app.js carryHistoryPr), so an open PR never reads Ready (Create PR) in between.
   const prs = new Map();
-  let prToken = 0, prsFailed = false;   // a failed lookup is asked again by a task page's Try again (retryPrs)
-  let prsEnded = 0;   // D7: the last lookup whose `done` frame came (the server ends each one with `{token, done: true, items: []}`)
+  // F-3-01 (#1362): dev broadcasts the frames to every socket, so the token starts random per page load, +1 per lookup
+  let prToken = 1 + Math.floor(random() * PR_TOKEN_SPAN), prsFailed = false;   // a failed lookup is asked again by a task page's Try again (retryPrs)
+  let prsEnded = prToken;   // D7: the last lookup whose `done` frame came (the server ends each one with `{token, done: true, items: []}`)
   const prKey = (projectKey, id) => `${projectKey || ''}|${id}`;
   function withPrs(h) {
     if (!h || !Array.isArray(h.pipelines) || !prs.size) return h;
@@ -256,7 +258,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
 
   function moveTask(raw) {
     const t = taskOfLive(raw, { now: now(), projects: projects() });
-    if (world.find(t.id)) world.move(t.id, t.case, t.detail, { title: t.title, cost: t.cost, unread: t.unread, over: !!t.over });   // a calm Failed sorts into Recent
+    if (world.find(t.id)) world.move(t.id, t.case, t.detail, { title: t.title, cost: t.cost, unread: t.unread, over: !!t.over, workflow: t.workflow });   // a calm Failed sorts into Recent
     else world.add(t);
   }
   // A run frame moves its task; a run that is not one of dev's Needs-you inputs (an agent generation, a run already over)
