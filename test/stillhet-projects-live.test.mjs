@@ -414,6 +414,22 @@ test('F-6-18: no GET for a removed item: not in its undo window, not when projec
   assert.equal(gets('docs-3333cccc'), d0 + 4, 'and its page reads it again');
 });
 
+test('F-6-18 review: a move keeps the old key\'s row (and its Locate form) until the new key is listed, reads nothing under it meanwhile, then hides it', async () => {
+  const r = rig({ answer: (m) => (m === 'PATCH' ? [200, { project: { key: 'shop-7777aaaa' } }] : null) });
+  r.live.detail('shop-1111aaaa'); await tick(); await tick();
+  const gets = () => r.calls.filter((c) => c.method === 'GET' && c.url.includes('shop-1111aaaa')).length, was = gets();
+  const mv = r.live.relocate('shop-1111aaaa', '/src/shop2');
+  await tick(); await tick();
+  assert.ok(!r.live.hidden().has('shop-1111aaaa'), 'while the new key is not listed the old row stays: a redraw keeps the Locate form');
+  assert.equal(r.live.pending('shop-1111aaaa'), 'Moving…', 'its label holds');
+  r.live.frame({ type: 'projects-changed' }); r.live.detail('shop-1111aaaa'); await tick();
+  assert.equal(gets(), was, 'nothing is read under the old key meanwhile');
+  r.setWorld({ ...WORLD(), projects: [...WORLD().projects, { id: 'shop-7777aaaa', name: 'shop', devPath: '/src/shop2' }] });   // the store lists both for a moment
+  await r.fire();
+  assert.equal((await mv).key, 'shop-7777aaaa');
+  assert.ok(r.live.hidden().has('shop-1111aaaa'), 'once the new key is listed the old one is hidden until the store drops it');
+});
+
 test('source scan (R-arch-3): the pages hold none of dev\'s route or field names', () => {
   for (const f of ['projects/projects.js', 'workspaces/workspaces.js']) {
     const src = readFileSync(new URL(`../ui/public/stillhet/${f}`, import.meta.url), 'utf8');

@@ -66,7 +66,7 @@ const lastSeg = (v) => (String(v).split(/[/:]/).filter(Boolean).pop() || '').rep
 const plural = (n, one) => `${n} ${n === 1 ? one : `${one}s`}`;
 
 export function startProjectsLive({ fetch, toast = () => {}, refresh = () => {}, world = () => ({ projects: [], spaces: [] }), go = () => {}, on = () => {}, setTimeout: later = globalThis.setTimeout, clearTimeout: cancel = globalThis.clearTimeout }) {
-  const busy = new Map(), hide = new Map(), gone = new Set(), fresh = new Map(), details = new Map(), spaceDetails = new Map(), clones = new Map();
+  const busy = new Map(), hide = new Map(), gone = new Set(), moving = new Set(), fresh = new Map(), details = new Map(), spaceDetails = new Map(), clones = new Map();
 
   async function send(id, args = {}) {
     const [, , build] = PROJECT_ACTIONS[id], [method, url, body] = build(args);
@@ -94,8 +94,8 @@ export function startProjectsLive({ fetch, toast = () => {}, refresh = () => {},
       look();
     });
   }
-  /** What may be read: listed in the store, not waiting for its undo window, not removed. */
-  const readable = (id) => (lists('projects', id) || lists('spaces', id)) && !hide.has(id) && !gone.has(id);
+  /** What may be read: listed in the store, not waiting for its undo window, not removed, not the old key of a move. */
+  const readable = (id) => (lists('projects', id) || lists('spaces', id)) && !hide.has(id) && !gone.has(id) && !moving.has(id);
   /** One action at a time per target: a second press while one runs answers { ok:false, text:'' } and sends nothing. */
   async function once(target, action, fn) {
     if (busy.has(target)) return { ok: false, text: '' };
@@ -133,9 +133,11 @@ export function startProjectsLive({ fetch, toast = () => {}, refresh = () => {},
     if (!a.ok) return a.status === 400 ? { ok: false, field: plainWhy(a) } : refused('relocate', was, a);
     refresh('projects', 'sync');
     const to = a.data.project?.key || key;
-    if (to !== key) { details.delete(key); gone.add(key); }   // the old key is never read again
+    if (to !== key) { details.delete(key); moving.add(key); }   // the old key is never read again; its row stays (the Locate form with it) until the new key is listed
     gone.delete(to);
-    return { ok: true, ...(await listed('projects', to) ? { key: to } : {}), text: `${was} now uses ${path}` };
+    const at = await listed('projects', to);
+    if (to !== key) { moving.delete(key); gone.add(key); }
+    return { ok: true, ...(at ? { key: to } : {}), text: `${was} now uses ${path}` };
   });
   const ORIGIN = { sync: ['sync', (n) => `Synced ${n}`], fetch: ['fetch', (n) => `Checked ${n}`], git: ['git', (n) => `${n} uses git now; the first task commits what is there`] };
   const origin = (key, act) => once(key, ORIGIN[act][0], async () => {
