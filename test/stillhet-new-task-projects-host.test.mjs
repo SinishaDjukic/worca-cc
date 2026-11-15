@@ -256,3 +256,53 @@ test('the empty host takes no clicks and draws nothing: #app\'s fixed, see-throu
   assert.match(cs.borderTopWidth || '0', /^0(px)?$/, 'no border');
   v.close();
 });
+
+// ---- F-gb21-01: the first open after load keeps its focus; Esc closes from anywhere ----
+// the form's own live loads (branches, the workflows and models catalogs) land after it opened and repaint it
+const heldOpen = async () => {
+  let gate = null, release = () => {};
+  const { w, d, calls } = await liveHost({ sources: clone(SOURCES), hold: () => gate, read: (u) => (u.startsWith('/api/branches') ? [200, { branches: ['main', 'dev'], current: 'main', runs: [] }] : null) });
+  await go(w, '#runs', 120);
+  gate = new Promise((r) => { release = r; });
+  const before = calls.length;
+  w.RailCenters.maker('tasks').newPick('form'); await settle(5);
+  return { w, d, calls: () => calls.slice(before).map((c) => c.url), release: async () => { gate = null; release(); await settle(150); } };
+};
+
+test('the first open: the live loads landing keep the focus, caret and selection in What should it do (F-gb21-01)', async () => {
+  const { w, d, calls, release } = await heldOpen();
+  assert.ok(calls().length, `the form's own loads are held: ${JSON.stringify(calls())}`);
+  const t = d.querySelector('#cc-text');
+  assert.equal(d.activeElement, t, 'it opens on the text field');
+  type(w, d, '#cc-text', 'Add a pager'); t.setSelectionRange(4, 5);
+  await release();
+  const now = d.querySelector('#cc-text');
+  assert.notEqual(now, t, 'the loads did repaint the form');
+  assert.equal(d.activeElement, now, 'the focus is still in the text field');
+  assert.deepEqual([now.selectionStart, now.selectionEnd], [4, 5], 'caret and selection kept');
+  assert.equal(now.value, 'Add a pager', 'the typed text is in the field');
+});
+
+test('text typed straight after the first open lands in the field once the loads land (F-gb21-01)', async () => {
+  const { w, d, release } = await heldOpen();
+  await release();
+  const t = d.activeElement;
+  assert.equal(t?.id, 'cc-text', 'typing goes to the text field');
+  t.value = 'Fix the login'; t.dispatchEvent(new w.Event('input', { bubbles: true }));
+  w.RailPulse.refresh(); await settle(40);
+  assert.equal(d.querySelector('#cc-text').value, 'Fix the login');
+});
+
+test('Esc with the focus on body closes the open form; once closed, the page has Esc back (F-gb21-01)', async () => {
+  const { w, d } = await liveHost({ sources: clone(SOURCES) });
+  await go(w, '#runs', 120);
+  await openTask(w);
+  d.activeElement.blur();
+  assert.equal(d.activeElement, d.body);
+  key(w, d.body, 'Escape'); await settle(20);
+  assert.equal(d.querySelector('#center-dlg .viewer-modal'), null, 'Esc closed it');
+  let heard = 0; d.addEventListener('keydown', (e) => { if (e.key === 'Escape') heard++; });
+  d.activeElement.blur();
+  key(w, d.body, 'Escape'); await settle(20);
+  assert.equal(heard, 1, 'with no form open, Esc goes on to the page');
+});
