@@ -167,9 +167,15 @@ function avatar() {
   const tip = lines.length ? lines.join('\n\n') : !c.usage.length ? 'No provider connected' : c.usage.some((u) => u.noQuota) ? 'No quota set: see Usage and costs' : 'Billed per token: see Usage and costs';
   return `<span class="pz-ava-wrap" title="${esc(tip)}">${rs.map((r, i) => gring(r.pct, 'pz-ring-' + i, r.tone)).join('')}<span class="pz-ava">${esc(initials())}</span><i class="acct-dot pz-ava-dot" aria-hidden="true">${R.icon('away', 8)}</i></span>`;
 }
-const people = () => C().identity?.people || ['Emil Angelov'];
+// Who is looking. Live: dev's GET /api/whoami, read once at boot, by dev's rule (R.describeAccount): a shared sign-in names
+// the person and has the identity card, an operator only its name, local, nobody or a failed call "Profile". Never a demo
+// name. The demo: its case's people, and the picker in the tools panel.
+let acct = R.describeAccount(null);
+if (LIVE) fetch('/api/whoami').then((r) => (r.ok ? r.json() : null)).catch(() => null).then((who) => { acct = R.describeAccount(who); render(); });
+const identity = () => (LIVE ? (acct.kind === 'shared' ? { via: acct.via } : null) : C().identity);
+const people = () => (LIVE ? [acct.short] : C().identity?.people || ['Sam Rivera']);
 const personName = () => people()[ui.person] || people()[0];
-const initials = () => personName().split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+const initials = () => (LIVE ? acct.initials : personName().split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase());
 const awayRow = () => M.awayRow({ ...C().away, status: ui.awayStatus });
 const isAway = () => awayRow().state === 'away';
 // The sidebar's foot: the avatar. The sidebar holds places only; what keeps running is in Vitals, a new version in Updates.
@@ -286,7 +292,7 @@ function popover() {
     { id: 'clearread', text: 'Clear read', help: 'Moves every read update to Cleared, in any view; what still waits for you stays' },
     { id: 'select', text: 'Select', help: 'Tick updates to mark read or clear several at once' }, { sep: true },
     { id: 'settings', text: 'Notification settings', help: 'Settings › Notifications: what reaches you' }], 'right')}</span>`;
-  return R.panelFrame({ label: 'Pulse', cls: `pz-popover${inCls('pop')}`, head: `${R.tabs({ cls: 'pz-ptabs', items: [{ id: 'vitals', label: 'Now', count: vitalsCount(), selected: ui.popTab === 'vitals', tip: 'What is true right now: it changes by itself and cannot be cleared' }, { id: 'updates', label: 'Updates', count: shown().length, selected: ui.popTab === 'updates', tip: `What happened: read, select and clear, like runs. The count follows the sentence below. Kept for 90 days${C().identity ? '. Read and cleared are yours; others on this sign-in keep their own' : ''}` }], hooks: (t) => ({ 'data-ptab': t.id, title: t.tip }) })}${more}`, body: listNow() ? pulseState() : ui.popTab === 'vitals' ? vitalsSections() : updatesPanel() });
+  return R.panelFrame({ label: 'Pulse', cls: `pz-popover${inCls('pop')}`, head: `${R.tabs({ cls: 'pz-ptabs', items: [{ id: 'vitals', label: 'Now', count: vitalsCount(), selected: ui.popTab === 'vitals', tip: 'What is true right now: it changes by itself and cannot be cleared' }, { id: 'updates', label: 'Updates', count: shown().length, selected: ui.popTab === 'updates', tip: `What happened: read, select and clear, like runs. The count follows the sentence below. Kept for 90 days${identity() ? '. Read and cleared are yours; others on this sign-in keep their own' : ''}` }], hooks: (t) => ({ 'data-ptab': t.id, title: t.tip }) })}${more}`, body: listNow() ? pulseState() : ui.popTab === 'vitals' ? vitalsSections() : updatesPanel() });
 }
 
 // ---- the profile menu: Worca's own menu (index.html #acct-menu); its spend card is now Usage and costs, the last row ----
@@ -299,7 +305,7 @@ function acctMenu() {
   const val = gone ? 'Used up' : top ? (top.pct >= 100 ? 'Reached' : `${top.pct}%`) : c.budget ? M.usd(c.budget.spent) : '';
   const lvl = LEVELS_UI.find((l) => l[0] === R.prefs.mode()), away = awayRow();
   // Who is looking, only on a shared sign-in; your team's new setup, until you look at it; the way past a blocked budget.
-  const id = c.identity ? `<div class="mcard id-card" role="group" aria-label="Signed in as"><span class="mc-k">Signed in as</span><b>${esc(personName())}</b><small>${esc(c.identity.via)}</small></div>` : '';
+  const idn = identity(), id = idn ? `<div class="mcard id-card" role="group" aria-label="Signed in as"><span class="mc-k">Signed in as</span><b>${esc(LIVE ? acct.name : personName())}</b><small>${esc(idn.via)}</small></div>` : '';
   const team = c.teamSetup && !ui.teamSeen ? R.accountItem({ label: 'Your team updated the recommended setup', cls: 'pz-team', mark: R.statusDot({ tone: 'is-amber' }), value: 'Review', attrs: { 'data-team': true, title: 'Opens Settings › Team policy; the note goes once you have looked' } }) : '';
   const raise = gone ? R.accountItem({ label: 'Raise budget', mark: svg('up', 16, 'mi-ic'), value: M.usd(c.budget.limit), attrs: { 'data-land': 'runs|Budget', title: 'Runs pause until the budget resets. Opens Settings › Tasks, on Budget' } }) : '';
   const sub = (id) => ({ 'data-sub': id, 'aria-haspopup': 'menu', 'aria-expanded': String(ui.sub === id) });
@@ -1196,7 +1202,7 @@ window.RailPulse = {
   playAway: () => { if (reducedMotion()) { toast('The screensaver is off under reduced motion'); render(); return; } showAway(); },
   // On a shared sign-in each person keeps their own read and cleared; a local install has one person.
   person: (name) => {
-    if (!C().identity) { toast('A local install has one person: pick the Every kind case'); document.getElementById('person').value = people()[0]; render(); return; }
+    if (!identity() || LIVE) { toast('A local install has one person: pick the Every kind case'); document.getElementById('person').value = people()[0]; render(); return; }
     ui.people[ui.person] = { read: ui.read, cleared: ui.cleared };
     ui.person = Math.max(0, people().indexOf(name));
     const saved = ui.people[ui.person] || { read: [], cleared: [] }; ui.read = saved.read; ui.cleared = saved.cleared;

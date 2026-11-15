@@ -3,7 +3,7 @@
 // kind sends nothing. The host is test/helpers/stillhet-projects-host.mjs.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { projectsHost, KEYS, sent, gate, noWould, undoTimers, settle, go, closeHosts } from './helpers/stillhet-projects-host.mjs';
+import { projectsHost, KEYS, PJ_SOURCES, sent, gate, noWould, undoTimers, settle, go, closeHosts } from './helpers/stillhet-projects-host.mjs';
 import { saidText } from './helpers/stillhet-chat-live-host.mjs';
 import { stillhetHost } from './helpers/stillhet-host.mjs';
 import { PROJECT_ACTIONS } from '../ui/public/stillhet/live/projects-live.mjs';
@@ -68,6 +68,16 @@ test('every project-side pending label shows on its control, disabled, while dev
   const projectSide = Object.entries(PROJECT_ACTIONS).filter(([id, [, label]]) => label && !id.startsWith('space-') && !['scan', 'answer', 'open-editor', 'clone'].includes(id)).map(([id]) => id);
   assert.deepEqual(projectSide.filter((id) => !PRESSED.has(id)), [], 'every project-side pending label was pressed');
   assert.deepEqual(h.w.__would, []);
+});
+
+test('F-6-03: a git project dev reads with remote:null (state unknown) is Only on this computer: Link a repository… and ⋯ Link a remote…', async () => {
+  const sync = { projects: { ...PJ_SOURCES.sync.projects, [KEYS.local]: { base: 'main', remote: null, state: 'unknown', settings: { beforeRun: true } } } };
+  const h = await projectsHost({ hash: `#projects/${KEYS.local}`, sources: { sync } });
+  assert.match(page(h.d).textContent, /Only on this computer/);
+  assert.doesNotMatch(page(h.d).textContent, /Up to date/);
+  assert.equal(page(h.d).querySelector('[data-pj-act]')?.textContent.trim(), 'Link a repository…');
+  page(h.d).querySelector('[data-menu="pj-more"]').click();
+  assert.match(page(h.d).querySelector('[data-menu-pick="pj-more|remote"]')?.textContent || '', /Link a remote…/);
 });
 
 test('Rename sends PATCH {name}; Locate sends {path} and goes to the new key; a 400 is the field\'s error; Add sends POST /api/projects', async () => {

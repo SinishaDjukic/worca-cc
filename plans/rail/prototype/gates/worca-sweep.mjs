@@ -1,4 +1,4 @@
-// Run: node plans/rail/prototype/gates/worca-sweep.mjs
+// Run: node plans/rail/prototype/gates/worca-sweep.mjs [--workers N]
 // The one Worca's gate (index.html): today's shell and pages with Wave 1 in them. Every route, at 1280, 760 and 375px,
 // in both themes: no script error, no sideways scroll, the top bar one row, one way back at a time, the sidebar marking
 // where you are. Then the journeys between the pieces: a run row opens its run (same title), the trail goes back to
@@ -7,10 +7,24 @@
 // The run page and Pulse keep their own gates (run-page-sweep, pulse-sweep, ds-check); this one checks how they join.
 import { chromium } from 'playwright';
 import { indexUrl, pageUrl, buildBundles } from './target.mjs';
+import { runUnits, workerCount } from './pool.mjs';
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
 buildBundles();   // the app's CSS and the Rail components for file:// (target.mjs)
 const URL_ = indexUrl();
+// From disk the shell draws a route at once, on hashchange (ui/public/stillhet/shell/shell.js route), so a route change waits
+// for the page to have handled its hash and painted a frame, not a fixed time; a step that already holds does not wait its
+// 120 ms. Against the app, data comes over the network: the fixed waits stay.
+const DISK = !process.env.STILLHET_TARGET;
+const SEEN = () => { window.__doc = Math.random(); window.__hc = 0; addEventListener('hashchange', () => setTimeout(() => { window.__hc++; }, 0)); };   // after every listener, the shell's too
+const go = async (p, hash, ms) => {
+  const was = await p.evaluate(() => [location.href, window.__doc, window.__hc]).catch(() => [null]);
+  await p.goto(`${URL_}#${hash}`);
+  if (!DISK) return p.waitForTimeout(ms);
+  const [href, doc] = await p.evaluate(() => [location.href, window.__doc]);
+  if (doc === was[1] && href !== was[0]) await p.waitForFunction((n) => window.__hc > n, was[2]);   // the same page: its hashchange handled
+  await p.evaluate(() => new Promise((r) => requestAnimationFrame(() => r())));
+};
 global.window = { RailWould: (p) => 'Would ' + p };   // the prototype host's demo sentence (ui/public/stillhet/demo/demo-actions.js); the model calls it at load
 await import('../../../../ui/public/stillhet/settings/settings-model.js');
 const SECTIONS = window.SettingsModel.GROUPS.flatMap((g) => g.items);
@@ -23,13 +37,14 @@ const RUNS = await scout.evaluate(() => window.RunCardModel.cases.map((c) => c.i
 const PLACES = await scout.evaluate(() => Object.entries(window.RailPlaces || {}).flatMap(([k, m]) => (m.sample ? [`${k}/${m.sample}`] : []))); await scout.close();   // each place built on Rail: one of its pages too
 const MOVED = new Set(['stats', 'team-metrics', 'workspaces']);   // Insights now: an old link lands there (its own step below)
 const ROUTES = ['runs', ...TODAY.filter((t) => !MOVED.has(t)), ...PLACES, ...RUNS.map((c) => 'run/' + c), ...SECTIONS.map((s) => 'settings/' + s)];
-let checks = 0;
-for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
+const units = [];   // each theme and width, each overlay width, and Usage: independent, so they run side by side (pool.mjs)
+for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) units.push(async (add) => { let checks = 0;
   const p = await b.newPage({ viewport: { width: w, height: 860 }, colorScheme: scheme, reducedMotion: 'reduce' });
   await p.addInitScript(() => { try { localStorage.setItem('worca-rail.mode', 'expert'); } catch { /* none */ } });   // the gates walk every place: Expert
+  await p.addInitScript(SEEN);
   p.on('pageerror', (e) => add('script error', `${scheme}/${w}: ${e}`));
   for (const r of ROUTES) {
-    await p.goto(`${URL_}#${r}`); await p.waitForTimeout(80);
+    await go(p, `${r}`, 80);
     const f = await p.evaluate((r) => {
       const out = [];
       if (document.documentElement.scrollWidth > innerWidth + 1) out.push(['sideways scroll', '']);
@@ -51,7 +66,7 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
     checks++;
   }
   // one mock: in every Pulse case the badge and the Runs list's Needs you agree (build.one-mock)
-  await p.goto(`${URL_}#runs`); await p.waitForTimeout(100);
+  await go(p, `runs`, 100);
   for (const pc of await p.evaluate(() => [...document.querySelectorAll('#pulse-case option')].map((o) => o.value))) {
     const got = await p.evaluate((v) => { const s = document.getElementById('pulse-case'); s.value = v; s.dispatchEvent(new Event('change', { bubbles: true })); document.querySelector('#runs-root [data-menu="show"]')?.click();
       const hint = document.querySelector('#runs-root [data-pick="show|needs"]')?.textContent.match(/\d+/)?.[0] || '0'; document.querySelector('#runs-root [data-menu="show"]')?.click(); return { list: +hint, badge: window.PulseModel && window.RailWorld.tops().filter((r) => r.section === 'needs' && !r.ticket).length, shown: +(document.querySelector('.pz-pulse-b .badge, .pz-pulse-b [class*="badge"]')?.textContent || 0) }; }, pc);
@@ -62,7 +77,9 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   await p.evaluate(() => { const s = document.getElementById('pulse-case'); if (!s) return; s.value = 'afternoon';   // the prototype's demo tools only: the app has none
     s.dispatchEvent(new Event('change', { bubbles: true })); });
   // the journeys
-  const step = async (name, fn, expect) => { const ok = await p.evaluate(fn); await p.waitForTimeout(120); const got = await p.evaluate(expect); if (!got) add('a journey breaks', `${scheme}/${w}: ${name}`); checks++; };
+  const step = async (name, fn, expect) => { await p.evaluate(fn); let got;
+    if (DISK && expect.constructor.name !== 'AsyncFunction') got = await p.evaluate(expect).catch(() => false);   // already so: no wait (not yet drawn: the old wait below)
+    if (!got) { await p.waitForTimeout(120); got = await p.evaluate(expect); } if (!got) add('a journey breaks', `${scheme}/${w}: ${name}`); checks++; };
   await p.goto(`${URL_}#runs`); await p.evaluate(() => localStorage.removeItem('worca-rail.runs.view')); await p.reload(); await p.waitForTimeout(100);
   await step('the sentence changes the list', () => { document.querySelector('#runs-root [data-menu="by"]')?.click(); document.querySelector('#runs-root [data-pick="by|project"]')?.click(); }, () => /by project/.test(document.querySelector('#runs-root .list-sentence')?.textContent || ''));
   await step('a task row leads to its card in its chat', () => document.querySelector('#runs-root [data-open="run:r1"]')?.click(), () => location.hash === '#chat/c1' && !!document.querySelector('#route-chat .is-flash'));
@@ -77,7 +94,7 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
     await step('the arrow closes it', () => document.querySelector('[data-bar-house]')?.click(), () => !document.querySelector('.bar-quick'));
   }
   // the one bar: Chat's list is in it; a row opens its conversation, and a task opens from its tree (nav.one-bar)
-  await p.goto(`${URL_}#chat`); await p.waitForTimeout(120);
+  await go(p, `chat`, 120);
   if (await p.evaluate(() => document.getElementById('side-rail').dataset.bar !== 'chat' || document.getElementById('bar-chat').hidden)) add('Chat\'s list is not in the bar', `${scheme}/${w}`);
   await step('a chat row opens its chat', () => document.querySelector('#bar-chat [data-open="chat:c2"]')?.click(), () => location.hash === '#chat/c2' && !!document.querySelector('#route-chat .convo') && !!document.querySelector('#bar-chat [data-row="chat:c2"].is-current'));
   await step('a task in the tree leads to its card', () => document.querySelector('#bar-chat [data-open="task:t1"]')?.click(), () => location.hash === '#chat/c1' && document.getElementById('side-rail').dataset.bar === 'chat' && !!document.querySelector('#route-chat .is-flash'));
@@ -87,7 +104,7 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   await step('asking from a task goes to its chat', () => { const t = document.querySelector('#task-dock [data-composer-t]'); t.value = 'Why?'; document.querySelector('[data-dock-send]').click(); }, () => location.hash === '#chat/c1');
   // the hidden bar: a 56px strip with the work's summary, nothing sticking out; hover opens it over the page; a menu keeps it open
   if (w > 760) {
-    await p.goto(`${URL_}#chat/c1`); await p.waitForTimeout(150);
+    await go(p, `chat/c1`, 150);
     await p.evaluate(() => document.querySelector('[data-bar-hide]')?.click()); await p.mouse.move(w - 40, 400); await p.waitForTimeout(260);
     const strip = await p.evaluate(() => { const b0 = document.getElementById('side-rail').getBoundingClientRect(), r = { left: b0.left, width: (() => { const s = document.getElementById('side-rail'), m = /inset\(0px (-?[\d.]+)px/.exec(getComputedStyle(s).clipPath); return s.getBoundingClientRect().width - (m ? Math.max(0, +m[1]) : 0); })(), get right() { return this.left + this.width; } }, out = [...document.querySelectorAll('#side-rail *')].filter((e) => e.checkVisibility?.({ opacityProperty: true, visibilityProperty: true }) && e.getClientRects().length && (e.nodeName === 'svg' || [...e.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim()))).filter((e) => { const b = e.getBoundingClientRect(); return b.width && (b.right > r.right + 1 || b.left < r.left - 1); }).map((e) => e.className || e.tagName); return { w: Math.round(r.width), mini: document.querySelectorAll('#bar-mini .bar-strip-i').length, out: [...new Set(out)].slice(0, 4) }; });
     if (strip.w !== 56 || !strip.mini || strip.out.length) add('the hidden bar is not a clean strip', `${scheme}/${w}: ${JSON.stringify(strip)}`);
@@ -114,7 +131,7 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
     checks += 5;
   }
   // the sidebar's width
-  await p.goto(`${URL_}#runs`); await p.waitForTimeout(350);
+  await go(p, `runs`, 350);
   const sideW = await p.evaluate(() => Math.round(document.getElementById('side-rail').getBoundingClientRect().width));
   if (w > 760 && sideW !== 280) add('the sidebar has the wrong width', `${scheme}/${w}: ${sideW}`);
   if (w <= 760) {
@@ -122,22 +139,22 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
     await step('the drawer closes', () => document.getElementById('nav-scrim').click(), () => !document.body.classList.contains('nav-open') && getComputedStyle(document.getElementById('side-rail')).visibility === 'hidden');
   }
   // every list groups by date by default, and a date section folds and comes back
-  await p.goto(`${URL_}#chat/c1`); await p.waitForTimeout(150);
+  await go(p, `chat/c1`, 150);
   await step('the Chat list is by date', () => {}, () => /by\s*date/.test(document.querySelector('#bar-chat .list-sentence')?.textContent || '') && !!document.querySelector('#bar-chat [data-fold-section="day:today"]'));
   await step('a date section folds', () => document.querySelector('#bar-chat [data-fold-section="day:today"]').click(), () => !!document.querySelector('#bar-chat .list-group.is-shut [data-fold-section="day:today"]'));
   await step('and opens again', () => document.querySelector('#bar-chat [data-fold-section="day:today"]').click(), () => !document.querySelector('#bar-chat .list-group.is-shut [data-fold-section="day:today"]'));
   await step('every period but Today starts folded (list.sections-start-folded)', () => {}, () => !!document.querySelector('#bar-chat .list-group.is-shut [data-fold-section="day:older"]'));
   // the flows, as dev has them (plans/rail/chat-cards.md › Parity): a starter arms the composer and sends into its flow
   if (w > 760) {
-    await p.goto(`${URL_}#chat`); await p.waitForTimeout(150);
+    await go(p, `chat`, 150);
     await step('a starter arms the composer with its chip', () => document.querySelector('[data-starter="workflow"]')?.click(), () => /Build workflow/.test(document.querySelector('.composer-intent')?.textContent || ''));
     await step('Build workflow proposes a workflow', () => { const t = document.querySelector('#route-chat [data-composer-t]'); t.value = 'Review every PR twice'; t.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('#route-chat [data-cp-send]').click(); }, async () => { await new Promise((r) => setTimeout(r, 1700)); const crafting = !!document.querySelector('#route-chat .craft'); await new Promise((r) => setTimeout(r, 2900)); return crafting && /Proposed workflow · round 1/.test(document.querySelector('#route-chat').textContent); });   // Crafting first, then the card
-    await p.goto(`${URL_}#chat`); await p.waitForTimeout(150);
+    await go(p, `chat`, 150);
     await step('Shaper proposes, then plans', () => document.querySelector('[data-starter="pin:Shaper"]')?.click(), () => /Shaper/.test(document.querySelector('.composer-intent')?.textContent || ''));
     await step('its proposal starts planning', () => { const t = document.querySelector('#route-chat [data-composer-t]'); t.value = 'Add a CSV export'; t.dispatchEvent(new Event('input', { bubbles: true })); document.querySelector('#route-chat [data-cp-send]').click(); }, async () => { await new Promise((r) => setTimeout(r, 1700)); return document.querySelector('[data-pp-start]')?.textContent === 'Start planning'; });
     await step('clarify, then the requirements, then the plan', () => { document.querySelector('[data-pp-start]').click(); }, async () => { await new Promise((r) => setTimeout(r, 150)); document.querySelector('[data-answer-picks]')?.click(); await new Promise((r) => setTimeout(r, 150)); const req = [...document.querySelectorAll('#route-chat .task-card.cp')].find((c) => /Requirements/.test(c.querySelector('.tp-kicker')?.textContent || '')); req?.querySelector('[data-cp-act$="|0"]')?.click(); await new Promise((r) => setTimeout(r, 200)); return !!req && !!document.querySelector('#route-chat .plan') && /Requirements agreed/.test(document.querySelector('#route-chat').textContent); });   // the requirements to agree, then the plan
     await step('a card acts in place', () => window.RailShell.openRun('run/failed', 'Fix the invoice export'), async () => { await new Promise((r) => setTimeout(r, 300)); document.querySelector('#route-chat [data-card-act]')?.click(); await new Promise((r) => setTimeout(r, 150)); return /^#chat\//.test(location.hash) && /Working/.test(document.querySelector('#route-chat .task-card .tp-kicker')?.textContent || ''); });
-    await p.goto(`${URL_}#chat/c7`); await p.waitForTimeout(150);
+    await go(p, `chat/c7`, 150);
     await step('a settings kind has its own choices', () => document.querySelector('[data-cp-act="a2|0"]')?.click(), () => /Allowed in this chat/.test(document.querySelector('#route-chat').textContent));
   }
   // one store: after each step, Pulse's badge, the bar's Needs you and the store agree (a card, a gate, a restart, a pause)
@@ -146,16 +163,16 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
     const want = window.RailChats.data().chats.filter((c) => !c.archived && runsOf(c).some((id) => ids.has(id))).map((c) => c.id).sort().join(','), g = [...document.querySelectorAll('#bar-chat .list-group')].find((x) => /Needs you/.test(x.textContent.slice(0, 40)));
     return badge === needy.length + (window.RailProjects?.needItems().length || 0) && want === (g ? [...g.querySelectorAll('[data-row^="chat:"]')].map((r) => r.dataset.row.slice(5)).sort().join(',') : ''); };
   if (w > 760 && scheme === 'light') {
-    await p.goto(`${URL_}#chat/c1`); await p.waitForTimeout(200); await p.evaluate((src) => { window.__agree = new Function(`return (${src})()`); }, AGREE.toString());
+    await go(p, `chat/c1`, 200); await p.evaluate((src) => { window.__agree = new Function(`return (${src})()`); }, AGREE.toString());
     await step('one store: Pulse and the bar agree at the start', () => {}, () => window.__agree());
     await step('answering moves the task everywhere', () => document.querySelector('#route-chat [data-answer-go]')?.click(), async () => { await new Promise((r) => setTimeout(r, 300)); return window.__agree(); });
-    await p.goto(`${URL_}#chat/c16`); await p.waitForTimeout(200); await p.evaluate((src) => { window.__agree = new Function(`return (${src})()`); }, AGREE.toString());
+    await go(p, `chat/c16`, 200); await p.evaluate((src) => { window.__agree = new Function(`return (${src})()`); }, AGREE.toString());
     await step('accepting a gate moves it everywhere', () => document.querySelector('#route-chat [data-card-act$="|Accept as is"]')?.click(), async () => { await new Promise((r) => setTimeout(r, 300)); return window.__agree(); });
-    await p.goto(`${URL_}#chat/c4`); await p.waitForTimeout(200); await p.evaluate((src) => { window.__agree = new Function(`return (${src})()`); }, AGREE.toString());
+    await go(p, `chat/c4`, 200); await p.evaluate((src) => { window.__agree = new Function(`return (${src})()`); }, AGREE.toString());
     await step('pausing moves it everywhere', () => document.querySelector('#route-chat [data-card-act$="|Pause"]')?.click(), async () => { await new Promise((r) => setTimeout(r, 300)); return window.__agree(); });    await p.reload(); await p.waitForTimeout(300);   // the steps after start from the seeded store again
   }
   // what a chat started: every task its own row, its icon names the type; a Shaper slice leads to its feature's card
-  await p.goto(`${URL_}#chat/c1`); await p.waitForTimeout(150);
+  await go(p, `chat/c1`, 150);
   await step('a Shaper slice is its own row with its type in the icon', () => {}, () => ['f5a', 'f5b', 'f5c'].every((id) => !!document.querySelector(`#bar-chat [data-row="task:${id}"] .kind-mark`)) && !!document.querySelector('#bar-chat [data-row="task:f5b"] .kind-mark .km-ring') && document.querySelector('#bar-chat [data-row="task:f5b"] .kind-mark').innerHTML.includes(window.RailUI.icon('kind-feature', 11)));
   await step('a slice opens its own stages in its feature card', () => { location.hash = 'chat/c5'; }, async () => { await new Promise((r) => setTimeout(r, 300)); document.querySelector('#route-chat [data-slice-open$="|1"]')?.click(); await new Promise((r) => setTimeout(r, 300)); return document.querySelectorAll('#route-chat .own-stages .stage-line').length === 5; });
   await step('the chat you are on never folds behind Show N more', () => {}, async () => { for (const c of window.RailChats.data().chats.filter((x) => !x.archived)) { location.hash = `chat/${c.id}`; await new Promise((r) => setTimeout(r, 120)); if (!document.querySelector('#bar-chat [aria-current="true"]')) return false; } return true; });   // docs/rail/lists.md › list.fold-keeps-current
@@ -163,7 +180,7 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   await step('an old link to Statistics lands in Insights', () => { location.hash = 'stats'; }, async () => { await new Promise((r) => setTimeout(r, 300)); return location.hash === '#insights/spend' && !!document.querySelector('#route-place .bar-chart'); });
   await step('a place built on Rail: its bar list, its page, its PlaceHead', () => { location.hash = 'projects/billing-api'; }, async () => { await new Promise((r) => setTimeout(r, 300)); return !!document.querySelector('#bar-place .list-row[aria-current]') && !!document.querySelector('#route-place .place-title') && document.querySelector('#bar-head')?.textContent.includes('Projects'); });
   // In view: from a row's ⋯ into the top bar; its mark opens it
-  await p.goto(`${URL_}#chat/c1`); await p.waitForTimeout(150);
+  await go(p, `chat/c1`, 150);
   await step('Keep in view puts a mark in the top bar', () => { document.querySelector('#bar-chat [data-menu="row:task:t1"]')?.click(); document.querySelector('#bar-chat [data-menu-pick="row:task:t1|in-view"]')?.click(); }, () => innerWidth <= 760 || !!document.querySelector('#in-view-slot [data-in-view="task:t1"]'));
   if (w > 760) await step('a mark in view leads to its card', () => document.querySelector('#in-view-slot [data-in-view="task:t1"]')?.click(), () => location.hash === '#chat/c1' && !!document.querySelector('#route-chat .is-flash'));
   if (w > 760) {
@@ -177,10 +194,10 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
     await step('In view lives only in the top bar', () => document.querySelector('#bar-head .bar-house')?.click(), () => !/\bIn view\b/.test(document.getElementById('bar-back')?.textContent || ''));
   }
   // on Chat, Ask worca is off (the page is the chat) and points to its box
-  await p.goto(`${URL_}#chat/c1`); await p.waitForTimeout(150);
+  await go(p, `chat/c1`, 150);
   await step('Ask worca is off on Chat and points to the box', () => document.getElementById('topnav-ask').click(), () => document.getElementById('topnav-ask').getAttribute('aria-disabled') === 'true' && document.getElementById('ask-side').hidden && document.activeElement?.matches('[data-composer-t]'));
   // the side column: push, cover, window; closes at once (on a page that is not the chat)
-  await p.goto(`${URL_}#runs`); await p.waitForTimeout(150);
+  await go(p, `runs`, 150);
   await p.evaluate(() => document.getElementById('topnav-ask').click()); await p.waitForTimeout(250);
   const ask = await p.evaluate(() => ({ w: document.getElementById('ask-side').getBoundingClientRect().width, main: document.querySelector('.main').getBoundingClientRect().width, mainAlone: innerWidth - document.getElementById('side-rail').getBoundingClientRect().width }));
   if (w > 1080 ? ask.main > ask.mainAlone - ask.w + 1 : w > 760 ? ask.main < ask.mainAlone - 1 : ask.w !== w) add('the side column is on the wrong tier', `${scheme}/${w}: ${JSON.stringify(ask)}`);
@@ -190,8 +207,8 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   await p.evaluate(() => { location.hash = 'schedules'; }); await p.waitForTimeout(100);
   if (await p.evaluate(() => !document.querySelector('[data-nav="schedules"]').hidden)) add('the sidebar ignores the mode', `${scheme}/${w}`);
   await step('a place above the mode unlocks', () => document.querySelector('#route-today [data-unlock]')?.click(), () => RailUI.prefs.mode() === 'advanced' && !document.querySelector('#route-today [data-unlock]'));   // Schedules is Advanced's (Wave 3 decision)
-  await p.close();
-}
+  await p.close(); return checks;
+});
 // What lies over a page closes on a click outside and on Esc, at 1280 and 375 (panel.dismiss). Each entry opens one; a new
 // overlay goes here. A click on the top bar's title is a click on nothing.
 {
@@ -209,7 +226,7 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
     ['search results', 'runs', async (p) => { await p.evaluate(() => { document.getElementById('tsearch-open')?.click(); const i = document.querySelector('[data-search]'); i.value = 'web'; i.dispatchEvent(new Event('input', { bubbles: true })); }); }, '.rl-search-res'],
     ['a Settings picker', 'settings/runs', clicks('#route-settings .spick-b'), '.spick-menu'], ['a record\'s ⋯ in Settings', 'settings/models', clicks('#route-settings [data-menu^="svm"]'), '#route-settings .rc-pop > .menu'],
   ];
-  for (const w of [1280, 375]) {
+  for (const w of [1280, 375]) units.push(async (add) => { let checks = 0;
     const p = await b.newPage({ viewport: { width: w, height: 860 }, reducedMotion: 'reduce' });
     await p.addInitScript(() => { try { localStorage.setItem('worca-rail.mode', 'expert'); } catch { /* none */ } });   // the gates walk every place: Expert
     p.on('pageerror', (e) => add('script error', `over/${w}: ${e}`));
@@ -251,11 +268,11 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
     await p.goto(`${URL_}#runs`); await p.reload(); await p.waitForTimeout(60);
     await p.evaluate(() => { document.getElementById('topnav-ask').click(); document.getElementById('topnav-title').click(); }); await p.waitForTimeout(30);
     if (await p.evaluate(() => document.getElementById('ask-side').hidden)) add('Ask worca closed on a click outside', `${w}`);
-    await p.close(); checks += 6;
-  }
+    await p.close(); checks += 6; return checks;
+  });
 }
 // Usage: live, connected providers only, every minute (docs/rail/small-rules.md).
-{
+units.push(async (add) => { let checks = 0;
   const p = await b.newPage({ viewport: { width: 1280, height: 860 }, reducedMotion: 'reduce' });
   await p.addInitScript(() => { try { localStorage.setItem('worca-rail.mode', 'expert'); } catch { /* none */ } });   // the gates walk every place: Expert
   await p.clock.install(); await p.goto(`${URL_}#runs`); await p.clock.runFor(200);
@@ -269,8 +286,9 @@ for (const scheme of ['light', 'dark']) for (const w of [1280, 900, 760, 375]) {
   await p.evaluate(() => { for (const x of ['claude', 'codex', 'copilot', 'gemini', 'openrouter']) window.RailUI.prefs.setConnected(x, false); }); await p.clock.runFor(50);
   if (!n0 || await p.evaluate(() => document.querySelectorAll('.pz-ava-wrap .usage-ring').length)) add('a disconnected provider keeps its ring', `${n0}`);
   if ((await tip()) !== 'No provider connected') add('nothing connected is not said', await tip());
-  await p.close(); checks += 4;
-}
+  await p.close(); checks += 4; return checks;
+});
+const checks = (await runUnits(units, add, workerCount())).reduce((a, n) => a + n, 0);
 await b.close();
 console.log(`${checks} checks · ` + (issues.size ? '\n' + [...issues].map(([k, v]) => `${k}\n   ${v.join('\n   ')}`).join('\n') : 'no glitches found'));
 process.exitCode = issues.size ? 1 : 0;
