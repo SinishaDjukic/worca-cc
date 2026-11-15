@@ -262,6 +262,12 @@ test('F-3-09: GET /api/history rows carry workflowId and workflowName from the r
   assert.equal('workflowName' in lone, false, 'the two keys are independent');
   const one = await (await fetch(`${base}/api/history/${lean.key}/${lean.id}?row=1`)).json();
   assert.equal(one.pipeline.workflowName, 'Lean', 'the one-row read inherits the keys');
+  // a real-size stepper (~10 KB): the server reads only the head of it, where the template sits
+  const nodes = Array.from({ length: 80 }, (_, i) => ({ id: `n_${i}`, kind: 'agent', label: `Step "${i}"`, x: i, y: i }));
+  const big = await seedPipeline(proj, { title: 'Big run', status: 'done', startedAt: '2026-06-04T00:00:00Z', updatedAt: '2026-06-04T00:00:00Z',
+    stepper: { version: 2, template: { id: 'wf_big', name: 'Big "quoted" \\ name' }, graph: { nodes, edges: [] } } });
+  const bigRow = (await (await fetch(`${base}/api/history`)).json()).pipelines.find((p) => p.id === big.id);
+  assert.deepEqual([bigRow.workflowId, bigRow.workflowName], ['wf_big', 'Big "quoted" \\ name']);
 });
 
 test('F-3-09: a run with no template (none, v1, empty, invalid JSON) has no workflowId or workflowName key; its other keys are unchanged', async () => {

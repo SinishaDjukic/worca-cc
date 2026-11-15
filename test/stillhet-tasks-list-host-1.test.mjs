@@ -162,7 +162,9 @@ test('F-3-09: the Tasks center by workflow groups tasks under their own workflow
   const center = () => d.querySelector('#route-runs');
   center().querySelector('[data-menu="c-by"]').click(); await settle(20);
   center().querySelector('[data-menu-pick="c-by|workflow"]').click(); await settle(40);
-  if (center().querySelector('[data-c-quiet]') && ![...center().querySelectorAll('.pg-card')].length) { center().querySelector('[data-c-quiet]').click(); await settle(40); }
+  // every task here is finished, so the groups start folded under the quiet line: open it
+  assert.equal(center().querySelectorAll('.pg-card').length, 0, 'the finished groups start folded');
+  center().querySelector('[data-c-quiet]').click(); await settle(40);
   const cards = () => [...center().querySelectorAll('.pg-card')];
   assert.deepEqual(cards().map((c) => c.querySelector('.pg-t').textContent).sort(), ['Default', 'Lean']);
   // the list as the card's Open leaves it: its "using" word and how many tasks its sections hold
