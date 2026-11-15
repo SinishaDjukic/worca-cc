@@ -583,3 +583,25 @@ test('F-6-03: a git project whose sync block has remote:null reads origin local 
   assert.equal(projectOf({ key: 'a', exists: true, vcs: 'none' }, { state: 'unknown', remote: null }).origin, 'folder');
   assert.equal(projectOf(p, { state: 'unknown', remote: null, fetchError: 'boom' }).origin, 'offline', 'a failed fetch is offline, not local');
 });
+
+test('F-3-09: taskOfSaved takes workflow from the row\'s workflowName; none → \'\'', () => {
+  const lean = taskOfSaved({ id: 'h-lean', status: 'done', workflowId: 'wf_lean', workflowName: 'Lean' }, { now: NOW });
+  assert.equal(lean.workflow, 'Lean');
+  assert.deepEqual(shapeErrors('task', lean), []);
+  for (const row of [{ id: 'h0', status: 'done' }, { id: 'h1', status: 'done', workflowId: 'wf_gone' }, { id: 'h2', status: 'done', workflowName: 7 }]) {
+    const t = taskOfSaved(row, { now: NOW });
+    assert.equal(t.workflow, '', row.id);
+    assert.deepEqual(shapeErrors('task', t), [], row.id);
+  }
+});
+
+test('F-3-09: taskOfLive takes workflow from stepper.template.name; no stepper → \'\'', () => {
+  const lean = taskOfLive({ runId: 'r-lean', status: 'running', stepper: { version: 2, template: { id: 'wf_lean', name: 'Lean' } } }, { now: NOW });
+  assert.equal(lean.workflow, 'Lean');
+  assert.deepEqual(shapeErrors('task', lean), []);
+  for (const run of [{ runId: 'r0', status: 'running' }, { runId: 'r1', status: 'running', stepper: { version: 1, steps: [] } }, { runId: 'r2', status: 'running', stepper: null }]) {
+    const t = taskOfLive(run, { now: NOW });
+    assert.equal(t.workflow, '', run.runId);
+    assert.deepEqual(shapeErrors('task', t), [], run.runId);
+  }
+});
