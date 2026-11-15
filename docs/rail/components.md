@@ -40,6 +40,7 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | An action in the top bar | TopBarAction, a 20px icon with its CountBadge; its name in the tooltip; with news (its count grew) the icon shakes, again every 3.5 s, for as long as Settings › Notifications › Pulse icon says (until you read or act on it by default); never under reduced motion | Ask worca, Pulse |
 | Ask worca in the top bar | AskWorcaMark: a boxy chat bubble with the W for its text; three dots while Worca writes, filled with the W cut out while its column is open; an unread reply is its dot | Ask worca |
 | Starting anything | Composer: the words, then one line with +, the Ask/Task/Schedule sentence, voice and send | Start task |
+| A message waiting for the reply to end | ComposerQueue: Queued rows with Remove, and one line | Sends when the reply finishes |
 | **Choosing** | | |
 | A choice that changes a step | SentencePicker: a picker in the sentence it changes, opening a CompactMenu (in the app, wired to `toggleMenu`, so the menu has keys); groups of choices open as sub-menus (comp.menu-sub); the model picker's items come from `makerItems`, its closed chip's words from `modelText` | `Send [what needs you ▾] to [desktop ▾]` |
 | A choice among a form's or a panel's words | WordPicker, opening a CompactMenu | `dev ▾` base branch, `One PR ▾` |

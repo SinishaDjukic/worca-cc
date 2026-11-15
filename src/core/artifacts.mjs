@@ -2464,7 +2464,24 @@ function wireRoundOf(m) {
     ...(outcome ? { outcome } : {}) };
 }
 
+// F-3-09: the run's workflow, read from the head of its stepper JSON. Parsing the whole stepper (~10 KB on a real
+// run) for every row made GET /api/history measurably slower, so SQL hands over only its first STEPPER_HEAD_CHARS.
+// buildGraphManifest (src/shared/graph/manifest.mjs) writes `{"version":2,"template":{"id":…,"name":…},…`, so the
+// template sits in that head; a head that is the whole stepper (a short one) is parsed in full; anything else has none.
+const STEPPER_HEAD_CHARS = 1024;
+const STEPPER_TEMPLATE_RE = /^\{"version":2,"template":(\{"id":"(?:[^"\\]|\\.)*","name":"(?:[^"\\]|\\.)*"\})/;
+function workflowOfStepperHead(head) {
+  if (typeof head !== 'string') return null;
+  try {
+    const m = STEPPER_TEMPLATE_RE.exec(head);
+    if (m) return JSON.parse(m[1]);
+    if (head.length < STEPPER_HEAD_CHARS) return JSON.parse(head)?.template ?? null;
+  } catch { /* invalid JSON: no workflow */ }
+  return null;
+}
+
 async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
+  const wf = workflowOfStepperHead(row.stepper_head);
   const branchObj = j(row.branch, null);
   const feature = branchObj?.feature ?? (typeof branchObj === 'string' ? branchObj : null);
   const source = branchObj?.source ?? null;
@@ -2504,6 +2521,10 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     // E2/2.3: the done-run caveat (open issues left by a forced loop, End not reached). Only on a v2 row.
     ...(row.open_issue_count ? { openIssueCount: Number(row.open_issue_count) } : {}),
     ...(row.end_reached === 0 ? { endReached: false } : row.end_reached === 1 ? { endReached: true } : {}),
+    // F-3-09: the run's workflow as it started (stepper.template); only listAllPipelines selects stepper_head, and a run
+    // with no template (old, v1, Auto bootstrap) carries neither key.
+    ...(typeof wf?.id === 'string' && wf.id.trim() ? { workflowId: wf.id } : {}),
+    ...(typeof wf?.name === 'string' && wf.name.trim() ? { workflowName: wf.name } : {}),
     retainedWork: retainedWorkFor(row),
     checkout: checkoutRecordsFor(row),
     baseCheck: baseCheckSummaryFor(row),
@@ -2672,6 +2693,7 @@ async function listAllPipelinesNow(opts, { batchSize = 16 } = {}) {
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitResetAt') AS limit_reset_at,
            resume_point IS NOT NULL AS has_resume_point,
+           substr(stepper, 1, ${STEPPER_HEAD_CHARS}) AS stepper_head,
            ${RUN_ENGINE_SQL} AS run_engine,
            ${OUTCOME_NOTE_SQL}
     FROM pipelines
