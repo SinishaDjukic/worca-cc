@@ -330,7 +330,7 @@ test('F-7a-02: run-pipeline naming a saved paused row keeps the pipeline once, l
   assert.ok(r.rows.get('run-r'), 'live');
 });
 
-test('F-7a-02: Stop of a paused run settles at once: its done(stopped) draws the runs part (no Paused, out of Needs you) and reads its saved row (GET /api/history/KEY/ID?row=1)', async () => {
+test('F-7a-02: Stop of a paused run settles at once: its done(stopped) moves its row at once (no Paused, out of Needs you) and reads its saved row (GET /api/history/KEY/ID?row=1)', async () => {
   const r = rig(); await r.tick();
   r.frame({ ...hello, runs: hello.runs.map((x) => (x.runId === 'run-a' ? { ...x, status: 'paused', pauseReason: 'paused by you', pendingQuestion: null } : x)) });
   await r.tick();
@@ -338,8 +338,8 @@ test('F-7a-02: Stop of a paused run settles at once: its done(stopped) draws the
   const n = r.calls.length, loads = r.log.filter((x) => x[0] === 'load').length;
   r.frame({ type: 'state', runId: 'run-a', id: 'pa', status: 'stopped' });
   r.frame({ type: 'done', runId: 'run-a', status: 'stopped' });
-  const drawn = r.log.filter((x) => x[0] === 'load').slice(loads);
-  assert.ok(drawn.some((x) => x[1].includes('runs')), 'the runs part is drawn at once');
+  assert.equal(r.log.filter((x) => x[0] === 'load').length, loads, 'moved, not drawn: no runs draw swaps its row id under a chat card on run-a before the read');
+  assert.ok(r.rows.get('run-a'), 'the row keeps its run id until its saved row is read');
   const held = ['run-a', 'pa'].filter((id) => r.rows.get(id));
   assert.equal(held.length, 1, 'one row for the pipeline');
   const row = r.rows.get(held[0]);

@@ -285,16 +285,13 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
     for (const [k, v] of live) if (k !== raw.runId && v.pipelineId === raw.pipelineId) { live.delete(k); progress.delete(k); gone = true; }
     return gone;
   }
-  // F-7a-02: a settled run the store holds is drawn with the runs part (not moved), so the Tasks list and its Needs you
-  // repaint at once; only when the snapshot still holds its row (in play, or a saved row): a fresh run with no saved row
-  // is moved to its finished case until its row read swaps in the saved row
-  const savedRow = (pid) => !!pid && (sources.history?.pipelines || []).some((p) => p && p.id === pid);
-  function place(raw, settled = false) {
+  // F-7a-02: a settled run is moved to its finished case at its own frame (out of Needs you at once), keeping its run id so
+  // a chat card or page on it reads the new case before any read; its saved row's read (settleRead) swaps in the saved row
+  function place(raw) {
     if (supersede(raw)) { drawRuns(); return; }
     if (!inPlay(raw) && !world.find(raw.runId)) return;
     if (raw.pipelineId && raw.pipelineId !== raw.runId && world.find(raw.pipelineId)) { drawRuns(); return; }
-    if (settled && world.find(raw.runId) && (inPlay(raw) || savedRow(str0(raw.pipelineId)))) drawRuns();
-    else moveTask(raw);
+    moveTask(raw);
   }
   // F-7a-02: a settled run's saved row is read at its own frame (the server's later pipelines-changed for it shares the
   // per-pipeline debounce); with no project key, or a workspace's, the whole history is read, as runRead does
@@ -336,7 +333,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
       }
       const settled = f.type === 'done' || f.type === 'error' || (f.type === 'state' && !inPlay({ kind: raw.kind, status: raw.status }));
       if (settled) settleRow(raw);
-      place(raw, settled);
+      place(raw);
       if (settled) settleRead(raw);
       if (f.type === 'state' && !had && str0(raw.pipelineId)) task.learned(f.runId, raw.pipelineId);
       return;
