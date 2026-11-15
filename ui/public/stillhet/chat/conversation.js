@@ -659,7 +659,7 @@
       return askChanges(x) ? R.planCard({ menu: planMenu, extra, check: 'shape check passed', title: x.title, summary: x.summary, version, roles: x.roles, open: !!x.open, hooks: { roles: { 'data-plan-roles': x.id }, approve: { 'data-plan-approve': x.id }, changes: { 'data-plan-changes': x.id }, full: { 'data-plan-full': x.id } }, full, fullOpen: !!x.fullOpen, attrs: { 'data-anchor': x.id } }) + askChanges(x) : R.planCard({ menu: planMenu, extra, check: 'shape check passed', title: x.title, summary: x.summary, version, roles: x.roles, open: !!x.open, hooks: { roles: { 'data-plan-roles': x.id }, approve: { 'data-plan-approve': x.id }, changes: { 'data-plan-changes': x.id }, full: { 'data-plan-full': x.id } }, full, fullOpen: !!x.fullOpen, attrs: { 'data-anchor': x.id } });
     }
     if (x.t === 'filesgrid') return R.filesCard({ label: x.label || 'Files', files: x.files.map((f) => ({ ...f, view: doOr(`open ${f.name}`, 'file', { threadId: chatId, attId: f.att }), download: doOr(`download ${f.name}`, 'file', { threadId: chatId, attId: f.att }) })) });
-    if (x.t === 'words') { const key = x.key || String(i); return `<p class="convo-words${timeShown === key ? ' is-time-shown' : ''}"${R.attrs({ 'data-words-turn': key, tabindex: '0' })}>${x.parts && LIVE() ? x.parts.map(refPart).join('') : x.html}${R.turnTime({ at: x.at, now: Date.now() })}</p>`; }   // no data-anchor: a timeline tick is a you turn or a card, never a paragraph
+    if (x.t === 'words') { const key = x.key || String(i); return `<div class="convo-words${timeShown === key ? ' is-time-shown' : ''}"${R.attrs({ 'data-words-turn': key, tabindex: '0' })}>${x.md ? R.prose({ text: x.md, doc: document, ...(LIVE() ? { refs: (t) => CL().partsOf(t), chip: chipOf } : {}) }) : x.html}${R.turnTime({ at: x.at, now: Date.now() })}</div>`; }   // panel.rendered-prose: finished words through Prose, in a div; no data-anchor: a timeline tick is a you turn or a card
     if (x.t === 'failed') return R.turnRow({ mark: R.kindMark({ kind: 'chat', tone: 'fail', size: 16 }), text: `<b>${esc(x.text)}</b>${x.details ? ` ${esc(x.detail)}` : ''}`, end: R.button({ label: x.details ? 'Hide details' : 'Details', kind: 'quiet', attrs: { 'data-failed-details': x.id, 'aria-expanded': String(!!x.details) } }) + R.button({ label: 'Try again', kind: 'quiet', attrs: { 'data-failed-retry': x.id } }), attrs: { 'data-anchor': x.id } });   // fail.no-raw: the raw error behind Details
     if (x.t === 'proposal') return proposalHtml(x);
     if (x.t === 'runwith') return runWithHtml(x);
@@ -848,15 +848,14 @@
     size(t);
     root.querySelector('[data-menu="starter-more"] + .menu')?.setAttribute('data-scroll-fade', '');   // it scrolls: the fade says there is more
   }
-  // panel.answer-refs: a ref Worca named becomes a RefChip once dev's resolve confirms it; until then (or never) its words
-  const refPart = (p) => {
-    const words = esc(p.text).replace(/\r\n?|\n/g, '<br>');
-    if (!p.ref) return words;
+  // panel.answer-refs: a ref part's RefChip once dev confirms it, else null (Prose keeps its words, or its link)
+  const chipOf = (p) => {
+    if (!p.ref) return null;
     const r = CL().ref(p.ref.key, chatId);
-    if (!r?.ok) return words;
+    if (!r?.ok) return null;
     if (r.kind === 'run') return R.refChip({ text: r.title || `#${p.ref.id}`, mark: R.kindMark({ kind: 'task', tone: 'idle', size: 14 }), attrs: { 'data-ref-run': r.runId || r.id || p.ref.id } });
     if (r.kind === 'chat') return R.refChip({ text: r.title || 'A chat', mark: R.icon('chat', 14), title: 'Opens the chat', attrs: { 'data-ref-chat': p.ref.id } });
-    if (!/^https:\/\//.test(p.ref.url)) return words;
+    if (!/^https:\/\//.test(p.ref.url)) return null;
     return R.refChip({ text: `${p.ref.label || p.text}${r.title ? ` · ${r.title}` : ''}`, mark: R.icon('pr', 14), title: r.kind === 'pr' ? 'Opens the PR' : 'Opens it in a new tab', attrs: { 'data-ref-url': p.ref.url } });
   };
   const size = (t) => { if (t) { t.style.height = 'auto'; t.style.height = `${Math.max(t.scrollHeight, t.closest('.is-plain') ? 0 : 44)}px`; } };
@@ -1529,6 +1528,9 @@
   // the live chat starts after the first paint (adapter.js): Chat home then asks dev for its pins and draws them
   // a chat opened by its address (a reload, a bookmark, a link) was shown before RailChatLive existed: it is read now
   window.RailAdapter?.ready?.then?.((l) => { if (l && LIVE()) { mounted.forEach((m) => m.reopen()); refreshAll(); } });
+  // panel.rendered-prose: the page's markdown renderer, once (the bundle has already loaded it in the browser); a failure
+  // leaves the plain words, as dev's chat
+  R.loadProse({ doc: document }).then((ok) => { if (ok) refreshAll(); });
   // a seeded chat that was replying or running a command finishes a few seconds after you open it: no row works forever
   const settling = new WeakSet();
   function settle(id) {

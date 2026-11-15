@@ -2002,6 +2002,26 @@
       ]
     },
     {
+      "name": "Prose",
+      "code": "ui/public/design-system/components/prose.mjs#prose",
+      "kind": "showing",
+      "needs": [
+        "Worca's finished words with their formatting: lists, code, links, tables"
+      ],
+      "rules": [
+        "panel.rendered-prose"
+      ],
+      "example": "Two changes fix it, a list and a code block",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/prose.mjs#loadProse",
+          "needs": [
+            "load the renderer once, then redraw"
+          ]
+        }
+      ]
+    },
+    {
       "name": "StagePart",
       "code": "ui/public/design-system/components/kind-mark.mjs#stagePart",
       "kind": "moving",
