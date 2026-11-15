@@ -131,19 +131,22 @@ test('the gear panel shows before and after, each in the Pulse head', () => {
   M.draw(host, { case: 'icons' });
   assert.ok(host.querySelector('[data-stillhet="ui-icon"]'), 'the top bar is drawn too');
   const side = (s) => host.querySelector(`[data-panel="gear"] [data-side="${s}"]`);
-  const inner = [...side('before').querySelectorAll('svg')].map((s) => s.innerHTML);
   const parsed = (html) => { const t = host.ownerDocument.createElement('template'); t.innerHTML = html; return t.content.querySelector('svg').innerHTML; };
-  assert.ok(inner.includes(parsed(R.icon('gear'))));
-  assert.ok(inner.includes(parsed(R.icon('nav-settings'))));
-  const gear = parsed(`<svg>${M.GEAR}</svg>`);
-  assert.ok([...side('after').querySelectorAll('svg')].some((s) => s.innerHTML === gear));
-  assert.ok([...side('after').querySelectorAll('svg')].some((s) => s.innerHTML === parsed(R.icon('sun'))), 'sun beside it');
-  for (const [s, want] of [['before', parsed(R.icon('gear'))], ['after', gear]]) {
+  const inner = (s) => [...side(s).querySelectorAll('svg')].map((x) => x.innerHTML);
+  const gear = parsed(R.icon('gear')), sun = parsed(R.icon('sun'));
+  for (const before of [M.BEFORE_GEAR, M.BEFORE_NAV_SETTINGS]) {
+    assert.ok(inner('before').includes(parsed(`<svg>${before}</svg>`)));
+    assert.notEqual(before, ICONS.gear);
+    assert.notEqual(before, ICONS.sun);
+  }
+  assert.ok(inner('after').includes(gear), 'after: the library\'s gear');
+  assert.ok(inner('after').includes(sun), 'sun beside it');
+  assert.ok(inner('after').includes(parsed(R.icon('stillhet-ui'))));
+  for (const [s, want] of [['before', parsed(`<svg>${M.BEFORE_GEAR}</svg>`)], ['after', gear]]) {
     const b = side(s).querySelector('[data-context="pulse-head"]');
     assert.equal(b.getAttribute('aria-label'), 'Notification settings');
     assert.equal(b.querySelector('svg').innerHTML, want);
   }
-  for (const other of [ICONS.gear, ICONS['nav-settings'], ICONS.sun]) assert.notEqual(M.GEAR, other);
 });
 
 test('the Pulse row panel shows the smaller Pulse mark in each tone', () => {
@@ -161,9 +164,11 @@ test('the Pulse row panel shows the smaller Pulse mark in each tone', () => {
 
 test('the mock holds no copied markup and exactly 2 own drawings', () => {
   const src = read(SCRIPT);
-  for (const bad of ['class="btn', 'role="menu', 'topnav-ask', 'kind-mark']) assert.ok(!src.includes(bad), bad);
-  assert.equal(src.split('<svg').length - 1, 2);
-  assert.equal(src.split('stroke="currentColor"').length - 1, 2);
+  for (const bad of ['class="btn', 'role="menu', 'topnav-ask', 'kind-mark', 'data-menu-pick', 'const GEAR', 'const GLYPH']) assert.ok(!src.includes(bad), bad);
+  assert.deepEqual([...src.matchAll(/^\s*const (\w+) = '<circle/gm)].map((m) => m[1]), ['BEFORE_GEAR', 'BEFORE_NAV_SETTINGS']);
+  assert.equal(src.split('<svg').length - 1, 1, 'one frame for both "before" drawings');
+  assert.match(src, /R\.stillhetSwitch\(/);
+  assert.match(src, /R\.watchStillhetSwitch\(/);
 });
 
 test('the page loads the library first and holds no handler; the index links it', () => {

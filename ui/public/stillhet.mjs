@@ -1,8 +1,8 @@
 // ui/public/stillhet.mjs — Stillhet's opt-in and opt-out in the app (docs/rail/navigation.md `nav.stillhet-ask`, `nav.design-switch`).
-// Glue only: the Invitation and the DesignSwitch are library parts (design-system/components), mounted by JS so the flag-off
+// Glue only: the Invitation and the StillhetSwitch are library parts (design-system/components), mounted by JS so the flag-off
 // page is dev's page. `toast` and `fetchJson(method, path, body) → {ok, data}` arrive by parameter, never by import.
-import { applyFlags, onFlagChange } from './flags.mjs';
-import { designSwitch, stillhetInvitation, watchStrips } from './design-system/components/index.mjs';
+import { applyFlags, flagOn, onFlagChange } from './flags.mjs';
+import { stillhetSwitch, stillhetInvitation, watchStillhetSwitch, watchStrips } from './design-system/components/index.mjs';
 
 let dismissedThisLoad = false;   // Esc or Not now: closed for the rest of this load, asked again on the next
 let inFlight = false;            // an answer is being saved
@@ -90,30 +90,27 @@ export function mountStillhetAsk({ doc, status, fetchJson, onAccepted = () => ap
 
 function closeSlot(doc) { doc.getElementById('rail-strip')?.remove(); }
 
-/** Mounts the Stillhet UI switch in the top bar, after Activity. `flag` is the `rail` entry of GET /api/flags. */
+/** Mounts the Stillhet icon and its menu in the top bar, after Activity. `flag` is the `rail` entry of GET /api/flags. Its tip
+ *  is the native title here (no tooltip watcher in today's app); the locked reason is also in its name. */
 export function mountDesignSwitch({ doc, status, flag, fetchJson, toast }) {
   if (!status || status.stillhetAsk !== true) return null;
   if (doc.querySelector('[data-stillhet="design-switch"]')) return null;
   const host = doc.querySelector('.topnav-r');
   if (!host) return null;
   const anchor = doc.getElementById('activity-pop') || doc.getElementById('topnav-activity');
-  let on = !!flag.on;
-  const locked = !!flag.locked;
-  const html = (busy = false) => designSwitch({ on, locked, busy });
-  if (anchor && host.contains(anchor)) anchor.insertAdjacentHTML('afterend', html()); else host.insertAdjacentHTML('afterbegin', html());
-  const node = () => doc.querySelector('[data-stillhet="design-switch"]');
-  const repaint = (busy) => { const n = node(); if (n) n.outerHTML = html(busy); };
-  node().addEventListener('click', async (e) => {
-    const b = e.target.closest('[data-design-switch]');
-    if (!b || b.disabled) return;
-    repaint(true);
-    const next = !on;
-    const r = await fetchJson('PATCH', '/api/flags', { rail: next });
-    if (r && r.ok) { on = next; repaint(false); applyFlags({ rail: next }, doc); return; }
-    repaint(false);
-    toast('Stillhet could not be switched: ' + messageOf(r));
+  const html = stillhetSwitch({ on: !!flag.on, locked: !!flag.locked });
+  if (anchor && host.contains(anchor)) anchor.insertAdjacentHTML('afterend', html); else host.insertAdjacentHTML('afterbegin', html);
+  watchStillhetSwitch(doc, {
+    current: () => flagOn('rail', doc),   // the live flag: Labs or another tab can move it after the slot was painted
+    pick: async (c) => {
+      const rail = c === 'on';
+      const r = await fetchJson('PATCH', '/api/flags', { rail });
+      if (r && r.ok) { applyFlags({ rail }, doc); return { ok: true }; }
+      toast('Stillhet could not be switched: ' + messageOf(r));
+      return { ok: false };
+    },
   });
-  return node();
+  return doc.querySelector('[data-stillhet="design-switch"]');
 }
 
 /** Reloads once when `rail` changes away from its server-rendered value; waits while text is typed. */

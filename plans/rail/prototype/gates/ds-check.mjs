@@ -127,7 +127,8 @@ const READ = ([CONTROL_SEL, known]) => {
 const b = await chromium.launch({ channel: 'chrome' });
 const OPEN = ['break:part', 'break:background', 'break:offline', '[data-pop]', '[data-acct]', '[data-newrun]', '[data-key="act-main"]', '[data-menu]', '.rc-tabs .tab:nth-child(2)', '.rc-tabs .tab:nth-child(3)', '.rc-tabs .tab:nth-child(4)', '.rc-tabs .tab:nth-child(5)'];
 for (const page of readdirSync(here('.')).filter((f) => f.endsWith('.html') && f !== 'components.html')) {
-  const p = await b.newPage({ viewport: { width: 900, height: 900 } });
+  // reduced motion, as every other gate: a running row's breathing dot (rail.css `sc-breathe`) moves its edge mid-measure
+  const p = await b.newPage({ viewport: { width: 900, height: 900 }, reducedMotion: 'reduce' });
   await p.addInitScript(() => { try { localStorage.setItem('worca-rail.mode', 'expert'); } catch { /* none */ } });   // the gates walk every place: Expert
   p.on('pageerror', (e) => add('script error', String(e)));
   await p.goto(pageUrl(page, here(page)));
