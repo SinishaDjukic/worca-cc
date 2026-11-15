@@ -256,7 +256,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
 
   function moveTask(raw) {
     const t = taskOfLive(raw, { now: now(), projects: projects() });
-    if (world.find(t.id)) world.move(t.id, t.case, t.detail, { title: t.title, cost: t.cost, unread: t.unread, over: !!t.over });   // a calm Failed sorts into Recent
+    if (world.find(t.id)) world.move(t.id, t.case, t.detail, { title: t.title, cost: t.cost, unread: t.unread, over: !!t.over, workflow: t.workflow });   // a calm Failed sorts into Recent
     else world.add(t);
   }
   // A run frame moves its task; a run that is not one of dev's Needs-you inputs (an agent generation, a run already over)

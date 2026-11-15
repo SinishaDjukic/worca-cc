@@ -538,3 +538,14 @@ test('Insights (slice 10 D8): pipelines-changed, ask-done, ask-error, budget-cha
   assert.deepEqual(got, ['pipelines-changed', 'ask-done', 'ask-error', 'budget-changed', 'team-metrics-changed']);
   assert.ok(!gets(r.calls).some((u) => /^\/api\/(stats|team-metrics|tag-dimensions|policy)/.test(u)), 'no Insights read until a page asks');
 });
+
+test('F-3-09: a running task\'s workflow is set when its state frame brings the stepper', async () => {
+  const r = rig();
+  await r.tick();
+  r.frame(r.sockets[0], hello);
+  await r.tick();
+  r.frame(r.sockets[0], { type: 'run-created', runId: 'run-w', title: 'Lean one', status: 'starting', projectDir: '/src/web', startedAt: new Date(NOW).toISOString() });
+  assert.equal(r.rows.get('run-w').workflow, '', 'run-created carries no stepper: Default for now');
+  r.frame(r.sockets[0], { type: 'state', runId: 'run-w', status: 'running', stepper: { version: 2, template: { id: 'wf_lean', name: 'Lean' }, graph: { nodes: [], edges: [] } } });
+  assert.equal(r.rows.get('run-w').workflow, 'Lean');
+});
