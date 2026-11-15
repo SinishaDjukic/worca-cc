@@ -2,6 +2,7 @@
 // and writes dev's workflow, agent, script and pin routes. Every request is built from WORKFLOW_ACTIONS; every answer is
 // { ok, status, data, error }. It keeps the place's records (workflow-map.mjs) and their drafts in memory (D8): a draft
 // reaches the server only on Save, after dev's own validator passed it here (D6) and its base is still current (D9).
+// Edit a copy by hand opens a never-saved draft; Save creates it under a free name (F-5-08).
 import { workflowOf, agentOf, scriptOf, modelIdOf, DEFAULT_MODEL, DEFAULT_EFFORT } from './workflow-map.mjs';
 import { templateOfDraft, sameBase, withFrontmatter, newStepId } from './workflow-draft.mjs';
 
@@ -35,11 +36,12 @@ export const NOT_ANSWERING = 'Worca is not answering';
 export const STALE = 'it changed since you started; discard the draft or save a copy';
 const KINDS = { workflow: 'workflow', agent: 'agent', script: 'script' };
 export const NO_ANSWER = 'no answer from Worca';
+export const COPY_TRIES = 5;   // F-5-08: the POSTs one copy may take while a race keeps its name taken
 const BENCH_MARGIN_MS = 30000, EARLY_MAX = 20;   // a bench's deadline past its cases' own timeouts; the frames kept for a POST still in flight
 
 export function startWorkflowLive({ fetch, toast = () => {}, go = () => {}, on = () => {}, download = () => {}, setTimeout: later = globalThis.setTimeout, clearTimeout: cancel = globalThis.clearTimeout }) {
   let lists = {}, state = 'loading', started = null, records = { workflow: [], agent: [], script: [] };
-  const busy = new Set(), benches = new Map(), early = new Map(), drafts = new Map(), pending = new Map(), saving = new Set();
+  const busy = new Set(), copying = new Set(), benches = new Map(), early = new Map(), drafts = new Map(), pending = new Map(), saving = new Set();
   let pinChain = Promise.resolve();
 
   async function send(id, args = {}) {
@@ -120,14 +122,33 @@ export function startWorkflowLive({ fetch, toast = () => {}, go = () => {}, on =
   // a saved draft leaves its thing: by key, and on whichever record holds it now (a refresh during the save made a new one)
   const dropDraft = (kind, id, ...xs) => { drafts.delete(keyOf(kind, id)); for (const y of [...xs, find(kind, id)]) if (y) delete y.draft; };
 
-  /** Save a draft (D6, D9). A second press while one saves answers with no words. */
-  async function save(kind, id) {
+  /** A copy: dev's create with no id (copy-workflow), under `name` (F-5-08, D3, D4). A 409 (the minted wf_<slug> is
+   *  taken: a race, or a title that slugs alike) reads the list again and tries `rename(tried)`, at most COPY_TRIES POSTs;
+   *  with no `rename` it comes back as it is. A second copy of the same id while one runs answers busy and sends nothing. */
+  async function copy({ id, tpl, name, rename }) {
+    if (copying.has(id)) return { ok: false, status: 0, data: {}, error: 'busy', name };
+    copying.add(id);
+    try {
+      const tried = new Set();
+      for (let n = 1; ; n += 1) {
+        const a = await act('copy-workflow', { tpl, name, id });
+        if (a.ok || a.status !== 409 || !rename || n >= COPY_TRIES) return { ...a, name };
+        tried.add(name.toLowerCase());
+        await refresh('workflows');
+        name = rename(tried);
+      }
+    } finally { copying.delete(id); }
+  }
+
+  /** Save a draft (D6, D9). A second press while one saves answers with no words. `opts.rename` names a fresh copy
+   *  again after a 409, while it still has its own name (F-5-08, D5). */
+  async function save(kind, id, opts = {}) {
     const k = keyOf(kind, id);
     if (saving.has(k)) return { ok: false, text: '' };
     saving.add(k);
-    try { return await saveNow(kind, id); } finally { saving.delete(k); }
+    try { return await saveNow(kind, id, opts); } finally { saving.delete(k); }
   }
-  async function saveNow(kind, id) {
+  async function saveNow(kind, id, opts) {
     const x = find(kind, id);
     if (!x?.draft) return { ok: true, text: '' };
     if (kind === 'workflow') {
@@ -141,8 +162,10 @@ export function startWorkflowLive({ fetch, toast = () => {}, go = () => {}, on =
         if (!sameBase(from, now.data)) return refused('save', x.title, STALE);
       }
       const tpl = x.fresh ? (({ id: _, ...t }) => t)(r.tpl) : { ...r.tpl, id: x.id };
-      const a = await act('save-workflow', { tpl, id: x.id });
-      if (!a.ok) return refused('save', x.title, a.error);
+      const a = x.fresh && x.copyOf   // a copy: created under a free name; a name you typed is never changed (D5)
+        ? await copy({ id: x.id, tpl: r.tpl, name: x.draft.title, rename: x.draft.title === x.copyName ? opts.rename : undefined })
+        : await act('save-workflow', { tpl, id: x.id });
+      if (!a.ok) return refused('save', x.fresh && x.copyOf ? x.draft.title : x.title, a.error);
       dropDraft(kind, id, x);
       if (x.fresh) records.workflow = records.workflow.filter((y) => y !== x);
       await refresh('workflows');
@@ -270,7 +293,7 @@ export function startWorkflowLive({ fetch, toast = () => {}, go = () => {}, on =
 
   return {
     stepId: (id, steps) => newStepId(find('workflow', id), steps),
-    load, refresh: (...n) => (started ? refresh(...(n.length ? n : Object.keys(LISTS))) : Promise.resolve(false)), act, pin, preview, save, discard, deferDelete, exportAs, importFile, runCases, reconnect, frame, drafts,
+    load, refresh: (...n) => (started ? refresh(...(n.length ? n : Object.keys(LISTS))) : Promise.resolve(false)), act, copy, pin, preview, save, discard, deferDelete, exportAs, importFile, runCases, reconnect, frame, drafts,
     data: () => { begin(); return records; },
     status: () => { begin(); return state; },
   };
