@@ -37,6 +37,7 @@ const CONTROLS = {
   'List by date': '.list-h-b',
   ListRow: '.lr-main, .row-btn, .sc-step, .ch-row, .st-head, .pz-nav-i, .pz-acct, .sc-loop.is-btn',
   FigureRows: '.fr-row',
+  TimeTrack: '.tt-open, .tt-end',
   TurnRow: '.tr-line',
   BarHead: '.bar-house',
   BarStrip: '.bar-strip-i',

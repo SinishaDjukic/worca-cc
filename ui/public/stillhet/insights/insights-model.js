@@ -489,5 +489,88 @@
     const [ma, da] = a.split(' '), [mb, db] = b.split(' ');
     return ma === mb && da && db && !/-/.test(da + db) ? `${ma} ${da}-${db}` : `${a} to ${b}`;
   }
-  window.RailInsightsModel = { rangeOf, rangeIn, STANDS, SUBS, SUB, DIM, DIM_GROUPS, TIME, FILTERS, WHEN, usd, cmp, compute, defaults, dimsOf, allocate, sum, rangeWord, linkOf, stateOfLink, spanOf };
+
+  // ---- a person's work on By person (#1310, D13): the demo's own, in the live map's shape (live/work-map.mjs personWork) ----
+  const DAY = 86_400_000, HR = 3_600_000, MON3 = Object.keys(MONTH_NO);
+  const WORK_WORDS = { merged: 'Merged', review: 'Open for review', waiting: 'Waiting for review', closed: 'Closed', failed: 'Failed', stopped: 'Stopped', done: 'Done' };   // live/work-map.mjs WORDS
+  const WORK_TONE = { merged: 'merged', review: 'wait', waiting: 'wait', closed: 'closed', failed: 'fail', stopped: 'stop', done: 'done' };
+  const WORK_DOT = { merged: 'is-green', review: 'is-green', waiting: 'is-grey', closed: 'is-grey', failed: 'is-red', stopped: 'is-grey', done: 'is-green' };
+  const COUNT_OF = { merged: 'merged', review: 'review', waiting: 'review', closed: 'closed', failed: 'failed', stopped: 'stopped', done: 'done' };
+  const COUNT_WORDS = [['merged', 'merged'], ['review', 'open for review'], ['closed', 'closed'], ['failed', 'failed'], ['stopped', 'stopped'], ['done', 'done']];
+  const PR_MARK = { merged: 'merged', review: 'open', waiting: 'open', closed: 'closed' };
+  // the owner's mock (Maya, this month): title, project, PR, state, work in hours from the axis' start, the PR's end; scaled to the axis
+  const MOCK_WORK = [
+    ['Retry failed webhook deliveries', 'billing-api', 1418, 'merged', [154, 160], 179],
+    ['Currency rounding in reports', 'billing-api', 1421, 'review', [164, 172], 178.5],
+    ['Tax ID validation', 'web-app', null, 'failed', [138, 152], null],
+    ['CSV export: totals row', 'invoices', 1402, 'merged', [58, 84], 106],
+    ['Remove legacy coupon code', 'billing-api', 1396, 'closed', [34, 41], 80],
+    ['Stripe event dedupe', 'billing-api', 1391, 'merged', [10, 26], 58],
+  ];
+  const VERBS = ['Fix', 'Add', 'Speed up', 'Tidy', 'Retry', 'Validate', 'Log', 'Cache'], NOUNS = ['invoice totals', 'login redirect', 'usage page', 'webhook queue', 'CSV import', 'rate limits', 'tax rounding', 'checkout retry', 'API guide', 'refund flow', 'audit trail'];
+  const SPREAD = ['merged', 'merged', 'failed', 'done', 'review', 'closed', 'stopped', 'merged', 'failed', 'done', 'waiting', 'merged'];
+  const PROJECTS = ['billing-api', 'web-app', 'worca-cc', 'invoices'];
+  const axisOf = (labels) => ({ start: Date.parse(`${spanOf(labels[0])[0]}T00:00:00Z`), end: Date.parse(`${spanOf(labels[labels.length - 1])[1]}T00:00:00Z`) + DAY - 1 });
+  const slug = (t) => t.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).join('-');
+  function demoItem(name, i, [title, project, pr, state, [w0, w1], at], a, scale) {
+    const t = (h) => Math.round(a.start + h * HR * scale), work = [t(w0), t(w1)], runId = `demo-${name.toLowerCase()}-${i + 1}`;
+    const end = pr != null && PR_MARK[state] ? { status: PR_MARK[state], at: t(at) } : null, result = state === 'failed' ? 'failed' : state === 'stopped' ? 'stopped' : 'done';
+    const cost = 4 + ((i * 7919) % 23), activeMs = (12 + ((i * 31) % 50)) * 60_000;
+    return { key: `demo:${runId}`, runId, title, project, prNumber: pr, prUrl: '', state, word: WORK_WORDS[state], tone: WORK_TONE[state],
+      reason: state === 'failed' ? 'The last attempt failed.' : state === 'waiting' ? 'Pull request waiting for review for 3 days.' : '',
+      work, wait: end ? [work[1], end.at] : null, end, own: false, runs: [{ id: runId, s: work[0], e: work[1], result, costUsd: cost, activeMs }],
+      costUsd: cost, activeMs, reviewCycles: i % 3, actor: name, branch: `feat/${slug(title)}`, ticket: '', workflow: 'Default', diff: `+${20 + ((i * 13) % 180)} −${(i * 7) % 40}`,
+      last: end ? end.at : work[1] };
+  }
+  /** D13: `name`'s tasks over the demo labels, as many as their row's tasks (`n`: the row's tasks for the page's range; the month's when absent); Maya's first six are the owner's mock. */
+  function workOf(name, labels, n = team.rows.person.find((r) => r.name === name)?.tasks || 0) {
+    const a = axisOf(labels), scale = (a.end + 1 - a.start) / (8 * DAY);
+    const fixed = name === 'Maya' ? MOCK_WORK : [], items = fixed.slice(0, n).map((m, i) => demoItem(name, i, m, a, scale));
+    const top = fixed.length ? 56 : 186, rest = Math.max(1, n - fixed.length);   // the rest end before the mock's six, spread over the days before
+    let seed = [...name].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 2147483647, 7);
+    const rnd = () => { seed = (seed * 48271) % 2147483647; return seed / 2147483647; };
+    for (let i = items.length; i < n; i++) {
+      const state = SPREAD[Math.floor(rnd() * SPREAD.length)], waits = !!PR_MARK[state], endAt = top - ((i - fixed.length) * (top - 2)) / rest - rnd() * 0.4;
+      const wait = waits ? Math.min(endAt - 1, 2 + rnd() * 8) : 0, w1 = Math.max(0.5, endAt - wait), w0 = Math.max(0, w1 - (0.5 + rnd() * 5));
+      items.push(demoItem(name, i, [`${VERBS[i % VERBS.length]} ${NOUNS[(i * 5) % NOUNS.length]}`, PROJECTS[i % PROJECTS.length], waits ? 1380 - i : null, state, [w0, w1], waits ? endAt : null], a, scale));
+    }
+    items.sort((x, y) => y.last - x.last || y.work[0] - x.work[0]);
+    const counts = { merged: 0, review: 0, closed: 0, failed: 0, stopped: 0, done: 0 };
+    for (const it of items) counts[COUNT_OF[it.state]] += 1;
+    return { items, counts, axis: a };
+  }
+  /** D2, demo: the item that holds run `runId`, among every person's work over the labels (`rows`: the page's person rows for its range); null when none does. */
+  function workTask(runId, labels, rows = team.rows.person) {
+    for (const r of rows) { const it = workOf(r.name, labels, r.tasks).items.find((x) => x.runId === runId); if (it) return it; }
+    return null;
+  }
+  // the words of the live map (live/work-map.mjs workHead, cardOf, taskViewOf), for the demo kind; test/stillhet-insights-model.test.mjs holds them equal
+  const two = (n) => String(n).padStart(2, '0');
+  const dayW = (t) => { const d = new Date(t); return `${MON3[d.getUTCMonth()]} ${d.getUTCDate()}`; };
+  const timeW = (t) => { const d = new Date(t); return `${dayW(t)}, ${two(d.getUTCHours())}:${two(d.getUTCMinutes())}`; };
+  const durW = (ms) => { const m = Math.max(0, Math.round(ms / 60_000)), d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mm = m % 60; return d ? `${d}d ${h}h` : h ? `${h}h ${mm}m` : `${mm}m`; };
+  function workHead(who, when, counts, pr = {}) {
+    const title = `${who}'s work, ${when}`, parts = COUNT_WORDS.filter(([k]) => counts[k]).map(([k, w]) => `${counts[k]} ${w}`);
+    if (!parts.length) return { title, line: '' };
+    const suffix = pr.state === 'pending' ? ' · looking up pull requests' : pr.state === 'failed' ? ` · pull requests could not be read: ${pr.error}` : pr.state === 'unknown' ? ' · pull request states are not known here' : '';
+    return { title, line: `newest first · ${parts.join(', ')}${suffix}` };
+  }
+  function cardOf(item) {
+    const e = item.end, n = item.prNumber != null ? `#${item.prNumber}` : 'The pull request';
+    const what = e.status === 'open' ? `${n} open since ${timeW(item.wait ? item.wait[0] : e.at)}` : `${n} ${e.status} ${timeW(e.at)} · ${durW(e.at - item.work[0])} from first run`;
+    return { title: item.title, line: `${what} · opens the pull request` };
+  }
+  function taskViewOf(item) {
+    const money2 = (v) => `$${(v || 0).toFixed(2)}`, RESULT = { done: 'Finished', failed: 'Failed', stopped: 'Stopped' };
+    return {
+      tone: item.tone, title: item.title,
+      meta: [item.actor, item.project, item.workflow, item.ticket, item.branch, item.diff].filter(Boolean),
+      state: { tone: WORK_DOT[item.state], word: item.word, detail: item.reason },
+      figures: [{ k: 'Cost', v: money2(item.costUsd) }, { k: 'Time working', v: durW(item.activeMs) }, { k: 'Runs', v: String(item.runs.length) }, { k: 'Review rounds', v: String(item.reviewCycles) }],
+      pr: item.end ? { status: item.end.status, label: `${item.prNumber != null ? `#${item.prNumber}` : 'Pull request'} ${item.end.status === 'open' ? 'open' : `${item.end.status} ${dayW(item.end.at)}`}`, url: item.prUrl } : null,
+      runs: { columns: [{ id: 'started', label: 'Started' }, { id: 'result', label: 'Result' }, { id: 'cost', label: 'Cost', num: true }, { id: 'time', label: 'Time working', num: true }],
+        rows: item.runs.map((r) => ({ started: timeW(r.s), result: RESULT[r.result] || 'Finished', cost: money2(r.costUsd), time: durW(r.activeMs) })) },
+    };
+  }
+  window.RailInsightsModel = { rangeOf, rangeIn, STANDS, SUBS, SUB, DIM, DIM_GROUPS, TIME, FILTERS, WHEN, usd, cmp, compute, defaults, dimsOf, allocate, sum, rangeWord, linkOf, stateOfLink, spanOf, workOf, workTask, workHead, cardOf, taskViewOf };
 })();

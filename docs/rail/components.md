@@ -80,6 +80,8 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | When a turn was said | TurnTime: under the turn at its right edge, on hover, focus or a tap; today a time, then Yesterday and a time, older a date and a time | 14:32, Yesterday 14:32, Nov 3, 14:32 |
 | Worca at work | OrbMark: the app's sphere of dots with Worca's W facing you, a hairline ring around it in light, lit while the sphere turns under it; still at rest; think, tool and write move it; `watchOrbs` brings every one to life | Thinking |
 | Moving through a long conversation or a task | Timeline on the right edge, its TimelineCard on hover | You · 14:32 (its time is TurnTime's) |
+| A person's tasks over the page's days | TimeTrack (its axis from `dayTicks`, each time placed by `trackX`), a WorkBar in each row's lane, a MarkLegend under it | Retry failed webhook deliveries · billing-api · #1418 |
+| A teammate's task, read only | TaskView: head, metadata, StatusLine with no action, Figures, runs, PR | Failed · The last attempt failed. |
 | What hangs under a row | the rounded tree under it (`tree` on a list's row) | a chat's tasks |
 | How far along, and its steps | Stepper, then StepRow on the rail | Plan · Build · Review |
 | One line that opens its detail in place | LineRow | Did all 3 parts you asked |

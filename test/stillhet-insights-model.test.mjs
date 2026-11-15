@@ -108,3 +108,35 @@ test('D9: a live source is taken as given: no re-cut, no seeded periods', () => 
   eq(c.rows[1].kids.map((k) => k.name), ['x']);
   assert.equal(c.v, 3.75); assert.equal(c.p, 1.5);
 });
+
+// ---- a person's work on By person (#1310, D13) ----
+test('workOf: Maya\'s first six are the mock\'s, her counts add up to her row\'s tasks, and it is deterministic', async () => {
+  const c = M.compute(M.SUB.team, M.defaults(M.SUB.team)), maya = c.rows.find((r) => r.name === 'Maya');
+  const w = M.workOf('Maya', c.labels);
+  eq(w.items.slice(0, 6).map((i) => [i.title, i.project, i.prNumber, i.word]), [
+    ['Retry failed webhook deliveries', 'billing-api', 1418, 'Merged'], ['Currency rounding in reports', 'billing-api', 1421, 'Open for review'],
+    ['Tax ID validation', 'web-app', null, 'Failed'], ['CSV export: totals row', 'invoices', 1402, 'Merged'],
+    ['Remove legacy coupon code', 'billing-api', 1396, 'Closed'], ['Stripe event dedupe', 'billing-api', 1391, 'Merged']]);
+  assert.equal(w.items.length, maya.tasks);
+  assert.equal(Object.values(w.counts).reduce((a, b) => a + b, 0), maya.tasks);
+  assert.ok(w.items.every((i) => i.work[0] >= w.axis.start && i.work[1] <= w.axis.end && i.prUrl === '' && !i.own));
+  eq(M.workOf('Maya', c.labels), w);
+  assert.equal(M.workTask(w.items[3].runId, c.labels).title, 'CSV export: totals row');
+  assert.equal(M.workTask('nope', c.labels), null);
+  // the page's range (review cycle 1, issue 1): as many as the row's tasks for THAT range, all inside its axis
+  for (const when of ['today', 'this week', 'last month']) {
+    const r = M.compute(M.SUB.team, { ...M.defaults(M.SUB.team), when }), row = r.rows.find((x) => x.name === 'Maya'), wr = M.workOf('Maya', r.labels, row.tasks);
+    assert.equal(wr.items.length, row.tasks, when);
+    assert.equal(Object.values(wr.counts).reduce((a, b) => a + b, 0), row.tasks, when);
+    assert.ok(wr.items.every((i) => i.work[0] >= wr.axis.start && i.work[1] <= wr.axis.end && (!i.end || i.end.at <= wr.axis.end)), when);
+  }
+  const today = M.compute(M.SUB.team, { ...M.defaults(M.SUB.team), when: 'today' });
+  assert.equal(M.workTask('demo-maya-16', today.labels, today.rows).actor, 'Maya');
+  assert.equal(M.workTask('demo-maya-17', today.labels, today.rows), null);
+  // the demo's words are the live map's (live/work-map.mjs)
+  const L = await import('../ui/public/stillhet/live/work-map.mjs');
+  eq(M.cardOf(w.items[0]), L.cardOf(w.items[0]));
+  assert.equal(M.cardOf(w.items[0]).line, '#1418 merged Nov 8, 11:00 · 1d 1h from first run · opens the pull request');
+  for (const it of w.items.slice(0, 12)) { eq(M.taskViewOf(it), L.taskViewOf(it)); assert.equal(it.word, L.WORDS[it.state]); }
+  for (const pr of [{ state: 'ready' }, { state: 'pending' }, { state: 'failed', error: 'x' }, { state: 'unknown' }]) eq(M.workHead('Maya', 'this month', w.counts, pr), L.workHead('Maya', 'this month', w.counts, pr));
+});

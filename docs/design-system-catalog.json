@@ -1583,10 +1583,23 @@
       "code": "ui/public/design-system/components/kind-mark.mjs#timelineCard",
       "kind": "showing",
       "needs": [
-        "what a timeline's tick holds, on hover"
+        "what a timeline's tick holds, on hover",
+        "what a TimeTrack's PR mark holds, on hover and focus: the pull request, its state and time, the lead time from the first run"
       ],
       "rules": [
-        "panel.timeline"
+        "panel.timeline",
+        "look.time-track"
+      ]
+    },
+    {
+      "name": "TaskView",
+      "code": "ui/public/design-system/components/task-view.mjs#taskView",
+      "kind": "showing",
+      "needs": [
+        "a teammate's task, read only: its head, metadata, StatusLine with its failure reason, figures, runs and pull request; no actions, steps or logs"
+      ],
+      "rules": [
+        "thing.read-only"
       ]
     },
     {
@@ -2127,10 +2140,59 @@
       "code": "ui/public/design-system/components/chart.mjs#figureRows",
       "kind": "showing",
       "needs": [
-        "the same figures across rows where each whole row opens one target, a second level under its parent; each column as wide as its head, on one line"
+        "the same figures across rows where each whole row opens one target, a second level under its parent; each column as wide as its head, on one line",
+        "a person's row that opens their work in place, under the row, with a head and Hide"
       ],
       "rules": [
-        "list.row-one-target"
+        "list.row-one-target",
+        "list.row-opens-in-place"
+      ]
+    },
+    {
+      "name": "TimeTrack",
+      "code": "ui/public/design-system/components/time-track.mjs#timeTrack",
+      "kind": "showing",
+      "needs": [
+        "a person's tasks over the page's days: one row per task that opens it, its work and its pull request drawn in a lane"
+      ],
+      "rules": [
+        "look.time-track"
+      ],
+      "also": [
+        {
+          "code": "ui/public/design-system/components/time-track.mjs#trackX",
+          "needs": [
+            "where a time sits on a track, 0 to 1, clamped"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/time-track.mjs#dayTicks",
+          "needs": [
+            "a track's day axis from the page's own range: its UTC days and a few labels"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "WorkBar",
+      "code": "ui/public/design-system/components/time-track.mjs#workBar",
+      "kind": "showing",
+      "needs": [
+        "one task's lane: a solid span while the agent works, a dashed tail while its pull request waits, and its GitMark at the PR's time that opens the pull request"
+      ],
+      "rules": [
+        "look.time-track"
+      ]
+    },
+    {
+      "name": "MarkLegend",
+      "code": "ui/public/design-system/components/time-track.mjs#markLegend",
+      "kind": "showing",
+      "needs": [
+        "the legend of a TimeTrack, naming its marks (lines and GitMarks), not series"
+      ],
+      "rules": [
+        "look.time-track"
       ]
     },
     {

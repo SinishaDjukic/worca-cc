@@ -3,6 +3,7 @@
 // each bar says its value on hover and focus; a table under it says the same to a screen reader. No legend for one
 // series (the title names it), no grid, no second axis, no colour: colour stays for what needs you.
 import { attrs, esc } from './html.mjs';
+import { textLink } from './text-link.mjs';
 
 /**
  * @param {object} o
@@ -165,9 +166,12 @@ export function watchChart(fig, { open, narrow } = {}) {
  * @param {object} o
  * @param {string} o.label
  * @param {{label:string, narrow?:boolean}[]} o.columns   after the name; narrow:false leaves on a narrow screen
- * @param {{name:string, cells:string[], sub?:boolean, quiet?:boolean, attrs?:object}[]} o.rows
+ * @param {{name:string, cells:string[], sub?:boolean, quiet?:boolean, attrs?:object, opens?:{id:string, open:boolean, label:string, head?:string, body?:string}}[]} o.rows
+ *   `opens` (list.row-opens-in-place): the row opens its detail in place, full width under it, with its head (markup), Hide and body (markup)
  */
 export function figureRows({ label, columns, rows }) {
   const cell = (t, c) => `<span class="fr-c${c.narrow === false ? ' is-wide' : ''}">${esc(t ?? '')}</span>`;
-  return `<div class="fr-list" role="group" style="--fr-n:${columns.length}"${attrs({ 'aria-label': label })}><div class="fr-row is-head" aria-hidden="true"><span></span>${columns.map((c) => cell(c.label, c)).join('')}</div>${rows.map((r) => `<button type="button" class="fr-row${r.sub ? ' is-sub' : ''}${r.quiet ? ' is-quiet' : ''}"${attrs({ 'aria-label': `${r.name}: ${columns.map((c, i) => `${c.label} ${r.cells[i]}`).join(', ')}`, ...(r.attrs || {}) })}><span class="fr-name">${esc(r.name)}</span>${columns.map((c, i) => cell(r.cells[i], c)).join('')}</button>`).join('')}</div>`;
+  const detail = (o) => (o && o.open ? `<div class="fr-detail"${attrs({ id: o.id, role: 'region', 'aria-label': o.label })}><div class="fr-d-head"><span class="fr-d-t">${o.head || ''}</span>${textLink({ label: 'Hide', attrs: { 'data-fr-hide': o.id } })}</div>${o.body || ''}</div>` : '');
+  const opened = (o) => (o ? { 'aria-expanded': String(!!o.open), 'aria-controls': o.id } : {});
+  return `<div class="fr-list" role="group" style="--fr-n:${columns.length}"${attrs({ 'aria-label': label })}><div class="fr-row is-head" aria-hidden="true"><span></span>${columns.map((c) => cell(c.label, c)).join('')}</div>${rows.map((r) => `<button type="button" class="fr-row${r.sub ? ' is-sub' : ''}${r.quiet ? ' is-quiet' : ''}${r.opens?.open ? ' is-open' : ''}"${attrs({ 'aria-label': `${r.name}: ${columns.map((c, i) => `${c.label} ${r.cells[i]}`).join(', ')}`, ...opened(r.opens), ...(r.attrs || {}) })}><span class="fr-name">${esc(r.name)}</span>${columns.map((c, i) => cell(r.cells[i], c)).join('')}</button>${detail(r.opens)}`).join('')}</div>`;
 }

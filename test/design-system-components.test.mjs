@@ -1153,6 +1153,40 @@ test('figureRows: each whole row is one button, a second level is marked', () =>
   assert.equal(c.querySelectorAll('button.fr-row').length, 2); assert.equal(c.querySelector('button .fr-name').textContent, 'a<b'); assert.ok(c.querySelector('button.fr-row.is-sub'));
   assert.match(c.querySelector('button').getAttribute('aria-label'), /Share 45%, AI spend \$186/); assert.equal(c.querySelector('button').querySelectorAll('button').length, 0);
 });
+// I2: without the new options the output is byte-identical to before (captured from the untouched components)
+const FR_TODAY = '<div class="fr-list" role="group" style="--fr-n:2" aria-label="By person"><div class="fr-row is-head" aria-hidden="true"><span></span><span class="fr-c">Share</span><span class="fr-c is-wide">Tasks</span></div><button type="button" class="fr-row" aria-label="Maya: Share 32%, Tasks 102" title="Shows it"><span class="fr-name">Maya</span><span class="fr-c">32%</span><span class="fr-c is-wide">102</span></button><button type="button" class="fr-row is-quiet" aria-label="Other: Share 8%, Tasks 17" disabled title="No"><span class="fr-name">Other</span><span class="fr-c">8%</span><span class="fr-c is-wide">17</span></button></div>';
+const TC_TODAY = '<div class="tline-card" role="status" style="top:50%"><i></i><span><b>Which date format?</b><span>Waiting for you · 14:32</span></span></div>';
+const frRows = (opens) => C.figureRows({ label: 'By person', columns: [{ label: 'Share' }, { label: 'Tasks', narrow: false }], rows: [{ name: 'Maya', cells: ['32%', '102'], attrs: { title: 'Shows it' }, ...(opens ? { opens } : {}) }, { name: 'Other', cells: ['8%', '17'], quiet: true, attrs: { disabled: true, title: 'No' } }] });
+test('figureRows and timelineCard without the new options render as before (fixtures)', () => {
+  assert.equal(frRows(null), FR_TODAY);
+  assert.equal(C.timelineCard({ mark: '<i></i>', title: 'Which date format?', line: 'Waiting for you · 14:32', at: 0.5 }), TC_TODAY);
+});
+test('figureRows opens (list.row-opens-in-place): aria-expanded, and one region right after the open row with Hide', () => {
+  const closed = dom(frRows({ id: 'fr-maya', open: false, label: "Maya's work", head: '<b>x</b>', body: 'y' }));
+  const row = closed.querySelector('button.fr-row');
+  assert.equal(row.getAttribute('aria-expanded'), 'false'); assert.equal(row.getAttribute('aria-controls'), 'fr-maya');
+  assert.equal(closed.querySelector('.fr-detail'), null);
+  const open = dom(frRows({ id: 'fr-maya', open: true, label: "Maya's work", head: "<b>Maya's work, this month</b>", body: '<p class="t">body</p>' }));
+  const o = open.querySelector('button.fr-row');
+  assert.equal(o.getAttribute('aria-expanded'), 'true'); assert.match(o.className, /is-open/);
+  const det = o.nextElementSibling;
+  assert.ok(det.matches('div.fr-detail#fr-maya[role="region"]')); assert.equal(det.getAttribute('aria-label'), "Maya's work");
+  assert.ok(det.querySelector('[data-fr-hide="fr-maya"]')); assert.ok(det.querySelector('.t'));
+  assert.equal(open.querySelectorAll('.fr-detail').length, 1);
+});
+test('timelineCard on a track: is-track, --tc-x, flipped past 60%, no top', () => {
+  const html = C.timelineCard({ mark: '', title: 'A', line: 'b', x: 0.7, id: 'c1' });
+  assert.match(html, /class="tline-card is-track is-flip"/); assert.match(html, /--tc-x:70%/); assert.doesNotMatch(html, /top:/);
+  assert.match(html, /id="c1"/); assert.match(html, /role="tooltip"/);
+  assert.doesNotMatch(C.timelineCard({ mark: '', title: 'A', x: 0.3 }), /is-flip/);
+});
+test('timeTrack, workBar, markLegend and taskView are in the library', () => {
+  for (const f of [C.timeTrack, C.workBar, C.markLegend, C.taskView, C.trackX, C.dayTicks]) assert.equal(typeof f, 'function');
+  assert.match(C.timeTrack({ label: 'x', ticks: [], days: 1, rows: [] }), /class="tt"/);
+  assert.match(C.workBar({ work: [0, 1] }), /tt-work/);
+  assert.match(C.markLegend({ items: [{ line: 'solid', text: 'a' }] }), /ch-key/);
+  assert.match(C.taskView({ back: { label: 'b' }, mark: '', title: 't', meta: [], state: { tone: '', word: 'Done' }, figures: [], runs: { columns: [{ id: 'a', label: 'A' }], rows: [] } }), /task-view/);
+});
 test('sideMenu: an item may carry a count', () => {
   const c = dom(C.sideMenu({ label: 'x', groups: [{ title: 'T', items: [{ label: 'a', count: 18 }, { label: 'b' }] }] }));
   assert.equal(c.querySelectorAll('.side-n').length, 1); assert.equal(c.querySelector('.side-n').textContent, '18');
