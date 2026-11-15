@@ -160,6 +160,23 @@ test('F-3-10: weekTotals reads /api/stats?range=week&report=1 once, null while p
   assert.ok(r.calls.slice(n).some((c) => c.url === WEEK), 'the frame re-reads the week');
 });
 
+test('B3.6 review: retryWeek re-reads a failed week once (a center visit), and leaves a ready or pending one alone', async () => {
+  const WEEK = '/api/stats?range=week&report=1';
+  let status = 500;
+  const r = rig({ answers: (u) => (u === WEEK ? [status, status === 200 ? stats(7) : { error: 'boom' }] : u === '/api/tag-dimensions' ? [200, { dims: [] }] : null) });
+  r.live.weekTotals(); await r.tick();
+  assert.equal(r.live.weekTotals(), null, 'failed: no figures');
+  assert.equal(r.calls.filter((c) => c.url === WEEK).length, 1);
+  r.live.weekTotals(); await r.tick();
+  assert.equal(r.calls.filter((c) => c.url === WEEK).length, 1, 'a paint alone never re-reads a failed week');
+  status = 200;
+  r.live.retryWeek(); await r.tick();
+  assert.equal(r.calls.filter((c) => c.url === WEEK).length, 2, 'the visit re-reads it');
+  assert.deepEqual(r.live.weekTotals(), { runs: 2, spentUsd: 7 });
+  r.live.retryWeek(); await r.tick();
+  assert.equal(r.calls.filter((c) => c.url === WEEK).length, 2, 'a ready week is not read again');
+});
+
 test('D18: saved views are kept in this browser; a refusing storage says so', () => {
   const r = rig();
   assert.deepEqual(r.live.views(), []);

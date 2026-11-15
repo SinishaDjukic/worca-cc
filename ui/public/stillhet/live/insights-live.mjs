@@ -155,6 +155,8 @@ export function startInsightsLive({ fetch, on = () => {}, now = Date.now, setTim
     const e = get(weekKey());
     return e.status === 'ready' ? weekTotalsOf(e.data, project) : null;
   }
+  /** B3.6 review: a visit to Tasks reads a failed week again; a paint alone never does (a failed read would loop). */
+  function retryWeek() { const k = weekKey(), e = cache.get(k); if (e?.status === 'failed') read(k); }
 
   // ---- a person's work (#1310): dev's Timeline lookups over the scope's records, read for By person's open row ----
   /** The open team scope and its records, as the team page read them; null while either is not ready. */
@@ -260,5 +262,5 @@ export function startInsightsLive({ fetch, on = () => {}, now = Date.now, setTim
 
   function scopes() { const sc = get(SCOPES); return sc.status === 'ready' ? scopesOf(sc.data) : []; }
   function stop() { stopped = true; clearTimeout(timer); }
-  return { page, peek, scopes, offered, monthSpend, weekTotals, csv, rowsCsv, views, saveView, dropView, frame, retry, stop, work, task, retryWork, workHead, cardOf, taskViewOf };
+  return { page, peek, scopes, offered, monthSpend, weekTotals, retryWeek, csv, rowsCsv, views, saveView, dropView, frame, retry, stop, work, task, retryWork, workHead, cardOf, taskViewOf };
 }

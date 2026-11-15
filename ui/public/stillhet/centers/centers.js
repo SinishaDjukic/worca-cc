@@ -102,7 +102,9 @@
     // F-3-10: live, the API's week (every project, or the chosen one's row), nothing while it is read; demo, the per-run sum
     const week = W.live ? (() => { const f = List().from(), t = window.RailInsightsLive?.weekTotals?.(f === 'all' ? null : f); return t ? { n: t.runs, cost: t.spentUsd } : null; })() : weekOf(rows);
     const shown = all.filter((g) => !g.quiet).flatMap(partsOf).sort(SORTS[view.sort]), quiet = all.filter((g) => g.quiet);
-    const facts = week ? `${count(`${plural(week.n, 'task')} this week`, filterHook({ range: WEEK }), 'Opens this week\'s tasks')}${week.cost > 0 ? ` · ${count(`${usd(week.cost)} this week`, filterHook({ range: WEEK }), 'Opens this week\'s tasks')}` : ''}` : '';
+    // the count opens the chosen project's week; live, the list can hold fewer than the API counted, and the tip says so
+    const f = List().from(), wk = filterHook({ range: WEEK, ...(f === 'all' ? {} : { project: f }) }), wTip = W.live ? 'Opens this week\'s tasks in the list. The figure counts every run Worca recorded this week, so the two can differ' : 'Opens this week\'s tasks';
+    const facts = week ? `${count(`${plural(week.n, 'task')} this week`, wk, wTip)}${week.cost > 0 ? ` · ${count(`${usd(week.cost)} this week`, wk, wTip)}` : ''}` : '';
     const sent = R.centerSentence({ words: `Showing ${picker('c-sort', view.sort, Object.keys(SORTS), 'How the cards are ordered')} by ${picker('c-by', view.by, ['project', 'workflow'], 'What a card is')}`, open: figs.tasks, attrs: { 'data-c-figs': 'tasks' }, facts });
     const calm = !all.some((g) => g.needs.length || g.missed.length);
     const way = advanced() ? '' : `<p class="center-way">New work starts in Chat. ${link('Go to Chat', { 'data-c-chat': '' })}</p>`;
@@ -460,7 +462,7 @@
   const maker = (noun, chatWord, formWord) => ({ newLabel: `New ${noun}`, newMenu: () => [{ header: 'Ask in chat' }, { id: 'bar-new|chat', text: chatWord }, { sep: true }, { header: 'Legacy approach' }, { id: 'bar-new|form', text: formWord }], newPick: (id) => { if (id === 'form') openForm(noun); else ask(noun); } });
   const MAKERS = { tasks: maker('task', 'Start a task', 'New task…'), schedules: maker('schedule', 'Schedule a task', 'New schedule…') };
   window.RailCenters = {
-    tasks: (el) => { wire(); tasksHost = el; menu = ''; asking = null; paint(); },
+    tasks: (el) => { wire(); tasksHost = el; menu = ''; asking = null; if (W.live) window.RailInsightsLive?.retryWeek?.(); paint(); },   // a visit reads a failed week again
     schedules: (el) => { wire(); schedHost = el; menu = ''; if (/^#schedules/.test(location.hash)) el.innerHTML = schedulesHtml(); },
     maker: (which) => (advanced() ? MAKERS[which] : null),
     newTask: (keep = {}) => { wire(); openForm('task', { ...keep, ...(keep.project && !projects().includes(keep.project) ? { project: defaultProject() } : {}) }); },   // Run after this: the New task form, waiting for that one

@@ -10,6 +10,7 @@ import { TASK_DETAILS, PR_URL } from './helpers/stillhet-live-fixture.mjs';
 
 afterEach(closeHosts);
 const WEEK_URL = '/api/stats?range=week&report=1';
+const LIVE_TIP = 'Opens this week\'s tasks in the list. The figure counts every run Worca recorded this week, so the two can differ';
 const fact = (id, project, usd) => ({ id, person: 'Maya', project, workflow: 'Default', status: 'finished', pr: null, tags: {}, usd, hours: 1, inCohort: true, startedMs: 1, hourBucket: 0, spend: [[0, usd]] });
 const WEEK = { bucket: 'day', windowStartMs: 0, windowEndMs: 1, humanRateUsd: 0, prev: null, series: [],
   totals: { spentUsd: 2542.31, humanHours: 0, savedUsd: 0, runs: 49, finished: 49, failed: 0, stopped: 0, prsMerged: 0, prsOpened: 0 },
@@ -25,7 +26,35 @@ test('F-3-10 live: the head equals GET /api/stats?range=week totals (49 tasks th
   assert.equal(calls.filter((c) => c.url === WEEK_URL).length, 1, 'one read');
   const n = d.querySelector('#route-runs .figs-line [data-c-filter]');
   assert.deepEqual(JSON.parse(n.dataset.cFilter), { range: { from: 1102, to: 1108, label: 'this week' } }, 'the count opens this week\'s tasks');
-  assert.equal(n.title, 'Opens this week\'s tasks');
+  assert.equal(n.title, LIVE_TIP, 'B3.6 review: live, the link says what it opens, since the list can hold fewer than the count');
+});
+
+test('B3.6 review: a chosen project\'s week count opens that project\'s week, not every project', async () => {
+  const { w, d } = await liveHost({ sources: sources(), read: (u) => (u === WEEK_URL ? [200, WEEK] : null) });
+  await go(w, '#runs', 200);
+  w.RailRunsList.filter({ project: 'api' }); await go(w, '#runs', 60);
+  facts(d);
+  for (const n of d.querySelectorAll('#route-runs .figs-line [data-c-filter]')) assert.deepEqual(JSON.parse(n.dataset.cFilter), { range: { from: 1102, to: 1108, label: 'this week' }, project: 'api' });
+});
+
+test('B3.6 review: a failed week read is read again when Tasks is opened again', async () => {
+  let status = 500;
+  const { w, d, calls } = await liveHost({ sources: sources(), read: (u) => (u === WEEK_URL ? [status, status === 200 ? WEEK : { error: 'boom' }] : null) });
+  await go(w, '#runs', 200);
+  assert.equal(facts(d), '', 'failed: no figures');
+  status = 200;
+  await go(w, '#chat', 60); await go(w, '#runs', 200);
+  assert.equal(calls.filter((c) => c.url === WEEK_URL).length, 2, 'the visit re-reads the failed week');
+  assert.equal(facts(d), '49 tasks this week · $2542.31 this week');
+});
+
+test('B3.6 review: an Insights read landing redraws the Projects center once', async () => {
+  const { w } = await liveHost({ sources: sources(), read: (u) => (u === WEEK_URL ? [200, WEEK] : null) });
+  await go(w, '#runs', 200);
+  let n = 0; const p = w.RailPlaces.projects, was = p.redraw; p.redraw = (...a) => { n += 1; return was.apply(p, a); };
+  w.RailInsightsLive.frame({ type: 'pipelines-changed' }); await settle(450);
+  p.redraw = was;
+  assert.equal(n, 1, `one redraw per landed read, not ${n}`);
 });
 
 test('F-3-10 live: while /api/stats is pending (hold) or 500, the head shows no week figures and no row sum; when it lands the center repaints with them', async () => {

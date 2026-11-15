@@ -87,7 +87,7 @@
         // Insights (slice 10): a read answered redraws the open page, and the project pages' spend fact
         insightsModel: function () { return window.RailInsightsModel; },   // the design's pages (insights-model.js), copied with dev's figures
         storage: (function () { try { return window.localStorage; } catch (e) { return null; } })(),   // saved views (D18); a browser with site data blocked keeps none
-        insightsChanged: function () { var p = window.RailPlaces && window.RailPlaces.insights; if (p && p.redraw) p.redraw(); var j = window.RailPlaces && window.RailPlaces.projects; if (j && j.redraw) j.redraw(); var c = window.RailCenters; if (c && c.paint) c.paint(); },
+        insightsChanged: function () { var p = window.RailPlaces && window.RailPlaces.insights; if (p && p.redraw) p.redraw(); var c = window.RailCenters, j = window.RailPlaces && window.RailPlaces.projects; if (c && c.paint) c.paint(); else if (j && j.redraw) j.redraw(); },   // the centers' paint redraws Projects too: once
         on: function (ev, fn) { window.addEventListener(ev, fn); }
       });
       window.RailChatLive = live.chat;   // the live chat's reads and actions (D5): chat/conversation.js and chats-column.js
