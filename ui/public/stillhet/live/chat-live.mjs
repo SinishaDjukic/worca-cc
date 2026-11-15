@@ -8,7 +8,7 @@ import { turnsOf, planView, planPicks, runWithTurn, partsOf } from './chat-turns
 import { createTerminalLive } from './terminal-live.mjs';
 import { projectKeyOf } from './live-map.mjs';
 import { perspectivesWith, chipsHiddenFor, DEFAULT_PERSPECTIVES } from '../../../../src/shared/shape/perspectives.mjs';
-import { ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 } from '../../attach-files.mjs';
+import { ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 } from '../../../../src/shared/attach-bytes.mjs';
 
 const enc = encodeURIComponent;
 const T = (id) => `/api/ask/threads/${enc(id)}`;

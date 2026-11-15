@@ -6,6 +6,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { startChatLive, prBodyOf, startBodyOf, perspectiveChoices, ACTIONS, FLOW, OPENS, openTab, saveLink } from '../ui/public/stillhet/live/chat-live.mjs';
 import { ATTACH_MAX_MESSAGE_BYTES } from '../ui/public/attach-files.mjs';
+import * as shared from '../src/shared/attach-bytes.mjs';
+import { bytesToBase64 } from '../ui/public/attach-files.mjs';
 import { actionFlow } from '../ui/public/design-system/components/run-state.mjs';
 import { THREAD } from './helpers/stillhet-live-fixture.mjs';
 
@@ -919,4 +921,10 @@ test('COV-3 #6: Start reads the files and sends extras; over the limit or a fail
   assert.equal(y.ok, false);
   assert.equal(bad.calls.filter((c) => c.method === 'POST').length, 0, 'COV-3 #6: a failed read posts no run');
   assert.deepEqual(bad.toasts, ['Could not start the task: could not read attachment a.txt']);
+});
+
+test('COV-3 #6: Stillhet\'s attachment cap and base64 (src/shared/attach-bytes.mjs) match classic\'s attach-files.mjs', () => {
+  assert.equal(shared.ATTACH_MAX_MESSAGE_BYTES, ATTACH_MAX_MESSAGE_BYTES);
+  const big = new Uint8Array(0x8000 * 2 + 7).map((_, i) => i % 251);
+  for (const b of [new Uint8Array(0), Uint8Array.from([0, 255, 104, 105]), big]) assert.equal(shared.bytesToBase64(b), bytesToBase64(b));
 });
