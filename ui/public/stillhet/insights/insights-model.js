@@ -15,7 +15,7 @@
   // the dimensions of "by", grouped; a page offers those it has data for
   const DIM_GROUPS = [
     ['Where', [['project', 'project'], ['workspace', 'workspace'], ['branch', 'branch'], ['ticket', 'ticket'], ['pr', 'pull request']]],
-    ['What did the work', [['workflow', 'workflow'], ['stage', 'stage'], ['agent', 'step and agent'], ['subagents', 'sub-agents']]],
+    ['What did the work', [['workflow', 'workflow'], ['size', 'task size'], ['stage', 'stage'], ['agent', 'step and agent'], ['subagents', 'sub-agents']]],
     ['What it ran on', [['model', 'model'], ['engine', 'engine'], ['effort', 'effort'], ['cache', 'cache read or write'], ['tokens', 'tokens in or out']]],
     ['Why it cost', [['why', 'why'], ['rework', 'rework'], ['retries', 'retries'], ['fixes', 'fix rounds'], ['failed', 'failed or stopped'], ['reason', 'what went wrong']]],
     ['Who and how', [['person', 'person'], ['origin', 'chat, task, schedule'], ['requirements', 'Requirements'], ['away', 'Away or at the desk'], ['status', 'status'], ['billing', 'API or subscription']]],
@@ -23,8 +23,8 @@
     ['When', [['hour', 'hour'], ['day', 'day'], ['week', 'week'], ['month', 'month'], ['timeofday', 'time of day']]],
   ];
   const DIM = Object.fromEntries(DIM_GROUPS.flatMap(([, l]) => l));
-  const TIME = new Set(['day', 'week', 'month']), ORDERED = new Set(['stage', 'timeofday', ...TIME]);
-  const FILTERS = ['project', 'workspace', 'workflow', 'model', 'origin', 'client', 'label'];
+  const TIME = new Set(['day', 'week', 'month']), ORDERED = new Set(['stage', 'size', 'timeofday', ...TIME]);
+  const FILTERS = ['project', 'workspace', 'workflow', 'model', 'origin', 'client', 'label', 'person'];   // person: list.sentence-person (slice 10)
 
   // a source: its fields, each field's day series for 1-8 Nov and for the same days last month, and its rows by dimension
   function source(def) {
@@ -83,6 +83,7 @@
       label: [['billing', 188], ['no label', 128], ['hotfix', 96]],
       hour: [['14:00', 64], ['10:00', 58], ['15:00', 57], ['11:00', 51], ['16:00', 49], ['13:00', 41], ['09:00', 34], ['17:00', 31], ['20:00', 27]],
       timeofday: [['Morning', 142], ['Afternoon', 178], ['Evening', 61], ['Night', 31]],
+      person: [['Maya', 160, 18, 480, 19], ['Jonas', 120, 14, 360, 14], ['Priya', 82, 10, 246, 10], ['Lee', 50, 5, 147, 6]],   // last: source()'s first dim stays project
     },
   });
   const waste = source({
@@ -104,6 +105,7 @@
       workflow: [['Default', 26, 2, 1], ['Full', 9, 2, 0], ['Quick Fix', 8, 0, 1]],
       model: [['Opus 5.5', 20, 1, 1], ['Sonnet 5.5', 17, 2, 1], ['Haiku 5', 6, 1, 0]],
       client: [['acme', 18, 1, 0], ['globex', 10, 1, 1], ['No client', 15, 2, 1]],
+      person: [['Maya', 16, 1, 1], ['Jonas', 12, 2, 0], ['Priya', 10, 1, 1], ['Lee', 5, 0, 0]],
     },
   });
   const review = source({
@@ -148,6 +150,7 @@
     dims: {
       project: [['billing-api', 12, 252], ['web-app', 9, 189], ['worca-cc', 5, 110], ['docs-site', 1, 16]],
       workflow: [['Default', 16, 322], ['Full', 6, 165], ['Quick Fix', 5, 80]],
+      person: [['Maya', 10, 210], ['Jonas', 8, 170], ['Priya', 6, 120], ['Lee', 3, 67]],
     },
   });
   const done = source({
@@ -173,6 +176,33 @@
       client: [['acme', 1460, 168, 4380, 156], ['No client', 790, 91, 2370, 84], ['globex', 610, 71, 1830, 65]],
     },
   });
+  team.scopes = [{ id: 'project:billing-api', name: 'billing-api' }, { id: 'workspace:web-shop', name: 'web-shop' }];   // list.sentence-scope: the enabled team scopes
+  // Shaping (D13, design first): shaped and unshaped finished tasks by size; each figure a size's total, so an average is total ÷ runs
+  const shaping = source({
+    fields: ['runs', 'usd', 'uruns', 'uusd', 'mins', 'cycles'],
+    series: { runs: [1, 1, 0, 2, 1, 0, 2, 1] }, before: { runs: [1, 0, 1, 1, 0, 1, 1, 1] },
+    dims: { size: [['small', 3, 24, 5, 55, 75, 3], ['medium', 3, 57, 4, 92, 180, 5], ['large', 2, 64, 2, 81, 230, 4]] },
+  });
+  shaping.noTime = true;
+  // Who spends where (D14, design first): the team's people by the top values of "by", each cell a person's part of a column
+  const heatSrc = source({
+    fields: ['spend', 'tasks'],
+    series: { spend: [240, 410, 180, 520, 390, 60, 610, 450] }, before: { spend: [200, 340, 160, 440, 340, 60, 500, 360] },
+    dims: {
+      project: [['billing-api', 1240, 132], ['web-app', 980, 105], ['worca-cc', 640, 68]],
+      workflow: [['Default', 1490, 160], ['Full', 830, 89], ['Quick Fix', 540, 56]],
+      client: [['acme', 1460, 156], ['No client', 790, 84], ['globex', 610, 65]],
+    },
+  });
+  heatSrc.noTime = true;
+  heatSrc.heat = Object.fromEntries(Object.entries(heatSrc.rows).map(([dim, cols]) => {
+    const people = team.rows.person, cells = people.map(() => []);
+    for (const col of cols) {
+      const usd = allocate(people.map((p) => p.spend), col.spend), runs = allocate(people.map((p) => p.tasks), col.tasks);
+      people.forEach((_, i) => cells[i].push({ value: usd[i], runs: runs[i] }));
+    }
+    return [dim, { rows: people.map((p) => ({ label: p.name })), columns: cols.map((c) => ({ label: c.name })), cells, max: Math.max(...cells.flat().map((x) => x.value)) }];
+  }));
   const untagged = source({
     fields: ['tasks', 'spend'],
     series: { tasks: [2, 3, 1, 3, 2, 0, 4, 3], spend: [13, 26, 8, 30, 18, 3, 31, 19] }, before: { tasks: [2, 2, 2, 3, 2, 1, 3, 2], spend: [11, 15, 14, 19, 15, 5, 21, 16] },
@@ -198,11 +228,12 @@
   const SPAN = { today: [7, 7], 'this week': [1, 7], 'this month': [0, 7] };
   const WEEKS = { labels: ['Oct 1-7', 'Oct 8-14', 'Oct 15-21', 'Oct 22-28', 'Oct 29-31'], days: [7, 7, 7, 7, 3], w: [18, 24, 20, 22, 16] };
   const MONTHS = { labels: ['Jul', 'Aug', 'Sep', 'Oct', 'Nov'], days: [31, 31, 30, 31, 8], k: [1.6, 2.2, 2.8, 3.2] };
-  const WHEN = ['today', 'this week', 'this month', 'last month', 'all time'];
+  const WHEN = ['today', 'this week', 'this month', 'last month', 'this quarter', 'this year', 'all time'];   // this quarter by week, this year by month (look.chart-play)
   function periodSeries(src, f, when) {
     const now = src.series[f], before = src.before[f], total = sum(now);
     if (SPAN[when]) { const [a, b] = SPAN[when]; return { labels: NOV.slice(a, b + 1), days: NOV.slice(a, b + 1).map(() => 1), now: now.slice(a, b + 1), before: before.slice(a, b + 1) }; }
     if (when === 'last month') return { ...WEEKS, now: allocate(WEEKS.w, Math.round(total * (src.lastK[f] ?? 3.2))), before: allocate(WEEKS.w, Math.round(total * 3.2 * 0.85)) };
+    if (when === 'this quarter') return { labels: [...WEEKS.labels, 'Nov 1-8'], days: [...WEEKS.days, 8], now: [...allocate(WEEKS.w, Math.round(total * (src.lastK[f] ?? 3.2))), total], before: allocate([...WEEKS.w, 20], Math.round(total * 4.2 * 0.85)) };
     return { ...MONTHS, now: [...MONTHS.k.map((k, i) => Math.round(total * (i === 3 && src.lastK[f] || k))), total], before: null };
   }
   function filterShare(src, filter, f) {
@@ -236,6 +267,10 @@
       wordAlways: (c) => `${usd(c.v)} of ${usd(c.base)} went on rework and waste`, whyAlways: (c) => (c.P && c.st.against === 'before' ? `${pct(c.v / c.base)}, up from ${pct(c.P.spend / c.pbase)} ${c.whole && c.st.when === 'this month' ? 'last month' : 'in the period before'}` : pct(c.v / c.base)) },
     { id: 'budget', title: 'Budget', group: 'Cost', pace: 'On pace for $1,545, $545 over', icon: 'set-limits', noun: 'budget used', src: money, num: 'spend', text: usd, forms: SUM, as: 'running', against: 'budget', budget: 1000, cols: moneyCols(), share: 'spend',
       word: (c) => `${Math.round((c.v / 1000) * 100)}% of $1,000 used`, why: (c) => `${usd(c.v)} so far · on pace for $1,545, $545 over · 8 of 30 days gone` },
+    { id: 'shaping', title: 'Shaping', group: 'Cost', icon: 'dollar', noun: 'cost a shaped task', src: shaping, by: 'size', num: 'usd', den: 'runs', text: usd2, forms: RATE, noShare: true,
+      caption: 'Shaped tasks, by size. Unshaped in the rows below', closed: 'Tasks do not narrow by size',
+      cols: [['Shaped runs', (r) => String(r.runs)], ['Shaped average cost', (r) => (r.runs ? usd2(r.usd / r.runs) : '-')], ['Unshaped average cost', (r) => (r.uruns ? usd2(r.uusd / r.uruns) : '-')], ['Shaped average time', (r) => (r.runs ? `${Math.round(r.mins / r.runs)} min` : '-')], ['Shaped review rounds', (r) => (r.runs ? (r.cycles / r.runs).toFixed(1) : '-')]],
+      word: (c) => (c.T.runs ? `Shaped tasks cost ${usd2(c.T.usd / c.T.runs)} on average${c.T.uruns ? `, unshaped ${usd2(c.T.uusd / c.T.uruns)}` : ''}` : 'No shaped task finished'), why: (c) => `${plural(c.T.runs, 'shaped task')} and ${plural(c.T.uruns, 'unshaped task')}` },
     { id: 'time-saved', title: 'Time saved', group: 'Value', icon: 'hourglass', noun: 'money saved', src: money, num: 'saved', text: usd, forms: SUM, cols: moneyCols(), share: 'saved',
       word: (c) => `${usd(c.v)} saved`, why: (c) => `About ${c.T.hours} hours of work` },
     { id: 'value', title: 'Value for spend', group: 'Value', icon: 'sparkle', noun: 'saved for each dollar', src: money, num: 'saved', den: 'spend', text: (n) => `${n.toFixed(1)}×`, forms: RATE, cols: moneyCols(), share: 'spend',
@@ -257,6 +292,7 @@
       word: (c) => `${pct(c.v)} of input from the cache`, why: (c) => `${(c.T.read / 10).toFixed(1)}M of ${(c.T.input / 10).toFixed(1)}M tokens` },
     { id: 'shipped', title: 'Shipped', group: 'Flow', icon: 'page-shipped', noun: 'PRs merged', src: prs, num: 'prs', text: (n) => plural(n, 'PR'), forms: COUNT, share: 'prs',
       cols: [['PRs merged', (r) => String(r.prs)], ['Days each', (r) => (r.prs ? (r.days / r.prs / 10).toFixed(1) : '-')]],
+      liveCols: [['PRs merged', (r) => String(r.prs)], ['Opened', (r) => String(r.opened)]],   // live: dev counts opened and merged, not days to merge
       word: (c) => `${c.T.prs} PRs merged`, why: (c) => '6 in review, 3 need attention' },
     { id: 'merge', title: 'Start to merge', group: 'Flow', icon: 'after', noun: 'days to merge', src: prs, num: 'days', den: 'prs', text: (n) => `${(n / 10).toFixed(1)} days`, forms: RATE, share: 'prs',
       cols: [['PRs merged', (r) => String(r.prs)], ['Days each', (r) => (r.prs ? (r.days / r.prs / 10).toFixed(1) : '-')]],
@@ -272,12 +308,16 @@
     { id: 'untagged', title: 'Missing cost tags', group: 'Team', team: true, icon: 'tag', noun: 'tasks without a client', src: untagged, num: 'tasks', text: (n) => plural(n, 'task'), forms: COUNT, share: 'tasks',
       cols: [['Without a client', (r) => String(r.tasks)], ['AI spend', (r) => usd(r.spend)]],
       word: (c) => `${c.T.tasks} tasks without a client`, why: (c) => `${usd(c.T.spend)} has no client` },
+    { id: 'heat', title: 'Who spends where', group: 'Team', team: true, icon: 'globe', noun: 'team spend by person', src: heatSrc, by: 'project', num: 'spend', text: usd, forms: ['grid'], cols: [['AI spend', (r) => usd(r.spend)], ['Tasks', (r) => String(r.tasks)]], share: 'spend',
+      word: (c) => `${usd(c.v)} across ${plural(c.src.heat[c.st.by]?.rows.length || 0, 'person').replace(/persons$/, 'people')}`, why: () => 'The darker the cell, the more it spent' },
   ];
   const SUB = Object.fromEntries(SUBS.map((s) => [s.id, s]));
 
   // ---- what a page shows ----
-  const dimsOf = (src, st) => Object.keys(DIM).filter((d) => src.rows[d] || d === 'day' || ((d === 'week' || d === 'month') && (st.when === 'this month' || st.when === 'this week')));
-  const defaults = (sub) => ({ by: sub.by || 'project', then: '', as: sub.as || 'bars', against: sub.against || 'none', when: 'this month', filter: [], narrow: null });
+  const dimsOf = (src, st) => Object.keys(DIM).filter((d) => src.rows[d] || (!src.noTime && (d === 'day' || (!src.live && (d === 'week' || d === 'month') && (st.when === 'this month' || st.when === 'this week')))));
+  // the page's own "by", or the first dim its source has when the source lacks it (a live source has fewer dims)
+  const byOf = (sub) => { const by = sub.by || 'project'; return sub.src.rows[by] || TIME.has(by) ? by : Object.keys(sub.src.rows)[0] || 'day'; };
+  const defaults = (sub) => ({ by: byOf(sub), then: '', as: sub.as || sub.forms[0], against: sub.against || 'none', when: 'this month', filter: [], narrow: null });
   const dayRows = (c) => c.labels.map((name, i) => ({ name, ...Object.fromEntries(c.src.fields.map((f) => [f, c.F[f][i]])) }));
   function baseRows(c, dim) {
     if (dim === 'day') return dayRows(c);
@@ -322,7 +362,26 @@
     const perDay = c.F[sub.num].map((total) => { const got = allocate(left, total); left = left.map((v, k) => v - got[k]); return got; });
     return { names, perDay, days: c.F[sub.num] };
   }
+  // a live source (D9): dev's totals, series, period before and rows as given. Narrowing is a re-read, never a re-cut.
+  function computeLive(sub, st, all) {
+    const src = sub.src, rowField = sub.share === 'base' ? 'spend' : sub.share;
+    const c = { sub, st, src, live: true, labels: src.labels, days: src.dayCount, F: src.series, B: null, T: { ...src.totals }, P: src.prev ? { ...src.prev } : null, whole: !st.narrow && !st.from };
+    const val = (A, i) => (sub.den ? (A[sub.den][i] ? A[sub.num][i] / A[sub.den][i] : null) : A[sub.num][i]);
+    c.points = c.labels.map((_, i) => val(c.F, i));
+    c.before = null;
+    const whole = (T) => (sub.den ? (T[sub.den] ? T[sub.num] / T[sub.den] : 0) : T[sub.num]);
+    c.v = whole(c.T); c.p = c.P ? whole(c.P) : null; c.base = 0;
+    c.timeWord = st.from && c.labels.length ? rangeWord(c.labels) : st.when;
+    const sort = (rows, dim) => (ORDERED.has(dim) ? rows : [...rows].sort((x, y) => y[rowField] - x[rowField]));
+    const copy = (r) => ({ ...r });
+    let rows = sort(baseRows(c, st.by).map(copy), st.by);
+    c.rowCount = rows.length;
+    if (st.then) for (const r of rows) r.kids = sort((src.kids[r.name] || []).map(copy), st.then);
+    c.rows = all ? rows : rows;
+    return c;
+  }
   function compute(sub, st, all = false, whole0 = false) {
+    if (sub.src.live) return computeLive(sub, st, all);
     const src = sub.src, fields = src.fields, first = periodSeries(src, fields[0], st.when), n = first.labels.length, [a, b] = st.narrow || [0, n - 1];
     const c = { sub, st, src, labels: first.labels.slice(a, b + 1), days: sum(first.days.slice(a, b + 1)), F: {}, B: first.before ? {} : null, T: {}, P: first.before ? {} : null, whole: !st.narrow };
     for (const f of fields) {
@@ -367,11 +426,68 @@
     c.rows = rows;
     return c;
   }
+  // ---- a link to a page as you narrowed it (act.copy-link): only what differs from the defaults; days as ISO days ----
+  const YEAR = 2026;   // the demo world's year: its labels name days of it
+  const isoDay = (m, d) => `${YEAR}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  // a demo label's first and last day ('Nov 3', 'Oct 8-14', 'Nov 1-8', 'Jul')
+  function spanOf(label) {
+    const [mon, d] = label.split(' '), m = MONTH_NO[mon];
+    if (!d) return [isoDay(m, 1), isoDay(m, new Date(Date.UTC(YEAR, m, 0)).getUTCDate())];
+    const [a, b = a] = d.split('-');
+    return [isoDay(m, +a), isoDay(m, +b)];
+  }
+  const realDay = (s) => { if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return null; const [y, m, d] = s.split('-').map(Number), t = new Date(Date.UTC(y, m - 1, d)); return t.getUTCMonth() === m - 1 && t.getUTCDate() === d ? s : null; };
+  const AGAINSTS = ['none', 'before', 'budget'];
+  function linkOf(id, st) {
+    const sub = SUB[id], d = defaults(sub), q = [], put = (k, v) => q.push(`${k}=${encodeURIComponent(v)}`);
+    if (st.by !== d.by) put('by', st.by);
+    if (st.then) put('then', st.then);
+    if (st.when !== d.when) put('when', st.when);
+    if (st.filter.length) q.push(`of=${st.filter.map(encodeURIComponent).join(',')}`);
+    if (st.as !== d.as) put('as', st.as);
+    if (st.against !== d.against) put('vs', st.against);
+    if (sub.team && st.scope) put('scope', st.scope);   // a team picked in the of sentence (the first is the default)
+    let from = st.from || null, to = st.to || null;
+    if (st.narrow) { const labels = compute(sub, { ...st, narrow: null }).labels; from = spanOf(labels[st.narrow[0]])[0]; to = spanOf(labels[st.narrow[1]])[1]; }
+    if (from && to) { put('from', from); put('to', to); }
+    return `insights/${id}${q.length ? `?${q.join('&')}` : ''}`;
+  }
+  /** A link's query back to a state; anything unknown or impossible is dropped, never thrown; a day past the labels is
+   *  clamped to the nearest one. Live, the days stay ISO days (the read is the custom range: D7). */
+  function stateOfLink(query, sub, { live = false } = {}) {
+    const st = { ...defaults(sub) }, p = {};
+    for (const part of String(query || '').split('&')) {
+      const at = part.indexOf('=');
+      if (at < 1) continue;
+      const k = part.slice(0, at), raw = part.slice(at + 1);
+      try { p[k] = k === 'of' ? raw.split(',').map(decodeURIComponent) : decodeURIComponent(raw); } catch { /* a malformed value is dropped */ }
+    }
+    if (WHEN.includes(p.when)) st.when = p.when;
+    const dims = live ? Object.keys(DIM) : dimsOf(sub.src, st);
+    if (dims.includes(p.by)) st.by = p.by;
+    if (dims.includes(p.then) && p.then !== st.by && !TIME.has(p.then)) st.then = p.then;
+    if (Array.isArray(p.of)) st.filter = p.of.filter((k) => { const at = k.indexOf(':'), dim = k.slice(0, at); return at > 0 && FILTERS.includes(dim) && (live || (sub.src.rows[dim] || []).some((r) => r.name === k.slice(at + 1))); });
+    if (sub.forms.includes(p.as)) st.as = p.as;
+    if (AGAINSTS.includes(p.vs) && (p.vs !== 'budget' || sub.budget)) st.against = p.vs;
+    if (sub.team && typeof p.scope === 'string' && (live || (sub.src.scopes || []).some((x) => x.id === p.scope))) st.scope = p.scope;   // live, an unknown team draws the first (insights-live)
+    let from = realDay(p.from), to = realDay(p.to);
+    if (from && to && from > to) from = to = null;
+    if (live) { if (from && to) { st.from = from; st.to = to; st.custom = true; } return st; }
+    if (from || to) {
+      const spans = compute(sub, { ...st, narrow: null }).labels.map(spanOf), n = spans.length;
+      const a = from ? Math.max(0, spans.findIndex((x) => x[1] >= from)) : 0;
+      let b = to ? spans.map((x) => x[0] <= to).lastIndexOf(true) : n - 1;
+      if (b < 0) b = 0;
+      if (from && spans.every((x) => x[1] < from)) return st;
+      if (a <= b) { st.narrow = [a, b]; st.custom = st.when === 'this month'; }
+    }
+    return st;
+  }
   function rangeWord(labels) {
     const a = labels[0], b = labels[labels.length - 1];
     if (a === b) return a;
     const [ma, da] = a.split(' '), [mb, db] = b.split(' ');
     return ma === mb && da && db && !/-/.test(da + db) ? `${ma} ${da}-${db}` : `${a} to ${b}`;
   }
-  window.RailInsightsModel = { rangeOf, rangeIn, STANDS, SUBS, SUB, DIM, DIM_GROUPS, TIME, FILTERS, WHEN, usd, cmp, compute, defaults, dimsOf, allocate, sum, rangeWord };
+  window.RailInsightsModel = { rangeOf, rangeIn, STANDS, SUBS, SUB, DIM, DIM_GROUPS, TIME, FILTERS, WHEN, usd, cmp, compute, defaults, dimsOf, allocate, sum, rangeWord, linkOf, stateOfLink, spanOf };
 })();

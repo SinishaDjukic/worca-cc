@@ -317,7 +317,7 @@
     // from the search: the runs with this label
     label: (l) => { view = { ...view, labels: [l], show: 'all', from: 'all', day: '', person: '' }; store.set(view); ctl.clear(); ctl.paint(); },
     // from another page: opens Tasks narrowed; the sentence says it and you can widen it there. project: a project's name, day: an id of M.DAYS (today, yesterday, week, month, older, upcoming), show: a SHOWS id, range: { from, to, label } as month*100+day
-    filter: ({ project = 'all', day = '', show = 'all', range = null, workflow = '', schedule = '' } = {}) => { view = { ...FRESH, by: view.by, from: project, day, range, workflow, schedule, show: showOf(show) ? show : 'all' }; store.set(view); ctl.clear(); ctl.paint(); centers(); window.RailShell?.go('runs'); },
+    filter: ({ project = 'all', day = '', show = 'all', range = null, workflow = '', schedule = '', person = '' } = {}) => { view = { ...FRESH, by: view.by, from: project, day, range, workflow, schedule, person, show: showOf(show) ? show : 'all' }; store.set(view); ctl.clear(); ctl.paint(); centers(); window.RailShell?.go('runs'); },
   };
   ctl.paint();
 })();

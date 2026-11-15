@@ -79,36 +79,35 @@ test('the strip, Pulse\'s tabs and sections equal their rows, and each opens wha
   for (const n of DEMO_NAMES) assert.ok(!d.getElementById('route-chat').textContent.includes(n), `no seeded ${n}`);
 });
 
-test('the spend card shows windowSpendUsd; #insights/spend says it is not in Stillhet yet and where it is today (nav.not-live), no seeded title', async () => {
+test('the spend card shows windowSpendUsd; #insights/spend draws the live page from dev\'s answer, no seeded title (slice 10 D21)', async () => {
   const { w, d, hello } = await liveHost();
   await hello();
   d.querySelector('[data-acct]').click();
   d.querySelector('[data-sub="usage"]').click();
   assert.match(d.querySelector('.spend-card').textContent, /\$12\.50/);
-  w.location.hash = '#insights/spend'; await settle();
-  assert.equal(d.getElementById('route-place').hidden, true);
-  const today = d.getElementById('route-today');
-  assert.equal(today.querySelector('.el-t').textContent, 'Insights is not in Stillhet yet');
-  assert.match(today.textContent, /With Stillhet off, it is Statistics and Team metrics\./);
-  assert.equal(today.querySelectorAll('button[data-nav="chat"]').length, 1, 'one Back to Chat');
-  assert.doesNotMatch(today.textContent, /No insights yet/);
-  for (const n of DEMO_NAMES) assert.ok(!today.textContent.includes(n), `no seeded ${n}`);
+  w.location.hash = '#insights/spend'; await settle(120);
+  assert.equal(d.getElementById('route-place').hidden, false, 'Insights is live: its own page, not the "insights" list state');
+  assert.doesNotMatch(d.body.textContent, /No insights yet\./);
+  assert.match(d.getElementById('route-place').textContent, /Spend/);
+  for (const n of DEMO_NAMES) assert.ok(!d.getElementById('route-place').textContent.includes(n), `no seeded ${n}`);
 });
 
 test('a not-live place after Projects: the home bar, #bar-place hidden, no Projects row; back to Projects redraws its rows', async () => {
-  const { w, d, hello } = await liveHost();
+  const { w, d, hello, sockets } = await liveHost();
   await hello();
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'flags', flags: { rail: true, requirements: true } }) });   // Requirements on: not live, not locked (Insights is live since slice 10)
+  await settle();
   const side = d.getElementById('side-rail'), place = d.getElementById('bar-place');
   w.location.hash = '#projects'; await settle();
   assert.equal(side.dataset.bar, 'place');
   assert.match(place.textContent, /tasks need you/, 'Projects draws its rows');
-  w.location.hash = '#insights'; await settle();
+  w.location.hash = '#requirements'; await settle();
   assert.equal(side.dataset.bar, 'home', 'a not-live place shows the home bar');
   assert.ok(place.hidden || place.closest('[hidden]'), '#bar-place is hidden');
   assert.equal(d.querySelector('[data-bar-new="place"]:not([hidden])'), null, 'no place "+" stays reachable');
   assert.ok(![...side.querySelectorAll('*')].some((x) => !x.closest('[hidden]') && !x.hidden && /tasks need you/.test(x.textContent) && x.closest('#bar-place')), 'no reachable Projects row');
-  w.location.hash = '#requirements'; await settle();
-  assert.equal(side.dataset.bar, 'home', 'still home from one not-live place to another');
+  w.location.hash = '#insights'; await settle(120);
+  assert.ok(!/tasks need you/.test(place.textContent), 'a live place after a not-live one: its own bar, no Projects row');
   w.location.hash = '#projects'; await settle();
   assert.equal(side.dataset.bar, 'place');
   assert.equal(place.hidden || !!place.closest('[hidden]'), false, '#bar-place shows again');

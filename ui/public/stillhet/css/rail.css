@@ -1887,6 +1887,14 @@ button.fr-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .fr-row.is-sub .fr-name{font-weight:400;}
 .fr-c{text-align:right;line-height:1.2;white-space:nowrap;}
 @media (max-width:640px){.fr-list{grid-template-columns:minmax(0,1fr) repeat(2,auto);}.fr-c.is-wide{display:none;}}
+/* HeatGrid (look.heat-grid): people by values, ink shades scaled to the largest cell, never a hue */
+.heat-grid{position:relative;display:grid;grid-template-columns:minmax(0,max-content) repeat(var(--hg-n),minmax(40px,1fr));gap:3px;margin:12px 0 4px;}   /* ds-ok: --hg-n is the count HeatGrid sets */
+.hg-row{display:contents;}
+.hg-col{font-size:var(--fs-meta);color:var(--ink-2);text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-bottom:2px;}
+.hg-name{font-size:var(--fs-body);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:8px;align-self:center;}
+.hg-cell{display:block;height:24px;border-radius:var(--r-xs);background:var(--hover);outline:none;}
+.hg-cell.is-h1{background:var(--line-2);} .hg-cell.is-h2{background:var(--ink-3);} .hg-cell.is-h3{background:var(--ink-2);} .hg-cell.is-h4{background:var(--ink);}
+.hg-cell:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 /* comp.menu-groups: two columns at most, a head never parted from its options, inside the window */
 .menu-g{display:contents;}
 .pz-menu.is-two-cols{display:block;width:min(440px,calc(100vw - 32px));height:auto;max-height:min(420px,calc(100vh - 32px));overflow-y:auto;}

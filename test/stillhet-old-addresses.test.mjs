@@ -174,3 +174,39 @@ test('Stillhet off: dev\'s workspace and project-tab forms are dev\'s (no MOVED_
   assert.match(app, /function routeWsDetail\(param/, 'dev routes its workspaces itself');
   assert.match(app, /function routeProjectDetail\(param/, 'dev routes its project tabs itself');
 });
+
+// Slice 10 D20: dev's Statistics and Team metrics forms
+const DEV_INSIGHTS_FORMS = [['#stats', '#insights/spend'], ['#stats/cost', '#insights/spend'], ['#statistics', '#insights/spend'], ['#team-metrics', '#insights/team'], ['#team-metrics/timeline', '#insights/team'], ['#team-metrics/q3', '#insights/team']];
+
+test('Stillhet on: each of dev\'s 6 Statistics and Team metrics forms lands on its Insights route (never asking has)', () => {
+  const has = () => { throw new Error('the insights rule never asks has'); };
+  for (const [from, to] of DEV_INSIGHTS_FORMS) assert.equal(resolve(from, { has })?.hash, to, from);
+  for (const own of ['#insights', '#insights/spend', '#insights/team', '#insights/shaping', '#insights/heat', '#insights/spend?by=client']) assert.equal(resolve(own, { has }), null, own);
+});
+
+test('Stillhet off: dev\'s Statistics and Team metrics forms are dev\'s (MOVED_ROUTES moves none; dev\'s router loads its own pages)', () => {
+  const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
+  const block = app.slice(app.indexOf('const MOVED_ROUTES'), app.indexOf('});', app.indexOf('const MOVED_ROUTES')));
+  const keys = [...block.matchAll(/^\s*'?([a-z/-]+)'?:\s*'/gm)].map((m) => m[1]);
+  assert.ok(keys.length >= 10);
+  for (const [from] of DEV_INSIGHTS_FORMS) {
+    const path = from.slice(1);
+    assert.ok(!keys.some((k) => path === k || path.startsWith(`${k}/`)), `${from} is not moved by dev`);
+  }
+  assert.match(app, /if \(name === 'stats'\) loadStatsView\(\);/, '#stats and #stats/cost reach loadStatsView');
+  assert.match(app, /tmState\.tab = param === 'timeline' \? 'timeline' : 'overview';/, '#team-metrics/timeline opens dev\'s Timeline tab');
+  assert.match(app, /else loadTeamMetricsView\(\);/, 'the team-metrics forms reach loadTeamMetricsView');
+});
+
+test('Stillhet on below Expert: #team-metrics lands on #insights/team and draws the locked line (Insights at Simple, By person at Advanced), never Spend', async () => {
+  const settle = () => new Promise((r) => setTimeout(r, 30));
+  for (const level of ['simple', 'advanced']) {
+    const w = stillhetHost({ after, hash: '#team-metrics', level, beforeScripts: (win) => win.localStorage.setItem('worca-rail.mode', level) });   // the demo kind's mode
+    await settle();
+    assert.equal(w.location.hash, '#insights/team', level);
+    const t = w.document.body.textContent;
+    if (level === 'simple') assert.match(t, /Insights needs Advanced/, 'simple: Insights itself starts at Advanced');
+    else { assert.match(t, /By person needs Expert/, 'advanced: the team page\'s own locked line'); }
+    assert.doesNotMatch(w.document.getElementById('route-place').hidden ? '' : w.document.getElementById('route-place').textContent, /AI spend/, `${level}: never Spend in its place`);
+  }
+});

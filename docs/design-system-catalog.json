@@ -2064,6 +2064,18 @@
       ]
     },
     {
+      "name": "HeatGrid",
+      "code": "ui/public/design-system/components/heat-grid.mjs#heatGrid",
+      "kind": "showing",
+      "needs": [
+        "who spends where in a team: people by the top values of one dimension, in ink shades",
+        "a cell that reads its person, value, spend and tasks on hover and focus, and opens nothing"
+      ],
+      "rules": [
+        "look.heat-grid"
+      ]
+    },
+    {
       "name": "LineChart",
       "code": "ui/public/design-system/components/chart.mjs#lineChart",
       "kind": "showing",

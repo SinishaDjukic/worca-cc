@@ -117,6 +117,21 @@ export const PROJECTS_STATES = [
   ['pj-not-found', '#projects/nope'],
 ];
 for (const [id, q, seed] of PROJECTS_STATES) PARTS.push({ id, route: true, ...(seed ? { seed } : {}), app: { route: q }, proto: { route: q } });
+// Insights (slice 10): its list states, the design-first parts (the person filter, this quarter and this year, Who spends where
+// by workflow, the team scope choice), the copied-link toast and a link opened cold. Expert, demo against demo; the copy-link
+// cell has the clipboard permission on both hosts.
+const inPick = (menu, v) => [`[data-menu="${menu}"]`, `[data-pick="${menu}|${v}"]`];
+export const INSIGHTS_STATES = [
+  ['in-list-loading', '?state=loading#insights/spend'], ['in-list-failed', '?state=failed#insights/spend'],
+  ['in-team-empty', '?state=empty#insights/team'],
+  ['in-spend-person', '#insights/spend', inPick('in-of', 'person:Maya')],
+  ['in-spend-quarter', '#insights/spend', inPick('in-when', 'this quarter')], ['in-spend-year', '#insights/spend', inPick('in-when', 'this year')],
+  ['in-heat-workflow', '#insights/heat', inPick('in-by', 'workflow')],
+  ['in-team-scope', '#insights/team', ['[data-menu="in-of"]']],
+  ['in-link-copied', '#insights/spend', ['[data-menu="in-more"]', '[data-menu-pick="in-more|link"]']],
+  ['in-spend-link', '#insights/spend?by=client&when=this%20quarter'],
+];
+for (const [id, q, seed] of INSIGHTS_STATES) PARTS.push({ id, route: true, ...(seed ? { seed } : {}), ...(id === 'in-link-copied' ? { clipboard: true } : {}), app: { route: q }, proto: { route: q } });
 /** One seed step: a click on a selector, or { fill, text } typed into a field. */
 const seedStep = (page, sel) => (typeof sel === 'string' ? page.locator(sel).first().click() : page.locator(sel.fill).first().fill(sel.text));
 export const PAGES = ['components.html', 'run-page.html', 'pulse.html'];
@@ -146,6 +161,10 @@ export const marketplaceCellIds = (deep = []) => [...MARKETPLACE_CELL_IDS, ...de
 // a count) every deep route under projects/.
 export const PROJECTS_CELL_IDS = Object.freeze(['route-projects', ...PROJECTS_STATES.map(([id]) => id)]);
 export const projectsCellIds = (deep = []) => [...PROJECTS_CELL_IDS, ...deep.filter((h) => h.startsWith('projects/')).map((h) => deepPart(h).id)];
+// Every Insights cell: the whole page, its own states above, and (derived from the prototype's routes, never a count) every
+// deep route under insights/, Shaping and Who spends where included.
+export const INSIGHTS_CELL_IDS = Object.freeze(['route-insights', ...INSIGHTS_STATES.map(([id]) => id)]);
+export const insightsCellIds = (deep = []) => [...INSIGHTS_CELL_IDS, ...deep.filter((h) => h.startsWith('insights/')).map((h) => deepPart(h).id)];
 /** The Tasks cells a run's cells lack: one line per id, theme and width of CELLS that has no compared cell. */
 export function tasksCoverage(cells, ids = TASKS_CELL_IDS) {
   const have = new Set(cells.map((c) => `${c.part}|${c.theme}|${c.width}`));
@@ -443,7 +462,7 @@ async function pagesMain() {
  *  shows, a page that hangs) fails alone; the rest still run. */
 export async function shootCell(browser, app, part, theme, width, outRoot) {
   const out = join(outRoot, part.dir || '');
-  const ctx = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: theme, reducedMotion: 'reduce' });
+  const ctx = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: theme, reducedMotion: 'reduce', ...(part.clipboard ? { permissions: ['clipboard-read', 'clipboard-write'] } : {}) });
   const errors = [];
   let cell;
   try {
