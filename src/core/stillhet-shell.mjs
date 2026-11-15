@@ -15,7 +15,7 @@ export const isStillhetShellRel = (rel) => /^stillhet\/shell(\.html)?$/i.test(re
  * @param {'system'|'light'|'dark'} theme
  * @param {'simple'|'advanced'|'expert'} [level]
  * @param {{ git?: boolean, adapter?: 'live'|'demo', railLocked?: boolean }} [opts]  railLocked: `rail` is locked by WORCA_FLAGS, so
- *   the top-bar Stillhet UI switch is drawn disabled and says why (docs/rail/navigation.md nav.design-switch)  adapter: which data the pages read (ui/public/stillhet/adapter.js);
+ *   the top-bar Stillhet icon's menu rows are drawn disabled and say why (docs/rail/navigation.md nav.design-switch)  adapter: which data the pages read (ui/public/stillhet/adapter.js);
  *   live unless the server runs with WORCA_STILLHET_DEMO=1 (the pixel comparison and the gates, docs/feature-flags.md)
  * @returns {string}
  * @throws {Error} 'stillhet shell anchor missing' when the theme anchor is gone

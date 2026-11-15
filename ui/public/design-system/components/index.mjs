@@ -25,7 +25,7 @@ export { SOUND_CHOICES, BURST_MS, soundFor, playChime } from './sound.mjs';
 export { row, pulseRow } from './row.mjs';
 export { chip } from './chip.mjs';
 export { stillhetInvitation } from './invitation.mjs';
-export { designSwitch } from './design-switch.mjs';
+export { stillhetSwitch, watchStillhetSwitch, STILLHET_NAME, STILLHET_TIP, STILLHET_LOCKED, STILLHET_ITEMS } from './stillhet-switch.mjs';
 export { checkbox } from './checkbox.mjs';
 export { optionList } from './option-list.mjs';
 export { suggestionField, suggestionFail, suggestButton, suggestedChip, stopWriting, failureLink, previewToggle, suggestionPreview, gapMark, rewriteFail, rewriteSuggestion } from './suggestion-field.mjs';

@@ -202,8 +202,8 @@ body.bar-hidden .bar-show{display:inline-flex;}   /* nav.one-bar: hidden, the wa
 .topnav-badge.is-corner,.pz-pulse-b .topnav-badge{position:absolute;top:-1px;right:-3px;min-width:16px;height:16px;padding:0 4px;border-radius:var(--r-pill);font-size:10px;line-height:16px;}
 .topnav-badge.is-corner:not([data-tone]){background:var(--field);color:var(--ink-2);}
 #topnav-ask .ask-ic,#topnav-ask .ask-ic svg{width:20px;height:20px;}
-.pz-pulse-b svg{width:20px;height:20px;}
-#topnav-ask,.pz-pulse-b{width:36px;height:36px;}
+.pz-pulse-b svg,[data-stillhet="ui-icon"] svg{width:20px;height:20px;}
+#topnav-ask,.pz-pulse-b,[data-stillhet="ui-icon"]{width:36px;height:36px;}
 /* In view: what you keep an eye on, live, in the top bar. */
 #in-view-slot{display:inline-flex;}
 /* The prototype's own corner: bottom right, its build in its own panel, so it never covers the composer. */

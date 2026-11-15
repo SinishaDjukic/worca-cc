@@ -156,6 +156,7 @@ other library calls, never a person's text: a person's text goes through the lib
 | The flash on what you just went to | `land` | What a toggle opens, moving |
 | Esc or a click outside takes a strip back | `watchStrips` | Closing what lies over a page |
 | A tool beside the page that closes nothing when clicked | `neverOutside` | Closing what lies over a page |
+| The Stillhet icon's menu opens, a pick goes busy and shows its outcome | `watchStillhetSwitch` | StillhetSwitch |
 | A menu kept inside the window | `fitMenu` | A list page's behaviour |
 | A state's words filled with the task's facts | `fill` | States |
 | Every state there is | `stateIds` | States |

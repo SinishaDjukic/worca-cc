@@ -51,3 +51,14 @@ test('a route\'s page file exists once: no name is shared between plans/rail/pro
   const shared = walk(DIR).filter((f) => proto.has(f));
   assert.deepEqual(shared, []);
 });
+
+test('the prototype host: setStillhet(false) answers { ok: true } and stillhetOn() then agrees with the repainted slot', async (t) => {
+  const { JSDOM } = await import('jsdom');
+  const w = new JSDOM('<body></body>', { runScripts: 'outside-only', url: 'http://localhost/' }).window;
+  t.after(() => w.close());
+  w.matchMedia = () => ({ matches: false });
+  w.eval(readFileSync(DIR + 'host-prototype.js', 'utf8'));
+  assert.equal(w.RailHost.stillhetOn(), true);
+  assert.deepEqual({ ...w.RailHost.setStillhet(false) }, { ok: true });
+  assert.equal(w.RailHost.stillhetOn(), false);
+});

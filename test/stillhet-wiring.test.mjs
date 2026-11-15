@@ -173,3 +173,12 @@ test('the prompt check Moves rows: the chip and Improve stay open, waiting for t
     assert.match(cells[1], /^open: waits for the owner/, name);
   }
 });
+
+test('the proposed perspectives Moves row stays open, waiting for the owner (TaskProposal reviewed by), as a 4-column row', () => {
+  const name = 'Perspectives proposed on the run card (flag proposedPerspectives)';
+  const row = doc.split('\n').find((l) => l.startsWith(`| ${name} |`));
+  assert.ok(row, name);
+  const cells = row.split('|').slice(1, -1).map((c) => c.trim());
+  assert.equal(cells.length, 4);
+  assert.equal(cells[1], 'open: waits for the owner (TaskProposal reviewed by)');
+});

@@ -30,9 +30,14 @@
       title: 'Runs',
       left: R.menuButton() + R.sideToggle() + R.button({ label: 'Show the bar', kind: 'quiet', iconOnly: true, icon: R.icon('bar-show', 16), cls: 'bar-show', attrs: { id: 'bar-show' } }),
       centre: R.search({ label: 'Search or ask', bar: { kbd: R.keyHint(['mod', 'K'], R.isMac(window)) } }),
-      right: `<span id="in-view-slot"></span>${R.askButton({ mark: R.askWorcaMark() })}<span id="rail-pulse-slot"></span>${R.designSwitch({ on: window.RailHost ? window.RailHost.stillhetOn() : false, locked: !!(window.RailHost && window.RailHost.railLocked && window.RailHost.railLocked()) })}<span id="rail-conn"></span>`,
+      right: `<span id="in-view-slot"></span>${R.askButton({ mark: R.askWorcaMark() })}<span id="rail-pulse-slot"></span>${R.stillhetSwitch({ on: window.RailHost ? window.RailHost.stillhetOn() : false, locked: !!(window.RailHost && window.RailHost.railLocked && window.RailHost.railLocked()) })}<span id="rail-conn"></span>`,
     }));
   }
+
+  // the Stillhet icon's menu, for both hosts: a pick lands in the host's setStillhet (the app's PATCH, toast and reload; the
+  // prototype's moved check), and busy and restore are the library's (nav.design-switch). The host's live flag decides the
+  // current UI at each click, not the slot's painted data-on
+  R.watchStillhetSwitch(document, { pick: (c) => Promise.resolve(window.RailHost.setStillhet(c === 'on')), current: () => !!(window.RailHost && window.RailHost.stillhetOn()) });
 
   window.RailFrame = { sidebar, topBar };
 })();

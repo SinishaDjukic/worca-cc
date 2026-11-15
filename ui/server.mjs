@@ -448,6 +448,7 @@ import {
 import { latestChecklist, checklistMarkdown, CHECKLIST_PR_MARKER } from '../src/shared/shape/review-checklist.mjs';
 import { attachRoleReviews } from '../src/shared/shape/role-review.mjs';
 import { resolveShapeRequest, PLAN_ASK_KIND, planFileOf } from '../src/core/shape/run.mjs';
+import { runPerspectivesOf, recordRunCardChoice } from '../src/core/prompt-check/perspective-choices.mjs';
 import { savePlanToCheckout } from '../src/core/shape/save.mjs';
 import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, cancelRest, resumeFeature,
   rechainWaiting, replanRest, setApproveEach, recordShapePlan, listShapePlans, chainFeature,
@@ -2727,9 +2728,10 @@ const startRunHandler = async (req, res) => {
   if (DRAIN.on) return res.status(503).json(DRAIN_REFUSAL);
   try {
     const body = req.body || {};
-    // Scheduled runs: `internal` is set ONLY by fireTicket() (never from HTTP) — the
-    // due ticket being started through this same gate. It carries the ticket, whose id
-    // IS the runId, plus the CLI-only options a stored request may hold.
+    const proposedOn = flagEnabled('proposedPerspectives'); // read once per start; off: drop the perspective fields first
+    if (!proposedOn) { delete body.perspectives; delete body.perspectiveProposal; }
+    // Scheduled runs: `internal` is set ONLY by fireTicket() (never from HTTP) — the due ticket being started through
+    // this same gate. It carries the ticket, whose id IS the runId, plus the CLI-only options a stored request may hold.
     const internal = req._internal && typeof req._internal === 'object' ? req._internal : null;
     // Workspace scan (wf_workspace_scan): scanRequest hands the target in-process — a workspace
     // that may not exist yet ({ id, name, projectPaths, description:'' }, D3). Never from HTTP.
@@ -2876,29 +2878,26 @@ const startRunHandler = async (req, res) => {
 
     // prompt OR promptMarkdown. promptMarkdown is treated as the prompt text.
     const prompt = typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt : undefined;
-    const promptMarkdown =
-      typeof body.promptMarkdown === 'string' && body.promptMarkdown.trim() ? body.promptMarkdown : undefined;
+    const promptMarkdown = typeof body.promptMarkdown === 'string' && body.promptMarkdown.trim() ? body.promptMarkdown : undefined;
     const effectivePrompt = prompt || promptMarkdown;
     if (source && effectivePrompt) return badRequest(res, 'provide source OR prompt/promptMarkdown, not both');
     if (!source && !effectivePrompt) return badRequest(res, 'prompt or promptMarkdown is required');
 
-    // UI Markdown runs carry provenance (spec §10): absent an explicit
-    // body.source, a promptMarkdown-only body maps to the markdown source type.
-    // prompt.md bytes and every legacy guard/message stay identical; only the
-    // new source_type column differs ('markdown' instead of the default).
-    const effectiveSource = source
-      || (promptMarkdown && !prompt ? { type: 'markdown', promptText: promptMarkdown } : null);
+    // UI Markdown runs carry provenance (spec §10): absent an explicit body.source, a promptMarkdown-only body maps to the
+    // markdown source type. prompt.md bytes and every legacy guard/message stay identical; only the new source_type
+    // column differs ('markdown' instead of the default).
+    const effectiveSource = source || (promptMarkdown && !prompt ? { type: 'markdown', promptText: promptMarkdown } : null);
 
     const mock = !!body.mock || serverMockMode();
 
-    // Optional workflowId selects a saved (or built-in default) topology. The
-    // orchestrator resolves topology + per-project run-config into an executable
-    // plan at run start; here we only normalize + reject an unknown id up front
-    // so the client gets a clean 400 instead of a mid-run error event.
-    // Shape it first (spec D9/D12): `shape` and the shape workflows.
-    const shapeReq = resolveShapeRequest({ shape: body.shape, workflowId: body.workflowId }, { internal: !!internal });
+    // Optional workflowId selects a saved (or built-in default) topology. The orchestrator resolves topology + per-project
+    // run-config into an executable plan at run start; here we only normalize + reject an unknown id up front so the
+    // client gets a clean 400 instead of a mid-run error event. Shape it first (spec D9/D12): `shape` and its workflows.
+    const shapeReq = resolveShapeRequest({ shape: body.shape, workflowId: body.workflowId }, { internal: !!internal, compliance: proposedOn });
     if (!shapeReq.ok) return badRequest(res, shapeReq.error);
     const { shape: askedShape } = shapeReq;
+    const { perspectiveSet = null, perspectiveProposal = null, error: perspectivesError } = proposedOn ? runPerspectivesOf(body, askedShape) : {};
+    if (perspectivesError) return badRequest(res, perspectivesError); // the chosen set drives Clarify and the review roles
     // L7: a sliced Shape-it-first run chains tickets per slice, and a run without a project cannot be scheduled. So with
     // no project a shaped run is never sliced: `slices: 'off'` unless 'auto' was asked for, which is refused (U13: the
     // Shaper itself still runs with No project).
@@ -3143,7 +3142,7 @@ const startRunHandler = async (req, res) => {
         claude: { permissionMode: 'acceptEdits', ...(startPair ? { model: startPair.model, ...(startPair.effort ? { effort: startPair.effort } : {}) } : {}), mock, ...runEngine },
         ...(nightMode ? { nightMode: true } : {}),
         tags,
-        ...(shape ? { shape } : {}), ...(Number(req._runCostCapUsd) > 0 ? { runCostCapUsd: Number(req._runCostCapUsd) } : {}),
+        ...(shape ? { shape } : {}), ...(perspectiveSet ? { perspectiveSet } : {}), ...(Number(req._runCostCapUsd) > 0 ? { runCostCapUsd: Number(req._runCostCapUsd) } : {}),
       });
       entry = {
         id: runId, orch, projectDir, projectKey: NO_PROJECT_KEY, workMode: 'none', kind: 'run', pipelineId,
@@ -3293,7 +3292,7 @@ const startRunHandler = async (req, res) => {
         ...(nightMode ? { nightMode: true } : {}),
         tags,
         labels,
-        ...(shape ? { shape } : {}),
+        ...(shape ? { shape } : {}), ...(perspectiveSet ? { perspectiveSet } : {}),
         ...(runSetup ? { runSetup } : {}),
       });
 
@@ -3470,7 +3469,7 @@ const startRunHandler = async (req, res) => {
         ...(nightMode ? { nightMode: true } : {}),
         tags,
         labels,
-        ...(shape ? { shape } : {}),
+        ...(shape ? { shape } : {}), ...(perspectiveSet ? { perspectiveSet } : {}),
         ...(runSetup ? { runSetup } : {}),
       });
 
@@ -3550,6 +3549,7 @@ const startRunHandler = async (req, res) => {
         console.error(`[worca-ui] ask run link failed: ${err && err.message ? err.message : err}`);
       }
     }
+    recordRunCardChoice(runId, perspectiveSet, perspectiveProposal); // the proposal and what changed (ids only)
     announceRun(entry);
 
     // Fire-and-forget; all progress is surfaced through events. Kept on the entry: a Stop of the
