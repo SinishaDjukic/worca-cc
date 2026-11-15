@@ -1942,8 +1942,8 @@ app.use('/design-preview', createPreviewGate({
 app.use((req, res, next) => {
   // A Browser tab's preview page runs in an opaque origin (Origin: null) by design: /preview/ requests are held to the
   // Host check here and to their per-tab token in the proxy (issue 1064). S1 itself is unchanged for every other request.
-  const ok = req.worcaExtensionRoute || (isPreviewPath(req.path) ? previewHostOk(req) : isLocalRequest(req));
-  if (!ok) return res.status(403).json({ error: HOST_FORBIDDEN });
+  const previewOk = isPreviewPath(req.path) && previewHostOk(req);
+  if (!previewOk && !req.worcaExtensionRoute && !isLocalRequest(req)) return res.status(403).json({ error: HOST_FORBIDDEN });
   next();
 });
 
