@@ -125,6 +125,7 @@
     const show = askOpen;
     if (show && side.hidden) { if (!side.firstChild) drawAsk(side); side.classList.add('is-in'); setTimeout(() => side.classList.remove('is-in'), 300); }
     side.hidden = !show;
+    if (show) window.RailConversation?.paintIfStale?.();   // comp.live-paint: what changed while it was closed is drawn once
     document.body.classList.toggle('ask-side-open', show);
   }
 
