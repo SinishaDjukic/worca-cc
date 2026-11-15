@@ -16,7 +16,7 @@ export function scrollEdges({ scrollTop, scrollHeight, clientHeight }) {
 /**
  * Whether a scrolling box sits at its end: its last `near` px are in view (docs/rail/motion.md › motion.follow-end).
  * @param {{scrollTop:number, scrollHeight:number, clientHeight:number}|null|undefined} box
- * @param {number} [near=80]
+ * @param {number} [near=PIN]
  * @returns {boolean}
  */
 export function pinnedToEnd(box, near = PIN) {

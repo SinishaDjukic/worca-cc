@@ -1780,7 +1780,7 @@
         {
           "code": "ui/public/design-system/components/scroll-fade.mjs#pinnedToEnd",
           "needs": [
-            "whether a chat sits at its end (its last 80px in view), so a growing reply keeps it there"
+            "whether a chat sits at its end (its last PIN px in view), so a growing reply keeps it there"
           ]
         }
       ],
