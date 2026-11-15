@@ -96,6 +96,17 @@ export function patchKeyed(container, items, { carry } = {}) {
 }
 
 /**
+ * Draws a region made of named parts (docs/rail/components.md `comp.patch-parts`): `parts` is `{ name: html }`, drawn in
+ * its key order, and patched by name with `patchKeyed`, so a part whose string did not change keeps its nodes (its focus,
+ * caret, scroll, an open menu), a changed part is replaced with its neighbours kept, an empty part (`''`, null,
+ * undefined) draws nothing, and a redraw that changes nothing writes nothing. Part names are never integer-like: JS
+ * would reorder them. Returns `{ kept, replaced, added, removed }`.
+ */
+export function patchParts(container, parts, { carry } = {}) {
+  return patchKeyed(container, Object.entries(parts).map(([key, html]) => ({ key, html })), { carry });
+}
+
+/**
  * `fn` once per animation frame however often `request()` is called before it (`setTimeout` 16 ms without
  * requestAnimationFrame). `flush()` runs a pending `fn` now; `cancel()` drops it. A background tab's frames pause, so a
  * pending `fn` waits until the tab is seen again.

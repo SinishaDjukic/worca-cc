@@ -2425,6 +2425,15 @@
       ]
     },
     {
+      "name": "Patching a region by part",
+      "code": "ui/public/design-system/components/keyed-list.mjs#patchParts",
+      "needs": [
+        "a region drawn from named parts (the shell's layers, a slot, a page's column), where a part whose string did not change keeps its nodes, its focus, caret, scroll and open menu",
+        "a redraw that changes nothing writes nothing"
+      ],
+      "example": "patchParts(app, { popover: popover(), 'new-run': newRun(), account: acctMenu(), session: sessionDialog() })"
+    },
+    {
       "name": "Keeping an open control across a redraw",
       "code": "ui/public/design-system/components/keep-open.mjs#watchKeepOpen",
       "needs": [
