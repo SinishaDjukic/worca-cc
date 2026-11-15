@@ -3,7 +3,7 @@
 // (runs/run-page-model.js, run-page.js), the bar's list, the center and the chat TaskCard read from here; none of them
 // writes before a route answers `ok`.
 import { actionRunner, FLOW as CHAT_FLOW, openTab } from './chat-live.mjs';
-import { taskPageOf, taskCardOf, newTaskBodyOf, patchFiles, docsOf, logLinesOf, actionsOf, groupOf, sessionRowsOf, agentRowsOf, usageRowsOf, commentsByPath } from './task-page.mjs';
+import { taskPageOf, taskCardOf, newTaskBodyOf, patchFiles, docsOf, logLinesOf, logStepsOf, actionsOf, groupOf, sessionRowsOf, agentRowsOf, usageRowsOf, commentsByPath } from './task-page.mjs';
 import { ENGINES, ENGINE_NAMES } from '../../../../src/shared/engine-switch.mjs';
 
 const str = (v) => (typeof v === 'string' ? v : '');
@@ -575,7 +575,7 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
   return {
     list, projectDirOf, branches, transcript,
     // the page's parts, with its agents read from the task's own steps
-    parts: (id) => { const p = parts.get(id); return p ? { ...p, agents: agentRowsOf(inputOf(id).state?.steps) } : null; }, loadParts, wholeDiff, docText, download, models,
+    parts: (id) => { const p = parts.get(id); return p ? { ...p, agents: agentRowsOf(inputOf(id).state?.steps), log: logStepsOf(p.log, inputOf(id).state) } : null; }, loadParts, wholeDiff, docText, download, models,
     group, loadGroups, members: membersOf,
     /** Move to group…'s choices: dev's own groups (features take no hand-added task: dev answers IN_GROUP). */
     groups: () => { if (!groupList && !groupFailed) loadGroups(); return (groupList || []).filter((g) => g.kind === 'user').map((g) => groupOf(g)); },
