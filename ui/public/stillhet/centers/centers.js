@@ -118,11 +118,12 @@
 
   // ---- the Schedules center ----
   const OUT = (r) => { const t = RM.stateOf(r.case); return t === 'failed' ? 'fail' : R.sectionOf(R.runState(t).word) === 'running' ? 'run' : 'ok'; };
-  const sectionNow = (s) => (Sch().running(s.id) ? 'running' : s.state === 'paused' ? 'paused' : s.section === 'needs' ? 'needs' : 'next');
-  const DEFAULT_TZ = 'Europe/Sofia';
-  const SCHED_RANK = { needs: 0, running: 1, next: 2, paused: 3 };
+  const sectionNow = (s) => (s.ended ? 'ended' : Sch().running(s.id) ? 'running' : s.state === 'paused' ? 'paused' : s.section === 'needs' ? 'needs' : 'next');
+  const DEFAULT_TZ = 'Europe/Sofia';   // the demo's seed; live, a new schedule's zone is the browser's (homeTz)
+  const homeTz = () => (W.live ? Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' : DEFAULT_TZ);
+  const SCHED_RANK = { needs: 0, running: 1, next: 2, paused: 3, ended: 4 };
   const nextDate = (s) => Sch().nextDates(s)[0];
-  const SCHED_SORTS = { 'most urgent': (a, b) => SCHED_RANK[sectionNow(a)] - SCHED_RANK[sectionNow(b)] || nextDate(a) - nextDate(b), 'next to run': (a, b) => (a.state === 'paused') - (b.state === 'paused') || nextDate(a) - nextDate(b), 'A–Z': (a, b) => a.title.localeCompare(b.title) };
+  const SCHED_SORTS = { 'most urgent': (a, b) => SCHED_RANK[sectionNow(a)] - SCHED_RANK[sectionNow(b)] || nextDate(a) - nextDate(b), 'next to run': (a, b) => (a.state === 'paused' || !!a.ended) - (b.state === 'paused' || !!b.ended) || nextDate(a) - nextDate(b), 'A–Z': (a, b) => a.title.localeCompare(b.title) };
   function schedLine(s) {
     const week = s.runs.filter((r) => r.case !== 'stopped').slice(0, 7).reverse(), done = week.filter((r) => OUT(r) !== 'run'), won = done.filter((r) => OUT(r) === 'ok').length, sec = sectionNow(s);
     const failed = done.filter((r) => OUT(r) === 'fail').at(-1);
@@ -137,14 +138,15 @@
     return R.runOutcomes({ runs: week.map(OUT), says: `${pre}${num}${fail}${pr ? ` · merged ${pr[0]}` : ''}${week.length !== done.length ? ` · last ${week.length} runs` : ''}` });
   }
   function schedCard(s) {
-    const sec = sectionNow(s), run = Sch().runningRun(s), next = Sch().nextLine(s);
-    const [word, kicker, tone] = sec === 'needs' ? ['Missed', `${s.missed}, ${s.at} · ${s.missedWhy}`, 'act'] : sec === 'running' ? [R.runState('working').word, `for ${!run.time || run.time === 'now' ? 'a moment' : run.time}`, 'run'] : sec === 'paused' ? ['Paused', 'by you', 'idle'] : ['Next up', next, 'idle'];
-    const fact = esc(`${s.project || 'No project'} · ${R.scheduleWords(s).says}${s.tz && s.tz !== DEFAULT_TZ ? ` ${s.tz}` : ''}`);
-    const act = sec === 'needs' ? ['Run now', 'run', ''] : sec === 'running' ? ['Stop', 'stop', 'quiet'] : sec === 'paused' ? ['Resume', 'pause', 'quiet'] : ['Run now', 'run', 'quiet'];
-    return R.pluginCard({ mark: R.kindMark({ kind: 'schedule', tone: sec === 'needs' ? 'act' : sec === 'paused' ? 'pause' : sec === 'running' ? 'run' : 'idle', breathe: sec === 'needs' }), word, kicker, tone, title: s.title, titleHtml: link(s.title, { 'data-c-sched': s.id }, `Opens ${s.title}`), what: s.what || R.scheduleWords(s).says, line: schedLine(s), factsHtml: fact, factsTip: fact, action: R.button({ label: act[0], kind: act[2], attrs: { 'data-c-sact': `${act[1]}|${s.id}`, title: `${act[0]}: ${s.title}` } }), attrs: { 'data-c-card': s.id, title: s.cost ? `${usd(s.cost)} a run` : null } });
+    // its word and why are the schedule's own (RailSchedules.wordOf / nextOf): the same on its page, its row and its chat card
+    const sec = sectionNow(s), word = Sch().wordOf(s.id), next = Sch().nextOf(s.id);
+    const [kicker, tone] = sec === 'needs' ? [`${s.missed}, ${s.at} · ${s.missedWhy}`, 'act'] : sec === 'running' ? [next, 'run'] : [next, 'idle'];
+    const fact = esc(`${s.project || 'No project'} · ${R.REPEATS.includes(s.every) ? R.scheduleWords(s).says : s.every}${s.tz && s.tz !== homeTz() ? ` ${s.tz}` : ''}${s.preset ? ` · ${s.preset === 'preset deleted' ? s.preset : `from ${s.preset}`}` : ''}`);
+    const act = sec === 'ended' ? null : sec === 'needs' ? ['Run now', 'run', ''] : sec === 'running' ? ['Stop', 'stop', 'quiet'] : sec === 'paused' ? ['Resume', 'pause', 'quiet'] : ['Run now', 'run', 'quiet'];   // an ended one runs no more
+    return R.pluginCard({ mark: R.kindMark({ kind: 'schedule', tone: sec === 'needs' ? 'act' : sec === 'paused' ? 'pause' : sec === 'running' ? 'run' : 'idle', breathe: sec === 'needs' }), word, kicker, tone, title: s.title, titleHtml: link(s.title, { 'data-c-sched': s.id }, `Opens ${s.title}`), what: s.what || R.scheduleWords(s).says, line: schedLine(s), factsHtml: fact, factsTip: fact, action: act ? R.button({ label: act[0], kind: act[2], attrs: { 'data-c-sact': `${act[1]}|${s.id}`, title: `${act[0]}: ${s.title}` } }) : '', attrs: { 'data-c-card': s.id, title: s.cost ? `${usd(s.cost)} a run` : null } });
   }
   function schedulesHtml() {
-    const all = Sch().all(), list = all.filter((s) => (!view.from || (s.project || 'No project') === view.from) && (Sch().showing() === 'all' || s.state === 'paused')).sort(SCHED_SORTS[view.sSort]);
+    const all = Sch().all(), list = all.filter((s) => (!view.from || (s.project || 'No project') === view.from) && (Sch().showing() === 'all' || (Sch().showing() === 'drafts' ? !!window.RailDrafts?.get(`schedule:${s.id}`) : s.state === 'paused'))).sort(SCHED_SORTS[view.sSort]);
     if (!all.length) return wrap(`${R.placeHead({ title: 'Your schedules', facts: 'New work starts in Chat' })}${R.emptyState({ title: 'No schedules yet.', actions: R.button({ label: 'Schedule a task', kind: 'quiet', attrs: { 'data-c-new': 'schedule' } }) })}`);
     const runs = all.flatMap((s) => s.runs.filter((r) => r.case !== 'stopped').slice(0, 7)).filter((r) => OUT(r) !== 'run'), won = runs.filter((r) => OUT(r) === 'ok').length;
     const facts = [esc(plural(all.length, 'schedule')), runs.length ? count(`${won} of ${runs.length} runs succeeded in 7 days`, filterHook({ schedule: 'any', show: 'finished' }), 'Opens the runs that succeeded in Tasks') : '', `times in ${DEFAULT_TZ}${all.some((s) => s.tz && s.tz !== DEFAULT_TZ) ? ', unless a card says' : ''}`].filter(Boolean).join(' · ');
@@ -289,14 +291,15 @@
     return liveModels.filter((m) => m.engine === engine).map((m) => ({ text: `${m.label} for every step`, model: m.id }));
   }
   const projects = () => [...new Set(W.rows().map((r) => r.project).filter(Boolean)), 'No project'];
-  const LISTS = () => ({ project: projects(), workflow: flows().map((w) => w.title), agent: W.live ? [LIVE_AGENT, ...engines().map((e) => e.label)] : ['Claude', 'Codex', 'Gemini'], base: W.live ? [LIVE_BASE, ...liveBranches.list] : ['main', 'dev'], source: W.live ? [LIVE_SETUP, ...Object.keys(LIVE_SOURCE)] : ['the latest version from origin', 'my local copy'], then: W.live ? [LIVE_SETUP, ...Object.keys(LIVE_THEN)] : Object.keys(THEN), every: R.REPEATS.filter((x) => x !== 'once' && x !== 'every hour').map((x) => x.replace(/^every /, '')), at: R.TIMES_OF_DAY, tz: ['Europe/Sofia', 'UTC', 'Europe/Berlin', 'America/New_York'], ends: ['no end date', 'after 10 runs', 'after 30 days'], overlap: ['skip if still going', 'queue if still going'], fails: ['pause after 3 failures', 'pause after 5 failures', 'never pause'], cap: ['the workflow\'s own', 'at $5', 'at $20'], agents: W.live ? [AGENTS_OWN, ...liveAgentPicks().map((x) => x.text)] : [AGENTS_OWN, 'Sonnet for every step', 'Opus for every step'] });
-  const blank = (kind, keep = {}) => ({ kind, project: projects().includes('billing-api') ? 'billing-api' : projects()[0], workflow: 'Default', agent: W.live ? LIVE_AGENT : 'Claude', base: W.live ? LIVE_BASE : 'main', source: W.live ? LIVE_SETUP : 'the latest version from origin', then: W.live ? LIVE_SETUP : 'open a PR', text: '', path: '', src: 'write', name: '', more: false, title: '', branch: '', tags: '', files: [], agents: 'the workflow\'s own', cap: 'the workflow\'s own', every: 'weekday', at: '09:00', tz: 'Europe/Sofia', ends: 'no end date', overlap: 'skip if still going', fails: 'pause after 3 failures', err: '', ...keep });
+  const LISTS = () => ({ project: projects(), workflow: flows().map((w) => w.title), agent: W.live ? [LIVE_AGENT, ...engines().map((e) => e.label)] : ['Claude', 'Codex', 'Gemini'], base: W.live ? [LIVE_BASE, ...liveBranches.list] : ['main', 'dev'], source: W.live ? [LIVE_SETUP, ...Object.keys(LIVE_SOURCE)] : ['the latest version from origin', 'my local copy'], then: W.live ? [LIVE_SETUP, ...Object.keys(LIVE_THEN)] : Object.keys(THEN), every: R.REPEATS.filter((x) => x !== 'once' && x !== 'every hour').map((x) => x.replace(/^every /, '')), at: R.TIMES_OF_DAY, tz: [...new Set([homeTz(), 'Europe/Sofia', 'UTC', 'Europe/Berlin', 'America/New_York'])], ends: ['no end date', 'after 10 runs', 'after 30 days'], overlap: ['skip if still going', 'queue if still going'], fails: ['pause after 3 failures', 'pause after 5 failures', 'never pause'], cap: ['the workflow\'s own', 'at $5', 'at $20'], agents: W.live ? [AGENTS_OWN, ...liveAgentPicks().map((x) => x.text)] : [AGENTS_OWN, 'Sonnet for every step', 'Opus for every step'] });
+  const blank = (kind, keep = {}) => ({ kind, project: projects().includes('billing-api') ? 'billing-api' : projects()[0], workflow: 'Default', agent: W.live ? LIVE_AGENT : 'Claude', base: W.live ? LIVE_BASE : 'main', source: W.live ? LIVE_SETUP : 'the latest version from origin', then: W.live ? LIVE_SETUP : 'open a PR', text: '', path: '', src: 'write', name: '', more: false, title: '', branch: '', tags: '', files: [], agents: 'the workflow\'s own', cap: 'the workflow\'s own', every: 'weekday', at: '09:00', tz: homeTz(), ends: 'no end date', overlap: 'skip if still going', fails: 'pause after 3 failures', err: '', ...keep });
   const fPick = (k, tip) => R.sentencePicker({ id: `f-${k}`, text: form[k], tip, items: LISTS()[k].map((v) => ({ id: v, text: v, checked: v === form[k] })), open: menu === `f-${k}`, chevron: chev });
   const proof = () => { const w = flows().find((x) => x.title === form.workflow), s = (w?.steps || []).map((x) => VERB[x] || x.toLowerCase()), last = s.pop(); return `${form.workflow} ${[s.join(', '), last].filter(Boolean).join(' and ')}, then ${THEN[form.then] || 'does what the project is set up to do'}.`.replace(' and , ', ' ').replace(' , ', ', '); };
   const errOf = (at) => (form.errAt === at ? form.err : '');   // the line sits under the field it is about
   function formHtml() {
     const sched = form.kind === 'schedule';
-    const frame = `<div class="cc-frame"><span>A task on ${fPick('project', 'The project you used last')} using the ${fPick('workflow')} workflow, run by ${fPick('agent')},<br> from ${fPick('base')}, ${fPick('source')}, then ${fPick('then')}</span><span class="cc-proof">${esc(proof())}</span></div>`;
+    const after = form.after ? `<br> It starts once ${esc(form.after.title)} ends` : '';   // Run after this (dev's Schedule next…): it waits for that one
+    const frame = `<div class="cc-frame"><span>A task on ${fPick('project', 'The project you used last')} using the ${fPick('workflow')} workflow, run by ${fPick('agent')},<br> from ${fPick('base')}, ${fPick('source')}, then ${fPick('then')}${after}</span><span class="cc-proof">${esc(proof())}</span></div>`;
     const src = R.segmented({ label: 'Task source', hook: 'c-src', items: [{ id: 'write', label: 'Write it', pressed: form.src === 'write' }, { id: 'file', label: 'From file', pressed: form.src === 'file' }] });
     const what = `<div class="cc-lbl">${form.src === 'write' ? R.field({ id: 'cc-text', label: 'What should it do', multiline: true, error: errOf('#cc-text'), value: form.text, placeholder: sched ? 'What should each run do?' : 'Describe the software task to build…', attrs: { 'data-f': 'text', rows: 5 } }) : R.field({ id: 'cc-path', label: 'What should it do', error: errOf('#cc-path'), value: form.path, placeholder: 'A file in the project: docs/task.md', attrs: { 'data-f': 'path' } })}${src}</div>`;
     const fold = (label, says) => `<div class="cc-fold">${R.button({ label, kind: 'quiet', icon: R.icon(form.more ? 'chevron' : 'chevR', 12), attrs: { 'data-c-more': '', 'aria-expanded': String(form.more) } })}<span>${esc(says)}</span></div>`;
@@ -308,7 +311,7 @@
     }
     const perStep = W.live && LISTS().agents.length < 2 ? `<span>Cost cap: ${fPick('cap')}</span>` : `<span>Agents: ${fPick('agents')}</span><span>Cost cap: ${fPick('cap')}</span>`;
     const body = `${frame}${what}${fold('More options', W.live ? 'Title, branch, cost tags, agents, cost cap, files' : 'Title, branch, cost tags, agents, guardrails, files')}${form.more ? `<div class="cc-more">${R.field({ id: 'cc-title', label: 'Title', value: form.title, placeholder: 'Worca names it from what it should do', attrs: { 'data-f': 'title', maxlength: NAME_MAX } })}${R.field({ id: 'cc-branch', label: 'Branch', value: form.branch, placeholder: 'Worca makes one', attrs: { 'data-f': 'branch' } })}${R.field({ id: 'cc-tags', label: 'Cost tags', value: form.tags, placeholder: 'Comma separated', attrs: { 'data-f': 'tags' } })}${perStep}<span>${R.button({ label: 'Add files…', kind: 'quiet', attrs: { 'data-c-files': '', title: 'Attaches files to the task' } })}${form.files.length ? ` ${esc(form.files.map((x) => x.name).join(', '))}` : ''}</span></div>` : ''}`;
-    return R.dialog({ title: 'New task', body, yes: 'Start task', busy: !!form.busy, busyLabel: 'Starting…', status: `${R.button({ label: 'Schedule…', kind: 'quiet', attrs: { 'data-c-tosched': '', title: 'The same task, at a time' } })}`, close: R.icon('x', 15), id: 'cc-t', cls: 'cc-dlg', hooks: hooksOf() });
+    return R.dialog({ title: 'New task', body, yes: form.after ? 'Start after it' : 'Start task', busy: !!form.busy, busyLabel: 'Starting…', status: `${R.button({ label: 'Schedule…', kind: 'quiet', attrs: { 'data-c-tosched': '', title: 'The same task, at a time' } })}`, close: R.icon('x', 15), id: 'cc-t', cls: 'cc-dlg', hooks: hooksOf() });
   }
   const hooksOf = () => ({ close: {}, cancel: {}, yes: {} });
   const cap = (t) => t[0].toUpperCase() + t.slice(1);
@@ -329,47 +332,71 @@
     if (!words) return [form.src === 'write' ? 'Say what it should do' : 'Name the file it should follow', form.src === 'write' ? '#cc-text' : '#cc-path'];
     return null;
   }
+  // the form's overlap and failures words as dev's values (both kinds)
+  const policiesOf = (f) => ({ overlap: /^queue/.test(f.overlap) ? 'queue' : 'skip', maxFailures: /never/.test(f.fails) ? 0 : Number(/\d+/.exec(f.fails)?.[0] || 3) });
   function save() {
     const bad = check(); if (bad) { form.err = bad[0]; form.errAt = bad[1]; paintForm(bad[1]); return; }
     if (W.live && form.kind === 'task') { liveStart(); return; }   // D12b: dev's POST /api/run
-    if (window.RailAdapter?.refuse?.(`tasks.new-${form.kind}`)) return;   // R-arch-10: the live kind schedules nothing until the Schedules slice; the form stays as it was
+    if (W.live && form.kind === 'schedule') { liveSchedule(); return; }   // Schedules D9: dev's POST /api/run with repeat
     const words = (form.src === 'write' ? form.text : `Follow ${form.path}`).trim(), project = form.project === 'No project' ? '' : form.project, k = Date.now().toString(36);
     if (form.kind === 'task') {
       const title = form.title.trim() || (words.length > 56 ? `${words.slice(0, 54).trim()}…` : words);
       const f = form; closeForm();
+      if (f.after) { Sch().add({ id: `n${k}`, title, project, chat: '', every: 'Once', at: '', next: `after ${f.after.title}`, state: 'scheduled', time: 'after', section: 'next', labels: [], what: words, cost: 0, started: Sch().dateWord(Sch().TODAY), runs: [], after: f.after.title, afterRef: { kind: f.after.kind, id: f.after.id, policy: 'done' } }); say(`Scheduled ${title}: it starts once ${f.after.title} ends`); paint(); return; }
       W.add({ id: `n-${k}`, case: 'starting', title, project, detail: 'Plan is under way', time: 'now', day: 'today', cost: 0, workflow: f.workflow, kind: project ? 'Git' : 'No project' });
       say(`Started ${title}`); paint(); return;
     }
-    const every = `every ${form.every}`, w = R.scheduleWords({ every, at: form.at }), s = { id: `n${k}`, title: form.name.trim(), project, chat: '', every, at: form.at, tz: form.tz, next: w.next, day: w.day, state: 'scheduled', time: w.time, section: 'next', labels: [], what: words.endsWith('.') ? words : `${words}.`, cost: 0, started: Sch().dateWord(Sch().TODAY), workflow: form.workflow, agent: form.agent, base: form.base, then: form.then, ends: form.ends, overlap: form.overlap, fails: form.fails, runs: [] };
+    const every = `every ${form.every}`, w = R.scheduleWords({ every, at: form.at }), s = { id: `n${k}`, title: form.name.trim(), project, chat: '', every, at: form.at, tz: form.tz, next: w.next, day: w.day, state: 'scheduled', time: w.time, section: 'next', labels: [], what: words.endsWith('.') ? words : `${words}.`, cost: 0, started: Sch().dateWord(Sch().TODAY), workflow: form.workflow, agent: form.agent, base: form.base, then: form.then, ends: form.ends, overlap: policiesOf(form).overlap, fails: policiesOf(form).maxFailures, runs: [] };
     closeForm(); Sch().add(s); say(`Scheduled ${s.title}: ${R.scheduleWords(s).runs}`); paint();
   }
   // New task… in the live kind (D12b): POST /api/run { projectDir | noProject, prompt, workflowId?, engine?, sourceBranch?, syncBeforeStart?, pr?,
   // costCapUsd?, overlay? }; on ok the task's page opens, a refusal stays in the form with what was typed. One start at a time.
+  // the frame's picks as dev's run fields, the same for a task and a schedule: workflow, engine and, with a project, its
+  // base, sync and PR (No project has no git); a schedule stores them and replays them at each fire
+  function runFields(none) {
+    const wf = flows().find((x) => x.title === form.workflow)?.id || '';
+    const engine = engines().find((e) => e.label === form.agent)?.id || '';
+    const git = none ? {} : { ...(form.base && form.base !== LIVE_BASE ? { sourceBranch: form.base } : {}),
+      ...(form.source in LIVE_SOURCE ? { syncBeforeStart: LIVE_SOURCE[form.source] } : {}), ...(LIVE_THEN[form.then] ? { pr: { open: LIVE_THEN[form.then] } } : {}) };
+    return { ...(wf ? { workflowId: wf } : {}), ...(engine ? { engine } : {}), ...git };
+  }
   async function liveStart() {
     if (form.busy) return;
     const words = (form.src === 'write' ? form.text : `Follow ${form.path}`).trim();
     const none = form.project === 'No project', dir = none ? '' : window.RailTaskLive?.projectDirOf(form.project) || '';
     const usd = form.cap === LISTS().cap[0] ? null : capUsd(form.cap);
     const tags = form.tags.split(',').map((x) => x.trim()).filter(Boolean);
-    const wf = flows().find((x) => x.title === form.workflow)?.id || '';
-    const engine = engines().find((e) => e.label === form.agent)?.id || '';
     const every = liveAgentPicks().find((x) => x.text === form.agents)?.model || '';   // one model for each agent node: dev's overlay.nodes
     const overlay = every ? { nodes: Object.fromEntries(liveFlow().agents.map((id) => [id, { model: every }])) } : null;
-    // No project has no git: its base, sync, PR and branch name are not sent
-    const git = none ? {} : { ...(form.base && form.base !== LIVE_BASE ? { sourceBranch: form.base } : {}),
-      ...(form.source in LIVE_SOURCE ? { syncBeforeStart: LIVE_SOURCE[form.source] } : {}), ...(LIVE_THEN[form.then] ? { pr: { open: LIVE_THEN[form.then] } } : {}),
-      ...(form.branch.trim() ? { featureBranch: form.branch.trim() } : {}) };
-    const body = { ...(none ? { noProject: true } : dir ? { projectDir: dir } : {}), prompt: words, ...(wf ? { workflowId: wf } : {}), ...(engine ? { engine } : {}),
-      ...git, ...(usd ? { costCapUsd: usd } : {}), ...(overlay ? { overlay } : {}),
+    const body = { ...(none ? { noProject: true } : dir ? { projectDir: dir } : {}), prompt: words, ...runFields(none),
+      ...(!none && form.branch.trim() ? { featureBranch: form.branch.trim() } : {}), ...(usd ? { costCapUsd: usd } : {}), ...(overlay ? { overlay } : {}),
       ...(form.title.trim() ? { title: form.title.trim() } : {}),
-      ...(tags.length ? { tags } : {}), ...(form.files.length ? { extras: form.files.map(({ name, dataBase64 }) => ({ name, dataBase64 })) } : {}) };
+      ...(tags.length ? { tags } : {}), ...(form.files.length ? { extras: form.files.map(({ name, dataBase64 }) => ({ name, dataBase64 })) } : {}),
+      ...(form.after ? { after: { kind: form.after.kind, id: form.after.id }, afterPolicy: 'done' } : {}) };
     const f = form; f.busy = true; paintForm();
     const res = await window.RailTaskLive?.act('new-task', { body, quiet: true, key: 'new-task:form' });
     f.busy = false;
     if (form !== f) return;
     if (!res?.ok) { form.err = `Could not start the task: ${res?.error || 'no answer'}`; form.errAt = form.src === 'write' ? '#cc-text' : '#cc-path'; paintForm(form.errAt); return; }
-    closeForm(); say(`Started ${f.title.trim() || words}`);
+    closeForm();
+    if (f.after) { say(`Scheduled ${f.title.trim() || words}: it starts once ${f.after.title} ends`); return; }   // a waiting ticket, no task yet: Schedules lists it
+    say(`Started ${f.title.trim() || words}`);
     if (res.data?.runId) window.RailShell?.go(`run/${res.data.runId}`);
+  }
+  // New schedule… in the live kind (Schedules D9): POST /api/run { projectDir | noProject, prompt, title, repeat: { rule } }, through
+  // RailScheduleLive (the rule from its words, live/schedule-rule.mjs); a refusal stays in the form with what was typed.
+  async function liveSchedule() {
+    if (form.busy) return;
+    const words = (form.src === 'write' ? form.text : `Follow ${form.path}`).trim(), none = form.project === 'No project';
+    const dir = none ? '' : window.RailTaskLive?.projectDirOf(form.project) || '';
+    if (!none && !dir) { form.err = 'Could not create the schedule: that project is not known'; form.errAt = '#cc-name'; paintForm(form.errAt); return; }   // never a no-project schedule by accident
+    const f = form; f.busy = true; paintForm();
+    const res = await window.RailScheduleLive?.act('new', { ...(none ? { noProject: true } : { projectDir: dir }), run: runFields(none), prompt: words, title: f.name.trim(), every: `every ${f.every}`, at: f.at, tz: f.tz,
+      end: window.RailScheduleLive.endOf?.(f.ends) || null, ...policiesOf(f) });
+    f.busy = false;
+    if (form !== f) return;
+    if (!res?.ok) { form.err = `Could not create the schedule: ${res?.error || 'no answer'}`; form.errAt = form.src === 'write' ? '#cc-text' : '#cc-path'; paintForm(form.errAt); return; }
+    closeForm(); say(`Scheduled ${f.name.trim()}: ${R.scheduleWords({ every: `every ${f.every}`, at: f.at }).runs}`);
   }
   function dlgClick(e) {
     const on = (q) => e.target.closest(q); let hit;
@@ -412,6 +439,7 @@
     tasks: (el) => { wire(); tasksHost = el; menu = ''; asking = null; paint(); },
     schedules: (el) => { wire(); schedHost = el; menu = ''; if (/^#schedules/.test(location.hash)) el.innerHTML = schedulesHtml(); },
     maker: (which) => (advanced() ? MAKERS[which] : null),
+    newTask: (keep = {}) => { wire(); openForm('task', { ...keep, ...(keep.project && !projects().includes(keep.project) ? { project: projects()[0] } : {}) }); },   // Run after this: the New task form, waiting for that one
     // the Projects center's strip, under its home's head; a strip asked there is dropped once its home is left
     askStrip: () => (asking?.where === 'place' && W.find(asking.id) ? stripOf(asking) : ''), unask: () => { if (asking?.where === 'place') asking = null; },
     paint, wire, taskOf, stateOf, clause, actionsOf, schedLink, link, inWeek,

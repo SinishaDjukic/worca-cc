@@ -941,6 +941,13 @@ export function listSchedules({ projectDir = null, workspaceId = null, includeEn
     .all(...args).map((r) => rowToSchedule(r));
 }
 
+/** A user skip is undoable only until the series is paused or its rule changes: after that its slot is not the series'
+ *  next one any more, so Keep next time must never bring it back (it would duplicate or restore a stale slot). */
+function retireSkips(scheduleId, now) {
+  getDb().prepare("UPDATE scheduled_runs SET fail_reason = 'skip superseded', updated_at = ? WHERE schedule_id = ? AND status = 'skipped' AND fail_reason = 'skipped by user' AND run_at > ?")
+    .run(iso(now), String(scheduleId), iso(now));
+}
+
 function dropPendingTickets(scheduleId) {
   getDb().prepare("DELETE FROM scheduled_runs WHERE schedule_id = ? AND status = 'scheduled' AND owner_pid IS NULL").run(scheduleId);
 }
@@ -1004,6 +1011,7 @@ export function updateSchedule(id, patch = {}, { now = Date.now(), by = undefine
   tx(() => {
     getDb().prepare(`UPDATE schedules SET ${sets.join(', ')}, updated_at = ?, updated_by = COALESCE(?, updated_by) WHERE id = ?`).run(...args, iso(now), byOf(by), id);
     dropPendingTickets(id);
+    if (patch.rule !== undefined) retireSkips(id, now);
   });
   materializeNext(id, { now });
   return getSchedule(id);
@@ -1015,6 +1023,7 @@ export function pauseSchedule(id, { reason = 'user', now = Date.now(), by = unde
     .run(reason, iso(now), byOf(by), String(id)).changes;
   if (!changed) return null;
   dropPendingTickets(id);
+  retireSkips(id, now);
   return getSchedule(id);
 }
 
@@ -1038,6 +1047,43 @@ export function skipNext(id, { now = Date.now(), by = undefined } = {}) {
   if (byOf(by)) getDb().prepare('UPDATE schedules SET updated_at = ?, updated_by = ? WHERE id = ?').run(iso(now), byOf(by), id);
   materializeNext(id, { now: Math.max(now, Date.parse(row.run_at)) });
   return getSchedule(id);
+}
+
+// a user-skipped future slot that is still before the series' open (unforced) occurrence: the one Keep next time restores
+const USER_SKIPPED = "k.status = 'skipped' AND k.fail_reason = 'skipped by user' AND k.forced = 0 AND k.run_at > ? AND k.run_at < "
+  + "(SELECT MIN(o.run_at) FROM scheduled_runs o WHERE o.schedule_id = k.schedule_id AND o.status IN ('scheduled', 'firing') AND o.forced = 0)";
+
+/** The latest user-skipped future slot of a series (the one Keep next time restores), ISO or null. */
+export function skippedNextOf(id, { now = Date.now() } = {}) {
+  const row = getDb().prepare(`SELECT MAX(k.run_at) AS at FROM scheduled_runs k WHERE k.schedule_id = ? AND ${USER_SKIPPED}`).get(String(id), iso(now));
+  return row?.at || null;
+}
+
+/** skippedNextOf for every series at once: Map(scheduleId → ISO), one grouped query. */
+export function skippedSlots({ now = Date.now() } = {}) {
+  const rows = getDb().prepare(`SELECT k.schedule_id, MAX(k.run_at) AS at FROM scheduled_runs k WHERE k.schedule_id IS NOT NULL AND ${USER_SKIPPED} GROUP BY k.schedule_id`).all(iso(now));
+  return new Map(rows.map((r) => [r.schedule_id, r.at]));
+}
+
+/**
+ * Undo the most recent "Skip next time" (last skipped, first kept): in one transaction the latest user-skipped
+ * future slot is scheduled again, every pending unforced ticket after it is removed, and next_run_at is that slot.
+ * @returns {object|null|{refused: 'nothing-skipped'}|{refused: 'not-active', status: string}} the schedule; null when missing
+ */
+export function keepNext(id, { now = Date.now(), by = undefined } = {}) {
+  // the status check, the read and the writes are one BEGIN IMMEDIATE transaction: a pause from another process waits for it
+  const out = tx(() => {
+    const s = getSchedule(id);
+    if (!s) return null;
+    if (s.status !== 'active') return { refused: 'not-active', status: s.status };   // the status the refusal names is the one read here
+    const row = getDb().prepare(`SELECT k.* FROM scheduled_runs k WHERE k.schedule_id = ? AND ${USER_SKIPPED} ORDER BY k.run_at DESC LIMIT 1`).get(s.id, iso(now));
+    if (!row) return { refused: 'nothing-skipped' };
+    touchTicket(row.id, "status = 'scheduled', fail_reason = NULL", [], now, by);
+    getDb().prepare("DELETE FROM scheduled_runs WHERE schedule_id = ? AND status = 'scheduled' AND owner_pid IS NULL AND forced = 0 AND run_at > ?").run(s.id, row.run_at);
+    getDb().prepare('UPDATE schedules SET next_run_at = ?, updated_at = ?, updated_by = COALESCE(?, updated_by) WHERE id = ?').run(row.run_at, iso(now), byOf(by), s.id);
+    return { ok: true };
+  });
+  return out?.ok ? getSchedule(id) : out;
 }
 
 /** Start one extra occurrence now; the series itself does not shift. */

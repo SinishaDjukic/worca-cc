@@ -167,9 +167,9 @@ test('slice 10 D19: while the month read is held, the project page draws no spen
   assert.match(page(h.d).textContent, /\$16 this month/, 'seed-ok and seed-local: $12.40 + $3.10');
 });
 
-test('the demo kind sends nothing: Remove, Rename and a setting change only the demo', async () => {
+test('the demo kind sends nothing: Remove, Rename and a setting change only the demo', async (t) => {
   const calls = [];
-  const w = stillhetHost({ hash: '#projects/worca-cc', fetch: async (u, o = {}) => { calls.push([o.method || 'GET', String(u)]); return { ok: true, status: 200, json: async () => ({}) }; } });
+  const w = stillhetHost({ hash: '#projects/worca-cc', after: (fn) => t.after(fn), fetch: async (u, o = {}) => { calls.push([o.method || 'GET', String(u)]); return { ok: true, status: 200, json: async () => ({}) }; } });
   await settle(120);
   const d = w.document;
   pickMore(d, 'rename'); await settle(80);

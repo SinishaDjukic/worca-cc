@@ -251,3 +251,12 @@ test('Insights (slice 10): every Insights row is wired, or not offered live with
   for (const l of lines.filter((x) => x.includes('insights/'))) assert.doesNotMatch(l, /\| (wire to|wired \(partial\)|add to the design first|new: build it) \|/, l.slice(0, 100));
   assert.doesNotMatch(doc, /^- add to the design first: .*Insights/m, 'the four design-first lines are built');
 });
+
+test('the proposed perspectives Moves row stays open, waiting for the owner (TaskProposal reviewed by), as a 4-column row', () => {
+  const name = 'Perspectives proposed on the run card (flag proposedPerspectives)';
+  const row = doc.split('\n').find((l) => l.startsWith(`| ${name} |`));
+  assert.ok(row, name);
+  const cells = row.split('|').slice(1, -1).map((c) => c.trim());
+  assert.equal(cells.length, 4);
+  assert.equal(cells[1], 'open: waits for the owner (TaskProposal reviewed by)');
+});

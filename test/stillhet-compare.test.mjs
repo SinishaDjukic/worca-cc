@@ -16,6 +16,7 @@ test('PARTS lists the invitation, the design switch, one whole-page cell per she
     'state-task-loading-run', 'state-task-failed-run', 'state-task-gone-run', 'action-failed-run', 'terminal-chat',
     'wf-way-agents', 'wf-way-scripts', 'wf-way-drafts-empty', 'wf-way-for-you', 'wf-way-team-empty', 'wf-list-loading', 'wf-list-failed', 'wf-canvas', 'wf-canvas-picked', 'wf-draft',
     'wf-delete-confirm', 'wf-export-form', 'wf-export-plugin', 'wf-import-scripts', 'wf-agent-draft', 'wf-not-found', 'wf-fresh', 'run-graph-open-workflow',
+    'schedules-empty', 'schedules-loading', 'schedules-failed', 'schedule-skipped', 'schedule-draft', 'schedule-deleted-undo',
     'mk-way-updates', 'mk-way-installed', 'mk-way-for-you', 'mk-way-all', 'mk-way-shelf', 'mk-way-shelf-new-empty', 'mk-way-source', 'mk-list-loading', 'mk-list-failed',
     'mk-install-form', 'mk-remove-confirm', 'mk-setup-form', 'mk-needs-setup', 'mk-update-asks', 'mk-add-error', 'mk-not-found',
     'pj-list-loading', 'pj-list-failed', 'pj-by-project', 'pj-rename-form', 'pj-remove-confirm', 'pj-remove-owned', 'pj-locate-form', 'pj-link-remote',
@@ -393,6 +394,15 @@ test('Workflows (slice 7): WORKFLOWS_CELL_IDS lists every Workflows state and th
   assert.deepEqual(seedsOf(fresh, 360), ['#mbar-menu', '#bar-head [data-bar-new="place"]', '[data-menu-pick="bar-new|hand"]'], 'narrow: the drawer opens first');
   assert.deepEqual(seedsOf(fresh, 1280), ['#bar-head [data-bar-new="place"]', '[data-menu-pick="bar-new|hand"]']);
   assert.deepEqual(seedsOf(PARTS.find((p) => p.id === 'terminal-chat'), 360), ['#route-chat [data-terminal]'], 'a plain seed is the same at every width');
+});
+
+test('SCHEDULES_CELL_IDS (Stillhet Schedules, D14): the six Schedules cells, each opened by the same address (and clicks) in both hosts', async () => {
+  const { SCHEDULES_CELL_IDS, SHOWN } = await import('../tools/stillhet-compare.mjs');
+  const ids = new Set([...PARTS.map((p) => p.id), ...SHOWN.map((h) => deepPart(h).id)]);
+  for (const id of SCHEDULES_CELL_IDS) assert.ok(ids.has(id), id);
+  const six = ['schedules-empty', 'schedules-loading', 'schedules-failed', 'schedule-draft', 'schedule-deleted-undo', 'schedule-skipped'];
+  for (const id of six) { const p = PARTS.find((x) => x.id === id); assert.ok(p, id); assert.equal(p.app.route, p.proto.route, id); }
+  assert.deepEqual(PARTS.find((x) => x.id === 'schedule-draft').seed, ['#route-schedule [data-menu="sc-at"]', '#route-schedule [data-menu-pick="sc-at|10:00"]']);
 });
 
 test('Marketplace (slice 8): its own cells, each the same route on both sides; the deep marketplace/ routes are derived', async () => {
