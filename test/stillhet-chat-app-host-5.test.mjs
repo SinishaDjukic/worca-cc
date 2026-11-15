@@ -228,3 +228,32 @@ test('F-a2-01: a Stop pauses it: "Queue paused: the reply was stopped" and Send 
   assert.equal(note(d), null);
   assert.deepEqual(sent(calls), ['one']);
 });
+
+test('F-a2-01 review: the queued toast says only "Queued: 1 of 3" (the line says when it goes); Remove on the one being sent says it was already sent', async () => {
+  let release; const gate = new Promise((ok) => { release = ok; });
+  const { w, d, sockets } = await liveHost({ write: async (url) => { if (url.endsWith('/messages')) { await gate; return [202, { userMessageId: 'u5' }]; } return [200, {}]; } });
+  await go(w, '#chat/ask_1');
+  ask(sockets, START()); await settle(40);
+  await enter(w, 'one');
+  assert.match(saidText(d), /(^| \| )Queued: 1 of 3($| \| )/);
+  await enter(w, 'two');
+  ask(sockets, DONE()); await settle(60);
+  d.querySelector('#route-chat [data-q-drop]').click(); await settle(40);
+  assert.match(saidText(d), /Already sent: it can no longer be removed/);
+  assert.deepEqual(rowsOf(d), ['Queued one', 'Queued two'], 'nothing is taken out');
+  release(); await settle(60);
+  assert.deepEqual(rowsOf(d), ['Queued two']);
+});
+
+test('F-a2-01 review: a reply that ends after you left Chat for another page sends nothing; back in the chat it waits paused with Send now', async () => {
+  const { w, d, calls, sockets } = await liveHost({ write: accept });
+  await go(w, '#chat/ask_1');
+  ask(sockets, START()); await settle(40);
+  await enter(w, 'later');
+  await go(w, '#today');
+  ask(sockets, DONE()); await settle(80);
+  assert.deepEqual(sent(calls), [], 'not sent while Chat is not on screen');
+  await go(w, '#chat/ask_1');
+  assert.match(note(d).textContent, /^Queue paused: the reply ended while this chat was closed/);
+  assert.ok(d.querySelector('#route-chat [data-q-send]'));
+});

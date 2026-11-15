@@ -374,7 +374,7 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
   let qSeq = 0;
   const qOf = (id) => { if (!queues.has(id)) queues.set(id, { items: [], paused: '', why: '', draining: false, ended: null, recheck: false }); return queues.get(id); };   // recheck: true after a send's 409, 'drain' after a drained item's
   const isBusy = (id) => !!threads.get(id)?.model?.inFlight?.() || !!queues.get(id)?.draining;
-  const viewed = (id) => [...viewers.values()].includes(id);
+  const viewed = (id) => [...viewers.values()].some((v) => v.id === id && v.shown());   // a mount on a page that is left, or a closed side panel, shows nothing
   const IN_FLIGHT = (res) => res.status === 409 && res.error === 'turn in flight';
   function enqueue(id, a) {
     const q = qOf(id);
@@ -391,9 +391,10 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
     if (f === 'load') {
       if (isBusy(id)) return;
       if (q.recheck === 'drain') { q.recheck = false; q.paused = 'refused'; q.why = 'turn in flight'; notify(id); return; }   // dev refused a drained item yet runs no turn: Send now, never a loop
-      if (!q.recheck) {   // the end was missed (classic loadThread): paused, with the reason the chat shows
+      if (!q.recheck) {   // the end was missed (classic loadThread): a stop or a failure pauses with its reason; a clean end in a chat on screen sends the next
         const last = [...(threads.get(id)?.model?.messages?.() || [])].reverse().find((m) => m.role === 'assistant');
-        if (!q.paused) q.paused = last?.status === 'error' ? 'failed' : last?.status === 'stopped' ? 'stopped' : 'away';
+        if (!q.paused) q.paused = last?.status === 'error' ? 'failed' : last?.status === 'stopped' ? 'stopped' : viewed(id) ? '' : 'away';
+        if (!q.paused) drain(id);
         notify(id); return;
       }
     }
@@ -573,6 +574,7 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
     dropQueued: (id, key) => {
       const q = queues.get(id), k = q ? q.items.findIndex((x) => x.key === key) : -1;
       if (k < 0) return false;
+      if (k === 0 && q.draining) return 'sending';   // its POST is out: it can no longer be taken back
       q.items.splice(k, 1);
       if (!q.items.length) { q.paused = ''; q.why = ''; }
       notify(id);
@@ -584,7 +586,7 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
       q.paused = ''; q.why = ''; notify(id);
       return isBusy(id) ? Promise.resolve({ ok: true }) : drain(id);   // busy: the next clean end sends it
     },
-    look: (viewer, id) => { if (id) viewers.set(viewer, id); else viewers.delete(viewer); },
+    look: (viewer, id, shown = () => true) => { if (id) viewers.set(viewer, { id, shown }); else viewers.delete(viewer); },
   };
   return api;
 }

@@ -5,6 +5,7 @@
 // browser measure.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { liveHost, go, settle, clone, THREAD } from './helpers/stillhet-chat-live-host.mjs';
 import { stillhetHost } from './helpers/stillhet-host.mjs';
 
@@ -147,7 +148,9 @@ test('F-a2-01 prototype: while the demo reply runs, Enter queues at most 3 with 
   const enter = async (text) => { box().value = text; box().dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await settle(10); };
   await enter('Add a totals row');
   assert.ok(q('[data-cp-stop]'), 'the demo reply runs');
-  for (const m of ['one', 'two', 'three']) await enter(m);
+  await enter('one');
+  assert.match([...d.querySelectorAll('body > .rc-toast')].map((e) => e.textContent).join(' | '), /(^| \| )Queued: 1 of 3($| \| )/, 'the toast never repeats the line');
+  for (const m of ['two', 'three']) await enter(m);
   assert.deepEqual([...d.querySelectorAll('#route-chat .composer-queue .tr-text')].map((e) => e.textContent), ['Queued one', 'Queued two', 'Queued three']);
   assert.equal(q('[data-q-note]').textContent, 'Queue full: sends when the reply finishes');
   await enter('four');
@@ -163,4 +166,9 @@ test('F-a2-01 prototype: while the demo reply runs, Enter queues at most 3 with 
   assert.equal(d.querySelectorAll('#route-chat .composer-queue [data-q-drop]').length, 2, 'Send now sends the oldest');
   assert.ok(q('[data-cp-stop]'), 'its reply runs');
   assert.equal(q('[data-q-note]').textContent, 'Sends when the reply finishes');
+});
+
+test('F-a2-01 review: no demo [data-cp-queue] path queues past the cap: the handler is gone', () => {
+  const src = readFileSync(new URL('../ui/public/stillhet/chat/conversation.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(src, /data-cp-queue/);
 });

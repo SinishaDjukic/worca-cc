@@ -824,3 +824,48 @@ test('F-a2-01: dev answers 409 turn in flight to every POST while its read shows
   assert.deepEqual(r.live.queue('ask_1'), { items: [{ key: r.live.queue('ask_1').items[0].key, text: 'stuck' }], max: 3, paused: 'refused', why: 'turn in flight', draining: false }, 'kept, with Send now');
   assert.deepEqual(r.toasts, []);
 });
+
+test('F-a2-01 review: a missed clean end in a chat on screen sends the next (never "away"); off screen (shown() false) it pauses away', async () => {
+  const done = () => snap({ messages: [THREAD.messages[0], { id: 'a1', role: 'assistant', text: 'ok', status: 'done', createdAt: THREAD.messages[0].createdAt, blocks: [] }] });
+  const on = rig({ answer: (url, method) => (url === '/api/ask/threads/ask_1' && method === 'GET' ? [200, done()] : url.endsWith('/messages') ? [202, { userMessageId: 'u' }] : [200, {}]) });
+  await on.live.open('ask_1'); on.live.look({}, 'ask_1', () => true);
+  on.live.frame(START('a2'));
+  await on.live.act('send', { threadId: 'ask_1', text: 'next', queue: true });
+  await on.live.open('ask_1', { force: true }); await tick(); await tick();   // the end frame was never seen
+  assert.deepEqual(qPosts(on).map((c) => c.body.text), ['next'], 'a clean end on screen sends it');
+  assert.deepEqual(on.live.queue('ask_1'), { items: [], max: 3, paused: '', why: '', draining: false });
+  const off = rig({ answer: (url, method) => (url === '/api/ask/threads/ask_1' && method === 'GET' ? [200, done()] : [200, {}]) });
+  await off.live.open('ask_1'); off.live.look({}, 'ask_1', () => false);   // a Chat route left, or a side panel closed
+  off.live.frame(START('a2'));
+  await off.live.act('send', { threadId: 'ask_1', text: 'next', queue: true });
+  await off.live.open('ask_1', { force: true }); await tick();
+  assert.equal(off.live.queue('ask_1').paused, 'away');
+  assert.equal(qPosts(off).length, 0);
+});
+
+test('F-a2-01 review: a viewer whose page is hidden is not on screen: a clean end pauses away and sends nothing', async () => {
+  let shown = true;
+  const r = rig({ answer: (url, method) => (url === '/api/ask/threads/ask_1' && method === 'GET' ? [200, snap()] : url.endsWith('/messages') ? [202, { userMessageId: 'u' }] : [200, {}]) });
+  await r.live.open('ask_1');
+  r.live.look({}, 'ask_1', () => shown);
+  r.live.frame(START());
+  await r.live.act('send', { threadId: 'ask_1', text: 'later', queue: true });
+  shown = false;
+  r.live.frame(DONE()); await tick();
+  assert.equal(qPosts(r).length, 0, 'nothing is sent while no mount shows the chat');
+  assert.equal(r.live.queue('ask_1').paused, 'away');
+});
+
+test('F-a2-01 review: Remove on the item whose POST is out answers sending and keeps it; it leaves after the ok', async () => {
+  let release; const gate = new Promise((ok) => { release = ok; });
+  const r = await queued({ msg: async () => { await gate; return [202, { userMessageId: 'u' }]; } });
+  await r.live.act('send', { threadId: 'ask_1', text: 'first', queue: true });
+  await r.live.act('send', { threadId: 'ask_1', text: 'second', queue: true });
+  r.live.frame(DONE()); await tick();
+  const [k1, k2] = r.live.queue('ask_1').items.map((x) => x.key);
+  assert.equal(r.live.dropQueued('ask_1', k1), 'sending', 'already on its way');
+  assert.deepEqual(r.live.queue('ask_1').items.map((x) => x.text), ['first', 'second']);
+  assert.equal(r.live.dropQueued('ask_1', k2), true, 'one that waits still goes');
+  release(); await tick();
+  assert.deepEqual(r.live.queue('ask_1').items, []);
+});

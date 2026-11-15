@@ -1112,7 +1112,7 @@
       root.querySelectorAll('[data-composer-t]').forEach((t) => { t.value = ''; });
       const id = r.data.threadId;
       window.RailAdapter.refresh('threads');
-      if (r.queued) { paint(false); say(`Queued: ${r.data.position} of ${Q_MAX}, sends when the reply finishes`); return; }   // form.composer-queue: same chat, it waits for the reply
+      if (r.queued) { paint(false); say(`Queued: ${r.data.position} of ${Q_MAX}`); return; }   // form.composer-queue: same chat, it waits for the reply
       if (!side && location.hash !== `#chat/${id}`) { window.RailShell.go(`chat/${id}`); return; }
       chatId = id; paint(false);
       const box = root.querySelector('.convo-scroll'); if (box) box.scrollTop = box.scrollHeight;
@@ -1124,7 +1124,7 @@
     if (text && LIVE()) { liveSend(text); return; }
     if (comp.busy && text) {   // while Worca replies, sending queues (form.composer-queue): at most three, and a full queue keeps the text
       if ((comp.queue || []).length >= Q_MAX) { say(`Queue full: ${Q_MAX} messages wait for this reply`); return; }
-      comp.queue = [...(comp.queue || []), text]; comp.text = ''; if (had) had.value = ''; paint(false); say(`Queued: ${comp.queue.length} of ${Q_MAX}, sends when the reply finishes`); return;
+      comp.queue = [...(comp.queue || []), text]; comp.text = ''; if (had) had.value = ''; paint(false); say(`Queued: ${comp.queue.length} of ${Q_MAX}`); return;
     }
     if (!text) { had?.focus(); say(comp.mode === 'ask' ? 'Write something first' : 'Say what it should do first'); return; }
     const c = ensureChat(comp.mode === 'schedule' ? saidName(text) : text);
@@ -1389,7 +1389,7 @@
     if ((hit = on('[data-ref-chat]'))) { window.RailShell.go(`chat/${hit.dataset.refChat}`); return true; }
     if ((hit = on('[data-ref-url]'))) { CL().act('url', { url: hit.dataset.refUrl, key: `url:${hit.dataset.refUrl}` }); return true; }
     if (on('[data-cp-stop]')) { e.preventDefault(); busyBtn(on('[data-cp-stop]'), CL().act('stop', { threadId: chatId })); return true; }
-    if ((hit = on('[data-q-drop]'))) { if (CL().dropQueued(chatId, hit.dataset.qDrop)) say('Removed from the queue'); return true; }   // form.composer-queue
+    if ((hit = on('[data-q-drop]'))) { const r = CL().dropQueued(chatId, hit.dataset.qDrop); if (r === 'sending') say('Already sent: it can no longer be removed'); else if (r) say('Removed from the queue'); return true; }   // form.composer-queue
     if ((hit = on('[data-q-send]'))) { busyBtn(hit, CL().sendQueued(chatId)); return true; }
     if ((x = turn('data-failed-details'))) { x.details = !x.details; paint(); root.querySelector(`[data-failed-details="${CSS.escape(x.id)}"]`)?.focus(); return true; }
     if ((x = turn('data-failed-retry'))) { busyBtn(hit, CL().act('retry', { threadId: chatId, messageId: x.id })); return true; }
@@ -1496,7 +1496,6 @@
       if (!t) { x.answered = x.options[x.pick]; afterClarify(); paint(); say('Answered'); return; }   // a question of the chat itself, not of a task
       x.answered = x.options[x.pick]; t.case = 'working'; t.detail = 'Review · carries on with your answer'; c.state = 'following'; put(c, t); window.RailChats.refresh(); paint(); say('Answered: the task carries on'); return;
     }
-    if (on('[data-cp-queue]')) { const t = root.querySelector('[data-composer-t]'); comp.queue = [...(comp.queue || []), (t?.value || comp.text).trim()]; comp.text = ''; paint(); say('Queued: it goes when this reply is done'); return; }
     if ((hit = on('[data-q-drop]'))) { comp.queue.splice(+hit.dataset.qDrop, 1); if (!comp.queue.length) comp.queuePaused = ''; paint(); say('Removed from the queue'); return; }
     if (on('[data-q-send]')) { comp.queuePaused = ''; if (!comp.busy && (comp.queue || []).length) { comp.text = comp.queue.shift(); send(); } else paint(); return; }   // Send now
     if ((hit = on('[data-starter]'))) { const id = hit.dataset.starter; if (id === 'track') { menu = menu === 'starter-track' ? '' : 'starter-track'; paint(); } else arm(id); return; }
@@ -1686,7 +1685,7 @@
       el.classList.remove('is-flash'); void el.offsetWidth; el.classList.add('is-flash');
       return true;
     },
-    show: (id) => { if (LIVE()) { listen(); CL().look(root, id || ''); if (id) CL().open(id); } setTimeout(() => settle(id), 0); const other = id !== chatId; if (other) { drafts.set(chatId, { ...comp, text: root.querySelector('[data-composer-t]')?.value ?? comp.text, busy: false, queue: [], listening: false, sending: false }); opened = new Set(); hover = null; menu = ''; const was = drafts.get(id || ''); comp = was && (id || was.text || was.intent || was.mode !== 'ask') ? { ...was } : { ...fresh(), project: id ? data().chats.find((c) => c.id === id)?.project || 'No project' : lastProject };   /* a new chat starts on the project you added last */ comp.sending = sendingIn.has(id || ''); } chatId = id || ''; paint(!other); if (id) { const box = root.querySelector('.convo-scroll'); if (box) { box.scrollTop = 0; paintTimeline(); } } },
+    show: (id) => { if (LIVE()) { listen(); CL().look(root, id || '', () => !hiddenNow()); if (id) CL().open(id); } setTimeout(() => settle(id), 0); const other = id !== chatId; if (other) { drafts.set(chatId, { ...comp, text: root.querySelector('[data-composer-t]')?.value ?? comp.text, busy: false, queue: [], listening: false, sending: false }); opened = new Set(); hover = null; menu = ''; const was = drafts.get(id || ''); comp = was && (id || was.text || was.intent || was.mode !== 'ask') ? { ...was } : { ...fresh(), project: id ? data().chats.find((c) => c.id === id)?.project || 'No project' : lastProject };   /* a new chat starts on the project you added last */ comp.sending = sendingIn.has(id || ''); } chatId = id || ''; paint(!other); if (id) { const box = root.querySelector('.convo-scroll'); if (box) { box.scrollTop = 0; paintTimeline(); } } },
     start: (mode, text, project) => { chatId = ''; comp = { ...fresh(mode), text: text || '', ...(project ? { project } : {}) }; if (!side) window.RailShell.go('chat'); paint(false); root.querySelector('[data-composer-t]')?.focus(); },   /* what another place hands over stays in the box, on its project */
     pin: (w, on) => { const next = on ? [...new Set([...shownPins(), w])] : shownPins().filter((x) => x !== w); if (LIVE()) setPins(next, on ? `Pinned ${w}` : `Unpinned ${w}`); else { pins = next; refreshAll(); } },
     handOver: ({ mode = 'ask', about, text = '', ph = '', project, workflow, ref = null }) => {   // ref: the page's own ids, posted as context (D16)   // rail.hand-to-chat: the one way a place sends something to Chat
@@ -1700,7 +1699,7 @@
     // thread is still read waits for it, and a thread that failed or is gone drops it and shows that state
     openTask: (id, task) => { pendingTask = { chat: id, task }; window.RailShell.go(`chat/${id}`); landTask(); },
     landTask: () => landTask(),
-    reopen: () => { listen(); CL().look(root, chatId); if (chatId) CL().open(chatId); },
+    reopen: () => { listen(); CL().look(root, chatId, () => !hiddenNow()); if (chatId) CL().open(chatId); },
   };
   let pendingTask = null, listening = false;
   // RailChatLive starts after the pages load (adapter.js): the open chat repaints on its changes from the first show on
