@@ -31,9 +31,10 @@ function patch(a, b, out) {
   patchAttrs(a, b);
   const text = a.tagName === 'TEXTAREA' ? b.value : null;   // read first: its text node may move across below
   patchChildren(a, b, out);
-  // what the user sees, as a fresh innerHTML would set it
-  if (a.tagName === 'INPUT') { if (a.value !== b.value) a.value = b.value; if (a.checked !== b.checked) a.checked = b.checked; }
-  else if (a.tagName === 'TEXTAREA') { if (a.value !== text) a.value = text; }
+  // what the user sees, as a fresh innerHTML would set it; an open control marked data-keep keeps what was typed (comp.keep-open)
+  const typed = a.hasAttribute('data-keep');
+  if (a.tagName === 'INPUT') { if (!typed && a.value !== b.value) a.value = b.value; if (a.checked !== b.checked) a.checked = b.checked; }
+  else if (a.tagName === 'TEXTAREA') { if (!typed && a.value !== text) a.value = text; }
   else if (a.tagName === 'SELECT') { if (a.selectedIndex !== b.selectedIndex) a.selectedIndex = b.selectedIndex; }
   if (before !== null && a.innerHTML !== before) out.changed.push(a);
 }

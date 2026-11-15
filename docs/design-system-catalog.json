@@ -2425,6 +2425,14 @@
       ]
     },
     {
+      "name": "Keeping an open control across a redraw",
+      "code": "ui/public/design-system/components/keep-open.mjs#watchKeepOpen",
+      "needs": [
+        "an open menu, inline field or dialog whose typed text, caret and focus must survive a live redraw"
+      ],
+      "example": "watchKeepOpen(document); R.field({ id, label, attrs: { 'data-keep': 'pj-hand:rename:billing-api' } })"
+    },
+    {
       "name": "The sound of a new event",
       "code": "ui/public/design-system/components/sound.mjs#soundFor",
       "needs": [
