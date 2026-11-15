@@ -1902,6 +1902,49 @@ button.fr-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .fr-row.is-sub .fr-name{font-weight:400;}
 .fr-c{text-align:right;line-height:1.2;white-space:nowrap;}
 @media (max-width:640px){.fr-list{grid-template-columns:minmax(0,1fr) repeat(2,auto);}.fr-c.is-wide{display:none;}}
+/* FigureRows that open in place (list.row-opens-in-place): the open row is tinted, its detail full width under it */
+.fr-row.is-open{background:var(--hover);}
+.fr-detail{grid-column:1 / -1;padding:10px 0 14px 18px;border-top:1px solid var(--line);}
+.fr-d-head{display:flex;align-items:baseline;gap:12px;font-size:var(--fs-meta);color:var(--ink-2);}
+.fr-d-t{flex:1;min-width:0;}
+.fr-d-t b{font-weight:600;color:var(--ink);}
+.fr-d-head .btn{margin-left:6px;}
+/* TimeTrack (look.time-track): a day axis, one row per task, its lane's work, wait and PR mark; no hue */
+.tt{--tt-name:230px;margin-top:8px;}   /* ds-ok: the name column's width, the axis and every lane line up on it */
+.tt-axis,.tt-row{display:grid;grid-template-columns:var(--tt-name) minmax(0,1fr);align-items:center;}
+.tt-ticks{position:relative;height:20px;font-size:var(--fs-meta);color:var(--ink-2);}
+.tt-tick{position:absolute;top:2px;white-space:nowrap;}
+.tt-row{border-top:1px solid var(--line);min-height:48px;}
+.tt-open{display:flex;align-items:center;gap:10px;min-width:0;height:100%;padding:6px 8px 6px 0;border:0;background:none;font:inherit;color:var(--ink);text-align:left;cursor:pointer;}
+.tt-open:hover{background:var(--hover);}
+.tt-open:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.tt-t{display:flex;flex-direction:column;min-width:0;}
+.tt-title{font-size:var(--fs-body);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tt-sub{font-size:var(--fs-meta);color:var(--ink-2);}
+.tt-lane{position:relative;align-self:stretch;min-height:44px;background-image:repeating-linear-gradient(to right,var(--line) 0 1px,transparent 1px calc(100% / var(--tt-days)));}   /* ds-ok: --tt-days is the count TimeTrack sets; faint day lines */
+.tt-work,.tt-wait{position:absolute;top:50%;height:0;min-width:2px;}   /* ds-ok: a zero-width span still draws */
+.tt-work{border-top:2px solid var(--ink);}
+.tt-work.is-cut{mask-image:linear-gradient(to right,transparent,#000 8px);}   /* it began before the window: its start fades in */
+.tt-wait{border-top:2px dashed var(--ink-3);}
+.tt-end{position:absolute;top:50%;display:inline-flex;align-items:center;justify-content:center;min-width:24px;min-height:24px;padding:5px;margin:0;border:0;background:none;color:var(--ink);transform:translate(-50%,-50%);cursor:pointer;}
+.tt-end:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;border-radius:var(--r-md);}
+.tline-card.is-track{right:auto;top:auto;bottom:calc(50% + 14px);left:var(--tc-x);margin-top:0;visibility:hidden;}   /* ds-ok: --tc-x is where TimelineCard sits on its track */
+.tline-card.is-track.is-flip{transform:translateX(-100%);}
+.tt-end:hover + .tline-card.is-track,.tt-end:focus + .tline-card.is-track{visibility:visible;}
+.tt-lane[data-card-off] .tline-card.is-track{visibility:hidden;}
+.tt-legend{margin-top:10px;}
+@media (max-width:600px){.tline-card.is-track,.tline-card.is-track.is-flip{max-width:min(260px,100%);transform:translateX(calc(-1 * var(--tc-x)));}}   /* ds-ok: a narrow lane has no room to flip at 60%; the card slides with its mark and stays inside the lane */
+.tt-legend .git-mark{display:inline-flex;}
+.tt-more{margin:8px 0 0;}
+@media (max-width:600px){.tt-axis,.tt-row{grid-template-columns:minmax(0,1fr);}.tt-axis > span:first-child{display:none;}.tt-tick:not(:first-child):not(:last-child){visibility:hidden;}.tt-tick:last-child{transform:translateX(-100%);}}
+/* TaskView (thing.read-only): a teammate's task, read only */
+.task-view{--rail:20px;--gap:12px;display:flex;flex-direction:column;gap:10px;}
+.task-view .rc-word{font-size:var(--fs-section);}
+.tv-back{margin:0;font-size:var(--fs-meta);}
+.tv-title{display:flex;align-items:center;gap:10px;margin:0;font-size:var(--fs-section);font-weight:600;}
+.tv-meta{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
+.tv-pr{display:flex;align-items:center;gap:6px;margin:0;font-size:var(--fs-body);}
+.tv-pr-link{color:var(--ink);}
 /* HeatGrid (look.heat-grid): people by values, ink shades scaled to the largest cell, never a hue */
 .heat-grid{position:relative;display:grid;grid-template-columns:minmax(0,max-content) repeat(var(--hg-n),minmax(40px,1fr));gap:3px;margin:12px 0 4px;}   /* ds-ok: --hg-n is the count HeatGrid sets */
 .hg-row{display:contents;}

@@ -9,6 +9,7 @@
 | `thing.one-telling` | On a thing's page a fact about one of its parts is told in one section: a count or a step's cost is not repeated by a head, a section's note or a row. What can be changed gets its control once, without restating the fact around it | `rail.one-place` for a page's parts: three tellings on one screen read as three facts | by hand |
 | `thing.by-exception` | A tab draws in full what needs you; what went fine is one line | The exception is the news | by hand |
 | `thing.opens` | A row opens its detail in place; a problem opens itself once; sections never collapse | Nothing is hidden when it matters | by hand |
+| `thing.read-only` | A task that is not yours (a teammate's synced record) shows the task page's head, metadata line, StatusLine (its word and the failure reason, an empty action slot, no ⋯), Figures, its runs and its PR (TaskView), and never steps, logs or actions | Records are all Worca has of a teammate's run: what it shows is true, and nothing offers what cannot be done | design-system-task-view |
 | `thing.tabs-by-level` | Inside the tabs, Logs, the graph, Sessions and Actions are Advanced, Agents and log filters Expert; a mode never removes a tab | The page keeps its shape in every mode | design-system-logic |
 | `thing.follows-state` | Rows, tabs, figures and menus show only what the state makes true: no diff before Build runs, no decisions before anything is decided, and what is gone says gone and has no tools | A page never contradicts itself | run-page-model |
 

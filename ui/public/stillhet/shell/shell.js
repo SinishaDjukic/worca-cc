@@ -384,11 +384,12 @@
   // the library keeps its words until then. Verbs stay ("Run now", "it runs"); code, branches and what you type stay. ----
   const WORDS = [[/\bNew run\b/g, 'New task'], [/\bStart run\b/g, 'Start task'], [/\bRuns\b(?=\s*(?:$|[·:(),.]))/g, 'Tasks'], [/\b(all|All|these|the|The|Your|your|paused|Paused|manual|Manual|other|many|\d+|their|its|two|three|mock|Mock) runs\b/g, '$1 tasks'], [/\b(a|A|an|An|the|The|this|This|one|One|each|Each|every|Every|your|Your|its|Its|paused|Paused|that|That|mock|Mock|1|new|New|next|Next|last|Last|Following a|following a) run\b(?! (?:the|it|on|now|once|a\b))/g, '$1 task'], [/\bRun (needs|asks|is|was|has|\d)/g, 'Task $1'], [/\bbuilds?\b(?= (?:across|in conversations))/g, 'tasks']];
   const reword = (t) => WORDS.reduce((x, [re, to]) => x.replace(re, to), t);
-  const SKIP = 'code, pre, textarea, input, script, style, .mk-tools, .tr-body, .rc-mid-a, .is-center';   // a center says a schedule's runs (panel.run-outcomes)
+  const SKIP = 'code, pre, textarea, input, script, style, .mk-tools, .tr-body, .rc-mid-a, .is-center, .task-view';   // a center says a schedule's runs (panel.run-outcomes); a task view counts its own runs
+  const SKIP_ATTR = '.is-center, .task-view';
   function rewordIn(rootEl) {
     const walk = document.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT);
     for (let n = walk.nextNode(); n; n = walk.nextNode()) { if (!/\b[Rr]uns?\b|builds?/.test(n.nodeValue) || n.parentElement?.closest(SKIP)) continue; const v = reword(n.nodeValue); if (v !== n.nodeValue) n.nodeValue = v; }
-    for (const e of rootEl.querySelectorAll?.('[title], [aria-label]') || []) for (const k of ['title', 'aria-label']) { const v = e.getAttribute(k); if (v && /\b[Rr]uns?\b/.test(v) && !e.closest('.is-center')) { const w = reword(v); if (w !== v) e.setAttribute(k, w); } }
+    for (const e of rootEl.querySelectorAll?.('[title], [aria-label]') || []) for (const k of ['title', 'aria-label']) { const v = e.getAttribute(k); if (v && /\b[Rr]uns?\b/.test(v) && !e.closest(SKIP_ATTR)) { const w = reword(v); if (w !== v) e.setAttribute(k, w); } }
   }
   // A tick's hover says what is there: a stage's name, its time and its steps.
   function stageCard(id) {

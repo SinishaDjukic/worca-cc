@@ -96,5 +96,15 @@ test('R-qa-6: in the demo kind every Insights page sends no request', async () =
   for (const s of w.RailInsightsModel.SUBS) { w.location.hash = `#insights/${s.id}`; await settle(20); }
   assert.deepEqual(calls.slice(before), []);
   assert.match(w.document.getElementById('route-place').textContent, /Missing cost tags|Who spends where/);
+  // I4 (#1310): a person's row and a teammate's task open in the demo with no request either
+  w.location.hash = '#insights/team'; await settle(40);
+  const place = w.document.getElementById('route-place');
+  place.querySelector('[data-in-person="Maya"]').click(); await settle(30);
+  assert.match(place.querySelector('.fr-detail .fr-d-t').textContent, /^Maya's work, this month · newest first/);
+  assert.equal(place.querySelector('.fr-detail .tt-title').textContent, 'Retry failed webhook deliveries');
+  place.querySelector('.fr-detail [data-in-work]').click(); await settle(40);
+  assert.match(w.location.hash, /^#insights\/team\?task=demo-maya-1$/);
+  assert.match(place.querySelector('.tv-title').textContent, /Retry failed webhook deliveries/);
+  assert.deepEqual(calls.slice(before), []);
   w.close();
 });

@@ -8,6 +8,7 @@ One map, from the prototype's own code (the places list in `shell/shell.js`, the
 |---|---|---|---|
 | Statistics | Insights (a center) | the statistics API and aggregation in `src/shared/` | `#stats`, `#stats/…`, `#statistics` |
 | Team metrics | Insights (a center) | the team metrics API and `src/shared/team-metrics/` | `#team-metrics`, `#team-metrics/…` |
+| Team metrics › Timeline | Insights › By person, a person's row opens their work in place | `src/shared/team-metrics/timeline.mjs` (`buildWorkItems`, `groupByPerson`, `prLookupFor`), `POST /api/team-metrics/prs`, `GET /api/team-metrics/pr-events` | `#team-metrics/timeline` |
 | Runs | Tasks | the runs API and live run frames | `#runs` (Tasks at its own address), `#history`, `#history/…` |
 | Pipelines | Tasks | the pipelines API and the run page's data | `#pipelines`, `#running/…`, `#feature/…`, `#group/…` |
 | Activity | Pulse | the activity feed and the notification frames | `#activity` (Chat, with Pulse open on Now) |
@@ -28,6 +29,11 @@ Dev data the design lacks (add to the design first: rule, catalog entry, compone
 - built in slice 10 (D13): Shaper spend on Insights, the Shaping page (`insights/shaping`).
 - built in slice 10 (D7): the Quarter and Year ranges on Insights, this quarter and this year (`docs/rail/look.md` `look.chart-play`).
 - built in slice 10 (D14): the team heat grid on Insights, Who spends where (`insights/heat`; `docs/rail/look.md` `look.heat-grid`, the `HeatGrid` component).
+- built in #1310: a person's work on By person (`docs/rail/look.md` `look.time-track`, `docs/rail/lists.md` `list.row-opens-in-place`, `docs/rail/thing-page.md` `thing.read-only`; the `TimeTrack`, `WorkBar`, `MarkLegend` and `TaskView` components).
+- dev's Timeline team-wide items view, grouped by project (items mode): add to the design first (owner decision).
+- dev's Timeline tiles (Shipped, In review, Needs attention, Median lead time, Agent spend) and their filters: add to the design first (owner decision).
+- dev's Timeline "PRs outside Worca" switch (Stillhet always shows them): add to the design first (owner decision).
+- dev's Timeline merged-per-period strip and per-run segment colours: add to the design first (owner decision).
 
 New in the design (new: build it): each action the run page model lists as new (`runs/run-page-model.js`, `PROPOSED`) is built for real and added here when its slice starts.
 
@@ -129,6 +135,14 @@ One row per action: `npm run stillhet:wiring` lists every `window.RailWould(...)
 | `insights/insights.js › Set a default for a project` | wired | slice 10 D24: `RailProjects.editTags` for the live project with the most runs without a client (the Unallocated client row's project children) |
 | `insights/insights.js › Save this view` | wired | slice 10 D18: kept in this browser, `localStorage['worca-rail.insights-views']` (`insights-live.mjs` `saveView`, `dropView`); a refusing storage says `Could not save NAME: your browser did not keep it` |
 | `insights/insights.js › the team scope` | wired | slice 10 D3: `GET /api/team-metrics/scopes`, one enabled scope read at a time (`GET /api/team-metrics?scope=ID&range=all&aggregate=0&defer=1`), as dev's page does; with 2 or more the sentence's "of" lists them under team (`list.sentence-scope`) |
+| `insights/insights.js › open a person's work` | wired | #1310: a person's row on By person opens their work in place (`RailInsightsWork.detail`): live `RailInsightsLive.work` over the scope's `GET /api/team-metrics` records, dev's `buildWorkItems` and `groupByPerson` (`live/work-map.mjs` `personWork`); demo `RailInsightsModel.workOf` |
+| `insights/insights.js › Hide` | wired | #1310: closes the open row (page state `st.open`), focus back on the row; Esc does the same |
+| `insights/insights.js › Show N more` | wired | #1310: shows all the rest of the person's tasks at once, focus on the first revealed task |
+| `insights/insights.js › open your task` | wired | #1310 D3: a task this Worca knows (`RailWorld.find`) opens your task page, `RailShell.go('run/ID')` |
+| `insights/insights.js › open a teammate's task` | wired | #1310 D2: `#insights/team?task=RUNID`, read only (`TaskView`, `RailInsightsLive.task` over the scope's records) |
+| `insights/insights.js › open the pull request` | wired | #1310: the PR mark is a link to the PR's url at its host (`POST /api/team-metrics/prs`, `GET /api/team-metrics/pr-events`), in a new tab; the demo says Opens #N at its host |
+| `insights/insights.js › Try again (pull requests)` | wired | #1310 D5: `RailInsightsLive.retryWork` drops the PR caches and asks `POST /api/team-metrics/prs` again |
+| `insights/insights.js › Back to By person` | wired | #1310: from a teammate's task back to `#insights/team`, the person's row still open and focused |
 | `shell/shell.js › the not-live look of Insights and Requirements` | wired | live, `NOT_LIVE` names where each lives with Stillhet off (Statistics and Team metrics; Requirements, under Build) through the library's NotInStillhet, with Back to Chat; the bar shows home (#1298); Insights is live since slice 10, so only Requirements draws it now |
 | `marketplace/marketplace.js › open it on GitHub` | wired | `GET /api/plugins/:name` `webUrl` (the pinned commit) for an installed plugin, else the market snapshot's commit (`githubWebUrl`), opened in a new tab; a plugin from a local folder offers no View its source (slice 8 D15) |
 | `marketplace/marketplace.js › open … at … on GitHub` | wired | the market's URL in Where plugins come from is a text link to its synced commit on GitHub (`githubWebUrl` of `GET /api/marketplaces` `url` and `lastSync.sha`), opened in a new tab (slice 8 D15) |
@@ -290,6 +304,9 @@ One row per seeded figure: each data key and seed getter of the globals a model 
 | `insights/insights-model.js › RailInsightsModel.TIME` | wired | the statistics and team-metrics APIs through `live/insights-live.mjs` and `live/insights-map.mjs` (slice 10): the pages, their sources and dims, the ranges this quarter and this year, the person filter |
 | `insights/insights-model.js › RailInsightsModel.FILTERS` | wired | the statistics and team-metrics APIs through `live/insights-live.mjs` and `live/insights-map.mjs` (slice 10): the pages, their sources and dims, the ranges this quarter and this year, the person filter |
 | `insights/insights-model.js › RailInsightsModel.WHEN` | wired | the statistics and team-metrics APIs through `live/insights-live.mjs` and `live/insights-map.mjs` (slice 10): the pages, their sources and dims, the ranges this quarter and this year, the person filter |
+| `insights/insights-model.js › RailInsightsModel.workOf` | wired | #1310: live, `RailInsightsLive.work` (`live/work-map.mjs` `personWork` over the scope's records, the PR lookups and events); the demo's own tasks stay in the prototype |
+| `insights/insights-work.js › the work head counts` | wired | #1310: merged, open for review, closed, failed, stopped, done from dev's `ITEM_STATUSES` (`live/work-map.mjs` `WORDS`, `workHead`) |
+| `insights/insights-work.js › the read-only view's figures` | wired | #1310: cost, time working, runs and review rounds of dev's work item (`live/work-map.mjs` `taskViewOf`), its runs' records |
 | `bar › Pulse badge: the Needs you count` | wired | the Needs you rows of the store: `countNeedsYou` over `hello.runs` and `GET /api/history`, plus `counts.missed` of `GET /api/schedules`, plus the projects that need you (D22) |
 | `bar › Pulse: the unread updates` | wired | `GET /api/notifications` (unread problems) and the failed and paused run outcomes of `GET /api/history`, session read state |
 | `bar › Pulse: the running tasks` | wired | `hello.runs` and the run frames |
@@ -322,6 +339,8 @@ One row per surface of today's UI that Stillhet must carry (gate.prototype in `d
 | `setting › pulseFor` | wired | Settings › Notifications, the Pulse animation row (`pulse.js` reads it through the live map; #1258) |
 | `ui/public/ask-panel.mjs` | wired | Today's run card sends the chosen perspective set with the run (flag proposedPerspectives); Stillhet's TaskProposal "reviewed by" picker sends the same `perspectives` field (`stillhet/chat/conversation.js` `perspPicker`, `live/chat-live.mjs` `startBodyOf`; the Perspectives proposed on the run card row above). The prompt check's proposal (`chip-host.mjs` `onAssessment`) does not reach Stillhet's card yet: it starts from dev's default set |
 | `ui/public/shape/` | wired | The perspective chips and their Product lock, Compliance and held-back Project fit (flag proposedPerspectives): Stillhet's TaskProposal "reviewed by" picker, from `src/shared/shape/perspectives.mjs` through `live/chat-live.mjs` `perspectiveChoices` (the Perspectives proposed on the run card row above) |
+| `route › /api/team-metrics/prs` | wired | Insights › By person, a person's open row and a teammate's task: the PR states of the scope's runs (`live/insights-live.mjs` `work`, #1310) |
+| `route › /api/team-metrics/pr-events` | wired | Insights › By person, a person's open row: their pull requests made outside Worca (`live/insights-live.mjs` `work`, #1310) |
 
 ## Opt-in
 
