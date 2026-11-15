@@ -47,6 +47,16 @@ export async function liveHost({ sources = SOURCES, thread = () => [200, THREAD]
   return { w, d: w.document, calls, sockets };
 }
 export const go = async (w, hash, ms = 60) => { w.location.hash = hash; await settle(ms); };
+// a condition wait: polls `fn` (sync) until it is truthy and returns that value; a fixed tick races a loaded runner
+export async function until(fn, ms = 2000, step = 10) {
+  const end = Date.now() + ms;
+  for (;;) {
+    const v = fn();
+    if (v) return v;
+    if (Date.now() >= end) throw new Error('until: timed out after ' + ms + ' ms');
+    await settle(step);
+  }
+}
 export const store = (w) => clone({ data: w.RailWorld.data(), chats: w.RailWorld.part('chats') });
 // Step 7's DISABLED_OK: the only controls the live kind may draw disabled, each for its runtime reason. At rest none of
 // them holds, so the walk finds no disabled control at all; a pending one is checked in its own test above.
