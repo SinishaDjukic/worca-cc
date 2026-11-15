@@ -81,7 +81,7 @@
       R.byPart({ by: view.by, choices: [{ id: 'day', help: 'By the next run: Today, Tomorrow, This week, Later; paused ones last' }, { id: 'state', help: `${SECTIONS.map(([, t]) => t).join(', ')}` }] })],
     sections: sections(), empty: { text: view.show === 'drafts' ? 'No drafts.' : 'No schedules yet.', action: 'New schedule' } }),
     can: () => ['menu'], bulk: () => [], act, open: (r) => window.RailShell.openSchedule(r._s.id), word: (id, v) => { view = { ...view, [id]: v }; if (!current) window.RailCenters?.schedules(page); return false; }, say,
-    active: () => /^#schedule/.test(location.hash) && !document.querySelector('.pz-popover, .keys-modal, #app .viewer-modal, #app .nav-fly'), emptyAct: () => window.RailConversation?.start('schedule') } });
+    active: () => /^#schedule/.test(location.hash) && !document.querySelector('.pz-popover, .keys-modal, #app .viewer-modal, #center-dlg .viewer-modal, #app .nav-fly'), emptyAct: () => window.RailConversation?.start('schedule') } });
   // Showing drafts lists only the schedules with a draft (rail.drafts: Drafts in the bar lists every one)
   const showing = (s) => view.show === 'all' || (view.show === 'paused' ? s.state === 'paused' : !!D()?.get(`schedule:${s.id}`));
   // By date (the default): what waits on you first, then by the next run, each day folding; paused ones, then ended ones last, as they have none.

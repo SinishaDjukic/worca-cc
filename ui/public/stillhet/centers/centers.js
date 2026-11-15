@@ -323,7 +323,9 @@
   }
   const hooksOf = () => ({ close: {}, cancel: {}, yes: {} });
   const cap = (t) => t[0].toUpperCase() + t.slice(1);
-  const host = () => { let h = document.getElementById('center-dlg'); if (!h) { h = document.createElement('div'); h.id = 'center-dlg'; h.className = 'pz-app rail-page'; document.getElementById('app').append(h); h.addEventListener('click', dlgClick); h.addEventListener('input', dlgInput); h.addEventListener('keydown', dlgKey); h.addEventListener('mousedown', (e) => { if (e.target.classList.contains('viewer-modal')) closeForm(); }); } return h; };
+  // the forms' host sits beside #app, never in it: Pulse rewrites #app on every draw (live loads, frames), which would drop an
+  // open form. rail-layer gives it #app's fixed full-window box, so the scrim still covers the window and an empty host takes no clicks.
+  const host = () => { let h = document.getElementById('center-dlg'); if (!h) { h = document.createElement('div'); h.id = 'center-dlg'; h.className = 'pz-app rail-page rail-layer'; document.body.append(h); h.addEventListener('click', dlgClick); h.addEventListener('input', dlgInput); h.addEventListener('keydown', dlgKey); h.addEventListener('mousedown', (e) => { if (e.target.classList.contains('viewer-modal')) closeForm(); }); } return h; };
   function paintForm(focus) {
     const h = host(), scroll = h.querySelector('.dlg-body')?.scrollTop || 0;
     h.innerHTML = form ? formHtml() : '';

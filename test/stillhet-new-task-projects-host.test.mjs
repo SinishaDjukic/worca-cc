@@ -2,8 +2,11 @@
 // (New task…, New schedule…, Run after this) reads the store's projects part (dev's GET /api/projects) in the live kind, never
 // task rows: a project with no tasks is offered, a removed one is neither offered nor defaulted, a missing folder is listed
 // but never preselected. The demo keeps its task-row list. Live app host (jsdom).
+// F-a4-02 / F-gb2-01 (batch B2.1): the forms' host #center-dlg sits outside #app, so an #app redraw (a live load, a frame)
+// never removes an open form: its fields, typed text and focus stay, and + › New task… opens at once while data loads.
 import { test, afterEach, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { liveHost, go, settle, closeHosts, clone, SOURCES, posts } from './helpers/stillhet-chat-live-host.mjs';
 import { stillhetHost } from './helpers/stillhet-host.mjs';
 
@@ -104,4 +107,104 @@ test('the demo keeps its task-row list and billing-api default (pixel comparison
   w.RailCenters.newTask(); await settle(60);   // the demo's level hides the Legacy menu; its form is the same blank()
   assert.deepEqual(await items(d), rows);
   assert.equal(shown(d), 'billing-api');
+});
+
+// ---- B2.1: the forms survive a repaint (F-a4-02, F-gb2-01) ----
+const key = (w, el, k) => el.dispatchEvent(new w.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
+const typedTask = async (w, d) => {
+  await openTask(w);
+  type(w, d, '#cc-text', 'Add a pager'); d.querySelector('#cc-text').focus();
+  return d.querySelector('#center-dlg .viewer-modal');
+};
+
+test('New task survives a full #app redraw: text, focus, then Escape still closes (F-a4-02, F-gb2-01)', async () => {
+  const { w, d } = await liveHost({ sources: clone(SOURCES) });
+  await go(w, '#runs', 120);
+  const dlg = await typedTask(w, d);
+  w.RailPulse.refresh(); await settle(40);
+  assert.ok(dlg.isConnected, 'the same dialog is still on screen');
+  assert.equal(d.querySelector('#center-dlg .viewer-modal'), dlg);
+  assert.equal(d.querySelector('#cc-text').value, 'Add a pager');
+  assert.equal(d.activeElement?.id, 'cc-text', 'the typed field keeps the focus');
+  key(w, d.querySelector('#cc-text'), 'Escape'); await settle(20);
+  assert.equal(d.querySelector('#center-dlg .viewer-modal'), null, 'Escape closes it');
+  assert.equal(d.activeElement, d.querySelector('#bar-head [data-bar-new]'), 'the focus goes back to +');
+});
+
+test('a pipelines-changed frame on live data keeps the open form (F-a4-02, F-gb2-01)', async () => {
+  const { w, d, sockets } = await liveHost({ sources: clone(SOURCES) });
+  await go(w, '#runs', 120);
+  const dlg = await typedTask(w, d);
+  sockets.at(-1).onmessage({ data: '{"type":"pipelines-changed"}' }); await settle(400);   // the frame's reload waits out the 250 ms debounce
+  assert.ok(dlg.isConnected, 'the same dialog is still on screen');
+  assert.equal(d.querySelector('#cc-text').value, 'Add a pager');
+  assert.equal(d.activeElement?.id, 'cc-text');
+});
+
+test('New schedule survives a redraw: the name stays (F-a4-02, F-gb2-01)', async () => {
+  const { w, d } = await liveHost({ sources: clone(SOURCES) });
+  await go(w, '#runs', 120);
+  w.RailCenters.maker('schedules').newPick('form'); await settle(60);
+  type(w, d, '#cc-name', 'Nightly pager'); d.querySelector('#cc-name').focus();
+  const dlg = d.querySelector('#center-dlg .viewer-modal');
+  w.RailPulse.refresh(); await settle(40);
+  assert.ok(dlg.isConnected);
+  assert.equal(d.querySelector('#cc-name').value, 'Nightly pager');
+  assert.equal(d.activeElement?.id, 'cc-name');
+});
+
+test('a focused picker inside the form keeps the focus across a redraw (F-a4-02, F-gb2-01)', async () => {
+  const { w, d } = await liveHost({ sources: clone(SOURCES) });
+  await go(w, '#runs', 120);
+  await openTask(w);
+  const pick = d.querySelector('#center-dlg [data-menu="f-project"]'); pick.focus();
+  w.RailPulse.refresh(); await settle(40);
+  assert.equal(d.activeElement, pick, 'the picker keeps the focus');
+});
+
+test('+ › New task… right after boot opens at once while live data loads; the host sits outside #app (F-gb2-01, F-a4-02)', async () => {
+  let release; const gate = new Promise((r) => { release = r; });
+  const hold = (u) => (u === '/api/history' || u.startsWith('/api/run-groups') ? gate : null);
+  const { w, d } = await liveHost({ sources: clone(SOURCES), hold });
+  const adds = []; const add = w.EventTarget.prototype.addEventListener;
+  w.EventTarget.prototype.addEventListener = function (type, ...rest) { if (this.id === 'center-dlg') adds.push(type); return add.call(this, type, ...rest); };
+  await go(w, '#runs', 40);
+  d.querySelector('#bar-head [data-bar-new]').click(); await settle(10);
+  d.querySelector('#bar-head [data-menu-pick="bar-new|form"]').click();
+  const dlg = d.querySelector('#center-dlg .viewer-modal');
+  assert.ok(dlg, 'the dialog is there at once');
+  type(w, d, '#cc-text', 'Add a pager');
+  release(); await settle(150);
+  assert.ok(d.querySelector('#center-dlg .viewer-modal'), 'still there once the held sources land');   // its own catalog loads may repaint it
+  assert.equal(d.querySelector('#cc-text').value, 'Add a pager');
+  const host = d.getElementById('center-dlg');
+  assert.equal(host.parentElement, d.body, 'a direct child of body');
+  assert.equal(d.getElementById('app').contains(host), false, 'not inside #app');
+  assert.ok(host.classList.contains('pz-app') && host.classList.contains('rail-page'));
+  key(w, d.querySelector('#cc-text'), 'Escape'); await settle(20);
+  await openTask(w);
+  assert.equal(d.querySelectorAll('#center-dlg').length, 1);
+  assert.equal(d.getElementById('center-dlg'), host, 'the same host across close and reopen');
+  assert.equal(adds.filter((t) => t === 'click').length, 1, 'its click listener is added once');
+});
+
+test('list keys stay off behind an open New task form, and come back after it closes (F-a4-02)', async () => {
+  const { w, d } = await liveHost({ sources: clone(SOURCES) });
+  await go(w, '#runs', 120);
+  const rows = () => [...d.querySelectorAll('#runs-root [data-open]')];
+  const first = rows()[0]; first.focus();
+  await openTask(w);
+  d.activeElement.blur();
+  assert.equal(d.activeElement, d.body);
+  key(w, d.body, 'ArrowDown'); await settle(20);
+  assert.equal(d.activeElement, d.body, 'no row took the focus behind the form');
+  assert.ok(d.querySelector('#center-dlg .viewer-modal'), 'the form is still open');
+  key(w, d.querySelector('#center-dlg .viewer-modal'), 'Escape'); await settle(20);
+  const at = d.activeElement;
+  key(w, at, 'ArrowDown'); await settle(20);
+  assert.notEqual(d.activeElement, at, 'the list key moves the row once the form is closed');
+  assert.ok(d.activeElement.closest('#runs-root'), 'a row has the focus');
+  for (const f of ['ui/public/stillhet/runs/runs-list.js', 'ui/public/stillhet/schedules/schedules.js', 'ui/public/stillhet/chat/chats-column.js']) {
+    assert.ok(readFileSync(new URL(`../${f}`, import.meta.url), 'utf8').includes('#center-dlg .viewer-modal'), `${f} guards the form's host`);
+  }
 });
