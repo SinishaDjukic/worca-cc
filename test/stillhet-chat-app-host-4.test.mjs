@@ -149,8 +149,12 @@ test('Pulse and search open a live task at its card in its starting chat; a task
 // F-a1-04: a running ("spending") run's ⋯ Stop. A live frame rebuilds the store's tasks (chats-model seed), so the card's
 // confirm must outlive the task object it was opened on.
 const runTask = (w) => w.RailChats.data().chats.flatMap((c) => c.tasks || []).find((t) => (t.run || t.id) === 'run-a');
+// a frame that really changes the history row's PR (B2.3: a frame that repeats the PR on screen, or names no row on
+// screen, draws nothing); the fixture's row `pa` has no projectKey
+let redraws = 0;
 const redraw = async (w, sockets) => {
-  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'history-pr', token: w.RailTaskLive.prLookup().token, items: [{ id: 'pa', projectKey: 'web-1a2b3c4d', pr: null }] }) });
+  const n = ++redraws;
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'history-pr', token: w.RailTaskLive.prLookup().token, items: [{ id: 'pa', pr: { url: `https://x/pull/${n}`, number: n, state: 'OPEN' } }] }) });
   await settle(60);
 };
 const openStop = async (w, d) => {
