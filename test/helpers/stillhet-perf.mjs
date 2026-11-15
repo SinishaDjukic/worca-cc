@@ -1,7 +1,8 @@
 // test/helpers/stillhet-perf.mjs — B2.4 C1 (plans/rail/test-results/PLAN.md §3C, D19): the performance budgets' harness.
 // The ratchet (readBudgets, checkBudget), the fixtures (longThread, tasksScaleSources) and a live Stillhet host on virtual
-// time: setInterval is a registry that runs only when the clock advances, Date.now reads that clock and
-// requestAnimationFrame is a manual queue. setTimeout stays real, so boot, fetch and debounce run as in the other hosts.
+// time: setInterval is a registry that runs only when the clock advances, Date.now, a no-argument new Date() and
+// performance.now read that clock and requestAnimationFrame is a manual queue. setTimeout stays real, so boot, fetch and
+// debounce run as in the other hosts. Limit: Date called without new (a string) still reads real time.
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { liveHost, go, settle, clone, SOURCES, THREAD, NOW } from './stillhet-chat-live-host.mjs';
@@ -40,7 +41,11 @@ export function longThread(turns = 200) {
   return th;
 }
 
-/** SOURCES with a real-size Tasks world (D10): runs-scale's generator as history rows and live runs, 300 tasks. */
+/**
+ * SOURCES with a real-size Tasks world (D10): runs-scale's generator as history rows and live runs, 300 tasks.
+ * Deviation from D10's `singles: 200`: each group's last member is a waiting schedule ticket, never a history row, so 200
+ * singles give 280 tasks; 220 give the 300 the plan asks for (304 rows with the page's own Missed schedule row).
+ */
 export function tasksScaleSources() {
   const { live, history } = scaleRuns({ singles: 220, groups: 20, perGroup: 5 });
   const src = clone(SOURCES);
@@ -54,7 +59,9 @@ export async function perfHost({ hash = '#chat', sources = SOURCES, thread = THR
   let now = NOW, ids = 0;
   const intervals = new Map(), raf = new Map();
   const h = await liveHost({ sources, thread: () => [200, clone(thread)], beforeScripts: (win) => {
-    win.Date.now = () => now;
+    const RealDate = win.Date, t0 = now;
+    win.Date = class extends RealDate { constructor(...a) { super(...(a.length ? a : [now])); } static now() { return now; } };
+    Object.defineProperty(win.performance, 'now', { configurable: true, value: () => now - t0 });
     win.setInterval = (fn, ms = 0, ...args) => { const id = ++ids, every = Math.max(1, Number(ms) || 0); intervals.set(id, { fn, args, every, due: now + every }); return id; };
     win.clearInterval = (id) => { intervals.delete(id); };
     win.requestAnimationFrame = (f) => { raf.set(++ids, f); return ids; };

@@ -16,7 +16,9 @@ function pin(t, key, measured, extra = '') {
   assert.ok(r.ok, r.message + extra);
 }
 const openChat = (o = {}) => perfHost({ hash: '#chat/ask_1', thread: longThread(200), ...o });
-// h2 under its project's key, as dev's history rows carry it, so a history-pr frame for it lands on its row
+// h2 under its project's key, as dev's history rows carry it, so a history-pr frame for it lands on its row. Deviation
+// from the plan's web-1: h2 belongs to api in SOURCES and onPrs matches rows by projectKey|id, so a web-1 item would never
+// land on h2 (the draw counts were the same, 1/2/1, either way)
 const prSources = () => { const s = clone(SOURCES); s.history.pipelines = s.history.pipelines.map((p) => (p.id === 'h2' ? { ...p, projectKey: 'api-2' } : p)); return s; };
 const PR = { url: 'https://github.com/acme/api/pull/7', state: 'OPEN', number: 7 };
 
