@@ -126,6 +126,11 @@ test('6: a teammate\'s task opens read only at #insights/team?task=RUNID; Back r
   assert.match(page(h2.d).querySelector('.tv-title').textContent, /Remove legacy coupon code/);
   assert.equal(page(h2.d).querySelector('.rc-word').textContent, 'Closed');
   assert.equal(page(h2.d).querySelectorAll('table.rt tbody tr').length, 1);
+  // the shell's tasks reword leaves a task view's Runs figure and table alone (they are its runs)
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../ui/public/stillhet/shell/shell.js', import.meta.url), 'utf8');
+  assert.match(src.match(/const SKIP = '([^']*)'/)[1], /(^|, )\.task-view(,|$)/, 'text nodes inside .task-view are skipped');
+  assert.match(src, /!e\.closest\(SKIP_ATTR\)/, 'title and aria-label inside .task-view are skipped too');
 });
 
 test('7: your own task opens #run/ID; with its local run deleted it opens read only', async () => {
@@ -209,11 +214,4 @@ test('14: #team-metrics/timeline lands on By person, whose rows open in place', 
   assert.equal(w.location.hash, '#insights/team');
   assert.match(page(d).textContent, /By person/);
   assert.equal(row(d, 'Maya').getAttribute('aria-expanded'), 'false');
-});
-
-test("6b: the shell's tasks reword leaves a task view's Runs figure and table alone (they are its runs)", async () => {
-  const { readFileSync } = await import('node:fs');
-  const src = readFileSync(new URL('../ui/public/stillhet/shell/shell.js', import.meta.url), 'utf8');
-  assert.match(src.match(/const SKIP = '([^']*)'/)[1], /(^|, )\.task-view(,|$)/, 'text nodes inside .task-view are skipped');
-  assert.match(src, /!e\.closest\(SKIP_ATTR\)/, 'title and aria-label inside .task-view are skipped too');
 });
