@@ -38,6 +38,21 @@ const DEBOUNCE_MS = 250, BACKOFF_MS = 1000, BACKOFF_MAX_MS = 30000, TOKEN_EXPIRE
 
 const PROJECT_FRAMES = new Set(['clone-changed', 'settings-changed', 'projects-changed', 'workspaces-changed']);
 const INSIGHTS_FRAMES = new Set(['pipelines-changed', 'ask-done', 'ask-error', 'budget-changed', 'team-metrics-changed']);
+// F-a1-02, F-a1-10: a history-pr item changes a row only when its PR differs as a whole (any field a row, card or
+// needs-you reads), key order aside. No PR (`null`, missing) is one value; the top-level `stale` mark of a cached resend
+// is not drawn (#1322: it keeps the PR), so it is no change.
+function sameValue(a, b) {
+  if (a === b) return true;
+  if (!a || !b || typeof a !== 'object' || typeof b !== 'object' || Array.isArray(a) !== Array.isArray(b)) return false;
+  const ka = Object.keys(a), kb = Object.keys(b);
+  return ka.length === kb.length && ka.every((k) => Object.prototype.hasOwnProperty.call(b, k) && sameValue(a[k], b[k]));
+}
+function samePr(a, b) {
+  if (a == null || b == null) return a == null && b == null;
+  if (typeof a !== 'object' || typeof b !== 'object') return a === b;
+  const { stale: _sa, ...ra } = a, { stale: _sb, ...rb } = b;
+  return sameValue(ra, rb);
+}
 export function startLive({ fetch, WebSocket, location, world, host = {}, prefs = null, setTimeout, clearTimeout = () => {}, now = Date.now, openChat = () => '', hidden = () => false, toast = () => {}, open = undefined, go = () => {}, download = () => {}, workflowsChanged = () => {}, marketChanged = () => {}, projectsChanged = () => {}, insightsChanged = () => {}, insightsModel = () => globalThis.window?.RailInsightsModel, storage = null, openSource = undefined, on = () => {} }) {
   let sources = {}, loaded = false, listFailed = false, stopped = false, sock = null, backoff = BACKOFF_MS, reconnect = 0, queue = [], unread = [], asked = 0;
   const live = new Map(), timers = {}, stamp = {}, stale = new Set();
@@ -120,6 +135,11 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
     const known = new Map(items.filter((it) => it && it.id).map((it) => [prKey(it.projectKey, it.id), it.pr || null]));
     const h = sources.history;
     if (!h || !Array.isArray(h.pipelines)) return;
+    // a batch that repeats the PRs on screen draws nothing (F-a1-02, F-a1-10); its done frame still ends a waiting page's lookup
+    if (!h.pipelines.some((p) => p && known.has(prKey(p.projectKey, p.id)) && !samePr(p.pr, known.get(prKey(p.projectKey, p.id))))) {
+      if (f.token === prToken && f.done === true) task.listChanged();
+      return;
+    }
     sources = { ...sources, history: { ...h, pipelines: h.pipelines.map((p) => (p && known.has(prKey(p.projectKey, p.id)) ? { ...p, pr: known.get(prKey(p.projectKey, p.id)) } : p)) } };
     draw(() => partOf('history', sources.history, { ...sources, hello: { runs: [...live.values()] } }, { now: now(), unread, checksOf: task.checks }), undefined, { list: 'refresh' });
   }
