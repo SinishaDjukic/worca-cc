@@ -117,6 +117,21 @@ test('on a 105-turn chat a frame that changes the last turn replaces at most 1 a
   assert.equal(h.q('[data-anchor="u0"]'), first, 'the same node');
 });
 
+test('on a 105-turn chat a streamed frame builds no unchanged turn\'s string again; a change to one still draws it', async (t) => {
+  const h = await open(t);
+  let you = 0;
+  const orig = h.w.RailUI.youTurn;
+  h.w.RailUI.youTurn = (o) => { you++; return orig(o); };
+  h.stream(1); h.frame();
+  assert.equal(you, 0, 'the 52 you turns are not built again');
+  h.w.RailWorld.setState({}); h.frame();
+  assert.equal(you, 0);
+  h.q('[data-anchor="u3"]').click();   // panel.turn-time: a tap shows its time (its class only, no paint)
+  h.w.RailWorld.setState({}); h.frame();
+  assert.equal(you, 1, 'only the turn whose drawing changed is built again');
+  assert.ok(h.q('[data-anchor="u3"]').classList.contains('is-time-shown'));
+});
+
 test('the thinking orb\'s canvas is the same node across 3 frames and its data-orb follows the phase', async (t) => {
   const h = await open(t);
   const cv = h.q('[data-think-at] canvas[data-orb]');
@@ -136,21 +151,23 @@ test('the thinking orb\'s canvas is the same node across 3 frames and its data-o
 test('the composer keeps its text, caret and focus during a streamed frame and across a busy flip', async (t) => {
   const h = await open(t);
   const box = h.q('[data-composer-t]');
-  box.focus(); box.value = 'half a thought'; box.setSelectionRange(14, 14);
+  box.focus(); box.value = 'half a thought'; box.setSelectionRange(3, 3);   // the caret mid-text, not at the end
   h.stream(1); h.frame();
   let now = h.q('[data-composer-t]');
   assert.equal(h.d.activeElement, now, 'the box keeps the focus');
   assert.equal(now.value, 'half a thought');
-  assert.equal(now.selectionStart, now.value.length);
+  assert.deepEqual([now.selectionStart, now.selectionEnd], [3, 3], 'a streamed frame leaves the caret where it was put');
   const kept = now;
+  kept.setSelectionRange(5, 9);   // a selection, too
   h.stream(2); h.frame();
   assert.equal(h.q('[data-composer-t]'), kept, 'a frame that does not change the box keeps its node');
+  assert.deepEqual([kept.selectionStart, kept.selectionEnd], [5, 9], 'the selection survives a frame');
   h.send({ type: 'ask-done', threadId: 'ask_1', messageId: 'mS', seq: 3, text: 'Done.', status: 'done' }); h.frame();
   now = h.q('[data-composer-t]');
   assert.notEqual(now, kept, 'the busy flip redraws the box');
   assert.equal(h.d.activeElement, now, 'focus back in the box');
   assert.equal(now.value, 'half a thought');
-  assert.equal(now.selectionStart, now.value.length);
+  assert.deepEqual([now.selectionStart, now.selectionEnd], [5, 9], 'a redrawn box gets the selection back');
 });
 
 test('a reader scrolled up keeps the same scrollTop across streamed frames', async (t) => {

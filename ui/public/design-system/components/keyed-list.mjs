@@ -21,13 +21,17 @@ function matching(nodes, sel) {
   return out;
 }
 
-/** The n-th old element matching `sel` takes the place of the n-th new one, its attributes made the new one's. */
-function carryOver(oldNodes, newNodes, sel) {
-  const was = matching(oldNodes, sel), now = matching(newNodes, sel);
+/**
+ * The n-th old element matching `sel` takes the place of the n-th new one. Only the attributes the drawing changed
+ * (`drawn`, the old string's own nodes, against the new) reach it: what the page set on it since (an orb canvas's
+ * DPR-sized width and height, its data-phase) stays.
+ */
+function carryOver(drawn, oldNodes, newNodes, sel) {
+  const before = matching(drawn, sel), was = matching(oldNodes, sel), now = matching(newNodes, sel);
   for (let i = 0; i < Math.min(was.length, now.length); i++) {
-    const o = was[i], n = now[i];
-    for (const a of [...o.attributes]) if (!n.hasAttribute(a.name)) o.removeAttribute(a.name);
-    for (const a of [...n.attributes]) if (o.getAttribute(a.name) !== a.value) o.setAttribute(a.name, a.value);
+    const o = was[i], n = now[i], d = before[i] || o;
+    for (const a of [...d.attributes]) if (!n.hasAttribute(a.name)) o.removeAttribute(a.name);
+    for (const a of [...n.attributes]) if (d.getAttribute(a.name) !== a.value) o.setAttribute(a.name, a.value);
     const at = newNodes.indexOf(n);
     if (at >= 0) newNodes[at] = o;
     else n.replaceWith(o);
@@ -55,8 +59,8 @@ function intact(container, memo) {
  * Draws `items` (`[{ key, html }]`, in order) into `container`, touching only what changed: the same key with the same
  * string keeps its nodes (moved only when the order changed), a changed string is replaced, a new key is inserted at its
  * place, a gone key removed. The first call, or a container someone else changed, is built once. `carry` (a selector):
- * in a replaced item, the n-th old element matching it stays in place of the n-th new one, with the new one's attributes
- * (an orb's canvas keeps turning). Returns `{ kept, replaced, added, removed }`.
+ * in a replaced item, the n-th old element matching it stays in place of the n-th new one, taking the attributes the
+ * drawing changed (an orb's canvas keeps turning, at its DPR size). Returns `{ kept, replaced, added, removed }`.
  */
 export function patchKeyed(container, items, { carry } = {}) {
   const doc = container.ownerDocument, list = uniqueKeys(items || []);
@@ -74,7 +78,7 @@ export function patchKeyed(container, items, { carry } = {}) {
     const was = memo.get(x.key);
     if (was && was.html === x.html) { next.set(x.key, was); counts.kept++; continue; }
     const nodes = parse(doc, x.html);
-    if (was) { if (carry) carryOver(was.nodes, nodes, carry); drop.push(...was.nodes); counts.replaced++; }
+    if (was) { if (carry) carryOver(parse(doc, was.html), was.nodes, nodes, carry); drop.push(...was.nodes); counts.replaced++; }
     else counts.added++;
     next.set(x.key, { html: x.html, nodes });
   }

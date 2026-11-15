@@ -88,6 +88,76 @@ test('3 id-less frames during an in-flight full read give 2 GETs of /api/history
   assert.equal(gets(r.calls.slice(n)).filter((u) => u === URLS.history).length, 2);
 });
 
+test('a settle asked while a full read is out is not lost: one more full read follows the one out', async () => {
+  let gate = null;
+  const r = await ready({ hold: (u) => (u === URLS.history && gate ? gate.p : null) });
+  gate = deferred();
+  const n = r.calls.length;
+  r.frame({ type: 'pipelines-changed', action: 'updated' });
+  await r.tick(250);   // the full read is out
+  r.frame({ type: 'pipelines-changed', action: 'updated', pipelineId: 'pa', key: 'web-00000001' });
+  await r.tick(250);
+  const first = gate; gate = null; first.open();
+  await r.tick(); await r.tick(250); await r.tick(250);
+  const g = gets(r.calls.slice(n)).filter((u) => u.startsWith('/api/history'));
+  assert.deepEqual(g, [URLS.history, URLS.history]);
+});
+
+test('a row read that lands while a reconnect\'s full read is out does not make that newer list be dropped', async () => {
+  let gate = null, fresh = false;
+  const NEWCOMER = { id: 'pn', title: 'Newcomer', status: 'done', projectKey: 'web-00000001', projectName: 'web', startedAt: new Date(NOW).toISOString(), mtime: NOW };
+  const answer = (u) => (u === ROW_A ? { pipeline: { ...HISTORY.pipelines[0], status: 'done' } } : u === URLS.history && fresh ? { ...HISTORY, pipelines: [...HISTORY.pipelines, NEWCOMER] } : ANSWER[u] ?? {});
+  const r = await ready({ answer, hold: (u) => (u === URLS.history && gate ? gate.p : null) });
+  gate = deferred(); fresh = true;
+  r.frame(hello);   // back after a drop: every source is read again, history held
+  await r.tick();
+  r.frame({ type: 'pipelines-changed', action: 'updated', pipelineId: 'pa', key: 'web-00000001' });
+  await r.tick(250);   // the row read lands first
+  const first = gate; gate = null; first.open();
+  await r.tick(); await r.tick();
+  assert.equal(r.live.chat.runOf('pn').projectKey, 'web-00000001', 'the reconnect list landed');
+});
+
+test('a settle while a reconnect\'s full read is out reads no row: one more full read follows the held list', async () => {
+  let gate = null;
+  const r = await ready({ hold: (u) => (u === URLS.history && gate ? gate.p : null) });
+  gate = deferred();
+  const n = r.calls.length;
+  r.frame(hello);   // back after a drop: the reconnect's list is out, and may predate the settle below
+  await r.tick();
+  r.frame({ type: 'done', runId: 'run-a', status: 'done' });
+  r.frame({ type: 'pipelines-changed', action: 'updated', runId: 'run-a', pipelineId: 'pa', key: 'web-00000001' });
+  await r.tick(250);
+  assert.ok(!gets(r.calls.slice(n)).includes(ROW_A), 'no row read while the reconnect list is out');
+  const first = gate; gate = null; first.open();
+  await r.tick(); await r.tick(250); await r.tick(250);
+  assert.deepEqual(gets(r.calls.slice(n)).filter((u) => u.startsWith('/api/history')), [URLS.history, URLS.history]);
+});
+
+test('two held reconnect reads: a settle after the first lands waits for the second, and its status is not reverted', async () => {
+  const held = [];
+  let settled = false;
+  const answer = (u) => (u === URLS.history && settled ? { ...HISTORY, pipelines: HISTORY.pipelines.map((p) => (p.id === 'pa' ? { ...p, status: 'done' } : p)) } : u === ROW_A ? { pipeline: { ...HISTORY.pipelines.find((p) => p.id === 'pa'), status: 'done' } } : ANSWER[u] ?? {});
+  let holding = false;
+  const r = await ready({ answer, hold: (u) => { if (u !== URLS.history || !holding) return null; const d = deferred(); held.push(d); return d.p; } });
+  holding = true;
+  r.frame(hello); await r.tick();   // the first reconnect read is out
+  r.frame(hello); await r.tick();   // a second one, beside it
+  holding = false;
+  assert.equal(held.length, 2);
+  const n = r.calls.length;
+  held[0].open(); await r.tick(); await r.tick();   // the first lands; the second is still out
+  r.frame({ type: 'done', runId: 'run-a', status: 'done' });
+  settled = true;
+  r.frame({ type: 'pipelines-changed', action: 'updated', runId: 'run-a', pipelineId: 'pa', key: 'web-00000001' });
+  await r.tick(250);
+  assert.ok(!gets(r.calls.slice(n)).includes(ROW_A), 'no row read while a reconnect list is still out');
+  held[1].open(); await r.tick(); await r.tick(250); await r.tick(250);
+  assert.deepEqual(gets(r.calls.slice(n)).filter((u) => u.startsWith('/api/history')), [URLS.history], 'one more full read after the last one out');
+  const t = r.rows.get('pa') || r.rows.get('run-a');
+  assert.equal(t.case, r.rows.get('h2').case, `the saved row reads done like h2 (case ${t.case})`);
+});
+
 test('a per-run read asked while a full read is pending is dropped', async () => {
   const r = await ready();
   const n = r.calls.length;
@@ -114,7 +184,7 @@ test('a row read older than a landed list is dropped', async () => {
   assert.equal(r.live.chat.runOf('h1').projectKey, '', 'the older row read did not bring the old list back');
 });
 
-test('a row read merges its row: it replaces the element with its id, or appends it', async () => {
+test('a row read merges its row: it replaces the element with its id, or puts a new one first (newest first)', async () => {
   const answer = (u) => (u === ROW_A ? { pipeline: { ...HISTORY.pipelines[0], status: 'done', title: 'Read back' } } : u === '/api/history/web-00000001/pn?row=1' ? { pipeline: { id: 'pn', title: 'Newcomer', status: 'done', projectKey: 'web-00000001', projectName: 'web', startedAt: new Date(NOW).toISOString(), mtime: NOW } } : ANSWER[u] ?? {});
   const r = await ready({ answer });
   r.frame({ type: 'pipelines-changed', action: 'updated', pipelineId: 'pa', key: 'web-00000001' });

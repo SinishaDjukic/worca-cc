@@ -92,6 +92,7 @@ test('panel.ship-card: a feature\'s ship marks each requirement (dev\'s acceptan
   d.querySelector('#route-chat [data-ship-why="card_ship"]').value = 'not needed';
   d.querySelector('#route-chat [data-ship-why-save="card_ship"]').click(); await settle(60);
   assert.deepEqual(posts(calls).at(-1), ['PUT', '/api/shape/features/f1/acceptance', { entries: [{ id: 'R-2', mark: 'dropped', reason: 'not needed' }] }]);
+  w.RailConversation.flushPaints();   // the acceptance read's repaint waits for a frame (comp.live-paint)
   assert.equal(go1().disabled, false, 'every requirement is marked: Create PR is on');
   d.querySelector('#route-chat [data-menu="shiphow-card_ship"]').click(); await settle(5);
   d.querySelector('#route-chat [data-menu-pick="shiphow-card_ship|as stacked PRs"]').click(); await settle(10);

@@ -115,6 +115,14 @@ test('the gallery\'s inline scripts parse: one syntax error blanks every example
   for (const [i, src] of scripts.entries()) assert.doesNotThrow(() => new Function(src), `inline script ${i + 1}`);
 });
 
+test('a logic entry with a gallery example is drawn: its example is keyed by the catalog name and the gallery draws logic too', () => {
+  const gallery = read('plans/rail/prototype/components.html');
+  const name = 'Patching a list by key';
+  assert.ok(catalog().logic.some((c) => c.name === name), `${name} is a logic entry`);
+  assert.ok(gallery.includes(`'${name}': [[`), `${name}: the example is keyed by its catalog name, or the gallery never draws it`);
+  assert.match(gallery, /\[\.\.\.window\.RailCatalog\.components, \.\.\.window\.RailCatalog\.logic\]\.filter\(\(c\) => c\.code && EX\[c\.name\]\)/, 'the gallery draws the logic entries that have an example');
+});
+
 test('every component in code is tested and drawn in the gallery', () => {
   const tests = read('test/design-system-components.test.mjs'); const gallery = read('plans/rail/prototype/components.html');
   for (const c of catalog().components) {

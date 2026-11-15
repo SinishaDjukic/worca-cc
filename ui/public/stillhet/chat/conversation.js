@@ -496,9 +496,28 @@
   const ASKING = (y) => taskWaits(y) || (y.t === 'proposal' && !y.later) || (y.t === 'runwith' && y.state === 'proposed') || (y.t === 'change' && y.state === 'proposed' && !y.done) || (y.t === 'plan' && !y.approved) || (y.t === 'feature' && y.split) || ((y.t === 'gate' || y.t === 'ship' || y.t === 'act') && !y.done) || (y.t === 'question' && !y.answered);
   // one string per turn, keyed for the thread's patch (comp.keyed-patch): a turn whose string did not change keeps its node
   const turnKey = (x, i) => x.id || x.key || `${x.t}:${x.at ?? i}`;
+  // A live frame gives fresh turn objects, so a turn is kept by its key and a signature of what draws it: only the kinds
+  // whose string reads the turn itself and the few page inputs in the signature (never a task, a run or a menu); a
+  // running command (its clock) is always built again.
+  const PURE = new Set(['you', 'words', 'commands', 'divider', 'notice', 'code', 'failed', 'think', 'cmds', 'fail']);
+  let turnCache = new Map();   // turn key -> { sig, html }
+  function turnSig(x, i) {
+    if (!(PURE.has(x.t) || (x.t === 'cmd' && (x.done || x.stopped)))) return '';
+    const refs = x.t === 'words' && LIVE() && x.parts ? x.parts.filter((p) => p.ref).map((p) => CL().ref(p.ref.key, chatId)) : null;
+    try { return JSON.stringify([x, i, chatId, !!timeShown && timeShown === (x.t === 'words' ? x.key || String(i) : x.id), opened.has(i), opened.has(`shut${i}`), new Date(Date.now()).toDateString(), R.shows('advanced'), R.shows('expert'), LIVE(), refs]); } catch { return ''; }
+  }
+  function cachedTurn(x, i, key, next) {
+    const sig = turnSig(x, i), was = turnCache.get(key);
+    const html = sig && was && was.sig === sig ? was.html : turnHtml(x, i);
+    if (sig) next.set(key, { sig, html });
+    return html;
+  }
   function calmCards(l) {
     let last = -1; l.forEach((y, k) => { if (ASKING(y)) last = k; });
-    return l.map((y, k) => { const h = turnHtml(y, k); return { key: turnKey(y, k), html: k === last ? h : h.replace(/ btn-primary"/g, '"') }; });
+    const next = new Map();
+    const out = l.map((y, k) => { const key = turnKey(y, k), h = cachedTurn(y, k, key, next); return { key, html: k === last ? h : h.replace(/ btn-primary"/g, '"') }; });
+    turnCache = next;
+    return out;
   }
   // A Shaper run's plan that waits for you (its pendingQuestion, kind 'plan'), drawn live as the PlanCard under its TaskCard
   // (panel.conversation-cards): Approve and build, Ask for changes, Save to plans/, Stop and Read the plan are dev's run routes
@@ -838,6 +857,7 @@
   function paintOnly(keepText = true) {
     const fm = focusMark();
     const had = root.querySelector('[data-composer-t]'), caret = had && document.activeElement === had, y = root.querySelector('.convo-scroll')?.scrollTop;
+    const sel = caret ? [had.selectionStart, had.selectionEnd, had.selectionDirection] : null;   // where the writer left the caret
     if (had && keepText) comp.text = had.value;
     const c = chat();
     if (!chatId || !c) {
@@ -868,7 +888,11 @@
     if (!mine.length || !fm?.sel || !mine.includes(fm.sel)) focusBack(fm);
     const t = root.querySelector('[data-composer-t]');
     if (t && !keepText && t.value !== (comp.text ?? '')) t.value = comp.text ?? '';   // a kept box drops what the redraw drops
-    if (t && caret) { t.focus(); t.setSelectionRange(t.value.length, t.value.length); }
+    if (t && caret) {   // the caret stays where it was put: a kept box is left alone, a redrawn one gets it back
+      if (document.activeElement !== t) t.focus();
+      const n = t.value.length, s = Math.min(sel[0], n), e = Math.min(sel[1], n);
+      if (t.selectionStart !== s || t.selectionEnd !== e) t.setSelectionRange(s, e, sel[2] || 'none');
+    }
     size(t);
     root.querySelector('[data-menu="starter-more"] + .menu')?.setAttribute('data-scroll-fade', '');   // it scrolls: the fade says there is more
   }

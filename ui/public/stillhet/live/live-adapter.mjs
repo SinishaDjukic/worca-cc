@@ -128,8 +128,14 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
       .map((x) => get(`/api/workspaces/${encodeURIComponent(x.id)}/map`).then((m) => { maps[x.id] = m; }, () => {})));
     return { ...list, maps };
   }
+  // its list may predate a settle: a row read asked while it is out becomes one more full read after it (a newer full read
+  // may still run beside it; the stamps order those two)
   async function fetchAll() {
-    const n = ++asked, names = Object.keys(SOURCES), answers = await Promise.all(names.map((x) => load(x)));
+    const n = ++asked, names = Object.keys(SOURCES);
+    allOut++;   // a count: two reconnects' reads can be out at once, and the later one may still predate a settle
+    let answers;
+    try { answers = await Promise.all(names.map((x) => load(x))); }
+    finally { allOut--; if (!allOut && !historyOut && historyDirty) { historyDirty = false; refresh('history'); } }
     names.forEach((x, i) => keep(x, answers[i], n));
   }
   const snapshot = () => snapshotOf({ ...sources, hello: { runs: [...live.values()] } }, { now: now(), unread, checksOf: task.checks });
@@ -278,10 +284,15 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
   }
 
   // One run's row (GET /api/history/KEY/ID?row=1), debounced per pipeline, merged into the saved rows. The full read covers
-  // it: a row read asked while one is pending or out is dropped, and a row read older than a landed list is not applied.
-  const runTimers = {};
-  let historyOut = false, historyDirty = false;
-  const historyDue = () => !!timers.history || historyOut;
+  // it: a row read asked while one is pending is dropped; one asked while a full read is out asks one more full read after
+  // it (the list out may predate the settle); a row read older than a landed list is not applied, and a row read never
+  // moves the history's stamp, so a full list asked before it still lands.
+  const runTimers = new Map();
+  let historyOut = false, historyDirty = false, allOut = 0;
+  const historyDue = () => {
+    if (historyOut || allOut > 0) { historyDirty = true; return true; }
+    return !!timers.history;
+  };
   function runRead(f) {
     const key = str0(f.key) || str0((sources.history?.pipelines || []).find((p) => p && p.id === f.pipelineId)?.projectKey);
     if (!key || key.startsWith('workspaces/')) { refresh('history'); return; }   // a workspace key fails the route's check
@@ -289,9 +300,9 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
   }
   function refreshRun(key, id) {
     if (historyDue()) return;
-    clearTimeout(runTimers[id]);
-    runTimers[id] = setTimeout(async () => {
-      delete runTimers[id];
+    clearTimeout(runTimers.get(id));
+    runTimers.set(id, setTimeout(async () => {
+      runTimers.delete(id);
       if (historyDue()) return;
       const n = ++asked;
       let row;
@@ -299,9 +310,10 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
       if (!row || typeof row !== 'object') { refresh('history'); return; }
       const h = sources.history || {}, list = Array.isArray(h.pipelines) ? h.pipelines : [];
       const i = list.findIndex((p) => p && p.id === row.id);
-      if (!keep('history', { ...h, pipelines: i < 0 ? [...list, row] : list.map((p, j) => (j === i ? row : p)) }, n)) return;
+      if ((stamp.history || 0) > n) return;
+      sources = { ...sources, history: withPrs({ ...h, pipelines: i < 0 ? [row, ...list] : list.map((p, j) => (j === i ? row : p)) }) };
       drawSource('history');
-    }, DEBOUNCE_MS);
+    }, DEBOUNCE_MS));
   }
   // A settled run's status reaches its saved row from its own frame, before any read: every later snapshot draw shows it.
   function settleRow(raw) {
@@ -330,6 +342,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
   const marketDue = new Set();
   let marketTimer = 0;
   function refresh(source) {
+    if (stopped) return;
     if (WORKFLOW_SOURCES.has(source)) { workflow.refresh(source); return; }
     if (MARKET_SOURCES.has(source)) {   // one frame names both lists: they are read together, once, debounced
       marketDue.add(source); clearTimeout(marketTimer);
@@ -359,7 +372,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
   armBudgetTick();
   return {
     chat, task, workflow, schedule, market, projects: projectsLive,
-    stop: () => { stopped = true; clearTimeout(reconnect); clearTimeout(budgetTick); for (const t of [...Object.values(timers), ...Object.values(runTimers)]) clearTimeout(t); sock?.close(); },
+    stop: () => { stopped = true; clearTimeout(reconnect); clearTimeout(budgetTick); for (const t of [...Object.values(timers), ...runTimers.values()]) clearTimeout(t); sock?.close(); },
     refresh,
     retry,
     // opening a chat clears its dot (D14)

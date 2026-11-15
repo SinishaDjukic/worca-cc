@@ -90,6 +90,22 @@ test('carry keeps the old canvas in a replaced item, takes the new attributes an
   assert.equal(c.innerHTML, row('write', '2s').html);
 });
 
+test('carry leaves what the page set on the kept canvas since its drawing (a DPR-sized backing store) unless the drawing changed it', () => {
+  const c = box();
+  const row = (phase, t, w = '32') => ({ key: 'r', html: `<div><canvas data-orb="${phase}" width="${w}" height="32" style="width:32px"></canvas><span>${t}</span></div>` });
+  patchKeyed(c, [row('think', '1s')], { carry: 'canvas[data-orb]' });
+  const cv = c.querySelector('canvas');
+  cv.setAttribute('width', '64'); cv.setAttribute('height', '64'); cv.setAttribute('data-phase', 'think');   // the orb's runtime, DPR 2
+  patchKeyed(c, [row('write', '2s')], { carry: 'canvas[data-orb]' });
+  assert.equal(c.querySelector('canvas'), cv, 'the same canvas');
+  assert.equal(cv.getAttribute('data-orb'), 'write');
+  assert.equal(cv.getAttribute('width'), '64', 'the backing store keeps its DPR size');
+  assert.equal(cv.getAttribute('height'), '64');
+  assert.equal(cv.getAttribute('data-phase'), 'think', 'an attribute the drawing never had stays');
+  patchKeyed(c, [row('write', '3s', '48')], { carry: 'canvas[data-orb]' });
+  assert.equal(cv.getAttribute('width'), '48', 'an attribute the drawing changed is taken');
+});
+
 test('frameBatch runs fn once for 5 requests, on the next animation frame', () => {
   const frames = [];
   const win = { requestAnimationFrame: (f) => frames.push(f), cancelAnimationFrame: (i) => { frames[i - 1] = null; } };
