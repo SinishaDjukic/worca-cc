@@ -247,3 +247,39 @@ test('GET /api/history/:key/:id?row=1 with a wrong key or an archived id is 404'
     { name: 'an unknown id', run: async () => assert.equal((await fetch(`${base}/api/history/${alphaKey}/nope?row=1`)).status, 404) },
   ]);
 });
+
+test('F-3-09: GET /api/history rows carry workflowId and workflowName from the run\'s stepper template', async () => {
+  const lean = await seedPipeline(proj, { title: 'Lean run', status: 'done', startedAt: '2026-06-04T00:00:00Z', updatedAt: '2026-06-04T00:00:00Z',
+    stepper: { version: 2, template: { id: 'wf_lean', name: 'Lean' }, graph: { nodes: [], edges: [] } } });
+  const idOnly = await seedPipeline(proj, { title: 'Id only run', status: 'done', startedAt: '2026-06-04T00:00:00Z', updatedAt: '2026-06-04T00:00:00Z',
+    stepper: { version: 2, template: { id: 'wf_lone', name: '  ' }, graph: { nodes: [], edges: [] } } });
+  const { pipelines } = await (await fetch(`${base}/api/history`)).json();
+  const row = pipelines.find((p) => p.id === lean.id);
+  assert.equal(row.workflowId, 'wf_lean');
+  assert.equal(row.workflowName, 'Lean');
+  const lone = pipelines.find((p) => p.id === idOnly.id);
+  assert.equal(lone.workflowId, 'wf_lone');
+  assert.equal('workflowName' in lone, false, 'the two keys are independent');
+  const one = await (await fetch(`${base}/api/history/${lean.key}/${lean.id}?row=1`)).json();
+  assert.equal(one.pipeline.workflowName, 'Lean', 'the one-row read inherits the keys');
+});
+
+test('F-3-09: a run with no template (none, v1, empty, invalid JSON) has no workflowId or workflowName key; its other keys are unchanged', async () => {
+  const at = { status: 'done', startedAt: '2026-06-05T00:00:00Z', updatedAt: '2026-06-05T00:00:00Z' };
+  const plain = await seedPipeline(proj, { ...at, title: 'No stepper' });
+  const v1 = await seedPipeline(proj, { ...at, title: 'V1', stepper: { version: 1, steps: [] } });
+  const empty = await seedPipeline(proj, { ...at, title: 'Empty', stepper: { version: 2, template: { id: '', name: '' }, graph: { nodes: [], edges: [] } } });
+  const odd = await seedPipeline(proj, { ...at, title: 'Odd', stepper: { version: 2, template: { id: 7, name: { x: 1 } }, graph: { nodes: [], edges: [] } } });
+  const bad = await seedPipeline(proj, { ...at, title: 'Bad' });
+  getDb().prepare('UPDATE pipelines SET stepper = ? WHERE id = ?').run('not json', bad.id);
+  const { pipelines } = await (await fetch(`${base}/api/history`)).json();
+  const byId = (id) => pipelines.find((p) => p.id === id);
+  const keys = Object.keys(byId(plain.id)).sort();
+  await checkRows([plain, v1, empty, odd, bad].map((s, i) => ({ name: ['none', 'v1', 'empty', 'non-string', 'invalid JSON'][i], run: () => {
+    const r = byId(s.id);
+    assert.ok(r, 'the row is listed');
+    assert.equal('workflowId' in r, false);
+    assert.equal('workflowName' in r, false);
+    assert.deepEqual(Object.keys(r).sort(), keys);
+  } })));
+});

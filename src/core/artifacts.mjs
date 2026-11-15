@@ -2504,6 +2504,10 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     // E2/2.3: the done-run caveat (open issues left by a forced loop, End not reached). Only on a v2 row.
     ...(row.open_issue_count ? { openIssueCount: Number(row.open_issue_count) } : {}),
     ...(row.end_reached === 0 ? { endReached: false } : row.end_reached === 1 ? { endReached: true } : {}),
+    // F-3-09: the run's workflow as it started (stepper.template); only listAllPipelines selects these, and a run with no
+    // template (old, v1, Auto bootstrap) carries neither key.
+    ...(typeof row.workflow_id === 'string' && row.workflow_id.trim() ? { workflowId: row.workflow_id } : {}),
+    ...(typeof row.workflow_name === 'string' && row.workflow_name.trim() ? { workflowName: row.workflow_name } : {}),
     retainedWork: retainedWorkFor(row),
     checkout: checkoutRecordsFor(row),
     baseCheck: baseCheckSummaryFor(row),
@@ -2665,6 +2669,8 @@ async function listAllPipelinesNow(opts, { batchSize = 16 } = {}) {
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitResetAt') AS limit_reset_at,
            resume_point IS NOT NULL AS has_resume_point,
+           CASE WHEN json_valid(stepper) THEN CASE WHEN json_type(stepper, '$.template.id') = 'text' THEN json_extract(stepper, '$.template.id') END END AS workflow_id,
+           CASE WHEN json_valid(stepper) THEN CASE WHEN json_type(stepper, '$.template.name') = 'text' THEN json_extract(stepper, '$.template.name') END END AS workflow_name,
            ${RUN_ENGINE_SQL} AS run_engine,
            ${OUTCOME_NOTE_SQL}
     FROM pipelines

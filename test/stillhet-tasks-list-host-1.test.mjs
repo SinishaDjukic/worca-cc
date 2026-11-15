@@ -151,3 +151,27 @@ test('+ › Legacy approach › New task… posts /api/run with the project fold
   assert.ok(s.projects.projects.some((p) => p.path === run[2].projectDir), `the picked project's folder: ${run[2].projectDir}`);
   assert.equal(w.location.hash, '#run/r-new');
 });
+
+test('F-3-09: the Tasks center by workflow groups tasks under their own workflow, the rest under Default', async () => {
+  const s = sources(), h3 = s.history.pipelines.find((p) => p.id === 'h3');
+  const at = { status: 'error', projectName: 'api', projectKey: 'web-1', startedAt: h3.startedAt, mtime: Date.parse(h3.startedAt) };
+  s.history.pipelines = [{ ...at, id: 'w1', title: 'Lean one', workflowId: 'wf_lean', workflowName: 'Lean' }, { ...at, id: 'w2', title: 'Lean two', workflowId: 'wf_lean', workflowName: 'Lean' }, { ...at, id: 'w3', title: 'Plain one' }];
+  s.hello.runs = []; s.schedules = { schedules: [] };
+  const { w, d } = await liveHost({ sources: s });
+  await go(w, '#runs', 150);
+  const center = () => d.querySelector('#route-runs');
+  center().querySelector('[data-menu="c-by"]').click(); await settle(20);
+  center().querySelector('[data-menu-pick="c-by|workflow"]').click(); await settle(40);
+  if (center().querySelector('[data-c-quiet]') && ![...center().querySelectorAll('.pg-card')].length) { center().querySelector('[data-c-quiet]').click(); await settle(40); }
+  const cards = () => [...center().querySelectorAll('.pg-card')];
+  assert.deepEqual(cards().map((c) => c.querySelector('.pg-t').textContent).sort(), ['Default', 'Lean']);
+  // the list as the card's Open leaves it: its "using" word and how many tasks its sections hold
+  const shown = () => { const r = d.getElementById('runs-root'); return { using: r.querySelector('[data-menu="workflow"]')?.textContent || '', n: [...r.querySelectorAll('.list-group .list-h .n')].reduce((a, e) => a + Number(e.textContent), 0) }; };
+  const open = async (name) => { const card = cards().find((c) => c.querySelector('.pg-t').textContent === name); card.querySelector('[data-c-filter]').click(); await settle(60); };
+  await open('Lean');
+  assert.deepEqual(shown(), { using: 'Lean', n: 2 }, 'the Lean card opens its 2 tasks');
+  await go(w, '#runs', 60);
+  const facts = (name) => cards().find((c) => c.querySelector('.pg-t').textContent === name).getAttribute('title');
+  assert.equal(facts('Lean'), '2 finished');
+  assert.equal(facts('Default'), '1 finished', 'a task with no workflow is under Default');
+});
