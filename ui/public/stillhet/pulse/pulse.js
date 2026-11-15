@@ -573,7 +573,7 @@ function settingsFinds() {
         const rmin = strict(min, r.min), rflag = flag || r.flag, open = 'more:' + at + '/' + r.name;
         out.push({ label: r.name, words: sampleLive(r) ? '' : text(r.say), sset: id, min: rmin, flag: rflag, where });
         if (sampleLive(r)) continue;
-        for (const m of (r.more || []).filter(shown)) out.push({ label: m.name, words: text(m.say), sset: id, open, parent: r.name, min: strict(rmin, m.min), flag: rflag, where: `${sec.title} › ${r.name}` });
+        for (const m of (r.more || []).filter(shown)) out.push({ label: m.name, words: sampleLive(m) ? '' : text(m.say), sset: id, open, parent: r.name, min: strict(rmin, m.min), flag: rflag, where: `${sec.title} › ${r.name}` });
         for (const it of (r.moreList || []).filter(shown)) out.push({ label: it.title, words: it.meta, sset: id, open, parent: r.name, list: true, min: rmin, flag: rflag, where: `${sec.title} › ${r.name}` });
       } };
       const recsIn = (list, where, at, min, flag, extra = {}) => { for (const it of (list || []).filter(shown)) {

@@ -1279,8 +1279,8 @@ function askFrameComposer(obj) {
 // Because the client always SETS counts to an absolute value (never +1/-1), a tab
 // receiving its own echo is idempotent. A tab disconnected at mutation time recovers
 // on its next view switch / reload (the agreed product behavior).
-function emitChanged(type, action) {
-  broadcast({ type, action: action || null });
+function emitChanged(type, action, ids) {   // ids (optional): a single run's { runId, pipelineId, key }
+  broadcast({ type, action: action || null, ...ids });
 }
 // CONTRACT §1.7: every open Marketplace tab re-reads its lists after a plugin action (install, update, enable, remove,
 // purge, link, config; P2 adds the marketplace actions).
@@ -3564,7 +3564,7 @@ const startRunHandler = async (req, res) => {
         syncKeepAwake();
       })
       // #620: the harness's post-run base check landed after the run's last frame; History re-reads it.
-      .finally(() => { entry.settled = true; emitChanged('pipelines-changed', 'updated'); afterRunSettled(orch); });
+      .finally(() => { entry.settled = true; emitChanged('pipelines-changed', 'updated', { runId, pipelineId: entry.pipelineId || orch.state?.id, ...(entry.projectDir && !entry.workspaceId ? { key: projectKey(entry.projectDir) } : {}) }); afterRunSettled(orch); });
 
     // A scan's launcher needs the card attribution the wizard cannot compute (the key is a hash).
     res.json(scanTarget
@@ -4163,7 +4163,7 @@ function afterRunSettled(orch) {
     // PR when the run finishes, after the Ship card exists (a ship flips it); never throws.
     card = Promise.resolve(card).then(() => prAutoFinisher()?.afterSettled(st)).catch((err) => console.error(`[worca-ui] PR when done failed: ${err?.message || err}`));
     if (!ranMergeBack(st)) return card;
-    emitChanged('pipelines-changed', 'updated');
+    emitChanged('pipelines-changed', 'updated', { pipelineId: st.id });
     setTimeout(() => { void schedulerTick(); }, 0);
   } catch { /* a refresh hint only */ }
   return card;
@@ -4923,7 +4923,7 @@ async function stopPausedPipelineOnce(pipelineId, by = 'local') {
     throw err;
   }
   cancelScheduledResumes(pipelineId, { by, reason: `the run was stopped${byActor(by || 'local')}` });
-  emitChanged('pipelines-changed', 'stopped');
+  emitChanged('pipelines-changed', 'stopped', { pipelineId });
   // Run chains without a wired entry: a run waiting on this one decides now, not at the next
   // 30 s tick (a wired entry's done frame nudges them through wireRun).
   if (!entry) {
@@ -5590,7 +5590,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
       broadcast(event);
       syncKeepAwake();
     })
-    .finally(() => { entry.settled = true; emitChanged('pipelines-changed', 'updated'); afterRunSettled(orch); });   // #620, as /api/run's
+    .finally(() => { entry.settled = true; emitChanged('pipelines-changed', 'updated', { runId, pipelineId: entry.pipelineId || orch.state?.id, ...(entry.projectDir && !entry.workspaceId ? { key: projectKey(entry.projectDir) } : {}) }); afterRunSettled(orch); });   // #620, as /api/run's
 
   return { ok: true, runId, pipelineId };
 }
