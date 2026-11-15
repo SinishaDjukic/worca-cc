@@ -19,7 +19,7 @@ export function startInsightsLive({ fetch, on = () => {}, now = Date.now, setTim
   storage = globalThis.localStorage, model = () => globalThis.window?.RailInsightsModel } = {}) {
   const cache = new Map();   // url → { status: 'loading' | 'ready' | 'failed', data, text, seq }
   let open = new Set(), monthAsked = false, timer = 0, stopped = false, eventsKey = '';
-  const prsBy = new Map();   // #1310 D5: scope → { map: run id → PRs, asked, inflight, error, token }; only the open scope's is kept
+  const prsBy = new Map();   // #1310 D5: scope → { map: run id → PRs, asked, inflight, why, token }; only the open scope's is kept
   let prToken = 0;
   const SOFT = (url) => url.startsWith('/api/policy') || url === TAGS;   // a refusal here is "none", never a failed page
 
@@ -171,7 +171,7 @@ export function startInsightsLive({ fetch, on = () => {}, now = Date.now, setTim
   }
   function prsOf(scope) {
     for (const k of [...prsBy.keys()]) if (k !== scope) prsBy.delete(k);   // a scope change: the old scope's answers are dropped
-    if (!prsBy.has(scope)) prsBy.set(scope, { map: {}, asked: new Set(), inflight: 0, error: '', token: ++prToken });
+    if (!prsBy.has(scope)) prsBy.set(scope, { map: {}, asked: new Set(), inflight: 0, why: '', token: ++prToken });
     return prsBy.get(scope);
   }
   /** D5: POST each run's lookup once per scope, 500 to a request; an answer whose token is no longer current is dropped. */
@@ -185,7 +185,7 @@ export function startInsightsLive({ fetch, on = () => {}, now = Date.now, setTim
         if (stopped || prsBy.get(scope) !== P || P.token !== token) return;
         P.inflight -= 1;
         if (status >= 200 && status < 300) Object.assign(P.map, body?.prs && typeof body.prs === 'object' ? body.prs : {});
-        else P.error = errorOf(status, body);
+        else P.why = errorOf(status, body);
         on();
       };
       Promise.resolve().then(() => fetch(PRS, { method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ scope, runs }) })).then(
@@ -195,19 +195,19 @@ export function startInsightsLive({ fetch, on = () => {}, now = Date.now, setTim
     return P;
   }
   function prState(P, ids) {
-    if (P.error) return { state: 'failed', error: P.error };
-    if (P.inflight) return { state: 'pending', error: '' };
+    if (P.why) return { state: 'failed', why: P.why };
+    if (P.inflight) return { state: 'pending', why: '' };
     const asked = ids.filter((id) => P.asked.has(id));
-    return { state: asked.length && asked.every((id) => P.map[id] == null) ? 'unknown' : 'ready', error: '' };
+    return { state: asked.length && asked.every((id) => P.map[id] == null) ? 'unknown' : 'ready', why: '' };
   }
   const EMPTY = () => ({ merged: 0, review: 0, closed: 0, failed: 0, stopped: 0, done: 0 });
   /** #1310: one person's work on the page's days; the records come from the team page's read, never a new one. */
   function work(name, st) {
     const sr = scopeRecords(st);
-    if (!sr) return { state: 'loading', items: [], counts: EMPTY(), axis: null, pr: { state: 'pending', error: '' } };
+    if (!sr) return { state: 'loading', items: [], counts: EMPTY(), axis: null, pr: { state: 'pending', why: '' } };
     const t = cache.get(`/api/team-metrics?scope=${encodeURIComponent(sr.scope)}&range=all&aggregate=0&defer=1`);
     const win = windowOf(sr.records, t.data, st);
-    if (!win) return { state: 'ready', items: [], counts: EMPTY(), axis: null, pr: { state: 'ready', error: '' } };
+    if (!win) return { state: 'ready', items: [], counts: EMPTY(), axis: null, pr: { state: 'ready', why: '' } };
     const lookups = lookupsFor(sr.records.filter((r) => Date.parse(r.startedAt) <= win.end), { start: win.start, now: now() });   // dev's ensureTmPrs: up to the window's end too
     const P = askPrs(sr.scope, lookups);
     eventsKey = `${EVENTS}?scope=${encodeURIComponent(sr.scope)}&from=${win.start}&to=${win.end + 1}`;

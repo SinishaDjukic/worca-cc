@@ -552,7 +552,7 @@
   function workHead(who, when, counts, pr = {}) {
     const title = `${who}'s work, ${when}`, parts = COUNT_WORDS.filter(([k]) => counts[k]).map(([k, w]) => `${counts[k]} ${w}`);
     if (!parts.length) return { title, line: '' };
-    const suffix = pr.state === 'pending' ? ' · looking up pull requests' : pr.state === 'failed' ? ` · pull requests could not be read: ${pr.error}` : pr.state === 'unknown' ? ' · pull request states are not known here' : '';
+    const suffix = pr.state === 'pending' ? ' · looking up pull requests' : pr.state === 'failed' ? ` · pull requests could not be read: ${pr.why}` : pr.state === 'unknown' ? ' · pull request states are not known here' : '';
     return { title, line: `newest first · ${parts.join(', ')}${suffix}` };
   }
   function cardOf(item) {

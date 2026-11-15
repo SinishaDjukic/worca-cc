@@ -190,7 +190,7 @@ test('work: the PR events are read once per scope and window; a repeat sends not
 test('work: a failed lookup keeps the items and says why; retryWork asks again', async () => {
   const r = rig({ answers: TEAM(recsN(3), [500, { error: 'gh is not signed in' }]) });
   const w = await settleWork(r);
-  assert.equal(w.pr.state, 'failed'); assert.equal(w.pr.error, 'gh is not signed in'); assert.equal(w.items.length, 3);
+  assert.equal(w.pr.state, 'failed'); assert.equal(w.pr.why, 'gh is not signed in'); assert.equal(w.items.length, 3);
   const n = posts(r).length;
   r.live.retryWork(); await settleWork(r);
   assert.equal(posts(r).length, n + 1);

@@ -104,7 +104,7 @@ test('workHead: the nonzero counts in order, the PR suffixes, and no line for no
   const counts = { merged: 7, review: 1, closed: 1, failed: 6, stopped: 0, done: 0 };
   assert.deepEqual(workHead('Maya', 'this month', counts, { state: 'ready' }), { title: "Maya's work, this month", line: 'newest first · 7 merged, 1 open for review, 1 closed, 6 failed' });
   assert.match(workHead('Maya', 'this month', counts, { state: 'pending' }).line, / · looking up pull requests$/);
-  assert.match(workHead('Maya', 'this month', counts, { state: 'failed', error: 'gh is not signed in' }).line, / · pull requests could not be read: gh is not signed in$/);
+  assert.match(workHead('Maya', 'this month', counts, { state: 'failed', why: 'gh is not signed in' }).line, / · pull requests could not be read: gh is not signed in$/);
   assert.match(workHead('Maya', 'this month', counts, { state: 'unknown' }).line, / · pull request states are not known here$/);
   assert.deepEqual(workHead('Maya', 'this month', { merged: 0, review: 0, closed: 0, failed: 0, stopped: 0, done: 0 }, { state: 'ready' }), { title: "Maya's work, this month", line: '' });
   assert.equal(workHead('Maya', 'this month', { merged: 0, review: 0, closed: 0, failed: 0, stopped: 1, done: 2 }, { state: 'ready' }).line, 'newest first · 1 stopped, 2 done');

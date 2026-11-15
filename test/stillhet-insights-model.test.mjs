@@ -138,5 +138,5 @@ test('workOf: Maya\'s first six are the mock\'s, her counts add up to her row\'s
   eq(M.cardOf(w.items[0]), L.cardOf(w.items[0]));
   assert.equal(M.cardOf(w.items[0]).line, '#1418 merged Nov 8, 11:00 · 1d 1h from first run · opens the pull request');
   for (const it of w.items.slice(0, 12)) { eq(M.taskViewOf(it), L.taskViewOf(it)); assert.equal(it.word, L.WORDS[it.state]); }
-  for (const pr of [{ state: 'ready' }, { state: 'pending' }, { state: 'failed', error: 'x' }, { state: 'unknown' }]) eq(M.workHead('Maya', 'this month', w.counts, pr), L.workHead('Maya', 'this month', w.counts, pr));
+  for (const pr of [{ state: 'ready' }, { state: 'pending' }, { state: 'failed', why: 'x' }, { state: 'unknown' }]) eq(M.workHead('Maya', 'this month', w.counts, pr), L.workHead('Maya', 'this month', w.counts, pr));
 });

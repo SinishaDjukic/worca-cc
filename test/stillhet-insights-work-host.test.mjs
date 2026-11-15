@@ -186,12 +186,12 @@ test('11: an unknown answer says the states are not known here and draws no mark
 test('12: no work in the range says so with no legend; records still reading show the loading line', async () => {
   const { w, d } = await host();
   const real = w.RailInsightsLive.work;
-  w.RailInsightsLive.work = () => ({ state: 'ready', items: [], counts: { merged: 0, review: 0, closed: 0, failed: 0, stopped: 0, done: 0 }, axis: null, pr: { state: 'ready', error: '' } });
+  w.RailInsightsLive.work = () => ({ state: 'ready', items: [], counts: { merged: 0, review: 0, closed: 0, failed: 0, stopped: 0, done: 0 }, axis: null, pr: { state: 'ready', why: '' } });
   await open(d, 'Maya');
   assert.equal(headText(d).trim(), "Maya's work, this month");
   assert.match(detail(d).textContent, /No tasks in this month/);
   assert.equal(detail(d).querySelector('.tt-legend'), null); assert.equal(detail(d).querySelector('[data-in-more]'), null);
-  w.RailInsightsLive.work = () => ({ state: 'loading', items: [], counts: {}, axis: null, pr: { state: 'pending', error: '' } });
+  w.RailInsightsLive.work = () => ({ state: 'loading', items: [], counts: {}, axis: null, pr: { state: 'pending', why: '' } });
   w.RailPlaces.insights.redraw(); await settle(30);
   assert.match(detail(d).textContent, /Loading Maya's work…/);
   w.RailInsightsLive.work = real;

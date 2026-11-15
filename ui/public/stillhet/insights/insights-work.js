@@ -10,9 +10,9 @@
   // D3: yours when this Worca knows one of its runs (live/work-map.mjs isOwn); your newest local run opens
   const ownRun = (it) => (isLive() ? [...it.runs].reverse().find((r) => window.RailWorld?.find?.(r.id))?.id || '' : '');
   function dataOf(c, name, st) {
-    if (!isLive()) return { state: 'ready', ...M.workOf(name, c.labels, c.rows.find((r) => r.name === name)?.tasks || 0), pr: { state: 'ready', error: '' } };
+    if (!isLive()) return { state: 'ready', ...M.workOf(name, c.labels, c.rows.find((r) => r.name === name)?.tasks || 0), pr: { state: 'ready', why: '' } };
     const L = K();
-    return L ? L.work(name, st) : { state: 'loading', items: [], counts: {}, axis: null, pr: { state: 'pending', error: '' } };
+    return L ? L.work(name, st) : { state: 'loading', items: [], counts: {}, axis: null, pr: { state: 'pending', why: '' } };
   }
   function rowOf(it, a) {
     const fx = (t) => (t - a.start) / (a.end - a.start), n = it.prNumber != null ? `#${it.prNumber}` : '';
