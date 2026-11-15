@@ -72,7 +72,7 @@
   const view = { show: 'all', by: 'workspace' }, showAll = new Set();   // a workspace in Needs you lists its trouble first; its other projects are one click away
   const pid = () => current.split('@')[0];   // the address may say through which workspace: billing-api@legacy
   const firstHome = (id) => window.RailSpaces?.list().find((w) => w.projects.some(([p]) => p === id))?.id;
-  let bellHeard = -1, drawn = '', current = '', menu = '', confirm = null, ctl = null, bar = null, page = null, form = '', formTyped = '', formErr = '', setsOpen = false, locating = '';
+  let notFoundSoon = false, bellHeard = -1, drawn = '', current = '', menu = '', confirm = null, ctl = null, bar = null, page = null, form = '', formTyped = '', formErr = '', setsOpen = false, locating = '';
   const NAME_MAX = 80, TAG_MAX = 40;   // form.name-limit; small.label-short
   // what Worca can go and look at: a full path, or (adding) a repository's address; nothing else leaves this form
   const pathWrong = (v, repo) => (/[<>"`|*?\x00-\x1f]/.test(v) ? 'A path has no < > " ` | * or ?' : (repo && /^(https?:\/\/|ssh:\/\/|git@)\S+$/.test(v)) || /^~?(\/[^/]+)+\/?$/.test(v) ? '' : `Give its full path, such as ~/src/your-project${repo ? ', or a repository address' : ''}`);
@@ -306,6 +306,10 @@
     const scrolled = drawn === current ? page.querySelector('.convo-scroll')?.scrollTop || 0 : 0, keep = () => { drawn = current; const s = page.querySelector('.convo-scroll'); if (s) s.scrollTop = scrolled; };   // a menu opening leaves the page where it was, its picker in view
     if (current.startsWith('ws:')) { if (!adv()) { window.RailShell.go('projects'); return; } window.RailSpaces.render(page, current.slice(3)); keep(); return; }
     const p = data.projects.find((x) => x.id === pid());
+    // nav.not-found: loaded and not listed, the shell's not-found page (never the home, never Loading); not while an action
+    // on it waits, and a turn later, so an action that just moved it routes first
+    const lost = () => !data.projects.some((x) => x.id === pid()) && pid() && !busyOf(pid()) && W?.live && listNow() === 'ready' && here() && !page.hidden;
+    if (!p && lost() && !notFoundSoon) { notFoundSoon = true; const at = location.hash; setTimeout(() => { notFoundSoon = false; if (location.hash === at && lost()) window.RailShell.go(at.slice(1)); }, 0); }
     if (!p) { page.innerHTML = homeHtml(); keep(); return; }
     page.innerHTML = pageHtml(p);
     window.RailConversation?.dock(document.getElementById('pj-dock'), { kind: 'project', title: nameOf(p), chat: '', ref: { pageProjectKey: p.id } });   // D16: the page's project, as dev's context
