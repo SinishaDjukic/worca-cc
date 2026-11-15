@@ -20,7 +20,7 @@ function freshSettings(c) {
 // Settings › Tasks › Budget reads the case's figures too.
 const budgetSv = (b) => (b ? { spentNow: b.spent, total: String(b.limit), period: 'month' } : { spentNow: 0 });
 const fresh = (caseId) => ({ caseId, page: 'runs', pop: false, popTab: 'vitals', acct: false, sub: '', nr: null, menu: '', show: 'unread', from: 'all', vitalsShow: 'all', vitalsFrom: 'all',
-  pick: R.selectClear(), rowKey: '', read: [], cleared: [], fixed: [], custom: '', confirm: '', toast: '', flash: '', awayStatus: caseOf(caseId).away.status, keep: W.live ? !!W.part('keep') : true, s: freshSettings(caseOf(caseId)), sset: '', sv: { ...SV.fresh(), ...budgetSv(caseOf(caseId).budget), gemQuota: caseOf(caseId).gemQuota || '', ...(caseOf(caseId).newVersion ? { latest: caseOf(caseId).newVersion, upd: 'available' } : {}) },
+  pick: R.selectClear(), rowKey: '', read: [], cleared: [], fixed: [], custom: '', confirm: '', toast: '', flash: '', awayStatus: caseOf(caseId).away.status, keep: W.live ? !!W.part('keep') : true, s: freshSettings(caseOf(caseId)), sset: '', sv: { ...SV.fresh(), ...(W.live ? {} : budgetSv(caseOf(caseId).budget)), gemQuota: caseOf(caseId).gemQuota || '', ...(caseOf(caseId).newVersion ? { latest: caseOf(caseId).newVersion, upd: 'available' } : {}) },
   added: [], soundAt: null, stopped: [], teamSeen: false, chatSeen: false, unlock: null, session: false, person: 0, people: {} });
 let ui = fresh(M.CASES[0].id);   // the demo's first case, or the live kind's one case (pulse-model.js)
 // The live kind: dev's own routes for every action (D13). A refusal names what failed and changes nothing.
@@ -553,28 +553,31 @@ const strict = (...ms) => ms.filter(Boolean).sort((a, b) => R.MODES.indexOf(b) -
 function settingsFinds() {
   const out = [{ label: 'Settings', sset: SM.FIRST, where: 'Your menu' }, { label: SM.title('notifications'), sset: 'notifications', where: 'Settings' }, ...NOTIF_ROWS.map((n) => ({ label: n, sset: 'notifications', where: 'Notifications' })), ...RUNS_LIMIT_ROWS.map((n) => ({ label: n, sset: 'runs', where: 'Runs › Limits' }))];
   const text = (x) => (typeof x === 'function' ? x(ui.sv) : x);
+  const shown = (x) => !x.only || (x.only === 'live') === !!W.live;   // a sample row the live kind does not draw is not found either
   for (const g of SM.GROUPS) for (const id of g.items) {
     const sec = SM.SECTIONS[id]; if (!sec) continue;
     out.push({ label: sec.title, sset: id, min: sec.min, flag: sec.flag, where: 'Settings › ' + g.title });
-    for (const s of sec.sections) {
+    if (!shown(sec)) continue;
+    for (const s of sec.sections.filter(shown)) {
       const smin = strict(sec.min, s.min), sflag = sec.flag || s.flag, base = id + '/' + s.title, here = `${sec.title} › ${s.title}`;
       if (s.title !== sec.title) out.push({ label: s.title, words: text(s.meta), sset: id, head: true, min: smin, flag: sflag, where: sec.title });
-      const rowsIn = (rows, where, at, min, flag) => { for (const r of rows || []) {
+      const rowsIn = (rows, where, at, min, flag) => { for (const r of (rows || []).filter(shown)) {
         const rmin = strict(min, r.min), rflag = flag || r.flag, open = 'more:' + at + '/' + r.name;
         out.push({ label: r.name, words: text(r.say), sset: id, min: rmin, flag: rflag, where });
-        for (const m of r.more || []) out.push({ label: m.name, words: text(m.say), sset: id, open, parent: r.name, min: strict(rmin, m.min), flag: rflag, where: `${sec.title} › ${r.name}` });
-        for (const it of r.moreList || []) out.push({ label: it.title, words: it.meta, sset: id, open, parent: r.name, list: true, min: rmin, flag: rflag, where: `${sec.title} › ${r.name}` });
+        for (const m of (r.more || []).filter(shown)) out.push({ label: m.name, words: text(m.say), sset: id, open, parent: r.name, min: strict(rmin, m.min), flag: rflag, where: `${sec.title} › ${r.name}` });
+        for (const it of (r.moreList || []).filter(shown)) out.push({ label: it.title, words: it.meta, sset: id, open, parent: r.name, list: true, min: rmin, flag: rflag, where: `${sec.title} › ${r.name}` });
       } };
-      const recsIn = (list, where, at, min, flag, extra = {}) => { for (const it of list || []) {
+      const recsIn = (list, where, at, min, flag, extra = {}) => { for (const it of (list || []).filter(shown)) {
         out.push({ label: it.title, words: it.meta, sset: id, list: true, min, flag, where, ...extra });
         if (!it.more) continue;
         const open = 'more:' + at + '/' + it.title, fflag = flag || it.foldFlag;
-        for (const m of it.more) out.push({ label: m.name, words: m.say, sset: id, open, parent: it.title, parentList: true, min: strict(min, m.min), flag: fflag, where: `${sec.title} › ${it.title}` });
-        for (const r of it.moreList || []) out.push({ label: r.title, words: r.meta, sset: id, open, parent: it.title, parentList: true, list: true, min, flag: fflag, where: `${sec.title} › ${it.title}` });
+        for (const m of it.more.filter(shown)) out.push({ label: m.name, words: m.say, sset: id, open, parent: it.title, parentList: true, min: strict(min, m.min), flag: fflag, where: `${sec.title} › ${it.title}` });
+        for (const r of (it.moreList || []).filter(shown)) out.push({ label: r.title, words: r.meta, sset: id, open, parent: it.title, parentList: true, list: true, min, flag: fflag, where: `${sec.title} › ${it.title}` });
       } };
       rowsIn(s.rows, here, base, smin, sflag);
       recsIn(s.list, here, base, smin, sflag);
-      for (const a of s.actions || []) if (a.list) {
+      if (s.liveList && W.live) recsIn(s.liveList(ui.sv), here, base, smin, sflag);
+      for (const a of (s.actions || []).filter(shown)) if (a.list) {
         const opens = `${base}/${a.id || a.label}`;
         out.push({ label: a.label, sset: id, opens, min: smin, flag: sflag, where: here });
         recsIn(a.list, `${sec.title} › ${a.label}`, base, smin, sflag, { opens });

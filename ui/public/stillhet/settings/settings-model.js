@@ -63,11 +63,13 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     if (sv.period !== 'month') return `**${own}**, and **${team}** (your team's)`;
     return +sv.total <= +sv.pol.capAll ? `**${own}**` : `**${team}** (your team's; yours is ${usd(sv.total)})`; };
   const SPENT = { day: ['today', 38], week: ['this week', 140], month: ['this month', 412] };
-  const spentWords = (sv) => { const own = sv.total ? sv.period : 'month', [when, table] = SPENT[own], n = own === 'month' && sv.spentNow != null ? sv.spentNow : table, of = sv.total && own !== 'month' ? +sv.total : sv.total ? Math.min(+sv.total, +sv.pol.capAll) : +sv.pol.capAll; return `Spent ${when}: $${n} of ${usd(of)}.`; };
+  const spentWords = (sv) => { if (window.RailWorld?.live) return '';   // live: the sample spend is not drawn (the real budget is wave 3's)
+    const own = sv.total ? sv.period : 'month', [when, table] = SPENT[own], n = own === 'month' && sv.spentNow != null ? sv.spentNow : table, of = sv.total && own !== 'month' ? +sv.total : sv.total ? Math.min(+sv.total, +sv.pol.capAll) : +sv.pol.capAll; return `Spent ${when}: $${n} of ${usd(of)}.`; };
 
   // ---- Plugins and Chat › Channels read one fact from here: what is installed, and whether a channel has its token ----
   const store = () => window.RailPlaces?.marketplace;   // the Marketplace holds what is installed; a plugin it does not list falls back to this page's own
-  const installed = (sv, title) => store()?.isInstalled?.(title) ?? !sv.gone[title];
+  // live: only the Marketplace knows; a name it does not list is not installed (never this page's sample)
+  const installed = (sv, title) => (window.RailWorld?.live ? store()?.isInstalled?.(title) === true : store()?.isInstalled?.(title) ?? !sv.gone[title]);
   // Live: Delete all chats is dev's (app.js deleteAskHistory): fresh counts, the confirm with dev's facts, then the DELETE.
   // `changed()` repaints Settings once an answer is in.
   const n = (k, w) => `${k} ${w}${k === 1 ? '' : 's'}`;
@@ -92,6 +94,22 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     });
   }
   const uninstall = (title) => (r, x) => x.confirm({ text: `Uninstall ${title}?`, yes: 'Uninstall', danger: true, then: (s) => { s.gone = { ...s.gone, [title]: true }; store()?.setInstalled?.(title, false); return `Uninstalled: ${title}`; } });
+  // ---- Plugins, live: exactly what GET /api/plugins lists, read through the Marketplace's live layer (market-live owns every
+  // plugin request). A record only opens its Marketplace page; installing, updating and set-up are the Marketplace's. ----
+  const STORE_ROW = { name: 'Marketplace', say: 'More plugins are in the store', acts: [{ label: 'Open', id: 'store', page: 'marketplace', say: 'Opens the Marketplace, the store in the sidebar' }] };
+  let waitingPlugins = false;   // one repaint per load, however often Settings draws while it reads
+  const pluginRecord = (p) => ({ title: p.name, meta: [p.kind.replace(/s$/, ''), p.market].filter(Boolean).join(' · '), chip: p.update ? 'Update available' : p.needsSetup ? 'Needs set-up' : '',
+    open: (r, x) => x.page('marketplace/' + p.id, '') });
+  function livePlugins() {
+    const L = window.RailMarketLive; if (!L) return [];
+    const st = L.status();
+    if (st === 'loading') {
+      if (!waitingPlugins) { waitingPlugins = true; L.load().then(() => { waitingPlugins = false; window.dispatchEvent(new Event('rail-settings')); }); }
+      return [];
+    }
+    return st === 'failed' ? [] : L.data().plugins.filter((p) => p.installed).map(pluginRecord);
+  }
+  const livePluginsEmpty = () => ({ loading: 'Loading the plugins', failed: 'Could not read the plugins' })[window.RailMarketLive?.status()] || 'Nothing installed';
   const CHANNELS = [['Telegram', 'chTelegram'], ['Discord', 'chDiscord'], ['Slack', 'chSlack'], ['Teams', 'chTeams']];
   const channelState = (sv, title, key) => (!sv.chToken[title] ? 'Not set up' : sv[key] ? 'Connected' : 'Off');
   const workingChannels = (sv) => CHANNELS.filter(([t, k]) => installed(sv, t) && channelState(sv, t, k) === 'Connected').map(([t]) => t);
@@ -313,7 +331,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
   const SECTIONS = {
     general: { title: 'General', meta: 'Setup, storage, and which version of Worca runs.', sections: [
       { title: 'Setup', rows: [
-        { name: 'Setup assistant', say: 'Checks this machine, the network, model access and your limits', acts: [{ label: 'Run setup', edit: setup }] },
+        { name: 'Setup assistant', only: 'demo', say: 'Checks this machine, the network, model access and your limits', acts: [{ label: 'Run setup', edit: setup }] },
         { name: 'Getting started', say: 'The Getting started chat: sign in, add a project, then your first task{gsWords}', vals: { gsWords: (sv) => (sv.gsShown ? ': back in the sidebar' : '') }, acts: [{ label: 'Show again', off: (sv) => (sv.gsShown ? 'The checklist is already showing' : ''), do: (sv) => { sv.gsShown = true; return 'The Getting started checklist is back in the sidebar'; } }] },
         { name: 'Browser extension', help: 'Works with a local Worca only', say: 'Add Worca to {browser}', picks: { browser: P('chrome', O(['chrome', 'Chrome'], ['edge', 'Edge'], ['firefox', 'Firefox']), 'Which browser to install it in') }, foldLabel: 'Paired browsers',
           acts: [{ label: 'How to install', edit: (sv) => ({ title: `Install in ${{ chrome: 'Chrome', edge: 'Edge', firefox: 'Firefox' }[sv.browser]}`, view: true, yes: 'Close', note: 'Load the folder `~/.worca-cc/extension` in the browser\'s extensions page, or take the zip from the latest release. It pairs on first use.' }) }],
@@ -351,7 +369,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
       ] },
     ] },
 
-    team: { min: 'advanced', title: 'Team policy', meta: 'What your team requires of every Worca that follows its policy.',
+    team: { min: 'advanced', only: 'demo', notLive: 'Settings › Team policy', title: 'Team policy', meta: 'What your team requires of every Worca that follows its policy.',
       lock: { level: 'expert', why: 'Expert mode changes the policy; here you can read it' }, sections: [
       { title: 'Not published', when: (sv) => pending(sv).length > 0, meta: 'Nothing reaches your team until you publish: one commit on the worca-policy branch, read by every teammate\'s Worca.', actions: [
         { label: 'Cancel editing', do: (sv) => { Object.assign(sv, sv.pol); return 'Changes dropped; the policy is as published'; } },
@@ -412,7 +430,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
 
     runs: { title: 'Tasks', meta: 'How tasks spend, start and wait.', sections: [
       { title: 'Spending', meta: spentWords, rows: [
-        { name: 'Budget', say: (sv) => `All tasks pause at ${totalCap(sv)}; one run at ${runCap(sv)}`,
+        { name: 'Budget', only: 'demo', say: (sv) => `All tasks pause at ${totalCap(sv)}; one run at ${runCap(sv)}`,
           acts: [{ label: 'Change…', edit: { title: 'Change the budget', yes: 'Save', note: 'Empty means only your team\'s cap applies. The tighter of the two wins.', check: (v) => limitsWrong(v.perRun, v.total), fields: [
             { key: 'perRun', label: 'Per run (USD)', placeholder: 'No limit' }, { key: 'total', label: 'Total (USD)', placeholder: 'No limit' }, { key: 'period', label: 'The total starts again', options: O(['day', 'Each day, at midnight'], ['week', 'Each week, from Monday'], ['month', 'Each month, from the 1st']) },
           ], done: 'Budget saved' } }],
@@ -660,9 +678,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     ] },
 
     plugins: { min: 'advanced', title: 'Plugins', meta: 'What you installed from the Marketplace, and where Worca looks for more.', sections: [
-      { title: 'Installed', actions: [{ label: 'Sources', help: 'Where Worca looks for plugins', list: SOURCES, edit: sourcesDialog }], rows: [
-        { name: 'Marketplace', say: 'More plugins are in the store', acts: [{ label: 'Open', id: 'store', page: 'marketplace', say: 'Opens the Marketplace, the store in the sidebar' }] },
-      ], empty: 'Nothing installed', groups: [
+      { title: 'Installed', only: 'demo', actions: [{ label: 'Sources', help: 'Where Worca looks for plugins', list: SOURCES, edit: sourcesDialog }], rows: [STORE_ROW], empty: 'Nothing installed', groups: [
         { title: 'Trackers', list: [
           tracker('Jira', 'jira', 'A task source · worca-official · 1 update', 'pJira', true, { mark: 'is-amber', menu: ['Update', 'Settings', 'Uninstall'], url: 'https://acme.atlassian.net' }, [rule('WEB', MOVES.jira[0]), rule('INFRA', 'none', 'Resolved')]),
           tracker('Azure Boards', 'azure', 'A task source · worca-official', 'pAzure', true, { url: 'https://dev.azure.com/acme' }, [rule('Billing', 'Closed')]),
@@ -682,6 +698,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
           plugin('Promo video', 'A workflow and 3 agents · worca-official', 'pPromoVideo', true, { nothing: true }),
         ] },
       ] },
+      { title: 'Installed', only: 'live', rows: [STORE_ROW], liveList: livePlugins, empty: livePluginsEmpty },
     ] },
 
     connectors: { min: 'advanced', title: 'Connectors', meta: 'MCP servers and skills, grouped in sets that projects follow.', sections: [
