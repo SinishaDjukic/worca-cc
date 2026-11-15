@@ -15,6 +15,7 @@ import { selectionAction, selectApply, selectClear, selectPrune, selectStart, se
 import { bindLongPress, selectionBar } from './selection-bar.mjs';
 import { keyFacts, listMove, openShortcutsSheet, shortcutAction } from './shortcuts.mjs';
 import { listEditor } from './tag-group.mjs';
+import { keptRoute } from './keep-open.mjs';
 
 /** How long a date section takes to fold before it is drawn folded: the Rail's change timing. */
 const FOLD_MS = 200;
@@ -260,6 +261,9 @@ export function listController({ root, spec }) {
     }
   });
   let stale = false;   // something closed from outside: draw again, unless a handler already did
+  // an open popover belongs to its route (comp.keep-open): moving to another place or item closes it, its text with it
+  let routeAt = keptRoute(win.location.hash);
+  win.addEventListener('hashchange', () => { const now = keptRoute(win.location.hash), moved = now !== routeAt; routeAt = now; if (moved && s.pop) { s.pop = null; stale = true; } });
   const repaint = () => { if (stale) paint(); };
   dismissOnOutside(doc, { rank: 3, open: () => !!s.menu, inside: (t) => !!t.closest('.menu') || t.closest?.('[data-menu]')?.dataset.menu === s.menu, back: () => root.querySelector(`[data-menu="${q(s.menu)}"]`), close: () => { s.menu = ''; stale = true; }, paint: repaint });
   dismissOnOutside(doc, { rank: 3, open: () => !!s.pop, inside: '.list-pop', back: () => (s.pop ? root.querySelector(s.pop.anchor) : null), close: () => { s.pop = null; stale = true; }, paint: repaint });

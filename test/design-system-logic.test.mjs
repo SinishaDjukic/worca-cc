@@ -519,3 +519,10 @@ test('frameBatch: live redraws asked many times before a frame run once, through
   frames.forEach((f) => f());
   assert.deepEqual([frames.length, n], [1, 1]);
 });
+
+test('keptRoute (comp.keep-open): the place and its item, without a side panel or an @ way in', () => {
+  assert.equal(R.keptRoute('#chat/ask_1/run/run-a/logs'), '#chat/ask_1');
+  assert.equal(R.keptRoute('#projects/billing-api@legacy'), '#projects/billing-api');
+  assert.equal(R.keptRoute('#chat'), '#chat');
+  assert.equal(R.keptRoute(''), '');
+});

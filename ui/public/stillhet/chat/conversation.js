@@ -499,7 +499,7 @@
   // dev's dialogs, each a short form under its card: what it asks, its choices, its action and Cancel
   const taskList = () => (window.RailChats?.data().chats || []).flatMap((c) => c.tasks || []);
   const formPick = (t, items) => R.sentencePicker({ id: `cf-${t.id}`, text: t.form.value, items: items.map((v) => (typeof v === 'string' ? { id: v, text: v, checked: v === t.form.value } : v.id ? { ...v, checked: v.id === t.form.value } : v)), open: menu === `cf-${t.id}`, chevron: R.icon('chevron', 10) });
-  const formField = (t, label, o = {}) => R.field({ id: `cf-${t.id}-f`, label, quietLabel: true, value: o.value || '', placeholder: o.placeholder || '', multiline: !!o.multiline, hint: o.max ? `Up to ${o.max} characters` : '', attrs: { 'data-cf-field': t.id, maxlength: o.max || null } });
+  const formField = (t, label, o = {}) => R.field({ id: `cf-${t.id}-f`, label, quietLabel: true, value: o.value || '', placeholder: o.placeholder || '', multiline: !!o.multiline, hint: o.max ? `Up to ${o.max} characters` : '', attrs: { 'data-cf-field': t.id, 'data-keep': `cf-${t.id}`, maxlength: o.max || null } });
   const FORMS = {
     pr: { value: () => 'ready for review', text: (t) => `Open the PR for ${t.title}`, body: (t) => formField(t, 'PR title', { value: t.title }) + `<span class="tp-sentence">as ${formPick(t, ['ready for review', 'a draft'])} into ${esc(LIVE() ? t.base || 'its base' : 'dev')}</span>`, say: (t, f) => `${f.say}${t.form.value === 'a draft' ? ' as a draft' : ''}` },
     model: { value: () => 'Sonnet 5.5', text: () => 'Resume on another model', body: (t) => `<span class="tp-sentence">Every remaining step runs on ${formPick(t, ENGINE_ITEMS)}</span>` },
@@ -1650,6 +1650,9 @@
   root.addEventListener('input', (e) => { const f = e.target.dataset?.cpField; if (f) comp[f] = e.target.value; });
   root.addEventListener('input', (e) => { const k = e.target.dataset?.pjField; if (!k) return; const [id, f] = k.split('|'), x = turns().find((y) => y.id === id); if (x) { x.f = x.f || {}; x.f[f] = e.target.value; } });   // Add project's fields keep what you type   // Customise's fields keep what you type
   root.addEventListener('input', (e) => { if (e.target.id === 'cl-label-q') { labelQ = e.target.value.slice(0, LABEL_MAX); paint(false); keepLabelQ(); } });
+  // an open menu belongs to the chat it was opened in: moving to another place or chat closes it, so its text never waits (comp.keep-open)
+  let routeAt = location.hash.split('/').slice(0, 2).join('/');
+  window.addEventListener('hashchange', () => { const now = location.hash.split('/').slice(0, 2).join('/'), moved = now !== routeAt; routeAt = now; if (side || !moved || !menu) return; menu = ''; menuSub = ''; labelQ = ''; });
   root.addEventListener('keydown', (e) => {
     if (e.target.id !== 'cl-label-q' || e.key !== 'Enter') return;
     e.preventDefault(); const v = labelQ.trim().toLowerCase(), c = chat(); if (!v || !c) return;
