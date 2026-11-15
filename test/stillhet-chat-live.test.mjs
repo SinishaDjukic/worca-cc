@@ -86,6 +86,21 @@ test('a send that names no model (Try again, Follow, the dock) runs on the chat\
   assert.deepEqual([post.body.model, post.body.effort], ['claude-opus', 'high'], 'a new chat: dev\'s default');
 });
 
+test('F-a1-01: a new chat sent on Haiku/medium is seeded with Haiku/medium, and a send that names no model keeps it', async () => {
+  const r = rig({ answer: (url, method) => {
+    if (url === '/api/ask/models') return [200, { default: { model: 'claude-opus-5-5', effort: 'max' } }];
+    if (url === '/api/ask/threads' && method === 'POST') return [201, { thread: { id: 'ask_new' } }];
+    if (url.endsWith('/messages')) return [202, { userMessageId: 'u1' }];
+    return [200, {}];
+  } });
+  assert.equal((await r.live.act('send', { text: 'Add a CSV export', model: 'claude-haiku-5-5', effort: 'medium' })).ok, true);
+  const th = r.live.thread('ask_new');
+  assert.deepEqual([th.model, th.effort], ['claude-haiku-5-5', 'medium'], 'the new chat starts on the sent model and effort');
+  assert.equal((await r.live.act('send', { threadId: 'ask_new', text: 'and a JSON one' })).ok, true);
+  const post = r.calls.filter((c) => c.url === '/api/ask/threads/ask_new/messages').at(-1);
+  assert.deepEqual([post.body.model, post.body.effort], ['claude-haiku-5-5', 'medium'], 'not the catalogue\'s opus/max');
+});
+
 test('a refused send writes nothing and toasts once; create-ok then message-409 deletes the empty thread; a failed delete is reused', async () => {
   let del = 200, msg = 409;
   const r = rig({ answer: (url, method) => {
