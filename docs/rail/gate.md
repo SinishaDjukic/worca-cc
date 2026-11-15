@@ -8,6 +8,7 @@
 | `gate.docs` | Docs, catalog, library and gallery agree; every public export is a component, logic, an element found by need, or internal | One source, no drift | rail-docs |
 | `gate.colour` | Nothing wears a colour Rail does not have (no blue, no gold: running is ink); readable text holds 4.5:1 (3:1 large); every state's ring holds 3:1, in both themes | Colour means state, and everyone can read it | colour-check |
 | `gate.prototype` | Every change to today's UI is reflected in the Stillhet prototype, or the PR adds a `wire to` row under `## Dev surfaces` in `plans/rail/stillhet-wiring.md` that says why, or carries the `no-ui-change` label and a "No UI change:" line; every Settings key and every path today's UI fetches has a row or sits in the frozen baseline (`stillhet-surfaces`, in `npm test`) | One design system: nothing reaches today's UI that the prototype does not know about | prototype-pr-check |
+| `gate.real-data` | Every Stillhet change is walked end to end in a real browser on four instances (classic and Stillhet, each on a copy of real data and on an empty install) against the prototype, by `plans/rail/test-protocol.md`: classic leads on what a place does and shows, the prototype on how it looks; the items the change touches and every item that passed before stay OK, classic included; no live control shows demo data, a would-answer or a local-only success; idle CPU and a live update stay within budget | Demo data hides what real data breaks; classic stays intact | by hand |
 
 `gate.prototype` counts all of `ui/public/` except `stillhet/` and `design-system/` as today's UI. That is wider than
 `rail-gate`'s skip list on purpose: `style.css`, `assets/`, `vendor/` and `browser-extension/` are not page code for the
@@ -26,6 +27,7 @@ The one table: each check, its command, when it runs and the widths it owes. Fro
 | `rail-default` | `node --test test/rail-default.test.mjs` | A change to a pattern, `featureKinds` or `build.md`; in `npm test` | none |
 | `rail-look-options` | `node --test test/rail-look-options.test.mjs` | Every change to the library; in `npm test` | none |
 | `settings-sentences` | `node G/settings-sentences.mjs` | A change to Settings' model | none |
+| Real-data browser test (`gate.real-data`) | browser agents walk `plans/rail/test-protocol.md` on four instances (classic and Stillhet; a copy of real data and an empty install, each with its own `HOME`) against the prototype | Before every Stillhet PR or fix batch merges; the touched items plus every item that passed before | 1280, 390 |
 | `ds-check`, with `align-check` | `node G/ds-check.mjs` | A change to a Rail page, inside its run | 900, 400 |
 | `handover-check` | `node G/handover-check.mjs` | A change to anything that sends to Chat | 1280 |
 | `colour-check` | `node G/colour-check.mjs` (`--list` to see all) | A change to a colour, a token or a page's text | 1280, light and dark |
