@@ -24,18 +24,18 @@ export function watchScrollFades(doc) {
   const win = doc.defaultView;
   const mark = (el) => { const e = scrollEdges(el); el.toggleAttribute('data-more-above', e.above); el.toggleAttribute('data-more-below', e.below); el.toggleAttribute('data-far-below', el.scrollHeight - el.scrollTop - el.clientHeight > FAR); };
   const dirty = new Set(), sized = new WeakSet();
-  const flush = frameBatch(win, () => { const cols = [...dirty]; dirty.clear(); for (const el of cols) if (el.isConnected) mark(el); });
+  const flush = frameBatch(win, () => { const cols = [...dirty]; dirty.clear(); for (const el of cols) if (el.isConnected) mark(el); else if (resized) { resized.unobserve(el); sized.delete(el); } });   // a column that left is no longer observed
   const resized = win.ResizeObserver && new win.ResizeObserver((entries) => { for (const x of entries) dirty.add(x.target); flush.request(); });
   const want = (el) => { dirty.add(el); if (resized && !sized.has(el)) { sized.add(el); resized.observe(el); } };
   const all = () => doc.querySelectorAll(SEL).forEach((el) => { want(el); mark(el); dirty.delete(el); });
   doc.addEventListener('scroll', (ev) => { if (ev.target.matches?.(SEL)) mark(ev.target); }, { capture: true, passive: true });
   win.addEventListener('resize', all);
   all();
-  // content change: the column a change landed in, and any column that arrived with it; a change outside every column measures nothing
+  // content change: the column a change landed in and every column around it (an outer column grows with an inner one,
+  // its box unchanged), and any column that arrived with it; a change outside every column measures nothing
   const changed = (records) => {
     for (const r of records) {
-      const col = r.target.closest?.(SEL);
-      if (col) want(col);
+      for (let col = r.target.closest?.(SEL); col; col = col.parentElement?.closest(SEL)) want(col);
       for (const n of r.addedNodes) if (n.nodeType === 1) { if (n.matches(SEL)) want(n); n.querySelectorAll(SEL).forEach(want); }
     }
     if (dirty.size) flush.request();

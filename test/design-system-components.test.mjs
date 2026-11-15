@@ -1576,6 +1576,38 @@ test('B2.8 F-a1-02 ScrollFade: a resize measures every column; a new column is m
   window.close();
 });
 
+test('B2.8 F-a1-02 ScrollFade: content added in a column inside a column re-marks both', async () => {
+  const { window } = new JSDOM('<body><div id="outer" class="side-menu" data-h="0"><div id="inner" data-scroll-fade data-h="0"></div></div></body>', { pretendToBeVisual: true });
+  Object.defineProperty(window.Element.prototype, 'scrollHeight', { configurable: true, get() { return Number(this.dataset.h || 0); } });
+  const frames = () => new Promise((r) => window.requestAnimationFrame(() => window.requestAnimationFrame(r)));
+  const doc = window.document;
+  C.watchScrollFades(doc);
+  await frames();
+  const outer = doc.getElementById('outer'), inner = doc.getElementById('inner');
+  assert.equal(outer.hasAttribute('data-more-below'), false);
+  outer.dataset.h = '900'; inner.dataset.h = '900'; inner.append(doc.createElement('p'));
+  await frames();
+  assert.equal(inner.hasAttribute('data-more-below'), true, 'the inner column');
+  assert.equal(outer.hasAttribute('data-more-below'), true, 'the outer column grew too');
+  window.close();
+});
+
+test('B2.8 ScrollFade: a column that leaves the page is no longer observed', async () => {
+  const { window } = new JSDOM('<body><div id="a" class="convo-scroll"></div></body>', { pretendToBeVisual: true });
+  const watched = new Set();
+  let ro;
+  window.ResizeObserver = class { constructor(cb) { this.cb = cb; ro = this; } observe(el) { watched.add(el); } unobserve(el) { watched.delete(el); } };
+  const frames = () => new Promise((r) => window.requestAnimationFrame(() => window.requestAnimationFrame(r)));
+  const doc = window.document;
+  C.watchScrollFades(doc);
+  const a = doc.getElementById('a');
+  assert.equal(watched.has(a), true);
+  a.remove(); ro.cb([{ target: a }]);   // a removed box resizes to nothing
+  await frames();
+  assert.equal(watched.has(a), false, 'a removed column is unobserved');
+  window.close();
+});
+
 test('commands: dev\'s group head, rows with no mark, Copy on the command and its output', () => {
   assert.equal(C.commandHead({ count: 3, failed: 1, dur: '5.4s' }), '<b>Ran 3 commands</b> · <span class="cmd-failed">1 failed</span> · 5.4s');
   assert.match(C.commandHead({ count: 3, running: true, current: 'Running the tests', dur: '2.1s' }), /^<b>Running the tests<\/b> · 3 commands · 2.1s$/);

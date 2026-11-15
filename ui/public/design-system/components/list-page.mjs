@@ -160,7 +160,8 @@ export function listController({ root, spec }) {
     el.style.top = `${r.bottom + 4 + h > vh - 8 ? Math.max(8, r.top - h - 4) : r.bottom + 4}px`;
   }
 
-  // `ifChanged`: a drawing equal to the last one, still in place and still this list's, writes nothing (comp.patch-parts)
+  // `ifChanged`: a drawing equal to the last one, still in place and still this list's, writes nothing (comp.patch-parts).
+  // Only paint writes inside the root: the check sees the root's top level only, so a write below it by another writer goes unseen.
   function paint({ focus = '', ifChanged = false } = {}) {
     stale = false;
     const owned = OWNER.get(root) === s; OWNER.set(root, s);

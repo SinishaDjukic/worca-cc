@@ -1775,7 +1775,7 @@
       "kind": "telling",
       "needs": [
         "a chat softens where it goes under the composer or the top bar, only while there is more past that edge (scrollEdges says which)",
-        "a column measured only when it scrolls, resizes or its content changes: a draw that changes nothing measures nothing"
+        "a column measured only when it scrolls, resizes or its content changes (and every column around that change): a draw that changes nothing measures nothing"
       ],
       "rules": [
         "motion.scroll-fade"
@@ -2496,7 +2496,7 @@
       "needs": [
         "a list with its sentence, selecting, keys and states",
         "selected counted in the actions' unit where a row stands for several (spec.count)",
-        "an idle redraw that leaves the list as it was: paint({ ifChanged: true }) writes nothing when its drawing did not change"
+        "an idle redraw that leaves the list as it was: paint({ ifChanged: true }) writes nothing when its drawing did not change (only paint writes inside the root)"
       ],
       "example": "listController({ root, spec })",
       "also": [
