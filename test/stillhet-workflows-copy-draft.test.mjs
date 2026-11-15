@@ -141,3 +141,18 @@ test('F-5-08 live: the copy draft and its edits survive a workflows-changed refr
   assert.equal(d.querySelector('[data-ed-name]').value, 'Default copy');
   assert.deepEqual(sent(calls), []);
 });
+
+test('F-5-08 live: Discard while the copy\'s Save is in flight: the copy it made is deleted again and the page says so', async () => {
+  const s = server();
+  let release; const held = new Promise((y) => { release = y; });
+  const { w, d, calls } = await workflowsHost({ hash: '#workflows/workflow:wf_default', read: s.read,
+    write: async (u, b, m) => { if (m === 'POST') await held; return m === 'DELETE' ? [200, { ok: true }] : s.write(u, b, m); } });
+  await copyEdit(d);
+  d.querySelector('[data-draft-save]').click(); await settle(40);
+  d.querySelector('[data-draft-discard]').click(); await settle(40);
+  assert.equal(w.location.hash, '#workflows');
+  release(); await settle(150);
+  assert.deepEqual(sent(calls).map((c) => `${c.method} ${c.url}`), ['POST /api/workflows', 'DELETE /api/workflows/wf_default-copy']);
+  assert.equal(w.location.hash, '#workflows', 'not sent to the copy\'s page');
+  assert.match(saidText(d), /^Discarded Default copy: its Save had already reached Worca, so it was deleted again/);
+});

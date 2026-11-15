@@ -41,7 +41,7 @@ const BENCH_MARGIN_MS = 30000, EARLY_MAX = 20;   // a bench's deadline past its 
 
 export function startWorkflowLive({ fetch, toast = () => {}, go = () => {}, on = () => {}, download = () => {}, setTimeout: later = globalThis.setTimeout, clearTimeout: cancel = globalThis.clearTimeout }) {
   let lists = {}, state = 'loading', started = null, records = { workflow: [], agent: [], script: [] };
-  const busy = new Set(), copying = new Set(), benches = new Map(), early = new Map(), drafts = new Map(), pending = new Map(), saving = new Set();
+  const busy = new Set(), copying = new Set(), benches = new Map(), early = new Map(), drafts = new Map(), pending = new Map(), saving = new Set(), dropped = new Set();
   let pinChain = Promise.resolve();
 
   async function send(id, args = {}) {
@@ -124,15 +124,16 @@ export function startWorkflowLive({ fetch, toast = () => {}, go = () => {}, on =
 
   /** A copy: dev's create with no id (copy-workflow), under `name` (F-5-08, D3, D4). A 409 (the minted wf_<slug> is
    *  taken: a race, or a title that slugs alike) reads the list again and tries `rename(tried)`, at most COPY_TRIES POSTs;
-   *  with no `rename` it comes back as it is. A second copy of the same id while one runs answers busy and sends nothing. */
-  async function copy({ id, tpl, name, rename }) {
+   *  with no `rename` it comes back as it is; `stop()` true ends the retries. A second copy of the same id while one runs
+   *  answers busy and sends nothing. */
+  async function copy({ id, tpl, name, rename, stop }) {
     if (copying.has(id)) return { ok: false, status: 0, data: {}, error: 'busy', name };
     copying.add(id);
     try {
       const tried = new Set();
       for (let n = 1; ; n += 1) {
         const a = await act('copy-workflow', { tpl, name, id });
-        if (a.ok || a.status !== 409 || !rename || n >= COPY_TRIES) return { ...a, name };
+        if (a.ok || a.status !== 409 || !rename || n >= COPY_TRIES || stop?.()) return { ...a, name };
         tried.add(name.toLowerCase());
         await refresh('workflows');
         name = rename(tried);
@@ -146,7 +147,7 @@ export function startWorkflowLive({ fetch, toast = () => {}, go = () => {}, on =
     const k = keyOf(kind, id);
     if (saving.has(k)) return { ok: false, text: '' };
     saving.add(k);
-    try { return await saveNow(kind, id, opts); } finally { saving.delete(k); }
+    try { return await saveNow(kind, id, opts); } finally { saving.delete(k); dropped.delete(k); }
   }
   async function saveNow(kind, id, opts) {
     const x = find(kind, id);
@@ -163,9 +164,10 @@ export function startWorkflowLive({ fetch, toast = () => {}, go = () => {}, on =
       }
       const tpl = x.fresh ? (({ id: _, ...t }) => t)(r.tpl) : { ...r.tpl, id: x.id };
       const a = x.fresh && x.copyOf   // a copy: created under a free name; a name you typed is never changed (D5)
-        ? await copy({ id: x.id, tpl: r.tpl, name: x.draft.title, rename: x.draft.title === x.copyName ? opts.rename : undefined })
+        ? await copy({ id: x.id, tpl: r.tpl, name: x.draft.title, rename: x.draft.title === x.copyName ? opts.rename : undefined, stop: () => dropped.has(keyOf(kind, id)) })
         : await act('save-workflow', { tpl, id: x.id });
-      if (!a.ok) return refused('save', x.fresh && x.copyOf ? x.draft.title : x.title, a.error);
+      if (x.fresh && dropped.has(keyOf(kind, id))) return undoSave(a, a.name || x.draft.title);
+      if (!a.ok) return refused('save', x.fresh && x.copyOf ? a.name || x.draft.title : x.title, a.error);   // after the retries: the last name tried
       dropDraft(kind, id, x);
       if (x.fresh) records.workflow = records.workflow.filter((y) => y !== x);
       await refresh('workflows');
@@ -188,6 +190,15 @@ export function startWorkflowLive({ fetch, toast = () => {}, go = () => {}, on =
     return { ok: true, text: '' };
   }
   function discard(kind, id) { dropDraft(kind, id); on(); }
+  /** A never-saved draft discarded while its Save runs: nothing more is tried, and a create that lands anyway is deleted
+   *  again, so the discard holds. Says nothing when no Save runs. */
+  function abandon(kind, id) { const k = keyOf(kind, id); if (saving.has(k)) dropped.add(k); }
+  async function undoSave(a, name) {
+    if (!a.ok) return { ok: false, text: '' };   // nothing was made: the discard already said so
+    const id = a.data?.workflow?.id, d = id ? await act('delete-workflow', { id }) : { ok: false, error: NO_ANSWER };
+    await refresh('workflows');
+    return { ok: false, text: d.ok ? `Discarded ${name}: its Save had already reached Worca, so it was deleted again` : `Could not delete ${name} after the discard: ${d.error}` };
+  }
 
   /** Delete waits for the undo window (D14): the thing leaves the lists at once and stays out of every refresh; the real
    *  DELETE goes only when the window closes; undo sends nothing and brings it back (true), or answers false once the
@@ -293,7 +304,7 @@ export function startWorkflowLive({ fetch, toast = () => {}, go = () => {}, on =
 
   return {
     stepId: (id, steps) => newStepId(find('workflow', id), steps),
-    load, refresh: (...n) => (started ? refresh(...(n.length ? n : Object.keys(LISTS))) : Promise.resolve(false)), act, copy, pin, preview, save, discard, deferDelete, exportAs, importFile, runCases, reconnect, frame, drafts,
+    load, refresh: (...n) => (started ? refresh(...(n.length ? n : Object.keys(LISTS))) : Promise.resolve(false)), act, copy, pin, preview, save, discard, abandon, deferDelete, exportAs, importFile, runCases, reconnect, frame, drafts,
     data: () => { begin(); return records; },
     status: () => { begin(); return state; },
   };
