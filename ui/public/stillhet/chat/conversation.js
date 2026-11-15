@@ -40,6 +40,7 @@
   // which writes nothing before the server answers ok and toasts a refusal; the demo kind keeps its sentence.
   const LIVE = () => !!(window.RailWorld?.live && window.RailChatLive);
   const CL = () => window.RailChatLive;
+  let proseReady = false;   // the markdown renderer answered: a cached words turn drawn as plain words is built again
   // a control that only says what it would do in the demo, and does it in the live kind (`data-live="id|{args}"`)
   const doOr = (phrase, id, args = {}) => (LIVE() ? { 'data-live': `${id}|${JSON.stringify(args)}` } : { 'data-say': window.RailWould(phrase) });
   // chat labels, live: the labels in use come from dev's GET /api/ask/labels (read each time the picker opens); a change is
@@ -578,9 +579,30 @@
   const liveWaits = (t) => LIVE() && !!t?.run && ['ask', 'act', 'fail'].includes(R.markTone(stOf(t)));
   const taskWaits = (y) => { if (y.t !== 'task') return false; const t = taskOf(y.task), r = t?.run && window.RailWorld.find(t.run); return (!!r && window.RailWorld.section(r) === 'needs') || liveWaits(t); };
   const ASKING = (y) => taskWaits(y) || (y.t === 'proposal' && !y.later) || (y.t === 'runwith' && y.state === 'proposed') || (y.t === 'change' && y.state === 'proposed' && !y.done) || (y.t === 'plan' && !y.approved) || (y.t === 'feature' && y.split) || ((y.t === 'gate' || y.t === 'ship' || y.t === 'act') && !y.done) || (y.t === 'question' && !y.answered);
+  // one string per turn, keyed for the thread's patch (comp.keyed-patch): a turn whose string did not change keeps its node
+  const turnKey = (x, i) => x.id || x.key || `${x.t}:${x.at ?? i}`;
+  // A live frame gives fresh turn objects, so a turn is kept by its key and a signature of what draws it: only the kinds
+  // whose string reads the turn itself and the few page inputs in the signature (never a task, a run or a menu); a
+  // running command (its clock) is always built again.
+  const PURE = new Set(['you', 'words', 'commands', 'divider', 'notice', 'code', 'failed', 'think', 'cmds', 'fail']);
+  let turnCache = new Map();   // turn key -> { sig, html }
+  function turnSig(x, i) {
+    if (!(PURE.has(x.t) || (x.t === 'cmd' && (x.done || x.stopped)))) return '';
+    const refs = x.t === 'words' && x.md && LIVE() ? (CL().partsOf(x.md) || []).filter((p) => p.ref).map((p) => CL().ref(p.ref.key, chatId)) : null;   // its chips' answers (panel.answer-refs)
+    try { return JSON.stringify([x, i, chatId, proseReady, !!timeShown && timeShown === (x.t === 'words' ? x.key || String(i) : x.id), opened.has(i), opened.has(`shut${i}`), new Date(Date.now()).toDateString(), R.shows('advanced'), R.shows('expert'), LIVE(), refs]); } catch { return ''; }
+  }
+  function cachedTurn(x, i, key, next) {
+    const sig = turnSig(x, i), was = turnCache.get(key);
+    const html = sig && was && was.sig === sig ? was.html : turnHtml(x, i);
+    if (sig) next.set(key, { sig, html });
+    return html;
+  }
   function calmCards(l) {
     let last = -1; l.forEach((y, k) => { if (ASKING(y)) last = k; });
-    return l.map((y, k) => { const h = turnHtml(y, k); return k === last ? h : h.replace(/ btn-primary"/g, '"'); }).join('');
+    const next = new Map();
+    const out = l.map((y, k) => { const key = turnKey(y, k), h = cachedTurn(y, k, key, next); return { key, html: k === last ? h : h.replace(/ btn-primary"/g, '"') }; });
+    turnCache = next;
+    return out;
   }
   // A Shaper run's plan that waits for you (its pendingQuestion, kind 'plan'), drawn live as the PlanCard under its TaskCard
   // (panel.conversation-cards): Approve and build, Ask for changes, Save to plans/, Stop and Read the plan are dev's run routes
@@ -878,7 +900,15 @@
   function goTo(id) { hover = null; menu = ''; paint(); const el = root.querySelector(`[data-anchor="${CSS.escape(id)}"]`); if (el) { el.scrollIntoView({ block: 'center' }); R.land?.(el); } paintTimeline(); }   // the picked menu closes, then the turn is found in the redrawn page
 
   // ---- the page ----
+  // comp.live-paint: a background change (a live frame, a store load, a world move) paints at the next frame, once, and not
+  // at all while this Chat is hidden; it then paints once when shown (show, paintIfStale). A direct paint (a click, show)
+  // is drawn at once and covers the pending one.
+  let stale = false;
+  const hiddenNow = () => !root.isConnected || !!root.closest('[hidden]');
+  const batch = R.frameBatch(window, () => { if (hiddenNow()) { stale = true; return; } paint(); landTask(); });
+  const paintSoon = () => batch.request();
   function paint(keepText = true) {
+    batch.cancel(); stale = false;
     if (menu !== 'cp-engine') menuSub = '';   // the sub-menu never outlives its picker (comp.menu-sub)
     window.RailShell?.unembedRun?.(root);   // the task page lent to an open card goes home before the chat redraws
     paintOnly(keepText);
@@ -917,33 +947,48 @@
     const el = m.sel ? root.querySelector(m.sel) : root.querySelector(`[data-anchor="${CSS.escape(m.anchor)}"]`)?.querySelectorAll(FOCUSABLE)[m.at];
     el?.focus?.();
   }
+  let frameKey = '';   // the thread's frame (head column, timeline, dock) is built again only when this changes
+  const dimmed = new Set();   // controls a pending action disabled (busyFor): enabled again once it is answered, a kept node too
   function paintOnly(keepText = true) {
     const fm = focusMark();
     const had = root.querySelector('[data-composer-t]'), caret = had && document.activeElement === had, y = root.querySelector('.convo-scroll')?.scrollTop;
+    const sel = caret ? [had.selectionStart, had.selectionEnd, had.selectionDirection] : null, draft = had ? had.value : null;   // where the writer left the caret, in which draft
     if (had && keepText) comp.text = had.value;
     const c = chat();
     if (!chatId || !c) {
+      frameKey = '';
       root.innerHTML = side ? sideHome() : `<div class="chat-home" data-home><div class="chat-home-in"><h1>${esc(opts.title || 'What\'s next?')}</h1>${composerHtml()}${opts.mode ? '' : startersHtml() + newHere()}</div></div>`;
     } else {
       const labels = (c.labels || []).map((l) => R.chip({ text: l })).join('');
-      const st = LIVE() ? CL().state(c.id) : window.RailDemoState?.thread || 'ready', body = st === 'ready' || !st ? calmCards(turns()) : threadState(st);
+      const st = LIVE() ? CL().state(c.id) : window.RailDemoState?.thread || 'ready', body = st === 'ready' || !st ? calmCards(turns()) : [{ key: 'state', html: threadState(st) }];
       // a chat that is gone or did not load has nothing to label or place
       const shown = st === 'ready' || !st, offered = offeredLabels(c), labelPick = shown ? R.sentencePicker({ id: 'cl-label', text: '+ Label', tip: 'Adds or removes a label', body: R.listEditor({ label: 'Labels', inputId: 'cl-label-q', placeholder: 'Find or make a label', sections: [{ title: 'Labels', kind: 'label', many: true, rows: offered.filter((l) => l.includes(labelQ.toLowerCase())).map((l) => ({ text: l, n: '', on: (c.labels || []).includes(l) })) }], hint: labelQ.length >= LABEL_MAX ? `A label holds ${LABEL_MAX} characters at most` : labelQ && !offered.includes(labelQ.toLowerCase()) ? `Enter makes “${labelQ.toLowerCase()}”` : '' }), open: menu === 'cl-label', chevron: '' }) : '';
-      root.innerHTML = `<div class="convo"><div class="convo-scroll"><div class="convo-col"><div class="convo-head">${shown ? `${esc(c.project || 'No project')}${labels ? ` · ${labels}` : ''}` : ''}${labelPick}${worktreesHtml()}<span class="tl-list-btn rc-pop" data-anchor-menu>${R.button({ label: 'Move through this chat', kind: 'quiet', iconOnly: true, icon: R.icon('list', 15), attrs: { 'data-anchor-open': '', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'anchors') } })}</span></div>${wtConfirm()}${engConfirm()}${body}</div></div><div data-timeline></div><div class="convo-dock">${R.button({ label: 'Latest', kind: 'quiet', icon: R.icon('chevron', 12), cls: 'jump-latest', attrs: { 'data-jump-latest': '', title: 'Back to the newest turn' } })}${composerHtml()}</div></div>`;
-      const box = root.querySelector('.convo-scroll');
+      const anchorsMenu = menu === 'anchors' ? R.compactMenu({ items: ticks().map((t) => ({ id: `tick|${t.id}`, text: t.title, hint: t.line })) }) : '';   // read before the patch: its turns are where they were
+      const fk = `${chatId}|${side ? 'side' : 'main'}|${st}`;
+      let box = root.querySelector(':scope > .convo > .convo-scroll');
+      if (fk !== frameKey || !box || !root.querySelector(':scope > .convo > .convo-dock')) {
+        root.innerHTML = '<div class="convo"><div class="convo-scroll"><div class="convo-col"></div></div><div data-timeline></div><div class="convo-dock"></div></div>';
+        frameKey = fk; box = root.querySelector('.convo-scroll');
+        box.addEventListener('scroll', paintTimeline, { passive: true });
+      }
+      R.patchKeyed(box.querySelector('.convo-col'), [{ key: 'head', html: `<div class="convo-head">${shown ? `${esc(c.project || 'No project')}${labels ? ` · ${labels}` : ''}` : ''}${labelPick}${worktreesHtml()}<span class="tl-list-btn rc-pop" data-anchor-menu>${R.button({ label: 'Move through this chat', kind: 'quiet', iconOnly: true, icon: R.icon('list', 15), attrs: { 'data-anchor-open': '', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'anchors') } })}${anchorsMenu}</span></div>` }, { key: 'wt-confirm', html: wtConfirm() }, { key: 'eng-confirm', html: engConfirm() }, ...body], { carry: 'canvas[data-orb]' });
+      R.patchKeyed(root.querySelector('.convo-dock'), [{ key: 'latest', html: `${R.button({ label: 'Latest', kind: 'quiet', icon: R.icon('chevron', 12), cls: 'jump-latest', attrs: { 'data-jump-latest': '', title: 'Back to the newest turn' } })}` }, { key: 'composer', html: composerHtml() }]);
       if (y != null) box.scrollTop = y;
-      if (menu === 'anchors') root.querySelector('[data-anchor-menu]').insertAdjacentHTML('beforeend', R.compactMenu({ items: ticks().map((t) => ({ id: `tick|${t.id}`, text: t.title, hint: t.line })) }));
-      box.addEventListener('scroll', paintTimeline, { passive: true });
       paintTimeline();
     }
     placeImprove();   // before the focus comes back: a focused Use this is found again in its moved view
     const mine = [...busy].filter(([, c]) => c === (chatId || '')).map(([sel]) => sel);   // another chat's pending control stays its own
-    for (const sel of mine) root.querySelectorAll(sel).forEach((b) => { b.disabled = true; });
+    const still = new Set(mine.flatMap((sel) => [...root.querySelectorAll(sel)]));
+    for (const b of dimmed) if (!still.has(b)) { if (b.isConnected) b.disabled = false; dimmed.delete(b); }
+    for (const b of still) dim(b);
     if (!mine.length || !fm?.sel || !mine.includes(fm.sel)) focusBack(fm);
     const t = root.querySelector('[data-composer-t]');
-    const same = t && had && t.value === had.value, at = same ? [had.selectionStart, had.selectionEnd] : null;   // the rebuilt box keeps the caret of the same draft (a picker opened or picked); a new text puts it at the end
-    if (t && at) t.setSelectionRange(at[0], at[1]);
-    if (t && caret) { t.focus(); if (at) t.setSelectionRange(at[0], at[1]); else t.setSelectionRange(t.value.length, t.value.length); }
+    if (t && !keepText && t.value !== (comp.text ?? '')) t.value = comp.text ?? '';   // a kept box drops what the redraw drops
+    if (t && caret) {   // the caret stays where it was put in the same draft (a kept box is left alone, a redrawn one gets it back); a new text puts it at the end
+      if (document.activeElement !== t) t.focus();
+      const n = t.value.length, same = t.value === draft, s = same ? Math.min(sel[0], n) : n, e = same ? Math.min(sel[1], n) : n;
+      if (t.selectionStart !== s || t.selectionEnd !== e) t.setSelectionRange(s, e, same ? sel[2] || 'none' : 'none');
+    }
     size(t);
     root.querySelector('[data-menu="starter-more"] + .menu')?.setAttribute('data-scroll-fade', '');   // it scrolls: the fade says there is more
   }
@@ -1227,7 +1272,7 @@
     }
     CL().terminal(x.session).then((s) => {
       if (s.closed) { x.shellClosed = s.tip; paint(); return; }
-      x.term = s; s.onChange(() => paint()); paint();
+      x.term = s; s.onChange(() => paintSoon()); paint();
     });
   }
   // Choose a folder…: dev's native picker answers the folder, which fills the Folder field; no dialog here says so
@@ -1243,10 +1288,11 @@
   // D9: a control whose action is out is drawn disabled on every paint until dev answers. Its focus is noted BEFORE it is
   // disabled (Chromium blurs a focused button the moment it is disabled) and given back to the redrawn control after.
   const selOf = (btn) => { const a = btn && [...btn.attributes].find((y) => y.name.startsWith('data-') && y.name !== 'data-key'); return a ? `[${a.name}="${CSS.escape(a.value)}"]` : ''; };
+  function dim(b) { if (!b.disabled) { b.disabled = true; dimmed.add(b); } }
   function busyFor(sel, p, had = false) {
     const c = chatId || '';
     if (sel) busy.set(sel, c);
-    root.querySelectorAll(sel || ':not(*)').forEach((b) => { b.disabled = true; });
+    root.querySelectorAll(sel || ':not(*)').forEach(dim);
     return p.finally(() => { if (busy.get(sel) === c) busy.delete(sel); paint(); if (had && sel && (chatId || '') === c) root.querySelector(sel)?.focus(); });
   }
   // `had`: the control, or its redrawn twin (a repaint between the press and here keeps the focus by its hook), has the focus
@@ -1546,10 +1592,10 @@
   root.addEventListener('focusin', quietSoon);
   root.addEventListener('pointerdown', (e) => { if (e.target.closest?.('button, input, textarea, [role="radio"], [role="menuitem"]')) seeNow(e.target.closest('.is-attn[data-anchor]')); else quietSoon(e); });
   // the store changed (here, in Tasks, in Pulse, from Away): read every chat's tasks again and draw; what now waits glows
-  window.RailWorld.onMove(() => { for (const c of data().chats) M.sync(c); window.RailChats?.refresh(); paint(); });
+  window.RailWorld.onMove(() => { for (const c of data().chats) M.sync(c); window.RailChats?.refresh(); paintSoon(); });
   // live: a store load (the threads, the run links, the runs) redraws the open chat, so a chat opened by its address
   // draws its project and its cards once they are known, without a hash change
-  window.RailWorld.onChange(() => { if (window.RailWorld.live && chatId) paint(); });
+  window.RailWorld.onChange(() => { if (window.RailWorld.live && chatId) paintSoon(); });
   // Settings › Chat › Prompt check: read again when Settings' switch answers and when the store's settings change
   window.addEventListener('rail-settings', () => pcSync());
   window.RailWorld.onChange(() => pcSync());
@@ -1619,8 +1665,8 @@
   };
   let pendingTask = null, listening = false;
   // RailChatLive starts after the pages load (adapter.js): the open chat repaints on its changes from the first show on
-  function listen() { if (listening || !window.RailChatLive) return; listening = true; CL().onChange((id) => { if (id && id === chatId) { paint(); landTask(); } });
-    window.RailTaskLive?.onChange((id) => { if (chatId && (!id || allTasks(chat()).some((t) => (t.run || t.id) === id))) paint(); }); }
+  function listen() { if (listening || !window.RailChatLive) return; listening = true; CL().onChange((id) => { if (id && id === chatId) paintSoon(); });
+    window.RailTaskLive?.onChange((id) => { if (chatId && (!id || allTasks(chat()).some((t) => (t.run || t.id) === id))) paintSoon(); }); }
   function landTask() {
     if (!pendingTask || pendingTask.chat !== chatId) return;
     const st = LIVE() ? CL().state(chatId) : 'ready';
@@ -1632,6 +1678,8 @@
     el.scrollIntoView({ block: 'center' });
     (el.querySelector('h3, [tabindex], button, a') || el).focus?.();
   }
+  api.flushPaints = () => batch.flush();
+  api.paintIfStale = () => { if (stale && !hiddenNow()) paint(); };
   mounted.push(api);
   paint();
   return api;
@@ -1642,7 +1690,7 @@
   window.RailAdapter?.ready?.then?.((l) => { if (l && LIVE()) { mounted.forEach((m) => m.reopen()); refreshAll(); } });
   // panel.rendered-prose: the page's markdown renderer, once (the bundle has already loaded it in the browser); a failure
   // leaves the plain words, as dev's chat
-  R.loadProse({ doc: document }).then((ok) => { if (ok) refreshAll(); });
+  R.loadProse({ doc: document }).then((ok) => { if (ok) { proseReady = true; refreshAll(); } });
   // a seeded chat that was replying or running a command finishes a few seconds after you open it: no row works forever
   const settling = new WeakSet();
   function settle(id) {
@@ -1680,7 +1728,7 @@
   }
 
   const main = mount(document.getElementById('route-chat'));
-  setInterval(() => { for (const r of document.querySelectorAll('[data-think-at]')) { const now = thinkNow({ at: +r.dataset.thinkAt }), st = r.querySelector('.think-w'), t = r.querySelector('.think-t'); if (st && st.textContent !== now.step) st.textContent = now.step; if (t && t.textContent !== now.secs) t.textContent = now.secs; const orb = r.querySelector('canvas[data-orb]'); if (orb && orb.dataset.orb !== now.phase) orb.dataset.orb = now.phase; } }, 250);
+  setInterval(() => { for (const r of document.querySelectorAll('[data-think-at]')) { if (r.closest('[hidden]')) continue; const now = thinkNow({ at: +r.dataset.thinkAt }), st = r.querySelector('.think-w'), t = r.querySelector('.think-t'); if (st && st.textContent !== now.step) st.textContent = now.step; if (t && t.textContent !== now.secs) t.textContent = now.secs; const orb = r.querySelector('canvas[data-orb]'); if (orb && orb.dataset.orb !== now.phase) orb.dataset.orb = now.phase; } }, 250);
   // Away: Worca answered what waited, with its pick; coming back finds the questions answered and the tasks moving
   function awayAnswer() {
     const out = [];
@@ -1698,6 +1746,8 @@
     awayAnswer,
     show: main.show,
     sideRefresh: () => mounted.forEach((m) => m.isSide && m.paint()),
+    flushPaints: () => mounted.forEach((m) => m.flushPaints()),   // runs every pending batched paint now (tests, the measurement)
+    paintIfStale: () => mounted.forEach((m) => m.paintIfStale()),   // a place shown again (the side panel) paints what it missed
     focus: main.focus,
     start: main.start,
     handOver: main.handOver,

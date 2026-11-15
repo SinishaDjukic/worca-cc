@@ -494,3 +494,11 @@ test('makerItems groups models by maker and modelText names a model run off its 
   assert.match(R.modelText(rows[2]), /Copilot/);
   assert.doesNotMatch(R.modelText(rows[0]), /Claude Code/);
 });
+
+test('frameBatch: live redraws asked many times before a frame run once, through the library (cases in design-system-keyed-list)', () => {
+  const frames = []; let n = 0;
+  const b = R.frameBatch({ requestAnimationFrame: (f) => frames.push(f) }, () => { n++; });
+  b.request(); b.request(); b.request();
+  frames.forEach((f) => f());
+  assert.deepEqual([frames.length, n], [1, 1]);
+});
