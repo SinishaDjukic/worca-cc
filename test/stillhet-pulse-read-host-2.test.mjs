@@ -111,7 +111,7 @@ test('an opened outcome that changes event is unread again in the same tab', asy
   showAll(w, d);
   open(d, 'oh3');
   const h3 = sources.history.pipelines.find((p) => p.id === 'h3');
-  h3.status = 'paused'; h3.mtime = Date.parse(at(14, 55));
+  h3.status = 'paused'; h3.pauseReason = 'error'; h3.mtime = Date.parse(at(14, 55));   // an error pause (F-7a-06: your own pause is no update)
   frame(h, { type: 'pipelines-changed' }); await settle(400);
   assert.deepEqual(stored(w), [], 'the old event\'s key is forgotten');
   showAll(w, d);

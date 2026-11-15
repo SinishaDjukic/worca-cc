@@ -72,6 +72,16 @@ test('every project-side pending label shows on its control, disabled, while dev
   assert.deepEqual(h.w.__would, []);
 });
 
+test('F-6-03: a git project dev reads with remote:null (state unknown) is Only on this computer: Link a repository… and ⋯ Link a remote…', async () => {
+  const sync = { projects: { ...PJ_SOURCES.sync.projects, [KEYS.local]: { base: 'main', remote: null, state: 'unknown', settings: { beforeRun: true } } } };
+  const h = await projectsHost({ hash: `#projects/${KEYS.local}`, sources: { sync } });
+  assert.match(page(h.d).textContent, /Only on this computer/);
+  assert.doesNotMatch(page(h.d).textContent, /Up to date/);
+  assert.equal(page(h.d).querySelector('[data-pj-act]')?.textContent.trim(), 'Link a repository…');
+  page(h.d).querySelector('[data-menu="pj-more"]').click();
+  assert.match(page(h.d).querySelector('[data-menu-pick="pj-more|remote"]')?.textContent || '', /Link a remote…/);
+});
+
 test('Rename sends PATCH {name}; Locate sends {path}; a 400 is the field\'s error', async () => {
   const h = await projectsHost({ hash: `#projects/${KEYS.ok}`, write: (u, b, m) => (m === 'PATCH' && b.path === '~/nope' ? [400, { error: 'path is not a directory' }] : [200, { ok: true }]) });
   pickMore(h.d, 'rename'); await settle(80);

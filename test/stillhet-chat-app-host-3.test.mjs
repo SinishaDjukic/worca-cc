@@ -83,6 +83,19 @@ test('panel.plan-folds: a run in a feature shows the feature\'s total cost and t
   assert.match(d.getElementById('route-chat').textContent, /since its first task · 2 tasks/);
 });
 
+test('F-a2-03: a chat whose run is a feature member shows the other started member\'s card, and its Figures read the feature total', async () => {
+  // h1 is a member of the feature with no run link (the scheduler started it): its card still draws in the chat
+  const { w, d } = await liveHost({ lists: { ...LISTS, '/api/run-groups': { groups: [{ id: 'f1', kind: 'feature', title: 'CSV', planning: null, members: [{ pipelineId: 'pa', position: 1 }, { pipelineId: 'h1', position: 2 }], cost: { usd: 3.5, byPipeline: {} } }] } } });
+  await go(w, '#chat/ask_1', 120);
+  assert.ok(d.querySelector('#route-chat [data-anchor="card_run"]'), 'the card the chat started');
+  const other = d.querySelector('#route-chat [data-anchor="card_run:h1"]');
+  assert.ok(other, 'the other member\'s TaskCard, right under it');
+  const figs = other.querySelector('[data-figs]');
+  assert.ok(figs, 'its Figures fold is offered');
+  figs.click(); await settle(60);
+  assert.match(d.querySelector('#route-chat [data-anchor="card_run:h1"]').textContent, /\$3\.50\s*the feature so far/);
+});
+
 test('panel.ship-card: a feature\'s ship marks each requirement (dev\'s acceptance PUT), ships one PR or stacked (dev\'s feature ship), and Create PR waits for every mark', async () => {
   let marked = false;
   const shipBlock = () => ({ kind: 'card', id: 'card_ship', state: 'proposed', card: { type: 'ship', featureId: 'f1', title: 'CSV export', files: 7, suggested: 'one', acceptance: { agreed: [{ id: 'R-1', text: 'Totals' }, { id: 'R-2', text: 'ISO dates' }], entries: [{ id: 'R-1', mark: 'met' }, ...(marked ? [{ id: 'R-2', mark: 'dropped', reason: 'not needed' }] : [])] } } });

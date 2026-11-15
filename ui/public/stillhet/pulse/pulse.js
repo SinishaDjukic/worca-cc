@@ -755,7 +755,7 @@ function pulseButton() {
 const KEPT = ['data-open', 'data-sel', 'data-selall', 'data-ptab', 'data-menu', 'data-bulk', 'data-pop'];
 function holdFocus(paint) {
   const a = document.activeElement, inPanel = !!a?.closest?.('.pz-popover'), attr = KEPT.find((k) => a?.hasAttribute?.(k));
-  if (!inPanel && attr !== 'data-pop') { paint(); return; }
+  if ((!inPanel && attr !== 'data-pop') || a?.closest?.('[data-keep]')) { paint(); return; }   // a kept field is the library's (comp.keep-open)
   const picked = (a.dataset.menuPick || a.dataset.pick || '').split('|')[0];   // a choice in a menu: back on its picker
   const sel = picked ? `[data-menu="${CSS.escape(picked)}"]` : attr && `[${attr}${a.getAttribute(attr) ? `="${CSS.escape(a.getAttribute(attr))}"` : ''}]`;
   const row = a.closest('[data-row]')?.dataset.row || ui.rowKey, before = rowIds();
@@ -838,6 +838,7 @@ setInterval(() => { if (!awayEl && R.awayShows({ away: isAway(), keepAwake: ui.k
 // ---- render ----
 let sideWas = null, swapCls = '';   // the sidebar's content fades only when it changes between Worca's and Settings'
 function render() { stale = false; readCache = null; holdFocus(SHELL ? renderInShell : paintAlone); }
+R.watchKeepOpen(document);   // an open field, menu or dialog keeps its text, caret and focus across any redraw (comp.keep-open)
 W.onMove?.(() => render());   // a task moved anywhere: the badge, Vitals and Updates read the store again
 // the live kind: a load or a list state changed the store (D20): Keep awake and Away are dev's, and the rows read it again
 window.addEventListener('rail-settings', () => render());   // a live Settings action answered (settings.js)
