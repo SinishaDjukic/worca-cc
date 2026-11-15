@@ -412,6 +412,13 @@ These are the outcomes of this plan and the findings that wave 3 must take in. U
 
 ---
 
+
+### Gate follow-ups (B1 combined gate, 2026-11-15)
+- **B3 add:** `/api/history` rows carry the stored `pr_url`/`pr_state`, so the first paint shows the known PR state instead of "Ready · Create PR" for 10–25 s until the PR batch arrives (classic Runs has the same lag) · S · `ui/routes/history/history.mjs`, `src/core/artifacts.mjs` listAllPipelines.
+- **B3 add (design call):** a stage head whose step ended blocked shows blocked, not a tick (`stagesOf` in `live/task-page.mjs` changes the head only for `ask`).
+- **Gate setup:** test instances need a way to answer a live review gate (a run stopped at the gate), and Claude CLI login under their own HOME, to cover O1/O4 and real replies.
+- **#1314:** wrong attribution (three people share one 229-item timeline) → fix run on #1314's branch before merge.
+
 ## 5. Timeline
 | Step | Lane S (server/live) | Lane U (UI/page) | Gate |
 |---|---|---|---|
