@@ -1870,3 +1870,15 @@ test('composerQueue (F-a2-01): nothing without items; waiting, full and each pau
     assert.match(go.className, /btn-quiet/);
   }
 });
+
+test('composerQueueButton (F-gb235-03): a quiet text button named Queue, data-cp-queue, its title says when it goes', () => {
+  const b = dom(`<div>${C.composerQueueButton()}</div>`).firstElementChild;
+  assert.equal(b.tagName, 'BUTTON');
+  assert.equal(b.getAttribute('type'), 'button');
+  assert.ok(b.classList.contains('btn-quiet'));
+  assert.ok(!b.classList.contains('btn-icon'), 'a word, not an icon');
+  assert.equal(b.textContent, 'Queue');
+  assert.equal(b.getAttribute('aria-label'), null, 'its name is its visible word');
+  assert.equal(b.getAttribute('data-cp-queue'), '');
+  assert.equal(b.getAttribute('title'), 'Sends it when the reply finishes');
+});

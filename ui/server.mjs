@@ -1467,6 +1467,8 @@ function announceRun(entry) {
     labels: entry.labels || [],
   });
 }
+// F-7a-02: a page keyed by run id learns the pipeline id once it is known (new run: after its first naming state frame; resume: right after run-created). Not buffered, like run-created.
+function announcePipeline(entry) { broadcast({ type: 'run-pipeline', runId: entry.id, pipelineId: entry.pipelineId }); }
 
 // ---------------------------------------------------------------------------
 // Wire a core orchestrator's events onto the WebSocket, tagged with runId.
@@ -1575,12 +1577,10 @@ function wireRun(entry) {
         // Mirror status from the snapshot when present. (Pending questions are
         // cleared explicitly on answer/done/error, not from state snapshots.)
         if (payload.status) entry.status = payload.status;
-        // Capture the on-disk pipeline short id the orchestrator stamps onto
-        // state.id after createPipeline. Guard so null in pre-createPipeline
-        // snapshots cannot overwrite a previously-captured value.
+        // Capture the pipeline short id stamped onto state.id after createPipeline (null earlier never overwrites it); the first capture sends run-pipeline after this state frame.
         if (typeof payload.id === 'string' && payload.id) {
           const first = !entry.pipelineId;
-          entry.pipelineId = payload.id;
+          entry.pipelineId = payload.id; if (first) entry._announcePipeline = true;
           // Scheduled runs: the ticket learns the pipeline it became (provenance columns).
           if (first && entry.ticketId) {
             try { setTicketPipeline(entry.ticketId, payload.id); } catch (err) { console.error(`[worca-ui] ticket link failed: ${err && err.message ? err.message : err}`); }
@@ -1656,7 +1656,7 @@ function wireRun(entry) {
         } catch (err) { console.error(`[worca-ui] round frame failed: ${err && err.message ? err.message : err}`); }
       }
 
-      record(event);
+      record(event); if (entry._announcePipeline) { entry._announcePipeline = false; announcePipeline(entry); }
       if (name === 'done') settleRunEntry(entry);
       // Only the events that can change status or pendingQuestion; log/token frames are far too
       // frequent for a flag check (it reads settings.json synchronously).
@@ -5546,7 +5546,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
   runs.set(runId, entry);
   markResumedRescan(entry);   // before the paused lineage is evicted below
   wireRun(entry);
-  announceRun(entry);
+  announceRun(entry); announcePipeline(entry);
 
   // A card-linked run keeps reporting to its chat across the resume: the link
   // row moves to the new runId and a fresh follower takes over (the old one

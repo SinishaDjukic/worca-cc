@@ -1225,7 +1225,7 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .jump-latest{position:absolute;left:50%;top:-44px;translate:-50% 4px;opacity:0;visibility:hidden;pointer-events:none;transition:opacity var(--motion-change) var(--ease),translate var(--motion-change) var(--ease),visibility var(--motion-change) var(--ease);background:var(--bg);box-shadow:0 0 0 1px var(--line-2);}   /* ds-ok: floats just above the input */
 .convo:has(> .convo-scroll[data-far-below]) .jump-latest{opacity:1;visibility:visible;translate:-50% 0;pointer-events:auto;}   /* only while the end is well below: near it, the pill would sit on the last row */
 @media (prefers-reduced-motion: reduce){.jump-latest{transition:none;}}
-.convo-dock .composer{width:calc(100% - 32px);max-width:648px;margin:0 auto;translate:16px 0;}   /* ds-ok: on the cards' rail (32px in), as wide as the cards */
+.convo-dock .composer,.convo-dock > .composer-queue,.convo-dock > .composer-queue + .composer-note{width:calc(100% - 32px);max-width:648px;margin-inline:auto;translate:16px 0;}   /* ds-ok: the composer, its queue and its line on the cards' rail (32px in), as wide as the cards */
 .convo-dock-note{max-width:680px;margin:4px auto 0;font-size:var(--fs-caption);color:var(--ink-3);}
 
 /* Composer: the one way to start anything. */
