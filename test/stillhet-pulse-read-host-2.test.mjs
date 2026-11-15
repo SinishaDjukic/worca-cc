@@ -223,3 +223,21 @@ test('Now rows say how they clear, and a task opens by its own id', async () => 
   w.RailPulse.open('now');
   assert.equal(pop(d).querySelector('[data-open="r:run-f"]'), null, 'it leaves Now');
 });
+
+test('Updates and Limits rows draw the Pulse mark (signal) in their tones, never the event bolt', async () => {
+  const { icon } = await import('../ui/public/design-system/components/index.mjs');
+  const h = await loaded(), { w, d } = h;
+  const inner = (html) => { const t = d.createElement('template'); t.innerHTML = html; return t.content.querySelector('svg').innerHTML; };
+  const signal = inner(icon('signal')), bolt = inner(icon('kind-event'));
+  const marks = (sel) => [...pop(d).querySelectorAll(sel)].map((m) => ({ tone: [...m.classList].find((c) => c.startsWith('is-')), glyph: m.querySelector('svg').innerHTML }));
+  showAll(w, d);
+  const updates = marks('.pz-list .kind-mark');
+  assert.ok(updates.length > 0, 'Updates has rows');
+  assert.ok(updates.every((m) => ['is-ask', 'is-idle'].includes(m.tone) && m.glyph === signal && m.glyph !== bolt), JSON.stringify(updates));
+  w.RailPulse.open('vitals');
+  const lim = [...pop(d).querySelectorAll('.pz-sec')].find((s) => s.querySelector('.pz-h').textContent.startsWith('Limits'));
+  assert.ok(lim, 'Vitals shows its Limits section');
+  const limits = [...lim.querySelectorAll('.kind-mark')].map((m) => ({ tone: [...m.classList].find((c) => c.startsWith('is-')), glyph: m.querySelector('svg').innerHTML }));
+  assert.ok(limits.length > 0);
+  assert.ok(limits.every((m) => ['is-fail', 'is-act'].includes(m.tone) && m.glyph === signal), JSON.stringify(limits));
+});

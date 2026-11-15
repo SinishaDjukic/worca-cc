@@ -103,8 +103,20 @@ test('panel.answer-refs: Worca\'s words split into words and dev\'s refs (a run 
   assert.equal(partsOf('No refs here.'), null);
   const msg = (status) => ({ messages: [{ id: 'm', role: 'assistant', status, text: 'See ask_0123abcd', blocks: [] }] });
   const done = turnsOf(msg('done')).find((x) => x.t === 'words');
-  assert.ok(done.parts && turnErrors(done).length === 0);
-  assert.equal(turnsOf(msg('streaming')).find((x) => x.t === 'words').parts, undefined);
+  assert.ok(done.md && !('parts' in done) && turnErrors(done).length === 0, 'a finished answer is drawn by Prose, which finds its refs');
+  assert.equal(turnsOf(msg('streaming')).find((x) => x.t === 'words').md, undefined);
+});
+
+test('panel.rendered-prose: a finished answer\'s words turn carries its trimmed words as `md`; a streaming one stays plain html', () => {
+  const msg = (status) => ({ messages: [{ id: 'm', role: 'assistant', status, text: '  **Done.**\n\n- one\n- two  ', blocks: [] }] });
+  const done = turnsOf(msg('done')).find((x) => x.t === 'words');
+  assert.equal(done.md, '**Done.**\n\n- one\n- two');
+  assert.equal(done.html, '**Done.**<br><br>- one<br>- two');
+  assert.ok(!('parts' in done));
+  assert.deepEqual(turnErrors(done), []);
+  const live = turnsOf(msg('streaming')).find((x) => x.t === 'words');
+  assert.ok(!('md' in live) && !('parts' in live));
+  assert.equal(live.html, '**Done.**<br><br>- one<br>- two');
 });
 
 test('a PR shows on its TaskCard alone: an applied PR card whose run\'s card is in the thread is no turn; an orphan one reads "PR opened #N", never its URL (D4)', () => {

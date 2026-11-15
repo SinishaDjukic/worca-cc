@@ -4,7 +4,7 @@
 // drawn through chat-turns.mjs. Every action posts dev's route and body (D9, D11): nothing is written before the server
 // answers ok, and a refusal toasts once, `Could not ACTION: REASON`, and changes nothing.
 import { createThreadModel } from '../../../../src/shared/ask-model.mjs';
-import { turnsOf, planView, planPicks, runWithTurn } from './chat-turns.mjs';
+import { turnsOf, planView, planPicks, runWithTurn, partsOf } from './chat-turns.mjs';
 import { createTerminalLive } from './terminal-live.mjs';
 import { projectKeyOf } from './live-map.mjs';
 import { perspectivesWith, chipsHiddenFor, DEFAULT_PERSPECTIVES } from '../../../../src/shared/shape/perspectives.mjs';
@@ -470,6 +470,7 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
 
   const api = {
     open, frame, turns, act, prBodyOf, startBodyOf, perspectiveChoices, ref, feature,
+    partsOf,   // panel.answer-refs: words and refs of a text, for Prose's chips (conversation.js is a classic script)
     // Settings › Chat › Delete all chats (dev's app.js deleteAskHistory): the counts read fresh right before its confirm
     // (GET /api/ask/history), then dev's DELETE /api/ask/threads. Not an act() id: no card or chat control can reach it.
     chatHistory: async () => { const r = await request('GET', '/api/ask/history'); return r.ok ? r : refuse('read the chat history', r); },

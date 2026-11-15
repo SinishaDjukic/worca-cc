@@ -329,7 +329,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
       ] },
       { title: 'Credentials', rows: [
         { name: 'Model keys', help: 'With a team credential broker, keys come from it and this opens its key page', say: 'Each engine signs in by itself, in Models › Sign-ins', acts: [{ label: 'Open Models', min: 'expert', go: 'models', help: 'Models › Sign-ins' }] },
-        { name: 'GitHub', say: 'Signed in as **@emil-angelov**' },
+        { name: 'GitHub', say: 'Pull requests and issues use this machine\'s GitHub sign-in (`gh`)' },
       ] },
       { title: 'About', rows: [
         { name: 'Version', help: 'From a source checkout this says Source build and offers no Update', say: '**{verNow}** · {updNow}', vals: { verNow: (sv) => short(sv.ver), updNow: updWords },
@@ -531,7 +531,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
           chip: (sv) => (sv.claudeIn ? '' : 'Signed out'),
           acts: [{ label: 'Sign out', when: (sv) => sv.claudeIn, do: (sv) => { sv.claudeIn = false; window.RailUI.prefs.setConnected('claude', false); return 'Signed out of Claude Code'; } }, { label: 'Sign in', when: (sv) => !sv.claudeIn, do: (sv) => { sv.claudeIn = true; window.RailUI.prefs.setConnected('claude', true); return 'Signed in to Claude Code'; } }] },
       ], list: [
-        { title: 'GitHub Copilot', meta: 'Connected as @emil-angelov', mark: 'is-green', detail: 'Premium requests are read from GitHub, not counted by Worca, and reset on 1 Dec.',
+        { title: 'GitHub Copilot', meta: 'Your GitHub sign-in', mark: 'is-green', detail: 'Premium requests are read from GitHub, not counted by Worca, and reset on 1 Dec.',
           live: (sv, r) => (r.signedOut ? 'Not signed in' : `${r.account} · ${r.conc} at once · ${r.used} of 1,000 premium requests, from GitHub`), account: 'Business', conc: 4, used: 312,
           menu: (r) => (r.signedOut ? ['Sign in'] : ['Edit', 'Import models', 'Refresh usage', 'Sign out']),
           on: {
@@ -539,7 +539,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
             'Import models': (r, x) => (importable(x.sv).length ? x.dialog(importModels(x.sv)) : 'Nothing new to import: the catalogue has it all'),
             'Refresh usage': (r) => { r.used += 7; return `Copilot: ${r.used} of 1,000 used, from GitHub`; },
             'Sign out': (r) => { r.signedOut = true; r.mark = ''; window.RailUI.prefs.setConnected('copilot', false); return 'Signed out of Copilot'; },
-            'Sign in': (r) => { r.signedOut = false; r.mark = 'is-green'; window.RailUI.prefs.setConnected('copilot', true); return 'Signed in to Copilot as @emil-angelov'; },
+            'Sign in': (r) => { r.signedOut = false; r.mark = 'is-green'; window.RailUI.prefs.setConnected('copilot', true); return 'Signed in to Copilot'; },
           } },
         { title: 'Codex', meta: 'Your ChatGPT sign-in', mark: 'is-green', detail: 'Codex reports its own session and weekly usage.',
           live: (sv, r) => (r.signedOut ? 'Not signed in' : 'Your ChatGPT sign-in'), menu: (r) => (r.signedOut ? ['Sign in'] : ['Sign out']),

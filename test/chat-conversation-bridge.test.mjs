@@ -1,6 +1,6 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { createConversationBridge, stripBotMention, refusalText, turnRefusalText, followUpError, isSyntheticUserRow, SAY, cardRefusal, turnRefusal, historyCountOf } from '../src/core/chat/conversation-bridge.mjs';
+import { createConversationBridge, stripBotMention, refusalText, turnRefusalText, followUpError, isSyntheticUserRow, SAY, cardRefusal, turnRefusal, historyCountOf, _testing } from '../src/core/chat/conversation-bridge.mjs';
 import { TokenBucket } from '../src/core/chat/rate-limiter.mjs';
 import { parseChatMembers } from '../src/core/chat/allowlist.mjs';
 import { createReceipts, commandOutcome, MARK, REACT_RETRY_MS, ACTION_DONE } from '../src/core/chat/receipts.mjs';
@@ -431,6 +431,36 @@ test('live status: posted at turn start with typing; progress edits are throttle
   assert.deepEqual(L.editsOf(id).map((p) => p.message.body[0].value).at(-1), '⏳ Working on it… · 10 s\nWriting the answer…');
   assert.ok(!JSON.stringify(L.posts).includes('id_rsa'), 'no tool argument reaches the platform');
   assert.ok(sid >= 0);
+});
+
+test('live status: _testing.statusClock drives the elapsed time and the ticker; null, the bridge uses deps again', async () => {
+  let ft = 1_000_000;
+  const fake = new Map();
+  let nextFake = 0;
+  _testing.statusClock = {
+    now: () => ft,
+    setInterval: (fn, ms) => { assert.equal(ms, 5000); const id = `f${++nextFake}`; fake.set(id, fn); return id; },
+    clearInterval: (id) => { fake.delete(id); },
+  };
+  try {
+    const L = liveBridge();
+    await L.say('<@BOT1> hello there');
+    const th = L.threads[0];
+    const id = L.statusId(th);
+    assert.equal(fake.size, 1, 'the ticker is registered on the status clock');
+    assert.equal(L.intervals.size, 0, 'not on deps.setInterval');
+    await L.tick(60_000);                                // deps' clock moves, the ticker is not on it: no edit
+    assert.equal(L.editsOf(id).length, 0);
+    ft += 5000;
+    for (const fn of [...fake.values()]) fn();
+    await flush();
+    assert.deepEqual(L.editsOf(id).map((p) => p.message.body[0].value), ['⏳ Working on it… · 5 s']);
+  } finally { _testing.statusClock = null; }
+  const L = liveBridge();
+  await L.say('<@BOT1> hello there');
+  assert.equal(L.intervals.size, 1, 'with the status clock null, the ticker is on deps.setInterval');
+  await L.tick(5000);
+  assert.deepEqual(L.editsOf(L.statusId(L.threads[0])).map((p) => p.message.body[0].value), ['⏳ Working on it… · 5 s']);
 });
 
 test('live status: the reply is edited into the status message; extra parts follow as new posts; nothing twice', async () => {

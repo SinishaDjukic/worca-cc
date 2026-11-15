@@ -12,10 +12,11 @@ import { fixAllFeedback, displayCoverage } from '../../../../src/shared/shape/pl
 const str = (v) => (typeof v === 'string' ? v : '');
 const arr = (v) => (Array.isArray(v) ? v : []);
 const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-// an answer is text: escaped, its line breaks kept (dev's markdown renderer is a dev screen; Stillhet draws plain words)
+// an answer while it streams is text: escaped, its line breaks kept; a finished one renders through Prose (panel.rendered-prose)
 const wordsHtml = (t) => esc(t).replace(/\r\n?|\n/g, '<br>');
 // panel.answer-refs: the runs, chats and PRs dev's answer chips find in the words (src/shared/chip-refs.mjs): dev's text
-// refs, and a link written out (Stillhet draws plain words, so a PR's URL is text). `parts` are words and refs in order.
+// refs, and a link written out (a PR's URL as text, or a link's href). `parts` are words and refs in order; Prose asks for
+// them per text node and per link (conversation.js, through RailChatLive.partsOf).
 const URL_RE = /https:\/\/[^\s<>()"'`]+[^\s<>()"'`.,;:!?]/g;
 export function partsOf(text) {
   const found = [...refsInText(text)];
@@ -188,7 +189,7 @@ function assistantTurns(m, ctx) {
   // a card placed mid-answer (`textAt`) sits after the words before it; one without stands after the whole answer
   let from = 0, k = 0;
   const at = atOf(m);   // each words turn keyed by its message, so a row inserted above it never moves its time or its focus
-  const words = (to) => { const w = text.slice(from, to).trim(); if (w) { const parts = m.status === 'streaming' ? null : partsOf(w); out.push({ t: 'words', html: wordsHtml(w), ...(parts ? { parts } : {}), ...at, key: `${str(m.id)}:${k++}` }); } from = to; };   // refs once the answer is done, as dev's chips
+  const words = (to) => { const w = text.slice(from, to).trim(); if (w) out.push({ t: 'words', html: wordsHtml(w), ...(m.status === 'streaming' ? {} : { md: w }), ...at, key: `${str(m.id)}:${k++}` }); from = to; };   // markdown and refs once the answer is done, as dev's
   for (const b of cards) {
     const turn = turnOfBlock(b, ctx);
     if (!Number.isInteger(b.textAt)) { if (turn) tail.push(turn); continue; }

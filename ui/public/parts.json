@@ -11,7 +11,7 @@
     "feature-flags/labs-flags.css",
     "design-system/design-system.css",
     "design-system/confirm-strip.css",
-    "design-system/design-switch.css",
+    "design-system/stillhet-switch.css",
     "design-system/buttons-component.css",
     "design-system/action-feedback.css",
     "new-run/pipeline-config.css",
