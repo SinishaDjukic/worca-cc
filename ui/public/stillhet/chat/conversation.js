@@ -105,14 +105,31 @@
   // D6: a Create PR dev took, per run, until the run's PR comes back (`was`: the button's label; `token`: the PR lookup it
   // waits on, 0 while the POST is out). D8: a PR step's failure, said once on its card until the next action there.
   const opening = new Map(), prError = new Map();
+  // F-a1-04: a card's open confirm and form, per run (else task) id. A live frame rebuilds the store's tasks, so they never
+  // live on the task object alone; every write goes through setCardAsk or clearCardForms, and liveCard copies them back
+  const cardAsk = new Map();
+  const askKey = (t) => t.run || t.id;
+  function setCardAsk(t, ask) {
+    const k = askKey(t), was = cardAsk.get(k) || { confirm: null, form: null };
+    const next = { confirm: 'confirm' in ask ? ask.confirm : was.confirm, form: 'form' in ask ? ask.form : was.form };
+    t.confirm = next.confirm; t.form = next.form;
+    if (next.confirm || next.form) cardAsk.set(k, next); else cardAsk.delete(k);
+  }
+  function clearCardForms() {
+    taskList().forEach((y) => { y.form = null; });
+    for (const [k, a] of cardAsk) { if (a.confirm) cardAsk.set(k, { ...a, form: null }); else cardAsk.delete(k); }
+  }
   const liveCard = (t) => {
     const T = window.RailTaskLive, id = t.run || t.id;
     if (!T) return t;
     if (!cardRead.has(id)) { cardRead.add(id); T.open(id); }
-    // in place: the card's own state (its confirm, its form) lives on this object; the facts taskCardOf leaves out once
-    // they clear (a Retry that worked: no failure, no failing items) go too, never kept from the last draw
+    // in place: the card's own state (its confirm, its form) lives in cardAsk and is copied back here, since the store's
+    // task is rebuilt on every frame; the facts taskCardOf leaves out once they clear (a Retry that worked: no failure, no
+    // failing items) go too, never kept from the last draw
     for (const k of CARD_FACTS) delete t[k];
     Object.assign(t, T.card(id));
+    const ask = cardAsk.get(id);
+    t.confirm = ask?.confirm || null; t.form = ask?.form || null;
     const o = opening.get(id);
     if (o && t.prUrl) opening.delete(id);   // the PR is the one the server sent, never the POST's url
     else if (o && o.token) { const l = T.prLookup?.(); if (l && l.ended && l.token >= o.token) { opening.delete(id); prError.set(id, 'Could not read the PR back. Open Tasks to see it.'); } }
@@ -499,8 +516,8 @@
     if (f.autofix && !LIVE()) { fixTry(t, 1); return; }   /* the log lives on its page, under What broke */
     if (label === 'Send a direction') { const x = turns().find((y) => y.task === t.id && y.t === 'task'); if (x) { x.directing = true; paint(); root.querySelector(`[data-direction="${CSS.escape(x.id)}"]`)?.focus(); } return; }
     if (f.followUp) { const x = turns().find((y) => y.task === t.id && y.t === 'task'); if (x) { x.asking = true; if (f.fix) x.askValue = `Fix what failed: ${(t.why || []).map((w) => w.replace(/^✗\s*/, '')).join('; ') || t.detail}`; paint(); root.querySelector(`[data-ask-changes="${x.id}"]`)?.focus(); } return; }   // a follow-up is asked under the card, tied to this task
-    if (f.dialog) { taskList().forEach((y) => { y.form = null; }); t.confirm = null; t.form = { label, kind: f.dialog, flow: f, value: FORMS[f.dialog]?.value(t) ?? '' }; paint(); root.querySelector(`[data-card-form="${t.id}"] input, [data-card-form="${t.id}"] textarea`)?.focus(); return; }   // what dev asks in a dialog, asked under the card, with its choices
-    if (f.confirm) { t.confirm = { label, text: f.confirm, flow: f }; paint(); return; }
+    if (f.dialog) { clearCardForms(); setCardAsk(t, { confirm: null, form: { label, kind: f.dialog, flow: f, value: FORMS[f.dialog]?.value(t) ?? '' } }); paint(); root.querySelector(`[data-card-form="${t.id}"] input, [data-card-form="${t.id}"] textarea`)?.focus(); return; }   // what dev asks in a dialog, asked under the card, with its choices
+    if (f.confirm) { setCardAsk(t, { confirm: { label, text: f.confirm, flow: f } }); paint(); return; }
     doAct(t, label, f);
   }
   // Ask Worca to fix it: Worca reads what broke, says where it starts again and what it changes, and tries up to three
@@ -520,7 +537,7 @@
       const asked = window.RailTaskLive?.prLookup?.().token || 0;   // the lookup before the click: a later one is the PR's
       if (pr) opening.set(rid, { was: label, token: 0 });   // D6: Opening the PR… from here until its PR arrives
       const fl = (taskFlow(label, t) ? window.RailTaskLive.flow : CL().flow)(label, { taskId: rid, ...flowArgs(t), value: given.value ?? t.form?.value, ...(given.typed ? { title: given.typed } : {}), ...(given.value === 'a draft' ? { draft: true } : {}), ...(pr ? { quiet: true } : {}) });
-      t.form = null; t.confirm = null; paint();
+      setCardAsk(t, { confirm: null, form: null }); paint();
       busyFor(`[data-card-act="${t.id}|${label}"]`, fl.then((r) => {
         if (pr) {   // D8: a refused create says why once, on its card; a taken one waits for the lookup afterPr just asked
           if (!r.ok) { const fail = R.failureOf('Create the PR', r.error); opening.delete(rid); prError.set(rid, `${fail.title}: ${fail.detail}`); }
@@ -1390,16 +1407,16 @@
     if ((hit = on('[data-menu-pick^="wfs-"], [data-menu-pick^="wfl-"]'))) { const [id, v] = hit.dataset.menuPick.split('|'), parts = id.split('-'), x = turns().find((y) => y.id === parts[1]), was = x && (parts[0] === 'wfl' ? x.loop[2] : x.steps[+parts[2]][parts[3] === 'm' ? 2 : 3]); if (x) { if (parts[0] === 'wfl') x.loop[2] = v; else x.steps[+parts[2]][parts[3] === 'm' ? 2 : 3] = v; } menu = ''; paint(); if (was !== v) say('Changed: Save keeps it'); return; }
     if ((hit = on('[data-menu-pick]'))) { const [id, ...r] = hit.dataset.menuPick.split('|'); if (id === 'tick') goTo(r.join('|')); else if (id.startsWith('cf-')) { const t = taskOf(id.slice(3)); if (t?.form) t.form.value = r.join('|'); menu = ''; paint(); } else if (id.startsWith('card:')) { menu = ''; const t = taskOf(id.slice(5)), label = r.join('|'); if (t?.kind === 'schedule') { window.RailSchedules?.act(t.id, { Pause: 'pause', Resume: 'pause', Skip: 'skip', Delete: 'delete' }[label]); paint(); return; } if (t) { if (label === 'open' || !label) window.RailShell.openTaskPage(t.case, chatId, t.title, taskId(t)); else cardAct(t, label); } } else pickMenu(id, r.join('|')); return; }
     if ((hit = on('[data-listtoggle^="label|"]'))) { const v = hit.dataset.listtoggle.slice(6), c = chat(); if (c && LIVE()) { liveLabel(c, ...toggledLabel(c, v)); return; } if (c) { c.labels = (c.labels || []).includes(v) ? c.labels.filter((l) => l !== v) : [...(c.labels || []), v]; window.RailChats.refresh(); refreshAll(); keepLabelQ(); } return; }
-    if ((hit = on('[data-card-form] [data-confirm]'))) { e.preventDefault(); const t = taskOf(hit.closest('[data-card-form]').dataset.cardForm); if (!t?.form) return; const fm = t.form; t.form = null;
+    if ((hit = on('[data-card-form] [data-confirm]'))) { e.preventDefault(); const t = taskOf(hit.closest('[data-card-form]').dataset.cardForm); if (!t?.form) return; const fm = t.form; setCardAsk(t, { form: null });
       if (hit.dataset.confirm !== 'yes') { paint(); return; }
       const typed = root.querySelector(`[data-cf-field="${t.id}"]`)?.value?.trim(), picked = ['preset', 'team-cap', 'label'].includes(fm.kind) ? typed || fm.value : fm.value; let value = picked;
-      if (fm.kind === 'preset' && !LIVE()) { value = clip(picked, LABEL_MAX); if (PRESETS.includes(value)) { fm.typed = typed ?? ''; t.form = fm; paint(); say(`There is already a preset called ${value}`); return; } PRESETS.push(value); SAVED[value] = t.setup || {}; }
+      if (fm.kind === 'preset' && !LIVE()) { value = clip(picked, LABEL_MAX); if (PRESETS.includes(value)) { fm.typed = typed ?? ''; setCardAsk(t, { form: fm }); paint(); say(`There is already a preset called ${value}`); return; } PRESETS.push(value); SAVED[value] = t.setup || {}; }
       if (LIVE()) { doAct(t, fm.label, { ...fm.flow, dialog: '' }, { value: fm.kind === 'label' ? value.toLowerCase().slice(0, LABEL_MAX) : value, typed }); return; }
       if (fm.kind === 'group') t.inGroup = value;
-      if (fm.kind === 'label' && (t.labels || []).includes(value.toLowerCase().slice(0, LABEL_MAX))) { t.form = null; paint(); return; }   // already on it: nothing happened, nothing to say
+      if (fm.kind === 'label' && (t.labels || []).includes(value.toLowerCase().slice(0, LABEL_MAX))) { setCardAsk(t, { form: null }); paint(); return; }   // already on it: nothing happened, nothing to say
       if (fm.kind === 'label') { const v = value.toLowerCase().slice(0, LABEL_MAX); value = v; if (!LABELS.includes(v)) LABELS.push(v); t.labels = [...new Set([...(t.labels || []), v])]; const r = t.run && window.RailWorld.find(t.run); if (r) r.labels = [...new Set([...(r.labels || []), v])]; }
       if (fm.kind === 'after') { const o = taskList().find((y) => y.title === value); if (o) { o.detail = `Starts after ${t.title}`; put(chatOfT(o), o); } }
-      if (fm.kind === 'team-cap' && !typed) { t.form = fm; paint(); say('Say why it goes on first'); return; }
+      if (fm.kind === 'team-cap' && !typed) { setCardAsk(t, { form: fm }); paint(); say('Say why it goes on first'); return; }
       const F = FORMS[fm.kind], flow = { ...fm.flow, dialog: '', say: (F.say ? F.say({ ...t, form: fm }, fm.flow) : fm.flow.say || fm.label).replace('{value}', value) };
       doAct(t, fm.label, flow, { value, typed }); return; }
     if (on('[data-jump-latest]')) { const b = root.querySelector('.convo-scroll'); b?.scrollTo({ top: b.scrollHeight, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); return; }
@@ -1428,7 +1445,7 @@
     if ((hit = on('[data-open-task-page]'))) { const t = taskOf(hit.dataset.openTaskPage); if (t) window.RailShell.openTaskPage(t.case, chatId, t.title, taskId(t)); return; }
     if ((hit = on('[data-sched-card]'))) { const [id, how] = hit.dataset.schedCard.split('|'); window.RailSchedules?.act(id, how || 'run'); paint(); return; }
     if ((hit = on('[data-card-act]'))) { const [id, ...l] = hit.dataset.cardAct.split('|'), t = taskOf(id); if (t) cardAct(t, l.join('|')); return; }   // the button's own label, never its tone: View PR opens the PR
-    if ((hit = on('[data-card-yes], [data-card-no]'))) { const t = taskOf(hit.dataset.cardYes || hit.dataset.cardNo); if (t) { const c = t.confirm; t.confirm = null; if (hit.dataset.cardYes && c?.flow.schedule) { window.RailSchedules?.act(t.id, 'delete'); paint(); } else if (hit.dataset.cardYes && c) doAct(t, c.label, c.flow); else paint(); } return; }
+    if ((hit = on('[data-card-yes], [data-card-no]'))) { const t = taskOf(hit.dataset.cardYes || hit.dataset.cardNo); if (t) { const c = t.confirm; setCardAsk(t, { confirm: null }); if (hit.dataset.cardYes && c?.flow.schedule) { window.RailSchedules?.act(t.id, 'delete'); paint(); } else if (hit.dataset.cardYes && c) doAct(t, c.label, c.flow); else paint(); } return; }
     if (on('[data-cp-unabout]')) { e.preventDefault(); const a = comp.about; if (a?.binds) comp[a.binds] = a.was; comp.about = null; paint(); return; }
     if ((hit = on('[data-cp-unfile]'))) { e.preventDefault(); comp.files = comp.files.filter((f) => f !== hit.dataset.cpUnfile); paint(); return; }
     if ((hit = on('[data-menu]'))) { e.preventDefault(); menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; menuSub = ''; if (menu !== 'cl-label') labelQ = ''; paint(); if (menu === 'cl-label') { keepLabelQ(); if (LIVE()) readLabels(); } return; }
