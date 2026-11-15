@@ -820,6 +820,7 @@
       if (c.reqsCheck && left) offs[label] = 'Mark every requirement before you create the PR · ' + left + ' left';
       const alt = sh ? [pick === 'one' ? 'Create ' + sh.runs.length + ' ' + stackWord + ' PRs instead' : 'Create one PR instead'] : [];
       if (published) offs['Publish branch'] = 'It is already on origin';
+      if (c.restartOff) offs['Restart Build'] = c.restartOff;   // the server would refuse it (task-live restartOff, F-a4-11)
       if (c.watchOff) offs.Watch = c.watchOff;
       const rest = liveNow && c.stages.some((x) => x.run) && c.stages.some((x) => x.run && x.subs.every((y) => y.state === 'next'));
       const stopWord = c.stages.some((x) => x.run) && liveRun >= 0 ? 'Stop task ' + (liveRun + 1) : 'Stop the task';
@@ -1007,7 +1008,7 @@
       startedWord: at ? 'Started ' + at.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ', ' + at.toTimeString().slice(0, 5) : '',
       detail: page.detail || '', why: page.why || [], failure: page.failure || null, review: page.review || { roles: [], issues: [] }, stages, spent: { mins: page.mins || 0, cost: page.cost || 0 }, budget: page.cap || null, movedFrom: base.id, liveId: page.id,
       // no live decisions source yet: the design's sample decisions never reach a real task
-      decisions: [], failedChecks: page.failedChecks || 0, workflow: page.workflow || null, stageCost: Object.fromEntries((page.stages || []).map((x) => [x.key, x.costUsd || 0])) });
+      decisions: [], failedChecks: page.failedChecks || 0, restartOff: page.restartOff || '', workflow: page.workflow || null, stageCost: Object.fromEntries((page.stages || []).map((x) => [x.key, x.costUsd || 0])) });
   }
   // The live kind's group page (#run/group:GID, D5): dev's run group (GET /api/run-groups), its members in stack order,
   // each drawn as its own store task's case. Its one action merges the next PR in order, or fixes the first failing one,
@@ -1030,7 +1031,13 @@
     const flow = ship ? { 'Create PR': { confirm: 'Create one PR for the ' + ms.length + ' tasks? Their branches combine into one branch for one review.', live: 'Ship group', ship: 'one', say: 'Created the PR' },
       ['Create ' + toOpen + ' PRs']: { confirm: 'Create ' + toOpen + ' ' + word + ' PRs? ' + (feature ? 'Each goes into the one before.' : 'Each goes into its base.'), live: 'Ship group', ship: word, say: 'Created ' + toOpen + ' PRs' } } : {};
     // its head's word and mark are its state's (a member that failed needs you: chain), as every task page's
-    const state = merged ? 'merged' : ms.some((m) => m.case === 'failed') ? 'chain' : ms.some((m) => m.pr) ? 'ship-applied' : 'feature';
+    // Working only while a member works (F-a4-09, classic groupModel's order): else the first member still on its way
+    // speaks for it (a question, a gate, a stop), then one not started yet is Waiting, then the PRs, then the members' end
+    const known = (id) => { try { R.runState(id, {}); return true; } catch { return false; } };
+    const done = (m) => !!m.pr || /^(merged|ready|approved)$/.test(m.case);
+    const on = ms.find((m) => m.case && !done(m) && known(m.case)), end = (ms.find((m) => m.case !== 'merged') || {}).case;
+    const state = merged ? 'merged' : ms.some((m) => m.case === 'failed') ? 'chain' : ms.some((m) => /^(starting|working)$/.test(m.case)) ? 'feature'
+      : on ? on.case : ms.some((m) => !m.case) ? 'scheduled' : ms.some((m) => m.pr) ? 'ship-applied' : end && known(end) ? end : 'featureready';
     const look = R.runState(state, {});
     return { word: look.word, dot: look.dot, sym: look.sym, id: 'group:' + g.id, liveId: 'group:' + g.id, liveGroup: g, project: '', group: 'Groups', label: g.title, kind: g.kind, title: g.title, task: g.title, branch: '', over: true, follows: g.kind === 'Feature', independent: g.kind !== 'Feature',
       state, decisions: [], noDiff: true,

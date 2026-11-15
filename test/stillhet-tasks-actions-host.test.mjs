@@ -19,6 +19,7 @@ function sources() {
 const read = (u) => {
   const m = /^\/api\/history\/web-1\/(\w+)$/.exec(u); if (m && DETAIL[m[1]]) return [200, { state: DETAIL[m[1]].state }];
   const c = /^\/api\/pr\/checks\?id=(\w+)/.exec(u); if (c && DETAIL[c[1]]?.checks) return [200, DETAIL[c[1]].checks];
+  if (u === '/api/runs/h3/artifacts') return [200, { runId: 'h3', artifacts: [{ kind: 'plan', relPath: 'plan.md' }], truncated: false }];   // a plan to build from (F-a4-11)
   return null;
 };
 async function page(id, over = {}) {
@@ -84,6 +85,16 @@ test('restart-build: Restart Build on an errored task posts /api/runs/:id/restar
   main(d).click(); await settle(80);
   if (d.querySelector('#card [data-confirm="yes"]')) await yes(d);
   assert.deepEqual(sent(calls), [['POST', '/api/runs/h3/restart-build', {}]]);
+});
+
+test('F-a4-11: an errored task with no plan: Restart Build is off and says it needs a plan; nothing is posted', async () => {
+  const { d, calls } = await page('h3', { read: (u) => (u === '/api/runs/h3/artifacts' ? [200, { runId: 'h3', artifacts: [{ kind: 'prompt', relPath: 'prompt.md' }], truncated: false }] : read(u)) });
+  const b = main(d);
+  assert.equal(b.dataset.label, 'Restart Build', 'still named: the page says why it is off');
+  assert.ok(b.disabled, 'off');
+  assert.equal(b.title, 'Needs a plan: this task saved none to build from');
+  b.click(); await settle(80);
+  assert.deepEqual(sent(calls), [], 'a disabled Restart Build posts nothing');
 });
 
 test('plan-approve: Approve and build posts the plan answer through Chat\'s action', async () => {

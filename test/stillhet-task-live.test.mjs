@@ -549,3 +549,51 @@ test('F-a1-09: before the pipeline id is known a pipeline-keyed action refuses w
   assert.equal((await t.act('pause-after-step', { taskId: 'run-c' })).ok, true);
   assert.deepEqual(calls.slice(before), [['POST', '/api/pause', { runId: 'run-c', afterStep: true }]]);
 });
+
+test('restartOff (F-a4-11): an errored task with no plan needs a plan; with one, nothing; a workspace task says its own reason; unknown until the read lands, and one read per task', async () => {
+  const NEEDS = 'Needs a plan: this task saved none to build from';
+  const arts = (calls, pid) => calls.filter((c) => c[1] === `/api/runs/${pid}/artifacts`).length;
+  let release; const gate = new Promise((r) => { release = r; });
+  const a = host({ rows: { h3: failedRow }, routes: { 'GET /api/history/web-1/h3$': [200, { state: TASK_DETAILS.failed.state }],
+    'GET /api/runs/h3/artifacts': async () => { await gate; return [200, { runId: 'h3', artifacts: [{ kind: 'prompt', relPath: 'prompt.md' }], truncated: false }]; } } });
+  await a.t.open('h3');
+  assert.equal(a.t.restartOff('h3'), '', 'before the read lands, \'\': never disabled on an unknown');
+  release(); await settle(20);
+  assert.equal(a.t.restartOff('h3'), NEEDS);
+  assert.equal(a.t.detail('h3').restartOff, NEEDS, 'the page reads it from detail');
+  assert.equal(arts(a.calls, 'h3'), 1, 'loadParts\'s own read: none of its own');
+  // with a plan: offered
+  const b = host({ rows: { h3: failedRow }, routes: { 'GET /api/history/web-1/h3$': [200, { state: TASK_DETAILS.failed.state }], 'GET /api/runs/h3/artifacts': [200, { artifacts: [{ kind: 'plan', relPath: 'plan.md' }] }] } });
+  await b.t.open('h3'); await settle(20);
+  assert.equal(b.t.restartOff('h3'), '');
+  // a failed read: unknown, offered
+  const c = host({ rows: { h3: failedRow }, routes: { 'GET /api/history/web-1/h3$': [200, { state: TASK_DETAILS.failed.state }], 'GET /api/runs/h3/artifacts': [500, { error: 'boom' }] } });
+  await c.t.open('h3'); await settle(20);
+  assert.equal(c.t.restartOff('h3'), '');
+  // a task that is not stopped or failed: nothing to say, nothing read
+  const d = host({ rows: { h2: approvedRow } });
+  assert.equal(d.t.restartOff('h2'), '');
+  assert.equal(arts(d.calls, 'h2'), 0);
+  // a card's task never opened (a live errored run): restartOff reads once itself and tells the card
+  const live = { 'run-z': { runId: 'run-z', pipelineId: 'pz', projectKey: 'web-1', status: 'error' }, 'run-y': { runId: 'run-y', projectKey: 'web-1', status: 'error' } };
+  const e = host({ live, routes: { 'GET /api/runs/pz/artifacts': [200, { artifacts: [] }] } });
+  const told = []; e.t.onChange((x) => told.push(x));
+  assert.equal(e.t.restartOff('run-z'), '');
+  assert.equal(e.t.restartOff('run-z'), '', 'still reading');
+  await settle(20);
+  assert.equal(e.t.restartOff('run-z'), NEEDS);
+  assert.ok(told.includes('run-z'), 'the card is told when the read lands');
+  assert.equal(arts(e.calls, 'pz'), 1, 'one read per task');
+  assert.equal(e.t.restartOff('run-y'), '', 'a run whose pipeline is not named yet: nothing (F-a1-09)');
+  assert.ok(!e.calls.some((c) => /run-y/.test(c[1])), 'and nothing is read');
+  // a chat card's saved task never opened: its store row's case says it failed, and it reads once itself
+  const f = host({ rows: { h3: failedRow }, routes: { 'GET /api/runs/h3/artifacts': [200, { artifacts: [] }] } });
+  assert.equal(f.t.restartOff('h3'), '');
+  await settle(20);
+  assert.equal(f.t.restartOff('h3'), NEEDS, 'the row\'s case stands in for a status not read yet');
+  assert.ok(!f.calls.some((c) => c[1] === '/api/history/web-1/h3'), 'the page is not opened for it');
+  // a workspace task: its own reason, before anything else, with no read
+  const w = wsHost();
+  assert.equal(w.t.restartOff('w1'), 'Not offered for a workspace task yet');
+  assert.equal(w.calls.length, 0);
+});

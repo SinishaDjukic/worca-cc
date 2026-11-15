@@ -3,7 +3,7 @@
 // (runs/run-page-model.js, run-page.js), the bar's list, the center and the chat TaskCard read from here; none of them
 // writes before a route answers `ok`.
 import { actionRunner, FLOW as CHAT_FLOW, openTab } from './chat-live.mjs';
-import { taskPageOf, taskCardOf, newTaskBodyOf, patchFiles, docsOf, logLinesOf, actionsOf, groupOf, sessionRowsOf, agentRowsOf, usageRowsOf, commentsByPath } from './task-page.mjs';
+import { taskPageOf, taskCardOf, newTaskBodyOf, patchFiles, docsOf, logLinesOf, actionsOf, groupOf, planOf, sessionRowsOf, agentRowsOf, usageRowsOf, commentsByPath } from './task-page.mjs';
 import { ENGINES, ENGINE_NAMES } from '../../../../src/shared/engine-switch.mjs';
 
 const str = (v) => (typeof v === 'string' ? v : '');
@@ -283,6 +283,10 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
 
   // ---- the page's parts (D4): Changes, documents, Logs and the worktree's actions, read once the task is ready ----
   const parts = new Map();   // task id → { changes, docs, log, actions, setup }
+  // pipelineId → whether it saved a plan (planOf: true, false, null unknown) or 'reading': Restart Build's NO_PLAN, up front (F-a4-11)
+  const plans = new Map();
+  /** One artifacts read lands: its plan answer (a known answer outlives a failed re-read). */
+  const planLands = (pid, x) => { if (x.ok) plans.set(pid, planOf(x.data)); else if (typeof plans.get(pid) !== 'boolean') plans.set(pid, null); };
   async function text(url) {
     let r; try { r = await fetch(url, { headers: { Accept: 'text/plain, application/x-ndjson, text/x-diff, application/json' } }); } catch (e) { return { ok: false, error: str(e?.message) || 'no connection' }; }
     let t = ''; try { t = await r.text(); } catch { t = ''; }
@@ -306,7 +310,8 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
       .then((x) => land('changes', x.ok, patchFiles(x.ok ? x.text : '')));
     // before the run names its pipeline, every other part is keyed by an id that is not one yet (F-a1-09): not read, null
     if (pidless) return;
-    request('GET', `/api/runs/${enc(pid)}/artifacts`).then((x) => land('docs', x.ok, x.ok ? docsOf(x.data?.artifacts) : []));
+    if (typeof plans.get(pid) !== 'boolean') plans.set(pid, 'reading');
+    request('GET', `/api/runs/${enc(pid)}/artifacts`).then((x) => { planLands(pid, x); land('docs', x.ok, x.ok ? docsOf(x.data?.artifacts) : []); });
     (key ? text(`${runUrl(key, pid)}/log`) : Promise.resolve({ ok: false })).then((x) => land('log', x.ok, x.ok ? logLinesOf(x.text) : []));
     if (key || r.projectDir) request('GET', `/api/runs/${enc(pid)}/actions?${scopeQ(r)}`).then((x) => land('actions', x.ok, x.ok ? actionsOf(x.data) : null));
     request('GET', `/api/pipelines/${enc(pid)}/setup`).then((x) => land('setup', x.ok, x.ok && x.data?.setup ? x.data.setup : null));
@@ -548,6 +553,23 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
     return !!TASK_FLOW[label] || (!!CHAT_FLOW[label] && (!CHAT_FLOW[label].needsPr || !!a.pr));
   }
 
+  /** Why Restart Build would be refused, when the page can already see it (F-a4-11): a workspace task, or a task that saved
+   *  no plan. '' when it is offered, or not known yet: a read lands and tells the page or card (notify). Never posts. */
+  function restartOff(id) {
+    const r = resolve(id); if (!r) return '';
+    if (wsOf(r.projectKey)) return 'Not offered for a workspace task yet';
+    const input = inputOf(id);   // a card's task never opened has no saved status yet: its store row's case says it ended
+    if (!/^(stopped|error|failed)$/.test(lc(input.state?.status) || lc(input.row?.case))) return '';
+    if (r.live && !r.pidKnown) return '';   // no pipeline id to read by yet (F-a1-09)
+    const pid = r.pipelineId, p = plans.get(pid);
+    if (p === false) return 'Needs a plan: this task saved none to build from';
+    if (p === undefined) {
+      plans.set(pid, 'reading');
+      request('GET', `/api/runs/${enc(pid)}/artifacts`).then((x) => { planLands(pid, x); notify(id); });
+    }
+    return '';
+  }
+
   /** A list action (D17). `args.ids`: the rows' task ids; their pipeline ids and live run ids come from resolve. */
   async function list(id, args = {}) {
     const def = LIST_ACTIONS[id]; if (!def) return refuse(id, { ok: false, error: 'this action is unknown' });
@@ -588,9 +610,9 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
     // side-effect free for a group until its list is read: open() loads it, so a failed load is not asked again on every paint
     state: (id) => (isGroup(id) ? (!groupList ? (groupFailed ? 'failed' : 'loading') : ({ null: 'loading', false: 'gone' })[String(group(id.slice(6)))] || 'ready') : !listLoaded() ? (listFailed() ? 'failed' : 'loading') : !resolve(id) ? 'gone' : tasks.get(id)?.state || 'loading'),
     // liveRunning (B1.9 D7): a running task whose pipeline is known is not over, even before its steps arrive (F-a4-03)
-    detail: (id) => (isGroup(id) ? groupDetail(id) : { ...taskPageOf(inputOf(id), { now: now() }), liveRunning: liveRunning(id) }),
+    detail: (id) => (isGroup(id) ? groupDetail(id) : { ...taskPageOf(inputOf(id), { now: now() }), liveRunning: liveRunning(id), restartOff: restartOff(id) }),
     card: (id) => taskCardOf(inputOf(id)),
-    input: inputOf, checks: checksOf, refreshChecks, frame, act, flow, canFlow, learned,
+    input: inputOf, checks: checksOf, refreshChecks, frame, act, flow, canFlow, restartOff, learned,
     pending: (key) => runner.pending.has(key), keyOf: runner.keyOf,
     /** The list's first load failed (or was asked again): a task page waiting on it looks again. */
     listChanged: () => notify(null),

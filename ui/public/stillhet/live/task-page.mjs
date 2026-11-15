@@ -360,13 +360,21 @@ export function actionsOf(data) {
   });
   return { services, builtins, stacks, enabled: data.enabled !== false, checkedOut: arr(data.members).some((m) => m.state === 'checked-out') };
 }
-/** A run group (GET /api/run-groups) → the group page's facts: { id, title, kind, members: [{pipelineId, title, case, pr, prUrl}], cost }. */
+/** dev's run artifacts (GET /api/runs/:id/artifacts) → whether the run saved a plan (the server's NO_PLAN filter, F-a4-11):
+ *  true, false, or null when unknown (a truncated list without one may hold it past the cut; not an object). */
+export function planOf(data) {
+  if (!data || typeof data !== 'object') return null;
+  if (arr(data.artifacts).some((a) => a && a.kind === 'plan')) return true;
+  return data.truncated ? null : false;
+}
+/** A run group (GET /api/run-groups) → the group page's facts: { id, title, kind, members: [{pipelineId, title, case, pr, prUrl}], cost }.
+ *  A member without a store row (not started, or not in the store yet) has no case: never a working sample (F-a4-09). */
 export function groupOf(g, rowOf = () => null) {
   if (!g || typeof g !== 'object') return null;
   const members = arr(g.members).slice().sort((a, b) => (num(a.position) ?? 0) - (num(b.position) ?? 0)).map((m) => {
     const prUrl = str(m.pr?.url) || str(m.pr);
     const row = rowOf(str(m.pipelineId)) || {};
-    return { pipelineId: str(m.pipelineId), title: str(m.title) || str(row.title) || 'Untitled task', case: str(row.case) || 'working', pr: prUrl ? `#${prNumber(prUrl)}` : '', prUrl, cost: num(row.cost) ?? 0 };
+    return { pipelineId: str(m.pipelineId), title: str(m.title) || str(row.title) || 'Untitled task', case: str(row.case), pr: prUrl ? `#${prNumber(prUrl)}` : '', prUrl, cost: num(row.cost) ?? 0 };
   });
   return { id: str(g.id), title: str(g.title) || 'Untitled group', kind: g.kind === 'feature' ? 'Feature' : 'Group', members, cost: num(g.cost?.usd) ?? 0 };
 }

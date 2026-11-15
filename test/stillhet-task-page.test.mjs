@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readServerSource } from '../src/core/read-server-source.mjs';
-import { taskPageOf, taskCardOf, newTaskBodyOf, NEW_TASK_KEYS, stagesOf, gateOf, stageOfStep, patchFiles, docsOf, logLinesOf, actionsOf, groupOf, commentsByPath, DIFF_PREVIEW } from '../ui/public/stillhet/live/task-page.mjs';
+import { taskPageOf, taskCardOf, newTaskBodyOf, NEW_TASK_KEYS, stagesOf, gateOf, stageOfStep, patchFiles, docsOf, logLinesOf, actionsOf, groupOf, planOf, commentsByPath, DIFF_PREVIEW } from '../ui/public/stillhet/live/task-page.mjs';
 import { taskPageErrors } from '../ui/public/stillhet/live/model-shape.mjs';
 import { TASK_DETAILS, NOW, PR_URL } from './helpers/stillhet-live-fixture.mjs';
 import { shortDetail } from '../ui/public/stillhet/live/live-map.mjs';
@@ -176,6 +176,24 @@ test('groupOf: dev\'s run group in stack order, each member\'s case and cost rea
     { position: 2, title: 'Two', pipelineId: 'p2', pr: { url: 'https://github.com/o/r/pull/960' } }, { position: 1, title: '', pipelineId: 'p1', pr: null }] }, (id) => rows[id]);
   assert.deepEqual(g, { id: 'G', title: 'Pager', kind: 'Feature', cost: 1.7, members: [
     { pipelineId: 'p1', title: 'One', case: 'merged', pr: '', prUrl: '', cost: 1.2 }, { pipelineId: 'p2', title: 'Two', case: 'approved', pr: '#960', prUrl: 'https://github.com/o/r/pull/960', cost: 0.5 }] });
+});
+
+test('groupOf (F-a4-09): a member not started (no pipeline, no row) has no case, never working', () => {
+  const rows = { p1: { case: 'ready', cost: 0.8 } };
+  const g = groupOf({ id: 'G', kind: 'feature', title: 'Pager', members: [
+    { position: 1, title: 'One', pipelineId: 'p1' }, { position: 2, title: 'Two', pipelineId: null, status: null, ticket: { id: 'tk' } },
+    { position: 3, title: 'Three', pipelineId: 'p3' }] }, (id) => rows[id]);
+  assert.deepEqual(g.members.map((m) => [m.title, m.case]), [['One', 'ready'], ['Two', ''], ['Three', '']], 'no row is not started: never a working sample');
+});
+
+test('planOf (F-a4-11): a plan artifact is a plan; none is none; none in a truncated list is unknown', () => {
+  assert.equal(planOf({ artifacts: [{ kind: 'prompt', relPath: 'prompt.md' }, { kind: 'plan', relPath: 'plan.md' }], truncated: false }), true);
+  assert.equal(planOf({ artifacts: [{ kind: 'plan', relPath: 'plan.md' }], truncated: true }), true, 'a plan in the page is a plan');
+  assert.equal(planOf({ artifacts: [{ kind: 'prompt', relPath: 'prompt.md' }], truncated: false }), false);
+  assert.equal(planOf({ artifacts: [] }), false);
+  assert.equal(planOf({ artifacts: [{ kind: 'prompt' }], truncated: true }), null, 'the cut may hold the plan');
+  for (const x of [null, undefined, 'x', 3]) assert.equal(planOf(x), null);
+  assert.equal(planOf({ artifacts: [null, 'x'] }), false, 'junk rows never throw');
 });
 
 test('the page\'s plan review is the run\'s own: its role findings, its shape check and its concern, else none', () => {

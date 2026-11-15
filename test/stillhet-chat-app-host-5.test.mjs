@@ -148,3 +148,23 @@ test('first send: the composer project chip shows the chat\'s project', async ()
   assert.equal(d.querySelector('#route-chat [data-menu="cp-project"]').textContent.trim(), 'web');
   assert.ok(!calls.some((c) => c.method === 'GET' && c.url === '/api/ask/threads/ask_new'), 'no thread GET');
 });
+
+test('F-a4-11: a failed task\'s card with no plan: Restart Build is off with its reason; the ⋯ item is aria-disabled; nothing is posted', async () => {
+  const { w, d, calls } = await liveHost({ sources: savedRun({ status: 'error' }), read: (u) => (u === '/api/runs/pa/artifacts' ? [200, { runId: 'pa', artifacts: [{ kind: 'prompt', relPath: 'prompt.md' }], truncated: false }] : null) });
+  await go(w, '#chat/ask_1', 80); await settle(80);
+  const card = d.querySelector('#route-chat [data-anchor="card_run"]');
+  const b = card.querySelector('[data-card-act="pa|Restart Build"]');
+  assert.ok(b, 'Restart Build is still its action');
+  assert.ok(b.disabled, 'off');
+  assert.equal(b.title, 'Needs a plan: this task saved none to build from');
+  const before = posts(calls).filter(([m]) => m !== 'GET').length;
+  b.click(); await settle(40);
+  d.querySelector('#route-chat [data-menu="card:pa"]')?.click(); await settle(5);
+  const item = d.querySelector('#route-chat [data-menu-pick="card:pa|Restart Build"]');
+  if (item) {
+    assert.equal(item.getAttribute('aria-disabled'), 'true');
+    item.click(); await settle(40);
+  }
+  assert.equal(posts(calls).filter(([m]) => m !== 'GET').length, before, 'a disabled Restart Build posts nothing');
+  assert.ok(!posts(calls).some(([, u]) => /restart-build/.test(u)));
+});
