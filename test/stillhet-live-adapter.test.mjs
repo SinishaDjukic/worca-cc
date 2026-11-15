@@ -221,7 +221,7 @@ test('a finished run with an open PR: each history load asks dev\'s PR lookup, i
 });
 
 test('history-pr: a row the server omits or marks stale keeps its PR (F-3-01, F-7a-01)', async () => {
-  const done = { id: 'hpr', title: 'Shipped', status: 'done', branch: 'feat/x', survived: true, projectKey: 'web', projectName: 'web', mtime: new Date(NOW).toISOString() };
+  const done = { id: 'hpr', title: 'Shipped', status: 'done', branch: 'feat/x', sourceBranch: 'dev', survived: true, projectKey: 'web', projectName: 'web', mtime: new Date(NOW).toISOString() };
   const r = rig({ answer: (u) => (u === URLS.history ? { pipelines: [...SOURCES.history.pipelines, done] } : ANSWER[u] ?? {}) });
   await r.tick();
   r.frame(r.sockets[0], hello);
