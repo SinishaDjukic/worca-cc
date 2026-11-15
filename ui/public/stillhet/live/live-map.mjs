@@ -189,9 +189,11 @@ function chatTasks(threadId, links, tasks, livePids = new Map(), featureIds = ne
     out.push(chatTaskOf(t, str(l.pipelineId) || t.id, { ...(inFeature ? { group: t.group, pos: t.pos } : {}), ...(l.started ? {} : { followed: true }) }));
     if (inFeature && !feats.includes(t.group)) feats.push(t.group);
   }
+  // a live member's store id is its run id; dev's per-task acts take its pipeline id
+  const pidOf = new Map([...livePids].map(([pid, runId]) => [runId, pid]));
   for (const gid of feats) {
     for (const t of arr(tasks).filter((x) => x && x.group === gid).sort((a, b) => (a.pos ?? 0) - (b.pos ?? 0))) {
-      if (!out.some((x) => x.run === t.id)) out.push(chatTaskOf(t, t.id, { group: gid, pos: t.pos }));
+      if (!out.some((x) => x.run === t.id)) out.push(chatTaskOf(t, pidOf.get(t.id) || t.id, { group: gid, pos: t.pos }));
     }
   }
   return out;

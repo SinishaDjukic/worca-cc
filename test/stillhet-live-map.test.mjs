@@ -562,6 +562,16 @@ test('F-a2-03: a chat that started a feature member lists the feature\'s other m
   assert.deepEqual(part.chats.find((x) => x.id === 'ask_1').tasks.map((t) => t.id), ['p1', 'p2', 'member:F:3', 'member:F:4']);
 });
 
+test('F-a2-03: an unlinked live member of the chat\'s feature carries its pipeline id as pid (the id dev\'s per-task acts take), its run id as run', () => {
+  const src = JSON.parse(JSON.stringify(SOURCES));
+  src.history.pipelines.push({ id: 'p1', title: 'Store tags', status: 'done', projectName: 'web', startedAt: NOW - 7200000, mtime: NOW - 3600000 });
+  src.schedules = { schedules: [], tickets: [] };
+  src.runGroups = FEATURE([{ position: 1, pipelineId: 'p1', title: 'Store tags', adhoc: false }, { position: 2, pipelineId: 'pb', title: 'Busy', adhoc: false }]);
+  src.runLinks = { links: [{ threadId: 'ask_1', runId: 'p1', pipelineId: 'p1', started: true }] };
+  const c = snapshotOf(src, { now: NOW }).chats.find((x) => x.id === 'ask_1');
+  assert.deepEqual(c.tasks.map((t) => [t.id, t.run, t.pid]), [['p1', 'p1', 'p1'], ['run-b', 'run-b', 'pb']]);
+});
+
 test('F-6-03: a git project whose sync block has remote:null reads origin local (Only on this computer, Link a remote), without an origin/ base, and does not need you', () => {
   const p = { key: 'a', exists: true, vcs: 'git' };
   const local = projectOf(p, { state: 'unknown', remote: null, base: 'main' });
