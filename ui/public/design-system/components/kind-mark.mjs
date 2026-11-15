@@ -226,6 +226,15 @@ export function composerQueue({ items = [], max = 3, paused = '', why = '' } = {
 }
 
 /**
+ * ComposerQueueButton: while Worca replies, the quiet Queue beside Stop in the composer's send slot (form.composer-queue).
+ * It queues what you wrote exactly as Enter does; its word is its name, its tooltip says when it goes.
+ * @returns {string}
+ */
+export function composerQueueButton() {
+  return button({ label: 'Queue', kind: 'quiet', attrs: { 'data-cp-queue': '', title: 'Sends it when the reply finishes' } });
+}
+
+/**
  * CardHead: the one head every chat card has: its kicker (its mark and one word: Proposed, Running, Plan), its title, at most
  * one line under it, and its facts (a branch, a place). TaskCard, TaskProposal, ChangeProposal and PlanCard all use it.
  * @param {object} o
