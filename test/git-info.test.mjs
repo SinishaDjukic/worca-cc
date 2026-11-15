@@ -53,7 +53,7 @@ test('findPrForBranch branch search: argv, normalization, OPEN > MERGED > CLOSED
     { name: 'findPrForBranch returns a single MERGED PR, normalized, queried by head', run: async () => {
       const seen = [];
       gitInfo.setRunner((cmd, args) => {
-        seen.push([cmd, ...args]);
+        if (cmd === 'gh') seen.push([cmd, ...args]);   // after the remote listing (git)
         return Promise.resolve({
           ok: true,
           stdout: JSON.stringify([{ number: 9, state: 'MERGED', url: 'https://gh/x/pull/9', isDraft: false, mergeable: 'UNKNOWN' }]),
