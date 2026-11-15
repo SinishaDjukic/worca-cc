@@ -591,7 +591,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
           { name: 'Summaries', flag: 'commandSummaries', say: 'Show each command as one line saying what it does', sw: { key: 'summaries', on: true, why: 'With Labs › Command summaries on' } },
           { name: 'Suggestions', say: 'Suggest a next prompt after each reply', sw: { key: 'nextPrompt', on: true } },
           // docs/rail/settings.md: the chat pref `promptCheck` (docs/prompt-check.md), saved live in the app
-          { name: 'Prompt check', say: 'Check how clear a task prompt is', sw: { key: 'promptCheck', on: false, live: 'chat.promptCheck', why: "Shows in today's Chat for now" } },
+          { name: 'Prompt check', say: 'Check how clear a task prompt is', sw: { key: 'promptCheck', on: false, live: 'chat.promptCheck' } },
         ] },
         { name: 'Limits', help: 'On an engine other than Claude the cap is checked when a reply ends', say: 'One message may use **{turns}** turns, and a turn stops at **{capWords}**', vals: { turns: '400', cap: '', capWords: (sv) => (sv.cap ? `$${sv.cap}` : 'no cost cap') },
             acts: [edit('Change the chat limits', [{ key: 'turns', label: 'Turn limit', type: 'number', hint: '1 to 500, per message; empty restores 400', placeholder: '400' }, { key: 'cap', label: 'Per-turn cost cap (USD)', type: 'number', hint: '0.1 to 100; empty means no cap', placeholder: 'No cap' }], {

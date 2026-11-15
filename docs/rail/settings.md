@@ -40,7 +40,8 @@ row its state hides lands on the row it folds under. Mocks:
   Sharing fold under its Sources row).
 - Chat: Assistant · Channels · Speech (each URL folds under its row) · History.
   Chat › Assistant › Abilities holds "Check how clear a task prompt is" (Prompt check) right under "Suggestions": a
-  library switch row, off by default, saved live to the chat pref `chat.promptCheck` (a row's `sw.live`).
+  library switch row, off by default, saved live to the chat pref `chat.promptCheck` (a row's `sw.live`), shown in the
+  composer's sentence (`panel.chat-composer`).
 - Memory: Notes (health is its meta line; Defragment now, Expert, is its head's action) · Restore points · Proposals · Team memory.
 - Team policy: Not published (while a change waits) · Effective policy · Defaults · Rules (groups: Required plugins, Blocked, Guardrail sets, Models, MCP servers) ·
   Editing (Home and Consent fold under its row).
