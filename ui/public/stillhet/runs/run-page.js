@@ -959,7 +959,7 @@ function prDialogHtml(v) {
   const moved = !LIVE_PAGE() && v.baseMoved && pr.base === 'dev' ? `<span class="pd-hint is-warn">dev moved while the task worked: 12 new commits, 1 file overlaps. Update the branch first, or the PR opens with conflicts.</span>` : '';
   const release = `<div class="pd-f">${R.checkbox({ label: 'Add a release', checked: !!pr.release, attrs: { id: 'pd-release', 'data-key': 'pd-release' } })}${pr.release ? R.field({ id: 'pd-version', label: 'Version', value: pr.version === undefined ? 'v1.20.0' : pr.version, hint: 'From the latest tag · a draft release after it merges', attrs: { 'data-key': 'pd-version' } }) : ''}</div>`;
   const tryFirst = R.shows('advanced') && !stacked && !LIVE_PAGE() ? `<div class="pd-f"><div class="rl-tools">${R.button({ label: 'Try it first', kind: 'quiet', attrs: { 'data-pd': 'try', 'data-key': 'pd-try', title: v.heldBy ? `Held by “${v.heldBy}”` : v.hosted ? HOSTED_WHY : 'Checks the branch out locally before the PR opens', disabled: !!(v.heldBy || v.hosted || ui.copy) } })}${ui.copy ? '<span class="pd-hint">Local copy open · since 18:12</span>' : ''}</div></div>` : '';
-  const opts = `<div class="pd-opts">${R.checkbox({ label: 'Draft', checked: pr.draft, attrs: { id: 'pd-draft', 'data-key': 'pd-draft' } })}${R.checkbox({ label: 'Watch: fix failing checks', checked: pr.watch, attrs: { id: 'pd-watch', 'data-key': 'pd-watch' } })}<span class="pd-hint pd-closes">${stacked ? 'The last PR closes ' : 'Closes '}${esc(v.tabData.issue)}</span></div>`;
+  const opts = `<div class="pd-opts">${R.checkbox({ label: 'Draft', checked: pr.draft, attrs: { id: 'pd-draft', 'data-key': 'pd-draft' } })}${R.checkbox({ label: 'Watch: fix failing checks', checked: pr.watch, attrs: { id: 'pd-watch', 'data-key': 'pd-watch' } })}${LIVE_PAGE() ? '' : `<span class="pd-hint pd-closes">${stacked ? 'The last PR closes ' : 'Closes '}${esc(v.tabData.issue)}</span>`}</div>`;
   const alert = pr.err ? `<div class="pd-alert" role="alert"><b>${esc(pr.err.title)}</b><span>${esc(pr.err.detail)}${pr.err.odd ? ' ' + detailsLink(pr.err) : ''}</span></div>` : '';
   const busy = !!ui.busy;
   // The Dialog component: its head (title, Close), the one scrolling body, its foot (Cancel, the step naming what happens).
@@ -971,6 +971,8 @@ function prDialogHtml(v) {
 const live = (f) => ui.pr && (f === ui.pr || (ui.pr.prs || []).includes(f));
 // If Worca cannot write it (an error, or no answer in 20s), nothing changes: the field keeps the text it had.
 function generate(f = ui.pr, i = -1, delay = 1400) {
+  // live: no sample text: the prototype's demo body (its files, tests and "Closes #942") must never reach a real PR; the person writes it
+  if (LIVE_PAGE()) { f.gen = false; f.descSuggested = false; return; }
   const v = M.view(ui.caseId, ui); const fails = takeFail();
   f.gen = true; f.mode = 'write'; f.errDesc = false;
   setTimeout(() => { if (!live(f) || !f.gen) return; f.gen = false;
@@ -987,7 +989,7 @@ function generateTitle(f = ui.pr, i = -1, delay = 700) {
 // Each stacked PR starts from today's text (the server's template) and Worca writes over it; all rows start closed.
 function startStack(v) {
   const titles = v.runs.map((r) => r.title);
-  ui.pr.prs = v.runs.map((r, i) => ({ title: r.title, made: (v.ship.owned || {})[i] || '', desc: v.tabData.prTemplate(i, titles, v.title), gen: false, genTitle: false, titleSuggested: true, descSuggested: false, mode: 'write', open: false }));
+  ui.pr.prs = v.runs.map((r, i) => ({ title: r.title, made: (v.ship.owned || {})[i] || '', desc: LIVE_PAGE() ? '' : v.tabData.prTemplate(i, titles, v.title), gen: false, genTitle: false, titleSuggested: true, descSuggested: false, mode: 'write', open: false }));
   ui.pr.prs.forEach((f, i) => { if (!f.made) generate(f, i, 900 + i * 600); });
 }
 // A question is answered where it is asked: under its step, Worca's pick checked, the other options and your own
