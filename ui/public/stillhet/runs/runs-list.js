@@ -277,7 +277,7 @@
       if (id === 'range') { if (!v) { view = { ...view, range: null }; store.set(view); } return false; }
       view = { ...view, [id]: v }; store.set(view); centers(); return false;
     },
-    say, active: () => !root.closest('[hidden]') && !document.querySelector('.pz-popover, .keys-modal, #app .viewer-modal, #app .nav-fly'),
+    say, active: () => !root.closest('[hidden]') && !document.querySelector('.pz-popover, .keys-modal, #app .viewer-modal, #center-dlg .viewer-modal, #app .nav-fly'),
     retry: () => { if (W.live) window.RailAdapter.retry(); else setCase('full'); }, emptyAct: () => { if (noTasks()) { if (W.live) window.RailConversation?.start?.('task'); return; }   /* D12c: Start a task hands over to Chat */ view = { ...FRESH }; store.set(view); ctl.clear(); ctl.paint(); centers(); },
   } });
 

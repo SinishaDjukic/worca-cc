@@ -289,7 +289,7 @@
       else if (act === 'focus-list') ctl.focusList();
       else if (act === 'prev-chat' || act === 'next-chat') { const id = neighbour(act === 'next-chat' ? 1 : -1); if (id) openChat(id); }
     },
-    say, active: () => (location.hash.startsWith('#chat') || !location.hash) && !document.querySelector('.pz-popover, .keys-modal, #app .viewer-modal, #app .nav-fly'),
+    say, active: () => (location.hash.startsWith('#chat') || !location.hash) && !document.querySelector('.pz-popover, .keys-modal, #app .viewer-modal, #center-dlg .viewer-modal, #app .nav-fly'),
     retry: () => { if (window.RailWorld.live) window.RailAdapter.retry(); else setCase('full'); }, emptyAct: () => window.RailConversation?.start('ask'),
   } });
   function setCase(c) {
