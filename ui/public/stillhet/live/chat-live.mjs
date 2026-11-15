@@ -394,7 +394,8 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
       e.model = createThreadModel({ threadId: id });
       // D9: the thread dev answered (its PATCH {scope}, else its create), so the chat's project is known with no GET
       const th = [scoped.data?.thread, created].find((x) => x && typeof x === 'object' && x.id === id) || { id };
-      e.model.load({ thread: th, messages: [], attachments: [], runLinks: [], inFlight: null });
+      // F-a1-01: the new chat starts on the model and effort its first message went out with, not dev's null
+      e.model.load({ thread: { ...th, ...(model ? { model } : {}), ...(effort ? { effort } : {}) }, messages: [], attachments: [], runLinks: [], inFlight: null });
       e.state = 'ready'; e.reloading = false;
     }
     e.model?.noteLocalUserMessage?.({ id: res.data?.userMessageId, text: a.text, attachments: [] });
