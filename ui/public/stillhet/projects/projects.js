@@ -209,13 +209,21 @@
   // the bar counts its own rows, in its unit: projects (one in two workspaces once; a workspace with only a question is one)
   const loneSpaces = () => (adv() && view.by === 'workspace' ? spaces().filter((w) => !w.projects.some(([id]) => data.projects.some((p) => p.id === id && needs(p))) && window.RailSpaces.questions(w).length) : []);
   const needCount = () => data.projects.filter(needs).length + loneSpaces().length;
+  // a project item names its problem with figures, its effect and its one fix (panel.pulse-read); `clear` is its state's
+  // clear line in Pulse (pulse-model.js CLEARS), `fix` the label of the one fix the item carries itself (Sync, when only behind)
+  function needOf(p) {
+    if (p.origin === 'behind') { const n = p.behind; return { meta: `${n} ${n === 1 ? 'commit' : 'commits'} behind ${p.base} · ${p.autoSync === false ? 'New tasks start from older code' : 'Each new task syncs it first'}`, clear: 'project-behind', fix: busyOf(p.id) || 'Sync' }; }
+    if (p.origin === 'diverged') return { meta: `${p.ahead} ahead, ${p.behind} behind ${p.base} · The next task asks how to bring them together`, clear: 'project-diverged', fix: '' };
+    if (p.origin === 'missing') return { meta: 'Its folder is gone · New tasks cannot start here', clear: 'project-missing', fix: '' };
+    return { meta: wordOf(p), clear: '', fix: '' };
+  }
   // what needs you beyond tasks and missed times, each once: the bell and Pulse's Needs you read this list (small-rules)
   function needItems() {
     // each workspace link Worca is unsure of; live, from dev's workspaces and their maps (D10)
     const asks = spaces().flatMap((w) => window.RailSpaces.questions(w).map((l) => ({ key: `q:${w.id}:${l.from}:${l.to}`, title: w.title, meta: `Does ${l.from} ${l.how.replace(/s\b/, '')} ${l.to}?`, kind: 'workspace', tone: 'ask', go: `projects/ws:${w.id}`, project: '', tip: `Opens ${w.title} at its question` })));
     // live: a missing folder or out of sync (D22)
-    if (W?.live) return [...data.projects.filter((p) => p.needs).map((p) => ({ key: `p:${p.id}`, title: nameOf(p), meta: wordOf(p), kind: 'project', tone: o(p).tone === 'fail' ? 'fail' : 'ask', go: `projects/${p.id}`, project: p.id, tip: `Opens ${nameOf(p)}` })), ...asks];
-    return [...data.projects.filter((p) => o(p).tone === 'fail' || p.origin === 'diverged').map((p) => ({ key: `p:${p.id}`, title: p.id, meta: wordOf(p), kind: 'project', tone: o(p).tone === 'fail' ? 'fail' : 'ask', go: `projects/${p.id}`, project: p.id, tip: `Opens ${p.id}` })), ...asks];
+    if (W?.live) return [...data.projects.filter((p) => p.needs).map((p) => ({ key: `p:${p.id}`, title: nameOf(p), ...needOf(p), kind: 'project', tone: o(p).tone === 'fail' ? 'fail' : 'ask', go: `projects/${p.id}`, project: p.id, tip: `Opens ${nameOf(p)} at its fix` })), ...asks];
+    return [...data.projects.filter((p) => o(p).tone === 'fail' || p.origin === 'diverged').map((p) => ({ key: `p:${p.id}`, title: p.id, ...needOf(p), kind: 'project', tone: o(p).tone === 'fail' ? 'fail' : 'ask', go: `projects/${p.id}`, project: p.id, tip: `Opens ${p.id} at its fix` })), ...asks];
   }
   // a workspace's link Worca is unsure of, as a card
   const qCard = (w, l) => R.pluginCard({ mark: R.kindMark({ kind: 'workspace', tone: 'ask', breathe: true }), word: R.needsReason('question'), tone: 'ask', title: w.title,
@@ -402,7 +410,22 @@
   }
   // a half-typed cost tag or label does not wait for you on another page
   window.addEventListener('hashchange', () => { [...data.projects, ...(window.RailSpaces?.list() || [])].forEach((x) => { delete x.editing; delete x.defErr; delete x.defTyped; }); });
-  window.RailProjects = { needItems, all: () => data.projects, editTags: (id) => { window.RailShell.go(`projects/${id}`); setTimeout(() => { const p = data.projects.find((x) => x.id === id); if (!p) return; p.editing = 'tags'; draw(); document.getElementById('def-tags')?.focus(); }, 80); }, sync: (id) => { if (LIVE()) { LIVE().origin(id, 'sync').then(said); return; } const p = data.projects.find((x) => x.id === id); if (p?.origin === 'behind') Object.assign(p, { origin: 'ok', behind: 0, checked: 'just now' }); }, spend: (id) => { const p = data.projects.find((x) => x.id === id); return (p ? spendOf(p) : SPEND[id]?.[0]) || 0; }, hint: (id) => { const p = data.projects.find((x) => x.id === id); return p ? (p.origin === 'behind' ? `${p.behind} behind` : shortOf(p) || '') : ''; }, list: () => data.projects, add: (p) => { if (LIVE()) { LIVE().addProject(p.path || p.id).then(said); return; } if (!data.projects.some((x) => x.id === p.id)) data.projects.push({ kind: 'Git', origin: 'local', branch: 'main', ...p }); ctl?.paint(); } };
+  // a Pulse item opens its project with the fix in view: Locate folder's form, else the head's fix landed, else (a task
+  // question holds the head) the More menu open on it; a project that no longer needs you only opens
+  function openNeed(id) {
+    const p = data.projects.find((x) => x.id === id); if (!p) { window.RailShell.go(`projects/${id}`); return; }
+    if (p.origin === 'missing') { openForm('locate', p, p.path); return; }
+    window.RailShell.go(`projects/${id}`);
+    setTimeout(() => {
+      if (pid() !== id || !page) return;
+      const fix = page.querySelector('[data-pj-act]');
+      if (fix) { R.land(fix); return; }   // R.land focuses it
+      if (!asking(p).length || !actItem(p).length) return;
+      menu = 'pj-more'; draw();
+      const item = page.querySelector('[data-menu-pick="pj-more|act"]'); R.land(item);
+    }, 60);
+  }
+  window.RailProjects = { needItems, openNeed, all: () => data.projects, editTags: (id) => { window.RailShell.go(`projects/${id}`); setTimeout(() => { const p = data.projects.find((x) => x.id === id); if (!p) return; p.editing = 'tags'; draw(); document.getElementById('def-tags')?.focus(); }, 80); }, sync: (id) => { if (LIVE()) { LIVE().origin(id, 'sync').then(said); return; } const p = data.projects.find((x) => x.id === id); if (p?.origin === 'behind') Object.assign(p, { origin: 'ok', behind: 0, checked: 'just now' }); }, spend: (id) => { const p = data.projects.find((x) => x.id === id); return (p ? spendOf(p) : SPEND[id]?.[0]) || 0; }, hint: (id) => { const p = data.projects.find((x) => x.id === id); return p ? (p.origin === 'behind' ? `${p.behind} behind` : shortOf(p) || '') : ''; }, list: () => data.projects, add: (p) => { if (LIVE()) { LIVE().addProject(p.path || p.id).then(said); return; } if (!data.projects.some((x) => x.id === p.id)) data.projects.push({ kind: 'Git', origin: 'local', branch: 'main', ...p }); ctl?.paint(); } };
   if (window.RailFirstRun) data.projects = [];   // the first run: nothing added yet
   window.RailPlaces = window.RailPlaces || {};
   window.RailPlaces.projects = { has: (a) => (!!W?.live && listNow() !== 'ready') || (a.startsWith('ws:') ? (window.RailSpaces?.list() || []).some((w) => w.id === a.slice(3)) : data.projects.some((p) => p.id === a.split('@')[0])), defaults: defaultsRows, defaultsClick, defaultsKey, redraw: () => draw(), get newMenu() { return adv() ? newMenuItems : null; }, get newAct() { return adv() ? () => window.RailConversation?.starter('project') : null; }, get newLabel() { return adv() ? 'Add project' : ''; }, newPick: (id) => { if (id === 'project' || id === 'workspace') { window.RailConversation?.starter(id); return; } form = id === 'hand-project' ? 'project' : 'space'; if (current) window.RailShell.go('projects'); setTimeout(() => { draw(); page?.querySelector('#pj-hand-v')?.focus(); }, 60); }, search: (q) => [...data.projects.filter((p) => `${nameOf(p)} ${p.path}`.toLowerCase().includes(q)).map((p) => ({ label: nameOf(p), where: wordOf(p), hash: `projects/${p.id}` })), ...spaces().filter((w) => w.title.toLowerCase().includes(q)).map((w) => ({ label: w.title, where: 'Workspace', hash: `projects/ws:${w.id}` }))], sample: 'billing-api',

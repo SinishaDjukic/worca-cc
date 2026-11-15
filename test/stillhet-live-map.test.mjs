@@ -81,6 +81,10 @@ test('projectOf: needs for a missing folder and for an out-of-sync project, not 
   assert.equal(projectOf({ key: 'a', exists: true, vcs: 'git' }, { state: 'behind', behind: 2, base: 'main' }).needs, true);
   assert.equal(projectOf({ key: 'a', exists: true, vcs: 'git' }, { state: 'up-to-date', base: 'main' }).needs, false);
   assert.equal(projectOf({ key: 'a', exists: true, vcs: 'git' }, { state: 'up-to-date', base: 'main' }).origin, 'ok');
+  assert.equal(projectOf({ key: 'a', exists: true, vcs: 'git' }, { state: 'behind', behind: 2, base: 'main' }).autoSync, true, 'dev syncs before a run unless told not to');
+  assert.equal(projectOf({ key: 'a', exists: true, vcs: 'git' }, { state: 'behind', behind: 2, base: 'main', settings: { beforeRun: true } }).autoSync, true);
+  assert.equal(projectOf({ key: 'a', exists: true, vcs: 'git' }, { state: 'behind', behind: 2, base: 'main', settings: { beforeRun: false } }).autoSync, false, 'settings.beforeRun false: new tasks start from older code');
+  assert.equal(projectOf({ key: 'a', exists: false }).autoSync, true, 'no sync block: dev\'s default');
   assert.equal(projectOf({ key: 'gone2-9428', name: 'gone2', exists: false }).name, 'gone2', 'its name, not its key, is what the pages show');
   assert.equal(projectOf({ key: 'gone2-9428', name: 'gone2', exists: false }).id, 'gone2-9428', 'the id stays dev\'s key (#projects/KEY)');
   assert.equal(projectOf({ key: 'k' }).name, 'k', 'no name: the key');

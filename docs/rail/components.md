@@ -105,6 +105,7 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | Something failed | where you acted: the strip, the dialog's alert, the field's error line, the suggestion's grey line; a Toast only when there is no such place | Could not merge #959 |
 | Nothing here, loading, could not load | EmptyState: one line on the text edge; loading shows nothing for 300ms, then one line, never a spinner or skeleton | No runs yet |
 | A part of the page cannot be drawn | EmptyState's error, in that part only, with Reload this part | Could not show the changes |
+| A place that is not in Stillhet yet | NotInStillhet: says so, names where it lives today in words, and offers Back to Chat; never "No … yet" | Insights is not in Stillhet yet |
 | Something broke that nothing handles | Toast, error: stays until closed, a repeat counts on it | Something went wrong |
 | The connection dropped | a quiet line at the end of the top bar, grey dot, until it reconnects | Offline · retrying |
 

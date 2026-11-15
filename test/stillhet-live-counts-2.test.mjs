@@ -158,3 +158,71 @@ test('a resume that dev answers with a confirm opens the task instead', async ()
   d.querySelector('#app .pz-popover [data-fix="oh1"]').click(); await settle();
   assert.equal(w.location.hash, '#run/h1', 'the task oh1 names (history row h1), by its id, never the case (#1266)');
 });
+
+// Pulse Needs you, project items (#1298): each names its figures, its effect and its one fix
+const quiet = (edit) => { const s = clone(SOURCES); s.hello.runs = [s.hello.runs[1]]; s.history.pipelines = s.history.pipelines.filter((p) => p.status !== 'paused'); edit?.(s); return s; };   // no task waits on api
+const behind = (settings) => quiet((s) => { s.sync.projects['api-2'] = { base: 'main', remote: 'origin', state: 'behind', ahead: 0, behind: 3, fetchedAt: SOURCES.sync.projects['api-2'].fetchedAt, ...(settings ? { settings } : {}) }; });
+const needRow = (d, key) => d.querySelector(`#app .pz-popover [data-open="np:projects/${key}"]`);
+
+test('Pulse Needs you, a behind project: its count, effect and \'Clears when you sync it\'; Sync on the item posts /api/projects/KEY/sync {mode:\'ff\'} and the item leaves after the re-read', async () => {
+  const src = behind();
+  let release; const held = new Promise((r) => { release = r; });
+  const { w, d, posts, hello } = await liveHost({ sources: src, post: async (u) => { if (u === '/api/projects/api-2/sync') { await held; src.sync.projects['api-2'] = { ...src.sync.projects['api-2'], state: 'up-to-date', behind: 0 }; return [200, { sync: { ff: { ok: true } } }]; } return [200, {}]; } });
+  await hello();
+  d.querySelector('[data-pop]').click();
+  const item = needRow(d, 'api-2');
+  assert.ok(item, 'the behind project is in Needs you');
+  assert.match(item.textContent, /3 commits behind origin\/main · Each new task syncs it first · Clears when you sync it/);
+  const hash = w.location.hash;
+  const sync = () => d.querySelector('#app .pz-popover [data-fix="np:projects/api-2"]');
+  assert.equal(sync().textContent.trim(), 'Sync');
+  sync().click(); await settle();
+  assert.equal(sync().textContent.trim(), 'Syncing…', 'it says what it is doing');
+  assert.equal(sync().disabled, true, 'and a second press is out of reach');
+  sync().click(); await settle();
+  assert.equal(w.location.hash, hash, 'Sync does not open the row');
+  release(); await settle(400);   // the store's re-read is debounced (DEBOUNCE_MS)
+  assert.deepEqual(posts.filter((p) => p.url === '/api/projects/api-2/sync').map((p) => p.body), [{ mode: 'ff' }], 'two presses, one POST');
+  if (!d.querySelector('#app .pz-popover')) d.querySelector('[data-pop]').click();
+  assert.equal(needRow(d, 'api-2'), null, 'synced: the item left Needs you after the re-read');
+  closeHosts();
+  // dev's before-run sync off: the effect says so; a dirty copy is refused by dev and the item stays
+  const off = await liveHost({ sources: behind({ beforeRun: false }), post: (u) => (u === '/api/projects/api-2/sync' ? [200, { sync: { ff: { ok: false, kind: 'dirty' } } }] : [200, {}]) });
+  await off.hello();
+  off.d.querySelector('[data-pop]').click();
+  assert.match(needRow(off.d, 'api-2').textContent, /3 commits behind origin\/main · New tasks start from older code · Clears when you sync it/);
+  off.d.querySelector('#app .pz-popover [data-fix="np:projects/api-2"]').click(); await settle(80);
+  assert.match(toastText(off.d), /Could not sync api: it has uncommitted changes/);
+  if (!off.d.querySelector('#app .pz-popover')) off.d.querySelector('[data-pop]').click();
+  assert.ok(needRow(off.d, 'api-2'), 'refused: the item stays, so Sync can be pressed again');
+});
+
+test('a diverged project\'s item opens its page with Bring together… focused; with a task question waiting, the More menu opens on it; a missing one opens Locate folder', async () => {
+  const landedOn = (d) => { const a = d.activeElement; return [a?.querySelector('.mi-l')?.textContent.trim() || a?.textContent.trim(), a?.hasAttribute('data-landed')]; };
+  const plain = await liveHost({ sources: quiet() });
+  await plain.hello();
+  plain.d.querySelector('[data-pop]').click();
+  assert.match(needRow(plain.d, 'api-2').textContent, /1 ahead, 2 behind origin\/main · The next task asks how to bring them together · Clears when you bring them together/);
+  assert.equal(needRow(plain.d, 'api-2').querySelector('[data-fix]'), null, 'no button on a diverged item');
+  needRow(plain.d, 'api-2').click(); await settle(120);
+  assert.equal(plain.w.location.hash, '#projects/api-2');
+  assert.ok(plain.d.activeElement?.matches('[data-pj-act]'), 'the head\'s fix has the focus');
+  assert.deepEqual(landedOn(plain.d), ['Bring together…', true]);
+  closeHosts();
+  // run-a's question waits on api, in its chat: the head holds the question's button, so the fix is the More menu's act item
+  const onApi = clone(SOURCES);
+  onApi.threads.threads = onApi.threads.threads.map((t) => (t.id === 'ask_1' ? { ...t, context: { projectKey: 'api-2' } } : t));   // its chat works in api
+  const asks = await liveHost({ sources: onApi });
+  await asks.hello();
+  asks.d.querySelector('[data-pop]').click();
+  needRow(asks.d, 'api-2').click(); await settle(120);
+  assert.ok(asks.d.querySelector('#route-place [data-menu-pick="pj-more|act"]'), 'the More menu is open');
+  assert.ok(asks.d.activeElement?.matches('[data-menu-pick="pj-more|act"]'));
+  assert.deepEqual(landedOn(asks.d), ['Bring together…', true]);
+  // gone-3's folder is missing: Locate folder's form
+  asks.d.querySelector('[data-pop]').click();
+  assert.match(needRow(asks.d, 'gone-3').textContent, /Its folder is gone · New tasks cannot start here · Clears when you locate its folder/);
+  needRow(asks.d, 'gone-3').click(); await settle(120);
+  assert.equal(asks.w.location.hash, '#projects/gone-3');
+  assert.ok(asks.d.querySelector('#route-place #pj-hand-v'), 'the Locate folder form is open');
+});

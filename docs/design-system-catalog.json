@@ -1533,6 +1533,18 @@
       "example": "There is no project called nope"
     },
     {
+      "name": "NotInStillhet",
+      "code": "ui/public/design-system/components/empty-state.mjs#notInStillhet",
+      "kind": "telling",
+      "needs": [
+        "a place that is not in Stillhet yet"
+      ],
+      "rules": [
+        "says so, names where it lives today in words, and offers Back to Chat; never reads as empty and holds no switch (nav.not-live)"
+      ],
+      "example": "Insights is not in Stillhet yet"
+    },
+    {
       "name": "KindMark",
       "code": "ui/public/design-system/components/kind-mark.mjs#kindMark",
       "kind": "telling",

@@ -205,9 +205,9 @@ function topbar() {
 // One row on the 20px rail: the dot, the title line, the meta line, the time at the right.
 // In Updates the rail holds the mark (amber: still waits for you, blue: unread, nothing once read) and, while selecting,
 // the tick box in its place: one text edge for every list.
-function row({ dot, mark: own, title, meta, time, tip, key, check, unreadDot, resolved, flash, fix, fixTip, fixLand }) {
+function row({ dot, mark: own, title, meta, time, tip, key, check, unreadDot, resolved, flash, fix, fixTip, fixLand, fixBusy }) {
   return R.pulseRow({ mark: own || (dot ? R.statusDot({ tone: dot }) : ''), title, meta, time, tip, id: key, check, unread: unreadDot, resolved, flash,
-    action: fix ? R.button({ label: fix, kind: 'quiet', attrs: { ...(fixLand ? { 'data-land': fixLand } : { 'data-fix': key }), title: fixTip } }) : '' });
+    action: fix ? R.button({ label: fix, kind: 'quiet', attrs: { ...(fixLand ? { 'data-land': fixLand } : { 'data-fix': key }), title: fixTip, disabled: !!fixBusy } }) : '' });
 }
 const dotOf = (u) => (u.sev === 'needs' && u.open ? 'is-amber' : '');
 // A run's mark and word come from the library's state.
@@ -229,7 +229,7 @@ function vitalsSections() {
     { word: 'from', id: 'vitalsFrom', text: ui.vitalsFrom === 'all' ? 'all projects' : ui.vitalsFrom, items: [{ id: 'all', text: 'all projects', checked: ui.vitalsFrom === 'all', hint: String(vitalsN(vitalsShown(ui.vitalsShow, 'all'))) }, { sep: true }].concat(vitalsProjects().map((p) => ({ id: p, text: p, checked: ui.vitalsFrom === p, hint: String(vitalsN(vitalsShown(ui.vitalsShow, p))) }))), tip: 'Which project\'s runs it shows; limits belong to a harness and show for every project' }])}</span></div>`;
   const sec = (h, n, rows, note) => (n ? `<section class="pz-sec"><h3 class="pz-h">${h} <span class="n">${n}${note ? ` · ${note}` : ''}</span></h3><div class="pz-list">${rows}</div></section>` : '');
   const levelOfRun = (r) => (r.missed ? 2 : R.alertLevel(R.markTone(R.runState(window.RunCardModel.stateOf(r.case)))));
-  const needRows = [...c.needs.map((r) => [levelOfRun(r), r.missed ? row({ mark: R.kindMark({ kind: 'schedule', tone: 'act', size: 16 }), title: r.title, meta: clearsMeta(metaOf(r, schedWords(r) || undefined), 'missed'), time: r.time, key: 'r:' + r.id, tip: 'A missed time never started: it needs you and is not a task' }) : runRow(r, 'Opens the run page at what it asks', clearsMeta(metaOf(r), clearsKeyOf(r)))]), ...c.places.map((x) => [R.alertLevel(x.tone), row({ mark: R.kindMark({ kind: x.kind, tone: x.tone, size: 16 }), title: x.title, meta: clearsMeta(x.meta, x.kind), key: `np:${x.go}`, tip: x.tip })])].sort((a, b) => b[0] - a[0]);   // highest level first (look.alert-ladder)
+  const needRows = [...c.needs.map((r) => [levelOfRun(r), r.missed ? row({ mark: R.kindMark({ kind: 'schedule', tone: 'act', size: 16 }), title: r.title, meta: clearsMeta(metaOf(r, schedWords(r) || undefined), 'missed'), time: r.time, key: 'r:' + r.id, tip: 'A missed time never started: it needs you and is not a task' }) : runRow(r, 'Opens the run page at what it asks', clearsMeta(metaOf(r), clearsKeyOf(r)))]), ...c.places.map((x) => [R.alertLevel(x.tone), row({ mark: R.kindMark({ kind: x.kind, tone: x.tone, size: 16 }), title: x.title, meta: clearsMeta(x.meta, x.clear || x.kind), key: `np:${x.go}`, tip: x.tip, fix: x.fix, fixTip: 'Fast-forwards to the remote; nothing of yours is touched', fixBusy: x.fix === 'Syncing…' })])].sort((a, b) => b[0] - a[0]);   // highest level first (look.alert-ladder)
   const out = sec(R.runState('question').word, needRows.length, needRows.map(([, h]) => h).join(''), needsWords().includes('(') ? needsWords().replace(/^\d+ needs? you \((.*)\)$/, '$1') : '')
     + sec('Limits', lim.length, lim.map((l, i) => row({ mark: R.kindMark({ kind: 'event', tone: l.tone === 'over' ? 'fail' : 'act', size: 16 }), title: l.title, meta: l.detail, time: l.time, key: 'lim' + i, tip: `${l.tip} · opens Usage and costs` })).join(''))
     + sec('Running', c.running.length, c.running.map((r) => runRow(r, 'Opens the live run')).join(''))
@@ -927,7 +927,7 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-pulse-retry]'))) { if (LIVE) A.retry(); else { window.RailDemoState.list = ''; render(); } return; }
   if ((el = tg('[data-land]'))) { e.preventDefault(); const [sset, label, list] = el.dataset.land.split('|'); land({ sset, label, list: !!list }); return; }
   if ((el = tg('[data-unlock]'))) { window.RailPulse.unlock(el.dataset.unlock); return; }
-  if ((el = tg('[data-fix]'))) { takeStep(C().updates.find((x) => x.id === el.dataset.fix)); return; }
+  if ((el = tg('[data-fix]'))) { if (el.dataset.fix.startsWith('np:projects/')) { window.RailProjects?.sync(el.dataset.fix.slice(12)); render(); return; } takeStep(C().updates.find((x) => x.id === el.dataset.fix)); return; }   // a behind project's Sync acts in place; the row does not open
   if ((el = tg('[data-team]'))) { ui.teamSeen = true; ui.acct = false; if (SHELL) { SHELL.closeDrawer(); SHELL.go('settings/team'); } else { ui.page = 'settings'; ui.sset = 'team'; } render(); return; }
   if ((el = tg('[data-pop]'))) { ui.pop = !ui.pop; ui.acct = false; ui.nr = null; if (ui.pop) opening = 'pop'; render(); return; }
   if ((el = tg('[data-acct]'))) { ui.acct = !ui.acct; ui.sub = ''; ui.pop = false; ui.nr = null; if (ui.acct) opening = 'acct'; render(); return; }
@@ -994,7 +994,7 @@ document.addEventListener('click', (e) => {
       else openTarget(u.go, u.title.split(' · ')[1] || u.title, `Opens ${u.to}`);
     }
     else if (key.startsWith('lim')) { const l = limitsNow()[+key.slice(3)]; openUsage(l.p ? pname(l.p) : ''); return; }
-    else if (key.startsWith('np:')) { ui.pop = null; window.RailShell.go(key.slice(3)); }
+    else if (key.startsWith('np:')) { ui.pop = null; const to = key.slice(3); if (/^projects\/(?!ws:)/.test(to) && window.RailProjects?.openNeed) window.RailProjects.openNeed(to.slice(9)); else window.RailShell.go(to); }   // a project opens at its fix
     else if (key.startsWith('act:')) { const a = C().actions.find((x) => x.id === key.slice(4)), r = a.runId && W.find(a.runId); if (r) openTarget('run/' + r.case, r.title, `Opens ${r.title}`, r.id); else toast(`${a.run} is gone; ${a.label} can still be stopped`); }
     else {
       const id = key.slice(2), r = W.tops().find((x) => x.id === id);

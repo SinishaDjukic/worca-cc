@@ -92,6 +92,46 @@ test('the spend card shows windowSpendUsd; #insights/spend draws the live page f
   for (const n of DEMO_NAMES) assert.ok(!d.getElementById('route-place').textContent.includes(n), `no seeded ${n}`);
 });
 
+test('a not-live place after Projects: the home bar, #bar-place hidden, no Projects row; back to Projects redraws its rows', async () => {
+  const { w, d, hello, sockets } = await liveHost();
+  await hello();
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'flags', flags: { rail: true, requirements: true } }) });   // Requirements on: not live, not locked (Insights is live since slice 10)
+  await settle();
+  const side = d.getElementById('side-rail'), place = d.getElementById('bar-place');
+  w.location.hash = '#projects'; await settle();
+  assert.equal(side.dataset.bar, 'place');
+  assert.match(place.textContent, /tasks need you/, 'Projects draws its rows');
+  w.location.hash = '#requirements'; await settle();
+  assert.equal(side.dataset.bar, 'home', 'a not-live place shows the home bar');
+  assert.ok(place.hidden || place.closest('[hidden]'), '#bar-place is hidden');
+  assert.equal(d.querySelector('[data-bar-new="place"]:not([hidden])'), null, 'no place "+" stays reachable');
+  assert.ok(![...side.querySelectorAll('*')].some((x) => !x.closest('[hidden]') && !x.hidden && /tasks need you/.test(x.textContent) && x.closest('#bar-place')), 'no reachable Projects row');
+  w.location.hash = '#insights'; await settle(120);
+  assert.ok(!/tasks need you/.test(place.textContent), 'a live place after a not-live one: its own bar, no Projects row');
+  w.location.hash = '#projects'; await settle();
+  assert.equal(side.dataset.bar, 'place');
+  assert.equal(place.hidden || !!place.closest('[hidden]'), false, '#bar-place shows again');
+  assert.match(place.textContent, /tasks need you/, 'back to Projects redraws its rows');
+});
+
+test('#requirements, flag on: not in Stillhet yet, where it is today, Back to Chat clicks to #chat', async () => {
+  const { w, d, hello, sockets } = await liveHost();
+  await hello();
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'flags', flags: { rail: true, requirements: true } }) });   // dev's flags frame: Labs' Requirements on
+  await settle();
+  w.location.hash = '#requirements'; await settle();
+  const today = d.getElementById('route-today');
+  assert.equal(today.hidden, false);
+  assert.equal(today.querySelector('.el-t').textContent, 'Requirements is not in Stillhet yet');
+  assert.match(today.textContent, /With Stillhet off, it is Requirements, under Build\./);
+  assert.doesNotMatch(today.textContent, /No requirements yet|is in Labs/);
+  const back = today.querySelectorAll('button[data-nav="chat"]');
+  assert.equal(back.length, 1);
+  assert.equal(back[0].textContent, 'Back to Chat');
+  back[0].click(); await settle();
+  assert.equal(w.location.hash, '#chat');
+});
+
 test('only the adapter writes: set, remove and taskGone change nothing; the Tasks list\'s menu and selection are dev\'s (Tasks D17)', async () => {
   const { w, d, hello } = await liveHost();
   await hello();
