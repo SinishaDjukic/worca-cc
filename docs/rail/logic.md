@@ -5,6 +5,8 @@
 | `logic.one-source` | A state's word, colour and action, a step's flow and where the work goes come from the library | A page that rebuilds them gets them wrong: Chat's list once turned Paused and Stopped into Ready | rail-gate |
 | `logic.pure` | The logic has no DOM and no mock data; a run's names reach it as facts | Chat, the run page and Pulse can all use it | design-system-logic |
 | `logic.no-guess` | An unknown state throws | A new state must be named here before a page can show it | design-system-logic |
+| `logic.pr-needs-a-base` | A finished task with no git remote reads `no-remote` (Link remote), one whose base is unknown reads `no-base` (Publish branch, Discard); neither offers Create PR | A PR opened into a guessed base lands on the wrong branch (F-3-03) | design-system-logic |
+| `logic.no-sample-base` | `workPhrase` with no base names the branch and its PR only (`feat/x`, `#9 merges feat/x`, `feat/x merged by #9`), never "into" | A live page once named the source branch, or the sample `dev`, as a PR's base (F-3-02) | design-system-logic |
 
 All of it is exported by `ui/public/design-system/components/index.mjs`.
 

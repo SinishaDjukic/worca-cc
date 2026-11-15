@@ -262,6 +262,8 @@ test('notLiveRow: a named row is its name and the exact sentence with nothing to
   assert.equal(line.querySelectorAll('button').length, 0);
   assert.equal(line.querySelector('.el-acts'), null);
   assert.doesNotMatch(line.textContent, /No .* yet/);
+  assert.equal(C.NOT_LIVE_SENTENCE, SENTENCE, 'pages read the sentence from the library, never retype it');
+  assert.equal(dom(C.notLiveRow({ name: 'x' })).querySelector('.set-text').textContent, C.NOT_LIVE_SENTENCE);
 });
 
 test('resetViewTool: its tooltip is where it goes, or why it is off (list.reset-view)', () => {

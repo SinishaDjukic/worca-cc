@@ -290,3 +290,49 @@ test('I7: a gate on a paused or stopped task keeps its case; stagesOf with no th
   assert.deepEqual(stagesOf(steps, GATE_NODES, {}), stagesOf(steps, GATE_NODES));
   assert.ok(!stagesOf(steps, GATE_NODES).flatMap((s) => s.steps).some((x) => /^(ask|blocked)$/.test(x.state)));
 });
+
+// B1.7 (#1321): the base is the PR's when known, else (no PR) the run's recorded base; never the source branch for a PR
+const FIN = (state = {}, row = {}) => ({ row: { id: 'pz', case: 'ready', title: 'Fin', detail: 'Finished', pr: '', ...row },
+  state: { id: 'pz', title: 'Fin', status: 'done', projectKey: 'web-1', branch: { source: 'docs/rail-agreed', feature: 'feat/x', branchKept: true }, steps: [], ...state } });
+const MERGED = { url: 'https://github.com/acme/web/pull/1307', state: 'MERGED' };
+
+test('F-3-02: a task with no PR takes its base from branch.source (docs/rail-agreed)', () => {
+  const card = taskCardOf(FIN());
+  assert.equal(card.base, 'docs/rail-agreed');
+  assert.equal(taskPageOf(FIN(), { now: NOW }).base, 'docs/rail-agreed');
+  // a closed-unmerged PR counts as none: the run's own base
+  assert.equal(taskCardOf(FIN({ pr: { url: PR_URL, state: 'CLOSED' } }, { pr: PR_URL })).base, 'docs/rail-agreed');
+});
+
+test('F-3-02: a merged PR with no checks entry has no base, never the source branch; an open PR\'s checks.base wins', () => {
+  const merged = FIN({ pr: MERGED, branch: { source: 'feat/run-4-slice-9-projects-and', feature: 'feat/x', branchKept: true } }, { case: 'merged', pr: MERGED.url });
+  assert.equal(taskCardOf(merged).base, undefined);
+  assert.equal(taskPageOf(merged, { now: NOW }).base, '');
+  assert.equal(taskPageOf(merged, { now: NOW }).pr, '#1307');
+  // the row alone (no state.pr) still says a PR stands
+  assert.equal(taskCardOf(FIN({}, { case: 'checks', pr: PR_URL })).base, undefined);
+  const open = FIN({ pr: { url: PR_URL, state: 'OPEN' } }, { case: 'checks', pr: PR_URL });
+  assert.equal(taskCardOf({ ...open, checks: { checks: { state: 'pending' }, base: 'docs/rail-agreed' } }).base, 'docs/rail-agreed');
+  assert.equal(taskCardOf({ ...open, checks: { checks: { state: 'pending' }, base: null } }).base, undefined, 'no base yet: none, never the source');
+});
+
+test('F-3-03: the no-remote card and page say \'This project has no git remote\'', () => {
+  const nr = FIN({}, { case: 'no-remote' });
+  assert.equal(taskCardOf(nr).detail, 'This project has no git remote');
+  const page = taskPageOf(nr, { now: NOW });
+  assert.equal(page.case, 'no-remote');
+  assert.equal(page.detail, 'This project has no git remote');
+  assert.equal(page.base, 'docs/rail-agreed', 'a known base still shows');
+});
+
+test('B1.7 unknown base: the no-base card and page say \'Base unknown: …\' and carry no base', () => {
+  // one fixture for the store and the page: the row's sourceBranch and the state's branch.source are the same SHA (I4)
+  const SHA = 'a1b2c3d4e5f6';
+  const nb = FIN({ branch: { source: SHA, feature: 'feat/x', branchKept: true } }, { case: 'no-base' });
+  const card = taskCardOf(nb);
+  assert.equal(card.detail, 'Base unknown: Worca cannot tell where to open a PR');
+  assert.equal(card.base, undefined);
+  const page = taskPageOf(nb, { now: NOW });
+  assert.deepEqual([page.case, page.detail, page.base, page.branch], ['no-base', 'Base unknown: Worca cannot tell where to open a PR', '', 'feat/x']);
+  assert.equal(taskCardOf(FIN({ branch: { source: '', feature: 'feat/x' } })).base, undefined);
+});

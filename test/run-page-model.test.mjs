@@ -211,3 +211,27 @@ test('O2: the prototype\'s ready-issues case draws its blocked review as a probl
   const y = stepsOf(M.view('ready-issues', {}), 'review')[0];
   assert.deepEqual(J([y.name, y.rowCls, y.live, y.loops]), ['Review implementation', 'is-problem', 'Blocked · accepted with 2 open issues', 3]);
 });
+
+test('B1.7: the prototype\'s "Ready, base unknown" offers no Create PR and names no base; a live page never takes the sample base', () => {
+  assert.ok(ids.includes('no-base'), 'the case is in the picker');
+  const v = M.view('no-base', {});
+  const labels = [v.action.label, ...v.action.items.map((x) => x.text)];
+  assert.ok(!labels.some((l) => /^Create/.test(l)), labels.join());
+  assert.equal(v.place.base, '');
+  assert.equal(v.detail, 'Base unknown: Worca cannot tell where to open a PR');
+  assert.equal(M.view('ready', {}).place.base, 'dev', 'I6: the demo keeps its sample base');
+  const live = M.liveRun({ id: 'pz', case: 'ready', title: 'Fin', branch: 'feat/x', base: '', stages: [], review: { roles: [], issues: [] } });
+  assert.equal(M.view(live.id, { run: live }).place.base, '', 'a live task with no base shows none');
+});
+
+test('F-a4-03: liveRun of a running task with no steps yet is not over when liveRunning, and offers Pause and Stop; without liveRunning (or with a question) it is over', () => {
+  const idle = ['plan', 'build', 'review'].map((key) => ({ key, state: 'next', steps: [] }));
+  const run = M.liveRun(page({ case: 'working', liveRunning: true, stages: idle }));
+  assert.equal(run.over, false, 'a running task whose steps have not arrived is not over');
+  const v = M.view(run.id, { run });
+  assert.equal(v.action.label, 'Pause');
+  assert.ok(v.action.items.some((x) => x.text === 'Stop the task'), J(v.action.items.map((x) => x.text)));
+  const before = M.liveRun(page({ case: 'working', stages: idle }));
+  assert.equal(before.over, true, 'without liveRunning (pipeline unknown, or waiting on a question) it reads as today');
+  assert.equal(M.view(before.id, { run: before }).action, null);
+});

@@ -4,7 +4,7 @@
 //     `state`, patched by the live run's `state` frames), checks: the task's checks entry (task-live.mjs, GET /api/pr/checks),
 //     group, plan, diff }.
 // A field dev cannot fill is left out, so the part that draws it hides (D3).
-import { prCaseOf, stageOfStep, STAGE_LABEL, failureItems, shortDetail } from './live-map.mjs';
+import { prCaseOf, stageOfStep, STAGE_LABEL, failureItems, shortDetail, knownBase } from './live-map.mjs';
 import { currentPass } from '../../../../src/shared/shape/role-review.mjs';
 
 export { stageOfStep };
@@ -92,6 +92,16 @@ const prOf = (row, state) => {
   const pr = state?.pr && typeof state.pr === 'object' ? state.pr : null;
   return { url: str(pr?.url) || str(row?.pr), state: str(pr?.state).toUpperCase() || (str(row?.pr) ? 'OPEN' : '') };
 };
+/** The task's base (B1.7 D1): its PR's (the checks entry's), else, with no standing PR, the run's recorded base when it is a
+ *  branch name. A PR that stands (open or merged) with no known base has none: never the source branch, never a sample. */
+function baseOf({ row = {}, state = {}, checks = null }) {
+  if (str(checks?.base)) return checks.base;
+  const pr = prOf(row, state);
+  if (pr.url && pr.state !== 'CLOSED') return '';
+  return knownBase(state.branch?.source);
+}
+// why a finished task with its branch offers no Create PR (B1.7 D7): no-remote's words are the prototype's case detail
+const NO_PR_WHY = { 'no-remote': 'This project has no git remote', 'no-base': 'Base unknown: Worca cannot tell where to open a PR' };
 const prNumber = (url) => (/\/(?:pull|pullrequest|pull-requests)\/(\d+)/.exec(str(url)) || [])[1] || '';
 
 const sevWord = (v) => { const t = str(v) || 'suggestion'; return t[0].toUpperCase() + t.slice(1).toLowerCase(); };
@@ -146,12 +156,12 @@ export function taskCardOf(input = {}) {
   const c = caseFor(input);
   const pr = prOf(row, state);
   const branch = str(state.branch?.feature);
-  const base = str(checks?.base) || str(state.branch?.source);
+  const base = baseOf(input);
   const fail = failureOf(state);
   const why = fail ? fail.items : /^(approved|failing|conflicts|checks)$/.test(c) ? checksWhy(checks) : [];
   // R-arch-3: the card's failure line is the one Pulse and the bell draw (live-map.mjs shortDetail)
   const failed = fail ? arr(state.steps).filter((s) => FAILED_STEP.test(lc(s?.status))).at(-1) : null;
-  const detail = fail ? shortDetail({ status: 'failed', error: str(failed?.error) || str(state.error) || str(state.pauseDetail), step: failed || null }) : '';
+  const detail = fail ? shortDetail({ status: 'failed', error: str(failed?.error) || str(state.error) || str(state.pauseDetail), step: failed || null }) : NO_PR_WHY[c] || '';
   const git = gitOf(c, pr, branch);
   const w = checks?.watch;
   const watch = w && typeof w === 'object' ? (w.status === 'fixing' || w.status === 'starting' ? 'fix' : w.watching ? 'idle' : '') : '';

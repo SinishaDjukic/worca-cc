@@ -370,6 +370,23 @@ test('a project with no remote offers Link remote, never Create PR; a mock run o
   assert.equal(R.runState('mock-run').word, 'Mock task'); assert.equal(R.runState('mock-run').action, null);
 });
 
+test('B1.7: no-base offers Publish branch and Discard, never Create PR or Link remote; its section is Ready\'s', () => {
+  const s = R.runState('no-base'), labels = [s.action.label, ...s.action.items];
+  assert.equal(s.word, 'Ready');
+  assert.deepEqual(labels, ['Publish branch', 'Discard']);
+  assert.ok(!labels.some((l) => /Create|Link remote|How to merge/.test(l)), labels.join());
+  assert.equal(R.sectionOf(s.word, 'no-base'), R.sectionOf(R.runState('no-remote').word, 'no-remote'));
+  assert.deepEqual(Object.keys(R.actionFlow('no-base', { branch: 'feat/x' })), ['Publish branch', 'Discard']);
+});
+
+test('F-3-02: workPhrase with no base: \'feat/x\', \'#9 merges feat/x\', \'feat/x merged by #9\'', () => {
+  assert.equal(R.workPhrase({ branch: 'feat/x', base: '' }), 'feat/x');
+  assert.equal(R.workPhrase({ branch: 'feat/x' }), 'feat/x');
+  assert.equal(R.workPhrase({ branch: 'feat/x', base: '', pr: '#9' }), '#9 merges feat/x');
+  assert.equal(R.workPhrase({ branch: 'feat/x', base: '', pr: '#9', merged: true }), 'feat/x merged by #9');
+  assert.doesNotMatch(R.workPlace({ branch: 'feat/x', base: '' }), /into|rc-base/);
+});
+
 test('sectionOf: a list reads a real case: Paused and Stopped are never Ready, and every state has its section', () => {
   for (const id of R.stateIds()) assert.ok(['needs', 'running', 'scheduled', 'recent'].includes(R.sectionOf(R.runState(id).word)), id);
   assert.equal(R.runState('paused').word, 'Paused'); assert.equal(R.sectionOf('Paused'), 'needs');

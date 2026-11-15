@@ -125,6 +125,7 @@ other library calls, never a person's text: a person's text goes through the lib
 |---|---|---|
 | A limit's tooltip: what, whose, how much, when it resets | `usageTip` | UsageRing |
 | A limit's window in words: Session, Weekly | `usageWindow` | UsageRing |
+| A live Settings control not wired yet: its reason | `NOT_LIVE_SENTENCE` | NotLiveRow |
 | Only the providers that count: one signed out has no ring | `connectedUsage` | UsageRing |
 | What holds the rows of the profile menu | `navFlyout` | AccountItem |
 | One of Appearance's choices: light, dark, system | `themeChoice` | AccountItem |

@@ -345,7 +345,7 @@
     [['paused', 'interrupted', 'capped'], 'Clears when you resume or stop it'],
     [['failed'], 'Clears once you open it'],   // dev counts a failed run nobody opened yet
     [['pr-changes', 'failing', 'conflicts', 'checks', 'approved', 'pr-behind', 'pr-blocked'], 'Clears when its pull request no longer needs you'],
-    [['ready', 'no-remote'], 'Clears when you create its pull request or discard it'],
+    [['ready', 'no-remote', 'no-base'], 'Clears when you create its pull request or discard it'],
     [['missed'], 'Clears when you run it or cancel it'],
     [['project-behind'], 'Clears when you sync it'],   // a project by its state, each naming its one fix (projects.js needOf)
     [['project-diverged'], 'Clears when you bring them together'],

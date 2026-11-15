@@ -241,7 +241,7 @@ function changesPanel(v) {
   // Documents its steps wrote: they stay with the task and are not in the PR. A name opens it; one download at the end.
   const arts = v.over.artifacts;
   const docs = arts.length ? head('Not in the code', String(arts.length)) + `<li class="ch-gnote">Written by the task’s steps; they stay with the task and are not in the PR</li>` + arts.map(([doc, step], i) => `<li class="ch-file ch-doc${ui.land === 'doc:' + i ? ' is-flash' : ''}"><span class="ch-st" aria-hidden="true"></span><span class="ch-name">${R.documentLink({ name: doc, attrs: { 'data-key': 'art:' + i, 'data-doc': i, title: 'Open ' + doc } })}<span class="ch-path">from ${esc(step)}</span></span>${R.button({ label: 'Download ' + doc, kind: 'quiet', iconOnly: true, icon: svg('download', 14), attrs: LIVE_PAGE() ? { 'data-key': 'dl:' + i, 'data-dl': i } : { 'data-key': 'dl:' + i, 'data-say': window.RailWould('download ' + doc) } })}</li>`).join('') : '';
-  const where = v.place.folder ? `In a copy of ${v.place.folder}; Apply writes them into the folder.` : v.place.branch ? `${v.place.branch} into ${v.place.base || 'dev'}` : '';
+  const where = v.place.folder ? `In a copy of ${v.place.folder}; Apply writes them into the folder.` : v.place.branch ? (v.place.base ? `${v.place.branch} into ${v.place.base}` : v.place.branch) : '';
   // The code's own actions sit in the Changes head, as the card's action does: Check out, the rest in its ▾.
   const chItems = (v.bar.stop ? [{ id: 'ch:refresh', text: 'Refresh', help: 'Reload the diff from the worktree' }] : [])
     .concat([{ id: 'ch:patch', text: 'Download patch', help: 'Every change as one .patch file' }, { id: 'ch:copy', text: 'Copy git commands', help: 'git fetch and git switch to this branch' }]);
@@ -251,7 +251,7 @@ function changesPanel(v) {
   // is dev's patch, and the git commands copy for real
   const tools = v.place.folder || (LIVE_PAGE() && !v.place.branch) ? '' : R.splitButton({ main: { label: ui.copy && !LIVE_PAGE() ? 'Unlink' : 'Check out', title: coWhy || (ui.copy ? 'Lets go of the local copy; the branch stays' : 'Check the branch out on this machine'), attrs: { 'data-key': 'ch:checkout', 'data-checkout': true, disabled: !!coWhy } },
     moreLabel: 'More for these changes', chevron: svg('chevron', 14), open: ui.menu === 'ch', menuHtml: menu('ch', chItems), moreAttrs: { 'data-menu': 'ch', 'data-key': 'menu:ch' }, cls: 'rc-pop is-right ch-act' });
-  return `<section class="rtab"><div class="ch-head"><div class="ch-sum"><h2 class="rtab-h">${f.length} ${f.length === 1 ? 'file' : 'files'} <span class="ct"><span class="add">+${add}</span><span class="del">−${del}</span></span></h2><span class="rtab-dim" title="${esc(where)}">${v.place.folder ? esc(where) : R.workPlace({ branch: v.place.branch, base: v.place.base || 'dev' })}</span></div>${tools}</div>
+  return `<section class="rtab"><div class="ch-head"><div class="ch-sum"><h2 class="rtab-h">${f.length} ${f.length === 1 ? 'file' : 'files'} <span class="ct"><span class="add">+${add}</span><span class="del">−${del}</span></span></h2><span class="rtab-dim" title="${esc(where)}">${v.place.folder ? esc(where) : R.workPlace({ branch: v.place.branch, base: v.place.base })}</span></div>${tools}</div>
     ${actionsHtml(v)}<ul class="ch-list">${rows}${docs}</ul></section>`;
 }
 function activityPanel(v) {
@@ -549,7 +549,7 @@ function liveAction(v, a) {
     const items = (a.items || []).filter((it) => it && own(it.text));
     return own(a.label) ? Object.assign({}, a, { items }) : items.length ? Object.assign({}, a, { label: items[0].text, items: items.slice(1) }) : null;
   }
-  const ok = (label) => typeof label === 'string' && !(label === 'Switch model…' && !liveModels.length) && (label === 'Full plan' ? livePlanDoc() >= 0 : T.canFlow((((v.flow || {})[label] || {}).live) || LIVE_ACT_LABEL[label] || label, { pr, case: ui.caseId, page: true, taskId: ui.taskId }));
+  const ok = (label) => typeof label === 'string' && !(label === 'Switch model…' && !liveModels.length) && (label === 'Full plan' ? livePlanDoc() >= 0 : label === 'Link remote' ? ui.caseId === 'no-remote' : T.canFlow((((v.flow || {})[label] || {}).live) || LIVE_ACT_LABEL[label] || label, { pr, case: ui.caseId, page: true, taskId: ui.taskId }));
   // the ▾ items are menu entries ({ text, … }); a separator or a header has no action of its own and goes with them
   const items = (a.items || []).filter((it) => it && !it.sep && !it.header && ok(it.text));
   if (ok(a.label)) return Object.assign({}, a, { items });
@@ -843,6 +843,13 @@ async function liveTool(id, args, key) {
 function act(label) {
   if (label === 'Ask for changes' || label === 'Revise') { const v = M.view(ui.caseId, ui); ui.changesFor = label; ui.dialog = 'changes'; ui.changesText = ''; ui.menu = ''; if (!LIVE_PAGE() && (v.id === 'plan' || v.id === 'outline')) { draft('changes'); pendingFocus = 'draft-stop'; } else pendingFocus = 'changes-text'; return; }
   if (label === 'Full plan') { openDoc(LIVE_PAGE() ? livePlanDoc() : 0); return; }
+  // live: Link remote opens the task's project, whose More menu holds Link a remote… (B1.7 D12); it changes nothing, so no confirm
+  if (label === 'Link remote' && LIVE_PAGE()) {
+    const to = placeOf('projects/{project}'), say = to.go === 'projects' ? to.say : `${to.say}: Link a remote… is in its More menu`;
+    ui.menu = '';
+    if (SHELL) { SHELL.go(to.go); window.RailPulse?.say(say); } else toast(say);
+    return;
+  }
   if (label === 'Review the workflow') { ui.dialog = 'graph'; ui.graphNode = null; ui.menu = ''; pendingFocus = 'vd-close'; return; }
   if (label === 'Watch' || label === 'Watch PRs') { const it = M.view(ui.caseId, ui).action.items.find((x) => x.text === label); ui.watched = !(it && it.checked); ui.menu = ''; toast(ui.watched ? (label === 'Watch' ? 'Worca watches the PR and fixes failing checks' : 'Worca watches all three PRs') : 'Worca stopped watching'); pendingFocus = 'act-main'; return; }
   if (label === 'Next question' || label === 'Previous question') { ui.question = (ui.question || 0) + (label === 'Next question' ? 1 : -1); ui.answer = null; ui.answerOwn = ''; ui.menu = ''; pendingFocus = 'act-main'; return; }

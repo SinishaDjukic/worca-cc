@@ -125,7 +125,7 @@ test('the page\'s own tools: Changes › Check out posts dev\'s checkout route w
 });
 
 test('create-pr: the Create PR dialog starts on the task\'s base and posts what you wrote and picked: title, description, draft, watch, base (code review r9)', async () => {
-  const h7 = { id: 'h7', title: 'Ready one', status: 'done', projectName: 'web', projectKey: 'web-1', branch: 'feat/ready', survived: true, startedAt: SOURCES.history.pipelines[2].startedAt, mtime: SOURCES.history.pipelines[2].mtime };
+  const h7 = { id: 'h7', title: 'Ready one', status: 'done', projectName: 'web', projectKey: 'web-1', branch: 'feat/ready', sourceBranch: 'main', survived: true, startedAt: SOURCES.history.pipelines[2].startedAt, mtime: SOURCES.history.pipelines[2].mtime };
   const s = sources(); s.history.pipelines.push(h7);
   const state = { id: 'h7', title: 'Ready one', status: 'done', projectKey: 'web-1', projectDir: '/src/web', branch: { source: 'main', feature: 'feat/ready', branchKept: true }, totalCostUsd: 0.2, totalActiveMs: 60000, steps: [] };
   const h = await liveHost({ sources: s, read: (u) => (u === '/api/history/web-1/h7' ? [200, { state }] : read(u)), write: () => [200, { ok: true }] });
@@ -141,4 +141,30 @@ test('create-pr: the Create PR dialog starts on the task\'s base and posts what 
   const draft = d.querySelector('#pd-draft'); draft.checked = true; draft.dispatchEvent(new w.Event('change', { bubbles: true }));
   d.querySelector('#card [data-key="pd-ok"]').click(); await settle(80);
   assert.deepEqual(sent(calls), [['POST', '/api/pr', { id: 'h7', title: 'My title', body: 'What it did', draft: true, watch: true, baseBranch: 'main', projectKey: 'web-1' }]]);
+});
+
+test('F-a4-03 + F-a1-09: a running task opened by its run id shows Pause and Stop once its state frame names the pipeline; they post with the run id (Stop after its confirm); no run-id 404 route is called', async () => {
+  const s = sources(); s.hello.runs.find((r) => r.runId === 'run-b').pipelineId = null;
+  const { w, d, calls, sockets } = await page('run-b', { sources: s });
+  const runIdRoute = /^\/api\/(runs|pipelines)\/run-b\/(?!live-diff)/;
+  assert.notEqual(main(d)?.dataset.label, 'Pause', 'no Pause before the pipeline is known');
+  assert.deepEqual(calls.map((c) => c.url).filter((u) => runIdRoute.test(u)), [], 'no run-id route in place of the pipeline id');
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'state', runId: 'run-b', id: 'pb', status: 'running', steps: [{ id: 'implementer', agent: 'implementer', status: 'running' }] }) });
+  await settle(300);
+  assert.equal(main(d).dataset.label, 'Pause');
+  assert.deepEqual(calls.map((c) => c.url).filter((u) => runIdRoute.test(u)), [], 'still none after: the parts are read by the pipeline id');
+  assert.ok(calls.some((c) => c.url === '/api/runs/pb/artifacts'), 'the parts are read with the pipeline id');
+  // Pause: its confirm (when one is drawn) first, then POST /api/pause with the run id
+  main(d).click(); await settle(80);
+  if (d.querySelector('#card [data-confirm="yes"]')) { assert.deepEqual(sent(calls), [], 'nothing before the confirm'); await yes(d); }
+  assert.deepEqual(sent(calls), [['POST', '/api/pause', { runId: 'run-b' }]]);
+  // Stop: in the action's menu, asks first, then POST /api/stop with the run id
+  await go(w, '#runs', 50); await go(w, '#run/run-b', 250);
+  d.querySelector('#card [data-menu="act"]').click(); await settle(30);
+  const stop = [...d.querySelectorAll('#card [data-menu-pick]')].find((b) => b.textContent.trim() === 'Stop the task');
+  assert.ok(stop, 'the action menu lists Stop the task');
+  stop.click(); await settle(80);
+  assert.equal(sent(calls).length, 1, 'Stop is not sent before its confirm');
+  await yes(d);
+  assert.deepEqual(sent(calls).at(-1), ['POST', '/api/stop', { runId: 'run-b' }]);
 });

@@ -252,3 +252,20 @@ test('the live tick re-reads the budget every 60 s only while a run is running, 
   await r.tick(60000); await r.tick(250);
   assert.equal(count(n), 0, 'no run is running');
 });
+
+test('F-a4-03: a state frame that first names a run\'s pipeline id hands it to task-live; a reconnect hello that names it does too', async () => {
+  const run = (pipelineId) => ({ runId: 'run-x', pipelineId, projectDir: '/src/web', title: 'New', status: 'running', pendingQuestion: null, startedAt: SOURCES.hello.runs[1].startedAt });
+  const r = rig(); await r.tick(); r.frame({ ...hello, runs: [...hello.runs, run(null)] }); await r.tick();
+  await r.live.task.open('run-x'); await r.tick();
+  assert.ok(!gets(r.calls).some((u) => /\/(runs|pipelines)\/run-x\/(?!live-diff)/.test(u)), 'nothing keyed by the run id in place of the pipeline id');
+  assert.equal(r.live.task.detail('run-x').liveRunning, false);
+  r.frame({ type: 'state', runId: 'run-x', id: 'px', status: 'running', steps: [] }); await r.tick();
+  assert.equal(r.live.task.resolve('run-x').pipelineId, 'px');
+  for (const u of ['/api/runs/px/artifacts', '/api/pipelines/px/setup', '/api/runs/px/sessions']) assert.ok(gets(r.calls).includes(u), u);
+  assert.equal(r.live.task.detail('run-x').liveRunning, true, 'Pause and Stop once the pipeline is known');
+  // the reconnect: the frame was lost, the next hello names the pipeline
+  const y = rig(); await y.tick(); y.frame({ ...hello, runs: [...hello.runs, run(null)] }); await y.tick();
+  await y.live.task.open('run-x'); await y.tick();
+  y.frame({ ...hello, runs: [...hello.runs, run('py')] }); await y.tick();
+  assert.ok(gets(y.calls).includes('/api/runs/py/artifacts'), 'read with the pipeline id after the hello');
+});

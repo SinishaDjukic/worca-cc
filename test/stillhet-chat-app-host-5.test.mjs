@@ -86,7 +86,7 @@ test('one-stage workflow: a refused save leaves Run with enabled', async () => {
   assert.equal(toastText(d), 'Could not save the workflow: name taken');
 });
 
-const READY = () => savedRun({ status: 'done', branch: 'feat/x', survived: true, projectKey: 'web-1a2b3c4d', projectDir: '/src/web' });
+const READY = () => savedRun({ status: 'done', branch: 'feat/x', sourceBranch: 'main', survived: true, projectKey: 'web-1a2b3c4d', projectDir: '/src/web' });
 async function createPr(pr) {
   const h = await liveHost({ sources: READY(), write: (url) => (url === '/api/pr' ? pr() : [200, {}]), beforeScripts: blurOnDisable });
   await go(h.w, '#chat/ask_1');
