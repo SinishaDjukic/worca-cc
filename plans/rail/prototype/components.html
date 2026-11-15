@@ -161,6 +161,7 @@
     SideColumn: [['Its frame', `<div class="ask-side rl-gal-side">${R.sideColumn({ title: 'Ask worca', body: '<p>The chat, as it is today.</p>', close: R.icon('x', 14) })}</div>`]],
     AwayScreen: [['Filling its box', `<div class="rl-gal-away">${R.awayScreen({ line: 'Everything is under control.' })}</div>`]],
     NotFound: [['An address that names nothing', R.notFound({ what: 'project', name: 'nope', back: 'Projects' })]],
+    NotInStillhet: [['A place not in Stillhet yet', R.notInStillhet({ place: 'Insights', today: 'Statistics and Team metrics' })]],
     ResetView: [['Changed, and at the default', R.compactMenu({ items: [R.resetViewTool({ changed: true, to: 'all tasks, from all projects, by date' }), { ...R.resetViewTool({ changed: false, to: '' }), id: 'reset2' }] })]],
     EmptyState: [['Empty', R.emptyState({ title: 'No runs yet', actions: R.button({ label: 'Start a run', kind: 'quiet' }) })],
       ['A part that cannot be drawn', R.emptyState({ title: 'Could not show the changes', text: 'Something went wrong here. The rest of the page still works.', error: true, actions: R.button({ label: 'Reload this part' }) + R.button({ label: 'Details', kind: 'quiet' }) })]],

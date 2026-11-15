@@ -28,7 +28,7 @@ export async function liveHost({ sources = SOURCES, getStatus = () => 200, post 
     if (url === '/api/history/pr') return { ok: true, status: 200, json: async () => ({ ok: true }) };   // History's PR lookup: a read, its answer comes as frames
     if (method !== 'GET') {
       const body = o.body ? JSON.parse(o.body) : null; posts.push({ url, method, body });
-      const [status, data] = post(url, body);
+      const [status, data] = await post(url, body);   // a test may hold a write back: it answers when the test says
       return { ok: status < 300, status, json: async () => data };
     }
     gets.push(url);

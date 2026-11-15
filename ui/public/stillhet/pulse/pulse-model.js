@@ -347,7 +347,9 @@
     [['pr-changes', 'failing', 'conflicts', 'checks', 'approved', 'pr-behind', 'pr-blocked'], 'Clears when its pull request no longer needs you'],
     [['ready', 'no-remote'], 'Clears when you create its pull request or discard it'],
     [['missed'], 'Clears when you run it or cancel it'],
-    [['project'], 'Clears when the project is fixed'],
+    [['project-behind'], 'Clears when you sync it'],   // a project by its state, each naming its one fix (projects.js needOf)
+    [['project-diverged'], 'Clears when you bring them together'],
+    [['project-missing'], 'Clears when you locate its folder'],
   ];
   /** The phrase for a state id or row kind; '' for one not in the table (never guessed from its word). */
   function clearsWhen(key) {

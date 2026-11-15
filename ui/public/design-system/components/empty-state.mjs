@@ -25,3 +25,15 @@ export function emptyState({ title, text = '', actions = '', error = false }) {
 export function notFound({ what, name = '', back, attrs = {} }) {
   return emptyState({ title: name ? `There is no ${what} called ${name}` : `There is no such ${what}`, text: 'It may have been removed, or the address is wrong.', actions: button({ label: `Go to ${back}`, kind: 'quiet', attrs }) });
 }
+
+/**
+ * NotInStillhet: a place that is not in Stillhet yet says so, names where it lives today in words, and offers Back to
+ * Chat; it never reads as empty ("No … yet") and holds no switch (nav.not-live).
+ * @param {object} o
+ * @param {string} o.place     the place's name ("Insights")
+ * @param {string} [o.today]   where it lives with Stillhet off ("Statistics and Team metrics")
+ * @param {object} [o.attrs]   Back to Chat's hooks
+ */
+export function notInStillhet({ place, today = '', attrs = {} }) {
+  return emptyState({ title: `${place} is not in Stillhet yet`, text: today ? `With Stillhet off, it is ${today}.` : 'It has no Stillhet screen yet.', actions: button({ label: 'Back to Chat', kind: 'quiet', attrs }) });
+}

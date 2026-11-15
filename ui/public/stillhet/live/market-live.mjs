@@ -35,6 +35,7 @@ const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 export function startMarketLive({ fetch, toast = () => {}, open = (u) => globalThis.window?.open(u, '_blank', 'noopener'), on = () => {}, setTimeout: later = globalThis.setTimeout, clearTimeout: cancel = globalThis.clearTimeout, now = () => Date.now() }) {
   let lists = {}, configs = {}, state = 'loading', started = null, records = { markets: [], plugins: [] };
   const busy = new Map(), hidden = new Map(), asked = new Map(), fields = new Map(), seq = {};
+  const tried = new Set(), pending = new Set();   // the first sync (#1298): sent once per never-synced builtin per page load
 
   async function send(id, args = {}) {
     const [, build] = MARKET_ACTIONS[id], [method, url, body] = build(args);
@@ -68,8 +69,23 @@ export function startMarketLive({ fetch, toast = () => {}, open = (u) => globalT
     fresh.forEach((n) => { lists[n] = answers[names.indexOf(n)].data; });
     if (cfg && fresh.includes('plugins')) configs = cfg;
     state = 'ready'; rebuild(); on();
+    if (fresh.includes('markets')) firstSync();
     return true;
   }
+  // a builtin that has never synced (dev seeds it with lastSync: null) is synced once, quietly: a failure shows on the
+  // page through the market's error, never as a toast; a source the person added, or one that needs git, is never synced here
+  const neverSynced = (m) => m?.builtin === true && !m.lastSync && !m.needsGit;
+  function firstSync() {
+    for (const m of marketsOf(lists.markets)) {
+      if (!neverSynced(m) || tried.has(m.id)) continue;
+      tried.add(m.id); pending.add(m.id);
+      once(`source:${m.id}`, 'sync', async () => { await send('sync', { id: m.id }); await reread(); })
+        .finally(() => { pending.delete(m.id); on(); });
+    }
+  }
+  /** True while a never-synced builtin's first sync is still to be sent or still runs: read from the lists, so the very
+   *  draw that first shows them is already Loading the catalogue, never No plugins yet. */
+  const firstSyncing = () => marketsOf(lists.markets).some((m) => neverSynced(m) && (!tried.has(m.id) || pending.has(m.id)));
   let inflight = null;
   function load() {
     if (state === 'failed') { state = 'loading'; on(); }   // Try again shows the read it starts
@@ -263,7 +279,7 @@ export function startMarketLive({ fetch, toast = () => {}, open = (u) => globalT
     load, refresh: (...n) => (started ? refresh(...(n.length ? n : Object.keys(LISTS))) : Promise.resolve(false)),
     data: () => { begin(); return records; },
     status: () => { begin(); return state; },
-    pending: (id) => busy.get(id) || '',
+    pending: (id) => busy.get(id) || '', firstSyncing,
     install, update, updateAll, remove, setupFields, saveSetup, sync, addSource, deferRemoveSource, openSource, openMarket,
   };
 }

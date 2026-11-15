@@ -135,10 +135,25 @@
     if (key.startsWith('src-')) { const m = src().markets.find((x) => x.id === key.slice(4)); return { title: m?.name || 'Source', meta: m ? `${m.url} · synced ${m.synced}` : '', list: src().plugins.filter((p) => p.market === m?.id) }; }
     return null;
   }
+  // the catalogue with no plugins at all (#1298): Loading while a never-synced builtin's first sync runs, then No plugins yet
+  // with its Sync, and why it is empty in words; a filtered view with plugins elsewhere keeps its own empty line
+  const firstSyncing = () => !!LIVE()?.firstSyncing();
+  const noCatalogue = () => !src().plugins.length;
+  const firstLine = (t) => t.split('\n').map((x) => x.trim()).find(Boolean)?.slice(0, 120) || '';
+  function catalogueEmpty(all = '') {
+    const ms = src().markets, m = ms.find((x) => x.builtin && x.synced === 'never') || ms.find((x) => x.builtin) || ms[0];
+    if (!m) return R.emptyState({ title: 'No plugins yet', text: 'Add a source to see plugins.', actions: all });
+    const busy = !!busyOf(`source:${m.id}`), never = m.synced === 'never';
+    const text = never && m.error ? `The last sync of ${m.name} failed: ${firstLine(m.error)}` : never ? `Sync fetches the catalogue from ${m.name}.` : 'Your sources list no plugins. Sync checks them again.';
+    return R.emptyState({ title: 'No plugins yet', text, actions: R.button({ label: busy ? 'Syncing…' : 'Sync', kind: 'quiet', attrs: { 'data-mk-sync': m.id, disabled: busy } }) + all });
+  }
+  const catalogueLoading = () => R.listState({ state: 'loading', noun: 'the catalogue' });
   function emptyOf(key, w) {   // an empty view says what comes next
     const goto = (label, to) => R.button({ label, kind: 'quiet', attrs: { 'data-mk-goto': to } });
+    if (noCatalogue() && firstSyncing()) return catalogueLoading();
     if (key.startsWith('src-')) return R.emptyState({ title: 'No plugins from this source yet.', text: 'A plugin shows here once its repository or folder holds a worca-cc-plugin.json. Sync after adding one.', actions: R.button({ label: 'Sync', attrs: { 'data-mk-sync': key.slice(4) } }) + goto('All plugins', '~all') });
     if (w.fresh) return R.emptyState({ title: 'You have installed them all.', text: 'What they added is in your workflows and agents.', actions: goto('Installed', '~installed') });
+    if (noCatalogue()) return catalogueEmpty(goto('All plugins', '~all'));
     return R.emptyState({ title: key === 'updates' ? 'Everything is up to date.' : 'Nothing here yet.', actions: goto('All plugins', '~all') });
   }
   function wayHtml(key) {
@@ -155,6 +170,7 @@
     const shelf = (title, meta, list, cls = '') => (list.length ? `<section class="pg-shelf ${cls}"><h2 class="pg-shelf-h">${esc(title)} <span class="n">${list.length}</span></h2>${meta ? `<p class="pg-shelf-m">${esc(meta)}</p>` : ''}<div class="pg-grid">${list.map((p) => cardOf(p, cls === 'pg-for')).join('')}</div></section>` : '');
     return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${R.placeHead({ title: 'Marketplace', facts: `${src().plugins.length} plugins · ${src().plugins.filter((p) => p.installed).length} installed · from ${m.length === 1 ? esc(m[0].name) : `${m.length} sources`}`,
       ...(ups.length ? { mark: R.kindMark({ kind: 'plugin', tone: 'act' }), word: `${ups.length} ${ups.length === 1 ? 'update' : 'updates'}`, why: `${ups.map((p) => `${nameOf(p)} ${p.update}`).join(', ')} asks for nothing new`, ...(ups.length > 1 ? { action: R.button({ label: updatingAll ? WORKING.update : 'Update all', attrs: { 'data-mk-update-all': '', disabled: updatingAll } }) } : {}) } : {}) })}
+      ${noCatalogue() ? (firstSyncing() ? catalogueLoading() : catalogueEmpty()) : ''}
       ${shelf('For you', 'Worca suggests these from how you work; each says why.', yours, 'pg-for')}
       ${SHELVES.map(([t, meta, kinds]) => shelf(t, meta, rest.filter((p) => kinds.includes(p.kind)))).join('')}
       ${R.settingsSection({ title: 'Where plugins come from', rows: m.map((x) => R.settingsRow({ name: x.name, sentence: `${x.webUrl ? R.textLink({ label: x.url, attrs: { 'data-mk-market': x.id, title: 'Opens it on GitHub, in a new tab' } }) : esc(x.url)}${esc([`synced ${x.synced}`, x.sha].filter(Boolean).map((t) => ` · ${t}`).join(''))}`, end: R.button({ label: busyOf(`source:${x.id}`) ? 'Syncing…' : 'Sync', kind: 'quiet', attrs: { 'data-mk-sync': x.id, disabled: !!busyOf(`source:${x.id}`) } }) + (x.builtin ? '' : R.button({ label: 'Remove', kind: 'quiet', attrs: { 'data-mk-unsource': x.id, title: 'Stops looking here; Undo brings it back' } })) })).join('') + R.settingsRow({ name: 'Add one', sentence: R.field({ id: 'mk-add', label: 'Repository or folder', quietLabel: true, placeholder: 'owner/repo, a GitHub URL or a folder', value: addVal, error: addErr, attrs: { 'data-mk-add': '' } }), end: R.button({ label: busyOf('source:add') ? 'Adding…' : 'Add', attrs: { 'data-mk-addgo': '', disabled: !!busyOf('source:add') } }) }) })}</div></div></div>`;
