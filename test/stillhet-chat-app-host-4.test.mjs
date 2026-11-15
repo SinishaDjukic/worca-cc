@@ -64,6 +64,7 @@ test('a chat opened by its address draws its project and its cards once the stor
   src.runLinks = { links }; src.threads.threads = src.threads.threads.map((t) => (t.id === 'ask_1' ? { ...t, context: { projectKey: 'web' } } : t));
   for (const type of ['ask-run-status', 'ask-labels-changed']) sockets.at(-1).onmessage({ data: JSON.stringify({ type }) });
   await settle(400);
+  w.RailConversation.flushPaints();   // the store's repaint waits for a frame (comp.live-paint)
   assert.equal(w.location.hash, '#chat/ask_1');
   assert.ok(d.querySelector('#route-chat [data-anchor="card_run"]'), 'the TaskCard is drawn');
   assert.match(d.querySelector('#route-chat .convo-head').textContent, /^web/);
