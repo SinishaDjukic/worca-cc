@@ -51,7 +51,7 @@
       ]
     },
     "shellNoChangeMutations": {
-      "value": 2,
+      "value": 0,
       "target": 0,
       "test": "test/stillhet-perf-budgets-tasks-host.test.mjs",
       "findings": [

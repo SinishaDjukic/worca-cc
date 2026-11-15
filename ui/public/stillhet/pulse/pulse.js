@@ -780,9 +780,10 @@ function renderInShell() {
   // sidebar stays Worca's, and Settings opens on its menu as a list in the page)
   const side = document.querySelector('#side-rail'), nav = side.querySelector('nav.nav');
   let sm = side.querySelector('.rail-side-settings');
-  if (sideNow) { if (!sm) { sm = document.createElement('div'); sm.className = 'rail-side-settings'; nav.after(sm); } sm.innerHTML = settingsMenu(); side.classList.add('is-settings'); }
-  else { sm?.remove(); side.classList.remove('is-settings'); }
-  document.querySelector('#side-rail .brand')?.classList.toggle('is-settings', sideNow);
+  if (sideNow) { if (!sm) { sm = document.createElement('div'); sm.className = 'rail-side-settings'; nav.after(sm); } sm.innerHTML = settingsMenu(); }
+  else sm?.remove();
+  // a class is written only when it changes: a DOMTokenList add, remove or toggle writes the attribute even when it does not
+  for (const el of [side, side.querySelector('.brand')]) if (el && el.classList.contains('is-settings') !== sideNow) el.classList.toggle('is-settings', sideNow);
   if (sideNow) document.getElementById('route-settings').innerHTML = `<div class="pz-page">${settingsPage()}</div>`;
   const res = document.querySelector('[data-search-res]'); if (res) res.innerHTML = searchResults();
   R.patchParts(document.getElementById('app'), { popover: popover(), 'new-run': newRun(), account: acctMenu(), session: sessionDialog() });

@@ -84,14 +84,23 @@ test('B2.7 F-a4-10: a focused control in an #app part keeps the same node and fo
 
 test('B2.7: closing a part removes only its nodes; the order popover → new run → account → session matches today\'s concatenation', async () => {
   const h = await perfHost({ hash: '#chat' });
+  // the strings renderInShell hands #app, as they come: today's way is #app.innerHTML = their concatenation
+  let drawn = null; const patchParts = h.w.RailUI.patchParts;
+  h.w.RailUI.patchParts = (el, parts, o) => { if (el.id === 'app') drawn = { ...parts }; return patchParts(el, parts, o); };
   const pop = await openPop(h);
   h.w.RailPulse.session(true); await h.settleAll();
   const sess = app(h.d).querySelector('#pz-sess-t')?.closest('#app > *');
   const parts = [...app(h.d).children];
   assert.deepEqual(parts.map((e) => e === pop ? 'popover' : e === sess ? 'session' : '?'), ['popover', 'session'], 'popover before session');
-  const joined = app(h.d).innerHTML;
-  // today's concatenation: the parts' own HTML, in order, with nothing between
-  assert.equal(joined, pop.outerHTML + [...app(h.d).childNodes].slice(1).map((n) => n.outerHTML ?? n.textContent).join(''));
+  assert.deepEqual(Object.keys(drawn), ['popover', 'new-run', 'account', 'session'], 'the parts in today\'s order');
+  // the independent expectation: a fresh element given today's concatenation, in the page for a moment so the shell's
+  // words pass (runs read as tasks) reaches it as it reaches #app; #app, patched part by part (the popover kept from an
+  // earlier draw), reads the same
+  const fresh = h.d.createElement('div'); fresh.innerHTML = Object.values(drawn).join('');
+  h.d.body.append(fresh); await h.settleAll();
+  const want = fresh.innerHTML; fresh.remove();
+  assert.ok(fresh.querySelector('.pz-popover') && fresh.querySelector('#pz-sess-t'), 'the expectation holds both parts');
+  assert.equal(app(h.d).innerHTML, want);
   h.w.RailPulse.session(false); await h.settleAll();
   assert.equal(app(h.d).querySelector('#pz-sess-t'), null, 'the session part is gone');
   assert.deepEqual([...app(h.d).children], [pop], 'only the popover is left, the same node');

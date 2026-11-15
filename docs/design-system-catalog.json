@@ -2489,7 +2489,8 @@
         {
           "code": "ui/public/design-system/components/list-page.mjs#fitMenu",
           "needs": [
-            "A menu kept inside the window"
+            "A menu kept inside the window",
+            "a kept menu re-fitted on a redraw or resize without drift"
           ]
         }
       ]
