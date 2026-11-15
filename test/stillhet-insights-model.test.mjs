@@ -74,6 +74,13 @@ test('Invariant 8: stateOfLink round-trips every key, drops what is unknown or i
   const live = M.stateOfLink('from=2026-10-02&to=2026-10-09&when=this%20quarter', sub, { live: true });
   assert.equal(live.from, '2026-10-02'); assert.equal(live.to, '2026-10-09'); assert.equal(live.narrow, null); assert.equal(live.custom, true);
   assert.equal(M.linkOf('spend', live), 'insights/spend?when=this%20quarter&from=2026-10-02&to=2026-10-09');
+  // a team picked in the of sentence goes into the link and back; an unknown demo team is dropped
+  const team = { ...M.defaults(M.SUB.team), scope: 'workspace:web-shop' };
+  assert.equal(M.linkOf('team', team), 'insights/team?scope=workspace%3Aweb-shop');
+  assert.equal(M.stateOfLink('scope=workspace%3Aweb-shop', M.SUB.team).scope, 'workspace:web-shop');
+  assert.equal(M.stateOfLink('scope=workspace%3Anope', M.SUB.team).scope, M.defaults(M.SUB.team).scope);
+  assert.equal(M.stateOfLink('scope=workspace%3Awks-x', M.SUB.team, { live: true }).scope, 'workspace:wks-x');
+  assert.equal(M.linkOf('spend', { ...M.defaults(M.SUB.spend), scope: 'workspace:web-shop' }), 'insights/spend', 'only a team page has a team');
 });
 
 test('D13, D14, D15: Shaping has 3 sizes; Who spends where has 5 people; the demo team source has 2 scopes', () => {

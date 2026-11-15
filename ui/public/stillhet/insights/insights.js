@@ -191,7 +191,7 @@
     const scope = st.narrow || st.from ? (c.days === 1 ? 'on this day' : `in these ${c.days} days`) : st.when === 'all time' ? 'in all' : st.when;
     const word = sub.wordAlways ? sub.wordAlways(c) : plain ? sub.word(c) : `${sub.text(c.v)} ${scope}`;
     const why = sub.whyAlways ? sub.whyAlways(c) : st.against === 'before' ? M.cmp(c, sub) : plain ? sub.why(c) : '';   // no comparison asked for: none in the headline; sub.why never compares
-    const pace = sub.pace && plain;   // live: the words of D10 (no budget, or under it: no pace)   // over budget at this pace: Advisory, in ink (look.alert-ladder)
+    const pace = sub.pace && plain;   // over budget at this pace: Advisory, in ink (look.alert-ladder); live: the words of D10 (no budget, or under it: no pace)
     const head = R.placeHead({ center: arg === 'spend' ? null : { label: 'Insights', to: 'insights' }, title: viewList().find((v) => v.id === arg)?.name || sub.title, mark: pace ? R.kindMark({ kind: 'figure', tone: 'ok', icon: sub.icon, title: sub.pace }) : R.kindMark({ kind: 'plugin', icon: sub.icon }), tone: pace ? 'ok' : '', word: pace ? sub.pace : word, why: pace ? [word, ...why.split(' · ').filter((x) => !/on pace for/i.test(x))].join(' · ') : why, menu: R.moreMenu({ id: 'in-more', label: `More for ${sub.title}`, icon: R.icon('more', 16), open: menu === 'in-more', items: [{ id: 'link', text: 'Copy a link', help: 'To this page, as you narrowed it' }] }) });
     const stands = sub.id === 'why' ? `<p class="in-stands">A small change to try: <b>web-app</b> ${esc(M.STANDS.why.outcome)}</p><p class="in-stands">${esc(M.STANDS.why.because)}</p><div class="in-acts">${R.button({ label: 'Try Opus 5.5 on web-app', attrs: { 'data-in-try': '' } })}</div><p class="wf-ed-m">Try starts a new chat for you to send; nothing changes until you do. You can switch back to Sonnet 5.5 at any time.</p>` : sub.id === 'review' ? `<p class="in-stands">What stands out: <b>web-app</b> ${esc(M.STANDS.review)}</p><div class="in-acts">${R.button({ label: 'Ask why web-app goes back', attrs: { 'data-in-ask': '' } })}</div>` : '';
     return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${head}${sentence(sub, st, c)}${chartHtml(sub, st, c)}${st.as === 'table' && (stacks(sub, st, c) || (st.against === 'before' && !axisIsRows(sub, st))) ? '' : rowsHtml(sub, c)}${stands}${actions(sub, st, c)}</div></div><div class="convo-dock" id="in-dock"></div></div>`;
@@ -279,14 +279,11 @@
     const own = isLive() ? LIVE()?.csv(sub.id, st, { byLabel: M.DIM[st.by], thenByLabel: st.then ? M.DIM[st.then] : '' }) : null;
     if (own) { const count = own.split(/\r?\n/).filter(Boolean).length - 1; download(own, `insights-${sub.id}.csv`); say(`Downloaded ${sub.title}, ${count} ${count === 1 ? 'row' : 'rows'}`); return; }
     const c = M.compute(sub, st, true), q = (t) => `"${String(t).replace(/"/g, '""')}"`, head = [M.DIM[st.by], ...(st.then ? [M.DIM[st.then]] : []), ...(sub.noShare ? [] : ['Share']), ...sub.cols.map(([l]) => l)];
-    const lines = [head.map(q).join(',')];
-    let count = 0;
-    for (const r of c.rows) {
-      if (r.kids) for (const k of r.kids) { lines.push([r.name, k.name, ...cellsOf(sub, c, k)].map(q).join(',')); count += 1; }
-      else { lines.push([r.name, ...cellsOf(sub, c, r)].map(q).join(',')); count += 1; }
-    }
-    download(lines.join('\n'), `insights-${sub.id}.csv`);
-    say(`Downloaded ${sub.title}, ${count} ${count === 1 ? 'row' : 'rows'}`);
+    const rows = c.rows.flatMap((r) => (r.kids ? r.kids.map((k) => [r.name, k.name, ...cellsOf(sub, c, k)]) : [[r.name, ...cellsOf(sub, c, r)]]));
+    // live, the rows as drawn go through dev's CSV writer (its formula guard: teammates' names cross into this file)
+    const text = isLive() && LIVE()?.rowsCsv ? LIVE().rowsCsv(head, rows) : [head, ...rows].map((l) => l.map(q).join(',')).join('\n');
+    download(text, `insights-${sub.id}.csv`);
+    say(`Downloaded ${sub.title}, ${rows.length} ${rows.length === 1 ? 'row' : 'rows'}`);
   }
   function save(sub, st) {
     const dflt = M.defaults(sub), c = M.compute(sub, st), name = [`${sub.title} by ${M.DIM[st.by]}${st.then ? `, then ${M.DIM[st.then]}` : ''}, ${c.timeWord}`, st.filter.length ? `of ${filterWord(st, sub)}` : '', st.as !== dflt.as ? `as ${AS[st.as]}` : '', st.against !== dflt.against ? `against ${AGAINST[st.against]}` : ''].filter(Boolean).join(', ');   // the whole state, so two different views never share a name
@@ -303,17 +300,21 @@
     views.push({ id, name, sub: sub.id, st: copy }); bar.innerHTML = barHtml();
     say(`Saved ${name} to Your views`, () => { views.splice(views.findIndex((v) => v.id === id), 1); if (here()) bar.innerHTML = barHtml(); });
   }
-  // Copy a link (actions.copy-link): the page as you narrowed it, only what differs from its defaults; no request is sent
+  // Copy a link (act.copy-link): the page as you narrowed it, only what differs from its defaults; no request is sent
   function copyLink(sub, st) {
     const text = `${location.origin}${location.pathname}#${M.linkOf(sub.id, st)}`, no = () => say('Could not copy the link: your browser did not allow it');
     try { Promise.resolve(navigator.clipboard.writeText(text)).then(() => say(`Copied a link to ${sub.title}`), no); } catch { no(); }
   }
-  // Set a default for a project: the project with the most tasks without a client
-  function topUntagged() {
-    if (!isLive()) return [...M.SUB.untagged.src.rows.project].sort((a, b) => b.tasks - a.tasks)[0].name;
-    const r = LIVE()?.page('spend', { ...M.defaults(M.SUB.spend), by: 'client', then: 'project' });
-    const none = r?.sub?.src.rows.client?.find((x) => x.kind === 'none');
-    return none ? [...(r.sub.src.kids[none.name] || [])].filter((k) => !k.kind && !k.other).sort((a, b) => b.tasks - a.tasks)[0]?.name || '' : '';
+  // Set a default for a project: the project with the most tasks without a client, in what the open page shows. Live it
+  // reads nothing: Missing cost tags has its own project rows; Spend by client peeks at the answer it already drew
+  function topUntagged(shown, st) {
+    const top = (rows) => [...(rows || [])].filter((k) => !k.kind && !k.other).sort((a, b) => b.tasks - a.tasks)[0]?.name || '';
+    if (!isLive()) return top(M.SUB.untagged.src.rows.project);
+    if (!shown.src?.live) return '';
+    if (shown.id === 'untagged') return top(shown.src.rows.project);
+    const src = LIVE()?.peek(shown.id, { ...st, by: 'client', then: 'project' });
+    const none = src?.rows.client?.find((x) => x.kind === 'none');
+    return none ? top(src.kids[none.name]) : '';
   }
   function wire(b, pg) {
     bar = b; page = pg;
@@ -331,7 +332,7 @@
       if (on('[data-in-ask]')) { window.RailConversation?.handOver({ project: 'web-app', about: { kind: 'Project', name: 'web-app' }, ph: 'Why does review send web-app back so often?' }); return; }
       if ((hit = on('[data-in-tag]'))) { window.RailConversation?.handOver({ about: { kind: 'Insights', name: [sub.title, st.filter.length ? `of ${filterWord(st, shown)}` : '', M.compute(shown, st).timeWord].filter(Boolean).join(', ') }, ph: `How should the ${hit.dataset.inTag} tasks without a client be tagged?` }); return; }
       if (on('[data-in-default]')) {
-        const top = topUntagged(), p = isLive() ? (window.RailProjects?.all() || []).find((x) => (x.name || x.id) === top) : { id: top };
+        const top = topUntagged(shown, st), p = isLive() ? (window.RailProjects?.all() || []).find((x) => (x.name || x.id) === top) : { id: top };
         if (!top || !p) return;
         window.RailProjects.editTags(p.id); say(`${top} has the most untagged tasks`); return;
       }
@@ -346,9 +347,9 @@
   window.RailPlaces.insights = {
     sample: 'spend',
     redraw: () => draw(),
-    spendOf: (project) => { stateOf('spend').filter = [`project:${project}`]; stateOf('spend').narrow = null; window.RailShell.go('insights/spend'); },   // a project's $ opens Spend narrowed to it
+    spendOf: (project) => { Object.assign(stateOf('spend'), { filter: [`project:${project}`], narrow: null, when: 'this month', from: null, to: null, custom: false }); window.RailShell.go('insights/spend'); },   // a project's $ this month opens Spend narrowed to it, this month
     search: (q) => [...M.SUBS.filter((s) => (!s.team || team()) && offered(s)).map((s) => ({ label: s.title, where: `Insights · ${barGroup(s)}`, hash: `insights/${s.id}` })), ...viewList().map((v) => ({ label: v.name, where: 'Insights · Your views', hash: `insights/${v.id}` }))].filter((x) => x.label.toLowerCase().includes(q)),
-    // a link carries its state after `?` (actions.copy-link); live, a page dev has no figure for is not found (D12)
+    // a link carries its state after `?` (act.copy-link); live, a page dev has no figure for is not found (D12)
     has: (a0) => {
       const a = ALIAS[pathOf(a0)] || pathOf(a0), s = M.SUB[a];
       if (viewList().some((v) => v.id === a)) return true;

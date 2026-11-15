@@ -426,7 +426,7 @@
     c.rows = rows;
     return c;
   }
-  // ---- a link to a page as you narrowed it (actions.copy-link): only what differs from the defaults; days as ISO days ----
+  // ---- a link to a page as you narrowed it (act.copy-link): only what differs from the defaults; days as ISO days ----
   const YEAR = 2026;   // the demo world's year: its labels name days of it
   const isoDay = (m, d) => `${YEAR}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
   // a demo label's first and last day ('Nov 3', 'Oct 8-14', 'Nov 1-8', 'Jul')
@@ -446,6 +446,7 @@
     if (st.filter.length) q.push(`of=${st.filter.map(encodeURIComponent).join(',')}`);
     if (st.as !== d.as) put('as', st.as);
     if (st.against !== d.against) put('vs', st.against);
+    if (sub.team && st.scope) put('scope', st.scope);   // a team picked in the of sentence (the first is the default)
     let from = st.from || null, to = st.to || null;
     if (st.narrow) { const labels = compute(sub, { ...st, narrow: null }).labels; from = spanOf(labels[st.narrow[0]])[0]; to = spanOf(labels[st.narrow[1]])[1]; }
     if (from && to) { put('from', from); put('to', to); }
@@ -468,6 +469,7 @@
     if (Array.isArray(p.of)) st.filter = p.of.filter((k) => { const at = k.indexOf(':'), dim = k.slice(0, at); return at > 0 && FILTERS.includes(dim) && (live || (sub.src.rows[dim] || []).some((r) => r.name === k.slice(at + 1))); });
     if (sub.forms.includes(p.as)) st.as = p.as;
     if (AGAINSTS.includes(p.vs) && (p.vs !== 'budget' || sub.budget)) st.against = p.vs;
+    if (sub.team && typeof p.scope === 'string' && (live || (sub.src.scopes || []).some((x) => x.id === p.scope))) st.scope = p.scope;   // live, an unknown team draws the first (insights-live)
     let from = realDay(p.from), to = realDay(p.to);
     if (from && to && from > to) from = to = null;
     if (live) { if (from && to) { st.from = from; st.to = to; st.custom = true; } return st; }

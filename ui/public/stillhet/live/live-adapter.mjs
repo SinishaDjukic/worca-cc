@@ -184,8 +184,8 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
     if (f.type === 'hello') { hello(f); return; }
     if (typeof f.type === 'string' && (f.type.startsWith('ask-') || f.type.startsWith('term-'))) chat.frame(f);
     if (typeof f.type === 'string' && f.type.startsWith('scriptbench-')) workflow.frame(f);   // a script bench's answer (D12)
-    if (PROJECT_FRAMES.has(f.type)) projectsLive.frame(f);
-    if (INSIGHTS_FRAMES.has(f.type)) insights.frame(f);   // the open Insights page reads again (slice 10 D8)   // a clone this tab started, a project page's settings read again (slice 9)
+    if (PROJECT_FRAMES.has(f.type)) projectsLive.frame(f);   // a clone this tab started, a project page's settings read again (slice 9)
+    if (INSIGHTS_FRAMES.has(f.type)) insights.frame(f);   // the open Insights page reads again (slice 10 D8)
     task.frame(f);
     if (!loaded) { queue.push(f); return; }
     apply(f);

@@ -2,7 +2,7 @@
 // nothing to Worca. One cached answer per query key, the newest read per key wins, and the keys of pages no longer open
 // are dropped, never re-read. Answers go whole to insights-map.mjs, which is the only code that reads their fields.
 import {
-  statsQuery, statsSource, statsCsv, shapingSource, teamSource, heatOf, gridOf, untaggedSource, scopesOf, budgetOf, pooledOf,
+  statsQuery, statsSource, statsCsv, rowsCsv, shapingSource, teamSource, heatOf, gridOf, untaggedSource, scopesOf, budgetOf, pooledOf,
   monthSpendOf, errorOf, wordsOf, tagKeysOf, recordsOf, LIVE_PAGES, TEAM_PAGES, DIM_OF,
 } from './insights-map.mjs';
 
@@ -125,6 +125,16 @@ export function startInsightsLive({ fetch, on = () => {}, now = Date.now, setTim
     return e && e.status === 'ready' ? statsCsv(e.data, { by: st.by, thenBy: st.then, filter: st.filter, page: id, ...labels }) : null;
   }
 
+  /** The stats answer already read for `st`, mapped for page `id`; null when it is not ready. It reads nothing and keeps
+   *  every cached key and the open page as they are (Set a default for a project asks it from the open page). */
+  function peek(id, st) {
+    const t = cache.get(TAGS), keys = t?.status === 'ready' ? tagKeysOf(t.data) : [];
+    let url;
+    try { url = statsUrl(st, keys); } catch { return null; }
+    const e = cache.get(url);
+    return e?.status === 'ready' ? statsSource(e.data, { by: st.by, thenBy: st.then, filter: st.filter, page: id, tagKeys: keys, now: now() }) : null;
+  }
+
   /** D19: a project's spend this month; null while the read is pending or the project has none. */
   function monthSpend(name) {
     monthAsked = true;
@@ -156,5 +166,5 @@ export function startInsightsLive({ fetch, on = () => {}, now = Date.now, setTim
 
   function scopes() { const sc = get(SCOPES); return sc.status === 'ready' ? scopesOf(sc.data) : []; }
   function stop() { stopped = true; clearTimeout(timer); }
-  return { page, scopes, offered, monthSpend, csv, views, saveView, dropView, frame, retry, stop };
+  return { page, peek, scopes, offered, monthSpend, csv, rowsCsv, views, saveView, dropView, frame, retry, stop };
 }

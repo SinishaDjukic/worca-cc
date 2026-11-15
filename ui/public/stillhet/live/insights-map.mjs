@@ -6,6 +6,7 @@
 import { allocate, allocationSeries, matchesFilters, valueOf, valueLabel, formatShare, reportCsv, savedUsd } from '../../../../src/shared/cost/allocation.mjs';
 import { aggregate } from '../../../../src/shared/team-metrics/aggregate.mjs';
 import { recordFacts, heatGrid, missingKeyTodos } from '../../../../src/shared/team-metrics/cost-facts.mjs';
+import { rowsToCsv } from '../../../../src/shared/csv.mjs';
 
 export const NOT_ANSWERING = 'Worca is not answering';
 const DAY = 86_400_000;
@@ -175,6 +176,10 @@ export function statsSource(answer, { by = 'project', thenBy = '', filter = [], 
 }
 
 /** The Cost report's model for a page as drawn (D24's Download CSV): dev's allocate over the same facts, then reportCsv. */
+/** A live page's rows as drawn (the team pages have no stats answer), through dev's one CSV writer: its formula guard
+ *  keeps a teammate's person, project or tag value such as `=1+1` from reaching a spreadsheet as a formula. */
+export const rowsCsv = (header, rows) => rowsToCsv(header, rows);
+
 export function statsCsv(answer, { by = 'project', thenBy = '', filter = [], page = 'spend', byLabel, thenByLabel = '' } = {}) {
   const facts = selectFacts((answer.report || {}).runs || [], ticksOf(filter)), t = answer.totals || {}, whole = !ticksOf(filter).length;
   const dev = DIM_OF[by] && by !== 'origin' ? DIM_OF[by] : 'project', then = thenBy && DIM_OF[thenBy] && thenBy !== 'origin' ? DIM_OF[thenBy] : null;

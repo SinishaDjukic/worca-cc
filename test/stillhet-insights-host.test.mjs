@@ -4,7 +4,7 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { insightsHost, insightsCalls, statsAnswer, settle, go, closeHosts } from './helpers/stillhet-insights-host.mjs';
+import { insightsHost, insightsCalls, statsAnswer, RECORDS, settle, go, closeHosts } from './helpers/stillhet-insights-host.mjs';
 import { saidText } from './helpers/stillhet-chat-live-host.mjs';
 import { stillhetHost } from './helpers/stillhet-host.mjs';
 import { gate } from './helpers/stillhet-projects-host.mjs';
@@ -131,6 +131,35 @@ test('D24: Download CSV is dev\'s Cost report CSV for the page; Tag these N task
   assert.equal(tag.textContent.trim(), 'Tag these 2 tasks');
   tag.click();
   assert.match(handed[0].ph, /the 2 tasks without a client/);
+});
+
+test('Set a default for a project: live, it opens the top untagged project\'s tags from the page as drawn and sends no read', async () => {
+  for (const [hash, by] of [['#insights/untagged', ''], ['#insights/spend', 'client']]) {
+    const h = await insightsHost({ hash });
+    if (by) await pick(h.d, 'in-by', by);
+    const edited = [];
+    h.w.RailProjects.all = () => [{ id: 'p-web', name: 'web-app' }, { id: 'p-acme-web', name: 'acme/web-app' }, { id: 'p-bill', name: 'billing-api' }];
+    h.w.RailProjects.editTags = (id) => edited.push(id);
+    const n = insightsCalls(h.calls).length, before = text(h.d);
+    for (let i = 0; i < 2; i += 1) { page(h.d).querySelector('[data-in-default]').click(); await settle(150); }
+    assert.equal(edited.length, 2, `${hash}: every click opens a project's tags`);
+    assert.equal(edited[0], edited[1]);
+    if (!by) assert.match(edited[0], /web/, 'Missing cost tags: web-app has both untagged tasks');
+    assert.equal(insightsCalls(h.calls).length, n, `${hash}: nothing is read again`);
+    assert.equal(text(h.d), before, `${hash}: the page stays as drawn`);
+    closeHosts();
+  }
+});
+
+test('Download CSV on a live team page goes through dev\'s CSV writer: a teammate named =1+1 is no formula', async () => {
+  const records = [{ ...RECORDS[0], actor: '=1+1' }, ...RECORDS.slice(1)];
+  const h = await insightsHost({ hash: '#insights/team', read: (u) => (u.startsWith('/api/team-metrics?') ? [200, { scope: {}, records, humanRateUsd: 0, aggregate: null }] : null) });
+  let blob = null; h.w.URL.createObjectURL = (b) => { blob = b; return 'blob:x'; }; h.w.URL.revokeObjectURL = () => {};
+  page(h.d).querySelector('[data-in-csv]').click(); await settle(30);
+  const got = new TextDecoder('utf-8', { ignoreBOM: true }).decode(await blob.arrayBuffer());
+  assert.match(got, /^\uFEFF/);
+  assert.match(got, /(^|\r\n)'=1\+1,/);
+  assert.doesNotMatch(got, /(^|\r\n)"?=1\+1/);
 });
 
 test('R-arch-1: the live pages call no RailWould and insights.js holds none; saved views are kept in this browser', async () => {
