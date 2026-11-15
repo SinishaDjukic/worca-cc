@@ -3,7 +3,7 @@
 // (runs/run-page-model.js, run-page.js), the bar's list, the center and the chat TaskCard read from here; none of them
 // writes before a route answers `ok`.
 import { actionRunner, FLOW as CHAT_FLOW, openTab } from './chat-live.mjs';
-import { taskPageOf, taskCardOf, newTaskBodyOf, patchFiles, docsOf, logLinesOf, actionsOf, groupOf, sessionRowsOf, agentRowsOf, usageRowsOf, commentsByPath } from './task-page.mjs';
+import { taskPageOf, taskCardOf, newTaskBodyOf, patchFiles, docsOf, logLinesOf, logStepsOf, actionsOf, groupOf, sessionRowsOf, agentRowsOf, usageRowsOf, commentsByPath } from './task-page.mjs';
 import { ENGINES, ENGINE_NAMES } from '../../../../src/shared/engine-switch.mjs';
 
 const str = (v) => (typeof v === 'string' ? v : '');
@@ -315,6 +315,14 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
     if (flag('runTelemetry')) request('GET', `/api/runs/${enc(pid)}/telemetry`).then((x) => land('usage', x.ok, x.ok ? usageRowsOf(x.data) : []));   // dev's Labs flag: off, the route is a 404
     else land('usage', true, []);
   }
+  // the log with its steps named (logStepsOf), kept per log read until the state's nodes or steps change: a read does not rebuild it
+  const logNamed = new WeakMap();   // log lines → { nodes, steps, out }
+  function namedLog(log, state) {
+    if (!Array.isArray(log)) return log;
+    const nodes = state?.stepper?.graph?.nodes, steps = state?.steps, c = logNamed.get(log);
+    if (c && c.nodes === nodes && c.steps === steps) return c.out;
+    const out = logStepsOf(log, state); logNamed.set(log, { nodes, steps, out }); return out;
+  }
   /** A session's transcript: dev's raw trace (GET /api/runs/:id/sessions/:sid/trace), in a new tab. */
   function transcript(id, sid) {
     const r = resolve(id) || {};
@@ -575,7 +583,7 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
   return {
     list, projectDirOf, branches, transcript,
     // the page's parts, with its agents read from the task's own steps
-    parts: (id) => { const p = parts.get(id); return p ? { ...p, agents: agentRowsOf(inputOf(id).state?.steps) } : null; }, loadParts, wholeDiff, docText, download, models,
+    parts: (id) => { const p = parts.get(id); if (!p) return null; const st = inputOf(id).state; return { ...p, agents: agentRowsOf(st?.steps), log: namedLog(p.log, st) }; }, loadParts, wholeDiff, docText, download, models,
     group, loadGroups, members: membersOf,
     /** Move to group…'s choices: dev's own groups (features take no hand-added task: dev answers IN_GROUP). */
     groups: () => { if (!groupList && !groupFailed) loadGroups(); return (groupList || []).filter((g) => g.kind === 'user').map((g) => groupOf(g)); },
