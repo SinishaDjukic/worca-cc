@@ -37,6 +37,7 @@ Columns: **From** (the slice and where it was found), **Area**, **Finding** (one
 | owner real test (4317) | Tasks | Review Implementation shows a green tick when its review ended blocked by a major issue, so a blocked review reads as passed | `ui/public/stillhet/live/task-page.mjs` | major | open (owner: feature 2 final check) |
 | owner real test (4317) | Tasks | The task head says "into dev" for a run whose base is `docs/rail-agreed`, and Changes (477 files, +8997) is measured against dev, so it counts all of feature 2 instead of the run's own diff | `ui/public/stillhet/live/task-page.mjs`, `ui/public/stillhet/live/live-map.mjs` | major | open (owner: feature 2 final check) |
 | owner real test (4317) | Tasks | "Decisions 1 · 1 open" sits under Plan although the open decision is the review gate, so the open question is shown under the wrong step | `ui/public/stillhet/live/task-page.mjs` | minor | open (owner: feature 2 final check) |
+| B1.3 (#1328) | Settings | Tasks › Limits (Warning line, Manual/Automatic starts) save nothing on live: the pickers change on screen only; B1.3 left them unchanged by the owner's answer (D22: wired in wave 3) | `ui/public/stillhet/pulse/pulse.js` `limitsRows` | follow-up | open (owner: feature 3) |
 
 ## Closed
 
