@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readServerSource } from '../src/core/read-server-source.mjs';
-import { taskPageOf, taskCardOf, newTaskBodyOf, NEW_TASK_KEYS, stagesOf, stageOfStep, patchFiles, docsOf, logLinesOf, actionsOf, groupOf, commentsByPath, DIFF_PREVIEW } from '../ui/public/stillhet/live/task-page.mjs';
+import { taskPageOf, taskCardOf, newTaskBodyOf, NEW_TASK_KEYS, stagesOf, gateOf, stageOfStep, patchFiles, docsOf, logLinesOf, actionsOf, groupOf, commentsByPath, DIFF_PREVIEW } from '../ui/public/stillhet/live/task-page.mjs';
 import { taskPageErrors } from '../ui/public/stillhet/live/model-shape.mjs';
 import { TASK_DETAILS, NOW, PR_URL } from './helpers/stillhet-live-fixture.mjs';
 import { shortDetail } from '../ui/public/stillhet/live/live-map.mjs';
@@ -211,4 +211,82 @@ test('stageOf returns the case\'s labels: a task with no PR ends at Done, a read
   assert.deepEqual([...M.stageOf('finished-nogit').labels], ['Plan', 'Build', 'Review', 'Done']);
   assert.deepEqual([...M.stageOf('ready').labels].slice(-2), ['PR', 'Merged']);
   assert.deepEqual({ ...M.stageOf('no-such-case') }, {});
+});
+
+// B1.6 (#1318): a live task at its review gate. dev's gate question (src/core/graph/scheduler.mjs askGate) and its
+// workflow's own nodes; the review node's verdict blocked, so the gate's nodeId is n_rev.
+const gNode = (id, label, progressStage) => ({ id, kind: 'agent', key: id.slice(2), label, progressStage });
+const GATE_NODES = [gNode('n_plan', 'Plan', 'plan'), gNode('n_impl', 'Implementation', 'build'), gNode('n_rev', 'Review implementation', 'review'), gNode('n_manual', 'Manual tests checklist', 'review'), { id: 'n_end', kind: 'end', key: null, label: 'End' }];
+const gRow = (nodeId, status, n = 1) => ({ key: `x:${nodeId}:${n}`, executionId: `x:${nodeId}:${n}`, nodeId, agentKey: nodeId.slice(2), status });
+const GATE_Q = { id: 'gate-w5-3', kind: 'gate', wireId: 'w5', nodeId: 'n_rev', executionId: 'x:n_rev:3', deliveryNo: 3, holdNo: 0,
+  issues: [{ severity: 'major', title: 'The pager loses its place', file: 'ui/pager.mjs', line: 42 }, { severity: 'minor', title: '', file: 'ui/pager.css' }] };
+const gateInput = (state = {}, row = {}) => ({ row: { id: 'run-g', case: 'question', title: 'Pager', detail: 'Asks you something', ...row },
+  state: { id: 'pg', status: 'running', steps: [gRow('n_plan', 'done'), gRow('n_impl', 'done'), gRow('n_rev', 'done'), gRow('n_impl', 'done', 2), gRow('n_rev', 'done', 2)],
+    stepper: { graph: { nodes: GATE_NODES } }, pendingQuestion: GATE_Q, ...state } });
+const marks = (stages) => stages.map((s) => [s.key, s.state, s.steps.map((x) => `${x.name}:${x.state}`)]);
+
+test('O1, O4: a pending review gate is the gate case; its node\'s step asks in Review, Plan asks nothing; the gate\'s issues are the review\'s rows', () => {
+  const page = taskPageOf(gateInput(), { now: NOW });
+  assert.equal(page.case, 'gate');
+  assert.equal(taskCardOf(gateInput()).case, 'gate', 'the chat TaskCard reads the same case (D1)');
+  const issues = [{ sev: 'Major', t: 'The pager loses its place', at: 'ui/pager.mjs:42' }, { sev: 'Minor', t: '(untitled issue)', at: 'ui/pager.css' }];
+  assert.deepEqual(page.gate, { id: 'gate-w5-3', nodeId: 'n_rev', issues, count: 2, line: '2 open issues: accept as is, or run another cycle?' });
+  assert.deepEqual(marks(page.stages), [['plan', 'done', ['Plan:done']], ['build', 'done', ['Implementation:done']],
+    ['review', 'ask', ['Review implementation:ask', 'Manual tests checklist:next']]]);
+  assert.equal(page.stages.flatMap((s) => s.steps).filter((x) => x.state === 'ask').length, 1, 'exactly one step asks (I3)');
+  assert.equal(page.detail, 'Review implementation reached its cycle limit');
+  assert.doesNotMatch(page.detail, /Asks you something/);
+  assert.deepEqual(page.review, { roles: [], issues });
+  // no issues: the line asks without a count
+  assert.equal(taskPageOf(gateInput({ pendingQuestion: { ...GATE_Q, issues: [] } })).gate.line, 'Accept as is, or run another cycle?');
+  // role reviews ride the gate: they are the rows, and its issues are not listed again (D8)
+  const roleReviews = { rounds: [{ pass: 1, round: 1, target: 'diff', node: 'n_rev', roles: [{ key: 'qa', label: 'QA', findings: [{ id: 'qa-1', title: 'No test for page 2', status: 'open' }] }] }] };
+  const withRoles = taskPageOf(gateInput({ pendingQuestion: { ...GATE_Q, roleReviews } }));
+  assert.deepEqual([withRoles.review.roles.map((r) => [r.role, r.n]), withRoles.review.issues], [[['QA', 1]], []]);
+  // no gate: gateOf is null
+  assert.equal(gateOf({ status: 'running', pendingQuestion: { id: 'q-plan', kind: 'plan' } }), null);
+  assert.equal(gateOf({ status: 'running', pendingQuestion: { kind: 'gate', id: '' } }), null);
+  assert.equal(gateOf({ status: 'done', pendingQuestion: GATE_Q }), null);
+  assert.equal(taskPageOf(TASK_DETAILS.approved).gate, null);
+});
+
+test('O2: a review forced on with open issues is blocked, never done; a node with no open issues stays done', () => {
+  const openIssues = [{ nodeId: 'n_rev', wireId: 'w5', executionId: 'x:n_rev:3', count: 2, critical: 0, major: 1, titles: ['a', 'b'] }, { nodeId: 'n_impl', count: 0 }];
+  const steps = [gRow('n_plan', 'done'), gRow('n_impl', 'done'), gRow('n_rev', 'done'), gRow('n_manual', 'start')];
+  const st = stagesOf(steps, GATE_NODES, { openIssues });
+  assert.deepEqual(marks(st), [['plan', 'done', ['Plan:done']], ['build', 'done', ['Implementation:done']],
+    ['review', 'now', ['Review implementation:blocked', 'Manual tests checklist:now']]]);
+  assert.equal(st[2].steps[0].open, 2);
+  // a finished run: the stage's state is its rows' (done); its step stays blocked
+  const done = stagesOf([gRow('n_plan', 'done'), gRow('n_impl', 'done'), gRow('n_rev', 'done'), gRow('n_manual', 'done')], GATE_NODES, { openIssues });
+  assert.deepEqual(marks(done)[2], ['review', 'done', ['Review implementation:blocked', 'Manual tests checklist:done']]);
+  // the page passes the run's openIssues through
+  const page = taskPageOf(gateInput({ pendingQuestion: null, status: 'done', openIssues, steps: [...steps.slice(0, 3), gRow('n_manual', 'done')] }));
+  assert.equal(page.stages[2].steps[0].state, 'blocked');
+  assert.equal(page.gate, null);
+  // a loose ledger row (no graph) is blocked by its own nodeId
+  assert.deepEqual(stagesOf([{ agentKey: 'reviewer', nodeId: 'n_reviewer', status: 'done' }], [], { openIssues: [{ nodeId: 'n_reviewer', count: 1 }] })[2].steps.map((x) => [x.state, x.open]), [['blocked', 1]]);
+});
+
+test('O4: a gate whose node is not in the graph asks on the Review stage\'s last step that ran', () => {
+  const st = stagesOf([gRow('n_plan', 'done'), gRow('n_impl', 'done'), gRow('n_rev', 'done')], GATE_NODES, { gate: { nodeId: 'n_gone' } });
+  assert.deepEqual(marks(st)[2], ['review', 'ask', ['Review implementation:ask', 'Manual tests checklist:next']]);
+  // nothing ran in Review: its last step asks
+  const none = stagesOf([gRow('n_plan', 'done'), gRow('n_impl', 'done')], GATE_NODES, { gate: { nodeId: 'n_gone' } });
+  assert.deepEqual(marks(none)[2], ['review', 'ask', ['Review implementation:next', 'Manual tests checklist:ask']]);
+  // a gate on a plan-review loop asks under its own node's stage
+  const planGate = stagesOf([gRow('n_plan', 'done')], GATE_NODES, { gate: { nodeId: 'n_plan' } });
+  assert.deepEqual(marks(planGate)[0], ['plan', 'ask', ['Plan:ask']]);
+  assert.ok(!planGate[2].steps.some((x) => x.state === 'ask'));
+});
+
+test('I7: a gate on a paused or stopped task keeps its case; stagesOf with no third argument is unchanged', () => {
+  for (const c of ['paused', 'stopped', 'failed', 'plan', 'recovery', 'capped']) assert.equal(taskPageOf(gateInput({}, { case: c })).case, c, c);
+  assert.equal(taskPageOf(gateInput({}, { case: 'working' })).case, 'gate');
+  assert.equal(taskPageOf(gateInput({}, { case: '' })).case, 'gate');
+  // a paused gate keeps its paused head, never the gate's reason
+  assert.notEqual(taskPageOf(gateInput({}, { case: 'paused', detail: 'Paused by you' })).detail, 'Review implementation reached its cycle limit');
+  const steps = gateInput().state.steps;
+  assert.deepEqual(stagesOf(steps, GATE_NODES, {}), stagesOf(steps, GATE_NODES));
+  assert.ok(!stagesOf(steps, GATE_NODES).flatMap((s) => s.steps).some((x) => /^(ask|blocked)$/.test(x.state)));
 });
