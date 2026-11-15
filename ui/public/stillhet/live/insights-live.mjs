@@ -5,6 +5,7 @@ import {
   statsQuery, statsSource, statsCsv, rowsCsv, shapingSource, teamSource, heatOf, gridOf, untaggedSource, scopesOf, budgetOf, pooledOf,
   monthSpendOf, errorOf, wordsOf, tagKeysOf, recordsOf, LIVE_PAGES, TEAM_PAGES, DIM_OF,
 } from './insights-map.mjs';
+import { lookupsFor, personWork, workItemOf, workHead, cardOf, taskViewOf } from './work-map.mjs';
 
 export const VIEWS_KEY = 'worca-rail.insights-views';
 export const TEAM_EMPTY = 'No project shares its team numbers yet';
@@ -12,11 +13,14 @@ const STATS_FRAMES = new Set(['pipelines-changed', 'ask-done', 'ask-error', 'bud
 const TAGS = '/api/tag-dimensions', SCOPES = '/api/team-metrics/scopes';
 const DEBOUNCE_MS = 250;
 const HEAT_DIMS = ['project', 'workflow', 'client'];
+const PRS = '/api/team-metrics/prs', EVENTS = '/api/team-metrics/pr-events', PR_CHUNK = 500, DAY = 86_400_000;   // dev's TL_PR_CHUNK; MAX_LOOKUPS is 600
 
 export function startInsightsLive({ fetch, on = () => {}, now = Date.now, setTimeout = globalThis.setTimeout, clearTimeout = globalThis.clearTimeout, world = () => ({}),
   storage = globalThis.localStorage, model = () => globalThis.window?.RailInsightsModel } = {}) {
   const cache = new Map();   // url → { status: 'loading' | 'ready' | 'failed', data, text, seq }
-  let open = new Set(), monthAsked = false, timer = 0, stopped = false;
+  let open = new Set(), monthAsked = false, timer = 0, stopped = false, eventsKey = '';
+  const prsBy = new Map();   // #1310 D5: scope → { map: run id → PRs, asked, inflight, why, token }; only the open scope's is kept
+  let prToken = 0;
   const SOFT = (url) => url.startsWith('/api/policy') || url === TAGS;   // a refusal here is "none", never a failed page
 
   function read(url) {
@@ -41,7 +45,7 @@ export function startInsightsLive({ fetch, on = () => {}, now = Date.now, setTim
   const get = (url) => cache.get(url) || read(url);
   const want = (url) => { open.add(url); return get(url); };
   function prune() {
-    const keep = new Set([...open, TAGS, SCOPES]);
+    const keep = new Set([...open, TAGS, SCOPES, eventsKey]);
     for (const k of cache.keys()) if (!keep.has(k) && !(monthAsked && k === monthKey())) cache.delete(k);
   }
   const tagKeys = () => { const t = get(TAGS); return t.status === 'ready' ? tagKeysOf(t.data) : null; };
@@ -144,6 +148,87 @@ export function startInsightsLive({ fetch, on = () => {}, now = Date.now, setTim
     return e.status === 'ready' ? monthSpendOf(e.data, name) : null;
   }
 
+  // ---- a person's work (#1310): dev's Timeline lookups over the scope's records, read for By person's open row ----
+  /** The open team scope and its records, as the team page read them; null while either is not ready. */
+  function scopeRecords(st) {
+    const sc = cache.get(SCOPES);
+    if (sc?.status !== 'ready') return null;
+    const scopes = scopesOf(sc.data), scope = scopes.find((s) => s.id === st.scope) || scopes[0];
+    if (!scope) return null;
+    const t = cache.get(`/api/team-metrics?scope=${encodeURIComponent(scope.id)}&range=all&aggregate=0&defer=1`);
+    return t?.status === 'ready' ? { scope: scope.id, ...recordsOf(t.data) } : null;
+  }
+  const winMemo = { key: '', data: null, win: null };
+  /** D6: the page's own days, as the team page computes them (UTC), first day's start to last day's end. */
+  function windowOf(records, data, st) {
+    const when = st.from && st.to ? 'custom' : st.when, key = `${when}|${st.from}|${st.to}`;
+    if (winMemo.key === key && winMemo.data === data) return winMemo.win;
+    const src = teamSource(records, { when, from: st.from, to: st.to, by: 'person', thenBy: '', filter: [], now: now(), humanRateUsd: 0, page: 'team' });
+    const first = src.days[0], last = src.last[src.last.length - 1];
+    const win = first && last ? { start: Date.parse(`${first}T00:00:00Z`), end: Date.parse(`${last}T00:00:00Z`) + DAY - 1 } : null;
+    Object.assign(winMemo, { key, data, win });
+    return win;
+  }
+  function prsOf(scope) {
+    for (const k of [...prsBy.keys()]) if (k !== scope) prsBy.delete(k);   // a scope change: the old scope's answers are dropped
+    if (!prsBy.has(scope)) prsBy.set(scope, { map: {}, asked: new Set(), inflight: 0, why: '', token: ++prToken });
+    return prsBy.get(scope);
+  }
+  /** D5: POST each run's lookup once per scope, 500 to a request; an answer whose token is no longer current is dropped. */
+  function askPrs(scope, lookups) {
+    const P = prsOf(scope), need = lookups.filter((l) => !P.asked.has(l.id)), token = P.token;
+    for (const l of need) P.asked.add(l.id);
+    for (let i = 0; i < need.length; i += PR_CHUNK) {
+      const runs = need.slice(i, i + PR_CHUNK);
+      P.inflight += 1;
+      const done = (status, body) => {
+        if (stopped || prsBy.get(scope) !== P || P.token !== token) return;
+        P.inflight -= 1;
+        if (status >= 200 && status < 300) Object.assign(P.map, body?.prs && typeof body.prs === 'object' ? body.prs : {});
+        else P.why = errorOf(status, body);
+        on();
+      };
+      Promise.resolve().then(() => fetch(PRS, { method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: JSON.stringify({ scope, runs }) })).then(
+        (r) => r.json().catch(() => ({})).then((body) => done(r.status, body)),
+        () => done(0, {}));
+    }
+    return P;
+  }
+  function prState(P, ids) {
+    if (P.why) return { state: 'failed', why: P.why };
+    if (P.inflight) return { state: 'pending', why: '' };
+    const asked = ids.filter((id) => P.asked.has(id));
+    return { state: asked.length && asked.every((id) => P.map[id] == null) ? 'unknown' : 'ready', why: '' };
+  }
+  const EMPTY = () => ({ merged: 0, review: 0, closed: 0, failed: 0, stopped: 0, done: 0 });
+  /** #1310: one person's work on the page's days; the records come from the team page's read, never a new one. */
+  function work(name, st) {
+    const sr = scopeRecords(st);
+    if (!sr) return { state: 'loading', items: [], counts: EMPTY(), axis: null, pr: { state: 'pending', why: '' } };
+    const t = cache.get(`/api/team-metrics?scope=${encodeURIComponent(sr.scope)}&range=all&aggregate=0&defer=1`);
+    const win = windowOf(sr.records, t.data, st);
+    if (!win) return { state: 'ready', items: [], counts: EMPTY(), axis: null, pr: { state: 'ready', why: '' } };
+    const lookups = lookupsFor(sr.records.filter((r) => Date.parse(r.startedAt) <= win.end), { start: win.start, now: now() });   // dev's ensureTmPrs: up to the window's end too
+    const P = askPrs(sr.scope, lookups);
+    eventsKey = `${EVENTS}?scope=${encodeURIComponent(sr.scope)}&from=${win.start}&to=${win.end + 1}`;
+    const ev = want(eventsKey), outside = ev.status === 'ready' && Array.isArray(ev.data?.prs) ? ev.data.prs : [];   // dev: without the Action, none
+    const out = personWork(sr.records, { person: name, start: win.start, end: win.end, prs: P.map, outside, now: now() });
+    return { state: 'ready', ...out, pr: prState(P, lookups.map((l) => l.id)) };
+  }
+  /** #1310 D2: the work item that holds run `runId`, over all the scope's records; null when none does (gone). */
+  function task(runId, st) {
+    const sr = scopeRecords(st);
+    if (!sr) return { state: 'loading', item: null };
+    const r = sr.records.find((x) => x.id === runId);
+    if (!r) return { state: 'ready', item: null };
+    const P = prsOf(sr.scope);
+    const item = workItemOf(sr.records, { runId, prs: P.map, now: now() });
+    if (item) { const ids = new Set(item.runs.map((x) => x.id)); askPrs(sr.scope, lookupsFor(sr.records.filter((x) => ids.has(x.id)), { start: 0 })); }   // its PR, asked once like the row's
+    return { state: 'ready', item };
+  }
+  function dropWork() { prsBy.clear(); for (const k of [...cache.keys()]) if (k.startsWith(EVENTS)) cache.delete(k); }
+  function retryWork() { dropWork(); on(); }
+
   function frame(f) {
     if (!f || stopped) return;
     if (STATS_FRAMES.has(f.type)) {
@@ -152,6 +237,7 @@ export function startInsightsLive({ fetch, on = () => {}, now = Date.now, setTim
     }
     if (f.type === 'team-metrics-changed' && f.action !== 'flush-failed') {   // dev skips a failed flush too (app.js)
       for (const k of [...cache.keys()]) if (k === SCOPES || k.startsWith('/api/team-metrics?') || k.startsWith('/api/policy')) read(k);
+      dropWork();
     }
   }
   function retry() { for (const [k, v] of [...cache]) if (v.status === 'failed') read(k); on(); }
@@ -166,5 +252,5 @@ export function startInsightsLive({ fetch, on = () => {}, now = Date.now, setTim
 
   function scopes() { const sc = get(SCOPES); return sc.status === 'ready' ? scopesOf(sc.data) : []; }
   function stop() { stopped = true; clearTimeout(timer); }
-  return { page, peek, scopes, offered, monthSpend, csv, rowsCsv, views, saveView, dropView, frame, retry, stop };
+  return { page, peek, scopes, offered, monthSpend, csv, rowsCsv, views, saveView, dropView, frame, retry, stop, work, task, retryWork, workHead, cardOf, taskViewOf };
 }

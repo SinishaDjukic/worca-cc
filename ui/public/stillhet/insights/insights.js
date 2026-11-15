@@ -12,7 +12,7 @@
   const ALIAS = { saved: 'time-saved', outcomes: 'ends', time: 'merge' };   // old links to what the page used to be called
   const views = [{ id: 'v1', name: 'By client, then workflow', sub: 'spend', st: { by: 'client', then: 'workflow' } }, { id: 'v2', name: 'Monthly for finance', sub: 'spend', st: { by: 'costcenter', when: 'last month', as: 'table' } }];
   const states = {};
-  let arg = 'spend', menu = '', bar = null, page = null, seq = 3, back = '', applied = '', retry = null;
+  let arg = 'spend', menu = '', bar = null, page = null, seq = 3, back = '', applied = '', retry = null, taskId = '', focusRow = '';   // taskId: a teammate's task, read only (#1310 D2)
   // the live kind (slice 10 D9): every read goes through RailInsightsLive (live/insights-live.mjs); the demo's seed otherwise
   const isLive = () => window.RailAdapter?.kind === 'live';
   const LIVE = () => (isLive() ? window.RailInsightsLive || null : null);
@@ -177,9 +177,16 @@
   const targetOf = (sub, st, c, i) => (axisIsRows(sub, st) ? tasksOf(c, st, c.rows[i].name) : tasksOf(c, { ...st, by: 'day', then: '' }, c.labels[i]));   // what a bar opens: null when it opens nothing
   const cellsOf = (sub, c, r) => [...(sub.noShare ? [] : [r.share ?? `${r.sharePct}%`]), ...sub.cols.map(([, get]) => get(r, c))];   // live: dev's formatShare
   const columns = (sub) => [...(sub.noShare ? [] : [{ label: sub.shareLabel || 'Share' }]), ...sub.cols.map(([label], i) => ({ label, narrow: i < (sub.noShare ? 2 : 1) }))];
+  // #1310: on By person a person's row opens their work in place (list.row-opens-in-place), one at a time
+  const personRows = (c) => c.sub.id === 'team' && c.st.by === 'person' && !!window.RailInsightsWork;
+  const isPerson = (c, r, parent) => personRows(c) && !parent && !r.other && !r.kind && r.name !== 'Other' && !/^No /.test(r.name);
   function rowsHtml(sub, c) {
-    const rowOf = (r, parent, s) => { const f = r.other || r.kind ? null : tasksOf(c, c.st, r.name, parent); return { name: r.name, cells: cellsOf(sub, c, r), sub: s, quiet: /^No /.test(r.name) || r.name === 'Other' || !!r.other || !!r.kind, attrs: f ? { 'data-in-row': JSON.stringify(f), title: `Opens Tasks, narrowed to ${parent ? `${parent}, ` : ''}${r.name}` } : { disabled: true, title: c.sub.team ? "The whole team's numbers: Tasks lists your own" : sub.closed || `Tasks narrow by project, time or status, not by ${byWord(c.st)}` } }; };
-    return R.figureRows({ label: `By ${M.DIM[c.st.by]}`, columns: columns(sub), rows: c.rows.flatMap((r) => [rowOf(r, '', false), ...(r.kids || []).map((k) => rowOf(k, r.name, true))]) });
+    const opens = (r, i) => { const open = c.st.open === r.name; return { id: `in-work-${i}`, open, label: `${r.name}'s work`, ...(open ? window.RailInsightsWork.detail(c, r.name, c.st, c.st.shown || window.RailInsightsWork.FIRST) : {}) }; };
+    const rowOf = (r, parent, s, i) => {
+      if (isPerson(c, r, parent)) return { name: r.name, cells: cellsOf(sub, c, r), sub: s, opens: opens(r, i), attrs: { 'data-in-person': r.name, title: `Shows ${r.name}'s work` } };
+      const f = r.other || r.kind ? null : tasksOf(c, c.st, r.name, parent); return { name: r.name, cells: cellsOf(sub, c, r), sub: s, quiet: /^No /.test(r.name) || r.name === 'Other' || !!r.other || !!r.kind, attrs: f ? { 'data-in-row': JSON.stringify(f), title: `Opens Tasks, narrowed to ${parent ? `${parent}, ` : ''}${r.name}` } : { disabled: true, title: c.sub.team ? "The whole team's numbers: Tasks lists your own" : sub.closed || `Tasks narrow by project, time or status, not by ${byWord(c.st)}` } };
+    };
+    return R.figureRows({ label: `By ${M.DIM[c.st.by]}`, columns: columns(sub), rows: c.rows.flatMap((r, i) => [rowOf(r, '', false, i), ...(r.kids || []).map((k) => rowOf(k, r.name, true, i))]) });
   }
   function actions(sub, st, c) {
     const tag = sub.id === 'untagged' || (M.SUB[sub.id]?.src === M.SUB.spend.src && st.by === 'client');   // the money pages, demo or live
@@ -227,7 +234,10 @@
     }
     if (simple()) { if (st.by === 'workspace') st.by = 'project'; if (st.then === 'workspace') st.then = ''; st.filter = st.filter.filter((k) => !k.startsWith('workspace:')); }
     if (st.as === 'lines' && noLines(sub, st)) st.as = 'bars';
+    if (st.by !== 'person') st.open = null;   // I6: the open row closes when "by" leaves person
     const c = M.compute(sub, st);
+    if (taskId && sub.id === 'team' && window.RailInsightsWork) { bar.innerHTML = barHtml(); page.innerHTML = window.RailInsightsWork.task(c, taskId, st, st.open || ''); page.querySelector('[data-in-back]')?.focus({ preventScroll: true }); return; }
+    const had = keyOf(document.activeElement);
     const scroll = page.querySelector('.convo-scroll')?.scrollTop || 0, draft = page.querySelector('#in-dock [data-composer-t]')?.value || '';
     bar.innerHTML = barHtml();
     page.innerHTML = pageHtml(sub, st, c);
@@ -239,7 +249,20 @@
       narrow: axisIsRows(sub, st) ? undefined : (a, b) => { if (c.live) { st.from = c.src.days[a]; st.to = c.src.last[b]; } else { const base = st.narrow ? st.narrow[0] : 0; st.narrow = [base + a, base + b]; }   /* live: a re-read over the dragged days (D7) */ menu = ''; dragged = true; try { localStorage.setItem(DRAGGED, '1'); } catch { /* remembering is a nicety */ } draw(); },
     });
     if (back) { page.querySelector(`[data-menu="${back}"]`)?.focus({ preventScroll: true }); back = ''; }
+    else if (focusRow) { personRow(focusRow)?.focus({ preventScroll: true }); focusRow = ''; }
+    else if (had) page.querySelector(had)?.focus({ preventScroll: true });   // a live answer redrew the open row: focus stays where it was
   }
+  // what to focus again after a redraw: a control of the open row, by its own hook
+  const q = (v) => String(v).replace(/["\\]/g, '\\$&');   // a value inside an attribute selector
+  const HOOKS = ['data-in-person', 'data-in-work', 'data-in-work-url', 'data-fr-hide', 'data-in-more', 'data-in-work-retry'];
+  function keyOf(el) {
+    if (!el || !page || !page.contains(el)) return '';
+    if (el.matches('.tt-end')) { const row = el.closest('.tt-row'); return row ? `[data-tt-row="${q(row.dataset.ttRow)}"] .tt-end` : ''; }
+    const h = HOOKS.find((k) => el.hasAttribute(k));
+    return h ? `[${h}="${q(el.getAttribute(h))}"]` : '';
+  }
+  const personRow = (name) => page.querySelector(`[data-in-person="${q(name)}"]`);
+  function closeWork(st) { const name = st.open; st.open = null; st.shown = 0; focusRow = name || ''; draw(); }
   function choose(id, v) {
     const sub = subOf(arg), st = stateOf();
     if (id === 'in-what') { menu = ''; if (v !== sub.id) window.RailShell.go(`insights/${v}`); else draw(); return; }
@@ -337,10 +360,29 @@
         window.RailProjects.editTags(p.id); say(`${top} has the most untagged tasks`); return;
       }
       if ((hit = on('[data-in-row]'))) { window.RailRunsList.filter(JSON.parse(hit.dataset.inRow)); return; }
+      // #1310: a person's work, in place
+      if ((hit = on('[data-in-person]'))) { const name = hit.dataset.inPerson; st.open = st.open === name ? null : name; st.shown = 0; focusRow = name; draw(); return; }
+      if (on('[data-fr-hide]')) { closeWork(st); return; }
+      if (on('[data-in-more]')) { st.shown = Infinity; draw(); page.querySelectorAll('.fr-detail .tt-open')[window.RailInsightsWork.FIRST]?.focus({ preventScroll: true }); return; }
+      if (on('[data-in-work-retry]')) { LIVE()?.retryWork(); draw(); return; }
+      if (on('[data-in-back]')) { focusRow = st.open || ''; window.RailShell.go('insights/team'); return; }
+      if ((hit = on('[data-in-work]'))) { const own = hit.dataset.inOwn; window.RailShell.go(own ? `run/${own}` : `insights/team?task=${encodeURIComponent(hit.dataset.inWork)}`); return; }   // D3: yours opens your task; a teammate's, read only
+      if ((hit = on('[data-in-work-url]'))) { window.open(hit.dataset.inWorkUrl, '_blank', 'noopener'); return; }   // work outside Worca: its pull request
+      if ((hit = on('[data-in-pr]'))) { say(`Opens ${hit.dataset.inPr} at its host`); return; }   // D13: the demo's PRs have no host
       if ((hit = on('[data-pick]'))) { const t = hit.dataset.pick, at = t.indexOf('|'); choose(t.slice(0, at), t.slice(at + 1)); return; }
       if ((hit = on('[data-menu-pick]'))) { menu = ''; if (hit.dataset.menuPick === 'in-more|link') copyLink(shown, st); draw(); return; }
       if ((hit = on('[data-menu]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); }
     });
+    // Esc in the open row: a mark's card first (D8), then the detail itself, focus back on the row (docs/rail/keyboard.md)
+    page.addEventListener('keydown', (e) => {
+      if (!here() || e.key !== 'Escape' || !e.target.closest('.fr-detail')) return;
+      const lane = e.target.closest('.tt-end') && e.target.closest('.tt-lane');
+      e.preventDefault(); e.stopPropagation();
+      if (lane && !lane.hasAttribute('data-card-off')) { lane.setAttribute('data-card-off', ''); return; }
+      closeWork(stateOf());
+    });
+    const cardBack = (e) => { if (e.target.closest?.('.tt-end')) e.target.closest('.tt-lane')?.removeAttribute('data-card-off'); };   // leaving the mark brings its card back next time
+    page.addEventListener('focusout', cardBack); page.addEventListener('mouseout', cardBack);
     R.dismissOnOutside(document, { open: () => here() && !!menu, inside: '#route-place .spick, #route-place .rc-pop, #route-place .pz-pick', back: () => null, close: () => { menu = ''; }, paint: draw });
   }
   window.RailPlaces = window.RailPlaces || {};
@@ -364,7 +406,10 @@
       const at = a.indexOf('?'), next = ALIAS[pathOf(a)] || pathOf(a) || 'spend';
       if (arg !== next) menu = '';
       arg = next;
-      if (at >= 0 && a !== applied && M.SUB[next]) { applied = a; states[next] = M.stateOfLink(a.slice(at + 1), M.SUB[next], { live: isLive() }); }   // a link's state, once
+      const query = at >= 0 ? a.slice(at + 1) : '', task = /(?:^|&)task=([^&]*)/.exec(query);
+      try { taskId = task ? decodeURIComponent(task[1]) : ''; } catch { taskId = ''; }
+      const onlyTask = task && query.split('&').filter(Boolean).length === 1;   // D2: a task address keeps the page's own state (the open person)
+      if (at >= 0 && !onlyTask && a !== applied && M.SUB[next]) { applied = a; states[next] = M.stateOfLink(query, M.SUB[next], { live: isLive() }); }   // a link's state, once
       draw();
     },
   };

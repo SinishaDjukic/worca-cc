@@ -21,7 +21,7 @@
     'schedules/schedules-model.js', 'settings/settings-model.js', 'settings/settings.js', 'shell/old-addresses.js', 'shell/drafts.js', 'shell/shell.js',
     'runs/runs-list.js', 'chat/chats-column.js', 'chat/conversation.js', 'schedules/schedules.js', 'centers/centers.js',
     'projects/projects.js', 'workflows/workflows.js', 'requirements/requirements.js', 'marketplace/marketplace.js',
-    'insights/insights-model.js', 'insights/insights.js', 'workspaces/workspaces.js', 'runs/run-page.js', 'pulse/pulse.js'
+    'insights/insights-model.js', 'insights/insights.js', 'insights/insights-work.js', 'workspaces/workspaces.js', 'runs/run-page.js', 'pulse/pulse.js'
   ];
 
   function list(h) { return { styles: STYLES[h], scripts: HEAD.concat(HOST_SCRIPTS[h], PAGES) }; }

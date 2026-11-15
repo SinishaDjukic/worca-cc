@@ -48,10 +48,21 @@ export function insightsLists({ limit = 100, tagKeys = 1, scopes = 1 } = {}) {
   };
 }
 
-/** The live app on `hash` (Expert), its Insights reads answered from the fixtures; `read` and `hold` come first. */
-export async function insightsHost({ hash = '#insights/spend', limit = 100, tagKeys = 1, scopes = 1, hold = () => null, read = () => null, write, beforeScripts = () => {} } = {}) {
+/** dev's POST /api/team-metrics/prs answer for the asked runs (#1310): `prs` is run id → PRs (an absent id is [] : looked
+ *  up, none), a status code (a refusal with dev's error), or 'unknown' (every entry null: no source could read them). */
+export function prsAnswer(prs, body) {
+  if (typeof prs === 'number') return [prs, { error: 'gh is not signed in' }];
+  const ids = (body?.runs || []).map((r) => r.id);
+  return [200, { prs: Object.fromEntries(ids.map((id) => [id, prs === 'unknown' ? null : clone(prs[id] || [])])), status: { gh: prs === 'unknown' ? 'missing' : 'ok', actionRepos: [] } }];
+}
+
+/** The live app on `hash` (Expert), its Insights reads answered from the fixtures; `read` and `hold` come first. `records`
+ *  replaces the team records, `prs` answers the PR lookups (prsAnswer), `events` the scope's PR events. */
+export async function insightsHost({ hash = '#insights/spend', limit = 100, tagKeys = 1, scopes = 1, hold = () => null, read = () => null, write, beforeScripts = () => {}, records = null, prs = {}, events = [] } = {}) {
   const v = insightsLists({ limit, tagKeys, scopes });
-  const h = await liveHost({ hash: '#chat', sources: { ...clone(SOURCES), budget: v.budget }, hold, write, read: async (u) => (await read(u)) || v.answer(u),
+  const own = (u) => (records && u.startsWith('/api/team-metrics?') ? [200, { scope: {}, records: clone(typeof records === 'function' ? records() : records), humanRateUsd: 0, aggregate: null }] : u.startsWith('/api/team-metrics/pr-events?') ? [200, { prs: clone(events) }] : null);
+  const writes = async (u, body, m) => (u === '/api/team-metrics/prs' ? prsAnswer(prs, body) : write ? write(u, body, m) : [200, {}]);
+  const h = await liveHost({ hash: '#chat', sources: { ...clone(SOURCES), budget: v.budget }, hold, write: writes, read: async (u) => (await read(u)) || own(u) || v.answer(u),
     beforeScripts: (win) => { win.structuredClone ||= structuredClone; beforeScripts(win); } });
   await go(h.w, hash, 200); await settle(150);
   return h;

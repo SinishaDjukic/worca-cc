@@ -57,3 +57,14 @@ test('the owner\'s real-test rows (#1298) are Closed by this PR: the Pulse proje
   }
   assert.ok(!open.some((r) => r[0] === 'owner real test (4402)' && r[1] === 'Pulse'), 'no longer Open');
 });
+
+test('#1310: a person\'s work over time is Closed by this PR; the Timeline\'s not-homed parts stay Open for the owner', () => {
+  const closed = rows('Closed'), open = rows('Open');
+  const done = closed.find((r) => r[0] === 'slice 10' && r[1] === 'Insights' && r[2].includes("a person's work over time"));
+  assert.ok(done, 'the Closed row'); assert.equal(done[3], 'this PR');
+  const left = open.find((r) => r[0] === 'slice 10' && r[1] === 'Insights' && r[2].includes('Timeline is homed only in part'));
+  assert.ok(left, 'the Open row');
+  for (const words of ['team-wide items view', 'Shipped / In review / Needs attention tiles', 'filters', '"PRs outside Worca" switch']) assert.ok(left[2].includes(words), words);
+  assert.equal(left[5], 'open (owner: owner decision)');
+  assert.ok(!open.some((r) => r[2].includes('Timeline tab has no Stillhet home yet')), 'the old row is narrowed, not kept');
+});

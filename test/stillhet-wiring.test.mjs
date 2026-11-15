@@ -235,6 +235,9 @@ test('Insights (slice 10): every Insights row is wired, or not offered live with
     ...['STANDS', 'SUBS', 'SUB', 'DIM', 'DIM_GROUPS', 'TIME', 'FILTERS', 'WHEN'].map((k) => `insights/insights-model.js › RailInsightsModel.${k}`),
     ...['copy a link to this page', 'Download CSV', 'Tag these N tasks', 'Set a default for a project', 'Save this view', 'the team scope'].map((a) => `insights/insights.js › ${a}`),
     ...[...PAGES, ...NOT].map((p) => `insights/insights.js › page insights/${p}`),
+    // #1310: a person's work on By person
+    ...["open a person's work", 'Hide', 'Show N more', 'open your task', "open a teammate's task", 'open the pull request', 'Try again (pull requests)', 'Back to By person'].map((a) => `insights/insights.js › ${a}`),
+    'insights/insights-model.js › RailInsightsModel.workOf', 'insights/insights-work.js › the work head counts', "insights/insights-work.js › the read-only view's figures",
   ];
   assert.deepEqual(ins.map(id).sort(), [...want].sort(), 'the pinned Insights rows, no more and no fewer');
   for (const r of ins) {

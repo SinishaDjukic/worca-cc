@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
 import { startInsightsLive, TEAM_EMPTY, VIEWS_KEY } from '../ui/public/stillhet/live/insights-live.mjs';
+import { makeRecord } from './fixtures/team-metrics/records.mjs';
 
 const win = {};
 vm.runInNewContext(readFileSync('ui/public/stillhet/insights/insights-model.js', 'utf8'), { window: win });
@@ -20,7 +21,7 @@ function rig({ answers = {}, costs = { budget: { period: 'this month', spent: 3,
   const calls = [], held = new Map(), timers = [];
   let t = 0;
   const fetch = (url, opts = {}) => {
-    calls.push({ url, method: opts.method || 'GET' });
+    calls.push({ url, method: opts.method || 'GET', body: opts.body ? JSON.parse(opts.body) : undefined });
     const a = typeof answers === 'function' ? answers(url) : answers[url] ?? Object.entries(answers).find(([k]) => url.startsWith(k))?.[1];
     const answer = () => (a instanceof Error ? Promise.reject(a) : Promise.resolve({ status: a?.[0] ?? 404, json: async () => a?.[1] ?? {} }));
     if (held.has(url)) return new Promise((res, rej) => held.get(url).push(() => answer().then(res, rej)));
@@ -150,4 +151,72 @@ test('D18: saved views are kept in this browser; a refusing storage says so', ()
   r.live.dropView('v1'); assert.deepEqual(r.live.views(), []);
   const no = rig({ storage: { getItem: () => null, setItem: () => { throw new Error('quota'); } } });
   assert.deepEqual(no.live.saveView({ id: 'v1', name: 'Mine', sub: 'spend', st: {} }), { ok: false, text: 'Could not save Mine: your browser did not keep it' });
+});
+
+// ---- a person's work (#1310): the PR lookups and events of the open row ----
+const PRS_URL = '/api/team-metrics/prs', EVENTS = '/api/team-metrics/pr-events?';
+const TEAM = (records, prs = [200, { prs: {}, status: {} }]) => ({ ...TAGS, '/api/team-metrics/scopes': [200, { scopes: { projects: [{ id: 'project:a', label: 'a' }] } }], '/api/team-metrics?': [200, { records, humanRateUsd: 0 }], '/api/policy': [404, {}], [PRS_URL]: prs, [EVENTS]: [200, { prs: [] }] });
+const recsN = (n, at = Date.UTC(2026, 10, 3, 10), pre = 'r') => Array.from({ length: n }, (_, i) => makeRecord({ id: `${pre}${i}`, startedAt: new Date(at + i * 60_000).toISOString(), actor: 'Maya' }));
+const tst = () => ({ ...M.defaults(M.SUB.team) });
+async function settleWork(r, s = tst(), n = 6) { let w; for (let i = 0; i < n; i++) { r.live.page('team', s); w = r.live.work('Maya', s); await r.tick(); } return w; }
+const posts = (r) => r.calls.filter((c) => c.method === 'POST');
+
+test('work: 500 in-window records are 1 lookup POST, 520 are 2 (500 + 20); a record past the 60-day lookback is never asked', async () => {
+  const old = recsN(3, Date.UTC(2026, 7, 1, 10), 'old');
+  const a = rig({ answers: TEAM([...recsN(500), ...old]) });
+  await settleWork(a);
+  assert.deepEqual(posts(a).map((c) => [c.url, c.body.runs.length, c.body.scope]), [[PRS_URL, 500, 'project:a']]);
+  const b = rig({ answers: TEAM([...recsN(520), ...old]) });
+  await settleWork(b);
+  assert.deepEqual(posts(b).map((c) => c.body.runs.length), [500, 20]);
+  assert.ok(posts(b).every((c) => c.body.runs.every((l) => !l.id.startsWith('old'))));
+  assert.deepEqual(Object.keys(posts(b)[0].body.runs[0]).sort(), ['branch', 'endedAt', 'id', 'pr', 'repos']);
+});
+
+test('work: the PR events are read once per scope and window; a repeat sends nothing', async () => {
+  const r = rig({ answers: TEAM(recsN(3), [200, { prs: { r0: [], r1: [], r2: [] }, status: {} }]) });
+  const w = await settleWork(r);
+  assert.equal(w.state, 'ready'); assert.equal(w.items.length, 3); assert.equal(w.pr.state, 'ready');
+  const ev = r.calls.filter((c) => c.url.startsWith(EVENTS));
+  assert.equal(ev.length, 1);
+  assert.match(ev[0].url, /^\/api\/team-metrics\/pr-events\?scope=project%3Aa&from=\d+&to=\d+$/);
+  const n = r.calls.length;
+  await settleWork(r);
+  assert.equal(r.calls.length, n, 'a second work() with the same state sends nothing');
+  const u = rig({ answers: TEAM(recsN(3)) });
+  assert.equal((await settleWork(u)).pr.state, 'unknown', 'every entry null: no source could read them');
+});
+
+test('work: a failed lookup keeps the items and says why; retryWork asks again', async () => {
+  const r = rig({ answers: TEAM(recsN(3), [500, { error: 'gh is not signed in' }]) });
+  const w = await settleWork(r);
+  assert.equal(w.pr.state, 'failed'); assert.equal(w.pr.why, 'gh is not signed in'); assert.equal(w.items.length, 3);
+  const n = posts(r).length;
+  r.live.retryWork(); await settleWork(r);
+  assert.equal(posts(r).length, n + 1);
+});
+
+test('work: a team-metrics-changed frame asks the PRs and events again', async () => {
+  const r = rig({ answers: TEAM(recsN(3)) });
+  await settleWork(r);
+  const p = posts(r).length, e = r.calls.filter((c) => c.url.startsWith(EVENTS)).length;
+  r.live.frame({ type: 'team-metrics-changed', action: 'flushed' }); await settleWork(r);
+  assert.equal(posts(r).length, p + 1);
+  assert.equal(r.calls.filter((c) => c.url.startsWith(EVENTS)).length, e + 1);
+});
+
+test('work: an answer that lands after retryWork is dropped, never drawn', async () => {
+  let k = 0;
+  const merged = { prs: { r0: [{ repo: 'acme/billing-api', number: 9, url: 'https://x/9', state: 'MERGED', createdAt: '2026-11-03T12:00:00Z', mergedAt: '2026-11-04T12:00:00Z' }] }, status: {} };
+  const base = TEAM(recsN(1));
+  const r = rig({ answers: (u) => (u === PRS_URL ? (k++ === 0 ? [200, merged] : [200, { prs: { r0: [] }, status: {} }]) : base[u] ?? Object.entries(base).find(([key]) => u.startsWith(key))?.[1]) });
+  r.hold(PRS_URL);
+  await settleWork(r);
+  assert.equal(r.live.work('Maya', tst()).pr.state, 'pending');
+  r.live.retryWork(); await settleWork(r, tst(), 2);
+  assert.equal(posts(r).length, 2);
+  r.release(PRS_URL); await settleWork(r);
+  const w = r.live.work('Maya', tst());
+  assert.equal(w.pr.state, 'ready');
+  assert.equal(w.items[0].word, 'Done', 'the first answer (merged) came after the retry and was dropped');
 });

@@ -38,7 +38,11 @@
   const optsOf = (p, sv) => (typeof p.options === 'function' ? p.options(sv) : p.options);
   const optText = (p, v, sv) => (optsOf(p, sv).find((o) => o[0] === v) || [v, v])[1];
   const words = (t, c) => c.esc(t || '').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`(.+?)`/g, '<code>$1</code>');
-  const vis = (x, c) => R.shows(x.min, c.level) && (!x.flag || R.prefs.flag(x.flag)) && (!x.when || x.when(c.sv));
+  // `only: 'demo' | 'live'`: a sample row the live kind does not draw, or a live row the demo does not
+  const liveOn = () => !!window.RailWorld?.live;
+  // `sample: true` (docs/rail/settings.md `set.not-live`): a section or a row still sample data; live, it reads NotLiveRow
+  const notLive = (x) => !!x.sample && liveOn();
+  const vis = (x, c) => R.shows(x.min, c.level) && (!x.flag || R.prefs.flag(x.flag)) && (!x.when || x.when(c.sv)) && (!x.only || (x.only === 'live') === liveOn());
   const textOf = (v, sv) => (typeof v === 'function' ? v(sv) : v);
 
   function sentence(r, sv, c) {
@@ -68,6 +72,7 @@
   const same = (a, b) => String(a ?? '') === String(b ?? '');
   const defaultWords = (k, v, fallback) => (SM.VALUE_WORDS[k] ? SM.VALUE_WORDS[k](v, SM.STATE) : fallback ?? (v === '' || v == null ? 'none' : String(v)));
   function changesOf(r, sv, c) {
+    if (notLive(r)) return [];
     const out = [], seen = new Set();
     const add = (k, name, start, words) => { if (seen.has(k)) return; seen.add(k); if (!same(sv[k], start)) out.push({ name: SM.VALUE_NAMES[k] || name, was: defaultWords(k, start, words) }); };
     for (const [k, p] of Object.entries(r.picks || {})) add(k, p.name || r.name, p.value, optText(p, p.value, sv));
@@ -100,6 +105,7 @@
   }
   const chipOf = (x, sv, c) => { const t = x.chip && textOf(x.chip, sv); return t ? c.R.chip({ text: t, title: x.chipTip || '' }) : ''; };
   function row(r, sv, c, where) {
+    if (notLive(r)) return c.R.notLiveRow({ name: r.name, help: r.help || '' });   // before anything registers: nothing to click
     const key = 'more:' + where + '/' + r.name, open = sv.__open === key;
     const folds = !!r.moreList || (r.more || []).some((m) => vis(m, c));   // nothing to open, no Customise
     const inner = open ? (r.more || []).filter((m) => vis(m, c)).map((m) => row(m, sv, c, where + '/' + r.name)).join('') : '';
@@ -224,13 +230,21 @@
       const f = SM.FLAGS.find((x) => x.key === sec.flag);
       return c.R.emptyState({ title: `${f.name} is off`, text: 'Turn it on in Labs.', actions: c.R.button({ label: 'Open Labs', kind: 'quiet', attrs: { 'data-sset': 'experimental' } }) });
     }
+    if (sec.only === 'demo' && liveOn()) {   // a place that is all sample data: the library's not-live page, its Back to Chat ours
+      const key = id + '/not-live/chat';
+      REG.set(key, { page: 'chat', say: '' });
+      return c.R.notInStillhet({ place: sec.title, today: sec.notLive, attrs: { 'data-svdo': key, 'data-key': 'sv:' + key } });
+    }
     const locked = sec.lock && !R.atLevel(level, sec.lock.level) ? sec.lock.why : '';
     return dialogHtml(sv, c) + sec.sections.filter((s) => vis(s, c)).map((s) => {
+      if (notLive(s)) return c.R.settingsSection({ icon: '', title: s.bare ? '' : s.title, meta: '', action: '', rows: c.R.notLiveRow({}) });
       const where = id + '/' + s.title, cc = { ...c, locked };
       const head = (s.actions || []).filter((a) => vis(a, c)).map((a) => act(a, where, cc)).join('');
       const rows = ((c.extra && c.extra[s.title]) || '') + (s.rows || []).filter((r) => vis(r, c)).map((r) => row(r, sv, cc, where)).join('');
       const table = s.table ? c.R.table({ ...s.table, rows: textOf(s.table.rows, sv) }) : '';
-      const list = s.list && (!s.listWhen || s.listWhen(sv)) ? records(s.list, sv, cc, where, s.empty) : '';
+      // a live list (`liveList(sv)`) is read again on every draw: its records are never this page's own copy
+      if (s.liveList) delete sv.__recs[where];
+      const list = s.liveList ? records(s.liveList(sv), sv, cc, where, textOf(s.empty, sv)) : s.list && (!s.listWhen || s.listWhen(sv)) ? records(s.list, sv, cc, where, textOf(s.empty, sv)) : '';
       return c.R.settingsSection({ icon: ''   /* the place's icon is in the bar beside; a section's head is its words */, title: s.bare ? '' : s.title, meta: textOf(s.meta, sv) || '', action: head, rows: rows + table + list + groupsHtml(s, sv, cc, where) });
     }).join('');
   }
@@ -255,7 +269,6 @@
   }
   // A switch with `sw.live` ('chat.promptCheck') is wired in the live kind: it shows the server's value (the store's
   // chatPrefs, refetched on settings-changed) and a toggle POSTs dev's own body. Every other switch is as before.
-  const liveOn = () => !!window.RailWorld?.live;
   const liveValue = (path) => { const [area, k] = path.split('.'); return area === 'chat' ? window.RailWorld.part('chatPrefs')?.[k] === true : false; };
   function syncLive(sv) {
     if (!liveOn()) return;
