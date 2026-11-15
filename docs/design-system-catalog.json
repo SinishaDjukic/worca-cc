@@ -219,7 +219,7 @@
       "rules": [
         "its name for a screen reader says what the rings say"
       ],
-      "example": "Emil Angelov ⇅"
+      "example": "Sam Rivera ⇅"
     },
     {
       "name": "UsageRing",
@@ -3020,6 +3020,14 @@
         "the named step of New schedule"
       ],
       "example": "scheduleButton({ every: 'every weekday', at: '09:00' })"
+    },
+    {
+      "name": "Who the account corner names",
+      "code": "ui/public/design-system/components/account-menu.mjs#describeAccount",
+      "needs": [
+        "the account button's name and initials and the identity card, from GET /api/whoami; never a demo name on a live page"
+      ],
+      "example": "describeAccount({ name: 'sam.rivera@acme.dev', shared: true, source: 'access' }) // { kind: 'shared', short: 'sam.rivera', initials: 'SR', via: 'via Cloudflare Access' }"
     }
   ],
   "telling": [

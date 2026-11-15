@@ -6,7 +6,7 @@ import { JSDOM } from 'jsdom';
 import * as C from '../ui/public/design-system/components/index.mjs';
 
 const dom = (html) => new JSDOM(`<body>${html}</body>`).window.document.body.firstElementChild;
-const people = ['Maya', 'Jonas', 'Priya', 'Emil', 'Lee'], cols = ['billing-api', 'web-app', 'worca-cc'];
+const people = ['Maya', 'Jonas', 'Priya', 'Sam', 'Lee'], cols = ['billing-api', 'web-app', 'worca-cc'];
 const values = [[186, 120, 0], [90, 60, 30], [40, 20, 10], [12, 6, 3], [5, 2, 1]];
 const grid = () => C.heatGrid({ label: 'Who spends where by project, this month', rows: people.map((label) => ({ label })), columns: cols.map((label) => ({ label })), max: 186, off: "The whole team's numbers: Tasks lists your own",
   cells: values.map((row) => row.map((v) => ({ value: v, text: v ? `$${v}, ${v === 186 ? 21 : 2} tasks` : '' }))) });
