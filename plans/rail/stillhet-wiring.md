@@ -257,6 +257,8 @@ One row per surface of today's UI that Stillhet must carry (gate.prototype in `d
 | `ui/public/chat-settings-view.mjs` | wired | The "Check how clear a task prompt is" row: Stillhet's Settings › Chat › Assistant › Abilities › Prompt check (`stillhet/settings/settings-model.js`, a live switch on `chat.promptCheck` through `live/live-map.mjs` `chatPrefs`) |
 | `ui/public/prompt-check/` | wire to | The browser grader and the chip's controller (`chip-host.mjs`, whose `onAssessment` now hands the assessment's proposed perspectives to the run card); Stillhet's composer uses them once its chip is built (waits for the owner, the Prompt check chip row above and the Perspectives proposed on the run card row) |
 | `ui/public/settings/settings.html` | wired | The setting's place in today's Settings page: Stillhet's Settings › Chat › Assistant › Abilities › Prompt check (`stillhet/settings/settings-model.js`) |
+| `ui/public/stillhet.mjs` | wired | The Stillhet icon and its 2-row menu in today's top bar, after Activity (`nav.design-switch`): the library's StillhetSwitch and its watch, the same part frame.js draws after Pulse |
+| `ui/public/parts.json` | wired | Loads `design-system/stillhet-switch.css` in place of `design-switch.css`: the icon's box, its menu's place and the check, scoped to its slot |
 | `setting › pulseFor` | wired | Settings › Notifications, the Pulse animation row (`pulse.js` reads it through the live map; #1258) |
 | `ui/public/ask-panel.mjs` | wire to | Today's run card takes the prompt check's proposed perspectives and sends the chosen set with the run (flag proposedPerspectives); Stillhet's TaskProposal "reviewed by" picker waits for the owner (the Perspectives proposed on the run card row above) |
 | `ui/public/shape/` | wire to | The perspective chips, their proposed state and the plan's perspective sections (flag proposedPerspectives); Stillhet's TaskProposal "reviewed by" picker waits for the owner (the Perspectives proposed on the run card row above) |
@@ -272,7 +274,7 @@ Wired in slice 1, each row real:
 | The ask switch | `src/core/stillhet.mjs` | Hides the question, and the top-bar switch while Stillhet is off, until the last slice of feature 3 turns it on, once every area runs on live data. |
 | The Labs row | `ui/public/stillhet.mjs` `stillhetLabsRow` | Settings › Labs shows the `rail` row (Stillhet, experimental) in every level, whatever the ask switch says: until the end of feature 3 the one way in and out. The one flag-off difference from dev the owner accepts (`tools/stillhet-style-diff.mjs` `ACCEPTED`). |
 | The Invitation | `ui/public/design-system/components/invitation.mjs` | A ConfirmStrip under the top bar; Try Stillhet sets the flag, No thanks is never asked again. |
-| The Stillhet UI switch | `ui/public/design-system/components/design-switch.mjs` | The top-bar switch, the same setting as Settings › Labs. |
+| The Stillhet UI switch | `ui/public/design-system/components/stillhet-switch.mjs` | The top-bar icon and its 2-row menu, the same setting as Settings › Labs. |
 | The reload | `ui/public/stillhet.mjs` | A change of the flag reloads each open page once, never while text is typed. |
 
 ## Chat capabilities

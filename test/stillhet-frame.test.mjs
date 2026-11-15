@@ -47,11 +47,15 @@ test('the sidebar frame.js draws equals the golden taken from the capture (landm
   assert.equal(norm(w.RailFrame.sidebar(PLACES)), golden().sidebar);
 });
 
-test('the top bar frame.js draws equals the golden taken from the capture (aria, the switch role)', () => {
+test('the top bar frame.js draws equals the golden taken from the capture (aria, the Stillhet icon after Pulse)', () => {
   const w = world();
   const bar = w.RailFrame.topBar();
   assert.equal(norm(bar), golden().topBar);
-  assert.equal(bar.querySelector('[data-design-switch]').getAttribute('role'), 'switch');
+  const slot = bar.querySelector('#rail-pulse-slot').nextElementSibling;
+  assert.equal(slot.dataset.stillhet, 'design-switch');
+  assert.ok(slot.querySelector('[data-stillhet="ui-icon"]'));
+  assert.equal(bar.querySelectorAll('[role="switch"]').length, 0);
+  assert.equal(bar.querySelectorAll('.chip').length, 0, 'no beta chip');
   assert.equal(bar.querySelector('#side-toggle').getAttribute('aria-expanded'), 'true');
 });
 

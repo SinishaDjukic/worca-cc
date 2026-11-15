@@ -157,7 +157,7 @@ async function stillhetWalk() {
   pg = await open('chat/new');
   check('with the override the question shows once, as a strip under the top bar', (await strip(pg)) && await pg.evalJs(`document.getElementById('topnav').nextElementSibling?.id === 'rail-strip'`));
   check('the focus is on No thanks', await pg.evalJs(`document.activeElement?.matches('[data-confirm="no"]') === true`));
-  check('the switch shows after Activity', await sw(pg));
+  check('the Stillhet icon shows after Activity', await sw(pg));
   await pg.evalJs(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`); await sleep(500);
   check('Esc takes it back and stores nothing', !(await strip(pg)) && (await stored()).onboarding?.stillhetAsked !== true);
   await pg.send('Page.reload'); await waitLoad(pg);
@@ -174,9 +174,10 @@ async function stillhetWalk() {
   check('Try Stillhet turns rail on with exactly 1 navigation', (await flagRail()).on === true && (await loads(pg)) === n0 + 1, `loads ${n0} → ${await loads(pg)}`);
   check('turning it on stored the flag and the answer', (await stored()).flags?.rail === true && (await stored()).onboarding?.stillhetAsked === true);
   const n1 = await loads(pg);
-  await click(pg, '[data-design-switch]');
+  await click(pg, '[data-design-switch]'); await sleep(300);   // the Stillhet icon opens its menu
+  await click(pg, '[data-design-pick="off"]');
   await until(async () => (await loads(pg)) > n1, 8000); await waitLoad(pg);
-  check('the switch turns it off with exactly 1 navigation, changing only flags.rail', (await flagRail()).on === false && (await loads(pg)) === n1 + 1 && (await stored()).flags?.rail === undefined);
+  check('Back to today\'s UI turns it off with exactly 1 navigation, changing only flags.rail', (await flagRail()).on === false && (await loads(pg)) === n1 + 1 && (await stored()).flags?.rail === undefined);
   const n2 = await loads(pg);
   await pg.evalJs(`location.hash = '#settings/experimental'`); await sleep(1500);
   await click(pg, '[data-flag-switch="rail"]');
@@ -189,8 +190,9 @@ async function stillhetWalk() {
   pg.evalJs(`location.hash = '#chat/new'`); await sleep(1500);
   const n4 = await loads(pg);
   await pg.evalJs(`(() => { const t = document.querySelector('textarea'); if (t) { t.value = 'draft that must survive'; t.dispatchEvent(new Event('input', { bubbles: true })); } })()`);
-  await click(pg, '[data-design-switch]'); await sleep(2500);
-  check('typed text: the switch change gives 0 navigations and a Toast', (await loads(pg)) === n4 && await pg.evalJs(`!![...document.querySelectorAll('.toast')].find((t) => /Stillhet is (on|off)/.test(t.textContent))`));
+  await click(pg, '[data-design-switch]'); await sleep(300);
+  await click(pg, '[data-design-pick="on"]'); await sleep(2500);
+  check('typed text: the icon\'s pick gives 0 navigations and a Toast', (await loads(pg)) === n4 && await pg.evalJs(`!![...document.querySelectorAll('.toast')].find((t) => /Stillhet is (on|off)/.test(t.textContent))`));
   await pg.evalJs(`(() => { const t = document.querySelector('textarea'); t.value = ''; t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
   await until(async () => (await loads(pg)) > n4, 8000);
   check('the reload follows once the text is gone', (await loads(pg)) === n4 + 1);

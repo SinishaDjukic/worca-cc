@@ -1,9 +1,10 @@
 // ui/public/stillhet/host-prototype.js — what differs in the prototype host (plans/rail/prototype/index.html). The
-// prototype is Stillhet, so the switch reads on; `?stillhet=off` makes it read off, for the part comparison against dev's
+// prototype is Stillhet, so the icon's menu reads on; `?stillhet=off` makes it read off, for the part comparison against dev's
 // page. Also fills the prototype's stamp and the tools panel's theme buttons, which only that page has.
 (function () {
   var off = new URLSearchParams(location.search).get('stillhet') === 'off';
-  window.RailHost = { name: 'prototype', stillhetOn: function () { return !off; }, setStillhet: function () { /* the prototype has nothing to turn off */ } };
+  // a pick in the top-bar icon's menu moves the check; nothing reloads, and stillhetOn() then agrees with the repainted slot
+  window.RailHost = { name: 'prototype', stillhetOn: function () { return !off; }, setStillhet: function (on) { off = !on; return { ok: true }; } };
 
   var dark = matchMedia('(prefers-color-scheme: dark)').matches;
   document.querySelectorAll('[data-theme-pick]').forEach(function (b) { b.setAttribute('aria-pressed', String((b.dataset.themePick === 'dark') === dark)); });

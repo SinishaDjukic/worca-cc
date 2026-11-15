@@ -219,7 +219,7 @@ const runRow = (r, tip, meta = metaOf(r)) => row({ mark: runMark(r.state, r.stag
 const clearsKeyOf = (r) => (r.paused || r.interrupted ? 'paused' : window.RunCardModel.stateOf(r.case));
 const clearsMeta = (meta, key) => { const p = M.clearsWhen(key); return p ? [meta, p].filter(Boolean).join(' · ') : meta; };
 function updateRow(u, withCheck) {
-  return row({ mark: R.kindMark({ kind: 'event', tone: dotOf(u) ? 'ask' : 'idle', size: 16 }), title: u.title, meta: `${groupOf(u.g).name} · ${u.meta}`, time: u.time, key: u.id, check: withCheck ? ui.pick.ids.includes(u.id) : undefined,
+  return row({ mark: R.kindMark({ kind: 'event', tone: dotOf(u) ? 'ask' : 'idle', size: 16, icon: 'signal' }), title: u.title, meta: `${groupOf(u.g).name} · ${u.meta}`, time: u.time, key: u.id, check: withCheck ? ui.pick.ids.includes(u.id) : undefined,
     unreadDot: isUnread(u), resolved: u.resolved || isFixed(u), fix: !isFixed(u) && !ui.pick.on ? u.fix : '', fixLand: u.fixLand, fixTip: u.fixLand ? `${u.fix}: opens Settings › Tasks, on Budget` : `${u.fix} from here; the row then reads Resolved`, flash: ui.flash === u.id, tip: `Opens ${u.to}${isUnread(u) ? ' and marks it read' : ''}` });
 }
 function vitalsSections() {
@@ -231,7 +231,7 @@ function vitalsSections() {
   const levelOfRun = (r) => (r.missed ? 2 : R.alertLevel(R.markTone(R.runState(window.RunCardModel.stateOf(r.case)))));
   const needRows = [...c.needs.map((r) => [levelOfRun(r), r.missed ? row({ mark: R.kindMark({ kind: 'schedule', tone: 'act', size: 16 }), title: r.title, meta: clearsMeta(metaOf(r), 'missed'), time: r.time, key: 'r:' + r.id, tip: 'A missed time never started: it needs you and is not a task' }) : runRow(r, 'Opens the run page at what it asks', clearsMeta(metaOf(r), clearsKeyOf(r)))]), ...c.places.map((x) => [R.alertLevel(x.tone), row({ mark: R.kindMark({ kind: x.kind, tone: x.tone, size: 16 }), title: x.title, meta: clearsMeta(x.meta, x.kind), key: `np:${x.go}`, tip: x.tip })])].sort((a, b) => b[0] - a[0]);   // highest level first (look.alert-ladder)
   const out = sec(R.runState('question').word, needRows.length, needRows.map(([, h]) => h).join(''), needsWords().includes('(') ? needsWords().replace(/^\d+ needs? you \((.*)\)$/, '$1') : '')
-    + sec('Limits', lim.length, lim.map((l, i) => row({ mark: R.kindMark({ kind: 'event', tone: l.tone === 'over' ? 'fail' : 'act', size: 16 }), title: l.title, meta: l.detail, time: l.time, key: 'lim' + i, tip: `${l.tip} · opens Usage and costs` })).join(''))
+    + sec('Limits', lim.length, lim.map((l, i) => row({ mark: R.kindMark({ kind: 'event', tone: l.tone === 'over' ? 'fail' : 'act', size: 16, icon: 'signal' }), title: l.title, meta: l.detail, time: l.time, key: 'lim' + i, tip: `${l.tip} · opens Usage and costs` })).join(''))
     + sec('Running', c.running.length, c.running.map((r) => runRow(r, 'Opens the live run')).join(''))
     + sec('Running actions', c.actions.length, c.actions.map((a) => R.pulseRow({ mark: runMark('working'), title: a.run, meta: a.label, time: '', id: 'act:' + a.id, tip: a.go ? `Opens ${a.run}` : 'Its run is gone; it can still be stopped',
       action: R.button({ label: 'Stop', kind: 'quiet', attrs: { 'data-act-stop': a.id, title: `Stop ${a.label} and free its port` } }) })).join(''))
@@ -903,7 +903,7 @@ document.addEventListener('click', (e) => {
   if (SHELL && !SHELL.owns('pulse', e.target)) return;
   const tg = (sel) => e.target.closest(sel);
   let el;
-  if ((el = tg('[aria-disabled="true"]'))) { toast(el.title); render(); return; }
+  if ((el = tg('[aria-disabled="true"]'))) { if (el.getAttribute('aria-busy') !== 'true') { toast(el.title); render(); } return; }   // busy (the Stillhet icon mid-pick) is not a reason to say
   if ((el = tg('[data-pick]'))) { const [id, v] = el.dataset.pick.split('|'); pick(id, v); render(); return; }
   if ((el = tg('[data-menu-pick^="srch|"]'))) { pickResult(el.dataset.menuPick.slice(5)); return; }
   if ((el = tg('[data-menu-pick]'))) { const v = el.dataset.menuPick, i = v.indexOf('|'), id = v.slice(0, i); if (/^svm?:/.test(id)) { const say = SV.pick(ui.sv, id, v.slice(i + 1)); ui.menu = ''; if (say) toast(say); } else pick(id, v.slice(i + 1)); render(); return; }

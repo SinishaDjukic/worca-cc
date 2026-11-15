@@ -38,6 +38,20 @@ test('opt-out: one PATCH /api/flags with { rail: false }, no other call, then a 
   assert.deepEqual(calls.slice(1), ['reload']);
 });
 
+test('"Try Stillhet" while in Stillhet (rail moved off elsewhere): rail back on, no reload; a failure says "on"', async () => {
+  const { win, calls } = load('host-app.js', { fetchImpl: reply(true, { flags: [] }) });
+  win.RailHost.flagsChanged({ rail: false });
+  assert.equal(win.RailHost.stillhetOn(), false);
+  calls.length = 0;
+  assert.deepEqual({ ...(await win.RailHost.setStillhet(true)) }, { ok: true });
+  assert.deepEqual(JSON.parse(calls[0].o.body), { rail: true });
+  assert.equal(calls.includes('reload'), false);
+  assert.equal(win.RailHost.stillhetOn(), true);
+  const failed = load(['host-app.js', 'adapter.js'], { fetchImpl: reply(false, { error: 'locked' }) });
+  const r = await failed.win.RailHost.setStillhet(true);
+  assert.equal(r.text, 'Could not turn Stillhet on: locked');
+});
+
 test('a failed opt-out names the failed step, does not reload, and leaves the page', async () => {
   for (const fetchImpl of [reply(false, { error: 'rail is locked by WORCA_FLAGS' }), async () => { throw new Error('down'); }]) {
     const { win, calls, toast } = load(['host-app.js', 'adapter.js'], { fetchImpl });
@@ -50,53 +64,61 @@ test('a failed opt-out names the failed step, does not reload, and leaves the pa
   }
 });
 
-// the top-bar switch (frame.js draws R.designSwitch) is the way back: a click on it runs setStillhet(false)
-const switchStub = () => {
-  const attrs = { 'aria-checked': 'true' };
-  const b = { disabled: false, focused: 0, focus() { b.focused++; }, getAttribute: (k) => (k in attrs ? attrs[k] : null), setAttribute: (k, v) => { attrs[k] = String(v); }, removeAttribute: (k) => { delete attrs[k]; } };
-  return { b, attrs, target: { closest: (s) => (s === '[data-design-switch]' ? b : null) } };
-};
+// the top-bar icon (frame.js draws R.stillhetSwitch and installs its watch) is the way back: "Back to today's UI" runs
+// setStillhet(false). The real scripts in jsdom, in boot.js's order.
 const settle = () => new Promise((r) => setImmediate(r));
+async function iconHost(t, fetch) {
+  const { stillhetHost } = await import('./helpers/stillhet-host.mjs');
+  const w = stillhetHost({ after: (fn) => t.after(fn), fetch });
+  const d = w.document;
+  return { w, d, icon: () => d.querySelector('[data-stillhet="ui-icon"]'), rows: () => [...d.querySelectorAll('[data-design-pick]')], slot: () => d.querySelector('[data-stillhet="design-switch"]') };
+}
+const writes = (calls) => calls.filter(([m]) => m !== 'GET');
 
-test('the top-bar switch: a click sends one PATCH { rail: false } and reloads; a click elsewhere does nothing', async () => {
-  const { calls, click } = load('host-app.js', { fetchImpl: reply(true, { flags: [] }) });
-  click({ closest: () => null });
+test('the top-bar icon: "Back to today\'s UI" sends one PATCH { rail: false }, busy while it is out; the checked row and a busy click send nothing', async (t) => {
+  const calls = [];
+  const { d, icon, rows } = await iconHost(t, async (u, o = {}) => { calls.push([o.method || 'GET', String(u), o.body]); if (o.method === 'PATCH') return new Promise(() => {}); return { ok: false, json: async () => ({}) }; });
+  d.body.click();
+  icon().click();
+  assert.deepEqual(rows().map((r) => [r.textContent, r.getAttribute('aria-checked')]), [['Try Stillhet', 'true'], ["Back to today's UI", 'false']]);
+  rows()[0].click();   // the current UI: it only closes
+  assert.equal(rows().length, 0);
   await settle();
-  assert.equal(calls.length, 0);
-  const sw = switchStub();
-  click(sw.target);
-  assert.equal(sw.attrs['aria-busy'], 'true');
-  click(sw.target);   // a second click while the first is in flight sends nothing more
+  assert.deepEqual(writes(calls), []);
+  icon().click();
+  rows()[1].click();
+  assert.equal(icon().getAttribute('aria-busy'), 'true');
+  icon().click();   // a second click while the first is in flight sends nothing more
   await settle();
-  assert.equal(calls.filter((c) => c !== 'reload').length, 1);
-  assert.deepEqual(JSON.parse(calls[0].o.body), { rail: false });
-  assert.deepEqual(calls.slice(1), ['reload']);
+  assert.deepEqual(writes(calls).map(([m, u, b]) => [m, u, JSON.parse(b)]), [['PATCH', '/api/flags', { rail: false }]]);
 });
 
-test('the top-bar switch: a failed opt-out keeps the switch on, clears busy, says why and can be tried again', async () => {
-  const { calls, click, toast, doc } = load(['host-app.js', 'adapter.js'], { fetchImpl: reply(false, { error: 'rail is locked by WORCA_FLAGS' }) });
-  const sw = switchStub();
-  doc.activeElement = sw.b;   // focused before the click; Chromium blurs it on disable, so focus must come back
-  click(sw.target);
-  await settle();
-  assert.equal(sw.attrs['aria-checked'], 'true');
-  assert.equal('aria-busy' in sw.attrs, false);
-  assert.equal(sw.b.disabled, false);
-  assert.equal(sw.b.focused, 1);
-  assert.equal(toast.textContent, 'Could not turn Stillhet off: rail is locked by WORCA_FLAGS');
-  assert.ok(toast.cls.has('is-on'));
-  assert.equal(calls.includes('reload'), false);
-  click(sw.target);
-  await settle();
-  assert.equal(calls.length, 2);
+test('the top-bar icon: a failed opt-out keeps Stillhet checked, clears busy, refocuses the icon, says why and can be tried again', async (t) => {
+  const calls = [];
+  const { w, d, icon, rows, slot } = await iconHost(t, async (u, o = {}) => { calls.push([o.method || 'GET', String(u)]); return o.method === 'PATCH' ? { ok: false, json: async () => ({ error: 'rail is locked by WORCA_FLAGS' }) } : { ok: false, json: async () => ({}) }; });
+  icon().focus();
+  icon().click();
+  rows()[1].click();
+  for (let i = 0; i < 5; i++) await settle();
+  assert.equal(slot().dataset.on, 'true');
+  assert.equal(icon().hasAttribute('aria-busy'), false);
+  assert.equal(icon().hasAttribute('aria-disabled'), false);
+  assert.equal(d.activeElement, icon());
+  assert.equal(w.RailHost.toastEl.textContent, 'Could not turn Stillhet off: rail is locked by WORCA_FLAGS', 'the shell\'s own toast');
+  icon().click();
+  rows()[1].click();
+  for (let i = 0; i < 5; i++) await settle();
+  assert.equal(writes(calls).length, 2);
 });
 
-test('prototype host: the switch reads on, and off with ?stillhet=off; setStillhet does nothing', () => {
+test('prototype host: Stillhet reads on, and off with ?stillhet=off; setStillhet moves it and reloads nothing', () => {
   assert.equal(load('host-prototype.js').win.RailHost.stillhetOn(), true);
-  const off = load('host-prototype.js', { search: '?stillhet=off' }).win.RailHost;
+  const { win, calls } = load('host-prototype.js', { search: '?stillhet=off' }), off = win.RailHost;
   assert.equal(off.stillhetOn(), false);
-  assert.equal(off.setStillhet(true), undefined);
+  assert.deepEqual({ ...off.setStillhet(true) }, { ok: true });
+  assert.equal(off.stillhetOn(), true);
   assert.equal(off.name, 'prototype');
+  assert.deepEqual(calls, []);
 });
 
 test('adapter: in the app host an action is refused with the one sentence, announced once, never "Would…"', () => {
@@ -145,14 +167,14 @@ test('jsdom: a failed opt-out (fetch rejected, or locked) shows its sentence in 
     const w = dom.window, d = w.document;
     w.RailUI = { ...R };
     w.fetch = fetchImpl;
-    w.eval(readFileSync(new URL('host-app.js', DIR), 'utf8'));
-    w.eval(readFileSync(new URL('adapter.js', DIR), 'utf8'));
-    // drawn later, as the shell does: the run board with its own toast inside a hidden route, and the top-bar switch
+    for (const f of ['host-app.js', 'adapter.js', 'shell/frame.js']) w.eval(readFileSync(new URL(f, DIR), 'utf8'));
+    // drawn later, as the shell does: the run board with its own toast inside a hidden route, and the top-bar icon
     d.getElementById('app').innerHTML = `<section id="route-run" hidden><div class="rc">${R.toast({})}</div></section>`
-      + `<header>${R.designSwitch({ on: true })}</header>`;
-    const sw = d.querySelector('[data-design-switch]');
-    sw.focus();
-    sw.click();
+      + `<header>${R.stillhetSwitch({ on: true })}</header>`;
+    const sw = () => d.querySelector('[data-stillhet="ui-icon"]');
+    sw().focus();
+    sw().click();
+    d.querySelector('[data-design-pick="off"]').click();
     for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
     const shown = [...d.querySelectorAll('.rc-toast')].filter((t) => t.textContent);
     assert.equal(shown.length, 1, `${name}: one toast speaks`);
@@ -166,9 +188,9 @@ test('jsdom: a failed opt-out (fetch rejected, or locked) shows its sentence in 
     assert.notEqual(cs.display, 'none', name);
     assert.equal(cs.opacity, '1', name);
     assert.equal(d.querySelector('.rc .rc-toast').textContent, '', `${name}: the hidden run board's toast stays empty`);
-    assert.equal(sw.getAttribute('aria-checked'), 'true', `${name}: the switch stays on`);
-    assert.equal(sw.disabled, false, name);
-    assert.equal(d.activeElement, sw, `${name}: focus stays on the switch`);
+    assert.equal(d.querySelector('[data-stillhet="design-switch"]').dataset.on, 'true', `${name}: Stillhet stays checked`);
+    assert.equal(sw().hasAttribute('aria-busy'), false, name);
+    assert.equal(d.activeElement, sw(), `${name}: focus stays on the icon`);
     w.close();
   }
 });
@@ -179,16 +201,18 @@ test('adapter: the shell\'s stamp picks the kind, never the address: live with d
   assert.equal(load('adapter.js', { host: { name: 'prototype' }, adapter: 'live' }).win.RailAdapter.kind, 'demo', 'the prototype is always demo');
 });
 
-test('one reload owner: the switch and a flags frame with rail off reload exactly once; the only write is PATCH /api/flags', async () => {
-  const { win, calls, click } = load('host-app.js', { fetchImpl: reply(true, { flags: [] }) });
-  click(switchStub().target);
+test('one reload owner: the icon\'s pick and a flags frame with rail off reload exactly once; the only write is PATCH /api/flags', async () => {
+  const { win, calls } = load('host-app.js', { fetchImpl: reply(true, { flags: [] }) });
+  win.RailHost.setStillhet(false);   // what frame.js's watch calls on "Back to today's UI"
   win.RailHost.flagsChanged({ rail: false });
   await settle();
   win.RailHost.flagsChanged({ rail: false });
   assert.deepEqual(calls.filter((c) => c === 'reload'), ['reload']);
   const writes = calls.filter((c) => c !== 'reload' && c.o && c.o.method && c.o.method !== 'GET');
   assert.deepEqual(writes.map((c) => [c.o.method, c.u]), [['PATCH', '/api/flags']]);
+  assert.equal(win.RailHost.stillhetOn(), false, 'the live flag: the icon\'s menu checks "Back to today\'s UI" until the reload lands');
   win.RailHost.flagsChanged({ rail: true });
+  assert.equal(win.RailHost.stillhetOn(), true);
   assert.equal(calls.filter((c) => c === 'reload').length, 1);
 });
 
@@ -207,20 +231,24 @@ test('a flags frame with rail off waits while text is typed, says so once, and r
   assert.deepEqual(calls, ['reload']);
 });
 
-test('jsdom: rail locked by WORCA_FLAGS draws the switch disabled, saying why; a click sends nothing and shows no toast', async () => {
+test('jsdom: rail locked by WORCA_FLAGS: the tip and both rows say why; a pick sends nothing and shows no toast', async () => {
   const { stillhetHost } = await import('./helpers/stillhet-host.mjs');
   const { after } = await import('node:test');
   const calls = [];
   const w = stillhetHost({ railLocked: true, after, fetch: async (u, o = {}) => { calls.push([o.method || 'GET', String(u)]); return { ok: false, status: 500, json: async () => ({}) }; } });
-  const d = w.document, sw = d.querySelector('[data-design-switch]');
-  assert.ok(sw, 'the switch is drawn');
-  assert.equal(sw.disabled, true);
-  assert.equal(sw.getAttribute('aria-checked'), 'true', 'it still says Stillhet is on');
-  assert.equal(d.getElementById(sw.getAttribute('aria-describedby')).textContent, 'Locked by WORCA_FLAGS');
-  assert.match(sw.closest('[data-stillhet="design-switch"]').outerHTML, /Locked by WORCA_FLAGS/);
-  sw.click();
+  const d = w.document, icon = d.querySelector('[data-stillhet="ui-icon"]');
+  assert.ok(icon, 'the icon is drawn');
+  assert.ok(icon.getAttribute('aria-label').endsWith(' · Locked by WORCA_FLAGS'));
+  assert.ok((icon.getAttribute('title') || icon.getAttribute('data-tip-text') || '').endsWith(' · Locked by WORCA_FLAGS'));
+  icon.click();
+  const rows = [...d.querySelectorAll('[data-design-pick]')];
+  assert.equal(rows.length, 2);
+  assert.ok(rows.every((r) => r.getAttribute('aria-disabled') === 'true' && r.getAttribute('title') === 'Locked by WORCA_FLAGS'));
+  assert.equal(rows[0].getAttribute('aria-checked'), 'true', 'it still says Stillhet is on');
+  rows[1].click();
   await new Promise((r) => setTimeout(r, 20));
   assert.deepEqual(calls.filter(([m]) => m !== 'GET'), [], 'no PATCH /api/flags');
-  assert.equal(d.querySelector('body > .rc-toast').textContent, '', 'no toast: nothing failed');
+  const said = [...d.querySelectorAll('body > .rc-toast')].map((x) => x.textContent).filter(Boolean);
+  assert.ok(said.every((x) => x === 'Locked by WORCA_FLAGS'), `a disabled row only says why, nothing failed: ${said}`);
   assert.equal(w.RailHost.railLocked(), true);
 });
