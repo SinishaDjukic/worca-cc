@@ -109,7 +109,7 @@ test('B1.10: wire-to rows from every section, Dev surfaces included; update refu
 const EMPTY_SOURCES = {
   history: { pipelines: [] }, threads: { threads: [], counts: {} }, groups: { groups: [] }, schedules: { schedules: [], tickets: [], counts: {} },
   projects: { projects: [] }, sync: { projects: {} }, budget: {}, actions: { actions: [] }, notifications: { notifications: [] }, away: {},
-  settings: {}, runLinks: { links: [] }, runGroups: { groups: [] }, usageLimits: {}, workspaces: { workspaces: [] }, hello: { runs: [] },
+  settings: {}, runLinks: { links: [] }, runGroups: { groups: [] }, usageLimits: {}, workspaces: { workspaces: [] }, archived: { pipelines: [] }, hello: { runs: [] },
 };
 // the per-place GET lists, empty
 const EMPTY_LISTS = {
