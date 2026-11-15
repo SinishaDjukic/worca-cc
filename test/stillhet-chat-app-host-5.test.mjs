@@ -2,7 +2,7 @@
 // boot.js's order, data-adapter="live"); the host and its helpers are test/helpers/stillhet-chat-live-host.mjs.
 import { test, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { SOURCES, THREAD, blurOnDisable, cardItems, clone, go, liveHost, menuPick, posts, savedRun, settle, store, toastText, withRun, closeHosts } from './helpers/stillhet-chat-live-host.mjs';
+import { SOURCES, THREAD, blurOnDisable, cardItems, clone, go, liveHost, menuPick, posts, savedRun, saidText, settle, store, toastText, withRun, closeHosts } from './helpers/stillhet-chat-live-host.mjs';
 
 afterEach(closeHosts);   // each test's window closes when the test ends
 test('Show its stages opens the live TaskCard in place, and Hide its stages folds it', async () => {
