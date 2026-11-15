@@ -1189,9 +1189,13 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     void (async () => {
       try {
         const refresh = !!(briefData && briefData.brief && briefData.brief.madeAt);
+        const asked = paintNo, shownAtAsk = briefData;
         const data = await api('POST', briefApi(s), choice && choice.model ? { choice: { engine: choice.engine, model: choice.model, effort: choice.effort || null } } : {});
         creating = false;
-        paintAnswer(s, data);
+        // a paint started during the POST (the job's frame) is newer than this answer: leave the page to it, and
+        // redraw its controls without `creating` if it has landed already
+        if (paintNo === asked) paintAnswer(s, data);
+        else if (briefData !== shownAtAsk) redrawBrief();
         // the pressed button is disabled now, so the focus is lost: the polite message line says the work started
         say(`Worca is ${refresh ? 'refreshing' : 'making'} the brief. This takes a few minutes; you can leave this page.`, 'ok');
       } catch (err) {

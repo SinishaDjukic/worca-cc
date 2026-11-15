@@ -1956,6 +1956,44 @@ test('brief page, none yet: Create posts, then paints the answer; a refused Crea
   assert.equal(createBtn(b.host).disabled, false, 'the button stays');
 });
 
+test('brief page (F-brief-create): a Create answer that lands after the made brief does not paint the page back to Creating…', async () => {
+  const deferred = () => { let resolve; const p = new Promise((r) => { resolve = r; }); return { p, resolve }; };
+  const sections = (host) => host.querySelectorAll('.req-brief-card [data-section]').length;
+  // the job's frame painted the made brief before the stale `making` answer of the POST came back
+  let post = deferred(), made = false;
+  const a = await openBrief(() => (made ? madeBody() : briefBody()), { [`POST ${BRIEF_URL}`]: () => post.p });
+  createBtn(a.host).click();
+  await tick();
+  made = true;
+  await a.view.changed(undefined, 'project:shop-1');
+  await tick();
+  assert.equal(sections(a.host), 4, 'the frame painted the made brief');
+  post.resolve(briefBody({ brief: briefRow({ status: 'making' }) }));
+  await tick(); await tick(); await tick();
+  assert.equal(sections(a.host), 4, 'the made brief stays');
+  assert.equal(createBtn(a.host), null, 'no Creating… button');
+  a.host.querySelector('[data-ui="brief-more"]').click();
+  assert.equal(a.host.querySelector('[data-ui="mi-brief-refresh"]').disabled, false, 'no [data-brief-go] control is left disabled');
+  assert.equal(a.msgEl.textContent, 'Worca is making the brief. This takes a few minutes; you can leave this page.');
+  // the frame's GET is still in flight when the POST answers: the made page wins once it lands
+  post = deferred(); made = false;
+  let get = null;
+  const b = await openBrief(() => (get ? get.p : briefBody()), { [`POST ${BRIEF_URL}`]: () => post.p });
+  createBtn(b.host).click();
+  await tick();
+  get = deferred();
+  const frame = b.view.changed(undefined, 'project:shop-1');
+  await tick();
+  post.resolve(briefBody({ brief: briefRow({ status: 'making' }) }));
+  await tick(); await tick();
+  get.resolve(madeBody());
+  await frame; await tick();
+  assert.equal(sections(b.host), 4, 'the made brief wins');
+  assert.equal(createBtn(b.host), null, 'no Creating… button');
+  b.host.querySelector('[data-ui="brief-more"]').click();
+  assert.equal(b.host.querySelector('[data-ui="mi-brief-refresh"]').disabled, false, 'Refresh is enabled');
+});
+
 test('brief page, none yet: making, a failed first make, the switch off, no repository, members left out', async () => {
   const states = [
     [briefBody({ brief: briefRow({ status: 'making' }) }), { label: 'Creating…', disabled: true,
