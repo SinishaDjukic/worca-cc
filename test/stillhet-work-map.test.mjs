@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { makeRecord } from './fixtures/team-metrics/records.mjs';
 import { WORDS, lookupsFor, personWork, workItemOf, isOwn, workHead, cardOf, taskViewOf } from '../ui/public/stillhet/live/work-map.mjs';
+import { buildWorkItems, groupByPerson } from '../src/shared/team-metrics/timeline.mjs';
 
 const DAY = 86_400_000, H = 3_600_000;
 const T = (d, h = 10) => Date.UTC(2026, 10, d, h);
@@ -81,13 +82,19 @@ test('items are newest first, by their last activity', () => {
   assert.deepEqual(work().items.map((i) => i.title), ['Currency rounding in reports', 'Open too long', 'Retry failed webhook deliveries', 'Remove legacy coupon code', 'Tax ID validation', 'Stopped one', 'Done one']);
 });
 
-test('a person under two spellings, a key-less actor and an outside PR are one person', () => {
+test('RD-timeline-person: a row\'s timeline is its exact actor; another spelling is its own row', () => {
   const recs = [rec('s1', 3, { actor: 'Maya Lind' }), rec('s2', 4, { actor: 'maya  lind' }), rec('s3', 5, { actor: 'Maya Lind', actorKey: null }), rec('j', 5, { actor: 'Jonas', actorKey: 'k-jonas' })];
-  const outside = [{ repo: 'acme/web-app', number: 77, url: 'https://github.com/acme/web-app/pull/77', title: 'Outside fix', state: 'MERGED', createdAt: iso(T(6)), mergedAt: iso(T(7)), author: 'mayal', authorKey: 'k-maya', head: 'fix' }];
-  const w = personWork(recs, { person: 'maya  lind', start: START, end: END, prs: {}, outside, now: NOW });
-  assert.deepEqual(w.items.map((i) => i.runId).sort(), [null, 's1', 's2', 's3'].sort());
+  const outside = [
+    { repo: 'acme/web-app', number: 77, url: 'https://github.com/acme/web-app/pull/77', title: 'Outside fix', state: 'MERGED', createdAt: iso(T(6)), mergedAt: iso(T(7)), author: 'mayal', authorName: 'Maya Lind', authorKey: 'k-maya', head: 'fix' },
+    { repo: 'acme/web-app', number: 78, url: 'https://github.com/acme/web-app/pull/78', title: 'Login only', state: 'MERGED', createdAt: iso(T(6)), mergedAt: iso(T(7)), author: 'mayal', authorKey: 'k-maya', head: 'login-only' },
+  ];
+  const at = (person) => personWork(recs, { person, start: START, end: END, prs: {}, outside, now: NOW });
+  assert.deepEqual(at('maya  lind').items.map((i) => i.runId), ['s2']);
+  const w = at('Maya Lind');
+  assert.deepEqual(w.items.map((i) => i.runId).sort(), [null, 's1', 's3'].sort());
   const o = w.items.find((i) => i.title === 'Outside fix');
   assert.equal(o.runs.length, 0); assert.equal(o.prUrl, 'https://github.com/acme/web-app/pull/77');
+  for (const p of ['Maya Lind', 'maya  lind', 'Jonas']) assert.ok(!at(p).items.some((i) => i.title === 'Login only'));
   assert.deepEqual(personWork(recs, { person: 'Nobody', start: START, end: END, now: NOW }).items, []);
 });
 
@@ -147,4 +154,46 @@ test('a shared ticket: each person sees their own group, and the item is found b
   assert.ok(j.items.some((i) => i.title === 'Jonas only')); assert.ok(!j.items.some((i) => i.title === 'Maya only'));
   assert.deepEqual(workItemOf(recs, { runId: 'sh1', prs: {}, now: NOW }).runs.map((r) => r.id).sort(), ['sh1', 'sh2', 'sh3']);
   assert.equal(workItemOf(recs, { runId: 'nope', prs: {}, now: NOW }), null);
+});
+
+// RD-timeline-person: dev's groupByPerson merges these three into one group (Bulibas's key is the fallback key of the
+// two shared items, and the union-find joins it with both other names). Each By person row must still get only its own.
+const DEN = 'Denislav Prinov', BUL = 'Bulibas', PRW = 'pr-watch';
+const MERGED_RECS = [
+  rec('d1', 3, { actor: DEN, actorKey: null, title: 'Shared with Denislav', source: src(21) }),
+  rec('d2', 4, { actor: DEN, actorKey: null, title: 'Shared with Denislav', source: src(21) }),
+  rec('b1', 5, { actor: BUL, actorKey: 'k-bul', title: 'Shared with Denislav', source: src(21) }),
+  rec('p1', 6, { actor: PRW, actorKey: null, title: 'Shared with pr-watch', source: src(22) }),
+  rec('p2', 7, { actor: PRW, actorKey: null, title: 'Shared with pr-watch', source: src(22) }),
+  rec('b2', 8, { actor: BUL, actorKey: 'k-bul', title: 'Shared with pr-watch', source: src(22) }),
+  rec('ds', 9, { actor: DEN, actorKey: null, title: 'Denislav solo' }),
+  rec('bs', 10, { actor: BUL, actorKey: 'k-bul', title: 'Bulibas solo' }),
+  rec('ps', 11, { actor: PRW, actorKey: null, title: 'pr-watch solo' }),
+];
+const mergedWork = (person) => personWork(MERGED_RECS, { person, start: START, end: END, prs: {}, now: NOW });
+
+test('RD-timeline-person: the fixture reproduces dev\'s merge (one group holds all three)', () => {
+  const groups = groupByPerson(buildWorkItems(MERGED_RECS, { prs: {}, now: NOW }));
+  const all = groups.find((g) => [DEN, BUL, PRW].every((p) => g.items.some((it) => it.actors.includes(p))));
+  assert.ok(all, 'one group holds items of all three people');
+  assert.equal(all.items.length, 5);
+});
+
+test('RD-timeline-person: three people whose items share a fallback key each get only their own items', () => {
+  const titles = (p) => mergedWork(p).items.map((i) => i.title).sort();
+  assert.deepEqual(titles(DEN), ['Denislav solo', 'Shared with Denislav']);
+  assert.deepEqual(titles(PRW), ['Shared with pr-watch', 'pr-watch solo']);
+  assert.deepEqual(titles(BUL), ['Bulibas solo', 'Shared with Denislav', 'Shared with pr-watch']);
+  for (const p of [DEN, BUL, PRW]) {
+    for (const it of mergedWork(p).items) assert.ok(MERGED_RECS.some((r) => r.actor === p && it.runs.some((x) => x.id === r.id)), `${p} has a run in ${it.title}`);
+  }
+});
+
+test('RD-timeline-person: the head counts match the person\'s items', () => {
+  const expected = { [DEN]: 'newest first · 2 done', [BUL]: 'newest first · 3 done', [PRW]: 'newest first · 2 done' };
+  for (const p of [DEN, BUL, PRW]) {
+    const w = mergedWork(p);
+    assert.equal(Object.values(w.counts).reduce((a, b) => a + b, 0), w.items.length);
+    assert.equal(workHead(p, 'this month', w.counts, { state: 'ready' }).line, expected[p]);
+  }
 });

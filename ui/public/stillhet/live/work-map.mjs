@@ -1,7 +1,7 @@
-// A person's work on By person (#1310): dev's Timeline work items (buildWorkItems, groupByPerson, prLookupFor in
-// src/shared/team-metrics/timeline.mjs) mapped to the design's words, counts, head, card and read-only view. Pure and
-// deterministic given `now`; it reads nothing. Times are epoch ms; days and clock times are UTC, as teamQuery's.
-import { buildWorkItems, groupByPerson, prLookupFor } from '../../../../src/shared/team-metrics/timeline.mjs';
+// A person's work on By person (#1310): dev's Timeline work items (buildWorkItems, prLookupFor in
+// src/shared/team-metrics/timeline.mjs), the items they have a run in, mapped to the design's words, counts, head, card
+// and read-only view. Pure and deterministic given `now`; it reads nothing. Times are epoch ms; days and clock times are UTC, as teamQuery's.
+import { buildWorkItems, prLookupFor } from '../../../../src/shared/team-metrics/timeline.mjs';
 import { safeHttpUrl } from '../../../../src/shared/team-metrics/aggregate.mjs';
 
 const DAY = 86_400_000, LOOKBACK_MS = 60 * DAY;   // dev's TL_PR_LOOKBACK (ui/public/app.js): a PR may open long after its run
@@ -64,14 +64,10 @@ function itemOf(it, byId, now) {
  */
 export function personWork(records, { person, start, end, prs = {}, outside = [], now }) {
   const all = buildWorkItems(records, { prs, outside, now });
-  const groups = groupByPerson(all);
-  // Their own group: the one labelled with them, else one where they are an item's main actor; a shared item lists
-  // other people in `actors`, so that match is only the last resort.
-  const group = groups.find((g) => g.label === person) || groups.find((g) => g.items.some((it) => it.actor === person))
-    || groups.find((g) => g.items.some((it) => (it.actors || []).includes(person)));
+  // The items they have a run in (an outside PR: its author), by the By person row's exact actor. No group: dev's
+  // grouping merges people through a shared item's fallback key.
   const counts = zeros(), byId = new Map((records || []).map((r) => [r.id, r]));
-  if (!group) return { items: [], counts, axis: { start, end } };
-  const items = group.items.filter((it) => it.first <= end && (it.end ?? it.lastEnd) >= start).map((it) => itemOf(it, byId, now))
+  const items = all.filter((it) => (it.actors || []).includes(person) && it.first <= end && (it.end ?? it.lastEnd) >= start).map((it) => itemOf(it, byId, now))
     .sort((a, b) => b.last - a.last || b.work[0] - a.work[0]);
   for (const it of items) counts[COUNT_OF[it.state]] += 1;
   return { items, counts, axis: { start, end } };
