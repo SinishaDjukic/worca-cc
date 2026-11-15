@@ -353,12 +353,21 @@ test('config-env: YAML aliases and a long parent key never multiply a file\'s pa
   const url = `a: &v "http://h/${'x'.repeat(10240)}"\nb: &l ${refs('*v', 1000)}\nc: ${refs('*l', 150)}\n`;
   // two documents of 3 MB each: one budget spans the file
   const twoDocs = `a: &v "${'x'.repeat(10240)}"\nb: ${refs('*v', 300)}\n---\na: &v "${'x'.repeat(10240)}"\nb: ${refs('*v', 300)}\n`;
+  // The cap itself, not the clock: the walk stops with "config too large" inside 4 MiB of keys and values.
+  const capped = (text) => {
+    const { pairs, errors } = configPairs('config/app.yml', text);
+    assert.ok(errors.some((e) => /config too large/.test(e)), JSON.stringify(errors));
+    const bytes = pairs.reduce((n, p) => n + p.key.length + p.value.length, 0);
+    assert.ok(bytes <= 4 * 1024 * 1024, `${bytes} chars of keys and values`);
+    return pairs.length;
+  };
   for (const text of [aliased, url, twoDocs]) {
-    const t0 = performance.now();
+    capped(text);
     const r = detector.detect({ rel: 'config/app.yml', text }, ctx());
-    assert.ok(performance.now() - t0 < 2000, `took ${(performance.now() - t0).toFixed(0)} ms`);
     assert.deepEqual(r.unresolved.map((u) => u.reason), ['parse error: config too large']);
   }
+  // twice the alias fan-out yields no more pairs: the cap, not the input, bounds the walk
+  assert.equal(capped(aliased.replace(refs('*l', 150), refs('*l', 300))), capped(aliased));
   // a 64 KB JSON key over 2 000 leaves is 128 MB of flattened keys (a 400 KB key over 20 000 leaves ran out of memory)
   const leaves = Object.fromEntries(Array.from({ length: 2000 }, (_, i) => [`q${i}`, 'v']));
   const { pairs } = configPairs('config/app.json', JSON.stringify({ ['k'.repeat(65536)]: leaves, ledger: { url: 'http://ledger:7000/api' } }));

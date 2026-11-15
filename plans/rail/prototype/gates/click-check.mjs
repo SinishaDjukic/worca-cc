@@ -30,9 +30,9 @@ const FALLBACK = [];
 const EXPERT = () => { try { localStorage.setItem('worca-rail.mode', 'expert'); } catch { /* none */ } };   // the gates walk every place: Expert
 
 // Every control in the page's own area: the prototype's corner and captured pages are not the design. Against the app
-// (STILLHET_TARGET) the Stillhet UI switch is left out: it turns `rail` off on the server and reloads into dev's app, which
-// would end the walk (test/stillhet-app-host.test.mjs pins what it does).
-const APP_SKIP = process.env.STILLHET_TARGET ? ', [data-design-switch]' : '';
+// (STILLHET_TARGET) the Stillhet icon and its menu rows are left out: "Back to today's UI" turns `rail` off on the server and
+// reloads into dev's app, which would end the walk (test/stillhet-app-host.test.mjs pins what it does).
+const APP_SKIP = process.env.STILLHET_TARGET ? ', [data-stillhet="design-switch"]' : '';
 const CONTROLS = `(() => {
   const SEL = 'button, a[href], [role="tab"], [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="radio"], [role="switch"], input[type="checkbox"], input[type="radio"], select, summary';
   const out = []; const seen = new Set();

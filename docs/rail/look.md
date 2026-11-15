@@ -91,6 +91,9 @@ suggestion is never a dot or a badge. Merged is full ink, with no ring, so it an
 | Globe | Web access |
 | Service mark | Came from this service, one ink |
 | × | Close or remove only, never a failed check |
+| Gear (`gear`) | Settings only: toothed, never `sun`'s rays; `nav-settings` and `set-general` are the same drawing |
+| Sun on water (`stillhet-ui`) | The UI choice: the Stillhet icon in the top bar (`nav.design-switch`) |
+| Signal (`signal`) | Pulse, and an event row's mark (Updates, Limits), smaller, in its row's tone |
 
 ## Scrollbars
 Thin, in `--line-2`. They appear as the mouse moves, on the page and on any scroller under the pointer, and while something scrolls; 0.8s after it stops they fade out, unless the pointer is on one. They take no room, so nothing shifts, and they can be dragged. A bar stays under whatever opens over its page; a panel's, menu's or dialog's own bar sits on it. The library draws them (`watchScrollbars(document)`, `.rail-thumb` in `rail-look.css`), because an operating system's overlay bars take no styling and show only when it says so. Strips with their own controls (Tabs) have none.

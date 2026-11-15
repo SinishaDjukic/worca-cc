@@ -10,7 +10,7 @@ globalThis.window = dom0.window;
 globalThis.CustomEvent = dom0.window.CustomEvent;
 const S = await import('../ui/public/stillhet.mjs');
 const F = await import('../ui/public/flags.mjs');
-const { stillhetInvitation, designSwitch } = await import('../ui/public/design-system/components/index.mjs');
+const { stillhetInvitation, stillhetSwitch } = await import('../ui/public/design-system/components/index.mjs');
 
 const URL_ = 'https://github.com/o/r/issues';
 const page = (extra = '') => {
@@ -125,16 +125,27 @@ test('the strip closes when rail turns on elsewhere', () => {
   F.applyFlags({ rail: false }, d);
 });
 
-test('the switch writes the flag, sets aria-busy while pending, and flips back with a Toast on failure', async () => {
-  const d = page().document; const toasts = [];
+test('the icon\'s pick writes the flag once, sets aria-busy while pending, and restores with a Toast on failure', async () => {
+  const d = page().document; const toasts = [], sent = [];
   let release; const gate = new Promise((r) => { release = r; });
-  S.mountDesignSwitch({ doc: d, status, flag: { on: false, locked: false }, fetchJson: async (m, u, b) => { assert.deepEqual(b, { rail: true }); await gate; return { ok: false, data: { error: 'nope' } }; }, toast: (t) => toasts.push(t) });
-  d.querySelector('[data-design-switch]').click();
-  assert.equal(d.querySelector('[data-design-switch]').getAttribute('aria-busy'), 'true');
+  S.mountDesignSwitch({ doc: d, status, flag: { on: false, locked: false }, fetchJson: async (m, u, b) => { sent.push([m, u, b]); await gate; return { ok: false, data: { error: 'nope' } }; }, toast: (t) => toasts.push(t) });
+  const icon = () => d.querySelector('[data-stillhet="ui-icon"]');
+  F.applyFlags({ rail: true }, d);   // turned on elsewhere (Labs, another tab): the live flag decides the check, not the painted slot
+  icon().click();
+  assert.deepEqual([...d.querySelectorAll('[data-design-pick]')].map((r) => r.getAttribute('aria-checked')), ['true', 'false']);
+  icon().click();
+  F.applyFlags({ rail: false }, d);
+  icon().click();
+  const rows = [...d.querySelectorAll('[data-design-pick]')];
+  assert.deepEqual(rows.map((r) => [r.textContent, r.getAttribute('aria-checked')]), [['Try Stillhet', 'false'], ["Back to today's UI", 'true']]);
+  rows[0].click();
+  assert.equal(icon().getAttribute('aria-busy'), 'true');
+  icon().click();   // busy: nothing more is sent
+  assert.deepEqual(sent, [['PATCH', '/api/flags', { rail: true }]]);
   release(); await sleep(); await sleep();
-  assert.equal(d.querySelector('[data-design-switch]').getAttribute('aria-checked'), 'false');
   assert.deepEqual(toasts, ['Stillhet could not be switched: nope']);
-  assert.equal(d.querySelector('[data-stillhet="design-switch"]').outerHTML, designSwitch({ on: false }));
+  assert.equal(d.querySelector('[data-stillhet="design-switch"]').outerHTML, stillhetSwitch({ on: false }));
+  assert.equal(d.activeElement, icon());
 });
 
 test('watchRailReload: once away from the boot value, never toward it, held while text is typed, and not twice in 10 s', () => {

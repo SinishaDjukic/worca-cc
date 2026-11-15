@@ -322,7 +322,7 @@ export async function verifyApp({ base, proj, child, log, phase }) {
 // The page typeface is the one thing the two shells do not share until slice 2 serves Stillhet (the app is Poppins, the prototype Inter),
 // so both are pinned to one family here: what is compared is structure, spacing and colour.
 const ISOLATE = (id) => `*{font-family:Arial,Helvetica,sans-serif!important}html,body{background:var(--bg,#fff)!important}body *{visibility:hidden!important}[data-stillhet="${id}"],[data-stillhet="${id}"] *{visibility:visible!important}*{animation:none!important;transition:none!important;caret-color:transparent!important}`
-  + (id === 'design-switch' ? '[data-stillhet="design-switch"]{position:fixed!important;top:0!important;left:0!important;z-index:2147483647!important;background:var(--bg)!important}' : '')
+  + (id === 'design-switch' ? '[data-stillhet="design-switch"]{position:fixed!important;top:0!important;right:0!important;left:auto!important;z-index:2147483647!important;background:var(--bg)!important}' : '')   // the icon, and its menu right-aligned under it when open
   + (id === 'invitation' ? '#rail-strip{position:fixed!important;top:0!important;left:0!important;right:0!important;z-index:2147483647!important}' : '');
 
 async function playwright() {
@@ -347,7 +347,7 @@ export async function freePort() {
 export async function startApp(home, env, { lockRail = false, serverArgs = ['ui/server.mjs'] } = {}) {
   const port = await freePort();
   await mkdir(join(home, '.worca-cc'), { recursive: true });
-  // a locked flag draws the top-bar switch disabled (nav.design-switch), which the prototype's switch is not
+  // a locked flag draws the top-bar icon's menu rows disabled (nav.design-switch), which the prototype's are not
   await writeFile(join(home, '.worca-cc', 'settings.json'), JSON.stringify({ onboarding: { welcomeSeen: true }, ...(lockRail ? {} : { flags: { rail: true } }) }));
   let log = '';
   const child = spawn(process.execPath, serverArgs, { cwd: ROOT, env: { ...process.env, ...env, WORCA_FLAGS: lockRail ? 'rail' : '', WORCA_STILLHET_DEMO: '1', PORT: String(port), HOME: home, USERPROFILE: home, WORCA_HOME: join(home, 'worca-home'), WORCA_MOCK: '1', WORCA_TEST_ALLOW_HOME_FALLBACK: '1', FORCE_COLOR: '0', WORCA_HOST: '127.0.0.1' }, stdio: ['ignore', 'pipe', 'pipe'] });

@@ -28,6 +28,15 @@ test('the allowed targets pass: the design system, fonts, assets, Stillhet itsel
   assert.deepEqual(kinds("import 'node:fs';"), []);
 });
 
+test('the prompt check\'s grader and improve view are allowed; chip-host.mjs is still a violation', () => {
+  const at = 'ui/public/stillhet/chat/prompt-check.mjs';
+  assert.deepEqual(kinds("import { createPromptGrader } from '../../prompt-check/grader.mjs';", at), []);
+  assert.deepEqual(kinds("import { createImproveView } from '../../prompt-check/improve-view.mjs';", at), []);
+  assert.deepEqual(kinds("import { KIND_LABELS } from '../../../../src/shared/prompt-check/assessment.mjs';", at), []);
+  assert.deepEqual(kinds("import { mountPromptCheckChip } from '../../prompt-check/chip-host.mjs';", at), ['import']);
+  assert.deepEqual(kinds("import { createPromptCheckAddon } from '../../chat/prompt-check.mjs';", at), ['import']);
+});
+
 test('reaching an id of dev\'s shell is a violation; an id Stillhet draws itself, and the allowed words, are not', () => {
   assert.deepEqual(kinds("document.getElementById('topnav')"), ['dev-dom']);
   assert.deepEqual(kinds("el.closest('#topnav .x')"), ['dev-dom']);

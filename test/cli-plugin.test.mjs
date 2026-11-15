@@ -498,11 +498,15 @@ test('plugin validate --run-cases streams the script\'s lines, WHOLE, to a reade
   let stdout = '';
   let stderr = '';
   child.stdout.on('data', (b) => (stdout += b.toString()));
+  // The reader is attached at spawn but paused: a stream with no consumer at all would be dropped by Node when the
+  // child exits first, while a paused one stops reading once its buffer is full, so the CLI still meets a full pipe.
+  child.stderr.on('data', (b) => (stderr += b.toString()));
+  child.stderr.pause();
   const exited = new Promise((res) => child.on('close', (code) => res(code)));
   // ~210 KB of lines against a 64 KiB pipe: nothing is read until the run is long
   // over, so whatever the CLI had not flushed when it called process.exit is lost.
   await new Promise((r) => setTimeout(r, 1500));
-  child.stderr.on('data', (b) => (stderr += b.toString()));
+  child.stderr.resume();
   assert.equal(await exited, 0, stdout);
   const got = stderr.split('\n').filter((l) => /^\[chatty\/sample\] chat \d+ x+$/.test(l)).length;
   assert.equal(got, 3000, `stderr was cut: ${got} of 3000 lines arrived`);
