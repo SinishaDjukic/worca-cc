@@ -153,6 +153,50 @@ test('F-a4-07: Undo after archiving a live run\'s row sends restore with its pip
   assert.deepEqual(rows.map((x) => [x.id, x.archived]), [['pb', false]]);
 });
 
+test('F-a4-07 (review minor): a failing /api/history?archived=1 fails only the Archived view, at load and on reconnect; the rest of the list draws, and a refresh that answers clears it', async () => {
+  let fail = true;
+  const r = rig({ status: (u) => (fail && u === URLS.archived ? 500 : 200) });
+  await r.tick();
+  assert.equal(r.st.archived, 'failed', 'the Archived view reads failed');
+  assert.notEqual(r.st.list, 'failed', 'the list does not');
+  assert.equal(r.sockets.length, 1, 'the socket opens');
+  r.frame(r.sockets[0], hello);
+  await r.tick();
+  assert.equal(r.st.list, '');
+  assert.ok(r.rows.size > 0, 'the rest of the list draws');
+  // a reconnect whose archived read fails again: the list is not out of date, and the state is not set again
+  const sets = r.log.filter((x) => x[0] === 'setState').length;
+  r.sockets[0].onclose({}); await r.tick(1000);
+  r.frame(r.sockets[1], hello);
+  await r.tick();
+  assert.equal(r.st.list, '', 'the reconnect draws the list');
+  assert.equal(r.st.archived, 'failed');
+  assert.deepEqual(r.log.filter((x) => x[0] === 'setState').slice(sets).map((x) => x[1]), [{ conn: 'offline' }], 'no list or archived state on a reconnect that only repeats the failure');
+  // Try again: the archived read alone answers and the view clears
+  fail = false;
+  const n = r.calls.length;
+  r.live.refresh('archived'); await r.tick(250);
+  assert.deepEqual(gets(r.calls.slice(n)), [URLS.archived]);
+  assert.equal(r.st.archived, '');
+  // it fails again on its own: only the Archived view, never the list's out-of-date look
+  fail = true;
+  r.live.refresh('archived'); await r.tick(250);
+  assert.equal(r.st.archived, 'failed');
+  assert.equal(r.st.list, '');
+});
+
+test('F-a4-07 (review minor): an Undo sent right after archiving a live run (before its archived row is read) restores by its pipeline id', async () => {
+  const r = rig({ answer: (u) => (u === '/api/runs/bulk' ? { done: [{ pipelineId: 'pb' }] } : ANSWER[u] ?? {}) });
+  await r.tick();
+  r.frame(r.sockets[0], hello);
+  await r.tick();
+  r.frame(r.sockets[0], { type: 'state', runId: 'run-b', id: 'pb', status: 'paused', pauseReason: 'paused by you' });
+  await r.live.task.list('archive', { ids: ['run-b'] });
+  r.frame(r.sockets[0], { type: 'pipelines-changed', action: 'bulk-archive', removedRunIds: ['run-b'] });
+  await r.live.task.list('restore', { ids: ['run-b'] });   // no tick: the archived feed is not read yet
+  assert.deepEqual(r.calls.filter((c) => c.method === 'POST' && c.u === '/api/runs/bulk').at(-1).body, { action: 'restore', targets: [{ pipelineId: 'pb' }] });
+});
+
 test('failed on a 500 (a task page too); retry() says loading, fetches again and loads', async () => {
   let fail = true;
   const r = rig({ status: (u) => (fail && u === URLS.budget ? 500 : 200) });

@@ -194,3 +194,25 @@ test('F-a4-07: the Showing menu\'s archived count is the API\'s archived rows; p
   assert.ok(!root.querySelector('[data-open="run:h3"]'), 'an active row is not');
   assert.equal(calls.filter((c) => c.method === 'GET' && c.url === URLS.archived).length, n + 1, 'the view\'s opening reads the archived feed once');
 });
+
+test('F-a4-07 (review minor): a failing archived read leaves the Tasks list drawn; the Archived view says it could not load, and its Try again reads only the archived feed', async () => {
+  let fail = true;
+  const s = sources(), h3 = s.history.pipelines.find((p) => p.id === 'h3');
+  s.archived = { pipelines: [{ ...h3, id: 'x1', title: 'Arch x1', archived: true }] };
+  const { w, d, calls } = await liveHost({ sources: s, read: (u) => (fail && u === URLS.archived ? [500, {}] : null) });
+  await go(w, '#runs', 150);
+  const root = d.querySelector('#runs-root');
+  assert.ok(root.querySelector('[data-open="run:h3"]'), 'the rest of the list draws');
+  assert.doesNotMatch(root.textContent, /Could not load/);
+  root.querySelector('[data-menu="show"]').click(); await settle(20);
+  root.querySelector('[data-pick="show|archived"]').click(); await settle(400);
+  assert.match(root.textContent, /Could not load the tasks/, 'the Archived view says it could not load');
+  const again = [...root.querySelectorAll('[data-retry]')].find((b) => b.textContent.trim() === 'Try again');
+  assert.ok(again, 'with Try again');
+  fail = false;
+  const n = calls.length;
+  again.click(); await settle(400);
+  assert.deepEqual(calls.slice(n).filter((c) => c.method === 'GET').map((c) => c.url), [URLS.archived], 'Try again reads the archived feed alone');
+  assert.ok(root.querySelector('[data-open="run:x1"]'), 'the archived row shows');
+  assert.doesNotMatch(root.textContent, /Could not load/);
+});

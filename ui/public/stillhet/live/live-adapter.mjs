@@ -37,6 +37,7 @@ const ARCHIVE_ACTIONS = new Set(['bulk-archive', 'bulk-restore', 'bulk-delete', 
 const WORKFLOW_SOURCES = new Set(['workflows', 'scripts']);
 const MARKET_SOURCES = new Set(['plugins', 'markets']);
 const RUN_FRAMES = new Set(['run-created', 'run-pipeline', 'state', 'question', 'question-resolved', 'done', 'error', 'title']);
+const ARCHIVED_FAILED = Symbol('archived failed');
 const DEBOUNCE_MS = 250, BACKOFF_MS = 1000, BACKOFF_MAX_MS = 30000, TOKEN_EXPIRED = 4001;
 
 const PROJECT_FRAMES = new Set(['clone-changed', 'settings-changed', 'projects-changed', 'workspaces-changed']);
@@ -163,9 +164,17 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
     const n = ++asked, names = Object.keys(SOURCES);
     allOut++;   // a count: two reconnects' reads can be out at once, and the later one may still predate a settle
     let answers;
-    try { answers = await Promise.all(names.map((x) => load(x))); }
+    // the Archived view's read fails alone: the rest of the list still draws, and that view says it could not load
+    try { answers = await Promise.all(names.map((x) => (x === 'archived' ? load(x).catch(() => ARCHIVED_FAILED) : load(x)))); }
     finally { allOut--; if (!allOut && !historyOut && historyDirty) { historyDirty = false; refresh('history'); } }
-    names.forEach((x, i) => keep(x, answers[i], n));
+    names.forEach((x, i) => { if (answers[i] !== ARCHIVED_FAILED) keep(x, answers[i], n); });
+    archivedRead(answers[names.indexOf('archived')] !== ARCHIVED_FAILED);
+  }
+  // the world's `archived` state ('failed' or ''): set only when it changes, so a read on idle adds no redraw
+  let archivedFailed = false;
+  function archivedRead(ok) {
+    if (archivedFailed === !ok) return;
+    archivedFailed = !ok; world.setState({ archived: ok ? '' : 'failed' });
   }
   const snapshot = () => snapshotOf({ ...sources, hello: { runs: [...live.values()] } }, { now: now(), unread, checksOf: task.checks });
   // A checks entry landed (D5): the rows read their case from it, so the runs part is drawn again (debounced). Only then:
@@ -423,7 +432,8 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
       let a, failed = false;
       try { a = await load(source); } catch { failed = true; }
       if (full) { historyOut = false; if (historyDirty) { historyDirty = false; refresh('history'); } }
-      if (failed) { stale.add(source); world.setState({ list: 'refresh' }); return; }
+      if (source === 'archived') archivedRead(!failed);
+      if (failed) { if (source !== 'archived') { stale.add(source); world.setState({ list: 'refresh' }); } return; }
       if (!keep(source, a, n)) return;
       if (full) askPrs();
       drawSource(source);

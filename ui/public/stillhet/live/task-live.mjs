@@ -559,7 +559,8 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
   /** A list action (D17). `args.ids`: the rows' task ids; their pipeline ids and live run ids come from resolve. */
   async function list(id, args = {}) {
     const def = LIST_ACTIONS[id]; if (!def) return refuse(id, { ok: false, error: 'this action is unknown' });
-    const rs = (args.ids || []).map((x) => resolve(x) || { pipelineId: x });
+    // an Undo right after an archive: the run left the runs and its archived row is not read yet, so its pipeline id is the alias
+    const rs = (args.ids || []).map((x) => resolve(x) || { pipelineId: alias.get(x) || x });
     const a = { ...args, pipelineIds: rs.map((r) => r.pipelineId), pipelineId: rs[0]?.pipelineId, runId: rs[0]?.live ? rs[0].runId : '' };
     return runner.run(`list:${id}:${a.pipelineIds.join(',')}`, def[0], async () => {
       const [method, url, body] = def[1](a);
