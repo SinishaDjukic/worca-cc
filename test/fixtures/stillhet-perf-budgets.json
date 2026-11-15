@@ -11,7 +11,7 @@
       ]
     },
     "prNoChangeWorldChanges": {
-      "value": 1,
+      "value": 0,
       "target": 0,
       "test": "test/stillhet-perf-budgets-chat-host.test.mjs",
       "findings": [
@@ -19,7 +19,7 @@
       ]
     },
     "prNoChangeShellRenders": {
-      "value": 2,
+      "value": 0,
       "target": 0,
       "test": "test/stillhet-perf-budgets-chat-host.test.mjs",
       "findings": [
