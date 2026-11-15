@@ -94,7 +94,8 @@ export const ACTIONS = Object.freeze({
   'task-watch-state': ['read the PR watch', (a) => ['GET', `/api/pr/watch?id=${enc(a.pipelineId || a.runId)}`]],
   'task-watch': ['watch the PR', (a) => ['POST', '/api/pr/watch', { watch: !!a.watch, id: a.pipelineId || a.runId }]],
   'task-terminal': ['open a terminal in the worktree', (a) => ['POST', `/api/runs/${enc(a.pipelineId || a.runId)}/resolve-terminal`, {}]],
-  'task-stop': ['stop the task', (a) => ['POST', '/api/stop', { runId: a.runId }]],
+  // classic's stopRun (app.js): a live run by its runId, with its pipeline id when paused; no live run: its pipeline id
+  'task-stop': ['stop the task', (a) => ['POST', '/api/stop', { ...(a.runId ? { runId: a.runId } : {}), ...(a.pipelineId && (a.paused || !a.runId) ? { pipelineId: a.pipelineId } : {}) }]],
   changes: ['send your changes', (a) => ['POST', `${T(a.threadId)}/changes`, { pipelineId: a.pipelineId, text: a.text }]],
   direction: ['send the direction', (a) => ['POST', `${T(a.threadId)}/directions`, { runId: a.runId, text: a.text }]],
   pr: ['create the PR', (a) => ['POST', '/api/pr', prBodyOf(a)]],

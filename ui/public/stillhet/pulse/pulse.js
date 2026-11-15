@@ -469,7 +469,11 @@ function runsPage() {
 // On a narrow screen the sidebar stays Worca's, and Settings opens on its menu as a list; a section has ‹ Settings.
 // Every section is SettingsSections of SettingsRows (the components own the alignment). Notifications is drawn here,
 // from Pulse's model; every other section comes from settings-model.js through settings.js.
-const sp = (id, text, items, tip, right) => R.sentencePicker({ id, text, items, open: ui.menu === id, tip, chevron: svg('chevron', 12), right });
+// Live, what Notifications does not save yet (B1.3): Badge, Sound, Breathing and every Updates picker show their value,
+// disabled, with the not-live sentence as the reason. LIVE is read when called, after it is defined below.
+const OFF_LIVE = (id) => LIVE && (['badge', 'sound', 'attnFor'].includes(id) || /^(lvl|whr|ev):/.test(id));
+const offLive = (html) => R.tooltip({ text: R.NOT_LIVE_SENTENCE, off: true, html });
+const sp = (id, text, items, tip, right) => (OFF_LIVE(id) ? offLive('<b>' + esc(text) + '</b>') : R.sentencePicker({ id, text, items, open: ui.menu === id, tip, chevron: svg('chevron', 12), right }));
 const sectionId = () => ui.sset || (R.shows('advanced') ? SM.FIRST : 'general');   /* a newcomer lands on General, not on budgets */
 const menuGroups = () => SM.GROUPS.map((g) => ({ title: g.title, items: g.items.filter((id) => SM.visible(id, R.prefs.mode())).map((id) => ({ label: SM.title(id), icon: SM.ICONS?.[id] || '', current: id === sectionId(), attrs: { 'data-sset': id } })) })).filter((g) => g.items.length);   // a group with nothing at this mode has no head
 const settingsMenu = () => R.sideMenu({ label: 'Settings', cls: swapCls.trim(), back: SHELL ? null : { label: 'Back to Worca', icon: svg('chevL', 14), attrs: { 'data-go': 'runs', title: 'Back to the page you came from' } }, groups: menuGroups() });
@@ -495,7 +499,8 @@ function notifications() {
     : s.desktop === 'unsupported' ? R.settingsRow({ name: 'Desktop', sentence: 'This browser does not support desktop notifications' })
     : s.desktop === 'insecure' ? R.settingsRow({ name: 'Desktop', sentence: 'Desktop notifications need a secure address: open Worca on https:// or localhost' })
     : R.settingsRow({ name: 'Desktop', changed: changedFrom('desktop', 'Desktop', (v) => (v === 'on' ? 'on' : 'off')), sentence: 'Desktop notifications in this browser', end: R.button({ label: 'Send test', kind: 'quiet', attrs: { 'data-test': '', disabled: s.desktop !== 'on', title: s.desktop === 'on' ? 'Sends one test notification' : 'Turn desktop notifications on to send a test' } })
-      + R.switchButton({ on: s.desktop === 'on', label: 'Desktop notifications in this browser', why: s.desktop === 'on' ? 'On: what a group sends to desktop shows as a notification' : 'Off: no desktop notifications from any group', attrs: { 'data-desk': '' } }) });
+      + (LIVE ? offLive(R.switchButton({ on: s.desktop === 'on', label: 'Desktop notifications in this browser', why: R.NOT_LIVE_SENTENCE, disabled: true }))
+        : R.switchButton({ on: s.desktop === 'on', label: 'Desktop notifications in this browser', why: s.desktop === 'on' ? 'On: what a group sends to desktop shows as a notification' : 'Off: no desktop notifications from any group', attrs: { 'data-desk': '' } })) });
   const channels = desk
     + R.settingsRow({ name: 'Badge', changed: changedFrom('badge', 'Badge', (v) => BADGE.find((b) => b.id === v).text), sentence: `The tab title ${sp('badge', BADGE.find((b) => b.id === s.badge).text, BADGE.map((b) => ({ ...b, checked: b.id === s.badge })), 'What the count in the tab title counts')}` })
     + R.settingsRow({ name: 'Sound', changed: changedFrom('sound', 'Sound', (v) => R.SOUND_CHOICES.find((x) => x.id === v).text), sentence: `${sp('sound', R.SOUND_CHOICES.find((x) => x.id === s.sound).text, R.SOUND_CHOICES.map((x) => ({ ...x, checked: x.id === s.sound })), 'What makes a sound as it arrives. Never during away hours; a burst plays once')}` })
@@ -506,7 +511,7 @@ function notifications() {
     const gs = s.groups[g.id], g0 = startOf().groups[g.id], open = ui.custom === g.id, nEx = Object.keys(gs.ex).length;
     const groupWhere = (ev) => (M.qualifies(gs.level, ev[2]) ? gs.where : 'pulse');
     const evChange = (ev) => (gs.ex[ev[0]] ? [{ name: ev[1], was: whereText(groupWhere(ev)) }] : []);
-    const detailRows = open ? g.events.map((ev) => {
+    const detailRows = open && !LIVE ? g.events.map((ev) => {
       const w = effWhere(g, ev);
       return R.settingsRow({ name: ev[1], help: `${ev[0]} · ${ev[2] === 'needs' ? 'needs you' : ev[2]}`, changed: evChange(ev), sentence: `${w === 'pulse' ? '' : 'Goes to '}${sp('ev:' + ev[0], whereText(w), M.WHERE.map((x) => ({ ...x, checked: x.id === w })), `Where ${ev[1]} goes`)}` });
     }).join('') : '';
@@ -517,12 +522,13 @@ function notifications() {
       // Pulse keeps everything, so with Pulse only there is no level to choose.
       sentence: gs.where === 'pulse' ? sp('whr:' + g.id, whereText(gs.where), M.WHERE.map((x) => ({ ...x, checked: x.id === gs.where })), `Where ${g.name} goes beyond Pulse`)
         : `Send ${sp('lvl:' + g.id, levelText(gs.level), M.LEVELS.map((l) => ({ ...l, checked: l.id === gs.level })), `How much of ${g.name} reaches you`)} to ${sp('whr:' + g.id, whereText(gs.where), M.WHERE.map((x) => ({ ...x, checked: x.id === gs.where })), `Where ${g.name} goes beyond Pulse`, true)}`,
-      fold: { open, attrs: { 'data-custom': g.id }, help: open ? 'Close the events' : 'Choose per event: ' + g.events.map((e) => e[1]).join(', ') } });
+      fold: LIVE ? null : { open, attrs: { 'data-custom': g.id }, help: open ? 'Close the events' : 'Choose per event: ' + g.events.map((e) => e[1]).join(', ') } });
   }).join('');
   const atDefaults = JSON.stringify(s.groups) === JSON.stringify(freshSettings(C()).groups);
   const reset = quiet('Reset to defaults', { 'data-reset': '', title: 'Every group back to its defaults; asks first' });
-  return R.settingsSection({ title: 'Channels', rows: channels })
-    + R.settingsSection({ title: 'Updates', meta: `What each kind of update sends beyond Pulse. Pulse keeps everything for 90 days; a problem clears when you act on it.${s.desktop === 'on' ? '' : ' Desktop notifications are off, so nothing shows there.'}`, rows: groups, action: atDefaults ? R.tooltip({ text: 'Nothing to reset: every group is at its default', off: true, html: R.button({ label: 'Reset to defaults', kind: 'quiet', attrs: { disabled: true } }) }) : reset });
+  const resetOff = (why) => R.tooltip({ text: why, off: true, html: R.button({ label: 'Reset to defaults', kind: 'quiet', attrs: { disabled: true } }) });
+  return R.settingsSection({ title: 'Channels', rows: channels, meta: LIVE ? R.NOT_LIVE_SENTENCE : '' })
+    + R.settingsSection({ title: 'Updates', meta: `What each kind of update sends beyond Pulse. Pulse keeps everything for 90 days; a problem clears when you act on it.${s.desktop === 'on' ? '' : ' Desktop notifications are off, so nothing shows there.'}`, rows: groups, action: LIVE ? resetOff(R.NOT_LIVE_SENTENCE) : atDefaults ? resetOff('Nothing to reset: every group is at its default') : reset });
 }
 // What a run does near a limit is a run's business, so it sits in Settings › Tasks; Notifications only says how you hear of it.
 function limitsRows() {
@@ -881,6 +887,7 @@ function toast(text, canUndo) {
 
 function pick(id, v) {
   const s = ui.s;
+  if (OFF_LIVE(id)) { ui.menu = ''; return; }   // live: not saved yet, so a stale menu's pick changes nothing (B1.3)
   if (id === 'show') { ui.show = v; ui.pick = R.selectPrune(ui.pick, []); }
   else if (id === 'vitalsShow') ui.vitalsShow = v;
   else if (id === 'vitalsFrom') ui.vitalsFrom = v;
@@ -938,7 +945,7 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-pop]'))) { ui.pop = !ui.pop; ui.acct = false; ui.nr = null; if (ui.pop) opening = 'pop'; render(); return; }
   if ((el = tg('[data-acct]'))) { ui.acct = !ui.acct; ui.sub = ''; ui.pop = false; ui.nr = null; if (ui.acct) opening = 'acct'; render(); return; }
   if ((el = tg('[data-sub]'))) { const v = el.dataset.sub; ui.sub = v && ui.sub !== v ? v : ''; if (ui.sub) opening = 'sub'; render(); return; }
-  if ((el = tg('[data-desk]'))) { ui.s.desktop = ui.s.desktop === 'on' ? 'off' : 'on'; render(); return; }
+  if ((el = tg('[data-desk]'))) { if (LIVE) return; ui.s.desktop = ui.s.desktop === 'on' ? 'off' : 'on'; render(); return; }
   // the mode menu's items only: the app host's <html> carries dev's data-level (src/core/index-html.mjs), which closest() would match on every click
   if ((el = tg('[data-level]:not(:root)'))) {
     ui.sub = ''; const to = el.dataset.level;
@@ -1008,9 +1015,9 @@ document.addEventListener('click', (e) => {
     }
     render(); return;
   }
-  if ((el = tg('[data-custom]'))) { ui.custom = ui.custom === el.dataset.custom ? '' : el.dataset.custom; render(); return; }
-  if ((el = tg('[data-backgroup]'))) { ui.s.groups[el.dataset.backgroup].ex = {}; toast('Every event follows the group again'); render(); return; }
-  if ((el = tg('[data-reset]'))) { ui.confirm = 'reset'; render(); return; }
+  if ((el = tg('[data-custom]'))) { if (LIVE) return; ui.custom = ui.custom === el.dataset.custom ? '' : el.dataset.custom; render(); return; }
+  if ((el = tg('[data-backgroup]'))) { if (LIVE) return; ui.s.groups[el.dataset.backgroup].ex = {}; toast('Every event follows the group again'); render(); return; }
+  if ((el = tg('[data-reset]'))) { if (LIVE) return; ui.confirm = 'reset'; render(); return; }
   if ((el = tg('[data-confirm]')) && window.RailShell?.inviteStrip?.()) { window.RailShell.answerInvite(el.dataset.confirm); render(); return; }   /* the demo's answers close the strip and remember it */
   if ((el = tg('[data-confirm]')) && !settingsStrip() && labsBack()) { if (el.dataset.confirm === 'yes') { ui.unlock = null; history.back(); } else ui.unlock.stay = true; render(); return; }
   if ((el = tg('[data-confirm]')) && ui.unlock?.strip) { if (el.dataset.confirm === 'yes') modeByPerson(ui.unlock.strip); else { ui.unlock = null; render(); } return; }
