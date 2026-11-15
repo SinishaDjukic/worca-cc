@@ -295,10 +295,10 @@ const EVENTS = {
   'schedule.missed': ['schedules', 'problem'], 'schedule.failed': ['schedules', 'problem'], 'schedule.run_error': ['schedules', 'problem'], 'schedule.run_paused': ['schedules', 'problem'],
   'schedule.self_paused': ['schedules', 'problem'], 'schedule.late': ['schedules', 'info'], 'schedule.retrying': ['schedules', 'info'], 'schedule.skipped': ['schedules', 'info'],
   'schedule.canceled': ['schedules', 'info'], 'schedule.ended': ['schedules', 'info'], 'schedule.completed': ['schedules', 'info'],
-  'run.done': ['runs', 'info'], 'run.failed': ['runs', 'problem'], 'run.paused_limit': ['runs', 'problem'], 'run.paused_error': ['runs', 'problem'], 'run.cost_cap': ['runs', 'needs'],
+  'run.done': ['runs', 'info'], 'run.failed': ['runs', 'problem'], 'run.paused_limit': ['runs', 'problem'], 'run.paused_error': ['runs', 'problem'], 'run.paused_stopped': ['runs', 'problem'], 'run.cost_cap': ['runs', 'needs'],
 };
 const NOTIF_EVENT = { missed: 'schedule.missed', failed: 'schedule.failed', run_error: 'schedule.run_error', run_paused: 'schedule.run_paused', paused: 'schedule.self_paused', late: 'schedule.late', retrying: 'schedule.retrying', skipped: 'schedule.skipped', canceled: 'schedule.canceled', ended: 'schedule.ended', completed: 'schedule.completed' };
-const NAMES = { 'schedule.missed': 'Start missed', 'schedule.failed': 'Could not start', 'schedule.run_error': 'Scheduled run failed', 'schedule.run_paused': 'Run paused', 'schedule.self_paused': 'Series paused itself', 'schedule.late': 'Started late', 'schedule.retrying': 'Retrying a start', 'schedule.skipped': 'Start skipped', 'schedule.canceled': 'Start canceled', 'schedule.ended': 'Series ended', 'schedule.completed': 'Scheduled run finished', 'run.done': 'Run finished', 'run.failed': 'Task failed', 'run.paused_limit': 'Usage limit reached', 'run.paused_error': 'Paused on error', 'run.cost_cap': 'Cost cap reached' };
+const NAMES = { 'schedule.missed': 'Start missed', 'schedule.failed': 'Could not start', 'schedule.run_error': 'Scheduled run failed', 'schedule.run_paused': 'Run paused', 'schedule.self_paused': 'Series paused itself', 'schedule.late': 'Started late', 'schedule.retrying': 'Retrying a start', 'schedule.skipped': 'Start skipped', 'schedule.canceled': 'Start canceled', 'schedule.ended': 'Series ended', 'schedule.completed': 'Scheduled run finished', 'run.done': 'Run finished', 'run.failed': 'Task failed', 'run.paused_limit': 'Usage limit reached', 'run.paused_error': 'Paused on error', 'run.paused_stopped': 'Worca was stopped', 'run.cost_cap': 'Cost cap reached' };
 const updDay = (at, now) => { const d = dayOf(at, now); return d === 'today' ? 'Today' : d === 'yesterday' ? 'Yesterday' : 'Earlier'; };
 const update = (id, e, title, meta, at, now, o = {}) => ({ id, e, g: EVENTS[e][0], sev: EVENTS[e][1], title, meta, time: timeOf(at, now) || '', day: updDay(at, now), unread: EVENTS[e][1] !== 'info' && !o.read, go: o.go || 'runs', to: o.to || 'Tasks', ...(o.run ? { run: o.run } : {}), ...(o.about ? { about: o.about } : {}), ...(o.fix ? { fix: o.fix } : {}), ...(Number.isFinite(o.work) ? { work: o.work } : {}) });
 
@@ -324,8 +324,10 @@ export function updateOf(n = {}, { now = 0 } = {}) {
  *  same event, while a later write that is no new attempt (a smart title landing after the failure) keeps it (#1268). */
 export function updateOfOutcome(row = {}, { now = 0 } = {}) {
   const s = lc(row.status), at = Number.isFinite(ms(row.mtime)) ? row.mtime : row.startedAt;
-  const capped = s === 'paused' && COST.test(lc(row.pauseReason));
-  const e = s === 'done' ? 'run.done' : FAILED.has(s) ? 'run.failed' : capped ? 'run.cost_cap' : s === 'paused' ? (row.limitEngine ? 'run.paused_limit' : 'run.paused_error') : '';
+  const reason = lc(row.pauseReason), capped = s === 'paused' && !row.limitEngine && COST.test(reason);
+  // F-7a-06: a pause reads by its kind; one you made yourself (no reason) needs nothing from you, so it is no update
+  const pause = row.limitEngine || reason === 'usage_limit' ? 'run.paused_limit' : capped ? 'run.cost_cap' : reason === 'drain' ? 'run.paused_stopped' : reason ? 'run.paused_error' : '';
+  const e = s === 'done' ? 'run.done' : FAILED.has(s) ? 'run.failed' : s === 'paused' ? pause : '';
   if (!e) return null;
   const cap = capOf(row.pauseDetail), line = capped ? (cap ? `paused at $${cap}` : 'paused at its cap') : shortDetail(row);
   return update(`o${row.id}`, e, `${NAMES[e]} · ${str(row.title) || 'Untitled task'}`, [str(row.projectName), line].filter(Boolean).join(' · '), at, now, { go: 'run', to: 'the run page', run: str(row.id), fix: FAILED.has(s) ? 'Try again' : s === 'paused' ? 'Resume' : '', work: Number.isFinite(row.totalActiveMs) ? Math.round(row.totalActiveMs) : 0 });
