@@ -334,6 +334,8 @@
     (focus ? h.querySelector(focus) : null)?.focus();
   }
   function openForm(kind, keep) { menu = ''; opener = document.activeElement; form = blank(kind, keep); loadFlows(); loadBranches(); paintForm(kind === 'schedule' ? '#cc-name' : '#cc-text'); }
+  // a route change closes the form, as the account menu does (pulse.js): only a redraw of the same page keeps it; the next page owns the focus
+  addEventListener('hashchange', () => { if (!form) return; form = null; menu = ''; opener = null; paintForm(); });
   function closeForm() { form = null; menu = ''; paintForm(); (opener?.isConnected && opener !== document.body ? opener : document.querySelector('#bar-head [data-bar-new]'))?.focus(); }   // a menu's item is gone by now: back to its +
   function check() {
     const words = form.src === 'write' ? form.text.trim() : form.path.trim();

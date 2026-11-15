@@ -7,6 +7,7 @@
 import { test, afterEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { JSDOM } from 'jsdom';
 import { liveHost, go, settle, closeHosts, clone, SOURCES, posts } from './helpers/stillhet-chat-live-host.mjs';
 import { stillhetHost } from './helpers/stillhet-host.mjs';
 
@@ -204,7 +205,54 @@ test('list keys stay off behind an open New task form, and come back after it cl
   key(w, at, 'ArrowDown'); await settle(20);
   assert.notEqual(d.activeElement, at, 'the list key moves the row once the form is closed');
   assert.ok(d.activeElement.closest('#runs-root'), 'a row has the focus');
-  for (const f of ['ui/public/stillhet/runs/runs-list.js', 'ui/public/stillhet/schedules/schedules.js', 'ui/public/stillhet/chat/chats-column.js']) {
-    assert.ok(readFileSync(new URL(`../${f}`, import.meta.url), 'utf8').includes('#center-dlg .viewer-modal'), `${f} guards the form's host`);
-  }
+});
+
+// the same guard on Schedules and Chats: the list's down key would take a row behind the form, now that the host is outside #app
+for (const [hash, root] of [['#schedules', '#bar-schedules'], ['#chat', '#chats-root']]) {
+  test(`${hash}: list keys stay off behind an open New schedule form, and come back after it closes (F-a4-02)`, async () => {
+    const { w, d } = await liveHost({ sources: clone(SOURCES) });
+    await go(w, hash, 120);
+    assert.ok(d.querySelector(`${root} [data-open]`), 'the list has rows');
+    w.RailCenters.maker('schedules').newPick('form'); await settle(60);
+    d.activeElement.blur();
+    key(w, d.body, 'ArrowDown'); await settle(20);
+    assert.equal(d.activeElement, d.body, 'no row took the focus behind the form');
+    key(w, d.querySelector('#center-dlg .viewer-modal'), 'Escape'); await settle(20);
+    d.activeElement.blur();
+    key(w, d.body, 'ArrowDown'); await settle(20);
+    assert.ok(d.activeElement.closest(root), 'a row has the focus once the form is closed');
+  });
+}
+
+test('a route change closes the open form, as the account menu does; a redraw of the same page keeps it (F-a4-02)', async () => {
+  const { w, d } = await liveHost({ sources: clone(SOURCES) });
+  await go(w, '#runs', 120);
+  const dlg = await typedTask(w, d);
+  w.RailPulse.refresh(); await settle(40);
+  assert.ok(dlg.isConnected, 'a redraw of the same page keeps it');
+  await go(w, '#schedules', 60);
+  assert.equal(d.querySelector('#center-dlg .viewer-modal'), null, 'closed on navigation');
+  assert.equal(d.getElementById('center-dlg').children.length, 0, 'the host is left empty');
+  w.RailCenters.maker('schedules').newPick('form'); await settle(60);
+  assert.ok(d.querySelector('#center-dlg #cc-name'), 'New schedule opens on the next page');
+  await go(w, '#chat', 60);
+  assert.equal(d.querySelector('#center-dlg .viewer-modal'), null, 'New schedule closes on navigation too');
+});
+
+test('the empty host takes no clicks and draws nothing: #app\'s fixed, see-through, click-through layer (F-a4-02)', async () => {
+  const { w, d } = await liveHost({ sources: clone(SOURCES) });
+  await go(w, '#runs', 120);
+  await openTask(w);
+  key(w, d.querySelector('#center-dlg .viewer-modal'), 'Escape'); await settle(20);
+  const host = d.getElementById('center-dlg');
+  assert.equal(host.innerHTML, '', 'nothing left in it once closed');
+  // the shell's own sheets in boot.js's order (pulse.css, then shell.css); jsdom cascades them but lays nothing out
+  const css = ['pulse/pulse.css', 'shell/shell.css'].map((f) => readFileSync(new URL(`../ui/public/stillhet/${f}`, import.meta.url), 'utf8')).join('\n');
+  const { window: v } = new JSDOM(`<style>${css}</style><div id="h" class="${host.className}"></div>`);
+  const cs = v.getComputedStyle(v.document.getElementById('h'));
+  assert.equal(cs.pointerEvents, 'none', 'clicks go through to the page');
+  assert.equal(cs.position, 'fixed', 'out of the flow: it moves nothing');
+  assert.match(cs.backgroundColor, /^(transparent|rgba\(0, 0, 0, 0\))$/, 'see-through');
+  assert.match(cs.borderTopWidth || '0', /^0(px)?$/, 'no border');
+  v.close();
 });
