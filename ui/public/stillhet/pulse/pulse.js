@@ -711,8 +711,15 @@ const settingsStrip = () => (ui.page !== 'settings' ? '' : SV.strip(ui.sv) || (u
 const unlockStrip = () => (ui.unlock?.strip ? R.confirmStrip({ text: `${ui.unlock.e.label} needs ${cap(ui.unlock.strip)}. Switch to ${cap(ui.unlock.strip)}?`, yes: 'Switch' }) : '');
 // nav.locked: handed to Labs, the way back stays on screen until the switch is on or you stay on your own
 const labsBack = () => (ui.unlock?.flag && !ui.unlock.strip && !ui.unlock.stay ? R.confirmStrip({ text: `${flagName(ui.unlock.flag)} is in Labs. Turn on its switch to go on, or go back.`, yes: 'Go back', no: 'Stay here' }) : '');
-document.addEventListener('input', (e) => { if (e.target.matches?.('[data-search]')) { ui.q = e.target.value; document.querySelector('[data-search-res]').innerHTML = searchResults(); fitSearch(); } });
-function fitSearch() { const m = document.querySelector('.rl-search-res'); if (!m) return; m.style.left = ''; const r = m.getBoundingClientRect(), vw = document.documentElement.clientWidth; if (r.right > vw - 16) m.style.left = `${vw - 16 - r.right}px`; }
+document.addEventListener('input', (e) => { if (e.target.matches?.('[data-search]')) { ui.q = e.target.value; const res = document.querySelector('[data-search-res]'); if (res) R.patchParts(res, { list: searchResults() }); fitSearch(); } });
+// The results open to the left when they would leave the window: measured from where they would sit without their last
+// shift (as RailUI.fitMenu), and written only when the shift changes.
+function fitSearch() {
+  const m = document.querySelector('.rl-search-res'); if (!m) return;
+  const was = parseFloat(m.style.left || 0) || 0, right = m.getBoundingClientRect().right - was, vw = document.documentElement.clientWidth;
+  const dx = right > vw - 16 ? vw - 16 - right : 0;
+  if (dx !== was) m.style.left = dx ? `${dx}px` : '';
+}
 
 // ---- in the one Worca: Pulse in Activity's place, the overlays above the shell, Settings in the page, its menu in the sidebar ----
 // Pulse's icon has news when the count it holds grew since it was last drawn. The news lasts as Settings › Notifications ›
@@ -769,9 +776,11 @@ function renderInShell() {
   const pageEl = document.querySelector('main.main'); const keepMain = pageEl?.scrollTop || 0;   // the page scrolls in main in the one Worca
   const keepP = document.querySelector('.panel-body')?.scrollTop || 0;
   // each region is patched by part (comp.patch-parts): an unchanged one keeps its nodes, and a redraw that changes nothing writes nothing
-  R.patchParts(document.getElementById('rail-pulse-slot'), { slot: pulseButton() });
-  R.patchParts(document.getElementById('side-foot'), { slot: sideFoot() });
-  R.patchParts(document.getElementById('rail-strip'), { slot: window.RailShell?.inviteStrip?.() || unlockStrip() || settingsStrip() || labsBack() });
+  const drawn = [   // what each patch did: menus are fitted only after a part changed (or the window's width did)
+    R.patchParts(document.getElementById('rail-pulse-slot'), { slot: pulseButton() }),
+    R.patchParts(document.getElementById('side-foot'), { slot: sideFoot() }),
+    R.patchParts(document.getElementById('rail-strip'), { slot: window.RailShell?.inviteStrip?.() || unlockStrip() || settingsStrip() || labsBack() }),
+  ];
   // a reply in a chat you left: the dot on the Chat row and on Ask worca, until you open Chat
   const chatDot = !!C().chatUnread && !ui.chatSeen, dotTip = 'A reply in a chat you left';
   for (const id of ['nav-chat-unread', 'topnav-ask-dot']) { const d = document.getElementById(id); if (d) { if (d.hidden !== !chatDot) d.hidden = !chatDot; if (d.title !== dotTip) d.title = dotTip; } }
@@ -780,17 +789,18 @@ function renderInShell() {
   // sidebar stays Worca's, and Settings opens on its menu as a list in the page)
   const side = document.querySelector('#side-rail'), nav = side.querySelector('nav.nav');
   let sm = side.querySelector('.rail-side-settings');
-  if (sideNow) { if (!sm) { sm = document.createElement('div'); sm.className = 'rail-side-settings'; nav.after(sm); } sm.innerHTML = settingsMenu(); }
+  if (sideNow) { if (!sm) { sm = document.createElement('div'); sm.className = 'rail-side-settings'; nav.after(sm); } drawn.push(R.patchParts(sm, { menu: settingsMenu() })); }
   else sm?.remove();
   // a class is written only when it changes: a DOMTokenList add, remove or toggle writes the attribute even when it does not
   for (const el of [side, side.querySelector('.brand')]) if (el && el.classList.contains('is-settings') !== sideNow) el.classList.toggle('is-settings', sideNow);
-  if (sideNow) document.getElementById('route-settings').innerHTML = `<div class="pz-page">${settingsPage()}</div>`;
-  const res = document.querySelector('[data-search-res]'); if (res) res.innerHTML = searchResults();
-  R.patchParts(document.getElementById('app'), { popover: popover(), 'new-run': newRun(), account: acctMenu(), session: sessionDialog() });
+  // Settings' page is a part too: an unchanged page writes nothing, a typed field is carried by comp.keep-open
+  if (sideNow) drawn.push(R.patchParts(document.getElementById('route-settings'), { page: `<div class="pz-page">${settingsPage()}</div>` }));
+  const res = document.querySelector('[data-search-res]'); if (res) drawn.push(R.patchParts(res, { list: searchResults() }));
+  drawn.push(R.patchParts(document.getElementById('app'), { popover: popover(), 'new-run': newRun(), account: acctMenu(), session: sessionDialog() }));
   paintToast();
-  for (const b of document.querySelectorAll('[data-mixed]')) b.indeterminate = true;
-  const pb = document.querySelector('.panel-body'); if (pb && !opening) pb.scrollTop = keepP;
-  fitMenus();
+  for (const b of document.querySelectorAll('[data-mixed]')) if (!b.indeterminate) b.indeterminate = true;
+  const pb = document.querySelector('.panel-body'); if (pb && !opening && pb.scrollTop !== keepP) pb.scrollTop = keepP;
+  if (opening || drawn.some((r) => r.replaced + r.added > 0) || document.documentElement.clientWidth !== fitW) fitMenus();
   opening = '';
   if (scroller.scrollTop !== keepY) scroller.scrollTop = keepY;
   if (pageEl && pageEl.isConnected && pageEl.scrollTop !== keepMain) pageEl.scrollTop = keepMain;
@@ -869,8 +879,9 @@ function paintAlone() {
   if (pageEl && pageEl.isConnected && pageEl.scrollTop !== keepMain) pageEl.scrollTop = keepMain;   // nothing moves by itself: a repaint never scrolls the page
 }
 // A menu opens under its picker; one that would leave the window opens to the left instead.
+let fitW = -1;   // the window's width at the last fit: the shell's draw fits again when it changed
 function fitMenus() {
-  const vw = document.documentElement.clientWidth;
+  const vw = document.documentElement.clientWidth; fitW = vw;
   fitSearch();
   for (const m of document.querySelectorAll('.pz-menu, .spick-menu')) R.fitMenu(m, vw);
 }

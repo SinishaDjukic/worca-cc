@@ -1,6 +1,6 @@
 // test/stillhet-keep-open-projects-host.test.mjs — comp.keep-open on Projects (B2.6): each inline form's one field keeps
 // what you typed, its caret and its focus through a live redraw (F-6-01, F-a4-02's Link a remote), and a route change
-// closes the form, so reopening starts empty. The host is test/helpers/stillhet-projects-host.mjs.
+// closes the form, so reopening starts empty. B2.8: an idle redraw keeps the sidebar's rows (listController paint({ ifChanged })). The host is test/helpers/stillhet-projects-host.mjs.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { projectsHost, KEYS, settle, go, closeHosts } from './helpers/stillhet-projects-host.mjs';
@@ -136,6 +136,20 @@ test('B2.7 F-6-01: the home page\'s form field and card grid keep their nodes th
   await redraw(h.w);
   assert.notEqual(col(h.d), foreign);
   assert.ok(page(h.d).querySelector('.pg-grid'), 'the home is drawn whole');
+});
+
+test('B2.8 F-6-01: a no-change Projects redraw keeps every sidebar row node and the focused row\'s focus', async () => {
+  const h = await projectsHost({ hash: `#projects/${KEYS.ok}` });
+  await redraw(h.w);
+  const bar = h.d.getElementById('bar-place'), row = bar.querySelector('[data-open^="proj:"]');
+  assert.ok(row, 'the Projects bar shows its projects');
+  row.focus();
+  const before = nodes(bar), stops = [...bar.querySelectorAll('[data-open]')].map((b) => b.tabIndex);
+  await redraw(h.w);
+  const after = nodes(bar);
+  assert.ok(after.length === before.length && after.every((n, i) => n === before[i]), 'every sidebar node kept (the same objects)');
+  assert.equal(h.d.activeElement, row, 'the focused row keeps the focus');
+  assert.deepEqual([...bar.querySelectorAll('[data-open]')].map((b) => b.tabIndex), stops, 'the row tab stops are unchanged');
 });
 
 test('B2.7 C1 F-6-01: a no-change Projects redraw makes no more DOM mutations than its budget', async (t) => {

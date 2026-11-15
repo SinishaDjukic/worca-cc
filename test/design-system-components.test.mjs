@@ -149,6 +149,31 @@ test('listController: two lists on one bar, the rows showing answer (one owner p
   assert.deepEqual(opened, ['b']);
 });
 
+test('B2.8 F-6-01 listController: paint({ ifChanged }) with an unchanged drawing writes nothing; a changed one, or a bar another painter rewrote, paints', () => {
+  const win = new JSDOM('<div id="b"></div>').window, root = win.document.getElementById('b');
+  let title = 'T';
+  const mk = (n) => C.listController({ root, spec: { noun: `ifc-${n}-${Math.random()}`, label: 'x', can: () => [], bulk: () => [], act: () => {}, word: () => false, say: () => {}, active: () => true, open: () => {}, view: () => ({ state: 'ready', parts: [], sections: [{ id: 's', title: 'S', noCount: true, rows: [{ key: 'k', title }, { key: 'j', title: 'U' }] }] }) } });
+  const a = mk('a'), b = mk('b');
+  const seen = new win.MutationObserver(() => {});
+  seen.observe(root, { subtree: true, childList: true, attributes: true, characterData: true });
+  a.paint();
+  const row = root.querySelector('[data-open="k"]');
+  seen.takeRecords();
+  a.paint({ ifChanged: true });
+  assert.equal(seen.takeRecords().length, 0, 'nothing changed: nothing written');
+  assert.equal(root.querySelector('[data-open="k"]'), row, 'the row keeps its node');
+  a.paint({ ifChanged: true, focus: '[data-open="j"]' });
+  assert.equal(win.document.activeElement, root.querySelector('[data-open="j"]'), 'a passed focus still lands');
+  title = 'T2'; a.paint({ ifChanged: true });
+  assert.match(root.textContent, /T2/, 'a changed drawing paints');
+  b.paint(); a.paint({ ifChanged: true });
+  root.querySelector('[data-open]').click();
+  assert.notEqual(root.querySelector('[data-open="k"]'), null);
+  seen.takeRecords(); b.paint({ ifChanged: true }); assert.ok(seen.takeRecords().length > 0, 'another painter took the bar: it paints');
+  root.innerHTML = '<p>x</p>'; seen.takeRecords(); b.paint({ ifChanged: true });
+  assert.notEqual(root.querySelector('[data-open="k"]'), null, 'someone else wrote into the root: it paints');
+});
+
 test('listController: a dialog\'s name field stops at its limit and says so (small.name-short)', () => {
   const root = new JSDOM('<div id="b"></div>').window.document.getElementById('b');
   const ctl = C.listController({ root, spec: { noun: `max-${Math.random()}`, label: 'x', can: () => [], bulk: () => [], act: () => {}, word: () => false, say: () => {}, active: () => true, view: () => ({ state: 'ready', parts: [], sections: [] }) } });
@@ -1503,6 +1528,51 @@ test('ScrollFade: an edge fades only while there is more past it', () => {
   const { window } = new JSDOM('<body><div class="convo-scroll"></div></body>');
   C.watchScrollFades(window.document);
   assert.equal(window.document.querySelector('.convo-scroll').hasAttribute('data-more-below'), false, 'nothing past it: no fade');
+  window.close();
+});
+
+// B2.8: a column is measured only when it scrolls, resizes or its content changes. `reads` counts scrollHeight reads per
+// element; `data-h` stands in for a column's content height.
+function fadeHost() {
+  const { window } = new JSDOM('<body><div id="a" class="convo-scroll" data-h="0"></div><div id="b" class="convo-scroll" data-h="0"></div><div id="other"></div></body>', { pretendToBeVisual: true });
+  const reads = [];
+  Object.defineProperty(window.Element.prototype, 'scrollHeight', { configurable: true, get() { reads.push(this.id || this.className); return Number(this.dataset.h || 0); } });
+  const frames = () => new Promise((r) => window.requestAnimationFrame(() => window.requestAnimationFrame(r)));
+  C.watchScrollFades(window.document);
+  return { window, doc: window.document, reads, frames };
+}
+
+test('B2.8 F-a1-02 ScrollFade: a mutation outside every column measures no column', async () => {
+  const { window, doc, reads, frames } = fadeHost();
+  await frames(); reads.length = 0;
+  doc.getElementById('other').append(doc.createElement('p'));
+  await frames();
+  assert.deepEqual(reads, []);
+  window.close();
+});
+
+test('B2.8 F-a1-02 ScrollFade: content added in one column measures that column only, and marks it', async () => {
+  const { window, doc, reads, frames } = fadeHost();
+  await frames(); reads.length = 0;
+  const a = doc.getElementById('a');
+  a.dataset.h = '900'; a.append(doc.createElement('p')); a.append(doc.createElement('p'));
+  await frames();
+  assert.ok(reads.length > 0 && reads.every((x) => x === 'a'), `read: ${reads}`);
+  assert.equal(a.hasAttribute('data-more-below'), true);
+  assert.equal(a.hasAttribute('data-far-below'), true, 'the Latest button still has its cue');
+  window.close();
+});
+
+test('B2.8 F-a1-02 ScrollFade: a resize measures every column; a new column is marked when it appears', async () => {
+  const { window, doc, reads, frames } = fadeHost();
+  await frames(); reads.length = 0;
+  window.dispatchEvent(new window.Event('resize'));
+  assert.ok(reads.includes('a') && reads.includes('b'), `read: ${reads}`);
+  const wrap = doc.createElement('section');
+  wrap.innerHTML = '<div id="c" data-scroll-fade data-h="500"></div>';
+  doc.getElementById('other').append(wrap);
+  await frames();
+  assert.equal(doc.getElementById('c').hasAttribute('data-more-below'), true);
   window.close();
 });
 

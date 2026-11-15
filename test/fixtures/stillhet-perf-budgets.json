@@ -61,11 +61,19 @@
       ]
     },
     "projectsNoChangeMutations": {
-      "value": 9,
+      "value": 0,
       "target": 0,
       "test": "test/stillhet-keep-open-projects-host.test.mjs",
       "findings": [
         "F-6-01",
+        "F-a1-02"
+      ]
+    },
+    "settingsNoChangeMutations": {
+      "value": 0,
+      "target": 0,
+      "test": "test/stillhet-pulse-redraw-host.test.mjs",
+      "findings": [
         "F-a1-02"
       ]
     }

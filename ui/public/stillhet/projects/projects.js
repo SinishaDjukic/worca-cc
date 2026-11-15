@@ -308,7 +308,7 @@
     if (!bar || !page || !here()) return;
     const items = needItems().length; if (items !== bellHeard) { bellHeard = items; window.RailPulse?.refresh(); }   // the bell reads the same list
     if (current.includes('@') && !adv()) { window.RailShell.go(`projects/${pid()}`); return; }   // "through a workspace" is an Advanced address
-    ctl?.paint();
+    ctl?.paint({ ifChanged: true });   // B2.8: an idle draw leaves the bar's rows as they are
     const scrolled = drawn === current ? page.querySelector('.convo-scroll')?.scrollTop || 0 : 0, keep = () => { drawn = current; const s = page.querySelector('.convo-scroll'); if (s) s.scrollTop = scrolled; };   // a menu opening leaves the page where it was, its picker in view
     if (current.startsWith('ws:')) { if (!adv()) { window.RailShell.go('projects'); return; } frameKey = ''; window.RailSpaces.render(page, current.slice(3)); keep(); return; }
     const p = data.projects.find((x) => x.id === pid()), now = p ? { cls: '', parts: pageParts(p) } : homeParts();
