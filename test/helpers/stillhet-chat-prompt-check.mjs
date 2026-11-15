@@ -1,10 +1,11 @@
 // test/helpers/stillhet-chat-prompt-check.mjs — the live Chat host (stillhet-chat-live-host.mjs) with the prompt check
 // wired: Settings › Chat › Prompt check from the /api/settings source, dev's fake timers through
 // __worcaTestHooks.promptCheckTimers, the composer's module import handed to the host, and every /api/prompt-check/* POST
-// held until the test answers it. Shared by test/stillhet-chat-prompt-check-chip.test.mjs and -improve.test.mjs.
-import { liveHost, SOURCES, clone, settle } from './stillhet-chat-live-host.mjs';
+// held until the test answers it. Shared by test/stillhet-chat-prompt-check-chip.test.mjs, -improve.test.mjs and -scope.test.mjs.
+import { liveHost, SOURCES, clone, settle, go } from './stillhet-chat-live-host.mjs';
 import { fakeTimers, reply, TASK } from './prompt-check-chip-host.mjs';
 import { PROMPT_CHECK_DEBOUNCE_MS } from '../../src/shared/prompt-check/filter.mjs';
+import { normalizeRewrite, rewriteText } from '../../src/shared/prompt-check/improve.mjs';
 
 export { TASK, reply, settle, PROMPT_CHECK_DEBOUNCE_MS };
 export const PC = '/api/prompt-check/';
@@ -55,3 +56,26 @@ export async function pcHost({ on = true, sources = SOURCES, ask = null, hash = 
 export const pcNode = (s) => s.q('[data-pc]');
 export const picker = (s) => s.q('[data-pc] [data-menu="cp-pcheck"]');
 export const gradeText = (s) => s.q('[data-pc] [data-pc-say]')?.textContent || '';
+
+/** Improve: a model rewrite for an /improve call, the held calls, the button, the suggestion, and the host with Improve pressed (opened) or answered (ready). */
+export function okReply(call, { kind = 'implementation', sections = [{ id: 'change', text: 'Add a CSV export button to Insights.' }], paths = [], model = 'Sonnet 5.5' } = {}) {
+  const rewrite = normalizeRewrite({ sections }, kind);
+  return { requestId: call.body.requestId, source: 'model', kind, model, rewrite, text: rewriteText(rewrite), paths };
+}
+export const improves = (s) => s.held.filter((c) => c.url === `${PC}improve`);
+export const improveBtn = (s) => s.q('[data-pc] [data-pc-improve-open]');
+export const view = (s) => s.q('[data-pc-improve] [data-prompt-improve]');
+/** Needs detail, then Improve pressed: the request is out. */
+export async function opened(o = {}) {
+  const s = await pcHost(o);
+  if (o.chat) await go(s.w, `#chat/${o.chat}`);
+  await s.graded(TASK, { grade: 'needs-detail', openDecisions: ['Which columns?'] });
+  improveBtn(s).click(); await settle(10);
+  return s;
+}
+export async function ready(o = {}) {
+  const s = await opened(o);
+  const call = improves(s).at(-1);
+  call.answer(okReply(call, o.reply)); await settle(20);
+  return s;
+}

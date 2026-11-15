@@ -3,36 +3,13 @@
 // library's RewriteSuggestion above the composer (busy, ready, used, failed). Send is never held.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { closeHosts, settle, go, blurOnDisable } from './helpers/stillhet-chat-live-host.mjs';
-import { pcHost, pcNode, picker, reply, TASK, PC } from './helpers/stillhet-chat-prompt-check.mjs';
-import { normalizeRewrite, rewriteText } from '../src/shared/prompt-check/improve.mjs';
+import { closeHosts, settle, blurOnDisable } from './helpers/stillhet-chat-live-host.mjs';
+import { pcHost, picker, reply, TASK, improves, improveBtn, view, opened, ready, okReply } from './helpers/stillhet-chat-prompt-check.mjs';
 
 afterEach(closeHosts);
 const LONGER = `${TASK} It must also export the monthly totals for every team.`;
-
-function okReply(call, { kind = 'implementation', sections = [{ id: 'change', text: 'Add a CSV export button to Insights.' }], paths = [], model = 'Sonnet 5.5' } = {}) {
-  const rewrite = normalizeRewrite({ sections }, kind);
-  return { requestId: call.body.requestId, source: 'model', kind, model, rewrite, text: rewriteText(rewrite), paths };
-}
-const improves = (s) => s.held.filter((c) => c.url === `${PC}improve`);
-const improveBtn = (s) => s.q('[data-pc] [data-pc-improve-open]');
-const view = (s) => s.q('[data-pc-improve] [data-prompt-improve]');
 const act = (s, name) => s.q(`[data-pc-improve] [data-improve-act="${name}"]`);
 const btn = (s, label) => [...(view(s)?.querySelectorAll('button') || [])].find((b) => b.textContent.trim() === label);
-/** Needs detail, then Improve pressed: the request is out. */
-async function opened(o = {}) {
-  const s = await pcHost(o);
-  if (o.chat) await go(s.w, `#chat/${o.chat}`);
-  await s.graded(TASK, { grade: 'needs-detail', openDecisions: ['Which columns?'] });
-  improveBtn(s).click(); await settle(10);
-  return s;
-}
-async function ready(o = {}) {
-  const s = await opened(o);
-  const call = improves(s).at(-1);
-  call.answer(okReply(call, o.reply)); await settle(20);
-  return s;
-}
 
 test('Improve shows only on needs-detail', async () => {
   const s = await pcHost();
@@ -74,14 +51,6 @@ test('busy: Improve is disabled and the focus moves into the suggestion, above t
   const slot = s.q('[data-pc-improve]');
   assert.equal(slot.nextElementSibling, s.q('[data-composer]'), 'right before the composer');
   assert.ok(picker(s), 'the chip stays');
-});
-
-test('Send works while Improve is busy (R-qa-4)', async () => {
-  const s = await opened({ chat: 'ask_1' });
-  assert.ok(act(s, 'busy'));
-  assert.equal(s.q('[data-cp-send]').disabled, false);
-  s.q('[data-cp-send]').click(); await settle(60);
-  assert.ok(s.calls.some((c) => c.url === '/api/ask/threads/ask_1/messages' && c.body.text === TASK));
 });
 
 test('ready: sections, amber gaps labelled by perspective and paths not in the repo', async () => {
@@ -158,26 +127,4 @@ test('a repaint keeps the ready suggestion: the same node, moved back', async ()
   s.q('[data-menu="cp-mode"]').click(); await settle(10);
   assert.equal(view(s), node);
   assert.ok(btn(s, 'Use this'));
-});
-
-test('send closes the suggestion and the chip', async () => {
-  const s = await ready({ chat: 'ask_1' });
-  s.q('[data-cp-send]').click(); await settle(60);
-  assert.equal(view(s), null);
-  assert.equal(pcNode(s).children.length, 0);
-});
-
-test('the improve body carries the projectKey of the composer\'s project', async () => {
-  const s = await pcHost();
-  s.q('[data-menu="cp-project"]').click(); await settle(5);
-  const pick = s.d.querySelector('#route-chat [data-menu-pick^="cp-project|"]:not([data-menu-pick="cp-project|No project"])');
-  const name = pick.dataset.menuPick.split('|')[1];
-  pick.click(); await settle(20);
-  await s.graded(TASK, { grade: 'needs-detail' });
-  improveBtn(s).click(); await settle(10);
-  const key = s.w.RailWorld.part('projects').find((p) => p.name === name).id;
-  assert.ok(key);
-  assert.equal(improves(s).at(-1).body.projectKey, key);
-  assert.equal(improves(s).at(-1).body.kind, 'implementation');
-  assert.deepEqual(improves(s).at(-1).body.openDecisions, []);
 });
