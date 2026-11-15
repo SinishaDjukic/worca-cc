@@ -33,13 +33,13 @@ Columns: **From** (the slice and where it was found), **Area**, **Finding** (one
 | owner real test (4403) | Chat | The live composer has no workflow picker and live tasks carry `workflow: ''`, so "Select workflow" lists none and Tasks' "using workflow" filter is empty (`chat/conversation.js` composer, `live/live-map.mjs`) | `ui/public/stillhet/chat/`, `ui/public/stillhet/live/` | major | open (owner: feature 2 final check) |
 | slice 10 review | Insights | Minors left by the second code review: a copied link keeps `scope=`; `of=` filters and saved views are not checked against live keys; the copy-link rule id should read `act.copy-link`; a few comments sit away from their code | `ui/public/stillhet/insights/` | minor | open (owner: feature 2 final check) |
 | slice 10 review | Compare | Slice 10 re-shot the Schedules compare PNGs in `out/stillhet-compare/` (fit-1 to fit-4) though Schedules did not change; confirm they match their cells or restore them | `out/stillhet-compare/` | minor | open (owner: feature 2 final check) |
-| owner real test (4317) | Tasks | The task head says "into dev" for a run whose base is `docs/rail-agreed`, and Changes (477 files, +8997) is measured against dev, so it counts all of feature 2 instead of the run's own diff | `ui/public/stillhet/live/task-page.mjs`, `ui/public/stillhet/live/live-map.mjs` | major | open (owner: feature 2 final check) |
 | B1.3 (#1328) | Settings | Tasks › Limits (Warning line, Manual/Automatic starts) save nothing on live: the pickers change on screen only; B1.3 left them unchanged by the owner's answer (D22: wired in wave 3) | `ui/public/stillhet/pulse/pulse.js` `limitsRows` | follow-up | open (owner: feature 3) |
 
 ## Closed
 
 | From | Area | Finding | Closed by |
 |---|---|---|---|
+| owner real test (4317) | Tasks | The task head says "into dev" for a run whose base is `docs/rail-agreed`, and Changes (477 files, +8997) is measured against dev, so it counts all of feature 2 instead of the run's own diff | #1327 |
 | slice 10 | Insights | Dev's Team metrics Timeline had no Stillhet home for a person's work over time: a person's row on By person now opens their tasks and PRs in place, on the page's range, and a teammate's task opens read only | this PR |
 | owner real test (4317) | Tasks | A task waiting at its review gate reads "Needs you · Asks you something" but the task page shows no question and no "Run another cycle" / "Accept as is" action; opening Review only collapses it, so the person cannot tell or answer what it wants (classic shows the gate card with both actions) | #1325 |
 | owner real test (4317) | Tasks | Review Implementation shows a green tick when its review ended blocked by a major issue, so a blocked review reads as passed | #1325 |

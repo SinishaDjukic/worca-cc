@@ -125,7 +125,7 @@ test('the page\'s own tools: Changes › Check out posts dev\'s checkout route w
 });
 
 test('create-pr: the Create PR dialog starts on the task\'s base and posts what you wrote and picked: title, description, draft, watch, base (code review r9)', async () => {
-  const h7 = { id: 'h7', title: 'Ready one', status: 'done', projectName: 'web', projectKey: 'web-1', branch: 'feat/ready', survived: true, startedAt: SOURCES.history.pipelines[2].startedAt, mtime: SOURCES.history.pipelines[2].mtime };
+  const h7 = { id: 'h7', title: 'Ready one', status: 'done', projectName: 'web', projectKey: 'web-1', branch: 'feat/ready', sourceBranch: 'main', survived: true, startedAt: SOURCES.history.pipelines[2].startedAt, mtime: SOURCES.history.pipelines[2].mtime };
   const s = sources(); s.history.pipelines.push(h7);
   const state = { id: 'h7', title: 'Ready one', status: 'done', projectKey: 'web-1', projectDir: '/src/web', branch: { source: 'main', feature: 'feat/ready', branchKept: true }, totalCostUsd: 0.2, totalActiveMs: 60000, steps: [] };
   const h = await liveHost({ sources: s, read: (u) => (u === '/api/history/web-1/h7' ? [200, { state }] : read(u)), write: () => [200, { ok: true }] });
