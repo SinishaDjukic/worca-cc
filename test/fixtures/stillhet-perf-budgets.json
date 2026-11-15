@@ -76,6 +76,14 @@
       "findings": [
         "F-a1-02"
       ]
+    },
+    "tasksNoChangeMutations": {
+      "value": 0,
+      "target": 0,
+      "test": "test/stillhet-perf-budgets-tasks-host.test.mjs",
+      "findings": [
+        "F-fm-01"
+      ]
     }
   },
   "exclusions": [
