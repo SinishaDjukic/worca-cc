@@ -160,17 +160,28 @@ export function listController({ root, spec }) {
     el.style.top = `${r.bottom + 4 + h > vh - 8 ? Math.max(8, r.top - h - 4) : r.bottom + 4}px`;
   }
 
-  function paint({ focus = '' } = {}) {
-    stale = false; OWNER.set(root, s);
+  // `ifChanged`: a drawing equal to the last one, still in place and still this list's, writes nothing (comp.patch-parts).
+  // Only paint writes inside the root: the check sees the root's top level only, so a write below it by another writer goes unseen.
+  function paint({ focus = '', ifChanged = false } = {}) {
+    stale = false;
+    const owned = OWNER.get(root) === s; OWNER.set(root, s);
     const a = doc.activeElement, inside = root.contains(a);
-    const scroller = root.closest('.main, .rl-side-body'), y = scroller?.scrollTop || 0;
     const before = s.order, fromRow = a?.closest?.('[data-row]')?.dataset.row || s.focus;
+    const out = html(spec.view()), d = s.drawn;
+    if (ifChanged && owned && d && d.html === out && root.firstChild === d.first && root.childNodes.length === d.count) {
+      const stop = s.order.includes(s.focus) ? s.focus : s.order[0];
+      for (const b of root.querySelectorAll('[data-open]')) { const t = b.dataset.open === stop ? 0 : -1; if (b.tabIndex !== t) b.tabIndex = t; }
+      if (focus && root.querySelector(focus)) root.querySelector(focus).focus();
+      return;
+    }
+    const scroller = root.closest('.main, .rl-side-body'), y = scroller?.scrollTop || 0;
     const picked = (a?.dataset?.menuPick || a?.dataset?.pick || '').split('|')[0];
     const keep = focus || (picked ? `[data-menu="${q(picked)}"]` : ['data-menu', 'data-bulk', 'data-selall', 'data-fold', 'data-rounds'].filter((k) => a?.hasAttribute?.(k)).map((k) => `[${k}${a.getAttribute(k) && a.getAttribute(k) !== 'true' ? `="${q(a.getAttribute(k))}"` : ''}]`)[0]);
     const typed = root.querySelector('#list-pop-q')?.value, name = root.querySelector('[data-dlg-name]')?.value;
     const toneOf = (el) => { const m = el.querySelector(':scope > .lr-rail .kind-mark, :scope > .lr-rail .status-dot'); return m ? `${m.className.replace(/ ?is-(news|still)/g, '')}|${m.querySelectorAll('circle[style]').length}` : ''; };   // its state and how far its ring has filled
     const was = new Map([...root.querySelectorAll('[data-row]')].map((el) => [el.dataset.row, toneOf(el)]));
-    root.innerHTML = html(spec.view());
+    root.innerHTML = out;
+    s.drawn = { html: out, first: root.firstChild, count: root.childNodes.length };
     // a row whose state changed since the last paint says so once: its mark pulses (list.news)
     // a row whose state or stage changed since the last paint says so once: its ring fills to where it is, then it pulses (list.news);
     // a row never seen before drops into its place, briefly tinted (list.arrives); none of it on the first paint
