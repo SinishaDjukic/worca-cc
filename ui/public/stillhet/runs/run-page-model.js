@@ -1001,7 +1001,8 @@
     // the task's own facts only: an empty branch, time or cost stays empty, never the design's sample (BRANCH, the case's figures)
     const at = page.startedAt ? new Date(page.startedAt) : null;
     const figs = (base.figs || [['Time', ''], ['Cost', '']]).map(([k, v]) => [k, k === 'Time' ? fmtMin(page.mins || 0) : k === 'Cost' ? '$' + (page.cost || 0).toFixed(2) : v]);
-    const going = (page.stages || []).some((x) => x.state === 'now' || x.state === 'paused' || x.state === 'ask');
+    // a running task whose pipeline is known (task-live liveRunning, B1.9 D7) is going even before its steps arrive
+    const going = page.liveRunning === true || (page.stages || []).some((x) => x.state === 'now' || x.state === 'paused' || x.state === 'ask');
     return Object.assign({}, base, { id: base.id, title: page.title, project: page.project || '', over: !going, branch: page.branch || '', base: page.base || '', pr: page.pr || '', diff: '', task: page.prompt || '', figs,
       startedWord: at ? 'Started ' + at.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ', ' + at.toTimeString().slice(0, 5) : '',
       detail: page.detail || '', why: page.why || [], failure: page.failure || null, review: page.review || { roles: [], issues: [] }, stages, spent: { mins: page.mins || 0, cost: page.cost || 0 }, budget: page.cap || null, movedFrom: base.id, liveId: page.id,

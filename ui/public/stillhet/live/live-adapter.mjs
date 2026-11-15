@@ -218,8 +218,11 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
     const was = live;
     const next = new Map();
     for (const r of Array.isArray(f.runs) ? f.runs : []) if (r && r.runId) next.set(r.runId, { ...r, ...(was.get(r.runId)?.opened ? { opened: true, unread: false } : {}) });
+    // a run whose pipeline id was lost with a dropped frame: a task opened by its run id reads by the pipeline now (B1.9 D5)
+    const named = [...next].filter(([k, v]) => was.has(k) && !str0(was.get(k).pipelineId) && str0(v.pipelineId));
     live.clear(); for (const [k, v] of next) live.set(k, v);
     helloSeen = true;
+    for (const [k, v] of named) task.learned(k, v.pipelineId);
     copyFlags(f.flags);
     // the first hello draws the first snapshot, even after a drop before it (a socket that closed before its hello)
     if (!loaded) { firstLoad(); return; }
@@ -258,6 +261,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
       let raw = live.get(f.runId);
       if (f.type === 'run-created') { raw = { ...f, type: undefined }; live.set(f.runId, raw); place(raw); return; }
       if (!raw) return;
+      const had = str0(raw.pipelineId);   // B1.9 D5: the first state frame that names the pipeline is handed to task-live below
       if (f.type === 'state') { const pg = progressOfState(f); if (pg.step) { progress.set(f.runId, pg); if (f.id) progress.set(f.id, pg); } }
       if (f.type === 'state') Object.assign(raw, { status: f.status ?? raw.status, title: f.title || raw.title, totalCostUsd: f.totalCostUsd ?? raw.totalCostUsd, pauseReason: f.pauseReason ?? null, pauseDetail: f.pauseDetail ?? null, limitEngine: f.limitEngine ?? null, limitResetAt: f.limitResetAt ?? null, pipelineId: f.id || raw.pipelineId,
         branch: f.branch ?? raw.branch, steps: Array.isArray(f.steps) ? f.steps : raw.steps, totalActiveMs: f.totalActiveMs ?? raw.totalActiveMs, pipelineCapUsd: f.pipelineCapUsd ?? raw.pipelineCapUsd, pauseAfterStep: f.pauseAfterStep === true,
@@ -273,6 +277,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
       }
       if (f.type === 'done' || f.type === 'error' || (f.type === 'state' && !inPlay({ kind: raw.kind, status: raw.status }))) settleRow(raw);
       place(raw);
+      if (f.type === 'state' && !had && str0(raw.pipelineId)) task.learned(f.runId, raw.pipelineId);
       return;
     }
     if (f.type === 'ask-done' || f.type === 'ask-error') unread = unreadOf(unread, f, { openChat: openChat(), hidden: hidden() });

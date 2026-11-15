@@ -223,3 +223,15 @@ test('B1.7: the prototype\'s "Ready, base unknown" offers no Create PR and names
   const live = M.liveRun({ id: 'pz', case: 'ready', title: 'Fin', branch: 'feat/x', base: '', stages: [], review: { roles: [], issues: [] } });
   assert.equal(M.view(live.id, { run: live }).place.base, '', 'a live task with no base shows none');
 });
+
+test('F-a4-03: liveRun of a running task with no steps yet is not over when liveRunning, and offers Pause and Stop; without liveRunning (or with a question) it is over', () => {
+  const idle = ['plan', 'build', 'review'].map((key) => ({ key, state: 'next', steps: [] }));
+  const run = M.liveRun(page({ case: 'working', liveRunning: true, stages: idle }));
+  assert.equal(run.over, false, 'a running task whose steps have not arrived is not over');
+  const v = M.view(run.id, { run });
+  assert.equal(v.action.label, 'Pause');
+  assert.ok(v.action.items.some((x) => x.text === 'Stop the task'), J(v.action.items.map((x) => x.text)));
+  const before = M.liveRun(page({ case: 'working', stages: idle }));
+  assert.equal(before.over, true, 'without liveRunning (pipeline unknown, or waiting on a question) it reads as today');
+  assert.equal(M.view(before.id, { run: before }).action, null);
+});
