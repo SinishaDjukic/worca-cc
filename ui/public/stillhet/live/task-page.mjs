@@ -25,6 +25,8 @@ const bookend = (s = {}) => !s.agentKey && (/^x:(preflight|sync|done):/.test(str
 const STEP_KINDS = /^(agent|script)$/;
 const WORK_STAGE = /^(plan|build|review)$/;
 const stageOfNode = (n) => (WORK_STAGE.test(str(n.progressStage)) ? n.progressStage : stageOfStep(n));
+// a workflow node's name on the page: its label, else its key, else its id (the step list and the log name it alike)
+const stepNameOf = (n) => str(n.label) || str(n.key) || str(n.id);
 const rowState = (rows) => (rows.some((r) => STEP_STATE[lc(r.status)] === 'now') ? 'now' : STEP_STATE[lc(rows.at(-1)?.status)] || 'next');
 /** dev's steps folded into the page's three work stages: [{ key, label, state: done|now|failed|ask|paused|stopped|next, costUsd,
  *  activeMs, steps: [{ name, state, open? }] }]. `nodes`: the workflow's graph nodes (state.stepper.graph.nodes): a stage's steps are
@@ -46,7 +48,7 @@ export function stagesOf(steps = [], nodes = [], { gate = null, openIssues = [] 
     const state = !mine.length ? 'next' : states.includes('failed') ? 'failed' : states.includes('now') ? 'now'
       : states.includes('paused') ? 'paused' : states.includes('stopped') ? 'stopped' : states.every((x) => x === 'done') ? 'done' : 'now';
     // the workflow's nodes in this stage, then any step the ledger ran that no node names, once per node or agent
-    const own = flow.filter((n) => stageOfNode(n) === key).map((n) => ({ name: str(n.label) || str(n.key) || str(n.id), ids: [str(n.id)], rows: mine.filter((s) => str(s.nodeId) === str(n.id)) }));
+    const own = flow.filter((n) => stageOfNode(n) === key).map((n) => ({ name: stepNameOf(n), ids: [str(n.id)], rows: mine.filter((s) => str(s.nodeId) === str(n.id)) }));
     const loose = new Map();
     for (const s of mine.filter((x) => !byId.has(str(x.nodeId)))) { const k = str(s.agentKey) || str(s.nodeId) || str(s.key); (loose.get(k) || loose.set(k, []).get(k)).push(s); }
     const list = own.concat([...loose].map(([name, rows]) => ({ name, ids: rows.map((r) => str(r.nodeId)).filter(Boolean), rows })));
@@ -324,6 +326,13 @@ export function docsOf(artifacts) {
   return arr(artifacts).filter((a) => a && DOC.test(str(a.relPath))).map((a) => [str(a.relPath).split('/').pop(), str(a.stepKey) || str(a.nodeId) || str(a.kind), str(a.relPath)]);
 }
 export const SYNC_STEP = 'Sync';
+const pad = (n) => String(n).padStart(2, '0');
+// a log record's time on the reader's clock: local HH:MM:SS, 24-hour; '' when it has none (never now)
+function clock(ts) {
+  if (typeof ts !== 'string' && typeof ts !== 'number') return '';
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime()) ? '' : `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
 /** dev's run log (NDJSON, GET /api/history/:key/:id/log) → the page's log lines; the base sync's lines are the Sync step. */
 export function logLinesOf(text) {
   const out = [];
@@ -331,11 +340,25 @@ export function logLinesOf(text) {
     if (!l.trim()) continue;
     let e; try { e = JSON.parse(l); } catch { continue; }
     if (!e || typeof e !== 'object') continue;
-    const step = e.executionId === 'x:sync:1' || e.nodeId === 'sync' ? SYNC_STEP : str(e.nodeId) || str(e.source) || 'worca';
-    const t = /T(\d\d:\d\d:\d\d)/.exec(str(e.ts));
-    out.push({ t: t ? t[1] : '', step, from: str(e.source) || 'worca', lvl: str(e.level) || 'info', cycle: String(num(e.cycle) || 1), session: str(e.session), sum: str(e.desc) || str(e.text), raw: str(e.text) });
+    const sync = e.executionId === 'x:sync:1' || e.nodeId === 'sync';
+    const step = sync ? SYNC_STEP : str(e.nodeId) || str(e.source) || 'worca';
+    out.push({ t: clock(e.ts), step, node: sync ? '' : str(e.nodeId), from: str(e.source) || 'worca', lvl: str(e.level) || 'info', cycle: String(num(e.cycle) || 1), session: str(e.session), sum: str(e.desc) || str(e.text), raw: str(e.text) });
   }
   return out;
+}
+/** A run state → node id → the name the step list shows it by: a graph node's stepNameOf, a ledger row no node names its agent. */
+export function stepNamesOf(state) {
+  const names = new Map();
+  for (const n of arr(state?.stepper?.graph?.nodes)) if (n && str(n.id)) names.set(n.id, stepNameOf(n));
+  for (const s of arr(state?.steps)) if (s && str(s.nodeId) && !names.has(s.nodeId)) names.set(s.nodeId, str(s.agentKey) || s.nodeId);
+  return names;
+}
+/** logLinesOf's lines with each step named as the step list names it (read time: the log can land before the state). null stays
+ *  null (not read yet); the lines given are never changed. */
+export function logStepsOf(lines, state) {
+  if (!Array.isArray(lines)) return lines;
+  const names = stepNamesOf(state);
+  return lines.map((l) => (l && l.node && names.has(l.node) ? { ...l, step: names.get(l.node) } : l));
 }
 /** dev's worktree actions (GET /api/runs/:id/actions) → { services: [{key, id, name, port, running, url, member}], builtins: [{key, id, label, member}],
  *  stacks: [{id, name, steps, status, step, error}], checkedOut, enabled }. A service's and a built-in tool's `key` is its member and its id. A service's port is the one its running instance holds. */

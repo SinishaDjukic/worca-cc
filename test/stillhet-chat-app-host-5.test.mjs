@@ -168,3 +168,112 @@ test('F-a4-11: a failed task\'s card with no plan: Restart Build is off with its
   assert.equal(posts(calls).filter(([m]) => m !== 'GET').length, before, 'a disabled Restart Build posts nothing');
   assert.ok(!posts(calls).some(([, u]) => /restart-build/.test(u)));
 });
+
+// ---- F-a2-01: a send while a reply streams is queued (form.composer-queue) ----
+const ask = (sockets, f) => sockets.at(-1).onmessage({ data: JSON.stringify({ threadId: 'ask_1', ...f }) });
+const START = (id = 'a9') => ({ type: 'ask-start', messageId: id, userMessageId: `u${id}`, seq: 1, startedAt: THREAD.messages[0].createdAt });
+const DONE = (id = 'a9', status = 'done', seq = 2) => ({ type: 'ask-done', messageId: id, seq, status, text: 'ok' });
+const enter = (w, text) => { const t = w.document.querySelector('#route-chat [data-composer-t]'); t.value = text; t.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); return settle(60); };
+const sent = (calls) => posts(calls).filter(([m, u]) => m === 'POST' && u === '/api/ask/threads/ask_1/messages').map(([, , b]) => b.text);
+const note = (d) => d.querySelector('#route-chat [data-q-note]');
+const rowsOf = (d) => [...d.querySelectorAll('#route-chat .composer-queue .tr-text')].map((e) => e.textContent);
+const accept = (url) => (url.endsWith('/messages') ? [202, { userMessageId: 'u5' }] : [200, {}]);
+
+test('F-a2-01: Enter while the reply streams posts nothing, empties the box and shows "Sends when the reply finishes"; ask-done sends one POST with the text and the line goes', async () => {
+  const { w, d, calls, sockets } = await liveHost({ write: accept });
+  await go(w, '#chat/ask_1');
+  ask(sockets, START()); await settle(40);
+  assert.ok(d.querySelector('#route-chat [data-cp-stop]'), 'the reply runs: Stop');
+  await enter(w, 'and the totals');
+  assert.deepEqual(sent(calls), [], 'no POST while the reply runs');
+  assert.equal(d.querySelector('#route-chat [data-composer-t]').value, '');
+  assert.deepEqual(rowsOf(d), ['Queued and the totals']);
+  assert.equal(note(d).textContent, 'Sends when the reply finishes');
+  ask(sockets, DONE()); await settle(80);
+  assert.deepEqual(sent(calls), ['and the totals'], 'one POST with the text');
+  assert.equal(note(d), null, 'the line goes');
+});
+
+test('F-a2-01: a redraw between (a delta frame, and going to another chat and back) keeps the queued row and its line; the turn\'s end still sends it once', async () => {
+  const { w, d, calls, sockets } = await liveHost({ write: accept });
+  await go(w, '#chat/ask_1');
+  ask(sockets, START()); await settle(40);
+  await enter(w, 'kept');
+  ask(sockets, { type: 'ask-delta', messageId: 'a9', seq: 2, text: 'Writing' }); await settle(40);
+  assert.deepEqual(rowsOf(d), ['Queued kept'], 'after a delta frame');
+  await go(w, '#chat/ask_2'); await go(w, '#chat/ask_1');
+  assert.deepEqual(rowsOf(d), ['Queued kept'], 'after another chat and back');
+  assert.equal(note(d).textContent, 'Sends when the reply finishes');
+  ask(sockets, DONE('a9', 'done', 3)); await settle(80);
+  ask(sockets, DONE('a9', 'done', 3)); await settle(40);
+  assert.deepEqual(sent(calls), ['kept'], 'sent once');
+});
+
+test('F-a2-01: a 409 turn in flight on a send is not lost: no "Could not send" toast, the row shows, and after the event turn\'s ask-start and ask-done one more POST carries the text', async () => {
+  let busy = false;
+  const { w, d, calls, sockets } = await liveHost({
+    thread: () => [200, busy ? { ...THREAD, inFlight: { messageId: 'a9' } } : THREAD],   // the re-read learns dev's turn
+    write: (url) => { if (!url.endsWith('/messages')) return [200, {}]; if (!busy) { busy = true; return [409, { error: 'turn in flight' }]; } return [202, { userMessageId: 'u5' }]; },
+  });
+  await go(w, '#chat/ask_1');
+  await enter(w, 'raced'); await settle(40);
+  assert.doesNotMatch(toastText(d), /Could not send/);
+  assert.deepEqual(rowsOf(d), ['Queued raced']);
+  assert.deepEqual(sent(calls), ['raced'], 'the refused one only');
+  ask(sockets, START()); await settle(40);
+  ask(sockets, DONE()); await settle(80);
+  assert.deepEqual(sent(calls), ['raced', 'raced'], 'one more POST carries it');
+  assert.deepEqual(rowsOf(d), []);
+});
+
+test('F-a2-01: a Stop pauses it: "Queue paused: the reply was stopped" and Send now; Send now posts it once; Remove takes a row out', async () => {
+  let h;
+  h = await liveHost({ write: (url) => { if (url.endsWith('/stop')) ask(h.sockets, DONE('a9', 'stopped')); return accept(url); } });
+  const { w, d, calls, sockets } = h;
+  await go(w, '#chat/ask_1');
+  ask(sockets, START()); await settle(40);
+  await enter(w, 'one'); await enter(w, 'two');
+  d.querySelector('#route-chat [data-cp-stop]').click(); await settle(80);
+  assert.deepEqual(sent(calls), [], 'a stop sends nothing');
+  assert.match(note(d).textContent, /^Queue paused: the reply was stopped/);
+  const now = d.querySelector('#route-chat [data-q-send]');
+  assert.equal(now.textContent, 'Send now');
+  now.click(); await settle(80);
+  assert.deepEqual(sent(calls), ['one'], 'Send now posts it once');
+  assert.deepEqual(rowsOf(d), ['Queued two']);
+  assert.equal(note(d).textContent, 'Sends when the reply finishes', 'the rest waits for the reply');
+  assert.equal(d.querySelector('#route-chat [data-q-edit]'), null, 'removable only');
+  d.querySelector('#route-chat [data-q-drop]').click(); await settle(40);
+  assert.deepEqual(rowsOf(d), []);
+  assert.equal(note(d), null);
+  assert.deepEqual(sent(calls), ['one']);
+});
+
+test('F-a2-01 review: the queued toast says only "Queued: 1 of 3" (the line says when it goes); Remove on the one being sent says it was already sent', async () => {
+  let release; const gate = new Promise((ok) => { release = ok; });
+  const { w, d, sockets } = await liveHost({ write: async (url) => { if (url.endsWith('/messages')) { await gate; return [202, { userMessageId: 'u5' }]; } return [200, {}]; } });
+  await go(w, '#chat/ask_1');
+  ask(sockets, START()); await settle(40);
+  await enter(w, 'one');
+  assert.match(saidText(d), /(^| \| )Queued: 1 of 3($| \| )/);
+  await enter(w, 'two');
+  ask(sockets, DONE()); await settle(60);
+  d.querySelector('#route-chat [data-q-drop]').click(); await settle(40);
+  assert.match(saidText(d), /Already sent: it can no longer be removed/);
+  assert.deepEqual(rowsOf(d), ['Queued one', 'Queued two'], 'nothing is taken out');
+  release(); await settle(60);
+  assert.deepEqual(rowsOf(d), ['Queued two']);
+});
+
+test('F-a2-01 review: a reply that ends after you left Chat for another page sends nothing; back in the chat it waits paused with Send now', async () => {
+  const { w, d, calls, sockets } = await liveHost({ write: accept });
+  await go(w, '#chat/ask_1');
+  ask(sockets, START()); await settle(40);
+  await enter(w, 'later');
+  await go(w, '#today');
+  ask(sockets, DONE()); await settle(80);
+  assert.deepEqual(sent(calls), [], 'not sent while Chat is not on screen');
+  await go(w, '#chat/ask_1');
+  assert.match(note(d).textContent, /^Queue paused: the reply ended while this chat was closed/);
+  assert.ok(d.querySelector('#route-chat [data-q-send]'));
+});

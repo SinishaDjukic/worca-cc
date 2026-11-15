@@ -3,7 +3,7 @@
 // frames, drafts across a refresh and stale or invalid drafts refused with nothing sent.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startWorkflowLive, WORKFLOW_ACTIONS } from '../ui/public/stillhet/live/workflow-live.mjs';
+import { startWorkflowLive, WORKFLOW_ACTIONS, COPY_TRIES } from '../ui/public/stillhet/live/workflow-live.mjs';
 import { WF_LISTS, wfTemplate } from './helpers/stillhet-workflows-host.mjs';
 
 const ALL = [];   // every request of every rig: checked against the table at the end
@@ -317,4 +317,117 @@ test('an import answers with the new id and its name; a rename says so', async (
   const a = await r.live.importFile({ name: 'x.json', text: async () => JSON.stringify(wfTemplate('wf_mine')) });
   assert.deepEqual(a, { ok: true, text: 'Imported as Release checklist (2)', id: 'wf_release_checklist_2' });
   assert.deepEqual(r.gone, ['workflows/workflow:wf_release_checklist_2']);
+});
+
+// dev's create with no id: a name already POSTed (or `taken`) mints a taken wf_<slug> and answers 409 ID_TAKEN
+const minting = (taken = new Set()) => (m, u, b) => {
+  if (m !== 'POST' || u !== '/api/workflows') return null;
+  const k = b.name.toLowerCase();
+  if (taken.has(k)) return [409, { error: `a pipeline with the id "wf_${k.replace(/\W+/g, '-')}" already exists — choose another name` }];
+  taken.add(k); return [201, { workflow: { id: `wf_${k.replace(/\W+/g, '-')}`, name: b.name } }];
+};
+
+test('F-5-08 copy(): a 409 refreshes and retries under rename(tried); it stops after COPY_TRIES; no rename means no retry; a second call while one runs is busy', async () => {
+  const tpl = { ...wfTemplate('wf_mine'), id: 'wf_mine' };
+  // "Mine copy 2" is in no list (its slug is taken by a "Mine-copy 2"): only `tried` keeps the next name off it
+  const r = await ready(rig({ answer: minting(new Set(['mine copy', 'mine copy 2'])) }));
+  const seen = [];
+  const rename = (tried) => { seen.push([...tried]); let n = 2; while (tried.has(`mine copy ${n}`)) n += 1; return `Mine copy ${n}`; };
+  const n = r.calls.length;
+  const a = await r.live.copy({ id: 'wf_mine', tpl, name: 'Mine copy', rename });
+  assert.equal(a.ok, true, a.error); assert.equal(a.status, 201);
+  assert.equal(a.name, 'Mine copy 3');
+  const after0 = r.calls.slice(n);
+  assert.deepEqual(after0.filter((c) => c.method === 'POST').map((c) => c.body.name), ['Mine copy', 'Mine copy 2', 'Mine copy 3']);
+  assert.ok(after0.every((c) => c.method !== 'POST' || (c.body.id === undefined && c.body.origin === undefined)), 'no id, no origin');
+  assert.deepEqual(after0.map((c) => (c.method === 'POST' ? 'POST' : c.url)), ['POST', '/api/workflows', 'POST', '/api/workflows', 'POST'], 'a refresh before each retry');
+  assert.deepEqual(seen, [['mine copy'], ['mine copy', 'mine copy 2']], 'tried holds every refused name, lowercased');
+
+  const full = await ready(rig({ answer: (m, u) => (m === 'POST' && u === '/api/workflows' ? [409, { error: 'taken' }] : null) }));
+  let k = 1;
+  const b = await full.live.copy({ id: 'wf_mine', tpl, name: 'Mine copy', rename: () => `Mine copy ${++k}` });
+  assert.equal(b.ok, false); assert.equal(b.status, 409); assert.equal(b.error, 'taken');
+  assert.equal(full.writes().length, COPY_TRIES);
+  assert.equal(b.name, `Mine copy ${COPY_TRIES}`);
+
+  const once = await ready(rig({ answer: (m, u) => (m === 'POST' && u === '/api/workflows' ? [409, { error: 'taken' }] : null) }));
+  const c = await once.live.copy({ id: 'wf_mine', tpl, name: 'Mine copy' });
+  assert.equal(c.status, 409); assert.equal(once.writes().length, 1, 'no rename: no retry');
+
+  const two = await ready(rig({ answer: minting() }));
+  const p = two.live.copy({ id: 'wf_mine', tpl, name: 'Mine copy', rename });
+  assert.deepEqual(await two.live.copy({ id: 'wf_mine', tpl, name: 'Mine copy', rename }), { ok: false, status: 0, data: {}, error: 'busy', name: 'Mine copy' });
+  assert.equal((await p).ok, true);
+  assert.equal(two.writes().length, 1);
+});
+
+test('F-5-08 save of a fresh copy with a typed name: a 409 is refused with the server\'s words, one POST, and the draft kept', async () => {
+  const r = await ready(rig({ answer: minting(new Set(['my review'])) }));
+  const src = r.live.data().workflow.find((w) => w.id === 'wf_mine');
+  const steps = structuredClone(src.steps), loops = structuredClone(src.loops);
+  const x = { ...src, id: 'copy-1', title: 'Mine copy', copyName: 'Mine copy', copyOf: src.id, copyFrom: src.title, fresh: true, nodeIds: [...src.nodeIds],
+    draft: { title: 'My review', steps, loops, changes: 1, base: src.tpl } };
+  r.live.data().workflow.push(x);
+  let renamed = 0;
+  const a = await r.live.save('workflow', 'copy-1', { rename: () => { renamed += 1; return 'Mine copy 2'; } });
+  assert.equal(a.ok, false);
+  assert.match(a.text, /^Could not save My review: a pipeline with the id "wf_my-review" already exists/);
+  assert.equal(r.writes().length, 1); assert.equal(renamed, 0, 'a typed name is never renamed');
+  assert.equal(r.writes()[0].body.id, undefined);
+  const y = r.live.data().workflow.find((w) => w.id === 'copy-1');
+  assert.ok(y?.fresh && y.draft?.title === 'My review', 'the draft stays, still fresh');
+
+  y.draft.title = 'Mine copy';   // back to the auto name: a 409 now retries under rename
+  const b = await r.live.save('workflow', 'copy-1', { rename: (t) => (t.has('mine copy 2') ? 'Mine copy 3' : 'Mine copy 2') });
+  assert.equal(b.ok, true, b.text);
+  assert.equal(b.text, 'Saved Mine copy: tasks run it from now');
+  assert.deepEqual(r.gone, ['workflows/workflow:wf_mine-copy']);
+  assert.ok(!r.live.data().workflow.some((w) => w.id === 'copy-1'), 'the fresh record left');
+});
+
+// a fresh copy of wf_mine, pushed as Edit a copy by hand makes it
+const freshCopy = (r, title = 'Mine copy') => {
+  const src = r.live.data().workflow.find((w) => w.id === 'wf_mine');
+  const x = { ...src, id: 'copy-1', title: 'Mine copy', copyName: 'Mine copy', copyOf: src.id, copyFrom: src.title, fresh: true, nodeIds: [...src.nodeIds],
+    draft: { title, steps: structuredClone(src.steps), loops: structuredClone(src.loops), changes: 0, base: src.tpl } };
+  r.live.data().workflow.push(x); return x;
+};
+
+test('F-5-08 Discard while the copy\'s Save runs: the create that lands is deleted again and said; a 409 is not retried; no Save, nothing marked', async () => {
+  let release; const held = new Promise((y) => { release = y; });
+  const r = await ready(rig({ answer: async (m, u) => (m === 'POST' && u === '/api/workflows' ? (await held, [201, { workflow: { id: 'wf_mine-copy', name: 'Mine copy' } }]) : null) }));
+  freshCopy(r);
+  const p = r.live.save('workflow', 'copy-1', { rename: () => 'Mine copy 2' });
+  await new Promise((y) => setImmediate(y));
+  r.live.abandon('workflow', 'copy-1');
+  release();
+  const a = await p;
+  assert.equal(a.ok, false);
+  assert.equal(a.text, 'Discarded Mine copy: its Save had already reached Worca, so it was deleted again');
+  assert.deepEqual(r.writes().map((c) => `${c.method} ${c.url}`), ['POST /api/workflows', 'DELETE /api/workflows/wf_mine-copy']);
+  assert.deepEqual(r.gone, [], 'not sent to the copy\'s page');
+
+  let release2; const held2 = new Promise((y) => { release2 = y; });
+  const t = await ready(rig({ answer: async (m, u) => (m === 'POST' && u === '/api/workflows' ? (await held2, [409, { error: 'taken' }]) : null) }));
+  freshCopy(t);
+  const q = t.live.save('workflow', 'copy-1', { rename: () => 'Mine copy 2' });
+  await new Promise((y) => setImmediate(y));
+  t.live.abandon('workflow', 'copy-1');
+  release2();
+  assert.deepEqual(await q, { ok: false, text: '' }, 'nothing was made: the discard already said so');
+  assert.equal(t.writes().length, 1, 'no retry after the discard');
+
+  t.live.abandon('workflow', 'copy-1');   // no Save runs: marks nothing, a later Save goes through
+  const b = await t.live.save('workflow', 'copy-1');
+  assert.match(b.text, /^Could not save Mine copy: taken/);
+});
+
+test('F-5-08 a copy refused COPY_TRIES times says the last name it tried, not the draft\'s', async () => {
+  const r = await ready(rig({ answer: (m, u) => (m === 'POST' && u === '/api/workflows' ? [409, { error: 'taken' }] : null) }));
+  freshCopy(r);
+  let k = 1;
+  const a = await r.live.save('workflow', 'copy-1', { rename: () => `Mine copy ${++k}` });
+  assert.equal(r.writes().length, COPY_TRIES);
+  assert.equal(a.text, `Could not save Mine copy ${COPY_TRIES}: taken`);
+  assert.ok(r.live.data().workflow.find((w) => w.id === 'copy-1')?.draft, 'the draft stays');
 });

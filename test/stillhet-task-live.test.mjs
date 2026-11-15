@@ -15,7 +15,7 @@ function host({ routes = {}, loaded = true, live = {}, rows = {}, clock = { t: 1
       if (new RegExp(re).test(`${init.method || 'GET'} ${url}`)) {
         const [status, data] = typeof answer === 'function' ? await answer(url, init) : answer;
         if (status === 0) throw new Error('Failed to fetch');
-        return { ok: status < 400, status, json: async () => data };
+        return { ok: status < 400, status, json: async () => data, text: async () => (typeof data === 'string' ? data : JSON.stringify(data)) };
       }
     }
     return { ok: false, status: 404, json: async () => ({ error: 'not found' }) };
@@ -596,4 +596,19 @@ test('restartOff (F-a4-11): an errored task with no plan needs a plan; with one,
   const w = wsHost();
   assert.equal(w.t.restartOff('w1'), 'Not offered for a workspace task yet');
   assert.equal(w.calls.length, 0);
+});
+
+test('F-3-11: the task page\'s log names each line\'s step from the task\'s workflow, even when the log was read before the state that names it', async () => {
+  const named = { ...TASK_DETAILS.failed.state, stepper: { graph: { nodes: [{ id: 'n_plan', kind: 'agent', key: 'planner', label: 'Plan', progressStage: 'plan' }] } } };
+  let state = { ...TASK_DETAILS.failed.state, stepper: undefined, steps: [] }, logReads = 0;
+  // the log answers once; a later read fails, so the line shown after the state lands is the one read before it
+  const { t } = host({ rows: { h3: failedRow }, routes: { 'GET /api/history/web-1/h3$': () => [200, { state }],
+    'GET /api/history/web-1/h3/log': () => (logReads++ ? [500, { error: 'boom' }] : [200, JSON.stringify({ nodeId: 'n_plan', source: 'agent', text: 'planning' }) + '\n']) } });
+  await t.open('h3'); await settle(20);
+  assert.equal(t.parts('h3').log, t.parts('h3').log, 'a read does not rebuild the named log while the state stays');
+  assert.equal(t.parts('h3').log[0].step, 'n_plan', 'the log landed while no state names the step yet: its id');
+  state = named;
+  await t.open('h3', { force: true }); await settle(20);
+  assert.equal(logReads, 2);
+  assert.equal(t.parts('h3').log[0].step, 'Plan', 'the state landed after the log: the workflow\'s label, not the node id');
 });
