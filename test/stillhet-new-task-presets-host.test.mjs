@@ -92,12 +92,25 @@ test('COV-2 presets: a changed pick shows Update preset; it sends PUT with setup
   const put = posts(calls).find(([m]) => m === 'PUT');
   assert.equal(put[1], '/api/presets/rp_fix');
   assert.deepEqual(put[2].basis, { projectDir: '/src/web' });
-  assert.equal(put[2].setup.engine, undefined, 'Claude, the project\'s default, is not a pick (classic presetSetupFromForm reads the same body)');
+  assert.equal(put[2].setup.engine, 'claude', 'the preset pins an engine: the new pick stays a pin, though Claude is the project\'s default (COV-2 m-pin)');
   assert.equal(put[2].setup.workflowId, 'wf_lean');
   assert.deepEqual(put[2].setup.overlay, { nodes: { plan: { model: 'opus' } } }, 'the preset\'s agent picks ride along');
   assert.equal(put[2].setup.humanInLoop, true);
   assert.equal(put[2].setup.prompt, undefined, 'never the task');
   assert.ok(!(await menuOf(d)).includes('Update preset'), 'saved: not modified any more');
+});
+
+test('COV-2 m-pin: Update preset keeps a preset\'s Claude pin when Claude is also the project\'s default', async () => {
+  const pinned = { id: 'rp_pin', name: 'Claude pinned', scope: { kind: 'global', ref: null }, setup: { workflowId: 'wf_lean', engine: 'claude' } };
+  const { w, d, calls } = await open({ presets: [pinned], write: (u, b, m) => (m === 'PUT' ? [200, { preset: { ...pinned, setup: b.setup } }] : [200, { runId: 'r-new' }]) });
+  await pick(d, 'preset', 'p:rp_pin');
+  await pick(d, 'workflow', 'Shaper');
+  await pick(d, 'preset', 'update');
+  const put = posts(calls).find(([m]) => m === 'PUT');
+  assert.equal(put[2].setup.engine, 'claude', 'the pin is kept');
+  assert.equal(put[2].setup.workflowId, 'wf_shape');
+  type(w, d, '#cc-text', 'Add a pager'); await start(d);
+  assert.equal(runs(calls)[0].engine, undefined, 'the start still sends no Claude when it is the project\'s default (classic startRun)');
 });
 
 test('COV-2 presets: Duplicate saves a copy, reads the list again and applies the copy', async () => {

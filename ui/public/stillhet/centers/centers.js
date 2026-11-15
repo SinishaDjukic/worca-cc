@@ -379,7 +379,12 @@
     const o = OPT(), f = form, id = flowId(), dir = dirOf(); if (!o || !id || !dir) return;
     const model = agentModel();
     const p = reset ? o.resetWorkflow(dir, id) : o.saveWorkflowDefaults(id, Object.fromEntries(agentIds().map((n) => [n, { model }])), dir);
-    p.then((r) => { if (form === f) said('flowSaid', r.ok ? (reset ? 'Reset' : 'Saved') : `Could not ${r.step || 'reset to the workflow\'s defaults'}: ${r.error}`); });
+    p.then((r) => {
+      if (form !== f) return;
+      if (r.ok) { said('flowSaid', reset ? 'Reset' : 'Saved'); return; }
+      // COV-2 m-flowerr: a refusal is the form's error line (the field's error line, DS "something failed"), never the button's label
+      f.err = `Could not ${r.step || 'reset to the workflow\'s defaults'}: ${r.error}`; f.errAt = f.src === 'write' ? '#cc-text' : f.src === 'file' ? '#cc-path' : '#cc-search'; paintForm();
+    });
   }
   // ---- presets (D7): picked, applied and checked here; Update and Duplicate in the same menu ----
   function applyPreset(p) {
@@ -417,7 +422,7 @@
   }
   function updatePreset() {
     const o = OPT(), f = form; if (!o || !f.presetObj) return;
-    o.updatePreset(f.preset, RO().presetSetupOf(startBody(), f.presetObj), dirOf()).then((r) => {
+    o.updatePreset(f.preset, RO().presetSetupOf(startBody(!!f.presetObj.setup?.engine), f.presetObj), dirOf()).then((r) => {
       if (form !== f) return;
       if (!r.ok) { f.err = `Could not update the preset: ${r.error}`; f.errAt = '#cc-text'; paintForm(); return; }
       f.presetObj = r.data?.preset || f.presetObj; f.presetBase = presetView(); presetList = (presetList || []).map((p) => (p.id === f.preset ? f.presetObj : p));
@@ -600,8 +605,9 @@
     return { ...(wf ? { workflowId: wf } : {}), ...(engine ? { engine } : {}), ...git };
   }
   // the start's one body (R-arch-2): the frame's picks, More options, and the run options (COV-2) — a preset's id and what
-  // it carries, a picked ticket in place of the words, the engine consent; nothing extra when no option is used
-  function startBody() {
+  // it carries, a picked ticket in place of the words, the engine consent; nothing extra when no option is used.
+  // `keepPin`: Update preset keeps Claude when the preset pins an engine (COV-2 m-pin); only the start drops it
+  function startBody(keepPin) {
     const words = (form.src === 'write' ? form.text : `Follow ${form.path}`).trim(), s = pluginOf();
     const none = form.project === 'No project', dir = none ? '' : window.RailTaskLive?.projectDirOf(form.project) || '';
     const usd = form.cap === LISTS().cap[0] ? null : capUsd(form.cap);
@@ -616,7 +622,7 @@
     if (form.preset) Object.assign(body, Object.fromEntries(Object.entries(form.carried).filter(([k]) => k !== 'overlay' || !overlay)), { presetId: form.preset });
     if (s && form.ticket) { delete body.prompt; body.source = RO().sourceBodyOf({ plugin: s.plugin, sourceId: s.sourceId, taskId: form.ticket, inputs: Object.fromEntries((s.inputs || []).filter((x) => x && x.key && x.type !== 'task-browser' && x.default !== undefined).map((x) => [x.key, x.default])), profile: form.profile }); }
     // dev's Claude default is not sent as a pick (classic startRun): the body stays as before the defaults were read
-    if (body.engine === 'claude' && form.defaultEngine === 'claude') delete body.engine;
+    if (!keepPin && body.engine === 'claude' && form.defaultEngine === 'claude') delete body.engine;
     if (form.allow && (body.engine || form.defaultEngine || 'claude') !== 'claude') body.allowUnguardedEngine = true;
     return body;
   }
