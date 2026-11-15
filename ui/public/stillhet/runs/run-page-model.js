@@ -463,6 +463,8 @@
   // A form behind a step: its words and its one field or choice (docs/rail/forms.md).
   const FORMS = {
     model: { title: 'Switch model', yes: 'Resume', text: 'Every remaining step runs on the model you pick; the task resumes from {step}.', options: ['Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5'], pick: 1 },
+    // Resume on ‹Engine› (COV-3): classic's confirm, named for the engine; live, its sentence is dev's engineSwitchNote
+    engine: { title: 'Resume on {engine}?', yes: 'Resume on {engine}', text: 'Starts the paused step fresh; a model {engine} cannot run falls back to its default.' },
     'resume-at': { title: 'Resume at a time', yes: 'Schedule the resume', text: 'The task stays paused until then, and you can cancel it.', field: { label: 'Time', value: '15:30', hint: 'Today, in your time zone', time: true } },
     report: { title: 'Report this task', yes: 'Send report', text: 'Files a GitHub issue with this task’s redacted report and your note.', field: { label: 'Note', value: '', hint: 'What went wrong, or what you expected', multiline: true } },
     cap: { title: 'Raise the cap', yes: 'Raise it and go on', text: 'A new cost cap for this task; it goes on from {step}.', field: { label: 'New cap', value: '$180', hint: 'It is at $120' } },

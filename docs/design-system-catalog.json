@@ -1776,8 +1776,17 @@
       "needs": [
         "a chat softens where it goes under the composer or the top bar, only while there is more past that edge (scrollEdges says which)"
       ],
+      "also": [
+        {
+          "code": "ui/public/design-system/components/scroll-fade.mjs#pinnedToEnd",
+          "needs": [
+            "whether a chat sits at its end (its last PIN px in view), so a growing reply keeps it there"
+          ]
+        }
+      ],
       "rules": [
-        "motion.scroll-fade"
+        "motion.scroll-fade",
+        "motion.follow-end"
       ]
     },
     {
@@ -2022,7 +2031,8 @@
       "code": "ui/public/design-system/components/kind-mark.mjs#filesCard",
       "kind": "moving",
       "needs": [
-        "files Worca shows in a conversation: pictures as tiles, files as rows, each with Download"
+        "files Worca shows in a conversation: pictures as tiles, files as rows, each with Download",
+        "a file's Show in ‹file manager› (revealLabel and the file's reveal), only where the server offers it"
       ],
       "rules": [
         "panel.conversation-cards"
@@ -2047,7 +2057,8 @@
       "code": "ui/public/design-system/components/kind-mark.mjs#youTurn",
       "kind": "showing",
       "needs": [
-        "what you said in a conversation, with the quote you answered and the files you attached"
+        "what you said in a conversation, with the quote you answered and the files you attached",
+        "an attached file as a chip that opens it ({name, attrs}); a plain name stays a plain chip"
       ],
       "rules": [
         "panel.conversation-cards"

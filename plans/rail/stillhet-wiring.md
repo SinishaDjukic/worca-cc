@@ -161,6 +161,7 @@ One row per action: `npm run stillhet:wiring` lists every `window.RailWould(...)
 | `runs/run-page-model.js › open worca-docs #31 on GitHub` | not offered live | the live mapper (`ui/public/stillhet/live/live-map.mjs` caseOf) never draws the design's workspace cases: dev keeps a workspace run as one task whose members each open their PR through View PR; the three-PR stand-ins are not drawn (for the controller: dev has no one-call "every member's PR" link) |
 | `runs/run-page-model.js › open worca-web #88 on GitHub` | not offered live | the live mapper (`ui/public/stillhet/live/live-map.mjs` caseOf) never draws the design's workspace cases: dev keeps a workspace run as one task whose members each open their PR through View PR; the three-PR stand-ins are not drawn (for the controller: dev has no one-call "every member's PR" link) |
 | `runs/run-page.js › (a phrase built from data)` | wired | in the live kind `RailTaskLive` (`ui/public/stillhet/live/task-live.mjs`) calls dev's run route; a label no route answers is not drawn (`liveAction`, `liveMore`) |
+| `runs/run-page.js › send the direction` | wired | ⋯ › Send a direction on a live, unfinished task: `RailTaskLive.act('run-direction')`, dev's `POST /api/runs/:id/directions {text}` (COV-3 #1); the demo answers only on the prototype |
 | `runs/run-page.js › check out on this machine and open a local copy` | wired | ⋯ › Try it: `POST /api/runs/:id/checkout`, then the first service's `POST /api/runs/:id/actions/:actionId/start` |
 | `runs/run-page.js › check out on this machine; the PR waits for you` | wired | Changes › Check out (`POST /api/runs/:id/checkout`); the PR dialog's Try it first is the same Try it |
 | `runs/run-page.js › check out …` | wired | Changes › Check out: `RailTaskLive.flow('Check out')`, dev's `POST /api/runs/:id/checkout` |
@@ -327,6 +328,14 @@ One row per surface of today's UI that Stillhet must carry (gate.prototype in `d
 
 | Surface | Status | Where in Stillhet, or why not yet |
 |---|---|---|
+| `route › /api/runs/:param/directions` | wired | Tasks › the task page's ⋯ Send a direction (`live/task-live.mjs` `run-direction`, COV-3 #1) |
+| `route › /api/runs/:param/restore` | wired | Tasks › the archived task page's ⋯ Restore, scoped as classic's runActionQuery (`live/task-live.mjs` `restore`, COV-3 #3); multi-select keeps `POST /api/runs/bulk` |
+| `route › /api/runs/:param/ask-files/:param/:param` | wired | Chat › a TaskCard's live question: its files as a FilesCard, View by index (`live/chat-live.mjs` `OPENS['ask-file']`, COV-3 #2) |
+| `route › /api/run-links/:param` | wired | Tasks › an old `#run/ID` link opens the saved task it became (`live/task-live.mjs` `openTask`, COV-3 #11) |
+| `route › /api/ask/reveal` | wired | Chat › FilesCard: the probe that draws Show in ‹file manager›, read once (`live/chat-live.mjs` `revealInfo`, COV-3 #9) |
+| `route › /api/ask/threads/:param/attachments/:param` | wired | Chat › FilesCard View and Download, a YouTurn's file chip, a proposal's files read for Start's extras (`live/chat-live.mjs` `OPENS.file`, `download`, COV-3 #5–#8) |
+| `route › /api/ask/threads/:param/attachments/:param/reveal` | wired | Chat › FilesCard Show in ‹file manager› (`live/chat-live.mjs` `ACTIONS['file-reveal']`, COV-3 #9) |
+| `route › /api/ask/threads/:param/directions` | wired | Chat › a followed TaskCard's ⋯ Send a direction (`live/chat-live.mjs` `ACTIONS.direction`) |
 | `route › /api/prompt-check/grade` | wired | Chat › composer sentence row: `stillhet/chat/prompt-check.mjs` grades the draft through dev's `prompt-check/grader.mjs` (the Prompt check chip row above) |
 | `route › /api/prompt-check/kind-correction` | wired | Chat › composer sentence row: a kind pick on the chip, ids and kinds only, posted by `stillhet/chat/prompt-check.mjs` (a new chat's after its first send) |
 | `route › /api/prompt-check/improve` | wired | Chat › composer: Improve on a Needs detail chip, through dev's `prompt-check/improve-view.mjs` in `stillhet/chat/prompt-check.mjs` (the Prompt check Improve row above) |
@@ -507,3 +516,34 @@ kind does not draw it, for the reason given, for the controller to decide.
 New sources this slice built (`new: built`): `ui/public/stillhet/live/task-live.mjs` (task fetches, the checks cache, the
 Tasks actions), `ui/public/stillhet/live/task-page.mjs` (the page and card mapper), and the engine additions in
 `plans/rail/task-engine-additions.md`.
+
+### Classic run and chat extras (COV-3)
+
+Classic's run and chat controls (rail off), derived from their call sites (#1390), each with its home in Stillhet. The
+controls below the table are classic's too but are not counted, for the reason given.
+
+| Capability (dev route) | Home in the prototype | Status |
+|---|---|---|
+| 1. Pinpoint tray Send to run (`POST /api/runs/:id/directions {text}`) | the task page's ⋯ Send a direction on a live, unfinished task: a field under the StatusLine | new: built |
+| 2. A pending run question's files (`GET /api/runs/:runId/ask-files/:askId/:index`) | a Chat TaskCard's live question: its files as a FilesCard (Its files), View by index | new: built |
+| 3. History Restore (`POST /api/runs/:id/restore?projectKey…`, no body) | the task page's ⋯ Restore on an archived task, per run; with no scope, the bulk route for that one id; the TaskCard ⋯ Restore is wired through the same flow but a chat lists no archived task today, so it does not show | new: built |
+| 4. Chat engine switch (`POST /api/ask/threads/:id/engine {engine, model, effort, dropTurns?}`) | the composer's model picker (`conversation.js` engineSwitch); the server's confirm-dropped-turns stands in for classic's dry-run preview | wired |
+| 5. A sent message's attachment pill (`GET /api/ask/threads/:id/attachments/:attId`) | a YouTurn's file chip opens it | new: built |
+| 6. A run proposal's Start carries its pills (`POST /api/run` `extras:[{name, dataBase64}]`) | the live TaskProposal's files under its brief (the message it answers), × removes one; over 100 MB or a failed read posts nothing | new: built |
+| 7. FilesCard view (`GET …/attachments/:attId`) | FilesCard View | wired |
+| 8. FilesCard Download (`<a download>`) | FilesCard Download saves the file (`chat-live.mjs` `download`) | new: built |
+| 9. FilesCard Show in ‹file manager› (`GET /api/ask/reveal`, then `POST …/attachments/:attId/reveal {}`) | FilesCard: a per-file Show in ‹label›, only when the probe says so | new: built |
+| 10. Pinpoint Propose fix run (a chat message, no route of its own) | none yet: Stillhet has no Pinpoint surface | not in this slice: Pinpoint slice |
+| 11. Stale `#running/ID` bounce (`GET /api/run-links/:runId`) | an old task link opens the saved task, else gone; one lookup per id | new: built |
+| 12. Run banner Resume on ‹Engine› (`POST /api/resume {pipelineId, baseCheck:true, engine}`) | the task page's Resume ▾ on a usage-limit pause, confirm first; a moved base asks, then sends baseAck | new: built |
+| 13. Run banner Switch model… (`POST /api/resume {pipelineId, model}`) | the task page's Switch model… (`task-live.mjs` `switch-model`) | wired |
+| 14. Run page Resume ▾ Resume on ‹Engine› | as 12 | new: built |
+| 15. Run page Resume ▾ Switch model… | as 13 | wired |
+| 16. History Resume ▾ Resume on ‹Engine› | as 12, on the saved paused task's page | new: built |
+| 17. History Resume ▾ Switch model… | as 13, on the saved paused task's page | wired |
+
+Not counted:
+- the History twin `GET /api/history/:key/:id/ask-files/…`: a saved run's answered ask, which Stillhet's task page does not draw;
+- the Design chat and Workflows dock thumbnails: other surfaces, each its own slice;
+- Resume at…: already wired (`task-live.mjs` `resume-at`); plain Resume: already wired;
+- the engine refusal's "Allow unguarded" retry (409 `engine-refused`, `overridable`): a known gap; Stillhet shows the server's reason and has no home for the consent yet.

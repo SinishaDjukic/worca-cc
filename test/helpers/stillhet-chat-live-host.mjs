@@ -31,7 +31,8 @@ export async function liveHost({ sources = SOURCES, thread = () => [200, THREAD]
     if (own && own[0] === 0) throw new TypeError('Failed to fetch');   // a network failure
     // a store source the fixture has no answer for falls back to the test's own lists (GET /api/run-groups is both)
     const [status, data] = own || (method !== 'GET' ? await write(url, body, method) : BY_URL[url] && (sources[BY_URL[url]] !== undefined || !lists[url]) ? [200, clone(sources[BY_URL[url]] ?? {})] : lists[url] ? [200, lists[url]] : url.startsWith('/api/ask/threads/') ? await thread(url) : [404, {}]);
-    return { ok: status < 300, status, json: async () => clone(data), text: async () => (typeof data === 'string' ? data : JSON.stringify(data ?? {})) };   // a diff or a log is text
+    const text = () => (typeof data === 'string' ? data : JSON.stringify(data ?? {}));
+    return { ok: status < 300, status, json: async () => clone(data), text: async () => text(), arrayBuffer: async () => new TextEncoder().encode(text()).buffer };   // a diff or a log is text; an attachment is bytes
   };
   const w = stillhetHost({ adapter: 'live', hash, fetch, after: (fn) => closers.push(fn), beforeScripts: (win) => {
     win.WebSocket = class { constructor(url) { this.url = url; this.readyState = 1; sockets.push(this); } close() {} send() {} };

@@ -131,7 +131,8 @@ test('a settle while a reconnect\'s full read is out reads no row: one more full
   assert.ok(!gets(r.calls.slice(n)).includes(ROW_A), 'no row read while the reconnect list is out');
   const first = gate; gate = null; first.open();
   await r.tick(); await r.tick(250); await r.tick(250);
-  assert.deepEqual(gets(r.calls.slice(n)).filter((u) => u.startsWith('/api/history')), [URLS.history, URLS.history]);
+  // the reconnect's full re-read reads the archived feed too (F-a4-07); this counts the active list's reads
+  assert.deepEqual(gets(r.calls.slice(n)).filter((u) => u.startsWith('/api/history') && u !== URLS.archived), [URLS.history, URLS.history]);
 });
 
 test('two held reconnect reads: a settle after the first lands waits for the second, and its status is not reverted', async () => {
@@ -218,6 +219,21 @@ test('with no saved row the done frame moves the task at once', async () => {
   assert.equal(r.rows.get('run-b').case, 'failed');
 });
 
+test('a fresh run with no saved row that ends done or stopped keeps its row, settled, until its row read lands', async () => {
+  let block = false;
+  const r = await ready({ hold: () => (block ? new Promise(() => {}) : null) });
+  block = true;
+  for (const [id, pid, status, kase] of [['run-n', 'pn', 'done', /^finished/], ['run-s', 'ps', 'stopped', /^stopped$/]]) {
+    r.frame({ type: 'run-created', runId: id, title: 'Fresh', status: 'starting' });
+    r.frame({ type: 'state', runId: id, id: pid, status: 'running' });
+    r.frame({ type: 'state', runId: id, id: pid, status });
+    r.frame({ type: 'done', runId: id, seq: 9, status });
+    const t = r.rows.get(id) || r.rows.get(pid);
+    assert.ok(t, `${status}: the run keeps its row while its read is out`);
+    assert.match(t.case, kase, `${status}: its settled case (case ${t.case})`);
+  }
+});
+
 test('a pipelines-changed with pipelineId and an ask-done each re-read /api/budget; an id-less one does not', async () => {
   const r = await ready();
   const count = (n) => gets(r.calls.slice(n)).filter((u) => u === URLS.budget).length;
@@ -270,7 +286,7 @@ test('F-a4-03: a state frame that first names a run\'s pipeline id hands it to t
   assert.ok(gets(y.calls).includes('/api/runs/py/artifacts'), 'read with the pipeline id after the hello');
 });
 
-test('F-7a-02: the live adapter ignores run-pipeline today (no draw, no read, the run record unchanged)', async () => {
+test('F-7a-02: a run-pipeline that repeats the known pipeline draws and reads nothing', async () => {
   const r = await ready();
   r.frame({ type: 'run-created', runId: 'run-n', title: 'Fresh', status: 'starting', projectDir: '/src/web', startedAt: new Date(NOW).toISOString() });
   r.frame({ type: 'state', runId: 'run-n', id: 'pn', status: 'running' });
@@ -283,4 +299,63 @@ test('F-7a-02: the live adapter ignores run-pipeline today (no draw, no read, th
   assert.deepEqual(r.calls.slice(before.calls), [], 'nothing read (task.learned asks nothing again)');
   assert.deepEqual([...r.rows], before.rows, 'the rows are unchanged');
   assert.deepEqual(r.live.chat.runOf('run-n'), before.run, 'the live run record is unchanged');
+  r.frame({ type: 'run-pipeline', runId: 'run-unknown', pipelineId: 'pu' });
+  await r.tick(250);
+  assert.equal(r.log.length, before.draws, 'a run-pipeline for an unknown run draws nothing');
+  assert.deepEqual(r.calls.slice(before.calls), [], 'and reads nothing');
+});
+
+const at = new Date(NOW).toISOString();
+const created = (runId, title) => ({ type: 'run-created', runId, title, status: 'starting', projectDir: '/src/web', startedAt: at });
+test('F-7a-02: Resume in the server\'s order (run-created without pipelineId, then run-pipeline) replaces the paused run: one row, never Paused', async () => {
+  const r = rig(); await r.tick();
+  r.frame({ ...hello, runs: [...hello.runs, { runId: 'run-p', pipelineId: 'pp', projectDir: '/src/web', title: 'Resumed', status: 'paused', pauseReason: 'paused by you', startedAt: at }] });
+  await r.tick();
+  assert.ok(r.rows.get('run-p'), 'the paused run is a row');
+  r.frame(created('run-q', 'Resumed'));
+  r.frame({ type: 'run-pipeline', runId: 'run-q', pipelineId: 'pp' });
+  assert.equal(r.rows.get('run-p'), undefined, 'the old run is gone');
+  assert.equal(r.rows.get('run-q').case, 'starting');
+  assert.ok(![...r.rows.values()].some((x) => x.title === 'Resumed' && x.case.startsWith('paused')), 'no row reads Paused');
+  assert.deepEqual([...r.rows.values()].filter((x) => x.title === 'Resumed').map((x) => x.id), ['run-q']);
+  assert.equal(r.live.chat.runOf('pp').pipelineId, 'pp', 'task-live learned the pipeline');
+});
+
+test('F-7a-02: run-pipeline naming a saved paused row keeps the pipeline once, live', async () => {
+  const r = await ready();
+  assert.ok(r.rows.get('h1'), 'the saved paused row is a row');
+  r.frame(created('run-r', 'Old pause'));
+  r.frame({ type: 'run-pipeline', runId: 'run-r', pipelineId: 'h1' });
+  assert.equal(r.rows.get('h1'), undefined, 'the saved row is kept once');
+  assert.ok(r.rows.get('run-r'), 'live');
+});
+
+test('F-7a-02: Stop of a paused run settles at once: its done(stopped) moves its row at once (no Paused, out of Needs you) and reads its saved row (GET /api/history/KEY/ID?row=1)', async () => {
+  const r = rig(); await r.tick();
+  r.frame({ ...hello, runs: hello.runs.map((x) => (x.runId === 'run-a' ? { ...x, status: 'paused', pauseReason: 'paused by you', pendingQuestion: null } : x)) });
+  await r.tick();
+  assert.ok(r.rows.get('run-a').case.startsWith('paused'), 'paused before the stop');
+  const n = r.calls.length, loads = r.log.filter((x) => x[0] === 'load').length;
+  r.frame({ type: 'state', runId: 'run-a', id: 'pa', status: 'stopped' });
+  r.frame({ type: 'done', runId: 'run-a', status: 'stopped' });
+  assert.equal(r.log.filter((x) => x[0] === 'load').length, loads, 'moved, not drawn: no runs draw swaps its row id under a chat card on run-a before the read');
+  assert.ok(r.rows.get('run-a'), 'the row keeps its run id until its saved row is read');
+  const held = ['run-a', 'pa'].filter((id) => r.rows.get(id));
+  assert.equal(held.length, 1, 'one row for the pipeline');
+  const row = r.rows.get(held[0]);
+  assert.equal(row.case, 'stopped', `reads Stopped, out of Needs you (case ${row.case})`);
+  r.frame({ type: 'pipelines-changed', action: 'stopped', pipelineId: 'pa' });
+  await r.tick(250);
+  assert.equal(gets(r.calls.slice(n)).filter((u) => u === ROW_A).length, 1, 'one row read for the settle and the server\'s frame');
+  assert.equal(gets(r.calls.slice(n)).filter((u) => u === URLS.history).length, 0);
+});
+
+test('F-7a-02: a settled run with no known project key reads the whole history once', async () => {
+  const r = rig(); await r.tick();
+  r.frame({ ...hello, runs: [...hello.runs, { runId: 'run-w', pipelineId: 'pw', projectDir: '/elsewhere', title: 'Workspace', status: 'running', startedAt: at }] });
+  await r.tick();
+  const n = r.calls.length;
+  r.frame({ type: 'done', runId: 'run-w', status: 'done' });
+  await r.tick(250);
+  assert.deepEqual(gets(r.calls.slice(n)).filter((u) => u.startsWith('/api/history')), [URLS.history]);
 });

@@ -4,20 +4,21 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { startChatLive, prBodyOf, startBodyOf, perspectiveChoices, ACTIONS, FLOW, OPENS, openTab } from '../ui/public/stillhet/live/chat-live.mjs';
+import { startChatLive, prBodyOf, startBodyOf, perspectiveChoices, ACTIONS, FLOW, OPENS, openTab, saveLink } from '../ui/public/stillhet/live/chat-live.mjs';
+import { ATTACH_MAX_MESSAGE_BYTES } from '../ui/public/attach-files.mjs';
 import { actionFlow } from '../ui/public/design-system/components/run-state.mjs';
 import { THREAD } from './helpers/stillhet-live-fixture.mjs';
 
 const tick = async () => { for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r)); };
-function rig({ answer = () => [200, {}], opened = [], went = [], clip = null, open = (u) => { opened.push(u); return {}; } } = {}) {
+function rig({ answer = () => [200, {}], opened = [], went = [], clip = null, open = (u) => { opened.push(u); return {}; }, save = null } = {}) {
   const calls = [], sent = [], toasts = [], changes = [];
   const fetch = async (url, o = {}) => {
     calls.push({ url, method: o.method || 'GET', body: o.body ? JSON.parse(o.body) : undefined });
     const [status, body] = await answer(url, o.method || 'GET', calls.length);
     if (status === 'throw') throw new Error('offline');
-    return { ok: status < 300, status, json: async () => { if (body === 'not json') throw new SyntaxError('Unexpected token'); return body; } };
+    return { ok: status < 300, status, json: async () => { if (body === 'not json') throw new SyntaxError('Unexpected token'); return body; }, arrayBuffer: async () => new TextEncoder().encode(typeof body === 'string' ? body : '').buffer };
   };
-  const live = startChatLive({ fetch, send: (m) => sent.push(m), toast: (t) => toasts.push(t), now: () => 0, open, go: (h) => went.push(h), ...(clip ? { clipboard: clip } : {}) });
+  const live = startChatLive({ fetch, send: (m) => sent.push(m), toast: (t) => toasts.push(t), now: () => 0, open, go: (h) => went.push(h), ...(clip ? { clipboard: clip } : {}), ...(save ? { save } : {}) });
   live.onChange((id) => changes.push([id, live.state(id)]));
   return { live, calls, sent, toasts, changes };
 }
@@ -240,7 +241,7 @@ test('read ids open dev\'s GET in a new tab (a visible effect); a blocked tab is
   const blocked = rig({ open: () => null });   // a real blocked tab: window.open answers null
   assert.equal((await blocked.live.act('file', { threadId: 'ask_1', attId: 'att_1' })).ok, false);
   assert.deepEqual(blocked.toasts, ['Could not open the file: the browser blocked the new tab']);
-  assert.deepEqual(Object.keys(OPENS).sort(), ['artifact', 'diff', 'file', 'patch', 'url']);
+  assert.deepEqual(Object.keys(OPENS).sort(), ['artifact', 'ask-file', 'diff', 'file', 'patch', 'url']);
 });
 
 test('Start carries the person\'s picks: a stricter guardrail set, the target and branches reach POST /api/run', () => {
@@ -868,4 +869,54 @@ test('F-a2-01 review: Remove on the item whose POST is out answers sending and k
   assert.equal(r.live.dropQueued('ask_1', k2), true, 'one that waits still goes');
   release(); await tick();
   assert.deepEqual(r.live.queue('ask_1').items, []);
+});
+
+// ---- COV-3: classic's chat extras (a question's files, Download that saves, Show in ‹file manager›, a proposal's files) ----
+test('COV-3 #2: the ask-file URL is the live run, the ask id and the index, each encoded (a hostile id stays one segment)', () => {
+  assert.equal(OPENS['ask-file'][1]({ runId: 'run-a', askId: 'tok_1', index: 0 }), '/api/runs/run-a/ask-files/tok_1/0');
+  assert.equal(OPENS['ask-file'][1]({ runId: '../x', askId: 'a/b?c', index: '1/../2' }), '/api/runs/..%2Fx/ask-files/a%2Fb%3Fc/1%2F..%2F2');
+});
+
+test('COV-3 #8: download saves through `save` with the file\'s name, no tab; a blocked save is refused', async () => {
+  const saved = [], opened = [];
+  const r = rig({ opened, save: (u, n) => { saved.push([u, n]); return true; } });
+  assert.deepEqual(await r.live.download({ threadId: 'ask_1', attId: 'att 1', name: 'a.csv' }), { ok: true });
+  assert.deepEqual(saved, [['/api/ask/threads/ask_1/attachments/att%201', 'a.csv']]);
+  assert.deepEqual(opened, [], 'no tab');
+  const b = rig({ save: () => false });
+  const x = await b.live.download({ threadId: 'ask_1', attId: 'a', name: 'a.csv' });
+  assert.equal(x.ok, false);
+  assert.deepEqual(b.toasts, ['Could not download a.csv: the browser blocked the download']);
+  assert.equal(typeof saveLink, 'function');
+});
+
+test('COV-3 #9: the reveal probe is read once per adapter; null when the server offers none or the read fails', async () => {
+  const r = rig({ answer: (u) => (u === '/api/ask/reveal' ? [200, { available: true, label: 'Finder' }] : [200, {}]) });
+  assert.deepEqual(await r.live.revealInfo(), { label: 'Finder' });
+  assert.deepEqual(await r.live.revealInfo(), { label: 'Finder' });
+  assert.equal(r.calls.filter((c) => c.url === '/api/ask/reveal').length, 1, 'COV-3 #9: the reveal probe is read once');
+  assert.equal(await rig({ answer: () => [200, { available: false, label: null }] }).live.revealInfo(), null);
+  assert.equal(await rig({ answer: () => [500, { error: 'boom' }] }).live.revealInfo(), null);
+});
+
+test('COV-3 #6: Start reads the files and sends extras; over the limit or a failed read posts no run', async () => {
+  const card = { title: 'Fix it', brief: 'Do it', projectDir: '/src/web', workflowId: 'wf_lean' };
+  const r = rig({ answer: (u, m) => (u === '/api/ask/threads/ask_1/attachments/att_1' ? [200, 'hello'] : u === '/api/ask/threads/ask_1/attachments/att_2' ? [200, 'hi'] : m === 'POST' ? [200, { runId: 'r1' }] : [200, {}]) });
+  const ok = await r.live.act('start', { threadId: 'ask_1', cardId: 'c1', card, picks: {}, files: [{ name: 'a.txt', att: 'att_1', bytes: 5 }, { name: 'b.txt', att: 'att_2', bytes: 2 }] });
+  assert.equal(ok.ok, true);
+  const post = r.calls.find((c) => c.method === 'POST');
+  assert.equal(post.url, '/api/run');
+  assert.deepEqual(post.body.extras, [{ name: 'a.txt', dataBase64: Buffer.from('hello').toString('base64') }, { name: 'b.txt', dataBase64: Buffer.from('hi').toString('base64') }]);
+  assert.equal(post.body.askCardId, 'c1');
+  assert.equal(startBodyOf(card, {}).extras, undefined, 'no files: no extras');
+  const big = rig();
+  const x = await big.live.act('start', { threadId: 'ask_1', cardId: 'c1', card, picks: {}, files: [{ name: 'huge.bin', att: 'att_9', bytes: ATTACH_MAX_MESSAGE_BYTES + 1 }] });
+  assert.equal(x.ok, false);
+  assert.deepEqual(big.calls, [], 'over the limit: nothing is read or posted');
+  assert.deepEqual(big.toasts, [`Could not start the task: attachments exceed ${ATTACH_MAX_MESSAGE_BYTES / (1024 * 1024)} MB: remove one`]);
+  const bad = rig({ answer: (u) => (/attachments/.test(u) ? [404, { error: 'attachment not found' }] : [200, {}]) });
+  const y = await bad.live.act('start', { threadId: 'ask_1', cardId: 'c1', card, picks: {}, files: [{ name: 'a.txt', att: 'att_1', bytes: 5 }] });
+  assert.equal(y.ok, false);
+  assert.equal(bad.calls.filter((c) => c.method === 'POST').length, 0, 'COV-3 #6: a failed read posts no run');
+  assert.deepEqual(bad.toasts, ['Could not start the task: could not read attachment a.txt']);
 });

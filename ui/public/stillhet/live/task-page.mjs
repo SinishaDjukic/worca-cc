@@ -6,6 +6,7 @@
 // A field dev cannot fill is left out, so the part that draws it hides (D3).
 import { prCaseOf, stageOfStep, STAGE_LABEL, failureItems, shortDetail, knownBase } from './live-map.mjs';
 import { currentPass } from '../../../../src/shared/shape/role-review.mjs';
+import { usageLimitSwitches, engineLabel, engineSwitchNote } from '../../../../src/shared/engine-switch.mjs';
 
 export { stageOfStep };
 
@@ -234,7 +235,8 @@ export function taskPageOf(input = {}, { now = 0 } = {}) {
   const asking = card.case === 'gate' ? stages.flatMap((st) => st.steps).find((x) => x.state === 'ask') : null;
   return {
     id: str(row.id) || str(state.id),
-    case: card.case,
+    // an archived task's page is the design's archived case (its ⋯ offers Restore, COV-3 #3); its card keeps its own
+    case: row.archived ? 'archived' : card.case,
     title: str(row.title) || str(state.title) || 'Untitled task',
     branch: card.branch || '',
     base: card.base || '',
@@ -263,6 +265,9 @@ export function taskPageOf(input = {}, { now = 0 } = {}) {
     pauseAfterStep: state.pauseAfterStep === true,
     // the workflow the task ran (its stepper's template, slice 7 D17): the Workflow dialog opens it in Workflows
     workflow: str(state.stepper?.template?.id) ? { id: str(state.stepper.template.id), name: str(state.stepper.template.name) || str(state.stepper.template.id) } : null,
+    // COV-3 #12: a run its own engine's usage limit paused may go on on another (classic's paintResumeEngineItems), in the
+    // same words: `engineLabel`, and `engineSwitchNote` as the item's help and its confirm
+    resumeEngines: lc(state.status) === 'paused' ? usageLimitSwitches({ reason: state.pauseReason || null, limitEngine: state.limitEngine || null }).map((id) => ({ id, label: engineLabel(id), note: engineSwitchNote(id) })) : [],
   };
 }
 
