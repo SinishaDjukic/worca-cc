@@ -75,3 +75,9 @@ test('gate.real-data F-cov23-07: the presets Duplicate makes and Stillhet cannot
   for (const words of ['Duplicate', '(copy)', 'rename', 'delete', 'Settings › Presets', 'slice 12']) assert.ok(r[2].includes(words), words);
   assert.equal(r[5], 'open (owner: feature 3)');
 });
+
+test('F-cov23-09 (#1392): a proposal\'s files on the closed card stay Open for feature 3', () => {
+  const row = rows('Open').find((r) => /F-cov23-09/.test(r[2]));
+  assert.ok(row, 'an Open row');
+  assert.equal(row[5], 'open (owner: feature 3)');
+});

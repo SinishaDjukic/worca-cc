@@ -61,6 +61,7 @@ export function classicFiles(root = ROOT) {
 // [test over "file area function", page]. The first that matches names the page; app.js is read by its section heads.
 const PAGE_RULES = [
   [/setup-assistant|smart-naming|update-view|credentials-view|sound-settings/, 'Settings'],
+  [/pinpoint-surfaces/, 'Tasks'],   // Pinpoint on a run's artifact viewer and Diff tab: the run's page (COV-3)
   [/pinpoint/, 'Chat'],
   [/skill-/, 'Marketplace'],
   [/team-policy|teamPolicy|\btp[A-Z_]/, 'Team policy'],

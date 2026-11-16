@@ -285,8 +285,8 @@
     const head = R.placeHead({ title: 'Your projects', say: calm && data.projects.length ? 'Nothing needs you' : '' });
     const way = adv() ? '' : `<p class="center-way">New work starts in Chat. ${link('Go to Chat', { 'data-pj-chat': '' })}</p>`;
     const say2 = adv() && !spaces().length ? '<p class="ws-about">A workspace is projects that work together: Worca learns how they connect, and changes them in the right order.</p>' : '';
-    const fields =form === 'project' ? R.field({ id: 'pj-hand-v', label: 'Folder or repository', placeholder: '~/src/your-project', value: formTyped, error: formErr, attrs: { maxlength: 200, 'data-keep': 'pj-hand:project:' } }) : R.field({ id: 'pj-hand-v', label: 'Its name', placeholder: 'Web shop', value: formTyped, error: formErr, hint: `Up to ${NAME_MAX} characters`, attrs: { maxlength: NAME_MAX, 'data-keep': 'pj-hand:space:' } });
-    const hand = form ? `<div class="card-form">${R.confirmForm({ form: 'hand', id: 'pj-hand-t', text: form === 'project' ? 'Add a project by hand' : 'Make a workspace by hand', body: fields + R.confirmActions({ yes: form === 'project' ? busyOf('add') || 'Add' : 'Make it', busy: form === 'project' && !!busyOf('add') }) })}</div>` : '';
+    const fields = R.field({ id: 'pj-hand-v', label: 'Its name', placeholder: 'Web shop', value: formTyped, error: formErr, hint: `Up to ${NAME_MAX} characters`, attrs: { maxlength: NAME_MAX, 'data-keep': 'pj-hand:space:' } });
+    const hand = form === 'project' ? addCtl.html() : form ? `<div class="card-form">${R.confirmForm({ form: 'hand', id: 'pj-hand-t', text: 'Make a workspace by hand', body: fields + R.confirmActions({ yes: 'Make it' }) })}</div>` : '';
     const wrap = (parts) => ({ cls: 'is-center', parts });
     const ls = listNow();   // D18: loading and failed, in both kinds
     if (ls !== 'ready') return wrap({ head: R.placeHead({ title: 'Your projects' }), state: R.listState({ state: ls, noun: 'projects', retry: ls === 'failed' ? { 'data-pj-retry': '' } : null }) });
@@ -327,7 +327,7 @@
     keep();
   }
   // panel.dismiss: focus returns to what opened it: Locate on the page, the bar's + otherwise
-  const closeForm = () => { const was = form; form = ''; formTyped = ''; formErr = ''; draw(); (PAGE_FORMS[was] ? page.querySelector('[data-pj-act]') || page.querySelector('[data-menu="pj-more"]') : document.querySelector('[data-bar-new]'))?.focus(); };
+  const closeForm = () => { const was = form; if (was === 'project') addCtl.close(); form = ''; formTyped = ''; formErr = ''; draw(); (PAGE_FORMS[was] ? page.querySelector('[data-pj-act]') || page.querySelector('[data-menu="pj-more"]') : document.querySelector('[data-bar-new]'))?.focus(); };
   const formErr2 = (v, why) => { formTyped = v; formErr = why; draw(); page.querySelector('#pj-hand-v')?.focus(); };
   const REPO_RE = /^(https?:\/\/|ssh:\/\/|git@)\S+$/;
   // a page form's Yes: checked as the design does, then live through the module (a field error keeps it open), else the demo
@@ -376,6 +376,7 @@
     page.addEventListener('click', (e) => {
       if (!here()) return;   /* another place's page is showing */
       const on = (q) => e.target.closest(q); let hit;
+      if (form === 'project' && !current) { const took = addCtl.click(e.target); if (took === 'close') closeForm(); if (took) return; }   // form.add-project: its ways, its browser, its review
       if (on('[data-c-ask]')) return;   /* the center card's ConfirmStrip answers in centers.js */
       if ((hit = on('[data-pj-home-act]'))) { const x = data.projects.find((y) => y.id === hit.dataset.pjHomeAct); if (x) originAct(x); return; }
       if (on('[data-pc-figs]')) { figures = !figures; draw(); return; }
@@ -390,9 +391,8 @@
       if ((hit = on('[data-pj-go]'))) { window.RailShell.go(`projects/${hit.dataset.pjGo}`); return; }
       if (current.startsWith('ws:')) return;   // the workspace has its own
       if (PAGE_FORMS[form] && (hit = on('[data-confirm]'))) { pageFormYes(hit.dataset.confirm === 'yes'); return; }
-      if (form && (hit = on('[data-confirm]'))) { const v = page.querySelector('#pj-hand-v')?.value.trim() || '', kind = form; if (hit.dataset.confirm !== 'yes') { closeForm(); return; } if (busyOf('add')) return; const id = kind === 'project' ? (v.split(/[/:]/).filter(Boolean).pop() || '').replace(/\.git$/, '') : '', wrong = !v || (kind === 'project' && !id) ? (kind === 'project' ? 'It needs a folder or a repository' : 'It needs a name') : kind === 'project' ? (pathWrong(v, true) || (id.length > NAME_MAX ? `A project's name holds ${NAME_MAX} characters; this folder's has ${id.length}` : data.projects.some((x) => nameOf(x) === id) ? `${id} is already a project` : '')) : (window.RailSpaces.named(v) ? `${window.RailSpaces.named(v).title} already exists` : ''); if (wrong) { formErr2(v, wrong); return; }
-        if (kind === 'project' && LIVE()) { formTyped = v; formErr = ''; const from = current; LIVE().addProject(v).then((a) => { if (!a.ok) { if (a.field) formErr2(v, a.field); else said(a); return; } form = ''; formTyped = ''; formErr = ''; say(a.text); if (a.key && current === from && here()) window.RailShell.go(`projects/${a.key}`); else draw(); }); draw(); return; }   // D11: a path, or a repository to clone; its page once the store lists it, while the person is still here
-        form = ''; formTyped = ''; formErr = ''; if (kind === 'project') { window.RailProjects.add({ id, path: v, kind: 'Git', origin: 'local', branch: 'main' }); say(`Added ${id}`); window.RailShell.go(`projects/${id}`); return; } const wsId = window.RailSpaces.add({ title: v, fresh: true }); window.RailShell.go(`projects/ws:${wsId}`); return; }
+      if (form && (hit = on('[data-confirm]'))) { const v = page.querySelector('#pj-hand-v')?.value.trim() || ''; if (hit.dataset.confirm !== 'yes') { closeForm(); return; } const wrong = !v ? 'It needs a name' : window.RailSpaces.named(v) ? `${window.RailSpaces.named(v).title} already exists` : ''; if (wrong) { formErr2(v, wrong); return; }
+        form = ''; formTyped = ''; formErr = ''; const wsId = window.RailSpaces.add({ title: v, fresh: true }); window.RailShell.go(`projects/ws:${wsId}`); return; }
       const p0 = data.projects.find((x) => x.id === pid()); if (!p0 || !page.querySelector('#pj-dock')) return;
       const p = withDetail(p0);
       if (defaultsClick(e, p, draw)) return;      if (on('[data-pj-spend]')) { window.RailPlaces.insights.spendOf(nameOf(p)); return; }
@@ -417,6 +417,7 @@
     });
     page.addEventListener('keydown', (e) => {
       if (!here() || current.startsWith('ws:')) return;
+      if (form === 'project') { const took = addCtl.key(e); if (took === 'close') closeForm(); if (took) return; }
       if (form && e.target.id === 'pj-hand-v' && ['Enter', 'Escape'].includes(e.key)) { e.preventDefault(); e.stopPropagation(); if (e.key === 'Escape') closeForm(); else page.querySelector('[data-confirm="yes"]')?.click(); return; }
       const p = data.projects.find((x) => x.id === pid()); if (p) defaultsKey(e, p, draw);
     });
@@ -428,7 +429,7 @@
   window.addEventListener('hashchange', () => { [...data.projects, ...(window.RailSpaces?.list() || [])].forEach((x) => { delete x.editing; delete x.defErr; delete x.defTyped; });
     // an open form belongs to its own route: moving anywhere else closes it, so its text never waits for you (comp.keep-open)
     const [place, arg = ''] = location.hash.slice(1).split('/');
-    if (form && (place !== 'projects' || arg.split('@')[0] !== formAt)) { form = ''; formTyped = ''; formErr = ''; } });
+    if (form && (place !== 'projects' || arg.split('@')[0] !== formAt)) { if (form === 'project') addCtl.close(); form = ''; formTyped = ''; formErr = ''; } });
   // a Pulse item opens its project with the fix in view: Locate folder's form, else the head's fix landed, else (a task
   // question holds the head) the More menu open on it; a project that no longer needs you only opens
   function openNeed(id) {
@@ -444,10 +445,13 @@
       const item = page.querySelector('[data-menu-pick="pj-more|act"]'); R.land(item);
     }, 60);
   }
+  // form.add-project (COV-1): every way classic adds a project, in project-add.js
+  const addCtl = window.RailProjectAdd.make({ R, live: LIVE, onLive: isLive, say, said, go: (to) => window.RailShell.go(to), draw: () => draw(), projects: () => data.projects, nameOf, pathWrong,
+    end: () => { form = ''; formTyped = ''; formErr = ''; }, addDemo: (p) => { if (!data.projects.some((x) => x.id === p.id)) data.projects.push({ kind: 'Git', origin: 'local', branch: 'main', ...p }); ctl?.paint(); } });
   window.RailProjects = { needItems, openNeed, all: () => data.projects, editTags: (id) => { window.RailShell.go(`projects/${id}`); setTimeout(() => { const p = data.projects.find((x) => x.id === id); if (!p) return; p.editing = 'tags'; draw(); document.getElementById('def-tags')?.focus(); }, 80); }, sync: (id) => { if (LIVE()) { LIVE().origin(id, 'sync').then(said); return; } const p = data.projects.find((x) => x.id === id); if (p?.origin === 'behind') Object.assign(p, { origin: 'ok', behind: 0, checked: 'just now' }); }, spend: (id) => { const p = data.projects.find((x) => x.id === id); return (p ? spendOf(p) : SPEND[id]?.[0]) || 0; }, hint: (id) => { const p = data.projects.find((x) => x.id === id); return p ? (p.origin === 'behind' ? `${p.behind} behind` : shortOf(p) || '') : ''; }, list: () => data.projects, add: (p) => { if (LIVE()) { LIVE().addProject(p.path || p.id).then(said); return; } if (!data.projects.some((x) => x.id === p.id)) data.projects.push({ kind: 'Git', origin: 'local', branch: 'main', ...p }); ctl?.paint(); } };
   if (window.RailFirstRun) data.projects = [];   // the first run: nothing added yet
   window.RailPlaces = window.RailPlaces || {};
-  window.RailPlaces.projects = { has: (a) => (!!W?.live && listNow() !== 'ready') || (a.startsWith('ws:') ? (window.RailSpaces?.list() || []).some((w) => w.id === a.slice(3)) : data.projects.some((p) => p.id === a.split('@')[0])), defaults: defaultsRows, defaultsClick, defaultsKey, redraw: () => draw(), get newMenu() { return adv() ? newMenuItems : null; }, get newAct() { return adv() ? () => window.RailConversation?.starter('project') : null; }, get newLabel() { return adv() ? 'Add project' : ''; }, newPick: (id) => { if (id === 'project' || id === 'workspace') { window.RailConversation?.starter(id); return; } form = id === 'hand-project' ? 'project' : 'space'; formAt = ''; if (current) window.RailShell.go('projects'); setTimeout(() => { draw(); page?.querySelector('#pj-hand-v')?.focus(); }, 60); }, search: (q) => [...data.projects.filter((p) => `${nameOf(p)} ${p.path}`.toLowerCase().includes(q)).map((p) => ({ label: nameOf(p), where: wordOf(p), hash: `projects/${p.id}` })), ...spaces().filter((w) => w.title.toLowerCase().includes(q)).map((w) => ({ label: w.title, where: 'Workspace', hash: `projects/ws:${w.id}` }))], sample: 'billing-api',
+  window.RailPlaces.projects = { has: (a) => (!!W?.live && listNow() !== 'ready') || (a.startsWith('ws:') ? (window.RailSpaces?.list() || []).some((w) => w.id === a.slice(3)) : data.projects.some((p) => p.id === a.split('@')[0])), defaults: defaultsRows, defaultsClick, defaultsKey, redraw: () => draw(), get newMenu() { return adv() ? newMenuItems : null; }, get newAct() { return adv() ? () => window.RailConversation?.starter('project') : null; }, get newLabel() { return adv() ? 'Add project' : ''; }, newPick: (id) => { if (id === 'project' || id === 'workspace') { window.RailConversation?.starter(id); return; } window.RailShell.closeDrawer?.(); form = id === 'hand-project' ? 'project' : 'space'; formAt = '';   /* F-cov1-04: the bar's drawer never stays over the form */ if (form === 'project') addCtl.open('folder'); if (current) window.RailShell.go('projects'); setTimeout(() => { draw(); page?.querySelector('#pj-hand-v')?.focus(); }, 60); }, search: (q) => [...data.projects.filter((p) => `${nameOf(p)} ${p.path}`.toLowerCase().includes(q)).map((p) => ({ label: nameOf(p), where: wordOf(p), hash: `projects/${p.id}` })), ...spaces().filter((w) => w.title.toLowerCase().includes(q)).map((w) => ({ label: w.title, where: 'Workspace', hash: `projects/ws:${w.id}` }))], sample: 'billing-api',
     show: ({ bar: b, page: pg, arg }) => { window.RailCenters?.wire(); if (b !== bar) wire(b, pg); if (current !== arg) { menu = ''; window.RailCenters?.unask?.(); if (confirm?.p?.id !== arg) confirm = null; if (PAGE_FORMS[form] && (arg || '').split('@')[0] !== locating) { form = ''; formTyped = ''; formErr = ''; } } current = arg || ''; draw(); } };
   const newMenuItems = () => [{ header: 'Ask in chat' }, { id: 'bar-new|project', text: 'Add a project' }, ...(adv() ? [{ id: 'bar-new|workspace', text: 'Make a workspace' }] : []), { sep: true }, { header: 'Legacy approach' }, { id: 'bar-new|hand-project', text: 'Add a project…' }, ...(adv() ? [{ id: 'bar-new|hand-space', text: 'Make a workspace…' }] : [])];
 })();

@@ -115,7 +115,7 @@ export function turnErrors(turn) {
 export const TASK_PAGE_SHAPE = Object.freeze({
   id: 'string', case: 'string', title: 'string', branch: 'string', base: 'string', pr: 'string', prUrl: 'string', detail: 'string', why: 'array', git: 'string',
   cost: 'number|null', cap: 'number|null', mins: 'number|null', startedAgo: 'number|null', startedAt: 'string', project: 'string', labels: 'array', tags: 'array',
-  prompt: 'string', stages: 'array', pauseAfterStep: 'boolean', workflow: 'object|null',
+  prompt: 'string', stages: 'array', pauseAfterStep: 'boolean', workflow: 'object|null', resumeEngines: 'array',
 });
 /** [] when `page` has every TASK_PAGE_SHAPE field with its type, else one line per wrong field ("taskPage.cost: expected number|null"). */
 export function taskPageErrors(page) {

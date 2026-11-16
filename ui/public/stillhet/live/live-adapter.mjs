@@ -71,7 +71,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
   // a run by its run or pipeline id: its pipeline id, when it started and ended (a live run has not ended), and its scope
   // (store key, project folder, whether it worked on a folder copy) for dev's routes that need one (POST /api/pr, recovery-patch)
   chat.runOf = (id) => {
-    const l = live.get(id) || [...live.values()].find((r) => r.pipelineId === id), h = (sources.history?.pipelines || []).find((p) => p && (p.id === id || (l && p.id === l.pipelineId)));
+    const l = live.get(id) || [...live.values()].find((r) => r.pipelineId === id), h = [...(sources.history?.pipelines || []), ...(sources.archived?.pipelines || [])].find((p) => p && (p.id === id || (l && p.id === l.pipelineId)));   // an archived row's scope too (its per-run restore, COV-3)
     return { pipelineId: l?.pipelineId || h?.id || id, startedAt: l?.startedAt || h?.startedAt || '', endAt: l ? null : h?.mtime ?? null,
       projectKey: h?.projectKey || l?.projectKey || '', projectDir: h?.projectDir || l?.projectDir || '', folder: workModeOf(h || l) === 'folder' };
   };
@@ -99,7 +99,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
       const l = liveRun(id); if (!l) return null;
       return { runId: l.runId, pipelineId: l.pipelineId || '', status: l.status, projectKey: l.projectKey || '', projectDir: l.projectDir || '', pendingQuestion: l.pendingQuestion || null,
         state: { status: l.status, title: l.title, branch: l.branch || null, steps: l.steps || [], totalCostUsd: l.totalCostUsd, totalActiveMs: l.totalActiveMs, pipelineCapUsd: l.pipelineCapUsd,
-          pauseReason: l.pauseReason, pauseDetail: l.pauseDetail, startedAt: l.startedAt, stepper: l.stepper, ...(l.pauseAfterStep ? { pauseAfterStep: true } : {}) } };
+          pauseReason: l.pauseReason, pauseDetail: l.pauseDetail, limitEngine: l.limitEngine, startedAt: l.startedAt, stepper: l.stepper, ...(l.pauseAfterStep ? { pauseAfterStep: true } : {}) } };
     } });
 
   // New task's run options (COV-2): run-options-live owns every read and write of the form's and the proposal's options

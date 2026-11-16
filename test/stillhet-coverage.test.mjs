@@ -38,6 +38,11 @@ test('classify: a Stillhet fetch is wired, a wiring row decides, an unnamed rout
   assert.equal(C.classify(cx2, ctl([], [], 'Nowhere')).status, null);
 });
 
+test('pageOf: Pinpoint\'s run surfaces (artifact viewer, Diff tab) are the run\'s page; Pinpoint itself stays Chat (COV-3)', () => {
+  assert.equal(C.pageOf('ui/public/pinpoint-surfaces.mjs'), 'Tasks');
+  assert.equal(C.pageOf('ui/public/pinpoint.mjs'), 'Chat');
+});
+
 test('placeOf: a folder of ui/public/stillhet/ is its place, a live/ file takes its place by name, shared code serves all', () => {
   assert.equal(C.placeOf('stillhet/projects/project-add.js'), 'projects');
   assert.equal(C.placeOf('ui/public/stillhet/live/task-live.mjs'), 'runs');
