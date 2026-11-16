@@ -43,7 +43,6 @@
 .convo-col .task-card:not(.is-compact) > .rc-head:has(> .tc-title) > .tp-kicker > .kind-mark:first-child{top:calc(24px - var(--km,20px) / 2 + 2px);}
 .composer-fields{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px;min-width:0;}
 .composer-field{display:inline-flex;align-items:center;gap:6px;min-width:0;}
-.composer-field > .filter-l{flex:none;}
 
 /* ---- Narrow: stage rows never break a word a letter a line; the page and its parts share one 16px gutter ---- */
 .stage-head .tr-text,.stage-head .tr-text b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}

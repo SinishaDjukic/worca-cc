@@ -356,7 +356,7 @@
     } else if (lock) {   // a deep link above the mode, or a place whose Labs feature is off: one line, and its one way on
       document.body.className = '';
       const name = lock.name || TITLES[view] || 'Schedules', need = lock.min ? lock.min[0].toUpperCase() + lock.min.slice(1) : '';
-      pane.today.innerHTML = `<div class="stillhet-locked">${R.emptyState({ title: lock.min ? `${name} needs ${need}` : `${name} is in Labs`, actions: R.button({ label: lock.min ? `Switch to ${need}` : 'Turn on Labs', kind: 'quiet', attrs: { 'data-unlock': lock.min ? 'mode:' + lock.min : 'flag:' + lock.flag, 'data-to': view } }) })}</div>`;
+      pane.today.innerHTML = `<div class="stillhet-locked">${R.emptyState({ page: true, title: lock.min ? `${name} needs ${need}` : `${name} is in Labs`, actions: R.button({ label: lock.min ? `Switch to ${need}` : 'Turn on Labs', kind: 'quiet', attrs: { 'data-unlock': lock.min ? 'mode:' + lock.min : 'flag:' + lock.flag, 'data-to': view } }) })}</div>`;
       scrollTo(0, 0);
     } else if (taskState !== 'ready') {   // D15: the task page's loading, failed and gone looks (listState)
       document.body.className = 'view-place';

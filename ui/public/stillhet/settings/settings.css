@@ -1,7 +1,5 @@
-/* Stillhet: settings. Rules for this place only; what every page shares is in css/stillhet-look.css and css/stillhet.css.
-   The second half holds the library's new rules from the Settings redesign (Dialog, menus, RowPicker, toast): they serve
-   every page and move to css/stillhet.css when the redesign is merged. */
-
+/* Stillhet: settings. Rules for this place only; what every page shares is in css/stillhet-look.css and css/stillhet.css
+   (SettingsRow, RowPicker, the Dialog, menus and the toast are there). */
 
 /* Appearance: a choice of two or three is a Segmented at the row's end. */
 .set-end > .seg{flex:none;}

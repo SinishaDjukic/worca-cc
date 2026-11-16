@@ -68,7 +68,7 @@ test('the running sign: at least 16px, one slow breath of 4s, nothing faster, st
   assert.match(css, /\.kind-mark\.is-run\{color:var\(--ink\);animation:sl-breath 4s ease-in-out infinite;\}/);
   assert.match(css, /\.rc-rail:has\(> \.kind-mark\.is-run\) ~ \.rc-word\{color:var\(--ink\);\}/, 'the state word of a running task is full ink');
   for (const m of (css + own).matchAll(/(\.(?:kind-mark|git-mark|sl-step|sl-knot|btn-knot|sc-cell|rd-route-dot|status-dot)[^{}]*)\{[^}]*animation:[a-z-]+ ([\d.]+)s[^;}]*infinite/g)) assert.ok(+m[2] >= 4, `${m[1]} breathes no faster than 4s (${m[2]}s)`);
-  assert.match(own, /@media \(prefers-reduced-motion: reduce\)\{[^}]*\.kind-mark\.is-run[^}]*\{animation:none;\}/);
+  assert.match(css + own, /@media \(prefers-reduced-motion: reduce\)\{[^}]*\.kind-mark\.is-run[^}]*\{animation:none;\}/);
 });
 
 test('the open-line fold: a hairline from the words to the chevron, closed and open; what it opens hangs on it', () => {
@@ -83,7 +83,7 @@ test('the open-line fold: a hairline from the words to the chevron, closed and o
   assert.equal(open.querySelector('.sp-open > .sp-body > #in').textContent, 'files');
   assert.equal(open.querySelector('.sp-open > button b').textContent, 'Changes', 'the words do not change; the chevron turns');
   assert.equal(dom(stagePart({ label: 'Changes', body: '<p>x</p>' })).querySelector('.sp-body'), null, 'closed: nothing under it');
-  const css = readFileSync('ui/public/stillhet/runs/task.css', 'utf8');
+  const css = readFileSync('ui/public/stillhet/css/stillhet.css', 'utf8') + readFileSync('ui/public/stillhet/runs/task.css', 'utf8');
   assert.match(css, /\.sp-body\{[^}]*border-bottom:1px solid/, 'the opened part ends with a line of its own');
 });
 
@@ -122,7 +122,7 @@ test('diffView: a Segmented picks the layout where both fit; under 900px of its 
   const seg = [...d.querySelectorAll('.dv-seg .seg button')];
   assert.deepEqual(seg.map((b) => [b.textContent, b.dataset.diffMode, b.getAttribute('aria-pressed')]), [['Side by side', 'split', 'false'], ['Unified', 'unified', 'true']]);
   assert.equal(dom(diffView({ path: 'a.js', hunks: [HUNK], seg: false })).querySelector('.dv-seg'), null, 'the later files of one view share the first one\'s');
-  const css = readFileSync('ui/public/stillhet/runs/task.css', 'utf8');
+  const css = readFileSync('ui/public/stillhet/css/stillhet.css', 'utf8') + readFileSync('ui/public/stillhet/runs/task.css', 'utf8');
   assert.match(css, /\.diff-view\{container-type:inline-size/);
   assert.match(css, /\.dv-split\{display:none/); assert.match(css, /\.dv-seg\{display:none/);
   assert.match(css, /@container \(min-width: 900px\)\{\s*\.dv-seg\{display:inline-flex;\}\s*\.diff-view\[data-mode="split"\] \.dv-split\{display:table;\}\s*\.diff-view\[data-mode="split"\] \.dv-unified\{display:none;\}/);
@@ -178,7 +178,7 @@ test('Chat home starters are cards: an icon, a name, one plain line, the whole c
   assert.equal(cards.length, 2); assert.equal(d.querySelector('.starter-grid').getAttribute('role'), 'group');
   assert.equal(cards[0].dataset.starter, 'task'); assert.equal(cards[0].querySelector('.st-n').textContent, 'New task'); assert.equal(cards[0].querySelector('.st-s').textContent, 'One job on a project');
   assert.ok(cards[1].querySelector('.st-n svg'), 'More says it opens a menu');
-  const css = readFileSync('ui/public/stillhet/runs/task.css', 'utf8');
+  const css = readFileSync('ui/public/stillhet/css/stillhet.css', 'utf8') + readFileSync('ui/public/stillhet/runs/task.css', 'utf8');
   assert.match(css, /\.home-starters\.starter-grid\{display:grid;grid-template-columns:repeat\(3,/);
   assert.match(css, /@media \(max-width: 900px\)\{ \.home-starters\.starter-grid\{grid-template-columns:repeat\(2,/);
   assert.match(css, /@media \(max-width: 600px\)\{ \.home-starters\.starter-grid\{grid-template-columns:minmax\(0,1fr\)/);
@@ -187,7 +187,7 @@ test('Chat home starters are cards: an icon, a name, one plain line, the whole c
 });
 
 test('the chat timeline: a slim track on the reading column\'s right edge, quiet at rest, its ticks on hover or focus; not drawn when narrow', () => {
-  const css = readFileSync('ui/public/stillhet/runs/task.css', 'utf8');
+  const css = readFileSync('ui/public/stillhet/css/stillhet.css', 'utf8') + readFileSync('ui/public/stillhet/runs/task.css', 'utf8');
   assert.match(css, /\[data-timeline\]\{position:absolute;[^}]*left:min\(calc\(50% \+ 336px\),calc\(100% - 44px\)\)/);
   assert.match(css, /\[data-timeline\] \.tl-tick i\{opacity:0;/);
   assert.match(css, /\[data-timeline\] > \.timeline:is\(:hover,:focus-within\) \.tl-tick i\{opacity:1;\}/);

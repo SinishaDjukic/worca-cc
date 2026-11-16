@@ -9,9 +9,10 @@ import { button } from './button.mjs';
  * @param {string} [o.text]      why, or what still works
  * @param {string} [o.actions]   the buttons' markup
  * @param {boolean} [o.error]
+ * @param {boolean} [o.page]      it is all the page shows (not found, locked, not here yet): its title is the page's heading
  */
-export function emptyState({ title, text = '', actions = '', error = false }) {
-  return `<div class="empty-line${error ? ' is-err' : ''}"${error ? ' role="alert"' : ''}><span class="el-t">${esc(title)}</span>${text ? `<span>${esc(text)}</span>` : ''}${actions ? `<span class="el-acts">${actions}</span>` : ''}</div>`;
+export function emptyState({ title, text = '', actions = '', error = false, page = false }) {
+  return `<div class="empty-line${error ? ' is-err' : ''}"${error ? ' role="alert"' : ''}>${page ? `<h1 class="el-t">${esc(title)}</h1>` : `<span class="el-t">${esc(title)}</span>`}${text ? `<span>${esc(text)}</span>` : ''}${actions ? `<span class="el-acts">${actions}</span>` : ''}</div>`;
 }
 
 /**
@@ -23,7 +24,7 @@ export function emptyState({ title, text = '', actions = '', error = false }) {
  * @param {object} [o.attrs]   the way on's hooks
  */
 export function notFound({ what, name = '', back, attrs = {} }) {
-  return emptyState({ title: name ? `There is no ${what} called ${name}` : `There is no such ${what}`, text: 'It may have been removed, or the address is wrong.', actions: button({ label: `Go to ${back}`, kind: 'quiet', attrs }) });
+  return emptyState({ page: true, title: name ? `There is no ${what} called ${name}` : `There is no such ${what}`, text: 'It may have been removed, or the address is wrong.', actions: button({ label: `Go to ${back}`, kind: 'quiet', attrs }) });
 }
 
 /**
@@ -35,5 +36,5 @@ export function notFound({ what, name = '', back, attrs = {} }) {
  * @param {object} [o.attrs]   Back to Chat's hooks
  */
 export function notInStillhet({ place, today = '', attrs = {} }) {
-  return emptyState({ title: `${place} is not in Stillhet yet`, text: today ? `With Stillhet off, it is ${today}.` : 'It has no Stillhet screen yet.', actions: button({ label: 'Back to Chat', kind: 'quiet', attrs }) });
+  return emptyState({ page: true, title: `${place} is not in Stillhet yet`, text: today ? `With Stillhet off, it is ${today}.` : 'It has no Stillhet screen yet.', actions: button({ label: 'Back to Chat', kind: 'quiet', attrs }) });
 }

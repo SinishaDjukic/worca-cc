@@ -85,7 +85,7 @@
     // a filter a link set (a project's spend, a copied link) holds for this visit, and the page says so (list.narrowed)
     const by = narrowedBy(st), lines = [
       by ? `<p class="in-narrowed" data-in-narrowed>Narrowed to <b>${esc(by)}</b> · ${R.button({ label: 'Clear', kind: 'quiet', attrs: { 'data-in-unlink': '', title: 'Shows everything again' } })}</p>` : '',
-      narrowed || st.custom ? `<p class="in-narrowed">Showing <b>${esc(c.timeWord)}</b> only · ${R.button({ label: 'Back to the whole period', kind: 'quiet', cls: 'ch-clear', attrs: { 'data-in-clear': '' } })}</p>` : '',
+      narrowed || st.custom ? `<p class="in-narrowed">Showing <b>${esc(c.timeWord)}</b> only · ${R.button({ label: 'Back to the whole period', kind: 'quiet', attrs: { 'data-in-clear': '' } })}</p>` : '',
     ];
     return row + lines.join('');
   }

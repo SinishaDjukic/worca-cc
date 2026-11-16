@@ -4,7 +4,6 @@
 /* The layer above the shell for Pulse, the profile menu and New run: the window itself, clicks only on what it holds. */
 .stillhet-layer{position:fixed;inset:0;z-index:43;display:block;min-height:0;border:0;border-radius:0;background:none;pointer-events:none;}
 .stillhet-layer > *{pointer-events:auto;}
-.stillhet-layer .viewer-modal{position:fixed;}
 
 /* Settings in the page, as on pulse.html: the Stillhet page frame without the mock window. */
 .stillhet-page{display:block;min-height:0;border:0;border-radius:0;background:none;}
@@ -225,10 +224,6 @@ body .toasts{top:60px;bottom:auto;}   /* ds-ok: just under the 48px top bar */
 body > .rc-toast{top:60px;bottom:auto;}   /* ds-ok: the same place: never over a page's last rows or a canvas's zoom */
 body:has(.wf-canvas) > .rc-toast{top:112px;}   /* ds-ok: under the canvas's own head */
 
-/* the bar's name opens the places too: its ▾ says so */
-.bar-title-b{display:inline-flex;align-items:center;gap:6px;padding:2px 6px;margin-left:-6px;border:0;border-radius:var(--r-sm);background:none;color:inherit;font:inherit;cursor:pointer;}
-.bar-title-b:hover{background:var(--hover);}
-.bar-title-b svg{color:var(--ink-3);}
 .place-title{margin:0;font:600 var(--fs-subpage)/1.3 var(--sans);letter-spacing:-.02em;}   /* panel.place-head: a thing's page's title */
 
 /* list.bar-model: the same air under every bar's sentence */
@@ -258,20 +253,6 @@ body:has(.wf-canvas) > .rc-toast{top:112px;}   /* ds-ok: under the canvas's own 
 
 /* ================= The shell redesign: the place button, New task, the bars' filters and rows, skip link, search ================= */
 
-/* key.skip-link: the first Tab stop; it shows only while it has the focus. */
-.skip-link{position:fixed;left:8px;top:8px;z-index:100;padding:8px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);color:var(--ink);font:500 var(--fs-body)/1 var(--sans);text-decoration:none;box-shadow:var(--shadow-pop);transform:translateY(-200%);}
-.skip-link:focus{transform:none;outline:2px solid var(--ink);outline-offset:2px;}
-#main-content:focus{outline:0;}
-#main-content :is(h1,h2,.place-title,[data-title],.rc-title)[tabindex="-1"]:focus-visible{outline:2px solid var(--ink);outline-offset:4px;border-radius:var(--r-xs);}
-
-/* nav.place-button: the place's name and its chevron are one bordered button, 32px high; the W beside it goes home. */
-.place-btn{display:inline-flex;align-items:center;gap:6px;max-width:100%;height:32px;padding:0 8px 0 10px;border:1px solid var(--line);border-radius:var(--r-sm);background:none;color:inherit;font:inherit;letter-spacing:inherit;cursor:pointer;}
-.place-btn:hover,.place-btn[aria-expanded="true"]{background:var(--hover);border-color:var(--line-2);}
-.place-btn:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
-.place-btn svg{flex:none;color:var(--ink-2);}
-.place-btn-t{min-width:0;overflow:hidden;text-overflow:ellipsis;}
-.bar-head .bar-title{display:flex;align-items:center;overflow:visible;}
-.bar-quick .menu{min-width:220px;}
 
 /* key.search: the field shows where the focus is. At rest it is small and starts at the left of the top bar's content;
    on focus (a click, the shortcut) or while it shows results it grows to its full width, the width alone, in the change
@@ -285,6 +266,27 @@ body:has(.wf-canvas) > .rc-toast{top:112px;}   /* ds-ok: under the canvas's own 
 }
 @media (prefers-reduced-motion: reduce){ #topnav .tsearch{transition:none;} }
 
+
+/* act.row-opens in a bar: the whole row is the target and lights as one, in the hover fill, with the radius of the rows
+   beside it; the row you are on keeps the field fill. A row with rows under it lights its own line only. */
+.bar-list .list-row{position:relative;isolation:isolate;cursor:pointer;}
+.bar-list .list-row::after{content:'';position:absolute;grid-column:1 / -1;grid-row:1;inset:0 -4px;z-index:-1;border-radius:var(--r-sm);pointer-events:none;transition:background-color 100ms var(--ease);}
+.bar-list .list-row:hover:not(:has(.list-row:hover))::after{background:var(--hover);}
+.bar-list .list-row.is-current::after,.bar-list .list-row.is-current:hover::after{background:var(--field);}
+.bar-list button.lr-main:hover,.bar-list .list-row.is-current > .lr-main,.bar-list .list-row.is-holds > .lr-main{background:none;}
+.bar-list .lr-after{cursor:auto;}
+.bar-list .lr-m{font-size:var(--fs-caption);line-height:16px;}
+/* list.row-more in a bar: ⋯ is 28px wide; it shows on hover, on focus, on touch, and always on the row you are on. A row
+   with a second line holds it under its time, so it never covers the title. */
+.bar-list .list-row .lr-end .rc-pop > .btn.btn-icon{width:28px;height:22px;}
+.bar-list .list-row.is-current > .lr-end .rc-pop{opacity:1;pointer-events:auto;}
+.bar-list .lr-end .rc-pop{background:none;}
+.bar-list .list-row:not(:has(> .lr-main > .lr-m)) > .lr-end .rc-pop{background:var(--side-bg);}
+.bar-list .list-row:has(> .lr-main > .lr-m) > .lr-end:not(:has(> [data-fold])){display:flex;flex-direction:column;align-items:flex-end;gap:0;min-width:28px;}
+.bar-list .list-row:has(> .lr-main > .lr-m) > .lr-end:not(:has(> [data-fold])) .rc-pop{position:static;}
+.bar-list .list-row:has(> .lr-main > .lr-m) > .lr-end:not(:has(> [data-fold])) > .lr-fig{line-height:20px;}
+
+/* ---- NarrowedLine and FilterRow (list-parts.mjs) and a list row's mark: library rules that must follow the bars' own (they set the bar's head), so they stay here ---- */
 /* list.narrowed-visit: one line under the filters while a link from another page narrows the list. */
 .list-narrowed{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 12px;padding:4px 4px 4px 10px;border-radius:var(--r-sm);background:var(--field);font-size:var(--fs-meta);color:var(--ink-2);}
 .list-narrowed-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
@@ -338,22 +340,3 @@ body:has(.wf-canvas) > .rc-toast{top:112px;}   /* ds-ok: under the canvas's own 
 }
 /* list.row-mark: a row with two lines holds its mark at its middle */
 .list-row:has(> .lr-main > .lr-m) > .lr-rail{align-self:center;}
-
-/* act.row-opens in a bar: the whole row is the target and lights as one, in the hover fill, with the radius of the rows
-   beside it; the row you are on keeps the field fill. A row with rows under it lights its own line only. */
-.bar-list .list-row{position:relative;isolation:isolate;cursor:pointer;}
-.bar-list .list-row::after{content:'';position:absolute;grid-column:1 / -1;grid-row:1;inset:0 -4px;z-index:-1;border-radius:var(--r-sm);pointer-events:none;transition:background-color 100ms var(--ease);}
-.bar-list .list-row:hover:not(:has(.list-row:hover))::after{background:var(--hover);}
-.bar-list .list-row.is-current::after,.bar-list .list-row.is-current:hover::after{background:var(--field);}
-.bar-list button.lr-main:hover,.bar-list .list-row.is-current > .lr-main,.bar-list .list-row.is-holds > .lr-main{background:none;}
-.bar-list .lr-after{cursor:auto;}
-.bar-list .lr-m{font-size:var(--fs-caption);line-height:16px;}
-/* list.row-more in a bar: ⋯ is 28px wide; it shows on hover, on focus, on touch, and always on the row you are on. A row
-   with a second line holds it under its time, so it never covers the title. */
-.bar-list .list-row .lr-end .rc-pop > .btn.btn-icon{width:28px;height:22px;}
-.bar-list .list-row.is-current > .lr-end .rc-pop{opacity:1;pointer-events:auto;}
-.bar-list .lr-end .rc-pop{background:none;}
-.bar-list .list-row:not(:has(> .lr-main > .lr-m)) > .lr-end .rc-pop{background:var(--side-bg);}
-.bar-list .list-row:has(> .lr-main > .lr-m) > .lr-end:not(:has(> [data-fold])){display:flex;flex-direction:column;align-items:flex-end;gap:0;min-width:28px;}
-.bar-list .list-row:has(> .lr-main > .lr-m) > .lr-end:not(:has(> [data-fold])) .rc-pop{position:static;}
-.bar-list .list-row:has(> .lr-main > .lr-m) > .lr-end:not(:has(> [data-fold])) > .lr-fig{line-height:20px;}

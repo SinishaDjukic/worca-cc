@@ -98,7 +98,6 @@
 .pz-nr-task{min-height:56px;padding:8px 10px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--field);color:var(--ink);}
 .pz-nr .pz-sentence{margin-block:0;}
 .pz-newrun .pz-menu{min-width:min(340px,calc(100vw - 32px));}   /* a harness's name and its figures on one line */
-.viewer-modal:has(#pz-sess-t){place-items:center;}   /* the Session dialog sits where the other short dialogs do */
 .pz-advice{display:grid;grid-template-columns:var(--rail) minmax(0,1fr);column-gap:var(--gap);align-items:start;}
 .pz-advice .pz-rail{height:20px;}
 .pz-advice-t{margin:0;font-size:var(--fs-meta);line-height:1.5;color:var(--ink-2);}
@@ -243,3 +242,7 @@
 .bg-sw .chat-home-bg.is-dots{background-size:4px 4px;-webkit-mask-image:none;mask-image:none;}
 .bg-sw .chat-home-bg:is(.is-aurora-dots,.is-dusk-dots){-webkit-mask-size:3px 3px;mask-size:3px 3px;-webkit-mask-image:radial-gradient(#000 1px,transparent 1.3px);mask-image:radial-gradient(#000 1px,transparent 1.3px);}
 .bg-sw .chat-home-bg.is-mist{background-size:4px 4px,auto,auto;}
+
+/* A section head in the panel: its name never breaks; a long count line after it wraps on its own */
+.pz-popover .pz-h{white-space:nowrap;}
+.pz-popover .pz-h > .n{min-width:0;white-space:normal;}

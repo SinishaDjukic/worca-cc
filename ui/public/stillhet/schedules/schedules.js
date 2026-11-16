@@ -125,21 +125,6 @@
     }
     window.StillhetShell.openTask(r.case, cid, r.title, r.wid);
   }
-  // the question under a schedule goes to its chat with the schedule as its chip, on its project; Enter sends
-  function dockSend(host, s) {
-    const send = () => {
-      const box = host.querySelector('[data-composer-t]'), text = box.value.trim();
-      if (!text) { box.focus(); say('Say what to ask first'); return; }
-      if (LIVE()) { window.StillhetConversation?.handOver?.({ mode: 'ask', about: { kind: 'Schedule', name: s.title }, text, project: s.project || undefined }); return; }   // live: Chat sends it (stillhet.hand-to-chat; the live chat owns the threads)
-      const id = s.chat || window.StillhetChats.newChat(`About ${s.title}`, s.project || ''), c = window.StillhetChats.data().chats.find((x) => x.id === id), k = Date.now().toString(36);
-      window.StillhetConversation.join(c, { t: 'you', id: `y${k}`, text, when: 'now', refs: [], files: [`Schedule · ${s.title}`] });
-      window.StillhetConversation.join(c, { t: 'words', html: `Looking at <b>${esc(s.title)}</b>.` });
-      window.StillhetChats.refresh(); window.StillhetShell.go(`chat/${id}`);
-    };
-    host.addEventListener('click', (e) => { if (e.target.closest('[data-dock-send]')) { e.stopPropagation(); send(); } }, true);
-    host.addEventListener('submit', (e) => { e.stopPropagation(); e.preventDefault(); send(); }, true);
-    host.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && e.target.matches('[data-composer-t]')) { e.preventDefault(); send(); } });
-  }
   // ---- the page's facts, in words ----
   const OVERLAP = { skip: 'skip if still going', queue: 'queue if still going', start: 'start another if still going' };
   const MISSED = { run: 'run late if missed', skip: 'skip if missed' };
@@ -196,7 +181,7 @@
     return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${R.placeHead({ center: { label: 'Schedules', to: 'schedules' }, title: s.title, actions: change, facts: `${esc(s.project || 'No project')} · ${esc(flowWord(s))}${(s.labels || []).map((l) => R.chip({ text: l })).join('')}`, mark: R.kindMark({ kind: 'schedule', tone: toneOf(s), title: word(s) }), word: word(s), why: `${why(s)}${s.chat ? ' · from a chat' : ''}`,   /* the word already says it */ action, menu: R.moreMenu({ id: 'sc-more', label: `More for ${s.title}`, icon: R.icon('more', 16), open: menu === 'sc-more', items }) })}
       <div class="sched-form">${facts}${F.readback(readback(s))}</div>
       ${cards || R.emptyState({ title: 'It has not run yet.' })}
-    </div></div><div class="convo-dock" id="sched-dock"></div></div>`;
+    </div></div></div>`;   // no chat box here (a schedule's page is for inspecting): "Change it in chat" in its head leads there
   }
   // Change it in chat: its own chat with the schedule in focus, or, with no chat yet, Chat's composer with the schedule as its chip
   function toChat(s) {
@@ -209,7 +194,6 @@
     if (!s && current && LIVE() && window.StillhetDemoState?.list === 'loading') { page.innerHTML = R.listState({ state: 'loading', noun: 'this schedule' }); return; }   // F-G-fid-01: a fresh load waits for the first read
     if (!s) { window.StillhetCenters?.schedules(page); return; }
     page.innerHTML = pageHtml(s);
-    if (s) { const host = document.getElementById('sched-dock'); window.StillhetConversation?.dock(host, { kind: 'schedule', title: s.title, chat: s.chat }); dockSend(host, s); }
   }
   // the chat's schedule row and card read the same schedule: a time changed here is the bar's time too
   function follow(s) {

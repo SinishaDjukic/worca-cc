@@ -1677,7 +1677,7 @@
     if ((hit = on('[data-q-drop]'))) { comp.queue.splice(+hit.dataset.qDrop, 1); if (!comp.queue.length) comp.queuePaused = ''; paint(); say('Removed from the queue'); return; }
     if (on('[data-q-send]')) { comp.queuePaused = ''; if (!comp.busy && (comp.queue || []).length) { comp.text = comp.queue.shift(); send(); } else paint(); return; }   // Send now
     if ((hit = on('[data-starter]'))) { const id = hit.dataset.starter; if (id === 'track') { menu = menu === 'starter-track' ? '' : 'starter-track'; paint(); } else arm(id); return; }
-    if ((hit = on('[data-intent-form]'))) { const id = hit.dataset.intentForm, keep = { ...(comp.text.trim() ? { text: comp.text.trim() } : {}), ...(comp.project && comp.project !== 'No project' ? { project: comp.project } : {}) }; comp.intent = ''; comp.text = ''; paint(); window.StillhetCenters[FORM_OF[id]](keep); return; }
+    if ((hit = on('[data-intent-form]'))) { const id = hit.dataset.intentForm, keep = { ...(comp.text.trim() ? { text: comp.text.trim() } : {}), ...(comp.project && comp.project !== 'No project' ? { project: comp.project } : {}) }; window.StillhetCenters[FORM_OF[id]](keep); return; }   // the composer stays as it is: Cancel in the form comes back to it
     if (on('[data-intent-clear]')) { comp.intent = ''; paint(); root.querySelector('[data-composer-t]')?.focus(); return; }
     const pp = (attr) => { const h = on(`[${attr}]`); return h ? turns().find((y) => y.id === h.getAttribute(attr)) : null; };
     let px;

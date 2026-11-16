@@ -28,7 +28,7 @@ test('PickField: a label over a field-shaped button that names itself and report
 test('PickField: its value sits in a span that cuts short, so a longer choice never widens the field', () => {
   const html = pickField({ id: 'f-w', label: 'Workflow', text: 'A very long workflow name that would not fit', items: [] });
   assert.match(html, /<span class="fld-pick-t">A very long workflow name that would not fit<\/span>/);
-  const css = readFileSync('ui/public/stillhet/centers/forms.css', 'utf8');
+  const css = readFileSync('ui/public/stillhet/css/stillhet.css', 'utf8') + readFileSync('ui/public/stillhet/centers/forms.css', 'utf8');   // a library part's rules are in the shared sheet; the forms' own stay in theirs
   assert.match(css, /\.fld-pick-t\{[^}]*text-overflow:ellipsis/);
   assert.match(css, /\.fld-pick \.pd-base\.is-words\.is-field\.fld-pick-b\{[^}]*width:100%/);
 });
@@ -57,7 +57,7 @@ test('FormGrid: every field has a cell, a wide one takes the row, an empty strin
   const html = formGrid({ fields: ['<i>a</i>', { html: '<i>b</i>', wide: true }, '', '<span></span>'] });
   assert.equal((html.match(/class="fld-cell/g) || []).length, 3);
   assert.match(html, /<div class="fld-cell is-wide"><i>b<\/i><\/div>/);
-  const css = readFileSync('ui/public/stillhet/centers/forms.css', 'utf8');
+  const css = readFileSync('ui/public/stillhet/css/stillhet.css', 'utf8') + readFileSync('ui/public/stillhet/centers/forms.css', 'utf8');   // a library part's rules are in the shared sheet; the forms' own stay in theirs
   assert.match(css, /@media \(max-width: 560px\)\{[\s\S]*\.fld-grid,\.cc-opts\{grid-template-columns:minmax\(0,1fr\)/, 'the fields stack on a narrow screen');
 });
 
@@ -104,7 +104,7 @@ test('ChoiceNote (lessons 9): its text takes the body role, never the status zon
   const html = choiceNote({ needsYou: false, text: 'team policy · 1 note', rows: [{ text: 'a row' }] });
   assert.match(html, /<span class="rc-main choice-note-t">team policy · 1 note<\/span>/);
   assert.doesNotMatch(html, /rc-word/);
-  const css = readFileSync('ui/public/stillhet/centers/forms.css', 'utf8');
+  const css = readFileSync('ui/public/stillhet/css/stillhet.css', 'utf8') + readFileSync('ui/public/stillhet/centers/forms.css', 'utf8');   // a library part's rules are in the shared sheet; the forms' own stay in theirs
   const rule = /\.choice-note-t\{([^}]*)\}/.exec(css)?.[1] || '';
   assert.match(rule, /var\(--fs-body\)/, 'body size');
   assert.match(rule, /white-space:normal/, 'it wraps');

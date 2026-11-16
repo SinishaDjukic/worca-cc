@@ -5,7 +5,6 @@
 /* stillhet.card-opens: a card that opens its thing shows the pointer; the title link's rules are in the Workflows part */
 .pg-card[data-mk-open],.pg-card[data-pj-go]{cursor:pointer;}
 .pg-card[data-mk-open]:hover .pg-t .dc-link,.pg-card[data-pj-go]:hover .pg-t .dc-link{text-decoration:underline;text-underline-offset:3px;}
-/* PageFilters, until FilterRow draws its own `end` slot: the row, then the page's small tools at the end of the same line */
 
 /* ---- Projects and workspaces ---- */
 /* a project's tabs (from classic's project tabs): one row that scrolls sideways when narrow, never wraps */

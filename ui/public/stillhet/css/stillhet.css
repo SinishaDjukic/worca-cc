@@ -1714,7 +1714,6 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 /* F-G-G3-01: a ticket source has no label row for the tabs to sit beside: they take their own row, its note and inputs under them */
 .cc-src{display:grid;gap:12px;}
 .cc-src > .seg{justify-self:end;}
-.dlg-status > .btn-quiet:first-child{padding-left:0;}
 
 /* list.fold-by-mark: a row's mark folds what is under it; it reads as the mark, with a hover like the row's */
 .lr-mark-fold{display:inline-grid;place-items:center;padding:0;margin:0;border:0;background:none;color:inherit;cursor:pointer;border-radius:50%;}
@@ -2353,3 +2352,22 @@ button.fr-row:hover .fr-name,.fr-row.is-open .fr-name{background:var(--hover);}
 /* narrow: the rows scroll sideways in their own box (wide, they fit, and an open row's cards may reach past the box) */
 @media (max-width:640px){.fr-scroll{overflow-x:auto;max-width:100%;}.fr-list{min-width:max-content;}}
 
+
+/* ==== SkipLink and PlaceButton (shell-frame.mjs) ==== */
+/* key.skip-link: the first Tab stop; it shows only while it has the focus. */
+.skip-link{position:fixed;left:8px;top:8px;z-index:100;padding:8px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);color:var(--ink);font:500 var(--fs-body)/1 var(--sans);text-decoration:none;box-shadow:var(--shadow-pop);transform:translateY(-200%);}
+.skip-link:focus{transform:none;outline:2px solid var(--ink);outline-offset:2px;}
+#main-content:focus{outline:0;}
+#main-content :is(h1,h2,.place-title,[data-title],.rc-title)[tabindex="-1"]:focus-visible{outline:2px solid var(--ink);outline-offset:4px;border-radius:var(--r-xs);}
+
+/* nav.place-button: the place's name and its chevron are one bordered button, 32px high; the W beside it goes home. */
+.place-btn{display:inline-flex;align-items:center;gap:6px;max-width:100%;height:32px;padding:0 8px 0 10px;border:1px solid var(--line);border-radius:var(--r-sm);background:none;color:inherit;font:inherit;letter-spacing:inherit;cursor:pointer;}
+.place-btn:hover,.place-btn[aria-expanded="true"]{background:var(--hover);border-color:var(--line-2);}
+.place-btn:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.place-btn svg{flex:none;color:var(--ink-2);}
+.place-btn-t{min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.bar-head .bar-title{display:flex;align-items:center;overflow:visible;}
+.bar-quick .menu{min-width:220px;}
+
+/* EmptyState as a whole page (empty-state.mjs, `page`): its title is the heading, in the same look */
+:where(h1).el-t{margin:0;font:inherit;color:inherit;}

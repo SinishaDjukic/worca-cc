@@ -121,7 +121,7 @@ test('Workflows: the lists use FilterRow, the pages have no composer, and the ed
     assert.equal(cells[0].querySelector('.hg-tip').textContent, '$186, 21 tasks');
     assert.ok(cells[0].classList.contains('is-first') && cells[1].classList.contains('is-last'), 'an edge cell keeps its card inside the grid');
     assert.equal(d.querySelectorAll('button, a, [title]').length, 0, 'a cell is not a control');
-    const css = readFileSync('ui/public/stillhet/css/places.css', 'utf8');
+    const css = readFileSync('ui/public/stillhet/css/stillhet.css', 'utf8') + readFileSync('ui/public/stillhet/css/places.css', 'utf8');
     assert.match(css, /\.hg-cell:hover \.hg-tip,\.hg-cell:focus \.hg-tip\{display:block;\}/);
     assert.match(css, /\.hg-cell\{[^}]*cursor:default/);
   });
