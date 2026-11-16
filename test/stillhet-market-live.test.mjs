@@ -3,7 +3,7 @@
 // removal after the undo window, and the set-up form's PUTs.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startMarketLive, MARKET_ACTIONS, fieldKey } from '../ui/public/stillhet/live/market-live.mjs';
+import { startMarketLive, MARKET_ACTIONS, fieldKey, STALE_MS } from '../ui/public/stillhet/live/market-live.mjs';
 import { MK_LISTS, SHA, preview } from './helpers/stillhet-marketplace-host.mjs';
 
 const ALL = [];   // every request of every rig: checked against the table at the end
@@ -15,7 +15,7 @@ after(() => {
   }
 });
 
-function rig({ answer = () => null, lists = MK_LISTS } = {}) {
+function rig({ answer = () => null, lists = MK_LISTS, now = () => Date.now() } = {}) {
   const calls = [], toasts = [], opened = [], timers = [];
   let changes = 0;
   const fetch = async (url, o = {}) => {
@@ -26,7 +26,7 @@ function rig({ answer = () => null, lists = MK_LISTS } = {}) {
     const [status, data] = a || (method === 'GET' && lists[url] ? [200, structuredClone(lists[url])] : method === 'GET' ? [404, { error: 'plugin not found' }] : [200, { ok: true }]);
     return { ok: status < 400, status, json: async () => structuredClone(data) };
   };
-  const live = startMarketLive({ fetch, toast: (t) => toasts.push(t), open: (u) => opened.push(u), on: () => { changes += 1; },
+  const live = startMarketLive({ fetch, now, toast: (t) => toasts.push(t), open: (u) => opened.push(u), on: () => { changes += 1; },
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: (n) => { if (timers[n - 1]) timers[n - 1].fn = null; } });
   const writes = () => calls.filter((c) => c.method !== 'GET');
   return { live, calls, writes, toasts, opened, timers, changes: () => changes, fire: () => { for (const t of timers.splice(0)) t.fn?.(); } };
@@ -341,4 +341,88 @@ test('a failed first sync is not retried on the next refresh, and firstSyncing()
   await r.live.refresh(); await settleAll();
   assert.equal(r.writes().length, 1, 'not retried');
   assert.deepEqual(r.toasts, []);
+});
+
+// fresh on open (B5.10, F-5-18): every open re-reads both lists; a source last synced over 24 h ago is synced once, quietly
+const NOW = Date.parse('2026-11-16T12:00:00.000Z');
+const at = (ms) => new Date(NOW - ms).toISOString();
+const aged = (edit) => { const l = structuredClone(MK_LISTS); l['/api/marketplaces'].marketplaces = edit(l['/api/marketplaces'].marketplaces); return l; };
+const syncs = (r) => r.writes().filter((c) => c.method === 'POST' && /\/refresh$/.test(c.url)).map((c) => c.url);
+
+test('F-5-18: opened() reads both lists again once started; a refresh from a WS frame does not sync', async () => {
+  assert.equal(STALE_MS, 24 * 3600 * 1000);
+  const old = aged((ms) => ms.map((m) => ({ ...m, lastSync: { ...m.lastSync, at: at(STALE_MS + 3600e3) } })));
+  const r = rig({ lists: old, now: () => NOW });
+  await r.live.load(); await settleAll();
+  await r.live.refresh(); await settleAll();
+  assert.deepEqual(r.writes(), [], 'a read that is no open never syncs');
+  const fine = rig({ lists: aged((ms) => ms.map((m) => ({ ...m, lastSync: { ...m.lastSync, at: at(3600e3) } }))), now: () => NOW });
+  await fine.live.load(); const n = fine.calls.length;
+  assert.equal(await fine.live.opened(), true);
+  await settleAll();
+  const again = fine.calls.slice(n).map((c) => c.url);
+  assert.ok(again.includes('/api/plugins') && again.includes('/api/marketplaces'), again.join());
+  assert.deepEqual(fine.writes(), [], 'synced within 24 h: nothing sent');
+});
+
+test('F-5-18: on open, a source last synced over 24 h ago (builtin and added) is synced once, then the lists re-read; one synced within 24 h and a needsGit one are not', async () => {
+  const lists = aged((ms) => [
+    { ...ms[0], lastSync: { ...ms[0].lastSync, at: at(STALE_MS + 60e3) } },
+    { ...ms[1], lastSync: { ...ms[1].lastSync, at: at(3 * STALE_MS) } },
+    { ...ms[1], id: 'recent', name: 'recent', url: 'https://github.com/r/r', lastSync: { ...ms[1].lastSync, at: at(STALE_MS - 60e3) }, plugins: [] },
+    { ...ms[1], id: 'gitless', name: 'gitless', url: 'https://github.com/g/g', needsGit: true, lastSync: { ...ms[1].lastSync, at: at(3 * STALE_MS) }, plugins: [] },
+    { ...ms[1], id: 'odd', name: 'odd', url: 'https://github.com/o/o', lastSync: { ...ms[1].lastSync, at: 'not a date' }, plugins: [] },
+  ]);
+  let release; const held = new Promise((res) => { release = res; });
+  const r = rig({ lists, now: () => NOW, answer: async (m, u) => { if (u === '/api/marketplaces/worca-official/refresh') await held; return null; } });
+  await r.live.opened(); await settleAll();
+  assert.deepEqual(syncs(r), ['/api/marketplaces/worca-official/refresh', '/api/marketplaces/team-plugins/refresh']);
+  assert.equal(r.live.pending('source:worca-official'), 'sync', 'its Sync row reads Syncing…');
+  assert.deepEqual(await r.live.sync('worca-official'), { ok: false, text: '' }, 'a Sync press meanwhile shares the target');
+  const n = r.calls.length;
+  release(); await settleAll();
+  assert.deepEqual(syncs(r), ['/api/marketplaces/worca-official/refresh', '/api/marketplaces/team-plugins/refresh'], 'one POST per source');
+  const after = r.calls.slice(n).map((c) => c.url);
+  assert.ok(after.includes('/api/marketplaces') && after.includes('/api/plugins'), 'both lists read again after it');
+  assert.deepEqual(r.toasts, []);
+  await r.live.refresh(); await settleAll();
+  assert.equal(syncs(r).length, 2, 'a later read that is no open sends nothing');
+});
+
+test('F-5-18: a failed stale sync sends no toast and is not retried on the next open while its lastSync.at is unchanged', async () => {
+  const lists = aged((ms) => ms.map((m) => ({ ...m, lastSync: { ...m.lastSync, at: at(m.builtin ? 2 * STALE_MS : 3600e3) } })));
+  const r = rig({ lists, now: () => NOW, answer: (m) => { if (m === 'POST') { const o = lists['/api/marketplaces'].marketplaces[0]; o.lastError = { message: 'git fetch failed', at: '2026-11-16T12:00:01.000Z' }; return [200, { marketplace: o }]; } return null; } });
+  await r.live.opened(); await settleAll();
+  assert.equal(syncs(r).length, 1);
+  assert.equal(r.live.data().markets[0].error, 'git fetch failed', 'the failure shows through the market');
+  await r.live.opened(); await settleAll();
+  assert.equal(syncs(r).length, 1, 'same lastSync.at: not retried');
+  assert.deepEqual(r.toasts, []);
+  assert.equal(r.live.status(), 'ready');
+});
+
+test('F-5-18 (#1305 check): opened() on a never-synced builtin sends exactly one sync (firstSync), not two', async () => {
+  const r = rig({ lists: fresh((ms) => ms.map((m) => (m.builtin ? m : { ...m, lastSync: { ...m.lastSync, at: at(3600e3) } }))), now: () => NOW });
+  await r.live.opened(); await settleAll();
+  await r.live.opened(); await settleAll();
+  assert.deepEqual(syncs(r), ['/api/marketplaces/worca-official/refresh']);
+});
+
+test('F-5-18: an open whose read fails leaves no stale sync owed: a later read that is no open sends nothing', async () => {
+  const old = aged((ms) => ms.map((m) => ({ ...m, lastSync: { ...m.lastSync, at: at(2 * STALE_MS) } })));
+  let down = false;
+  const r = rig({ lists: old, now: () => NOW, answer: (m, u) => (down && m === 'GET' && u === '/api/marketplaces' ? 'down' : null) });
+  await r.live.load(); await settleAll();
+  down = true; assert.equal(await r.live.opened(), false); await settleAll();
+  down = false; await r.live.refresh(); await settleAll();
+  assert.deepEqual(syncs(r), [], 'the failed open\'s sync is not run by a WS refresh');
+});
+
+test('F-5-18: on open, a source hidden for removal (inside its undo window) is not synced', async () => {
+  const old = aged((ms) => ms.map((m) => ({ ...m, lastSync: { ...m.lastSync, at: at(2 * STALE_MS) } })));
+  const r = rig({ lists: old, now: () => NOW });
+  await r.live.load(); await settleAll();
+  r.live.deferRemoveSource('team-plugins', 5000);
+  await r.live.opened(); await settleAll();
+  assert.deepEqual(syncs(r), ['/api/marketplaces/worca-official/refresh']);
 });
