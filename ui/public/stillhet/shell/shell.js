@@ -145,7 +145,7 @@
     const app = document.getElementById('worca');
     app.innerHTML = '';
     const col = el('<div class="main-col"></div>');
-    col.append(topBar(), el('<div id="stillhet-strip"></div>'), el('<div id="main-row" class="main-row"><main class="main" id="main-content" tabindex="-1"><div class="page-bg" aria-hidden="true"><div class="chat-home-bg"></div></div><div id="route-today"></div><div id="route-chat" hidden></div><div id="route-schedule" hidden></div><div id="route-place" hidden></div><div id="route-runs" class="pz-app stillhet-page" hidden></div><div id="route-run" class="rc-board" hidden><div id="card"></div><div id="task-timeline"></div></div><div id="route-settings" class="pz-app stillhet-page" hidden></div></main></div>'));
+    col.append(topBar(), el('<div id="stillhet-strip"></div>'), el('<div id="main-row" class="main-row"><div class="page-bg" aria-hidden="true"><div class="chat-home-bg"></div></div><main class="main" id="main-content" tabindex="-1"><div id="route-today"></div><div id="route-chat" hidden></div><div id="route-schedule" hidden></div><div id="route-place" hidden></div><div id="route-runs" class="pz-app stillhet-page" hidden></div><div id="route-run" class="rc-board" hidden><div id="card"></div><div id="task-timeline"></div></div><div id="route-settings" class="pz-app stillhet-page" hidden></div></main></div>'));
     app.append(el(R.skipLink()), el('<div class="nav-scrim" id="nav-scrim" hidden></div>'), sidebar(), col);   // key.skip-link: the first Tab stop
     syncRail(); applyPrefs();
   }

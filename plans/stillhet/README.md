@@ -12,8 +12,9 @@ behind the `stillhet` flag; with the flag off, Worca is classic, unchanged.
 | The build spec | [`spec/`](spec/) | What a fresh, full build of the live app needs: gaps, lessons, wiring, server work, build order and the gate |
 | What was removed | [`PRUNED.md`](PRUNED.md) | Every file this branch deleted, and why |
 
-**To open the prototype:** `npm run stillhet:build`, then serve the repository (`python3 -m http.server 4610 --bind 127.0.0.1`)
-and open `http://127.0.0.1:4610/plans/stillhet/prototype/index.html`. `npm run stillhet` builds it and opens the file directly.
+**To open the prototype:** `npm run stillhet -- --serve` builds it, serves the repository on `127.0.0.1:4610` (another port:
+`--serve 4700`) and opens `http://127.0.0.1:4610/plans/stillhet/prototype/index.html`. `npm run stillhet` alone builds it and
+opens the file directly, with no server.
 `prototype/run-page.html` and `prototype/pulse.html` show the task page's and Pulse's cases one by one.
 
 **Which wins.** The prototype is the design. A rule and the prototype agree; where they differ, the prototype wins and
