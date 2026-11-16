@@ -26,7 +26,7 @@
   // a PR is named by its number, never its address (navigation.md): `#N` in the demo, a url on live
   const prNumOf = (pr) => (/^#(\d+)$/.exec(pr || '') || /\/(?:pull|pullrequest|pull-requests)\/(\d+)/.exec(pr || '') || [])[1] || '';
   const prWords = (pr) => (prNumOf(pr) ? `PR #${prNumOf(pr)}` : 'PR');
-  const prItem = (r) => ({ id: `view-pr:${r.id}`, text: prNumOf(r.pr) ? `View PR #${prNumOf(r.pr)} ↗` : 'View PR ↗', help: 'Opens the PR on GitHub' });
+  const prItem = (r) => ({ id: `view-pr:${r.id}`, text: prNumOf(r.pr) ? `View PR #${prNumOf(r.pr)} ↗` : 'View PR ↗', help: /^https?:\/\/github\.com\//i.test(r.pr || '') ? 'Opens the PR on GitHub' : 'Opens the PR in a new tab' });
   const gitOf = (r, state) => { if (!r.pr && (r.kind || 'Git') !== 'Git') return ''; const tone = R.markTone(R.runState(state)); const status = tone === 'merged' ? 'merged' : tone === 'closed' ? 'closed' : !r.pr ? 'branch' : /fail/.test(r.case) ? 'fail' : /conflict/.test(r.case) ? 'conflict' : state === 'approved' ? 'pass' : /draft/.test(r.case) ? 'draft' : 'open'; const watch = /round|pr-fixing/.test(r.case) ? 'fix' : ''; return R.gitMark({ status, watch, title: [r.pr ? prWords(r.pr) : '', R.runState(state).word].filter(Boolean).join(' · ') }); };
   const membersOf = (g) => data.runs.filter((r) => r.group === g.id).sort((a, b) => (a.pos || 0) - (b.pos || 0));
   const groupState = (g) => RM.stateOf(g.case);
@@ -196,9 +196,10 @@
     if (id === 'delete') { ctl.confirm({ text: `Delete ${rows.length === 1 ? names : plural(ids.length, 'task')}? ${R.bulkConfirm('delete', plan('delete', rows)).message}`, yes: `Delete ${ids.length}`, danger: true, back: '', run: () => each('delete', (c) => `Deleted ${plural(c, 'task')}`) }); return; }
     if (id === 'leave-group') { const r = rows[0].r, g = data.groups.find((x) => x.id === r.group); const res = await T().list('leave-group', { ids: [r.id] }); if (res?.ok) say(`Removed from ${g?.title || 'the group'}`, res.data?.undo ? { tip: 'Puts it back in the group', run: () => T().list('undo-group', { token: res.data.undo }) } : undefined); return; }
     if (id.startsWith('view-pr:')) {   // the run its item names, never the ticked rows
-      const r = byId(id.slice(8)); if (!r?.pr) return;
+      const r = byId(id.slice(8)); if (!r?.pr) { say('That task is gone'); return; }
       if (!/^https?:\/\//i.test(r.pr)) { say('Could not open the PR: it has no web address'); return; }
-      if (window.open(r.pr, '_blank') === null) say('Could not open the PR: the browser blocked the new tab');
+      const tab = window.open(r.pr, '_blank');   // noopener by hand: the flag would make open() return null and hide a blocked tab
+      if (tab === null) say('Could not open the PR: the browser blocked the new tab'); else if (tab) tab.opener = null;
       return;
     }
   }
@@ -219,7 +220,7 @@
     if (id === 'label') { openLabels(rows); return; }
     if (id === 'add-to-group') { openGroups(rows, rows.length === 1 && !bulk ? `[data-menu="row:${CSS.escape(rows[0].key)}"]` : '[data-bulk="add-to-group"]'); return; }
     if (id === 'leave-group') { const r = rows[0].r, g = data.groups.find((x) => x.id === r.group); r.group = ''; r.adhoc = false; ctl.paint(); say(`Removed from ${g.title}`, undoTo(snap, pick, 'Puts it back in the group')); return; }
-    if (id.startsWith('view-pr:')) { const r = byId(id.slice(8)); say(window.RailWould(`open PR ${r.pr} on GitHub (it leaves Worca)`)); ctl.paint(); return; }
+    if (id.startsWith('view-pr:')) { const r = byId(id.slice(8)); if (!r?.pr) { say('That task is gone'); return; } say(window.RailWould(`open PR ${r.pr} on GitHub (it leaves Worca)`)); ctl.paint(); return; }
     if (id === 'open') { openThing(rows0[0]); return; }
   }
   function openLabels(rows) {
