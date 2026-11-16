@@ -114,8 +114,11 @@
     if (document.readyState === 'complete') setTimeout(startLive, 0); else if (window.addEventListener) window.addEventListener('load', startLive);
   } else {
     readyDone(null);
+    // F-G-fid-16: a page opened from file:// (the prototype in the compare) cannot import a module: Chrome blocks it and logs
+    // an error. There the form draws no run options; served over http (the app, a local server) it reads their words.
+    var served = typeof location !== 'undefined' && /^https?:$/.test(location.protocol);
     var words = function () { try { adapter.importRunOptions().then(function (m) { window.RailRunOptions = m; }, function () { /* no words: the form draws no run options */ }); } catch (e) { /* a host with no module loader */ } };
-    if (typeof document !== 'undefined' && document.readyState !== 'complete' && window.addEventListener) window.addEventListener('load', words); else if (typeof setTimeout === 'function') setTimeout(words, 0);
+    if (!served) { /* nothing to read */ } else if (typeof document !== 'undefined' && document.readyState !== 'complete' && window.addEventListener) window.addEventListener('load', words); else if (typeof setTimeout === 'function') setTimeout(words, 0);
   }
   // The sentence for an action a page cannot do yet: the demo sentence in the prototype host, the one refusal in the app host.
   window.RailWould = function (phrase) {
