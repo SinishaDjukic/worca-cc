@@ -9,6 +9,7 @@
   --hover:light-dark(#F0F0F2,#222227); --side-sel-bg:light-dark(#F0F0F2,#26262B);   /* ds-ok: the Stillhet look's table */
   --ink:light-dark(#18181B,#EDEDEF); --ink-2:light-dark(#63636B,#A1A1A9); --ink-3:light-dark(#A1A1A9,#6E6E76); --advisory:var(--ink);   /* ds-ok: the Stillhet look's table */
   --ink-hint:light-dark(#6F6F78,#8D8D96);   /* ds-ok: the Stillhet look's table: placeholder and hint text, 4.5:1 on its field in both themes (--ink-3 is for marks) */
+  --btn-line:light-dark(#909099,#6C6C75);   /* ds-ok: the Stillhet look's table: a button's border, 3:1 on --panel in both themes */
   --line:light-dark(#EEEEF0,#26262B); --line-2:light-dark(#E2E2E6,#35353B);   /* ds-ok: the Stillhet look's table */
   --float:light-dark(#FFFFFF,#1D1D21); --float-line:light-dark(#EEEEF0,#323238);   /* ds-ok: the Stillhet look's table */
   /* running is ink, never a colour (look.running-needs-apart): the old working gold and the app's blue map to ink, so no page brings them back */
@@ -58,7 +59,10 @@ body{-webkit-font-smoothing:antialiased;}
    border at rest, in every kind. Only an icon button stays borderless: its shape says it is one. A labelled button is
    32px with 13px words. */
 :is(.rc-board,.pz-app,.app,.mk-tools) .btn-sm:not(.btn-icon){height:32px;padding:0 12px;font-size:var(--fs-meta);}
-:is(.rc-board,.pz-app,.app) .btn-quiet:not(.btn-icon){border-color:var(--line-2);color:var(--ink);background:var(--panel);}
+/* The ladder (act.looks-clickable): filled is the one step a Warning needs; the state's own action is outlined in ink;
+   every other button is outlined in --btn-line, which holds 3:1 on the page in both themes. */
+:is(.rc-board,.pz-app,.app) .btn-sm:not(.btn-icon):not(.btn-primary):not(.btn-quiet):not(.btn-danger){border-color:var(--ink-2);font-weight:600;}
+:is(.rc-board,.pz-app,.app) .btn-quiet:not(.btn-icon){border-color:var(--btn-line);color:var(--ink);background:var(--panel);}
 :is(.rc-board,.pz-app,.app) .btn-quiet:not(.btn-icon):hover:not(:disabled){background-color:var(--hover);}
 
 /* A field-shaped picker (FilterRow's and a form's PickField, list.filters, form.dialog): a bordered button whose value
