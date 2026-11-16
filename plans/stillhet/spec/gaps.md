@@ -13,7 +13,7 @@ means Stillhet does not offer it, by a decision, with the reason. A row marked *
 
 | Function | Classic has | The prototype | Mark |
 |---|---|---|---|
-| Start a task from any page | A New run button in the top bar on every page | Only from Chat, or Tasks › + › Legacy approach › New task… | **Must**: a New task button in the top bar, on every page |
+| Start a task from any page | A New run button in the top bar on every page | Only from Chat | **Drop** (the owner): work starts in Chat only; Tasks and Schedules are views to inspect. Chat is one click from every page, and its New task starter opens the labelled form |
 | See the places and go to one | A sidebar that lists every place, with counts on Runs and Schedules | A small chevron beside the place's name opens the list; no counts | **Must**: the place's name and chevron are one button that opens the list, each place with its count |
 | What is scheduled next | Activity › Scheduled, with a Schedule… shortcut | Pulse › Now lists Scheduled; no shortcut | **Must** (in Pulse): keep, add New schedule |
 | Know it is a mock or test instance | A MOCK badge | Nothing | **Must**: one quiet word in the top bar |
