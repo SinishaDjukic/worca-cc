@@ -179,6 +179,9 @@
   const PROJECTS = NO_SEED ? ['No project'] : ['billing-api', 'web-app', 'worca-cc', 'docs-site', 'No project'];   // the first run lists only what you add
   // live: the projects are the store's (dev's /api/projects), the models dev's chat catalog (GET /api/ask/models)
   const liveProjects = () => (window.RailWorld?.part?.('projects') || []).filter((p) => p && p.id);
+  const liveSpaces = () => (R.shows('advanced') ? window.RailSpaces?.list() || [] : []).filter((w) => w && w.id && !w.fresh);   // a draft is not in dev yet
+  // where a chat runs, as dev's scope (classic's ask-panel pickScope): a project's key, else a saved workspace's id; null: none
+  const liveScope = (name) => { const pr = liveProjects().find((p) => p.name === name); if (pr) return { pinned: true, projectKey: pr.id }; const w = liveSpaces().find((x) => x.title === name); return w ? { pinned: true, workspaceId: w.id } : null; };
   let liveCat = null;
   const liveModels = () => liveCat?.models || [];
   const modelOf = (id) => liveModels().find((m) => m.id === id) || null;
@@ -217,8 +220,8 @@
     if (liveCat && !comp.effort) comp.effort = d.effort || '';
     const th = chatId ? CL().thread(chatId) : null; if (!th) return;
     if (th.model) comp.engine = th.model; if (th.effort) comp.effort = th.effort;
-    const key = CL().projectKey(chatId);   // dev keeps the chat's project in its `context` (live-map.mjs projectKeyOf)
-    comp.project = key ? liveProjects().find((p) => p.id === key)?.name || key : 'No project';
+    const key = CL().projectKey(chatId), ws = key ? '' : CL().workspaceId(chatId);   // dev keeps the chat's project, else its workspace, in its `context` (live-map.mjs)
+    comp.project = key ? liveProjects().find((p) => p.id === key)?.name || key : ws ? liveSpaces().find((w) => w.id === ws)?.title || ws : 'No project';
   }
   // engine first, then its model: each engine's models under its name (Codex has its own)
   const ENGINE_MODELS = [['Claude Code', ['Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5']], ['Codex', ['Codex 5', 'Codex mini']], ['Gemini CLI', ['Gemini Pro', 'Gemini Flash']]];
@@ -234,7 +237,8 @@
     if (LIVE()) {   // what dev's message carries: where it runs, the model and its effort; the mode only words the ask
       const m = modelOf(comp.engine), efforts = (m?.efforts || []).filter((e) => e !== '-');
       const mode = comp.intent ? '' : pk('mode', comp.mode === 'ask' ? 'Ask' : comp.mode === 'task' ? 'Task' : 'Schedule', MODES, 'Ask, start a task, or schedule one');
-      const project = WP('on', pk('project', comp.project, [...liveProjects().map((p) => ({ id: p.name, text: p.name })), { id: 'No project', text: 'No project' }], 'Where it runs: the project this chat works in'));
+      const spaces = liveSpaces().map((w) => ({ id: w.title, text: w.title, hint: window.RailSpaces.hint(w) }));   // from Advanced, as classic's scope picker lists workspaces
+      const project = WP('on', pk('project', comp.project, [...liveProjects().map((p) => ({ id: p.name, text: p.name })), { id: 'No project', text: 'No project' }, ...(spaces.length ? [{ sep: true }, { header: 'Workspaces · projects that work together' }, ...spaces] : [])], 'Where it runs: the project or workspace this chat works in'));
       const model = modelPicker(liveModels(), m ? R.modelText(m) : comp.engine || 'Model');
       return mode + project + model + (efforts.length ? pk('effort', comp.effort || efforts[0], efforts, 'How hard it thinks') : '') + setsPicker();
     }
@@ -1114,9 +1118,9 @@
     if (comp.sending || sendingIn.has(from)) return;
     sendingIn.add(from); comp.sending = true; paint();
     const handed = aboutNow(), ctx = context || (handed ? { view: String(handed.kind || 'page').toLowerCase().replace(/[^a-z0-9-]+/g, '-').slice(0, 32), ...(handed.ref || {}) } : null);   // D16: the page it came from
-    const m = modelOf(comp.engine), pr = !chatId && comp.project !== 'No project' ? liveProjects().find((p) => p.name === comp.project) : null;
+    const m = modelOf(comp.engine), sc = !chatId && comp.project !== 'No project' ? liveScope(comp.project) : null;
     const checked = pc;   // the prompt check of the chat that sends: its held correction goes with this send's thread id
-    CL().act('send', { threadId: chatId || '', text, attachments: comp.attachments || [], ...(m ? { model: m.id, effort: comp.effort || (m.efforts || [])[0] } : {}), ...(pr ? { scope: { pinned: true, projectKey: pr.id } } : {}), ...(!chatId && comp.mcpOff ? { mcpOff: comp.mcpOff } : {}), ...(ctx ? { context: ctx } : {}), queue: true, key: `send:${chatId || 'new'}` }).then((r) => {
+    CL().act('send', { threadId: chatId || '', text, attachments: comp.attachments || [], ...(m ? { model: m.id, effort: comp.effort || (m.efforts || [])[0] } : {}), ...(sc ? { scope: sc } : {}), ...(!chatId && comp.mcpOff ? { mcpOff: comp.mcpOff } : {}), ...(ctx ? { context: ctx } : {}), queue: true, key: `send:${chatId || 'new'}` }).then((r) => {
       sendingIn.delete(from);
       if (r.ok) checked?.sent(text, { threadId: r.data?.threadId || from });   // a refused send posts nothing
       const here = (chatId || '') === from;
@@ -1272,7 +1276,7 @@
     if (efforts.length && !efforts.includes(next.effort)) next.effort = efforts[0];
     if (!chatId) { Object.assign(comp, next); paint(); return; }
     let p;
-    if (id === 'cp-project') { const pr = liveProjects().find((x) => x.name === v); p = CL().act('scope', { threadId: chatId, scope: pr ? { pinned: true, projectKey: pr.id } : { pinned: false } }); }
+    if (id === 'cp-project') p = CL().act('scope', { threadId: chatId, scope: liveScope(v) || { pinned: false } });
     else {
       // a chat with no reply yet has no engine: its model is the PATCH, and its first reply runs on it (dev's no-engine-yet)
       // dev's chatEngine: the thread's engine, else its model's, else claude, and none until its first reply (askChatEngine)

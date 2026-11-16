@@ -454,7 +454,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
         { label: 'Reset all', help: 'Every feature back to its default; asks first', off: () => (liveOn() ? window.RailUI.NOT_LIVE_SENTENCE : flagsChanged().length ? '' : 'Nothing to reset: every feature is at its default'),
           confirm: { text: 'Turn every Labs feature back to its default?', yes: 'Reset all', then: () => { for (const f of flagsChanged()) window.RailUI.prefs.setFlag(f.key, f.on); return 'Labs: back to its defaults'; } } },
       ], rows: [
-        { name: 'Guide', say: 'How Labs works, and what a stage means', acts: [{ label: 'Open', say: window.RailWould('open the Labs guide in a new tab') }] },
+        { name: 'Guide', say: 'How Labs works, and what a stage means', acts: [{ label: 'Open', off: () => (liveOn() ? window.RailUI.NOT_LIVE_SENTENCE : ''), say: window.RailWould('open the Labs guide in a new tab') }] },   // F-G-G4-07: classic has no Labs guide; live, it is not in Stillhet yet
       ], get groups() { return liveOn() ? liveLabsGroups() : DEMO_LABS; } },
     ] },
 

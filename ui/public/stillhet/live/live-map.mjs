@@ -162,6 +162,12 @@ export function projectKeyOf(thread = {}) {
   const c = thread && typeof thread.context === 'object' ? thread.context : null;
   return c && c.pinned !== false ? str(c.projectKey) : '';
 }
+/** The workspace a chat works in (F-G-G4-03): dev's context holds a projectKey, else a workspaceId (scope.mjs chatScopeOf);
+ *  '' when it is pinned to a project or to none. */
+export function workspaceIdOf(thread = {}) {
+  const c = thread && typeof thread.context === 'object' ? thread.context : null;
+  return c && c.pinned !== false && !str(c.projectKey) ? str(c.workspaceId) : '';
+}
 export function chatOf(thread = {}, { now = 0, unread = [], links = [], tasks = [], projects = [], livePids = new Map(), schedules = [], groups = [] } = {}) {
   const featureIds = new Set(arr(groups).filter((g) => g && g.kind === 'feature').map((g) => g.id));
   const key = projectKeyOf(thread), project = key ? str(arr(projects).find((p) => p && p.key === key)?.name) || key : '';
