@@ -6,13 +6,16 @@ The one plan. Build Stillhet, Worca's new design system, in the real app, behind
 
 `CLAUDE.md`, `CONTRIBUTING.md`, `docs/rail/README.md` (it leads), `docs/rail/gate.md`, `docs/feature-flags.md`, `plans/rail/stillhet-wiring.md` (where every moved feature, action and figure stands). The working design is `plans/rail/prototype/`; the rules are `docs/rail/`; the components are `ui/public/design-system/components/` (`docs/design-system-catalog.json` says which meets which need).
 
-## The five requirements
+## The requirements
 
 1. Stillhet (codename Rail) is a new design system under the `rail` flag, opt-in and opt-out.
-2. We build it, and adapt every existing feature to it, **stepping first on the redesign**: the prototype's screen is what gets built.
+2. We build it, and adapt every existing feature to it, **stepping first on the redesign**: the prototype's screen is what gets built, **on live data from its first line**. The app never loads demo data: demo data lives only in the prototype and its tests (`gate.no-demo`, `test/stillhet-no-demo-on-live.test.mjs`).
 3. Where something a feature needs is missing in the design, it is created in the design first (the prototype plus a `docs/rail/` rule, catalog entry, component, test and gallery example), then built.
 4. **The design leads.** Dev contributes data, APIs and logic, never its screens or markup.
-5. What the design introduces is developed for real: no "Would…" toasts and no disabled stand-ins in the app.
+5. **Nothing fake, ever.** What the design introduces is developed for real: no "Would…" toasts and no success that only happened on screen. Something not built yet says so honestly ("Not in Stillhet yet", with the way to do it in classic), has an open row with an owner in `plans/rail/findings.md`, and only a test-backed list of these may reach dev.
+6. **Every classic function reaches Stillhet.** Each classic control and API has a row: wired, planned (with an owner and a batch), or dropped by a recorded decision. A test fails an unmapped one (`gate.coverage`, `gate.prototype`'s surfaces check), and the list of what is still missing can only shrink.
+7. **Done means real.** Every change is written test-first, passes CI, and passes `gate.real-data`: a browser walk on real and empty data, in both UIs, before it merges. A pixel comparison of the app against the prototype is a check of the demo only, never of the live app.
+8. **How a page redraws is a design-system rule, not a page's choice.** Pages patch by part (`comp.patch-parts`), keep what is open (`comp.keep-open`), and stay within performance budgets that only go down (`test/fixtures/stillhet-perf-budgets.json`).
 
 ## Order of authority
 
