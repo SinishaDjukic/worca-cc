@@ -148,3 +148,10 @@
   .stage-head .turn-row .tr-line{grid-template-columns:20px minmax(0,1fr);}
   .stage-head .tr-end{grid-column:2;white-space:normal;text-align:left;overflow:visible;}
 }
+
+/* The slim task card (panel.task-card): state and title, then the train with one small icon at its right end that
+   opens the detail panel, then the message, the action and the vitals. */
+.task-card.is-slim .tc-train{display:flex;align-items:flex-start;gap:8px;min-width:0;}
+.task-card.is-slim .tc-train > :first-child{flex:1 1 auto;min-width:0;}
+.task-card.is-slim .tc-train > .btn{flex:none;margin-top:-4px;}
+.task-card.is-slim .tc-msg{margin-top:4px;}
