@@ -449,31 +449,64 @@
   const pluginOf = () => (/^plugin:\d+$/.test(form.src) ? (sourceList || [])[+form.src.slice(7)] || null : null);
   function pickSource() {
     const o = OPT(), f = form, s = pluginOf(); if (!o || !s) return;
-    Object.assign(f, { profile: '', gate: null, gatePick: '', tickets: null, ticket: '', preview: null, ticketErr: '', search: '' });
+    Object.assign(f, { profile: '', gate: null, gatePick: '', tickets: null, ticket: '', preview: null, ticketErr: '', search: '', conn: null, srcIn: {}, srcOpts: {} });
     const dir = dirOf();
-    if (!s.multiProfile) { searchTickets(); return; }
+    if (!s.multiProfile) { connectSource(); return; }
     if (!dir) { f.gate = { text: 'Select a project first. The source profile is bound to it.', profiles: [] }; return; }
     o.binding(dir, s.plugin, s.sourceId).then((r) => {
       if (form !== f || pluginOf() !== s) return;
       if (!r.ok) { f.gate = { text: `Could not resolve the source profile: ${r.error}`, profiles: [] }; paintForm(); return; }
       const g = RO().gateOf(r.data, s, f.project);
       if (g) { f.gate = g; f.gatePick = g.profiles[0] || ''; paintForm(); return; }
-      f.profile = String(r.data.profile || ''); searchTickets(); paintForm();
+      f.profile = String(r.data.profile || ''); connectSource(); paintForm();
     });
+  }
+  // F-cov23-04: the source is checked before anything is listed (classic mountPluginSourcePane: validateConfig, a pending
+  // sign-in polled every 5 s for up to 5 min); an unconnected one says so with its ways out, never an empty list
+  const CONNECT_POLL_MS = 5000, CONNECT_MAX_MS = 5 * 60 * 1000;
+  function connectSource(started = Date.now()) {
+    const o = OPT(), f = form, s = pluginOf(); if (!o || !s) return;
+    const name = s.displayName || s.sourceId;
+    f.conn = { text: `Checking ${name} configuration…` };
+    o.call(s.plugin, s.sourceId, 'validateConfig', {}, f.profile || undefined).then((r) => {
+      if (form !== f || pluginOf() !== s) return;
+      const v = r.ok ? r.data : { ok: false, errors: [{ message: r.error }] };
+      if (v && v.ok === true) { f.conn = null; loadSourceOptions(); searchTickets(); paintForm(); return; }
+      if (v && v.pending && Date.now() - started <= CONNECT_MAX_MS) {
+        f.conn = { text: v.message || `Waiting for ${name} to connect…` }; paintForm();
+        setTimeout(() => { if (form === f && pluginOf() === s && f.conn && !f.conn.fail) connectSource(started); }, CONNECT_POLL_MS);
+        return;
+      }
+      const detail = v && v.pending ? 'timed out waiting for the sign-in. Press Test connection to try again' : (Array.isArray(v?.errors) ? v.errors : []).map((x) => x && x.message).filter(Boolean).join('; ') || 'connection check failed';
+      f.conn = { fail: true, text: `${name} is not connected: ${detail}` }; paintForm();
+    });
+  }
+  // the source's own inputs (source-pane.mjs): a text's default, a select's default; a remote-select is filled from its op
+  const srcInputs = (s) => Object.fromEntries((s.inputs || []).filter((x) => x && x.key && x.type !== 'task-browser').map((x) => [x.key, form.srcIn?.[x.key] ?? (x.default != null ? String(x.default) : undefined)]).filter(([, v]) => v !== undefined && v !== ''));
+  function loadSourceOptions() {
+    const o = OPT(), f = form, s = pluginOf(); if (!o || !s) return;
+    for (const x of (s.inputs || []).filter((i) => i && i.key && i.type === 'remote-select' && i.optionsFrom)) {
+      f.srcOpts = { ...f.srcOpts, [x.key]: 'loading' };
+      o.call(s.plugin, s.sourceId, x.optionsFrom, {}, f.profile || undefined).then((r) => {
+        if (form !== f || pluginOf() !== s) return;
+        f.srcOpts = { ...f.srcOpts, [x.key]: r.ok && Array.isArray(r.data) ? r.data.filter((v) => v && v.value != null).map((v) => ({ value: String(v.value), label: v.label != null ? String(v.label) : String(v.value) })) : 'failed' };
+        paintForm();
+      });
+    }
   }
   function bindProfile() {
     const o = OPT(), f = form, s = pluginOf(), pick = f.gatePick; if (!o || !s || !pick) return;
     o.bind(dirOf(), s.plugin, s.sourceId, pick).then((r) => {
       if (form !== f) return;
       if (!r.ok) { f.err = `Could not save the profile binding: ${r.error}`; f.errAt = '#cc-search'; paintForm(); return; }
-      f.gate = null; f.profile = pick; searchTickets(); paintForm('#cc-search');
+      f.gate = null; f.profile = pick; connectSource(); paintForm();
     });
   }
   let searchTimer = 0;
   function searchTickets() {
     const o = OPT(), f = form, s = pluginOf(); if (!o || !s) return;
     const asked = f.search, n = (f.searchGen = (f.searchGen || 0) + 1);
-    const inputs = Object.fromEntries((s.inputs || []).filter((x) => x && x.key && x.type !== 'task-browser' && x.default !== undefined).map((x) => [x.key, x.default]));
+    const inputs = srcInputs(s);
     o.call(s.plugin, s.sourceId, 'listTasks', { inputs, search: asked }, f.profile || undefined).then((r) => {
       if (form !== f || f.searchGen !== n || f.search !== asked) return;   // a stale answer is dropped
       f.ticketErr = r.ok ? '' : `search failed: ${r.error}`; f.tickets = r.ok ? (Array.isArray(r.data?.tasks) ? r.data.tasks : []) : null; paintForm();
@@ -491,11 +524,20 @@
       const pick = form.gate.profiles.length ? `<span>Profile ${R.sentencePicker({ id: 'f-gprofile', text: form.gatePick || 'pick one', items: form.gate.profiles.map((p) => ({ id: p, text: p, checked: p === form.gatePick })), open: menu === 'f-gprofile', chevron: chev })}</span>` : '';
       return `${R.choiceNote({ text: form.gate.text, ways: form.gate.profiles.length ? [{ label: 'Use this profile', kind: 'primary', attrs: { 'data-c-bind': '' } }] : [] })}${pick}`;
     }
+    if (form.conn) return form.conn.fail ? R.choiceNote({ text: form.conn.text, ways: [{ label: 'Open the Marketplace page', kind: 'quiet', attrs: { 'data-c-market': '' } }, { label: 'Test connection', kind: 'primary', attrs: { 'data-c-srctest': '' } }] }) : `<p class="cc-proof">${esc(form.conn.text)}</p>`;
+    const own = (s.inputs || []).filter((x) => x && x.key && x.type !== 'task-browser').map((x) => {
+      const label = x.label || x.key, v = srcInputs(s)[x.key] || '';
+      if (x.type === 'text') return R.field({ id: `cc-in-${x.key}`, label, value: v, attrs: { 'data-src-in': x.key } });
+      const opts = x.type === 'select' ? (x.options || []).map((o) => (typeof o === 'object' ? { value: String(o.value), label: String(o.label ?? o.value) } : { value: String(o), label: String(o) })) : form.srcOpts?.[x.key];
+      const list = Array.isArray(opts) ? opts : [];
+      const text = opts === 'loading' ? 'Loading…' : opts === 'failed' ? 'failed to load' : list.find((o) => o.value === v)?.label || v || 'pick one';
+      return `<span>${esc(label)} ${R.sentencePicker({ id: `si-${x.key}`, text, items: list.map((o) => ({ id: o.value, text: o.label, checked: o.value === v })), open: menu === `si-${x.key}`, chevron: chev })}</span>`;
+    }).join('');
     const rows = (form.tickets || []).map((t) => R.listRow({ title: String(t.title || t.id), meta: Array.isArray(t.labels) ? t.labels.join(', ') : '', check: form.ticket === String(t.id), open: { 'data-c-ticket': String(t.id) }, boxAttrs: { 'data-c-ticket': String(t.id) } })).join('');
     const empty = form.tickets && !form.tickets.length ? `<p class="cc-proof">${form.search ? 'No tasks matched.' : 'Type to search.'}</p>` : '';
     const fail = form.ticketErr ? `<p class="cc-proof">${esc(form.ticketErr)}</p>` : '';
     const prev = form.preview ? R.prose({ text: `${form.preview.title}\n\n${form.preview.body}` }) : '';
-    return `${R.field({ id: 'cc-search', label: `Search ${name}`, error: errOf('#cc-search'), value: form.search, placeholder: `Search ${name}…`, attrs: { 'data-f': 'search' } })}${rows ? `<div class="cc-tickets">${rows}</div>` : ''}${empty}${fail}${prev}`;
+    return `${own}${R.field({ id: 'cc-search', label: `Search ${name}`, error: errOf('#cc-search'), value: form.search, placeholder: `Search ${name}…`, attrs: { 'data-f': 'search' } })}${rows ? `<div class="cc-tickets">${rows}</div>` : ''}${empty}${fail}${prev}`;
   }
   // the one note under the text (form.run-options): the newest refusal, else the broken preset, else the team policy
   function noteHtml() {
@@ -629,7 +671,7 @@
       ...(form.after ? { after: { kind: form.after.kind, id: form.after.id }, afterPolicy: 'done' } : {}),
       ...(body0.workflowId === 'wf_auto' ? { humanInLoop: form.hitl !== false } : {}) };   // Auto only: classic's switch, on unless the project turned it off
     if (form.preset) Object.assign(body, Object.fromEntries(Object.entries(form.carried).filter(([k]) => k !== 'overlay' || !overlay)), { presetId: form.preset });
-    if (s && form.ticket) { delete body.prompt; body.source = RO().sourceBodyOf({ plugin: s.plugin, sourceId: s.sourceId, taskId: form.ticket, inputs: Object.fromEntries((s.inputs || []).filter((x) => x && x.key && x.type !== 'task-browser' && x.default !== undefined).map((x) => [x.key, x.default])), profile: form.profile }); }
+    if (s && form.ticket) { delete body.prompt; body.source = RO().sourceBodyOf({ plugin: s.plugin, sourceId: s.sourceId, taskId: form.ticket, inputs: srcInputs(s), profile: form.profile }); }
     // dev's Claude default is not sent as a pick (classic startRun): the body stays as before the defaults were read
     if (!keepPin && body.engine === 'claude' && form.defaultEngine === 'claude') delete body.engine;
     if (form.allow && (body.engine || form.defaultEngine || 'claude') !== 'claude') body.allowUnguardedEngine = true;
@@ -691,6 +733,8 @@
   function dlgClick(e) {
     const on = (q) => e.target.closest(q); let hit;
     if ((hit = on('[data-menu-pick^="f-preset|"]'))) { const v = hit.dataset.menuPick.slice('f-preset|'.length); menu = ''; if (v === 'update') updatePreset(); else if (v === 'duplicate') duplicatePreset(); else if (v === 'none') clearPreset(); else { const p = (presetList || []).find((x) => `p:${x.id}` === v); if (p) applyPreset(p); } paintForm('[data-menu="f-preset"]'); return; }
+    if ((hit = on('[data-menu-pick^="si-"]'))) { const [id, ...v] = hit.dataset.menuPick.split('|'); form.srcIn = { ...form.srcIn, [id.slice(3)]: v.join('|') }; menu = ''; paintForm(`[data-menu="${id}"]`); searchTickets(); return; }
+    if ((hit = on('[data-menu^="si-"]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; paintForm(`[data-menu="${hit.dataset.menu}"]`); return; }
     if ((hit = on('[data-menu-pick^="f-gprofile|"]'))) { form.gatePick = hit.dataset.menuPick.slice('f-gprofile|'.length); menu = ''; paintForm('[data-menu="f-gprofile"]'); return; }
     if ((hit = on('[data-menu-pick^="f-"]'))) {
       const [id, v] = hit.dataset.menuPick.split('|'); form[id.slice(2)] = v; menu = '';
@@ -709,6 +753,8 @@
     if ((hit = on('[data-c-sync]'))) { if (!hit.disabled) syncWay(hit.dataset.cSync); return; }
     if ((hit = on('[data-c-preset-reset]'))) { resetBroken(+hit.dataset.cPresetReset); return; }
     if (on('[data-c-bind]')) { bindProfile(); return; }
+    if (on('[data-c-srctest]')) { connectSource(); paintForm(); return; }
+    if (on('[data-c-market]')) { closeForm(); window.RailShell.go('marketplace'); return; }
     if ((hit = on('[data-c-ticket]'))) { if (hit.matches('input')) e.preventDefault(); pickTicket(hit.dataset.cTicket); return; }
     if (on('[data-c-tagsave]')) { saveTags(); return; }
     if (on('[data-c-flowsave]')) { saveFlow(false); return; }
@@ -732,6 +778,7 @@
     input.click();
   }
   function dlgInput(e) {
+    const si = e.target.dataset?.srcIn; if (si) { form.srcIn = { ...form.srcIn, [si]: e.target.value }; clearTimeout(searchTimer); searchTimer = setTimeout(searchTickets, 300); return; }   // a filter reruns the list (source-pane.mjs)
     const k = e.target.dataset?.f; if (!k) return; form[k] = e.target.value;
     if (k === 'tags') form.tagsTouched = true;
     if (k === 'search') { clearTimeout(searchTimer); searchTimer = setTimeout(searchTickets, 300); }   // source-pane.mjs's debounce

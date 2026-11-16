@@ -10,7 +10,7 @@ const JIRA = { type: 'plugin', plugin: 'jira', sourceId: 'issues', displayName: 
 const SOURCES = { sources: [{ type: 'prompt', displayName: 'Prompt' }, { type: 'markdown', displayName: 'Markdown' }, JIRA] };
 const BINDING = '/api/source-bindings?projectDir=%2Fsrc%2Fweb&plugin=jira&sourceId=issues';
 const TICKETS = [{ id: 'WEB-1', title: 'WEB-1 Pager breaks on page 2', labels: ['bug'] }, { id: 'WEB-2', title: 'WEB-2 Export to CSV' }];
-async function open({ sources = SOURCES, binding = [200, { profile: 'work', via: 'binding' }], call = (b) => [200, { ok: true, result: b.op === 'getTask' ? { title: 'WEB-1 Pager breaks on page 2', body: 'Page 2 shows page 1.' } : { tasks: TICKETS.filter((t) => t.title.toLowerCase().includes(String(b.args.search || '').toLowerCase())) } }], hold, write = () => [200, { runId: 'r-new' }] } = {}) {
+async function open({ sources = SOURCES, binding = [200, { profile: 'work', via: 'binding' }], call = (b) => [200, { ok: true, result: b.op === 'validateConfig' ? { ok: true } : b.op === 'getTask' ? { title: 'WEB-1 Pager breaks on page 2', body: 'Page 2 shows page 1.' } : { tasks: TICKETS.filter((t) => t.title.toLowerCase().includes(String(b.args.search || '').toLowerCase())) } }], hold, write = () => [200, { runId: 'r-new' }] } = {}) {
   const h = await liveHost({ lists: LISTS, hold, read: (u) => (u === '/api/sources' ? [200, sources] : u === BINDING ? binding : null), write: (u, b, m) => (u === '/api/sources/call' ? call(b) : write(u, b, m)) });
   await go(h.w, '#runs', 120);
   h.w.RailCenters.maker('tasks').newPick('form'); await settle(80);
@@ -74,7 +74,7 @@ test('COV-2 source: a bound profile lists the tickets with its inputs; typing se
 
 test('COV-2 source: a stale search answer is dropped', async () => {
   let n = 0, release; const held = new Promise((r) => { release = r; });
-  const { w, d } = await open({ call: async (b) => { if (b.op !== 'listTasks') return [200, { ok: true, result: {} }]; n++; if (b.args.search === 'pag') await held; return [200, { ok: true, result: { tasks: TICKETS.filter((t) => t.title.toLowerCase().includes(b.args.search)) } }]; } });
+  const { w, d } = await open({ call: async (b) => { if (b.op !== 'listTasks') return [200, { ok: true, result: { ok: true } }]; n++; if (b.args.search === 'pag') await held; return [200, { ok: true, result: { tasks: TICKETS.filter((t) => t.title.toLowerCase().includes(b.args.search)) } }]; } });
   await jira(d);
   type(w, d, '#cc-search', 'pag'); await settle(350);
   type(w, d, '#cc-search', 'csv'); await settle(350);
@@ -104,7 +104,7 @@ test('COV-2 source: Start with no ticket picked says so under the search and sta
 });
 
 test('COV-2 source: a connector refusal shows search failed with its message', async () => {
-  const { d } = await open({ call: () => [200, { ok: false, error: { kind: 'auth', message: 'token expired' } }] });
+  const { d } = await open({ call: (b) => (b.op === 'validateConfig' ? [200, { ok: true, result: { ok: true } }] : [200, { ok: false, error: { kind: 'auth', message: 'token expired' } }]) });
   await jira(d);
   assert.match(q(d, '.dlg').textContent, /search failed: token expired/);
   assert.equal(d.querySelectorAll('#center-dlg [data-c-ticket]').length, 0);
