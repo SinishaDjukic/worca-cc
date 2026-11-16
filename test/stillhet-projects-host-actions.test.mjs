@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { projectsHost, KEYS, PJ_SOURCES, sent, gate, noWould, undoTimers, settle, go, clone, closeHosts } from './helpers/stillhet-projects-host.mjs';
 import { saidText } from './helpers/stillhet-chat-live-host.mjs';
 import { stillhetHost } from './helpers/stillhet-host.mjs';
-import { PROJECT_ACTIONS } from '../ui/public/stillhet/live/projects-live.mjs';
+import { PROJECT_ACTIONS, plainWhy } from '../ui/public/stillhet/live/projects-live.mjs';
 
 afterEach(closeHosts);
 const page = (d) => d.getElementById('route-place');
@@ -230,4 +230,69 @@ test('the demo kind sends nothing: Remove, Rename and a setting change only the 
   assert.equal(w.RailProjects.all().find((p) => p.id === 'worca-cc').name, 'worca', 'D7: the demo sets its name; the id stays');
   pickMore(d, 'remove'); await settle(80); yes(d).click(); await settle(80);
   assert.deepEqual(calls.filter(([m]) => m !== 'GET'), []);
+});
+
+const type = (w, sel, v) => { const el = page(w.document).querySelector(sel); el.value = v; el.dispatchEvent(new w.Event('input', { bubbles: true })); };
+const labelOf = (d, id) => page(d).querySelector(`label[for="${id}"]`)?.textContent || '';
+test('F-cov1-06 demo: an address shows Branch and Folder name under it, a path does not; the demo adds the project by its Folder name', async (t) => {
+  const calls = [];
+  const w = stillhetHost({ hash: '#projects', after: (fn) => t.after(fn), fetch: async (u, o = {}) => { calls.push([o.method || 'GET', String(u)]); return { ok: true, status: 200, json: async () => ({}) }; } });
+  await settle(120);
+  const d = w.document;
+  w.RailPlaces.projects.newPick('hand-project'); await settle(100);
+  type(w, '#pj-hand-v', '~/src/web-app'); await settle(300);
+  assert.equal(page(d).querySelector('#pj-clone-branch'), null, 'a path: no Branch');
+  assert.equal(page(d).querySelector('#pj-clone-name'), null, 'a path: no Folder name');
+  type(w, '#pj-hand-v', 'git@github.com:o/shop-api.git'); await settle(300);
+  assert.equal(labelOf(d, 'pj-clone-branch'), 'Branch (optional)');
+  assert.equal(labelOf(d, 'pj-clone-name'), 'Folder name (optional)');
+  assert.equal(page(d).querySelector('#pj-clone-branch').placeholder, "the repository's default branch");
+  assert.equal(page(d).querySelector('#pj-clone-name').placeholder, 'shop-api', 'the placeholder follows the address');
+  assert.equal(page(d).querySelector('#pj-hand-v').value, 'git@github.com:o/shop-api.git', 'the redraw keeps what was typed');
+  type(w, '#pj-clone-name', 'my-shop'); await settle(60);
+  yes(d).click(); await settle(120);
+  assert.ok(w.RailProjects.all().some((p) => p.id === 'my-shop'), 'the demo adds it by its Folder name');
+  assert.match(saidText(d), /Added my-shop/);
+  assert.deepEqual(calls.filter(([m]) => m !== 'GET'), []);
+});
+
+const cloned = (u) => (u === '/api/projects/clone' ? [202, { jobId: 'cln_1', job: { id: 'cln_1', state: 'running' } }] : [200, { ok: true }]);
+const clones = (calls) => sent(calls).filter(([m, u]) => m === 'POST' && u === '/api/projects/clone');
+test('F-cov1-06 live: Branch and Folder name reach POST /api/projects/clone; empty ones are left out', async () => {
+  const h = await projectsHost({ write: cloned });
+  const url = 'https://github.com/o/shop-api.git';
+  h.w.RailPlaces.projects.newPick('hand-project'); await settle(100);
+  type(h.w, '#pj-hand-v', url); await settle(300);
+  type(h.w, '#pj-clone-branch', ' dev '); type(h.w, '#pj-clone-name', 'my-shop'); await settle(60);
+  yes(h.d).click(); await until(() => clones(h.calls).length === 1); await settle(100);
+  assert.deepEqual(sent(h.calls).at(-1), ['POST', '/api/projects/clone', { url, branch: 'dev', name: 'my-shop' }]);
+  assert.match(saidText(h.d), /Cloning my-shop…/);
+  h.w.RailPlaces.projects.newPick('hand-project'); await settle(100);
+  type(h.w, '#pj-hand-v', url); await settle(300);
+  yes(h.d).click(); await until(() => clones(h.calls).length === 2); await settle(100);
+  assert.deepEqual(sent(h.calls).at(-1), ['POST', '/api/projects/clone', { url }]);
+});
+
+test('F-cov1-06 live: a 409 (folder exists) lands on Folder name and a 400 (bad branch) on Branch, never the address; a Folder name that is already a project (any case) is refused there before any request', async () => {
+  const EXISTS = '/w/projects/taken already exists; pick another folder name';
+  const h = await projectsHost({ write: (u, b) => (u !== '/api/projects/clone' ? [200, { ok: true }] : b.name === 'taken' ? [409, { error: EXISTS, code: 'exists' }] : [400, { error: 'not a valid branch name' }]) });
+  const note = (id) => page(h.d).querySelector(`#${id}-note`)?.textContent || '';
+  h.w.RailPlaces.projects.newPick('hand-project'); await settle(100);
+  type(h.w, '#pj-hand-v', 'git@github.com:o/shop-api.git'); await settle(300);
+  type(h.w, '#pj-clone-name', 'taken'); await settle(60);
+  yes(h.d).click(); await until(() => note('pj-clone-name') !== ''); await settle(60);
+  assert.equal(note('pj-clone-name'), plainWhy({ status: 409, error: EXISTS }));
+  assert.equal(note('pj-hand-v'), '', 'not on the address');
+  assert.ok(page(h.d).querySelector('#pj-hand-v'), 'the form stays open');
+  type(h.w, '#pj-clone-name', ''); type(h.w, '#pj-clone-branch', 'bad..branch'); await settle(60);
+  yes(h.d).click(); await until(() => note('pj-clone-branch') !== ''); await settle(60);
+  assert.equal(note('pj-clone-branch'), 'not a valid branch name');
+  assert.equal(note('pj-hand-v'), '');
+  assert.equal(note('pj-clone-name'), '');
+  assert.deepEqual(clones(h.calls).map(([, , b]) => b), [{ url: 'git@github.com:o/shop-api.git', name: 'taken' }, { url: 'git@github.com:o/shop-api.git', branch: 'bad..branch' }]);
+  type(h.w, '#pj-clone-branch', ''); type(h.w, '#pj-clone-name', 'Seed-OK'); await settle(60);
+  yes(h.d).click(); await settle(150);
+  assert.equal(note('pj-clone-name'), 'Seed-OK is already a project', 'dev compares a clone name case-blind; so does the page');
+  assert.equal(note('pj-hand-v'), '');
+  assert.equal(clones(h.calls).length, 2, 'nothing more was sent');
 });

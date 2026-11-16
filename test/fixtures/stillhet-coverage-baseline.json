@@ -226,8 +226,6 @@
  "ui/public/projects/project-add.html › button › Choose folder…": "COV-1",
  "ui/public/projects/project-add.html › button › Use git": "COV-2",
  "ui/public/projects/project-add.html › dialog › Add project": "COV-2",
- "ui/public/projects/project-add.html › field › Branch (optional)": "COV-2",
- "ui/public/projects/project-add.html › field › Folder name (optional)": "COV-2",
  "ui/public/projects/project-add.html › field › Remote URL (optional)": "COV-2",
  "ui/public/projects/project-add.html › field › Repository URL": "COV-2",
  "ui/public/requirements-view.mjs › button › (button)": "COV-20",
