@@ -138,3 +138,39 @@ test('a step added after a reload never reuses a saved node id', async () => {
   assert.equal(newStepId(x, d.steps), 'n_new3', 'and never one the draft already took');
   assert.equal(newStepId({ ...x, tpl: mine(), draft: { base: t } }, []), 'n_new2', 'the draft\'s base counts too');
 });
+
+// F-W3a2-11: two loops between same-named steps (Build ↔ Review twice): a changed round count lands on its own wire
+const twice = () => ({
+  id: 'wf_twice', name: 'Twice', version: 2, domain: 'coding', origin: null, createdAt: '2026-11-01T00:00:00.000Z',
+  nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} },
+    { id: 'n_plan', kind: 'agent', key: 'planner', x: 300, y: 0, config: {} },
+    { id: 'n_impl', kind: 'agent', key: 'implementer', x: 600, y: 0, config: {} },
+    { id: 'n_review', kind: 'agent', key: 'reviewer', x: 900, y: 0, config: {} },
+    { id: 'n_impl2', kind: 'agent', key: 'implementer', x: 1200, y: 0, config: {} },
+    { id: 'n_review2', kind: 'agent', key: 'reviewer', x: 1500, y: 0, config: {} },
+    { id: 'n_end', kind: 'end', x: 1800, y: 0, config: {} }],
+  wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_plan', port: 'task' } },
+    { id: 'w2', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_impl', port: 'plan' } },
+    { id: 'w3', from: { node: 'n_impl', port: 'done' }, to: { node: 'n_review', port: 'done' } },
+    { id: 'w4', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_review', port: 'plan' } },
+    { id: 'w5', from: { node: 'n_review', port: 'review' }, to: { node: 'n_impl', port: 'fix' }, config: { maxCycles: 3 } },
+    { id: 'w6', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_impl2', port: 'plan' } },
+    { id: 'w7', from: { node: 'n_review', port: 'pass' }, to: { node: 'n_impl2', port: 'await' } },
+    { id: 'w8', from: { node: 'n_impl2', port: 'done' }, to: { node: 'n_review2', port: 'done' } },
+    { id: 'w9', from: { node: 'n_plan', port: 'plan' }, to: { node: 'n_review2', port: 'plan' } },
+    { id: 'w10', from: { node: 'n_review2', port: 'review' }, to: { node: 'n_impl2', port: 'fix' }, config: { maxCycles: 3 } },
+    { id: 'w11', from: { node: 'n_review2', port: 'pass' }, to: { node: 'n_end', port: 'result' } }],
+});
+
+test('two same-named loops: changing the second saves only its own wire (F-W3a2-11)', () => {
+  const b = base(twice()), d = draftOf(b);
+  assert.equal(b.loops.length, 2);
+  assert.equal(b.loops[0][0], b.loops[1][0]); assert.equal(b.loops[0][1], b.loops[1][1]);   // same names both ends
+  d.loops.find((l) => l[3] === 'n_review2')[2] = 6;   // the second loop (step 5 → step 4)
+  const r = templateOfDraft(b, d, { portsFn });
+  assert.equal(r.ok, true, r.reason);
+  const was = twice(), cfg = (t, id) => t.wires.find((w) => w.id === id).config;
+  assert.deepEqual(cfg(r.tpl, 'w10'), { maxCycles: 6 });
+  assert.deepEqual(cfg(r.tpl, 'w5'), cfg(was, 'w5'));
+  for (const w of r.tpl.wires) if (w.id !== 'w10') assert.deepEqual(w.config || {}, was.wires.find((x) => x.id === w.id).config || {}, w.id);
+});

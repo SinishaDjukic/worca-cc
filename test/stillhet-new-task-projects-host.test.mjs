@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { liveHost, go, settle, closeHosts, clone, SOURCES, posts } from './helpers/stillhet-chat-live-host.mjs';
-import { stillhetHost } from './helpers/stillhet-host.mjs';
+import { stillhetHost, demoTaskHost } from './helpers/stillhet-host.mjs';
 
 afterEach(closeHosts);
 const sent = (calls) => posts(calls).filter(([, u]) => !/^\/api\/ask\//.test(u));
@@ -108,4 +108,43 @@ test('the demo keeps its task-row list and billing-api default (pixel comparison
   w.RailCenters.newTask(); await settle(60);   // the demo's level hides the Legacy menu; its form is the same blank()
   assert.deepEqual(await items(d), rows);
   assert.equal(shown(d), 'billing-api');
+});
+
+// ---- COV-2 (docs/rail/forms.md form.run-options): what slice 1 draws in the demo kind is not on the live kind ----
+const q = (d, sel) => d.querySelector(`#center-dlg ${sel}`);
+const menuOf = async (d, id) => { q(d, `[data-menu="f-${id}"]`).click(); await settle(20); const m = q(d, '.spick-menu'); const got = { picks: [...m.querySelectorAll('[data-menu-pick]')].map((x) => x.dataset.menuPick.slice(id.length + 3)), heads: [...m.querySelectorAll('.menu-h')].map((x) => x.textContent) }; q(d, `[data-menu="f-${id}"]`).click(); await settle(20); return got; };
+const pickIn = async (d, id, v) => { q(d, `[data-menu="f-${id}"]`).click(); await settle(20); q(d, `[data-menu-pick="f-${id}|${v}"]`).click(); await settle(40); };
+
+test('COV-2 live kind unchanged (R-arch-4): More options shows no Guardrails and no Human in the loop, the open project menu lists no Workspaces header and no Add project…, the Agent menu lists no Copilot item, and a task waiting for a run shows no Start now instead link and no "the run before it\'s branch" base item', async () => {
+  const { w, d } = await liveHost({ sources: clone(SOURCES) });
+  await go(w, '#runs', 120);
+  await openTask(w);
+  q(d, '[data-c-more]').click(); await settle(20);
+  assert.doesNotMatch(q(d, '.cc-more').textContent, /Guardrails/, 'guard');
+  assert.equal(q(d, '[data-menu="f-guard"]'), null, 'guard');
+  await pickIn(d, 'workflow', 'Auto');
+  assert.equal(q(d, '[data-c-hitl]'), null, 'hitl');
+  const project = await menuOf(d, 'project');
+  assert.ok(!project.heads.includes('Workspaces'), 'workspace');
+  assert.ok(!project.picks.includes('+add'), 'addProject');
+  const agent = await menuOf(d, 'agent');
+  assert.ok(!agent.picks.includes('Copilot'), 'engineCheck');
+  q(d, '[data-dialog="cancel"]').click(); await settle(20);
+  w.RailCenters.newTask({ after: { kind: 'ticket', id: 's-docs', title: 'Nightly docs' } }); await settle(60);
+  assert.match(q(d, '.cc-frame').textContent, /It starts once Nightly docs ends/);
+  assert.equal(q(d, '[data-c-nowinstead]'), null, 'nowInstead');
+  assert.ok(!(await menuOf(d, 'base')).picks.includes('the task before it\'s branch'), 'previous');
+});
+
+test('COV-2 Workspace (simple level, demo): the open project menu lists no Workspaces header, while More options still shows Guardrails and, for Auto, Human in the loop', async () => {
+  const w = demoTaskHost({ mode: 'simple', after }), d = w.document;
+  await settle(60);
+  w.RailCenters.newTask(); await settle(60);
+  const project = await menuOf(d, 'project');
+  assert.ok(!project.heads.includes('Workspaces'));
+  assert.ok(!w.RailSpaces.list().some((x) => project.picks.includes(x.title)), 'no workspace is offered');
+  q(d, '[data-c-more]').click(); await settle(20);
+  assert.match(q(d, '.cc-more').textContent, /Guardrails: Team default/);
+  await pickIn(d, 'workflow', 'Auto');
+  assert.ok(q(d, '[data-c-hitl]'), 'Human in the loop');
 });

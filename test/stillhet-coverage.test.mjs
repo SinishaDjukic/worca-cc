@@ -104,3 +104,15 @@ test('each MISSING control names an open finding in findings.md and its PLAN.md 
     assert.ok(new RegExp(`\\b${id}\\b`).test(plan), `${id} is in a PLAN.md batch`);
   }
 });
+
+test('COV-3 (COV-R): Resume on, Switch model…, Pause, Stop and Full plan are wired by a Classic controls row', () => {
+  for (const id of ['ui/public/app.js › button › Resume on …', 'ui/public/app.js › button › Switch model…',
+    'ui/public/chat/run-card.mjs › button › Pause', 'ui/public/chat/run-card.mjs › button › Stop',
+    'ui/public/shape/plan-body.mjs › button › Full plan']) {
+    const c = classified.find((x) => x.id === id);
+    assert.ok(c, id);
+    assert.equal(c.status, 'wired', id);
+    assert.ok(c.where.startsWith('stillhet-wiring.md Classic controls:'), `${id}: ${c.where}`);
+    assert.ok(!(id in baseline), `${id} is still in the baseline`);
+  }
+});

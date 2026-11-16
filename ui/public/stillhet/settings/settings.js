@@ -5,7 +5,7 @@
 //   a record    → ListRow in a List: the row opens what it does not already show, or nothing; its one action a button, more in its ⋯;
 //   Change…     → a Dialog with Fields (`edit`), stepped when it has `steps`; a yes or no → the ConfirmStrip.
 // A value lives in `sv`, a Labs flag in R.prefs. Every control acts on them; nothing is saved (a prototype). Live, Labs
-// reads the server's flags (GET /api/flags) and changes none: its switches are disabled with the not-live sentence.
+// reads the server's flags (GET /api/flags) and a switch writes through PATCH /api/flags (settings-model.js `labsSwitch`).
 (function () {
   const SM = window.SettingsModel, R = window.RailUI;
   for (const f of SM.FLAGS) R.prefs.setFlag(f.key, f.on);   // a Labs switch's default, for every page that reads a flag
@@ -84,7 +84,7 @@
     }
     for (const [k, v] of Object.entries(r.vals || {})) if (typeof v !== 'function') add(k, r.name, v);
     if (r.sw && r.sw.key) add(r.sw.key, r.name, !!r.sw.on, r.sw.on ? 'on' : 'off');
-    if (r.sw && r.sw.flag && !r.sw.real) { const on = !!(SM.FLAGS.find((f) => f.key === r.sw.flag) || {}).on; if (R.prefs.flag(r.sw.flag) !== on) out.push({ name: r.name, was: on ? 'on' : 'off' }); }
+    if (r.sw && r.sw.flag && !r.sw.server) { const on = !!(SM.FLAGS.find((f) => f.key === r.sw.flag) || {}).on; if (R.prefs.flag(r.sw.flag) !== on) out.push({ name: r.name, was: on ? 'on' : 'off' }); }
     return [...out, ...(r.more || []).filter((m) => vis(m, c)).flatMap((m) => changesOf(m, sv, c))];
   }
   // An action: a jump to another section (go), a Dialog (edit), a ConfirmStrip (confirm), a copy, a change (do), or a
@@ -101,9 +101,14 @@
   }
   function swOf(r, label, sv, c) {
     const s = r.sw; if (!s) return '';
-    if (s.real) return c.R.tooltip({ text: R.NOT_LIVE_SENTENCE, off: true, html: c.R.switchButton({ on: s.on, label, why: R.NOT_LIVE_SENTENCE, disabled: true, attrs: { 'data-svsw': 'flag:' + s.flag } }) });   // a server flag, read-only (B1.3)
-    const off = c.locked || s.locked || (s.off && s.off(sv)) || '';
-    return c.R.switchButton({ on: s.flag ? R.prefs.flag(s.flag) : sv[s.key], label, why: off || s.why || '', disabled: !!off, attrs: { 'data-svsw': s.flag ? 'flag:' + s.flag : s.key } });
+    const busy = s.saving ? { 'aria-busy': 'true' } : {};   // a write it waits for: Saving, and the last value it knows
+    if (s.server) {   // a server flag: its value is the server's; locked or saving, the reason is its tooltip
+      const off = c.locked || s.locked || (s.saving ? SM.LABS_WORDS.saving : '');
+      const sw = c.R.switchButton({ on: s.on, label, why: off, disabled: !!off, attrs: { 'data-svsw': 'flag:' + s.flag, ...busy } });
+      return off ? c.R.tooltip({ text: off, off: true, html: sw }) : sw;
+    }
+    const off = c.locked || s.locked || (s.saving ? SM.LABS_WORDS.saving : '') || (s.off && s.off(sv)) || '';
+    return c.R.switchButton({ on: s.flag ? R.prefs.flag(s.flag) : sv[s.key], label, why: off || s.why || '', disabled: !!off, attrs: { 'data-svsw': s.flag ? 'flag:' + s.flag : s.key, ...busy } });
   }
   const chipOf = (x, sv, c) => { const t = x.chip && textOf(x.chip, sv); return t ? c.R.chip({ text: t, title: x.chipTip || '' }) : ''; };
   function row(r, sv, c, where) {
@@ -287,8 +292,8 @@
   }
   function toggle(sv, key) {
     if (key.startsWith('flag:')) {
-      if (liveOn()) return '';   // live Labs shows the server's flags and changes none: no write, no toast (B1.3)
       const k = key.slice(5), f = SM.FLAGS.find((x) => x.key === k);
+      if (liveOn() || !f || f.refuses) return SM.labsSwitch(k, sv);   // a write that answers later: its toast or its refusal then
       R.prefs.setFlag(k, !R.prefs.flag(k));
       const hidden = R.prefs.flag(k) && f.min && !R.shows(f.min, R.prefs.mode());   // on, but this mode does not draw what it adds: the toast says so
       return `${f.name}: ${R.prefs.flag(k) ? 'on' : 'off'}${hidden ? `. It shows in ${f.min[0].toUpperCase()}${f.min.slice(1)}; you are in ${R.prefs.mode()[0].toUpperCase()}${R.prefs.mode().slice(1)}` : ''}`;
