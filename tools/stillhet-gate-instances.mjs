@@ -5,7 +5,7 @@
 // the owner's store (an APFS clone where it can; the real store is only read) made independent of it: the repos it names are
 // cloned into the instance HOME and every record and git link points there, so nothing done on A or B reaches the owner's
 // real repos (C1, isolateCopy / verifyIsolation; a copy that still leads outside its HOME is refused); copied schedules are turned off,
-// every clone pushes to HOME/outside/no-push, and no instance env carries a GitHub credential. C and D start empty. `rail` lives in each
+// every clone pushes to HOME/outside/no-push, and no instance env carries a GitHub credential or reaches GitHub over ssh or by URL. C and D start empty. `rail` lives in each
 // instance's own settings.json and never in WORCA_FLAGS, so it stays unlocked (P11). Stop kills only the processes this tool
 // started (a pid file per HOME, checked against the process's start time and command). `login-status` and `login X` check
 // and run the Claude CLI's own login under each HOME; the CLI's output is never printed, logged or stored.
@@ -15,7 +15,7 @@
 //      node tools/stillhet-gate-instances.mjs list | stop [letters] | login-status [letters] | login X   [--root DIR]
 import { createHash } from 'node:crypto';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { closeSync, constants as FS, cpSync, existsSync, linkSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, constants as FS, cpSync, existsSync, linkSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -141,6 +141,7 @@ export function buildInstanceEnv(inst, baseEnv = process.env) {
   env.GH_CONFIG_DIR = path.join(inst.home, '.config', 'gh');
   env.GIT_CONFIG_GLOBAL = path.join(inst.home, '.gitconfig');
   env.GIT_CONFIG_NOSYSTEM = '1';   // the system config holds the keychain credential helper on macOS
+  env.GIT_SSH_COMMAND = env.GIT_SSH = noSshPath(inst.home);   // ssh would find the owner's keys in the account's own ~/.ssh
   env.HOME = inst.home;
   env.USERPROFILE = inst.home;
   // WORCA_HOME is the BASE: the store is WORCA_HOME/.worca-cc (src/core/projects.mjs worcaHome), the same folder as the
@@ -153,9 +154,41 @@ export function buildInstanceEnv(inst, baseEnv = process.env) {
   return env;
 }
 
+// GitHub by any URL (https, scp-style ssh, ssh://) is rewritten to a path in HOME/outside that never exists, and ssh itself
+// always fails, so neither an explicit `git push <url>` nor a fetch reaches GitHub from an instance.
+const NO_SSH_MESSAGE = 'gate instance: ssh blocked';
+const GITHUB_URL_PREFIXES = Object.freeze(['https://github.com/', 'git@github.com:', 'ssh://git@github.com/']);
+const noSshPath = (home) => path.join(home, 'bin', 'no-ssh');
+const noGithubBase = (home) => `${path.join(home, 'outside', 'no-https')}/`;
+const gitConfigGetAll = (file, key) => {
+  const r = spawnSync('git', ['config', '--file', file, '--get-all', key], { encoding: 'utf8' });
+  return r.status === 0 ? r.stdout.split('\n').filter(Boolean) : [];
+};
+
+/** Writes the instance's ssh blocker (HOME/bin/no-ssh) and the GitHub insteadOf rules into its global git config. */
+export function writeGitBlockers(home) {
+  const script = noSshPath(home);
+  mkdirSync(path.dirname(script), { recursive: true });
+  writeFileSync(script, `#!/bin/sh\necho "${NO_SSH_MESSAGE}" >&2\nexit 1\n`);
+  chmodSync(script, 0o755);
+  const file = path.join(home, '.gitconfig');
+  const key = `url.${noGithubBase(home)}.insteadOf`;
+  spawnSync('git', ['config', '--file', file, '--unset-all', key], { stdio: 'ignore' });
+  for (const u of GITHUB_URL_PREFIXES) execFileSync('git', ['config', '--file', file, '--add', key, u], { stdio: 'ignore' });
+}
+
 /** What in a server env could still reach the owner's GitHub. Empty when none. */
 export function envProblems(env, home) {
   const bad = [];
+  const script = noSshPath(home);
+  for (const k of ['GIT_SSH_COMMAND', 'GIT_SSH']) if (env[k] !== script) bad.push(`env ${k} is not the ssh blocker ${script}: ${env[k] ?? '(unset)'}`);
+  let blocks = false;
+  try { blocks = (statSync(script).mode & 0o111) !== 0 && readFileSync(script, 'utf8').includes('exit 1'); } catch { /* missing */ }
+  if (!blocks) bad.push(`ssh blocker ${script} missing`);
+  if (env.GIT_CONFIG_GLOBAL) {
+    const rules = gitConfigGetAll(env.GIT_CONFIG_GLOBAL, `url.${noGithubBase(home)}.insteadOf`);
+    for (const u of GITHUB_URL_PREFIXES) if (!rules.includes(u)) bad.push(`${env.GIT_CONFIG_GLOBAL} has no insteadOf rule for ${u}`);
+  }
   for (const k of Object.keys(env)) if (GITHUB_REACH_ENV.includes(k) || isGitConfigPair(k)) bad.push(`env ${k} set`);
   for (const k of ['GH_CONFIG_DIR', 'GIT_CONFIG_GLOBAL']) if (!env[k] || !within(path.resolve(env[k]), path.resolve(home))) bad.push(`env ${k} outside ${home}: ${env[k] ?? '(unset)'}`);
   if (env.GIT_CONFIG_NOSYSTEM !== '1') bad.push('env GIT_CONFIG_NOSYSTEM not 1');
@@ -606,6 +639,7 @@ export async function startInstance(inst, { serverPath = SERVER_PATH, spawn: spa
   try { offset = statSync(logFile).size; } catch { /* no log yet */ }
   const fd = openSync(logFile, 'a');
   const env = buildInstanceEnv(inst, baseEnv);
+  writeGitBlockers(inst.home);
   const envBad = envProblems(env, inst.home);
   if (envBad.length) { closeSync(fd); refuse('credential-env', `${inst.letter}'s server env could reach the owner's GitHub; nothing was started. ${envBad.join('; ')}`); }
   let child;

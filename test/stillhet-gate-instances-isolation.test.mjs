@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import net from 'node:net';
 import { DatabaseSync } from 'node:sqlite';
-import { parseArgs, planInstances, buildInstanceEnv, prepareHome, verifyIsolation, startInstance, envProblems, main } from '../tools/stillhet-gate-instances.mjs';
+import { parseArgs, planInstances, buildInstanceEnv, prepareHome, verifyIsolation, startInstance, envProblems, writeGitBlockers, main } from '../tools/stillhet-gate-instances.mjs';
 import { _resetForTests } from '../src/core/db.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 import { projectKey } from '../src/core/store.mjs';
@@ -229,6 +229,18 @@ test('PLAN-Gc owner decision 2: every clone in the copy pushes to HOME/outside (
   const wt = join(b.home, '.worca-cc', 'runs', 'r1', 'repos', 'proj');
   const r = spawnSync('git', ['-C', wt, 'push', 'origin', 'feat/x'], { encoding: 'utf8', env: buildInstanceEnv(b, GIT_ENV) });
   assert.notEqual(r.status, 0, 'git push from a copied worktree fails');
+  // an explicit push to GitHub by URL fails over every transport, without the network: ssh is blocked, the URL is rewritten
+  writeGitBlockers(b.home);
+  const env = buildInstanceEnv(b, GIT_ENV);
+  assert.deepEqual(envProblems(env, b.home), []);
+  for (const url of ['git@github.com:x/y.git', 'https://github.com/x/y.git', 'ssh://git@github.com/x/y.git']) {
+    const p = spawnSync('git', ['-C', wt, 'push', url, 'feat/x'], { encoding: 'utf8', env, timeout: 20000 });
+    assert.notEqual(p.status, 0, `git push ${url} fails`);
+    assert.match(p.stderr, /outside\/no-https/, `${url} was rewritten into HOME/outside: ${p.stderr}`);
+  }
+  const ssh = spawnSync('git', ['-C', wt, 'ls-remote', 'git@example.com:x/y.git'], { encoding: 'utf8', env, timeout: 20000 });
+  assert.notEqual(ssh.status, 0);
+  assert.match(ssh.stderr, /gate instance: ssh blocked/, 'any ssh transport hits the blocker');
   assert.equal(git(o.main, 'config', '--get-all', 'remote.origin.url'), 'git@github.com:owner/real.git', 'the real repo\'s remote is untouched');
   assert.throws(() => git(o.main, 'config', '--get', 'remote.origin.pushurl'), 'the real repo got no pushurl');
   assert.deepEqual(verifyIsolation(b.home), []);
@@ -256,7 +268,16 @@ test('PLAN-Gc safety net: the spawned server env carries no GitHub token or SSH 
   assert.equal(spawned.GH_CONFIG_DIR, join(a.home, '.config', 'gh'));
   assert.equal(spawned.GIT_CONFIG_GLOBAL, join(a.home, '.gitconfig'));
   assert.equal(spawned.GIT_CONFIG_NOSYSTEM, '1');
+  assert.equal(spawned.GIT_SSH_COMMAND, join(a.home, 'bin', 'no-ssh'));
+  assert.equal(spawned.GIT_SSH, join(a.home, 'bin', 'no-ssh'));
   assert.deepEqual(envProblems(spawned, a.home), []);
+  // a missing blocker is refused: env not set, script gone, insteadOf rules gone
+  assert.ok(envProblems({ ...spawned, GIT_SSH_COMMAND: undefined }, a.home).some((v) => v.includes('GIT_SSH_COMMAND')));
+  assert.ok(envProblems({ ...spawned, GIT_SSH: 'ssh' }, a.home).some((v) => v.includes('GIT_SSH ')));
+  execFileSync('git', ['config', '--file', spawned.GIT_CONFIG_GLOBAL, '--remove-section', `url.${join(a.home, 'outside', 'no-https')}/`]);
+  assert.ok(envProblems(spawned, a.home).some((v) => v.includes('insteadOf rule for git@github.com:')));
+  rmSync(join(a.home, 'bin', 'no-ssh'));
+  assert.ok(envProblems(spawned, a.home).some((v) => v.includes('ssh blocker') && v.includes('missing')));
   // the check itself refuses an env that still carries one
   assert.ok(envProblems({ ...spawned, GH_TOKEN: 'x' }, a.home).some((v) => v.includes('GH_TOKEN')));
   assert.ok(envProblems({ ...spawned, GH_CONFIG_DIR: '/owner/.config/gh' }, a.home).some((v) => v.includes('GH_CONFIG_DIR')));
