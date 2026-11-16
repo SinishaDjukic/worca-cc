@@ -9,7 +9,12 @@
     exact.map((e, i) => [e - Math.floor(e), i]).sort((a, b) => b[0] - a[0] || a[1] - b[1]).slice(0, Math.round(total - sum(out))).forEach(([, i]) => { out[i] += 1; });
     return out;
   }
-  const usd = (n) => `$${Math.round(n).toLocaleString('en-US')}`, usd2 = (n) => `$${n.toFixed(2)}`, pct = (n) => `${Math.round(n * 100)}%`;
+  // F-6-11: a minus (U+2212) before the currency, the same as the live map's; a value that rounds to zero is never signed
+  const signed = (r, text) => `${r < 0 ? '\u2212' : ''}$${text}`;
+  const usd = (n) => { const r = Math.round(n); return signed(r, Math.abs(r).toLocaleString('en-US')); };
+  const usd2 = (n) => { const r = Math.round(n * 100) / 100; return signed(r, Math.abs(r).toFixed(2)); };
+  const hoursWord = (n) => `${Math.round(n)} ${Math.round(n) === 1 ? 'hour' : 'hours'}`;
+  const pct = (n) => `${Math.round(n * 100)}%`;
   const plural = (n, w) => `${Math.round(n)} ${w}${Math.round(n) === 1 ? '' : 's'}`;
 
   // the dimensions of "by", grouped; a page offers those it has data for
@@ -254,9 +259,9 @@
   const SUM = ['bars', 'lines', 'running', 'table'], COUNT = ['bars', 'lines', 'table'], RATE = ['bars', 'lines', 'table'];
   const cmp = (c, sub, w = 'in the period before') => {
     if (c.p == null || !isFinite(c.p)) return '';
-    const up = c.v > c.p, near = !c.p || Math.abs(c.v - c.p) / c.p < 0.03;
+    const up = c.v > c.p, near = c.p > 0 ? Math.abs(c.v - c.p) / c.p < 0.03 : c.p === 0 && c.v === 0;
     if (near) return `About the same as ${sub.text(c.p)} ${w}`;
-    return sub.den ? `${up ? 'Up' : 'Down'} from ${sub.text(c.p)} ${w}` : `${up ? 'Up' : 'Down'} ${Math.abs(Math.round(((c.v - c.p) / c.p) * 100))}% from ${sub.text(c.p)} ${w}`;
+    return sub.den || c.p <= 0 ? `${up ? 'Up' : 'Down'} from ${sub.text(c.p)} ${w}` : `${up ? 'Up' : 'Down'} ${Math.abs(Math.round(((c.v - c.p) / c.p) * 100))}% from ${sub.text(c.p)} ${w}`;
   };
   const SUBS = [
     { id: 'spend', title: 'Spend', group: 'Cost', pace: 'On pace for $1,545, $545 over', icon: 'set-spending', noun: 'AI spend', src: money, num: 'spend', text: usd, forms: SUM, budget: 1000, cols: moneyCols(), share: 'spend',
@@ -272,7 +277,7 @@
       cols: [['Shaped runs', (r) => String(r.runs)], ['Shaped average cost', (r) => (r.runs ? usd2(r.usd / r.runs) : '-')], ['Unshaped average cost', (r) => (r.uruns ? usd2(r.uusd / r.uruns) : '-')], ['Shaped average time', (r) => (r.runs ? `${Math.round(r.mins / r.runs)} min` : '-')], ['Shaped review rounds', (r) => (r.runs ? (r.cycles / r.runs).toFixed(1) : '-')]],
       word: (c) => (c.T.runs ? `Shaped tasks cost ${usd2(c.T.usd / c.T.runs)} on average${c.T.uruns ? `, unshaped ${usd2(c.T.uusd / c.T.uruns)}` : ''}` : 'No shaped task finished'), why: (c) => `${plural(c.T.runs, 'shaped task')} and ${plural(c.T.uruns, 'unshaped task')}` },
     { id: 'time-saved', title: 'Time saved', group: 'Value', icon: 'hourglass', noun: 'money saved', src: money, num: 'saved', text: usd, forms: SUM, cols: moneyCols(), share: 'saved',
-      word: (c) => `${usd(c.v)} saved`, why: (c) => `About ${c.T.hours} hours of work` },
+      word: (c) => `${usd(c.v)} saved`, why: (c) => `About ${hoursWord(c.T.hours)} of work` },
     { id: 'value', title: 'Value for spend', group: 'Value', icon: 'sparkle', noun: 'saved for each dollar', src: money, num: 'saved', den: 'spend', text: (n) => `${n.toFixed(1)}×`, forms: RATE, cols: moneyCols(), share: 'spend',
       word: (c) => `${c.v.toFixed(1)}× what it cost`, why: (c) => `${usd(c.T.saved)} saved on ${usd(c.T.spend)} · ${usd2(c.T.spend / c.T.hours)} for each hour saved` },
     { id: 'ends', title: 'How tasks end', group: 'Quality', icon: 'page-ends', noun: 'finished tasks', src: ends, num: 'finished', text: (n) => plural(n, 'task'), forms: COUNT, share: 'finished', shareLabel: 'Share of finished',
