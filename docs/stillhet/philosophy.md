@@ -1,5 +1,29 @@
 # One rail: the philosophy
 
+Stillhet is calm and state-first: a page shows what is happening, then the one thing you can do about it, and stays
+quiet about everything else. This is how its parts fit together; the table below holds the rules themselves.
+
+- **The rail.** Every row on a page sits on one 20px line with one text edge beside it: a state mark, a step, a task
+  in a list. Nothing floats, so a page reads straight down.
+- **The state word.** What a thing is doing is said first, in a word and a colour that only ever mean a state. Normal
+  is plain ink. Colour is kept for what needs you: amber asks, red has stopped.
+- **The one action.** Each state offers one main button. Filled means something stopped and waits for you; the state's
+  own action is outlined in ink; every other control is a lighter outline or sits behind ⋯.
+- **Chat.** Work starts here and only here: you ask, Worca proposes, and a task or a schedule begins from its card.
+  Chat is the only place you type to Worca.
+- **The card.** A task in a chat is a card that answers two questions: what is its state, and what do I do now. It
+  holds the state, the stage train, one message and the vitals.
+- **The detail panel.** What you open to investigate (activity, changes, decisions, checks) opens beside the chat, only
+  when you ask for it.
+- **The places.** Tasks, Schedules, Workflows, Projects, Marketplace, Insights and Settings are views: each has a bar
+  that lists its things, a home that sums them up, and a page per thing. A row opens the thing's own page; the page
+  names its chat.
+- **Facts lead.** What you scan or choose is a labelled value or a control in a fixed place. A sentence is one short
+  supporting line, never the control. Nothing moves when a value changes.
+- **The library.** Every page is composed from the same components; a page never draws its own. What a page needs and
+  the library lacks is added to the library first, with its rule.
+
+
 | Rule | What | Why | Held by |
 |---|---|---|---|
 | `stillhet.one-rail` | Everything aligns to one 20px rail and one text edge | Nothing floats, so a page is read straight down | ds-check |
