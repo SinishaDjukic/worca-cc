@@ -1333,7 +1333,7 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
   box-shadow:0 0 0 18px color-mix(in srgb,var(--bg) 80%,transparent),0 0 0 40px color-mix(in srgb,var(--bg) 55%,transparent),0 0 0 66px color-mix(in srgb,var(--bg) 28%,transparent);}   /* ds-ok: the page's own colour at three strengths, the levels of the fade */
 .page-bg .chat-home-bg{position:absolute;inset:0;}
 body:has(#route-chat:not([hidden]) .has-detail) .page-bg{display:none;}   /* with the detail panel open the chat is off centre: no background, so no word sits on it */
-.detail-panel .dp-title:focus{outline:none;}   /* the panel's title takes the focus when it opens; a title is not a control */
+.detail-panel :is(.dp-title,[data-dp-title]):focus,.detail-panel :is(.dp-title,[data-dp-title]):focus-visible{outline:none;box-shadow:none;}   /* the panel's title takes the focus when it opens; a title is not a control */
 .chat-home > .chat-home-bg{display:none;}   /* a home has no background of its own: the page's one background, in its corners, is the same everywhere */
 @media (max-width: 1180px){ .page-bg{display:none;} }
 .stage-stream{display:flex;flex-direction:column;gap:8px;padding-top:10px;}

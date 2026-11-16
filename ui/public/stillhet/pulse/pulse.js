@@ -600,6 +600,11 @@ function limitsRows() {
 // Appearance holds the same theme and background (one value, two ways in). ----
 const KEY_TEXT = 'worca-stillhet.text';
 const TEXT_SIZES = [['small', 'Small'], ['default', 'Default'], ['large', 'Large']];
+// Task details (panel.detail-panel): where a task's stages, changes and decisions open from its card in a chat.
+const KEY_DETAILS = 'worca-stillhet.card-layout';
+const DETAILS = [['panel', 'Side panel'], ['card', 'Inside the card']];
+const readDetails = () => { try { return localStorage.getItem(KEY_DETAILS) === 'card' ? 'card' : 'panel'; } catch { return 'panel'; } };
+function setDetails(v) { try { if (v === 'card') localStorage.setItem(KEY_DETAILS, 'card'); else localStorage.removeItem(KEY_DETAILS); } catch { /* not kept */ } window.dispatchEvent(new Event('stillhet-settings')); }
 const readText = () => { try { const v = localStorage.getItem(KEY_TEXT) || ''; return v === 'small' || v === 'large' ? v : 'default'; } catch { return 'default'; } };
 function setText(v) {
   const h = document.documentElement;
@@ -613,9 +618,10 @@ function appearancePage() {
   const look = R.settingsRow({ name: 'Theme', note: 'Light, dark, or the same as this device', end: R.segmented({ label: 'Theme', hook: 'appearance', items: THEMES.map(([id, label]) => ({ id, label, pressed: appearance === id })) }) })
     + R.settingsRow({ name: 'Background', note: 'The two soft corners behind every page, and the away screen', end: rp('bg', 'Background', BACKGROUNDS.map(([id, text, help]) => ({ id, text, help })), bg, 'One family, built on the same dots') })
     + R.settingsRow({ name: 'Breathing background', note: 'The same picture, slowly brighter and quieter. Still when your system reduces motion', end: R.switchButton({ on: readBreathe(), label: 'Breathing background', attrs: { 'data-bg-breathes': '', 'data-key': 'look:breathes' } }) });
+  const details = R.settingsRow({ name: 'Task details', value: DETAILS.find(([id]) => id === readDetails())[1], note: 'Where a task\'s stages, changes, decisions and checks open from its card in a chat. The card itself stays short', end: R.segmented({ label: 'Task details', hook: 'taskdetails', items: DETAILS.map(([id, label]) => ({ id, label, pressed: readDetails() === id })) }) });
   const text = R.settingsRow({ name: 'Text size', note: 'Every text in Worca, one step smaller or larger', end: R.segmented({ label: 'Text size', hook: 'textsize', items: TEXT_SIZES.map(([id, label]) => ({ id, label, pressed: size === id })) }) });
   const motion = R.settingsRow({ name: 'Pulse icon', changed: ui.s.pulseFor !== PULSE_FOR_DEFAULT ? [{ name: 'Pulse icon', was: word(PULSE_FOR[0]) }] : [], note: 'Whether Pulse\'s icon moves when something new arrives', end: rp('pulseFor', 'Pulse icon', PULSE_FOR, ui.s.pulseFor, 'How long Pulse\'s icon moves when something new arrives') });
-  return R.settingsSection({ title: 'Look', rows: look }) + R.settingsSection({ title: 'Text', rows: text }) + R.settingsSection({ title: 'Motion', rows: motion });
+  return R.settingsSection({ title: 'Look', rows: look }) + R.settingsSection({ title: 'Text', rows: text }) + R.settingsSection({ title: 'Chat', rows: details }) + R.settingsSection({ title: 'Motion', rows: motion });
 }
 function settingsPage() {
   const id = sectionId();
@@ -1151,6 +1157,7 @@ document.addEventListener('click', (e) => {
   }
   if ((el = tg('[data-appearance]'))) { applyAppearance(el.dataset.appearance); render(); return; }
   if ((el = tg('[data-textsize]'))) { setText(el.dataset.textsize); render(); return; }
+  if ((el = tg('[data-taskdetails]'))) { setDetails(el.dataset.taskdetails); render(); return; }
   if ((el = tg('[data-details]'))) { ui.acct = false; ui.sub = ''; if (SHELL) { SHELL.closeDrawer(); SHELL.go('insights/spend'); } else toast(window.StillhetWould('open Statistics')); render(); return; }
   if (SHELL && (el = tg('[data-newrun]'))) { window.StillhetConversation?.start('task'); return; }
   if ((el = tg('[data-bg-pick]'))) { ui.bg = el.dataset.bgPick; setBg(ui.bg); render(); return; }
