@@ -22,7 +22,7 @@ test('fresh install: Loading the catalogue… while the first sync is held, and 
     new win.MutationObserver(() => { const t = win.document.getElementById('route-place')?.textContent || ''; if (t) draws.push(t); }).observe(win.document, { subtree: true, childList: true, characterData: true });
   } });
   assert.match(text(d), /Loading the catalogue…/);
-  assert.equal(d.querySelector('[data-mk-sync="worca-official"]')?.textContent.trim(), 'Syncing…');
+  assert.equal(d.querySelector('[data-mk-sync="worca-official"] .btn-busy-t')?.textContent.trim(), 'Syncing…');   // the redesign (comp.button-busy): the busy words show once
   assert.equal(d.querySelector('[data-mk-sync="worca-official"]').disabled, true);
   await go(w, '#marketplace/~all', 60);
   assert.match(text(d), /Loading the catalogue…/, 'a side view loads too');

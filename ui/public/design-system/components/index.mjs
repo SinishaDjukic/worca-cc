@@ -1,7 +1,8 @@
 // The Stillhet components (docs/stillhet/; docs/design-system-catalog.json names each one's
 // module). Build a page from these: a component brings its look, so a page sets no size, colour, corner or shadow.
 export { esc, attrs, cls, toElement } from './html.mjs';
-export { button, splitButton, busy } from './button.mjs';
+export { button, splitButton, busy, busyWord } from './button.mjs';
+export { diffView, parsePatch } from './diff-view.mjs';
 export { terminalPane } from './terminal-pane.mjs';
 export { compactMenu, menuItem, menuKeys, choiceMove, typeAhead, focusMenu, watchChoiceKeys } from './compact-menu.mjs';
 export { MAKERS, ENGINE_WORDS, makerOf, modelText, modelMakers, makerItems } from './model-makers.mjs';
@@ -63,7 +64,7 @@ export { selectionBar, selectAllBox, bindLongPress } from './selection-bar.mjs';
 export { barChart, lineChart, mixChart, figureRows, watchChart, diffWords } from './chart.mjs';
 export { heatGrid } from './heat-grid.mjs';
 export { sliderPick, rankList, pickRows, factsLine } from './question-forms.mjs';
-export { stageStep } from './kind-mark.mjs';
+export { stageStep, starterCard, starterGrid, taskAsks, proposalRows } from './kind-mark.mjs';
 export { runOutcomes, handedChip, expandFrame, markTone, alertLevel, kindMark, partsWord, gitMark, timeline, timelineCard, barHead, turnRow, composer, composerQueue, composerQueueButton, stageBar, cardHead, taskCard, taskProposal, changeProposal, turnDivider, planCard, filesCard, refChip, youTurn, stageLine, stagePart, thinkingRow, placeHead, pluginCard } from './kind-mark.mjs';
 export { turnTime, turnTimeText } from './turn-time.mjs';
 export { prose, loadProse } from './prose.mjs';

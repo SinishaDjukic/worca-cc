@@ -1,3 +1,5 @@
+// The demo answers a waiting action after a short moment, so a busy button is seen (act.busy). Tests leave it unset.
+window.StillhetDemoDelay = 450;
 // ui/public/stillhet/host-prototype.js — what differs in the prototype host (plans/stillhet/prototype/index.html). The
 // prototype is Stillhet, so the icon's menu reads on; `?stillhet=off` makes it read off, for the part comparison against dev's
 // page. Also fills the prototype's stamp and the tools panel's theme buttons, which only that page has.
