@@ -1,4 +1,4 @@
-// The shell's own pieces (docs/rail/components.md, panels.md, motion.md): the quiet offline line, a side column's frame,
+// The shell's own pieces (docs/stillhet/components.md, panels.md, motion.md): the quiet offline line, a side column's frame,
 // the away screensaver.
 import { attrs, cls, esc } from './html.mjs';
 import { button } from './button.mjs';
@@ -32,7 +32,7 @@ export const AWAY_IDLE_MS = 5 * 60 * 1000;
 export const awayShows = ({ away, keepAwake, focused, idleMs, reduced }) => !!(away && keepAwake && focused && !reduced && idleMs >= AWAY_IDLE_MS);
 
 /**
- * The away screensaver (docs/rail/motion.md's one exception): the wordmark and one line that says how things stand. The
+ * The away screensaver (docs/stillhet/motion.md's one exception): the wordmark and one line that says how things stand. The
  * page moves `.rl-away-mark` through --x and --y; any input hides it, and that input does not reach the page.
  * @param {object} o
  * @param {string} o.line

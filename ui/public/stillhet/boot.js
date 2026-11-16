@@ -1,5 +1,5 @@
 // ui/public/stillhet/boot.js — the one loader for Stillhet's classic scripts and stylesheets. The app shell
-// (shell.html, data-host="app") and the prototype page (plans/rail/prototype/index.html, data-host="prototype") both load
+// (shell.html, data-host="app") and the prototype page (plans/stillhet/prototype/index.html, data-host="prototype") both load
 // only this file, so the order lives here once. Scripts are injected with async = false, which keeps this order.
 (function () {
   var self = typeof document !== 'undefined' ? document.currentScript : null;
@@ -7,8 +7,8 @@
   var base = self ? self.src.replace(/boot\.js(\?.*)?$/, '') : '';
 
   var STYLES = {
-    app: ['/style.css', 'css/rail-look.css', 'css/rail.css', 'pulse/pulse.css', 'shell/shell.css'],
-    prototype: ['app.css', 'css/rail-look.css', 'css/rail.css', 'pulse/pulse.css', 'shell/shell.css', '../workflows/node-graph.css']
+    app: ['/style.css', 'css/stillhet-look.css', 'css/stillhet.css', 'pulse/pulse.css', 'shell/shell.css'],
+    prototype: ['app.css', 'css/stillhet-look.css', 'css/stillhet.css', 'pulse/pulse.css', 'shell/shell.css', '../workflows/node-graph.css']
   };
   var HEAD = ['components.js', 'graph.js'];
   var HOST_SCRIPTS = {

@@ -9,7 +9,7 @@ import { marked } from 'marked';
 import createDOMPurify from 'dompurify';
 import { prose, loadProse } from '../ui/public/design-system/components/index.mjs';
 
-const CSS = readFileSync(new URL('../ui/public/stillhet/css/rail.css', import.meta.url), 'utf8');
+const CSS = readFileSync(new URL('../ui/public/stillhet/css/stillhet.css', import.meta.url), 'utf8');
 const fresh = () => new JSDOM('<!doctype html><body></body>', { url: 'http://localhost/' }).window.document;
 const realLoad = () => Promise.resolve({ marked, createDOMPurify });
 async function ready(load = realLoad) {
@@ -82,17 +82,17 @@ test('Prose: javascript: links, script, img onerror, iframe and planted data-*/a
   assert.deepEqual([...empty.querySelectorAll('p')].map((p) => p.textContent), ['One.', 'Two.'], 'a dropped image leaves no empty paragraph');
 });
 
-test('Prose: a # heading is an h1, calm by rail.css (body size, 600); a scroll box has a 2px ink ring on focus', async () => {
+test('Prose: a # heading is an h1, calm by stillhet.css (body size, 600); a scroll box has a 2px ink ring on focus', async () => {
   const doc = await ready();
   assert.ok(el(doc, prose({ text: '# Title', doc })).querySelector('h1'));
-  const rule = (sel) => { const at = CSS.indexOf(`${sel}{`); assert.ok(at >= 0, `${sel} is in rail.css`); return CSS.slice(at, CSS.indexOf('}', at)); };
+  const rule = (sel) => { const at = CSS.indexOf(`${sel}{`); assert.ok(at >= 0, `${sel} is in stillhet.css`); return CSS.slice(at, CSS.indexOf('}', at)); };
   const h = rule('.prose :is(h1,h2,h3,h4,h5,h6)');
   assert.match(h, /font-size:inherit/); assert.match(h, /font-weight:600/);
   assert.match(rule('.prose :is(pre,.rt-wrap):focus-visible'), /outline:2px solid var\(--ink\)/);
   for (const box of ['.prose pre', '.prose .rt-wrap']) assert.match(rule(box), /overflow-wrap:normal/, `${box} overflows and scrolls, never breaks words mid-character (.convo-col sets anywhere)`);
 });
 
-test('Prose: a pipe table is the Rail Table in a focusable scroll box', async () => {
+test('Prose: a pipe table is the Stillhet Table in a focusable scroll box', async () => {
   const doc = await ready();
   const out = el(doc, prose({ text: '| a | b |\n|---|---|\n| 1 | 2 |', doc }));
   const wrap = out.querySelector('div.rt-wrap[tabindex="0"][aria-label="Table"]');

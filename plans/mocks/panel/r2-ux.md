@@ -25,7 +25,7 @@ Mock: `r2-ux.png` (from `r2-ux.html`, rendered 1440 wide with `r2-ux-shot.mjs`, 
 
 **New chat.** I keep the first-row `+ New chat ⌘N`, with a word, at the top of the list, which is where Marta looks. ⌘N and the home composer cover Dana. It is lit on Chat home, because the empty composer there is that new chat. The composer's attach + becomes a paperclip, so + means "new" in exactly one place. Tradeoff: the row costs one row of height; dropping the list sentence gives two back.
 
-## Changes to docs/rail
+## Changes to docs/stillhet
 
 - **SentencePicker, composer use:** values `--ink` 400, the repo 500, `·` separators, no per-value chevron, ChangedDot for changed values, each value a Tab stop. Effort names: quick, standard, thorough, deepest. The last value's menu holds workflow and base.
 - **ListSentence:** removed at rest. The list title takes a scope menu with counts and reads `Scope · project ✕` when narrowed. The `components.md` row "Narrowing a list" changes to match.

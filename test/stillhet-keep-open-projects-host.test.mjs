@@ -15,7 +15,7 @@ const pickMore = (d, v) => { page(d).querySelector('[data-menu="pj-more"]').clic
 /** Types `text` into the field as a person does, the caret left at 1. */
 const type = (w, el, text) => { el.focus(); el.value = text; el.dispatchEvent(new w.Event('input', { bubbles: true })); el.setSelectionRange(1, 1); };
 /** A live redraw of the page, then the watcher's microtask. */
-const redraw = async (w) => { w.RailPlaces.projects.redraw(); await settle(0); };
+const redraw = async (w) => { w.StillhetPlaces.projects.redraw(); await settle(0); };
 const kept = async (h, key) => {
   const before = field(h.d);
   assert.ok(before, 'the form is open');
@@ -31,14 +31,14 @@ const kept = async (h, key) => {
 
 test('F-6-01: Add by hand keeps its text, caret and focus through a live redraw', async () => {
   const h = await projectsHost();
-  h.w.RailPlaces.projects.newPick('hand-project'); await settle(100);
+  h.w.StillhetPlaces.projects.newPick('hand-project'); await settle(100);
   await kept(h, 'pj-hand:project:');
 });
 
 test('F-6-01 COV-1: a Several folders review name keeps its text, caret and focus through a live redraw', async () => {
   const dirs = { path: '/src', parent: '/', home: '/home/me', dirs: [{ name: 'a', path: '/src/a' }, { name: 'b', path: '/src/b' }] };
   const h = await projectsHost({ read: (u) => (u.startsWith('/api/fs/dirs') ? [200, dirs] : null) });
-  h.w.RailPlaces.projects.newPick('hand-project'); await settle(100);
+  h.w.StillhetPlaces.projects.newPick('hand-project'); await settle(100);
   page(h.d).querySelector('[data-pa-way="many"]').click(); await settle(60);
   page(h.d).querySelector('.card-form [data-form="hand"] [data-confirm="yes"]').click(); await settle(150);
   for (const p of ['/src/a', '/src/b']) { page(h.d).querySelector(`[data-fb-pick="${p}"]`).click(); await settle(30); }
@@ -57,7 +57,7 @@ test('F-6-01 COV-1: a Several folders review name keeps its text, caret and focu
 test('F-cov1-02: in Several folders… a tick keeps the focus on its row, so Escape asks before it drops the picks', async () => {
   const dirs = { path: '/src', parent: '/', home: '/home/me', dirs: [{ name: 'a', path: '/src/a' }, { name: 'b', path: '/src/b' }] };
   const h = await projectsHost({ read: (u) => (u.startsWith('/api/fs/dirs') ? [200, dirs] : null) });
-  h.w.RailPlaces.projects.newPick('hand-project'); await settle(100);
+  h.w.StillhetPlaces.projects.newPick('hand-project'); await settle(100);
   page(h.d).querySelector('[data-pa-way="many"]').click(); await settle(60);
   page(h.d).querySelector('.card-form [data-form="hand"] [data-confirm="yes"]').click(); await settle(150);
   for (const p of ['/src/a', '/src/b']) {
@@ -73,7 +73,7 @@ test('F-cov1-02: in Several folders… a tick keeps the focus on its row, so Esc
 
 test('F-6-01: Make a workspace keeps its text, caret and focus through a live redraw', async () => {
   const h = await projectsHost();
-  h.w.RailPlaces.projects.newPick('hand-space'); await settle(100);
+  h.w.StillhetPlaces.projects.newPick('hand-space'); await settle(100);
   await kept(h, 'pj-hand:space:');
 });
 
@@ -97,12 +97,12 @@ test('F-a4-02: Link a remote keeps its text, caret and focus through a live redr
 
 test('route change closes Add by hand: away to Chat and back, the form is gone, and reopening shows an empty field', async () => {
   const h = await projectsHost();
-  h.w.RailPlaces.projects.newPick('hand-project'); await settle(100);
+  h.w.StillhetPlaces.projects.newPick('hand-project'); await settle(100);
   type(h.w, field(h.d), 'abc');
   await go(h.w, '#chat', 80);
   await go(h.w, '#projects', 120);
   assert.equal(field(h.d), null, 'closed on the way out');
-  h.w.RailPlaces.projects.newPick('hand-project'); await settle(100);
+  h.w.StillhetPlaces.projects.newPick('hand-project'); await settle(100);
   assert.equal(field(h.d).value, '');
 });
 
@@ -112,9 +112,9 @@ const col = (d) => page(d).querySelector(':scope > .convo > .convo-scroll > .con
 /** One task of seed-ok's, in a chat of its own, whose state the test sets (`state.now`). */
 function seedTask(w) {
   const state = { now: 'working' };
-  const data = w.RailChats.data, stateOf = w.RunCardModel.stateOf;
+  const data = w.StillhetChats.data, stateOf = w.RunCardModel.stateOf;
   const chat = { id: 'c-b27', title: 'B2.7', project: 'seed-ok', tasks: [{ title: 'Ship the change', case: 'b27-case', detail: '' }] };
-  w.RailChats.data = () => { const x = data(); return { ...x, chats: [...x.chats, chat] }; };
+  w.StillhetChats.data = () => { const x = data(); return { ...x, chats: [...x.chats, chat] }; };
   w.RunCardModel.stateOf = (id) => (id === 'b27-case' ? state.now : stateOf(id));
   return state;
 }
@@ -152,7 +152,7 @@ test('B2.7 F-6-01: a redraw that changes one part (a task finishes: on-it and la
 
 test('B2.7 F-6-01: the home page\'s form field and card grid keep their nodes through an idle redraw; going home → project → home rebuilds the frame once', async () => {
   const h = await projectsHost();
-  h.w.RailPlaces.projects.newPick('hand-project'); await settle(100);
+  h.w.StillhetPlaces.projects.newPick('hand-project'); await settle(100);
   const f = field(h.d), grid = page(h.d).querySelector('.pg-grid'), cards = nodes(grid), home = col(h.d);
   assert.ok(grid, 'the card grid is drawn');
   await redraw(h.w);

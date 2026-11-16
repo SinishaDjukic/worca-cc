@@ -1,4 +1,4 @@
-// Keyboard shortcuts (docs/rail/keyboard.md): the one table of what a key does, the pure step from a key event's facts
+// Keyboard shortcuts (docs/stillhet/keyboard.md): the one table of what a key does, the pure step from a key event's facts
 // to an action, and the sheet drawn from the table. The page owns focus, rows and what an action does. Stands alone,
 // like run-state.mjs: the app's list-keys.mjs and keys-sheet.mjs are where this came from, and nothing imports them.
 import { esc, toElement } from './html.mjs';

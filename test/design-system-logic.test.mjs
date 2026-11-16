@@ -1,4 +1,4 @@
-// test/design-system-logic.test.mjs — the shared logic of a Rail page (docs/rail/logic.md): states, actions, the step
+// test/design-system-logic.test.mjs — the shared logic of a Stillhet page (docs/stillhet/logic.md): states, actions, the step
 // flow, where the work goes, interface modes. Written so Chat can use it: no DOM, no mock data.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -34,7 +34,7 @@ test('one main action per state; names fill from the run; every main step leads 
   }
 });
 
-// A step others see or that cannot be taken back confirms (docs/rail/actions.md act.confirm). An exception needs its reason here.
+// A step others see or that cannot be taken back confirms (docs/stillhet/actions.md act.confirm). An exception needs its reason here.
 const OTHERS_SEE = /^(Push|Publish|Apply to|Fix |Merge|Mark ready|Link remote|Discard|Archive|Stop|Cancel the rest|Re-plan|Delete|Continue|Update branch|Create|Raise)/;
 const NO_CONFIRM = {
   'Fix all': 'it rewrites a plan nobody else has seen yet; spending alone never confirms',
@@ -107,7 +107,7 @@ test('a step\'s state and time in words: isDone, subState, toMin, fmtMin', () =>
   assert.equal(R.toMin('1h 30m'), 90); assert.equal(R.fmtMin(90), '1h 30m'); assert.equal(R.fmtMin(0.5), '30s'); assert.equal(R.fmtMin(59.8), '1h');
 });
 
-test('makeAction and failureOf: an action as a state offers it; a failure in Rail\'s words', () => {
+test('makeAction and failureOf: an action as a state offers it; a failure in Stillhet\'s words', () => {
   assert.deepEqual(R.makeAction('Merge', 'pr', 1), { label: 'Merge', icon: 'pr', primary: true, items: [] });
   const f = R.failureOf('Merge PR', 'Checks failed.');
   assert.equal(f.title, 'Could not merge PR'); assert.equal(f.detail, 'Checks failed. Nothing changed.');

@@ -43,7 +43,7 @@ test('a failed task\'s What broke lists the same failing items as its card (R-ux
   assert.ok(broke, 'the What broke part');
   // one row per failure under its bold title (D9): the card's own items, without their marks
   const lines = [...broke.querySelectorAll('.rtab-ev-l')].map((e) => e.textContent);
-  assert.deepEqual(lines, w.RailTaskLive.detail('h3').why.map((l) => l.replace(/^✗ /, '')), 'the card\'s own items');
+  assert.deepEqual(lines, w.StillhetTaskLive.detail('h3').why.map((l) => l.replace(/^✗ /, '')), 'the card\'s own items');
   assert.deepEqual(lines, ['test/a.test.mjs: timeout', 'test/b.test.mjs: expected 2', 'test/c.test.mjs: ENOENT']);
 });
 
@@ -111,7 +111,7 @@ test('no task at all: the Tasks list says "No tasks yet." and Start a task hands
   const start = root.querySelector('[data-empty]');
   assert.equal(start?.textContent.trim(), 'Start a task');
   let started = '';
-  w.RailConversation.start = (kind) => { started = kind; };
+  w.StillhetConversation.start = (kind) => { started = kind; };
   start.click(); await settle(40);
   assert.equal(started, 'task');
 });
@@ -153,6 +153,6 @@ test('a store change while a dialog is open keeps the page\'s own state: the cap
   d.querySelector('#card [data-key="act-main"]').click(); await settle(20);
   const f = d.querySelector('#fd-value'); f.value = '$40'; f.dispatchEvent(new w.Event('input', { bubbles: true }));
   await settle(600);   // h2's checks land and the store redraws its rows meanwhile
-  assert.equal(w.RailWorld.find('h2').case, 'approved', 'the store did change');
+  assert.equal(w.StillhetWorld.find('h2').case, 'approved', 'the store did change');
   assert.equal(d.querySelector('#fd-value')?.value, '$40', 'the dialog is still open with what was typed');
 });

@@ -1,4 +1,4 @@
-// NotLiveRow (docs/rail/settings.md `set.not-live`): a Settings row, or a whole section, that is still sample data on a
+// NotLiveRow (docs/stillhet/settings.md `set.not-live`): a Settings row, or a whole section, that is still sample data on a
 // live Stillhet. It shows no value and holds nothing to click: a row is its name and the sentence (a SettingsRow), a section
 // all sample is one line (an EmptyState). The sentence lives here only; a page that needs the bare words (a disabled control's reason) reads NOT_LIVE_SENTENCE.
 import { esc } from './html.mjs';

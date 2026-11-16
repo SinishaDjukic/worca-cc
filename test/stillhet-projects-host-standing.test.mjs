@@ -64,11 +64,11 @@ test('F-6-15: metrics and policy are facts with links', async () => {
 });
 
 // the mode is the library's one store (levels.mjs prefs), shared by every host in this process: a test that changes it puts it back
-const atMode = (t, w, mode) => { const was = w.RailUI.prefs.mode(); t.after(() => w.RailUI.prefs.setMode(was)); w.RailUI.prefs.setMode(mode); };
+const atMode = (t, w, mode) => { const was = w.StillhetUI.prefs.mode(); t.after(() => w.StillhetUI.prefs.setMode(was)); w.StillhetUI.prefs.setMode(mode); };
 
 test('F-6-15: metrics and policy are hidden below Expert; readiness stays', async (t) => {
   const h = await projectsHost({ hash: `#projects/${KEYS.ok}` });
-  atMode(t, h.w, 'advanced'); h.w.RailPlaces.projects.redraw(); await settle(30);
+  atMode(t, h.w, 'advanced'); h.w.StillhetPlaces.projects.redraw(); await settle(30);
   assert.equal(row(h.d, 'Metrics'), null);
   assert.equal(row(h.d, 'Policy'), null);
   assert.equal(sentence(h.d, 'Readiness'), 'Partly ready · 2 must fix, 3 should fix');
@@ -121,14 +121,14 @@ test('D11: coming back to the same project from another place reads its facts ag
   await go(h.w, `#projects/${KEYS.ok}`, 150);
   assert.deepEqual(reads(), [2, 2], 'read again on the way back');
   assert.ok(policy() > policyAway, 'its policy is read again too');
-  h.w.RailPlaces.projects.redraw(); await settle(60);
+  h.w.StillhetPlaces.projects.redraw(); await settle(60);
   assert.deepEqual(reads(), [2, 2], 'a redraw on the same address does not read');
 });
 
 test('F-6-15 demo: readiness and last run first', async (t) => {
   const w = stillhetHost({ hash: '#projects/billing-api', after: (fn) => t.after(fn) });
   await settle(150);
-  atMode(t, w, 'expert'); w.RailPlaces.projects.redraw(); await settle(30);
+  atMode(t, w, 'expert'); w.StillhetPlaces.projects.redraw(); await settle(30);
   const d = w.document;
   const stands = section(d, 'How it stands');
   assert.ok(stands);

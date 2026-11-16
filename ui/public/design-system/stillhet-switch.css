@@ -1,5 +1,5 @@
-/* StillhetSwitch (docs/rail/navigation.md `nav.design-switch`): the Stillhet icon in the top bar and its 2-row menu. Today's
-   app loads neither rail.css nor shell.css, so the part carries its box, its menu's place and the choice row's check here,
+/* StillhetSwitch (docs/stillhet/navigation.md `nav.design-switch`): the Stillhet icon in the top bar and its 2-row menu. Today's
+   app loads neither stillhet.css nor shell.css, so the part carries its box, its menu's place and the choice row's check here,
    scoped to its slot. The same values as shell.css gives its neighbours (#topnav-ask, .pz-pulse-b). */
 [data-stillhet="design-switch"]{display:inline-flex;align-items:center;flex:none;}
 [data-stillhet="design-switch"] .rc-pop{position:relative;display:inline-flex;}

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // tools/stillhet-wiring.mjs — lists every prototype action and every seeded figure of ui/public/stillhet/, and reports the ones
-// with no row in plans/rail/stillhet-wiring.md ("Action rows" and "Figure rows", keyed by the id in the first column).
-//   action  `module › phrase`: each window.RailWould(...) call (the phrase with every ${…} read as …), each RailAdapter.act('id')
+// with no row in plans/stillhet/stillhet-wiring.md ("Action rows" and "Figure rows", keyed by the id in the first column).
+//   action  `module › phrase`: each window.StillhetWould(...) call (the phrase with every ${…} read as …), each StillhetAdapter.act('id')
 //           call, and each key of demo/demo-actions.js but `would`; plus `design-system/components/run-state.mjs › phrase`
 //           for each `would` phrase of the library's run-state flow (its {names} kept)
 //   figure  `model file › key`: each data key (not a function) of the globals a model file sets, loaded in a node:vm sandbox, and
@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const SRC = path.join(ROOT, 'ui/public/stillhet');
-export const WIRING = path.join(ROOT, 'plans/rail/stillhet-wiring.md');
+export const WIRING = path.join(ROOT, 'plans/stillhet/stillhet-wiring.md');
 const GENERATED = /\/(components|graph)\.js$/;
 const SKIP = /\/(adapter|demo-actions)\.js$/;   // the seam itself: it answers the calls, it holds no action
 
@@ -51,10 +51,10 @@ function readLiteral(src, i) {
   return [out, j + 1];
 }
 
-/** The phrase of each RailWould call in a source text. */
+/** The phrase of each StillhetWould call in a source text. */
 export function phrasesOf(src) {
   const out = [];
-  for (const m of src.matchAll(/RailWould\(\s*/g)) {
+  for (const m of src.matchAll(/StillhetWould\(\s*/g)) {
     const at = m.index + m[0].length;
     if (!/['"`]/.test(src[at])) { out.push('(a phrase built from data)'); continue; }
     let [text, end] = readLiteral(src, at);
@@ -67,7 +67,7 @@ export function phrasesOf(src) {
 const walk = (d) => readdirSync(d).flatMap((n) => { const p = path.join(d, n); return statSync(p).isDirectory() ? walk(p) : [p]; });
 
 // The library's run-state flow: each `would` phrase is an action the library cannot take, answered by the host (the app's
-// refusal until its area wires it), so it needs a row like a RailWould call. Read from the source, its {names} kept.
+// refusal until its area wires it), so it needs a row like a StillhetWould call. Read from the source, its {names} kept.
 const RUN_STATE = path.join(ROOT, 'ui/public/design-system/components/run-state.mjs');
 const RUN_STATE_ID = 'design-system/components/run-state.mjs';
 export function wouldPhrasesOf(src) {
@@ -81,12 +81,12 @@ export function actionIds(src = SRC, runState = RUN_STATE) {
     const text = readFileSync(f, 'utf8'), mod = path.relative(src, f).split(path.sep).join('/');
     if (mod === 'demo/demo-actions.js') {
       const sb = { window: {} }; vm.runInNewContext(text, sb);
-      for (const k of Object.keys(sb.window.RailDemoActions || {})) if (k !== 'would') ids.add(`${mod} › ${k}`);
+      for (const k of Object.keys(sb.window.StillhetDemoActions || {})) if (k !== 'would') ids.add(`${mod} › ${k}`);
       continue;
     }
     if (SKIP.test(f)) continue;
     for (const p of phrasesOf(text)) ids.add(`${mod} › ${p}`);
-    for (const m of text.matchAll(/RailAdapter\.act\(\s*['"]([^'"]+)['"]/g)) ids.add(`${mod} › ${m[1]}`);
+    for (const m of text.matchAll(/StillhetAdapter\.act\(\s*['"]([^'"]+)['"]/g)) ids.add(`${mod} › ${m[1]}`);
   }
   for (const p of wouldPhrasesOf(readFileSync(runState, 'utf8'))) ids.add(`${RUN_STATE_ID} › ${p}`);
   return [...ids].sort();
@@ -95,7 +95,7 @@ export function actionIds(src = SRC, runState = RUN_STATE) {
 /** Every seeded figure id: each data key of the globals the model files set, then NAMED_FIGURES. */
 export async function figureIds(src = SRC) {
   const R = await import(new URL('../ui/public/design-system/components/index.mjs', import.meta.url));
-  const win = { RailUI: { ...R }, RailWould: (p) => p, location: { search: '', hash: '' }, addEventListener() {} };
+  const win = { StillhetUI: { ...R }, StillhetWould: (p) => p, location: { search: '', hash: '' }, addEventListener() {} };
   const ctx = vm.createContext({ window: win, location: win.location, URLSearchParams, setTimeout, console,
     document: { addEventListener() {}, querySelector: () => null, documentElement: { dataset: {} } }, localStorage: { getItem: () => null, setItem() {} } });
   const ids = [];

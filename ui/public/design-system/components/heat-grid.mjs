@@ -1,7 +1,7 @@
-// HeatGrid (docs/rail/look.md › look.heat-grid, slice 10 D14): the team heat grid, Insights' Who spends where.
+// HeatGrid (docs/stillhet/look.md › look.heat-grid, slice 10 D14): the team heat grid, Insights' Who spends where.
 import { attrs, esc } from './html.mjs';
 /**
- * HeatGrid (docs/rail/look.md › look.heat-grid): who spends where. People down the side, the top values of one dimension
+ * HeatGrid (docs/stillhet/look.md › look.heat-grid): who spends where. People down the side, the top values of one dimension
  * across, each cell a person's part of a column in ink shades scaled to the largest cell (never a hue). Each cell says
  * its value on hover and focus; a table under it says the same to a screen reader. The cells open nothing.
  * @param {object} o

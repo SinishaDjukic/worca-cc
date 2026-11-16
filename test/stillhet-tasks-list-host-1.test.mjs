@@ -85,10 +85,10 @@ test('a live row\'s Stop asks first, then posts /api/stop with its run id', asyn
 test('a refused row action says Could not ACTION: REASON and moves nothing', async () => {
   const { w, d, calls } = await liveHost({ sources: sources(), write: () => [409, { error: 'a terminal still has the worktree open' }] });
   await go(w, '#runs', 150);
-  const before = JSON.stringify(w.RailWorld.data());
+  const before = JSON.stringify(w.StillhetWorld.data());
   await rowPick(w, d, 'h3', 'archive');
   assert.equal(toastText(d), 'Could not archive the tasks: a terminal still has the worktree open');
-  assert.equal(JSON.stringify(w.RailWorld.data()), before);
+  assert.equal(JSON.stringify(w.StillhetWorld.data()), before);
   assert.equal(sent(calls).length, 1);
 });
 
@@ -127,7 +127,7 @@ test('+ › Legacy approach › New task… posts /api/run with the project fold
   const s = sources();
   const { w, d, calls } = await liveHost({ sources: s, write: (u) => (u === '/api/run' ? [200, { runId: 'r-new' }] : [200, {}]) });
   await go(w, '#runs', 120);
-  w.RailCenters.maker('tasks')?.newPick?.('form'); await settle(40);
+  w.StillhetCenters.maker('tasks')?.newPick?.('form'); await settle(40);
   const t = d.querySelector('#cc-text'); t.value = 'Add a pager'; t.dispatchEvent(new w.Event('input', { bubbles: true }));
   d.querySelector('#center-dlg [data-c-more]').click(); await settle(20);
   const ti = d.querySelector('#cc-title'); ti.value = 'Pager'; ti.dispatchEvent(new w.Event('input', { bubbles: true }));

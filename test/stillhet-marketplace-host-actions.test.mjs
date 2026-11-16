@@ -1,6 +1,6 @@
 // test/stillhet-marketplace-host-actions.test.mjs — Stillhet's Marketplace actions in the live kind (slice 8 D8–D14): each
 // sends dev's route with its body, shows its working label disabled while it is pending (`hold`), and a refusal toasts
-// `Could not …` with the card unchanged. No RailWould phrase runs live.
+// `Could not …` with the card unchanged. No StillhetWould phrase runs live.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { marketplaceHost, MK_LISTS, SHA, preview, settle, go, saidText, closeHosts } from './helpers/stillhet-marketplace-host.mjs';
@@ -8,8 +8,8 @@ import { marketplaceHost, MK_LISTS, SHA, preview, settle, go, saidText, closeHos
 afterEach(closeHosts);
 const sent = (calls) => calls.filter((c) => c.method !== 'GET').map((c) => [c.method, c.url, c.body]);
 const gate = () => { let open; const p = new Promise((r) => { open = r; }); return { p, open }; };
-// every RailWould phrase asked for: none may be, live
-const noWould = (win) => { const orig = win.RailWould; win.__would = []; win.RailWould = (ph) => { win.__would.push(ph); return orig(ph); }; };
+// every StillhetWould phrase asked for: none may be, live
+const noWould = (win) => { const orig = win.StillhetWould; win.__would = []; win.StillhetWould = (ph) => { win.__would.push(ph); return orig(ph); }; };
 async function host(o = {}) { const h = await marketplaceHost({ ...o, beforeScripts: (w) => { o.beforeScripts?.(w); } }); noWould(h.w); return h; }
 const card = (d, id) => d.querySelector(`[data-mk-card="${id}"]`);
 

@@ -9,7 +9,7 @@ import { createDotOrbs, ORB_PHASES } from '../../dot-orb.mjs';
  * @param {object} [o]
  * @param {'rest'|'think'|'tool'|'write'} [o.phase]
  * @param {number} [o.size]
- * @param {boolean} [o.w]   Worca's W facing you, lit while the sphere turns under it (on in Rail)
+ * @param {boolean} [o.w]   Worca's W facing you, lit while the sphere turns under it (on in Stillhet)
  */
 export function orbMark({ phase = 'think', size = 18, w = true } = {}) {
   const p = ORB_PHASES[phase] ? phase : 'rest';

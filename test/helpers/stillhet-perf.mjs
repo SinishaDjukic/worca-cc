@@ -1,4 +1,4 @@
-// test/helpers/stillhet-perf.mjs — B2.4 C1 (plans/rail/test-results/PLAN.md §3C, D19): the performance budgets' harness.
+// test/helpers/stillhet-perf.mjs — B2.4 C1 (plans/stillhet/test-results/PLAN.md §3C, D19): the performance budgets' harness.
 // The ratchet (readBudgets, checkBudget), the fixtures (longThread, tasksScaleSources) and a live Stillhet host on virtual
 // time: setInterval is a registry that runs only when the clock advances, Date.now, a no-argument new Date() and
 // performance.now read that clock and requestAnimationFrame is a manual queue. setTimeout stays real, so boot, fetch and
@@ -69,8 +69,8 @@ export async function perfHost({ hash = '#chat', sources = SOURCES, thread = THR
   } });
   const { w, d, sockets, calls } = h;
   const paints = [];
-  const orig = w.RailUI.patchKeyed;
-  w.RailUI.patchKeyed = (c, items, opt) => { const r = orig(c, items, opt); paints.push(c); return r; };
+  const orig = w.StillhetUI.patchKeyed;
+  w.StillhetUI.patchKeyed = (c, items, opt) => { const r = orig(c, items, opt); paints.push(c); return r; };
   /** Runs the animation frames asked for so far (one frame: what they ask for runs at the next). */
   const frame = () => { const l = [...raf.values()]; raf.clear(); for (const f of l) f(now); };
   const pending = () => raf.size;
@@ -110,7 +110,7 @@ export async function perfHost({ hash = '#chat', sources = SOURCES, thread = THR
   const convoPaints = () => paints.filter((c) => c.matches('#route-chat .convo-col')).length;
   await go(w, hash);
   const id = hash.startsWith('#chat/') ? hash.split('/')[1] : '';   // a chat's first read has landed and is drawn
-  for (let k = 0; id && k < 100 && !(w.RailChatLive?.state?.(id) === 'ready' && d.querySelector('#route-chat .convo-col')?.children.length > 3); k++) { frame(); await settle(20); }
+  for (let k = 0; id && k < 100 && !(w.StillhetChatLive?.state?.(id) === 'ready' && d.querySelector('#route-chat .convo-col')?.children.length > 3); k++) { frame(); await settle(20); }
   await settleAll();
   return { ...h, clock, frame, pending, settleAll, send, convoPaints };
 }
@@ -146,14 +146,14 @@ export function countMutations(w, root, exclusions = []) {
 }
 
 /**
- * Pulse's shell renders (D4): renderInShell patches #rail-pulse-slot with RailUI.patchParts once a call (B2.7 D8), so a
+ * Pulse's shell renders (D4): renderInShell patches #stillhet-pulse-slot with StillhetUI.patchParts once a call (B2.7 D8), so a
  * render is counted even when it writes nothing. `stop()` puts the original back.
  */
 export function shellRenders(w) {
   let n = 0;
-  const orig = w.RailUI.patchParts, slot = w.document.getElementById('rail-pulse-slot');
-  w.RailUI.patchParts = (c, parts, opt) => { if (c === slot) n++; return orig(c, parts, opt); };
-  return { stop() { w.RailUI.patchParts = orig; return n; } };
+  const orig = w.StillhetUI.patchParts, slot = w.document.getElementById('stillhet-pulse-slot');
+  w.StillhetUI.patchParts = (c, parts, opt) => { if (c === slot) n++; return orig(c, parts, opt); };
+  return { stop() { w.StillhetUI.patchParts = orig; return n; } };
 }
 
 const TURN = '[data-anchor], [data-words-turn], [data-fold-turn], [data-think-at]';

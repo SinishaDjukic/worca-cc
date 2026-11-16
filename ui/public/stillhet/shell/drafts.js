@@ -1,10 +1,10 @@
-// ui/public/stillhet/shell/drafts.js — the one drafts store (docs/rail/philosophy.md rail.drafts, Schedules D6). What you
+// ui/public/stillhet/shell/drafts.js — the one drafts store (docs/stillhet/philosophy.md stillhet.drafts, Schedules D6). What you
 // change by hand is a draft until you save it: per thing (`kind:id`, e.g. `schedule:sch_1`) the fields you changed and how
-// many, kept in localStorage `worca-rail.drafts`, so leaving and coming back keeps it. A field set back to its saved value
+// many, kept in localStorage `worca-stillhet.drafts`, so leaving and coming back keeps it. A field set back to its saved value
 // leaves the draft; a draft with no change left is gone. Nothing here talks to Worca: Save is the page's (schedule-live.mjs).
-// window.RailDrafts = { get, touch, changes, discard, all, onChange }.
+// window.StillhetDrafts = { get, touch, changes, discard, all, onChange }.
 (function () {
-  var KEY = 'worca-rail.drafts';
+  var KEY = 'worca-stillhet.drafts';
   function make(storage) {
     var listeners = [];
     function read() {
@@ -34,6 +34,6 @@
     };
     return api;
   }
-  if (typeof window !== 'undefined') { var s = null; try { s = window.localStorage; } catch (e) { s = null; } window.RailDrafts = make(s); }
+  if (typeof window !== 'undefined') { var s = null; try { s = window.localStorage; } catch (e) { s = null; } window.StillhetDrafts = make(s); }
   if (typeof module !== 'undefined' && module.exports) module.exports = { make: make, KEY: KEY };   // test/stillhet-drafts.test.mjs
 })();

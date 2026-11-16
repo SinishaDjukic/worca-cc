@@ -12,7 +12,7 @@ import * as C from '../ui/public/design-system/components/index.mjs';
 
 afterEach(closeHosts);
 // the tint is read while it breathes: Settings › Notifications "until you act on it" keeps it on
-const attnFor = (win) => { win.RailAttnFor = 'act'; };
+const attnFor = (win) => { win.StillhetAttnFor = 'act'; };
 const chat = (d) => d.querySelector('#route-chat');
 const count = (el, re) => (el.textContent.match(re) || []).length;
 const prHost = (checks, row = {}) => liveHost({ sources: savedRun({ status: 'done', pr: { url: PR_URL, state: 'OPEN' }, ...row }), beforeScripts: attnFor, read: (u) => (u.startsWith('/api/pr/checks?id=pa') ? (typeof checks === 'function' ? checks() : [200, checks]) : null) });
@@ -37,7 +37,7 @@ test('the demo kind\'s plan chat shows one Approve and build (the act arm of bel
   // a demo task held at its plan (act, the pencil) with an ask under it: the ask speaks for it, the card offers no
   // second Approve and build
   const w2 = stillhetHost({ hash: '#chat', after: (fn) => t.after(fn) });
-  const t1 = w2.RailChats.data().chats.find((c) => c.id === 'c1').tasks.find((t) => t.id === 't1');
+  const t1 = w2.StillhetChats.data().chats.find((c) => c.id === 'c1').tasks.find((t) => t.id === 't1');
   t1.case = 'plan';
   w2.location.hash = '#chat/c1';
   w2.dispatchEvent(new w2.HashChangeEvent('hashchange'));

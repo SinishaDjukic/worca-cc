@@ -11,7 +11,7 @@ Mock: `r1-ux.png` (from `r1-ux.html`), today next to the proposal for the compos
    The bold weight already says "this is a value", so the chevron says it a second time.
 3. **Defaults speak as loudly as choices.** `Default` workflow, `origin · latest` and `open a PR` say "as always". Three
    of seven values carry no information, yet they weigh as much as `billing-api`, the one value you must check.
-   This breaks `rail.quiet`.
+   This breaks `stillhet.quiet`.
 4. **Connectors make it longer, not clearer.** `on … with … on … from … then` adds five words, and `on` appears twice.
    Model and effort are two pickers (`Opus 5.5 ⌄ high ⌄`) for what is one choice.
 5. **Line count.** At body size the sentence wraps to two lines in the composer. In the sidebar, `Showing all from all
@@ -32,7 +32,7 @@ Mock: `r1-ux.png` (from `r1-ux.html`), today next to the proposal for the compos
 - **Size and weight:** the sentence is Meta (12/400). Connectors are `--ink-3` and values `--ink-2`. Only the mode word
   (`Task`) is 13/500 `--ink`, because it is the one choice that changes what Send does.
 - **No chevrons.** A value carries a 1px dotted underline in a line tone, which shows it opens. Hover and focus fill it
-  with `--hover` (as `.spick-b` does today), without reflow, so `rail.still` holds. Keys stay the same (toggleMenu).
+  with `--hover` (as `.spick-b` does today), without reflow, so `stillhet.still` holds. Keys stay the same (toggleMenu).
 - **Defaults fold into one word.** Clauses at their default collapse into a trailing picker, **as usual**. It opens a
   CompactMenu of divided rows (Workflow · Default, From · origin · latest, Then · open a PR). Change one and it
   leaves the fold and joins the sentence with its own connector (`…, then push only`). The result is
@@ -67,7 +67,7 @@ at all, and Task is still a mode you pick.
 - Dotted underlines are a new affordance. It is one tone and one pixel, but it has to be the only way the DS marks a
   word as pickable.
 
-## What changes in docs/rail
+## What changes in docs/stillhet
 
 - `components.md` › SentencePicker: Meta 12/400, values `--ink-2` with a dotted underline, no chevron. A changed value is
   `--ink`/500. Defaults fold into **as usual**. Remove "each choice with its count" from the visible sentence (counts

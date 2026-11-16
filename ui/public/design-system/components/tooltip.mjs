@@ -1,4 +1,4 @@
-// Tooltip (docs/rail/small-rules.md): help lives in tooltips, so they appear quickly and read well: on hover, on keyboard
+// Tooltip (docs/stillhet/small-rules.md): help lives in tooltips, so they appear quickly and read well: on hover, on keyboard
 // focus, and on a long-press on touch. A page keeps writing `title`; this draws it, and the browser's own never shows.
 const SHOW_MS = 180, TOUCH_MS = 450, TOUCH_STAY_MS = 1800, GAP = 6, EDGE = 8;
 const seen = new WeakSet();
@@ -49,7 +49,7 @@ export function doubleTips(root) {
     const up = el.parentElement;
     if (up && has(up, 'title') && up.children.length === 1) sources.push('wrapper-title');
     if ([...el.querySelectorAll('[title]')].some((c) => has(c, 'title'))) sources.push('child-title');
-    if ((el.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean).some((id) => byId(id)?.matches('[role="tooltip"], .rail-tip'))) sources.push('describedby');
+    if ((el.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean).some((id) => byId(id)?.matches('[role="tooltip"], .stillhet-tip'))) sources.push('describedby');
     if (el.hasAttribute('data-tip')) sources.push('data-tip');
     if (sources.length >= 2) out.push({ el, sources });
   }
@@ -70,7 +70,7 @@ export function watchTooltips(doc) {
     // a menu open over the page owns the moment: nothing outside it shows a tooltip, its own trigger least of all (it would cover the first item)
     if (doc.querySelector('[role="menu"]') && !el.closest('[role="menu"]')) { hide(); return; }
     if (el.closest('[aria-expanded="true"]')) { hide(); return; }   // a trigger whose own popup is open (Pulse, a picker): the popup speaks for it
-    tip = doc.createElement('div'); tip.className = 'rail-tip'; tip.setAttribute('role', 'tooltip'); tip.textContent = el.dataset.tipText;
+    tip = doc.createElement('div'); tip.className = 'stillhet-tip'; tip.setAttribute('role', 'tooltip'); tip.textContent = el.dataset.tipText;
     doc.body.append(tip);
     // a menu's item: past every menu open beside it (the profile menu and its side menu), never over the next option
     const boxes = el.closest('[role="menu"]') ? [...doc.querySelectorAll('[role="menu"]')].map((m) => m.getBoundingClientRect()).filter((b) => b.width) : [];

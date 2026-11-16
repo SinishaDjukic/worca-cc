@@ -1,10 +1,10 @@
-// Insights on Rail (Wave 3): one feature; its bar holds its sub-features, grouped. Every page says the answer in a sentence
+// Insights on Stillhet (Wave 3): one feature; its bar holds its sub-features, grouped. Every page says the answer in a sentence
 // (the PlaceHead), draws one chart (bars unless you ask otherwise, look.chart-play), says what it shows in one sentence of
 // pickers, lists breakdown rows that open their tasks and ends with the composer. The numbers come from insights-model.js.
 (function () {
-  const R = window.RailUI, M = window.RailInsightsModel;
+  const R = window.StillhetUI, M = window.StillhetInsightsModel;
   const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const say = (t, undo) => window.RailPulse?.say(t, undo);
+  const say = (t, undo) => window.StillhetPulse?.say(t, undo);
   const AS = { bars: 'bars', lines: 'lines', running: 'running total', table: 'table' };
   const AGAINST = { none: 'no comparison', before: 'the period before', budget: 'the budget' };
   const HINT = 'Drag across to narrow';
@@ -14,14 +14,14 @@
   const states = {};
   const unchecked = new Set();   // live: a state from a link or a saved view, checked once against the data it reads (ledger row 3)
   let arg = 'spend', menu = '', bar = null, page = null, seq = 3, back = '', applied = '', retry = null, taskId = '', focusRow = '';   // taskId: a teammate's task, read only (#1310 D2)
-  // the live kind (slice 10 D9): every read goes through RailInsightsLive (live/insights-live.mjs); the demo's seed otherwise
-  const isLive = () => window.RailAdapter?.kind === 'live';
-  const LIVE = () => (isLive() ? window.RailInsightsLive || null : null);
+  // the live kind (slice 10 D9): every read goes through StillhetInsightsLive (live/insights-live.mjs); the demo's seed otherwise
+  const isLive = () => window.StillhetAdapter?.kind === 'live';
+  const LIVE = () => (isLive() ? window.StillhetInsightsLive || null : null);
   const viewList = () => (isLive() ? LIVE()?.views() || [] : views);   // D18: live, the views this browser keeps
   // D11, D12: live, a page is in the bar, search and has only while dev has its figure (no budget, no tag key: not yet)
   const offered = (s) => !isLive() || LIVE()?.offered(s.id) === true;
   const pathOf = (a) => String(a || '').split('?')[0];
-  const DRAGGED = 'worca-rail.insights-dragged';
+  const DRAGGED = 'worca-stillhet.insights-dragged';
   let dragged = false;   // the hint is quiet once you have narrowed a chart
   try { dragged = localStorage.getItem(DRAGGED) === '1'; } catch { /* remembering is a nicety */ }
   const team = () => R.shows('expert');
@@ -167,12 +167,12 @@
     return R.barChart({ label, bars, current: cur, play: true, hint, caption, limit: paceLine, parts });
   }
   // ---- the rows ----
-  // what Tasks can narrow to from a row or a bar (RailRunsList.filter): a project, a stretch of time, how they ended; null when it cannot
+  // what Tasks can narrow to from a row or a bar (StillhetRunsList.filter): a project, a stretch of time, how they ended; null when it cannot
   const SHOW_OF = { Finished: 'finished' };
   const isDates = (label) => /^(Jul|Aug|Sep|Oct|Nov)( \d+(-\d+)?)?$/.test(label);
   const rangeOf = M.rangeOf;
   // this chart's stretch, when it is not the plain month: a drag, or another period, travels with the click
-  const md = (iso) => +iso.slice(5, 7) * 100 + +iso.slice(8, 10);   // RailRunsList.filter's range: month and day
+  const md = (iso) => +iso.slice(5, 7) * 100 + +iso.slice(8, 10);   // StillhetRunsList.filter's range: month and day
   const within = (c) => {
     if (c.live) return c.st.from || !['this month', 'all time'].includes(c.st.when) ? (c.src.days.length ? { range: { from: md(c.src.days[0]), to: md(c.src.last[c.src.last.length - 1]), label: c.timeWord } } : {}) : {};
     const range = M.rangeIn(c.labels, c.st); return range ? { range } : {};
@@ -191,10 +191,10 @@
   const cellsOf = (sub, c, r) => [...(sub.noShare ? [] : [r.share ?? `${r.sharePct}%`]), ...sub.cols.map(([, get]) => get(r, c))];   // live: dev's formatShare
   const columns = (sub) => [...(sub.noShare ? [] : [{ label: sub.shareLabel || 'Share' }]), ...sub.cols.map(([label], i) => ({ label, narrow: i < (sub.noShare ? 2 : 1) }))];
   // #1310: on By person a person's row opens their work in place (list.row-opens-in-place), one at a time
-  const personRows = (c) => c.sub.id === 'team' && c.st.by === 'person' && !!window.RailInsightsWork;
+  const personRows = (c) => c.sub.id === 'team' && c.st.by === 'person' && !!window.StillhetInsightsWork;
   const isPerson = (c, r, parent) => personRows(c) && !parent && !r.other && !r.kind && r.name !== 'Other' && !/^No /.test(r.name);
   function rowsHtml(sub, c) {
-    const opens = (r, i) => { const open = c.st.open === r.name; return { id: `in-work-${i}`, open, label: `${r.name}'s work`, ...(open ? window.RailInsightsWork.detail(c, r.name, c.st, c.st.shown || window.RailInsightsWork.FIRST) : {}) }; };
+    const opens = (r, i) => { const open = c.st.open === r.name; return { id: `in-work-${i}`, open, label: `${r.name}'s work`, ...(open ? window.StillhetInsightsWork.detail(c, r.name, c.st, c.st.shown || window.StillhetInsightsWork.FIRST) : {}) }; };
     const rowOf = (r, parent, s, i) => {
       if (isPerson(c, r, parent)) return { name: r.name, cells: cellsOf(sub, c, r), sub: s, opens: opens(r, i), attrs: { 'data-in-person': r.name, title: `Shows ${r.name}'s work` } };
       const f = r.other || r.kind ? null : tasksOf(c, c.st, r.name, parent); return { name: r.name, cells: cellsOf(sub, c, r), sub: s, quiet: /^No /.test(r.name) || r.name === 'Other' || !!r.other || !!r.kind, attrs: f ? { 'data-in-row': JSON.stringify(f), title: `Opens Tasks, narrowed to ${parent ? `${parent}, ` : ''}${r.name}` } : { disabled: true, title: c.sub.team ? "The whole team's numbers: Tasks lists your own" : sub.closed || `Tasks narrow by project, time or status, not by ${byWord(c.st)}` } };
@@ -220,7 +220,7 @@
   // the live kind's list states (D8): loading, failed with Try again, and the team pages' empty state
   function listStateHtml(sub, r) {
     const state = r.state === 'loading' ? 'loading' : r.state === 'failed' ? 'failed' : 'empty';
-    return `<div class="rail-locked">${R.placeHead({ center: { label: 'Insights', to: 'insights' }, title: sub.title })}${R.listState({ state, noun: sub.noun, title: r.state === 'failed' ? `Could not load ${sub.title}: ${r.text}` : '', text: r.text || '', retry: r.state === 'failed' ? { 'data-in-retry': '' } : null })}</div>`;
+    return `<div class="stillhet-locked">${R.placeHead({ center: { label: 'Insights', to: 'insights' }, title: sub.title })}${R.listState({ state, noun: sub.noun, title: r.state === 'failed' ? `Could not load ${sub.title}: ${r.text}` : '', text: r.text || '', retry: r.state === 'failed' ? { 'data-in-retry': '' } : null })}</div>`;
   }
   // live: the page's live sub (the design's SUB with dev's figures); a state its source lacks falls back to the defaults
   function liveSub(sub, st) {
@@ -250,23 +250,23 @@
       if (r.state !== 'ready') { retry = r.retry || null; bar.innerHTML = barHtml(); page.innerHTML = listStateHtml(sub, r); return; }
       sub = r.sub;
     } else {   // the demo kind opens the same list states from the address (?state=loading, failed; empty on a team page)
-      const ls = window.RailDemoState?.list;
+      const ls = window.StillhetDemoState?.list;
       if (ls === 'loading' || ls === 'failed' || (ls === 'empty' && sub.team)) { bar.innerHTML = barHtml(); page.innerHTML = listStateHtml(sub, { state: ls, text: ls === 'empty' ? TEAM_EMPTY : ls === 'failed' ? 'Worca is not answering' : '' }); return; }
     }
     if (simple()) { if (st.by === 'workspace') st.by = 'project'; if (st.then === 'workspace') st.then = ''; st.filter = st.filter.filter((k) => !k.startsWith('workspace:')); }
     if (st.as === 'lines' && noLines(sub, st)) st.as = 'bars';
     if (st.by !== 'person') st.open = null;   // I6: the open row closes when "by" leaves person
     const c = M.compute(sub, st);
-    if (taskId && sub.id === 'team' && window.RailInsightsWork) { bar.innerHTML = barHtml(); page.innerHTML = window.RailInsightsWork.task(c, taskId, st, st.open || ''); page.querySelector('[data-in-back]')?.focus({ preventScroll: true }); return; }
+    if (taskId && sub.id === 'team' && window.StillhetInsightsWork) { bar.innerHTML = barHtml(); page.innerHTML = window.StillhetInsightsWork.task(c, taskId, st, st.open || ''); page.querySelector('[data-in-back]')?.focus({ preventScroll: true }); return; }
     const had = keyOf(document.activeElement);
     const scroll = page.querySelector('.convo-scroll')?.scrollTop || 0, draft = page.querySelector('#in-dock [data-composer-t]')?.value || '';
     bar.innerHTML = barHtml();
     page.innerHTML = pageHtml(sub, st, c);
-    window.RailConversation?.dock(document.getElementById('in-dock'), { kind: 'question', title: sub.title, chat: '' });
+    window.StillhetConversation?.dock(document.getElementById('in-dock'), { kind: 'question', title: sub.title, chat: '' });
     const scroller = page.querySelector('.convo-scroll'); if (scroller) scroller.scrollTop = scroll;
     const box = page.querySelector('#in-dock [data-composer-t]'); if (box && draft) box.value = draft;
     R.watchChart(page.querySelector('[data-chart]'), {
-      open: (i) => { const f = targetOf(sub, st, c, i); if (f) window.RailRunsList.filter(f); },
+      open: (i) => { const f = targetOf(sub, st, c, i); if (f) window.StillhetRunsList.filter(f); },
       narrow: axisIsRows(sub, st) ? undefined : (a, b) => { if (c.live) { st.from = c.src.days[a]; st.to = c.src.last[b]; } else { const base = st.narrow ? st.narrow[0] : 0; st.narrow = [base + a, base + b]; }   /* live: a re-read over the dragged days (D7) */ menu = ''; dragged = true; try { localStorage.setItem(DRAGGED, '1'); } catch { /* remembering is a nicety */ } draw(); },
     });
     if (back) { page.querySelector(`[data-menu="${back}"]`)?.focus({ preventScroll: true }); back = ''; }
@@ -286,7 +286,7 @@
   function closeWork(st) { const name = st.open; st.open = null; st.shown = 0; focusRow = name || ''; draw(); }
   function choose(id, v) {
     const sub = subOf(arg), st = stateOf();
-    if (id === 'in-what') { menu = ''; if (v !== sub.id) window.RailShell.go(`insights/${v}`); else draw(); return; }
+    if (id === 'in-what') { menu = ''; if (v !== sub.id) window.StillhetShell.go(`insights/${v}`); else draw(); return; }
     if (id === 'in-by') {
       if (v === '+then') { st.then = st.then || dimsNow(sub, st).find((d) => d !== st.by && !M.TIME.has(d)) || ''; menu = 'in-then'; draw(); return; }
       st.by = v; if (st.then === v) st.then = '';
@@ -362,7 +362,7 @@
   }
   function wire(b, pg) {
     bar = b; page = pg;
-    bar.addEventListener('click', (e) => { if (!here()) return; const hit = e.target.closest('[data-in-go]'); if (hit) window.RailShell.go(`insights/${hit.dataset.inGo}`); });
+    bar.addEventListener('click', (e) => { if (!here()) return; const hit = e.target.closest('[data-in-go]'); if (hit) window.StillhetShell.go(`insights/${hit.dataset.inGo}`); });
     page.addEventListener('click', (e) => {
       if (!here()) return;   /* another place's page is showing */
       const on = (q) => e.target.closest(q); let hit;
@@ -372,29 +372,29 @@
       const shown = isLive() ? liveSub(sub, st).sub || sub : sub;
       if (on('[data-in-csv]')) { csv(shown, st); return; }
       if (on('[data-in-save]')) { save(shown, st); return; }
-      if (on('[data-in-try]')) { window.RailConversation?.handOver({ project: 'web-app', about: { kind: 'Project', name: 'web-app' }, ph: "Try Opus 5.5 for web-app's coding step?" }); return; }
-      if (on('[data-in-ask]')) { window.RailConversation?.handOver({ project: 'web-app', about: { kind: 'Project', name: 'web-app' }, ph: 'Why does review send web-app back so often?' }); return; }
-      if ((hit = on('[data-in-tag]'))) { window.RailConversation?.handOver({ about: { kind: 'Insights', name: [sub.title, st.filter.length ? `of ${filterWord(st, shown)}` : '', M.compute(shown, st).timeWord].filter(Boolean).join(', ') }, ph: `How should the ${hit.dataset.inTag} tasks without a client be tagged?` }); return; }
+      if (on('[data-in-try]')) { window.StillhetConversation?.handOver({ project: 'web-app', about: { kind: 'Project', name: 'web-app' }, ph: "Try Opus 5.5 for web-app's coding step?" }); return; }
+      if (on('[data-in-ask]')) { window.StillhetConversation?.handOver({ project: 'web-app', about: { kind: 'Project', name: 'web-app' }, ph: 'Why does review send web-app back so often?' }); return; }
+      if ((hit = on('[data-in-tag]'))) { window.StillhetConversation?.handOver({ about: { kind: 'Insights', name: [sub.title, st.filter.length ? `of ${filterWord(st, shown)}` : '', M.compute(shown, st).timeWord].filter(Boolean).join(', ') }, ph: `How should the ${hit.dataset.inTag} tasks without a client be tagged?` }); return; }
       if (on('[data-in-default]')) {
-        const top = topUntagged(shown, st), p = isLive() ? (window.RailProjects?.all() || []).find((x) => (x.name || x.id) === top) : { id: top };
+        const top = topUntagged(shown, st), p = isLive() ? (window.StillhetProjects?.all() || []).find((x) => (x.name || x.id) === top) : { id: top };
         if (!top || !p) return;
-        window.RailProjects.editTags(p.id); say(`${top} has the most untagged tasks`); return;
+        window.StillhetProjects.editTags(p.id); say(`${top} has the most untagged tasks`); return;
       }
-      if ((hit = on('[data-in-row]'))) { window.RailRunsList.filter(JSON.parse(hit.dataset.inRow)); return; }
+      if ((hit = on('[data-in-row]'))) { window.StillhetRunsList.filter(JSON.parse(hit.dataset.inRow)); return; }
       // #1310: a person's work, in place
       if ((hit = on('[data-in-person]'))) { const name = hit.dataset.inPerson; st.open = st.open === name ? null : name; st.shown = 0; focusRow = name; draw(); return; }
       if (on('[data-fr-hide]')) { closeWork(st); return; }
-      if (on('[data-in-more]')) { st.shown = Infinity; draw(); page.querySelectorAll('.fr-detail .tt-open')[window.RailInsightsWork.FIRST]?.focus({ preventScroll: true }); return; }
+      if (on('[data-in-more]')) { st.shown = Infinity; draw(); page.querySelectorAll('.fr-detail .tt-open')[window.StillhetInsightsWork.FIRST]?.focus({ preventScroll: true }); return; }
       if (on('[data-in-work-retry]')) { LIVE()?.retryWork(); draw(); return; }
-      if (on('[data-in-back]')) { focusRow = st.open || ''; window.RailShell.go('insights/team'); return; }
-      if ((hit = on('[data-in-work]'))) { const own = hit.dataset.inOwn; window.RailShell.go(own ? `run/${own}` : `insights/team?task=${encodeURIComponent(hit.dataset.inWork)}`); return; }   // D3: yours opens your task; a teammate's, read only
+      if (on('[data-in-back]')) { focusRow = st.open || ''; window.StillhetShell.go('insights/team'); return; }
+      if ((hit = on('[data-in-work]'))) { const own = hit.dataset.inOwn; window.StillhetShell.go(own ? `run/${own}` : `insights/team?task=${encodeURIComponent(hit.dataset.inWork)}`); return; }   // D3: yours opens your task; a teammate's, read only
       if ((hit = on('[data-in-work-url]'))) { window.open(hit.dataset.inWorkUrl, '_blank', 'noopener'); return; }   // work outside Worca: its pull request
       if ((hit = on('[data-in-pr]'))) { say(`Opens ${hit.dataset.inPr} at its host`); return; }   // D13: the demo's PRs have no host
       if ((hit = on('[data-pick]'))) { const t = hit.dataset.pick, at = t.indexOf('|'); choose(t.slice(0, at), t.slice(at + 1)); return; }
       if ((hit = on('[data-menu-pick]'))) { menu = ''; if (hit.dataset.menuPick === 'in-more|link') copyLink(shown, st); draw(); return; }
       if ((hit = on('[data-menu]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); }
     });
-    // Esc in the open row: a mark's card first (D8), then the detail itself, focus back on the row (docs/rail/keyboard.md)
+    // Esc in the open row: a mark's card first (D8), then the detail itself, focus back on the row (docs/stillhet/keyboard.md)
     page.addEventListener('keydown', (e) => {
       if (!here() || e.key !== 'Escape' || !e.target.closest('.fr-detail')) return;
       const lane = e.target.closest('.tt-end') && e.target.closest('.tt-lane');
@@ -406,11 +406,11 @@
     page.addEventListener('focusout', cardBack); page.addEventListener('mouseout', cardBack);
     R.dismissOnOutside(document, { open: () => here() && !!menu, inside: '#route-place .spick, #route-place .rc-pop, #route-place .pz-pick', back: () => null, close: () => { menu = ''; }, paint: draw });
   }
-  window.RailPlaces = window.RailPlaces || {};
-  window.RailPlaces.insights = {
+  window.StillhetPlaces = window.StillhetPlaces || {};
+  window.StillhetPlaces.insights = {
     sample: 'spend',
     redraw: () => draw(),
-    spendOf: (project) => { Object.assign(stateOf('spend'), { filter: [`project:${project}`], narrow: null, when: 'this month', from: null, to: null, custom: false }); window.RailShell.go('insights/spend'); },   // a project's $ this month opens Spend narrowed to it, this month
+    spendOf: (project) => { Object.assign(stateOf('spend'), { filter: [`project:${project}`], narrow: null, when: 'this month', from: null, to: null, custom: false }); window.StillhetShell.go('insights/spend'); },   // a project's $ this month opens Spend narrowed to it, this month
     search: (q) => [...M.SUBS.filter((s) => (!s.team || team()) && offered(s)).map((s) => ({ label: s.title, where: `Insights · ${barGroup(s)}`, hash: `insights/${s.id}` })), ...viewList().map((v) => ({ label: v.name, where: 'Insights · Your views', hash: `insights/${v.id}` }))].filter((x) => x.label.toLowerCase().includes(q)),
     // a link carries its state after `?` (act.copy-link); live, a page dev has no figure for is not found (D12)
     has: (a0) => {

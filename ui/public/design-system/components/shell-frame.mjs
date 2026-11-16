@@ -1,4 +1,4 @@
-// The shell's frame (docs/rail/navigation.md, docs/rail/narrow.md): the sidebar and the top bar with their named slots.
+// The shell's frame (docs/stillhet/navigation.md, docs/stillhet/narrow.md): the sidebar and the top bar with their named slots.
 // Their ids and classes are the names the Stillhet stylesheets address; the library defines them here.
 import { attrs, esc } from './html.mjs';
 import { icon } from './icons.mjs';

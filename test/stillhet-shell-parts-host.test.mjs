@@ -1,4 +1,4 @@
-// test/stillhet-shell-parts-host.test.mjs — B2.7 (docs/rail/components.md `comp.patch-parts`): renderInShell patches
+// test/stillhet-shell-parts-host.test.mjs — B2.7 (docs/stillhet/components.md `comp.patch-parts`): renderInShell patches
 // #app and the shell's slots by part, so a redraw that changes nothing writes nothing (F-a1-02), an open Pulse popover
 // keeps its nodes when another layer opens (F-a4-02), and a focused control in it keeps its node (F-a4-10). The live
 // Stillhet host on virtual time (test/helpers/stillhet-perf.mjs), so no timer redraws behind the test's back.
@@ -9,7 +9,7 @@ import { perfHost } from './helpers/stillhet-perf.mjs';
 
 afterEach(() => closeHosts());
 const app = (d) => d.getElementById('app');
-const SLOTS = { '#app': '#app', '#rail-pulse-slot': '#rail-pulse-slot', '#side-foot': '#side-foot', '#rail-strip': '#rail-strip', 'nav dots': '#nav-chat-unread, #topnav-ask-dot' };
+const SLOTS = { '#app': '#app', '#stillhet-pulse-slot': '#stillhet-pulse-slot', '#side-foot': '#side-foot', '#stillhet-strip': '#stillhet-strip', 'nav dots': '#nav-chat-unread, #topnav-ask-dot' };
 /** The slot a mutation record belongs to, or 'title' for <title>, or '' for none of the shell's. */
 function slotOf(r) {
   const el = r.target.nodeType === 1 ? r.target : r.target.parentElement;
@@ -30,21 +30,21 @@ async function perSlot(h, fn) {
 }
 /** The Pulse popover open and drawn a second time, so its opening fade (is-in) is gone. */
 async function openPop(h) {
-  h.w.RailPulse.open('updates');
-  h.w.RailPulse.refresh();
+  h.w.StillhetPulse.open('updates');
+  h.w.StillhetPulse.refresh();
   await h.settleAll();
   const pop = app(h.d).querySelector('.pz-popover');
   assert.ok(pop, 'the popover is open');
   return pop;
 }
 
-test('B2.7 probe F-a1-02: a no-change redraw (RailPulse.refresh()) on chat, tasks and projects mutates no shell slot', async () => {
+test('B2.7 probe F-a1-02: a no-change redraw (StillhetPulse.refresh()) on chat, tasks and projects mutates no shell slot', async () => {
   const h = await perfHost({ hash: '#chat' });
   const seen = {};
   for (const hash of ['#chat', '#runs', '#projects']) {
     await go(h.w, hash); await h.settleAll();
-    h.w.RailPulse.refresh(); await h.settleAll();   // whatever the route's first draw left, drawn once more
-    seen[hash] = await perSlot(h, async () => { h.w.RailPulse.refresh(); h.w.RailPulse.refresh(); await h.settleAll(); });
+    h.w.StillhetPulse.refresh(); await h.settleAll();   // whatever the route's first draw left, drawn once more
+    seen[hash] = await perSlot(h, async () => { h.w.StillhetPulse.refresh(); h.w.StillhetPulse.refresh(); await h.settleAll(); });
   }
   assert.deepEqual(seen, { '#chat': {}, '#runs': {}, '#projects': {} }, `mutation records per slot: ${JSON.stringify(seen)}`);
 });
@@ -52,7 +52,7 @@ test('B2.7 probe F-a1-02: a no-change redraw (RailPulse.refresh()) on chat, task
 test('B2.7 F-a4-02: with the Pulse popover open, a session dialog adds its part and keeps the popover\'s nodes (same .pz-popover object)', async () => {
   const h = await perfHost({ hash: '#chat' });
   const pop = await openPop(h);
-  h.w.RailPulse.session(true); await h.settleAll();
+  h.w.StillhetPulse.session(true); await h.settleAll();
   assert.ok(app(h.d).querySelector('#pz-sess-t'), 'the session dialog is drawn');
   assert.equal(app(h.d).querySelector('.pz-popover'), pop, 'the popover kept its node');
   assert.equal(pop.isConnected, true);
@@ -62,7 +62,7 @@ test('B2.7 F-a4-02: with the popover open, an idle redraw replaces nothing in #a
   const h = await perfHost({ hash: '#chat' });
   await openPop(h);
   const before = [...app(h.d).childNodes];
-  const recs = await perSlot(h, async () => { h.w.RailPulse.refresh(); await h.settleAll(); });
+  const recs = await perSlot(h, async () => { h.w.StillhetPulse.refresh(); await h.settleAll(); });
   assert.deepEqual([...app(h.d).childNodes], before);
   assert.equal(recs['#app'] || 0, 0, `#app records: ${recs['#app']}`);
 });
@@ -76,7 +76,7 @@ test('B2.7 F-a4-10: a focused control in an #app part keeps the same node and fo
   assert.ok(tab, 'the popover has its tabs');
   tab.focus();
   const others = [...pop.querySelectorAll('*')];
-  h.w.RailPulse.session(true); await h.settleAll();
+  h.w.StillhetPulse.session(true); await h.settleAll();
   assert.equal(pop.querySelector('[data-ptab]'), tab, 'the same node');
   assert.equal(h.d.activeElement, tab, 'still focused');
   assert.deepEqual([...pop.querySelectorAll('*')], others, 'nothing in the popover was rebuilt');
@@ -85,10 +85,10 @@ test('B2.7 F-a4-10: a focused control in an #app part keeps the same node and fo
 test('B2.7: closing a part removes only its nodes; the order popover → new run → account → session matches today\'s concatenation', async () => {
   const h = await perfHost({ hash: '#chat' });
   // the strings renderInShell hands #app, as they come: today's way is #app.innerHTML = their concatenation
-  let drawn = null; const patchParts = h.w.RailUI.patchParts;
-  h.w.RailUI.patchParts = (el, parts, o) => { if (el.id === 'app') drawn = { ...parts }; return patchParts(el, parts, o); };
+  let drawn = null; const patchParts = h.w.StillhetUI.patchParts;
+  h.w.StillhetUI.patchParts = (el, parts, o) => { if (el.id === 'app') drawn = { ...parts }; return patchParts(el, parts, o); };
   const pop = await openPop(h);
-  h.w.RailPulse.session(true); await h.settleAll();
+  h.w.StillhetPulse.session(true); await h.settleAll();
   const sess = app(h.d).querySelector('#pz-sess-t')?.closest('#app > *');
   const parts = [...app(h.d).children];
   assert.deepEqual(parts.map((e) => e === pop ? 'popover' : e === sess ? 'session' : '?'), ['popover', 'session'], 'popover before session');
@@ -101,7 +101,7 @@ test('B2.7: closing a part removes only its nodes; the order popover → new run
   const want = fresh.innerHTML; fresh.remove();
   assert.ok(fresh.querySelector('.pz-popover') && fresh.querySelector('#pz-sess-t'), 'the expectation holds both parts');
   assert.equal(app(h.d).innerHTML, want);
-  h.w.RailPulse.session(false); await h.settleAll();
+  h.w.StillhetPulse.session(false); await h.settleAll();
   assert.equal(app(h.d).querySelector('#pz-sess-t'), null, 'the session part is gone');
   assert.deepEqual([...app(h.d).children], [pop], 'only the popover is left, the same node');
   // the account menu, then the new-run form, each drawn alone, read as their own strings
@@ -110,18 +110,18 @@ test('B2.7: closing a part removes only its nodes; the order popover → new run
   assert.equal(app(h.d).querySelector('.pz-popover'), null, 'opening it closed the popover');
 });
 
-test('B2.7 F-a1-02: a redraw where the Pulse button changes (the popover opens) replaces #rail-pulse-slot\'s button and leaves #side-foot and #rail-strip nodes identical', async () => {
+test('B2.7 F-a1-02: a redraw where the Pulse button changes (the popover opens) replaces #stillhet-pulse-slot\'s button and leaves #side-foot and #stillhet-strip nodes identical', async () => {
   const h = await perfHost({ hash: '#chat' });
-  h.w.RailPulse.refresh(); await h.settleAll();
-  const slot = h.d.getElementById('rail-pulse-slot'), btn = slot.firstElementChild;
-  const foot = [...h.d.getElementById('side-foot').childNodes], strip = [...h.d.getElementById('rail-strip').childNodes];
+  h.w.StillhetPulse.refresh(); await h.settleAll();
+  const slot = h.d.getElementById('stillhet-pulse-slot'), btn = slot.firstElementChild;
+  const foot = [...h.d.getElementById('side-foot').childNodes], strip = [...h.d.getElementById('stillhet-strip').childNodes];
   const was = slot.innerHTML;
-  h.w.RailPulse.say('A note');   // a toast: Pulse's words do not change
-  h.w.RailPulse.refresh(); await h.settleAll();
+  h.w.StillhetPulse.say('A note');   // a toast: Pulse's words do not change
+  h.w.StillhetPulse.refresh(); await h.settleAll();
   assert.equal(slot.firstElementChild, btn, 'an unchanged button keeps its node');
-  h.w.RailPulse.open('updates'); await h.settleAll();   // aria-expanded flips: the button's string changes
+  h.w.StillhetPulse.open('updates'); await h.settleAll();   // aria-expanded flips: the button's string changes
   assert.notEqual(slot.innerHTML, was);
   assert.notEqual(slot.firstElementChild, btn, 'the changed button is replaced');
   assert.deepEqual([...h.d.getElementById('side-foot').childNodes], foot);
-  assert.deepEqual([...h.d.getElementById('rail-strip').childNodes], strip);
+  assert.deepEqual([...h.d.getElementById('stillhet-strip').childNodes], strip);
 });

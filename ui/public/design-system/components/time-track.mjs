@@ -1,4 +1,4 @@
-// TimeTrack (docs/rail/look.md › look.time-track): a person's tasks on a day axis taken from the page's own range. Each
+// TimeTrack (docs/stillhet/look.md › look.time-track): a person's tasks on a day axis taken from the page's own range. Each
 // row is one task: its button opens the task; its lane draws the work as a solid ink span (first run to last), the wait
 // for review as a dashed tail, and ends in a GitMark at the PR's time, the row's one second target (it opens the PR).
 // No hue: state colour comes from the KindMark and the GitMark.

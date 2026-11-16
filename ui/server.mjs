@@ -2231,9 +2231,9 @@ async function pinUiLevel() {
   if (!shell.includes(INDEX_THEME_ANCHOR)) throw new Error(`ui/public/index.html lost its theme anchor ${INDEX_THEME_ANCHOR}`);
   if (!shell.includes(FLAG_GATES_ANCHOR)) throw new Error(`ui/public/index.html lost its flag-gates anchor ${FLAG_GATES_ANCHOR}`);
 }
-async function sendIndex(res) {   // with `rail` on: Stillhet's shell (src/core/stillhet-shell.mjs)
+async function sendIndex(res) {   // with `stillhet` on: Stillhet's shell (src/core/stillhet-shell.mjs)
   let html;
-  try { html = allFlags().rail ? await stillhetShellHtml(PUBLIC_DIR, storedTheme(), effectiveUiLevel(), gitAvailable(), { railLocked: !!listFlags().find((f) => f.key === 'rail')?.locked }) : renderIndexHtml(readIndexHtml(PUBLIC_DIR), storedTheme(), effectiveUiLevel(), allFlags(), { git: gitAvailable() }); }
+  try { html = allFlags().stillhet ? await stillhetShellHtml(PUBLIC_DIR, storedTheme(), effectiveUiLevel(), gitAvailable(), { stillhetLocked: !!listFlags().find((f) => f.key === 'stillhet')?.locked }) : renderIndexHtml(readIndexHtml(PUBLIC_DIR), storedTheme(), effectiveUiLevel(), allFlags(), { git: gitAvailable() }); }
   catch (err) { return res.status(500).json({ error: err && err.message ? err.message : 'shell unavailable' }); }
   res.set('Content-Type', 'text/html; charset=utf-8');
   res.set('Cache-Control', 'no-store');

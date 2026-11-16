@@ -8,7 +8,7 @@ import { makeRecord } from './fixtures/team-metrics/records.mjs';
 
 const win = {};
 vm.runInNewContext(readFileSync('ui/public/stillhet/insights/insights-model.js', 'utf8'), { window: win });
-const M = win.RailInsightsModel;
+const M = win.StillhetInsightsModel;
 const NOW = new Date(2026, 10, 14, 12).getTime();
 const B = [new Date(2026, 10, 1).getTime(), new Date(2026, 10, 2).getTime()];
 const fact = (id, o) => ({ id, person: 'Maya', project: 'billing-api', workflow: 'Default', status: 'finished', pr: null, tags: {}, usd: 2, hours: 1, inCohort: true, startedMs: B[0] + 1, hourBucket: 0, spend: [[0, 2]], ...o });

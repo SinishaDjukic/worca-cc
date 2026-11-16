@@ -27,7 +27,7 @@ export async function pcHost({ on = true, sources = SOURCES, ask = null, hash = 
     return (ask && (await ask(url, body, method))) || chatWrite(url, body, method);
   };
   const h = await liveHost({ sources: src, write, hash, beforeScripts: (win) => { win.__worcaTestHooks = { promptCheckTimers: timers }; }, ...rest });
-  h.w.RailConversation.importPromptCheck = () => import('../../ui/public/stillhet/chat/prompt-check.mjs');
+  h.w.StillhetConversation.importPromptCheck = () => import('../../ui/public/stillhet/chat/prompt-check.mjs');
   const where = rest.where || '#route-chat';
   const q = (sel) => h.d.querySelector(`${where} ${sel}`);
   const box = () => q('[data-composer-t]');
@@ -48,7 +48,7 @@ export async function pcHost({ on = true, sources = SOURCES, ask = null, hash = 
     src.settings.chat.promptCheck = v;
     h.sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'settings-changed' }) });
     await settle(400);
-    h.w.dispatchEvent(new h.w.Event('rail-settings'));
+    h.w.dispatchEvent(new h.w.Event('stillhet-settings'));
     await settle(10);
   };
   return { ...h, src, timers, held, q, box, type, quiet, grades, pcCalls, graded, setOn };

@@ -1,4 +1,4 @@
-// Models by who makes them (docs/rail/components.md comp.menu-sub): the model picker lists makers first, each maker's models
+// Models by who makes them (docs/stillhet/components.md comp.menu-sub): the model picker lists makers first, each maker's models
 // in its sub-menu. A row's maker comes from its own id, label and engine; a row off its maker's own engine names its engine.
 // Shared logic: no DOM, no fetch.
 

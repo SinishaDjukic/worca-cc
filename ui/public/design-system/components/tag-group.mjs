@@ -1,4 +1,4 @@
-// TagGroup and ListEditor (docs/rail/components.md): labels and cost tags on one line, one button opens one editor. What
+// TagGroup and ListEditor (docs/stillhet/components.md): labels and cost tags on one line, one button opens one editor. What
 // does not fit folds into +N; a page measures after each render with fitTags. No colour; removing is in the editor.
 import { esc, attrs, cls } from './html.mjs';
 import { icon } from './icons.mjs';

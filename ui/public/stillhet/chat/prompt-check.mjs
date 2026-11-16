@@ -1,5 +1,5 @@
 // ui/public/stillhet/chat/prompt-check.mjs — the prompt check chip's state in Stillhet's composer (docs/prompt-check.md,
-// "The chip"; docs/rail/panels.md panel.chat-composer). Dev's own logic, never dev's screen: dev's grader
+// "The chip"; docs/stillhet/panels.md panel.chat-composer). Dev's own logic, never dev's screen: dev's grader
 // (prompt-check/grader.mjs) and Improve view (prompt-check/improve-view.mjs) behind one state the composer draws with the
 // library (SentencePicker, Chip, Button). conversation.js loads it with import() the first time the setting is on and the
 // draft is not empty. One controller per surface: the composer re-keys it when its chat, its surface kind or forceTask

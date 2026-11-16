@@ -1,4 +1,4 @@
-// Table (docs/rail/components.md): the same figures across many rows. Divided rows, tabular figures, no box per row, the
+// Table (docs/stillhet/components.md): the same figures across many rows. Divided rows, tabular figures, no box per row, the
 // name first; on a narrow screen a column marked `narrow: false` moves to the row's detail line.
 import { esc, attrs, cls } from './html.mjs';
 

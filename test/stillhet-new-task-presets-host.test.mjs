@@ -1,4 +1,4 @@
-// test/stillhet-new-task-presets-host.test.mjs — COV-2 D7 (docs/rail/forms.md form.run-options): New task picks, applies and
+// test/stillhet-new-task-presets-host.test.mjs — COV-2 D7 (docs/stillhet/forms.md form.run-options): New task picks, applies and
 // checks a saved preset; its broken items block Start until reset; Update and Duplicate are its menu's; Start sends its
 // id and what it carries. Live app host (jsdom), the real shell, a stubbed fetch.
 import { test, afterEach, after } from 'node:test';
@@ -20,7 +20,7 @@ async function open({ presets = Object.values(P), check = () => [200, { broken: 
   const h = await liveHost({ lists: LISTS, read: (u) => (u === '/api/presets' ? [200, list] : u === DEFAULTS ? [200, { engine: { value: 'claude' }, tags: [], projectKey: 'web-1' }] : null),
     write: (u, b, m) => (/\/check$/.test(u) ? check(u, b) : write(u, b, m, list)) });
   await go(h.w, '#runs', 120);
-  h.w.RailCenters.maker('tasks').newPick('form'); await settle(80);
+  h.w.StillhetCenters.maker('tasks').newPick('form'); await settle(80);
   return { ...h, list };
 }
 const q = (d, sel) => d.querySelector(`#center-dlg ${sel}`);
@@ -176,7 +176,7 @@ test('F-G-G3-02: a refused Save as default leaves its error under Cost tags unti
 
 test('COV-2 presetSelect / Clear preset / Update preset (demo): from Docs pass ▾ lists Update preset after an edit and No preset; No preset drops the clause', async () => {
   const w = demoTaskHost({ after }), d = w.document; await settle(60);
-  w.RailCenters.maker('tasks').newPick('form'); await settle(60);
+  w.StillhetCenters.maker('tasks').newPick('form'); await settle(60);
   await pick(d, 'project', 'worca-cc');
   assert.ok((await menuOf(d)).includes('Docs pass'), 'the project\'s own preset is offered');
   await pick(d, 'preset', 'p:rp_docs');

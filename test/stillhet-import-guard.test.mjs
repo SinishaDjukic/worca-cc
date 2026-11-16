@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { guardStillhet, scanText, ALLOWED_IDS, KNOWN_CAPTURE_READERS } from '../tools/stillhet-import-guard.mjs';
 
-const opts = { devIds: new Set(['topnav', 'app', 'toast']), ownIds: new Set(['rail-strip']), captureReaders: {} };
+const opts = { devIds: new Set(['topnav', 'app', 'toast']), ownIds: new Set(['stillhet-strip']), captureReaders: {} };
 const scan = (text, file = 'ui/public/stillhet/shell/x.js') => scanText(text, file, opts);
 const kinds = (text, file) => scan(text, file).map((v) => v.kind);
 
@@ -40,7 +40,7 @@ test('the prompt check\'s grader and improve view are allowed; chip-host.mjs is 
 test('reaching an id of dev\'s shell is a violation; an id Stillhet draws itself, and the allowed words, are not', () => {
   assert.deepEqual(kinds("document.getElementById('topnav')"), ['dev-dom']);
   assert.deepEqual(kinds("el.closest('#topnav .x')"), ['dev-dom']);
-  assert.deepEqual(kinds("document.getElementById('rail-strip')"), []);
+  assert.deepEqual(kinds("document.getElementById('stillhet-strip')"), []);
   assert.ok('app' in ALLOWED_IDS && 'toast' in ALLOWED_IDS);
   assert.deepEqual(kinds("document.getElementById('app'); document.querySelector('#toast')"), []);
   for (const [id, reason] of Object.entries(ALLOWED_IDS)) assert.ok(reason.length > 10, `${id} needs a reason`);
@@ -49,7 +49,7 @@ test('reaching an id of dev\'s shell is a violation; an id Stillhet draws itself
 test('window.Today and cloning a dev node are violations; no file is a known reader', () => {
   assert.deepEqual(kinds('const T = window.Today;'), ['capture']);
   assert.deepEqual(kinds("document.getElementById('topnav').cloneNode(true)"), ['dev-dom', 'capture']);
-  assert.deepEqual(kinds("document.getElementById('rail-strip').cloneNode(true)"), []);
+  assert.deepEqual(kinds("document.getElementById('stillhet-strip').cloneNode(true)"), []);
   assert.deepEqual(KNOWN_CAPTURE_READERS, {}, 'there is no named exception');
 });
 

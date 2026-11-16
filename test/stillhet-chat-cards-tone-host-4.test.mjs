@@ -12,7 +12,7 @@ import * as C from '../ui/public/design-system/components/index.mjs';
 
 afterEach(closeHosts);
 // the tint is read while it breathes: Settings › Notifications "until you act on it" keeps it on
-const attnFor = (win) => { win.RailAttnFor = 'act'; };
+const attnFor = (win) => { win.StillhetAttnFor = 'act'; };
 const chat = (d) => d.querySelector('#route-chat');
 const count = (el, re) => (el.textContent.match(re) || []).length;
 const prHost = (checks, row = {}) => liveHost({ sources: savedRun({ status: 'done', pr: { url: PR_URL, state: 'OPEN' }, ...row }), beforeScripts: attnFor, read: (u) => (u.startsWith('/api/pr/checks?id=pa') ? (typeof checks === 'function' ? checks() : [200, checks]) : null) });
@@ -28,7 +28,7 @@ test('a checks read that fails leaves the card In review, with no Merge', async 
 test('a branch on a card sits in .rc-mid, which the stylesheet draws in the text face (look.md, D5)', async () => {
   const { w, d } = await liveHost({ sources: savedRun({ status: 'error', branch: 'feat/x' }) });
   await go(w, '#chat/ask_1', 200);
-  const css = readFileSync('ui/public/stillhet/css/rail.css', 'utf8');
+  const css = readFileSync('ui/public/stillhet/css/stillhet.css', 'utf8');
   assert.doesNotMatch(css.match(/^\.rc-mid\{[^}]*\}/m)[0], /--mono/);
   const mid = chat(d).querySelector('[data-anchor="card_run"] .rc-mid');
   if (mid) assert.ok(mid.textContent.length > 0);

@@ -247,7 +247,7 @@ async function main() {
   process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
   process.env.WORCA_MOCK = '1';
   await mkdir(path.join(home, '.worca-cc'), { recursive: true });
-  await writeFile(path.join(home, '.worca-cc', 'settings.json'), JSON.stringify({ onboarding: { welcomeSeen: true }, flags: { rail: true }, uiLevel: 'expert' }));
+  await writeFile(path.join(home, '.worca-cc', 'settings.json'), JSON.stringify({ onboarding: { welcomeSeen: true }, flags: { stillhet: true }, uiLevel: 'expert' }));
   // the PRs' host: the tasks seed's stub gh (passing, approved, mergeable), so the ready card reads Ready to merge
   const { installStubGh } = await import('./stillhet-seed-tasks.mjs');
   await installStubGh(path.join(home, 'bin'));

@@ -37,7 +37,7 @@ test('F-5-08 live: Edit a copy by hand on wf_default opens #workflows/edit:copy-
   assert.match(d.querySelector('.wf-ed-top').textContent, /never saved/);
   assert.equal(d.querySelector('[data-ed-name]').value, 'Default copy');
   assert.match(saidText(d), /^Default copy: a draft until you save it/);
-  const x = w.RailWorkflowLive.data().workflow.find((y) => y.id === 'copy-1');
+  const x = w.StillhetWorkflowLive.data().workflow.find((y) => y.id === 'copy-1');
   assert.ok(x.fresh && x.draft, 'a fresh record with its draft');
 });
 
@@ -53,18 +53,18 @@ test('F-5-08 live: Save of the copy sends one POST /api/workflows with no id or 
   assert.ok(p[0].body.nodes.length > 2, 'the source graph, not the task→end stub');
   assert.equal(w.location.hash, '#workflows/workflow:wf_default-copy');
   assert.match(saidText(d), /^Saved Default copy: tasks run it from now/);
-  assert.ok(!w.RailWorkflowLive.data().workflow.some((y) => y.id === 'copy-1'), 'the draft left');
+  assert.ok(!w.StillhetWorkflowLive.data().workflow.some((y) => y.id === 'copy-1'), 'the draft left');
 });
 
 test('F-5-08 live: Discard of the copy sends nothing and it is gone; Back instead keeps it as a Draft · never saved card on ~drafts', async () => {
   const a = await workflowsHost({ hash: '#workflows/workflow:wf_default' });
-  const before = a.w.RailWorkflowLive.data().workflow.filter((y) => !y.fresh).map((y) => y.id);
+  const before = a.w.StillhetWorkflowLive.data().workflow.filter((y) => !y.fresh).map((y) => y.id);
   await copyEdit(a.d);
   a.d.querySelector('[data-draft-discard]').click(); await settle(80);
   assert.deepEqual(sent(a.calls), [], 'discard sends nothing');
   assert.equal(a.w.location.hash, '#workflows');
   assert.match(saidText(a.d), /Discarded Default copy/);
-  assert.deepEqual(a.w.RailWorkflowLive.data().workflow.map((y) => y.id), before, 'the saved list unchanged, the copy gone');
+  assert.deepEqual(a.w.StillhetWorkflowLive.data().workflow.map((y) => y.id), before, 'the saved list unchanged, the copy gone');
 
   const b = await workflowsHost({ hash: '#workflows/workflow:wf_default' });
   await copyEdit(b.d);
@@ -108,9 +108,9 @@ test('F-5-08 live: Use as a template on a built-in twice: the second POST is nam
 
 test('F-5-08 demo: Edit a copy by hand makes a fresh draft (not in All workflows\' count), and Save makes it a saved workflow', async (t) => {
   // the demo kind's mode is Expert's (Edit a copy by hand); graph.js is not among the host's scripts, so the canvas draws on a stub
-  const w = stillhetHost({ hash: '#workflows/workflow:default', after: (fn) => t.after(fn), beforeScripts: (win) => { win.structuredClone ||= structuredClone; win.localStorage.setItem('worca-rail.mode', 'expert'); win.RailGraph = { mount: () => ({ g: null, view: null, fit: 1 }), align: (g) => g, build: () => ({}) }; } });
+  const w = stillhetHost({ hash: '#workflows/workflow:default', after: (fn) => t.after(fn), beforeScripts: (win) => { win.structuredClone ||= structuredClone; win.localStorage.setItem('worca-stillhet.mode', 'expert'); win.StillhetGraph = { mount: () => ({ g: null, view: null, fit: 1 }), align: (g) => g, build: () => ({}) }; } });
   await go(w, '#workflows/workflow:default', 120);
-  const d = w.document, recs = () => w.RailPlaces.workflows.records().workflow;
+  const d = w.document, recs = () => w.StillhetPlaces.workflows.records().workflow;
   const saved = recs().filter((x) => !x.fresh).length;
   await copyEdit(d);
   const x = recs().find((y) => y.copyOf === 'default');
@@ -132,9 +132,9 @@ test('F-5-08 live: the copy draft and its edits survive a workflows-changed refr
   const at = d.querySelector('[data-menu^="ed-m-"]').dataset.menu;
   await pick(d, at, 'Haiku 5.5');
   const i = +at.slice(5);
-  await w.RailWorkflowLive.refresh('workflows'); await settle(60);
-  w.RailPlaces.workflows.changed(); await settle(40);
-  const x = w.RailWorkflowLive.data().workflow.find((y) => y.id === 'copy-1');
+  await w.StillhetWorkflowLive.refresh('workflows'); await settle(60);
+  w.StillhetPlaces.workflows.changed(); await settle(40);
+  const x = w.StillhetWorkflowLive.data().workflow.find((y) => y.id === 'copy-1');
   assert.ok(x?.fresh, 'the same id, still fresh');
   assert.equal(x.draft.steps[i][2], 'Haiku 5.5', 'the edit kept');
   assert.equal(w.location.hash, '#workflows/edit:copy-1');

@@ -1,6 +1,6 @@
-// Scrollbars (docs/rail/look.md): thin, there as the mouse moves and while something scrolls, gone when still. The library
+// Scrollbars (docs/stillhet/look.md): thin, there as the mouse moves and while something scrolls, gone when still. The library
 // draws them: an operating system's overlay bars show only when it says so and take no styling, so no CSS can do this. The
-// browser's own bar is hidden (rail-look.css); wheel, keys and touch scroll as ever, and a bar can be dragged.
+// browser's own bar is hidden (stillhet-look.css); wheel, keys and touch scroll as ever, and a bar can be dragged.
 
 export const SCROLL_SHOW_MS = 800;
 const MIN_THUMB = 24;
@@ -31,7 +31,7 @@ export function watchScrollbars(doc, { wait = setTimeout, clear = clearTimeout }
   const thumb = (el, axis) => {
     const t = doc.createElement('div');
     // A scroller in a panel, menu or dialog has its bar on top of it; any other bar stays under whatever opens over the page.
-    t.className = `rail-thumb is-${axis}${el.closest?.('[role="dialog"], [role="menu"], .menu') ? ' is-over' : ''}`;
+    t.className = `stillhet-thumb is-${axis}${el.closest?.('[role="dialog"], [role="menu"], .menu') ? ' is-over' : ''}`;
     t.setAttribute('aria-hidden', 'true');
     t.addEventListener('pointerdown', (e) => {
       e.preventDefault(); t.setPointerCapture?.(e.pointerId);
@@ -71,7 +71,7 @@ export function watchScrollbars(doc, { wait = setTimeout, clear = clearTimeout }
   if (win.MutationObserver && doc.body) new win.MutationObserver(() => { for (const [el, s] of shown) if (el !== root && !el.isConnected) { clear(s.timer); s.v?.remove(); s.h?.remove(); shown.delete(el); } }).observe(doc.body, { subtree: true, childList: true });
   doc.addEventListener('scroll', (e) => { const el = e.target === doc ? root : e.target; if (el?.matches && scrolls(el)) show(el); }, { capture: true, passive: true });
   doc.addEventListener('mousemove', (e) => {
-    if (e.target?.classList?.contains('rail-thumb')) return;
+    if (e.target?.classList?.contains('stillhet-thumb')) return;
     for (let el = e.target; el?.matches; el = el.parentElement) if (scrolls(el)) show(el);
   }, { passive: true });
 }

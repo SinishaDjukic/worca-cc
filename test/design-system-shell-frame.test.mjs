@@ -44,7 +44,7 @@ test('sidebarFrame places each slot once, in order; topBarFrame holds its region
 
 test('every frame part has a catalog entry, a rule line and a gallery example', () => {
   const cat = JSON.parse(read('docs/design-system-catalog.json')).components;
-  const gallery = read('plans/rail/prototype/components.html'), rules = read('docs/rail/navigation.md') + read('docs/rail/narrow.md');
+  const gallery = read('plans/stillhet/prototype/components.html'), rules = read('docs/stillhet/navigation.md') + read('docs/stillhet/narrow.md');
   assert.match(rules, /nav\.frame/); assert.match(rules, /narrow\.frame-toggles/);
   for (const fn of PARTS) {
     const e = cat.find((c) => c.code === `ui/public/design-system/components/shell-frame.mjs#${fn}`);

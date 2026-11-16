@@ -1,4 +1,4 @@
-// WorkflowStory (docs/rail/panels.md › panel.workflow-story): a workflow told in plain words, as a storyboard. A panel a
+// WorkflowStory (docs/stillhet/panels.md › panel.workflow-story): a workflow told in plain words, as a storyboard. A panel a
 // step, saying what happens to your task there, with its time and cost; a loop drawn back under the steps it joins, in
 // words; then how a task goes through it, from its last tasks. Simple's drawing of a workflow; above the graph elsewhere.
 import { attrs, esc } from './html.mjs';

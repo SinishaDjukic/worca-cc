@@ -41,7 +41,7 @@ after(async () => {
   await rm(sandboxHome, { recursive: true, force: true });
 });
 
-const M = (() => { const window = {}; vm.runInNewContext(readFileSync('ui/public/stillhet/insights/insights-model.js', 'utf8'), { window }); return window.RailInsightsModel; })();
+const M = (() => { const window = {}; vm.runInNewContext(readFileSync('ui/public/stillhet/insights/insights-model.js', 'utf8'), { window }); return window.StillhetInsightsModel; })();
 const map = await import('../ui/public/stillhet/live/insights-map.mjs');
 const { allocate, savedUsd } = await import('../src/shared/cost/allocation.mjs');
 const { aggregate } = await import('../src/shared/team-metrics/aggregate.mjs');

@@ -232,7 +232,7 @@ test('F-6-11 = V3-10: wordsOf writes \u2212$ for a negative saved; never $-', ()
 });
 
 // ---- B4.9: Per task counts tasks only (F-6-08) ----
-const MODEL = (() => { const window = {}; vm.runInNewContext(readFileSync('ui/public/stillhet/insights/insights-model.js', 'utf8'), { window }); return window.RailInsightsModel; })();
+const MODEL = (() => { const window = {}; vm.runInNewContext(readFileSync('ui/public/stillhet/insights/insights-model.js', 'utf8'), { window }); return window.StillhetInsightsModel; })();
 const RUN_FACTS = [
   fact('t1', { usd: 2000, hours: 30, startedMs: B[0] + 1, spend: [[0, 1200], [1, 800]] }),
   fact('t2', { usd: 1500, hours: 20, startedMs: B[1] + 1, spend: [[1, 1500]], person: 'Jonas', status: 'failed' }),

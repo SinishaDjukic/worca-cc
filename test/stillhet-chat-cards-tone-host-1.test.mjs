@@ -12,7 +12,7 @@ import * as C from '../ui/public/design-system/components/index.mjs';
 
 afterEach(closeHosts);
 // the tint is read while it breathes: Settings › Notifications "until you act on it" keeps it on
-const attnFor = (win) => { win.RailAttnFor = 'act'; };
+const attnFor = (win) => { win.StillhetAttnFor = 'act'; };
 const chat = (d) => d.querySelector('#route-chat');
 const count = (el, re) => (el.textContent.match(re) || []).length;
 const prHost = (checks, row = {}) => liveHost({ sources: savedRun({ status: 'done', pr: { url: PR_URL, state: 'OPEN' }, ...row }), beforeScripts: attnFor, read: (u) => (u.startsWith('/api/pr/checks?id=pa') ? (typeof checks === 'function' ? checks() : [200, checks]) : null) });

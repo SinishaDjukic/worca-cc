@@ -1,4 +1,4 @@
-// ui/public/stillhet.mjs — Stillhet's opt-in and opt-out in the app (docs/rail/navigation.md `nav.stillhet-ask`, `nav.design-switch`).
+// ui/public/stillhet.mjs — Stillhet's opt-in and opt-out in the app (docs/stillhet/navigation.md `nav.stillhet-ask`, `nav.design-switch`).
 // Glue only: the Invitation and the StillhetSwitch are library parts (design-system/components), mounted by JS so the flag-off
 // page is dev's page. `toast` and `fetchJson(method, path, body) → {ok, data}` arrive by parameter, never by import.
 import { applyFlags, flagOn, onFlagChange } from './flags.mjs';
@@ -18,8 +18,8 @@ export function shouldAskStillhet({ ask, asked, fresh, flagKnown, on, locked, we
   return !!ask && !asked && !fresh && !!flagKnown && !on && !locked && !welcomeThisLoad && !setupOpen && !dialogOpen;
 }
 
-/** Settings › Labs keeps every row, the `rail` row (Stillhet) in every level and whatever the ask switch says: until the end
- *  of feature 3 it is the one way into Stillhet and back (plans/rail/implementation-prompt.md, Opt-in and opt-out; the owner,
+/** Settings › Labs keeps every row, the `stillhet` row (Stillhet) in every level and whatever the ask switch says: until the end
+ *  of feature 3 it is the one way into Stillhet and back (plans/stillhet/implementation-prompt.md, Opt-in and opt-out; the owner,
  *  in writing: "before enrolling everything I would recommend to be de-activated, labs is reasonable"). */
 export function stillhetLabsRow() {
   return () => true;
@@ -36,14 +36,14 @@ export function hasTypedText(doc) {
 }
 
 /** Mounts the Invitation under the top bar. Returns a handle, or null when it is closed for this load. */
-export function mountStillhetAsk({ doc, status, fetchJson, onAccepted = () => applyFlags({ rail: true }, doc) }) {
+export function mountStillhetAsk({ doc, status, fetchJson, onAccepted = () => applyFlags({ stillhet: true }, doc) }) {
   if (dismissedThisLoad) return null;
   const existing = doc.querySelector('[data-stillhet="invitation"]');
   if (existing) return { el: existing, close: () => closeSlot(doc) };
-  let slot = doc.getElementById('rail-strip');
+  let slot = doc.getElementById('stillhet-strip');
   if (!slot) {
     slot = doc.createElement('div');
-    slot.id = 'rail-strip';
+    slot.id = 'stillhet-strip';
     const bar = doc.getElementById('topnav');
     if (bar) bar.insertAdjacentElement('afterend', slot); else doc.body.prepend(slot);
   }
@@ -59,7 +59,7 @@ export function mountStillhetAsk({ doc, status, fetchJson, onAccepted = () => ap
   async function answer(which) {
     inFlight = true; busy = which; err = null; paint(which === 'yes' ? 'yes' : 'no');
     const r = which === 'yes'
-      ? await fetchJson('PATCH', '/api/flags', { rail: true })
+      ? await fetchJson('PATCH', '/api/flags', { stillhet: true })
       : await fetchJson('POST', '/api/onboarding', { stillhetAsked: true });
     inFlight = false; busy = false;
     if (r && r.ok) { close(); if (which === 'yes') onAccepted(); return; }
@@ -83,14 +83,14 @@ export function mountStillhetAsk({ doc, status, fetchJson, onAccepted = () => ap
     answer('no');
   });
   slot.addEventListener('strip:back', back);
-  unsub = onFlagChange('rail', (on) => { if (on) close(); });
+  unsub = onFlagChange('stillhet', (on) => { if (on) close(); });
   paint();
   return { el: slot.querySelector('[data-stillhet="invitation"]'), close };
 }
 
-function closeSlot(doc) { doc.getElementById('rail-strip')?.remove(); }
+function closeSlot(doc) { doc.getElementById('stillhet-strip')?.remove(); }
 
-/** Mounts the Stillhet icon and its menu in the top bar, after Activity. `flag` is the `rail` entry of GET /api/flags. Its tip
+/** Mounts the Stillhet icon and its menu in the top bar, after Activity. `flag` is the `stillhet` entry of GET /api/flags. Its tip
  *  is the native title here (no tooltip watcher in today's app); the locked reason is also in its name. */
 export function mountDesignSwitch({ doc, status, flag, fetchJson, toast }) {
   if (!status || status.stillhetAsk !== true) return null;
@@ -101,11 +101,11 @@ export function mountDesignSwitch({ doc, status, flag, fetchJson, toast }) {
   const html = stillhetSwitch({ on: !!flag.on, locked: !!flag.locked });
   if (anchor && host.contains(anchor)) anchor.insertAdjacentHTML('afterend', html); else host.insertAdjacentHTML('afterbegin', html);
   watchStillhetSwitch(doc, {
-    current: () => flagOn('rail', doc),   // the live flag: Labs or another tab can move it after the slot was painted
+    current: () => flagOn('stillhet', doc),   // the live flag: Labs or another tab can move it after the slot was painted
     pick: async (c) => {
-      const rail = c === 'on';
-      const r = await fetchJson('PATCH', '/api/flags', { rail });
-      if (r && r.ok) { applyFlags({ rail }, doc); return { ok: true }; }
+      const stillhet = c === 'on';
+      const r = await fetchJson('PATCH', '/api/flags', { stillhet });
+      if (r && r.ok) { applyFlags({ stillhet }, doc); return { ok: true }; }
       toast('Stillhet could not be switched: ' + messageOf(r));
       return { ok: false };
     },
@@ -113,8 +113,8 @@ export function mountDesignSwitch({ doc, status, flag, fetchJson, toast }) {
   return doc.querySelector('[data-stillhet="design-switch"]');
 }
 
-/** Reloads once when `rail` changes away from its server-rendered value; waits while text is typed. */
-export function watchRailReload({ doc, win, bootOn, isDirty = hasTypedText, toast, now = Date.now, storage = win.sessionStorage }) {
+/** Reloads once when `stillhet` changes away from its server-rendered value; waits while text is typed. */
+export function watchStillhetReload({ doc, win, bootOn, isDirty = hasTypedText, toast, now = Date.now, storage = win.sessionStorage }) {
   let target = null, toasted = false, scheduled = false;
   const KEY = 'worca.stillhet.reload';
   function attempt() {
@@ -131,7 +131,7 @@ export function watchRailReload({ doc, win, bootOn, isDirty = hasTypedText, toas
     scheduled = true;
     win.location.reload();
   }
-  const off = onFlagChange('rail', (on) => {
+  const off = onFlagChange('stillhet', (on) => {
     toasted = false;
     target = on === bootOn ? null : on;
     attempt();

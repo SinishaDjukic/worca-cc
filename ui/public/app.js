@@ -352,9 +352,9 @@ import { openLabelPicker, closeLabelPickerFor, fetchLabels, labelChip } from './
 import { labelStates, applyLabelChange, normaliseLabel } from '../../src/shared/run-labels.mjs';
 import { renderLabelsSection, runCount } from './labels-settings.mjs';
 import { makeSwitch } from './switch.mjs';
-import { watchRailReload, mountDesignSwitch, mountStillhetAsk, shouldAskStillhet, stillhetLabsRow } from './stillhet.mjs';
-// Stillhet: the server-rendered value of `rail`, read before any flags frame or the boot re-read can change it.
-const RAIL_BOOT = flagOn('rail');
+import { watchStillhetReload, mountDesignSwitch, mountStillhetAsk, shouldAskStillhet, stillhetLabsRow } from './stillhet.mjs';
+// Stillhet: the server-rendered value of `stillhet`, read before any flags frame or the boot re-read can change it.
+const STILLHET_BOOT = flagOn('stillhet');
 import { createWorcaLevelWiring } from './worca-level/app-wiring.mjs';
 
 // With site data blocked, Chrome throws SecurityError on merely reading `localStorage`. Every bare `localStorage` in
@@ -38958,15 +38958,15 @@ async function loadOnboarding({ recheck = false } = {}) {
 }
 
 // Stillhet's opt-in and opt-out (ui/public/stillhet.mjs): idempotent, so a socket reconnect that reruns the boot path adds nothing.
-let railReloadWatch = null;
+let stillhetReloadWatch = null;
 async function stillhetBoot() {
   const status = gs.status;
   if (!status) return;
   const toastText = (text) => notify({ tone: 'info', title: text });
-  if (!railReloadWatch) railReloadWatch = watchRailReload({ doc: document, win: window, bootOn: RAIL_BOOT, toast: toastText });
+  if (!stillhetReloadWatch) stillhetReloadWatch = watchStillhetReload({ doc: document, win: window, bootOn: STILLHET_BOOT, toast: toastText });
   if (status.stillhetAsk !== true) return;
   const r = await mcpApi('GET', '/api/flags');
-  const flag = r.ok && Array.isArray(r.data?.flags) ? r.data.flags.find((f) => f.key === 'rail') : null;
+  const flag = r.ok && Array.isArray(r.data?.flags) ? r.data.flags.find((f) => f.key === 'stillhet') : null;
   if (!flag) return;
   mountDesignSwitch({ doc: document, status, flag, fetchJson: mcpApi, toast: toastText });
   const dialogOpen = [...document.querySelectorAll('dialog[open], .viewer-modal:not(.hidden), .keys-modal')].some((d) => d.getClientRects().length > 0);   // a hidden modal keeps its node

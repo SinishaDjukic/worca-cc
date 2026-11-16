@@ -23,7 +23,7 @@ test('ROUTES includes Labs; the CLI without --dev exits 2', () => {
 });
 
 test('ACCEPTED: one flag-off difference, the Labs row for Stillhet, with the owner\'s words as its reason', () => {
-  assert.deepEqual(ACCEPTED.map((a) => [a.route, a.selector]), [['#settings/experimental', '[data-flag-row="rail"]']]);
+  assert.deepEqual(ACCEPTED.map((a) => [a.route, a.selector]), [['#settings/experimental', '[data-flag-row="stillhet"]']]);
   assert.match(ACCEPTED[0].reason, /before enrolling everything I would recommend to be de-activated, labs is reasonable/);
 });
 

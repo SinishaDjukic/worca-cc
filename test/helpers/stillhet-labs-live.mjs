@@ -5,7 +5,7 @@
 import { liveHost, settle } from './stillhet-live-counts-host.mjs';
 
 export const F = (key, title, stage, on, o = {}) => ({ key, title, description: `${title} does a thing.`, stage, on, source: 'default', locked: false, requires: [], ...o });
-export const FIXTURE = () => [F('rail', 'Stillhet', 'experimental', true, { source: 'settings' }), F('design', 'Design pass', 'experimental', false),
+export const FIXTURE = () => [F('stillhet', 'Stillhet', 'experimental', true, { source: 'settings' }), F('design', 'Design pass', 'experimental', false),
   F('runLabels', 'Run labels', 'experimental', false), F('runTelemetry', 'Run telemetry', 'experimental', false),
   F('commandSummaries', 'Command summaries', 'beta', true), F('gitAutomations', 'Git event automations', 'experimental', false, { requires: ['runLabels'] })];
 
@@ -31,10 +31,10 @@ export function server({ flags = FIXTURE(), patch } = {}) {
   };
   return s;
 }
-export async function live(srv = server(), { hash = '#settings/experimental', railHost } = {}) {
+export async function live(srv = server(), { hash = '#settings/experimental', stillhetHost } = {}) {
   const h = await liveHost({ read: (u) => srv.read(u), post: (u, b) => srv.post(u, b) });
   const calls = [];
-  h.w.RailHost.setStillhet = (on) => { calls.push(on); return Promise.resolve(railHost ? railHost(on) : { ok: true }); };
+  h.w.StillhetHost.setStillhet = (on) => { calls.push(on); return Promise.resolve(stillhetHost ? stillhetHost(on) : { ok: true }); };
   await h.hello();
   await go(h.w, hash);
   return { ...h, srv, calls };
@@ -48,7 +48,7 @@ export const textOf = (d, name) => rowOf(d, name).querySelector('.set-text').tex
 export const buttonOf = (s, label) => [...s.querySelectorAll('button')].find((b) => b.textContent.trim() === label);
 export const patches = (posts) => posts.filter((p) => p.url === '/api/flags').map((p) => p.body);
 export const click = (w, el) => el.dispatchEvent(new w.MouseEvent('click', { bubbles: true }));
-// every toast the page said: the app host's own (RailHost.toastEl) is the last `.rc-toast`, the prototype's the first
+// every toast the page said: the app host's own (StillhetHost.toastEl) is the last `.rc-toast`, the prototype's the first
 export const toastText = (d) => [...d.querySelectorAll('body > .rc-toast')].map((x) => x.textContent).filter(Boolean).join(' | ');
 export const stripText = (d) => d.querySelector('.rc-confirm-t')?.textContent.trim() || '';
 export const answer = async (w, d, yes) => { click(w, d.querySelector(`[data-confirm="${yes ? 'yes' : 'no'}"]`)); await settle(60); };

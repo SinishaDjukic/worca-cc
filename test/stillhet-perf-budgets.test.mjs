@@ -1,4 +1,4 @@
-// test/stillhet-perf-budgets.test.mjs — B2.4 C1 (plans/rail/test-results/PLAN.md §3C, D19): the performance budgets'
+// test/stillhet-perf-budgets.test.mjs — B2.4 C1 (plans/stillhet/test-results/PLAN.md §3C, D19): the performance budgets'
 // ratchet itself, with no host. test/fixtures/stillhet-perf-budgets.json holds the measured numbers the host tests
 // (stillhet-perf-budgets-chat-host, -tasks-host) pin; a number only goes down, and the exclusion list only shrinks.
 import { test } from 'node:test';

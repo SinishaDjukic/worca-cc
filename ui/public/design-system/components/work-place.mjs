@@ -1,4 +1,4 @@
-// Where a run's work goes (docs/rail/thing-page.md): one phrase in the metadata line that follows the run, never a badge.
+// Where a run's work goes (docs/stillhet/thing-page.md): one phrase in the metadata line that follows the run, never a badge.
 // `workPhrase` says it in words, for a list or Chat; `workPlace` draws it for a thing's page. A branch is named once, and
 // loses its middle, never its end.
 import { esc, attrs } from './html.mjs';

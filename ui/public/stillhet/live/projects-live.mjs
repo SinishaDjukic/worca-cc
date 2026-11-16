@@ -1,7 +1,7 @@
 // ui/public/stillhet/live/projects-live.mjs — Stillhet's Projects and Workspaces in the live kind (slice 9 D3): the one
 // module that writes them through dev's routes. Every request is built from PROJECT_ACTIONS; every action answers
 // { ok, text } (text: the toast; a refusal is `Could not WORDS NAME: ` plus dev's answer in plain words, plainWhy). The lists stay the shared
-// store's (RailWorld.part('projects' | 'spaces')): after a write this module asks the adapter to read them again and
+// store's (StillhetWorld.part('projects' | 'spaces')): after a write this module asks the adapter to read them again and
 // never edits a record. Client state of its own: what each action is doing (pending), what waits for its undo window
 // (hidden), what was removed until the store drops it (gone), a fresh workspace's draft until Save, each project's and
 // workspace's page detail, and clone jobs. An action answers a key to go to only once the store lists it (listed).

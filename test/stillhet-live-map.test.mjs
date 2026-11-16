@@ -80,7 +80,7 @@ test('F-a4-07: snapshotOf maps src.archived as archived tasks, one per pipeline 
 
 test('caseOf keeps D7 for every status: section is needs exactly when dev\'s needsYouItems lists the item', () => {
   const w = stillhetHost({ after });
-  const W = w.RailWorld;
+  const W = w.StillhetWorld;
   const statuses = [...new Set(['created', 'starting', 'running', 'pausing', 'paused', 'interrupted', 'stopped', 'aborted', 'error', 'failed', 'done', 'complete', 'mystery', ...Object.keys(RUN_STATES)])];
   let n = 0;
   for (const status of statuses) for (const ask of [false, true]) for (const unread of [false, true]) for (const prNeeds of [false, true]) {
@@ -296,10 +296,10 @@ test('a calm failed run reads Failed and a finished run with its branch reads Re
   const failed = taskOfSaved({ id: 'pf', status: 'error', mtime: NOW }, { now: NOW, needs: false });
   assert.equal(failed.case, 'failed', 'never Stopped: Pulse says Task failed');
   assert.equal(failed.over, true);
-  assert.equal(w.RailWorld.section(failed), 'recent');
+  assert.equal(w.StillhetWorld.section(failed), 'recent');
   const ready = taskOfSaved({ id: 'pr', status: 'done', branch: 'feat/x', sourceBranch: 'dev', survived: true, mtime: NOW }, { now: NOW, needs: false });
   assert.equal(ready.case, 'ready');
-  assert.equal(w.RailWorld.section(ready), 'recent', 'D7: dev\'s Needs you does not list it');
+  assert.equal(w.StillhetWorld.section(ready), 'recent', 'D7: dev\'s Needs you does not list it');
   assert.equal(taskOfSaved({ id: 'pg', status: 'done', branch: 'feat/x', survived: false, mtime: NOW }, { now: NOW }).case, 'finished-nogit', 'its branch is gone');
   assert.equal(taskOfSaved({ id: 'pm', status: 'done', branch: 'feat/x', survived: true, inBase: { base: 'dev' }, mtime: NOW }, { now: NOW }).case, 'merged', 'already in its base');
   assert.deepEqual(shapeErrors('task', ready), []);
@@ -348,7 +348,7 @@ test('B1.7: no-remote and no-base sort as ready does (overOf), Needs you unchang
     const t = taskOfSaved(row, { now: NOW, needs: false, sync });
     assert.equal(t.case, c);
     assert.equal(t.over, true, c);
-    assert.equal(w.RailWorld.section(t), 'recent', c);
+    assert.equal(w.StillhetWorld.section(t), 'recent', c);
     assert.equal(overOf({ ...row, needs: true }, c), false, `${c}: listed by dev's Needs you, it is not over`);
   }
   const rows = [FIN(), FIN({ id: 'py', sourceBranch: '' })];

@@ -1,4 +1,4 @@
-// Button (docs/rail/components.md): one look per role, never a size or colour of its own.
+// Button (docs/stillhet/components.md): one look per role, never a size or colour of its own.
 // `kind` is the role: '' (secondary), 'primary' (the one main step of a state), 'quiet' (a step among many), 'danger'
 // (only inside the confirm of a step that cannot be taken back). An icon-only button names itself in `label`, which
 // becomes its aria-label; its tooltip is `title` (the label when not given). While its action is out it is busy and says
@@ -7,8 +7,8 @@
 import { attrs, cls, esc } from './html.mjs';
 
 const KIND = { primary: 'btn-primary', quiet: 'btn-quiet', danger: 'btn-danger', '': '' };
-// The busy state (comp.button-busy, rail.css .rail-busy): the knot breathes as look.stage-line's now step (sl-breath).
-const BUSY_CLS = 'rail-busy';
+// The busy state (comp.button-busy, stillhet.css .stillhet-busy): the knot breathes as look.stage-line's now step (sl-breath).
+const BUSY_CLS = 'stillhet-busy';
 const busyText = (label, word) => label || `${word}…`;
 const busyInner = (text, iconOnly, say = text) => `<span class="btn-knot" aria-hidden="true"></span>${iconOnly ? '' : `<span class="btn-busy-t" aria-hidden="true">${esc(text)}</span>`}<span class="sr-only" role="status">${esc(say)}</span>`;
 

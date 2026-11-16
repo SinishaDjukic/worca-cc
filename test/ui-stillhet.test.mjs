@@ -30,8 +30,8 @@ test('shouldAskStillhet: false for each condition alone, true when all pass', ()
   }
 });
 
-test('stillhetLabsRow keeps the rail row in every case, until the end of feature 3 the one way in and out', () => {
-  for (const flag of [{ key: 'rail', on: false }, { key: 'rail', on: true }, { key: 'runLabels', on: false }]) assert.equal(S.stillhetLabsRow()(flag), true, JSON.stringify(flag));
+test('stillhetLabsRow keeps the stillhet row in every case, until the end of feature 3 the one way in and out', () => {
+  for (const flag of [{ key: 'stillhet', on: false }, { key: 'stillhet', on: true }, { key: 'runLabels', on: false }]) assert.equal(S.stillhetLabsRow()(flag), true, JSON.stringify(flag));
 });
 
 test('mounting twice leaves one node of each kind; the strip follows #topnav and takes the focus on No thanks', () => {
@@ -43,9 +43,9 @@ test('mounting twice leaves one node of each kind; the strip follows #topnav and
   S.mountDesignSwitch({ doc: d, status, flag: { on: false, locked: false }, fetchJson, toast() {} });
   assert.equal(d.querySelectorAll('[data-stillhet="invitation"]').length, 1);
   assert.equal(d.querySelectorAll('[data-stillhet="design-switch"]').length, 1);
-  assert.equal(d.getElementById('topnav').nextElementSibling.id, 'rail-strip');
+  assert.equal(d.getElementById('topnav').nextElementSibling.id, 'stillhet-strip');
   assert.equal(d.activeElement, d.querySelector('[data-confirm="no"]'));
-  assert.equal(d.getElementById('rail-strip').innerHTML, stillhetInvitation({ bugsUrl: URL_ }));
+  assert.equal(d.getElementById('stillhet-strip').innerHTML, stillhetInvitation({ bugsUrl: URL_ }));
   assert.equal(d.getElementById('activity-pop').nextElementSibling.dataset.stillhet, 'design-switch');
 });
 
@@ -64,10 +64,10 @@ test('Try Stillhet sends one PATCH and ignores clicks while it is pending; a fai
   d.querySelector('[data-confirm="yes"]').click();
   d.querySelector('[data-confirm="yes"]').click();
   d.querySelector('[data-confirm="no"]').click();
-  assert.deepEqual(sent, [['PATCH', '/api/flags', { rail: true }]]);
+  assert.deepEqual(sent, [['PATCH', '/api/flags', { stillhet: true }]]);
   assert.equal(d.querySelector('[data-confirm="yes"]').textContent, 'Turning on…');
   release(); await sleep(); await sleep();
-  assert.match(d.getElementById('rail-strip').textContent, /Stillhet could not be turned on.*read-only/);
+  assert.match(d.getElementById('stillhet-strip').textContent, /Stillhet could not be turned on.*read-only/);
   assert.equal(d.querySelector('[data-confirm="yes"]').textContent, 'Try again');
   d.querySelector('[data-confirm="yes"]').click();
   assert.equal(sent.length, 2);
@@ -80,11 +80,11 @@ test('No thanks sends one POST; a failure offers Not now, which closes with no r
   d.querySelector('[data-confirm="no"]').click();
   assert.deepEqual(sent, [['POST', '/api/onboarding', { stillhetAsked: true }]]);
   await sleep(); await sleep();
-  assert.match(d.getElementById('rail-strip').textContent, /Your answer could not be saved/);
+  assert.match(d.getElementById('stillhet-strip').textContent, /Your answer could not be saved/);
   assert.equal(d.querySelector('[data-confirm="no"]').textContent, 'Not now');
   d.querySelector('[data-confirm="no"]').click();
   assert.equal(sent.length, 1);
-  assert.equal(d.getElementById('rail-strip'), null);
+  assert.equal(d.getElementById('stillhet-strip'), null);
 });
 
 test('a saved No thanks closes the strip', async () => {
@@ -92,7 +92,7 @@ test('a saved No thanks closes the strip', async () => {
   S.mountStillhetAsk({ doc: d, status, fetchJson: async () => ({ ok: true, data: {} }) });
   d.querySelector('[data-confirm="no"]').click();
   await sleep(); await sleep();
-  assert.equal(d.getElementById('rail-strip'), null);
+  assert.equal(d.getElementById('stillhet-strip'), null);
 });
 
 test('Esc sends nothing, closes the strip, and a reconnect mount adds nothing', async () => {
@@ -102,7 +102,7 @@ test('Esc sends nothing, closes the strip, and a reconnect mount adds nothing', 
   d.querySelector('.rc-confirm').getClientRects = () => [1];
   d.body.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   assert.equal(sent.length, 0);
-  assert.equal(d.getElementById('rail-strip'), null);
+  assert.equal(d.getElementById('stillhet-strip'), null);
   assert.equal(d.activeElement, d.getElementById('main'));
   assert.equal(S.mountStillhetAsk({ doc: d, status, fetchJson }), null);
   assert.equal(d.querySelectorAll('[data-stillhet]').length, 0);
@@ -114,15 +114,15 @@ test('Esc while the answer is pending does nothing', async () => {
   d.querySelector('[data-confirm="yes"]').click();
   d.querySelector('.rc-confirm').getClientRects = () => [1];
   d.body.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-  assert.ok(d.getElementById('rail-strip'));
+  assert.ok(d.getElementById('stillhet-strip'));
 });
 
-test('the strip closes when rail turns on elsewhere', () => {
+test('the strip closes when stillhet turns on elsewhere', () => {
   const d = page().document;
   S.mountStillhetAsk({ doc: d, status, fetchJson: async () => ({ ok: true }) });
-  F.applyFlags({ rail: true }, d);
-  assert.equal(d.getElementById('rail-strip'), null);
-  F.applyFlags({ rail: false }, d);
+  F.applyFlags({ stillhet: true }, d);
+  assert.equal(d.getElementById('stillhet-strip'), null);
+  F.applyFlags({ stillhet: false }, d);
 });
 
 test('the icon\'s pick writes the flag once, sets aria-busy while pending, and restores with a Toast on failure', async () => {
@@ -130,45 +130,45 @@ test('the icon\'s pick writes the flag once, sets aria-busy while pending, and r
   let release; const gate = new Promise((r) => { release = r; });
   S.mountDesignSwitch({ doc: d, status, flag: { on: false, locked: false }, fetchJson: async (m, u, b) => { sent.push([m, u, b]); await gate; return { ok: false, data: { error: 'nope' } }; }, toast: (t) => toasts.push(t) });
   const icon = () => d.querySelector('[data-stillhet="ui-icon"]');
-  F.applyFlags({ rail: true }, d);   // turned on elsewhere (Labs, another tab): the live flag decides the check, not the painted slot
+  F.applyFlags({ stillhet: true }, d);   // turned on elsewhere (Labs, another tab): the live flag decides the check, not the painted slot
   icon().click();
   assert.deepEqual([...d.querySelectorAll('[data-design-pick]')].map((r) => r.getAttribute('aria-checked')), ['true', 'false']);
   icon().click();
-  F.applyFlags({ rail: false }, d);
+  F.applyFlags({ stillhet: false }, d);
   icon().click();
   const rows = [...d.querySelectorAll('[data-design-pick]')];
   assert.deepEqual(rows.map((r) => [r.textContent, r.getAttribute('aria-checked')]), [['Try Stillhet', 'false'], ["Back to today's UI", 'true']]);
   rows[0].click();
   assert.equal(icon().getAttribute('aria-busy'), 'true');
   icon().click();   // busy: nothing more is sent
-  assert.deepEqual(sent, [['PATCH', '/api/flags', { rail: true }]]);
+  assert.deepEqual(sent, [['PATCH', '/api/flags', { stillhet: true }]]);
   release(); await sleep(); await sleep();
   assert.deepEqual(toasts, ['Stillhet could not be switched: nope']);
   assert.equal(d.querySelector('[data-stillhet="design-switch"]').outerHTML, stillhetSwitch({ on: false }));
   assert.equal(d.activeElement, icon());
 });
 
-test('watchRailReload: once away from the boot value, never toward it, held while text is typed, and not twice in 10 s', () => {
+test('watchStillhetReload: once away from the boot value, never toward it, held while text is typed, and not twice in 10 s', () => {
   const w = page('<textarea id="t"></textarea>'); const d = w.document;
   const store = new Map(); const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v) };
   let reloads = 0; const toasts = []; let t = 1000;
   const win = { location: { reload: () => { reloads++; } }, sessionStorage: storage };
-  const off = S.watchRailReload({ doc: d, win, bootOn: false, toast: (x) => toasts.push(x), now: () => t, storage });
-  F.applyFlags({ rail: false }, d);
+  const off = S.watchStillhetReload({ doc: d, win, bootOn: false, toast: (x) => toasts.push(x), now: () => t, storage });
+  F.applyFlags({ stillhet: false }, d);
   assert.equal(reloads, 0);
   d.getElementById('t').value = 'typed';
-  F.applyFlags({ rail: true }, d);
+  F.applyFlags({ stillhet: true }, d);
   assert.equal(reloads, 0); assert.deepEqual(toasts, ['Stillhet is on.']);
   d.getElementById('t').value = '';
   d.dispatchEvent(new w.Event('input'));
   assert.equal(reloads, 1);
-  F.applyFlags({ rail: false }, d);
+  F.applyFlags({ stillhet: false }, d);
   assert.equal(reloads, 1);
   t += 1000;
-  F.applyFlags({ rail: true }, d);
+  F.applyFlags({ stillhet: true }, d);
   assert.equal(reloads, 1);   // same value again within 10 s: refused
   off();
-  F.applyFlags({ rail: false }, d);
+  F.applyFlags({ stillhet: false }, d);
 });
 
 test('ui/public/stillhet.mjs imports only the flags module and the library index', () => {

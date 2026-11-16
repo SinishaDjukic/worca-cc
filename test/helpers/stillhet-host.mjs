@@ -12,12 +12,12 @@ const boot = { module: { exports: {} } };
 vm.runInNewContext(readStillhet('boot.js'), boot);
 export const appScripts = () => boot.module.exports.list('app').scripts.filter((x) => !['components.js', 'graph.js'].includes(x));
 
-export function stillhetHost({ adapter = '', railLocked = false, level = 'expert', hash = '#chat', search = '', fetch, beforeScripts, after } = {}) {
-  const stamp = (adapter ? ` data-adapter="${adapter}"` : '') + (railLocked ? ' data-rail-locked="true"' : '');
-  const dom = new JSDOM(`<!doctype html><html data-level="${level}"${stamp}><body><div class="app" id="worca"></div><div class="pz-app rail-layer" id="app"></div>${R.toast({})}</body></html>`, { runScripts: 'outside-only', url: `http://localhost/${search}${hash}`, pretendToBeVisual: true });
+export function stillhetHost({ adapter = '', stillhetLocked = false, level = 'expert', hash = '#chat', search = '', fetch, beforeScripts, after } = {}) {
+  const stamp = (adapter ? ` data-adapter="${adapter}"` : '') + (stillhetLocked ? ' data-stillhet-locked="true"' : '');
+  const dom = new JSDOM(`<!doctype html><html data-level="${level}"${stamp}><body><div class="app" id="worca"></div><div class="pz-app stillhet-layer" id="app"></div>${R.toast({})}</body></html>`, { runScripts: 'outside-only', url: `http://localhost/${search}${hash}`, pretendToBeVisual: true });
   const w = dom.window;
   if (after) after(() => w.close());   // the pages keep timers on the window
-  w.RailUI = { ...R };
+  w.StillhetUI = { ...R };
   w.scrollTo = () => {};
   w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   w.fetch = fetch || (async () => ({ ok: false, json: async () => ({}) }));
@@ -27,5 +27,5 @@ export function stillhetHost({ adapter = '', railLocked = false, level = 'expert
 }
 
 // New task in the demo kind, as the prototype draws it: the run options' words (adapter.js imports them only when served
-// over http) and the person's mode (shell.js reads worca-rail.mode at boot)
-export const demoTaskHost = ({ mode = 'expert', after } = {}) => stillhetHost({ hash: '#runs', after, beforeScripts: (w) => { w.localStorage.setItem('worca-rail.mode', mode); w.RailRunOptions = RunOptions; } });
+// over http) and the person's mode (shell.js reads worca-stillhet.mode at boot)
+export const demoTaskHost = ({ mode = 'expert', after } = {}) => stillhetHost({ hash: '#runs', after, beforeScripts: (w) => { w.localStorage.setItem('worca-stillhet.mode', mode); w.StillhetRunOptions = RunOptions; } });

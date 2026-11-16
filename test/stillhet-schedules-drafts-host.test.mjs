@@ -1,4 +1,4 @@
-// test/stillhet-schedules-drafts-host.test.mjs — a schedule's edits are drafts (rail.drafts, Schedules D6, D7, D11): a picker
+// test/stillhet-schedules-drafts-host.test.mjs — a schedule's edits are drafts (stillhet.drafts, Schedules D6, D7, D11): a picker
 // sends nothing and shows a DraftBar; Save sends one PATCH with dev's rule; Discard sends nothing and leaves the store as it was.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -34,7 +34,7 @@ test('a Repeats change sends nothing and shows the DraftBar; Save sends one PATC
   src.schedules.schedules[0].rule = { freq: 'weekly', interval: 1, time: '09:00', tz: 'UTC', weekdays: ['mo'] };   // what the server saved
   sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'schedules-changed', action: 'updated' }) }); await settle(400);
   assert.equal(bar(), '', 'saved: no draft');
-  assert.equal(w.RailDrafts.get('schedule:sr1'), null);
+  assert.equal(w.StillhetDrafts.get('schedule:sr1'), null);
 });
 
 test('the Expert facts are pickers in the same draft: overlap, failures before pause, if missed', async () => {

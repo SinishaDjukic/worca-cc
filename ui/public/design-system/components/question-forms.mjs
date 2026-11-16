@@ -1,4 +1,4 @@
-// A question asked as a small form, under its question's row (docs/rail/panels.md › panel.question-forms): a number in its
+// A question asked as a small form, under its question's row (docs/stillhet/panels.md › panel.question-forms): a number in its
 // range with Worca's pick marked on the track, an order to set, rows to pick from a table. Each is the field of one
 // question; the card's one filled button answers it, a quiet one takes Worca's pick. And a task card's facts on one line,
 // each a way to its detail.

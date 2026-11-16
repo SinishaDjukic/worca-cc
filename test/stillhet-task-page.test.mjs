@@ -251,7 +251,7 @@ test('slice 7 D17: taskPageOf names the task\'s workflow from stepper.template, 
 });
 
 test('stageOf returns the case\'s labels: a task with no PR ends at Done, a ready one at Merged (#1266)', () => {
-  const window = { RailUI: R, RailWould: (p) => 'Would ' + p };
+  const window = { StillhetUI: R, StillhetWould: (p) => 'Would ' + p };
   vm.runInNewContext(readFileSync(new URL('../ui/public/stillhet/runs/run-page-model.js', import.meta.url), 'utf8'), { window, console, Math, Object, String, Set, JSON, parseFloat, Error });
   const M = window.RunCardModel;
   assert.deepEqual([...M.stageOf('finished-nogit').labels], ['Plan', 'Build', 'Review', 'Done']);

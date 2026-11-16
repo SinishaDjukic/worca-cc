@@ -1,4 +1,4 @@
-// test/design-system-keep-open.test.mjs — watchKeepOpen (docs/rail/components.md `comp.keep-open`): an open menu, inline
+// test/design-system-keep-open.test.mjs — watchKeepOpen (docs/stillhet/components.md `comp.keep-open`): an open menu, inline
 // field or dialog marked data-keep keeps its value, caret, selection and focus across any redraw of its page; a route
 // change never carries its text; a closed control is forgotten.
 import { test } from 'node:test';

@@ -1,4 +1,4 @@
-// test/design-system-stillhet-switch.test.mjs — StillhetSwitch (docs/rail/navigation.md `nav.design-switch`): the one top-bar
+// test/design-system-stillhet-switch.test.mjs — StillhetSwitch (docs/stillhet/navigation.md `nav.design-switch`): the one top-bar
 // icon with its 2-row menu, its shared open/pick/busy/restore watch, its CSS, and the glyphs it brings (`stillhet-ui`, the
 // toothed Settings gear).
 import { test } from 'node:test';

@@ -120,7 +120,7 @@ test('F-a2-01 review: a reply that ends after you left Chat for another page sen
 
 // ---- F-gb235-02: the rows and their line sit on the composer's rail ----
 test('F-gb235-02: the queue rows and their line sit on the composer\'s rail (same width, max-width, margin-inline and translate as .convo-dock .composer; nothing else widens them)', () => {
-  const rules = cssRules(readFileSync(new URL('../ui/public/stillhet/css/rail.css', import.meta.url), 'utf8'));
+  const rules = cssRules(readFileSync(new URL('../ui/public/stillhet/css/stillhet.css', import.meta.url), 'utf8'));
   const list = (r) => r.sel.split(',').map((s) => s.trim());
   const decls = (r) => Object.fromEntries(r.body.split(';').map((x) => x.split(':')).filter((p) => p.length > 1).map(([k, ...v]) => [k.trim(), v.join(':').trim()]));
   const RAIL = ['.convo-dock .composer', '.convo-dock > .composer-queue', '.convo-dock > .composer-queue + .composer-note'];

@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 
 const window = {};
 vm.runInNewContext(readFileSync('ui/public/stillhet/insights/insights-model.js', 'utf8'), { window });
-const M = window.RailInsightsModel;
+const M = window.StillhetInsightsModel;
 const GOLDEN = JSON.parse(readFileSync('test/fixtures/stillhet-insights-demo-golden.json', 'utf8'));
 const plain = (x) => (x === undefined ? x : JSON.parse(JSON.stringify(x)));
 const eq = (a, b, m) => assert.deepEqual(plain(a), plain(b), m);

@@ -1,4 +1,4 @@
-// test/prototype-pr-check.test.mjs — the CI half of gate.prototype (docs/rail/gate.md): a PR that changes today's UI
+// test/prototype-pr-check.test.mjs — the CI half of gate.prototype (docs/stillhet/gate.md): a PR that changes today's UI
 // changes the prototype too, or adds a `wire to` row under `## Dev surfaces` for each changed file, or carries the
 // no-ui-change label plus a "No UI change:" line (tools/prototype-pr-check.mjs). Pure decisions first, then temp git repos.
 import { test } from 'node:test';
@@ -44,7 +44,7 @@ test('decide: no-ui when nothing in today\'s UI changed', () => {
 });
 
 test('decide: prototype when a prototype file changed too', () => {
-  for (const f of ['ui/public/stillhet/a.js', 'plans/rail/prototype/a.html', 'docs/rail/a.md']) {
+  for (const f of ['ui/public/stillhet/a.js', 'plans/stillhet/prototype/a.html', 'docs/stillhet/a.md']) {
     assert.deepEqual(P.decide(input({ files: ['ui/public/app.js', f] })), { ok: true, why: 'prototype', uncovered: [] }, f);
   }
 });
@@ -83,8 +83,8 @@ test('decide: the label with a "No UI change:" line passes; the label alone fail
 test('failureMessage: every uncovered file, the route it adds, the three ways and the rule', () => {
   const m = P.failureMessage({ ok: false, why: 'fail', uncovered: [{ file: 'ui/public/app.js' }, { file: 'ui/routes/foo/foo.mjs', route: '/api/foo' }] });
   assert.match(m, /^This PR changes today's UI but not the Stillhet prototype:\n {2}ui\/public\/app\.js\n {2}ui\/routes\/foo\/foo\.mjs \(adds \/api\/foo, which today's UI fetches\)\n/);
-  for (const s of ['Add ONE of these:', 'ui/public/stillhet/, plans/rail/prototype/ or docs/rail/', '## Dev surfaces', '| `ui/public/app.js` | wire to |',
-    '`ui/public/chat/`', '`no-ui-change` label', 'No UI change: what and why', 'gate.prototype in docs/rail/gate.md']) assert.ok(m.includes(s), s);
+  for (const s of ['Add ONE of these:', 'ui/public/stillhet/, plans/stillhet/prototype/ or docs/stillhet/', '## Dev surfaces', '| `ui/public/app.js` | wire to |',
+    '`ui/public/chat/`', '`no-ui-change` label', 'No UI change: what and why', 'gate.prototype in docs/stillhet/gate.md']) assert.ok(m.includes(s), s);
 });
 
 // ---- temp repos: a base commit, then the PR's commit on top ----
@@ -95,7 +95,7 @@ function write(root, files) {
 function repo(baseFiles, prFiles) {
   const root = mkdtempSync(join(tmpdir(), 'prototype-pr-check-'));
   git(root, 'init', '-q', '-b', 'main');
-  write(root, { 'ui/public/app.js': "fetch('/api/x')\n", 'plans/rail/stillhet-wiring.md': wiring(), 'tools/parity/route-classes.json': '{"GET /api/x": {}}\n', ...baseFiles });
+  write(root, { 'ui/public/app.js': "fetch('/api/x')\n", 'plans/stillhet/stillhet-wiring.md': wiring(), 'tools/parity/route-classes.json': '{"GET /api/x": {}}\n', ...baseFiles });
   git(root, 'add', '-A'); git(root, 'commit', '-q', '-m', 'base');
   const base = git(root, 'rev-parse', 'HEAD');
   write(root, prFiles);
@@ -119,12 +119,12 @@ test('main: a today\'s-UI change alone fails and names the file', async () => {
 test('main: the same change passes with a Stillhet file, or with a wire-to row added in the PR', async () => {
   let r = await run(repo({ 'ui/public/stillhet/x.js': '1\n' }, { ...APP_CHANGE, 'ui/public/stillhet/x.js': '2\n' }));
   assert.equal(r.code, 0); assert.match(r.text, /prototype/);
-  r = await run(repo({}, { ...APP_CHANGE, 'plans/rail/stillhet-wiring.md': wiring(APP_ROW) }));
+  r = await run(repo({}, { ...APP_CHANGE, 'plans/stillhet/stillhet-wiring.md': wiring(APP_ROW) }));
   assert.equal(r.code, 0); assert.match(r.text, /wiring/);
 });
 
 test('main: a row already on base does not count', async () => {
-  const { code, text } = await run(repo({ 'plans/rail/stillhet-wiring.md': wiring(APP_ROW) }, APP_CHANGE));
+  const { code, text } = await run(repo({ 'plans/stillhet/stillhet-wiring.md': wiring(APP_ROW) }, APP_CHANGE));
   assert.equal(code, 1);
   assert.match(text, /update its why/);
 });

@@ -1,15 +1,15 @@
-// The Runs list (docs/rail/lists.md; plans/rail/agreed/chat-and-runs-decisions.md C3, C4): one operations view across
+// The Runs list (docs/stillhet/lists.md; plans/stillhet/agreed/chat-and-runs-decisions.md C3, C4): one operations view across
 // every build. The library owns the behaviour (listController); this names the rows, the sentence and what an action does.
 // A row's state, word and section come from R.runState and R.sectionOf on its real run-page case, and it opens that case.
 (function () {
-  const R = window.RailUI, M = window.RunsListModel, RM = window.RunCardModel, W = window.RailWorld;
+  const R = window.StillhetUI, M = window.RunsListModel, RM = window.RunCardModel, W = window.StillhetWorld;
   const root = document.getElementById('runs-root');
   if (!root) return;
-  const KEY = 'worca-rail.runs.view';
+  const KEY = 'worca-stillhet.runs.view';
   const store = { get: () => { try { return JSON.parse(localStorage.getItem(KEY) || 'null'); } catch { return null; } }, set: (v) => { try { localStorage.setItem(KEY, JSON.stringify(v)); } catch { /* the view lasts the session */ } } };
-  const FRESH = { show: 'all', from: 'all', day: '', range: null, person: '', by: window.RailUI.BY_DEFAULT, labels: [], workflow: '', schedule: '' };
+  const FRESH = { show: 'all', from: 'all', day: '', range: null, person: '', by: window.StillhetUI.BY_DEFAULT, labels: [], workflow: '', schedule: '' };
   let view = { ...FRESH, ...(store.get() || {}) }, data = M.seed(), listCase = 'full', recent = [], ctl = null;
-  const say = (t, undo) => window.RailPulse?.say(t, undo);
+  const say = (t, undo) => window.StillhetPulse?.say(t, undo);
   const cap = (w) => w[0].toUpperCase() + w.slice(1);
   const plural = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
   const usd = (n) => `$${n.toFixed(2)}`;
@@ -42,7 +42,7 @@
     }
     return out;
   }
-  const filterTo = (project) => window.RailRunsList.filter({ project: project || 'No project' });
+  const filterTo = (project) => window.StillhetRunsList.filter({ project: project || 'No project' });
   const finished = (t) => t.section === 'recent';   // what still needs you counts there, once: the Showing counts add up to all
   const readyToShip = (t) => t.word === 'Ready' && (t.run?.kind || 'Git') === 'Git' && !t.run?.pr;
   const SHOWS = [
@@ -77,7 +77,7 @@
     const stop = plan('stop', [x]), arch = plan('archive', [x]), del = plan('delete', [x]);
     // Tasks D17: in the live kind every item is dev's route (liveAct below); the menu is the design's own
     const isArchived = g ? membersOf(g).every((m) => m.archived) : r.archived;
-    const items = [{ id: 'toggle', text: 'Select', hint: hint('Space') }, ...(r ? [{ id: 'in-view', text: window.RailShell?.inView.has('task', `run:${r.id}`) ? 'Out of view' : 'Keep in view', help: 'Its live mark in the top bar, on every page' }] : []),
+    const items = [{ id: 'toggle', text: 'Select', hint: hint('Space') }, ...(r ? [{ id: 'in-view', text: window.StillhetShell?.inView.has('task', `run:${r.id}`) ? 'Out of view' : 'Keep in view', help: 'Its live mark in the top bar, on every page' }] : []),
       { id: 'stop', text: 'Stop', hint: hint('S'), off: !n(stop), help: n(stop) ? 'Stops it; the branch and changes stay' : R.skipText(stop) },
       isArchived ? { id: 'archive', text: 'Restore', hint: hint('E'), help: 'Brings the record back to Tasks; its branch, worktree and logs stay gone' } : { id: 'archive', text: 'Archive', hint: hint('E'), off: !n(arch), help: n(arch) ? (has('advanced') ? 'Removes its local branch, worktree and logs; Undo brings back the record' : 'Takes it out of Tasks; Undo brings it back') : R.skipText(arch) }];
     if (has('advanced') && r && !(r.group && !r.adhoc)) items.push({ sep: true }, { id: 'add-to-group', text: 'Add to group…', hint: hint('G'), help: 'Find a group, or make a new one' });
@@ -124,7 +124,7 @@
     if (shared()) out.push({ word: 'started by', id: 'person', text: view.person || 'everyone', tip: 'Whose tasks it shows, on a shared sign-in', items: [{ id: '', text: 'everyone', checked: !view.person, hint: count({ person: '' }) }, { sep: true }, ...M.PEOPLE.map((p) => ({ id: p, text: p, checked: view.person === p, hint: count({ person: p }) }))] });
     if (!view.schedule || view.from !== 'all') out.push({ word: 'from', id: 'from', text: view.from === 'all' ? 'all projects' : view.from, tip: 'Which project they come from', items: [{ id: 'all', text: 'all projects', checked: view.from === 'all', hint: count({ from: 'all' }) }, { sep: true }, ...projects.map((p) => ({ id: p, text: p, checked: view.from === p, hint: count({ from: p }) }))] });
     if (view.workflow) out.push({ word: 'using', id: 'workflow', text: view.workflow, tip: 'Only tasks that ran this workflow', items: [{ id: '', text: 'any workflow', hint: count({ workflow: '' }) }, { sep: true }, { id: view.workflow, text: view.workflow, checked: true, hint: count({}) }] });
-    if (view.schedule) out.push({ word: 'from', id: 'schedule', text: view.schedule === 'any' ? 'schedules' : window.RailSchedules?.find(view.schedule)?.title || 'a schedule', tip: 'Only the runs of a schedule', items: [{ id: '', text: 'anything', hint: count({ schedule: '' }) }, { sep: true }, { id: view.schedule, text: view.schedule === 'any' ? 'schedules' : window.RailSchedules?.find(view.schedule)?.title || 'a schedule', checked: true, hint: count({}) }] });
+    if (view.schedule) out.push({ word: 'from', id: 'schedule', text: view.schedule === 'any' ? 'schedules' : window.StillhetSchedules?.find(view.schedule)?.title || 'a schedule', tip: 'Only the runs of a schedule', items: [{ id: '', text: 'anything', hint: count({ schedule: '' }) }, { sep: true }, { id: view.schedule, text: view.schedule === 'any' ? 'schedules' : window.StillhetSchedules?.find(view.schedule)?.title || 'a schedule', checked: true, hint: count({}) }] });
     if (view.range) out.push({ word: 'on', id: 'range', text: view.range.label, tip: 'Only these days', items: [{ id: '', text: 'any time', hint: count({ range: null }) }, { sep: true }, { id: 'keep', text: view.range.label, checked: true, hint: count({}) }] });
     if (view.day) out.push({ word: 'in', id: 'day', text: M.DAYS.find(([d]) => d === view.day)?.[1] || view.day, tip: 'Only this period', items: [{ id: '', text: 'any time', hint: count({ day: '' }) }, { sep: true }, ...M.DAYS.map(([d, t]) => ({ id: d, text: t, checked: view.day === d, hint: count({ day: d }) }))] });
     // grouping only arranges the same tasks: no count here, so every number in these menus counts tasks
@@ -171,9 +171,9 @@
     if (has('advanced')) { const can = rows.filter((x) => x.r && !(x.r.group && !x.r.adhoc)); acts.push({ id: 'add-to-group', label: 'Add to group', n: can.length, tip: can.length < rows.length ? `Skips ${rows.length - can.length}: a feature's runs and groups stay as they are` : 'Find a group, or make a new one', why: 'A feature\'s runs and groups stay as they are' }); }
     return acts;
   }
-  // Tasks D17: the live kind's row menu and bulk bar call dev's routes through RailTaskLive.list; the store moves only when
+  // Tasks D17: the live kind's row menu and bulk bar call dev's routes through StillhetTaskLive.list; the store moves only when
   // dev's frames and refetches say so, and a refusal is the one `Could not ACTION: REASON`.
-  const T = () => window.RailTaskLive;
+  const T = () => window.StillhetTaskLive;
   const idsOf = (rows) => runRows(rows).map((r) => r.id);
   async function liveAct(id, rows, names, backTo) {
     const ids = idsOf(rows);
@@ -207,7 +207,7 @@
     const rows = rowsNow(rows0), pick = ctl.state.pick, snap = snapshot(), names = rows.length === 1 ? `“${(rows[0].r || rows[0].g).title}”` : plural(rows.length, 'task');
     const backTo = rows.length === 1 && !bulk ? `[data-open="${CSS.escape(rows[0].key)}"]` : '';
     if (W.live && T() && (['stop', 'archive', 'delete', 'leave-group'].includes(id) || id.startsWith('view-pr:'))) { liveAct(id, rows, names, backTo); return; }
-    if (id === 'in-view' && rows[0]?.r) { const r = rows[0].r; window.RailShell.inView.toggle({ type: 'task', id: `run:${r.id}`, title: r.title, case: r.case, ...(W.live ? { run: r.id } : {}) }); ctl.paint(); return; }
+    if (id === 'in-view' && rows[0]?.r) { const r = rows[0].r; window.StillhetShell.inView.toggle({ type: 'task', id: `run:${r.id}`, title: r.title, case: r.case, ...(W.live ? { run: r.id } : {}) }); ctl.paint(); return; }
     if (id === 'stop') { const p = plan('stop', rows), c = n(p); if (!c) { say(R.skipText(p)); return; } ctl.confirm({ text: `Stop ${rows.length === 1 ? names : plural(c, 'task')}? Its branch and changes stay.${p.skip.length ? ` ${R.skipText(p)}` : ''}`, yes: `Stop ${c}`, danger: true, back: backTo, run: () => { p.apply.forEach((t) => { byId(t.id).case = 'stopped'; }); p.cancel.forEach((t) => { byId(t.id).case = 'ticket-canceled'; }); ctl.clear(); W.touch(); say(`Stopped ${plural(c, 'task')}`); } }); return; }
     if (id === 'archive') {
       const back = view.show === 'archived' || rows.every((x) => (x.g ? membersOf(x.g).every((m) => m.archived) : x.r.archived));
@@ -220,7 +220,7 @@
     if (id === 'label') { openLabels(rows); return; }
     if (id === 'add-to-group') { openGroups(rows, rows.length === 1 && !bulk ? `[data-menu="row:${CSS.escape(rows[0].key)}"]` : '[data-bulk="add-to-group"]'); return; }
     if (id === 'leave-group') { const r = rows[0].r, g = data.groups.find((x) => x.id === r.group); r.group = ''; r.adhoc = false; ctl.paint(); say(`Removed from ${g.title}`, undoTo(snap, pick, 'Puts it back in the group')); return; }
-    if (id.startsWith('view-pr:')) { const r = byId(id.slice(8)); if (!r?.pr) { say('That task is gone'); return; } say(window.RailWould(`open PR ${r.pr} on GitHub (it leaves Worca)`)); ctl.paint(); return; }
+    if (id.startsWith('view-pr:')) { const r = byId(id.slice(8)); if (!r?.pr) { say('That task is gone'); return; } say(window.StillhetWould(`open PR ${r.pr} on GitHub (it leaves Worca)`)); ctl.paint(); return; }
     if (id === 'open') { openThing(rows0[0]); return; }
   }
   function openLabels(rows) {
@@ -266,13 +266,13 @@
   }
   function openThing(row) {
     const x = row._x;
-    if (x.m) { if (has('advanced')) window.RailShell.openSchedule(x.m.id.replace(/^sch-/, '')); else filterTo(x.m.project); return; }
+    if (x.m) { if (has('advanced')) window.StillhetShell.openSchedule(x.m.id.replace(/^sch-/, '')); else filterTo(x.m.project); return; }
     // live: only the adapter writes the store (D8), so opening goes through it
-    if (x.r) { if (W.live) window.RailAdapter.seenRun(x.r.id); else x.r.unread = false; openId = x.r.id; }
-    window.RailShell.openRun(`run/${x.g ? (W.live ? `group:${x.g.id}` : x.g.case) : openCase(x.r)}`, x.g ? x.g.title : x.r.title, x.g ? window.RailWorld.membersOf(x.g)[0]?.id : x.r.opens || x.r.id);   // the task itself (a lit origin: its needy round), so its own chat opens
+    if (x.r) { if (W.live) window.StillhetAdapter.seenRun(x.r.id); else x.r.unread = false; openId = x.r.id; }
+    window.StillhetShell.openRun(`run/${x.g ? (W.live ? `group:${x.g.id}` : x.g.case) : openCase(x.r)}`, x.g ? x.g.title : x.r.title, x.g ? window.StillhetWorld.membersOf(x.g)[0]?.id : x.r.opens || x.r.id);   // the task itself (a lit origin: its needy round), so its own chat opens
   }
 
-  const centers = () => window.RailCenters?.paint();   // the page beside this list reads the same project
+  const centers = () => window.StillhetCenters?.paint();   // the page beside this list reads the same project
   ctl = R.listController({ root, spec: {
     noun: 'tasks', label: 'Selected tasks',
     tool: (v) => { if (v === 'reset') { view = { ...FRESH }; store.set(view); centers(); say('View reset'); } },
@@ -281,20 +281,20 @@
     // Tasks D17: the same menu, keys and bulk bar in both kinds; the live kind's act calls dev's routes
     can: () => ['menu', 'fold', 'stop', 'archive', ...(has('advanced') ? ['group', 'delete'] : [])],
     bulk: (rows) => bulkActions(rows), act, open: openThing,
-    openRound: (row, n2) => { const rd = row._x.r.rounds.list.find((x) => x.n === n2); window.RailShell.openRun(`run/${rd.case}`, `${row._x.r.title} · Round ${n2}`, W.live ? rd.task?.id || rd.case : undefined); },   // live: a round's case is its task's id
+    openRound: (row, n2) => { const rd = row._x.r.rounds.list.find((x) => x.n === n2); window.StillhetShell.openRun(`run/${rd.case}`, `${row._x.r.title} · Round ${n2}`, W.live ? rd.task?.id || rd.case : undefined); },   // live: a round's case is its task's id
     word: (id, v) => {
       if (id === 'labels') { if (!v) { view.labels = []; return false; } view.labels = view.labels.includes(v) ? view.labels.filter((l) => l !== v) : [...view.labels, v]; store.set(view); return view.labels.length > 0; }
       if (id === 'range') { if (!v) { view = { ...view, range: null }; store.set(view); } return false; }
-      if (id === 'show' && v === 'archived' && W.live) window.RailAdapter?.refresh?.('archived');   // F-a4-07: the Archived view reads its rows again
+      if (id === 'show' && v === 'archived' && W.live) window.StillhetAdapter?.refresh?.('archived');   // F-a4-07: the Archived view reads its rows again
       view = { ...view, [id]: v }; store.set(view); centers(); return false;
     },
     say, active: () => !root.closest('[hidden]') && !document.querySelector('.pz-popover, .keys-modal, #app .viewer-modal, #center-dlg .viewer-modal, #app .nav-fly'),
-    retry: () => { if (archivedFailed()) window.RailAdapter.refresh('archived'); else if (W.live) window.RailAdapter.retry(); else setCase('full'); }, emptyAct: () => { if (noTasks()) { if (W.live) window.RailConversation?.start?.('task'); return; }   /* D12c: Start a task hands over to Chat */ view = { ...FRESH }; store.set(view); ctl.clear(); ctl.paint(); centers(); },
+    retry: () => { if (archivedFailed()) window.StillhetAdapter.refresh('archived'); else if (W.live) window.StillhetAdapter.retry(); else setCase('full'); }, emptyAct: () => { if (noTasks()) { if (W.live) window.StillhetConversation?.start?.('task'); return; }   /* D12c: Start a task hands over to Chat */ view = { ...FRESH }; store.set(view); ctl.clear(); ctl.paint(); centers(); },
   } });
 
   // no task at all: the demo's ?state=empty, or a live store whose load answered with none (the adapter keeps the list '')
   // the Archived view's own read failed (the rest of the list drew): that view says it could not load, and Try again reads it alone
-  const archivedFailed = () => W.live && view.show === 'archived' && window.RailDemoState?.archived === 'failed';
+  const archivedFailed = () => W.live && view.show === 'archived' && window.StillhetDemoState?.archived === 'failed';
   const noTasks = () => listCase === 'empty' || (W.live && listCase === 'full' && !data.runs.length);
   function setCase(c) {
     listCase = c; data = c === 'empty' ? { groups: [], runs: [], userGroups: [] } : M.seed(); ctl.clear();
@@ -304,11 +304,11 @@
     ctl.paint({ ifChanged: true });   // B2.8 F-fm-01: an update that changes no task leaves the rows as they are
   }
   document.getElementById('list-case')?.addEventListener('change', (e) => setCase(e.target.value));
-  if (window.RailDemoState?.list) setCase(window.RailDemoState.list);   // ?state=NAME (world.js)
-  W.onChange(() => setCase(W.live ? window.RailDemoState.list || 'full' : listCase));   // another Pulse case, or (live) a load or a list state (D20)
+  if (window.StillhetDemoState?.list) setCase(window.StillhetDemoState.list);   // ?state=NAME (world.js)
+  W.onChange(() => setCase(W.live ? window.StillhetDemoState.list || 'full' : listCase));   // another Pulse case, or (live) a load or a list state (D20)
   W.onMove?.(() => { data = W.data(); ctl.paint(); });   // a task moved or started anywhere (a chat, Pulse): the list reads the store again
   R.prefs.onChange(() => ctl.paint());
-  window.RailRunsList = {
+  window.StillhetRunsList = {
     show: () => ctl.paint(),
     // what the Tasks center counts: the very rows of this list, so a number and what it opens agree
     rows: () => tops().filter((t) => !t.archived),
@@ -321,7 +321,7 @@
       const r = !g && data.runs.find((x) => x.title === taskTitle && !x.group);
       if (r) { place([r], data.userGroups.find((x) => x.title === title) || makeGroup(title), snapshot(), ctl.state.pick, true); g = data.groups.find((x) => x.title === title); W.touch(); }
       if (g) ctl.openGroup(`group:${g.id}`);
-      ctl.paint(); centers(); window.RailShell?.go('runs');
+      ctl.paint(); centers(); window.StillhetShell?.go('runs');
     },
     dateOf: dateKey,   // the date a row belongs to: Figures' week counts the real days
     focus: () => ctl.focusRow(),
@@ -330,7 +330,7 @@
     // from the search: the runs with this label
     label: (l) => { view = { ...view, labels: [l], show: 'all', from: 'all', day: '', person: '' }; store.set(view); ctl.clear(); ctl.paint(); },
     // from another page: opens Tasks narrowed; the sentence says it and you can widen it there. project: a project's name, day: an id of M.DAYS (today, yesterday, week, month, older, upcoming), show: a SHOWS id, range: { from, to, label } as month*100+day
-    filter: ({ project = 'all', day = '', show = 'all', range = null, workflow = '', schedule = '', person = '' } = {}) => { view = { ...FRESH, by: view.by, from: project, day, range, workflow, schedule, person, show: showOf(show) ? show : 'all' }; store.set(view); ctl.clear(); ctl.paint(); centers(); window.RailShell?.go('runs'); },
+    filter: ({ project = 'all', day = '', show = 'all', range = null, workflow = '', schedule = '', person = '' } = {}) => { view = { ...FRESH, by: view.by, from: project, day, range, workflow, schedule, person, show: showOf(show) ? show : 'all' }; store.set(view); ctl.clear(); ctl.paint(); centers(); window.StillhetShell?.go('runs'); },
   };
   ctl.paint();
 })();

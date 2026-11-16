@@ -24,8 +24,8 @@ test('the stamp picks the data: data-adapter="live" by default, "demo" only when
 });
 
 test('the stamp says when rail is locked by WORCA_FLAGS, so the switch is drawn disabled (nav.design-switch)', () => {
-  assert.match(renderStillhetShell(html, 'dark', 'simple', { railLocked: true }), / data-adapter="live" data-rail-locked="true">/);
-  assert.doesNotMatch(renderStillhetShell(html, 'dark', 'simple'), /data-rail-locked/);
+  assert.match(renderStillhetShell(html, 'dark', 'simple', { stillhetLocked: true }), / data-adapter="live" data-stillhet-locked="true">/);
+  assert.doesNotMatch(renderStillhetShell(html, 'dark', 'simple'), /data-stillhet-locked/);
 });
 
 test('the shell runs no inline script and holds no handler attribute (the shell CSP allows only same-origin scripts)', () => {
@@ -59,11 +59,11 @@ test('staleStillhetBundles: a bundle older than its sources is stale in a source
   assert.deepEqual(staleStillhetBundles(pub), ['components.js', 'graph.js', 'app.css']);
 });
 
-test('railStamp falls back to a default stamp when git cannot run', async () => {
-  const { railStamp } = await import('../plans/rail/prototype/gates/components-js.mjs');
+test('stillhetStamp falls back to a default stamp when git cannot run', async () => {
+  const { stillhetStamp } = await import('../plans/stillhet/prototype/gates/components-js.mjs');
   const was = process.env.PATH;
   process.env.PATH = '/nonexistent';
-  try { assert.equal(railStamp().sha, 'unknown'); } finally { process.env.PATH = was; }
+  try { assert.equal(stillhetStamp().sha, 'unknown'); } finally { process.env.PATH = was; }
 });
 
 test('the 760px rule hides names only in the .pz-side mock rail, never in the app\'s drawer (#1266)', () => {

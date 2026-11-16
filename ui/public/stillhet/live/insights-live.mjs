@@ -7,7 +7,7 @@ import {
 } from './insights-map.mjs';
 import { lookupsFor, personWork, workItemOf, workHead, cardOf, taskViewOf } from './work-map.mjs';
 
-export const VIEWS_KEY = 'worca-rail.insights-views';
+export const VIEWS_KEY = 'worca-stillhet.insights-views';
 export const TEAM_EMPTY = 'No project shares its team numbers yet';
 const STATS_FRAMES = new Set(['pipelines-changed', 'ask-done', 'ask-error', 'budget-changed']);
 const TAGS = '/api/tag-dimensions', SCOPES = '/api/team-metrics/scopes';
@@ -16,7 +16,7 @@ const HEAT_DIMS = ['project', 'workflow', 'client'];
 const PRS = '/api/team-metrics/prs', EVENTS = '/api/team-metrics/pr-events', PR_CHUNK = 500, DAY = 86_400_000;   // dev's TL_PR_CHUNK; MAX_LOOKUPS is 600
 
 export function startInsightsLive({ fetch, on = () => {}, now = Date.now, setTimeout = globalThis.setTimeout, clearTimeout = globalThis.clearTimeout, world = () => ({}),
-  storage = globalThis.localStorage, model = () => globalThis.window?.RailInsightsModel } = {}) {
+  storage = globalThis.localStorage, model = () => globalThis.window?.StillhetInsightsModel } = {}) {
   const cache = new Map();   // url → { status: 'loading' | 'ready' | 'failed', data, text, seq }
   let open = new Set(), monthAsked = false, weekAsked = false, timer = 0, stopped = false, eventsKey = '';
   const prsBy = new Map();   // #1310 D5: scope → { map: run id → PRs, asked, inflight, why, token }; only the open scope's is kept

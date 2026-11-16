@@ -9,7 +9,7 @@ export { SOURCES, NOW, THREAD, RUN_STATE, URLS };
 export const settle = (ms = 30) => new Promise((r) => setTimeout(r, ms));
 export const BY_URL = Object.fromEntries(Object.entries(URLS).map(([k, u]) => [u, k]));
 export const clone = (x) => JSON.parse(JSON.stringify(x));
-export const toastText = (d) => (d.defaultView.RailHost?.toastEl || d.querySelector('body > .rc-toast'))?.textContent || '';
+export const toastText = (d) => (d.defaultView.StillhetHost?.toastEl || d.querySelector('body > .rc-toast'))?.textContent || '';
 
 // dev's GET lists a Chat control picks from (chat-live.mjs CATALOG)
 export const LISTS = {
@@ -41,7 +41,7 @@ export async function liveHost({ sources = SOURCES, thread = () => [200, THREAD]
     win.Element.prototype.scrollTo = function () {};
     beforeScripts(win);
   } });
-  w.RailAdapter.importLive = () => import('../../ui/public/stillhet/live/live-adapter.mjs');
+  w.StillhetAdapter.importLive = () => import('../../ui/public/stillhet/live/live-adapter.mjs');
   await settle();
   sockets.at(-1)?.onmessage({ data: JSON.stringify({ type: 'hello', bootId: 'b', runs: sources.hello.runs }) });   // none yet while a held or failed first load is out
   await settle();
@@ -58,7 +58,7 @@ export async function until(fn, ms = 2000, step = 10) {
     await settle(step);
   }
 }
-export const store = (w) => clone({ data: w.RailWorld.data(), chats: w.RailWorld.part('chats') });
+export const store = (w) => clone({ data: w.StillhetWorld.data(), chats: w.StillhetWorld.part('chats') });
 // Step 7's DISABLED_OK: the only controls the live kind may draw disabled, each for its runtime reason. At rest none of
 // them holds, so the walk finds no disabled control at all; a pending one is checked in its own test above.
 export const DISABLED_OK = Object.freeze({
@@ -94,7 +94,7 @@ export function blurOnDisable(win) {
   Object.defineProperty(proto, 'disabled', { configurable: true, get() { return desc.get.call(this); }, set(v) { if (v) this.blur(); desc.set.call(this, v); } });
 }
 export const menuPick = async (d, menuId, item) => { d.querySelector(`#route-chat [data-menu="${menuId}"]`).click(); await settle(5); d.querySelector(`#route-chat [data-menu-pick="${menuId}|${item}"]`).click(); await settle(40); };
-// a page's own sentence (RailPulse.say, the first `body > .rc-toast`) next to the host's refusal toast
+// a page's own sentence (StillhetPulse.say, the first `body > .rc-toast`) next to the host's refusal toast
 export const saidText = (d) => [...d.querySelectorAll('body > .rc-toast')].map((e) => e.textContent).join(' | ');
 export const savedRun = (row) => { const src = clone(SOURCES); src.hello.runs = src.hello.runs.filter((r) => r.runId !== 'run-a'); src.history.pipelines = src.history.pipelines.map((r) => (r.id === 'pa' ? { ...r, ...row } : r)); return src; };
 export const cardItems = async (d, id) => { d.querySelector(`#route-chat [data-menu="card:${id}"]`).click(); await settle(5); return [...d.querySelectorAll(`#route-chat [data-menu-pick^="card:${id}|"]`)].map((e) => e.dataset.menuPick.split('|')[1]); };

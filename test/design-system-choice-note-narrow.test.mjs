@@ -1,4 +1,4 @@
-// test/design-system-choice-note-narrow.test.mjs — gate.real-data F-cov23-05 (docs/rail/components.md ChoiceNote): at 390px
+// test/design-system-choice-note-narrow.test.mjs — gate.real-data F-cov23-05 (docs/stillhet/components.md ChoiceNote): at 390px
 // the note clipped its 22px title, cut its message to two lines and drew every row on one grid row, over its ways out.
 // The rules: a ChoiceNote's title wraps, each detail line takes its own row at any card width and is never clamped, and
 // its rows and ways wrap their buttons under the words. jsdom has no layout, so this reads the cascade the app loads.
@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const css = readFileSync('ui/public/stillhet/css/rail.css', 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+const css = readFileSync('ui/public/stillhet/css/stillhet.css', 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
 // the last declaration of `prop` among the rules whose selector list is exactly `sel` (later rules win at equal specificity)
 const last = (sel, prop) => {
   let hit = null;

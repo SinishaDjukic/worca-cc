@@ -125,8 +125,8 @@ jobs:
               - 'tools/split-by-feature.mjs'
               - 'tools/split-by-feature/**'
 
-  # gate.prototype (docs/rail/gate.md): a PR that changes today's UI changes the Stillhet prototype too, adds a
-  # `wire to` row under "## Dev surfaces" in plans/rail/stillhet-wiring.md for each changed file, or carries the
+  # gate.prototype (docs/stillhet/gate.md): a PR that changes today's UI changes the Stillhet prototype too, adds a
+  # `wire to` row under "## Dev surfaces" in plans/stillhet/stillhet-wiring.md for each changed file, or carries the
   # no-ui-change label plus a "No UI change:" line in its body. Labels and body are read live with `gh pr view`, so
   # "Re-run job" after a label or body edit sees them (the event payload would be stale). The body only reaches the
   # script through the JSON file, never a shell line. HEAD^1 of GitHub's merge commit is the base tip it merged onto.

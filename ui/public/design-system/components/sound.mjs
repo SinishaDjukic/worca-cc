@@ -1,4 +1,4 @@
-// The sound Pulse makes (docs/rail/small-rules.md): whether a new event plays, and the chime itself. A short, soft pair of
+// The sound Pulse makes (docs/stillhet/small-rules.md): whether a new event plays, and the chime itself. A short, soft pair of
 // notes generated with Web Audio; there is no audio file.
 
 /** The choices of Notifications › Channels › Sound: what plays. Info never does. */

@@ -1,4 +1,4 @@
-// The states of a run, and what each one offers (docs/rail/logic.md). The one source of a state's word, colour and one
+// The states of a run, and what each one offers (docs/stillhet/logic.md). The one source of a state's word, colour and one
 // action, so a page (the task page, a group, Pulse's Vitals, Chat's list later) cannot turn Paused into Ready by drawing its
 // own. Pure: no DOM, no mock data. Names in the words (`{pr}`, `{base}`, `{branch}`…) come from the task through `ctx`.
 import { CREATE_PR_LABEL, VIEW_PR_LABEL, VIEW_PRS_LABEL } from '../../ship-words.mjs';
@@ -427,7 +427,7 @@ const STATES = {
   }
 };
 
-// The rest of a task's states (docs/rail/thing-page.md: The task page's cases). `off` names a step that is shown but
+// The rest of a task's states (docs/stillhet/thing-page.md: The task page's cases). `off` names a step that is shown but
 // cannot be taken now, with why; a word a git host renames sits in HOST_WORD.
 const off = (label, icon, primary, items, offs) => ({ label, icon, primary, items, off: offs });
 const act = (label, icon, primary, items = []) => ({ label, icon, primary, items });
@@ -607,7 +607,7 @@ Object.assign(HELP, {
   'Approve {n} tasks': 'Creates the feature: these tasks build one after another',
 });
 
-// Where each action leads (docs/rail/actions.md). `to` moves this task to another state; `say` is what happened, and the
+// Where each action leads (docs/stillhet/actions.md). `to` moves this task to another state; `say` is what happened, and the
 // toast's words; `would` is an action the library cannot take itself: a bare phrase ("open #1 on GitHub") that
 // actionFlow turns into the `say` through the host's `ctx.would` (the prototype host's demo sentence, the app's refusal); `confirm` asks in the strip, `no` names its safe side; `dialog` opens a form; `commands` opens the panel
 // with a copy button; `step` says what happens to the task's own steps when the state alone does not (`restart:build`, the
@@ -826,7 +826,7 @@ export function cardAction(id) {
   return { label: 'Open', does: 'open' };
 }
 
-// A chat's states and kinds (docs/rail/lists.md): a chat is not a run, but its dot and word come from here too. `section`:
+// A chat's states and kinds (docs/stillhet/lists.md): a chat is not a run, but its dot and word come from here too. `section`:
 // where it sorts in the Chats column. Busy chats pulse; an idle chat shows what it did, its kind's icon in the dot's place.
 const CHAT_STATES = {
   'needs-you': { word: STATES.question.word, line: 'Run needs you', dot: STATES.question.dot, sym: STATES.question.sym, section: 'needs' },
@@ -889,7 +889,7 @@ export function stageMeta(st) {
 }
 
 /**
- * Try it never goes dead-ended: it says what is happening, then offers the next step (docs/rail/thing-page.md).
+ * Try it never goes dead-ended: it says what is happening, then offers the next step (docs/stillhet/thing-page.md).
  * @param {object} f  { checkingOut, settingUp, setupFailed, service: { name, port, running } | null }
  * @returns {{id:string, text:string, off?:boolean, help:string}[]}  items for the thing's ⋯
  */

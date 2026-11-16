@@ -22,7 +22,7 @@ test('Make a workspace by hand: a draft in the bar until Save; Save sends POST /
   const spaces = () => ({ workspaces: [...clone(PJ_SOURCES.workspaces.workspaces), ...(made ? [{ id: 'wks-web-store-1234abcd', name: 'Web store', projectKeys: [KEYS.ok, KEYS.local], projectPaths: ['/src/seed-ok', '/src/seed-local'], exists: [true, true], mapSummary: null }] : [])] });
   const h = await projectsHost({ read: (u) => (u === '/api/workspaces' ? [200, spaces()] : null), write: (u) => (u === '/api/workspaces' ? (made = true, [201, { workspace: { id: 'wks-web-store-1234abcd' } }]) : [200, { ok: true }]) });
   noWould(h.w);
-  h.w.RailPlaces.projects.newPick('hand-space'); await settle(100);
+  h.w.StillhetPlaces.projects.newPick('hand-space'); await settle(100);
   page(h.d).querySelector('#pj-hand-v').value = 'Web store'; page(h.d).querySelector('[data-confirm="yes"]').click(); await settle(150);
   assert.equal(h.w.location.hash, '#projects/ws:draft:web-store');
   assert.match(h.d.getElementById('bar-place').textContent, /Web store/, 'the fresh draft is in the bar');
@@ -31,7 +31,7 @@ test('Make a workspace by hand: a draft in the bar until Save; Save sends POST /
   page(h.d).querySelector('[data-draft-save]').click(); await until(() => h.w.location.hash === '#projects/ws:wks-web-store-1234abcd');
   assert.deepEqual(sent(h.calls), [['POST', '/api/workspaces', { name: 'Web store', projectPaths: ['/src/seed-ok', '/src/seed-local'] }]]);
   assert.equal(h.w.location.hash, '#projects/ws:wks-web-store-1234abcd');
-  h.w.RailPlaces.projects.newPick('hand-space'); await settle(100);
+  h.w.StillhetPlaces.projects.newPick('hand-space'); await settle(100);
   page(h.d).querySelector('#pj-hand-v').value = 'Throwaway'; page(h.d).querySelector('[data-confirm="yes"]').click(); await settle(150);
   page(h.d).querySelector('[data-draft-discard]').click(); await settle(100);
   assert.equal(sent(h.calls).length, 1, 'Discard sends nothing');
@@ -44,7 +44,7 @@ test('F-5-05 review: a new workspace opens once the store lists it only while th
   const held = gate();
   const spaces = () => ({ workspaces: [...clone(PJ_SOURCES.workspaces.workspaces), ...(made ? [{ id: 'wks-web-store-1234abcd', name: 'Web store', projectKeys: [KEYS.ok, KEYS.local], projectPaths: ['/src/seed-ok', '/src/seed-local'], exists: [true, true], mapSummary: null }] : [])] });
   const h = await projectsHost({ hold: (u) => (made && u === '/api/workspaces' ? held.p : null), read: (u) => (u === '/api/workspaces' ? [200, spaces()] : null), write: (u) => (u === '/api/workspaces' ? (made = true, [201, { workspace: { id: 'wks-web-store-1234abcd' } }]) : [200, { ok: true }]) });
-  h.w.RailPlaces.projects.newPick('hand-space'); await settle(100);
+  h.w.StillhetPlaces.projects.newPick('hand-space'); await settle(100);
   page(h.d).querySelector('#pj-hand-v').value = 'Web store'; page(h.d).querySelector('[data-confirm="yes"]').click(); await settle(150);
   addMember(h.d, KEYS.ok); await settle(60); addMember(h.d, KEYS.local); await settle(60);
   page(h.d).querySelector('[data-draft-save]').click(); await settle(200);
@@ -114,7 +114,7 @@ test('every workspace-side pending label shows on its control, disabled, while d
   pickMore(h.d, 'edit'); await settle(80); P().querySelector('[data-ws-rm="1"]').click(); await settle(60);
   await press('space-remove', `/api/workspaces/${WS}/members`, () => save().click(), save);
   await go(h.w, '#projects', 100);
-  h.w.RailPlaces.projects.newPick('hand-space'); await settle(100);
+  h.w.StillhetPlaces.projects.newPick('hand-space'); await settle(100);
   P().querySelector('#pj-hand-v').value = 'Pair two'; P().querySelector('[data-confirm="yes"]').click(); await settle(150);
   addMember(h.d, KEYS.ok); await settle(60); addMember(h.d, KEYS.local); await settle(60);
   await press('space-create', '/api/workspaces', () => save().click(), save);
@@ -124,7 +124,7 @@ test('every workspace-side pending label shows on its control, disabled, while d
 
 test('Delete on a fresh draft sends nothing: it is discarded; its menu offers no Scan, Sync or New task', async () => {
   const h = await projectsHost({ beforeScripts: undoTimers });
-  h.w.RailPlaces.projects.newPick('hand-space'); await settle(100);
+  h.w.StillhetPlaces.projects.newPick('hand-space'); await settle(100);
   page(h.d).querySelector('#pj-hand-v').value = 'Scratch'; page(h.d).querySelector('[data-confirm="yes"]').click(); await settle(150);
   page(h.d).querySelector('[data-menu="ws-more"]').click(); await settle(30);
   const offered = [...page(h.d).querySelectorAll('[data-menu-pick^="ws-more|"]')].map((b) => b.dataset.menuPick.split('|')[1]);
@@ -136,7 +136,7 @@ test('Delete on a fresh draft sends nothing: it is discarded; its menu offers no
   await settle(80);
   assert.deepEqual(sent(h.calls), [], 'no request for a draft');
   assert.ok(!h.d.getElementById('bar-place').textContent.includes('Scratch'));
-  assert.ok(!h.w.RailSpaces.list().some((w) => w.id.startsWith('draft:')));
+  assert.ok(!h.w.StillhetSpaces.list().some((w) => w.id.startsWith('draft:')));
 });
 
 test('fit: while its defaults are still being read, Change is off and a Labels change sends no PUT', async () => {
@@ -158,14 +158,14 @@ test('Scan again: a 428 toasts dev\'s message; Delete waits for the undo window 
   pickMore(h.d, 'delete'); await settle(80);
   page(h.d).querySelector('[data-confirm="yes"]').click(); await settle(80);
   assert.equal(sent(h.calls).filter(([m]) => m === 'DELETE').length, 0, 'nothing before the window closes');
-  assert.ok(!h.w.RailSpaces.list().some((w) => w.id === WS), 'hidden at once');
+  assert.ok(!h.w.StillhetSpaces.list().some((w) => w.id === WS), 'hidden at once');
   const undo = [...h.d.querySelectorAll('body > .rc-toast button')].find((b) => /undo|back/i.test(b.textContent + (b.title || '')));
   assert.ok(undo, 'the toast offers its undo');
   undo.click(); await settle(60);
   for (const fn of h.w.__undo.splice(0)) await fn();
   await settle(60);
   assert.equal(sent(h.calls).filter(([m]) => m === 'DELETE').length, 0, 'Undo sends no DELETE');
-  assert.ok(h.w.RailSpaces.list().some((w) => w.id === WS), 'back');
+  assert.ok(h.w.StillhetSpaces.list().some((w) => w.id === WS), 'back');
 });
 
 test('a question\'s at link sends open-in-editor with the evidence file; its Yes sends the edge PUT; Cost tags send PUT …/defaults', async () => {
@@ -190,7 +190,7 @@ test('F-G-G5-06: a workspace question names its projects by name, never by key: 
   const h = await projectsHost({ hash: HERE });
   const q = page(h.d).querySelector('[data-ws-yes]').closest('.turn-row').textContent;
   assert.match(q, /seed-ok connects to seed-local\?/);
-  const need = h.w.RailProjects.needItems().find((x) => x.kind === 'workspace');
+  const need = h.w.StillhetProjects.needItems().find((x) => x.kind === 'workspace');
   assert.equal(need.meta, 'Does seed-ok connect to seed-local?', 'the Pulse row');
   page(h.d).querySelector('[data-ws-yes]').click(); await settle(120);
   assert.match(saidText(h.d), /seed-ok connects to seed-local/);

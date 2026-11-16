@@ -136,7 +136,7 @@ export const FLAGS = Object.freeze([
     docs: 'docs/ticket-updates.md',
   }),
   entry({
-    key: 'rail',
+    key: 'stillhet',
     title: 'Stillhet',
     description: 'Stillhet, the calmer Worca: an evolution of the design system, opt-in while it is shaped.',
     stage: 'experimental',

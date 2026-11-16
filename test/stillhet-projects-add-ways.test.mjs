@@ -26,7 +26,7 @@ async function addHost(way, { write = () => [200, { ok: true }], read = () => nu
   const h = await projectsHost({ write: (u, b, m) => write(u, b, m, st),
     read: (u) => (u === '/api/projects' ? [200, { projects: st.list }] : u.startsWith('/api/fs/dirs') ? dirsOf(u) : u.startsWith('/api/projects/probe') ? probe(decodeURIComponent(u.split('path=')[1])) : read(u)) });
   h.st = st;
-  h.w.RailPlaces.projects.newPick('hand-project'); await settle(120);
+  h.w.StillhetPlaces.projects.newPick('hand-project'); await settle(120);
   if (way !== 'folder') { page(h.d).querySelector(`[data-pa-way="${way}"]`).click(); await settle(120); }
   return h;
 }
@@ -48,7 +48,7 @@ test('COV-1: the add form offers the three ways as one Segmented', async () => {
   assert.ok(page(h.d).querySelector('[data-pa-choose]'), 'and Choose folder…');
   // F-cov1-04: + › Add a project… closes the bar's drawer (390px) instead of leaving it over the form
   h.d.body.classList.add('nav-open');
-  h.w.RailPlaces.projects.newPick('hand-project'); await settle(100);
+  h.w.StillhetPlaces.projects.newPick('hand-project'); await settle(100);
   assert.equal(h.d.body.classList.contains('nav-open'), false, 'the drawer is closed');
   // F-cov1-03: before any pick, Several folders… shows one Browse folders…, the form's yes
   page(h.d).querySelector('[data-pa-way="many"]').click(); await settle(60);
@@ -89,7 +89,7 @@ test('COV-1 New folder: a refusal (400 EXISTS) is the field\'s words and the for
   assert.equal(yes(h.d).disabled, true, 'Create is off while the dry run refuses');
   assert.equal(page(h.d).querySelector('#pj-new-name').value, 'taken');
   assert.equal(sent(h.calls).filter(([, , b]) => b && !b.dryRun).length, 0, 'nothing was created');
-  assert.ok(!h.w.RailProjects.list().some((p) => p.name === 'taken'));
+  assert.ok(!h.w.StillhetProjects.list().some((p) => p.name === 'taken'));
 });
 
 test('COV-1 Choose folder… reads GET /api/fs/dirs, goes into a folder, and Select fills the path and probes it', async () => {
@@ -211,10 +211,10 @@ test('COV-1 the folder browser: a 400 shows its words in the dialog and the list
   assert.ok(page(h.d).querySelector('.fb [data-fb-go="/src/a"]'), 'the last listing stays');
 });
 
-test('COV-1 nothing fake on live: before RailProjectsLive is up, Create says Worca is not answering and adds nothing', async () => {
+test('COV-1 nothing fake on live: before StillhetProjectsLive is up, Create says Worca is not answering and adds nothing', async () => {
   const h = await addHost('folder', { write: create });
   noWould(h.w);
-  h.w.RailProjectsLive = undefined;
+  h.w.StillhetProjectsLive = undefined;
   page(h.d).querySelector('[data-pa-way="new"]').click(); await settle(120);
   type(h, '#pj-new-name', 'ghost'); await settle(300);
   assert.ok(!/~\/worca\/projects/.test(page(h.d).textContent), 'no demo location');
@@ -224,6 +224,6 @@ test('COV-1 nothing fake on live: before RailProjectsLive is up, Create says Wor
   yes(h.d).click(); await settle(150);
   assert.equal(page(h.d).querySelector('.fb'), null, 'no demo folders');
   assert.deepEqual(sent(h.calls).filter(([, u]) => u.startsWith('/api/projects')), []);
-  assert.ok(!h.w.RailProjects.list().some((p) => p.name === 'ghost'));
+  assert.ok(!h.w.StillhetProjects.list().some((p) => p.name === 'ghost'));
   assert.deepEqual(h.w.__would, []);
 });

@@ -1,5 +1,5 @@
 // test/stillhet-chat-persp-picker.test.mjs — the TaskProposal's "reviewed by" picker on a live task card (flag
-// proposedPerspectives; docs/rail/panels.md panel.conversation-cards). Dev's perspectives with Compliance, Product always
+// proposedPerspectives; docs/stillhet/panels.md panel.conversation-cards). Dev's perspectives with Compliance, Product always
 // on, and the ticked set sent with Start as dev's run card sends it (POST /api/run `perspectives`). jsdom app host:
 // test/helpers/stillhet-chat-live-host.mjs, its fixture's proposed card `card_prop`.
 import { test, afterEach } from 'node:test';

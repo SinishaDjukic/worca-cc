@@ -1,16 +1,16 @@
-// The Chats column (docs/rail/lists.md; plans/rail/agreed/chat-and-runs-decisions.md C1): beside the conversation, Needs
+// The Chats column (docs/stillhet/lists.md; plans/stillhet/agreed/chat-and-runs-decisions.md C1): beside the conversation, Needs
 // you first, then Running, then Recent. The list is the library's (listController); the conversation is today's capture.
 (function () {
-  const R = window.RailUI, M = window.ChatsListModel;
+  const R = window.StillhetUI, M = window.ChatsListModel;
   const bar = document.getElementById('bar-chat');
   if (!bar) return;
-  const STORE_W = 'worca-rail.chats.width', STORE_V = 'worca-rail.chats.view';
+  const STORE_W = 'worca-stillhet.chats.width', STORE_V = 'worca-stillhet.chats.view';
   const get = (k) => { try { return localStorage.getItem(k); } catch { return null; } }, set = (k, v) => { try { localStorage.setItem(k, v); } catch { /* a remembered choice is a nicety */ } };
   const clampW = (px) => Math.min(680, Math.max(360, Math.round(+px) || 360));
   const FRESH = { show: 'all', from: 'all', by: R.BY_DEFAULT, sort: 'activity' };
   const parse = (t) => { try { return JSON.parse(t) || {}; } catch { return {}; } };
   let view = { ...FRESH, ...parse(get(STORE_V)) }, data = M.seed(), width = clampW(get(STORE_W)), current = '', listCase = 'full', recent = [], ctl = null, opened = true;
-  const say = (t, undo) => window.RailPulse?.say(t, undo);
+  const say = (t, undo) => window.StillhetPulse?.say(t, undo);
   const plural = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
   const usd = (n) => `$${n.toFixed(2)}`;
   const NEEDS = () => R.runState('question').word;
@@ -20,7 +20,7 @@
   // a task that waits on you (a question, a gate, a failure, a pause, a cap) lifts its chat, as it counts in Pulse
   const NEEDS_TONES = ['ask', 'act', 'fail'];
   // the store says what waits on you (Pulse reads the same): a task needs you by its section; a slice that is only ready ships with its feature
-  const W = window.RailWorld;
+  const W = window.StillhetWorld;
   const waits = (t) => { const r = t.run && W.find(t.run); if (r) return !r.archived && W.section(r) === 'needs'; return !!t.case && t.case !== 'scheduled' && NEEDS_TONES.includes(R.markTone(R.runState(window.RunCardModel.stateOf(t.case)))); };
   const asksInside = (c) => { const walk = (t) => waits(t) || (t.after || []).some(walk); return (c.tasks || []).some(walk); };
   const sectionOfChat = (c) => (asksInside(c) ? 'needs' : R.chatState(c.state).section);
@@ -40,7 +40,7 @@
   const LEVEL_TONE = { 3: 'fail', 2: 'ask', 1: 'ok' };   // a parent chat wears the ring of the highest level under it; the task holds the fill (one light per thing)
   const markOf = (state, kind, breathe = false, lit = '') => R.kindMark({ breathe, kind: kind === 'workflow' && state === 'idle' ? 'workflow' : 'chat', tone: lit || toneOf(state), advisory: lit === 'ok', outline: lit === 'fail', title: state === 'idle' ? R.CHAT_KINDS[kind]?.label || 'Chat' : R.chatState(state).word });
   const RM = window.RunCardModel;
-  const taskMenu = (t) => [{ id: 'open-task', text: t.kind === 'schedule' ? 'Open schedule' : 'Open task', help: 'Opens its card in its chat' }, { id: 'in-view', text: window.RailShell?.inView.has(t.kind === 'schedule' ? 'schedule' : 'task', t.id) ? 'Out of view' : 'Keep in view', help: 'Its live mark in the top bar, on every page' }, ...(t.git === 'open' || t.git === 'fail' ? [{ id: 'watch', text: t.watch ? 'Stop watching' : 'Watch', help: 'Worca follows the PR and fixes failing checks for you' }] : []), { id: 'label-task', text: 'Label…', hint: hint('L'), help: 'Adds a label to this task' }, ...(has('advanced') ? [{ id: 'add-to-group', text: 'Add to group…', hint: hint('G'), help: 'Find a group, or make a new one' }] : []), { sep: true }, { id: 'archive', text: 'Archive', hint: hint('E'), help: 'Undo in the notice' }];
+  const taskMenu = (t) => [{ id: 'open-task', text: t.kind === 'schedule' ? 'Open schedule' : 'Open task', help: 'Opens its card in its chat' }, { id: 'in-view', text: window.StillhetShell?.inView.has(t.kind === 'schedule' ? 'schedule' : 'task', t.id) ? 'Out of view' : 'Keep in view', help: 'Its live mark in the top bar, on every page' }, ...(t.git === 'open' || t.git === 'fail' ? [{ id: 'watch', text: t.watch ? 'Stop watching' : 'Watch', help: 'Worca follows the PR and fixes failing checks for you' }] : []), { id: 'label-task', text: 'Label…', hint: hint('L'), help: 'Adds a label to this task' }, ...(has('advanced') ? [{ id: 'add-to-group', text: 'Add to group…', hint: hint('G'), help: 'Find a group, or make a new one' }] : []), { sep: true }, { id: 'archive', text: 'Archive', hint: hint('E'), help: 'Undo in the notice' }];
   // What hangs under a chat: its tasks and schedules, in their order of waiting.
   const treeOf = (c, list) => list.filter((t) => !t.gone).map((t) => {   // a deleted schedule leaves the bar
     const x = { t, c, key: `task:${t.id}` };
@@ -65,7 +65,7 @@
     const st = R.chatState(c.state), x = { c, key: `chat:${c.id}` };
     const r = { key: x.key, _x: x, title: c.title, lead: `${c.pinned ? `<span class="lr-pin" title="Pinned">${R.icon('pin', 12)}</span>` : ''}${c.origin ? R.originMark(c.origin) : ''}`, mark: markOf(c.state, c.kind, ownAttn(c), sectionOfChat(c) === 'needs' ? LEVEL_TONE[levelOf(c)] || '' : ''), unread: c.unread, current: current === c.id, tip: [c.title, [c.project || 'No project', ...(c.labels || [])].join(' · '), [st.line || (c.state === 'idle' ? R.CHAT_KINDS[c.kind]?.label : ''), c.time].filter(Boolean).join(' · '), c.pinned ? 'Pinned' : ''].filter(Boolean).join('\n'), end: c.time, tree: c.tasks?.length ? treeOf(c, c.tasks) : undefined,
       meta: '' };
-    r.menu = [{ id: 'toggle', text: 'Select', hint: hint('Space') }, { id: 'in-view', text: window.RailShell?.inView.has('chat', c.id) ? 'Out of view' : 'Keep in view', help: 'Its live mark in the top bar, on every page' }, { id: 'rename', text: 'Rename…', hint: hint('R'), help: 'Give it another name' }, { id: 'pin', text: c.pinned ? 'Unpin' : 'Pin', hint: hint('P'), help: 'A pinned chat leads its section' },
+    r.menu = [{ id: 'toggle', text: 'Select', hint: hint('Space') }, { id: 'in-view', text: window.StillhetShell?.inView.has('chat', c.id) ? 'Out of view' : 'Keep in view', help: 'Its live mark in the top bar, on every page' }, { id: 'rename', text: 'Rename…', hint: hint('R'), help: 'Give it another name' }, { id: 'pin', text: c.pinned ? 'Unpin' : 'Pin', hint: hint('P'), help: 'A pinned chat leads its section' },
       ...(has('advanced') ? [{ id: 'add-to-group', text: 'Add to group…', hint: hint('G'), help: 'Find a group, or make a new one' }, ...(c.group ? [{ id: 'leave-group', text: 'Remove from group', hint: hint('shift', 'G'), help: 'It stays in Chats, in no group' }] : [])] : []),
       { sep: true }, c.archived ? { id: 'archive', text: 'Restore', hint: hint('E'), help: 'Brings it back' } : { id: 'archive', text: 'Archive', hint: hint('E'), off: !!busyOf(c), help: busyOf(c) || 'Undo in the notice' },
       ...(has('advanced') ? [{ id: 'delete', text: 'Delete…', hint: hint('Backspace'), danger: true, help: 'Removes it for good; asks first' }] : [])];
@@ -143,17 +143,17 @@
   }
   function act(id, rows0, { bulk, viaKey } = {}) {
     const rows = rows0.map((r) => r._x), x = rows[0], snap = snapshot(), pick = ctl.state.pick;
-    if (id === 'in-view' && x) { if (x.t) window.RailShell.inView.toggle({ type: x.t.kind === 'schedule' ? 'schedule' : 'task', id: x.t.id, chat: x.c.id, title: x.t.title, case: x.t.case }); else if (x.c) window.RailShell.inView.toggle({ type: 'chat', id: x.c.id, title: x.c.title }); ctl.paint(); return; }
-    if (window.RailWorld.live && id !== 'open-task') { liveAct(id, rows, x, { bulk }); return; }   // D6: the live kind calls dev's routes
+    if (id === 'in-view' && x) { if (x.t) window.StillhetShell.inView.toggle({ type: x.t.kind === 'schedule' ? 'schedule' : 'task', id: x.t.id, chat: x.c.id, title: x.t.title, case: x.t.case }); else if (x.c) window.StillhetShell.inView.toggle({ type: 'chat', id: x.c.id, title: x.c.title }); ctl.paint(); return; }
+    if (window.StillhetWorld.live && id !== 'open-task') { liveAct(id, rows, x, { bulk }); return; }   // D6: the live kind calls dev's routes
     if (x?.t && !bulk && id !== 'add-to-group') {
       const t = x.t;
-      if (id === 'open-task' && window.RailWorld.live && t.kind !== 'schedule') { window.RailConversation?.openTask(x.c.id, t.id); return; }   // live: the chat it is listed under, its card in view
-      if (id === 'open-task') { if (t.kind === 'schedule') window.RailShell.openSchedule(t.id); else window.RailShell.openTask(t.case, x.c.id, t.title); return; }
+      if (id === 'open-task' && window.StillhetWorld.live && t.kind !== 'schedule') { window.StillhetConversation?.openTask(x.c.id, t.id); return; }   // live: the chat it is listed under, its card in view
+      if (id === 'open-task') { if (t.kind === 'schedule') window.StillhetShell.openSchedule(t.id); else window.StillhetShell.openTask(t.case, x.c.id, t.title); return; }
       if (id === 'watch') { t.watch = t.watch ? '' : 'idle'; ctl.paint(); say(t.watch ? 'Watching: Worca fixes failing checks' : 'Stopped watching', undoTo(snap, pick, 'As it was')); return; }
       if (id === 'label-task') { const focus = `[data-open="${CSS.escape(x.key)}"]`; ctl.dialog({ title: 'Label this task', label: 'Label', value: '', max: 40, yes: 'Add label', back: focus, run: (v) => {
         const word = v.toLowerCase(); if ((t.labels || []).includes(word)) { ctl.paint({ focus }); return; }   // already on it: nothing happened, nothing to say
-        t.labels = [...(t.labels || []), word]; const run = t.run && window.RailWorld?.find(t.run), had = run?.labels; if (run) run.labels = [...(run.labels || []), word]; ctl.paint({ focus }); window.RailConversation?.refresh(); const back = undoTo(snap, pick, 'As it was'); say(`Labelled ${t.title}: ${word}`, { tip: back.tip, run: () => { if (run) run.labels = had; back.run(); window.RailConversation?.refresh(); } }); } }); return; }
-      if (id === 'archive') { const drop = (l) => l.flatMap((y) => (y === t ? y.after || [] : y.after ? [{ ...y, after: drop(y.after) }] : [y])); x.c.tasks = drop(x.c.tasks);   /* its follow-up is a task of its own: it stays */ ctl.paint(); say(`Archived ${t.title}`, undoTo(snap, pick, 'Puts it back')); window.RailConversation?.refresh(); return; }
+        t.labels = [...(t.labels || []), word]; const run = t.run && window.StillhetWorld?.find(t.run), had = run?.labels; if (run) run.labels = [...(run.labels || []), word]; ctl.paint({ focus }); window.StillhetConversation?.refresh(); const back = undoTo(snap, pick, 'As it was'); say(`Labelled ${t.title}: ${word}`, { tip: back.tip, run: () => { if (run) run.labels = had; back.run(); window.StillhetConversation?.refresh(); } }); } }); return; }
+      if (id === 'archive') { const drop = (l) => l.flatMap((y) => (y === t ? y.after || [] : y.after ? [{ ...y, after: drop(y.after) }] : [y])); x.c.tasks = drop(x.c.tasks);   /* its follow-up is a task of its own: it stays */ ctl.paint(); say(`Archived ${t.title}`, undoTo(snap, pick, 'Puts it back')); window.StillhetConversation?.refresh(); return; }
     }
     const back = !bulk && x ? `[data-open="${CSS.escape(x.key)}"]` : '';
     if (id === 'rename') {
@@ -179,28 +179,28 @@
     if (id === 'ungroup') { data.chats.filter((c) => c.group === x.g.id).forEach((c) => { c.group = ''; }); data.groups = data.groups.filter((g) => g !== x.g); ctl.paint(); say(`Group removed · ${x.g.name}`, undoTo(snap, pick, 'Puts the group back')); return; }
     void viaKey;
   }
-  // ---- the live kind (D6, D9): each action is dev's route through RailChatLive; nothing changes here before it answers
+  // ---- the live kind (D6, D9): each action is dev's route through StillhetChatLive; nothing changes here before it answers
   // ok, then the threads and groups are read again. A refusal toasts once; a bulk one names how many of how many.
-  const liveRun = (id, a) => window.RailChatLive.act(id, a);
-  const reread = () => { window.RailAdapter.refresh('threads'); window.RailAdapter.refresh('groups'); };
+  const liveRun = (id, a) => window.StillhetChatLive.act(id, a);
+  const reread = () => { window.StillhetAdapter.refresh('threads'); window.StillhetAdapter.refresh('groups'); };
   // `{done, refused}`: how many dev did and refused. A refusal is the only message (one toast with the count and the
   // first reason); the success sentence is said only when none was refused.
   async function liveEach(words, chats, run) {
     const out = [];
     for (const c of chats) out.push(await run(c));
     const bad = out.filter((r) => !r.ok), done = out.length - bad.length, ok = chats.filter((c, i) => out[i].ok);
-    if (bad.length) window.RailAdapter.toast(chats.length === 1 ? `Could not ${words} the chat: ${bad[0].error}` : `Could not ${words} ${bad.length} of ${plural(chats.length, 'chat')}: ${bad[0].error}`);   // D9: one toast, the shell's
+    if (bad.length) window.StillhetAdapter.toast(chats.length === 1 ? `Could not ${words} the chat: ${bad[0].error}` : `Could not ${words} ${bad.length} of ${plural(chats.length, 'chat')}: ${bad[0].error}`);   // D9: one toast, the shell's
     if (done) { ctl.clear(); reread(); }
     return { done, refused: bad.length, ok };
   }
-  // a task row under a chat: its own actions are dev's run routes (PR watch, labels, archive), through RailChatLive
+  // a task row under a chat: its own actions are dev's run routes (PR watch, labels, archive), through StillhetChatLive
   function liveTask(id, x, back) {
-    const t = x.t, focus = back ? { focus: back } : {}, reTasks = () => { window.RailAdapter.refresh('history'); window.RailAdapter.refresh('runLinks'); };
+    const t = x.t, focus = back ? { focus: back } : {}, reTasks = () => { window.StillhetAdapter.refresh('history'); window.StillhetAdapter.refresh('runLinks'); };
     // Watch toggles from dev's own watch state (GET /api/pr/watch `watching`), read right before the POST
     if (id === 'watch') { (async () => { const cur = await liveRun('task-watch-state', { pipelineId: t.run }); if (!cur.ok) { ctl.paint(focus); return; } const on = !cur.data?.watching; const r = await liveRun('task-watch', { pipelineId: t.run, watch: on }); if (r.ok) { reTasks(); say(on ? 'Watching: Worca fixes failing checks' : 'Stopped watching'); } ctl.paint(focus); })(); return; }
     if (id === 'archive') { liveRun('task-archive', { pipelineId: t.run }).then((r) => { if (r.ok) { reTasks(); say(`Archived ${t.title}`); } ctl.paint(focus); }); return; }
     ctl.dialog({ title: 'Label this task', label: 'Label', value: '', max: 40, yes: 'Add label', back, run: async (v) => {
-      const word = v.toLowerCase(), had = (window.RailWorld.find(t.run) || {}).labels || [];   // the run's labels as they are now, not when the dialog opened
+      const word = v.toLowerCase(), had = (window.StillhetWorld.find(t.run) || {}).labels || [];   // the run's labels as they are now, not when the dialog opened
       if (had.includes(word)) { ctl.paint(focus); return; }   // already on it: nothing happened, nothing to say
       const r = await liveRun('task-label', { pipelineId: t.run, labels: [...had, word] });
       if (r.ok) { reTasks(); say(`Labelled ${t.title}: ${word}`); }
@@ -248,16 +248,16 @@
         place(chats, kind === 'create' ? newGroup(text.slice(8, -1).slice(0, 80)) : data.groups.find((g) => g.name === text), snap, pick);
       } });
   }
-  const newGroup = (name) => { const g = { id: `t-${Date.now().toString(36)}`, name }; if (!window.RailWorld.live) data.groups.push(g); return g; };   // live: dev makes it (place)
+  const newGroup = (name) => { const g = { id: `t-${Date.now().toString(36)}`, name }; if (!window.StillhetWorld.live) data.groups.push(g); return g; };   // live: dev makes it (place)
   function place(chats, g, snap, pick) {
-    if (window.RailWorld.live) {   // dev's group routes: a new group is made with its chats in one call; Undo is dev's undo token
+    if (window.StillhetWorld.live) {   // dev's group routes: a new group is made with its chats in one call; Undo is dev's undo token
       const threadIds = chats.map((c) => c.id), made = !data.groups.includes(g);   // newGroup() keeps a live group out of the list until dev has made it
       ctl.closePicker();
-      window.RailChatLive.act(made ? 'group-new' : 'group-add', made ? { name: g.name, threadIds } : { groupId: g.id, threadIds }).then((r) => {
+      window.StillhetChatLive.act(made ? 'group-new' : 'group-add', made ? { name: g.name, threadIds } : { groupId: g.id, threadIds }).then((r) => {
         if (!r.ok) { ctl.paint(); return; }
         const token = r.data?.undo?.token;
-        ctl.clear(); window.RailAdapter.refresh('threads'); window.RailAdapter.refresh('groups');
-        say(`Added to ${g.name} · ${chats.length === 1 ? chats[0].title : plural(chats.length, 'chat')}`, token ? { tip: 'Puts them back where they were', run: () => window.RailChatLive.act('group-undo', { token }).then((u) => { if (u.ok) { window.RailAdapter.refresh('threads'); window.RailAdapter.refresh('groups'); } }) } : undefined);
+        ctl.clear(); window.StillhetAdapter.refresh('threads'); window.StillhetAdapter.refresh('groups');
+        say(`Added to ${g.name} · ${chats.length === 1 ? chats[0].title : plural(chats.length, 'chat')}`, token ? { tip: 'Puts them back where they were', run: () => window.StillhetChatLive.act('group-undo', { token }).then((u) => { if (u.ok) { window.StillhetAdapter.refresh('threads'); window.StillhetAdapter.refresh('groups'); } }) } : undefined);
       });
       return;
     }
@@ -265,8 +265,8 @@
     ctl.closePicker(); ctl.clear(); ctl.openGroup(`cgroup:${g.id}`); ctl.paint(); ctl.landOn(`chat:${chats[0].id}`);
     say(`Added to ${g.name} · ${chats.length === 1 ? chats[0].title : plural(chats.length, 'chat')}`, undoTo(snap, pick, 'Puts them back where they were'));
   }
-  function openChat(id) { const c = data.chats.find((x) => x.id === id); if (c) c.unread = false; window.RailShell.go(`chat/${id}`); }
-  const goHome = () => { current = ''; window.RailShell.go('chat'); };
+  function openChat(id) { const c = data.chats.find((x) => x.id === id); if (c) c.unread = false; window.StillhetShell.go(`chat/${id}`); }
+  const goHome = () => { current = ''; window.StillhetShell.go('chat'); };
   function newChat(title = 'New chat', project = '', o = {}) { const id = `n${Date.now().toString(36)}`; data.chats.unshift({ id, title, state: 'idle', kind: 'chat', project, time: 'now', day: 'today', cost: null, pinned: false, archived: false, unread: false, group: '', origin: null, labels: [], tasks: [], ...o }); ctl.paint(); return id; }
   // ---- the column ----
   bar.innerHTML = '<div id="chats-root"></div>';
@@ -281,16 +281,16 @@
       sections: sections().map((s) => ({ ...s, count: s.rows.reduce((n, r) => n + (r.members ? (s.id === 'needs' ? Math.max(1, r.members.filter((m) => sectionOfChat(m._x.c) === 'needs').length) : r.members.length) : 1), 0) })) /* one unit: chats, a folded group by its members */, empty: { text: listCase === 'empty' ? 'No chats yet.' : view.show === 'needs' ? 'No chat needs you.' : view.show === 'archived' ? 'No archived chats.' : view.show === 'running' ? 'No chat is running.' : 'No chats yet.', action: listCase === 'empty' ? 'New chat' : '' } }),
     can: () => ['menu', 'fold', 'archive', 'rename', 'pin', ...(has('advanced') ? ['group', 'delete'] : [])],
     bulk: bulkActions, count: (rows) => chatsOf(rows.map((r) => r._x)).length, act,
-    open: (r) => { if (r._x.g) { ctl.toggleGroup(r.key); return; } if (r._x.t) { if (window.RailWorld.live && r._x.t.kind !== 'schedule') { window.RailConversation?.openTask(r._x.c.id, r._x.t.id); return; } if (r._x.t.kind === 'schedule') window.RailShell.openSchedule(r._x.t.id); else window.RailShell.openTask(r._x.t.case, r._x.c.id, r._x.t.title); return; } openChat(r._x.c.id); },
+    open: (r) => { if (r._x.g) { ctl.toggleGroup(r.key); return; } if (r._x.t) { if (window.StillhetWorld.live && r._x.t.kind !== 'schedule') { window.StillhetConversation?.openTask(r._x.c.id, r._x.t.id); return; } if (r._x.t.kind === 'schedule') window.StillhetShell.openSchedule(r._x.t.id); else window.StillhetShell.openTask(r._x.t.case, r._x.c.id, r._x.t.title); return; } openChat(r._x.c.id); },
     word: (id, v) => { view = { ...view, [id]: v }; set(STORE_V, JSON.stringify(view)); return false; },
     tool: (v) => { if (v === 'reset') { view = { ...FRESH }; set(STORE_V, JSON.stringify(view)); say('View reset'); return; } if (v.startsWith('sort:')) { view = { ...view, sort: v.slice(5) }; set(STORE_V, JSON.stringify(view)); } },
     key: (act) => {
-      if (act === 'new-chat') window.RailConversation?.start('ask');
+      if (act === 'new-chat') window.StillhetConversation?.start('ask');
       else if (act === 'focus-list') ctl.focusList();
       else if (act === 'prev-chat' || act === 'next-chat') { const id = neighbour(act === 'next-chat' ? 1 : -1); if (id) openChat(id); }
     },
     say, active: () => (location.hash.startsWith('#chat') || !location.hash) && !document.querySelector('.pz-popover, .keys-modal, #app .viewer-modal, #center-dlg .viewer-modal, #app .nav-fly'),
-    retry: () => { if (window.RailWorld.live) window.RailAdapter.retry(); else setCase('full'); }, emptyAct: () => window.RailConversation?.start('ask'),
+    retry: () => { if (window.StillhetWorld.live) window.StillhetAdapter.retry(); else setCase('full'); }, emptyAct: () => window.StillhetConversation?.start('ask'),
   } });
   function setCase(c) {
     listCase = c === 'shared' || c === 'refresh' ? 'full' : c; data = c === 'empty' ? { groups: [], chats: [] } : M.seed(); ctl.clear(); ctl.state.waited = false;
@@ -299,12 +299,12 @@
     if (c === 'refresh' && location.hash.startsWith('#chat')) say('Could not load the chats. The rows here may be out of date.');
   }
   document.getElementById('list-case')?.addEventListener('change', (e) => setCase(e.target.value));
-  if (window.RailDemoState?.list) setCase(window.RailDemoState.list);   // ?state=NAME (world.js)
-  window.RailWorld.onChange(() => setCase(window.RailWorld.live ? window.RailDemoState.list || 'full' : listCase));   // another Pulse case, or (live) a load or a list state (D20)
-  window.RailWorld.onMove(() => { data.chats.forEach(M.sync); ctl?.paint(); });   // a task moved anywhere: its row and its chat's place in Needs you follow
+  if (window.StillhetDemoState?.list) setCase(window.StillhetDemoState.list);   // ?state=NAME (world.js)
+  window.StillhetWorld.onChange(() => setCase(window.StillhetWorld.live ? window.StillhetDemoState.list || 'full' : listCase));   // another Pulse case, or (live) a load or a list state (D20)
+  window.StillhetWorld.onMove(() => { data.chats.forEach(M.sync); ctl?.paint(); });   // a task moved anywhere: its row and its chat's place in Needs you follow
   R.prefs.onChange(() => ctl.paint());
   let toTop = false;
-  window.RailChats = {
+  window.StillhetChats = {
     show: (id) => { current = id || ''; ctl.paint(); if (toTop) { toTop = false; requestAnimationFrame(() => { bar.scrollTop = 0; }); } return true; },   // after the route has shown the bar: a hidden one cannot scroll
     opened: () => true,
     /** nav.one-bar: the bar as it starts: the fresh view, nothing selected, no chat open, at the top. */
@@ -314,10 +314,10 @@
     data: () => data,
     summary: () => {   // the list's own Needs you; the live kind's number is the server's count over every thread (counts.needs)
       const chats = data.chats.filter((c) => !c.archived), mine = chats.filter((c) => sectionOfChat(c) === 'needs').length;
-      const all = window.RailWorld.live ? window.RailWorld.part('chatsNeeds') : null, needs = Number.isFinite(all) ? all : mine;
+      const all = window.StillhetWorld.live ? window.StillhetWorld.part('chatsNeeds') : null, needs = Number.isFinite(all) ? all : mine;
       return { n: chats.filter((c) => c.state !== 'idle' || sectionOfChat(c) === 'needs').length + Math.max(0, needs - mine), needs };
     },
-    refresh: () => { ctl.paint(); window.RailShell?.inView.draw(); },
+    refresh: () => { ctl.paint(); window.StillhetShell?.inView.draw(); },
   };
   ctl.paint();
 })();

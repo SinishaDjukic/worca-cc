@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// tools/stillhet-no-demo.mjs — the static half of gate.no-demo (docs/rail/gate.md, B1.10). Lists every demo-answer site under
-// ui/public/stillhet/ and every `wire to` row of plans/rail/stillhet-wiring.md, and checks each against its classification in
+// tools/stillhet-no-demo.mjs — the static half of gate.no-demo (docs/stillhet/gate.md, B1.10). Lists every demo-answer site under
+// ui/public/stillhet/ and every `wire to` row of plans/stillhet/stillhet-wiring.md, and checks each against its classification in
 // test/fixtures/stillhet-no-demo-baseline.json (wired, refused, not-in-stillhet, prototype-only, offender). The offenders can
 // only shrink: --update drops gone sites, refuses an unclassified one and refuses a new offender.
 //   node tools/stillhet-no-demo.mjs            exit 1 on an unclassified, stale or badly evidenced site
@@ -45,7 +45,7 @@ export function sitesOfText(file, src) {
   const out = [];
   if (!SEAM.has(file)) {
     for (const label of phrasesOf(src)) out.push({ file, kind: 'would', label });
-    for (const m of src.matchAll(/RailAdapter\.(act|refuse)\(\s*/g)) {
+    for (const m of src.matchAll(/StillhetAdapter\.(act|refuse)\(\s*/g)) {
       const lit = src.slice(m.index + m[0].length).match(/^(['"`])([^'"`]+)\1/);
       out.push({ file, kind: 'act', label: lit ? lit[2] : '(an id built from data)' });
     }
@@ -57,11 +57,11 @@ export function sitesOfText(file, src) {
   return numbered(out);
 }
 
-/** Every key of the `window.RailDemoActions` literal in demo/demo-actions.js but `would`. */
+/** Every key of the `window.StillhetDemoActions` literal in demo/demo-actions.js but `would`. */
 export function demoActionSites(src) {
   const sb = { window: {} };
   vm.runInNewContext(src, sb);
-  return numbered(Object.keys(sb.window.RailDemoActions || {}).filter((k) => k !== 'would').map((label) => ({ file: 'demo/demo-actions.js', kind: 'demo-action', label })));
+  return numbered(Object.keys(sb.window.StillhetDemoActions || {}).filter((k) => k !== 'would').map((label) => ({ file: 'demo/demo-actions.js', kind: 'demo-action', label })));
 }
 
 /** Every `wire to` row under every `## ` heading of the wiring doc, Dev surfaces and any later section included. */
@@ -93,9 +93,9 @@ export function scanSites(root = ROOT) {
   return sites.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
-// the rule ids the docs define: the first backticked cell of each rules row in docs/rail/*.md
+// the rule ids the docs define: the first backticked cell of each rules row in docs/stillhet/*.md
 function ruleIds(root) {
-  const dir = path.join(root, 'docs/rail');
+  const dir = path.join(root, 'docs/stillhet');
   const ids = new Set();
   for (const f of readdirSync(dir).filter((n) => n.endsWith('.md'))) {
     for (const m of readFileSync(path.join(dir, f), 'utf8').matchAll(/^\| `([a-z][\w-]*\.[\w.-]+)` \|/gm)) ids.add(m[1]);

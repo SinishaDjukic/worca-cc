@@ -1,7 +1,7 @@
 // Pulse mock: the cases, the event catalogue by group, and the pure figures the renderer paints (pulse.js).
-// Spec: plans/rail/pulse.md. Vitals is a state, Updates is an event; usage is read per provider and window.
+// Spec: plans/stillhet/pulse.md. Vitals is a state, Updates is an event; usage is read per provider and window.
 (function () {
-  const R = window.RailUI, W = window.RailWorld;   // who is running what, and the usage and spend behind it, come from shell/world.js
+  const R = window.StillhetUI, W = window.StillhetWorld;   // who is running what, and the usage and spend behind it, come from shell/world.js
   // The groups, in Settings order. Each event: its id, its own title, its severity: needs (waiting for a person), problem
   // (went wrong while nobody waited), info (simply happened). A group with a `flag` follows that Labs feature.
   // Your own Pause and a drain (the server stopping) wait on nobody: they are not events and never notify.
@@ -335,7 +335,7 @@
   const TRY = { needs: ['run.questions', 'Rename settings keys', 'worca-cc · 1 question', 'run/question'], problem: ['run.failed', 'Fix the flaky e2e test', 'worca-cc · it stopped at Review', 'run/failed'], info: ['run.done', 'Update the changelog', 'docs-site · ready', 'run/ready'] };
   const tryEvent = (sev, n) => { const [e, about, meta, go] = TRY[sev]; return up('try-' + n, e, about, meta, 'now', 'Today', { go }); };
 
-  // What takes a Now row out of Needs you (docs/rail/panels.md `panel.pulse-read`), keyed by the run state's id, never its
+  // What takes a Now row out of Needs you (docs/stillhet/panels.md `panel.pulse-read`), keyed by the run state's id, never its
   // word (one word is shared by states that clear differently: question and recovery; ready and no-remote), or by the row's kind for a missed time
   // and a place. Its words follow dev's Needs-you rule (src/shared/needs-you.mjs) and each state's action (run-state.mjs).
   const CLEARS = [

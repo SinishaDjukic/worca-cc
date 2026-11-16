@@ -35,9 +35,9 @@ test('Make a workspace by hand over two git projects: Save is POST /api/workspac
   for (let i = 0; i < 100 && !h.sockets.length; i++) await settle(30);   // the socket opens after the first read, slower than the host's own hello
   h.sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'hello', bootId: 'b', runs: [] }) });
   await go(h.w, '#projects', 300);
-  const keys = h.w.RailProjects.list().map((p) => p.id);
+  const keys = h.w.StillhetProjects.list().map((p) => p.id);
   assert.equal(keys.length, 2, 'the two real projects');
-  h.w.RailPlaces.projects.newPick('hand-space'); await settle(100);
+  h.w.StillhetPlaces.projects.newPick('hand-space'); await settle(100);
   const page = h.d.getElementById('route-place');
   page.querySelector('#pj-hand-v').value = 'Seed pair'; page.querySelector('[data-confirm="yes"]').click(); await settle(150);
   for (const k of keys) { page.querySelector('[data-menu="ws-add"]').click(); page.querySelector(`[data-menu-pick="ws-add|${k}"]`).click(); await settle(60); }

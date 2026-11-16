@@ -1,5 +1,5 @@
 // ui/public/stillhet/live/task-live.mjs — the live kind's Tasks I/O (Stillhet Tasks, D4, D5, D13): the only owner of task
-// fetches, the PR checks cache and every Tasks action. live-adapter.mjs starts it and sets window.RailTaskLive. The page
+// fetches, the PR checks cache and every Tasks action. live-adapter.mjs starts it and sets window.StillhetTaskLive. The page
 // (runs/run-page-model.js, run-page.js), the bar's list, the center and the chat TaskCard read from here; none of them
 // writes before a route answers `ok`.
 import { actionRunner, FLOW as CHAT_FLOW, openTab, resumeBody } from './chat-live.mjs';

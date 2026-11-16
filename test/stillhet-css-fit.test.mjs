@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { cssRules } from './helpers/css-rules.mjs';
 
-const RAIL = cssRules(readFileSync('ui/public/stillhet/css/rail.css', 'utf8'));
+const RAIL = cssRules(readFileSync('ui/public/stillhet/css/stillhet.css', 'utf8'));
 const SHELL = cssRules(readFileSync('ui/public/stillhet/shell/shell.css', 'utf8'));
 const norm = (s) => s.replace(/\s*,\s*/g, ',').replace(/\s+/g, ' ').trim();
 /** The first rule whose normalised selector matches, optionally only under a media head that matches. */

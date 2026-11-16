@@ -94,7 +94,7 @@ test('R-qa-5: a link opened cold draws loading, sends its one custom read, then 
 
 test('D17: a project row opens Tasks narrowed to it; a person row narrows Tasks to who started them', async () => {
   const h = await insightsHost();
-  const got = []; h.w.RailRunsList.filter = (f) => got.push(JSON.parse(JSON.stringify(f)));
+  const got = []; h.w.StillhetRunsList.filter = (f) => got.push(JSON.parse(JSON.stringify(f)));
   page(h.d).querySelector('[data-in-row]').click();
   assert.deepEqual(got.at(-1), { project: 'billing-api' });
   await pick(h.d, 'in-by', 'person');
@@ -148,7 +148,7 @@ test('F-FM2-04: a project keeps one shade across views', async () => {
 
 // F-FM2-05: a bar's number never wraps at 360 ("2 / tasks")
 test('F-FM2-05: a bar value is kept on one line', () => {
-  const css = readFileSync(new URL('../ui/public/stillhet/css/rail.css', import.meta.url), 'utf8');
+  const css = readFileSync(new URL('../ui/public/stillhet/css/stillhet.css', import.meta.url), 'utf8');
   assert.match(css, /\.bc-v\{[^}]*white-space:nowrap/);
 });
 

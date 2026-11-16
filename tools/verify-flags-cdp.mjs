@@ -122,7 +122,7 @@ async function openPage(url) {
 const shown = (p) => p.evalJs(`(() => { const n = document.getElementById('flags-demo-note'); return !!n && getComputedStyle(n).display !== 'none'; })()`);
 const until = async (fn, ms = 5000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { if (await fn()) return true; await sleep(50); } return false; };
 
-// ---- --stillhet: the opt-in and opt-out walk (docs/rail/gate.md; Expert, one tab). The ask switch is read per request, so the
+// ---- --stillhet: the opt-in and opt-out walk (docs/stillhet/gate.md; Expert, one tab). The ask switch is read per request, so the
 // walk flips WORCA_STILLHET_ASK in this process. Seeds: onboarding seen and one project.
 async function stillhetWalk() {
   const { settingsFile } = await import(new URL('../src/core/settings.mjs', import.meta.url).href);
@@ -135,7 +135,7 @@ async function stillhetWalk() {
   const snapshot = async () => JSON.stringify({ projects: (await j('/api/projects')).projects.map((x) => `${x.name} ${x.path}`), settings: Object.fromEntries(Object.entries(await j('/api/settings')).filter(([k]) => !['flags', 'onboarding'].includes(k))) });
   const before = await snapshot();
   const stored = async () => JSON.parse(await readFile(settingsFile(), 'utf8'));
-  const flagRail = async () => (await j('/api/flags')).flags.find((f) => f.key === 'rail');
+  const flagStillhet = async () => (await j('/api/flags')).flags.find((f) => f.key === 'stillhet');
   const waitLoad = async (pg) => { await sleep(300); await until(() => pg.evalJs(`document.readyState === 'complete' && !!window.__np`).catch(() => false), 15000); await sleep(1500); };
   const open = async (hash) => {
     const pg = await openPage(`${base}/#${hash}`);
@@ -149,13 +149,13 @@ async function stillhetWalk() {
 
   delete process.env.WORCA_STILLHET_ASK;
   let pg = await open('chat/new');
-  check('hidden by default: no question, no switch, no Labs rail row', !(await strip(pg)) && !(await sw(pg)));
+  check('hidden by default: no question, no switch, no Labs stillhet row', !(await strip(pg)) && !(await sw(pg)));
   pg.evalJs(`location.hash = '#settings/experimental'`); await sleep(1500);
-  check('hidden by default: Labs has no rail row', !(await pg.evalJs(`!!document.getElementById('flag-row-rail')`)));
+  check('hidden by default: Labs has no stillhet row', !(await pg.evalJs(`!!document.getElementById('flag-row-stillhet')`)));
 
   process.env.WORCA_STILLHET_ASK = '1';
   pg = await open('chat/new');
-  check('with the override the question shows once, as a strip under the top bar', (await strip(pg)) && await pg.evalJs(`document.getElementById('topnav').nextElementSibling?.id === 'rail-strip'`));
+  check('with the override the question shows once, as a strip under the top bar', (await strip(pg)) && await pg.evalJs(`document.getElementById('topnav').nextElementSibling?.id === 'stillhet-strip'`));
   check('the focus is on No thanks', await pg.evalJs(`document.activeElement?.matches('[data-confirm="no"]') === true`));
   check('the Stillhet icon shows after Activity', await sw(pg));
   await pg.evalJs(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`); await sleep(500);
@@ -171,22 +171,22 @@ async function stillhetWalk() {
   const n0 = await loads(pg);
   await click(pg, '[data-stillhet="invitation"] [data-confirm="yes"]');
   await until(async () => (await loads(pg)) > n0, 8000); await waitLoad(pg);
-  check('Try Stillhet turns rail on with exactly 1 navigation', (await flagRail()).on === true && (await loads(pg)) === n0 + 1, `loads ${n0} → ${await loads(pg)}`);
-  check('turning it on stored the flag and the answer', (await stored()).flags?.rail === true && (await stored()).onboarding?.stillhetAsked === true);
+  check('Try Stillhet turns stillhet on with exactly 1 navigation', (await flagStillhet()).on === true && (await loads(pg)) === n0 + 1, `loads ${n0} → ${await loads(pg)}`);
+  check('turning it on stored the flag and the answer', (await stored()).flags?.stillhet === true && (await stored()).onboarding?.stillhetAsked === true);
   const n1 = await loads(pg);
   await click(pg, '[data-design-switch]'); await sleep(300);   // the Stillhet icon opens its menu
   await click(pg, '[data-design-pick="off"]');
   await until(async () => (await loads(pg)) > n1, 8000); await waitLoad(pg);
-  check('Back to today\'s UI turns it off with exactly 1 navigation, changing only flags.rail', (await flagRail()).on === false && (await loads(pg)) === n1 + 1 && (await stored()).flags?.rail === undefined);
+  check('Back to today\'s UI turns it off with exactly 1 navigation, changing only flags.stillhet', (await flagStillhet()).on === false && (await loads(pg)) === n1 + 1 && (await stored()).flags?.stillhet === undefined);
   const n2 = await loads(pg);
   await pg.evalJs(`location.hash = '#settings/experimental'`); await sleep(1500);
-  await click(pg, '[data-flag-switch="rail"]');
+  await click(pg, '[data-flag-switch="stillhet"]');
   await until(async () => (await loads(pg)) > n2, 8000); await waitLoad(pg);
-  check('Labs turns it on with exactly 1 navigation', (await flagRail()).on === true && (await loads(pg)) === n2 + 1, `loads ${n2} → ${await loads(pg)}`);
+  check('Labs turns it on with exactly 1 navigation', (await flagStillhet()).on === true && (await loads(pg)) === n2 + 1, `loads ${n2} → ${await loads(pg)}`);
   const n3 = await loads(pg);
-  await click(pg, '[data-flag-switch="rail"]');
+  await click(pg, '[data-flag-switch="stillhet"]');
   await until(async () => (await loads(pg)) > n3, 8000); await waitLoad(pg);
-  check('Labs turns it off with exactly 1 navigation', (await flagRail()).on === false && (await loads(pg)) === n3 + 1);
+  check('Labs turns it off with exactly 1 navigation', (await flagStillhet()).on === false && (await loads(pg)) === n3 + 1);
   pg.evalJs(`location.hash = '#chat/new'`); await sleep(1500);
   const n4 = await loads(pg);
   await pg.evalJs(`(() => { const t = document.querySelector('textarea'); if (t) { t.value = 'draft that must survive'; t.dispatchEvent(new Event('input', { bubbles: true })); } })()`);
@@ -196,7 +196,7 @@ async function stillhetWalk() {
   await pg.evalJs(`(() => { const t = document.querySelector('textarea'); t.value = ''; t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
   await until(async () => (await loads(pg)) > n4, 8000);
   check('the reload follows once the text is gone', (await loads(pg)) === n4 + 1);
-  await j('/api/flags', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rail: false }) });
+  await j('/api/flags', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ stillhet: false }) });
   const after = await snapshot();
   check('projects and every other setting are identical before and after', before === after, before === after ? '' : (() => { const a = JSON.parse(before), b = JSON.parse(after); const keys = [...new Set([...Object.keys(a.settings), ...Object.keys(b.settings)])].filter((k) => JSON.stringify(a.settings[k]) !== JSON.stringify(b.settings[k])); return `changed: ${keys.join(', ') || 'projects'}`; })());
   check('no page errors', pg.pageErrors.length === 0, pg.pageErrors.join(' | '));

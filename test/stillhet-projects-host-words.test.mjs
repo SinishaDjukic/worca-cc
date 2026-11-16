@@ -36,7 +36,7 @@ test('V3-05: no empty On it now line when nothing runs', async () => {
   const src = WORLD();
   const h = await projectsHost({ hash: '#projects/web-1', sources: { ...src, hello: { ...clone(SOURCES.hello), runs: [] },
     history: { pipelines: [{ id: 'pa', title: 'Stopped here', status: 'stopped', projectName: 'web', startedAt: SOURCES.history.pipelines[0].startedAt, mtime: SOURCES.history.pipelines[0].mtime }] } } });
-  assert.ok(h.w.RailChats.data().chats.find((c) => c.id === 'ask_1')?.tasks.some((t) => t.title === 'Stopped here'), 'a stopped task in its chat');
+  assert.ok(h.w.StillhetChats.data().chats.find((c) => c.id === 'ask_1')?.tasks.some((t) => t.title === 'Stopped here'), 'a stopped task in its chat');
   const lines = [...page(h.d).querySelectorAll('.convo-head')].map((p) => p.textContent.trim());
   assert.deepEqual(lines.filter((l) => /On it now/.test(l)), [], 'no On it now line');
   assert.deepEqual(lines.filter((l) => !l), [], 'and no empty one');
@@ -93,9 +93,9 @@ test('F-W3a2-06: the head and the bar row count the same waits; a stopped run is
   const src = WORLD(), at0 = SOURCES.history.pipelines[0];
   const h = await projectsHost({ hash: '#projects', sources: { ...src, hello: { ...clone(SOURCES.hello), runs: [] },
     history: { pipelines: [{ id: 'pa', title: 'Stopped here', status: 'stopped', projectName: 'web', startedAt: at0.startedAt, mtime: at0.mtime }] } } });
-  assert.ok(h.w.RailChats.data().chats.find((c) => c.id === 'ask_1')?.tasks.some((t) => t.title === 'Stopped here'), 'a stopped task in its chat');
-  const tops = h.w.RailWorld.tops.bind(h.w.RailWorld);
-  h.w.RailWorld.tops = () => [...tops(), { id: 'feat_same', isGroup: true, section: 'needs', project: 'web', title: 'Stopped here', case: 'ready', archived: false }];
+  assert.ok(h.w.StillhetChats.data().chats.find((c) => c.id === 'ask_1')?.tasks.some((t) => t.title === 'Stopped here'), 'a stopped task in its chat');
+  const tops = h.w.StillhetWorld.tops.bind(h.w.StillhetWorld);
+  h.w.StillhetWorld.tops = () => [...tops(), { id: 'feat_same', isGroup: true, section: 'needs', project: 'web', title: 'Stopped here', case: 'ready', archived: false }];
   await go(h.w, '#projects/web-1', 200); await settle(120);
   assert.match(headWord(h.d), /1 task here needs you/);
   assert.equal([...page(h.d).querySelectorAll('.lr-t')].map((r) => r.textContent.trim())[0], 'Missed one');

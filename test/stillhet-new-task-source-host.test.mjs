@@ -1,4 +1,4 @@
-// test/stillhet-new-task-source-host.test.mjs — COV-2 D8 (docs/rail/forms.md form.run-options): New task's ticket source.
+// test/stillhet-new-task-source-host.test.mjs — COV-2 D8 (docs/stillhet/forms.md form.run-options): New task's ticket source.
 // A plugin task source is a segment beside Write it and From file; its profile gate binds a profile; the search lists
 // tickets; the picked one's preview comes from getTask; Start sends it as `source`, with no prompt. Live app host (jsdom).
 import { test, afterEach } from 'node:test';
@@ -13,7 +13,7 @@ const TICKETS = [{ id: 'WEB-1', title: 'WEB-1 Pager breaks on page 2', labels: [
 async function open({ sources = SOURCES, binding = [200, { profile: 'work', via: 'binding' }], call = (b) => [200, { ok: true, result: b.op === 'validateConfig' ? { ok: true } : b.op === 'getTask' ? { title: 'WEB-1 Pager breaks on page 2', body: 'Page 2 shows page 1.' } : { tasks: TICKETS.filter((t) => t.title.toLowerCase().includes(String(b.args.search || '').toLowerCase())) } }], hold, write = () => [200, { runId: 'r-new' }] } = {}) {
   const h = await liveHost({ lists: LISTS, hold, read: (u) => (u === '/api/sources' ? [200, sources] : u === BINDING ? binding : null), write: (u, b, m) => (u === '/api/sources/call' ? call(b) : write(u, b, m)) });
   await go(h.w, '#runs', 120);
-  h.w.RailCenters.maker('tasks').newPick('form'); await settle(80);
+  h.w.StillhetCenters.maker('tasks').newPick('form'); await settle(80);
   return h;
 }
 const q = (d, sel) => d.querySelector(`#center-dlg ${sel}`);

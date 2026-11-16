@@ -1,7 +1,7 @@
 // test/stillhet-settings-labs-live.test.mjs — Stillhet Settings › Labs writes the real flags (S12.1 · F-7b-01, F-7b-06):
 // the switches. Live: a switch PATCHes /api/flags and shows the server's answer (Saving while it waits, the refusal at the
-// end of its sentence, Locked by WORCA_FLAGS when the server locked it); the rows are exactly GET /api/flags'; `rail`
-// leaves through RailHost.setStillhet; answers out of order or without their list. Reset all, set.flags and the
+// end of its sentence, Locked by WORCA_FLAGS when the server locked it); the rows are exactly GET /api/flags'; `stillhet`
+// leaves through StillhetHost.setStillhet; answers out of order or without their list. Reset all, set.flags and the
 // prototype: test/stillhet-settings-labs-reset.test.mjs. The fake server: test/helpers/stillhet-labs-live.mjs.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -31,7 +31,7 @@ test('T1 F-7b-01: a live Labs switch sends one PATCH, shows Saving while it wait
   assert.equal(sw.disabled, false);
   assert.equal(sw.hasAttribute('aria-busy'), false);
   assert.equal(toastText(d), 'Run labels: on');
-  assert.equal(w.RailUI.prefs.flag('runLabels'), true);
+  assert.equal(w.StillhetUI.prefs.flag('runLabels'), true);
 });
 
 test('T2 F-7b-01: a 200 whose answer still says off leaves the switch off and the toast says off', async () => {
@@ -45,13 +45,13 @@ test('T2 F-7b-01: a 200 whose answer still says off leaves the switch off and th
 test('T3 F-7b-01: a 409 refusal ends the row\'s sentence; the switch keeps the server value; prefs stay; no success toast', async () => {
   const srv = server({ patch: () => [409, { error: '"runLabels" is locked by WORCA_FLAGS', code: 'locked', key: 'runLabels' }] });
   const { w, d } = await live(srv);
-  const was = w.RailUI.prefs.flag('runLabels');
+  const was = w.StillhetUI.prefs.flag('runLabels');
   click(w, switchOf(d, 'Run labels')); await settle(120);
   assert.equal(textOf(d, 'Run labels'), 'Run labels does a thing. Could not turn it on: "runLabels" is locked by WORCA_FLAGS');
   const sw = switchOf(d, 'Run labels');
   assert.equal(sw.disabled, false);
   assert.equal(sw.getAttribute('aria-checked'), 'false');
-  assert.equal(w.RailUI.prefs.flag('runLabels'), was);
+  assert.equal(w.StillhetUI.prefs.flag('runLabels'), was);
   assert.equal(toastText(d), '');
 });
 
@@ -102,7 +102,7 @@ test('T7 F-7b-06: Run telemetry shows no Locked while locked:false, and shows it
   assert.ok(rowOf(d, 'Run telemetry').textContent.includes('Locked by WORCA_FLAGS'));
 });
 
-test('T8 F-7b-06: Stillhet and Design rows show under Experimental; Stillhet off goes through RailHost.setStillhet once, no own PATCH; a failure ends its row', async () => {
+test('T8 F-7b-06: Stillhet and Design rows show under Experimental; Stillhet off goes through StillhetHost.setStillhet once, no own PATCH; a failure ends its row', async () => {
   const { w, d, posts, calls } = await live();
   const exp = [...secOf(d, 'Features').querySelectorAll('.set-group')].find((g) => g.textContent.includes('Experimental'));
   assert.ok(exp.textContent.includes('Stillhet') && exp.textContent.includes('Design pass'));
@@ -112,7 +112,7 @@ test('T8 F-7b-06: Stillhet and Design rows show under Experimental; Stillhet off
   assert.deepEqual(calls, [false]);
   assert.deepEqual(patches(posts), []);
   // a failed setStillhet puts its line on the Stillhet row
-  const no = await live(server(), { railHost: () => ({ ok: false, text: 'Could not turn Stillhet off: no disk' }) });
+  const no = await live(server(), { stillhetHost: () => ({ ok: false, text: 'Could not turn Stillhet off: no disk' }) });
   click(no.w, switchOf(no.d, 'Stillhet')); await settle(120);
   assert.deepEqual(no.calls, [false]);
   assert.equal(textOf(no.d, 'Stillhet'), 'Stillhet does a thing. Could not turn Stillhet off: no disk');
@@ -144,11 +144,11 @@ test('T16 F-7b-01: an older PATCH answer that arrives last does not undo a newer
   click(w, switchOf(d, 'Run labels')); await settle(30);
   click(w, switchOf(d, 'Design pass')); await settle(120);
   assert.equal(switchOf(d, 'Design pass').getAttribute('aria-checked'), 'true');
-  assert.equal(w.RailUI.prefs.flag('design'), true);
+  assert.equal(w.StillhetUI.prefs.flag('design'), true);
   gate.open(); await settle(20);
   assert.equal(switchOf(d, 'Design pass').getAttribute('aria-checked'), 'true', 'the late answer leaves Design pass as the newer one drew it');
   assert.equal(switchOf(d, 'Run labels').getAttribute('aria-checked'), 'true', 'it still takes its own flag');
   await settle(120);
-  assert.equal(w.RailUI.prefs.flag('design'), true, 'what Design pass gates stays on');
-  assert.equal(w.RailUI.prefs.flag('runLabels'), true);
+  assert.equal(w.StillhetUI.prefs.flag('design'), true, 'what Design pass gates stays on');
+  assert.equal(w.StillhetUI.prefs.flag('runLabels'), true);
 });

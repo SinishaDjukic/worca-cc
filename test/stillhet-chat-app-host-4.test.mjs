@@ -17,7 +17,7 @@ test('Follow a task: a new chat asks Worca to follow the run by its id (dev\'s t
   assert.deepEqual(posts(calls).map(([m, u]) => `${m} ${u}`), ['POST /api/ask/threads', 'POST /api/ask/threads/ask_fol/messages', 'DELETE /api/ask/threads/ask_fol']);
   assert.equal(toastText(d), 'Could not send your message: turn in flight', 'refused: the send\'s one toast, no "Following"');
   assert.equal(w.location.hash, '#chat');
-  assert.ok(!w.RailChats.data().chats.some((c) => /^Follow /.test(c.title)), 'no local-only chat');
+  assert.ok(!w.StillhetChats.data().chats.some((c) => /^Follow /.test(c.title)), 'no local-only chat');
   msg = 202; calls.length = 0;
   await follow();
   const sent = posts(calls).find(([, u]) => u.endsWith('/messages'));
@@ -46,7 +46,7 @@ test('a chat\'s project is dev\'s thread context: the composer and head name it 
   const th = clone(THREAD); th.thread.context = { pinned: true, projectKey: 'web-1' };
   const { w, d } = await liveHost({ sources: src, thread: () => [200, th] });
   const name = src.projects.projects.find((p) => p.key === 'web-1').name;
-  assert.equal(w.RailChats.data().chats.find((c) => c.id === 'ask_1').project, name);
+  assert.equal(w.StillhetChats.data().chats.find((c) => c.id === 'ask_1').project, name);
   await go(w, '#chat/ask_1');
   assert.match(d.querySelector('#route-chat .convo-head').textContent, new RegExp(name));
   assert.match(d.querySelector('#route-chat [data-cp-project], #route-chat [data-menu="cp-project"]')?.textContent || d.querySelector('#route-chat .convo-dock').textContent, new RegExp(name));
@@ -64,7 +64,7 @@ test('a chat opened by its address draws its project and its cards once the stor
   src.runLinks = { links }; src.threads.threads = src.threads.threads.map((t) => (t.id === 'ask_1' ? { ...t, context: { projectKey: 'web' } } : t));
   for (const type of ['ask-run-status', 'ask-labels-changed']) sockets.at(-1).onmessage({ data: JSON.stringify({ type }) });
   await settle(400);
-  w.RailConversation.flushPaints();   // the store's repaint waits for a frame (comp.live-paint)
+  w.StillhetConversation.flushPaints();   // the store's repaint waits for a frame (comp.live-paint)
   assert.equal(w.location.hash, '#chat/ask_1');
   assert.ok(d.querySelector('#route-chat [data-anchor="card_run"]'), 'the TaskCard is drawn');
   assert.match(d.querySelector('#route-chat .convo-head').textContent, /^web/);
@@ -153,24 +153,24 @@ test('an applied change dev cannot undo has no Revert; a revertible receipt keep
 
 test('Pulse and search open a live task at its card in its starting chat; a task no chat started opens its page', async () => {
   const { w, d } = await liveHost();
-  w.RailShell.openRun('run/question', 'A task', 'run-a');   // what a Pulse row does: its case, its title, its run id
+  w.StillhetShell.openRun('run/question', 'A task', 'run-a');   // what a Pulse row does: its case, its title, its run id
   await settle(80);
   assert.equal(w.location.hash, '#chat/ask_1');
   assert.ok(d.querySelector('#route-chat [data-anchor="card_run"]'), 'the TaskCard is drawn');
-  w.RailShell.openRun('run/question', 'B task', 'run-b');   // ask_2 only follows run-b: no starting chat
+  w.StillhetShell.openRun('run/question', 'B task', 'run-b');   // ask_2 only follows run-b: no starting chat
   await settle(40);
   assert.equal(w.location.hash, '#run/run-b', 'its own page, by its id, never the case (#1266)');
 });
 
 // F-a1-04: a running ("spending") run's ⋯ Stop. A live frame rebuilds the store's tasks (chats-model seed), so the card's
 // confirm must outlive the task object it was opened on.
-const runTask = (w) => w.RailChats.data().chats.flatMap((c) => c.tasks || []).find((t) => (t.run || t.id) === 'run-a');
+const runTask = (w) => w.StillhetChats.data().chats.flatMap((c) => c.tasks || []).find((t) => (t.run || t.id) === 'run-a');
 // a frame that really changes the history row's PR (B2.3: a frame that repeats the PR on screen, or names no row on
 // screen, draws nothing); the fixture's row `pa` has no projectKey
 let redraws = 0;
 const redraw = async (w, sockets) => {
   const n = ++redraws;
-  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'history-pr', token: w.RailTaskLive.prLookup().token, items: [{ id: 'pa', pr: { url: `https://x/pull/${n}`, number: n, state: 'OPEN' } }] }) });
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'history-pr', token: w.StillhetTaskLive.prLookup().token, items: [{ id: 'pa', pr: { url: `https://x/pull/${n}`, number: n, state: 'OPEN' } }] }) });
   await settle(60);
 };
 const openStop = async (w, d) => {

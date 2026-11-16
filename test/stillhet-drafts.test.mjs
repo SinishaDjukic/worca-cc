@@ -1,4 +1,4 @@
-// test/stillhet-drafts.test.mjs — shell/drafts.js, the one drafts store (Schedules D6, rail.drafts).
+// test/stillhet-drafts.test.mjs — shell/drafts.js, the one drafts store (Schedules D6, stillhet.drafts).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';

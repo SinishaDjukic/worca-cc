@@ -1,4 +1,4 @@
-// The row primitive (docs/rail/components.md: one rail, one end). Every row on a Rail page has the same four slots:
+// The row primitive (docs/stillhet/components.md: one rail, one end). Every row on a Stillhet page has the same four slots:
 // its mark on the rail, its text, its end (a figure, a time, a Switch, a button) and its ⋯. The kinds differ only in the
 // classes their lists lay out: a list that holds rows gives them one rail and one end, so no row aligns itself.
 import { attrs, cls, esc } from './html.mjs';
@@ -49,7 +49,7 @@ export function row({ kind = 'list', rail = '', text = '', end = '', more = '', 
  * @param {string} [o.action]    a Button at its end
  */
 export function pulseRow({ mark = '', title, meta, time, tip, id, check, unread = false, resolved = false, flash = false, action = '' }) {
-  const unreadMark = '';   // unread is the title's weight, never a dot beside the mark (docs/rail/lists.md › list.kind-mark)
+  const unreadMark = '';   // unread is the title's weight, never a dot beside the mark (docs/stillhet/lists.md › list.kind-mark)
   return row({ kind: 'pulse', cls: `${check ? 'is-sel' : ''}${unread ? ' is-unread' : ''}${flash ? ' is-flash' : ''}`, attrs: { 'data-row': id },
     rail: `${mark}${unreadMark}${check !== undefined ? checkbox({ cls: 'pz-check', why: 'Select', checked: !!check, attrs: { 'data-sel': id, 'aria-label': `Select ${title}` } }) : ''}`,
     text: `<button type="button" class="pz-row-main row-btn"${attrs({ 'data-open': id, title: `${title}\n${meta}\n${tip}` })}><span class="pz-row-t${unread ? ' is-unread' : ''}"><span class="pz-row-tt">${esc(title)}</span>${resolved ? '<span class="pz-resolved">Resolved</span>' : ''}</span><span class="pz-row-m">${esc(meta)}</span></button><span class="pz-row-end"><span class="pz-row-time">${esc(time)}</span>${action}</span>` });

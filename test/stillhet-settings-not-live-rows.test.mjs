@@ -1,6 +1,6 @@
 // test/stillhet-settings-not-live-rows.test.mjs — Stillhet Settings in the live kind (ui/public/stillhet/settings/settings.js,
 // settings-model.js, pulse/pulse.js): a row or section still sample shows no value and nothing to click, and reads the
-// NotLiveRow sentence (docs/rail/settings.md `set.not-live`). A section all sample is its title and one line; a mixed
+// NotLiveRow sentence (docs/stillhet/settings.md `set.not-live`). A section all sample is its title and one line; a mixed
 // section's sample rows are their name and the line. Live rows (Prompt check, Delete all chats) stay as they are, and the
 // demo kind keeps every sample value. Each window is closed when its test ends (closeHosts).
 import { test, afterEach } from 'node:test';
@@ -65,7 +65,7 @@ test('F-7b-03: a live not-live section holds nothing to click', async () => {
 
 test('F-7b-10: live Presets and Labels read the sentence, with no sample record', async () => {
   const { w, d } = await live();
-  w.RailUI.prefs.setFlag('runLabels', true);
+  w.StillhetUI.prefs.setFlag('runLabels', true);
   for (const hash of ['#settings/presets', '#settings/labels']) {
     const text = await go(w, hash);
     const s = secs(d);
@@ -143,7 +143,7 @@ test('F-7b-07: live General: Setup, Storage and About read the sentence; Credent
 test('F-7b-03: sweep: on live, every Settings place\'s rows are live or read the sentence', async () => {
   const { w, d, posts } = await live();
   const SM = w.SettingsModel;
-  for (const f of SM.FLAGS) w.RailUI.prefs.setFlag(f.key, true);
+  for (const f of SM.FLAGS) w.StillhetUI.prefs.setFlag(f.key, true);
   const LIVE = new Set(['Abilities', 'Prompt check', 'Model keys', 'GitHub', 'Version']);   // Version: F-G-G5-04
   const SKIP = new Set(['team', 'plugins', 'experimental', 'automations']);
   const n = posts.length;
@@ -162,7 +162,7 @@ test('F-7b-03: sweep: on live, every Settings place\'s rows are live or read the
 
 test('F-7b-03: live search finds a not-live row by name, never its sample value', async () => {
   const { w } = await live();
-  w.RailUI.prefs.setFlag('runLabels', true);
+  w.StillhetUI.prefs.setFlag('runLabels', true);
   await go(w, '#settings/runs');
   // a row of a section all sample is not found (its section's head is); a not-live row in a mixed section is, by name only
   const rate = await find(w, 'Hourly rate');
@@ -181,8 +181,8 @@ test('F-7b-03: live search finds a not-live row by name, never its sample value'
 test('demo keeps every sample value and never says Not in Stillhet yet', async () => {
   const w = stillhetHost({ hash: '#chat', after: (fn) => demoClosers.push(fn) });
   await settle(200);
-  assert.equal(w.RailWorld.live, false);
-  w.RailUI.prefs.setMode('expert');
+  assert.equal(w.StillhetWorld.live, false);
+  w.StillhetUI.prefs.setMode('expert');
   assert.match(await go(w, '#settings/runs'), /\$35/);
   assert.match(await go(w, '#settings/models'), /GitHub Copilot/);
   const chat = await go(w, '#settings/ask');

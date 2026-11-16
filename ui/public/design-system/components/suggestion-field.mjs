@@ -1,4 +1,4 @@
-// SuggestionField (docs/rail/forms.md): text Worca writes for you. A sparkle inside the field, a Suggested chip, the violet
+// SuggestionField (docs/stillhet/forms.md): text Worca writes for you. A sparkle inside the field, a Suggested chip, the violet
 // shimmer while it writes, and a grey line when it could not; the field then keeps the text it had.
 import { esc, attrs, cls } from './html.mjs';
 import { icon } from './icons.mjs';

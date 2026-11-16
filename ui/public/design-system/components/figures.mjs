@@ -1,4 +1,4 @@
-// Figures (docs/rail/components.md): the few numbers of a thing (time, cost against its budget,
+// Figures (docs/stillhet/components.md): the few numbers of a thing (time, cost against its budget,
 // the diff), one line, the value bold. A figure with a home opens it.
 import { attrs, esc } from './html.mjs';
 import { icon } from './icons.mjs';

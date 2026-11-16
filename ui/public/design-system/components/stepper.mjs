@@ -1,4 +1,4 @@
-// Stepper and StepRow (docs/rail/components.md): how far along, and its steps. One segment per stage, one cell per step,
+// Stepper and StepRow (docs/stillhet/components.md): how far along, and its steps. One segment per stage, one cell per step,
 // a real tablist under it; a stage's steps are rows on the rail, cells of their list's grid, so columns line up.
 import { foldMiddle } from './work-place.mjs';
 import { esc, attrs, cls } from './html.mjs';

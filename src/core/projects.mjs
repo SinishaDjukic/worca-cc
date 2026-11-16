@@ -159,7 +159,7 @@ export function markProjectGit(key) {
   return changes === 1;
 }
 
-/** The longest project name a rename takes (Stillhet `form.rename-project`, docs/rail/forms.md). */
+/** The longest project name a rename takes (Stillhet `form.rename-project`, docs/stillhet/forms.md). */
 export const NAME_MAX = 80;
 const projectError = (code, message) => Object.assign(new Error(message), { code });
 

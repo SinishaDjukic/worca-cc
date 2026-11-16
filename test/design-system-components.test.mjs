@@ -1,4 +1,4 @@
-// test/design-system-components.test.mjs — the Worca Rail components (ui/public/design-system/components/): each
+// test/design-system-components.test.mjs — the Stillhet components (ui/public/design-system/components/): each
 // writes the markup its catalog entry promises, escapes what it is given, and carries its roles and states.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -32,7 +32,7 @@ test('T-8 busy: false draws today\'s button', () => {
 
 test('T-8 button({ busy }) says what it is doing: the breathing knot before the present-tense label, no spinner', () => {
   const b = dom(C.button({ label: 'Create PR', kind: 'primary', icon: '<svg></svg>', busy: { label: 'Creating PR…' }, cls: 'x-pr' }));
-  assert.equal(b.className, 'btn btn-sm btn-primary x-pr rail-busy');
+  assert.equal(b.className, 'btn btn-sm btn-primary x-pr stillhet-busy');
   assert.equal(b.getAttribute('aria-busy'), 'true'); assert.equal(b.disabled, true);
   assert.equal(b.firstElementChild.className, 'btn-knot'); assert.equal(b.firstElementChild.getAttribute('aria-hidden'), 'true');
   assert.equal(b.querySelector('.btn-busy-t').textContent, 'Creating PR…');
@@ -165,23 +165,23 @@ test('T-8 busy(): a removed button is left alone', async () => {
   let done; const p = new Promise((r) => { done = r; });
   const first = C.busy(b, { until: p });
   b.remove(); done(); await first;
-  assert.ok(b.classList.contains('rail-busy'), 'a removed button is left as it was'); assert.equal(b.disabled, true);
+  assert.ok(b.classList.contains('stillhet-busy'), 'a removed button is left as it was'); assert.equal(b.disabled, true);
   window.close();
 });
 
 test('T-8 the busy knot breathes as the stage line\'s now step and stands still under reduced motion; no spinner', () => {
-  const css = readFileSync('ui/public/stillhet/css/rail.css', 'utf8');
+  const css = readFileSync('ui/public/stillhet/css/stillhet.css', 'utf8');
   const step = css.match(/\.sl-step\.is-now\{[^}]*animation:([^;}]+)/)[1];
   assert.match(css, new RegExp(`\\.btn-knot\\{[^}]*animation:${step.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[;}]`), 'the same keyframes and timing');
   assert.equal((css.match(/@keyframes sl-breath/g) || []).length, 1, 'no keyframes of its own');
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)\{\.btn-knot\{animation:none;\}\}/, 'still under reduced motion');
-  assert.match(css, /\.btn\.rail-busy\{[^}]*white-space:nowrap/, 'one line');
+  assert.match(css, /\.btn\.stillhet-busy\{[^}]*white-space:nowrap/, 'one line');
   const fb = readFileSync('ui/public/design-system/action-feedback.css', 'utf8');
-  assert.doesNotMatch(fb + css, /rail-busy[^{]*\.btn-spin/, 'the busy button draws no spinner');
+  assert.doesNotMatch(fb + css, /stillhet-busy[^{]*\.btn-spin/, 'the busy button draws no spinner');
 });
 
 test('T-8 motion.md keeps no spinners: the busy button is no exception', () => {
-  const md = readFileSync('docs/rail/motion.md', 'utf8');
+  const md = readFileSync('docs/stillhet/motion.md', 'utf8');
   const never = md.slice(md.indexOf('- **Never:**'), md.indexOf('- **Reduced motion**'));
   assert.match(never, /spinner/); assert.doesNotMatch(never, /busy/);
 });
@@ -279,7 +279,7 @@ test('watchMenus: a disabled item acts for nothing and says why (comp.menu-off)'
   C.watchMenus(d.document);
   let acted = 0, why = '';
   d.document.getElementById('r').addEventListener('click', () => { acted++; });
-  d.document.addEventListener('rail:disabled', (e) => { why = e.detail.why; });
+  d.document.addEventListener('stillhet:disabled', (e) => { why = e.detail.why; });
   d.document.querySelector('.menu-item').click();
   assert.equal(acted, 0); assert.equal(why, 'Needs a project');
 });
@@ -1198,16 +1198,16 @@ test('thumbBox and watchScrollbars: a bar sits where the scroller is, shows on a
   C.watchScrollbars(d, { wait: () => { throw new Error('watched twice'); } });
   const a = d.getElementById('a'); Object.defineProperty(a, 'scrollHeight', { value: 100 }); Object.defineProperty(a, 'clientHeight', { value: 50 });
   d.getElementById('b').dispatchEvent(new d.defaultView.MouseEvent('mousemove', { bubbles: true }));
-  assert.equal(d.querySelector('.rail-thumb'), null, 'what cannot scroll has no bar');
+  assert.equal(d.querySelector('.stillhet-thumb'), null, 'what cannot scroll has no bar');
   d.getElementById('in').dispatchEvent(new d.defaultView.MouseEvent('mousemove', { bubbles: true }));
-  const th = d.querySelector('.rail-thumb.is-v'); assert.ok(th.classList.contains('is-on')); assert.equal(th.style.height, '25px');
+  const th = d.querySelector('.stillhet-thumb.is-v'); assert.ok(th.classList.contains('is-on')); assert.equal(th.style.height, '25px');
   later.shift()(); assert.ok(!th.classList.contains('is-on'), 'gone when still');
-  later.shift()(); assert.equal(d.querySelector('.rail-thumb'), null);
+  later.shift()(); assert.equal(d.querySelector('.stillhet-thumb'), null);
   // A bar in a panel sits on top of that panel; a page's stays under what opens over it.
   const m = d.body.appendChild(d.createElement('div')); m.setAttribute('role', 'dialog'); m.style.overflowY = 'auto';
   Object.defineProperty(m, 'scrollHeight', { value: 100 }); Object.defineProperty(m, 'clientHeight', { value: 50 });
   m.dispatchEvent(new d.defaultView.MouseEvent('mousemove', { bubbles: true }));
-  assert.ok(d.querySelector('.rail-thumb').classList.contains('is-over'));
+  assert.ok(d.querySelector('.stillhet-thumb').classList.contains('is-over'));
 });
 
 test('selectionBar: how many, each action with its count, disabled at 0 with why, Cancel', () => {
@@ -1276,7 +1276,7 @@ test('T-2 doubleTips: a double is listed with its sources', () => {
   const { window } = new JSDOM(`<body>
     <span class="tip-wrap" title="Why it is off" tabindex="0"><button id="a" title="Merge" disabled>M</button></span>
     <button id="b" title="Copy" data-tip="Copy it">C</button>
-    <button id="c" title="Stop" aria-describedby="t1">S</button><div class="rail-tip" id="t1">Stops it</div>
+    <button id="c" title="Stop" aria-describedby="t1">S</button><div class="stillhet-tip" id="t1">Stops it</div>
     <a id="d" href="#x" title="Open"><span title="The run">r</span></a>
     <div id="e" role="menuitem" data-tip-text="Held by the watcher"><i title="x"></i></div>
   </body>`);
@@ -1322,7 +1322,7 @@ test('T-2 OffTip: one title, the detailed one', () => {
 });
 
 test('T-2 small-rules holds small.one-tooltip', () => {
-  const row = readFileSync('docs/rail/small-rules.md', 'utf8').split('\n').find((l) => l.startsWith('| `small.one-tooltip`'));
+  const row = readFileSync('docs/stillhet/small-rules.md', 'utf8').split('\n').find((l) => l.startsWith('| `small.one-tooltip`'));
   assert.ok(row); assert.match(row, /tipPlace/); assert.match(row, /doubleTips/);
 });
 
@@ -1614,7 +1614,7 @@ test('navItem lab: a Labs feature says so at its end, and only then (nav.labs)',
   assert.equal(dom(C.navItem({ label: 'Requirements', icon: '<svg></svg>', lab: true })).querySelector('.nav-lab').textContent, 'Labs');
   assert.equal(dom(C.navItem({ label: 'Tasks', icon: '<svg></svg>' })).querySelector('.nav-lab'), null);
 });
-test('handedChip: says what was handed over, and can be removed (rail.hand-to-chat)', () => {
+test('handedChip: says what was handed over, and can be removed (stillhet.hand-to-chat)', () => {
   const b = dom(C.handedChip({ kind: 'Workflow', name: 'Lean', attrs: { 'data-x': '' } }));
   assert.match(b.textContent, /Workflow · Lean/);
   assert.ok(b.hasAttribute('data-x'));
@@ -1658,7 +1658,7 @@ test('watchFolds: opening animates the new part; closing fades a copy that then 
   g._a.onfinish(); assert.equal(r.querySelector('.tc-stream'), null, 'and goes');
   assert.equal(C.foldKey(r.querySelector('[data-t]')), '[data-t="1"][aria-expanded]');
 });
-test('draftBar: a draft, its changes, that the saved one still runs, Discard and Save (rail.drafts)', () => {
+test('draftBar: a draft, its changes, that the saved one still runs, Discard and Save (stillhet.drafts)', () => {
   const d = dom(C.draftBar({ changes: 2, hooks: { save: { 'data-s': '' }, discard: { 'data-d': '' } } }));
   assert.equal(d.getAttribute('role'), 'status'); assert.match(d.textContent, /Draft/); assert.match(d.textContent, /2 changes · tasks still run the saved one/);
   assert.ok(d.querySelector('[data-s]').classList.contains('btn-primary') || /primary/.test(d.querySelector('[data-s]').className)); assert.ok(d.querySelector('[data-d]'));
@@ -1726,7 +1726,7 @@ test('artifactView: its name and where from, Previous and Next through the other
   assert.equal(v.querySelector('.av-h b').textContent, 'plan.md'); assert.ok(v.querySelector('[data-p]').disabled, 'the first has no previous'); assert.ok(!v.querySelector('[data-n]').disabled);
   assert.match(v.querySelector('.av-n').textContent, /1 of 3/); assert.ok(v.querySelector('[data-f]') && v.querySelector('[data-d]')); assert.equal(v.querySelector('.av-body p').textContent, 'Hi');
   assert.equal(dom(C.artifactView({ name: 'a', body: '' })).querySelector('.av-n'), null, 'one alone: no stepping');
-  assert.ok(![...dom(C.artifactView({ name: 'a', body: '', hooks: { download: {} } })).querySelectorAll('button')].some((x) => x.textContent.trim() === 'Open full'), 'outside Expert it has no page to open (rail.stay-in-chat)');
+  assert.ok(![...dom(C.artifactView({ name: 'a', body: '', hooks: { download: {} } })).querySelectorAll('button')].some((x) => x.textContent.trim() === 'Open full'), 'outside Expert it has no page to open (stillhet.stay-in-chat)');
 });
 test('GitMark: its status in the tooltip, Watch as a ring', () => {
   assert.match(C.gitMark({ status: 'fail' }), /Checks failing/);
@@ -1744,7 +1744,7 @@ test('BarHead, TurnRow, Composer, StageBar', () => {
   assert.doesNotMatch(C.turnRow({ mark: '', text: 'Ran', body: 'x', attrs: { 'data-fold-turn': '0' } }), /tr-body/);
   assert.match(C.composer({ placeholder: 'Ask', sentence: 's', tools: '', send: 'b' }), /data-composer-t/);
   assert.match(C.stageBar({ labels: ['a', 'b'], stage: 0 }), /<b>a<\/b>/);
-  assert.equal(dom(C.stageBar({ labels: ['a', 'b'], stage: 0, bare: true })).querySelector('.sb-labels'), null, 'bare: the line alone (rail.one-place)');
+  assert.equal(dom(C.stageBar({ labels: ['a', 'b'], stage: 0, bare: true })).querySelector('.sb-labels'), null, 'bare: the line alone (stillhet.one-place)');
   const line = dom(C.stageBar({ labels: ['Plan', 'Build', 'Review', 'PR', 'Merged'], stage: 2, tone: 'ask', step: [2, 3] }));   // look.stage-line
   assert.equal(line.querySelectorAll('.sl-knot').length, 5); assert.equal(line.querySelectorAll('.sl-knot.is-done').length, 2); assert.ok(line.querySelectorAll('.sl-knot')[2].classList.contains('is-now'));
   assert.equal(line.querySelectorAll('.sl-step').length, 3); assert.equal(line.querySelectorAll('.sl-step.is-done').length, 1); assert.ok(line.querySelectorAll('.sl-step')[1].classList.contains('is-now'));
@@ -1762,14 +1762,14 @@ test('Tooltip: watchTooltips draws a title; tipPlace keeps it inside the window'
   a.dispatchEvent(new window.Event('pointerover', { bubbles: true }));
   assert.equal(a.getAttribute('title'), null, 'the browser\'s own never shows');
   await new Promise((r) => setTimeout(r, 220));
-  assert.equal(window.document.querySelector('.rail-tip')?.textContent, 'What it does');
+  assert.equal(window.document.querySelector('.stillhet-tip')?.textContent, 'What it does');
   window.document.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
-  assert.equal(window.document.querySelector('.rail-tip'), null); assert.equal(a.getAttribute('title'), 'What it does');
+  assert.equal(window.document.querySelector('.stillhet-tip'), null); assert.equal(a.getAttribute('title'), 'What it does');
   // the trigger of an open menu shows no tooltip: it would cover the menu's first item
   a.setAttribute('aria-expanded', 'true'); window.document.body.insertAdjacentHTML('beforeend', '<div role="menu"><button>One</button></div>');
   a.dispatchEvent(new window.Event('pointerover', { bubbles: true }));
   await new Promise((r) => setTimeout(r, 220));
-  assert.equal(window.document.querySelector('.rail-tip'), null, 'no tooltip over an open menu');
+  assert.equal(window.document.querySelector('.stillhet-tip'), null, 'no tooltip over an open menu');
   window.close();
 });
 
@@ -1789,7 +1789,7 @@ test('watchMenus: a menu with no room under it opens above; menuUp says when', a
 });
 
 test('pluginCard: its actions end the card, so they line up across a row (panel.plugin-card)', () => {
-  const css = readFileSync('ui/public/stillhet/css/rail.css', 'utf8');
+  const css = readFileSync('ui/public/stillhet/css/stillhet.css', 'utf8');
   assert.match(css, /\.pg-card\{grid-template-rows:repeat\(5,auto\) 1fr;\}/);
   assert.match(css, /\.pg-a\{[^}]*grid-row:6;align-self:end;/);
 });
@@ -1845,7 +1845,7 @@ test('scheduleDates and scheduleButton: the next times and the named step', () =
 });
 
 test('menus keep one edge only for check marks: a switch item (the account menu) keeps its own layout', () => {
-  const css = readFileSync('ui/public/stillhet/css/rail.css', 'utf8');
+  const css = readFileSync('ui/public/stillhet/css/stillhet.css', 'utf8');
   const lines = css.split('\n').filter((l) => l.includes('.menu:has(.menu-item:is([role="menuitemradio"]'));
   assert.ok(lines.length > 0);
   for (const l of lines) assert.match(l, /:not\(\.sw-item\)/, 'a switch never turns its menu into the check-mark grid');
@@ -1997,8 +1997,8 @@ test('commands: dev\'s group head, rows with no mark, Copy on the command and it
   assert.match(g, /cmd-rows"><i>r<\/i>/); assert.match(g, />Stop</);
 });
 
-test('the Rail stylesheets close every rule: one open brace would swallow all that follows', () => {
-  for (const f of ['ui/public/stillhet/css/rail.css', 'ui/public/stillhet/css/rail-look.css', 'ui/public/stillhet/shell/shell.css', 'ui/public/stillhet/pulse/pulse.css']) {
+test('the Stillhet stylesheets close every rule: one open brace would swallow all that follows', () => {
+  for (const f of ['ui/public/stillhet/css/stillhet.css', 'ui/public/stillhet/css/stillhet-look.css', 'ui/public/stillhet/shell/shell.css', 'ui/public/stillhet/pulse/pulse.css']) {
     const css = readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
     assert.equal((css.match(/\{/g) || []).length, (css.match(/\}/g) || []).length, f);
   }
@@ -2232,10 +2232,10 @@ test('runState plan: a plan waiting for your approval wears the pencil, as a gat
   assert.equal(C.markTone(st), 'act');
   assert.equal(C.alertLevel(C.markTone(st)), C.alertLevel('ask'), 'the badge tone holds');
   assert.equal(C.sectionOf(st.word, 'plan'), 'needs', 'it stays under Needs you'); assert.equal(C.bulkStateOf(st.word), 'needs-you');
-  assert.match(readFileSync('plans/rail/prototype/components.html', 'utf8'), /runState\('plan'\)/, 'the gallery shows a plan-state TaskCard');
+  assert.match(readFileSync('plans/stillhet/prototype/components.html', 'utf8'), /runState\('plan'\)/, 'the gallery shows a plan-state TaskCard');
 });
 test('a branch on a card is in the text face, not the mono (look.md)', () => {
-  const css = readFileSync('ui/public/stillhet/css/rail.css', 'utf8');
+  const css = readFileSync('ui/public/stillhet/css/stillhet.css', 'utf8');
   for (const sel of ['.rc-mid', '.rc-base']) {
     const rule = css.match(new RegExp(`^\\${sel}\\{[^}]*\\}`, 'm'))[0];
     assert.doesNotMatch(rule, /--mono/, sel);

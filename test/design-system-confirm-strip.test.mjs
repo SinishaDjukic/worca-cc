@@ -71,10 +71,10 @@ test('the strip CSS exists once, in the app part', () => {
   const parts = JSON.parse(readFileSync('ui/public/parts.json', 'utf8')).css;
   assert.ok(parts.includes('design-system/confirm-strip.css'));
   const mine = readFileSync('ui/public/design-system/confirm-strip.css', 'utf8');
-  for (const n of ['.rc-confirm{', '.dc-link{', '#rail-strip{']) assert.ok(mine.includes(n), n);
-  const rail = readFileSync('ui/public/stillhet/css/rail.css', 'utf8'), shell = readFileSync('ui/public/stillhet/shell/shell.css', 'utf8');
+  for (const n of ['.rc-confirm{', '.dc-link{', '#stillhet-strip{']) assert.ok(mine.includes(n), n);
+  const rail = readFileSync('ui/public/stillhet/css/stillhet.css', 'utf8'), shell = readFileSync('ui/public/stillhet/shell/shell.css', 'utf8');
   for (const n of ['.rc-confirm{', '.dc-link{']) assert.ok(!rail.includes(n), n);
-  assert.ok(!shell.includes('#rail-strip{'));
+  assert.ok(!shell.includes('#stillhet-strip{'));
 });
 
 test('V-TW-02 / V3-02: the TextLink rule aligns a wrapped link left', () => {

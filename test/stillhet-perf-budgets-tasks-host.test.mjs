@@ -1,4 +1,4 @@
-// test/stillhet-perf-budgets-tasks-host.test.mjs — B2.4 C1 (plans/rail/test-results/PLAN.md §3C, D19): the Tasks page's
+// test/stillhet-perf-budgets-tasks-host.test.mjs — B2.4 C1 (plans/stillhet/test-results/PLAN.md §3C, D19): the Tasks page's
 // idle budget in the live Stillhet host (jsdom) on virtual time (test/helpers/stillhet-perf.mjs). #runs with a real-size
 // world (300 tasks), every fold and "Show N more" opened, idle for 10 s: its DOM mutations, counted with Chat's
 // exclusions, are held to tasksIdleMutations in test/fixtures/stillhet-perf-budgets.json (budgets only go down).
@@ -46,10 +46,10 @@ test('B2.4 C1 F-a1-02: an idle Tasks page (300 tasks) for 10 s makes no more DOM
 
 test('B2.7 C1 F-a1-02 F-a4-02: a no-change shell redraw with the Pulse popover open makes no more DOM mutations than its budget', async (t) => {
   const h = await perfHost({ hash: '#runs', sources: tasksScaleSources() });
-  h.w.RailPulse.open('updates'); h.w.RailPulse.refresh();   // open, then drawn once more: its opening fade is gone
+  h.w.StillhetPulse.open('updates'); h.w.StillhetPulse.refresh();   // open, then drawn once more: its opening fade is gone
   await h.settleAll();
   const m = countMutations(h.w, h.d.body, exclusions);
-  h.w.RailPulse.refresh(); h.w.RailPulse.refresh();
+  h.w.StillhetPulse.refresh(); h.w.StillhetPulse.refresh();
   await h.settleAll();
   const r = m.stop();
   t.diagnostic(`budget shellNoChangeMutations: measured ${r.counted}, pinned ${budgets.shellNoChangeMutations?.value} (${r.total} records)`);

@@ -74,7 +74,7 @@
 .menu-item.is-danger:hover:not(:disabled){background:var(--red-bg);}
 .menu-sep{height:1px;margin:4px 6px;background:var(--line);}
 .menu-h{padding:8px 9px 4px;color:var(--ink-2);font-size:var(--fs-meta);font-weight:600;}
-/* SentencePicker (docs/design-system.md › Worca Rail): the chosen words inside the sentence they change. The menu it
+/* SentencePicker (docs/design-system.md › Stillhet): the chosen words inside the sentence they change. The menu it
    opens is openMenu's .menu (toggleMenu), so only the trigger is drawn here. */
 .spick{position:relative;}
 .spick-b{display:inline;margin:0;padding:0;border:0;border-radius:var(--r-xs);background:none;font:inherit;font-weight:600;line-height:inherit;color:var(--ink);white-space:nowrap;cursor:pointer;transition:background-color 100ms,box-shadow 100ms;}

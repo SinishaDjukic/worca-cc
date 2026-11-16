@@ -1,4 +1,4 @@
-// Invitation (docs/rail/components.md, docs/rail/navigation.md `nav.stillhet-ask`): the one question that asks, once for the
+// Invitation (docs/stillhet/components.md, docs/stillhet/navigation.md `nav.stillhet-ask`): the one question that asks, once for the
 // whole install, whether to try Stillhet. It is a ConfirmStrip with Stillhet's words and no markup of its own.
 import { confirmStrip } from './confirm-strip.mjs';
 

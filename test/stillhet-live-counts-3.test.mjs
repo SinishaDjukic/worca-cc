@@ -10,42 +10,42 @@ test('a failed first load: failed in the bar and in Pulse; Try again in Pulse an
   let down = true;
   const { w, d, sockets, hello } = await liveHost({ getStatus: (u) => (down && u === URLS.budget ? 500 : 200) });
   await settle();
-  assert.equal(w.RailDemoState.list, 'failed');
+  assert.equal(w.StillhetDemoState.list, 'failed');
   assert.match(d.getElementById('bar-chat').textContent, /Could not load the chats/);
-  w.RailPulse.open('now');
+  w.StillhetPulse.open('now');
   assert.match(d.querySelector('#app .pz-popover').textContent, /Could not load the updates/);
-  let retried = 0; const real = w.RailAdapter.retry; w.RailAdapter.retry = () => { retried++; return real(); };
+  let retried = 0; const real = w.StillhetAdapter.retry; w.StillhetAdapter.retry = () => { retried++; return real(); };
   d.querySelector('#app .pz-popover [data-pulse-retry]').click();
   assert.equal(retried, 1);
   await settle();
   [...d.querySelectorAll('#bar-chat button')].find((b) => b.textContent.trim() === 'Try again').click();
   assert.equal(retried, 2);
   down = false;
-  w.RailAdapter.retry(); await settle();
+  w.StillhetAdapter.retry(); await settle();
   assert.ok(sockets.length >= 1);
   await hello();
-  assert.equal(w.RailDemoState.list, '');
+  assert.equal(w.StillhetDemoState.list, '');
   assert.equal(bellN(d), BELL);
   assert.ok(d.querySelector('#bar-chat [data-open]'), 'the chats show');
 });
 
 test('the mode: the stamp wins over localStorage, nothing posted at start; a pick posts uiLevel once; a refusal restores the confirmed level', async () => {
   let answer = [200, { uiLevel: 'advanced' }];
-  const { w, d, posts, hello } = await liveHost({ level: 'expert', post: () => answer, before: (win) => win.localStorage.setItem('worca-rail.mode', 'simple') });
+  const { w, d, posts, hello } = await liveHost({ level: 'expert', post: () => answer, before: (win) => win.localStorage.setItem('worca-stillhet.mode', 'simple') });
   await hello();
-  assert.equal(w.RailUI.prefs.mode(), 'expert');
+  assert.equal(w.StillhetUI.prefs.mode(), 'expert');
   assert.equal(posts.length, 0);
   const pick = (lvl) => { if (!d.querySelector('#app .acct-menu')) d.querySelector('[data-acct]').click(); if (!d.querySelector('#app [data-level]')) d.querySelector('[data-sub="lvl"]').click(); d.querySelector(`#app [data-level="${lvl}"]`).click(); };
   pick('advanced'); await settle();
   assert.deepEqual(posts.map((p) => [p.url, p.body]), [['/api/settings', { uiLevel: 'advanced' }]]);
-  assert.equal(w.RailUI.prefs.mode(), 'advanced');
+  assert.equal(w.StillhetUI.prefs.mode(), 'advanced');
   assert.equal(toastText(d), 'Interface mode: Advanced');
   answer = [400, { error: 'uiLevel is locked by your team' }];
   pick('simple'); await settle();
   assert.equal(posts.length, 2, 'one post for the refused pick, no second');
-  assert.equal(w.RailUI.prefs.mode(), 'advanced');
+  assert.equal(w.StillhetUI.prefs.mode(), 'advanced');
   assert.equal(toastText(d), 'Could not change the interface mode: uiLevel is locked by your team');
-  assert.equal(w.localStorage.getItem('worca-rail.mode'), 'simple', 'the live kind never writes the demo\'s mode');
+  assert.equal(w.localStorage.getItem('worca-stillhet.mode'), 'simple', 'the live kind never writes the demo\'s mode');
 });
 
 test('the Chats needs number is counts.needs over every thread, not the waiting rows of the first page', async () => {
@@ -63,7 +63,7 @@ test('opening a failed task the run left unread drops it from the bell, and a pi
   const frame = async (f) => { sockets.at(-1).onmessage({ data: JSON.stringify(f) }); await settle(); };
   await frame({ type: 'done', runId: 'run-b', seq: 1, status: 'error' });
   assert.equal(bellN(d), BELL + 1, 'failed while watched: it needs you');
-  w.RailAdapter.seenRun('run-b'); await settle();
+  w.StillhetAdapter.seenRun('run-b'); await settle();
   assert.equal(bellN(d), BELL);
   await frame({ type: 'pipelines-changed' }); await settle(300);
   assert.equal(bellN(d), BELL, 'still out after the runs are read again');

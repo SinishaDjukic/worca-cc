@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // tools/stillhet-build.mjs — builds the generated files of ui/public/stillhet/ (gitignored there): components.js and
-// graph.js (the Rail components and the graph renderer bundled as classic scripts), app.css (dev's /style.css for file://).
+// graph.js (the Stillhet components and the graph renderer bundled as classic scripts), app.css (dev's /style.css for file://).
 // In a source checkout it builds; in an installed package esbuild is absent, so it only checks the files exist.
 import { fileURLToPath } from 'node:url';
 import { STILLHET_BUNDLES, missingStillhetBundles } from '../src/core/stillhet-shell.mjs';
@@ -17,7 +17,7 @@ export const missingBundles = (outDir = OUT) => missingStillhetBundles(outDir.re
  * @throws {Error} 'stillhet build: esbuild is missing' when esbuild is not installed
  */
 export async function buildStillhet({ outDir = OUT } = {}) {
-  const gates = new URL('../plans/rail/prototype/gates/', import.meta.url);
+  const gates = new URL('../plans/stillhet/prototype/gates/', import.meta.url);
   try { await import('esbuild'); } catch { throw new Error('stillhet build: esbuild is missing (a source checkout builds; an installed package ships the files)'); }
   (await import(new URL('app-css.mjs', gates))).writeAppCss();
   (await import(new URL('components-js.mjs', gates))).writeComponentsJs();

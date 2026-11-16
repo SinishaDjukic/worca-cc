@@ -136,14 +136,14 @@ test('6: a teammate\'s task opens read only at #insights/team?task=RUNID; Back r
 test('7: your own task opens #run/ID; with its local run deleted it opens read only', async () => {
   let localId = '';   // a run this Worca knows, known once the host is up; the team records are read after
   const h = await insightsHost({ hash: '#chat', records: () => W.records.map((r) => (r.id === 'm9' ? { ...r, id: localId } : r)), prs: W.prs });
-  localId = h.w.RailWorld.data().runs[0].id;
+  localId = h.w.StillhetWorld.data().runs[0].id;
   await go(h.w, '#insights/team', 250);
   await open(h.d, 'Maya');
   const mine = detail(h.d).querySelector(`[data-in-work="${localId}"]`);
   assert.ok(mine, 'the local run is one of Maya\'s tasks'); assert.equal(mine.dataset.inOwn, localId);
   mine.click(); await settle(100);
   assert.equal(h.w.location.hash, `#run/${localId}`);
-  h.w.RailWorld.find = () => undefined;   // the run was deleted here; its record still syncs
+  h.w.StillhetWorld.find = () => undefined;   // the run was deleted here; its record still syncs
   await go(h.w, '#insights/team', 200);
   if (!detail(h.d)) await open(h.d, 'Maya');
   detail(h.d).querySelector(`[data-in-work="${localId}"]`).click(); await settle(150);
@@ -190,16 +190,16 @@ test('11: an unknown answer says the states are not known here and draws no mark
 
 test('12: no work in the range says so with no legend; records still reading show the loading line', async () => {
   const { w, d } = await host();
-  const real = w.RailInsightsLive.work;
-  w.RailInsightsLive.work = () => ({ state: 'ready', items: [], counts: { merged: 0, review: 0, closed: 0, failed: 0, stopped: 0, done: 0 }, axis: null, pr: { state: 'ready', why: '' } });
+  const real = w.StillhetInsightsLive.work;
+  w.StillhetInsightsLive.work = () => ({ state: 'ready', items: [], counts: { merged: 0, review: 0, closed: 0, failed: 0, stopped: 0, done: 0 }, axis: null, pr: { state: 'ready', why: '' } });
   await open(d, 'Maya');
   assert.equal(headText(d).trim(), "Maya's work, this month");
   assert.match(detail(d).textContent, /No tasks in this month/);
   assert.equal(detail(d).querySelector('.tt-legend'), null); assert.equal(detail(d).querySelector('[data-in-more]'), null);
-  w.RailInsightsLive.work = () => ({ state: 'loading', items: [], counts: {}, axis: null, pr: { state: 'pending', why: '' } });
-  w.RailPlaces.insights.redraw(); await settle(30);
+  w.StillhetInsightsLive.work = () => ({ state: 'loading', items: [], counts: {}, axis: null, pr: { state: 'pending', why: '' } });
+  w.StillhetPlaces.insights.redraw(); await settle(30);
   assert.match(detail(d).textContent, /Loading Maya's work…/);
-  w.RailInsightsLive.work = real;
+  w.StillhetInsightsLive.work = real;
 });
 
 test('13: a task no record holds says it is gone, with Back to By person', async () => {

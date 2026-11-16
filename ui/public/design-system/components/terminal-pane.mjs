@@ -1,4 +1,4 @@
-// TerminalPane (docs/rail/panels.md › panel.terminal): a command's shell, opened under its card by Show in terminal. Its
+// TerminalPane (docs/stillhet/panels.md › panel.terminal): a command's shell, opened under its card by Show in terminal. Its
 // output is LogLines (a polite live log), one input line is a Field, and Stop and Close are Buttons; it has no state and
 // no words beyond the rule's. Closed (the shell ended or was gone when opened), its last line says "Shell closed" and
 // the input is off with dev's reason (ui/public/ask-command-card.mjs).

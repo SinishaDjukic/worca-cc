@@ -1,16 +1,16 @@
-// The one mock of who is running what, per Pulse case (docs/rail/build.md). The Runs list, Pulse's Vitals and Updates, Usage
+// The one mock of who is running what, per Pulse case (docs/stillhet/build.md). The Runs list, Pulse's Vitals and Updates, Usage
 // and costs, the Chats column and the run page's title all read it, so the badge, the rows and the lists agree. A run is
 // written once, in `table`, and a case picks its runs; a page that acts on a run changes it here.
 (function () {
-  const R = window.RailUI, RM = window.RunCardModel;
+  const R = window.StillhetUI, RM = window.RunCardModel;
   // The live kind (adapter.js, D8): the store starts empty and loading, and takes only what live/live-adapter.mjs loads;
   // the address never picks its data, so ?state and ?first are the demo's alone.
-  const LIVE = window.RailAdapter?.kind === 'live';
-  const FIRST = window.RailFirstRun = !LIVE && typeof location !== 'undefined' && /[?&]first\b/.test(location.search);   // the first run: a newcomer's empty Worca
+  const LIVE = window.StillhetAdapter?.kind === 'live';
+  const FIRST = window.StillhetFirstRun = !LIVE && typeof location !== 'undefined' && /[?&]first\b/.test(location.search);   // the first run: a newcomer's empty Worca
   // A non-default state asked for by the address (?state=NAME), so both hosts can open it cold: what the lists show (the
   // tools panel's Lists) and what the connection does (its Connection). A demo-adapter input only; a live adapter ignores it.
   const STATE = !LIVE && typeof location !== 'undefined' ? new URLSearchParams(location.search).get('state') || '' : '';
-  window.RailDemoState = LIVE ? { list: 'loading', conn: '' } : { list: { loading: 'loading', empty: 'empty', offline: 'offline', failed: 'failed', 'refresh-failed': 'refresh' }[STATE] || '', conn: { 'connection-lost': 'offline', 'session-expired': 'session' }[STATE] || '', thread: { 'thread-loading': 'loading', 'thread-failed': 'failed', 'thread-gone': 'gone' }[STATE] || '', task: { 'task-loading': 'loading', 'task-failed': 'failed', 'task-gone': 'gone' }[STATE] || '', market: STATE === 'update-asks' ? STATE : '' };   // fail.chat-thread: an open chat's own state; fail.task-page: an open task's; market: the demo Jira's update asks for something new (form.update-asks)
+  window.StillhetDemoState = LIVE ? { list: 'loading', conn: '' } : { list: { loading: 'loading', empty: 'empty', offline: 'offline', failed: 'failed', 'refresh-failed': 'refresh' }[STATE] || '', conn: { 'connection-lost': 'offline', 'session-expired': 'session' }[STATE] || '', thread: { 'thread-loading': 'loading', 'thread-failed': 'failed', 'thread-gone': 'gone' }[STATE] || '', task: { 'task-loading': 'loading', 'task-failed': 'failed', 'task-gone': 'gone' }[STATE] || '', market: STATE === 'update-asks' ? STATE : '' };   // fail.chat-thread: an open chat's own state; fail.task-page: an open task's; market: the demo Jira's update asks for something new (form.update-asks)
   const WORKFLOW_OF = { r2: 'Security-first review', r9: 'Security-first review', r5: 'Quick Fix', r7: 'Quick Fix', r12: 'Full', m1: 'API rewrite', m2: 'API rewrite', m3: 'API rewrite' };   // the Tasks center's by workflow
   const run = (id, kase, title, project, detail, time, day, o = {}) => ({ id, case: kase, title, project, detail, time, day, labels: [], cost: null, archived: false, unread: false, pr: '', group: '', kind: 'Git', by: 'Sam Rivera', workflow: WORKFLOW_OF[id] || 'Default', ...o });
   // not started yet: `when` is its group in Vitals › Scheduled
@@ -172,7 +172,7 @@
     return out;
   }
   build(current);
-  window.RailWorld = {
+  window.StillhetWorld = {
     current: () => current,
     set: (id) => { if (LIVE) return; current = id; build(id); listeners.forEach((fn) => fn()); },   // the demo's case picker; nothing in the live kind
     live: LIVE,
@@ -180,10 +180,10 @@
     // connection, in one step: one onChange. setState: the list and the connection only, one onChange.
     load: (next = {}, state) => {
       for (const k of Object.keys(next)) { if (OWN.includes(k)) data[k] = next[k]; else if (k in parts) parts[k] = next[k]; }
-      if (state) Object.assign(window.RailDemoState, state);
+      if (state) Object.assign(window.StillhetDemoState, state);
       titles(); listeners.forEach((fn) => fn());
     },
-    setState: (state = {}) => { Object.assign(window.RailDemoState, state); listeners.forEach((fn) => fn()); },
+    setState: (state = {}) => { Object.assign(window.StillhetDemoState, state); listeners.forEach((fn) => fn()); },
     part: (name) => (OWN.includes(name) ? data[name] : parts[name]),
     onChange: (fn) => listeners.push(fn),
     data: () => data,

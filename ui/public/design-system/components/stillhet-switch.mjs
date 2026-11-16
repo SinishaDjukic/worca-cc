@@ -1,4 +1,4 @@
-// StillhetSwitch (docs/rail/navigation.md `nav.design-switch`): Stillhet's one top-bar icon. Its tip names the new UI in beta;
+// StillhetSwitch (docs/stillhet/navigation.md `nav.design-switch`): Stillhet's one top-bar icon. Its tip names the new UI in beta;
 // a click opens a 2-row menu, "Try Stillhet" and "Back to today's UI", the current UI checked. Locked by WORCA_FLAGS, the tip,
 // the name and both rows say why. The watch is the one open/pick/busy/restore flow every host shares; the host's `pick`
 // makes the call and says a failure.

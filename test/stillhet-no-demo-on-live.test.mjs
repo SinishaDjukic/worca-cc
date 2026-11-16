@@ -1,6 +1,6 @@
-// test/stillhet-no-demo-on-live.test.mjs — gate.no-demo (docs/rail/gate.md, B1.10): a live Stillhet shows no demo data, no
+// test/stillhet-no-demo-on-live.test.mjs — gate.no-demo (docs/stillhet/gate.md, B1.10): a live Stillhet shows no demo data, no
 // would-answer and no local-only success. Static: every demo-answer site under ui/public/stillhet/ and every `wire to` row of
-// plans/rail/stillhet-wiring.md is classified in test/fixtures/stillhet-no-demo-baseline.json (tools/stillhet-no-demo.mjs),
+// plans/stillhet/stillhet-wiring.md is classified in test/fixtures/stillhet-no-demo-baseline.json (tools/stillhet-no-demo.mjs),
 // and the offenders can only shrink. Live: an app host with an EMPTY live adapter walks every place in the bar, Pulse and
 // every Settings section; what it finds must equal the baseline's `live` list.
 import { test, afterEach } from 'node:test';
@@ -46,12 +46,12 @@ test('B1.10 RC7: each demo string still appears in its demo source', () => {
 
 test('B1.10: the scanner reads would, act, demo-action and demo-row sites with stable ids', () => {
   const src = [
-    "  btn.onclick = () => window.RailWould('open a terminal in the worktree');",
-    "  // window.RailWould('a comment')",
-    "  other.onclick = () => window.RailWould('open a terminal in the worktree');",
-    '  x = window.RailWould(`stop ${name}`);',
-    '  y = window.RailWould(phrase);',
-    "  RailAdapter.act('retry-run'); RailAdapter.refuse(id);",
+    "  btn.onclick = () => window.StillhetWould('open a terminal in the worktree');",
+    "  // window.StillhetWould('a comment')",
+    "  other.onclick = () => window.StillhetWould('open a terminal in the worktree');",
+    '  x = window.StillhetWould(`stop ${name}`);',
+    '  y = window.StillhetWould(phrase);',
+    "  StillhetAdapter.act('retry-run'); StillhetAdapter.refuse(id);",
     "  { name: 'Setup assistant', only: 'demo', say: 'x' },",
     "  { title: 'Storage', sample: true, rows: [",
     "  { sample: true, rows: [",
@@ -74,9 +74,9 @@ test('B1.10: the scanner reads would, act, demo-action and demo-row sites with s
   ]);
   // the seam itself answers the calls: it holds no site
   assert.deepEqual(sitesOfText('adapter.js', src).filter((s) => s.kind === 'would' || s.kind === 'act'), []);
-  assert.deepEqual(sitesOfText('demo/demo-actions.js', "window.RailWould('x')").length, 0);
+  assert.deepEqual(sitesOfText('demo/demo-actions.js', "window.StillhetWould('x')").length, 0);
   // a demo action other than `would` is a site
-  assert.deepEqual(demoActionSites("window.RailDemoActions = { would: (p) => 'Would ' + p, retry: () => 'ok' };").map((s) => s.id), ['demo/demo-actions.js › demo-action › retry']);
+  assert.deepEqual(demoActionSites("window.StillhetDemoActions = { would: (p) => 'Would ' + p, retry: () => 'ok' };").map((s) => s.id), ['demo/demo-actions.js › demo-action › retry']);
 });
 
 test('B1.10: wire-to rows from every section, Dev surfaces included; update refuses a new offender', () => {
@@ -128,7 +128,7 @@ const emptyHost = (hash = '#chat') => liveHost({ sources: EMPTY_SOURCES, lists: 
  */
 const settingsPlaces = (w) => [...new Set([...w.SettingsModel.GROUPS.flatMap((g) => g.items), ...Object.keys(w.SettingsModel.SECTIONS)])].map((k) => `settings/${k}`);
 /** The places the walk visits: the bar's places and Pulse (routes without a `/`), then every Settings section. */
-const places = (w) => [...w.RailShell.routes().filter((r) => !r.includes('/')), ...settingsPlaces(w)];
+const places = (w) => [...w.StillhetShell.routes().filter((r) => !r.includes('/')), ...settingsPlaces(w)];
 // the bar's places as shell.js declares them (PLACES), read from the source so a new place is walked
 const PLACE_IDS = [...readFileSync(stillhet('shell/shell.js'), 'utf8').match(/const PLACES = (.+);/)[1].matchAll(/\['(\w+)', '[^']+', '(?:simple|advanced|expert)'/g)].map((m) => m[1]);
 
@@ -207,7 +207,7 @@ function exactly(slice, hits) {
 test('B1.10: the empty live adapter boots and the walk covers every place in the bar', async () => {
   assert.deepEqual(Object.keys(SOURCES).filter((k) => !(k in EMPTY_SOURCES)), [], 'every boot source has its empty answer');
   const { w, calls } = await emptyHost();
-  assert.notEqual(w.RailDemoState.list, 'failed', 'the empty install loads: a failed list would hide demo behind "failed"');
+  assert.notEqual(w.StillhetDemoState.list, 'failed', 'the empty install loads: a failed list would hide demo behind "failed"');
   for (const u of BOOT_URLS) assert.ok(calls.some((c) => c.url === u), `boot read ${u}`);
   const walked = places(w);
   assert.ok(PLACE_IDS.length >= 9, 'the bar\'s places are read from shell.js');
@@ -236,7 +236,7 @@ test('B1.10: Manage and Insight places and Pulse (Projects, Insights, the bell) 
   const { w, d, hits } = await walkPlaces(['projects', 'insights', 'pulse']);
   // the bell opens Pulse over the page: its rows and the budget ($1,000 sample) come from the store, empty here
   await go(w, '#chat', 60);
-  const bell = d.querySelector('#rail-pulse-slot button, #rail-pulse-slot [role="button"]');
+  const bell = d.querySelector('#stillhet-pulse-slot button, #stillhet-pulse-slot [role="button"]');
   assert.ok(bell, 'the bell is drawn');
   bell.click();
   await settle(60);
@@ -287,18 +287,18 @@ test('F-G-G2-02: a live task waiting on its question shows no sample question, u
   }
 });
 
-// F-G-G5-01: the prototype's Invitation (`?invite=stillhet`) is demo input. Live Stillhet means `rail` is on, and the opt-in
+// F-G-G5-01: the prototype's Invitation (`?invite=stillhet`) is demo input. Live Stillhet means `stillhet` is on, and the opt-in
 // rule (ui/public/stillhet.mjs shouldAskStillhet) never asks while it is on; today's app owns the real question. So live
 // draws no strip, no demo bug link, and its answers never land in browser storage alone.
 test('F-G-G5-01: live Stillhet never draws the demo Invitation for ?invite=stillhet', async () => {
   const { w, d, calls } = await liveHost({ sources: EMPTY_SOURCES, lists: EMPTY_LISTS, read, hash: '#runs', search: '?invite=stillhet' });
   await settle(120);
   assert.equal(w.location.search, '?invite=stillhet');
-  assert.equal(w.RailShell.inviteStrip(), '', 'no Invitation on live');
+  assert.equal(w.StillhetShell.inviteStrip(), '', 'no Invitation on live');
   assert.equal(d.querySelector('[data-stillhet="invitation"]'), null, 'none drawn');
   assert.equal(d.querySelector('a[href="https://github.com/"]'), null, 'no demo bug link');
-  w.RailShell.answerInvite('yes');
-  assert.equal(w.localStorage.getItem('worca-rail.stillhetAsked'), null, 'an answer is never kept in the browser alone');
+  w.StillhetShell.answerInvite('yes');
+  assert.equal(w.localStorage.getItem('worca-stillhet.stillhetAsked'), null, 'an answer is never kept in the browser alone');
   assert.deepEqual(calls.filter((c) => c.method !== 'GET'), [], 'and sends nothing');
 });
 
@@ -312,7 +312,7 @@ test('F-G-fid-07/F-G-fid-08: a live workflow shows its agents\' descriptions, no
   const page = () => (d.querySelector('#route-place') || d.body).textContent.replace(/\s+/g, ' ');
   const planner = WF_LISTS['/api/agents'].agents.find((a) => a.key === 'planner');
   for (const mode of ['simple', 'advanced', 'expert']) {
-    w.RailUI.prefs.setMode(mode); await goWf(w, '#workflows', 40); await goWf(w, '#workflows/workflow:wf_default', 120);
+    w.StillhetUI.prefs.setMode(mode); await goWf(w, '#workflows', 40); await goWf(w, '#workflows/workflow:wf_default', 120);
     d.querySelector('[data-wf-ways][aria-expanded="false"]')?.click(); await settle(40);   // Advanced and Expert fold the ways: open them
     const t = page();
     assert.ok(t.includes(planner.description), `${mode}: Plan reads its agent's description`);

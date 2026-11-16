@@ -1,5 +1,5 @@
 // test/stillhet-app-host.test.mjs — host-app.js (the opt-out inside Stillhet), host-prototype.js and adapter.js, run in a vm
-// with a small DOM stub: the files are classic scripts that set window.RailHost / window.RailAdapter.
+// with a small DOM stub: the files are classic scripts that set window.StillhetHost / window.StillhetAdapter.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 const DIR = new URL('../ui/public/stillhet/', import.meta.url);
 const load = (file, { fetchImpl, search = '', host, adapter = '', fields = [] } = {}) => {
   const calls = [], cls = new Set(), toast = { textContent: '', cls, classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c) } }, listeners = [];
-  const win = { RailHost: host };
+  const win = { StillhetHost: host };
   const ctx = {
     window: win, fetch: async (u, o) => { calls.push({ u, o }); return fetchImpl(u, o); }, setTimeout: () => 0, clearTimeout: () => {},
     location: { search, reload: () => calls.push('reload') }, URLSearchParams, JSON,
@@ -26,36 +26,36 @@ const load = (file, { fetchImpl, search = '', host, adapter = '', fields = [] } 
 };
 const reply = (ok, data = {}) => async () => ({ ok, json: async () => data });
 
-test('opt-out: one PATCH /api/flags with { rail: false }, no other call, then a reload', async () => {
+test('opt-out: one PATCH /api/flags with { stillhet: false }, no other call, then a reload', async () => {
   const { win, calls } = load('host-app.js', { fetchImpl: reply(true, { flags: [] }) });
-  assert.equal(win.RailHost.name, 'app');
-  assert.equal(win.RailHost.stillhetOn(), true);
-  assert.deepEqual({ ...(await win.RailHost.setStillhet(false)) }, { ok: true });
+  assert.equal(win.StillhetHost.name, 'app');
+  assert.equal(win.StillhetHost.stillhetOn(), true);
+  assert.deepEqual({ ...(await win.StillhetHost.setStillhet(false)) }, { ok: true });
   assert.equal(calls.filter((c) => c !== 'reload').length, 1);
   assert.equal(calls[0].u, '/api/flags');
   assert.equal(calls[0].o.method, 'PATCH');
-  assert.deepEqual(JSON.parse(calls[0].o.body), { rail: false });
+  assert.deepEqual(JSON.parse(calls[0].o.body), { stillhet: false });
   assert.deepEqual(calls.slice(1), ['reload']);
 });
 
-test('"Try Stillhet" while in Stillhet (rail moved off elsewhere): rail back on, no reload; a failure says "on"', async () => {
+test('"Try Stillhet" while in Stillhet (rail moved off elsewhere): stillhet back on, no reload; a failure says "on"', async () => {
   const { win, calls } = load('host-app.js', { fetchImpl: reply(true, { flags: [] }) });
-  win.RailHost.flagsChanged({ rail: false });
-  assert.equal(win.RailHost.stillhetOn(), false);
+  win.StillhetHost.flagsChanged({ stillhet: false });
+  assert.equal(win.StillhetHost.stillhetOn(), false);
   calls.length = 0;
-  assert.deepEqual({ ...(await win.RailHost.setStillhet(true)) }, { ok: true });
-  assert.deepEqual(JSON.parse(calls[0].o.body), { rail: true });
+  assert.deepEqual({ ...(await win.StillhetHost.setStillhet(true)) }, { ok: true });
+  assert.deepEqual(JSON.parse(calls[0].o.body), { stillhet: true });
   assert.equal(calls.includes('reload'), false);
-  assert.equal(win.RailHost.stillhetOn(), true);
+  assert.equal(win.StillhetHost.stillhetOn(), true);
   const failed = load(['host-app.js', 'adapter.js'], { fetchImpl: reply(false, { error: 'locked' }) });
-  const r = await failed.win.RailHost.setStillhet(true);
+  const r = await failed.win.StillhetHost.setStillhet(true);
   assert.equal(r.text, 'Could not turn Stillhet on: locked');
 });
 
 test('a failed opt-out names the failed step, does not reload, and leaves the page', async () => {
   for (const fetchImpl of [reply(false, { error: 'rail is locked by WORCA_FLAGS' }), async () => { throw new Error('down'); }]) {
     const { win, calls, toast } = load(['host-app.js', 'adapter.js'], { fetchImpl });
-    const r = await win.RailHost.setStillhet(false);
+    const r = await win.StillhetHost.setStillhet(false);
     assert.equal(r.ok, false);
     assert.match(r.text, /^Could not turn Stillhet off: /);
     assert.equal(toast.textContent, r.text);
@@ -75,7 +75,7 @@ async function iconHost(t, fetch) {
 }
 const writes = (calls) => calls.filter(([m]) => m !== 'GET');
 
-test('the top-bar icon: "Back to today\'s UI" sends one PATCH { rail: false }, busy while it is out; the checked row and a busy click send nothing', async (t) => {
+test('the top-bar icon: "Back to today\'s UI" sends one PATCH { stillhet: false }, busy while it is out; the checked row and a busy click send nothing', async (t) => {
   const calls = [];
   const { d, icon, rows } = await iconHost(t, async (u, o = {}) => { calls.push([o.method || 'GET', String(u), o.body]); if (o.method === 'PATCH') return new Promise(() => {}); return { ok: false, json: async () => ({}) }; });
   d.body.click();
@@ -90,7 +90,7 @@ test('the top-bar icon: "Back to today\'s UI" sends one PATCH { rail: false }, b
   assert.equal(icon().getAttribute('aria-busy'), 'true');
   icon().click();   // a second click while the first is in flight sends nothing more
   await settle();
-  assert.deepEqual(writes(calls).map(([m, u, b]) => [m, u, JSON.parse(b)]), [['PATCH', '/api/flags', { rail: false }]]);
+  assert.deepEqual(writes(calls).map(([m, u, b]) => [m, u, JSON.parse(b)]), [['PATCH', '/api/flags', { stillhet: false }]]);
 });
 
 test('the top-bar icon: a failed opt-out keeps Stillhet checked, clears busy, refocuses the icon, says why and can be tried again', async (t) => {
@@ -104,7 +104,7 @@ test('the top-bar icon: a failed opt-out keeps Stillhet checked, clears busy, re
   assert.equal(icon().hasAttribute('aria-busy'), false);
   assert.equal(icon().hasAttribute('aria-disabled'), false);
   assert.equal(d.activeElement, icon());
-  assert.equal(w.RailHost.toastEl.textContent, 'Could not turn Stillhet off: rail is locked by WORCA_FLAGS', 'the shell\'s own toast');
+  assert.equal(w.StillhetHost.toastEl.textContent, 'Could not turn Stillhet off: rail is locked by WORCA_FLAGS', 'the shell\'s own toast');
   icon().click();
   rows()[1].click();
   for (let i = 0; i < 5; i++) await settle();
@@ -112,8 +112,8 @@ test('the top-bar icon: a failed opt-out keeps Stillhet checked, clears busy, re
 });
 
 test('prototype host: Stillhet reads on, and off with ?stillhet=off; setStillhet moves it and reloads nothing', () => {
-  assert.equal(load('host-prototype.js').win.RailHost.stillhetOn(), true);
-  const { win, calls } = load('host-prototype.js', { search: '?stillhet=off' }), off = win.RailHost;
+  assert.equal(load('host-prototype.js').win.StillhetHost.stillhetOn(), true);
+  const { win, calls } = load('host-prototype.js', { search: '?stillhet=off' }), off = win.StillhetHost;
   assert.equal(off.stillhetOn(), false);
   assert.deepEqual({ ...off.setStillhet(true) }, { ok: true });
   assert.equal(off.stillhetOn(), true);
@@ -123,7 +123,7 @@ test('prototype host: Stillhet reads on, and off with ?stillhet=off; setStillhet
 
 test('adapter: in the app host an action is refused with the one sentence, announced once, never "Would…"', () => {
   const { win, toast } = load('adapter.js', { host: { name: 'app' } });
-  const a = win.RailAdapter;
+  const a = win.StillhetAdapter;
   assert.equal(a.kind, 'demo');
   assert.deepEqual(JSON.parse(JSON.stringify(a.act('create-pr', {}))), { ok: false, text: 'Not connected to Worca yet.' });
   assert.equal(toast.textContent, 'Not connected to Worca yet.');
@@ -135,21 +135,21 @@ test('adapter: a refused act sends nothing and touches only the toast; a second 
   const timers = [], cleared = [], touched = [];
   ctx.setTimeout = (fn) => timers.push(fn); ctx.clearTimeout = (id) => cleared.push(id);
   for (const k of ['querySelectorAll', 'getElementById']) doc[k] = (s) => { touched.push(s); return k === 'querySelectorAll' ? [] : null; };
-  win.RailAdapter.act('create-pr', {});
+  win.StillhetAdapter.act('create-pr', {});
   assert.deepEqual(calls, [], 'no fetch, no reload');
   assert.deepEqual(touched, []);
-  win.RailAdapter.toast('Could not turn Stillhet off');
+  win.StillhetAdapter.toast('Could not turn Stillhet off');
   assert.deepEqual(cleared, [null, 1], 'each toast clears the hide timer before it');
   timers[2](); assert.equal(toast.cls.has('is-on'), false);
 });
 
-test('RailWould: the prototype host asks demo-actions.js for the sentence, the app host refuses with the one sentence', () => {
-  const demo = load('demo/demo-actions.js').win.RailDemoActions;
+test('StillhetWould: the prototype host asks demo-actions.js for the sentence, the app host refuses with the one sentence', () => {
+  const demo = load('demo/demo-actions.js').win.StillhetDemoActions;
   assert.equal(demo.would('open a terminal'), 'Would open a terminal');
   const proto = load('adapter.js', { host: { name: 'prototype' } }).win;
-  proto.RailDemoActions = demo;
-  assert.equal(proto.RailWould('open a terminal'), 'Would open a terminal');
-  assert.equal(load('adapter.js', { host: { name: 'app' } }).win.RailWould('open a terminal'), 'Not connected to Worca yet.');
+  proto.StillhetDemoActions = demo;
+  assert.equal(proto.StillhetWould('open a terminal'), 'Would open a terminal');
+  assert.equal(load('adapter.js', { host: { name: 'app' } }).win.StillhetWould('open a terminal'), 'Not connected to Worca yet.');
 });
 
 // The real scripts in a jsdom page shaped like shell.html, with a view's toast (the run board's, inside a hidden route)
@@ -157,15 +157,15 @@ test('RailWould: the prototype host asks demo-actions.js for the sentence, the a
 test('jsdom: a failed opt-out (fetch rejected, or locked) shows its sentence in the shell\'s own toast, not a hidden view\'s', async () => {
   const { JSDOM } = await import('jsdom');
   const R = await import('../ui/public/design-system/components/index.mjs');
-  const css = ['css/rail.css', 'shell/shell.css'].map((f) => readFileSync(new URL(f, DIR), 'utf8')).join('\n');
+  const css = ['css/stillhet.css', 'shell/shell.css'].map((f) => readFileSync(new URL(f, DIR), 'utf8')).join('\n');
   for (const [name, fetchImpl, sentence] of [
     ['rejected', async () => { throw new TypeError('Failed to fetch'); }, 'Could not turn Stillhet off: the server did not answer.'],
-    ['locked', reply(false, { error: '"rail" is locked by WORCA_FLAGS' }), 'Could not turn Stillhet off: "rail" is locked by WORCA_FLAGS'],
+    ['locked', reply(false, { error: '"stillhet" is locked by WORCA_FLAGS' }), 'Could not turn Stillhet off: "stillhet" is locked by WORCA_FLAGS'],
   ]) {
     const dom = new JSDOM(`<!doctype html><html><head><style>${css}</style></head><body><div class="app" id="worca"></div>`
-      + '<div class="pz-app rail-layer" id="app"></div></body></html>', { runScripts: 'outside-only', url: 'http://localhost/#chat' });
+      + '<div class="pz-app stillhet-layer" id="app"></div></body></html>', { runScripts: 'outside-only', url: 'http://localhost/#chat' });
     const w = dom.window, d = w.document;
-    w.RailUI = { ...R };
+    w.StillhetUI = { ...R };
     w.fetch = fetchImpl;
     for (const f of ['host-app.js', 'adapter.js', 'shell/frame.js']) w.eval(readFileSync(new URL(f, DIR), 'utf8'));
     // drawn later, as the shell does: the run board with its own toast inside a hidden route, and the top-bar icon
@@ -196,46 +196,46 @@ test('jsdom: a failed opt-out (fetch rejected, or locked) shows its sentence in 
 });
 
 test('adapter: the shell\'s stamp picks the kind, never the address: live with data-adapter="live" even with ?state=empty', () => {
-  assert.equal(load('adapter.js', { host: { name: 'app' }, adapter: 'live', search: '?state=empty' }).win.RailAdapter.kind, 'live');
-  assert.equal(load('adapter.js', { host: { name: 'app' }, adapter: 'demo' }).win.RailAdapter.kind, 'demo');
-  assert.equal(load('adapter.js', { host: { name: 'prototype' }, adapter: 'live' }).win.RailAdapter.kind, 'demo', 'the prototype is always demo');
+  assert.equal(load('adapter.js', { host: { name: 'app' }, adapter: 'live', search: '?state=empty' }).win.StillhetAdapter.kind, 'live');
+  assert.equal(load('adapter.js', { host: { name: 'app' }, adapter: 'demo' }).win.StillhetAdapter.kind, 'demo');
+  assert.equal(load('adapter.js', { host: { name: 'prototype' }, adapter: 'live' }).win.StillhetAdapter.kind, 'demo', 'the prototype is always demo');
 });
 
 test('one reload owner: the icon\'s pick and a flags frame with rail off reload exactly once; the only write is PATCH /api/flags', async () => {
   const { win, calls } = load('host-app.js', { fetchImpl: reply(true, { flags: [] }) });
-  win.RailHost.setStillhet(false);   // what frame.js's watch calls on "Back to today's UI"
-  win.RailHost.flagsChanged({ rail: false });
+  win.StillhetHost.setStillhet(false);   // what frame.js's watch calls on "Back to today's UI"
+  win.StillhetHost.flagsChanged({ stillhet: false });
   await settle();
-  win.RailHost.flagsChanged({ rail: false });
+  win.StillhetHost.flagsChanged({ stillhet: false });
   assert.deepEqual(calls.filter((c) => c === 'reload'), ['reload']);
   const writes = calls.filter((c) => c !== 'reload' && c.o && c.o.method && c.o.method !== 'GET');
   assert.deepEqual(writes.map((c) => [c.o.method, c.u]), [['PATCH', '/api/flags']]);
-  assert.equal(win.RailHost.stillhetOn(), false, 'the live flag: the icon\'s menu checks "Back to today\'s UI" until the reload lands');
-  win.RailHost.flagsChanged({ rail: true });
-  assert.equal(win.RailHost.stillhetOn(), true);
+  assert.equal(win.StillhetHost.stillhetOn(), false, 'the live flag: the icon\'s menu checks "Back to today\'s UI" until the reload lands');
+  win.StillhetHost.flagsChanged({ stillhet: true });
+  assert.equal(win.StillhetHost.stillhetOn(), true);
   assert.equal(calls.filter((c) => c === 'reload').length, 1);
 });
 
 test('a flags frame with rail off waits while text is typed, says so once, and reloads once the text is gone', () => {
   const field = { value: 'half a sentence', defaultValue: '', getAttribute: () => null, closest: () => null };
   const { win, calls, toast } = load(['host-app.js', 'adapter.js'], { fetchImpl: reply(true, {}), fields: [field] });
-  win.RailHost.flagsChanged({ rail: false });
-  win.RailHost.flagsChanged({ rail: false });
+  win.StillhetHost.flagsChanged({ stillhet: false });
+  win.StillhetHost.flagsChanged({ stillhet: false });
   assert.equal(calls.includes('reload'), false);
   assert.equal(toast.textContent, 'Stillhet is off.');
   toast.textContent = '';
-  win.RailHost.flagsChanged({ rail: false });
+  win.StillhetHost.flagsChanged({ stillhet: false });
   assert.equal(toast.textContent, '', 'said once');
   field.value = '';
-  win.RailHost.flagsChanged({ rail: false });
+  win.StillhetHost.flagsChanged({ stillhet: false });
   assert.deepEqual(calls, ['reload']);
 });
 
-test('jsdom: rail locked by WORCA_FLAGS: the tip and both rows say why; a pick sends nothing and shows no toast', async () => {
+test('jsdom: stillhet locked by WORCA_FLAGS: the tip and both rows say why; a pick sends nothing and shows no toast', async () => {
   const { stillhetHost } = await import('./helpers/stillhet-host.mjs');
   const { after } = await import('node:test');
   const calls = [];
-  const w = stillhetHost({ railLocked: true, after, fetch: async (u, o = {}) => { calls.push([o.method || 'GET', String(u)]); return { ok: false, status: 500, json: async () => ({}) }; } });
+  const w = stillhetHost({ stillhetLocked: true, after, fetch: async (u, o = {}) => { calls.push([o.method || 'GET', String(u)]); return { ok: false, status: 500, json: async () => ({}) }; } });
   const d = w.document, icon = d.querySelector('[data-stillhet="ui-icon"]');
   assert.ok(icon, 'the icon is drawn');
   assert.ok(icon.getAttribute('aria-label').endsWith(' · Locked by WORCA_FLAGS'));
@@ -250,5 +250,5 @@ test('jsdom: rail locked by WORCA_FLAGS: the tip and both rows say why; a pick s
   assert.deepEqual(calls.filter(([m]) => m !== 'GET'), [], 'no PATCH /api/flags');
   const said = [...d.querySelectorAll('body > .rc-toast')].map((x) => x.textContent).filter(Boolean);
   assert.ok(said.every((x) => x === 'Locked by WORCA_FLAGS'), `a disabled row only says why, nothing failed: ${said}`);
-  assert.equal(w.RailHost.railLocked(), true);
+  assert.equal(w.StillhetHost.stillhetLocked(), true);
 });

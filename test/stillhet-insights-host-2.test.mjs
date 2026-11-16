@@ -40,7 +40,7 @@ test('D24: Download CSV is dev\'s Cost report CSV for the page; Tag these N task
   page(h.d).querySelector('[data-in-csv]').click(); await settle(30);
   const got = new TextDecoder('utf-8', { ignoreBOM: true }).decode(await blob.arrayBuffer());
   assert.equal(got, statsCsv(statsAnswer(1), { by: 'client', page: 'spend', byLabel: 'client (cost tag)' }));
-  const handed = []; h.w.RailConversation.handOver = (x) => handed.push(x);
+  const handed = []; h.w.StillhetConversation.handOver = (x) => handed.push(x);
   const tag = page(h.d).querySelector('[data-in-tag]');
   assert.equal(tag.textContent.trim(), 'Tag these 2 tasks');
   tag.click();
@@ -52,8 +52,8 @@ test('Set a default for a project: live, it opens the top untagged project\'s ta
     const h = await insightsHost({ hash });
     if (by) await pick(h.d, 'in-by', by);
     const edited = [];
-    h.w.RailProjects.all = () => [{ id: 'p-web', name: 'web-app' }, { id: 'p-acme-web', name: 'acme/web-app' }, { id: 'p-bill', name: 'billing-api' }];
-    h.w.RailProjects.editTags = (id) => edited.push(id);
+    h.w.StillhetProjects.all = () => [{ id: 'p-web', name: 'web-app' }, { id: 'p-acme-web', name: 'acme/web-app' }, { id: 'p-bill', name: 'billing-api' }];
+    h.w.StillhetProjects.editTags = (id) => edited.push(id);
     const n = insightsCalls(h.calls).length, before = text(h.d);
     for (let i = 0; i < 2; i += 1) { page(h.d).querySelector('[data-in-default]').click(); await settle(150); }
     assert.equal(edited.length, 2, `${hash}: every click opens a project's tags`);
@@ -76,13 +76,13 @@ test('Download CSV on a live team page goes through dev\'s CSV writer: a teammat
   assert.doesNotMatch(got, /(^|\r\n)"?=1\+1/);
 });
 
-test('R-arch-1: the live pages call no RailWould and insights.js holds none; saved views are kept in this browser', async () => {
-  assert.doesNotMatch(readFileSync('ui/public/stillhet/insights/insights.js', 'utf8'), /RailWould\(/);
+test('R-arch-1: the live pages call no StillhetWould and insights.js holds none; saved views are kept in this browser', async () => {
+  assert.doesNotMatch(readFileSync('ui/public/stillhet/insights/insights.js', 'utf8'), /StillhetWould\(/);
   const h = await insightsHost();
-  const would = []; h.w.RailWould = (t) => { would.push(t); return t; };
+  const would = []; h.w.StillhetWould = (t) => { would.push(t); return t; };
   page(h.d).querySelector('[data-in-save]').click(); await settle(60);
   assert.match(saidText(h.d), /Saved Spend by project, this month to Your views/);
-  assert.equal(JSON.parse(h.w.localStorage.getItem('worca-rail.insights-views')).length, 1);
+  assert.equal(JSON.parse(h.w.localStorage.getItem('worca-stillhet.insights-views')).length, 1);
   for (const id of LIVE_PAGES) { await go(h.w, `#insights/${id}`, 80); }
   assert.deepEqual(would, []);
   assert.ok(h.calls.every((c) => c.method === 'GET'), 'Invariant 4: Insights writes nothing');
@@ -90,10 +90,10 @@ test('R-arch-1: the live pages call no RailWould and insights.js holds none; sav
 
 test('R-qa-6: in the demo kind every Insights page sends no request', async () => {
   const calls = [];
-  const w = stillhetHost({ hash: '#insights/spend', fetch: async (u) => { calls.push(String(u)); return { ok: false, status: 404, json: async () => ({}) }; }, after: () => {}, beforeScripts: (win) => win.localStorage.setItem('worca-rail.mode', 'expert') });
+  const w = stillhetHost({ hash: '#insights/spend', fetch: async (u) => { calls.push(String(u)); return { ok: false, status: 404, json: async () => ({}) }; }, after: () => {}, beforeScripts: (win) => win.localStorage.setItem('worca-stillhet.mode', 'expert') });
   await settle(60);
   const before = calls.length;
-  for (const s of w.RailInsightsModel.SUBS) { w.location.hash = `#insights/${s.id}`; await settle(20); }
+  for (const s of w.StillhetInsightsModel.SUBS) { w.location.hash = `#insights/${s.id}`; await settle(20); }
   assert.deepEqual(calls.slice(before), []);
   assert.match(w.document.getElementById('route-place').textContent, /Missing cost tags|Who spends where/);
   // I4 (#1310): a person's row and a teammate's task open in the demo with no request either

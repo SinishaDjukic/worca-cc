@@ -96,7 +96,7 @@ test('every page action refused with a 409 or a network failure: one "Could not 
     for (const [id, sid, press, words] of presses) {
       if (!location(w, sid)) { await go(w, `#schedule/${sid}`, 150); await settle(150); }
       const before = store(w), n = sent(calls).length;
-      w.RailDrafts?.discard(`schedule:${sid}`);
+      w.StillhetDrafts?.discard(`schedule:${sid}`);
       await press(d); await settle(80);
       assert.equal(sent(calls).length - n, 1, `${id} ${status}: one request, no retry`);
       assert.equal(toastText(d), `Could not ${words}: ${reason}`, `${id} ${status}`);

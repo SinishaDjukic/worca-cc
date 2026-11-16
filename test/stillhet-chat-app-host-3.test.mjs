@@ -30,9 +30,9 @@ test('chatOfTask in the live kind: the starting chat by the run links, an archiv
   const src = clone(SOURCES);
   src.threads.threads[0].archivedAt = src.threads.threads[0].updatedAt;
   const { w } = await liveHost({ sources: src });
-  assert.equal(w.RailConversation.chatOfTask({ run: 'pa' }), 'ask_1', 'by pipeline id too');
-  assert.equal(w.RailConversation.chatOfTask({ run: 'run-a' }), 'ask_1');
-  assert.equal(w.RailConversation.chatOfTask({ run: 'run-zzz', title: 'Ask me' }), '');
+  assert.equal(w.StillhetConversation.chatOfTask({ run: 'pa' }), 'ask_1', 'by pipeline id too');
+  assert.equal(w.StillhetConversation.chatOfTask({ run: 'run-a' }), 'ask_1');
+  assert.equal(w.StillhetConversation.chatOfTask({ run: 'run-zzz', title: 'Ask me' }), '');
 });
 
 test('a Shaper run\'s plan waiting for you is a live PlanCard under its TaskCard: Approve and Ask for changes are dev\'s plan answer (R-fit-5)', async () => {
@@ -115,7 +115,7 @@ test('panel.ship-card: a feature\'s ship marks each requirement (dev\'s acceptan
   d.querySelector('#route-chat [data-ship-why="card_ship"]').value = 'not needed';
   d.querySelector('#route-chat [data-ship-why-save="card_ship"]').click(); await settle(60);
   assert.deepEqual(posts(calls).at(-1), ['PUT', '/api/shape/features/f1/acceptance', { entries: [{ id: 'R-2', mark: 'dropped', reason: 'not needed' }] }]);
-  w.RailConversation.flushPaints();   // the acceptance read's repaint waits for a frame (comp.live-paint)
+  w.StillhetConversation.flushPaints();   // the acceptance read's repaint waits for a frame (comp.live-paint)
   assert.equal(go1().disabled, false, 'every requirement is marked: Create PR is on');
   d.querySelector('#route-chat [data-menu="shiphow-card_ship"]').click(); await settle(5);
   d.querySelector('#route-chat [data-menu-pick="shiphow-card_ship|as stacked PRs"]').click(); await settle(10);

@@ -158,8 +158,8 @@ test('F-5-01/F-5-02/F-7b-05: live search offers no demo Settings row', async () 
 test('demo keeps the sample Setup, Plugins, Spending and Team policy', async () => {
   const w = stillhetHost({ hash: '#chat', after: (fn) => demoClosers.push(fn) });
   await settle(200);
-  assert.equal(w.RailWorld.live, false);
-  w.RailUI.prefs.setMode('expert');   // Plugins and Team policy need Advanced
+  assert.equal(w.StillhetWorld.live, false);
+  w.StillhetUI.prefs.setMode('expert');   // Plugins and Team policy need Advanced
   assert.match(await go(w, '#settings/general'), /Setup assistant/);
   assert.match(await go(w, '#settings/plugins'), /Jira/);
   const tasks = await go(w, '#settings/runs');
@@ -169,7 +169,7 @@ test('demo keeps the sample Setup, Plugins, Spending and Team policy', async () 
 });
 
 // F-G-G5-04: today's app reads GET /api/app/version (About and the sidebar marker); Stillhet shows it where the rule puts it,
-// Settings › General › About (docs/rail/settings.md): `Version 1.19 · New version: 1.20`, and Check now re-checks npm.
+// Settings › General › About (docs/stillhet/settings.md): `Version 1.19 · New version: 1.20`, and Check now re-checks npm.
 test('F-G-G5-04: General › About reads GET /api/app/version and says an update is available', async () => {
   const VS = { current: '1.19.0', latest: '1.20.0', status: 'outdated', enabled: true, links: {} };
   const reads = marketRead();

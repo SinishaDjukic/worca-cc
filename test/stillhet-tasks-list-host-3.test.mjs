@@ -1,5 +1,5 @@
 // test/stillhet-tasks-list-host-3.test.mjs — B4.4a: a Tasks row's ⋯ reads View PR #N ↗ (one per member PR on a group) and opens
-// the real url on live (F-3-15); a row's tooltip is one fact a line, cost never in the bar (F-3-14, docs/rail/lists.md list.one-end).
+// the real url on live (F-3-15); a row's tooltip is one fact a line, cost never in the bar (F-3-14, docs/stillhet/lists.md list.one-end).
 // Demo (stillhetHost) and live (liveHost) app hosts, jsdom.
 import { test, afterEach, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,13 +14,13 @@ const prItems = (d, key) => items(d, key).filter((x) => x.id.startsWith('view-pr
 const pick = async (d, key, id) => { d.querySelector(`[data-menu-pick="row:${key}|${id}"]`).click(); await settle(60); };
 const toastText = (d) => d.querySelector('.rc-toast.is-on')?.textContent || '';
 const tip = (d, key) => d.querySelector(`[data-open="${key}"]`)?.getAttribute('title') || '';
-// the phrases a page hands RailWould (the app host answers every one with its one refusal; the prototype host with the demo sentence)
-const would = (w) => { const said = [], was = w.RailWould; w.RailWould = (p) => { said.push(p); return was(p); }; return said; };
+// the phrases a page hands StillhetWould (the app host answers every one with its one refusal; the prototype host with the demo sentence)
+const would = (w) => { const said = [], was = w.StillhetWould; w.StillhetWould = (p) => { said.push(p); return was(p); }; return said; };
 const stubOpen =(w, answer = {}) => { const opened = []; w.open = (u, t) => { opened.push([u, t]); return answer; }; return opened; };
 // every folded date section and every "N more" open, so a row of any day can be read
 async function openAll(d) { for (let i = 0; i < 30; i++) { const b = d.querySelector('#runs-root [data-fold-section][aria-expanded="false"], #runs-root [data-more]'); if (!b) return; b.click(); await settle(20); } }
 // the demo's every case holds r7 with its PR and the Billing export stack (shell/world.js CASES.every)
-async function demo() { const w = stillhetHost({ hash: '#runs', after }); await settle(200); w.RailWorld.set('every'); await settle(100); await openAll(w.document); return w; }
+async function demo() { const w = stillhetHost({ hash: '#runs', after }); await settle(200); w.StillhetWorld.set('every'); await settle(100); await openAll(w.document); return w; }
 async function prLive({ url = '', by = '' } = {}) {
   const { PR_URL } = await import('./helpers/stillhet-live-fixture.mjs');
   const s = sources(), h2 = s.history.pipelines.find((p) => p.id === 'h2');
@@ -39,7 +39,7 @@ test('F-3-15 demo: a run row\'s ⋯ reads View PR #962 ↗ and picking it gives 
   const said = would(w);
   await pick(d, 'run:r7', 'view-pr:r7');
   assert.deepEqual(said, ['open PR #962 on GitHub (it leaves Worca)'], 'the no-demo baseline\'s phrase, byte for byte');
-  assert.equal(toastText(d), w.RailWould(said[0]), 'its toast is the adapter\'s answer');
+  assert.equal(toastText(d), w.StillhetWould(said[0]), 'its toast is the adapter\'s answer');
 });
 
 test('F-3-15 demo: the Billing export stack offers View PR #970, #971, #972 ↗ in order; #971 toasts #971', async () => {
@@ -63,7 +63,7 @@ test('F-3-15 live: a saved row with a PR url reads View PR #959 ↗ (no url) and
 
 test('F-3-15 live: an active run and a row without a PR have no View PR', async () => {
   const { w, d } = await prLive();
-  const active = w.RailWorld.data().runs.find((r) => !r.pr && d.querySelector(`[data-menu="row:run:${r.id}"]`) && /^run-/.test(r.id));
+  const active = w.StillhetWorld.data().runs.find((r) => !r.pr && d.querySelector(`[data-menu="row:run:${r.id}"]`) && /^run-/.test(r.id));
   assert.ok(active, 'an active run is listed');
   await openMenu(d, `run:${active.id}`);
   assert.deepEqual(prItems(d, `run:${active.id}`), []);
@@ -105,8 +105,8 @@ test('F-3-15 live: with two rows ticked, View PR opens only its own row\'s PR', 
 });
 
 test('F-3-14 demo: r7\'s tooltip is one fact a line: title, state, project, PR #962, time', async () => {
-  const w = await demo(), d = w.document, r = w.RailWorld.find('r7');
-  const word = w.RailUI.runState(w.RunCardModel.stateOf(r.case)).word, needs = w.RailUI.runState('question').word;
+  const w = await demo(), d = w.document, r = w.StillhetWorld.find('r7');
+  const word = w.StillhetUI.runState(w.RunCardModel.stateOf(r.case)).word, needs = w.StillhetUI.runState('question').word;
   const lines = tip(d, 'run:r7').split('\n');
   // in Needs you its section already says the word, as before
   assert.deepEqual(lines, [r.title, word === needs ? '' : word, ...(r.detail === word ? [] : [r.detail]), r.project, 'PR #962', r.time].filter(Boolean));
@@ -115,15 +115,15 @@ test('F-3-14 demo: r7\'s tooltip is one fact a line: title, state, project, PR #
 
 test('F-3-14 demo: the Labels line shows only with runLabels on', async () => {
   const w = await demo(), d = w.document;
-  w.RailUI.prefs.setFlag('runLabels', false); await settle(40); await openAll(d);
+  w.StillhetUI.prefs.setFlag('runLabels', false); await settle(40); await openAll(d);
   assert.doesNotMatch(tip(d, 'run:r7'), /Labels:/);
-  w.RailUI.prefs.setFlag('runLabels', true); await settle(40); await openAll(d);
+  w.StillhetUI.prefs.setFlag('runLabels', true); await settle(40); await openAll(d);
   assert.ok(tip(d, 'run:r7').split('\n').includes('Labels: hotfix'));
 });
 
 test('F-3-14 demo: the bar row stays one line: no meta line, the same end', async () => {
   const w = await demo(), d = w.document;
-  w.RailUI.prefs.setFlag('runLabels', true); await settle(40); await openAll(d);
+  w.StillhetUI.prefs.setFlag('runLabels', true); await settle(40); await openAll(d);
   const main = d.querySelector('[data-open="run:r7"]');
   assert.equal(main.querySelector('.lr-m'), null, 'no meta line on the row');
   assert.equal(main.textContent.trim(), 'Retry on 502', 'the row holds its title only');
@@ -132,7 +132,7 @@ test('F-3-14 demo: the bar row stays one line: no meta line, the same end', asyn
 
 test('F-3-14 demo: a group\'s tooltip is one fact a line (kind, project, labels, why); its member\'s carries its PR', async () => {
   const w = await demo(), d = w.document;
-  w.RailUI.prefs.setFlag('runLabels', true); await settle(40); await openAll(d);
+  w.StillhetUI.prefs.setFlag('runLabels', true); await settle(40); await openAll(d);
   const lines = tip(d, 'group:g-stack').split('\n');
   assert.equal(lines[0], 'Billing export stack');
   assert.equal(lines[1], 'Chain');
@@ -148,16 +148,16 @@ test('F-3-14 live: a saved row\'s tooltip reads PR #959, never the url; Started 
   assert.ok(tip(d, 'run:h2').split('\n').includes('PR #959'));
   assert.doesNotMatch(tip(d, 'run:h2'), /http/);
   assert.doesNotMatch(tip(d, 'run:h2'), /Started by/);
-  w.RailWorld.setState({ list: 'shared' }); await settle(80); await openAll(d);   // reaches setCase('shared') through W.onChange
+  w.StillhetWorld.setState({ list: 'shared' }); await settle(80); await openAll(d);   // reaches setCase('shared') through W.onChange
   assert.ok(tip(d, 'run:h2').split('\n').includes('Started by mara'));
 });
 
 test('F-3-14: no row or group tooltip shows a cost', async () => {
   const w = await demo(), d = w.document;
-  w.RailUI.prefs.setFlag('runLabels', true); await settle(40);
+  w.StillhetUI.prefs.setFlag('runLabels', true); await settle(40);
   await openAll(d);
   for (let i = 0; i < 20; i++) { const b = d.querySelector('#runs-root button[data-fold^="group:"][aria-expanded="false"]'); if (!b) break; b.click(); await settle(30); }
-  const { runs, groups } = w.RailWorld.data();
+  const { runs, groups } = w.StillhetWorld.data();
   const costOf = new Map([...runs.map((r) => [`run:${r.id}`, r.cost]), ...groups.map((g) => [`group:${g.id}`, g.cost])]);
   const tips = [...d.querySelectorAll('#runs-root [data-open]')].map((e) => [e.dataset.open, e.getAttribute('title') || '']);
   assert.ok(tips.filter(([k]) => costOf.get(k) > 0).length > 5, 'rows with a cost are read');

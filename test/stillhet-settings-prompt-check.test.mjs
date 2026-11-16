@@ -12,7 +12,7 @@ const demoClosers = [];
 afterEach(() => { while (demoClosers.length) demoClosers.pop()(); });
 
 const KEY = '[data-svsw="promptCheck"]';
-const toastText = (w) => w.RailHost.toastEl.textContent;   // the app host's toast (RailAdapter.toast)
+const toastText = (w) => w.StillhetHost.toastEl.textContent;   // the app host's toast (StillhetAdapter.toast)
 const withChat = (chat) => ({ ...clone(SOURCES), settings: { ...clone(SOURCES.settings || {}), chat } });
 async function openAbilities(w) {
   w.location.hash = '#settings/ask';
@@ -56,7 +56,7 @@ test('demo: a toggle changes sv.promptCheck and sends 0 requests; the Abilities 
   const calls = [];
   const w = stillhetHost({ hash: '#chat', after: (fn) => demoClosers.push(fn), fetch: async (u, o = {}) => { calls.push(`${o.method || 'GET'} ${u}`); return { ok: false, json: async () => ({}) }; } });
   await settle(200);
-  assert.equal(w.RailWorld.live, false);
+  assert.equal(w.StillhetWorld.live, false);
   const n = calls.length;
   const sv = w.SettingsView.fresh();
   assert.equal(sv.promptCheck, false);

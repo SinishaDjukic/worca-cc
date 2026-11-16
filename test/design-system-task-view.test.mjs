@@ -1,4 +1,4 @@
-// test/design-system-task-view.test.mjs — TaskView (docs/rail/thing-page.md › thing.read-only): a teammate's task, read
+// test/design-system-task-view.test.mjs — TaskView (docs/stillhet/thing-page.md › thing.read-only): a teammate's task, read
 // only: the task page's head, metadata, StatusLine, Figures, runs and PR; never an action, a step or a log.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

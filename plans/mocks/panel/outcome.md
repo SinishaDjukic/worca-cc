@@ -46,7 +46,7 @@ Final mock: `r8-ux.png` (the proposal card), `r7-ux.png` (the button tooltip and
 - Keys (Dana): Shift+Tab from Start walks the pickers backwards; after a pick, focus returns to Start. The repo stays first and bold.
 - Sam: keep one clause per value so the sentence doesn't get busy.
 
-## Rule changes this needs in docs/rail
+## Rule changes this needs in docs/stillhet
 - `components.md`: SentencePicker quiet variant, ListSentence folded/one-line, BarHead action with label, row reason end, engine picker with Thinks.
 - `forms.md`: `form.composer`, per-mode sentences.
 - `lists.md`: off-defaults line, reason end.

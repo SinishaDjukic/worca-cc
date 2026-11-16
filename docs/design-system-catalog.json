@@ -1,16 +1,16 @@
 {
-  "about": "The Worca Rail design system as data: what a page can be built from, for a tool or an agent. The rules are docs/rail/; when this file and those differ, the file there wins and this one is fixed in the same change. Each component is drawn in the gallery (plans/rail/prototype/components.html) and on the generated Worca Rail page.",
+  "about": "The Stillhet design system as data: what a page can be built from, for a tool or an agent. The rules are docs/stillhet/; when this file and those differ, the file there wins and this one is fixed in the same change. Each component is drawn in the gallery (plans/stillhet/prototype/components.html) and on the generated Stillhet page.",
   "howToBuild": [
-    "Pick the page's pattern from `featureKinds`: what the feature is picks it (docs/rail/build.md › build.default).",
+    "Pick the page's pattern from `featureKinds`: what the feature is picks it (docs/stillhet/build.md › build.default).",
     "For each thing the person must see or do, find its need below (a component, a logic entry, or an element under its family's `also`); use it in that pattern's slot. A need with no entry is a question for a person, then build.teach.",
     "A component or logic with `code` is built in code: import it from ui/public/design-system/components/index.mjs and call it; never write its markup. A need with no component in code: add the component there first, with its test and its `code` entry.",
-    "Write the words by the rules in docs/rail/: state words, labels of 1–3 words, failures as `Could not …`, the reason, `Nothing changed.`",
+    "Write the words by the rules in docs/stillhet/: state words, labels of 1–3 words, failures as `Could not …`, the reason, `Nothing changed.`",
     "Draw every state: empty, loading, could not load, a failed step, an unexpected break, a lost connection, and 375px.",
     "Set no look of your own: no size, colour, corner or shadow; they come with the component.",
-    "Lay it out narrow by docs/rail/narrow.md: at 520px of content (560px for a settings row) side by side stacks on the same text edge, the action slot moves under the state word and its extra buttons fold into ⋯; nothing is dropped; names keep one line with an ellipsis and a tooltip; a branch or path loses its middle and keeps its start and last part (feat/unifi…-breadcrumb).",
+    "Lay it out narrow by docs/stillhet/narrow.md: at 520px of content (560px for a settings row) side by side stacks on the same text edge, the action slot moves under the state word and its extra buttons fold into ⋯; nothing is dropped; names keep one line with an ellipsis and a tooltip; a branch or path loses its middle and keeps its start and last part (feat/unifi…-breadcrumb).",
     "Name every page, menu item, section head and row by Small rules › Names: the thing, 1–3 words, one thing one name; ds-check reads them.",
     "What a page needed and the design system did not have is added to it first: the rule, the catalog entry, the component in code with its test and gallery example",
-    "Pass the gate: plans/rail/prototype/gates/ds-check.mjs and the page's sweep."
+    "Pass the gate: plans/stillhet/prototype/gates/ds-check.mjs and the page's sweep."
   ],
   "featureKinds": [
     {
@@ -1032,7 +1032,7 @@
         "a schedule's times and rules"
       ],
       "rules": [
-        "rail.drafts"
+        "stillhet.drafts"
       ],
       "example": "A workflow's page after changing a step's model"
     },
@@ -1262,10 +1262,10 @@
       "code": "ui/public/design-system/components/row.mjs#row",
       "kind": "showing",
       "needs": [
-        "any row on a Rail page"
+        "any row on a Stillhet page"
       ],
       "parts": [
-        "rail",
+        "stillhet",
         "text",
         "end",
         "⋯"
@@ -1404,7 +1404,7 @@
       "rules": [
         "one left edge for every text and section line, one right edge for every action, the name, the sentence and the end on one baseline: the component's, never the page's",
         "takes effect at once; only a reset of many rows confirms, in the strip",
-        "under 560px of width it stacks (docs/rail/narrow.md)",
+        "under 560px of width it stacks (docs/stillhet/narrow.md)",
         "`fold.label` names a fold that holds a list instead of fine-tuning (Paired browsers)",
         "a write it waits for shows Saving on its switch; a refused write says why at the end of its sentence, until the next change"
       ],
@@ -1443,7 +1443,7 @@
         "it takes the sidebar's place; the sidebar's content fades over change",
         "on a narrow screen the page's first view, as a list (`list`): 44px rows with ›, a line where each group after the first starts"
       ],
-      "example": "Settings: see docs/rail/settings.md"
+      "example": "Settings: see docs/stillhet/settings.md"
     },
     {
       "name": "Search",
@@ -1769,7 +1769,7 @@
         "what another place sent to Chat, shown in the composer"
       ],
       "rules": [
-        "rail.hand-to-chat"
+        "stillhet.hand-to-chat"
       ]
     },
     {
@@ -1824,7 +1824,7 @@
       "kind": "telling",
       "needs": [
         "a thing's main stages on a card",
-        "the progress line alone (bare), where a stage list under it names the stages (rail.one-place)"
+        "the progress line alone (bare), where a stage list under it names the stages (stillhet.one-place)"
       ],
       "rules": [
         "list.kind-mark"
@@ -2807,7 +2807,7 @@
         {
           "code": "ui/public/design-system/components/step-flow.mjs#failureOf",
           "needs": [
-            "A failure in Rail's words: Could not …, the reason, Nothing changed"
+            "A failure in Stillhet's words: Could not …, the reason, Nothing changed"
           ]
         },
         {
@@ -3299,7 +3299,7 @@
       "for": "how Worca behaves everywhere",
       "slots": [
         "opened from the profile menu only",
-        "SideMenu in the sidebar's place: ‹ Back to Worca, then the groups in docs/rail/settings.md",
+        "SideMenu in the sidebar's place: ‹ Back to Worca, then the groups in docs/stillhet/settings.md",
         "each section is A settings tab",
         "Search finds every row, folded row and record and lands on it"
       ]
@@ -3371,7 +3371,7 @@
     }
   ],
   "motion": {
-    "rule": "docs/rail/motion.md: motion shows what changed, never decorates; fade, never slide",
+    "rule": "docs/stillhet/motion.md: motion shows what changed, never decorates; fade, never slide",
     "timings": {
       "--motion-quick": "150ms: appears, opens, goes",
       "--motion-change": "200ms: becomes something else",
@@ -3552,7 +3552,7 @@
     {
       "name": "shortcutSections",
       "kind": "part",
-      "why": "ShortcutsSheet's sections; only the gallery (plans/rail/prototype/components.html) calls it, to draw the sheet's example"
+      "why": "ShortcutsSheet's sections; only the gallery (plans/stillhet/prototype/components.html) calls it, to draw the sheet's example"
     },
     {
       "name": "foldMiddle",

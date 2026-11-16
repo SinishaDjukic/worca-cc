@@ -28,7 +28,7 @@ const AWAY = { stepKey: '4:n_rev#1', round: 1, nodeId: 'n_rev', agentKey: 'rev',
 // `pid`: the pipeline the page reads (a live run's id is its run id, its saved detail its pipeline's)
 async function open(id, detail, { src = sources(), read = () => null, pid = id } = {}) {
   const h = await liveHost({ sources: src, read: (u) => (u === `/api/history/web-1/${pid}` ? [200, clone(detail)] : read(u)) });
-  h.w.RailUI.prefs.setMode('expert');
+  h.w.StillhetUI.prefs.setMode('expert');
   await go(h.w, `#run/${id}`, 200); await settle(300);
   return h;
 }

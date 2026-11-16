@@ -1,13 +1,13 @@
-/* The one Worca's shell: today's app (app.css) around the Rail pieces. Only what joining them needs; the look comes from
-   the app's CSS and the Rail layer. */
+/* The one Worca's shell: today's app (app.css) around the Stillhet pieces. Only what joining them needs; the look comes from
+   the app's CSS and the Stillhet layer. */
 
 /* The layer above the shell for Pulse, the profile menu and New run: the window itself, clicks only on what it holds. */
-.rail-layer{position:fixed;inset:0;z-index:43;display:block;min-height:0;border:0;border-radius:0;background:none;pointer-events:none;}
-.rail-layer > *{pointer-events:auto;}
-.rail-layer .viewer-modal{position:fixed;}
+.stillhet-layer{position:fixed;inset:0;z-index:43;display:block;min-height:0;border:0;border-radius:0;background:none;pointer-events:none;}
+.stillhet-layer > *{pointer-events:auto;}
+.stillhet-layer .viewer-modal{position:fixed;}
 
-/* Settings in the page, as on pulse.html: the Rail page frame without the mock window. */
-.rail-page{display:block;min-height:0;border:0;border-radius:0;background:none;}
+/* Settings in the page, as on pulse.html: the Stillhet page frame without the mock window. */
+.stillhet-page{display:block;min-height:0;border:0;border-radius:0;background:none;}
 
 /* The run page as a full page in the main column: the trail is its one way back. */
 #route-run{padding:24px 32px 56px;}
@@ -15,22 +15,22 @@
 
 /* The sidebar as Settings' menu: on a wide screen the SideMenu shows instead of today's nav; below 760px the sidebar
    stays Worca's (its narrow rail) and Settings opens on its menu as a list in the page. */
-.rail-side-settings{flex:1 1 auto;min-height:0;overflow:auto;}
+.stillhet-side-settings{flex:1 1 auto;min-height:0;overflow:auto;}
 @media (min-width: 761px){ #side-rail.is-settings nav.nav{display:none;} }
-@media (max-width: 760px){ .rail-side-settings{display:none;} }
+@media (max-width: 760px){ .stillhet-side-settings{display:none;} }
 /* On the 60px rail the sidebar stays Worca's too: its icons, and Settings' menu as a list in the page, with ‹ Settings. */
 .has-rail #side-rail.is-settings nav.nav{display:flex;}
-.has-rail .rail-side-settings{display:none;}
+.has-rail .stillhet-side-settings{display:none;}
 .has-rail .cfg-index{display:block;}
 .has-rail .cfg-index .side-menu{margin-left:var(--edge);}.has-rail .cfg-section > .rl-back{display:inline-flex;margin-left:var(--edge);}
 .has-rail .cfg-page:not(.is-index) .cfg-index,.has-rail .cfg-page.is-index .cfg-section{display:none;}
 
-/* The drawer at 760px and below: Rail's fade, never a slide; it closes at once. */
+/* The drawer at 760px and below: Stillhet's fade, never a slide; it closes at once. */
 @media (max-width: 760px){
   .sidebar{transform:none;opacity:0;transition:none;}
   body.nav-open .sidebar{transform:none;opacity:1;transition:opacity var(--motion-quick) var(--ease);}
 }
-/* The sidebar's foot: the Rail avatar and its rings in the corner, the rows above it. */
+/* The sidebar's foot: the Stillhet avatar and its rings in the corner, the rows above it. */
 .side-foot .pz-acct{--rail:20px;}
 
 /* Search in the top bar: what it finds hangs under the field; on a phone it takes the field's width. */
@@ -41,7 +41,7 @@
 @media (max-width: 760px){ .tsearch-field .menu.rl-search-res{width:100%;max-width:none;} }
 
 /* A confirm under the top bar (the search's hand-off), and the one line of a page above the mode. */
-.rail-locked{padding:24px 32px;}
+.stillhet-locked{padding:24px 32px;}
 
 /* Ask worca: 761 to 1080px it covers the page's right side at its own width, with its grip; push and window as the app.
    It fades in, the page narrowing with it above 1080px; at 1080px and below it covers the page and only fades, as Pulse
@@ -50,13 +50,13 @@
   .ask-side{width:var(--ask-side-w, 440px);border-left:1px solid var(--line);box-shadow:var(--shadow-pop);}
   .ask-side-grip{display:block;}
 }
-@media (min-width: 1081px){ .ask-side.is-in{animation:rail-ask-in var(--motion-quick) var(--ease);} }
-@media (max-width: 1080px){ .ask-side.is-in{animation:rail-ask-fade var(--motion-quick) var(--ease);} }
-@keyframes rail-ask-in{from{width:0;opacity:0;}}
-@keyframes rail-ask-fade{from{opacity:0;}}
+@media (min-width: 1081px){ .ask-side.is-in{animation:stillhet-ask-in var(--motion-quick) var(--ease);} }
+@media (max-width: 1080px){ .ask-side.is-in{animation:stillhet-ask-fade var(--motion-quick) var(--ease);} }
+@keyframes stillhet-ask-in{from{width:0;opacity:0;}}
+@keyframes stillhet-ask-fade{from{opacity:0;}}
 @media (prefers-reduced-motion: reduce){ .ask-side.is-in{animation:none;} }
-.rail-ask-body{height:100%;min-height:0;display:flex;flex-direction:column;}
-.rail-ask-body > section.view{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;}
+.stillhet-ask-body{height:100%;min-height:0;display:flex;flex-direction:column;}
+.stillhet-ask-body > section.view{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;}
 
 /* The prototype's own controls, folded into a corner (not Worca). */
 .mk-tools{position:fixed;right:12px;bottom:12px;z-index:60;max-width:min(360px, calc(100vw - 24px));background:var(--float, var(--panel));
@@ -74,15 +74,15 @@
 /* The one bar: which of its lists is showing. */
 #side-rail nav.nav{display:none;}
 #side-rail[data-bar="home"] nav.nav{display:flex;}
-#side-rail[data-bar="home"] .rail-side-settings{display:none;}
-#side-rail:not([data-bar="settings"]) .rail-side-settings{display:none;}
+#side-rail[data-bar="home"] .stillhet-side-settings{display:none;}
+#side-rail:not([data-bar="settings"]) .stillhet-side-settings{display:none;}
 @media (min-width: 761px){ #side-rail.is-settings[data-bar="home"] nav.nav{display:flex;} }
 #side-rail .brand{padding:0;justify-content:flex-start;}
 #side-rail #bar-head{flex:1;min-width:0;}
 #side-rail{position:relative;width:var(--bar-w,280px);flex:0 0 var(--bar-w,280px);}
 #bar-back{display:none;flex:none;}
 #side-rail[data-bar="home"] #bar-back{display:block;}
-.bar-list.rail-page,.bar-back.rail-page{padding:0 8px 8px 8px;max-width:none;margin:0;--rail:20px;--gap:6px;font-size:var(--fs-body);}
+.bar-list.stillhet-page,.bar-back.stillhet-page{padding:0 8px 8px 8px;max-width:none;margin:0;--rail:20px;--gap:6px;font-size:var(--fs-body);}
 .bar-list{flex:1 1 auto;min-height:0;overflow:auto;}
 .bar-list .list-head{display:block;margin-left:0;}
 .bar-list .list-sentence,.bar-back .list-sentence{display:inline;margin:0;font-size:var(--fs-meta);line-height:22px;}
@@ -101,7 +101,7 @@
 .bar-list .lr-end .rc-pop > .btn:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 @media (hover:none){.bar-list .lr-end .rc-pop{position:static;background:none;opacity:1;pointer-events:auto;}}   /* no hover on a touch screen: it is simply there */
 .bar-list .list-row:is(:hover,:focus-within) > .lr-end .rc-pop,.bar-list .lr-end .rc-pop:has(.menu){opacity:1;pointer-events:auto;}   /* ⋯ beside the end, never over it */
-body.view-rail-chat .main{display:flex;flex-direction:column;overflow:hidden;}
+body.view-stillhet-chat .main{display:flex;flex-direction:column;overflow:hidden;}
 .convo-answer{margin:6px 0 0 32px;}.convo-answer-go{margin-top:8px;}
 #route-run{position:relative;}
 #task-dock{position:sticky;bottom:0;background:var(--bg);padding:10px 56px 12px 24px;}
@@ -124,7 +124,7 @@ body.view-run .main{display:flex;flex-direction:column;overflow:hidden;}
 .bar-grip:focus-visible{outline:0;}
 body.is-resizing-bar{cursor:col-resize;user-select:none;}
 @media (max-width: 760px){ .bar-grip{display:none;} #side-rail{width:280px;flex:none;} }
-body.view-rail-chat .main,body.view-run .main{padding:0;}
+body.view-stillhet-chat .main,body.view-run .main{padding:0;}
 #route-run > #card{width:100%;max-width:none;align-self:stretch;box-sizing:border-box;}
 #route-run > #card > *{width:100%;max-width:720px;margin-inline:auto;}
 #task-dock .composer,#task-dock .convo-dock-note{max-width:720px;}
@@ -134,15 +134,15 @@ body.view-rail-chat .main,body.view-run .main{padding:0;}
 @media (min-width: 761px) and (max-width: 1240px){ .mk-tools .mk-stamp{display:none;} }
 #side-rail nav.nav .side-g{margin:12px 0 4px;}
 .bar-back .list-h{font:600 var(--fs-section)/var(--lh-title) var(--sans);letter-spacing:-.01em;padding:12px 9px 4px;margin:0;}
-.bar-list.rail-page{padding-right:12px;}
+.bar-list.stillhet-page{padding-right:12px;}
 .bar-back .list-rows{margin-left:0!important;}
 .bar-back .list-h{margin-left:-6px;}
-.bar-back.rail-page{padding-left:10px;}
+.bar-back.stillhet-page{padding-left:10px;}
 @media (max-width: 760px){ .mk-tools .mk-stamp{display:none;} }
 .main{position:relative;}
 /* One background rule (look.backgrounds): every reading page, Chat home, a chat, a task, the Tasks and Schedules homes and
    Settings, shows the page's background faded into its column; only the away screen has it full. */
-body:not(.view-rail-chat):not(.view-run):not(.view-settings):not(.view-runs) .page-bg{display:none;}
+body:not(.view-stillhet-chat):not(.view-run):not(.view-settings):not(.view-runs) .page-bg{display:none;}
 #route-chat,#route-schedule,#route-place,#route-run,#route-settings,#route-runs{position:relative;z-index:1;}
 #route-run.rc-board,#route-settings,#route-settings .pz-page{background:transparent;}
 /* A row's ⋯: its own, never its parent's too. */
@@ -166,7 +166,7 @@ body:not(.view-rail-chat):not(.view-run):not(.view-settings):not(.view-runs) .pa
 @media (pointer:fine){ :is(.bar-list,.bar-back) .lr-rail{height:28px;} }
 body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}
 #route-runs:not([hidden]){flex:1 1 auto;min-height:0;display:flex;flex-direction:column;}
-#route-runs.rail-page{max-width:none;margin:0;padding:0;}
+#route-runs.stillhet-page{max-width:none;margin:0;padding:0;}
 /* Hidden, the bar is a strip: its content keeps its full width and is clipped, so nothing reflows while it opens or
    closes; the strip (the kinds of work and their counts) is its own layer over the left 56px, and they cross-fade. Under the
    pointer, or while something in it is open, it opens over the page, and nothing moves. */
@@ -239,7 +239,7 @@ body:has(.wf-canvas) > .rc-toast{top:112px;}   /* ds-ok: under the canvas's own 
 .bar-list .list-head{margin-bottom:12px;}
 .bar-list > .list > .list-sentence{display:block;margin-bottom:12px;}
 
-/* list.bar-model: one left edge for every bar, side menus and sentences too (rail.one-rail) */
+/* list.bar-model: one left edge for every bar, side menus and sentences too (stillhet.one-rail) */
 #side-rail .bar-list .list-sentence{margin-left:2px;}
 #side-rail .side-menu{margin-left:0;padding-left:8px;padding-right:8px;}
 #side-rail .bar-list .side-menu{padding-left:0;}
@@ -252,7 +252,7 @@ body:has(.wf-canvas) > .rc-toast{top:112px;}   /* ds-ok: under the canvas's own 
 /* list.bar-model: side menus start where list bars start; a selected row's fill ends at the same right edge on every bar */
 #side-rail .side-menu{padding-top:0;}
 #side-rail .side-group:first-child .side-g{margin-top:0;}
-#side-rail .rail-side-settings .side-menu{padding-right:12px;}
+#side-rail .stillhet-side-settings .side-menu{padding-right:12px;}
 .bar-list .list-row.is-current{position:relative;isolation:isolate;}
 .bar-list .list-row.is-current > .lr-main{position:static;background:none;}
 .bar-list .list-row.is-current > .lr-main::after{content:'';position:absolute;z-index:-1;left:26px;right:0;top:0;height:28px;background:var(--field);border-radius:var(--r-sm);}

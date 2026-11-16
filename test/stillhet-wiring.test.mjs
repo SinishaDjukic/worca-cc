@@ -1,5 +1,5 @@
-// test/stillhet-wiring.test.mjs — plans/rail/stillhet-wiring.md has a row for every module with actions and every model file
-// with seeded figures, each with a known status. A module that gains a RailWould call, or a model file that is added, with no row fails here.
+// test/stillhet-wiring.test.mjs — plans/stillhet/stillhet-wiring.md has a row for every module with actions and every model file
+// with seeded figures, each with a known status. A module that gains a StillhetWould call, or a model file that is added, with no row fails here.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
@@ -7,15 +7,15 @@ import path from 'node:path';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 const SRC = path.join(ROOT, 'ui/public/stillhet');
-const doc = readFileSync(path.join(ROOT, 'plans/rail/stillhet-wiring.md'), 'utf8');
+const doc = readFileSync(path.join(ROOT, 'plans/stillhet/stillhet-wiring.md'), 'utf8');
 const walk = (d) => readdirSync(d).flatMap((n) => { const p = path.join(d, n); return statSync(p).isDirectory() ? walk(p) : [p]; });
 const sources = walk(SRC).map((p) => path.relative(ROOT, p)).filter((p) => p.endsWith('.js') && !/\/(components|graph)\.js$/.test(p));
 const rows = doc.split('\n').filter((l) => l.startsWith('|') && /`ui\/public\/stillhet\//.test(l));
 const rowFor = (file) => rows.find((r) => r.includes('`' + file + '`'));
 const STATUS = /\|\s*(wire to|wired|wired \(partial\)|new: build it|new: built|add to the design first|not offered live)\s*\|/;
 
-test('every module that calls RailWould has an action row with a known status', () => {
-  const missing = sources.filter((f) => /RailWould\(/.test(readFileSync(path.join(ROOT, f), 'utf8')) && !/(adapter|demo-actions)\.js$/.test(f)).filter((f) => !rowFor(f));
+test('every module that calls StillhetWould has an action row with a known status', () => {
+  const missing = sources.filter((f) => /StillhetWould\(/.test(readFileSync(path.join(ROOT, f), 'utf8')) && !/(adapter|demo-actions)\.js$/.test(f)).filter((f) => !rowFor(f));
   assert.deepEqual(missing, []);
 });
 
@@ -31,8 +31,8 @@ test('every row of the actions and figures tables carries a known status', () =>
 // One row per action and per seeded figure (tools/stillhet-wiring.mjs).
 const W = await import('../tools/stillhet-wiring.mjs');
 
-test('phrasesOf: a RailWould literal with every ${…} read as …, a concatenation ends in …, a computed phrase is named', () => {
-  assert.deepEqual(W.phrasesOf("RailWould(`open ${a.b} in a new tab`); RailWould('run ' + x); RailWould(say); RailWould(`x ${{ a: 1 }.a} y`)"),
+test('phrasesOf: a StillhetWould literal with every ${…} read as …, a concatenation ends in …, a computed phrase is named', () => {
+  assert.deepEqual(W.phrasesOf("StillhetWould(`open ${a.b} in a new tab`); StillhetWould('run ' + x); StillhetWould(say); StillhetWould(`x ${{ a: 1 }.a} y`)"),
     ['open … in a new tab', 'run …', '(a phrase built from data)', 'x … y']);
 });
 
@@ -119,7 +119,7 @@ test('Tasks (slice 5): the capabilities table, the new sources built, and the ro
   assert.ok(caps.length >= 20, `one row per capability (${caps.length})`);
   for (const r of caps) assert.match(r, /\| (wired|new: built|not offered live) \|$/, r.slice(0, 80));
   for (const what of ['Raise the cap', 'Restart Build', 'Pause after this step', 'Merge PR', 'reviewers']) assert.ok(caps.some((r) => r.includes(what) && /new: built \|$/.test(r)), what);
-  for (const id of ['shell/world.js › RailDemoState.task', 'runs/runs-list.js › open PR … on GitHub (it leaves Worca)']) assert.ok(doc.includes('| `' + id + '` | wired |'), id);
+  for (const id of ['shell/world.js › StillhetDemoState.task', 'runs/runs-list.js › open PR … on GitHub (it leaves Worca)']) assert.ok(doc.includes('| `' + id + '` | wired |'), id);
   assert.match(doc, /\| `ui\/public\/stillhet\/runs\/runs-list\.js` \| [^|]+ \| wired \|/);
 });
 
@@ -233,12 +233,12 @@ test('Insights (slice 10): every Insights row is wired, or not offered live with
   const NOT = ['why', 'review', 'autonomy', 'cache', 'merge', 'waiting'];
   const want = [
     'ui/public/stillhet/insights/insights.js', 'ui/public/stillhet/insights/insights-model.js',
-    ...['STANDS', 'SUBS', 'SUB', 'DIM', 'DIM_GROUPS', 'TIME', 'FILTERS', 'WHEN'].map((k) => `insights/insights-model.js › RailInsightsModel.${k}`),
+    ...['STANDS', 'SUBS', 'SUB', 'DIM', 'DIM_GROUPS', 'TIME', 'FILTERS', 'WHEN'].map((k) => `insights/insights-model.js › StillhetInsightsModel.${k}`),
     ...['copy a link to this page', 'Download CSV', 'Tag these N tasks', 'Set a default for a project', 'Save this view', 'the team scope'].map((a) => `insights/insights.js › ${a}`),
     ...[...PAGES, ...NOT].map((p) => `insights/insights.js › page insights/${p}`),
     // #1310: a person's work on By person
     ...["open a person's work", 'Hide', 'Show N more', 'open your task', "open a teammate's task", 'open the pull request', 'Try again (pull requests)', 'Back to By person'].map((a) => `insights/insights.js › ${a}`),
-    'insights/insights-model.js › RailInsightsModel.workOf', 'insights/insights-work.js › the work head counts', "insights/insights-work.js › the read-only view's figures",
+    'insights/insights-model.js › StillhetInsightsModel.workOf', 'insights/insights-work.js › the work head counts', "insights/insights-work.js › the read-only view's figures",
   ];
   assert.deepEqual(ins.map(id).sort(), [...want].sort(), 'the pinned Insights rows, no more and no fewer');
   for (const r of ins) {
@@ -249,7 +249,7 @@ test('Insights (slice 10): every Insights row is wired, or not offered live with
     }
     assert.match(r, /\| wired \|/, id(r));
   }
-  assert.deepEqual(ins.filter((r) => /\| not offered live \|/.test(r)).map(id).sort(), ['insights/insights-model.js › RailInsightsModel.STANDS', ...NOT.map((p) => `insights/insights.js › page insights/${p}`)].sort());
+  assert.deepEqual(ins.filter((r) => /\| not offered live \|/.test(r)).map(id).sort(), ['insights/insights-model.js › StillhetInsightsModel.STANDS', ...NOT.map((p) => `insights/insights.js › page insights/${p}`)].sort());
   for (const p of PAGES) assert.match(lines.find((l) => id(l) === `insights/insights.js › page insights/${p}`), /FIGURE_SOURCE/, p);
   assert.match(lines.find((l) => id(l) === "projects/projects.js › This month's spend"), /\| wired \|/);
   for (const l of lines.filter((x) => x.includes('insights/'))) assert.doesNotMatch(l, /\| (wire to|wired \(partial\)|add to the design first|new: build it) \|/, l.slice(0, 100));

@@ -1,4 +1,4 @@
-// test/design-system-time-track.test.mjs — TimeTrack, WorkBar, MarkLegend and their helpers (docs/rail/look.md ›
+// test/design-system-time-track.test.mjs — TimeTrack, WorkBar, MarkLegend and their helpers (docs/stillhet/look.md ›
 // look.time-track): a person's work on a day axis, each row one task, its PR mark the row's one second target.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

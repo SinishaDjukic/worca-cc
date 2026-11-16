@@ -50,13 +50,13 @@
   const GIT = { checks: 'open', 'pr-fixing': 'fail', failing: 'fail', approved: 'pass', ready: 'branch', merged: 'merged', conflicts: 'conflict' };
   const link = (c, t) => {
     if (t.kind === 'schedule') return t;
-    const W = window.RailWorld; if (t.run && W.find(t.run)) return t;
+    const W = window.StillhetWorld; if (t.run && W.find(t.run)) return t;
     const r = W.add({ short: t.short, id: t.run || `k-${t.id}`, case: t.case || 'starting', title: t.title, project: c.project || '', detail: t.detail || '', stage: t.stage, chat: c.id, day: t.case === 'scheduled' ? 'upcoming' : 'today', when: t.case === 'scheduled' ? 'after' : undefined });
     t.run = r.id; return t;
   };
   const sync = (c) => {
     const walk = (t) => {
-      const r = t.run && window.RailWorld.find(t.run);
+      const r = t.run && window.StillhetWorld.find(t.run);
       if (r) {
         const st = window.RunCardModel?.stageOf?.(r.case) || {}, merged = r.case === 'merged';
         Object.assign(t, { title: r.title, case: r.case, detail: r.detail, stage: merged ? 4 : r.stage ?? (st.stage >= 0 ? st.stage : t.stage) });   // its stage is the store's, else its state's
@@ -68,9 +68,9 @@
   };
   const seed = () => {
     // the live kind (D9): the store's chats and topic groups, read again on every call; never a seeded chat
-    if (window.RailWorld.live) return { groups: window.RailWorld.part('chatGroups').map((g) => ({ ...g })), chats: window.RailWorld.part('chats').map((c) => { const x = { ...c, tasks: (c.tasks || []).map((t) => ({ ...t })) }; sync(x); return x; }) };   // its tasks read the store's runs now, as every move does
-    const d = base(), f = window.RailWorld.facts().chats;
-    if (window.RailFirstRun) { d.groups = []; d.chats = d.chats.filter((c) => c.id === 'c0'); }   // the first run: Getting started alone
+    if (window.StillhetWorld.live) return { groups: window.StillhetWorld.part('chatGroups').map((g) => ({ ...g })), chats: window.StillhetWorld.part('chats').map((c) => { const x = { ...c, tasks: (c.tasks || []).map((t) => ({ ...t })) }; sync(x); return x; }) };   // its tasks read the store's runs now, as every move does
+    const d = base(), f = window.StillhetWorld.facts().chats;
+    if (window.StillhetFirstRun) { d.groups = []; d.chats = d.chats.filter((c) => c.id === 'c0'); }   // the first run: Getting started alone
     for (const c of d.chats) {
       const walk = (t) => { link(c, t); (t.after || []).forEach(walk); }; (c.tasks || []).forEach(walk);   // every task in the store, once
       sync(c);
@@ -95,7 +95,7 @@
   };
   // Worca's words take the time of what they answer; words before anything was said take now
   const timed = (list) => { const now = Date.now(); let last = now; for (const x of list) { if (x.t === 'you') { const a = atOf(x.when, now); if (a !== undefined) x.at = last = a; } else if (x.t === 'words') x.at = last; } return list; };
-  const thread = (c) => (window.RailWorld?.live && window.RailChatLive ? window.RailChatLive.turns(c.id) : timed(seedThread(c)));   // live: dev's thread (live/chat-live.mjs), its times dev's own
+  const thread = (c) => (window.StillhetWorld?.live && window.StillhetChatLive ? window.StillhetChatLive.turns(c.id) : timed(seedThread(c)));   // live: dev's thread (live/chat-live.mjs), its times dev's own
   const seedThread = (c) => {
     if (c.fromTask) return (c.tasks || []).map((x, i) => ({ t: 'task', id: `b${i}`, task: x.id }));   // opened from Tasks or Pulse: its card, nothing made up
     if (c.id === 'c0') return [   // the first minutes: a chat like any other, so nothing new to learn
@@ -130,7 +130,7 @@
       { t: 'you', id: 'a1', text: 'Is the release branch ready?', when: '11:40' },
       { t: 'think', text: 'Thought for 5s' },
       { t: 'words', html: 'Everything for 1.20 is in and the checks passed.' },
-      { t: 'act', id: 'a2', mark: 'git', text: '<b>Ready to open a PR</b> 12 files +540 −96 into main', actions: [['Create PR', 'primary', window.RailWould('open PR #1104 into main')], ['View changes', 'quiet', '', window.RailWould('open the 12 changed files')]] },
+      { t: 'act', id: 'a2', mark: 'git', text: '<b>Ready to open a PR</b> 12 files +540 −96 into main', actions: [['Create PR', 'primary', window.StillhetWould('open PR #1104 into main')], ['View changes', 'quiet', '', window.StillhetWould('open the 12 changed files')]] },
       { t: 'you', id: 'a3', text: 'Bump the version to 1.20.0', when: '11:42' },
       { t: 'change', id: 'a4', kind: 'Version', title: 'Version bumped', rows: [{ name: 'package.json', before: '1.19.4', after: '1.20.0' }], state: 'applied' },
       { t: 'task', id: 'a4b', task: 't9s' },
@@ -192,9 +192,9 @@
     if (c.id === 'c10') return [
       { t: 'you', id: 'a1', text: 'Make an agent that drafts the changelog from merged PRs', when: 'Oct 1' },
       { t: 'change', id: 'a2', kind: 'Agent', title: 'Changelog writer', why: 'Reads the PRs merged since the last tag and writes one line per change, grouped by area.', rows: [{ name: 'Reads', before: '', after: 'Merged PRs since the last tag' }, { name: 'Writes', before: '', after: 'CHANGELOG.md, a draft' }, { name: 'Model', before: '', after: 'Sonnet 5.5' }], apply: 'Save', state: 'proposed' },
-      { t: 'act', id: 'a3', mark: 'ask', text: '<b>Run scripts/release-notes.sh?</b> It reads git tags and writes nothing', actions: [['Run', 'primary', window.RailWould('run scripts/release-notes.sh')], ['Not now', 'quiet', 'Not run']] },
+      { t: 'act', id: 'a3', mark: 'ask', text: '<b>Run scripts/release-notes.sh?</b> It reads git tags and writes nothing', actions: [['Run', 'primary', window.StillhetWould('run scripts/release-notes.sh')], ['Not now', 'quiet', 'Not run']] },
       { t: 'you', id: 'a4', text: 'Write a guide for the CSV export', when: 'Yesterday' },
-      { t: 'change', id: 'a5', kind: 'Changes', title: '3 files changed on a copy of docs-site', why: 'docs-site has no git: the task worked on a copy. Apply it to the folder, or discard it.', rows: [{ name: 'Adds', before: '', after: 'guides/export.md' }, { name: 'Updates', before: '', after: 'index.md, nav.yml' }, { name: 'Checked', before: '', after: 'nothing changed in the folder since it started' }], diff: [['guides/export.md', '+42'], ['index.md', '+3 −1'], ['nav.yml', '+1']], actions: [['Apply 3 files', 'primary', window.RailWould('apply 3 files to docs-site')], ['Show the diff', 'quiet', ''], ['Discard', 'danger', 'Discarded the copy: docs-site is as it was']], state: 'proposed' },
+      { t: 'change', id: 'a5', kind: 'Changes', title: '3 files changed on a copy of docs-site', why: 'docs-site has no git: the task worked on a copy. Apply it to the folder, or discard it.', rows: [{ name: 'Adds', before: '', after: 'guides/export.md' }, { name: 'Updates', before: '', after: 'index.md, nav.yml' }, { name: 'Checked', before: '', after: 'nothing changed in the folder since it started' }], diff: [['guides/export.md', '+42'], ['index.md', '+3 −1'], ['nav.yml', '+1']], actions: [['Apply 3 files', 'primary', window.StillhetWould('apply 3 files to docs-site')], ['Show the diff', 'quiet', ''], ['Discard', 'danger', 'Discarded the copy: docs-site is as it was']], state: 'proposed' },
     ];
     if (c.id === 'c7') return [
       { t: 'you', id: 'a1', text: 'Check what Stripe says about CSV exports', when: 'Oct 3' },
@@ -225,8 +225,8 @@
     const out = [{ t: 'you', id: 'a1', text: c.title, when: c.time }, { t: 'think', text: 'Thought for 6s' }, { t: 'words', html: (c.tasks || []).some((t) => t.kind !== 'schedule') ? 'I’ll do it as a task:' : c.state === 'idle' ? 'Here is the answer, from the project’s code.' : 'On it.' }];
     (c.tasks || []).forEach((x, i) => out.push({ t: x.kind === 'schedule' ? 'schedule' : 'task', id: `b${i}`, task: x.id }));
     // a chat that follows a task shows the task's card, which is live; one replying or running a command finishes soon after you look
-    if (['replying', 'command'].includes(c.state)) out.push({ t: 'working', text: window.RailUI.chatState(c.state).line, end: '12s', settle: 'Done: the answer is above, with the files it read.' });
+    if (['replying', 'command'].includes(c.state)) out.push({ t: 'working', text: window.StillhetUI.chatState(c.state).line, end: '12s', settle: 'Done: the answer is above, with the files it read.' });
     return out;
   };
-  window.ChatsListModel = { thread, seed, sync, link, DAYS: window.RailUI.DAY_SECTIONS.filter(([d]) => d !== 'upcoming') };
+  window.ChatsListModel = { thread, seed, sync, link, DAYS: window.StillhetUI.DAY_SECTIONS.filter(([d]) => d !== 'upcoming') };
 })();

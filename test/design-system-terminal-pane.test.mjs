@@ -1,4 +1,4 @@
-// test/design-system-terminal-pane.test.mjs — TerminalPane (docs/rail/panels.md › panel.terminal): a command's shell under
+// test/design-system-terminal-pane.test.mjs — TerminalPane (docs/stillhet/panels.md › panel.terminal): a command's shell under
 // its card, composed of LogLines, Field and Button; its output a polite live log; closed, "Shell closed" with dev's tip and
 // the input off.
 import { test } from 'node:test';

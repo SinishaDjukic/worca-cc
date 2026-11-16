@@ -1,11 +1,11 @@
-// Interface modes (docs/ui-levels.md; docs/rail/logic.md): what a mode shows is one rule, read here, never a page's test.
+// Interface modes (docs/ui-levels.md; docs/stillhet/logic.md): what a mode shows is one rule, read here, never a page's test.
 export const MODES = ['simple', 'advanced', 'expert'];
 const rank = (m) => { const i = MODES.indexOf(m); if (i < 0) throw new Error(`levels: unknown mode ${m}`); return i; };
 
 /** Whether a thing that needs `need` shows in `mode`. */
 export const atLevel = (mode, need = 'simple') => rank(mode) >= rank(need);
 
-// A mode never removes a tab of the run page; inside them these parts have a level (docs/rail/thing-page.md).
+// A mode never removes a tab of the run page; inside them these parts have a level (docs/stillhet/thing-page.md).
 export const RUN_PAGE_LEVELS = { logs: 'advanced', graph: 'advanced', agents: 'expert', logFilters: 'expert', actions: 'advanced', sessions: 'advanced' };
 
 /** Whether a part of the run page shows in `mode`. A part with no level shows in every mode. */

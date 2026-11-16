@@ -1,6 +1,6 @@
-// The Stillhet switch as a top-bar icon: the owner's mock (plans/rail/prototype/stillhet-switch.html and .js), its persona
-// note and PNGs (plans/rail/stillhet-switch.md, plans/rail/mocks/), and the guard on what stays live: the ask switch is off
-// and Settings › Labs keeps the `rail` row.
+// The Stillhet switch as a top-bar icon: the owner's mock (plans/stillhet/prototype/stillhet-switch.html and .js), its persona
+// note and PNGs (plans/stillhet/stillhet-switch.md, plans/stillhet/mocks/), and the guard on what stays live: the ask switch is off
+// and Settings › Labs keeps the `stillhet` row.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -9,7 +9,7 @@ import * as R from '../ui/public/design-system/components/index.mjs';
 import { ICONS } from '../ui/public/design-system/components/icons.mjs';
 
 const read = (p) => readFileSync(new URL('../' + p, import.meta.url), 'utf8');
-const SCRIPT = 'plans/rail/prototype/stillhet-switch.js';
+const SCRIPT = 'plans/stillhet/prototype/stillhet-switch.js';
 
 const windows = [];
 after(() => { for (const w of windows) w.close(); });
@@ -23,7 +23,7 @@ function world() {
   w.XMLHttpRequest.prototype.open = function (...a) { calls.push(a); return open.apply(this, a); };
   w.navigator.sendBeacon = (...a) => { calls.push(a); return false; };
   w.WebSocket = function (...a) { calls.push(a); throw new Error('no network in the mock'); };
-  w.RailUI = R;
+  w.StillhetUI = R;
   w.eval(read(SCRIPT));
   const M = w.StillhetSwitchMock, host = w.document.getElementById('mock');
   const icon = () => host.querySelector('[data-stillhet="ui-icon"]');
@@ -172,13 +172,13 @@ test('the mock holds no copied markup and exactly 2 own drawings', () => {
 });
 
 test('the page loads the library first and holds no handler; the index links it', () => {
-  const html = read('plans/rail/prototype/stillhet-switch.html');
+  const html = read('plans/stillhet/prototype/stillhet-switch.html');
   assert.ok(html.indexOf('stillhet/components.js') > 0 && html.indexOf('stillhet/components.js') < html.indexOf('stillhet-switch.js'));
   const sheets = [...html.matchAll(/<link rel="stylesheet" href="([^"]+)"/g)].map((m) => m[1]);
   assert.ok(sheets.length >= 5);
   assert.ok(sheets.every((h) => h.startsWith('../../../ui/public/stillhet/')), sheets.join(' '));
   assert.doesNotMatch(html, /\son[a-z]+\s*=/);
-  assert.match(read('plans/rail/prototype/index.html'), /href="stillhet-switch\.html"/);
+  assert.match(read('plans/stillhet/prototype/index.html'), /href="stillhet-switch\.html"/);
 });
 
 test('STILLHET_ASK_ON is still false', async () => {
@@ -190,13 +190,13 @@ test('Settings › Labs still renders the Stillhet row, off and on', async () =>
   const { stillhetLabsRow } = await import('../ui/public/stillhet.mjs');
   const { flagRowsHtml } = await import('../ui/public/flags-view.mjs');
   for (const on of [false, true]) {
-    const rows = [{ key: 'rail', title: 'Stillhet', description: 'd', stage: 'experimental', on, locked: false }];
-    assert.match(flagRowsHtml(rows.filter(stillhetLabsRow())), /data-flag-row="rail"/, `on: ${on}`);
+    const rows = [{ key: 'stillhet', title: 'Stillhet', description: 'd', stage: 'experimental', on, locked: false }];
+    assert.match(flagRowsHtml(rows.filter(stillhetLabsRow())), /data-flag-row="stillhet"/, `on: ${on}`);
   }
 });
 
 test('the persona note lists each persona\'s challenge and its outcome', () => {
-  const md = read('plans/rail/stillhet-switch.md');
+  const md = read('plans/stillhet/stillhet-switch.md');
   const parts = md.split(/^### /m).slice(1);
   for (const who of ['New user', 'Daily user', 'UX reviewer']) {
     const part = parts.find((p) => p.startsWith(who));
@@ -216,7 +216,7 @@ test('the persona note lists each persona\'s challenge and its outcome', () => {
 test('the owner\'s PNGs exist at their widths', () => {
   const names = ['menu-light-1280', 'menu-dark-1280', 'menu-light-360', 'menu-dark-360', 'menu-off-light-1280', 'tip-light-1280', 'locked-light-1280', 'icons-light-1280', 'icons-dark-1280'];
   for (const n of names) {
-    const b = readFileSync(new URL(`../plans/rail/mocks/stillhet-switch-${n}.png`, import.meta.url));
+    const b = readFileSync(new URL(`../plans/stillhet/mocks/stillhet-switch-${n}.png`, import.meta.url));
     assert.deepEqual([...b.subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47], n);
     assert.equal(b.readUInt32BE(16), n.endsWith('-360') ? 500 : 1280, n);
   }

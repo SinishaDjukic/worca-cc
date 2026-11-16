@@ -36,7 +36,7 @@ export const SOURCES = {
   // GET /api/ask/run-links: ask_1 started run-a; ask_2 only follows run-b (Stillhet Chat, D7)
   runLinks: { links: [{ threadId: 'ask_1', runId: 'run-a', pipelineId: 'pa', started: true }, { threadId: 'ask_2', runId: 'run-b', pipelineId: 'pb', started: false }] },
   away: { toggle: 'auto', config: {} },
-  settings: { keepAwake: true, uiLevel: 'expert', flags: { rail: true }, git: { available: true } },
+  settings: { keepAwake: true, uiLevel: 'expert', flags: { stillhet: true }, git: { available: true } },
 };
 
 

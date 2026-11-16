@@ -1,4 +1,4 @@
-// test/stillhet-chat-proposal-options-host.test.mjs — COV-2 D12 (docs/rail/forms.md form.run-options): Chat's TaskProposal
+// test/stillhet-chat-proposal-options-host.test.mjs — COV-2 D12 (docs/stillhet/forms.md form.run-options): Chat's TaskProposal
 // gets New task's start-time behaviour: the project's saved engine and tags, the team policy notes, and a refused Start's
 // sync or engine note with its ways out. No presets and no ticket source. Live app host (jsdom), the real shell.
 import { test, afterEach } from 'node:test';

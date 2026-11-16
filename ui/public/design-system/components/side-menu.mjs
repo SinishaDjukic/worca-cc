@@ -1,4 +1,4 @@
-// SideMenu and Search (docs/rail/settings.md, docs/rail/components.md).
+// SideMenu and Search (docs/stillhet/settings.md, docs/stillhet/components.md).
 import { attrs, esc } from './html.mjs';
 import { compactMenu } from './compact-menu.mjs';
 import { icon } from './icons.mjs';

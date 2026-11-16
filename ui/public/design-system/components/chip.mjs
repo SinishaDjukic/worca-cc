@@ -1,4 +1,4 @@
-// Chip (docs/rail/components.md): a short fact (a stage, a source, a slot to set up). It never acts.
+// Chip (docs/stillhet/components.md): a short fact (a stage, a source, a slot to set up). It never acts.
 import { esc, attrs, cls } from './html.mjs';
 
 /** @param {{text:string, title?:string, cls?:string, attrs?:object}} o */

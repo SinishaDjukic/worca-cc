@@ -1,6 +1,6 @@
 // test/stillhet-settings-labs-notifications-live.test.mjs — Stillhet Settings › Labs and › Notifications in the live kind
 // (ui/public/stillhet/settings/settings-model.js, settings.js, pulse/pulse.js): what is real but not wired yet is disabled,
-// shows its value and says the not-live sentence as its reason (docs/rail/settings.md `set.not-live`). Labs lists exactly
+// shows its value and says the not-live sentence as its reason (docs/stillhet/settings.md `set.not-live`). Labs lists exactly
 // the flags GET /api/flags returns (its writes: stillhet-settings-labs-live.test.mjs); Notifications' Badge, Sound, Breathing,
 // Desktop and Updates save nothing.
 // The demo kind keeps every switch and picker. Each window is closed when its test ends.
@@ -15,7 +15,7 @@ const demoClosers = [];
 afterEach(() => { while (demoClosers.length) demoClosers.pop()(); });
 
 const FLAG = (key, title, stage, on) => ({ key, title, description: `${title} does a thing`, stage, default: false, on, locked: false, requires: [] });
-const FLAGS_FIXTURE = [FLAG('rail', 'Stillhet', 'experimental', true), FLAG('runLabels', 'Run labels', 'experimental', false),
+const FLAGS_FIXTURE = [FLAG('stillhet', 'Stillhet', 'experimental', true), FLAG('runLabels', 'Run labels', 'experimental', false),
   FLAG('commandSummaries', 'Command summaries', 'beta', true), FLAG('design', 'Design pass', 'experimental', false)];
 
 async function live({ flags = () => [200, { flags: FLAGS_FIXTURE }], hash } = {}) {
@@ -118,7 +118,7 @@ test('F-7b-02: the live Updates pickers, fold and Reset are disabled; nothing ch
     el.click(); await settle();
   }
   assert.equal(rowOf(d, 'Badge').textContent, before);
-  assert.equal(w.RailAttnFor, undefined);
+  assert.equal(w.StillhetAttnFor, undefined);
   assert.ok(!d.body.textContent.includes('Reset every group'), 'no reset confirm opened');
   assert.equal(page(d).querySelectorAll('[data-menu^="ev:"]').length, 0, 'no fold opened');
   assert.equal(switchOf(d, 'Desktop').getAttribute('aria-checked'), 'false');

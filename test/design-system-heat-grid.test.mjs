@@ -1,4 +1,4 @@
-// HeatGrid (docs/rail/look.md › look.heat-grid, slice 10 D14): people by values in ink shades, a focusable cell per value,
+// HeatGrid (docs/stillhet/look.md › look.heat-grid, slice 10 D14): people by values in ink shades, a focusable cell per value,
 // and a table that says the same to a screen reader.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

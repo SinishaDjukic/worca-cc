@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // tools/stillhet-sweeps.mjs — runs only the prototype sweeps a change needs, from disk, one after another (each already runs
-// its units side by side, plans/rail/prototype/gates/pool.mjs). Which sweep a path needs follows docs/rail/gate.md › The
+// its units side by side, plans/stillhet/prototype/gates/pool.mjs). Which sweep a path needs follows docs/stillhet/gate.md › The
 // checks, its "When" column; a file every page shares needs all four. The change is the working tree against HEAD (staged,
 // unstaged, untracked), and with --base REF the commits since it too.
 //   npm run stillhet:sweeps [-- --base origin/docs/rail-agreed] [--all] [--list] [--workers N]
@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
-const PROTO = 'plans/rail/prototype';
+const PROTO = 'plans/stillhet/prototype';
 /** The four sweeps, cheapest first, with the page each opens (run-page-sweep and pulse-sweep take theirs as an argument). */
 export const SWEEPS = { 'ds-check': null, 'worca-sweep': null, 'run-page-sweep': 'run-page.html', 'pulse-sweep': 'pulse.html' };
 const ALL = Object.keys(SWEEPS);

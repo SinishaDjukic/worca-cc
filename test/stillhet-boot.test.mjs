@@ -45,9 +45,9 @@ test('every page script under ui/public/stillhet/ is loaded by the list, once', 
   assert.deepEqual(skipped, ['graph/graph-entry.mjs'].filter(() => false), `not loaded: ${skipped}`);
 });
 
-test('a route\'s page file exists once: no name is shared between plans/rail/prototype/ and ui/public/stillhet/', () => {
+test('a route\'s page file exists once: no name is shared between plans/stillhet/prototype/ and ui/public/stillhet/', () => {
   const walk = (d, base = d) => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name), base) : [join(d, e.name).slice(base.length)]));
-  const proto = new Set(walk(new URL('../plans/rail/prototype/', import.meta.url).pathname).filter((f) => !f.startsWith('gates/') && !f.startsWith('today/')));
+  const proto = new Set(walk(new URL('../plans/stillhet/prototype/', import.meta.url).pathname).filter((f) => !f.startsWith('gates/') && !f.startsWith('today/')));
   const shared = walk(DIR).filter((f) => proto.has(f));
   assert.deepEqual(shared, []);
 });
@@ -58,19 +58,19 @@ test('the prototype host: setStillhet(false) answers { ok: true } and stillhetOn
   t.after(() => w.close());
   w.matchMedia = () => ({ matches: false });
   w.eval(readFileSync(DIR + 'host-prototype.js', 'utf8'));
-  assert.equal(w.RailHost.stillhetOn(), true);
-  assert.deepEqual({ ...w.RailHost.setStillhet(false) }, { ok: true });
-  assert.equal(w.RailHost.stillhetOn(), false);
+  assert.equal(w.StillhetHost.stillhetOn(), true);
+  assert.deepEqual({ ...w.StillhetHost.setStillhet(false) }, { ok: true });
+  assert.equal(w.StillhetHost.stillhetOn(), false);
 });
 
 // gate G F-G-fid-16: the prototype opened from file:// (the compare's way) must not import a module: Chrome blocks it and
 // logs a console error on every page. Served over http (the app, a local server) the demo kind reads the run options words.
 function demoAdapterImports(protocol) {
   let imported = 0; const timers = [];
-  const win = { RailHost: { name: 'prototype' }, addEventListener() {} };
+  const win = { StillhetHost: { name: 'prototype' }, addEventListener() {} };
   const doc = { documentElement: { getAttribute: () => null }, readyState: 'complete', currentScript: { src: `${protocol}//x/ui/public/stillhet/adapter.js` }, querySelector: () => null };
   vm.runInNewContext(readFileSync(DIR + 'adapter.js', 'utf8'), { window: win, document: doc, location: { protocol }, setTimeout: (fn) => { timers.push(fn); return 0; }, clearTimeout() {}, Promise });
-  win.RailAdapter.importRunOptions = () => { imported++; return Promise.resolve({}); };
+  win.StillhetAdapter.importRunOptions = () => { imported++; return Promise.resolve({}); };
   for (const fn of timers) fn();
   return imported;
 }

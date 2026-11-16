@@ -22,7 +22,7 @@ test('F-3-10 live: the head equals GET /api/stats?range=week runs (49 tasks this
   const { w, d, calls } = await liveHost({ sources: sources(), read: (u) => (u === WEEK_URL ? [200, WEEK] : null) });
   await go(w, '#runs', 200);
   assert.equal(facts(d), '49 tasks this week · $2,551.75 this week');
-  assert.notEqual(w.RailRunsList.rows().length, 49, 'the list itself holds another number of rows');
+  assert.notEqual(w.StillhetRunsList.rows().length, 49, 'the list itself holds another number of rows');
   assert.equal(calls.filter((c) => c.url === WEEK_URL).length, 1, 'one read');
   const n = d.querySelector('#route-runs .figs-line [data-c-filter]');
   assert.deepEqual(JSON.parse(n.dataset.cFilter), { range: { from: 1102, to: 1108, label: 'this week' } }, 'the count opens this week\'s tasks');
@@ -32,7 +32,7 @@ test('F-3-10 live: the head equals GET /api/stats?range=week runs (49 tasks this
 test('B3.6 review: a chosen project\'s week count opens that project\'s week, not every project', async () => {
   const { w, d } = await liveHost({ sources: sources(), read: (u) => (u === WEEK_URL ? [200, WEEK] : null) });
   await go(w, '#runs', 200);
-  w.RailRunsList.filter({ project: 'api' }); await go(w, '#runs', 60);
+  w.StillhetRunsList.filter({ project: 'api' }); await go(w, '#runs', 60);
   facts(d);
   for (const n of d.querySelectorAll('#route-runs .figs-line [data-c-filter]')) assert.deepEqual(JSON.parse(n.dataset.cFilter), { range: { from: 1102, to: 1108, label: 'this week' }, project: 'api' });
 });
@@ -51,8 +51,8 @@ test('B3.6 review: a failed week read is read again when Tasks is opened again',
 test('B3.6 review: an Insights read landing redraws the Projects center once', async () => {
   const { w } = await liveHost({ sources: sources(), read: (u) => (u === WEEK_URL ? [200, WEEK] : null) });
   await go(w, '#runs', 200);
-  let n = 0; const p = w.RailPlaces.projects, was = p.redraw; p.redraw = (...a) => { n += 1; return was.apply(p, a); };
-  w.RailInsightsLive.frame({ type: 'pipelines-changed' }); await settle(450);
+  let n = 0; const p = w.StillhetPlaces.projects, was = p.redraw; p.redraw = (...a) => { n += 1; return was.apply(p, a); };
+  w.StillhetInsightsLive.frame({ type: 'pipelines-changed' }); await settle(450);
   p.redraw = was;
   assert.equal(n, 1, `one redraw per landed read, not ${n}`);
 });
@@ -74,10 +74,10 @@ test('F-3-10 live: while /api/stats is pending (hold) or 500, the head shows no 
 test('F-3-10 live: a chosen project reads its own allocation row', async () => {
   const { w, d } = await liveHost({ sources: sources(), read: (u) => (u === WEEK_URL ? [200, WEEK] : null) });
   await go(w, '#runs', 200);
-  w.RailRunsList.filter({ project: 'api' }); await go(w, '#runs', 60);
+  w.StillhetRunsList.filter({ project: 'api' }); await go(w, '#runs', 60);
   assert.equal(facts(d), '3 tasks this week · $12.40 this week');
-  w.RailRunsList.filter({ project: 'web' }); await go(w, '#runs', 60);
-  assert.ok(w.RailRunsList.rows().some((t) => t.project === 'web'), 'web has tasks in the list');
+  w.StillhetRunsList.filter({ project: 'web' }); await go(w, '#runs', 60);
+  assert.ok(w.StillhetRunsList.rows().some((t) => t.project === 'web'), 'web has tasks in the list');
   assert.equal(facts(d), '0 tasks this week', 'no allocation row this week: 0, and no cost');
 });
 
@@ -95,7 +95,7 @@ test('F-3-10 live: a pipelines-changed frame re-reads the week and the head foll
 
 test('F-3-10 demo: a group counts each member once, by its own date and cost (no group × inWeek)', async () => {
   const w = stillhetHost({ hash: '#chat' });
-  const W = w.RailWorld, L = () => w.RailRunsList;
+  const W = w.StillhetWorld, L = () => w.StillhetRunsList;
   await settle();
   const g = W.data().groups.find((x) => W.membersOf(x).length);
   assert.ok(g, 'the seed has a group');
@@ -150,7 +150,7 @@ test('V-TW-01 / V3-01: two waiting live tasks with long titles get buttons at mo
   for (const b of btns) assert.ok(b.textContent.trim().length <= 'Merge '.length + 25, b.textContent);
   // the demo's own short names win (its seed rows r2 and r9, shell/world.js), through the same actionsOf
   const seed = [{ id: 'r2', case: 'gate', title: 'Migrate cron parser', short: 'cron parser' }, { id: 'r9', case: 'approved', title: 'Add pager to the audit log', short: 'audit pager' }];
-  const box = d.createElement('div'); box.innerHTML = w.RailCenters.actionsOf(seed);
+  const box = d.createElement('div'); box.innerHTML = w.StillhetCenters.actionsOf(seed);
   const demo = [...box.querySelectorAll('[data-c-act]')];
   assert.deepEqual(demo.map((b) => b.textContent.trim().split(' ').slice(-2).join(' ')), ['cron parser', 'audit pager']);
   assert.deepEqual(demo.map((b) => b.title.split(': ')[1]), ['Migrate cron parser', 'Add pager to the audit log']);

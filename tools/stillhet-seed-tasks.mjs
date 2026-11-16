@@ -252,7 +252,7 @@ async function main() {
   process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
   process.env.WORCA_MOCK = '1';
   await mkdir(path.join(home, '.worca-cc'), { recursive: true });
-  await writeFile(path.join(home, '.worca-cc', 'settings.json'), JSON.stringify({ onboarding: { welcomeSeen: true }, flags: { rail: true }, uiLevel: 'expert' }));
+  await writeFile(path.join(home, '.worca-cc', 'settings.json'), JSON.stringify({ onboarding: { welcomeSeen: true }, flags: { stillhet: true }, uiLevel: 'expert' }));
   await installStubGh(path.join(home, 'bin'));
   const proj = await mkdtemp(path.join(tmpdir(), 'worca-seed-tasks-proj-'));
   for (const a of [['init', '-q', '-b', 'main'], ['config', 'user.email', 'seed@worca.local'], ['config', 'user.name', 'seed']]) execFileSync('git', a, { cwd: proj });

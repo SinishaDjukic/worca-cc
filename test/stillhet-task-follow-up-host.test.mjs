@@ -1,5 +1,5 @@
 // test/stillhet-task-follow-up-host.test.mjs — gate G w3a-1 on Start a follow-up task / Schedule a task after this (B5.6,
-// V-TW-15), live app host (jsdom, the real live adapter and RailTaskLive):
+// V-TW-15), live app host (jsdom, the real live adapter and StillhetTaskLive):
 // F-W3a1-05: after an empty text is refused in place the button keeps its words (it read Start task, then Start run);
 // F-W3a1-06: a press that lands after the form closed (a double press) throws nothing (the generic confirm read ui.confirm);
 // F-W3a1-07: a task waiting for plan approval has not finished, so it schedules after itself, never "Now, as a follow-up".

@@ -1,5 +1,5 @@
 // test/stillhet-tasks-actions-host.test.mjs — Step 7: each of the ten Tasks actions sends exactly its route and body, in
-// the live app host (jsdom, the real live adapter and RailTaskLive). Merge, Fix checks, Raise the cap and Restart Build
+// the live app host (jsdom, the real live adapter and StillhetTaskLive). Merge, Fix checks, Raise the cap and Restart Build
 // are pressed on the task page itself (its action slot, strip and dialog); the rest through the page's flow.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -44,7 +44,7 @@ test('merge: Merge PR, confirmed in its strip, posts /api/pr/merge with the task
 
 test('rerun-checks: Re-run checks posts /api/pr/rerun-checks', async () => {
   const { w, calls } = await page('h5');
-  await w.RailTaskLive.flow('Re-run checks', { taskId: 'h5' });
+  await w.StillhetTaskLive.flow('Re-run checks', { taskId: 'h5' });
   assert.deepEqual(sent(calls), [['POST', '/api/pr/rerun-checks', { id: 'h5', projectKey: 'web-1' }]]);
 });
 
@@ -75,7 +75,7 @@ test('raise-cap: the cap dialog starts at the task\'s own cap, and "$180" as typ
 
 test('retry: Try again on a paused task posts /api/resume with baseCheck', async () => {
   const { w, calls } = await page('h1');
-  await w.RailTaskLive.flow('Try again', { taskId: 'h1' });
+  await w.StillhetTaskLive.flow('Try again', { taskId: 'h1' });
   assert.deepEqual(sent(calls), [['POST', '/api/resume', { pipelineId: 'h1', baseCheck: true }]]);
 });
 
@@ -101,26 +101,26 @@ test('plan-approve: Approve and build posts the plan answer through Chat\'s acti
   const s = sources();
   s.hello.runs = s.hello.runs.map((r) => (r.runId === 'run-a' ? { ...r, pendingQuestion: { id: 'q-plan', kind: 'plan', plan: { file: '/p.md' } } } : r));
   const { w, calls } = await page('run-a', { sources: s });
-  await w.RailTaskLive.flow('Approve and build', { taskId: 'run-a' });
+  await w.StillhetTaskLive.flow('Approve and build', { taskId: 'run-a' });
   assert.deepEqual(sent(calls), [['POST', '/api/runs/run-a/answer', { id: 'q-plan', decision: 'approve' }]]);
 });
 
 test('new-task: Start a new task posts /api/run with the saved run\'s project, prompt and setup', async () => {
   const { w, calls } = await page('h3', { write: (u) => (u === '/api/run' ? [200, { runId: 'r-new' }] : [200, {}]) });
-  const r = await w.RailTaskLive.flow('Start a new task', { taskId: 'h3' });
+  const r = await w.StillhetTaskLive.flow('Start a new task', { taskId: 'h3' });
   assert.equal(r.ok, true);
   assert.deepEqual(sent(calls), [['POST', '/api/run', { projectDir: '/src/web', prompt: 'Update Node to 24', workflowId: 'wf_default', guardrailsId: 'g1', labels: ['infra'], tags: [{ key: 'team', value: 'web' }] }]]);
 });
 
 test('pause-after-step: Pause after this step posts /api/pause with afterStep', async () => {
   const { w, calls } = await page('run-b');
-  await w.RailTaskLive.flow('Pause after this step', { taskId: 'run-b' });
+  await w.StillhetTaskLive.flow('Pause after this step', { taskId: 'run-b' });
   assert.deepEqual(sent(calls), [['POST', '/api/pause', { runId: 'run-b', afterStep: true }]]);
 });
 
 test('report: Report this task posts dev\'s run report with its reason and the note', async () => {
   const { w, calls } = await page('h3');
-  await w.RailTaskLive.flow('Report this task', { taskId: 'h3', value: 'It hung on the tests' });
+  await w.StillhetTaskLive.flow('Report this task', { taskId: 'h3', value: 'It hung on the tests' });
   assert.deepEqual(sent(calls), [['POST', '/api/pipelines/h3/report-issue', { reason: 'failed-or-stuck', expectation: 'It hung on the tests' }]]);
 });
 

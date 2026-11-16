@@ -1,4 +1,4 @@
-// ChoiceNote (docs/rail/components.md, forms.md › form.run-options): a problem with a choice, shown before it is made, on
+// ChoiceNote (docs/stillhet/components.md, forms.md › form.run-options): a problem with a choice, shown before it is made, on
 // the rail with its dot: one note, what it means, its rows (each with its own way out), and the ways out as buttons. A
 // grey note only tells (the team policy notes) and offers no way. `end` is a slot for a Checkbox (a consent).
 import { esc, cls } from './html.mjs';

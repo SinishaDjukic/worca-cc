@@ -67,6 +67,7 @@ import {
   isUpstreamBaseUrl, REASONING_EFFORT_LEVELS,
 } from './model-env.mjs';
 import { MODEL_ROLES } from '../shared/model-roles.mjs';
+import { readOldStillhetFlag } from './stillhet.mjs';
 import { CODEX_PRICES, listPriceFor } from './list-prices.mjs';
 import { engineLabel } from '../shared/engine-switch.mjs';
 import { validateNightPatch, NIGHT_TOGGLES } from './night/config.mjs';
@@ -3006,7 +3007,7 @@ export function storedFlags() {
   for (const [k, b] of Object.entries(v)) {
     if (typeof b === 'boolean') out[k] = b; else warnFlagOnce(`flags.${k}`, b);
   }
-  return out;
+  return readOldStillhetFlag(out);
 }
 
 /** Persist the whole stored flag map; the caller has already dropped defaults and unknown keys. Empty ⇒ the key goes. */

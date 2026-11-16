@@ -1,4 +1,4 @@
-// A settings tab (docs/rail/settings.md: "A settings tab"): sections of rows, each row its
+// A settings tab (docs/stillhet/settings.md: "A settings tab"): sections of rows, each row its
 // name, one sentence, and what acts on it at the right. The components own the alignment, so no page draws it by hand:
 // every text starts on one left edge (the dividers too), every action ends on one right edge (a quiet button's text,
 // not its padding), and the name, the sentence and the actions share one baseline. Under 560px of width a row stacks.
@@ -61,7 +61,7 @@ export function switchButton({ on, label, why = '', disabled = false, attrs: a =
 
 /**
  * ChangedDot: a value in this row differs from Worca's default. A tiny neutral dot right after the row's name; its
- * tooltip says Changed, then a line per value with its default (docs/rail/settings.md: `set.changed`). No reset here.
+ * tooltip says Changed, then a line per value with its default (docs/stillhet/settings.md: `set.changed`). No reset here.
  * @param {true|{name:string, was:string}[]} [changes]  each changed value and its default words; `true` when none can be named
  */
 export function changedDot(changes) {

@@ -1,19 +1,19 @@
-// The Tasks and Schedules centers (Wave 3; docs/rail/panels.md › panel.center; mocks plans/rail/mocks/wave-3/tasks-center, schedules-center):
+// The Tasks and Schedules centers (Wave 3; docs/stillhet/panels.md › panel.center; mocks plans/stillhet/mocks/wave-3/tasks-center, schedules-center):
 // the landing page of each, cards from the one store, so a card changes when its task or schedule does. And the two Legacy
-// approach forms (rail.chat-first), as Dialogs. Everything drawn comes from the library; this says what each thing is.
+// approach forms (stillhet.chat-first), as Dialogs. Everything drawn comes from the library; this says what each thing is.
 (function () {
-  const R = window.RailUI, W = window.RailWorld, RM = window.RunCardModel;
+  const R = window.StillhetUI, W = window.StillhetWorld, RM = window.RunCardModel;
   const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const say = (t, undo) => window.RailPulse?.say(t, undo);
+  const say = (t, undo) => window.StillhetPulse?.say(t, undo);
   const usd = (n) => `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;   // F-fm-02: thousands separated ($2,551.75)
   const plural = (n, one) => `${n} ${one}${n === 1 ? '' : 's'}`;
   const advanced = () => R.shows('advanced');
-  const List = () => window.RailRunsList, Sch = () => window.RailSchedules;
+  const List = () => window.StillhetRunsList, Sch = () => window.StillhetSchedules;
   const WEEK = { from: 1102, to: 1108, label: 'this week' };   // Monday to today, in the list's own date keys: the seven real days the figure opens
   const inWeek = (t) => { const d = List().dateOf(t); return d >= WEEK.from && d <= WEEK.to; };
   const chev = R.icon('chevron', 10);
   const link = (label, hook, tip) => R.textLink({ label, attrs: { ...hook, title: tip || null } });
-  const count = (label, hook, tip) => link(label, hook, tip);   // a number that opens what it counts (quiet until hovered: rail.css)
+  const count = (label, hook, tip) => link(label, hook, tip);   // a number that opens what it counts (quiet until hovered: stillhet.css)
   const filterHook = (f) => ({ 'data-c-filter': JSON.stringify(f) });
   let menu = '', tasksHost = null, schedHost = null, quietOpen = false;
   let asking = null;   // a card's step that asks first (act.confirm), in a ConfirmStrip under the head of the center it was pressed in: { does, id, label, f, busy, where }
@@ -30,7 +30,7 @@
   // live: what the task page says of it (its reason, else its first ✗ item: '2 of 5 checks failing'), never the row's bare 'Finished'
   // the page's reason, else its first ✗ item, else its PR mark's word (gitMark: Conflicts, Checks failing)
   const GIT_SAYS = { conflict: 'Conflicts', fail: 'Checks failing' };
-  const liveSays = (r) => { const v = W.live ? window.RailTaskLive?.detail?.(r.id) : null; if (!v) return ''; const why = (v.why || []).find((x) => /^✗/.test(x)); return v.detail || (why ? why.replace(/^✗\s*/, '') : '') || GIT_SAYS[v.git] || ''; };
+  const liveSays = (r) => { const v = W.live ? window.StillhetTaskLive?.detail?.(r.id) : null; if (!v) return ''; const why = (v.why || []).find((x) => /^✗/.test(x)); return v.detail || (why ? why.replace(/^✗\s*/, '') : '') || GIT_SAYS[v.git] || ''; };
   const clause = (r) => R.taskClause({ state: stateOf(r), name: link(r.title, { 'data-c-open': r.id }, `Opens ${r.title} in its chat`), detail: liveSays(r) || r.detail || '' });
   // V-TW-01: a button names its task in at most 24 characters, whole words, "…" when cut; its tooltip keeps the full title
   const SHORT = 24;
@@ -95,12 +95,12 @@
   const picker = (id, text, items, tip) => R.sentencePicker({ id, text, tip, items: items.map((v) => ({ id: v, text: v, checked: v === text })), open: menu === id, chevron: chev });
   function tasksHtml() {
     // the list's own first-load looks (D15): never "No tasks yet." while the first load is out
-    const ls = window.RailDemoState?.list || '';
+    const ls = window.StillhetDemoState?.list || '';
     if (ls === 'loading' || ls === 'failed') return wrap(`${R.placeHead({ title: 'Your tasks', facts: 'New work starts in Chat' })}${R.listState({ state: ls, noun: 'tasks', retry: ls === 'failed' ? { 'data-c-retry': '', 'data-key': 'c-retry' } : null })}`);
     const rows = fromRows(), all = groups().sort(SORTS[view.sort]);
     if (!rows.length) return wrap(`${R.placeHead({ title: 'Your tasks', facts: 'New work starts in Chat' })}${R.emptyState({ title: 'No tasks yet.', actions: R.button({ label: 'Go to Chat', kind: 'quiet', attrs: { 'data-c-chat': '' } }) })}`);
     // F-3-10: live, the API's week (every project, or the chosen one's row), nothing while it is read; demo, the per-run sum
-    const week = W.live ? (() => { const f = List().from(), t = window.RailInsightsLive?.weekTotals?.(f === 'all' ? null : f); return t ? { n: t.runs, cost: t.spentUsd } : null; })() : weekOf(rows);
+    const week = W.live ? (() => { const f = List().from(), t = window.StillhetInsightsLive?.weekTotals?.(f === 'all' ? null : f); return t ? { n: t.runs, cost: t.spentUsd } : null; })() : weekOf(rows);
     const shown = all.filter((g) => !g.quiet).flatMap(partsOf).sort(SORTS[view.sort]), quiet = all.filter((g) => g.quiet);
     // the count opens the chosen project's week; live, the list can hold fewer than the API counted, and the tip says so
     const f = List().from(), wk = filterHook({ range: WEEK, ...(f === 'all' ? {} : { project: f }) }), wTip = W.live ? 'Opens this week\'s tasks in the list. The figure counts every run Worca recorded this week, so the two can differ' : 'Opens this week\'s tasks';
@@ -146,7 +146,7 @@
     return R.runOutcomes({ runs: week.map(OUT), says: `${pre}${num}${fail}${pr ? ` · merged ${pr[0]}` : ''}${week.length !== done.length ? ` · last ${week.length} runs` : ''}` });
   }
   function schedCard(s) {
-    // its word and why are the schedule's own (RailSchedules.wordOf / nextOf): the same on its page, its row and its chat card
+    // its word and why are the schedule's own (StillhetSchedules.wordOf / nextOf): the same on its page, its row and its chat card
     const sec = sectionNow(s), word = Sch().wordOf(s.id), next = Sch().nextOf(s.id);
     const [kicker, tone] = sec === 'needs' ? [`${s.missed}, ${s.at} · ${s.missedWhy}`, 'act'] : sec === 'running' ? [next, 'run'] : [next, 'idle'];
     const fact = esc(`${s.project || 'No project'} · ${R.REPEATS.includes(s.every) ? R.scheduleWords(s).says : s.every}${s.tz && s.tz !== homeTz() ? ` ${s.tz}` : ''}${s.preset ? ` · ${s.preset === 'preset deleted' ? s.preset : `from ${s.preset}`}` : ''}`);
@@ -154,7 +154,7 @@
     return R.pluginCard({ mark: R.kindMark({ kind: 'schedule', tone: sec === 'needs' ? 'act' : sec === 'paused' ? 'pause' : sec === 'running' ? 'run' : 'idle', breathe: sec === 'needs' }), word, kicker, tone, title: s.title, titleHtml: link(s.title, { 'data-c-sched': s.id }, `Opens ${s.title}`), what: s.what || R.scheduleWords(s).says, line: schedLine(s), factsHtml: fact, factsTip: fact, action: act ? R.button({ label: act[0], kind: act[2], attrs: { 'data-c-sact': `${act[1]}|${s.id}`, title: `${act[0]}: ${s.title}` } }) : '', attrs: { 'data-c-card': s.id, title: s.cost ? `${usd(s.cost)} a run` : null } });
   }
   function schedulesHtml() {
-    const all = Sch().all(), list = all.filter((s) => (!view.from || (s.project || 'No project') === view.from) && (Sch().showing() === 'all' || (Sch().showing() === 'drafts' ? !!window.RailDrafts?.get(`schedule:${s.id}`) : s.state === 'paused'))).sort(SCHED_SORTS[view.sSort]);
+    const all = Sch().all(), list = all.filter((s) => (!view.from || (s.project || 'No project') === view.from) && (Sch().showing() === 'all' || (Sch().showing() === 'drafts' ? !!window.StillhetDrafts?.get(`schedule:${s.id}`) : s.state === 'paused'))).sort(SCHED_SORTS[view.sSort]);
     if (!all.length) return wrap(`${R.placeHead({ title: 'Your schedules', facts: 'New work starts in Chat' })}${R.emptyState({ title: 'No schedules yet.', actions: R.button({ label: 'Schedule a task', kind: 'quiet', attrs: { 'data-c-new': 'schedule' } }) })}`);
     const runs = all.flatMap((s) => s.runs.filter((r) => r.case !== 'stopped').slice(0, 7)).filter((r) => OUT(r) !== 'run'), won = runs.filter((r) => OUT(r) === 'ok').length;
     const facts = [esc(plural(all.length, 'schedule')), runs.length ? count(`${won} of ${runs.length} runs succeeded in 7 days`, filterHook({ schedule: 'any', show: 'finished' }), 'Opens the runs that succeeded in Tasks') : '', `times in ${DEFAULT_TZ}${all.some((s) => s.tz && s.tz !== DEFAULT_TZ) ? ', unless a card says' : ''}`].filter(Boolean).join(' · ');
@@ -166,13 +166,13 @@
   // ---- paint ----
   const paintTasks = () => { if (tasksHost && !tasksHost.hidden && location.hash.startsWith('#runs')) tasksHost.innerHTML = tasksHtml(); };
   const paintSched = () => { if (schedHost && !schedHost.hidden && /^#schedules/.test(location.hash)) schedHost.innerHTML = schedulesHtml(); };
-  const paint = () => { paintTasks(); paintSched(); window.RailPlaces?.projects?.redraw?.(); };
+  const paint = () => { paintTasks(); paintSched(); window.StillhetPlaces?.projects?.redraw?.(); };
 
   // ---- a card's action, on the thing itself ----
   function act(does, id, label = '', confirmed = false) {
     const r = W.find(id); if (!r) return;
-    if (does === 'open' || does === 'answer') { if (!W.live) r.unread = false; window.RailShell.openRun(`run/${r.case}`, r.title, r.opens || r.id); return; }   // a lit origin opens its needy round (foldRounds); the live kind: the shell acknowledges it through the adapter
-    if (W.live) { liveAct(does, r); return; }   // Tasks D17: dev's route through RailTaskLive; the store moves only when dev's frames say so
+    if (does === 'open' || does === 'answer') { if (!W.live) r.unread = false; window.StillhetShell.openRun(`run/${r.case}`, r.title, r.opens || r.id); return; }   // a lit origin opens its needy round (foldRounds); the live kind: the shell acknowledges it through the adapter
+    if (W.live) { liveAct(does, r); return; }   // Tasks D17: dev's route through StillhetTaskLive; the store moves only when dev's frames say so
     // panel.center: a step that asks first (Merge, Fix checks) asks in a ConfirmStrip under the head, in the demo kind too,
     // with the demo task's own facts (its case's flow, the task page's words); only its Yes moves the store
     const asks = !confirmed && whereNow() && demoAsk(does, r);   // its strip draws under the head of the center it was pressed in
@@ -186,7 +186,7 @@
     if (does === 'pr') { W.move(id, 'checks', 'PR opened · checks running'); say(LIVE_SAY.pr(r.title), back); }
     if (does === 'fix-checks') { W.move(id, 'fixing-checks', 'Fixing the failing checks'); say(`A short task is fixing ${r.title}\u2019s checks`, back); }
   }
-  // The live kind (Tasks, Step 8): a card's action is the same RailTaskLive id the task page runs; nothing moves here before
+  // The live kind (Tasks, Step 8): a card's action is the same StillhetTaskLive id the task page runs; nothing moves here before
   // its route answers ok, and a refusal is the shell's one `Could not ACTION: REASON`.
   const LIVE_LABEL = { retry: 'Retry', resume: 'Resume', approve: 'Approve and build', merge: 'Merge PR', pr: 'Create PR', 'fix-checks': 'Fix checks' };
   const LIVE_SAY = { retry: (t) => `Retrying ${t}`, resume: (t) => `Resumed ${t}`, approve: (t) => `Approved ${t}`, merge: (t) => `Merged ${t}`, pr: (t) => `Created a PR for ${t}`, 'fix-checks': (t) => `A short task is fixing ${t}\u2019s checks` };
@@ -197,13 +197,13 @@
     return f && f.confirm ? { does, id: r.id, label, f, busy: false } : null;
   }
   function liveAsk(does, r) {
-    const v = window.RailTaskLive?.detail?.(r.id), label = LIVE_LABEL[does];
+    const v = window.StillhetTaskLive?.detail?.(r.id), label = LIVE_LABEL[does];
     // the base: the page's (once its detail is in), else the PR's own from its checks entry
-    const f = v ? R.actionFlow(stateOf(r), RM.liveFacts({ ...v, base: v.base || window.RailTaskLive.checks?.(r.id)?.base || '' }))[label] : null;
+    const f = v ? R.actionFlow(stateOf(r), RM.liveFacts({ ...v, base: v.base || window.StillhetTaskLive.checks?.(r.id)?.base || '' }))[label] : null;
     return f && f.confirm ? { does, id: r.id, label, f, busy: false } : null;
   }
   function liveAct(does, r, confirmed = false) {
-    const T = window.RailTaskLive;
+    const T = window.StillhetTaskLive;
     if (!T || !LIVE_LABEL[does]) return;
     const asks = !confirmed && liveAsk(does, r);   // the live kind never merges unasked
     if (asks) { startAsk(asks); return; }
@@ -225,15 +225,15 @@
   function onClick(e) {
     const on = (q) => e.target.closest(q); let hit;
     if ((hit = on('[data-c-ask] [data-confirm]'))) { if (!hit.disabled) answerAsk(hit.dataset.confirm === 'yes'); return; }
-    if ((hit = on('[data-c-retry]'))) { window.RailAdapter?.retry?.(); return; }
+    if ((hit = on('[data-c-retry]'))) { window.StillhetAdapter?.retry?.(); return; }
     if ((hit = on('[data-c-figs]'))) { figs[hit.dataset.cFigs] = !figs[hit.dataset.cFigs]; paint(); return; }
     if ((hit = on('[data-c-filter]'))) { List().filter(JSON.parse(hit.dataset.cFilter)); return; }
     if ((hit = on('[data-c-open]'))) { act('open', hit.dataset.cOpen); return; }
     if ((hit = on('[data-c-act]'))) { const [d, id] = hit.dataset.cAct.split('|'); act(d, id, hit.textContent); return; }
     if ((hit = on('[data-c-sact]'))) { const [d, id] = hit.dataset.cSact.split('|'); Sch().act(id, d); paint(); return; }
-    if ((hit = on('[data-c-sched]'))) { window.RailShell.openSchedule(hit.dataset.cSched); return; }
+    if ((hit = on('[data-c-sched]'))) { window.StillhetShell.openSchedule(hit.dataset.cSched); return; }
     if ((hit = on('[data-c-srun]'))) { const [id, i] = hit.dataset.cSrun.split('|'), s = Sch().find(id); Sch().openRun(s, s.runs[+i]); return; }
-    if (on('[data-c-chat]')) { window.RailShell.go('chat'); return; }
+    if (on('[data-c-chat]')) { window.StillhetShell.go('chat'); return; }
     if ((hit = on('[data-c-new]'))) { openForm(hit.dataset.cNew); return; }
     if (on('[data-c-quiet]')) { quietOpen = !quietOpen; paint(); return; }
     if ((hit = on('[data-menu-pick^="c-"]'))) {
@@ -268,27 +268,27 @@
   // project's own setting holds, as dev's New run); Cost cap is the run's own cap (costCapUsd, pipelines.cost_cap_usd).
   // Agents is dev's per-run agent pick (POST /api/run `overlay.nodes`, checked by checkRunOverlay): one model for every agent
   // node of the picked workflow, from dev's models for the run's engine; Auto decides its agents at start, so it offers none.
-  // dev has no auto-merge at start, so the live form draws no 'merge when checks pass' (plans/rail/stillhet-wiring.md).
+  // dev has no auto-merge at start, so the live form draws no 'merge when checks pass' (plans/stillhet/stillhet-wiring.md).
   const LIVE_AGENT = 'the project\'s default';
   const LIVE_SETUP = 'as the project is set up';
   const LIVE_THEN = { 'open a PR': 'ready', 'leave it on the branch': 'none' };
   const LIVE_SOURCE = { 'the latest version from origin': true, 'my local copy': false };
   const capUsd = (t) => { const m = /\$(\d+(?:\.\d+)?)/.exec(t); return m ? parseFloat(m[1]) : null; };
-  const engines = () => window.RailTaskLive?.engines?.() || [];
+  const engines = () => window.StillhetTaskLive?.engines?.() || [];
   function loadBranches() {
     if (!W.live || !form || liveBranches.project === form.project) return;
     const project = form.project; liveBranches = { project, list: [] };
-    window.RailTaskLive?.branches?.(window.RailTaskLive.projectDirOf(project) || '').then((list) => {
+    window.StillhetTaskLive?.branches?.(window.StillhetTaskLive.projectDirOf(project) || '').then((list) => {
       if (liveBranches.project !== project || !list) return;
       liveBranches = { project, list }; if (form) paintForm();
     });
   }
-  const flows = () => (W.live ? liveFlows || [{ id: '', title: 'Default', steps: [], agents: [] }] : [...(drawn('hitl') ? [AUTO_FLOW] : []), ...window.RailPlaces.workflows.names()]);   // the demo offers Auto as the live picker does (COV-2 humanInLoop)
+  const flows = () => (W.live ? liveFlows || [{ id: '', title: 'Default', steps: [], agents: [] }] : [...(drawn('hitl') ? [AUTO_FLOW] : []), ...window.StillhetPlaces.workflows.names()]);   // the demo offers Auto as the live picker does (COV-2 humanInLoop)
   let liveModels = [];
   function loadFlows() {
     if (!W.live) return;
-    if (!liveFlows) window.RailChatLive?.catalog('workflows').then((r) => { if (!r?.ok) return; liveFlows = (r.data?.workflows || []).map((x) => ({ id: x.id, title: x.name || x.id, steps: [], auto: x.auto === true || x.id === 'wf_auto', agents: (Array.isArray(x.nodes) ? x.nodes : []).filter((n) => n && n.kind === 'agent' && n.id).map((n) => n.id) })); if (!liveFlows.some((x) => x.id === 'wf_auto')) liveFlows.unshift(AUTO_FLOW); if (form) { applyActiveFlow(); paintForm(); } });
-    if (!liveModels.length) window.RailChatLive?.catalog('models').then((r) => { if (!r?.ok) return; liveModels = (r.data?.models || []).filter((m) => m && m.id).map((m) => ({ id: m.id, label: m.label || m.id, engine: m.engine || 'claude' })); if (form) paintForm(); });
+    if (!liveFlows) window.StillhetChatLive?.catalog('workflows').then((r) => { if (!r?.ok) return; liveFlows = (r.data?.workflows || []).map((x) => ({ id: x.id, title: x.name || x.id, steps: [], auto: x.auto === true || x.id === 'wf_auto', agents: (Array.isArray(x.nodes) ? x.nodes : []).filter((n) => n && n.kind === 'agent' && n.id).map((n) => n.id) })); if (!liveFlows.some((x) => x.id === 'wf_auto')) liveFlows.unshift(AUTO_FLOW); if (form) { applyActiveFlow(); paintForm(); } });
+    if (!liveModels.length) window.StillhetChatLive?.catalog('models').then((r) => { if (!r?.ok) return; liveModels = (r.data?.models || []).filter((m) => m && m.id).map((m) => ({ id: m.id, label: m.label || m.id, engine: m.engine || 'claude' })); if (form) paintForm(); });
   }
   // F-cov23-03: Auto is classic's client-side constant (app.js AUTO_WORKFLOW): /api/workflows never lists it, its picker leads with it
   const AUTO_FLOW = Object.freeze({ id: 'wf_auto', title: 'Auto', steps: [], auto: true, agents: [] });
@@ -300,10 +300,10 @@
     const engine = engines().find((e) => e.label === form.agent)?.id || 'claude';
     return liveModels.filter((m) => m.engine === engine).map((m) => ({ text: `${m.label} for every step`, model: m.id }));
   }
-  // ---- New task's run options (COV-2; docs/rail/forms.md form.run-options) ----
-  // Every read and write is RailRunOptionsLive's (dev's routes, live/run-options-live.mjs); its words are RailRunOptions'
+  // ---- New task's run options (COV-2; docs/stillhet/forms.md form.run-options) ----
+  // Every read and write is StillhetRunOptionsLive's (dev's routes, live/run-options-live.mjs); its words are StillhetRunOptions'
   // (the same module's helpers). The demo answers the same calls with sample data in dev's shapes, so one path draws both.
-  const RO = () => window.RailRunOptions || null;
+  const RO = () => window.StillhetRunOptions || null;
   const DEMO_PRESETS = [
     { id: 'rp_bugfix', name: 'Bug fix', scope: { kind: 'global', ref: null }, setup: { workflowId: 'wf_fix', engine: 'claude', syncBeforeStart: true, tags: ['bugfix'] } },
     { id: 'rp_docs', name: 'Docs pass', scope: { kind: 'project', ref: 'worca-cc' }, setup: { workflowId: 'wf_docs', engine: 'codex', sourceBranch: 'dev', guardrailsId: 'strict' } },
@@ -324,9 +324,9 @@
     call: (plugin, sourceId, op, args) => ok(op === 'getTask' ? DEMO_TICKETS.find((t) => t.id === args.id) : { tasks: DEMO_TICKETS.filter((t) => t.title.toLowerCase().includes((args.search || '').toLowerCase())) }),
     policyNotes: () => ok({ policy: { home: 'acme/worca-policy', caps: { pipeline: { kind: 'hard', value: 20 } } }, notes: [{ level: 'warn', text: 'Guardrails Normal rank below the team minimum (Strict). The run proceeds and is recorded as off-policy.' }] }),
   };
-  const OPT = () => (!RO() ? null : W.live ? window.RailRunOptionsLive || null : DEMO_OPT);
+  const OPT = () => (!RO() ? null : W.live ? window.StillhetRunOptionsLive || null : DEMO_OPT);
   let presetList = null, sourceList = null;   // per form open: dev's presets and plugin task sources (null: not read, or refused)
-  const dirOf = (project = form.project) => (project === 'No project' ? '' : W.live ? window.RailTaskLive?.projectDirOf(project) || '' : `/demo/${project}`);
+  const dirOf = (project = form.project) => (project === 'No project' ? '' : W.live ? window.StillhetTaskLive?.projectDirOf(project) || '' : `/demo/${project}`);
   const engineLabelOf = (id) => (W.live ? engines().find((e) => e.id === id)?.label || '' : id ? id[0].toUpperCase() + id.slice(1) : '');
   const engineIdOf = (label) => (W.live ? engines().find((e) => e.label === label)?.id || '' : String(label || '').toLowerCase());
   const slugOf = (t) => `wf_${String(t).toLowerCase().replace(/[^a-z0-9]+/g, '_')}`;
@@ -555,7 +555,7 @@
   }
 
   // live: dev's GET /api/projects (the store's projects part, less a Remove's undo window), never task rows (F-a4-06)
-  const liveProjects = () => { const gone = window.RailProjectsLive?.hidden?.() || new Set(); return (W.part('projects') || []).filter((p) => p.id && !gone.has(p.id)).map((p) => ({ name: p.name || p.id, missing: p.origin === 'missing' })); };
+  const liveProjects = () => { const gone = window.StillhetProjectsLive?.hidden?.() || new Set(); return (W.part('projects') || []).filter((p) => p.id && !gone.has(p.id)).map((p) => ({ name: p.name || p.id, missing: p.origin === 'missing' })); };
   const projects = () => [...new Set([...(W.live ? liveProjects().map((p) => p.name) : W.rows().map((r) => r.project).filter(Boolean)), 'No project'])];
   // the project used last: the newest task's (a waiting schedule is not used yet) if listed and its folder is there; a missing folder is never preselected
   function defaultProject() {
@@ -563,7 +563,7 @@
     const ok = liveProjects().filter((p) => !p.missing).map((p) => p.name);
     return W.rows().find((r) => !String(r.id).startsWith('sched:') && ok.includes(r.project))?.project ?? ok[0] ?? 'No project';
   }
-  // ---- COV-2 rows drawn in the prototype first (docs/rail/forms.md form.run-options): each later slice wires one key live ----
+  // ---- COV-2 rows drawn in the prototype first (docs/stillhet/forms.md form.run-options): each later slice wires one key live ----
   const DRAWN = ['guard', 'hitl', 'workspace', 'previous', 'nowInstead', 'engineCheck', 'addProject'];
   const drawn = (row) => DRAWN.includes(row) && !W.live;
   const GUARDS = ['Team default', 'Strict', 'Read only'];   // TaskProposal's list (chat/conversation.js)
@@ -572,16 +572,16 @@
   const DEMO_HOME = '/Users/you';
   const DEMO_FOLDERS = { [DEMO_HOME]: ['src', 'Documents'], [`${DEMO_HOME}/src`]: ['notes-app', 'billing-api', 'web-app'], [`${DEMO_HOME}/Documents`]: ['drafts'] };
   const demoDirs = (path) => (W.live ? [] : (DEMO_FOLDERS[path] || []).map((name) => ({ name, path: `${path}/${name}` })));
-  const isSpace = (v) => drawn('workspace') && R.shows('advanced') && (window.RailSpaces?.list() || []).some((x) => x.title === v);
+  const isSpace = (v) => drawn('workspace') && R.shows('advanced') && (window.StillhetSpaces?.list() || []).some((x) => x.title === v);
   const targetOf = (project) => (project === 'No project' ? 'none' : isSpace(project) ? 'workspace' : 'project');
   function projectItems() {
     const list = projects(), own = list.filter((p) => p !== 'No project');
     if (drawn('addProject') && form?.target === 'project' && !own.includes(form.project)) own.push(form.project);   // one added here
-    const spaces = drawn('workspace') && R.shows('advanced') ? window.RailSpaces?.list() || [] : [];
+    const spaces = drawn('workspace') && R.shows('advanced') ? window.StillhetSpaces?.list() || [] : [];
     if (!drawn('addProject') && !spaces.length) return list;
     const it = (v) => ({ id: v, text: v, checked: v === form?.project });
     return [...own.map(it), ...(drawn('addProject') && R.shows('advanced') ? [{ id: '+add', text: 'Add project…', help: 'Adds a project and picks it' }] : []), it('No project'),
-      ...(spaces.length ? [{ sep: true }, { header: 'Workspaces' }, ...spaces.map((x) => ({ ...it(x.title), hint: window.RailSpaces.hint(x) }))] : [])];
+      ...(spaces.length ? [{ sep: true }, { header: 'Workspaces' }, ...spaces.map((x) => ({ ...it(x.title), hint: window.StillhetSpaces.hint(x) }))] : [])];
   }
   const baseList = () => { const own = W.live ? [LIVE_BASE, ...liveBranches.list] : form?.target === 'workspace' ? [EACH_BASE] : ['main', 'dev']; return drawn('previous') && form?.after ? [PREVIOUS_BASE, ...own] : own; };
   const engineItems = () => [...LISTS().agent, ...(drawn('engineCheck') ? Object.keys(DEMO_LOCKS) : [])].map((v) => ({ id: v, text: v, checked: v === form.agent, ...(drawn('engineCheck') && DEMO_LOCKS[v] ? { off: true, help: DEMO_LOCKS[v] } : {}) }));
@@ -643,7 +643,7 @@
     if (on('[data-c-addcancel]')) { toView('form', '[data-menu="f-project"]'); return; }
     const save = on('[data-c-addsave]'); if (!save || save.disabled) return;
     const name = form.add.name.trim(), path = form.add.path.trim();
-    window.RailProjects?.add({ id: name, path });   // one project list: Projects' own
+    window.StillhetProjects?.add({ id: name, path });   // one project list: Projects' own
     Object.assign(form, { project: name, target: 'project', add: { name: '', path: '' } });
     pickedProject(); toView('form', '[data-menu="f-project"]');
   }
@@ -656,8 +656,8 @@
   }
   const cap = (t) => t[0].toUpperCase() + t.slice(1);
   // the forms' host sits beside #app, never in it: Pulse rewrites #app on every draw (live loads, frames), which would drop an
-  // open form. rail-layer gives it #app's fixed full-window box, so the scrim still covers the window and an empty host takes no clicks.
-  const host = () => { let h = document.getElementById('center-dlg'); if (!h) { h = document.createElement('div'); h.id = 'center-dlg'; h.className = 'pz-app rail-page rail-layer'; document.body.append(h); h.addEventListener('click', dlgClick); h.addEventListener('input', dlgInput); h.addEventListener('keydown', dlgKey); h.addEventListener('mousedown', (e) => { if (e.target.classList.contains('viewer-modal')) closeForm(); }); } return h; };
+  // open form. stillhet-layer gives it #app's fixed full-window box, so the scrim still covers the window and an empty host takes no clicks.
+  const host = () => { let h = document.getElementById('center-dlg'); if (!h) { h = document.createElement('div'); h.id = 'center-dlg'; h.className = 'pz-app stillhet-page stillhet-layer'; document.body.append(h); h.addEventListener('click', dlgClick); h.addEventListener('input', dlgInput); h.addEventListener('keydown', dlgKey); h.addEventListener('mousedown', (e) => { if (e.target.classList.contains('viewer-modal')) closeForm(); }); } return h; };
   // F-gb21-01: a repaint with no focus target (a live load landing) keeps the field that had the focus, its caret and selection
   const focusOf = (h) => { const a = document.activeElement; if (!a || a === h || !h.contains(a)) return null; const sel = a.id ? `#${a.id}` : a.dataset.menu ? `[data-menu="${a.dataset.menu}"]` : a.dataset.f ? `[data-f="${a.dataset.f}"]` : ''; let at = null; try { at = [a.selectionStart, a.selectionEnd, a.selectionDirection]; } catch { /* no caret on a button */ } return sel ? { sel, at } : null; };
   function paintForm(focus) {
@@ -720,7 +720,7 @@
   // `keepPin`: Update preset keeps Claude when the preset pins an engine (COV-2 m-pin); only the start drops it
   function startBody(keepPin) {
     const words = (form.src === 'write' ? form.text : `Follow ${form.path}`).trim(), s = pluginOf();
-    const none = form.project === 'No project', dir = none ? '' : window.RailTaskLive?.projectDirOf(form.project) || '';
+    const none = form.project === 'No project', dir = none ? '' : window.StillhetTaskLive?.projectDirOf(form.project) || '';
     const usd = form.cap === LISTS().cap[0] ? null : capUsd(form.cap);
     const tags = form.tags.split(',').map((x) => x.trim()).filter(Boolean);
     const every = liveAgentPicks().find((x) => x.text === form.agents)?.model || '';   // one model for each agent node: dev's overlay.nodes
@@ -746,7 +746,7 @@
     const ticket = pluginOf() && (form.tickets || []).find((t) => String(t.id) === form.ticket);
     const words = (ticket ? String(ticket.title) : form.src === 'write' ? form.text : `Follow ${form.path}`).trim();
     const f = form; f.busy = true; paintForm();
-    const res = await window.RailTaskLive?.act('new-task', { body, quiet: true, key: 'new-task:form' });
+    const res = await window.StillhetTaskLive?.act('new-task', { body, quiet: true, key: 'new-task:form' });
     f.busy = false;
     if (form !== f) return;
     if (!res?.ok && refused(res)) return;
@@ -754,7 +754,7 @@
     closeForm();
     if (f.after) { say(`Scheduled ${f.title.trim() || words}: it starts once ${f.after.title} ends`); return; }   // a waiting ticket, no task yet: Schedules lists it
     say(`Started ${f.title.trim() || words}`);
-    if (res.data?.runId) window.RailShell?.go(`run/${res.data.runId}`);
+    if (res.data?.runId) window.StillhetShell?.go(`run/${res.data.runId}`);
   }
   // A refused start that has a note (D7, D9, D10): the note says it, under the text, and the form stays as it was
   function refused(res) {
@@ -778,15 +778,15 @@
     return !!res && refused(res);
   }
   // New schedule… in the live kind (Schedules D9): POST /api/run { projectDir | noProject, prompt, title, repeat: { rule } }, through
-  // RailScheduleLive (the rule from its words, live/schedule-rule.mjs); a refusal stays in the form with what was typed.
+  // StillhetScheduleLive (the rule from its words, live/schedule-rule.mjs); a refusal stays in the form with what was typed.
   async function liveSchedule() {
     if (form.busy) return;
     const words = (form.src === 'write' ? form.text : `Follow ${form.path}`).trim(), none = form.project === 'No project';
-    const dir = none ? '' : window.RailTaskLive?.projectDirOf(form.project) || '';
+    const dir = none ? '' : window.StillhetTaskLive?.projectDirOf(form.project) || '';
     if (!none && !dir) { form.err = 'Could not create the schedule: that project is not known'; form.errAt = '#cc-name'; paintForm(form.errAt); return; }   // never a no-project schedule by accident
     const f = form; f.busy = true; paintForm();
-    const res = await window.RailScheduleLive?.act('new', { ...(none ? { noProject: true } : { projectDir: dir }), run: runFields(none), prompt: words, title: f.name.trim(), every: `every ${f.every}`, at: f.at, tz: f.tz,
-      end: window.RailScheduleLive.endOf?.(f.ends) || null, ...policiesOf(f) });
+    const res = await window.StillhetScheduleLive?.act('new', { ...(none ? { noProject: true } : { projectDir: dir }), run: runFields(none), prompt: words, title: f.name.trim(), every: `every ${f.every}`, at: f.at, tz: f.tz,
+      end: window.StillhetScheduleLive.endOf?.(f.ends) || null, ...policiesOf(f) });
     f.busy = false;
     if (form !== f) return;
     if (!res?.ok) { form.err = `Could not create the schedule: ${res?.error || 'no answer'}`; form.errAt = form.src === 'write' ? '#cc-text' : '#cc-path'; paintForm(form.errAt); return; }
@@ -817,7 +817,7 @@
       if (id === 'f-project') pickedProject();
       if (id === 'f-base' || id === 'f-source') { form.note = null; form.synced = false; }   // a changed base or source is asked again
       if (id === 'f-agent') { form.agentTouched = true; form.allow = false; if (form.note?.kind === 'engine') form.note = null; }   // the consent was for the engine refused
-      if (id === 'f-workflow') { form.workflowTouched = true; const wf = flowId(), dir = dirOf(); if (W.live && !form.preset && wf && dir) OPT()?.setActiveWorkflow(dir, wf).then((r) => { if (!r.ok) window.RailAdapter?.toast?.(`Could not select the workflow: ${r.error}`); }); }
+      if (id === 'f-workflow') { form.workflowTouched = true; const wf = flowId(), dir = dirOf(); if (W.live && !form.preset && wf && dir) OPT()?.setActiveWorkflow(dir, wf).then((r) => { if (!r.ok) window.StillhetAdapter?.toast?.(`Could not select the workflow: ${r.error}`); }); }
       if (!LISTS().agents.includes(form.agents)) form.agents = AGENTS_OWN;
       if (id === 'f-agents' || id === 'f-workflow') loadPolicy();
       paintForm(`[data-menu="${id}"]`); return;
@@ -832,7 +832,7 @@
     if ((hit = on('[data-c-preset-reset]'))) { resetBroken(+hit.dataset.cPresetReset); return; }
     if (on('[data-c-bind]')) { bindProfile(); return; }
     if (on('[data-c-srctest]')) { connectSource(); paintForm(); return; }
-    if (on('[data-c-market]')) { closeForm(); window.RailShell.go('marketplace'); return; }
+    if (on('[data-c-market]')) { closeForm(); window.StillhetShell.go('marketplace'); return; }
     if ((hit = on('[data-c-ticket]'))) { if (hit.matches('input')) e.preventDefault(); pickTicket(hit.dataset.cTicket); return; }
     if (on('[data-c-tagsave]')) { saveTags(); return; }
     if (on('[data-c-flowsave]')) { saveFlow(false); return; }
@@ -872,11 +872,11 @@
     if (e.key === 'Tab') { const all = [...document.querySelectorAll('#center-dlg .card button, #center-dlg .card input, #center-dlg .card textarea')].filter((x) => !x.disabled && x.offsetParent), first = all[0], last = all.at(-1); if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); } else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); } }
   }
 
-  const ask = (which) => window.RailConversation?.handOver({ mode: which === 'task' ? 'task' : 'schedule', ph: which === 'task' ? 'What should the task do?' : 'What should run, and when?' });
+  const ask = (which) => window.StillhetConversation?.handOver({ mode: which === 'task' ? 'task' : 'schedule', ph: which === 'task' ? 'What should the task do?' : 'What should run, and when?' });
   const maker = (noun, chatWord, formWord) => ({ newLabel: `New ${noun}`, newMenu: () => [{ header: 'Ask in chat' }, { id: 'bar-new|chat', text: chatWord }, { sep: true }, { header: 'Legacy approach' }, { id: 'bar-new|form', text: formWord }], newPick: (id) => { if (id === 'form') openForm(noun); else ask(noun); } });
   const MAKERS = { tasks: maker('task', 'Start a task', 'New task…'), schedules: maker('schedule', 'Schedule a task', 'New schedule…') };
-  window.RailCenters = {
-    tasks: (el) => { wire(); tasksHost = el; menu = ''; asking = null; if (W.live) window.RailInsightsLive?.retryWeek?.(); paint(); },   // a visit reads a failed week again
+  window.StillhetCenters = {
+    tasks: (el) => { wire(); tasksHost = el; menu = ''; asking = null; if (W.live) window.StillhetInsightsLive?.retryWeek?.(); paint(); },   // a visit reads a failed week again
     schedules: (el) => { wire(); schedHost = el; menu = ''; if (/^#schedules/.test(location.hash)) el.innerHTML = schedulesHtml(); },
     maker: (which) => (advanced() ? MAKERS[which] : null),
     newTask: (keep = {}) => { wire(); openForm('task', { ...keep, ...(keep.project && !projects().includes(keep.project) ? { project: defaultProject() } : {}) }); },   // Run after this: the New task form, waiting for that one

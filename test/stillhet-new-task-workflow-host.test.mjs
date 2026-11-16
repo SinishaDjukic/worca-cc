@@ -1,4 +1,4 @@
-// test/stillhet-new-task-workflow-host.test.mjs — gate.real-data F-cov23-03 (docs/rail/forms.md form.run-options): New task's
+// test/stillhet-new-task-workflow-host.test.mjs — gate.real-data F-cov23-03 (docs/stillhet/forms.md form.run-options): New task's
 // Workflow picker offers Auto as classic's New run does (app.js AUTO_WORKFLOW: a client-side constant /api/workflows never
 // lists); a project whose activeWorkflowId is wf_auto preselects it and Start posts workflowId wf_auto with classic's
 // humanInLoop. Live app host (jsdom), the real shell, a stubbed fetch.
@@ -12,7 +12,7 @@ const CONFIG = '/api/config?projectDir=%2Fsrc%2Fweb';
 async function open({ reads = {}, write = () => [200, { runId: 'r-new' }] } = {}) {
   const h = await liveHost({ lists: LISTS, write, read: (u) => reads[u] || null });
   await go(h.w, '#runs', 120);
-  h.w.RailCenters.maker('tasks').newPick('form'); await settle(80);
+  h.w.StillhetCenters.maker('tasks').newPick('form'); await settle(80);
   return h;
 }
 const q = (d, sel) => d.querySelector(`#center-dlg ${sel}`);
@@ -55,7 +55,7 @@ test('F-cov23-03: any other workflow sends no humanInLoop (the body stays as bef
 });
 
 // ---- COV-2: the engine check, the source, Workflow, Reset and Save as default, drawn in the demo kind ----
-const demo = async () => { const w = demoTaskHost({ after }); await settle(60); w.RailCenters.maker('tasks').newPick('form'); await settle(60); return { w, d: w.document }; };
+const demo = async () => { const w = demoTaskHost({ after }); await settle(60); w.StillhetCenters.maker('tasks').newPick('form'); await settle(60); return { w, d: w.document }; };
 
 test('COV-2 Engine check (demo): Copilot\'s Agent item is aria-disabled with title Copilot: off while the credential broker is on, and a click on it leaves the Agent picker\'s text reading Claude', async () => {
   const { d } = await demo();

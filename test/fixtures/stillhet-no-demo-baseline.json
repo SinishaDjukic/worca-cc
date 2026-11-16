@@ -2,33 +2,33 @@
   "sites": {
     "chat/chats-model.js › would › apply 3 files to docs-site": {
       "class": "prototype-only",
-      "why": "A seeded chat's card: on live seed() serves the store's chats only (chat/chats-model.js:71) and thread() reads RailChatLive.turns (:98)."
+      "why": "A seeded chat's card: on live seed() serves the store's chats only (chat/chats-model.js:71) and thread() reads StillhetChatLive.turns (:98)."
     },
     "chat/chats-model.js › would › open PR #1104 into main": {
       "class": "prototype-only",
-      "why": "A seeded chat's card: on live seed() serves the store's chats only (chat/chats-model.js:71) and thread() reads RailChatLive.turns (:98)."
+      "why": "A seeded chat's card: on live seed() serves the store's chats only (chat/chats-model.js:71) and thread() reads StillhetChatLive.turns (:98)."
     },
     "chat/chats-model.js › would › open the 12 changed files": {
       "class": "prototype-only",
-      "why": "A seeded chat's card: on live seed() serves the store's chats only (chat/chats-model.js:71) and thread() reads RailChatLive.turns (:98)."
+      "why": "A seeded chat's card: on live seed() serves the store's chats only (chat/chats-model.js:71) and thread() reads StillhetChatLive.turns (:98)."
     },
     "chat/chats-model.js › would › run scripts/release-notes.sh": {
       "class": "prototype-only",
-      "why": "A seeded chat's card: on live seed() serves the store's chats only (chat/chats-model.js:71) and thread() reads RailChatLive.turns (:98)."
+      "why": "A seeded chat's card: on live seed() serves the store's chats only (chat/chats-model.js:71) and thread() reads StillhetChatLive.turns (:98)."
     },
     "chat/conversation.js › would › (a phrase built from data)": {
       "class": "wired",
-      "why": "doOr (chat/conversation.js:45) draws data-live on live instead of the would sentence; liveClick sends it to RailChatLive.act (:1343).",
+      "why": "doOr (chat/conversation.js:45) draws data-live on live instead of the would sentence; liveClick sends it to StillhetChatLive.act (:1343).",
       "via": "test/stillhet-chat-live.test.mjs"
     },
     "chat/conversation.js › would › be saved as …": {
       "class": "wired",
-      "why": "Live says 'Saved as …' (chat/conversation.js:807) and Save to plans/ calls RailChatLive.act('plan-save') (:1174).",
+      "why": "Live says 'Saved as …' (chat/conversation.js:807) and Save to plans/ calls StillhetChatLive.act('plan-save') (:1174).",
       "via": "ui/public/stillhet/live/chat-live.mjs"
     },
     "chat/conversation.js › would › be …": {
       "class": "wired",
-      "why": "The menu help is LIVE() ? 'Saved as…' : RailWould(…) (chat/conversation.js:806); the action is plan-save on live (:1174).",
+      "why": "The menu help is LIVE() ? 'Saved as…' : StillhetWould(…) (chat/conversation.js:806); the action is plan-save on live (:1174).",
       "via": "ui/public/stillhet/live/chat-live.mjs"
     },
     "chat/conversation.js › would › copy": {
@@ -38,7 +38,7 @@
     },
     "chat/conversation.js › would › copy … lines": {
       "class": "wired",
-      "why": "if (LIVE()) RailChatLive.act('copy') and says Copied only on ok, before the would line (chat/conversation.js:1447). The via tests act('copy') writing the clipboard (:145); no test clicks data-dl-copy itself.",
+      "why": "if (LIVE()) StillhetChatLive.act('copy') and says Copied only on ok, before the would line (chat/conversation.js:1447). The via tests act('copy') writing the clipboard (:145); no test clicks data-dl-copy itself.",
       "via": "test/stillhet-chat-live.test.mjs"
     },
     "chat/conversation.js › would › download": {
@@ -53,7 +53,7 @@
     },
     "chat/conversation.js › would › open PR #1107 into dev · …": {
       "class": "wired",
-      "why": "On live liveClick handles data-ship with RailChatLive.act('ship') (chat/conversation.js:1373) before the demo handler (:1499).",
+      "why": "On live liveClick handles data-ship with StillhetChatLive.act('ship') (chat/conversation.js:1373) before the demo handler (:1499).",
       "via": "test/stillhet-chat-app-host-3.test.mjs"
     },
     "chat/conversation.js › would › open a file picker": {
@@ -68,7 +68,7 @@
     },
     "chat/conversation.js › would › save it as …": {
       "class": "wired",
-      "why": "if (LIVE()) RailChatLive.act('plan-save') returns before the demo would line (chat/conversation.js:1174).",
+      "why": "if (LIVE()) StillhetChatLive.act('plan-save') returns before the demo would line (chat/conversation.js:1174).",
       "via": "ui/public/stillhet/live/chat-live.mjs"
     },
     "chat/conversation.js › would › start building": {
@@ -78,7 +78,7 @@
     },
     "chat/conversation.js › would › write it into the project’s plans folder": {
       "class": "wired",
-      "why": "The help is LIVE() ? 'Writes it into the project’s plans folder' : RailWould(…) (chat/conversation.js:806); the action is plan-save (:1174).",
+      "why": "The help is LIVE() ? 'Writes it into the project’s plans folder' : StillhetWould(…) (chat/conversation.js:806); the action is plan-save (:1174).",
       "via": "ui/public/stillhet/live/chat-live.mjs"
     },
     "chat/conversation.js › would › … …": {
@@ -93,12 +93,12 @@
     },
     "marketplace/marketplace.js › would › open … at … on GitHub": {
       "class": "wired",
-      "why": "if (LIVE()) LIVE().openMarket(m.id) else say(RailWould(…)) (marketplace/marketplace.js:237).",
+      "why": "if (LIVE()) LIVE().openMarket(m.id) else say(StillhetWould(…)) (marketplace/marketplace.js:237).",
       "via": "test/stillhet-market-live.test.mjs"
     },
     "marketplace/marketplace.js › would › open … at … on GitHub #2": {
       "class": "wired",
-      "why": "else if (LIVE()) LIVE().openSource(p.id) else say(RailWould(…)) (marketplace/marketplace.js:257).",
+      "why": "else if (LIVE()) LIVE().openSource(p.id) else say(StillhetWould(…)) (marketplace/marketplace.js:257).",
       "via": "test/stillhet-market-live.test.mjs"
     },
     "pulse/pulse.js › would › (a phrase built from data)": {
@@ -107,15 +107,15 @@
     },
     "pulse/pulse.js › would › (a phrase built from data) #2": {
       "class": "prototype-only",
-      "why": "if (!SHELL) { toast(RailWould(…)); return; } (pulse/pulse.js:1080); the app host always has RailShell."
+      "why": "if (!SHELL) { toast(StillhetWould(…)); return; } (pulse/pulse.js:1080); the app host always has StillhetShell."
     },
     "pulse/pulse.js › would › ask Chat: …": {
       "class": "prototype-only",
-      "why": "if (SHELL) RailConversation.handOver(…) else toast(RailWould(…)) (pulse/pulse.js:695); the app host always has RailShell."
+      "why": "if (SHELL) StillhetConversation.handOver(…) else toast(StillhetWould(…)) (pulse/pulse.js:695); the app host always has StillhetShell."
     },
     "pulse/pulse.js › would › open Statistics": {
       "class": "prototype-only",
-      "why": "if (SHELL) SHELL.go('insights/spend') else toast(RailWould('open Statistics')) (pulse/pulse.js:969)."
+      "why": "if (SHELL) SHELL.go('insights/spend') else toast(StillhetWould('open Statistics')) (pulse/pulse.js:969)."
     },
     "pulse/pulse.js › would › open …": {
       "class": "prototype-only",
@@ -131,7 +131,7 @@
     },
     "pulse/pulse.js › would › send a test notification": {
       "class": "prototype-only",
-      "why": "if (SHELL) sendTest(); else toast(RailWould(…)) (pulse/pulse.js:1026); the app host always has RailShell."
+      "why": "if (SHELL) sendTest(); else toast(StillhetWould(…)) (pulse/pulse.js:1026); the app host always has StillhetShell."
     },
     "requirements/requirements.js › would › copy … as Markdown": {
       "class": "not-in-stillhet",
@@ -162,7 +162,7 @@
     },
     "runs/run-page.js › would › (a phrase built from data)": {
       "class": "wired",
-      "why": "act() sends a label without a flow to liveDirect (RailTaskLive.flow) on live (runs/run-page.js:900) before the toast; only canFlow labels are drawn.",
+      "why": "act() sends a label without a flow to liveDirect (StillhetTaskLive.flow) on live (runs/run-page.js:900) before the toast; only canFlow labels are drawn.",
       "via": "ui/public/stillhet/live/task-live.mjs"
     },
     "runs/run-page.js › would › (a phrase built from data) #2": {
@@ -176,7 +176,7 @@
     },
     "runs/run-page.js › would › send the direction": {
       "class": "wired",
-      "why": "On live, Send direction posts RailTaskLive.act('run-direction') before the demo branch, which runs only when !LIVE_PAGE() (runs/run-page.js:1128).",
+      "why": "On live, Send direction posts StillhetTaskLive.act('run-direction') before the demo branch, which runs only when !LIVE_PAGE() (runs/run-page.js:1128).",
       "via": "test/stillhet-classic-extras-task-host.test.mjs"
     },
     "runs/run-page.js › would › check out on this machine and open a local copy": {
@@ -234,7 +234,7 @@
     },
     "runs/run-page.js › would › download …": {
       "class": "wired",
-      "why": "On live the document Download is data-dl (runs/run-page.js:247), which calls RailTaskLive.download (:1219).",
+      "why": "On live the document Download is data-dl (runs/run-page.js:247), which calls StillhetTaskLive.download (:1219).",
       "via": "test/stillhet-task-tools-host-1.test.mjs"
     },
     "runs/run-page.js › would › download … #2": {
@@ -244,7 +244,7 @@
     },
     "runs/run-page.js › would › download … #3": {
       "class": "wired",
-      "why": "On live the document viewer's Download is data-dl (runs/run-page.js:336), which calls RailTaskLive.download (:1219).",
+      "why": "On live the document viewer's Download is data-dl (runs/run-page.js:336), which calls StillhetTaskLive.download (:1219).",
       "via": "test/stillhet-task-tools-host-1.test.mjs"
     },
     "runs/run-page.js › would › open a terminal in the worktree": {
@@ -278,7 +278,7 @@
     },
     "runs/run-page.js › would › open the whole diff of the file": {
       "class": "wired",
-      "why": "On live the button is data-fulldiff (runs/run-page.js:237), which opens RailTaskLive.wholeDiff (:1107).",
+      "why": "On live the button is data-fulldiff (runs/run-page.js:237), which opens StillhetTaskLive.wholeDiff (:1107).",
       "via": "test/stillhet-task-tools-host-1.test.mjs"
     },
     "runs/run-page.js › would › open … on GitHub": {
@@ -293,7 +293,7 @@
     },
     "runs/run-page.js › would › refresh the diff from the worktree": {
       "class": "wired",
-      "why": "On live ch:refresh re-reads the task through RailTaskLive.open (runs/run-page.js:1211) before CH_SAY.",
+      "why": "On live ch:refresh re-reads the task through StillhetTaskLive.open (runs/run-page.js:1211) before CH_SAY.",
       "via": "ui/public/stillhet/live/task-live.mjs"
     },
     "runs/run-page.js › would › run …": {

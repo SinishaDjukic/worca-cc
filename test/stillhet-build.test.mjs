@@ -16,7 +16,7 @@ test('buildStillhet writes every bundle, and writing twice gives the same files'
   const before = bytes();
   await buildStillhet();
   assert.deepEqual(bytes(), before);
-  assert.match(readFileSync(ROOT + 'ui/public/stillhet/components.js', 'utf8'), /window\.RailCatalog/);
+  assert.match(readFileSync(ROOT + 'ui/public/stillhet/components.js', 'utf8'), /window\.StillhetCatalog/);
 });
 
 test('missingBundles names an absent file', () => {

@@ -8,11 +8,11 @@ import { BELL, DEMO_NAMES, MISSED, NOW, SOURCES, TASK_NEEDS, bellN, clone, count
 afterEach(closeHosts);   // each test's window closes when the test ends
 test('before the first snapshot: no rows, the loading look in the bar and Pulse, no number on the bell', async () => {
   const { w, d } = await liveHost();
-  assert.equal(w.RailAdapter.kind, 'live');
-  assert.equal(w.RailDemoState.list, 'loading');
-  assert.equal(w.RailWorld.data().runs.length, 0);
+  assert.equal(w.StillhetAdapter.kind, 'live');
+  assert.equal(w.StillhetDemoState.list, 'loading');
+  assert.equal(w.StillhetWorld.data().runs.length, 0);
   assert.equal(bellN(d), null);
-  w.RailPulse.open('now');
+  w.StillhetPulse.open('now');
   assert.match(d.querySelector('#app .pz-popover').textContent, /Loading updates…/);
   await settle(350);
   assert.match(d.getElementById('bar-chat').textContent, /Loading chats…/);
@@ -22,7 +22,7 @@ test('before the first snapshot: no rows, the loading look in the bar and Pulse,
 test('the bell: tasks by dev\'s rule, missed schedules and projects that need you; the tab title follows it', async () => {
   const { w, d, hello } = await liveHost();
   await hello();
-  assert.equal(w.RailDemoState.list, '');
+  assert.equal(w.StillhetDemoState.list, '');
   const live = SOURCES.hello.runs.map((r) => ({ pipelineId: r.pipelineId, status: r.status, ask: !!r.pendingQuestion }));
   assert.equal(countNeedsYou({ live, history: SOURCES.history.pipelines.filter((p) => !p.archived) }), TASK_NEEDS);
   assert.equal(SOURCES.schedules.counts.missed, MISSED);
@@ -42,7 +42,7 @@ test('with nothing that needs you the bell has no number; its words say the unre
   const { w, d, hello } = await liveHost({ sources: calm });
   await hello();
   assert.equal(bellN(d), null);
-  w.RailPulse.open('updates');
+  w.StillhetPulse.open('updates');
   const unread = d.querySelectorAll('#app .pz-popover [data-open]').length;
   assert.ok(unread > 0);
   assert.match(d.querySelector('[data-pop]').title, new RegExp(`${unread} unread`));
@@ -95,7 +95,7 @@ test('the spend card shows windowSpendUsd; #insights/spend draws the live page f
 test('a not-live place after Projects: the home bar, #bar-place hidden, no Projects row; back to Projects redraws its rows', async () => {
   const { w, d, hello, sockets } = await liveHost();
   await hello();
-  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'flags', flags: { rail: true, requirements: true } }) });   // Requirements on: not live, not locked (Insights is live since slice 10)
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'flags', flags: { stillhet: true, requirements: true } }) });   // Requirements on: not live, not locked (Insights is live since slice 10)
   await settle();
   const side = d.getElementById('side-rail'), place = d.getElementById('bar-place');
   w.location.hash = '#projects'; await settle();
@@ -117,7 +117,7 @@ test('a not-live place after Projects: the home bar, #bar-place hidden, no Proje
 test('#requirements, flag on: not in Stillhet yet, where it is today, Back to Chat clicks to #chat', async () => {
   const { w, d, hello, sockets } = await liveHost();
   await hello();
-  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'flags', flags: { rail: true, requirements: true } }) });   // dev's flags frame: Labs' Requirements on
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'flags', flags: { stillhet: true, requirements: true } }) });   // dev's flags frame: Labs' Requirements on
   await settle();
   w.location.hash = '#requirements'; await settle();
   const today = d.getElementById('route-today');
@@ -136,9 +136,9 @@ test('only the adapter writes: set, remove and taskGone change nothing; the Task
   const { w, d, hello } = await liveHost();
   await hello();
   const before = store(w);
-  w.RailWorld.set('every');
-  w.RailWorld.remove('run-a');
-  w.RailShell.taskGone('question', 'Ask me');
+  w.StillhetWorld.set('every');
+  w.StillhetWorld.remove('run-a');
+  w.StillhetShell.taskGone('question', 'Ask me');
   assert.deepEqual(store(w), before);
   w.location.hash = '#runs'; await settle();
   const row = d.querySelector('#bar-tasks [data-open]');
@@ -159,15 +159,15 @@ test('Projects: titled by dev\'s name, no seeded workspaces; Schedules: the next
   s.schedules.tickets.push({ id: 'tk3', kind: 'once', title: 'Sunday ticket', status: 'scheduled', runAt: new Date(2026, 10, 15, 14, 44).toISOString(), createdAt: SOURCES.schedules.tickets[0].createdAt });
   const { w, d, hello } = await liveHost({ sources: s, level: 'advanced' });
   await hello();
-  assert.deepEqual([...w.RailProjects.needItems().map((x) => x.title)].sort(), ['api', 'gone']);
-  assert.equal(w.RailSpaces.list().length, 0);
+  assert.deepEqual([...w.StillhetProjects.needItems().map((x) => x.title)].sort(), ['api', 'gone']);
+  assert.equal(w.StillhetSpaces.list().length, 0);
   w.location.hash = '#projects'; await settle();
   const text = d.body.textContent;
   for (const n of ['Web shop', 'IoT SP Platform', 'Legacy billing', 'gone-3', 'api-2']) assert.ok(!text.includes(n), `no ${n}`);
   assert.ok(text.includes('gone'));
-  assert.equal(w.RailSchedules.nextLine(w.RailSchedules.find('tk3')), 'Nov 15, 14:44');
-  assert.equal(w.RailSchedules.nextLine(w.RailSchedules.find('sr1')), 'Nov 13, 02:00');
-  const day = (t) => w.RailSchedules.TODAY.getTime() === new Date(t).setHours(0, 0, 0, 0);
+  assert.equal(w.StillhetSchedules.nextLine(w.StillhetSchedules.find('tk3')), 'Nov 15, 14:44');
+  assert.equal(w.StillhetSchedules.nextLine(w.StillhetSchedules.find('sr1')), 'Nov 13, 02:00');
+  const day = (t) => w.StillhetSchedules.TODAY.getTime() === new Date(t).setHours(0, 0, 0, 0);
   assert.ok(day(NOW), 'today is the local day of now');
   w.Date.now = () => NOW + 86400000;
   assert.ok(day(NOW + 86400000), 'past midnight, today moves on without a reload');
@@ -178,12 +178,12 @@ test('the bell counts each unsure workspace link once (GET /api/workspaces/:id/m
   const { w, d, gets, hello } = await liveHost({ sources: withWorkspaces(), read: mapRead(), level: 'advanced' });
   await hello(); await settle(60);
   assert.ok(gets.includes('/api/workspaces/w1/map') && gets.includes('/api/workspaces/w2/map'), 'each workspace\'s map, read after the list');
-  const qs = w.RailProjects.needItems().filter((x) => x.kind === 'workspace');
+  const qs = w.StillhetProjects.needItems().filter((x) => x.kind === 'workspace');
   assert.deepEqual(Array.from(qs, (x) => x.key), ['q:w1:web-1:api-2', 'q:w1:api-2:web-1'], 'heuristic and inferred auto links; never exact or verified, never the failed map');
   assert.ok(qs.every((x) => x.go === 'projects/ws:w1' && x.title === 'Shop'));
   assert.equal(WS_QUESTIONS, qs.length);
   assert.equal(bellN(d), BELL + WS_QUESTIONS, 'one per unsure link, counted once');
-  assert.deepEqual(Array.from(w.RailSpaces.list(), (x) => [x.id, x.title]), [['w1', 'Shop'], ['w2', 'Broken map']], 'the live workspaces, never the demo\'s');
+  assert.deepEqual(Array.from(w.StillhetSpaces.list(), (x) => [x.id, x.title]), [['w1', 'Shop'], ['w2', 'Broken map']], 'the live workspaces, never the demo\'s');
 });
 
 test('the bell head: the count, then " · " and what needs you, when more than tasks do (D7); a plan run counts and tones as a question does (D1)', async () => {
@@ -200,7 +200,7 @@ test('the bell head: the count, then " · " and what needs you, when more than t
   closeHosts();
   // run-a held at its plan: Needs approval, the pencil; the bell's number and the badge's tone stay a question's
   const asks = await liveHost(); await asks.hello();
-  const badge = (x) => [bellN(x.d), x.d.querySelector('#rail-pulse-slot .topnav-badge')?.className];
+  const badge = (x) => [bellN(x.d), x.d.querySelector('#stillhet-pulse-slot .topnav-badge')?.className];
   const before = badge(asks);
   closeHosts();
   const plan = clone(SOURCES); plan.hello.runs = plan.hello.runs.map((r) => (r.runId === 'run-a' ? { ...r, pendingQuestion: { id: 'q-plan', kind: 'plan', plan: { title: 'Ask me' } } } : r));

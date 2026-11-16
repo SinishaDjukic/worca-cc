@@ -28,11 +28,11 @@ async function refused(id, label, answer, args = {}) {
   const h = await liveHost({ sources: sources(), read, write: () => answer });
   await go(h.w, `#run/${id}`, 150);
   await settle(400);   // the open PRs' checks land and the store's rows redraw from them (D5, debounced) before the snapshot
-  const before = { store: store(h.w), page: clone(h.w.RailTaskLive.detail(id)) };
-  const res = await h.w.RailTaskLive.flow(label, { taskId: id, ...args });
+  const before = { store: store(h.w), page: clone(h.w.StillhetTaskLive.detail(id)) };
+  const res = await h.w.StillhetTaskLive.flow(label, { taskId: id, ...args });
   await settle(40);
   assert.equal(res.ok, false, label);
-  assert.deepEqual({ store: store(h.w), page: clone(h.w.RailTaskLive.detail(id)) }, before, `${label}: nothing written locally`);
+  assert.deepEqual({ store: store(h.w), page: clone(h.w.StillhetTaskLive.detail(id)) }, before, `${label}: nothing written locally`);
   return { ...h, res };
 }
 const CASES = [
@@ -64,11 +64,11 @@ test('Ask for changes on a live plan: no demo draft; a refusal keeps the dialog 
   assert.equal(field.value, '', 'the live kind drafts nothing: the field is empty');
   assert.equal(h.d.querySelector('#card [data-draft="changes"]'), null, 'no demo draft button');
   field.value = 'Split the pager out'; field.dispatchEvent(new h.w.Event('input', { bubbles: true }));
-  const before = clone(h.w.RailTaskLive.detail('run-a'));
+  const before = clone(h.w.StillhetTaskLive.detail('run-a'));
   h.d.querySelector('#card [data-confirm="yes"]').click(); await settle(100);
   assert.equal(h.d.querySelector('#changes-text')?.value, 'Split the pager out', 'the dialog keeps what was typed');
   assert.equal(toastText(h.d), 'Could not send your changes: the task is not waiting on a plan');
-  assert.deepEqual(clone(h.w.RailTaskLive.detail('run-a')), before, 'the page model is unchanged');
+  assert.deepEqual(clone(h.w.StillhetTaskLive.detail('run-a')), before, 'the page model is unchanged');
   answer = [200, { ok: true }];
   h.d.querySelector('#card [data-confirm="yes"]').click(); await settle(100);
   assert.equal(h.d.querySelector('#changes-text'), null, 'ok closes the dialog');

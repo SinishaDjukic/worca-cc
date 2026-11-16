@@ -1,5 +1,5 @@
 // TurnTime (panel.turn-time): when a turn in a conversation was said, shown on hover, on focus and on a tap, in the gap
-// under the turn at its right edge; showing it moves nothing (rail.css draws it absolute and reveals it by opacity only).
+// under the turn at its right edge; showing it moves nothing (stillhet.css draws it absolute and reveals it by opacity only).
 import { esc, attrs } from './html.mjs';
 import { dayBucket } from '../../../../src/shared/day-buckets.mjs';
 

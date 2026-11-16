@@ -28,7 +28,7 @@ test('the failed task (c17): BRANCH into BASE, "Build · REASON", its failing it
   assert.match(text, /Build · 3 tests failed/);
   assert.match(text, /test\/a\.test\.mjs: timeout/);
   assert.match(text, /Retry/);
-  const T = w.RailTaskLive;
+  const T = w.StillhetTaskLive;
   assert.deepEqual([T.card('pa').case, T.detail('pa').case], ['failed', 'failed']);
   await go(w, '#run/pa', 200);
   const page = d.querySelector('#card').textContent.replace(/\s+/g, ' ');
@@ -46,7 +46,7 @@ test('the approved PR (c18): its checks, "Approved by NAME" and Merge PR; its pa
   assert.match(text, /All 12 checks pass/);
   assert.match(text, /Approved by maya/);
   assert.match(text, /Merge/);
-  assert.equal(w.RailTaskLive.card('pa').case, 'approved');
+  assert.equal(w.StillhetTaskLive.card('pa').case, 'approved');
   await go(w, '#run/pa', 200);
   assert.equal(d.querySelector('#card [data-key="act-main"]').dataset.label, 'Merge PR');
 });
@@ -57,7 +57,7 @@ test('the failing PR\'s card: Fix checks asks with its own count, PR and base, n
   const { w, d } = await liveHost({ sources: sources({ status: 'done', pr: { url: PR_URL, state: 'OPEN' } }), read: (u) => (u === '/api/history/web-1/pa' ? [200, { state }]
     : u.startsWith('/api/pr/checks?id=pa') ? [200, checks] : null) });
   await go(w, '#chat/ask_1', 250);
-  assert.deepEqual([w.RailTaskLive.card('pa').base, w.RailTaskLive.card('pa').failedChecks], ['main', 3]);
+  assert.deepEqual([w.StillhetTaskLive.card('pa').base, w.StillhetTaskLive.card('pa').failedChecks], ['main', 3]);
   assert.ok(d.querySelector('#route-chat [data-card-act="pa|Fix checks"]'), 'the card offers Fix checks');
   // under load the card can repaint between finding the button and the click: press the one drawn now until the strip asks
   let text = '';
@@ -112,9 +112,9 @@ test('the prototype\'s demo chat holds a finished no-project card with the same 
 // ok (push, folder, a feature) is not finished: its card keeps its last stage to come, as its page does.
 test('a no-PR card with tone ok keeps its last stage to come, as its page does', async (t) => {
   const w = stillhetHost({ hash: '#chat/c9', after: (f) => t.after(f) }); await settle(400);
-  const task = w.RailChats.data().chats.find((c) => c.id === 'c9').tasks.find((x) => x.id === 't9n');
+  const task = w.StillhetChats.data().chats.find((c) => c.id === 'c9').tasks.find((x) => x.id === 't9n');
   Object.assign(task, { case: 'push', stage: 2 });
-  w.RailConversation.refresh(); await settle(80);
+  w.StillhetConversation.refresh(); await settle(80);
   const c = () => w.document.querySelector('#route-chat [data-anchor="a4c"]');
   assert.deepEqual(barLabels(c()), ['Plan', 'Build', 'Review', 'Push']);
   c().querySelector('[data-open-task="t9n"]').click(); await settle(80);

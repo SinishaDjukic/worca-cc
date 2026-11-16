@@ -1,4 +1,4 @@
-// An open control across a redraw (docs/rail/components.md `comp.keep-open`): a menu, inline field or dialog whose control
+// An open control across a redraw (docs/stillhet/components.md `comp.keep-open`): a menu, inline field or dialog whose control
 // is marked data-keep="KEY" keeps its value, caret, selection and focus when a draw rewrites its markup. Once per
 // document: it remembers each marked control the user focused or typed into, and when a draw removes that element it moves
 // what the user had onto the new element with the same key, in the observer's microtask, before the browser paints.

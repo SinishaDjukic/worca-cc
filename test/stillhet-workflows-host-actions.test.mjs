@@ -1,6 +1,6 @@
 // test/stillhet-workflows-host-actions.test.mjs — Stillhet's Workflows actions on dev's routes in the live kind (slice 7):
 // a draft sends nothing until Save, Save POSTs once, an agent saves through its .md frontmatter, Pin, refusals that keep the
-// draft, Delete after the undo window, and no RailWould anywhere.
+// draft, Delete after the undo window, and no StillhetWould anywhere.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { workflowsHost, SEC, SEC_MD, WF_LISTS, settle, clone, saidText, closeHosts } from './helpers/stillhet-workflows-host.mjs';
@@ -11,7 +11,7 @@ const pick = async (d, menu, value) => { d.querySelector(`[data-menu="${menu}"]`
 async function host(o = {}) {
   let would = 0; const phrases = [];
   const h = await workflowsHost({ ...o, beforeScripts: (win) => { o.beforeScripts?.(win); } });
-  const real = h.w.RailWould; h.w.RailWould = (p) => { if (/^(ask for a file to import|export |run the )/.test(p)) { would += 1; phrases.push(p); } return real(p); };   // Workflows' own phrases (another place's render-time ones are its slice's)
+  const real = h.w.StillhetWould; h.w.StillhetWould = (p) => { if (/^(ask for a file to import|export |run the )/.test(p)) { would += 1; phrases.push(p); } return real(p); };   // Workflows' own phrases (another place's render-time ones are its slice's)
   return { ...h, would: () => would, phrases };
 }
 
@@ -30,7 +30,7 @@ test('a model change keeps a draft and sends nothing; Save POSTs /api/workflows 
   await pick(again.d, 'wfm-1', 'Haiku 5.5');
   again.d.querySelector('[data-draft-discard]').click(); await settle(60);
   assert.deepEqual(sent(again.calls), [], 'discard sends nothing');
-  assert.equal(would() + again.would(), 0, `RailWould is never called: ${[...again.phrases, ...first.phrases]}`);
+  assert.equal(would() + again.would(), 0, `StillhetWould is never called: ${[...again.phrases, ...first.phrases]}`);
 });
 
 test('discard leaves GET /api/workflows/:id byte-equal: nothing was written', async () => {
@@ -76,7 +76,7 @@ test('a stale base: the API changed the wires after the draft started; Save send
     const l = clone(WF_LISTS['/api/workflows']); l.workflows.find((x) => x.id === 'wf_mine').wires.at(-1).id = 'w_new'; return [200, l];
   } });
   await pick(d, 'wfm-1', 'Haiku 5.5');
-  changed = true; await w.RailWorkflowLive.refresh('workflows'); await settle(60);
+  changed = true; await w.StillhetWorkflowLive.refresh('workflows'); await settle(60);
   const n = calls.length;
   d.querySelector('[data-draft-save]').click(); await settle(120);
   assert.equal(calls.length, n, 'zero requests');
@@ -147,8 +147,8 @@ test('Delete in the live kind: a refresh in the undo window keeps it gone; Undo 
   const { w, d } = await host({ hash: '#workflows/workflow:wf_mine', beforeScripts: fake });
   await pick(d, 'wf-more', 'delete');
   d.querySelector('[data-confirm="yes"]').click(); await settle(40);
-  await w.RailWorkflowLive.refresh('workflows'); await settle(40);
-  assert.ok(!w.RailWorkflowLive.data().workflow.some((x) => x.id === 'wf_mine'), 'still gone after a refresh');
+  await w.StillhetWorkflowLive.refresh('workflows'); await settle(40);
+  assert.ok(!w.StillhetWorkflowLive.data().workflow.some((x) => x.id === 'wf_mine'), 'still gone after a refresh');
   d.querySelector('body > .rc-toast button').click(); await settle(40);
-  assert.ok(w.RailWorkflowLive.data().workflow.some((x) => x.id === 'wf_mine'), 'back after Undo');
+  assert.ok(w.StillhetWorkflowLive.data().workflow.some((x) => x.id === 'wf_mine'), 'back after Undo');
 });

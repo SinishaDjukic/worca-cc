@@ -1,4 +1,4 @@
-// test/run-page-model.test.mjs — the run page's cases say one consistent thing (docs/rail/thing-page.md): an action moves
+// test/run-page-model.test.mjs — the run page's cases say one consistent thing (docs/stillhet/thing-page.md): an action moves
 // this run, and what a state shows follows the state. Reads the prototype's model with no browser, so a new case that
 // contradicts itself fails here, before anyone opens it.
 import { test } from 'node:test';
@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import * as R from '../ui/public/design-system/components/index.mjs';
 
-const window = { RailUI: R, RailWould: (p) => 'Would ' + p };
+const window = { StillhetUI: R, StillhetWould: (p) => 'Would ' + p };
 vm.runInNewContext(readFileSync(new URL('../ui/public/stillhet/runs/run-page-model.js', import.meta.url), 'utf8'), { window, console, Math, Object, String, Set, JSON, parseFloat, Error });
 const M = window.RunCardModel;
 const ids = M.cases.map((c) => c.id);
@@ -162,9 +162,9 @@ test('liveRun: a capped task\'s paused step reads Paused at its cap; Create PR a
 });
 test('liveRun: a failure is the prototype\'s bold title and its rows, and the head keeps no failure text', () => {
   const run = M.liveRun(page({ case: 'failed', failure: { head: 'Build · 3 tests failed', rows: ['a', 'b', 'c'] }, why: ['✗ a', '✗ b', '✗ c'], stages: [{ key: 'build', state: 'failed', steps: [{ name: 'implementer', state: 'failed' }] }] }));
-  window.RailTaskLive = { parts: () => ({}) };   // the live kind's parts (task-live.mjs), empty here
+  window.StillhetTaskLive = { parts: () => ({}) };   // the live kind's parts (task-live.mjs), empty here
   const v = M.view('failed', { run });
-  delete window.RailTaskLive;
+  delete window.StillhetTaskLive;
   assert.equal(v.over.focus.kind, 'broke');
   assert.deepEqual(J([v.over.focus.ev.title, v.over.focus.ev.lines]), ['Build · 3 tests failed', ['a', 'b', 'c']]);
   assert.equal(run.detail, '');
@@ -191,9 +191,9 @@ test('O1, O4: liveRun draws the asking step in Review with the gate\'s line, and
   assert.deepEqual(J(v.under), { issues: GATE_ISSUES, roles: [] }, 'the gate\'s own rows, never DETAIL.issues');
   assert.deepEqual(J([v.over.focus.issues, v.over.focus.roles]), [GATE_ISSUES, []], 'the Overview focus reads the run\'s own review (D8)');
   assert.equal(v.ask, null, 'no design sample question');
-  window.RailTaskLive = { parts: () => ({}) };   // with the live kind's parts the focus is the task's own failure only (liveOver)
+  window.StillhetTaskLive = { parts: () => ({}) };   // with the live kind's parts the focus is the task's own failure only (liveOver)
   const lp = M.view('gate', { run });
-  delete window.RailTaskLive;
+  delete window.StillhetTaskLive;
   assert.equal(lp.over.focus, null);
   // a stage with no known steps draws its ask as one asking step
   const bare = M.liveRun(gatePage({ stages: [{ key: 'review', state: 'ask', steps: [] }] }));
@@ -242,9 +242,9 @@ test('liveGroup (F-a4-09): one ready member and two not started reads Waiting, n
   assert.equal(g.word, 'Waiting');
   assert.equal(g.state, 'scheduled');
   assert.equal(g.action, null, 'the group\'s own action only: no Create PR before every task is ready');
-  window.RailTaskLive = { parts: () => ({}) };
+  window.StillhetTaskLive = { parts: () => ({}) };
   const v = M.view(g.id, { run: g });
-  delete window.RailTaskLive;
+  delete window.StillhetTaskLive;
   assert.ok(!v.action || ![v.action.label, ...v.action.items.map((x) => x.text)].includes('Start now'), 'a waiting group never offers Start now');
 });
 test('liveGroup (F-a4-09): the head follows its members', () => {
@@ -265,10 +265,10 @@ test('view (F-a4-11): a live failed task with restartOff: Restart Build is off a
   const why = 'Needs a plan: this task saved none to build from';
   const run = M.liveRun(page({ case: 'failed', restartOff: why, stages: [{ key: 'build', state: 'failed', steps: [{ name: 'implementer', state: 'failed' }] }] }));
   assert.equal(run.restartOff, why);
-  window.RailTaskLive = { parts: () => ({}) };
+  window.StillhetTaskLive = { parts: () => ({}) };
   const v = M.view('failed', { run });
   const on = M.view('failed', { run: M.liveRun(page({ case: 'failed', stages: [{ key: 'build', state: 'failed', steps: [{ name: 'implementer', state: 'failed' }] }] })) });
-  delete window.RailTaskLive;
+  delete window.StillhetTaskLive;
   assert.equal(v.action.label, 'Restart Build');
   assert.equal(v.action.offWhy, why);
   assert.equal(on.action.offWhy, '', 'without a reason it is offered');
@@ -333,18 +333,18 @@ test('F-3-19, F-a4-13: a ready group with one member left to open says "Create 1
   assert.ok(g.flow['Create 1 PR'], Object.keys(g.flow).join());
   assert.equal(g.flow['Create 1 PR'].say, 'Created 1 PR');
   assert.ok(!Object.keys(g.flow).some((k) => /\b1 PRs\b/.test(k)));
-  window.RailTaskLive = { parts: () => ({}) };
+  window.StillhetTaskLive = { parts: () => ({}) };
   const v = M.view(g.id, { run: g });
-  delete window.RailTaskLive;
+  delete window.StillhetTaskLive;
   assert.equal(v.action.label, 'Create 1 PR');
   assert.ok(v.flow[v.action.label], 'the label is the flow key');
 });
 
 test('F-3-19, F-a4-13: the Changes count names one document "1 doc"', () => {
   const run = M.liveRun(page({ case: 'ready', stages: [{ key: 'build', state: 'done', steps: [{ name: 'implementer', state: 'done' }] }] }));
-  window.RailTaskLive = { parts: () => ({ changes: { files: [['a.js', 1, 0]], fileMeta: {}, hunks: {} }, docs: [['plan.md', 'Plan', 'docs/plan.md']] }) };
+  window.StillhetTaskLive = { parts: () => ({ changes: { files: [['a.js', 1, 0]], fileMeta: {}, hunks: {} }, docs: [['plan.md', 'Plan', 'docs/plan.md']] }) };
   const v = M.view(run.id, { run });
-  delete window.RailTaskLive;
+  delete window.StillhetTaskLive;
   const ch = v.tabs.find((t) => t.id === 'changes');
   assert.ok(ch, 'a Changes part');
   assert.equal(ch.n, '1 · 1 doc');

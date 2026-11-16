@@ -1294,7 +1294,7 @@ export class RunHarness extends EventEmitter {
   }
 
   /**
-   * Pause after this step (Stillhet, plans/rail/task-engine-additions.md): set the in-memory flag `pauseAfterStep`
+   * Pause after this step (Stillhet, plans/stillhet/task-engine-additions.md): set the in-memory flag `pauseAfterStep`
    * without aborting anything. No new execution starts while it is set (_awaitStepBoundary); once none is in flight,
    * dev's pause(by) runs once. Never persisted; cleared by that conversion and by any status other than running.
    * → true, false (not running: dev's CANNOT_PAUSE) or 'already' (a pause after this step is pending).
@@ -1697,7 +1697,7 @@ export class RunHarness extends EventEmitter {
       this.state.pipelineDir = this.pipeline.dir;
       if (this.runCostCapUsd != null) {
         setRunCostCap(this.pipeline.id, this.runCostCapUsd);   // a Restart Build keeps its origin's cap
-        // The cap set at the start is a decision worth an audit line (D12); it shows with `rail` off too.
+        // The cap set at the start is a decision worth an audit line (D12); it shows with `stillhet` off too.
         const by = this.opts.startedBy || null;
         // a Restart Build or PR-fix round inherits its origin's cap: nobody set it for this round, so it says so
         const kept = validRoundOf(this.opts.branch && this.opts.branch.roundOf);

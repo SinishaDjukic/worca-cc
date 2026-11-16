@@ -60,7 +60,7 @@ function samePr(a, b) {
   const { stale: _sa, ...ra } = a, { stale: _sb, ...rb } = b;
   return sameValue(ra, rb);
 }
-export function startLive({ fetch, WebSocket, location, world, host = {}, prefs = null, setTimeout, clearTimeout = () => {}, now = Date.now, openChat = () => '', hidden = () => false, toast = () => {}, open = undefined, go = () => {}, download = () => {}, workflowsChanged = () => {}, marketChanged = () => {}, projectsChanged = () => {}, insightsChanged = () => {}, insightsModel = () => globalThis.window?.RailInsightsModel, storage = null, openSource = undefined, on = () => {}, random = Math.random }) {
+export function startLive({ fetch, WebSocket, location, world, host = {}, prefs = null, setTimeout, clearTimeout = () => {}, now = Date.now, openChat = () => '', hidden = () => false, toast = () => {}, open = undefined, go = () => {}, download = () => {}, workflowsChanged = () => {}, marketChanged = () => {}, projectsChanged = () => {}, insightsChanged = () => {}, insightsModel = () => globalThis.window?.StillhetInsightsModel, storage = null, openSource = undefined, on = () => {}, random = Math.random }) {
   let sources = {}, loaded = false, listFailed = false, stopped = false, sock = null, backoff = BACKOFF_MS, reconnect = 0, queue = [], unread = [], asked = 0;
   const live = new Map(), timers = {}, stamp = {}, stale = new Set();
   const progress = new Map();   // R-ux-12: each live run's place among its stages, from its `state` frames (runProgress)
@@ -284,7 +284,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
     copyFlags(f.flags);
     // the first hello draws the first snapshot, even after a drop before it (a socket that closed before its hello)
     if (!loaded) { firstLoad(); return; }
-    // back after a drop: rail turned off meanwhile reaches the host; offline clears only once every source is read again
+    // back after a drop: stillhet turned off meanwhile reaches the host; offline clears only once every source is read again
     if (f.flags && typeof f.flags === 'object') host.flagsChanged?.(f.flags);
     chat.reconnect();
     workflow.reconnect();   // a Run all whose frames were lost while the socket was gone answers now (D12)

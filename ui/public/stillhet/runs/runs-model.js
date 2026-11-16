@@ -1,6 +1,6 @@
 // The Runs list's mock: the runs and groups of the Pulse case in view (shell/world.js). Each row points at a real run-page case: its state, word, section and
 // page come from there through the library (runs-list.js), so a list can never call Paused or Stopped Ready.
 (function () {
-  const seed = () => window.RailWorld.data();
-  window.RunsListModel = { seed, PEOPLE: ['Sam Rivera', 'Dana Ruiz'], DAYS: window.RailUI.DAY_SECTIONS };
+  const seed = () => window.StillhetWorld.data();
+  window.RunsListModel = { seed, PEOPLE: ['Sam Rivera', 'Dana Ruiz'], DAYS: window.StillhetUI.DAY_SECTIONS };
 })();

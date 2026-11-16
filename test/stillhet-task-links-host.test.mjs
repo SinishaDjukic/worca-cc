@@ -58,7 +58,7 @@ test('the Tasks list row opens #run/pa', async () => {
 
 test('a Pulse row opens its task by its id', async () => {
   const { w, d, noCase } = await host();
-  w.RailPulse.open('updates'); await settle(50);
+  w.StillhetPulse.open('updates'); await settle(50);
   d.querySelector('.pz-popover [data-open="oh3"]').click(); await settle(80);
   assert.equal(w.location.hash, '#run/h3');
   noCase();
@@ -114,11 +114,11 @@ test('the card\'s title is no link: a click on it writes no #run/ hash', async (
 
 test('a live open with no task id lands on Tasks with "This task has no page to open"', async () => {
   const { w, d, noCase } = await host();
-  w.RailShell.openTaskPage('finished-nogit', '', 'Ask me'); await settle(80);
+  w.StillhetShell.openTaskPage('finished-nogit', '', 'Ask me'); await settle(80);
   assert.equal(w.location.hash, '#runs');
   assert.match(saidText(d), /This task has no page to open/);
   assert.equal(d.querySelector('body > .rc-toast').getAttribute('aria-live'), 'polite');
-  w.RailShell.openRun('run/group:g1', 'Release', 'run-b'); await settle(80);   // a Tasks group row: its member's id finds no chat
+  w.StillhetShell.openRun('run/group:g1', 'Release', 'run-b'); await settle(80);   // a Tasks group row: its member's id finds no chat
   assert.equal(w.location.hash, '#run/group:g1', 'a live group opens its own page, not its first member');
   noCase();
 });

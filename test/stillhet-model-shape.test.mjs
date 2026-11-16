@@ -7,18 +7,18 @@ import { stillhetHost } from './helpers/stillhet-host.mjs';
 
 test('every demo seed of the 8 kinds meets its shape', () => {
   const w = stillhetHost({ after });
-  const W = w.RailWorld, seen = Object.fromEntries(Object.keys(SHAPES).map((k) => [k, 0]));
+  const W = w.StillhetWorld, seen = Object.fromEntries(Object.keys(SHAPES).map((k) => [k, 0]));
   const check = (kind, list) => { for (const x of list) { assert.deepEqual(shapeErrors(kind, x), [], `${kind} ${x.id || ''}`); seen[kind]++; } };
   check('task', W.data().runs);
   check('group', W.data().groups);
   check('chat', w.ChatsListModel.seed().chats);
   check('schedule', w.SchedulesModel.seed().schedules);
-  check('project', w.RailProjects.all());
-  check('space', w.RailSpaces.list());   // the live adapter's spacesOf draws the same shape (D10)
+  check('project', w.StillhetProjects.all());
+  check('space', w.StillhetSpaces.list());   // the live adapter's spacesOf draws the same shape (D10)
   for (const c of w.PulseModel.CASES) { check('update', c.updates); check('costs', [{ budget: c.budget, usage: c.usage }]); }
-  const wf = w.RailPlaces.workflows.records();   // Workflows (slice 7): the place's own demo lists
+  const wf = w.StillhetPlaces.workflows.records();   // Workflows (slice 7): the place's own demo lists
   check('workflow', wf.workflow); check('agent', wf.agent); check('script', wf.script);
-  const mk = w.RailPlaces.marketplace.records();   // Marketplace (slice 8): the place's own demo lists
+  const mk = w.StillhetPlaces.marketplace.records();   // Marketplace (slice 8): the place's own demo lists
   check('plugin', mk.plugins); check('market', mk.markets);
   for (const [k, n] of Object.entries(seen)) if (k !== 'insight') assert.ok(n > 0, `${k}: seeds checked`);   // insight: live sources only (below)
 });

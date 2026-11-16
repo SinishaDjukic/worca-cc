@@ -372,7 +372,7 @@ test('Marketplace is a page of its own: its loader and background refresh, its t
 // off them, so no click lands on an old address (and no branch waits for a tab that is gone).
 test('no in-app link, route call or tab check names an old address', () => {
   const pub = fileURLToPath(new URL('../ui/public/', import.meta.url));
-  const files = readdirSync(pub, { recursive: true }).map(String).filter((f) => /\.(m?js|html)$/.test(f) && !/^stillhet[\\/]/.test(f));   // stillhet: the prototype's code has its own gates (docs/rail/gate.md)
+  const files = readdirSync(pub, { recursive: true }).map(String).filter((f) => /\.(m?js|html)$/.test(f) && !/^stillhet[\\/]/.test(f));   // stillhet: the prototype's code has its own gates (docs/stillhet/gate.md)
   assert.ok(files.includes('app.js'));
   assert.ok(files.some((f) => /^graph[\\/]/.test(f)) && files.some((f) => /^ask[\\/]/.test(f)), 'the sweep reads ui/public/graph and ui/public/ask too');
   const offenders = [];

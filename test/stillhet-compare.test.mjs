@@ -53,9 +53,9 @@ test('report: a console or page error in a cell fails it even with 0 differing p
   assert.match(r.lines.join('\n'), /app pageerror: boom/);
 });
 
-test('deepRoutes: the shell\'s own route list (RailShell.routes) less the top-level places', () => {
+test('deepRoutes: the shell\'s own route list (StillhetShell.routes) less the top-level places', () => {
   const was = globalThis.window;
-  globalThis.window = { RailShell: { routes: () => ['chat', 'chat/c1', 'pulse', 'run/ready', 'settings', 'settings/runs'] } };
+  globalThis.window = { StillhetShell: { routes: () => ['chat', 'chat/c1', 'pulse', 'run/ready', 'settings', 'settings/runs'] } };
   try {
     assert.deepEqual(deepRoutes(), ['chat/c1', 'run/ready', 'settings/runs']);
   } finally { globalThis.window = was; }
@@ -98,12 +98,12 @@ test('the compare and the gates start the app on demo data (WORCA_STILLHET_DEMO=
   for (const f of ['stillhet-compare.mjs', 'stillhet-gates.mjs']) assert.match(readFileSync(new URL(`../tools/${f}`, import.meta.url), 'utf8'), /WORCA_STILLHET_DEMO: '1'/, f);
 });
 
-test('the comparison stores rail as a person does; the gates lock it with WORCA_FLAGS', async () => {
+test('the comparison stores stillhet as a person does; the gates lock it with WORCA_FLAGS', async () => {
   const { readFileSync } = await import('node:fs');
   const src = readFileSync(new URL('../tools/stillhet-compare.mjs', import.meta.url), 'utf8');
-  assert.match(src, /lockRail \? \{\} : \{ flags: \{ rail: true \} \}/);
-  assert.match(src, /WORCA_FLAGS: lockRail \? 'rail' : ''/);
-  assert.match(readFileSync(new URL('../tools/stillhet-gates.mjs', import.meta.url), 'utf8'), /\{ lockRail: true \}/);
+  assert.match(src, /lockStillhet \? \{\} : \{ flags: \{ stillhet: true \} \}/);
+  assert.match(src, /WORCA_FLAGS: lockStillhet \? 'stillhet' : ''/);
+  assert.match(readFileSync(new URL('../tools/stillhet-gates.mjs', import.meta.url), 'utf8'), /\{ lockStillhet: true \}/);
 });
 
 test('CHAT_STATES: each Chat cell id of the plan is a whole-page cell, opened by the same address in both hosts; a missing one fails', () => {
@@ -352,7 +352,7 @@ test('the pool owns SIGINT and SIGTERM: every browser the compare and click-chec
   // playwright's own handler otherwise closes the browsers and exits 130 before the apps are stopped and the homes removed
   assert.deepEqual(pool.OWN_SIGNALS, { handleSIGINT: false, handleSIGTERM: false });
   const { readFileSync } = await import('node:fs');
-  for (const f of ['../tools/stillhet-compare.mjs', '../plans/rail/prototype/gates/click-check.mjs']) {
+  for (const f of ['../tools/stillhet-compare.mjs', '../plans/stillhet/prototype/gates/click-check.mjs']) {
     const launches = readFileSync(new URL(f, import.meta.url), 'utf8').match(/chromium\.launch\([^\n]*/g);
     // --pages (pagesMain) keeps today's single path and playwright's own handlers: it starts no app and no temp home
     for (const l of launches.filter((x) => x !== 'chromium.launch(launchOptions());')) assert.match(l, /OWN_SIGNALS/, `${f}: ${l}`);
@@ -384,7 +384,7 @@ test('Workflows (slice 7): WORKFLOWS_CELL_IDS lists every Workflows state and th
   const ids = PARTS.map((p) => p.id);
   assert.equal(new Set(ids).size, ids.length, 'no id twice');
   assert.ok(!WORKFLOWS_CELL_IDS.some((id) => id.startsWith('state-')), 'no Workflows id collides with a state- id');
-  globalThis.window = { RailShell: { routes: () => ['workflows', 'workflows/workflow:default', 'workflows/~agents', 'run/ready', 'workflows/agent:planner'] } };
+  globalThis.window = { StillhetShell: { routes: () => ['workflows', 'workflows/workflow:default', 'workflows/~agents', 'run/ready', 'workflows/agent:planner'] } };
   const deep = deepRoutes();
   delete globalThis.window;
   assert.deepEqual(workflowsCellIds(deep), [...WORKFLOWS_CELL_IDS, 'route-workflows-workflow-default', 'route-workflows-agents', 'route-workflows-agent-planner']);
@@ -418,7 +418,7 @@ test('Marketplace (slice 8): its own cells, each the same route on both sides; t
   const ids = PARTS.map((p) => p.id);
   assert.equal(new Set(ids).size, ids.length, 'no id twice');
   assert.ok(!MARKETPLACE_CELL_IDS.some((id) => id.startsWith('state-')), 'no Marketplace id collides with a state- id');
-  globalThis.window = { RailShell: { routes: () => ['marketplace', 'marketplace/slack-chat', 'marketplace/~all', 'run/ready', 'workflows/~agents'] } };
+  globalThis.window = { StillhetShell: { routes: () => ['marketplace', 'marketplace/slack-chat', 'marketplace/~all', 'run/ready', 'workflows/~agents'] } };
   const deep = deepRoutes();
   delete globalThis.window;
   assert.deepEqual(marketplaceCellIds(deep), [...MARKETPLACE_CELL_IDS, 'route-marketplace-slack-chat', 'route-marketplace-all']);
@@ -442,7 +442,7 @@ test('Projects (slice 9): its own cells, each the same route on both sides; a ty
   assert.deepEqual(seedsOf(fresh, 1280), ['#bar-head [data-bar-new="place"]', '[data-menu-pick="bar-new|hand-space"]', { fill: '#pj-hand-v', text: 'Web store' }, '[data-confirm="yes"]']);
   // F-G-fid-16: the pick itself closes the drawer (COV-1): a click on the hidden #side-close timed out every 360 cell
   assert.deepEqual(seedsOf(fresh, 360).slice(0, 4), ['#mbar-menu', '#bar-head [data-bar-new="place"]', '[data-menu-pick="bar-new|hand-space"]', { fill: '#pj-hand-v', text: 'Web store' }], 'narrow: the bar is the drawer, and the pick closes it over the form');
-  globalThis.window = { RailShell: { routes: () => ['projects', 'projects/billing-api', 'projects/ws:web-shop', 'marketplace/slack-chat', 'run/ready'] } };
+  globalThis.window = { StillhetShell: { routes: () => ['projects', 'projects/billing-api', 'projects/ws:web-shop', 'marketplace/slack-chat', 'run/ready'] } };
   const deep = deepRoutes();
   delete globalThis.window;
   assert.deepEqual(projectsCellIds(deep), [...PROJECTS_CELL_IDS, 'route-projects-billing-api', 'route-projects-ws-web-shop']);
@@ -460,7 +460,7 @@ test('Insights (slice 10): its own cells, each the same route on both sides; the
   assert.deepEqual(seedsOf(PARTS.find((p) => p.id === 'in-link-copied'), 1280), ['[data-menu="in-more"]', '[data-menu-pick="in-more|link"]']);
   assert.equal(PARTS.find((p) => p.id === 'in-link-copied').clipboard, true);
   assert.equal(PARTS.find((p) => p.id === 'in-spend-link').app.route, '#insights/spend?by=client&when=this%20quarter');
-  globalThis.window = { RailShell: { routes: () => ['insights', 'insights/spend', 'insights/shaping', 'insights/heat', 'projects/billing-api', 'run/ready'] } };
+  globalThis.window = { StillhetShell: { routes: () => ['insights', 'insights/spend', 'insights/shaping', 'insights/heat', 'projects/billing-api', 'run/ready'] } };
   const deep = deepRoutes();
   delete globalThis.window;
   assert.deepEqual(insightsCellIds(deep), [...INSIGHTS_CELL_IDS, 'route-insights-spend', 'route-insights-shaping', 'route-insights-heat']);

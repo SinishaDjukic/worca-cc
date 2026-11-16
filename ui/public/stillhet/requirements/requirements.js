@@ -1,11 +1,11 @@
-// Requirements on Rail (Wave 3, 3.3): dev's feature interview and spec, Rail's design. The list in the one bar (features
+// Requirements on Stillhet (Wave 3, 3.3): dev's feature interview and spec, Stillhet's design. The list in the one bar (features
 // by state, one line each); a feature's page as a PlaceHead with its one next step, then the spec as rows by part, the
 // assumptions each with Confirm and Reject, and the six checks that make it ready. Answering its questions happens in
 // its chat (Chat leads), so the page sends you there rather than drawing a second form.
 (function () {
-  const R = window.RailUI;
+  const R = window.StillhetUI;
   const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const say = (t, undo) => window.RailPulse?.say(t, undo);
+  const say = (t, undo) => window.StillhetPulse?.say(t, undo);
   const STATE = {
     turn: { word: 'Your turn', tone: 'ask', act: 'Answer in its chat', why: (f) => `Round ${f.round} of 6 · ${f.questions} ${f.questions === 1 ? 'question' : 'questions'} for you` },
     decide: { word: 'Decide', tone: 'act', act: 'Open to decide', why: (f) => { const n = f.assumptions.filter((a) => !a.v).length; return `${n} ${n === 1 ? 'assumption' : 'assumptions'} to decide`; } },
@@ -33,19 +33,19 @@
   const rowOf = (f) => ({ key: `feat:${f.id}`, _f: f, title: f.title, mark: mark(f, 20, f.id !== current), end: st(f).word, current: f.id === current, tip: `${f.id} · ${f.title}\n${f.project} · ${f.cost} so far\n${st(f).why(f)}`,
     menu: [...(f.state === 'archived' ? [] : [{ id: 'next', text: st(f).act, help: st(f).why(f) }]), { id: 'copy', text: 'Copy as Markdown', help: 'The spec, ready to paste' }, { sep: true }, { id: 'archive', text: f.state === 'archived' ? 'Restore' : 'Archive', help: 'Out of the way; nothing is deleted' }] });
 
-  const handOver = (f, ph, text = '') => window.RailConversation?.handOver({ about: { kind: 'Page', name: f.title }, project: f.project, ph, text });   // rail.hand-to-chat, on its project (kind Page: the chip is the page, the project only sets the sentence)
+  const handOver = (f, ph, text = '') => window.StillhetConversation?.handOver({ about: { kind: 'Page', name: f.title }, project: f.project, ph, text });   // stillhet.hand-to-chat, on its project (kind Page: the chip is the page, the project only sets the sentence)
   function act(id, f) {
-    if (id === 'copy') { say(window.RailWould(`copy ${f.id} as Markdown`)); return; }
+    if (id === 'copy') { say(window.StillhetWould(`copy ${f.id} as Markdown`)); return; }
     if (id === 'archive' || (id === 'next' && f.state === 'archived')) { f.was = f.state === 'archived' ? f.was : f.state; f.state = f.state === 'archived' ? f.was || 'ready' : 'archived'; draw(); say(f.state === 'archived' ? `Archived ${f.id}` : `Restored ${f.id}`); return; }
     if (id === 'next') {
-      if (f.state === 'turn') { if (f.chat) window.RailShell.go(`chat/${f.chat}`); else handOver(f, `Answer what Worca asked about ${f.title}`); return; }
-      if (f.state === 'decide') { window.RailShell.go(`requirements/${f.id}`); return; }   // the row's way in; on its page the assumptions are the step
-      if (f.state === 'ready') { Object.assign(f, { state: 'started', run: 'Plan · writing the plan' }); window.RailWorld?.add({ id: `feat-${f.id}`, case: 'working', title: f.title, project: f.project, detail: 'Plan · writing the plan', time: 'now', day: 'today' }); draw(); say(`Started ${f.id}: a task builds it from the spec`); return; }
+      if (f.state === 'turn') { if (f.chat) window.StillhetShell.go(`chat/${f.chat}`); else handOver(f, `Answer what Worca asked about ${f.title}`); return; }
+      if (f.state === 'decide') { window.StillhetShell.go(`requirements/${f.id}`); return; }   // the row's way in; on its page the assumptions are the step
+      if (f.state === 'ready') { Object.assign(f, { state: 'started', run: 'Plan · writing the plan' }); window.StillhetWorld?.add({ id: `feat-${f.id}`, case: 'working', title: f.title, project: f.project, detail: 'Plan · writing the plan', time: 'now', day: 'today' }); draw(); say(`Started ${f.id}: a task builds it from the spec`); return; }
       if (f.state === 'started') {   // its card in its chat, on its project: the seeded ones are told to the world here
-        if (!window.RailWorld?.find(`feat-${f.id}`)) window.RailWorld?.add({ id: `feat-${f.id}`, case: 'working', title: f.title, project: f.project, detail: f.run, time: 'now', day: 'today' });
+        if (!window.StillhetWorld?.find(`feat-${f.id}`)) window.StillhetWorld?.add({ id: `feat-${f.id}`, case: 'working', title: f.title, project: f.project, detail: f.run, time: 'now', day: 'today' });
         const run = `feat-${f.id}`;   // its chat exists before you open it: a card opens, not a notice about a new chat
-        if (!window.RailConversation?.chatOfTask({ run, title: f.title })) { window.RailChats?.newChat(f.title, f.project, { fromTask: true, tasks: [{ id: `t-${run}`, run, title: f.title, case: 'working', stage: 1, detail: f.run, branch: '' }] }); window.RailChats?.refresh(); }
-        window.RailShell.openRun('run/working', f.title, run);
+        if (!window.StillhetConversation?.chatOfTask({ run, title: f.title })) { window.StillhetChats?.newChat(f.title, f.project, { fromTask: true, tasks: [{ id: `t-${run}`, run, title: f.title, case: 'working', stage: 1, detail: f.run, branch: '' }] }); window.StillhetChats?.refresh(); }
+        window.StillhetShell.openRun('run/working', f.title, run);
       }
     }
   }
@@ -66,10 +66,10 @@
     if (!bar || !page || !here()) return;
     ctl?.paint();
     const f = data.features.find((x) => x.id === current);
-    if (!f) { home ||= window.RailConversation?.mount(page, { mode: 'ask', where: '#route-place', title: 'Shape a feature', note: 'Describe it in a few sentences; Worca interviews you, then writes the spec a task builds from.' }); home?.show(''); return; }
+    if (!f) { home ||= window.StillhetConversation?.mount(page, { mode: 'ask', where: '#route-place', title: 'Shape a feature', note: 'Describe it in a few sentences; Worca interviews you, then writes the spec a task builds from.' }); home?.show(''); return; }
     home = null; page.innerHTML = pageHtml(f);
     const dock = document.getElementById('rq-dock');
-    if (f.chat) window.RailConversation?.dock(dock, { kind: 'feature', title: f.title, chat: f.chat });
+    if (f.chat) window.StillhetConversation?.dock(dock, { kind: 'feature', title: f.title, chat: f.chat });
     else dock.innerHTML = R.composer({ placeholder: 'Ask about this feature, or change it · in a new chat', sentence: '', tools: '', send: R.button({ label: 'Send', kind: 'primary', iconOnly: true, icon: R.icon('up', 14), attrs: { 'data-rq-send': '', title: 'Takes it to a new chat, on its project' } }), attrs: { 'data-dock': '' } });   // no chat yet: what you write is handed over, with its project
   }
   function wire(b, pg) {
@@ -80,8 +80,8 @@
       parts: [{ word: 'Showing', id: 'show', text: SHOWS.find((x) => x.id === view.show).text, tip: 'Which features the list shows', items: SHOWS.map((x) => ({ id: x.id, text: x.text, checked: view.show === x.id, hint: String(data.features.filter(x.test).length) })) }],
       sections: [{ id: 'needs', title: R.runState('question').word, rows: data.features.filter((f) => CAUTION.includes(f.state) && SHOWS.find((x) => x.id === view.show).test(f)).map(rowOf) }, ...[...new Set(data.features.map((f) => f.project))].map((p) => ({ id: p, title: p, rows: shownIn(p).filter((f) => !CAUTION.includes(f.state)).map(rowOf) }))].filter((s) => s.rows.length).map((s) => (s.id === 'needs' ? { ...s, count: s.rows.length } : s)),   // Caution is counted (look.alert-ladder)
       empty: { text: 'No features here.', action: 'Shape a feature' } }),
-      can: () => ['menu'], bulk: () => [], act: (id, rows) => rows[0] && act(id, rows[0]._f), open: (r) => window.RailShell.go(`requirements/${r._f.id}`), word: (id, v) => { view[id] = v; return false; }, say,
-      active: () => /^#requirements/.test(location.hash), emptyAct: () => window.RailConversation?.starter('pin:Shaper') } });
+      can: () => ['menu'], bulk: () => [], act: (id, rows) => rows[0] && act(id, rows[0]._f), open: (r) => window.StillhetShell.go(`requirements/${r._f.id}`), word: (id, v) => { view[id] = v; return false; }, say,
+      active: () => /^#requirements/.test(location.hash), emptyAct: () => window.StillhetConversation?.starter('pin:Shaper') } });
     const sendDock = (f) => { const t = page.querySelector('#rq-dock [data-composer-t]'), text = t.value.trim(); if (!text) { t.focus(); say('Say what to ask first'); return; } handOver(f, '', text); };
     page.addEventListener('submit', (e) => { const f = data.features.find((x) => x.id === current); if (here() && f && !f.chat && e.target.closest('#rq-dock')) { e.preventDefault(); sendDock(f); } });
     page.addEventListener('click', (e) => {
@@ -98,13 +98,13 @@
         say(a.v === 'no' ? 'Rejected: it comes back as one short question in its chat' : f.state === 'ready' && before !== 'ready' ? `${f.id} is ready to build` : a.v ? 'Confirmed' : 'Back to decide');
         draw(); return;
       }
-      if ((hit = on('[data-menu-pick]'))) { const [id, v] = hit.dataset.menuPick.split('|'); menu = ''; if (id === 'rq-more') { if (v === 'specs') { say(window.RailWould(`save specs/${f.id.toLowerCase()}.md in ${f.project}`)); draw(); } else act(v, f); } return; }
+      if ((hit = on('[data-menu-pick]'))) { const [id, v] = hit.dataset.menuPick.split('|'); menu = ''; if (id === 'rq-more') { if (v === 'specs') { say(window.StillhetWould(`save specs/${f.id.toLowerCase()}.md in ${f.project}`)); draw(); } else act(v, f); } return; }
       if ((hit = on('[data-menu]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); }
     });
     R.dismissOnOutside(document, { open: () => here() && !!menu, inside: '#route-place .rc-pop', back: () => null, close: () => { menu = ''; }, paint: draw });
   }
-  if (window.RailFirstRun) data.features = [];   // the first run: nothing added yet
-  window.RailPlaces = window.RailPlaces || {};
-  window.RailPlaces.requirements = { search: (q) => data.features.filter((f) => `${f.id} ${f.title}`.toLowerCase().includes(q)).map((f) => ({ label: f.title, where: `Feature · ${f.project}`, hash: `requirements/${f.id}` })), has: (a) => data.features.some((f) => f.id === a), sample: 'FEAT-2', newLabel: 'Shape a feature', newAct: () => window.RailConversation?.starter('pin:Shaper'),
+  if (window.StillhetFirstRun) data.features = [];   // the first run: nothing added yet
+  window.StillhetPlaces = window.StillhetPlaces || {};
+  window.StillhetPlaces.requirements = { search: (q) => data.features.filter((f) => `${f.id} ${f.title}`.toLowerCase().includes(q)).map((f) => ({ label: f.title, where: `Feature · ${f.project}`, hash: `requirements/${f.id}` })), has: (a) => data.features.some((f) => f.id === a), sample: 'FEAT-2', newLabel: 'Shape a feature', newAct: () => window.StillhetConversation?.starter('pin:Shaper'),
     show: ({ bar: b, page: pg, arg }) => { if (b !== bar) wire(b, pg); if (current !== arg) menu = ''; current = arg || ''; draw(); } };
 })();

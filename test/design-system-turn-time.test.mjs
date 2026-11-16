@@ -10,7 +10,7 @@ import { turnTimeText, turnTime, youTurn, icon } from '../ui/public/design-syste
 const NOW = new Date(2026, 10, 12, 15, 0).getTime();
 const at = (mo, d, h, m, y = 2026) => new Date(y, mo, d, h, m).getTime();
 const dom = (html) => new JSDOM(`<body>${html}</body>`).window.document.body;
-const CSS = readFileSync(new URL('../ui/public/stillhet/css/rail.css', import.meta.url), 'utf8');
+const CSS = readFileSync(new URL('../ui/public/stillhet/css/stillhet.css', import.meta.url), 'utf8');
 
 test('turnTimeText: today reads as its time, a later time today too', () => {
   assert.equal(turnTimeText(at(10, 12, 14, 32), NOW), '14:32');

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// tools/stillhet-gates.mjs — runs the six prototype gates against the running app (docs/rail/gate.md). A sandbox app is started
-// with `rail` on, each gate opens it through STILLHET_TARGET (plans/rail/prototype/gates/target.mjs), and what a gate reports is
+// tools/stillhet-gates.mjs — runs the six prototype gates against the running app (docs/stillhet/gate.md). A sandbox app is started
+// with `stillhet` on, each gate opens it through STILLHET_TARGET (plans/stillhet/prototype/gates/target.mjs), and what a gate reports is
 // compared with test/fixtures/stillhet-gate-baselines.json. The baseline can only shrink: a finding outside it fails, and an
 // entry the gate no longer reports also fails (delete it), so it cannot go stale or be raised without a visible edit.
 //   npm run stillhet:gates [-- --only ds-check,click-check] [--workers N] [--units-json FILE]
@@ -42,7 +42,7 @@ export const launchFailure = (output) => output.split('\n').find((l) => /Executa
 
 const runGate = (gate, env, args = []) => new Promise((resolve) => {
   let out = '';
-  const c = spawn(process.execPath, [join(ROOT, 'plans/rail/prototype/gates', gate + '.mjs'), ...args], { cwd: ROOT, env: { ...process.env, ...env, FORCE_COLOR: '0' } });
+  const c = spawn(process.execPath, [join(ROOT, 'plans/stillhet/prototype/gates', gate + '.mjs'), ...args], { cwd: ROOT, env: { ...process.env, ...env, FORCE_COLOR: '0' } });
   c.stdout.on('data', (d) => { out += d; }); c.stderr.on('data', (d) => { out += d; });
   c.on('close', (code) => resolve({ code, out }));
 });
@@ -64,7 +64,7 @@ export async function main(argv = process.argv.slice(2), deps = {}) {
   await (deps.build || (async () => (await import('./stillhet-build.mjs')).buildStillhet()))();
   const chrome = launchOptions().executablePath;   // the compare's Chrome; colour-check and handover-check read CHROME, the rest launch channel 'chrome'
   const home = await mkdtemp(join(tmpdir(), 'stillhet-gates-'));
-  const app = await (deps.startApp || startApp)(home, { WORCA_STILLHET_DEMO: '1' }, { lockRail: true });   // demo data (D3); locked, so no gate's click turns it off
+  const app = await (deps.startApp || startApp)(home, { WORCA_STILLHET_DEMO: '1' }, { lockStillhet: true });   // demo data (D3); locked, so no gate's click turns it off
   let code = 0;
   try {
     for (const gate of gates) {

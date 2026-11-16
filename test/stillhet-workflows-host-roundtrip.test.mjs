@@ -15,7 +15,7 @@ const shape = (t) => ({ nodes: t.nodes.map((n) => [n.kind, n.key ?? null]).sort(
 const file = (name, text) => ({ name, text: async () => text });
 
 before(async () => {
-  srv = await startServer({ flags: 'rail' });
+  srv = await startServer({ flags: 'stillhet' });
   const { id, origin, createdAt, updatedAt, archivedAt, ...body } = wfTemplate('wf_mine');
   const r = await fetch(`${srv.base}/api/workflows`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, id: 'wf_mine' }) });
   assert.equal(r.status, 201, await r.text());

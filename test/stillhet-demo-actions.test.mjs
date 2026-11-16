@@ -21,7 +21,7 @@ test('"Would" appears in no Stillhet source file but demo/demo-actions.js', () =
   assert.deepEqual(hits, ['demo/demo-actions.js']);
 });
 
-test('no Stillhet source fakes an action with "(not in this prototype)": it asks window.RailWould instead', () => {
+test('no Stillhet source fakes an action with "(not in this prototype)": it asks window.StillhetWould instead', () => {
   const hits = walk(ROOT)
     .filter((p) => /\.(js|mjs|html)$/.test(p) && !GENERATED.has(path.relative(ROOT, p)) && !p.endsWith('demo-actions.js'))
     .filter((p) => /not in this prototype/.test(readFileSync(p, 'utf8')))

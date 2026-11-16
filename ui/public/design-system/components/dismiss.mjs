@@ -1,4 +1,4 @@
-// What lies over a page and how it goes (docs/rail/panels.md): one registry per document, so every menu, picker, popover,
+// What lies over a page and how it goes (docs/stillhet/panels.md): one registry per document, so every menu, picker, popover,
 // flyout, panel, search result, editor and Dialog closes the same way. A page says when a layer is open, what counts as
 // inside it, and how to close it; a click outside or Esc does the rest.
 const NEVER_OUTSIDE = '.rc-toast, .toasts, .keys-modal';   // a notice, the keys' sheet

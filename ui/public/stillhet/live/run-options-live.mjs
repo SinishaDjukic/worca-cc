@@ -1,4 +1,4 @@
-// ui/public/stillhet/live/run-options-live.mjs — New task's and the proposal's run options (COV-2, docs/rail/forms.md
+// ui/public/stillhet/live/run-options-live.mjs — New task's and the proposal's run options (COV-2, docs/stillhet/forms.md
 // form.run-options): every read and write classic's New run makes for its saved defaults, a workflow's defaults, presets,
 // a ticket source and the team policy notes, on dev's own routes, through the shared action runner (D13). The pure helpers
 // turn dev's answers into what the page draws, in classic's words (app.js, branch-sync.mjs, source-pane.mjs,

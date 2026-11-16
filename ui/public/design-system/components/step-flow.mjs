@@ -1,4 +1,4 @@
-// How a step runs (docs/rail/actions.md): it opens its Dialog if it needs fields, asks in the strip if others will see it
+// How a step runs (docs/stillhet/actions.md): it opens its Dialog if it needs fields, asks in the strip if others will see it
 // or it cannot be taken back, then its button says what is happening, and either the thing moves on or the place you
 // acted says what failed and why. One flow on every page. Pure: a page gives it hooks and draws what they set.
 

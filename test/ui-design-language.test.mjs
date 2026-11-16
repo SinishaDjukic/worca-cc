@@ -75,7 +75,7 @@ test('the one button: 32px default, 28px small, 40px large, 40px minimum under a
   }
 });
 
-const SKIP_DIRS = new Set(['node_modules', 'vendor', 'fonts', 'assets', 'stillhet']);   // stillhet: the prototype's code, moved from plans/rail/prototype/ (never read by this scan); it has its own gates (docs/rail/gate.md)
+const SKIP_DIRS = new Set(['node_modules', 'vendor', 'fonts', 'assets', 'stillhet']);   // stillhet: the prototype's code, moved from plans/stillhet/prototype/ (never read by this scan); it has its own gates (docs/stillhet/gate.md)
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
     if (SKIP_DIRS.has(name)) continue;
@@ -341,7 +341,7 @@ const OFF_SCALE = [26, 31, 34, 36, 43, 44, 55, 78];
 const CONTROL_WORD = /^(?:tab|tabs|seg|btn|chip|preset|act|folder|switch|button)$/;
 // Rows, not controls (spec §1.2): allowed at their own height. Each entry names its reason.
 const ROW_OK = ['.act-srow'];                          // activity list row, 26px dense row (spec §3.1)
-// The Stillhet switch's top-bar icon: a 20px glyph in a 36px box, as docs/rail/navigation.md `nav.design-switch` says (owner-approved mock, #1289)
+// The Stillhet switch's top-bar icon: a 20px glyph in a 36px box, as docs/stillhet/navigation.md `nav.design-switch` says (owner-approved mock, #1289)
 ROW_OK.push('[data-stillhet="design-switch"]');
 // Ticket updates' phone targets, 36px chips and 44px controls (ticket-updates board 6): only inside its phone @media block, so an off-scale desktop height is still caught
 const rowOk = (r, s) => ROW_OK.some((ok) => s.includes(ok)) || (!!r.media && /max-width:\s*600px/.test(r.media) && /\.mk-tu/.test(s));

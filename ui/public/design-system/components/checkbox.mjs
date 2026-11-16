@@ -1,4 +1,4 @@
-// Checkbox (docs/rail/components.md): picking items from a list, an opt-out, a consent.
+// Checkbox (docs/stillhet/components.md): picking items from a list, an opt-out, a consent.
 import { esc, attrs, cls } from './html.mjs';
 
 /**

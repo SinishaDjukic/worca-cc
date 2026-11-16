@@ -1,4 +1,4 @@
-// A center's parts (docs/rail/panels.md › panel.center, panel.center-shelf): what Tasks, Schedules and Projects share, so a card
+// A center's parts (docs/stillhet/panels.md › panel.center, panel.center-shelf): what Tasks, Schedules and Projects share, so a card
 // says a task the same way on each. A page says what each thing is; the words and the drawing are here.
 import { attrs, esc } from './html.mjs';
 import { button } from './button.mjs';
@@ -26,7 +26,7 @@ export function taskClause({ state, name, detail = '' }) {
 }
 
 /**
- * A card's actions for the tasks that wait, named when two do; only a Warning's is filled (rail.one-action).
+ * A card's actions for the tasks that wait, named when two do; only a Warning's is filled (stillhet.one-action).
  * @param {{id:string, title:string, short?:string, state:string}[]} tasks  at most two are drawn
  * @returns {string} Buttons, each `data-c-act="does|id"`
  */

@@ -1,5 +1,5 @@
-// ui/public/stillhet/shell/old-addresses.js — dev's old addresses with Stillhet on (docs/rail/navigation.md nav.old-address,
-// plans/rail/stillhet-wiring.md Moves). One table for the app and the prototype: window.RailOldAddresses = { TABLE,
+// ui/public/stillhet/shell/old-addresses.js — dev's old addresses with Stillhet on (docs/stillhet/navigation.md nav.old-address,
+// plans/stillhet/stillhet-wiring.md Moves). One table for the app and the prototype: window.StillhetOldAddresses = { TABLE,
 // resolve(hash) }. resolve answers null for every Stillhet address, else { hash, pulse }: where the thing lives now, and a
 // Pulse tab to open there ('' for none). shell.js route() asks it first and replaces the address in place, so Back never
 // loops. Dev's own router (app.js MOVED_ROUTES) is untouched; with Stillhet off these addresses stay dev's.
@@ -55,7 +55,7 @@
     return 'projects/' + segs[0];
   }
   var dec = function (x) { try { return decodeURIComponent(x); } catch (e) { return x; } };
-  var workflowsHas = function (a) { var w = typeof window !== 'undefined' && window.RailPlaces && window.RailPlaces.workflows; return !!(w && w.has && w.has(a)); };
+  var workflowsHas = function (a) { var w = typeof window !== 'undefined' && window.StillhetPlaces && window.StillhetPlaces.workflows; return !!(w && w.has && w.has(a)); };
 
   /** null, or { hash: '#…', pulse: '' | 'now' }. `has` asks Workflows whether it has a way (default: the page's own). */
   function resolve(hash, opts) {
@@ -81,6 +81,6 @@
     return null;
   }
   var api = { TABLE: TABLE, resolve: resolve };
-  if (typeof window !== 'undefined') window.RailOldAddresses = api;
+  if (typeof window !== 'undefined') window.StillhetOldAddresses = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;   // test/stillhet-old-addresses.test.mjs reads it
 })();

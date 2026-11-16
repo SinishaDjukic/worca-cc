@@ -1,4 +1,4 @@
-// What a row is and how it stands, in one mark (docs/rail/lists.md, docs/rail/look.md): the type's icon, inside one smooth
+// What a row is and how it stands, in one mark (docs/stillhet/lists.md, docs/stillhet/look.md): the type's icon, inside one smooth
 // ring in its level's colour (look.alert-ladder). The dot and the icon are one thing: while work happens the whole mark
 // breathes. A task's centre shows its state; a failure is filled; merged is the branch in full ink, with no ring.
 import { attrs, esc } from './html.mjs';
@@ -280,7 +280,7 @@ export function taskCard({ title, place = '', mark, word, detail = '', action = 
 /**
  * PlaceHead: the head of a thing's own page (a schedule, a project, a workflow, a feature, a workspace): its title, its
  * facts on one line (words and SentencePickers), then its state on the cards' rail: its KindMark, the state word with one
- * line why, its one action and its ⋯. Never a box, never a second title (docs/rail/panels.md › panel.place-head).
+ * line why, its one action and its ⋯. Never a box, never a second title (docs/stillhet/panels.md › panel.place-head).
  * @param {object} o
  * @param {string} o.title
  * @param {string} [o.facts]   markup: escaped words, SentencePickers, chips
@@ -302,7 +302,7 @@ export function placeHead({ title, facts = '', mark = '', word = '', why = '', a
  * PluginCard: one plugin in the Marketplace, on the cards' rail like a task card in a chat: no box, its brand as the mark
  * (a generic plug without one), its kind and version as the kicker (an update in its colour), its name, one line on what
  * it does, Worca's reason when it suggests it, one line of facts (what it adds, what it asks for), one action and What it
- * asks for (docs/rail/panels.md › panel.plugin-card).
+ * asks for (docs/stillhet/panels.md › panel.plugin-card).
  * @param {object} o
  * @param {string} o.mark     its KindMark
  * @param {string} o.kicker   "Chat channel · 0.2.0"
@@ -517,7 +517,7 @@ export function stagePart({ label, says = '', open = false, attrs: a = {} }) {
 }
 
 /**
- * StageBar (look.stage-line): a thing's main stages on a card as one line, Rail's own: a knot at each stage, filled when
+ * StageBar (look.stage-line): a thing's main stages on a card as one line, Stillhet's own: a knot at each stage, filled when
  * done; the stage it is on holds its steps as short notches, done ones solid, the one now breathing, the rest waiting,
  * and its name carries the count (Review 2 of 3). The state's colour marks only the stage it is on (a failed Build is
  * red, the Plan before it is not); done and merged are ink all along.
@@ -530,7 +530,7 @@ export function stagePart({ label, says = '', open = false, attrs: a = {} }) {
 /** The step a detail names ("Review · step 2 of 3"), for a StageBar: [2, 3], or null. */
 export const stageStep = (detail) => { const m = /step (\d+) of (\d+)/.exec(String(detail || '')); return m ? [+m[1], +m[2]] : null; };
 
-export function stageBar({ labels, stage, tone = 'run', step = null, bare = false, key = '' }) {   // key: the thing it belongs to, so its advance plays once (motion.stage-advance)   // bare: the line alone, where a stage list under it names them (rail.one-place)
+export function stageBar({ labels, stage, tone = 'run', step = null, bare = false, key = '' }) {   // key: the thing it belongs to, so its advance plays once (motion.stage-advance)   // bare: the line alone, where a stage list under it names them (stillhet.one-place)
   const n = labels.length, whole = tone === 'ok' || tone === 'done' || tone === 'merged';   // done and merged are ink all along; a failure, a question, a pause only where it is
   const at = (i) => (i / n) * 100, W = 100 / n, live = !whole && stage >= 0 && stage < n;
   const [k, m] = live && step && step[1] > 1 ? step : [0, 0];
@@ -540,7 +540,7 @@ export function stageBar({ labels, stage, tone = 'run', step = null, bare = fals
 }
 
 /**
- * What another place handed to Chat, in the composer: its kind and name, removable (rail.hand-to-chat).
+ * What another place handed to Chat, in the composer: its kind and name, removable (stillhet.hand-to-chat).
  * @param {object} o
  * @param {string} o.kind   Workflow, Project, Page…
  * @param {string} o.name

@@ -1,11 +1,11 @@
-// test/stillhet-findings-ledger.test.mjs — plans/rail/findings.md keeps one shape (D14 of the feature 1 final check): every
+// test/stillhet-findings-ledger.test.mjs — plans/stillhet/findings.md keeps one shape (D14 of the feature 1 final check): every
 // Open row has a named owner from a fixed list, every Closed row names a PR or a reason, and no row the final check fixed is
 // still Open.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const doc = readFileSync(new URL('../plans/rail/findings.md', import.meta.url), 'utf8');
+const doc = readFileSync(new URL('../plans/stillhet/findings.md', import.meta.url), 'utf8');
 const OWNERS = ['feature 3', 'Projects slice', 'final cleanup PR', 'owner decision', 'dev PR (owner to open the issue)', 'feature 2 final check', 'B4.10'];
 /** The rows of the table under `## title`: each a list of its cells. */
 function rows(title) {

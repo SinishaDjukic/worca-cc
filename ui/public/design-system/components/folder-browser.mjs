@@ -1,4 +1,4 @@
-// FolderBrowser (docs/rail/components.md): picking one folder, or several, on this computer. A Dialog that lists the
+// FolderBrowser (docs/stillhet/components.md): picking one folder, or several, on this computer. A Dialog that lists the
 // folders under one path (GET /api/fs/dirs); its helpers: a folder's name (folderName), the probe line under a typed
 // path (folderProbe, classic's detectModel rules) and the review list of picked folders (folderReview).
 import { attrs, esc } from './html.mjs';

@@ -1,4 +1,4 @@
-// test/design-system-search-two-lines.test.mjs — gate G F-W3a1-10 (docs/rail/components.md Search): a top-bar hit for a
+// test/design-system-search-two-lines.test.mjs — gate G F-W3a1-10 (docs/stillhet/components.md Search): a top-bar hit for a
 // Settings home not in Stillhet yet ("network proxy", "machine load") carries a long where line ("… · Not in Stillhet
 // yet: turn Stillhet off …"). On one line the where took the row, the name collapsed to 0–7px and drew over it, and the
 // where ran past the popover at 1280 and 390. The rule: a result is its name on one line and where it lives on the line
@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const css = readFileSync('ui/public/stillhet/css/rail.css', 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+const css = readFileSync('ui/public/stillhet/css/stillhet.css', 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
 const last = (sel, prop) => {
   let hit = null;
   for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {

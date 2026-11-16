@@ -7,9 +7,9 @@ import { DISABLED_OK, RUN_STATE, SOURCES, THREAD, clone, go, liveHost, menuPick,
 afterEach(closeHosts);   // each test's window closes when the test ends
 test('chatOfTask: the starting chat for a started run, none for a run a chat only follows (R-qa-9)', async () => {
   const { w } = await liveHost();
-  assert.equal(w.RailConversation.chatOfTask({ run: 'run-a' }), 'ask_1');
-  assert.equal(w.RailConversation.chatOfTask({ run: 'run-b' }), '', 'ask_2 only follows run-b');
-  assert.equal(typeof w.RailChatLive.act, 'function');
+  assert.equal(w.StillhetConversation.chatOfTask({ run: 'run-a' }), 'ask_1');
+  assert.equal(w.StillhetConversation.chatOfTask({ run: 'run-b' }), '', 'ask_2 only follows run-b');
+  assert.equal(typeof w.StillhetChatLive.act, 'function');
 });
 
 test('a conversation: loading until the thread answers, then its turns; a 404 is gone; a 500 failed with Try again', async () => {
@@ -62,7 +62,7 @@ test('a row action refused (pin): one toast naming it, the list and store unchan
   assert.deepEqual(calls.filter((c) => c.method !== 'GET').map((c) => [c.method, c.url, c.body]), [['PATCH', '/api/ask/threads/ask_1', { pinned: false }]], 'ask_1 is pinned: the action unpins it');
   assert.equal(toastText(d), 'Could not pin the chat: chat is busy');
   assert.deepEqual(store(w), before);
-  assert.ok(!toastText(d).includes(w.RailAdapter.NOT_CONNECTED));
+  assert.ok(!toastText(d).includes(w.StillhetAdapter.NOT_CONNECTED));
 });
 
 test('the walk over the Chat control set (conversation, Chat home, the bar\'s chat column and their open menus) never says "Not connected" or "Would", and no control is disabled outside DISABLED_OK (R-qa-11)', async () => {
@@ -71,7 +71,7 @@ test('the walk over the Chat control set (conversation, Chat home, the bar\'s ch
     await go(w, hash);
     const { n, seen, disabled } = await walk(w, d, root);
     assert.ok(n > 3, `${hash} ${root}: ${n} controls`);
-    assert.ok(!seen.some((t) => t.includes(w.RailAdapter.NOT_CONNECTED)), `${hash} ${root}: no Not connected`);
+    assert.ok(!seen.some((t) => t.includes(w.StillhetAdapter.NOT_CONNECTED)), `${hash} ${root}: no Not connected`);
     assert.ok(!seen.some((t) => /^Would/.test(t)), `${hash} ${root}: no Would`);
     const stray = disabled.filter((html) => !Object.keys(DISABLED_OK).some((sel) => { const box = d.createElement('div'); box.innerHTML = html.replace(/>.*$/s, '>') + '</button>'; return box.firstElementChild?.matches(sel); }));
     assert.deepEqual(stray, [], `${hash} ${root}: disabled outside DISABLED_OK`);
@@ -97,7 +97,7 @@ test('a bulk archive with 2 of 5 chats refused: one toast with the count and the
 test('a task opened from the bar lands on its chat with its card focused, also when the thread is still loading', async () => {
   let release; const gate = new Promise((r) => { release = r; });
   const { w, d } = await liveHost({ thread: async () => { await gate; return [200, THREAD]; } });
-  w.RailConversation.openTask('ask_1', 'run-a');
+  w.StillhetConversation.openTask('ask_1', 'run-a');
   await settle(20);
   assert.equal(w.location.hash, '#chat/ask_1');
   release(); await settle(80);

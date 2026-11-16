@@ -1,4 +1,4 @@
-// WorkspaceBoxes and WorkspaceMap (docs/rail/panels.md › panel.workspace-map): how your projects fit together. Each workspace
+// WorkspaceBoxes and WorkspaceMap (docs/stillhet/panels.md › panel.workspace-map): how your projects fit together. Each workspace
 // is one box saying only what is wrong or running; one opens in place, its projects drawn by who uses whom, the others
 // staying boxes beside it. It holds at any size: boxes grow with workspaces, not projects, and a project in two says so.
 import { attrs, cls, esc } from './html.mjs';

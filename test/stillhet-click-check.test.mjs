@@ -1,4 +1,4 @@
-// test/stillhet-click-check.test.mjs — the pure parts of plans/rail/prototype/gates/click-check.mjs: its units, their merge and
+// test/stillhet-click-check.test.mjs — the pure parts of plans/stillhet/prototype/gates/click-check.mjs: its units, their merge and
 // report, the settle step, and its worker processes on the shared pool (tools/stillhet-compare.mjs runPool).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -6,13 +6,13 @@ import { readFileSync, statSync, existsSync } from 'node:fs';
 
 const CSS = new URL('../ui/public/stillhet/app.css', import.meta.url);
 const cssBefore = existsSync(CSS) ? statSync(CSS).mtimeMs : null;
-const cc = await import('../plans/rail/prototype/gates/click-check.mjs');
+const cc = await import('../plans/stillhet/prototype/gates/click-check.mjs');
 const { runPool, finishRun } = await import('../tools/stillhet-compare.mjs');
 const { listUnits, unitWhere, mergeUnits, formatReport, settledSignature, childWorkers, SETTLE, CLICK_TIMEOUT_MS } = cc;
 
 test('importing the module builds nothing and launches no browser (playwright is loaded only inside main)', () => {
   assert.equal(existsSync(CSS) ? statSync(CSS).mtimeMs : null, cssBefore);
-  const src = readFileSync(new URL('../plans/rail/prototype/gates/click-check.mjs', import.meta.url), 'utf8');
+  const src = readFileSync(new URL('../plans/stillhet/prototype/gates/click-check.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(src, /^import [^;]*from 'playwright'/m);
   assert.equal(CLICK_TIMEOUT_MS, 900000);
   assert.deepEqual(SETTLE, { frames: 2, pollMs: 25, maxMs: 250 });

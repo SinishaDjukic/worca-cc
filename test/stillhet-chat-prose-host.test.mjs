@@ -96,13 +96,13 @@ test('a loader that fails leaves today\'s plain words', async (t) => {
   assert.match(p.innerHTML, /^It is \*\*done\*\*<br>next$/);
 });
 
-test('a pipe table is the Rail Table', async (t) => {
+test('a pipe table is the Stillhet Table', async (t) => {
   const { q } = await open(t, '| a | b |\n|---|---|\n| 1 | 2 |');
   await rendered(q);
   assert.ok(q('.convo-words .prose div.rt-wrap > table.rt td.rt-c'));
 });
 
-test('a ## heading is an h2 inside .prose, with no class of its own (calm by rail.css)', async (t) => {
+test('a ## heading is an h2 inside .prose, with no class of its own (calm by stillhet.css)', async (t) => {
   const { q } = await open(t, '## Heading\n\nBody');
   await rendered(q);
   const h = q('.convo-words .prose h2');
@@ -127,7 +127,7 @@ test('a PR written as a markdown link that dev confirms is a RefChip in place of
   assert.equal(q('.convo-words .prose a'), null, 'no link left beside it');
 });
 
-test('demo: the seeded markdown reply renders a list, a code block and a Rail table; other demo words keep their inline HTML', async (t) => {
+test('demo: the seeded markdown reply renders a list, a code block and a Stillhet table; other demo words keep their inline HTML', async (t) => {
   const w = stillhetHost({ adapter: 'demo', hash: '#chat/c11', after: (fn) => t.after(fn), beforeScripts: hook() });
   const d = w.document, p = await until(() => d.querySelector(`#route-chat ${LOADED}`), 15000).catch(() => null);
   assert.ok(p, 'the seeded reply is rendered');

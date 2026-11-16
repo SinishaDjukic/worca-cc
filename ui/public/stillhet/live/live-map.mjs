@@ -205,7 +205,7 @@ function chatTasks(threadId, links, tasks, livePids = new Map(), featureIds = ne
   return out;
 }
 // A schedule made from the chat (its `askThreadId`, scheduleOf's `chat`) is the chat's schedule task, as chats-model.js's
-// are; its card reads its word and why from RailSchedules
+// are; its card reads its word and why from StillhetSchedules
 const chatSchedules = (threadId, schedules) => arr(schedules).filter((s) => s && s.chat && s.chat === threadId).map((s) => ({ id: s.id, kind: 'schedule', title: s.title, time: s.time, detail: s.every }));
 /** The chat that started a run, by its run id or pipeline id: the first started link (the route answers oldest first);
  *  '' for a run a chat only follows or no chat linked. */

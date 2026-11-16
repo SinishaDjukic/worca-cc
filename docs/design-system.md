@@ -4,9 +4,9 @@ The one reference for how Worca looks. Every screen follows it; `test/ui-design-
 `tools/button-audit.mjs` enforce the rules marked (checked). When the guide and the code disagree, fix one of them in
 the same commit.
 
-## Worca Rail
+## Stillhet
 
-The rules of the redesign live in [`docs/rail/`](rail/README.md), one concern per file. What follows here is what today's app keeps until each page moves to Rail.
+The rules of the redesign live in [`docs/stillhet/`](rail/README.md), one concern per file. What follows here is what today's app keeps until each page moves to Stillhet.
 
 ## Foundations
 
@@ -23,8 +23,8 @@ a `color-mix()` recipe used twice is a named token (`--btn-hover`, `--red-tint`,
 | violet | `--violet*` | Labs only (the merged status dot, the merged run orb and the run page route's merged circle `.rd-route-dot.is-merged` and merged words `.rd-fact-tx.is-merged` are the named exceptions; the Marketplace chat kind tile and dot follow its kind colours, › Marketplace exceptions) | sources, "Official", policy, a badge, a chart series |
 | slate | `--slate*` | neutral metadata: a source, "Official", policy (`.badge.slate`) | a state |
 Status-dot exceptions: peach = working (it pulses), violet = merged. They are the dots only, never a badge.
-Working and needs you must read as two states at dot size. The Rail look makes `--peach` a warm yellow apart from
-`--amber` (› The Rail look); it arrives with Wave 1 behind the `rail` flag, and today's `--peach` stays one orange.
+Working and needs you must read as two states at dot size. The Stillhet look makes `--peach` a warm yellow apart from
+`--amber` (› The Stillhet look); it arrives with Wave 1 behind the `stillhet` flag, and today's `--peach` stays one orange.
 Surfaces: `--panel` page, `--surface` raised, `--field` field and tint fill; `--line` dividers, `--line-2` control borders.
 `--row-selected` is `--ink` at 8% over transparent (no new hue): the selected Runs row, one ink step over whatever it
 sits on, so it reads on the panel and on the Needs-you amber tint alike. Its PR chips take the `-ink-strong` shades to
@@ -437,7 +437,7 @@ catalogue structure that was approved, drawn with this system's tokens:
 - Browse is a tile grid: one bordered `.mk-tile` button per plugin, 270px minimum, 16px padding, no shadow at rest or on
   hover. Every other list on the page stays divided rows, except the Marketplaces tab: one `.card.mk-mkt` per
   marketplace (board 4.1), with 16px 20px padding.
-- A page-scoped "Search plugins" field and a facet rail sit beside the grid. Rail rows (`.mk-facet`) are 32px rows with a
+- A page-scoped "Search plugins" field and a facet rail sit beside the grid. Stillhet rows (`.mk-facet`) are 32px rows with a
   count and `aria-pressed`, the selected one on the `--panel` fill; they are not filter chips.
 - No page intro: the tabs (Browse · Installed · Marketplaces, each with a count) are the header.
 - Centred empty states: a 56px tile, a 15px title, at most one meta line and one action (or the inline add field).

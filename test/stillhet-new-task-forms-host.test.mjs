@@ -16,7 +16,7 @@ const items = async (d) => {
   return got;
 };
 const shown = (d) => d.querySelector('#center-dlg [data-menu="f-project"]').textContent.trim();
-const openTask = async (w) => { w.RailCenters.maker('tasks').newPick('form'); await settle(60); };
+const openTask = async (w) => { w.StillhetCenters.maker('tasks').newPick('form'); await settle(60); };
 const type = (w, d, sel, v) => { const t = d.querySelector(sel); t.value = v; t.dispatchEvent(new w.Event('input', { bubbles: true })); };
 const yes = async (d) => { d.querySelector('#center-dlg [data-dialog="yes"]').click(); await settle(100); };
 // no live runs; the newest saved task (pa) is in `old`, a project dev no longer lists
@@ -35,7 +35,7 @@ test('New task survives a full #app redraw: text, focus, then Escape still close
   const { w, d } = await liveHost({ sources: clone(SOURCES) });
   await go(w, '#runs', 120);
   const dlg = await typedTask(w, d);
-  w.RailPulse.refresh(); await settle(40);
+  w.StillhetPulse.refresh(); await settle(40);
   assert.ok(dlg.isConnected, 'the same dialog is still on screen');
   assert.equal(d.querySelector('#center-dlg .viewer-modal'), dlg);
   assert.equal(d.querySelector('#cc-text').value, 'Add a pager');
@@ -58,10 +58,10 @@ test('a pipelines-changed frame on live data keeps the open form (F-a4-02, F-gb2
 test('New schedule survives a redraw: the name stays (F-a4-02, F-gb2-01)', async () => {
   const { w, d } = await liveHost({ sources: clone(SOURCES) });
   await go(w, '#runs', 120);
-  w.RailCenters.maker('schedules').newPick('form'); await settle(60);
+  w.StillhetCenters.maker('schedules').newPick('form'); await settle(60);
   type(w, d, '#cc-name', 'Nightly pager'); d.querySelector('#cc-name').focus();
   const dlg = d.querySelector('#center-dlg .viewer-modal');
-  w.RailPulse.refresh(); await settle(40);
+  w.StillhetPulse.refresh(); await settle(40);
   assert.ok(dlg.isConnected);
   assert.equal(d.querySelector('#cc-name').value, 'Nightly pager');
   assert.equal(d.activeElement?.id, 'cc-name');
@@ -72,7 +72,7 @@ test('a focused picker inside the form keeps the focus across a redraw (F-a4-02,
   await go(w, '#runs', 120);
   await openTask(w);
   const pick = d.querySelector('#center-dlg [data-menu="f-project"]'); pick.focus();
-  w.RailPulse.refresh(); await settle(40);
+  w.StillhetPulse.refresh(); await settle(40);
   assert.equal(d.activeElement, pick, 'the picker keeps the focus');
 });
 
@@ -94,7 +94,7 @@ test('+ › New task… right after boot opens at once while live data loads; th
   const host = d.getElementById('center-dlg');
   assert.equal(host.parentElement, d.body, 'a direct child of body');
   assert.equal(d.getElementById('app').contains(host), false, 'not inside #app');
-  assert.ok(host.classList.contains('pz-app') && host.classList.contains('rail-page'));
+  assert.ok(host.classList.contains('pz-app') && host.classList.contains('stillhet-page'));
   key(w, d.querySelector('#cc-text'), 'Escape'); await settle(20);
   await openTask(w);
   assert.equal(d.querySelectorAll('#center-dlg').length, 1);
@@ -126,7 +126,7 @@ for (const [hash, root] of [['#schedules', '#bar-schedules'], ['#chat', '#chats-
     const { w, d } = await liveHost({ sources: clone(SOURCES) });
     await go(w, hash, 120);
     assert.ok(d.querySelector(`${root} [data-open]`), 'the list has rows');
-    w.RailCenters.maker('schedules').newPick('form'); await settle(60);
+    w.StillhetCenters.maker('schedules').newPick('form'); await settle(60);
     d.activeElement.blur();
     key(w, d.body, 'ArrowDown'); await settle(20);
     assert.equal(d.activeElement, d.body, 'no row took the focus behind the form');
@@ -141,12 +141,12 @@ test('a route change closes the open form, as the account menu does; a redraw of
   const { w, d } = await liveHost({ sources: clone(SOURCES) });
   await go(w, '#runs', 120);
   const dlg = await typedTask(w, d);
-  w.RailPulse.refresh(); await settle(40);
+  w.StillhetPulse.refresh(); await settle(40);
   assert.ok(dlg.isConnected, 'a redraw of the same page keeps it');
   await go(w, '#schedules', 60);
   assert.equal(d.querySelector('#center-dlg .viewer-modal'), null, 'closed on navigation');
   assert.equal(d.getElementById('center-dlg').children.length, 0, 'the host is left empty');
-  w.RailCenters.maker('schedules').newPick('form'); await settle(60);
+  w.StillhetCenters.maker('schedules').newPick('form'); await settle(60);
   assert.ok(d.querySelector('#center-dlg #cc-name'), 'New schedule opens on the next page');
   await go(w, '#chat', 60);
   assert.equal(d.querySelector('#center-dlg .viewer-modal'), null, 'New schedule closes on navigation too');
@@ -178,7 +178,7 @@ const heldOpen = async () => {
   await go(w, '#runs', 120);
   gate = new Promise((r) => { release = r; });
   const before = calls.length;
-  w.RailCenters.maker('tasks').newPick('form'); await settle(5);
+  w.StillhetCenters.maker('tasks').newPick('form'); await settle(5);
   return { w, d, calls: () => calls.slice(before).map((c) => c.url), release: async () => { gate = null; release(); await settle(150); } };
 };
 
@@ -202,7 +202,7 @@ test('text typed straight after the first open lands in the field once the loads
   const t = d.activeElement;
   assert.equal(t?.id, 'cc-text', 'typing goes to the text field');
   t.value = 'Fix the login'; t.dispatchEvent(new w.Event('input', { bubbles: true }));
-  w.RailPulse.refresh(); await settle(40);
+  w.StillhetPulse.refresh(); await settle(40);
   assert.equal(d.querySelector('#cc-text').value, 'Fix the login');
 });
 
@@ -220,7 +220,7 @@ test('Esc with the focus on body closes the open form; once closed, the page has
   assert.equal(heard, 1, 'with no form open, Esc goes on to the page');
 });
 
-// ---- COV-2 (docs/rail/forms.md form.run-options): the project picker's workspaces and Add project…, drawn in the demo kind ----
+// ---- COV-2 (docs/stillhet/forms.md form.run-options): the project picker's workspaces and Add project…, drawn in the demo kind ----
 const demo = async (o) => { const w = demoTaskHost({ after, ...o }); await settle(60); return { w, d: w.document }; };
 const dq = (d, sel) => d.querySelector(`#center-dlg ${sel}`);
 const dpick = async (d, id, v) => { dq(d, `[data-menu="f-${id}"]`).click(); await settle(20); dq(d, `[data-menu-pick="f-${id}|${v}"]`).click(); await settle(40); };
@@ -230,7 +230,7 @@ test('COV-2 Workspace (demo): the project picker lists the demo workspaces under
   await openTask(w);
   dq(d, '[data-menu="f-project"]').click(); await settle(20);
   assert.ok([...d.querySelectorAll('#center-dlg .menu-h')].some((h) => h.textContent === 'Workspaces'), 'a Workspaces header');
-  const titles = w.RailSpaces.list().map((x) => x.title);
+  const titles = w.StillhetSpaces.list().map((x) => x.title);
   assert.ok(titles.length > 1);
   for (const t of titles) assert.ok(dq(d, `[data-menu-pick="f-project|${t}"]`), `${t} is offered`);
   dq(d, '[data-menu="f-project"]').click(); await settle(20);
@@ -241,12 +241,12 @@ test('COV-2 Workspace (demo): the project picker lists the demo workspaces under
   assert.equal(dq(d, '[data-c-tagsave]'), null, 'a workspace has no project defaults to save');
   assert.equal(dq(d, '[data-menu="f-base"]').textContent.trim(), 'each project\'s own branch');
   dq(d, '[data-dialog="cancel"]').click(); await settle(20);
-  w.RailCenters.newTask({ after: { kind: 'ticket', id: 's-docs', title: 'Nightly docs' } }); await settle(60);
+  w.StillhetCenters.newTask({ after: { kind: 'ticket', id: 's-docs', title: 'Nightly docs' } }); await settle(60);
   await dpick(d, 'project', titles[0]);
   assert.equal(dq(d, '[data-menu="f-base"]').textContent.trim(), 'the task before it\'s branch', 'waiting for a run, its branch stays the base');
 });
 
-test('COV-2 Project name / folder field / Cancel / Save, F-cov1-09 (demo): Add project… shows the name and folder fields; Save is off while empty; Browse… shows the folderBrowser dialog (title Select a folder) and Select this folder fills the path; Save adds the project through RailProjects.add and picks it; Cancel returns with the project picker focused; typing in the name field changes no other field on the page (no document-level listener)', async () => {
+test('COV-2 Project name / folder field / Cancel / Save, F-cov1-09 (demo): Add project… shows the name and folder fields; Save is off while empty; Browse… shows the folderBrowser dialog (title Select a folder) and Select this folder fills the path; Save adds the project through StillhetProjects.add and picks it; Cancel returns with the project picker focused; typing in the name field changes no other field on the page (no document-level listener)', async () => {
   const { w, d } = await demo();
   await openTask(w);
   type(w, d, '#cc-text', 'Add a pager');
@@ -270,7 +270,7 @@ test('COV-2 Project name / folder field / Cancel / Save, F-cov1-09 (demo): Add p
   assert.equal(dq(d, '[data-c-addname]').value, 'notes-app');
   assert.ok(!save().disabled);
   save().click(); await settle(40);
-  assert.deepEqual([...w.RailProjects.list().filter((p) => p.id === 'notes-app').map((p) => p.path)], [path], 'one project list');
+  assert.deepEqual([...w.StillhetProjects.list().filter((p) => p.id === 'notes-app').map((p) => p.path)], [path], 'one project list');
   assert.equal(shown(d), 'notes-app', 'the new project is picked');
   assert.equal(dq(d, '#cc-text').value, 'Add a pager', 'the task is as it was');
   await dpick(d, 'project', '+add');

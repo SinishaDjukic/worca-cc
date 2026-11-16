@@ -1,5 +1,5 @@
-// Commands in a conversation (docs/rail/panels.md › panel.conversation-rail; dev's ask-command-group.mjs and
-// ask-command-card.mjs on Rail's rail): commands run one after another are one group, folded to its head; each command is a
+// Commands in a conversation (docs/stillhet/panels.md › panel.conversation-rail; dev's ask-command-group.mjs and
+// ask-command-card.mjs on Stillhet's rail): commands run one after another are one group, folded to its head; each command is a
 // row with no mark, its words saying how it went (done quiet ink, failed quiet red, running counting); one fold opens the
 // command (with Copy), where it ran (Show in terminal) and its output (with Copy).
 import { attrs, esc } from './html.mjs';

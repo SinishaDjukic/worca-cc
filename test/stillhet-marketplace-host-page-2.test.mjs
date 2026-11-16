@@ -64,7 +64,7 @@ test('fresh install, sync gives 0 plugins: No plugins yet with Sync on Home and 
 
 test('while the set-up form is open, the rows\' Set up buttons are disabled and say why (gate.controls: no dead control)', async () => {
   const w = stillhetHost({ after, hash: '#chat' });
-  w.RailUI.prefs.setMode('expert'); await go(w, '#marketplace/jira-source', 50);
+  w.StillhetUI.prefs.setMode('expert'); await go(w, '#marketplace/jira-source', 50);
   const d = w.document;
   const rows = () => [...d.querySelectorAll('[data-mk-setup]')];
   assert.equal(rows().length, 2);
@@ -84,14 +84,14 @@ test('F-G-G5-05: the side chat on a list names the list, not a plugin; a plugin\
   assert.match(side(), /List · Marketplace/, 'the chip names the list');
   assert.match(side(), /Worca sees this list\./);
   assert.doesNotMatch(side(), /Plugin · Marketplace|this plugin|What would Marketplace add/);
-  assert.equal(w.RailShell.pageContext().kind, 'list');
+  assert.equal(w.StillhetShell.pageContext().kind, 'list');
   await go(w, '#marketplace/~all', 60);
-  assert.equal(w.RailShell.pageContext().kind, 'list', 'a side view is the list too');
+  assert.equal(w.StillhetShell.pageContext().kind, 'list', 'a side view is the list too');
   await go(w, '#marketplace/jira-source', 60);
-  assert.equal(w.RailShell.pageContext().kind, 'plugin', 'a plugin\'s own page is the plugin');
+  assert.equal(w.StillhetShell.pageContext().kind, 'plugin', 'a plugin\'s own page is the plugin');
   // same cause as F-7a-08: the Projects list is no project
   await go(w, '#projects', 60);
-  assert.deepEqual([w.RailShell.pageContext().kind, w.RailShell.pageContext().name, w.RailShell.pageContext().project], ['list', 'Projects', '']);
+  assert.deepEqual([w.StillhetShell.pageContext().kind, w.StillhetShell.pageContext().name, w.StillhetShell.pageContext().project], ['list', 'Projects', '']);
 });
 
 // B5.10: a plugin's own pinned commit, its asks named from the manifest, the lists fresh on each open
@@ -100,7 +100,7 @@ const whereText = (d) => rowsOf(d, 'Where it comes from').map(([, t]) => t).join
 
 test('F-5-15 (demo kind): the Jira page\'s Where it comes from reads pinned … · update available: 42eb305; Slack (not installed) reads the catalogue sha', async () => {
   const w = stillhetHost({ after, hash: '#chat' });
-  w.RailUI.prefs.setMode('expert'); await go(w, '#marketplace/jira-source', 50);
+  w.StillhetUI.prefs.setMode('expert'); await go(w, '#marketplace/jira-source', 50);
   assert.equal(whereText(w.document), 'github.com/SinishaDjukic/worca-cc on dev · pinned c3d9a17 · update available: 42eb305');
   await go(w, '#marketplace/slack-chat', 50);
   assert.equal(whereText(w.document), 'github.com/SinishaDjukic/worca-cc on dev · 42eb305');
@@ -121,7 +121,7 @@ test('F-5-16 / V3-13: What it asks for names each row from the manifest (Jira AP
   assert.deepEqual(rowsOf(d, 'What it asks for'), [['Bot token', 'Secret · botToken'], ['App token', 'Secret · appToken']]);
   assert.ok([...d.querySelectorAll('#route-place .set-text code')].some((c) => c.textContent === 'botToken'), 'the key is the secondary text');
   const demo = stillhetHost({ after, hash: '#chat' });
-  demo.RailUI.prefs.setMode('expert'); await go(demo, '#marketplace/jira-source', 50);
+  demo.StillhetUI.prefs.setMode('expert'); await go(demo, '#marketplace/jira-source', 50);
   assert.deepEqual(rowsOf(demo.document, 'What it asks for').map(([n]) => n), ['Jira API token', 'Jira site'], 'the demo kind names them the same way');
 });
 

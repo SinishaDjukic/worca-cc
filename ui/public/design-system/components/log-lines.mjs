@@ -1,4 +1,4 @@
-// LogLines (docs/rail/components.md): a step's or a run's log. One line per entry: its time, where it came from, its
+// LogLines (docs/stillhet/components.md): a step's or a run's log. One line per entry: its time, where it came from, its
 // words; a warning or an error in its colour. It scrolls by itself; its filters are the sentence above it.
 import { attrs, cls, esc } from './html.mjs';
 

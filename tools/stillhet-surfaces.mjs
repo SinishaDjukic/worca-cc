@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// tools/stillhet-surfaces.mjs — the npm-test half of gate.prototype (docs/rail/gate.md): every Settings key
+// tools/stillhet-surfaces.mjs — the npm-test half of gate.prototype (docs/stillhet/gate.md): every Settings key
 // (test/fixtures/settings-api-keys.json, pinned to GET /api/settings by test/settings-projects-root.test.mjs) and every
-// path today's UI fetches has a row under `## Dev surfaces` in plans/rail/stillhet-wiring.md, or sits in the frozen
-// baseline test/fixtures/stillhet-surfaces-baseline.json, which only shrinks (like tools/rail-gate.mjs).
+// path today's UI fetches has a row under `## Dev surfaces` in plans/stillhet/stillhet-wiring.md, or sits in the frozen
+// baseline test/fixtures/stillhet-surfaces-baseline.json, which only shrinks (like tools/stillhet-library-gate.mjs).
 // Ids: `setting › KEY`, `route › /api/path/:param`. Stillhet's own fetches (ui/public/stillhet/) have Action rows instead.
 //   node tools/stillhet-surfaces.mjs            what has no row against the baseline; exit 1 on a new one or a bad row
 //   node tools/stillhet-surfaces.mjs --list     every id
@@ -15,7 +15,7 @@ import { SURFACE_STATUS, surfaceRows } from './stillhet-wiring.mjs';
 export const ROOT = fileURLToPath(new URL('..', import.meta.url));
 export const BASELINE = join(ROOT, 'test/fixtures/stillhet-surfaces-baseline.json');
 export const SETTINGS_KEYS = join(ROOT, 'test/fixtures/settings-api-keys.json');
-const WIRING = 'plans/rail/stillhet-wiring.md';
+const WIRING = 'plans/stillhet/stillhet-wiring.md';
 const EXT = /\.(mjs|js|html)$/;
 
 /** Today's UI: ui/public/ except Stillhet (built side) and the design-system library. */
@@ -129,7 +129,7 @@ export function main(argv = process.argv.slice(2), { root = ROOT, baseline = BAS
     }
     const r = nextBaseline(ids, doc, JSON.parse(readFileSync(baseline, 'utf8')));
     if (!r.ok) {
-      out.log('Refused: the baseline only shrinks. Add a row under "## Dev surfaces" in plans/rail/stillhet-wiring.md for:');
+      out.log('Refused: the baseline only shrinks. Add a row under "## Dev surfaces" in plans/stillhet/stillhet-wiring.md for:');
       for (const id of r.added) out.log('  ' + id);
       return 1;
     }

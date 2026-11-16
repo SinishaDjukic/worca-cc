@@ -1,4 +1,4 @@
-// Menus keep inside what shows them (docs/rail/small-rules.md › Menus): a menu opens under what opened it, and above when
+// Menus keep inside what shows them (docs/stillhet/small-rules.md › Menus): a menu opens under what opened it, and above when
 // there is no room under it and more room above; it slides sideways to stay inside, and taller than its room it scrolls
 // inside. "Inside" is the window and every box around it that clips (a sidebar, a scrolling list). A page draws its menus
 // as it always did; one watcher places them all.
@@ -60,7 +60,7 @@ export function watchMenus(doc) {
   win.addEventListener('click', (e) => {
     const off = e.target.closest?.('.menu-item[aria-disabled="true"]'); if (!off) return;
     e.stopImmediatePropagation(); e.preventDefault();
-    doc.dispatchEvent(new win.CustomEvent('rail:disabled', { detail: { why: off.title } }));
+    doc.dispatchEvent(new win.CustomEvent('stillhet:disabled', { detail: { why: off.title } }));
   }, true);
   const place = () => {
     for (const m of doc.querySelectorAll('.menu:is([role="menu"], [role="dialog"]):not([data-placed])')) {

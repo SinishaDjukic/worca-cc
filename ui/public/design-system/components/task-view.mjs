@@ -1,4 +1,4 @@
-// TaskView (docs/rail/thing-page.md › thing.read-only): a task that is not yours (a teammate's synced record), read only.
+// TaskView (docs/stillhet/thing-page.md › thing.read-only): a task that is not yours (a teammate's synced record), read only.
 // The task page's own pieces: the head, the metadata line, the StatusLine (its word and why, an empty action slot, no ⋯),
 // the Figures, its PR and its runs. Never an action, a step or a log.
 import { esc } from './html.mjs';

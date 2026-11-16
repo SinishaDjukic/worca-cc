@@ -1,4 +1,4 @@
-// What the usage rings and figures read (docs/rail/small-rules.md): only providers connected right now, refreshed every
+// What the usage rings and figures read (docs/stillhet/small-rules.md): only providers connected right now, refreshed every
 // minute, each ring saying exactly what it shows.
 
 import { attrs } from './html.mjs';

@@ -1,19 +1,19 @@
-// Marketplace on Rail (Wave 3, 4.1, the mock Emil agreed on 8 Nov: plans/rail/mocks/wave-3/marketplace.html). Its home: a
+// Marketplace on Stillhet (Wave 3, 4.1, the mock Emil agreed on 8 Nov: plans/stillhet/mocks/wave-3/marketplace.html). Its home: a
 // PlaceHead with the one update to take, For you (Worca's suggestions, each with its reason), then shelves named for what
 // you want (Bring tasks in, Talk to Worca from, Give tasks tools, New agents and workflows), each plugin once, as
-// PluginCards with its brand in Rail's line. A plugin's page: its PlaceHead and one step, what it adds, what it asks for,
+// PluginCards with its brand in Stillhet's line. A plugin's page: its PlaceHead and one step, what it adds, what it asks for,
 // where it comes from. The bar lists them all. Installing asks in a short form; what is installed is managed in Settings.
-// Live (slice 8 D3): the same code reads window.RailMarketLive.data() through src(), and each write runs its live branch
+// Live (slice 8 D3): the same code reads window.StillhetMarketLive.data() through src(), and each write runs its live branch
 // first (live/market-live.mjs, dev's plugin and marketplace routes); the demo branches keep the prototype's own data.
 (function () {
-  const R = window.RailUI;
+  const R = window.StillhetUI;
   const esc = R.esc;   // the library's: it escapes the double quote too
-  const say = (t, undo) => window.RailPulse?.say(t, undo);
+  const say = (t, undo) => window.StillhetPulse?.say(t, undo);
   const data = {
     markets: [{ id: 'official', name: 'Worca CC Official', url: 'github.com/SinishaDjukic/worca-cc', branch: 'dev', sha: '42eb305', synced: 'just now', builtin: true, webUrl: 'https://github.com/SinishaDjukic/worca-cc/tree/42eb305' }],
     plugins: [
       { id: 'github-source', name: 'GitHub Issues', brand: 'brand-github', ver: '0.2.0', kind: 'Task sources', market: 'official', what: 'Pull tasks from GitHub Issues; close them when the PR merges.', adds: ['A task source: GitHub Issues'], asks: ['A GitHub token'], installed: false, uses: 120, why: 'Your projects live on GitHub' },
-      { id: 'jira-source', name: 'Jira', brand: 'brand-jira', ver: '0.1.0', kind: 'Task sources', market: 'official', what: 'Pull tasks from Jira issues; write the result back to the ticket.', adds: ['A task source: Jira'], asks: ['A Jira API token', 'Your Jira site'], installed: true, pinned: 'c3d9a17', uses: 60, update: '0.2.0', updateSha: '42eb305', ...(window.RailDemoState?.market === 'update-asks' ? { updateAsks: ['A Jira webhook secret'] } : {}) },
+      { id: 'jira-source', name: 'Jira', brand: 'brand-jira', ver: '0.1.0', kind: 'Task sources', market: 'official', what: 'Pull tasks from Jira issues; write the result back to the ticket.', adds: ['A task source: Jira'], asks: ['A Jira API token', 'Your Jira site'], installed: true, pinned: 'c3d9a17', uses: 60, update: '0.2.0', updateSha: '42eb305', ...(window.StillhetDemoState?.market === 'update-asks' ? { updateAsks: ['A Jira webhook secret'] } : {}) },
       { id: 'slack-chat', name: 'Slack', brand: 'brand-slack', ver: '0.2.0', kind: 'Chat channels', market: 'official', what: 'Talk to Worca from Slack: notices, and /status, /pause, /approve.', adds: ['A chat channel: Slack', 'Keeps a small worker running that listens for commands'], asks: ['A Slack bot token', 'A Slack app token'], installed: false, uses: 88, why: 'You step away most evenings: answer from your phone' },
       { id: 'telegram-chat', name: 'Telegram', brand: 'brand-telegram', ver: '0.1.0', kind: 'Chat channels', market: 'official', what: 'Notices and answers from Telegram.', adds: ['A chat channel: Telegram'], asks: ['A Telegram bot token'], installed: true, pinned: '7b21e04', uses: 21 },
       { id: 'cloudflare-mcp', name: 'Cloudflare', brand: 'brand-cloudflare', ver: '0.1.0', kind: 'MCP servers', market: 'official', what: 'The whole Cloudflare API and its docs, for your tasks.', adds: ['2 MCP servers'], parts: [['MCP server', 'Cloudflare API'], ['MCP server', 'Cloudflare docs']], asks: ['A Cloudflare API token'], installed: false, uses: 45 },
@@ -29,11 +29,11 @@
           workflow: [{ id: 'promo-video', title: 'Promo video', what: 'From a feature to a 30-second video: script, shots, cut.', steps: [['Script', 'script-writer', 'Opus 5.5', 'high', 4, 0.30], ['Shots', 'shot-maker', 'Sonnet 5.5', 'medium', 12, 0.60], ['Cut', 'video-cutter', 'Haiku 5.5', 'medium', 3, 0.05]] }] } },
     ],
   };
-  const isLive = () => window.RailAdapter?.kind === 'live';
-  const LIVE = () => (isLive() ? window.RailMarketLive || null : null);
+  const isLive = () => window.StillhetAdapter?.kind === 'live';
+  const LIVE = () => (isLive() ? window.StillhetMarketLive || null : null);
   const NONE = { markets: [], plugins: [] };
   const src = () => (isLive() ? LIVE()?.data() || NONE : data);   // D3: every read of the records goes through here
-  const listNow = () => { const st = isLive() ? LIVE()?.status() || 'loading' : window.RailDemoState?.list; return st === 'loading' || st === 'failed' ? st : 'ready'; };   // D18
+  const listNow = () => { const st = isLive() ? LIVE()?.status() || 'loading' : window.StillhetDemoState?.list; return st === 'loading' || st === 'failed' ? st : 'ready'; };   // D18
   const busyOf = (id) => LIVE()?.pending(id) || '';   // the action running on it (D8, D9, D14): its button says so, disabled
   const UNDO_MS = 5000;
   const view = { sort: '' };
@@ -57,13 +57,13 @@
   const shown = {};   // how many of a view's plugins are shown: six, then Show N more
   const SHELVES = [['Bring tasks in', 'Tickets become tasks; the result goes back to the ticket.', ['Task sources']], ['Talk to Worca from', 'Answer what needs you without opening Worca.', ['Chat channels']], ['Give tasks tools', 'MCP servers and models a task can call.', ['MCP servers', 'Models']], ['New agents and workflows', 'Steps and whole flows for your workflows.', ['Agents', 'Workflows', 'Scripts', 'Skills']]];
   const nameOf = (p) => p.name || p.id;
-  const markOf = (p, size = 20) => R.kindMark({ kind: 'plugin', icon: p.brand || '', tone: stOf(p).tone, size, title: stOf(p).word });   // its brand in Rail's line; a plug without one
+  const markOf = (p, size = 20) => R.kindMark({ kind: 'plugin', icon: p.brand || '', tone: stOf(p).tone, size, title: stOf(p).word });   // its brand in Stillhet's line; a plug without one
   const factsOf = (p) => `Adds ${p.adds.map((a) => { const w = a.split(':')[0]; return w.charAt(0).toLowerCase() + w.slice(1); }).join(', ')} · ${p.asks.length ? `asks for ${p.asks.length === 1 ? p.asks[0].replace(/^A /, 'a ').replace(/^An /, 'an ').replace(/^Your /, 'your ') : `${p.asks.length} things`}` : 'asks for nothing'}`;
   // what it adds, each by name: [kind of thing, its name]
   const partsOf = (p) => p.parts || (p.gives ? Object.entries(p.gives).flatMap(([k, l]) => l.map((x) => [k === 'agent' ? 'Agent' : 'Workflow', `${x.title}: ${x.says || x.what}`])) : p.adds.map((a) => { const i = a.indexOf(': '); return i > 0 ? [a.slice(0, i).replace(/^An? /, '').replace(/^./, (c) => c.toUpperCase()), a.slice(i + 2)] : ['Also', a]; }));
   // Worca's suggestions: one you install stays where it was until you leave them
   const forYou = () => src().plugins.filter((p) => p.why && (!p.installed || p.keptForYou));
-  // Update lives on the card that has it, once per plugin (rail.one-action)
+  // Update lives on the card that has it, once per plugin (stillhet.one-action)
   const cardOf = (p, why = false) => R.pluginCard({ mark: markOf(p), kicker: `${p.kind.replace(/s$/, '')}${p.update ? '' : ` · ${p.installed ? 'installed' : p.ver}`}`, update: p.update || '', title: nameOf(p), what: p.what, why: why ? p.why : '', facts: factsOf(p),
     action: R.button({ label: actOf(p), kind: p.installed && !p.update && !p.needsSetup ? 'quiet' : '', attrs: { 'data-mk-card': p.id, disabled: !!busyOf(p.id) } }), more: R.button({ label: 'What it asks for', kind: 'quiet', attrs: { 'data-mk-open': p.id } }), attrs: { 'data-mk-plugin': p.id } });
   const mkOf = (p) => src().markets.find((m) => m.id === p.market) || null;   // the plugin's own market (D15)
@@ -82,7 +82,7 @@
   const lowerArticle = (a) => a.replace(/^(An?|Your) /, (w) => w.toLowerCase());
   const rowOf = (p) => ({ key: `plug:${p.id}`, _p: p, title: nameOf(p), mark: markOf(p), end: p.update ? `Update ${p.update}` : p.installed ? 'Installed' : p.ver, current: p.id === current, tip: `${p.id} ${p.ver}\n${p.kind} · ${marketOf(p)}\n${p.what}`,
     menu: [{ id: 'step', text: stOf(p).act, help: p.installed ? 'Set it up on its page' : `Adds ${p.adds.join(', ')}` }, { id: 'source', text: 'View its source', help: whereOf(p) }] });
-  const toPage = (p) => { if (current === p.id) draw(); else window.RailShell.go(`marketplace/${p.id}`); };
+  const toPage = (p) => { if (current === p.id) draw(); else window.StillhetShell.go(`marketplace/${p.id}`); };
   // Set it up (form.plugin-setup, D12): a plugin that asks for nothing says so; one that asks, or that still needs set-up,
   // opens its form on its own page. "Is set up" is never said while it reads Needs set-up.
   function setUp(p) {
@@ -133,8 +133,8 @@
     const st = stOf(p);
     const asking = form?.id === p.id && form.k !== 'remove';   // the form below holds the one step
     const head = R.placeHead({ center: { label: 'Marketplace', to: 'marketplace' }, title: nameOf(p), facts: esc(`${p.kind.replace(/s$/, '')} · ${p.id} ${p.ver}`), mark: markOf(p), word: st.word, why: p.what,
-      action: asking ? '' : R.button({ label: actOf(p), attrs: { 'data-mk-step': '', disabled: !!busyOf(p.id) } }),   // no Warning here: outlined (rail.one-action)
-      menu: R.moreMenu({ id: 'mk-more', label: `More for ${p.id}`, icon: R.icon('more', 16), open: menu === 'mk-more', items: [...(!isLive() ? [{ id: 'source', text: 'View its source', help: window.RailWould('open it on GitHub') }] : p.source?.webUrl ? [{ id: 'source', text: 'View its source', help: 'On GitHub, in a new tab' }] : []), ...(p.installed ? [{ sep: true }, { id: 'remove', text: 'Remove…', danger: true, help: 'Asks first; says what stops working' }] : [])] }) });
+      action: asking ? '' : R.button({ label: actOf(p), attrs: { 'data-mk-step': '', disabled: !!busyOf(p.id) } }),   // no Warning here: outlined (stillhet.one-action)
+      menu: R.moreMenu({ id: 'mk-more', label: `More for ${p.id}`, icon: R.icon('more', 16), open: menu === 'mk-more', items: [...(!isLive() ? [{ id: 'source', text: 'View its source', help: window.StillhetWould('open it on GitHub') }] : p.source?.webUrl ? [{ id: 'source', text: 'View its source', help: 'On GitHub, in a new tab' }] : []), ...(p.installed ? [{ sep: true }, { id: 'remove', text: 'Remove…', danger: true, help: 'Asks first; says what stops working' }] : [])] }) });
     const install = formHtml(p), setting = form?.id === p.id && form.k === 'setup';   // its rows' Set up would open the same form again
     const rows = R.settingsSection({ title: 'What it adds', rows: partsOf(p).map(([kind, name]) => R.settingsRow({ name: esc(kind), sentence: esc(name) })).join('') })
       + R.settingsSection({ title: 'What it asks for', rows: p.asks.length ? needsOf(p).map((n) => R.settingsRow({ name: bare(n.label), sentence: `${n.secret ? 'Secret' : 'Setting'}${n.key ? ` · <code>${esc(n.key)}</code>` : ''}`, end: !p.installed ? '' : setting ? R.tooltip({ text: 'The set-up form above is open', off: true, html: R.button({ label: 'Set up', kind: 'quiet', attrs: { 'data-mk-setup': '', disabled: true } }) }) : R.button({ label: 'Set up', kind: 'quiet', attrs: { 'data-mk-setup': '' } }) })).join('') : R.settingsRow({ name: 'Setup', sentence: 'No secrets, nothing to do' }) })
@@ -195,13 +195,13 @@
     if (!bar || !page || !here()) return;
     ctl?.paint();
     const ls = listNow();
-    if (ls !== 'ready') { page.innerHTML = `<div class="rail-locked">${R.placeHead({ title: 'Marketplace' })}${R.listState({ state: ls, noun: 'plugins', retry: ls === 'failed' ? { 'data-mk-retry': '' } : null })}</div>`; return; }   // D18
+    if (ls !== 'ready') { page.innerHTML = `<div class="stillhet-locked">${R.placeHead({ title: 'Marketplace' })}${R.listState({ state: ls, noun: 'plugins', retry: ls === 'failed' ? { 'data-mk-retry': '' } : null })}</div>`; return; }   // D18
     // what you typed survives a redraw (a list read again, a pending label)
     const typed = [...page.querySelectorAll('[data-mk-field], [data-mk-add]')].map((i) => [i.dataset.mkField ?? '', i.value, i === document.activeElement]);
     const p = src().plugins.find((x) => x.id === current);
     page.innerHTML = p ? pageHtml(p) : current.startsWith('~') ? wayHtml(current.slice(1)) : homeHtml();
     for (const [k, v, had] of typed) { const i = k ? [...page.querySelectorAll('[data-mk-field]')].find((x) => x.dataset.mkField === k) : page.querySelector('[data-mk-add]'); if (i) { if (v) i.value = v; if (had) i.focus(); } }
-    if (p) window.RailConversation?.dock(document.getElementById('mk-dock'), { kind: 'plugin', title: p.id, chat: '' });
+    if (p) window.StillhetConversation?.dock(document.getElementById('mk-dock'), { kind: 'plugin', title: p.id, chat: '' });
     if (p && form && !form.focused && (form.k !== 'setup' || form.fields)) { form.focused = true; (page.querySelector('[data-mk-field]') || page.querySelector('[data-confirm="yes"]'))?.focus(); }   // Enter takes it, Esc leaves it
   }
   // the answer to the form or strip under the head: Install, Remove, Update (it asks for something new) or Save
@@ -236,7 +236,7 @@
     draw();
   }
   let updatingAll = false;
-  const setOn = (p, on) => { if (on && p.why) p.keptForYou = true; p.installed = on; if (!on) delete p.update; window.RailPlaces.workflows?.plugin(p.id, nameOf(p), p.gives, on); };   // one truth: Workflows' lists and counts follow
+  const setOn = (p, on) => { if (on && p.why) p.keptForYou = true; p.installed = on; if (!on) delete p.update; window.StillhetPlaces.workflows?.plugin(p.id, nameOf(p), p.gives, on); };   // one truth: Workflows' lists and counts follow
   function wire(b, pg) {
     bar = b; page = pg;
     if (!watching) { watching = true; window.addEventListener('hashchange', () => { if (!here()) opening = true; }); }   // a move inside the place is no open
@@ -245,32 +245,32 @@
       sections: [{ id: 'yours', title: 'Yours', noCount: true, rows: [way('updates', 'Updates', R.kindMark({ kind: 'plugin', icon: 'refresh', tone: src().plugins.some((p) => p.update) ? 'act' : 'idle' }), src().plugins.filter((p) => p.update).length), way('installed', 'Installed', R.kindMark({ kind: 'plugin', icon: 'check' }), src().plugins.filter((p) => p.installed).length)] },
         { id: 'browse', title: 'Browse', noCount: true, rows: [way('for-you', 'For you', R.kindMark({ kind: 'plugin', icon: 'whoYou' }), forYou().length), ...SHELVES.map(([t, , kinds], n) => way(`shelf-${n}`, t, R.kindMark({ kind: 'plugin', icon: SHELF_ICON[n] }), src().plugins.filter((p) => kinds.includes(p.kind) && !forYou().includes(p)).length)), way('all', 'All plugins', R.kindMark({ kind: 'plugin', icon: 'list' }), src().plugins.length)] },
         { id: 'sources', title: 'Sources', noCount: true, rows: src().markets.map((m) => way(`src-${m.id}`, m.name, R.kindMark({ kind: 'plugin', icon: /^[.~/]/.test(m.url) ? 'folder' : 'brand-github' }), src().plugins.filter((p) => p.market === m.id).length)) }] }),
-      can: () => [], bulk: () => [], act: () => {}, open: (r) => window.RailShell.go(`marketplace/~${r._way}`), word: () => false, say, active: () => /^#marketplace/.test(location.hash) } });
+      can: () => [], bulk: () => [], act: () => {}, open: (r) => window.StillhetShell.go(`marketplace/~${r._way}`), word: () => false, say, active: () => /^#marketplace/.test(location.hash) } });
     page.addEventListener('click', (e) => {
       if (!here()) return;   /* another place's page is showing */
       const on = (q) => e.target.closest(q); let hit; const p = src().plugins.find((x) => x.id === current);
       if (on('[data-mk-retry]')) { LIVE()?.load(); draw(); return; }
-      if ((hit = on('[data-mk-market]'))) { const m = src().markets.find((y) => y.id === hit.dataset.mkMarket); if (LIVE()) LIVE().openMarket(m.id); else say(window.RailWould(`open ${m.url} at ${m.sha} on GitHub`)); return; }
+      if ((hit = on('[data-mk-market]'))) { const m = src().markets.find((y) => y.id === hit.dataset.mkMarket); if (LIVE()) LIVE().openMarket(m.id); else say(window.StillhetWould(`open ${m.url} at ${m.sha} on GitHub`)); return; }
       if ((hit = on('[data-mk-sync]')) && LIVE()) { LIVE().sync(hit.dataset.mkSync).then((a) => { if (a.text) say(a.text); draw(); }); return; }
       if ((hit = on('[data-mk-unsource]')) && LIVE()) { const m = src().markets.find((y) => y.id === hit.dataset.mkUnsource); if (!m) return; const u = LIVE().deferRemoveSource(m.id, UNDO_MS); say(`Removed the source ${m.name}`, () => { if (!u.undo()) say(`Too late to undo: ${m.name} is being removed`); }); return; }
       if ((hit = on('[data-mk-sync]'))) { const m = src().markets.find((y) => y.id === hit.dataset.mkSync); m.synced = 'just now'; draw(); say(`Synced ${m.name}: ${plugins(countOf(m))}, nothing new`); return; }
       if ((hit = on('[data-mk-unsource]'))) { const i = src().markets.findIndex((y) => y.id === hit.dataset.mkUnsource), m = src().markets[i]; src().markets.splice(i, 1); draw(); say(`Removed the source ${m.name}`, () => { src().markets.splice(i, 0, m); draw(); }); return; }
-      if ((hit = on('[data-mk-goto]'))) { window.RailShell.go(`marketplace/${hit.dataset.mkGoto}`); return; }
+      if ((hit = on('[data-mk-goto]'))) { window.StillhetShell.go(`marketplace/${hit.dataset.mkGoto}`); return; }
       if ((hit = on('[data-mk-more]'))) { shown[hit.dataset.mkMore] = Infinity; draw(); return; }
       if ((hit = on('[data-menu-pick^="mk-sort|"]'))) { view.sort = hit.dataset.menuPick.split('|')[1]; menu = ''; draw(); return; }
       if (!p && (hit = on('[data-menu]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); return; }
       if ((hit = on('[data-mk-card]'))) { step(src().plugins.find((x) => x.id === hit.dataset.mkCard)); return; }
-      if ((hit = on('[data-mk-open]'))) { window.RailShell.go(`marketplace/${hit.dataset.mkOpen}`); return; }
+      if ((hit = on('[data-mk-open]'))) { window.StillhetShell.go(`marketplace/${hit.dataset.mkOpen}`); return; }
       if (on('[data-mk-update-all]') && LIVE()) { if (updatingAll) return; updatingAll = true; draw(); LIVE().updateAll().then((a) => { updatingAll = false; if (a.text) say(a.text); draw(); }); return; }
       if (on('[data-mk-update-all]')) { const ups = src().plugins.filter((x) => x.update); ups.forEach((x) => { x.ver = x.update; delete x.update; }); draw(); say(`Updated ${ups.map(nameOf).join(', ')}`); return; }
       if (on('[data-mk-addgo]')) { const v = page.querySelector('[data-mk-add]')?.value.trim() || ''; addErr = addProblem(v); addVal = addErr ? v : ''; if (addErr) { draw(); page.querySelector('[data-mk-add]')?.focus(); return; }
-        if (LIVE()) { addVal = v; LIVE().addSource(v).then((a) => { if (a.ok) { addVal = ''; const i = page.querySelector('[data-mk-add]'); if (i) i.value = ''; window.RailShell.go(a.to); } if (a.text) say(a.text); draw(); }); draw(); return; }
-        src().markets.push({ id: `s${src().markets.length}`, name: srcKey(v) === v.toLowerCase() ? v : v.replace(/^(https?:\/\/)?(www\.)?(github\.com\/)?/, '').replace(/\.git$/, '').replace(/\/$/, ''), url: v, branch: 'main', sha: /^[.~/]/.test(v) ? '' : 'a1b2c3d', synced: 'just now' }); const added = src().markets[src().markets.length - 1]; window.RailShell.go(`marketplace/~src-${added.id}`); say(`Added ${added.name}: no plugins from it yet`); return; }
+        if (LIVE()) { addVal = v; LIVE().addSource(v).then((a) => { if (a.ok) { addVal = ''; const i = page.querySelector('[data-mk-add]'); if (i) i.value = ''; window.StillhetShell.go(a.to); } if (a.text) say(a.text); draw(); }); draw(); return; }
+        src().markets.push({ id: `s${src().markets.length}`, name: srcKey(v) === v.toLowerCase() ? v : v.replace(/^(https?:\/\/)?(www\.)?(github\.com\/)?/, '').replace(/\.git$/, '').replace(/\/$/, ''), url: v, branch: 'main', sha: /^[.~/]/.test(v) ? '' : 'a1b2c3d', synced: 'just now' }); const added = src().markets[src().markets.length - 1]; window.StillhetShell.go(`marketplace/~src-${added.id}`); say(`Added ${added.name}: no plugins from it yet`); return; }
       if (!p || !page.querySelector('#mk-dock')) return;
       if (on('[data-mk-step]')) { step(p); return; }
       if (on('[data-mk-setup]')) { setUp(p); return; }
       if ((hit = on('[data-confirm]'))) { confirm(p, hit.dataset.confirm === 'yes', hit); return; }
-      if ((hit = on('[data-menu-pick]'))) { const [, v] = hit.dataset.menuPick.split('|'); menu = ''; if (v === 'remove') form = { k: 'remove', id: p.id }; else if (LIVE()) LIVE().openSource(p.id).then((a) => { if (a.text) say(a.text); }); else say(window.RailWould(`open ${mkOf(p)?.url} at ${mkOf(p)?.sha} on GitHub`)); draw(); return; }
+      if ((hit = on('[data-menu-pick]'))) { const [, v] = hit.dataset.menuPick.split('|'); menu = ''; if (v === 'remove') form = { k: 'remove', id: p.id }; else if (LIVE()) LIVE().openSource(p.id).then((a) => { if (a.text) say(a.text); }); else say(window.StillhetWould(`open ${mkOf(p)?.url} at ${mkOf(p)?.sha} on GitHub`)); draw(); return; }
       if ((hit = on('[data-menu]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); }
     });
     page.addEventListener('submit', (e) => { if (!here()) return; e.preventDefault(); e.target.querySelector('[data-confirm="yes"]')?.click(); });   // Enter in a field takes the form's step
@@ -280,10 +280,10 @@
       if (e.key === 'Enter') { e.preventDefault(); page.querySelector('[data-mk-addgo]')?.click(); }
       if (e.key === 'Escape' && (e.target.value || addErr)) { addVal = ''; addErr = ''; draw(); page.querySelector('[data-mk-add]')?.focus(); } });
   }
-  window.RailPlaces = window.RailPlaces || {};
+  window.StillhetPlaces = window.StillhetPlaces || {};
   const byName = (name) => src().plugins.find((p) => nameOf(p) === name);
   const isWay = (k) => (k.startsWith('shelf-') ? /^shelf-\d+(-new)?$/.test(k) && !!SHELVES[parseInt(k.slice(6), 10)] : k.startsWith('src-') ? src().markets.some((m) => m.id === k.slice(4)) : ['updates', 'installed', 'for-you', 'all'].includes(k));
-  window.RailPlaces.marketplace = { records: () => src(), changed: () => { if (here()) { openIfDue(); draw(); } }, has: (a) => (isLive() && listNow() !== 'ready') || (a.startsWith('~') ? isWay(a.slice(1)) : src().plugins.some((p) => p.id === a)),
+  window.StillhetPlaces.marketplace = { records: () => src(), changed: () => { if (here()) { openIfDue(); draw(); } }, has: (a) => (isLive() && listNow() !== 'ready') || (a.startsWith('~') ? isWay(a.slice(1)) : src().plugins.some((p) => p.id === a)),
     // the one truth of what is installed: Settings › Plugins and Workflows read it (undefined: not a plugin of this list)
     isInstalled: (name) => byName(name)?.installed, setInstalled: (name, on) => { const p = byName(name); if (p && !isLive()) setOn(p, on); },   // live: Settings › Plugins changes nothing here (D19)
     hasUpdate: (name) => !!byName(name)?.update, update: (name) => { const p = byName(name); if (p?.update && !isLive()) { p.ver = p.update; delete p.update; } },

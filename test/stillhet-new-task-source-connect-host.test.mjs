@@ -1,4 +1,4 @@
-// test/stillhet-new-task-source-connect-host.test.mjs — gate.real-data F-cov23-04 (docs/rail/forms.md form.run-options): a
+// test/stillhet-new-task-source-connect-host.test.mjs — gate.real-data F-cov23-04 (docs/stillhet/forms.md form.run-options): a
 // ticket source is checked first, as classic's New run does (app.js mountPluginSourcePane: validateConfig), and an
 // unconnected one says so with its ways out (Open the Marketplace page, Test connection) instead of an empty list; the
 // source's own inputs come before the search, a remote-select (GitHub's Repository) filled from its optionsFrom op
@@ -18,7 +18,7 @@ const connected = (b) => [200, { ok: true, result: b.op === 'validateConfig' ? {
 async function open({ call = connected } = {}) {
   const h = await liveHost({ lists: LISTS, read: (u) => (u === '/api/sources' ? [200, SOURCES] : null), write: (u, b) => (u === '/api/sources/call' ? call(b) : [200, { runId: 'r-new' }]) });
   await go(h.w, '#runs', 120);
-  h.w.RailCenters.maker('tasks').newPick('form'); await settle(80);
+  h.w.StillhetCenters.maker('tasks').newPick('form'); await settle(80);
   return h;
 }
 const q = (d, sel) => d.querySelector(`#center-dlg ${sel}`);
@@ -33,7 +33,7 @@ test('F-G-G3-01: with a ticket source the tabs take their own row above its note
   const seg = q(d, '[data-c-src="plugin:0"]').closest('.seg'), n = q(d, '.choice-note');
   assert.ok(!seg.parentElement.matches('.cc-lbl'), 'not the label row\'s absolutely placed tabs: there is no label row to sit beside');
   assert.ok(seg.compareDocumentPosition(n) & 4, 'the tabs come first, the note under them');
-  assert.match(readFileSync(new URL('../ui/public/stillhet/css/rail.css', import.meta.url), 'utf8'), /\.cc-src > \.seg\{[^}]*justify-self:end/, 'the tabs keep their place at the end of their own row');
+  assert.match(readFileSync(new URL('../ui/public/stillhet/css/stillhet.css', import.meta.url), 'utf8'), /\.cc-src > \.seg\{[^}]*justify-self:end/, 'the tabs keep their place at the end of their own row');
 });
 
 test('F-cov23-04: an unconnected source says so in classic\'s words, with Open the Marketplace page and Test connection; nothing is listed', async () => {

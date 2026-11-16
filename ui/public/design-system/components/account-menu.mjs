@@ -1,4 +1,4 @@
-// The profile menu's parts (docs/rail/components.md): a side menu opened from the avatar, its rows with an icon, a value
+// The profile menu's parts (docs/stillhet/components.md): a side menu opened from the avatar, its rows with an icon, a value
 // and sometimes a switch, its Appearance choice, and the link on the spend card.
 import { attrs, esc } from './html.mjs';
 

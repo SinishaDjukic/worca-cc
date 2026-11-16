@@ -156,7 +156,7 @@ test('a task row with an open PR: Watch toggles from dev\'s own watch state, so 
 test('a page\'s dock hands over with the page as dev\'s context (D16)', async () => {
   const { w, d, calls } = await liveHost({ write: (url, body, method) => (url === '/api/ask/threads' && method === 'POST' ? [201, { thread: { id: 'ask_new' } }] : [202, { userMessageId: 'u1' }]) });
   const host = d.createElement('div'); d.body.appendChild(host);
-  w.RailConversation.dock(host, { kind: 'project', title: 'web', chat: '', ref: { pageProjectKey: 'web-1' } });
+  w.StillhetConversation.dock(host, { kind: 'project', title: 'web', chat: '', ref: { pageProjectKey: 'web-1' } });
   host.querySelector('[data-composer-t]').value = 'What is behind?';
   host.querySelector('[data-dock-send]').click(); await settle(60);
   const msg = calls.find((c) => c.url.endsWith('/messages'));

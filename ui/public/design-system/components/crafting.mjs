@@ -1,4 +1,4 @@
-// Crafting (docs/rail/motion.md › motion.crafting): what Worca shows in place of a thing it is making (a workflow, an
+// Crafting (docs/stillhet/motion.md › motion.crafting): what Worca shows in place of a thing it is making (a workflow, an
 // image, a document) until the thing is ready. A small sketch of that kind of thing draws itself, line by line, and
 // starts again; one line says what is being made. The same for every kind; only the sketch differs. With reduced motion
 // the sketch stands still, drawn.

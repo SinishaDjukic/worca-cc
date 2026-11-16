@@ -1,4 +1,4 @@
-// test/stillhet-new-task-options-host.test.mjs — COV-2 (docs/rail/forms.md form.run-options): New task's saved run defaults,
+// test/stillhet-new-task-options-host.test.mjs — COV-2 (docs/stillhet/forms.md form.run-options): New task's saved run defaults,
 // a workflow's defaults and the team policy notes, on dev's routes and in classic's words. The engine and sync refusals:
 // stillhet-new-task-refusals-host.test.mjs.
 // Live app host (jsdom), the real shell, a stubbed fetch.
@@ -13,7 +13,7 @@ const FLOWS = { ...LISTS, '/api/workflows': { workflows: [{ id: 'wf_shape', name
 async function open({ reads = {}, write = () => [200, { runId: 'r-new' }], hold, lists = FLOWS } = {}) {
   const h = await liveHost({ lists, write, hold, read: (u) => reads[u] || null });
   await go(h.w, '#runs', 120);
-  h.w.RailCenters.maker('tasks').newPick('form'); await settle(80);
+  h.w.StillhetCenters.maker('tasks').newPick('form'); await settle(80);
   return h;
 }
 const q = (d, sel) => d.querySelector(`#center-dlg ${sel}`);
@@ -129,7 +129,7 @@ test('COV-2 one start at a time: a second press while the first is out sends not
 });
 
 // ---- COV-2: Guardrails and Human in the loop, drawn in the demo kind ----
-const demo = async () => { const w = demoTaskHost({ after }); await settle(60); w.RailCenters.maker('tasks').newPick('form'); await settle(60); return { w, d: w.document }; };
+const demo = async () => { const w = demoTaskHost({ after }); await settle(60); w.StillhetCenters.maker('tasks').newPick('form'); await settle(60); return { w, d: w.document }; };
 const menuItems = async (d, id) => { q(d, `[data-menu="f-${id}"]`).click(); await settle(10); const got = [...d.querySelectorAll(`#center-dlg [data-menu-pick^="f-${id}|"]`)].map((x) => x.textContent.trim()); q(d, `[data-menu="f-${id}"]`).click(); await settle(10); return got; };
 
 test('COV-2 Guardrails (demo): More options shows Guardrails: Team default, and a pick of Strict is shown in the frame summary', async () => {

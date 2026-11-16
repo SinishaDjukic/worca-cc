@@ -1,4 +1,4 @@
-// test/stillhet-routes.test.mjs — RailShell.routes() (ui/public/stillhet/shell/shell.js), the route list the compare tool
+// test/stillhet-routes.test.mjs — StillhetShell.routes() (ui/public/stillhet/shell/shell.js), the route list the compare tool
 // walks (tools/stillhet-compare.mjs deepRoutes). The app host's real scripts run in jsdom, in boot.js's order, without the
 // generated bundles (the library comes from index.mjs).
 import { test, after } from 'node:test';
@@ -13,10 +13,10 @@ const boot = { module: { exports: {} } };
 vm.runInNewContext(read('boot.js'), boot);
 
 function appHost() {
-  const dom = new JSDOM(`<!doctype html><html data-level="expert"><body><div class="app" id="worca"></div><div class="pz-app rail-layer" id="app"></div>${R.toast({})}</body></html>`, { runScripts: 'outside-only', url: 'http://localhost/#chat', pretendToBeVisual: true });
+  const dom = new JSDOM(`<!doctype html><html data-level="expert"><body><div class="app" id="worca"></div><div class="pz-app stillhet-layer" id="app"></div>${R.toast({})}</body></html>`, { runScripts: 'outside-only', url: 'http://localhost/#chat', pretendToBeVisual: true });
   const w = dom.window;
   after(() => w.close());   // the pages keep timers on the window
-  w.RailUI = { ...R };
+  w.StillhetUI = { ...R };
   w.scrollTo = () => {};
   w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   w.fetch = async () => ({ ok: false, json: async () => ({}) });
@@ -24,9 +24,9 @@ function appHost() {
   return w;
 }
 
-test('RailShell.routes(): every place, every Settings section, every run-page case; each address once', () => {
+test('StillhetShell.routes(): every place, every Settings section, every run-page case; each address once', () => {
   const w = appHost();
-  const routes = [...w.RailShell.routes()];
+  const routes = [...w.StillhetShell.routes()];
   assert.equal(new Set(routes).size, routes.length, 'no duplicate address');
   assert.deepEqual([...routes].sort(), routes, 'sorted');
   const places = [...w.document.querySelectorAll('#side-rail nav.nav [data-nav]')].map((b) => b.dataset.nav);

@@ -1,4 +1,4 @@
-// BarChart (docs/rail/look.md › look.chart): one question, one series, one chart. Thin ink bars with 4px rounded ends on
+// BarChart (docs/stillhet/look.md › look.chart): one question, one series, one chart. Thin ink bars with 4px rounded ends on
 // the baseline and a 2px gap; the period you are in is the darkest; only the highest and the current carry a number;
 // each bar says its value on hover and focus; a table under it says the same to a screen reader. No legend for one
 // series (the title names it), no grid, no second axis, no colour: colour stays for what needs you.
@@ -41,7 +41,7 @@ export function barChart({ label, bars, current = -1, height = 120, play = false
   return `<figure class="bar-chart${play ? ' is-read-able' : ''}${step ? ' is-thin' : ''}" style="--bc-h:${height}px"${play ? ` data-chart data-n="${bars.length}"` : ''}>${capOf(caption)}${play ? '<div class="ch-read" hidden></div>' : ''}<div class="bc-plot${limit ? ' has-limit' : ''}" aria-hidden="true">${cols}${line}</div>${legend}${hintOf(hint)}${table}</figure>`;
 }
 
-// ---- Chart play (docs/rail/look.md › look.chart-play): other forms appear only when you ask for them ----
+// ---- Chart play (docs/stillhet/look.md › look.chart-play): other forms appear only when you ask for them ----
 
 /** What a point differs by: "+$27, +41%". Nothing to compare with, nothing said. */
 export function diffWords(now, before, text = (n) => String(n)) {
@@ -133,7 +133,7 @@ export function watchChart(fig, { open, narrow } = {}) {
     read.style.left = `${Math.max(0, Math.min(box.width - w, mid - w / 2))}px`;
   };
   // look.chart-play: a point that opens nothing says why, as a disabled row does
-  const tryOpen = (i) => { const why = hitAt(i)?.dataset.off; if (why) doc.dispatchEvent(new doc.defaultView.CustomEvent('rail:disabled', { detail: { why } })); else open?.(i); };
+  const tryOpen = (i) => { const why = hitAt(i)?.dataset.off; if (why) doc.dispatchEvent(new doc.defaultView.CustomEvent('stillhet:disabled', { detail: { why } })); else open?.(i); };
   let start = -1, startX = 0, dragging = false, brush = null;
   const paint = (a, b) => {
     if (!brush) { brush = doc.createElement('span'); brush.className = 'ch-brush'; plot.append(brush); }

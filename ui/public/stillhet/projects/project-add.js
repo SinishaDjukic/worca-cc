@@ -1,7 +1,7 @@
 // Projects' Add a project by hand (form.add-project, COV-1): every way classic adds a project, in the one card form.
 // One folder (a path or a repository address, Choose folder… and the probe line), New folder (a name, Use git, where it
 // is made) and Several folders… (the FolderBrowser, then the review list). Live, every request goes through
-// RailProjectsLive; the demo answers from a small folder tree and adds to the demo's list. projects.js calls make(ctx).
+// StillhetProjectsLive; the demo answers from a small folder tree and adds to the demo's list. projects.js calls make(ctx).
 (function () {
   const NOT_ANSWERING = 'Worca is not answering';
   const WAIT_MS = 150;   // the probe and the dry run wait this long after the last keystroke (classic PROBE_DEBOUNCE_MS)
@@ -277,5 +277,5 @@
     function close() { clearTimeout(probeT); clearTimeout(newT); probeSeq += 1; newSeq += 1; dirSeq += 1; s = fresh(); }
     return { html, click, key, open, close, busy: () => !!busy() };
   }
-  window.RailProjectAdd = { make };
+  window.StillhetProjectAdd = { make };
 })();

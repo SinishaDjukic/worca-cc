@@ -1,4 +1,4 @@
-// DraftBar (docs/rail/philosophy.md › rail.drafts): what you change by hand is a draft until you save it. The bar says so
+// DraftBar (docs/stillhet/philosophy.md › stillhet.drafts): what you change by hand is a draft until you save it. The bar says so
 // on the thing: a draft, how many changes, that tasks still run the saved one (or that nothing can run it yet), and its
 // two answers: Discard, quiet, and Save, filled.
 import { esc } from './html.mjs';

@@ -12,8 +12,8 @@ const PLACES = [['Work', [['chat', 'Chat', 'simple'], ['runs', 'Tasks', 'simple'
 
 function world() {
   const dom = new JSDOM('<body></body>', { runScripts: 'outside-only' });
-  dom.window.RailUI = R;
-  dom.window.RailHost = { stillhetOn: () => true };
+  dom.window.StillhetUI = R;
+  dom.window.StillhetHost = { stillhetOn: () => true };
   dom.window.eval(read('ui/public/stillhet/shell/frame.js'));
   return dom.window;
 }
@@ -38,20 +38,20 @@ function norm(node) {
 const GOLDEN = new URL('./fixtures/stillhet-frame.golden.json', import.meta.url);
 if (process.env.STILLHET_FRAME_GOLDEN === 'write') {
   const w = world();
-  writeFileSync(GOLDEN, JSON.stringify({ sidebar: norm(w.RailFrame.sidebar(PLACES)), topBar: norm(w.RailFrame.topBar()) }, null, 1) + '\n');
+  writeFileSync(GOLDEN, JSON.stringify({ sidebar: norm(w.StillhetFrame.sidebar(PLACES)), topBar: norm(w.StillhetFrame.topBar()) }, null, 1) + '\n');
 }
 const golden = () => JSON.parse(readFileSync(GOLDEN, 'utf8'));
 
 test('the sidebar frame.js draws equals the golden taken from the capture (landmarks, aria, ids)', () => {
   const w = world();
-  assert.equal(norm(w.RailFrame.sidebar(PLACES)), golden().sidebar);
+  assert.equal(norm(w.StillhetFrame.sidebar(PLACES)), golden().sidebar);
 });
 
 test('the top bar frame.js draws equals the golden taken from the capture (aria, the Stillhet icon after Pulse)', () => {
   const w = world();
-  const bar = w.RailFrame.topBar();
+  const bar = w.StillhetFrame.topBar();
   assert.equal(norm(bar), golden().topBar);
-  const slot = bar.querySelector('#rail-pulse-slot').nextElementSibling;
+  const slot = bar.querySelector('#stillhet-pulse-slot').nextElementSibling;
   assert.equal(slot.dataset.stillhet, 'design-switch');
   assert.ok(slot.querySelector('[data-stillhet="ui-icon"]'));
   assert.equal(bar.querySelectorAll('[role="switch"]').length, 0);
@@ -66,7 +66,7 @@ test('shell.js no longer reads window.Today and the capture is gone', () => {
 
 test('every sidebar place row carries its name (the ☰ drawer shows icon and name, #1266)', () => {
   const w = world();
-  const side = w.RailFrame.sidebar(PLACES), rows = [...side.querySelectorAll('[data-nav]')];
+  const side = w.StillhetFrame.sidebar(PLACES), rows = [...side.querySelectorAll('[data-nav]')];
   assert.ok(rows.length > 5, 'the sidebar lists its places');
   for (const r of rows) assert.ok(r.querySelector('.pz-nav-l')?.textContent.trim(), `${r.dataset.nav} has a name`);
 });

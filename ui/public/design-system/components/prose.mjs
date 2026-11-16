@@ -1,6 +1,6 @@
 // Prose (panel.rendered-prose): Worca's finished words with their formatting, drawn by dev's own markdown renderer and
 // sanitiser (ui/public/ask-markdown.mjs: marked + DOMPurify, its allow-lists, plain text on failure or past its limit).
-// No highlighting: a code block is a plain monospace block. Tables take the Rail Table's classes, and a box that scrolls
+// No highlighting: a code block is a plain monospace block. Tables take the Stillhet Table's classes, and a box that scrolls
 // (a code block, a table) is reachable by Tab. The renderer, its load and its cache are kept per document, so one
 // window's never reaches another's. `prose()` loads nothing; `loadProse()` loads once, then the page redraws.
 import { esc, attrs } from './html.mjs';
@@ -10,12 +10,12 @@ const PLAIN_LIMIT = 200_000;
 const CACHE_MAX = 2000;
 const states = new WeakMap();
 
-// the modules: a test's hook first (as ui/public/app.js does), else the generated bundle's window.RailMarkdown
+// the modules: a test's hook first (as ui/public/app.js does), else the generated bundle's window.StillhetMarkdown
 const defaultLoad = (doc) => () => {
   const w = doc.defaultView;
   const hook = w?.__worcaTestHooks?.askMarkdown;
   if (typeof hook === 'function') return hook();
-  if (w?.RailMarkdown) return Promise.resolve(w.RailMarkdown);
+  if (w?.StillhetMarkdown) return Promise.resolve(w.StillhetMarkdown);
   return Promise.reject(new Error('the markdown modules are not loaded'));
 };
 

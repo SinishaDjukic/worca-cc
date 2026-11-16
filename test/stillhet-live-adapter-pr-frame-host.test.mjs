@@ -1,6 +1,6 @@
 // test/stillhet-live-adapter-pr-frame-host.test.mjs — F-a1-02, F-a1-10 in the live Chat host (jsdom): a `history-pr` frame
 // draws only when a row's PR really changed. A frame that repeats the PRs on screen makes no world change, no shell render
-// (#rail-pulse-slot) and no conversation paint (RailUI.patchKeyed on #route-chat .convo-col); a real change draws once.
+// (#stillhet-pulse-slot) and no conversation paint (StillhetUI.patchKeyed on #route-chat .convo-col); a real change draws once.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { liveHost, clone, SOURCES, settle, closeHosts } from './helpers/stillhet-chat-live-host.mjs';
@@ -14,15 +14,15 @@ async function open() {
   const h = await liveHost({ sources: src, hash: '#chat/ask_1' });
   const { w, d, sockets } = h;
   await settle(60);
-  const send = (pr) => { sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'history-pr', token: w.RailTaskLive.prLookup().token, done: false, items: [{ projectKey: 'api-2', id: 'h2', pr }] }) }); };
+  const send = (pr) => { sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'history-pr', token: w.StillhetTaskLive.prLookup().token, done: false, items: [{ projectKey: 'api-2', id: 'h2', pr }] }) }); };
   send(OPEN);
   await settle(60);
   const n = { world: 0, shell: 0, convo: 0 };
-  const orig = w.RailUI.patchKeyed;
-  w.RailUI.patchKeyed = (c, items, opt) => { if (c && c.matches && c.matches('#route-chat .convo-col')) n.convo++; return orig(c, items, opt); };
+  const orig = w.StillhetUI.patchKeyed;
+  w.StillhetUI.patchKeyed = (c, items, opt) => { if (c && c.matches && c.matches('#route-chat .convo-col')) n.convo++; return orig(c, items, opt); };
   const mo = new w.MutationObserver((l) => { n.shell += l.filter((r) => r.type === 'childList').length; });
-  mo.observe(d.getElementById('rail-pulse-slot'), { childList: true, subtree: true });
-  w.RailWorld.onChange(() => { n.world++; });
+  mo.observe(d.getElementById('stillhet-pulse-slot'), { childList: true, subtree: true });
+  w.StillhetWorld.onChange(() => { n.world++; });
   const measure = async (pr) => {
     send(pr);
     await settle(60);

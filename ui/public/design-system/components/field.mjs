@@ -1,4 +1,4 @@
-// Field and Tooltip (docs/rail/components.md).
+// Field and Tooltip (docs/stillhet/components.md).
 import { attrs, esc } from './html.mjs';
 
 /**

@@ -42,14 +42,14 @@ export async function liveHost({ sources = SOURCES, getStatus = () => 200, post 
     win.Date.now = () => NOW;
     if (before) before(win);
   } });
-  w.RailAdapter.importLive = () => import('../../ui/public/stillhet/live/live-adapter.mjs');
+  w.StillhetAdapter.importLive = () => import('../../ui/public/stillhet/live/live-adapter.mjs');
   const hello = async (runs = sources.hello.runs) => { await settle(); sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'hello', bootId: 'b', runs }) }); await settle(); };
   return { w, d: w.document, gets, posts, sockets, hello };
 }
-export const bellN = (d) => { const b = d.querySelector('#rail-pulse-slot .topnav-badge'); return b ? +b.textContent : null; };
+export const bellN = (d) => { const b = d.querySelector('#stillhet-pulse-slot .topnav-badge'); return b ? +b.textContent : null; };
 export const openAcct = (d) => { if (!d.querySelector('#app .acct-menu')) d.querySelector('[data-acct]').click(); };
 export const toastText = (d) => d.querySelector('body > .rc-toast')?.textContent || '';
-export const store = (w) => clone({ data: w.RailWorld.data(), parts: ['chats', 'schedules', 'projects', 'costs', 'updates', 'actions', 'away', 'keep'].map((k) => w.RailWorld.part(k)) });
+export const store = (w) => clone({ data: w.StillhetWorld.data(), parts: ['chats', 'schedules', 'projects', 'costs', 'updates', 'actions', 'away', 'keep'].map((k) => w.StillhetWorld.part(k)) });
 export const DEMO_NAMES = ['Add CSV export to billing', 'Fix flaky login test', 'billing-api', 'Billing CSV export', 'Nightly export check'];
 export const REFUSE = { error: 'not now' };
 export async function refusalHost() {

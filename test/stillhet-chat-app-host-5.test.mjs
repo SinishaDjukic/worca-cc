@@ -102,16 +102,16 @@ test('Create PR: the card reads Opening the PR… until the PR frame', async () 
   const { w, d, sockets } = await createPr(() => [200, { ok: true, url }]);
   assert.equal(mainBtn(d).textContent, 'Opening the PR…');
   assert.equal(mainBtn(d).disabled, true);
-  assert.equal(w.RailTaskLive.card('pa').prUrl, undefined, 'never the POST\'s url as the PR');
+  assert.equal(w.StillhetTaskLive.card('pa').prUrl, undefined, 'never the POST\'s url as the PR');
   assert.equal(d.querySelector('#route-chat [data-card-act="pa|View PR"]'), null);
-  const token = w.RailTaskLive.prLookup().token;
+  const token = w.StillhetTaskLive.prLookup().token;
   assert.ok(token > 0, 'afterPr asked the PR lookup');
   prFrame(sockets, { token, items: [{ id: 'pa', projectKey: 'web-1a2b3c4d', pr: { url, state: 'OPEN' } }] });
   await settle(120);
   const card = d.querySelector('#route-chat [data-anchor="card_run"]');
   assert.doesNotMatch(card.textContent, /Opening the PR…/);
   assert.ok(card.querySelector('[data-card-act="pa|View PR"]'), 'its PR is open: View PR');
-  assert.equal(w.RailTaskLive.card('pa').prUrl, url, 'the PR is the frame\'s');
+  assert.equal(w.StillhetTaskLive.card('pa').prUrl, url, 'the PR is the frame\'s');
 });
 
 test('Create PR: a failed create clears Opening and shows the error', async () => {
@@ -125,7 +125,7 @@ test('Create PR: a failed create clears Opening and shows the error', async () =
 test('Create PR: a lookup that ends without the PR clears Opening', async () => {
   const { w, d, sockets } = await createPr(() => [200, { ok: true, url: 'https://github.com/acme/web/pull/42' }]);
   assert.equal(mainBtn(d).textContent, 'Opening the PR…');
-  const token = w.RailTaskLive.prLookup().token;
+  const token = w.StillhetTaskLive.prLookup().token;
   prFrame(sockets, { token, done: true, items: [] });
   await settle(60);
   const card = d.querySelector('#route-chat [data-anchor="card_run"]');

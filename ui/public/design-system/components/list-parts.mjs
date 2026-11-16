@@ -1,4 +1,4 @@
-// The parts of a list (docs/rail/lists.md): its sentence, a group row with its members, a run's stacked fix rounds, the
+// The parts of a list (docs/stillhet/lists.md): its sentence, a group row with its members, a run's stacked fix rounds, the
 // list's own state, and a chat's marks. list.mjs holds the row and the list; list-page.mjs joins them to a page.
 import { attrs, esc } from './html.mjs';
 import { button } from './button.mjs';
@@ -118,7 +118,7 @@ export function scheduleButton({ every, at }) {
 /** The times a schedule picker offers: every half hour of the day. */
 export const TIMES_OF_DAY = Object.freeze(Array.from({ length: 48 }, (_, i) => `${String(Math.floor(i / 2)).padStart(2, '0')}:${i % 2 ? '30' : '00'}`));
 
-/** The sections of a list by day, newest first (docs/rail/lists.md). */
+/** The sections of a list by day, newest first (docs/stillhet/lists.md). */
 export const DAY_SECTIONS = Object.freeze([['upcoming', 'Waiting'], ['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'Previous 7 days'], ['month', 'Previous 30 days'], ['older', 'Older']]);
 
 /**

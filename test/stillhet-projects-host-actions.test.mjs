@@ -23,14 +23,14 @@ test('the bar lists dev\'s projects, seed-moved reads Folder missing; while the 
   const g = gate();
   const h = await projectsHost({ hold: (u) => (u === '/api/projects' ? g.p : null) });
   assert.match(page(h.d).textContent, /Loading projects/);
-  assert.equal(h.w.RailPlaces.projects.has('anything'), true, 'a deep link waits for the list');
+  assert.equal(h.w.StillhetPlaces.projects.has('anything'), true, 'a deep link waits for the list');
   g.open(); await settle(100);
   h.sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'hello', bootId: 'b', runs: [] }) }); await settle(200);   // the socket opens after the first read
-  const names = h.w.RailProjects.list().map((p) => p.name);
+  const names = h.w.StillhetProjects.list().map((p) => p.name);
   for (const n of ['seed-ok', 'seed-behind', 'seed-moved', 'seed-owned']) assert.ok(names.includes(n), n);
   assert.match(h.d.getElementById('bar-place').textContent, /seed-moved/);
   assert.match(h.d.getElementById('bar-place').textContent, /Folder missing/);
-  assert.equal(h.w.RailPlaces.projects.has('anything'), false);
+  assert.equal(h.w.StillhetPlaces.projects.has('anything'), false);
 });
 
 test('every project-side pending label shows on its control, disabled, while dev answers, then the control rests', async () => {
@@ -67,8 +67,8 @@ test('every project-side pending label shows on its control, disabled, while dev
   await press('team', `/api/projects/${KEYS.ok}/settings`, () => page(h.d).querySelector('[data-pj-team]').click(), () => page(h.d).querySelector('[data-pj-team]'));
   await press('defaults', `/api/projects/${KEYS.ok}/tags/defaults`, async () => { page(h.d).querySelector('[data-def-edit="labels"]').click(); await settle(30); h.d.getElementById('def-labels').value = 'billing'; page(h.d).querySelector('[data-def-edit="labels"]').click(); }, () => rowButton(h.d, 'Labels'));
   await go(h.w, '#projects', 150);
-  await press('add', '/api/projects', async () => { h.w.RailPlaces.projects.newPick('hand-project'); await settle(100); page(h.d).querySelector('#pj-hand-v').value = '~/src/brand-new'; yes(h.d).click(); }, () => yes(h.d));
-  const way = async (w) => { h.w.RailPlaces.projects.newPick('hand-project'); await settle(100); page(h.d).querySelector(`[data-pa-way="${w}"]`).click(); await settle(60); };
+  await press('add', '/api/projects', async () => { h.w.StillhetPlaces.projects.newPick('hand-project'); await settle(100); page(h.d).querySelector('#pj-hand-v').value = '~/src/brand-new'; yes(h.d).click(); }, () => yes(h.d));
+  const way = async (w) => { h.w.StillhetPlaces.projects.newPick('hand-project'); await settle(100); page(h.d).querySelector(`[data-pa-way="${w}"]`).click(); await settle(60); };
   await press('create', '/api/projects/create', async () => { await way('new'); page(h.d).querySelector('#pj-new-name').value = 'alpha'; yes(h.d).click(); }, () => yes(h.d));
   await press('bulk', '/api/projects/bulk', async () => { await way('many'); yes(h.d).click(); await settle(120); for (const p of ['/src/a', '/src/b']) page(h.d).querySelector(`[data-fb-pick="${p}"]`).click(); page(h.d).querySelector('.fb [data-dialog="yes"]').click(); await settle(40); yes(h.d).click(); }, () => yes(h.d));
   const projectSide = Object.entries(PROJECT_ACTIONS).filter(([id, [, label]]) => label && !id.startsWith('space-') && !['scan', 'answer', 'open-editor', 'clone'].includes(id)).map(([id]) => id);
@@ -123,7 +123,7 @@ test('F-5-05 = F-6-02: Add by hand and Locate folder open the page of what was a
   noGone();
   assert.ok(page(h.d).querySelector('#pj-dock'), 'the moved project\'s page');
   await go(h.w, '#projects', 150);
-  h.w.RailPlaces.projects.newPick('hand-project'); await settle(100);
+  h.w.StillhetPlaces.projects.newPick('hand-project'); await settle(100);
   page(h.d).querySelector('#pj-hand-v').value = '~/src/brand-new'; yes(h.d).click(); await settle(60);
   assert.ok(heldWith(yes(h.d), 'Adding…'), 'Add holds Adding… while the store reads the list');
   await until(() => h.w.location.hash === `#projects/${ADDED}`); await settle(100);
@@ -133,11 +133,11 @@ test('F-5-05 = F-6-02: Add by hand and Locate folder open the page of what was a
   assert.match(page(h.d).textContent, /brand-new/, 'its page, with its name');
   assert.ok(page(h.d).querySelector('#pj-dock'));
   await go(h.w, '#projects', 150);   // D4: a person who moves on during the wait stays where they went
-  h.w.RailPlaces.projects.newPick('hand-project'); await settle(100);
+  h.w.StillhetPlaces.projects.newPick('hand-project'); await settle(100);
   const lists = () => h.calls.filter((c) => c.method === 'GET' && c.url === '/api/projects').length, before = lists();
   page(h.d).querySelector('#pj-hand-v').value = '~/src/late-one'; yes(h.d).click(); await until(() => lists() > before);   // the store's read after the add, held
   await go(h.w, '#chat', 100);
-  held = null; g.open(); await until(() => h.w.RailProjects.list().some((p) => p.name === 'late-one')); await settle(600);
+  held = null; g.open(); await until(() => h.w.StillhetProjects.list().some((p) => p.name === 'late-one')); await settle(600);
   assert.equal(h.w.location.hash, '#chat');
 });
 
@@ -196,7 +196,7 @@ const monthAnswer = { bucket: 'day', windowStartMs: 0, windowEndMs: 1, humanRate
   report: { buckets: [], prevRuns: null, runs: [{ id: 'a', person: null, project: 'seed-ok', workflow: null, status: 'finished', pr: null, tags: {}, usd: 12.4, hours: 0, inCohort: true, startedMs: 1, hourBucket: -1, spend: [] },
     { id: 'b', person: null, project: 'seed-local', workflow: null, status: 'finished', pr: null, tags: {}, usd: 3.1, hours: 0, inCohort: true, startedMs: 1, hourBucket: -1, spend: [] }] } };
 
-test('live, the page holds no stand-in: no "not in Stillhet yet", no RailWould, no Branch names row; the spend fact is dev\'s (slice 10 D19)', async () => {
+test('live, the page holds no stand-in: no "not in Stillhet yet", no StillhetWould, no Branch names row; the spend fact is dev\'s (slice 10 D19)', async () => {
   const h = await projectsHost({ hash: `#projects/${KEYS.ok}`, read: (u) => (u === MONTH ? [200, monthAnswer] : null) });
   noWould(h.w);
   await settle(150);
@@ -227,7 +227,7 @@ test('the demo kind sends nothing: Remove, Rename and a setting change only the 
   const d = w.document;
   pickMore(d, 'rename'); await settle(80);
   page(d).querySelector('#pj-hand-v').value = 'worca'; yes(d).click(); await settle(80);
-  assert.equal(w.RailProjects.all().find((p) => p.id === 'worca-cc').name, 'worca', 'D7: the demo sets its name; the id stays');
+  assert.equal(w.StillhetProjects.all().find((p) => p.id === 'worca-cc').name, 'worca', 'D7: the demo sets its name; the id stays');
   pickMore(d, 'remove'); await settle(80); yes(d).click(); await settle(80);
   assert.deepEqual(calls.filter(([m]) => m !== 'GET'), []);
 });
@@ -239,7 +239,7 @@ test('F-cov1-06 demo: an address shows Branch and Folder name under it, a path d
   const w = stillhetHost({ hash: '#projects', after: (fn) => t.after(fn), fetch: async (u, o = {}) => { calls.push([o.method || 'GET', String(u)]); return { ok: true, status: 200, json: async () => ({}) }; } });
   await settle(120);
   const d = w.document;
-  w.RailPlaces.projects.newPick('hand-project'); await settle(100);
+  w.StillhetPlaces.projects.newPick('hand-project'); await settle(100);
   type(w, '#pj-hand-v', '~/src/web-app'); await settle(300);
   assert.equal(page(d).querySelector('#pj-clone-branch'), null, 'a path: no Branch');
   assert.equal(page(d).querySelector('#pj-clone-name'), null, 'a path: no Folder name');
@@ -251,7 +251,7 @@ test('F-cov1-06 demo: an address shows Branch and Folder name under it, a path d
   assert.equal(page(d).querySelector('#pj-hand-v').value, 'git@github.com:o/shop-api.git', 'the redraw keeps what was typed');
   type(w, '#pj-clone-name', 'my-shop'); await settle(60);
   yes(d).click(); await settle(120);
-  assert.ok(w.RailProjects.all().some((p) => p.id === 'my-shop'), 'the demo adds it by its Folder name');
+  assert.ok(w.StillhetProjects.all().some((p) => p.id === 'my-shop'), 'the demo adds it by its Folder name');
   assert.match(saidText(d), /Added my-shop/);
   assert.deepEqual(calls.filter(([m]) => m !== 'GET'), []);
 });
@@ -261,13 +261,13 @@ const clones = (calls) => sent(calls).filter(([m, u]) => m === 'POST' && u === '
 test('F-cov1-06 live: Branch and Folder name reach POST /api/projects/clone; empty ones are left out', async () => {
   const h = await projectsHost({ write: cloned });
   const url = 'https://github.com/o/shop-api.git';
-  h.w.RailPlaces.projects.newPick('hand-project'); await settle(100);
+  h.w.StillhetPlaces.projects.newPick('hand-project'); await settle(100);
   type(h.w, '#pj-hand-v', url); await settle(300);
   type(h.w, '#pj-clone-branch', ' dev '); type(h.w, '#pj-clone-name', 'my-shop'); await settle(60);
   yes(h.d).click(); await until(() => clones(h.calls).length === 1); await settle(100);
   assert.deepEqual(sent(h.calls).at(-1), ['POST', '/api/projects/clone', { url, branch: 'dev', name: 'my-shop' }]);
   assert.match(saidText(h.d), /Cloning my-shop…/);
-  h.w.RailPlaces.projects.newPick('hand-project'); await settle(100);
+  h.w.StillhetPlaces.projects.newPick('hand-project'); await settle(100);
   type(h.w, '#pj-hand-v', url); await settle(300);
   yes(h.d).click(); await until(() => clones(h.calls).length === 2); await settle(100);
   assert.deepEqual(sent(h.calls).at(-1), ['POST', '/api/projects/clone', { url }]);
@@ -277,7 +277,7 @@ test('F-cov1-06 live: a 409 (folder exists) lands on Folder name and a 400 (bad 
   const EXISTS = '/w/projects/taken already exists; pick another folder name';
   const h = await projectsHost({ write: (u, b) => (u !== '/api/projects/clone' ? [200, { ok: true }] : b.name === 'taken' ? [409, { error: EXISTS, code: 'exists' }] : [400, { error: 'not a valid branch name' }]) });
   const note = (id) => page(h.d).querySelector(`#${id}-note`)?.textContent || '';
-  h.w.RailPlaces.projects.newPick('hand-project'); await settle(100);
+  h.w.StillhetPlaces.projects.newPick('hand-project'); await settle(100);
   type(h.w, '#pj-hand-v', 'git@github.com:o/shop-api.git'); await settle(300);
   type(h.w, '#pj-clone-name', 'taken'); await settle(60);
   yes(h.d).click(); await until(() => note('pj-clone-name') !== ''); await settle(60);

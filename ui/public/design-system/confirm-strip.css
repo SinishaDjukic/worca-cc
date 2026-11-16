@@ -1,4 +1,4 @@
-/* ConfirmStrip (docs/rail/components.md) and the text link: moved here once from the prototype's rail.css and shell.css,
+/* ConfirmStrip (docs/stillhet/components.md) and the text link: moved here once from the prototype's stillhet.css and shell.css,
    so the app and the prototype draw them from one rule. */
 .dc-link{padding:0;border:0;background:none;font:inherit;color:var(--ink);text-decoration:underline;text-underline-offset:3px;cursor:pointer;text-align:left;}
 .rc-confirm{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;padding:10px 12px;border:1px solid var(--line-2);border-radius:var(--r-md);background:var(--panel);font-size:var(--fs-body);}
@@ -16,5 +16,5 @@
 .dc-link[data-c-filter]:hover{text-decoration:underline;text-underline-offset:2px;}
 .rc-confirm.is-form .fld{flex-direction:column;align-items:stretch;}
 .rc-confirm.is-form .fld>.input{flex:0 0 auto;}
-#rail-strip:empty{display:none;}
-#rail-strip{flex:none;padding:0 16px;}
+#stillhet-strip:empty{display:none;}
+#stillhet-strip{flex:none;padding:0 16px;}

@@ -42,7 +42,7 @@ test('resolve: Workflows takes its own ways when it has them', () => {
 
 test('resolve never loops: null for every current Stillhet route and for every target', () => {
   const w = stillhetHost({ after });
-  const routes = [...w.RailShell.routes(), 'chat', 'insights/spend', 'insights/team', 'settings/connectors', 'settings/team', 'projects/ws:w1'];
+  const routes = [...w.StillhetShell.routes(), 'chat', 'insights/spend', 'insights/team', 'settings/connectors', 'settings/team', 'projects/ws:w1'];
   for (const r of routes) assert.equal(resolve(`#${r}`), null, r);
   for (const to of new Set(Object.values(EXPECT))) assert.equal(resolve(to), null, to);
   for (const to of ['#run/r1', '#run/p', '#run/group:g1']) assert.equal(resolve(to), null, to);
@@ -201,7 +201,7 @@ test('Stillhet off: dev\'s Statistics and Team metrics forms are dev\'s (MOVED_R
 test('Stillhet on below Expert: #team-metrics lands on #insights/team and draws the locked line (Insights at Simple, By person at Advanced), never Spend', async () => {
   const settle = () => new Promise((r) => setTimeout(r, 30));
   for (const level of ['simple', 'advanced']) {
-    const w = stillhetHost({ after, hash: '#team-metrics', level, beforeScripts: (win) => win.localStorage.setItem('worca-rail.mode', level) });   // the demo kind's mode
+    const w = stillhetHost({ after, hash: '#team-metrics', level, beforeScripts: (win) => win.localStorage.setItem('worca-stillhet.mode', level) });   // the demo kind's mode
     await settle();
     assert.equal(w.location.hash, '#insights/team', level);
     const t = w.document.body.textContent;

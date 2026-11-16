@@ -61,10 +61,10 @@ test('?state is ignored live; a failed GET /api/plugins shows the failed list st
   await go(w, '#marketplace', 50);
 });
 
-test('RailPlaces.marketplace.has: true while loading, false for nope once ready', async () => {
+test('StillhetPlaces.marketplace.has: true while loading, false for nope once ready', async () => {
   let release; const held = new Promise((r) => { release = r; });
   const { w } = await marketplaceHost({ hash: '#chat', hold: (u) => (u === '/api/plugins' ? held : null) });
-  const place = w.RailPlaces.marketplace;
+  const place = w.StillhetPlaces.marketplace;
   place.records();   // asks for the lists
   assert.equal(place.has('nope'), true, 'a deep link waits for the lists');
   release(); await settle(100);
@@ -96,7 +96,7 @@ test('View its source opens the pinned commit on GitHub in a new tab', async () 
 test('demo kind: Install sends nothing', async () => {
   const calls = [];
   const w = stillhetHost({ after, hash: '#chat', fetch: async (u, o = {}) => { calls.push([o.method || 'GET', String(u)]); return { ok: true, status: 200, json: async () => ({}) }; } });
-  w.RailUI.prefs.setMode('expert'); await go(w, '#marketplace/slack-chat', 50);
+  w.StillhetUI.prefs.setMode('expert'); await go(w, '#marketplace/slack-chat', 50);
   const d = w.document;
   d.querySelector('[data-mk-step]').click(); await settle(10);
   d.querySelector('[data-confirm="yes"]').click(); await settle(30);
@@ -106,7 +106,7 @@ test('demo kind: Install sends nothing', async () => {
 
 test('demo kind: notion-mcp needs set-up; the built-in market has no Remove', async () => {
   const w = stillhetHost({ after, hash: '#chat' });
-  w.RailUI.prefs.setMode('expert'); await go(w, '#marketplace/notion-mcp', 50);
+  w.StillhetUI.prefs.setMode('expert'); await go(w, '#marketplace/notion-mcp', 50);
   assert.match(w.document.body.textContent, /Needs set-up/);
   w.location.hash = '#marketplace'; await settle(50);
   assert.ok(!w.document.querySelector('[data-mk-unsource="official"]'));

@@ -50,7 +50,7 @@ test('F-5-11: pins are read again only when Chat home is shown', async () => {
   assert.equal(pinGets(calls), n0, 'an open chat never reads the pins');
   await go(w, '#schedules');
   assert.equal(pinGets(calls), n0, 'another page never reads them');
-  w.RailConversation.refresh(); w.RailConversation.flushPaints(); await settle(20);
+  w.StillhetConversation.refresh(); w.StillhetConversation.flushPaints(); await settle(20);
   assert.equal(pinGets(calls), n0, 'a repaint never reads them');
   await go(w, '#chat');
   assert.equal(pinGets(calls), n0 + 1, 'Chat home shown: one read');
@@ -106,7 +106,7 @@ test('F-5-11: a pins read that answers after a pin keeps the pin', async () => {
   await until(() => starters(d).includes('Shaper'));
   await go(w, '#chat/ask_1');
   h.arm(); await go(w, '#chat');
-  w.RailConversation.pin('Lean', true); await settle(60);
+  w.StillhetConversation.pin('Lean', true); await settle(60);
   assert.ok(calls.some((c) => c.method === 'PUT' && c.url === PINS));
   assert.deepEqual(starters(d), ['Shaper', 'Lean'], 'the PUT answer is drawn');
   h.release(); await settle(80);
@@ -117,7 +117,7 @@ test('F-5-11: a home with no starters (Requirements\' Shape a feature) never rea
   const { w, d, calls } = await liveHost({ hash: '#chat/ask_1' });
   await settle(60);
   const el = d.createElement('div'); d.body.append(el);
-  const home = w.RailConversation.mount(el, { mode: 'ask', title: 'Shape a feature' });
+  const home = w.StillhetConversation.mount(el, { mode: 'ask', title: 'Shape a feature' });
   const n0 = pinGets(calls);
   home.show(''); await settle(40);
   home.show(''); await settle(40);
@@ -137,7 +137,7 @@ test('F-5-11: a fresh read whose workflows read fails keeps the names, never a b
 
 test('F-5-11 demo: a pin made in Workflows is a starter on Chat home', async () => {
   const urls = [];
-  const w = stillhetHost({ hash: '#chat', after: (fn) => closers.push(fn), fetch: async (u) => { urls.push(String(u)); return { ok: false, status: 404, json: async () => ({}) }; }, beforeScripts: (win) => { win.structuredClone ||= structuredClone; win.RailGraph = { mount: () => ({ g: null, view: null, fit: 1 }), align: (g) => g, build: () => ({}) }; } });
+  const w = stillhetHost({ hash: '#chat', after: (fn) => closers.push(fn), fetch: async (u) => { urls.push(String(u)); return { ok: false, status: 404, json: async () => ({}) }; }, beforeScripts: (win) => { win.structuredClone ||= structuredClone; win.StillhetGraph = { mount: () => ({ g: null, view: null, fit: 1 }), align: (g) => g, build: () => ({}) }; } });
   const d = w.document;
   await settle(60);
   const before = starters(d);

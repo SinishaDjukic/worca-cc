@@ -1,6 +1,6 @@
 // test/stillhet-schedules-page-host.test.mjs — a schedule's page in both kinds: the demo's DraftBar and Delete's Undo, the
 // preset and run-after facts, the Ended section, one TaskCard per fire, and one word per schedule on every surface that
-// draws it (RailSchedules.wordOf / nextOf / skipItem) for the seeded states (Schedules D6, D8, D10, D11, Step 9).
+// draws it (StillhetSchedules.wordOf / nextOf / skipItem) for the seeded states (Schedules D6, D8, D10, D11, Step 9).
 import { test, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { stillhetHost } from './helpers/stillhet-host.mjs';
@@ -17,7 +17,7 @@ test('demo: a picker change shows the DraftBar with 1 change; Discard drops it',
   d.querySelector('#route-schedule [data-menu="sc-at"]').click(); await settle(10);
   d.querySelector('#route-schedule [data-menu-pick="sc-at|10:00"]').click(); await settle(20);
   assert.match(d.querySelector('#route-schedule .draft-bar').textContent, /1 change/);
-  assert.equal(w.RailSchedules.find('s2').at, '09:00', 'the schedule keeps its time until Save');
+  assert.equal(w.StillhetSchedules.find('s2').at, '09:00', 'the schedule keeps its time until Save');
   d.querySelector('#route-schedule [data-sched-discard]').click(); await settle(20);
   assert.equal(d.querySelector('#route-schedule .draft-bar'), null);
 });
@@ -25,11 +25,11 @@ test('demo: a picker change shows the DraftBar with 1 change; Discard drops it',
 test('demo: Delete hides the schedule and says "Deleted TITLE" with Undo; Undo brings it back', async () => {
   const w = stillhetHost({ hash: '#schedule/s2', after }); await settle(200);
   const d = w.document;
-  w.RailSchedules.act('s2', 'delete'); await settle(20);
-  assert.equal(w.RailSchedules.find('s2'), undefined);
+  w.StillhetSchedules.act('s2', 'delete'); await settle(20);
+  assert.equal(w.StillhetSchedules.find('s2'), undefined);
   assert.match(toastText(d), /^Deleted Weekly deps update/);
   d.querySelector('body > .rc-toast button').click(); await settle(20);
-  assert.ok(w.RailSchedules.find('s2'));
+  assert.ok(w.StillhetSchedules.find('s2'));
 });
 
 test('demo: a preset-backed schedule says where it comes from; an ended one reads Ended, with no Run now, in its own section', async () => {
@@ -45,11 +45,11 @@ test('demo: a preset-backed schedule says where it comes from; an ended one read
 
 test('demo: a schedule\'s Chat card reads its word and why; its More › Delete says "Deleted TITLE" with Undo, and Undo brings it back', async () => {
   const w = stillhetHost({ hash: '#chat/c1', after }); await settle(300);
-  const d = w.document, S = w.RailSchedules;
+  const d = w.document, S = w.StillhetSchedules;
   const card = d.querySelector('#route-chat [data-menu="card:s1"]').closest('.task-card, [data-anchor]');
   assert.equal(card.querySelector('.kind-mark').getAttribute('title'), `${S.wordOf('s1')} · ${S.nextOf('s1')}`, 'its mark says the word, as the bar row\'s does');
   assert.ok(card.textContent.includes(S.nextOf('s1')), card.textContent);
-  w.RailSchedules.act('s1', 'skip'); await settle(40);
+  w.StillhetSchedules.act('s1', 'skip'); await settle(40);
   assert.ok(d.querySelector('#route-chat [data-menu="card:s1"]').closest('.task-card, [data-anchor]').textContent.includes('Skips next time, then as usual'), 'a skip shows on the card too');
   d.querySelector('#route-chat [data-menu="card:s1"]').click(); await settle(10);
   d.querySelector('#route-chat [data-menu-pick="card:s1|Delete"]').click(); await settle(40);
@@ -61,7 +61,7 @@ test('demo: a schedule\'s Chat card reads its word and why; its More › Delete 
 
 test('a failed ticket\'s task page: Open project opens projects/KEY and says which', async () => {
   const w = stillhetHost({ hash: '#run/ticket-failed', after }); await settle(300);
-  const said = []; const say = w.RailPulse.say; w.RailPulse.say = (t, u) => { said.push(t); return say(t, u); };
+  const said = []; const say = w.StillhetPulse.say; w.StillhetPulse.say = (t, u) => { said.push(t); return say(t, u); };
   w.document.querySelector('#card [data-label="Open project"]').click(); await settle(100);
   assert.equal(w.location.hash, '#projects/worca-cc');
   assert.deepEqual(said, ['Opened worca-cc']);
@@ -99,19 +99,19 @@ test('live: the page lists one TaskCard per fire of its history', async () => {
   const { w, d } = await liveWorld();
   await go(w, '#schedule/sch_next', 150); await settle(400);
   assert.equal(d.querySelectorAll('#route-schedule .task-card, #route-schedule [data-sched-run], #route-schedule [data-sched-ticket$="|now"]').length >= 3, true);
-  assert.equal(w.RailSchedules.find('sch_next').runs.length, 3);
+  assert.equal(w.StillhetSchedules.find('sch_next').runs.length, 3);
   assert.match(facts(d), /from Nightly preset/);
 });
 
 test('live: each seeded state reads the same word, why and skip item on its page, its center card, its bar row and its Pulse row', async () => {
   const { w, d } = await liveWorld();
   await go(w, '#schedules', 150); await settle(500);
-  const S = w.RailSchedules, fails = [];
+  const S = w.StillhetSchedules, fails = [];
   d.querySelector('#bar-schedules [data-menu="by"]').click(); await settle(10);
   d.querySelector('#bar-schedules [data-pick="by|state"]').click(); await settle(40);   // every section open: one row per schedule
   for (const [state, x, word, skip] of STATES) {
     const got = S.wordOf(x.id);
-    if (got !== (word || w.RailUI.runState('working').word)) fails.push(`${state}: wordOf ${got} ≠ ${word}`);
+    if (got !== (word || w.StillhetUI.runState('working').word)) fails.push(`${state}: wordOf ${got} ≠ ${word}`);
     const card = d.querySelector(`[data-c-card="${x.id}"]`);
     if (!card) fails.push(`${state}: no center card`);
     else if (!card.textContent.includes(got)) fails.push(`${state}: card lacks ${got}`);
@@ -127,7 +127,7 @@ test('live: each seeded state reads the same word, why and skip item on its page
     if (S.nextOf(x.id) && !line(d).includes(S.nextOf(x.id))) fails.push(`${state}: page why lacks ${S.nextOf(x.id)}`);
   }
   // Pulse: a schedule still to come or missed is a row there (Scheduled, or Needs you), with the same word and why
-  w.RailPulse.open('now'); await settle(80);
+  w.StillhetPulse.open('now'); await settle(80);
   const rowed = [];
   for (const [state, x] of STATES) {
     const b = d.querySelector(`#app .pz-popover [data-row="r:sched:${x.id}"] button[data-open]`);
@@ -150,7 +150,7 @@ test('live: each seeded state reads the same word, why and skip item on its page
 test('live: a schedule made from a chat has its Chat card, with the same word and why as its page; the other states have none', async () => {
   const { w, d } = await liveWorld();
   await go(w, '#chat/ask_1', 300); await settle(300);
-  const S = w.RailSchedules, fails = [];
+  const S = w.StillhetSchedules, fails = [];
   for (const [state, x] of STATES) {
     const card = d.querySelector(`#route-chat [data-menu="card:${x.id}"]`)?.closest('.task-card, [data-anchor]');
     if (!CHAT.includes(x.id)) { if (card) fails.push(`${state}: a Chat card it was not made from`); continue; }

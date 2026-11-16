@@ -84,7 +84,7 @@ test('a send answered after a switch away and back leaves no chip on the cleared
 test('the Requirements page\'s Shape a feature composer draws no chip and makes no prompt check call', async () => {
   const s = await pcHost();
   const page = s.d.createElement('div'); page.id = 'rq-test-page'; s.d.body.append(page);
-  const home = s.w.RailConversation.mount(page, { mode: 'ask', where: '#rq-test-page', title: 'Shape a feature' });   // requirements.js mounts it so
+  const home = s.w.StillhetConversation.mount(page, { mode: 'ask', where: '#rq-test-page', title: 'Shape a feature' });   // requirements.js mounts it so
   home?.show?.(''); await settle(30);
   s.q = (sel) => page.querySelector(sel);
   s.box = () => page.querySelector('[data-composer-t]');
@@ -131,7 +131,7 @@ test('the improve body carries the projectKey of the composer\'s project', async
   pick.click(); await settle(20);
   await s.graded(TASK, { grade: 'needs-detail' });
   improveBtn(s).click(); await settle(10);
-  const key = s.w.RailWorld.part('projects').find((p) => p.name === name).id;
+  const key = s.w.StillhetWorld.part('projects').find((p) => p.name === name).id;
   assert.ok(key);
   assert.equal(improves(s).at(-1).body.projectKey, key);
   assert.equal(improves(s).at(-1).body.kind, 'implementation');

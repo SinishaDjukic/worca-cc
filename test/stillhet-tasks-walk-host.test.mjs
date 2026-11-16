@@ -1,7 +1,7 @@
-// test/stillhet-tasks-walk-host.test.mjs — R-qa-11, the Tasks invariant "RailWould never runs in the live kind": the walk
+// test/stillhet-tasks-walk-host.test.mjs — R-qa-11, the Tasks invariant "StillhetWould never runs in the live kind": the walk
 // over the Tasks control set (the bar's Tasks list, the Tasks center and each fixture task page, with their open menus)
 // never says "Not connected" or "Would" or "the task page does not offer it", and finds a disabled control only for a
-// DISABLED_OK reason. Live app host (jsdom, the real live adapter and RailTaskLive).
+// DISABLED_OK reason. Live app host (jsdom, the real live adapter and StillhetTaskLive).
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { liveHost, go, settle, closeHosts, clone, SOURCES, walk, DISABLED_OK, CONTROLS, toastText } from './helpers/stillhet-chat-live-host.mjs';

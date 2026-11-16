@@ -4,14 +4,14 @@
 // New run, and Settings › Notifications.
 // The viewer's choices live in `ui`; every click repaints #app, and a repaint never scrolls the page.
 const M = window.PulseModel;
-const R = window.RailUI;
-const W = window.RailWorld;   // who is running what, in the case in view: the one mock (shell/world.js)
-const SHELL = window.RailShell || null;   // the one Worca: mount into today's shell instead of drawing a frame   // the Rail components (ui/public/design-system/components)
+const R = window.StillhetUI;
+const W = window.StillhetWorld;   // who is running what, in the case in view: the one mock (shell/world.js)
+const SHELL = window.StillhetShell || null;   // the one Worca: mount into today's shell instead of drawing a frame   // the Stillhet components (ui/public/design-system/components)
 const SM = window.SettingsModel, SV = window.SettingsView;   // Settings: its menu and every section but Notifications
 const esc = R.esc;
 const svg = (name, size, cls) => R.icon(name, size, { cls });
 
-const caseOf = (id) => { const c = M.CASES.find((x) => x.id === id); return window.RailFirstRun && c ? { ...c, updates: [], teamSetup: false, actions: [] } : c; };   // the first run: nothing has happened yet
+const caseOf = (id) => { const c = M.CASES.find((x) => x.id === id); return window.StillhetFirstRun && c ? { ...c, updates: [], teamSetup: false, actions: [] } : c; };   // the first run: nothing has happened yet
 const groupOf = (id) => M.GROUPS.find((g) => g.id === id);
 function freshSettings(c) {
   return { desktop: c.desktop, badge: 'needs', sound: 'needs', pulseFor: (W.live && W.part('pulseFor')) || 'until-read', attnFor: '3', warnAt: 80, mine: 'suggest', auto: 'move', groups: Object.fromEntries(M.GROUPS.map((g) => [g.id, { level: g.level, where: g.where, ex: {} }])) };
@@ -24,18 +24,18 @@ const fresh = (caseId) => ({ caseId, page: 'runs', pop: false, popTab: 'vitals',
   added: [], soundAt: null, stopped: [], teamSeen: false, chatSeen: false, unlock: null, session: false, person: 0, people: {} });
 let ui = fresh(M.CASES[0].id);   // the demo's first case, or the live kind's one case (pulse-model.js)
 // The live kind: dev's own routes for every action (D13). A refusal names what failed and changes nothing.
-const LIVE = !!W.live, A = window.RailAdapter;
+const LIVE = !!W.live, A = window.StillhetAdapter;
 const refused = (what, r) => { toast(`Could not ${what}: ${r.error}`); render(); };
 // a resume dev answers with a confirm (team cap, base moved, a cost override, an engine) opens the task: the confirm is the task page's
 const asksConfirm = (r) => !!(r.data && (r.data.needsPolicyAck || r.data.needsPolicyOverride || r.data.needsOverride || ['base-moved', 'base-missing', 'engine-refused', 'reason_required'].includes(r.data.code)));
 // Pulse's own list states (failures.md): before the first snapshot and when it failed, the popover says so, as the bar's lists do
-const listNow = () => { const l = window.RailDemoState?.list; return l === 'loading' || l === 'failed' ? l : ''; };
+const listNow = () => { const l = window.StillhetDemoState?.list; return l === 'loading' || l === 'failed' ? l : ''; };
 const pulseState = () => R.listState({ state: listNow(), noun: 'updates', retry: { 'data-pulse-retry': '' } });
 // What opened with this click: only that fades in (a repaint of what was already open does not fade again).
 let opening = '';
 const inCls = (k) => (opening === k ? ' is-in' : '');
 // Appearance is the viewer's, not the case's: it outlives a case change.
-const KEY_LOOK = 'worca-rail.appearance';
+const KEY_LOOK = 'worca-stillhet.appearance';
 let appearance = 'system';
 function applyAppearance(m) {
   appearance = m;
@@ -53,12 +53,12 @@ const liveBudget = (b) => (!W.live && b && ui.sv.total && ui.sv.period === 'mont
 const budgetGone = () => M.budgetGone(C().budget);
 // A row's read state is the person's own on a shared sign-in; a problem clears when it is acted on; info rows arrive read.
 const isFixed = (u) => ui.fixed.includes(u.id);
-// Read in the live kind (#1268, docs/rail/panels.md `panel.pulse-read`): a notification's read is the server's, per reader;
+// Read in the live kind (#1268, docs/stillhet/panels.md `panel.pulse-read`): a notification's read is the server's, per reader;
 // a run outcome has no record there, so its read lives in this browser under KEY_READ, shared by its tabs and kept across a
 // reload: { v: 1, keys: ['o' + pipeline id + '|' + event + '|' + the run's total active ms, …] }, oldest first, the newest
 // READ_MAX kept: the run's next outcome, even under the same event, never matches an older read (a new attempt works, so its
 // active time grows), while a write that is no attempt (a late title) leaves the key as it was. The demo keeps `ui.read`.
-const KEY_READ = 'worca-rail.pulse-read', READ_MAX = 500;
+const KEY_READ = 'worca-stillhet.pulse-read', READ_MAX = 500;
 const isNote = (u) => /^n\d+$/.test(u.id), isOutcome = (u) => /^o/.test(u.id);
 const outcomeOf = (u) => u.e + (u.work != null ? '|' + u.work : '');   // which outcome of its run: the event and the work behind it
 const readKey = (u) => u.id + '|' + outcomeOf(u);
@@ -113,7 +113,7 @@ function markRead(updates, { undo = false } = {}) {
 // lacks keeps its key.
 const WORKING = ['starting', 'running', 'pausing'];
 function runWorks(pid) {
-  const l = window.RailTaskLive?.resolve?.(pid)?.live;   // the live run of that pipeline, under any run id
+  const l = window.StillhetTaskLive?.resolve?.(pid)?.live;   // the live run of that pipeline, under any run id
   if (l && (WORKING.includes(String(l.status).toLowerCase()) || l.pendingQuestion)) return true;
   return ['starting', 'working', 'question'].includes(W.find(pid)?.case);
 }
@@ -149,7 +149,7 @@ const vitalsCount = () => vitalsN(vitalsShown());
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many || one + 's'}`;
 
 // ---- shared pieces ----
-// One compact menu (Rail › Menu): one line per item, a leading check for a choice, the help in the tooltip.
+// One compact menu (Stillhet › Menu): one line per item, a leading check for a choice, the help in the tooltip.
 function menu(id, items, align) {
   if (ui.menu !== id) return '';
   return R.compactMenu({ items: items.map((it) => (it.sep ? it : { ...it, id: `${id}|${it.id}` })), cls: `pz-menu${align === 'right' ? ' is-right' : ''}${inCls('menu')}`, pickAttr: 'data-pick', motion: false });
@@ -193,7 +193,7 @@ function sidebar() {
   return `<aside class="pz-side">
     <div class="pz-brand"><span class="pz-word${swapCls}">${ui.page === 'settings' ? 'Settings' : 'Worca'}</span></div>
     ${ui.page === 'settings' ? settingsMenu() : ''}
-    <nav class="pz-nav${ui.page === 'settings' ? ' is-app' : ''}${swapCls}">${NAV.map(([ic, t]) => ic === 'runs' ? navGo('runs', ic, t, 'Runs: the page behind Pulse in this prototype') : R.navItem({ label: t, icon: svg(ic, 16), off: true, title: window.RailWould(`open ${t}`) })).join('')}</nav>
+    <nav class="pz-nav${ui.page === 'settings' ? ' is-app' : ''}${swapCls}">${NAV.map(([ic, t]) => ic === 'runs' ? navGo('runs', ic, t, 'Runs: the page behind Pulse in this prototype') : R.navItem({ label: t, icon: svg(ic, 16), off: true, title: window.StillhetWould(`open ${t}`) })).join('')}</nav>
     <div class="pz-foot">${sideFoot()}</div>
   </aside>`;
 }
@@ -246,11 +246,11 @@ function vitalsSections() {
   return bar + (out || `<p class="pz-empty">${all ? 'Nothing needs you. Nothing is running.' : 'Nothing here right now.'}</p>`);
 }
 
-// a schedule's waiting row (demo `ticket`, live `sched:ID`) reads the schedule's own word and why (RailSchedules.wordOf /
+// a schedule's waiting row (demo `ticket`, live `sched:ID`) reads the schedule's own word and why (StillhetSchedules.wordOf /
 // nextOf), as its page, card and bar row do; one deleted inside its Undo window is no row any more
 const schedIdOf = (r) => r.ticket || (/^sched:/.test(r.id || '') ? r.id.slice(6) : '');
-const schedGone = (r) => { const id = schedIdOf(r), S = window.RailSchedules; return !!(id && S && !S.find(id)); };
-const schedWords = (r) => { const id = schedIdOf(r), S = window.RailSchedules; return id && S?.find(id) ? [S.wordOf(id), S.nextOf(id)].filter(Boolean).join(' · ') : ''; };
+const schedGone = (r) => { const id = schedIdOf(r), S = window.StillhetSchedules; return !!(id && S && !S.find(id)); };
+const schedWords = (r) => { const id = schedIdOf(r), S = window.StillhetSchedules; return id && S?.find(id) ? [S.wordOf(id), S.nextOf(id)].filter(Boolean).join(' · ') : ''; };
 // Scheduled, by when: Missed, Today, Tomorrow, This week, Later, After a run; a group with nothing has no head.
 function scheduledSection(all) {
   const list = all.filter((r) => !schedGone(r));
@@ -356,11 +356,11 @@ function spendCard(c) {
 }
 // A background on Chat home and the away screen: one family, built on the same dots.
 const BACKGROUNDS = [['dots', 'Dots', 'The quiet grid, fading down'], ['aurora-dots', 'Aurora dots', 'The same grid, cool at the top'], ['dusk-dots', 'Dusk dots', 'The same grid, warm from below'], ['mist', 'Mist', 'A faint wash under quiet dots'], ['none', 'None', 'A plain page']];
-const bgKey = 'worca-rail.background';
+const bgKey = 'worca-stillhet.background';
 const readBg = () => { try { return localStorage.getItem(bgKey) || 'dots'; } catch { return 'dots'; } };
 function setBg(v) { document.documentElement.dataset.bg = v; try { localStorage.setItem(bgKey, v); } catch { /* private mode: for this session */ } }
 // the background can breathe: the same picture, slowly brighter and quieter (Emil, 8 Nov); still by default and when motion is reduced
-const breatheKey = 'worca-rail.background-breathes';
+const breatheKey = 'worca-stillhet.background-breathes';
 const readBreathe = () => { try { return localStorage.getItem(breatheKey) === '1'; } catch { return false; } };
 function setBreathe(on) { document.documentElement.dataset.bgBreathe = on ? '1' : '0'; try { localStorage.setItem(breatheKey, on ? '1' : '0'); } catch { /* for this session */ } }
 const bgName = () => BACKGROUNDS.find((b) => b[0] === (ui.bg || 'dots'))?.[1] || 'Dots';
@@ -471,7 +471,7 @@ function runsPage() {
 }
 
 // ---- Settings ----
-// The sidebar becomes Settings' menu (B: plans/rail/mocks/settings-menu-b-sidebar-*.png), ‹ Back to Worca at its top.
+// The sidebar becomes Settings' menu (B: plans/stillhet/mocks/settings-menu-b-sidebar-*.png), ‹ Back to Worca at its top.
 // On a narrow screen the sidebar stays Worca's, and Settings opens on its menu as a list; a section has ‹ Settings.
 // Every section is SettingsSections of SettingsRows (the components own the alignment). Notifications is drawn here,
 // from Pulse's model; every other section comes from settings-model.js through settings.js.
@@ -490,7 +490,7 @@ const levelText = (id) => M.LEVELS.find((l) => l.id === id).text;
 const whereText = (id) => M.WHERE.find((w) => w.id === id).text;
 const effWhere = (g, ev) => { const gs = ui.s.groups[g.id]; return gs.ex[ev[0]] || (M.qualifies(gs.level, ev[2]) ? gs.where : 'pulse'); };
 const quiet = (label, a) => R.button({ label, kind: 'quiet', attrs: a });
-// What differs from a value's start: the ChangedDot's lines (docs/rail/settings.md `set.changed`).
+// What differs from a value's start: the ChangedDot's lines (docs/stillhet/settings.md `set.changed`).
 const startOf = () => freshSettings(C());
 const changedFrom = (key, name, words) => (ui.s[key] !== startOf()[key] ? [{ name, was: words(startOf()[key]) }] : []);
 const ATTN_FOR = [{ id: '1', text: 'for 1 second' }, { id: '3', text: 'for 3 seconds' }, { id: '5', text: 'for 5 seconds' }, { id: 'act', text: 'until you act on it' }];
@@ -522,7 +522,7 @@ function notifications() {
       return R.settingsRow({ name: ev[1], help: `${ev[0]} · ${ev[2] === 'needs' ? 'needs you' : ev[2]}`, changed: evChange(ev), sentence: `${w === 'pulse' ? '' : 'Goes to '}${sp('ev:' + ev[0], whereText(w), M.WHERE.map((x) => ({ ...x, checked: x.id === w })), `Where ${ev[1]} goes`)}` });
     }).join('') : '';
     const detailAction = open && nEx ? quiet('Back to the group', { 'data-backgroup': g.id, title: 'Every event follows the group again' }) : '';
-    // Usage's limits are Runs': one row, in the section that owns it (docs/rail/settings.md)
+    // Usage's limits are Runs': one row, in the section that owns it (docs/stillhet/settings.md)
     const end = g.id === 'usage' ? quiet('Limits', { 'data-land': 'runs|Warning line', title: 'What a run does near a limit: Settings › Tasks › Limits' }) : '';
     return R.settingsRow({ name: g.name, end, detailRows, detailAction, changed: [...(gs.level !== g0.level ? [{ name: 'How much', was: levelText(g0.level) }] : []), ...(gs.where !== g0.where ? [{ name: 'Where', was: whereText(g0.where) }] : []), ...g.events.flatMap(evChange)],
       // Pulse keeps everything, so with Pulse only there is no level to choose.
@@ -667,7 +667,7 @@ function searchHits() {
   const set = settingsFinds().filter((e) => plain(e.label).includes(q) || plain(e.words).includes(q)), setByName = set.filter((e) => plain(e.label).includes(q));
   const seen = new Set();
   const own = [];
-  if (SHELL && window.RailChats) for (const c of window.RailChats.data().chats) {
+  if (SHELL && window.StillhetChats) for (const c of window.StillhetChats.data().chats) {
     if (plain(c.title).includes(q)) own.push({ label: c.title, where: c.project || 'No project', area: 'Chats', hash: `chat/${c.id}` });
     const walk = (t) => { if (plain(t.title).includes(q)) own.push({ label: t.title, where: `in ${c.title}`, area: t.kind === 'schedule' ? 'Schedules' : 'Tasks', hash: t.kind === 'schedule' ? `schedule/${t.id}` : `run/${t.case}`, chat: LIVE && t.followed ? '' : c.id, ...(LIVE ? { run: t.pid || t.run || '' } : {}) });   /* live: the chat that started it, and its own id */ (t.after || []).forEach(walk); };
     (c.tasks || []).forEach(walk);
@@ -681,7 +681,7 @@ function searchHits() {
     page.push({ label: t.slice(0, 60), where: head && head !== t ? head : 'This page', area: 'On this page', el });
     if (page.length >= 5) break;
   }
-  const places = Object.entries(window.RailPlaces || {}).flatMap(([k, m]) => (m.search ? m.search(q).slice(0, 4).map((x) => ({ ...x, area: m.area || k.charAt(0).toUpperCase() + k.slice(1), ...(SHELL?.needs(k) || {}) })) : []));
+  const places = Object.entries(window.StillhetPlaces || {}).flatMap(([k, m]) => (m.search ? m.search(q).slice(0, 4).map((x) => ({ ...x, area: m.area || k.charAt(0).toUpperCase() + k.slice(1), ...(SHELL?.needs(k) || {}) })) : []));
   const named = [...own, ...places, ...M.find(q).slice(0, 14)];
   // a setting found only by the words of its sentence counts when nothing is found by name
   const rest = [...named, ...(named.length || setByName.length ? setByName : set)].sort((a, b) => score(a) - score(b));
@@ -733,8 +733,8 @@ function land(e) {
 function goTo(e) {
   if (e.sset) { land(e); return; }
   closeOverlays();
-  if (SHELL) { if (e.kind === 'label') window.RailRunsList?.label(e.label); if (e.go.startsWith('run/')) SHELL.openRun(e.go, e.label, LIVE ? e.run : undefined); else SHELL.go(e.go); render(); return; }
-  toast(window.RailWould(`open ${e.label} · ${e.where}`)); render();
+  if (SHELL) { if (e.kind === 'label') window.StillhetRunsList?.label(e.label); if (e.go.startsWith('run/')) SHELL.openRun(e.go, e.label, LIVE ? e.run : undefined); else SHELL.go(e.go); render(); return; }
+  toast(window.StillhetWould(`open ${e.label} · ${e.where}`)); render();
 }
 // The hand-off: a mode asks in the strip under the top bar; a flag goes to its row in Labs. Once nothing locks it, on to the result.
 function stepUnlock() {
@@ -745,9 +745,9 @@ function stepUnlock() {
   if (lock.flag && u.flag !== lock.flag) { u.flag = lock.flag; land({ sset: 'experimental', label: flagName(lock.flag) }); }
 }
 function pickResult(v) {
-  if (v === 'ask') {   // rail.hand-to-chat: the words wait in the composer, about the page you asked from; nothing is sent yet
+  if (v === 'ask') {   // stillhet.hand-to-chat: the words wait in the composer, about the page you asked from; nothing is sent yet
     const q = askWords(), ctx = SHELL?.pageContext(); closeOverlays();
-    if (SHELL) window.RailConversation?.handOver({ text: q, about: ctx && ctx.view !== 'chat' ? { kind: 'Page', name: ctx.name } : undefined }); else toast(window.RailWould(`ask Chat: ${q}`));
+    if (SHELL) window.StillhetConversation?.handOver({ text: q, about: ctx && ctx.view !== 'chat' ? { kind: 'Page', name: ctx.name } : undefined }); else toast(window.StillhetWould(`ask Chat: ${q}`));
     render(); return;
   }
   const e = found[+v]; if (!e) return;
@@ -761,14 +761,14 @@ function pickResult(v) {
   goTo(e);
 }
 const flagName = (key) => (SM.FLAGS || []).find((f) => f.key === key)?.name || M.FLAG_ROW[key] || key;
-// A yes or no asked on a Settings page: under the top bar, on screen wherever the page is scrolled (docs/rail/actions.md).
+// A yes or no asked on a Settings page: under the top bar, on screen wherever the page is scrolled (docs/stillhet/actions.md).
 const settingsStrip = () => (ui.page !== 'settings' ? '' : SV.strip(ui.sv) || (ui.confirm === 'reset' ? R.confirmStrip({ text: 'Reset every group to its defaults? Your channels stay as they are.', yes: 'Reset' }) : ''));
 const unlockStrip = () => (ui.unlock?.strip ? R.confirmStrip({ text: `${ui.unlock.e.label} needs ${cap(ui.unlock.strip)}. Switch to ${cap(ui.unlock.strip)}?`, yes: 'Switch' }) : '');
 // nav.locked: handed to Labs, the way back stays on screen until the switch is on or you stay on your own
 const labsBack = () => (ui.unlock?.flag && !ui.unlock.strip && !ui.unlock.stay ? R.confirmStrip({ text: `${flagName(ui.unlock.flag)} is in Labs. Turn on its switch to go on, or go back.`, yes: 'Go back', no: 'Stay here' }) : '');
 document.addEventListener('input', (e) => { if (e.target.matches?.('[data-search]')) { ui.q = e.target.value; const res = document.querySelector('[data-search-res]'); if (res) R.patchParts(res, { list: searchResults() }); fitSearch(); } });
 // The results open to the left when they would leave the window: measured from where they would sit without their last
-// shift (as RailUI.fitMenu), and written only when the shift changes.
+// shift (as StillhetUI.fitMenu), and written only when the shift changes.
 function fitSearch() {
   const m = document.querySelector('.rl-search-res'); if (!m) return;
   const was = parseFloat(m.style.left || 0) || 0, right = m.getBoundingClientRect().right - was, vw = document.documentElement.clientWidth;
@@ -803,7 +803,7 @@ const pulseNews = (n, unreadIds = []) => {
 };
 // the master light wears the highest level that waits (look.alert-ladder)
 // The bell's one number: the rows of Needs you: tasks and missed times from the store, projects and workspace questions from Projects (small-rules)
-const placeNeeds = () => window.RailProjects?.needItems() || [];
+const placeNeeds = () => window.StillhetProjects?.needItems() || [];
 const needsTotal = () => vitalsRuns().needs.length + placeNeeds().length;
 const needsWords = () => { const l = vitalsRuns().needs, m = l.filter((r) => r.missed).length, t = l.length - m, more = placeNeeds(), q = more.filter((x) => x.kind === 'workspace').length, p = more.length - q, n = l.length + more.length; return n ? `${plural(n, 'needs you', 'need you')}${m || more.length ? ` (${[t && plural(t, 'task'), m && plural(m, 'missed schedule'), p && plural(p, 'project'), q && plural(q, 'question')].filter(Boolean).join(', ')})` : ''}` : ''; };   // panel.task-truth: a missed time needs you, and is not a task
 const masterTone = () => (vitalsRuns().needs.some((r) => R.alertLevel(R.markTone(R.runState(window.RunCardModel.stateOf(r.case)))) === 3) || placeNeeds().some((x) => x.tone === 'fail') ? 'warn' : 'need');
@@ -832,9 +832,9 @@ function renderInShell() {
   const keepP = document.querySelector('.panel-body')?.scrollTop || 0;
   // each region is patched by part (comp.patch-parts): an unchanged one keeps its nodes, and a redraw that changes nothing writes nothing
   const drawn = [   // what each patch did: menus are fitted only after a part changed (or the window's width did)
-    R.patchParts(document.getElementById('rail-pulse-slot'), { slot: pulseButton() }),
+    R.patchParts(document.getElementById('stillhet-pulse-slot'), { slot: pulseButton() }),
     R.patchParts(document.getElementById('side-foot'), { slot: sideFoot() }),
-    R.patchParts(document.getElementById('rail-strip'), { slot: window.RailShell?.inviteStrip?.() || unlockStrip() || settingsStrip() || labsBack() }),
+    R.patchParts(document.getElementById('stillhet-strip'), { slot: window.StillhetShell?.inviteStrip?.() || unlockStrip() || settingsStrip() || labsBack() }),
   ];
   // a reply in a chat you left: the dot on the Chat row and on Ask worca, until you open Chat
   const chatDot = !!C().chatUnread && !ui.chatSeen, dotTip = 'A reply in a chat you left';
@@ -843,8 +843,8 @@ function renderInShell() {
   // Settings' menu takes the sidebar's place beside today's nav (shown instead of it on a wide screen; below 760px the
   // sidebar stays Worca's, and Settings opens on its menu as a list in the page)
   const side = document.querySelector('#side-rail'), nav = side.querySelector('nav.nav');
-  let sm = side.querySelector('.rail-side-settings');
-  if (sideNow) { if (!sm) { sm = document.createElement('div'); sm.className = 'rail-side-settings'; nav.after(sm); } drawn.push(R.patchParts(sm, { menu: settingsMenu() })); }
+  let sm = side.querySelector('.stillhet-side-settings');
+  if (sideNow) { if (!sm) { sm = document.createElement('div'); sm.className = 'stillhet-side-settings'; nav.after(sm); } drawn.push(R.patchParts(sm, { menu: settingsMenu() })); }
   else sm?.remove();
   // a class is written only when it changes: a DOMTokenList add, remove or toggle writes the attribute even when it does not
   for (const el of [side, side.querySelector('.brand')]) if (el && el.classList.contains('is-settings') !== sideNow) el.classList.toggle('is-settings', sideNow);
@@ -867,7 +867,7 @@ function tabTitle() {
   const n = ui.s.badge === 'none' ? 0 : ui.s.badge === 'needs' ? needs : needs + problems;
   return n ? `(${n}) Worca` : 'Worca';
 }
-// Session expired, Rail's way: a Dialog with its one step.
+// Session expired, Stillhet's way: a Dialog with its one step.
 const sessionDialog = () => (ui.session ? R.dialog({ title: 'Session expired', body: '<p class="pz-sess">Your sign-in has expired. Your runs keep going; this page catches up when you are back.</p>', yes: 'Sign in again', hooks: { cancel: { hidden: true } }, id: 'pz-sess-t' }) : '');
 
 // ---- the away screensaver: Away, Keep awake, the window focused, 5 idle minutes; never under reduced motion (Motion's
@@ -908,7 +908,7 @@ function render() { stale = false; readCache = null; holdFocus(SHELL ? renderInS
 R.watchKeepOpen(document);   // an open field, menu or dialog keeps its text, caret and focus across any redraw (comp.keep-open)
 W.onMove?.(() => render());   // a task moved anywhere: the badge, Vitals and Updates read the store again
 // the live kind: a load or a list state changed the store (D20): Keep awake and Away are dev's, and the rows read it again
-window.addEventListener('rail-settings', () => render());   // a live Settings action answered (settings.js)
+window.addEventListener('stillhet-settings', () => render());   // a live Settings action answered (settings.js)
 // the account menu belongs to the page it was opened on: moving on closes it
 window.addEventListener('hashchange', () => { if (!ui.acct && !ui.sub) return; ui.acct = false; ui.sub = ''; render(); });
 if (LIVE) W.onChange(() => {
@@ -949,7 +949,7 @@ function paintToast() {
   const t = toastEl(); t.innerHTML = ui.toast ? R.toastText(ui.toast, undo ? R.toastUndo({ title: undo.tip }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
 }
 function toast(text, canUndo) {
-  window.RailScheduleLive?.pending?.()?.flush();   // a schedule's Delete waiting out its Undo: this notice replaces its Undo, so it is sent now (Schedules D8)
+  window.StillhetScheduleLive?.pending?.()?.flush();   // a schedule's Delete waiting out its Undo: this notice replaces its Undo, so it is sent now (Schedules D8)
   toastSaid++; ui.toast = text; undo = typeof canUndo === 'function' ? { tip: 'Undo', run: canUndo } : canUndo || null; clearTimeout(toastTimer);   // a place's Undo is a function, or { tip, run }
   toastTimer = setTimeout(() => { ui.toast = ''; undo = null; const el = toastEl(); if (el) { el.classList.remove('is-on'); el.textContent = ''; } }, 5000);
 }
@@ -968,7 +968,7 @@ function pick(id, v) {
     else if (v === 'allread') { const n = unread().length; const was = ui.read; ui.read = ui.read.concat(unread().map((u) => u.id)); toast(n ? `Marked ${plural(n, 'update')} read` : 'Nothing is unread', n ? { tip: 'Marks them unread again', run: () => { ui.read = was; toast('Unread again'); } } : null); }
     else { const read = live().filter((u) => !isUnread(u)), waits = read.filter((u) => u.sev === 'needs' && u.open && !u.resolved && !isFixed(u)), ids = read.filter((u) => !waits.includes(u)).map((u) => u.id); ui.cleared = ui.cleared.concat(ids); ui.pick = R.selectPrune(ui.pick, []); toast(ids.length ? `Cleared ${plural(ids.length, 'read update')}${waits.length ? `; ${waits.length} still ${waits.length === 1 ? 'waits' : 'wait'} for you` : ''}` : waits.length ? `Nothing to clear: ${waits.length} read still ${waits.length === 1 ? 'waits' : 'wait'} for you` : 'Nothing read to clear', ids.length ? undoClear(ids) : null); }
   }
-  else if (id === 'attnFor') { s.attnFor = v; window.RailAttnFor = v; }
+  else if (id === 'attnFor') { s.attnFor = v; window.StillhetAttnFor = v; }
   else if (id === 'pulseFor' && LIVE) A.post('/api/settings', { pulseFor: v }).then((r) => { if (!r.ok) { refused('change the Pulse icon', r); return; } ui.s.pulseFor = v; armNews(); render(); });
   else if (id === 'pulseFor') { s.pulseFor = v; armNews(); }
   else if (id === 'badge') s.badge = v;   // the sentence has changed before your eyes: no toast repeats it
@@ -1006,10 +1006,10 @@ document.addEventListener('click', (e) => {
     if (LIVE) { A.post(`/api/actions/instances/${encodeURIComponent(a.id)}/stop`).then((r) => { if (!r.ok) { refused(`stop ${a.label}`, r); return; } ui.stopped = ui.stopped.concat(a.id); toast(`Stopped ${a.label}`); render(); }); return; }
     ui.stopped = ui.stopped.concat(a.id); toast(`Stopped ${a.label}`); render(); return;
   }
-  if ((el = tg('[data-pulse-retry]'))) { if (LIVE) A.retry(); else { window.RailDemoState.list = ''; render(); } return; }
+  if ((el = tg('[data-pulse-retry]'))) { if (LIVE) A.retry(); else { window.StillhetDemoState.list = ''; render(); } return; }
   if ((el = tg('[data-land]'))) { e.preventDefault(); const [sset, label, list] = el.dataset.land.split('|'); land({ sset, label, list: !!list }); return; }
-  if ((el = tg('[data-unlock]'))) { window.RailPulse.unlock(el.dataset.unlock); return; }
-  if ((el = tg('[data-fix]'))) { if (el.dataset.fix.startsWith('np:projects/')) { window.RailProjects?.sync(el.dataset.fix.slice(12)); render(); return; } takeStep(C().updates.find((x) => x.id === el.dataset.fix)); return; }   // a behind project's Sync acts in place; the row does not open
+  if ((el = tg('[data-unlock]'))) { window.StillhetPulse.unlock(el.dataset.unlock); return; }
+  if ((el = tg('[data-fix]'))) { if (el.dataset.fix.startsWith('np:projects/')) { window.StillhetProjects?.sync(el.dataset.fix.slice(12)); render(); return; } takeStep(C().updates.find((x) => x.id === el.dataset.fix)); return; }   // a behind project's Sync acts in place; the row does not open
   if ((el = tg('[data-team]'))) { ui.teamSeen = true; ui.acct = false; if (SHELL) { SHELL.closeDrawer(); SHELL.go('settings/team'); } else { ui.page = 'settings'; ui.sset = 'team'; } render(); return; }
   if ((el = tg('[data-pop]'))) { ui.pop = !ui.pop; ui.acct = false; ui.nr = null; if (ui.pop) opening = 'pop'; render(); return; }
   if ((el = tg('[data-acct]'))) { ui.acct = !ui.acct; ui.sub = ''; ui.pop = false; ui.nr = null; if (ui.acct) opening = 'acct'; render(); return; }
@@ -1027,7 +1027,7 @@ document.addEventListener('click', (e) => {
     // dev's Away switch: here when away, else on (app.js awayRow's nightModeToggle)
     if (LIVE) { A.post('/api/settings', { nightModeToggle: back ? 'here' : 'on' }).then((r) => { if (!r.ok) { refused('change Away', r); return; } ui.awayStatus = back ? (C().away.hours ? 'here' : 'no-hours') : 'away-now'; toast(back ? 'Back: what Worca did while you were away is in Pulse › Updates' : 'Away: Worca answers waiting task questions for you'); render(); }); return; } ui.awayStatus = back ? (C().away.hours ? 'here' : 'no-hours') : 'away-now';
     // coming back brings back what Worca did meanwhile: one update at the top of Updates, unread
-    if (back) { const did = window.RailConversation?.awayAnswer?.() || []; ui.added = [{ ...M.tryEvent('info', ui.added.length), id: `away-${Date.now()}`, title: 'While you were away', meta: did.length ? `Worca answered ${did.length === 1 ? 'a question' : `${did.length} questions`} with its pick: ${did.join(' · ')}` : 'Nothing waited on you', time: 'now', day: 'Today', unread: true }, ...ui.added]; }
+    if (back) { const did = window.StillhetConversation?.awayAnswer?.() || []; ui.added = [{ ...M.tryEvent('info', ui.added.length), id: `away-${Date.now()}`, title: 'While you were away', meta: did.length ? `Worca answered ${did.length === 1 ? 'a question' : `${did.length} questions`} with its pick: ${did.join(' · ')}` : 'Nothing waited on you', time: 'now', day: 'Today', unread: true }, ...ui.added]; }
     toast(back ? 'Back: what Worca did while you were away is in Pulse › Updates' : 'Away: Worca answers waiting task questions for you'); render(); return;
   }
   if ((el = tg('[data-sw="keep"]'))) {
@@ -1035,16 +1035,16 @@ document.addEventListener('click', (e) => {
     ui.keep = !ui.keep; render(); return;
   }
   if ((el = tg('[data-appearance]'))) { applyAppearance(el.dataset.appearance); render(); return; }
-  if ((el = tg('[data-details]'))) { ui.acct = false; ui.sub = ''; if (SHELL) { SHELL.closeDrawer(); SHELL.go('insights/spend'); } else toast(window.RailWould('open Statistics')); render(); return; }
-  if (SHELL && (el = tg('[data-newrun]'))) { window.RailConversation?.start('task'); return; }
+  if ((el = tg('[data-details]'))) { ui.acct = false; ui.sub = ''; if (SHELL) { SHELL.closeDrawer(); SHELL.go('insights/spend'); } else toast(window.StillhetWould('open Statistics')); render(); return; }
+  if (SHELL && (el = tg('[data-newrun]'))) { window.StillhetConversation?.start('task'); return; }
   if ((el = tg('[data-bg-pick]'))) { ui.bg = el.dataset.bgPick; setBg(ui.bg); render(); return; }
   if ((el = tg('button[data-bg-breathes]'))) { setBreathe(!readBreathe()); render(); return; }
   if ((el = tg('[data-newrun]'))) { if (ui.nr) ui.nr = null; else { openNewRun(); opening = 'nr'; } ui.pop = false; ui.acct = false; render(); return; }
   if ((el = tg('[data-nr-use]'))) { ui.nr = { ...ui.nr, on: el.dataset.nrUse, wait: false, moved: '' }; render(); return; }
-  if ((el = tg('[data-nr-wait]'))) { toast(window.RailWould(`schedule it: ${el.textContent.replace('Start at', 'starts at')}`)); ui.nr = null; render(); return; }
+  if ((el = tg('[data-nr-wait]'))) { toast(window.StillhetWould(`schedule it: ${el.textContent.replace('Start at', 'starts at')}`)); ui.nr = null; render(); return; }
   if ((el = tg('[data-nr-now]'))) { ui.nr.wait = false; render(); return; }
   if ((el = tg('[data-nr-cancel]'))) { ui.nr = null; render(); return; }
-  if ((el = tg('[data-nr-start]'))) { toast(window.RailWould(el.textContent === 'Start run' ? `start it on ${pname(ui.nr.on)}` : `schedule it: ${el.textContent.replace('Start at', 'starts at')}`)); ui.nr = null; render(); return; }
+  if ((el = tg('[data-nr-start]'))) { toast(window.StillhetWould(el.textContent === 'Start run' ? `start it on ${pname(ui.nr.on)}` : `schedule it: ${el.textContent.replace('Start at', 'starts at')}`)); ui.nr = null; render(); return; }
   if ((el = tg('[data-ptab]'))) { ui.popTab = el.dataset.ptab; ui.pick = R.selectClear(); ui.rowKey = ''; render(); return; }
   if (SHELL && (el = tg('[data-sset]'))) { SHELL.go('settings/' + el.dataset.sset); return; }
   if (SHELL && (el = tg('[data-go]'))) { ui.pop = false; ui.acct = false; ui.sub = ''; SHELL.closeDrawer(); SHELL.go(el.dataset.go === 'settings' ? 'settings/' + (el.dataset.to || '') : el.dataset.go); return; }
@@ -1076,7 +1076,7 @@ document.addEventListener('click', (e) => {
       else openTarget(u.go, u.title.split(' · ')[1] || u.title, `Opens ${u.to}`);
     }
     else if (key.startsWith('lim')) { const l = limitsNow()[+key.slice(3)]; openUsage(l.p ? pname(l.p) : ''); return; }
-    else if (key.startsWith('np:')) { ui.pop = null; const to = key.slice(3); if (/^projects\/(?!ws:)/.test(to) && window.RailProjects?.openNeed) window.RailProjects.openNeed(to.slice(9)); else window.RailShell.go(to); }   // a project opens at its fix
+    else if (key.startsWith('np:')) { ui.pop = null; const to = key.slice(3); if (/^projects\/(?!ws:)/.test(to) && window.StillhetProjects?.openNeed) window.StillhetProjects.openNeed(to.slice(9)); else window.StillhetShell.go(to); }   // a project opens at its fix
     else if (key.startsWith('act:')) { const a = C().actions.find((x) => x.id === key.slice(4)), r = a.runId && W.find(a.runId); if (r) openTarget('run/' + r.case, r.title, `Opens ${r.title}`, r.id); else toast(`${a.run} is gone; ${a.label} can still be stopped`); }
     else {
       const id = key.slice(2), r = W.tops().find((x) => x.id === id);
@@ -1088,12 +1088,12 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-custom]'))) { if (LIVE) return; ui.custom = ui.custom === el.dataset.custom ? '' : el.dataset.custom; render(); return; }
   if ((el = tg('[data-backgroup]'))) { if (LIVE) return; ui.s.groups[el.dataset.backgroup].ex = {}; toast('Every event follows the group again'); render(); return; }
   if ((el = tg('[data-reset]'))) { if (LIVE) return; ui.confirm = 'reset'; render(); return; }
-  if ((el = tg('[data-confirm]')) && window.RailShell?.inviteStrip?.()) { window.RailShell.answerInvite(el.dataset.confirm); render(); return; }   /* the demo's answers close the strip and remember it */
+  if ((el = tg('[data-confirm]')) && window.StillhetShell?.inviteStrip?.()) { window.StillhetShell.answerInvite(el.dataset.confirm); render(); return; }   /* the demo's answers close the strip and remember it */
   if ((el = tg('[data-confirm]')) && !settingsStrip() && labsBack()) { if (el.dataset.confirm === 'yes') { ui.unlock = null; history.back(); } else ui.unlock.stay = true; render(); return; }
   if ((el = tg('[data-confirm]')) && ui.unlock?.strip) { if (el.dataset.confirm === 'yes') modeByPerson(ui.unlock.strip); else { ui.unlock = null; render(); } return; }
   if ((el = tg('[data-confirm]')) && ui.sv.__confirm) { const say = SV.confirm(ui.sv, el.dataset.confirm === 'yes'); if (say) toast(say); render(); return; }
   if ((el = tg('[data-confirm]'))) { if (el.dataset.confirm === 'yes') { const d = ui.s.desktop; ui.s = freshSettings(C()); ui.s.desktop = d; ui.custom = ''; toast('Every group is back to its defaults'); } ui.confirm = ''; render(); return; }
-  if ((el = tg('[data-test]'))) { if (SHELL) sendTest(); else { toast(window.RailWould('send a test notification')); render(); } return; }
+  if ((el = tg('[data-test]'))) { if (SHELL) sendTest(); else { toast(window.StillhetWould('send a test notification')); render(); } return; }
   if ((el = tg('[data-how]'))) { toast(el.title); render(); return; }
 });
 const isUpdate = (id) => C().updates.some((u) => u.id === id);
@@ -1120,7 +1120,7 @@ function liveStep(u) {
     if (!ticket && asksConfirm(res) && r) { ui.pop = false; SHELL?.openRun(`run/${r.case}`, r.title, r.id); render(); return; }
     refused(u.fix.toLowerCase(), res);
   };
-  if (ticket) (window.RailScheduleLive?.act('run', { id: ticket }) ?? Promise.resolve({ ok: false, error: 'Worca is not answering' })).then(done);   // Schedules D15: the one Schedules I/O module
+  if (ticket) (window.StillhetScheduleLive?.act('run', { id: ticket }) ?? Promise.resolve({ ok: false, error: 'Worca is not answering' })).then(done);   // Schedules D15: the one Schedules I/O module
   else A.post('/api/resume', { pipelineId: u.run, baseCheck: true }).then(done);
 }
 // A mode a person picks: in the live kind it is dev's uiLevel, written first (D21)
@@ -1132,7 +1132,7 @@ function takeStep(u) {
   if (LIVE) { liveStep(u); return; }
   ui.fixed = ui.fixed.concat(u.id);
   const move = STEP_MOVES[u.fix], r = u.run && W.find(u.run);
-  if (move && r) { W.move(r.id, ...move); window.RailRunsList?.show(); }
+  if (move && r) { W.move(r.id, ...move); window.StillhetRunsList?.show(); }
   toast(`${u.fix}: ${r ? r.title : 'done'}${move && r ? ` is ${move[0]}` : ''}`);
   render();
 }
@@ -1147,10 +1147,10 @@ const pickRow = (action, id) => { ui.pick = R.selectApply(ui.pick, action, { id,
 // run: the row's run id; the live kind acknowledges it on opening, as dev does from any path (the demo opens as before)
 function openTarget(go, title, say, run) {
   ui.pop = false;
-  if (!SHELL) { ui.pop = true; toast(window.RailWould(say.replace(/^Opens\b/, 'open'))); return; }
+  if (!SHELL) { ui.pop = true; toast(window.StillhetWould(say.replace(/^Opens\b/, 'open'))); return; }
   if (go.startsWith('run/')) SHELL.openRun(go, title, LIVE ? run : undefined); else SHELL.go(go);
 }
-// The keys come from the library's table (docs/rail/keyboard.md); this owns what they do here. The panel's lists take
+// The keys come from the library's table (docs/stillhet/keyboard.md); this owns what they do here. The panel's lists take
 // them wherever the focus is: Updates all of them, Vitals moving and opening only.
 const ROW = '.pz-popover [data-open]';
 const rowEl = (id) => document.querySelector(`${ROW}[data-open="${CSS.escape(id)}"]`);
@@ -1167,7 +1167,7 @@ function panelKey(act, e) {
   const { pick, to } = R.selectStep(ui.pick, act, { from: act === 'toggle' ? e.target.closest(ROW).dataset.open : from, shown: shownIds() });
   ui.pick = pick; render(); if (to) rowEl(to)?.focus();
 }
-document.addEventListener('strip:back', () => { window.RailShell?.answerInvite?.('back'); render(); });   /* Esc on the Invitation: closed for this load, no answer */
+document.addEventListener('strip:back', () => { window.StillhetShell?.answerInvite?.('back'); render(); });   /* Esc on the Invitation: closed for this load, no answer */
 document.addEventListener('keydown', (e) => {
   const inPanel = ui.pop && !ui.menu && !ui.acct && !ui.nr && !ui.sub && !somethingUp();
   const scopes = [...(inPanel ? (ui.popTab === 'updates' ? ['selecting', 'list'] : ['list']) : []), 'anywhere'];
@@ -1195,7 +1195,7 @@ caseSel.addEventListener('change', () => {
 });
 if (!SHELL) R.prefs.setFlag('gitAutomations', true);   // the explorer shows every group
 R.watchScrollbars(document);
-// What lies over the page closes on a click outside or Esc (docs/rail/panels.md), and the focus goes back to what opened it.
+// What lies over the page closes on a click outside or Esc (docs/stillhet/panels.md), and the focus goes back to what opened it.
 let stale = false;   // closed from outside: draw again, unless a handler already did
 const repaint = () => { if (stale) render(); };
 const shut = (fn) => () => { fn(); stale = true; };
@@ -1217,7 +1217,7 @@ setInterval(() => {
 document.querySelectorAll('[data-theme-pick]').forEach((b) => b.addEventListener('click', () => { applyAppearance(b.dataset.themePick); render(); }));
 try { const look = localStorage.getItem(KEY_LOOK); if (['system', 'light', 'dark'].includes(look)) applyAppearance(look); } catch { /* remembering is a nicety */ }
 if (SHELL) { ui.bg = readBg(); setBg(ui.bg); setBreathe(readBreathe()); }
-window.RailPulse = {
+window.StillhetPulse = {
   classicSettings: CLASSIC_SETTINGS,   // F-7b-16: read-only, the coverage test compares it with classic CARDS
   refresh: () => render(),   // a task moved elsewhere (a card in a chat): the badge and the lists read it again
   // opens the popover on a tab ('now' or 'updates'): the bell, and #activity (shell/old-addresses.js)
@@ -1260,6 +1260,6 @@ window.RailPulse = {
     toast(`Signed in as ${name}: their own read and cleared`); render();
   },
 };
-document.getElementById('new-event')?.addEventListener('click', () => window.RailPulse.newEvent(document.getElementById('new-event-kind').value));
+document.getElementById('new-event')?.addEventListener('click', () => window.StillhetPulse.newEvent(document.getElementById('new-event-kind').value));
 if (SHELL) SHELL.start(); else render();
 })();

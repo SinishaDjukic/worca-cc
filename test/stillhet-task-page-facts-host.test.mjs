@@ -53,7 +53,7 @@ test('a live run opened by its pipeline id reads its own parts: its setup offers
   const d = h.d;
   card(d).querySelector('[data-menu="more"]').click(); await settle(20);
   assert.ok(card(d).querySelector('[data-menu-pick="more:preset"]'), 'Save as preset');
-  assert.deepEqual(h.w.RailTaskLive.parts('pa').log.map((l) => l.raw), ['Edited the pager']);
+  assert.deepEqual(h.w.StillhetTaskLive.parts('pa').log.map((l) => l.raw), ['Edited the pager']);
 });
 
 // web-UI review cycle 1: the live page drew the design's sample (steps' prices and models, skills, memory, worktree, "Open log
@@ -69,7 +69,7 @@ async function host(id, detail, { checks = null, write = () => [200, { ok: true 
   if (detail.pauseReason) { row.status = 'paused'; row.pauseReason = detail.pauseReason; row.pauseDetail = detail.pauseDetail; }
   if (detail.pr) row.pr = detail.pr;
   const h = await liveHost({ sources: s, write, read: (u) => (u === `/api/history/web-1/${id}` ? [200, { state: detail }] : checks && u.startsWith(`/api/pr/checks?id=${id}`) ? [200, checks] : null) });
-  h.w.RailUI.prefs.setMode('expert');
+  h.w.StillhetUI.prefs.setMode('expert');
   await go(h.w, `#run/${id}`, 200); await settle(400);
   return h;
 }
@@ -79,7 +79,7 @@ test('a capped task in Expert: no sample step prices, models, skills, memory, wo
   const part = card(d).querySelector('[data-key="tab:activity"]'); if (part && part.dataset.tab === 'activity') { part.click(); await settle(60); }
   const t = card(d).textContent;
   assert.doesNotMatch(t, /\$41\.52|\$67\.73|\$7\.82|Opus 5\.5|skills mounted|memory changes|frontend-design|run-7b0bfb1e|line 1,284|Into dev/);
-  assert.equal(w.RailTaskLive.detail('h1').stages.find((x) => x.key === 'build').state, 'next', 'the preflight bookend is no Build step');
+  assert.equal(w.StillhetTaskLive.detail('h1').stages.find((x) => x.key === 'build').state, 'next', 'the preflight bookend is no Build step');
   assert.match(t, /\$0\.80/);
   assert.match(t, /of \$0\.50/, 'the Cost figure carries the Settings cap');
   assert.doesNotMatch(t, />=|cost limit reached \(/, 'the head never repeats the cap\'s numbers');
@@ -92,7 +92,7 @@ test('a capped task in Expert: no sample step prices, models, skills, memory, wo
 // Manual web UI testing) with their marks, not the task's workflow
 const NODE = (id, label, progressStage, kind = 'agent') => ({ id, kind, key: id.slice(2), label, ...(progressStage ? { progressStage } : {}) });
 const GRAPH = (...nodes) => ({ version: 2, template: { id: 'wf' }, graph: { nodes, wires: [] } });
-const pageView = (w, id) => { const run = w.RunCardModel.liveRun({ ...w.RailTaskLive.detail(id), id }); return JSON.parse(JSON.stringify(w.RunCardModel.view(run.id, { run }))); };   // out of the page's realm
+const pageView = (w, id) => { const run = w.RunCardModel.liveRun({ ...w.StillhetTaskLive.detail(id), id }); return JSON.parse(JSON.stringify(w.RunCardModel.view(run.id, { run }))); };   // out of the page's realm
 const ROW = (nodeId, status, n = 1) => ({ key: `x:${nodeId}:${n}`, executionId: `x:${nodeId}:${n}`, nodeId, agentKey: nodeId.slice(2), status, costUsd: 0.4 });
 test('the page draws the task\'s own workflow steps and marks: no design step list, no Build done that never ran', async () => {
   const stepper = GRAPH(NODE('n_task', 'Task', '', 'task'), NODE('n_clarify', 'Clarify', 'plan'), NODE('n_plan', 'Plan', 'plan'), NODE('n_impl', 'Implementation', 'build'), NODE('n_rev', 'Review Implementation', 'review'));
@@ -136,7 +136,7 @@ test('a PR\'s words are its own: Merge #42 into main, Fix the 1 failing check on
 test('a live group\'s page draws its members\' own facts: no "worca-cc", sample times or "Into dev"', async () => {
   const GROUPS = { groups: [{ id: 'G1', kind: 'user', title: 'Audit log', members: [{ position: 1, title: 'Shipped', pipelineId: 'h2', pr: null }, { position: 2, title: 'Broke', pipelineId: 'h3', pr: null }], cost: { usd: 1.5 } }] };
   const h = await liveHost({ sources: sources(), read: (u) => (u === '/api/run-groups' ? [200, GROUPS] : null) });
-  h.w.RailUI.prefs.setMode('expert');
+  h.w.StillhetUI.prefs.setMode('expert');
   await go(h.w, '#run/group:G1', 200); await settle(400);
   const t = card(h.d).textContent;
   assert.match(t, /Audit log/);
@@ -173,7 +173,7 @@ test('F-5-19: Open in Workflows only for a workflow dev still lists', async () =
     const stepper = { ...GRAPH(NODE('n_task', 'Task', '', 'task'), NODE('n_impl', 'Implementation', 'build')), template: { id, name: id === 'wf_gone' ? 'Old flow' : 'Lean' } };
     const state = { ...STATE, stepper, steps: [ROW('n_impl', 'done')] };
     const h = await liveHost({ sources: sources(), read: (u) => (u === '/api/history/web-1/h2' ? [200, { state }] : u === '/api/workflows' ? [200, { workflows: [{ id: 'wf_lean', name: 'Lean' }] }] : null) });
-    h.w.RailUI.prefs.setMode('expert');
+    h.w.StillhetUI.prefs.setMode('expert');
     await go(h.w, '#run/h2', 200); await settle(400);
     const part = card(h.d).querySelector('[data-key="tab:activity"]'); if (part.dataset.tab === 'activity') { part.click(); await settle(60); }
     card(h.d).querySelector('[data-graph]').click(); await settle(200);
@@ -193,7 +193,7 @@ test('B5.6 review: a later read of dev\'s workflow list that fails leaves only t
   const state = { ...STATE, stepper, steps: [ROW('n_impl', 'done')] };
   let lists = 0, down = false;
   const h = await liveHost({ sources: sources(), read: (u) => (u === '/api/history/web-1/h2' ? [200, { state }] : u === '/api/workflows' ? (lists++, !down ? [200, { workflows: [{ id: 'wf_lean', name: 'Lean' }] }] : [500, { error: 'down' }]) : null) });
-  h.w.RailUI.prefs.setMode('expert');
+  h.w.StillhetUI.prefs.setMode('expert');
   await go(h.w, '#run/h2', 200); await settle(400);
   const part = card(h.d).querySelector('[data-key="tab:activity"]'); if (part.dataset.tab === 'activity') { part.click(); await settle(60); }
   card(h.d).querySelector('[data-graph]').click(); await settle(200);
@@ -208,7 +208,7 @@ test('B5.6 review: a later read of dev\'s workflow list that fails leaves only t
 
 test('F-b23-03: with runLabels off the task page has no labels: cost tags only, a word sends no PUT', async () => {
   const { w, d, calls } = await page();
-  assert.equal(w.RailUI.prefs.flag('runLabels'), false);
+  assert.equal(w.StillhetUI.prefs.flag('runLabels'), false);
   const chips = () => card(d).querySelector('.rc-tags')?.textContent || '';
   assert.doesNotMatch(chips(), /infra/, 'no label chip');
   assert.match(chips(), /team: web/, 'cost tags stay');
@@ -226,7 +226,7 @@ test('F-b23-03: with runLabels off the task page has no labels: cost tags only, 
   inp2.value = 'client: acme'; inp2.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await settle(80);
   assert.deepEqual(sent(calls), [['PUT', '/api/runs/h2/tags', { tags: ['team:web', 'client:acme'] }]]);
   card(d).querySelector('[data-tagzone]').click(); await settle(20);   // closes the editor
-  w.RailUI.prefs.setFlag('runLabels', true); await settle(30);
+  w.StillhetUI.prefs.setFlag('runLabels', true); await settle(30);
   assert.equal(card(d).querySelector('#tag-input'), null, 'the editor is closed');
   assert.match(chips(), /infra/, 'Run labels on: the label is back');
   d.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'l', bubbles: true })); await settle(30);

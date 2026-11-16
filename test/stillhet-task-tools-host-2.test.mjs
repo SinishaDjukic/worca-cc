@@ -1,7 +1,7 @@
 // test/stillhet-task-tools-host-2.test.mjs — the live task page's tools on dev's routes (R-po-4, R-ux-6): Changes, its (part 2 of 2: split to stay under CI's 300 s per file)
 // documents and the Logs are the task's own (D4); Terminal, services and built-in tools, Try it, Sync log, Open the whole
 // diff, document downloads, Save as preset, Switch model, Resume at… and Move to group… each call dev's route. Live app
-// host (jsdom, the real live adapter and RailTaskLive).
+// host (jsdom, the real live adapter and StillhetTaskLive).
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { liveHost, go, settle, closeHosts, clone, SOURCES, posts, toastText } from './helpers/stillhet-chat-live-host.mjs';
@@ -46,8 +46,8 @@ const tab = async (d, id) => { const b = card(d).querySelector(`[data-key="tab:$
 const sent = (calls) => posts(calls).filter(([m, u]) => m !== 'GET' && !/^\/api\/ask\//.test(u));
 test('Switch model… and Resume at… are dev\'s resume with a model and its timed resume', async () => {
   const { w, calls } = await page();
-  await w.RailTaskLive.flow('Switch model…', { taskId: 'h1', model: 'sonnet', modelLabel: 'Sonnet 5.5' });
-  await w.RailTaskLive.flow('Resume at…', { taskId: 'h1', value: '23:30' });
+  await w.StillhetTaskLive.flow('Switch model…', { taskId: 'h1', model: 'sonnet', modelLabel: 'Sonnet 5.5' });
+  await w.StillhetTaskLive.flow('Resume at…', { taskId: 'h1', value: '23:30' });
   const [sw, at] = sent(calls);
   assert.deepEqual(sw, ['POST', '/api/resume', { pipelineId: 'h1', baseCheck: true, model: 'sonnet' }], 'F-cov23-08: classic\'s resumeBody carries baseCheck');
   assert.equal(at[1], '/api/schedules/resume');
@@ -58,9 +58,9 @@ test('Switch model… and Resume at… are dev\'s resume with a model and its ti
 test('F-cov23-08: Switch model… on a moved base asks; Resume anyway resends with baseAck and the same model', async () => {
   let n = 0;
   const { w, calls } = await page('#run/h2', (u) => (u === '/api/resume' && !n++ ? [409, { error: 'The base moved', code: 'base-moved' }] : [200, { ok: true }]));
-  const first = await w.RailTaskLive.flow('Switch model…', { taskId: 'h1', model: 'sonnet', modelLabel: 'Sonnet 5.5' });
+  const first = await w.StillhetTaskLive.flow('Switch model…', { taskId: 'h1', model: 'sonnet', modelLabel: 'Sonnet 5.5' });
   assert.equal(first.prompt, 'base');
-  await w.RailTaskLive.flow('Switch model…', { taskId: 'h1', model: 'sonnet', modelLabel: 'Sonnet 5.5', baseAck: true });
+  await w.StillhetTaskLive.flow('Switch model…', { taskId: 'h1', model: 'sonnet', modelLabel: 'Sonnet 5.5', baseAck: true });
   assert.deepEqual(sent(calls).map((c) => c[2]), [{ pipelineId: 'h1', baseCheck: true, model: 'sonnet' }, { pipelineId: 'h1', baseCheck: true, baseAck: true, model: 'sonnet' }]);
 });
 
@@ -95,9 +95,9 @@ test('a diff line\'s comment posts dev\'s comment anchored to its side and line;
 
 test('Publish branch and a running task\'s away mode are dev\'s publish and night routes', async () => {
   const { w, calls } = await page('#run/h2', () => [200, { ok: true, remote: 'origin', branch: 'feat/audit-log-pager', upToDate: false }]);
-  const pub = await w.RailTaskLive.flow('Publish branch', { taskId: 'h2' });
+  const pub = await w.StillhetTaskLive.flow('Publish branch', { taskId: 'h2' });
   assert.equal(pub.say, 'Published feat/audit-log-pager to origin');
-  await w.RailTaskLive.act('night', { taskId: 'run-b', mode: 'on' });
+  await w.StillhetTaskLive.act('night', { taskId: 'run-b', mode: 'on' });
   assert.deepEqual(sent(calls), [['POST', '/api/runs/h2/publish', { projectKey: 'web-1' }], ['POST', '/api/run/night', { runId: 'run-b', mode: 'on' }]]);
 });
 
@@ -220,7 +220,7 @@ test('V-TW-15: a done task\'s ⋯ offers Start a follow-up task, Report and Arch
   const [post] = sent(calls);
   assert.equal(post[1], '/api/run');
   assert.equal(post[2].prompt, 'Add paging tests');
-  assert.equal(post[2].projectDir, w.RailTaskLive.resolve('h2').projectDir || w.RailTaskLive.input('h2').state.projectDir);
+  assert.equal(post[2].projectDir, w.StillhetTaskLive.resolve('h2').projectDir || w.StillhetTaskLive.input('h2').state.projectDir);
   assert.equal(post[2].source, undefined);
   assert.equal(post[2].after, undefined, 'a done task starts it now');
   assert.equal(w.location.hash, '#run/r9');

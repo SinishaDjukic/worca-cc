@@ -1,4 +1,4 @@
-// test/stillhet-perf-budgets-chat-host.test.mjs — B2.4 C1 (plans/rail/test-results/PLAN.md §3C, D19): Chat's performance
+// test/stillhet-perf-budgets-chat-host.test.mjs — B2.4 C1 (plans/stillhet/test-results/PLAN.md §3C, D19): Chat's performance
 // budgets in the live Stillhet host (jsdom) on virtual time (test/helpers/stillhet-perf.mjs). An idle 200-turn chat, a
 // history-pr frame that changes nothing and one live update are measured and held to test/fixtures/stillhet-perf-budgets.json:
 // a number above its budget fails, one below fails until the JSON is lowered (budgets only go down).
@@ -53,11 +53,11 @@ test('B2.4 C1 D7: every exclusion still matches something in the idle chat windo
 
 /** Primes h2's PR, then sends `items` and the lookup's done frame, and counts the draws they cause. */
 async function prFrame(h, items) {
-  const token = h.w.RailTaskLive.prLookup().token;
+  const token = h.w.StillhetTaskLive.prLookup().token;
   h.send({ type: 'history-pr', token, items: [{ projectKey: 'api-2', id: 'h2', pr: PR }] });
   await h.settleAll();
   let world = 0;
-  h.w.RailWorld.onChange(() => { world++; });
+  h.w.StillhetWorld.onChange(() => { world++; });
   const shell = shellRenders(h.w), convo = h.convoPaints();
   h.send({ type: 'history-pr', token, items });
   h.send({ type: 'history-pr', token, done: true, items: [] });

@@ -1,5 +1,5 @@
 // test/stillhet-schedules-tickets-host.test.mjs — the live Schedules tickets and New (D9, D16): a failed ticket's Start now
-// and Open project, Pulse's missed ticket through RailScheduleLive.act, and New schedule's POST /api/run.
+// and Open project, Pulse's missed ticket through StillhetScheduleLive.act, and New schedule's POST /api/run.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { go, settle, closeHosts } from './helpers/stillhet-chat-live-host.mjs';
@@ -15,10 +15,10 @@ test('a failed ticket (D16): Start now posts its own run-now; Open project opens
   assert.equal(w.location.hash, '#projects/web-1');
 });
 
-test('Pulse\'s missed ticket Run now goes through RailScheduleLive.act', async () => {
+test('Pulse\'s missed ticket Run now goes through StillhetScheduleLive.act', async () => {
   const { w, calls } = await page('sr1');
-  const acts = []; const act = w.RailScheduleLive.act; w.RailScheduleLive.act = (id, a) => { acts.push([id, a.id]); return act(id, a); };
-  w.RailPulse.open('updates');
+  const acts = []; const act = w.StillhetScheduleLive.act; w.StillhetScheduleLive.act = (id, a) => { acts.push([id, a.id]); return act(id, a); };
+  w.StillhetPulse.open('updates');
   w.document.querySelector('#app .pz-popover [data-fix="n7"]').click(); await settle(80);
   assert.deepEqual(acts, [['run', 'tk1']]);
   assert.deepEqual(sent(calls), [['POST', '/api/schedules/tk1/run-now', {}]]);

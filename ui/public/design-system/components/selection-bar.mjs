@@ -1,4 +1,4 @@
-// The selection's parts (docs/rail/lists.md): the bar at the top of a list, its Select all box, and the touch long-press
+// The selection's parts (docs/stillhet/lists.md): the bar at the top of a list, its Select all box, and the touch long-press
 // that starts selecting. The logic is selection.mjs.
 import { attrs } from './html.mjs';
 import { button } from './button.mjs';

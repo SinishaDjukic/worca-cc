@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 
 globalThis.window = globalThis.window || {};
 await import('../ui/public/stillhet/graph/graph-entry.mjs');
-const G = globalThis.window.RailGraph;
+const G = globalThis.window.StillhetGraph;
 
 // the demo security-first record (workflows/workflows.js data.workflow)
 const wf = { id: 'security-first', title: 'Security-first review', steps: [['Plan', 'planner', 'Opus 5.5', 'high', 3, 0.40], ['Build', 'implementer', 'Sonnet 5.5', 'high', 9, 0.31], ['Security check', 'security', 'Opus 5.5', 'high', 4, 0.19], ['Review', 'reviewer', 'Opus 5.5', 'medium', 2, 0.12]], loops: [['Security check', 'Build', 2]] };
@@ -38,7 +38,7 @@ const stepsOf = (n) => Array.from({ length: n }, (_, i) => [`Step ${i + 1}`, 'pl
 const wide = { id: 'wide', title: 'Wide', steps: stepsOf(14), loops: [] };
 const hostOf = () => new JSDOM('<!doctype html><div id="h"></div>').window.document.getElementById('h');
 
-test('V-TW-09: RailGraph.mount of a 14-step demo workflow at 900px opens at READABLE_FIT, the well scrolls, fit is 0.82 and whole the unfloored zoom', () => {
+test('V-TW-09: StillhetGraph.mount of a 14-step demo workflow at 900px opens at READABLE_FIT, the well scrolls, fit is 0.82 and whole the unfloored zoom', () => {
   const host = hostOf();
   const { view, fit, whole } = G.mount(host, wide, { width: 900 });
   assert.equal(fit, READABLE_FIT);

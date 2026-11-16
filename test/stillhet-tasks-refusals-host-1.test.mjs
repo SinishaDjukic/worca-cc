@@ -28,11 +28,11 @@ async function refused(id, label, answer, args = {}) {
   const h = await liveHost({ sources: sources(), read, write: () => answer });
   await go(h.w, `#run/${id}`, 150);
   await settle(400);   // the open PRs' checks land and the store's rows redraw from them (D5, debounced) before the snapshot
-  const before = { store: store(h.w), page: clone(h.w.RailTaskLive.detail(id)) };
-  const res = await h.w.RailTaskLive.flow(label, { taskId: id, ...args });
+  const before = { store: store(h.w), page: clone(h.w.StillhetTaskLive.detail(id)) };
+  const res = await h.w.StillhetTaskLive.flow(label, { taskId: id, ...args });
   await settle(40);
   assert.equal(res.ok, false, label);
-  assert.deepEqual({ store: store(h.w), page: clone(h.w.RailTaskLive.detail(id)) }, before, `${label}: nothing written locally`);
+  assert.deepEqual({ store: store(h.w), page: clone(h.w.StillhetTaskLive.detail(id)) }, before, `${label}: nothing written locally`);
   return { ...h, res };
 }
 const CASES = [
@@ -58,12 +58,12 @@ test('a 500 and a network failure read the same way, and change nothing', async 
   assert.equal(toastText(d), 'Could not merge #959: boom');
   const h = await liveHost({ sources: sources(), read, write: () => { throw new TypeError('Failed to fetch'); } });
   await go(h.w, '#run/h2', 150);
-  const before = clone(h.w.RailTaskLive.detail('h2'));
-  const res = await h.w.RailTaskLive.flow('Merge PR', { taskId: 'h2' });
+  const before = clone(h.w.StillhetTaskLive.detail('h2'));
+  const res = await h.w.StillhetTaskLive.flow('Merge PR', { taskId: 'h2' });
   await settle(40);
   assert.equal(res.ok, false);
   assert.match(toastText(h.d), /^Could not merge #959: /);
-  assert.deepEqual(clone(h.w.RailTaskLive.detail('h2')), before);
+  assert.deepEqual(clone(h.w.StillhetTaskLive.detail('h2')), before);
 });
 
 test('on the page: a refused Merge says it in its strip, naming the action, once; a refused cap keeps its typed value in its dialog', async () => {

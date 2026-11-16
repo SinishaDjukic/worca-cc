@@ -1,5 +1,5 @@
 // test/stillhet-settings-labs-reset.test.mjs — Stillhet Settings › Labs (S12.1 · F-7b-01, F-7b-06): what a flag gates
-// follows at once (set.flags), Reset all asks and then PATCHes every changed flag (rail through RailHost.setStillhet), and
+// follows at once (set.flags), Reset all asks and then PATCHes every changed flag (rail through StillhetHost.setStillhet), and
 // the demo kind and gallery show the same states (the prototype). The switches: test/stillhet-settings-labs-live.test.mjs.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -35,7 +35,7 @@ test('T9 set.flags: an ok PATCH (no frame) turns Labels on at once and off again
 });
 
 test('T10 Reset all: disabled with Nothing to reset when no unlocked row has source settings; a locked one does not count', async () => {
-  const srv = server({ flags: FIXTURE().map((f) => (f.key === 'rail' ? { ...f, source: 'default' } : f.key === 'runTelemetry' ? { ...f, locked: true, source: 'settings' } : f)) });
+  const srv = server({ flags: FIXTURE().map((f) => (f.key === 'stillhet' ? { ...f, source: 'default' } : f.key === 'runTelemetry' ? { ...f, locked: true, source: 'settings' } : f)) });
   const { w, d, posts } = await live(srv);
   const b = buttonOf(secOf(d, 'Features'), 'Reset all');
   assert.equal(b.disabled, true);
@@ -45,7 +45,7 @@ test('T10 Reset all: disabled with Nothing to reset when no unlocked row has sou
 });
 
 test('T11 Reset all: asks first; No sends nothing; Yes sends one PATCH of nulls, then toasts', async () => {
-  const srv = server({ flags: FIXTURE().map((f) => (f.key === 'rail' ? { ...f, source: 'default' } : f.key === 'runLabels' || f.key === 'design' ? { ...f, on: true, source: 'settings' } : f)) });
+  const srv = server({ flags: FIXTURE().map((f) => (f.key === 'stillhet' ? { ...f, source: 'default' } : f.key === 'runLabels' || f.key === 'design' ? { ...f, on: true, source: 'settings' } : f)) });
   const { w, d, posts, calls } = await live(srv);
   click(w, buttonOf(secOf(d, 'Features'), 'Reset all')); await settle(60);
   assert.equal(stripText(d), 'Turn every Labs feature back to its default?');
@@ -61,7 +61,7 @@ test('T11 Reset all: asks first; No sends nothing; Yes sends one PATCH of nulls,
 
 test('T11b Reset all: a switch write started while the confirm waits refuses Yes (one PATCH, no reset, Saving kept)', async () => {
   const gate = held();
-  const srv = server({ flags: FIXTURE().map((f) => (f.key === 'rail' ? { ...f, source: 'default' } : f.key === 'runLabels' ? { ...f, on: true, source: 'settings' } : f)),
+  const srv = server({ flags: FIXTURE().map((f) => (f.key === 'stillhet' ? { ...f, source: 'default' } : f.key === 'runLabels' ? { ...f, on: true, source: 'settings' } : f)),
     patch: () => gate.p.then(() => null) });
   const { w, d, posts, calls } = await live(srv);
   click(w, buttonOf(secOf(d, 'Features'), 'Reset all')); await settle(60);
@@ -78,7 +78,7 @@ test('T11b Reset all: a switch write started while the confirm waits refuses Yes
   assert.equal(switchOf(d, 'Run labels').getAttribute('aria-checked'), 'false');
 });
 
-test('T12 Reset all with rail changed: the confirm says Stillhet turns off; Yes PATCHes the others, then setStillhet(false); a refusal or rail alone', async () => {
+test('T12 Reset all with stillhet changed: the confirm says Stillhet turns off; Yes PATCHes the others, then setStillhet(false); a refusal or stillhet alone', async () => {
   const flags = () => FIXTURE().map((f) => (f.key === 'runLabels' ? { ...f, on: true, source: 'settings' } : f));
   const { w, d, posts, calls } = await live(server({ flags: flags() }));
   click(w, buttonOf(secOf(d, 'Features'), 'Reset all')); await settle(60);
@@ -93,7 +93,7 @@ test('T12 Reset all with rail changed: the confirm says Stillhet turns off; Yes 
   assert.deepEqual(patches(no.posts), [{ runLabels: null }]);
   assert.deepEqual(no.calls, []);
   assert.equal(toastText(no.d), 'Could not reset Labs: disk full');
-  // only rail changed: no PATCH, it leaves through setStillhet
+  // only stillhet changed: no PATCH, it leaves through setStillhet
   const only = await live();
   click(only.w, buttonOf(secOf(only.d, 'Features'), 'Reset all')); await settle(60);
   await answer(only.w, only.d, true); await settle(120);
@@ -126,7 +126,7 @@ test('T13 prototype: the demo kind shows Saving then refused on Requirements fir
 });
 
 test('T14 prototype: the gallery holds the Labs: saving, refused, locked example in LABS_WORDS\' words', async () => {
-  const html = readFileSync(new URL('../plans/rail/prototype/components.html', import.meta.url), 'utf8');
+  const html = readFileSync(new URL('../plans/stillhet/prototype/components.html', import.meta.url), 'utf8');
   const at = html.indexOf("'Labs: saving, refused, locked'");
   assert.ok(at > 0, 'the example is in the gallery');
   const entry = html.slice(at, html.indexOf(']]', at));

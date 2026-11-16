@@ -1,6 +1,6 @@
 // test/stillhet-pulse-read-host-1.test.mjs — Pulse in the live kind (#1268): opening an update marks it and every update about
 // the same task read at once; a notification's read is the server's, a run outcome's lives in this browser
-// (`worca-rail.pulse-read`), in every tab and after a reload; reading ends the icon's news; Now rows say what clears them;
+// (`worca-stillhet.pulse-read`), in every tab and after a reload; reading ends the icon's news; Now rows say what clears them;
 // a task opens by its own id. The host is test/helpers/stillhet-live-counts-host.mjs (jsdom, dev-shaped answers).
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,7 +9,7 @@ import { at } from './helpers/stillhet-live-fixture.mjs';
 
 afterEach(closeHosts);   // each test's window closes when the test ends
 
-const KEY = 'worca-rail.pulse-read';
+const KEY = 'worca-stillhet.pulse-read';
 // dev's GET /api/notifications rows (src/core/notifications.mjs rowToNotification): a scheduled run that paused (about h1),
 // a start that failed, and one that finished (info: it arrives read), beside the fixture's missed start n7
 const PAUSED_NOTE = { id: 9, kind: 'run_paused', ticketId: null, scheduleId: 'sr1', pipelineId: 'h1', title: 'Old pause', message: 'paused (cost pipeline): over its cap', createdAt: at(9, 31), readAt: null, unread: true };
@@ -19,7 +19,7 @@ const withNotes = () => { const s = clone(SOURCES); s.notifications.notification
 
 const frame = (h, f) => h.sockets.at(-1).onmessage({ data: JSON.stringify(f) });
 const pop = (d) => d.querySelector('#app .pz-popover');
-const openUpdates = (w) => w.RailPulse.open('updates');
+const openUpdates = (w) => w.StillhetPulse.open('updates');
 // the list's sentence: Showing [unread ▾] → all (or another view)
 function showAll(w, d, v = 'all') {
   openUpdates(w);
@@ -29,8 +29,8 @@ function showAll(w, d, v = 'all') {
 const titleOf = (d, id) => pop(d)?.querySelector(`[data-open="${id}"] .pz-row-t`) || null;
 const unreadRow = (d, id) => titleOf(d, id).classList.contains('is-unread');
 // the Pulse button's words: "N unread", or none
-const unreadN = (d) => +(/(\d+) unread/.exec(d.querySelector('#rail-pulse-slot .pz-pulse-b').title)?.[1] || 0);
-const news = (d) => d.querySelector('#rail-pulse-slot .pz-pulse-b').classList.contains('is-news');
+const unreadN = (d) => +(/(\d+) unread/.exec(d.querySelector('#stillhet-pulse-slot .pz-pulse-b').title)?.[1] || 0);
+const news = (d) => d.querySelector('#stillhet-pulse-slot .pz-pulse-b').classList.contains('is-news');
 const rawKeys = (w) => { const v = w.localStorage.getItem(KEY); return v === null ? null : JSON.parse(v).keys; };
 // the stored keys without their outcome's time (id|event|ms → id|event), so the cases read by event
 const stored = (w) => rawKeys(w)?.map((k) => k.replace(/\|\d+$/, '')) ?? null;

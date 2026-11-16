@@ -1,6 +1,6 @@
 // test/stillhet-gate-instances.test.mjs — tools/stillhet-gate-instances.mjs starts the gate instances A–D (test protocol §2),
 // each with its own HOME (F-X-01: settings.json lives under HOME, so an instance without one changes the owner's settings),
-// keeps `rail` in that HOME's settings and never in WORCA_FLAGS (P11), stops only the processes it started, and checks the
+// keeps `stillhet` in that HOME's settings and never in WORCA_FLAGS (P11), stops only the processes it started, and checks the
 // Claude login per HOME without ever printing or storing the CLI's output. In-process apart from a fixture server and a fake
 // `claude` (a shell script on PATH, as test/scan-auth-gate.test.mjs does).
 import { test, after } from 'node:test';
@@ -45,7 +45,7 @@ function fakeRealHome() {
   const store = join(home, '.worca-cc');
   mkdirSync(join(store, 'store', 'p'), { recursive: true });
   mkdirSync(join(store, 'runs', 'r1'), { recursive: true });
-  writeFileSync(join(store, 'settings.json'), JSON.stringify({ theme: 'dark', uiLevel: 'advanced', flags: { other: true, rail: true }, onboarding: { hidden: true } }));
+  writeFileSync(join(store, 'settings.json'), JSON.stringify({ theme: 'dark', uiLevel: 'advanced', flags: { other: true, stillhet: true }, onboarding: { hidden: true } }));
   const db = new DatabaseSync(join(store, 'worca-cc.db'));
   db.exec('CREATE TABLE pipelines (id TEXT PRIMARY KEY, branch TEXT, project_dir TEXT, n INTEGER)');
   db.prepare('INSERT INTO pipelines VALUES (?, ?, ?, ?)').run('p1', JSON.stringify({ worktreeDir: join(store, 'runs', 'r1', 'repos', 'x'), feature: 'feat/x' }), '/repos/owner', 7);
@@ -111,8 +111,8 @@ test('PLAN-Gc F-X-01: refuses port 4317, a HOME equal to the real home and a roo
   assert.deepEqual(snapshot(realHome), before, 'the real store is untouched');
 });
 
-test('PLAN-Gc P11 (NV-14, NV-15, SX-04, OB-08): rail is set in the instance settings only; WORCA_FLAGS, CLAUDE_CONFIG_DIR and the Claude auth env keys are dropped', () => {
-  const parent = { PATH: '/bin', WORCA_FLAGS: 'rail', CLAUDE_CONFIG_DIR: '/owner/.claude', NODE_TEST_CONTEXT: 'child-v8', WORCA_TEST_ALLOW_HOME_FALLBACK: '1' };
+test('PLAN-Gc P11 (NV-14, NV-15, SX-04, OB-08): stillhet is set in the instance settings only; WORCA_FLAGS, CLAUDE_CONFIG_DIR and the Claude auth env keys are dropped', () => {
+  const parent = { PATH: '/bin', WORCA_FLAGS: 'stillhet', CLAUDE_CONFIG_DIR: '/owner/.claude', NODE_TEST_CONTEXT: 'child-v8', WORCA_TEST_ALLOW_HOME_FALLBACK: '1' };
   for (const k of [...CLAUDE_AUTH_ENV_KEYS, ...CLAUDE_AUTH_ENV_FLAGS]) parent[k] = 'sk-owner';
   const frozen = JSON.stringify(parent);
   const plan = planInstances(parseArgs(['start', '--root', join(scratch, 'p11')]), { realHome: fakeRealHome(), tmp: scratch });
@@ -121,11 +121,11 @@ test('PLAN-Gc P11 (NV-14, NV-15, SX-04, OB-08): rail is set in the instance sett
     for (const k of ['WORCA_FLAGS', 'CLAUDE_CONFIG_DIR', 'NODE_TEST_CONTEXT', 'WORCA_TEST_ALLOW_HOME_FALLBACK', ...CLAUDE_AUTH_ENV_KEYS, ...CLAUDE_AUTH_ENV_FLAGS]) {
       assert.ok(!(k in env), `${inst.letter}: ${k} dropped`);
     }
-    const s = instanceSettings({ flags: { other: true, rail: !inst.rail } }, inst, {});
-    assert.equal(s.flags.rail, inst.rail, `${inst.letter}: rail ${inst.rail}`);
+    const s = instanceSettings({ flags: { other: true, stillhet: !inst.stillhet } }, inst, {});
+    assert.equal(s.flags.stillhet, inst.stillhet, `${inst.letter}: stillhet ${inst.stillhet}`);
     assert.equal(s.flags.other, true, 'other flags kept');
   }
-  assert.deepEqual(plan.map((i) => i.rail), [false, true, false, true]);
+  assert.deepEqual(plan.map((i) => i.stillhet), [false, true, false, true]);
   assert.equal(JSON.stringify(parent), frozen, 'the parent env is never mutated');
 });
 
@@ -143,10 +143,10 @@ test('PLAN-Gc: mock is on by default, --no-mock turns it off per instance, --moc
     assert.ok(!('WORCA_MOCK' in env[l]) && !('ORCH_MOCK' in env[l]), `${l} is not mock`);
     assert.ok(!('WORCA_MOCK_SLOW_MS' in env[l]), `${l} gets no mock knob`);
   }
-  assert.throws(() => planInstances(parseArgs(['start', '--mock-env', 'WORCA_FLAGS=rail']), { realHome, tmp: scratch }), (e) => e.code === 'bad-mock-env');
+  assert.throws(() => planInstances(parseArgs(['start', '--mock-env', 'WORCA_FLAGS=stillhet']), { realHome, tmp: scratch }), (e) => e.code === 'bad-mock-env');
 });
 
-test('PLAN-Gc F-X-01: A/B copy a fake real store; the source is byte-identical and its mtimes unchanged; C/D start empty with welcomeSeen, rail and uiLevel', async () => {
+test('PLAN-Gc F-X-01: A/B copy a fake real store; the source is byte-identical and its mtimes unchanged; C/D start empty with welcomeSeen, stillhet and uiLevel', async () => {
   const realHome = fakeRealHome();
   const before = snapshot(join(realHome, '.worca-cc'));
   const root = fresh('copy-root');
@@ -168,7 +168,7 @@ test('PLAN-Gc F-X-01: A/B copy a fake real store; the source is byte-identical a
     const s = settingsOf(l);
     assert.equal(s.theme, 'dark');
     assert.equal(s.uiLevel, 'advanced', 'a copied store keeps its level');
-    assert.deepEqual(s.flags, { other: true, rail: l === 'B' });
+    assert.deepEqual(s.flags, { other: true, stillhet: l === 'B' });
     assert.deepEqual(s.onboarding, { hidden: true, welcomeSeen: true });
     assert.ok(!existsSync(join(root, l, '.worca-cc', 'settings.json.tmp')));
   }
@@ -181,7 +181,7 @@ test('PLAN-Gc F-X-01: A/B copy a fake real store; the source is byte-identical a
   for (const l of ['C', 'D']) {
     assert.equal((await prepareHome(by[l], { realHome })).copied, 'empty');
     assert.deepEqual(readdirSync(join(root, l, '.worca-cc')), ['settings.json']);
-    assert.deepEqual(settingsOf(l), { flags: { rail: l === 'D' }, onboarding: { welcomeSeen: true }, uiLevel: 'expert' });
+    assert.deepEqual(settingsOf(l), { flags: { stillhet: l === 'D' }, onboarding: { welcomeSeen: true }, uiLevel: 'expert' });
   }
   // --welcome leaves the welcome dialog to show
   assert.equal(instanceSettings({}, by.C, { welcome: true }).onboarding.welcomeSeen, false);
@@ -227,11 +227,11 @@ test('PLAN-Gc: start spawns the fixture server, records pid and lstart in the in
   assert.ok(Number.isInteger(rec.pid) && rec.lstart, 'pid and lstart recorded');
   assert.equal(rec.lstart, defaultPs(rec.pid).lstart);
   assert.equal((await (await fetch(`http://127.0.0.1:${port}/api/projects`)).json()).projects.length, 0);
-  assert.equal(c.out.join('\n'), `C  http://127.0.0.1:${port}  HOME=${join(root, 'C')}  rail=off  mock=on  store=empty  pid=${rec.pid}`);
+  assert.equal(c.out.join('\n'), `C  http://127.0.0.1:${port}  HOME=${join(root, 'C')}  stillhet=off  mock=on  store=empty  pid=${rec.pid}`);
 
   const l = io({ realHome, tmp: scratch });
   assert.equal(await main(['list', '--root', root], l.io), 0);
-  assert.equal(l.out.join('\n'), `C  http://127.0.0.1:${port}  HOME=${join(root, 'C')}  rail=off  mock=on  store=empty  pid=${rec.pid}`);
+  assert.equal(l.out.join('\n'), `C  http://127.0.0.1:${port}  HOME=${join(root, 'C')}  stillhet=off  mock=on  store=empty  pid=${rec.pid}`);
   const listed = listInstances(root);
   assert.equal(listed.length, 1);
   assert.ok(listed[0].alive && listed[0].ours);

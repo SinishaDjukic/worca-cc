@@ -1,4 +1,4 @@
-// test/stillhet-new-task-refusals-host.test.mjs — COV-2 (docs/rail/forms.md form.run-options): New task's engine and sync
+// test/stillhet-new-task-refusals-host.test.mjs — COV-2 (docs/stillhet/forms.md form.run-options): New task's engine and sync
 // refusals, on dev's routes and in classic's words (split from stillhet-new-task-options-host for CI's per-file limit).
 // Live app host (jsdom), the real shell, a stubbed fetch.
 import { test, afterEach, after } from 'node:test';
@@ -13,7 +13,7 @@ const ENGINE = { error: 'OpenAI Codex cannot enforce the guardrails Strict', cod
 async function open({ reads = {}, write = () => [200, { runId: 'r-new' }], hold, lists = FLOWS } = {}) {
   const h = await liveHost({ lists, write, hold, read: (u) => reads[u] || null });
   await go(h.w, '#runs', 120);
-  h.w.RailCenters.maker('tasks').newPick('form'); await settle(80);
+  h.w.StillhetCenters.maker('tasks').newPick('form'); await settle(80);
   return h;
 }
 const q = (d, sel) => d.querySelector(`#center-dlg ${sel}`);
@@ -84,7 +84,7 @@ test('COV-2 sync: a failed fetch offers Start anyway with last-fetch; a forbidde
   assert.match(note(d).textContent, /origin could not be reached\. Worca will start from the last fetch instead\./);
   q(d, '[data-c-sync="last-fetch"]').click(); await settle(80);
   assert.equal(runs(calls)[1].syncPolicy, 'last-fetch');
-  w.RailCenters.maker('tasks').newPick('form'); await settle(80);
+  w.StillhetCenters.maker('tasks').newPick('form'); await settle(80);
   type(w, d, '#cc-text', 'Again'); await start(d);
   assert.match(note(d).textContent, /This project's sync setting does not allow starting from the remote\./);
   assert.deepEqual([...note(d).querySelectorAll('button')].map((b) => b.textContent), ['Cancel']);
@@ -102,7 +102,7 @@ test('COV-2 sync: Cancel clears the note, says Start cancelled and starts nothin
 
 // ---- COV-2: the waiting clause's way out and the run before it's branch, drawn in the demo kind ----
 const AFTER = { after: { kind: 'ticket', id: 's-docs', title: 'Nightly docs' } };
-const demo = async (keep) => { const w = demoTaskHost({ after }); await settle(60); w.RailCenters.newTask(keep); await settle(60); return { w, d: w.document }; };
+const demo = async (keep) => { const w = demoTaskHost({ after }); await settle(60); w.StillhetCenters.newTask(keep); await settle(60); return { w, d: w.document }; };
 const baseItems = async (d) => { q(d, '[data-menu="f-base"]').click(); await settle(10); const got = [...d.querySelectorAll('#center-dlg [data-menu-pick^="f-base|"]')].map((x) => x.textContent.trim()); q(d, '[data-menu="f-base"]').click(); await settle(10); return got; };
 
 test('COV-2 Start now instead / Start run / Start run now (demo): the waiting clause\'s link drops it and the yes button reads Start task', async () => {
@@ -116,7 +116,7 @@ test('COV-2 Start now instead / Start run / Start run now (demo): the waiting cl
   assert.equal(d.activeElement, q(d, '[data-dialog="yes"]'));
   assert.notEqual(q(d, '[data-menu="f-base"]').textContent.trim(), 'the task before it\'s branch', 'no run before it, no such base');
   type(w, d, '#cc-text', 'Write the release notes'); await start(d);
-  assert.ok(w.RailWorld.rows().some((r) => r.title === 'Write the release notes' && r.case === 'starting'), 'Start task starts it now');
+  assert.ok(w.StillhetWorld.rows().some((r) => r.title === 'Write the release notes' && r.case === 'starting'), 'Start task starts it now');
 });
 
 test('COV-2 Branch off the run before it (demo): with a run before it, the base picker offers and defaults to the run before it\'s branch; without one it is absent', async () => {
@@ -124,7 +124,7 @@ test('COV-2 Branch off the run before it (demo): with a run before it, the base 
   assert.equal(q(d, '[data-menu="f-base"]').textContent.trim(), 'the task before it\'s branch');
   assert.deepEqual(await baseItems(d), ['the task before it\'s branch', 'main', 'dev']);
   q(d, '[data-dialog="cancel"]').click(); await settle(20);
-  w.RailCenters.newTask(); await settle(60);
+  w.StillhetCenters.newTask(); await settle(60);
   assert.equal(q(d, '[data-menu="f-base"]').textContent.trim(), 'main');
   assert.deepEqual(await baseItems(d), ['main', 'dev']);
 });

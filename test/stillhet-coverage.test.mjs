@@ -1,7 +1,7 @@
-// test/stillhet-coverage.test.mjs — gate.coverage (docs/rail/gate.md): every classic control in
-// plans/rail/coverage/classic-controls.json is classified against Stillhet (wired, planned, not offered by decision, MISSING);
+// test/stillhet-coverage.test.mjs — gate.coverage (docs/stillhet/gate.md): every classic control in
+// plans/stillhet/coverage/classic-controls.json is classified against Stillhet (wired, planned, not offered by decision, MISSING);
 // today's MISSING list is the frozen baseline test/fixtures/stillhet-coverage-baseline.json, which only shrinks, and each of
-// its controls names an open finding (COV-N) in plans/rail/findings.md and plans/rail/test-results/PLAN.md.
+// its controls names an open finding (COV-N) in plans/stillhet/findings.md and plans/stillhet/test-results/PLAN.md.
 // Static and fast: no browser, no server (tools/classic-inventory.mjs; its --walk is run by hand).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -77,12 +77,12 @@ test('the inventory is current: the static scan finds exactly the static control
   const scanned = C.scanStatic().map((c) => c.id);
   const stored = controls.filter((c) => c.file).map((c) => c.id);
   const added = scanned.filter((id) => !stored.includes(id)), gone = stored.filter((id) => !scanned.includes(id));
-  assert.deepEqual({ added, gone }, { added: [], gone: [] }, 'run node tools/classic-inventory.mjs and commit plans/rail/coverage/');
+  assert.deepEqual({ added, gone }, { added: [], gone: [] }, 'run node tools/classic-inventory.mjs and commit plans/stillhet/coverage/');
 });
 
 test('every classic control has a classification', () => {
   const none = classified.filter((c) => !C.STATUSES.includes(c.status)).map((c) => `${c.id}: ${c.where}`);
-  assert.deepEqual(none, [], 'give its page a Stillhet place (PAGES) or add a `## Classic controls` row in plans/rail/stillhet-wiring.md');
+  assert.deepEqual(none, [], 'give its page a Stillhet place (PAGES) or add a `## Classic controls` row in plans/stillhet/stillhet-wiring.md');
 });
 
 test('MISSING only shrinks: every MISSING control is in the baseline, and the baseline holds nothing that is no longer MISSING', () => {
@@ -94,13 +94,13 @@ test('MISSING only shrinks: every MISSING control is in the baseline, and the ba
 });
 
 test('each MISSING control names an open finding in findings.md and its PLAN.md batch', () => {
-  const ledger = read('plans/rail/findings.md');
+  const ledger = read('plans/stillhet/findings.md');
   const open = ledger.slice(ledger.indexOf('## Open'), ledger.indexOf('## Closed'));
-  const plan = read('plans/rail/test-results/PLAN.md');
+  const plan = read('plans/stillhet/test-results/PLAN.md');
   const ids = [...new Set(Object.values(baseline))];
   for (const id of ids) {
     assert.match(id, /^COV-\d+$/, `finding id ${id}`);
-    assert.ok(new RegExp(`\\b${id}\\b`).test(open), `${id} has an Open row in plans/rail/findings.md`);
+    assert.ok(new RegExp(`\\b${id}\\b`).test(open), `${id} has an Open row in plans/stillhet/findings.md`);
     assert.ok(new RegExp(`\\b${id}\\b`).test(plan), `${id} is in a PLAN.md batch`);
   }
 });

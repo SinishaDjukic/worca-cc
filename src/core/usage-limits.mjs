@@ -1,7 +1,7 @@
 // src/core/usage-limits.mjs — the harnesses' own plan-limit readings (the profile's usage rings, D7, D8).
 // The Claude normaliser turns the CLI's rate-limit frame into a `limit` event; runs, chats and the session host
 // forward it here. Readings are kept per engine, in usage-limits.json under WORCA_HOME (temp file plus rename,
-// written only on a change), and served at GET /api/usage-limits. Nothing renders them with `rail` off.
+// written only on a change), and served at GET /api/usage-limits. Nothing renders them with `stillhet` off.
 import fs from 'node:fs';
 import path from 'node:path';
 import { worcaHome } from './projects.mjs';

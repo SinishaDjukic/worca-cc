@@ -1,4 +1,4 @@
-// Selecting in a list (docs/rail/lists.md): pure logic, no DOM. A selection is { on, ids, anchor }: selecting or not,
+// Selecting in a list (docs/stillhet/lists.md): pure logic, no DOM. A selection is { on, ids, anchor }: selecting or not,
 // the ticked keys, where a range starts. `shown` is the keys the list shows now, in its order. Written for every list
 // that has selecting: Pulse's Updates now, the Runs list and Chat in their waves.
 import { shortcutAction } from './shortcuts.mjs';

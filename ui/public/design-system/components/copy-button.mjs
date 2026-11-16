@@ -1,4 +1,4 @@
-// CopyButton (docs/rail/components.md): a quiet 28px icon button that copies text. A tick for 1.2s, Copied in its tooltip
+// CopyButton (docs/stillhet/components.md): a quiet 28px icon button that copies text. A tick for 1.2s, Copied in its tooltip
 // and the live region; its width never changes. Its kind says what it copies: plain text, markdown as written, or code
 // without its prompt. The caller passes that source; the button never rewrites it. `copyFrom(btn)` writes the clipboard
 // and says Copied, or Could not copy; a page that copies another way calls `copied(el)` after it copies.
@@ -21,7 +21,7 @@ const timers = new WeakMap();
 export function copyButton({ text, kind = 'text', label, cls: c = '', attrs: a = {} }) {
   if (!(kind in KINDS)) throw new Error(`copyButton: unknown kind "${kind}"`);
   const name = label ?? KINDS[kind];
-  return `<button type="button" class="${cls('btn btn-sm btn-quiet btn-icon rail-copy', c)}"${attrs({ title: name, 'aria-label': name, 'data-copy': text, 'data-copy-kind': kind, ...a })}>${icon('copy', 14)}<span class="rail-copy-tick">${icon('check', 14)}</span><span class="sr-only" role="status"></span></button>`;
+  return `<button type="button" class="${cls('btn btn-sm btn-quiet btn-icon stillhet-copy', c)}"${attrs({ title: name, 'aria-label': name, 'data-copy': text, 'data-copy-kind': kind, ...a })}>${icon('copy', 14)}<span class="stillhet-copy-tick">${icon('check', 14)}</span><span class="sr-only" role="status"></span></button>`;
 }
 
 // The tooltip's words: in data-tip-text while the tooltip watcher holds the title (its hide puts that back), else the title.

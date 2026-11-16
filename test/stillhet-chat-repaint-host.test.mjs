@@ -1,7 +1,7 @@
 // test/stillhet-chat-repaint-host.test.mjs — comp.live-paint and comp.keyed-patch in the Chat host (jsdom): a live frame
 // paints only what changed, once per animation frame, never while Chat is hidden; the thinking orb keeps its canvas; the
 // composer, focus and scroll stay put; a run's done frame shows on its card before any read. Frames are a stubbed
-// requestAnimationFrame; paints are counted by wrapping window.RailUI.patchKeyed (conversation.js calls it through R).
+// requestAnimationFrame; paints are counted by wrapping window.StillhetUI.patchKeyed (conversation.js calls it through R).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { liveHost, go, settle, clone, THREAD, NOW, SOURCES, withRun } from './helpers/stillhet-chat-live-host.mjs';
@@ -29,8 +29,8 @@ async function open(t, { thread = threadOf(), hash = '#chat/ask_1', ...o } = {})
   t.after(() => h.w.close());
   const { w, d } = h;
   const paints = [];
-  const orig = w.RailUI.patchKeyed;
-  w.RailUI.patchKeyed = (c, items, opt) => { const r = orig(c, items, opt); paints.push({ c, r }); return r; };
+  const orig = w.StillhetUI.patchKeyed;
+  w.StillhetUI.patchKeyed = (c, items, opt) => { const r = orig(c, items, opt); paints.push({ c, r }); return r; };
   /** Runs the animation frames asked for so far. */
   const frame = () => { const l = [...raf.values()]; raf.clear(); for (const f of l) f(0); };
   const pending = () => raf.size;
@@ -42,7 +42,7 @@ async function open(t, { thread = threadOf(), hash = '#chat/ask_1', ...o } = {})
   const send = (f) => h.sockets.at(-1).onmessage({ data: JSON.stringify(f) });
   await go(w, hash);
   const id = hash.split('/')[1];   // the thread's first read has landed and is drawn (a slow machine takes longer than one settle)
-  for (let k = 0; k < 100 && !(w.RailChatLive?.state?.(id) === 'ready' && d.querySelector('#route-chat .convo-col')?.children.length > 3); k++) { frame(); await settle(20); }
+  for (let k = 0; k < 100 && !(w.StillhetChatLive?.state?.(id) === 'ready' && d.querySelector('#route-chat .convo-col')?.children.length > 3); k++) { frame(); await settle(20); }
   frame();
   return { ...h, paints, frame, pending, q, colPaints, stream, send };
 }
@@ -55,7 +55,7 @@ test('a hidden Chat records 0 mutations for a world move, a streamed frame and 2
   assert.equal(route.hidden, true);
   const n = h.colPaints().length;
   const mo = observe(h.w, route);
-  h.w.RailWorld.setState({});
+  h.w.StillhetWorld.setState({});
   h.send({ type: 'state', runId: 'run-b', status: 'running' });
   h.stream(1);
   h.frame();
@@ -80,7 +80,7 @@ test('the Ask worca side panel paints on open what changed while it was closed',
   const side = h.d.getElementById('ask-side');
   assert.equal(side.hidden, true);
   const mo = observe(h.w, h.d.getElementById('ask-convo'));
-  h.send({ type: 'state', runId: 'run-b', status: 'running' }); h.w.RailWorld.setState({});
+  h.send({ type: 'state', runId: 'run-b', status: 'running' }); h.w.StillhetWorld.setState({});
   h.frame(); await settle(30); h.frame();
   assert.equal(mo.flush().length, 0, 'closed: nothing painted');
   const shown = observe(h.w, h.d.getElementById('ask-convo'));
@@ -98,7 +98,7 @@ test('5 streamed frames in one animation frame give 1 paint, and flushPaints run
   h.frame();
   assert.equal(h.colPaints().length, n + 1);
   h.stream(6);
-  h.w.RailConversation.flushPaints();
+  h.w.StillhetConversation.flushPaints();
   assert.equal(h.colPaints().length, n + 2, 'flushPaints paints the pending frame now');
   h.frame();
   assert.equal(h.colPaints().length, n + 2, 'and its frame does nothing more');
@@ -120,14 +120,14 @@ test('on a 105-turn chat a frame that changes the last turn replaces at most 1 a
 test('on a 105-turn chat a streamed frame builds no unchanged turn\'s string again; a change to one still draws it', async (t) => {
   const h = await open(t);
   let you = 0;
-  const orig = h.w.RailUI.youTurn;
-  h.w.RailUI.youTurn = (o) => { you++; return orig(o); };
+  const orig = h.w.StillhetUI.youTurn;
+  h.w.StillhetUI.youTurn = (o) => { you++; return orig(o); };
   h.stream(1); h.frame();
   assert.equal(you, 0, 'the 52 you turns are not built again');
-  h.w.RailWorld.setState({}); h.frame();
+  h.w.StillhetWorld.setState({}); h.frame();
   assert.equal(you, 0);
   h.q('[data-anchor="u3"]').click();   // panel.turn-time: a tap shows its time (its class only, no paint)
-  h.w.RailWorld.setState({}); h.frame();
+  h.w.StillhetWorld.setState({}); h.frame();
   assert.equal(you, 1, 'only the turn whose drawing changed is built again');
   assert.ok(h.q('[data-anchor="u3"]').classList.contains('is-time-shown'));
 });
@@ -140,7 +140,7 @@ test('the thinking orb\'s canvas is the same node across 3 frames and its data-o
   const phases = [];
   for (const [i, at] of [[1, 700], [2, 1300], [3, 1900]]) {   // its steps move on with the time: Thinking, Searching (a tool), Writing
     h.w.Date.now = () => NOW + at;
-    h.w.RailWorld.setState({}); h.frame();
+    h.w.StillhetWorld.setState({}); h.frame();
     const now = h.q('[data-think-at] canvas[data-orb]');
     assert.equal(now, cv, `frame ${i}: the same canvas`);
     phases.push(now.dataset.orb);
@@ -185,13 +185,13 @@ test('a reader scrolled up keeps the same scrollTop across streamed frames', asy
 test('a patched thread serialises like a full redraw of the same state (the frame built again, nothing kept)', async (t) => {
   const h = await open(t, { thread: threadOf({ pairs: 6, streaming: false }) });
   h.send({ type: 'state', runId: 'run-b', status: 'running' }); h.frame();
-  h.w.RailWorld.setState({}); h.frame();
+  h.w.StillhetWorld.setState({}); h.frame();
   const patched = h.d.getElementById('route-chat').innerHTML;
   assert.ok(h.colPaints().length >= 2, 'patched at least once after the first paint');
   const route = h.d.getElementById('route-chat');
   route.replaceChildren();   // the root no longer holds the frame: the next paint builds it, and every turn, from nothing
   const n = h.colPaints().length;
-  h.w.RailWorld.setState({}); h.frame();
+  h.w.StillhetWorld.setState({}); h.frame();
   assert.equal(h.colPaints().at(-1).r.kept, 0, 'a full redraw');
   assert.equal(h.colPaints().length, n + 1);
   assert.equal(route.innerHTML, patched);
@@ -219,7 +219,7 @@ test('a busy control is enabled again after busy clears on a kept turn', async (
   assert.ok(btn, 'the card offers Pause');
   btn.click();
   assert.equal(h.q(sel).disabled, true, 'disabled while its action is out');
-  h.w.RailWorld.setState({}); h.frame();
+  h.w.StillhetWorld.setState({}); h.frame();
   assert.equal(h.q(sel).disabled, true, 'still, across a paint');
   release(); await settle(30); h.frame();
   assert.equal(h.q(sel).disabled, false, 'enabled once answered');
@@ -228,7 +228,7 @@ test('a busy control is enabled again after busy clears on a kept turn', async (
 test('switching chats builds the frame again', async (t) => {
   const h = await open(t, { thread: threadOf({ pairs: 2, streaming: false }) });
   const convo = h.q('.convo');
-  h.w.RailWorld.setState({}); h.frame();
+  h.w.StillhetWorld.setState({}); h.frame();
   assert.equal(h.q('.convo'), convo, 'a live frame keeps the frame');
   await go(h.w, '#chat/ask_2'); h.frame(); await settle(20); h.frame();
   assert.notEqual(h.q('.convo'), convo);
@@ -243,7 +243,7 @@ test('a done frame turns the chat card\'s state mark to done before any read ret
   assert.notEqual(mark().getAttribute('aria-label'), 'Finished · Finished');
   block = true;
   h.send({ type: 'done', runId: 'run-a', seq: 99, status: 'done' });
-  h.w.RailConversation.flushPaints();
+  h.w.StillhetConversation.flushPaints();
   assert.equal(mark().getAttribute('aria-label'), 'Finished · Finished', 'done on its own frame');
   h.send({ type: 'ask-run-status', threadId: 'ask_1', runId: 'run-a' });
   await settle(400); h.frame();

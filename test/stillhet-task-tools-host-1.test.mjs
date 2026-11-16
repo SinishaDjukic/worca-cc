@@ -1,7 +1,7 @@
 // test/stillhet-task-tools-host-1.test.mjs — the live task page's tools on dev's routes (R-po-4, R-ux-6): Changes, its (part 1 of 2: split to stay under CI's 300 s per file)
 // documents and the Logs are the task's own (D4); Terminal, services and built-in tools, Try it, Sync log, Open the whole
 // diff, document downloads, Save as preset, Switch model, Resume at… and Move to group… each call dev's route. Live app
-// host (jsdom, the real live adapter and RailTaskLive).
+// host (jsdom, the real live adapter and StillhetTaskLive).
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { liveHost, go, settle, closeHosts, clone, SOURCES, posts, toastText } from './helpers/stillhet-chat-live-host.mjs';

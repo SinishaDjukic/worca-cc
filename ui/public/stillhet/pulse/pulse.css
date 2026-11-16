@@ -1,4 +1,4 @@
-/* Pulse: the hub's layer on top of Worca's style.css and rail.css (spec: plans/rail/pulse.md). One rail: a 20px column
+/* Pulse: the hub's layer on top of Worca's style.css and stillhet.css (spec: plans/stillhet/pulse.md). One rail: a 20px column
    for the dot (or the tick box), a 12px gap, then the text edge every heading, row and sentence starts on. */
 
 .pz-title,.pz-nr-h{letter-spacing:-.02em;}

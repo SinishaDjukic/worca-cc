@@ -1,6 +1,6 @@
 // test/helpers/stillhet-workflows-host.mjs — Stillhet's Workflows in the live kind (slice 7): dev's workflow, agent and
 // script answers as a fake API (WF_LISTS), and a jsdom app host over it that records every request and stubs
-// RailGraph.mount to record the workflow it is given.
+// StillhetGraph.mount to record the workflow it is given.
 import { SEED_TEMPLATES } from '../../src/core/graph/seed-templates.mjs';
 import { GRAPH_DEFAULT_WORKFLOW } from '../../src/core/workflows.mjs';
 import { loadAgentRegistry } from '../../src/core/agent-registry.mjs';
@@ -43,7 +43,7 @@ export async function workflowsHost({ hash = '#workflows', read = () => null, wr
   const one = (u) => { const m = /^\/api\/workflows\/([^/?]+)$/.exec(u), t = m && (lists['/api/workflows']?.workflows || []).find((w) => w.id === decodeURIComponent(m[1])); return t ? [200, clone(t)] : null; };
   const h = await liveHost({ hash: '#chat', lists: { ...LISTS, ...clone(lists) }, read: async (u) => (await read(u)) || one(u), write, beforeScripts: (win) => { win.structuredClone ||= structuredClone; beforeScripts(win); } });   // jsdom has none; the page copies drafts with it
   // graph.js (the bundled renderer) is not among the host's scripts: the stub records what the page asks it to draw
-  h.w.RailGraph = { ...(h.w.RailGraph || {}), mount: (host, wf, o) => { mounts.push({ wf, o }); return { g: null, view: null, ...graph }; }, align: (g) => g, build: () => ({}) };
+  h.w.StillhetGraph = { ...(h.w.StillhetGraph || {}), mount: (host, wf, o) => { mounts.push({ wf, o }); return { g: null, view: null, ...graph }; }, align: (g) => g, build: () => ({}) };
   await go(h.w, hash, 200);
   await settle(200);
   return { ...h, mounts };

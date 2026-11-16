@@ -1,4 +1,4 @@
-// test/design-system-keyed-list.test.mjs — patchKeyed and frameBatch (docs/rail/components.md `comp.keyed-patch`): a list
+// test/design-system-keyed-list.test.mjs — patchKeyed and frameBatch (docs/stillhet/components.md `comp.keyed-patch`): a list
 // redrawn on live data keeps the node of every item whose drawing did not change, moves without re-creating, and keeps an
 // orb's canvas in a redrawn item; live redraws wait for the next frame, once.
 import { test } from 'node:test';

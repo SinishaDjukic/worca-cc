@@ -11,8 +11,8 @@ const page = (d) => d.querySelector('#route-place') || d.body;
 
 test('#workflows lists the API\'s workflows, agents and scripts in the bar and as cards', async () => {
   const { w, d } = await workflowsHost();
-  assert.equal(w.RailWorkflowLive.status(), 'ready');
-  const bar = text(d.querySelector('#rail-bar, .rail-bar, nav')) + text(d.body);
+  assert.equal(w.StillhetWorkflowLive.status(), 'ready');
+  const bar = text(d.querySelector('#stillhet-bar, .stillhet-bar, nav')) + text(d.body);
   assert.match(bar, /All workflows/); assert.match(bar, /Agents/); assert.match(bar, /Scripts/);
   const cards = [...page(d).querySelectorAll('[data-wf-open]')].map((c) => c.dataset.wfOpen);
   for (const id of ['workflow:wf_default', 'workflow:wf_mine', 'workflow:wf_full']) assert.ok(cards.includes(id), `${id} in ${cards}`);
@@ -24,7 +24,7 @@ test('#workflows lists the API\'s workflows, agents and scripts in the bar and a
   assert.match(text(page(d)), /Diff gate/);
 });
 
-test('#workflows/workflow:wf_full mounts RailGraph with dev\'s template (11 nodes) and the agents it uses', async () => {
+test('#workflows/workflow:wf_full mounts StillhetGraph with dev\'s template (11 nodes) and the agents it uses', async () => {
   const { w, mounts } = await workflowsHost({ hash: '#workflows/workflow:wf_full'});
   const m = mounts.filter((x) => x.wf.id === 'wf_full').at(-1);
   assert.ok(m, 'the graph is mounted');
@@ -59,9 +59,9 @@ test('a failed list read shows the failed look, with Try again', async () => {
   assert.ok(page(d).querySelector('[data-wf-retry]'));
 });
 
-test('RailPlaces.workflows.has answers on the live data', async () => {
+test('StillhetPlaces.workflows.has answers on the live data', async () => {
   const { w } = await workflowsHost();
-  const has = w.RailPlaces.workflows.has;
+  const has = w.StillhetPlaces.workflows.has;
   assert.equal(has('workflow:wf_full'), true);
   assert.equal(has('agent:planner'), true);
   assert.equal(has('~scripts'), true);
@@ -196,7 +196,7 @@ test('V-TW-06: the canvas Loop row, Remove and the loop picker follow the node',
   await at('n_web');
   assert.match(insp(), /Sends fixes back to Build \(step 3\) up to 1 time(?!s)/);
   d.querySelector('[data-menu="ed-l-3"]').click(); await settle(20); d.querySelector('[data-menu-pick="ed-l-3|3"]').click(); await settle(40);
-  const draft = () => w.RailWorkflowLive.data().workflow.find((x) => x.id === 'wf_twice').draft;
+  const draft = () => w.StillhetWorkflowLive.data().workflow.find((x) => x.id === 'wf_twice').draft;
   assert.deepEqual(draft().loops.map((l) => [l[2], l[3]]), [[2, 'n_rev'], [3, 'n_web']], 'the picker changed the Web UI loop, not the first one');
   await at('n_b2');
   d.querySelector('[data-ed-remove="2"]').click(); await settle(60);

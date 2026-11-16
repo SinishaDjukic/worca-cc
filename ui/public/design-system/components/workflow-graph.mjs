@@ -1,4 +1,4 @@
-// WorkflowGraph (docs/rail/components.md): a run's workflow at full size, the view inside a Dialog without a form. A lane
+// WorkflowGraph (docs/stillhet/components.md): a run's workflow at full size, the view inside a Dialog without a form. A lane
 // per stage, a node per step in its status colour, a pip on a gate, its rounds, and at the end what it came to. A node
 // opens that step's log drawer under the graph. Wraps on a narrow screen; nothing scrolls sideways.
 import { attrs, cls, esc } from './html.mjs';

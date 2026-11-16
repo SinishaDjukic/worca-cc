@@ -1,4 +1,4 @@
-// ArtifactView (docs/rail/panels.md › panel.task-depth): one artifact a task wrote, open in place under its list. Its
+// ArtifactView (docs/stillhet/panels.md › panel.task-depth): one artifact a task wrote, open in place under its list. Its
 // name and where it came from, Previous and Next through the others, Open full and Download; what it holds below, read
 // where it is.
 import { attrs, esc } from './html.mjs';

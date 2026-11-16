@@ -40,7 +40,7 @@ test('the baselines file names exactly the six gates, each a list of strings', (
 });
 
 test('against the app (STILLHET_TARGET) a gate does not rebuild the shared bundles: the runner built them once', async () => {
-  const { buildBundles } = await import('../plans/rail/prototype/gates/target.mjs');
+  const { buildBundles } = await import('../plans/stillhet/prototype/gates/target.mjs');
   const { statSync, existsSync: has } = await import('node:fs');
   const css = new URL('../ui/public/stillhet/app.css', import.meta.url);
   const before = has(css) ? statSync(css).mtimeMs : null;

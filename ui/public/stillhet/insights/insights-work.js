@@ -1,14 +1,14 @@
 // A person's work on Insights › By person (#1310): the open row's detail (a TimeTrack of their tasks on the page's own
-// days) and a teammate's task, read only (TaskView). Live, the data is RailInsightsLive.work and .task (dev's Timeline
-// items, live/work-map.mjs); in the demo it is RailInsightsModel.workOf and .workTask. Built only from the library.
+// days) and a teammate's task, read only (TaskView). Live, the data is StillhetInsightsLive.work and .task (dev's Timeline
+// items, live/work-map.mjs); in the demo it is StillhetInsightsModel.workOf and .workTask. Built only from the library.
 (function () {
-  const R = window.RailUI, M = window.RailInsightsModel;
-  const isLive = () => window.RailAdapter?.kind === 'live';
-  const K = () => (isLive() ? window.RailInsightsLive || null : M);   // the words: live/work-map.mjs, or the demo's equal copy
+  const R = window.StillhetUI, M = window.StillhetInsightsModel;
+  const isLive = () => window.StillhetAdapter?.kind === 'live';
+  const K = () => (isLive() ? window.StillhetInsightsLive || null : M);   // the words: live/work-map.mjs, or the demo's equal copy
   const FIRST = 6;   // D9: rows shown before Show N more
   const legend = () => R.markLegend({ items: [{ line: 'solid', text: 'Agent working, first run to last' }, { line: 'dashed', text: 'Waiting for review' }, { mark: R.gitMark({ status: 'merged' }), text: 'Merged' }, { mark: R.gitMark({ status: 'open' }), text: 'Open' }, { mark: R.gitMark({ status: 'closed' }), text: 'Closed' }] });
   // D3: yours when this Worca knows one of its runs (live/work-map.mjs isOwn); your newest local run opens
-  const ownRun = (it) => (isLive() ? [...it.runs].reverse().find((r) => window.RailWorld?.find?.(r.id))?.id || '' : '');
+  const ownRun = (it) => (isLive() ? [...it.runs].reverse().find((r) => window.StillhetWorld?.find?.(r.id))?.id || '' : '');
   function dataOf(c, name, st) {
     if (!isLive()) return { state: 'ready', ...M.workOf(name, c.labels, c.rows.find((r) => r.name === name)?.tasks || 0), pr: { state: 'ready', why: '' } };
     const L = K();
@@ -42,5 +42,5 @@
     const v = K().taskViewOf(r.item);
     return wrap(R.taskView({ back: { label: `By person › ${who || r.item.actor}`, attrs: { 'data-in-back': '' } }, mark: R.kindMark({ kind: 'task', tone: v.tone }), title: v.title, meta: v.meta, state: v.state, figures: v.figures, pr: v.pr && v.pr.url ? v.pr : null, runs: v.runs }));
   }
-  window.RailInsightsWork = { detail, task, FIRST };
+  window.StillhetInsightsWork = { detail, task, FIRST };
 })();

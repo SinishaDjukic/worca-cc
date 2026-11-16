@@ -346,7 +346,7 @@
     for (const f of fields) other[f] = sum(rest.map((r) => r[f]));
     return [...rows.slice(0, 5), other];
   }
-  // the stretch a row carries to Tasks, when it is not the plain month: a drag, or another period (RailRunsList.filter's range)
+  // the stretch a row carries to Tasks, when it is not the plain month: a drag, or another period (StillhetRunsList.filter's range)
   const MON = { Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11 };
   const edge = (label, end) => { const [m, d] = label.split(' '), days = d ? d.split('-') : ['1', '31']; return MON[m] * 100 + +(end ? days[days.length - 1] : days[0]); };
   const rangeOf = (labels) => ({ from: edge(labels[0]), to: edge(labels[labels.length - 1], true), label: rangeWord(labels) });
@@ -357,7 +357,7 @@
   // a row's number of tasks is what its click opens: the rows of the Tasks list itself. A workspace is the projects its row stands for.
   const WS_OF = { 'web-shop': ['billing-api', 'web-app'], internal: ['worca-cc', 'docs-site'] };
   function listCount(dim, name, range) {
-    const L = window.RailRunsList?.rows(); if (!L) return null;
+    const L = window.StillhetRunsList?.rows(); if (!L) return null;
     const names = dim === 'workspace' ? WS_OF[name] || [] : [name];
     return L.filter((t) => names.includes(t.project) && (!range || (dateKey(t) >= range.from && dateKey(t) <= range.to))).length;
   }
@@ -399,7 +399,7 @@
       if (c.B) { const was = s.before.slice(a, b + 1); c.P[f] = Math.round(sum(was) * share); c.B[f] = allocate(was, c.P[f]); }
     }
     const counted = src === money || src === alone, range = rangeIn(c.labels, st);
-    if (counted && st.when === 'this month' && !st.narrow && !st.filter.length && window.RailRunsList) {   // the plain month: the headline is the list too
+    if (counted && st.when === 'this month' && !st.narrow && !st.filter.length && window.StillhetRunsList) {   // the plain month: the headline is the list too
       c.T.tasks = sum(src.rows.project.map((r) => listCount('project', r.name, null))); c.F.tasks = allocate(periodSeries(src, 'tasks', st.when).now, c.T.tasks);
     }
     const splits = !whole0 && !sub.den && !TIME.has(st.by) && !!src.rows[st.by];
@@ -582,5 +582,5 @@
         rows: item.runs.map((r) => ({ started: timeW(r.s), result: RESULT[r.result] || 'Finished', cost: money2(r.costUsd), time: durW(r.activeMs) })) },
     };
   }
-  window.RailInsightsModel = { rangeOf, rangeIn, STANDS, SUBS, SUB, DIM, DIM_GROUPS, TIME, FILTERS, WHEN, usd, cmp, compute, defaults, dimsOf, allocate, sum, rangeWord, linkOf, stateOfLink, spanOf, workOf, workTask, workHead, cardOf, taskViewOf };
+  window.StillhetInsightsModel = { rangeOf, rangeIn, STANDS, SUBS, SUB, DIM, DIM_GROUPS, TIME, FILTERS, WHEN, usd, cmp, compute, defaults, dimsOf, allocate, sum, rangeWord, linkOf, stateOfLink, spanOf, workOf, workTask, workHead, cardOf, taskViewOf };
 })();

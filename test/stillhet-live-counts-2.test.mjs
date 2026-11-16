@@ -27,7 +27,7 @@ test('Projects in the live kind (slice 9): each action sends dev\'s route; the s
   const page = () => d.getElementById('route-place');
   const pick = (v) => { page().querySelector('[data-menu="pj-more"]').click(); page().querySelector(`[data-menu-pick="pj-more|${v}"]`).click(); };
   pick('fetch'); await settle();
-  w.RailProjects.sync('api-2'); await settle();
+  w.StillhetProjects.sync('api-2'); await settle();
   pick('act'); await settle();   // diverged: Bring together hands over to a chat, writing nothing (B4.5: Old pause waits on you, so the head offers it and ⋯ the hand-over)
   assert.deepEqual(posts.map((p) => [p.method, p.url, p.body]), [['POST', '/api/projects/api-2/sync', { mode: 'fetch' }], ['POST', '/api/projects/api-2/sync', { mode: 'ff' }]]);
   assert.deepEqual(store(w), was, 'no store write outside a read');
@@ -43,7 +43,7 @@ test('R-arch-10: every action of an area this slice does not wire goes through t
   const { w, d, posts, hello } = await liveHost({ level: 'expert' });
   await hello();
   const acts = [];
-  const act = w.RailAdapter.act; w.RailAdapter.act = (id, args) => { const r = act(id, args); acts.push(`${id}: ${r.ok ? 'done' : r.text}`); return r; };
+  const act = w.StillhetAdapter.act; w.StillhetAdapter.act = (id, args) => { const r = act(id, args); acts.push(`${id}: ${r.ok ? 'done' : r.text}`); return r; };
   const html = (id) => d.getElementById(id)?.innerHTML ?? '';
   const cases = [
     // Schedules: wired by the Schedules slice (test/stillhet-schedules-actions-host.test.mjs), so none of its actions refuses here
@@ -54,20 +54,20 @@ test('R-arch-10: every action of an area this slice does not wire goes through t
   ];
   for (const [id, go, run, root] of cases) {
     if (go) await go();
-    const before = store(w), page = html(root), schedules = clone(w.RailSchedules.all()), chats = clone(w.RailChats.data()), n = acts.length, p = posts.length;
+    const before = store(w), page = html(root), schedules = clone(w.StillhetSchedules.all()), chats = clone(w.StillhetChats.data()), n = acts.length, p = posts.length;
     run(); await settle();
-    assert.deepEqual(acts.slice(n), [`${id}: ${w.RailAdapter.NOT_CONNECTED}`], `${id}: one refusal, through RailAdapter.act`);
-    if (!n) assert.equal(w.RailHost.toastEl.textContent, w.RailAdapter.NOT_CONNECTED, 'the app host\'s toast says so (once in 3 s, adapter.js)');
+    assert.deepEqual(acts.slice(n), [`${id}: ${w.StillhetAdapter.NOT_CONNECTED}`], `${id}: one refusal, through StillhetAdapter.act`);
+    if (!n) assert.equal(w.StillhetHost.toastEl.textContent, w.StillhetAdapter.NOT_CONNECTED, 'the app host\'s toast says so (once in 3 s, adapter.js)');
     assert.deepEqual(store(w), before, `${id}: the store is unchanged`);
-    assert.deepEqual(clone(w.RailSchedules.all()), schedules, `${id}: the schedules are unchanged`);
-    assert.deepEqual(clone(w.RailChats.data()), chats, `${id}: the chats are unchanged`);
+    assert.deepEqual(clone(w.StillhetSchedules.all()), schedules, `${id}: the schedules are unchanged`);
+    assert.deepEqual(clone(w.StillhetChats.data()), chats, `${id}: the chats are unchanged`);
     assert.equal(html(root), page, `${id}: the page is unchanged`);
     assert.equal(posts.length, p, `${id}: nothing sent to Worca`);
     w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   }
   w.location.hash = '#settings'; await settle();
   assert.equal(d.querySelector('[data-svsw="sync"]'), null, 'live Settings draws no Sync switch to refuse (B1.2)');
-  assert.equal(w.RailSpaces.list().length, 0);
+  assert.equal(w.StillhetSpaces.list().length, 0);
 });
 
 
@@ -75,26 +75,26 @@ test('every Step 5 action, refused: one toast "Could not ACTION: REASON", the st
   const { w, d, posts } = await refusalHost();
   const pop = () => d.querySelector('#app .pz-popover');
   const cases = [
-    ['Resume', () => { w.RailPulse.open('updates'); pop().querySelector('[data-fix="oh1"]').click(); }, 'resume', '/api/resume'],
-    ['Try again', () => { w.RailPulse.open('updates'); pop().querySelector('[data-fix="oh3"]').click(); }, 'try again', '/api/resume'],
-    ['Run now', () => { w.RailPulse.open('updates'); pop().querySelector('[data-fix="n7"]').click(); }, 'run now', '/api/schedules/tk1/run-now'],
-    ['Stop', () => { w.RailPulse.open('now'); pop().querySelector('[data-act-stop="i1"]').click(); }, 'stop Dev server :4417', '/api/actions/instances/i1/stop'],
-    ['Mark read', () => { w.RailPulse.open('updates'); pop().querySelector('[data-open="n7"]').click(); }, 'mark it read', '/api/notifications/7/read'],
-    ['Mark all read', () => { w.RailPulse.open('updates'); pop().querySelector('[data-menu="more"]').click(); d.querySelector('[data-menu-pick="more|allread"], [data-pick="more|allread"]').click(); }, 'mark all read', '/api/notifications/read-all'],
+    ['Resume', () => { w.StillhetPulse.open('updates'); pop().querySelector('[data-fix="oh1"]').click(); }, 'resume', '/api/resume'],
+    ['Try again', () => { w.StillhetPulse.open('updates'); pop().querySelector('[data-fix="oh3"]').click(); }, 'try again', '/api/resume'],
+    ['Run now', () => { w.StillhetPulse.open('updates'); pop().querySelector('[data-fix="n7"]').click(); }, 'run now', '/api/schedules/tk1/run-now'],
+    ['Stop', () => { w.StillhetPulse.open('now'); pop().querySelector('[data-act-stop="i1"]').click(); }, 'stop Dev server :4417', '/api/actions/instances/i1/stop'],
+    ['Mark read', () => { w.StillhetPulse.open('updates'); pop().querySelector('[data-open="n7"]').click(); }, 'mark it read', '/api/notifications/7/read'],
+    ['Mark all read', () => { w.StillhetPulse.open('updates'); pop().querySelector('[data-menu="more"]').click(); d.querySelector('[data-menu-pick="more|allread"], [data-pick="more|allread"]').click(); }, 'mark all read', '/api/notifications/read-all'],
     ['Interface mode', () => { openAcct(d); d.querySelector('[data-sub="lvl"]').click(); d.querySelector('#app [data-level="simple"]').click(); }, 'change the interface mode', '/api/settings'],
     ['Keep awake', () => { openAcct(d); d.querySelector('[data-sw="keep"]').click(); }, 'change Keep awake', '/api/settings'],
     ['Away', () => { openAcct(d); d.querySelector('[data-sw="away"]').click(); }, 'change Away', '/api/settings'],
     ['Pulse icon', async () => { await openPulseFor(w, d); d.querySelector('[data-menu-pick="pulseFor|never"]').click(); }, 'change the Pulse icon', '/api/settings'],
   ];
   for (const [name, act, what, url] of cases) {
-    const before = store(w), mode = w.RailUI.prefs.mode(), n = posts.length;
+    const before = store(w), mode = w.StillhetUI.prefs.mode(), n = posts.length;
     w.location.hash = '#chat'; await settle();
     await act(); await settle();
     assert.equal(posts.length, n + 1, `${name}: one post`);
     assert.equal(posts.at(-1).url, url, name);
     assert.equal(toastText(d), `Could not ${what}: ${REFUSE.error}`, name);
     assert.deepEqual(store(w), before, `${name}: the store is unchanged`);
-    assert.equal(w.RailUI.prefs.mode(), mode, `${name}: the mode is unchanged`);
+    assert.equal(w.StillhetUI.prefs.mode(), mode, `${name}: the mode is unchanged`);
     if (name === 'Pulse icon') assert.match(pulseForRow(d).textContent, /shakes until you read or act on it/, 'the Pulse icon keeps its value');
     if (name === 'Keep awake') { openAcct(d); assert.equal(d.querySelector('[data-sw="keep"]').getAttribute('aria-checked'), 'true', 'Keep awake stays on'); }
     w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
@@ -107,7 +107,7 @@ async function openPulseFor(w, d) {
   w.location.hash = '#settings/notifications'; await settle();
   d.querySelector('[data-menu="pulseFor"]').click();
 }
-const pulseNews = (d) => d.querySelector('#rail-pulse-slot .pz-pulse-b').classList.contains('is-news');
+const pulseNews = (d) => d.querySelector('#stillhet-pulse-slot .pz-pulse-b').classList.contains('is-news');
 
 test('live: picking Pulse icon posts {pulseFor} to /api/settings and keeps the value on ok', async () => {
   const { w, d, posts, hello } = await liveHost({ post: (url, body) => [200, url === '/api/settings' ? { ...body } : { ok: true }] });
@@ -122,11 +122,11 @@ test('live: a settings-changed re-fetch with pulseFor \'never\' stops a running 
   const sources = clone(SOURCES);
   const { w, d, sockets, hello } = await liveHost({ sources });
   await hello();
-  w.RailPulse.newEvent('problem'); await settle();
+  w.StillhetPulse.newEvent('problem'); await settle();
   assert.equal(pulseNews(d), true, 'the icon has news');
   sources.settings.pulseFor = 'never';   // another tab saved it
   sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'settings-changed', action: null }) }); await settle(400);   // the adapter's re-fetch is debounced (250 ms)
-  assert.equal(w.RailWorld.part('pulseFor'), 'never');
+  assert.equal(w.StillhetWorld.part('pulseFor'), 'never');
   assert.equal(pulseNews(d), false, 'the running icon stops without a reload');
 });
 
@@ -134,11 +134,11 @@ test('every Step 5 action posts dev\'s route and body; no "Would…" in the app 
   let would = 0;
   const { w, d, posts, hello } = await liveHost({ post: (url) => [200, url === '/api/settings' ? { uiLevel: 'simple', keepAwake: false } : { ok: true }] });
   await hello();
-  const wrap = w.RailWould; w.RailWould = (p) => { would++; return wrap(p); };
+  const wrap = w.StillhetWould; w.StillhetWould = (p) => { would++; return wrap(p); };
   const pop = () => d.querySelector('#app .pz-popover');
-  w.RailPulse.open('updates'); pop().querySelector('[data-fix="oh1"]').click(); await settle();
-  w.RailPulse.open('updates'); pop().querySelector('[data-fix="n7"]').click(); await settle();
-  w.RailPulse.open('now'); pop().querySelector('[data-act-stop="i1"]').click(); await settle();
+  w.StillhetPulse.open('updates'); pop().querySelector('[data-fix="oh1"]').click(); await settle();
+  w.StillhetPulse.open('updates'); pop().querySelector('[data-fix="n7"]').click(); await settle();
+  w.StillhetPulse.open('now'); pop().querySelector('[data-act-stop="i1"]').click(); await settle();
   openAcct(d); d.querySelector('[data-sw="keep"]').click(); await settle();
   openAcct(d); d.querySelector('[data-sw="away"]').click(); await settle();
   assert.deepEqual(posts.map((p) => [p.url, p.body]), [
@@ -155,7 +155,7 @@ test('every Step 5 action posts dev\'s route and body; no "Would…" in the app 
 test('a resume that dev answers with a confirm opens the task instead', async () => {
   const { w, d, hello } = await liveHost({ post: () => [409, { code: 'base-moved', error: 'the base moved' }] });
   await hello();
-  w.RailPulse.open('updates');
+  w.StillhetPulse.open('updates');
   d.querySelector('#app .pz-popover [data-fix="oh1"]').click(); await settle();
   assert.equal(w.location.hash, '#run/h1', 'the task oh1 names (history row h1), by its id, never the case (#1266)');
 });

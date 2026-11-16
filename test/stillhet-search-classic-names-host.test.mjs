@@ -10,7 +10,7 @@ import { liveHost, settle, closeHosts } from './helpers/stillhet-chat-live-host.
 
 const closers = [];
 afterEach(() => { while (closers.length) closers.pop()(); closeHosts(); });
-const expert = (win) => win.localStorage.setItem('worca-rail.mode', 'expert');   // every row visible: only a lock note differs
+const expert = (win) => win.localStorage.setItem('worca-stillhet.mode', 'expert');   // every row visible: only a lock note differs
 async function demo() { const w = stillhetHost({ hash: '#chat', after: (fn) => closers.push(fn), beforeScripts: expert }); await settle(200); return w; }
 async function live() { const { w } = await liveHost({ hash: '#chat', beforeScripts: expert }); await settle(100); return w; }
 // the results for `q`, as [label, hint]; the tail (Ask Chat) left out
@@ -24,7 +24,7 @@ const pick = async (w, label) => { const el = [...w.document.querySelectorAll('[
 
 test('F-7b-16 coverage: the table covers every classic CARDS entry', async () => {
   const w = await demo();
-  const table = w.RailPulse.classicSettings;
+  const table = w.StillhetPulse.classicSettings;
   assert.ok(Object.isFrozen(table));
   assert.deepEqual(JSON.parse(JSON.stringify(table.map((x) => ({ card: x.card, name: x.name, alts: x.alts })))), CARDS.filter((c) => !UNLISTED_CARDS.includes(c.id)).map((c) => ({ card: c.id, name: c.title, alts: [...c.alts] })));
 });
@@ -60,7 +60,7 @@ test('F-7b-16: every classic name and alt finds a row, demo and live', async () 
 
 test('F-7b-16: picking Network proxy lands on Settings › Tasks', async () => {
   const w = await demo();
-  const went = []; const go = w.RailShell.go; w.RailShell.go = (h, ...a) => { went.push(h); return go(h, ...a); };
+  const went = []; const go = w.StillhetShell.go; w.StillhetShell.go = (h, ...a) => { went.push(h); return go(h, ...a); };
   search(w, 'network proxy');
   await pick(w, 'Proxy');
   assert.ok(went.includes('settings/runs'), went.join(', '));
@@ -71,7 +71,7 @@ test('F-7b-16: Interface mode opens the profile menu\'s Interface mode, and Work
   assert.deepEqual(search(w, 'interface mode')[0], ['Interface mode', 'Your menu']);
   await pick(w, 'Interface mode');
   assert.ok(d.querySelector('[data-sub="lvl"][aria-expanded="true"]'), 'the Interface mode sub-menu is open');
-  const went = []; const go = w.RailShell.go; w.RailShell.go = (h, ...a) => { went.push(h); return go(h, ...a); };
+  const went = []; const go = w.StillhetShell.go; w.StillhetShell.go = (h, ...a) => { went.push(h); return go(h, ...a); };
   assert.deepEqual(search(w, 'monorepo')[0], ['Workspaces', 'Projects · by workspace'], 'a classic alt finds its home in Projects');
   await pick(w, 'Workspaces');
   assert.ok(went.includes('projects'), went.join(', '));

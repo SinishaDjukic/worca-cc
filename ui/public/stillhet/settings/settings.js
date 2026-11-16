@@ -1,5 +1,5 @@
 // Settings' sections (all but Notifications, which pulse.js draws from Pulse's model), drawn from settings-model.js with
-// the Rail components alone, so the look, the alignment and the motion are the components':
+// the Stillhet components alone, so the look, the alignment and the motion are the components':
 //   a decision  → SettingsRow: its name, its state in words (SentencePickers where it changes), a Switch or a button;
 //                 its fine-tuning folds under Customise (`more`);
 //   a record    → ListRow in a List: the row opens what it does not already show, or nothing; its one action a button, more in its ⋯;
@@ -7,7 +7,7 @@
 // A value lives in `sv`, a Labs flag in R.prefs. Every control acts on them; nothing is saved (a prototype). Live, Labs
 // reads the server's flags (GET /api/flags) and a switch writes through PATCH /api/flags (settings-model.js `labsSwitch`).
 (function () {
-  const SM = window.SettingsModel, R = window.RailUI;
+  const SM = window.SettingsModel, R = window.StillhetUI;
   for (const f of SM.FLAGS) R.prefs.setFlag(f.key, f.on);   // a Labs switch's default, for every page that reads a flag
   const noSlash = () => { if (window.location?.hash === '#settings/') window.location.replace('#settings'); };   // the landing has one address
   window.addEventListener?.('hashchange', noSlash); noSlash();
@@ -40,8 +40,8 @@
   const optText = (p, v, sv) => (optsOf(p, sv).find((o) => o[0] === v) || [v, v])[1];
   const words = (t, c) => c.esc(t || '').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`(.+?)`/g, '<code>$1</code>');
   // `only: 'demo' | 'live'`: a sample row the live kind does not draw, or a live row the demo does not
-  const liveOn = () => !!window.RailWorld?.live;
-  // `sample: true` (docs/rail/settings.md `set.not-live`): a section or a row still sample data; live, it reads NotLiveRow
+  const liveOn = () => !!window.StillhetWorld?.live;
+  // `sample: true` (docs/stillhet/settings.md `set.not-live`): a section or a row still sample data; live, it reads NotLiveRow
   const notLive = (x) => !!x.sample && liveOn();
   const vis = (x, c) => R.shows(x.min, c.level) && (!x.flag || R.prefs.flag(x.flag)) && (!x.when || x.when(c.sv)) && (!x.only || (x.only === 'live') === liveOn());
   const textOf = (v, sv) => (typeof v === 'function' ? v(sv) : v);
@@ -68,7 +68,7 @@
     });
   }
   // What differs from Worca's default, each value with its default's words: the row's own, then its folded rows' (the
-  // ChangedDot; docs/rail/settings.md `set.changed`). A pick's default is its start value; a value only a Dialog sets is
+  // ChangedDot; docs/stillhet/settings.md `set.changed`). A pick's default is its start value; a value only a Dialog sets is
   // in the model's STATE. A secret is never in the list.
   const same = (a, b) => String(a ?? '') === String(b ?? '');
   const defaultWords = (k, v, fallback) => (SM.VALUE_WORDS[k] ? SM.VALUE_WORDS[k](v, SM.STATE) : fallback ?? (v === '' || v == null ? 'none' : String(v)));
@@ -134,8 +134,8 @@
     const [id, ...rest] = where.split('/'), s = SM.SECTIONS[id].sections.find((x) => x.title === rest.join('/'));
     return (s?.list || []).map((it, i) => ({ ...it, id: 'r' + i }));
   }
-  const goSection = (id) => setTimeout(() => { if (window.RailShell) window.RailShell.go('settings/' + id); else document.querySelector(`[data-sset="${id}"]`)?.click(); });
-  const toPage = (p, say) => { if (window.RailShell) { setTimeout(() => window.RailShell.go(p)); return ''; } return say; };
+  const goSection = (id) => setTimeout(() => { if (window.StillhetShell) window.StillhetShell.go('settings/' + id); else document.querySelector(`[data-sset="${id}"]`)?.click(); });
+  const toPage = (p, say) => { if (window.StillhetShell) { setTimeout(() => window.StillhetShell.go(p)); return ''; } return say; };
   const clickThrough = (sels) => setTimeout(() => sels.forEach((s) => document.querySelector(s)?.click()));
   // The record actions every list shares; anything else is the record's own `on`, or a model error (a dead control).
   const SHARED = {
@@ -256,13 +256,13 @@
     }).join('');
   }
 
-  // The strip of a yes or no on the page, drawn under the top bar by the page around Settings (docs/rail/actions.md).
+  // The strip of a yes or no on the page, drawn under the top bar by the page around Settings (docs/stillhet/actions.md).
   const strip = (sv) => (sv.__confirm && !sv.__dialog ? R.confirmStrip({ text: sv.__confirm.text, yes: sv.__confirm.yes, danger: !!sv.__confirm.danger }) : '');
 
   // ---- what a click means ----
   const runRec = (sv, a) => a.rec(a.it, tools(sv, a.it, a.where)) || '';
   // R-arch-10: the live kind does not wire Settings yet; a change goes through the adapter, which refuses, and nothing is written
-  const refused = (what) => !!window.RailAdapter?.refuse?.(`settings.${what}`);
+  const refused = (what) => !!window.StillhetAdapter?.refuse?.(`settings.${what}`);
   function pick(sv, id, v) {
     if (id.startsWith('svm:')) {
       const a = REG.get(id.slice(4) + '/' + v); if (!a || refused(id.slice(4) + '/' + v)) return '';
@@ -276,17 +276,17 @@
   }
   // A switch with `sw.live` ('chat.promptCheck') is wired in the live kind: it shows the server's value (the store's
   // chatPrefs, refetched on settings-changed) and a toggle POSTs dev's own body. Every other switch is as before.
-  const liveValue = (path) => { const [area, k] = path.split('.'); return area === 'chat' ? window.RailWorld.part('chatPrefs')?.[k] === true : false; };
+  const liveValue = (path) => { const [area, k] = path.split('.'); return area === 'chat' ? window.StillhetWorld.part('chatPrefs')?.[k] === true : false; };
   function syncLive(sv) {
     if (!liveOn()) return;
     for (const r of rowsOf()) if (r.sw && r.sw.live) sv[r.sw.key] = liveValue(r.sw.live);
   }
   function toggleLive(sv, r) {
-    const A = window.RailAdapter, to = !sv[r.sw.key], [area, k] = r.sw.live.split('.');
+    const A = window.StillhetAdapter, to = !sv[r.sw.key], [area, k] = r.sw.live.split('.');
     A.post('/api/settings', { [area]: { [k]: to } }).then((res) => {
       if (res.ok) { sv[r.sw.key] = to; A.refresh?.('settings'); A.toast(`${r.name}: ${to ? 'on' : 'off'}`); }
       else A.toast(`Could not change ${r.name}: ${res.error}`);   // the switch keeps the server's value
-      window.dispatchEvent(new Event('rail-settings'));
+      window.dispatchEvent(new Event('stillhet-settings'));
     });
     return '';
   }
@@ -318,12 +318,12 @@
     if (d && say.startsWith('dlgbtn:')) { const k = say.slice(7), f = (d.steps ? d.steps[d.at] : d).fields.find((x) => x.key === k); d.status = f.do(d.vals) || ''; return ''; }
     const a = REG.get(say);
     if (!a) throw new Error('settings: no action ' + say);
-    if (a.live && window.RailWorld?.live && window.RailChatLive) { a.live(sv, () => window.dispatchEvent(new Event('rail-settings'))); return ''; }   // wired to dev in this slice (stillhet-wiring.md)
+    if (a.live && window.StillhetWorld?.live && window.StillhetChatLive) { a.live(sv, () => window.dispatchEvent(new Event('stillhet-settings'))); return ''; }   // wired to dev in this slice (stillhet-wiring.md)
     if ((a.rec && !say.endsWith('/open')) || a.do) { if (refused(say)) return ''; }   // a row's open only shows it; what it then saves is the Dialog's
     if (a.rec) return runRec(sv, a);
     if (a.edit) { openDialog(sv, typeof a.edit === 'function' ? a.edit(sv) : a.edit); return ''; }
     if (a.confirm) { sv.__confirm = typeof a.confirm === 'function' ? a.confirm(sv) : a.confirm; return ''; }
-    if (a.copy) { try { navigator.clipboard?.writeText(textOf(a.copy, sv))?.catch(() => {}); } catch { /* a page without clipboard access */ } return a.copied || window.RailWould(`copy: ${textOf(a.copy, sv)}`); }
+    if (a.copy) { try { navigator.clipboard?.writeText(textOf(a.copy, sv))?.catch(() => {}); } catch { /* a page without clipboard access */ } return a.copied || window.StillhetWould(`copy: ${textOf(a.copy, sv)}`); }
     if (a.do) return a.do(sv) || '';
     if (a.click) { clickThrough(a.click); return a.say || ''; }
     if (a.page) return toPage(a.page, a.say);

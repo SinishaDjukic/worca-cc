@@ -2,7 +2,7 @@
 
 Mock: `r5-ux.png` (from `r5-ux.html`, rendered with `r2-ux-shot.mjs`). It shows the list's menu with By and Archived, two narrowed lines, the proposal with *when*, Ask and Schedule, a preset armed, and the engine menu with families.
 
-Sources checked: `plans/rail/prototype/chat/chats-column.js` (parts, SORTS, tools, can, bulk) and `chat/conversation.js` (sentence, detail/Customise, + menu, composerHtml, proposalHtml).
+Sources checked: `plans/stillhet/prototype/chat/chats-column.js` (parts, SORTS, tools, can, bulk) and `chat/conversation.js` (sentence, detail/Customise, + menu, composerHtml, proposalHtml).
 
 ## Parity table
 

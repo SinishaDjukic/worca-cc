@@ -31,15 +31,15 @@ async function open(t, { thread = threadOf(), hash = '#chat/ask_1', beforeScript
   const { w, d } = h;
   // jsdom has no layout: a test's `grow` runs when the turns are patched, as a browser's scrollHeight grows with the patch
   const hooks = { grow: () => {} };
-  const orig = w.RailUI.patchKeyed;
-  w.RailUI.patchKeyed = (c, items, opt) => { const r = orig(c, items, opt); if (c.matches('#route-chat .convo-col')) hooks.grow(); return r; };
+  const orig = w.StillhetUI.patchKeyed;
+  w.StillhetUI.patchKeyed = (c, items, opt) => { const r = orig(c, items, opt); if (c.matches('#route-chat .convo-col')) hooks.grow(); return r; };
   /** Runs the animation frames asked for so far. */
   const frame = () => { const l = [...raf.values()]; raf.clear(); for (const f of l) f(0); };
   const q = (s) => d.querySelector(`#route-chat ${s}`);
   let seq = 0;
   /** A streamed frame of the reply being written: a tool step lands on its working row (the last turn). */
   const stream = (i) => h.sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'ask-block', threadId: 'ask_1', messageId: 'mS', seq: ++seq, block: { kind: 'tool', id: `tb${i}`, name: `Tool ${i}`, status: 'running' } }) });
-  const ready = async (id) => { for (let k = 0; k < 100 && !(w.RailChatLive?.state?.(id) === 'ready' && d.querySelector('#route-chat .convo-col')?.children.length > 3); k++) { frame(); await settle(20); } frame(); };
+  const ready = async (id) => { for (let k = 0; k < 100 && !(w.StillhetChatLive?.state?.(id) === 'ready' && d.querySelector('#route-chat .convo-col')?.children.length > 3); k++) { frame(); await settle(20); } frame(); };
   await go(w, hash);
   await ready(hash.split('/')[1]);
   return { ...h, frame, q, stream, ready, hooks };
@@ -84,7 +84,7 @@ test('#1381 scrolled up, a growing reply keeps the place and Latest shows', asyn
   assert.equal(h.q('.convo-scroll'), sc);
   assert.equal(g.top, 120);
   sc.dispatchEvent(new h.w.Event('scroll'));
-  assert.ok(sc.hasAttribute('data-far-below'), 'Latest shows (rail.css: .convo-scroll[data-far-below] .jump-latest)');
+  assert.ok(sc.hasAttribute('data-far-below'), 'Latest shows (stillhet.css: .convo-scroll[data-far-below] .jump-latest)');
   assert.ok(h.q('.convo-dock [data-jump-latest]'));
 });
 

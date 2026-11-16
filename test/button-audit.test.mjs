@@ -39,7 +39,7 @@ test('T-8 classic: button() draws today\'s markup unless busy is used', () => {
     [{ label: 'Stop', kind: 'danger', title: false, attrs: { disabled: true } }, '<button type="button" class="btn btn-sm btn-danger" disabled>Stop</button>'],
   ];
   for (const [o, html] of today) { assert.equal(button(o), html); assert.equal(button({ ...o, busy: false }), html); }
-  assert.doesNotMatch(today.map(([o]) => button(o)).join(''), /rail-busy|btn-knot|aria-busy/);
+  assert.doesNotMatch(today.map(([o]) => button(o)).join(''), /stillhet-busy|btn-knot|aria-busy/);
 });
 
 test('T-8 a busy button passes the audit (one size, one variant)', () => {

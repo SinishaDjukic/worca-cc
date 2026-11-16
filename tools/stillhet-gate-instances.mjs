@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// tools/stillhet-gate-instances.mjs — starts, lists and stops the gate instances A–D of plans/rail/test-protocol.md §2,
+// tools/stillhet-gate-instances.mjs — starts, lists and stops the gate instances A–D of plans/stillhet/test-protocol.md §2,
 // each with its OWN HOME. settings.json is read and written at $HOME/.worca-cc (src/core/settings.mjs defaultRoot), never at
 // WORCA_HOME, so an instance started without its own HOME changes the owner's real settings (F-X-01). A and B get a copy of
 // the owner's store (an APFS clone where it can; the real store is only read) made independent of it: the repos it names are
 // cloned into the instance HOME and every record and git link points there, so nothing done on A or B reaches the owner's
 // real repos (C1, isolateCopy / verifyIsolation; a copy that still leads outside its HOME is refused); copied schedules are turned off,
-// every clone pushes to HOME/outside/no-push, and no instance env carries a GitHub credential or reaches GitHub over ssh or by URL. C and D start empty. `rail` lives in each
+// every clone pushes to HOME/outside/no-push, and no instance env carries a GitHub credential or reaches GitHub over ssh or by URL. C and D start empty. `stillhet` lives in each
 // instance's own settings.json and never in WORCA_FLAGS, so it stays unlocked (P11). Stop kills only the processes this tool
 // started (a pid file per HOME, checked against the process's start time and command). `login-status` and `login X` check
 // and run the Claude CLI's own login under each HOME; the CLI's output is never printed, logged or stored.
@@ -32,10 +32,10 @@ const SERVER_PATH = fileURLToPath(new URL('../ui/server.mjs', import.meta.url));
 
 /** The protocol's four targets (test-protocol §2). */
 export const INSTANCES = Object.freeze({
-  A: Object.freeze({ port: 4501, rail: false, store: 'copy' }),
-  B: Object.freeze({ port: 4502, rail: true, store: 'copy' }),
-  C: Object.freeze({ port: 4503, rail: false, store: 'empty' }),
-  D: Object.freeze({ port: 4504, rail: true, store: 'empty' }),
+  A: Object.freeze({ port: 4501, stillhet: false, store: 'copy' }),
+  B: Object.freeze({ port: 4502, stillhet: true, store: 'copy' }),
+  C: Object.freeze({ port: 4503, stillhet: false, store: 'empty' }),
+  D: Object.freeze({ port: 4504, stillhet: true, store: 'empty' }),
 });
 export const RECORD_FILE = 'gate-instance.json';
 
@@ -125,7 +125,7 @@ export function planInstances(opts, { realHome = realHomeDefault(), tmp = os.tmp
     const port = opts.ports[letter] ?? INSTANCES[letter].port;
     assertSafePort(port);
     const mock = !opts.noMock.has(letter);
-    return { letter, home, port, rail: INSTANCES[letter].rail, store: INSTANCES[letter].store, mock, mockEnv: mock ? { ...opts.mockEnv } : {} };
+    return { letter, home, port, stillhet: INSTANCES[letter].stillhet, store: INSTANCES[letter].store, mock, mockEnv: mock ? { ...opts.mockEnv } : {} };
   });
 }
 
@@ -196,11 +196,11 @@ export function envProblems(env, home) {
   return bad;
 }
 
-/** The instance's settings.json (D6): rail per instance, the welcome dialog seen, expert on an empty install. Pure. */
+/** The instance's settings.json (D6): stillhet per instance, the welcome dialog seen, expert on an empty install. Pure. */
 export function instanceSettings(existing, inst, { welcome = false, uiLevel = null } = {}) {
   const base = existing && typeof existing === 'object' && !Array.isArray(existing) ? existing : {};
   const out = { ...base };
-  out.flags = { ...(base.flags && typeof base.flags === 'object' ? base.flags : {}), rail: inst.rail };
+  out.flags = { ...(base.flags && typeof base.flags === 'object' ? base.flags : {}), stillhet: inst.stillhet };
   out.onboarding = { ...(base.onboarding && typeof base.onboarding === 'object' ? base.onboarding : {}), welcomeSeen: !welcome };
   if (uiLevel) out.uiLevel = uiLevel;
   else if (inst.store === 'empty' && !base.uiLevel) out.uiLevel = 'expert';
@@ -733,7 +733,7 @@ export async function startInstance(inst, { serverPath = SERVER_PATH, spawn: spa
   // without its start time the record could never be matched again, and stop could never reach the server
   if (!lstart) fail('no-start-time', `${inst.letter}'s server start time could not be read (pid ${child.pid}); it was stopped`);
   const record = { letter: inst.letter, home: inst.home, port: inst.port, pid: child.pid, lstart,
-    serverPath, rail: inst.rail, mock: inst.mock, mockEnv: inst.mockEnv || {}, store: inst.store, startedAt: new Date().toISOString() };
+    serverPath, stillhet: inst.stillhet, mock: inst.mock, mockEnv: inst.mockEnv || {}, store: inst.store, startedAt: new Date().toISOString() };
   writeFileSync(path.join(inst.home, RECORD_FILE), JSON.stringify(record, null, 2) + '\n');
   return record;
 }
@@ -825,7 +825,7 @@ export async function loginStatus(inst, { run = runCaptured, bin = null, baseEnv
   }
 }
 
-const line = (r) => `${r.letter}  http://127.0.0.1:${r.port}  HOME=${r.home}  rail=${r.rail ? 'on' : 'off'}  mock=${r.mock ? 'on' : 'off'}  store=${r.store}`;
+const line = (r) => `${r.letter}  http://127.0.0.1:${r.port}  HOME=${r.home}  stillhet=${r.stillhet ? 'on' : 'off'}  mock=${r.mock ? 'on' : 'off'}  store=${r.store}`;
 const authLine = (s) => `claude=${s.state} (${s.method === 'none' ? 'no answer' : s.method}), config ${s.configHome === 'unknown' ? 'unknown' : s.configHome} HOME`;
 
 /** The CLI. 0 ok, 2 a refusal (`code: message` on stderr), 3 a login that did not take. `io` carries the test seams. */

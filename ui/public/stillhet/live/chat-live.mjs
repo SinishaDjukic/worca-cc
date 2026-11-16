@@ -1,5 +1,5 @@
 // ui/public/stillhet/live/chat-live.mjs — the live chat's one owner of thread fetches, subscriptions and Chat actions (D5).
-// live-adapter.mjs starts it and hands it the socket's `ask-*` frames; the page reads `window.RailChatLive`. A thread is
+// live-adapter.mjs starts it and hands it the socket's `ask-*` frames; the page reads `window.StillhetChatLive`. A thread is
 // read with dev's `GET /api/ask/threads/:id`, kept in dev's own reducer (src/shared/ask-model.mjs createThreadModel) and
 // drawn through chat-turns.mjs. Every action posts dev's route and body (D9, D11): nothing is written before the server
 // answers ok, and a refusal toasts once, `Could not ACTION: REASON`, and changes nothing.
@@ -661,7 +661,7 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
   return api;
 }
 // The run-state flow's labels a chat TaskCard reaches (run-state.mjs FLOW for the live cases, live-map.mjs caseOf, plus
-// runFlow's and the card's own ⋯), each onto dev's real target (plans/rail/stillhet-wiring.md run-state rows). A label
+// runFlow's and the card's own ⋯), each onto dev's real target (plans/stillhet/stillhet-wiring.md run-state rows). A label
 // that is not here is not offered on a live card.
 export const FLOW = Object.freeze({
   Pause: { act: 'task-pause' }, 'Pause now': { act: 'task-pause' },

@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// tools/prototype-pr-check.mjs — the CI half of gate.prototype (docs/rail/gate.md), run by ci.yml's `prototype` job.
+// tools/prototype-pr-check.mjs — the CI half of gate.prototype (docs/stillhet/gate.md), run by ci.yml's `prototype` job.
 // A PR that changes today's UI (ui/public/ outside stillhet/ and design-system/, or a ui/routes/ or ui/server.mjs change
 // that adds a route today's UI fetches) passes only when it also:
-//   1. changes a file under ui/public/stillhet/, plans/rail/prototype/ or docs/rail/, or
-//   2. adds or changes a `wire to` row with a why under `## Dev surfaces` in plans/rail/stillhet-wiring.md for each such file, or
+//   1. changes a file under ui/public/stillhet/, plans/stillhet/prototype/ or docs/stillhet/, or
+//   2. adds or changes a `wire to` row with a why under `## Dev surfaces` in plans/stillhet/stillhet-wiring.md for each such file, or
 //   3. carries the no-ui-change label and a "No UI change: …" line in its body.
 //   node tools/prototype-pr-check.mjs --base origin/dev [--pr-json FILE]   (FILE: `gh pr view --json labels,body`)
 // Exit 0 pass, 1 fail, 2 base or usage error. Only node: built-ins and tools/stillhet-*.mjs, so CI runs it without npm ci.
@@ -13,10 +13,10 @@ import { fileURLToPath } from 'node:url';
 import { surfaceRows } from './stillhet-wiring.mjs';
 import { browserPaths, isTodaysUi, pathMatches } from './stillhet-surfaces.mjs';
 
-export const PROTOTYPE_DIRS = ['ui/public/stillhet/', 'plans/rail/prototype/', 'docs/rail/'];
+export const PROTOTYPE_DIRS = ['ui/public/stillhet/', 'plans/stillhet/prototype/', 'docs/stillhet/'];
 export const LABEL = 'no-ui-change';
 export const BODY_LINE = /^[ \t]*No UI change:[ \t]*\S/m;
-const WIRING = 'plans/rail/stillhet-wiring.md';
+const WIRING = 'plans/stillhet/stillhet-wiring.md';
 const ROUTES = 'tools/parity/route-classes.json';
 
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -87,13 +87,13 @@ export function failureMessage(result) {
   const example = result.uncovered[0]?.file || 'ui/public/app.js';
   return [head, ...lines,
     'Add ONE of these:',
-    '  1. The same change in ui/public/stillhet/, plans/rail/prototype/ or docs/rail/.',
+    '  1. The same change in ui/public/stillhet/, plans/stillhet/prototype/ or docs/stillhet/.',
     `  2. A row under "## Dev surfaces" in ${WIRING}, for each file above:`,
     `       | \`${example}\` | wire to | why it is not built in Stillhet yet |`,
     '     A folder id such as `ui/public/chat/` covers every file in it.',
     '  3. No visible effect (a refactor, a test-only change)? Add the `no-ui-change` label and a',
     '     "No UI change: what and why" line to the PR body, then re-run this job.',
-    'Rule: gate.prototype in docs/rail/gate.md.'].join('\n');
+    'Rule: gate.prototype in docs/stillhet/gate.md.'].join('\n');
 }
 
 const PASS = {

@@ -19,7 +19,7 @@ export const CELLS = [['dark', 1280], ['light', 1280], ['light', 360]];
 /** The flag-off differences from dev the owner accepts, each with the owner's reason: taken off this tree's page before its
  *  dump, so the rest of the page is still compared. Nothing else may differ. */
 export const ACCEPTED = Object.freeze([
-  { route: '#settings/experimental', selector: '[data-flag-row="rail"]', reason: 'Settings › Labs shows the Stillhet row in every level until the end of feature 3. The owner, in writing: "before enrolling everything I would recommend to be de-activated, labs is reasonable."' },
+  { route: '#settings/experimental', selector: '[data-flag-row="stillhet"]', reason: 'Settings › Labs shows the Stillhet row in every level until the end of feature 3. The owner, in writing: "before enrolling everything I would recommend to be de-activated, labs is reasonable."' },
 ]);
 
 /** dump: { "route|theme|width": { domPath: { prop: value } } } → one row per difference. */

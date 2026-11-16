@@ -1,6 +1,6 @@
 // test/stillhet-pulse-read-host-2.test.mjs — Pulse in the live kind (#1268): opening an update marks it and every update about
 // the same task read at once; a notification's read is the server's, a run outcome's lives in this browser
-// (`worca-rail.pulse-read`), in every tab and after a reload; reading ends the icon's news; Now rows say what clears them;
+// (`worca-stillhet.pulse-read`), in every tab and after a reload; reading ends the icon's news; Now rows say what clears them;
 // a task opens by its own id. The host is test/helpers/stillhet-live-counts-host.mjs (jsdom, dev-shaped answers).
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,7 +9,7 @@ import { at } from './helpers/stillhet-live-fixture.mjs';
 
 afterEach(closeHosts);   // each test's window closes when the test ends
 
-const KEY = 'worca-rail.pulse-read';
+const KEY = 'worca-stillhet.pulse-read';
 // dev's GET /api/notifications rows (src/core/notifications.mjs rowToNotification): a scheduled run that paused (about h1),
 // a start that failed, and one that finished (info: it arrives read), beside the fixture's missed start n7
 const PAUSED_NOTE = { id: 9, kind: 'run_paused', ticketId: null, scheduleId: 'sr1', pipelineId: 'h1', title: 'Old pause', message: 'paused (cost pipeline): over its cap', createdAt: at(9, 31), readAt: null, unread: true };
@@ -19,7 +19,7 @@ const withNotes = () => { const s = clone(SOURCES); s.notifications.notification
 
 const frame = (h, f) => h.sockets.at(-1).onmessage({ data: JSON.stringify(f) });
 const pop = (d) => d.querySelector('#app .pz-popover');
-const openUpdates = (w) => w.RailPulse.open('updates');
+const openUpdates = (w) => w.StillhetPulse.open('updates');
 // the list's sentence: Showing [unread ▾] → all (or another view)
 function showAll(w, d, v = 'all') {
   openUpdates(w);
@@ -29,8 +29,8 @@ function showAll(w, d, v = 'all') {
 const titleOf = (d, id) => pop(d)?.querySelector(`[data-open="${id}"] .pz-row-t`) || null;
 const unreadRow = (d, id) => titleOf(d, id).classList.contains('is-unread');
 // the Pulse button's words: "N unread", or none
-const unreadN = (d) => +(/(\d+) unread/.exec(d.querySelector('#rail-pulse-slot .pz-pulse-b').title)?.[1] || 0);
-const news = (d) => d.querySelector('#rail-pulse-slot .pz-pulse-b').classList.contains('is-news');
+const unreadN = (d) => +(/(\d+) unread/.exec(d.querySelector('#stillhet-pulse-slot .pz-pulse-b').title)?.[1] || 0);
+const news = (d) => d.querySelector('#stillhet-pulse-slot .pz-pulse-b').classList.contains('is-news');
 const rawKeys = (w) => { const v = w.localStorage.getItem(KEY); return v === null ? null : JSON.parse(v).keys; };
 // the stored keys without their outcome's time (id|event|ms → id|event), so the cases read by event
 const stored = (w) => rawKeys(w)?.map((k) => k.replace(/\|\d+$/, '')) ?? null;
@@ -191,7 +191,7 @@ test('Now rows say how they clear, and a task opens by its own id', async () => 
   await h.hello(runs);
 
   // wording
-  w.RailPulse.open('now');
+  w.StillhetPulse.open('now');
   const meta = (id) => pop(d).querySelector(`[data-open="r:${id}"] .pz-row-m`)?.textContent || '';
   assert.match(meta('run-c'), /Clears when you resume or stop it/, 'a paused-at-a-limit row');
   assert.match(meta('run-a'), /Clears when you answer it/, 'a question row');
@@ -206,21 +206,21 @@ test('Now rows say how they clear, and a task opens by its own id', async () => 
   assert.equal(M.clearsWhen('working'), '', 'a key not in the table says nothing');
 
   // address: an outcome with no chat opens its task by its own id
-  w.RailPulse.open('updates');
+  w.StillhetPulse.open('updates');
   showAll(w, d);
   open(d, 'oh3'); await settle();
   assert.equal(w.location.hash, '#run/h3', 'never #run/failed');
 
   // Failed: opening it acknowledges it, and it leaves Now
-  const seen = [], was = w.RailAdapter.seenRun;
-  w.RailAdapter.seenRun = (id) => { seen.push(id); return was(id); };
+  const seen = [], was = w.StillhetAdapter.seenRun;
+  w.StillhetAdapter.seenRun = (id) => { seen.push(id); return was(id); };
   w.location.hash = '#chat'; await settle();
-  w.RailPulse.open('now');
+  w.StillhetPulse.open('now');
   assert.ok(pop(d).querySelector('[data-open="r:run-f"]'), 'the failed task is in Now');
   assert.match(meta('run-f'), /Clears once you open it/);
   pop(d).querySelector('[data-open="r:run-f"]').click(); await settle();
   assert.deepEqual(seen, ['run-f'], 'seenRun with its id');
-  w.RailPulse.open('now');
+  w.StillhetPulse.open('now');
   assert.equal(pop(d).querySelector('[data-open="r:run-f"]'), null, 'it leaves Now');
 });
 
@@ -248,7 +248,7 @@ test('Updates and Limits rows draw the Pulse mark (signal) in their tones, never
   const updates = marks('.pz-list .kind-mark');
   assert.ok(updates.length > 0, 'Updates has rows');
   assert.ok(updates.every((m) => ['is-ask', 'is-idle'].includes(m.tone) && m.glyph === signal && m.glyph !== bolt), JSON.stringify(updates));
-  w.RailPulse.open('vitals');
+  w.StillhetPulse.open('vitals');
   const lim = [...pop(d).querySelectorAll('.pz-sec')].find((s) => s.querySelector('.pz-h').textContent.startsWith('Limits'));
   assert.ok(lim, 'Vitals shows its Limits section');
   const limits = [...lim.querySelectorAll('.kind-mark')].map((m) => ({ tone: [...m.classList].find((c) => c.startsWith('is-')), glyph: m.querySelector('svg').innerHTML }));
@@ -263,7 +263,7 @@ test('F-G-G5-02: a missed schedule row in Now opens the schedule\'s own page, ne
   await h.hello();
   for (const [ticket, page] of [['tk1', '#schedule/tk1'], ['tk3', '#schedule/sr1']]) {
     w.location.hash = '#chat'; await settle();
-    w.RailPulse.open('now');
+    w.StillhetPulse.open('now');
     const row = pop(d).querySelector(`[data-open="r:sched:${ticket}"]`);
     assert.ok(row, `the missed ${ticket} is in Now`);
     row.click(); await settle();

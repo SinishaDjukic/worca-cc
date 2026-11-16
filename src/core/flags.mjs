@@ -13,7 +13,7 @@ import { EventEmitter } from 'node:events';
 import { FLAGS } from '../shared/flags/registry.mjs';
 import { resolveFlags } from '../shared/flags/resolve.mjs';
 import { storedFlags, writeStoredFlags, setOnboardingPrefs } from './settings.mjs';
-import { railAnswerHook } from './stillhet.mjs';
+import { stillhetAnswerHook, readOldStillhetEnv } from './stillhet.mjs';
 
 export class FlagError extends Error {
   /** @param {'invalid'|'locked'} code  @param {string} message  @param {string|null} [key] */
@@ -32,7 +32,7 @@ function warnUnknownOnce(key, where) {
  * @param {{registry?:ReadonlyArray<object>, env?:()=>string|undefined, read?:()=>object, write?:(m:object)=>Promise<void>, warn?:(key:string, where:string)=>void, afterSet?:(patch:object)=>Promise<void>|void}} [o]
  */
 export function createFlags({
-  registry = FLAGS, env = () => process.env.WORCA_FLAGS, read = storedFlags, write = writeStoredFlags, warn = warnUnknownOnce, afterSet,
+  registry = FLAGS, env = () => readOldStillhetEnv(process.env.WORCA_FLAGS), read = storedFlags, write = writeStoredFlags, warn = warnUnknownOnce, afterSet,
 } = {}) {
   const events = new EventEmitter();
   const byKey = new Map(registry.map((f) => [f.key, f]));
@@ -141,7 +141,7 @@ export function createFlags({
 }
 
 // The process-wide instance (env WORCA_FLAGS + settings.json).
-const flags = createFlags({ afterSet: railAnswerHook(setOnboardingPrefs) });
+const flags = createFlags({ afterSet: stillhetAnswerHook(setOnboardingPrefs) });
 export const flagEvents = flags.events;
 export const flagEnabled = (key) => flags.enabled(key);
 export const allFlags = () => flags.map();

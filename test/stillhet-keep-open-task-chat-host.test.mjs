@@ -31,15 +31,15 @@ async function taskPage() {
   await go(h.w, '#run/run-a', 200); await settle(400);
   return h;
 }
-/** The task page's live redraw: what RailTaskLive.onChange does for a frame about this task. */
-const liveRedraw = (h) => () => h.w.RailRunPage.openLive('run-a', true);
+/** The task page's live redraw: what StillhetTaskLive.onChange does for a frame about this task. */
+const liveRedraw = (h) => () => h.w.StillhetRunPage.openLive('run-a', true);
 const openGroups = async (h) => { card(h.d).querySelector('[data-menu="more"]').click(); await settle(20); card(h.d).querySelector('[data-menu-pick="more:group"]').click(); await settle(20); };
 async function chat() {
   const h = await liveHost({ sources: clone(SOURCES) });
   await go(h.w, '#chat/ask_1', 200);
   return h;
 }
-const chatPaint = (h) => () => { h.w.RailConversation.refresh(); h.w.RailConversation.flushPaints(); };
+const chatPaint = (h) => () => { h.w.StillhetConversation.refresh(); h.w.StillhetConversation.flushPaints(); };
 
 test('F-a4-10: Move to group…\'s #group-input keeps its value, caret and focus through a live redraw', async () => {
   const h = await taskPage();
@@ -69,8 +69,8 @@ test('F-a4-02: the terminal input keeps its text through a frame of the shell', 
   const h = await taskPage();
   let frame = () => {};
   const session = { closed: false, lines: [], tip: '', onChange: (fn) => { frame = fn; }, send() {}, stop: async () => ({ ok: true }), close() {} };
-  h.w.RailTaskLive.act = async () => ({ ok: true, session: 's1' });
-  h.w.RailChatLive.terminal = async () => session;
+  h.w.StillhetTaskLive.act = async () => ({ ok: true, session: 's1' });
+  h.w.StillhetChatLive.terminal = async () => session;
   const pick = h.d.createElement('button'); pick.dataset.menuPick = 'more:terminal'; card(h.d).append(pick); pick.click(); await settle(40);
   await keeps(h, '[data-term-input]', () => { session.lines.push({ t: '', text: 'a line' }); frame(); });
 });
@@ -117,7 +117,7 @@ test('pulse: holdFocus leaves a focused kept field alone during a render()', asy
   h.d.querySelector('#route-chat [data-menu="cl-label"]').click(); await settle(30);
   const q = h.d.querySelector('#cl-label-q');
   type(h.w, q, 'abc');
-  h.w.dispatchEvent(new h.w.Event('rail-settings'));   // Pulse's render(), through holdFocus
+  h.w.dispatchEvent(new h.w.Event('stillhet-settings'));   // Pulse's render(), through holdFocus
   await settle(0);
   const now = h.d.querySelector('#cl-label-q');
   assert.equal(h.d.activeElement, now, 'the focus stays in the kept field');

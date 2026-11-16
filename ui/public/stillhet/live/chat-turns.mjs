@@ -16,7 +16,7 @@ const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replac
 const wordsHtml = (t) => esc(t).replace(/\r\n?|\n/g, '<br>');
 // panel.answer-refs: the runs, chats and PRs dev's answer chips find in the words (src/shared/chip-refs.mjs): dev's text
 // refs, and a link written out (a PR's URL as text, or a link's href). `parts` are words and refs in order; Prose asks for
-// them per text node and per link (conversation.js, through RailChatLive.partsOf).
+// them per text node and per link (conversation.js, through StillhetChatLive.partsOf).
 const URL_RE = /https:\/\/[^\s<>()"'`]+[^\s<>()"'`.,;:!?]/g;
 export function partsOf(text) {
   const found = [...refsInText(text)];
@@ -61,7 +61,7 @@ const rowsOf = (card) => { const l = own(card); return l.length ? l : (TYPE_ROWS
 // The change kinds, in the prototype's words (chat/chats-model.js demo kinds)
 const KIND = { 'scope-switch': 'Project', model: 'Model', schedule: 'Schedule', away: 'Away', proxy: 'Settings', web: 'Web access', clone: 'Project', project: 'Project', workspace: 'Workspace', actions: 'Settings', metrics: 'Settings', policy: 'Settings', workflow: 'Workflow', 'workflow-build': 'Workflow', receipt: 'Settings' };
 const change = (b, ctx, o = {}) => ({ t: 'change', id: str(b.id), kind: KIND[b.card.type] || 'Settings', title: str(b.card.summary) || str(b.card.label) || str(b.card.name) || str(b.card.title) || KIND[b.card.type] || 'A change', why: str(b.card.note), rows: rowsOf(b.card), state: stateOf(b.state), card: str(b.id), cardType: str(b.card.type), ...o });
-// a turn row with its verbs; `ids` are RailChatLive.act ids, one per action (conversation.js data-act)
+// a turn row with its verbs; `ids` are StillhetChatLive.act ids, one per action (conversation.js data-act)
 // `bodies`: per action, what that action posts beyond the card's ids (a verb card's `{verb}`, dev's route-card choice)
 const act = (b, text, actions, o = {}) => ({ t: 'act', id: str(b.id), mark: 'git', text, actions: actions.map((a) => [a[0], a[1], a[2]]), ids: actions.map((a) => a[3]), bodies: actions.map((a) => a[4] || null), card: str(b.id), cardType: str(b.card.type), args: { pipelineId: str(b.card.pipelineId), title: str(b.card.title), runId: str(b.card.runId) }, ...(stateOf(b.state) === 'proposed' ? {} : { done: b.state === 'applied' ? 'Done' : 'Not now' }), ...o });
 // the run a card started or follows: through its link (D7) or the card's own ids

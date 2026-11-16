@@ -55,7 +55,7 @@ export async function projectsHost({ hash = '#projects', write = () => [200, { o
 export const sent = (calls) => calls.filter((c) => c.method !== 'GET').map((c) => [c.method, c.url, c.body]);
 /** A held request: its promise and the function that lets it through. */
 export const gate = () => { let open; const p = new Promise((r) => { open = r; }); return { p, open }; };
-/** Each RailWould phrase asked for while the host runs: none may be, live. */
-export const noWould = (win) => { const orig = win.RailWould; win.__would = []; win.RailWould = (ph) => { win.__would.push(ph); return orig(ph); }; };
+/** Each StillhetWould phrase asked for while the host runs: none may be, live. */
+export const noWould = (win) => { const orig = win.StillhetWould; win.__would = []; win.StillhetWould = (ph) => { win.__would.push(ph); return orig(ph); }; };
 /** Before the pages load: every 5 s timer (the toast's undo window) waits in `win.__undo` for the test to fire it. */
 export const undoTimers = (win) => { const real = win.setTimeout.bind(win); win.__undo = []; win.setTimeout = (fn, ms, ...a) => (ms === 5000 ? (win.__undo.push(fn), 1e6 + win.__undo.length) : real(fn, ms, ...a)); };

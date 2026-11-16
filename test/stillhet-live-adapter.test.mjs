@@ -298,8 +298,8 @@ test('a flags frame goes to host.flagsChanged and never reloads', async () => {
   const r = rig();
   await r.tick();
   r.frame(r.sockets[0], hello);
-  r.frame(r.sockets[0], { type: 'flags', flags: { rail: false } });
-  assert.deepEqual(r.host.flags, [{ rail: false }]);
+  r.frame(r.sockets[0], { type: 'flags', flags: { stillhet: false } });
+  assert.deepEqual(r.host.flags, [{ stillhet: false }]);
   assert.ok(!r.calls.includes('reload'));
 });
 
@@ -619,8 +619,8 @@ test('a reconnect hello passes its flags to the host (rail turned off while offl
   r.frame(r.sockets[0], hello);
   r.sockets[0].onclose({ code: 1006 });
   await r.tick(1000);
-  r.frame(r.sockets[1], { ...hello, flags: { rail: false } });
-  assert.deepEqual(r.host.flags, [{ rail: false }]);
+  r.frame(r.sockets[1], { ...hello, flags: { stillhet: false } });
+  assert.deepEqual(r.host.flags, [{ stillhet: false }]);
 });
 
 test('the live chat (D5) starts with the adapter: ask-* frames reach it, subscribe goes out on the socket, a reconnect re-reads the open thread', async () => {

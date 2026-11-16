@@ -1,6 +1,6 @@
 // The prototype's graph: dev's own renderer (ui/public/graph/view.mjs, the one the chat's workflow proposals draw with) and
 // its auto-layout (src/shared/graph/layout.mjs), on the prototype's workflows. Bundled to graph.js by
-// gates/components-js.mjs; it sets window.RailGraph. Rail is the skin (rail.css › .gv-skin): plain words on the view, ports
+// gates/components-js.mjs; it sets window.StillhetGraph. Stillhet is the skin (stillhet.css › .gv-skin): plain words on the view, ports
 // and their types on the Expert canvas. The engine is dev's, unchanged.
 import { createGraphView, READABLE_FIT, MODE_ZOOM } from '../../graph/view.mjs';
 import { buildGraphManifest, manifestPortsFn, manifestTemplate } from '../../../../src/shared/graph/manifest.mjs';
@@ -89,4 +89,4 @@ function mount(host, wf, { width = 680, zoom, mode = 'static', aligned = false, 
   return { g: graph, view, fit, whole };
 }
 
-window.RailGraph = { mount, build, align, fromTpl, demo };
+window.StillhetGraph = { mount, build, align, fromTpl, demo };

@@ -31,7 +31,7 @@ test('every action the library cannot take is said through the host: the demo se
 
 test('the run page model says the app host\'s refusal for "Open Settings" on a budget pause, never "Would…"', () => {
   for (const [host, would] of Object.entries(HOSTS)) {
-    const window = { RailUI: R, RailWould: would };
+    const window = { StillhetUI: R, StillhetWould: would };
     vm.runInNewContext(readFileSync(new URL('../ui/public/stillhet/runs/run-page-model.js', import.meta.url), 'utf8'), { window, console, Math, Object, String, Set, JSON, parseFloat, Error });
     const say = window.RunCardModel.view('paused-budget', {}).flow['Open Settings'].say;
     assert.equal(say, host === 'app' ? NOT_CONNECTED : 'Would open Settings › Tasks › Budget; Resume opens once there is room');

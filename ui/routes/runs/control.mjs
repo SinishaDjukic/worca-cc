@@ -65,7 +65,7 @@ export function register(app) {
 app.post('/api/run', startRunHandler);
 
 // POST /api/runs/:id/restart-build (id = the pipeline id) -> { runId, pipelineId }: a stopped or failed task's Build again,
-// as a new round on its kept branch (plans/rail/task-engine-additions.md). A paused task resumes instead (POST /api/resume).
+// as a new round on its kept branch (plans/stillhet/task-engine-additions.md). A paused task resumes instead (POST /api/resume).
 app.post('/api/runs/:id/restart-build', async (req, res) => {
   let lock = null;
   try {

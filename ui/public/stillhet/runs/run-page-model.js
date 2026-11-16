@@ -2,7 +2,7 @@
 // viewer's choices (open stage, added chips, ship mode) into one view model. The local mock and the design canvas
 // both render this, so a case is written once. Times in the "working" case are a real run's figures.
 (function () {
-  const R = window.RailUI;   // states, actions and where the work goes come from the library (docs/rail/logic.md)
+  const R = window.StillhetUI;   // states, actions and where the work goes come from the library (docs/stillhet/logic.md)
   const s = (name, state, time, o) => Object.assign({ name, state, time: time || '', loops: 0, live: '', when: '' }, o || {});
   const ok = (name, time, o) => s(name, 'done', time, o);
   const next = (name, o) => s(name, 'next', '', o);
@@ -460,7 +460,7 @@
   };
   const money = (v) => parseFloat(String(v).replace(/[^0-9.]/g, '')) || 0;
 
-  // A form behind a step: its words and its one field or choice (docs/rail/forms.md).
+  // A form behind a step: its words and its one field or choice (docs/stillhet/forms.md).
   const FORMS = {
     model: { title: 'Switch model', yes: 'Resume', text: 'Every remaining step runs on the model you pick; the task resumes from {step}.', options: ['Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5'], pick: 1 },
     // Resume on ‹Engine› (COV-3): classic's confirm, named for the engine; live, its sentence is dev's engineSwitchNote
@@ -590,9 +590,9 @@
     const max = Math.max(1, ...Object.values(areas).map((x) => x.add + x.del));
     return Object.values(areas).map((x) => Object.assign(x, { pct: Math.round(((x.add + x.del) / max) * 100) }));
   }
-  // The live kind (D4): a task's Changes, documents, Logs and worktree actions are its own, read by RailTaskLive once its
+  // The live kind (D4): a task's Changes, documents, Logs and worktree actions are its own, read by StillhetTaskLive once its
   // page is ready (null while a part is still out: the part draws empty, never the design's sample).
-  const livePartsOf = (c) => (c.liveId && window.RailTaskLive?.parts ? window.RailTaskLive.parts(c.liveId) || {} : null);
+  const livePartsOf = (c) => (c.liveId && window.StillhetTaskLive?.parts ? window.StillhetTaskLive.parts(c.liveId) || {} : null);
   // live: the overview keeps only the task's own facts (what was asked, its areas and documents, what broke); the design's
   // sample plan, checklist, outcome and evidence are not this task's, so they are left out. A failed task's What broke lists
   // the same items its card does (taskPageOf `why`).
@@ -660,7 +660,7 @@
   function prOpen(c) { return c.stages.some((x) => x.key === 'pr' && x.subs[0] && x.subs[0].name === 'Create PR' && isDone(x.subs[0])); }
 
 
-  // An action moves THIS run (docs/rail/thing-page.md: One task, moving). The target case supplies only its state, its word,
+  // An action moves THIS run (docs/stillhet/thing-page.md: One task, moving). The target case supplies only its state, its word,
   // its detail and what its state changes; the title, the time and cost its steps add up to, the branch and the PR are the
   // run's own, here and nowhere else. A task you paused remembers where it was, and an archived one what it was.
   const RUN_FACTS = ['title', 'task', 'decisions', 'outcome', 'branch', 'folder', 'project', 'repos', 'onSource', 'hidden', 'host', 'noDiff', 'noSetup', 'noTry', 'mock', 'hosted', 'heldBy', 'agentsUnknown', 'dependents', 'shaped', 'budget', 'files', 'diff', 'figs', 'at', 'base', 'pr', 'shipLive', 'sizes', 'parent'];
@@ -927,7 +927,7 @@
             evidence: !c.liveId && /^(failed|problem)$/.test(y.state) ? (x.key === 'pr' && y.name === 'Checks' && /^1 failed/.test(y.live) ? EVIDENCE['pr/Checks/one'] : c.ev && x.key !== 'pr' ? c.ev : EVIDENCE[x.key + '/' + y.name] || null) : null,
             focus: ui.focus === x.key + '/' + y.name, ref: x.key + '/' + y.name })) };
       }),
-      tryIt: window.RailWould((() => {
+      tryIt: window.StillhetWould((() => {
         if (g) return 'copy: git switch ' + BRANCH + '-' + (par.index + 1) + (par.index ? ' · runs 1\u2013' + (par.index + 1) + ' together' : ' · run 1 alone');
         if (runStages.length) return pick === 'one' ? 'copy: git switch ' + BRANCH + ' · ' + (runStages.length === 2 ? 'both tasks' : 'all ' + runStages.length + ' tasks') + ' on one branch'
           : 'copy: git switch ' + BRANCH + '-' + runStages.length + ' · the top of the stack holds ' + (runStages.length === 2 ? 'both tasks' : 'all ' + runStages.length + ' tasks');
@@ -951,8 +951,8 @@
 
   // An action either moves the task to another state (`to`) or does its job where it is and says so (`say`); `confirm`
   // asks first; events from outside (checks finish, a reviewer approves) are `next`. The table is the library's.
-  const INSTANCE_FLOW = { workspace: { 'worca-api #212': { say: window.RailWould('open worca-api #212 on GitHub') }, 'worca-web #88': { say: window.RailWould('open worca-web #88 on GitHub') }, 'worca-docs #31': { say: window.RailWould('open worca-docs #31 on GitHub') } } };
-  function flowOf(c, stateId, ctx) { return Object.assign(R.actionFlow(stateId, Object.assign({}, ctx, { would: window.RailWould })), INSTANCE_FLOW[c.id] || {}, c.flow || {}); }
+  const INSTANCE_FLOW = { workspace: { 'worca-api #212': { say: window.StillhetWould('open worca-api #212 on GitHub') }, 'worca-web #88': { say: window.StillhetWould('open worca-web #88 on GitHub') }, 'worca-docs #31': { say: window.StillhetWould('open worca-docs #31 on GitHub') } } };
+  function flowOf(c, stateId, ctx) { return Object.assign(R.actionFlow(stateId, Object.assign({}, ctx, { would: window.StillhetWould })), INSTANCE_FLOW[c.id] || {}, c.flow || {}); }
   function EVENT_OF(c, stateId, ctx) { return flowOf(c, stateId, ctx).event || ''; }
   const FLOW = Object.fromEntries(CASES.map((c) => [c.id, flowOf(c, c.state || c.id, ctxOf(c))]));
   const RUN_FLOW = R.runFlow();

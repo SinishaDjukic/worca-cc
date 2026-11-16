@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// tools/stillhet-compare.mjs — the comparison (docs/rail/gate.md): what the app draws and what the prototype draws must match
+// tools/stillhet-compare.mjs — the comparison (docs/stillhet/gate.md): what the app draws and what the prototype draws must match
 // pixel for pixel. Parts (the invitation, the design switch) are compared element by element; every route of the shell is
 // compared as a whole page, in both themes at 1280 and in light at 360, with the fonts pinned, the clock fixed and animations off;
 // so is every deep route the prototype has (deepRoutes: each task case, chat, schedule, Settings section and place item).
@@ -9,9 +9,9 @@
 // --workers N splits the walk across N workers, each with its own sandbox app, browser and temp home, and prints the very same
 // report: default the CPU count less one, at most 4, at least 1; any whole number of 1 or more; never more than the number of
 // cells; `--workers 1` is the single walk. It splits one mode's walk (Expert), not modes. With --pages it is validated, then
-// ignored. A cell with no result after 300 s fails the run. click-check (plans/rail/prototype/gates/click-check.mjs) uses the
+// ignored. A cell with no result after 300 s fails the run. click-check (plans/stillhet/prototype/gates/click-check.mjs) uses the
 // same worker pool (runPool).
-// Needs the prototype's built files (`npm run rail`) and a Chromium that playwright can launch. NOT part of `npm test`.
+// Needs the prototype's built files (`npm run stillhet`) and a Chromium that playwright can launch. NOT part of `npm test`.
 import { spawn } from 'node:child_process';
 import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { availableParallelism, tmpdir } from 'node:os';
@@ -48,16 +48,16 @@ for (const r of ROUTES) PARTS.push({ id: `route-${r}`, route: true, app: { route
 // states on Tasks, the connection's and the newcomer's on Chat.
 export const STATES = [['loading', 'runs'], ['empty', 'runs'], ['offline', 'runs'], ['failed', 'runs'], ['refresh-failed', 'runs'], ['connection-lost', 'chat'], ['session-expired', 'chat'], ['first-run', 'chat']];
 for (const [s, r] of STATES) { const q = s === 'first-run' ? `?first#${r}` : `?state=${s}#${r}`; PARTS.push({ id: `state-${s}`, route: true, app: { route: q }, proto: { route: q } }); }
-// Pulse's own list states (docs/rail/failures.md, fail.pulse-list): the popover opened by the old Activity address, which lands
+// Pulse's own list states (docs/stillhet/failures.md, fail.pulse-list): the popover opened by the old Activity address, which lands
 // on Chat with Pulse open on Now (shell/old-addresses.js), over the same ?state= in both hosts.
 export const PULSE_STATES = [['loading-pulse', 'loading'], ['failed-pulse', 'failed']];
 for (const [id, s] of PULSE_STATES) PARTS.push({ id: `state-${id}`, route: true, app: { route: `?state=${s}#activity` }, proto: { route: `?state=${s}#activity` } });
-// Chat's own states (docs/rail/failures.md, fail.chat-thread): an open chat that is loading, could not load or is gone, and the
+// Chat's own states (docs/stillhet/failures.md, fail.chat-thread): an open chat that is loading, could not load or is gone, and the
 // bar's chat list loading, empty and failed; then the TerminalPane (panel.terminal), seeded by clicking the first Show in
 // terminal of a demo chat with commands.
 export const CHAT_STATES = [['thread-loading-chat', '?state=thread-loading#chat/c1'], ['thread-failed-chat', '?state=thread-failed#chat/c1'], ['thread-gone-chat', '?state=thread-gone#chat/c1'], ['loading-chat', '?state=loading#chat'], ['empty-chat', '?state=empty#chat'], ['failed-chat', '?state=failed#chat']];
 for (const [id, q] of CHAT_STATES) PARTS.push({ id: `state-${id}`, route: true, app: { route: q }, proto: { route: q } });
-// The task page's own states (docs/rail/failures.md, fail.task-page): loading, could not load, gone; and a confirmed action
+// The task page's own states (docs/stillhet/failures.md, fail.task-page): loading, could not load, gone; and a confirmed action
 // that failed, its line in the strip (fail.task-action), seeded by pressing the approved task's Merge PR and confirming it.
 export const TASK_STATES = [['task-loading-run', '?state=task-loading#run/working'], ['task-failed-run', '?state=task-failed#run/working'], ['task-gone-run', '?state=task-gone#run/working']];
 for (const [id, q] of TASK_STATES) PARTS.push({ id: `state-${id}`, route: true, app: { route: q }, proto: { route: q } });
@@ -135,10 +135,10 @@ for (const [id, q, seed] of INSIGHTS_STATES) PARTS.push({ id, route: true, ...(s
 /** One seed step: a click on a selector, or { fill, text } typed into a field. */
 const seedStep = (page, sel) => (typeof sel === 'string' ? page.locator(sel).first().click() : page.locator(sel.fill).first().fill(sel.text));
 export const PAGES = ['components.html', 'run-page.html', 'pulse.html'];
-// The deep routes, read from the prototype's own route list once it has drawn (it runs inside the page): RailShell.routes()
+// The deep routes, read from the prototype's own route list once it has drawn (it runs inside the page): StillhetShell.routes()
 // (ui/public/stillhet/shell/shell.js) less the top-level places, which ROUTES compares as whole pages.
 export function deepRoutes() {
-  return window.RailShell.routes().filter((h) => h.includes('/'));
+  return window.StillhetShell.routes().filter((h) => h.includes('/'));
 }
 // One deep route of each kind keeps its pairs beside the other cells, for the PR; the rest go to out/stillhet-compare/deep/
 // (git-ignored: about 230 routes in three cells would weigh ~100 MB). Every cell is compared and reported either way.
@@ -323,7 +323,7 @@ export async function verifyApp({ base, proj, child, log, phase }) {
 // so both are pinned to one family here: what is compared is structure, spacing and colour.
 const ISOLATE = (id) => `*{font-family:Arial,Helvetica,sans-serif!important}html,body{background:var(--bg,#fff)!important}body *{visibility:hidden!important}[data-stillhet="${id}"],[data-stillhet="${id}"] *{visibility:visible!important}*{animation:none!important;transition:none!important;caret-color:transparent!important}`
   + (id === 'design-switch' ? '[data-stillhet="design-switch"]{position:fixed!important;top:0!important;right:0!important;left:auto!important;z-index:2147483647!important;background:var(--bg)!important}' : '')   // the icon, and its menu right-aligned under it when open
-  + (id === 'invitation' ? '#rail-strip{position:fixed!important;top:0!important;left:0!important;right:0!important;z-index:2147483647!important}' : '');
+  + (id === 'invitation' ? '#stillhet-strip{position:fixed!important;top:0!important;left:0!important;right:0!important;z-index:2147483647!important}' : '');
 
 async function playwright() {
   try { return await import('playwright'); } catch { return import('playwright-core'); }
@@ -342,15 +342,15 @@ export async function freePort() {
   return new Promise((res) => { const s = net.createServer().listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)); }); });
 }
 
-/** `lockRail`: turn `rail` on with WORCA_FLAGS (the gates: a click on the switch then changes nothing); else stored, as a
+/** `lockStillhet`: turn `stillhet` on with WORCA_FLAGS (the gates: a click on the switch then changes nothing); else stored, as a
  *  person turns it on (the comparison: the switch is drawn as the prototype draws it). */
-export async function startApp(home, env, { lockRail = false, serverArgs = ['ui/server.mjs'] } = {}) {
+export async function startApp(home, env, { lockStillhet = false, serverArgs = ['ui/server.mjs'] } = {}) {
   const port = await freePort();
   await mkdir(join(home, '.worca-cc'), { recursive: true });
   // a locked flag draws the top-bar icon's menu rows disabled (nav.design-switch), which the prototype's are not
-  await writeFile(join(home, '.worca-cc', 'settings.json'), JSON.stringify({ onboarding: { welcomeSeen: true }, ...(lockRail ? {} : { flags: { rail: true } }) }));
+  await writeFile(join(home, '.worca-cc', 'settings.json'), JSON.stringify({ onboarding: { welcomeSeen: true }, ...(lockStillhet ? {} : { flags: { stillhet: true } }) }));
   let log = '';
-  const child = spawn(process.execPath, serverArgs, { cwd: ROOT, env: { ...process.env, ...env, WORCA_FLAGS: lockRail ? 'rail' : '', WORCA_STILLHET_DEMO: '1', PORT: String(port), HOME: home, USERPROFILE: home, WORCA_HOME: join(home, 'worca-home'), WORCA_MOCK: '1', WORCA_TEST_ALLOW_HOME_FALLBACK: '1', FORCE_COLOR: '0', WORCA_HOST: '127.0.0.1' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, serverArgs, { cwd: ROOT, env: { ...process.env, ...env, WORCA_FLAGS: lockStillhet ? 'stillhet' : '', WORCA_STILLHET_DEMO: '1', PORT: String(port), HOME: home, USERPROFILE: home, WORCA_HOME: join(home, 'worca-home'), WORCA_MOCK: '1', WORCA_TEST_ALLOW_HOME_FALLBACK: '1', FORCE_COLOR: '0', WORCA_HOST: '127.0.0.1' }, stdio: ['ignore', 'pipe', 'pipe'] });
   child.stdout.on('data', (d) => { log += d; }); child.stderr.on('data', (d) => { log += d; });
   const exited = new Promise((r) => child.once('exit', r));
   const stop = async () => {
@@ -380,7 +380,7 @@ const watch = (page, who, into) => {
   page.on('pageerror', (e) => into.push(`${who} pageerror: ${e.message}`));
 };
 // Expert and the theme, set before the page's first script runs (a same-page hash change never reloads it).
-const setLook = (t) => { try { localStorage.setItem('worca-rail.mode', 'expert'); localStorage.setItem('worca-rail.appearance', t); } catch { /* none */ } };
+const setLook = (t) => { try { localStorage.setItem('worca-stillhet.mode', 'expert'); localStorage.setItem('worca-stillhet.appearance', t); } catch { /* none */ } };
 const freezeClock = (page) => page.addInitScript((t) => {
   const Real = Date;
   const Fixed = class extends Real { constructor(...a) { super(...(a.length ? a : [t])); } static now() { return t; } };
@@ -430,9 +430,9 @@ async function shoot(page, id, outFile, route) {
 async function listDeep(browser) {
   try {
     const p = await browser.newPage();
-    await p.addInitScript(() => { try { localStorage.setItem('worca-rail.mode', 'expert'); } catch { /* none */ } });
-    await p.goto(pathToFileURL(join(ROOT, 'plans/rail/prototype/index.html')).href + '#chat');
-    await p.waitForFunction(() => !!(window.RunCardModel && window.RailPlaces && window.RailChats && window.RailShell));
+    await p.addInitScript(() => { try { localStorage.setItem('worca-stillhet.mode', 'expert'); } catch { /* none */ } });
+    await p.goto(pathToFileURL(join(ROOT, 'plans/stillhet/prototype/index.html')).href + '#chat');
+    await p.waitForFunction(() => !!(window.RunCardModel && window.StillhetPlaces && window.StillhetChats && window.StillhetShell));
     return await p.evaluate(deepRoutes);
   } finally { await browser.close(); }
 }
@@ -447,7 +447,7 @@ async function pagesMain() {
       const errors = [];
       const p = await browser.newPage({ viewport: { width: 1280, height: 900 } });
       watch(p, name, errors);
-      await p.goto(pathToFileURL(join(ROOT, 'plans/rail/prototype', name)).href);
+      await p.goto(pathToFileURL(join(ROOT, 'plans/stillhet/prototype', name)).href);
       await p.waitForTimeout(500);
       await p.close();
       if (errors.length) code = 1;
@@ -476,10 +476,10 @@ export async function shootCell(browser, app, part, theme, width, outRoot) {
     const p = await ctx.newPage();
     watch(p, 'prototype', errors);
     if (part.route) { await freezeClock(p); await p.addInitScript(setLook, theme); }
-    const protoUrl = pathToFileURL(join(ROOT, 'plans/rail/prototype/index.html')).href;
+    const protoUrl = pathToFileURL(join(ROOT, 'plans/stillhet/prototype/index.html')).href;
     // a route opens once, on its own address (a first visit to Chat would mark its unread dot seen); a part is seeded, then moved
     if (!part.route) await p.goto(protoUrl);
-    if (!part.route) await p.evaluate((t) => { localStorage.setItem('worca-rail.mode', 'expert'); localStorage.setItem('worca-rail.appearance', t); localStorage.removeItem('worca-rail.stillhetAsked'); }, theme);
+    if (!part.route) await p.evaluate((t) => { localStorage.setItem('worca-stillhet.mode', 'expert'); localStorage.setItem('worca-stillhet.appearance', t); localStorage.removeItem('worca-stillhet.stillhetAsked'); }, theme);
     await p.goto(protoUrl.replace(/index\.html.*$/, 'index.html') + part.proto.route);
     for (const sel of seedsOf(part, width)) { await seedStep(p, sel); await p.waitForTimeout(part.wait || 300); }
     const P = await shoot(p, part.id, join(out, `${part.id}-${theme}-${width}-proto.png`), part.route);

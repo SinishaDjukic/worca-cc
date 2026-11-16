@@ -1,4 +1,4 @@
-// Segmented (docs/rail/components.md): two or three views of the same thing, one pressed.
+// Segmented (docs/stillhet/components.md): two or three views of the same thing, one pressed.
 import { attrs, esc } from './html.mjs';
 
 /**

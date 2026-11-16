@@ -1,4 +1,4 @@
-// OptionList (docs/rail/components.md): answering Worca's question, or a choice inside a confirm. One row per answer, a
+// OptionList (docs/stillhet/components.md): answering Worca's question, or a choice inside a confirm. One row per answer, a
 // radio dot, Worca's pick marked, your own answer under it (a SuggestionField). Never radio cards.
 import { esc, attrs } from './html.mjs';
 

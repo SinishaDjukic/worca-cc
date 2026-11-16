@@ -85,7 +85,7 @@
 .pcheck{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;max-width:100%;font-size:var(--fs-caption);}
 .pcheck-grade{padding:0 6px;background:var(--hover);color:var(--ink-2);}
 .pcheck-grade.is-needs-detail{background:var(--amber-bg);color:var(--amber-ink);}
-/* The rewrite suggestion (docs/rail/forms.md form.rewrite): Worca's whole-text rewrite under the chip, gaps as amber
+/* The rewrite suggestion (docs/stillhet/forms.md form.rewrite): Worca's whole-text rewrite under the chip, gaps as amber
    marks naming a perspective. Head, marks and foot wrap at narrow widths; no text is cut off. */
 .pd-rewrite{display:flex;flex-direction:column;gap:6px;flex-basis:100%;max-width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r-sm);font-size:var(--fs-meta);overflow-wrap:anywhere;}
 .pd-rewrite.is-used{flex-direction:row;flex-wrap:wrap;align-items:center;}

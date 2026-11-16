@@ -1,4 +1,4 @@
-// Settings' content for the prototype, built strictly from the design system (docs/rail/settings.md and
+// Settings' content for the prototype, built strictly from the design system (docs/stillhet/settings.md and
 // › A settings tab; drawn by settings.js). From the app's Settings (ui/public/settings/settings.html and the views it
 // mounts), its Team policy page and its Add-ons pages; Notifications is Pulse's (pulse-model.js).
 //   - A decision is a row: its name, its state in words (pickers where it changes), its Switch or button. The
@@ -31,7 +31,7 @@
   const edit = (title, fields, o = {}) => ({ label: 'Change…', edit: { title, fields, yes: 'Save', ...o } });
   const ENGINES = O(['claude', 'Claude'], ['codex', 'Codex (beta)'], ['copilot', 'Copilot (beta)'], ['cursor', 'Cursor (beta)'], ['gemini', 'Gemini CLI (beta)'], ['goose', 'Goose (beta)'], ['opencode', 'OpenCode (beta)'], ['qwen', 'Qwen Code (beta)']);
   const usd = (v) => (v === '' || v == null ? 'no limit' : '$' + Number(v).toLocaleString('en-US'));
-  const opens = (where) => ({ label: 'Open', say: window.RailWould(`open ${where} in a new tab`) });
+  const opens = (where) => ({ label: 'Open', say: window.StillhetWould(`open ${where} in a new tab`) });
 const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
   const plural = (n, w) => `${n} ${w}${+n === 1 ? '' : 's'}`;
   const andList = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
@@ -39,12 +39,12 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
   const isFolder = (s) => /^~?\/[^/]/.test(s.trim());   // a real folder: / or ~/ alone is not one
   const isUrl = (s) => /^https?:\/\/\S+$/.test(String(s).trim());
   const limitsWrong = (run, all) => { const r = String(run).trim(), a = String(all).trim(), ok = (s) => !s || (isAmount(s) && +s > 0); return !ok(r) || !ok(a) ? 'A limit is an amount in dollars above 0, or empty' : r && a && +r > +a ? 'One run cannot be allowed more than the total' : ''; };
-  const atLevel = (min) => window.RailUI.shows(min, window.RailUI.prefs.mode());
+  const atLevel = (min) => window.StillhetUI.shows(min, window.StillhetUI.prefs.mode());
   const pickText = (options, v) => (options.find((o) => o[0] === v) || [v, v])[1];
   const ARCHIVE = O(['never', 'stay until you archive them'], ['7', 'are archived after 7 days'], ['30', 'are archived after 30 days'], ['90', 'are archived after 90 days'], ['365', 'are archived after a year']);
   const WAIT = O(['30m', '30 minutes'], ['1h', '1 hour'], ['4h', '4 hours'], ['12h', '12 hours'], ['24h', '24 hours']);
 
-  // ---- Team policy: what the team published, and what you edit (docs/rail/settings.md › Team policy). The page edits
+  // ---- Team policy: what the team published, and what you edit (docs/stillhet/settings.md › Team policy). The page edits
   // sv's own values; `sv.pol` is the last published document, and everything outside the editor reads that. A change
   // waits until Publish, one commit on the worca-policy branch, as in the app. ----
   const POLICY = { prOpen: 'none', prSlices: 'each', capRun: '50', capAll: '2000', wsCap: '120', blockMcp: true, policyTitle: 'Gateway team policy', policyNotes: 'Ask #platform' };
@@ -57,25 +57,25 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
   const pendingWords = (sv) => { const n = pending(sv).length; return n ? `${plural(n, 'change')} not published` : 'Nothing to publish'; };
   const pendingChip = (...keys) => (sv) => (pending(sv, keys).length ? 'Not published' : '');
   const polEdit = (title, fields, check) => ({ label: 'Change…', edit: { title, yes: 'Add to changes', note: 'Nothing reaches your team until you publish.', fields, check, then: (v, sv) => { Object.assign(sv, v); return pendingWords(sv); } } });
-  // A cap has one behaviour: a task pauses at it (docs/rail/settings.md › Spending). The tighter of yours and your team's wins.
+  // A cap has one behaviour: a task pauses at it (docs/stillhet/settings.md › Spending). The tighter of yours and your team's wins.
   const runCap = (sv) => (!sv.perRun ? `**${usd(sv.pol.capRun)}** (your team's)` : +sv.perRun <= +sv.pol.capRun ? `**${usd(sv.perRun)}**` : `**${usd(sv.pol.capRun)}** (your team's; yours is ${usd(sv.perRun)})`);
   const totalCap = (sv) => { const team = `${usd(sv.pol.capAll)} a month`, own = `${usd(sv.total)} a ${sv.period}`;
     if (!sv.total) return `**${team}** (your team's)`;
     if (sv.period !== 'month') return `**${own}**, and **${team}** (your team's)`;
     return +sv.total <= +sv.pol.capAll ? `**${own}**` : `**${team}** (your team's; yours is ${usd(sv.total)})`; };
   const SPENT = { day: ['today', 38], week: ['this week', 140], month: ['this month', 412] };
-  const spentWords = (sv) => { if (window.RailWorld?.live) return '';   // live: the sample spend is not drawn (the real budget is wave 3's)
+  const spentWords = (sv) => { if (window.StillhetWorld?.live) return '';   // live: the sample spend is not drawn (the real budget is wave 3's)
     const own = sv.total ? sv.period : 'month', [when, table] = SPENT[own], n = own === 'month' && sv.spentNow != null ? sv.spentNow : table, of = sv.total && own !== 'month' ? +sv.total : sv.total ? Math.min(+sv.total, +sv.pol.capAll) : +sv.pol.capAll; return `Spent ${when}: $${n} of ${usd(of)}.`; };
 
   // ---- Plugins and Chat › Channels read one fact from here: what is installed, and whether a channel has its token ----
-  const store = () => window.RailPlaces?.marketplace;   // the Marketplace holds what is installed; a plugin it does not list falls back to this page's own
+  const store = () => window.StillhetPlaces?.marketplace;   // the Marketplace holds what is installed; a plugin it does not list falls back to this page's own
   // live: only the Marketplace knows; a name it does not list is not installed (never this page's sample)
-  const installed = (sv, title) => (window.RailWorld?.live ? store()?.isInstalled?.(title) === true : store()?.isInstalled?.(title) ?? !sv.gone[title]);
+  const installed = (sv, title) => (window.StillhetWorld?.live ? store()?.isInstalled?.(title) === true : store()?.isInstalled?.(title) ?? !sv.gone[title]);
   // Live: Delete all chats is dev's (app.js deleteAskHistory): fresh counts, the confirm with dev's facts, then the DELETE.
   // `changed()` repaints Settings once an answer is in.
   const n = (k, w) => `${k} ${w}${k === 1 ? '' : 's'}`;
   function liveDeleteAll(sv, changed) {
-    const L = window.RailChatLive;
+    const L = window.StillhetChatLive;
     return L.chatHistory().then((r) => {
       if (!r.ok) return;
       const c = r.data || {};
@@ -85,8 +85,8 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
           if (!d.ok) return;
           const rm = d.data?.removed || {}, failed = (d.data?.failed || []).length;
           Object.assign(s, { chats: failed, worktrees: 0, attach: n(0, 'attachment') });
-          window.RailAdapter?.toast?.(`Deleted ${n(rm.threads || 0, 'chat')} and ${n(rm.worktrees || 0, 'worktree')}.${failed ? ` ${n(failed, 'chat')} could not be removed.` : ''}`);
-          window.RailAdapter?.refresh?.('threads');
+          window.StillhetAdapter?.toast?.(`Deleted ${n(rm.threads || 0, 'chat')} and ${n(rm.worktrees || 0, 'worktree')}.${failed ? ` ${n(failed, 'chat')} could not be removed.` : ''}`);
+          window.StillhetAdapter?.refresh?.('threads');
           changed();
         });
         return '';
@@ -102,15 +102,15 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
   const pluginRecord = (p) => ({ title: p.name, meta: [p.kind.replace(/s$/, ''), p.market].filter(Boolean).join(' · '), chip: p.update ? 'Update available' : p.needsSetup ? 'Needs set-up' : '',
     open: (r, x) => x.page('marketplace/' + p.id, '') });
   function livePlugins() {
-    const L = window.RailMarketLive; if (!L) return [];
+    const L = window.StillhetMarketLive; if (!L) return [];
     const st = L.status();
     if (st === 'loading') {
-      if (!waitingPlugins) { waitingPlugins = true; L.load().then(() => { waitingPlugins = false; window.dispatchEvent(new Event('rail-settings')); }); }
+      if (!waitingPlugins) { waitingPlugins = true; L.load().then(() => { waitingPlugins = false; window.dispatchEvent(new Event('stillhet-settings')); }); }
       return [];
     }
     return st === 'failed' ? [] : L.data().plugins.filter((p) => p.installed).map(pluginRecord);
   }
-  const livePluginsEmpty = () => ({ loading: 'Loading the plugins', failed: 'Could not read the plugins' })[window.RailMarketLive?.status()] || 'Nothing installed';
+  const livePluginsEmpty = () => ({ loading: 'Loading the plugins', failed: 'Could not read the plugins' })[window.StillhetMarketLive?.status()] || 'Nothing installed';
   const CHANNELS = [['Telegram', 'chTelegram'], ['Discord', 'chDiscord'], ['Slack', 'chSlack'], ['Teams', 'chTeams']];
   const channelState = (sv, title, key) => (!sv.chToken[title] ? 'Not set up' : sv[key] ? 'Connected' : 'Off');
   const workingChannels = (sv) => CHANNELS.filter(([t, k]) => installed(sv, t) && channelState(sv, t, k) === 'Connected').map(([t]) => t);
@@ -127,7 +127,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
 
 
   // ---- Labs: the registry's flags (src/shared/flags/registry.mjs), but its Flags demo ----
-  // The words of a Labs write (docs/rail/settings.md `set.flags`): Saving while it waits, the refusal at the end of its sentence.
+  // The words of a Labs write (docs/stillhet/settings.md `set.flags`): Saving while it waits, the refusal at the end of its sentence.
   const LABS_WORDS = { saving: 'Saving', locked: 'Locked by WORCA_FLAGS', unanswered: 'the server did not answer', nothing: 'Nothing to reset: every feature is at its default',
     reset: 'Turn every Labs feature back to its default?', resetRail: 'Stillhet is one of them: it turns off, and Worca opens in its classic look.', resetDone: 'Labs: back to its defaults', demoRefusal: 'the settings file is read-only' };
   const refusedLine = (on, error) => `Could not turn it ${on ? 'on' : 'off'}: ${error}`;
@@ -145,15 +145,15 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     { key: 'ticketUpdates', name: 'Ticket updates', stage: 'Experimental', on: false, say: 'A finished run moves its ticket, by a rule per tracker project', why: 'Adds Plugins › Ticket updates, which needs Advanced', min: 'advanced' },
     { key: 'shapeRequirements', name: 'Requirements first', stage: 'Experimental', on: false, say: 'A medium or large Shaper task first agrees what must be true, then plans', why: 'Adds a step to Shaper', refuses: LABS_WORDS.demoRefusal },
   ];
-  const flagsChanged = () => FLAGS.filter((f) => !f.locked && window.RailUI.prefs.flag(f.key) !== f.on);
+  const flagsChanged = () => FLAGS.filter((f) => !f.locked && window.StillhetUI.prefs.flag(f.key) !== f.on);
   // ---- Labs, live: exactly the flags GET /api/flags returns. A switch shows the server's `on` and writes PATCH /api/flags;
   // only the server's answer (or a flags frame, copied into prefs by the live adapter, which reads the list again) changes
   // what it shows. `saving` and `errors` are per flag: an error lasts until that row's next write starts. Every PATCH gets
   // the next `seq`; a flag takes its value from an answer only if no later answer already set it (`answered`). ----
-  const liveOn = () => !!window.RailWorld?.live;
+  const liveOn = () => !!window.StillhetWorld?.live;
   const labs = { status: 'loading', flags: [], busy: false, again: false, watching: false, saving: {}, errors: {}, toastFor: [], seq: 0, answered: {} };
-  const redraw = () => window.dispatchEvent(new Event('rail-settings'));
-  const toast = (text) => window.RailAdapter?.toast?.(text);
+  const redraw = () => window.dispatchEvent(new Event('stillhet-settings'));
+  const toast = (text) => window.StillhetAdapter?.toast?.(text);
   const onWords = (k) => { const f = labs.flags.find((x) => x.key === k); return f ? `${f.title}: ${f.on ? 'on' : 'off'}` : ''; };
   function readFlags() {
     if (labs.busy) { labs.again = true; return; }
@@ -170,7 +170,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
       .then((j) => (Array.isArray(j?.flags) ? done('ready', j.flags) : done('failed')), () => done('failed'));
   }
   function liveFlags() {
-    if (!labs.watching) { labs.watching = true; window.RailUI.prefs.onChange(() => readFlags()); readFlags(); }
+    if (!labs.watching) { labs.watching = true; window.StillhetUI.prefs.onChange(() => readFlags()); readFlags(); }
     return labs;
   }
   // The one write path: live, PATCH /api/flags (ui/routes/feature-flags/flags.mjs). The demo only writes here for its one
@@ -194,15 +194,15 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     const fresh = flags.filter((f) => !(labs.answered[f.key] > seq));
     for (const f of fresh) labs.answered[f.key] = seq;
     Object.assign(labs, { status: 'ready', flags: flags.map((f) => (fresh.includes(f) ? f : labs.flags.find((x) => x.key === f.key) || f)) });
-    for (const f of fresh) if (typeof f.on === 'boolean' && window.RailUI.prefs.flag(f.key) !== f.on) window.RailUI.prefs.setFlag(f.key, f.on);
+    for (const f of fresh) if (typeof f.on === 'boolean' && window.StillhetUI.prefs.flag(f.key) !== f.on) window.StillhetUI.prefs.setFlag(f.key, f.on);
     return true;
   }
-  // `rail` is only written by RailHost.setStillhet, the one reload owner (the top bar's path); it toasts a failure itself.
-  function railSwitch(on) {
-    labs.saving.rail = true; delete labs.errors.rail; redraw();
-    return Promise.resolve().then(() => window.RailHost.setStillhet(on)).catch(() => ({ ok: false, text: refusedLine(on, LABS_WORDS.unanswered) })).then((r) => {
-      delete labs.saving.rail;
-      if (!r || !r.ok) labs.errors.rail = r?.text || refusedLine(on, LABS_WORDS.unanswered);
+  // `stillhet` is only written by StillhetHost.setStillhet, the one reload owner (the top bar's path); it toasts a failure itself.
+  function switchStillhet(on) {
+    labs.saving.stillhet = true; delete labs.errors.stillhet; redraw();
+    return Promise.resolve().then(() => window.StillhetHost.setStillhet(on)).catch(() => ({ ok: false, text: refusedLine(on, LABS_WORDS.unanswered) })).then((r) => {
+      delete labs.saving.stillhet;
+      if (!r || !r.ok) labs.errors.stillhet = r?.text || refusedLine(on, LABS_WORDS.unanswered);
       redraw();
     });
   }
@@ -218,8 +218,8 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
   function labsSwitch(key, sv) {
     const live = liveOn(), f = live ? labs.flags.find((x) => x.key === key) : FLAGS.find((x) => x.key === key);
     if (!f || f.locked || labs.saving[key]) return '';
-    const on = live ? !!f.on : window.RailUI.prefs.flag(key);
-    if (live && key === 'rail') { railSwitch(!on); return ''; }
+    const on = live ? !!f.on : window.StillhetUI.prefs.flag(key);
+    if (live && key === 'stillhet') { switchStillhet(!on); return ''; }
     const start = () => {
       labs.saving[key] = true; delete labs.errors[key]; redraw();
       const seq = ++labs.seq;
@@ -255,14 +255,14 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     const st = liveOn() ? liveFlags().status : 'ready';
     return ({ loading: 'Loading the features', failed: 'Could not read the features' })[st] || (Object.keys(labs.saving).length ? LABS_WORDS.saving : labsChanged().length ? '' : LABS_WORDS.nothing);
   };
-  // Live: one PATCH of nulls for every changed flag but rail; then rail through the top bar's path, which reloads.
+  // Live: one PATCH of nulls for every changed flag but stillhet; then stillhet through the top bar's path, which reloads.
   // The strip is not modal: a write started while it waited (or anything else that disables Reset all) refuses Yes.
   function labsReset() {
-    if (!liveOn()) { for (const f of flagsChanged()) window.RailUI.prefs.setFlag(f.key, f.on); return LABS_WORDS.resetDone; }
+    if (!liveOn()) { for (const f of flagsChanged()) window.StillhetUI.prefs.setFlag(f.key, f.on); return LABS_WORDS.resetDone; }
     const off = labsResetOff();
     if (off) { toast(off); return ''; }
-    const changed = labsChanged().map((f) => f.key), rail = changed.includes('rail'), keys = changed.filter((k) => k !== 'rail');
-    const after = () => { if (rail) railSwitch(false); else toast(LABS_WORDS.resetDone); };
+    const changed = labsChanged().map((f) => f.key), rail = changed.includes('stillhet'), keys = changed.filter((k) => k !== 'stillhet');
+    const after = () => { if (rail) switchStillhet(false); else toast(LABS_WORDS.resetDone); };
     if (!keys.length) { after(); return ''; }
     for (const k of keys) labs.saving[k] = true;
     redraw();
@@ -290,7 +290,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
   // ---- General › About: what `Check now`, `Update` and `Choose version…` do ----
   const cmd = (sv) => `npm install -g @worca/app@${sv.upd === 'failed' || sv.upd === 'available' ? sv.latest : sv.ver}`;
   const short = (v) => v.replace(/\.0$/, '');   // 1.20.0 reads 1.20
-  const updateFailed = (sv) => window.RailUI.failureOf(`Update to ${short(sv.latest)}`, 'npm could not write to the install folder');
+  const updateFailed = (sv) => window.StillhetUI.failureOf(`Update to ${short(sv.latest)}`, 'npm could not write to the install folder');
   const updWords = (sv) => ({ latest: 'Up to date', available: `New version: ${short(sv.latest)}`, failed: updateFailed(sv).title, back: `An older version; ${short(sv.latest)} is the latest` }[sv.upd]);
   const outdated = (sv) => sv.upd === 'available' || sv.upd === 'failed' || sv.upd === 'back';
   const canUpdate = (sv) => sv.upd === 'available' || sv.upd === 'back';
@@ -302,7 +302,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     appVer.busy = true; appVer.read = true;
     Promise.resolve().then(() => window.fetch(force ? '/api/app/version/check' : '/api/app/version', force ? { method: 'POST' } : undefined))
       .then((r) => (r && r.ok ? r.json() : null)).catch(() => null)
-      .then((vs) => { appVer.busy = false; if (vs || !force) appVer.vs = vs; window.dispatchEvent(new Event('rail-settings')); });
+      .then((vs) => { appVer.busy = false; if (vs || !force) appVer.vs = vs; window.dispatchEvent(new Event('stillhet-settings')); });
   }
   const liveVer = () => { if (!appVer.read && liveOn()) readVersion(); return appVer.vs; };   // the demo and the gates read no route
   const liveVerWords = () => {
@@ -315,7 +315,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     acts: [{ label: 'Check now', id: 'version-check', when: () => appVer.vs?.status !== 'source' && appVer.vs?.enabled !== false, live: () => readVersion(true) }] };
   const VERSIONS = O(['1.20.0', '1.20, the latest'], ['1.19.0', '1.19'], ['1.18.2', '1.18.2'], ['1.17.0', '1.17']);
 
-  // ---- General › Setup assistant: one Dialog, one step per screen (docs/rail/forms.md). No workspace walkthrough. ----
+  // ---- General › Setup assistant: one Dialog, one step per screen (docs/stillhet/forms.md). No workspace walkthrough. ----
   const setup = () => ({ title: 'Setup assistant', yes: 'Apply',
     steps: [
       { label: 'Check', note: 'What Worca found on this machine.', facts: [
@@ -342,7 +342,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
         fields: [{ key: 'saRun', label: 'Per run (USD)', value: '', placeholder: 'No limit' }, { key: 'saTotal', label: 'Total a month (USD)', value: '1000', placeholder: 'No limit' }] },
       { label: 'Review', note: 'Nothing changes until you press Apply.', facts: (v) => [
         { title: 'Network', meta: v.saNet === 'proxy' ? `Through ${v.saHost}:${v.saPort}` : 'Direct' },
-        { title: 'Access', meta: [v.saClaude && (window.RailUI.prefs.connected('claude') ? 'Claude Code' : 'Claude Code (not signed in)'), v.saCopilot && 'Copilot'].filter(Boolean).join(', ') || 'None' },
+        { title: 'Access', meta: [v.saClaude && (window.StillhetUI.prefs.connected('claude') ? 'Claude Code' : 'Claude Code (not signed in)'), v.saCopilot && 'Copilot'].filter(Boolean).join(', ') || 'None' },
         { title: 'Roles', meta: { rec: 'Recommended', cheap: 'Cheaper', keep: 'As they are' }[v.saRoles] },
         { title: 'Limits', meta: `Each task ${usd(v.saRun)}, all tasks ${usd(v.saTotal)} a month` },
       ] },
@@ -392,7 +392,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     const key = kind + i, start = j.factory ? `model:${j.factory}` : 'follows';
     return { name: j.title, help: j.detail, say: '{' + key + '}',
       picks: { [key]: P(start, jobOptions(j, kind), j.detail) },
-      acts: [{ label: 'Test', help: 'Sends one tiny prompt to this model', when: (sv) => sv[key] !== 'follows', do: (sv) => (j.factory && sv[key] === start && !sv.claudeIn ? `${j.title}: sign in to Claude Code or pick a model` : window.RailWould(`send ${String(sv[key]).replace('model:', '')} one tiny prompt`)) }] };
+      acts: [{ label: 'Test', help: 'Sends one tiny prompt to this model', when: (sv) => sv[key] !== 'follows', do: (sv) => (j.factory && sv[key] === start && !sv.claudeIn ? `${j.title}: sign in to Claude Code or pick a model` : window.StillhetWould(`send ${String(sv[key]).replace('model:', '')} one tiny prompt`)) }] };
   });
   const jobsSet = (list, kind, sv) => list.filter((_, i) => sv[kind + i] !== 'follows').length;
   // Another engine: a job's own model that it does not offer goes back to its role, and the toast says how many.
@@ -420,13 +420,13 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     // A row's one step: a problem's way out first; Test once nothing is wrong.
     menu: (r, sv) => (!sv.chToken[title] ? ['Set up'] : o.warn && !sv.chAllowed[title] ? ['Allow chat'] : [sv[key] ? 'Test' : { text: 'Test', off: true, help: 'Turn it on to send a test' }]),
     on: {
-      Test: () => window.RailWould(`send a test to ${title}`),
+      Test: () => window.StillhetWould(`send a test to ${title}`),
       'Set up': (r, x) => x.go('plugins'),
       'Allow chat': (r, x) => x.dialog({ title: `Allow a chat on ${title}`, yes: 'Allow', fields: [{ key: 'chat', label: 'Chat id', value: o.chatId || '', hint: 'Replies like /approve from this chat count' }], check: (v) => (v.chat.trim() ? '' : 'It needs a chat id'), then: (v, sv) => { sv.chAllowed = { ...sv.chAllowed, [title]: v.chat }; return `Chat ${v.chat} can answer on ${title}`; } }),
     } });
 
   // ---- Plugins: the trackers, each with its own Ticket updates ----
-  const MOVES = window.RailUI?.TRACKER_MOVES || { jira: [] };   // the library's; the sweeps read this file for its section ids, without it
+  const MOVES = window.StillhetUI?.TRACKER_MOVES || { jira: [] };   // the library's; the sweeps read this file for its section ids, without it
   const ruleWords = (m) => (m === 'none' ? 'Don\'t move' : m === 'done' ? 'Any Done status' : `Moves to ${m}`);
   const rule = (title, move, gone) => ({ title, move, gone, mark: gone ? 'is-amber' : '',
     meta: gone ? `${title} has no status named ${gone} any more: pick another; until then a task leaves its tickets where they are` : ruleWords(move),
@@ -520,8 +520,8 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
             { name: 'Last update', when: (sv) => sv.upd === 'failed', say: (sv) => { const f = updateFailed(sv); return `${f.title}. ${f.detail} Update from a terminal instead`; }, acts: [{ label: 'Dismiss', do: (sv) => { sv.upd = 'available'; return ''; } }] },
             { name: 'npm output', when: (sv) => sv.upd === 'failed', say: 'The last lines npm wrote', acts: [{ label: 'View', edit: { title: 'npm output', view: true, yes: 'Close', note: '`npm ERR! code EACCES` · `npm ERR! syscall rename` · `npm ERR! path /usr/local/lib/node_modules/@worca/app`' } }] },
             { name: 'Repository', say: '`github.com/acme/worca`', acts: [opens('the repository')] },
-            { name: 'Report a bug', say: 'Opens a new issue, labelled bug', acts: [{ label: 'Open', id: 'bug', say: window.RailWould('open a new bug issue on GitHub in a new tab') }] },
-            { name: 'Suggest an improvement', say: 'Opens a new issue, labelled enhancement', acts: [{ label: 'Open', id: 'idea', say: window.RailWould('open a new enhancement issue on GitHub in a new tab') }] },
+            { name: 'Report a bug', say: 'Opens a new issue, labelled bug', acts: [{ label: 'Open', id: 'bug', say: window.StillhetWould('open a new bug issue on GitHub in a new tab') }] },
+            { name: 'Suggest an improvement', say: 'Opens a new issue, labelled enhancement', acts: [{ label: 'Open', id: 'idea', say: window.StillhetWould('open a new enhancement issue on GitHub in a new tab') }] },
           ] },
       ] },
     ] },
@@ -532,7 +532,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
         { label: 'Cancel editing', do: (sv) => { Object.assign(sv, sv.pol); return 'Changes dropped; the policy is as published'; } },
         { label: 'Publish to worca-policy', id: 'publish', confirm: (sv) => ({ text: `Publish ${plural(pending(sv).length, 'change')} to worca-policy? Every teammate's Worca reads it at its next run.`, yes: 'Publish', then: (s) => { s.pol = Object.fromEntries(Object.keys(POLICY).map((k) => [k, s[k]])); return 'Policy published · commit 7a1c3e2'; } }) },
       ], rows: [
-        { name: 'Changes', say: (sv) => pending(sv).map((k) => POLICY_WORDS[k](sv[k])).join(' · '), acts: [{ label: 'Copy for PR', help: 'The whole policy as JSON, for a pull request against worca-policy', copy: (sv) => JSON.stringify(Object.fromEntries(Object.keys(POLICY).map((k) => [k, sv[k]])), null, 2), copied: window.RailWould('copy it, to paste into .worca-policy/policy.json on a pull request') }] },
+        { name: 'Changes', say: (sv) => pending(sv).map((k) => POLICY_WORDS[k](sv[k])).join(' · '), acts: [{ label: 'Copy for PR', help: 'The whole policy as JSON, for a pull request against worca-policy', copy: (sv) => JSON.stringify(Object.fromEntries(Object.keys(POLICY).map((k) => [k, sv[k]])), null, 2), copied: window.StillhetWould('copy it, to paste into .worca-policy/policy.json on a pull request') }] },
       ] },
       { title: 'Effective policy', meta: 'What the next run on this machine will use.', table: { label: 'Effective policy', columns: [{ id: 'f', label: 'Field' }, { id: 't', label: 'Team', narrow: false }, { id: 'k', label: 'Kind', narrow: false }, { id: 'y', label: 'Yours', narrow: false }, { id: 'e', label: 'Effective' }],
         rows: (sv) => [
@@ -579,9 +579,9 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     experimental: { title: 'Labs', meta: 'Features still being shaped. Each switch applies to everyone using this Worca.', sections: [
       { title: 'Features', meta: () => (liveOn() ? liveLabsMeta() : `Labs features may change, break or disappear in any release.${flagsChanged().length ? '' : ' Reset all waits until you change one.'}`), actions: [
         { label: 'Reset all', help: 'Every feature back to its default; asks first', off: labsResetOff,
-          confirm: () => ({ text: LABS_WORDS.reset + (liveOn() && labsChanged().some((f) => f.key === 'rail') ? ' ' + LABS_WORDS.resetRail : ''), yes: 'Reset all', live: true, then: labsReset }) },
+          confirm: () => ({ text: LABS_WORDS.reset + (liveOn() && labsChanged().some((f) => f.key === 'stillhet') ? ' ' + LABS_WORDS.resetRail : ''), yes: 'Reset all', live: true, then: labsReset }) },
       ], rows: [
-        { name: 'Guide', say: 'How Labs works, and what a stage means', acts: [{ label: 'Open', off: () => (liveOn() ? window.RailUI.NOT_LIVE_SENTENCE : ''), say: window.RailWould('open the Labs guide in a new tab') }] },   // F-G-G4-07: classic has no Labs guide; live, it is not in Stillhet yet
+        { name: 'Guide', say: 'How Labs works, and what a stage means', acts: [{ label: 'Open', off: () => (liveOn() ? window.StillhetUI.NOT_LIVE_SENTENCE : ''), say: window.StillhetWould('open the Labs guide in a new tab') }] },   // F-G-G4-07: classic has no Labs guide; live, it is not in Stillhet yet
       ], get groups() { return liveOn() ? liveLabsGroups() : demoLabsGroups(); } },
     ] },
 
@@ -680,7 +680,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     automations: { min: 'advanced', flag: 'gitAutomations', title: 'Automations', meta: 'What runs by itself across projects; each project keeps its own rules.', sections: [
       { title: 'Waiting', empty: 'Nothing is waiting', list: [
         { title: 'Issue #1088', meta: 'A fix is proposed · worca-cc', mark: 'is-amber', fig: '2h ago', menu: ['Approve', 'Skip'], quick: ['Approve'],
-          on: { Approve: (r, x) => { x.remove(); window.RailWorld?.add({ id: `auto-1088-${Date.now()}`, title: 'Fix Issue #1088', project: 'worca-cc', detail: 'Started by you from Automations' }); x.add({ title: r.title, meta: 'Approved: a task started · worca-cc', fig: 'now', open: (o, y) => y.page('runs', 'Opens Tasks') }, 'automations/Recent'); return 'Issue #1088: a task started, in Tasks'; }, Skip: (r, x) => { x.remove(); x.add({ title: r.title, meta: 'Skipped by you · worca-cc', fig: 'now' }, 'automations/Recent'); return 'Issue #1088: skipped'; } } },
+          on: { Approve: (r, x) => { x.remove(); window.StillhetWorld?.add({ id: `auto-1088-${Date.now()}`, title: 'Fix Issue #1088', project: 'worca-cc', detail: 'Started by you from Automations' }); x.add({ title: r.title, meta: 'Approved: a task started · worca-cc', fig: 'now', open: (o, y) => y.page('runs', 'Opens Tasks') }, 'automations/Recent'); return 'Issue #1088: a task started, in Tasks'; }, Skip: (r, x) => { x.remove(); x.add({ title: r.title, meta: 'Skipped by you · worca-cc', fig: 'now' }, 'automations/Recent'); return 'Issue #1088: skipped'; } } },
       ] },
       { title: 'Projects', list: [
         { title: 'worca-cc', meta: 'Proposes a fix for new issues and reviews PRs · 3 rules', open: (r, x) => x.page('projects', 'Opens the project worca-cc, where its 3 rules are') },
@@ -704,7 +704,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
       { title: 'Sign-ins', sample: true, meta: 'Sign-ins and keys for the models Worca runs through its own bridge.', rows: [
         { name: 'Claude sign-in', say: '{claudeWords}', vals: { claudeWords: (sv) => (sv.claudeIn ? 'Signed in to Claude Code; factory defaults show as (default)' : 'Not signed in to Claude Code: Memory defragment and Second-opinion reviewer lose their factory default. A run that needs one is refused, never given another model') },
           chip: (sv) => (sv.claudeIn ? '' : 'Signed out'),
-          acts: [{ label: 'Sign out', when: (sv) => sv.claudeIn, do: (sv) => { sv.claudeIn = false; window.RailUI.prefs.setConnected('claude', false); return 'Signed out of Claude Code'; } }, { label: 'Sign in', when: (sv) => !sv.claudeIn, do: (sv) => { sv.claudeIn = true; window.RailUI.prefs.setConnected('claude', true); return 'Signed in to Claude Code'; } }] },
+          acts: [{ label: 'Sign out', when: (sv) => sv.claudeIn, do: (sv) => { sv.claudeIn = false; window.StillhetUI.prefs.setConnected('claude', false); return 'Signed out of Claude Code'; } }, { label: 'Sign in', when: (sv) => !sv.claudeIn, do: (sv) => { sv.claudeIn = true; window.StillhetUI.prefs.setConnected('claude', true); return 'Signed in to Claude Code'; } }] },
       ], list: [
         { title: 'GitHub Copilot', meta: 'Your GitHub sign-in', mark: 'is-green', detail: 'Premium requests are read from GitHub, not counted by Worca, and reset on 1 Dec.',
           live: (sv, r) => (r.signedOut ? 'Not signed in' : `${r.account} · ${r.conc} at once · ${r.used} of 1,000 premium requests, from GitHub`), account: 'Business', conc: 4, used: 312,
@@ -713,14 +713,14 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
             Edit: (r, x) => x.dialog({ title: 'GitHub Copilot', yes: 'Save', fields: [{ key: 'acct', label: 'Account type', value: r.account, options: O('Individual', 'Business', 'Enterprise') }, { key: 'conc', label: 'Requests at once', value: String(r.conc), type: 'number', hint: 'Keep it low: more waits its turn, and it lowers GitHub\'s abuse-detection risk' }], then: (v) => { r.account = v.acct; r.conc = v.conc; return 'GitHub Copilot saved'; } }),
             'Import models': (r, x) => (importable(x.sv).length ? x.dialog(importModels(x.sv)) : 'Nothing new to import: the catalogue has it all'),
             'Refresh usage': (r) => { r.used += 7; return `Copilot: ${r.used} of 1,000 used, from GitHub`; },
-            'Sign out': (r) => { r.signedOut = true; r.mark = ''; window.RailUI.prefs.setConnected('copilot', false); return 'Signed out of Copilot'; },
-            'Sign in': (r) => { r.signedOut = false; r.mark = 'is-green'; window.RailUI.prefs.setConnected('copilot', true); return 'Signed in to Copilot'; },
+            'Sign out': (r) => { r.signedOut = true; r.mark = ''; window.StillhetUI.prefs.setConnected('copilot', false); return 'Signed out of Copilot'; },
+            'Sign in': (r) => { r.signedOut = false; r.mark = 'is-green'; window.StillhetUI.prefs.setConnected('copilot', true); return 'Signed in to Copilot'; },
           } },
         { title: 'Codex', meta: 'Your ChatGPT sign-in', mark: 'is-green', detail: 'Codex reports its own session and weekly usage.',
           live: (sv, r) => (r.signedOut ? 'Not signed in' : 'Your ChatGPT sign-in'), menu: (r) => (r.signedOut ? ['Sign in'] : ['Sign out']),
           on: {
-            'Sign out': (r) => { r.signedOut = true; r.mark = ''; window.RailUI.prefs.setConnected('codex', false); return 'Signed out of Codex'; },
-            'Sign in': (r) => { r.signedOut = false; r.mark = 'is-green'; window.RailUI.prefs.setConnected('codex', true); return 'Signed in to Codex'; },
+            'Sign out': (r) => { r.signedOut = true; r.mark = ''; window.StillhetUI.prefs.setConnected('codex', false); return 'Signed out of Codex'; },
+            'Sign in': (r) => { r.signedOut = false; r.mark = 'is-green'; window.StillhetUI.prefs.setConnected('codex', true); return 'Signed in to Codex'; },
           } },
         { title: 'OpenAI-compatible', meta: 'Not set up · presets: OpenRouter',
           live: (sv, r) => (r.url ? (r.preset === 'openrouter' ? orFree(sv) : `${r.url} · key set`) : 'Not set up · presets: OpenRouter'),
@@ -737,8 +737,8 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
           live: (sv, r) => (r.signedOut ? 'Not signed in' : sv.gemQuota ? `Your Gemini sign-in · ${sv.gemUsed} of ${sv.gemQuota} requests today, counted by Worca against your quota` : 'Your Gemini sign-in · no quota set, so nothing is counted'),
           menu: (r, sv) => (r.signedOut ? ['Sign in'] : sv.gemQuota ? ['Set quota', 'Clear quota', 'Sign out'] : ['Set quota', 'Sign out']),
           on: {
-            'Sign out': (r) => { r.signedOut = true; r.mark = ''; window.RailUI.prefs.setConnected('gemini', false); return 'Signed out of Gemini'; },
-            'Sign in': (r) => { r.signedOut = false; r.mark = 'is-green'; window.RailUI.prefs.setConnected('gemini', true); return 'Signed in to Gemini'; },
+            'Sign out': (r) => { r.signedOut = true; r.mark = ''; window.StillhetUI.prefs.setConnected('gemini', false); return 'Signed out of Gemini'; },
+            'Sign in': (r) => { r.signedOut = false; r.mark = 'is-green'; window.StillhetUI.prefs.setConnected('gemini', true); return 'Signed in to Gemini'; },
             'Set quota': (r, x) => x.dialog({ title: 'Set the Gemini quota', yes: 'Save', note: 'Google does not report one. Worca counts requests against the number you set here, and Pulse warns near it.', fields: [{ key: 'gemQuota', label: 'Requests a day', type: 'number', placeholder: 'No quota', value: x.sv.gemQuota }], check: (v) => (+v.gemQuota >= 0 ? '' : 'A quota is a number'), then: (v, sv) => { if (v.gemQuota === sv.gemQuota) return ''; sv.gemQuota = v.gemQuota; return v.gemQuota ? `Gemini quota: ${v.gemQuota} requests a day` : 'Gemini quota cleared'; } }),
             'Clear quota': (r, x) => { x.sv.gemQuota = ''; return 'Gemini quota cleared'; },
           } },
@@ -761,12 +761,12 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
         { name: 'Engine', sample: true, help: 'Engine for new chats. A chat can move to another engine later, from its model picker', say: 'New chats start on {chatEngine}{chatNote}', vals: { chatNote: (sv) => { const m = sv['chatModel_' + sv.chatEngine]; return m ? ` with ${m}` : sv.chatEngine === 'gemini' || sv.chatEngine === 'qwen' ? '. It needs a model: pick one under Customise' : ''; } },
           picks: { chatEngine: P('claude', [...ENGINES.filter(([id]) => id !== 'cursor'), ['cursor', 'Cursor', 'Unavailable on this Cursor version; new chats start on Claude', true]], 'The engine a new chat starts on') },
           more: ENGINES.filter(([id]) => id !== 'cursor').map(([e, label]) => chatModel(e, label.replace(' (beta)', ''))) },
-        { name: 'Abilities', say: (sv) => { if (window.RailWorld?.live) return sv.promptCheck ? 'Checks how clear a task is' : 'Does not check how clear a task is';   // live: only Prompt check is real
-          const on = [sv.scripts && 'runs scripts', sv.summaries && window.RailUI?.prefs.flag('commandSummaries') && 'sums up commands', sv.nextPrompt && 'suggests a next prompt', sv.promptCheck && 'checks how clear a task is'].filter(Boolean); return on.length ? `${on[0][0].toUpperCase()}${andList(on).slice(1)}` : 'It only answers: no scripts, no summaries, no suggestions'; }, more: [
+        { name: 'Abilities', say: (sv) => { if (window.StillhetWorld?.live) return sv.promptCheck ? 'Checks how clear a task is' : 'Does not check how clear a task is';   // live: only Prompt check is real
+          const on = [sv.scripts && 'runs scripts', sv.summaries && window.StillhetUI?.prefs.flag('commandSummaries') && 'sums up commands', sv.nextPrompt && 'suggests a next prompt', sv.promptCheck && 'checks how clear a task is'].filter(Boolean); return on.length ? `${on[0][0].toUpperCase()}${andList(on).slice(1)}` : 'It only answers: no scripts, no summaries, no suggestions'; }, more: [
           { name: 'Scripts', sample: true, say: 'Create and run scripts', sw: { key: 'scripts', on: true } },
           { name: 'Summaries', sample: true, flag: 'commandSummaries', say: 'Show each command as one line saying what it does', sw: { key: 'summaries', on: true, why: 'With Labs › Command summaries on' } },
           { name: 'Suggestions', sample: true, say: 'Suggest a next prompt after each reply', sw: { key: 'nextPrompt', on: true } },
-          // docs/rail/settings.md: the chat pref `promptCheck` (docs/prompt-check.md), saved live in the app
+          // docs/stillhet/settings.md: the chat pref `promptCheck` (docs/prompt-check.md), saved live in the app
           { name: 'Prompt check', say: 'Check how clear a task prompt is', sw: { key: 'promptCheck', on: false, live: 'chat.promptCheck' } },
         ] },
         { name: 'Limits', sample: true, help: 'On an engine other than Claude the cap is checked when a reply ends', say: 'One message may use **{turns}** turns, and a turn stops at **{capWords}**', vals: { turns: '400', cap: '', capWords: (sv) => (sv.cap ? `$${sv.cap}` : 'no cost cap') },
@@ -795,7 +795,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
         { name: 'Speech models', say: '{speechWords}', vals: { speechWords: (sv) =>  (sv.speechModels ? 'Downloaded: 480 MB; the next mic use fetches them again' : 'Not downloaded; the first mic use fetches them, up to 500 MB') }, acts: [{ label: 'Remove', off: (sv) => (sv.speechModels ? '' : 'Nothing is downloaded'), do: (sv) => { sv.speechModels = false; return 'Speech models removed'; } }] },
       ] },
       { title: 'History', meta: 'Delete removes transcripts, attachments and the worktrees checked out for them. Runs started from a chat stay.', actions: [
-        { label: 'Delete all chats', help: 'Asks first', off: (sv) => (window.RailWorld?.live || sv.chats ? '' : 'No chats to delete'),   /* live: dev's counts are read when it is pressed */ confirm: (sv) => ({ text: `Delete all ${sv.chats} chats, with ${sv.worktrees} worktrees and ${sv.attach} of attachments? They cannot be brought back.`, yes: 'Delete all', danger: true, then: (s) => { s.chats = 0; s.worktrees = 0; s.attach = '0 MB'; return 'All chats deleted'; } }), live: liveDeleteAll },
+        { label: 'Delete all chats', help: 'Asks first', off: (sv) => (window.StillhetWorld?.live || sv.chats ? '' : 'No chats to delete'),   /* live: dev's counts are read when it is pressed */ confirm: (sv) => ({ text: `Delete all ${sv.chats} chats, with ${sv.worktrees} worktrees and ${sv.attach} of attachments? They cannot be brought back.`, yes: 'Delete all', danger: true, then: (s) => { s.chats = 0; s.worktrees = 0; s.attach = '0 MB'; return 'All chats deleted'; } }), live: liveDeleteAll },
       ], rows: [
         { name: 'Chat history', sample: true, say: '**{chatsNow}** chats, **{treesNow}** worktrees and **{attachNow}** of attachments on this machine', vals: { chatsNow: (sv) => sv.chats, treesNow: (sv) => sv.worktrees, attachNow: (sv) => sv.attach } },
       ] },
@@ -901,7 +901,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     const key = 'chatModel_' + e, needs = e === 'gemini' || e === 'qwen';
     return { name: title, say: (sv) => (sv[key] || !needs ? `Chats on ${title} use {${key}}` : `Chats on ${title} {${key}}`),
       picks: { [key]: P(e === 'claude' ? 'Sonnet 5.5' : '', [['', needs ? 'need a model' : 'Worca\'s default'], ...ENGINE_MODELS[e][0].map(([, t]) => [t, t])], `The model a chat on ${title} starts on`) },
-      acts: [{ label: 'Test', help: 'Sends one tiny prompt to this model', when: (sv) => !!sv[key], do: (sv) => window.RailWould(`send ${sv[key]} one tiny prompt`) }] };
+      acts: [{ label: 'Test', help: 'Sends one tiny prompt to this model', when: (sv) => !!sv[key], do: (sv) => window.StillhetWould(`send ${sv[key]} one tiny prompt`) }] };
   }
   function importable(sv) {
     const have = (sv.__recs['models/Catalogue'] || recsSeed('models', 'Catalogue')).map((r) => r.title);
@@ -974,8 +974,8 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     meta: (id) => (id === 'notifications' ? NOTIFICATIONS : SECTIONS[id] || { meta: '' }).meta,
     min: (id) => (SECTIONS[id] || {}).min || '',
     flag: (id) => (SECTIONS[id] || {}).flag || '',
-    shows: (min, level) => window.RailUI.shows(min, level),   // the one rule is the library's
+    shows: (min, level) => window.StillhetUI.shows(min, level),   // the one rule is the library's
     // Whether a section is in the menu: its level and its Labs flag.
-    visible: (id, level) => { const x = SECTIONS[id] || {}; return window.RailUI.shows(x.min, level) && (!x.flag || window.RailUI.prefs.flag(x.flag)); },
+    visible: (id, level) => { const x = SECTIONS[id] || {}; return window.StillhetUI.shows(x.min, level) && (!x.flag || window.StillhetUI.prefs.flag(x.flag)); },
   };
 })();

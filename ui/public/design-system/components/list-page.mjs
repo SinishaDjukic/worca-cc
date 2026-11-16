@@ -1,4 +1,4 @@
-// A list page's behaviour (docs/rail/lists.md), one for every list that has selecting: it draws the list from what a page
+// A list page's behaviour (docs/stillhet/lists.md), one for every list that has selecting: it draws the list from what a page
 // names, and owns what a click, a long-press or a key means there: the sentence's menus, selecting, a row's ⋯, Show N more,
 // a group's ⌄, the strip, a Dialog and the list's editor. A page names its rows and what an action does.
 import { attrs, esc } from './html.mjs';
@@ -17,11 +17,11 @@ import { keyFacts, listMove, openShortcutsSheet, shortcutAction } from './shortc
 import { listEditor } from './tag-group.mjs';
 import { keptRoute } from './keep-open.mjs';
 
-/** How long a date section takes to fold before it is drawn folded: the Rail's change timing. */
+/** How long a date section takes to fold before it is drawn folded: the Stillhet's change timing. */
 const FOLD_MS = 200;
-/** How long a new row's drop and tint last: the Rail's flash timing. */
+/** How long a new row's drop and tint last: the Stillhet's flash timing. */
 const ARRIVE_MS = 1200;
-/** How many live marks in a list may breathe at once; the rest hold still (docs/rail/lists.md, list.calm-motion). */
+/** How many live marks in a list may breathe at once; the rest hold still (docs/stillhet/lists.md, list.calm-motion). */
 export const BREATHE = 3;
 /**
  * Calm motion: in a row with work under it, only the deepest live thing breathes (a chat running one task: the task);
@@ -85,7 +85,7 @@ export function listController({ root, spec }) {
   const s = { pick: selectClear(), menu: '', more: new Set(), shut: new Set(), treeShut: new Set(), treeSeen: new Set(), opening: '', seen: new Set(), arrived: new Map(), groups: new Map(), rounds: new Set(), roundsAll: new Set(), confirm: null, pop: null, dialog: null, focus: '', flash: '', order: [], rows: new Map() };
   const dots = () => icon('more', 16);
   // folded date sections are kept per list, so Older stays folded when you come back
-  const FOLD_KEY = `worca-rail.fold.${spec.noun}`;
+  const FOLD_KEY = `worca-stillhet.fold.${spec.noun}`;
   s.opened = new Set();
   try { const kept = JSON.parse(win.localStorage.getItem(FOLD_KEY) || '[]'); (Array.isArray(kept) ? kept : kept.shut || []).forEach((id) => s.shut.add(id)); (kept.opened || []).forEach((id) => s.opened.add(id)); } catch { /* a remembered fold is a convenience */ }
   const keepShut = () => { try { win.localStorage.setItem(FOLD_KEY, JSON.stringify({ shut: [...s.shut], opened: [...s.opened] })); } catch { /* as above */ } };
@@ -123,7 +123,7 @@ export function listController({ root, spec }) {
     const groups = ready ? v.sections.filter((x) => x.rows.length).map((x) => {   // list.sections: an empty one is not drawn
       const shut = isShut(x);
       const limit = x.limit || LIST_SHOWN, all = s.more.has(x.id) || x.rows.length <= limit;
-      // the row you are on never folds behind Show N more: it stays under the first ones (docs/rail/lists.md › list.fold-keeps-current)
+      // the row you are on never folds behind Show N more: it stays under the first ones (docs/stillhet/lists.md › list.fold-keeps-current)
       const rows = shut ? [] : all ? x.rows : [...x.rows.slice(0, limit), ...x.rows.slice(limit).filter((r) => r.current || r.holds)];
       const walk = (r) => { s.order.push(r.key); (r.tree || []).forEach(walk); if (r.members && groupOpen(r)) r.members.forEach(walk); }; rows.forEach(walk);
       s.top.push(...rows.filter((r) => r.pick !== false).map((r) => r.key));   // Select all: a group's row stands for its members, so a count never counts one twice

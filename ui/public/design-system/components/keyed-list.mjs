@@ -1,4 +1,4 @@
-// A list redrawn on live data (docs/rail/components.md `comp.keyed-patch`): patched by key, so an item whose drawing did
+// A list redrawn on live data (docs/stillhet/components.md `comp.keyed-patch`): patched by key, so an item whose drawing did
 // not change keeps its node (and the focus, caret, scroll and selection in it); live redraws wait for the next frame.
 
 const MEMO = new WeakMap();   // container -> Map(key -> { html, nodes }) in order, the last strings drawn (never the DOM's)
@@ -96,7 +96,7 @@ export function patchKeyed(container, items, { carry } = {}) {
 }
 
 /**
- * Draws a region made of named parts (docs/rail/components.md `comp.patch-parts`): `parts` is `{ name: html }`, drawn in
+ * Draws a region made of named parts (docs/stillhet/components.md `comp.patch-parts`): `parts` is `{ name: html }`, drawn in
  * its key order, and patched by name with `patchKeyed`, so a part whose string did not change keeps its nodes (its focus,
  * caret, scroll, an open menu), a changed part is replaced with its neighbours kept, an empty part (`''`, null,
  * undefined) draws nothing, and a redraw that changes nothing writes nothing. Part names are never integer-like: JS
