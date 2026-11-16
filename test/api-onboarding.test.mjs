@@ -108,9 +108,12 @@ test('DELETE of the LAST workspace clears workspaceGuideSeen; deleting one of tw
       assert.equal((await del('wks-guide-0000000a')).status, 200);
       assert.equal((await (await get()).json()).workspaceGuideSeen, true);
     } },
-    { name: 'the last deleted: unseen again', run: async () => {
+    { name: 'the last deleted: unseen again, but the workspaces area stays seen in guidesSeen', run: async () => {
       assert.equal((await del('wks-guide-0000000b')).status, 200);
-      assert.equal((await (await get()).json()).workspaceGuideSeen, false);
+      const s = await (await get()).json();
+      assert.equal(s.workspaceGuideSeen, false);
+      assert.equal(s.guidesSeen.workspaces, true);
+      await post({ guidesReset: true });
     } },
   ]);
 });
@@ -133,4 +136,51 @@ test('Stillhet: GET carries the ask switch and the issues URL; POST stillhetAske
   assert.notEqual(JSON.parse(readFileSync(settingsFile(), 'utf8')).onboarding?.stillhetAsked, true);
   process.env.WORCA_STILLHET_ASK = '1';
   try { assert.equal((await (await get()).json()).stillhetAsk, true); } finally { delete process.env.WORCA_STILLHET_ASK; }
+});
+
+test('guidesSeen: POST persists, refusals are 400 and byte-identical, guidesReset clears; a seen-only write never pins uiLevel', async () => {
+  const { readFileSync, rmSync, existsSync } = await import('node:fs');
+  const { settingsFile } = await import('../src/core/settings.mjs');
+  const file = () => (existsSync(settingsFile()) ? readFileSync(settingsFile(), 'utf8') : '');
+  const level = () => { try { return JSON.parse(file()).uiLevel; } catch { return undefined; } };
+  await checkRows([
+    { name: 'POST {guidesSeen:{runs:true}} persists and GET carries it', run: async () => {
+      const r = await post({ guidesSeen: { runs: true } });
+      assert.equal(r.status, 200);
+      assert.deepEqual((await r.json()).guidesSeen, { runs: true });
+      assert.deepEqual((await (await get()).json()).guidesSeen, { runs: true }, 'persisted');
+    } },
+    { name: 'an unknown area, a non-boolean value and a non-object map are each a 400 that writes nothing', run: async () => {
+      const before = file();
+      const bodies = [{ guidesSeen: { nope: true } }, { guidesSeen: { runs: 'yes' } }, { guidesSeen: 'runs' }, { guidesSeen: [] }, { guidesReset: 'yes' }];
+      for (const body of bodies) {
+        const r = await post(body);
+        assert.equal(r.status, 400, JSON.stringify(body));
+        assert.match((await r.json()).error, /how-it-works area|guidesSeen|guidesReset/);
+        assert.equal(file(), before, `byte-identical after ${JSON.stringify(body)}`);
+      }
+    } },
+    { name: 'guidesReset:true clears the map', run: async () => {
+      const r = await post({ guidesReset: true });
+      assert.equal(r.status, 200);
+      assert.deepEqual((await r.json()).guidesSeen, {});
+      assert.deepEqual((await (await get()).json()).guidesSeen, {});
+    } },
+    { name: 'D-13: seen-only writes leave uiLevel unstored; a 400 leaves the file byte-identical', run: async () => {
+      rmSync(settingsFile(), { force: true });
+      assert.equal(level(), undefined);
+      assert.equal((await post({ guidesSeen: { runs: true } })).status, 200);
+      assert.equal(level(), undefined, 'guidesSeen does not pin the interface mode');
+      assert.equal((await post({ workspaceGuideSeen: true })).status, 200);
+      assert.equal(level(), undefined, 'workspaceGuideSeen does not pin it either');
+      const before = file();
+      assert.equal((await post({ guidesSeen: { nope: true }, hidden: true })).status, 400);
+      assert.equal(file(), before);
+      assert.equal(level(), undefined, 'a refused patch pins nothing');
+    } },
+    { name: 'a patch with other keys still pins the interface mode', run: async () => {
+      assert.equal((await post({ guidesReset: true })).status, 200);
+      assert.ok(level(), 'guidesReset is not seen-only');
+    } },
+  ]);
 });

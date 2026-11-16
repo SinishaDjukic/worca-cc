@@ -174,11 +174,6 @@
       "class": "prototype-only",
       "why": "try:start/stop come from the Try-it header; on live liveMore keeps only LIVE_MORE ids (runs/run-page.js:641), so try:* is never drawn."
     },
-    "runs/run-page.js › would › send the direction": {
-      "class": "wired",
-      "why": "On live, Send direction posts RailTaskLive.act('run-direction') before the demo branch, which runs only when !LIVE_PAGE() (runs/run-page.js:1128).",
-      "via": "test/stillhet-classic-extras-task-host.test.mjs"
-    },
     "runs/run-page.js › would › check out on this machine and open a local copy": {
       "class": "wired",
       "why": "On live more:try goes to liveDirect('Try it') (runs/run-page.js:1181) before the demo branch.",
@@ -290,6 +285,11 @@
       "class": "wired",
       "why": "On live built-in tools are data-builtin (runs/run-page.js:197), which call liveTool('builtin') (:1111).",
       "via": "test/stillhet-task-tools-host-1.test.mjs"
+    },
+    "runs/run-page.js › would › send the direction": {
+      "class": "wired",
+      "why": "On live, Send direction posts RailTaskLive.act('run-direction') before the demo branch, which runs only when !LIVE_PAGE() (runs/run-page.js:1128).",
+      "via": "test/stillhet-classic-extras-task-host.test.mjs"
     },
     "runs/runs-list.js › would › open PR … on GitHub (it leaves Worca)": {
       "class": "wired",
@@ -579,6 +579,21 @@
       "class": "not-in-stillhet",
       "why": "The module's only would action, the copy fallback (settings.js:321), is reached only from the sample About section.",
       "rule": "set.not-live"
+    },
+    "stillhet-wiring.md › wire-to › Dev surfaces › ui/public/how-it-works/": {
+      "class": "not-in-stillhet",
+      "why": "FEAT-11 How it works is classic only while rail is experimental: Stillhet draws no How it works control, so this surface is never reached on live.",
+      "rule": "nav.not-live"
+    },
+    "stillhet-wiring.md › wire-to › Dev surfaces › ui/public/workspace-guide.mjs": {
+      "class": "not-in-stillhet",
+      "why": "FEAT-11 How it works is classic only while rail is experimental: Stillhet draws no How it works control, so this surface is never reached on live.",
+      "rule": "nav.not-live"
+    },
+    "stillhet-wiring.md › wire-to › Dev surfaces › ui/public/workspace-map/workspaces.html": {
+      "class": "not-in-stillhet",
+      "why": "FEAT-11 How it works is classic only while rail is experimental: Stillhet draws no How it works control, so this surface is never reached on live.",
+      "rule": "nav.not-live"
     },
     "stillhet-wiring.md › wire-to › Figure rows › settings/settings-model.js › SettingsModel.FIRST": {
       "class": "wired",

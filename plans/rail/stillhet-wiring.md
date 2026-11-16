@@ -355,6 +355,9 @@ One row per surface of today's UI that Stillhet must carry (gate.prototype in `d
 | `ui/public/shape/` | wired | The perspective chips and their Product lock, Compliance and held-back Project fit (flag proposedPerspectives): Stillhet's TaskProposal "reviewed by" picker, from `src/shared/shape/perspectives.mjs` through `live/chat-live.mjs` `perspectiveChoices` (the Perspectives proposed on the run card row above) |
 | `route › /api/team-metrics/prs` | wired | Insights › By person, a person's open row and a teammate's task: the PR states of the scope's runs (`live/insights-live.mjs` `work`, #1310) |
 | `route › /api/team-metrics/pr-events` | wired | Insights › By person, a person's open row: their pull requests made outside Worca (`live/insights-live.mjs` `work`, #1310) |
+| `ui/public/how-it-works/` | wire to | FEAT-11 How it works: classic only while rail is experimental |
+| `ui/public/workspace-guide.mjs` | wire to | FEAT-11 How it works: classic only while rail is experimental |
+| `ui/public/workspace-map/workspaces.html` | wire to | FEAT-11 How it works: classic only while rail is experimental |
 
 ## Classic controls
 

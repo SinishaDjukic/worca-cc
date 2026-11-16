@@ -137,16 +137,91 @@ test('onboarding prefs: booleans only, unknown keys refused, all-false drops the
   assert.throws(() => assertOnboardingPrefsInput({ workspaceGuideSeen: 1 }), /onboarding\.workspaceGuideSeen must be true or false/);
   assert.throws(() => assertOnboardingPrefsInput({ nope: true }), /unknown onboarding key/);
   assert.throws(() => assertOnboardingPrefsInput(null), /object/);
-  assert.deepEqual(await setOnboardingPrefs({ hidden: true }), { hidden: true, welcomeSeen: false, workspaceGuideSeen: false, stillhetAsked: false });
-  assert.deepEqual(await setOnboardingPrefs({ welcomeSeen: true }), { hidden: true, welcomeSeen: true, workspaceGuideSeen: false, stillhetAsked: false });
-  assert.deepEqual(await setOnboardingPrefs({ hidden: false }), { hidden: false, welcomeSeen: true, workspaceGuideSeen: false, stillhetAsked: false }, 'Show again keeps the welcome seen');
-  assert.deepEqual(await setOnboardingPrefs({ welcomeSeen: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false, stillhetAsked: false });
-  assert.deepEqual(await setOnboardingPrefs({ workspaceGuideSeen: true, stillhetAsked: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: true, stillhetAsked: false }, 'the walkthrough flag alone keeps the key');
+  assert.deepEqual(await setOnboardingPrefs({ hidden: true }), { hidden: true, welcomeSeen: false, workspaceGuideSeen: false, stillhetAsked: false, guidesSeen: {} });
+  assert.deepEqual(await setOnboardingPrefs({ welcomeSeen: true }), { hidden: true, welcomeSeen: true, workspaceGuideSeen: false, stillhetAsked: false, guidesSeen: {} });
+  assert.deepEqual(await setOnboardingPrefs({ hidden: false }), { hidden: false, welcomeSeen: true, workspaceGuideSeen: false, stillhetAsked: false, guidesSeen: {} }, 'Show again keeps the welcome seen');
+  assert.deepEqual(await setOnboardingPrefs({ welcomeSeen: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false, stillhetAsked: false, guidesSeen: {} });
+  assert.deepEqual(await setOnboardingPrefs({ workspaceGuideSeen: true, stillhetAsked: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: true, stillhetAsked: false, guidesSeen: {} }, 'the walkthrough flag alone keeps the key');
   assert.equal((await onboardingStatus()).workspaceGuideSeen, true, 'GET /api/onboarding carries it');
-  assert.deepEqual(await setOnboardingPrefs({ workspaceGuideSeen: false, stillhetAsked: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false, stillhetAsked: false });
-  assert.deepEqual(onboardingPrefs(), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false, stillhetAsked: false });
+  assert.deepEqual(await setOnboardingPrefs({ workspaceGuideSeen: false, stillhetAsked: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false, stillhetAsked: false, guidesSeen: {} });
+  assert.deepEqual(onboardingPrefs(), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false, stillhetAsked: false, guidesSeen: {} });
   const s = await onboardingStatus();
   assert.equal(s.hidden, false);
+  assert.deepEqual(s.guidesSeen, {}, 'GET /api/onboarding always carries the map');
+});
+
+test('onboarding guidesSeen: validated whole-patch, merged (true sets, false deletes), reset composes, empty drops the key', async () => {
+  const { settingsFile, isSeenOnlyPatch } = await import('../src/core/settings.mjs');
+  const { readFileSync, existsSync } = await import('node:fs');
+  const onDisk = () => (existsSync(settingsFile()) ? JSON.parse(readFileSync(settingsFile(), 'utf8')) : {});
+  await checkRows([
+    { name: 'every new refusal has its own words', run: () => {
+      assert.throws(() => assertOnboardingPrefsInput({ guidesSeen: [] }), /onboarding\.guidesSeen must be an object/);
+      assert.throws(() => assertOnboardingPrefsInput({ guidesSeen: 'runs' }), /onboarding\.guidesSeen must be an object/);
+      assert.throws(() => assertOnboardingPrefsInput({ guidesSeen: null }), /onboarding\.guidesSeen must be an object/);
+      assert.throws(() => assertOnboardingPrefsInput({ guidesSeen: { nope: true } }), /unknown how-it-works area "nope"/);
+      assert.throws(() => assertOnboardingPrefsInput({ guidesSeen: { runs: 'yes' } }), /onboarding\.guidesSeen\.runs must be true or false/);
+      assert.throws(() => assertOnboardingPrefsInput({ guidesReset: 1 }), /onboarding\.guidesReset must be true or false/);
+      assert.throws(() => assertOnboardingPrefsInput({ other: true }), /unknown onboarding key "other"/);
+      assert.doesNotThrow(() => assertOnboardingPrefsInput({ guidesSeen: { runs: true, chat: false }, guidesReset: false }));
+    } },
+    { name: 'isSeenOnlyPatch: only guidesSeen / workspaceGuideSeen keys', run: () => {
+      assert.equal(isSeenOnlyPatch({ guidesSeen: { runs: true } }), true);
+      assert.equal(isSeenOnlyPatch({ workspaceGuideSeen: true }), true);
+      assert.equal(isSeenOnlyPatch({ guidesSeen: { runs: true }, workspaceGuideSeen: false }), true);
+      assert.equal(isSeenOnlyPatch({ guidesSeen: { runs: true }, hidden: true }), false);
+      assert.equal(isSeenOnlyPatch({}), false, 'an empty body keeps today\'s pin');
+      assert.equal(isSeenOnlyPatch({ welcomeSeen: true }), false);
+      assert.equal(isSeenOnlyPatch({ stillhetAsked: true }), false);
+      assert.equal(isSeenOnlyPatch({ guidesReset: true }), false);
+      assert.equal(isSeenOnlyPatch({ guidesSeen: { runs: true }, guidesReset: true }), false);
+    } },
+    { name: 'true sets a key, false deletes it, other keys stay', run: async () => {
+      let p = await setOnboardingPrefs({ guidesSeen: { runs: true, chat: true } });
+      assert.deepEqual(p.guidesSeen, { runs: true, chat: true });
+      assert.deepEqual(onDisk().onboarding.guidesSeen, { runs: true, chat: true });
+      p = await setOnboardingPrefs({ guidesSeen: { chat: false } });
+      assert.deepEqual(p.guidesSeen, { runs: true });
+      assert.equal(p.hidden, false, 'booleans untouched');
+    } },
+    { name: 'a refused patch writes nothing (prefs and file unchanged)', run: async () => {
+      const before = onboardingPrefs();
+      const fileBefore = readFileSync(settingsFile(), 'utf8');
+      await assert.rejects(setOnboardingPrefs({ hidden: true, guidesSeen: { runs: true, nope: true } }), /unknown how-it-works area/);
+      assert.deepEqual(onboardingPrefs(), before);
+      assert.equal(readFileSync(settingsFile(), 'utf8'), fileBefore);
+    } },
+    { name: 'the returned prefs are a fresh object (mutating them changes nothing stored)', run: () => {
+      const p = onboardingPrefs();
+      p.guidesSeen.design = true;
+      assert.deepEqual(onboardingPrefs().guidesSeen, { runs: true });
+    } },
+    { name: 'stored junk is ignored on read (unknown area, non-true value)', run: async () => {
+      const { writeFileSync } = await import('node:fs');
+      const file = onDisk();
+      writeFileSync(settingsFile(), JSON.stringify({ ...file, onboarding: { guidesSeen: { runs: true, bogus: true, chat: 'yes', design: false } } }));
+      assert.deepEqual(onboardingPrefs().guidesSeen, { runs: true });
+    } },
+    { name: 'guidesReset clears the map and workspaceGuideSeen, and composes with the same patch', run: async () => {
+      await setOnboardingPrefs({ workspaceGuideSeen: true, hidden: true });
+      const p = await setOnboardingPrefs({ guidesReset: true, guidesSeen: { stats: true } });
+      assert.deepEqual(p.guidesSeen, { stats: true }, 'the reset runs first, then the patch map');
+      assert.equal(p.workspaceGuideSeen, false);
+      assert.equal(p.hidden, true, 'other flags stay');
+      const q = await setOnboardingPrefs({ guidesReset: true });
+      assert.deepEqual(q.guidesSeen, {});
+    } },
+    { name: 'the onboarding key drops only when every flag is false AND the map is empty', run: async () => {
+      await setOnboardingPrefs({ hidden: false, guidesSeen: { runs: true } });
+      assert.ok(onDisk().onboarding, 'a map alone keeps the key');
+      await setOnboardingPrefs({ guidesSeen: { runs: false } });
+      assert.equal('onboarding' in onDisk(), false);
+      await setOnboardingPrefs({ hidden: true });
+      assert.equal('guidesSeen' in onDisk().onboarding, false, 'an empty map is omitted');
+      await setOnboardingPrefs({ hidden: false });
+      assert.equal('onboarding' in onDisk(), false);
+    } },
+  ]);
 });
 
 test('resetWorkspaceGuideIfNoWorkspaces: clears the flag only when it is set AND no workspace is left', async () => {
@@ -166,6 +241,12 @@ test('resetWorkspaceGuideIfNoWorkspaces: clears the flag only when it is set AND
     { name: 'seen + none left: cleared, true', run: async () => {
       assert.equal(await resetWorkspaceGuideIfNoWorkspaces(), true);
       assert.equal(onboardingPrefs().workspaceGuideSeen, false);
+    } },
+    { name: 'seen + none left: the one write also marks the workspaces area as seen (D-5)', run: async () => {
+      await setOnboardingPrefs({ workspaceGuideSeen: true });
+      assert.equal(await resetWorkspaceGuideIfNoWorkspaces(), true);
+      assert.equal(onboardingPrefs().workspaceGuideSeen, false);
+      assert.equal(onboardingPrefs().guidesSeen.workspaces, true);
     } },
     { name: 'not seen + none left: nothing to undo, false (no write)', run: async () => {
       assert.equal(await resetWorkspaceGuideIfNoWorkspaces(), false);

@@ -4,7 +4,8 @@
 // PATH — and never written by the client: finishing a step ticks it on its own,
 // Restart / Show again are trivially safe, and an established install meets a
 // checklist that already knows what it has done. The only stored flags are the
-// flags in settings.mjs#onboardingPrefs (hidden, welcomeSeen, workspaceGuideSeen).
+// prefs in settings.mjs#onboardingPrefs (hidden, welcomeSeen, workspaceGuideSeen,
+// stillhetAsked, guidesSeen).
 import { getDb } from './db.mjs';
 import { countProjects } from './projects.mjs';
 import { countWorkspaces } from './workspaces.mjs';
@@ -49,14 +50,15 @@ export async function detectClaude({ recheck = false, ready = claudeReady, probe
 }
 
 /**
- * The nine ticks plus the two stored flags, in one call. The Claude step needs
+ * The nine ticks plus the stored prefs, in one call. The Claude step needs
  * the CLI found AND not signed out (`auth` is preflight's probeClaudeAuth state;
  * 'unknown' — mock, an older CLI — never un-ticks it). `recheck` skips the
  * probe's remembered answer (the Connect dialog's Check again).
  * @param {{recheck?:boolean, detect?:typeof detectClaude}} [opts]  `detect`: a test seam
  * @returns {Promise<{steps:Record<string,boolean>, done:number, total:number,
  *   claude:{bin:string, hint:string|null, auth:'signed-in'|'signed-out'|'unknown'|null, configDirectory:string|null},
- *   hidden:boolean, welcomeSeen:boolean, workspaceGuideSeen:boolean}>}
+ *   hidden:boolean, welcomeSeen:boolean, workspaceGuideSeen:boolean, stillhetAsked:boolean,
+ *   guidesSeen:Record<string,true>}>}
  */
 export async function onboardingStatus({ recheck = false, detect = detectClaude } = {}) {
   const db = getDb();
@@ -94,11 +96,12 @@ export async function onboardingStatus({ recheck = false, detect = detectClaude 
  * again. Writes only when there is something to undo — the flag is set and no workspace is
  * left — so a delete that leaves workspaces, or an install that never opened the walkthrough,
  * touches no file.
- * @returns {Promise<boolean>} true when the flag was cleared
+ * @returns {Promise<boolean>} true when the flag was cleared (guidesSeen.workspaces is set in the same write)
  */
 export async function resetWorkspaceGuideIfNoWorkspaces() {
   if (countWorkspaces() > 0) return false;
   if (!onboardingPrefs().workspaceGuideSeen) return false;
-  await setOnboardingPrefs({ workspaceGuideSeen: false });
+  // The same write keeps the workspaces area seen in guidesSeen (D-5): only the legacy flag is cleared.
+  await setOnboardingPrefs({ workspaceGuideSeen: false, guidesSeen: { workspaces: true } });
   return true;
 }

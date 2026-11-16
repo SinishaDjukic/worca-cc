@@ -7,7 +7,7 @@ import { listNotifications, markAllRead, markRead, unreadCount } from '../../../
 import { onboardingStatus } from '../../../src/core/onboarding.mjs';
 import { BUGS_URL } from '../../../src/core/run-report.mjs';
 import { stillhetAskOpen } from '../../../src/core/stillhet.mjs';
-import { nightModeHereSince, nightModeHereSinceFor, nightModeSettings, nightModeToggle, nightModeToggleFor, onboardingPrefs, setOnboardingPrefs } from '../../../src/core/settings.mjs';
+import { assertOnboardingPrefsInput, isSeenOnlyPatch, nightModeHereSince, nightModeHereSinceFor, nightModeSettings, nightModeToggle, nightModeToggleFor, onboardingPrefs, setOnboardingPrefs } from '../../../src/core/settings.mjs';
 import { awayPersonOf, badRequest, emitChanged, isFreshInstall, isTruthy, notifReader, pinUiLevel, resolveProjectDir } from '../../server.mjs';
 
 export function register(app) {
@@ -75,8 +75,10 @@ app.get('/api/away-mode', (req, res) => {
 // ---------------------------------------------------------------------------
 // Getting started (docs/getting-started.md). GET is the derived checklist —
 // eight ticks computed from the store + PATH, never stored — plus the stored flags.
-// POST writes ONLY those flags ({hidden?, welcomeSeen?, workspaceGuideSeen?}; booleans; unknown keys
-// 400) and answers with the same full payload, so one round trip repaints.
+// POST writes ONLY the stored prefs ({hidden?, welcomeSeen?, workspaceGuideSeen?, stillhetAsked?,
+// guidesSeen?, guidesReset?}; invalid or unknown keys 400, nothing written) and answers with the same
+// full payload, so one round trip repaints. A seen-only body (guidesSeen / workspaceGuideSeen) does not
+// pin the interface mode: opening a guide is not a first action.
 // ---------------------------------------------------------------------------
 // ?recheck=1 skips the remembered Claude sign-in answer (the dialog's Check again).
 app.get('/api/onboarding', async (req, res) => {
@@ -85,8 +87,10 @@ app.get('/api/onboarding', async (req, res) => {
 });
 app.post('/api/onboarding', async (req, res) => {
   try {
-    await pinUiLevel();                        // before welcomeSeen flips and ends "fresh install"
-    await setOnboardingPrefs(req.body || {});
+    const body = req.body || {};
+    assertOnboardingPrefsInput(body);          // a refused body writes nothing, not even the pin
+    if (!isSeenOnlyPatch(body)) await pinUiLevel();   // before welcomeSeen flips and ends "fresh install"
+    await setOnboardingPrefs(body);
   }
   catch (err) { return badRequest(res, err && err.message ? err.message : String(err)); }
   emitChanged('onboarding-changed');
