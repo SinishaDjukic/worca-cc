@@ -125,7 +125,7 @@
   }
   function parts0() {
     const projects = [...new Set(data.chats.map((c) => c.project || 'No project'))].sort();
-    return [{ word: 'Showing', id: 'show', text: showOf(view.show).text, tip: 'Which chats the list shows', items: SHOWS.map((x) => ({ id: x.id, text: x.text, help: x.help, checked: view.show === x.id, hint: count({ show: x.id }) })) },
+    return [{ word: 'Showing', id: 'show', tabs: ['all', 'needs', 'running'], text: showOf(view.show).text, tip: 'Which chats the list shows', items: SHOWS.map((x) => ({ id: x.id, text: x.text, help: x.help, checked: view.show === x.id, hint: count({ show: x.id }) })) },
       { word: 'from', id: 'from', text: view.from === 'all' ? 'all projects' : view.from, tip: 'Which project they belong to', items: [{ id: 'all', text: 'all projects', checked: view.from === 'all', hint: count({ from: 'all' }) }, { sep: true }, ...projects.map((p) => ({ id: p, text: p, checked: view.from === p, hint: count({ from: p }) }))] },
       R.byPart({ by: view.by, choices: [{ id: 'day' }, { id: 'state', help: `${NEEDS()}, Running, Recent` }, { id: 'project' }, { id: 'topic', help: 'One section per group, then Ungrouped' }, { id: 'ai', help: 'A helper job names the topics (Models › Jobs: Haiku); your groups are kept' }] })];
   }

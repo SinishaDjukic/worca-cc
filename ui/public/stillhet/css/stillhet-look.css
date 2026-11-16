@@ -59,3 +59,28 @@ body{-webkit-font-smoothing:antialiased;}
 :is(.rc-board,.pz-app,.app,.mk-tools) .btn-sm:not(.btn-icon){height:32px;padding:0 12px;font-size:var(--fs-meta);}
 :is(.rc-board,.pz-app,.app) .btn-quiet:not(.btn-icon){border-color:var(--line-2);color:var(--ink);background:var(--panel);}
 :is(.rc-board,.pz-app,.app) .btn-quiet:not(.btn-icon):hover:not(:disabled){background-color:var(--hover);}
+
+/* FilterRow (list.filters; from classic's tabs and dropdown filters): tabs with counts, then labelled pickers of a
+   fixed width. Nothing in it changes size when a value changes. */
+.filter-row{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px 12px;min-width:0;}
+.filter-tabs{display:inline-flex;align-items:center;gap:2px;padding:2px;border-radius:var(--r-sm);background:var(--field);flex:none;max-width:100%;}
+.filter-tab,.pd-base.filter-tab{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;margin:0;border:0;border-radius:var(--r-xs);background:none;color:var(--ink-2);font:500 var(--fs-meta)/1 var(--sans);white-space:nowrap;cursor:pointer;}
+.filter-tab:hover{color:var(--ink);}
+.filter-tab[aria-pressed="true"],.pd-base.filter-tab.is-on{background:var(--panel);color:var(--ink);box-shadow:0 0 0 1px var(--line-2);}
+.filter-tab .n{font-size:var(--fs-caption);color:var(--ink-2);font-variant-numeric:tabular-nums;}
+.filter-tab:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+.filter-field{display:inline-flex;flex-direction:column;gap:4px;min-width:0;flex:0 1 auto;}
+.filter-l{font:400 var(--fs-caption)/1 var(--sans);color:var(--ink-2);}
+.pd-base.is-words.is-field{display:inline-flex;align-items:center;justify-content:space-between;gap:6px;width:148px;max-width:100%;height:32px;padding:0 8px 0 10px;margin:0;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);color:var(--ink);font:500 var(--fs-meta)/1 var(--sans);overflow:hidden;}
+.pd-base.is-words.is-field:hover,.pd-base.is-words.is-field[aria-expanded="true"]{background:var(--hover);}
+.pd-base.is-words.is-field svg{flex:none;}
+.filter-field .pz-pick{display:block;max-width:100%;}
+.filter-row .pz-pick{position:relative;}
+/* in a bar the fields share the bar's width two to a row */
+.bar-list .filter-row,.bar-back .filter-row{display:flex;gap:8px;margin:0 0 8px;}
+.bar-list .filter-tabs,.bar-back .filter-tabs{flex:1 1 100%;}
+.bar-list .filter-field,.bar-back .filter-field{flex:1 1 0;}
+.bar-list .pd-base.is-words.is-field,.bar-back .pd-base.is-words.is-field{width:100%;}
+.bar-list .list-sentence,.bar-back .list-sentence{display:block;line-height:normal;}
+.filter-tabs{overflow:hidden;}
+.bar-list .filter-tab,.bar-back .filter-tab{flex:1 1 auto;justify-content:center;padding:0 6px;min-width:0;}

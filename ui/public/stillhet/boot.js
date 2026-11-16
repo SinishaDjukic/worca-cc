@@ -7,8 +7,8 @@
   var base = self ? self.src.replace(/boot\.js(\?.*)?$/, '') : '';
 
   var STYLES = {
-    app: ['/style.css', 'css/stillhet-look.css', 'css/stillhet.css', 'pulse/pulse.css', 'shell/shell.css'],
-    prototype: ['app.css', 'css/stillhet-look.css', 'css/stillhet.css', 'pulse/pulse.css', 'shell/shell.css', '../workflows/node-graph.css']
+    app: ['/style.css', 'css/stillhet-look.css', 'css/stillhet.css', 'pulse/pulse.css', 'shell/shell.css', 'runs/task.css', 'centers/forms.css', 'settings/settings.css', 'css/places.css', 'css/access.css'],
+    prototype: ['app.css', 'css/stillhet-look.css', 'css/stillhet.css', 'pulse/pulse.css', 'shell/shell.css', 'runs/task.css', 'centers/forms.css', 'settings/settings.css', 'css/places.css', 'css/access.css', '../workflows/node-graph.css']
   };
   var HEAD = ['components.js', 'graph.js'];
   var HOST_SCRIPTS = {

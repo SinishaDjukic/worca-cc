@@ -21,10 +21,12 @@ import { ORIGIN_MARKS, originLabel } from '../../chat-origin.mjs';
  * @param {string} [o.chevron]
  * @param {string} [o.menuCls]  a state on the menu (its fade)
  */
-export function listWord({ id, text, items, tip = '', align = '' }, { open = '', chevron = '', menuCls = '' } = {}) {
+export function listWord({ id, text, items, tip = '', align = '', field = '', tab = false, on: pressed = false }, { open = '', chevron = '', menuCls = '' } = {}) {
   const on = open === id;
   const menu = on ? compactMenu({ items: items.map((it) => (it.sep || it.header ? it : { ...it, id: `${id}|${it.id}` })), cls: `pz-menu${align === 'right' ? ' is-right' : ''}${menuCls}`, pickAttr: 'data-pick', motion: false }) : '';
-  return wordPicker({ text, tip, cls: 'is-words', wrapCls: 'pz-pick', chevron: chevron || icon('chevron', 12), open: on, menuHtml: menu, attrs: { 'data-menu': id } });
+  // inside a FilterRow the picker is a field (its label named for a screen reader) or the row's last tab
+  const look = tab ? `is-words filter-tab is-more${pressed ? ' is-on' : ''}` : field ? 'is-words is-field' : 'is-words';
+  return wordPicker({ text, tip, cls: look, wrapCls: 'pz-pick', chevron: chevron || icon('chevron', 12), open: on, menuHtml: menu, attrs: { 'data-menu': id, ...(field ? { 'aria-label': `${field}: ${text}` } : {}) } });
 }
 
 /** small.names-short: a picker holding names says the first two and how many more: "a, b, +3". */
@@ -32,17 +34,38 @@ export function namesWord(names = [], shown = 2) {
   return names.length > shown ? `${names.slice(0, shown).join(', ')}, +${names.length - shown}` : names.join(', ');
 }
 
+// What a part of the old sentence is called as a field (list.filters): the label over its picker.
+const FILTER_LABELS = { Showing: 'Show', from: 'Project', by: 'Group by', 'started by': 'Started by', using: 'Workflow', on: 'Days', in: 'Period', of: 'Of', as: 'As', 'this': 'Time', 'then by': 'Then by', 'compared with': 'Compared with' };
+const sentenceCase = (t) => String(t).charAt(0).toUpperCase() + String(t).slice(1);
+
 /**
- * The list's sentence: `Showing [what ▾] from [where ▾] by [grouping ▾]`, each choice in its menu with its count.
+ * FilterRow (list.filters; from classic's tabs and dropdown filters): what a list shows, as controls that keep their
+ * place. A part with `tabs` is a row of tabs, each with its count; the choices not named there sit behind a last tab,
+ * More. Every other part is a labelled picker of a fixed width whose value cuts short, so picking one never moves
+ * another. A pick reports `data-pick="<id>|<item>"`, from a tab as from a menu.
  * @param {object} o
- * @param {{word:string, id:string, text:string, items:object[], tip?:string}[]} o.parts
- * @param {string} [o.open]
+ * @param {{id:string, word?:string, label?:string, text:string, items:object[], tip?:string, tabs?:string[]}[]} o.parts
+ *   `label` names the field (else the old sentence word's label); `tabs` lists the item ids drawn as tabs
+ * @param {string} [o.open]     the id of the open menu
  * @param {string} [o.chevron]
  * @param {string} [o.menuCls]
  */
-export function listSentence({ parts, open = '', chevron = '', menuCls = '' }) {
-  return parts.map((p) => `<span class="list-part">${esc(p.word)} ${listWord(p, { open, chevron, menuCls })}</span>`).join(' ');
+export function filterRow({ parts, open = '', chevron = '', menuCls = '' }) {
+  const labelOf = (p) => p.label || FILTER_LABELS[p.word] || sentenceCase(p.word || p.id);
+  const field = (p) => `<span class="filter-field"><span class="filter-l" id="fl-${esc(p.id)}">${esc(labelOf(p))}</span>${listWord({ ...p, text: sentenceCase(p.text), field: labelOf(p) }, { open, chevron, menuCls })}</span>`;
+  const tabsOf = (p) => {
+    const real = p.items.filter((it) => !it.sep && !it.header);
+    const shown = p.tabs.map((id) => real.find((it) => it.id === id)).filter(Boolean), rest = real.filter((it) => !shown.includes(it));
+    const cur = rest.find((it) => it.checked);
+    const tab = (it) => `<button type="button" class="filter-tab"${attrs({ 'data-pick': `${p.id}|${it.id}`, 'data-key': `pick:${p.id}:${it.id}`, 'aria-pressed': String(!!it.checked), title: it.help || null })}>${esc(sentenceCase(it.text))}${it.hint !== undefined && it.hint !== '' ? `<span class="n">${esc(it.hint)}</span>` : ''}</button>`;
+    const more = rest.length ? listWord({ id: p.id, text: cur ? sentenceCase(cur.text) : 'More', items: rest, tip: p.tip, field: labelOf(p), tab: true, on: !!cur }, { open, chevron, menuCls }) : '';
+    return `<span class="filter-tabs" role="group"${attrs({ 'aria-label': labelOf(p) })}>${shown.map(tab).join('')}${more}</span>`;
+  };
+  return `<span class="filter-row">${parts.map((p) => (p.tabs ? tabsOf(p) : field(p))).join('')}</span>`;
 }
+
+/** The list's filters. The name is the old one: a list's "sentence" is a FilterRow now (list.filters). */
+export function listSentence(o) { return filterRow(o); }
 
 /**
  * How every list may be grouped, in one order and one set of words: date first (the default), then state, project,

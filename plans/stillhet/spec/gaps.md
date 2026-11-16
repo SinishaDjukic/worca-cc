@@ -7,7 +7,7 @@ walk of classic and the prototype (baseline round, [assessment.md](assessment.md
 Each row is a function people need, not a control. **Must** means the full build is not done without it. **Later** means
 it is designed and built after the first full build, and until then Stillhet says where to do it in classic. **Drop**
 means Stillhet does not offer it, by a decision, with the reason. A row marked **(agreed)** is a call the owner agreed to on 16 November
-confirm ([assessment.md](assessment.md), Decisions).
+([assessment.md](assessment.md), Decisions).
 
 ## The shell
 
