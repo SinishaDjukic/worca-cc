@@ -253,33 +253,41 @@ function formLabels(ask) {
   for (const [k, p] of Object.entries(props)) if (!out.has(k) && str(p?.title)) out.set(k, p.title);
   return out;
 }
-function roundDecisions(r, step) {
-  const who = r.night || r.answeredBy === NIGHT_ACTOR ? 'away' : 'you';
+// who answered: Away mode; another person on a shared sign-in (classic's personLabel: dev's answeredBy, never "You" for
+// someone else); else you. `viewer`: the signed-in person's name on a shared sign-in, '' otherwise (people are not shown)
+function whoOf(r, viewer) {
+  if (r.night || r.answeredBy === NIGHT_ACTOR) return { who: 'away' };
+  const by = str(r.answeredBy).trim();
+  return viewer && by && by !== 'local' && lc(by) !== lc(viewer) ? { who: 'person', by } : { who: 'you' };
+}
+function roundDecisions(r, step, viewer = '') {
+  const { who, by } = whoOf(r, viewer), person = by ? { by } : {};
   if (isObj(r.ask)) {   // a form round (formAskOf): one decision, its values as Label: value
     const values = isObj(r.formAnswer?.values) ? r.formAnswer.values : isObj(r.ask.values) ? r.ask.values : {};
     const labels = formLabels(r.ask);
     const a = Object.entries(values).filter(([, v]) => v != null && v !== '' && !(Array.isArray(v) && !v.length)).map(([k, v]) => `${labels.get(k) || k}: ${formValue(v)}`).join(' · ');
-    return a ? [{ step, q: str(r.ask.title) || str(r.ask.form) || 'Form', a, who }] : [];
+    return a ? [{ step, q: str(r.ask.title) || str(r.ask.form) || 'Form', a, who, ...person }] : [];
   }
   const answers = arr(r.answers).filter(isObj), notes = arr(r.night?.questions).filter(isObj);
   return arr(r.questions).filter((q) => isObj(q) && str(q.question)).flatMap((q) => {
     const a = str(answers.find((x) => x.id === q.id)?.choice).trim();
     if (!a) return [];
     const n = who === 'away' ? notes.find((x) => x.id === q.id) : null, why = str(n?.rationale).trim().replace(/\.$/, '');
-    return [{ step, q: q.question, a, who, ...(why ? { note: (n.flagged ? 'please check: ' : '') + why } : {}) }];
+    return [{ step, q: q.question, a, who, ...person, ...(why ? { note: (n.flagged ? 'please check: ' : '') + why } : {}) }];
   });
 }
-/** F-3-04: dev's `clarify` and `stepQuestions` (qa) → the Decisions part's rows: [{ step, q, a, who: you|away, note? }]. The run's
- *  clarify first (step Clarify), then each round in dev's order, named as the step list names its node, `· cycle N` past the first. */
-export function decisionsOf(qa = null, state = {}) {
+/** F-3-04: dev's `clarify` and `stepQuestions` (qa) → the Decisions part's rows: [{ step, q, a, who: you|away|person, by?, note? }].
+ *  The run's clarify first (step Clarify), then each round in dev's order, named as the step list names its node, `· cycle N`
+ *  past the first. `viewer`: the shared sign-in's name ('' when people are not shown): another person's answer names them. */
+export function decisionsOf(qa = null, state = {}, viewer = '') {
   if (!isObj(qa)) return [];
   const names = stepNamesOf(state);
-  const out = isObj(qa.clarify) ? roundDecisions(qa.clarify, 'Clarify') : [];
+  const out = isObj(qa.clarify) ? roundDecisions(qa.clarify, 'Clarify', viewer) : [];
   for (const r of arr(qa.stepQuestions)) {
     if (!isObj(r)) continue;
     const cycle = Number((/#(\d+)$/.exec(str(r.stepKey)) || [])[1]);
     const step = (names.get(str(r.nodeId)) || str(r.agentKey) || str(r.nodeId)) + (cycle > 1 ? ` · cycle ${cycle}` : '');
-    out.push(...roundDecisions(r, step));
+    out.push(...roundDecisions(r, step, viewer));
   }
   return out;
 }
@@ -334,7 +342,7 @@ export function taskPageOf(input = {}, { now = 0 } = {}) {
     stages,
     gate,
     ask,
-    decisions: decisionsOf(input.qa, state),
+    decisions: decisionsOf(input.qa, state, str(input.viewer)),
     ...(failedChecks ? { failedChecks } : {}),
     pauseAfterStep: state.pauseAfterStep === true,
     // the workflow the task ran (its stepper's template, slice 7 D17): the Workflow dialog opens it in Workflows

@@ -434,6 +434,15 @@ test('F-3-04: decisionsOf: an unanswered question is no decision; the step falls
   assert.equal(decisionsOf({ stepQuestions: [qa.stepQuestions[1]] }, { steps: [{ nodeId: 'n_y', agentKey: 'designer' }] })[0].step, 'designer');
 });
 
+test('F-3-04: decisionsOf names another person\'s answer on a shared sign-in (who: person, by); the viewer\'s own (any case), Away mode and no sign-in stay as before', () => {
+  const round = (answeredBy) => ({ stepKey: '3:n_y#1', nodeId: 'n_y', questions: [{ id: 'q', question: 'Q?' }], answers: [{ id: 'q', choice: 'A' }], ...(answeredBy ? { answeredBy } : {}) });
+  const qa = { stepQuestions: [round('mara@acme.dev'), round('SAM@acme.dev'), round('night-mode'), round('')] };
+  assert.deepEqual(decisionsOf(qa, {}, 'sam@acme.dev').map((x) => [x.who, x.by]), [['person', 'mara@acme.dev'], ['you', undefined], ['away', undefined], ['you', undefined]]);
+  assert.deepEqual(decisionsOf(qa, {}).map((x) => x.who), ['you', 'you', 'away', 'you'], 'no shared sign-in: people are not shown');
+  const clar = { clarify: { questions: [{ id: 'c', question: 'C?' }], answers: [{ id: 'c', choice: 'Yes' }], answeredBy: 'mara@acme.dev' } };
+  assert.deepEqual(decisionsOf(clar, {}, 'sam@acme.dev'), [{ step: 'Clarify', q: 'C?', a: 'Yes', who: 'person', by: 'mara@acme.dev' }]);
+});
+
 test('F-3-04: decisionsOf: a form round is one decision, Label: value joined; with no values it is left out', () => {
   const ask = { kind: 'form', form: 'size', version: 1, title: 'Pick a size', layout: [{ type: 'group', children: [{ field: 'w', label: 'Width' }] }],
     answerSchema: { type: 'object', properties: { w: { type: 'number' }, h: { type: 'number', title: 'Height' }, tags: { type: 'array' } } } };

@@ -302,6 +302,16 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
   }
 
   /** The one input the page and the card read (D3). */
+  // who is looking (dev's GET /api/whoami, as classic's viewer): asked once, only when a task holds an answer someone signed
+  // its name to; a shared sign-in gives the name another person's answer is told from, anything else '' (people not shown)
+  let viewer = null;
+  function viewerOf(qa) {
+    if (viewer !== null) return typeof viewer === 'string' ? viewer : '';
+    const signed = (r) => r && typeof r.answeredBy === 'string' && r.answeredBy && r.answeredBy !== 'night-mode';
+    if (!qa || !(signed(qa.clarify) || (qa.stepQuestions || []).some(signed))) return '';
+    viewer = request('GET', '/api/whoami').then((res) => { viewer = res.ok && res.data?.shared === true && str(res.data.name).trim() !== 'local' ? str(res.data.name).trim() : ''; notify(''); });
+    return '';
+  }
   function inputOf(id) {
     const r = resolve(id);
     let row = rowOf(id) || (r && ((r.runId && rowOf(r.runId)) || rowOf(r.pipelineId))) || { id }; const live = liveOf(id);
@@ -312,7 +322,8 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
     // (nor does a frame's 0 hide a time or cost dev saved: a round's frames can read $0 after it ended)
     const fresh = live?.state ? Object.fromEntries(Object.entries(live.state).filter(([k, v]) => v != null && !(Array.isArray(v) && !v.length) && !(v === 0 && saved[k] > 0))) : {};
     const state = live ? { ...saved, ...fresh, pendingQuestion: live.pendingQuestion ?? saved.pendingQuestion, status: live.status || saved.status } : saved;
-    return { row, state, checks: checksOf(id), qa: tasks.get(id)?.qa || null };
+    const qa = tasks.get(id)?.qa || null;
+    return { row, state, checks: checksOf(id), qa, viewer: viewerOf(qa) };
   }
 
   /** A frame that changes a task's PR or ends a round drops its checks entry (D5). */

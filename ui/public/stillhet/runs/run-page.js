@@ -360,10 +360,10 @@ function decisionsPanel(v) {
   const ds = v.tabData.decisions;
   const by = (w) => ds.filter((x) => x.who === w).length;
   const ask = v.ask;
-  const sum = [by('you') ? by('you') + ' by you' : '', by('away') ? by('away') + ' by Away mode' : '', by('default') ? by('default') + ' by default' : ''].filter(Boolean).join(' · ');
+  const sum = [by('you') ? by('you') + ' by you' : '', by('person') ? by('person') + ' by others' : '', by('away') ? by('away') + ' by Away mode' : '', by('default') ? by('default') + ' by default' : ''].filter(Boolean).join(' · ');
   const waiting = ask ? R.row({ kind: 'route', cls: 'is-ask', rail: R.stepDot({ dotCls: 'is-problem', word: 'Waiting for you', icon: 'question' }), text: `<div class="dc-body"><p class="rtab-q">${esc(ask.q)}</p><p class="rtab-dim">Waiting for you · ${R.textLink({ label: 'Answer it in the card', attrs: { 'data-goanswer': true, 'data-key': 'dc-answer' } })}</p></div>` }) : '';
   return `<section class="rtab"><div class="ch-head"><h2 class="rtab-h">${ds.length ? ds.length + (ds.length === 1 ? ' decision' : ' decisions') : 'Nothing decided yet'}</h2><span class="rtab-dim">${esc(sum)}</span></div>
-    <ol class="rd-route-list dc-list">${waiting}${ds.map((x) => R.row({ kind: 'route', cls: 'is-done', rail: R.stepDot({ dotCls: 'dc-who is-' + x.who, word: WHO[x.who], icon: ICON_WHO[x.who], size: 11 }), text: `<div class="dc-body"><p class="rtab-q">${esc(x.q)}</p><p class="dc-a">${esc(x.a)}</p><p class="rtab-dim">${esc([x.step, WHO[x.who], x.note, x.when].filter(Boolean).join(' · '))}</p></div>` })).join('')}</ol></section>`;
+    <ol class="rd-route-list dc-list">${waiting}${ds.map((x) => R.row({ kind: 'route', cls: 'is-done', rail: R.stepDot({ dotCls: 'dc-who is-' + x.who, word: WHO[x.who] || x.by, icon: ICON_WHO[x.who] || ICON_WHO.you, size: 11 }), text: `<div class="dc-body"><p class="rtab-q">${esc(x.q)}</p><p class="dc-a">${esc(x.a)}</p><p class="rtab-dim">${esc([x.step, WHO[x.who] || x.by, x.note, x.when].filter(Boolean).join(' · '))}</p></div>` })).join('')}</ol></section>`;
 }
 function panelHtml(v) {
   const t = v.tabs.find((x) => x.sel) || v.tabs[0]; const id = t.id;

@@ -61,6 +61,15 @@ test('F-3-04: a question Away mode answered reads "Answered for you · Away mode
   assert.match(p.querySelector('.ch-head').textContent, /1 by Away mode/);
 });
 
+test('F-3-04: on a shared sign-in, a question another person answered names them, never "You"; the viewer\'s own answer reads "You"', async () => {
+  const qa = { clarify: { ...QA.clarify, answeredBy: 'mara@acme.dev' }, stepQuestions: [{ ...QA.stepQuestions[0], answeredBy: 'Sam@acme.dev' }] };
+  const { d } = await open('h2', { state: STATE, ...qa }, { read: (u) => (u === '/api/whoami' ? [200, { name: 'sam@acme.dev', shared: true, source: 'access' }] : null) });
+  await settle(200);
+  const p = await part(d, 'decisions');
+  assert.deepEqual(decisionRows(p).map((r) => r[2]), ['Clarify · mara@acme.dev', 'Clarify · mara@acme.dev', 'Implementation · cycle 2 · You']);
+  assert.match(p.querySelector('.ch-head').textContent, /1 by you · 2 by others/);
+});
+
 test('F-3-04: an unanswered question is not listed; a waiting question is listed once, as the waiting row', async () => {
   const q = { id: 'q-run', kind: 'clarify', questions: [{ id: 'w1', question: 'Which format?', options: ['CSV', 'JSON'] }] };
   const state = { ...TASK_DETAILS.plan.state, status: 'running', pendingQuestion: q };
