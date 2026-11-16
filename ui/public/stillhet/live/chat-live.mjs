@@ -202,7 +202,7 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
   const term = createTerminalLive({ fetch, send, now });   // D14: a command's TerminalPane
   let spare = '';   // D10: a new chat whose first message was refused and whose cleanup DELETE failed; the retry reuses it
   const notify = (id) => { for (const fn of fns) { try { fn(id); } catch (e) { console.error(e); } } };
-  const entry = (id) => { if (!threads.has(id)) threads.set(id, { state: '', model: null, buffer: [], loading: null, reloading: false, hidden: new Set() }); return threads.get(id); };
+  const entry = (id) => { if (!threads.has(id)) threads.set(id, { state: '', model: null, buffer: [], loading: null, reloading: false, hidden: new Set(), caught: '' }); return threads.get(id); };
 
   // D13: the pending keys, the request and the refusal are the shared runner's (Tasks uses the same one)
   // a bulk action says one sentence for all its calls (chats-column.js): `quiet` is that call's own, never shared
@@ -235,11 +235,16 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
       }
       e.model = createThreadModel({ threadId: id });
       e.model.load(snap);
+      e.caught = '';
       // frames that came while the thread was read: applied once, in seq order (the reducer drops what the GET already had)
       const q = e.buffer.map((f, i) => [f, i]).sort((a, b) => ((a[0].seq ?? 0) - (b[0].seq ?? 0)) || a[1] - b[1]).map(([f]) => f);
       e.buffer = [];
       e.state = 'ready';
       const end = applyAll(e, q);
+      // a reply runs: its replay is asked for again now the model can take it (classic loadThread), in case the
+      // subscribe sent before the read was dropped by a socket that was not open yet
+      // that subscribe is also the catch-up for a frame the waiting batch adopted, so none is sent for it again
+      if (snap.inFlight) { send({ type: 'subscribe', threadId: id }); const lv = e.model.live(); if (lv?.adopted) e.caught = lv.messageId; }
       notify(id);
       checkRunWith(id);
       settle(id, end || 'load');
@@ -253,6 +258,14 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
     for (const f of q) { const r = e.model.apply(f); if (!r?.dropped && !r?.gap && ENDS.has(f?.type)) end = f; }
     return end;
   }
+  // a reply the model adopted mid-turn (a broadcast frame came, the subscribe's replay did not): ask for the replay once
+  // per model and message, so its beginning comes back (the reducer rewinds the adopted turn to the replayed start)
+  function catchUp(e, id) {
+    const live = e.model?.live?.();
+    if (!live?.adopted || e.caught === live.messageId) return;
+    e.caught = live.messageId;
+    send({ type: 'subscribe', threadId: id });
+  }
   /** A socket frame (live-adapter.mjs passes every `ask-*` one). A frame for an open thread is reduced; one that comes
    *  while the thread is read waits for it; a seq gap reads the thread again. */
   function frame(f) {
@@ -264,6 +277,7 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
     if (e.state !== 'ready' || !e.model) return;
     const r = e.model.apply(f);
     if (r?.gap) { open(id, { force: true }); return; }
+    if (!r?.dropped && typeof f.seq === 'number') catchUp(e, id);
     if (!r?.dropped) { notify(id); checkRunWith(id); if (ENDS.has(f.type)) settle(id, f); }
   }
   // the lists a Chat control picks from, read once from dev's own GET routes (the person's choices come from these, never
@@ -327,7 +341,9 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
   function turns(id) {
     const e = threads.get(id);
     if (!e || e.state !== 'ready') return [];
-    const rw = e.runWith, messages = e.model.messages().filter((m) => !e.hidden.has(m.id));
+    // the reply that streams draws its text so far (the model keeps it in `live` until ask-done): a copy, never the model's row
+    const lv = e.model.live(), grown = (m) => (lv && m.id === lv.messageId && m.status === 'streaming' && str(lv.text).length > str(m.text).length ? { ...m, text: lv.text } : m);
+    const rw = e.runWith, messages = e.model.messages().filter((m) => !e.hidden.has(m.id)).map(grown);
     const out = turnsOf({ messages, runLinks: linksOf(e.model), inFlight: e.model.inFlight() }, { tasks: tasksOf(id), now: now(), commandOf: (b) => commandOf(id, b) });
     if (!rw) return out;
     // D5: while Run with waits, its workflow card stays the one Run with card (saved meanwhile) and the run proposal the

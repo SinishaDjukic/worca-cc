@@ -71,7 +71,19 @@ function addsOf(inventory, counts) {
   }
   return { adds, parts };
 }
-const secretsOf = (inventory) => [...arr(inventory?.taskSources).flatMap((s) => arr(s?.secrets)), ...arr(inventory?.chatChannels).flatMap((c) => arr(c?.secrets)), ...arr(inventory?.modelSecrets).map((x) => str(x?.label) || str(x?.key))].filter(Boolean);
+// V3-13: what a plugin that is not installed asks for, from its inventory: each key in plain words, the key kept as the hint;
+// a model secret with its own label keeps it
+const fromKey = (k, secret) => ({ label: plainLabel(k), key: k, secret });
+const secretsOf = (inventory) => [...arr(inventory?.taskSources).flatMap((s) => arr(s?.secrets)), ...arr(inventory?.chatChannels).flatMap((c) => arr(c?.secrets))].map(str).filter(Boolean).map((k) => fromKey(k, true))
+  .concat(arr(inventory?.modelSecrets).filter((x) => str(x?.label) || str(x?.key)).map((x) => (str(x.label) ? { label: x.label, key: '', secret: true } : fromKey(x.key, true))));
+
+const ACRONYMS = ['api', 'url', 'uri', 'id', 'mcp', 'ssh', 'pat', 'jwt', 'http', 'https'];
+const BRAND_WORDS = { github: 'GitHub', jira: 'Jira', slack: 'Slack', telegram: 'Telegram', cloudflare: 'Cloudflare', notion: 'Notion' };
+/** A config key in plain words (D4): `JIRA_API_TOKEN` → `Jira API token`, `apiToken` → `API token`. */
+export function plainLabel(key) {
+  const words = str(key).replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2').split(/[\s_-]+/).filter(Boolean).map((w) => w.toLowerCase());
+  return words.map((w, i) => (ACRONYMS.includes(w) ? w.toUpperCase() : BRAND_WORDS[w] || (i === 0 ? w.charAt(0).toUpperCase() + w.slice(1) : w))).join(' ');
+}
 
 /** Dev's lists as the prototype's plugin records (D5–D7). `configs` maps an installed plugin's name to its
  *  GET /api/plugins/:name/config answer (its asks are those labels); without one the inventory's secret keys ask. */
@@ -88,12 +100,13 @@ export function pluginsOf(markets = [], rows = [], configs = {}) {
     const counts = inv ? countsOf(inv) : row?.contributions || {};
     const { adds, parts } = addsOf(inv, counts);
     const cfg = row ? configs?.[name] : null;
-    const asks = cfg ? setupFieldsOf(cfg).map((f) => f.label) : secretsOf(inv);
+    const needs = cfg ? setupFieldsOf(cfg).map((f) => ({ label: f.label, key: f.rawKey || '', secret: f.secret })) : secretsOf(inv);
     const repoUrl = row ? str(row.repo) : str(pick?.m?.url), sha = row ? str(row.pinnedSha) : str(pick?.m?.lastSync?.sha), subdir = row ? str(row.subdir) : str(entry?.subdir);
     const rec = {
       id: name, name: nameOf(entry, row) || name, brand: brandOf(inv), ver: str(row?.version) || str(entry?.version), kind: kindOf(counts),
       market: (row ? str(row.marketplace) : str(pick?.m?.id)) || 'linked',
-      what: str(row?.description) || str(entry?.description), adds, asks, installed: !!row,
+      what: str(row?.description) || str(entry?.description), adds, asks: needs.map((n) => n.label), needs, installed: !!row,
+      pinned: row ? str(row.pinnedSha).slice(0, 7) : '', updateSha: str(row?.latest?.sha).slice(0, 7),
       needsSetup: !!row && row.setup?.ok === false,
       source: { repoUrl, sha, subdir, webUrl: githubWebUrl(repoUrl, sha, subdir) || null },
       row,
@@ -108,6 +121,8 @@ export function pluginsOf(markets = [], rows = [], configs = {}) {
  *  required fields that are everyday, or still empty though advanced (dev's set-up state counts those too). A
  *  multi-profile source carries its profile (null: none yet, one is made first); with no field to ask, it asks for that
  *  first profile alone (`profileOnly`). */
+// its manifest label, else its key in plain words with the key kept (`rawKey`, V3-13)
+const labelOf = (f) => (str(f.label) ? { label: f.label } : { label: plainLabel(f.key), rawKey: f.key });
 export function setupFieldsOf(config) {
   if (!config || typeof config !== 'object') return [];
   const out = [];
@@ -115,12 +130,12 @@ export function setupFieldsOf(config) {
   const kept = (schema, values) => arr(schema).filter((f) => f && f.required === true && str(f.key)).map((f) => [f, setOf(values, f)]).filter(([f, set]) => f.advanced !== true || !set);
   for (const s of arr(config.sources)) {
     const id = str(s?.id), prof = s?.multiProfile ? { profile: s.profile || null } : {}, list = kept(s?.schema, s?.values);
-    for (const [f, set] of list) out.push({ target: 'source', sourceId: id, ...prof, key: f.key, label: str(f.label) || f.key, secret: f.secret === true, set });
+    for (const [f, set] of list) out.push({ target: 'source', sourceId: id, ...prof, key: f.key, ...labelOf(f), secret: f.secret === true, set });
     if (!list.length && s?.multiProfile && !s.profile) out.push({ target: 'source', sourceId: id, profile: null, key: '', label: `A first profile for ${id}`, secret: false, set: false, profileOnly: true });
   }
-  for (const c of arr(config.channels)) for (const [f, set] of kept(c?.schema, c?.values)) out.push({ target: 'channel', channelId: str(c.id), key: f.key, label: str(f.label) || f.key, secret: f.secret === true, set });
+  for (const c of arr(config.channels)) for (const [f, set] of kept(c?.schema, c?.values)) out.push({ target: 'channel', channelId: str(c.id), key: f.key, ...labelOf(f), secret: f.secret === true, set });
   // model secrets are required by dev's setup state (plugin-setup-state.mjs) though their schema says otherwise; the broker holds them when on
-  if (config.models && !config.models.broker) for (const f of arr(config.models.schema)) if (str(f?.key)) out.push({ target: 'modelSecrets', key: f.key, label: str(f.label) || f.key, secret: true, set: setOf(config.models.values, f) });
+  if (config.models && !config.models.broker) for (const f of arr(config.models.schema)) if (str(f?.key)) out.push({ target: 'modelSecrets', key: f.key, ...labelOf(f), secret: true, set: setOf(config.models.values, f) });
   return out;
 }
 
