@@ -14,6 +14,7 @@ const MODEL_WORDS = Object.fromEntries(Object.entries(MODEL_IDS).map(([k, v]) =>
 const ALIAS = Object.fromEntries(Object.keys(MODEL_IDS).map((w) => [w.split(' ')[0].toLowerCase(), w]));
 const cap = (f) => f.charAt(0).toUpperCase() + f.slice(1), ver = (maj, min) => (min ? `${maj}.${min}` : maj);
 const worded = new Map();   // words → the id they were made from: an untouched step saves back its own id, not the words
+const asIs = new Set();   // ids that read as themselves: words equal to one save back as it, never as a claude id
 export const modelWords = (id) => {
   if (!id) return '';
   const s = String(id);
@@ -21,14 +22,14 @@ export const modelWords = (id) => {
   if (ALIAS[s.toLowerCase()]) return ALIAS[s.toLowerCase()];
   const m = /^claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/.exec(s), o = !m && /^claude-(\d+)(?:-(\d{1,2}))?-(opus|sonnet|haiku)(?:-\d{8})?$/.exec(s);
   const words = m ? `${cap(m[1])} ${ver(m[2], m[3])}` : o ? `${cap(o[3])} ${ver(o[1], o[2])}` : s;
-  if (words === s) return s;
+  if (words === s) { asIs.add(s); return s; }
   // Two ids that word the same (a dated id and its alias, or a dated id of a picker's model): the later one, and any id
   // whose words are a picker's, reads as itself, so each saves back exactly.
-  if (MODEL_IDS[words] || (worded.has(words) && worded.get(words) !== s)) return s;
+  if (MODEL_IDS[words] || asIs.has(words) || (worded.has(words) && worded.get(words) !== s)) return s;
   worded.set(words, s);
   return words;
 };
-export const modelIdOf = (words) => MODEL_IDS[words] || worded.get(words) || words;
+export const modelIdOf = (words) => MODEL_IDS[words] || (asIs.has(words) ? words : worded.get(words)) || words;
 /** The words a step reads when its node sets no model: dev's run config decides it. */
 export const DEFAULT_MODEL = 'its default model';
 export const DEFAULT_EFFORT = 'default effort';

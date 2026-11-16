@@ -1,6 +1,7 @@
 // test/stillhet-workflow-map.test.mjs — dev's workflows, agents and scripts as the prototype's records (Stillhet slice 7
 // D4), and the graph model the live page draws equals dev's engine manifest (Invariant 5).
 import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { SEED_TEMPLATES } from '../src/core/graph/seed-templates.mjs';
 import { GRAPH_DEFAULT_WORKFLOW, GRAPH_LEAN_WORKFLOW, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_SHAPE_WORKFLOW } from '../src/core/workflows.mjs';
@@ -127,6 +128,17 @@ test('V-TW-06: loopEnds falls back to labels for 3-tuples and steps without [9]'
   assert.deepEqual(loopEnds(keyedSteps, ['Review', 'Build', 1, 'd2']), { from: 2, to: 1 }, 'one node id alone: labels');
 });
 
+test('V-TW-06: the classic script\'s loopEnds copy keeps the same non-array guard as the exported one', () => {
+  const src = readFileSync(new URL('../ui/public/stillhet/workflows/workflows.js', import.meta.url), 'utf8');
+  const line = /const loopEnds = (\(steps, loop\) => \{.*?return \{ from: at\(0\), to: at\(1\) \}; \});/.exec(src);
+  assert.ok(line, 'workflows.js keeps a loopEnds copy taking (steps, loop)');
+  const classic = new Function(`return ${line[1]}`)();
+  const steps = [['Plan', 'planner'], ['Build', 'implementer'], ['Review', 'reviewer']];
+  for (const [st, l] of [[steps, null], [steps, undefined], [steps, 'Review'], [steps, { 0: 'Review' }], [null, ['Review', 'Build', 2]], [undefined, ['Review', 'Build']], [[null, ...steps], ['Review', 'Build', 2]], [steps, ['Review', 'Build', 2]]])
+    assert.deepEqual(classic(st, l), loopEnds(st, l), `${JSON.stringify(st)} / ${JSON.stringify(l)}`);
+  assert.deepEqual(classic(steps, null), { from: -1, to: -1 }, 'a missing loop never throws');
+});
+
 test('V-TW-19: modelWords words aliases and every claude-* id; others stay as typed', () => {
   const cases = { opus: 'Opus 5.5', Sonnet: 'Sonnet 5.5', HAIKU: 'Haiku 5.5', 'claude-opus-5-5': 'Opus 5.5', 'claude-opus-4-1': 'Opus 4.1', 'claude-sonnet-4-5-20250929': 'Sonnet 4.5',
     'claude-sonnet-4-20250514': 'Sonnet 4', 'claude-3-5-sonnet-20241022': 'Sonnet 3.5', 'claude-3-haiku-20240307': 'Haiku 3', 'claude-fable-5-2': 'Fable 5.2', 'gpt-9-mini': 'gpt-9-mini', '': '' };
@@ -143,6 +155,15 @@ test('V-TW-19: modelIdOf round-trips a worded id; canonical words save the 5.5 i
   assert.equal(modelIdOf('Opus 5.5'), 'claude-opus-5-5');
   assert.equal(modelIdOf(modelWords('opus')), 'claude-opus-5-5', 'an alias saves as the pinned id (open finding)');
   assert.equal(modelIdOf('Sonnet 9.9'), 'Sonnet 9.9', 'words never worded save as typed');
+});
+
+test('V-TW-19: a non-claude id equal to a worded id\'s words saves back as itself, never as the claude id', () => {
+  const claude = 'claude-sonnet-4-3', literal = 'Sonnet 4.3';
+  assert.equal(modelWords(literal), literal, 'a non-claude id reads as itself');
+  assert.equal(modelIdOf(modelWords(literal)), literal);
+  assert.equal(modelWords(claude), claude, 'a claude id whose words are taken by an id that reads as itself reads raw');
+  assert.equal(modelIdOf(modelWords(claude)), claude);
+  assert.equal(modelIdOf(modelWords(literal)), literal, 'still itself after the claude id was read');
 });
 
 test('V-TW-19: two ids that word the same both round-trip: the later one reads as its raw id', () => {

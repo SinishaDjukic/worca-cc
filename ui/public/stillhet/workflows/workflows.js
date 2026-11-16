@@ -73,7 +73,7 @@
   // V-TW-06: a loop's ends among the steps, -1 for one not found: by node when the loop carries both ([3], [4]) against
   // a step's [9], else the first step of that label (a demo row, a draft from before). live/workflow-map.mjs loopEnds is
   // the same rule (this classic script cannot import it); both are pinned by tests.
-  const loopEnds = (steps, l) => { const byNode = l[3] && l[4], at = (k) => steps.findIndex((s) => (byNode ? s[9] === l[k + 3] : s[0] === l[k])); return { from: at(0), to: at(1) }; };
+  const loopEnds = (steps, loop) => { const l = Array.isArray(loop) ? loop : [], list = Array.isArray(steps) ? steps : [], byNode = l[3] && l[4], at = (k) => list.findIndex((s) => (byNode ? s?.[9] === l[k + 3] : s?.[0] === l[k])); return { from: at(0), to: at(1) }; };
   // a step in loop words: its name, and its place when another step has the same name ("Build (step 2)")
   const stepName = (steps, i) => { const n = steps[i]?.[0] ?? ''; return steps.filter((s) => s[0] === n).length > 1 ? `${n} (step ${i + 1})` : n; };
   const shape = (w) => `${stepsWord(w.steps.length)} · ${w.tasks ? `used by ${w.tasks} ${w.tasks === 1 ? 'task' : 'tasks'}` : 'not used yet'}`;
