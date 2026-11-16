@@ -59,7 +59,7 @@ what it belongs to.
 
 **Try it never dead-ends.** It lives in ⋯: it says what is happening (`Checking out…`, `Setting up…`), then offers the next step: `Start Web`, then `Open :3000` and `Stop Web`, or `Open Actions` when there is no service (`tryStep`).
 
-**What opens, and what does not** (mocks: `plans/stillhet/mocks/run-expand-rules-*.png`):
+**What opens, and what does not**:
 - **A row opens its own detail, in place:** the ask's parts, a file's diff, a step's rounds. Its › points right while
   closed and down while open; focus stays on the row.
 - **What has a problem opens by itself** (a failing test, a part of the ask not done, a failed command in Chat: its

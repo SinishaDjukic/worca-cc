@@ -180,7 +180,7 @@ for (const page of readdirSync(here('.')).filter((f) => f.endsWith('.html') && f
 });
 // --- the generated Stillhet page draws every component, as the gallery does ---
 units.push(async (add) => {
-  const { buildPage } = await import('../../../../tools/stillhet-artifact.mjs');
+  const { buildPage } = await import('../../../../tools/stillhet-design-system-page.mjs');
   const p = await b.newPage({ viewport: { width: 1280, height: 800 } });
   await p.addInitScript(() => { try { localStorage.setItem('worca-stillhet.mode', 'expert'); } catch { /* none */ } });   // the gates walk every place: Expert
   p.on('pageerror', (e) => add('the generated Stillhet page has a script error', String(e)));

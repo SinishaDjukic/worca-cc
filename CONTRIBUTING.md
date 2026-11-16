@@ -174,8 +174,8 @@ pipeline agent behavior belong in `agents/`.
 UI work starts at [docs/stillhet/README.md](docs/stillhet/README.md): the rules, one concern per file. Pages are built from
 the library in `ui/public/design-system/components/` (components and shared logic), and
 `docs/design-system-catalog.json` says which one meets which need. The prototype in
-`plans/stillhet/prototype/` is the design and wins; `npm run stillhet` builds it and opens it in your browser. The plan is
-`plans/stillhet/implementation-prompt.md`.
+`plans/stillhet/prototype/` is the design and wins; `npm run stillhet` builds it and opens it in your browser. The way in is
+`plans/stillhet/README.md`.
 
 `npm test` fails new UI code that writes a component's markup or a state's words by hand (`test/stillhet-library-gate.test.mjs`). Old
 pages are frozen by a ratchet that can only shrink: after moving a page to the library, run

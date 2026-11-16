@@ -1,4 +1,4 @@
-// The Chats column (docs/stillhet/lists.md; plans/stillhet/agreed/chat-and-runs-decisions.md C1): beside the conversation, Needs
+// The Chats column (docs/stillhet/lists.md): beside the conversation, Needs
 // you first, then Running, then Recent. The list is the library's (listController); the conversation is today's capture.
 (function () {
   const R = window.StillhetUI, M = window.ChatsListModel;

@@ -1,4 +1,4 @@
-// Marketplace on Stillhet (Wave 3, 4.1, the mock Emil agreed on 8 Nov: plans/stillhet/mocks/wave-3/marketplace.html). Its home: a
+// Marketplace on Stillhet (Wave 3, 4.1). Its home: a
 // PlaceHead with the one update to take, For you (Worca's suggestions, each with its reason), then shelves named for what
 // you want (Bring tasks in, Talk to Worca from, Give tasks tools, New agents and workflows), each plugin once, as
 // PluginCards with its brand in Stillhet's line. A plugin's page: its PlaceHead and one step, what it adds, what it asks for,

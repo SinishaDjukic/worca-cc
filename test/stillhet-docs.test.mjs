@@ -7,7 +7,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as LIB from '../ui/public/design-system/components/index.mjs';
-import { catalogHtml, chapters as pageChapters, tilesHtml } from '../tools/stillhet-artifact.mjs';
+import { catalogHtml, chapters as pageChapters, tilesHtml } from '../tools/stillhet-design-system-page.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const read = (f) => readFileSync(join(ROOT, f), 'utf8');
@@ -149,10 +149,9 @@ test('contributors and agents are pointed at the design system', () => {
   for (const a of readdirSync(join(ROOT, '.claude/agents'))) assert.match(read(`.claude/agents/${a}`), /docs\/stillhet\/README\.md/, `${a} does not point to the design system`);
 });
 
-test('the plans point at what exists, and the one names stay', () => {
-  for (const f of readdirSync(join(ROOT, 'plans/stillhet'))) if (f.endsWith('.md')) assert.doesNotMatch(read(`plans/stillhet/${f}`), /rail-restart-handoff/, f);
-  assert.match(read('plans/stillhet/implementation-prompt.md'), /`docs\/rail-agreed`/);
-  for (const f of ['CLAUDE.md', 'AGENTS.md', 'docs/stillhet/README.md']) assert.match(read(f), /Building Stillhet now/, f);
+test('the entry points lead to the one way in, and the one names stay', () => {
+  for (const f of ['CLAUDE.md', 'AGENTS.md', 'docs/stillhet/README.md']) assert.match(read(f), /Building Stillhet now:\*\* start at \[plans\/stillhet\/README\.md\]/, f);
+  for (const m of read('plans/stillhet/README.md').matchAll(/\]\(([^)#]+)\)/g)) assert.ok(existsSync(join(ROOT, 'plans/stillhet', m[1])), `plans/stillhet/README.md links ${m[1]}, which does not exist`);
   for (const f of [...chapters().map((c) => `${RAIL}/${c}`), 'docs/design-system-catalog.json']) assert.doesNotMatch(read(f), /account menu/i, `${f}: the name is the profile menu`);
 });
 
@@ -161,10 +160,6 @@ test('the motion timings are the ones the catalog names', () => {
   assert.match(look, /--motion-quick:150ms/); assert.match(t['--motion-quick'], /^150ms/);
   assert.match(look, /--motion-change:200ms/); assert.match(t['--motion-change'], /^200ms/);
   assert.match(look, /--motion-flash:1\.2s/);
-});
-
-test('no pointer to the deleted Shaping branch is left in what Agreed decided', () => {
-  for (const f of readdirSync(join(ROOT, 'plans/stillhet/agreed'))) if (f.endsWith('.md')) assert.doesNotMatch(read(`plans/stillhet/agreed/${f}`), /rail-shaping|plans\/stillhet\/shaping/, f);
 });
 
 test('the generated page holds every chapter, rule and catalog entry, from the sources alone', () => {

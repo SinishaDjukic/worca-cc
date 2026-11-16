@@ -1,4 +1,4 @@
-// Workspaces on Stillhet (Wave 3, second pass; mock plans/stillhet/mocks/wave-3/scope-2): organizational: a named set of projects
+// Workspaces on Stillhet (Wave 3, second pass): organizational: a named set of projects
 // and the map of how they connect. They live inside the one Projects place, from Advanced (projects/ws:<id>): its box on
 // the home, opened in place as its map; what Worca is unsure of comes first as yes-or-no questions. Chat first: a page
 // ends with the composer, Change projects or links in a chat leads; Edit by hand is the manual way, a draft until saved (stillhet.drafts).

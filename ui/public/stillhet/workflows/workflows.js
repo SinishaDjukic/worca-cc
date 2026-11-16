@@ -1,4 +1,4 @@
-// Workflows on Stillhet (Wave 3, second pass; mock plans/stillhet/mocks/wave-3/workflows-2): explored as the Marketplace is. The
+// Workflows on Stillhet (Wave 3, second pass): explored as the Marketplace is. The
 // bar holds ways in with counts (yours: workflows, agents, scripts; for you, your team's, the Marketplace's); Build it by
 // hand is its quiet last line, in Expert. A way opens as cards (cost, time, merged; Use it; Change it in a chat). A
 // workflow's page tells it as a WorkflowStory (Simple's drawing); Advanced and Expert show dev's real graph under it, one

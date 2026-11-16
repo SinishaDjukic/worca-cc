@@ -12,6 +12,8 @@ The lookup says which component meets a need; a pattern says where it sits. A pa
 pattern of each part; a spec names the pattern and the needs, and the place follows. When a part fits no pattern,
 propose one here before building it.
 
+**One codebase.** The prototype is Stillhet on a demo data adapter; the app is the same page code on a live adapter. There is never a second copy of a page, and a page never wraps or reuses a classic screen: it reuses classic's data, APIs and logic. Demo data and demo answers live only in the demo adapter (`gate.no-demo`).
+
 **Which pattern.** What the feature is picks its pattern; the catalog's `featureKinds` lists the same rows.
 | The feature is… | Pattern |
 |---|---|

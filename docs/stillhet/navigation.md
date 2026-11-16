@@ -22,7 +22,7 @@
 | `nav.in-view` | Keep in view, from any chat's, task's or schedule's ⋯ or the eye on a task's head, puts it in the top bar on every page, and only there, like a browser's tab: its mark and its name cut short, five at most (marks only below 1100px; one on a phone); every icon in that area, In view's marks, Ask worca and Pulse, is one size, 20px, then +N opens a menu of the rest. A mark holds still and only says where its thing stands: no pulse, no breathing. Hovered or focused, a card says what it is and where it stands, with × to take it out of view; a click opens it. The tab whose page is open has a thin ink line along its foot, grown from the centre; a pressed tab dips. It is not a PR's Watch, which fixes checks | You keep an eye on a run without a tab to manage, in one place | worca-sweep |
 | `nav.task-like-chat` | A task or a schedule opens like a conversation: a reading column, a timeline, a composer whose question goes to its chat, or starts one and links it | A task never changes while it runs; steering belongs to Chat | by hand |
 
-How you move through Worca, the same everywhere. Mocks: `plans/stillhet/mocks/nav-*.png`.
+How you move through Worca, the same everywhere.
 
 **Four depths, always in this order.** A **place** (Chat, Runs, Schedules, Statistics…: the sidebar) holds **things** (a
 run, a group, a schedule, a chat: its list's rows); a thing has **parts** (its tabs: Overview, Changes, Activity, Decisions); a

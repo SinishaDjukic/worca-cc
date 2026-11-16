@@ -19,7 +19,7 @@ export function shouldAskStillhet({ ask, asked, fresh, flagKnown, on, locked, we
 }
 
 /** Settings › Labs keeps every row, the `stillhet` row (Stillhet) in every level and whatever the ask switch says: until the end
- *  of feature 3 it is the one way into Stillhet and back (plans/stillhet/implementation-prompt.md, Opt-in and opt-out; the owner,
+ *  of feature 3 it is the one way into Stillhet and back (docs/stillhet/navigation.md `nav.design-switch`; the owner,
  *  in writing: "before enrolling everything I would recommend to be de-activated, labs is reasonable"). */
 export function stillhetLabsRow() {
   return () => true;

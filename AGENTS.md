@@ -5,7 +5,7 @@ Read `CONTRIBUTING.md` for setup, tests and the PR workflow.
 ## Any UI work starts at the design system
 
 Before you build or change a page, read [docs/stillhet/README.md](docs/stillhet/README.md). It leads; a page only composes it.
-**Building Stillhet now:** start at [plans/stillhet/implementation-prompt.md](plans/stillhet/implementation-prompt.md).
+**Building Stillhet now:** start at [plans/stillhet/README.md](plans/stillhet/README.md).
 
 - **Components and shared logic:** `ui/public/design-system/components/` (`index.mjs` exports them all). Call them; never
   write their markup or their words. `docs/design-system-catalog.json` says which one meets which need.

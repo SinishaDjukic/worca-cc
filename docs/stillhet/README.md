@@ -1,14 +1,15 @@
 # Stillhet
 
-Stillhet is the redesign of every Worca page, one page at a time. A page is specified in `plans/stillhet/`, built first in
-the prototype (`plans/stillhet/prototype/`), and built from the library (`ui/public/design-system/components/`). Until a page
-ships, the app's current page keeps the rules in `docs/design-system.md`.
+Stillhet is Worca's design system: classic's functions on one set of parts, every page built from the library
+(`ui/public/design-system/components/`), drawn first in the prototype (`plans/stillhet/prototype/`). With the `stillhet`
+flag off, Worca is classic and keeps `docs/design-system.md`.
 
-**Building Stillhet now:** start at [plans/stillhet/implementation-prompt.md](../../plans/stillhet/implementation-prompt.md).
+**Building Stillhet now:** start at [plans/stillhet/README.md](../../plans/stillhet/README.md).
 
-**When the app and Stillhet differ** (the app ships something Stillhet does not have, or does it another way), one rule
-decides, never case by case: 1. Stillhet is preferred. 2. If the app's way meets a real need, find how Stillhet takes it in.
-3. The result is Stillhet, upgraded where needed, written here. A dev way is adopted only once it is written into the prototype and `docs/stillhet`.
+**Classic's ideas are welcome.** Where a classic pattern works better than Stillhet's own (tabs, dropdown filters,
+labelled fields, bordered buttons, a row that opens on click), Stillhet takes it: drawn in Stillhet's look, added to the
+library, written here with where it came from. It is then a Stillhet pattern, never a one-off copy. Classic's screens and
+markup are never reused; its data, APIs and logic are.
 
 ## Where each concern lives
 

@@ -86,4 +86,4 @@ If the prompt says **graphify** is available, use graphify to ground the review 
 
 A change to Worca's interface follows the design system: `docs/stillhet/README.md` leads, and pages call `ui/public/design-system/components/` instead of writing its markup or words. `npm test` fails UI code that skips it.
 
-Under `stillhet`, the prototype's screen is the spec: dev contributes data, APIs and logic, never its screens or markup; read `plans/stillhet/implementation-prompt.md` first.
+Under `stillhet`, the prototype's screen is the spec: dev contributes data, APIs and logic, never its screens or markup; read `plans/stillhet/README.md` first.

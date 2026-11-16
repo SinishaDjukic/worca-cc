@@ -17,7 +17,6 @@ test('a page needs its own sweep and ds-check', () => {
   assert.deepEqual(sweepsFor(['ui/public/stillhet/settings/settings-model.js']), ['ds-check', 'pulse-sweep']);
   assert.deepEqual(sweepsFor(['ui/public/stillhet/shell/shell.js']), ['ds-check', 'worca-sweep']);
   assert.deepEqual(sweepsFor(['ui/public/stillhet/chat/chat.js']), ['ds-check', 'worca-sweep']);
-  assert.deepEqual(sweepsFor(['plans/stillhet/prototype/stillhet-switch.js']), ['ds-check']);
 });
 
 test('what feeds two pages needs both', () => {

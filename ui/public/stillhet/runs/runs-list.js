@@ -1,4 +1,4 @@
-// The Runs list (docs/stillhet/lists.md; plans/stillhet/agreed/chat-and-runs-decisions.md C3, C4): one operations view across
+// The Runs list (docs/stillhet/lists.md): one operations view across
 // every build. The library owns the behaviour (listController); this names the rows, the sentence and what an action does.
 // A row's state, word and section come from R.runState and R.sectionOf on its real run-page case, and it opens that case.
 (function () {

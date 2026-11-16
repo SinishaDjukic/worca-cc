@@ -471,7 +471,7 @@ function runsPage() {
 }
 
 // ---- Settings ----
-// The sidebar becomes Settings' menu (B: plans/stillhet/mocks/settings-menu-b-sidebar-*.png), ‹ Back to Worca at its top.
+// The sidebar becomes Settings' menu, ‹ Back to Worca at its top.
 // On a narrow screen the sidebar stays Worca's, and Settings opens on its menu as a list; a section has ‹ Settings.
 // Every section is SettingsSections of SettingsRows (the components own the alignment). Notifications is drawn here,
 // from Pulse's model; every other section comes from settings-model.js through settings.js.

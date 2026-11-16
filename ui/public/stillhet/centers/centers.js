@@ -1,4 +1,4 @@
-// The Tasks and Schedules centers (Wave 3; docs/stillhet/panels.md › panel.center; mocks plans/stillhet/mocks/wave-3/tasks-center, schedules-center):
+// The Tasks and Schedules centers (Wave 3; docs/stillhet/panels.md › panel.center):
 // the landing page of each, cards from the one store, so a card changes when its task or schedule does. And the two Legacy
 // approach forms (stillhet.chat-first), as Dialogs. Everything drawn comes from the library; this says what each thing is.
 (function () {

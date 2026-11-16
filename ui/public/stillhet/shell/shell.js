@@ -13,7 +13,7 @@
 // and what a place needs of the interface mode and Labs (the sidebar follows; a deep link above them gets one line).
 (function () {
   const R = window.StillhetUI;
-  // places Stillhet redesigns (plans/stillhet/implementation-prompt.md): until then, what each will hold, said plainly
+  // places Stillhet redesigns (plans/stillhet/README.md): until then, what each will hold, said plainly
   const SOON = {
     workflows: ['Workflows: being redesigned with Stillhet', 'Your workflows, agents and scripts as one list beside the chat; building one happens in Chat today (Build workflow).'],
     projects: ['Projects: being redesigned with Stillhet', 'Your projects as one list, each with its settings and memory; add one from Chat today (Add project).'],

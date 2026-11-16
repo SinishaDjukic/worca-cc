@@ -30,8 +30,7 @@ Worca behaves, set rarely, taking effect at once; a place is where you do work a
 settings. On a narrow screen Worca's sidebar stays, Settings opens
 on its menu as a list, and a section has `‹ Settings` above its title. The top bar's search finds every section head, group, row, folded
 row and record by its name or its words, and lands on it with the flash, opening its Customise (or its Dialog). A folded
-row its state hides lands on the row it folds under. Mocks:
-`plans/stillhet/mocks/settings-*.png`, `settings-open-light.gif`.
+row its state hides lands on the row it folds under.
 
 **Sections, in order.** Moving a row never removes it: it stays reachable, and search finds it.
 - Runs: Spending · Starting (with Schedules) · Limits · Away mode · Machine (Capacity, Tools, Network).

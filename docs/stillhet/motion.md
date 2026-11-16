@@ -16,7 +16,7 @@
 | `motion.follow-end` | A chat at its end (its last `PIN` px in view, set once in `scroll-fade.mjs`) stays at its end as a reply grows or a live update lands. Scrolled further up, it holds its place and Latest shows. Opening a chat lands on its newest turn. A follow only moves the scroll box, at once, never animated and never a redraw (`pinnedToEnd`) | You read the reply as it is written, and never lose a place you scrolled to | design-system-components |
 
 Motion shows what changed, never decorates. Every change of state on the screen eases in, quickly and with one
-curve; everything else is still. Filmed from the run page: `plans/stillhet/mocks/motion-*.gif`.
+curve; everything else is still.
 - **Three timings, one curve:** `--motion-quick` 150ms (something appears, opens or goes), `--motion-change` 200ms
   (something that was there becomes something else), `--motion-flash` 1.2s (the one flash after a jump); all on
   `--ease` `cubic-bezier(.2, 0, 0, 1)`. Nothing is slower; nothing bounces.

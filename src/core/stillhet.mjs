@@ -4,7 +4,7 @@
 export const STILLHET_ASK_ON = false;
 
 /** True when the Stillhet question may show, and the top-bar switch while Stillhet is off. Settings › Labs shows the `stillhet`
- *  row whatever this says, and the switch shows while Stillhet is on (plans/stillhet/implementation-prompt.md, Opt-in and opt-out). */
+ *  row whatever this says, and the switch shows while Stillhet is on (docs/stillhet/navigation.md `nav.design-switch`). */
 export function stillhetAskOpen(env = process.env) {
   return STILLHET_ASK_ON || env.WORCA_STILLHET_ASK === '1';
 }

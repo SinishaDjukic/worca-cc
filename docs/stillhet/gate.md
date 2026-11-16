@@ -5,6 +5,7 @@
 | `gate.pages` | Every Stillhet page passes its sweeps in every case, at its widths, in both themes | A page is checked by running it | worca-sweep |
 | `gate.controls` | Every control acts, or is disabled and says why | No dead controls | click-check |
 | `gate.new-code` | New UI code that skips the library fails npm test; old pages shrink by a ratchet | The design system has force | stillhet-library-gate |
+| `gate.flag-off` | With the `stillhet` flag off Worca is classic: the page is dev's byte for byte but for the flag's own gate rule, the same behaviour and data, and no migration that cannot be undone. An old `rail` flag in settings or `WORCA_FLAGS` is read as `stillhet` | Stillhet is opt-in, and turning it off must cost nothing | stillhet-flag-off |
 | `gate.docs` | Docs, catalog, library and gallery agree; every public export is a component, logic, an element found by need, or internal | One source, no drift | stillhet-docs |
 | `gate.colour` | Nothing wears a colour Stillhet does not have (no blue, no gold: running is ink); readable text holds 4.5:1 (3:1 large); every state's ring holds 3:1, in both themes | Colour means state, and everyone can read it | colour-check |
 | `gate.prototype` | Every change to today's UI is reflected in the Stillhet prototype, or the PR adds a `wire to` row under `## Dev surfaces` in `plans/stillhet/stillhet-wiring.md` that says why, or carries the `no-ui-change` label and a "No UI change:" line; every Settings key and every path today's UI fetches has a row or sits in the frozen baseline (`stillhet-surfaces`, in `npm test`) | One design system: nothing reaches today's UI that the prototype does not know about | prototype-pr-check |
@@ -46,7 +47,6 @@ The one table: each check, its command, when it runs and the widths it owes. Fro
 | `stillhet-perf-budgets` | `node tools/test.mjs test/stillhet-perf-budgets.test.mjs test/stillhet-perf-budgets-chat-host.test.mjs test/stillhet-perf-budgets-tasks-host.test.mjs`. Budgets in `test/fixtures/stillhet-perf-budgets.json` only go down: a lower measurement fails until the JSON is lowered, a higher one fails; the exclusion list only shrinks (D19) | Every change to `ui/public/stillhet/` or a design-system component it draws; in `npm test` | none |
 | `prototype-pr-check` | `node tools/prototype-pr-check.mjs --base origin/dev` | Every PR, in CI's `prototype` job; after adding the label or the body line, re-run the `prototype` job. Advisory until a maintainer makes it a required check in GitHub's settings | none |
 | Flag-off style diff | `npm run stillhet:style-diff -- --dev DEV_BASE` (the dev commit merged in first, one seed, a frozen clock) | Once per slice | 1280 both themes, 360 light |
-| Feature fidelity audit | No command: a live walk on the seeds (`tools/stillhet-seed-tasks.mjs`, `tools/stillhet-seed-chat-cards.mjs`) beside the prototype, scored per area in `plans/stillhet/audit-feature-1.md`; its shape is held by `test/stillhet-audit-report.test.mjs` | Once at the end of a feature, before it goes to dev | 1280 both themes, 360 light |
 | The audit by looking | No command: open every control and judge the page as a person would | Once per page, after it is built, before review | wide, narrow |
 | A person's review | The step a gate cannot do: nothing pushes or merges without it | After the audit by looking | wide, narrow |
 
@@ -63,7 +63,7 @@ click, the top bar one row, one way back at a time (`‹ Settings` only while th
 something. `ds-check`: everything on the page comes from the design system. `align-check`, on a settings tab: one left edge
 for every head, name and divider, one right edge where every row's end stops (a quiet button by its text), and each row's
 name, sentence and end on one baseline. The alignment is SettingsRow's and SettingsSection's, never a page's;
-`align-proof.mjs` shows the check catches each fault. These run on the prototype, and on the app from slice 2 (`plans/stillhet/implementation-prompt.md`).
+`align-proof.mjs` shows the check catches each fault. These run on the prototype, and on the app.
 
 **Mode.** A comparison names its mode, set on the prototype's own `file://` origin with `worca-stillhet.mode`. Expert is the default; Simple and Advanced only when a change touches what that mode shows. Modes run one after another, never in parallel.
 
@@ -93,5 +93,5 @@ name, sentence and end on one baseline. The alignment is SettingsRow's and Setti
   file that grows fails; a file that shrinks lowers its count in the same change, with `node tools/stillhet-library-gate.mjs --update`,
   which refuses a higher one.
 - **The docs, catalog, library and gallery agree** (`test/stillhet-docs.test.mjs`).
-- **The Stillhet page is generated** from these files, the catalog and the library by `node tools/stillhet-artifact.mjs`, and
+- **The Stillhet page is generated** from these files, the catalog and the library by `node tools/stillhet-design-system-page.mjs`, and
   never edited by hand. Git is the source; nothing is copied.
