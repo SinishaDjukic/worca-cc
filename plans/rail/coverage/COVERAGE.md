@@ -80,24 +80,24 @@ Each MISSING control, grouped by its finding (`plans/rail/findings.md`, PLAN.md 
 | Chat | auto | field | `route /api/agents`, `route /api/branches`, `route /api/workflows/:param` | ui/public/ask-panel.mjs:5715 |
 | Models | Save | button | `route /api/engines` | ui/public/models/models.html:22 |
 | New run | Cancel | button | `route /api/engines`, `route /api/naming/config` | ui/public/new-run/new.html:67 |
-| New run | Clear preset | button | `route /api/agents`, `route /api/scripts`, `route /api/workflows/:param` | ui/public/new-run/new.html:21 |
+| New run | Clear preset | button | `route /api/scripts` | ui/public/new-run/new.html:21 |
 | New run | Origin · latest | button | `route /api/sync` | ui/public/new-run/new.html:232 |
-| New run | Reset | button | `route /api/agents`, `route /api/mcp/preview`, `route /api/mcp/projects/:param/mcpjson`, `route /api/scripts`, `route /api/workflows/:param` | ui/public/new-run/new.html:303 |
+| New run | Reset | button | `route /api/mcp/preview`, `route /api/mcp/projects/:param/mcpjson`, `route /api/scripts` | ui/public/new-run/new.html:303 |
 | New run | Save | button | `route /api/engines`, `route /api/naming/config` | ui/public/new-run/new.html:68 |
-| New run | Save as default | button | `route /api/agents`, `route /api/mcp/preview`, `route /api/mcp/projects/:param/mcpjson`, `route /api/scripts`, `route /api/tag-dimensions`, `route /api/workflows/:param` | ui/public/new-run/new.html:112 |
+| New run | Save as default | button | `route /api/mcp/preview`, `route /api/mcp/projects/:param/mcpjson`, `route /api/scripts`, `route /api/tag-dimensions` | ui/public/new-run/new.html:112 |
 | New run | Start now instead | button | `route /api/sync` | ui/public/new-run/new.html:416 |
 | New run | Start run | button | `route /api/branches`, `route /api/sync` | ui/public/new-run/new.html:421 |
 | New run | Update preset | button | `route /api/plugins/install` | ui/public/new-run/new.html:18 |
 | New run | /absolute/path/to/project | field | `route /api/engines`, `route /api/fs/dirs`, `route /api/naming/config` | ui/public/new-run/new.html:62 |
-| New run | Engine | field | `route /api/agents`, `route /api/mcp/preview`, `route /api/mcp/projects/:param/mcpjson`, `route /api/scripts`, `route /api/workflows/:param`, `route /api/workspaces/:param/scan` | ui/public/new-run/new.html:138 |
+| New run | Engine | field | `route /api/mcp/preview`, `route /api/mcp/projects/:param/mcpjson`, `route /api/scripts`, `route /api/workspaces/:param/scan` | ui/public/new-run/new.html:138 |
 | New run | Guardrails | field | `route /api/mcp/preview`, `route /api/mcp/projects/:param/mcpjson`, `route /api/workspaces/:param/scan` | ui/public/new-run/new.html:356 |
-| New run | presetSelect | field | `route /api/agents`, `route /api/mcp/preview`, `route /api/mcp/projects/:param/mcpjson`, `route /api/scripts`, `route /api/workflows/:param` | ui/public/new-run/new.html:23 |
+| New run | presetSelect | field | `route /api/mcp/preview`, `route /api/mcp/projects/:param/mcpjson`, `route /api/scripts` | ui/public/new-run/new.html:23 |
 | New run | Project name | field | `route /api/engines`, `route /api/naming/config` | ui/public/new-run/new.html:60 |
-| New run | Workflow | field | `route /api/agents`, `route /api/mcp/preview`, `route /api/mcp/projects/:param/mcpjson`, `route /api/onboarding`, `route /api/scripts`, `route /api/workflows/:param` | ui/public/new-run/new.html:124 |
+| New run | Workflow | field | `route /api/mcp/preview`, `route /api/mcp/projects/:param/mcpjson`, `route /api/onboarding`, `route /api/scripts` | ui/public/new-run/new.html:124 |
 | New run | Workspace | field | `route /api/branches`, `route /api/sync`, `route /api/tag-dimensions` | ui/public/new-run/new.html:78 |
 | New run | Start run now Begins immediately | menu item | `route /api/sync` | ui/public/new-run/new.html:430 |
 | New run | Branch off the run before it | toggle | `route /api/branches`, `route /api/chat/status`, `route /api/plugins/:param`, `route /api/plugins/install`, `route /api/sync` | ui/public/new-run/new.html:252 |
-| New run | humanInLoop | toggle | `route /api/agents`, `route /api/mcp/preview`, `route /api/mcp/projects/:param/mcpjson`, `route /api/scripts`, `route /api/workflows/:param`, `route /api/workspaces/:param/scan` | ui/public/new-run/new.html:314 |
+| New run | humanInLoop | toggle | `route /api/mcp/preview`, `route /api/mcp/projects/:param/mcpjson`, `route /api/scripts`, `route /api/workspaces/:param/scan` | ui/public/new-run/new.html:314 |
 | Projects | Use git | button | `route /api/sync/all` | ui/public/projects/project-add.html:90 |
 | Projects | Add project | dialog | `route /api/ask/groups/undo`, `route /api/git`, `route /api/naming/config`, `route /api/policy/scopes`, `route /api/projects/:param/readiness`, `route /api/projects/create`, `route /api/projects/probe`, `route /api/source-bindings`, `route /api/sync/all`, `route /api/team-metrics/scopes` | ui/public/projects/project-add.html:2 |
 | Projects | Branch (optional) | field | `route /api/git`, `route /api/projects/create`, `route /api/projects/probe`, `route /api/sync/all` | ui/public/projects/project-add.html:52 |
@@ -405,7 +405,7 @@ Each MISSING control, grouped by its finding (`plans/rail/findings.md`, PLAN.md 
 | Marketplace | Send test message | button | `route /api/chat/status` | ui/public/marketplace/install-sheet.mjs:220 |
 | Marketplace | Skip for now | button | `route /api/chat/status` | ui/public/marketplace/install-sheet.mjs:131 |
 | New run | engineAllowUnguarded | toggle | `route /api/chat/status`, `route /api/plugins/:param`, `route /api/plugins/install` | ui/public/new-run/new.html:402 |
-| New run | mock | toggle | `route /api/agents`, `route /api/chat/status`, `route /api/plugins/:param`, `route /api/plugins/install` | ui/public/new-run/new.html:384 |
+| New run | mock | toggle | `route /api/chat/status`, `route /api/plugins/:param`, `route /api/plugins/install` | ui/public/new-run/new.html:384 |
 | New run | nightMode | toggle | `route /api/chat/status`, `route /api/plugins/:param`, `route /api/plugins/install` | ui/public/new-run/new.html:336 |
 | New run | noMemory | toggle | `route /api/chat/status`, `route /api/plugins/:param`, `route /api/plugins/install` | ui/public/new-run/new.html:343 |
 | Settings | Save | button | `route /api/answer`, `route /api/ask/models`, `route /api/chat/status`, `route /api/chat/test`, `route /api/extension/pair/:param/:param`, `route /api/openrouter/free-daily`, `route /api/runs/:param/answer`, `route /api/source-bindings` | ui/public/settings/settings.html:169 |
