@@ -440,7 +440,8 @@ test('Projects (slice 9): its own cells, each the same route on both sides; a ty
   assert.ok(!PROJECTS_CELL_IDS.some((id) => id.startsWith('state-')), 'no Projects id collides with a state- id');
   const fresh = PARTS.find((p) => p.id === 'ws-fresh-draft');
   assert.deepEqual(seedsOf(fresh, 1280), ['#bar-head [data-bar-new="place"]', '[data-menu-pick="bar-new|hand-space"]', { fill: '#pj-hand-v', text: 'Web store' }, '[data-confirm="yes"]']);
-  assert.deepEqual(seedsOf(fresh, 360).slice(0, 4), ['#mbar-menu', '#bar-head [data-bar-new="place"]', '[data-menu-pick="bar-new|hand-space"]', '#side-close'], 'narrow: the bar is the drawer, closed again over the form');
+  // F-G-fid-16: the pick itself closes the drawer (COV-1): a click on the hidden #side-close timed out every 360 cell
+  assert.deepEqual(seedsOf(fresh, 360).slice(0, 4), ['#mbar-menu', '#bar-head [data-bar-new="place"]', '[data-menu-pick="bar-new|hand-space"]', { fill: '#pj-hand-v', text: 'Web store' }], 'narrow: the bar is the drawer, and the pick closes it over the form');
   globalThis.window = { RailShell: { routes: () => ['projects', 'projects/billing-api', 'projects/ws:web-shop', 'marketplace/slack-chat', 'run/ready'] } };
   const deep = deepRoutes();
   delete globalThis.window;
