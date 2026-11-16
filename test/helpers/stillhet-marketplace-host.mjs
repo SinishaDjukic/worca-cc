@@ -17,15 +17,17 @@ const JIRA = inv({ taskSources: [{ id: 'jira', displayName: 'Jira', secrets: ['a
 const SLACK = inv({ chatChannels: [{ id: 'slack', displayName: 'Slack', platform: 'slack', ingress: 'socket', inbound: true, outbound: true, secrets: ['botToken', 'appToken'] }] });
 const SETUP = inv({ taskSources: [{ id: 'seed', displayName: 'Seed tracker', secrets: ['token'] }] });
 const READY = inv({ skills: ['tidy'] });
+// synced an hour ago: an open of #marketplace syncs only a source synced over 24 h ago (F-5-18), so the fixtures never age into one
+const SYNCED_AT = new Date(Date.now() - 3600e3).toISOString();
 const TOOL = inv({ mcpServers: [{ name: 'team-api', type: 'http', url: 'https://x' }, { name: 'team-docs', type: 'http', url: 'https://y' }] });
 
 // dev's GET answers, by URL
 export const MK_LISTS = Object.freeze({
   '/api/marketplaces': { marketplaces: [
-    { id: 'worca-official', url: OFFICIAL, name: 'Worca CC Official', description: 'x', addedAt: '2026-11-01T00:00:00.000Z', lastSync: { sha: SHA, at: '2026-11-14T10:00:00.000Z' }, warnings: [], ref: 'dev', builtin: true, lastError: null,
+    { id: 'worca-official', url: OFFICIAL, name: 'Worca CC Official', description: 'x', addedAt: '2026-11-01T00:00:00.000Z', lastSync: { sha: SHA, at: SYNCED_AT }, warnings: [], ref: 'dev', builtin: true, lastError: null,
       plugins: [{ ...entry('slack-chat', '0.2.0', SLACK, 'Talk to Worca from Slack.'), installed: false }, { ...entry('jira-source', '0.2.0', JIRA, 'Pull tasks from Jira issues.'), installed: true },
         { ...entry('seed-setup', '0.1.0', SETUP, 'A tracker that needs its token.'), installed: true }, { ...entry('seed-ready', '0.1.0', READY, 'Asks for nothing.'), installed: false }] },
-    { id: 'team-plugins', url: TEAM, name: 'team/plugins', description: '', addedAt: '2026-11-02T00:00:00.000Z', lastSync: { sha: TEAM_SHA, at: '2026-11-14T09:00:00.000Z' }, warnings: [], lastError: null,
+    { id: 'team-plugins', url: TEAM, name: 'team/plugins', description: '', addedAt: '2026-11-02T00:00:00.000Z', lastSync: { sha: TEAM_SHA, at: SYNCED_AT }, warnings: [], lastError: null,
       plugins: [{ ...entry('team-tool', '1.0.0', TOOL, 'The team API and its docs.'), installed: false }] },
   ] },
   '/api/plugins': { plugins: [
