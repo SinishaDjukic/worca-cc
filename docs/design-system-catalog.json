@@ -1432,7 +1432,7 @@
       ],
       "parts": [
         "the top bar's field: Search or ask",
-        "what it finds under it (searchResults), each with where it lives"
+        "what it finds under it (searchResults), each its name, then where it lives on the line under it (a long where wraps)"
       ],
       "rules": [
         "a pick lands on the thing (land): it comes into view and lights once"

@@ -166,7 +166,7 @@ other library calls, never a person's text: a person's text goes through the lib
 | One figure: its name, its value, of what | `figure` | Figures |
 | What a figure is made of, opened from it | `figureBreakdown` | Figures |
 | Labels that fit their line, the rest folded into +N | `fitTags` | TagGroup |
-| Search results under their area's head | `searchResults` | Search |
+| Search results under their area's head: each its name, then where it lives on the line under it; a long where wraps inside the popover | `searchResults` | Search |
 | A failure that can be read whole, until it is closed | `errorToast` | Toast |
 | Undo right after a step | `toastUndo` | Toast |
 | What a toast says, two lines at most, the whole text in its tooltip | `toastText` | Toast |
