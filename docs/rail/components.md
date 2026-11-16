@@ -19,6 +19,8 @@
 | `comp.row` | A row in a list is row(): rail, text, end, ⋯; a changed file and a stacked PR are their own rows | One rail and one end on every list | rail-gate |
 | `comp.end-column` | A list's ends share one column, as wide as the widest, capped; the title gives way first | Figures and buttons line up down a list | ds-check |
 | `comp.look-options` | No component takes a size, colour or class of its own: called with its required options it draws its full look; the few that still do are listed in the catalog and only go down | One look per role, never a page's | rail-look-options |
+| `comp.button-busy` | A button whose action is out is busy and says what it is doing (`busy(el, { label, until })`, or `button({ busy: { label } })` when drawn so): the stage line's breathing knot (look.stage-line's now step, its breath and keyframes) before a present-tense label (`Creating PR…`, `Starting the task…`, `Resuming…`; its own words + `…` when none is given), never a spinner; its width steady (never narrower than at rest, held until it settles), `disabled` so it cannot be pressed twice, `aria-busy`, the label said politely; when the action settles it is back at rest with its own words, keeps the disabled it had (or one the page set while it was busy), and takes the focus back if it had it and the person did not move it elsewhere; under reduced motion the knot stands still | A press must show it was heard and what is happening, without the button jumping or the focus being lost | design-system-components |
+| `comp.button-words` | A button's label is a short verb plus its detail (Save, Merge PR, Copy branch), three words at most, on one line: it never overflows or wraps | A label that wraps or runs out of its button cannot be read at a glance | button-audit |
 
 A Rail page is built by naming needs, not looks. Find the need, use its component as the gallery
 (`plans/rail/prototype/components.html`) shows it; sizes, colours and spacing come with the component.
@@ -31,7 +33,7 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | A step that needs fields first | Dialog, the only one for a form | Create PR |
 | Acting on several rows of a list | SelectionBar at the list's foot, while selecting | 2 selected · Clear 2 · Cancel |
 | Going to another page or place | Text link, or a ListRow you open | Changes +358 −144, a file, a step |
-| Copying text | CopyButton: a quiet 28px icon button; a tick for 1.2s and `Copied` in its tooltip and the live region; its width never changes | a branch, a command, an id |
+| Copying text | CopyButton: a real, quiet 28px icon button whose label names what it copies (`Copy`, `Copy as markdown`, `Copy code`); it copies the source exactly as passed: markdown as written, code without its prompt or line numbers. `copyFrom` writes the clipboard; a tick for 1.2s and `Copied` in its tooltip and the live region, or `Could not copy` when the clipboard refuses; focus stays on it and its width never changes | a branch, a command, an id, a reply as markdown |
 | A line icon | `icon` from the library's one set, at its one weight (1.8px); no page draws a path or picks a weight, and the sidebar's places are `nav-<view>` | ✓ on a menu item, Runs in the sidebar |
 | A place in the bar's places | NavItem, under Settings-like group heads; a Work place's + starts its own thing | Chat, Tasks, Schedules |
 | The head of the one bar | BarHead: Worca's W (the way to the places), its title, its one action, Hide | Chat + |
@@ -138,6 +140,7 @@ other library calls, never a person's text: a person's text goes through the lib
 | Whether the away screen shows now | `awayShows` | AwayScreen |
 | A state's dot on the rail, without its words | `statusDot` | StatusLine |
 | One main action with alternatives under ▾ | `splitButton` | Button |
+| A button whose action is out | `busy` | Button |
 | A line icon from the library's one set, at its one weight | `icon` | Button |
 | One item of a menu: its name, its tick or its reason when off | `menuItem` | CompactMenu |
 | Supporting actions behind ⋯, danger last | `moreMenu` | CompactMenu |
@@ -154,6 +157,8 @@ other library calls, never a person's text: a person's text goes through the lib
 | What a bulk add did, in one line | `reviewSummary` | FolderBrowser |
 | A document's name that opens it | `documentLink` | Text link |
 | The tick after something was copied | `copied` | CopyButton |
+| Writing a copy to the clipboard and saying Copied or Could not copy | `copyFrom` | CopyButton |
+| Finding a control with two tips | `doubleTips` | Tooltip |
 | Ask Worca to write a field | `suggestButton` | SuggestionField |
 | Text Worca wrote, not yet yours | `suggestedChip` | SuggestionField |
 | Worca could not write it: the text stays, Try again | `suggestionFail` | SuggestionField |
