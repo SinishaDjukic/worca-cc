@@ -347,6 +347,20 @@ One row per surface of today's UI that Stillhet must carry (gate.prototype in `d
 | `route › /api/team-metrics/prs` | wired | Insights › By person, a person's open row and a teammate's task: the PR states of the scope's runs (`live/insights-live.mjs` `work`, #1310) |
 | `route › /api/team-metrics/pr-events` | wired | Insights › By person, a person's open row: their pull requests made outside Worca (`live/insights-live.mjs` `work`, #1310) |
 
+## Classic controls
+
+One classic control's coverage decided by hand (`tools/classic-inventory.mjs` reads this table by id): app.js's folder
+browser and bulk review list serve Projects › Add project, which the tool's page map reads as Tasks.
+
+| Classic control | Status | Where in Stillhet |
+|---|---|---|
+| `ui/public/app.js › button › (folder-item)` | wired | Projects › Add a project by hand › Choose folder… / Several folders…: a folder row of the FolderBrowser (`projects/project-add.js`, `GET /api/fs/dirs` in `live/projects-live.mjs`) |
+| `ui/public/app.js › button › No subfolders.` | wired | the FolderBrowser's No subfolders. line (`projects/project-add.js`, `GET /api/fs/dirs`) |
+| `ui/public/app.js › toggle › Select …` | wired | the FolderBrowser's tick per folder in Several folders… (`projects/project-add.js`) |
+| `ui/public/app.js › toggle › Add …` | wired | the review list's tick per picked folder (`projects/project-add.js`, `POST /api/projects/bulk`) |
+| `ui/public/app.js › field › Project name for …` | wired | the review list's name per picked folder (`projects/project-add.js`, `POST /api/projects/bulk`) |
+| `ui/public/projects/project-add.html › button › Choose folder…` | wired | One folder's Choose folder… opens the in-app FolderBrowser (`projects/project-add.js`, `GET /api/fs/dirs`); classic's native OS picker (`POST /api/fs/pick-folder`) is not used there, the in-app browser is classic's own fallback |
+
 ## Opt-in
 
 Wired in slice 1, each row real:
