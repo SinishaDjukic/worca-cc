@@ -132,7 +132,7 @@
     // a stored confirm whose label the card no longer offers (an open Stop on a run that has since ended) is dropped, so
     // a yes never sends what the card cannot do
     const ask = cardAsk.get(id);
-    if (ask?.confirm && !stillAsks(t, ask.confirm.label)) setCardAsk(t, { confirm: null });
+    if (ask?.confirm && !stillAsks(t, ask.confirm.flow?.live || ask.confirm.label)) setCardAsk(t, { confirm: null });   // Resume anyway: still asks while its resume does
     t.confirm = cardAsk.get(id)?.confirm || null; t.form = cardAsk.get(id)?.form || null;
     const o = opening.get(id);
     if (o && t.prUrl) opening.delete(id);   // the PR is the one the server sent, never the POST's url
@@ -552,7 +552,8 @@
       prError.delete(rid);
       const asked = window.RailTaskLive?.prLookup?.().token || 0;   // the lookup before the click: a later one is the PR's
       if (pr) opening.set(rid, { was: label, token: 0 });   // D6: Opening the PR… from here until its PR arrives
-      const fl = (taskFlow(label, t) ? window.RailTaskLive.flow : CL().flow)(label, { taskId: rid, ...flowArgs(t), ...(label === 'Stop' ? stopArgs(t) : {}), value: given.value ?? t.form?.value, ...(given.typed ? { title: given.typed } : {}), ...(given.value === 'a draft' ? { draft: true } : {}), ...(pr ? { quiet: true } : {}) });
+      const said = f.live || label;   // Resume anyway resends the resume it answers (F-G-G2-03)
+      const fl = (taskFlow(said, t) ? window.RailTaskLive.flow : CL().flow)(said, { taskId: rid, ...flowArgs(t), ...(label === 'Stop' ? stopArgs(t) : {}), ...(f.baseAck ? { baseAck: true } : {}), value: given.value ?? t.form?.value, ...(given.typed ? { title: given.typed } : {}), ...(given.value === 'a draft' ? { draft: true } : {}), ...(pr ? { quiet: true } : {}) });
       setCardAsk(t, { confirm: null, form: null }); paint();
       busyFor(`[data-card-act="${t.id}|${label}"]`, fl.then((r) => {
         if (pr) {   // D8: a refused create says why once, on its card; a taken one waits for the lookup afterPr just asked
@@ -560,6 +561,8 @@
           else if (opening.has(rid)) opening.get(rid).token = Math.max(window.RailTaskLive?.prLookup?.().token || 0, asked + 1);   // no lookup asked (no socket): wait for the next one
           return r;
         }
+        // F-G-G2-03: a moved base asks first, in the card's confirm row; yes resends the same resume with baseAck
+        if (r.prompt === 'base') { setCardAsk(t, { confirm: { label: 'Resume anyway', text: r.error, flow: { ...f, live: said, baseAck: true, say: 'Resumed on the moved base' } } }); paint(); return { ok: true }; }
         if (r.ok && !/^(View|Open|Download)/.test(label)) say(label === 'Copy PR link' ? 'Copied the PR link' : (f.say || label).replace('{value}', given.value || '').replace(/\{[a-z]+\}/g, '').trim());
         return r;
       }));

@@ -563,6 +563,8 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
       let res = await request(method, url, body);
       // POST /api/runs/bulk answers 200 with its refusals in `skipped`: none done is a refusal
       if (res.ok && Array.isArray(res.data?.skipped) && res.data.skipped.length && !(res.data.done || []).length) res = { ok: false, status: 200, error: str(res.data.skipped[0]?.reason) || 'it was skipped' };
+      // F-G-G2-03: a card's resume on a moved base is a prompt, not a refusal: the card asks Resume anyway, which resends with baseAck
+      if (!res.ok && id === 'task-resume' && /^base-(moved|missing)$/.test(str(res.code))) return { ...res, prompt: 'base' };
       if (!res.ok) return refuse(a[0], res, q);
       if (id === 'pr') afterPr();   // a PR now exists: the task's card reads it without a reload (dev's history skeleton has no PRs)
       if (args.threadId && threads.get(args.threadId)?.state === 'ready' && url.startsWith(T(args.threadId))) open(args.threadId, { force: true });
