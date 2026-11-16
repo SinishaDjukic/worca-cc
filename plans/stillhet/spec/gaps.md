@@ -37,7 +37,7 @@ means Stillhet does not offer it, by a decision, with the reason. A row marked *
 | Send a direction straight to a running task | Yes | Nothing | **Drop**: a task does not change while it runs; steering is a message in its chat (`nav.task-like-chat`) |
 | Pinpoint: select text, then Explain, Alternatives, Discuss, Use this | Yes | Nothing | **Later** |
 | Voice: speak and hands-free | Clear icons per way of talking | Two icons, voice and hands-free | **Must**: one Voice button whose menu holds the ways |
-| Engine status and Send test message for a chat channel; edit a channel | Test and enable; no edit | Test and enable; no edit | **Must** (edit is server work, [server.md](server.md)) |
+| Engine status and Send test message for a chat channel; edit a channel | Test and enable; no edit | Test and enable; no edit | **Must** (the API for editing exists; the control was never drawn) |
 
 ## New task
 
