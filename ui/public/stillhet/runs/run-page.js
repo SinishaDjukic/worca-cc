@@ -895,7 +895,7 @@ async function liveFollowUp() {
   if (!text) { pendingFocus = 'after-task'; render(); return; }
   const T = window.RailTaskLive, u = ui, r = T.resolve(u.taskId) || {}, st = T.input(u.taskId)?.state || {};
   const body = M.followUpBodyOf(Object.assign({}, st, { projectDir: r.projectDir || st.projectDir }), text, now ? '' : r.pipelineId || u.taskId);
-  ui.busy = { label: now ? 'Start run' : 'Schedule' }; render();
+  ui.busy = { label: now ? 'Start task' : 'Schedule' }; render();
   const res = await T.act('new-task', { taskId: u.taskId, body, quiet: false });
   if (ui !== u) return;
   ui.busy = null;
@@ -1017,7 +1017,7 @@ function stripHtml(v) {
     const opts = v.finished ? ['Now, as a follow-up'] : ['When this task finishes'].concat(v.place.pr && !LIVE_PAGE() ? ['When its PR merges'] : []);
     const err = ui.afterErr ? ' aria-invalid="true" aria-describedby="after-task-note"' : '';   // live: an empty text, refused in place
     return R.confirmForm({ form: 'after', text: v.runAfter.label, body: `<input class="input input-sm" id="after-task" type="text" placeholder="What should the next task do?" aria-label="Task for the next task" data-key="after-task" value="${esc(ui.afterDraft || '')}"${err}>
-      ${opts.length > 1 ? `<select class="select input-sm" id="after-when" aria-label="When it starts" data-key="after-when">${opts.map((o) => `<option>${esc(o)}</option>`).join('')}</select>` : `<span class="rtab-dim" id="after-when-t">${esc(opts[0])}</span>`}${acts(v.finished ? 'Start run' : 'Schedule')}${ui.afterErr ? `<span class="fld-err" id="after-task-note" role="alert" style="flex:1 0 100%">${esc(ui.afterErr)}</span>` : ''}` });
+      ${opts.length > 1 ? `<select class="select input-sm" id="after-when" aria-label="When it starts" data-key="after-when">${opts.map((o) => `<option>${esc(o)}</option>`).join('')}</select>` : `<span class="rtab-dim" id="after-when-t">${esc(opts[0])}</span>`}${acts(v.finished ? 'Start task' : 'Schedule')}${ui.afterErr ? `<span class="fld-err" id="after-task-note" role="alert" style="flex:1 0 100%">${esc(ui.afterErr)}</span>` : ''}` });
   }
   if (ui.dialog === 'changes') {
     return R.confirmForm({ form: 'changes', text: ui.changesFor === 'Revise' ? 'Tell Worca what to change in the workflow' : v.id === 'plan' || v.id === 'outline' ? 'Tell the planner what to change' : 'Say what to change', body: `${R.suggestionField({ id: 'changes-text', cls: 'pd-wide', value: ui.changesText || '', rows: 3, placeholder: v.id === 'plan' || v.id === 'outline' ? 'What should the plan do differently?' : 'What should change?', writingPlaceholder: 'Drafting from the 2 open issues…', writing: ui.changesDraft, attrs: { 'data-key': 'changes-text' }, act: LIVE_PAGE() ? '' : ui.changesDraft ? R.stopWriting({ attrs: { 'data-stopdraft': 'changes', 'data-key': 'draft-stop', title: null } }) : R.suggestButton({ tip: draftTip('Draft it from the open issues'), label: 'Draft it from the open issues', attrs: { 'data-draft': 'changes', 'data-key': 'draft-changes' } }) })}
@@ -1282,7 +1282,8 @@ document.addEventListener('click', (e) => {
   else if (d.prrow !== undefined) { const f = ui.pr.prs[+d.prrow]; f.open = !f.open; pendingFocus = t.dataset.key; }
   else if (d.pd === 'stop') { const i = +(d.pi ?? -1), w = i < 0 ? ui.pr : ui.pr.prs[i]; w.gen = false; w.genTitle = false; pendingFocus = 'pd-gen' + (i < 0 ? '' : '-' + i); toast('Stopped writing'); }
   else if (d.pdmode) { const i = +(d.pi ?? -1); (i < 0 ? ui.pr : ui.pr.prs[i]).mode = d.pdmode; pendingFocus = t.dataset.key; }
-  else if (d.confirm) { if (d.confirm === 'yes') { ui.confirm.ok = true; follow(ui.confirm.f, ui.confirm.label); } else { ui.confirm = null; pendingFocus = 'act-main'; } }
+  else if (d.confirm) { if (!ui.confirm) return;   /* a press that lands after its strip closed (a double press, F-W3a1-06): nothing to confirm */
+    if (d.confirm === 'yes') { ui.confirm.ok = true; follow(ui.confirm.f, ui.confirm.label); } else { ui.confirm = null; pendingFocus = 'act-main'; } }
   else if (d.run === 'stop') follow(M.runFlow.stop, 'Stop the task');
   else if (d.act) act(d.act);
   else if (d.menu) { const opening = ui.menu !== d.menu; ui.menu = opening ? d.menu : ''; if (opening) pendingFocus = d.menu === 'tags' ? 'tag-input' : 'menu-first'; }

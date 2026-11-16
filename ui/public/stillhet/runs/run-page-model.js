@@ -846,6 +846,9 @@
     // What this state can truthfully show. Never started means nothing spent, nothing made and nothing decided; gone is gone.
     const started = c.stages.some((x) => x.subs.some((y) => y.state !== 'next')) || runStages.some((x) => x.member);
     const gone = { Archived: 'archived', Discarded: 'discarded', Deleted: 'deleted' }[c.word] || '';
+    // finished is ended (done, failed, stopped), never only "not live": a task whose step waits for you (a plan to approve)
+    // or that is paused has not finished, so what comes after it waits for it (F-W3a1-07); one that cannot resume has
+    const finished = !live && !/^(Waiting)$/.test(c.word) && !(c.word === 'Paused' && stateId !== 'interrupted-dead') && !c.stages.some((x) => x.subs.some((y) => y.state === 'ask'));
     const buildStarted = c.stages.some((x) => x.key === 'build' && x.subs.some((y) => y.state !== 'next'));
     const hasChanges = !c.noDiff && !runStages.length && buildStarted;
     const groupBuilt = runStages.filter((x) => x.subs.some((y) => y.name === 'Build' && y.state !== 'next')).map((x) => +x.key.slice(3) - 1);
@@ -873,9 +876,9 @@
         merged: c.stages.some((x) => x.key === 'merged' && x.subs.length && x.subs.every((y) => y.state === 'merged')), applied: c.word === 'Applied' },
       chips: (ui.chips || []).filter((x) => x.kind !== 'group'), inGroup: !!g || runStages.length > 0, addedGroup: ((ui.chips || []).find((x) => x.kind === 'group') || {}).text || '',
       alert: R.stateIds().includes(stateId) ? R.runState(stateId).alert : undefined, word: c.word, dot: c.dot || '', sym: c.sym || '', detail: R.fill(c.detail || '', Object.assign({}, liveCtx, { branch })), action, archived: !!c.archived,
-      finished: !live && !/^(Waiting)$/.test(c.word),
+      finished,
       // Run after, as today: on any run with a project that is not archived or a group; its words follow the state.
-      runAfter: c.archived || gone || runStages.length || !place || c.mock || (!started && c.word !== 'Waiting') || (c.action && [c.action.label].concat(c.action.items).includes('Start a new task')) ? null : !live && !/^(Waiting)$/.test(c.word)
+      runAfter: c.archived || gone || runStages.length || !place || c.mock || (!started && c.word !== 'Waiting') || (c.action && [c.action.label].concat(c.action.items).includes('Start a new task')) ? null : finished
         ? { short: 'Run after', label: 'Start a follow-up task', help: 'A new run that builds on this one' }
         : { short: 'Run after', label: 'Schedule a task after this', help: 'A task that starts when this one finishes' },
       stages: c.stages.map((x) => ({ key: x.key, label: x.label, meta: stageMeta(x), selected: x.key === open, live: stageState(x.subs) === 'live',
