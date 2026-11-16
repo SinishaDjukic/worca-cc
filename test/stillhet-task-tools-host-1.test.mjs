@@ -177,3 +177,52 @@ test('V-TW-15: an unfinished live task schedules after it, with no "When its PR 
   assert.match(toastText(d) + d.body.textContent, /Scheduled: Add paging tests · when this task finishes/);
   assert.equal(card(d).querySelector('#after-task'), null, 'the form closes once dev took it');
 });
+
+// B5.6 review: a feature group of one ready task recommends its one PR; the other way is "Create 1 stacked PR instead",
+// which the live action slot keeps (liveAction's own())
+test('B5.6 review: a live feature group of one keeps "Create 1 stacked PR instead" in its ▾', async () => {
+  const groups = { groups: [{ id: 'F1', kind: 'feature', title: 'Pager', members: [{ position: 1, title: 'Shipped', pipelineId: 'h2', pr: null }], cost: { usd: 1 } }] };
+  const src = sources();
+  Object.assign(src.history.pipelines.find((x) => x.id === 'h2'), { status: 'done', branch: 'feat/h2', sourceBranch: 'main', survived: true, pr: null });
+  const h = await liveHost({ sources: src, read: (u) => (u === '/api/run-groups' ? [200, groups] : read(u)) });
+  await go(h.w, '#run/group:F1', 200); await settle(400);
+  const { d } = h;
+  assert.equal(card(d).querySelector('[data-key="act-main"]').dataset.label, 'Create PR');
+  card(d).querySelector('[data-menu="act"]')?.click(); await settle(20);   // no ▾ at all when the slot dropped its one item
+  const items = [...card(d).querySelectorAll('.menu-item')].map((x) => x.textContent.trim());
+  assert.ok(items.some((x) => x.startsWith('Create 1 stacked PR instead')), items.join(' | '));
+});
+
+// B5.6 review: Start a follow-up task, live: an empty text is refused in the form itself, and a second press while dev
+// has not answered sends nothing more and says nothing
+const followUp = async (d, text) => {
+  card(d).querySelector('[data-menu="more"]').click(); await settle(20);
+  card(d).querySelector('[data-menu-pick="more:after"]').click(); await settle(40);
+  const inp = card(d).querySelector('#after-task'); inp.value = text; inp.dispatchEvent(new d.defaultView.Event('input', { bubbles: true }));
+};
+test('B5.6 review: an empty follow-up is refused in place: the field says why, no toast, nothing sent', async () => {
+  const { d, calls } = await page('#run/h2');
+  await followUp(d, '   ');
+  card(d).querySelector('[data-confirm="yes"]').click(); await settle(60);
+  const inp = card(d).querySelector('#after-task');
+  assert.equal(inp.getAttribute('aria-invalid'), 'true');
+  const note = card(d).querySelector('#' + inp.getAttribute('aria-describedby'));
+  assert.equal(note?.textContent, 'Say what the next task should do');
+  assert.equal(note.getAttribute('role'), 'alert');
+  assert.doesNotMatch(toastText(d), /Say what the next task should do/, 'not a toast');
+  assert.equal(d.activeElement?.id, 'after-task');
+  assert.deepEqual(sent(calls), []);
+  inp.value = 'Add paging tests'; card(d).querySelector('[data-confirm="yes"]').click(); await settle(150);
+  assert.equal(sent(calls).length, 1, 'with words it is sent');
+});
+test('B5.6 review: a second Start run while the follow-up\'s POST is on its way sends nothing and says nothing', async () => {
+  let release; const held = new Promise((r) => { release = r; });
+  const { w, d, calls } = await page('#run/h2', (u) => (u === '/api/run' ? held.then(() => [200, { runId: 'r9' }]) : [200, { ok: true }]));
+  await followUp(d, 'Add paging tests');
+  card(d).querySelector('[data-confirm="yes"]').click(); await settle(30);
+  card(d).querySelector('[data-confirm="yes"]')?.click(); await settle(30);
+  assert.equal(sent(calls).length, 1, 'one POST');
+  assert.doesNotMatch(toastText(d) + d.body.textContent, /already on its way/);
+  release(); await settle(150);
+  assert.equal(w.location.hash, '#run/r9');
+});

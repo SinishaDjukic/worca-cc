@@ -359,15 +359,16 @@ function viewDialogHtml(v) {
 function workflowListed(wf) {
   const W = window.RailWorkflowLive;
   if (!LIVE_PAGE()) return true;
-  return !!W && W.status() === 'ready' && (W.data().workflow || []).some((x) => x.id === wf.id);
+  return !!W && !!ui.wfRead && W.status() === 'ready' && (W.data().workflow || []).some((x) => x.id === wf.id);
 }
 // The Workflow dialog; live, it reads dev's workflow list again and repaints once it lands
 function openGraph() {
   ui.dialog = 'graph'; ui.graphNode = null; ui.menu = ''; pendingFocus = 'vd-close';
   const W = window.RailWorkflowLive;
   if (!LIVE_PAGE() || !W) return;
-  const u = ui; W.status();   // starts its first load, so a refresh is taken
-  W.refresh('workflows').then(() => { if (ui === u && ui.dialog === 'graph') render(); });
+  // a read that failed leaves only the name, never a list from before
+  const u = ui; ui.wfRead = false; W.status();   // starts its first load, so a refresh is taken
+  W.refresh('workflows').then((ok) => { if (ui !== u) return; ui.wfRead = !!ok; if (ui.dialog === 'graph') render(); });
 }
 // A step's form (docs/rail/forms.md): its sentence, one field or choice, a foot that names what happens.
 function formDialogHtml() {
@@ -580,7 +581,7 @@ let liveModels = [];
 function liveAction(v, a) {
   const T = window.RailTaskLive, pr = livePrUrl();
   if (ui.run && ui.run.liveGroup) {   // a group's page: its members' Merge #N and Fix checks on #N, and the group's Create PR
-    const own = (label) => typeof label === 'string' && /^(Merge|Fix checks on) #\d+$|^Create (PR|\d+ PRs?)$|^Create (one PR|\d+ (separate|stacked) PRs) instead$/.test(label);
+    const own = (label) => typeof label === 'string' && /^(Merge|Fix checks on) #\d+$|^Create (PR|\d+ PRs?)$|^Create (one PR|\d+ (separate|stacked) PRs?) instead$/.test(label);
     const items = (a.items || []).filter((it) => it && own(it.text));
     return own(a.label) ? Object.assign({}, a, { items }) : items.length ? Object.assign({}, a, { label: items[0].text, items: items.slice(1) }) : null;
   }
@@ -886,9 +887,12 @@ async function liveComment() {
 // scheduled after an unfinished task carries dev's after + afterPolicy. Nothing changes here before dev says ok; a refusal
 // is the runner's one toast, and the form keeps its text.
 async function liveFollowUp() {
+  if (ui.busy) return;   // its POST is on its way: a second press sends nothing and says nothing
   const text = (document.getElementById('after-task')?.value || '').trim(), now = v0().finished;
   ui.afterDraft = text;
-  if (!text) { toast('Say what the next task should do'); pendingFocus = 'after-task'; render(); return; }   // never an invented prompt
+  // never an invented prompt: an empty text is refused in the form itself, under its field
+  ui.afterErr = text ? '' : 'Say what the next task should do';
+  if (!text) { pendingFocus = 'after-task'; render(); return; }
   const T = window.RailTaskLive, u = ui, r = T.resolve(u.taskId) || {}, st = T.input(u.taskId)?.state || {};
   const body = M.followUpBodyOf(Object.assign({}, st, { projectDir: r.projectDir || st.projectDir }), text, now ? '' : r.pipelineId || u.taskId);
   ui.busy = { label: now ? 'Start run' : 'Schedule' }; render();
@@ -1011,8 +1015,9 @@ function stripHtml(v) {
   if (ui.dialog === 'after') {
     // live: dev has no route that starts a task when a PR merges, so that choice is left out (V-TW-15)
     const opts = v.finished ? ['Now, as a follow-up'] : ['When this task finishes'].concat(v.place.pr && !LIVE_PAGE() ? ['When its PR merges'] : []);
-    return R.confirmForm({ form: 'after', text: v.runAfter.label, body: `<input class="input input-sm" id="after-task" type="text" placeholder="What should the next task do?" aria-label="Task for the next task" data-key="after-task" value="${esc(ui.afterDraft || '')}">
-      ${opts.length > 1 ? `<select class="select input-sm" id="after-when" aria-label="When it starts" data-key="after-when">${opts.map((o) => `<option>${esc(o)}</option>`).join('')}</select>` : `<span class="rtab-dim" id="after-when-t">${esc(opts[0])}</span>`}${acts(v.finished ? 'Start run' : 'Schedule')}` });
+    const err = ui.afterErr ? ' aria-invalid="true" aria-describedby="after-task-note"' : '';   // live: an empty text, refused in place
+    return R.confirmForm({ form: 'after', text: v.runAfter.label, body: `<input class="input input-sm" id="after-task" type="text" placeholder="What should the next task do?" aria-label="Task for the next task" data-key="after-task" value="${esc(ui.afterDraft || '')}"${err}>
+      ${opts.length > 1 ? `<select class="select input-sm" id="after-when" aria-label="When it starts" data-key="after-when">${opts.map((o) => `<option>${esc(o)}</option>`).join('')}</select>` : `<span class="rtab-dim" id="after-when-t">${esc(opts[0])}</span>`}${acts(v.finished ? 'Start run' : 'Schedule')}${ui.afterErr ? `<span class="fld-err" id="after-task-note" role="alert" style="flex:1 0 100%">${esc(ui.afterErr)}</span>` : ''}` });
   }
   if (ui.dialog === 'changes') {
     return R.confirmForm({ form: 'changes', text: ui.changesFor === 'Revise' ? 'Tell Worca what to change in the workflow' : v.id === 'plan' || v.id === 'outline' ? 'Tell the planner what to change' : 'Say what to change', body: `${R.suggestionField({ id: 'changes-text', cls: 'pd-wide', value: ui.changesText || '', rows: 3, placeholder: v.id === 'plan' || v.id === 'outline' ? 'What should the plan do differently?' : 'What should change?', writingPlaceholder: 'Drafting from the 2 open issues…', writing: ui.changesDraft, attrs: { 'data-key': 'changes-text' }, act: LIVE_PAGE() ? '' : ui.changesDraft ? R.stopWriting({ attrs: { 'data-stopdraft': 'changes', 'data-key': 'draft-stop', title: null } }) : R.suggestButton({ tip: draftTip('Draft it from the open issues'), label: 'Draft it from the open issues', attrs: { 'data-draft': 'changes', 'data-key': 'draft-changes' } }) })}
@@ -1320,7 +1325,7 @@ document.addEventListener('click', (e) => {
     else if (d.menuPick.startsWith('away:') && LIVE_PAGE()) { const id = d.menuPick, u = ui; ui.menu = ''; pendingFocus = 'menu:more'; render();
       window.RailTaskLive.act('night', { taskId: u.taskId, mode: id.slice(5) }).then((r) => { if (ui !== u || !r.ok) return; ui.away = id; toast('Away mode on this task: ' + AWAY.find((x) => x.id === id).text); render(); }); return; }
     else if (d.menuPick.startsWith('away:')) { ui.away = d.menuPick; ui.menu = ''; pendingFocus = 'menu:more'; toast('Away mode on this task: ' + AWAY.find((x) => x.id === d.menuPick).text); }
-    else if (d.menuPick === 'more:after') { ui.dialog = 'after'; ui.menu = ''; pendingFocus = 'after-task'; }
+    else if (d.menuPick === 'more:after') { ui.dialog = 'after'; ui.afterErr = ''; ui.menu = ''; pendingFocus = 'after-task'; }
     else if (d.menuPick === 'more:archive') { const vm = v0(); const a = vm.runFlow.archive; follow(Object.assign({}, a, { confirm: (vm.dependents ? M.plural(vm.dependents, 'run waits', 'runs wait') + ' on this one and will start without it. ' : '') + a.confirm.replace('this task', 'this ' + (vm.kind ? vm.kind.toLowerCase() : 'run')) }), 'Archive'); }
     else if (d.menuPick === 'more:restore') { landOn(M.restored(ui)); toast('The record is back in Tasks; its branch, worktree and logs are not'); }
     else if (d.menuPick === 'group:ask' || d.menuPick === 'group:go') { const ask = d.menuPick === 'group:ask'; ui.menu = ''; pendingFocus = 'menu:then';

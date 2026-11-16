@@ -1060,13 +1060,16 @@
   }
   // F-3-19, F-a4-13: one count, one word ("1 file", "2 files"); the page uses it too
   function plural(n, one, many) { return `${n} ${n === 1 ? one : many ?? one + 's'}`; }
-  // F-a4-12: whether a refused Create PR pushed the branch, from dev's own answer (ui/server.mjs createRunPr): its 400 and 409
-  // refusals come before the push, "git push failed: …" is the push itself, "… pull request failed: …" comes after it
-  function prPushOf({ status, error } = {}) {
+  // F-a4-12: whether a refused Create PR pushed the branch, from dev's own answer (ui/server.mjs createRunPr): its 400, 409
+  // and 422 refusals come before the push, "git push failed: …" is the push itself, "… pull request failed: …" (also a
+  // 422) comes after it. A group's ship (ui/routes/runs/run-groups.mjs shipUserGroupNow) refuses with 400/409 before any
+  // member ships, but separate PRs ship one by one: "could not create the PR for <task>" may follow PRs already opened.
+  function prPushOf({ status, error, group = false } = {}) {
     const e = String(error || '');
+    if (group && /^could not create the PR for /i.test(e)) return 'unknown';
     if (/^git push (failed|was rejected)\b/i.test(e)) return 'not-pushed';
     if (/\bpull request failed:/i.test(e)) return 'pushed';
-    if (status === 400 || status === 409) return 'not-pushed';
+    if (status === 400 || status === 409 || status === 422) return 'not-pushed';
     return 'unknown';
   }
   // the refusal's detail: its reason as failureOf writes it, then what that answer proves; a group's ship names no PR

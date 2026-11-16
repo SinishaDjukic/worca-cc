@@ -312,7 +312,6 @@ test('F-a4-12: prPushOf reads whether the branch was pushed from dev\'s /api/pr 
   assert.equal(M.prPushOf({ status: 409, error: 'the base branch dev is not on origin: fetch it first' }), 'not-pushed');
   assert.equal(M.prPushOf({ status: 400, error: 'id is required' }), 'not-pushed');
   assert.equal(M.prPushOf({ error: 'Failed to fetch' }), 'unknown');
-  assert.equal(M.prPushOf({ status: 422, error: 'forks are not supported' }), 'unknown');
   assert.equal(M.prPushOf({}), 'unknown');
 });
 
@@ -333,4 +332,19 @@ test('V-TW-15: followUpBodyOf is newTaskBodyOf with the follow-up as the prompt 
   const ws = { workspaceId: 'ws1', projectDir: '/w/x', stepper: { template: { id: 'wf_t' } }, runEngine: 'claude' };
   assert.deepEqual(J(M.followUpBodyOf(ws, 'Next')), J(newTaskBodyOf({ ...ws, source: null, prompt: 'Next' })));
   assert.deepEqual(J(M.followUpBodyOf(state, 'Add paging tests', 'p1')), { ...J(newTaskBodyOf({ ...state, source: null, prompt: 'Add paging tests' })), after: { kind: 'pipeline', id: 'p1' }, afterPolicy: 'done' });
+});
+
+// B5.6 review: dev's order. createRunPr's 422 provider refusal (kind unsupported) comes before pushBranch; its 422 after
+// the push says "… pull request failed". POST /api/run-groups/:id/ship (ui/routes/runs/run-groups.mjs shipUserGroupNow)
+// refuses with 400/409 before any member ships, and the one PR's own refusals are createRunPr's; but separate PRs ship
+// member by member, so "could not create the PR for <task>" may follow PRs already opened and branches already pushed.
+test('B5.6 review: prPushOf: a 422 before the push is not pushed; a group\'s part-way refusal proves nothing', () => {
+  assert.equal(M.prPushOf({ status: 422, error: 'forks are not supported' }), 'not-pushed');
+  assert.equal(M.prPushOf({ status: 422, error: 'GitHub pull request failed: unsupported' }), 'pushed');
+  assert.equal(M.prPushOf({ status: 409, error: 'could not create the PR for Task 2: the run has no base branch. Create PR again to continue.', group: true }), 'unknown');
+  assert.equal(M.prPushOf({ status: 500, error: 'could not create the PR for Task 1: git push failed: rejected. Create PR again to continue.', group: true }), 'unknown');
+  assert.equal(M.prPushOf({ status: 409, error: 'this group is already shipping', group: true }), 'not-pushed');
+  assert.equal(M.prPushOf({ status: 400, error: 'mode must be one or separate', group: true }), 'not-pushed');
+  assert.equal(M.prPushOf({ status: 500, error: 'git push failed: rejected', group: true }), 'not-pushed');
+  assert.equal(M.prPushOf({ status: 500, error: 'GitHub pull request failed: x', group: true }), 'pushed');
 });

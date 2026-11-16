@@ -188,6 +188,24 @@ test('F-5-19: Open in Workflows only for a workflow dev still lists', async () =
   assert.ok(card(kept.d).querySelector('[data-open-wf="wf_lean"]'), 'a listed workflow opens in Workflows');
 });
 
+test('B5.6 review: a later read of dev\'s workflow list that fails leaves only the name, never the list from before', async () => {
+  const stepper = { ...GRAPH(NODE('n_task', 'Task', '', 'task'), NODE('n_impl', 'Implementation', 'build')), template: { id: 'wf_lean', name: 'Lean' } };
+  const state = { ...STATE, stepper, steps: [ROW('n_impl', 'done')] };
+  let lists = 0, down = false;
+  const h = await liveHost({ sources: sources(), read: (u) => (u === '/api/history/web-1/h2' ? [200, { state }] : u === '/api/workflows' ? (lists++, !down ? [200, { workflows: [{ id: 'wf_lean', name: 'Lean' }] }] : [500, { error: 'down' }]) : null) });
+  h.w.RailUI.prefs.setMode('expert');
+  await go(h.w, '#run/h2', 200); await settle(400);
+  const part = card(h.d).querySelector('[data-key="tab:activity"]'); if (part.dataset.tab === 'activity') { part.click(); await settle(60); }
+  card(h.d).querySelector('[data-graph]').click(); await settle(200);
+  assert.ok(card(h.d).querySelector('[data-open-wf="wf_lean"]'), 'listed: it opens in Workflows');
+  card(h.d).querySelector('.viewer-modal [data-key="vd-close"]').click(); await settle(30);
+  const before = lists; down = true;
+  card(h.d).querySelector('[data-graph]').click(); await settle(200);
+  assert.ok(lists > before, 'the dialog read the list again');
+  assert.equal(card(h.d).querySelector('[data-open-wf]'), null, 'the read failed: no way in on an old list');
+  assert.match(card(h.d).querySelector('.viewer-modal').textContent, /Lean/);
+});
+
 test('F-b23-03: with runLabels off the task page has no labels: cost tags only, a word sends no PUT', async () => {
   const { w, d, calls } = await page();
   assert.equal(w.RailUI.prefs.flag('runLabels'), false);
