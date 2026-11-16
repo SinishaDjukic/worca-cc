@@ -17,7 +17,7 @@ app.get('/api/history', async (req, res) => {
     // shape as the active list. They cannot be stale-running, so no self-heal here —
     // and `lite` (no git/gh fans), since an archived run's branch and worktree are gone.
     if (req.query.archived === '1' || req.query.archived === 'true') {
-      return res.json({ pipelines: (await listAllPipelines({ archived: true, lite: true })) || [], ghAvailable: await hasGh(), prHosts: await prHostsAvailable() });
+      return res.json({ pipelines: (await listAllPipelines({ archived: true, lite: true, storedPr: true })) || [], ghAvailable: await hasGh(), prHosts: await prHostsAvailable() });
     }
     // Self-heal records left 'running' by a dead process before listing, so History
     // never shows a phantom Running run and its Delete button appears (see
@@ -25,7 +25,7 @@ app.get('/api/history', async (req, res) => {
     try { reconcileStaleRunning({ liveIds: liveRunIds() }); } catch { /* best-effort */ }
     // Phase 1: PR-light skeleton (no `gh pr list`). Live PR state is pushed
     // separately over the WS by POST /api/history/pr -> enrichPipelinesPr.
-    res.json({ pipelines: (await listAllPipelines()) || [], ghAvailable: await hasGh(), prHosts: await prHostsAvailable() });
+    res.json({ pipelines: (await listAllPipelines({ storedPr: true })) || [], ghAvailable: await hasGh(), prHosts: await prHostsAvailable() });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
@@ -60,7 +60,7 @@ app.get('/api/history/:key/:id', async (req, res) => {
     // ?row=1: the run as one element of GET /api/history's list (Stillhet's per-run read after a settle). No
     // reconcileStaleRunning: that sweep reads every row, and a settled run's row already holds its final status.
     if (req.query.row === '1') {
-      const [pipeline] = (await listAllPipelines({ id: req.params.id })) || [];
+      const [pipeline] = (await listAllPipelines({ id: req.params.id, storedPr: true })) || [];
       if (!pipeline || pipeline.projectKey !== req.params.key) return res.status(404).json({ error: 'pipeline not found' });
       return res.json({ pipeline });
     }
