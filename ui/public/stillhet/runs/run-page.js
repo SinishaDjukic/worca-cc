@@ -707,7 +707,7 @@ let liveSaid = '', liveNext = null, liveFailWords = '';
 async function liveDo(f, label) {
   const asked = !!(f.confirm || f.dialog || f.fromDialog);
   const u = ui;   // the page this step started on
-  const m = u.form && u.form.models ? u.form.models[u.form.pick] : null;   // Switch model: the picked model's id and name
+  const m = (u.form && u.form.models ? u.form.models[u.form.pick] : null) || f.model || null;   // Switch model: the picked model's id and name (kept for Resume anyway)
   const res = await window.RailTaskLive.flow(f.live || LIVE_LABEL[label] || label, Object.assign({ taskId: f.taskId || u.taskId, value: u.form ? u.form.value : undefined, baseAck: !!f.baseAck, quiet: asked }, m ? { model: m.id, modelLabel: m.label } : {}, f.engine ? { engine: f.engine } : {},
     f.ship && u.run && u.run.liveGroup ? { ship: f.ship, groupId: u.run.liveGroup.id, groupKind: u.run.liveGroup.kind } : {},
     // Create PR's dialog: what you wrote and picked goes to dev's POST /api/pr (title, description, draft, watch, base)
@@ -715,7 +715,7 @@ async function liveDo(f, label) {
   // Left behind (another task opened meanwhile): the reply never lands on the page now shown, as the demo's perform does.
   if (ui !== u) return new Promise(() => {});
   ui.busy = null;
-  if (res && res.prompt === 'base') { liveNext = Object.assign({ confirm: res.error, baseAck: true, say: 'Resumed on the moved base' }, f.engine ? { live: 'Resume on…', engine: f.engine } : {}); return { ok: true }; }   // Resume anyway keeps the engine picked
+  if (res && res.prompt === 'base') { liveNext = Object.assign({ confirm: res.error, baseAck: true, say: 'Resumed on the moved base' }, f.engine ? { live: 'Resume on…', engine: f.engine } : m ? { live: 'Switch model…', model: m } : {}); return { ok: true }; }   // Resume anyway keeps the engine picked
   liveSaid = (res && res.say) || '';
   // a new task, a restarted Build or a resume answers the run it started: the page follows it (a resume's new run id is
   // the same task; its old one is dropped from the live runs)

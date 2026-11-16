@@ -42,7 +42,7 @@ export const TASK_ACTIONS = Object.freeze({
   // Save as preset is dev's run-page save (POST /api/pipelines/:id/preset): the run's own stored setup, under a name
   preset: ['save the preset', (a) => ['POST', `/api/pipelines/${enc(a.pipelineId)}/preset`, { name: str(a.value).trim(), scope: { kind: str(a.projectKey).startsWith('workspaces/') ? 'workspace' : 'project' } }]],
   // Switch model and Resume at… are dev's resume with a model and dev's timed resume (POST /api/schedules/resume)
-  'switch-model': ['switch the model', (a) => ['POST', '/api/resume', { pipelineId: a.pipelineId, model: a.model }]],
+  'switch-model': ['switch the model', (a) => ['POST', '/api/resume', { pipelineId: a.pipelineId, baseCheck: true, ...(a.baseAck ? { baseAck: true } : {}), model: a.model }]],   // classic's resumeBody (F-cov23-08)
   'resume-at': ['schedule the resume', (a) => ['POST', '/api/schedules/resume', { pipelineId: a.pipelineId, scheduledFor: a.scheduledFor }]],
   // Publish branch (dev's `git push -u`), a task's away mode, a diff line's comment
   publish: ['publish the branch', (a) => ['POST', `/api/runs/${enc(a.pipelineId)}/publish`, { ...(a.projectKey ? { projectKey: a.projectKey } : { projectDir: a.projectDir }), ...(a.memberKey ? { memberKey: a.memberKey } : {}) }]],
@@ -486,7 +486,7 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
       const [method, url, body] = def[1](a);
       const res = await request(method, url, body);
       // Retry on a moved base is a prompt, not a refusal (D10): the strip asks, Resume anyway posts baseAck.
-      if (!res.ok && (id === 'retry' || id === 'resume-engine') && BASE_PROMPT.has(res.code)) return { ...res, prompt: 'base' };
+      if (!res.ok && (id === 'retry' || id === 'resume-engine' || id === 'switch-model') && BASE_PROMPT.has(res.code)) return { ...res, prompt: 'base' };
       if (!res.ok) return refuse(words, { ...res, words }, args.quiet);
       // a resume answers the pipeline's new run id: it is the same task, so its old ids keep finding it
       if (res.data?.runId && a.pipelineId && (id === 'retry' || id === 'raise-cap' || id === 'switch-model' || id === 'resume-engine')) alias.set(str(res.data.runId), a.pipelineId);
