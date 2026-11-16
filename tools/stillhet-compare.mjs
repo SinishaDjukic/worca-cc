@@ -102,9 +102,9 @@ for (const [id, q, seed] of MARKETPLACE_STATES) PARTS.push({ id, route: true, ..
 // Projects' and Workspaces' own cells (slice 9): the list states, the by-project cards, the design-first forms (Rename, the
 // owned-folder Remove, Link a remote, a workspace's Name row), Locate folder, Remove, Add and Make by hand, a fresh draft,
 // a workspace's Delete and its links, and a project not found. Compared in Expert, demo against demo. A seed is the clicks
-// (and a typed { fill, text }) that open it; the bar's + sits in the drawer at 360, which is closed again over the form. A
+// (and a typed { fill, text }) that open it; the bar's + sits in the drawer at 360, which the pick closes over the form. A
 // strip's seed ends on its own sentence, so the pointer rests on no row and no row's tooltip races the shot.
-const barNew = (pick) => (w) => [...(w <= 760 ? ['#mbar-menu'] : []), '#bar-head [data-bar-new="place"]', `[data-menu-pick="bar-new|${pick}"]`, ...(w <= 760 ? ['#side-close'] : [])];
+const barNew = (pick) => (w) => [...(w <= 760 ? ['#mbar-menu'] : []), '#bar-head [data-bar-new="place"]', `[data-menu-pick="bar-new|${pick}"]`];   // narrow: the pick closes the drawer itself
 const pjMore = (v) => ['[data-menu="pj-more"]', `[data-menu-pick="pj-more|${v}"]`], wsMore = (v) => ['[data-menu="ws-more"]', `[data-menu-pick="ws-more|${v}"]`];
 export const PROJECTS_STATES = [
   ['pj-list-loading', '?state=loading#projects'], ['pj-list-failed', '?state=failed#projects'],
