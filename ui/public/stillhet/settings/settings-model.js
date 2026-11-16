@@ -148,9 +148,10 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
   const flagsChanged = () => FLAGS.filter((f) => !f.locked && window.RailUI.prefs.flag(f.key) !== f.on);
   // ---- Labs, live: exactly the flags GET /api/flags returns. A switch shows the server's `on` and writes PATCH /api/flags;
   // only the server's answer (or a flags frame, copied into prefs by the live adapter, which reads the list again) changes
-  // what it shows. `saving` and `errors` are per flag: an error lasts until that row's next write starts. ----
+  // what it shows. `saving` and `errors` are per flag: an error lasts until that row's next write starts. Every PATCH gets
+  // the next `seq`; a flag takes its value from an answer only if no later answer already set it (`answered`). ----
   const liveOn = () => !!window.RailWorld?.live;
-  const labs = { status: 'loading', flags: [], busy: false, again: false, watching: false, saving: {}, errors: {}, toastFor: '' };
+  const labs = { status: 'loading', flags: [], busy: false, again: false, watching: false, saving: {}, errors: {}, toastFor: [], seq: 0, answered: {} };
   const redraw = () => window.dispatchEvent(new Event('rail-settings'));
   const toast = (text) => window.RailAdapter?.toast?.(text);
   const onWords = (k) => { const f = labs.flags.find((x) => x.key === k); return f ? `${f.title}: ${f.on ? 'on' : 'off'}` : ''; };
@@ -160,7 +161,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     const done = (status, flags) => {
       labs.busy = false;
       if (status === 'ready' || labs.status !== 'ready') Object.assign(labs, { status, flags: status === 'ready' ? flags : labs.flags });
-      if (status === 'ready' && labs.toastFor && !labs.again) { toast(onWords(labs.toastFor)); labs.toastFor = ''; }   // an answer without its list: the toast waits for the re-read
+      if (status === 'ready' && labs.toastFor.length && !labs.again) { toast(labs.toastFor.map(onWords).filter(Boolean).join('. ')); labs.toastFor = []; }   // answers without their list: their toasts wait for the re-read
       redraw();
       if (labs.again) { labs.again = false; readFlags(); }
     };
@@ -172,12 +173,12 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     if (!labs.watching) { labs.watching = true; window.RailUI.prefs.onChange(() => readFlags()); readFlags(); }
     return labs;
   }
-  // The one write path: live, PATCH /api/flags (ui/routes/feature-flags/flags.mjs); the demo answers from its own FLAGS. Never rejects.
+  // The one write path: live, PATCH /api/flags (ui/routes/feature-flags/flags.mjs). The demo only writes here for its one
+  // refusing flag (toggle sets the others at once, and its Reset all sets prefs): it refuses after a pause. Never rejects.
   function labsWrite(body) {
     if (!liveOn()) {
       const no = FLAGS.find((f) => f.key in body && f.refuses);
-      if (no) return new Promise((r) => setTimeout(() => r({ ok: false, status: 500, error: no.refuses }), DEMO_ANSWER_MS));
-      return Promise.resolve().then(() => { for (const [k, v] of Object.entries(body)) window.RailUI.prefs.setFlag(k, v === null ? !!FLAGS.find((f) => f.key === k)?.on : v); return { ok: true, status: 200, error: '', flags: null }; });
+      return new Promise((r) => setTimeout(() => r({ ok: false, status: 500, error: no ? no.refuses : LABS_WORDS.demoRefusal }), DEMO_ANSWER_MS));
     }
     return Promise.resolve().then(() => window.fetch('/api/flags', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }))
       .then((r) => Promise.resolve().then(() => r.json()).catch(() => ({})).then((data) => (r.ok
@@ -186,11 +187,14 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
       .catch(() => ({ ok: false, status: 0, error: LABS_WORDS.unanswered }));
   }
   // A 200's answer is the list now, and its values are the pages' flags (what copyFlags does with the frame), so what a
-  // flag gates follows before the frame comes. An answer without a list waits for the re-read.
-  function applyAnswer(flags) {
+  // flag gates follows before the frame comes. An answer without a list waits for the re-read. An answer older than one a
+  // flag already took (`seq`) keeps that flag as it is drawn: answers can arrive out of order.
+  function applyAnswer(flags, seq) {
     if (!Array.isArray(flags)) { readFlags(); return false; }
-    Object.assign(labs, { status: 'ready', flags });
-    for (const f of flags) if (typeof f.on === 'boolean' && window.RailUI.prefs.flag(f.key) !== f.on) window.RailUI.prefs.setFlag(f.key, f.on);
+    const fresh = flags.filter((f) => !(labs.answered[f.key] > seq));
+    for (const f of fresh) labs.answered[f.key] = seq;
+    Object.assign(labs, { status: 'ready', flags: flags.map((f) => (fresh.includes(f) ? f : labs.flags.find((x) => x.key === f.key) || f)) });
+    for (const f of fresh) if (typeof f.on === 'boolean' && window.RailUI.prefs.flag(f.key) !== f.on) window.RailUI.prefs.setFlag(f.key, f.on);
     return true;
   }
   // `rail` is only written by RailHost.setStillhet, the one reload owner (the top bar's path); it toasts a failure itself.
@@ -218,11 +222,11 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     if (live && key === 'rail') { railSwitch(!on); return ''; }
     const start = () => {
       labs.saving[key] = true; delete labs.errors[key]; redraw();
+      const seq = ++labs.seq;
       labsWrite({ [key]: !on }).then((r) => {
-        if (r.ok) {
-          if (!live) toast(`${f.name}: ${window.RailUI.prefs.flag(key) ? 'on' : 'off'}`);
-          else if (applyAnswer(r.flags)) toast(onWords(key));
-          else labs.toastFor = key;
+        if (r.ok) {   // only live answers ok
+          if (applyAnswer(r.flags, seq)) toast(onWords(key));
+          else if (!labs.toastFor.includes(key)) labs.toastFor.push(key);
         } else labs.errors[key] = refusedLine(!on, r.error);
         delete labs.saving[key];
         redraw();
@@ -262,9 +266,10 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     if (!keys.length) { after(); return ''; }
     for (const k of keys) labs.saving[k] = true;
     redraw();
+    const seq = ++labs.seq;
     labsWrite(Object.fromEntries(keys.map((k) => [k, null]))).then((r) => {
       for (const k of keys) delete labs.saving[k];
-      if (r.ok) { applyAnswer(r.flags); after(); } else toast(resetFailed(r.error));
+      if (r.ok) { applyAnswer(r.flags, seq); after(); } else toast(resetFailed(r.error));
       redraw();
     });
     return '';
