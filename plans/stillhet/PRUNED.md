@@ -33,17 +33,23 @@ Classic, the server and tests that are not Stillhet's were not touched.
 |---|---|---|
 | `tools/stillhet-artifact.mjs` | `tools/stillhet-design-system-page.mjs` | It writes the rules, catalog and gallery as one HTML file. It is never published as an Artifact |
 
-## Stays until the spec replaces it
+## Replaced by the spec, then deleted
 
-These hold facts the build spec still needs. Each is folded into `spec/` when that file is written, then deleted, and
-this list is updated.
-
-| File | Goes into |
+| File | Now in |
 |---|---|
-| `stillhet-wiring.md` | `spec/wiring.md` (every place and classic function, from today's code) |
-| `findings.md`, `test-results/FINDINGS.md`, `test-results/PLAN.md` | `spec/assessment.md`, `spec/server.md`, `spec/lessons.md` |
-| `chat-cards.md` | `spec/wiring.md` (the classic card to Stillhet card table, each starter's fields) and `spec/gaps.md` |
-| `spec.md` (the task page), `pulse.md` | `docs/stillhet/` rules where they are design, `spec/server.md` where they are engine facts |
-| `task-engine-additions.md` | `spec/server.md` |
+| `chat-cards.md` (classic's chat cards to Stillhet's, each starter's fields, the open parity gaps) | `spec/wiring.md` (Chat; the task card and proposals), `spec/gaps.md` |
+| `spec.md` (the task page) | `docs/stillhet/thing-page.md` where it is design, `spec/wiring.md` (a task's page) for its functions |
+| `pulse.md` | `docs/stillhet/panels.md` and `settings.md` where it is design; `spec/server.md` (S23 to S29, E5 to E8) for the engine rules near a limit, the usage windows and events; `spec/stillhet-features.md` (Pulse) |
 | `test-protocol.md` | `spec/gate.md` |
-| `coverage/` | Kept: the generated inventory of classic's controls (`tools/classic-inventory.mjs`). Regenerated against dev for the build |
+
+## Kept, and why
+
+| File | Why it stays |
+|---|---|
+| `stillhet-wiring.md`, `findings.md`, `test-results/PLAN.md`, `test-results/FINDINGS.md` | Read by the gate's tools and their tests in `npm test` (`tools/stillhet-wiring.mjs`, `stillhet-surfaces.mjs`, `stillhet-no-demo.mjs`, `classic-inventory.mjs`, `prototype-pr-check.mjs`). They describe the first wiring, which `spec/wiring.md` replaces for people. Step B2 of `spec/build-order.md` points the tools at one file per place (`spec/places/`), and these four go in that step. Do not add rows to them |
+| `task-engine-additions.md` | The three server additions on this branch (raise the cap, Restart Build, pause after a step) are cited from server code this branch does not edit. Its facts are also in `spec/server.md` |
+| `coverage/` | The generated inventory of classic's controls (`tools/classic-inventory.mjs`). Regenerated against dev for the build |
+
+## Tests retired with the redesign
+
+Listed here when the test pass is done: host tests of the first wiring that only held a design the redesign replaced.

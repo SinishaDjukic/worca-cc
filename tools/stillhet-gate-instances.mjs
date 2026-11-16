@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// tools/stillhet-gate-instances.mjs — starts, lists and stops the gate instances A–D of plans/stillhet/test-protocol.md §2,
+// tools/stillhet-gate-instances.mjs — starts, lists and stops the gate instances A–D of plans/stillhet/spec/gate.md,
 // each with its OWN HOME. settings.json is read and written at $HOME/.worca-cc (src/core/settings.mjs defaultRoot), never at
 // WORCA_HOME, so an instance started without its own HOME changes the owner's real settings (F-X-01). A and B get a copy of
 // the owner's store (an APFS clone where it can; the real store is only read) made independent of it: the repos it names are
