@@ -46,3 +46,16 @@ body{-webkit-font-smoothing:antialiased;}
 .stillhet-thumb.is-v{width:6px;}
 .stillhet-thumb.is-h{height:6px;}
 @media (prefers-reduced-motion: reduce){.stillhet-thumb{transition:none;}}
+
+/* The type scale (look.type-roles, look.text-size): one step larger than classic's, and nothing under 12px. Appearance ›
+   Text size moves the whole scale; every size on a Stillhet page is one of these tokens. */
+:root{--fs-caption:12px;--fs-meta:13px;--fs-body:14px;--fs-section:17px;--fs-subpage:20px;--fs-page:24px;--fs-stat:24px;}
+:root[data-text="small"]{--fs-caption:12px;--fs-meta:12px;--fs-body:13px;--fs-section:15px;--fs-subpage:18px;--fs-page:22px;--fs-stat:22px;}
+:root[data-text="large"]{--fs-caption:13px;--fs-meta:14px;--fs-body:15px;--fs-section:18px;--fs-subpage:22px;--fs-page:26px;--fs-stat:26px;}
+
+/* Clickable looks clickable (act.looks-clickable; from classic's bordered buttons): a button that acts has a visible
+   border at rest, in every kind. Only an icon button stays borderless: its shape says it is one. A labelled button is
+   32px with 13px words. */
+:is(.rc-board,.pz-app,.app,.mk-tools) .btn-sm:not(.btn-icon){height:32px;padding:0 12px;font-size:var(--fs-meta);}
+:is(.rc-board,.pz-app,.app) .btn-quiet:not(.btn-icon){border-color:var(--line-2);color:var(--ink);background:var(--panel);}
+:is(.rc-board,.pz-app,.app) .btn-quiet:not(.btn-icon):hover:not(:disabled){background-color:var(--hover);}

@@ -1,6 +1,6 @@
 # Assessment: the feedback and the personas, each item answered
 
-Two sources. **The feedback** is a real user's recorded walk of live Stillhet (Sinisha, 15 November). **The personas**
+Two sources. **The feedback** is a real user's recorded walk of live Stillhet (15 November). **The personas**
 are six separate agents who each walked today's prototype by clicking, at 1280 and 390, light and dark, without seeing
 each other's notes or any plan: the baseline round, before any redesign.
 
@@ -63,7 +63,7 @@ Grouped by what fixes them. "DS" means a change in the design system that reache
 | A10 | **No whole or side-by-side diff** | Power | **Planned.** Decided: side by side, unified when narrow |
 | A11 | **Narrow**: stage rows wrap one letter per line at 390; Insights drops four columns; the composer starts at another edge; Settings' drawer is empty | New, UX, team lead | **Planned.** |
 | A12 | **Insider words where a new user decides** (Shaper, "with Default", Guardrails, Pulse, Stillhet, slice, run and task for one thing; explanations only in hover) | New | **Planned.** "Run" as a noun becomes "task" at the source ([lessons.md](lessons.md) 4). A starter says what it does in its own line. **Declined:** renaming Pulse, Shaper and Stillhet: they are product names; each gets one plain line where it is first met |
-| A13 | **"Legacy approach"** reads oddly, and the form people know is filed under it | New, classic, power | **Planned**, if Emil agrees (Decisions, 3): the + menu offers New task… directly; "Legacy approach" goes |
+| A13 | **"Legacy approach"** reads oddly, and the form people know is filed under it | New, classic, power | **Planned** (Decisions, 3): the + menu offers New task… directly; "Legacy approach" goes |
 | A14 | **The team lead cannot see the team**: Tasks lists only your own; no list of pull requests; a person's or model's number does not open | Team lead | Pull requests tab in Tasks: **Planned.** A row that cannot open is not drawn as clickable: **Planned.** The team's tasks: **Planned** as a "Whose" picker in Tasks, where the team shares its records; needs server work ([server.md](server.md)) |
 | A15 | **Budget numbers do not add up** (four budgets; "71%" that matches none; two "Saved" figures) and resuming past a used-up budget is one click with no warning | Team lead | **Planned.** One mock per fact (`build.one-mock`); a figure names what it measures; Resume past a budget confirms with the amount |
 | A16 | **Team policy**: no way to edit a guardrail rule or the allowed models; "blocked" that does not block | Team lead | **Planned** in [gaps.md](gaps.md) (Settings). The wording of "blocked" is classic's and is checked against it |
@@ -98,9 +98,9 @@ Design issues the first build recorded and left open. All **Planned**, in the pl
 | Settings | No Appearance section; unlabelled theme and background swatches |
 | Shell | A toast over an open confirm strip; one table of place by mode for navigation, locks and gates |
 
-## Decisions for Emil
+## Decisions for the owner
 
-Real calls where I chose a direction and want a yes or a change before the redesign builds on them.
+Real calls where a direction had to be chosen. **The owner agreed to all eight on 16 November**; the redesign builds on them.
 
 | # | The call | What I chose | Why | If no |
 |---|---|---|---|---|

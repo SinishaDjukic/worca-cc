@@ -6,7 +6,7 @@ walk of classic and the prototype (baseline round, [assessment.md](assessment.md
 
 Each row is a function people need, not a control. **Must** means the full build is not done without it. **Later** means
 it is designed and built after the first full build, and until then Stillhet says where to do it in classic. **Drop**
-means Stillhet does not offer it, by a decision, with the reason. A row marked **(E)** is a call I made that Emil should
+means Stillhet does not offer it, by a decision, with the reason. A row marked **(agreed)** is a call the owner agreed to on 16 November
 confirm ([assessment.md](assessment.md), Decisions).
 
 ## The shell
@@ -17,11 +17,11 @@ confirm ([assessment.md](assessment.md), Decisions).
 | See the places and go to one | A sidebar that lists every place, with counts on Runs and Schedules | A small chevron beside the place's name opens the list; no counts | **Must**: the place's name and chevron are one button that opens the list, each place with its count |
 | What is scheduled next | Activity › Scheduled, with a Schedule… shortcut | Pulse › Now lists Scheduled; no shortcut | **Must** (in Pulse): keep, add New schedule |
 | Know it is a mock or test instance | A MOCK badge | Nothing | **Must**: one quiet word in the top bar |
-| Your level and the team-setup notice | "Curious → Runner", "the team updated the recommended setup · Review" | The Review row is in the profile menu; no level | Level: **Drop (E)** (a game layer; nothing depends on it). Team-setup notice: **Must** |
+| Your level and the team-setup notice | "Curious → Runner", "the team updated the recommended setup · Review" | The Review row is in the profile menu; no level | Level: **Drop (agreed)** (a game layer; nothing depends on it). Team-setup notice: **Must** |
 | Getting started with a step count | A checklist with "2 of 5 done" | A chat that walks you through, no count | **Must**: the count on the Getting started row |
 | Browser push sign-up; sign in again when the session ends | Yes | The session case is drawn; no push sign-up | **Must** |
-| The Design page (web page, deck, video, document builds) | A whole page, beta | Nothing | **Later (E)**: Stillhet says "Not in Stillhet yet" and opens classic's page |
-| The Profile page | A page | The profile menu holds what matters | **Drop (E)**: the menu and Settings cover it |
+| The Design page (web page, deck, video, document builds) | A whole page, beta | Nothing | **Later (agreed)**: Stillhet says "Not in Stillhet yet" and opens classic's page |
+| The Profile page | A page | The profile menu holds what matters | **Drop (agreed)**: the menu and Settings cover it |
 | Text size | Nothing | Nothing | **Must** (new, from user feedback): Settings › Appearance › Text size |
 
 ## Chat
@@ -123,7 +123,7 @@ confirm ([assessment.md](assessment.md), Decisions).
 
 | Function | Classic has | The prototype | Mark |
 |---|---|---|---|
-| The whole page: brief, helper chat, assumptions, answers, attachments, import and export, start, finish, revert; the Shaper answerer (Fix all, Ask for changes, Agree and plan) | A Labs feature | Behind its Labs switch, mostly not drawn | **Later (E)**: it is a Labs feature in classic too; until designed, Stillhet opens classic's page |
+| The whole page: brief, helper chat, assumptions, answers, attachments, import and export, start, finish, revert; the Shaper answerer (Fix all, Ask for changes, Agree and plan) | A Labs feature | Behind its Labs switch, mostly not drawn | **Later (agreed)**: it is a Labs feature in classic too; until designed, Stillhet opens classic's page |
 
 ## Settings
 

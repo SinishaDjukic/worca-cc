@@ -1,6 +1,6 @@
 # Stillhet test findings: delivery plan
 
-Sources: `/Users/emil.angelov/src/worka-cc-test/plans/stillhet/test-results/`. Read FINDINGS.md, v1-chat-shell.md, v2-tasks-wf.md, v3-proj-ins-mk-set.md and a1…a7b. Paths are under `ui/public/stillhet/` unless they start with `ui/`, `src/`, `docs/`, `test/` or `plans/`.
+Sources: `the test worktree, plans/stillhet/test-results/`. Read FINDINGS.md, v1-chat-shell.md, v2-tasks-wf.md, v3-proj-ins-mk-set.md and a1…a7b. Paths are under `ui/public/stillhet/` unless they start with `ui/`, `src/`, `docs/`, `test/` or `plans/`.
 
 **Already done or in flight**
 - #1312 Create PR demo body (merged).

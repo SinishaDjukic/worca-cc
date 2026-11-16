@@ -359,7 +359,7 @@ const BACKGROUNDS = [['dots', 'Dots', 'The quiet grid, fading down'], ['aurora-d
 const bgKey = 'worca-stillhet.background';
 const readBg = () => { try { return localStorage.getItem(bgKey) || 'dots'; } catch { return 'dots'; } };
 function setBg(v) { document.documentElement.dataset.bg = v; try { localStorage.setItem(bgKey, v); } catch { /* private mode: for this session */ } }
-// the background can breathe: the same picture, slowly brighter and quieter (Emil, 8 Nov); still by default and when motion is reduced
+// the background can breathe: the same picture, slowly brighter and quieter (the owner, 8 Nov); still by default and when motion is reduced
 const breatheKey = 'worca-stillhet.background-breathes';
 const readBreathe = () => { try { return localStorage.getItem(breatheKey) === '1'; } catch { return false; } };
 function setBreathe(on) { document.documentElement.dataset.bgBreathe = on ? '1' : '0'; try { localStorage.setItem(breatheKey, on ? '1' : '0'); } catch { /* for this session */ } }
