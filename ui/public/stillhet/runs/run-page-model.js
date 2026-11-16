@@ -797,7 +797,7 @@
     const sh = c.stack && c.stack.mode === 'create' ? c.stack : null;
     const pick = sh ? (ui.ship && !(ui.ship === 'one' && sh.oneBlocked) ? ui.ship : sh.rec) : '';
     const stackWord = sh && sh.separate ? 'separate' : 'stacked';
-    const shipWord = (id) => (id === 'one' ? 'one PR' : sh.runs.length + ' ' + stackWord + ' PRs');
+    const shipWord = (id) => (id === 'one' ? 'one PR' : plural(sh.runs.length, stackWord + ' PR'));
     const owned = (sh && sh.owned) || {};
     const toOpen = sh ? sh.runs.length - Object.keys(owned).length : 0;
     if (c.stack && (open === 'pr' || (c.stack.mode === 'outline' && open === 'plan'))) {
@@ -819,19 +819,19 @@
     const liveNow = !ENDED.test(c.word) && !c.over && !c.stages.filter((x) => !SHIP.test(x.key)).every((x) => x.subs.every(isDone));
     if (!c.action && liveNow && c.word !== 'Paused') c = Object.assign({}, c, { action: A('Pause', 'pause', false, ['Pause after this step']) });
     if (c.action) {
-      const label = sh ? (pick === 'one' ? 'Create PR' : 'Create ' + toOpen + ' PRs') : outlineN ? 'Approve ' + outlineN + ' tasks' : c.action.label;
+      const label = sh ? (pick === 'one' ? 'Create PR' : 'Create ' + plural(toOpen, 'PR')) : outlineN ? 'Approve ' + outlineN + ' tasks' : c.action.label;
       const liveRun = c.stages.filter((x) => x.run).findIndex((x) => stageState(x.subs) === 'live');
       const offs = Object.assign({}, c.action.off || {});
       if (c.reqsCheck && left) offs[label] = 'Mark every requirement before you create the PR · ' + left + ' left';
-      const alt = sh ? [pick === 'one' ? 'Create ' + sh.runs.length + ' ' + stackWord + ' PRs instead' : 'Create one PR instead'] : [];
+      const alt = sh ? [pick === 'one' ? 'Create ' + plural(sh.runs.length, stackWord + ' PR') + ' instead' : 'Create one PR instead'] : [];
       if (published) offs['Publish branch'] = 'It is already on origin';
       if (c.restartOff) offs['Restart Build'] = c.restartOff;   // the server would refuse it (task-live restartOff, F-a4-11)
       if (c.watchOff) offs.Watch = c.watchOff;
       const rest = liveNow && c.stages.some((x) => x.run) && c.stages.some((x) => x.run && x.subs.every((y) => y.state === 'next'));
       const stopWord = c.stages.some((x) => x.run) && liveRun >= 0 ? 'Stop task ' + (liveRun + 1) : 'Stop the task';
       // ▾ holds each step once: a group's way to ship is the choice above; a menu never repeats the main.
-      const items = alt.concat(c.action.items.filter((t) => !(sh && /^Create (PR|\d+ PRs)$/.test(t)) && t !== label && !(t === 'Fix all' && ui.fixed && ui.fixed[c.id]) && R.shows(R.actionLevel(t)))).concat(liveNow && !c.action.items.includes('Stop') && !c.action.items.includes('Abort') ? [stopWord] : []).concat(rest && !c.action.items.includes('Re-plan the rest') ? ['Re-plan the rest'] : []).concat(rest && !c.action.items.includes('Cancel the rest') ? ['Cancel the rest'] : []);
-      const helpOf = (t) => offs[t] || (sh && sh.separate && /^Create \d+ PRs$/.test(t) ? 'Creates one PR per task, each into ' + liveCtx.base : '') || HELP_OF(t, liveCtx) || (/^Merge #(\d+)$/.test(t) ? 'Merges ' + t.slice(6) + ' into ' + liveCtx.base + '; Worca then moves the next PR onto dev' : /^Fix checks on #/.test(t) ? 'Starts a short task that fixes ' + t.slice(14) + '’s failing checks' : '');
+      const items = alt.concat(c.action.items.filter((t) => !(sh && /^Create (PR|\d+ PRs?)$/.test(t)) && t !== label && !(t === 'Fix all' && ui.fixed && ui.fixed[c.id]) && R.shows(R.actionLevel(t)))).concat(liveNow && !c.action.items.includes('Stop') && !c.action.items.includes('Abort') ? [stopWord] : []).concat(rest && !c.action.items.includes('Re-plan the rest') ? ['Re-plan the rest'] : []).concat(rest && !c.action.items.includes('Cancel the rest') ? ['Cancel the rest'] : []);
+      const helpOf = (t) => offs[t] || (sh && sh.separate && /^Create \d+ PRs?$/.test(t) ? 'Creates one PR per task, each into ' + liveCtx.base : '') || HELP_OF(t, liveCtx) || (/^Merge #(\d+)$/.test(t) ? 'Merges ' + t.slice(6) + ' into ' + liveCtx.base + '; Worca then moves the next PR onto dev' : /^Fix checks on #/.test(t) ? 'Starts a short task that fixes ' + t.slice(14) + '’s failing checks' : '');
       action = Object.assign({}, c.action, { label, isNew: NEW.has(label), help: helpOf(label), items: items.map((t) => ({ text: t, isNew: NEW.has(t), help: sh && / instead$/.test(t) ? (/one PR/.test(t) && sh.oneBlocked ? 'Not possible: ' + sh.oneBlocked.replace(/^Not possible: /, '') : sh.reason) : helpOf(t), off: !!offs[t] || (/one PR instead/.test(t) && sh && !!sh.oneBlocked), checked: t === 'Watch' ? watching : t === 'Pause after this step' ? !!ui.pauseAfter : undefined })), offWhy: offs[label] || '' });
     }
     // The task is live while any work stage (everything before shipping) is unfinished and it has not failed;
@@ -846,6 +846,9 @@
     // What this state can truthfully show. Never started means nothing spent, nothing made and nothing decided; gone is gone.
     const started = c.stages.some((x) => x.subs.some((y) => y.state !== 'next')) || runStages.some((x) => x.member);
     const gone = { Archived: 'archived', Discarded: 'discarded', Deleted: 'deleted' }[c.word] || '';
+    // what comes after a task (Run after) starts now only once it ended (done, failed, stopped), never only "not live": a
+    // task whose step waits for you (a plan to approve) or that is paused has not ended (F-W3a1-07); one that cannot resume has
+    const ended = !live && !/^(Waiting)$/.test(c.word) && !(c.word === 'Paused' && stateId !== 'interrupted-dead') && !c.stages.some((x) => x.subs.some((y) => y.state === 'ask'));
     const buildStarted = c.stages.some((x) => x.key === 'build' && x.subs.some((y) => y.state !== 'next'));
     const hasChanges = !c.noDiff && !runStages.length && buildStarted;
     const groupBuilt = runStages.filter((x) => x.subs.some((y) => y.name === 'Build' && y.state !== 'next')).map((x) => +x.key.slice(3) - 1);
@@ -873,9 +876,9 @@
         merged: c.stages.some((x) => x.key === 'merged' && x.subs.length && x.subs.every((y) => y.state === 'merged')), applied: c.word === 'Applied' },
       chips: (ui.chips || []).filter((x) => x.kind !== 'group'), inGroup: !!g || runStages.length > 0, addedGroup: ((ui.chips || []).find((x) => x.kind === 'group') || {}).text || '',
       alert: R.stateIds().includes(stateId) ? R.runState(stateId).alert : undefined, word: c.word, dot: c.dot || '', sym: c.sym || '', detail: R.fill(c.detail || '', Object.assign({}, liveCtx, { branch })), action, archived: !!c.archived,
-      finished: !live && !/^(Waiting)$/.test(c.word),
+      finished: !live && !/^(Waiting)$/.test(c.word), ended,
       // Run after, as today: on any run with a project that is not archived or a group; its words follow the state.
-      runAfter: c.archived || gone || runStages.length || !place || c.mock || (!started && c.word !== 'Waiting') || (c.action && [c.action.label].concat(c.action.items).includes('Start a new task')) ? null : !live && !/^(Waiting)$/.test(c.word)
+      runAfter: c.archived || gone || runStages.length || !place || c.mock || (!started && c.word !== 'Waiting') || (c.action && [c.action.label].concat(c.action.items).includes('Start a new task')) ? null : ended
         ? { short: 'Run after', label: 'Start a follow-up task', help: 'A new run that builds on this one' }
         : { short: 'Run after', label: 'Schedule a task after this', help: 'A task that starts when this one finishes' },
       stages: c.stages.map((x) => ({ key: x.key, label: x.label, meta: stageMeta(x), selected: x.key === open, live: stageState(x.subs) === 'live',
@@ -909,7 +912,7 @@
       }).concat(gone || c.noDiff || (!buildStarted && !groupBuilt.length) ? [] : [runStages.length ? (() => { const sum = groupBuilt.reduce((a, i) => { const [p, m] = SIZE(sizesOf(c)[i] || '+0 \u22120'); return [a[0] + p, a[1] + m]; }, [0, 0]); return { k: 'Changes', v: '+' + sum[0] + ' \u2212' + sum[1], tab: '' }; })()
         : { k: 'Changes', v: c.diff || '+' + files.reduce((a, x) => a + x[1], 0) + ' \u2212' + files.reduce((a, x) => a + x[2], 0), tab: 'changes' }]),
       // A tab shows only what exists: no diff before Build, no decisions before anything was decided.
-      tabs: (runStages.length ? GROUP_TABS : RUN_TABS).filter(([id]) => (id === 'changes' ? hasChanges : id === 'decisions' ? decisionsOf(c, runStages).length > 0 || !!askOf(c) : true)).map(([id, l], i, all) => ({ id, l, n: id === 'changes' && !gone ? String(files.length) + (over.artifacts.length ? ' · ' + over.artifacts.length + ' docs' : '') : id === 'decisions' ? String(decisionsOf(c, runStages).length + (askOf(c) ? 1 : 0)) : '',
+      tabs: (runStages.length ? GROUP_TABS : RUN_TABS).filter(([id]) => (id === 'changes' ? hasChanges : id === 'decisions' ? decisionsOf(c, runStages).length > 0 || !!askOf(c) : true)).map(([id, l], i, all) => ({ id, l, n: id === 'changes' && !gone ? String(files.length) + (over.artifacts.length ? ' · ' + plural(over.artifacts.length, 'doc') : '') : id === 'decisions' ? String(decisionsOf(c, runStages).length + (askOf(c) ? 1 : 0)) : '',
         sel: id === (all.some((x) => x[0] === ui.tab) ? ui.tab : all[0][0]) })),
       activity: c.stages.map((x) => {
         // live: the stage's own cost (taskPageOf); its steps keep the design's names, never its sample prices, models or evidence
@@ -917,7 +920,9 @@
           : x.run ? (x.member ? totals(resolve(x.member)).cost : 0) : x.subs.reduce((a, y) => a + (y.state === 'next' ? 0 : costOf(y)), 0) * (c.scale || 1);
         return { key: x.key, label: x.label, title: x.title || '', meta: cost ? '$' + cost.toFixed(2) : '',
           rows: x.subs.map((y, i) => Object.assign(rowOf(y, x.subs[i + 1]), { model: x.run || c.liveId ? '' : MODEL_OF[y.name] || '',
-            cost: x.run || c.liveId || y.state === 'next' || !COST_OF[y.name] ? '' : '$' + (costOf(y) * (c.scale || 1)).toFixed(2) + (/^(now|ask|paused)$/.test(y.state) ? ' so far' : ''),
+            // live (F-3-07 D10): the step's own cost (liveSub), so far while it works
+            cost: x.run || y.state === 'next' ? '' : c.liveId ? (y.cost ? y.cost + (/^(now|ask|paused)$/.test(y.state) ? ' so far' : '') : '')
+              : !COST_OF[y.name] ? '' : '$' + (costOf(y) * (c.scale || 1)).toFixed(2) + (/^(now|ask|paused)$/.test(y.state) ? ' so far' : ''),
             // the evidence of this state: what this step says went wrong, not a neighbour's
             evidence: !c.liveId && /^(failed|problem)$/.test(y.state) ? (x.key === 'pr' && y.name === 'Checks' && /^1 failed/.test(y.live) ? EVIDENCE['pr/Checks/one'] : c.ev && x.key !== 'pr' ? c.ev : EVIDENCE[x.key + '/' + y.name] || null) : null,
             focus: ui.focus === x.key + '/' + y.name, ref: x.key + '/' + y.name })) };
@@ -971,7 +976,7 @@
   const STAGE_SUB = { done: 'done', now: 'now', failed: 'failed', paused: 'paused', next: 'next' };
   // a step of dev's in the prototype's shape: a stopped one is the design's stopped look (paused, Stopped by you), a
   // capped task's paused one says it is at its cap
-  const liveSub = (page, x) => (x.state === 'stopped' ? s(x.name, 'paused', '', { live: 'Stopped by you' })
+  const liveLook = (page, x) => (x.state === 'stopped' ? s(x.name, 'paused', '', { live: 'Stopped by you' })
     // a review gate's asking step says what you pick (B1.6 D7); a review forced on with open issues is a problem, never a tick (D5)
     : x.state === 'ask' ? s(x.name, 'ask', '', { live: (page.gate && page.gate.line) || askLine(page.ask) })
     : x.state === 'blocked' ? s(x.name, 'problem', '', { live: 'Blocked · accepted with ' + x.open + ' open issue' + (x.open === 1 ? '' : 's') })
@@ -979,6 +984,10 @@
     // dev's failure policy holds a failed step paused: on a failed task it is the step that broke, its line what broke
     : x.state === 'paused' && page.failure ? s(x.name, 'failed', '', { live: String(page.failure.head || '').replace(/^[^·]*·\s*/, '') })
     : s(x.name, STAGE_SUB[x.state] || 'next'));
+  // F-3-07: each step's own figures where the design draws them (taskPageOf stagesOf): its time, its rounds past the first and
+  // its cost once it ran; a step that never ran has none
+  const liveSub = (page, x) => Object.assign(liveLook(page, x), { time: x.activeMs > 0 ? fmtMin(x.activeMs / 60000) : '', loops: x.cycles >= 2 ? x.cycles : 0,
+    cost: x.ran ? '$' + (x.costUsd || 0).toFixed(2) : undefined });
   // F-G-G2-02: the asking step's line is the run's own question (and how many it asks), never the design's sample
   const askLine = (a) => (!a ? '' : a.questions[0].q + (a.questions.length > 1 ? ' · 1 of ' + a.questions.length + ' questions' : ''));
   // the PR stage's lines from the PR's own facts: Create PR "Opened #N", Checks "2 failed" or "3 of 3 passed"
@@ -1016,8 +1025,8 @@
     return Object.assign({}, base, { id: base.id, title: page.title, project: page.project || '', over: !going, branch: page.branch || '', base: page.base || '', pr: page.pr || '', diff: '', task: page.prompt || '', figs,
       startedWord: at ? 'Started ' + at.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ', ' + at.toTimeString().slice(0, 5) : '',
       detail: page.detail || '', why: page.why || [], failure: page.failure || null, review: page.review || { roles: [], issues: [] }, stages, spent: { mins: page.mins || 0, cost: page.cost || 0 }, budget: page.cap || null, movedFrom: base.id, liveId: page.id,
-      // no live decisions source yet: the design's sample decisions never reach a real task
-      decisions: [], liveAsk: page.ask || null, failedChecks: page.failedChecks || 0, restartOff: page.restartOff || '', workflow: page.workflow || null, stageCost: Object.fromEntries((page.stages || []).map((x) => [x.key, x.costUsd || 0])) });
+      // the task's own answered Q&A (taskPageOf decisionsOf); the design's sample decisions never reach a real task
+      decisions: page.decisions || [], liveAsk: page.ask || null, failedChecks: page.failedChecks || 0, restartOff: page.restartOff || '', workflow: page.workflow || null, stageCost: Object.fromEntries((page.stages || []).map((x) => [x.key, x.costUsd || 0])) });
   }
   // The live kind's group page (#run/group:GID, D5): dev's run group (GET /api/run-groups), its members in stack order,
   // each drawn as its own store task's case. Its one action merges the next PR in order, or fixes the first failing one,
@@ -1038,7 +1047,7 @@
     const ship = ready ? { mode: 'create', separate: !feature, runs: ms.map((m) => m.title), rec, sizes: ms.map(() => ''), owned, oneBlocked,
       reason: rec === 'one' ? 'one review for the whole feature.' : feature ? 'each task lands on top of the one before.' : 'independent tasks, so each gets its own review.' } : null;
     const flow = ship ? { 'Create PR': { confirm: 'Create one PR for the ' + ms.length + ' tasks? Their branches combine into one branch for one review.', live: 'Ship group', ship: 'one', say: 'Created the PR' },
-      ['Create ' + toOpen + ' PRs']: { confirm: 'Create ' + toOpen + ' ' + word + ' PRs? ' + (feature ? 'Each goes into the one before.' : 'Each goes into its base.'), live: 'Ship group', ship: word, say: 'Created ' + toOpen + ' PRs' } } : {};
+      ['Create ' + plural(toOpen, 'PR')]: { confirm: 'Create ' + plural(toOpen, word + ' PR') + '? ' + (feature ? 'Each goes into the one before.' : 'Each goes into its base.'), live: 'Ship group', ship: word, say: 'Created ' + plural(toOpen, 'PR') } } : {};
     // its head's word and mark are its state's (a member that failed needs you: chain), as every task page's
     // Working only while a member works (F-a4-09, classic groupModel's order): else the first member still on its way
     // speaks for it (a question, a gate, a stop), then one not started yet is Waiting, then the PRs, then the members' end
@@ -1058,5 +1067,47 @@
       ...(ship ? { stack: ship, flow } : {}),
       stages: ms.map((m, i) => ({ ...member(i + 1, m.title, ['next', 'next', 'next', 'next']), label: m.title || 'Task ' + (i + 1) })).concat(ms.some((m) => m.pr) || ship ? [{ key: 'pr', label: 'PRs', subs: ms.map(prSub) }] : []) };   // Create PR opens what it will open
   }
-  window.RunCardModel = { liveRun, liveFacts: liveFactsOf, liveGroup, stageOf, move: moveIn, memberAt, moveMember, restored, caseGroups: CASE_GROUPS, stateOf: (id) => { const c = caseFor(id); if (!c) throw new Error(`no run case ${id}`); return c.state || c.id; }, forms: FORMS, titles: TITLES, chainStart: CHAIN_START, chainPrs: CHAIN_PRS.map((x) => x[0]), proposed: PROPOSED, isNew: (t) => NEW.has(t), flow: FLOW, runFlow: RUN_FLOW, cases: CASES.map((c) => ({ id: c.id, label: c.label, group: c.group, chips: c.chips || [] })), view, add: ADD };
+  // F-3-19, F-a4-13: one count, one word ("1 file", "2 files"); the page uses it too
+  function plural(n, one, many) { return `${n} ${n === 1 ? one : many ?? one + 's'}`; }
+  // F-a4-12: whether a refused Create PR pushed the branch, from dev's own answer (ui/server.mjs createRunPr): its 400, 409
+  // and 422 refusals come before the push, "git push failed: …" is the push itself, "… pull request failed: …" (also a
+  // 422) comes after it. A group's ship (ui/routes/runs/run-groups.mjs shipUserGroupNow) refuses with 400/409 before any
+  // member ships, but separate PRs ship one by one: "could not create the PR for <task>" may follow PRs already opened.
+  function prPushOf({ status, error, group = false } = {}) {
+    const e = String(error || '');
+    if (group && /^could not create the PR for /i.test(e)) return 'unknown';
+    if (/^git push (failed|was rejected)\b/i.test(e)) return 'not-pushed';
+    if (/\bpull request failed:/i.test(e)) return 'pushed';
+    if (status === 400 || status === 409 || status === 422) return 'not-pushed';
+    return 'unknown';
+  }
+  // the refusal's detail: its reason as failureOf writes it, then what that answer proves; a group's ship names no PR
+  function prFailDetail(reason, push, { group = false } = {}) {
+    if (push === 'not-pushed') return R.failureOf('Create PR', reason).detail;   // nothing reached the remote: failureOf's own words
+    const r = String(reason || '').replace(/[.\s]+$/, '') || 'something went wrong on Worca’s side';
+    const first = r[0].toUpperCase() + r.slice(1) + '.';
+    if (group) return first + ' Some of its branches may have been pushed.';
+    return first + (push === 'pushed' ? ' The branch is on the remote; no PR opened.' : ' The branch may have been pushed; no PR opened.');
+  }
+  // V-TW-15: a follow-up task's POST /api/run body: task-page.mjs newTaskBodyOf with the follow-up as its prompt and no
+  // source (this classic script cannot import it; test/run-page-model.test.mjs pins the two together); scheduled after a
+  // task, dev's after + afterPolicy (ui/server.mjs parseScheduleRequest)
+  function followUpBodyOf(state = {}, text = '', after = '') {
+    const str = (v) => (typeof v === 'string' ? v : ''), arr = (v) => (Array.isArray(v) ? v : []);
+    const body = {};
+    if (str(state.workspaceId)) body.workspaceId = state.workspaceId;
+    else if (str(state.projectDir)) body.projectDir = state.projectDir;
+    if (str(text)) body.prompt = text;
+    const wf = str(state.workflowId) || str(state.stepper?.template?.id);
+    if (wf) body.workflowId = wf;
+    if (str(state.guardrailsId)) body.guardrailsId = state.guardrailsId;
+    const engine = str(state.engine) || str(state.runEngine);
+    if (engine && engine !== 'claude') body.engine = engine;
+    const labels = arr(state.labels).map((l) => (typeof l === 'string' ? l : str(l?.name))).filter(Boolean);
+    if (labels.length) body.labels = labels;
+    if (arr(state.tags).length) body.tags = state.tags;
+    if (str(after)) Object.assign(body, { after: { kind: 'pipeline', id: after }, afterPolicy: 'done' });
+    return body;
+  }
+  window.RunCardModel = { plural, prPushOf, prFailDetail, followUpBodyOf, liveRun, liveFacts: liveFactsOf, liveGroup, stageOf, move: moveIn, memberAt, moveMember, restored, caseGroups: CASE_GROUPS, stateOf: (id) => { const c = caseFor(id); if (!c) throw new Error(`no run case ${id}`); return c.state || c.id; }, forms: FORMS, titles: TITLES, chainStart: CHAIN_START, chainPrs: CHAIN_PRS.map((x) => x[0]), proposed: PROPOSED, isNew: (t) => NEW.has(t), flow: FLOW, runFlow: RUN_FLOW, cases: CASES.map((c) => ({ id: c.id, label: c.label, group: c.group, chips: c.chips || [] })), view, add: ADD };
 })();

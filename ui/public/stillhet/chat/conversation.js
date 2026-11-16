@@ -284,10 +284,30 @@
   // D19 live: the pins are dev's (GET / PUT /api/chat-home/pins, workflow ids), named by dev's workflows
   let liveFlows = null, livePins = null;
   const flowName = (id) => liveFlows?.find((w) => w.id === id)?.name || id, flowId = (name) => liveFlows?.find((w) => w.name === name)?.id || name;
-  function loadPins() {
+  // F-5-11: Chat home shown reads them again (fresh): a pin made elsewhere (Workflows' own PUT) is a starter without a
+  // reload. A failed read keeps what is drawn; a read older than a pin's PUT answer is dropped (pinsSeq).
+  let pinsSeq = 0;
+  async function loadPins({ fresh = false } = {}) {
+    if (fresh && LIVE()) {
+      const seq = ++pinsSeq, had = !!liveFlows, p = await CL().catalog('pins', { fresh: true });
+      if (!p.ok) { if (!liveFlows) livePins = null; return; }
+      const ids = p.data?.pins || [];
+      if (!liveFlows || ids.some((id) => !liveFlows.some((w) => w.id === id))) {
+        const w = await CL().catalog('workflows', { fresh: true });
+        if (!w.ok) return;   // a pin's name is unknown: what is drawn stays (names from the last good read), never a bare id
+        liveFlows = (w.data?.workflows || []).map((x) => ({ id: x.id, name: x.name || x.id }));
+      }
+      if (seq !== pinsSeq || !liveFlows) return;
+      const next = ids.map(flowName);
+      if (had && next.join('\n') === pins.join('\n')) return;   // unchanged: nothing is redrawn
+      pins = next; paintStarters();
+      return;
+    }
     if (livePins) return;
+    const seq = ++pinsSeq;
     livePins = Promise.all([CL().catalog('pins'), CL().catalog('workflows')]).then(([p, w]) => {
       if (!p.ok || !w.ok) { livePins = null; return; }
+      if (seq !== pinsSeq && liveFlows) return;   // a newer read or a pin's answer is already drawn
       liveFlows = (w.data?.workflows || []).map((x) => ({ id: x.id, name: x.name || x.id })); pins = (p.data?.pins || []).map(flowName); refreshAll();
     });
   }
@@ -297,7 +317,7 @@
   // a pin or an unpin: the demo changes the row; live, dev's PUT answers first and its list is the row
   function setPins(next, word) {
     if (!LIVE()) { pins = next; paint(); say(word); return; }
-    CL().act('pins', { pins: next.map(flowId), key: 'pins' }).then((r) => { if (!r.ok) return; pins = (r.data?.pins || next.map(flowId)).map(flowName); refreshAll(); say(word); });
+    CL().act('pins', { pins: next.map(flowId), key: 'pins' }).then((r) => { if (!r.ok) return; pinsSeq++; pins = (r.data?.pins || next.map(flowId)).map(flowName); refreshAll(); say(word); });
   }
   const intentOf = (id) => [...STARTERS, ...MORE].find((x) => x.id === id) || (id?.startsWith('pin:') ? { id, label: id.slice(4), icon: 'kind-workflow', ph: id === 'pin:Shaper' ? 'Describe the problem…' : `What should ${id.slice(4)} do?` } : null);
   function arm(id) {
@@ -1767,7 +1787,7 @@
       el.classList.remove('is-flash'); void el.offsetWidth; el.classList.add('is-flash');
       return true;
     },
-    show: (id) => { if (LIVE()) { listen(); CL().look(root, id || '', () => !hiddenNow()); if (id) CL().open(id); } setTimeout(() => settle(id), 0); const other = id !== chatId; if (other) { drafts.set(chatId, { ...comp, text: root.querySelector('[data-composer-t]')?.value ?? comp.text, busy: false, queue: [], listening: false, sending: false }); opened = new Set(); hover = null; menu = ''; const was = drafts.get(id || ''); comp = was && (id || was.text || was.intent || was.mode !== 'ask') ? { ...was } : { ...fresh(), project: id ? data().chats.find((c) => c.id === id)?.project || 'No project' : lastProject };   /* a new chat starts on the project you added last */ comp.sending = sendingIn.has(id || ''); } chatId = id || ''; paint(!other); if (id) { const box = root.querySelector('.convo-scroll'); if (box) { box.scrollTop = box.scrollHeight; paintTimeline(); } } },
+    show: (id) => { if (LIVE()) { listen(); CL().look(root, id || '', () => !hiddenNow()); if (id) CL().open(id); else if (!side && !opts.mode) loadPins({ fresh: true }); }   /* a home with no starters (Requirements' Shape a feature, the side panel) reads no pins */ setTimeout(() => settle(id), 0); const other = id !== chatId; if (other) { drafts.set(chatId, { ...comp, text: root.querySelector('[data-composer-t]')?.value ?? comp.text, busy: false, queue: [], listening: false, sending: false }); opened = new Set(); hover = null; menu = ''; const was = drafts.get(id || ''); comp = was && (id || was.text || was.intent || was.mode !== 'ask') ? { ...was } : { ...fresh(), project: id ? data().chats.find((c) => c.id === id)?.project || 'No project' : lastProject };   /* a new chat starts on the project you added last */ comp.sending = sendingIn.has(id || ''); } chatId = id || ''; paint(!other); if (id) { const box = root.querySelector('.convo-scroll'); if (box) { box.scrollTop = box.scrollHeight; paintTimeline(); } } },
     start: (mode, text, project) => { chatId = ''; comp = { ...fresh(mode), text: text || '', ...(project ? { project } : {}) }; if (!side) window.RailShell.go('chat'); paint(false); root.querySelector('[data-composer-t]')?.focus(); },   /* what another place hands over stays in the box, on its project */
     pin: (w, on) => { const next = on ? [...new Set([...shownPins(), w])] : shownPins().filter((x) => x !== w); if (LIVE()) setPins(next, on ? `Pinned ${w}` : `Unpinned ${w}`); else { pins = next; refreshAll(); } },
     handOver: ({ mode = 'ask', about, text = '', ph = '', project, workflow, ref = null }) => {   // ref: the page's own ids, posted as context (D16)   // rail.hand-to-chat: the one way a place sends something to Chat
@@ -1800,6 +1820,13 @@
   }
   api.flushPaints = () => batch.flush();
   api.paintIfStale = () => { if (stale && !hiddenNow()) paint(); };
+  // F-5-11: only the starters row is drawn again (the composer, its text and focus stay); a hidden Chat paints when shown
+  function paintStarters() {
+    if (hiddenNow()) { stale = true; return; }
+    const row = root.querySelector('.home-starters');
+    if (row) row.outerHTML = startersHtml();
+  }
+  api.paintStarters = paintStarters;
   mounted.push(api);
   paint();
   return api;

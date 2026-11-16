@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readServerSource } from '../src/core/read-server-source.mjs';
-import { taskPageOf, taskCardOf, newTaskBodyOf, NEW_TASK_KEYS, stagesOf, gateOf, stageOfStep, patchFiles, docsOf, logLinesOf, logStepsOf, stepNamesOf, actionsOf, groupOf, planOf, commentsByPath, DIFF_PREVIEW } from '../ui/public/stillhet/live/task-page.mjs';
+import { taskPageOf, taskCardOf, newTaskBodyOf, NEW_TASK_KEYS, stagesOf, gateOf, stageOfStep, patchFiles, docsOf, docStepsOf, decisionsOf, logLinesOf, logStepsOf, stepNamesOf, actionsOf, groupOf, planOf, commentsByPath, DIFF_PREVIEW } from '../ui/public/stillhet/live/task-page.mjs';
 import { taskPageErrors } from '../ui/public/stillhet/live/model-shape.mjs';
 import { TASK_DETAILS, NOW, PR_URL } from './helpers/stillhet-live-fixture.mjs';
 import { shortDetail } from '../ui/public/stillhet/live/live-map.mjs';
@@ -151,7 +151,6 @@ test('the page\'s parts on dev\'s data (D4): a patch, artifacts, the log, the wo
   assert.doesNotMatch(ws.full['api/src/x.mjs'], /^# /m, 'the next project\'s `# KEY` line is not this file\'s');
   assert.match(ws.full['web/src/x.mjs'], /^\+c$/m);
   assert.deepEqual(commentsByPath({ comments: [{ projectKey: 'web', path: 'src/x.mjs', lineText: 'c', body: 'ok', author: 'user' }] }), { 'web/src/x.mjs': [{ who: 'You', line: 'c', t: 'ok' }] });
-  assert.deepEqual(docsOf([{ relPath: 'docs/plan.md', stepKey: 'plan' }, { relPath: 'live-log.ndjson', kind: 'live-log' }, null]), [['plan.md', 'plan', 'docs/plan.md']]);
   const prevTz = process.env.TZ;
   process.env.TZ = 'UTC';
   try {
@@ -396,4 +395,133 @@ test('COV-3 #12: resumeEngines follows usageLimitSwitches with classic\'s words;
   assert.deepEqual(taskPageOf({ row: { id: 'p1' }, state: { ...limit, pauseReason: 'cost_cap' } }).resumeEngines, [], 'another pause: none');
   assert.deepEqual(taskPageOf({ row: { id: 'p1' }, state: { ...limit, limitEngine: null } }).resumeEngines, [], 'a provider\'s limit (no limitEngine): none');
   assert.deepEqual(taskPageOf({ row: { id: 'p1' }, state: { ...limit, status: 'running' } }).resumeEngines, [], 'running: none');
+});
+
+// ---- B4.1: Decisions from clarify, time, cost and cycles per step, every artifact named by its step ----
+// dev's saved-run read (GET /api/history/:key/:id, readPipelineExtras): `clarify` and `stepQuestions` beside `state`
+const QA_STATE = { stepper: { graph: { nodes: [{ id: 'n_impl', kind: 'agent', key: 'implementer', label: 'Implementation', progressStage: 'build' },
+  { id: 'n_rev', kind: 'agent', key: 'reviewer', label: 'Review implementation', progressStage: 'review' }] } }, steps: [] };
+const QA = {
+  clarify: { questions: [{ id: 'q1', question: 'Keep the old address working?', options: ['Redirect it', 'Drop it'] }, { id: 'q2', question: 'Which dates?' }],
+    answers: [{ id: 'q2', question: 'Which dates?', choice: 'The invoice date' }, { id: 'q1', question: 'Keep the old address working?', choice: 'Redirect it' }] },
+  stepQuestions: [
+    { stepKey: '3:n_impl#2', round: 1, nodeId: 'n_impl', agentKey: 'implementer', questions: [{ id: 's1', question: 'Use the shared pager?' }, { id: 's2', question: 'Never answered?' }],
+      answers: [{ id: 's1', question: 'Use the shared pager?', choice: 'Yes' }, { id: 's2', question: 'Never answered?', choice: '  ' }] },
+    { stepKey: '4:n_rev#1', round: 1, nodeId: 'n_rev', agentKey: 'reviewer', questions: [{ id: 'a1', question: 'Split the PR?' }, { id: 'a2', question: 'Keep the flag?' }],
+      answers: [{ id: 'a1', choice: 'No' }, { id: 'a2', choice: 'Yes' }], answeredBy: 'night-mode',
+      night: { flagged: true, questions: [{ id: 'a1', choice: 'No', rationale: 'A smaller scope is safer.', flagged: true }, { id: 'a2', choice: 'Yes', rationale: 'The agent recommended it.' }] } },
+  ],
+};
+
+test('F-3-04: decisionsOf builds the run\'s answered Q&A in the demo\'s shape: run-level clarify first, then each round, named by its step', () => {
+  const before = JSON.stringify(QA);
+  assert.deepEqual(decisionsOf(QA, QA_STATE), [
+    { step: 'Clarify', q: 'Keep the old address working?', a: 'Redirect it', who: 'you' },
+    { step: 'Clarify', q: 'Which dates?', a: 'The invoice date', who: 'you' },
+    { step: 'Implementation · cycle 2', q: 'Use the shared pager?', a: 'Yes', who: 'you' },
+    { step: 'Review implementation', q: 'Split the PR?', a: 'No', who: 'away', note: 'please check: A smaller scope is safer' },
+    { step: 'Review implementation', q: 'Keep the flag?', a: 'Yes', who: 'away', note: 'The agent recommended it' },
+  ]);
+  assert.equal(JSON.stringify(QA), before, 'the read is never changed');
+});
+
+test('F-3-04: decisionsOf: an unanswered question is no decision; the step falls back to the agent, then the node; Away mode by answeredBy alone', () => {
+  const qa = { clarify: { questions: [{ id: 'q1', question: 'Asked, never answered' }], answers: [] },
+    stepQuestions: [{ stepKey: '7:n_x#1', nodeId: 'n_x', agentKey: 'tester', questions: [{ id: 'x', question: 'Q?' }], answers: [{ id: 'x', choice: 'A' }], answeredBy: 'night-mode' },
+      { stepKey: 'n_y', nodeId: 'n_y', questions: [{ id: 'y', question: 'R?' }], answers: [{ id: 'y', choice: 'B' }], answeredBy: 'maya' }] };
+  assert.deepEqual(decisionsOf(qa, {}), [{ step: 'tester', q: 'Q?', a: 'A', who: 'away' }, { step: 'n_y', q: 'R?', a: 'B', who: 'you' }]);
+  // a ledger row no graph node names is named by its agent, as the step list names it (stepNamesOf)
+  assert.equal(decisionsOf({ stepQuestions: [qa.stepQuestions[1]] }, { steps: [{ nodeId: 'n_y', agentKey: 'designer' }] })[0].step, 'designer');
+});
+
+test('F-3-04: decisionsOf names another person\'s answer on a shared sign-in (who: person, by); the viewer\'s own (any case), Away mode and no sign-in stay as before', () => {
+  const round = (answeredBy) => ({ stepKey: '3:n_y#1', nodeId: 'n_y', questions: [{ id: 'q', question: 'Q?' }], answers: [{ id: 'q', choice: 'A' }], ...(answeredBy ? { answeredBy } : {}) });
+  const qa = { stepQuestions: [round('mara@acme.dev'), round('SAM@acme.dev'), round('night-mode'), round('')] };
+  assert.deepEqual(decisionsOf(qa, {}, 'sam@acme.dev').map((x) => [x.who, x.by]), [['person', 'mara@acme.dev'], ['you', undefined], ['away', undefined], ['you', undefined]]);
+  assert.deepEqual(decisionsOf(qa, {}).map((x) => x.who), ['you', 'you', 'away', 'you'], 'no shared sign-in: people are not shown');
+  const clar = { clarify: { questions: [{ id: 'c', question: 'C?' }], answers: [{ id: 'c', choice: 'Yes' }], answeredBy: 'mara@acme.dev' } };
+  assert.deepEqual(decisionsOf(clar, {}, 'sam@acme.dev'), [{ step: 'Clarify', q: 'C?', a: 'Yes', who: 'person', by: 'mara@acme.dev' }]);
+});
+
+test('F-3-04: decisionsOf: a form round is one decision, Label: value joined; with no values it is left out', () => {
+  const ask = { kind: 'form', form: 'size', version: 1, title: 'Pick a size', layout: [{ type: 'group', children: [{ field: 'w', label: 'Width' }] }],
+    answerSchema: { type: 'object', properties: { w: { type: 'number' }, h: { type: 'number', title: 'Height' }, tags: { type: 'array' } } } };
+  const qa = { stepQuestions: [{ stepKey: '5:n_impl#1', nodeId: 'n_impl', questions: [], answers: [], ask: { ...ask, values: { w: 3, h: 4, tags: ['a', 'b'] } },
+    formAnswer: { form: 'size', version: 1, values: { w: 3, h: 4, tags: ['a', 'b'] } } },
+  { stepKey: '6:n_impl#1', nodeId: 'n_impl', questions: [], answers: [], ask: { ...ask, values: null }, formAnswer: null }],
+  clarify: { questions: [], answers: [], ask: { ...ask, title: 'Run size' }, formAnswer: { values: { w: 1 } } } };
+  assert.deepEqual(decisionsOf(qa, QA_STATE), [{ step: 'Clarify', q: 'Run size', a: 'Width: 1', who: 'you' },
+    { step: 'Implementation', q: 'Pick a size', a: 'Width: 3 · Height: 4 · tags: a, b', who: 'you' }]);
+});
+
+test('F-3-04: decisionsOf never throws on garbage; no Q&A is no decision; taskPageOf carries them', () => {
+  for (const bad of [null, undefined, 3, 'x', [], { clarify: 'x', stepQuestions: 'y' }, { clarify: { questions: [null, 3, { id: 'a' }], answers: [null, { id: 'a', choice: 7 }] }, stepQuestions: [null, 1, { questions: null, answers: null }] }]) {
+    assert.deepEqual(decisionsOf(bad, null), [], JSON.stringify(bad));
+  }
+  assert.deepEqual(taskPageOf({ row: { id: 'p1' }, state: QA_STATE, qa: QA }).decisions.length, 5);
+  assert.deepEqual(taskPageOf({ row: { id: 'p1' }, state: {} }).decisions, []);
+});
+
+test('F-3-07: stagesOf gives each step its own activeMs, costUsd and cycles (the max), and whether it ran; an asking or blocked step keeps them', () => {
+  const nodes = [{ id: 'n_plan', kind: 'agent', label: 'Plan', progressStage: 'plan' }, { id: 'n_impl', kind: 'agent', label: 'Implementation', progressStage: 'build' },
+    { id: 'n_rev', kind: 'agent', label: 'Review implementation', progressStage: 'review' }, { id: 'n_man', kind: 'agent', label: 'Manual tests', progressStage: 'review' }];
+  const steps = [{ nodeId: 'n_plan', status: 'done', activeMs: 60000, costUsd: 0.5, ordinal: 1 },
+    { nodeId: 'n_impl', status: 'done', activeMs: 120000, costUsd: 1, cycle: 1 }, { nodeId: 'n_impl', status: 'done', activeMs: 60000, costUsd: 0.2, cycle: 3 },
+    { nodeId: 'n_rev', status: 'done', activeMs: 30000, costUsd: 0.1 }];
+  const st = stagesOf(steps, nodes, { openIssues: [{ nodeId: 'n_rev', count: 1 }] });
+  const facts = (x) => [x.name, x.state, x.activeMs, x.costUsd, x.cycles, x.ran];
+  assert.deepEqual(st.map((s) => s.steps.map(facts)), [[['Plan', 'done', 60000, 0.5, 1, true]], [['Implementation', 'done', 180000, 1.2, 3, true]],
+    [['Review implementation', 'blocked', 30000, 0.1, 1, true], ['Manual tests', 'next', 0, 0, 0, false]]]);
+  assert.deepEqual([st[1].activeMs, st[1].costUsd], [180000, 1.2], 'the stage keeps its sums');
+  const asks = stagesOf(steps, nodes, { question: { nodeId: 'n_impl' } });
+  assert.deepEqual(facts(asks[1].steps[0]), ['Implementation', 'ask', 180000, 1.2, 3, true]);
+  // a stage none of whose steps are known (Auto deciding): no step, no numbers
+  assert.deepEqual(stagesOf([], []).map((s) => s.steps), [[], [], []]);
+});
+
+test('F-3-12: docsOf keeps every artifact dev lists, in its order, named by its node id', () => {
+  const list = [{ relPath: 'results/review.json', nodeId: 'n_rev', stepKey: '4:n_rev#1', kind: 'review' }, { relPath: 'changes.patch', stepKey: '3:n_impl#2', kind: 'patch' },
+    { relPath: 'plan.md', kind: 'plan' }, null, 7, { kind: 'x' }, { relPath: '' }];
+  assert.deepEqual(docsOf(list), [['review.json', 'n_rev', 'results/review.json'], ['changes.patch', 'n_impl', 'changes.patch'], ['plan.md', 'plan', 'plan.md']]);
+  for (const bad of [null, undefined, 'x', {}]) assert.deepEqual(docsOf(bad), []);
+});
+
+test('F-3-12: docStepsOf names each document\'s step by its node label, as the step list does; the given list is never changed', () => {
+  const docs = docsOf([{ relPath: 'results/review.json', nodeId: 'n_rev' }, { relPath: 'changes.patch', stepKey: '3:n_impl#2' }, { relPath: 'plan.md', kind: 'plan' }]);
+  const before = JSON.stringify(docs);
+  assert.deepEqual(docStepsOf(docs, QA_STATE), [['review.json', 'Review implementation', 'results/review.json'], ['changes.patch', 'Implementation', 'changes.patch'], ['plan.md', 'plan', 'plan.md']]);
+  assert.equal(JSON.stringify(docs), before);
+  assert.equal(docStepsOf(null, QA_STATE), null, 'not read yet stays null');
+  assert.deepEqual(docStepsOf(docs, {}), docs, 'no state yet: the ids');
+});
+
+// gate G F-W3a1-03: a saved run holds the clarify Q&A twice, in `clarify` and in the clarify step's own round
+// (stepQuestions, nodeId n_clarify); Decisions listed every question twice. Each question shows once, the richer record
+// kept; a real later round of the same step is its own round, named so.
+test('F-W3a1-03: decisionsOf shows a clarify question once when the saved run holds it in clarify and in the clarify round', () => {
+  const state = { stepper: { graph: { nodes: [{ id: 'n_clarify', kind: 'agent', key: 'clarify', label: 'Clarify' }, ...QA_STATE.stepper.graph.nodes] } }, steps: [] };
+  const qs = [{ id: 'q1', question: 'Keep the old address working?' }, { id: 'q2', question: 'Which dates?' }];
+  const qa = {
+    clarify: { questions: qs, answers: [{ id: 'q1', choice: 'Redirect it' }, { id: 'q2', choice: 'The invoice date' }] },
+    stepQuestions: [
+      { stepKey: '1:n_clarify#1', round: 1, nodeId: 'n_clarify', agentKey: 'clarify', questions: qs, answers: [{ id: 'q1', choice: 'Redirect it' }, { id: 'q2', choice: 'The invoice date' }], answeredBy: 'mara@acme.dev' },
+      { stepKey: '1:n_clarify#1', round: 2, nodeId: 'n_clarify', agentKey: 'clarify', questions: [{ id: 'q3', question: 'Which time zone?' }], answers: [{ id: 'q3', choice: 'UTC' }] },
+      { stepKey: '3:n_impl#1', round: 1, nodeId: 'n_impl', agentKey: 'implementer', questions: [{ id: 's1', question: 'Use the shared pager?' }], answers: [{ id: 's1', choice: 'Yes' }] },
+    ],
+  };
+  assert.deepEqual(decisionsOf(qa, state, 'sam@acme.dev'), [
+    { step: 'Clarify', q: 'Keep the old address working?', a: 'Redirect it', who: 'person', by: 'mara@acme.dev' },
+    { step: 'Clarify', q: 'Which dates?', a: 'The invoice date', who: 'person', by: 'mara@acme.dev' },
+    { step: 'Clarify · round 2', q: 'Which time zone?', a: 'UTC', who: 'you' },
+    { step: 'Implementation', q: 'Use the shared pager?', a: 'Yes', who: 'you' },
+  ]);
+  // no state graph: the clarify round is known by its agent; still once
+  assert.equal(decisionsOf({ clarify: qa.clarify, stepQuestions: [qa.stepQuestions[0]] }, {}).length, 2);
+});
+
+// gate G F-W3a1-04: a document no step wrote (the run's own: its brief, attached files, the diff, results) read
+// "from extra / prompt / diff-patch / results" under Changes › Not in the code; it is said in words
+test('F-W3a1-04: docStepsOf words a run document\'s kind when no step wrote it', () => {
+  const docs = docsOf([{ relPath: 'prompt.md', kind: 'prompt' }, { relPath: 'extras/spec.md', kind: 'extra' }, { relPath: 'diff.patch', kind: 'diff-patch' }, { relPath: 'results.json', kind: 'results' }, { relPath: 'plan.md', kind: 'plan' }]);
+  assert.deepEqual(docStepsOf(docs, {}).map((d) => d[1]), ['the brief', 'the brief', 'the diff', 'results', 'plan']);
 });

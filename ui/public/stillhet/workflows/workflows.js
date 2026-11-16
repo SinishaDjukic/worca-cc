@@ -24,6 +24,8 @@
       { id: 'quick-fix', title: 'Quick Fix', own: false, domain: 'coding', what: 'Skips the plan; builds and runs the tests.', tasks: 9, merged: 89, from: 'Made with Worca', steps: [['Build', 'implementer', 'Sonnet 5.5', 'medium', 5, 0.18], ['Run tests', 'run-tests', '', '', 2, 0.01]], loops: [['Run tests', 'Build', 2]] },
       { id: 'full', title: 'Full', own: false, domain: 'coding', what: 'Asks first, plans, builds, reviews and runs the tests.', tasks: 3, merged: 100, from: 'Made with Worca', steps: [['Clarify', 'clarify', 'Opus 5.5', 'high', 2, 0.12], ['Plan', 'planner', 'Opus 5.5', 'high', 3, 0.30], ['Build', 'implementer', 'Sonnet 5.5', 'high', 11, 0.24], ['Review', 'reviewer', 'Opus 5.5', 'high', 4, 0.14], ['Run tests', 'run-tests', '', '', 2, 0.01]], loops: [['Review', 'Build', 3]] },
       { id: 'api-rewrite', title: 'API rewrite', own: true, team: true, domain: 'coding', what: 'Plans the contract, builds it behind a diff gate, reviews it.', tasks: 1, merged: 0, running: true, from: 'From the chat Plan the API rewrite', steps: [['Plan', 'planner', 'Opus 5.5', 'high', 6, 0.90], ['Build', 'implementer', 'Opus 5.5', 'high', 24, 2.80], ['Diff gate', 'diff-gate', '', '', 1, 0.01], ['Review', 'reviewer', 'Opus 5.5', 'high', 6, 0.40]], loops: [['Review', 'Build', 2]] },
+      // V-TW-06: two steps share a name; each step carries its node ([9]) and each loop its two ends, so each goes back to its own Build
+      { id: 'two-builds', title: 'Build twice', own: true, domain: 'coding', what: 'Builds, reviews, builds the follow-up and runs the tests; each build takes its own fixes.', tasks: 2, merged: 50, from: 'Yours', steps: [['Plan', 'planner', 'Opus 5.5', 'high', 3, 0.30, undefined, undefined, undefined, 'd_plan'], ['Build', 'implementer', 'Sonnet 5.5', 'high', 9, 0.22, undefined, undefined, undefined, 'd_build1'], ['Review', 'reviewer', 'Opus 5.5', 'medium', 4, 0.12, undefined, undefined, undefined, 'd_review'], ['Build', 'implementer', 'Sonnet 5.5', 'medium', 5, 0.15, undefined, undefined, undefined, 'd_build2'], ['Run tests', 'run-tests', '', '', 2, 0.01, undefined, undefined, undefined, 'd_tests']], loops: [['Review', 'Build', 2, 'd_review', 'd_build1'], ['Run tests', 'Build', 1, 'd_tests', 'd_build2']] },
     ],
     agent: [
       { id: 'planner', title: 'Plan', own: false, domain: 'coding', type: 'producer', ins: 'the task, your answers', outs: 'the plan', model: 'Opus 5.5', effort: 'high', asks: true, fan: true },
@@ -67,6 +69,13 @@
   let figs = false;   // look.figures-on-demand: a card's cost and time open with the page's Figures
   const factsOf = (w) => (figs ? (w.running ? (isLive() ? 'Its first task is running' : `Its first task is running · ${money(4.8)} so far`) : measured(w) ? `${money(costOf(w))} a task · ${minOf(w)} min · ${mergedOf(w)}` : mergedOf(w)) : (w.running ? 'Its first task is running' : ''));
   const stepsWord = (n) => `${n} ${n === 1 ? 'step' : 'steps'}`;   // F-G-fid-10
+  const roundsWord = (n) => (+n === 1 ? 'time' : 'times');   // F-5-10: "up to 1 time"
+  // V-TW-06: a loop's ends among the steps, -1 for one not found: by node when the loop carries both ([3], [4]) against
+  // a step's [9], else the first step of that label (a demo row, a draft from before). live/workflow-map.mjs loopEnds is
+  // the same rule (this classic script cannot import it); both are pinned by tests.
+  const loopEnds = (steps, loop) => { const l = Array.isArray(loop) ? loop : [], list = Array.isArray(steps) ? steps : [], byNode = l[3] && l[4], at = (k) => list.findIndex((s) => (byNode ? s?.[9] === l[k + 3] : s?.[0] === l[k])); return { from: at(0), to: at(1) }; };
+  // a step in loop words: its name, and its place when another step has the same name ("Build (step 2)")
+  const stepName = (steps, i) => { const n = steps[i]?.[0] ?? ''; return steps.filter((s) => s[0] === n).length > 1 ? `${n} (step ${i + 1})` : n; };
   const shape = (w) => `${stepsWord(w.steps.length)} · ${w.tasks ? `used by ${w.tasks} ${w.tasks === 1 ? 'task' : 'tasks'}` : 'not used yet'}`;
   const markOf = (kind, size) => R.kindMark({ kind, size });
   // drafts (rail.drafts): a change by hand goes into the thing's draft; tasks keep running the saved one until you save
@@ -90,19 +99,21 @@
   // work back to itself says so in its own panel. F-G-fid-07/-08: in the live kind a step says its agent's or script's own
   // description, no model is named (none wrote the words), and the ways carry no task split dev never counted.
   function storyOf(w) {
-    const at = (name) => w.steps.findIndex((s) => s[0] === name), times = (n) => (n === 1 ? 'once' : n === 2 ? 'twice' : `${n} times`);
-    const loops = w.loops.map(([a, b, n]) => ({ from: at(a), to: at(b), back: b, n: +n })).filter((l) => l.from >= 0 && l.to >= 0);
+    const times = (n) => (n === 1 ? 'once' : n === 2 ? 'twice' : `${n} times`);
+    const loops = w.loops.map((l) => { const e = loopEnds(w.steps, l); return { ...e, back: stepName(w.steps, e.to), n: +l[2] }; }).filter((l) => l.from >= 0 && l.to >= 0);
     const arcs = loops.filter((l) => l.from !== l.to), live = isLive();
     const roundOf = (l) => [(w.steps[l.from][5] || 0) + (w.steps[l.to][5] || 0), (w.steps[l.from][4] || 0) + (w.steps[l.to][4] || 0)];
     const loop = arcs[0], half = Math.ceil(w.tasks / 2), split = !live && w.tasks;   // the demo's telling; live has no per-way counts
     const fig = measured(w), ways = [{ title: 'Straight through', meta: `${w.steps.map((s) => s[0]).join(', ')}${fig ? ` · about ${minOf(w)} min, ${money(costOf(w))}` : ''}${split ? ` · ${w.tasks - (loop ? half : 0)} of ${w.tasks} tasks` : ''}`, tone: 'ok', stage: 4 },
-      ...arcs.flatMap((l) => { const [round, roundMin] = roundOf(l), from = w.steps[l.from][0]; return [
+      ...arcs.flatMap((l) => { const [round, roundMin] = roundOf(l), from = stepName(w.steps, l.from); return [
         { title: `${from} finds something`, meta: `${live ? `Back to ${l.back}, at most ${times(l.n)}` : `Back to ${l.back} once or twice`}${fig ? ` · each round about ${roundMin} min, ${money(round)}` : ''}${split && l === loop ? ` · ${half} of ${w.tasks} tasks` : ''}`, tone: 'act', stage: 2 },
         { title: `Still not right after ${l.n} ${l.n === 1 ? 'round' : 'rounds'}`, meta: `It stops and asks you what to do${live ? '' : ' · never yet'}`, tone: 'ask', stage: 2 }]; })];
     const says = (ref) => (live ? w.agentsByKey?.[ref]?.description || w.scriptsByKey?.[ref]?.description || '' : SAYS[ref] || `${titleOf(ref)}.`);
     const checks = new Set(arcs.map((l) => l.from));
     return R.workflowStory({ steps: w.steps.map(([name, ref, , , min, cost], i) => ({ name, says: says(ref), meta: fig ? `about ${min} min · ${money(cost || 0)}` : '', check: checks.has(i) })),
-      loops: loops.map((l) => ({ from: l.from, to: l.to, text: l.from === l.to ? `found something? runs again, at most ${times(l.n)}` : `found something? back to ${l.back}, at most ${times(l.n)}` })),
+      loops: loops.map((l, _, all) => { const line = (x) => (x.from === x.to ? `found something? runs again, at most ${times(x.n)}` : `found something? back to ${x.back}, at most ${times(x.n)}`);
+        const twin = all.some((o) => o !== l && line(o) === line(l));   // F-W3a2-12: two lines that would read the same name their sending step
+        return { from: l.from, to: l.to, text: twin ? `${stepName(w.steps, l.from)} ${line(l)}` : line(l) }; }),
       ways: !atLeast('advanced') || waysOpen ? ways : [], byline: atLeast('advanced') && !live ? `Told by Haiku 5.5 from this workflow${w.tasks ? ` and its last ${w.tasks} ${w.tasks === 1 ? 'task' : 'tasks'}` : ''}` : '' })
       + (atLeast('advanced') ? `<div class="wf-acts open-line">${R.button({ label: waysOpen ? 'Fold how a task goes through it' : `How a task goes through it · ${ways.length} ${ways.length === 1 ? 'way' : 'ways'}`, kind: 'quiet', icon: R.icon(waysOpen ? 'chevron' : 'chevR', 12), attrs: { 'data-wf-ways': '', 'aria-expanded': String(waysOpen), 'data-folds': '.ws .list' } })}</div>` : '');
   }
@@ -151,7 +162,7 @@
       // thing.one-telling: the story says what each step does and costs, the graph how they connect; this holds only what you can change
       const steps = atLeast('advanced') && !ro ? R.settingsSection({ title: 'Change a step', meta: 'Its model and effort here, or anything in a chat.',
         rows: x.steps.map(([name, , model, effort], i) => (model ? R.settingsRow({ name: `${i + 1}. ${name}`, sentence: `Runs on ${pick(`wfm-${i}`, model, MODELS, 'Its model')} ${pick(`wfe-${i}`, effort, EFFORTS, 'How hard it thinks')}` }) : '')).join('')
-          + x.loops.map(([from, to, n], i) => R.settingsRow({ name: 'Loop', sentence: `${esc(from)} sends fixes back up to ${pick(`wfl-${i}`, String(n), ['1', '2', '3', '5'], 'How many rounds')} times` })).join('') }) : '';
+          + x.loops.map((l, i) => { const k = loopEnds(x.steps, l).from; return R.settingsRow({ name: 'Loop', sentence: `${esc(k >= 0 ? stepName(x.steps, k) : l[0])} sends fixes back up to ${pick(`wfl-${i}`, String(l[2]), ['1', '2', '3', '5'], 'How many rounds')} ${roundsWord(l[2])}` }); }).join('') }) : '';
       return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${head}${strip}${exp}${storyOf(x)}${labsRows(x)}${toggle}${well}${steps}<div class="wf-acts">${R.button({ label: 'Use it', attrs: { 'data-wf-use': x.id, disabled: x0.fresh ? true : null, title: x0.fresh ? 'Save it first: nothing can run a draft' : 'Starts a task in a chat with this workflow in its sentence' } })}${x0.fresh ? '<span class="wf-ed-m">Save it first: nothing can run a draft</span>' : ''}</div></div></div><div class="convo-dock" id="wf-dock"></div></div>`;
     }
     const head = R.placeHead({ center: { label: 'Workflows', to: 'workflows' }, title: x.title, facts: esc(`${x.domain} · ${kind === 'agent' ? x.type : x.runtime}`), mark: markOf(kind), word: x.own ? 'Yours' : 'Built-in', why: usedIn(x.id).length ? `In ${usedIn(x.id).join(', ')}` : 'In no workflow yet', action: chat, menu: more }) + draft;
@@ -178,12 +189,12 @@
   function edHtml() {
     const w = ed.wf, i = stepAt(ed.picked), st = w.steps[i];
     const pick = (id, text, items, tip) => R.sentencePicker({ id, text, tip, items: items.map((v) => ({ id: v, text: v, checked: v === text })), open: menu === id, chevron: R.icon('chevron', 10), right: true });
-    const loop = st && w.loops.find((l) => l[0] === st[0]);
+    const loop = st && w.loops.find((l) => loopEnds(w.steps, l).from === i), to = loop ? loopEnds(w.steps, loop).to : -1;
     const insp = st ? `<h2 class="wf-ed-h">${esc(st[0])}</h2><p class="wf-ed-m">Step ${i + 1} of ${w.steps.length} · ${st[2] ? 'an agent' : 'a script'}</p>${R.settingsSection({ rows: [R.settingsRow({ name: 'Name', sentence: R.field({ id: 'ed-step-name', label: 'Step name', quietLabel: true, value: st[0], hint: '40 characters at most', attrs: { 'data-ed-step': String(i), maxlength: 40 } }) }), R.settingsRow({ name: 'Does', sentence: esc(SAYS[st[1]] || titleOf(st[1])) }),
       ...(st[2] ? [R.settingsRow({ name: 'Runs on', sentence: `${pick(`ed-m-${i}`, st[2], MODELS, 'Its model')} ${pick(`ed-e-${i}`, st[3], EFFORTS, 'How hard it thinks')}` })] : []),
-      ...(loop ? [R.settingsRow({ name: 'Loop', sentence: `Sends fixes back to <b>${esc(loop[1])}</b> up to ${pick(`ed-l-${i}`, String(loop[2]), ['1', '2', '3', '5'], 'How many rounds')} times, then asks you` })] : []),
+      ...(loop ? [R.settingsRow({ name: 'Loop', sentence: `Sends fixes back to <b>${esc(to >= 0 ? stepName(w.steps, to) : loop[1])}</b> up to ${pick(`ed-l-${i}`, String(loop[2]), ['1', '2', '3', '5'], 'How many rounds')} ${roundsWord(loop[2])}, then asks you` })] : []),
       R.settingsRow({ name: 'Stops after', sentence: pick(`ed-t-${i}`, st[6] || '30 min', ['10 min', '30 min', '1 hour'], 'When it gives up') }),
-      R.settingsRow({ name: 'Costs', sentence: `About ${money(st[5] || 0)} a task${loop ? `; a round back adds ${money((st[5] || 0) + (w.steps[w.steps.findIndex((s) => s[0] === loop[1])]?.[5] || 0))}` : ''}` }),
+      R.settingsRow({ name: 'Costs', sentence: `About ${money(st[5] || 0)} a task${loop ? `; a round back adds ${money((st[5] || 0) + (w.steps[to]?.[5] || 0))}` : ''}` }),
       ...(edMore ? ['<div class="ed-more">' + R.settingsRow({ name: 'Session', sentence: `${pick(`ed-s-${i}`, st[7] || 'its own session', ['its own session', 'one conversation with the step before'], 'Which session it runs in')}` }), R.settingsRow({ name: 'Sub-agents', sentence: `${pick(`ed-sa-${i}`, st[8] || 'on', ['on', 'off'], 'Whether it sends helpers')}` }) + '</div>'] : [])].join('') })}
       <div class="wf-acts open-line">${R.button({ label: edMore ? 'Fewer settings' : 'More settings', kind: 'quiet', icon: R.icon(edMore ? 'chevron' : 'chevR', 12), attrs: { 'data-ed-more': '', 'aria-expanded': String(edMore), 'data-folds': '.ed-more' } })}</div><div class="wf-acts">${R.button({ label: 'Try it on a task', kind: 'quiet', attrs: { 'data-ed-try': String(i), disabled: src().workflow.find((y) => y.id === ed.id)?.fresh ? true : null, title: src().workflow.find((y) => y.id === ed.id)?.fresh ? 'Save it first: nothing can run a draft' : 'Starts a task in a chat with this step named' } })}${R.button({ label: 'Remove', kind: 'quiet', attrs: { 'data-ed-remove': String(i) } })}</div>${src().workflow.find((y) => y.id === ed.id)?.fresh ? '<p class="wf-ed-m">Try it on a task once it is saved: nothing can run a draft.</p>' : ''}`
       : `<h2 class="wf-ed-h">${ed.picked === 'n_end' ? 'End' : 'Task'}</h2><p class="wf-ed-m">${ed.picked === 'n_end' ? 'What the workflow comes to: a pull request' : 'Where your task comes in: its words and the files you add'}</p><p class="wf-ed-m">Pick a step on the canvas to change it.</p>`;
@@ -216,7 +227,8 @@
     if (current.startsWith('edit:')) {
       if (listNow() !== 'ready') { page.innerHTML = `<div class="rail-locked">${R.listState({ state: listNow(), noun: 'workflows', retry: listNow() === 'failed' ? { 'data-wf-retry': '' } : null })}</div>`; return; }
       const { x } = find(current); if (!x || !atLeast('expert') || !x.own) { window.RailShell.go(x ? `workflows/workflow:${x.id}` : 'workflows'); return; }   // a built-in reads as it is
-      if (!ed || ed.id !== x.id) ed = { id: x.id, wf: structuredClone(shown(x)), g: null, picked: x.steps[x.loops.length ? x.steps.findIndex((s) => s[0] === x.loops[0][0]) : 0]?.[9] || `n${x.loops.length ? x.steps.findIndex((s) => s[0] === x.loops[0][0]) : 0}`, saved: true, past: [], next: [], z: 0, fit: 0, whole: 0 };
+      const k0 = x.loops.length ? loopEnds(x.steps, x.loops[0]).from : 0;   // it opens on the step that sends the first loop back
+      if (!ed || ed.id !== x.id) ed = { id: x.id, wf: structuredClone(shown(x)), g: null, picked: x.steps[k0]?.[9] || `n${k0}`, saved: true, past: [], next: [], z: 0, fit: 0, whole: 0 };
       page.innerHTML = edHtml(); edMount(); return;
     }
     const ls = listNow();
@@ -320,15 +332,15 @@
         if (on('[data-ed-save], [data-draft-save]')) { const x = src().workflow.find((w) => w.id === ed.id); x.draft ||= blank('workflow', ed.wf); saveDraft(x); ed.past = []; ed.next = []; ed.laid = false; draw(); say(`Saved ${x.title}`); return; }
         if ((hit = on('[data-ed-remove]'))) { const k = +hit.dataset.edRemove, name = ed.wf.steps[k][0];
           if (src().workflow.find((w) => w.id === ed.id)?.chain === false) { say(`Could not remove ${name}: ${BRANCHES}`); return; }   // D7
-          edChange(() => { ed.wf.steps.splice(k, 1); ed.wf.loops = ed.wf.loops.filter((l) => l[0] !== name && l[1] !== name); ed.g = null; ed.picked = 'n_task'; }, `Removed ${name}`); return; }
+          edChange(() => { ed.wf.loops = ed.wf.loops.filter((l) => { const e = loopEnds(ed.wf.steps, l); return e.from !== k && e.to !== k; }); ed.wf.steps.splice(k, 1); ed.g = null; ed.picked = 'n_task'; }, `Removed ${name}`); return; }
         if ((hit = on('#wf-canvas-g [data-node-id]'))) { ed.picked = hit.dataset.nodeId; draw(); return; }
         if ((hit = on('[data-menu-pick]'))) { const [id, v] = hit.dataset.menuPick.split('|'); menu = '';
           if (id === 'ed-io' && LIVE()) { if (v === 'import') fileInput.click(); else LIVE().exportAs(ed.id, 'a JSON file').then((a) => say(a.text)); draw(); return; }   // D10, D11
           if (id === 'ed-io' && v === 'import') { importing = { name: 'Release checklist.json', n: 1 }; draw(); return; }   // the demo's sample file: it runs one script
           if (id === 'ed-io') { say(v === 'import' ? window.RailWould('ask for a file to import') : window.RailWould(`export ${ed.wf.title}`)); draw(); return; }
-          const [, k, n] = id.split('-'), st = ed.wf.steps[+n];
-          const was = { m: st[2], e: st[3], l: String(ed.wf.loops.find((l) => l[0] === st[0])?.[2]), t: st[6] || '30 min', s: st[7] || 'its own session', sa: st[8] || 'on' }[k]; if (v === was) { draw(); return; }   // the same value is no change
-          edChange(() => { if (k === 'm') reprice(st, v, st[3]); else if (k === 'e') reprice(st, st[2], v); else if (k === 'l') ed.wf.loops.find((l) => l[0] === st[0])[2] = +v; else if (k === 't') st[6] = v; else if (k === 's') st[7] = v; else if (k === 'sa') st[8] = v; ed.g = null; }); return; }
+          const [, k, n] = id.split('-'), st = ed.wf.steps[+n], sent = () => ed.wf.loops.find((l) => loopEnds(ed.wf.steps, l).from === +n);   // the loop this step sends
+          const was = { m: st[2], e: st[3], l: String(sent()?.[2]), t: st[6] || '30 min', s: st[7] || 'its own session', sa: st[8] || 'on' }[k]; if (v === was) { draw(); return; }   // the same value is no change
+          edChange(() => { if (k === 'm') reprice(st, v, st[3]); else if (k === 'e') reprice(st, st[2], v); else if (k === 'l') sent()[2] = +v; else if (k === 't') st[6] = v; else if (k === 's') st[7] = v; else if (k === 'sa') st[8] = v; ed.g = null; }); return; }
         if ((hit = on('[data-menu]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); }
         return;
       }
@@ -370,11 +382,11 @@
       if (!here() || !ed || !current.startsWith('edit:')) return;
       const t = e.target, v = t.value?.trim();
       if (t.matches('[data-ed-name]')) { if (!v) { t.value = ed.wf.title; say(`Kept ${ed.wf.title}: a workflow needs a name`); return; } if (v === ed.wf.title) { t.value = v; return; } if (src().workflow.some((w) => w.id !== ed.id && w.title.toLowerCase() === v.toLowerCase())) { t.value = ed.wf.title; say(`Kept ${ed.wf.title}: another workflow is called ${v}`); return; } edChange(() => { ed.wf.title = v; }, `Renamed to ${v}`); return; }
-      if (t.matches('[data-ed-step]')) { const st = ed.wf.steps[+t.dataset.edStep], old = st[0];
+      if (t.matches('[data-ed-step]')) { const k = +t.dataset.edStep, st = ed.wf.steps[k], old = st[0];
         if (!v) { t.value = old; say(`Kept ${old}: a step needs a name`); return; }
         if (v === old) { t.value = old; return; }
         if (ed.wf.steps.some((s) => s[0] === v)) { t.value = old; say(`Kept ${old}: another step is called ${v}`); return; }   // loops name their steps
-        edChange(() => { st[0] = v; ed.wf.loops.forEach((l) => { if (l[0] === old) l[0] = v; if (l[1] === old) l[1] = v; }); ed.g = null; }, `Renamed to ${v}`); }
+        edChange(() => { const ends = ed.wf.loops.map((l) => loopEnds(ed.wf.steps, l)); st[0] = v; ed.wf.loops.forEach((l, j) => { if (ends[j].from === k) l[0] = v; if (ends[j].to === k) l[1] = v; }); ed.g = null; }, `Renamed to ${v}`); }   // only this step's loops (the draft save matches them by node)
     });
     R.dismissOnOutside(document, { open: () => here() && !!menu, inside: '#route-place .spick, #route-place .rc-pop', back: () => null, close: () => { menu = ''; }, paint: draw });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && wide && here()) { wide = false; draw(); } });

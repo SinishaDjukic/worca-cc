@@ -2,9 +2,10 @@
 // Workflow picker offers Auto as classic's New run does (app.js AUTO_WORKFLOW: a client-side constant /api/workflows never
 // lists); a project whose activeWorkflowId is wf_auto preselects it and Start posts workflowId wf_auto with classic's
 // humanInLoop. Live app host (jsdom), the real shell, a stubbed fetch.
-import { test, afterEach } from 'node:test';
+import { test, afterEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { liveHost, go, settle, closeHosts, posts, LISTS } from './helpers/stillhet-chat-live-host.mjs';
+import { demoTaskHost } from './helpers/stillhet-host.mjs';
 
 afterEach(closeHosts);
 const CONFIG = '/api/config?projectDir=%2Fsrc%2Fweb';
@@ -51,4 +52,38 @@ test('F-cov23-03: any other workflow sends no humanInLoop (the body stays as bef
   type(w, d, '#cc-text', 'Add a pager'); await start(d);
   const [b] = runs(calls);
   assert.equal(b.workflowId, 'wf_lean'); assert.equal(b.humanInLoop, undefined);
+});
+
+// ---- COV-2: the engine check, the source, Workflow, Reset and Save as default, drawn in the demo kind ----
+const demo = async () => { const w = demoTaskHost({ after }); await settle(60); w.RailCenters.maker('tasks').newPick('form'); await settle(60); return { w, d: w.document }; };
+
+test('COV-2 Engine check (demo): Copilot\'s Agent item is aria-disabled with title Copilot: off while the credential broker is on, and a click on it leaves the Agent picker\'s text reading Claude', async () => {
+  const { d } = await demo();
+  q(d, '[data-menu="f-agent"]').click(); await settle(10);
+  const item = q(d, '[data-menu-pick="f-agent|Copilot"]');
+  assert.equal(item.getAttribute('aria-disabled'), 'true');
+  assert.equal(item.getAttribute('title'), 'Copilot: off while the credential broker is on');
+  item.click(); await settle(20);
+  assert.equal(shown(d, 'agent'), 'Claude');
+});
+
+test('COV-2 Engine check (demo): a preset pinning Copilot leaves Agent on Claude and says Copilot is off: starts on Claude', async () => {
+  const { d } = await demo();
+  await pick(d, 'preset', 'p:rp_copilot');
+  assert.equal(shown(d, 'preset'), 'Copilot review');
+  assert.equal(shown(d, 'agent'), 'Claude');
+  assert.match(q(d, '.dlg-status').textContent, /Copilot is off: starts on Claude/);
+});
+
+test('COV-2 Origin · latest / Workflow / Reset / Save as default (demo): the source picker lists the latest version from origin and my local copy; Workflow lists Auto; Reset and Save as default each repaint with their said word', async () => {
+  const { w, d } = await demo();
+  assert.deepEqual(await items(d, 'source'), ['the latest version from origin', 'my local copy']);
+  assert.equal((await items(d, 'workflow'))[0], 'Auto');
+  await pick(d, 'workflow', 'Quick Fix');
+  q(d, '[data-c-more]').click(); await settle(20);
+  q(d, '[data-c-flowreset]').click(); await settle(20);
+  assert.equal(q(d, '[data-c-flowreset]').textContent, 'Reset');
+  type(w, d, '#cc-tags', 'docs');
+  q(d, '[data-c-tagsave]').click(); await settle(20);
+  assert.equal(q(d, '[data-c-tagsave]').textContent, 'Saved');
 });

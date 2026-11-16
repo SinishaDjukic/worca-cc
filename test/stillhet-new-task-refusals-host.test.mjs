@@ -1,9 +1,10 @@
 // test/stillhet-new-task-refusals-host.test.mjs — COV-2 (docs/rail/forms.md form.run-options): New task's engine and sync
 // refusals, on dev's routes and in classic's words (split from stillhet-new-task-options-host for CI's per-file limit).
 // Live app host (jsdom), the real shell, a stubbed fetch.
-import { test, afterEach } from 'node:test';
+import { test, afterEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { liveHost, go, settle, closeHosts, posts, LISTS } from './helpers/stillhet-chat-live-host.mjs';
+import { demoTaskHost } from './helpers/stillhet-host.mjs';
 
 afterEach(closeHosts);
 const FLOWS = { ...LISTS, '/api/workflows': { workflows: [{ id: 'wf_shape', name: 'Shaper' }, { id: 'wf_lean', name: 'Lean', nodes: [{ id: 'plan', kind: 'agent' }, { id: 'build', kind: 'agent' }] }] } };
@@ -97,4 +98,39 @@ test('COV-2 sync: Cancel clears the note, says Start cancelled and starts nothin
   assert.match([...d.querySelectorAll('body > .rc-toast')].map((e) => e.textContent).join(' '), /Start cancelled/);
   assert.equal(runs(calls).length, 1);
   assert.equal(q(d, '#cc-text').value, 'Add a pager', 'what was typed stays');
+});
+
+// ---- COV-2: the waiting clause's way out and the run before it's branch, drawn in the demo kind ----
+const AFTER = { after: { kind: 'ticket', id: 's-docs', title: 'Nightly docs' } };
+const demo = async (keep) => { const w = demoTaskHost({ after }); await settle(60); w.RailCenters.newTask(keep); await settle(60); return { w, d: w.document }; };
+const baseItems = async (d) => { q(d, '[data-menu="f-base"]').click(); await settle(10); const got = [...d.querySelectorAll('#center-dlg [data-menu-pick^="f-base|"]')].map((x) => x.textContent.trim()); q(d, '[data-menu="f-base"]').click(); await settle(10); return got; };
+
+test('COV-2 Start now instead / Start run / Start run now (demo): the waiting clause\'s link drops it and the yes button reads Start task', async () => {
+  const { w, d } = await demo(AFTER);
+  assert.match(q(d, '.cc-frame').textContent, /It starts once Nightly docs ends/);
+  assert.equal(q(d, '[data-dialog="yes"]').textContent, 'Start after it');
+  q(d, '[data-c-nowinstead]').click(); await settle(20);
+  assert.doesNotMatch(q(d, '.cc-frame').textContent, /It starts once/);
+  assert.equal(q(d, '[data-c-nowinstead]'), null);
+  assert.equal(q(d, '[data-dialog="yes"]').textContent, 'Start task');
+  assert.equal(d.activeElement, q(d, '[data-dialog="yes"]'));
+  assert.notEqual(q(d, '[data-menu="f-base"]').textContent.trim(), 'the task before it\'s branch', 'no run before it, no such base');
+  type(w, d, '#cc-text', 'Write the release notes'); await start(d);
+  assert.ok(w.RailWorld.rows().some((r) => r.title === 'Write the release notes' && r.case === 'starting'), 'Start task starts it now');
+});
+
+test('COV-2 Branch off the run before it (demo): with a run before it, the base picker offers and defaults to the run before it\'s branch; without one it is absent', async () => {
+  const { w, d } = await demo(AFTER);
+  assert.equal(q(d, '[data-menu="f-base"]').textContent.trim(), 'the task before it\'s branch');
+  assert.deepEqual(await baseItems(d), ['the task before it\'s branch', 'main', 'dev']);
+  q(d, '[data-dialog="cancel"]').click(); await settle(20);
+  w.RailCenters.newTask(); await settle(60);
+  assert.equal(q(d, '[data-menu="f-base"]').textContent.trim(), 'main');
+  assert.deepEqual(await baseItems(d), ['main', 'dev']);
+});
+
+test('COV-2 Branch off the run before it (demo): Schedule… from a waiting task does not carry the task before it\'s branch', async () => {
+  const { d } = await demo(AFTER);
+  q(d, '[data-c-tosched]').click(); await settle(30);
+  assert.equal(q(d, '[data-menu="f-base"]').textContent.trim(), 'main');
 });

@@ -6,17 +6,19 @@ import { createGraphView, READABLE_FIT, MODE_ZOOM } from '../../graph/view.mjs';
 import { buildGraphManifest, manifestPortsFn, manifestTemplate } from '../../../../src/shared/graph/manifest.mjs';
 import { manifestAgents } from '../../graph/run-decor.mjs';
 import { autoLayout } from '../../../../src/shared/graph/layout.mjs';
+import { loopEnds, modelWords, modelIdOf } from '../live/workflow-map.mjs';
 
 const md = (id, extra = {}) => ({ id, type: 'md', ...extra });
-const MODEL_IDS = { 'Opus 5.5': 'claude-opus-5-5', 'Sonnet 5.5': 'claude-sonnet-5-5', 'Haiku 5.5': 'claude-haiku-5-5' };
-const MODEL_WORDS = Object.fromEntries(Object.entries(MODEL_IDS).map(([k, v]) => [v, k]));
 
 const ICON = '<circle cx="12" cy="8" r="3.6"/><path d="M5 20c1.2-5.4 12.8-5.4 14 0"/>';
 
-/** A prototype workflow ({steps:[[name, ref, model, effort]], loops:[[from, to, n]]}) as dev's template and its agent sidecars. */
+/**
+ * A prototype workflow ({steps:[[name, ref, model, effort, …, node]], loops:[[from, to, n, fromNode, toNode]]}) as dev's
+ * template and its agent sidecars. A step's node is its [9], else nN; loops find their ends by node (loopEnds, V-TW-06).
+ */
 function demo(wf) {
-  const names = wf.steps.map((s) => s[0]), agentsByKey = {};
-  const sends = (i) => wf.loops.find((l) => l[0] === names[i]), takes = (i) => wf.loops.some((l) => l[1] === names[i]);
+  const agentsByKey = {}, ends = wf.loops.map((l) => loopEnds(wf.steps, l)), id = (i) => wf.steps[i]?.[9] || `n${i}`;
+  const sends = (i) => ends.some((e) => e.from === i), takes = (i) => ends.some((e) => e.to === i);
   wf.steps.forEach(([name, ref], i) => {
     agentsByKey[`s${i}`] = { key: `s${i}`, displayName: name, color: sends(i) ? 'amber' : ['violet', 'blue', 'green', 'slate'][i % 4],
       ...(sends(i) ? { verdict: { filename: `s${i}.json` } } : {}),
@@ -25,17 +27,17 @@ function demo(wf) {
   });
   // two rows when it loops: the step that sends work back, and what follows it, sit under the step it sends back to, so
   // the graph draws large and the loop is a short return (Auto-align lays it out as dev does)
-  const src = wf.loops.length ? names.indexOf(wf.loops[0][0]) : -1, dst = src >= 0 ? names.indexOf(wf.loops[0][1]) : -1, two = src > 0 && dst >= 0 && dst < src;
+  const src = wf.loops.length ? ends[0].from : -1, dst = src >= 0 ? ends[0].to : -1, two = src > 0 && dst >= 0 && dst < src;
   const at = (i) => (two && i >= src ? [320 + (dst + i - src) * 280, 300] : [320 + i * 280, 40]);
   const endAt = at(wf.steps.length - 1);
   const nodes = [{ id: 'n_task', kind: 'task', x: 40, y: 40, config: {} },
-    ...wf.steps.map(([, , model, effort], i) => ({ id: `n${i}`, kind: 'agent', key: `s${i}`, x: at(i)[0], y: at(i)[1], config: model ? { model: MODEL_IDS[model] || model, effort } : {} })),
+    ...wf.steps.map(([, , model, effort], i) => ({ id: id(i), kind: 'agent', key: `s${i}`, x: at(i)[0], y: at(i)[1], config: model ? { model: modelIdOf(model), effort } : {} })),
     { id: 'n_end', kind: 'end', x: endAt[0] + 280, y: endAt[1], config: {} }];
   const outOf = (i) => (sends(i) ? 'ok' : 'out');
-  const wires = [{ id: 'w_in', from: { node: 'n_task', port: 'task' }, to: { node: 'n0', port: 'in' } },
-    ...wf.steps.slice(1).map((_, k) => ({ id: `w${k}`, from: { node: `n${k}`, port: outOf(k) }, to: { node: `n${k + 1}`, port: 'in' } })),
-    { id: 'w_end', from: { node: `n${wf.steps.length - 1}`, port: outOf(wf.steps.length - 1) }, to: { node: 'n_end', port: 'result' } },
-    ...wf.loops.map(([from, to, n], k) => ({ id: `wl${k}`, from: { node: `n${names.indexOf(from)}`, port: 'fix' }, to: { node: `n${names.indexOf(to)}`, port: 'back' }, config: { maxCycles: +n } }))];
+  const wires = [{ id: 'w_in', from: { node: 'n_task', port: 'task' }, to: { node: id(0), port: 'in' } },
+    ...wf.steps.slice(1).map((_, k) => ({ id: `w${k}`, from: { node: id(k), port: outOf(k) }, to: { node: id(k + 1), port: 'in' } })),
+    { id: 'w_end', from: { node: id(wf.steps.length - 1), port: outOf(wf.steps.length - 1) }, to: { node: 'n_end', port: 'result' } },
+    ...wf.loops.map((l, k) => ({ id: `wl${k}`, from: { node: id(ends[k].from), port: 'fix' }, to: { node: id(ends[k].to), port: 'back' }, config: { maxCycles: +l[2] } }))];
   return { tpl: { id: `wf_${wf.id}`, name: wf.title, version: 2, domain: 'coding', nodes, wires }, agentsByKey };
 }
 
@@ -74,7 +76,7 @@ function mount(host, wf, { width = 680, zoom, mode = 'static', aligned = false, 
   const fits = !zoom;   // undefined (the detail well) or 0 (the editor's Fit): opens at a readable size
   // an explicit zoom below the mode's minimum (the editor's Zoom out to the whole graph) is drawn, not clamped
   const zoomMin = zoom ? Math.min(zoom, (MODE_ZOOM[mode] || MODE_ZOOM.edit).min) : null;
-  const view = createGraphView(host, { doc: host.ownerDocument, mode, zoomMin, portsFn: graph.portsFn, agents: graph.agents, describe: true, modelLabel: (id) => MODEL_WORDS[id] || id, fitFloor: fits ? READABLE_FIT : null });
+  const view = createGraphView(host, { doc: host.ownerDocument, mode, zoomMin, portsFn: graph.portsFn, agents: graph.agents, describe: true, modelLabel: modelWords, fitFloor: fits ? READABLE_FIT : null });
   view.render(graph.tpl, {});
   const full = view.bounds(60)?.w || width, whole = Math.min(1, width / full);   // fitToWidth measures with this padding
   const fit = Math.min(1, Math.max(READABLE_FIT, whole));

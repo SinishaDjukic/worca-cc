@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { diffStyles, ROUTES, ACCEPTED } from '../tools/stillhet-style-diff.mjs';
+import { diffStyles, hashDiff, withTimeout, ROUTES, ACCEPTED } from '../tools/stillhet-style-diff.mjs';
 
 const dump = (color = 'red') => ({ 'r|dark|1280': { 'div:0': { color, width: '10px' }, 'p:1': { color: 'blue' } } });
 
@@ -25,4 +25,23 @@ test('ROUTES includes Labs; the CLI without --dev exits 2', () => {
 test('ACCEPTED: one flag-off difference, the Labs row for Stillhet, with the owner\'s words as its reason', () => {
   assert.deepEqual(ACCEPTED.map((a) => [a.route, a.selector]), [['#settings/experimental', '[data-flag-row="rail"]']]);
   assert.match(ACCEPTED[0].reason, /before enrolling everything I would recommend to be de-activated, labs is reasonable/);
+});
+
+test('hashDiff: only the paths whose hash differs are fetched in full; an element on one side only is a skeleton row', () => {
+  const { changed, devOnly, sliceOnly } = hashDiff({ a: 1, b: 2, c: 3 }, { a: 1, b: 9, d: 4 });
+  assert.deepEqual(changed, ['b']);
+  assert.deepEqual(devOnly, { c: {} });
+  assert.deepEqual(sliceOnly, { d: {} });
+  assert.deepEqual(diffStyles({ k: devOnly }, { k: sliceOnly }).map((r) => [r.path, r.dev, r.slice]), [['c', 'present', 'absent'], ['d', 'absent', 'present']]);
+});
+
+test('withTimeout: a page that never settles is an error naming it, not a hang', async () => {
+  await assert.rejects(withTimeout(new Promise(() => {}), 20, '#settings light 360 on slice'), /#settings light 360 on slice: timed out/);
+  assert.equal(await withTimeout(Promise.resolve(7), 20, 'x'), 7);
+});
+
+test('the CLI refuses an unknown --route with exit 2', () => {
+  const r = spawnSync(process.execPath, ['tools/stillhet-style-diff.mjs', '--dev', 'HEAD', '--route', '#nope'], { encoding: 'utf8' });
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /unknown route #nope/);
 });
