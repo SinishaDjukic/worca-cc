@@ -39,6 +39,8 @@ const CONTROL = 'button, a[href], input, select, textarea, ' + ['button', 'menui
 export function doubleTips(root) {
   const doc = root.ownerDocument || root;
   const has = (el, a) => !!el.getAttribute(a);
+  // a root not in its document (a fragment, a drawn but unattached part) is searched itself
+  const byId = (id) => doc.getElementById?.(id) || (root.id === id ? root : [...root.querySelectorAll('[id]')].find((n) => n.id === id));
   const out = [];
   for (const el of [root, ...root.querySelectorAll(CONTROL)]) {
     if (!el.matches?.(CONTROL)) continue;
@@ -47,7 +49,7 @@ export function doubleTips(root) {
     const up = el.parentElement;
     if (up && has(up, 'title') && up.children.length === 1) sources.push('wrapper-title');
     if ([...el.querySelectorAll('[title]')].some((c) => has(c, 'title'))) sources.push('child-title');
-    if ((el.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean).some((id) => doc.getElementById(id)?.matches('[role="tooltip"], .rail-tip'))) sources.push('describedby');
+    if ((el.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean).some((id) => byId(id)?.matches('[role="tooltip"], .rail-tip'))) sources.push('describedby');
     if (el.hasAttribute('data-tip')) sources.push('data-tip');
     if (sources.length >= 2) out.push({ el, sources });
   }

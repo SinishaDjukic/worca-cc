@@ -67,6 +67,39 @@ test('T-8 busy(): back on resolve and on reject, focus returns, the earlier disa
   window.close();
 });
 
+test('T-8 busy(): a disabled state set while busy is kept, not the older one', async () => {
+  const { window } = new JSDOM(`<body>${C.button({ label: 'Save' })}${C.button({ label: 'Off', attrs: { disabled: true } })}${C.button({ label: 'Attr' })}</body>`);
+  const [b, off, at] = window.document.querySelectorAll('button');
+  let done; const p = new Promise((r) => { done = r; });
+  const out = C.busy(b, p);
+  b.disabled = true;   // the page closes it while its action is out
+  done(); await out;
+  assert.equal(b.disabled, true, 'a disable set while busy wins over the earlier enabled');
+  let done2; const p2 = new Promise((r) => { done2 = r; });
+  const out2 = C.busy(off, p2);
+  off.disabled = false;   // the page opens it while busy
+  done2(); await out2;
+  assert.equal(off.disabled, false, 'an enable set while busy wins over the earlier disabled');
+  let done3; const p3 = new Promise((r) => { done3 = r; });
+  const out3 = C.busy(at, p3);
+  at.setAttribute('disabled', '');
+  done3(); await out3;
+  assert.equal(at.disabled, true, 'the attribute path counts too');
+  window.close();
+});
+
+test('T-8 busy(): focus moved elsewhere while busy stays there', async () => {
+  const { window } = new JSDOM(`<body>${C.button({ label: 'Save' })}<input id="q"></body>`);
+  const b = window.document.querySelector('button'), q = window.document.getElementById('q');
+  b.focus();
+  let done; const p = new Promise((r) => { done = r; });
+  const out = C.busy(b, p);
+  q.focus();   // the person went on to type
+  done(); await out;
+  assert.equal(window.document.activeElement, q, 'busy() never takes the focus back from where the person went');
+  window.close();
+});
+
 test('T-8 busy(): a removed button is left alone; a second call adds no second spinner', async () => {
   const { window } = new JSDOM(`<body>${C.button({ label: 'Save' })}</body>`);
   const b = window.document.querySelector('button');
@@ -1208,6 +1241,14 @@ test('T-2 doubleTips: one tip is not listed', () => {
   const before = window.document.body.innerHTML;
   assert.deepEqual(C.doubleTips(window.document.body), []);
   assert.equal(window.document.body.innerHTML, before, 'pure: nothing changes');
+  window.close();
+});
+
+test('T-2 doubleTips: aria-describedby to a drawn tip is found on a detached root', () => {
+  const { window } = new JSDOM('<body></body>');
+  const root = window.document.createElement('div');
+  root.innerHTML = '<button id="d" title="Save" aria-describedby="t1">S</button><div id="t1" role="tooltip">Save the draft</div>';
+  assert.deepEqual(C.doubleTips(root).map(({ el, sources }) => [el.id, sources]), [['d', ['title', 'describedby']]]);
   window.close();
 });
 

@@ -34,25 +34,33 @@ export function button({ label, kind = '', icon = '', iconOnly = false, title, c
 
 /**
  * Busy while `p` is out: the same state `button({ busy: true })` draws. When it settles the button is back at rest,
- * keeps the disabled it had, and takes the focus back if it had it. Settles like `p`; a removed button is left alone.
+ * keeps the disabled it had (or the one the page set while it was busy), and takes the focus back if it had it and the
+ * person has not moved it elsewhere. Settles like `p`; a removed button is left alone.
  * @param {HTMLButtonElement} el
  * @param {Promise|any} p
  */
 export function busy(el, p) {
   if (!el || el.classList.contains('rail-busy')) return Promise.resolve(p);
-  const had = el.ownerDocument.activeElement === el, wasDisabled = el.disabled;
+  const doc = el.ownerDocument, had = doc.activeElement === el, wasDisabled = el.disabled;
   el.classList.add(...BUSY_CLS);
   for (const [k, v] of Object.entries(BUSY_ATTRS)) el.setAttribute(k, v);
   el.disabled = true;
   el.insertAdjacentHTML('afterbegin', SPIN);
   const spin = el.firstElementChild;
+  // a disabled the page sets (or clears) while busy is the newer state: it wins over the one the button had
+  let pageSet = false;
+  const watch = new doc.defaultView.MutationObserver(() => { pageSet = true; });
+  watch.observe(el, { attributes: true, attributeFilter: ['disabled'] });
   return Promise.resolve(p).finally(() => {
+    if (watch.takeRecords().length) pageSet = true;
+    watch.disconnect();
     if (!el.isConnected) return;
     spin.remove();
     el.classList.remove(...BUSY_CLS);
     for (const k of Object.keys(BUSY_ATTRS)) el.removeAttribute(k);
-    el.disabled = wasDisabled;
-    if (had) el.focus();
+    if (!pageSet) el.disabled = wasDisabled;
+    const now = doc.activeElement;
+    if (had && (!now || now === doc.body || now === el)) el.focus();
   });
 }
 
