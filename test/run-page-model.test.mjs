@@ -273,3 +273,48 @@ test('view (F-a4-11): a live failed task with restartOff: Restart Build is off a
   assert.equal(v.action.offWhy, why);
   assert.equal(on.action.offWhy, '', 'without a reason it is offered');
 });
+
+// B4.1: the live page's Decisions and each step's own time, cost and rounds
+const DECIDED = [{ step: 'Clarify', q: 'Keep the old address?', a: 'Redirect it', who: 'you' }, { step: 'Implementation · cycle 2', q: 'Split?', a: 'No', who: 'away', note: 'please check: Smaller' }];
+test('F-3-04: liveRun passes the task\'s decisions; view shows the Decisions tab with its count; none is no tab', () => {
+  const stages = [{ key: 'build', state: 'done', steps: [{ name: 'Implementation', state: 'done', activeMs: 0, costUsd: 0, cycles: 1, ran: true }] }];
+  const run = M.liveRun(page({ case: 'ready', stages, decisions: DECIDED }));
+  assert.deepEqual(J(run.decisions), DECIDED);
+  const v = M.view('ready', { run });
+  assert.equal(tab(v, 'decisions').n, '2');
+  assert.deepEqual(J(v.tabData.decisions), DECIDED);
+  const none = M.view('ready', { run: M.liveRun(page({ case: 'ready', stages })) });
+  assert.ok(!tab(none, 'decisions'), 'no Q&A, no Decisions tab (never the design\'s sample)');
+});
+
+test('F-3-07: liveRun\'s subs carry each step\'s own time, loops and cost; a step that never ran has none', () => {
+  const run = M.liveRun(page({ case: 'working', stages: [
+    { key: 'plan', state: 'done', steps: [{ name: 'Plan', state: 'done', activeMs: 45000, costUsd: 0.25, cycles: 1, ran: true }] },
+    { key: 'build', state: 'now', steps: [{ name: 'Implementation', state: 'now', activeMs: 180000, costUsd: 1.2, cycles: 3, ran: true }] },
+    { key: 'review', state: 'next', steps: [{ name: 'Review implementation', state: 'next', activeMs: 0, costUsd: 0, cycles: 0, ran: false },
+      { name: 'Manual tests', state: 'blocked', open: 1, activeMs: 60000, costUsd: 0, cycles: 2, ran: true }] }] }));
+  const f = (x) => [x.name, x.time, x.loops, x.cost];
+  assert.deepEqual(J(subsOf(run, 'plan').map(f)), [['Plan', '45s', 0, '$0.25']]);
+  assert.deepEqual(J(subsOf(run, 'build').map(f)), [['Implementation', '3m', 3, '$1.20']]);
+  assert.deepEqual(J(subsOf(run, 'review').map(f)), [['Review implementation', '', 0, null], ['Manual tests', '1m', 2, '$0.00']]);
+  assert.equal(subsOf(run, 'review')[0].cost, undefined, 'never ran: no cost (J reads it as null)');
+  // every branch keeps them: stopped, ask, capped, failed
+  for (const [c, state, extra] of [['stopped', 'stopped', {}], ['working', 'ask', { ask: { id: 'q', questions: [{ q: 'Why?' }] } }], ['capped', 'paused', {}], ['failed', 'paused', { failure: { head: 'Build · broke', rows: [] } }]]) {
+    const r = M.liveRun(page(Object.assign({ case: c, stages: [{ key: 'build', state, steps: [{ name: 'Implementation', state, activeMs: 120000, costUsd: 0.5, cycles: 2, ran: true }] }] }, extra)));
+    assert.deepEqual(J(f(subsOf(r, 'build')[0])), ['Implementation', '2m', 2, '$0.50'], c + '/' + state);
+  }
+});
+
+test('F-3-07: view\'s live Activity rows show the step\'s own cost, "so far" while it works; a next step and the model stay empty', () => {
+  const run = M.liveRun(page({ case: 'working', stages: [
+    { key: 'plan', state: 'done', steps: [{ name: 'Plan', state: 'done', activeMs: 45000, costUsd: 0.25, cycles: 1, ran: true }] },
+    { key: 'build', state: 'now', steps: [{ name: 'Implementation', state: 'now', activeMs: 180000, costUsd: 1.2, cycles: 3, ran: true }] },
+    { key: 'review', state: 'next', steps: [{ name: 'Review implementation', state: 'next', activeMs: 0, costUsd: 0, cycles: 0, ran: false }] }] }));
+  const v = M.view('working', { run });
+  const row = (k) => stepsOf(v, k)[0];
+  assert.deepEqual(J([row('plan').cost, row('plan').time, row('plan').loops]), ['$0.25', '45s', 0]);
+  assert.deepEqual(J([row('build').cost, row('build').time, row('build').loops]), ['$1.20 so far', '3m', 3]);
+  assert.deepEqual(J([row('review').cost, row('review').time]), ['', '']);
+  assert.ok(steps(v).every((y) => y.model === ''), 'dev\'s rows carry no model');
+  assert.equal(v.graph.stages.find((s) => s.label.startsWith('Build')).nodes[0].meta, '3m', 'the graph\'s node meta is the step\'s time');
+});

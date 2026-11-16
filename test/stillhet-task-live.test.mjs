@@ -771,3 +771,54 @@ test('F-G-G1-01: GET /api/pr/checks only for a PR known open', async () => {
     assert.equal(calls.filter(([m, u]) => m === 'GET' && u.startsWith('/api/pr/checks')).length, asks, `a PR whose state is "${prState}"`);
   }
 });
+
+// ---- B4.1: the saved-run read's Q&A and documents ----
+const QA_NODES = [{ id: 'n_plan', kind: 'agent', key: 'planner', label: 'Plan', progressStage: 'plan' }, { id: 'n_impl', kind: 'agent', key: 'implementer', label: 'Implementation', progressStage: 'build' }];
+const QA_READ = { clarify: { questions: [{ id: 'q1', question: 'Keep the old address?' }, { id: 'q2', question: 'Which dates?' }], answers: [{ id: 'q1', choice: 'Redirect it' }, { id: 'q2', choice: 'The invoice date' }] },
+  stepQuestions: [{ stepKey: '3:n_impl#2', round: 1, nodeId: 'n_impl', agentKey: 'implementer', questions: [{ id: 's1', question: 'Shared pager?' }], answers: [{ id: 's1', choice: 'Yes' }] }],
+  reviews: [] };
+
+test('F-3-04: the history read keeps clarify and stepQuestions beside state; the state and the members read as before', async () => {
+  const state = { ...TASK_DETAILS.failed.state, stepper: { graph: { nodes: QA_NODES } } };
+  const { t } = host({ rows: { h3: failedRow }, routes: { 'GET /api/history/web-1/h3$': [200, { state, ...QA_READ }] } });
+  await t.open('h3');
+  assert.deepEqual(t.detail('h3').decisions.map((d) => [d.step, d.q, d.a, d.who]), [['Clarify', 'Keep the old address?', 'Redirect it', 'you'],
+    ['Clarify', 'Which dates?', 'The invoice date', 'you'], ['Implementation · cycle 2', 'Shared pager?', 'Yes', 'you']]);
+  const input = t.input('h3');
+  assert.deepEqual(input.state, state, 'the state is exactly the read\'s state (I1)');
+  assert.ok(!('clarify' in input.state) && !('stepQuestions' in input.state));
+  assert.deepEqual(input.qa, { clarify: QA_READ.clarify, stepQuestions: QA_READ.stepQuestions });
+  assert.deepEqual(t.members('h3'), [], 'a project\'s task has no members');
+  // a read with no Q&A keys: no decision
+  const b = host({ rows: { h3: failedRow }, routes: { 'GET /api/history/web-1/h3$': [200, { state }] } });
+  await b.t.open('h3');
+  assert.deepEqual([b.t.detail('h3').decisions, b.t.input('h3').qa], [[], { clarify: null, stepQuestions: [] }]);
+  // a live run with no history row has no Q&A
+  const live = { 'run-a': { runId: 'run-a', pipelineId: 'pa', projectKey: 'web-1', status: 'running', state: {} } };
+  const c = host({ live, routes: { 'GET /api/history/': [404, {}] } });
+  await c.t.open('run-a');
+  assert.deepEqual([c.t.input('run-a').qa, c.t.detail('run-a').decisions], [null, []]);
+});
+
+test('F-3-04: a failed re-read keeps the decisions', async () => {
+  let fail = false;
+  const { t } = host({ rows: { h3: failedRow }, routes: { 'GET /api/history/web-1/h3$': () => (fail ? [500, { error: 'boom' }] : [200, { state: TASK_DETAILS.failed.state, ...QA_READ }]) } });
+  await t.open('h3');
+  const before = t.input('h3').qa;
+  fail = true; await t.open('h3', { force: true });
+  assert.equal(t.input('h3').qa, before, 'the Q&A is unchanged (I2)');
+  assert.equal(t.detail('h3').decisions.length, 3);
+});
+
+test('F-3-12: parts(id).docs name steps as the step list does, even when the artifacts were read before the state that names them', async () => {
+  let state = { ...TASK_DETAILS.failed.state, stepper: undefined, steps: [] }, reads = 0;
+  const { t } = host({ rows: { h3: failedRow }, routes: { 'GET /api/history/web-1/h3$': () => [200, { state }],
+    'GET /api/runs/h3/artifacts': () => (reads++ ? [500, { error: 'boom' }] : [200, { artifacts: [{ relPath: 'results/out.json', stepKey: '3:n_impl#1', kind: 'result' }, { relPath: 'plan.md', nodeId: 'n_plan', kind: 'plan' }] }]) } });
+  await t.open('h3'); await settle(20);
+  assert.deepEqual(t.parts('h3').docs, [['out.json', 'n_impl', 'results/out.json'], ['plan.md', 'n_plan', 'plan.md']], 'no state names the steps yet: their ids');
+  assert.equal(t.parts('h3').docs, t.parts('h3').docs, 'a read does not rebuild the named documents while the state stays');
+  state = { ...state, stepper: { graph: { nodes: QA_NODES } } };
+  await t.open('h3', { force: true }); await settle(20);
+  assert.equal(reads, 2);
+  assert.deepEqual(t.parts('h3').docs.map((d) => d[1]), ['Implementation', 'Plan'], 'the state landed after the artifacts: the workflow\'s labels');
+});

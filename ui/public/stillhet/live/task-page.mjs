@@ -29,8 +29,11 @@ const stageOfNode = (n) => (WORK_STAGE.test(str(n.progressStage)) ? n.progressSt
 // a workflow node's name on the page: its label, else its key, else its id (the step list and the log name it alike)
 const stepNameOf = (n) => str(n.label) || str(n.key) || str(n.id);
 const rowState = (rows) => (rows.some((r) => STEP_STATE[lc(r.status)] === 'now') ? 'now' : STEP_STATE[lc(rows.at(-1)?.status)] || 'next');
+// a step's own figures (F-3-07): its rows' time and cost summed, its rounds the max cycle they ran (classic's nodeCycle), 0 unrun
+const cyclesOf = (rows) => rows.reduce((a, r) => Math.max(a, num(r.cycle) ?? num(r.ordinal) ?? 1), 0);
+const figuresOf = (rows) => ({ activeMs: rows.reduce((a, s) => a + (num(s.activeMs) || 0), 0), costUsd: rows.reduce((a, s) => a + (num(s.costUsd) || 0), 0), cycles: cyclesOf(rows), ran: rows.length > 0 });
 /** dev's steps folded into the page's three work stages: [{ key, label, state: done|now|failed|ask|paused|stopped|next, costUsd,
- *  activeMs, steps: [{ name, state, open? }] }]. `nodes`: the workflow's graph nodes (state.stepper.graph.nodes): a stage's steps are
+ *  activeMs, steps: [{ name, state, activeMs, costUsd, cycles, ran, open? }] }]. `nodes`: the workflow's graph nodes (state.stepper.graph.nodes): a stage's steps are
  *  its nodes, named by their labels and marked by their ledger rows; a stage none of them is in, and no step ran in, is left
  *  out (a Restart Build round's workflow has no planner). An empty list (Auto still deciding) keeps all three, and its steps
  *  are the ledger's own. `gate` (gateOf): its node's step asks (B1.6 D4); `question` (questionsOf): its node's step asks,
@@ -55,7 +58,7 @@ export function stagesOf(steps = [], nodes = [], { gate = null, question = null,
     for (const s of mine.filter((x) => !byId.has(str(x.nodeId)))) { const k = str(s.agentKey) || str(s.nodeId) || str(s.key); (loose.get(k) || loose.set(k, []).get(k)).push(s); }
     const list = own.concat([...loose].map(([name, rows]) => ({ name, ids: rows.map((r) => str(r.nodeId)).filter(Boolean), rows })));
     return { key, label: STAGE_LABEL[key], state, costUsd: mine.reduce((a, s) => a + (num(s.costUsd) || 0), 0), activeMs: mine.reduce((a, s) => a + (num(s.activeMs) || 0), 0),
-      steps: list.map((x) => ({ name: x.name, state: rowState(x.rows) })), list };
+      steps: list.map((x) => ({ name: x.name, state: rowState(x.rows), ...figuresOf(x.rows) })), list };
   });
   // the step that asks: the gate's node's, else the Review stage's last step that ran, else its last step (exactly one)
   let ask = null;
@@ -235,6 +238,52 @@ function reviewOf(state = {}) {
 // the PR's checks as counts (dev gives no check names): Checks reads "2 failed" or "3 of 3 passed"
 const checksOf = (checks) => { const c = checks?.checks; return c && typeof c === 'object' && num(c.total) ? { total: num(c.total), failed: num(c.failed) || 0, pending: num(c.pending) || 0 } : null; };
 
+// F-3-04: the run's answered questions (dev's saved-run read: `clarify` and `stepQuestions` beside `state`, readPipelineExtras)
+// in the demo's decision shape. A question with no answer decided nothing (a waiting one is the page's waiting row, said once).
+const NIGHT_ACTOR = 'night-mode';   // src/core/night/config.mjs: the answerer Away mode records
+const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
+// a form value as one line: a list's items joined, an object as its JSON
+const formValue = (v) => (Array.isArray(v) ? v.map((x) => (isObj(x) ? JSON.stringify(x) : String(x))).join(', ') : isObj(v) ? JSON.stringify(v) : String(v));
+// a form field's label: its layout item's (any depth), else its answer schema's title, else its key
+function formLabels(ask) {
+  const out = new Map();
+  const walk = (v) => { if (Array.isArray(v)) v.forEach(walk); else if (isObj(v)) { if (str(v.field) && str(v.label) && !out.has(v.field)) out.set(v.field, v.label); Object.values(v).forEach(walk); } };
+  walk(ask.layout);
+  const props = isObj(ask.answerSchema?.properties) ? ask.answerSchema.properties : {};
+  for (const [k, p] of Object.entries(props)) if (!out.has(k) && str(p?.title)) out.set(k, p.title);
+  return out;
+}
+function roundDecisions(r, step) {
+  const who = r.night || r.answeredBy === NIGHT_ACTOR ? 'away' : 'you';
+  if (isObj(r.ask)) {   // a form round (formAskOf): one decision, its values as Label: value
+    const values = isObj(r.formAnswer?.values) ? r.formAnswer.values : isObj(r.ask.values) ? r.ask.values : {};
+    const labels = formLabels(r.ask);
+    const a = Object.entries(values).filter(([, v]) => v != null && v !== '' && !(Array.isArray(v) && !v.length)).map(([k, v]) => `${labels.get(k) || k}: ${formValue(v)}`).join(' · ');
+    return a ? [{ step, q: str(r.ask.title) || str(r.ask.form) || 'Form', a, who }] : [];
+  }
+  const answers = arr(r.answers).filter(isObj), notes = arr(r.night?.questions).filter(isObj);
+  return arr(r.questions).filter((q) => isObj(q) && str(q.question)).flatMap((q) => {
+    const a = str(answers.find((x) => x.id === q.id)?.choice).trim();
+    if (!a) return [];
+    const n = who === 'away' ? notes.find((x) => x.id === q.id) : null, why = str(n?.rationale).trim().replace(/\.$/, '');
+    return [{ step, q: q.question, a, who, ...(why ? { note: (n.flagged ? 'please check: ' : '') + why } : {}) }];
+  });
+}
+/** F-3-04: dev's `clarify` and `stepQuestions` (qa) → the Decisions part's rows: [{ step, q, a, who: you|away, note? }]. The run's
+ *  clarify first (step Clarify), then each round in dev's order, named as the step list names its node, `· cycle N` past the first. */
+export function decisionsOf(qa = null, state = {}) {
+  if (!isObj(qa)) return [];
+  const names = stepNamesOf(state);
+  const out = isObj(qa.clarify) ? roundDecisions(qa.clarify, 'Clarify') : [];
+  for (const r of arr(qa.stepQuestions)) {
+    if (!isObj(r)) continue;
+    const cycle = Number((/#(\d+)$/.exec(str(r.stepKey)) || [])[1]);
+    const step = (names.get(str(r.nodeId)) || str(r.agentKey) || str(r.nodeId)) + (cycle > 1 ? ` · cycle ${cycle}` : '');
+    out.push(...roundDecisions(r, step));
+  }
+  return out;
+}
+
 const ENDED = /^(done|complete|completed|stopped|aborted|error|failed)$/;
 /** The task page's live view (D3): the instance facts run-page-model.js view() draws over the prototype's case. */
 export function taskPageOf(input = {}, { now = 0 } = {}) {
@@ -285,6 +334,7 @@ export function taskPageOf(input = {}, { now = 0 } = {}) {
     stages,
     gate,
     ask,
+    decisions: decisionsOf(input.qa, state),
     ...(failedChecks ? { failedChecks } : {}),
     pauseAfterStep: state.pauseAfterStep === true,
     // the workflow the task ran (its stepper's template, slice 7 D17): the Workflow dialog opens it in Workflows
@@ -349,10 +399,19 @@ export function patchFiles(text) {
   }
   return out;
 }
-const DOC = /\.(md|markdown|txt)$/i;
-/** dev's run artifacts (GET /api/runs/:id/artifacts) → the documents its steps wrote: [[name, step, relPath]]. */
+/** dev's run artifacts (GET /api/runs/:id/artifacts, already only what it can show) → the documents its steps wrote:
+ *  [[name, step, relPath]], every one listed (F-3-12). `step` is the node id (its stepKey's node part), else the kind;
+ *  docStepsOf names it at read time. */
 export function docsOf(artifacts) {
-  return arr(artifacts).filter((a) => a && DOC.test(str(a.relPath))).map((a) => [str(a.relPath).split('/').pop(), str(a.stepKey) || str(a.nodeId) || str(a.kind), str(a.relPath)]);
+  return arr(artifacts).filter((a) => isObj(a) && str(a.relPath)).map((a) => [str(a.relPath).split('/').pop(),
+    str(a.nodeId) || (/^\d+:([^#]+)/.exec(str(a.stepKey)) || [])[1] || str(a.kind), str(a.relPath)]);
+}
+/** docsOf's documents with each step named as the step list names it (read time, as logStepsOf: the artifacts can land
+ *  before the state). A list not read yet is returned as is; the given list is never changed. */
+export function docStepsOf(docs, state) {
+  if (!Array.isArray(docs)) return docs;
+  const names = stepNamesOf(state);
+  return docs.map((d) => (Array.isArray(d) && names.has(d[1]) ? [d[0], names.get(d[1]), d[2]] : d));
 }
 export const SYNC_STEP = 'Sync';
 const pad = (n) => String(n).padStart(2, '0');

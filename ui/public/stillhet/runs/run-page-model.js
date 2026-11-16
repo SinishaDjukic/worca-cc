@@ -917,7 +917,9 @@
           : x.run ? (x.member ? totals(resolve(x.member)).cost : 0) : x.subs.reduce((a, y) => a + (y.state === 'next' ? 0 : costOf(y)), 0) * (c.scale || 1);
         return { key: x.key, label: x.label, title: x.title || '', meta: cost ? '$' + cost.toFixed(2) : '',
           rows: x.subs.map((y, i) => Object.assign(rowOf(y, x.subs[i + 1]), { model: x.run || c.liveId ? '' : MODEL_OF[y.name] || '',
-            cost: x.run || c.liveId || y.state === 'next' || !COST_OF[y.name] ? '' : '$' + (costOf(y) * (c.scale || 1)).toFixed(2) + (/^(now|ask|paused)$/.test(y.state) ? ' so far' : ''),
+            // live (F-3-07 D10): the step's own cost (liveSub), so far while it works
+            cost: x.run || y.state === 'next' ? '' : c.liveId ? (y.cost ? y.cost + (/^(now|ask|paused)$/.test(y.state) ? ' so far' : '') : '')
+              : !COST_OF[y.name] ? '' : '$' + (costOf(y) * (c.scale || 1)).toFixed(2) + (/^(now|ask|paused)$/.test(y.state) ? ' so far' : ''),
             // the evidence of this state: what this step says went wrong, not a neighbour's
             evidence: !c.liveId && /^(failed|problem)$/.test(y.state) ? (x.key === 'pr' && y.name === 'Checks' && /^1 failed/.test(y.live) ? EVIDENCE['pr/Checks/one'] : c.ev && x.key !== 'pr' ? c.ev : EVIDENCE[x.key + '/' + y.name] || null) : null,
             focus: ui.focus === x.key + '/' + y.name, ref: x.key + '/' + y.name })) };
@@ -971,7 +973,7 @@
   const STAGE_SUB = { done: 'done', now: 'now', failed: 'failed', paused: 'paused', next: 'next' };
   // a step of dev's in the prototype's shape: a stopped one is the design's stopped look (paused, Stopped by you), a
   // capped task's paused one says it is at its cap
-  const liveSub = (page, x) => (x.state === 'stopped' ? s(x.name, 'paused', '', { live: 'Stopped by you' })
+  const liveLook = (page, x) => (x.state === 'stopped' ? s(x.name, 'paused', '', { live: 'Stopped by you' })
     // a review gate's asking step says what you pick (B1.6 D7); a review forced on with open issues is a problem, never a tick (D5)
     : x.state === 'ask' ? s(x.name, 'ask', '', { live: (page.gate && page.gate.line) || askLine(page.ask) })
     : x.state === 'blocked' ? s(x.name, 'problem', '', { live: 'Blocked · accepted with ' + x.open + ' open issue' + (x.open === 1 ? '' : 's') })
@@ -979,6 +981,10 @@
     // dev's failure policy holds a failed step paused: on a failed task it is the step that broke, its line what broke
     : x.state === 'paused' && page.failure ? s(x.name, 'failed', '', { live: String(page.failure.head || '').replace(/^[^·]*·\s*/, '') })
     : s(x.name, STAGE_SUB[x.state] || 'next'));
+  // F-3-07: each step's own figures where the design draws them (taskPageOf stagesOf): its time, its rounds past the first and
+  // its cost once it ran; a step that never ran has none
+  const liveSub = (page, x) => Object.assign(liveLook(page, x), { time: x.activeMs > 0 ? fmtMin(x.activeMs / 60000) : '', loops: x.cycles >= 2 ? x.cycles : 0,
+    cost: x.ran ? '$' + (x.costUsd || 0).toFixed(2) : undefined });
   // F-G-G2-02: the asking step's line is the run's own question (and how many it asks), never the design's sample
   const askLine = (a) => (!a ? '' : a.questions[0].q + (a.questions.length > 1 ? ' · 1 of ' + a.questions.length + ' questions' : ''));
   // the PR stage's lines from the PR's own facts: Create PR "Opened #N", Checks "2 failed" or "3 of 3 passed"
@@ -1016,8 +1022,8 @@
     return Object.assign({}, base, { id: base.id, title: page.title, project: page.project || '', over: !going, branch: page.branch || '', base: page.base || '', pr: page.pr || '', diff: '', task: page.prompt || '', figs,
       startedWord: at ? 'Started ' + at.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ', ' + at.toTimeString().slice(0, 5) : '',
       detail: page.detail || '', why: page.why || [], failure: page.failure || null, review: page.review || { roles: [], issues: [] }, stages, spent: { mins: page.mins || 0, cost: page.cost || 0 }, budget: page.cap || null, movedFrom: base.id, liveId: page.id,
-      // no live decisions source yet: the design's sample decisions never reach a real task
-      decisions: [], liveAsk: page.ask || null, failedChecks: page.failedChecks || 0, restartOff: page.restartOff || '', workflow: page.workflow || null, stageCost: Object.fromEntries((page.stages || []).map((x) => [x.key, x.costUsd || 0])) });
+      // the task's own answered Q&A (taskPageOf decisionsOf); the design's sample decisions never reach a real task
+      decisions: page.decisions || [], liveAsk: page.ask || null, failedChecks: page.failedChecks || 0, restartOff: page.restartOff || '', workflow: page.workflow || null, stageCost: Object.fromEntries((page.stages || []).map((x) => [x.key, x.costUsd || 0])) });
   }
   // The live kind's group page (#run/group:GID, D5): dev's run group (GET /api/run-groups), its members in stack order,
   // each drawn as its own store task's case. Its one action merges the next PR in order, or fixes the first failing one,

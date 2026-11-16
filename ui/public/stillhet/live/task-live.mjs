@@ -3,7 +3,7 @@
 // (runs/run-page-model.js, run-page.js), the bar's list, the center and the chat TaskCard read from here; none of them
 // writes before a route answers `ok`.
 import { actionRunner, FLOW as CHAT_FLOW, openTab, resumeBody } from './chat-live.mjs';
-import { questionsOf, taskPageOf, taskCardOf, newTaskBodyOf, patchFiles, docsOf, logLinesOf, logStepsOf, actionsOf, groupOf, planOf, sessionRowsOf, agentRowsOf, usageRowsOf, commentsByPath } from './task-page.mjs';
+import { questionsOf, taskPageOf, taskCardOf, newTaskBodyOf, patchFiles, docsOf, docStepsOf, logLinesOf, logStepsOf, actionsOf, groupOf, planOf, sessionRowsOf, agentRowsOf, usageRowsOf, commentsByPath } from './task-page.mjs';
 import { ENGINES, ENGINE_NAMES, engineLabel } from '../../../../src/shared/engine-switch.mjs';
 
 const str = (v) => (typeof v === 'string' ? v : '');
@@ -196,7 +196,7 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
   }
   /** The member a workspace task's PR is on: its only member with a feature branch; '' when several have one (each its own PR) or none. */
   function memberKeyOf(id) { const g = membersOf(id).filter((m) => m.branch); return g.length === 1 ? g[0].key : ''; }
-  const entry = (id) => { if (!tasks.has(id)) tasks.set(id, { state: 'loading', detail: null, loading: null }); return tasks.get(id); };
+  const entry = (id) => { if (!tasks.has(id)) tasks.set(id, { state: 'loading', detail: null, qa: null, loading: null }); return tasks.get(id); };
 
   /** Load a task page (§3): loading until the store's first load answered and the detail is in; gone when neither the runs
    *  nor the store hold it, or History answers 404 for a task no run holds; failed on a 5xx or a network failure. */
@@ -235,10 +235,11 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
       await null;
       const key = r.projectKey;
       const res = key && r.pidKnown ? await request('GET', runUrl(key, r.pipelineId)) : { ok: false, status: 404 };
-      if (res.ok) { e.detail = res.data?.state || null; e.state = 'ready'; }
+      // the read's answered Q&A rides beside the state, never in it (F-3-04 D1): `detail` stays exactly dev's state
+      if (res.ok) { e.detail = res.data?.state || null; e.qa = { clarify: res.data?.clarify || null, stepQuestions: Array.isArray(res.data?.stepQuestions) ? res.data.stepQuestions : [] }; e.state = 'ready'; }
       // a page already drawn keeps what it read: a failed re-read changes nothing and says so once (R-arch-8)
       else if (wasReady && res.status !== 404) { e.loading = null; refuse('read the task again', res); return { state: 'failed', error: res.error }; }
-      else if (r.live) { e.detail = null; e.state = 'ready'; }                    // a live run with no history row draws from its frames
+      else if (r.live) { e.detail = null; e.qa = null; e.state = 'ready'; }                    // a live run with no history row draws from its frames
       else if (res.status === 404) e.state = 'gone';
       else e.state = 'failed';
       e.loading = null;
@@ -311,7 +312,7 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
     // (nor does a frame's 0 hide a time or cost dev saved: a round's frames can read $0 after it ended)
     const fresh = live?.state ? Object.fromEntries(Object.entries(live.state).filter(([k, v]) => v != null && !(Array.isArray(v) && !v.length) && !(v === 0 && saved[k] > 0))) : {};
     const state = live ? { ...saved, ...fresh, pendingQuestion: live.pendingQuestion ?? saved.pendingQuestion, status: live.status || saved.status } : saved;
-    return { row, state, checks: checksOf(id) };
+    return { row, state, checks: checksOf(id), qa: tasks.get(id)?.qa || null };
   }
 
   /** A frame that changes a task's PR or ends a round drops its checks entry (D5). */
@@ -374,6 +375,14 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
     const nodes = state?.stepper?.graph?.nodes, steps = state?.steps, c = logNamed.get(log);
     if (c && c.nodes === nodes && c.steps === steps) return c.out;
     const out = logStepsOf(log, state); logNamed.set(log, { nodes, steps, out }); return out;
+  }
+  // the documents with their steps named (docStepsOf, F-3-12), cached as namedLog is
+  const docsNamed = new WeakMap();   // documents → { nodes, steps, out }
+  function namedDocs(docs, state) {
+    if (!Array.isArray(docs)) return docs;
+    const nodes = state?.stepper?.graph?.nodes, steps = state?.steps, c = docsNamed.get(docs);
+    if (c && c.nodes === nodes && c.steps === steps) return c.out;
+    const out = docStepsOf(docs, state); docsNamed.set(docs, { nodes, steps, out }); return out;
   }
   /** A session's transcript: dev's raw trace (GET /api/runs/:id/sessions/:sid/trace), in a new tab. */
   function transcript(id, sid) {
@@ -672,7 +681,7 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
   return {
     list, projectDirOf, branches, transcript,
     // the page's parts, with its agents read from the task's own steps
-    parts: (id) => { const p = parts.get(id); if (!p) return null; const st = inputOf(id).state; return { ...p, agents: agentRowsOf(st?.steps), log: namedLog(p.log, st) }; }, loadParts, wholeDiff, docText, download, models,
+    parts: (id) => { const p = parts.get(id); if (!p) return null; const st = inputOf(id).state; return { ...p, agents: agentRowsOf(st?.steps), log: namedLog(p.log, st), docs: namedDocs(p.docs, st) }; }, loadParts, wholeDiff, docText, download, models,
     group, loadGroups, members: membersOf,
     /** Move to group…'s choices: dev's own groups (features take no hand-added task: dev answers IN_GROUP). */
     groups: () => { if (!groupList && !groupFailed) loadGroups(); return (groupList || []).filter((g) => g.kind === 'user').map((g) => groupOf(g)); },
