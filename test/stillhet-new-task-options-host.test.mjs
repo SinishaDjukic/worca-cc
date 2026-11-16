@@ -53,7 +53,8 @@ test('COV-2 defaults: Save as default sends the tags and reads Saved; a refusal 
   assert.equal(q(d, '[data-c-tagsave]').textContent, 'Saved');
   answer = [400, {}];
   q(d, '[data-c-tagsave]').click(); await settle(40);
-  assert.equal(q(d, '[data-c-tagsave]').textContent, 'Could not save (HTTP 400)');
+  assert.equal(q(d, '[data-c-tagsave]').textContent, 'Save as default', 'F-cov23-06: the label stays the action');
+  assert.equal(q(d, '#cc-tags-note[role="alert"]').textContent, 'Could not save (HTTP 400)', 'F-cov23-06: the refusal is the Cost tags field\'s error line');
   assert.equal(q(d, '#cc-tags').value, 'client', 'the form is as it was');
 });
 

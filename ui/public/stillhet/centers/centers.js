@@ -373,7 +373,11 @@
   const failWords = (r) => (/^HTTP \d+$/.test(r.error || '') ? `Could not save (${r.error})` : r.error || 'Could not save');
   function saveTags() {
     const o = OPT(), f = form; if (!o || !f.projectKey) return;
-    o.saveTagDefaults(f.projectKey, f.tags.split(',').map((x) => x.trim()).filter(Boolean)).then((r) => { if (form === f) said('tagsSaid', r.ok ? 'Saved' : failWords(r)); });
+    o.saveTagDefaults(f.projectKey, f.tags.split(',').map((x) => x.trim()).filter(Boolean)).then((r) => {
+      if (form !== f) return;
+      if (r.ok) { said('tagsSaid', 'Saved'); return; }
+      f.tagsSaid = ''; f.err = failWords(r); f.errAt = '#cc-tags'; paintForm();   // F-cov23-06: the field's error line, never the button's label
+    });
   }
   function saveFlow(reset) {
     const o = OPT(), f = form, id = flowId(), dir = dirOf(); if (!o || !id || !dir) return;
@@ -382,6 +386,7 @@
     p.then((r) => {
       if (form !== f) return;
       if (r.ok) { said('flowSaid', reset ? 'Reset' : 'Saved'); return; }
+      f.flowSaid = '';
       // COV-2 m-flowerr: a refusal is the form's error line (the field's error line, DS "something failed"), never the button's label
       f.err = `Could not ${r.step || 'reset to the workflow\'s defaults'}: ${r.error}`; f.errAt = f.src === 'write' ? '#cc-text' : f.src === 'file' ? '#cc-path' : '#cc-search'; paintForm();
     });
@@ -539,7 +544,7 @@
     const flowBtns = flowOwn ? `${agentModel() ? R.button({ label: form.flowSaid || 'Save as the workflow\'s defaults', kind: 'quiet', attrs: { 'data-c-flowsave': '', title: `Every agent of ${form.workflow} runs ${form.agents.replace(/ for every step$/, '')} unless a task picks another` } }) : ''}${R.button({ label: !agentModel() && form.flowSaid ? form.flowSaid : 'Reset to the workflow\'s defaults', kind: 'quiet', attrs: { 'data-c-flowreset': '', title: `Clears ${form.project}'s own agent picks for ${form.workflow}` } })}` : '';
     const perStep = W.live && LISTS().agents.length < 2 ? `<span>Cost cap: ${fPick('cap')}</span>` : `<span>Agents: ${fPick('agents')}${flowBtns}</span><span>Cost cap: ${fPick('cap')}</span>`;
     const tagsSave = form.projectKey && OPT() ? R.button({ label: form.tagsSaid || 'Save as default', kind: 'quiet', attrs: { 'data-c-tagsave': '', title: `New tasks in ${form.project} start with these tags` } }) : '';
-    const body = `${frame}${what}${fold('More options', `${W.live ? 'Title, branch, cost tags, agents, cost cap, files' : 'Title, branch, cost tags, agents, guardrails, files'}${form.preset ? ', preset' : ''}`)}${form.more ? `<div class="cc-more">${R.field({ id: 'cc-title', label: 'Title', value: form.title, placeholder: 'Worca names it from what it should do', attrs: { 'data-f': 'title', maxlength: NAME_MAX } })}${R.field({ id: 'cc-branch', label: 'Branch', value: form.branch, placeholder: 'Worca makes one', attrs: { 'data-f': 'branch' } })}${R.field({ id: 'cc-tags', label: 'Cost tags', value: form.tags, placeholder: 'Comma separated', attrs: { 'data-f': 'tags' } })}${tagsSave}${perStep}<span>${R.button({ label: 'Add files…', kind: 'quiet', attrs: { 'data-c-files': '', title: 'Attaches files to the task' } })}${form.files.length ? ` ${esc(form.files.map((x) => x.name).join(', '))}` : ''}</span></div>` : ''}`;
+    const body = `${frame}${what}${fold('More options', `${W.live ? 'Title, branch, cost tags, agents, cost cap, files' : 'Title, branch, cost tags, agents, guardrails, files'}${form.preset ? ', preset' : ''}`)}${form.more ? `<div class="cc-more">${R.field({ id: 'cc-title', label: 'Title', value: form.title, placeholder: 'Worca names it from what it should do', attrs: { 'data-f': 'title', maxlength: NAME_MAX } })}${R.field({ id: 'cc-branch', label: 'Branch', value: form.branch, placeholder: 'Worca makes one', attrs: { 'data-f': 'branch' } })}${R.field({ id: 'cc-tags', label: 'Cost tags', error: errOf('#cc-tags'), value: form.tags, placeholder: 'Comma separated', attrs: { 'data-f': 'tags' } })}${tagsSave}${perStep}<span>${R.button({ label: 'Add files…', kind: 'quiet', attrs: { 'data-c-files': '', title: 'Attaches files to the task' } })}${form.files.length ? ` ${esc(form.files.map((x) => x.name).join(', '))}` : ''}</span></div>` : ''}`;
     return R.dialog({ title: 'New task', body, yes: form.after ? 'Start after it' : 'Start task', busy: !!form.busy, busyLabel: 'Starting…', status: `${R.button({ label: 'Schedule…', kind: 'quiet', attrs: { 'data-c-tosched': '', title: 'The same task, at a time' } })}`, close: R.icon('x', 15), id: 'cc-t', cls: 'cc-dlg', hooks: hooksOf() });
   }
   const hooksOf = () => ({ close: {}, cancel: {}, yes: {} });
