@@ -23,7 +23,8 @@
     const { R } = ctx;
     // typed/newName follow the field; shown/newShown are what the page draws into it, changed only when the page sets the value,
     // so a redraw while typing draws the same value and the field stays the same element (comp.keep-open, B2.7)
-    const fresh = () => ({ way: 'folder', typed: '', shown: '', newShown: '', err: '', probe: null, probeFor: '', probeErr: '', gitOk: true, useGit: false, newName: '', newGit: true, where: '', newErr: '', newRefused: false, browser: null, review: null, reviewErr: '' });
+    // branch/cloneName (and their shown copies) are an address's Branch and Folder name (F-cov1-06); repoFor is what the last draw showed them for
+    const fresh = () => ({ way: 'folder', typed: '', shown: '', newShown: '', branch: '', branchShown: '', cloneName: '', cloneNameShown: '', repoFor: '', err: '', probe: null, probeFor: '', probeErr: '', gitOk: true, useGit: false, newName: '', newGit: true, where: '', newErr: '', newRefused: false, browser: null, review: null, reviewErr: '' });
     let s = fresh(), probeSeq = 0, newSeq = 0, dirSeq = 0, probeT = 0, newT = 0;
     const live = () => ctx.live();
     // live but the module is not up yet: nothing fake, every action says so (D8)
@@ -32,12 +33,15 @@
     const val = (id) => document.getElementById(id)?.value.trim() ?? '';
     const focus = (q) => setTimeout(() => document.querySelector(q)?.focus(), 0);
     const nameOfPath = (v) => (v.split(/[/:]/).filter(Boolean).pop() || '').replace(/\.git$/, '');
+    const repoKey = (v) => (REPO.test(v) ? `repo:${nameOfPath(v)}` : '');
 
     // ---- the probe line (One folder) ----
     async function probeNow(v) {
       const n = ++probeSeq;
       clearTimeout(probeT);
-      if (!v || REPO.test(v) || ctx.pathWrong(v, true)) { s.probe = null; s.probeFor = v; s.probeErr = ''; return null; }
+      const rf = repoKey(v), shownFor = rf !== s.repoFor;
+      if (shownFor) { s.repoFor = rf; s.branchShown = s.branch; s.cloneNameShown = s.cloneName; }   // Branch and Folder name come and go with an address
+      if (!v || REPO.test(v) || ctx.pathWrong(v, true)) { s.probe = null; s.probeFor = v; s.probeErr = ''; if (shownFor) ctx.draw(); return null; }
       const a = ctx.onLive() ? (live() ? await live().probe(v) : { ok: false }) : { ok: true, probe: { path: v, exists: true, isDir: true, vcs: 'git' } };
       if (n !== probeSeq) return undefined;   // a newer path was typed: this answer is stale
       s.probe = a.ok ? a.probe : null; s.probeFor = v;
@@ -99,8 +103,11 @@
     // ---- what the yes does, per way ----
     const finish = (text, key, from) => { s = fresh(); ctx.end(); ctx.say(text); if (key && location.hash === from) ctx.go(`projects/${key}`); else ctx.draw(); };
     async function addOne() {
-      const v = val('pj-hand-v'), id = nameOfPath(v);
+      const v = val('pj-hand-v'), repo = REPO.test(v);
+      const fieldOr = (fid, cur) => (document.getElementById(fid) ? val(fid) : cur);   // a field not drawn yet keeps what is held
       s.typed = s.shown = v;
+      if (repo) { s.branch = s.branchShown = fieldOr('pj-clone-branch', s.branch); s.cloneName = s.cloneNameShown = fieldOr('pj-clone-name', s.cloneName); }
+      const id = (repo && s.cloneName) || nameOfPath(v);
       const wrong = !v || !id ? 'It needs a folder or a repository' : ctx.pathWrong(v, true) || (id.length > NAME_MAX ? `A project's name holds ${NAME_MAX} characters; this folder's has ${id.length}` : ctx.projects().some((x) => ctx.nameOf(x) === id) ? `${id} is already a project` : '');
       if (wrong) { s.err = wrong; ctx.draw(); focus('#pj-hand-v'); return; }
       if (down()) { ctx.say(NOT_ANSWERING); return; }
@@ -113,14 +120,14 @@
       }
       const from = location.hash;
       if (ctx.onLive()) {
-        const a = live().addProject(v, { useGit: s.useGit && model().useGit });
+        const a = live().addProject(v, { useGit: s.useGit && model().useGit, ...(repo && s.branch ? { branch: s.branch } : {}), ...(repo && s.cloneName ? { name: s.cloneName } : {}) });
         ctx.draw();
         const r = await a;
         if (!r.ok) { if (r.field) { s.err = r.field; ctx.draw(); focus('#pj-hand-v'); } else ctx.said(r); return; }
         finish(r.text, r.key, from);
         return;
       }
-      ctx.addDemo({ id, path: v, kind: s.useGit || s.probe?.vcs === 'git' ? 'Git' : 'Folder', origin: s.probe?.vcs === 'git' || s.useGit ? 'local' : 'folder', branch: 'main' });
+      ctx.addDemo(repo ? { id, path: v, kind: 'Git', origin: 'local', branch: s.branch || 'main' } : { id, path: v, kind: s.useGit || s.probe?.vcs === 'git' ? 'Git' : 'Folder', origin: s.probe?.vcs === 'git' || s.useGit ? 'local' : 'folder', branch: 'main' });
       finish(`Added ${id}`, id, from);
     }
     async function createOne() {
@@ -178,7 +185,10 @@
         return R.folderReview({ rows: s.review.map((r) => ({ ...r, name: r.shown })), saving: !!b, error: s.reviewErr });
       }
       const m = model();
+      const repo = REPO.test(s.typed);
       return R.field({ id: 'pj-hand-v', label: 'Folder or repository', placeholder: '~/src/your-project', value: s.shown, error: s.err, attrs: { maxlength: 200, 'data-keep': 'pj-hand:project:' } })
+        + (repo ? R.field({ id: 'pj-clone-branch', label: 'Branch (optional)', placeholder: "the repository's default branch", value: s.branchShown, attrs: { maxlength: 200, 'data-keep': 'pj-hand:branch:' } })
+          + R.field({ id: 'pj-clone-name', label: 'Folder name (optional)', placeholder: nameOfPath(s.typed) || 'the repository name', value: s.cloneNameShown, attrs: { maxlength: 100, 'data-keep': 'pj-hand:clone-name:' } }) : '')
         + R.folderWay({ pick: { label: 'Choose folder…', hook: 'data-pa-choose', title: 'Pick a folder on this computer' } })
         + m.html
         + (m.useGit ? R.folderWay({ git: { on: s.useGit, hook: 'data-pa-git', why: 'Runs git init in it when it is added' } }) : '')
@@ -191,7 +201,7 @@
     const html = () => `<div class="card-form">${R.confirmForm({ form: 'hand', id: 'pj-hand-t', text: 'Add a project by hand', body: R.segmented({ label: 'How to add it', hook: 'pa-way', items: WAYS.map(([id, label]) => ({ id, label, pressed: s.way === id })) }) + body() })}${browserHtml()}</div>`;
 
     function setWay(w) {
-      s.way = w; s.reviewErr = ''; s.shown = s.typed; s.newShown = s.newName;   // the way's field comes back with what was typed
+      s.way = w; s.reviewErr = ''; s.shown = s.typed; s.newShown = s.newName; s.branchShown = s.branch; s.cloneNameShown = s.cloneName;   // the way's field comes back with what was typed
       ctx.draw();
       if (w === 'new') { checkNow(); focus('#pj-new-name'); } else if (w === 'folder') focus('#pj-hand-v');
     }
@@ -239,7 +249,7 @@
         return true;
       }
       if (e.key !== 'Enter' && e.key !== 'Escape') return false;
-      const inForm = t.id === 'pj-hand-v' || t.id === 'pj-new-name' || t.dataset?.frName !== undefined;
+      const inForm = ['pj-hand-v', 'pj-clone-branch', 'pj-clone-name', 'pj-new-name'].includes(t.id) || t.dataset?.frName !== undefined;
       if (!inForm) return false;
       stop();
       if (e.key === 'Escape') return 'close';
@@ -250,6 +260,8 @@
     document.addEventListener('input', (e) => {
       const t = e.target;
       if (t.id === 'pj-hand-v') { s.typed = t.value.trim(); s.err = ''; s.probeErr = ''; probeSoon(s.typed); }
+      else if (t.id === 'pj-clone-branch') { s.branch = t.value.trim(); s.err = ''; }
+      else if (t.id === 'pj-clone-name') { s.cloneName = t.value.trim(); s.err = ''; }
       else if (t.id === 'pj-new-name') { s.newName = t.value.trim(); s.newErr = ''; s.newRefused = false; checkSoon(); }
       else if (t.dataset?.frName !== undefined) { const r = s.review?.[Number(t.dataset.frName)]; if (r && r.status !== 'added') r.name = t.value.trim(); }
     });

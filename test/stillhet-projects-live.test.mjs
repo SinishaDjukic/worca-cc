@@ -3,7 +3,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { startProjectsLive, PROJECT_ACTIONS } from '../ui/public/stillhet/live/projects-live.mjs';
+import { startProjectsLive, PROJECT_ACTIONS, plainWhy } from '../ui/public/stillhet/live/projects-live.mjs';
 
 const ALL = [];   // every request of every rig: checked against the table at the end
 after(() => {
@@ -54,6 +54,9 @@ test('PROJECT_ACTIONS: each id builds its method, URL and body, and carries its 
   assert.deepEqual(b('remove', { name: 'a b', owned: true }), ['DELETE', '/api/projects?name=a%20b&deleteFolder=1']);
   assert.deepEqual(b('add', { name: 'n', path: '/p/n' }), ['POST', '/api/projects', { name: 'n', path: '/p/n' }]);
   assert.deepEqual(b('clone', { url: 'https://x/y.git' }), ['POST', '/api/projects/clone', { url: 'https://x/y.git' }]);
+  // F-cov1-06: Branch and Folder name ride along only when given; empty ones are left out
+  assert.deepEqual(b('clone', { url: 'https://x/y.git', branch: 'dev', name: 'shop' }), ['POST', '/api/projects/clone', { url: 'https://x/y.git', branch: 'dev', name: 'shop' }]);
+  assert.deepEqual(b('clone', { url: 'https://x/y.git', branch: '', name: '' }), ['POST', '/api/projects/clone', { url: 'https://x/y.git' }]);
   assert.deepEqual(b('set', { key: 'k', patch: { 'pr.open': 'draft' } }), ['PATCH', '/api/projects/k/settings', { 'pr.open': 'draft' }]);
   assert.deepEqual(b('defaults', { key: 'k', tags: ['a: b'], labels: ['x'] }), ['PUT', '/api/projects/k/tags/defaults', { tags: ['a: b'], labels: ['x'] }]);
   assert.deepEqual(b('space-create', { name: 'W', paths: ['/a', '/b'] }), ['POST', '/api/workspaces', { name: 'W', projectPaths: ['/a', '/b'] }]);
@@ -123,6 +126,21 @@ test('addProject: a path posts {name, path}; an address clones and follows clone
   assert.deepEqual(r.toasts, ['Could not clone repo: auth failed']);
   assert.deepEqual(r.writes().map(([m, u]) => [m, u]), [['POST', '/api/projects'], ['POST', '/api/projects'], ['POST', '/api/projects/clone'], ['POST', '/api/projects/clone']]);
   assert.equal(r.writes()[0][2].name, 'new');
+});
+
+test('F-cov1-06: addProject sends branch and name with an address, names the job by the Folder name, and sends neither for a path', async () => {
+  const r = rig({ answer: (m, u, b) => (u === '/api/projects/clone' && b.name === 'taken' ? [409, { error: '/w/taken already exists; pick another folder name', code: 'exists' }]
+    : u === '/api/projects/clone' ? [202, { jobId: 'cln_1', job: { id: 'cln_1', state: 'running' } }] : u === '/api/projects' ? [200, { projects: [] }] : null) });
+  const url = 'https://github.com/o/repo.git';
+  assert.deepEqual(await r.live.addProject(url, { branch: 'dev', name: 'shop' }), { ok: true, text: 'Cloning shop…' });
+  assert.deepEqual(r.writes().at(-1), ['POST', '/api/projects/clone', { url, branch: 'dev', name: 'shop' }]);
+  r.live.frame({ type: 'clone-changed', job: { id: 'cln_1', state: 'error', error: 'auth failed' } });
+  assert.deepEqual(r.toasts, ['Could not clone shop: auth failed']);
+  await r.live.addProject('/src/new', { branch: 'dev', name: 'x' });
+  assert.deepEqual(r.writes().at(-1), ['POST', '/api/projects', { name: 'new', path: '/src/new' }]);
+  const refusal = { status: 409, error: '/w/taken already exists; pick another folder name' };
+  assert.deepEqual(await r.live.addProject(url, { name: 'taken' }), { ok: false, field: plainWhy(refusal) });
+  assert.deepEqual(r.writes().at(-1), ['POST', '/api/projects/clone', { url, name: 'taken' }]);
 });
 
 test('relocate answers the new key; a 400 answers the field error; a 409 says Could not … and the world stays', async () => {

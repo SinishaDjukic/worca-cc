@@ -368,6 +368,8 @@ browser and bulk review list serve Projects › Add project, which the tool's pa
 | `ui/public/app.js › toggle › Select …` | wired | the FolderBrowser's tick per folder in Several folders… (`projects/project-add.js`) |
 | `ui/public/app.js › toggle › Add …` | wired | the review list's tick per picked folder (`projects/project-add.js`, `POST /api/projects/bulk`) |
 | `ui/public/app.js › field › Project name for …` | wired | the review list's name per picked folder (`projects/project-add.js`, `POST /api/projects/bulk`) |
+| `ui/public/projects/project-add.html › field › Branch (optional)` | wired | Projects › Add a project by hand › One folder, under a repository address: Branch (`projects/project-add.js`, `POST /api/projects/clone` `{url, branch?}` in `live/projects-live.mjs`) |
+| `ui/public/projects/project-add.html › field › Folder name (optional)` | wired | Projects › Add a project by hand › One folder, under a repository address: Folder name (`projects/project-add.js`, `POST /api/projects/clone` `{url, name?}` in `live/projects-live.mjs`; it names the project and the clone job) |
 
 ## Opt-in
 
