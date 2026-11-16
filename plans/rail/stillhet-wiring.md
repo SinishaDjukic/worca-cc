@@ -419,7 +419,7 @@ Every dev chat capability (`ui/public/ask-panel.mjs`, `ui/public/chat/`, `ui/rou
 | Search | `GET /api/ask/threads?q=` | the bar's search | wired (slice 3) |
 | Unread | `ask-done` / `ask-error` frames | the bar's dot | wired (slice 3) |
 | External origin | `thread.origin` | the row's origin mark | wired (slice 3) |
-| Chat home pins | `GET` / `PUT /api/chat-home/pins` | the starters row | wired: the row is dev's pins, named by dev's workflows (`GET /api/workflows`); a pin or unpin is the PUT, answered first |
+| Chat home pins | `GET` / `PUT /api/chat-home/pins` | the starters row | wired: the row is dev's pins, named by dev's workflows (`GET /api/workflows`); a pin or unpin is the PUT, answered first; read again (fresh) each time Chat home is shown (F-5-11) |
 | Chat worktrees (remove) | `DELETE /api/ask/threads/:id/worktrees/:wtId` | a conversation's head (Expert): Worktrees · N | wired: dev's question ("Remove this worktree?") under the head, then the DELETE |
 | Voice: dictate and hands-free | `src/shared/ask-voice.mjs` (dev's engine) | the composer's mic and Voice options | wired: the mic and hands-free drive dev's engine (`chat/voice.mjs`); the voice settings are Settings › Speech's |
 | A task opens the chat that started it | `GET /api/ask/run-links` | the bar's task rows, `RailConversation.chatOfTask` | wired |
