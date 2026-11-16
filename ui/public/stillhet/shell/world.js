@@ -10,9 +10,9 @@
   // A non-default state asked for by the address (?state=NAME), so both hosts can open it cold: what the lists show (the
   // tools panel's Lists) and what the connection does (its Connection). A demo-adapter input only; a live adapter ignores it.
   const STATE = !LIVE && typeof location !== 'undefined' ? new URLSearchParams(location.search).get('state') || '' : '';
-  window.RailDemoState = LIVE ? { list: 'loading', conn: '' } : { list: { loading: 'loading', empty: 'empty', offline: 'offline', failed: 'failed', 'refresh-failed': 'refresh' }[STATE] || '', conn: { 'connection-lost': 'offline', 'session-expired': 'session' }[STATE] || '', thread: { 'thread-loading': 'loading', 'thread-failed': 'failed', 'thread-gone': 'gone' }[STATE] || '', task: { 'task-loading': 'loading', 'task-failed': 'failed', 'task-gone': 'gone' }[STATE] || '' };   // fail.chat-thread: an open chat's own state; fail.task-page: an open task's
+  window.RailDemoState = LIVE ? { list: 'loading', conn: '' } : { list: { loading: 'loading', empty: 'empty', offline: 'offline', failed: 'failed', 'refresh-failed': 'refresh' }[STATE] || '', conn: { 'connection-lost': 'offline', 'session-expired': 'session' }[STATE] || '', thread: { 'thread-loading': 'loading', 'thread-failed': 'failed', 'thread-gone': 'gone' }[STATE] || '', task: { 'task-loading': 'loading', 'task-failed': 'failed', 'task-gone': 'gone' }[STATE] || '', market: STATE === 'update-asks' ? STATE : '' };   // fail.chat-thread: an open chat's own state; fail.task-page: an open task's; market: the demo Jira's update asks for something new (form.update-asks)
   const WORKFLOW_OF = { r2: 'Security-first review', r9: 'Security-first review', r5: 'Quick Fix', r7: 'Quick Fix', r12: 'Full', m1: 'API rewrite', m2: 'API rewrite', m3: 'API rewrite' };   // the Tasks center's by workflow
-  const run = (id, kase, title, project, detail, time, day, o = {}) => ({ id, case: kase, title, project, detail, time, day, labels: [], cost: null, archived: false, unread: false, pr: '', group: '', kind: 'Git', by: 'Emil Angelov', workflow: WORKFLOW_OF[id] || 'Default', ...o });
+  const run = (id, kase, title, project, detail, time, day, o = {}) => ({ id, case: kase, title, project, detail, time, day, labels: [], cost: null, archived: false, unread: false, pr: '', group: '', kind: 'Git', by: 'Sam Rivera', workflow: WORKFLOW_OF[id] || 'Default', ...o });
   // not started yet: `when` is its group in Vitals › Scheduled
   const wait = (id, kase, when, title, project, detail, time, o) => run(id, kase, title, project, detail, time, 'upcoming', { when, ...o });
   const round = (n, words, time, kase = 'round') => ({ n, words, time, case: kase });
@@ -79,7 +79,7 @@
     // a finished feature: closed until opened
     run('m10', 'ready', 'Index the pages', 'docs-site', 'Checks pass', 'Mon', 'week', { group: 'g-docs', pos: 1, cost: 20 }),
     run('m11', 'ready', 'The search box', 'docs-site', 'Checks pass', 'Mon', 'week', { group: 'g-docs', pos: 2, cost: 13 }),
-    ...OLD.map((t, i) => run(`o${i}`, i % 5 === 3 ? 'stopped' : 'merged', t, ['web-app', 'worca-cc', 'billing-api'][i % 3], i % 5 === 3 ? 'Stopped by you' : 'Merged', ['Sep 12', 'Aug 30', 'Aug 2', 'Jul 18'][i % 4], 'older', { cost: 1 + (i % 7), pr: i % 5 === 3 ? '' : `#${800 - i}`, by: i % 2 ? 'Dana Ruiz' : 'Emil Angelov', labels: i === 2 ? ['hotfix'] : [] })),
+    ...OLD.map((t, i) => run(`o${i}`, i % 5 === 3 ? 'stopped' : 'merged', t, ['web-app', 'worca-cc', 'billing-api'][i % 3], i % 5 === 3 ? 'Stopped by you' : 'Merged', ['Sep 12', 'Aug 30', 'Aug 2', 'Jul 18'][i % 4], 'older', { cost: 1 + (i % 7), pr: i % 5 === 3 ? '' : `#${800 - i}`, by: i % 2 ? 'Dana Ruiz' : 'Sam Rivera', labels: i === 2 ? ['hotfix'] : [] })),
   ].map((r) => [r.id, r]));
   const GROUPS = {
     'g-nav': { id: 'g-nav', kind: 'feature', case: 'feature', title: 'Unified page navigation', project: 'worca-cc', time: '12:04', day: 'today', cost: 41.2 },

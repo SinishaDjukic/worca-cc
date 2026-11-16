@@ -111,7 +111,7 @@ test('an opened outcome that changes event is unread again in the same tab', asy
   showAll(w, d);
   open(d, 'oh3');
   const h3 = sources.history.pipelines.find((p) => p.id === 'h3');
-  h3.status = 'paused'; h3.mtime = Date.parse(at(14, 55));
+  h3.status = 'paused'; h3.pauseReason = 'error'; h3.mtime = Date.parse(at(14, 55));   // an error pause (F-7a-06: your own pause is no update)
   frame(h, { type: 'pipelines-changed' }); await settle(400);
   assert.deepEqual(stored(w), [], 'the old event\'s key is forgotten');
   showAll(w, d);
@@ -201,7 +201,7 @@ test('Now rows say how they clear, and a task opens by its own id', async () => 
   const TABLE = { question: 'Clears when you answer it', clarify: 'Clears when you answer it', recovery: 'Clears when you retry or stop it', gate: 'Clears when you approve it or ask for changes', plan: 'Clears when you approve it or ask for changes', outline: 'Clears when you approve it or ask for changes',
     'paused-limit': 'Clears when you resume or stop it', paused: 'Clears when you resume or stop it', interrupted: 'Clears when you resume or stop it', capped: 'Clears when you resume or stop it', failed: 'Clears once you open it',
     'pr-changes': 'Clears when its pull request no longer needs you', failing: 'Clears when its pull request no longer needs you', conflicts: 'Clears when its pull request no longer needs you', checks: 'Clears when its pull request no longer needs you', approved: 'Clears when its pull request no longer needs you', 'pr-behind': 'Clears when its pull request no longer needs you', 'pr-blocked': 'Clears when its pull request no longer needs you',
-    ready: 'Clears when you create its pull request or discard it', 'no-remote': 'Clears when you create its pull request or discard it', missed: 'Clears when you run it or cancel it', project: 'Clears when the project is fixed', workspace: 'Clears when you answer it' };
+    ready: 'Clears when you create its pull request or discard it', 'no-remote': 'Clears when you create its pull request or discard it', 'no-base': 'Clears when you create its pull request or discard it', missed: 'Clears when you run it or cancel it', 'project-behind': 'Clears when you sync it', 'project-diverged': 'Clears when you bring them together', 'project-missing': 'Clears when you locate its folder', project: '', workspace: 'Clears when you answer it' };
   for (const [k, v] of Object.entries(TABLE)) assert.equal(M.clearsWhen(k), v, `clearsWhen(${k})`);
   assert.equal(M.clearsWhen('working'), '', 'a key not in the table says nothing');
 
@@ -224,6 +224,20 @@ test('Now rows say how they clear, and a task opens by its own id', async () => 
   assert.equal(pop(d).querySelector('[data-open="r:run-f"]'), null, 'it leaves Now');
 });
 
+test('the profile spend figure changes after a pipelines-changed that names its run, once the run\'s cost moved', async () => {
+  const sources = clone(SOURCES);
+  const h = await liveHost({ sources }), { d } = h;
+  await h.hello();
+  d.querySelector('[data-acct]').click();
+  d.querySelector('[data-sub="usage"]').click();
+  assert.match(d.querySelector('.spend-card').textContent, /\$12\.50/);
+  sources.budget.windowSpendUsd = 14.25;   // the run settled with its cost
+  frame(h, { type: 'pipelines-changed', action: 'updated', runId: 'run-a', pipelineId: 'pa', key: 'web-00000001' });
+  await settle(400);
+  assert.match(d.querySelector('.spend-card').textContent, /\$14\.25/, 'read again, with no reload');
+  assert.ok(h.gets.includes('/api/history/web-00000001/pa?row=1'), 'its one row, not the whole history');
+});
+
 test('Updates and Limits rows draw the Pulse mark (signal) in their tones, never the event bolt', async () => {
   const { icon } = await import('../ui/public/design-system/components/index.mjs');
   const h = await loaded(), { w, d } = h;
@@ -240,4 +254,20 @@ test('Updates and Limits rows draw the Pulse mark (signal) in their tones, never
   const limits = [...lim.querySelectorAll('.kind-mark')].map((m) => ({ tone: [...m.classList].find((c) => c.startsWith('is-')), glyph: m.querySelector('svg').innerHTML }));
   assert.ok(limits.length > 0);
   assert.ok(limits.every((m) => ['is-fail', 'is-act'].includes(m.tone) && m.glyph === signal), JSON.stringify(limits));
+});
+
+test('F-G-G5-02: a missed schedule row in Now opens the schedule\'s own page, never a dead task page', async () => {
+  const sources = withNotes();
+  sources.schedules.tickets.push({ id: 'tk3', kind: 'once', scheduleId: 'sr1', title: 'Nightly', status: 'missed', runAt: at(2), projectKey: 'web-1', createdAt: at(1) });
+  const h = await liveHost({ sources }), { w, d } = h;
+  await h.hello();
+  for (const [ticket, page] of [['tk1', '#schedule/tk1'], ['tk3', '#schedule/sr1']]) {
+    w.location.hash = '#chat'; await settle();
+    w.RailPulse.open('now');
+    const row = pop(d).querySelector(`[data-open="r:sched:${ticket}"]`);
+    assert.ok(row, `the missed ${ticket} is in Now`);
+    row.click(); await settle();
+    assert.equal(w.location.hash, page, `${ticket} opens its schedule`);
+    assert.doesNotMatch(d.body.textContent, /This task no longer exists/);
+  }
 });

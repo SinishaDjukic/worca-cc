@@ -15,6 +15,7 @@ import { selectionAction, selectApply, selectClear, selectPrune, selectStart, se
 import { bindLongPress, selectionBar } from './selection-bar.mjs';
 import { keyFacts, listMove, openShortcutsSheet, shortcutAction } from './shortcuts.mjs';
 import { listEditor } from './tag-group.mjs';
+import { keptRoute } from './keep-open.mjs';
 
 /** How long a date section takes to fold before it is drawn folded: the Rail's change timing. */
 const FOLD_MS = 200;
@@ -43,12 +44,17 @@ export const LIST_SHOWN = 8;
 const ROUNDS_SHOWN = 5;
 const q = (v) => String(v).replace(/["\\]/g, '\\$&');   // a value inside an attribute selector
 
-/** Keeps a menu inside the window, 16px from its edges. */
+/**
+ * Keeps a menu inside the window, 16px from its edges. A kept menu (comp.patch-parts) is measured from where it would sit
+ * without its last shift, so a redraw never builds on that shift, a resize re-fits it, and nothing is written unless the
+ * shift changes.
+ */
 export function fitMenu(m, vw) {
-  const r = m.getBoundingClientRect();
-  if (r.right > vw - 16) m.style.left = `${Math.min(0, vw - 16 - r.right)}px`;
-  const r2 = m.getBoundingClientRect();
-  if (r2.left < 16) m.style.left = `${parseFloat(m.style.left || 0) + 16 - r2.left}px`;
+  const was = parseFloat(m.style.left || 0) || 0, r = m.getBoundingClientRect();
+  const left = r.left - was, right = r.right - was;
+  let dx = right > vw - 16 ? vw - 16 - right : 0;
+  if (left + dx < 16) dx = 16 - left;
+  if (dx !== was) m.style.left = dx ? `${dx}px` : '';
 }
 
 /**
@@ -154,17 +160,28 @@ export function listController({ root, spec }) {
     el.style.top = `${r.bottom + 4 + h > vh - 8 ? Math.max(8, r.top - h - 4) : r.bottom + 4}px`;
   }
 
-  function paint({ focus = '' } = {}) {
-    stale = false; OWNER.set(root, s);
+  // `ifChanged`: a drawing equal to the last one, still in place and still this list's, writes nothing (comp.patch-parts).
+  // Only paint writes inside the root: the check sees the root's top level only, so a write below it by another writer goes unseen.
+  function paint({ focus = '', ifChanged = false } = {}) {
+    stale = false;
+    const owned = OWNER.get(root) === s; OWNER.set(root, s);
     const a = doc.activeElement, inside = root.contains(a);
-    const scroller = root.closest('.main, .rl-side-body'), y = scroller?.scrollTop || 0;
     const before = s.order, fromRow = a?.closest?.('[data-row]')?.dataset.row || s.focus;
+    const out = html(spec.view()), d = s.drawn;
+    if (ifChanged && owned && d && d.html === out && root.firstChild === d.first && root.childNodes.length === d.count) {
+      const stop = s.order.includes(s.focus) ? s.focus : s.order[0];
+      for (const b of root.querySelectorAll('[data-open]')) { const t = b.dataset.open === stop ? 0 : -1; if (b.tabIndex !== t) b.tabIndex = t; }
+      if (focus && root.querySelector(focus)) root.querySelector(focus).focus();
+      return;
+    }
+    const scroller = root.closest('.main, .rl-side-body'), y = scroller?.scrollTop || 0;
     const picked = (a?.dataset?.menuPick || a?.dataset?.pick || '').split('|')[0];
     const keep = focus || (picked ? `[data-menu="${q(picked)}"]` : ['data-menu', 'data-bulk', 'data-selall', 'data-fold', 'data-rounds'].filter((k) => a?.hasAttribute?.(k)).map((k) => `[${k}${a.getAttribute(k) && a.getAttribute(k) !== 'true' ? `="${q(a.getAttribute(k))}"` : ''}]`)[0]);
     const typed = root.querySelector('#list-pop-q')?.value, name = root.querySelector('[data-dlg-name]')?.value;
     const toneOf = (el) => { const m = el.querySelector(':scope > .lr-rail .kind-mark, :scope > .lr-rail .status-dot'); return m ? `${m.className.replace(/ ?is-(news|still)/g, '')}|${m.querySelectorAll('circle[style]').length}` : ''; };   // its state and how far its ring has filled
     const was = new Map([...root.querySelectorAll('[data-row]')].map((el) => [el.dataset.row, toneOf(el)]));
-    root.innerHTML = html(spec.view());
+    root.innerHTML = out;
+    s.drawn = { html: out, first: root.firstChild, count: root.childNodes.length };
     // a row whose state changed since the last paint says so once: its mark pulses (list.news)
     // a row whose state or stage changed since the last paint says so once: its ring fills to where it is, then it pulses (list.news);
     // a row never seen before drops into its place, briefly tinted (list.arrives); none of it on the first paint
@@ -260,6 +277,9 @@ export function listController({ root, spec }) {
     }
   });
   let stale = false;   // something closed from outside: draw again, unless a handler already did
+  // an open popover belongs to its route (comp.keep-open): moving to another place or item closes it, its text with it
+  let routeAt = keptRoute(win.location.hash);
+  win.addEventListener('hashchange', () => { const now = keptRoute(win.location.hash), moved = now !== routeAt; routeAt = now; if (moved && s.pop) { s.pop = null; stale = true; } });
   const repaint = () => { if (stale) paint(); };
   dismissOnOutside(doc, { rank: 3, open: () => !!s.menu, inside: (t) => !!t.closest('.menu') || t.closest?.('[data-menu]')?.dataset.menu === s.menu, back: () => root.querySelector(`[data-menu="${q(s.menu)}"]`), close: () => { s.menu = ''; stale = true; }, paint: repaint });
   dismissOnOutside(doc, { rank: 3, open: () => !!s.pop, inside: '.list-pop', back: () => (s.pop ? root.querySelector(s.pop.anchor) : null), close: () => { s.pop = null; stale = true; }, paint: repaint });

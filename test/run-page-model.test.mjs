@@ -173,3 +173,103 @@ test('liveRun: a failed task\'s held step wears the failed look, with what broke
   const run = M.liveRun(page({ case: 'failed', failure: { head: 'Build · 3 tests failed', rows: ['a'] }, stages: [{ key: 'build', state: 'paused', steps: [{ name: 'Implementation', state: 'paused' }] }] }));
   assert.deepEqual(J(subsOf(run, 'build').map((x) => [x.state, x.live])), [['failed', '3 tests failed']]);
 });
+
+// B1.6 (#1318): a live task at its review gate, and a review forced on with open issues
+const GATE_ISSUES = [{ sev: 'Major', t: 'The pager loses its place', at: 'ui/pager.mjs:42' }];
+const gatePage = (o) => page(Object.assign({ case: 'gate', detail: 'Review implementation reached its cycle limit',
+  gate: { id: 'gate-w5-3', nodeId: 'n_rev', issues: GATE_ISSUES, count: 1, line: '1 open issue: accept as is, or run another cycle?' },
+  review: { roles: [], issues: GATE_ISSUES },
+  stages: [{ key: 'plan', state: 'done', steps: [{ name: 'Plan', state: 'done' }] }, { key: 'build', state: 'done', steps: [{ name: 'Implementation', state: 'done' }] },
+    { key: 'review', state: 'ask', steps: [{ name: 'Review implementation', state: 'ask' }, { name: 'Manual tests checklist', state: 'next' }] }] }, o));
+test('O1, O4: liveRun draws the asking step in Review with the gate\'s line, and the page opens on Review', () => {
+  const run = M.liveRun(gatePage());
+  assert.deepEqual(J(subsOf(run, 'review').map((x) => [x.name, x.state, x.live])), [['Review implementation', 'ask', '1 open issue: accept as is, or run another cycle?'], ['Manual tests checklist', 'next', '']]);
+  assert.ok(!subsOf(run, 'plan').some((x) => x.state === 'ask'), 'Plan asks nothing');
+  assert.equal(run.over, false, 'a task waiting at its gate is not over');
+  const v = M.view('gate', { run });
+  assert.equal(v.open.key, 'review');
+  assert.deepEqual(J(v.under), { issues: GATE_ISSUES, roles: [] }, 'the gate\'s own rows, never DETAIL.issues');
+  assert.deepEqual(J([v.over.focus.issues, v.over.focus.roles]), [GATE_ISSUES, []], 'the Overview focus reads the run\'s own review (D8)');
+  assert.equal(v.ask, null, 'no design sample question');
+  window.RailTaskLive = { parts: () => ({}) };   // with the live kind's parts the focus is the task's own failure only (liveOver)
+  const lp = M.view('gate', { run });
+  delete window.RailTaskLive;
+  assert.equal(lp.over.focus, null);
+  // a stage with no known steps draws its ask as one asking step
+  const bare = M.liveRun(gatePage({ stages: [{ key: 'review', state: 'ask', steps: [] }] }));
+  assert.deepEqual(J(subsOf(bare, 'review').map((x) => [x.state, x.live])), [['ask', '1 open issue: accept as is, or run another cycle?']]);
+});
+test('O2: a blocked live step is a problem step with its open-issue line, not a tick', () => {
+  const run = M.liveRun(page({ case: 'working', stages: [{ key: 'build', state: 'done', steps: [{ name: 'Implementation', state: 'done' }] },
+    { key: 'review', state: 'done', steps: [{ name: 'Review implementation', state: 'blocked', open: 2 }, { name: 'Manual tests checklist', state: 'done' }] }] }));
+  assert.deepEqual(J(subsOf(run, 'review').map((x) => [x.state, x.live])), [['problem', 'Blocked · accepted with 2 open issues'], ['done', '']]);
+  const one = M.liveRun(page({ stages: [{ key: 'review', state: 'done', steps: [{ name: 'Review implementation', state: 'blocked', open: 1 }] }] }));
+  assert.equal(subsOf(one, 'review')[0].live, 'Blocked · accepted with 1 open issue');
+  assert.notEqual(R.stageState(subsOf(run, 'review')), 'done', 'the Review stage is not ticked');
+});
+test('O2: the prototype\'s ready-issues case draws its blocked review as a problem', () => {
+  const y = stepsOf(M.view('ready-issues', {}), 'review')[0];
+  assert.deepEqual(J([y.name, y.rowCls, y.live, y.loops]), ['Review implementation', 'is-problem', 'Blocked · accepted with 2 open issues', 3]);
+});
+
+test('B1.7: the prototype\'s "Ready, base unknown" offers no Create PR and names no base; a live page never takes the sample base', () => {
+  assert.ok(ids.includes('no-base'), 'the case is in the picker');
+  const v = M.view('no-base', {});
+  const labels = [v.action.label, ...v.action.items.map((x) => x.text)];
+  assert.ok(!labels.some((l) => /^Create/.test(l)), labels.join());
+  assert.equal(v.place.base, '');
+  assert.equal(v.detail, 'Base unknown: Worca cannot tell where to open a PR');
+  assert.equal(M.view('ready', {}).place.base, 'dev', 'I6: the demo keeps its sample base');
+  const live = M.liveRun({ id: 'pz', case: 'ready', title: 'Fin', branch: 'feat/x', base: '', stages: [], review: { roles: [], issues: [] } });
+  assert.equal(M.view(live.id, { run: live }).place.base, '', 'a live task with no base shows none');
+});
+
+test('F-a4-03: liveRun of a running task with no steps yet is not over when liveRunning, and offers Pause and Stop; without liveRunning (or with a question) it is over', () => {
+  const idle = ['plan', 'build', 'review'].map((key) => ({ key, state: 'next', steps: [] }));
+  const run = M.liveRun(page({ case: 'working', liveRunning: true, stages: idle }));
+  assert.equal(run.over, false, 'a running task whose steps have not arrived is not over');
+  const v = M.view(run.id, { run });
+  assert.equal(v.action.label, 'Pause');
+  assert.ok(v.action.items.some((x) => x.text === 'Stop the task'), J(v.action.items.map((x) => x.text)));
+  const before = M.liveRun(page({ case: 'working', stages: idle }));
+  assert.equal(before.over, true, 'without liveRunning (pipeline unknown, or waiting on a question) it reads as today');
+  assert.equal(M.view(before.id, { run: before }).action, null);
+});
+
+const grp = (cases, o = {}) => M.liveGroup({ id: 'G', title: 'Pager', kind: 'Feature', cost: 0, members: cases.map((c, i) => ({ pipelineId: c ? 'p' + i : '', title: 'Task ' + (i + 1), case: c, pr: '', prUrl: '', cost: 0, ...(o[i] || {}) })) });
+test('liveGroup (F-a4-09): one ready member and two not started reads Waiting, never Working', () => {
+  const g = grp(['ready', '', '']);
+  assert.equal(g.word, 'Waiting');
+  assert.equal(g.state, 'scheduled');
+  assert.equal(g.action, null, 'the group\'s own action only: no Create PR before every task is ready');
+  window.RailTaskLive = { parts: () => ({}) };
+  const v = M.view(g.id, { run: g });
+  delete window.RailTaskLive;
+  assert.ok(!v.action || ![v.action.label, ...v.action.items.map((x) => x.text)].includes('Start now'), 'a waiting group never offers Start now');
+});
+test('liveGroup (F-a4-09): the head follows its members', () => {
+  const rows = [
+    [['ready', 'working', ''], 'Working'], [['starting', ''], 'Working', 'feature'],
+    [['ready', 'question', ''], 'Needs you', 'question'], [['ready', 'stopped', ''], 'Stopped'], [['ready', 'ready'], 'Ready'],
+    [['ready', 'failed', ''], 'Needs you', 'chain'], [['merged', 'merged'], 'Merged'], [['zzz-unknown'], 'Ready', 'featureready'],
+    [['merged', 'ready'], 'Ready', 'ready'],
+  ];
+  for (const [cases, word, state] of rows) {
+    const g = grp(cases);
+    if (state) assert.equal(g.state, state, J(cases));
+    assert.equal(g.word, word, J(cases));
+  }
+  assert.equal(grp(['approved', 'ready'], { 0: { pr: '#41', prUrl: 'u' } }).state, 'ship-applied', 'a member with a PR and none left to start: unchanged');
+});
+test('view (F-a4-11): a live failed task with restartOff: Restart Build is off and says why', () => {
+  const why = 'Needs a plan: this task saved none to build from';
+  const run = M.liveRun(page({ case: 'failed', restartOff: why, stages: [{ key: 'build', state: 'failed', steps: [{ name: 'implementer', state: 'failed' }] }] }));
+  assert.equal(run.restartOff, why);
+  window.RailTaskLive = { parts: () => ({}) };
+  const v = M.view('failed', { run });
+  const on = M.view('failed', { run: M.liveRun(page({ case: 'failed', stages: [{ key: 'build', state: 'failed', steps: [{ name: 'implementer', state: 'failed' }] }] })) });
+  delete window.RailTaskLive;
+  assert.equal(v.action.label, 'Restart Build');
+  assert.equal(v.action.offWhy, why);
+  assert.equal(on.action.offWhy, '', 'without a reason it is offered');
+});

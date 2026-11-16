@@ -10,7 +10,7 @@ export const SOURCES = {
   ] },
   history: { pipelines: [
     { id: 'pa', title: 'Ask me', status: 'paused', projectName: 'web', dir: '/secret/pa', totalCostUsd: 1, startedAt: at(14, 10), mtime: Date.parse(at(14, 30)) },
-    { id: 'h1', title: 'Old pause', status: 'paused', projectName: 'api', dir: '/secret/h1', totalCostUsd: 2.5, startedAt: at(9), mtime: Date.parse(at(9, 30)) },
+    { id: 'h1', title: 'Old pause', status: 'paused', pauseReason: 'recoverable', projectName: 'api', dir: '/secret/h1', totalCostUsd: 2.5, startedAt: at(9), mtime: Date.parse(at(9, 30)) },
     { id: 'h2', title: 'Shipped', status: 'done', projectName: 'api', dir: '/secret/h2', totalCostUsd: null, startedAt: at(8, 0, 11), mtime: Date.parse(at(8, 30, 11)) },
     { id: 'h3', title: 'Broke', status: 'error', projectName: 'web', totalCostUsd: 0.4, startedAt: at(7), mtime: Date.parse(at(7, 5)) },
     { id: 'h4', title: 'Gone', status: 'done', archived: true, projectName: 'web', startedAt: at(7) },

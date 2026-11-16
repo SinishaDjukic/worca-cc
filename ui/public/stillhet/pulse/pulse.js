@@ -20,7 +20,7 @@ function freshSettings(c) {
 // Settings › Tasks › Budget reads the case's figures too.
 const budgetSv = (b) => (b ? { spentNow: b.spent, total: String(b.limit), period: 'month' } : { spentNow: 0 });
 const fresh = (caseId) => ({ caseId, page: 'runs', pop: false, popTab: 'vitals', acct: false, sub: '', nr: null, menu: '', show: 'unread', from: 'all', vitalsShow: 'all', vitalsFrom: 'all',
-  pick: R.selectClear(), rowKey: '', read: [], cleared: [], fixed: [], custom: '', confirm: '', toast: '', flash: '', awayStatus: caseOf(caseId).away.status, keep: W.live ? !!W.part('keep') : true, s: freshSettings(caseOf(caseId)), sset: '', sv: { ...SV.fresh(), ...budgetSv(caseOf(caseId).budget), gemQuota: caseOf(caseId).gemQuota || '', ...(caseOf(caseId).newVersion ? { latest: caseOf(caseId).newVersion, upd: 'available' } : {}) },
+  pick: R.selectClear(), rowKey: '', read: [], cleared: [], fixed: [], custom: '', confirm: '', toast: '', flash: '', awayStatus: caseOf(caseId).away.status, keep: W.live ? !!W.part('keep') : true, s: freshSettings(caseOf(caseId)), sset: '', sv: { ...SV.fresh(), ...(W.live ? {} : budgetSv(caseOf(caseId).budget)), gemQuota: caseOf(caseId).gemQuota || '', ...(caseOf(caseId).newVersion ? { latest: caseOf(caseId).newVersion, upd: 'available' } : {}) },
   added: [], soundAt: null, stopped: [], teamSeen: false, chatSeen: false, unlock: null, session: false, person: 0, people: {} });
 let ui = fresh(M.CASES[0].id);   // the demo's first case, or the live kind's one case (pulse-model.js)
 // The live kind: dev's own routes for every action (D13). A refusal names what failed and changes nothing.
@@ -167,9 +167,15 @@ function avatar() {
   const tip = lines.length ? lines.join('\n\n') : !c.usage.length ? 'No provider connected' : c.usage.some((u) => u.noQuota) ? 'No quota set: see Usage and costs' : 'Billed per token: see Usage and costs';
   return `<span class="pz-ava-wrap" title="${esc(tip)}">${rs.map((r, i) => gring(r.pct, 'pz-ring-' + i, r.tone)).join('')}<span class="pz-ava">${esc(initials())}</span><i class="acct-dot pz-ava-dot" aria-hidden="true">${R.icon('away', 8)}</i></span>`;
 }
-const people = () => C().identity?.people || ['Emil Angelov'];
+// Who is looking. Live: dev's GET /api/whoami, read once at boot, by dev's rule (R.describeAccount): a shared sign-in names
+// the person and has the identity card, an operator only its name, local, nobody or a failed call "Profile". Never a demo
+// name. The demo: its case's people, and the picker in the tools panel.
+let acct = R.describeAccount(null);
+if (LIVE) fetch('/api/whoami').then((r) => (r.ok ? r.json() : null)).catch(() => null).then((who) => { acct = R.describeAccount(who); render(); });
+const identity = () => (LIVE ? (acct.kind === 'shared' ? { via: acct.via } : null) : C().identity);
+const people = () => (LIVE ? [acct.short] : C().identity?.people || ['Sam Rivera']);
 const personName = () => people()[ui.person] || people()[0];
-const initials = () => personName().split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+const initials = () => (LIVE ? acct.initials : personName().split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase());
 const awayRow = () => M.awayRow({ ...C().away, status: ui.awayStatus });
 const isAway = () => awayRow().state === 'away';
 // The sidebar's foot: the avatar. The sidebar holds places only; what keeps running is in Vitals, a new version in Updates.
@@ -205,9 +211,9 @@ function topbar() {
 // One row on the 20px rail: the dot, the title line, the meta line, the time at the right.
 // In Updates the rail holds the mark (amber: still waits for you, blue: unread, nothing once read) and, while selecting,
 // the tick box in its place: one text edge for every list.
-function row({ dot, mark: own, title, meta, time, tip, key, check, unreadDot, resolved, flash, fix, fixTip, fixLand }) {
+function row({ dot, mark: own, title, meta, time, tip, key, check, unreadDot, resolved, flash, fix, fixTip, fixLand, fixBusy }) {
   return R.pulseRow({ mark: own || (dot ? R.statusDot({ tone: dot }) : ''), title, meta, time, tip, id: key, check, unread: unreadDot, resolved, flash,
-    action: fix ? R.button({ label: fix, kind: 'quiet', attrs: { ...(fixLand ? { 'data-land': fixLand } : { 'data-fix': key }), title: fixTip } }) : '' });
+    action: fix ? R.button({ label: fix, kind: 'quiet', attrs: { ...(fixLand ? { 'data-land': fixLand } : { 'data-fix': key }), title: fixTip, disabled: !!fixBusy } }) : '' });
 }
 const dotOf = (u) => (u.sev === 'needs' && u.open ? 'is-amber' : '');
 // A run's mark and word come from the library's state.
@@ -229,7 +235,7 @@ function vitalsSections() {
     { word: 'from', id: 'vitalsFrom', text: ui.vitalsFrom === 'all' ? 'all projects' : ui.vitalsFrom, items: [{ id: 'all', text: 'all projects', checked: ui.vitalsFrom === 'all', hint: String(vitalsN(vitalsShown(ui.vitalsShow, 'all'))) }, { sep: true }].concat(vitalsProjects().map((p) => ({ id: p, text: p, checked: ui.vitalsFrom === p, hint: String(vitalsN(vitalsShown(ui.vitalsShow, p))) }))), tip: 'Which project\'s runs it shows; limits belong to a harness and show for every project' }])}</span></div>`;
   const sec = (h, n, rows, note) => (n ? `<section class="pz-sec"><h3 class="pz-h">${h} <span class="n">${n}${note ? ` · ${note}` : ''}</span></h3><div class="pz-list">${rows}</div></section>` : '');
   const levelOfRun = (r) => (r.missed ? 2 : R.alertLevel(R.markTone(R.runState(window.RunCardModel.stateOf(r.case)))));
-  const needRows = [...c.needs.map((r) => [levelOfRun(r), r.missed ? row({ mark: R.kindMark({ kind: 'schedule', tone: 'act', size: 16 }), title: r.title, meta: clearsMeta(metaOf(r), 'missed'), time: r.time, key: 'r:' + r.id, tip: 'A missed time never started: it needs you and is not a task' }) : runRow(r, 'Opens the run page at what it asks', clearsMeta(metaOf(r), clearsKeyOf(r)))]), ...c.places.map((x) => [R.alertLevel(x.tone), row({ mark: R.kindMark({ kind: x.kind, tone: x.tone, size: 16 }), title: x.title, meta: clearsMeta(x.meta, x.kind), key: `np:${x.go}`, tip: x.tip })])].sort((a, b) => b[0] - a[0]);   // highest level first (look.alert-ladder)
+  const needRows = [...c.needs.map((r) => [levelOfRun(r), r.missed ? row({ mark: R.kindMark({ kind: 'schedule', tone: 'act', size: 16 }), title: r.title, meta: clearsMeta(metaOf(r, schedWords(r) || undefined), 'missed'), time: r.time, key: 'r:' + r.id, tip: 'A missed time never started: it needs you and is not a task' }) : runRow(r, 'Opens the run page at what it asks', clearsMeta(metaOf(r), clearsKeyOf(r)))]), ...c.places.map((x) => [R.alertLevel(x.tone), row({ mark: R.kindMark({ kind: x.kind, tone: x.tone, size: 16 }), title: x.title, meta: clearsMeta(x.meta, x.clear || x.kind), key: `np:${x.go}`, tip: x.tip, fix: x.fix, fixTip: 'Fast-forwards to the remote; nothing of yours is touched', fixBusy: x.fix === 'Syncing…' })])].sort((a, b) => b[0] - a[0]);   // highest level first (look.alert-ladder)
   const out = sec(R.runState('question').word, needRows.length, needRows.map(([, h]) => h).join(''), needsWords().includes('(') ? needsWords().replace(/^\d+ needs? you \((.*)\)$/, '$1') : '')
     + sec('Limits', lim.length, lim.map((l, i) => row({ mark: R.kindMark({ kind: 'event', tone: l.tone === 'over' ? 'fail' : 'act', size: 16, icon: 'signal' }), title: l.title, meta: l.detail, time: l.time, key: 'lim' + i, tip: `${l.tip} · opens Usage and costs` })).join(''))
     + sec('Running', c.running.length, c.running.map((r) => runRow(r, 'Opens the live run')).join(''))
@@ -240,10 +246,16 @@ function vitalsSections() {
   return bar + (out || `<p class="pz-empty">${all ? 'Nothing needs you. Nothing is running.' : 'Nothing here right now.'}</p>`);
 }
 
+// a schedule's waiting row (demo `ticket`, live `sched:ID`) reads the schedule's own word and why (RailSchedules.wordOf /
+// nextOf), as its page, card and bar row do; one deleted inside its Undo window is no row any more
+const schedIdOf = (r) => r.ticket || (/^sched:/.test(r.id || '') ? r.id.slice(6) : '');
+const schedGone = (r) => { const id = schedIdOf(r), S = window.RailSchedules; return !!(id && S && !S.find(id)); };
+const schedWords = (r) => { const id = schedIdOf(r), S = window.RailSchedules; return id && S?.find(id) ? [S.wordOf(id), S.nextOf(id)].filter(Boolean).join(' · ') : ''; };
 // Scheduled, by when: Missed, Today, Tomorrow, This week, Later, After a run; a group with nothing has no head.
-function scheduledSection(list) {
+function scheduledSection(all) {
+  const list = all.filter((r) => !schedGone(r));
   if (!list.length) return '';
-  const rowOf = (r) => row({ mark: R.kindMark({ kind: 'schedule', tone: r.when === 'missed' ? 'act' : 'idle', size: 16 }), title: r.title, meta: metaOf(r, r.on && !r.resumes ? startDetail(r) : r.detail), time: r.time, key: 'r:' + r.id, tip: r.resumes ? 'Opens the run: it resumes by itself' : r.queued ? 'Opens the run: it waits for a free slot' : 'Opens the run' });
+  const rowOf = (r) => row({ mark: R.kindMark({ kind: 'schedule', tone: r.when === 'missed' ? 'act' : 'idle', size: 16 }), title: r.title, meta: metaOf(r, schedWords(r) || (r.on && !r.resumes ? startDetail(r) : r.detail)), time: r.time, key: 'r:' + r.id, tip: r.resumes ? 'Opens the run: it resumes by itself' : r.queued ? 'Opens the run: it waits for a free slot' : 'Opens the run' });
   const groups = M.SCHED.filter(([id]) => list.some((r) => r.when === id)).map(([id, name]) => `<h4 class="pz-h pz-day">${name}</h4><div class="pz-list">${list.filter((r) => r.when === id).map(rowOf).join('')}</div>`).join('');
   return `<section class="pz-sec"><h3 class="pz-h">Scheduled <span class="n">${list.length}</span></h3>${groups}</section>`;
 }
@@ -280,7 +292,7 @@ function popover() {
     { id: 'clearread', text: 'Clear read', help: 'Moves every read update to Cleared, in any view; what still waits for you stays' },
     { id: 'select', text: 'Select', help: 'Tick updates to mark read or clear several at once' }, { sep: true },
     { id: 'settings', text: 'Notification settings', help: 'Settings › Notifications: what reaches you' }], 'right')}</span>`;
-  return R.panelFrame({ label: 'Pulse', cls: `pz-popover${inCls('pop')}`, head: `${R.tabs({ cls: 'pz-ptabs', items: [{ id: 'vitals', label: 'Now', count: vitalsCount(), selected: ui.popTab === 'vitals', tip: 'What is true right now: it changes by itself and cannot be cleared' }, { id: 'updates', label: 'Updates', count: shown().length, selected: ui.popTab === 'updates', tip: `What happened: read, select and clear, like runs. The count follows the sentence below. Kept for 90 days${C().identity ? '. Read and cleared are yours; others on this sign-in keep their own' : ''}` }], hooks: (t) => ({ 'data-ptab': t.id, title: t.tip }) })}${more}`, body: listNow() ? pulseState() : ui.popTab === 'vitals' ? vitalsSections() : updatesPanel() });
+  return R.panelFrame({ label: 'Pulse', cls: `pz-popover${inCls('pop')}`, head: `${R.tabs({ cls: 'pz-ptabs', items: [{ id: 'vitals', label: 'Now', count: vitalsCount(), selected: ui.popTab === 'vitals', tip: 'What is true right now: it changes by itself and cannot be cleared' }, { id: 'updates', label: 'Updates', count: shown().length, selected: ui.popTab === 'updates', tip: `What happened: read, select and clear, like runs. The count follows the sentence below. Kept for 90 days${identity() ? '. Read and cleared are yours; others on this sign-in keep their own' : ''}` }], hooks: (t) => ({ 'data-ptab': t.id, title: t.tip }) })}${more}`, body: listNow() ? pulseState() : ui.popTab === 'vitals' ? vitalsSections() : updatesPanel() });
 }
 
 // ---- the profile menu: Worca's own menu (index.html #acct-menu); its spend card is now Usage and costs, the last row ----
@@ -293,7 +305,7 @@ function acctMenu() {
   const val = gone ? 'Used up' : top ? (top.pct >= 100 ? 'Reached' : `${top.pct}%`) : c.budget ? M.usd(c.budget.spent) : '';
   const lvl = LEVELS_UI.find((l) => l[0] === R.prefs.mode()), away = awayRow();
   // Who is looking, only on a shared sign-in; your team's new setup, until you look at it; the way past a blocked budget.
-  const id = c.identity ? `<div class="mcard id-card" role="group" aria-label="Signed in as"><span class="mc-k">Signed in as</span><b>${esc(personName())}</b><small>${esc(c.identity.via)}</small></div>` : '';
+  const idn = identity(), id = idn ? `<div class="mcard id-card" role="group" aria-label="Signed in as"><span class="mc-k">Signed in as</span><b>${esc(LIVE ? acct.name : personName())}</b><small>${esc(idn.via)}</small></div>` : '';
   const team = c.teamSetup && !ui.teamSeen ? R.accountItem({ label: 'Your team updated the recommended setup', cls: 'pz-team', mark: R.statusDot({ tone: 'is-amber' }), value: 'Review', attrs: { 'data-team': true, title: 'Opens Settings › Team policy; the note goes once you have looked' } }) : '';
   const raise = gone ? R.accountItem({ label: 'Raise budget', mark: svg('up', 16, 'mi-ic'), value: M.usd(c.budget.limit), attrs: { 'data-land': 'runs|Budget', title: 'Runs pause until the budget resets. Opens Settings › Tasks, on Budget' } }) : '';
   const sub = (id) => ({ 'data-sub': id, 'aria-haspopup': 'menu', 'aria-expanded': String(ui.sub === id) });
@@ -463,7 +475,11 @@ function runsPage() {
 // On a narrow screen the sidebar stays Worca's, and Settings opens on its menu as a list; a section has ‹ Settings.
 // Every section is SettingsSections of SettingsRows (the components own the alignment). Notifications is drawn here,
 // from Pulse's model; every other section comes from settings-model.js through settings.js.
-const sp = (id, text, items, tip, right) => R.sentencePicker({ id, text, items, open: ui.menu === id, tip, chevron: svg('chevron', 12), right });
+// Live, what Notifications does not save yet (B1.3): Badge, Sound, Breathing and every Updates picker show their value,
+// disabled, with the not-live sentence as the reason. LIVE is read when called, after it is defined below.
+const OFF_LIVE = (id) => LIVE && (['badge', 'sound', 'attnFor'].includes(id) || /^(lvl|whr|ev):/.test(id));
+const offLive = (html) => R.tooltip({ text: R.NOT_LIVE_SENTENCE, off: true, html });
+const sp = (id, text, items, tip, right) => (OFF_LIVE(id) ? offLive('<b>' + esc(text) + '</b>') : R.sentencePicker({ id, text, items, open: ui.menu === id, tip, chevron: svg('chevron', 12), right }));
 const sectionId = () => ui.sset || (R.shows('advanced') ? SM.FIRST : 'general');   /* a newcomer lands on General, not on budgets */
 const menuGroups = () => SM.GROUPS.map((g) => ({ title: g.title, items: g.items.filter((id) => SM.visible(id, R.prefs.mode())).map((id) => ({ label: SM.title(id), icon: SM.ICONS?.[id] || '', current: id === sectionId(), attrs: { 'data-sset': id } })) })).filter((g) => g.items.length);   // a group with nothing at this mode has no head
 const settingsMenu = () => R.sideMenu({ label: 'Settings', cls: swapCls.trim(), back: SHELL ? null : { label: 'Back to Worca', icon: svg('chevL', 14), attrs: { 'data-go': 'runs', title: 'Back to the page you came from' } }, groups: menuGroups() });
@@ -489,7 +505,8 @@ function notifications() {
     : s.desktop === 'unsupported' ? R.settingsRow({ name: 'Desktop', sentence: 'This browser does not support desktop notifications' })
     : s.desktop === 'insecure' ? R.settingsRow({ name: 'Desktop', sentence: 'Desktop notifications need a secure address: open Worca on https:// or localhost' })
     : R.settingsRow({ name: 'Desktop', changed: changedFrom('desktop', 'Desktop', (v) => (v === 'on' ? 'on' : 'off')), sentence: 'Desktop notifications in this browser', end: R.button({ label: 'Send test', kind: 'quiet', attrs: { 'data-test': '', disabled: s.desktop !== 'on', title: s.desktop === 'on' ? 'Sends one test notification' : 'Turn desktop notifications on to send a test' } })
-      + R.switchButton({ on: s.desktop === 'on', label: 'Desktop notifications in this browser', why: s.desktop === 'on' ? 'On: what a group sends to desktop shows as a notification' : 'Off: no desktop notifications from any group', attrs: { 'data-desk': '' } }) });
+      + (LIVE ? offLive(R.switchButton({ on: s.desktop === 'on', label: 'Desktop notifications in this browser', why: R.NOT_LIVE_SENTENCE, disabled: true }))
+        : R.switchButton({ on: s.desktop === 'on', label: 'Desktop notifications in this browser', why: s.desktop === 'on' ? 'On: what a group sends to desktop shows as a notification' : 'Off: no desktop notifications from any group', attrs: { 'data-desk': '' } })) });
   const channels = desk
     + R.settingsRow({ name: 'Badge', changed: changedFrom('badge', 'Badge', (v) => BADGE.find((b) => b.id === v).text), sentence: `The tab title ${sp('badge', BADGE.find((b) => b.id === s.badge).text, BADGE.map((b) => ({ ...b, checked: b.id === s.badge })), 'What the count in the tab title counts')}` })
     + R.settingsRow({ name: 'Sound', changed: changedFrom('sound', 'Sound', (v) => R.SOUND_CHOICES.find((x) => x.id === v).text), sentence: `${sp('sound', R.SOUND_CHOICES.find((x) => x.id === s.sound).text, R.SOUND_CHOICES.map((x) => ({ ...x, checked: x.id === s.sound })), 'What makes a sound as it arrives. Never during away hours; a burst plays once')}` })
@@ -500,7 +517,7 @@ function notifications() {
     const gs = s.groups[g.id], g0 = startOf().groups[g.id], open = ui.custom === g.id, nEx = Object.keys(gs.ex).length;
     const groupWhere = (ev) => (M.qualifies(gs.level, ev[2]) ? gs.where : 'pulse');
     const evChange = (ev) => (gs.ex[ev[0]] ? [{ name: ev[1], was: whereText(groupWhere(ev)) }] : []);
-    const detailRows = open ? g.events.map((ev) => {
+    const detailRows = open && !LIVE ? g.events.map((ev) => {
       const w = effWhere(g, ev);
       return R.settingsRow({ name: ev[1], help: `${ev[0]} · ${ev[2] === 'needs' ? 'needs you' : ev[2]}`, changed: evChange(ev), sentence: `${w === 'pulse' ? '' : 'Goes to '}${sp('ev:' + ev[0], whereText(w), M.WHERE.map((x) => ({ ...x, checked: x.id === w })), `Where ${ev[1]} goes`)}` });
     }).join('') : '';
@@ -511,12 +528,13 @@ function notifications() {
       // Pulse keeps everything, so with Pulse only there is no level to choose.
       sentence: gs.where === 'pulse' ? sp('whr:' + g.id, whereText(gs.where), M.WHERE.map((x) => ({ ...x, checked: x.id === gs.where })), `Where ${g.name} goes beyond Pulse`)
         : `Send ${sp('lvl:' + g.id, levelText(gs.level), M.LEVELS.map((l) => ({ ...l, checked: l.id === gs.level })), `How much of ${g.name} reaches you`)} to ${sp('whr:' + g.id, whereText(gs.where), M.WHERE.map((x) => ({ ...x, checked: x.id === gs.where })), `Where ${g.name} goes beyond Pulse`, true)}`,
-      fold: { open, attrs: { 'data-custom': g.id }, help: open ? 'Close the events' : 'Choose per event: ' + g.events.map((e) => e[1]).join(', ') } });
+      fold: LIVE ? null : { open, attrs: { 'data-custom': g.id }, help: open ? 'Close the events' : 'Choose per event: ' + g.events.map((e) => e[1]).join(', ') } });
   }).join('');
   const atDefaults = JSON.stringify(s.groups) === JSON.stringify(freshSettings(C()).groups);
   const reset = quiet('Reset to defaults', { 'data-reset': '', title: 'Every group back to its defaults; asks first' });
-  return R.settingsSection({ title: 'Channels', rows: channels })
-    + R.settingsSection({ title: 'Updates', meta: `What each kind of update sends beyond Pulse. Pulse keeps everything for 90 days; a problem clears when you act on it.${s.desktop === 'on' ? '' : ' Desktop notifications are off, so nothing shows there.'}`, rows: groups, action: atDefaults ? R.tooltip({ text: 'Nothing to reset: every group is at its default', off: true, html: R.button({ label: 'Reset to defaults', kind: 'quiet', attrs: { disabled: true } }) }) : reset });
+  const resetOff = (why) => R.tooltip({ text: why, off: true, html: R.button({ label: 'Reset to defaults', kind: 'quiet', attrs: { disabled: true } }) });
+  return R.settingsSection({ title: 'Channels', rows: channels, meta: LIVE ? R.NOT_LIVE_SENTENCE : '' })
+    + R.settingsSection({ title: 'Updates', meta: `What each kind of update sends beyond Pulse. Pulse keeps everything for 90 days; a problem clears when you act on it.${s.desktop === 'on' ? '' : ' Desktop notifications are off, so nothing shows there.'}`, rows: groups, action: LIVE ? resetOff(R.NOT_LIVE_SENTENCE) : atDefaults ? resetOff('Nothing to reset: every group is at its default') : reset });
 }
 // What a run does near a limit is a run's business, so it sits in Settings › Tasks; Notifications only says how you hear of it.
 function limitsRows() {
@@ -547,28 +565,34 @@ const strict = (...ms) => ms.filter(Boolean).sort((a, b) => R.MODES.indexOf(b) -
 function settingsFinds() {
   const out = [{ label: 'Settings', sset: SM.FIRST, where: 'Your menu' }, { label: SM.title('notifications'), sset: 'notifications', where: 'Settings' }, ...NOTIF_ROWS.map((n) => ({ label: n, sset: 'notifications', where: 'Notifications' })), ...RUNS_LIMIT_ROWS.map((n) => ({ label: n, sset: 'runs', where: 'Runs › Limits' }))];
   const text = (x) => (typeof x === 'function' ? x(ui.sv) : x);
+  const shown = (x) => !x.only || (x.only === 'live') === !!W.live;   // a sample row the live kind does not draw is not found either
+  const sampleLive = (x) => !!x.sample && !!W.live;   // live, a sample section or row is found by its name only (set.not-live)
   for (const g of SM.GROUPS) for (const id of g.items) {
     const sec = SM.SECTIONS[id]; if (!sec) continue;
     out.push({ label: sec.title, sset: id, min: sec.min, flag: sec.flag, where: 'Settings › ' + g.title });
-    for (const s of sec.sections) {
+    if (!shown(sec)) continue;
+    for (const s of sec.sections.filter(shown)) {
       const smin = strict(sec.min, s.min), sflag = sec.flag || s.flag, base = id + '/' + s.title, here = `${sec.title} › ${s.title}`;
-      if (s.title !== sec.title) out.push({ label: s.title, words: text(s.meta), sset: id, head: true, min: smin, flag: sflag, where: sec.title });
-      const rowsIn = (rows, where, at, min, flag) => { for (const r of rows || []) {
+      if (s.title !== sec.title) out.push({ label: s.title, words: sampleLive(s) ? '' : text(s.meta), sset: id, head: true, min: smin, flag: sflag, where: sec.title });
+      if (sampleLive(s)) continue;
+      const rowsIn = (rows, where, at, min, flag) => { for (const r of (rows || []).filter(shown)) {
         const rmin = strict(min, r.min), rflag = flag || r.flag, open = 'more:' + at + '/' + r.name;
-        out.push({ label: r.name, words: text(r.say), sset: id, min: rmin, flag: rflag, where });
-        for (const m of r.more || []) out.push({ label: m.name, words: text(m.say), sset: id, open, parent: r.name, min: strict(rmin, m.min), flag: rflag, where: `${sec.title} › ${r.name}` });
-        for (const it of r.moreList || []) out.push({ label: it.title, words: it.meta, sset: id, open, parent: r.name, list: true, min: rmin, flag: rflag, where: `${sec.title} › ${r.name}` });
+        out.push({ label: r.name, words: sampleLive(r) ? '' : text(r.say), sset: id, min: rmin, flag: rflag, where });
+        if (sampleLive(r)) continue;
+        for (const m of (r.more || []).filter(shown)) out.push({ label: m.name, words: sampleLive(m) ? '' : text(m.say), sset: id, open, parent: r.name, min: strict(rmin, m.min), flag: rflag, where: `${sec.title} › ${r.name}` });
+        for (const it of (r.moreList || []).filter(shown)) out.push({ label: it.title, words: it.meta, sset: id, open, parent: r.name, list: true, min: rmin, flag: rflag, where: `${sec.title} › ${r.name}` });
       } };
-      const recsIn = (list, where, at, min, flag, extra = {}) => { for (const it of list || []) {
+      const recsIn = (list, where, at, min, flag, extra = {}) => { for (const it of (list || []).filter(shown)) {
         out.push({ label: it.title, words: it.meta, sset: id, list: true, min, flag, where, ...extra });
         if (!it.more) continue;
         const open = 'more:' + at + '/' + it.title, fflag = flag || it.foldFlag;
-        for (const m of it.more) out.push({ label: m.name, words: m.say, sset: id, open, parent: it.title, parentList: true, min: strict(min, m.min), flag: fflag, where: `${sec.title} › ${it.title}` });
-        for (const r of it.moreList || []) out.push({ label: r.title, words: r.meta, sset: id, open, parent: it.title, parentList: true, list: true, min, flag: fflag, where: `${sec.title} › ${it.title}` });
+        for (const m of it.more.filter(shown)) out.push({ label: m.name, words: m.say, sset: id, open, parent: it.title, parentList: true, min: strict(min, m.min), flag: fflag, where: `${sec.title} › ${it.title}` });
+        for (const r of (it.moreList || []).filter(shown)) out.push({ label: r.title, words: r.meta, sset: id, open, parent: it.title, parentList: true, list: true, min, flag: fflag, where: `${sec.title} › ${it.title}` });
       } };
       rowsIn(s.rows, here, base, smin, sflag);
       recsIn(s.list, here, base, smin, sflag);
-      for (const a of s.actions || []) if (a.list) {
+      if (s.liveList && W.live) recsIn(s.liveList(ui.sv), here, base, smin, sflag);
+      for (const a of (s.actions || []).filter(shown)) if (a.list) {
         const opens = `${base}/${a.id || a.label}`;
         out.push({ label: a.label, sset: id, opens, min: smin, flag: sflag, where: here });
         recsIn(a.list, `${sec.title} › ${a.label}`, base, smin, sflag, { opens });
@@ -596,7 +620,7 @@ function searchHits() {
   const own = [];
   if (SHELL && window.RailChats) for (const c of window.RailChats.data().chats) {
     if (plain(c.title).includes(q)) own.push({ label: c.title, where: c.project || 'No project', area: 'Chats', hash: `chat/${c.id}` });
-    const walk = (t) => { if (plain(t.title).includes(q)) own.push({ label: t.title, where: `in ${c.title}`, area: t.kind === 'schedule' ? 'Schedules' : 'Tasks', hash: t.kind === 'schedule' ? 'schedule/s1' : `run/${t.case}`, chat: LIVE && t.followed ? '' : c.id, ...(LIVE ? { run: t.pid || t.run || '' } : {}) });   /* live: the chat that started it, and its own id */ (t.after || []).forEach(walk); };
+    const walk = (t) => { if (plain(t.title).includes(q)) own.push({ label: t.title, where: `in ${c.title}`, area: t.kind === 'schedule' ? 'Schedules' : 'Tasks', hash: t.kind === 'schedule' ? `schedule/${t.id}` : `run/${t.case}`, chat: LIVE && t.followed ? '' : c.id, ...(LIVE ? { run: t.pid || t.run || '' } : {}) });   /* live: the chat that started it, and its own id */ (t.after || []).forEach(walk); };
     (c.tasks || []).forEach(walk);
   }
   const page = [];
@@ -693,8 +717,15 @@ const settingsStrip = () => (ui.page !== 'settings' ? '' : SV.strip(ui.sv) || (u
 const unlockStrip = () => (ui.unlock?.strip ? R.confirmStrip({ text: `${ui.unlock.e.label} needs ${cap(ui.unlock.strip)}. Switch to ${cap(ui.unlock.strip)}?`, yes: 'Switch' }) : '');
 // nav.locked: handed to Labs, the way back stays on screen until the switch is on or you stay on your own
 const labsBack = () => (ui.unlock?.flag && !ui.unlock.strip && !ui.unlock.stay ? R.confirmStrip({ text: `${flagName(ui.unlock.flag)} is in Labs. Turn on its switch to go on, or go back.`, yes: 'Go back', no: 'Stay here' }) : '');
-document.addEventListener('input', (e) => { if (e.target.matches?.('[data-search]')) { ui.q = e.target.value; document.querySelector('[data-search-res]').innerHTML = searchResults(); fitSearch(); } });
-function fitSearch() { const m = document.querySelector('.rl-search-res'); if (!m) return; m.style.left = ''; const r = m.getBoundingClientRect(), vw = document.documentElement.clientWidth; if (r.right > vw - 16) m.style.left = `${vw - 16 - r.right}px`; }
+document.addEventListener('input', (e) => { if (e.target.matches?.('[data-search]')) { ui.q = e.target.value; const res = document.querySelector('[data-search-res]'); if (res) R.patchParts(res, { list: searchResults() }); fitSearch(); } });
+// The results open to the left when they would leave the window: measured from where they would sit without their last
+// shift (as RailUI.fitMenu), and written only when the shift changes.
+function fitSearch() {
+  const m = document.querySelector('.rl-search-res'); if (!m) return;
+  const was = parseFloat(m.style.left || 0) || 0, right = m.getBoundingClientRect().right - was, vw = document.documentElement.clientWidth;
+  const dx = right > vw - 16 ? vw - 16 - right : 0;
+  if (dx !== was) m.style.left = dx ? `${dx}px` : '';
+}
 
 // ---- in the one Worca: Pulse in Activity's place, the overlays above the shell, Settings in the page, its menu in the sidebar ----
 // Pulse's icon has news when the count it holds grew since it was last drawn. The news lasts as Settings › Notifications ›
@@ -737,7 +768,7 @@ function pulseButton() {
 const KEPT = ['data-open', 'data-sel', 'data-selall', 'data-ptab', 'data-menu', 'data-bulk', 'data-pop'];
 function holdFocus(paint) {
   const a = document.activeElement, inPanel = !!a?.closest?.('.pz-popover'), attr = KEPT.find((k) => a?.hasAttribute?.(k));
-  if (!inPanel && attr !== 'data-pop') { paint(); return; }
+  if ((!inPanel && attr !== 'data-pop') || a?.closest?.('[data-keep]')) { paint(); return; }   // a kept field is the library's (comp.keep-open)
   const picked = (a.dataset.menuPick || a.dataset.pick || '').split('|')[0];   // a choice in a menu: back on its picker
   const sel = picked ? `[data-menu="${CSS.escape(picked)}"]` : attr && `[${attr}${a.getAttribute(attr) ? `="${CSS.escape(a.getAttribute(attr))}"` : ''}]`;
   const row = a.closest('[data-row]')?.dataset.row || ui.rowKey, before = rowIds();
@@ -750,27 +781,32 @@ function renderInShell() {
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
   const pageEl = document.querySelector('main.main'); const keepMain = pageEl?.scrollTop || 0;   // the page scrolls in main in the one Worca
   const keepP = document.querySelector('.panel-body')?.scrollTop || 0;
-  document.getElementById('rail-pulse-slot').innerHTML = pulseButton();
-  document.getElementById('side-foot').innerHTML = sideFoot();
-  document.getElementById('rail-strip').innerHTML = window.RailShell?.inviteStrip?.() || unlockStrip() || settingsStrip() || labsBack();
+  // each region is patched by part (comp.patch-parts): an unchanged one keeps its nodes, and a redraw that changes nothing writes nothing
+  const drawn = [   // what each patch did: menus are fitted only after a part changed (or the window's width did)
+    R.patchParts(document.getElementById('rail-pulse-slot'), { slot: pulseButton() }),
+    R.patchParts(document.getElementById('side-foot'), { slot: sideFoot() }),
+    R.patchParts(document.getElementById('rail-strip'), { slot: window.RailShell?.inviteStrip?.() || unlockStrip() || settingsStrip() || labsBack() }),
+  ];
   // a reply in a chat you left: the dot on the Chat row and on Ask worca, until you open Chat
-  const chatDot = !!C().chatUnread && !ui.chatSeen;
-  for (const id of ['nav-chat-unread', 'topnav-ask-dot']) { const d = document.getElementById(id); if (d) { d.hidden = !chatDot; d.title = 'A reply in a chat you left'; } }
-  document.title = tabTitle();
+  const chatDot = !!C().chatUnread && !ui.chatSeen, dotTip = 'A reply in a chat you left';
+  for (const id of ['nav-chat-unread', 'topnav-ask-dot']) { const d = document.getElementById(id); if (d) { if (d.hidden !== !chatDot) d.hidden = !chatDot; if (d.title !== dotTip) d.title = dotTip; } }
+  const title = tabTitle(); if (document.title !== title) document.title = title;
   // Settings' menu takes the sidebar's place beside today's nav (shown instead of it on a wide screen; below 760px the
   // sidebar stays Worca's, and Settings opens on its menu as a list in the page)
   const side = document.querySelector('#side-rail'), nav = side.querySelector('nav.nav');
   let sm = side.querySelector('.rail-side-settings');
-  if (sideNow) { if (!sm) { sm = document.createElement('div'); sm.className = 'rail-side-settings'; nav.after(sm); } sm.innerHTML = settingsMenu(); side.classList.add('is-settings'); }
-  else { sm?.remove(); side.classList.remove('is-settings'); }
-  document.querySelector('#side-rail .brand')?.classList.toggle('is-settings', sideNow);
-  if (sideNow) document.getElementById('route-settings').innerHTML = `<div class="pz-page">${settingsPage()}</div>`;
-  const res = document.querySelector('[data-search-res]'); if (res) res.innerHTML = searchResults();
-  document.getElementById('app').innerHTML = `${popover()}${newRun()}${acctMenu()}${sessionDialog()}`;
+  if (sideNow) { if (!sm) { sm = document.createElement('div'); sm.className = 'rail-side-settings'; nav.after(sm); } drawn.push(R.patchParts(sm, { menu: settingsMenu() })); }
+  else sm?.remove();
+  // a class is written only when it changes: a DOMTokenList add, remove or toggle writes the attribute even when it does not
+  for (const el of [side, side.querySelector('.brand')]) if (el && el.classList.contains('is-settings') !== sideNow) el.classList.toggle('is-settings', sideNow);
+  // Settings' page is a part too: an unchanged page writes nothing, a typed field is carried by comp.keep-open
+  if (sideNow) drawn.push(R.patchParts(document.getElementById('route-settings'), { page: `<div class="pz-page">${settingsPage()}</div>` }));
+  const res = document.querySelector('[data-search-res]'); if (res) drawn.push(R.patchParts(res, { list: searchResults() }));
+  drawn.push(R.patchParts(document.getElementById('app'), { popover: popover(), 'new-run': newRun(), account: acctMenu(), session: sessionDialog() }));
   paintToast();
-  for (const b of document.querySelectorAll('[data-mixed]')) b.indeterminate = true;
-  const pb = document.querySelector('.panel-body'); if (pb && !opening) pb.scrollTop = keepP;
-  fitMenus();
+  for (const b of document.querySelectorAll('[data-mixed]')) if (!b.indeterminate) b.indeterminate = true;
+  const pb = document.querySelector('.panel-body'); if (pb && !opening && pb.scrollTop !== keepP) pb.scrollTop = keepP;
+  if (opening || drawn.some((r) => r.replaced + r.added > 0) || document.documentElement.clientWidth !== fitW) fitMenus();
   opening = '';
   if (scroller.scrollTop !== keepY) scroller.scrollTop = keepY;
   if (pageEl && pageEl.isConnected && pageEl.scrollTop !== keepMain) pageEl.scrollTop = keepMain;
@@ -820,6 +856,7 @@ setInterval(() => { if (!awayEl && R.awayShows({ away: isAway(), keepAwake: ui.k
 // ---- render ----
 let sideWas = null, swapCls = '';   // the sidebar's content fades only when it changes between Worca's and Settings'
 function render() { stale = false; readCache = null; holdFocus(SHELL ? renderInShell : paintAlone); }
+R.watchKeepOpen(document);   // an open field, menu or dialog keeps its text, caret and focus across any redraw (comp.keep-open)
 W.onMove?.(() => render());   // a task moved anywhere: the badge, Vitals and Updates read the store again
 // the live kind: a load or a list state changed the store (D20): Keep awake and Away are dev's, and the rows read it again
 window.addEventListener('rail-settings', () => render());   // a live Settings action answered (settings.js)
@@ -848,8 +885,9 @@ function paintAlone() {
   if (pageEl && pageEl.isConnected && pageEl.scrollTop !== keepMain) pageEl.scrollTop = keepMain;   // nothing moves by itself: a repaint never scrolls the page
 }
 // A menu opens under its picker; one that would leave the window opens to the left instead.
+let fitW = -1;   // the window's width at the last fit: the shell's draw fits again when it changed
 function fitMenus() {
-  const vw = document.documentElement.clientWidth;
+  const vw = document.documentElement.clientWidth; fitW = vw;
   fitSearch();
   for (const m of document.querySelectorAll('.pz-menu, .spick-menu')) R.fitMenu(m, vw);
 }
@@ -862,12 +900,14 @@ function paintToast() {
   const t = toastEl(); t.innerHTML = ui.toast ? R.toastText(ui.toast, undo ? R.toastUndo({ title: undo.tip }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
 }
 function toast(text, canUndo) {
+  window.RailScheduleLive?.pending?.()?.flush();   // a schedule's Delete waiting out its Undo: this notice replaces its Undo, so it is sent now (Schedules D8)
   toastSaid++; ui.toast = text; undo = typeof canUndo === 'function' ? { tip: 'Undo', run: canUndo } : canUndo || null; clearTimeout(toastTimer);   // a place's Undo is a function, or { tip, run }
   toastTimer = setTimeout(() => { ui.toast = ''; undo = null; const el = toastEl(); if (el) { el.classList.remove('is-on'); el.textContent = ''; } }, 5000);
 }
 
 function pick(id, v) {
   const s = ui.s;
+  if (OFF_LIVE(id)) { ui.menu = ''; return; }   // live: not saved yet, so a stale menu's pick changes nothing (B1.3)
   if (id === 'show') { ui.show = v; ui.pick = R.selectPrune(ui.pick, []); }
   else if (id === 'vitalsShow') ui.vitalsShow = v;
   else if (id === 'vitalsFrom') ui.vitalsFrom = v;
@@ -920,12 +960,12 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-pulse-retry]'))) { if (LIVE) A.retry(); else { window.RailDemoState.list = ''; render(); } return; }
   if ((el = tg('[data-land]'))) { e.preventDefault(); const [sset, label, list] = el.dataset.land.split('|'); land({ sset, label, list: !!list }); return; }
   if ((el = tg('[data-unlock]'))) { window.RailPulse.unlock(el.dataset.unlock); return; }
-  if ((el = tg('[data-fix]'))) { takeStep(C().updates.find((x) => x.id === el.dataset.fix)); return; }
+  if ((el = tg('[data-fix]'))) { if (el.dataset.fix.startsWith('np:projects/')) { window.RailProjects?.sync(el.dataset.fix.slice(12)); render(); return; } takeStep(C().updates.find((x) => x.id === el.dataset.fix)); return; }   // a behind project's Sync acts in place; the row does not open
   if ((el = tg('[data-team]'))) { ui.teamSeen = true; ui.acct = false; if (SHELL) { SHELL.closeDrawer(); SHELL.go('settings/team'); } else { ui.page = 'settings'; ui.sset = 'team'; } render(); return; }
   if ((el = tg('[data-pop]'))) { ui.pop = !ui.pop; ui.acct = false; ui.nr = null; if (ui.pop) opening = 'pop'; render(); return; }
   if ((el = tg('[data-acct]'))) { ui.acct = !ui.acct; ui.sub = ''; ui.pop = false; ui.nr = null; if (ui.acct) opening = 'acct'; render(); return; }
   if ((el = tg('[data-sub]'))) { const v = el.dataset.sub; ui.sub = v && ui.sub !== v ? v : ''; if (ui.sub) opening = 'sub'; render(); return; }
-  if ((el = tg('[data-desk]'))) { ui.s.desktop = ui.s.desktop === 'on' ? 'off' : 'on'; render(); return; }
+  if ((el = tg('[data-desk]'))) { if (LIVE) return; ui.s.desktop = ui.s.desktop === 'on' ? 'off' : 'on'; render(); return; }
   // the mode menu's items only: the app host's <html> carries dev's data-level (src/core/index-html.mjs), which closest() would match on every click
   if ((el = tg('[data-level]:not(:root)'))) {
     ui.sub = ''; const to = el.dataset.level;
@@ -987,17 +1027,18 @@ document.addEventListener('click', (e) => {
       else openTarget(u.go, u.title.split(' · ')[1] || u.title, `Opens ${u.to}`);
     }
     else if (key.startsWith('lim')) { const l = limitsNow()[+key.slice(3)]; openUsage(l.p ? pname(l.p) : ''); return; }
-    else if (key.startsWith('np:')) { ui.pop = null; window.RailShell.go(key.slice(3)); }
+    else if (key.startsWith('np:')) { ui.pop = null; const to = key.slice(3); if (/^projects\/(?!ws:)/.test(to) && window.RailProjects?.openNeed) window.RailProjects.openNeed(to.slice(9)); else window.RailShell.go(to); }   // a project opens at its fix
     else if (key.startsWith('act:')) { const a = C().actions.find((x) => x.id === key.slice(4)), r = a.runId && W.find(a.runId); if (r) openTarget('run/' + r.case, r.title, `Opens ${r.title}`, r.id); else toast(`${a.run} is gone; ${a.label} can still be stopped`); }
     else {
       const id = key.slice(2), r = W.tops().find((x) => x.id === id);
-      openTarget('run/' + r.case, r.title, el.title.split('\n').pop(), r.id);
+      if (r?.scheduleId) openTarget(`schedule/${r.scheduleId}`, r.title, `Opens ${r.title}`);   // F-G-G5-02: a schedule's waiting row opens its schedule, as classic does
+      else openTarget('run/' + r.case, r.title, el.title.split('\n').pop(), r.id);
     }
     render(); return;
   }
-  if ((el = tg('[data-custom]'))) { ui.custom = ui.custom === el.dataset.custom ? '' : el.dataset.custom; render(); return; }
-  if ((el = tg('[data-backgroup]'))) { ui.s.groups[el.dataset.backgroup].ex = {}; toast('Every event follows the group again'); render(); return; }
-  if ((el = tg('[data-reset]'))) { ui.confirm = 'reset'; render(); return; }
+  if ((el = tg('[data-custom]'))) { if (LIVE) return; ui.custom = ui.custom === el.dataset.custom ? '' : el.dataset.custom; render(); return; }
+  if ((el = tg('[data-backgroup]'))) { if (LIVE) return; ui.s.groups[el.dataset.backgroup].ex = {}; toast('Every event follows the group again'); render(); return; }
+  if ((el = tg('[data-reset]'))) { if (LIVE) return; ui.confirm = 'reset'; render(); return; }
   if ((el = tg('[data-confirm]')) && window.RailShell?.inviteStrip?.()) { window.RailShell.answerInvite(el.dataset.confirm); render(); return; }   /* the demo's answers close the strip and remember it */
   if ((el = tg('[data-confirm]')) && !settingsStrip() && labsBack()) { if (el.dataset.confirm === 'yes') { ui.unlock = null; history.back(); } else ui.unlock.stay = true; render(); return; }
   if ((el = tg('[data-confirm]')) && ui.unlock?.strip) { if (el.dataset.confirm === 'yes') modeByPerson(ui.unlock.strip); else { ui.unlock = null; render(); } return; }
@@ -1030,7 +1071,7 @@ function liveStep(u) {
     if (!ticket && asksConfirm(res) && r) { ui.pop = false; SHELL?.openRun(`run/${r.case}`, r.title, r.id); render(); return; }
     refused(u.fix.toLowerCase(), res);
   };
-  if (ticket) A.post(`/api/schedules/${encodeURIComponent(ticket)}/run-now`).then(done);
+  if (ticket) (window.RailScheduleLive?.act('run', { id: ticket }) ?? Promise.resolve({ ok: false, error: 'Worca is not answering' })).then(done);   // Schedules D15: the one Schedules I/O module
   else A.post('/api/resume', { pipelineId: u.run, baseCheck: true }).then(done);
 }
 // A mode a person picks: in the live kind it is dev's uiLevel, written first (D21)
@@ -1162,7 +1203,7 @@ window.RailPulse = {
   playAway: () => { if (reducedMotion()) { toast('The screensaver is off under reduced motion'); render(); return; } showAway(); },
   // On a shared sign-in each person keeps their own read and cleared; a local install has one person.
   person: (name) => {
-    if (!C().identity) { toast('A local install has one person: pick the Every kind case'); document.getElementById('person').value = people()[0]; render(); return; }
+    if (!identity() || LIVE) { toast('A local install has one person: pick the Every kind case'); document.getElementById('person').value = people()[0]; render(); return; }
     ui.people[ui.person] = { read: ui.read, cleared: ui.cleared };
     ui.person = Math.max(0, people().indexOf(name));
     const saved = ui.people[ui.person] || { read: [], cleared: [] }; ui.read = saved.read; ui.cleared = saved.cleared;

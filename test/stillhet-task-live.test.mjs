@@ -7,7 +7,7 @@ import { caseOf } from '../ui/public/stillhet/live/live-map.mjs';
 import { TASK_DETAILS, PR_URL } from './helpers/stillhet-live-fixture.mjs';
 
 const settle = (ms = 5) => new Promise((r) => setTimeout(r, ms));
-function host({ routes = {}, loaded = true, live = {}, rows = {}, clock = { t: 1_000_000 }, flags = {} } = {}) {
+function host({ routes = {}, loaded = true, live = {}, rows = {}, clock = { t: 1_000_000 }, flags = {}, scopes = {} } = {}) {
   const calls = [], toasts = [];
   const fetch = async (url, init = {}) => {
     calls.push([init.method || 'GET', url, init.body ? JSON.parse(init.body) : undefined]);
@@ -15,14 +15,14 @@ function host({ routes = {}, loaded = true, live = {}, rows = {}, clock = { t: 1
       if (new RegExp(re).test(`${init.method || 'GET'} ${url}`)) {
         const [status, data] = typeof answer === 'function' ? await answer(url, init) : answer;
         if (status === 0) throw new Error('Failed to fetch');
-        return { ok: status < 400, status, json: async () => data };
+        return { ok: status < 400, status, json: async () => data, text: async () => (typeof data === 'string' ? data : JSON.stringify(data)) };
       }
     }
     return { ok: false, status: 404, json: async () => ({ error: 'not found' }) };
   };
   const t = startTaskLive({ fetch, toast: (s) => toasts.push(s), now: () => clock.t, listLoaded: () => loaded, flag: (k) => !!flags[k],
     rowOf: (id) => rows[id] || null, liveOf: (id) => live[id] || null,
-    runOf: (id) => (rows[id] ? { pipelineId: id, projectKey: 'web-1', projectDir: '/src/web' } : {}) });
+    runOf: (id) => (rows[id] ? (scopes[id] || { pipelineId: id, projectKey: 'web-1', projectDir: '/src/web', prState: 'OPEN' }) : {}) });   // dev's history row says its PR is open (F-G-G1-01)
   return { t, calls, toasts, clock };
 }
 const failedRow = { ...TASK_DETAILS.failed.row };
@@ -122,7 +122,7 @@ test('act: each id\'s route and body; a second press is refused; a refusal says 
   const draft = host({ rows: { h2: approvedRow }, routes: { 'POST /api/pr/merge': [409, { error: 'This pull request is a draft; mark it ready for review first.', code: 'DRAFT' }] } });
   await draft.t.act('merge', { taskId: 'h2', pr: PR_URL });
   assert.deepEqual(draft.toasts, ['Could not merge #959: This pull request is a draft; mark it ready for review first.'], 'the server\'s own refusal words');
-  assert.equal(Object.keys(TASK_ACTIONS).length, 28, 'the ten Step 7 actions, the page\'s Check out, Apply and Discard, and its Terminal, service start and stop, built-in tool, preset, Switch model, Resume at…, Publish branch, away mode, a diff comment, labels and cost tags, a stack\'s start and stop, a group\'s Create PR');
+  assert.equal(Object.keys(TASK_ACTIONS).length, 34, 'the ten Step 7 actions and the page\'s Resume (F-G-G2-03), the page\'s Check out, Apply and Discard, and its Terminal, service start and stop, built-in tool, preset, Switch model, Resume at…, Publish branch, away mode, a diff comment, labels and cost tags, a stack\'s start and stop, a group\'s Create PR, a review gate\'s two answers, and COV-3\'s restore, run direction and Resume on ‹Engine›');
 });
 
 test('retry on a moved base is a prompt, not a refusal; Resume anyway posts baseAck', async () => {
@@ -132,7 +132,7 @@ test('retry on a moved base is a prompt, not a refusal; Resume anyway posts base
   assert.deepEqual([r.ok, r.prompt], [false, 'base']);
   assert.deepEqual(toasts, []);
   assert.equal((await t.act('retry', { taskId: 'h3', baseAck: true })).ok, true);
-  assert.deepEqual(calls.filter(([m]) => m === 'POST').map((c) => c[2]), [{ pipelineId: 'h3', baseCheck: true }, { pipelineId: 'h3', baseAck: true }]);
+  assert.deepEqual(calls.filter(([m]) => m === 'POST').map((c) => c[2]), [{ pipelineId: 'h3', baseCheck: true }, { pipelineId: 'h3', baseCheck: true, baseAck: true }]);
 });
 
 test('report: the reason follows the task; GitHub not filing opens the prefilled issue', async () => {
@@ -172,7 +172,7 @@ test('Raise the cap reads dollars as typed: "$180" posts 180; a value that is no
   assert.deepEqual(['$180', '1,200', ' 99.5 ', '$', 'abc', '-5', '12e3'].map(capOf), [180, 1200, 99.5, NaN, NaN, NaN, NaN]);
   const { t, calls, toasts } = host({ rows: { h1: { id: 'h1', case: 'capped' } }, routes: { 'POST /api/resume': [200, { ok: true, runId: 'r2' }] } });
   assert.equal((await t.act('raise-cap', { taskId: 'h1', value: '$180' })).ok, true);
-  assert.deepEqual(calls.filter(([m]) => m === 'POST').map((c) => c[2]), [{ pipelineId: 'h1', costCapUsd: 180 }]);
+  assert.deepEqual(calls.filter(([m]) => m === 'POST').map((c) => c[2]), [{ pipelineId: 'h1', baseCheck: true, costCapUsd: 180 }]);
   const bad = await t.act('raise-cap', { taskId: 'h1', value: 'a lot' });
   assert.equal(bad.ok, false);
   assert.equal(calls.filter(([m]) => m === 'POST').length, 1, 'nothing posted');
@@ -292,7 +292,7 @@ function wsHost({ projects = [{ projectKey: 'api-1', projectName: 'api' }], bran
     return { ok: status < 400, status, json: async () => data, text: async () => (typeof data === 'string' ? data : JSON.stringify(data)) };
   };
   const t = startTaskLive({ fetch, listLoaded: () => true, rowOf: (id) => (id === 'w1' ? { id: 'w1', case: 'approved', pr: PR_URL } : null),
-    runOf: (id) => (id === 'w1' ? { pipelineId: 'w1', projectKey: 'workspaces/ws-9', projectDir: '' } : {}) });
+    runOf: (id) => (id === 'w1' ? { pipelineId: 'w1', projectKey: 'workspaces/ws-9', projectDir: '', prState: 'OPEN' } : {}) });
   return { t, calls };
 }
 
@@ -453,4 +453,321 @@ test('a merge that succeeded drops the checks entry and reads no checks again', 
   const res = await t.act('merge', { taskId: 'h2', pr: PR_URL }); await settle();
   assert.equal(res.ok, true);
   assert.deepEqual(calls.slice(before).filter(([, u]) => /\/api\/pr\/checks/.test(u)), [], 'a merged PR has no checks to read');
+});
+
+// B1.6 (#1318): a review gate's two answers, on dev's answer API (D2), only to the gate that is pending now (D3)
+const GATE_Q = { id: 'gate-w5-3', kind: 'gate', wireId: 'w5', nodeId: 'n_rev', issues: [] };
+const gateLive = (pendingQuestion, over = {}) => ({ 'run-g': { runId: 'run-g', pipelineId: 'pg', projectKey: 'web-1', status: 'running', state: {}, pendingQuestion, ...over } });
+
+test('O1: Accept as is and Run another cycle post /api/answer with the pending gate\'s id and decision continue / another', async () => {
+  const { t, calls } = host({ live: gateLive(GATE_Q), routes: { 'POST /api/answer': [200, { ok: true }] } });
+  assert.equal((await t.flow('Accept as is', { taskId: 'run-g', questionId: 'stale-id' })).ok, true);
+  assert.equal((await t.flow('Run another cycle', { taskId: 'run-g' })).ok, true);
+  assert.deepEqual(calls.filter(([m]) => m === 'POST'), [
+    ['POST', '/api/answer', { runId: 'run-g', id: 'gate-w5-3', payload: { decision: 'continue' } }],
+    ['POST', '/api/answer', { runId: 'run-g', id: 'gate-w5-3', payload: { decision: 'another' } }]], 'the id is the pending gate\'s, never a caller\'s');
+  // a double click sends one request
+  const two = host({ live: gateLive(GATE_Q), routes: { 'POST /api/answer': [200, { ok: true }] } });
+  await Promise.all([two.t.act('gate-continue', { taskId: 'run-g' }), two.t.act('gate-continue', { taskId: 'run-g' })]);
+  assert.equal(two.calls.filter(([m]) => m === 'POST').length, 1);
+  // dev's refusal is said once
+  const bad = host({ live: gateLive(GATE_Q), routes: { 'POST /api/answer': [400, { error: 'unknown runId' }] } });
+  const r = await bad.t.act('gate-another', { taskId: 'run-g' });
+  assert.deepEqual([r.ok, bad.toasts.length], [false, 1]);
+});
+
+test('O1: with no pending gate (none, or a plan question) a gate action sends nothing and refuses', async () => {
+  for (const pq of [null, { id: 'q-plan', kind: 'plan' }, { kind: 'gate', id: '' }]) {
+    const { t, calls, toasts } = host({ live: gateLive(pq), routes: { 'POST /api/answer': [200, { ok: true }] } });
+    const r = await t.flow('Accept as is', { taskId: 'run-g' });
+    assert.deepEqual([r.ok, r.error], [false, 'the review is no longer waiting for you'], JSON.stringify(pq));
+    assert.equal(calls.filter(([m]) => m === 'POST').length, 0, 'nothing posted');
+    assert.equal(toasts.length, 1, 'said once');
+  }
+  // a saved task (no live run id) whose state still holds a gate: no answer
+  const saved = host({ rows: { pg: { id: 'pg', case: 'question' } }, routes: { 'GET /api/history/web-1/pg': [200, { state: { status: 'paused', pendingQuestion: GATE_Q } }], 'POST /api/answer': [200, {}] } });
+  await saved.t.open('pg');
+  const r = await saved.t.act('gate-another', { taskId: 'pg', quiet: true });
+  assert.deepEqual([r.ok, r.error], [false, 'the task is not running']);
+  assert.equal(saved.calls.filter(([m]) => m === 'POST').length, 0);
+});
+
+test('O1: canFlow offers Accept as is and Run another cycle on the gate case only', () => {
+  const { t } = host();
+  for (const label of ['Accept as is', 'Run another cycle']) {
+    assert.equal(t.canFlow(label, { case: 'gate' }), true, `${label} on the chat TaskCard (no page)`);
+    assert.equal(t.canFlow(label, { case: 'gate', page: true }), true, label);
+    for (const c of ['question', 'working', 'plan', 'paused', 'ready']) assert.equal(t.canFlow(label, { case: c, page: true }), false, `${label} on ${c}`);
+  }
+});
+
+// B1.9 (#1329): a running task opened by its run id before the run names its pipeline (F-a1-09, F-a4-03)
+const pidless = () => ({ 'run-c': { runId: 'run-c', pipelineId: '', status: 'running', state: {}, pendingQuestion: null } });
+const pidRoutes = { 'GET /api/runs/run-c/live-diff': [200, { patch: '' }], 'GET /api/runs/pc/': [200, {}], 'GET /api/pipelines/pc/setup': [200, {}] };
+
+test('F-a1-09: a running task opened by its run id before its pipeline id is known reads no pipeline route; learned() then reads its parts by the pipeline id, once', async () => {
+  const gets = (calls) => calls.filter(([m]) => m === 'GET').map(([, u]) => u);
+  const live = pidless();
+  const { t, calls } = host({ live, routes: pidRoutes });
+  await t.open('run-c'); await settle(20);
+  assert.equal(t.state('run-c'), 'ready');
+  assert.deepEqual(gets(calls), ['/api/runs/run-c/live-diff'], 'only the run-id route: no artifacts, setup, sessions or history keyed by the run id');
+  assert.equal(t.parts('run-c').docs, null, 'not read yet, never [] from a failed read');
+  assert.equal(t.detail('run-c').liveRunning, false, 'no Pause or Stop before the pipeline id is known');
+  const heard = []; t.onChange((x) => heard.push(x));
+  live['run-c'].pipelineId = 'pc';
+  t.learned('run-c', 'pc'); t.learned('run-c', 'pc'); await settle(20);
+  for (const u of ['/api/runs/pc/artifacts', '/api/pipelines/pc/setup', '/api/runs/pc/sessions']) assert.equal(gets(calls).filter((x) => x === u).length, 1, u);
+  assert.ok(!gets(calls).some((u) => /\/(runs|pipelines)\/run-c\/(?!live-diff)/.test(u)), 'never the run id in place of the pipeline id');
+  assert.ok(heard.includes('run-c'), 'the page hears it');
+  assert.equal(t.detail('run-c').liveRunning, true, 'a running task whose pipeline is known is not over');
+  t.learned('run-x', 'px');   // a task nobody opened: nothing
+  // learned() while the first open is still loading: the parts are read with the pipeline id, once
+  const live2 = pidless();
+  const b = host({ live: live2, routes: pidRoutes });
+  const p = b.t.open('run-c');
+  live2['run-c'].pipelineId = 'pc';
+  b.t.learned('run-c', 'pc');
+  await p; await settle(20);
+  assert.equal(gets(b.calls).filter((x) => x === '/api/runs/pc/artifacts').length, 1);
+  assert.ok(!gets(b.calls).some((u) => /\/(runs|pipelines)\/run-c\/(?!live-diff)/.test(u)));
+});
+
+test('F-a1-09: before the pipeline id is known a pipeline-keyed action refuses with no request, its control is not offered; Pause and Stop are', async () => {
+  const { t, calls, toasts } = host({ live: pidless(), routes: { ...pidRoutes, 'POST /api/pause': [200, { ok: true }] } });
+  await t.open('run-c'); await settle(20);
+  const before = calls.length;
+  for (const id of ['labels', 'preset']) {
+    const r = await t.act(id, { taskId: 'run-c', labels: ['x'], value: 'p' });
+    assert.deepEqual([r.ok, r.error], [false, 'the task is still starting; try again in a moment'], id);
+  }
+  assert.equal(calls.length, before, 'nothing sent');
+  assert.deepEqual(toasts, ['Could not change the labels: the task is still starting; try again in a moment', 'Could not save the preset: the task is still starting; try again in a moment']);
+  assert.equal(t.canFlow('Save as preset', { page: true, taskId: 'run-c' }), false);
+  assert.equal(t.canFlow('Report this task', { page: true, taskId: 'run-c' }), false);
+  for (const label of ['Stop', 'Pause', 'Copy link', 'Pause after this step']) assert.equal(t.canFlow(label, { page: true, taskId: 'run-c' }), true, label);
+  assert.equal((await t.act('pause-after-step', { taskId: 'run-c' })).ok, true);
+  assert.deepEqual(calls.slice(before), [['POST', '/api/pause', { runId: 'run-c', afterStep: true }]]);
+});
+
+test('restartOff (F-a4-11): an errored task with no plan needs a plan; with one, nothing; a workspace task says its own reason; unknown until the read lands, and one read per task', async () => {
+  const NEEDS = 'Needs a plan: this task saved none to build from';
+  const arts = (calls, pid) => calls.filter((c) => c[1] === `/api/runs/${pid}/artifacts`).length;
+  let release; const gate = new Promise((r) => { release = r; });
+  const a = host({ rows: { h3: failedRow }, routes: { 'GET /api/history/web-1/h3$': [200, { state: TASK_DETAILS.failed.state }],
+    'GET /api/runs/h3/artifacts': async () => { await gate; return [200, { runId: 'h3', artifacts: [{ kind: 'prompt', relPath: 'prompt.md' }], truncated: false }]; } } });
+  await a.t.open('h3');
+  assert.equal(a.t.restartOff('h3'), '', 'before the read lands, \'\': never disabled on an unknown');
+  release(); await settle(20);
+  assert.equal(a.t.restartOff('h3'), NEEDS);
+  assert.equal(a.t.detail('h3').restartOff, NEEDS, 'the page reads it from detail');
+  assert.equal(arts(a.calls, 'h3'), 1, 'loadParts\'s own read: none of its own');
+  // with a plan: offered
+  const b = host({ rows: { h3: failedRow }, routes: { 'GET /api/history/web-1/h3$': [200, { state: TASK_DETAILS.failed.state }], 'GET /api/runs/h3/artifacts': [200, { artifacts: [{ kind: 'plan', relPath: 'plan.md' }] }] } });
+  await b.t.open('h3'); await settle(20);
+  assert.equal(b.t.restartOff('h3'), '');
+  // a failed read: unknown, offered
+  const c = host({ rows: { h3: failedRow }, routes: { 'GET /api/history/web-1/h3$': [200, { state: TASK_DETAILS.failed.state }], 'GET /api/runs/h3/artifacts': [500, { error: 'boom' }] } });
+  await c.t.open('h3'); await settle(20);
+  assert.equal(c.t.restartOff('h3'), '');
+  // a task that is not stopped or failed: nothing to say, nothing read
+  const d = host({ rows: { h2: approvedRow } });
+  assert.equal(d.t.restartOff('h2'), '');
+  assert.equal(arts(d.calls, 'h2'), 0);
+  // a card's task never opened (a live errored run): restartOff reads once itself and tells the card
+  const live = { 'run-z': { runId: 'run-z', pipelineId: 'pz', projectKey: 'web-1', status: 'error' }, 'run-y': { runId: 'run-y', projectKey: 'web-1', status: 'error' } };
+  const e = host({ live, routes: { 'GET /api/runs/pz/artifacts': [200, { artifacts: [] }] } });
+  const told = []; e.t.onChange((x) => told.push(x));
+  assert.equal(e.t.restartOff('run-z'), '');
+  assert.equal(e.t.restartOff('run-z'), '', 'still reading');
+  await settle(20);
+  assert.equal(e.t.restartOff('run-z'), NEEDS);
+  assert.ok(told.includes('run-z'), 'the card is told when the read lands');
+  assert.equal(arts(e.calls, 'pz'), 1, 'one read per task');
+  assert.equal(e.t.restartOff('run-y'), '', 'a run whose pipeline is not named yet: nothing (F-a1-09)');
+  assert.ok(!e.calls.some((c) => /run-y/.test(c[1])), 'and nothing is read');
+  // a chat card's saved task never opened: its store row's case says it failed, and it reads once itself
+  const f = host({ rows: { h3: failedRow }, routes: { 'GET /api/runs/h3/artifacts': [200, { artifacts: [] }] } });
+  assert.equal(f.t.restartOff('h3'), '');
+  await settle(20);
+  assert.equal(f.t.restartOff('h3'), NEEDS, 'the row\'s case stands in for a status not read yet');
+  assert.ok(!f.calls.some((c) => c[1] === '/api/history/web-1/h3'), 'the page is not opened for it');
+  // a workspace task: its own reason, before anything else, with no read
+  const w = wsHost();
+  assert.equal(w.t.restartOff('w1'), 'Not offered for a workspace task yet');
+  assert.equal(w.calls.length, 0);
+});
+
+test('restartOff (F-a4-11 review): a round that ends drops the cached answer, so a task that ran again and saved a plan is offered again; a read in flight across the end lands on nothing', async () => {
+  const NEEDS = 'Needs a plan: this task saved none to build from';
+  let artifacts = [];
+  const live = { 'run-z': { runId: 'run-z', pipelineId: 'pz', projectKey: 'web-1', status: 'error' } };
+  const { t, calls } = host({ live, routes: { 'GET /api/runs/pz/artifacts': () => [200, { artifacts }] } });
+  const arts = () => calls.filter((c) => c[1] === '/api/runs/pz/artifacts').length;
+  t.restartOff('run-z'); await settle(20);
+  assert.equal(t.restartOff('run-z'), NEEDS);
+  // it continues on the same pipeline, writes a plan and fails again: the round's end frame drops the false
+  artifacts = [{ kind: 'plan', relPath: 'plan.md' }];
+  t.frame({ type: 'error', runId: 'run-z', pipelineId: 'pz' });
+  assert.equal(t.restartOff('run-z'), '', 'unknown again: offered while it reads');
+  await settle(20);
+  assert.equal(t.restartOff('run-z'), '', 'it saved a plan: offered');
+  assert.equal(arts(), 2, 'read once more, after the end');
+  // a read started before a round ends lands on nothing: its stale answer is not kept
+  let release; const gate = new Promise((r) => { release = r; });
+  const b = host({ live, routes: { 'GET /api/runs/pz/artifacts': async () => { if (!release.done) { await gate; return [200, { artifacts: [] }]; } return [200, { artifacts: [{ kind: 'plan', relPath: 'plan.md' }] }]; } } });
+  b.t.restartOff('run-z');
+  b.t.frame({ type: 'done', runId: 'run-z', pipelineId: 'pz' });
+  release.done = true; release(); await settle(20);
+  assert.equal(b.t.restartOff('run-z'), '', 'the old read\'s false is not kept; a new read starts');
+  await settle(20);
+  assert.equal(b.t.restartOff('run-z'), '', 'the new read saw the plan');
+});
+
+test('F-3-11: the task page\'s log names each line\'s step from the task\'s workflow, even when the log was read before the state that names it', async () => {
+  const named = { ...TASK_DETAILS.failed.state, stepper: { graph: { nodes: [{ id: 'n_plan', kind: 'agent', key: 'planner', label: 'Plan', progressStage: 'plan' }] } } };
+  let state = { ...TASK_DETAILS.failed.state, stepper: undefined, steps: [] }, logReads = 0;
+  // the log answers once; a later read fails, so the line shown after the state lands is the one read before it
+  const { t } = host({ rows: { h3: failedRow }, routes: { 'GET /api/history/web-1/h3$': () => [200, { state }],
+    'GET /api/history/web-1/h3/log': () => (logReads++ ? [500, { error: 'boom' }] : [200, JSON.stringify({ nodeId: 'n_plan', source: 'agent', text: 'planning' }) + '\n']) } });
+  await t.open('h3'); await settle(20);
+  assert.equal(t.parts('h3').log, t.parts('h3').log, 'a read does not rebuild the named log while the state stays');
+  assert.equal(t.parts('h3').log[0].step, 'n_plan', 'the log landed while no state names the step yet: its id');
+  state = named;
+  await t.open('h3', { force: true }); await settle(20);
+  assert.equal(logReads, 2);
+  assert.equal(t.parts('h3').log[0].step, 'Plan', 'the state landed after the log: the workflow\'s label, not the node id');
+});
+
+// ---- COV-3: classic's run extras on the task page (restore per run, a run direction, Resume on ‹Engine›, an old link) ----
+const archivedRow = { id: 'h7', case: 'ready', archived: true };
+const writes = (calls) => calls.filter(([m]) => m !== 'GET');
+
+test('COV-3 #3: restore posts the per-run route with classic\'s scope (project, workspace) and no body; offered only on an archived task', async () => {
+  const { t, calls } = host({ rows: { h7: archivedRow, h3: failedRow }, routes: { 'POST /api/runs/h7/restore': [200, { ok: true }] } });
+  assert.equal(t.canFlow('Restore', { taskId: 'h7', page: true }), true);
+  assert.equal(t.canFlow('Restore', { taskId: 'h3', page: true }), false, 'a task that is not archived has nothing to restore');
+  const r = await t.flow('Restore', { taskId: 'h7' });
+  assert.equal(r.ok, true);
+  assert.deepEqual(writes(calls), [['POST', '/api/runs/h7/restore?projectKey=web-1', undefined]]);
+  const w = host({ rows: { h8: { id: 'h8', archived: true } }, scopes: { h8: { pipelineId: 'h8', projectKey: 'workspaces/ws1' } }, routes: { 'POST /api/runs/h8/restore': [200, { ok: true }] } });
+  await w.t.flow('Restore', { taskId: 'h8' });
+  assert.deepEqual(writes(w.calls), [['POST', '/api/runs/h8/restore?workspaceId=ws1', undefined]], 'a workspace row: its id without the workspaces/ prefix');
+  const d = host({ rows: { h9: { id: 'h9', archived: true } }, scopes: { h9: { pipelineId: 'h9', projectDir: '/src/x' } }, routes: { 'POST /api/runs/h9/restore': [200, { ok: true }] } });
+  await d.t.flow('Restore', { taskId: 'h9' });
+  assert.deepEqual(writes(d.calls), [['POST', '/api/runs/h9/restore?projectDir=%2Fsrc%2Fx', undefined]]);
+});
+
+test('COV-3 #3: no scope → bulk restore for that one id; a refused restore says why and leaves the row', async () => {
+  const n = host({ rows: { h9: { id: 'h9', archived: true } }, scopes: { h9: { pipelineId: 'h9' } }, routes: { 'POST /api/runs/bulk': [200, { done: [{ pipelineId: 'h9' }] }] } });
+  const r = await n.t.flow('Restore', { taskId: 'h9' });
+  assert.equal(r.ok, true);
+  assert.deepEqual(writes(n.calls), [['POST', '/api/runs/bulk', { action: 'restore', targets: [{ pipelineId: 'h9' }] }]]);
+  const rows = { h7: archivedRow };
+  const f = host({ rows, routes: { 'POST /api/runs/h7/restore': [409, { error: 'cannot restore a running pipeline' }] } });
+  const x = await f.t.flow('Restore', { taskId: 'h7' });
+  assert.equal(x.ok, false);
+  assert.deepEqual(f.toasts, ['Could not restore the task: cannot restore a running pipeline']);
+  assert.equal(rows.h7.archived, true, 'COV-3: a refused restore leaves the archived row');
+  assert.equal(f.t.canFlow('Restore', { taskId: 'h7', page: true }), true);
+});
+
+const liveRun = (status, o = {}) => ({ 'run-a': { runId: 'run-a', pipelineId: 'pa', status, state: {}, ...o } });
+test('COV-3 #1: the direction posts {text} to the run; an empty one asks nothing; a pid not yet known is still starting; a finished run\'s 409 says why', async () => {
+  const { t, calls, toasts } = host({ live: liveRun('running'), routes: { 'POST /api/runs/pa/directions': [201, { id: 'd1' }] } });
+  assert.equal(t.canFlow('Send a direction', { taskId: 'run-a', page: true }), true);
+  assert.equal(t.canFlow('Send a direction', { taskId: 'run-a' }), false, 'a card never posts it: the page only');
+  const r = await t.act('run-direction', { taskId: 'run-a', text: '  use the v2 API  ' });
+  assert.equal(r.ok, true);
+  assert.deepEqual(writes(calls), [['POST', '/api/runs/pa/directions', { text: '  use the v2 API  ' }]]);
+  const e = await t.act('run-direction', { taskId: 'run-a', text: '   ' });
+  assert.equal(e.ok, false);
+  assert.equal(writes(calls).length, 1, 'COV-3 #1: an empty direction asks nothing');
+  assert.match(toasts.at(-1), /say what it should take into account first/);
+  const s = host({ live: { 'run-b': { runId: 'run-b', status: 'running', state: {} } } });
+  const x = await s.t.act('run-direction', { taskId: 'run-b', text: 'hi' });
+  assert.match(x.error, /still starting/);
+  assert.deepEqual(writes(s.calls), []);
+  const f = host({ live: liveRun('running'), routes: { 'POST /api/runs/pa/directions': [409, { error: 'run is finished; a direction would never be read' }] } });
+  const y = await f.t.act('run-direction', { taskId: 'run-a', text: 'hi', quiet: true });
+  assert.equal(y.ok, false); assert.equal(y.status, 409);
+  for (const st of ['done', 'stopped', 'error']) assert.equal(host({ live: liveRun(st) }).t.canFlow('Send a direction', { taskId: 'run-a', page: true }), false, `${st}: no direction`);
+  assert.equal(host({ rows: { h3: failedRow } }).t.canFlow('Send a direction', { taskId: 'h3', page: true }), false, 'a saved task is not live');
+});
+
+test('COV-3 #12: resume-engine posts classic\'s body; base-moved asks before resuming, then sends baseAck with the engine; a missing engine is refused', async () => {
+  let n = 0;
+  const { t, calls, toasts } = host({ rows: { h3: failedRow }, routes: { 'POST /api/resume': () => (++n === 1 ? [409, { error: 'the base moved', code: 'base-moved' }] : [200, { ok: true, runId: 'r9' }]) } });
+  const none = await t.act('resume-engine', { taskId: 'h3' });
+  assert.equal(none.ok, false); assert.match(toasts.at(-1), /pick an engine first/);
+  assert.deepEqual(writes(calls), [], 'a missing engine makes no request');
+  const p = await t.flow('Resume on…', { taskId: 'h3', engine: 'codex', quiet: true });
+  assert.equal(p.prompt, 'base', 'COV-3 #12: base-moved asks before resuming');
+  const ok = await t.flow('Resume on…', { taskId: 'h3', engine: 'codex', baseAck: true });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.say, 'Resumed on OpenAI Codex');
+  assert.deepEqual(writes(calls), [['POST', '/api/resume', { pipelineId: 'h3', baseCheck: true, engine: 'codex' }], ['POST', '/api/resume', { pipelineId: 'h3', baseCheck: true, baseAck: true, engine: 'codex' }]]);
+  assert.equal(t.resolve('r9')?.pipelineId, 'h3', 'the new run id finds the same task');
+  assert.equal(t.canFlow('Resume on…', { taskId: 'h3' }), false, 'the page only');
+  assert.equal(t.canFlow('Resume on…', { taskId: 'h3', page: true }), true);
+});
+
+test('COV-3 #11: an id no source holds asks run-links once; a 200 opens its pipeline; a 404 is gone and never asked again', async () => {
+  const rows = { pz: { id: 'pz', case: 'ready' } };
+  const { t, calls } = host({ rows, routes: { 'GET /api/run-links/old-run': [200, { pipelineId: 'pz', historyKey: 'web-1' }], 'GET /api/history/web-1/pz': [200, { state: TASK_DETAILS.failed.state }], 'GET /api/run-links/': [404, { error: 'No saved run for that link' }] } });
+  await t.open('old-run'); await settle(20);
+  assert.equal(t.state('old-run'), 'ready', 'the old link opens the saved task');
+  assert.equal(t.resolve('old-run')?.pipelineId, 'pz');
+  await t.open('gone-run'); await settle(20);
+  assert.equal(t.state('gone-run'), 'gone');
+  await t.open('gone-run'); await t.open('gone-run', { force: true }); await settle(20);
+  assert.equal(calls.filter(([, u]) => u === '/api/run-links/gone-run').length, 1, 'COV-3 #11: a 404 link is asked once');
+  assert.equal(calls.filter(([, u]) => u === '/api/run-links/old-run').length, 1);
+});
+
+test('COV-3 #11: a run-links network failure or 5xx reads failed (Try again), a plain open does not ask again, a forced open asks once more', async () => {
+  const rows = { pz: { id: 'pz', case: 'ready' } };
+  let answer = [0, {}];
+  const { t, calls } = host({ rows, routes: { 'GET /api/run-links/old-run': () => answer, 'GET /api/history/web-1/pz': [200, { state: TASK_DETAILS.failed.state }] } });
+  const asked = () => calls.filter(([, u]) => u === '/api/run-links/old-run').length;
+  await t.open('old-run'); await settle(20);
+  assert.equal(t.state('old-run'), 'failed', 'a lookup that could not answer is not "no longer exists"');
+  await t.open('old-run'); await settle(20);
+  assert.equal(asked(), 1, 'a notify-driven re-route does not loop');
+  assert.equal(t.state('old-run'), 'failed');
+  answer = [502, { error: 'bad gateway' }];
+  await t.open('old-run', { force: true }); await settle(20);
+  assert.equal(asked(), 2, 'Try again asks after a network failure');
+  assert.equal(t.state('old-run'), 'failed');
+  answer = [200, { pipelineId: 'pz', historyKey: 'web-1' }];
+  await t.open('old-run', { force: true }); await settle(20);
+  assert.equal(asked(), 3, 'Try again asks after a 5xx');
+  assert.equal(t.state('old-run'), 'ready');
+  await t.open('old-run', { force: true }); await settle(20);
+  assert.equal(asked(), 3, 'a definitive answer is kept');
+});
+
+// F-G-G2-03: Resume now, Continue without cap and Raise the cap are classic's resumeBody (baseCheck), and a moved base asks
+// before resuming, as Switch model… does; Resume anyway resends the same resume with baseAck
+test('F-G-G2-03: every resume sends baseCheck; a moved base is a prompt, and the resend keeps the cap or the no-cap', async () => {
+  for (const [label, given, body] of [['Resume now', {}, {}], ['Continue without cap', {}, { ignoreCostCap: true }], ['Raise the cap', { value: '$180' }, { costCapUsd: 180 }]]) {
+    let n = 0;
+    const { t, calls, toasts } = host({ rows: { h1: { id: 'h1', case: 'capped' } }, routes: { 'POST /api/resume': () => (++n === 1 ? [409, { error: 'main moved 1 commit', code: 'base-moved' }] : [200, { ok: true, runId: 'r2' }]) } });
+    const first = await t.flow(label, { taskId: 'h1', ...given });
+    assert.deepEqual([first.ok, first.prompt], [false, 'base'], `${label}: a moved base asks`);
+    assert.deepEqual(toasts, [], `${label}: a prompt, not a refusal`);
+    assert.equal((await t.flow(label, { taskId: 'h1', ...given, baseAck: true })).ok, true);
+    assert.deepEqual(calls.filter(([m]) => m === 'POST').map((c) => c[2]), [{ pipelineId: 'h1', baseCheck: true, ...body }, { pipelineId: 'h1', baseCheck: true, baseAck: true, ...body }], label);
+  }
+});
+
+// F-G-G1-01: checks are read only for a PR known to be open; a merged, closed or unknown-state PR asks nothing (dev answers
+// 400 for those, and a chat that opened its cards logged console errors)
+test('F-G-G1-01: GET /api/pr/checks only for a PR known open', async () => {
+  for (const [prState, asks] of [['OPEN', 1], ['MERGED', 0], ['CLOSED', 0], ['', 0]]) {
+    const { t, calls } = host({ rows: { h2: { id: 'h2', case: 'ready', pr: PR_URL } }, scopes: { h2: { pipelineId: 'h2', projectKey: 'web-1', projectDir: '/src/web', prState } },
+      routes: { 'GET /api/pr/checks': [200, TASK_DETAILS.approved.checks] } });
+    t.checks('h2'); await settle(10);
+    assert.equal(calls.filter(([m, u]) => m === 'GET' && u.startsWith('/api/pr/checks')).length, asks, `a PR whose state is "${prState}"`);
+  }
 });

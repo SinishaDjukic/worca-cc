@@ -19,6 +19,7 @@ function sources() {
 const read = (u) => {
   const m = /^\/api\/history\/web-1\/(\w+)$/.exec(u); if (m && DETAIL[m[1]]) return [200, { state: DETAIL[m[1]].state }];
   const c = /^\/api\/pr\/checks\?id=(\w+)/.exec(u); if (c && DETAIL[c[1]]?.checks) return [200, DETAIL[c[1]].checks];
+  if (u === '/api/runs/h3/artifacts') return [200, { runId: 'h3', artifacts: [{ kind: 'plan', relPath: 'plan.md' }], truncated: false }];   // a plan to build from (F-a4-11)
   return null;
 };
 async function page(id, over = {}) {
@@ -69,7 +70,7 @@ test('raise-cap: the cap dialog starts at the task\'s own cap, and "$180" as typ
   assert.deepEqual(sent(calls), [], 'not money: nothing is posted');
   d.querySelector('#fd-value').value = '$180'; d.querySelector('#fd-value').dispatchEvent(new w.Event('input', { bubbles: true }));
   d.querySelector('[data-key="fd-ok"]').click(); await settle(80);
-  assert.deepEqual(sent(calls), [['POST', '/api/resume', { pipelineId: 'h1', costCapUsd: 180 }]]);
+  assert.deepEqual(sent(calls), [['POST', '/api/resume', { pipelineId: 'h1', baseCheck: true, costCapUsd: 180 }]]);
 });
 
 test('retry: Try again on a paused task posts /api/resume with baseCheck', async () => {
@@ -84,6 +85,16 @@ test('restart-build: Restart Build on an errored task posts /api/runs/:id/restar
   main(d).click(); await settle(80);
   if (d.querySelector('#card [data-confirm="yes"]')) await yes(d);
   assert.deepEqual(sent(calls), [['POST', '/api/runs/h3/restart-build', {}]]);
+});
+
+test('F-a4-11: an errored task with no plan: Restart Build is off and says it needs a plan; nothing is posted', async () => {
+  const { d, calls } = await page('h3', { read: (u) => (u === '/api/runs/h3/artifacts' ? [200, { runId: 'h3', artifacts: [{ kind: 'prompt', relPath: 'prompt.md' }], truncated: false }] : read(u)) });
+  const b = main(d);
+  assert.equal(b.dataset.label, 'Restart Build', 'still named: the page says why it is off');
+  assert.ok(b.disabled, 'off');
+  assert.equal(b.title, 'Needs a plan: this task saved none to build from');
+  b.click(); await settle(80);
+  assert.deepEqual(sent(calls), [], 'a disabled Restart Build posts nothing');
 });
 
 test('plan-approve: Approve and build posts the plan answer through Chat\'s action', async () => {
@@ -125,7 +136,7 @@ test('the page\'s own tools: Changes › Check out posts dev\'s checkout route w
 });
 
 test('create-pr: the Create PR dialog starts on the task\'s base and posts what you wrote and picked: title, description, draft, watch, base (code review r9)', async () => {
-  const h7 = { id: 'h7', title: 'Ready one', status: 'done', projectName: 'web', projectKey: 'web-1', branch: 'feat/ready', survived: true, startedAt: SOURCES.history.pipelines[2].startedAt, mtime: SOURCES.history.pipelines[2].mtime };
+  const h7 = { id: 'h7', title: 'Ready one', status: 'done', projectName: 'web', projectKey: 'web-1', branch: 'feat/ready', sourceBranch: 'main', survived: true, startedAt: SOURCES.history.pipelines[2].startedAt, mtime: SOURCES.history.pipelines[2].mtime };
   const s = sources(); s.history.pipelines.push(h7);
   const state = { id: 'h7', title: 'Ready one', status: 'done', projectKey: 'web-1', projectDir: '/src/web', branch: { source: 'main', feature: 'feat/ready', branchKept: true }, totalCostUsd: 0.2, totalActiveMs: 60000, steps: [] };
   const h = await liveHost({ sources: s, read: (u) => (u === '/api/history/web-1/h7' ? [200, { state }] : read(u)), write: () => [200, { ok: true }] });
@@ -144,4 +155,56 @@ test('create-pr: the Create PR dialog starts on the task\'s base and posts what 
   const draft = d.querySelector('#pd-draft'); draft.checked = true; draft.dispatchEvent(new w.Event('change', { bubbles: true }));
   d.querySelector('#card [data-key="pd-ok"]').click(); await settle(80);
   assert.deepEqual(sent(calls), [['POST', '/api/pr', { id: 'h7', title: 'My title', body: 'What it did', draft: true, watch: true, baseBranch: 'main', projectKey: 'web-1' }]]);
+});
+
+test('F-a4-03 + F-a1-09: a running task opened by its run id shows Pause and Stop once its state frame names the pipeline; they post with the run id (Stop after its confirm); no run-id 404 route is called', async () => {
+  const s = sources(); s.hello.runs.find((r) => r.runId === 'run-b').pipelineId = null;
+  const { w, d, calls, sockets } = await page('run-b', { sources: s });
+  const runIdRoute = /^\/api\/(runs|pipelines)\/run-b\/(?!live-diff)/;
+  assert.notEqual(main(d)?.dataset.label, 'Pause', 'no Pause before the pipeline is known');
+  assert.deepEqual(calls.map((c) => c.url).filter((u) => runIdRoute.test(u)), [], 'no run-id route in place of the pipeline id');
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'state', runId: 'run-b', id: 'pb', status: 'running', steps: [{ id: 'implementer', agent: 'implementer', status: 'running' }] }) });
+  await settle(300);
+  assert.equal(main(d).dataset.label, 'Pause');
+  assert.deepEqual(calls.map((c) => c.url).filter((u) => runIdRoute.test(u)), [], 'still none after: the parts are read by the pipeline id');
+  assert.ok(calls.some((c) => c.url === '/api/runs/pb/artifacts'), 'the parts are read with the pipeline id');
+  // Pause: its confirm (when one is drawn) first, then POST /api/pause with the run id
+  main(d).click(); await settle(80);
+  if (d.querySelector('#card [data-confirm="yes"]')) { assert.deepEqual(sent(calls), [], 'nothing before the confirm'); await yes(d); }
+  assert.deepEqual(sent(calls), [['POST', '/api/pause', { runId: 'run-b' }]]);
+  // Stop: in the action's menu, asks first, then POST /api/stop with the run id
+  await go(w, '#runs', 50); await go(w, '#run/run-b', 250);
+  d.querySelector('#card [data-menu="act"]').click(); await settle(30);
+  const stop = [...d.querySelectorAll('#card [data-menu-pick]')].find((b) => b.textContent.trim() === 'Stop the task');
+  assert.ok(stop, 'the action menu lists Stop the task');
+  stop.click(); await settle(80);
+  assert.equal(sent(calls).length, 1, 'Stop is not sent before its confirm');
+  await yes(d);
+  assert.deepEqual(sent(calls).at(-1), ['POST', '/api/stop', { runId: 'run-b' }]);
+});
+
+// F-G-G2-03: on the page, Raise the cap on a moved base asks "Resume anyway" (as Switch model… does); yes resends the same
+// cap with baseAck, never a plain Retry
+test('F-G-G2-03: Raise the cap on a moved base asks first; Resume anyway resends costCapUsd with baseCheck and baseAck', async () => {
+  let n = 0;
+  const { w, d, calls } = await page('h1', { write: (u) => (u === '/api/resume' && !n++ ? [409, { error: 'main moved 1 commit since this task started', code: 'base-moved' }] : [200, { ok: true }]) });
+  main(d).click(); await settle(40);
+  const field = d.querySelector('#fd-value');
+  field.value = '$180'; field.dispatchEvent(new w.Event('input', { bubbles: true }));
+  d.querySelector('[data-key="fd-ok"]').click(); await settle(120);
+  assert.match(d.querySelector('#card').textContent, /main moved 1 commit since this task started/, 'the move is said before anything resumes');
+  await yes(d); await settle(80);
+  assert.deepEqual(sent(calls), [['POST', '/api/resume', { pipelineId: 'h1', baseCheck: true, costCapUsd: 180 }], ['POST', '/api/resume', { pipelineId: 'h1', baseCheck: true, baseAck: true, costCapUsd: 180 }]]);
+});
+
+test('F-G-G2-03: Continue without cap, confirmed, sends baseCheck; on a moved base Resume anyway keeps ignoreCostCap', async () => {
+  let n = 0;
+  const { d, calls } = await page('h1', { write: (u) => (u === '/api/resume' && !n++ ? [409, { error: 'main moved 1 commit', code: 'base-moved' }] : [200, { ok: true }]) });
+  d.querySelector('#card [data-key="menu:act"]').click(); await settle(30);
+  d.querySelector('#card [data-menu-pick="Continue without cap"]').click(); await settle(60);
+  if (d.querySelector('#card [data-confirm="yes"]') && !/main moved/.test(d.querySelector('#card').textContent)) await yes(d);
+  await settle(60);
+  assert.match(d.querySelector('#card').textContent, /main moved 1 commit/);
+  await yes(d); await settle(80);
+  assert.deepEqual(sent(calls), [['POST', '/api/resume', { pipelineId: 'h1', baseCheck: true, ignoreCostCap: true }], ['POST', '/api/resume', { pipelineId: 'h1', baseCheck: true, baseAck: true, ignoreCostCap: true }]]);
 });

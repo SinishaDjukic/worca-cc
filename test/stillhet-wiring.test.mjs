@@ -142,6 +142,20 @@ test('Tasks (slice 5): every Tasks row is wired, new: built, or not offered live
   }
 });
 
+test('Workflows (slice 7): every Workflows row is wired, except the Team way, which says why it is not offered live', () => {
+  const wf = doc.split('\n').filter((l) => /^\| `(ui\/public\/stillhet\/workflows\/|workflows\/)/.test(l));
+  assert.ok(wf.length >= 6, `the Workflows rows are read (${wf.length})`);
+  for (const r of wf) {
+    if (r.includes('› the Team way`')) {
+      const m = /\| not offered live \| ([^|]*) \|$/.exec(r);
+      assert.ok(m && m[1].trim().length > 40, `the Team way says why: ${r.slice(0, 100)}`);
+      continue;
+    }
+    assert.match(r, /\| wired \|/, r.slice(0, 100));
+  }
+  assert.ok(doc.includes('| `design-system/components/run-state.mjs › open the workflow` | wired |'), 'open the workflow from a task');
+});
+
 // The Dev surfaces rows (tools/stillhet-surfaces.mjs and tools/prototype-pr-check.mjs read them through the same parser).
 test('surfaceRows: the id, status and why of each Dev surfaces row, and nothing from another table', () => {
   const doc = '# x\n\n## Action rows\n\n| `a › open` | wire to | y |\n\n## Dev surfaces\n\n| Surface | Status | Why |\n|---|---|---|\n'
@@ -164,6 +178,44 @@ test('check: a bad Dev surfaces row is not its business (it reads only the Actio
   assert.deepEqual(W.check(doc, ['a › open'], []).badStatus, []);
 });
 
+test('Marketplace (slice 8): every Marketplace row is wired, except the For you way, which says why it is not offered live', () => {
+  const mk = doc.split('\n').filter((l) => /^\| `(ui\/public\/stillhet\/marketplace\/|marketplace\/)/.test(l));
+  assert.ok(mk.length >= 3, `the Marketplace rows are read (${mk.length})`);
+  for (const r of mk) {
+    if (r.includes('› the For you way`')) {
+      const m = /\| not offered live \| ([^|]*) \|$/.exec(r);
+      assert.ok(m && m[1].trim().length > 40, `the For you way says why: ${r.slice(0, 100)}`);
+      continue;
+    }
+    assert.match(r, /\| wired \|/, r.slice(0, 100));
+  }
+  assert.ok(mk.some((r) => r.includes('› the For you way`')), 'the For you row is there');
+});
+
+test('Projects and Workspaces (slice 9): every row is wired, or not offered live with its reason and owner slice', () => {
+  const pj = doc.split('\n').filter((l) => /^\| `(ui\/public\/stillhet\/(projects|workspaces)\/|projects\/|workspaces\/)/.test(l));
+  const id = (r) => /^\| `([^`]*)`/.exec(r)[1];
+  const TABS = ['team', 'settings', 'mcp', 'actions', 'automations', 'away', 'memory', 'memory/NAME'];
+  const want = [
+    'ui/public/stillhet/projects/projects.js', 'ui/public/stillhet/workspaces/workspaces.js', 'workspaces/workspaces.js › open … in your editor',
+    ...['Sync', 'Check origin now', 'Retry', 'Use git', 'Link a repository… and Link a remote…', 'Rename…', 'Locate folder…', 'Remove…', 'Add a project by hand', 'How its tasks run', 'Team memory', 'Cost tags, Who pays and Labels', 'Branch names', 'This month\'s spend'].map((a) => `projects/projects.js › ${a}`),
+    ...['Make a workspace by hand', 'Edit by hand', 'Scan again', 'Sync what is behind', 'Delete…', 'Is this right (a question\'s answer)', 'Cost tags and Labels'].map((a) => `workspaces/workspaces.js › ${a}`),
+    ...TABS.map((t) => `projects/dev-tab-${t.replace('/NAME', '-note')} › #projects/KEY/${t}`),
+    ...['Choose folder…', 'New folder', 'Several folders…', 'the probe line'].map((a) => `projects/project-add.js › ${a}`),   // COV-1
+  ];
+  assert.deepEqual(pj.map(id).sort(), [...want].sort(), 'the pinned Projects and Workspaces rows, no more and no fewer');
+  for (const r of pj) {
+    if (/\| not offered live \|/.test(r)) {
+      const m = /\| not offered live \| ([^|]*) \|$/.exec(r);
+      assert.ok(m && m[1].trim().length > 40 && /slice 1[02]/.test(m[1]), `${id(r)} says why and names its owner slice`);
+      continue;
+    }
+    assert.match(r, /\| wired \|/, id(r));
+  }
+  assert.equal(pj.filter((r) => /\| not offered live \|/.test(r)).length, 1, 'Branch names (slice 12); the spend fact is wired since slice 10 (D19)');
+  for (const r of pj.filter((x) => id(x).startsWith('projects/dev-tab-'))) assert.match(r, /stopgap: lands on the project page; slice 12 gives it a home/);
+});
+
 test('the prompt check Moves rows: the chip and Improve are wired in the composer, as 4-column rows', () => {
   for (const name of ['Prompt check chip (composer)', 'Prompt check Improve (composer)']) {
     const row = doc.split('\n').find((l) => l.startsWith(`| ${name} |`));
@@ -172,6 +224,36 @@ test('the prompt check Moves rows: the chip and Improve are wired in the compose
     assert.equal(cells.length, 4, name);
     assert.match(cells[1], /\(wired: `stillhet\/chat\/prompt-check\.mjs`\)$/, name);
   }
+});
+
+test('Insights (slice 10): every Insights row is wired, or not offered live with its missing dev field and the Insights measures owner', () => {
+  const lines = doc.split('\n'), id = (r) => /^\| `([^`]*)`/.exec(r)?.[1];
+  const ins = lines.filter((l) => /^\| `(ui\/public\/stillhet\/insights\/|insights\/)/.test(l));
+  const PAGES = ['spend', 'per-task', 'budget', 'time-saved', 'value', 'ends', 'fails', 'shipped', 'throughput', 'team', 'untagged', 'shaping', 'heat'];
+  const NOT = ['why', 'review', 'autonomy', 'cache', 'merge', 'waiting'];
+  const want = [
+    'ui/public/stillhet/insights/insights.js', 'ui/public/stillhet/insights/insights-model.js',
+    ...['STANDS', 'SUBS', 'SUB', 'DIM', 'DIM_GROUPS', 'TIME', 'FILTERS', 'WHEN'].map((k) => `insights/insights-model.js › RailInsightsModel.${k}`),
+    ...['copy a link to this page', 'Download CSV', 'Tag these N tasks', 'Set a default for a project', 'Save this view', 'the team scope'].map((a) => `insights/insights.js › ${a}`),
+    ...[...PAGES, ...NOT].map((p) => `insights/insights.js › page insights/${p}`),
+    // #1310: a person's work on By person
+    ...["open a person's work", 'Hide', 'Show N more', 'open your task', "open a teammate's task", 'open the pull request', 'Try again (pull requests)', 'Back to By person'].map((a) => `insights/insights.js › ${a}`),
+    'insights/insights-model.js › RailInsightsModel.workOf', 'insights/insights-work.js › the work head counts', "insights/insights-work.js › the read-only view's figures",
+  ];
+  assert.deepEqual(ins.map(id).sort(), [...want].sort(), 'the pinned Insights rows, no more and no fewer');
+  for (const r of ins) {
+    if (/\| not offered live \|/.test(r)) {
+      const m = /\| not offered live \| ([^|]*) \|$/.exec(r);
+      assert.ok(m && m[1].trim().length > 40 && /Insights measures/.test(m[1]), `${id(r)} says why and names the Insights measures owner`);
+      continue;
+    }
+    assert.match(r, /\| wired \|/, id(r));
+  }
+  assert.deepEqual(ins.filter((r) => /\| not offered live \|/.test(r)).map(id).sort(), ['insights/insights-model.js › RailInsightsModel.STANDS', ...NOT.map((p) => `insights/insights.js › page insights/${p}`)].sort());
+  for (const p of PAGES) assert.match(lines.find((l) => id(l) === `insights/insights.js › page insights/${p}`), /FIGURE_SOURCE/, p);
+  assert.match(lines.find((l) => id(l) === "projects/projects.js › This month's spend"), /\| wired \|/);
+  for (const l of lines.filter((x) => x.includes('insights/'))) assert.doesNotMatch(l, /\| (wire to|wired \(partial\)|add to the design first|new: build it) \|/, l.slice(0, 100));
+  assert.doesNotMatch(doc, /^- add to the design first: .*Insights/m, 'the four design-first lines are built');
 });
 
 test('the proposed perspectives Moves row is wired to the TaskProposal\'s reviewed by picker, as a 4-column row', () => {

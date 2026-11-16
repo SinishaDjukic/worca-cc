@@ -6,8 +6,9 @@
 import { createThreadModel } from '../../../../src/shared/ask-model.mjs';
 import { turnsOf, planView, planPicks, runWithTurn, partsOf } from './chat-turns.mjs';
 import { createTerminalLive } from './terminal-live.mjs';
-import { projectKeyOf } from './live-map.mjs';
+import { projectKeyOf, workspaceIdOf } from './live-map.mjs';
 import { perspectivesWith, chipsHiddenFor, DEFAULT_PERSPECTIVES } from '../../../../src/shared/shape/perspectives.mjs';
+import { ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 } from '../../../../src/shared/attach-bytes.mjs';
 
 const enc = encodeURIComponent;
 const T = (id) => `/api/ask/threads/${enc(id)}`;
@@ -43,7 +44,8 @@ export function perspectiveChoices(picked) {
 
 /** POST /api/run's body for a TaskProposal's Start: the proposal card as dev's ask-panel.mjs collectCardBody reads it,
  *  with the person's `picks` (target, project folder, workflow, engine, guardrails, title, branches) over the card's own values.
- *  `picks.perspectives`: the "reviewed by" set (flag proposedPerspectives), sent as dev's run card sends it (`perspectives`). */
+ *  `picks.perspectives`: the "reviewed by" set (flag proposedPerspectives), sent as dev's run card sends it (`perspectives`).
+ *  COV-2: `picks.tags` (the project's saved tags, used when the card has none), `picks.syncPolicy` and `picks.allowUnguardedEngine`. */
 export function startBodyOf(card = {}, picks = {}) {
   const c = card || {}, p = picks || {};
   const target = p.target || c.target || 'project';
@@ -51,8 +53,13 @@ export function startBodyOf(card = {}, picks = {}) {
   const title = str(p.title || c.title).trim(); if (title) body.title = title;
   if (c.memoryScope && body.workflowId === 'wf_memory_defrag') body.memoryScope = c.memoryScope;
   if (Array.isArray(c.tags) && c.tags.length) body.tags = c.tags;
+  else if (Array.isArray(p.tags) && p.tags.length) body.tags = [...p.tags];   // COV-2: the project's saved tags, when the card names none
   if (p.engine || c.engine) body.engine = p.engine || c.engine;
+  // COV-2: a resend after a refusal is the same body plus one key: the base's sync policy, or the engine consent (never for Claude)
+  if (p.syncPolicy === 'origin' || p.syncPolicy === 'last-fetch') body.syncPolicy = p.syncPolicy;
+  if (p.allowUnguardedEngine === true && (body.engine || 'claude') !== 'claude') body.allowUnguardedEngine = true;
   if (Array.isArray(p.perspectives) && p.perspectives.length) body.perspectives = [...p.perspectives];
+  if (Array.isArray(p.extras) && p.extras.length) body.extras = p.extras;   // COV-3 #6: the proposal's files, as classic's run card sends its pills
   if (c.source) { delete body.prompt; body.source = { type: 'plugin', plugin: c.source.plugin, sourceId: c.source.sourceId, taskId: c.source.taskId, ...(c.source.profile ? { profile: c.source.profile } : {}), ...(c.source.inputs ? { inputs: c.source.inputs } : {}) }; }
   if (target === 'none') { body.noProject = true; return body; }
   if (p.sameAsSource ?? c.sameAsSource) body.sameAsSource = true;
@@ -87,20 +94,21 @@ export const ACTIONS = Object.freeze({
   'card-verb': ['answer the card', (a) => ['POST', `${T(a.threadId)}/cards/${enc(a.cardId)}`, { ...(a.body || {}) }]],
   'card-offer': ['run the script', (a) => ['POST', `${T(a.threadId)}/cards/${enc(a.cardId)}`, { choice: a.choice }]],
   'task-pause': ['pause the task', (a) => ['POST', '/api/pause', { runId: a.runId }]],
-  'task-resume': ['resume the task', (a) => ['POST', '/api/resume', { pipelineId: a.pipelineId || a.runId, ...(a.ignoreCostCap ? { ignoreCostCap: true } : {}) }]],
+  'task-resume': ['resume the task', (a) => ['POST', '/api/resume', resumeBody(a.pipelineId || a.runId, { baseAck: a.baseAck, ...(a.ignoreCostCap ? { ignoreCostCap: true } : {}) })]],
   'task-archive': ['archive the task', (a) => ['POST', '/api/runs/bulk', { action: 'archive', targets: [{ pipelineId: a.pipelineId || a.runId }] }]],
   'chat-label': ['label the chat', (a) => ['PUT', `${T(a.threadId)}/labels`, { labels: a.labels }]],
   'task-label': ['label the task', (a) => ['PUT', `/api/runs/${enc(a.pipelineId || a.runId)}/labels`, { labels: a.labels }]],
   'task-watch-state': ['read the PR watch', (a) => ['GET', `/api/pr/watch?id=${enc(a.pipelineId || a.runId)}`]],
   'task-watch': ['watch the PR', (a) => ['POST', '/api/pr/watch', { watch: !!a.watch, id: a.pipelineId || a.runId }]],
   'task-terminal': ['open a terminal in the worktree', (a) => ['POST', `/api/runs/${enc(a.pipelineId || a.runId)}/resolve-terminal`, {}]],
-  'task-stop': ['stop the task', (a) => ['POST', '/api/stop', { runId: a.runId }]],
+  // classic's stopRun (app.js): a live run by its runId, with its pipeline id when paused; no live run: its pipeline id
+  'task-stop': ['stop the task', (a) => ['POST', '/api/stop', { ...(a.runId ? { runId: a.runId } : {}), ...(a.pipelineId && (a.paused || !a.runId) ? { pipelineId: a.pipelineId } : {}) }]],
   changes: ['send your changes', (a) => ['POST', `${T(a.threadId)}/changes`, { pipelineId: a.pipelineId, text: a.text }]],
   direction: ['send the direction', (a) => ['POST', `${T(a.threadId)}/directions`, { runId: a.runId, text: a.text }]],
   pr: ['create the PR', (a) => ['POST', '/api/pr', prBodyOf(a)]],
   ship: ['create the PR', (a) => ['POST', `/api/shape/features/${enc(a.featureId)}/ship`, { mode: a.mode === 'stacked' ? 'stacked' : 'one' }]],
   'ship-mark': ['mark the requirement', (a) => ['PUT', `/api/shape/features/${enc(a.featureId)}/acceptance`, { entries: [a.entry] }]],
-  'file-reveal': ['show it in its folder', (a) => ['POST', `${T(a.threadId)}/attachments/${enc(a.attId)}/reveal`]],
+  'file-reveal': ['show it in its folder', (a) => ['POST', `${T(a.threadId)}/attachments/${enc(a.attId)}/reveal`, {}]],   // classic's revealFile posts {}
   folder: ['open the folder picker', () => ['POST', '/api/fs/pick-folder']],
   worktree: ['remove the worktree', (a) => ['DELETE', `${T(a.threadId)}/worktrees/${enc(a.worktreeId)}`]],
   'mcp-off': ['switch the sets', (a) => ['PATCH', T(a.threadId), { mcpOff: a.mcpOff }]],
@@ -125,6 +133,9 @@ export const ACTIONS = Object.freeze({
   pins: ['pin the starter', (a) => ['PUT', '/api/chat-home/pins', { pins: a.pins }]],
 });
 const SEND_WORDS = 'send your message';
+/** F-a2-01: how many messages may wait for a reply (classic ask-panel.mjs QUEUE_MAX). */
+export const QUEUE_MAX = 3;
+const ENDS = new Set(['ask-done', 'ask-error']);
 // Read ids whose answer is a file or a page: opened in a new tab on dev's own GET (D11), never fetched and dropped
 export const OPENS = Object.freeze({
   artifact: ['open the file', (a) => `/api/runs/${enc(a.pipelineId)}/artifact-raw/${String(a.name || '').split('/').map(enc).join('/')}${a.download ? '?download=1' : ''}`],
@@ -132,6 +143,8 @@ export const OPENS = Object.freeze({
   diff: ['open the changes', patchUrl],
   url: ['open the PR', (a) => (/^https:\/\//.test(str(a.url)) ? a.url : '')],
   patch: ['download the patch', patchUrl],
+  // COV-3 #2: a live run's pending question's file, by its index, as classic's askFileUrl addresses it (never by its path)
+  'ask-file': ['open the question’s file', (a) => `/api/runs/${enc(a.runId)}/ask-files/${enc(a.askId)}/${enc(a.index)}`],
 });
 export const COPY_WORDS = 'copy', ATTACH_WORDS = 'attach the file';
 
@@ -142,6 +155,22 @@ export function openTab(u) {
   if (w) { try { w.opener = null; } catch { /* a cross-origin tab already has none */ } }
   return w;
 }
+
+/** COV-3 #8: a file saved, not shown: an `<a href download=NAME>` clicked, as classic's FilesCard Download is. false when
+ *  there is no page to click it in. */
+export function saveLink(url, name) {
+  const d = globalThis.document;
+  if (!d?.createElement || !d.body) return false;
+  const a = d.createElement('a');
+  a.href = url; a.download = str(name); a.rel = 'noopener';
+  d.body.appendChild(a); a.click(); a.remove();
+  return true;
+}
+
+/** Every POST /api/resume body Chat and Tasks send, as classic's resumeBody (app.js): dev checks the base first (baseCheck),
+ *  and the resend after "Resume anyway" acknowledges the move (baseAck). `extra`: the resume's own keys (ignoreCostCap,
+ *  costCapUsd, model, engine). F-G-G2-03. */
+export const resumeBody = (pipelineId, { baseAck = false, ...extra } = {}) => ({ pipelineId, baseCheck: true, ...(baseAck ? { baseAck: true } : {}), ...extra });
 
 /** D13: the one action path Chat and Tasks share. `request` answers `{ok, data}` or `{ok:false, status?, error, code?}`
  *  (a network failure too); `refuse(words, res)` says `Could not WORDS: REASON` once, unless the caller says it itself
@@ -168,7 +197,7 @@ export function actionRunner({ fetch, toast = () => {}, notify = () => {} } = {}
 
 /** `doc`-free: the page's toast and clock come in. `send(msg)` writes a socket message; `tasksOf(threadId)` is the chat's
  *  tasks (live-map.mjs chatOf), so a run card names its store task. */
-export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toast = () => {}, now = Date.now, tasksOf = () => [], clipboard = null, open: openUrl = openTab, go = () => {}, progressOf = () => ({}), askOf = () => null } = {}) {
+export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toast = () => {}, now = Date.now, tasksOf = () => [], clipboard = null, open: openUrl = openTab, go = () => {}, progressOf = () => ({}), askOf = () => null, save = saveLink } = {}) {
   const threads = new Map(), fns = new Set();
   const term = createTerminalLive({ fetch, send, now });   // D14: a command's TerminalPane
   let spare = '';   // D10: a new chat whose first message was refused and whose cleanup DELETE failed; the retry reuses it
@@ -201,7 +230,7 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
         // a re-read of an open conversation that fails keeps what is shown; its waiting frames are applied as they came
         // 404, or 400 for an id dev can never hold ('invalid thread id'): the chat is gone, and Try again could never work
         const gone = !!r && (r.status === 404 || r.status === 400);
-        if (e.model && e.state === 'ready' && !gone) { const q = e.buffer; e.buffer = []; for (const f of q) e.model.apply(f); notify(id); return; }
+        if (e.model && e.state === 'ready' && !gone) { const q = e.buffer; e.buffer = []; const end = applyAll(e, q); notify(id); settle(id, end || 'load'); return; }
         e.state = gone ? 'gone' : 'failed'; e.buffer = []; notify(id); return;
       }
       e.model = createThreadModel({ threadId: id });
@@ -210,12 +239,19 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
       const q = e.buffer.map((f, i) => [f, i]).sort((a, b) => ((a[0].seq ?? 0) - (b[0].seq ?? 0)) || a[1] - b[1]).map(([f]) => f);
       e.buffer = [];
       e.state = 'ready';
-      for (const f of q) e.model.apply(f);
+      const end = applyAll(e, q);
       notify(id);
       checkRunWith(id);
+      settle(id, end || 'load');
     })();
     e.loading = p;
     return p;
+  }
+  // frames applied in order; the last turn end among them that the model took (the queue settles on it)
+  function applyAll(e, q) {
+    let end = null;
+    for (const f of q) { const r = e.model.apply(f); if (!r?.dropped && !r?.gap && ENDS.has(f?.type)) end = f; }
+    return end;
   }
   /** A socket frame (live-adapter.mjs passes every `ask-*` one). A frame for an open thread is reduced; one that comes
    *  while the thread is read waits for it; a seq gap reads the thread again. */
@@ -228,7 +264,7 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
     if (e.state !== 'ready' || !e.model) return;
     const r = e.model.apply(f);
     if (r?.gap) { open(id, { force: true }); return; }
-    if (!r?.dropped) { notify(id); checkRunWith(id); }
+    if (!r?.dropped) { notify(id); checkRunWith(id); if (ENDS.has(f.type)) settle(id, f); }
   }
   // the lists a Chat control picks from, read once from dev's own GET routes (the person's choices come from these, never
   // from the demo's): a failed read is not kept, so the next look asks again
@@ -356,8 +392,66 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
     refuse(RUN_WORDS, { ok: false, error: `Worca saved ${rw.name} but did not propose its task` });
   }
 
+  // F-a2-01 (D1): what the composer sent while a reply runs, per chat, kept here so no redraw or second mount loses it.
+  // An item leaves only after its POST answers ok; at most one queue POST is out per chat (`draining`); a paused queue
+  // sends nothing until Send now; nothing is sent in a chat no mount shows.
+  const queues = new Map(), viewers = new Map();
+  let qSeq = 0;
+  const qOf = (id) => { if (!queues.has(id)) queues.set(id, { items: [], paused: '', why: '', draining: false, ended: null, recheck: false }); return queues.get(id); };   // recheck: true after a send's 409, 'drain' after a drained item's
+  const isBusy = (id) => !!threads.get(id)?.model?.inFlight?.() || !!queues.get(id)?.draining;
+  const viewed = (id) => [...viewers.values()].some((v) => v.id === id && v.shown());   // a mount on a page that is left, or a closed side panel, shows nothing
+  const IN_FLIGHT = (res) => res.status === 409 && res.error === 'turn in flight';
+  function enqueue(id, a) {
+    const q = qOf(id);
+    // the composer's own words for a full queue (form.composer-queue), not the generic `Could not …` refusal (F-gb235-01)
+    if (q.items.length >= QUEUE_MAX) { const error = `${QUEUE_MAX} messages wait for this reply`; if (!a.quiet) toast(`Queue full: ${error}`); return { ok: false, code: 'QUEUE_FULL', error }; }
+    q.items.push({ key: `q${++qSeq}`, text: a.text, attachments: a.attachments, model: a.model, effort: a.effort, context: a.context });
+    notify(id);
+    return { ok: true, queued: true, data: { threadId: id, position: q.items.length } };
+  }
+  // a turn ended (`f`: its ask-done or ask-error) or the thread was read again ('load'): send the next, pause, or wait
+  function settle(id, f) {
+    const q = queues.get(id);
+    if (!q || !q.items.length) return;
+    if (q.draining) { if (f !== 'load') q.ended = f; return; }
+    if (f === 'load') {
+      if (isBusy(id)) return;
+      if (q.recheck === 'drain') { q.recheck = false; q.paused = 'refused'; q.why = 'turn in flight'; notify(id); return; }   // dev refused a drained item yet runs no turn: Send now, never a loop
+      if (!q.recheck) {   // the end was missed (classic loadThread): a stop or a failure pauses with its reason; a clean end in a chat on screen sends the next
+        const last = [...(threads.get(id)?.model?.messages?.() || [])].reverse().find((m) => m.role === 'assistant');
+        if (!q.paused) q.paused = last?.status === 'error' ? 'failed' : last?.status === 'stopped' ? 'stopped' : viewed(id) ? '' : 'away';
+        if (!q.paused) drain(id);
+        notify(id); return;
+      }
+    }
+    q.recheck = false;
+    if (f !== 'load' && f.type === 'ask-error') q.paused = 'failed';
+    else if (f !== 'load' && f.status && f.status !== 'done') q.paused = 'stopped';
+    else if (!q.paused) { if (!viewed(id)) q.paused = 'away'; else drain(id); }
+    notify(id);
+  }
+  // the oldest item, posted once; never through act(), so the composer's pending send key does not block it
+  async function drain(id) {
+    const q = queues.get(id);
+    if (!q || q.draining || q.paused || !q.items.length || threads.get(id)?.model?.inFlight?.()) return { ok: true };
+    const it = q.items[0];
+    q.draining = true; notify(id);
+    const res = await sendMessage({ threadId: id, text: it.text, attachments: it.attachments, model: it.model, effort: it.effort, context: it.context, quiet: true });
+    q.draining = false;
+    const ended = q.ended; q.ended = null;
+    if (res.ok) {
+      q.items = q.items.filter((x) => x.key !== it.key);
+      if (ended) settle(id, ended);
+    } else if (IN_FLIGHT(res)) { q.recheck = 'drain'; open(id, { force: true }); }   // kept first, unpaused: the next end sends it
+    else { q.paused = 'refused'; q.why = res.error; }
+    notify(id);
+    return res.ok ? { ok: true } : { ok: false, error: res.error };
+  }
+
   // D10: a send on Chat home makes the thread first; a refused message deletes it again, and a failed delete keeps it
   async function sendMessage(a) {
+    const queueing = a.queue === true && !!a.threadId;
+    if (queueing && isBusy(a.threadId)) return enqueue(a.threadId, a);   // F-a2-01: while a reply runs, it waits
     let id = a.threadId, made = '', created = null;
     if (!id) {
       if (spare) id = spare;
@@ -383,6 +477,12 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
     }
     const body = { text: a.text, ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(a.mcpOff ? { mcpOff: a.mcpOff } : {}), ...(a.attachments?.length ? { attachments: a.attachments } : {}), ...(a.context ? { context: a.context } : {}) };
     const res = scoped.ok ? await request('POST', `${T(id)}/messages`, body) : scoped;
+    // F-a2-01 (D7): dev's turn runs and we had not seen it: the message waits, and the thread is read to learn the turn
+    if (!res.ok && queueing && IN_FLIGHT(res) && threads.get(id)?.state === 'ready') {
+      const r = enqueue(id, a);
+      if (r.ok) { qOf(id).recheck = true; open(id, { force: true }); }
+      return r;
+    }
     if (!res.ok) {
       if (fresh) threads.delete(id);
       if (made || id === spare) { const d = await request('DELETE', T(id)); spare = d.ok ? '' : id; }
@@ -394,7 +494,8 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
       e.model = createThreadModel({ threadId: id });
       // D9: the thread dev answered (its PATCH {scope}, else its create), so the chat's project is known with no GET
       const th = [scoped.data?.thread, created].find((x) => x && typeof x === 'object' && x.id === id) || { id };
-      e.model.load({ thread: th, messages: [], attachments: [], runLinks: [], inFlight: null });
+      // F-a1-01: the new chat starts on the model and effort its first message went out with, not dev's null
+      e.model.load({ thread: { ...th, ...(model ? { model } : {}), ...(effort ? { effort } : {}) }, messages: [], attachments: [], runLinks: [], inFlight: null });
       e.state = 'ready'; e.reloading = false;
     }
     e.model?.noteLocalUserMessage?.({ id: res.data?.userMessageId, text: a.text, attachments: [] });
@@ -413,6 +514,21 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
     return res;
   }
 
+  // COV-3 #6: the files a TaskProposal's Start carries, read as classic's collectCardExtras reads them: over the message cap,
+  // or any read that fails, and nothing is posted
+  async function extrasOf(threadId, files) {
+    const max = ATTACH_MAX_MESSAGE_BYTES;
+    if (files.reduce((n, f) => n + (Number(f.bytes) || 0), 0) > max) return { error: `attachments exceed ${max / (1024 * 1024)} MB: remove one` };
+    const extras = [];
+    for (const f of files) {
+      let res = null, buf = null;
+      try { res = await fetch(`${T(threadId)}/attachments/${enc(f.att)}`); } catch { res = null; }
+      if (!res || !res.ok || typeof res.arrayBuffer !== 'function') return { error: `could not read attachment ${str(f.name)}` };
+      try { buf = await res.arrayBuffer(); } catch { return { error: `could not read attachment ${str(f.name)}` }; }
+      extras.push({ name: str(f.name), dataBase64: bytesToBase64(new Uint8Array(buf)) });
+    }
+    return { extras };
+  }
   // keyOf (the runner's): the key a control is pending under, its own or the action and the card or chat it acts on.
   /** One Chat action (Step 7): a Promise of `{ok, error?, data?}`. `args.key` names the control while it is pending. */
   async function act(id, args = {}) {
@@ -428,6 +544,11 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
         if (!u) return refuse(OPENS[id][0], { ok: false, error: 'it has no web address' }, q);
         const w = openUrl(u);
         return w === null ? refuse(OPENS[id][0], { ok: false, error: 'the browser blocked the new tab' }, q) : { ok: true };
+      }
+      if (id === 'start' && arr(args.files).length) {   // the files are read first: Start posts all of them or nothing
+        const x = await extrasOf(args.threadId, arr(args.files).slice());
+        if (x.error) return refuse(ACTIONS.start[0], { ok: false, error: x.error }, q);
+        args = { ...args, picks: { ...(args.picks || {}), extras: x.extras } };
       }
       if (id === 'run-with') {   // the save; the start waits for the event turn's proposal (checkRunWith)
         const res = await runWith(args, q);
@@ -447,6 +568,8 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
       let res = await request(method, url, body);
       // POST /api/runs/bulk answers 200 with its refusals in `skipped`: none done is a refusal
       if (res.ok && Array.isArray(res.data?.skipped) && res.data.skipped.length && !(res.data.done || []).length) res = { ok: false, status: 200, error: str(res.data.skipped[0]?.reason) || 'it was skipped' };
+      // F-G-G2-03: a card's resume on a moved base is a prompt, not a refusal: the card asks Resume anyway, which resends with baseAck
+      if (!res.ok && id === 'task-resume' && /^base-(moved|missing)$/.test(str(res.code))) return { ...res, prompt: 'base' };
       if (!res.ok) return refuse(a[0], res, q);
       if (id === 'pr') afterPr();   // a PR now exists: the task's card reads it without a reload (dev's history skeleton has no PRs)
       if (args.threadId && threads.get(args.threadId)?.state === 'ready' && url.startsWith(T(args.threadId))) open(args.threadId, { force: true });
@@ -468,6 +591,7 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
     return Promise.resolve({ ok: true });
   }
 
+  let revealAsk = null;
   const api = {
     open, frame, turns, act, prBodyOf, startBodyOf, perspectiveChoices, ref, feature,
     partsOf,   // panel.answer-refs: words and refs of a text, for Prose's chips (conversation.js is a classic script)
@@ -475,6 +599,10 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
     // (GET /api/ask/history), then dev's DELETE /api/ask/threads. Not an act() id: no card or chat control can reach it.
     chatHistory: async () => { const r = await request('GET', '/api/ask/history'); return r.ok ? r : refuse('read the chat history', r); },
     deleteAllChats: async () => { const r = await request('DELETE', '/api/ask/threads'); return r.ok ? r : refuse('delete the chats', r); },
+    /** COV-3 #8: a FilesCard's Download, saved under its name (not a tab, which shows only pictures, PDFs and text). */
+    download: ({ threadId, attId, name } = {}) => Promise.resolve(save(OPENS.file[1]({ threadId, attId }), name) ? { ok: true } : refuse(`download ${str(name) || 'the file'}`, { ok: false, error: 'the browser blocked the download' })),
+    /** COV-3 #9: whether this server can show a file in its folder ({label}: Finder, Explorer…), asked once (GET /api/ask/reveal). */
+    revealInfo: () => (revealAsk ??= request('GET', '/api/ask/reveal').then((r) => (r.ok && r.data?.available && str(r.data.label) ? { label: r.data.label } : null))),
     plan: (runId) => { const q = askOf(runId); return q && q.kind === 'plan' ? planView(q) : null; },
     planPicks,
     terminal: (sessionId) => term.openSession(sessionId),
@@ -492,8 +620,27 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
     worktrees: (id) => threads.get(id)?.model?.worktrees?.() || [],   // dev's chat worktrees (snapshot + ask-worktrees)
     thread: (id) => threads.get(id)?.model?.thread?.() || null,
     projectKey: (id) => projectKeyOf(threads.get(id)?.model?.thread?.() || {}),   // the project the chat works in
+    workspaceId: (id) => workspaceIdOf(threads.get(id)?.model?.thread?.() || {}),   // else the workspace it works in (F-G-G4-03)
     flow, canFlow: (label, a = {}) => !!FLOW[label] && (!FLOW[label].needsPr || !!a.pr),
     keyOf,
+    // F-a2-01: the composer's queue (a copy), Remove, Send now, and which chat each mount shows
+    queue: (id) => { const q = queues.get(id); return { items: (q?.items || []).map((x) => ({ key: x.key, text: x.text })), max: QUEUE_MAX, paused: q?.paused || '', why: q?.why || '', draining: !!q?.draining }; },
+    dropQueued: (id, key) => {
+      const q = queues.get(id), k = q ? q.items.findIndex((x) => x.key === key) : -1;
+      if (k < 0) return false;
+      if (k === 0 && q.draining) return 'sending';   // its POST is out: it can no longer be taken back
+      q.items.splice(k, 1);
+      if (!q.items.length) { q.paused = ''; q.why = ''; }
+      notify(id);
+      return true;
+    },
+    sendQueued: (id) => {
+      const q = queues.get(id);
+      if (!q) return Promise.resolve({ ok: true });
+      q.paused = ''; q.why = ''; notify(id);
+      return isBusy(id) ? Promise.resolve({ ok: true }) : drain(id);   // busy: the next clean end sends it
+    },
+    look: (viewer, id, shown = () => true) => { if (id) viewers.set(viewer, { id, shown }); else viewers.delete(viewer); },
   };
   return api;
 }

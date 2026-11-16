@@ -11,7 +11,7 @@ import { discoverProject } from '../../../src/core/metrics/sync.mjs';
 import { discoverPolicy } from '../../../src/core/policy/sync.mjs';
 import { PROJECT_ADD_STATUS, ProjectAddError, addProjectFolder, createProject, makeGitProject, probeFolder } from '../../../src/core/project-create.mjs';
 import { effectiveWorkMode, samePath } from '../../../src/core/project-kind.mjs';
-import { addProject, addProjects, displayPath, getProjectByName, listProjects, normalizeProjectPath, ownsProjectFolder, removeProject, removeProjectAndFolder, worcaHome, worcaNestedRepoHint, worcaNestedRepoOf } from '../../../src/core/projects.mjs';
+import { addProject, addProjects, displayPath, getProjectByName, listProjects, normalizeProjectPath, ownsProjectFolder, relocateProject, startingTargets, removeProject, removeProjectAndFolder, updateProject, worcaHome, worcaNestedRepoHint, worcaNestedRepoOf } from '../../../src/core/projects.mjs';
 import { readinessSummary } from '../../../src/core/repo-readiness/cache.mjs';
 import { evaluateAddedProject } from '../../../src/core/repo-readiness/projects.mjs';
 import { readinessEnabled } from '../../../src/core/repo-readiness/evaluate.mjs';
@@ -180,6 +180,17 @@ app.get('/api/projects/clone/:id', (req, res) => {
 // entry stays paused here after its run is archived or restored as interrupted (Stop refuses both), so its saved row
 // decides: the DB arm, which skips archived rows.
 const PROJECT_HOLD_STATUSES = ['created', 'starting', 'running', 'pausing', 'paused'];
+/** A run of the project that is still starting (startingTargets: POST /api/run before its runs entry), or null. A
+ *  workspace start holds every member folder of that workspace. Synchronous (the database is node:sqlite). */
+function startingHolds(project) {
+  const dir = canon(project.path);
+  const same = (x) => typeof x === 'string' && !!x && samePath(canon(x), dir);
+  for (const t of startingTargets()) {
+    if (t.projectDir && same(t.projectDir)) return { starting: true };
+    if (t.workspaceId && getDb().prepare('SELECT project_key AS p FROM workspace_projects WHERE workspace_id = ?').all(t.workspaceId).some((r) => same(r.p))) return { starting: true };
+  }
+  return null;
+}
 function runHoldingProject(project) {
   const dir = canon(project.path);
   const same = (p) => typeof p === 'string' && !!p && samePath(canon(p), dir);
@@ -258,6 +269,38 @@ app.delete('/api/projects', async (req, res) => {
     res.json(out);
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
+// PATCH /api/projects/:key {name?, path?} (Stillhet slice 9 D9): a rename keeps the key; a path moves the project to its
+// moved folder, which re-keys it (the key is derived from the path) and answers previousKey. Refused while a run of it
+// is live or paused (a pre-move run must never resume in a moved repository's broken worktrees).
+const UPDATE_STATUS = { INVALID: 400, EXISTS: 400, NOT_FOUND: 404, PROJECT_BUSY: 409 };
+app.patch('/api/projects/:key', async (req, res) => {
+  const p = await tmProject(req, res); if (!p) return;
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const wantName = body.name !== undefined, wantPath = body.path !== undefined;
+  if (!wantName && !wantPath) return res.status(400).json({ error: 'name or path is required', code: 'INVALID' });
+  // One change per request: a rename committed before a refused move would leave half a change behind.
+  if (wantName && wantPath) return res.status(400).json({ error: 'rename and move one at a time', code: 'INVALID' });
+  try {
+    let key = p.key, previousKey;
+    if (wantName) updateProject(key, { name: body.name });
+    else {
+      const to = normalizeProjectPath(body.path);
+      if (to && !(await requireFsAllowed(req, res, [to]))) return;
+      const gitOn = (await gitState()).available;   // every await before the busy check: nothing can start in between
+      const busy = runHoldingProject(p) || startingHolds(p);
+      if (busy) return res.status(409).json({ error: 'finish or stop its tasks first', code: 'PROJECT_BUSY', ...(busy.id ? { pipelineId: busy.id } : {}) });
+      ({ key, previousKey } = relocateProject(key, body.path, { gitOn }));
+    }
+    emitChanged('projects-changed', 'updated');
+    const projects = await projectsForApi(await listProjects());
+    res.json({ project: projects.find((x) => x.key === key) || null, projects, ...(previousKey ? { previousKey } : {}) });
+  } catch (err) {
+    const status = UPDATE_STATUS[err?.code];
+    if (!status) return res.status(500).json({ error: err && err.message ? err.message : String(err) });
+    res.status(status).json({ error: err.message, code: err.code });
   }
 });
 

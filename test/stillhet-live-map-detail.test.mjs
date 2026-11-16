@@ -73,3 +73,22 @@ test('a missed start\'s note reads when it was due, never dev\'s raw timestamp',
   const n = updateOf({ id: 2, kind: 'missed', title: 'Nightly', message: `was due at ${due}. Worca was not running.`, createdAt: 1, ticketId: 't' }, { now: 2 });
   assert.equal(n.meta, 'Worca was not running at 03:00');
 });
+
+test('F-7a-06: a paused run\'s Pulse event comes from its pause kind: yours none, budget cost cap, limit usage limit, error paused on error, drain Worca was stopped', () => {
+  const ev = (o) => updateOfOutcome({ id: 'r1', title: 'T', status: 'paused', mtime: Date.now(), ...o }, { now: Date.now() });
+  assert.equal(ev({ pauseReason: null }), null, 'you paused it yourself: nothing needs you');
+  assert.equal(ev({ pauseReason: '' }), null);
+  for (const [o, e, name] of [
+    [{ pauseReason: 'cost_pipeline' }, 'run.cost_cap', 'Cost cap reached'],
+    [{ pauseReason: 'usage_limit', limitEngine: 'claude' }, 'run.paused_limit', 'Usage limit reached'],
+    [{ pauseReason: 'You have hit your limit', limitEngine: 'claude' }, 'run.paused_limit', 'Usage limit reached'],
+    [{ pauseReason: 'error' }, 'run.paused_error', 'Paused on error'],
+    [{ pauseReason: 'recoverable' }, 'run.paused_error', 'Paused on error'],
+    [{ pauseReason: 'drain' }, 'run.paused_stopped', 'Worca was stopped'],
+  ]) {
+    const u = ev(o);
+    assert.equal(u.e, e, JSON.stringify(o));
+    assert.ok(u.title.startsWith(`${name} · `), u.title);
+    assert.equal(u.fix, 'Resume');
+  }
+});

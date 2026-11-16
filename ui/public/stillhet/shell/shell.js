@@ -28,7 +28,8 @@
   const placeMod = (v) => window.RailPlaces[v];
   // The live kind (D23): a place not yet on live data draws its empty look, never seeded rows, until its slice wires it.
   const LIVE = !!window.RailWorld?.live;
-  const NOT_LIVE = { insights: 'insights', workflows: 'workflows', marketplace: 'plugins', requirements: 'requirements' };
+  const NOT_LIVE = { requirements: 'Requirements, under Build' };   // where each lives with Stillhet off (nav.not-live); Workflows is live since slice 7, Marketplace since slice 8, Insights since slice 10
+  const notLiveOf = (view) => LIVE && !!NOT_LIVE[view];
   let liveTask = { title: '' };   // the live task a row opened: its page shows its title and no task details yet
   const el = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
 
@@ -92,8 +93,15 @@
     askW = clampAsk(px); document.documentElement.style.setProperty('--ask-side-w', askW + 'px'); store.set(KEY_ASK, askW);
     document.querySelector('#ask-side .ask-side-grip')?.setAttribute('aria-valuenow', askW);
   };
+  const LIST_SUG = {
+    marketplace: ['Which plugins fit how I work?', 'What does a plugin ask for, and why?', 'Which of my plugins have an update?'],
+    workflows: ['Which workflow fits my task?', 'How could my workflows cost less?', 'Which workflow ran most this week?'],
+    projects: ['Which project is behind, and is it safe to sync?', 'What ran this week, and what did it cost?', 'What needs me here?'],
+  };
   function pageContext() {
-    const v = routed.view, name = [...document.querySelectorAll('#main-row main .place-title, #main-row main [data-title], #card .rc-title')].find((x) => x.getClientRects().length)?.textContent?.trim() || TITLES[v === 'schedule' ? 'schedules' : v] || 'this page';   /* what shows: the task page waits hidden behind every other page */
+    const v = routed.view, list = ['marketplace', 'workflows', 'projects', 'requirements'].includes(v) && (!routed.arg || routed.arg.startsWith('~'));   // F-G-G5-05, F-7a-08: a place's list is no one thing
+    if (list) return { view: v, kind: 'list', name: TITLES[v], project: '', suggest: LIST_SUG[v] || ['What needs me?', 'What is ready to ship?', 'What happened while I was away?'] };
+    const name = [...document.querySelectorAll('#main-row main .place-title, #main-row main [data-title], #card .rc-title')].find((x) => x.getClientRects().length)?.textContent?.trim() || TITLES[v === 'schedule' ? 'schedules' : v] || 'this page';   /* what shows: the task page waits hidden behind every other page */
     const SUG = {
       run: ['Why did it stop?', 'What does it need from me?', 'What did it change?'],
       projects: [`Why is ${name} behind, and is it safe to sync?`, 'What ran here this week, and what did it cost?', 'What needs me here?'],
@@ -125,6 +133,7 @@
     const show = askOpen;
     if (show && side.hidden) { if (!side.firstChild) drawAsk(side); side.classList.add('is-in'); setTimeout(() => side.classList.remove('is-in'), 300); }
     side.hidden = !show;
+    if (show) window.RailConversation?.paintIfStale?.();   // comp.live-paint: what changed while it was closed is drawn once
     document.body.classList.toggle('ask-side-open', show);
   }
 
@@ -153,7 +162,7 @@
   const quickItems = () => [...document.querySelectorAll('#side-rail nav.nav [data-nav]')].filter((b) => !b.hidden && !b.closest('[hidden]') && b.style.display !== 'none').map((b) => ({ id: `bar-go|${b.dataset.nav}`, text: b.querySelector('.nav-label, span')?.textContent.trim() || b.textContent.trim(), checked: b.dataset.nav === routed.view, hint: b.dataset.flag ? 'Labs' : undefined, mark: R.icon(`nav-${b.dataset.nav}`, 14) }));   /* nav.labs: the word follows the row */
   let barMenu = false;   // the + as a menu, where a place makes things more than one way (list.bar-model)
   let homeNext = false, homeOpen = false, taskChat = '', lastThing = null, visited = [], pinsAll = false;
-  const barOf = (view) => (routed.locked ? 'home' : placeMod(view) ? 'place' : view === 'chat' ? 'chat' : view === 'runs' ? 'tasks' : view === 'run' ? (taskChat ? 'chat' : 'tasks') : view === 'schedules' || view === 'schedule' ? 'schedules' : view === 'settings' ? 'settings' : 'home');
+  const barOf = (view) => (routed.locked || notLiveOf(view) ? 'home' : placeMod(view) ? 'place' : view === 'chat' ? 'chat' : view === 'runs' ? 'tasks' : view === 'run' ? (taskChat ? 'chat' : 'tasks') : view === 'schedules' || view === 'schedule' ? 'schedules' : view === 'settings' ? 'settings' : 'home');
   // who makes things from this bar's +: a place, or Tasks and Schedules from Advanced up (rail.chat-first)
   const makerOf = (which) => (which === 'place' ? placeMod(routed.view) : which === 'tasks' || which === 'schedules' ? window.RailCenters?.maker(which) : null);
   function drawBar() {
@@ -229,7 +238,8 @@
   // a task's own page keeps it in view by its case: the one already kept from its chat counts, never twice
   function toggleCaseInView(cs, title) {
     const name = title || RM?.titles?.[cs] || 'This task', had = inViewList.find((x) => { const t = inViewNow(x)?.task; return t?.cs === cs && t.title === name; });
-    toggleInView(had || { type: 'task', id: `case-${cs}-${name.replace(/:/g, ' ')}`, case: cs, chat: '', title: name });
+    const run = LIVE && routed.view === 'run' ? routed.arg || '' : '';   // F-G-G5-03: the live kind reopens it by its own id
+    toggleInView(had || { type: 'task', id: `case-${cs}-${name.replace(/:/g, ' ')}`, case: cs, chat: '', title: name, run });
   }
   function toggleInView(item) {
     const had = isInView(item.type, item.id);
@@ -258,13 +268,15 @@
   };
   // nav.not-found: an address that names nothing here. null when it names something, or nothing in particular.
   const NOUNS = { projects: 'project', workflows: 'workflow', requirements: 'feature', marketplace: 'plugin', insights: 'view' };
+  let schedWaits = false;   // a #schedule/ID routed before the first list read landed
   function goneOf(kind, arg0) {
     let arg = arg0 || ''; try { arg = decodeURIComponent(arg); } catch { /* a stray % stays as typed */ }
     if (!TITLES[kind] && !['run', 'settings', 'schedule'].includes(kind)) return { lost: true, what: 'page', name: kind, back: 'Chat', to: 'chat' };
     if (!arg) return null;
     // live: a chat the bar has not listed (just made, or past its first page) is read by the conversation, which says when it is gone
     if (kind === 'chat') return window.RailWorld?.live || (window.RailChats?.data().chats || []).some((c) => c.id === arg) ? null : { what: 'chat', name: arg, back: 'Chat', to: 'chat' };
-    if (kind === 'schedule') return window.RailSchedules?.find(arg) ? null : { what: 'schedule', name: arg, back: 'Chat', to: 'chat' };
+    // F-G-fid-01: live, a fresh load or a shared link waits for the first list read (the page says Loading), then routes again
+    if (kind === 'schedule') { if (window.RailSchedules?.find(arg)) return null; if (LIVE && window.RailDemoState?.list === 'loading') { schedWaits = true; return null; } return { what: 'schedule', name: arg, back: 'Chat', to: 'chat' }; }
     if (kind === 'run') { if (LIVE) return null; try { RM.stateOf(arg); return null; } catch { return { lost: true, what: 'task', name: arg, back: 'Chat', to: 'chat' }; } }   // live: RailTaskLive says when a task is gone (D15)
     if (kind === 'settings') return window.RailPulse?.hasSection?.(arg) !== false ? null : { lost: true, what: 'setting', name: arg, back: 'Settings', to: 'settings' };
     const has = placeMod(kind)?.has; return !has || has(arg) ? null : { what: arg.startsWith('ws:') ? 'workspace' : NOUNS[kind] || 'page', name: arg.replace(/^[a-z]+:/, ''), back: TITLES[kind], to: kind };
@@ -295,7 +307,7 @@
     homeOpen = homeNext; homeNext = false;
     const pane = { today: document.getElementById('route-today'), chat: document.getElementById('route-chat'), schedule: document.getElementById('route-schedule'), place: document.getElementById('route-place'), run: document.getElementById('route-run'), settings: document.getElementById('route-settings'), runs: document.getElementById('route-runs') };
     const lock = !gone && (view === 'schedule' || !!TITLES[view] && view !== 'chat') && lockHere(view, arg);   // nav.locked: every place, by the bar's own data
-    const notLive = LIVE && !gone && !lock && !!NOT_LIVE[view];
+    const notLive = !gone && !lock && notLiveOf(view);
     // the live task page (D1, D15): loading until the list and the task's detail are in, failed with Try again, gone with Tasks
     const taskState = view === 'run' && !gone && !lock ? (LIVE ? liveTaskState(arg) : window.RailDemoState?.task || 'ready') : 'ready';   // the prototype's ?state=task-… shows the same looks
     const ownPage = !notLive && (!!placeMod(view) || view === 'run' || view === 'settings' || view === 'runs' || view === 'chat' || view === 'schedules' || view === 'schedule');
@@ -326,17 +338,17 @@
       pane.today.innerHTML = `<div class="rail-locked">${R.placeHead({ title: liveTask.title || 'Task' })}${look}</div>`;
       if (retryFocus === arg && taskState === 'failed') pane.today.querySelector('[data-task-retry]')?.focus({ preventScroll: true });   // still failing: the new Try again
       scrollTo(0, 0);
-    } else if (notLive) {   // D23: its existing empty look; a task opened from a row keeps its live title
+    } else if (notLive) {   // nav.not-live: it says so and where it lives today, never an empty look; a task opened from a row keeps its live title
       document.body.className = 'view-place';
       const title = view === 'run' ? liveTask.title || 'Task' : TITLES[view];
-      pane.today.innerHTML = `<div class="rail-locked">${R.placeHead({ title })}${R.listState({ state: 'empty', noun: view === 'run' ? 'task details' : NOT_LIVE[view] })}</div>`;
+      pane.today.innerHTML = `<div class="rail-locked">${R.placeHead({ title })}${R.notInStillhet({ place: TITLES[view], today: NOT_LIVE[view], attrs: { 'data-nav': 'chat' } })}</div>`;
       scrollTo(0, 0);
     } else if (!pane.today.hidden && SOON[view]) {   // nav.locked: a place not yet in Rail draws a true page, never a blank one, and the bar stays
       document.body.className = 'view-place';
       pane.today.innerHTML = `<div class="rail-locked">${R.emptyState({ title: SOON[view][0], text: SOON[view][1], actions: R.button({ label: 'Back to Chat', kind: 'quiet', attrs: { 'data-nav': 'chat' } }) })}</div>`;
       scrollTo(0, 0);
     } else if (!pane.today.hidden) {
-      pane.today.innerHTML = `<div class="rail-locked">${R.emptyState({ title: `${TITLES[view] || 'This page'} is not in Stillhet yet`, text: 'It has no Stillhet screen. It is on the wiring list.', actions: R.button({ label: 'Back to Chat', kind: 'quiet', attrs: { 'data-nav': 'chat' } }) })}</div>`;
+      pane.today.innerHTML = `<div class="rail-locked">${R.notInStillhet({ place: TITLES[view] || 'This page', attrs: { 'data-nav': 'chat' } })}</div>`;
       scrollTo(0, 0);
     } else pane.today.innerHTML = '';
     if (view === 'chat') {
@@ -382,11 +394,12 @@
   // the library keeps its words until then. Verbs stay ("Run now", "it runs"); code, branches and what you type stay. ----
   const WORDS = [[/\bNew run\b/g, 'New task'], [/\bStart run\b/g, 'Start task'], [/\bRuns\b(?=\s*(?:$|[·:(),.]))/g, 'Tasks'], [/\b(all|All|these|the|The|Your|your|paused|Paused|manual|Manual|other|many|\d+|their|its|two|three|mock|Mock) runs\b/g, '$1 tasks'], [/\b(a|A|an|An|the|The|this|This|one|One|each|Each|every|Every|your|Your|its|Its|paused|Paused|that|That|mock|Mock|1|new|New|next|Next|last|Last|Following a|following a) run\b(?! (?:the|it|on|now|once|a\b))/g, '$1 task'], [/\bRun (needs|asks|is|was|has|\d)/g, 'Task $1'], [/\bbuilds?\b(?= (?:across|in conversations))/g, 'tasks']];
   const reword = (t) => WORDS.reduce((x, [re, to]) => x.replace(re, to), t);
-  const SKIP = 'code, pre, textarea, input, script, style, .mk-tools, .tr-body, .rc-mid-a, .is-center';   // a center says a schedule's runs (panel.run-outcomes)
+  const SKIP = 'code, pre, textarea, input, script, style, .mk-tools, .tr-body, .rc-mid-a, .is-center, .task-view';   // a center says a schedule's runs (panel.run-outcomes); a task view counts its own runs
+  const SKIP_ATTR = '.is-center, .task-view';
   function rewordIn(rootEl) {
     const walk = document.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT);
     for (let n = walk.nextNode(); n; n = walk.nextNode()) { if (!/\b[Rr]uns?\b|builds?/.test(n.nodeValue) || n.parentElement?.closest(SKIP)) continue; const v = reword(n.nodeValue); if (v !== n.nodeValue) n.nodeValue = v; }
-    for (const e of rootEl.querySelectorAll?.('[title], [aria-label]') || []) for (const k of ['title', 'aria-label']) { const v = e.getAttribute(k); if (v && /\b[Rr]uns?\b/.test(v) && !e.closest('.is-center')) { const w = reword(v); if (w !== v) e.setAttribute(k, w); } }
+    for (const e of rootEl.querySelectorAll?.('[title], [aria-label]') || []) for (const k of ['title', 'aria-label']) { const v = e.getAttribute(k); if (v && /\b[Rr]uns?\b/.test(v) && !e.closest(SKIP_ATTR)) { const w = reword(v); if (w !== v) e.setAttribute(k, w); } }
   }
   // A tick's hover says what is there: a stage's name, its time and its steps.
   function stageCard(id) {
@@ -514,8 +527,10 @@
       ])].sort();
     },
     // nav.stillhet-ask: the Invitation under the top bar while the address says ?invite=stillhet and the demo has not answered
-    inviteStrip: () => (new URLSearchParams(location.search).get('invite') === 'stillhet' && !store.get('worca-rail.stillhetAsked') && !inviteBack ? R.stillhetInvitation({ bugsUrl: 'https://github.com/' }) : ''),
-    answerInvite: (answer) => { if (answer === 'yes' || answer === 'no') store.set('worca-rail.stillhetAsked', '1'); else inviteBack = true; },
+    // F-G-G5-01: live, `rail` is on, and the opt-in rule (ui/public/stillhet.mjs shouldAskStillhet) never asks while it is on:
+    // the real question, its Labs flag write and its stillhetAsked answer, is today's app's (mountStillhetAsk), never this demo strip
+    inviteStrip: () => (!LIVE && new URLSearchParams(location.search).get('invite') === 'stillhet' && !store.get('worca-rail.stillhetAsked') && !inviteBack ? R.stillhetInvitation({ bugsUrl: 'https://github.com/' }) : ''),
+    answerInvite: (answer) => { if (LIVE) return; if (answer === 'yes' || answer === 'no') store.set('worca-rail.stillhetAsked', '1'); else inviteBack = true; },
     // which script answers a click or a key: the run page owns #card and its tools; Pulse owns the rest of the Rail pieces
     owns: (who, target) => {
       if (!target?.isConnected) return false;   // a list page already answered it, and drew again
@@ -624,6 +639,7 @@
     // after the lists have read the store again (they listen later): the strip counts their rows
     const later = (fn) => setTimeout(fn, 0);
     window.RailWorld.onChange(() => { setConn(window.RailDemoState?.conn || 'ok'); later(() => { if (routed.view) drawBar(); else drawMini(); }); });
+    window.RailWorld.onChange(() => { if (!schedWaits || window.RailDemoState?.list === 'loading') return; schedWaits = false; later(() => { if (routed.view === 'schedule') route(); }); });   // F-G-fid-01: the list is in: the page, or gone
     window.RailWorld.onMove(() => later(drawMini));
   }
   // a step taken on a task's page moves the task everywhere: its row, the bar's and Pulse's counts, In view

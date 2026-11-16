@@ -219,7 +219,29 @@
       "rules": [
         "its name for a screen reader says what the rings say"
       ],
-      "example": "Emil Angelov ⇅"
+      "example": "Sam Rivera ⇅"
+    },
+    {
+      "name": "ChoiceNote",
+      "code": "ui/public/design-system/components/choice-note.mjs#choiceNote",
+      "kind": "telling",
+      "needs": [
+        "a problem with a choice, its rows and its ways out"
+      ],
+      "parts": [
+        "status dot (needsYou: amber; it only tells: grey)",
+        "the note",
+        "what it means",
+        "one row per item, each with its own way out",
+        "the ways out, as Buttons",
+        "an end slot for a Checkbox"
+      ],
+      "rules": [
+        "it shows before the choice is made, on the rail, one at a time: the newest refusal wins (`form.run-options`)",
+        "a grey note never blocks and offers no way"
+      ],
+      "example": "This preset needs attention · Workflow is gone · Reset to default",
+      "notFor": "a dialog on top of a Dialog; something done (a Toast)"
     },
     {
       "name": "UsageRing",
@@ -251,6 +273,53 @@
           "code": "ui/public/design-system/components/usage.mjs#connectedUsage",
           "needs": [
             "Only the providers that count: one signed out has no ring"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "FolderBrowser",
+      "code": "ui/public/design-system/components/folder-browser.mjs#folderBrowser",
+      "kind": "choosing",
+      "needs": [
+        "picking one folder or several on this computer"
+      ],
+      "notFor": "a path the person types (Field)",
+      "rules": [
+        "in a Dialog: Up, Home and one row per folder; a row's name goes into it",
+        "several: a checkbox per row, picks survive moving between folders, Add N selected",
+        "a failed load keeps the last listing and says why in the status line"
+      ],
+      "example": "Choose folder…, Several folders…",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/folder-browser.mjs#folderName",
+          "needs": [
+            "a folder's name from its path"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/folder-browser.mjs#folderProbe",
+          "needs": [
+            "what a typed folder is, under its field: Git, Folder, Not found, Part of a project"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/folder-browser.mjs#folderReview",
+          "needs": [
+            "picked folders reviewed before they are added: a name each, Added or why it was skipped"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/folder-browser.mjs#reviewSummary",
+          "needs": [
+            "what a bulk add did, in one line"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/folder-browser.mjs#folderWay",
+          "needs": [
+            "an add way's own controls on the form: Choose folder…, Browse folders…, Use git"
           ]
         }
       ]
@@ -938,7 +1007,8 @@
       "code": "ui/public/design-system/components/draft-bar.mjs#draftBar",
       "kind": "acting",
       "needs": [
-        "a thing you changed by hand that is not saved yet: a draft, its changes, Discard and Save"
+        "a thing you changed by hand that is not saved yet: a draft, its changes, Discard and Save",
+        "a schedule's times and rules"
       ],
       "rules": [
         "rail.drafts"
@@ -950,7 +1020,7 @@
       "code": "ui/public/design-system/components/workflow-story.mjs#workflowStory",
       "kind": "showing",
       "needs": [
-        "a workflow told in plain words: its steps, its loop, how a task goes through it"
+        "a workflow told in plain words: its steps, every loop (a step that runs again says so in its panel), how a task goes through it"
       ],
       "rules": [
         "panel.workflow-story",
@@ -1541,6 +1611,40 @@
       "example": "There is no project called nope"
     },
     {
+      "name": "NotInStillhet",
+      "code": "ui/public/design-system/components/empty-state.mjs#notInStillhet",
+      "kind": "telling",
+      "needs": [
+        "a place that is not in Stillhet yet"
+      ],
+      "rules": [
+        "says so, names where it lives today in words, and offers Back to Chat; never reads as empty and holds no switch (nav.not-live)"
+      ],
+      "example": "Insights is not in Stillhet yet"
+    },
+    {
+      "name": "NotLiveRow",
+      "code": "ui/public/design-system/components/not-live-row.mjs#notLiveRow",
+      "kind": "telling",
+      "needs": [
+        "a Settings row still sample on a live Stillhet",
+        "a Settings section all sample on a live Stillhet"
+      ],
+      "rules": [
+        "a row is its name and the words, a section all sample its one line; no value and nothing to click; the demo keeps its sample (set.not-live)",
+        "a real control not wired yet is disabled, shows its value and gives NOT_LIVE_SENTENCE as its reason; its section's meta says it once (set.not-live)"
+      ],
+      "example": "Not in Stillhet yet: turn Stillhet off from the top-bar switch to use it",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/not-live-row.mjs#NOT_LIVE_SENTENCE",
+          "needs": [
+            "a live Settings control not wired yet: its reason"
+          ]
+        }
+      ]
+    },
+    {
       "name": "KindMark",
       "code": "ui/public/design-system/components/kind-mark.mjs#kindMark",
       "kind": "telling",
@@ -1580,10 +1684,23 @@
       "code": "ui/public/design-system/components/kind-mark.mjs#timelineCard",
       "kind": "showing",
       "needs": [
-        "what a timeline's tick holds, on hover"
+        "what a timeline's tick holds, on hover",
+        "what a TimeTrack's PR mark holds, on hover and focus: the pull request, its state and time, the lead time from the first run"
       ],
       "rules": [
-        "panel.timeline"
+        "panel.timeline",
+        "look.time-track"
+      ]
+    },
+    {
+      "name": "TaskView",
+      "code": "ui/public/design-system/components/task-view.mjs#taskView",
+      "kind": "showing",
+      "needs": [
+        "a teammate's task, read only: its head, metadata, StatusLine with its failure reason, figures, runs and pull request; no actions, steps or logs"
+      ],
+      "rules": [
+        "thing.read-only"
       ]
     },
     {
@@ -1656,6 +1773,30 @@
       ]
     },
     {
+      "name": "ComposerQueue",
+      "code": "ui/public/design-system/components/kind-mark.mjs#composerQueue",
+      "kind": "telling",
+      "needs": [
+        "what you sent while Worca replies, waiting for the reply to end"
+      ],
+      "rules": [
+        "form.composer-queue"
+      ],
+      "example": "Sends when the reply finishes"
+    },
+    {
+      "name": "ComposerQueueButton",
+      "code": "ui/public/design-system/components/kind-mark.mjs#composerQueueButton",
+      "kind": "acting",
+      "needs": [
+        "queuing what you wrote while Worca replies, without Enter"
+      ],
+      "rules": [
+        "form.composer-queue"
+      ],
+      "example": "Queue"
+    },
+    {
       "name": "StageBar",
       "code": "ui/public/design-system/components/kind-mark.mjs#stageBar",
       "kind": "telling",
@@ -1702,10 +1843,20 @@
       "code": "ui/public/design-system/components/scroll-fade.mjs#watchScrollFades",
       "kind": "telling",
       "needs": [
-        "a chat softens where it goes under the composer or the top bar, only while there is more past that edge (scrollEdges says which)"
+        "a chat softens where it goes under the composer or the top bar, only while there is more past that edge (scrollEdges says which)",
+        "a column measured only when it scrolls, resizes or its content changes (and every column around that change): a draw that changes nothing measures nothing"
+      ],
+      "also": [
+        {
+          "code": "ui/public/design-system/components/scroll-fade.mjs#pinnedToEnd",
+          "needs": [
+            "whether a chat sits at its end (its last PIN px in view), so a growing reply keeps it there"
+          ]
+        }
       ],
       "rules": [
-        "motion.scroll-fade"
+        "motion.scroll-fade",
+        "motion.follow-end"
       ]
     },
     {
@@ -1950,7 +2101,8 @@
       "code": "ui/public/design-system/components/kind-mark.mjs#filesCard",
       "kind": "moving",
       "needs": [
-        "files Worca shows in a conversation: pictures as tiles, files as rows, each with Download"
+        "files Worca shows in a conversation: pictures as tiles, files as rows, each with Download",
+        "a file's Show in ‹file manager› (revealLabel and the file's reveal), only where the server offers it"
       ],
       "rules": [
         "panel.conversation-cards"
@@ -1975,7 +2127,8 @@
       "code": "ui/public/design-system/components/kind-mark.mjs#youTurn",
       "kind": "showing",
       "needs": [
-        "what you said in a conversation, with the quote you answered and the files you attached"
+        "what you said in a conversation, with the quote you answered and the files you attached",
+        "an attached file as a chip that opens it ({name, attrs}); a plain name stays a plain chip"
       ],
       "rules": [
         "panel.conversation-cards"
@@ -2081,6 +2234,18 @@
       ]
     },
     {
+      "name": "HeatGrid",
+      "code": "ui/public/design-system/components/heat-grid.mjs#heatGrid",
+      "kind": "showing",
+      "needs": [
+        "who spends where in a team: people by the top values of one dimension, in ink shades",
+        "a cell that reads its person, value, spend and tasks on hover and focus, and opens nothing"
+      ],
+      "rules": [
+        "look.heat-grid"
+      ]
+    },
+    {
       "name": "LineChart",
       "code": "ui/public/design-system/components/chart.mjs#lineChart",
       "kind": "showing",
@@ -2132,10 +2297,59 @@
       "code": "ui/public/design-system/components/chart.mjs#figureRows",
       "kind": "showing",
       "needs": [
-        "the same figures across rows where each whole row opens one target, a second level under its parent; each column as wide as its head, on one line"
+        "the same figures across rows where each whole row opens one target, a second level under its parent; each column as wide as its head, on one line",
+        "a person's row that opens their work in place, under the row, with a head and Hide"
       ],
       "rules": [
-        "list.row-one-target"
+        "list.row-one-target",
+        "list.row-opens-in-place"
+      ]
+    },
+    {
+      "name": "TimeTrack",
+      "code": "ui/public/design-system/components/time-track.mjs#timeTrack",
+      "kind": "showing",
+      "needs": [
+        "a person's tasks over the page's days: one row per task that opens it, its work and its pull request drawn in a lane"
+      ],
+      "rules": [
+        "look.time-track"
+      ],
+      "also": [
+        {
+          "code": "ui/public/design-system/components/time-track.mjs#trackX",
+          "needs": [
+            "where a time sits on a track, 0 to 1, clamped"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/time-track.mjs#dayTicks",
+          "needs": [
+            "a track's day axis from the page's own range: its UTC days and a few labels"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "WorkBar",
+      "code": "ui/public/design-system/components/time-track.mjs#workBar",
+      "kind": "showing",
+      "needs": [
+        "one task's lane: a solid span while the agent works, a dashed tail while its pull request waits, and its GitMark at the PR's time that opens the pull request"
+      ],
+      "rules": [
+        "look.time-track"
+      ]
+    },
+    {
+      "name": "MarkLegend",
+      "code": "ui/public/design-system/components/time-track.mjs#markLegend",
+      "kind": "showing",
+      "needs": [
+        "the legend of a TimeTrack, naming its marks (lines and GitMarks), not series"
+      ],
+      "rules": [
+        "look.time-track"
       ]
     },
     {
@@ -2299,6 +2513,48 @@
       ]
     },
     {
+      "name": "Patching a list by key",
+      "code": "ui/public/design-system/components/keyed-list.mjs#patchKeyed",
+      "needs": [
+        "a list redrawn on live data, where an item whose drawing did not change keeps its node, its focus, caret and scroll",
+        "an orb in a redrawn item that keeps turning instead of starting again"
+      ],
+      "example": "patchKeyed(col, turns.map((t) => ({ key: t.id, html: t.html })), { carry: 'canvas[data-orb]' })",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/keyed-list.mjs#frameBatch",
+          "needs": [
+            "live redraws asked many times within one frame draw once, at the next frame"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Patching a region by part",
+      "code": "ui/public/design-system/components/keyed-list.mjs#patchParts",
+      "needs": [
+        "a region drawn from named parts (the shell's layers, a slot, a page's column), where a part whose string did not change keeps its nodes, its focus, caret, scroll and open menu",
+        "a redraw that changes nothing writes nothing"
+      ],
+      "example": "patchParts(app, { popover: popover(), 'new-run': newRun(), account: acctMenu(), session: sessionDialog() })"
+    },
+    {
+      "name": "Keeping an open control across a redraw",
+      "code": "ui/public/design-system/components/keep-open.mjs#watchKeepOpen",
+      "needs": [
+        "an open menu, inline field or dialog whose typed text, caret and focus must survive a live redraw"
+      ],
+      "example": "watchKeepOpen(document); R.field({ id, label, attrs: { 'data-keep': 'pj-hand:rename:billing-api' } })",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/keep-open.mjs#keptRoute",
+          "needs": [
+            "the route an open control belongs to, so a page or list closes it when you move to another place or item"
+          ]
+        }
+      ]
+    },
+    {
       "name": "The sound of a new event",
       "code": "ui/public/design-system/components/sound.mjs#soundFor",
       "needs": [
@@ -2319,14 +2575,16 @@
       "code": "ui/public/design-system/components/list-page.mjs#listController",
       "needs": [
         "a list with its sentence, selecting, keys and states",
-        "selected counted in the actions' unit where a row stands for several (spec.count)"
+        "selected counted in the actions' unit where a row stands for several (spec.count)",
+        "an idle redraw that leaves the list as it was: paint({ ifChanged: true }) writes nothing when its drawing did not change (only paint writes inside the root)"
       ],
       "example": "listController({ root, spec })",
       "also": [
         {
           "code": "ui/public/design-system/components/list-page.mjs#fitMenu",
           "needs": [
-            "A menu kept inside the window"
+            "A menu kept inside the window",
+            "a kept menu re-fitted on a redraw or resize without drift"
           ]
         }
       ]
@@ -2364,6 +2622,12 @@
           "code": "ui/public/design-system/components/run-state.mjs#sectionOf",
           "needs": [
             "The section of a list a state goes in"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/run-state.mjs#stillGoing",
+          "needs": [
+            "Whether a run is still going, as a schedule's skip if still going counts it"
           ]
         },
         {
@@ -2854,6 +3118,14 @@
         "the named step of New schedule"
       ],
       "example": "scheduleButton({ every: 'every weekday', at: '09:00' })"
+    },
+    {
+      "name": "Who the account corner names",
+      "code": "ui/public/design-system/components/account-menu.mjs#describeAccount",
+      "needs": [
+        "the account button's name and initials and the identity card, from GET /api/whoami; never a demo name on a live page"
+      ],
+      "example": "describeAccount({ name: 'sam.rivera@acme.dev', shared: true, source: 'access' }) // { kind: 'shared', short: 'sam.rivera', initials: 'SR', via: 'via Cloudflare Access' }"
     }
   ],
   "telling": [
@@ -3310,6 +3582,11 @@
       "name": "ENGINE_WORDS",
       "kind": "constant",
       "why": "How each engine reads in a model's name"
+    },
+    {
+      "name": "REVIEW_EMPTY",
+      "kind": "constant",
+      "why": "FolderReview's words when no folder is ticked"
     }
   ],
   "lookOptions": [

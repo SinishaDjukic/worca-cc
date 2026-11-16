@@ -125,6 +125,11 @@ test('remote mode: start is refused with 403 ACTIONS_DISABLED', async () => {
   assert.equal((await remote('GET', `/api/runs/${id}/actions?projectKey=${key}`)).body.enabled, false);
 });
 
+test('remote mode: a workspace file\'s open in your editor is refused with 403 ACTIONS_DISABLED before anything else (Stillhet slice 9 D15)', async () => {
+  const r = await remote('POST', '/api/workspaces/wks-any-0000abcd/open-in-editor', { projectKey: key, file: 'README.md' });
+  assert.deepEqual([r.status, r.body.code], [403, 'ACTIONS_DISABLED']);
+});
+
 test('remote mode: the config can still be edited while actions are off (D4)', async () => {
   const r = await remote('PUT', `/api/projects/${key}/actions`, { setup: `${NODE} -e "console.log('installing')"`, actions: [RUN] });
   assert.equal(r.status, 200);

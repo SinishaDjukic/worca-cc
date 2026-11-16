@@ -11,6 +11,8 @@ export const TRACKER_MOVES = { jira: ['In review', 'Resolved', 'Done'], azure: [
 
 const STATES = {
   'no-remote': { word: 'Ready', dot: 'is-green', action: { label: 'Link remote', icon: 'up', primary: true, items: ['How to merge', 'Discard'] } },
+  // a finished task whose base Worca cannot tell (no branch recorded, or a commit): no PR to open, no merge commands to give
+  'no-base': { word: 'Ready', dot: 'is-green', action: { label: 'Publish branch', icon: 'up', primary: false, items: ['Discard'] } },
   'mock-run': { word: 'Mock task', dot: 'is-grey' },
   starting: {
     word: "Starting",
@@ -651,6 +653,7 @@ const REST = { 'Re-plan the rest': REPLAN, 'Cancel the rest': CANCEL_REST };
 
 const FLOW = {
   'no-remote': { 'Link remote': { to: 'ready', confirm: 'Add origin as this project’s remote? Worca pushes there from now on.', say: 'Linked origin; Create PR is now the next step' }, 'How to merge': HOW_TO_MERGE, Discard: DISCARD },
+  'no-base': { 'Publish branch': PUBLISH, Discard: DISCARD },
   'mock-run': {},
   starting: { next: 'working' },
   working: { next: 'ready' },
@@ -672,7 +675,7 @@ const FLOW = {
   'waiting-interrupted': WAITING,
   'ticket-missed': WAITING,
   'ticket-firing': { next: 'starting', event: 'The schedule fired; the task starts' },
-  'ticket-failed': { 'Open project': { would: 'open Settings › Projects; point it at the folder, then Start now' }, 'Start now': { to: 'starting', say: 'Started now' } },
+  'ticket-failed': { 'Open project': { go: 'projects/{project}', say: 'Opened its project' }, 'Start now': { to: 'starting', say: 'Started now' } },   // go: a real place (Schedules D16)
   'ticket-ended': { 'Start a new task': NEW_RUN },
   cancelled: { 'Start a new task': NEW_RUN },
   gate: { 'Accept as is': { to: 'working', say: 'Review accepted; manual tests start' }, 'Run another cycle': RESTART('One more Build and Review round'), Stop: STOP },
@@ -799,6 +802,12 @@ const SECTION = { 'Needs you': 'needs', 'Needs approval': 'needs', Working: 'run
 // Paused by you or until a time you set holds on nobody: Normal, so it is not counted (look.alert-ladder). Give the state's id to know.
 const PAUSE_NORMAL = new Set(['paused', 'paused-you', 'paused-at', 'group-paused']);
 export const sectionOf = (word, id = '') => (PAUSE_NORMAL.has(id) ? 'scheduled' : SECTION[word] || 'recent');
+
+// A run still going, as classic's scheduler counts one for "skip if still going" (src/core/scheduler.mjs LIVE_PIPELINE:
+// created, starting, running, pausing): Starting and Working, and a running run that waits on a question, a gate or a plan.
+// Paused, finished, in review and failed are not; so a schedule offers Stop, not Run now, while one is (F-G-G3-03).
+const GOING_ASKS = new Set(['question', 'gate', 'plan', 'clarify', 'outline', 'recovery']);
+export const stillGoing = (id) => { const w = runState(id).word; return w === 'Working' || w === 'Starting' || GOING_ASKS.has(id); };
 
 /**
  * A center's card action (panel.center): the one step that fits a task's state. `does` is what the page carries out;

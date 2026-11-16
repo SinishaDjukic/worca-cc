@@ -3,6 +3,7 @@
 // each bar says its value on hover and focus; a table under it says the same to a screen reader. No legend for one
 // series (the title names it), no grid, no second axis, no colour: colour stays for what needs you.
 import { attrs, esc } from './html.mjs';
+import { textLink } from './text-link.mjs';
 
 /**
  * @param {object} o
@@ -13,29 +14,31 @@ import { attrs, esc } from './html.mjs';
  * @param {boolean} [o.play]                  it is read and narrowed under the hand (watchChart)
  * @param {string} [o.hint]                   one quiet line under it
  * @param {string} [o.caption]                what it shows, above the plot, when the rows under it are not by time: "Per day, by project"
- * @param {{label:string, values:number[], texts?:string[]}[]} [o.parts]   what each bar is made of, at most four, the largest first; ink shades and a legend (look.chart-play)
+ * @param {{label:string, values:number[], texts?:string[], shade?:number}[]} [o.parts]   what each bar is made of, at most four, the largest first; ink shades and a legend (look.chart-play); `shade` (0–3) keeps a name's shade across views
  * @param {{value:number, text:string}} [o.limit]   a thin line across the plot, named once in the legend: the budget's daily pace
  */
 export function barChart({ label, bars, current = -1, height = 120, play = false, hint = '', caption = '', parts = null, limit = null }) {
   const high = Math.max(1, ...bars.map((b) => b.value)), max = Math.max(high, limit ? limit.value : 0), top = bars.findIndex((b) => b.value === high);
-  const segs = (i) => parts.filter((p) => p.values[i]).map((p) => `<i class="ch-seg is-s${parts.indexOf(p)}" style="flex-grow:${p.values[i]}"></i>`).join('');
+  const segs = (i) => parts.filter((p) => p.values[i]).map((p) => `<i class="ch-seg is-s${p.shade ?? parts.indexOf(p)}" style="flex-grow:${p.values[i]}"></i>`).join('');
   const partWords = (i) => parts.map((p) => `${p.label} ${p.texts ? p.texts[i] : p.values[i]}`).join(' · ');
   const noted = (b, i) => (parts ? { ...b, note: [partWords(i), b.note].filter(Boolean).join(' · ') } : b);
   const lineAt = limit ? Math.round((limit.value / max) * (height - 18)) : 0;
+  // more than eight bars: evenly spaced ticks from the first, at most eight; a narrow screen names only those (look.chart)
+  const step = bars.length > 8 ? Math.ceil(bars.length / 8) : 0, tick = (i) => (step && i % step === 0 ? ' is-tick' : '');
   const cols = bars.map((b, i) => {
     const h = Math.max(b.value ? 3 : 0, Math.round((b.value / max) * (height - 18)));
     const shown = i === top || i === current;
     // a number that would sit on the limit line goes beside its bar, under the line, so it never reads as the line's value
     const onLine = shown && limit && h <= lineAt && lineAt <= h + 20;
     const beside = onLine ? ` class="bc-v is-beside${i === 0 ? ' is-after' : ''}" style="bottom:${Math.max(0, h - 14)}px"` : ' class="bc-v"';
-    return `<span class="bc-col${i === current ? ' is-now' : ''}" data-i="${i}" tabindex="0"${b.off ? attrs({ 'data-off': b.off, 'aria-disabled': 'true', style: 'cursor:default' }) : ''}${play ? attrs({ 'data-read': readOf(noted(b, i)) }) : attrs({ title: `${b.label}: ${b.text}` })}><span${beside}>${shown ? esc(b.text) : ''}</span><span class="bc-bar${parts ? ' is-stack' : ''}" style="height:${h}px">${parts ? segs(i) : ''}</span><span class="bc-x">${esc(b.label)}</span></span>`;
+    return `<span class="bc-col${i === current ? ' is-now' : ''}${tick(i)}" data-i="${i}" tabindex="0"${b.off ? attrs({ 'data-off': b.off, 'aria-disabled': 'true', style: 'cursor:default' }) : ''}${play ? attrs({ 'data-read': readOf(noted(b, i)) }) : attrs({ title: `${b.label}: ${b.text}` })}><span${beside}>${shown ? esc(b.text) : ''}</span><span class="bc-bar${parts ? ' is-stack' : ''}" style="height:${h}px">${parts ? segs(i) : ''}</span><span class="bc-x">${esc(b.label)}</span></span>`;
   }).join('');
   const table = parts
     ? srTable(label, ['All', ...parts.map((p) => p.label)], bars.map((b, i) => [b.label, b.text, ...parts.map((p) => (p.texts ? p.texts[i] : String(p.values[i])))]))
     : `<table class="bc-table"><caption>${esc(label)}</caption><tbody>${bars.map((b) => `<tr><th scope="row">${esc(b.label)}</th><td>${esc(b.text)}</td></tr>`).join('')}</tbody></table>`;
   const line = limit ? `<span class="bc-limit" style="bottom:${lineAt}px"></span>` : '';
-  const legend = legendOf([...(parts || []).map((p, k) => ({ cls: `is-s${k}`, text: p.label })), ...(limit ? [{ cls: 'is-limit', text: limit.text }] : [])]);
-  return `<figure class="bar-chart${play ? ' is-read-able' : ''}" style="--bc-h:${height}px"${play ? ` data-chart data-n="${bars.length}"` : ''}>${capOf(caption)}${play ? '<div class="ch-read" hidden></div>' : ''}<div class="bc-plot${limit ? ' has-limit' : ''}" aria-hidden="true">${cols}${line}</div>${legend}${hintOf(hint)}${table}</figure>`;
+  const legend = legendOf([...(parts || []).map((p, k) => ({ cls: `is-s${p.shade ?? k}`, text: p.label })), ...(limit ? [{ cls: 'is-limit', text: limit.text }] : [])]);
+  return `<figure class="bar-chart${play ? ' is-read-able' : ''}${step ? ' is-thin' : ''}" style="--bc-h:${height}px"${play ? ` data-chart data-n="${bars.length}"` : ''}>${capOf(caption)}${play ? '<div class="ch-read" hidden></div>' : ''}<div class="bc-plot${limit ? ' has-limit' : ''}" aria-hidden="true">${cols}${line}</div>${legend}${hintOf(hint)}${table}</figure>`;
 }
 
 // ---- Chart play (docs/rail/look.md › look.chart-play): other forms appear only when you ask for them ----
@@ -96,9 +99,9 @@ export function lineChart({ label, labels, series, limit = null, current = -1, h
  */
 export function mixChart({ label, labels, parts, reads = [], height = 120, hint = '', caption = '' }) {
   const totals = labels.map((_, i) => parts.reduce((a, p) => a + (p.values[i] || 0), 0)), max = Math.max(1, ...totals);
-  const cols = labels.map((l, i) => `<span class="ch-col" data-i="${i}" tabindex="0" role="img" aria-label="${esc(`${l}: ${parts.map((p) => `${p.label} ${p.texts ? p.texts[i] : p.values[i]}`).join(', ')}`)}" data-read="${esc(readOf({ label: l, text: reads[i] || String(totals[i]), note: parts.map((p) => `${p.label} ${p.texts ? p.texts[i] : p.values[i]}`).join(' · ') }))}"><span class="ch-stack" style="height:${((totals[i] / max) * 100).toFixed(2)}%">${parts.map((p, k) => `<i class="ch-seg is-s${k}" style="flex-grow:${p.values[i] || 0}"></i>`).join('')}</span></span>`).join('');
+  const cols = labels.map((l, i) => `<span class="ch-col" data-i="${i}" tabindex="0" role="img" aria-label="${esc(`${l}: ${parts.map((p) => `${p.label} ${p.texts ? p.texts[i] : p.values[i]}`).join(', ')}`)}" data-read="${esc(readOf({ label: l, text: reads[i] || String(totals[i]), note: parts.map((p) => `${p.label} ${p.texts ? p.texts[i] : p.values[i]}`).join(' · ') }))}"><span class="ch-stack" style="height:${((totals[i] / max) * 100).toFixed(2)}%">${parts.map((p, k) => `<i class="ch-seg is-s${p.shade ?? k}" style="flex-grow:${p.values[i] || 0}"></i>`).join('')}</span></span>`).join('');
   const rows = labels.map((l, i) => [l, ...parts.map((p) => (p.texts ? p.texts[i] : String(p.values[i])))]);
-  return `<figure class="chart" style="--ch-h:${height}px" data-chart data-n="${labels.length}" data-last="${labels.length - 1}">${capOf(caption)}<div class="ch-read" hidden></div><div class="ch-plot"><div class="ch-hits is-cols" style="--ch-n:${labels.length}">${cols}</div></div>${axisOf(labels)}${legendOf(parts.map((p, k) => ({ cls: `is-s${k}`, text: p.label })))}${hintOf(hint)}${srTable(label, parts.map((p) => p.label), rows)}</figure>`;
+  return `<figure class="chart" style="--ch-h:${height}px" data-chart data-n="${labels.length}" data-last="${labels.length - 1}">${capOf(caption)}<div class="ch-read" hidden></div><div class="ch-plot"><div class="ch-hits is-cols" style="--ch-n:${labels.length}">${cols}</div></div>${axisOf(labels)}${legendOf(parts.map((p, k) => ({ cls: `is-s${p.shade ?? k}`, text: p.label })))}${hintOf(hint)}${srTable(label, parts.map((p) => p.label), rows)}</figure>`;
 }
 
 /**
@@ -165,9 +168,12 @@ export function watchChart(fig, { open, narrow } = {}) {
  * @param {object} o
  * @param {string} o.label
  * @param {{label:string, narrow?:boolean}[]} o.columns   after the name; narrow:false leaves on a narrow screen
- * @param {{name:string, cells:string[], sub?:boolean, quiet?:boolean, attrs?:object}[]} o.rows
+ * @param {{name:string, cells:string[], sub?:boolean, quiet?:boolean, attrs?:object, opens?:{id:string, open:boolean, label:string, head?:string, body?:string}}[]} o.rows
+ *   `opens` (list.row-opens-in-place): the row opens its detail in place, full width under it, with its head (markup), Hide and body (markup)
  */
 export function figureRows({ label, columns, rows }) {
   const cell = (t, c) => `<span class="fr-c${c.narrow === false ? ' is-wide' : ''}">${esc(t ?? '')}</span>`;
-  return `<div class="fr-list" role="group" style="--fr-n:${columns.length}"${attrs({ 'aria-label': label })}><div class="fr-row is-head" aria-hidden="true"><span></span>${columns.map((c) => cell(c.label, c)).join('')}</div>${rows.map((r) => `<button type="button" class="fr-row${r.sub ? ' is-sub' : ''}${r.quiet ? ' is-quiet' : ''}"${attrs({ 'aria-label': `${r.name}: ${columns.map((c, i) => `${c.label} ${r.cells[i]}`).join(', ')}`, ...(r.attrs || {}) })}><span class="fr-name">${esc(r.name)}</span>${columns.map((c, i) => cell(r.cells[i], c)).join('')}</button>`).join('')}</div>`;
+  const detail = (o) => (o && o.open ? `<div class="fr-detail"${attrs({ id: o.id, role: 'region', 'aria-label': o.label })}><div class="fr-d-head"><span class="fr-d-t">${o.head || ''}</span>${textLink({ label: 'Hide', attrs: { 'data-fr-hide': o.id } })}</div>${o.body || ''}</div>` : '');
+  const opened = (o) => (o ? { 'aria-expanded': String(!!o.open), 'aria-controls': o.id } : {});
+  return `<div class="fr-list" role="group" style="--fr-n:${columns.length}"${attrs({ 'aria-label': label })}><div class="fr-row is-head" aria-hidden="true"><span></span>${columns.map((c) => cell(c.label, c)).join('')}</div>${rows.map((r) => `<button type="button" class="fr-row${r.sub ? ' is-sub' : ''}${r.quiet ? ' is-quiet' : ''}${r.opens?.open ? ' is-open' : ''}"${attrs({ 'aria-label': `${r.name}: ${columns.map((c, i) => `${c.label} ${r.cells[i]}`).join(', ')}`, ...opened(r.opens), ...(r.attrs || {}) })}><span class="fr-name">${esc(r.name)}</span>${columns.map((c, i) => cell(r.cells[i], c)).join('')}</button>${detail(r.opens)}`).join('')}</div>`;
 }

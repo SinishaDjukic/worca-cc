@@ -7,6 +7,10 @@
 | `comp.no-radio-cards` | A choice is never a full-width toggle or radio cards; a yes or no never covers the page | It stays in the sentence or place it changes | by hand |
 | `comp.menu-groups` | A menu's head stays with its options: CompactMenu makes them one block, so columns never part them, and a scrolling menu never ends on a head alone (`watchMenus`) and fades where there is more (`watchScrollFades`); two columns at most, it takes the free height before it scrolls, and a menu stays inside the window, scrolling inside it (the columns sit inside what scrolls: a height on a columned box only makes more columns) | A head alone at a column's foot names nothing | design-system-components |
 | `comp.click-guard` | A second click within 400 ms at the same spot is ignored when what is under the pointer is no longer the button just pressed (`watchClickGuard`, once for the page); the same button, even redrawn, can be pressed twice, and a keyboard's click always passes | A double click must never fire what swaps or moves under the pointer, such as Approve then Merge | design-system-components |
+| `comp.keyed-patch` | A page that redraws a list on live data patches it by key (`patchKeyed`): an item whose drawing did not change keeps its node; live redraws wait for the next frame (`frameBatch`); an orb in a redrawn item keeps its canvas (`carry`) | A live frame must not cost the whole page, reset focus, caret or scroll, or restart the orb | design-system-keyed-list |
+| `comp.patch-parts` | A region drawn from named parts (the shell's `#app`, a slot, a page's column) patches by part (`patchParts`): a part whose string did not change keeps its nodes; a redraw that changes nothing writes nothing; a kept open menu is fitted from where it would sit, so its shift never builds on the last (`fitMenu`); menus are fitted only after a part changed or the window's width did; a list's `paint({ ifChanged })` whose drawing did not change writes nothing (only `paint` writes inside a list's root: it checks the root's top level, not below); the shell's Settings page and its sidebar menu are parts; part names are never integer-like | A redraw must not cost an unchanged part its focus, caret, scroll or open menu | design-system-keyed-list |
+| `comp.keep-open` | An open menu, inline field or dialog whose control is marked `data-keep` keeps its value, caret, selection and focus across any redraw of its page (`watchKeepOpen`, once for the page, for a rebuilt control; `morph` leaves a kept control's typed value alone); a route change (the place and its item, `keptRoute`: a side panel opened after them, or another way in after `@`, is the same route) closes it and never carries its text; what the page means wins: a page resets a kept field by closing it, changing its key, clearing the control itself before the redraw, or drawing a new value, and that value stands | A live frame must never take what you are typing | design-system-keep-open |
+| `comp.live-paint` | A hidden place does not paint on live changes; it paints once when shown | A change nobody can see must not cost the page that is in view | stillhet-chat-repaint-host |
 | `comp.menu-off` | A disabled menu item never acts, in any menu: it stays open, shows no pointer or hover, and says why (`watchMenus`) | A control acts, or is disabled and says why | design-system-components |
 | `comp.menu-tick` | A choice whose item carries a mark shows its tick at the row's end (CompactMenu), in any menu: the mark holds the place a tick has elsewhere | Where you are must be visible, not only announced | design-system-components |
 | `comp.menu-sub` | A menu that holds groups of choices (the model picker's makers) opens a group in place: its items replace the list under a ‹ back row named for the group; → Enter Space open it, ← Esc and the back row return to the group; the opener of the group holding the choice carries the tick (CompactMenu `openSub`, `menuKeys`) | One layout fits every width and never leaves the window | design-system-components |
@@ -34,10 +38,11 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | The hidden bar | BarStrip: one icon per kind of work, its CountBadge; opens its place | Chats 4, Tasks 7 |
 | What you keep an eye on | InView: a mark and a short name in the top bar only, like tabs; a card on hover with × for Out of view; +N opens a menu | Fix the flaky login, Working |
 | How many, on the corner of what it counts | CountBadge, `need` when any waits on you | Pulse 3 |
-| The sidebar's foot, the door to the profile menu | AccountButton, then AccountItem rows in its flyout | Interface mode, Away |
+| The sidebar's foot, the door to the profile menu | AccountButton, then AccountItem rows in its flyout; on a live page its name and initials are `describeAccount` of GET /api/whoami (dev's rule): a shared sign-in names the person and has the identity card, otherwise Profile and P, never a demo name | Interface mode, Away |
 | An action in the top bar | TopBarAction, a 20px icon with its CountBadge; its name in the tooltip; with news (its count grew) the icon shakes, again every 3.5 s, for as long as Settings › Notifications › Pulse icon says (until you read or act on it by default); never under reduced motion | Ask worca, Pulse |
 | Ask worca in the top bar | AskWorcaMark: a boxy chat bubble with the W for its text; three dots while Worca writes, filled with the W cut out while its column is open; an unread reply is its dot | Ask worca |
 | Starting anything | Composer: the words, then one line with +, the Ask/Task/Schedule sentence, voice and send | Start task |
+| A message waiting for the reply to end | ComposerQueue: Queued rows with Remove, and one line | Sends when the reply finishes |
 | **Choosing** | | |
 | A choice that changes a step | SentencePicker: a picker in the sentence it changes, opening a CompactMenu (in the app, wired to `toggleMenu`, so the menu has keys); groups of choices open as sub-menus (comp.menu-sub); the model picker's items come from `makerItems`, its closed chip's words from `modelText` | `Send [what needs you ▾] to [desktop ▾]` |
 | A choice among a form's or a panel's words | WordPicker, opening a CompactMenu | `dev ▾` base branch, `One PR ▾` |
@@ -55,7 +60,9 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | One pick from a long list, or a new one | ListEditor, single pick: find or create, recent first | Add to group |
 | **Entering** | | |
 | Text or a number in a form | Field | Branch, Budget |
+| Picking folders on this computer | FolderBrowser, in a Dialog (single, or multi with checkboxes) | Choose folder…, Several folders… |
 | Text Worca writes for you | SuggestionField | PR title and description, a drafted answer |
+| A field or menu that stays open while its page redraws | `data-keep` on its control, `watchKeepOpen` once for the page | Rename, Move to group…, Label |
 | A whole-text rewrite Worca suggests | RewriteSuggestion | Prompt check Improve |
 | Finding anything | the top bar's search (`searchResults` with areas): settings, chats, tasks, schedules, places, each under its area's head with its own mark; a result lands with the flash | Search or ask |
 | Context sent with a message | ListEditor's removable item, in the composer | This page × |
@@ -81,6 +88,8 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | Worca's finished words, with their formatting | Prose: dev's markdown rendered calm; lists, code, links, tables, ref chips in the words | Two changes fix it, a list and a code block |
 | Worca at work | OrbMark: the app's sphere of dots with Worca's W facing you, a hairline ring around it in light, lit while the sphere turns under it; still at rest; think, tool and write move it; `watchOrbs` brings every one to life | Thinking |
 | Moving through a long conversation or a task | Timeline on the right edge, its TimelineCard on hover | You · 14:32 (its time is TurnTime's) |
+| A person's tasks over the page's days | TimeTrack (its axis from `dayTicks`, each time placed by `trackX`), a WorkBar in each row's lane, a MarkLegend under it | Retry failed webhook deliveries · billing-api · #1418 |
+| A teammate's task, read only | TaskView: head, metadata, StatusLine with no action, Figures, runs, PR | Failed · The last attempt failed. |
 | What hangs under a row | the rounded tree under it (`tree` on a list's row) | a chat's tasks |
 | How far along, and its steps | Stepper, then StepRow on the rail | Plan · Build · Review |
 | One line that opens its detail in place | LineRow | Did all 3 parts you asked |
@@ -103,9 +112,12 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | The same figures across many rows | Table: divided rows, tabular figures, no box per row, the name first; on a narrow screen the least needed columns go to the row's detail | sessions, cost by step |
 | **Telling** | | |
 | Something done, nothing to answer | Toast | PR merged |
+| A problem with a choice, its rows and its ways out | ChoiceNote, on the rail before the choice is made: amber needs you, grey only tells (`form.run-options`) | This preset needs attention · Reset to default |
 | Something failed | where you acted: the strip, the dialog's alert, the field's error line, the suggestion's grey line; a Toast only when there is no such place | Could not merge #959 |
 | Nothing here, loading, could not load | EmptyState: one line on the text edge; loading shows nothing for 300ms, then one line, never a spinner or skeleton | No runs yet |
 | A part of the page cannot be drawn | EmptyState's error, in that part only, with Reload this part | Could not show the changes |
+| A place that is not in Stillhet yet | NotInStillhet: says so, names where it lives today in words, and offers Back to Chat; never "No … yet" | Insights is not in Stillhet yet |
+| A Settings row or section still sample on a live Stillhet | NotLiveRow: its name, or the section's one line, and the words; nothing to click | Not in Stillhet yet: turn Stillhet off from the top-bar switch to use it |
 | Something broke that nothing handles | Toast, error: stays until closed, a repeat counts on it | Something went wrong |
 | The connection dropped | a quiet line at the end of the top bar, grey dot, until it reconnects | Offline · retrying |
 
@@ -118,6 +130,7 @@ other library calls, never a person's text: a person's text goes through the lib
 |---|---|---|
 | A limit's tooltip: what, whose, how much, when it resets | `usageTip` | UsageRing |
 | A limit's window in words: Session, Weekly | `usageWindow` | UsageRing |
+| A live Settings control not wired yet: its reason | `NOT_LIVE_SENTENCE` | NotLiveRow |
 | Only the providers that count: one signed out has no ring | `connectedUsage` | UsageRing |
 | What holds the rows of the profile menu | `navFlyout` | AccountItem |
 | One of Appearance's choices: light, dark, system | `themeChoice` | AccountItem |
@@ -134,6 +147,11 @@ other library calls, never a person's text: a person's text goes through the lib
 | Select every row shown, or none | `selectAllBox` | SelectionBar |
 | A long press on a row starts selecting, on touch | `bindLongPress` | SelectionBar |
 | A view in a Dialog without a form: its head, its body | `dialogFrame` | Dialog |
+| A folder's name from its path | `folderName` | FolderBrowser |
+| What a typed folder is, under its field: Git, Folder, Not found | `folderProbe` | FolderBrowser |
+| Picked folders reviewed before they are added: a name each, Added or why skipped | `folderReview` | FolderBrowser |
+| An add way's own controls on the form: Choose folder…, Browse folders…, Use git | `folderWay` | FolderBrowser |
+| What a bulk add did, in one line | `reviewSummary` | FolderBrowser |
 | A document's name that opens it | `documentLink` | Text link |
 | The tick after something was copied | `copied` | CopyButton |
 | Ask Worca to write a field | `suggestButton` | SuggestionField |
@@ -153,6 +171,7 @@ other library calls, never a person's text: a person's text goes through the lib
 | Undo right after a step | `toastUndo` | Toast |
 | What a toast says, two lines at most, the whole text in its tooltip | `toastText` | Toast |
 | The head of a group of commands: how many, how many failed, how long | `commandHead` | CommandGroup |
+| A chat at its end follows what arrives; scrolled up, it holds | `pinnedToEnd` | ScrollFade |
 | A redraw that moves what changed instead of jumping | `morph` | What a toggle opens, moving |
 | The flash on what you just went to | `land` | What a toggle opens, moving |
 | Esc or a click outside takes a strip back | `watchStrips` | Closing what lies over a page |
@@ -162,6 +181,7 @@ other library calls, never a person's text: a person's text goes through the lib
 | A state's words filled with the task's facts | `fill` | States |
 | Every state there is | `stateIds` | States |
 | The section of a list a state goes in | `sectionOf` | States |
+| Whether a run is still going, as a schedule's skip if still going counts it | `stillGoing` | States |
 | Whether a step is done | `isDone` | States |
 | A stage's state from its steps: live, done or next | `stageState` | States |
 | The one state that speaks for a stage's steps | `subState` | States |

@@ -76,3 +76,9 @@ test('the strip CSS exists once, in the app part', () => {
   for (const n of ['.rc-confirm{', '.dc-link{']) assert.ok(!rail.includes(n), n);
   assert.ok(!shell.includes('#rail-strip{'));
 });
+
+test('V-TW-02 / V3-02: the TextLink rule aligns a wrapped link left', () => {
+  // a TextLink is a <button>, whose UA style centres its text; jsdom applies no stylesheet, so this pins the rule's text
+  const rule = /\.dc-link\{([^}]*)\}/.exec(readFileSync('ui/public/design-system/confirm-strip.css', 'utf8'))[1];
+  assert.match(rule, /(^|;)text-align:left(;|$)/);
+});

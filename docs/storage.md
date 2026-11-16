@@ -129,6 +129,9 @@ project's working tree, so nothing is ever committed to your repo.
     ledger/<runId>.json                  per-run team-metrics status for the History header (swept after 180 d)
     pr-cache.json                        Timeline: pull requests per repo#branch asked from gh (merged = final)
     tmp/enable-*                         transient staging for the orphan root commit
+  github/
+    pr-status.json                       PR status per repo#branch shared by every Worca process (merged = final)
+    quota.json                           the GitHub quota reset Worca waits for
   policy/
     repos/<owner~repo>/                  git worktree of the project repo, detached at origin/worca-policy
     locks/<owner~repo>.lock              cross-process lock for enable / follow / publish

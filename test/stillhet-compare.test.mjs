@@ -13,7 +13,15 @@ test('countDiffPixels: 0 for equal buffers, 1 for one changed channel, w*h for a
 
 test('PARTS lists the invitation, the design switch, one whole-page cell per shell route and one per non-default state', () => {
   assert.deepEqual(PARTS.map((p) => p.id), ['invitation', 'design-switch', ...ROUTES.map((r) => `route-${r}`), ...STATES.map(([s]) => `state-${s}`), ...PULSE_STATES.map(([s]) => `state-${s}`), ...CHAT_STATES.map(([s]) => `state-${s}`),
-    'state-task-loading-run', 'state-task-failed-run', 'state-task-gone-run', 'action-failed-run', 'terminal-chat']);
+    'state-task-loading-run', 'state-task-failed-run', 'state-task-gone-run', 'action-failed-run', 'terminal-chat',
+    'wf-way-agents', 'wf-way-scripts', 'wf-way-drafts-empty', 'wf-way-for-you', 'wf-way-team-empty', 'wf-list-loading', 'wf-list-failed', 'wf-canvas', 'wf-canvas-picked', 'wf-draft',
+    'wf-delete-confirm', 'wf-export-form', 'wf-export-plugin', 'wf-import-scripts', 'wf-agent-draft', 'wf-not-found', 'wf-fresh', 'run-graph-open-workflow',
+    'schedules-empty', 'schedules-loading', 'schedules-failed', 'schedule-skipped', 'schedule-draft', 'schedule-deleted-undo',
+    'mk-way-updates', 'mk-way-installed', 'mk-way-for-you', 'mk-way-all', 'mk-way-shelf', 'mk-way-shelf-new-empty', 'mk-way-source', 'mk-list-loading', 'mk-list-failed',
+    'mk-install-form', 'mk-remove-confirm', 'mk-setup-form', 'mk-needs-setup', 'mk-update-asks', 'mk-add-error', 'mk-not-found',
+    'pj-list-loading', 'pj-list-failed', 'pj-by-project', 'pj-rename-form', 'pj-remove-confirm', 'pj-remove-owned', 'pj-locate-form', 'pj-link-remote',
+    'pj-hand-project', 'pj-hand-project-error', 'ws-hand-form', 'ws-fresh-draft', 'ws-edit', 'ws-delete-confirm', 'ws-links-open', 'pj-not-found',
+    'in-list-loading', 'in-list-failed', 'in-team-empty', 'in-spend-person', 'in-spend-quarter', 'in-spend-year', 'in-heat-workflow', 'in-team-scope', 'in-link-copied', 'in-spend-link']);
   assert.deepEqual(PAGES, ['components.html', 'run-page.html', 'pulse.html']);
 });
 
@@ -361,4 +369,99 @@ test('TASKS_CELL_IDS (Stillhet Tasks): every Tasks cell is a part or a shown dee
   const all = TASKS_CELL_IDS.flatMap((part) => CELLS.map(([theme, width]) => ({ part, theme, width })));
   assert.deepEqual(tasksCoverage(all), []);
   assert.deepEqual(tasksCoverage(all.filter((c) => !(c.part === 'route-chat-c18' && c.width === 360))), ['route-chat-c18 light 360']);
+});
+
+test('Workflows (slice 7): WORKFLOWS_CELL_IDS lists every Workflows state and the whole page; the deep workflows/ routes are derived; no id collides', async () => {
+  const { WORKFLOWS_STATES, WORKFLOWS_CELL_IDS, workflowsCellIds } = await import('../tools/stillhet-compare.mjs');
+  const want = ['wf-way-agents', 'wf-way-scripts', 'wf-way-drafts-empty', 'wf-way-for-you', 'wf-way-team-empty', 'wf-list-loading', 'wf-list-failed', 'wf-canvas', 'wf-canvas-picked', 'wf-draft',
+    'wf-delete-confirm', 'wf-export-form', 'wf-export-plugin', 'wf-import-scripts', 'wf-agent-draft', 'wf-not-found', 'wf-fresh', 'run-graph-open-workflow'];
+  assert.deepEqual(WORKFLOWS_STATES.map(([id]) => id), want);
+  assert.deepEqual(WORKFLOWS_CELL_IDS, ['route-workflows', ...want]);
+  for (const id of WORKFLOWS_CELL_IDS) {
+    const p = PARTS.find((x) => x.id === id);
+    assert.ok(p, id); assert.equal(p.route, true, id); assert.equal(p.app.route, p.proto.route, id);
+  }
+  const ids = PARTS.map((p) => p.id);
+  assert.equal(new Set(ids).size, ids.length, 'no id twice');
+  assert.ok(!WORKFLOWS_CELL_IDS.some((id) => id.startsWith('state-')), 'no Workflows id collides with a state- id');
+  globalThis.window = { RailShell: { routes: () => ['workflows', 'workflows/workflow:default', 'workflows/~agents', 'run/ready', 'workflows/agent:planner'] } };
+  const deep = deepRoutes();
+  delete globalThis.window;
+  assert.deepEqual(workflowsCellIds(deep), [...WORKFLOWS_CELL_IDS, 'route-workflows-workflow-default', 'route-workflows-agents', 'route-workflows-agent-planner']);
+  assert.match(PARTS.find((p) => p.id === 'wf-list-failed').app.route, /^\?state=failed#workflows$/);
+  const { seedsOf } = await import('../tools/stillhet-compare.mjs');
+  const fresh = PARTS.find((p) => p.id === 'wf-fresh');
+  assert.deepEqual(seedsOf(fresh, 360), ['#mbar-menu', '#bar-head [data-bar-new="place"]', '[data-menu-pick="bar-new|hand"]'], 'narrow: the drawer opens first');
+  assert.deepEqual(seedsOf(fresh, 1280), ['#bar-head [data-bar-new="place"]', '[data-menu-pick="bar-new|hand"]']);
+  assert.deepEqual(seedsOf(PARTS.find((p) => p.id === 'terminal-chat'), 360), ['#route-chat [data-terminal]'], 'a plain seed is the same at every width');
+});
+
+test('SCHEDULES_CELL_IDS (Stillhet Schedules, D14): the six Schedules cells, each opened by the same address (and clicks) in both hosts', async () => {
+  const { SCHEDULES_CELL_IDS, SHOWN } = await import('../tools/stillhet-compare.mjs');
+  const ids = new Set([...PARTS.map((p) => p.id), ...SHOWN.map((h) => deepPart(h).id)]);
+  for (const id of SCHEDULES_CELL_IDS) assert.ok(ids.has(id), id);
+  const six = ['schedules-empty', 'schedules-loading', 'schedules-failed', 'schedule-draft', 'schedule-deleted-undo', 'schedule-skipped'];
+  for (const id of six) { const p = PARTS.find((x) => x.id === id); assert.ok(p, id); assert.equal(p.app.route, p.proto.route, id); }
+  assert.deepEqual(PARTS.find((x) => x.id === 'schedule-draft').seed, ['#route-schedule [data-menu="sc-at"]', '#route-schedule [data-menu-pick="sc-at|10:00"]']);
+});
+
+test('Marketplace (slice 8): its own cells, each the same route on both sides; the deep marketplace/ routes are derived', async () => {
+  const { MARKETPLACE_STATES, MARKETPLACE_CELL_IDS, marketplaceCellIds } = await import('../tools/stillhet-compare.mjs');
+  const want = ['mk-way-updates', 'mk-way-installed', 'mk-way-for-you', 'mk-way-all', 'mk-way-shelf', 'mk-way-shelf-new-empty', 'mk-way-source', 'mk-list-loading', 'mk-list-failed',
+    'mk-install-form', 'mk-remove-confirm', 'mk-setup-form', 'mk-needs-setup', 'mk-update-asks', 'mk-add-error', 'mk-not-found'];
+  assert.deepEqual(MARKETPLACE_STATES.map(([id]) => id), want);
+  assert.deepEqual(MARKETPLACE_CELL_IDS, ['route-marketplace', ...want]);
+  for (const id of MARKETPLACE_CELL_IDS) {
+    const p = PARTS.find((x) => x.id === id);
+    assert.ok(p, id); assert.equal(p.route, true, id); assert.equal(p.app.route, p.proto.route, id);
+  }
+  const ids = PARTS.map((p) => p.id);
+  assert.equal(new Set(ids).size, ids.length, 'no id twice');
+  assert.ok(!MARKETPLACE_CELL_IDS.some((id) => id.startsWith('state-')), 'no Marketplace id collides with a state- id');
+  globalThis.window = { RailShell: { routes: () => ['marketplace', 'marketplace/slack-chat', 'marketplace/~all', 'run/ready', 'workflows/~agents'] } };
+  const deep = deepRoutes();
+  delete globalThis.window;
+  assert.deepEqual(marketplaceCellIds(deep), [...MARKETPLACE_CELL_IDS, 'route-marketplace-slack-chat', 'route-marketplace-all']);
+  assert.match(PARTS.find((p) => p.id === 'mk-update-asks').app.route, /^\?state=update-asks#marketplace\/jira-source$/);
+});
+
+test('Projects (slice 9): its own cells, each the same route on both sides; a typed seed step; the deep projects/ routes are derived', async () => {
+  const { PROJECTS_STATES, PROJECTS_CELL_IDS, projectsCellIds, seedsOf } = await import('../tools/stillhet-compare.mjs');
+  const want = ['pj-list-loading', 'pj-list-failed', 'pj-by-project', 'pj-rename-form', 'pj-remove-confirm', 'pj-remove-owned', 'pj-locate-form', 'pj-link-remote',
+    'pj-hand-project', 'pj-hand-project-error', 'ws-hand-form', 'ws-fresh-draft', 'ws-edit', 'ws-delete-confirm', 'ws-links-open', 'pj-not-found'];
+  assert.deepEqual(PROJECTS_STATES.map(([id]) => id), want);
+  assert.deepEqual(PROJECTS_CELL_IDS, ['route-projects', ...want]);
+  for (const id of PROJECTS_CELL_IDS) {
+    const p = PARTS.find((x) => x.id === id);
+    assert.ok(p, id); assert.equal(p.route, true, id); assert.equal(p.app.route, p.proto.route, id);
+  }
+  const ids = PARTS.map((p) => p.id);
+  assert.equal(new Set(ids).size, ids.length, 'no id twice');
+  assert.ok(!PROJECTS_CELL_IDS.some((id) => id.startsWith('state-')), 'no Projects id collides with a state- id');
+  const fresh = PARTS.find((p) => p.id === 'ws-fresh-draft');
+  assert.deepEqual(seedsOf(fresh, 1280), ['#bar-head [data-bar-new="place"]', '[data-menu-pick="bar-new|hand-space"]', { fill: '#pj-hand-v', text: 'Web store' }, '[data-confirm="yes"]']);
+  // F-G-fid-16: the pick itself closes the drawer (COV-1): a click on the hidden #side-close timed out every 360 cell
+  assert.deepEqual(seedsOf(fresh, 360).slice(0, 4), ['#mbar-menu', '#bar-head [data-bar-new="place"]', '[data-menu-pick="bar-new|hand-space"]', { fill: '#pj-hand-v', text: 'Web store' }], 'narrow: the bar is the drawer, and the pick closes it over the form');
+  globalThis.window = { RailShell: { routes: () => ['projects', 'projects/billing-api', 'projects/ws:web-shop', 'marketplace/slack-chat', 'run/ready'] } };
+  const deep = deepRoutes();
+  delete globalThis.window;
+  assert.deepEqual(projectsCellIds(deep), [...PROJECTS_CELL_IDS, 'route-projects-billing-api', 'route-projects-ws-web-shop']);
+});
+
+test('Insights (slice 10): its own cells, each the same route on both sides; the copy-link cell has the clipboard; the deep insights/ routes are derived', async () => {
+  const { INSIGHTS_STATES, INSIGHTS_CELL_IDS, insightsCellIds, seedsOf } = await import('../tools/stillhet-compare.mjs');
+  const want = ['in-list-loading', 'in-list-failed', 'in-team-empty', 'in-spend-person', 'in-spend-quarter', 'in-spend-year', 'in-heat-workflow', 'in-team-scope', 'in-link-copied', 'in-spend-link'];
+  assert.deepEqual(INSIGHTS_STATES.map(([id]) => id), want);
+  assert.deepEqual(INSIGHTS_CELL_IDS, ['route-insights', ...want]);
+  for (const id of INSIGHTS_CELL_IDS) { const p = PARTS.find((x) => x.id === id); assert.ok(p, id); assert.equal(p.route, true, id); assert.equal(p.app.route, p.proto.route, id); }
+  const ids = PARTS.map((p) => p.id);
+  assert.equal(new Set(ids).size, ids.length, 'no id twice');
+  assert.deepEqual(seedsOf(PARTS.find((p) => p.id === 'in-spend-person'), 1280), ['[data-menu="in-of"]', '[data-pick="in-of|person:Maya"]']);
+  assert.deepEqual(seedsOf(PARTS.find((p) => p.id === 'in-link-copied'), 1280), ['[data-menu="in-more"]', '[data-menu-pick="in-more|link"]']);
+  assert.equal(PARTS.find((p) => p.id === 'in-link-copied').clipboard, true);
+  assert.equal(PARTS.find((p) => p.id === 'in-spend-link').app.route, '#insights/spend?by=client&when=this%20quarter');
+  globalThis.window = { RailShell: { routes: () => ['insights', 'insights/spend', 'insights/shaping', 'insights/heat', 'projects/billing-api', 'run/ready'] } };
+  const deep = deepRoutes();
+  delete globalThis.window;
+  assert.deepEqual(insightsCellIds(deep), [...INSIGHTS_CELL_IDS, 'route-insights-spend', 'route-insights-shaping', 'route-insights-heat']);
 });

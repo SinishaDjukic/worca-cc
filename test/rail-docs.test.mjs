@@ -115,6 +115,14 @@ test('the gallery\'s inline scripts parse: one syntax error blanks every example
   for (const [i, src] of scripts.entries()) assert.doesNotThrow(() => new Function(src), `inline script ${i + 1}`);
 });
 
+test('a logic entry with a gallery example is drawn: its example is keyed by the catalog name and the gallery draws logic too', () => {
+  const gallery = read('plans/rail/prototype/components.html');
+  const name = 'Patching a list by key';
+  assert.ok(catalog().logic.some((c) => c.name === name), `${name} is a logic entry`);
+  assert.ok(gallery.includes(`'${name}': [[`), `${name}: the example is keyed by its catalog name, or the gallery never draws it`);
+  assert.match(gallery, /\[\.\.\.window\.RailCatalog\.components, \.\.\.window\.RailCatalog\.logic\]\.filter\(\(c\) => c\.code && EX\[c\.name\]\)/, 'the gallery draws the logic entries that have an example');
+});
+
 test('every component in code is tested and drawn in the gallery', () => {
   const tests = read('test/design-system-components.test.mjs'); const gallery = read('plans/rail/prototype/components.html');
   for (const c of catalog().components) {
@@ -125,13 +133,13 @@ test('every component in code is tested and drawn in the gallery', () => {
   }
 });
 
-test('every gallery example sits under a catalog component in code: the gallery drops any other without a word', () => {
+test('every gallery example sits under a catalog component or logic entry in code: the gallery drops any other without a word', () => {
   const gallery = read('plans/rail/prototype/components.html');
-  const names = new Set(catalog().components.filter((c) => c.code).map((c) => c.name));
+  const names = new Set([...catalog().components, ...catalog().logic].filter((c) => c.code).map((c) => c.name));
   const keys = [...gallery.matchAll(/^ {4}(?:'([^']+)'|([A-Za-z]+)):\s*\[\[/gm)].map((m) => m[1] || m[2]);
   assert.ok(keys.length > 100, 'read the gallery examples');
-  // Frozen: these two predate the check and are not drawn; the list may only shrink.
-  const frozen = ['NamesWord', 'A list by date'];
+  // Frozen: this one predates the check and is not drawn; the list may only shrink.
+  const frozen = ['NamesWord'];
   assert.deepEqual(keys.filter((k) => !names.has(k) && !frozen.includes(k)), []);
   assert.deepEqual(frozen.filter((k) => !keys.includes(k) || names.has(k)), [], 'a frozen key left the gallery or got a component: drop it from the list');
 });

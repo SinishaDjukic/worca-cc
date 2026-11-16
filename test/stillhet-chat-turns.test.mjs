@@ -36,7 +36,7 @@ test('blocks and messages: you, words, think, notice, divider, the run proposal,
   assert.deepEqual(ts, ['you', 'think', 'words', 'proposal', 'task', 'notice', 'divider', 'you', 'failed']);
   const you = turns[0];
   assert.equal(you.text, 'Add a CSV export');
-  assert.deepEqual(you.files, ['spec.md']);
+  assert.deepEqual(you.files, [{ name: 'spec.md', att: 'att1', bytes: 120 }], 'COV-3 #5: with its id, its chip opens it');
   assert.equal(turns[2].html, 'I will start a task: &lt;b&gt;safe&lt;/b&gt;<br>with two lines', 'answer text is escaped, never raw HTML');
   assert.equal(turns[3].title, 'CSV export', 'a card with no type is the run proposal');
   assert.equal(turns[4].task, 'run-a', 'a started proposal is its run\'s TaskCard, through its link');
@@ -88,6 +88,12 @@ test('a live run TaskCard: one status line and step [n, m] from the stages, neve
 test('a started card whose run has ended names its task by the link\'s pipeline id (the store keeps an ended run by it)', () => {
   const turns = turnsOf(THREAD, { ...ctx, tasks: [{ id: 'pa', run: 'pa', title: 'Ask me', case: 'stopped' }] });
   assert.equal(turns.find((x) => x.id === 'card_run').task, 'pa');
+});
+
+test('a run proposal scheduled from the chat is the schedule\'s card: its series (scheduleId) or its one-off ticket (runId)', () => {
+  assert.deepEqual(cardTurn({ kind: 'card', id: 'c9', state: 'scheduled', card: { title: 'Nightly', scheduleId: 'sch_1' } }, ctx), { t: 'schedule', id: 'c9', task: 'sch_1' });
+  assert.deepEqual(cardTurn({ kind: 'card', id: 'c8', state: 'scheduled', card: { title: 'Once', runId: 'tk_1' } }, ctx), { t: 'schedule', id: 'c8', task: 'tk_1' });
+  assert.equal(cardTurn(block({ title: 'Nightly' }, 'scheduled'), ctx).t, 'proposal', 'a scheduled card that names nothing stays the proposal it was');
 });
 
 test('a resumed run (a new run id, same pipeline) still names the card\'s task: the chat task carries the pipeline id', () => {
@@ -228,4 +234,24 @@ test('a one-stage thenRun workflow card is one run-with turn; it falls back to A
   assert.equal(unnamed.title, 'A workflow'); assert.equal(unnamed.workflow, 'A workflow');
   const saved = cardTurn(block(card, 'saved', 'cw'), ctx);
   assert.equal(saved.t, 'change'); assert.equal(saved.state, 'applied'); assert.equal(saved.apply, 'Save workflow');
+});
+
+test('F-a2-03: a started feature member\'s card draws right after the card the chat started, an unstarted member draws none', () => {
+  const tasks = [{ id: 'p1', run: 'p1', title: 'Store tags', case: 'working', group: 'F', pos: 1 }, { id: 't3', run: 't3', title: 'Tag chips', case: 'scheduled', group: 'F', pos: 3 },
+    { id: 'p2', run: 'p2', title: 'Filter by tag', case: 'working', group: 'F', pos: 2 }];
+  const thread = { messages: [{ id: 'm1', role: 'user', text: 'Run tags' }, { id: 'm2', role: 'assistant', status: 'done', text: '', blocks: [block({ type: 'progress', runId: 'p1', pipelineId: 'p1' }, 'started', 'card_run')] }, { id: 'm3', role: 'user', text: 'Thanks' }],
+    runLinks: [{ runId: 'p1', pipelineId: 'p1', cardId: 'card_run', started: true }] };
+  const turns = turnsOf(thread, { tasks, now: NOW });
+  assert.deepEqual(turns.filter((x) => x.t === 'task'), [{ t: 'task', id: 'card_run', task: 'p1' }, { t: 'task', id: 'card_run:p2', task: 'p2' }]);
+  assert.equal(turns.findIndex((x) => x.id === 'card_run:p2'), turns.findIndex((x) => x.id === 'card_run') + 1, 'right after the card the chat started');
+  assert.ok(!turns.some((x) => x.task === 't3'), 'an unstarted member has no card');
+  assert.deepEqual(turnsOf(thread, { tasks, now: NOW }), turns, 'stable across repaints');
+  for (const x of turns) assert.deepEqual(turnErrors(x), [], x.t);
+});
+
+test('COV-3 #5: a you-turn keeps each attachment\'s id and size, so its chip opens it; a block with no id stays a name', () => {
+  const m = { id: 'u1', role: 'user', text: 'see these', createdAt: '2026-11-12T14:00:00Z', blocks: [{ kind: 'attachment', id: 'att_1', name: 'a.png', bytes: 120, attKind: 'image' }, { kind: 'attachment', id: null, name: 'old.txt' }] };
+  const [y] = turnsOf({ messages: [m], runLinks: [], inFlight: null }, { tasks: [], now: NOW });
+  assert.deepEqual(y.files, [{ name: 'a.png', att: 'att_1', bytes: 120 }, 'old.txt']);
+  assert.deepEqual(turnErrors(y), []);
 });

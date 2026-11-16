@@ -38,10 +38,13 @@ const DENY = ['with a clear stand-in', 'keep them visible and off', 'for anythin
 const denied = (text) => DENY.filter((p) => text.includes(p));
 const REQUIREMENTS = [
   'Stillhet (codename Rail) is a new design system under the `rail` flag, opt-in and opt-out.',
-  'We build it, and adapt every existing feature to it, **stepping first on the redesign**: the prototype\'s screen is what gets built.',
+  'We build it, and adapt every existing feature to it, **stepping first on the redesign**: the prototype\'s screen is what gets built, **on live data from its first line**.',
   'Where something a feature needs is missing in the design, it is created in the design first (the prototype plus a `docs/rail/` rule, catalog entry, component, test and gallery example), then built.',
   '**The design leads.** Dev contributes data, APIs and logic, never its screens or markup.',
-  'What the design introduces is developed for real: no "Would…" toasts and no disabled stand-ins in the app.',
+  '**Nothing fake, ever.** What the design introduces is developed for real: no "Would…" toasts and no success that only happened on screen.',
+  '**Every classic function reaches Stillhet.**',
+  '**Done means real.**',
+  '**How a page redraws is a design-system rule, not a page\'s choice.**',
 ];
 const SLICES = ['Instructions cleanup plus the flag, opt-in and opt-out', 'The prototype served under the flag', 'The live data layer', 'Chat', 'Tasks and the task page', 'Schedules', 'Workflows', 'Marketplace', 'Projects', 'Insights', 'Requirements', 'Settings', 'Onboarding'];
 const missingRequirements = (text) => REQUIREMENTS.filter((r) => !text.includes(r));
@@ -74,7 +77,7 @@ test('a "Would…" or stand-in line refuses it or names the mock; the deny list 
   assert.deepEqual(denied('no, with a clear stand-in until then'), ['with a clear stand-in']);
 });
 
-test('the single plan holds the five requirements, the 13 slices in order and the concept', () => {
+test('the single plan holds the requirements, the 13 slices in order and the concept', () => {
   const t = read(PLAN);
   assert.deepEqual(missingRequirements(t), []);
   assert.ok(slicesInOrder(t));
@@ -100,7 +103,7 @@ test('nothing outside history names a retired companion file; the wiring map hol
   assert.match(w, /\| Dev feature \| New name and place \| Dev data or module reused \| Old address \|/);
   const moves = w.split('## Moves')[1].split('\n\n')[1].split('\n').slice(2).filter((l) => l.startsWith('|'));
   assert.ok(moves.length >= 9, `${moves.length} moves`);
-  assert.equal((w.match(/add to the design first/g) || []).length >= 4, true);
+  assert.equal((w.match(/add to the design first|built in slice \d+ \(D\d+\)/g) || []).length >= 4, true);   // a design-first item, still to add or built by its slice
   const optin = w.split('## Opt-in')[1];
   assert.match(optin, /\|/);
   assert.doesNotMatch(optin, /Would/);

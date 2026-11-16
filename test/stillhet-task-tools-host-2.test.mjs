@@ -49,10 +49,19 @@ test('Switch model… and Resume at… are dev\'s resume with a model and its ti
   await w.RailTaskLive.flow('Switch model…', { taskId: 'h1', model: 'sonnet', modelLabel: 'Sonnet 5.5' });
   await w.RailTaskLive.flow('Resume at…', { taskId: 'h1', value: '23:30' });
   const [sw, at] = sent(calls);
-  assert.deepEqual(sw, ['POST', '/api/resume', { pipelineId: 'h1', model: 'sonnet' }]);
+  assert.deepEqual(sw, ['POST', '/api/resume', { pipelineId: 'h1', baseCheck: true, model: 'sonnet' }], 'F-cov23-08: classic\'s resumeBody carries baseCheck');
   assert.equal(at[1], '/api/schedules/resume');
   assert.equal(at[2].pipelineId, 'h1');
   assert.equal(new Date(at[2].scheduledFor).getHours(), 23);
+});
+
+test('F-cov23-08: Switch model… on a moved base asks; Resume anyway resends with baseAck and the same model', async () => {
+  let n = 0;
+  const { w, calls } = await page('#run/h2', (u) => (u === '/api/resume' && !n++ ? [409, { error: 'The base moved', code: 'base-moved' }] : [200, { ok: true }]));
+  const first = await w.RailTaskLive.flow('Switch model…', { taskId: 'h1', model: 'sonnet', modelLabel: 'Sonnet 5.5' });
+  assert.equal(first.prompt, 'base');
+  await w.RailTaskLive.flow('Switch model…', { taskId: 'h1', model: 'sonnet', modelLabel: 'Sonnet 5.5', baseAck: true });
+  assert.deepEqual(sent(calls).map((c) => c[2]), [{ pipelineId: 'h1', baseCheck: true, model: 'sonnet' }, { pipelineId: 'h1', baseCheck: true, baseAck: true, model: 'sonnet' }]);
 });
 
 test('dev\'s #group/ID draws its group page: its members in order, and Merge #N merges that member\'s PR', async () => {
@@ -95,7 +104,7 @@ test('Publish branch and a running task\'s away mode are dev\'s publish and nigh
 test('a group whose tasks are all ready offers Create PR: dev\'s combine check first, then its ship (separate PRs, or one when they combine)', async () => {
   const groups = { groups: [{ id: 'G2', kind: 'user', title: 'Pager pair', members: [{ position: 1, title: 'Shipped', pipelineId: 'h2', pr: null }, { position: 2, title: 'Old pause', pipelineId: 'h1', pr: null }], cost: { usd: 1 } }] };
   const src = sources();
-  for (const p of src.history.pipelines.filter((x) => x.id === 'h1' || x.id === 'h2')) Object.assign(p, { status: 'done', branch: 'feat/' + p.id, survived: true, pr: null });
+  for (const p of src.history.pipelines.filter((x) => x.id === 'h1' || x.id === 'h2')) Object.assign(p, { status: 'done', branch: 'feat/' + p.id, sourceBranch: 'main', survived: true, pr: null });
   const r = (u) => (u === '/api/run-groups' ? [200, groups] : u === '/api/run-groups/G2/combine' ? [200, { n: 2, oneOff: '' }] : read(u));
   const h = await liveHost({ sources: src, read: r, write: (u) => (/\/ship$/.test(u) ? [200, { ok: true, mode: 'separate', prs: ['u1', 'u2'] }] : [200, {}]) });
   await go(h.w, '#run/group:G2', 200); await settle(400);
@@ -112,7 +121,7 @@ test('a group whose tasks are all ready offers Create PR: dev\'s combine check f
 test('a failed live Create 2 PRs invents no PR: no #9…, no "Opened", dev\'s plain refusal', async () => {
   const groups = { groups: [{ id: 'G2', kind: 'user', title: 'Pager pair', members: [{ position: 1, title: 'Shipped', pipelineId: 'h2', pr: null }, { position: 2, title: 'Old pause', pipelineId: 'h1', pr: null }], cost: { usd: 1 } }] };
   const src = sources();
-  for (const p of src.history.pipelines.filter((x) => x.id === 'h1' || x.id === 'h2')) Object.assign(p, { status: 'done', branch: 'feat/' + p.id, survived: true, pr: null });
+  for (const p of src.history.pipelines.filter((x) => x.id === 'h1' || x.id === 'h2')) Object.assign(p, { status: 'done', branch: 'feat/' + p.id, sourceBranch: 'main', survived: true, pr: null });
   const r = (u) => (u === '/api/run-groups' ? [200, groups] : u === '/api/run-groups/G2/combine' ? [200, { n: 2, oneOff: '' }] : read(u));
   const h = await liveHost({ sources: src, read: r, write: (u) => (/\/ship$/.test(u) ? [409, { error: 'git push was rejected' }] : [200, {}]) });
   await go(h.w, '#run/group:G2', 200); await settle(400);

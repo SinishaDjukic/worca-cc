@@ -11,12 +11,14 @@ const md = (id, extra = {}) => ({ id, type: 'md', ...extra });
 const MODEL_IDS = { 'Opus 5.5': 'claude-opus-5-5', 'Sonnet 5.5': 'claude-sonnet-5-5', 'Haiku 5.5': 'claude-haiku-5-5' };
 const MODEL_WORDS = Object.fromEntries(Object.entries(MODEL_IDS).map(([k, v]) => [v, k]));
 
-/** A prototype workflow ({steps:[[name, ref, model, effort]], loops:[[from, to, n]]}) as dev's template and its agents. */
-function build(wf, says) {
-  const names = wf.steps.map((s) => s[0]), agents = {};
+const ICON = '<circle cx="12" cy="8" r="3.6"/><path d="M5 20c1.2-5.4 12.8-5.4 14 0"/>';
+
+/** A prototype workflow ({steps:[[name, ref, model, effort]], loops:[[from, to, n]]}) as dev's template and its agent sidecars. */
+function demo(wf) {
+  const names = wf.steps.map((s) => s[0]), agentsByKey = {};
   const sends = (i) => wf.loops.find((l) => l[0] === names[i]), takes = (i) => wf.loops.some((l) => l[1] === names[i]);
   wf.steps.forEach(([name, ref], i) => {
-    agents[`s${i}`] = { key: `s${i}`, displayName: name, color: sends(i) ? 'amber' : ['violet', 'blue', 'green', 'slate'][i % 4],
+    agentsByKey[`s${i}`] = { key: `s${i}`, displayName: name, color: sends(i) ? 'amber' : ['violet', 'blue', 'green', 'slate'][i % 4],
       ...(sends(i) ? { verdict: { filename: `s${i}.json` } } : {}),
       inputs: [md('in', { required: true }), ...(takes(i) ? [md('back', { required: false, loop: true })] : [])],
       outputs: sends(i) ? [md('fix', { when: 'blocking' }), md('ok', { when: 'clean' })] : [md('out', { when: 'always' })] };
@@ -34,9 +36,22 @@ function build(wf, says) {
     ...wf.steps.slice(1).map((_, k) => ({ id: `w${k}`, from: { node: `n${k}`, port: outOf(k) }, to: { node: `n${k + 1}`, port: 'in' } })),
     { id: 'w_end', from: { node: `n${wf.steps.length - 1}`, port: outOf(wf.steps.length - 1) }, to: { node: 'n_end', port: 'result' } },
     ...wf.loops.map(([from, to, n], k) => ({ id: `wl${k}`, from: { node: `n${names.indexOf(from)}`, port: 'fix' }, to: { node: `n${names.indexOf(to)}`, port: 'back' }, config: { maxCycles: +n } }))];
-  const m = buildGraphManifest({ id: `wf_${wf.id}`, name: wf.title, version: 2, domain: 'coding', nodes, wires }, agents);
-  const meta = manifestAgents(m); wf.steps.forEach(([, ref], i) => { if (meta[`s${i}`]) { meta[`s${i}`].description = says?.(ref) || ''; meta[`s${i}`].icon = meta[`s${i}`].icon || '<circle cx="12" cy="8" r="3.6"/><path d="M5 20c1.2-5.4 12.8-5.4 14 0"/>'; } });
+  return { tpl: { id: `wf_${wf.id}`, name: wf.title, version: 2, domain: 'coding', nodes, wires }, agentsByKey };
+}
+
+/** dev's template (a live workflow's `tpl`, slice 7 D5) as the drawn template, its ports and its agents, through dev's manifest. */
+function fromTpl(wf, says) {
+  const m = buildGraphManifest(wf.tpl, wf.agentsByKey || {}, { scripts: wf.scriptsByKey || {} });
+  const meta = manifestAgents(m);
+  for (const [k, a] of Object.entries(meta)) { a.description = says?.(k) || wf.agentsByKey?.[k]?.description || ''; a.icon = a.icon || ICON; }
   return { tpl: manifestTemplate(m), portsFn: manifestPortsFn(m), agents: meta };
+}
+
+/** A prototype workflow as dev's template and its agents: its demo template, drawn as fromTpl draws a live one. */
+function build(wf, says) {
+  const g = fromTpl(demo(wf));
+  wf.steps.forEach(([, ref], i) => { if (g.agents[`s${i}`]) g.agents[`s${i}`].description = says?.(ref) || ''; });
+  return g;
 }
 
 /** Lays the template out as dev's Auto-layout does (the canvas's Auto-align). */
@@ -45,13 +60,14 @@ function align(g) { const pos = autoLayout(g.tpl, g.portsFn, { describe: true })
 /**
  * Draws a workflow into host, fitted to width.
  * @param {HTMLElement} host
- * @param {object} wf          the prototype's workflow
+ * @param {object} wf          the prototype's workflow (a live one carries dev's template as `tpl`, and its agentsByKey)
  * @param {{width?:number, zoom?:number, mode?:'static'|'edit', aligned?:boolean, select?:string, says?:(ref:string)=>string, g?:object}} [o]
  *   zoom: the graph's real size (1 is full size; the view never magnifies past it) and the host takes its width; 0 fits width
  * @returns {{g:object, view:object, fit:number}}   g is the drawn template (keep it for Undo); fit is the zoom that fits width
  */
 function mount(host, wf, { width = 680, zoom, mode = 'static', aligned = false, select = '', says = null, g = null } = {}) {
-  let graph = g || build(wf, says); if (!g && aligned) graph = align(graph);
+  // a live workflow carries dev's template (D5); the same layout rule on both paths: aligned runs Auto-align, else the stored x/y
+  let graph = g || (wf.tpl ? fromTpl(wf, says) : build(wf, says)); if (!g && aligned) graph = align(graph);
   host.innerHTML = '';
   const view = createGraphView(host, { doc: host.ownerDocument, mode, portsFn: graph.portsFn, agents: graph.agents, describe: true, modelLabel: (id) => MODEL_WORDS[id] || id });
   view.render(graph.tpl, {});
@@ -65,4 +81,4 @@ function mount(host, wf, { width = 680, zoom, mode = 'static', aligned = false, 
   return { g: graph, view, fit };
 }
 
-window.RailGraph = { mount, build, align };
+window.RailGraph = { mount, build, align, fromTpl, demo };

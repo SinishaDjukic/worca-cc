@@ -120,6 +120,17 @@ test('fitMenu: a menu stays 16px inside the window', () => {
   at.left = -50; m.style = {}; R.fitMenu(m, 400); assert.equal(m.getBoundingClientRect().left, 16);
 });
 
+test('fitMenu: a kept menu is measured from where it would sit, so redraws and resizes never drift it (B2.7 review)', () => {
+  const at = { left: 300, width: 200 }; let writes = 0; const style = {};
+  const m = { style: new Proxy(style, { set: (o, k, v) => { o[k] = v; writes++; return true; } }), getBoundingClientRect: () => { const left = at.left + parseFloat(style.left || 0); return { left, right: left + at.width }; } };
+  R.fitMenu(m, 400); assert.equal(m.getBoundingClientRect().right, 384);
+  writes = 0; for (let i = 0; i < 3; i++) R.fitMenu(m, 400);   // the same window: the kept menu stays put, nothing written
+  assert.equal(m.getBoundingClientRect().right, 384); assert.equal(writes, 0);
+  for (let i = 0; i < 2; i++) { R.fitMenu(m, 370); assert.equal(m.getBoundingClientRect().right, 354); }   // a narrower window: inside it, every draw
+  R.fitMenu(m, 1000); assert.equal(m.getBoundingClientRect().left, 300);   // a wider one: back where a fresh menu opens
+  at.left = -50; R.fitMenu(m, 400); R.fitMenu(m, 400); assert.equal(m.getBoundingClientRect().left, 16);
+});
+
 test('act.archive: Archive says what goes and what stays', () => {
   const f = R.actionFlow('interrupted', CTX).Archive;
   assert.match(f.confirm, /local branch, worktree and logs are removed; the remote branch and any PR stay/);
@@ -370,11 +381,34 @@ test('a project with no remote offers Link remote, never Create PR; a mock run o
   assert.equal(R.runState('mock-run').word, 'Mock task'); assert.equal(R.runState('mock-run').action, null);
 });
 
+test('B1.7: no-base offers Publish branch and Discard, never Create PR or Link remote; its section is Ready\'s', () => {
+  const s = R.runState('no-base'), labels = [s.action.label, ...s.action.items];
+  assert.equal(s.word, 'Ready');
+  assert.deepEqual(labels, ['Publish branch', 'Discard']);
+  assert.ok(!labels.some((l) => /Create|Link remote|How to merge/.test(l)), labels.join());
+  assert.equal(R.sectionOf(s.word, 'no-base'), R.sectionOf(R.runState('no-remote').word, 'no-remote'));
+  assert.deepEqual(Object.keys(R.actionFlow('no-base', { branch: 'feat/x' })), ['Publish branch', 'Discard']);
+});
+
+test('F-3-02: workPhrase with no base: \'feat/x\', \'#9 merges feat/x\', \'feat/x merged by #9\'', () => {
+  assert.equal(R.workPhrase({ branch: 'feat/x', base: '' }), 'feat/x');
+  assert.equal(R.workPhrase({ branch: 'feat/x' }), 'feat/x');
+  assert.equal(R.workPhrase({ branch: 'feat/x', base: '', pr: '#9' }), '#9 merges feat/x');
+  assert.equal(R.workPhrase({ branch: 'feat/x', base: '', pr: '#9', merged: true }), 'feat/x merged by #9');
+  assert.doesNotMatch(R.workPlace({ branch: 'feat/x', base: '' }), /into|rc-base/);
+});
+
 test('sectionOf: a list reads a real case: Paused and Stopped are never Ready, and every state has its section', () => {
   for (const id of R.stateIds()) assert.ok(['needs', 'running', 'scheduled', 'recent'].includes(R.sectionOf(R.runState(id).word)), id);
   assert.equal(R.runState('paused').word, 'Paused'); assert.equal(R.sectionOf('Paused'), 'needs');
   assert.equal(R.runState('stopped').word, 'Stopped'); assert.equal(R.sectionOf('Stopped'), 'recent');
   assert.equal(R.sectionOf(R.runState('scheduled').word), 'scheduled');
+});
+
+test('stillGoing (F-G-G3-03): a run still going is classic\'s live run, a question or a gate included; paused, finished and in review are not', () => {
+  for (const id of ['starting', 'working', 'network', 'question', 'gate', 'plan', 'clarify', 'recovery', 'ticket-firing']) assert.equal(R.stillGoing(id), true, id);
+  for (const id of ['paused', 'paused-you', 'paused-limit', 'interrupted', 'failed', 'ready', 'checks', 'failing', 'merged', 'stopped', 'scheduled', 'ticket-missed']) assert.equal(R.stillGoing(id), false, id);
+  assert.throws(() => R.stillGoing('nope'), /unknown state/);
 });
 
 test('chatState, bulkStateOf: a chat sorts Needs you, Running, Recent; an unknown one throws; a run\'s word to the bulk table', () => {
@@ -493,4 +527,19 @@ test('makerItems groups models by maker and modelText names a model run off its 
   assert.ok(Array.isArray(items) && items.length >= 2, 'one opener per maker');
   assert.match(R.modelText(rows[2]), /Copilot/);
   assert.doesNotMatch(R.modelText(rows[0]), /Claude Code/);
+});
+
+test('frameBatch: live redraws asked many times before a frame run once, through the library (cases in design-system-keyed-list)', () => {
+  const frames = []; let n = 0;
+  const b = R.frameBatch({ requestAnimationFrame: (f) => frames.push(f) }, () => { n++; });
+  b.request(); b.request(); b.request();
+  frames.forEach((f) => f());
+  assert.deepEqual([frames.length, n], [1, 1]);
+});
+
+test('keptRoute (comp.keep-open): the place and its item, without a side panel or an @ way in', () => {
+  assert.equal(R.keptRoute('#chat/ask_1/run/run-a/logs'), '#chat/ask_1');
+  assert.equal(R.keptRoute('#projects/billing-api@legacy'), '#projects/billing-api');
+  assert.equal(R.keptRoute('#chat'), '#chat');
+  assert.equal(R.keptRoute(''), '');
 });
