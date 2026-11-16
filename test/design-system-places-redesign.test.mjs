@@ -158,3 +158,18 @@ test('Workflows: the lists use FilterRow, the pages have no composer, and the ed
     assert.equal(M.projectMonth('no-such-project'), null);
   });
 }
+
+test('barChart: a chart you can read is one Tab stop of named bars; one that only shows has no Tab stops and keeps its table', async () => {
+  const { barChart } = await import('../ui/public/design-system/components/chart.mjs');
+  const { JSDOM } = await import('jsdom');
+  const bars = [{ label: 'Mon', value: 10, text: '$10' }, { label: 'Tue', value: 40, text: '$40' }, { label: 'Wed', value: 5, text: '$5' }];
+  const play = new JSDOM(barChart({ label: 'Spend by day', bars, current: 2, play: true })).window.document;
+  assert.equal(play.querySelector('.bc-plot').getAttribute('aria-hidden'), null, 'the bars are read: the plot is not hidden');
+  assert.equal(play.querySelector('.bc-plot').getAttribute('role'), 'group');
+  assert.deepEqual([...play.querySelectorAll('.bc-col')].map((b) => [b.getAttribute('role'), b.getAttribute('tabindex'), b.getAttribute('aria-label')]), [['button', '-1', 'Mon: $10'], ['button', '-1', 'Tue: $40'], ['button', '0', 'Wed: $5']]);
+  assert.equal(play.querySelector('.bc-table').getAttribute('aria-hidden'), 'true', 'one or the other: the named bars, not the table too');
+  const still = new JSDOM(barChart({ label: 'Spend by day', bars })).window.document;
+  assert.equal(still.querySelector('.bc-plot').getAttribute('aria-hidden'), 'true');
+  assert.equal(still.querySelectorAll('.bc-col[tabindex]').length, 0, 'no Tab stop inside a hidden plot');
+  assert.equal(still.querySelector('.bc-table').getAttribute('aria-hidden'), null);
+});

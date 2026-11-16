@@ -9,7 +9,7 @@
   const say = (t, undo) => window.StillhetPulse?.say(t, undo);
   const AS = { bars: 'bars', lines: 'lines', running: 'running total', table: 'table' };
   const AGAINST = { none: 'no comparison', before: 'the period before', budget: 'the budget' };
-  const HINT = 'Drag across to narrow';
+  const HINT = 'Drag across to narrow, or hold Shift and press the arrow keys. The Time filter narrows it too.';
   const TEAM_EMPTY = 'No project shares its team numbers yet';   // D3: turning sharing on stays in the project's settings
   const ALIAS = { saved: 'time-saved', outcomes: 'ends' };   // old links to what the page used to be called
   const views = [{ id: 'v1', name: 'By client, then workflow', sub: 'spend', st: { by: 'client', then: 'workflow' } }, { id: 'v2', name: 'Monthly for finance', sub: 'spend', st: { by: 'costcenter', when: 'last month', as: 'table' } }];

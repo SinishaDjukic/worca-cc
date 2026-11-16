@@ -82,8 +82,24 @@
     document.body.classList.toggle('nav-open', on);
     const scrim = document.getElementById('nav-scrim'); if (scrim) scrim.hidden = !on;
     document.getElementById('mbar-menu')?.setAttribute('aria-expanded', String(on));
-    document.querySelector('.main-col')?.toggleAttribute('inert', on);
+    // the drawer is a dialog (key.drawer): it has the role and a name, the page behind it is inert, the focus goes into it and
+    // Tab stays in it; Esc and the scrim close it and the focus is back on Menu (dismissOnOutside, below)
+    const rail = document.getElementById('side-rail'), was = rail?.getAttribute('role') === 'dialog';
+    for (const el of document.querySelectorAll('.main-col, #topnav, #main-content')) el.toggleAttribute('inert', on);
+    if (!rail || was === on) return;
+    if (on) { rail.setAttribute('role', 'dialog'); rail.setAttribute('aria-modal', 'true'); rail.setAttribute('aria-label', 'Menu'); (rail.querySelector('[data-bar-house], .place-btn') || R.focusables(rail).find((x) => x.getClientRects().length))?.focus(); }
+    else { rail.removeAttribute('role'); rail.removeAttribute('aria-modal'); rail.removeAttribute('aria-label'); }
   }
+  // Tab stays inside the open drawer
+  addEventListener('keydown', (e) => {
+    if (e.key !== 'Tab' || !document.body.classList.contains('nav-open')) return;
+    const rail = document.getElementById('side-rail'); if (!rail || document.querySelector('.viewer-modal')) return;
+    const stops = R.focusables(rail).filter((x) => x.getClientRects().length), a = document.activeElement;
+    const open = document.querySelector('.menu'); if (open && open.contains(a)) return;   // a menu the drawer opened has its own Tab
+    if (!stops.length) return;
+    if (!rail.contains(a)) { e.preventDefault(); stops[0].focus(); return; }
+    if (e.shiftKey && a === stops[0]) { e.preventDefault(); stops[stops.length - 1].focus(); } else if (!e.shiftKey && a === stops[stops.length - 1]) { e.preventDefault(); stops[0].focus(); }
+  }, true);
 
   // ---- Ask worca: the side column, with today's Chat capture inside. Pushes above 1080px, covers to 761px, takes the
   // window below (shell.css); dragged between 360 and 680px and kept; fades in, closes at once. ----
@@ -430,9 +446,9 @@
     if (on('[data-in-view-more]')) { inViewMenu = !inViewMenu; drawInView(); return; }
     if ((hit = on('[data-mini]'))) { window.StillhetShell.go(hit.dataset.mini); return; }
     if (on('[data-pins-all]')) { pinsAll = true; drawBar(); return; }
-    if (on('[data-bar-hide]')) { hideBar(); return; }
+    if (on('[data-bar-hide]')) { hideBar(); if (e.detail === 0) document.getElementById('bar-show')?.focus(); return; }   // by the keyboard: the focus goes to what brings the bar back
     if (on('[data-bar-pin]')) { setStrip(false); syncRail(); drawBar(); return; }
-    if (on('#bar-show')) { setStrip(false); syncRail(); drawBar(); return; }
+    if (on('#bar-show')) { setStrip(false); syncRail(); drawBar(); if (e.detail === 0) document.querySelector('[data-bar-hide]')?.focus(); return; }
     if ((hit = on('[data-skip]'))) { e.preventDefault(); focusHeading(); return; }   // key.skip-link
     if ((hit = on('.rl-search-res [data-menu-pick^="srch|"]')) && hit.dataset.menuPick !== 'srch|ask') { const at = location.hash; setTimeout(() => { if (location.hash !== at) focusHeading(); }, 80); }   // key.search: the page a result opened takes the focus, on its heading (pulse.js opens it)
     if (on('[data-bar-home]')) { quickNav = false; window.StillhetChats?.home(); homeNext = true; window.StillhetShell.go('chat'); return; }   /* nav.one-bar: the W alone goes home: the places, with Chat's home behind them */
@@ -639,6 +655,17 @@
   // A change of mode or a Labs flag: the sidebar follows, and the page if that changes whether it is locked.
   R.prefs.onChange(() => { applyPrefs(); drawMini(); if (routed.view && (TITLES[routed.view] || routed.view === 'schedule') && !!lockHere(routed.view, routed.arg) !== routed.locked) route(); else if (routed.view) drawBar(); });
   addEventListener('hashchange', route);
+  // key.page-heading: a page change never leaves the focus on nothing. Once the new page is drawn, the focus lands on its
+  // heading, unless it is still somewhere that goes on (a bar's list you are walking, a field you are typing in, a dialog).
+  let pageWas = location.hash.split('@')[0];
+  addEventListener('hashchange', () => {
+    const now = location.hash.split('@')[0]; if (now === pageWas) return; pageWas = now;
+    setTimeout(() => {
+      const a = document.activeElement;
+      if (a && a !== document.body && a.isConnected && a.getClientRects().length && a.closest('.bar-list, textarea, input, select, [contenteditable="true"], .viewer-modal, [role="dialog"], .menu, #main-content')) return;
+      focusHeading();
+    }, 120);
+  });
   document.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') { e.preventDefault(); if (routed.view === 'chat') { document.querySelector('#route-chat [data-composer-t]')?.focus(); return; } askOpen = !askOpen; syncAsk(routed.view); if (askOpen) setTimeout(() => document.querySelector('#ask-side [data-composer-t]')?.focus(), 50); } });   // ⌘J: Ask worca beside this page
   // another Pulse case: the run page in view takes its title from it
   window.StillhetWorld.onChange(() => { drawInView(); if (routed.view === 'run') { reopen = true; route(); } });

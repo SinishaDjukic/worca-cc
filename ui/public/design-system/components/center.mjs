@@ -99,7 +99,7 @@ export function quietLine({ n, noun, names, open = false, hook = {} }) {
  */
 export function centerShelf({ title, count = '', link = '', word = '', tone = '', facts = '', cards = '', rest = '', attrs: a = {} }) {
   const says = [word ? `<span class="pg-state${tone ? ` is-${esc(tone)}` : ''}">${esc(word)}</span>` : '', facts].filter(Boolean).join(' · ');
-  return `<section class="pg-shelf center-shelf"${attrs(a)}><h3 class="pg-shelf-h">${esc(title)}${count ? `<span class="n">${esc(count)}</span>` : ''}${link ? `<span class="center-shelf-l">${link}</span>` : ''}</h3>${says ? `<p class="pg-shelf-m">${says}</p>` : ''}${cards ? `<div class="pg-grid">${cards}</div>` : ''}${rest}</section>`;
+  return `<section class="pg-shelf center-shelf"${attrs(a)}><h2 class="pg-shelf-h">${esc(title)}${count ? `<span class="n">${esc(count)}</span>` : ''}${link ? `<span class="center-shelf-l">${link}</span>` : ''}</h2>${says ? `<p class="pg-shelf-m">${says}</p>` : ''}${cards ? `<div class="pg-grid">${cards}</div>` : ''}${rest}</section>`;
 }
 
 /**

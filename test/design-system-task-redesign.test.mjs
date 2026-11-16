@@ -141,7 +141,7 @@ test('a card that asks shows what it asks about; its title opens its page; it sa
     menu: '<span class="rc-pop"><div class="menu">m</div></span>',
     asks: { label: 'What the review found', lines: ['2 small things left'], decisions: [{ text: 'Confirm these findings · 2', attrs: { 'data-open-task': 't16' } }], more: { label: 'Read it on the task page', attrs: { 'data-card-stage': 't16|Review' } } } }));
   assert.equal(d.querySelector('.tp-kicker .tp-from').textContent, 'Task · started from this chat');
-  assert.equal(d.querySelector('h3.tc-title > button.tc-title-b').dataset.openTaskPage, 't16');
+  assert.equal(d.querySelector('h2.tc-title > button.tc-title-b').dataset.openTaskPage, 't16');
   const asks = d.querySelector('.rc-card .tc-asks');
   assert.equal(asks.querySelector('.tc-asks-h').textContent, 'What the review found');
   assert.equal(asks.querySelector('.tc-asks-l li').textContent, '2 small things left');

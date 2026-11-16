@@ -38,7 +38,7 @@ test('sidebarFrame places each slot once, in order; topBarFrame holds its region
   assert.ok(d.querySelector('#side-scroll nav.nav') && d.querySelector('#side-scroll #L') && d.querySelector('#side-scroll #A'), 'nav and its lists sit in the one scrolling band');
   assert.equal(d.querySelector('#side-foot #F') !== null, true);
   const t = dom(C.topBarFrame({ title: 'Tasks', left: 'L', centre: 'C', right: 'R' }));
-  assert.equal(t.querySelector('header.topnav h1#topnav-title').textContent, 'Tasks');
+  assert.equal(t.querySelector('header.topnav #topnav-title').textContent, 'Tasks');
   assert.deepEqual(['.topnav-l', '.topnav-c', '.topnav-r'].map((s) => t.querySelector(s).textContent.replace('Tasks', '')), ['L', 'C', 'R']);
 });
 

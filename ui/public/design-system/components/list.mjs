@@ -77,19 +77,20 @@ export function listRow({ title, meta = '', mark = '', end = '', endText = '', o
  * @param {string} [o.tools]      at the sentence's right: Select all while selecting, the list's ⋯
  * @param {string} [o.selection]  under the head, kept in sight while the list scrolls: the SelectionBar
  * @param {string} [o.note]       under the filters: one line about this visit (NarrowedLine)
+ * @param {number} [o.level]     the heading level of a group's title: 3 in a bar (under its h2), 2 on a page whose h1 it follows
  * @param {object} [o.attrs]
  */
-function groupHtml(g) {
+function groupHtml(g, H = 'h3') {
   const shut = g.fold && !g.fold.open, n = g.count !== undefined ? ` <span class="n">${esc(g.count)}</span>` : '';
   const head = !g.title ? '' : g.fold
-    ? `<h3 class="list-h"><button type="button" class="list-h-b"${attrs({ ...g.fold.attrs, 'aria-expanded': String(!shut), title: shut ? `Shows ${g.title}` : `Folds ${g.title}` })}>${icon('chevron', 10)}${esc(g.title)}</button>${n}${g.chip || ''}</h3>`
-    : `<h3 class="list-h">${esc(g.title)}${n}${g.chip || ''}</h3>`;
+    ? `<${H} class="list-h"><button type="button" class="list-h-b"${attrs({ ...g.fold.attrs, 'aria-expanded': String(!shut), title: shut ? `Shows ${g.title}` : `Folds ${g.title}` })}>${icon('chevron', 10)}${esc(g.title)}</button>${n}${g.chip || ''}</${H}>`
+    : `<${H} class="list-h">${esc(g.title)}${n}${g.chip || ''}</${H}>`;
   if (shut) return `<section class="list-group is-shut">${head}</section>`;
   return `<section class="list-group">${head}${g.meta ? `<p class="list-m">${esc(g.meta)}</p>` : ''}<div class="list-rows" role="list"${attrs({ 'aria-label': g.title || null })}>${g.rows.join('')}</div>${g.more ? `<button type="button" class="dc-link list-more"${attrs(g.more.attrs)}>${g.more.less ? 'Show less' : `Show ${esc(g.more.n)} more`}</button>` : ''}</section>`;
 }
 
-export function list({ sentence = '', groups, empty = '', tools = '', selection = '', note = '', attrs: a = {} }) {
+export function list({ sentence = '', groups, empty = '', tools = '', selection = '', note = '', level = 3, attrs: a = {} }) {
   const shown = groups.filter((g) => g.rows.length);
-  const body = shown.length ? shown.map((g) => groupHtml(g)).join('') : empty;
+  const body = shown.length ? shown.map((g) => groupHtml(g, level === 2 ? 'h2' : 'h3')).join('') : empty;
   return `<div class="list"${attrs(a)}>${tools ? `<div class="list-head"><div class="list-sentence">${sentence}</div><span class="list-tools">${tools}</span></div>` : sentence ? `<div class="list-sentence">${sentence}</div>` : ''}${note}${selection ? `<div class="list-select">${selection}</div>` : ''}${body}</div>`;
 }

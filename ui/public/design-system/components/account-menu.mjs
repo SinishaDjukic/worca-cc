@@ -16,7 +16,7 @@ import { attrs, esc } from './html.mjs';
  * @param {object} [o.attrs]  role defaults to menuitem
  */
 export function accountItem({ label, mark = '', value = '', valueAlways = false, hint = '', sw = false, chev = '', cls = '', attrs: a = {} }) {
-  return `<button type="button" class="mi menu-item${cls ? ' ' + cls : ''}"${attrs({ role: 'menuitem', ...a })}>${mark}<span class="mi-lbl">${esc(label)}</span>${hint ? `<span class="mi-hint">${esc(hint)}</span>` : ''}${value || valueAlways ? `<span class="mi-val">${esc(value)}</span>` : ''}${sw ? '<span class="switch" aria-hidden="true"></span>' : ''}${chev}</button>`;
+  return `<button type="button" class="mi menu-item${cls ? ' ' + cls : ''}"${attrs({ role: 'menuitem', ...a })}>${mark}<span class="mi-lbl">${esc(label)}</span> ${hint ? `<span class="mi-hint">${esc(hint)}</span> ` : ''}${value || valueAlways ? `<span class="mi-val">${esc(value)}</span>` : ''}${sw ? '<span class="switch" aria-hidden="true"></span>' : ''}${chev}</button>`;
 }
 
 /** What holds the rows of a side menu. `cls` names it; `body` is markup. */

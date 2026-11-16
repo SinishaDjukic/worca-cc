@@ -28,17 +28,24 @@ import { icon } from './icons.mjs';
  * @param {string|null} [o.pickAttr]  the attribute a pick reads; null when `attrs` carries the page's own hook
  * @param {object} [o.attrs]          the page's hooks
  */
+// A hint is a count or a shortcut. A shortcut is not part of the item's name: it is said as aria-keyshortcuts and its glyphs
+// are hidden from the name ("Pin", never "PinP"). A count or a word is part of the name, after a space ("Chat 5").
+const KEY_HINT = /^(?:[⌘⌃⌥⇧↑↓←→⌫?\/]|Ctrl\b|Alt\b|Shift\b|Space$|Enter$|Esc$|Del$|Tab$|[A-Z]$)/;
+const KEY_NAMES = [[/⌘/g, 'Meta+'], [/⌃/g, 'Control+'], [/⌥/g, 'Alt+'], [/⇧/g, 'Shift+'], [/\bCtrl\b/g, 'Control'], [/⌫/g, 'Backspace'], [/\bDel\b/g, 'Delete'], [/\bEsc\b/g, 'Escape'], [/↑/g, 'ArrowUp'], [/↓/g, 'ArrowDown'], [/←/g, 'ArrowLeft'], [/→/g, 'ArrowRight']];
+export const isKeyHint = (hint) => String(hint).length <= 12 && KEY_HINT.test(String(hint));
+export const keyShortcuts = (hint) => KEY_NAMES.reduce((t, [re, to]) => t.replace(re, to), String(hint)).replace(/\s+/g, '+').replace(/\++/g, '+').replace(/\+$/, '');
+
 export function menuItem(it, { pickAttr = 'data-menu-pick', attrs: a = {} } = {}) {
   if (it.back) return `<button type="button" class="menu-item menu-back"${attrs({ role: 'menuitem', 'data-menu-sub': '', 'aria-label': 'Back to every maker' })}><span class="mi-l"><span class="menu-back-i">${icon('chevL', 12)}</span>${esc(it.text)}</span></button>`;
   if (it.sub) {   // comp.menu-sub: an opener; the group holding the choice carries the tick (comp.menu-tick)
     const ticked = it.sub.some((x) => x.checked);
     return `<button type="button" class="menu-item"${attrs({ role: 'menuitem', 'aria-haspopup': 'menu', 'aria-expanded': 'false', 'aria-disabled': it.off ? 'true' : null, 'data-menu-sub': it.id || it.text, title: it.help || null, ...a })}>${it.mark || ''}<span class="mi-l">${esc(it.text)}</span>${ticked ? `<span class="menu-check">${icon('check', 12)}</span>` : ''}<span class="menu-sub-chev">${icon('chevR', 12)}</span></button>`;
   }
-  const choice = it.checked !== undefined;
+  const choice = it.checked !== undefined, keys = it.hint && isKeyHint(it.hint);
   return `<button type="button" class="menu-item${it.danger ? ' is-danger' : ''}${it.line ? ' has-line' : ''}"${attrs({
     role: choice ? 'menuitemradio' : 'menuitem', 'aria-disabled': it.off ? 'true' : null,
-    'aria-checked': choice ? String(!!it.checked) : null, ...(pickAttr ? { [pickAttr]: it.id || it.text } : {}), title: it.help || null, ...a,
-  })}>${it.mark || ''}<span class="mi-l">${esc(it.text)}${it.line ? `<span class="mi-line">${esc(it.line)}</span>` : ''}</span>${it.hint ? `<span class="mi-hint">${esc(it.hint)}</span>` : ''}${it.mark && it.checked ? `<span class="menu-check">${icon('check', 12)}</span>` : ''}</button>`;   // comp.menu-tick: a mark takes the choice's place, so the choice is a tick at the end
+    'aria-checked': choice ? String(!!it.checked) : null, 'aria-keyshortcuts': keys ? keyShortcuts(it.hint) : null, ...(pickAttr ? { [pickAttr]: it.id || it.text } : {}), title: it.help || null, ...a,
+  })}>${it.mark || ''}<span class="mi-l">${esc(it.text)}${it.line ? `<span class="mi-line">${esc(it.line)}</span>` : ''}</span>${it.hint ? (keys ? `<span class="mi-hint" aria-hidden="true">${esc(it.hint)}</span>` : ` <span class="mi-hint">${esc(it.hint)}</span>`) : ''}${it.mark && it.checked ? `<span class="menu-check">${icon('check', 12)}</span>` : ''}</button>`;   // comp.menu-tick: a mark takes the choice's place, so the choice is a tick at the end
 }
 
 /**

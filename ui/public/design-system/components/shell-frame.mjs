@@ -82,7 +82,7 @@ export function sidebarFrame({ brand, nav, above = '', lists = '', foot = '', ex
  * @param {string} [o.right]
  */
 export function topBarFrame({ title, left = '', centre = '', right = '' }) {
-  return `<header class="topnav" id="topnav"><div class="topnav-l">${left}<h1 class="topnav-title" id="topnav-title">${esc(title)}</h1></div><div class="topnav-c">${centre}</div><div class="topnav-r">${right}</div></header>`;
+  return `<header class="topnav" id="topnav"><div class="topnav-l">${left}<div class="topnav-title" id="topnav-title">${esc(title)}</div></div><div class="topnav-c">${centre}</div><div class="topnav-r">${right}</div></header>`;
 }
 
 export { icon };

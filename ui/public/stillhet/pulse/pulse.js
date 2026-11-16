@@ -277,7 +277,7 @@ function vitalsSections() {
   const bar = `<div class="pz-bar"><span class="pz-rail"></span><span class="pz-sentence">${sentence([
     { word: 'Showing', id: 'vitalsShow', text: VITALS_SHOWS.find((x) => x.id === ui.vitalsShow).text, items: VITALS_SHOWS.map((x) => ({ ...x, checked: x.id === ui.vitalsShow, hint: String(vitalsN(vitalsShown(x.id, ui.vitalsFrom))) })), tip: 'Which of Vitals\'s sections the panel shows' },
     { word: 'from', id: 'vitalsFrom', text: ui.vitalsFrom === 'all' ? 'all projects' : ui.vitalsFrom, items: [{ id: 'all', text: 'all projects', checked: ui.vitalsFrom === 'all', hint: String(vitalsN(vitalsShown(ui.vitalsShow, 'all'))) }, { sep: true }].concat(vitalsProjects().map((p) => ({ id: p, text: p, checked: ui.vitalsFrom === p, hint: String(vitalsN(vitalsShown(ui.vitalsShow, p))) }))), tip: 'Which project\'s runs it shows; limits belong to a harness and show for every project' }])}</span></div>`;
-  const sec = (h, n, rows, note) => (n ? `<section class="pz-sec"><h3 class="pz-h">${h} <span class="n">${n}${note ? ` · ${note}` : ''}</span></h3><div class="pz-list">${rows}</div></section>` : '');
+  const sec = (h, n, rows, note) => (n ? `<section class="pz-sec"><h2 class="pz-h">${h} <span class="n">${n}${note ? ` · ${note}` : ''}</span></h2><div class="pz-list">${rows}</div></section>` : '');
   const levelOfRun = (r) => (r.missed ? 2 : R.alertLevel(R.markTone(R.runState(window.RunCardModel.stateOf(r.case)))));
   const needRows = [...c.needs.map((r) => { const a = nowAct(r), key = 'r:' + r.id, act = { fix: a.label, fixTip: a.tip }; return [levelOfRun(r), (r.missed ? row({ mark: R.kindMark({ kind: 'schedule', tone: 'act', size: 16 }), title: r.title, meta: metaOf(r, schedWords(r) || undefined), time: r.time, key, tip: clearsTip('A missed time never started: it needs you and is not a task', 'missed'), ...act }) : row({ mark: runMark(r.state, r.stage ?? -1), title: r.title, meta: metaOf(r), time: r.time, key, tip: clearsTip('Opens the task at what it asks', clearsKeyOf(r)), ...act })) + askStrip(key)]; }), ...c.places.map((x) => [R.alertLevel(x.tone), row({ mark: R.kindMark({ kind: x.kind, tone: x.tone, size: 16 }), title: x.title, meta: x.meta, key: `np:${x.go}`, tip: clearsTip(x.tip, x.clear || x.kind), fix: x.fix || 'Open', fixTip: x.fix ? 'Fast-forwards to the remote; nothing of yours is touched' : x.tip, fixBusy: x.fix === 'Syncing…' })])].sort((a, b) => b[0] - a[0]);   // highest level first (look.alert-ladder)
   const out = sec(R.runState('question').word, needRows.length, needRows.map(([, h]) => h).join(''), needsWords().includes('(') ? needsWords().replace(/^\d+ needs? you \((.*)\)$/, '$1') : '')
@@ -300,8 +300,8 @@ function scheduledSection(all) {
   const list = all.filter((r) => !schedGone(r));
   if (!list.length) return '';
   const rowOf = (r) => row({ mark: R.kindMark({ kind: 'schedule', tone: r.when === 'missed' ? 'act' : 'idle', size: 16 }), title: r.title, meta: metaOf(r, schedWords(r) || (r.on && !r.resumes ? startDetail(r) : r.detail)), time: r.time, key: 'r:' + r.id, tip: r.resumes ? 'Opens the task: it resumes by itself' : r.queued ? 'Opens the task: it waits for a free slot' : 'Opens the task' });
-  const groups = M.SCHED.filter(([id]) => list.some((r) => r.when === id)).map(([id, name]) => `<h4 class="pz-h pz-day">${name}</h4><div class="pz-list">${list.filter((r) => r.when === id).map(rowOf).join('')}</div>`).join('');
-  return `<section class="pz-sec"><h3 class="pz-h">Scheduled <span class="n">${list.length}</span></h3>${groups}</section>`;
+  const groups = M.SCHED.filter(([id]) => list.some((r) => r.when === id)).map(([id, name]) => `<h3 class="pz-h pz-day">${name}</h3><div class="pz-list">${list.filter((r) => r.when === id).map(rowOf).join('')}</div>`).join('');
+  return `<section class="pz-sec"><h2 class="pz-h">Scheduled <span class="n">${list.length}</span></h2>${groups}</section>`;
 }
 
 // A start with nobody there to ask (a slice, a queued or scheduled run) is checked against the warning line when its turn
@@ -495,7 +495,7 @@ function updatesPanel() {
     { word: 'from', id: 'from', text: ui.from === 'all' ? 'all groups' : groupOf(ui.from).name, items: [{ id: 'all', text: 'all groups', checked: ui.from === 'all', hint: String(shown(ui.show, 'all').length) }, { sep: true }].concat(groupsShown().map((g) => ({ id: g.id, text: g.name, checked: ui.from === g.id, hint: String(shown(ui.show, g.id).length) }))), tip: 'Which group the updates come from' }])}</span></div>${bulkBar()}`;
   if (!list.length) return bar + `<p class="pz-empty">${ui.show === 'unread' ? 'You are up to date.' : ui.show === 'cleared' ? 'Nothing cleared.' : 'No updates here.'}</p>`;
   const days = [...new Set(list.map((u) => u.day))];
-  return bar + days.map((d) => `<section class="pz-sec"><h3 class="pz-h pz-day">${d}</h3><div class="pz-list${ui.pick.on ? ' is-selecting' : ''}">${list.filter((u) => u.day === d).map((u) => updateRow(u, true)).join('')}</div></section>`).join('');
+  return bar + days.map((d) => `<section class="pz-sec"><h2 class="pz-h pz-day">${d}</h2><div class="pz-list${ui.pick.on ? ' is-selecting' : ''}">${list.filter((u) => u.day === d).map((u) => updateRow(u, true)).join('')}</div></section>`).join('');
 }
 // The selection's actions: the bar at the top of the list, each action with how many it applies to.
 const shownIds = () => shown().map((u) => u.id);
@@ -1110,7 +1110,7 @@ document.addEventListener('click', (e) => {
     takeStep(u); return;
   }   // a behind project's Sync acts in place; the row does not open
   if ((el = tg('[data-team]'))) { ui.teamSeen = true; ui.acct = false; if (SHELL) { SHELL.closeDrawer(); SHELL.go('settings/team'); } else { ui.page = 'settings'; ui.sset = 'team'; } render(); return; }
-  if ((el = tg('[data-pop]'))) { ui.pop = !ui.pop; ui.acct = false; ui.nr = null; if (ui.pop) opening = 'pop'; render(); return; }
+  if ((el = tg('[data-pop]'))) { ui.pop = !ui.pop; ui.acct = false; ui.nr = null; if (ui.pop) opening = 'pop'; render(); if (ui.pop && e.detail === 0) panelFirst()?.focus(); return; }   // opened by the keyboard: the focus goes into the panel
   if ((el = tg('[data-acct]'))) { ui.acct = !ui.acct; ui.sub = ''; ui.pop = false; ui.nr = null; if (ui.acct) opening = 'acct'; render(); return; }
   if ((el = tg('[data-sub]'))) { const v = el.dataset.sub; ui.sub = v && ui.sub !== v ? v : ''; if (ui.sub) opening = 'sub'; render(); return; }
   if ((el = tg('[data-desk]'))) { if (LIVE) return; ui.s.desktop = ui.s.desktop === 'on' ? 'off' : 'on'; render(); return; }
@@ -1302,6 +1302,17 @@ const shut = (fn) => () => { fn(); stale = true; };
 const layer = (o) => R.dismissOnOutside(document, { paint: repaint, ...o, close: shut(o.close) });
 layer({ rank: 3, open: () => !!ui.menu, inside: (t) => !!t.closest('.menu, .pz-menu, .spick-menu') || t.closest?.('[data-menu]')?.dataset.menu === ui.menu, back: () => `[data-menu="${CSS.escape(ui.menu)}"]`, close: () => { ui.menu = ''; } });
 layer({ rank: 3, open: () => !!ui.sub, inside: '.nav-fly, [data-sub]', back: () => `[data-sub="${CSS.escape(ui.sub)}"]`, close: () => { ui.sub = ''; } });
+// The Pulse panel is next after its button for the keyboard: Tab on the open button goes into it, Tab past its end (or
+// Shift+Tab before its start) comes back to the button, and Esc closes it from anywhere inside (the layer below).
+const panelStops = () => R.focusables(document.querySelector('.pz-popover[role="dialog"]') || document.createElement('div')).filter((x) => x.getClientRects().length);
+const panelFirst = () => document.querySelector('.pz-popover[role="dialog"] [role="tab"][aria-selected="true"]') || panelStops()[0];
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Tab' || !ui.pop) return;
+  const btn = document.querySelector('[data-pop]'), a = document.activeElement, stops = panelStops(); if (!btn || !stops.length) return;
+  if (a === btn && !e.shiftKey) { e.preventDefault(); panelFirst().focus(); return; }
+  if (!a?.closest?.('.pz-popover[role="dialog"]')) return;
+  if ((e.shiftKey && a === stops[0]) || (!e.shiftKey && a === stops[stops.length - 1])) { e.preventDefault(); btn.focus(); }
+});
 layer({ open: () => !!ui.pop, inside: '.pz-popover, [data-pop]', back: () => '[data-pop]', close: () => { ui.pop = false; ui.ask = ''; }, esc: () => { if (ui.ask) { const key = ui.ask; ui.ask = ''; stale = true; return `.pz-popover [data-fix="${CSS.escape(key)}"]`; } if (!ui.pick.on) return false; ui.pick = R.selectClear(); stale = true; return true; } });
 layer({ open: () => !!ui.acct, inside: '.nav-fly, [data-acct]', back: () => '[data-acct]', close: () => { ui.acct = false; ui.sub = ''; } });
 layer({ dialog: true, open: () => !!ui.nr, inside: '.pz-newrun, [data-newrun]', back: () => '[data-newrun]', close: () => { ui.nr = null; } });

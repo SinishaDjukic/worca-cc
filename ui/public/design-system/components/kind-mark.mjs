@@ -268,7 +268,7 @@ export function composerQueueButton() {
  */
 export function cardHead({ mark, kicker, kickerHtml = '', title = '', titleHtml = '', why = '', facts = '', menu = '', from = '', titleAttrs = null }) {
   const heading = titleAttrs ? `<button type="button" class="tc-title-b"${attrs({ title: `Open ${title}`, ...titleAttrs })}>${esc(title)}</button>` : esc(title);
-  return `<div class="rc-head"><div class="tp-kicker">${mark}<span>${kickerHtml || esc(kicker)}</span>${from ? `<small class="tp-from">${esc(from)}</small>` : ''}${menu ? `<span class="tp-menu">${menu}</span>` : ''}</div>${titleHtml || `<h3 class="rc-heading tc-title"${attrs({ title })}>${heading}</h3>`}${facts ? `<div class="rc-facts">${facts}</div>` : ''}${why ? `<p class="tp-why">${esc(why)}</p>` : ''}</div>`;
+  return `<div class="rc-head"><div class="tp-kicker">${mark}<span>${kickerHtml || esc(kicker)}</span>${from ? `<small class="tp-from">${esc(from)}</small>` : ''}${menu ? `<span class="tp-menu">${menu}</span>` : ''}</div>${titleHtml || `<h2 class="rc-heading tc-title"${attrs({ title })}>${heading}</h2>`}${facts ? `<div class="rc-facts">${facts}</div>` : ''}${why ? `<p class="tp-why">${esc(why)}</p>` : ''}</div>`;
 }
 
 /** What a card that asks shows (TaskCard's `asks`): a few lines of the review's result or the plan, each open decision by name, a way to the whole. */

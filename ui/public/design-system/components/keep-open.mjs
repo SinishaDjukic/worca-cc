@@ -110,21 +110,30 @@ const backs = new WeakMap();
 export function watchFocusBack(doc) {
   if (backs.has(doc)) return backs.get(doc);
   const win = doc.defaultView;
-  let last = null;      // { el, addr, back }: the control that had the focus last, and what opened it
+  let last = null;      // { el, addr, back, home }: the control that had the focus last, what opened it, and the thing it sat in
   let opener = null;    // the address of what opened the dialog that is up
   let lostAt = 0;
   const lost = () => !doc.activeElement || doc.activeElement === doc.body;
   doc.addEventListener('focusin', (e) => {
     const el = e.target; if (!el || el === doc.body) return;
     const inDialog = !!el.closest?.('.viewer-modal');
-    last = { el, addr: controlAddress(el), back: controlAddress(triggerOf(el)) || (inDialog ? opener : null) };
+    // home: the card, row or section the control sat in. When the control leaves with its step done (Answer, Approve) and
+    // nothing is drawn in its place, the focus stays with that thing: on its first control, else on the thing itself
+    const homes = [];
+    for (let box = el.parentElement?.closest?.('[data-anchor], [data-key], [id]'); box && box !== doc.body && homes.length < 5; box = box.parentElement?.closest?.('[data-anchor], [data-key], [id]')) homes.push(box.getAttribute('data-anchor') ? { sel: `[data-anchor="${quoted(box.getAttribute('data-anchor'))}"]`, n: 0 } : controlAddress(box));
+    last = { el, addr: controlAddress(el), back: controlAddress(triggerOf(el)) || (inDialog ? opener : null), homes };
     lostAt = 0;
   }, true);
   const restore = () => {
     if (!last || last.el.isConnected || !lost()) return;
     const now = Date.now(); lostAt ||= now;
     if (now - lostAt > FOCUS_BACK_MS) { last = null; return; }
-    const to = atAddress(doc, last.addr) || atAddress(doc, last.back);
+    let to = atAddress(doc, last.addr) || atAddress(doc, last.back);
+    if (!to || to.disabled) {
+      const home = (last.homes || []).map((h) => atAddress(doc, h)).find((x) => x && x.getClientRects().length);
+      to = home && ([...home.querySelectorAll('button:not([disabled]), a[href], input:not([disabled]), [tabindex="0"]')].find((x) => !x.closest('[hidden]') && x.getAttribute('aria-hidden') !== 'true') || home);
+      if (to === home && home && !home.hasAttribute('tabindex')) home.setAttribute('tabindex', '-1');
+    }
     if (to && !to.disabled) to.focus({ preventScroll: true });
   };
   if (win.MutationObserver && doc.body) new win.MutationObserver(restore).observe(doc.body, { subtree: true, childList: true });

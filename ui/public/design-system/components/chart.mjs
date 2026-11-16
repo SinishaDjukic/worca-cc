@@ -32,14 +32,17 @@ export function barChart({ label, bars, current = -1, height = 120, play = false
     // a number that would sit on the limit line goes beside its bar, under the line, so it never reads as the line's value
     const onLine = shown && limit && h <= lineAt && lineAt <= h + 20;
     const beside = onLine ? ` class="bc-v is-beside${i === 0 ? ' is-after' : ''}" style="bottom:${Math.max(0, h - 14)}px"` : ' class="bc-v"';
-    return `<span class="bc-col${i === current ? ' is-now' : ''}${tick(i)}" data-i="${i}" tabindex="0"${b.off ? attrs({ 'data-off': b.off, 'aria-disabled': 'true', style: 'cursor:default' }) : ''}${play ? attrs({ 'data-read': readOf(noted(b, i)) }) : attrs({ title: `${b.label}: ${b.text}` })}><span${beside}>${shown ? esc(b.text) : ''}</span><span class="bc-bar${parts ? ' is-stack' : ''}" style="height:${h}px">${parts ? segs(i) : ''}</span><span class="bc-x">${esc(b.label)}</span></span>`;
+    // a chart you can read and narrow (play) is one Tab stop: its bars are named buttons, the arrows move between them. A chart
+    // that only shows has no Tab stops: its figures are the table under it
+    const stop = play ? attrs({ role: 'button', tabindex: i === (current >= 0 ? current : 0) ? 0 : -1, 'aria-label': `${b.label}: ${b.text}${parts ? `, ${partWords(i)}` : ''}` }) : '';
+    return `<span class="bc-col${i === current ? ' is-now' : ''}${tick(i)}" data-i="${i}"${stop}${b.off ? attrs({ 'data-off': b.off, 'aria-disabled': 'true', style: 'cursor:default' }) : ''}${play ? attrs({ 'data-read': readOf(noted(b, i)) }) : attrs({ title: `${b.label}: ${b.text}` })}><span${beside}>${shown ? esc(b.text) : ''}</span><span class="bc-bar${parts ? ' is-stack' : ''}" style="height:${h}px">${parts ? segs(i) : ''}</span><span class="bc-x">${esc(b.label)}</span></span>`;
   }).join('');
   const table = parts
     ? srTable(label, ['All', ...parts.map((p) => p.label)], bars.map((b, i) => [b.label, b.text, ...parts.map((p) => (p.texts ? p.texts[i] : String(p.values[i])))]))
     : `<table class="bc-table"><caption>${esc(label)}</caption><tbody>${bars.map((b) => `<tr><th scope="row">${esc(b.label)}</th><td>${esc(b.text)}</td></tr>`).join('')}</tbody></table>`;
   const line = limit ? `<span class="bc-limit" style="bottom:${lineAt}px"></span>` : '';
   const legend = legendOf([...(parts || []).map((p, k) => ({ cls: `is-s${p.shade ?? k}`, text: p.label })), ...(limit ? [{ cls: 'is-limit', text: limit.text }] : [])]);
-  return `<figure class="bar-chart${play ? ' is-read-able' : ''}${step ? ' is-thin' : ''}" style="--bc-h:${height}px"${play ? ` data-chart data-n="${bars.length}"` : ''}>${capOf(caption)}${play ? '<div class="ch-read" hidden></div>' : ''}<div class="bc-plot${limit ? ' has-limit' : ''}" aria-hidden="true">${cols}${line}</div>${legend}${hintOf(hint)}${table}</figure>`;
+  return `<figure class="bar-chart${play ? ' is-read-able' : ''}${step ? ' is-thin' : ''}" style="--bc-h:${height}px"${play ? ` data-chart data-n="${bars.length}"` : ''}>${capOf(caption)}${play ? '<div class="ch-read" hidden></div>' : ''}<div class="bc-plot${limit ? ' has-limit' : ''}"${play ? attrs({ role: 'group', 'aria-label': label }) : ' aria-hidden="true"'}>${cols}${line}</div>${legend}${hintOf(hint)}${play ? table.replace('<table class="bc-table"', '<table class="bc-table" aria-hidden="true"') : table}</figure>`;
 }
 
 // ---- Chart play (docs/stillhet/look.md › look.chart-play): other forms appear only when you ask for them ----
@@ -81,7 +84,7 @@ export function lineChart({ label, labels, series, limit = null, current = -1, h
   const lim = limit ? `<path class="ch-l is-limit" vector-effect="non-scaling-stroke" d="M0 ${y(limit.value).toFixed(2)}H100"/>` : '';
   const dots = known.map((i) => `<span class="ch-dot${i === current ? ' is-now' : ''}" data-dot="${i}" style="left:${x(i).toFixed(2)}%;top:${y(main[i].value).toFixed(2)}%"></span>`).join('');
   const nums = [...new Set([high, current].filter((i) => i >= 0 && main[i]))].map((i) => `<span class="ch-v" style="left:${x(i).toFixed(2)}%;top:${y(main[i].value).toFixed(2)}%">${esc(main[i].text)}</span>`).join('');
-  const hits = labels.map((l, i) => (main[i] ? `<span class="ch-hit" data-i="${i}" tabindex="0" role="img"${main[i].off ? attrs({ 'data-off': main[i].off, 'aria-disabled': 'true', style: 'cursor:default' }) : ''} aria-label="${esc([l, main[i].text, main[i].diff].filter(Boolean).join(', '))}" data-read="${esc(readOf({ ...main[i], label: l }))}"></span>` : '<span class="ch-none"></span>')).join('');
+  const hits = labels.map((l, i) => (main[i] ? `<span class="ch-hit" data-i="${i}" tabindex="${i === (current >= 0 && main[current] ? current : known[0]) ? 0 : -1}" role="img"${main[i].off ? attrs({ 'data-off': main[i].off, 'aria-disabled': 'true', style: 'cursor:default' }) : ''} aria-label="${esc([l, main[i].text, main[i].diff].filter(Boolean).join(', '))}" data-read="${esc(readOf({ ...main[i], label: l }))}"></span>` : '<span class="ch-none"></span>')).join('');
   const legend = series.length > 1 || limit ? legendOf([...series.map((s) => ({ cls: s.part != null ? `is-line is-s${s.part}` : s.dashed ? 'is-before' : 'is-main', text: s.label })), ...(limit ? [{ cls: 'is-limit', text: limit.text }] : [])]) : '';
   const rows = labels.flatMap((l, i) => (main[i] ? [[l, ...series.map((s) => (s.points[i] ? s.points[i].text : ''))]] : []));
   return `<figure class="chart" style="--ch-h:${height}px" data-chart data-n="${n}" data-last="${known[known.length - 1] ?? 0}">${capOf(caption)}<div class="ch-read" hidden></div><div class="ch-plot"><svg class="ch-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">${lim}${series.slice(1).map(path).join('')}${path(series[0])}</svg>${dots}${nums}<div class="ch-hits" style="--ch-n:${n}">${hits}</div></div>${axisOf(labels)}${legend}${hintOf(hint)}${srTable(label, series.map((s) => s.label), rows)}</figure>`;
@@ -100,7 +103,7 @@ export function lineChart({ label, labels, series, limit = null, current = -1, h
  */
 export function mixChart({ label, labels, parts, reads = [], height = 120, hint = '', caption = '' }) {
   const totals = labels.map((_, i) => parts.reduce((a, p) => a + (p.values[i] || 0), 0)), max = Math.max(1, ...totals);
-  const cols = labels.map((l, i) => `<span class="ch-col" data-i="${i}" tabindex="0" role="img" aria-label="${esc(`${l}: ${parts.map((p) => `${p.label} ${p.texts ? p.texts[i] : p.values[i]}`).join(', ')}`)}" data-read="${esc(readOf({ label: l, text: reads[i] || String(totals[i]), note: parts.map((p) => `${p.label} ${p.texts ? p.texts[i] : p.values[i]}`).join(' · ') }))}"><span class="ch-stack" style="height:${((totals[i] / max) * 100).toFixed(2)}%">${parts.map((p, k) => `<i class="ch-seg is-s${p.shade ?? k}" style="flex-grow:${p.values[i] || 0}"></i>`).join('')}</span></span>`).join('');
+  const cols = labels.map((l, i) => `<span class="ch-col" data-i="${i}" tabindex="${i === 0 ? 0 : -1}" role="img" aria-label="${esc(`${l}: ${parts.map((p) => `${p.label} ${p.texts ? p.texts[i] : p.values[i]}`).join(', ')}`)}" data-read="${esc(readOf({ label: l, text: reads[i] || String(totals[i]), note: parts.map((p) => `${p.label} ${p.texts ? p.texts[i] : p.values[i]}`).join(' · ') }))}"><span class="ch-stack" style="height:${((totals[i] / max) * 100).toFixed(2)}%">${parts.map((p, k) => `<i class="ch-seg is-s${p.shade ?? k}" style="flex-grow:${p.values[i] || 0}"></i>`).join('')}</span></span>`).join('');
   const rows = labels.map((l, i) => [l, ...parts.map((p) => (p.texts ? p.texts[i] : String(p.values[i])))]);
   return `<figure class="chart" style="--ch-h:${height}px" data-chart data-n="${labels.length}" data-last="${labels.length - 1}">${capOf(caption)}<div class="ch-read" hidden></div><div class="ch-plot"><div class="ch-hits is-cols" style="--ch-n:${labels.length}">${cols}</div></div>${axisOf(labels)}${legendOf(parts.map((p, k) => ({ cls: `is-s${p.shade ?? k}`, text: p.label })))}${hintOf(hint)}${srTable(label, parts.map((p) => p.label), rows)}</figure>`;
 }
@@ -116,7 +119,7 @@ export function mixChart({ label, labels, parts, reads = [], height = 120, hint 
 export function watchChart(fig, { open, narrow } = {}) {
   const plot = fig?.querySelector('.ch-plot, .bc-plot'), read = fig?.querySelector('.ch-read');
   if (!plot) return;
-  if (narrow && (+fig.dataset.n || 0) > 2) plot.title = 'Drag across to narrow';
+  if (narrow && (+fig.dataset.n || 0) > 2) plot.title = 'Drag across to narrow. By keyboard: hold Shift and press the arrow keys, then let go';
   const doc = plot.ownerDocument, hits = [...plot.querySelectorAll('[data-i]')], n = +fig.dataset.n || hits.length, last = fig.dataset.last ? +fig.dataset.last : n - 1;
   const hitAt = (i) => hits.find((h) => +h.dataset.i === i);
   const at = (clientX) => { const r = plot.getBoundingClientRect(), w = r.width / n; return Math.min(last, Math.max(0, Math.floor((clientX - r.left) / w))); };
@@ -135,7 +138,7 @@ export function watchChart(fig, { open, narrow } = {}) {
   };
   // look.chart-play: a point that opens nothing says why, as a disabled row does
   const tryOpen = (i) => { const why = hitAt(i)?.dataset.off; if (why) doc.dispatchEvent(new doc.defaultView.CustomEvent('stillhet:disabled', { detail: { why } })); else open?.(i); };
-  let start = -1, startX = 0, dragging = false, brush = null;
+  let start = -1, startX = 0, dragging = false, brush = null, anchor = -1;
   const paint = (a, b) => {
     if (!brush) { brush = doc.createElement('span'); brush.className = 'ch-brush'; plot.append(brush); }
     brush.style.left = `${(Math.min(a, b) / n) * 100}%`; brush.style.width = `${((Math.abs(a - b) + 1) / n) * 100}%`;
@@ -160,7 +163,20 @@ export function watchChart(fig, { open, narrow } = {}) {
     const h = e.target.closest('[data-i]'); if (!h) return;
     const i = +h.dataset.i;
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tryOpen(i); }
-    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') { e.preventDefault(); hitAt(i + (e.key === 'ArrowRight' ? 1 : -1))?.focus(); }
+    if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+      e.preventDefault();
+      const to = hitAt(i + (e.key === 'ArrowRight' ? 1 : -1)); if (!to) return;
+      // narrowing without a drag: Shift and the arrows mark a range from where you stand; letting Shift go narrows to it
+      if (narrow && n > 2 && e.shiftKey) { if (anchor < 0) anchor = i; } else anchor = -1;
+      to.focus();
+      if (anchor >= 0) { clear(); paint(anchor, +to.dataset.i); } else { brush?.remove(); brush = null; }
+    }
+    if (e.key === 'Escape' && anchor >= 0) { anchor = -1; brush?.remove(); brush = null; }
+  });
+  plot.addEventListener('keyup', (e) => {
+    if (e.key !== 'Shift' || anchor < 0) return;
+    const a = anchor, h = doc.activeElement?.closest?.('[data-i]'), b = h ? +h.dataset.i : a; anchor = -1; brush?.remove(); brush = null;
+    if (a !== b) narrow(Math.min(a, b), Math.max(a, b));
   });
 }
 

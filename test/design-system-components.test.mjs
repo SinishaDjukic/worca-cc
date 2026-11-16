@@ -2265,7 +2265,7 @@ test('roundRows: one line, one end', () => {
 });
 test('watchChart: a chart that narrows keeps the drag in its tooltip', () => {
   const fig = dom(C.barChart({ label: 'x', play: true, bars: [1, 2, 3].map((v) => ({ label: `d${v}`, value: v, text: `$${v}` })) }));
-  C.watchChart(fig, { narrow: () => {} }); assert.equal(fig.querySelector('.bc-plot').title, 'Drag across to narrow');
+  C.watchChart(fig, { narrow: () => {} }); assert.match(fig.querySelector('.bc-plot').title, /^Drag across to narrow. By keyboard: hold Shift/, 'the drag, and its keyboard way');
 });
 
 test('figuresToggle, figuresLine: counts and costs on demand (look.figures-on-demand)', () => {

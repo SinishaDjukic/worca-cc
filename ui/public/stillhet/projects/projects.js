@@ -336,7 +336,7 @@
     const loading = R.listState({ state: 'loading', noun: 'tasks' });
     const PANELS = {
       overview: () => `${standsPart(p)}${p.early ? loading : `${onLine}${tasks}${figures}`}${lately}`,
-      tasks: () => (p.early ? loading : list.length || ended.length ? `${R.list({ groups: [{ title: 'Need you', rows: waits.map(rowOfTask) }, { title: 'Working', rows: going.map(rowOfTask) }, { title: 'Ended', rows: ended.map(rowOfTask) }].filter((g) => g.rows.length) })}<div class="pj-acts">${R.button({ label: `All ${taskCount(nameOf(p)) || ''} in Tasks`.replace('  ', ' '), attrs: { 'data-pj-menu': 'tasks', title: 'Opens Tasks, from this project' } })}</div>` : nothing),
+      tasks: () => (p.early ? loading : list.length || ended.length ? `${R.list({ level: 2, groups: [{ title: 'Need you', rows: waits.map(rowOfTask) }, { title: 'Working', rows: going.map(rowOfTask) }, { title: 'Ended', rows: ended.map(rowOfTask) }].filter((g) => g.rows.length) })}<div class="pj-acts">${R.button({ label: `All ${taskCount(nameOf(p)) || ''} in Tasks`.replace('  ', ' '), attrs: { 'data-pj-menu': 'tasks', title: 'Opens Tasks, from this project' } })}</div>` : nothing),
       memory: () => memoryTab(p), sets: () => setsTab(p), actions: () => actionsTab(p), automations: () => automationsTab(p),
       readiness: () => (p.origin === 'missing' ? gone : readinessTab(p)),
       settings: () => (p.origin === 'missing' ? gone : `${defaults(p, homes)}${sets}${where}${team}`),

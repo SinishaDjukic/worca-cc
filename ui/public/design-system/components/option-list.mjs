@@ -13,6 +13,6 @@ import { esc, attrs } from './html.mjs';
  * @param {(i:number)=>object} [o.optAttrs]  on each row
  */
 export function optionList({ label, options, selected, recommended = -1, pickWord = 'Worca’s pick', own = '', optAttrs = () => ({}) }) {
-  const rows = options.map((o, i) => `<button type="button" class="sc-ans-opt" role="radio" aria-checked="${i === selected}" tabindex="${i === selected ? 0 : -1}"${attrs(optAttrs(i))}><span class="sc-ans-dot" aria-hidden="true"></span><span class="sc-ans-l">${esc(o)}</span>${i === recommended ? `<span class="sc-ans-hint">${esc(pickWord)}</span>` : ''}</button>`).join('');
+  const rows = options.map((o, i) => `<button type="button" class="sc-ans-opt" role="radio" aria-checked="${i === selected}" tabindex="${i === selected ? 0 : -1}"${attrs({ 'data-key': `answer:${i}`, ...optAttrs(i) })}><span class="sc-ans-dot" aria-hidden="true"></span><span class="sc-ans-l">${esc(o)}</span>${i === recommended ? ` <span class="sc-ans-hint">${esc(pickWord)}</span>` : ''}</button>`).join('');
   return `<div class="sc-ans-opts" role="radiogroup" aria-label="${esc(label)}">${rows}</div>${own}`;
 }

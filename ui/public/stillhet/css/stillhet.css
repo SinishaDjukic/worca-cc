@@ -158,7 +158,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .rc-pop > .menu{position:absolute;z-index:5;top:calc(100% + 6px);left:0;min-width:180px;}
 .rc-pop.is-right > .menu{left:auto;right:0;}
 .plan-full{display:flex;flex-direction:column;gap:10px;padding-bottom:12px;border-bottom:1px solid var(--line);}   /* the plan itself, read before approving */
-.plan-full h4{margin:0;font:600 12px/1.4 var(--sans);color:var(--ink-3);}
+.plan-full :is(h3,h4){margin:0;font:600 12px/1.4 var(--sans);color:var(--ink-3);}
 .plan-full ol,.plan-full ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;color:var(--ink-2);}
 :is(.rc-pop, .spick) > .menu.is-up{top:auto;bottom:calc(100% + 6px);}   /* no room under it: it opens above (watchMenus) */
 .menu-h{padding:6px 9px 2px;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2);}
