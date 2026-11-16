@@ -583,3 +583,11 @@ test('COV-1 addMany: sends {projects:[{name,path}]}, sorts added and skipped by 
   assert.deepEqual([none.ok, none.added, r2.refreshed], [true, [], []], 'all skipped: nothing refreshes');
   assert.deepEqual(await r.live.addMany([1, 2, 3, 4].map((n) => ({ name: `p${n}`, path: `/s/p${n}` }))), { ok: false, text: 'Could not add 4 projects: at most 100 projects' });
 });
+
+// F-W3a2-10: a clone WORCA_CLONE_ALLOW refuses (403 not-allowed) is about the address: its words go under the field, no toast
+test('F-W3a2-10: a 403 not-allowed clone refusal answers the address field', async () => {
+  const why = 'github.com/o/repo is not in WORCA_CLONE_ALLOW';
+  const r = rig({ answer: (m, u) => (u === '/api/projects/clone' ? [403, { error: why, code: 'not-allowed' }] : null) });
+  assert.deepEqual(await r.live.addProject('https://github.com/o/repo.git'), { ok: false, field: why });
+  assert.deepEqual(r.toasts, []);
+});

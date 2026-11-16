@@ -120,7 +120,9 @@ export function startProjectsLive({ fetch, toast = () => {}, refresh = () => {},
         const a = await send('clone', { url: v, branch, name: folder });
         if (!a.ok) {   // on: the field dev's words are about (clone-project.mjs planClone), so the page puts them under it
           const on = /branch name/i.test(a.error || '') ? 'branch' : /folder name/i.test(a.error || '') ? 'name' : '';
-          return a.status === 400 || a.status === 409 ? { ok: false, field: plainWhy(a), ...(on ? { on } : {}) } : refused('clone', as, a);
+          // F-W3a2-10: WORCA_CLONE_ALLOW's refusal (403 not-allowed) is about the address too, so it lands under that field
+          const mine = a.status === 400 || a.status === 409 || (a.status === 403 && a.data?.code === 'not-allowed');
+          return mine ? { ok: false, field: plainWhy(a), ...(on ? { on } : {}) } : refused('clone', as, a);
         }
         clones.set(a.data.jobId || a.data.job?.id, { name: a.data.job?.name || as, from: at() });   // where the person was: it routes only if they still are
         return { ok: true, text: `Cloning ${a.data.job?.name || as}…` };
