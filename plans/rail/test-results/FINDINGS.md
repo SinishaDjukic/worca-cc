@@ -39,7 +39,7 @@ Root causes:
 | owner 4317 #1 | Task page | Task waits at its review gate ("Needs you · Asks you something") but the page shows no question and no Run another cycle / Accept as is | `live/task-page.mjs` gate not mapped | open |
 | F-5-01 = F-7b-11 | Settings › Plugins | Lists Teams, Notion, Jira… as installed when only github-source (B) or nothing (D) is | `settings/settings-model.js:70,681` demo rows | open |
 | F-5-02 = F-7b-12 | Settings › General › Setup | Setup assistant shows fixed "Claude Code installed, 6 projects…", Apply refused | `settings/settings-model.js:148-150` | open |
-| F-7b-01 | Settings › Labs | Switch flips and toasts "on"; nothing saved; off after reload | `settings/settings.js:273-277` local `setFlag` only ✓ | open |
+| F-7b-01 | Settings › Labs | Switch flips and toasts "on"; nothing saved; off after reload | `settings/settings.js:273-277` local `setFlag` only ✓ | fixed (this PR) |
 | F-7b-02 | Settings › Notifications | Badge, Sound, Breathing, Updates pickers change the sentence; nothing saved | `pulse/pulse.js:889-900` local `ui.s` only | open |
 | F-3-01 + F-7a-01 | Tasks, Pulse | Merged work reads Ready · Create PR, flips; Pulse "19 need you" vs classic 0 | `live/live-adapter.mjs:108-122` per-page `prToken` ✓; `live/live-map.mjs:431-447` ignores members' `pr` ✓ | open |
 | F-a4-06 = F-5-04 | New task / New schedule | Picker lists only projects with tasks; offered a removed project as default and **created a schedule in it** | `centers/centers.js:293` projects from `W.rows()` ✓ | open |

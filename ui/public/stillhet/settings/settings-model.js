@@ -127,29 +127,41 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
 
 
   // ---- Labs: the registry's flags (src/shared/flags/registry.mjs), but its Flags demo ----
+  // The words of a Labs write (docs/rail/settings.md `set.flags`): Saving while it waits, the refusal at the end of its sentence.
+  const LABS_WORDS = { saving: 'Saving', locked: 'Locked by WORCA_FLAGS', unanswered: 'the server did not answer', nothing: 'Nothing to reset: every feature is at its default',
+    reset: 'Turn every Labs feature back to its default?', resetRail: 'Stillhet is one of them: it turns off, and Worca opens in its classic look.', resetDone: 'Labs: back to its defaults', demoRefusal: 'the settings file is read-only' };
+  const refusedLine = (on, error) => `Could not turn it ${on ? 'on' : 'off'}: ${error}`;
+  const resetFailed = (error) => `Could not reset Labs: ${error}`;
+  const needsLine = (title, names) => `Turn on ${title}? It needs ${andList(names)}, which turn on too.`;
+  const DEMO_ANSWER_MS = 600;   // the demo's one refusing flag waits this long, so its Saving shows
   const FLAGS = [
     { key: 'commandSummaries', name: 'Command summaries', stage: 'Beta', on: true, say: 'Commands in Chat show as one line saying what they do', why: 'Adds Chat › Summaries, which needs Advanced', min: 'advanced' },
     { key: 'runLabels', name: 'Run labels', stage: 'Experimental', on: false, say: 'Free-word labels on runs, with a Label filter on the Runs list', why: 'Adds Settings › Labels and labels on runs' },
     { key: 'smartRunNaming', name: 'Smart run naming', stage: 'Experimental', on: false, say: 'A quick model suggests the run title and a branch name as you type', why: 'Adds Runs › Naming' },
     { key: 'requirements', name: 'Requirements', stage: 'Experimental', on: false, say: 'Turn an idea into a testable spec through a short interview, before any run', why: 'Adds Requirements to the sidebar' },
-    { key: 'runTelemetry', name: 'Run telemetry', stage: 'Experimental', on: false, say: 'Runs record context size, tokens and timing of every model call', why: 'Adds these numbers to a run\'s log', locked: 'Locked by WORCA_FLAGS' },
+    { key: 'runTelemetry', name: 'Run telemetry', stage: 'Experimental', on: false, say: 'Runs record context size, tokens and timing of every model call', why: 'Adds these numbers to a run\'s log', locked: LABS_WORDS.locked },
     { key: 'gitAutomations', name: 'Git event automations', stage: 'Experimental', on: false, say: 'Start a workflow when an issue or a pull request is opened', why: 'Adds Settings › Automations, which needs Advanced', min: 'advanced' },
     { key: 'sessionGroups', name: 'Shared session', stage: 'Experimental', on: false, say: 'Run 2 to 4 steps in a row in one agent session, so they share what they learned', why: 'Changes how a workflow\'s steps run' },
     { key: 'ticketUpdates', name: 'Ticket updates', stage: 'Experimental', on: false, say: 'A finished run moves its ticket, by a rule per tracker project', why: 'Adds Plugins › Ticket updates, which needs Advanced', min: 'advanced' },
-    { key: 'shapeRequirements', name: 'Requirements first', stage: 'Experimental', on: false, say: 'A medium or large Shaper task first agrees what must be true, then plans', why: 'Adds a step to Shaper' },
+    { key: 'shapeRequirements', name: 'Requirements first', stage: 'Experimental', on: false, say: 'A medium or large Shaper task first agrees what must be true, then plans', why: 'Adds a step to Shaper', refuses: LABS_WORDS.demoRefusal },
   ];
   const flagsChanged = () => FLAGS.filter((f) => !f.locked && window.RailUI.prefs.flag(f.key) !== f.on);
-  // ---- Labs, live: exactly the flags GET /api/flags returns, read-only (B1.3). A switch shows the server's `on`; a flags
-  // frame (copied into prefs by the live adapter) reads the list again, and the old list stays drawn until it answers. ----
+  // ---- Labs, live: exactly the flags GET /api/flags returns. A switch shows the server's `on` and writes PATCH /api/flags;
+  // only the server's answer (or a flags frame, copied into prefs by the live adapter, which reads the list again) changes
+  // what it shows. `saving` and `errors` are per flag: an error lasts until that row's next write starts. ----
   const liveOn = () => !!window.RailWorld?.live;
-  const labs = { status: 'loading', flags: [], busy: false, again: false, watching: false };
+  const labs = { status: 'loading', flags: [], busy: false, again: false, watching: false, saving: {}, errors: {}, toastFor: '' };
+  const redraw = () => window.dispatchEvent(new Event('rail-settings'));
+  const toast = (text) => window.RailAdapter?.toast?.(text);
+  const onWords = (k) => { const f = labs.flags.find((x) => x.key === k); return f ? `${f.title}: ${f.on ? 'on' : 'off'}` : ''; };
   function readFlags() {
     if (labs.busy) { labs.again = true; return; }
     labs.busy = true;
     const done = (status, flags) => {
       labs.busy = false;
       if (status === 'ready' || labs.status !== 'ready') Object.assign(labs, { status, flags: status === 'ready' ? flags : labs.flags });
-      window.dispatchEvent(new Event('rail-settings'));
+      if (status === 'ready' && labs.toastFor && !labs.again) { toast(onWords(labs.toastFor)); labs.toastFor = ''; }   // an answer without its list: the toast waits for the re-read
+      redraw();
       if (labs.again) { labs.again = false; readFlags(); }
     };
     Promise.resolve().then(() => window.fetch('/api/flags'))
@@ -160,14 +172,104 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     if (!labs.watching) { labs.watching = true; window.RailUI.prefs.onChange(() => readFlags()); readFlags(); }
     return labs;
   }
+  // The one write path: live, PATCH /api/flags (ui/routes/feature-flags/flags.mjs); the demo answers from its own FLAGS. Never rejects.
+  function labsWrite(body) {
+    if (!liveOn()) {
+      const no = FLAGS.find((f) => f.key in body && f.refuses);
+      if (no) return new Promise((r) => setTimeout(() => r({ ok: false, status: 500, error: no.refuses }), DEMO_ANSWER_MS));
+      return Promise.resolve().then(() => { for (const [k, v] of Object.entries(body)) window.RailUI.prefs.setFlag(k, v === null ? !!FLAGS.find((f) => f.key === k)?.on : v); return { ok: true, status: 200, error: '', flags: null }; });
+    }
+    return Promise.resolve().then(() => window.fetch('/api/flags', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }))
+      .then((r) => Promise.resolve().then(() => r.json()).catch(() => ({})).then((data) => (r.ok
+        ? { ok: true, status: r.status, error: '', flags: Array.isArray(data?.flags) ? data.flags : null }
+        : { ok: false, status: r.status, error: data?.error || data?.message || 'HTTP ' + r.status })))
+      .catch(() => ({ ok: false, status: 0, error: LABS_WORDS.unanswered }));
+  }
+  // A 200's answer is the list now, and its values are the pages' flags (what copyFlags does with the frame), so what a
+  // flag gates follows before the frame comes. An answer without a list waits for the re-read.
+  function applyAnswer(flags) {
+    if (!Array.isArray(flags)) { readFlags(); return false; }
+    Object.assign(labs, { status: 'ready', flags });
+    for (const f of flags) if (typeof f.on === 'boolean' && window.RailUI.prefs.flag(f.key) !== f.on) window.RailUI.prefs.setFlag(f.key, f.on);
+    return true;
+  }
+  // `rail` is only written by RailHost.setStillhet, the one reload owner (the top bar's path); it toasts a failure itself.
+  function railSwitch(on) {
+    labs.saving.rail = true; delete labs.errors.rail; redraw();
+    return Promise.resolve().then(() => window.RailHost.setStillhet(on)).catch(() => ({ ok: false, text: refusedLine(on, LABS_WORDS.unanswered) })).then((r) => {
+      delete labs.saving.rail;
+      if (!r || !r.ok) labs.errors.rail = r?.text || refusedLine(on, LABS_WORDS.unanswered);
+      redraw();
+    });
+  }
+  // Every flag `key` needs that is off, transitively, in a stable order (classic's flags-view.mjs `missing`).
+  function missing(key, acc = []) {
+    for (const r of (labs.flags.find((x) => x.key === key) || {}).requires || []) {
+      const f = labs.flags.find((x) => x.key === r);
+      if (f && !f.on && !acc.includes(f)) { acc.push(f); missing(r, acc); }
+    }
+    return acc;
+  }
+  // A Labs switch, both kinds: the toast comes when the write answers, so it always returns ''.
+  function labsSwitch(key, sv) {
+    const live = liveOn(), f = live ? labs.flags.find((x) => x.key === key) : FLAGS.find((x) => x.key === key);
+    if (!f || f.locked || labs.saving[key]) return '';
+    const on = live ? !!f.on : window.RailUI.prefs.flag(key);
+    if (live && key === 'rail') { railSwitch(!on); return ''; }
+    const start = () => {
+      labs.saving[key] = true; delete labs.errors[key]; redraw();
+      labsWrite({ [key]: !on }).then((r) => {
+        if (r.ok) {
+          if (!live) toast(`${f.name}: ${window.RailUI.prefs.flag(key) ? 'on' : 'off'}`);
+          else if (applyAnswer(r.flags)) toast(onWords(key));
+          else labs.toastFor = key;
+        } else labs.errors[key] = refusedLine(!on, r.error);
+        delete labs.saving[key];
+        redraw();
+      });
+    };
+    const need = live && !on ? missing(key) : [];
+    if (need.length) { sv.__confirm = { text: needsLine(f.title, need.map((x) => x.title)), yes: 'Turn on', live: true, then: () => { start(); return ''; } }; return ''; }
+    start();
+    return '';
+  }
   const STAGE_ORDER = ['beta', 'experimental'];
   const stageRank = (st) => { const i = STAGE_ORDER.indexOf(st); return i < 0 ? STAGE_ORDER.length : i; };
+  const tail = (key, locked) => (locked ? '. ' + LABS_WORDS.locked : '') + (labs.errors[key] ? '. ' + labs.errors[key] : '');
+  // The registry's descriptions end with a period: it goes when Locked or a refusal ends the sentence.
+  const sentence = (say, key, locked) => { const t = tail(key, locked); return t ? String(say).replace(/\.\s*$/, '') + t : say; };
   function liveLabsGroups() {
     const flags = liveFlags().flags, stages = [...new Set(flags.map((f) => String(f.stage || '')))].sort((a, b) => stageRank(a) - stageRank(b));
-    return stages.map((st) => ({ title: st ? st[0].toUpperCase() + st.slice(1) : '', rows: flags.filter((f) => String(f.stage || '') === st).map((f) => ({ name: f.title, say: f.description, sw: { flag: f.key, on: !!f.on, real: true } })) }));
+    return stages.map((st) => ({ title: st ? st[0].toUpperCase() + st.slice(1) : '', rows: flags.filter((f) => String(f.stage || '') === st).map((f) => ({ name: f.title, say: sentence(f.description, f.key, f.locked),
+      sw: { flag: f.key, on: !!f.on, server: true, locked: f.locked ? LABS_WORDS.locked : '', saving: !!labs.saving[f.key] } })) }));
   }
-  const DEMO_LABS = ['Beta', 'Experimental'].map((stage) => ({ title: stage, rows: FLAGS.filter((f) => f.stage === stage).map((f) => ({ name: f.name, say: f.locked ? `${f.say}. ${f.locked}` : f.say, sw: { flag: f.key, on: f.on, why: f.why, locked: f.locked } })) }));
-  const liveLabsMeta = () => ({ loading: 'Loading the features', failed: 'Could not read the features' })[liveFlags().status] || window.RailUI.NOT_LIVE_SENTENCE;
+  const demoLabsGroups = () => ['Beta', 'Experimental'].map((stage) => ({ title: stage, rows: FLAGS.filter((f) => f.stage === stage).map((f) => ({ name: f.name, say: sentence(f.say, f.key, f.locked),
+    sw: { flag: f.key, on: f.on, why: f.why, locked: f.locked, saving: !!labs.saving[f.key] } })) }));
+  // What Reset all puts back: live, classic's rule (unlocked and set in settings; GET has no default); the demo's own.
+  const labsChanged = () => (liveOn() ? liveFlags().flags.filter((f) => !f.locked && f.source === 'settings') : flagsChanged());
+  const labsResetOff = () => {
+    const st = liveOn() ? liveFlags().status : 'ready';
+    return ({ loading: 'Loading the features', failed: 'Could not read the features' })[st] || (Object.keys(labs.saving).length ? LABS_WORDS.saving : labsChanged().length ? '' : LABS_WORDS.nothing);
+  };
+  // Live: one PATCH of nulls for every changed flag but rail; then rail through the top bar's path, which reloads.
+  // The strip is not modal: a write started while it waited (or anything else that disables Reset all) refuses Yes.
+  function labsReset() {
+    if (!liveOn()) { for (const f of flagsChanged()) window.RailUI.prefs.setFlag(f.key, f.on); return LABS_WORDS.resetDone; }
+    const off = labsResetOff();
+    if (off) { toast(off); return ''; }
+    const changed = labsChanged().map((f) => f.key), rail = changed.includes('rail'), keys = changed.filter((k) => k !== 'rail');
+    const after = () => { if (rail) railSwitch(false); else toast(LABS_WORDS.resetDone); };
+    if (!keys.length) { after(); return ''; }
+    for (const k of keys) labs.saving[k] = true;
+    redraw();
+    labsWrite(Object.fromEntries(keys.map((k) => [k, null]))).then((r) => {
+      for (const k of keys) delete labs.saving[k];
+      if (r.ok) { applyAnswer(r.flags); after(); } else toast(resetFailed(r.error));
+      redraw();
+    });
+    return '';
+  }
+  const liveLabsMeta = () => ({ loading: 'Loading the features', failed: 'Could not read the features' })[liveFlags().status] || 'Labs features may change, break or disappear in any release.';
 
   // ---- values that are not a row's own ----
   const STATE = { ver: '1.19.0', latest: '1.19.0', upd: 'latest', updTried: false, gsShown: false, proxyLogin: true, claudeIn: true, chats: 38, worktrees: 12, attach: '140 MB',
@@ -471,11 +573,11 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
 
     experimental: { title: 'Labs', meta: 'Features still being shaped. Each switch applies to everyone using this Worca.', sections: [
       { title: 'Features', meta: () => (liveOn() ? liveLabsMeta() : `Labs features may change, break or disappear in any release.${flagsChanged().length ? '' : ' Reset all waits until you change one.'}`), actions: [
-        { label: 'Reset all', help: 'Every feature back to its default; asks first', off: () => (liveOn() ? window.RailUI.NOT_LIVE_SENTENCE : flagsChanged().length ? '' : 'Nothing to reset: every feature is at its default'),
-          confirm: { text: 'Turn every Labs feature back to its default?', yes: 'Reset all', then: () => { for (const f of flagsChanged()) window.RailUI.prefs.setFlag(f.key, f.on); return 'Labs: back to its defaults'; } } },
+        { label: 'Reset all', help: 'Every feature back to its default; asks first', off: labsResetOff,
+          confirm: () => ({ text: LABS_WORDS.reset + (liveOn() && labsChanged().some((f) => f.key === 'rail') ? ' ' + LABS_WORDS.resetRail : ''), yes: 'Reset all', live: true, then: labsReset }) },
       ], rows: [
         { name: 'Guide', say: 'How Labs works, and what a stage means', acts: [{ label: 'Open', off: () => (liveOn() ? window.RailUI.NOT_LIVE_SENTENCE : ''), say: window.RailWould('open the Labs guide in a new tab') }] },   // F-G-G4-07: classic has no Labs guide; live, it is not in Stillhet yet
-      ], get groups() { return liveOn() ? liveLabsGroups() : DEMO_LABS; } },
+      ], get groups() { return liveOn() ? liveLabsGroups() : demoLabsGroups(); } },
     ] },
 
     runs: { title: 'Tasks', meta: 'How tasks spend, start and wait.', sections: [
@@ -862,7 +964,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     keep: 'Checkout', coMax: 'Most kept', ct: 'Connect', lt: 'Sign in', it: 'Idle', auth: 'Signing in', wait: 'Wait', netWait: 'Wait for the network', web: 'Sites', webOn: 'Web access', proxy: 'Proxy', proxyHost: 'Host', proxyPort: 'Port', proxyLocal: 'Local proxy', period: 'Total starts again' };
   const VALUE_WORDS = { perRun: usd, total: (v, d) => `${usd(v)} a ${d.period}`, period: (v) => ({ day: 'each day', week: 'each week', month: 'each month' })[v] || v, rate: (v) => `${usd(v)} an hour`, capRun: usd, capAll: (v) => `${usd(v)} a month`, wsCap: usd };
   window.SettingsModel = { ICONS: { runs: 'nav-runs', presets: 'set-presets', labels: 'set-labels', automations: 'set-automations', models: 'set-models', ask: 'nav-chat', memory: 'set-memory', team: 'set-policy', guardrails: 'set-guardrails', plugins: 'set-plugins', connectors: 'set-connectors', general: 'set-general', notifications: 'set-notifications', experimental: 'set-labs' }, SECTION_ICONS: { Spending: 'set-spending', Starting: 'nav-runs', Limits: 'set-limits', 'Away mode': 'set-away', Machine: 'set-machine' },
-    GROUPS, SECTIONS, FLAGS, STATE, FIRST: 'runs', workingChannels, VALUE_NAMES, VALUE_WORDS,
+    GROUPS, SECTIONS, FLAGS, STATE, FIRST: 'runs', LABS_WORDS, labsSwitch, workingChannels, VALUE_NAMES, VALUE_WORDS,
     title: (id) => (id === 'notifications' ? NOTIFICATIONS : SECTIONS[id] || { title: id }).title,
     meta: (id) => (id === 'notifications' ? NOTIFICATIONS : SECTIONS[id] || { meta: '' }).meta,
     min: (id) => (SECTIONS[id] || {}).min || '',

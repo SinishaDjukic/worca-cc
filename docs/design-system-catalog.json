@@ -1384,7 +1384,8 @@
         "one left edge for every text and section line, one right edge for every action, the name, the sentence and the end on one baseline: the component's, never the page's",
         "takes effect at once; only a reset of many rows confirms, in the strip",
         "under 560px of width it stacks (docs/rail/narrow.md)",
-        "`fold.label` names a fold that holds a list instead of fine-tuning (Paired browsers)"
+        "`fold.label` names a fold that holds a list instead of fine-tuning (Paired browsers)",
+        "a write it waits for shows Saving on its switch; a refused write says why at the end of its sentence, until the next change"
       ],
       "example": "Badge · The tab title counts what needs you ▾"
     },
