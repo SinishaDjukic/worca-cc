@@ -51,6 +51,7 @@ Every action the prototype answers with a "Would…" sentence is `window.RailWou
 | `ui/public/stillhet/runs/run-page-model.js` | the try-it command, instance links | wired | Try it is `RailTaskLive.flow('Try it')`: `POST /api/runs/:id/checkout`, then the first service's `POST /api/runs/:id/actions/:actionId/start` (dev's `ui/public/app.js` tryItFlow); the workspace instance links are their own rows |
 | `ui/public/stillhet/settings/settings-model.js` | open a Settings link in a new tab, send a test to a model, report a bug, suggest an improvement, copy the policy for a PR, the Labs guide | wire to | the models and engines routes, the team policy routes, the Labs guide in `docs/feature-flags.md` |
 | `ui/public/stillhet/settings/settings.js` | copy a setting's value | wire to | the clipboard and the settings routes |
+| `ui/public/stillhet/settings/settings-model.js` | Settings › Labs: a feature's switch, Reset all | wired | S12.1: `labsSwitch` and Reset all write `PATCH /api/flags` (`ui/routes/feature-flags/flags.mjs`) and draw the server's answer; `rail` goes through `RailHost.setStillhet` (`ui/public/stillhet/host-app.js`) |
 | `ui/public/stillhet/pulse/pulse.js` | ask Chat from a page, send a test notification; on pulse.html only (no shell): open a search result, open Statistics, open what a Pulse row names, a place that is off, New run's start and schedule | wired | dev's routes with dev's bodies: `POST /api/resume` (Resume, Try again, Restart Build; a confirm opens the task), `POST /api/schedules/:id/run-now`, `POST /api/actions/instances/:instanceId/stop`, `POST /api/notifications/:id/read` and `/read-all` (the read of run-outcome updates kept in `worca-rail.pulse-read`, this browser, shared across tabs), `POST /api/settings` (`uiLevel`, `keepAwake`, `nightModeToggle`); a refusal toasts `Could not ACTION: REASON` and changes nothing |
 | `ui/public/stillhet/workflows/workflows.js` | import a workflow, export a workflow, run the saved cases | wired | slice 7: `live/workflow-live.mjs` (its `WORKFLOW_ACTIONS` table) on dev's workflow, agent, script and pin routes; the graph from dev's template (`graph-entry.mjs` `fromTpl`) |
 | `ui/public/stillhet/requirements/requirements.js` | copy a requirement as Markdown, save specs | wire to | the requirements routes |
@@ -147,6 +148,7 @@ One row per action: `npm run stillhet:wiring` lists every `window.RailWould(...)
 | `marketplace/marketplace.js › open it on GitHub` | wired | `GET /api/plugins/:name` `webUrl` (the pinned commit) for an installed plugin, else the market snapshot's commit (`githubWebUrl`), opened in a new tab; a plugin from a local folder offers no View its source (slice 8 D15) |
 | `marketplace/marketplace.js › open … at … on GitHub` | wired | the market's URL in Where plugins come from is a text link to its synced commit on GitHub (`githubWebUrl` of `GET /api/marketplaces` `url` and `lastSync.sha`), opened in a new tab (slice 8 D15) |
 | `marketplace/marketplace.js › the first sync of a never-synced builtin` | wired | `live/market-live.mjs` `firstSync`: `POST /api/marketplaces/:id/refresh` (the `sync` entry of `MARKET_ACTIONS`), once per page load for a builtin with `lastSync: null` and no `needsGit`, then both lists read again; Loading the catalogue… meanwhile, and an empty catalogue's No plugins yet offers Sync (#1298) |
+| `marketplace/marketplace.js › fresh on open` | wired | `live/market-live.mjs` `opened`: both lists re-read on each open of `#marketplace`, and a source last synced over 24 h ago synced quietly once (`POST /api/marketplaces/:id/refresh`) (B5.10, F-5-18) |
 | `pulse/pulse.js › (a phrase built from data)` | wired | in the app host each reaches its real target: Chat hand-over (`RailConversation.handOver`), `RailShell.go` / `openRun` / `openSchedule` (`insights/spend` for Statistics), New run is Chat's `RailConversation.start('task')`, and Send test is the browser `Notification` API after permission (D16); the demo sentences stay on the standalone `pulse.html` only |
 | `pulse/pulse.js › ask Chat: …` | wired | in the app host each reaches its real target: Chat hand-over (`RailConversation.handOver`), `RailShell.go` / `openRun` / `openSchedule` (`insights/spend` for Statistics), New run is Chat's `RailConversation.start('task')`, and Send test is the browser `Notification` API after permission (D16); the demo sentences stay on the standalone `pulse.html` only |
 | `pulse/pulse.js › open Statistics` | wired | in the app host each reaches its real target: Chat hand-over (`RailConversation.handOver`), `RailShell.go` / `openRun` / `openSchedule` (`insights/spend` for Statistics), New run is Chat's `RailConversation.start('task')`, and Send test is the browser `Notification` API after permission (D16); the demo sentences stay on the standalone `pulse.html` only |
@@ -279,21 +281,22 @@ One row per seeded figure: each data key and seed getter of the globals a model 
 | `settings/settings-model.js › SettingsModel.GROUPS` | wire to | the models and engines routes, the team policy routes, the Labs guide in `docs/feature-flags.md` |
 | `settings/settings-model.js › SettingsModel.SECTIONS` | wire to | the models and engines routes, the team policy routes, the Labs guide in `docs/feature-flags.md` |
 | `settings/settings-model.js › SettingsModel.FLAGS` | wire to | the models and engines routes, the team policy routes, the Labs guide in `docs/feature-flags.md` |
+| `settings/settings-model.js › SettingsModel.LABS_WORDS` | wired | the words of a Labs write in both kinds (Saving, Locked by WORCA_FLAGS, a refusal, Reset all's confirm); live, the switch and Reset all write `PATCH /api/flags` (`ui/routes/feature-flags/flags.mjs`) |
 | `settings/settings-model.js › SettingsModel.STATE` | wire to | the models and engines routes, the team policy routes, the Labs guide in `docs/feature-flags.md` |
 | `settings/settings-model.js › SettingsModel.FIRST` | wire to | the models and engines routes, the team policy routes, the Labs guide in `docs/feature-flags.md` |
 | `settings/settings-model.js › SettingsModel.VALUE_NAMES` | wire to | the models and engines routes, the team policy routes, the Labs guide in `docs/feature-flags.md` |
 | `settings/settings-model.js › SettingsModel.VALUE_WORDS` | wire to | the models and engines routes, the team policy routes, the Labs guide in `docs/feature-flags.md` |
 | `insights/insights-model.js › RailInsightsModel.STANDS` | not offered live | the standouts of Why it cost and Review need rework spend and review rounds per project, which no dev API returns (slice 10 D12); owner: the Insights measures run |
 | `insights/insights.js › page insights/spend` | wired | slice 10 D11, Spend: GET /api/stats totals.spentUsd (`insights-map.mjs` `FIGURE_SOURCE`) |
-| `insights/insights.js › page insights/per-task` | wired | slice 10 D11, Per task: GET /api/stats totals.spentUsd ÷ totals.runs (`insights-map.mjs` `FIGURE_SOURCE`) |
+| `insights/insights.js › page insights/per-task` | wired | slice 10 D11, Per task: GET /api/stats totals.pipelineSpendUsd (else report.runs usd summed) ÷ totals.runs; B4.9 F-6-08: the runs' cost only, so its series, rows, day cut, period before, Saved and CSV leave out Chat, Requirements and Design (`insights-map.mjs` `FIGURE_SOURCE`, `RUNS_ONLY`) |
 | `insights/insights.js › page insights/budget` | wired | slice 10 D11, Budget: GET /api/stats totals.spentUsd against GET /api/budget totalLimitUsd; in the bar only with a budget (`insights-map.mjs` `FIGURE_SOURCE`) |
-| `insights/insights.js › page insights/time-saved` | wired | slice 10 D11, Time saved: GET /api/stats totals.savedUsd (`insights-map.mjs` `FIGURE_SOURCE`) |
+| `insights/insights.js › page insights/time-saved` | wired | slice 10 D11, Time saved: GET /api/stats totals.savedUsd; B4.9 F-6-11: its hours (totals.humanHours) in whole hours, a negative amount with a minus before the currency (`insights-map.mjs` `FIGURE_SOURCE`) |
 | `insights/insights.js › page insights/value` | wired | slice 10 D11, Value for spend: GET /api/stats totals.savedUsd ÷ totals.spentUsd (`insights-map.mjs` `FIGURE_SOURCE`) |
-| `insights/insights.js › page insights/ends` | wired | slice 10 D11, How tasks end: GET /api/stats totals.finished, totals.failed, totals.stopped (`insights-map.mjs` `FIGURE_SOURCE`) |
+| `insights/insights.js › page insights/ends` | wired | slice 10 D11, How tasks end: GET /api/stats report.runs (in the shown buckets) through allocate().total; B4.9 F-6-12: its headline, bars and rows count that one fact set (`insights-map.mjs` `FIGURE_SOURCE`) |
 | `insights/insights.js › page insights/fails` | wired | slice 10 D11, Where it fails: GET /api/stats report.runs (failed or stopped) through allocate().total; by project live (`insights-map.mjs` `FIGURE_SOURCE`) |
 | `insights/insights.js › page insights/shipped` | wired | slice 10 D11, Shipped: GET /api/stats totals.prsMerged and totals.prsOpened (`insights-map.mjs` `FIGURE_SOURCE`) |
 | `insights/insights.js › page insights/throughput` | wired | slice 10 D11, Throughput: GET /api/stats totals.finished (`insights-map.mjs` `FIGURE_SOURCE`) |
-| `insights/insights.js › page insights/team` | wired | slice 10 D11, By person: GET /api/team-metrics records through aggregate().kpis.spendUsd; the pooled budget from GET /api/policy caps.pooled (`insights-map.mjs` `FIGURE_SOURCE`) |
+| `insights/insights.js › page insights/team` | wired | slice 10 D11, By person: GET /api/team-metrics records through aggregate().kpis.spendUsd; B4.9 F-6-10: "N people" counts the distinct named people in the records' facts; the pooled budget from GET /api/policy caps.pooled (`insights-map.mjs` `FIGURE_SOURCE`) |
 | `insights/insights.js › page insights/untagged` | wired | slice 10 D11, Missing cost tags: GET /api/team-metrics records through missingKeyTodos().rows for the first GET /api/tag-dimensions key; in the bar only with one (`insights-map.mjs` `FIGURE_SOURCE`) |
 | `insights/insights.js › page insights/shaping` | wired | slice 10 D11, Shaping: GET /api/stats shaping.groups (`insights-map.mjs` `FIGURE_SOURCE`) |
 | `insights/insights.js › page insights/heat` | wired | slice 10 D11, Who spends where: GET /api/team-metrics records through heatGrid() (`insights-map.mjs` `FIGURE_SOURCE`) |
@@ -360,7 +363,8 @@ One row per surface of today's UI that Stillhet must carry (gate.prototype in `d
 ## Classic controls
 
 One classic control's coverage decided by hand (`tools/classic-inventory.mjs` reads this table by id): app.js's folder
-browser and bulk review list serve Projects › Add project, which the tool's page map reads as Tasks.
+browser and bulk review list serve Projects › Add project, which the tool's page map reads as Tasks. The table also carries
+COV-3's run controls whose Stillhet control already does the same job (Resume on, Switch model…, Pause, Stop, Full plan).
 
 | Classic control | Status | Where in Stillhet |
 |---|---|---|
@@ -369,6 +373,11 @@ browser and bulk review list serve Projects › Add project, which the tool's pa
 | `ui/public/app.js › toggle › Select …` | wired | the FolderBrowser's tick per folder in Several folders… (`projects/project-add.js`) |
 | `ui/public/app.js › toggle › Add …` | wired | the review list's tick per picked folder (`projects/project-add.js`, `POST /api/projects/bulk`) |
 | `ui/public/app.js › field › Project name for …` | wired | the review list's name per picked folder (`projects/project-add.js`, `POST /api/projects/bulk`) |
+| `ui/public/app.js › button › Resume on …` | wired | the task page's Resume ▾ › Resume on ‹Engine› on a usage-limit pause, from the task's `resumeEngines` (`runs/run-page.js`, `live/task-live.mjs` `resume-engine`, `POST /api/resume` with `engine`; COV-3 rows 12, 14, 16). It sits in Resume ▾ and confirms first; classic is a banner button |
+| `ui/public/app.js › button › Switch model…` | wired | the task page's Switch model… on a paused task (`design-system/components/run-state.mjs` paused states, `live/task-live.mjs` `switch-model`, `POST /api/resume` with `model`; COV-3 rows 13, 15, 17). It is offered on more paused states than classic, and only when dev returns models |
+| `ui/public/chat/run-card.mjs › button › Pause` | wired | a Chat TaskCard's Pause on a live task (`chat/conversation.js` taskCard, `live/chat-live.mjs` `task-pause`, `POST /api/pause` with `runId`; Chat capabilities "Run cards: pause, resume, stop") |
+| `ui/public/chat/run-card.mjs › button › Stop` | wired | a Chat TaskCard's ⋯ › Stop, confirm first (`chat/conversation.js` taskCard `canStop`, `live/chat-live.mjs` `task-stop`, `POST /api/stop`; Chat capabilities "Run cards: pause, resume, stop"). It sits in ⋯ with a confirm; classic shows it in the card's footer |
+| `ui/public/shape/plan-body.mjs › button › Full plan` | wired | the task page's plan case › Full plan (`design-system/components/run-state.mjs` plan items, `runs/run-page.js` openDoc, `live/task-live.mjs` docText, `GET /api/runs/:id/artifact?rel=`; Tasks capabilities "The plan (read, save)"). It opens the run's plan artifact in the viewer and is hidden when no plan artifact exists |
 
 ## Opt-in
 
@@ -419,7 +428,7 @@ Every dev chat capability (`ui/public/ask-panel.mjs`, `ui/public/chat/`, `ui/rou
 | Search | `GET /api/ask/threads?q=` | the bar's search | wired (slice 3) |
 | Unread | `ask-done` / `ask-error` frames | the bar's dot | wired (slice 3) |
 | External origin | `thread.origin` | the row's origin mark | wired (slice 3) |
-| Chat home pins | `GET` / `PUT /api/chat-home/pins` | the starters row | wired: the row is dev's pins, named by dev's workflows (`GET /api/workflows`); a pin or unpin is the PUT, answered first |
+| Chat home pins | `GET` / `PUT /api/chat-home/pins` | the starters row | wired: the row is dev's pins, named by dev's workflows (`GET /api/workflows`); a pin or unpin is the PUT, answered first; read again (fresh) each time Chat home is shown (F-5-11) |
 | Chat worktrees (remove) | `DELETE /api/ask/threads/:id/worktrees/:wtId` | a conversation's head (Expert): Worktrees · N | wired: dev's question ("Remove this worktree?") under the head, then the DELETE |
 | Voice: dictate and hands-free | `src/shared/ask-voice.mjs` (dev's engine) | the composer's mic and Voice options | wired: the mic and hands-free drive dev's engine (`chat/voice.mjs`); the voice settings are Settings › Speech's |
 | A task opens the chat that started it | `GET /api/ask/run-links` | the bar's task rows, `RailConversation.chatOfTask` | wired |

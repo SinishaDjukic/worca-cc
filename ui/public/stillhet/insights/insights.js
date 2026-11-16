@@ -108,6 +108,10 @@
   function captionOf(sub, st, c) {
     const per = ['last month', 'this quarter'].includes(st.when) ? 'week' : ['all time', 'this year'].includes(st.when) ? 'month' : 'day', pace = paceOf(sub, st);
     if (sub.caption) return sub.caption;
+    const span = c.live && (!axisIsRows(sub, st) || M.TIME.has(st.by)) ? c.src.seriesSpan : null;   // B4.9 review: all time's headline is everything, dev's bars over time the last months only
+    return [captionBase(sub, st, c, per, pace), span && `The chart shows ${span}`].filter(Boolean).join('. ');
+  }
+  function captionBase(sub, st, c, per, pace) {
     if (axisIsRows(sub, st)) return [`By ${byWord(st)}`, sub.note].filter(Boolean).join('. ');
     if (compared(st) && st.by !== 'day') return `All of it per ${per}, against ${AGAINST[st.against]}; by ${byWord(st)} in the rows below`;
     if (sub.note) return `Per ${per}, all together. ${sub.note}`;
@@ -205,7 +209,7 @@
   function pageHtml(sub, st, c) {
     const plain = st.when === 'this month' && !st.narrow && !st.from && !st.filter.length;
     const scope = st.narrow || st.from ? (c.days === 1 ? 'on this day' : `in these ${c.days} days`) : st.when === 'all time' ? 'in all' : st.when;
-    const word = sub.wordAlways ? sub.wordAlways(c) : plain ? sub.word(c) : `${sub.text(c.v)} ${scope}`;
+    const word = sub.wordAlways ? sub.wordAlways(c) : plain ? sub.word(c) : c.live && c.v == null ? `Not known ${scope}` : `${sub.text(c.v)} ${scope}`;
     const why = sub.whyAlways ? sub.whyAlways(c) : st.against === 'before' ? M.cmp(c, sub) : plain ? sub.why(c) : '';   // no comparison asked for: none in the headline; sub.why never compares
     const pace = sub.pace && plain;   // over budget at this pace: Advisory, in ink (look.alert-ladder); live: the words of D10 (no budget, or under it: no pace)
     const head = R.placeHead({ center: arg === 'spend' ? null : { label: 'Insights', to: 'insights' }, title: viewList().find((v) => v.id === arg)?.name || sub.title, mark: pace ? R.kindMark({ kind: 'figure', tone: 'ok', icon: sub.icon, title: sub.pace }) : R.kindMark({ kind: 'plugin', icon: sub.icon }), tone: pace ? 'ok' : '', word: pace ? sub.pace : word, why: pace ? [word, ...why.split(' · ').filter((x) => !/on pace for/i.test(x))].join(' · ') : why, menu: R.moreMenu({ id: 'in-more', label: `More for ${sub.title}`, icon: R.icon('more', 16), open: menu === 'in-more', items: [{ id: 'link', text: 'Copy a link', help: 'To this page, as you narrowed it' }] }) });
