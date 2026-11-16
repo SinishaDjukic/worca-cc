@@ -73,7 +73,8 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
   chat.runOf = (id) => {
     const l = live.get(id) || [...live.values()].find((r) => r.pipelineId === id), h = [...(sources.history?.pipelines || []), ...(sources.archived?.pipelines || [])].find((p) => p && (p.id === id || (l && p.id === l.pipelineId)));   // an archived row's scope too (its per-run restore, COV-3)
     return { pipelineId: l?.pipelineId || h?.id || id, startedAt: l?.startedAt || h?.startedAt || '', endAt: l ? null : h?.mtime ?? null,
-      projectKey: h?.projectKey || l?.projectKey || '', projectDir: h?.projectDir || l?.projectDir || '', folder: workModeOf(h || l) === 'folder' };
+      projectKey: h?.projectKey || l?.projectKey || '', projectDir: h?.projectDir || l?.projectDir || '', folder: workModeOf(h || l) === 'folder',
+      prState: typeof h?.pr?.state === 'string' ? h.pr.state : '' };   // F-G-G1-01: whether its PR is known open (checks are read only then)
   };
 
   // Workflows (slice 7 D2): workflow-live owns every Workflows request; its lists are read when the place first asks

@@ -7,7 +7,7 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { sitesOfText, demoActionSites, wireToSites, update, scanSites, checkSites, BASELINE, STRINGS } from '../tools/stillhet-no-demo.mjs';
-import { liveHost, go, settle, closeHosts, toastText, saidText } from './helpers/stillhet-chat-live-host.mjs';
+import { liveHost, go, settle, closeHosts, toastText, saidText, SOURCES as SOURCES_FIXTURE } from './helpers/stillhet-chat-live-host.mjs';
 import { SOURCES } from '../ui/public/stillhet/live/live-adapter.mjs';
 import { VIEWS_KEY } from '../ui/public/stillhet/live/insights-live.mjs';
 
@@ -269,6 +269,22 @@ test('B1.10 A1: live offenders equal the baseline\'s live list', () => {
   }
   assert.equal(new Set(baseline.live).size, baseline.live.length, 'no entry twice');
   assert.throws(() => exactly('work', ['live › #chat › demo-text › Closes #942']), /B1\.10 gate\.no-demo/, 'a new hit fails');
+});
+
+// F-G-G2-02 (= F-cov23-10): the walk above boots an empty adapter, so it never opened a task waiting on its question. A live
+// task page with the run's own question, and one whose ask the page cannot draw, show none of the design's sample asks,
+// under its step or in Plan › Decisions (DETAIL.asks is the prototype's only)
+test('F-G-G2-02: a live task waiting on its question shows no sample question, under its step or in Decisions', async () => {
+  for (const q of [{ id: 'q-1', kind: 'clarify', questions: [{ id: 'a', question: 'Should the export include archived invoices?', options: ['Yes', 'No'] }] }, { id: 'f-1', kind: 'form', form: 'release' }]) {
+    const src = JSON.parse(JSON.stringify(SOURCES_FIXTURE));
+    src.hello.runs = src.hello.runs.map((r) => (r.runId === 'run-a' ? { ...r, pendingQuestion: q } : r));
+    const { d } = await liveHost({ sources: src });
+    await go(d.defaultView, '#run/run-a', 200); await settle(300);
+    const dec = d.querySelector('#route-run:not([hidden]) #card [data-key="tab:decisions"]');
+    if (dec) { dec.click(); await settle(60); }
+    assert.deepEqual(scan(d, '#run/run-a'), [], `${q.kind}: no sample question`);
+    if (q.kind === 'clarify') assert.match(d.querySelector('#route-run:not([hidden]) #card').textContent, /Should the export include archived invoices\?/);
+  }
 });
 
 // F-G-G5-01: the prototype's Invitation (`?invite=stillhet`) is demo input. Live Stillhet means `rail` is on, and the opt-in
