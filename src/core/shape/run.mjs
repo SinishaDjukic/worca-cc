@@ -40,7 +40,7 @@ export const isShapeWorkflowId = (id) => id === SHAPE_WORKFLOW_ID || id === SHAP
  * Shaper workflow: the requirements variant is chosen when the run starts.
  * @returns {{ok:true, shape:null|{perspectives:string[], slices?:string, size?:string, slice?:object, replaces?:string}, workflowId:string|null}|{ok:false, error:string}}
  */
-export function resolveShapeRequest({ shape, workflowId }, { internal = false, proposal = false, compliance = false } = {}) {
+export function resolveShapeRequest({ shape, workflowId }, { internal = false, proposal = false } = {}) {
   const named = typeof workflowId === 'string' && workflowId.trim() ? workflowId.trim() : null;
   if (shape === undefined && !isShapeWorkflowId(named)) return { ok: true, shape: null, workflowId: named };
   if (shape !== undefined && (shape === null || typeof shape !== 'object' || Array.isArray(shape))) {
@@ -56,7 +56,7 @@ export function resolveShapeRequest({ shape, workflowId }, { internal = false, p
     return { ok: false, error: `shape.lead must be one of ${ANSWERER_LEAD_KEYS.join(', ')}` };
   }
   const askedP = shape?.perspectives ?? [...DEFAULT_PERSPECTIVES];
-  const p = normalizePerspectives(shape?.lead && Array.isArray(askedP) ? [...askedP, shape.lead] : askedP, { compliance });   // the gate's flag
+  const p = normalizePerspectives(shape?.lead && Array.isArray(askedP) ? [...askedP, shape.lead] : askedP);
   if (!p.ok) return { ok: false, error: p.error };
   if (shape?.slices !== undefined && !SLICES_MODES.has(shape.slices)) return { ok: false, error: 'shape.slices must be "auto" or "off"' };
   if (shape?.size !== undefined && !SIZES.has(shape.size)) return { ok: false, error: 'shape.size must be small, medium or large' };
@@ -133,10 +133,9 @@ export function validatePlanAnswer(raw, { revisable = false, perspectives = null
   }
   const payload = { decision: 'revise', feedback, ...(source === 'check' ? { source } : {}) };
   if (raw.perspectives !== undefined) {
-    const had = Array.isArray(perspectives) ? perspectives : DEFAULT_PERSPECTIVES;
-    // A run that holds Compliance (a flag-on start) keeps it through approval; it cannot be newly added here.
-    const p = normalizePerspectives(raw.perspectives, { compliance: had.includes('compliance') });
+    const p = normalizePerspectives(raw.perspectives);
     if (!p.ok) return { ok: false, errors: [{ path: 'perspectives', code: 'invalid', message: p.error }] };
+    const had = Array.isArray(perspectives) ? perspectives : DEFAULT_PERSPECTIVES;
     if (had.includes('ux') !== p.perspectives.includes('ux')) {
       return { ok: false, errors: [{ path: 'perspectives', code: 'invalid',
         message: 'UX adds or drops the manual-test stages: start a new shaped run to change it' }] };

@@ -146,8 +146,7 @@ test('scan: no held layout, no chip check row, no "Run this plan" anywhere', () 
 
 test('scan: the gate-another button is created only in ui/public/shape/step-card.mjs (the delegate only names it)', () => {
   // D19: question-delegate.mjs keeps its DECISIONS map and Q_BUTTONS, which the run page's one delegate still uses.
-  // Stillhet's task-live.mjs names it as an action id that posts the same answer (B1.6); it builds no button.
-  assert.deepEqual(hits(/(?<![.\w-])gate-another\b/), ['ui/public/question-delegate.mjs', 'ui/public/shape/step-card.mjs', 'ui/public/stillhet/live/task-live.mjs']);
+  assert.deepEqual(hits(/(?<![.\w-])gate-another\b/), ['ui/public/question-delegate.mjs', 'ui/public/shape/step-card.mjs']);
 });
 
 // Shaper requirements s3 (D10): the ledger's item states. A marked item passes the count; not met keeps its ✕ and

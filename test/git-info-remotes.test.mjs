@@ -337,7 +337,7 @@ test('findPrForBranch with a persisted url: view wins; unreadable/empty/CLOSED f
     { name: 'findPrForBranch resolves a persisted url with gh pr view and skips the branch search', run: async () => {
       const seen = [];
       gitInfo.setRunner((cmd, args) => {
-        if (cmd === 'gh') seen.push([cmd, ...args]);   // the remote listing (git) precedes the lookup
+        seen.push([cmd, ...args]);
         return okOut(JSON.stringify({ number: 9, state: 'MERGED', url: 'https://github.com/up/repo/pull/9', isDraft: false, mergeable: 'UNKNOWN' }));
       });
       const pr = await findPrForBranch({ projectDir: '/repo', head: 'feat/x', prUrl: 'https://github.com/up/repo/pull/9' });
@@ -348,7 +348,7 @@ test('findPrForBranch with a persisted url: view wins; unreadable/empty/CLOSED f
       const seen = [];
       let viewOut = null;                       // null → the view call fails
       gitInfo.setRunner((cmd, args) => {
-        if (cmd === 'gh') seen.push([cmd, ...args]);   // the remote listing (git) precedes the lookup
+        seen.push([cmd, ...args]);
         if (args[1] === 'view') return viewOut === null ? fail('GraphQL: Could not resolve to a PullRequest') : okOut(viewOut);
         return okOut(JSON.stringify([{ number: 3, state: 'OPEN', url: 'https://github.com/o/r/pull/3' }]));
       });
@@ -363,7 +363,7 @@ test('findPrForBranch with a persisted url: view wins; unreadable/empty/CLOSED f
       const seen = [];
       let listRows = [];
       gitInfo.setRunner((cmd, args) => {
-        if (cmd === 'gh') seen.push([cmd, ...args]);   // the remote listing (git) precedes the lookup
+        seen.push([cmd, ...args]);
         if (args[1] === 'view') return okOut(JSON.stringify({ number: 9, state: 'CLOSED', url: 'https://github.com/up/repo/pull/9' }));
         return okOut(JSON.stringify(listRows));
       });
@@ -510,8 +510,7 @@ test('without an Azure credential the branch lookup spends no git call (D6)', as
     gitInfo.setRunner((cmd, args) => { calls.push(`${cmd} ${args[0]}`); return okOut('[]'); });
     await findPrForBranch({ projectDir: '/r', head: 'feat' });
   });
-  // The one git call is the remote listing that names the shared PR-status key (F-X-02); no Azure lookup on top.
-  assert.deepEqual(calls, ['git remote', 'gh pr']);
+  assert.deepEqual(calls, ['gh pr']);
 });
 
 test("Azure-only machine (no gh): a GitHub project's PR lookups return null/UNKNOWN without spawning gh pr", async () => {
@@ -684,122 +683,4 @@ test('prRefMatches: number via pr_number or URL tail; slug owner/repo incl. Azur
   assert.equal(prRefMatches(parsePrRef('nope/api#9'), az), false);
   assert.equal(prRefMatches(null, gh), false);
   assert.equal(prRefMatches(parsePrRef('12'), null), false);
-});
-
-// ── REST for the branch and URL lookup (F-X-02, D5/D6) ───────────────────────
-import { lookupPrForBranch } from '../src/core/git-info.mjs';
-import { _testing as prStatus } from '../src/core/pr-status-cache.mjs';
-import { _testing as ghQuota, noteQuotaExhausted } from '../src/core/github-quota.mjs';
-import { mkdtempSync, rmSync } from 'node:fs';
-
-const REMOTES = (lines) => okOut(lines.map(([n, u]) => `${n}\t${u} (fetch)\n${n}\t${u} (push)\n`).join(''));
-const http = (status, json) => okOut(`HTTP/2.0 ${status} X\nContent-Type: application/json\n\n${JSON.stringify(json)}`);
-const httpFail = (status, json) => Promise.resolve({ ok: false, stdout: `HTTP/2.0 ${status} X\n\n${JSON.stringify(json)}`, stderr: `gh: HTTP ${status}`, code: 1 });
-const pull = (n, over = {}) => ({ number: n, state: 'open', merged_at: null, draft: false, html_url: `https://github.com/up/repo/pull/${n}`, ...over });
-const VERDICT_FIELDS = 'isDraft,reviewDecision,mergeable,statusCheckRollup';
-/** upstream up/repo (base), origin me/repo; the branch was pushed to `pushedTo`. gh api answers by path. */
-function restRunner({ remotes = [['origin', 'https://github.com/me/repo.git'], ['upstream', 'https://github.com/up/repo.git']], pushedTo = 'origin', api = {}, verdict = null, calls = [] } = {}) {
-  return (cmd, args) => {
-    calls.push([cmd, ...args]);
-    if (cmd === 'git' && args[0] === 'remote') return REMOTES(remotes);
-    if (cmd === 'git' && args[0] === 'for-each-ref') return okOut(pushedTo ? `refs/remotes/${pushedTo}/feat\n` : '');
-    if (cmd === 'gh' && args[0] === 'api') {
-      const path = args.at(-1);
-      const key = Object.keys(api).find((k) => path.startsWith(k));
-      return key ? api[key](path) : httpFail(404, { message: 'Not Found' });
-    }
-    if (cmd === 'gh' && args[1] === 'view' && args.includes(VERDICT_FIELDS)) return verdict ? verdict() : fail('no verdict');
-    return fail('unexpected gh call');
-  };
-}
-const ghCalls = (calls) => calls.filter((c) => c[0] === 'gh').map((c) => (c[1] === 'api' ? `api ${c.at(-1)}` : c.slice(1, 4).join(' ')));
-
-test('REST: the branch and URL lookup on a github.com base remote (F-X-02)', async () => {
-  await checkRows([
-    { name: 'REST: a github.com base remote asks `gh api …/pulls?head=owner:branch&state=all&per_page=30`, merged_at → MERGED, no GraphQL for a MERGED PR', run: async () => {
-      const calls = [];
-      gitInfo.setRunner(restRunner({ calls, api: { 'repos/up/repo/pulls?': () => http(200, [pull(5, { state: 'closed', merged_at: '2026-11-01T00:00:00Z' })]) } }));
-      assert.deepEqual(await lookupPrForBranch({ projectDir: '/r', head: 'feat', withVerdict: true }),
-        { ok: true, pr: { state: 'MERGED', url: 'https://github.com/up/repo/pull/5', number: 5, isDraft: false, mergeable: 'UNKNOWN' } });
-      assert.deepEqual(ghCalls(calls), ['api repos/up/repo/pulls?head=me:feat&state=all&per_page=30']);
-      const api = calls.find((c) => c[1] === 'api');
-      assert.deepEqual(api.slice(1, 7), ['api', '--include', '-X', 'GET', '-H', 'Accept: application/vnd.github+json']);
-    } },
-    { name: 'REST: an OPEN PR adds one `gh pr view --json VERDICT_FIELDS` for mergeable + verdict; skipped while graphql is blocked, keeping last mergeable/verdict for the same URL', run: async () => {
-      const calls = [];
-      let now = Date.parse('2026-11-15T12:00:00Z');
-      gitInfo.setRunner(restRunner({ calls, api: { 'repos/up/repo/pulls?': () => http(200, [pull(6, { draft: true })]) },
-        verdict: () => okOut(JSON.stringify({ isDraft: true, reviewDecision: 'APPROVED', mergeable: 'CONFLICTING', statusCheckRollup: [] })) }));
-      gitInfo.setNow(() => now);
-      const dir = mkdtempSync(join(tmpdir(), 'worca-rest-'));
-      try {
-        prStatus.useDir(dir); ghQuota.useDir(dir);
-        const want = { state: 'OPEN', url: 'https://github.com/up/repo/pull/6', number: 6, isDraft: true, mergeable: 'CONFLICTING',
-          verdict: { draft: true, reviewDecision: 'APPROVED', mergeable: 'CONFLICTING', checks: { state: 'none', total: 0, failed: 0, pending: 0 } } };
-        assert.deepEqual(await lookupPrForBranch({ projectDir: '/r', head: 'feat', withVerdict: true }), { ok: true, pr: want });
-        assert.deepEqual(ghCalls(calls), ['api repos/up/repo/pulls?head=me:feat&state=all&per_page=30', `pr view https://github.com/up/repo/pull/6`]);
-        // 11 minutes later GraphQL is used up: REST still answers, the verdict view is skipped, the last one is kept.
-        now += 11 * 60_000; calls.length = 0;
-        noteQuotaExhausted('graphql', { resetAt: now + 30 * 60_000, now });
-        assert.deepEqual(await lookupPrForBranch({ projectDir: '/r', head: 'feat', withVerdict: true }), { ok: true, pr: want });
-        assert.deepEqual(ghCalls(calls), ['api repos/up/repo/pulls?head=me:feat&state=all&per_page=30']);
-      } finally { rmSync(dir, { recursive: true, force: true }); }
-    } },
-    { name: 'REST: prUrl reads `repos/o/r/pulls/7`; CLOSED falls through to the branch search; a 404 with no list match is a failure', run: async () => {
-      const prUrl = 'https://github.com/up/repo/pull/7';
-      let calls = [];
-      gitInfo.setRunner(restRunner({ calls, api: { 'repos/up/repo/pulls/7': () => http(200, pull(7, { state: 'closed' })), 'repos/up/repo/pulls?': () => http(200, []) } }));
-      assert.deepEqual(await lookupPrForBranch({ projectDir: '/r', head: 'feat', prUrl, includeClosed: true }),
-        { ok: true, pr: { state: 'CLOSED', url: prUrl, number: 7, isDraft: false, mergeable: 'UNKNOWN' } });
-      assert.deepEqual(ghCalls(calls), ['api repos/up/repo/pulls/7', 'api repos/up/repo/pulls?head=me:feat&state=all&per_page=30']);
-      calls = [];
-      gitInfo.setRunner(restRunner({ calls, api: { 'repos/up/repo/pulls/7': () => http(200, pull(7, { state: 'closed', merged_at: '2026-11-02T00:00:00Z' })) } }));
-      assert.equal((await lookupPrForBranch({ projectDir: '/r', head: 'feat', prUrl })).pr.state, 'MERGED');
-      assert.deepEqual(ghCalls(calls), ['api repos/up/repo/pulls/7'], 'a merged PR behind the URL: no branch search');
-      gitInfo.setRunner(restRunner({ api: { 'repos/up/repo/pulls?': () => http(200, [pull(3, { state: 'closed' })]) } }));
-      assert.deepEqual(await lookupPrForBranch({ projectDir: '/r', head: 'feat', prUrl }), { ok: false, reason: 'gh-failed' });
-      gitInfo.setRunner(restRunner({ api: { 'repos/up/repo/pulls?': () => http(200, [pull(7, { state: 'closed' })]) } }));
-      assert.equal((await lookupPrForBranch({ projectDir: '/r', head: 'feat', prUrl, includeClosed: true })).pr.number, 7, 'the list names the recorded PR');
-      gitInfo.setRunner(restRunner({ api: { 'repos/up/repo/pulls?': () => okOut('HTTP/2.0 200 OK\n\nnot json') } }));
-      assert.deepEqual(await lookupPrForBranch({ projectDir: '/r', head: 'feat' }), { ok: false, reason: 'gh-bad-output' });
-    } },
-    { name: 'fork: headOwner is the owner of the remote the branch was pushed to', run: async () => {
-      const calls = [];
-      gitInfo.setRunner(restRunner({ calls, pushedTo: 'alice', remotes: [['alice', 'git@github.com:alice/repo.git'], ['origin', 'https://github.com/me/repo.git'], ['upstream', 'https://github.com/up/repo.git']],
-        api: { 'repos/up/repo/pulls?': () => http(200, []) } }));
-      assert.deepEqual(await lookupPrForBranch({ projectDir: '/r', head: 'feat' }), { ok: true, pr: null });
-      assert.deepEqual(ghCalls(calls), ['api repos/up/repo/pulls?head=alice:feat&state=all&per_page=30']);
-      const solo = [];
-      gitInfo.setRunner(restRunner({ calls: solo, pushedTo: null, remotes: [['origin', 'https://github.com/me/repo.git']], api: { 'repos/me/repo/pulls?': () => http(200, []) } }));
-      await lookupPrForBranch({ projectDir: '/r', head: 'feat' });
-      assert.deepEqual(ghCalls(solo), ['api repos/me/repo/pulls?head=me:feat&state=all&per_page=30'], 'not pushed: origin\'s owner');
-    } },
-    { name: 'GHE / no remotes / failed `git remote -v` → today\'s `gh pr list` argv', run: async () => {
-      const LIST = ['pr', 'list', '--head', 'feat', '--state', 'all', '--json', 'number,state,url,isDraft,mergeable', '--limit', '30'];
-      for (const remote of [REMOTES([['origin', 'git@ghe.corp:o/r.git']]), okOut(''), fail('fatal: not a git repository', 128)]) {
-        const gh = [];
-        gitInfo.setRunner((cmd, args) => {
-          if (cmd === 'git' && args[0] === 'remote') return remote;
-          if (cmd === 'gh') gh.push(args);
-          return okOut('[]');
-        });
-        assert.deepEqual(await lookupPrForBranch({ projectDir: '/r', head: 'feat' }), { ok: true, pr: null });
-        assert.deepEqual(gh, [LIST]);
-      }
-    } },
-  ]);
-});
-
-test('m1: a cached REST answer reads the remotes only; the pushed-to lookup runs only when GitHub is asked', async () => {
-  const calls = [];
-  gitInfo.setRunner(restRunner({ calls, api: { 'repos/up/repo/pulls?': () => http(200, [pull(5, { state: 'closed', merged_at: '2026-11-01T00:00:00Z' })]) } }));
-  const dir = mkdtempSync(join(tmpdir(), 'worca-rest-'));
-  try {
-    prStatus.useDir(dir);
-    await lookupPrForBranch({ projectDir: '/r', head: 'feat' });
-    assert.equal(calls.filter((c) => c[1] === 'for-each-ref').length, 1, 'asked once, for the REST lookup');
-    calls.length = 0;
-    assert.equal((await lookupPrForBranch({ projectDir: '/r', head: 'feat' })).pr.state, 'MERGED');
-    assert.deepEqual(calls.map((c) => c.slice(0, 2).join(' ')), ['git remote'], 'a warm hit: no for-each-ref, no gh');
-  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

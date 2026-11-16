@@ -57,13 +57,6 @@ app.get('/api/history/:key/:id', async (req, res) => {
     return res.status(404).json({ error: 'pipeline not found' });
   }
   try {
-    // ?row=1: the run as one element of GET /api/history's list (Stillhet's per-run read after a settle). No
-    // reconcileStaleRunning: that sweep reads every row, and a settled run's row already holds its final status.
-    if (req.query.row === '1') {
-      const [pipeline] = (await listAllPipelines({ id: req.params.id })) || [];
-      if (!pipeline || pipeline.projectKey !== req.params.key) return res.status(404).json({ error: 'pipeline not found' });
-      return res.json({ pipeline });
-    }
     const data = await readPipelineByKey(req.params.key, req.params.id);
     if (!data) return res.status(404).json({ error: 'pipeline not found' });
     res.json(data);

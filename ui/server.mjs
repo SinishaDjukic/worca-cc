@@ -8,7 +8,7 @@
 // Flag: --scratch (`npm start --scratch`) = a temp WORCA_HOME and a free port; see scratch-start.mjs
 
 import '../src/core/scratch-start.mjs'; // first: sets env before any module reads it
-import express from 'express'; import { onUsageLimitsChanged } from '../src/core/usage-limits.mjs';   // the profile's usage rings: a reported limit changed
+import express from 'express';
 import { WebSocketServer } from 'ws';
 import http from 'node:http';
 import path from 'node:path';
@@ -63,7 +63,7 @@ import {
   deleteDiffComment, unresolvedCounts, onDiffCommentsChanged, stampSentRunId,
   peekPendingCardComments, clearPendingCardComments, DiffCommentError, DC_ID_RE,
 } from '../src/core/diff-comments.mjs';
-import { listProjects, runOnboarded, currentKey, holdStart, addProject, addProjects, removeProject, normalizeProjectPath, countProjects, worcaHome, getProjectByPath, displayPath,
+import { listProjects, runOnboarded, addProject, addProjects, removeProject, normalizeProjectPath, countProjects, worcaHome, getProjectByPath, displayPath,
   getProjectByName, ownsProjectFolder, removeProjectAndFolder, enclosingRepoOf, nestedInRepoMessage, worcaNestedRepoOf, worcaNestedRepoHint } from '../src/core/projects.mjs';
 import { effectiveWorkMode, workModeOfRow, workModeForStart, samePath } from '../src/core/project-kind.mjs';
 import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR, SHELL_CSP } from '../src/core/index-html.mjs';
@@ -91,7 +91,7 @@ import {
   updateCheckEnabled, assertUpdateCheckInput, setUpdateCheck,
   titleModel as storedTitleModel, setTitleModel, assertTitleModelInput,
   hideBuiltinModels, setHideBuiltinModels, assertHideBuiltinModelsInput,
-  theme as storedTheme, setTheme, assertThemeInput, setPulseFor, assertPulseForInput,
+  theme as storedTheme, setTheme, assertThemeInput,
   uiLevel as storedUiLevel, setUiLevel, assertUiLevelInput, defaultUiLevel,
   autoWorkflowModel as storedAutoWorkflowModel, setAutoWorkflowModel, assertAutoWorkflowModelInput,
   prDescriptionModel as storedPrDescriptionModel, setPrDescriptionModel, assertPrDescriptionModelInput,
@@ -188,7 +188,7 @@ import { cancelSuggestion } from '../src/core/ask/suggest.mjs';
 import { validateMcpOff, resolveAskMcp, askMcpPromptInput, askMcpPreview, askMcpJoinNotice, resolveAskSkills } from '../src/core/ask/mcp.mjs';
 import { attachRunFollower } from '../src/core/ask/follow.mjs';
 import { mockEnabled, MOCK_WRITER_ROLES } from '../src/core/claude-runner.mjs';
-import { budgetStatus, readCostCapOverride, readRunCostCap, setCostCapOverride, raiseRunCostCap, runCostCapCheck, recordUtilityCost } from '../src/core/cost-budget.mjs';
+import { budgetStatus, readCostCapOverride, setCostCapOverride, recordUtilityCost } from '../src/core/cost-budget.mjs';
 import { resolveNamingModel, suggestNames, mockSuggestion, estimateNamingUsd, legacyBranchHint, suggestGroupName } from '../src/core/naming.mjs';
 import { createCommandSummariser, summariseCommandCard, commandSummariesWanted } from '../src/core/ask/command-summary.mjs';
 import { getStats, budgetWindowSavings, shapingGroups } from '../src/core/stats.mjs';
@@ -448,7 +448,6 @@ import {
 import { latestChecklist, checklistMarkdown, CHECKLIST_PR_MARKER } from '../src/shared/shape/review-checklist.mjs';
 import { attachRoleReviews } from '../src/shared/shape/role-review.mjs';
 import { resolveShapeRequest, PLAN_ASK_KIND, planFileOf } from '../src/core/shape/run.mjs';
-import { runPerspectivesOf, recordRunCardChoice } from '../src/core/prompt-check/perspective-choices.mjs';
 import { savePlanToCheckout } from '../src/core/shape/save.mjs';
 import { featureView, currentFeatureId, featureOfPipeline, featuresOfTickets, cancelRest, resumeFeature,
   rechainWaiting, replanRest, setApproveEach, recordShapePlan, listShapePlans, chainFeature,
@@ -1279,8 +1278,8 @@ function askFrameComposer(obj) {
 // Because the client always SETS counts to an absolute value (never +1/-1), a tab
 // receiving its own echo is idempotent. A tab disconnected at mutation time recovers
 // on its next view switch / reload (the agreed product behavior).
-function emitChanged(type, action, ids) {   // ids (optional): a single run's { runId, pipelineId, key }
-  broadcast({ type, action: action || null, ...ids });
+function emitChanged(type, action) {
+  broadcast({ type, action: action || null });
 }
 // CONTRACT §1.7: every open Marketplace tab re-reads its lists after a plugin action (install, update, enable, remove,
 // purge, link, config; P2 adds the marketplace actions).
@@ -1291,7 +1290,7 @@ policyEvents.on('changed', (e) => emitChanged('team-policy-changed', e && e.acti
 projectSyncEvents.on('changed', (e) => emitChanged('project-sync-changed', e && e.projectKey ? e.projectKey : null));
 watchReadiness({ projectSyncEvents, policyEvents, emitChanged, broadcast });
 // D6: every open tab rewrites <html data-flags> and #flag-gates, without a reload.
-flagEvents.on('changed', (flags) => broadcast({ type: 'flags', flags })); onUsageLimitsChanged(() => emitChanged('usage-limits-changed'));
+flagEvents.on('changed', (flags) => broadcast({ type: 'flags', flags }));
 
 // Every comment mutation in THIS process (the REST routes below) pokes the open
 // Diff tabs. A poke carries ids only — no payload, so it is idempotent and has no
@@ -1467,8 +1466,6 @@ function announceRun(entry) {
     labels: entry.labels || [],
   });
 }
-// F-7a-02: a page keyed by run id learns the pipeline id once it is known (new run: after its first naming state frame; resume: right after run-created). Not buffered, like run-created.
-function announcePipeline(entry) { broadcast({ type: 'run-pipeline', runId: entry.id, pipelineId: entry.pipelineId }); }
 
 // ---------------------------------------------------------------------------
 // Wire a core orchestrator's events onto the WebSocket, tagged with runId.
@@ -1577,10 +1574,12 @@ function wireRun(entry) {
         // Mirror status from the snapshot when present. (Pending questions are
         // cleared explicitly on answer/done/error, not from state snapshots.)
         if (payload.status) entry.status = payload.status;
-        // Capture the pipeline short id stamped onto state.id after createPipeline (null earlier never overwrites it); the first capture sends run-pipeline after this state frame.
+        // Capture the on-disk pipeline short id the orchestrator stamps onto
+        // state.id after createPipeline. Guard so null in pre-createPipeline
+        // snapshots cannot overwrite a previously-captured value.
         if (typeof payload.id === 'string' && payload.id) {
           const first = !entry.pipelineId;
-          entry.pipelineId = payload.id; if (first) entry._announcePipeline = true;
+          entry.pipelineId = payload.id;
           // Scheduled runs: the ticket learns the pipeline it became (provenance columns).
           if (first && entry.ticketId) {
             try { setTicketPipeline(entry.ticketId, payload.id); } catch (err) { console.error(`[worca-ui] ticket link failed: ${err && err.message ? err.message : err}`); }
@@ -1656,7 +1655,7 @@ function wireRun(entry) {
         } catch (err) { console.error(`[worca-ui] round frame failed: ${err && err.message ? err.message : err}`); }
       }
 
-      record(event); if (entry._announcePipeline) { entry._announcePipeline = false; announcePipeline(entry); }
+      record(event);
       if (name === 'done') settleRunEntry(entry);
       // Only the events that can change status or pendingQuestion; log/token frames are far too
       // frequent for a flag check (it reads settings.json synchronously).
@@ -2231,9 +2230,9 @@ async function pinUiLevel() {
   if (!shell.includes(INDEX_THEME_ANCHOR)) throw new Error(`ui/public/index.html lost its theme anchor ${INDEX_THEME_ANCHOR}`);
   if (!shell.includes(FLAG_GATES_ANCHOR)) throw new Error(`ui/public/index.html lost its flag-gates anchor ${FLAG_GATES_ANCHOR}`);
 }
-async function sendIndex(res) {   // with `rail` on: Stillhet's shell (src/core/stillhet-shell.mjs)
+function sendIndex(res) {
   let html;
-  try { html = allFlags().rail ? await stillhetShellHtml(PUBLIC_DIR, storedTheme(), effectiveUiLevel(), gitAvailable(), { railLocked: !!listFlags().find((f) => f.key === 'rail')?.locked }) : renderIndexHtml(readIndexHtml(PUBLIC_DIR), storedTheme(), effectiveUiLevel(), allFlags(), { git: gitAvailable() }); }
+  try { html = renderIndexHtml(readIndexHtml(PUBLIC_DIR), storedTheme(), effectiveUiLevel(), allFlags(), { git: gitAvailable() }); }
   catch (err) { return res.status(500).json({ error: err && err.message ? err.message : 'shell unavailable' }); }
   res.set('Content-Type', 'text/html; charset=utf-8');
   res.set('Cache-Control', 'no-store');
@@ -2249,7 +2248,7 @@ async function sendIndex(res) {   // with `rail` on: Stillhet's shell (src/core/
 // file system would otherwise reach the raw file: route every spelling here.
 app.use((req, res, next) => {
   if (req.method !== 'GET') return next();
-  if (req.path === '/' || /^\/index(\.html)?$/i.test(req.path) || isStillhetShellRel(publicRelPath(req.path))) return sendIndex(res);
+  if (req.path === '/' || /^\/index(\.html)?$/i.test(req.path)) return sendIndex(res);
   return next();
 });
 
@@ -2279,7 +2278,7 @@ app.use(function servePublic(req, res, next) {
   let part = false;
   // A broken parts.json must not take every static file down with it: log once and serve static.
   try { part = isPublicPart(req.path, PUBLIC_DIR); } catch (err) { warnAssetOnce('ui/public/parts.json', err); }
-  return part || isStillhetShellRel(publicRelPath(req.path)) ? next() : serveStatic(req, res, next);   // the shell template only through sendIndex
+  return part ? next() : serveStatic(req, res, next);
 });
 
 function badRequest(res, message) {
@@ -2726,12 +2725,11 @@ const presetEngineMessage = (presetRow, runEngine, msg) => (presetRow ? `Preset 
 const startRunHandler = async (req, res) => {
   // B2: a draining server starts nothing new (the scan arm and the scheduler come through here too).
   if (DRAIN.on) return res.status(503).json(DRAIN_REFUSAL);
-  const unhold = holdStart(req); try {   // the start holds its target until it answers: no relocate slips in (slice 9 D9)
+  try {
     const body = req.body || {};
-    const proposedOn = flagEnabled('proposedPerspectives'); // read once per start; off: drop the perspective fields first
-    if (!proposedOn) { delete body.perspectives; delete body.perspectiveProposal; }
-    // Scheduled runs: `internal` is set ONLY by fireTicket() (never from HTTP) — the due ticket being started through
-    // this same gate. It carries the ticket, whose id IS the runId, plus the CLI-only options a stored request may hold.
+    // Scheduled runs: `internal` is set ONLY by fireTicket() (never from HTTP) — the
+    // due ticket being started through this same gate. It carries the ticket, whose id
+    // IS the runId, plus the CLI-only options a stored request may hold.
     const internal = req._internal && typeof req._internal === 'object' ? req._internal : null;
     // Workspace scan (wf_workspace_scan): scanRequest hands the target in-process — a workspace
     // that may not exist yet ({ id, name, projectPaths, description:'' }, D3). Never from HTTP.
@@ -2878,26 +2876,29 @@ const startRunHandler = async (req, res) => {
 
     // prompt OR promptMarkdown. promptMarkdown is treated as the prompt text.
     const prompt = typeof body.prompt === 'string' && body.prompt.trim() ? body.prompt : undefined;
-    const promptMarkdown = typeof body.promptMarkdown === 'string' && body.promptMarkdown.trim() ? body.promptMarkdown : undefined;
+    const promptMarkdown =
+      typeof body.promptMarkdown === 'string' && body.promptMarkdown.trim() ? body.promptMarkdown : undefined;
     const effectivePrompt = prompt || promptMarkdown;
     if (source && effectivePrompt) return badRequest(res, 'provide source OR prompt/promptMarkdown, not both');
     if (!source && !effectivePrompt) return badRequest(res, 'prompt or promptMarkdown is required');
 
-    // UI Markdown runs carry provenance (spec §10): absent an explicit body.source, a promptMarkdown-only body maps to the
-    // markdown source type. prompt.md bytes and every legacy guard/message stay identical; only the new source_type
-    // column differs ('markdown' instead of the default).
-    const effectiveSource = source || (promptMarkdown && !prompt ? { type: 'markdown', promptText: promptMarkdown } : null);
+    // UI Markdown runs carry provenance (spec §10): absent an explicit
+    // body.source, a promptMarkdown-only body maps to the markdown source type.
+    // prompt.md bytes and every legacy guard/message stay identical; only the
+    // new source_type column differs ('markdown' instead of the default).
+    const effectiveSource = source
+      || (promptMarkdown && !prompt ? { type: 'markdown', promptText: promptMarkdown } : null);
 
     const mock = !!body.mock || serverMockMode();
 
-    // Optional workflowId selects a saved (or built-in default) topology. The orchestrator resolves topology + per-project
-    // run-config into an executable plan at run start; here we only normalize + reject an unknown id up front so the
-    // client gets a clean 400 instead of a mid-run error event. Shape it first (spec D9/D12): `shape` and its workflows.
-    const shapeReq = resolveShapeRequest({ shape: body.shape, workflowId: body.workflowId }, { internal: !!internal, compliance: proposedOn });
+    // Optional workflowId selects a saved (or built-in default) topology. The
+    // orchestrator resolves topology + per-project run-config into an executable
+    // plan at run start; here we only normalize + reject an unknown id up front
+    // so the client gets a clean 400 instead of a mid-run error event.
+    // Shape it first (spec D9/D12): `shape` and the shape workflows.
+    const shapeReq = resolveShapeRequest({ shape: body.shape, workflowId: body.workflowId }, { internal: !!internal });
     if (!shapeReq.ok) return badRequest(res, shapeReq.error);
     const { shape: askedShape } = shapeReq;
-    const { perspectiveSet = null, perspectiveProposal = null, error: perspectivesError } = proposedOn ? runPerspectivesOf(body, askedShape) : {};
-    if (perspectivesError) return badRequest(res, perspectivesError); // the chosen set drives Clarify and the review roles
     // L7: a sliced Shape-it-first run chains tickets per slice, and a run without a project cannot be scheduled. So with
     // no project a shaped run is never sliced: `slices: 'off'` unless 'auto' was asked for, which is refused (U13: the
     // Shaper itself still runs with No project).
@@ -2941,7 +2942,7 @@ const startRunHandler = async (req, res) => {
     const noMemory = body.noMemory === true;
     if (noMemory && memoryScope) return badRequest(res, 'noMemory cannot be set on a Memory defragment run');
     const prBody = checkRunPrBody(body.pr);   // before any side effect: a refused pr creates no run and no ticket
-    if (!prBody.ok) return badRequest(res, prBody.error); const startCap = runCostCapCheck(body.costCapUsd); if (startCap.error) return badRequest(res, startCap.error); if (startCap.cap != null) req._runCostCapUsd = startCap.cap;   // New task's Cost cap: pipelines.cost_cap_usd, as Raise the cap writes it; the same check
+    if (!prBody.ok) return badRequest(res, prBody.error);
     // Settings › Memory: a defragment run may name its model/effort PAIR at start — tier 1, above
     // the setting (memory-defrag-model.mjs). Defragment runs only: every other workflow picks its
     // models per node, and a body model there stays ignored exactly as before. The shape here; the
@@ -3142,7 +3143,7 @@ const startRunHandler = async (req, res) => {
         claude: { permissionMode: 'acceptEdits', ...(startPair ? { model: startPair.model, ...(startPair.effort ? { effort: startPair.effort } : {}) } : {}), mock, ...runEngine },
         ...(nightMode ? { nightMode: true } : {}),
         tags,
-        ...(shape ? { shape } : {}), ...(perspectiveSet ? { perspectiveSet } : {}), ...(Number(req._runCostCapUsd) > 0 ? { runCostCapUsd: Number(req._runCostCapUsd) } : {}),
+        ...(shape ? { shape } : {}),
       });
       entry = {
         id: runId, orch, projectDir, projectKey: NO_PROJECT_KEY, workMode: 'none', kind: 'run', pipelineId,
@@ -3280,7 +3281,7 @@ const startRunHandler = async (req, res) => {
         ...(mcpOptOut.length ? { mcpOptOut } : {}),
         startedBy,
         ...(req._prWatchRunId ? { prWatchRunId: req._prWatchRunId } : {}),
-        ...(reportTo ? { reportTo } : {}), ...(Number(req._runCostCapUsd) > 0 ? { runCostCapUsd: Number(req._runCostCapUsd) } : {}),   // A6 D15: the row names the ticket; Restart Build: the origin's cap
+        ...(reportTo ? { reportTo } : {}),   // A6 D15: the pipeline row names the ticket, so write-back reports to it
         branch,
         ...(titleLocked ? { titleLocked: true } : {}),
         sync,
@@ -3292,7 +3293,7 @@ const startRunHandler = async (req, res) => {
         ...(nightMode ? { nightMode: true } : {}),
         tags,
         labels,
-        ...(shape ? { shape } : {}), ...(perspectiveSet ? { perspectiveSet } : {}),
+        ...(shape ? { shape } : {}),
         ...(runSetup ? { runSetup } : {}),
       });
 
@@ -3450,7 +3451,7 @@ const startRunHandler = async (req, res) => {
         ...(mcpOptOut.length ? { mcpOptOut } : {}),
         startedBy,
         ...(req._prWatchRunId ? { prWatchRunId: req._prWatchRunId } : {}),
-        ...(reportTo ? { reportTo } : {}), ...(Number(req._runCostCapUsd) > 0 ? { runCostCapUsd: Number(req._runCostCapUsd) } : {}),   // A6 D15: the row names the ticket; Restart Build: the origin's cap
+        ...(reportTo ? { reportTo } : {}),   // A6 D15: the pipeline row names the ticket, so write-back reports to it
         branch,
         ...(titleLocked ? { titleLocked: true } : {}),
         sync,
@@ -3469,7 +3470,7 @@ const startRunHandler = async (req, res) => {
         ...(nightMode ? { nightMode: true } : {}),
         tags,
         labels,
-        ...(shape ? { shape } : {}), ...(perspectiveSet ? { perspectiveSet } : {}),
+        ...(shape ? { shape } : {}),
         ...(runSetup ? { runSetup } : {}),
       });
 
@@ -3549,7 +3550,6 @@ const startRunHandler = async (req, res) => {
         console.error(`[worca-ui] ask run link failed: ${err && err.message ? err.message : err}`);
       }
     }
-    recordRunCardChoice(runId, perspectiveSet, perspectiveProposal); // the proposal and what changed (ids only)
     announceRun(entry);
 
     // Fire-and-forget; all progress is surfaced through events. Kept on the entry: a Stop of the
@@ -3564,7 +3564,7 @@ const startRunHandler = async (req, res) => {
         syncKeepAwake();
       })
       // #620: the harness's post-run base check landed after the run's last frame; History re-reads it.
-      .finally(() => { entry.settled = true; emitChanged('pipelines-changed', 'updated', { runId, pipelineId: entry.pipelineId || orch.state?.id, ...(entry.projectDir && !entry.workspaceId ? { key: projectKey(entry.projectDir) } : {}) }); afterRunSettled(orch); });
+      .finally(() => { entry.settled = true; emitChanged('pipelines-changed', 'updated'); afterRunSettled(orch); });
 
     // A scan's launcher needs the card attribution the wizard cannot compute (the key is a hash).
     res.json(scanTarget
@@ -3572,7 +3572,7 @@ const startRunHandler = async (req, res) => {
       : noProject ? { runId, pipelineId: entry.pipelineId } : { runId });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
-  } finally { unhold(); }
+  }
 };
 
 // ---------------------------------------------------------------------------
@@ -3592,7 +3592,7 @@ import * as runSkillPolicy from '../src/core/policy/effective.mjs';
 import { ROUTE_SEGMENTS } from './routes/index.mjs';
 import { askCardRoute } from './routes/chat/thread-cards.mjs';
 import { isPublicPart, publicRelPath } from '../src/core/public-assets.mjs';
-import { readIndexHtml, stillhetShellHtml, isStillhetShellRel } from '../src/core/read-index-html.mjs';
+import { readIndexHtml } from '../src/core/read-index-html.mjs';
 import { readStyleCssEntry } from '../src/core/read-style-css.mjs';
 
 /** `mcpOptOut` (D16): at most 100 '<setId>|<serverId>' or '<setId>|<skillId>' entries (the membership
@@ -3756,10 +3756,10 @@ function resumeTargetOf(ticket) {
 }
 
 /** The onboarded project dir for a pipelines.project_key, or null. */
-async function projectDirForKey(raw) {
-  const list = await listProjects();   // the raw key first; currentKey only for a key no project holds (a Locate folder, slice 9 D9)
-  for (const key of new Set([raw, currentKey(raw)])) {   // per key, the stored key wins over the path's (S7)
-    const p = list.find((x) => x.key === key) || list.find((x) => projectKey(x.path) === key); if (p) return p.path; }
+async function projectDirForKey(key) {
+  const list = await listProjects();
+  for (const p of list) if (p.key === key) return p.path;            // the stored key wins (S7)
+  for (const p of list) if (projectKey(p.path) === key) return p.path;
   return null;
 }
 
@@ -3926,7 +3926,7 @@ async function invokeAskCard({ threadId, cardId, body, actor }) {
   return out;
 }
 
-async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null, extrasFiles = null, reportTo = null, automation = false, runCostCapUsd = null } = {}) {
+async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null, extrasFiles = null, reportTo = null, automation = false } = {}) {
   const files = Array.isArray(extrasFiles) && extrasFiles.length ? extrasFiles : null;
   const id = files ? (runId || randomUUID()) : runId;   // the extras folder is named by the run id
   const run = async (extrasPaths, staged = null) => {
@@ -3938,7 +3938,7 @@ async function invokeStartRun(body, internal, { startedBy = null, runId = null, 
     };
     await startRunHandler({ body, headers: {}, _internal: internal, _startedBy: startedBy, _runId: id,
       _prWatchRunId: prWatchRunId, ...(roundOf ? { _roundOf: roundOf } : {}), ...(extrasPaths ? { _extrasPaths: extrasPaths } : {}),
-      ...(reportTo ? { _reportTo: reportTo } : {}), ...(automation ? { _automation: true } : {}), ...(Number(runCostCapUsd) > 0 ? { _runCostCapUsd: Number(runCostCapUsd) } : {}) }, res);
+      ...(reportTo ? { _reportTo: reportTo } : {}), ...(automation ? { _automation: true } : {}) }, res);
     if (staged && out.status >= 200 && out.status <= 299) dropStagedOnceCopied(id, staged.drop);
     return out;
   };
@@ -4163,7 +4163,7 @@ function afterRunSettled(orch) {
     // PR when the run finishes, after the Ship card exists (a ship flips it); never throws.
     card = Promise.resolve(card).then(() => prAutoFinisher()?.afterSettled(st)).catch((err) => console.error(`[worca-ui] PR when done failed: ${err?.message || err}`));
     if (!ranMergeBack(st)) return card;
-    emitChanged('pipelines-changed', 'updated', { pipelineId: st.id });
+    emitChanged('pipelines-changed', 'updated');
     setTimeout(() => { void schedulerTick(); }, 0);
   } catch { /* a refresh hint only */ }
   return card;
@@ -4923,7 +4923,7 @@ async function stopPausedPipelineOnce(pipelineId, by = 'local') {
     throw err;
   }
   cancelScheduledResumes(pipelineId, { by, reason: `the run was stopped${byActor(by || 'local')}` });
-  emitChanged('pipelines-changed', 'stopped', { pipelineId });
+  emitChanged('pipelines-changed', 'stopped');
   // Run chains without a wired entry: a run waiting on this one decides now, not at the next
   // 30 s tick (a wired entry's done frame nudges them through wireRun).
   if (!entry) {
@@ -5371,12 +5371,12 @@ async function resumeTargetDirs(saved) {
   return { projectDir, workspace: undefined };
 }
 
-async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null, by = 'local', baseCheck = false, baseAck = false, engine = null, allowUnguardedEngine = undefined, model = null, effort = null, autoLimitResume = false, auto = false, resumeCause = null, costCapUsd = undefined } = {}) {
+async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, pastTeamCap = false, policyReason = null, by = 'local', baseCheck = false, baseAck = false, engine = null, allowUnguardedEngine = undefined, model = null, effort = null, autoLimitResume = false, auto = false, resumeCause = null } = {}) {
   if (!pipelineId || typeof pipelineId !== 'string') throw new ResumeError(400, { error: 'pipelineId is required' });
   if (DRAIN.on) throw new ResumeError(503, DRAIN_REFUSAL);
   const engineOpts = resumeEngineOpts(engine, allowUnguardedEngine);
   const saved = readPipelineForResume(pipelineId);
-  if (!saved) throw new ResumeError(404, { error: 'pipeline not found' }); const capCheck = runCostCapCheck(costCapUsd, { ignoreCostCap, spent: saved.row.total_cost_usd }); if (capCheck.error) throw new ResumeError(400, { error: capCheck.error }); costCapUsd = capCheck.cap;   // Raise the cap: written once every gate passed
+  if (!saved) throw new ResumeError(404, { error: 'pipeline not found' });
   if (workModeOfRow(saved.row) === 'git' && !(await gitState()).available) throw new ResumeError(409, { error: GIT_MISSING.message, code: GIT_MISSING.code });
   // Resume with another model (a usage limit spent on one provider): every remaining step runs on it. It must be a
   // catalog model the run's harness — the one it resumes on — can run (src/shared/connections.mjs).
@@ -5413,7 +5413,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
     setCostCapOverride(pipelineId);            // persistent per-pipeline override (F7)
     appendAuditById(pipelineId, `Pipeline cost limit override set${byActor(by)}.`, { actor: by });
   }
-  const pipeCap = costCapUsd ?? readRunCostCap(pipelineId) ?? budget.pipelineLimitUsd;
+  const pipeCap = budget.pipelineLimitUsd;
   const spentSoFar = Number(saved.row.total_cost_usd || 0);
   if (pipeCap != null && spentSoFar >= pipeCap && ignoreCostCap !== true && !readCostCapOverride(pipelineId)) {
     throw new ResumeError(403, {
@@ -5520,7 +5520,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
   const fresh = readPipelineForResume(pipelineId);
   if (!fresh || (fresh.row.status !== 'paused' && fresh.row.status !== 'interrupted')) {
     throw new ResumeError(409, { error: `pipeline is "${fresh ? fresh.row.status : 'gone'}", not resumable` });
-  } else if (costCapUsd != null) { raiseRunCostCap(orch, pipelineId, costCapUsd); appendAuditById(pipelineId, `Pipeline cost limit raised to $${costCapUsd.toFixed(2)} for this run${byActor(by)}.`, { actor: by }); }
+  }
   const entry = {
     id: runId,
     orch,
@@ -5546,7 +5546,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
   runs.set(runId, entry);
   markResumedRescan(entry);   // before the paused lineage is evicted below
   wireRun(entry);
-  announceRun(entry); announcePipeline(entry);
+  announceRun(entry);
 
   // A card-linked run keeps reporting to its chat across the resume: the link
   // row moves to the new runId and a fresh follower takes over (the old one
@@ -5590,7 +5590,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
       broadcast(event);
       syncKeepAwake();
     })
-    .finally(() => { entry.settled = true; emitChanged('pipelines-changed', 'updated', { runId, pipelineId: entry.pipelineId || orch.state?.id, ...(entry.projectDir && !entry.workspaceId ? { key: projectKey(entry.projectDir) } : {}) }); afterRunSettled(orch); });   // #620, as /api/run's
+    .finally(() => { entry.settled = true; emitChanged('pipelines-changed', 'updated'); afterRunSettled(orch); });   // #620, as /api/run's
 
   return { ok: true, runId, pipelineId };
 }
@@ -8041,7 +8041,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasUpdateCheckKey = has('updateCheck');
   const hasTitleModelKey = has('titleModel');
   const hasHideBuiltinKey = has('hideBuiltinModels');
-  const hasThemeKey = has('theme'), hasPulseForKey = has('pulseFor');
+  const hasThemeKey = has('theme');
   const hasUiLevelKey = has('uiLevel');
   const hasFlagsKey = has('flags');
   const hasAutoKey = has('autoWorkflowModel');
@@ -8127,7 +8127,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
       }
     });
     if (hasHideBuiltinKey) asSettingsField('hideBuiltinModels', () => assertHideBuiltinModelsInput(body.hideBuiltinModels));
-    if (hasThemeKey) asSettingsField('theme', () => assertThemeInput(body.theme)); if (hasPulseForKey) asSettingsField('pulseFor', () => assertPulseForInput(body.pulseFor));
+    if (hasThemeKey) asSettingsField('theme', () => assertThemeInput(body.theme));
     if (hasUiLevelKey) asSettingsField('uiLevel', () => assertUiLevelInput(body.uiLevel));
     if (hasAutoKey) asSettingsField('autoWorkflowModel', () => assertAutoWorkflowModelInput(body.autoWorkflowModel ?? '', autoModels));
     if (hasPrDescKey) asSettingsField('prDescriptionModel', () => assertPrDescriptionModelInput(body.prDescriptionModel ?? '', prDescModels));
@@ -8211,7 +8211,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     }
     if (hasTitleModelKey) await setTitleModel(titleModelInput);
     if (hasHideBuiltinKey) await setHideBuiltinModels(body.hideBuiltinModels);
-    if (hasThemeKey) await setTheme(body.theme); if (hasPulseForKey) await setPulseFor(body.pulseFor);
+    if (hasThemeKey) await setTheme(body.theme);
     if (hasUiLevelKey) await setUiLevel(body.uiLevel);
     if (hasFlagsKey) await asSettingsField('flags', () => setFlags(body.flags));   // same path as PATCH /api/flags (it broadcasts `flags`)
     if (hasAutoKey) await setAutoWorkflowModel(body.autoWorkflowModel ?? '', { models: autoModels });
@@ -8244,7 +8244,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
     if (hasSmartNaming || hasNamingModelKey) cachedPick = undefined;
-    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasPulseForKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || secondOpinionModels || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasRunLimitsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasDesignModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey || hasKeepAwakeKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || secondOpinionModels || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasRunLimitsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasDesignModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey || hasKeepAwakeKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;
@@ -10500,7 +10500,7 @@ if (isMain) {
 }
 
 export { app, server, runs };
-export { AGENTS_DIR, invokeStartRun, prWatcherDeps, APP_INFO, APP_REPO_URL, ASK_DEFERRED_REPLIES_MAX, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STORE_ERROR_CODES, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askChatEngineGate, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askCredentialGate, askDeferred, askDeferredReplies, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSignedIn, askSwitchTranscript, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatNotifier, chatRefusals, checkoutRecOf, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, designBuilds, designChatActions, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, featureShipping, findScheduleItem, findShipCardIn, flipCard, followCloneCard, forkPrRefusal, fsAllowedRoots, fsLimitedHere, gitMissing, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendPolicyError, sendPresetError, serveAskFile, serverMockMode, settleShipped, setupJobs, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, soundCards, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy };
+export { AGENTS_DIR, APP_INFO, APP_REPO_URL, ASK_DEFERRED_REPLIES_MAX, ASK_SCOPE_BUSY, ASK_TEXT_PREVIEW_MAX, BRANCH_SETTLED, BUGS_SLUG, CLONE_JOBS, HOST, MARKETPLACE_ID_RE, MARKET_JOBS, NO_PR_HOST, PKG_VERSION, PLAN_TEXT_MAX, PLUGIN_NAME_RE, PORT, PROJECT_ROOT, PR_TITLE_MAX, REMOTE_MODE, RUNNING_VERSION, ResumeError, SETTLED_RUN, SETUP_AGENT_TEXT, SETUP_JOBS, SKILLS_DIR, SKILL_FOLDER_IMPORTS, SKILL_MD_UNREACHABLE, STORE_ERROR_CODES, actions, actionsEnabledHere, activeActionSnaps, adoWebhookSecret, afterMembersChanged, afterProjectRegistered, agentErrorStatus, agentMayBeCaller, answerRun, applyProjectSettingsPatch, applySettingsPatch, askBusyReason, askChatActions, askChatEngine, askChatEngineGate, askCommandBridges, askCommands, askCommandsEnabled, askContextTokens, askCredentialGate, askDeferred, askDeferredReplies, askDeleting, askEngineSwitchText, askEventPick, askFilesRunDir, askFilesStoreDir, askFollowers, askGroupFor, askGroupThreads, askIdParam, askInFlight, askLiveRun, askProxyBridges, askRefResolver, askRelays, askRunFromPipelineRow, askRunningCount, askSignedIn, askSwitchTranscript, askThreadVisible, askTrackingCount, askTurnEngine, askValidateScope, askViewer, askWebAccessFor, askWorktreesEnvelope, autoDetectedBuiltins, automationWorkspaceMembers, automations, awayPersonOf, badRequest, bareWorkspaceKey, bearerMatches, broadcast, broadcastFeature, brokerStartRefusal, builtins, busyActionRunIds, channelHost, chatGroupError, chatNotifier, chatRefusals, checkoutRecOf, commentIdParam, commentsCreate, commentsDelete, commentsFail, commentsList, commentsPatch, commentsReply, createRunPr, crosslinkMemberPrs, currentUpdateEligibility, defaultPrRemotes, deleteAskThreadFully, designBuilds, designChatActions, detectSystemProxyImpl, detectTeamMemorySoon, drainServer, effectiveUiLevel, egressNow, emitAskWorktrees, emitChanged, emitMemoryChanged, emitPluginsChanged, ensureSetup, extensionPairing, factDeps, failedEventTurn, featureShipping, findScheduleItem, findShipCardIn, flipCard, followCloneCard, forkPrRefusal, fsAllowedRoots, fsLimitedHere, gitMissing, isFinishingRun, isFreshInstall, isLiveRun, isPlainObject, isPrStoreKey, isTruthy, kickAutomations, kickPrWatch, labelsOn, lastUpdateResult, liveAutoRescan, liveDefragRun, liveDiffOf, livePr, liveProbe, liveRunEntry, liveRunIds, liveSliceOf, marketJobFailure, mcpRunPreview, mcpTargetOf, memberFor, memoryError, modelTestsInFlight, namingBucket, namingCatalog, namingOn, namingPick, noRawCommand, notifReader, openMemberPr, ownsWorkspaceTarget, parseMcpOptOut, pauseRun, pickPrRemotes, pinUiLevel, postAskSystemNotice, postDirection, prTargetFor, prWatchFrame, prWatcher, presetCheckCtx, presetScopeOf, primaryMemberOf, projectAutomationRepo, projectDirForKey, projectSettingsState, proxyHost, pruneMarketJobs, prunedNote, publicCloneJob, readInstalledManifest, refuseAgentCaller, refuseSignedOutClaude, registeredProjectForDir, rejectRawTerminalFields, removeRecommendation, requireActions, requireFsAllowed, requireTerminal, resolvePrPipeline, resolveProjectDir, resolveRunScope, resumeEngineOpts, resumeRun, resumeTargetDirs, runGroupIds, runSourceIssue, scanModelsFor, scanRequest, scheduleVerb, sendArtifactRaw, sendCheckoutError, sendMetricsError, sendPolicyError, sendPresetError, serveAskFile, serverMockMode, settleShipped, setupJobs, setupProbesOverride, shipChainNow, shipCtxOf, shipFeatureNow, skillRunPreview, snapshotFor, sockets, soundCards, stackStates, stackTokens, startAgentGen, startAskTurn, startCloneJob, startMetricsEventTurn, startOrQueue, startRunAs, startRunHandler, startScopeEventTurn, startScriptBench, stopCheckoutServices, stopMemberServices, stopPausedPipeline, stopRun, switchThreadScope, syncMode, syncProjectAction, syncRoute, teamOriginOk, teamWarn, terminalCallerOk, terminalEnabledHere, terminalError, terminalSameOrigin, terminals, tmProject, uiControl, unsyncableBlock, updateChecker, updatePort, updatePreview, validateResumeTarget, versionLister, versionPayload, webhookSecret, withAfter, workspaceMembersBusy };
 export const _testing = {
   chatBridge, invokeAskCard, askBus, chatAgentModeFor, chatTurnIdentity,
   updateChecker,

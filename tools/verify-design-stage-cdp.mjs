@@ -294,9 +294,6 @@ try {
   if (!up) throw new Error(`server did not start on ${port}\n${serverLog}`);
   const postJson = (url, body) => fetch(`${API}${url}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   await postJson('/api/onboarding', { welcomeSeen: true });
-  // The worca-level welcome is a boot-time modal; acknowledge it so it never covers the stage.
-  { const r = await postJson('/api/worca-level/ack', { what: 'welcome' });
-    if (!r.ok) throw new Error(`could not acknowledge the worca-level welcome: HTTP ${r.status}`); }
   await postJson('/api/settings', { theme: 'light' });
 
   browser = await BROWSERS[NAME].launch(launchOptions(NAME, browserEnv));

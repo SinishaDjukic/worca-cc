@@ -1,7 +1,7 @@
 // src/shared/shape/role-review.mjs — role reviews (spec §3): one planReviewer per picked perspective.
 // Pure and browser-safe: the engine's role-review step (Shaper's checklist provider), the orchestrator, run-model,
 // the server and the shape cards import it.
-import { PERSPECTIVES, DEFAULT_PERSPECTIVES, perspectiveByKey, normalizePerspectives, FIT_KEY, COMPLIANCE } from './perspectives.mjs';
+import { PERSPECTIVES, DEFAULT_PERSPECTIVES, perspectiveByKey, normalizePerspectives, FIT_KEY } from './perspectives.mjs';
 import { extractChecklist } from './checklist.mjs';
 import { rolesForRound as engineRolesForRound, roleTaskId } from '../graph/role-review-step.mjs';
 import { roleCounts } from '../review/findings.mjs';
@@ -19,7 +19,7 @@ export const roleItems = (key, planMarkdown) => extractChecklist(planMarkdown ||
 /** The roles one round reviews, by perspective key (the engine's rolesForRound over Shaper's picked perspectives).
  *  Round 1: every picked perspective. Round 2+: drop a clean, fully met role (spec §3 "Cost"). */
 export function rolesForRound(perspectives, round, lastRound = null) {
-  const n = normalizePerspectives(perspectives, { compliance: true });   // a run that holds Compliance keeps it
+  const n = normalizePerspectives(perspectives);
   const keys = n.ok ? n.perspectives : ['product'];
   return engineRolesForRound(keys.map(asRole), round, lastRound).map(({ key, skip }) => ({ key, skip }));
 }
@@ -62,11 +62,9 @@ export const PERSPECTIVE_ROLE_CHECKLIST = Object.freeze({
   roles: () => PERSPECTIVES.map(({ key, label }) => ({ key, label })),
   normalizePicked(raw) {
     if (raw === null || raw === undefined) return [...DEFAULT_PERSPECTIVES];
-    const n = normalizePerspectives(raw, { compliance: true });
+    const n = normalizePerspectives(raw);
     return n.ok ? n.perspectives : ['product'];
   },
-  // Roles a chosen set may add to a `picked` spec that does not declare them (applyPerspectiveSet).
-  optInRoles: () => [{ key: COMPLIANCE.key, label: COMPLIANCE.label }],
   items: (key, planText) => roleItems(key, planText).map((i) => i.id),
   brief: (key, planText, { houseBrief } = {}) => roleBriefBlock(key, planText) + houseBriefBlock(key, houseBrief),
   wantsHouseBrief: (key) => key === FIT_KEY,

@@ -75,7 +75,7 @@ test('the one button: 32px default, 28px small, 40px large, 40px minimum under a
   }
 });
 
-const SKIP_DIRS = new Set(['node_modules', 'vendor', 'fonts', 'assets', 'stillhet']);   // stillhet: the prototype's code, moved from plans/rail/prototype/ (never read by this scan); it has its own gates (docs/rail/gate.md)
+const SKIP_DIRS = new Set(['node_modules', 'vendor', 'fonts', 'assets']);
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
     if (SKIP_DIRS.has(name)) continue;
@@ -167,7 +167,7 @@ const GRADIENT_OK = new Set(['.wf-pop-canvas', '.run-flow-wrap', '.ask-wfcard-gr
   '.chat-home-wf-tb', '.skel', '.ws-sum-pending', '.shipit-desc-field.is-generating .shipit-desc-busy::before',
   '.shipit-desc-busy-label', '.ask-thinking-label', '.ask-wfcard-step.is-live .st-label', '.wfc-act-l', '.pp-shimmer',
   '.ask-ctx-bar-buffer', '.ask-ctx-stat[data-stat="buffer"] .ask-ctx-swatch', '.chat-dock::before',
-  '.plan-md.collapsed::after', '.sn-adorn.sn-loading .input', '.rs-hand', '.dz-trail', '.pd-rewrite-busy']);
+  '.plan-md.collapsed::after', '.sn-adorn.sn-loading .input', '.rs-hand', '.dz-trail']);
 test('gradients only as functional textures (D15)', () => {
   const bad = ALL.flatMap((r) => decls(r.body, 'background(?:-image)?')
     .filter(([, v]) => /gradient\(/.test(v) && !GRADIENT_OK.has(r.sel)).map(([, v]) => where(r, v.slice(0, 40))));
@@ -300,7 +300,7 @@ const TABLIST_OK = [
   /class="(?:rd|hd|pd|tp)-tabs"/,   // initDetailTabs hosts: `bar.classList.add('tabs')` when the screen renders
   /make\('div', 'term-tabs'\)/,       // terminal-pane.mjs: the terminal strip is a browser-style tab row, not the underline
 ];
-const TAB_OK = [/sc-stage/, /export const REAL_CONTROL/, /button\(text, 'term-tab'/];   // the terminal's own tabs, same reason
+const TAB_OK = [/button\(text, 'term-tab'/];   // the terminal's own tabs, same reason
 const ROLE_TAB = /role(?:'\s*,\s*'|=")(tab|tablist)['"]/;
 const classTok = (w) => new RegExp(`['"\`][^'"\`\\n]*(?<![\\w-])(?:${w})(?![\\w-])[^'"\`\\n]*['"\`]`);
 function tabEmitterHits(files) {
@@ -341,8 +341,6 @@ const OFF_SCALE = [26, 31, 34, 36, 43, 44, 55, 78];
 const CONTROL_WORD = /^(?:tab|tabs|seg|btn|chip|preset|act|folder|switch|button)$/;
 // Rows, not controls (spec §1.2): allowed at their own height. Each entry names its reason.
 const ROW_OK = ['.act-srow'];                          // activity list row, 26px dense row (spec §3.1)
-// The Stillhet switch's top-bar icon: a 20px glyph in a 36px box, as docs/rail/navigation.md `nav.design-switch` says (owner-approved mock, #1289)
-ROW_OK.push('[data-stillhet="design-switch"]');
 // Ticket updates' phone targets, 36px chips and 44px controls (ticket-updates board 6): only inside its phone @media block, so an off-scale desktop height is still caught
 const rowOk = (r, s) => ROW_OK.some((ok) => s.includes(ok)) || (!!r.media && /max-width:\s*600px/.test(r.media) && /\.mk-tu/.test(s));
 const classWords = (s) => (s.match(/\.[\w-]+/g) || []).flatMap((c) => c.slice(1).split('-'));
@@ -883,7 +881,7 @@ test('no glyph at the edge of a visible string; use icon(doc, …) (F-12)', () =
 // Marketplace kind colours give the chat kind its violet tile and facet dot (docs/design-system.md › Marketplace exceptions). Exact selectors, no substring match.
 const VIOLET_OK = new Set(['.badge.flag-stage-experimental', '.status-dot.is-violet', '.rg-orb-merged .rg-orb-bg', '.rg-orb-merged .rg-orb-line',
   '.sn-chip', '.sn-adorn.sn-loading .input', '.mk-t-chat', '.mk-dot-chat', '.rd-route-dot.is-merged',
-  '.rd-fact-tx.is-merged', '.pd-rewrite-busy']);
+  '.rd-fact-tx.is-merged']);
 test('violet only inside Labs selectors and the merged dot and orb (F-13)', () => {
   const bad = ALL.filter((r) => r.sel !== ':root' && /var\(--violet/.test(r.body) && !splitTop(r.sel).every((s) => VIOLET_OK.has(s.trim())))
     .map((r) => where(r, 'violet'));

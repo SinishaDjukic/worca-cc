@@ -12,7 +12,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _testing as gitInfo } from '../src/core/git-info.mjs';
-import { _resetForTests, getDb } from '../src/core/db.mjs';
+import { _resetForTests } from '../src/core/db.mjs';
 import { writeStoreMeta } from '../src/core/artifacts.mjs';
 import { writeClarify, writeReview } from '../src/core/artifacts.mjs';
 import { seedPipeline, seedWorkspacePipeline } from './helpers/db-seed.mjs';
@@ -197,95 +197,4 @@ test('workspace /diff route: key validation + concatenated patch round-trip', as
   const r = await fetch(`${base}/api/workspaces/${wk}/runs/${seeded.id}/diff`);
   assert.equal(r.status, 200);
   assert.equal(await r.text(), patch);
-});
-
-test('GET /api/history/:key/:id carries state.costCapUsd: null when unset, the raised cap once set', async () => {
-  const read = async () => (await (await fetch(`${base}/api/history/${alphaKey}/${alphaId}`)).json()).state.costCapUsd;
-  assert.equal(await read(), null);
-  const { setRunCostCap } = await import('../src/core/cost-budget.mjs');
-  setRunCostCap(alphaId, 12.5);
-  try { assert.equal(await read(), 12.5); }
-  finally { getDb().prepare('UPDATE pipelines SET cost_cap_usd = NULL WHERE id = ?').run(alphaId); }
-});
-
-test('GET /api/history/:key/:id carries state.capUsd: the cap the task is held to, Settings\' when it has none of its own', async () => {
-  const state = async () => (await (await fetch(`${base}/api/history/${alphaKey}/${alphaId}`)).json()).state;
-  const settings = (body) => fetch(`${base}/api/settings`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-  assert.equal((await state()).capUsd, null, 'no cap anywhere');
-  assert.equal((await settings({ pipelineCostLimitUsd: 0.5 })).status, 200);
-  try {
-    assert.deepEqual([(await state()).costCapUsd, (await state()).capUsd], [null, 0.5]);
-    const { setRunCostCap } = await import('../src/core/cost-budget.mjs');
-    setRunCostCap(alphaId, 5);
-    assert.equal((await state()).capUsd, 5, 'a raised cap wins');
-  } finally {
-    getDb().prepare('UPDATE pipelines SET cost_cap_usd = NULL WHERE id = ?').run(alphaId);
-    await settings({ pipelineCostLimitUsd: '' });
-  }
-});
-
-test('GET /api/history/:key/:id?row=1 returns the same object as the list\'s element', async () => {
-  const list = await (await fetch(`${base}/api/history`)).json();
-  const el = list.pipelines.find((p) => p.id === alphaId);
-  assert.ok(el, 'the list holds the run');
-  const r = await fetch(`${base}/api/history/${alphaKey}/${alphaId}?row=1`);
-  assert.equal(r.status, 200);
-  assert.deepEqual(await r.json(), { pipeline: el });
-});
-
-test('GET /api/history/:key/:id?row=1 with a wrong key or an archived id is 404', async () => {
-  const other = await seedPipeline(proj, { title: 'Gone run', status: 'done', startedAt: '2026-06-02T00:00:00Z', updatedAt: '2026-06-02T00:00:00Z' });
-  assert.equal(other.key, alphaKey);
-  getDb().prepare('UPDATE pipelines SET archived_at = ? WHERE id = ?').run('2026-06-03T00:00:00Z', other.id);
-  await checkRows([
-    { name: 'a key that is not the row\'s', run: async () => {
-      const r = await fetch(`${base}/api/history/zeta-0000000a/${alphaId}?row=1`);
-      assert.equal(r.status, 404);
-      assert.deepEqual(await r.json(), { error: 'pipeline not found' });
-    } },
-    { name: 'an archived id', run: async () => assert.equal((await fetch(`${base}/api/history/${alphaKey}/${other.id}?row=1`)).status, 404) },
-    { name: 'an unknown id', run: async () => assert.equal((await fetch(`${base}/api/history/${alphaKey}/nope?row=1`)).status, 404) },
-  ]);
-});
-
-test('F-3-09: GET /api/history rows carry workflowId and workflowName from the run\'s stepper template', async () => {
-  const lean = await seedPipeline(proj, { title: 'Lean run', status: 'done', startedAt: '2026-06-04T00:00:00Z', updatedAt: '2026-06-04T00:00:00Z',
-    stepper: { version: 2, template: { id: 'wf_lean', name: 'Lean' }, graph: { nodes: [], edges: [] } } });
-  const idOnly = await seedPipeline(proj, { title: 'Id only run', status: 'done', startedAt: '2026-06-04T00:00:00Z', updatedAt: '2026-06-04T00:00:00Z',
-    stepper: { version: 2, template: { id: 'wf_lone', name: '  ' }, graph: { nodes: [], edges: [] } } });
-  const { pipelines } = await (await fetch(`${base}/api/history`)).json();
-  const row = pipelines.find((p) => p.id === lean.id);
-  assert.equal(row.workflowId, 'wf_lean');
-  assert.equal(row.workflowName, 'Lean');
-  const lone = pipelines.find((p) => p.id === idOnly.id);
-  assert.equal(lone.workflowId, 'wf_lone');
-  assert.equal('workflowName' in lone, false, 'the two keys are independent');
-  const one = await (await fetch(`${base}/api/history/${lean.key}/${lean.id}?row=1`)).json();
-  assert.equal(one.pipeline.workflowName, 'Lean', 'the one-row read inherits the keys');
-  // a real-size stepper (~10 KB): the server reads only the head of it, where the template sits
-  const nodes = Array.from({ length: 80 }, (_, i) => ({ id: `n_${i}`, kind: 'agent', label: `Step "${i}"`, x: i, y: i }));
-  const big = await seedPipeline(proj, { title: 'Big run', status: 'done', startedAt: '2026-06-04T00:00:00Z', updatedAt: '2026-06-04T00:00:00Z',
-    stepper: { version: 2, template: { id: 'wf_big', name: 'Big "quoted" \\ name' }, graph: { nodes, edges: [] } } });
-  const bigRow = (await (await fetch(`${base}/api/history`)).json()).pipelines.find((p) => p.id === big.id);
-  assert.deepEqual([bigRow.workflowId, bigRow.workflowName], ['wf_big', 'Big "quoted" \\ name']);
-});
-
-test('F-3-09: a run with no template (none, v1, empty, invalid JSON) has no workflowId or workflowName key; its other keys are unchanged', async () => {
-  const at = { status: 'done', startedAt: '2026-06-05T00:00:00Z', updatedAt: '2026-06-05T00:00:00Z' };
-  const plain = await seedPipeline(proj, { ...at, title: 'No stepper' });
-  const v1 = await seedPipeline(proj, { ...at, title: 'V1', stepper: { version: 1, steps: [] } });
-  const empty = await seedPipeline(proj, { ...at, title: 'Empty', stepper: { version: 2, template: { id: '', name: '' }, graph: { nodes: [], edges: [] } } });
-  const odd = await seedPipeline(proj, { ...at, title: 'Odd', stepper: { version: 2, template: { id: 7, name: { x: 1 } }, graph: { nodes: [], edges: [] } } });
-  const bad = await seedPipeline(proj, { ...at, title: 'Bad' });
-  getDb().prepare('UPDATE pipelines SET stepper = ? WHERE id = ?').run('not json', bad.id);
-  const { pipelines } = await (await fetch(`${base}/api/history`)).json();
-  const byId = (id) => pipelines.find((p) => p.id === id);
-  const keys = Object.keys(byId(plain.id)).sort();
-  await checkRows([plain, v1, empty, odd, bad].map((s, i) => ({ name: ['none', 'v1', 'empty', 'non-string', 'invalid JSON'][i], run: () => {
-    const r = byId(s.id);
-    assert.ok(r, 'the row is listed');
-    assert.equal('workflowId' in r, false);
-    assert.equal('workflowName' in r, false);
-    assert.deepEqual(Object.keys(r).sort(), keys);
-  } })));
 });

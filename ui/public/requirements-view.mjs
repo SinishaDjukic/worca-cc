@@ -1189,24 +1189,11 @@ export function createRequirementsView({ host, subEl, msgEl, deps = {} }) {
     void (async () => {
       try {
         const refresh = !!(briefData && briefData.brief && briefData.brief.madeAt);
-        const asked = paintNo, shownAtAsk = briefData;
         const data = await api('POST', briefApi(s), choice && choice.model ? { choice: { engine: choice.engine, model: choice.model, effort: choice.effort || null } } : {});
         creating = false;
-        // a paint started during the POST (the job's frame) is newer than this answer: leave the page to it, and
-        // redraw its controls without `creating` if it has landed already. This relies on makeBrief's notify after
-        // beginBrief: a frame sent before the brief was begun can still land here and read it as not made yet, and only
-        // that later frame paints it right again.
-        let gotErr = false;
-        if (paintNo === asked) paintAnswer(s, data);
-        else if (briefData !== shownAtAsk) redrawBrief();
-        else if (briefShown && scopeId(briefShown) === scopeId(s)) {
-          // its GET is still under way, or failed (its error is in the message line): paint this answer without bumping
-          // paintNo, so the page does not keep a disabled Create and a GET still under way wins when it lands
-          paintBrief(data);
-          gotErr = !!(msgEl && msgEl.classList.contains('err'));
-        }
+        paintAnswer(s, data);
         // the pressed button is disabled now, so the focus is lost: the polite message line says the work started
-        if (!gotErr) say(`Worca is ${refresh ? 'refreshing' : 'making'} the brief. This takes a few minutes; you can leave this page.`, 'ok');
+        say(`Worca is ${refresh ? 'refreshing' : 'making'} the brief. This takes a few minutes; you can leave this page.`, 'ok');
       } catch (err) {
         creating = false;
         // refused (budget, busy, the switch, no repository): said in the message line; the button stays

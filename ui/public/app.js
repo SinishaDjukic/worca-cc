@@ -186,7 +186,7 @@ import {
   channelBadge, renderNeedsGit,
 } from './plugins-view.mjs';
 import { mountMarketplace, tabFromParam, targetFromParam } from './marketplace/index.mjs';
-import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderPromptCheckToggle, collectPromptCheckToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
+import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
 import { mountNetworkProxyCard } from './settings-network-proxy.mjs';
@@ -324,8 +324,6 @@ import { pageTitle } from './topnav.mjs';
 import { activityCounts } from './activity-model.mjs';
 import { createChatHome, findFollowingThread } from './chat/home.mjs';
 import { installIntentAddon } from './chat/intent.mjs';
-import { installPromptCheckAddon } from './chat/prompt-check.mjs';
-import { mountPromptCheckChip, setPromptCheckPref } from './prompt-check/chip-host.mjs';
 import { needsYouItems as chatNeedsYouItems } from './runs-list.mjs';
 import { createActivityMenu } from './activity-menu.mjs';
 import { createAwayScreensaver } from './away-screensaver.mjs';
@@ -352,9 +350,6 @@ import { openLabelPicker, closeLabelPickerFor, fetchLabels, labelChip } from './
 import { labelStates, applyLabelChange, normaliseLabel } from '../../src/shared/run-labels.mjs';
 import { renderLabelsSection, runCount } from './labels-settings.mjs';
 import { makeSwitch } from './switch.mjs';
-import { watchRailReload, mountDesignSwitch, mountStillhetAsk, shouldAskStillhet, stillhetLabsRow } from './stillhet.mjs';
-// Stillhet: the server-rendered value of `rail`, read before any flags frame or the boot re-read can change it.
-const RAIL_BOOT = flagOn('rail');
 import { createWorcaLevelWiring } from './worca-level/app-wiring.mjs';
 
 // With site data blocked, Chrome throws SecurityError on merely reading `localStorage`. Every bare `localStorage` in
@@ -432,8 +427,6 @@ let askHistoryOnChat = false;  // the column's "Open History in Chat": the Chat 
 let askEntryThread = null;     // openChat({ threadId }) on a hidden column: the chat it opens on (askSide onShow), never the stored one first
 let chatSummariesPref = true;    // Settings › Chat › Summarise commands (#911): GET /api/settings chat.summariseCommands
 function setChatSummariesPref(chat) {
-  // The prompt check chip (docs/prompt-check.md) reads the same chat prefs, on every path that brings them.
-  setPromptCheckPref(!!(chat && chat.promptCheck === true));
   const on = !(chat && chat.summariseCommands === false);
   if (on === chatSummariesPref) return;
   chatSummariesPref = on;
@@ -7493,24 +7486,9 @@ function snapshotTask() {
 }
 const sameTask = (a, b) => a.title === b.title && a.prompt === b.prompt && a.markdown === b.markdown
   && a.extras.length === b.extras.length && a.extras.every((f, i) => f === b.extras[i]);
-// The prompt check chip under the New run prompt (docs/prompt-check.md "The chip"). A kind correction is held until
-// POST /api/run answers with the run id; an abandoned form records nothing.
-const newRunCheck = mountPromptCheckChip({
-  doc: document, host: el.promptPane,   // under the prompt (its mention overlay wraps the field later)
-  surface: { kind: 'new-run', id: 'form' }, deferCorrection: true, fetchImpl: (...a) => fetch(...a),
-  timers: window.__worcaTestHooks?.promptCheckTimers,   // tests only: fake timers for the debounce
-  field: {   // Improve writes through the prompt's own input path (the re-check)
-    read: () => el.prompt.value,
-    write: (text) => { el.prompt.value = text; el.prompt.dispatchEvent(new window.Event('input', { bubbles: true })); },
-    focus: () => el.prompt.focus(),
-  },
-  project: () => ({ projectDir: selectedProjectPath() }),
-});
-el.prompt.addEventListener('input', () => newRunCheck.input(el.prompt.value));
 function setTask(t) {
   el.title.value = t.title;
   el.prompt.value = t.prompt;
-  newRunCheck.input(t.prompt);
   el.promptMarkdown.value = t.markdown;
   el.mdFileName.textContent = t.mdFileName;
   el.mdFile.value = '';
@@ -15881,7 +15859,6 @@ el.form.addEventListener('submit', async (e) => {
     return { ok: false };
   };
   const submittedTask = snapshotTask();   // #687: cleared once the server accepts it
-  const heldCorrection = newRunCheck.pendingCorrection();   // the kind correction of THIS draft; a later pick stays held
 
   await withButton(el.startBtn, async () => {
     // Guard the whole in-flight window: applyBudgetToNewView also drives
@@ -15974,8 +15951,6 @@ el.form.addEventListener('submit', async (e) => {
         const picked = pendingSchedule;   // read before the form resets
         const line = `${title || 'Untitled run'} · ${picked ? scheduleWhenText(picked) : 'Starts later'}`;
         setPendingSchedule(null);   // the form is a plain Start run form again
-        void newRunCheck.flushCorrection({ runId: data.runId }, heldCorrection);
-        newRunCheck.sent(submittedTask.prompt);
         resetSyncChoice();
         showEngineRefusal(null);
         clearTask(submittedTask);
@@ -15994,8 +15969,6 @@ el.form.addEventListener('submit', async (e) => {
       // Re-enable the form so more runs can be started concurrently — unless the
       // budget just went over, in which case idleDisabled keeps Start disabled.
       startSubmitInFlight = false;
-      void newRunCheck.flushCorrection({ runId: data.runId }, heldCorrection);   // a held kind correction, now with its run id
-      newRunCheck.sent(submittedTask.prompt);
       resetSyncChoice();
       showEngineRefusal(null);
       clearTask(submittedTask);
@@ -17481,8 +17454,6 @@ function paintAskSettings(data) {
   if (scriptHost) scriptHost.replaceChildren(renderScriptToolsToggle({ prefs: data.chat || {} }, { doc: document }));
   const suggestHost = document.getElementById('ask-suggestions-host');
   if (suggestHost) suggestHost.replaceChildren(renderSuggestionsToggle({ prefs: data.chat || {} }, { doc: document }));
-  const promptCheckHost = document.getElementById('ask-prompt-check-host');
-  if (promptCheckHost) promptCheckHost.replaceChildren(renderPromptCheckToggle({ prefs: data.chat || {} }, { doc: document }));
   const summariesHost = document.getElementById('ask-summaries-host');
   if (summariesHost) summariesHost.replaceChildren(renderSummariesToggle({ prefs: data.chat || {} }, { doc: document }));
   setChatSummariesPref(data.chat);
@@ -17537,12 +17508,10 @@ function saveAskLimits(e) {
   const askWebBody = webHost ? collectAskWebFields(webHost) : null;   // null = the web fields were not touched
   const suggestHost = document.getElementById('ask-suggestions-host');
   const summariesHost = document.getElementById('ask-summaries-host');
-  const promptCheckHost = document.getElementById('ask-prompt-check-host');
   const chat = {
     ...(scriptHost ? collectScriptToolsToggle(scriptHost) : {}),
     ...(suggestHost ? collectSuggestionsToggle(suggestHost) : {}),
     ...(summariesHost ? collectSummariesToggle(summariesHost) : {}),
-    ...(promptCheckHost ? collectPromptCheckToggle(promptCheckHost) : {}),
   };
   postAskLimits({ askMaxTurns, askMaxBudgetUsd,
     ...(Object.keys(chat).length ? { chat } : {}),
@@ -18872,8 +18841,7 @@ function loadFlagsTab(sub = '') {
   if (!el.flagsHost) return;
   if (!flagsTabCtl) {
     flagsTabCtl = createFlagsView({ host: el.flagsHost, msgEl: el.flagsMsg, resetBtn: el.flagsReset,
-      api: (method, body) => mcpApi(method, '/api/flags', body), confirm: confirmModal,
-      keep: stillhetLabsRow() });
+      api: (method, body) => mcpApi(method, '/api/flags', body), confirm: confirmModal });
   }
   void flagsTabCtl.load(sub ? safeDecode(sub) : '');
 }
@@ -38952,28 +38920,7 @@ async function loadOnboarding({ recheck = false } = {}) {
   gs.status = data;
   paintOnboarding();
   maybeWelcome();
-  void stillhetBoot();
-  if (flagsTabCtl) void flagsTabCtl.load();   // the Labs row follows the ask switch
   return { ok: true };
-}
-
-// Stillhet's opt-in and opt-out (ui/public/stillhet.mjs): idempotent, so a socket reconnect that reruns the boot path adds nothing.
-let railReloadWatch = null;
-async function stillhetBoot() {
-  const status = gs.status;
-  if (!status) return;
-  const toastText = (text) => notify({ tone: 'info', title: text });
-  if (!railReloadWatch) railReloadWatch = watchRailReload({ doc: document, win: window, bootOn: RAIL_BOOT, toast: toastText });
-  if (status.stillhetAsk !== true) return;
-  const r = await mcpApi('GET', '/api/flags');
-  const flag = r.ok && Array.isArray(r.data?.flags) ? r.data.flags.find((f) => f.key === 'rail') : null;
-  if (!flag) return;
-  mountDesignSwitch({ doc: document, status, flag, fetchJson: mcpApi, toast: toastText });
-  const dialogOpen = [...document.querySelectorAll('dialog[open], .viewer-modal:not(.hidden), .keys-modal')].some((d) => d.getClientRects().length > 0);   // a hidden modal keeps its node
-  if (shouldAskStillhet({ ask: true, asked: status.stillhetAsked === true, fresh: status.fresh === true, flagKnown: true, on: flag.on, locked: flag.locked,
-    welcomeThisLoad: gs.welcomeShown, setupOpen: !!setupDialog, dialogOpen })) {
-    mountStillhetAsk({ doc: document, status, fetchJson: mcpApi });
-  }
 }
 /** Coalesce the change broadcasts (a finished run fires several) into one refetch. */
 function scheduleOnboardingRefresh() {
@@ -41668,7 +41615,6 @@ const chatHomeTimers = {
   clearTimeout: (t) => clearTimeout(t),
 };
 const chatIntent = installIntentAddon({ win: chatHomeTimers, onSend: () => { chatHome?.armFlip(); } });
-installPromptCheckAddon({ intent: chatIntent });   // the prompt check chip, after the intent chip (Chat and the Shaper task)
 
 // ── Chat home (worca Chat P6) ──────────────────────────────────────────────────────────────────────────────
 // The hero, quick actions, Needs you / Running / Recent chats / Workflows and the promos, inside the Chat page's

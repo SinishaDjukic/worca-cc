@@ -15,10 +15,9 @@ after(() => rmSync(dir, { recursive: true, force: true }));
 // empty file mid-beat (CI: "Unexpected end of JSON input"). lock.mjs's inspect() tolerates exactly
 // that by judging an unparsable file by mtime; a test reading the raw file has to tolerate it too.
 async function readLock(file) {
-  const deadline = Date.now() + 5000;
-  for (;;) {
+  for (let i = 0; ; i++) {
     try { return JSON.parse(readFileSync(file, 'utf8')); } catch (e) {
-      if (Date.now() >= deadline) throw e;
+      if (i >= 20) throw e;
       await new Promise((r) => setTimeout(r, 5));
     }
   }
@@ -62,12 +61,8 @@ test('the holder heartbeats, so a long critical section is not judged stale', as
   const lock = join(dir, 'beat.lock');
   const release = await acquireLock(lock, { heartbeatMs: 20 });
   const first = (await readLock(lock)).at;
-  // Wait for a beat to land (it changes `at`), not for a fixed time: under load a beat can be late.
-  const deadline = Date.now() + 5000;
-  while ((await readLock(lock)).at === first) {
-    if (Date.now() >= deadline) assert.fail(`no heartbeat changed the lock's "at" (${first}) within 5 s`);
-    await new Promise((r) => setTimeout(r, 10));
-  }
+  await new Promise((r) => setTimeout(r, 120));
+  assert.notEqual((await readLock(lock)).at, first);
   // staleMs must stay several heartbeats wide: at staleMs:60 with heartbeatMs:20 a single missed
   // tick under load flips this from LOCK_TIMEOUT to a successful acquire, i.e. a red test.
   await assert.rejects(acquireLock(lock, { staleMs: 250, timeoutMs: 150 }), { code: 'LOCK_TIMEOUT' });

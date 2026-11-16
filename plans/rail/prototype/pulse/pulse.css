@@ -1,0 +1,206 @@
+/* Pulse: the hub's layer on top of Worca's style.css and rail.css (spec: plans/rail/pulse.md). One rail: a 20px column
+   for the dot (or the tick box), a 12px gap, then the text edge every heading, row and sentence starts on. */
+
+.pz-title,.pz-nr-h{letter-spacing:-.02em;}
+
+/* The shell: a small Worca window (sidebar, top bar, page) on the board. */
+.pz-app{--rail:20px;--gap:12px;--edge:calc(var(--rail) + var(--gap));position:relative;display:flex;min-height:620px;
+  border:1px solid var(--line);border-radius:var(--r-card);background:var(--bg);font:400 var(--fs-body)/var(--lh-body) var(--sans);}
+.pz-side{flex:0 0 224px;display:flex;flex-direction:column;min-width:0;background:var(--side-bg);border-right:1px solid var(--line);
+  border-radius:var(--r-card) 0 0 var(--r-card);}
+.pz-brand{height:48px;display:flex;align-items:center;padding:0 20px;flex:none;}
+.pz-word{font-weight:700;font-size:var(--fs-section);letter-spacing:-.01em;color:var(--ink);}
+.pz-nav{display:flex;flex-direction:column;gap:4px;padding:11px 10px;}
+.pz-nav-i{display:flex;align-items:center;gap:10px;height:32px;padding:0 9px;border:0;border-radius:var(--r-sm);background:none;
+  color:var(--ink-2);font:500 var(--fs-body)/1 var(--sans);text-align:left;cursor:pointer;}
+.pz-nav-i:hover{background:var(--hover);color:var(--ink);}
+.pz-nav-i.is-on{background:var(--field);color:var(--ink);}
+.pz-nav-i[aria-disabled="true"]{cursor:default;}
+.pz-nav-i:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.pz-nav-l{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.pz-foot{margin-top:auto;padding:8px 10px 10px;}
+.pz-main{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;}
+.pz-top{height:48px;flex:none;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 12px 0 24px;border-bottom:1px solid var(--line);}
+.pz-top-l{min-width:0;}
+.pz-top-r{display:flex;align-items:center;gap:8px;flex:none;}
+.pz-pulse-b[aria-expanded="true"]{background:var(--hover);color:var(--ink);}
+.pz-page{padding:24px 24px 40px;min-width:0;max-width:760px;}
+
+/* The account corner: the avatar inside its usage rings, outside in: session, the long window, spend. */
+.pz-acct{display:flex;align-items:center;gap:9px;width:100%;height:50px;padding:0 8px 0 2px;border:0;border-radius:var(--r-sm);
+  background:none;color:var(--ink);font-family:inherit;text-align:left;cursor:pointer;}
+.pz-acct:hover,.pz-acct[aria-expanded="true"]{background:var(--field);}
+.pz-acct:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.pz-ava-wrap{position:relative;display:grid;place-items:center;width:38px;height:38px;flex:none;}
+.pz-ava{position:relative;display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:var(--line-2);color:var(--ink);font:600 var(--fs-caption)/1 var(--sans);}
+.pz-acct-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-meta);color:var(--ink-2);}
+.pz-updown{flex:none;color:var(--ink-3);}
+
+/* A ring that shades along its arc: --ink-2 at the start, --amber at the warning line (--w), --red at the limit; it
+   shows the first --p percent. Used up: full and solid red. The track is --line-2. Never violet, never green. */
+.pz-gring{--s:18px;--t:1.5px;position:relative;display:inline-block;flex:none;width:var(--s);height:var(--s);border-radius:50%;background:var(--line-2);
+  -webkit-mask:radial-gradient(farthest-side,transparent calc(100% - var(--t) - .5px),#000 calc(100% - var(--t)));
+  mask:radial-gradient(farthest-side,transparent calc(100% - var(--t) - .5px),#000 calc(100% - var(--t)));}
+.pz-gring::before{content:"";position:absolute;inset:0;border-radius:50%;
+  background:conic-gradient(var(--ink-2) 0%,var(--amber) calc(var(--w) * 1%),var(--red) 100%);
+  -webkit-mask:conic-gradient(#000 calc(var(--p) * 1%),transparent 0);mask:conic-gradient(#000 calc(var(--p) * 1%),transparent 0);}
+.pz-gring.is-over::before{background:var(--red);}
+.pz-ava-wrap .pz-gring{--t:1px;position:absolute;inset:0;margin:auto;}
+/* The rings hug the avatar: 1px lines with 1.5px between them and the avatar, outside in: session, long window, spend. */
+.pz-ring-0{--s:38px;} .pz-ring-1{--s:33px;} .pz-ring-2{--s:28px;}
+.pz-mi-ring{--s:16px;--t:1.25px;}
+
+/* The account menu is Worca's own (#acct-menu, style.css › .acct-menu); here it sits in the mock window, not the viewport.
+   Its side menus open beside it, bottom-aligned; on a narrow screen in its place, with a row back. */
+.pz-app .nav-fly{position:absolute;z-index:45;}
+.pz-app .nav-fly.acct-menu{left:8px;bottom:64px;max-height:none;}
+.pz-fly{left:calc(8px + 258px + 4px);bottom:64px;width:296px;max-height:none;gap:0;padding:6px;}
+.pz-fly.lvl-menu{width:236px;gap:1px;}
+.pz-subback{display:none;}
+/* Appearance sits in the first section with Interface mode (both are how Worca looks), as a row of its own. */
+.acct-menu .msect > .theme-sect{display:flex;align-items:center;gap:10px;height:32px;padding:0 4px 0 9px;}
+.acct-menu .msect > .theme-sect .theme-k{flex:1;}
+.pz-fly .nav-fly-k{color:var(--ink-2);}
+/* The spend card's title is its link to Statistics (a text link: --blue-ink-strong, 600), in place of Details. */
+.pz-mc-link{flex:none;padding:0;border:0;background:none;text-align:left;cursor:pointer;color:var(--blue-ink-strong);}
+.pz-mc-link:hover{text-decoration:underline;text-underline-offset:3px;}
+.pz-mc-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}   /* style.css's --ink-3 caption is under 4.5:1 on the menu */
+.pz-ublocks{display:flex;flex-direction:column;gap:10px;padding:2px 9px 10px;}
+.pz-fly > .msect{position:relative;margin-top:9px;}
+.pz-fly > .msect::before{content:"";position:absolute;top:-5px;left:6px;right:6px;height:1px;background:var(--line);}
+.pz-ublock{display:flex;flex-direction:column;gap:2px;}
+.pz-ublock + .pz-ublock{padding-top:10px;border-top:1px solid var(--line);}
+.pz-uhead{display:flex;align-items:baseline;gap:8px;min-width:0;min-height:22px;}
+.pz-uname{flex:none;font-weight:600;color:var(--ink);}
+.pz-uplan{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-meta);color:var(--ink-2);}
+.pz-uas{margin-left:auto;flex:none;font-size:var(--fs-caption);color:var(--ink-2);font-variant-numeric:tabular-nums;}
+.pz-urow{display:grid;grid-template-columns:18px 56px minmax(0,1fr) auto;align-items:center;column-gap:8px;min-height:24px;font-size:var(--fs-meta);}
+.pz-uk{color:var(--ink-2);}
+.pz-uv{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums;}
+.pz-uv.is-warn{color:var(--amber-ink-strong);}
+.pz-uv.is-over{color:var(--red-ink-strong);}
+.pz-ur{color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap;}
+.pz-unote{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
+
+/* New run is a Dialog (Worca's .viewer-modal and its card), here inside the mock window: the sentence that frames the
+   step, the task Field, the note when the run will not fit, then Cancel and the start button. */
+.pz-app .viewer-modal{position:absolute;z-index:47;border-radius:var(--r-card);padding:16px;}
+/* A Dialog on a long page (Settings) stays in view: it sits near the top of the window as the page scrolls. */
+.pz-app .viewer-modal:has(> .rl-dialog){place-items:start center;}
+.pz-app .viewer-modal > .rl-dialog{position:sticky;top:64px;}
+.pz-app .viewer-modal > .card.pz-newrun{width:min(460px,100%);max-height:none;padding:0;overflow:visible;display:flex;flex-direction:column;box-shadow:var(--shadow-pop);}
+.pz-nr{display:flex;flex-direction:column;gap:12px;padding:16px 16px 12px 4px;}
+.pz-nr > :not(.pz-advice){margin-left:var(--edge);}
+.pz-nr-h{margin:0;font:600 var(--fs-section)/1.3 var(--sans);color:var(--ink);}
+.pz-nr-task{min-height:56px;padding:8px 10px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--field);color:var(--ink);}
+.pz-nr .pz-sentence{margin-block:0;}
+.pz-advice{display:grid;grid-template-columns:var(--rail) minmax(0,1fr);column-gap:var(--gap);align-items:start;}
+.pz-advice .pz-rail{height:20px;}
+.pz-advice-t{margin:0;font-size:var(--fs-meta);line-height:1.5;color:var(--ink-2);}
+.pz-advice-acts{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;}
+
+/* The panel under the Pulse button is all of Pulse: Now and Updates with ⋯ beside them; the body scrolls. */
+.pz-popover{position:absolute;top:52px;right:8px;z-index:44;display:flex;flex-direction:column;width:min(420px,calc(100% - 16px));max-height:560px;
+  border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);box-shadow:var(--shadow-pop);}
+.pz-phead{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 8px 0 16px;box-shadow:inset 0 -1px 0 var(--line);}
+.pz-ptabs{min-width:0;box-shadow:none;}
+.pz-popover .pz-bar{margin-top:4px;}
+.pz-pbody{flex:1 1 auto;min-height:0;overflow-y:auto;padding:4px 16px 8px;}
+.pz-pfoot{flex:none;display:flex;justify-content:flex-end;gap:8px;padding:8px 12px;border-top:1px solid var(--line);}
+.pz-popover .pz-sec{margin-top:12px;}
+
+/* The page head: title, the metadata line, tabs, all on the text edge. */
+.pz-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-left:var(--edge);min-width:0;}
+.pz-title{margin:0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 var(--fs-page)/1.3 var(--sans);color:var(--ink);}
+.pz-acts{display:flex;align-items:center;gap:8px;flex:none;}
+.pz-meta{display:flex;flex-wrap:wrap;gap:0 8px;margin:4px 0 0 var(--edge);font-size:var(--fs-meta);color:var(--ink-2);}
+.pz-dotsep{color:var(--ink-3);}
+.pz-meta.pz-tabmeta{margin-top:12px;}
+.tab .n{font-size:var(--fs-caption);color:var(--ink-2);font-variant-numeric:tabular-nums;}
+.pz-panel{min-width:0;}
+
+/* Sections and divided rows. */
+.pz-sec{margin-top:20px;min-width:0;}
+.pz-h{margin:0 0 4px var(--edge);display:flex;align-items:baseline;gap:8px;font:600 var(--fs-body)/var(--lh-title) var(--sans);color:var(--ink);}
+.pz-h .n{font-size:var(--fs-caption);font-weight:500;color:var(--ink-2);font-variant-numeric:tabular-nums;}
+.pz-h.pz-day{color:var(--ink-2);font-size:var(--fs-meta);}
+.pz-h-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px;}
+.pz-h-row .pz-h{margin-bottom:0;}
+.pz-list{display:flex;flex-direction:column;min-width:0;}
+.pz-row{position:relative;display:grid;grid-template-columns:var(--rail) minmax(0,1fr) auto;column-gap:var(--gap);align-items:start;padding:2px 0;}
+/* A list grouped by something (status, day): a line where a group starts, from the text edge; rows divide by space. */
+.pz-sec + .pz-sec{position:relative;margin-top:12px;padding-top:12px;}
+.pz-sec + .pz-sec::before{content:"";position:absolute;top:0;left:var(--edge);right:0;border-top:1px solid var(--line);}
+.pz-rail{position:relative;display:grid;place-items:center;width:var(--rail);height:40px;}
+.pz-row-main{display:flex;flex-direction:column;gap:1px;min-width:0;margin:0 0 0 -6px;padding:5px 6px;}
+.pz-row-t{min-width:0;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.pz-row-m{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-meta);color:var(--ink-2);}
+.pz-row-time{padding-top:7px;font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;font-variant-numeric:tabular-nums;}
+.pz-resolved{margin-left:8px;font-size:var(--fs-caption);color:var(--ink-2);}
+.pz-unread{width:8px;height:8px;border-radius:50%;background:var(--blue);}
+.pz-empty{margin:20px 0 0 var(--edge);color:var(--ink-2);}
+/* While selecting (as the Runs list), the tick box takes the mark's place on the rail. */
+.pz-check{position:absolute;inset:0;display:none;place-items:center;cursor:pointer;}
+.pz-check input{margin:0;cursor:pointer;}
+.pz-list.is-selecting .pz-check{display:grid;}
+.pz-list.is-selecting .pz-rail > :not(.pz-check){visibility:hidden;}
+/* The Runs list's selection bar, at the panel's foot on the panel's own fill. */
+.pz-popover .runs-bulk{flex:none;padding:8px 12px;background:inherit;border-radius:0 0 var(--r-card) var(--r-card);}
+
+/* The list's sentence on the rail; Select all at its right while selecting. */
+.pz-bar{display:grid;grid-template-columns:var(--rail) minmax(0,1fr) auto;column-gap:var(--gap);align-items:center;min-height:40px;margin-top:12px;}
+.pz-bar .pz-rail{height:32px;}
+.pz-sentence{min-width:0;color:var(--ink-2);line-height:28px;}
+.pz-strong{color:var(--ink);font-weight:600;}
+
+/* A picker in its sentence: the chosen words in body type, a chevron; the menu opens under it. */
+.pz-pick{position:relative;display:inline-block;}
+.pd-base.is-words{font:600 var(--fs-body)/1.4 var(--sans);color:var(--ink);white-space:nowrap;}
+.pz-menu{position:absolute;top:calc(100% + 4px);left:0;z-index:46;min-width:200px;}
+.pz-menu.is-right{left:auto;right:0;}
+
+
+/* The toast's Undo. */
+.rc-toast.is-on{pointer-events:auto;}
+.pz-undo{margin-left:12px;padding:0;border:0;background:none;color:inherit;font:600 var(--fs-meta)/1 var(--sans);text-decoration:underline;text-underline-offset:3px;cursor:pointer;}
+
+/* Narrow: the sidebar is the rail (icons and the avatar alone); the page and settings stack. */
+@media (max-width: 760px){
+  .pz-side{flex-basis:60px;}
+  .pz-brand{padding:0;justify-content:center;}
+  .pz-word{font-size:0;} .pz-word::before{content:"W";font-size:var(--fs-section);}
+  .pz-nav{padding:11px 8px;}
+  .pz-nav-i{justify-content:center;padding:0;}
+  .pz-nav-l,.pz-acct-name,.pz-updown{display:none;}
+  .pz-foot{padding:8px 4px 10px;}
+  .pz-acct{justify-content:center;padding:0;}
+  .pz-top{padding:0 8px 0 16px;}
+  .pz-page{padding:16px 12px 32px 4px;}
+  .pz-app .nav-fly.acct-menu,.pz-fly{left:4px;}
+  .pz-fly{width:min(296px,calc(100% - 8px));}
+  .acct-menu.has-sub{display:none;}
+  .pz-subback{display:flex;}
+}
+@media (max-width: 480px){
+  .pz-pulse-l,.pz-new-l{display:none;}
+  .pz-top .btn-primary{width:28px;padding:0;}
+}
+
+/* Settings (B): the sidebar becomes its menu; groups under small heads; ‹ Back to Worca at its top. */
+.pz-nav.is-app{display:none;}
+.cfg-index,.cfg-section > .rl-back{display:none;}   /* ‹ Settings only where the side menu is hidden */
+.cfg-body{margin-left:var(--edge);}
+.cfg-body > .rc-confirm{margin-top:16px;}
+.cfg-body > .set-sec:first-child{margin-top:24px;}
+/* Narrow: Worca's own sidebar stays; Settings opens on its menu as a list, and a section has ‹ Settings. */
+@media (max-width: 760px){
+  .pz-side .side-menu{display:none;}
+  .pz-nav.is-app{display:flex;}
+  .cfg-index{display:block;}
+  .cfg-index .side-menu{margin-left:var(--edge);}
+  .cfg-section > .rl-back{display:inline-flex;margin-left:var(--edge);}
+  .cfg-page:not(.is-index) .cfg-index,.cfg-page.is-index .cfg-section{display:none;}
+}
+/* The sidebar's content fades when it becomes Settings' menu, and back; the page changes at once (Motion). */
+.pz-side .is-swap{animation:rl-in var(--motion-change) var(--ease);}
+@media (prefers-reduced-motion: reduce){.pz-side .is-swap{animation:none;}}

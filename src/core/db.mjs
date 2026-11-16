@@ -64,7 +64,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 97;
+export const SCHEMA_VERSION = 95;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -854,7 +854,6 @@ const INCREMENTAL_COLUMNS = {
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
                             source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT',
                             archived_at: 'TEXT', cost_cap_override: 'INTEGER NOT NULL DEFAULT 0',
-                            cost_cap_usd: 'REAL',   // v91: a cap raised for this run (Stillhet's Raise the cap); NULL = the settings cap
                             pr_url: 'TEXT', pr_number: 'INTEGER', pr_state: 'TEXT', pr_checked_at: 'TEXT',
                             outcome: 'TEXT',
                             scheduled_for: 'TEXT', schedule_id: 'TEXT',   // v31: scheduled-run provenance (NULL = started by hand)
@@ -905,8 +904,7 @@ const INCREMENTAL_COLUMNS = {
                             composer: 'TEXT',        // v54: JSON {sessionId, docToken, graph, selection, dirty, drafts} — the canvas the last message carried
                             archived_at: 'TEXT',     // v75 (#948 s2): when the chat was archived; NULL = not archived
                             pinned_at: 'TEXT',       // v75 (#948 s2): when the chat was pinned; NULL = not pinned
-                            group_id: 'TEXT',        // v76 (#948 s3): the chat's topic group (ask_chat_groups.id); NULL = ungrouped
-                            labels: 'TEXT' },        // v90 (Stillhet chat): JSON [label] (run labels' rules), in the order added; NULL = none
+                            group_id: 'TEXT' },      // v76 (#948 s3): the chat's topic group (ask_chat_groups.id); NULL = ungrouped
   shape_features:         { ship_mode: 'TEXT',        // v58 (D24): 'stacked' | 'one'; NULL = not shipped
                             ship_pr_url: 'TEXT',      // v58: the one PR (mode 'one'); NULL otherwise
                             shipped_at: 'TEXT',       // v58: when Ship as ran
@@ -930,8 +928,7 @@ const INCREMENTAL_COLUMNS = {
                             description_origin: 'TEXT',     // v40: 'generated' | 'edited'; NULL = before v40
                             actions_json: 'TEXT',           // v47: stack actions { stacks:[…] } (issue #529); NULL = none
                             scan_models_json: 'TEXT',       // v57: the scan pick captured at creation { scanModel, scanEffort, agentModel, agentEffort }; NULL = none
-                            settings_json: 'TEXT',          // v87: the workspace's own settings { "pr.open"?: … } (src/core/workspace-settings.mjs); NULL = none
-                            defaults: 'TEXT' },             // Stillhet slice 9 D19: New run prefills { tags, labels } (workspaces.mjs readWorkspaceDefaults); NULL = none
+                            settings_json: 'TEXT' },        // v87: the workspace's own settings { "pr.open"?: … } (src/core/workspace-settings.mjs); NULL = none
   schedules:              { ask_thread_id: 'TEXT', ask_card_id: 'TEXT',   // v31: the Ask Worca card a series came from
                             created_by: 'TEXT', updated_by: 'TEXT',   // v39: who made / last changed it (identity.mjs actor)
                             preset_id: 'TEXT' },   // v63: the run preset the series follows (read at fire time); NULL = none
@@ -1478,42 +1475,6 @@ CREATE TABLE IF NOT EXISTS req_briefs (
 );
 `;
 
-// v96 (prompt check s2, docs/prompt-check.md): a person's correction of the prompt check's kind, ids and kinds only —
-// never prompt text. No FK: a row stays after its thread or run is deleted, so deleting one never fails here.
-// Reconcile-safe: IF NOT EXISTS + INCREMENTAL_TABLES.
-const PROMPT_KIND_CORRECTIONS_DDL = `
-CREATE TABLE IF NOT EXISTS prompt_kind_corrections (
-  id            INTEGER PRIMARY KEY,
-  surface       TEXT NOT NULL,
-  thread_id     TEXT,
-  card_id       TEXT,
-  run_id        TEXT,
-  proposed_kind TEXT NOT NULL,
-  chosen_kind   TEXT NOT NULL,
-  at            TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_prompt_kind_corrections_thread ON prompt_kind_corrections (thread_id);
-CREATE INDEX IF NOT EXISTS idx_prompt_kind_corrections_run ON prompt_kind_corrections (run_id);
-`;
-
-// v97 (flag proposedPerspectives, docs/prompt-check.md "Perspectives"): one row per started run that had a proposal:
-// the proposed perspective ids and what the person dropped and added (JSON id lists). Ids, kind, surface, run id and
-// time only — never prompt text. No FK, like v96. Reconcile-safe: IF NOT EXISTS + INCREMENTAL_TABLES.
-const PERSPECTIVE_CHOICES_DDL = `
-CREATE TABLE IF NOT EXISTS perspective_choices (
-  id        INTEGER PRIMARY KEY,
-  run_id    TEXT NOT NULL,
-  surface   TEXT NOT NULL,
-  kind      TEXT,
-  proposed  TEXT NOT NULL,
-  chosen    TEXT NOT NULL,
-  dropped   TEXT NOT NULL,
-  added     TEXT NOT NULL,
-  at        TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_perspective_choices_run ON perspective_choices (run_id);
-`;
-
 // v76 (#948 s3): the Chats column's topic groups. A chat names its group in ask_threads.group_id (one at most); a
 // group is never empty (the store deletes it with its last chat). name_source: 'suggested' | 'user'.
 const ASK_CHAT_GROUPS_DDL = `
@@ -1649,16 +1610,7 @@ CREATE TABLE IF NOT EXISTS design_pictures (
 CREATE INDEX IF NOT EXISTS design_pictures_design ON design_pictures(design_id, round, id);
 `;
 
-// Project moves (Stillhet slice 9 D9): Locate folder re-keys a project (its key is derived from its path); each move
-// writes old_key → new_key here, in the same transaction, so a pre-move run (pipelines keep their old key) still
-// resolves to the project (projects.mjs currentKey). Reconcile-safe: IF NOT EXISTS + INCREMENTAL_TABLES, so no ladder step.
-const PROJECT_MOVES_DDL = `
-CREATE TABLE IF NOT EXISTS project_moves (
-  old_key TEXT PRIMARY KEY, new_key TEXT NOT NULL, moved_at TEXT NOT NULL);
-`;
-
 const INCREMENTAL_TABLES = {
-  project_moves: PROJECT_MOVES_DDL,
   config_workflow_wires: CONFIG_WORKFLOW_WIRES_DDL,
   step_questions:    STEP_QUESTIONS_DDL,
   guardrail_sets:    GUARDRAIL_SETS_DDL,
@@ -1721,8 +1673,6 @@ const INCREMENTAL_TABLES = {
   design_agents:      DESIGN_DDL,  // v92
   design_cost_ledger: DESIGN_DDL,  // v92
   design_pictures:    DESIGN_PICTURES_DDL,  // v94
-  prompt_kind_corrections: PROMPT_KIND_CORRECTIONS_DDL,  // v96 (prompt check s2)
-  perspective_choices: PERSPECTIVE_CHOICES_DDL,  // v97 (proposedPerspectives)
 };
 
 /**
@@ -2914,8 +2864,7 @@ export function migrate(db) {
     // cost_kind, input_tokens, output_tokens}, req_turns/req_helper_messages.{engine, notices_json}, req_attachments.read_engine
     // (all nullable, INCREMENTAL_COLUMNS, so the whole step is the reconcile).
     if (current < 89) repairSchemaGaps(db, schemaGaps(db));
-    // v90: ask_threads.labels (Stillhet chat labels) — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
-    // v91: pipelines.cost_cap_usd (Raise the cap) — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // v90, v91: reserved. Stillhet's ask_threads.labels and pipelines.cost_cap_usd were reverted from dev on 2026-11-14 (branch backup/dev-before-revert); the numbers stay taken, so a DB stamped up to 95 stays valid.
     // v92 Design: library, builds, agents, spend (first written as v87, then v89; PR-when-done #1156 took 87, Requirements A6.1 took 88,
     // Requirements 9c took 89 and Stillhet's chat labels and run cost cap took 90 and 91). IF NOT EXISTS, so a DB an earlier Design
     // numbering stamped 87 to 92 keeps its Design tables and gains dev's columns above.
@@ -2926,8 +2875,6 @@ export function migrate(db) {
     if (current < 94) db.exec(DESIGN_PICTURES_DDL);
     // v95 Design sound: designs.sound_json (the design's sound choice, D2) — INCREMENTAL_COLUMNS, added by the hoisted
     // repairSchemaGaps (a v92+ DB) or by the v92 DDL above (an older DB). First written as v92.
-    if (current < 96) db.exec(PROMPT_KIND_CORRECTIONS_DDL);   // v96 prompt check kind corrections (ids only)
-    if (current < 97) db.exec(PERSPECTIVE_CHOICES_DDL);   // v97 proposed perspectives: drops and adds (ids only)
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {
