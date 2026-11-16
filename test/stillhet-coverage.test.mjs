@@ -25,8 +25,8 @@ test('docRoutes: route mentions in prose, with params and a trailing wildcard', 
 });
 
 test('classify: a Stillhet fetch is wired, a wiring row decides, an unnamed route is MISSING, a view control takes its place', () => {
-  const cx2 = { stillhetRoutes: new Map([['/api/a/:id', 'stillhet/live/a.mjs']]), live: 'keepAwake', plans: [{ cite: 'PLAN.md B9', text: 'wire `/api/c`', routes: ['/api/c'] }],
-    rows: [{ section: 'Tasks capabilities', id: 'B', status: 'not offered', routes: ['/api/b/*'], line: '' }], overrides: new Map(), keyMemo: new Map(), routeMemo: new Map() };
+  const cx2 = { stillhetRoutes: new Map([['/api/a/:id', [['stillhet/live/task-live.mjs', 'runs']]]]), live: 'keepAwake', plans: [{ cite: 'PLAN.md B9', text: 'wire `/api/c`', routes: ['/api/c'] }],
+    rows: [{ section: 'Tasks capabilities', id: 'B', status: 'not offered', routes: ['/api/b/*'], places: [], line: '' }], overrides: new Map(), keyMemo: new Map(), routeMemo: new Map() };
   const ctl = (routes, keys = [], page = 'Tasks') => ({ id: 'x', page, routes, keys });
   assert.equal(C.classify(cx2, ctl(['/api/a/:param'])).status, 'wired');
   assert.equal(C.classify(cx2, ctl(['/api/b/x/y'])).status, 'not offered');
@@ -36,6 +36,41 @@ test('classify: a Stillhet fetch is wired, a wiring row decides, an unnamed rout
   assert.equal(C.classify(cx2, ctl(['/api/settings'], ['nope'])).status, 'MISSING');
   assert.equal(C.classify(cx2, ctl([], [], 'Settings')).status, 'planned');
   assert.equal(C.classify(cx2, ctl([], [], 'Nowhere')).status, null);
+});
+
+test('pageOf: Pinpoint\'s run surfaces (artifact viewer, Diff tab) are the run\'s page; Pinpoint itself stays Chat (COV-3)', () => {
+  assert.equal(C.pageOf('ui/public/pinpoint-surfaces.mjs'), 'Tasks');
+  assert.equal(C.pageOf('ui/public/pinpoint.mjs'), 'Chat');
+});
+
+test('placeOf: a folder of ui/public/stillhet/ is its place, a live/ file takes its place by name, shared code serves all', () => {
+  assert.equal(C.placeOf('stillhet/projects/project-add.js'), 'projects');
+  assert.equal(C.placeOf('ui/public/stillhet/live/task-live.mjs'), 'runs');
+  assert.equal(C.placeOf('stillhet/live/run-options-live.mjs'), 'centers');
+  assert.equal(C.placeOf('stillhet/live/live-adapter.mjs'), '*');
+  assert.equal(C.placeOf('stillhet/boot.js'), '*');
+});
+
+test('a classic control is covered only from its own Stillhet place: the same route called from another place clears nothing', () => {
+  // Stillhet as the open slices make it: Projects reads /api/fs/dirs, New task's ticket source calls the source routes, the task
+  // page sends a run's direction; each with a `wired` row that names its own file.
+  const cx2 = { live: '', plans: [], overrides: new Map(), keyMemo: new Map(), routeMemo: new Map(),
+    stillhetRoutes: new Map([
+      ['/api/fs/dirs', [['stillhet/live/projects-live.mjs', 'projects']]],
+      ['/api/source-bindings', [['stillhet/live/run-options-live.mjs', 'centers']]],
+      ['/api/sources/call', [['stillhet/live/run-options-live.mjs', 'centers']]],
+      ['/api/runs/:param/directions', [['stillhet/live/task-live.mjs', 'runs']]],
+      ['/api/runs/:param', [['stillhet/live/task-live.mjs', 'runs'], ['stillhet/live/chat-live.mjs', 'chat']]]]),
+    rows: [
+      { section: 'Dev surfaces', id: 'projects/project-add.js › Several folders…', status: 'wired', routes: ['/api/fs/dirs', '/api/projects/bulk'], places: ['projects'], line: '' },
+      { section: 'Dev surfaces', id: "New task…'s ticket source", status: 'wired', routes: ['/api/sources', '/api/source-bindings', '/api/sources/call'], places: [], line: '' },
+      { section: 'Dev surfaces', id: 'route › /api/runs/:param/directions', status: 'wired', routes: ['/api/runs/:param/directions'], places: ['runs'], line: '' }] };
+  const of = (id) => { const c = controls.find((x) => x.id === id); assert.ok(c, id); return C.classify(cx2, c); };
+  for (const id of ['ui/public/new-run/new.html › button › Browse…', 'ui/public/new-run/new.html › button › Several folders…',
+    'ui/public/workflows/export.html › button › Browse…', 'ui/public/app.js › button › Retry', 'ui/public/app.js › button › Test connection',
+    'ui/public/shape/plan-body.mjs › button › Full plan']) assert.equal(of(id).status, 'MISSING', id);
+  assert.deepEqual(of('ui/public/new-run/new.html › button › Several folders…').missing, ['route /api/fs/dirs']);
+  assert.equal(of('ui/public/projects/project-add.html › button › Several folders…').status, 'wired');
 });
 
 test('the inventory is current: the static scan finds exactly the static controls in classic-controls.json', () => {

@@ -9,7 +9,7 @@
 | `gate.colour` | Nothing wears a colour Rail does not have (no blue, no gold: running is ink); readable text holds 4.5:1 (3:1 large); every state's ring holds 3:1, in both themes | Colour means state, and everyone can read it | colour-check |
 | `gate.prototype` | Every change to today's UI is reflected in the Stillhet prototype, or the PR adds a `wire to` row under `## Dev surfaces` in `plans/rail/stillhet-wiring.md` that says why, or carries the `no-ui-change` label and a "No UI change:" line; every Settings key and every path today's UI fetches has a row or sits in the frozen baseline (`stillhet-surfaces`, in `npm test`) | One design system: nothing reaches today's UI that the prototype does not know about | prototype-pr-check |
 | `gate.real-data` | Every Stillhet change is walked end to end in a real browser on four instances (classic and Stillhet, each on a copy of real data and on an empty install) against the prototype, by `plans/rail/test-protocol.md`: classic leads on what a place does and shows, the prototype on how it looks; the items the change touches and every item that passed before stay OK, classic included; no live control shows demo data, a would-answer or a local-only success; idle CPU and a live update stay within budget | Demo data hides what real data breaks; classic stays intact | by hand |
-| `gate.coverage` | Every control classic Worca offers (`plans/rail/coverage/classic-controls.json`) is wired in Stillhet, planned (a findings row or a PLAN batch names its route), not offered by a decision (a `stillhet-wiring.md` row), or MISSING; MISSING is a frozen baseline that only shrinks, each control in it naming an open COV finding | Nothing classic does is lost on the way to Stillhet | stillhet-coverage |
+| `gate.coverage` | Every control classic Worca offers (`plans/rail/coverage/classic-controls.json`) is wired in Stillhet from its own place, planned (a findings row or a PLAN batch names its route), not offered by a decision (a `stillhet-wiring.md` row), or MISSING; MISSING is a frozen baseline that only shrinks, each control in it naming an open COV finding | Nothing classic does is lost on the way to Stillhet | stillhet-coverage |
 | `gate.no-demo` | On a live Stillhet no control shows demo data, a would-answer or a local-only success; every demo-answer site in `ui/public/stillhet/` and every `wire to` row is classified (wired, refused with a reason, not in Stillhet yet, prototype-only), and the offenders can only shrink | A page starts from the demo model, so whatever is not wired looks real | stillhet-no-demo-on-live |
 
 `gate.prototype` counts all of `ui/public/` except `stillhet/` and `design-system/` as today's UI. That is wider than
@@ -75,8 +75,9 @@ name, sentence and end on one baseline. The alignment is SettingsRow's and Setti
   instance in Expert mode (every page and Settings tab, each menu and dialog opened and closed with Escape; every request
   but GET is aborted, and the walk never changes the mode). The walk adds what it sees only when the code has its label;
   what it keeps is free of real data (addresses read `KEY` and `ID`).
-- **The status** of a control is its worst route or key: wired when Stillhet's code calls it (or a `wired` row names it),
-  planned when a `wire to` row, `PLAN.md`, `FINDINGS.md` or an Open findings row names it, not offered when a `not offered
+- **The status** of a control is its worst route or key: wired when Stillhet's code calls it from the control's own place
+  (its page's Stillhet folder, or a `wired` row that names a file there; the same route called from another place clears
+  nothing), planned when a `wire to` row, `PLAN.md`, `FINDINGS.md` or an Open findings row names it, not offered when a `not offered
   live` or `not a dev capability` row does, else MISSING. A control with no route and no key takes its page's place.
   A row under `## Classic controls` in `plans/rail/stillhet-wiring.md` (the control's id, a status, why) decides one control.
 - **The baseline** (`test/fixtures/stillhet-coverage-baseline.json`) maps each MISSING control to its COV finding; a new
