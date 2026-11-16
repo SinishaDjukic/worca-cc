@@ -273,3 +273,64 @@ test('view (F-a4-11): a live failed task with restartOff: Restart Build is off a
   assert.equal(v.action.offWhy, why);
   assert.equal(on.action.offWhy, '', 'without a reason it is offered');
 });
+
+test('F-3-19, F-a4-13: plural says one count with one word', () => {
+  assert.equal(M.plural(1, 'file'), '1 file');
+  assert.equal(M.plural(2, 'file'), '2 files');
+  assert.equal(M.plural(1, 'PR'), '1 PR');
+  assert.equal(M.plural(0, 'doc'), '0 docs');
+  assert.equal(M.plural(1, 'run waits', 'runs wait'), '1 run waits');
+  assert.equal(M.plural(3, 'run waits', 'runs wait'), '3 runs wait');
+});
+
+test('F-3-19, F-a4-13: a ready group with one member left to open says "Create 1 PR", its flow holds that key and says "Created 1 PR"', () => {
+  const g = grp(['checks', 'ready'], { 0: { pr: '#41', prUrl: 'u' } });
+  assert.ok(g.flow['Create 1 PR'], Object.keys(g.flow).join());
+  assert.equal(g.flow['Create 1 PR'].say, 'Created 1 PR');
+  assert.ok(!Object.keys(g.flow).some((k) => /\b1 PRs\b/.test(k)));
+  window.RailTaskLive = { parts: () => ({}) };
+  const v = M.view(g.id, { run: g });
+  delete window.RailTaskLive;
+  assert.equal(v.action.label, 'Create 1 PR');
+  assert.ok(v.flow[v.action.label], 'the label is the flow key');
+});
+
+test('F-3-19, F-a4-13: the Changes count names one document "1 doc"', () => {
+  const run = M.liveRun(page({ case: 'ready', stages: [{ key: 'build', state: 'done', steps: [{ name: 'implementer', state: 'done' }] }] }));
+  window.RailTaskLive = { parts: () => ({ changes: { files: [['a.js', 1, 0]], fileMeta: {}, hunks: {} }, docs: [['plan.md', 'Plan', 'docs/plan.md']] }) };
+  const v = M.view(run.id, { run });
+  delete window.RailTaskLive;
+  const ch = v.tabs.find((t) => t.id === 'changes');
+  assert.ok(ch, 'a Changes part');
+  assert.equal(ch.n, '1 · 1 doc');
+});
+
+test('F-a4-12: prPushOf reads whether the branch was pushed from dev\'s /api/pr answer', () => {
+  assert.equal(M.prPushOf({ status: 500, error: 'GitHub pull request failed: Validation Failed' }), 'pushed');
+  assert.equal(M.prPushOf({ status: 500, error: 'git push failed: rejected' }), 'not-pushed');
+  assert.equal(M.prPushOf({ status: 500, error: 'git push was rejected: the remote branch moved' }), 'not-pushed');
+  assert.equal(M.prPushOf({ status: 409, error: 'the base branch dev is not on origin: fetch it first' }), 'not-pushed');
+  assert.equal(M.prPushOf({ status: 400, error: 'id is required' }), 'not-pushed');
+  assert.equal(M.prPushOf({ error: 'Failed to fetch' }), 'unknown');
+  assert.equal(M.prPushOf({ status: 422, error: 'forks are not supported' }), 'unknown');
+  assert.equal(M.prPushOf({}), 'unknown');
+});
+
+test('F-a4-12: prFailDetail says what dev\'s answer proves, never "Nothing changed" after a push', () => {
+  assert.equal(M.prFailDetail('validation Failed', 'pushed'), 'Validation Failed. The branch is on the remote; no PR opened.');
+  assert.equal(M.prFailDetail('validation Failed.', 'unknown'), 'Validation Failed. The branch may have been pushed; no PR opened.');
+  assert.equal(M.prFailDetail('validation Failed', 'not-pushed'), R.failureOf('Create PR', 'validation Failed').detail);
+  assert.equal(M.prFailDetail('validation Failed', 'pushed', { group: true }), 'Validation Failed. Some of its branches may have been pushed.');
+  assert.equal(M.prFailDetail('validation Failed', 'unknown', { group: true }), 'Validation Failed. Some of its branches may have been pushed.');
+  assert.equal(M.prFailDetail('validation Failed', 'not-pushed', { group: true }), 'Validation Failed. Nothing changed.');
+});
+
+test('V-TW-15: followUpBodyOf is newTaskBodyOf with the follow-up as the prompt and no source; after a task, dev\'s after and afterPolicy', async () => {
+  const { newTaskBodyOf } = await import('../ui/public/stillhet/live/task-page.mjs');
+  const state = { projectDir: '/w/web', prompt: 'Page the audit log', source: { type: 'github', ref: 'acme/web#7' }, workflowId: 'wf_lean', guardrailsId: 'strict', engine: 'codex', labels: ['infra', { name: 'ui' }], tags: [{ key: 'team', value: 'web' }] };
+  assert.deepEqual(J(M.followUpBodyOf(state, 'Add paging tests')), J(newTaskBodyOf({ ...state, source: null, prompt: 'Add paging tests' })));
+  assert.equal(M.followUpBodyOf(state, 'Add paging tests').source, undefined);
+  const ws = { workspaceId: 'ws1', projectDir: '/w/x', stepper: { template: { id: 'wf_t' } }, runEngine: 'claude' };
+  assert.deepEqual(J(M.followUpBodyOf(ws, 'Next')), J(newTaskBodyOf({ ...ws, source: null, prompt: 'Next' })));
+  assert.deepEqual(J(M.followUpBodyOf(state, 'Add paging tests', 'p1')), { ...J(newTaskBodyOf({ ...state, source: null, prompt: 'Add paging tests' })), after: { kind: 'pipeline', id: 'p1' }, afterPolicy: 'done' });
+});

@@ -180,3 +180,48 @@ test('a workspace\'s two projects changing the same path are two files: each ope
   card(d).querySelector('[data-cmt="add"]').click(); await settle(120);
   assert.deepEqual(sent(calls), [['POST', '/api/history/web-1/h2/comments', { path: 'src/x.mjs', side: 'new', line: 2, body: 'Why?' }]]);
 });
+
+// a finished task with its branch and no PR: its action is Create PR (dev's POST /api/pr)
+async function readyTask(write) {
+  const s = sources();
+  Object.assign(s.history.pipelines.find((p) => p.id === 'h2'), { pr: null, branch: 'feat/x', sourceBranch: 'dev', survived: true, projectName: 'web' });
+  const state = { ...TASK_DETAILS.approved.state, projectKey: 'web-1', pr: null, branch: { source: 'dev', feature: 'feat/x', branchKept: true } };
+  const h = await liveHost({ sources: s, read: (u) => (u === '/api/history/web-1/h2' ? [200, { state }] : read(u)), write });
+  await go(h.w, '#run/h2', 200); await settle(400);
+  return h;
+}
+test('F-a4-12: a Create PR refused after the push says the branch is on the remote, never Nothing changed', async () => {
+  let n = 0;
+  const { d } = await readyTask((u) => { if (u !== '/api/pr') return [200, {}]; if (!n++) return [500, { error: 'GitHub pull request failed: Validation Failed' }]; throw new TypeError('Failed to fetch'); });
+  const main = card(d).querySelector('[data-key="act-main"]');
+  assert.equal(main.dataset.label, 'Create PR');
+  main.click(); await settle(900);   // the dialog opens and writes its title
+  card(d).querySelector('[data-key="pd-ok"]').click(); await settle(200);
+  const alert = () => card(d).querySelector('.pd-alert')?.textContent || '';
+  assert.match(alert(), /Could not create (the )?PR/);
+  assert.match(alert(), /The branch is on the remote; no PR opened/);
+  assert.doesNotMatch(alert(), /Nothing changed/);
+  assert.ok(card(d).querySelector('#pd-title').value, 'the dialog keeps its fields');
+  card(d).querySelector('[data-key="pd-ok"]').click(); await settle(200);
+  assert.match(alert(), /may have been pushed; no PR opened/, 'a network failure: dev did not say');
+  assert.doesNotMatch(alert(), /Nothing changed/);
+  assert.equal(n, 2);
+});
+
+test('V-TW-15: a done task\'s ⋯ offers Start a follow-up task, Report and Archive; Start run posts dev\'s POST /api/run and opens the new task', async () => {
+  const { w, d, calls } = await page('#run/h2', (u) => (u === '/api/run' ? [200, { runId: 'r9' }] : [200, { ok: true }]));
+  card(d).querySelector('[data-menu="more"]').click(); await settle(20);
+  const items = [...card(d).querySelectorAll('[data-menu-pick]')].map((x) => x.textContent.trim());
+  for (const t of ['Start a follow-up task', 'Report this task', 'Archive']) assert.ok(items.some((x) => x.startsWith(t)), `${t} in ${items.join(' | ')}`);
+  card(d).querySelector('[data-menu-pick="more:after"]').click(); await settle(40);
+  assert.match(card(d).querySelector('#after-when-t').textContent, /Now, as a follow-up/);
+  const inp = card(d).querySelector('#after-task'); inp.value = 'Add paging tests'; inp.dispatchEvent(new d.defaultView.Event('input', { bubbles: true }));
+  card(d).querySelector('[data-confirm="yes"]').click(); await settle(150);
+  const [post] = sent(calls);
+  assert.equal(post[1], '/api/run');
+  assert.equal(post[2].prompt, 'Add paging tests');
+  assert.equal(post[2].projectDir, w.RailTaskLive.resolve('h2').projectDir || w.RailTaskLive.input('h2').state.projectDir);
+  assert.equal(post[2].source, undefined);
+  assert.equal(post[2].after, undefined, 'a done task starts it now');
+  assert.equal(w.location.hash, '#run/r9');
+});

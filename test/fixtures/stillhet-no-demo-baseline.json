@@ -234,12 +234,17 @@
     },
     "runs/run-page.js › would › download …": {
       "class": "wired",
-      "why": "On live the document Download is data-dl (runs/run-page.js:243), which calls RailTaskLive.download (:1108).",
+      "why": "On live the document Download is data-dl (runs/run-page.js:247), which calls RailTaskLive.download (:1219).",
       "via": "test/stillhet-task-tools-host-1.test.mjs"
     },
     "runs/run-page.js › would › download … #2": {
       "class": "wired",
-      "why": "On live the doc viewer's Download is data-dl or left out (runs/run-page.js:325); handled at :1108.",
+      "why": "On live a transcript's viewer draws no Download (runs/run-page.js:330); a live transcript opens dev's trace in a new tab (:1236).",
+      "via": "test/stillhet-task-tools-host-1.test.mjs"
+    },
+    "runs/run-page.js › would › download … #3": {
+      "class": "wired",
+      "why": "On live the document viewer's Download is data-dl (runs/run-page.js:336), which calls RailTaskLive.download (:1219).",
       "via": "test/stillhet-task-tools-host-1.test.mjs"
     },
     "runs/run-page.js › would › open a terminal in the worktree": {
@@ -251,6 +256,11 @@
       "class": "wired",
       "why": "On live Ctrl+` calls openTerminal() or does nothing without a worktree, and returns before the toast (runs/run-page.js:1280).",
       "via": "test/stillhet-terminal-live.test.mjs"
+    },
+    "runs/run-page.js › would › open …": {
+      "class": "wired",
+      "why": "On live the document viewer's Open full is data-doc-full (runs/run-page.js:335), which opens dev's GET /api/runs/:id/artifact-raw/… in a new tab (:1231).",
+      "via": "test/stillhet-task-tools-host-1.test.mjs"
     },
     "runs/run-page.js › would › open localhost:…": {
       "class": "wired",
