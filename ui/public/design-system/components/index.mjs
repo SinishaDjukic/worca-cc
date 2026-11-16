@@ -34,7 +34,7 @@ export { suggestionField, suggestionFail, suggestButton, suggestedChip, stopWrit
 export { tagGroup, fitTags, listEditor } from './tag-group.mjs';
 export { stepper, stepDot, stepRow, stackRow, lineRow, fileRow, stackedPrRow } from './stepper.mjs';
 export { table } from './table.mjs';
-export { cardAction, fill, runState, needsReason, stateIds, actionHelp, actionLevel, actionFlow, runFlow, makeAction, memberKeeps, chatState, CHAT_KINDS, bulkStateOf, sectionOf, isDone, isLiveStep, stageState, subState, stepLook, defaultStage, stageMeta, toMin, fmtMin, STAGE_WORD, TRACKER_MOVES } from './run-state.mjs';
+export { cardAction, fill, runState, needsReason, stateIds, actionHelp, actionLevel, actionFlow, runFlow, makeAction, memberKeeps, chatState, CHAT_KINDS, bulkStateOf, sectionOf, stillGoing, isDone, isLiveStep, stageState, subState, stepLook, defaultStage, stageMeta, toMin, fmtMin, STAGE_WORD, TRACKER_MOVES } from './run-state.mjs';
 export { workingWord, confirmOf, failureOf, stepFlow } from './step-flow.mjs';
 export { foldMiddle, workParts, workPhrase, workPlace } from './work-place.mjs';
 export { MODES, atLevel, RUN_PAGE_LEVELS, runPartShows, prefs, shows } from './levels.mjs';

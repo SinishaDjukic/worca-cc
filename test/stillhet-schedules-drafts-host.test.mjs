@@ -8,11 +8,11 @@ afterEach(closeHosts);
 const RULE = { freq: 'daily', interval: 1, time: '02:00', tz: 'UTC' };
 const toastText = (d) => [...d.querySelectorAll('body > .rc-toast')].map((e) => e.textContent).filter(Boolean).join(' | ');
 const sent = (calls) => posts(calls).filter(([, u]) => /^\/api\/schedules\b/.test(u));
-async function page({ write = () => [200, { kind: 'recurring', item: {} }], rule = RULE, id = 'sr1', tickets = null } = {}) {
+async function page({ write = () => [200, { kind: 'recurring', item: {} }], rule = RULE, id = 'sr1', tickets = null, read = () => null } = {}) {
   const src = clone(SOURCES);
   src.schedules.schedules[0] = { ...src.schedules.schedules[0], rule, overlap: 'skip', maxFailures: 3, ifMissed: 'run', graceMin: 360, tz: 'UTC' };
   if (tickets) src.schedules.tickets.push(...tickets);
-  const h = await liveHost({ sources: src, write });
+  const h = await liveHost({ sources: src, write, read });
   await go(h.w, `#schedule/${id}`, 150); await settle(300);
   h.src = src;
   h.pick = async (menu, v) => { h.d.querySelector(`#route-schedule [data-menu="${menu}"]`).click(); await settle(5); h.d.querySelector(`#route-schedule [data-menu-pick="${menu}|${v}"]`).click(); await settle(40); };
@@ -104,12 +104,17 @@ test('the grace window is a picker on the Expert line while a missed time runs l
 
 // one-offs that wait for one another: tk_w waits for tk2 ("Later today"); tk3 is another one-off of the same project
 const WAITERS = [
-  { id: 'tk_w', kind: 'once', title: 'A waiter', status: 'scheduled', runAt: '9999-12-31T00:00:00.000Z', createdAt: new Date(2026, 10, 12, 1).toISOString(), after: { kind: 'ticket', id: 'tk2', title: 'Later today', policy: 'done' } },
-  { id: 'tk3', kind: 'once', title: 'Another one', status: 'scheduled', runAt: new Date(2026, 10, 12, 20).toISOString(), createdAt: new Date(2026, 10, 12, 1).toISOString() },
+  { id: 'tk_w', kind: 'once', title: 'A waiter', status: 'scheduled', runAt: '9999-12-31T00:00:00.000Z', createdAt: new Date(2026, 10, 12, 1).toISOString(), after: { kind: 'ticket', id: 'tk2', title: 'Later today', policy: 'done' }, projectKey: 'web-1', projectDir: '/src/web' },
+  { id: 'tk3', kind: 'once', title: 'Another one', status: 'scheduled', runAt: new Date(2026, 10, 12, 20).toISOString(), createdAt: new Date(2026, 10, 12, 1).toISOString(), projectKey: 'web-1', projectDir: '/src/web' },
 ];
+// GET /api/schedules/after-candidates for web (ui/routes/scheduled-runs/schedules.mjs): its live runs and open one-offs, tk_w itself among them
+const CANDS = '/api/schedules/after-candidates?projectDir=%2Fsrc%2Fweb';
+const CANDIDATES = { runs: [{ pipelineId: 'p9', runId: 'r9', title: 'Refactor', status: 'running' }], tickets: [
+  { id: 'tk2', title: 'Later today', status: 'scheduled', after: null }, { id: 'tk3', title: 'Another one', status: 'scheduled', after: null }, { id: 'tk_w', title: 'A waiter', status: 'scheduled', after: { kind: 'ticket', id: 'tk2' } }] };
+const candidates = (u) => (u === CANDS ? [200, CANDIDATES] : null);
 
 test('a one-off that waits for a run: its run-after is a picker in the draft; Save sends the new after', async () => {
-  const { d, calls, pick } = await page({ id: 'tk_w', tickets: WAITERS });
+  const { d, calls, pick } = await page({ id: 'tk_w', tickets: WAITERS, read: candidates });
   assert.match(d.querySelector('#route-schedule [data-menu="sc-after"]').textContent, /Later today/);
   d.querySelector('#route-schedule [data-menu="sc-after"]').click(); await settle(5);
   assert.equal(d.querySelector('#route-schedule [data-menu-pick="sc-after|ticket:tk2"]')?.getAttribute('aria-checked'), 'true', 'the saved one is checked');
@@ -117,6 +122,21 @@ test('a one-off that waits for a run: its run-after is a picker in the draft; Sa
   await pick('sc-after', 'ticket:tk3');
   d.querySelector('#route-schedule [data-sched-save]').click(); await settle(80);
   assert.deepEqual(sent(calls), [['PATCH', '/api/schedules/tk_w', { after: { kind: 'ticket', id: 'tk3' } }]]);
+});
+
+test('SC-11 (findings ledger row 9): the run-after picker lists what GET /api/schedules/after-candidates answers for its project, never a list built in the browser', async () => {
+  const { d, calls } = await page({ id: 'tk_w', tickets: WAITERS, read: candidates });
+  assert.equal(calls.filter((c) => c.url.startsWith('/api/schedules/after-candidates')).map((c) => c.url).join(), CANDS, 'one read, by its project folder as classic\'s schedules-view sends it');
+  d.querySelector('#route-schedule [data-menu="sc-after"]').click(); await settle(5);
+  const picks = [...d.querySelectorAll('#route-schedule [data-menu-pick^="sc-after|"]')].map((x) => [x.dataset.menuPick.split('|')[1], x.textContent.trim()]);
+  assert.deepEqual(picks, [['pipeline:p9', 'Refactor'], ['ticket:tk2', 'Later today'], ['ticket:tk3', 'Another one']], 'the route\'s run and one-offs; never the one-off itself');
+});
+
+test('SC-11: a refused after-candidates read keeps the saved pick and offers nothing it cannot prove', async () => {
+  const { d } = await page({ id: 'tk_w', tickets: WAITERS, read: (u) => (u === CANDS ? [500, { error: 'db locked' }] : null) });
+  d.querySelector('#route-schedule [data-menu="sc-after"]').click(); await settle(5);
+  const picks = [...d.querySelectorAll('#route-schedule [data-menu-pick^="sc-after|"]')].map((x) => x.dataset.menuPick.split('|')[1]);
+  assert.deepEqual(picks, ['ticket:tk2']);
 });
 
 test('Delete names the one-offs that wait for it; Run after this opens New task waiting for it and posts after', async () => {
