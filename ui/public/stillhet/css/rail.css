@@ -31,7 +31,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .rc-mid-a{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
 .rc-mid-b{flex:none;}
 .rc-to{color:var(--ink-3);}
-.rc-base{flex:none;color:var(--ink-2);}
+.rc-base{flex:0 1 auto;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2);}   /* a long base ends in an ellipsis instead of running off the card */
 .rc-pr{color:var(--ink);text-decoration:none;font-weight:500;font-variant-numeric:tabular-nums;}
 .rc-pr:hover{text-decoration:underline;text-underline-offset:3px;}
 .rc-sep{color:var(--ink-3);}
@@ -1163,6 +1163,7 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .convo-col .convo-head .kind-chip{white-space:normal;}   /* a long label wraps in the column; nothing runs off the window */
 .cw-pair{display:inline-flex;align-items:center;gap:5px;white-space:nowrap;}
 .lr-pin{display:inline-flex;vertical-align:-1px;margin-right:4px;color:var(--ink-3);}
+.lr-unread{display:inline-block;width:6px;height:6px;flex:none;vertical-align:middle;margin-right:4px;border-radius:50%;background:var(--advisory);}   /* list.bar-row-size: unread, the title's lead like .lr-pin */
 .convo-head{display:flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:var(--fs-meta);color:var(--ink-2);}
 .convo-you{position:relative;align-self:flex-end;max-width:72%;padding:6px 12px;border-radius:var(--r-md);background:var(--field);}
 .convo-words{position:relative;margin:0 0 0 32px;}
@@ -1367,6 +1368,12 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .stage-part-b.is-open svg{transform:rotate(180deg);}
 @media (max-width: 600px){ .stage-part-b span{display:none;} }
 .rl-search-res .menu-item > .kind-mark,.rl-search-res .menu-item > svg{flex:none;margin-right:8px;color:var(--ink-2);}
+/* A result is two rows: its name, then where it lives under it. A long where (a home not in Stillhet yet) wraps inside
+   the popover; it never takes the name's room (F-W3a1-10). */
+.rl-search-res .menu-item{display:grid;grid-template-columns:auto minmax(0,1fr);row-gap:1px;height:auto;align-items:center;}
+.rl-search-res .menu-item > .kind-mark,.rl-search-res .menu-item > svg{grid-column:1;grid-row:1;}
+.rl-search-res .menu-item > .mi-l{grid-column:2;grid-row:1;}
+.rl-search-res .menu-item > .mi-hint{grid-column:2;grid-row:2;margin-left:0;white-space:normal;overflow-wrap:anywhere;font:400 var(--fs-meta)/1.35 var(--sans);color:var(--ink-2);}
 
 /* InView: what you keep in view, in the top bar. Its marks hold still: they say where a thing stands, never pulse. */
 .in-view{display:inline-flex;align-items:center;gap:2px;margin-right:6px;padding-right:8px;border-right:1px solid var(--line);}
@@ -1675,6 +1682,7 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .pg-w{grid-column:2;font-size:var(--fs-body);line-height:1.45;}
 .pg-f,.pg-why{grid-column:2;font-size:var(--fs-meta);color:var(--ink-2);}
 .pg-why{display:flex;gap:6px;align-items:center;}
+.pg-why svg{flex:none;}   /* a long reason never squeezes its icon */
 .pg-card{grid-template-rows:repeat(5,auto) 1fr;}   /* panel.plugin-card: the actions end a card, so they line up across a row */
 .pg-a{grid-column:2;grid-row:6;align-self:end;display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px;}   /* a second action wraps at 360px, never clips */
 @media (max-width: 760px){.pg-grid{grid-template-columns:minmax(0,1fr);}}

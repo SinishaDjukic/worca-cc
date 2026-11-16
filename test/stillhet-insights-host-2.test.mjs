@@ -108,3 +108,19 @@ test('R-qa-6: in the demo kind every Insights page sends no request', async () =
   assert.deepEqual(calls.slice(before), []);
   w.close();
 });
+
+// B4.9 F-6-11 = V3-10: dev's savedUsd is negative with no human rate; the money reads with a minus before the currency
+test('F-6-11 = V3-10: Time saved on live reads −$412 saved (dev\'s negative savedUsd), never $-412', async () => {
+  const h = await insightsHost({ hash: '#insights/time-saved' });
+  assert.match(text(h.d), /−\$412 saved/);
+  assert.doesNotMatch(text(h.d), /\$-/);
+});
+
+// B4.9 F-6-10: By person counts the people, not the rows (top 5, Other and Unallocated)
+test('F-6-10: By person on live says 9 people for 9 teammates', async () => {
+  const names = ['Maya', 'Jonas', 'Priya', 'Lee', 'Ana', 'Ben', 'Cleo', 'Dev', 'Eli'];
+  const records = names.map((actor, i) => ({ ...RECORDS[0], id: `p${i}`, actor, cost: { usd: 10 - i, byPhase: {} } }));
+  const h = await insightsHost({ hash: '#insights/team', records });
+  assert.match(text(h.d), /9 people/);
+  assert.doesNotMatch(text(h.d), /7 people/);
+});

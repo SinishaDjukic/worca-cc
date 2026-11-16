@@ -151,3 +151,25 @@ test('F-FM2-05: a bar value is kept on one line', () => {
   const css = readFileSync(new URL('../ui/public/stillhet/css/rail.css', import.meta.url), 'utf8');
   assert.match(css, /\.bc-v\{[^}]*white-space:nowrap/);
 });
+
+// B4.9 F-6-08: Per task counts tasks only: the runs' cost (pipelineSpendUsd) over the tasks, chat spend left out
+test('F-6-08: #insights/per-task on live reads $37.85 a task with $23,598 of chat in the answer, and lists no Chat row', async () => {
+  const chatty = () => { const a = statsAnswer(1); a.totals = { ...a.totals, runs: 107, pipelineSpendUsd: 4049.95, spentUsd: 4049.95 + 23598, ask: { spendUsd: 23598 } }; a.report.ask = { spentUsd: 23598, series: [7000, 8000, 8598] }; return a; };
+  const h = await insightsHost({ hash: '#insights/per-task', read: (u) => (u.startsWith('/api/stats?') ? [200, chatty()] : null) });
+  assert.match(text(h.d), /\$37\.85 a task/);
+  assert.match(text(h.d), /\$4,050 across 107 tasks/);
+  assert.doesNotMatch(text(h.d), /\$258/);
+  const rows = [...page(h.d).querySelectorAll('[data-in-row]')].map((r) => r.textContent);
+  assert.ok(rows.length, 'the rows are drawn');
+  assert.ok(!rows.some((r) => /Chat|Requirements|Design/.test(r)), rows.join(' | '));
+});
+
+// B4.9 review: under all time dev's bars cover the last 12 months while the headline is all time; the caption says so
+test('B4.9 F-6-08 review: #insights/per-task under all time captions the chart with the months it shows', async () => {
+  const all = () => ({ ...statsAnswer(1), range: 'all', bucket: 'month' });
+  const h = await insightsHost({ hash: '#insights/per-task?when=all%20time&by=day', read: (u) => (u.startsWith('/api/stats?') ? [200, all()] : null) });
+  const cap = page(h.d).querySelector('.ch-cap')?.textContent || '';
+  assert.match(cap, /The chart shows the last 3 months/, cap);
+  await go(h.w, '#insights/per-task?when=all%20time&by=project', 150);
+  assert.doesNotMatch(page(h.d).querySelector('.ch-cap')?.textContent || '', /The chart shows/, 'a bar for each project is all time, as the headline');
+});
