@@ -116,6 +116,23 @@ export function startScheduleLive({ fetch, setTimeout = globalThis.setTimeout, c
   }
   on('pagehide', () => { if (held) held.flush({ keepalive: true }); });
 
+  /** What a one-off can wait for (SC-11): classic's GET /api/schedules/after-candidates for its project or workspace, read once
+   *  until the next schedules-changed. → {runs, tickets} ({runs:[], tickets:[], error} after a refusal) | null while the first read is out */
+  const candAsked = new Set(), candGot = new Map();
+  function candidates({ projectDir = '', workspaceId = '' } = {}) {
+    const q = workspaceId ? `workspaceId=${enc(workspaceId)}` : projectDir ? `projectDir=${enc(projectDir)}` : '';
+    if (!q) return { runs: [], tickets: [], error: 'it has no project' };
+    if (!candAsked.has(q)) {
+      candAsked.add(q);
+      request('GET', `/api/schedules/after-candidates?${q}`).then((x) => {
+        const b = x.ok ? obj(x.body) || {} : {}, list = (v) => (Array.isArray(v) ? v.filter(obj) : []);
+        candGot.set(q, x.ok ? { runs: list(b.runs), tickets: list(b.tickets) } : { runs: [], tickets: [], error: x.error });
+        notify();
+      });
+    }
+    return candGot.get(q) || null;
+  }
+
   /** A schedule's runs for its page, its card and its row (runsOf over the store's tasks); null until its detail is read. */
   function runs(id) {
     if (!cache.has(id)) detail(id);
@@ -124,9 +141,9 @@ export function startScheduleLive({ fetch, setTimeout = globalThis.setTimeout, c
   }
 
   return {
-    act, detail, deferDelete, runs, words: wordsOf, endOf,   // endOf: the New schedule form's end words (centers.js is a classic script)
+    act, detail, deferDelete, runs, candidates, words: wordsOf, endOf,   // endOf: the New schedule form's end words (centers.js is a classic script)
     pending: () => held,
-    frame(f) { if (f && f.type === 'schedules-changed') { cache.clear(); notify(); } },   // `got` stays: the runs drawn until the new read lands
+    frame(f) { if (f && f.type === 'schedules-changed') { cache.clear(); candAsked.clear(); notify(); } },   // `got` and `candGot` stay: drawn until the new read lands
     onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); },
   };
 }

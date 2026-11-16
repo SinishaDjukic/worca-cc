@@ -803,6 +803,12 @@ const SECTION = { 'Needs you': 'needs', 'Needs approval': 'needs', Working: 'run
 const PAUSE_NORMAL = new Set(['paused', 'paused-you', 'paused-at', 'group-paused']);
 export const sectionOf = (word, id = '') => (PAUSE_NORMAL.has(id) ? 'scheduled' : SECTION[word] || 'recent');
 
+// A run still going, as classic's scheduler counts one for "skip if still going" (src/core/scheduler.mjs LIVE_PIPELINE:
+// created, starting, running, pausing): Starting and Working, and a running run that waits on a question, a gate or a plan.
+// Paused, finished, in review and failed are not; so a schedule offers Stop, not Run now, while one is (F-G-G3-03).
+const GOING_ASKS = new Set(['question', 'gate', 'plan', 'clarify', 'outline', 'recovery']);
+export const stillGoing = (id) => { const w = runState(id).word; return w === 'Working' || w === 'Starting' || GOING_ASKS.has(id); };
+
 /**
  * A center's card action (panel.center): the one step that fits a task's state. `does` is what the page carries out;
  * `open` leads to its card, where the step needs words or a look.
