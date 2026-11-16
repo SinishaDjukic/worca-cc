@@ -1,0 +1,59 @@
+# Lessons: what went wrong, and what now stops it
+
+Each lesson is one mistake that cost time in the prototype, the first build or the first live wiring, and the cheapest
+thing that stops it: a **rule** (in `docs/stillhet/`), a **test** (in `npm test`) or a **gate check** (the browser gate,
+[gate.md](gate.md)). "New" marks a guard the fresh build must add; the rest exist and are kept. Finding ids (F-…) are
+from the first build's ledgers, kept in git history.
+
+## The prototype and the demo
+
+| # | What went wrong | Example | The guard |
+|---|---|---|---|
+| 1 | **Demo-only controls lived in page code.** A helper, `drawn(row)`, decided per control whether it was demo only, so every new control was one forgotten call away from showing on a live page. | `centers/centers.js` `DRAWN`, 16 call sites; 70 demo-answer sites in 14 files | Rule: a page has no demo branch. Demo rows and demo answers come only from the demo adapter, through the same model shape the live adapter fills. Test (`gate.no-demo`): any `!live`, `drawn(` or demo answer in page code fails. **New:** the baseline starts at zero, it is not a ratchet |
+| 2 | **Demo data showed on live pages as if real.** A page started from the demo model, so whatever was not wired looked real. | A PR body with "Closes #942" on a real task; about 55 Settings rows of sample values; demo plugins shown as installed | Test: a live page that reads a demo model value fails. Rule (`set.not-live`, `nav.not-live`): a place with no live source says so with one component, never sample rows |
+| 3 | **Fake success.** A control changed the screen and toasted; nothing was saved. | Labs and Notifications switches; "Opened PR #1104" | Rule (`gate.controls`): a control sends its request, or is disabled and says why. Gate check: after every click the walk reads the network log and the API state, never the screen |
+| 4 | **Display text rewrote quoted words.** A DOM walker swapped "run" for "task" at draw time and reached the user's own titles and messages. | `shell/shell.js` `rewordIn`: a task named "Run 7" read "Stop Task 7" | Rule (new, `small.words-at-source`): the product's words are written once, at their source; nothing rewords drawn text. Test: chat turns, Prose and titles pass through every draw unchanged. The build's first step renames "run" to "task" in the library's words and deletes the walker |
+| 5 | **One fact from several sources, so numbers disagreed.** | One task with three costs; 18 tasks in one list and 12 in another; a $1,000 and a $2,000 budget | Rule (`stillhet.one-place`, `build.one-mock`): one store per fact, in the prototype too. Test: every count equals the rows it opens |
+| 6 | **The prototype was designed without an inventory of classic.** Functions were found missing after pages were built. | About 470 classic controls with no home at the first count | Gate check (`gate.coverage`) exists before the first page: every classic function is offered, planned with its place, or dropped by a written decision ([gaps.md](gaps.md)) |
+
+## The look
+
+| # | What went wrong | Example | The guard |
+|---|---|---|---|
+| 7 | **Sentence UIs reflow.** Pickers inside a sentence change its length, so the line wraps, controls move under the pointer, and nothing has a fixed place to learn. | Chat's and Tasks' filter sentence; New schedule; `.pz-pick` 517px wide on a 400px page | Rule change: filters are tabs or a Segmented with counts plus labelled pickers; forms are labelled fields. A sentence stays only where it reads a value back and holds at most one picker. Gate check: no control moves when another control's value changes |
+| 8 | **Quiet buttons nobody finds.** Acting controls looked like text until hovered; some actions had only a key or a hover. | Settings' Customise and Change; row actions behind a hover-only ⋯; hiding the bar with no visible way back | Rule (new, `act.looks-clickable`): an acting control is a button with a visible border at rest; a row highlights on hover and a click opens its default action. Test: a `button` with no border, fill or icon-button shape fails the library gate. Gate check: one walk with touch and no hover reaches every action |
+| 9 | **A note drawn in the headline style.** `choiceNote` drew its text at the head size, so a remark read as the page's title. | The team policy line in New task; the ticket-source note at 22px, three lines at 390 | Rule: a note is body size wherever it stands. Test: `choiceNote`'s text takes the body role; `ds-check` fails a note above body size |
+| 10 | **One control listed twice.** | Guardrails listed twice in New task's More options (the owner's report); Remove… twice in one menu; Approve on both the task card and the plan card | Test (new): two controls with the same label or the same action in one menu, dialog or card fail |
+| 11 | **Rounding that disagrees with the row beside it.** A highlight, a wash or a child took a radius its neighbour did not have. | A rounded highlight beside a square row (the owner's report; `list.needs-wash` gives a row's wash curved ends); two highlights at 2px, not a token | Rule: corners come from the tokens, and a part never has a larger radius than what holds it. Gate check (new, beside `colour-check`): a computed radius off the tokens, or larger than its parent's, fails |
+| 12 | **Long and real values broke fits.** | A button 639px wide; a 150-character label; a long branch cut with no way to read it | Rule: every text slot clamps and carries its full text as a tooltip; a long branch folds its middle. Test: each gallery example is drawn with its longest real value at 390 |
+| 13 | **Raw ids, keys and server words on screen.** | `seed-ok-537c55e9`, "Change: enable", `n_plan`, UTC times | Rule: one words map per kind. Test: an unmapped kind fails; a key-shaped string in drawn text fails |
+| 14 | **Plural slips, written again in each page.** | "1 files", "1 steps", "1 rounds"; the helper written four times | Test: one `plural()` in the library; a count followed by a hand-written "s" fails the library gate |
+
+## Behaviour
+
+| # | What went wrong | Example | The guard |
+|---|---|---|---|
+| 15 | **A proposal switched what the user chose, silently.** | A proposal switched the workflow without saying so (the owner's report); a second message went out on the most expensive model; picking a ticket in Schedule mode switched to Task | Rule (new, `panel.proposal-keeps-picks`): a proposal carries the composer's own picks, and any change to workflow, model or project is a visible row before the user accepts. Test: the body sent equals what the card showed |
+| 16 | **The whole page was redrawn on every live frame.** Inputs were wiped, dialogs vanished, the CPU sat at 100%. | 25,000 DOM mutations in 10 seconds; New task's dialog gone after 1 to 3 seconds | Rule (`comp.patch-parts`, `comp.keep-open`). Test: performance budgets from the first page (an idle page makes 0 mutations; a frame that changes nothing makes 0 draws) |
+| 17 | **State kept on objects rebuilt per draw.** | A Stop confirm was set on a fresh card object and lost: a spending task could not be stopped | Rule: confirm and form state live in a store keyed by the thing's id. Test: draw twice, the confirm is still there |
+| 18 | **Matching by title, label or a split key.** | A chat's task matched to rows by title; workflow loops saved onto the wrong wire by step label | Rule: match by id only. Test: every fixture holds two things with the same name |
+| 19 | **Two ids for one thing.** | A task page keyed by run id had no Pause or Stop | Spec: one id per thing, settled in [wiring.md](wiring.md) before the page is built |
+| 20 | **Live reads stopped at the first page.** | The chats bar read 50 of 109; archived read 0 of 29; search covered only what was loaded | Test: a contract test per live source compares its count with the API on a store larger than one page |
+| 21 | **A route was judged before its data loaded.** | A schedule's address said "There is no schedule" on reload | Test: every address is opened cold; "not found" only after the source has answered |
+| 22 | **Dead or impossible actions were offered.** | Restart Build with no plan (409); an empty ⋯; disabled items that still acted | Gate check: a focusable element with no handler fails; a click with no request, state change or reason fails |
+| 23 | **Menus, Escape and focus were written per page.** | A tooltip over its own menu; a shortcut firing while typing in a menu | Rule: Menu, Dialog and the confirm strip own Escape, focus return and shortcut blocking in the library. Test: one keyboard test per component |
+| 24 | **Server fields were found missing mid-build.** | `/api/history` without the workflow id and the PR state; no conditional save for a workflow | Spec: each wiring row names the API field of every fact; a missing field is server work first ([server.md](server.md)) |
+
+## The build and its checks
+
+| # | What went wrong | Example | The guard |
+|---|---|---|---|
+| 25 | **Shared ledgers conflicted on every merge.** Every change appended to the same few files, so changes merged one at a time, each rebased. | `findings.md`, `stillhet-wiring.md`, `PLAN.md`, the baselines | Spec: a ledger is one file per place, or generated from the code; no file is appended to by two parallel changes ([build-order.md](build-order.md)) |
+| 26 | **Generated output was tracked.** | 2,000 comparison pictures in a change; a stale built `components.js` broke an instance | Rule: output is ignored. Test (new): a tracked file under `out/` fails |
+| 27 | **Test copies were not isolated from the owner's repositories and settings.** `settings.json` is read from `$HOME`, not `WORCA_HOME`, so a test copy changed real settings; copies shared repositories and the GitHub quota. | F-X-01, F-X-02 | Gate check: one start tool gives each instance its own HOME, its own clones, no tokens and no push, refuses the owner's port and refuses to start otherwise (`tools/stillhet-gate-instances.mjs`, `test/stillhet-gate-instances-isolation.test.mjs`) |
+| 28 | **Gates walked modes where a place does not exist.** A walk switched mode mid-run and reported a missing place as a bug. | Projects by workspace in Simple; a probe's mode bounce doubling every read | Spec: one table of place by mode, read by the navigation, the locks and the gate. A walk opens a place only in a mode that offers it and never switches mode mid-walk |
+| 29 | **Full suites inside agent runs hit the idle limit.** The suite takes about 30 minutes on a busy machine and prints nothing a run reads as progress. | Runs stopped as idle; a style comparison gave 270 and then 1,572 differences under load | Rule: a run executes only the tests of the files it touched. The full suite and the page gates run once per batch, outside runs, on a quiet machine |
+| 30 | **The look was scored before the function was proven.** Every area scored 9 of 10 on seeded data with 828 picture pairs passing; the browser test right after filed about 120 findings, 7 critical. | The first build's fidelity audit | Gate order: the real-data walk of every control comes before any audit of the look. Evidence is the request and the API state, never a screenshot |
+| 31 | **Ticks that did not hold.** Items marked done were still broken at the next review. | Eight ticks in one review | Rule: a tick names the test or the gate step that proves it |
+| 32 | **Stillhet's styles shipped inside classic's stylesheet.** Every change risked classic. | 115 inherited differences with the flag off | Rule (`gate.flag-off`): Stillhet's CSS loads only with the flag. Test: `test/stillhet-flag-off.test.mjs` |
+| 33 | **Rules and code drifted apart.** | A rule said 60px, the code 280 | Test (`stillhet-docs`): every rule names a check that exists; the catalog, the library and the gallery agree |
