@@ -3,6 +3,7 @@
 | Rule | What | Why | Held by |
 |---|---|---|---|
 | `small.names` | A name is the thing, 1–3 words, a plain noun; one thing, one name. What Worca runs is a task on every screen, before and after an action; "run" stays only as a verb | The same word everywhere | ds-check |
+| `small.words-at-source` | The product's words are written once, where they are made; nothing rewords text at draw time. A task is a "task" in every word a person reads (the verb stays: Run now) | A rewrite at draw time reached people's own titles and messages | by hand |
 | `small.disabled-why` | A disabled control says why in its tooltip | It teaches what is coming and where | click-check |
 | `small.label-short` | A label holds 40 characters at most; its field stops there and says so | A label is a word or two: it has to fit its picker, its chip and a notice | by hand |
 | `small.name-short` | A chat's or a group's name holds 80 characters at most; its rename field stops there and says so | A name has to fit its row, its head and a notice | by hand |

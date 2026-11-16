@@ -579,28 +579,36 @@
       "notFor": "any other question (ConfirmStrip)"
     },
     {
-      "name": "ListSentence",
-      "code": "ui/public/design-system/components/list-parts.mjs#listSentence",
+      "name": "FilterRow",
+      "code": "ui/public/design-system/components/list-parts.mjs#filterRow",
       "kind": "choosing",
       "needs": [
-        "what a list shows"
+        "what a list shows",
+        "a filter",
+        "narrowing a list"
       ],
       "parts": [
-        "Showing [what]",
-        "from [where]",
-        "by [grouping]"
+        "tabs with counts for a few fixed views, More for the rest",
+        "labelled pickers of a fixed width (Project, Group by, Order)"
       ],
       "rules": [
-        "a word stays with its picker; a sentence breaks between its parts",
-        "each choice in its menu with its count",
-        "one for every list"
+        "a pick never moves another control (list.filters)",
+        "each choice with its count",
+        "one for every list",
+        "from classic's tabs and dropdown filters"
       ],
-      "example": "Showing all from all projects by state",
+      "example": "All 31 · Needs you 5 · Running 3 · Project [All projects] · Group by [Date]",
       "also": [
+        {
+          "code": "ui/public/design-system/components/list-parts.mjs#listSentence",
+          "needs": [
+            "The old name of a list's FilterRow, kept for its callers"
+          ]
+        },
         {
           "code": "ui/public/design-system/components/list-parts.mjs#listWord",
           "needs": [
-            "One picker word of a list's sentence, with its menu"
+            "One picker of a FilterRow, with its menu"
           ]
         }
       ]

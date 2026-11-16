@@ -2,7 +2,7 @@
 
 | Rule | What | Why | Held by |
 |---|---|---|---|
-| `form.dialog` | A step that needs fields is one Dialog: framing sentence, Fields, a foot that names what happens | You know what the button does | by hand |
+| `form.dialog` | A step that needs fields is one Dialog: its title, labelled Fields in a fixed order (a picker is a field-shaped button of a fixed width), at most one line that reads the choice back, and a foot whose button names what happens (from classic's labelled forms). Its backdrop covers the whole window and the page under it does not move | You know where each field is and what the button does | by hand |
 | `form.check-at-save` | A Dialog's Fields are checked once, when you press its Save or Next: what is wrong stays in the status line, the Dialog stays open, typing clears the line once it is mended; a hint that promises a format is checked; a Save that changed nothing closes without a toast | One moment, and no Save that turns off while you are still typing | by hand |
 | `form.name-limit` | A name you type (a title, a schedule's name) stops at 80 characters | A name has to fit on a row and in a card | by hand |
 | `form.suggest` | Worca's text runs on a helper job; if it cannot write, the field keeps its text and says so | A suggestion never blocks you | by hand |
