@@ -360,7 +360,8 @@ One row per surface of today's UI that Stillhet must carry (gate.prototype in `d
 ## Classic controls
 
 One classic control's coverage decided by hand (`tools/classic-inventory.mjs` reads this table by id): app.js's folder
-browser and bulk review list serve Projects › Add project, which the tool's page map reads as Tasks.
+browser and bulk review list serve Projects › Add project, which the tool's page map reads as Tasks. The table also carries
+COV-3's run controls whose Stillhet control already does the same job (Resume on, Switch model…, Pause, Stop, Full plan).
 
 | Classic control | Status | Where in Stillhet |
 |---|---|---|
@@ -369,6 +370,11 @@ browser and bulk review list serve Projects › Add project, which the tool's pa
 | `ui/public/app.js › toggle › Select …` | wired | the FolderBrowser's tick per folder in Several folders… (`projects/project-add.js`) |
 | `ui/public/app.js › toggle › Add …` | wired | the review list's tick per picked folder (`projects/project-add.js`, `POST /api/projects/bulk`) |
 | `ui/public/app.js › field › Project name for …` | wired | the review list's name per picked folder (`projects/project-add.js`, `POST /api/projects/bulk`) |
+| `ui/public/app.js › button › Resume on …` | wired | the task page's Resume ▾ › Resume on ‹Engine› on a usage-limit pause, from the task's `resumeEngines` (`runs/run-page.js`, `live/task-live.mjs` `resume-engine`, `POST /api/resume` with `engine`; COV-3 rows 12, 14, 16). It sits in Resume ▾ and confirms first; classic is a banner button |
+| `ui/public/app.js › button › Switch model…` | wired | the task page's Switch model… on a paused task (`design-system/components/run-state.mjs` paused states, `live/task-live.mjs` `switch-model`, `POST /api/resume` with `model`; COV-3 rows 13, 15, 17). It is offered on more paused states than classic, and only when dev returns models |
+| `ui/public/chat/run-card.mjs › button › Pause` | wired | a Chat TaskCard's Pause on a live task (`chat/conversation.js` taskCard, `live/chat-live.mjs` `task-pause`, `POST /api/pause` with `runId`; Chat capabilities "Run cards: pause, resume, stop") |
+| `ui/public/chat/run-card.mjs › button › Stop` | wired | a Chat TaskCard's ⋯ › Stop, confirm first (`chat/conversation.js` taskCard `canStop`, `live/chat-live.mjs` `task-stop`, `POST /api/stop`; Chat capabilities "Run cards: pause, resume, stop"). It sits in ⋯ with a confirm; classic shows it in the card's footer |
+| `ui/public/shape/plan-body.mjs › button › Full plan` | wired | the task page's plan case › Full plan (`design-system/components/run-state.mjs` plan items, `runs/run-page.js` openDoc, `live/task-live.mjs` docText, `GET /api/runs/:id/artifact?rel=`; Tasks capabilities "The plan (read, save)"). It opens the run's plan artifact in the viewer and is hidden when no plan artifact exists |
 
 ## Opt-in
 
