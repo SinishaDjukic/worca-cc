@@ -21,14 +21,19 @@ export function field({ id, label, value = '', placeholder = '', type = 'text', 
   return `<div class="fld"><label class="fld-l${quietLabel ? ' is-quiet' : ''}"${attrs({ for: id })}>${esc(label)}</label>${input}${note}</div>`;   // quietLabel: read aloud, not shown, where the row already names it
 }
 
+// The root tag's own title, which would make a second tip (small.one-tooltip); its aria-label (the name) stays.
+const OWN_TITLE = /\stitle=(?:"[^"]*"|'[^']*'|[^\s>]*)/;
+
 /**
- * Tooltip: why a control is off, a cut-off text, an id. The words are the element's title; a disabled control gets a
- * wrapper that carries them, since a disabled button shows no tooltip of its own in every browser.
+ * Tooltip (OffTip): why a control is off, a cut-off text, an id. The words are the element's title; a disabled control
+ * gets a wrapper that carries them, since a disabled button shows no tooltip of its own in every browser. Exactly one
+ * title results, and it is `text`, the detailed tip: the control's own title gives way (small.one-tooltip).
  * @param {object} o
  * @param {string} o.text      the tooltip
  * @param {string} o.html      the control's markup
  * @param {boolean} [o.off]    the control is disabled: wrap it so the tooltip still shows
  */
 export function tooltip({ text, html, off = false }) {
-  return off ? `<span class="tip-wrap"${attrs({ title: text, tabindex: '0' })}>${html}</span>` : html.replace(/^<(\w+)/, (m) => `${m}${attrs({ title: text })}`);
+  const bare = html.replace(/^<\w+[^>]*>/, (tag) => tag.replace(OWN_TITLE, ''));
+  return off ? `<span class="tip-wrap"${attrs({ title: text, tabindex: '0' })}>${bare}</span>` : bare.replace(/^<(\w+)/, (m) => `${m}${attrs({ title: text })}`);
 }
