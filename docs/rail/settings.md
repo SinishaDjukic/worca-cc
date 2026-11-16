@@ -90,6 +90,8 @@ updates do. Opened directly while off, a section says so and offers Open Labs.
 there is one, Try again after a failure, Check now when not. A small state machine under its Customise: Other versions,
 Updates, Release notes; when behind, Command (copyable), Last update (the failed result in the words of a failure, with Dismiss, and its npm output; a
 failed Update opens the fold); then Repository and the two ways to report.
+Live, About is its Version row read from `GET /api/app/version` (the same answer as today's About card and its sidebar
+marker): `Version 1.19 · New version: 1.20`, Up to date or Source build, and Check now posts `/api/app/version/check`.
 
 **A stepped Dialog** (Forms): Setup assistant's Run setup: Check, Network, Access, Models, Limits, Review; the last step's
 button is Apply. Nothing changes until then. A choice inside it is an OptionList.

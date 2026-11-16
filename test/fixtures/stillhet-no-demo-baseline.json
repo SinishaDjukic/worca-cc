@@ -298,7 +298,7 @@
     },
     "settings/settings-model.js › demo-row › About": {
       "class": "not-in-stillhet",
-      "why": "The sample About section (settings/settings-model.js:382) is a title and one NotLiveRow on live (settings.js:242).",
+      "why": "The sample About section (settings/settings-model.js) is only: 'demo'; live draws its own About, the Version row read from GET /api/app/version (F-G-G5-04).",
       "rule": "set.not-live"
     },
     "settings/settings-model.js › demo-row › Away mode": {
@@ -480,12 +480,12 @@
     },
     "settings/settings-model.js › would › open a new bug issue on GitHub in a new tab": {
       "class": "not-in-stillhet",
-      "why": "Report a bug is in the sample About section, which live draws as NotLiveRow (settings.js:242).",
+      "why": "Report a bug is in the sample About section, which live does not draw (only: 'demo'; F-G-G5-04).",
       "rule": "set.not-live"
     },
     "settings/settings-model.js › would › open a new enhancement issue on GitHub in a new tab": {
       "class": "not-in-stillhet",
-      "why": "Suggest an improvement is in the sample About section, which live draws as NotLiveRow (settings.js:242).",
+      "why": "Suggest an improvement is in the sample About section, which live does not draw (only: 'demo'; F-G-G5-04).",
       "rule": "set.not-live"
     },
     "settings/settings-model.js › would › open the Labs guide in a new tab": {
@@ -494,17 +494,17 @@
     },
     "settings/settings-model.js › would › open … in a new tab": {
       "class": "not-in-stillhet",
-      "why": "opens() is used only by About's links (settings/settings-model.js:391, :395), in the sample About section (settings.js:242).",
+      "why": "opens() is used only by About's links (settings/settings-model.js:391, :395), in the sample About section, not drawn on live (only: 'demo').",
       "rule": "set.not-live"
     },
     "settings/settings-model.js › would › send a test to …": {
       "class": "not-in-stillhet",
-      "why": "The channel Test belongs to the sample Chat › Channels section, a NotLiveRow on live (settings.js:242).",
+      "why": "The channel Test belongs to the sample Chat › Channels section, not drawn on live (only: 'demo'; F-G-G5-04).",
       "rule": "set.not-live"
     },
     "settings/settings-model.js › would › send … one tiny prompt": {
       "class": "not-in-stillhet",
-      "why": "The job Test is drawn only under the sample Models › Jobs section, a NotLiveRow on live (settings.js:242).",
+      "why": "The job Test is drawn only under the sample Models › Jobs section, not drawn on live (only: 'demo'; F-G-G5-04).",
       "rule": "set.not-live"
     },
     "settings/settings-model.js › would › send … one tiny prompt #2": {
@@ -514,7 +514,7 @@
     },
     "settings/settings.js › would › copy: …": {
       "class": "not-in-stillhet",
-      "why": "The copy fallback (settings/settings.js:321) is reached only from About › Command, in the sample About section (settings.js:242).",
+      "why": "The copy fallback (settings/settings.js:321) is reached only from About › Command, in the sample About section, not drawn on live (only: 'demo').",
       "rule": "set.not-live"
     },
     "stillhet-wiring.md › wire-to › Action rows › requirements/requirements.js › copy … as Markdown": {
@@ -534,12 +534,12 @@
     },
     "stillhet-wiring.md › wire-to › Action rows › settings/settings-model.js › open a new bug issue on GitHub in a new tab": {
       "class": "not-in-stillhet",
-      "why": "Report a bug is in the sample About section, a NotLiveRow on live (settings.js:242).",
+      "why": "Report a bug is in the sample About section, not drawn on live (only: 'demo'; F-G-G5-04).",
       "rule": "set.not-live"
     },
     "stillhet-wiring.md › wire-to › Action rows › settings/settings-model.js › open a new enhancement issue on GitHub in a new tab": {
       "class": "not-in-stillhet",
-      "why": "Suggest an improvement is in the sample About section, a NotLiveRow on live (settings.js:242).",
+      "why": "Suggest an improvement is in the sample About section, not drawn on live (only: 'demo'; F-G-G5-04).",
       "rule": "set.not-live"
     },
     "stillhet-wiring.md › wire-to › Action rows › settings/settings-model.js › open the Labs guide in a new tab": {
@@ -548,12 +548,12 @@
     },
     "stillhet-wiring.md › wire-to › Action rows › settings/settings-model.js › open … in a new tab": {
       "class": "not-in-stillhet",
-      "why": "opens() is used only inside the sample About section, a NotLiveRow on live (settings.js:242).",
+      "why": "opens() is used only inside the sample About section, not drawn on live (only: 'demo'; F-G-G5-04).",
       "rule": "set.not-live"
     },
     "stillhet-wiring.md › wire-to › Action rows › settings/settings-model.js › send a test to …": {
       "class": "not-in-stillhet",
-      "why": "The channel Test belongs to the sample Chat › Channels section, a NotLiveRow on live (settings.js:242).",
+      "why": "The channel Test belongs to the sample Chat › Channels section, not drawn on live (only: 'demo'; F-G-G5-04).",
       "rule": "set.not-live"
     },
     "stillhet-wiring.md › wire-to › Action rows › settings/settings-model.js › send … one tiny prompt": {
@@ -563,7 +563,7 @@
     },
     "stillhet-wiring.md › wire-to › Action rows › settings/settings.js › copy: …": {
       "class": "not-in-stillhet",
-      "why": "The copy fallback's only reachable caller, About › Command, is in the sample About section (settings.js:242).",
+      "why": "The copy fallback's only reachable caller, About › Command, is in the sample About section, not drawn on live (only: 'demo').",
       "rule": "set.not-live"
     },
     "stillhet-wiring.md › wire-to › Actions › ui/public/stillhet/requirements/requirements.js": {
