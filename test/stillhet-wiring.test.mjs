@@ -198,7 +198,7 @@ test('Projects and Workspaces (slice 9): every row is wired, or not offered live
   const TABS = ['team', 'settings', 'mcp', 'actions', 'automations', 'away', 'memory', 'memory/NAME'];
   const want = [
     'ui/public/stillhet/projects/projects.js', 'ui/public/stillhet/workspaces/workspaces.js', 'workspaces/workspaces.js › open … in your editor',
-    ...['Sync', 'Check origin now', 'Retry', 'Use git', 'Link a repository… and Link a remote…', 'Rename…', 'Locate folder…', 'Remove…', 'Add a project by hand', 'How its tasks run', 'Team memory', 'Cost tags, Who pays and Labels', 'Branch names', 'This month\'s spend'].map((a) => `projects/projects.js › ${a}`),
+    ...['Sync', 'Check origin now', 'Retry', 'Use git', 'Link a repository… and Link a remote…', 'Rename…', 'Locate folder…', 'Remove…', 'Add a project by hand', 'How its tasks run', 'Team memory', 'Cost tags, Who pays and Labels', 'Branch names', 'This month\'s spend', 'Readiness', 'Last run', 'So far', 'Metrics', 'Policy'].map((a) => `projects/projects.js › ${a}`),   // B4.5: the read-only facts
     ...['Make a workspace by hand', 'Edit by hand', 'Scan again', 'Sync what is behind', 'Delete…', 'Is this right (a question\'s answer)', 'Cost tags and Labels'].map((a) => `workspaces/workspaces.js › ${a}`),
     ...TABS.map((t) => `projects/dev-tab-${t.replace('/NAME', '-note')} › #projects/KEY/${t}`),
     ...['Choose folder…', 'New folder', 'Several folders…', 'the probe line'].map((a) => `projects/project-add.js › ${a}`),   // COV-1

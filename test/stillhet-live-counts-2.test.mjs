@@ -28,7 +28,7 @@ test('Projects in the live kind (slice 9): each action sends dev\'s route; the s
   const pick = (v) => { page().querySelector('[data-menu="pj-more"]').click(); page().querySelector(`[data-menu-pick="pj-more|${v}"]`).click(); };
   pick('fetch'); await settle();
   w.RailProjects.sync('api-2'); await settle();
-  page().querySelector('[data-pj-act]').click(); await settle();   // diverged: Bring together hands over to a chat, writing nothing
+  pick('act'); await settle();   // diverged: Bring together hands over to a chat, writing nothing (B4.5: Old pause waits on you, so the head offers it and ⋯ the hand-over)
   assert.deepEqual(posts.map((p) => [p.method, p.url, p.body]), [['POST', '/api/projects/api-2/sync', { mode: 'fetch' }], ['POST', '/api/projects/api-2/sync', { mode: 'ff' }]]);
   assert.deepEqual(store(w), was, 'no store write outside a read');
   w.location.hash = '#projects/gone-3'; await settle();

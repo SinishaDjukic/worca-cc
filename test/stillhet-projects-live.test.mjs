@@ -565,3 +565,79 @@ test('COV-1 addMany: sends {projects:[{name,path}]}, sorts added and skipped by 
   assert.deepEqual([none.ok, none.added, r2.refreshed], [true, [], []], 'all skipped: nothing refreshes');
   assert.deepEqual(await r.live.addMany([1, 2, 3, 4].map((n) => ({ name: `p${n}`, path: `/s/p${n}` }))), { ok: false, text: 'Could not add 4 projects: at most 100 projects' });
 });
+
+// ---- B4.5 (F-6-15, F-6-19): a project page's facts and its early record, read-only ----
+const READY = { readiness: { level: 'partial', engines: {}, checks: [], counts: { mustFix: 1, shouldFix: 0, passed: 3, applicable: 4 } } };
+const factsAnswer = (over = {}) => (m, u) => {
+  for (const [k, v] of Object.entries(over)) if (u.includes(k)) return v;
+  if (u.endsWith('/readiness')) return [200, READY];
+  if (u.endsWith('/team-metrics')) return [200, { status: { hasOrigin: true, enabled: true, pending: 0, runs: 2 } }];
+  if (u === '/api/policy/scopes') return [200, { projects: [{ key: 'shop-1111aaaa', hasOrigin: true, present: true }] }];
+  return null;
+};
+const reads = (r) => r.calls.filter((c) => c.method === 'GET').map((c) => c.url);
+
+test('F-6-15 facts: the three GETs once per key, then the cache; each fact lands mapped', async () => {
+  const r = rig({ answer: factsAnswer() });
+  const f0 = r.live.facts('shop-1111aaaa');
+  assert.deepEqual([f0.readiness.status, f0.metrics.status, f0.policy.status], ['loading', 'loading', 'loading']);
+  r.live.facts('shop-1111aaaa');
+  await tick(); await tick();
+  assert.deepEqual(reads(r).sort(), ['/api/policy/scopes', '/api/projects/shop-1111aaaa/readiness', '/api/projects/shop-1111aaaa/team-metrics']);
+  const f = r.live.facts('shop-1111aaaa');
+  assert.equal(f.readiness.status, 'ready');
+  assert.equal(f.readiness.value.word, 'Partly ready');
+  assert.equal(f.metrics.value.word, 'on · 2 runs');
+  assert.equal(f.policy.value.word, 'home');
+  assert.ok(r.changes() >= 3, 'on() fires as each read lands');
+  assert.deepEqual(r.writes(), [], 'a fact never writes');
+});
+
+test('F-6-15 facts: a refused readiness leaves metrics and policy ready; not answering counts as failed', async () => {
+  const r = rig({ answer: factsAnswer({ '/readiness': [500, { error: 'boom' }], '/team-metrics': 'down' }) });
+  r.live.facts('shop-1111aaaa'); await tick(); await tick();
+  const f = r.live.facts('shop-1111aaaa');
+  assert.deepEqual([f.readiness.status, f.metrics.status, f.policy.status], ['failed', 'failed', 'ready']);
+  assert.equal(f.policy.value.word, 'home');
+});
+
+test('F-6-15 refacts reads again; a projects-changed frame re-reads the cached keys', async () => {
+  const r = rig({ answer: factsAnswer() });
+  r.live.facts('shop-1111aaaa'); await tick(); await tick();
+  r.live.refacts('shop-1111aaaa');
+  r.live.facts('shop-1111aaaa'); await tick(); await tick();
+  assert.equal(reads(r).filter((u) => u.endsWith('/readiness')).length, 2);
+  r.live.frame({ type: 'projects-changed' }); await tick(); await tick();
+  assert.equal(reads(r).filter((u) => u.endsWith('/readiness')).length, 3);
+  r.live.frame({ type: 'settings-changed' }); await tick(); await tick();
+  assert.equal(reads(r).filter((u) => u.endsWith('/team-metrics')).length, 4);
+  assert.equal(r.live.facts('shop-1111aaaa').readiness.status, 'ready', 'a re-read keeps what it holds');
+});
+
+test('F-6-15 facts: a key waiting for its undo window, or gone, sends nothing', async () => {
+  const r = rig({ answer: factsAnswer() });
+  r.live.deferRemove('shop-1111aaaa', 5000);
+  const f = r.live.facts('shop-1111aaaa'); await tick();
+  assert.equal(f.readiness.status, 'loading');
+  assert.deepEqual(reads(r), []);
+  await r.fire(); await tick();
+  r.live.facts('shop-1111aaaa'); await tick();
+  assert.deepEqual(reads(r), [], 'removed: never read');
+});
+
+test('F-6-19 known: GET /api/projects once while the store loads, mapped to the early record', async () => {
+  const g = gate();
+  const r = rig({ hold: (m, u) => (u === '/api/projects' ? g.p : null), answer: (m, u) => (u === '/api/projects' ? [200, { projects: [{ key: 'new-9999', name: 'fresh', path: '/src/fresh', exists: true, vcs: 'git' }] }] : null) });
+  r.setWorld({ projects: [], spaces: [] });
+  assert.equal(r.live.known('new-9999'), null, 'nothing yet');
+  r.live.known('new-9999');
+  g.open(); await tick(); await tick();
+  assert.deepEqual(reads(r), ['/api/projects'], 'one read, shared');
+  const k = r.live.known('new-9999');
+  assert.deepEqual([k.name, k.origin, k.early], ['fresh', 'reading', true]);
+  assert.equal(r.live.known('other'), null);
+  assert.deepEqual(reads(r), ['/api/projects']);
+  const r2 = rig({ answer: (m, u) => (u === '/api/projects' ? [500, {}] : null) });
+  r2.live.known('x'); await tick(); await tick();
+  assert.equal(r2.live.known('x'), null, 'a refused read: null');
+});

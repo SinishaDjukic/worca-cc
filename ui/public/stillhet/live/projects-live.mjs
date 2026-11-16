@@ -5,7 +5,7 @@
 // never edits a record. Client state of its own: what each action is doing (pending), what waits for its undo window
 // (hidden), what was removed until the store drops it (gone), a fresh workspace's draft until Save, each project's and
 // workspace's page detail, and clone jobs. An action answers a key to go to only once the store lists it (listed).
-import { SET_KEYS, setsOf, patchOf, defaultsOf } from './projects-map.mjs';
+import { SET_KEYS, setsOf, patchOf, defaultsOf, readinessOf, metricsOf, policyOf, knownOf } from './projects-map.mjs';
 import { folderName, reviewSummary } from '../../design-system/components/folder-browser.mjs';
 
 const enc = encodeURIComponent;
@@ -28,6 +28,11 @@ export const PROJECT_ACTIONS = Object.freeze({
   remove: ['remove', '', ({ name, owned }) => ['DELETE', `/api/projects?name=${enc(name)}${owned ? '&deleteFolder=1' : ''}`]],
   'read-settings': ['read', '', ({ key }) => ['GET', `/api/projects/${enc(key)}/settings`]],
   'read-defaults': ['read', '', ({ key }) => ['GET', `/api/projects/${enc(key)}/tags/defaults`]],
+  // B4.5: a project page's read-only facts (F-6-15) and its early record (F-6-19); nothing here writes
+  'read-readiness': ['read', '', ({ key }) => ['GET', `/api/projects/${enc(key)}/readiness`]],
+  'read-metrics': ['read', '', ({ key }) => ['GET', `/api/projects/${enc(key)}/team-metrics`]],
+  'read-policy': ['read', '', () => ['GET', '/api/policy/scopes']],
+  'read-list': ['read', '', () => ['GET', '/api/projects']],
   set: ['change', 'Saving…', ({ key, patch }) => ['PATCH', `/api/projects/${enc(key)}/settings`, patch]],
   team: ['change', 'Saving…', ({ key, patch }) => ['PATCH', `/api/projects/${enc(key)}/settings`, patch]],
   defaults: ['save', 'Saving…', ({ key, tags, labels }) => ['PUT', `/api/projects/${enc(key)}/tags/defaults`, { tags, labels }]],
@@ -73,7 +78,8 @@ const lastSeg = (v) => (String(v).split(/[/:]/).filter(Boolean).pop() || '').rep
 const plural = (n, one) => `${n} ${n === 1 ? one : `${one}s`}`;
 
 export function startProjectsLive({ fetch, toast = () => {}, refresh = () => {}, world = () => ({ projects: [], spaces: [] }), go = () => {}, at = () => globalThis.location?.hash || '', on = () => {}, setTimeout: later = globalThis.setTimeout, clearTimeout: cancel = globalThis.clearTimeout }) {
-  const busy = new Map(), hide = new Map(), gone = new Set(), moving = new Set(), fresh = new Map(), details = new Map(), spaceDetails = new Map(), clones = new Map();
+  const busy = new Map(), hide = new Map(), gone = new Set(), moving = new Set(), fresh = new Map(), details = new Map(), spaceDetails = new Map(), clones = new Map(), factsOf = new Map();
+  let listRead = null, listAnswer = null;   // F-6-19: GET /api/projects, read once while the store loads
 
   async function send(id, args = {}) {
     const [, , build] = PROJECT_ACTIONS[id], [method, url, body] = build(args);
@@ -266,6 +272,42 @@ export function startProjectsLive({ fetch, toast = () => {}, refresh = () => {},
     if (!details.has(key)) { details.set(key, { status: 'loading' }); readDetail(key); }
     return details.get(key);
   }
+
+  // ---- B4.5 (F-6-15): a project page's facts, read on each open (refacts) and on projects/settings frames ----
+  // what may be read: not waiting for its undo window, not removed, not the old key of a move; the store need not list
+  // it yet, so the page drawn before the store loads (F-6-19) reads them too
+  const factsReadable = (key) => !hide.has(key) && !gone.has(key) && !moving.has(key);
+  const FACTS = [['readiness', 'read-readiness', (d) => readinessOf(d)], ['metrics', 'read-metrics', (d) => metricsOf(d?.status)], ['policy', 'read-policy', (d, key) => policyOf(d, key)]];
+  const LOADING = { status: 'loading', value: null };
+  function readFacts(key) {
+    const held = factsOf.get(key) || {};
+    factsOf.set(key, Object.fromEntries(FACTS.map(([name]) => [name, held[name] || LOADING])));
+    for (const [name, action, map] of FACTS) {
+      send(action, { key }).then((a) => {
+        const now = factsOf.get(key);
+        if (!now || gone.has(key)) return;   // dropped or removed meanwhile
+        // one failed read never hides the others; a re-read that fails keeps what it held
+        now[name] = a.ok ? { status: 'ready', value: map(a.data, key) } : now[name].status === 'ready' ? now[name] : { status: 'failed', value: null };
+        on();
+      });
+    }
+  }
+  /** { readiness, metrics, policy }: each { status: 'loading'|'ready'|'failed', value } (projects-map's shapes). */
+  function facts(key) {
+    if (!factsReadable(key)) return { readiness: LOADING, metrics: LOADING, policy: LOADING };   // not stored: the next draw asks again
+    if (!factsOf.has(key)) readFacts(key);
+    return factsOf.get(key);
+  }
+  /** Drops the key's facts: the next facts() reads them again (each page open). */
+  const refacts = (key) => { factsOf.delete(key); };
+  /** F-6-19: the project's early record from GET /api/projects (read once, shared), or null until it lands or when refused. */
+  function known(key) {
+    if (!listRead) {
+      listRead = send('read-list').then((a) => { listAnswer = a.ok ? a.data : null; on(); });
+      return null;
+    }
+    return listAnswer ? knownOf(listAnswer, key) : null;
+  }
   const fromState = (key, state) => { const teamOn = !!state.effective?.['memory.team']?.value; details.set(key, { ...details.get(key), status: 'ready', state, sets: setsOf(state, teamOn), teamMemory: teamOn }); };
   // pending keys: KEY#set:ID for a sentence, KEY#team, KEY#defaults (each control shows its own label)
   const patch = (key, action, body, target) => once(target, action, async () => {
@@ -407,7 +449,7 @@ export function startProjectsLive({ fetch, toast = () => {}, refresh = () => {},
     }
     for (const [id, h] of hide) if (h.fired && h.frame === f.type) { hide.delete(id); on(); }   // the lists are read again: they say what is true
     const reread = (map, read) => { for (const id of [...map.keys()]) { if (gone.has(id)) map.delete(id); else if (readable(id)) read(id); } };
-    if (f.type === 'settings-changed' || f.type === 'projects-changed') reread(details, readDetail);
+    if (f.type === 'settings-changed' || f.type === 'projects-changed') { reread(details, readDetail); for (const id of [...factsOf.keys()]) { if (gone.has(id)) factsOf.delete(id); else if (factsReadable(id)) readFacts(id); } }
     if (f.type === 'workspaces-changed') reread(spaceDetails, readSpaceDetail);
   }
 
@@ -420,7 +462,7 @@ export function startProjectsLive({ fetch, toast = () => {}, refresh = () => {},
   return {
     addProject, rename, relocate, origin, linkRemote, deferRemove,
     folders, probe, gitAvailable, checkNew, createProject, addMany,
-    detail, setSet, resetSet, teamMemory, saveDefaults,
+    detail, setSet, resetSet, teamMemory, saveDefaults, facts, refacts, known,
     fresh: fresh_, drafts: () => [...fresh.values()], discardFresh, saveSpace, spaceDetail, saveSpaceDefaults, deferDeleteSpace, scan, syncBehind, answer, openInEditor,
     hidden, pending: (id) => busy.get(id) || '', frame,
   };

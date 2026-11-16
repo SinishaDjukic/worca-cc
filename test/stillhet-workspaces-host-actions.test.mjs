@@ -214,3 +214,20 @@ test('F-G-G4-02: the workspace page names its projects (order, edit rows, map) b
   const names = [...p.querySelectorAll('.set-row-n, .sr-name, [class*="row-n"]')].map((x) => x.textContent.trim());
   for (const t of [p.textContent, ...names]) assert.ok(!t.includes(KEYS.ok) && !t.includes(KEYS.local), 'no raw key on the page');
 });
+
+test('F-G-G4-02 (verified for B4.5): members, the question and a sync toast name projects, never keys; the description shows no raw markdown', async () => {
+  const { marked } = await import('marked');
+  const createDOMPurify = (await import('dompurify')).default;
+  const spaces = clone(PJ_SOURCES.workspaces); spaces.workspaces[0].description = 'A shop over **two** projects.';
+  const h = await projectsHost({ hash: HERE, sources: { workspaces: spaces, ...behindOk() }, write: (u) => (u.endsWith('/sync') ? [500, { error: 'boom' }] : [200, { ok: true }]),
+    beforeScripts: (win) => { win.__worcaTestHooks = { askMarkdown: () => Promise.resolve({ marked, createDOMPurify }) }; } });
+  await settle(200);
+  const p = page(h.d), noKey = (t, where) => assert.ok(!t.includes(KEYS.ok) && !t.includes(KEYS.local) && !t.includes(WS), `no raw key in ${where}: "${t}"`);
+  assert.doesNotMatch(p.querySelector('.ws-about').textContent, /\*\*/, 'Prose draws the bold');
+  assert.ok(p.querySelector('.ws-about .prose strong'));
+  noKey(p.textContent, 'the page');
+  noKey(h.d.getElementById('bar-place').textContent, 'the bar');
+  pickMore(h.d, 'sync'); await settle(200);
+  assert.match(saidText(h.d), /seed-ok/, 'the refusal names the project');
+  noKey(saidText(h.d), 'the toast');
+});
