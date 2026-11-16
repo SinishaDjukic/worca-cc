@@ -6,12 +6,13 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import net from 'node:net';
 import { DatabaseSync } from 'node:sqlite';
-import { parseArgs, planInstances, buildInstanceEnv, prepareHome, verifyIsolation, main } from '../tools/stillhet-gate-instances.mjs';
+import { parseArgs, planInstances, buildInstanceEnv, prepareHome, verifyIsolation, startInstance, envProblems, main } from '../tools/stillhet-gate-instances.mjs';
 import { _resetForTests } from '../src/core/db.mjs';
 import { worcaHome } from '../src/core/projects.mjs';
 import { projectKey } from '../src/core/store.mjs';
@@ -27,6 +28,8 @@ after(() => {
   if (prevHome === undefined) delete process.env.WORCA_HOME; else process.env.WORCA_HOME = prevHome;
   rmSync(scratch, { recursive: true, force: true });
 });
+// a free port per start, so a gate instance already running on its protocol port does not decide the test
+const freePort = () => new Promise((r) => { const s = net.createServer().listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => r(p)); }); });
 const GIT_ENV = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' };
 const git = (dir, ...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', env: GIT_ENV }).trim();
 
@@ -66,6 +69,7 @@ function fakeOwner() {
   const w1 = wt('r1', 'feat/x');
   const w2 = wt('r2', 'feat/y');
   git(main, 'branch', 'keep/other');
+  git(main, 'remote', 'add', 'origin', 'git@github.com:owner/real.git');   // what a real clone has: a GitHub remote
   process.env.WORCA_HOME = realHome;
   _resetForTests();
   const key = projectKey(proj);
@@ -73,6 +77,16 @@ function fakeOwner() {
   seedPipelineRow({ id: 'r1', projectKey: key, title: 'one', status: 'done', baseName: 'one', datePrefix: '16-11-26', branch: { source: 'dev', feature: 'feat/x', worktreeDir: w1 } });
   seedPipelineRow({ id: 'r2', projectKey: key, title: 'two', status: 'done', baseName: 'two', datePrefix: '16-11-26', branch: { source: 'dev', feature: 'feat/y', worktreeDir: w2 } });
   _resetForTests();
+  // an active series with its next occurrence, a paused one, and a one-off run waiting for its time
+  const db = new DatabaseSync(join(realStore, 'worca-cc.db'));
+  const now = new Date().toISOString(), soon = new Date(Date.now() + 60000).toISOString();
+  const sch = db.prepare("INSERT INTO schedules (id, title, project_key, project_dir, request, rule, status, next_run_at, created_at, updated_at) VALUES (?, 't', ?, ?, '{}', '{}', ?, ?, ?, ?)");
+  sch.run('sch_on', key, proj, 'active', soon, now, now);
+  sch.run('sch_off', key, proj, 'paused', null, now, now);
+  const tk = db.prepare("INSERT INTO scheduled_runs (id, schedule_id, project_key, project_dir, run_at, request, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, '{}', 'scheduled', ?, ?)");
+  tk.run('t_series', 'sch_on', key, proj, soon, now, now);
+  tk.run('t_once', null, key, proj, soon, now, now);
+  db.close();
   delete process.env.WORCA_HOME;
   return { realHome, realStore, main, proj, key, w1, w2 };
 }
@@ -142,7 +156,7 @@ test('PLAN-Gc C1: a copy that names a path outside its HOME is refused before an
   assert.ok(verifyIsolation(a.home).some((v) => v.includes(o.proj)), verifyIsolation(a.home).join('\n'));
   await assert.rejects(prepareHome(a, { realHome: o.realHome }), (e) => e.code === 'copy-not-isolated' && e.message.includes(o.proj));
   const out = [], err = [];
-  assert.equal(await main(['start', 'A', '--root', root], { out: (l) => out.push(l), err: (l) => err.push(l), realHome: o.realHome, tmp: scratch, serverPath: '/nonexistent' }), 2);
+  assert.equal(await main(['start', 'A', '--root', root, '--port', `A=${await freePort()}`], { out: (l) => out.push(l), err: (l) => err.push(l), realHome: o.realHome, tmp: scratch, serverPath: '/nonexistent' }), 2);
   assert.match(err.join('\n'), /^copy-not-isolated: .*outside/);
   assert.ok(!existsSync(join(a.home, 'gate-instance.json')), 'no server was started');
 
@@ -153,4 +167,100 @@ test('PLAN-Gc C1: a copy that names a path outside its HOME is refused before an
   assert.doesNotMatch(readFileSync(dotGit, 'utf8'), new RegExp(o.main), 'the copied worktree leads to the copied repo');
   writeFileSync(dotGit, readFileSync(join(o.w1, '.git'), 'utf8'));
   await assert.rejects(prepareHome(b, { realHome: o.realHome }), (e) => e.code === 'copy-not-isolated' && e.message.includes(o.main));
+});
+
+const pushUrls = (repo) => git(repo, 'config', '--get-all', 'remote.origin.pushurl').split('\n');
+const sqlite = (home) => new DatabaseSync(join(home, '.worca-cc', 'worca-cc.db'));
+
+test('PLAN-Gc owner decision 1: every copied schedule is off in the copy, the real ones stay on, and a start with a copied schedule on is refused', { skip: posixOnly, timeout: 120000 }, async () => {
+  const o = fakeOwner();
+  const root = join(scratch, 'gates-sched');
+  const [a] = planInstances(parseArgs(['start', 'A', '--root', root]), { realHome: o.realHome, tmp: scratch });
+  await prepareHome(a, { realHome: o.realHome });
+  let db = sqlite(a.home);
+  const rows = db.prepare('SELECT id, status, next_run_at FROM schedules ORDER BY id').all().map((r) => ({ ...r }));
+  const tickets = db.prepare('SELECT id, status FROM scheduled_runs ORDER BY id').all().map((r) => ({ ...r }));
+  db.close();
+  assert.deepEqual(rows, [{ id: 'sch_off', status: 'paused', next_run_at: null }, { id: 'sch_on', status: 'paused', next_run_at: null }]);
+  assert.deepEqual(tickets, [{ id: 't_once', status: 'canceled' }, { id: 't_series', status: 'canceled' }]);
+  const real = new DatabaseSync(join(o.realStore, 'worca-cc.db'), { readOnly: true });
+  assert.equal(real.prepare("SELECT status FROM schedules WHERE id = 'sch_on'").get().status, 'active', 'the owner\'s schedule is untouched');
+  real.close();
+  assert.deepEqual(verifyIsolation(a.home), []);
+
+  // a schedule made later inside the instance is its own business
+  db = sqlite(a.home);
+  const now = new Date().toISOString();
+  db.prepare("INSERT INTO schedules (id, request, rule, status, created_at, updated_at) VALUES ('sch_new', '{}', '{}', 'active', ?, ?)").run(now, now);
+  db.prepare("INSERT INTO scheduled_runs (id, schedule_id, run_at, request, status, created_at, updated_at) VALUES ('t_new', 'sch_new', ?, '{}', 'scheduled', ?, ?)").run(now, now, now);
+  db.close();
+  assert.deepEqual(verifyIsolation(a.home), [], 'a schedule created in the instance does not refuse a start');
+
+  // a copied schedule turned back on (or a copied run waiting again) refuses the next start
+  db = sqlite(a.home);
+  db.prepare("UPDATE schedules SET status = 'active' WHERE id = 'sch_on'").run();
+  db.prepare("UPDATE scheduled_runs SET status = 'scheduled' WHERE id = 't_once'").run();
+  db.close();
+  const bad = verifyIsolation(a.home);
+  assert.ok(bad.includes('schedule sch_on enabled'), bad.join('\n'));
+  assert.ok(bad.includes('scheduled run t_once pending'), bad.join('\n'));
+  await assert.rejects(prepareHome(a, { realHome: o.realHome }), (e) => e.code === 'copy-not-isolated' && e.message.includes('schedule sch_on enabled'));
+  const err = [];
+  assert.equal(await main(['start', 'A', '--root', root, '--port', `A=${await freePort()}`], { out: () => {}, err: (l) => err.push(l), realHome: o.realHome, tmp: scratch, serverPath: '/nonexistent' }), 2);
+  assert.match(err.join('\n'), /^copy-not-isolated: .*schedule sch_on enabled/);
+  assert.ok(!existsSync(join(a.home, 'gate-instance.json')), 'no server was started');
+});
+
+test('PLAN-Gc owner decision 2: every clone in the copy pushes to HOME/outside (fetch URL kept); a push URL outside HOME refuses the start', { skip: posixOnly, timeout: 120000 }, async () => {
+  const o = fakeOwner();
+  const root = join(scratch, 'gates-push');
+  const [b] = planInstances(parseArgs(['start', 'B', '--root', root]), { realHome: o.realHome, tmp: scratch });
+  await prepareHome(b, { realHome: o.realHome });
+  const clones = readdirSync(join(b.home, 'repos')).flatMap((h) => readdirSync(join(b.home, 'repos', h)).map((n) => join(b.home, 'repos', h, n)));
+  assert.ok(clones.length >= 1);
+  const noPush = join(b.home, 'outside', 'no-push');
+  for (const c of clones) {
+    assert.equal(git(c, 'remote', 'get-url', 'origin'), 'git@github.com:owner/real.git', 'fetch still goes to the real remote');
+    assert.equal(git(c, 'remote', 'get-url', '--push', 'origin'), noPush, 'a push can only go to a path that never exists');
+    assert.deepEqual(pushUrls(c), [noPush]);
+  }
+  assert.ok(!existsSync(noPush));
+  // a push from the copy fails and reaches nothing
+  const wt = join(b.home, '.worca-cc', 'runs', 'r1', 'repos', 'proj');
+  const r = spawnSync('git', ['-C', wt, 'push', 'origin', 'feat/x'], { encoding: 'utf8', env: buildInstanceEnv(b, GIT_ENV) });
+  assert.notEqual(r.status, 0, 'git push from a copied worktree fails');
+  assert.equal(git(o.main, 'config', '--get-all', 'remote.origin.url'), 'git@github.com:owner/real.git', 'the real repo\'s remote is untouched');
+  assert.throws(() => git(o.main, 'config', '--get', 'remote.origin.pushurl'), 'the real repo got no pushurl');
+  assert.deepEqual(verifyIsolation(b.home), []);
+
+  // a real-looking push URL on a clone refuses the start, naming it
+  git(clones[0], 'remote', 'set-url', '--push', 'origin', 'https://github.com/owner/real.git');
+  const bad = verifyIsolation(b.home);
+  assert.ok(bad.some((v) => v.includes('push') && v.includes('https://github.com/owner/real.git')), bad.join('\n'));
+  await assert.rejects(prepareHome(b, { realHome: o.realHome }), (e) => e.code === 'copy-not-isolated' && e.message.includes('https://github.com/owner/real.git'));
+  // a second remote added with only a fetch URL pushes there too: refused
+  git(clones[0], 'remote', 'set-url', '--push', 'origin', noPush);
+  git(clones[0], 'remote', 'add', 'upstream', 'https://github.com/other/real.git');
+  assert.ok(verifyIsolation(b.home).some((v) => v.includes('upstream') && v.includes('https://github.com/other/real.git')));
+});
+
+test('PLAN-Gc safety net: the spawned server env carries no GitHub token or SSH agent, and gh and git read their config inside the instance HOME', { skip: posixOnly }, async () => {
+  const [a] = planInstances(parseArgs(['start', 'A', '--root', join(scratch, 'gates-env'), '--port', `A=${await freePort()}`]), { realHome: join(scratch, 'nobody'), tmp: scratch });
+  const owner = { PATH: process.env.PATH, HOME: '/owner', GH_TOKEN: 'gho_x', GITHUB_TOKEN: 'ghp_x', GH_ENTERPRISE_TOKEN: 'x', SSH_AUTH_SOCK: '/tmp/agent.sock',
+    WORCA_GH_WRITE_TOKEN: 'w', GH_CONFIG_DIR: '/owner/.config/gh', GIT_CONFIG_GLOBAL: '/owner/.gitconfig' };
+  let spawned = null;
+  const fakeSpawn = (_cmd, _args, opts) => { spawned = opts.env; return { pid: 999999, once() {}, unref() {} }; };
+  await assert.rejects(startInstance(a, { spawn: fakeSpawn, fetch: async () => ({ ok: true }), ps: () => null, baseEnv: owner, waitMs: 50 }));
+  assert.ok(spawned, 'the server was spawned with the instance env');
+  for (const k of ['GH_TOKEN', 'GITHUB_TOKEN', 'GH_ENTERPRISE_TOKEN', 'SSH_AUTH_SOCK', 'WORCA_GH_WRITE_TOKEN']) assert.ok(!(k in spawned), `${k} is not passed on`);
+  assert.equal(spawned.GH_CONFIG_DIR, join(a.home, '.config', 'gh'));
+  assert.equal(spawned.GIT_CONFIG_GLOBAL, join(a.home, '.gitconfig'));
+  assert.equal(spawned.GIT_CONFIG_NOSYSTEM, '1');
+  assert.deepEqual(envProblems(spawned, a.home), []);
+  // the check itself refuses an env that still carries one
+  assert.ok(envProblems({ ...spawned, GH_TOKEN: 'x' }, a.home).some((v) => v.includes('GH_TOKEN')));
+  assert.ok(envProblems({ ...spawned, GH_CONFIG_DIR: '/owner/.config/gh' }, a.home).some((v) => v.includes('GH_CONFIG_DIR')));
+  // gh, where installed, finds no login under that env
+  const gh = spawnSync('gh', ['auth', 'status'], { encoding: 'utf8', env: spawned, timeout: 20000 });
+  if (!gh.error) assert.notEqual(gh.status, 0, 'gh has no GitHub login in the instance');
 });

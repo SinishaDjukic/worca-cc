@@ -4,7 +4,8 @@
 // WORCA_HOME, so an instance started without its own HOME changes the owner's real settings (F-X-01). A and B get a copy of
 // the owner's store (an APFS clone where it can; the real store is only read) made independent of it: the repos it names are
 // cloned into the instance HOME and every record and git link points there, so nothing done on A or B reaches the owner's
-// real repos (C1, isolateCopy / verifyIsolation; a copy that still leads outside its HOME is refused). C and D start empty. `rail` lives in each
+// real repos (C1, isolateCopy / verifyIsolation; a copy that still leads outside its HOME is refused); copied schedules are turned off,
+// every clone pushes to HOME/outside/no-push, and no instance env carries a GitHub credential. C and D start empty. `rail` lives in each
 // instance's own settings.json and never in WORCA_FLAGS, so it stays unlocked (P11). Stop kills only the processes this tool
 // started (a pid file per HOME, checked against the process's start time and command). `login-status` and `login X` check
 // and run the Claude CLI's own login under each HOME; the CLI's output is never printed, logged or stored.
@@ -21,6 +22,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { CLAUDE_AUTH_ENV_FLAGS, CLAUDE_AUTH_ENV_KEYS, isClaudeSignedOutError, parseClaudeAuthConfigDir, parseClaudeAuthStatus } from '../src/core/preflight.mjs';
+import { GITHUB_CREDENTIAL_KEYS } from '../src/core/github-credentials.mjs';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const OWNER_PORT = 4317;
@@ -126,10 +128,19 @@ export function planInstances(opts, { realHome = realHomeDefault(), tmp = os.tmp
   });
 }
 
-/** The instance server's env (D7): its own HOME, nothing that leads back to the owner's flags or login. Pure. */
+// Nothing an instance spawns may reach the owner's GitHub: no token, no SSH agent, no "push as me" broker, no git config
+// passed in the env (a credential helper), and gh and git read their config inside the instance HOME, where none exists.
+const GITHUB_REACH_ENV = Object.freeze([...GITHUB_CREDENTIAL_KEYS, 'SSH_AUTH_SOCK', 'WORCA_BROKER_URL', 'WORCA_GH_AS_PERSON', 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT']);
+const isGitConfigPair = (k) => /^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(k);
+
+/** The instance server's env (D7): its own HOME, nothing that leads back to the owner's flags, login or GitHub. Pure. */
 export function buildInstanceEnv(inst, baseEnv = process.env) {
   const env = { ...baseEnv };
-  for (const k of ['WORCA_FLAGS', 'CLAUDE_CONFIG_DIR', 'NODE_TEST_CONTEXT', 'WORCA_TEST_ALLOW_HOME_FALLBACK', ...CLAUDE_AUTH_ENV_KEYS, ...CLAUDE_AUTH_ENV_FLAGS]) delete env[k];
+  for (const k of ['WORCA_FLAGS', 'CLAUDE_CONFIG_DIR', 'NODE_TEST_CONTEXT', 'WORCA_TEST_ALLOW_HOME_FALLBACK', ...CLAUDE_AUTH_ENV_KEYS, ...CLAUDE_AUTH_ENV_FLAGS, ...GITHUB_REACH_ENV]) delete env[k];
+  for (const k of Object.keys(env)) if (isGitConfigPair(k)) delete env[k];
+  env.GH_CONFIG_DIR = path.join(inst.home, '.config', 'gh');
+  env.GIT_CONFIG_GLOBAL = path.join(inst.home, '.gitconfig');
+  env.GIT_CONFIG_NOSYSTEM = '1';   // the system config holds the keychain credential helper on macOS
   env.HOME = inst.home;
   env.USERPROFILE = inst.home;
   // WORCA_HOME is the BASE: the store is WORCA_HOME/.worca-cc (src/core/projects.mjs worcaHome), the same folder as the
@@ -140,6 +151,15 @@ export function buildInstanceEnv(inst, baseEnv = process.env) {
   if (inst.mock) Object.assign(env, { WORCA_MOCK: '1' }, inst.mockEnv || {});
   else { delete env.WORCA_MOCK; delete env.ORCH_MOCK; }
   return env;
+}
+
+/** What in a server env could still reach the owner's GitHub. Empty when none. */
+export function envProblems(env, home) {
+  const bad = [];
+  for (const k of Object.keys(env)) if (GITHUB_REACH_ENV.includes(k) || isGitConfigPair(k)) bad.push(`env ${k} set`);
+  for (const k of ['GH_CONFIG_DIR', 'GIT_CONFIG_GLOBAL']) if (!env[k] || !within(path.resolve(env[k]), path.resolve(home))) bad.push(`env ${k} outside ${home}: ${env[k] ?? '(unset)'}`);
+  if (env.GIT_CONFIG_NOSYSTEM !== '1') bad.push('env GIT_CONFIG_NOSYSTEM not 1');
+  return bad;
 }
 
 /** The instance's settings.json (D6): rail per instance, the welcome dialog seen, expert on an empty install. Pure. */
@@ -367,17 +387,110 @@ export function isolateCopy(store, { home, realStore, realHome, cp = cpStore }) 
     // a copied repo's registration of a checkout that is not in this copy (an owner worktree elsewhere) is dropped from the copy
     if (l.kind === 'admin' && linkTargets(l).some((t) => !within(canon(t), homeC))) rmSync(path.dirname(l.file), { recursive: true, force: true });
   }
+  const gitDirs = blockPushes(home);
+  const { schedules, tickets } = stopCopiedSchedules(store);
+  writeFileSync(path.join(store, COPY_RECORD), JSON.stringify({ copiedAt: new Date().toISOString(), schedules, tickets, gitDirs }, null, 2) + '\n');
   return { repos: tops.length, placeholders: exact.size };
 }
 
+// ── Owner decisions on PLAN-Gc: a copy never fires a copied schedule and never pushes ─────────────────────────────────
+// The copy's record (in its store) names what was copied, so a schedule or clone made later inside the instance is its own.
+const COPY_RECORD = 'gate-copy.json';
+const PENDING_TICKET = ['scheduled', 'missed', 'firing'];
+const hasTable = (db, t) => !!db.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = ?").get(t);
+
+/** Turns every copied schedule off: active series are paused (as a user pause would), and every run waiting for its time
+ *  is canceled. Returns the copied ids. */
+function stopCopiedSchedules(store) {
+  const dbFile = path.join(store, 'worca-cc.db');
+  if (!existsSync(dbFile)) return { schedules: [], tickets: [] };
+  const db = new DatabaseSync(dbFile);
+  try {
+    const now = new Date().toISOString();
+    const out = { schedules: [], tickets: [] };
+    if (hasTable(db, 'schedules')) {
+      out.schedules = db.prepare('SELECT id FROM schedules ORDER BY id').all().map((r) => r.id);
+      db.prepare("UPDATE schedules SET status = 'paused', pause_reason = 'user', next_run_at = NULL, updated_at = ? WHERE status = 'active'").run(now);
+    }
+    if (hasTable(db, 'scheduled_runs')) {
+      out.tickets = db.prepare('SELECT id FROM scheduled_runs ORDER BY id').all().map((r) => r.id);
+      db.prepare(`UPDATE scheduled_runs SET status = 'canceled', updated_at = ? WHERE status IN (${PENDING_TICKET.map(() => '?').join(', ')})`).run(now, ...PENDING_TICKET);
+    }
+    return out;
+  } finally { db.close(); }
+}
+
+/** `{ name: { urls, pushurls } }` of a git dir's remotes, read from its config file. */
+function remotesOf(gitDir) {
+  const out = {};
+  const r = spawnSync('git', ['config', '--file', path.join(gitDir, 'config'), '--get-regexp', '^remote\\..*\\.(url|pushurl)$'], { encoding: 'utf8' });
+  for (const line of (r.stdout || '').split('\n').filter(Boolean)) {
+    const m = /^remote\.(.+)\.(url|pushurl) (.*)$/.exec(line);
+    if (!m) continue;
+    const e = (out[m[1]] ||= { urls: [], pushurls: [] });
+    (m[2] === 'url' ? e.urls : e.pushurls).push(m[3]);
+  }
+  return out;
+}
+const gitDirsIn = (dir) => gitEntries(dir).filter((g) => { try { return statSync(g).isDirectory(); } catch { return false; } });
+
+/** Points every remote's push URL of every git dir in HOME at HOME/outside/no-push, which never exists: fetch keeps its
+ *  URL, a push fails. Returns the git dirs. */
+function blockPushes(home) {
+  const noPush = path.join(home, 'outside', 'no-push');
+  const dirs = gitDirsIn(home);
+  for (const g of dirs) {
+    for (const name of Object.keys(remotesOf(g))) {
+      execFileSync('git', ['config', '--file', path.join(g, 'config'), '--replace-all', `remote.${name}.pushurl`, noPush], { stdio: 'ignore' });
+    }
+  }
+  return dirs;
+}
+
+/** A copy's schedules still on and remotes that can push outside its HOME. */
+function copyProblems(home) {
+  const homeC = canon(home);
+  const store = path.join(home, '.worca-cc');
+  let rec = null;
+  try { rec = JSON.parse(readFileSync(path.join(store, COPY_RECORD), 'utf8')); } catch { /* a copy made before the record: everything counts as copied */ }
+  const bad = [];
+  const dbFile = path.join(store, 'worca-cc.db');
+  if (existsSync(dbFile)) {
+    const db = new DatabaseSync(dbFile, { readOnly: true });
+    try {
+      const copied = (ids) => (id) => !rec || (ids || []).includes(id);
+      if (hasTable(db, 'schedules')) {
+        for (const r of db.prepare("SELECT id FROM schedules WHERE status = 'active' ORDER BY id").all()) if (copied(rec?.schedules)(r.id)) bad.push(`schedule ${r.id} enabled`);
+      }
+      if (hasTable(db, 'scheduled_runs')) {
+        for (const r of db.prepare(`SELECT id FROM scheduled_runs WHERE status IN (${PENDING_TICKET.map(() => '?').join(', ')}) ORDER BY id`).all(...PENDING_TICKET)) {
+          if (copied(rec?.tickets)(r.id)) bad.push(`scheduled run ${r.id} pending`);
+        }
+      }
+    } finally { db.close(); }
+  }
+  const dirs = new Set([...(rec?.gitDirs || []).filter((g) => existsSync(g)), ...gitDirsIn(path.join(home, 'repos'))]);
+  for (const g of dirs) {
+    for (const [name, { urls, pushurls }] of Object.entries(remotesOf(g))) {
+      for (const u of pushurls.length ? pushurls : urls) {
+        const local = u.startsWith('/') || u.startsWith('file://') ? u.replace(/^file:\/\//, '') : null;
+        if (!local || !within(canon(local), homeC)) bad.push(`${g} remote ${name} push URL outside HOME: ${u}`);
+      }
+    }
+  }
+  return bad;
+}
+
 /** Everything in an instance HOME that still leads outside it: a record's path, a .git file, a worktree registration,
- *  object alternates or a local remote. Empty when the copy is independent. */
+ *  object alternates, a local remote, a remote that can push outside HOME, or a copied schedule still on. Empty when the
+ *  copy is independent. */
 export function verifyIsolation(home) {
   const homeC = canon(home);
   const store = path.join(home, '.worca-cc');
   const bad = [];
   for (const r of storeRecordPaths(store)) if (!within(canon(r.value), homeC)) bad.push(`${r.where} ${r.field}: ${r.value}`);
   for (const l of gitLinks(home)) for (const t of linkTargets(l)) if (!within(canon(t), homeC)) bad.push(`${l.file} (${l.kind}): ${t}`);
+  bad.push(...copyProblems(home));
   return bad;
 }
 
@@ -492,9 +605,12 @@ export async function startInstance(inst, { serverPath = SERVER_PATH, spawn: spa
   let offset = 0;
   try { offset = statSync(logFile).size; } catch { /* no log yet */ }
   const fd = openSync(logFile, 'a');
+  const env = buildInstanceEnv(inst, baseEnv);
+  const envBad = envProblems(env, inst.home);
+  if (envBad.length) { closeSync(fd); refuse('credential-env', `${inst.letter}'s server env could reach the owner's GitHub; nothing was started. ${envBad.join('; ')}`); }
   let child;
   try {
-    child = spawnImpl(process.execPath, [serverPath], { cwd: inst.home, env: buildInstanceEnv(inst, baseEnv), detached: true, stdio: ['ignore', fd, fd] });
+    child = spawnImpl(process.execPath, [serverPath], { cwd: inst.home, env, detached: true, stdio: ['ignore', fd, fd] });
   } finally { closeSync(fd); }
   let exited = false;
   child.once?.('exit', () => { exited = true; });
