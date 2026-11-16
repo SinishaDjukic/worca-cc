@@ -2680,14 +2680,40 @@ async function listPipelinesNow(projectDir, opts, workspaceKey) {
  *  {archived: true, archivedAt} — the Runs page's Archived feed. The default lists
  *  active rows only, so existing callers see exactly what they saw before. Workspace
  *  rows also carry `members[]` (per-member facts, tri-state `pr`; omitted in `lite`)
- *  — see rowToHistoryEntry. */
+ *  — see rowToHistoryEntry. `opts.storedPr` adds the RECORDED PR as `storedPr: { url, number, state }` on rows
+ *  and members that have one (no gh; `pr` stays absent) — GET /api/history's first paint. */
 export function listAllPipelines(opts = {}, cfg = {}) {
   return withRefSnapshot(() => listAllPipelinesNow(opts, cfg));
 }
+/** A stored PR as { url, number, state } (listRunPrIndex's defaults), or null without a url. */
+function storedPrOf(url, number, state) {
+  return url ? { url, number: number ?? null, state: state || 'OPEN' } : null;
+}
+
+/** Attach each workspace member's stored PR (pipeline_member_prs) as `storedPr`, in ONE query. Best effort. */
+function attachMemberStoredPrs(entries) {
+  let rows;
+  try {
+    rows = getDb().prepare('SELECT pipeline_id, member_key, pr_url, pr_number, pr_state FROM pipeline_member_prs').all();
+  } catch { return; }
+  const byRun = new Map();
+  for (const r of rows) {
+    const pr = storedPrOf(r.pr_url, r.pr_number, r.pr_state);
+    if (!pr) continue;
+    if (!byRun.has(r.pipeline_id)) byRun.set(r.pipeline_id, new Map());
+    byRun.get(r.pipeline_id).set(r.member_key, pr);
+  }
+  for (const e of entries) {
+    const prs = byRun.get(e.id);
+    if (!prs || !Array.isArray(e.members)) continue;
+    for (const m of e.members) if (prs.has(m.memberKey)) m.storedPr = prs.get(m.memberKey);
+  }
+}
+
 async function listAllPipelinesNow(opts, { batchSize = 16 } = {}) {
   const rows = getDb().prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at,
-           total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id, run_setup, started_by, pr_url, archived_at,
+           total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id, run_setup, started_by, pr_url, pr_number, pr_state, archived_at,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseDetail') AS pause_detail,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
@@ -2762,10 +2788,12 @@ async function listAllPipelinesNow(opts, { batchSize = 16 } = {}) {
       t.row.dir = idx.get(t.row.id) || join(t.pipelinesDir, t.row.id);
       const e = await rowToHistoryEntry(t.row, t.repoDir, opts);
       if (opts.archived) { e.archived = true; e.archivedAt = t.row.archived_at || null; }
+      if (opts.storedPr && t.row.pr_url) e.storedPr = storedPrOf(t.row.pr_url, t.row.pr_number, t.row.pr_state);
       return Object.assign(e, t.tag); // same tag fields as before; tag has no `pr` key
     }));
     out.push(...built);
   }
+  if (opts.storedPr && out.some((e) => e.members?.length > 0)) attachMemberStoredPrs(out);
   const tagMap = readTagsFor(out.map((e) => e.id));
   for (const e of out) e.tags = tagMap.get(e.id) || [];
   const labelMap = readLabelsFor(out.map((e) => e.id));
