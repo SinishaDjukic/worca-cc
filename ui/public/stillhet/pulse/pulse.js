@@ -1031,7 +1031,8 @@ document.addEventListener('click', (e) => {
     else if (key.startsWith('act:')) { const a = C().actions.find((x) => x.id === key.slice(4)), r = a.runId && W.find(a.runId); if (r) openTarget('run/' + r.case, r.title, `Opens ${r.title}`, r.id); else toast(`${a.run} is gone; ${a.label} can still be stopped`); }
     else {
       const id = key.slice(2), r = W.tops().find((x) => x.id === id);
-      openTarget('run/' + r.case, r.title, el.title.split('\n').pop(), r.id);
+      if (r?.scheduleId) openTarget(`schedule/${r.scheduleId}`, r.title, `Opens ${r.title}`);   // F-G-G5-02: a schedule's waiting row opens its schedule, as classic does
+      else openTarget('run/' + r.case, r.title, el.title.split('\n').pop(), r.id);
     }
     render(); return;
   }

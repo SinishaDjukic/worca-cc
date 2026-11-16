@@ -112,6 +112,7 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | The same figures across many rows | Table: divided rows, tabular figures, no box per row, the name first; on a narrow screen the least needed columns go to the row's detail | sessions, cost by step |
 | **Telling** | | |
 | Something done, nothing to answer | Toast | PR merged |
+| A problem with a choice, its rows and its ways out | ChoiceNote, on the rail before the choice is made: amber needs you, grey only tells (`form.run-options`) | This preset needs attention · Reset to default |
 | Something failed | where you acted: the strip, the dialog's alert, the field's error line, the suggestion's grey line; a Toast only when there is no such place | Could not merge #959 |
 | Nothing here, loading, could not load | EmptyState: one line on the text edge; loading shows nothing for 300ms, then one line, never a spinner or skeleton | No runs yet |
 | A part of the page cannot be drawn | EmptyState's error, in that part only, with Reload this part | Could not show the changes |

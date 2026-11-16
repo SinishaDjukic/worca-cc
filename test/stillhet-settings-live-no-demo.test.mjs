@@ -165,3 +165,20 @@ test('demo keeps the sample Setup, Plugins, Spending and Team policy', async () 
   assert.match(tasks, /Budget/);
   assert.match(await go(w, '#settings/team'), /Gateway team policy/);
 });
+
+// F-G-G5-04: today's app reads GET /api/app/version (About and the sidebar marker); Stillhet shows it where the rule puts it,
+// Settings › General › About (docs/rail/settings.md): `Version 1.19 · New version: 1.20`, and Check now re-checks npm.
+test('F-G-G5-04: General › About reads GET /api/app/version and says an update is available', async () => {
+  const VS = { current: '1.19.0', latest: '1.20.0', status: 'outdated', enabled: true, links: {} };
+  const reads = marketRead();
+  const h = await live({ host: { read: (u) => (u === '/api/app/version' ? [200, VS] : reads(u)), post: (u) => (u === '/api/app/version/check' ? [200, { ...VS, latest: '1.21.0' }] : [200, {}]) } });
+  const t = await go(h.w, '#settings/general', 200);
+  assert.ok(h.gets.includes('/api/app/version'), 'Stillhet reads the version');
+  assert.match(t, /1\.19 · New version: 1\.20/);
+  assert.doesNotMatch(secLine(h.d, 'About') || '', /Not in Stillhet yet/);
+  const check = [...page(h.d).querySelectorAll('button')].find((b) => b.textContent.trim() === 'Check now');
+  assert.ok(check, 'Check now is offered');
+  check.click(); await settle(150);
+  assert.ok(h.posts.some((p) => p.url === '/api/app/version/check'), 'Check now posts the check');
+  assert.match(page(h.d).textContent, /New version: 1\.21/);
+});

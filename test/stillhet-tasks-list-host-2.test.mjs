@@ -35,7 +35,7 @@ test('New task…: every drawn picker reaches the posted body; Agent, sync and P
   const picks = (id) => [...d.querySelectorAll(`#center-dlg [data-menu-pick^="f-${id}|"]`)].map((x) => x.dataset.menuPick.slice(`f-${id}|`.length));
   const open = async (id) => { d.querySelector(`#center-dlg [data-menu="f-${id}"]`).click(); await settle(20); };
   const pick = async (id, v) => { await open(id); d.querySelector(`#center-dlg [data-menu-pick="f-${id}|${v}"]`).click(); await settle(20); };
-  await open('workflow'); assert.deepEqual(picks('workflow'), ['Shaper', 'Lean'], 'dev\'s own workflows, never the demo\'s'); await open('workflow');
+  await open('workflow'); assert.deepEqual(picks('workflow'), ['Auto', 'Shaper', 'Lean'], 'dev\'s own workflows after classic\'s Auto (F-cov23-03), never the demo\'s'); await open('workflow');
   await open('agent'); assert.deepEqual(picks('agent'), ['the project\'s default', 'Claude Code', 'OpenAI Codex', 'GitHub Copilot', 'Cursor', 'Gemini CLI', 'Goose', 'OpenCode', 'Qwen Code']); await open('agent');
   await open('base'); assert.deepEqual(picks('base'), ['its default branch', 'dev', 'main', 'feat/x'], 'the project\'s own branches'); await open('base');
   await open('then'); assert.deepEqual(picks('then'), ['as the project is set up', 'open a PR', 'leave it on the branch'], 'no auto-merge: dev has none at start'); await open('then');

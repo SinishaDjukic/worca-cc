@@ -873,6 +873,18 @@ test('F-a2-01 review: Remove on the item whose POST is out answers sending and k
   assert.deepEqual(r.live.queue('ask_1').items, []);
 });
 
+test('COV-2 startBodyOf: syncPolicy and the engine consent ride as picks; Claude drops the consent; tags only when the card has none', () => {
+  const card = { brief: 'Add CSV', workflowId: 'wf_default', guardrailsId: 'g', target: 'project', projectDir: '/src/web' };
+  const base = startBodyOf(card);
+  assert.deepEqual(startBodyOf(card, { syncPolicy: 'origin' }), { ...base, syncPolicy: 'origin' });
+  assert.equal(startBodyOf(card, { syncPolicy: 'nope' }).syncPolicy, undefined, 'only dev\'s two policies');
+  assert.deepEqual(startBodyOf(card, { engine: 'codex', allowUnguardedEngine: true }), { ...base, engine: 'codex', allowUnguardedEngine: true });
+  assert.equal(startBodyOf(card, { allowUnguardedEngine: true }).allowUnguardedEngine, undefined, 'Claude: nothing to allow');
+  assert.equal(startBodyOf(card, { engine: 'claude', allowUnguardedEngine: true }).allowUnguardedEngine, undefined);
+  assert.deepEqual(startBodyOf(card, { tags: ['client'] }).tags, ['client'], 'the project\'s default tags when the card has none');
+  assert.deepEqual(startBodyOf({ ...card, tags: ['own'] }, { tags: ['client'] }).tags, ['own'], 'the card\'s own tags win');
+});
+
 // ---- COV-3: classic's chat extras (a question's files, Download that saves, Show in ‹file manager›, a proposal's files) ----
 test('COV-3 #2: the ask-file URL is the live run, the ask id and the index, each encoded (a hostile id stays one segment)', () => {
   assert.equal(OPENS['ask-file'][1]({ runId: 'run-a', askId: 'tok_1', index: 0 }), '/api/runs/run-a/ask-files/tok_1/0');

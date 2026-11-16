@@ -122,3 +122,19 @@ test('a live open with no task id lands on Tasks with "This task has no page to 
   assert.equal(w.location.hash, '#run/group:g1', 'a live group opens its own page, not its first member');
   noCase();
 });
+
+test('F-G-G5-03: a task kept in view from its own page reopens that page from its top-bar tab', async () => {
+  const { w, d, noCase } = await host();
+  await go(w, '#run/pa', 300);
+  const eye = d.querySelector('[data-keep-view]');
+  assert.ok(eye, 'the task page draws its eye');
+  eye.click(); await settle(40);
+  assert.equal(eye.getAttribute('aria-pressed'), 'true');
+  await go(w, '#chat', 100);
+  const tab = d.querySelector('[data-in-view^="task:"]');
+  assert.ok(tab, 'the tab is in the top bar');
+  tab.click(); await settle(80);
+  assert.equal(w.location.hash, '#run/pa', 'the tab opens the task page, never Tasks');
+  assert.doesNotMatch(saidText(d), /This task has no page to open/);
+  noCase();
+});

@@ -179,6 +179,9 @@
   const PROJECTS = NO_SEED ? ['No project'] : ['billing-api', 'web-app', 'worca-cc', 'docs-site', 'No project'];   // the first run lists only what you add
   // live: the projects are the store's (dev's /api/projects), the models dev's chat catalog (GET /api/ask/models)
   const liveProjects = () => (window.RailWorld?.part?.('projects') || []).filter((p) => p && p.id);
+  const liveSpaces = () => (R.shows('advanced') ? window.RailSpaces?.list() || [] : []).filter((w) => w && w.id && !w.fresh);   // a draft is not in dev yet
+  // where a chat runs, as dev's scope (classic's ask-panel pickScope): a project's key, else a saved workspace's id; null: none
+  const liveScope = (name) => { const pr = liveProjects().find((p) => p.name === name); if (pr) return { pinned: true, projectKey: pr.id }; const w = liveSpaces().find((x) => x.title === name); return w ? { pinned: true, workspaceId: w.id } : null; };
   let liveCat = null;
   const liveModels = () => liveCat?.models || [];
   const modelOf = (id) => liveModels().find((m) => m.id === id) || null;
@@ -217,8 +220,8 @@
     if (liveCat && !comp.effort) comp.effort = d.effort || '';
     const th = chatId ? CL().thread(chatId) : null; if (!th) return;
     if (th.model) comp.engine = th.model; if (th.effort) comp.effort = th.effort;
-    const key = CL().projectKey(chatId);   // dev keeps the chat's project in its `context` (live-map.mjs projectKeyOf)
-    comp.project = key ? liveProjects().find((p) => p.id === key)?.name || key : 'No project';
+    const key = CL().projectKey(chatId), ws = key ? '' : CL().workspaceId(chatId);   // dev keeps the chat's project, else its workspace, in its `context` (live-map.mjs)
+    comp.project = key ? liveProjects().find((p) => p.id === key)?.name || key : ws ? liveSpaces().find((w) => w.id === ws)?.title || ws : 'No project';
   }
   // engine first, then its model: each engine's models under its name (Codex has its own)
   const ENGINE_MODELS = [['Claude Code', ['Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5']], ['Codex', ['Codex 5', 'Codex mini']], ['Gemini CLI', ['Gemini Pro', 'Gemini Flash']]];
@@ -234,7 +237,8 @@
     if (LIVE()) {   // what dev's message carries: where it runs, the model and its effort; the mode only words the ask
       const m = modelOf(comp.engine), efforts = (m?.efforts || []).filter((e) => e !== '-');
       const mode = comp.intent ? '' : pk('mode', comp.mode === 'ask' ? 'Ask' : comp.mode === 'task' ? 'Task' : 'Schedule', MODES, 'Ask, start a task, or schedule one');
-      const project = WP('on', pk('project', comp.project, [...liveProjects().map((p) => ({ id: p.name, text: p.name })), { id: 'No project', text: 'No project' }], 'Where it runs: the project this chat works in'));
+      const spaces = liveSpaces().map((w) => ({ id: w.title, text: w.title, hint: window.RailSpaces.hint(w) }));   // from Advanced, as classic's scope picker lists workspaces
+      const project = WP('on', pk('project', comp.project, [...liveProjects().map((p) => ({ id: p.name, text: p.name })), { id: 'No project', text: 'No project' }, ...(spaces.length ? [{ sep: true }, { header: 'Workspaces · projects that work together' }, ...spaces] : [])], 'Where it runs: the project or workspace this chat works in'));
       const model = modelPicker(liveModels(), m ? R.modelText(m) : comp.engine || 'Model');
       return mode + project + model + (efforts.length ? pk('effort', comp.effort || efforts[0], efforts, 'How hard it thinks') : '') + setsPicker();
     }
@@ -694,6 +698,47 @@
     const text = ps.items.filter((i) => ps.picked.includes(i.key)).map((i) => i.label).join(', ');
     return perspPicker(x, text, ps.items.map((i) => ({ id: i.key, text: i.label, checked: ps.picked.includes(i.key), off: i.locked, help: i.help })));
   }
+  // COV-2 (D12): a live proposal's start-time options, kept per card beside its turn so a redraw keeps them: the project's
+  // saved engine and tags, the team policy notes, and a refused Start's engine or sync note (docs/rail/forms.md form.run-options)
+  const ppOpts = new Map();
+  const ppOf = (x) => { const k = `${chatId}|${x.card || x.id}`; if (!ppOpts.has(k)) ppOpts.set(k, { note: null, allow: false, read: false, engine: '', tags: [], policy: null }); return ppOpts.get(k); };
+  function ppRead(x) {
+    const o = ppOf(x), r = x.raw || {}, RO = window.RailRunOptions, L = window.RailRunOptionsLive;
+    if (o.read || !RO || !L || x.target !== 'Project' || !r.projectDir) return;
+    o.read = true;
+    L.defaults(r.projectDir).then((res) => {
+      if (!res.ok) return;
+      const d = RO.defaultsOf(res.data); o.engine = d.engine; o.tags = d.tags; paint();
+      if (d.projectKey) L.policyNotes({ projectKey: d.projectKey, guardrailsId: r.guardrailsId || '' }).then((p) => { o.policy = p.ok ? RO.policyNoteOf(p.data) : null; paint(); });
+    });
+  }
+  // the engine the card runs on when neither it nor the person named one: the project's saved one, unless it is Claude
+  const ppEngine = (x) => { const o = ppOf(x); return !x.raw?.engine && o.engine && o.engine !== 'claude' ? o.engine : ''; };
+  function ppNoteHtml(x) {
+    const o = ppOf(x), n = o.note, RO = window.RailRunOptions; if (!RO) return '';
+    if (n?.kind === 'engine') return R.choiceNote({ text: n.error, means: n.overridable ? RO.ENGINE_TICK : '', end: n.overridable ? R.checkbox({ label: RO.ENGINE_ALLOW, checked: o.allow, attrs: { 'data-pp-allow': x.id } }) : '' });
+    if (n?.kind === 'sync') return R.choiceNote({ text: n.title, means: n.note || '', rows: n.rows.map((text) => ({ text })), ways: [{ label: 'Cancel', kind: 'quiet', attrs: { 'data-pp-sync': `${x.id}|cancel` } }, ...(n.primary ? [{ label: n.primary.label, kind: 'primary', attrs: { 'data-pp-sync': `${x.id}|${n.primary.policy}` } }] : [])] });
+    const p = o.policy;
+    return p ? R.choiceNote({ needsYou: p.tone === 'amber', text: p.head, rows: [...p.rows.map((y) => ({ text: y.text })), ...(p.caps ? [{ text: p.caps }] : [])] }) : '';
+  }
+  // what Start sends from the card as it is now: a resend after a refusal reads it again, so an edit made since is never lost
+  function ppPicks(x) {
+    const r = x.raw || {}, target = TARGET_OF[x.target] || r.target, o = ppOf(x), eng = target === 'project' ? ppEngine(x) : '';
+    return { title: x.title, brief: x.brief, target, guardrailsId: x.guard || r.guardrailsId, ...(x.pkeys && R.prefs.flag('proposedPerspectives') ? { perspectives: x.pkeys } : {}), ...(target === 'none' ? {} : { sourceBranch: x.src ?? r.sourceBranch, featureBranch: x.feature ?? r.featureBranch, sameAsSource: x.onSource ?? !!r.sameAsSource }),
+      ...(eng ? { engine: eng } : {}), ...(target === 'project' && o.tags.length ? { tags: o.tags } : {}), ...(o.allow ? { allowUnguardedEngine: true } : {}) };
+  }
+  // Start, and a resend after a refusal: the note it may bring is the card's; any other refusal is the one toast
+  function ppStart(hit, x, picks) {
+    const o = ppOf(x), RO = window.RailRunOptions;
+    return busyBtn(hit, CL().act('start', { ...cardArgs(x), card: x.raw || {}, files: (x.ppFiles || []).slice(), picks, quiet: true }).then((res) => {
+      if (res.ok) { o.note = null; o.allow = false; return res; }
+      const r = RO?.refusalOf(res);
+      if (r?.kind === 'engine') o.note = { kind: 'engine', error: r.error, overridable: r.overridable };
+      else if (r?.kind === 'sync') o.note = { kind: 'sync', ...RO.syncNoteOf(r) };
+      else window.RailAdapter?.toast?.(`Could not start the task: ${res.error}`);
+      return res;
+    }));
+  }
   function liveProposalHtml(x) {
     const r = x.raw || {};
     if (!liveGuards) { liveGuards = []; CL().catalog('guardrails').then((g) => { if (g.ok) { liveGuards = (g.data?.guardrails || []).filter((y) => y.id !== 'permissive').map((y) => ({ id: y.id, text: y.name || y.id })); paint(); } else liveGuards = null; }); }
@@ -701,7 +746,9 @@
     const pp = (f, text, items, tip) => R.sentencePicker({ id: `pp-${x.id}-${f}`, text, tip, items: items.map((v) => (typeof v === 'string' ? { id: v, text: v, checked: v === text } : { ...v, checked: v.id === x[f] })), open: menu === `pp-${x.id}-${f}`, chevron: R.icon('chevron', 10) });
     const row = (k, v) => `<div class="cr"><span>${k}</span><span>${v}</span></div>`;
     const targets = ['No project', ...(r.projectDir ? ['Project'] : []), ...(r.workspaceId ? ['Workspace'] : [])];
-    const sentence = W('Task') + W('on') + W(esc(x.target === 'No project' ? 'no project' : x.project)) + W('with') + W(esc(x.workflow));
+    ppRead(x);
+    const eng = ppEngine(x), engLabel = eng ? window.RailTaskLive?.engines?.().find((e) => e.id === eng)?.label || eng : '';
+    const sentence = W('Task') + W('on') + W(esc(x.target === 'No project' ? 'no project' : x.project)) + W('with') + W(esc(x.workflow)) + (engLabel ? W('run by') + W(esc(engLabel)) : '');
     // COV-3 #6: the files of the message it answers (the you-turn before it), under the brief as the design draws them; × drops one
     // the files are read again while none have ids yet (an echo before the snapshot) and none were removed
     if (x.ppFiles === undefined || (!x.ppFiles.length && !x.ppCut)) { const all = threads.get(chatId) || [], k = all.findIndex((y) => y === x || (y.id === x.id && y.t === x.t)), you = all.slice(0, Math.max(0, k)).reverse().find((y) => y.t === 'you'); x.ppFiles = (you?.files || []).filter((f) => f && typeof f === 'object' && f.att); }
@@ -713,7 +760,7 @@
         + row('Run on the source branch', R.switchButton({ on: !!x.onSource, label: 'Run on the source branch', attrs: { 'data-pp-onsource': x.id } })))
       + row('Guardrails', pp('guard', guardText, liveGuards || [], 'Applies to every agent in this task'));
     const ppMenu = R.moreMenu({ id: `ppm:${x.id}`, label: `More for ${x.title}`, icon: R.icon('more', 16), open: menu === `ppm:${x.id}`, items: [{ id: 'composer', text: 'Edit in the composer', help: 'Puts all of it in the box to change; this card stays until you send' }] });
-    return R.taskProposal({ menu: ppMenu, title: x.title, why: x.why, sentence: sentence + livePersp(x), more: brief + more, open: x.open, nudge: '', hooks: { title: { 'data-pp-title': x.id }, more: { 'data-pp-more': x.id }, start: { 'data-pp-start': x.id }, later: { 'data-pp-later': x.id } }, start: 'Start', alts: null, kicker: 'Proposed', attrs: { 'data-anchor': x.id } });
+    return R.taskProposal({ menu: ppMenu, title: x.title, why: x.why, sentence: sentence + livePersp(x), more: brief + more, open: x.open, nudge: '', hooks: { title: { 'data-pp-title': x.id }, more: { 'data-pp-more': x.id }, start: { 'data-pp-start': x.id }, later: { 'data-pp-later': x.id } }, start: 'Start', alts: null, kicker: 'Proposed', extra: ppNoteHtml(x), attrs: { 'data-anchor': x.id } });
   }
   // Run with (D3): a one-stage workflow Worca proposed only to run a task is one TaskProposal; Start saves it and starts its
   // task (RailChatLive 'run-with'), Customise holds its steps and a plain Save workflow (dev's save, no start)
@@ -1117,9 +1164,9 @@
     if (comp.sending || sendingIn.has(from)) return;
     sendingIn.add(from); comp.sending = true; paint();
     const handed = aboutNow(), ctx = context || (handed ? { view: String(handed.kind || 'page').toLowerCase().replace(/[^a-z0-9-]+/g, '-').slice(0, 32), ...(handed.ref || {}) } : null);   // D16: the page it came from
-    const m = modelOf(comp.engine), pr = !chatId && comp.project !== 'No project' ? liveProjects().find((p) => p.name === comp.project) : null;
+    const m = modelOf(comp.engine), sc = !chatId && comp.project !== 'No project' ? liveScope(comp.project) : null;
     const checked = pc;   // the prompt check of the chat that sends: its held correction goes with this send's thread id
-    CL().act('send', { threadId: chatId || '', text, attachments: comp.attachments || [], ...(m ? { model: m.id, effort: comp.effort || (m.efforts || [])[0] } : {}), ...(pr ? { scope: { pinned: true, projectKey: pr.id } } : {}), ...(!chatId && comp.mcpOff ? { mcpOff: comp.mcpOff } : {}), ...(ctx ? { context: ctx } : {}), queue: true, key: `send:${chatId || 'new'}` }).then((r) => {
+    CL().act('send', { threadId: chatId || '', text, attachments: comp.attachments || [], ...(m ? { model: m.id, effort: comp.effort || (m.efforts || [])[0] } : {}), ...(sc ? { scope: sc } : {}), ...(!chatId && comp.mcpOff ? { mcpOff: comp.mcpOff } : {}), ...(ctx ? { context: ctx } : {}), queue: true, key: `send:${chatId || 'new'}` }).then((r) => {
       sendingIn.delete(from);
       if (r.ok) checked?.sent(text, { threadId: r.data?.threadId || from });   // a refused send posts nothing
       const here = (chatId || '') === from;
@@ -1275,7 +1322,7 @@
     if (efforts.length && !efforts.includes(next.effort)) next.effort = efforts[0];
     if (!chatId) { Object.assign(comp, next); paint(); return; }
     let p;
-    if (id === 'cp-project') { const pr = liveProjects().find((x) => x.name === v); p = CL().act('scope', { threadId: chatId, scope: pr ? { pinned: true, projectKey: pr.id } : { pinned: false } }); }
+    if (id === 'cp-project') p = CL().act('scope', { threadId: chatId, scope: liveScope(v) || { pinned: false } });
     else {
       // a chat with no reply yet has no engine: its model is the PATCH, and its first reply runs on it (dev's no-engine-yet)
       // dev's chatEngine: the thread's engine, else its model's, else claude, and none until its first reply (askChatEngine)
@@ -1427,8 +1474,14 @@
       const own = root.querySelector(`[data-own="${hit.dataset.answerGo}"]`)?.value.trim();
       busyBtn(hit, CL().act('answer', { ...cardArgs(x), ...(own ? { text: own } : { choice: x.optionIds?.[x.pick ?? 0] }) })); return true;
     }
-    if ((hit = on('[data-pp-start]'))) { x = turns().find((y) => y.id === hit.dataset.ppStart); if (!x?.card) return noId('start the task'); const r = x.raw || {}, target = TARGET_OF[x.target] || r.target;
-      busyBtn(hit, CL().act('start', { ...cardArgs(x), card: r, files: (x.ppFiles || []).slice(), picks: { title: x.title, brief: x.brief, target, guardrailsId: x.guard || r.guardrailsId, ...(x.pkeys && R.prefs.flag('proposedPerspectives') ? { perspectives: x.pkeys } : {}), ...(target === 'none' ? {} : { sourceBranch: x.src ?? r.sourceBranch, featureBranch: x.feature ?? r.featureBranch, sameAsSource: x.onSource ?? !!r.sameAsSource }) } })); return true; }
+    if ((hit = on('[data-pp-start]'))) { x = turns().find((y) => y.id === hit.dataset.ppStart); if (!x?.card) return noId('start the task'); ppStart(hit, x, ppPicks(x)); return true; }
+    if ((hit = on('input[data-pp-allow]'))) { x = turns().find((y) => y.id === hit.dataset.ppAllow); if (x) { ppOf(x).allow = hit.checked; paint(); root.querySelector(`[data-pp-allow="${CSS.escape(x.id)}"]`)?.focus(); } return true; }
+    if ((hit = on('[data-pp-sync]'))) {
+      const [id, policy] = hit.dataset.ppSync.split('|'); x = turns().find((y) => y.id === id); if (!x?.card) return noId('start the task');
+      const o = ppOf(x);
+      if (policy === 'cancel') { o.note = null; paint(); root.querySelector(`[data-pp-start="${CSS.escape(x.id)}"]`)?.focus(); say(window.RailRunOptions?.START_CANCELLED || 'Start cancelled'); return true; }
+      ppStart(hit, x, { ...ppPicks(x), syncPolicy: policy }); return true;   // the card as it is now, plus one key; the note stays, its button held, until dev answers
+    }
     if ((hit = on('[data-pp-later]'))) { x = turns().find((y) => y.id === hit.dataset.ppLater); if (!x?.card) return noId('set the proposal aside'); busyBtn(hit, CL().act('card-later', { ...cardArgs(x), run: true })); return true; }
     if ((x = turn('data-cmd-stop'))) { if (!x.session) return noId('stop the command'); busyBtn(hit, CL().act('cmd-stop', { sessionId: x.session })); return true; }
     if ((x = turn('data-term-stop'))) { if (x.term) busyBtn(hit, x.term.stop()); return true; }

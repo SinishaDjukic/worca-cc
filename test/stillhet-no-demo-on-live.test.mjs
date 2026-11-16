@@ -286,3 +286,18 @@ test('F-G-G2-02: a live task waiting on its question shows no sample question, u
     if (q.kind === 'clarify') assert.match(d.querySelector('#route-run:not([hidden]) #card').textContent, /Should the export include archived invoices\?/);
   }
 });
+
+// F-G-G5-01: the prototype's Invitation (`?invite=stillhet`) is demo input. Live Stillhet means `rail` is on, and the opt-in
+// rule (ui/public/stillhet.mjs shouldAskStillhet) never asks while it is on; today's app owns the real question. So live
+// draws no strip, no demo bug link, and its answers never land in browser storage alone.
+test('F-G-G5-01: live Stillhet never draws the demo Invitation for ?invite=stillhet', async () => {
+  const { w, d, calls } = await liveHost({ sources: EMPTY_SOURCES, lists: EMPTY_LISTS, read, hash: '#runs', search: '?invite=stillhet' });
+  await settle(120);
+  assert.equal(w.location.search, '?invite=stillhet');
+  assert.equal(w.RailShell.inviteStrip(), '', 'no Invitation on live');
+  assert.equal(d.querySelector('[data-stillhet="invitation"]'), null, 'none drawn');
+  assert.equal(d.querySelector('a[href="https://github.com/"]'), null, 'no demo bug link');
+  w.RailShell.answerInvite('yes');
+  assert.equal(w.localStorage.getItem('worca-rail.stillhetAsked'), null, 'an answer is never kept in the browser alone');
+  assert.deepEqual(calls.filter((c) => c.method !== 'GET'), [], 'and sends nothing');
+});

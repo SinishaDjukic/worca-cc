@@ -2031,3 +2031,8 @@ button.fr-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 /* comp.menu-sub: a group's opener ends in its ›; the open group's back row holds its ‹ where a choice holds its tick */
 .menu-sub-chev{display:inline-flex;margin-left:auto;padding-left:8px;color:var(--ink-2);}
 .menu-back-i{display:inline-flex;margin-right:4px;vertical-align:-1px;color:var(--ink-2);}
+/* ChoiceNote (F-cov23-05): at any card width its title wraps, each detail line takes its own row, unclamped (a note's
+   message is read whole), and its rows and ways wrap their buttons under the words: never the 420px card rule's row 2 */
+.choice-note .rc-word{white-space:normal;overflow-wrap:anywhere;}
+.choice-note > .rc-detail{grid-row:auto;display:block;white-space:normal;overflow:visible;-webkit-line-clamp:unset;overflow-wrap:anywhere;}
+.choice-note > .choice-note-row,.choice-note > .choice-note-ways{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;}

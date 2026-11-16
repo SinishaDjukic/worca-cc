@@ -162,6 +162,12 @@ export function projectKeyOf(thread = {}) {
   const c = thread && typeof thread.context === 'object' ? thread.context : null;
   return c && c.pinned !== false ? str(c.projectKey) : '';
 }
+/** The workspace a chat works in (F-G-G4-03): dev's context holds a projectKey, else a workspaceId (scope.mjs chatScopeOf);
+ *  '' when it is pinned to a project or to none. */
+export function workspaceIdOf(thread = {}) {
+  const c = thread && typeof thread.context === 'object' ? thread.context : null;
+  return c && c.pinned !== false && !str(c.projectKey) ? str(c.workspaceId) : '';
+}
 export function chatOf(thread = {}, { now = 0, unread = [], links = [], tasks = [], projects = [], livePids = new Map(), schedules = [], groups = [] } = {}) {
   const featureIds = new Set(arr(groups).filter((g) => g && g.kind === 'feature').map((g) => g.id));
   const key = projectKeyOf(thread), project = key ? str(arr(projects).find((p) => p && p.key === key)?.name) || key : '';
@@ -255,7 +261,7 @@ export function runsOf(history = [], tasks = [], { now = 0 } = {}) {
 function waitingTask(item, now, projects) {
   const once = item.kind === 'once', missed = once && item.status === 'missed', at = once ? item.runAt || item.scheduledFor : item.nextRunAt;
   const s = scheduleOf(item, { now, projects });
-  return pick('task', { id: `sched:${item.id}`, case: missed ? 'ticket-missed' : item.status === 'firing' ? 'ticket-firing' : 'scheduled', title: s.title, project: s.project, detail: missed ? 'Missed: it never started' : s.every, time: s.time, day: 'upcoming', labels: [], cost: null, archived: false, unread: false, pr: '', group: '', kind: 'Git', by: '', workflow: '', when: missed ? 'missed' : whenOf(at, now), ...(missed ? { missed: true } : {}) });
+  return pick('task', { id: `sched:${item.id}`, case: missed ? 'ticket-missed' : item.status === 'firing' ? 'ticket-firing' : 'scheduled', title: s.title, project: s.project, detail: missed ? 'Missed: it never started' : s.every, time: s.time, day: 'upcoming', labels: [], cost: null, archived: false, unread: false, pr: '', group: '', kind: 'Git', by: '', workflow: '', when: missed ? 'missed' : whenOf(at, now), ...(missed ? { missed: true } : {}), scheduleId: str(item.scheduleId) || str(item.id) });   // F-G-G5-02: the page it opens (a series' ticket opens its series)
 }
 
 // ---- projects ----

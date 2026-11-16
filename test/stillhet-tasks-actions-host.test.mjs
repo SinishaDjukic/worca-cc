@@ -147,6 +147,9 @@ test('create-pr: the Create PR dialog starts on the task\'s base and posts what 
   assert.match(d.querySelector('#card [data-key="menu:pdbase"]')?.textContent || '', /main/, 'the base picker starts on the task\'s own base');
   assert.doesNotMatch(d.querySelector('#card').textContent, /41 commits behind|2 new commits since the task started/, 'no demo base lines on a live task');
   const title = d.querySelector('#pd-title'), desc = d.querySelector('#pd-desc');
+  await settle(1600);   // past the demo's 1.4 s "writing for you": live never fills the prototype's sample body (its tests and "Closes #942")
+  assert.equal(d.querySelector('#pd-desc').value, '', 'a live task\'s PR description starts empty');
+  assert.doesNotMatch(d.querySelector('#card').textContent, /Closes #942|14 new tests/, 'no demo PR body on a live task');
   title.value = 'My title'; title.dispatchEvent(new w.Event('input', { bubbles: true }));
   desc.value = 'What it did'; desc.dispatchEvent(new w.Event('input', { bubbles: true }));
   const draft = d.querySelector('#pd-draft'); draft.checked = true; draft.dispatchEvent(new w.Event('change', { bubbles: true }));

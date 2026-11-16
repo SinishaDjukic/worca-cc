@@ -272,7 +272,7 @@ Any "Would…" or "Not connected to Worca yet." in B or D is **Wrong wiring**.
 | IN-09 | Missing cost tags; Tag these N tasks; Set a default for a project | Team metrics todos | `insights/untagged` | same | AB | rows equal `missingKeyTodos()`; Tag hands to Chat; Set a default opens project tags | W |
 | IN-10 | Shaping spend; Who spends where (heat) | Stats, cost heat grid | `insights/shaping`, `insights/heat` | same | AB | equal `shaping.groups`, `heatGrid()` | |
 | IN-11 | Team scope | Team metrics scope | team scope picker | same | AB | `GET /api/team-metrics/scopes` | |
-| IN-12 | Download CSV; Copy link | Stats export | Download CSV, copy link | same | AB | CSV equals `reportCsv`; the link has only what you narrowed (known: keeps `scope=`) | |
+| IN-12 | Download CSV; Copy link | Stats export | Download CSV, copy link | same | AB | CSV equals `reportCsv`; the link has only what you narrowed, no `scope=` | |
 | IN-13 | Six not-live pages: Why it cost, Review, Autonomy, Cache, Start to merge, Waiting on you | none | `insights/why`… | same | BD | live says not offered, never demo figures | |
 | IN-14 | Team metrics Timeline | `#team-metrics/timeline` | lands on By person | n/a | AB | known: no home, **Missing function** until a Team page | |
 | IN-15 | Team metrics enable, Push now, Check now | Team metrics | none | n/a | AB | known: no home | |

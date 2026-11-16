@@ -6,7 +6,7 @@
 import { createThreadModel } from '../../../../src/shared/ask-model.mjs';
 import { turnsOf, planView, planPicks, runWithTurn, partsOf } from './chat-turns.mjs';
 import { createTerminalLive } from './terminal-live.mjs';
-import { projectKeyOf } from './live-map.mjs';
+import { projectKeyOf, workspaceIdOf } from './live-map.mjs';
 import { perspectivesWith, chipsHiddenFor, DEFAULT_PERSPECTIVES } from '../../../../src/shared/shape/perspectives.mjs';
 import { ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 } from '../../../../src/shared/attach-bytes.mjs';
 
@@ -44,7 +44,8 @@ export function perspectiveChoices(picked) {
 
 /** POST /api/run's body for a TaskProposal's Start: the proposal card as dev's ask-panel.mjs collectCardBody reads it,
  *  with the person's `picks` (target, project folder, workflow, engine, guardrails, title, branches) over the card's own values.
- *  `picks.perspectives`: the "reviewed by" set (flag proposedPerspectives), sent as dev's run card sends it (`perspectives`). */
+ *  `picks.perspectives`: the "reviewed by" set (flag proposedPerspectives), sent as dev's run card sends it (`perspectives`).
+ *  COV-2: `picks.tags` (the project's saved tags, used when the card has none), `picks.syncPolicy` and `picks.allowUnguardedEngine`. */
 export function startBodyOf(card = {}, picks = {}) {
   const c = card || {}, p = picks || {};
   const target = p.target || c.target || 'project';
@@ -52,7 +53,11 @@ export function startBodyOf(card = {}, picks = {}) {
   const title = str(p.title || c.title).trim(); if (title) body.title = title;
   if (c.memoryScope && body.workflowId === 'wf_memory_defrag') body.memoryScope = c.memoryScope;
   if (Array.isArray(c.tags) && c.tags.length) body.tags = c.tags;
+  else if (Array.isArray(p.tags) && p.tags.length) body.tags = [...p.tags];   // COV-2: the project's saved tags, when the card names none
   if (p.engine || c.engine) body.engine = p.engine || c.engine;
+  // COV-2: a resend after a refusal is the same body plus one key: the base's sync policy, or the engine consent (never for Claude)
+  if (p.syncPolicy === 'origin' || p.syncPolicy === 'last-fetch') body.syncPolicy = p.syncPolicy;
+  if (p.allowUnguardedEngine === true && (body.engine || 'claude') !== 'claude') body.allowUnguardedEngine = true;
   if (Array.isArray(p.perspectives) && p.perspectives.length) body.perspectives = [...p.perspectives];
   if (Array.isArray(p.extras) && p.extras.length) body.extras = p.extras;   // COV-3 #6: the proposal's files, as classic's run card sends its pills
   if (c.source) { delete body.prompt; body.source = { type: 'plugin', plugin: c.source.plugin, sourceId: c.source.sourceId, taskId: c.source.taskId, ...(c.source.profile ? { profile: c.source.profile } : {}), ...(c.source.inputs ? { inputs: c.source.inputs } : {}) }; }
@@ -615,6 +620,7 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
     worktrees: (id) => threads.get(id)?.model?.worktrees?.() || [],   // dev's chat worktrees (snapshot + ask-worktrees)
     thread: (id) => threads.get(id)?.model?.thread?.() || null,
     projectKey: (id) => projectKeyOf(threads.get(id)?.model?.thread?.() || {}),   // the project the chat works in
+    workspaceId: (id) => workspaceIdOf(threads.get(id)?.model?.thread?.() || {}),   // else the workspace it works in (F-G-G4-03)
     flow, canFlow: (label, a = {}) => !!FLOW[label] && (!FLOW[label].needsPr || !!a.pr),
     keyOf,
     // F-a2-01: the composer's queue (a copy), Remove, Send now, and which chat each mount shows

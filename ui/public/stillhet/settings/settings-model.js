@@ -187,6 +187,25 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
   const updWords = (sv) => ({ latest: 'Up to date', available: `New version: ${short(sv.latest)}`, failed: updateFailed(sv).title, back: `An older version; ${short(sv.latest)} is the latest` }[sv.upd]);
   const outdated = (sv) => sv.upd === 'available' || sv.upd === 'failed' || sv.upd === 'back';
   const canUpdate = (sv) => sv.upd === 'available' || sv.upd === 'back';
+  // ---- General › About, live (F-G-G5-04): GET /api/app/version, as today's About card and sidebar marker read it; Check now
+  // posts its re-check. The server owns the cache and the daily check; a failed read says only the version is unknown. ----
+  const appVer = { vs: null, busy: false, read: false };
+  function readVersion(force = false) {
+    if (appVer.busy) return;
+    appVer.busy = true; appVer.read = true;
+    Promise.resolve().then(() => window.fetch(force ? '/api/app/version/check' : '/api/app/version', force ? { method: 'POST' } : undefined))
+      .then((r) => (r && r.ok ? r.json() : null)).catch(() => null)
+      .then((vs) => { appVer.busy = false; if (vs || !force) appVer.vs = vs; window.dispatchEvent(new Event('rail-settings')); });
+  }
+  const liveVer = () => { if (!appVer.read && liveOn()) readVersion(); return appVer.vs; };   // the demo and the gates read no route
+  const liveVerWords = () => {
+    const vs = liveVer(), cur = typeof vs?.current === 'string' && vs.current ? `**${short(vs.current)}**` : '';
+    if (!vs) return appVer.busy ? 'Checking…' : 'Its version could not be read';
+    if (vs.status === 'outdated' && vs.latest) return `${cur} · New version: ${short(vs.latest)}`;
+    return [cur, { 'up-to-date': 'Up to date', source: 'Source build' }[vs.status] || ''].filter(Boolean).join(' · ');
+  };
+  const LIVE_VERSION = { name: 'Version', help: 'From a source checkout this says Source build', say: liveVerWords,
+    acts: [{ label: 'Check now', id: 'version-check', when: () => appVer.vs?.status !== 'source' && appVer.vs?.enabled !== false, live: () => readVersion(true) }] };
   const VERSIONS = O(['1.20.0', '1.20, the latest'], ['1.19.0', '1.19'], ['1.18.2', '1.18.2'], ['1.17.0', '1.17']);
 
   // ---- General › Setup assistant: one Dialog, one step per screen (docs/rail/forms.md). No workspace walkthrough. ----
@@ -379,7 +398,8 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
         { name: 'Model keys', help: 'With a team credential broker, keys come from it and this opens its key page', say: 'Each engine signs in by itself, in Models › Sign-ins', acts: [{ label: 'Open Models', min: 'expert', go: 'models', help: 'Models › Sign-ins' }] },
         { name: 'GitHub', say: 'Pull requests and issues use this machine\'s GitHub sign-in (`gh`)' },
       ] },
-      { title: 'About', sample: true, rows: [
+      { title: 'About', only: 'live', rows: [LIVE_VERSION] },
+      { title: 'About', sample: true, only: 'demo', rows: [
         { name: 'Version', help: 'From a source checkout this says Source build and offers no Update', say: '**{verNow}** · {updNow}', vals: { verNow: (sv) => short(sv.ver), updNow: updWords },
           acts: [
             { label: (sv) => (sv.upd === 'failed' ? 'Try again' : 'Update'), id: 'update', when: (sv) => canUpdate(sv) || sv.upd === 'failed', do: (sv) => { if (!sv.updTried) { sv.updTried = true; sv.upd = 'failed'; sv.__open = 'more:general/About/Version'; return ''; } sv.ver = sv.latest; sv.upd = 'latest'; return `Worca ${short(sv.ver)} is running`; } },
@@ -454,7 +474,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
         { label: 'Reset all', help: 'Every feature back to its default; asks first', off: () => (liveOn() ? window.RailUI.NOT_LIVE_SENTENCE : flagsChanged().length ? '' : 'Nothing to reset: every feature is at its default'),
           confirm: { text: 'Turn every Labs feature back to its default?', yes: 'Reset all', then: () => { for (const f of flagsChanged()) window.RailUI.prefs.setFlag(f.key, f.on); return 'Labs: back to its defaults'; } } },
       ], rows: [
-        { name: 'Guide', say: 'How Labs works, and what a stage means', acts: [{ label: 'Open', say: window.RailWould('open the Labs guide in a new tab') }] },
+        { name: 'Guide', say: 'How Labs works, and what a stage means', acts: [{ label: 'Open', off: () => (liveOn() ? window.RailUI.NOT_LIVE_SENTENCE : ''), say: window.RailWould('open the Labs guide in a new tab') }] },   // F-G-G4-07: classic has no Labs guide; live, it is not in Stillhet yet
       ], get groups() { return liveOn() ? liveLabsGroups() : DEMO_LABS; } },
     ] },
 

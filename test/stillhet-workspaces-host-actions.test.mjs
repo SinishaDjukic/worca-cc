@@ -185,3 +185,32 @@ test('a question\'s at link sends open-in-editor with the evidence file; its Yes
   assert.deepEqual(sent(h.calls).at(-1), ['PUT', `/api/workspaces/${WS}/defaults`, { tags: ['team: shop', 'cost-center: 7'], labels: ['shop'] }]);
   assert.deepEqual(h.w.__would, []);
 });
+
+test('F-G-G5-06: a workspace question names its projects by name, never by key: the page, its Yes toast and the Pulse row', async () => {
+  const h = await projectsHost({ hash: HERE });
+  const q = page(h.d).querySelector('[data-ws-yes]').closest('.turn-row').textContent;
+  assert.match(q, /seed-ok connects to seed-local\?/);
+  const need = h.w.RailProjects.needItems().find((x) => x.kind === 'workspace');
+  assert.equal(need.meta, 'Does seed-ok connect to seed-local?', 'the Pulse row');
+  page(h.d).querySelector('[data-ws-yes]').click(); await settle(120);
+  assert.match(saidText(h.d), /seed-ok connects to seed-local/);
+  for (const t of [q, need.meta, saidText(h.d)]) assert.ok(!t.includes(KEYS.ok) && !t.includes(KEYS.local), `no raw key in "${t}"`);
+});
+
+test('F-G-G4-02: the workspace page names its projects (order, edit rows, map) by name, and draws its markdown description as Prose', async () => {
+  const { marked } = await import('marked');
+  const createDOMPurify = (await import('dompurify')).default;
+  const md = '# Workspace: Seed shop\n\n## Overview\n\nA shop over **two** projects.';
+  const spaces = clone(PJ_SOURCES.workspaces); spaces.workspaces[0].description = md;
+  const h = await projectsHost({ hash: HERE, sources: { workspaces: spaces }, beforeScripts: (win) => { win.__worcaTestHooks = { askMarkdown: () => Promise.resolve({ marked, createDOMPurify }) }; } });
+  await settle(200);
+  const p = page(h.d);
+  assert.match(p.querySelector('.ws-order').textContent, /seed-(ok|local) then seed-(ok|local)/, 'the order');
+  const about = p.querySelector('.ws-about .prose');
+  assert.ok(about, 'the description is the library\'s Prose');
+  assert.ok(about.querySelector('h1, h2'), 'its headings are drawn, not raw');
+  assert.doesNotMatch(p.querySelector('.ws-about').textContent, /^#|## Overview/m);
+  pickMore(h.d, 'edit'); await settle(100);
+  const names = [...p.querySelectorAll('.set-row-n, .sr-name, [class*="row-n"]')].map((x) => x.textContent.trim());
+  for (const t of [p.textContent, ...names]) assert.ok(!t.includes(KEYS.ok) && !t.includes(KEYS.local), 'no raw key on the page');
+});

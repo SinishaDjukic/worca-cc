@@ -10,6 +10,8 @@ import { startScheduleLive } from './schedule-live.mjs';
 import { startMarketLive } from './market-live.mjs';
 import { startProjectsLive } from './projects-live.mjs';
 import { startInsightsLive } from './insights-live.mjs';
+import { startRunOptionsLive } from './run-options-live.mjs';
+export * as runOptionsWords from './run-options-live.mjs';   // its pure helpers: the words the New task form and the proposal draw (COV-2)
 import { progressOfState } from './chat-turns.mjs';
 import { workModeOf } from '../../../../src/shared/ask-run-snapshot.mjs';
 import { USAGE_REFRESH_MS } from '../../design-system/components/usage.mjs';
@@ -101,6 +103,9 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
           pauseReason: l.pauseReason, pauseDetail: l.pauseDetail, limitEngine: l.limitEngine, startedAt: l.startedAt, stepper: l.stepper, ...(l.pauseAfterStep ? { pauseAfterStep: true } : {}) } };
     } });
 
+  // New task's run options (COV-2): run-options-live owns every read and write of the form's and the proposal's options
+  const runOptions = startRunOptionsLive({ fetch, toast });
+
   // Schedules (D4): schedule-live owns every Schedules request; the store still moves only on the server's frames
   const schedule = startScheduleLive({ fetch, setTimeout, clearTimeout, on, now, tasksOf: () => world.part?.('runs') || [] });
 
@@ -153,11 +158,28 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
   // A source's read: the workspaces list, then every workspace's map in parallel (a failed map read leaves that
   // workspace without questions, never the list unread); any other source is its one GET.
   async function load(name) {
+    if (name === 'threads') return allThreads();
     if (name !== 'workspaces') return get(SOURCES[name]);
     const list = await get(SOURCES.workspaces), maps = {};
     await Promise.all((Array.isArray(list?.workspaces) ? list.workspaces : []).filter((x) => x && typeof x.id === 'string')
       .map((x) => get(`/api/workspaces/${encodeURIComponent(x.id)}/map`).then((m) => { maps[x.id] = m; }, () => {})));
     return { ...list, maps };
+  }
+  // SX-10, F-a1-03: every chat, not only the API's first page: its cursor is followed to the end and the pages land as one
+  // answer, so the bar's chats part is drawn once (patch by parts), never page by page. A cursor seen twice ends the walk.
+  const THREAD_PAGES_MAX = 100;
+  // no cursor (one page, today's usual answer): the first answer as it came, with no extra wait
+  const allThreads = () => get(SOURCES.threads).then((first) => (typeof first?.cursor === 'string' && first.cursor ? morePages(first) : first));
+  async function morePages(first) {
+    const rows = Array.isArray(first?.threads) ? [...first.threads] : [], seen = new Set();
+    let cursor = typeof first?.cursor === 'string' ? first.cursor : null;
+    for (let i = 0; cursor && !seen.has(cursor) && i < THREAD_PAGES_MAX; i++) {
+      seen.add(cursor);
+      const page = await get(`${SOURCES.threads}&cursor=${encodeURIComponent(cursor)}`);
+      if (Array.isArray(page?.threads)) rows.push(...page.threads);
+      cursor = typeof page?.cursor === 'string' ? page.cursor : null;
+    }
+    return first && typeof first === 'object' ? { ...first, threads: rows, cursor: null } : first;
   }
   // its list may predate a settle: a row read asked while it is out becomes one more full read after it (a newer full read
   // may still run beside it; the stamps order those two)
@@ -442,7 +464,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
   begin();
   armBudgetTick();
   return {
-    chat, task, workflow, schedule, market, projects: projectsLive, insights,
+    chat, task, workflow, schedule, market, projects: projectsLive, insights, runOptions,
     stop: () => { stopped = true; insights.stop(); clearTimeout(reconnect); clearTimeout(budgetTick); for (const t of [...Object.values(timers), ...runTimers.values()]) clearTimeout(t); sock?.close(); },
     refresh,
     retry,
