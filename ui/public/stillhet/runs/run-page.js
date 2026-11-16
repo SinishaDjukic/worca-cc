@@ -888,7 +888,7 @@ async function liveComment() {
 // is the runner's one toast, and the form keeps its text.
 async function liveFollowUp() {
   if (ui.busy) return;   // its POST is on its way: a second press sends nothing and says nothing
-  const text = (document.getElementById('after-task')?.value || '').trim(), now = v0().finished;
+  const text = (document.getElementById('after-task')?.value || '').trim(), now = v0().ended;
   ui.afterDraft = text;
   // never an invented prompt: an empty text is refused in the form itself, under its field
   ui.afterErr = text ? '' : 'Say what the next task should do';
@@ -1014,10 +1014,10 @@ function stripHtml(v) {
   const acts = (yes) => R.confirmActions({ yes });
   if (ui.dialog === 'after') {
     // live: dev has no route that starts a task when a PR merges, so that choice is left out (V-TW-15)
-    const opts = v.finished ? ['Now, as a follow-up'] : ['When this task finishes'].concat(v.place.pr && !LIVE_PAGE() ? ['When its PR merges'] : []);
+    const opts = v.ended ? ['Now, as a follow-up'] : ['When this task finishes'].concat(v.place.pr && !LIVE_PAGE() ? ['When its PR merges'] : []);
     const err = ui.afterErr ? ' aria-invalid="true" aria-describedby="after-task-note"' : '';   // live: an empty text, refused in place
     return R.confirmForm({ form: 'after', text: v.runAfter.label, body: `<input class="input input-sm" id="after-task" type="text" placeholder="What should the next task do?" aria-label="Task for the next task" data-key="after-task" value="${esc(ui.afterDraft || '')}"${err}>
-      ${opts.length > 1 ? `<select class="select input-sm" id="after-when" aria-label="When it starts" data-key="after-when">${opts.map((o) => `<option>${esc(o)}</option>`).join('')}</select>` : `<span class="rtab-dim" id="after-when-t">${esc(opts[0])}</span>`}${acts(v.finished ? 'Start task' : 'Schedule')}${ui.afterErr ? `<span class="fld-err" id="after-task-note" role="alert" style="flex:1 0 100%">${esc(ui.afterErr)}</span>` : ''}` });
+      ${opts.length > 1 ? `<select class="select input-sm" id="after-when" aria-label="When it starts" data-key="after-when">${opts.map((o) => `<option>${esc(o)}</option>`).join('')}</select>` : `<span class="rtab-dim" id="after-when-t">${esc(opts[0])}</span>`}${acts(v.ended ? 'Start task' : 'Schedule')}${ui.afterErr ? `<span class="fld-err" id="after-task-note" role="alert" style="flex:1 0 100%">${esc(ui.afterErr)}</span>` : ''}` });
   }
   if (ui.dialog === 'changes') {
     return R.confirmForm({ form: 'changes', text: ui.changesFor === 'Revise' ? 'Tell Worca what to change in the workflow' : v.id === 'plan' || v.id === 'outline' ? 'Tell the planner what to change' : 'Say what to change', body: `${R.suggestionField({ id: 'changes-text', cls: 'pd-wide', value: ui.changesText || '', rows: 3, placeholder: v.id === 'plan' || v.id === 'outline' ? 'What should the plan do differently?' : 'What should change?', writingPlaceholder: 'Drafting from the 2 open issues…', writing: ui.changesDraft, attrs: { 'data-key': 'changes-text' }, act: LIVE_PAGE() ? '' : ui.changesDraft ? R.stopWriting({ attrs: { 'data-stopdraft': 'changes', 'data-key': 'draft-stop', title: null } }) : R.suggestButton({ tip: draftTip('Draft it from the open issues'), label: 'Draft it from the open issues', attrs: { 'data-draft': 'changes', 'data-key': 'draft-changes' } }) })}
