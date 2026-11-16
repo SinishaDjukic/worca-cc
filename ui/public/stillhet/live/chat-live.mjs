@@ -243,8 +243,8 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
       const end = applyAll(e, q);
       // a reply runs: its replay is asked for again now the model can take it (classic loadThread), in case the
       // subscribe sent before the read was dropped by a socket that was not open yet
-      if (snap.inFlight) send({ type: 'subscribe', threadId: id });
-      catchUp(e, id);
+      // that subscribe is also the catch-up for a frame the waiting batch adopted, so none is sent for it again
+      if (snap.inFlight) { send({ type: 'subscribe', threadId: id }); const lv = e.model.live(); if (lv?.adopted) e.caught = lv.messageId; }
       notify(id);
       checkRunWith(id);
       settle(id, end || 'load');

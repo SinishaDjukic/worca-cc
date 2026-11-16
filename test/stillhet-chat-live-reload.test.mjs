@@ -151,3 +151,16 @@ test('F-a1-05: a queued message waits for the caught-up reply\'s one end', async
   assert.equal(posts().length, 1, 'sent exactly once');
   assert.equal(posts()[0].body.text, 'next');
 });
+
+test('F-a1-05 reload: a read that finds a reply running and adopted a waiting frame subscribes once more, not twice', async () => {
+  const r = rig({ body: () => streaming('Hel'), held: () => true });
+  const p = r.live.open('ask_1');
+  await tick();
+  r.live.frame(DELTA(7, '!'));
+  r.release(); await p;
+  assert.deepEqual(r.sent, [SUB, SUB], 'the subscribe before the read and one after it');
+  r.live.frame(DELTA(8, '?'));
+  assert.deepEqual(r.sent, [SUB, SUB], 'the next broadcast frame asks for nothing more');
+  for (const f of [START(1), DELTA(2, 'Hel'), DELTA(3, 'lo'), DELTA(4, ' wor'), DELTA(5, 'ld')]) r.live.frame(f);
+  assert.equal(wordsOf(r.live.turns('ask_1')), 'Hello world');
+});
