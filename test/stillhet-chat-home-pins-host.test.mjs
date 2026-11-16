@@ -4,7 +4,7 @@
 // a failed read keeps what is drawn, and a read that answers after a pin keeps the pin. The demo (the prototype) shows the same.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { liveHost, go, settle, until, closeHosts, toastText, LISTS } from './helpers/stillhet-chat-live-host.mjs';
+import { liveHost, go, settle, until, closeHosts, toastText } from './helpers/stillhet-chat-live-host.mjs';
 import { workflowsHost, WF_LISTS } from './helpers/stillhet-workflows-host.mjs';
 import { stillhetHost } from './helpers/stillhet-host.mjs';
 
@@ -111,6 +111,28 @@ test('F-5-11: a pins read that answers after a pin keeps the pin', async () => {
   assert.deepEqual(starters(d), ['Shaper', 'Lean'], 'the PUT answer is drawn');
   h.release(); await settle(80);
   assert.deepEqual(starters(d), ['Shaper', 'Lean'], 'the older read is dropped');
+});
+
+test('F-5-11: a home with no starters (Requirements\' Shape a feature) never reads the pins', async () => {
+  const { w, d, calls } = await liveHost({ hash: '#chat/ask_1' });
+  await settle(60);
+  const el = d.createElement('div'); d.body.append(el);
+  const home = w.RailConversation.mount(el, { mode: 'ask', title: 'Shape a feature' });
+  const n0 = pinGets(calls);
+  home.show(''); await settle(40);
+  home.show(''); await settle(40);
+  assert.equal(pinGets(calls), n0, 'shown twice: no pins read');
+  assert.equal(el.querySelector('.home-starters'), null, 'it draws no starters');
+});
+
+test('F-5-11: a fresh read whose workflows read fails keeps the names, never a bare id', async () => {
+  let pins = ['wf_shape'], flowsDown = false;
+  const { w, d } = await liveHost({ hash: '#chat', read: (u) => (u === PINS ? [200, { pins: [...pins] }] : u === '/api/workflows' && flowsDown ? [500, { error: 'down' }] : null) });
+  await until(() => starters(d).includes('Shaper'));
+  pins = ['wf_shape', 'wf_new']; flowsDown = true;   // a pin of a workflow this page has not read yet, and its read fails
+  await go(w, '#chat/ask_1'); await go(w, '#chat', 120);
+  assert.deepEqual(starters(d), ['Shaper'], 'what is drawn stays');
+  assert.ok(!starters(d).includes('wf_new'), 'never the bare id');
 });
 
 test('F-5-11 demo: a pin made in Workflows is a starter on Chat home', async () => {

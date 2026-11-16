@@ -294,7 +294,8 @@
       const ids = p.data?.pins || [];
       if (!liveFlows || ids.some((id) => !liveFlows.some((w) => w.id === id))) {
         const w = await CL().catalog('workflows', { fresh: true });
-        if (w.ok) liveFlows = (w.data?.workflows || []).map((x) => ({ id: x.id, name: x.name || x.id }));
+        if (!w.ok) return;   // a pin's name is unknown: what is drawn stays (names from the last good read), never a bare id
+        liveFlows = (w.data?.workflows || []).map((x) => ({ id: x.id, name: x.name || x.id }));
       }
       if (seq !== pinsSeq || !liveFlows) return;
       const next = ids.map(flowName);
@@ -1786,7 +1787,7 @@
       el.classList.remove('is-flash'); void el.offsetWidth; el.classList.add('is-flash');
       return true;
     },
-    show: (id) => { if (LIVE()) { listen(); CL().look(root, id || '', () => !hiddenNow()); if (id) CL().open(id); else loadPins({ fresh: true }); } setTimeout(() => settle(id), 0); const other = id !== chatId; if (other) { drafts.set(chatId, { ...comp, text: root.querySelector('[data-composer-t]')?.value ?? comp.text, busy: false, queue: [], listening: false, sending: false }); opened = new Set(); hover = null; menu = ''; const was = drafts.get(id || ''); comp = was && (id || was.text || was.intent || was.mode !== 'ask') ? { ...was } : { ...fresh(), project: id ? data().chats.find((c) => c.id === id)?.project || 'No project' : lastProject };   /* a new chat starts on the project you added last */ comp.sending = sendingIn.has(id || ''); } chatId = id || ''; paint(!other); if (id) { const box = root.querySelector('.convo-scroll'); if (box) { box.scrollTop = box.scrollHeight; paintTimeline(); } } },
+    show: (id) => { if (LIVE()) { listen(); CL().look(root, id || '', () => !hiddenNow()); if (id) CL().open(id); else if (!side && !opts.mode) loadPins({ fresh: true }); }   /* a home with no starters (Requirements' Shape a feature, the side panel) reads no pins */ setTimeout(() => settle(id), 0); const other = id !== chatId; if (other) { drafts.set(chatId, { ...comp, text: root.querySelector('[data-composer-t]')?.value ?? comp.text, busy: false, queue: [], listening: false, sending: false }); opened = new Set(); hover = null; menu = ''; const was = drafts.get(id || ''); comp = was && (id || was.text || was.intent || was.mode !== 'ask') ? { ...was } : { ...fresh(), project: id ? data().chats.find((c) => c.id === id)?.project || 'No project' : lastProject };   /* a new chat starts on the project you added last */ comp.sending = sendingIn.has(id || ''); } chatId = id || ''; paint(!other); if (id) { const box = root.querySelector('.convo-scroll'); if (box) { box.scrollTop = box.scrollHeight; paintTimeline(); } } },
     start: (mode, text, project) => { chatId = ''; comp = { ...fresh(mode), text: text || '', ...(project ? { project } : {}) }; if (!side) window.RailShell.go('chat'); paint(false); root.querySelector('[data-composer-t]')?.focus(); },   /* what another place hands over stays in the box, on its project */
     pin: (w, on) => { const next = on ? [...new Set([...shownPins(), w])] : shownPins().filter((x) => x !== w); if (LIVE()) setPins(next, on ? `Pinned ${w}` : `Unpinned ${w}`); else { pins = next; refreshAll(); } },
     handOver: ({ mode = 'ask', about, text = '', ph = '', project, workflow, ref = null }) => {   // ref: the page's own ids, posted as context (D16)   // rail.hand-to-chat: the one way a place sends something to Chat
