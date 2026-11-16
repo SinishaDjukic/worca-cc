@@ -1367,6 +1367,12 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .stage-part-b.is-open svg{transform:rotate(180deg);}
 @media (max-width: 600px){ .stage-part-b span{display:none;} }
 .rl-search-res .menu-item > .kind-mark,.rl-search-res .menu-item > svg{flex:none;margin-right:8px;color:var(--ink-2);}
+/* A result is two rows: its name, then where it lives under it. A long where (a home not in Stillhet yet) wraps inside
+   the popover; it never takes the name's room (F-W3a1-10). */
+.rl-search-res .menu-item{display:grid;grid-template-columns:auto minmax(0,1fr);row-gap:1px;height:auto;align-items:center;}
+.rl-search-res .menu-item > .kind-mark,.rl-search-res .menu-item > svg{grid-column:1;grid-row:1;}
+.rl-search-res .menu-item > .mi-l{grid-column:2;grid-row:1;}
+.rl-search-res .menu-item > .mi-hint{grid-column:2;grid-row:2;margin-left:0;white-space:normal;overflow-wrap:anywhere;font:400 var(--fs-meta)/1.35 var(--sans);color:var(--ink-2);}
 
 /* InView: what you keep in view, in the top bar. Its marks hold still: they say where a thing stands, never pulse. */
 .in-view{display:inline-flex;align-items:center;gap:2px;margin-right:6px;padding-right:8px;border-right:1px solid var(--line);}

@@ -2,7 +2,7 @@
 // prototype's Marketplace records (ui/public/stillhet/live/market-map.mjs), the one place dev's field names are read.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { marketOf, pluginsOf, kindOf, nameOf, brandOf, setupFieldsOf } from '../ui/public/stillhet/live/market-map.mjs';
+import { marketOf, pluginsOf, kindOf, nameOf, brandOf, setupFieldsOf, plainLabel } from '../ui/public/stillhet/live/market-map.mjs';
 import { githubWebUrl } from '../src/shared/plugin-access.mjs';
 
 const SHA = 'a'.repeat(40), NOW = Date.parse('2026-11-14T12:00:00Z');
@@ -56,10 +56,46 @@ test('pluginsOf: update from latest.version, needsSetup from setup.ok false, one
 test('pluginsOf: asks are the inventory secrets when not installed, the config labels when installed', () => {
   const s = snap('slack-chat', { inventory: inv({ chatChannels: [{ id: 'main', displayName: 'Slack', platform: 'slack', secrets: ['botToken', 'appToken'] }] }) });
   const [p] = pluginsOf([market({ plugins: [s] })], [], {});
-  assert.deepEqual(p.asks, ['botToken', 'appToken']); assert.equal(p.brand, 'brand-slack'); assert.equal(p.kind, 'Chat channels');
+  assert.deepEqual(p.asks, ['Bot token', 'App token']); assert.equal(p.brand, 'brand-slack'); assert.equal(p.kind, 'Chat channels');
   const cfg = { sources: [], channels: [{ id: 'main', schema: [{ key: 'botToken', label: 'Bot token', secret: true, required: true, advanced: false }, { key: 'x', label: 'X', required: false }], values: { botToken: { set: false } } }] };
   const [q] = pluginsOf([market({ plugins: [s] })], [row('slack-chat')], { 'slack-chat': cfg });
   assert.deepEqual(q.asks, ['Bot token']);
+});
+
+test('F-5-15: an installed record carries its pinned sha7 and the update\'s sha7; a catalogue-only record has neither', () => {
+  const markets = [market({ plugins: [snap('jira-source'), snap('free')] })];
+  const rows = [row('jira-source', { latest: { version: '0.2.0', sha: 'c'.repeat(40), marketplace: 'mkt-a', access: [] } }), row('quiet')];
+  const [j, f, q] = pluginsOf(markets, rows, {});
+  assert.equal(j.pinned, 'bbbbbbb'); assert.equal(j.updateSha, 'ccccccc');
+  assert.equal(j.source.sha, 'b'.repeat(40), 'install and View its source keep the full sha');
+  assert.equal(f.pinned, ''); assert.equal(f.updateSha, '');
+  assert.equal(q.pinned, 'bbbbbbb'); assert.equal(q.updateSha, '', 'no latest: no update sha');
+  const [l] = pluginsOf([], [row('mine', { marketplace: null, linked: true, repo: '/tmp/mine', pinnedSha: null })], {});
+  assert.equal(l.pinned, '');
+});
+
+test('V3-13: plainLabel turns keys into plain words (JIRA_API_TOKEN, apiToken, botToken, GITHUB_TOKEN, \'\')', () => {
+  assert.equal(plainLabel('JIRA_API_TOKEN'), 'Jira API token');
+  assert.equal(plainLabel('apiToken'), 'API token');
+  assert.equal(plainLabel('botToken'), 'Bot token');
+  assert.equal(plainLabel('GITHUB_TOKEN'), 'GitHub token');
+  assert.equal(plainLabel('webhook-secret'), 'Webhook secret');
+  assert.equal(plainLabel('slackAppToken'), 'Slack app token');
+  assert.equal(plainLabel('BASE_URL'), 'Base URL');
+  assert.equal(plainLabel(''), '');
+});
+
+test('F-5-16 / V3-13: needs come from the config labels when installed; inventory keys and label-less schema fields read as plain words with the raw key kept', () => {
+  const s = snap('slack-chat', { inventory: inv({ chatChannels: [{ id: 'main', displayName: 'Slack', platform: 'slack', secrets: ['botToken', 'appToken'] }], modelSecrets: [{ key: 'OPENAI_KEY', label: 'OpenAI key' }, { key: 'GITHUB_TOKEN' }] }) });
+  const [p] = pluginsOf([market({ plugins: [s] })], [], {});
+  assert.deepEqual(p.needs, [{ label: 'Bot token', key: 'botToken', secret: true }, { label: 'App token', key: 'appToken', secret: true }, { label: 'OpenAI key', key: '', secret: true }, { label: 'GitHub token', key: 'GITHUB_TOKEN', secret: true }]);
+  assert.deepEqual(p.asks, p.needs.map((n) => n.label));
+  const cfg = { sources: [{ id: 'jira', schema: [{ key: 'apiToken', label: 'Jira API token', secret: true, required: true }, { key: 'JIRA_SITE', required: true }], values: {} }], channels: [] };
+  const [q] = pluginsOf([market({ plugins: [s] })], [row('slack-chat')], { 'slack-chat': cfg });
+  assert.deepEqual(q.needs, [{ label: 'Jira API token', key: '', secret: true }, { label: 'Jira site', key: 'JIRA_SITE', secret: false }]);
+  assert.deepEqual(q.asks, ['Jira API token', 'Jira site']);
+  const f = setupFieldsOf(cfg);
+  assert.deepEqual(f.map((x) => [x.key, x.label, x.rawKey]), [['apiToken', 'Jira API token', undefined], ['JIRA_SITE', 'Jira site', 'JIRA_SITE']]);
 });
 
 test('source.webUrl: githubWebUrl for a GitHub market (its full sha), null for a folder; a linked row is market linked', () => {
