@@ -45,9 +45,7 @@ curve; everything else is still. Filmed from the run page: `plans/rail/mocks/mot
   spinner, a skeleton shimmer, a parallax, motion on scroll, or anything that runs without a state change.
   The named exceptions are the away screensaver (`awayShows`, `awayScreen`): with Away and Keep awake on and the window
   focused, it starts after 5 idle minutes and is off under reduced motion; any input hides it and does not reach the page;
-  and the Design stage ([Design stage exceptions](../design-system.md#design-stage-exceptions)); and the busy button
-  (`busy`, `button({ busy: true })`): a ring inside the button, over its hidden label, only while its action runs (a
-  state change), gone when it settles, and a still ring under reduced motion (`comp.button-busy`).
+  and the Design stage ([Design stage exceptions](../design-system.md#design-stage-exceptions)).
 - **Reduced motion** (`prefers-reduced-motion`): every timing is 0; the breathing is a still colour, the shimmer a still
   wash, the flash a still outline that stays for the length of `flash`, and the page jumps instead of scrolling.
 - **In code:** a page that draws itself again after a change draws with `morph(target, html)` from

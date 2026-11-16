@@ -51,7 +51,7 @@
   const R = window.RailUI;
   document.getElementById('try-chime')?.addEventListener('click', () => R.playChime(window));
   document.addEventListener('click', (e) => { const b = e.target.closest?.('.rail-copy'); if (b) R.copyFrom(b); });   // CopyButton: one shared copy, Copied or Could not copy
-  document.addEventListener('click', (e) => { const b = e.target.closest?.('[data-try-busy]'); if (b) R.busy(b, new Promise((r) => setTimeout(r, 1500))); });   // Button: busy while its action is out
+  document.addEventListener('click', (e) => { const b = e.target.closest?.('[data-try-busy]'); if (b) R.busy(b, { label: b.dataset.tryBusy, until: new Promise((r) => setTimeout(r, 1500)) }); });   // Button: busy says what it is doing while its action is out
   const P = (d) => `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d}"></path></svg>`;
   const CHEV = P('M6 9.5l6 6 6-6'); const X = P('M7 7l10 10M17 7 7 17'); const MERGE = P('M6 7.7v8.6M6 7.7c0 2.4 2.5 4.3 9.8 4.3');
   const DOTS = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"></circle><circle cx="12" cy="12" r="1.8"></circle><circle cx="19" cy="12" r="1.8"></circle></svg>';
@@ -62,7 +62,8 @@
   const more = R.button({ label: 'More for this run', iconOnly: true, title: false, icon: DOTS });
   const EX = {
     Button: [['Each role', R.button({ label: 'Merge', kind: 'primary' }) + R.button({ label: 'Check out' }) + R.button({ label: 'Open the graph', kind: 'quiet' }) + R.button({ label: 'Stop', kind: 'danger' })],
-      ['Busy: rest, busy, back', R.button({ label: 'Save' }) + R.button({ label: 'Save', busy: true }) + R.button({ label: 'Save', kind: 'primary', attrs: { 'data-try-busy': '', title: 'Press it: busy for 1.5s, then back' } })],
+      ['Busy says what it is doing: Primary, Secondary, Small', R.button({ label: 'Create PR', kind: 'primary', busy: { label: 'Creating PR…' } }) + R.button({ label: 'Start the task', busy: { label: 'Starting the task…' } }) + R.button({ label: 'Resume', kind: 'quiet', busy: { label: 'Resuming…' } })],
+      ['Press one: busy for 1.5s, then back', R.button({ label: 'Create PR', kind: 'primary', attrs: { 'data-try-busy': 'Creating PR…' } }) + R.button({ label: 'Start the task', attrs: { 'data-try-busy': 'Starting the task…' } }) + R.button({ label: 'Resume', kind: 'quiet', attrs: { 'data-try-busy': 'Resuming…' } })],
       ['Icon only, with a split', R.button({ label: 'Close', kind: 'quiet', iconOnly: true, icon: X }) + R.splitButton({ main: { label: 'Merge PR', kind: 'primary', icon: MERGE }, moreLabel: 'More actions', chevron: CHEV })],
       ['Disabled', R.button({ label: 'Merging…', kind: 'primary', attrs: { disabled: true } })],
       ['Icons: the Settings gear beside sun, at 14, 16 and 20px', [14, 16, 20].map((n) => `${R.icon('gear', n)} ${R.icon('sun', n)}`).join(' · ')]],

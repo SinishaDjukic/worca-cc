@@ -453,7 +453,7 @@
       ],
       "notFor": "going somewhere (Text link); on or off (Switch)",
       "rules": [
-        "while its action is out it is busy: a spinner inside over its label, the same width, disabled and aria-busy; back at rest when it settles, focus returned; a still ring under reduced motion",
+        "while its action is out it is busy and says what it is doing: the stage line's breathing knot before a present-tense label (Creating PR…), never a spinner; its width steady, disabled, aria-busy, the label said politely; back at rest with its own words when it settles, focus returned; the knot still under reduced motion",
         "a short verb plus its detail, on one line: it never overflows"
       ],
       "also": [

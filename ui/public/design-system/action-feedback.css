@@ -33,13 +33,6 @@
 /* After the spinner rule, at the same specificity, so it wins. */
 @media (prefers-reduced-motion:reduce){.toast{animation:none;}.is-busy[data-fb-state="busy"] .btn-spin{animation:none;}}
 .is-busy.is-busy[data-fb-state="busy"]:disabled{opacity:1;cursor:progress;transform:none;filter:none;}
-/* The library's busy button (button.mjs busy, docs/rail/components.md comp.button-busy): the ring sits over the hidden
-   label, so the button keeps its width and its accessible name. Classic never sets rail-busy. */
-.btn.rail-busy{position:relative;-webkit-text-fill-color:transparent;}
-.btn.rail-busy .btn-spin{position:absolute;top:50%;left:50%;margin:-6px 0 0 -6px;-webkit-text-fill-color:currentColor;}
-.btn.rail-busy > svg{visibility:hidden;}
-/* opacity, not visibility: a visibility-hidden span drops out of the accessible name (accname "hidden" rule). */
-.btn.rail-busy > span:not(.btn-spin){opacity:0;}
 .is-done[data-fb-state="done"].is-done,.is-done[data-fb-state="done"].is-done:hover{background:var(--green-ink);border-color:var(--green-ink);
   color:var(--on-ink);text-decoration:none;transform:none;box-shadow:none;cursor:default;}
 .linkish.is-done[data-fb-state="done"]{padding:2px 8px;border-radius:var(--r-ctrl);}

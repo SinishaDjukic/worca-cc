@@ -31,8 +31,19 @@ test('the Start run split button counts as one primary beside a secondary (D11)'
     <button class="btn btn-lg" data-h="40">Save</button></div>`), []);
 });
 
+test('T-8 classic: button() draws today\'s markup unless busy is used', () => {
+  const today = [
+    [{ label: 'Merge', kind: 'primary', attrs: { 'data-key': 'm' } }, '<button type="button" class="btn btn-sm btn-primary" data-key="m">Merge</button>'],
+    [{ label: 'Save <it>', icon: '<svg></svg>', count: 2, cls: 'x' }, '<button type="button" class="btn btn-sm x"><svg></svg>Save &lt;it&gt; <span class="runs-bulk-c">2</span></button>'],
+    [{ label: 'More', kind: 'quiet', iconOnly: true, icon: '<svg></svg>' }, '<button type="button" class="btn btn-sm btn-quiet btn-icon" aria-label="More" title="More"><svg></svg></button>'],
+    [{ label: 'Stop', kind: 'danger', title: false, attrs: { disabled: true } }, '<button type="button" class="btn btn-sm btn-danger" disabled>Stop</button>'],
+  ];
+  for (const [o, html] of today) { assert.equal(button(o), html); assert.equal(button({ ...o, busy: false }), html); }
+  assert.doesNotMatch(today.map(([o]) => button(o)).join(''), /rail-busy|btn-knot|aria-busy/);
+});
+
 test('T-8 a busy button passes the audit (one size, one variant)', () => {
-  assert.deepEqual(run(button({ label: 'Save', kind: 'primary', busy: true, attrs: { 'data-h': '28' } })), []);
+  assert.deepEqual(run(button({ label: 'Create PR', kind: 'primary', busy: { label: 'Creating PR…' }, attrs: { 'data-h': '28' } })), []);
   assert.deepEqual(run(button({ label: 'Copy', kind: 'quiet', iconOnly: true, busy: true, attrs: { 'data-h': '28' } })), []);
 });
 

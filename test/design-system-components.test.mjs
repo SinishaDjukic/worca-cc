@@ -30,40 +30,99 @@ test('T-8 busy: false draws today\'s button', () => {
   assert.equal(C.button(o), today); assert.equal(C.button({ ...o, busy: false }), today);
 });
 
-test('T-8 button({ busy: true }) draws the spinner and keeps the label: disabled, aria-busy, is-busy rail-busy, data-fb-state', () => {
-  const b = dom(C.button({ label: 'Save', kind: 'primary', icon: '<svg></svg>', busy: true, cls: 'x-save' }));
-  assert.equal(b.className, 'btn btn-sm btn-primary x-save is-busy rail-busy');
-  assert.equal(b.dataset.fbState, 'busy'); assert.equal(b.getAttribute('aria-busy'), 'true'); assert.equal(b.disabled, true);
-  assert.equal(b.firstElementChild.className, 'btn-spin'); assert.equal(b.firstElementChild.getAttribute('aria-hidden'), 'true');
-  assert.ok(b.querySelector('svg'), 'the icon stays'); assert.equal(b.textContent, 'Save', 'the label stays');
+test('T-8 button({ busy }) says what it is doing: the breathing knot before the present-tense label, no spinner', () => {
+  const b = dom(C.button({ label: 'Create PR', kind: 'primary', icon: '<svg></svg>', busy: { label: 'Creating PR…' }, cls: 'x-pr' }));
+  assert.equal(b.className, 'btn btn-sm btn-primary x-pr rail-busy');
+  assert.equal(b.getAttribute('aria-busy'), 'true'); assert.equal(b.disabled, true);
+  assert.equal(b.firstElementChild.className, 'btn-knot'); assert.equal(b.firstElementChild.getAttribute('aria-hidden'), 'true');
+  assert.equal(b.querySelector('.btn-busy-t').textContent, 'Creating PR…');
+  assert.equal(b.querySelector('[role="status"]').textContent, 'Creating PR…', 'said politely');
+  assert.equal(b.querySelector('.btn-spin'), null, 'never a spinner'); assert.equal(b.querySelector('svg'), null, 'the knot takes the icon\'s place');
+  assert.equal(b.dataset.fbState, undefined, 'no classic spinner hook');
+  assert.equal(dom(C.button({ label: 'Save', busy: true })).querySelector('.btn-busy-t').textContent, 'Save…', 'no label: its own words + …');
+  const icon = dom(C.button({ label: 'Copy', iconOnly: true, icon: '<svg></svg>', busy: true }));
+  assert.equal(icon.getAttribute('aria-label'), 'Copy'); assert.equal(icon.querySelector('.btn-busy-t'), null);
+  assert.equal(icon.querySelector('[role="status"]').textContent, 'Copy…');
+  assert.equal(dom(C.button({ label: '<b>', busy: { label: '<i>…' } })).querySelector('.btn-busy-t').innerHTML, '&lt;i&gt;…', 'escaped');
 });
 
-const restBusy = (b) => ({ cls: b.className, fb: b.dataset.fbState, aria: b.getAttribute('aria-busy'), off: b.disabled, spin: b.firstElementChild?.outerHTML });
+const restBusy = (b) => ({ cls: b.className, aria: b.getAttribute('aria-busy'), off: b.disabled, knot: b.firstElementChild?.outerHTML, t: b.querySelector('.btn-busy-t')?.textContent });
+const later = (window) => new Promise((r) => window.setTimeout(r, 0));
 
 test('T-8 server-drawn and client busy agree', async () => {
-  const { window } = new JSDOM(`<body>${C.button({ label: 'Save', kind: 'quiet', cls: 'x' })}</body>`);
+  const { window } = new JSDOM(`<body>${C.button({ label: 'Resume', kind: 'quiet', cls: 'x' })}</body>`);
   const b = window.document.querySelector('button');
   let done; const p = new Promise((r) => { done = r; });
-  const out = C.busy(b, p);
-  assert.deepEqual(restBusy(b), restBusy(dom(C.button({ label: 'Save', kind: 'quiet', cls: 'x', busy: true }))));
+  const out = C.busy(b, { label: 'Resuming…', until: p });
+  assert.deepEqual(restBusy(b), restBusy(dom(C.button({ label: 'Resume', kind: 'quiet', cls: 'x', busy: { label: 'Resuming…' } }))));
   done(); await out; window.close();
 });
 
-test('T-8 busy(): back on resolve and on reject, focus returns, the earlier disabled is kept; it settles like the promise', async () => {
+test('T-8 busy(): the label swaps to the present tense and back, aria-busy, said politely once in the page', async () => {
+  const { window } = new JSDOM(`<body>${C.button({ label: 'Start the task', icon: '<svg></svg>' })}</body>`);
+  const b = window.document.querySelector('button'), rest = b.outerHTML;
+  const icon = b.querySelector('svg');
+  let done; const p = new Promise((r) => { done = r; });
+  const out = C.busy(b, { label: 'Starting the task…', until: p });
+  assert.equal(b.querySelector('.btn-knot')?.getAttribute('aria-hidden'), 'true', 'the knot is in front');
+  assert.equal(b.querySelector('.btn-busy-t').textContent, 'Starting the task…');
+  assert.equal(b.getAttribute('aria-busy'), 'true');
+  const live = b.querySelector('[role="status"]');
+  assert.equal(live.textContent, '', 'empty when it enters the page');
+  await later(window);
+  assert.equal(live.textContent, 'Starting the task…', 'then the words, so a reader says them');
+  done(); await out;
+  assert.equal(b.outerHTML, rest, 'back to its own words'); assert.equal(b.querySelector('svg'), icon, 'its own nodes come back');
+  b.insertAdjacentHTML('afterend', C.button({ label: 'Save' }));
+  const t = b.nextElementSibling, out2 = C.busy(t, { until: Promise.resolve() });
+  assert.equal(t.querySelector('.btn-busy-t').textContent, 'Save…', 'no label: its own words + …');
+  await out2; assert.equal(t.textContent, 'Save');
+  window.close();
+});
+
+test('T-8 busy(): cannot be pressed twice; a second call changes nothing', async () => {
+  const { window } = new JSDOM(`<body>${C.button({ label: 'Create PR' })}</body>`);
+  const b = window.document.querySelector('button');
+  let n = 0; b.addEventListener('click', () => { n += 1; });
+  let done; const p = new Promise((r) => { done = r; });
+  const first = C.busy(b, { label: 'Creating PR…', until: p });
+  b.click(); b.click();
+  assert.equal(n, 0, 'a disabled button takes no press');
+  const second = C.busy(b, { label: 'Other…', until: Promise.resolve('x') });
+  assert.equal(b.querySelectorAll('.btn-knot').length, 1); assert.equal(b.querySelector('.btn-busy-t').textContent, 'Creating PR…');
+  assert.equal(await second, 'x');
+  done(); await first;
+  b.click(); assert.equal(n, 1, 'pressable again at rest');
+  window.close();
+});
+
+test('T-8 busy(): the width is steady, never narrower than at rest, and given back', async () => {
+  const { window } = new JSDOM(`<body>${C.button({ label: 'Create PR' })}${C.button({ label: 'Go', attrs: { style: 'margin:0' } })}</body>`);
+  const [b, s] = window.document.querySelectorAll('button');
+  for (const el of [b, s]) el.getBoundingClientRect = () => ({ width: 80, height: 28 });
+  let done; const p = new Promise((r) => { done = r; });
+  const out = C.busy(b, { label: 'Creating PR…', until: p }), out2 = C.busy(s, { until: p });
+  assert.equal(b.style.minWidth, '80px'); assert.equal(s.style.minWidth, '80px');
+  done(); await out; await out2;
+  assert.equal(b.getAttribute('style'), null, 'its own style back'); assert.equal(s.getAttribute('style'), 'margin:0');
+  window.close();
+});
+
+test('T-8 busy(): back on resolve and on reject, focus returns, the earlier disabled is kept; it settles like the action', async () => {
   const { window } = new JSDOM(`<body>${C.button({ label: 'Save' })}${C.button({ label: 'Off', attrs: { disabled: true } })}</body>`);
   const [b, off] = window.document.querySelectorAll('button');
   const desc = Object.getOwnPropertyDescriptor(window.HTMLButtonElement.prototype, 'disabled');
   Object.defineProperty(b, 'disabled', { configurable: true, get() { return desc.get.call(this); }, set(v) { if (v) this.blur(); desc.set.call(this, v); } });   // as Chromium: disabling blurs
   const rest = b.outerHTML;
   b.focus();
-  assert.equal(await C.busy(b, Promise.resolve(42)), 42, 'the same value');
+  assert.equal(await C.busy(b, { until: Promise.resolve(42) }), 42, 'the same value');
   assert.equal(b.outerHTML, rest, 'back to rest'); assert.equal(window.document.activeElement, b, 'focus returns');
   b.focus();
-  await assert.rejects(C.busy(b, Promise.reject(new Error('no'))), /no/, 'the same rejection');
+  await assert.rejects(C.busy(b, { until: Promise.reject(new Error('no')) }), /no/, 'the same rejection');
   assert.equal(b.outerHTML, rest); assert.equal(window.document.activeElement, b);
-  await C.busy(off, Promise.resolve());
+  await C.busy(off, { until: Promise.resolve() });
   assert.equal(off.disabled, true, 'an already disabled button stays disabled');
-  assert.equal(await C.busy(null, 7), 7, 'no button: it settles like the value');
+  assert.equal(await C.busy(null, { until: 7 }), 7, 'no button: it settles like the value');
   window.close();
 });
 
@@ -71,17 +130,17 @@ test('T-8 busy(): a disabled state set while busy is kept, not the older one', a
   const { window } = new JSDOM(`<body>${C.button({ label: 'Save' })}${C.button({ label: 'Off', attrs: { disabled: true } })}${C.button({ label: 'Attr' })}</body>`);
   const [b, off, at] = window.document.querySelectorAll('button');
   let done; const p = new Promise((r) => { done = r; });
-  const out = C.busy(b, p);
+  const out = C.busy(b, { until: p });
   b.disabled = true;   // the page closes it while its action is out
   done(); await out;
   assert.equal(b.disabled, true, 'a disable set while busy wins over the earlier enabled');
   let done2; const p2 = new Promise((r) => { done2 = r; });
-  const out2 = C.busy(off, p2);
+  const out2 = C.busy(off, { until: p2 });
   off.disabled = false;   // the page opens it while busy
   done2(); await out2;
   assert.equal(off.disabled, false, 'an enable set while busy wins over the earlier disabled');
   let done3; const p3 = new Promise((r) => { done3 = r; });
-  const out3 = C.busy(at, p3);
+  const out3 = C.busy(at, { until: p3 });
   at.setAttribute('disabled', '');
   done3(); await out3;
   assert.equal(at.disabled, true, 'the attribute path counts too');
@@ -93,42 +152,38 @@ test('T-8 busy(): focus moved elsewhere while busy stays there', async () => {
   const b = window.document.querySelector('button'), q = window.document.getElementById('q');
   b.focus();
   let done; const p = new Promise((r) => { done = r; });
-  const out = C.busy(b, p);
+  const out = C.busy(b, { until: p });
   q.focus();   // the person went on to type
   done(); await out;
   assert.equal(window.document.activeElement, q, 'busy() never takes the focus back from where the person went');
   window.close();
 });
 
-test('T-8 busy(): a removed button is left alone; a second call adds no second spinner', async () => {
+test('T-8 busy(): a removed button is left alone', async () => {
   const { window } = new JSDOM(`<body>${C.button({ label: 'Save' })}</body>`);
   const b = window.document.querySelector('button');
   let done; const p = new Promise((r) => { done = r; });
-  const first = C.busy(b, p); const second = C.busy(b, Promise.resolve('x'));
-  assert.equal(b.querySelectorAll('.btn-spin').length, 1);
-  assert.equal(await second, 'x');
-  assert.ok(b.classList.contains('rail-busy'), 'the second call changed nothing');
+  const first = C.busy(b, { until: p });
   b.remove(); done(); await first;
   assert.ok(b.classList.contains('rail-busy'), 'a removed button is left as it was'); assert.equal(b.disabled, true);
   window.close();
 });
 
-test('T-8 the busy look overlays, never widens (action-feedback.css)', () => {
-  const css = readFileSync('ui/public/design-system/action-feedback.css', 'utf8');
-  assert.match(css, /\.btn\.rail-busy\{[^}]*position:relative/);
-  assert.match(css, /\.btn\.rail-busy \.btn-spin\{[^}]*position:absolute/);
-  assert.match(css, /\.btn\.rail-busy\{[^}]*-webkit-text-fill-color:transparent/);
-  // Spans keep their words in the accessible name (M1): opacity, never visibility; only the decorative svg is hidden.
-  assert.match(css, /\.btn\.rail-busy > span:not\(\.btn-spin\)\{opacity:0;?\}/);
-  assert.match(css, /\.btn\.rail-busy > svg\{visibility:hidden;?\}/);
-  assert.doesNotMatch(css, /rail-busy > span[^{]*\{[^}]*visibility:hidden/, 'a hidden span drops out of the name');
-  assert.match(css, /@media \(prefers-reduced-motion:reduce\)\{[^\n]*\.is-busy\[data-fb-state="busy"\] \.btn-spin\{animation:none;\}/, 'still under reduced motion');
+test('T-8 the busy knot breathes as the stage line\'s now step and stands still under reduced motion; no spinner', () => {
+  const css = readFileSync('ui/public/stillhet/css/rail.css', 'utf8');
+  const step = css.match(/\.sl-step\.is-now\{[^}]*animation:([^;}]+)/)[1];
+  assert.match(css, new RegExp(`\\.btn-knot\\{[^}]*animation:${step.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[;}]`), 'the same keyframes and timing');
+  assert.equal((css.match(/@keyframes sl-breath/g) || []).length, 1, 'no keyframes of its own');
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)\{\.btn-knot\{animation:none;\}\}/, 'still under reduced motion');
+  assert.match(css, /\.btn\.rail-busy\{[^}]*white-space:nowrap/, 'one line');
+  const fb = readFileSync('ui/public/design-system/action-feedback.css', 'utf8');
+  assert.doesNotMatch(fb + css, /rail-busy[^{]*\.btn-spin/, 'the busy button draws no spinner');
 });
 
-test('T-8 motion.md names the busy spinner exception', () => {
+test('T-8 motion.md keeps no spinners: the busy button is no exception', () => {
   const md = readFileSync('docs/rail/motion.md', 'utf8');
   const never = md.slice(md.indexOf('- **Never:**'), md.indexOf('- **Reduced motion**'));
-  assert.match(never, /busy button/); assert.match(never, /`busy`/); assert.match(never, /still ring/);
+  assert.match(never, /spinner/); assert.doesNotMatch(never, /busy/);
 });
 
 test('splitButton: the ▾ takes the main kind and shows its menu only when open', () => {
