@@ -46,7 +46,7 @@ const CALM_CASE = { created: 'starting', starting: 'starting', running: 'working
 // a PR that still stands (open or merged): a closed-unmerged one is gone, its run reads Ready again (Create PR)
 const prUrlOf = (pr) => (pr?.url && lc(pr.state) !== 'closed' ? str(pr.url) : '');
 // a saved row whose PR is still open: the rows the checks cache is read for (D5)
-const openPrOf = (row) => !!prUrlOf(row?.pr) && lc(row.pr.state || 'open') === 'open';
+const openPrOf = (row) => !!prUrlOf(row?.pr) && lc(row.pr.state) === 'open';   // F-G-G1-01: a PR of unknown state is not known open
 // D5: an open PR's case from its checks entry (task-live.mjs owns the cache; rows, cards and pages pass the same entry):
 // approved once the checks pass and it merges cleanly, conflicts, failing, else checks (still running). null = no entry.
 export function prCaseOf(checks) {

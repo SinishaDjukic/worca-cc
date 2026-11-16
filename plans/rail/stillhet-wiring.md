@@ -498,8 +498,8 @@ kind does not draw it, for the reason given, for the controller to decide.
 
 | Capability (dev route) | Home in the prototype | Status |
 |---|---|---|
-| Pause, Resume, Stop (`POST /api/pause`, `/api/resume`, `/api/stop`) | the task page's action slot and ▾, the card's ⋯, the bar's row menu | wired |
-| Answer, plan approval (`POST /api/answer`, `POST /api/runs/:id/answer`) | the page's question part, Approve and build, the center's Approve | wired |
+| Pause, Resume, Stop (`POST /api/pause`, `/api/resume`, `/api/stop`) | the task page's action slot and ▾, the card's ⋯, the bar's row menu; every resume (Resume now, Continue without cap, Raise the cap, Retry, Switch model…, Resume on…) is classic's `resumeBody` (`baseCheck`, chat-live.mjs `resumeBody`), and on the page a moved base asks Resume anyway, which resends it with `baseAck` (F-G-G2-03) | wired |
+| Answer, plan approval (`POST /api/answer`, `POST /api/runs/:id/answer`) | the page's question part: a live task's own clarify or questions ask (task-page.mjs `questionsOf`), one by one, sent together as Chat's `run-answer` `{answers}`; an ask it cannot draw shows no question, never the design's sample (F-G-G2-02); Approve and build, the center's Approve | wired |
 | Continue without cap; the team-cap reason (`POST /api/resume` `ignoreCostCap`, `pastTeamCap`, `policyReason`) | the capped case's ▾ and the team-cap dialog | wired |
 | Raise the cap (`POST /api/resume` `costCapUsd`, `pipelines.cost_cap_usd`) | the capped case's main action and its `cap` dialog | new: built |
 | Restart Build on a stopped or errored run (`POST /api/runs/:id/restart-build`) | the failed and stopped cases, c17's Retry | new: built |

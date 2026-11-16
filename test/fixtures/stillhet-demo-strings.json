@@ -28,5 +28,8 @@
   {"text":"Review pack","source":"settings/settings-model.js"},
   {"text":"Promo video","source":"settings/settings-model.js"},
   {"text":"https://mcp.notion.com","source":"settings/settings-model.js"},
-  {"text":"Issue #1088","source":"settings/settings-model.js"}
+  {"text":"Issue #1088","source":"settings/settings-model.js"},
+{"text":"Keep the breadcrumb on phones under 600px","source":"runs/run-page-model.js"},
+{"text":"Which pages get the breadcrumb?","source":"runs/run-page-model.js"},
+{"text":"On phones, does the page keep its full trail?","source":"runs/run-page-model.js"}
 ]

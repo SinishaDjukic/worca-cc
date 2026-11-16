@@ -94,7 +94,7 @@ export const ACTIONS = Object.freeze({
   'card-verb': ['answer the card', (a) => ['POST', `${T(a.threadId)}/cards/${enc(a.cardId)}`, { ...(a.body || {}) }]],
   'card-offer': ['run the script', (a) => ['POST', `${T(a.threadId)}/cards/${enc(a.cardId)}`, { choice: a.choice }]],
   'task-pause': ['pause the task', (a) => ['POST', '/api/pause', { runId: a.runId }]],
-  'task-resume': ['resume the task', (a) => ['POST', '/api/resume', { pipelineId: a.pipelineId || a.runId, ...(a.ignoreCostCap ? { ignoreCostCap: true } : {}) }]],
+  'task-resume': ['resume the task', (a) => ['POST', '/api/resume', resumeBody(a.pipelineId || a.runId, { baseAck: a.baseAck, ...(a.ignoreCostCap ? { ignoreCostCap: true } : {}) })]],
   'task-archive': ['archive the task', (a) => ['POST', '/api/runs/bulk', { action: 'archive', targets: [{ pipelineId: a.pipelineId || a.runId }] }]],
   'chat-label': ['label the chat', (a) => ['PUT', `${T(a.threadId)}/labels`, { labels: a.labels }]],
   'task-label': ['label the task', (a) => ['PUT', `/api/runs/${enc(a.pipelineId || a.runId)}/labels`, { labels: a.labels }]],
@@ -166,6 +166,11 @@ export function saveLink(url, name) {
   d.body.appendChild(a); a.click(); a.remove();
   return true;
 }
+
+/** Every POST /api/resume body Chat and Tasks send, as classic's resumeBody (app.js): dev checks the base first (baseCheck),
+ *  and the resend after "Resume anyway" acknowledges the move (baseAck). `extra`: the resume's own keys (ignoreCostCap,
+ *  costCapUsd, model, engine). F-G-G2-03. */
+export const resumeBody = (pipelineId, { baseAck = false, ...extra } = {}) => ({ pipelineId, baseCheck: true, ...(baseAck ? { baseAck: true } : {}), ...extra });
 
 /** D13: the one action path Chat and Tasks share. `request` answers `{ok, data}` or `{ok:false, status?, error, code?}`
  *  (a network failure too); `refuse(words, res)` says `Could not WORDS: REASON` once, unless the caller says it itself
@@ -563,6 +568,8 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
       let res = await request(method, url, body);
       // POST /api/runs/bulk answers 200 with its refusals in `skipped`: none done is a refusal
       if (res.ok && Array.isArray(res.data?.skipped) && res.data.skipped.length && !(res.data.done || []).length) res = { ok: false, status: 200, error: str(res.data.skipped[0]?.reason) || 'it was skipped' };
+      // F-G-G2-03: a card's resume on a moved base is a prompt, not a refusal: the card asks Resume anyway, which resends with baseAck
+      if (!res.ok && id === 'task-resume' && /^base-(moved|missing)$/.test(str(res.code))) return { ...res, prompt: 'base' };
       if (!res.ok) return refuse(a[0], res, q);
       if (id === 'pr') afterPr();   // a PR now exists: the task's card reads it without a reload (dev's history skeleton has no PRs)
       if (args.threadId && threads.get(args.threadId)?.state === 'ready' && url.startsWith(T(args.threadId))) open(args.threadId, { force: true });
