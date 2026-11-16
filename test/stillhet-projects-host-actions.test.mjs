@@ -273,22 +273,26 @@ test('F-cov1-06 live: Branch and Folder name reach POST /api/projects/clone; emp
   assert.deepEqual(sent(h.calls).at(-1), ['POST', '/api/projects/clone', { url }]);
 });
 
-test('F-cov1-06 live: a 409 (folder exists) and a 400 (bad branch) are the field\'s error; a Folder name that is already a project is refused before any request', async () => {
+test('F-cov1-06 live: a 409 (folder exists) lands on Folder name and a 400 (bad branch) on Branch, never the address; a Folder name that is already a project (any case) is refused there before any request', async () => {
   const EXISTS = '/w/projects/taken already exists; pick another folder name';
   const h = await projectsHost({ write: (u, b) => (u !== '/api/projects/clone' ? [200, { ok: true }] : b.name === 'taken' ? [409, { error: EXISTS, code: 'exists' }] : [400, { error: 'not a valid branch name' }]) });
-  const note = () => page(h.d).querySelector('#pj-hand-v-note')?.textContent || '';
+  const note = (id) => page(h.d).querySelector(`#${id}-note`)?.textContent || '';
   h.w.RailPlaces.projects.newPick('hand-project'); await settle(100);
   type(h.w, '#pj-hand-v', 'git@github.com:o/shop-api.git'); await settle(300);
   type(h.w, '#pj-clone-name', 'taken'); await settle(60);
-  yes(h.d).click(); await until(() => note() !== ''); await settle(60);
-  assert.equal(note(), plainWhy({ status: 409, error: EXISTS }));
+  yes(h.d).click(); await until(() => note('pj-clone-name') !== ''); await settle(60);
+  assert.equal(note('pj-clone-name'), plainWhy({ status: 409, error: EXISTS }));
+  assert.equal(note('pj-hand-v'), '', 'not on the address');
   assert.ok(page(h.d).querySelector('#pj-hand-v'), 'the form stays open');
   type(h.w, '#pj-clone-name', ''); type(h.w, '#pj-clone-branch', 'bad..branch'); await settle(60);
-  yes(h.d).click(); await until(() => note() !== ''); await settle(60);
-  assert.equal(note(), 'not a valid branch name');
+  yes(h.d).click(); await until(() => note('pj-clone-branch') !== ''); await settle(60);
+  assert.equal(note('pj-clone-branch'), 'not a valid branch name');
+  assert.equal(note('pj-hand-v'), '');
+  assert.equal(note('pj-clone-name'), '');
   assert.deepEqual(clones(h.calls).map(([, , b]) => b), [{ url: 'git@github.com:o/shop-api.git', name: 'taken' }, { url: 'git@github.com:o/shop-api.git', branch: 'bad..branch' }]);
-  type(h.w, '#pj-clone-branch', ''); type(h.w, '#pj-clone-name', 'seed-ok'); await settle(60);
+  type(h.w, '#pj-clone-branch', ''); type(h.w, '#pj-clone-name', 'Seed-OK'); await settle(60);
   yes(h.d).click(); await settle(150);
-  assert.equal(note(), 'seed-ok is already a project');
+  assert.equal(note('pj-clone-name'), 'Seed-OK is already a project', 'dev compares a clone name case-blind; so does the page');
+  assert.equal(note('pj-hand-v'), '');
   assert.equal(clones(h.calls).length, 2, 'nothing more was sent');
 });

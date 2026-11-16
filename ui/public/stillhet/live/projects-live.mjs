@@ -118,7 +118,10 @@ export function startProjectsLive({ fetch, toast = () => {}, refresh = () => {},
       if (REPO.test(v)) {
         const as = folder || name;   // F-cov1-06: the Folder name names the clone job
         const a = await send('clone', { url: v, branch, name: folder });
-        if (!a.ok) return a.status === 400 || a.status === 409 ? { ok: false, field: plainWhy(a) } : refused('clone', as, a);
+        if (!a.ok) {   // on: the field dev's words are about (clone-project.mjs planClone), so the page puts them under it
+          const on = /branch name/i.test(a.error || '') ? 'branch' : /folder name/i.test(a.error || '') ? 'name' : '';
+          return a.status === 400 || a.status === 409 ? { ok: false, field: plainWhy(a), ...(on ? { on } : {}) } : refused('clone', as, a);
+        }
         clones.set(a.data.jobId || a.data.job?.id, { name: a.data.job?.name || as, from: at() });   // where the person was: it routes only if they still are
         return { ok: true, text: `Cloning ${a.data.job?.name || as}…` };
       }

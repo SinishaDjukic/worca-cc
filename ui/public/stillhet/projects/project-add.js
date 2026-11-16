@@ -24,7 +24,7 @@
     // typed/newName follow the field; shown/newShown are what the page draws into it, changed only when the page sets the value,
     // so a redraw while typing draws the same value and the field stays the same element (comp.keep-open, B2.7)
     // branch/cloneName (and their shown copies) are an address's Branch and Folder name (F-cov1-06); repoFor is what the last draw showed them for
-    const fresh = () => ({ way: 'folder', typed: '', shown: '', newShown: '', branch: '', branchShown: '', cloneName: '', cloneNameShown: '', repoFor: '', err: '', probe: null, probeFor: '', probeErr: '', gitOk: true, useGit: false, newName: '', newGit: true, where: '', newErr: '', newRefused: false, browser: null, review: null, reviewErr: '' });
+    const fresh = () => ({ way: 'folder', typed: '', shown: '', newShown: '', branch: '', branchShown: '', cloneName: '', cloneNameShown: '', repoFor: '', err: '', errOn: '', probe: null, probeFor: '', probeErr: '', gitOk: true, useGit: false, newName: '', newGit: true, where: '', newErr: '', newRefused: false, browser: null, review: null, reviewErr: '' });
     let s = fresh(), probeSeq = 0, newSeq = 0, dirSeq = 0, probeT = 0, newT = 0;
     const live = () => ctx.live();
     // live but the module is not up yet: nothing fake, every action says so (D8)
@@ -46,7 +46,7 @@
       if (n !== probeSeq) return undefined;   // a newer path was typed: this answer is stale
       s.probe = a.ok ? a.probe : null; s.probeFor = v;
       s.probeErr = !a.ok && a.field ? a.field : '';   // a refused probe: its words are the field's error, and Add stays off
-      if (s.probeErr) s.err = s.probeErr;
+      if (s.probeErr) { s.err = s.probeErr; s.errOn = ''; }
       ctx.draw();
       return s.probe;
     }
@@ -92,7 +92,7 @@
     function picked() {
       const b = s.browser, paths = b.multiple ? [...b.picked.keys()] : [b.path];
       s.browser = null;
-      if (paths.length === 1) { s.way = 'folder'; s.typed = s.shown = paths[0]; s.err = ''; ctx.draw(); probeNow(paths[0]); focus('#pj-hand-v'); return; }
+      if (paths.length === 1) { s.way = 'folder'; s.typed = s.shown = paths[0]; s.err = ''; s.errOn = ''; ctx.draw(); probeNow(paths[0]); focus('#pj-hand-v'); return; }
       const abs = (q) => (q && b.home && /^~(\/|$)/.test(q) ? b.home + q.slice(1) : q);   // a ~/ path the store keeps, as the folder browser gives it (absolute)
       const known = (p) => ctx.projects().find((x) => [x.path, x.devPath].some((q) => q === p || abs(q) === p));
       s.review = paths.map((path) => { const k = known(path); const name = R.folderName(path); return { path, name, shown: name, include: !k, status: '', reason: k ? `already registered as “${ctx.nameOf(k)}”` : '' }; });
@@ -102,28 +102,32 @@
 
     // ---- what the yes does, per way ----
     const finish = (text, key, from) => { s = fresh(); ctx.end(); ctx.say(text); if (key && location.hash === from) ctx.go(`projects/${key}`); else ctx.draw(); };
+    // a refusal is the error of the field it is about: Branch, Folder name, or else the address (F-cov1-06)
+    const fail = (why, on = '') => { s.err = why; s.errOn = on; ctx.draw(); focus(`#${on || 'pj-hand-v'}`); };
     async function addOne() {
       const v = val('pj-hand-v'), repo = REPO.test(v);
       const fieldOr = (fid, cur) => (document.getElementById(fid) ? val(fid) : cur);   // a field not drawn yet keeps what is held
       s.typed = s.shown = v;
       if (repo) { s.branch = s.branchShown = fieldOr('pj-clone-branch', s.branch); s.cloneName = s.cloneNameShown = fieldOr('pj-clone-name', s.cloneName); }
       const id = (repo && s.cloneName) || nameOfPath(v);
-      const wrong = !v || !id ? 'It needs a folder or a repository' : ctx.pathWrong(v, true) || (id.length > NAME_MAX ? `A project's name holds ${NAME_MAX} characters; this folder's has ${id.length}` : ctx.projects().some((x) => ctx.nameOf(x) === id) ? `${id} is already a project` : '');
-      if (wrong) { s.err = wrong; ctx.draw(); focus('#pj-hand-v'); return; }
+      const same = (a, b) => (repo ? String(a).toLowerCase() === b.toLowerCase() : a === b);   // dev compares a clone's name case-blind (clone-project.mjs)
+      const tooLong = id.length > NAME_MAX ? `A project's name holds ${NAME_MAX} characters; this folder's has ${id.length}` : ctx.projects().some((x) => same(ctx.nameOf(x), id)) ? `${id} is already a project` : '';
+      const wrong = !v || !id ? 'It needs a folder or a repository' : ctx.pathWrong(v, true) || tooLong;
+      if (wrong) { fail(wrong, wrong === tooLong && repo && s.cloneName ? 'pj-clone-name' : ''); return; }
       if (down()) { ctx.say(NOT_ANSWERING); return; }
       s.err = '';
       if (!REPO.test(v)) {
         const p = s.probeFor === v && s.probe ? s.probe : await probeNow(v);
         if (p === undefined) return;   // a newer probe (a second press) carries on
         const why = s.probeErr || probeWhy(p);
-        if (why) { s.err = why; ctx.draw(); focus('#pj-hand-v'); return; }
+        if (why) { fail(why); return; }
       }
       const from = location.hash;
       if (ctx.onLive()) {
         const a = live().addProject(v, { useGit: s.useGit && model().useGit, ...(repo && s.branch ? { branch: s.branch } : {}), ...(repo && s.cloneName ? { name: s.cloneName } : {}) });
         ctx.draw();
         const r = await a;
-        if (!r.ok) { if (r.field) { s.err = r.field; ctx.draw(); focus('#pj-hand-v'); } else ctx.said(r); return; }
+        if (!r.ok) { if (r.field) fail(r.field, r.on === 'branch' ? 'pj-clone-branch' : r.on === 'name' ? 'pj-clone-name' : ''); else ctx.said(r); return; }
         finish(r.text, r.key, from);
         return;
       }
@@ -186,9 +190,9 @@
       }
       const m = model();
       const repo = REPO.test(s.typed);
-      return R.field({ id: 'pj-hand-v', label: 'Folder or repository', placeholder: '~/src/your-project', value: s.shown, error: s.err, attrs: { maxlength: 200, 'data-keep': 'pj-hand:project:' } })
-        + (repo ? R.field({ id: 'pj-clone-branch', label: 'Branch (optional)', placeholder: "the repository's default branch", value: s.branchShown, attrs: { maxlength: 200, 'data-keep': 'pj-hand:branch:' } })
-          + R.field({ id: 'pj-clone-name', label: 'Folder name (optional)', placeholder: nameOfPath(s.typed) || 'the repository name', value: s.cloneNameShown, attrs: { maxlength: 100, 'data-keep': 'pj-hand:clone-name:' } }) : '')
+      return R.field({ id: 'pj-hand-v', label: 'Folder or repository', placeholder: '~/src/your-project', value: s.shown, error: s.errOn ? '' : s.err, attrs: { maxlength: 200, 'data-keep': 'pj-hand:project:' } })
+        + (repo ? R.field({ id: 'pj-clone-branch', label: 'Branch (optional)', placeholder: "the repository's default branch", value: s.branchShown, error: s.errOn === 'pj-clone-branch' ? s.err : '', attrs: { maxlength: 200, 'data-keep': 'pj-hand:branch:' } })
+          + R.field({ id: 'pj-clone-name', label: 'Folder name (optional)', placeholder: nameOfPath(s.typed) || 'the repository name', value: s.cloneNameShown, error: s.errOn === 'pj-clone-name' ? s.err : '', attrs: { maxlength: 100, 'data-keep': 'pj-hand:clone-name:' } }) : '')
         + R.folderWay({ pick: { label: 'Choose folder…', hook: 'data-pa-choose', title: 'Pick a folder on this computer' } })
         + m.html
         + (m.useGit ? R.folderWay({ git: { on: s.useGit, hook: 'data-pa-git', why: 'Runs git init in it when it is added' } }) : '')

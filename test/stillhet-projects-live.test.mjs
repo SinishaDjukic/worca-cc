@@ -139,7 +139,7 @@ test('F-cov1-06: addProject sends branch and name with an address, names the job
   await r.live.addProject('/src/new', { branch: 'dev', name: 'x' });
   assert.deepEqual(r.writes().at(-1), ['POST', '/api/projects', { name: 'new', path: '/src/new' }]);
   const refusal = { status: 409, error: '/w/taken already exists; pick another folder name' };
-  assert.deepEqual(await r.live.addProject(url, { name: 'taken' }), { ok: false, field: plainWhy(refusal) });
+  assert.deepEqual(await r.live.addProject(url, { name: 'taken' }), { ok: false, field: plainWhy(refusal), on: 'name' }, 'the refusal names the Folder name field');
   assert.deepEqual(r.writes().at(-1), ['POST', '/api/projects/clone', { url, name: 'taken' }]);
 });
 
