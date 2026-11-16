@@ -136,3 +136,15 @@ test('F-5-18: leaving #marketplace and opening it again sends GET /api/plugins a
   assert.equal(reads(), first + 2, 'opening it again reads both lists');
   assert.equal(calls.filter((c) => c.method === 'POST').length, 0, 'synced within 24 h: no sync');
 });
+
+// F-W3a2-01: a source whose quiet sync failed says so on its own row (classic's marketplaces-view: Can't reach · its message)
+test('F-W3a2-01: a source whose last sync failed shows its error on its source row', async () => {
+  const lists = structuredClone(MK_LISTS);
+  lists['/api/marketplaces'].marketplaces = lists['/api/marketplaces'].marketplaces.map((m) => (m.id === 'team-plugins' ? { ...m, lastError: { message: 'fatal: could not read from remote repository\nPlease make sure you have access', at: m.lastSync.at } } : m));
+  const { d } = await marketplaceHost({ lists });
+  const rowOf = (id) => d.querySelector(`[data-mk-sync="${id}"]`)?.closest('.set-row, .list-row, [class*="row"]');
+  const team = rowOf('team-plugins').textContent.replace(/\s+/g, ' ');
+  assert.match(team, /can't reach it: fatal: could not read from remote repository/i);
+  assert.doesNotMatch(team, /Please make sure/, 'its first line only');
+  assert.doesNotMatch(rowOf('worca-official').textContent, /can't reach/i, 'a source that synced says nothing of the kind');
+});
