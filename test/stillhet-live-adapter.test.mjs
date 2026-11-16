@@ -6,14 +6,14 @@ import { startLive, SOURCES as URLS } from '../ui/public/stillhet/live/live-adap
 import { SOURCES, NOW } from './helpers/stillhet-live-fixture.mjs';
 const ANSWER = { [URLS.history]: SOURCES.history, [URLS.threads]: SOURCES.threads, [URLS.groups]: SOURCES.groups, [URLS.schedules]: SOURCES.schedules, [URLS.projects]: SOURCES.projects, [URLS.sync]: SOURCES.sync, [URLS.budget]: SOURCES.budget, [URLS.actions]: SOURCES.actions, [URLS.notifications]: SOURCES.notifications, [URLS.away]: SOURCES.away, [URLS.settings]: SOURCES.settings, [URLS.runLinks]: SOURCES.runLinks };
 
-function rig({ status = () => 200, answer = (u) => ANSWER[u] ?? {}, hold = () => null, random, parts = null } = {}) {
+function rig({ status = () => 200, answer = (u) => ANSWER[u] ?? {}, hold = () => null, random, parts = null, onLoad = () => {} } = {}) {
   const calls = [], sockets = [], timers = [];
   const fetch = async (u, o = {}) => { calls.push({ u, method: o.method || 'GET', ...(o.body ? { body: JSON.parse(o.body) } : {}) }); const h = hold(u); if (h) await h; const s = status(u); const a = answer(u); return { ok: s < 300, status: s, json: async () => a }; };
   class FakeSocket { constructor(url) { this.url = url; sockets.push(this); } close() { this.closed = true; } send() {} }
   const tick = async (ms = 0) => { for (const t of timers.filter((x) => !x.done && x.ms <= ms)) { t.done = true; t.fn(); } for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r)); };
   const st = { list: 'loading', conn: '' }, log = [], rows = new Map();
   const world = {
-    load: (parts, state) => { log.push(['load', Object.keys(parts).sort(), state]); if (parts.runs) { rows.clear(); for (const r of parts.runs) rows.set(r.id, { ...r }); } if (state) Object.assign(st, state); log.push(['onChange']); },
+    load: (parts, state) => { onLoad(parts); log.push(['load', Object.keys(parts).sort(), state]); if (parts.runs) { rows.clear(); for (const r of parts.runs) rows.set(r.id, { ...r }); } if (state) Object.assign(st, state); log.push(['onChange']); },
     setState: (s) => { Object.assign(st, s); log.push(['setState', { ...s }]); log.push(['onChange']); },
     find: (id) => rows.get(id), add: (r) => { rows.set(r.id, { ...r }); log.push(['onMove', r.id]); return r; },
     move: (id, kase, detail, o = {}) => { const r = rows.get(id); if (!r) return; Object.assign(r, { case: kase, detail }, o); log.push(['onMove', id]); },
@@ -311,7 +311,8 @@ test('ask-done for a chat that is not open lights its dot through a threads refe
   r.frame(r.sockets[0], { type: 'ask-done', threadId: 'ask_2', messageId: 'm', seq: 1 });
   await r.tick(250);
   assert.deepEqual(r.calls.slice(n).map((c) => c.u), [URLS.threads, URLS.runLinks, URLS.budget], 'a chat turn may have moved the spend');
-  assert.deepEqual(r.log.filter((x) => x[0] === 'load' && !x[1].includes('costs')).slice(-2).map((x) => x[1]), [['chats', 'chatsNeeds'], ['chats']]);
+  // two independent refetches (threads, runLinks): each patches its own parts, in whichever order they land (SX-10 pages threads)
+  assert.deepEqual(r.log.filter((x) => x[0] === 'load' && !x[1].includes('costs')).slice(-2).map((x) => x[1].join()).sort(), ['chats', 'chats,chatsNeeds']);
 });
 
 test('a socket that closes before its hello: the reconnect hello is the first load; frames apply and *-changed refetches', async () => {
@@ -735,4 +736,17 @@ test('F-3-09: a running task\'s workflow is set when its state frame brings the 
   assert.equal(r.rows.get('run-w').workflow, '', 'run-created carries no stepper: Default for now');
   r.frame(r.sockets[0], { type: 'state', runId: 'run-w', status: 'running', stepper: { version: 2, template: { id: 'wf_lean', name: 'Lean' }, graph: { nodes: [], edges: [] } } });
   assert.equal(r.rows.get('run-w').workflow, 'Lean');
+});
+
+test('SX-10 F-a1-03: the chats source pages through the API\'s cursor: every chat in one load, never only the first page', async () => {
+  const one = (i) => ({ id: `ask_p${i}`, title: `Chat ${i}`, archivedAt: null, updatedAt: SOURCES.threads.threads[0].updatedAt });
+  const PAGE2 = `${URLS.threads}&cursor=c2`, PAGE3 = `${URLS.threads}&cursor=c3`;
+  const pages = { [URLS.threads]: { threads: [one(1), one(2)], cursor: 'c2', total: 5, counts: { all: 5 } }, [PAGE2]: { threads: [one(3), one(4)], cursor: 'c3', total: 5 }, [PAGE3]: { threads: [one(5)], cursor: null, total: 5 } };
+  let chats = null;
+  const r = rig({ answer: (u) => pages[u] ?? ANSWER[u] ?? {}, onLoad: (p) => { if (p.chats) chats = p.chats; } });
+  await r.tick();
+  assert.deepEqual(gets(r.calls).filter((u) => u.startsWith('/api/ask/threads')), [URLS.threads, PAGE2, PAGE3], 'each page once, in order');
+  r.sockets[0].onopen?.(); r.frame(r.sockets[0], hello); await r.tick();
+  assert.equal(r.log.filter((x) => x[0] === 'load').length, 1, 'one load: the bar is drawn once, not page by page');
+  assert.deepEqual(chats.map((c) => c.id).filter((id) => id.startsWith('ask_p')).sort(), ['ask_p1', 'ask_p2', 'ask_p3', 'ask_p4', 'ask_p5']);
 });

@@ -133,7 +133,8 @@ test('F-7b-10: live Memory, Guardrails and Connectors read the sentence in every
 test('F-7b-07: live General: Setup, Storage and About read the sentence; Credentials is unchanged', async () => {
   const { w, d } = await live();
   const text = await go(w, '#settings/general');
-  for (const t of ['Setup', 'Storage', 'About']) assertLine(d, t);
+  for (const t of ['Setup', 'Storage']) assertLine(d, t);
+  assert.notEqual(textOf(rowOf(d, 'Version')), SENTENCE, 'F-G-G5-04: About is live, its Version read from GET /api/app/version');
   for (const v of ['1.19', '~/.worca-cc', 'Getting started', 'Browser extension']) assert.ok(!text.includes(v), `no ${v}`);
   assert.match(text, /Each engine signs in by itself/);
   assert.notEqual(textOf(rowOf(d, 'GitHub')), SENTENCE);
@@ -143,7 +144,7 @@ test('F-7b-03: sweep: on live, every Settings place\'s rows are live or read the
   const { w, d, posts } = await live();
   const SM = w.SettingsModel;
   for (const f of SM.FLAGS) w.RailUI.prefs.setFlag(f.key, true);
-  const LIVE = new Set(['Abilities', 'Prompt check', 'Model keys', 'GitHub']);
+  const LIVE = new Set(['Abilities', 'Prompt check', 'Model keys', 'GitHub', 'Version']);   // Version: F-G-G5-04
   const SKIP = new Set(['team', 'plugins', 'experimental', 'automations']);
   const n = posts.length;
   for (const id of Object.keys(SM.SECTIONS)) {

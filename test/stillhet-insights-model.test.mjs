@@ -74,9 +74,10 @@ test('Invariant 8: stateOfLink round-trips every key, drops what is unknown or i
   const live = M.stateOfLink('from=2026-10-02&to=2026-10-09&when=this%20quarter', sub, { live: true });
   assert.equal(live.from, '2026-10-02'); assert.equal(live.to, '2026-10-09'); assert.equal(live.narrow, null); assert.equal(live.custom, true);
   assert.equal(M.linkOf('spend', live), 'insights/spend?when=this%20quarter&from=2026-10-02&to=2026-10-09');
-  // a team picked in the of sentence goes into the link and back; an unknown demo team is dropped
+  // ledger row 3: a team picked in the of sentence stays out of the link (classic's carries none); an old link's is still
+  // read, and an unknown demo team is dropped
   const team = { ...M.defaults(M.SUB.team), scope: 'workspace:web-shop' };
-  assert.equal(M.linkOf('team', team), 'insights/team?scope=workspace%3Aweb-shop');
+  assert.equal(M.linkOf('team', team), 'insights/team');
   assert.equal(M.stateOfLink('scope=workspace%3Aweb-shop', M.SUB.team).scope, 'workspace:web-shop');
   assert.equal(M.stateOfLink('scope=workspace%3Anope', M.SUB.team).scope, M.defaults(M.SUB.team).scope);
   assert.equal(M.stateOfLink('scope=workspace%3Awks-x', M.SUB.team, { live: true }).scope, 'workspace:wks-x');
@@ -139,4 +140,10 @@ test('workOf: Maya\'s first six are the mock\'s, her counts add up to her row\'s
   assert.equal(M.cardOf(w.items[0]).line, '#1418 merged Nov 8, 11:00 · 1d 1h from first run · opens the pull request');
   for (const it of w.items.slice(0, 12)) { eq(M.taskViewOf(it), L.taskViewOf(it)); assert.equal(it.word, L.WORDS[it.state]); }
   for (const pr of [{ state: 'ready' }, { state: 'pending' }, { state: 'failed', why: 'x' }, { state: 'unknown' }]) eq(M.workHead('Maya', 'this month', w.counts, pr), L.workHead('Maya', 'this month', w.counts, pr));
+});
+
+test('F-G-G4-05: Hours saved shows whole hours, never a live figure\'s decimals', () => {
+  const hours = M.SUB.spend.cols.find(([n]) => n === 'Hours saved')[1];
+  assert.equal(hours({ hours: 18224.66 }), '18225 h');
+  assert.equal(hours({ hours: 12 }), '12 h');
 });
