@@ -152,6 +152,22 @@ function rowsAndKids(facts, { dims, by, thenBy, rate, extras, fields, share, tot
 }
 const tagDims = (facts, tagKeys) => ['client', 'teamtag', 'costcenter'].filter((d) => { const key = DIM_OF[d].slice(4); return tagKeys.includes(key) || facts.some((f) => f.tags && key in f.tags); });
 
+/** F-G-fid-14: each bucket cut by the top rows of `by`, as classic's cost report stacks them: dev's allocate over the same
+ *  facts, its allocationSeries for the money (Chat, Requirements and Design from their own series when nothing is
+ *  ticked), and each row's own facts counted per bucket as the page's series are. `perDay[field][bucket][row]`, the rows
+ *  in `names` order. A time "by" (or one dev cannot cut by) has none: the page draws whole bars and says so. */
+function cutOf(sel, { by, rate, extras, fields, buckets, rep, whole }) {
+  const n = buckets.length;
+  if (!n || !DIM_OF[by] || by === 'origin') return null;
+  const model = allocate(sel, { by: DIM_OF[by], rate, ...extras });
+  const own = (k) => (whole ? rep[k]?.series || null : null);
+  const money = allocationSeries(model, sel, { buckets, askSeries: own('ask'), requirementsSeries: own('requirements'), designSeries: own('design') });
+  const byId = new Map(sel.filter((f) => f.id).map((f) => [f.id, f]));
+  const rows = model.rows.map((row, k) => cohortSeries((row.factIds || []).map((id) => byId.get(id)).filter(Boolean), buckets, fields, rate, money[k]?.values || new Array(n).fill(0)));
+  const perDay = Object.fromEntries(fields.map((f) => [f, buckets.map((_, i) => rows.map((r) => r[f]?.[i] || 0))]));
+  return { by, names: model.rows.map((r) => r.label), perDay };
+}
+
 /** D2–D6: one stats answer (report=1) → a live source for a page. */
 export function statsSource(answer, { by = 'project', thenBy = '', filter = [], page = 'spend', tagKeys = [], now } = {}) {
   const fields = FIELDS_OF[page] || FIELDS.money, share = SHARE_OF[page] || 'spend';
@@ -172,7 +188,8 @@ export function statsSource(answer, { by = 'project', thenBy = '', filter = [], 
   const { rows, kids } = rowsAndKids(sel, { dims, by, thenBy, rate, extras, fields, share, totals });
   if (whole) { const m = allocate([], { by: 'project', rate, ...extras }); const o = m.rows.map((r) => rowOf(r, fields, share, totals)); if (o.length) rows.origin = o; }
   const { days, last } = daysOf(buckets, answer.bucket, answer.windowEndMs);
-  return { live: true, fields, labels: labelsOf(buckets, answer.bucket), days, last, dayCount: dayCountOf(answer.bucket, buckets, answer.windowStartMs, answer.windowEndMs, now), series, before: null, totals, prev, rows, kids, none: 'Unallocated' };
+  const cut = cutOf(sel, { by, rate, extras, fields, buckets, rep, whole });
+  return { live: true, fields, labels: labelsOf(buckets, answer.bucket), days, last, dayCount: dayCountOf(answer.bucket, buckets, answer.windowStartMs, answer.windowEndMs, now), series, before: null, totals, prev, rows, kids, cut, none: 'Unallocated' };
 }
 
 /** The Cost report's model for a page as drawn (D24's Download CSV): dev's allocate over the same facts, then reportCsv. */

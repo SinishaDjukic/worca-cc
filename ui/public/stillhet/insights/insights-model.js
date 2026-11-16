@@ -378,6 +378,9 @@
     c.rowCount = rows.length;
     if (st.then) for (const r of rows) r.kids = sort((src.kids[r.name] || []).map(copy), st.then);
     c.rows = all ? rows : rows;
+    // F-G-fid-14: dev's facts cut each day by the rows of "by" (insights-map.mjs cutOf): the bars stack as the design's do
+    const cut = src.cut && src.cut.by === st.by ? src.cut.perDay[sub.num] : null;
+    if (cut && cut.length === c.labels.length) c.dayCut = { names: src.cut.names, perDay: cut };
     return c;
   }
   function compute(sub, st, all = false, whole0 = false) {
