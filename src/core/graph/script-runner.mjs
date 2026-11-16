@@ -13,12 +13,13 @@ import { readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { mockEnabled, buildSpawnEnv } from '../claude-runner.mjs';
+import { ENV_KEEP_VAR, scrubKeepList, carryClass } from '../engines/spawn.mjs';
 import { scrubbedEnv } from '../plugin-shim.mjs';            // PATH/HOME, the proxy and CA variables + the Windows start-up baseline (P11); no cycle: plugin-shim imports no graph module
 import { normalizeReview } from '../protocol.mjs';
 import { readVerdict, missingVerdictWarning } from './exec-io.mjs';
 import { AWAIT_PORT, PARAMS_PORT } from '../../shared/graph/constants.mjs';
 import { DEFAULT_EXIT_CODES, DEFAULT_TIMEOUT_MS, MIN_TIMEOUT_MS, MAX_TIMEOUT_MS, SCRIPT_RUNTIMES, pythonMissingSentence, overlayWiredParams } from '../../shared/graph/script-meta.mjs';
-import { probePython } from './python-probe.mjs';
+import { probePython, pythonCandidates } from './python-probe.mjs';
 import { stripHostCredentials } from '../host-credentials.mjs';
 import { withoutProxyLogin } from '../env-proxy.mjs';
 import { agentIdentity, agentSpawn, killAgentGroupSync } from '../agent-user.mjs';
@@ -26,6 +27,9 @@ import { agentIdentityFor } from '../agent-pool.mjs';
 import { currentOwner } from '../billing.mjs';
 import { gitAvailable } from '../git-available.mjs';
 import { withNoGitPath } from '../nogit-stub.mjs';
+import { sessionFor, spawnsRemotely, executorInProcess } from '../executor/index.mjs';
+import { abortError } from '../executor/shared.mjs';
+import { createRemoteChild } from '../executor/remote-child.mjs';
 
 const CHILD_PATH = fileURLToPath(new URL('./script-child.mjs', import.meta.url));
 /** The `python` harness (workbench spec §7), spawned as `<python> -u worca_script.py <program.py>`. */
@@ -34,7 +38,7 @@ const PY_HARNESS_PATH = fileURLToPath(new URL('./worca_script.py', import.meta.u
 const PY_ENV = Object.freeze({ PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' });
 const AWAIT_ID = AWAIT_PORT.id;
 /** The three server-side variables a script must not inherit (D11). */
-const STRIPPED_ENV = new Set(['WORCA_HOME', 'WORCA_RUN_ROOT', 'WORCA_HOST_PID']);
+const STRIPPED_ENV = new Set(['WORCA_HOME', 'WORCA_DB_DIR', 'WORCA_RUN_ROOT', 'WORCA_HOST_PID']);
 export const CAPTURE_HEAD = 256 * 1024;
 export const CAPTURE_TAIL = 768 * 1024;
 /** v4 T1 — three bounds on what ONE child can push into the host. MEASURED before they existed: 600 MiB of
@@ -56,8 +60,17 @@ const TAIL_LINES = 20;
 function scriptError(message, extra = {}) {
   return Object.assign(new Error(message), { errorClass: null, ...extra });
 }
-function abortError() {
-  return Object.assign(new Error('aborted'), { name: 'AbortError' });
+/**
+ * What a script's failed spawn is thrown as. Locally that is a script error, never recoverable (D9). Under a remote
+ * executor the spawn can fail for the WORKER's reasons instead: a stop while the worker was starting stays an abort,
+ * and "no worker could start" / "the worker was lost" keep their network class, so the step is retried on a fresh
+ * worker like an agent's.
+ */
+export function scriptSpawnError(key, err) {
+  if (err?.name === 'AbortError') return err;
+  // A worker lost while the script ran is not a failed spawn: the script was running until its worker went.
+  const what = err?.code === 'EWORKERLOST' ? `script "${key}": ${err.message}` : `script "${key}": spawn failed — ${err?.message || err}`;
+  return carryClass(scriptError(what), err);
 }
 const lastLines = (text, n) => String(text || '').trimEnd().split('\n').slice(-n).join('\n');
 const secs = (ms) => (Math.round((ms || 0) / 100) / 10).toFixed(1);
@@ -190,7 +203,9 @@ export function scriptBaseEnv(claudeOpts, platform = process.platform) {
   const scrubbed = buildSpawnEnv(claudeOpts?.envScrub, claudeOpts?.envAllowlist);
   // Never a GitHub or Azure DevOps credential, nor a proxy URL with a login, like the agents
   // (src/core/host-credentials.mjs, env-proxy.mjs withoutProxyLogin).
-  return withNoGitPath(withoutProxyLogin(stripHostCredentials(scrubbed ? { ...scrubbedEnv(platform), ...scrubbed } : process.env)), { platform });
+  const env = withNoGitPath(withoutProxyLogin(stripHostCredentials(scrubbed ? { ...scrubbedEnv(platform), ...scrubbed } : process.env)), { platform });
+  // Scrubbed, and bound for a worker: the scrub's rule rides along, so the worker adds none of its own beyond it.
+  return scrubbed && spawnsRemotely() ? { ...env, [ENV_KEEP_VAR]: scrubKeepList(claudeOpts?.envAllowlist) } : env;
 }
 
 export function parseFrame(text) {
@@ -276,7 +291,10 @@ export async function materializeOutputs(ports, outputs, frame, key) {
  *  only hit OUR descendants; a group that is already empty answers ESRCH, which is caught.
  *  spawnScript calls this only while the spawn is unsettled (i.e. before `'close'`). */
 export function killTree(child, platform = process.platform) {
-  if (!child || typeof child.pid !== 'number') return;
+  if (!child) return;
+  // A child on a worker (executor/remote-child.mjs): the worker kills the whole group itself.
+  if (child.remote) { try { child.kill('SIGKILL'); } catch { /* gone */ } return; }
+  if (typeof child.pid !== 'number') return;
   if (platform === 'win32') {
     // taskkill /T needs the root alive to walk the tree; once it is gone there is nothing left to address.
     if (child.exitCode === null && child.signalCode === null) {
@@ -314,11 +332,19 @@ process.on('exit', () => { for (const [child, platform] of live) killTree(child,
  * Resolves `{ exitCode, signal, timedOut, aborted, stdout, frameOverflow, capture, durationMs }`;
  * rejects only on a spawn failure.
  */
-export function spawnScript({ file, args, cwd, env, stdin = null, timeoutMs, signal, onLine, stdoutMode, platform = process.platform }) {
+export function spawnScript(o) {
+  // The executor seam (executor/index.mjs): a script inside a run scope under a remote executor
+  // runs on that run's worker, in the same container as its agents; the default spawns here.
+  if (!spawnsRemotely()) return spawnScriptOn(o, null);
+  return sessionFor({ signal: o.signal }).then((session) => spawnScriptOn(o, session));
+}
+
+/** The spawn proper; with a `session` the child is a remote-child on that worker (no agent uid, no local group). */
+function spawnScriptOn({ file, args, cwd, env, stdin = null, timeoutMs, signal, onLine, stdoutMode, platform = process.platform }, session) {
   return new Promise((resolve, reject) => {
     const started = Date.now();
     // Scripts run the agents' code (tests, builds): under the agent's uid when the container has one.
-    const agent = platform !== 'win32' ? agentIdentityFor(currentOwner()) : null;   // the owner's pool user (agent-pool.mjs)
+    const agent = !session && platform !== 'win32' ? agentIdentityFor(currentOwner()) : null;   // the owner's pool user (agent-pool.mjs)
     let spawnFile = file;
     let spawnArgs = args;
     let spawnEnv = env;
@@ -326,15 +352,17 @@ export function spawnScript({ file, args, cwd, env, stdin = null, timeoutMs, sig
       try { ({ file: spawnFile, args: spawnArgs, env: spawnEnv } = agentSpawn(file, args, env || process.env, agent)); }
       catch (err) { reject(err); return; }
     }
-    const child = spawn(spawnFile, spawnArgs, {
-      cwd,
-      env: spawnEnv,
-      detached: platform !== 'win32',
-      windowsHide: true,
-      windowsVerbatimArguments: platform === 'win32' && stdoutMode === 'capture',
-      stdio: [stdin == null ? 'ignore' : 'pipe', 'pipe', 'pipe'],
-    });
-    live.set(child, platform);
+    const child = session
+      ? createRemoteChild(session, { file: spawnFile, args: spawnArgs, cwd, env: spawnEnv ?? scriptBaseEnv(null), stdin, displayBin: file })   // no env given: this process's, minus what no script may carry
+      : spawn(spawnFile, spawnArgs, {
+        cwd,
+        env: spawnEnv,
+        detached: platform !== 'win32',
+        windowsHide: true,
+        windowsVerbatimArguments: platform === 'win32' && stdoutMode === 'capture',
+        stdio: [stdin == null ? 'ignore' : 'pipe', 'pipe', 'pipe'],
+      });
+    if (!session) live.set(child, platform);
     if (agent) agentOf.set(child, agent);
     const capture = createCapture();
     const partial = { out: '', err: '' };
@@ -552,7 +580,7 @@ export async function runScriptExecution(ctx) {
     if (run.timedOut) throw scriptError(`script "${key}" timed out after ${Math.round(timeoutMs / 1000)} s`);
   };
   const spawnOrThrow = async (o) => {
-    try { return await spawnScript(o); } catch (err) { throw scriptError(`script "${key}": spawn failed — ${err?.message || err}`); }
+    try { return await spawnScript(o); } catch (err) { throw scriptSpawnError(key, err); }
   };
 
   // The two HARNESSED runtimes differ only in what is spawned: same envelope on
@@ -587,12 +615,24 @@ export async function runScriptExecution(ctx) {
     // and windowsVerbatimArguments stays off (spawnScript sets it for
     // stdoutMode 'capture' only), which is what quotes a path with a space.
     const file = programFile();
-    const probe = await probePython();
+    // On a worker the interpreter is the worker image's, not this container's: nothing to probe here (a worker
+    // without one fails the spawn, and says so).
+    // On a worker the interpreter is the worker image's: the configured command (WORCA_PYTHON, the pythonPath setting, else
+    // python3) goes as named and the worker's PATH resolves it. Under the in-process backend it is this machine's: probed.
+    const probe = spawnsRemotely() && !executorInProcess() ? { ok: true, command: pythonCandidates()[0].command } : await probePython();
     if (!probe.ok) throw scriptError(pythonMissingSentence(key));
     const [exe, ...pre] = probe.command;
     run = await spawnOrThrow({ file: exe, args: [...pre, '-u', PY_HARNESS_PATH, file], cwd: envelope.ctx.cwd,
       env: { ...env, ...PY_ENV }, stdin: JSON.stringify(envelope), timeoutMs, signal: ctx.signal, onLine,
-      stdoutMode: 'frame', platform });
+      stdoutMode: 'frame', platform }).catch((err) => {
+      // The worker image has no python (the slim images ship none): the sentence a local preflight would have given,
+      // with the image that has one.
+      // (A working directory the worker cannot see is an ENOENT too: the worker names it, and that message stands.)
+      if (spawnsRemotely() && !executorInProcess() && err?.code === 'ENOENT' && !/working directory .* does not exist on this worker/.test(String(err.message))) {
+        throw scriptError(`${pythonMissingSentence(key).replace('on this machine', 'in the worker image').replace(' (set WORCA_PYTHON)', '')}; a slim worker image ships no python — use the -full image (WORCA_TAG=<version>-full, or worker.variant: full in the Helm chart), or name an interpreter the image has with WORCA_PYTHON`);
+      }
+      throw err;
+    });
     afterRun(run);
     frame = readFrame(run, 'print() or api.log()');
   } else {

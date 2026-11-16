@@ -86,7 +86,21 @@ the composer's Save path (`saveGraphWorkflow`, origin `auto`), and starts the sa
 `propose_workflow`'s card; **Open in Workflows** opens it on the canvas as a new unsaved workflow. Draft Save/Decline
 start no turn: the context header's `cards:` line reports their state.
 
-Deep dives: [Guardrails](guardrails.md) · [Storage](storage.md) · [Scheduled runs](scheduled-runs.md)
+## Controller and workers
+
+Every engine and script spawn goes through one seam, the **executor** (`src/core/executor/`),
+chosen by `WORCA_EXECUTOR`. `local` (the default, and what Compose and Railway run) spawns the
+process in the Worca host itself. `kubernetes` splits the host in two: the **controller** is
+today's `worca ui` process (orchestrator, scheduler, SQLite, the UI), always on; a **worker** is
+an ephemeral pod per run and per chat thread that runs the agents and connects back to the
+controller's worker listener (port 4319) with a one-time token, over a protocol of exec, I/O and
+heartbeat frames. Files are shared through a volume mounted at the same paths on both sides;
+SQLite stays with the controller. A controller boot sweeps the workers of its predecessor, and a
+stop drains (pauses runs, releases workers) so the next controller resumes them. The worker
+process, its environment and the protocol: [workers.md](workers.md). The Helm chart, storage and
+operations: [kubernetes.md](kubernetes.md).
+
+Deep dives: [Guardrails](guardrails.md) · [Storage](storage.md) · [Scheduled runs](scheduled-runs.md) · [Kubernetes](kubernetes.md)
 
 <!--
   The diagram is rendered from the self-contained page docs/architecture.html.

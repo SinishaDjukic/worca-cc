@@ -13,6 +13,9 @@
 //                                   platform's). WORCA_IDENTITY_JWKS_URL (default
 //                                   <issuer>/.well-known/jwks.json) and
 //                                   WORCA_IDENTITY_AUDIENCE (default: the allowed hosts).
+//                                   WORCA_IDENTITY_EMAIL_CLAIM / WORCA_IDENTITY_TEAMS_CLAIM
+//                                   name the claims (default email / teams), for a plain
+//                                   OIDC provider's ID token behind oauth2-proxy.
 //                                   Exact hosts only: no ".example.com" entries
 //   WORCA_INSECURE_NO_IDENTITY_CHECK=1  run with an allowlist but no token check
 //                                   (the proxy alone is trusted); never the default
@@ -23,7 +26,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import { createAccessVerifier, normalizeTeamDomain } from './cf-access.mjs';
-import { createIssuerVerifier, normalizeIssuer } from './issuer-jwt.mjs';
+import { createIssuerVerifier, normalizeIssuer, parseClaimName, DEFAULT_CLAIMS } from './issuer-jwt.mjs';
 
 export const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 const LOOPBACK_BINDS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
@@ -72,6 +75,11 @@ export function readRemoteAccessConfig(env = process.env) {
       issuer,
       jwksUrl: String(env.WORCA_IDENTITY_JWKS_URL || '').trim() || `${issuer}/.well-known/jwks.json`,
       audience: audience.length ? audience : hosts.filter((h) => !h.startsWith('.') && !LOCAL_HOSTNAMES.has(h)),
+      // null = unusable (checkRemoteAccessConfig reports it).
+      claims: {
+        email: parseClaimName(env.WORCA_IDENTITY_EMAIL_CLAIM, DEFAULT_CLAIMS.email),
+        teams: parseClaimName(env.WORCA_IDENTITY_TEAMS_CLAIM, DEFAULT_CLAIMS.teams),
+      },
     };
   }
   return {
@@ -118,6 +126,8 @@ export function checkRemoteAccessConfig(cfg, { bindHost = '127.0.0.1', gateways 
     if (!secureUrl(id.issuer)) errors.push('WORCA_IDENTITY_ISSUER must be an https URL (http only for localhost)');
     if (!secureUrl(id.jwksUrl)) errors.push('WORCA_IDENTITY_JWKS_URL must be an https URL (http only for localhost)');
     if (!id.audience.length) errors.push('WORCA_IDENTITY_ISSUER is set but there is no audience: set WORCA_IDENTITY_AUDIENCE or an exact host in WORCA_ALLOWED_HOSTS');
+    if (id.claims?.email === null) errors.push('WORCA_IDENTITY_EMAIL_CLAIM must be a claim name (no spaces, at most 200 characters)');
+    if (id.claims?.teams === null) errors.push('WORCA_IDENTITY_TEAMS_CLAIM must be a claim name (no spaces, at most 200 characters)');
     // W2: with a shared issuer, a suffix entry would accept the Origin of every other instance
     // under the same domain. The issuer's audience check stops their tokens, not their pages.
     const suffixes = cfg.allowedHosts.filter((h) => h.startsWith('.'));
@@ -141,10 +151,23 @@ export function checkRemoteAccessConfig(cfg, { bindHost = '127.0.0.1', gateways 
     warnings.push(`${vars} is set but WORCA_ALLOWED_HOSTS is empty: only localhost requests are accepted`);
   }
   if (!LOOPBACK_BINDS.has(String(bindHost).toLowerCase()) && !remote) {
-    const via = gateways.length ? ` or through Docker's gateway (${gateways.join(', ')})` : '';
+    const via = gateways.length ? ` or through the container network's gateway (${gateways.join(', ')})` : '';
     warnings.push(`listening on ${bindHost} but WORCA_ALLOWED_HOSTS is empty: only connections from this machine${via} are answered, every other caller gets a 403`);
   }
   return { errors, warnings };
+}
+
+/**
+ * The 403 text for a request the host or peer guard refused. In local mode a request carrying an identity
+ * proxy's token header came through a proxy on another host (another container, for one): worca refuses it
+ * because WORCA_ALLOWED_HOSTS names no host, so say that rather than "localhost-only tool".
+ */
+export function hostForbiddenMessage(cfg, headers = {}) {
+  if (isRemoteMode(cfg)) return 'forbidden: host not allowed (see WORCA_ALLOWED_HOSTS)';
+  if (headers[ISSUER_TOKEN_HEADER] || headers['cf-access-jwt-assertion']) {
+    return 'forbidden: an identity proxy is in front of worca but WORCA_ALLOWED_HOSTS names no host: set it to the host people open (not localhost); see docs/auth.md';
+  }
+  return 'forbidden: worca is a localhost-only tool';
 }
 
 /** "a Cloudflare Access check" | "an identity issuer check": for log lines and messages. */
@@ -271,8 +294,8 @@ export function createIdentityCheck(cfg, { fetchImpl, now } = {}) {
     return (req) => verify(req.headers['cf-access-jwt-assertion']);
   }
   if (cfg.identity.provider === 'issuer') {
-    const { issuer, jwksUrl, audience } = cfg.identity;
-    const verify = createIssuerVerifier({ issuer, jwksUrl, audience, fetchImpl, now });
+    const { issuer, jwksUrl, audience, claims } = cfg.identity;
+    const verify = createIssuerVerifier({ issuer, jwksUrl, audience, claims, fetchImpl, now });
     return async (req) => {
       const v = req.headers[ISSUER_TOKEN_HEADER];
       const who = await verify(Array.isArray(v) ? v[0] : v);

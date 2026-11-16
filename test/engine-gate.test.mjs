@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { execSync, execFileSync } from 'node:child_process';
 import { useTempHome } from './helpers/temp-home.mjs';
 import { createOrchestrator } from '../src/core/orchestrator.mjs';
+import { installExecutor } from '../src/core/executor/index.mjs';
 import { runOpts } from '../src/core/phases.mjs';
 import { runClaude } from '../src/core/claude-runner.mjs';
 import { addGlobalModel, setUtilityModels } from '../src/core/settings.mjs';
@@ -540,6 +541,13 @@ test("a real (non-mock) codex run checks the engine's binary and sign-in before 
   await assert.rejects(() => real(join(dir, 'missing'))._engineChecks(() => true), /engine codex: cannot run .*missing \(ENOENT\)/);
   // A mock run spawns nothing, so it checks nothing.
   assert.equal(await createOrchestrator({ projectDir: dir, claude: { mock: true, engine: 'codex', bin: out } })._engineChecks(() => true), null);
+  // Under a remote executor the engine runs on its worker image: the controller (whose image may lack codex
+  // altogether) does not preflight it; the worker refuses a binary it lacks at the first spawn instead.
+  installExecutor({ kind: 'docker', registry: {} });
+  try {
+    assert.equal(await real(join(dir, 'missing'))._engineChecks(() => true, { quiet: true }), null);
+    assert.equal(await real(out)._engineChecks(() => true, { quiet: true }), null);
+  } finally { installExecutor(null); }
 });
 
 test('engineStartRefusal answers before a run exists, and says when the consent would lift it', async () => {

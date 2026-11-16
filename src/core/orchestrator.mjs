@@ -13,6 +13,7 @@
 import { join, isAbsolute, extname, dirname, basename, sep } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { runScratchDir } from './run-manifest.mjs';
+import { isRemoteExecutor, executorInProcess } from './executor/index.mjs';
 import { rm, readFile, readdir, access, stat, writeFile, mkdir, realpath } from 'node:fs/promises';
 import { readDirections, pendingDirections } from './directions.mjs';
 import { runsOn } from '../shared/connections.mjs';
@@ -939,6 +940,7 @@ export class GraphOrchestrator extends RunHarness {
       keys.push(nc.key);
     }
     if (!keys.length) return;
+    if (isRemoteExecutor() && !executorInProcess()) return;   // the scripts run on a worker image: its interpreter, not this container's
     const probe = await probePython();
     if (probe.ok) return;
     throw new Error(keys.map((key) => pythonMissingSentence(key)).join('\n'));

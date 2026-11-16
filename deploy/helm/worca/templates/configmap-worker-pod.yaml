@@ -1,0 +1,16 @@
+# The worker pod template (WORCA_K8S_POD_TEMPLATE=/etc/worca/worker-pod.json): a JSON Pod
+# manifest the kubernetes executor backend starts from for every run and chat worker. It
+# overwrites metadata.name, merges its labels, sets the worca.dev/scope annotation, fills the
+# `worker` container's image, env (appended) and resources, and enforces restartPolicy Never,
+# automountServiceAccountToken false and enableServiceLinks false. Edit through values
+# (worker.*); the StatefulSet restarts on a change (checksum/worker-pod).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "worca.fullname" . }}-worker-pod
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "worca.labels" . | nindent 4 }}
+data:
+  worker-pod.json: |-
+    {{- include "worca.workerPod" . | fromYaml | toPrettyJson | nindent 4 }}

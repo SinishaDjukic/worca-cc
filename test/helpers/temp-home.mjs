@@ -38,6 +38,9 @@ export function useTempHome(after, prefix = 'worca-cc-home-') {
   const prev = process.env.WORCA_HOME;
   const home = mkdtempSync(join(tmpdir(), prefix));
   process.env.WORCA_HOME = home;
+  // The database follows WORCA_DB_DIR before the home (db.mjs dbPath): one inherited from a deployment would send
+  // every test file to the same, real database.
+  delete process.env.WORCA_DB_DIR;
   _resetForTests(); // db reopens at this home on the next getDb()
   after(() => {
     // NEVER re-expose the real ~/.worca-cc. node:test runs after-hooks FIFO, so

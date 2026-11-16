@@ -26,6 +26,8 @@ const CASES = [
   ['Read(~/.kube/**)', `${HOME}/.kube/config`],
   ['Read(~/.docker/**)', `${HOME}/.docker/config.json`],
   ['Read(~/.claude/**)', `${HOME}/.claude/.credentials.json`],
+  ['Read(//seed/**)', '/seed/claude/.credentials.json'],                                             // a worker: the controller's login volume
+  ['Read(//**/.worca-cc/worker-homes/**)', `${W}/worker-homes/chat/ask_00000002/.claude/.credentials.json`],   // another scope's worker HOME
   ['Read(~/.netrc)', `${HOME}/.netrc`],
   ['Read(~/.npmrc)', `${HOME}/.npmrc`],
   ['Read(~/.config/gh/**)', `${HOME}/.config/gh/hosts.yml`],

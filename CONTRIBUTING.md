@@ -149,6 +149,29 @@ docker compose -f compose.yml -f compose.dev.yml run --rm worca npm test
 The Claude Code version baked into the image is pinned in
 `docker/CLAUDE_CODE_VERSION`; bump it by PR.
 
+### Deployment surfaces move together
+
+Worca runs in four shapes that share one code base: the npm process, the Compose box, the
+Compose box with **worker containers**, and the Kubernetes **controller + worker pods**
+([`docs/workers.md`](docs/workers.md), [`docs/kubernetes.md`](docs/kubernetes.md)). A change in one
+place usually has a twin elsewhere; check the row and update the twins in the same PR:
+
+| You change | Also update | Check with |
+| --- | --- | --- |
+| How an engine CLI is spawned: its flags, the environment it gets, a staged file, a new engine | the worker protocol and `worca worker` (`src/worker/`) if the spawn needs something a worker does not have; the **worker image contract** and the engine installs ([`docs/docker.md`](docs/docker.md), `docker/engines/install.sh`, pins in `docker/engines.env`); `docs/workers.md` | `node --test test/executor-*.test.mjs`, `npm run docker:build -- --target worker --engine <id>`, `node tools/docker-smoke.mjs --image … --worker-image …` |
+| `docker/Dockerfile`, an entrypoint, `docker/engines.env` | `docs/docker.md` (Images, Building it yourself), `.github/workflows/docker-image.yml` when the matrix changes | `npm run docker:build`, `npm run docker:smoke`, `node --test test/docker-files.test.mjs test/supply-chain.test.mjs` |
+| A Compose file or overlay | `docker/.env.example`, the `.env` reference table in `docs/docker.md`, `src/cli/container.mjs` (`OVERLAYS`) | `node --test test/docker-files.test.mjs test/cli-container.test.mjs` |
+| The Helm chart (`deploy/helm/worca`) | `values.yaml` comments, the chart README, `docs/kubernetes.md`; the golden renders: `UPDATE_GOLDEN=1 node --test test/helm-chart.test.mjs` after an intended change | `helm lint deploy/helm/worca`, `node --test test/helm-chart.test.mjs`, `node tools/k8s-smoke.mjs` (needs kind) |
+| The Kubernetes backend (`src/core/executor/backends/k8s-*.mjs`, `kubernetes.mjs`) | the worker pod template in `_helpers.tpl` and its values, `docs/kubernetes.md` | `node --test test/executor-k8s-*.test.mjs test/helm-chart.test.mjs` (the chart↔backend contract test) |
+| An environment variable the controller or a worker reads | the Configuration table in `docs/workers.md`, `.env.example`, `values.yaml` | — |
+| Where agents' credentials come from | `docs/workers.md` › Credentials on workers, `docs/docker.md` › Logging Claude Code in, `docs/kubernetes.md` › Credentials | — |
+
+Two more things the tests enforce: `ui/server.mjs` has a line ceiling
+(`tools/split-by-feature/size-caps.json`, pinned by `test/split-by-feature-plan.test.mjs`), so new
+server-side wiring goes into a module the server imports rather than into `ui/server.mjs`; and
+the CI runner's Helm may be a newer major than yours, so a golden that differs only in whitespace
+is a normalisation to add in `test/helm-chart.test.mjs`, not a golden to regenerate.
+
 ## Project structure
 
 ```

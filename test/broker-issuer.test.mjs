@@ -23,7 +23,7 @@ const BASE_ENV = {
 test('multi mode accepts an issuer; JWKS URL and audience default from the issuer and the public URL', () => {
   const { config, errors } = readBrokerConfig({ ...BASE_ENV, WORCA_IDENTITY_ISSUER: `${ISSUER}/` });
   assert.deepEqual(errors, []);
-  assert.deepEqual(config.identity, { kind: 'issuer', issuer: ISSUER, jwksUrl: JWKS_URL, audience: [KEY_HOST] });
+  assert.deepEqual(config.identity, { kind: 'issuer', issuer: ISSUER, jwksUrl: JWKS_URL, audience: [KEY_HOST], claims: { email: 'email', teams: 'teams' } });
 });
 
 test('the platform\'s explicit variables are used as given', () => {
@@ -46,6 +46,15 @@ test('Access and an issuer together is an error; http issuer is an error; Access
   assert.deepEqual(access.config.identity, { kind: 'access', teamDomain: TEAM, aud: 'aud' });
   const none = readBrokerConfig(BASE_ENV);
   assert.match(none.errors.join('\n'), /multi mode needs an identity check for the key page: .*WORCA_IDENTITY_ISSUER/);
+});
+
+test('the key page takes the same claim names; a bad one is an error', () => {
+  const ok = readBrokerConfig({ ...BASE_ENV, WORCA_IDENTITY_ISSUER: ISSUER, WORCA_IDENTITY_EMAIL_CLAIM: 'preferred_username', WORCA_IDENTITY_TEAMS_CLAIM: 'roles' });
+  assert.deepEqual(ok.errors, []);
+  assert.deepEqual(ok.config.identity.claims, { email: 'preferred_username', teams: 'roles' });
+  const bad = readBrokerConfig({ ...BASE_ENV, WORCA_IDENTITY_ISSUER: ISSUER, WORCA_IDENTITY_EMAIL_CLAIM: 'a b' });
+  assert.match(bad.errors.join('\n'), /WORCA_IDENTITY_EMAIL_CLAIM must be a claim name/);
+  assert.equal(bad.errors.filter((e) => /multi mode needs an identity check/.test(e)).length, 0, 'one clear message, not two');
 });
 
 let server, base, store;

@@ -1,13 +1,22 @@
 name: Container image
 
-# Reusable: builds the Worca container image (slim + full, linux/amd64 +
-# linux/arm64) from a git ref and pushes it to GHCR with provenance, SBOM and a
-# keyless cosign signature. Called by release-npm-app.yml on a release tag and
-# by docker-rebuild.yml on the weekly refresh. See plans/container-isolation-design.md §10.3.
+# Reusable: builds the Worca container images from a git ref and pushes them to GHCR with
+# provenance, SBOM and a keyless cosign signature. Called by release-npm-app.yml on a release
+# tag and by docker-rebuild.yml on the weekly refresh; a workflow_dispatch builds a subset by
+# hand. See plans/container-isolation-design.md §10.3 and docs/workers.md.
+#
+# The matrix (the `plan` job writes it, `engines` narrows the worker rows):
+#   controller            slim + full        ghcr.io/sinishadjukic/worca:<tag>[-full]
+#   worker claude         slim + full        ghcr.io/sinishadjukic/worca-worker:<tag>-claude[-full]
+#   worker all            slim + full        ...worca-worker:<tag>-all[-full]   (every engine)
+#   worker <other engine> slim               ...worca-worker:<tag>-<engine>
+# each for linux/amd64 and linux/arm64, joined into one manifest per (target, engine, variant).
+# The goose and cursor rows are continue-on-error: their upstreams ship no release for every
+# architecture every time, and a missing worker image must not hold the controller release.
 #
 # The tarball is produced by `npm pack` from the checked-out ref — the same
-# source and the same pack step the npm publish runs on that tag — so the image
-# holds exactly what npm ships for that version.
+# source and the same pack step the npm publish runs on that tag — so the images
+# hold exactly what npm ships for that version.
 on:
   workflow_call:
     inputs:
@@ -24,32 +33,88 @@ on:
         required: false
         type: boolean
         default: false
+      engines:
+        description: comma list of worker engines to build (claude,codex,copilot,cursor,gemini,qwen,goose,opencode,all); empty = every one
+        required: false
+        type: string
+        default: ""
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: git ref to build (a worca-app-v* tag)
+        required: true
+        type: string
+      channel:
+        description: latest | rc — which moving tags to update
+        required: true
+        type: choice
+        options: [rc, latest]
+        default: rc
+      date_tag:
+        description: also push a <version>-YYYYMMDD tag
+        required: false
+        type: boolean
+        default: false
+      engines:
+        description: comma list of worker engines to build (claude,codex,copilot,cursor,gemini,qwen,goose,opencode,all); empty = every one
+        required: false
+        type: string
+        default: ""
 
 env:
   # GHCR repository names must be lowercase; the owner login is not.
   IMAGE: ghcr.io/sinishadjukic/worca
+  IMAGE_WORKER: ghcr.io/sinishadjukic/worca-worker
 
 jobs:
+  # The matrix as JSON: one row per (target, engine, variant, arch) for `build`, one per
+  # (target, engine, variant) for `manifest`. A static `include` cannot be narrowed by an input.
+  plan:
+    name: plan the matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      manifest: ${{ steps.plan.outputs.manifest }}
+    steps:
+      - id: plan
+        env:
+          ENGINES: ${{ inputs.engines }}
+        run: |
+          node - <<'EOF' >> "$GITHUB_OUTPUT"
+          const all = ['claude', 'codex', 'copilot', 'cursor', 'gemini', 'qwen', 'goose', 'opencode', 'all'];
+          const asked = (process.env.ENGINES || '').split(',').map((s) => s.trim()).filter(Boolean);
+          for (const e of asked) if (!all.includes(e)) { console.error(`unknown engine ${e}`); process.exit(2); }
+          const engines = asked.length ? asked : all;
+          const fragile = new Set(['goose', 'cursor', 'all']);
+          const rows = [{ target: 'controller', engine: 'none', variant: 'slim' }, { target: 'controller', engine: 'none', variant: 'full' }];
+          for (const e of engines) {
+            rows.push({ target: 'worker', engine: e, variant: 'slim' });
+            if (e === 'claude' || e === 'all') rows.push({ target: 'worker', engine: e, variant: 'full' });
+          }
+          const manifest = rows.map((r) => ({ ...r, key: `${r.target}-${r.engine}-${r.variant}`, fragile: r.target === 'worker' && fragile.has(r.engine) }));
+          const archs = [{ arch: 'amd64', runner: 'ubuntu-latest' }, { arch: 'arm64', runner: 'ubuntu-24.04-arm' }];
+          const build = manifest.flatMap((r) => archs.map((a) => ({ ...r, ...a })));
+          console.log(`build=${JSON.stringify({ include: build })}`);
+          console.log(`manifest=${JSON.stringify({ include: manifest })}`);
+          console.error(`${build.length} builds, ${manifest.length} manifests: ${manifest.map((r) => r.key).join(' ')}`);
+          EOF
+
   build:
-    name: build ${{ matrix.variant }} ${{ matrix.arch }}
+    name: build ${{ matrix.key }} ${{ matrix.arch }}
+    needs: plan
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 45
+    timeout-minutes: 60
+    # A goose or cursor worker that does not build (no upstream release for this arch yet) must
+    # not hold the release of everything else.
+    continue-on-error: ${{ matrix.fragile }}
     permissions:
       contents: read
       packages: write
       id-token: write
     strategy:
-      fail-fast: true
-      matrix:
-        variant: [slim, full]
-        # arch must be a dimension: include-only values get overwritten by
-        # the next include, which left every combination on arm64.
-        arch: [amd64, arm64]
-        include:
-          - arch: amd64
-            runner: ubuntu-latest
-          - arch: arm64
-            runner: ubuntu-24.04-arm
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.build) }}
     outputs:
       version: ${{ steps.meta.outputs.version }}
     steps:
@@ -72,6 +137,12 @@ jobs:
           echo "tarball=$TGZ" >> "$GITHUB_OUTPUT"
           echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
           echo "claude_code=$(cat docker/CLAUDE_CODE_VERSION)" >> "$GITHUB_OUTPUT"
+          # The other engines' pins (docker/engines.env), one build arg per line.
+          {
+            echo "pins<<PINS_EOF"
+            grep -Ev '^\s*(#|$)' docker/engines.env
+            echo "PINS_EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -87,52 +158,76 @@ jobs:
         with:
           context: .
           file: docker/Dockerfile
+          target: ${{ matrix.target }}
           platforms: linux/${{ matrix.arch }}
           build-args: |
             WORCA_TARBALL=${{ steps.meta.outputs.tarball }}
             CLAUDE_CODE_VERSION=${{ steps.meta.outputs.claude_code }}
             VARIANT=${{ matrix.variant }}
+            ENGINE=${{ matrix.engine == 'none' && 'claude' || matrix.engine }}
+            ${{ steps.meta.outputs.pins }}
           labels: |
             org.opencontainers.image.version=${{ steps.meta.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
           provenance: mode=max
           sbom: true
-          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=${{ matrix.variant }}-${{ matrix.arch }}
-          cache-to: type=gha,scope=${{ matrix.variant }}-${{ matrix.arch }},mode=max
+          outputs: type=image,name=${{ matrix.target == 'worker' && env.IMAGE_WORKER || env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.key }}-${{ matrix.arch }}
+          cache-to: type=gha,scope=${{ matrix.key }}-${{ matrix.arch }},mode=max
 
       - name: Export digest
         run: |
-          mkdir -p /tmp/digests/${{ matrix.variant }}
-          touch "/tmp/digests/${{ matrix.variant }}/${DIGEST#sha256:}"
+          mkdir -p "/tmp/digests/${{ matrix.key }}"
+          touch "/tmp/digests/${{ matrix.key }}/${DIGEST#sha256:}"
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: digests-${{ matrix.variant }}-${{ matrix.arch }}
+          name: digests-${{ matrix.key }}-${{ matrix.arch }}
           path: /tmp/digests/*
           if-no-files-found: error
           retention-days: 1
 
   manifest:
-    name: manifest + sign (${{ matrix.variant }})
-    needs: build
+    name: manifest + sign (${{ matrix.key }})
+    needs: [plan, build]
+    # Not skipped when one build row failed: each manifest row checks its own digests (below) and publishes or
+    # refuses on its own, so a worker image that did not build never holds back the controller image.
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    continue-on-error: ${{ matrix.fragile }}
     permissions:
       contents: read
       packages: write
       id-token: write
     strategy:
-      matrix:
-        variant: [slim, full]
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.manifest) }}
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: /tmp/digests
-          pattern: digests-${{ matrix.variant }}-*
+          pattern: digests-${{ matrix.key }}-*
           merge-multiple: true
+      # Every row's digests, to know whether the whole build succeeded: the build job's result says `success` when only
+      # a fragile row (continue-on-error) failed, and a fragile row's absence must hold the moving tags as well — a
+      # controller `latest` never gets ahead of a worker image's.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: /tmp/all-digests
+          pattern: digests-*
+      - name: Did every build row deliver?
+        id: whole
+        env:
+          ROWS: ${{ needs.plan.outputs.manifest }}
+          ARCH_COUNT: 2
+        run: |
+          expected=$(( $(printf '%s' "$ROWS" | jq '.include | length') * ARCH_COUNT ))
+          got=$(find /tmp/all-digests -type f | wc -l)
+          echo "expected=$expected got=$got"
+          if [ "$got" -ge "$expected" ]; then echo "complete=true" >> "$GITHUB_OUTPUT"; else echo "complete=false" >> "$GITHUB_OUTPUT"; fi
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -146,6 +241,7 @@ jobs:
       #   stable 1.3.0 -> 1.3.0, 1.3, 1, latest        (+ "-full" twins)
       #   rc 1.3.0-rc.1 -> 1.3.0-rc.1, rc               (+ "-full" twins)
       #   date_tag     -> 1.3.0-20260919 in addition
+      # A worker image's tags carry its engine: <tag>-<engine>[-full] in the worca-worker repo.
       - name: Compute tags
         id: tags
         env:
@@ -153,41 +249,66 @@ jobs:
           CHANNEL: ${{ inputs.channel }}
           DATE_TAG: ${{ inputs.date_tag }}
           VARIANT: ${{ matrix.variant }}
+          TARGET: ${{ matrix.target }}
+          ENGINE: ${{ matrix.engine }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          BUILD_COMPLETE: ${{ steps.whole.outputs.complete }}
         run: |
-          suffix=""; [ "$VARIANT" = "full" ] && suffix="-full"
+          suffix=""; [ "$TARGET" = "worker" ] && suffix="-$ENGINE"
+          [ "$VARIANT" = "full" ] && suffix="$suffix-full"
           tags="$VERSION$suffix"
-          if [ "$CHANNEL" = "latest" ]; then
+          # The moving tags (latest, rc, 1, 1.3) move together or not at all: with one build row failed (a fragile
+          # row's failure does not fail the build job), this row still publishes its version tag, but a controller
+          # `latest` must not get ahead of a worker image that did not build.
+          if [ "$BUILD_RESULT" != "success" ] || [ "$BUILD_COMPLETE" != "true" ]; then
+            echo "::error title=moving tags held::a build row did not deliver its digests: $VERSION$suffix is published, but latest/rc/$major/$minor stay where they were — fix the failed row and re-run to move them"
+            echo "### Moving tags held for $VERSION$suffix" >> "$GITHUB_STEP_SUMMARY"; echo "A build row did not deliver its digests; only the version tag was published." >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$CHANNEL" = "latest" ]; then
             major="${VERSION%%.*}"; minor="${VERSION%.*}"
             tags="$tags $minor$suffix $major$suffix latest$suffix"
           else
             tags="$tags rc$suffix"
           fi
           if [ "$DATE_TAG" = "true" ]; then tags="$tags $VERSION-$(date -u +%Y%m%d)$suffix"; fi
+          repo="$IMAGE"; [ "$TARGET" = "worker" ] && repo="$IMAGE_WORKER"
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
           echo "tags=$tags" >> "$GITHUB_OUTPUT"
-          echo "will tag: $tags"
+          echo "will tag $repo: $tags"
 
       - name: Create multi-arch manifest
         id: manifest
-        working-directory: /tmp/digests/${{ matrix.variant }}
+        working-directory: /tmp/digests/${{ matrix.key }}
+        env:
+          REPO: ${{ steps.tags.outputs.repo }}
+          # linux/amd64 + linux/arm64: the `archs` list of the plan job. A row whose build may fail
+          # (continue-on-error) can arrive here with one digest; a tag that exists for one
+          # architecture only fails every pull on the other, so nothing is published then.
+          ARCH_COUNT: 2
         run: |
+          have=$(ls | wc -l)
+          if [ "$have" -ne "$ARCH_COUNT" ]; then
+            echo "::error::${{ matrix.key }}: $have of $ARCH_COUNT architectures built; not publishing a partial manifest"
+            exit 1
+          fi
           args=""
-          for t in ${{ steps.tags.outputs.tags }}; do args="$args -t $IMAGE:$t"; done
-          docker buildx imagetools create $args $(printf "$IMAGE@sha256:%s " *)
+          for t in ${{ steps.tags.outputs.tags }}; do args="$args -t $REPO:$t"; done
+          docker buildx imagetools create $args $(printf "$REPO@sha256:%s " *)
           first="$(echo ${{ steps.tags.outputs.tags }} | cut -d' ' -f1)"
-          echo "digest=$(docker buildx imagetools inspect "$IMAGE:$first" --format '{{json .Manifest.Digest}}' | tr -d '"')" >> "$GITHUB_OUTPUT"
+          echo "digest=$(docker buildx imagetools inspect "$REPO:$first" --format '{{json .Manifest.Digest}}' | tr -d '"')" >> "$GITHUB_OUTPUT"
 
       - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
       - name: Sign the manifest (keyless, OIDC)
         env:
           DIGEST: ${{ steps.manifest.outputs.digest }}
-        run: cosign sign --yes "$IMAGE@$DIGEST"
+          REPO: ${{ steps.tags.outputs.repo }}
+        run: cosign sign --yes "$REPO@$DIGEST"
 
   smoke:
-    name: smoke pushed image
+    name: smoke pushed images
     needs: [build, manifest]
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
       contents: read
       packages: read
@@ -203,5 +324,10 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Mock-mode smoke against the pushed manifest
+      - name: Mock-mode smoke against the pushed controller manifest
         run: node tools/docker-smoke.mjs --image "$IMAGE:${{ needs.build.outputs.version }}"
+      - name: Worker contract + controller/worker end to end against the pushed manifests
+        # Skipped when `engines` left claude out. With both images the smoke also runs a mock script
+        # node on a worker container the controller starts (docs/workers.md).
+        if: inputs.engines == '' || contains(format(',{0},', inputs.engines), ',claude,')
+        run: node tools/docker-smoke.mjs --image "$IMAGE:${{ needs.build.outputs.version }}" --worker-image "$IMAGE_WORKER:${{ needs.build.outputs.version }}-claude"

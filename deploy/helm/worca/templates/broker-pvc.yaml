@@ -1,0 +1,19 @@
+{{- if .Values.broker.enabled }}
+# The broker's store (WORCA_BROKER_DATA_DIR=/data): its SQLite vault. ReadWriteOnce, its own.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "worca.brokerServiceName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "worca.labels" . | nindent 4 }}
+    app.kubernetes.io/component: broker
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- with .Values.broker.storage.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.broker.storage.size }}
+{{- end }}

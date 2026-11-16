@@ -57,6 +57,7 @@ import {
 import { makeChatDescriptor } from './chat-descriptor.mjs';
 import { chatSelfTest, SELF_TEST_MODEL } from './chat-selftest.mjs';
 import { GEMINI_CLI } from './cli-specs.mjs';
+import { spawnHomeDir } from '../executor/index.mjs';
 
 /** Read at call time (not import time), so a test or a server child can point it at a fake after import. */
 export const geminiDefaultBin = () => process.env.WORCA_GEMINI_BIN || 'gemini';
@@ -345,9 +346,11 @@ const GEMINI_SPEC = Object.freeze({
   fatalStderrRe: GEMINI_POLICY_ERROR_RE, fatalMessage: 'Gemini CLI could not load worca\'s policy file, so the guardrail rules would not hold — stopped',
   createNormalizer: createGeminiNormalizer,
   askLockdown: GEMINI_ASK_LOCKDOWN,
+  askMinVersion: GEMINI_ASK_MIN_VERSION,
   prepare({ cwd, bin, sys, prompt, model, effort, servers, permissionRules, includeDirs, scratchDir, noGit, ask, probe }) {
     if (ask) return prepareAsk({ cwd, bin, sys, prompt, model, effort, servers, scratchDir, probe });
-    const plan = geminiRulePlan(permissionRules);
+    // `~/…` rules name the home this spawn runs with: on a worker that is the worker's, where a copied login lives.
+    const plan = geminiRulePlan(permissionRules, { home: spawnHomeDir() });
     let policyFile = null;
     if (plan.rules.length) {
       if (systemPolicyPresent()) throw new Error(`${bin}: the system policy folder (${GEMINI_SYSTEM_POLICY_DIRS[process.platform] || GEMINI_SYSTEM_POLICY_DIRS.linux}) holds policy files, so Gemini CLI would skip worca's guardrail rules`);

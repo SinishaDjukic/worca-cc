@@ -33,9 +33,14 @@ test('npm-shrinkwrap.json locks the package the image installs, and is the only 
 test('Dockerfile: the node base image is pinned by digest', () => {
   const d = read('docker/Dockerfile');
   const froms = d.split('\n').filter((l) => /^FROM\s/.test(l));
-  assert.deepEqual(froms.length, 1);
+  // One external image: every other stage builds FROM a stage of this file (`os`, `pkg`,
+  // `engines`), never a second registry image.
+  const stages = froms.map((l) => / AS (\S+)$/.exec(l)?.[1]).filter(Boolean);
+  const external = froms.filter((l) => !stages.includes(l.split(/\s+/)[1]));
+  assert.deepEqual(external.length, 1, `external images: ${external.join(' | ')}`);
+  assert.equal(external[0], froms[0], 'the external image is the first stage');
   // Literal, not a build arg: Dependabot only reads image references written in FROM.
-  assert.match(froms[0], /^FROM node:\d+-bookworm-slim@sha256:[0-9a-f]{64}$/);
+  assert.match(froms[0], /^FROM node:\d+-bookworm-slim@sha256:[0-9a-f]{64} AS os$/);
 });
 
 // One Node for everything this repo runs: .nvmrc names the major, the image and every single-version

@@ -24,6 +24,19 @@
 //   5. Agent isolation there: a fake `claude` started through runClaude runs as
 //      worca-agent, without a GitHub token, cannot read the server's environment,
 //      database or HOME, and commits in a project worca owns.
+//
+//   npm run docker:smoke -- --worker-image ghcr.io/sinishadjukic/worca-worker:dev-claude
+//
+// With --worker-image the WORKER image's contract (docs/workers.md) is checked instead (or as
+// well, when --image is given too): uid 1000, no sudo, `worca worker` without an assignment
+// exits 78 naming WORCA_CONTROLLER_URL, `--check` lists the engines with claude present,
+// WORCA_NO_DB=1 in the environment, and a worker stuck on a controller that never answers
+// leaves within 20 s of SIGTERM. Offline, no token.
+//
+// With BOTH --image and --worker-image, step 6 runs the two together: the controller under
+// WORCA_EXECUTOR=docker (given the socket) runs a mock workflow whose shell script node executes
+// on a worker container it starts from the worker image and removes when the run ends. The controller's
+// own checks are not repeated then (CI runs them the step before, on the same image).
 // ESM, no external dependencies.
 
 import { spawnSync } from 'node:child_process';
@@ -32,17 +45,21 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
+import { INSTANCE_LABEL } from '../src/core/executor/shared.mjs';
 
 const DEFAULT_IMAGE = 'ghcr.io/sinishadjukic/worca:dev';
 
 function parseArgs(argv) {
-  const out = { image: DEFAULT_IMAGE, keep: false, user: null };
+  const out = { image: null, workerImage: null, keep: false, user: null };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--image') out.image = argv[++i];
+    else if (argv[i] === '--worker-image') out.workerImage = argv[++i];
     else if (argv[i] === '--keep') out.keep = true;
     else if (argv[i] === '--user') out.user = argv[++i];
     else { console.error(`docker:smoke: unknown argument ${argv[i]}`); process.exit(2); }
   }
+  // The controller checks run by default; `--worker-image` alone runs the worker checks only.
+  if (!out.image && !out.workerImage) out.image = DEFAULT_IMAGE;
   return out;
 }
 
@@ -214,7 +231,163 @@ async function agentIsolation(inBox) {
   else ok('agent isolation: the server can read and remove what the agent wrote');
 }
 
+/**
+ * The worker image (docker/Dockerfile `worker` target, docker/entrypoint-worker.sh): runs as uid
+ * 1000 with no sudo, refuses an incomplete assignment with 78 and the variable's name, lists its
+ * engines offline, never opens the database, and leaves promptly on SIGTERM even while its
+ * controller never answers (a TCP black hole stands in for one).
+ */
+async function workerImage(img) {
+  console.log(`docker:smoke: worker image ${img}`);
+  const net = `worca-smoke-net-${stamp}`;
+  const hole = `worca-smoke-hole-${stamp}`;
+  const worker = `worca-smoke-worker-${stamp}`;
+  const assignment = ['-e', 'WORCA_WORKER_SCOPE=run:smoke', '-e', 'WORCA_WORKER_ID=w-smoke', '-e', 'WORCA_WORKER_TOKEN=smoke-token-never-valid'];
+  try {
+    const uid = docker(['run', '--rm', img, 'id', '-u'], { allowFail: true });
+    if (uid.status !== 0 || uid.stdout.trim() !== '1000') fail(`worker: id -u -> ${uid.stdout.trim() || uid.stderr.trim()} (exit ${uid.status}), expected 1000`);
+    else ok('worker: runs as uid 1000');
+
+    const sudo = docker(['run', '--rm', img, 'sudo', 'true'], { allowFail: true });
+    if (sudo.status !== 127) fail(`worker: sudo true exited ${sudo.status}, expected 127 (no sudo in the image)`);
+    else ok('worker: sudo is absent (127)');
+
+    const noEnv = docker(['run', '--rm', img, 'worca', 'worker'], { allowFail: true });
+    if (noEnv.status !== 78 || !/WORCA_CONTROLLER_URL/.test(noEnv.stderr)) fail(`worker: no assignment -> exit ${noEnv.status}, expected 78 naming WORCA_CONTROLLER_URL\n${noEnv.stderr}`);
+    else ok('worker: without an assignment exits 78 and names WORCA_CONTROLLER_URL');
+
+    const check = docker(['run', '--rm', img, 'worca', 'worker', '--check'], { allowFail: true });
+    let caps = null;
+    try { caps = JSON.parse(check.stdout); } catch { /* not JSON */ }
+    if (check.status !== 0 || !caps?.engines || !caps.engines.claude) fail(`worker: --check -> exit ${check.status}, engines.claude ${JSON.stringify(caps?.engines?.claude ?? null)}\n${check.stderr}`);
+    else ok(`worker: --check lists claude ${caps.engines.claude.version || '(no version)'} at ${caps.engines.claude.bin}`);
+
+    const noDb = docker(['run', '--rm', img, 'printenv', 'WORCA_NO_DB'], { allowFail: true });
+    if (noDb.stdout.trim() !== '1') fail(`worker: WORCA_NO_DB=${noDb.stdout.trim() || '(unset)'}, expected 1`);
+    else ok('worker: WORCA_NO_DB=1');
+
+    // A controller that accepts the TCP connection and never completes the handshake: the worker
+    // sits in its connect, and SIGTERM must still get it out within the stop timeout.
+    docker(['network', 'create', net]);
+    docker(['run', '-d', '--name', hole, '--network', net, img, 'node', '-e', 'require("node:net").createServer(() => {}).listen(4318, "0.0.0.0"); setInterval(() => {}, 1e6);']);
+    docker(['run', '-d', '--name', worker, '--network', net, '-e', `WORCA_CONTROLLER_URL=ws://${hole}:4318`, ...assignment, img]);
+    await sleep(2500);
+    const running = docker(['inspect', '-f', '{{.State.Running}}', worker], { allowFail: true }).stdout.trim();
+    if (running !== 'true') {
+      const logs = docker(['logs', worker], { allowFail: true });
+      fail(`worker: left before SIGTERM (exit ${docker(['inspect', '-f', '{{.State.ExitCode}}', worker], { allowFail: true }).stdout.trim()})\n${logs.stdout}${logs.stderr}`);
+    } else {
+      const t0 = Date.now();
+      docker(['stop', '-t', '20', worker]);
+      const code = Number(docker(['wait', worker]).stdout.trim());
+      const took = Date.now() - t0;
+      const logs = docker(['logs', worker], { allowFail: true });
+      if (took >= 20_000 || code === 137) fail(`worker: SIGTERM -> exit ${code} after ${took} ms (137 = killed by the stop timeout)\n${logs.stderr}`);
+      else if (!/worca-worker-entrypoint: engine \S+; scope run:smoke/.test(logs.stderr)) fail(`worker: the entrypoint did not log its engine and scope\n${logs.stderr}`);
+      else ok(`worker: SIGTERM -> exit ${code} in ${took} ms; the entrypoint logged engine, scope and HOME`);
+      if (/smoke-token-never-valid/.test(`${logs.stdout}${logs.stderr}`)) fail('worker: the token appeared in the log');
+    }
+  } finally {
+    if (!a.keep) {
+      docker(['rm', '-f', hole, worker], { allowFail: true });
+      docker(['network', 'rm', net], { allowFail: true });
+    } else console.log(`docker:smoke: kept containers ${hole}, ${worker} and network ${net}`);
+  }
+}
+
+/**
+ * 6. Workers end to end (docs/workers.md): the controller image under WORCA_EXECUTOR=docker, given the
+ * socket and a worker image, runs a mock workflow whose shell script node executes on a worker
+ * container it starts itself — and removes when the run ends. The API calls go through the
+ * controller's own loopback (its write routes admit loopback callers only).
+ */
+async function workersEndToEnd(ctrlImage, workerImg) {
+  const net = `worca-smoke-workers-${stamp}`;
+  const vol = `worca-smoke-workers-home-${stamp}`;
+  const ui = `worca-smoke-controller-${stamp}`;
+  const sockGid = sh('stat', ['-c', '%g', '/var/run/docker.sock'], { allowFail: true }).stdout.trim();
+  docker(['network', 'create', net]);
+  docker(['volume', 'create', vol]);
+  const api = (args) => docker(['exec', ui, 'curl', '-s', '-H', 'Host: localhost', '-H', 'content-type: application/json', ...args], { allowFail: true }).stdout;
+  try {
+    docker(['run', '-d', '--name', ui, '--network', net, ...(sockGid ? ['--group-add', sockGid] : []),
+      '-e', 'WORCA_MOCK=1', '-e', 'WORCA_EXECUTOR=docker', '-e', `WORCA_WORKER_IMAGE=${workerImg}`,
+      '-e', `WORCA_CONTROLLER_URL=ws://${ui}:4319`,   // no WORCA_CONTROLLER_CONTAINER: the controller finds its own container, as under Compose
+      '-e', 'GIT_AUTHOR_NAME=smoke', '-e', 'GIT_AUTHOR_EMAIL=smoke@example.com',
+      '-v', `${vol}:/worca`, '-v', '/var/run/docker.sock:/var/run/docker.sock', ctrlImage]);
+    let health = null;
+    for (let i = 0; i < 60 && !health; i++) {
+      try { const h = JSON.parse(api(['http://127.0.0.1:4317/api/health']) || 'null'); if (h?.executor) health = h; } catch { /* not up */ }
+      if (!health) await sleep(1000);
+    }
+    if (!health) {
+      process.stderr.write(docker(['logs', ui], { allowFail: true }).stderr);
+      return fail('workers: the controller never reported an executor on /api/health (did it reach the docker socket?)');
+    }
+    if (health.executor.kind !== 'docker' || health.executor.backend !== 'docker') return fail(`workers: /api/health executor = ${JSON.stringify(health.executor)}`);
+    ok(`workers: controller up with executor ${health.executor.kind} (${health.executor.backend})`);
+
+    const script = api(['-X', 'POST', 'http://127.0.0.1:4317/api/scripts', '-d', JSON.stringify({
+      meta: { key: 'smokeHello', metaVersion: 2, runtime: 'shell', displayName: 'Smoke hello', command: 'echo hello-from-$(hostname); echo HOME=$HOME',
+        inputs: [{ id: 'task', type: 'md', required: true }], outputs: [{ id: 'pass', type: 'void' }] },
+      source: '',
+    })]);
+    if (!/"key":"smokeHello"/.test(script)) return fail(`workers: cannot create the script: ${script.slice(0, 200)}`);
+    const wf = api(['-X', 'POST', 'http://127.0.0.1:4317/api/workflows', '-d', JSON.stringify({
+      name: 'Smoke worker script', version: 2, domain: 'coding',
+      nodes: [{ id: 'n_task', kind: 'task', x: 60, y: 198, config: {} }, { id: 'n_sh', kind: 'script', key: 'smokeHello', x: 360, y: 198, config: {} }, { id: 'n_end', kind: 'end', x: 660, y: 198, config: {} }],
+      wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_sh', port: 'task' } }, { id: 'w2', from: { node: 'n_sh', port: 'pass' }, to: { node: 'n_end', port: 'result' } }],
+    })]);
+    let wfId = null;
+    try { wfId = JSON.parse(wf).workflow.id; } catch { /* below */ }
+    if (!wfId) return fail(`workers: cannot save the workflow: ${wf.slice(0, 300)}`);
+    const run = api(['-X', 'POST', 'http://127.0.0.1:4317/api/run', '-d', JSON.stringify({ noProject: true, prompt: 'say hello', workflowId: wfId, mock: true, humanInLoop: false })]);
+    let pipelineId = null;
+    try { pipelineId = JSON.parse(run).pipelineId; } catch { /* below */ }
+    if (!pipelineId) return fail(`workers: cannot start the run: ${run.slice(0, 300)}`);
+    let status = null;
+    for (let i = 0; i < 120 && !['done', 'error', 'paused', 'stopped'].includes(status); i++) {
+      await sleep(1000);
+      try { status = JSON.parse(api(['http://127.0.0.1:4317/api/history'])).pipelines.find((p) => p.id === pipelineId)?.status ?? null; } catch { status = null; }
+    }
+    // The worker's release and removal follow the run's end asynchronously: give them a moment, as the k8s smoke does.
+    let log = '';
+    for (let i = 0; i < 60; i++) {
+      const logs = docker(['logs', ui], { allowFail: true });
+      log = `${logs.stdout}${logs.stderr}`;
+      if (/executor: removed worca-worker-run-/.test(log) && !docker(['ps', '-aq', '--filter', `label=${INSTANCE_LABEL}=${ui}`], { allowFail: true }).stdout.trim()) break;
+      await sleep(1000);
+    }
+    const started = new RegExp(`executor: started (worca-worker-run-${pipelineId}-\\S+) \\(${workerImg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\) for run:${pipelineId}`).exec(log);
+    const removed = started && new RegExp(`executor: removed ${started[1]} \\(done\\)`).test(log);
+    const left = docker(['ps', '-aq', '--filter', `label=${INSTANCE_LABEL}=${ui}`], { allowFail: true }).stdout.trim();   // this smoke's own (the instance is the controller's name)
+    const output = docker(['exec', ui, 'sh', '-c', `grep -rh "hello-from-" /worca/.worca-cc/store/*/pipelines/*${pipelineId}*/ 2>/dev/null | head -1`], { allowFail: true }).stdout;
+    if (status !== 'done') fail(`workers: the run ended ${status}\n${log.split('\n').filter((l) => /executor|worker|error/i.test(l)).join('\n')}`);
+    else if (!started) fail(`workers: the controller log shows no worker started for run:${pipelineId}\n${log.split('\n').filter((l) => /executor|workers/.test(l)).join('\n')}`);
+    else if (!removed) fail(`workers: ${started[1]} was not removed when the run finished`);
+    else if (left) fail(`workers: worker container(s) still around after the run: ${left}`);
+    else if (!/hello-from-worca-worker-run-/.test(output)) fail(`workers: the script's output does not come from the worker container: ${output.slice(0, 200)}`);
+    else ok(`workers: run ${pipelineId} done; its script ran on ${started[1]} (${workerImg}), which was removed afterwards`);
+  } finally {
+    if (!a.keep) {
+      const leftovers = docker(['ps', '-aq', '--filter', `label=${INSTANCE_LABEL}=${ui}`], { allowFail: true }).stdout.trim().split(/\s+/).filter(Boolean);   // never another worca's workers on this host
+      if (leftovers.length) docker(['rm', '-f', ...leftovers], { allowFail: true });
+      docker(['rm', '-f', ui], { allowFail: true });
+      docker(['volume', 'rm', '-f', vol], { allowFail: true });
+      docker(['network', 'rm', net], { allowFail: true });
+    } else console.log(`docker:smoke: kept controller ${ui}, volume ${vol}, network ${net}`);
+  }
+}
+
 async function main() {
+  if (a.workerImage) await workerImage(a.workerImage);
+  if (a.workerImage && a.image) await workersEndToEnd(a.image, a.workerImage);
+  // With a worker image named, the controller's own suite is not run again: CI ran it the step before, on the same image.
+  if (!a.image || a.workerImage) {
+    if (failed) process.exit(1);
+    console.log('docker:smoke PASSED');
+    return;
+  }
   const repo = freshRepo();
   const common = [
     '-e', 'WORCA_MOCK=1',

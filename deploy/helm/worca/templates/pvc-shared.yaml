@@ -1,0 +1,25 @@
+{{- if not .Values.storage.shared.existingClaim }}
+# The ReadWriteMany claim controller and workers share: /worca (subPath worca) and /projects
+# (subPath projects). SQLite never lives here (storage.db is a ReadWriteOnce claim).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "worca.sharedClaimName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "worca.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    {{- toYaml .Values.storage.shared.accessModes | nindent 4 }}
+  {{- if .Values.storage.shared.hostPath.enabled }}
+  # Static binding to the hostPath PersistentVolume (pv-hostpath.yaml): no class, so the
+  # cluster's default provisioner leaves this claim alone.
+  storageClassName: ""
+  volumeName: {{ include "worca.fullname" . }}-shared
+  {{- else if .Values.storage.shared.storageClassName }}
+  storageClassName: {{ .Values.storage.shared.storageClassName | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.storage.shared.size }}
+{{- end }}

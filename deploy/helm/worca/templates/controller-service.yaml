@@ -1,0 +1,22 @@
+# The UI and API. What the Ingress and port-forward reach; the workers' port is not here.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "worca.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "worca.labels" . | nindent 4 }}
+    app.kubernetes.io/component: controller
+  {{- with .Values.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.service.port }}
+      targetPort: http
+      protocol: TCP
+  selector:
+    {{- include "worca.selectorLabels" . | nindent 4 }}
