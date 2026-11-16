@@ -149,6 +149,31 @@ test('listController: two lists on one bar, the rows showing answer (one owner p
   assert.deepEqual(opened, ['b']);
 });
 
+test('B2.8 F-6-01 listController: paint({ ifChanged }) with an unchanged drawing writes nothing; a changed one, or a bar another painter rewrote, paints', () => {
+  const win = new JSDOM('<div id="b"></div>').window, root = win.document.getElementById('b');
+  let title = 'T';
+  const mk = (n) => C.listController({ root, spec: { noun: `ifc-${n}-${Math.random()}`, label: 'x', can: () => [], bulk: () => [], act: () => {}, word: () => false, say: () => {}, active: () => true, open: () => {}, view: () => ({ state: 'ready', parts: [], sections: [{ id: 's', title: 'S', noCount: true, rows: [{ key: 'k', title }, { key: 'j', title: 'U' }] }] }) } });
+  const a = mk('a'), b = mk('b');
+  const seen = new win.MutationObserver(() => {});
+  seen.observe(root, { subtree: true, childList: true, attributes: true, characterData: true });
+  a.paint();
+  const row = root.querySelector('[data-open="k"]');
+  seen.takeRecords();
+  a.paint({ ifChanged: true });
+  assert.equal(seen.takeRecords().length, 0, 'nothing changed: nothing written');
+  assert.equal(root.querySelector('[data-open="k"]'), row, 'the row keeps its node');
+  a.paint({ ifChanged: true, focus: '[data-open="j"]' });
+  assert.equal(win.document.activeElement, root.querySelector('[data-open="j"]'), 'a passed focus still lands');
+  title = 'T2'; a.paint({ ifChanged: true });
+  assert.match(root.textContent, /T2/, 'a changed drawing paints');
+  b.paint(); a.paint({ ifChanged: true });
+  root.querySelector('[data-open]').click();
+  assert.notEqual(root.querySelector('[data-open="k"]'), null);
+  seen.takeRecords(); b.paint({ ifChanged: true }); assert.ok(seen.takeRecords().length > 0, 'another painter took the bar: it paints');
+  root.innerHTML = '<p>x</p>'; seen.takeRecords(); b.paint({ ifChanged: true });
+  assert.notEqual(root.querySelector('[data-open="k"]'), null, 'someone else wrote into the root: it paints');
+});
+
 test('listController: a dialog\'s name field stops at its limit and says so (small.name-short)', () => {
   const root = new JSDOM('<div id="b"></div>').window.document.getElementById('b');
   const ctl = C.listController({ root, spec: { noun: `max-${Math.random()}`, label: 'x', can: () => [], bulk: () => [], act: () => {}, word: () => false, say: () => {}, active: () => true, view: () => ({ state: 'ready', parts: [], sections: [] }) } });
@@ -235,6 +260,37 @@ test('notFound: names what was asked for, escapes it, and gives one way on (nav.
   assert.equal(n.querySelector('button').dataset.nav, 'projects');
 });
 
+test('notInStillhet: names the place, where it is today, escapes both, one Back to Chat (nav.not-live)', () => {
+  const n = dom(C.notInStillhet({ place: '<Insights>', today: 'Statistics & <b>Team</b>', attrs: { 'data-nav': 'chat' } }));
+  assert.equal(n.querySelector('.el-t').textContent, '<Insights> is not in Stillhet yet');
+  assert.match(n.textContent, /With Stillhet off, it is Statistics & <b>Team<\/b>\./);
+  assert.equal(n.querySelector('b'), null, 'the words are escaped, never markup');
+  const bs = n.querySelectorAll('button');
+  assert.equal(bs.length, 1);
+  assert.equal(bs[0].textContent, 'Back to Chat');
+  assert.equal(bs[0].dataset.nav, 'chat');
+  assert.doesNotMatch(n.textContent, /No .* yet/);
+  assert.match(dom(C.notInStillhet({ place: 'Lab' })).textContent, /It has no Stillhet screen yet\./, 'with no today it says it has no screen yet');
+});
+
+test('notLiveRow: a named row is its name and the exact sentence with nothing to click; with no name it is the section\'s one line (set.not-live)', () => {
+  const SENTENCE = 'Not in Stillhet yet: turn Stillhet off from the top-bar switch to use it';
+  const r = dom(C.notLiveRow({ name: 'Hourly <rate>', help: 'Time saved' }));
+  assert.ok(r.matches('.set-row'));
+  assert.equal(r.querySelector('.set-name').textContent, 'Hourly <rate>');
+  assert.equal(r.querySelector('.set-name b'), null, 'the name is escaped');
+  assert.equal(r.querySelector('.set-text').textContent, SENTENCE);
+  for (const sel of ['button', '[role=switch]', '.spick', '.set-dot', '.set-detail']) assert.equal(r.querySelectorAll(sel).length, 0, sel);
+  const line = dom(C.notLiveRow({}));
+  assert.ok(line.matches('.empty-line'));
+  assert.equal(line.querySelector('.el-t').textContent, SENTENCE);
+  assert.equal(line.querySelectorAll('button').length, 0);
+  assert.equal(line.querySelector('.el-acts'), null);
+  assert.doesNotMatch(line.textContent, /No .* yet/);
+  assert.equal(C.NOT_LIVE_SENTENCE, SENTENCE, 'pages read the sentence from the library, never retype it');
+  assert.equal(dom(C.notLiveRow({ name: 'x' })).querySelector('.set-text').textContent, C.NOT_LIVE_SENTENCE);
+});
+
 test('resetViewTool: its tooltip is where it goes, or why it is off (list.reset-view)', () => {
   assert.deepEqual(C.resetViewTool({ changed: true, to: 'all tasks' }), { id: 'reset', text: 'Reset view', off: false, help: 'Back to all tasks' });
   const off = C.resetViewTool({ changed: false, to: 'all tasks' });
@@ -317,6 +373,15 @@ test('the catalog names a module for every component built in code, and each mod
     const mod = await import(new URL('../' + file, import.meta.url));
     assert.equal(typeof mod[name], 'function', `${c.name}: ${c.code}`);
   }
+});
+
+test('slice 10: the catalog\'s HeatGrid code resolves to heatGrid, exported by the library (test/design-system-heat-grid.test.mjs draws it)', async () => {
+  const cat = JSON.parse(readFileSync(new URL('../docs/design-system-catalog.json', import.meta.url), 'utf8'));
+  const hg = cat.components.find((c) => c.name === 'HeatGrid');
+  assert.equal(hg.code, 'ui/public/design-system/components/heat-grid.mjs#heatGrid');
+  const C = await import(new URL('../ui/public/design-system/components/index.mjs', import.meta.url));
+  assert.equal(typeof C.heatGrid, 'function');
+  assert.match(C.heatGrid({ label: 'x', rows: [{ label: 'Maya' }], columns: [{ label: 'a' }], cells: [[{ value: 1, text: '$1, 1 task' }]], max: 1 }), /class="hg-cell is-h4"/);
 });
 
 test('morph keeps what stays, adds what is new, drops what left, and draws the same DOM as innerHTML', () => {
@@ -1140,6 +1205,40 @@ test('figureRows: each whole row is one button, a second level is marked', () =>
   assert.equal(c.querySelectorAll('button.fr-row').length, 2); assert.equal(c.querySelector('button .fr-name').textContent, 'a<b'); assert.ok(c.querySelector('button.fr-row.is-sub'));
   assert.match(c.querySelector('button').getAttribute('aria-label'), /Share 45%, AI spend \$186/); assert.equal(c.querySelector('button').querySelectorAll('button').length, 0);
 });
+// I2: without the new options the output is byte-identical to before (captured from the untouched components)
+const FR_TODAY = '<div class="fr-list" role="group" style="--fr-n:2" aria-label="By person"><div class="fr-row is-head" aria-hidden="true"><span></span><span class="fr-c">Share</span><span class="fr-c is-wide">Tasks</span></div><button type="button" class="fr-row" aria-label="Maya: Share 32%, Tasks 102" title="Shows it"><span class="fr-name">Maya</span><span class="fr-c">32%</span><span class="fr-c is-wide">102</span></button><button type="button" class="fr-row is-quiet" aria-label="Other: Share 8%, Tasks 17" disabled title="No"><span class="fr-name">Other</span><span class="fr-c">8%</span><span class="fr-c is-wide">17</span></button></div>';
+const TC_TODAY = '<div class="tline-card" role="status" style="top:50%"><i></i><span><b>Which date format?</b><span>Waiting for you · 14:32</span></span></div>';
+const frRows = (opens) => C.figureRows({ label: 'By person', columns: [{ label: 'Share' }, { label: 'Tasks', narrow: false }], rows: [{ name: 'Maya', cells: ['32%', '102'], attrs: { title: 'Shows it' }, ...(opens ? { opens } : {}) }, { name: 'Other', cells: ['8%', '17'], quiet: true, attrs: { disabled: true, title: 'No' } }] });
+test('figureRows and timelineCard without the new options render as before (fixtures)', () => {
+  assert.equal(frRows(null), FR_TODAY);
+  assert.equal(C.timelineCard({ mark: '<i></i>', title: 'Which date format?', line: 'Waiting for you · 14:32', at: 0.5 }), TC_TODAY);
+});
+test('figureRows opens (list.row-opens-in-place): aria-expanded, and one region right after the open row with Hide', () => {
+  const closed = dom(frRows({ id: 'fr-maya', open: false, label: "Maya's work", head: '<b>x</b>', body: 'y' }));
+  const row = closed.querySelector('button.fr-row');
+  assert.equal(row.getAttribute('aria-expanded'), 'false'); assert.equal(row.getAttribute('aria-controls'), 'fr-maya');
+  assert.equal(closed.querySelector('.fr-detail'), null);
+  const open = dom(frRows({ id: 'fr-maya', open: true, label: "Maya's work", head: "<b>Maya's work, this month</b>", body: '<p class="t">body</p>' }));
+  const o = open.querySelector('button.fr-row');
+  assert.equal(o.getAttribute('aria-expanded'), 'true'); assert.match(o.className, /is-open/);
+  const det = o.nextElementSibling;
+  assert.ok(det.matches('div.fr-detail#fr-maya[role="region"]')); assert.equal(det.getAttribute('aria-label'), "Maya's work");
+  assert.ok(det.querySelector('[data-fr-hide="fr-maya"]')); assert.ok(det.querySelector('.t'));
+  assert.equal(open.querySelectorAll('.fr-detail').length, 1);
+});
+test('timelineCard on a track: is-track, --tc-x, flipped past 60%, no top', () => {
+  const html = C.timelineCard({ mark: '', title: 'A', line: 'b', x: 0.7, id: 'c1' });
+  assert.match(html, /class="tline-card is-track is-flip"/); assert.match(html, /--tc-x:70%/); assert.doesNotMatch(html, /top:/);
+  assert.match(html, /id="c1"/); assert.match(html, /role="tooltip"/);
+  assert.doesNotMatch(C.timelineCard({ mark: '', title: 'A', x: 0.3 }), /is-flip/);
+});
+test('timeTrack, workBar, markLegend and taskView are in the library', () => {
+  for (const f of [C.timeTrack, C.workBar, C.markLegend, C.taskView, C.trackX, C.dayTicks]) assert.equal(typeof f, 'function');
+  assert.match(C.timeTrack({ label: 'x', ticks: [], days: 1, rows: [] }), /class="tt"/);
+  assert.match(C.workBar({ work: [0, 1] }), /tt-work/);
+  assert.match(C.markLegend({ items: [{ line: 'solid', text: 'a' }] }), /ch-key/);
+  assert.match(C.taskView({ back: { label: 'b' }, mark: '', title: 't', meta: [], state: { tone: '', word: 'Done' }, figures: [], runs: { columns: [{ id: 'a', label: 'A' }], rows: [] } }), /task-view/);
+});
 test('sideMenu: an item may carry a count', () => {
   const c = dom(C.sideMenu({ label: 'x', groups: [{ title: 'T', items: [{ label: 'a', count: 18 }, { label: 'b' }] }] }));
   assert.equal(c.querySelectorAll('.side-n').length, 1); assert.equal(c.querySelector('.side-n').textContent, '18');
@@ -1248,9 +1347,51 @@ test('draftBar: a draft, its changes, that the saved one still runs, Discard and
 test('workflowStory: a panel a step, the loop drawn back in words under the steps it joins, how a task goes (panel.workflow-story)', () => {
   const s = dom(C.workflowStory({ steps: [{ name: 'Plan', says: 'Thinks', meta: '3 min' }, { name: 'Build', says: 'Makes' }, { name: 'Check', says: 'Looks', check: true }, { name: 'Review', says: 'Reads' }], loop: { from: 2, to: 1, text: 'back to Build' }, ways: [{ title: 'Straight through', meta: '18 min', tone: 'ok', stage: 4 }], byline: 'Told by a small model' }));
   assert.equal(s.querySelectorAll('.ws-p').length, 4); assert.ok(s.querySelectorAll('.ws-p')[2].classList.contains('is-check'));
-  const loop = s.querySelector('.ws-loop'); assert.equal(loop.style.left, '37.5%'); assert.equal(loop.style.width, '25%'); assert.match(loop.textContent, /back to Build/);
+  const loop = s.querySelector('.ws-loop'); assert.equal(loop.style.getPropertyValue('--ws-a'), '37.5%'); assert.equal(loop.style.getPropertyValue('--ws-w'), '25%'); assert.match(loop.textContent, /back to Build/);
   assert.match(s.querySelector('.list').textContent, /Straight through/); assert.match(s.querySelector('.ws-by').textContent, /small model/);
   assert.equal(dom(C.workflowStory({ steps: [{ name: 'A', says: 'a' }] })).querySelector('.ws-loop'), null, 'no loop, no arc');
+});
+test('workflowStory F-G-fid-06: every loop between two steps is an arc, one under the other; a self-loop is words in its panel', () => {
+  const steps = ['Clarify', 'Plan', 'Refine Plan', 'Implementation', 'Review'].map((name) => ({ name, says: name }));
+  const s = dom(C.workflowStory({ steps, loops: [{ from: 2, to: 2, text: 'runs again, at most once' }, { from: 4, to: 3, text: 'back to Implementation, at most 3 times', check: true }] }));
+  const arcs = s.querySelectorAll('.ws-loop');
+  assert.equal(arcs.length, 1, 'the self-loop draws no arc');
+  assert.match(arcs[0].textContent, /back to Implementation/); assert.equal(arcs[0].style.getPropertyValue('--ws-w'), '20%');
+  assert.match(s.querySelectorAll('.ws-p')[2].querySelector('.ws-again').textContent, /runs again, at most once/);
+  const two = dom(C.workflowStory({ steps, loops: [{ from: 4, to: 3, text: 'a' }, { from: 2, to: 1, text: 'b' }] }));
+  assert.equal(two.querySelectorAll('.ws-loop').length, 2, 'show all loops');
+  assert.equal(two.querySelectorAll('.ws-loop')[1].style.getPropertyValue('--ws-row'), '1', 'the second arc sits under the first');
+  assert.equal(two.querySelector('.ws-board').style.getPropertyValue('--ws-loops'), '2');
+  assert.equal(dom(C.workflowStory({ steps, loop: { from: 4, to: 3, text: 'a' } })).querySelectorAll('.ws-loop').length, 1, 'loop still reads as one loop');
+});
+test('workflowStory F-G-fid-09: a step name is its own element (it breaks between words); an empty says draws no line', () => {
+  const s = dom(C.workflowStory({ steps: [{ name: 'Review Implementation', says: '' }] }));
+  assert.equal(s.querySelector('.ws-n .ws-name').textContent, 'Review Implementation');
+  assert.equal(s.querySelector('.ws-t'), null);
+});
+test('barChart F-G-fid-15: more than eight bars mark evenly spaced ticks, so a narrow screen names at most eight', () => {
+  const bars = (n) => Array.from({ length: n }, (_, i) => ({ label: `Nov ${i + 1}`, value: i, text: String(i) }));
+  const f = dom(C.barChart({ label: 'x', bars: bars(16) }));
+  assert.ok(f.classList.contains('is-thin'));
+  assert.deepEqual([...f.querySelectorAll('.bc-col.is-tick .bc-x')].map((x) => x.textContent), ['Nov 1', 'Nov 3', 'Nov 5', 'Nov 7', 'Nov 9', 'Nov 11', 'Nov 13', 'Nov 15']);
+  assert.ok(dom(C.barChart({ label: 'x', bars: bars(31) })).querySelectorAll('.bc-col.is-tick').length <= 8);
+  const few = dom(C.barChart({ label: 'x', bars: bars(8) }));
+  assert.ok(!few.classList.contains('is-thin')); assert.equal(few.querySelectorAll('.is-tick').length, 0, 'eight or fewer: every bar named');
+});
+test('workflowStory F-G-fid-09: more than five steps read as a list (is-long), each loop in words under it', () => {
+  const steps = Array.from({ length: 11 }, (_, i) => ({ name: `Step number ${i + 1}`, says: 'Says what it does' }));
+  const s = dom(C.workflowStory({ steps, loops: [{ from: 9, to: 4, text: 'back to Step number 5' }] }));
+  assert.ok(s.querySelector('.ws-board').classList.contains('is-long'), 'eleven steps: the long telling');
+  assert.match(s.querySelector('.ws-loop').textContent, /back to Step number 5/);
+  assert.ok(!dom(C.workflowStory({ steps: steps.slice(0, 5) })).querySelector('.ws-board').classList.contains('is-long'), 'five steps stay columns');
+});
+test('chart parts F-FM2-04: a part\'s shade is its own (shade), not its place, in bars, mixes and legends', () => {
+  const parts = [{ label: 'web-app', values: [1, 2], shade: 2 }, { label: 'billing-api', values: [1, 1], shade: 0 }];
+  const b = dom(C.barChart({ label: 'x', bars: [{ label: 'a', value: 2, text: '2' }, { label: 'b', value: 3, text: '3' }], parts }));
+  assert.deepEqual([...b.querySelectorAll('.ch-key')].map((k) => [k.textContent, k.querySelector('.ch-swatch').classList.contains('is-s2') ? 2 : 0]), [['web-app', 2], ['billing-api', 0]]);
+  assert.ok(b.querySelector('.bc-col .ch-seg.is-s2'), 'its segment carries its shade');
+  const m = dom(C.mixChart({ label: 'x', labels: ['a', 'b'], parts }));
+  assert.ok(m.querySelector('.ch-seg.is-s2') && m.querySelector('.ch-legend .ch-swatch.is-s2'));
 });
 test('crafting: a sketch of its kind that draws itself, and what is being made (motion.crafting)', () => {
   const c = dom(C.crafting({ kind: 'workflow', label: 'Making the workflow', detail: 'from this chat' }));
@@ -1430,6 +1571,96 @@ test('ScrollFade: an edge fades only while there is more past it', () => {
   C.watchScrollFades(window.document);
   assert.equal(window.document.querySelector('.convo-scroll').hasAttribute('data-more-below'), false, 'nothing past it: no fade');
   window.close();
+});
+
+// B2.8: a column is measured only when it scrolls, resizes or its content changes. `reads` counts scrollHeight reads per
+// element; `data-h` stands in for a column's content height.
+function fadeHost() {
+  const { window } = new JSDOM('<body><div id="a" class="convo-scroll" data-h="0"></div><div id="b" class="convo-scroll" data-h="0"></div><div id="other"></div></body>', { pretendToBeVisual: true });
+  const reads = [];
+  Object.defineProperty(window.Element.prototype, 'scrollHeight', { configurable: true, get() { reads.push(this.id || this.className); return Number(this.dataset.h || 0); } });
+  const frames = () => new Promise((r) => window.requestAnimationFrame(() => window.requestAnimationFrame(r)));
+  C.watchScrollFades(window.document);
+  return { window, doc: window.document, reads, frames };
+}
+
+test('B2.8 F-a1-02 ScrollFade: a mutation outside every column measures no column', async () => {
+  const { window, doc, reads, frames } = fadeHost();
+  await frames(); reads.length = 0;
+  doc.getElementById('other').append(doc.createElement('p'));
+  await frames();
+  assert.deepEqual(reads, []);
+  window.close();
+});
+
+test('B2.8 F-a1-02 ScrollFade: content added in one column measures that column only, and marks it', async () => {
+  const { window, doc, reads, frames } = fadeHost();
+  await frames(); reads.length = 0;
+  const a = doc.getElementById('a');
+  a.dataset.h = '900'; a.append(doc.createElement('p')); a.append(doc.createElement('p'));
+  await frames();
+  assert.ok(reads.length > 0 && reads.every((x) => x === 'a'), `read: ${reads}`);
+  assert.equal(a.hasAttribute('data-more-below'), true);
+  assert.equal(a.hasAttribute('data-far-below'), true, 'the Latest button still has its cue');
+  window.close();
+});
+
+test('B2.8 F-a1-02 ScrollFade: a resize measures every column; a new column is marked when it appears', async () => {
+  const { window, doc, reads, frames } = fadeHost();
+  await frames(); reads.length = 0;
+  window.dispatchEvent(new window.Event('resize'));
+  assert.ok(reads.includes('a') && reads.includes('b'), `read: ${reads}`);
+  const wrap = doc.createElement('section');
+  wrap.innerHTML = '<div id="c" data-scroll-fade data-h="500"></div>';
+  doc.getElementById('other').append(wrap);
+  await frames();
+  assert.equal(doc.getElementById('c').hasAttribute('data-more-below'), true);
+  window.close();
+});
+
+test('B2.8 F-a1-02 ScrollFade: content added in a column inside a column re-marks both', async () => {
+  const { window } = new JSDOM('<body><div id="outer" class="side-menu" data-h="0"><div id="inner" data-scroll-fade data-h="0"></div></div></body>', { pretendToBeVisual: true });
+  Object.defineProperty(window.Element.prototype, 'scrollHeight', { configurable: true, get() { return Number(this.dataset.h || 0); } });
+  const frames = () => new Promise((r) => window.requestAnimationFrame(() => window.requestAnimationFrame(r)));
+  const doc = window.document;
+  C.watchScrollFades(doc);
+  await frames();
+  const outer = doc.getElementById('outer'), inner = doc.getElementById('inner');
+  assert.equal(outer.hasAttribute('data-more-below'), false);
+  outer.dataset.h = '900'; inner.dataset.h = '900'; inner.append(doc.createElement('p'));
+  await frames();
+  assert.equal(inner.hasAttribute('data-more-below'), true, 'the inner column');
+  assert.equal(outer.hasAttribute('data-more-below'), true, 'the outer column grew too');
+  window.close();
+});
+
+test('B2.8 ScrollFade: a column that leaves the page is no longer observed', async () => {
+  const { window } = new JSDOM('<body><div id="a" class="convo-scroll"></div></body>', { pretendToBeVisual: true });
+  const watched = new Set();
+  let ro;
+  window.ResizeObserver = class { constructor(cb) { this.cb = cb; ro = this; } observe(el) { watched.add(el); } unobserve(el) { watched.delete(el); } };
+  const frames = () => new Promise((r) => window.requestAnimationFrame(() => window.requestAnimationFrame(r)));
+  const doc = window.document;
+  C.watchScrollFades(doc);
+  const a = doc.getElementById('a');
+  assert.equal(watched.has(a), true);
+  a.remove(); ro.cb([{ target: a }]);   // a removed box resizes to nothing
+  await frames();
+  assert.equal(watched.has(a), false, 'a removed column is unobserved');
+  window.close();
+});
+
+test('ScrollFade: pinnedToEnd — within 80px of the end is the end (#1381, motion.follow-end)', () => {
+  assert.equal(typeof C.pinnedToEnd, 'function', 'on the index');
+  assert.equal(C.pinnedToEnd({ scrollTop: 1520, scrollHeight: 2000, clientHeight: 400 }), true, '80px from the end');
+  assert.equal(C.pinnedToEnd({ scrollTop: 1519, scrollHeight: 2000, clientHeight: 400 }), false, '81px holds');
+  assert.equal(C.pinnedToEnd({ scrollTop: 1600, scrollHeight: 2000, clientHeight: 400 }), true, 'at the exact end');
+  assert.equal(C.pinnedToEnd({ scrollTop: 120, scrollHeight: 2000, clientHeight: 400 }), false, 'scrolled up');
+  assert.equal(C.pinnedToEnd({ scrollTop: 0, scrollHeight: 300, clientHeight: 400 }), true, 'content that fits');
+  assert.equal(C.pinnedToEnd(null), false);
+  assert.equal(C.pinnedToEnd(undefined), false);
+  assert.equal(C.pinnedToEnd({ scrollTop: 1599, scrollHeight: 2000, clientHeight: 400 }, 0), false, 'a custom near of 0');
+  assert.equal(C.pinnedToEnd({ scrollTop: 1600, scrollHeight: 2000, clientHeight: 400 }, 0), true);
 });
 
 test('commands: dev\'s group head, rows with no mark, Copy on the command and its output', () => {
@@ -1760,4 +1991,204 @@ test('frame parts (brandRow, navSection, barGrip, sidebarFrame, sideToggle, menu
   assert.ok(side.querySelector('.bar-grip[role="separator"]'));
   const top = dom(C.topBarFrame({ title: 'Tasks', left: C.menuButton() + C.sideToggle() }));
   assert.equal(top.tagName, 'HEADER'); assert.equal(top.querySelectorAll('#mbar-menu[aria-expanded="false"], #side-toggle[aria-expanded="true"]').length, 2);
+});
+
+test('composerQueue (F-a2-01): nothing without items; waiting, full and each paused line; Remove per row with its key; Send now only when paused; text escaped', () => {
+  assert.equal(C.composerQueue({ items: [] }), '');
+  const q = (o) => dom(`<div>${C.composerQueue(o)}</div>`);
+  const one = q({ items: [{ key: 'q1', text: 'Add <b>CSV</b>' }] }), list = one.firstElementChild;
+  assert.equal(list.className, 'composer-queue');
+  assert.equal(list.getAttribute('role'), 'list');
+  assert.equal(list.getAttribute('aria-label'), 'Queued messages');
+  assert.equal(list.nextElementSibling.dataset.qNote, '', 'the line sits under the rows, right above the composer');
+  const rows = one.querySelectorAll('.turn-row[role="listitem"]');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].querySelector('.tr-text').textContent, 'Queued Add <b>CSV</b>', 'the text is escaped');
+  assert.equal(rows[0].querySelector('[data-q-drop]').getAttribute('data-q-drop'), 'q1');
+  assert.equal(rows[0].querySelector('[data-q-drop]').getAttribute('aria-label'), 'Remove queued message 1');
+  assert.equal(one.querySelector('[data-q-edit]'), null, 'removable only');
+  const note = one.querySelector('[data-q-note]');
+  assert.equal(note.className, 'composer-note');
+  assert.equal(note.getAttribute('aria-live'), 'polite');
+  assert.equal(note.textContent, 'Sends when the reply finishes');
+  assert.equal(one.querySelector('[data-q-send]'), null, 'no Send now while it waits');
+  const three = [1, 2, 3].map((k) => ({ key: `q${k}`, text: `m${k}` }));
+  const full = q({ items: three });
+  assert.deepEqual([...full.querySelectorAll('[data-q-drop]')].map((b) => [b.dataset.qDrop, b.getAttribute('aria-label')]), [['q1', 'Remove queued message 1'], ['q2', 'Remove queued message 2'], ['q3', 'Remove queued message 3']]);
+  assert.equal(full.querySelector('[data-q-note]').textContent, 'Queue full: sends when the reply finishes');
+  const said = { stopped: 'Queue paused: the reply was stopped', failed: 'Queue paused: the reply failed', away: 'Queue paused: the reply ended while this chat was closed', refused: 'Queue paused: could not send it: chat is <busy>' };
+  for (const [paused, words] of Object.entries(said)) {
+    const p = q({ items: three.slice(0, 1), paused, why: 'chat is <busy>' });
+    const n = p.querySelector('[data-q-note]');
+    assert.equal(n.firstChild.textContent.trim(), words, paused);
+    const go = n.querySelector('[data-q-send]');
+    assert.ok(go, `${paused}: Send now`);
+    assert.equal(go.textContent, 'Send now');
+    assert.match(go.className, /btn-quiet/);
+  }
+});
+
+test('composerQueueButton (F-gb235-03): a quiet text button named Queue, data-cp-queue, its title says when it goes', () => {
+  const b = dom(`<div>${C.composerQueueButton()}</div>`).firstElementChild;
+  assert.equal(b.tagName, 'BUTTON');
+  assert.equal(b.getAttribute('type'), 'button');
+  assert.ok(b.classList.contains('btn-quiet'));
+  assert.ok(!b.classList.contains('btn-icon'), 'a word, not an icon');
+  assert.equal(b.textContent, 'Queue');
+  assert.equal(b.getAttribute('aria-label'), null, 'its name is its visible word');
+  assert.equal(b.getAttribute('data-cp-queue'), '');
+  assert.equal(b.getAttribute('title'), 'Sends it when the reply finishes');
+});
+
+test('choiceNote (COV-2): an amber note, its rows with their ways, its ways as buttons, escaped, role=status', () => {
+  const n = dom(C.choiceNote({ text: 'This preset needs <attention>', means: 'Start waits until it is fixed', rows: [{ text: 'Workflow wf_gone is gone', way: { label: 'Reset to default', attrs: { 'data-x-reset': '0' } } }, { text: 'Guardrails <old>' }],
+    ways: [{ label: 'Start from origin/main', kind: 'primary', attrs: { 'data-x-go': '' } }, { label: 'Cancel', kind: 'quiet', attrs: { 'data-x-cancel': '' } }] }));
+  assert.equal(n.getAttribute('role'), 'status');
+  assert.match(n.className, /\bchoice-note\b/);
+  assert.match(n.className, /\bis-amber\b/, 'the tone class');
+  assert.ok(n.querySelector('.rc-rail > .status-dot.is-amber'), 'the dot is statusDot');
+  assert.equal(n.querySelector('.rc-word').textContent, 'This preset needs <attention>', 'text is escaped');
+  assert.equal(n.querySelector('.rc-detail').textContent, 'Start waits until it is fixed');
+  const rows = n.querySelectorAll('.choice-note-row');
+  assert.equal(rows.length, 2);
+  assert.match(rows[0].textContent, /Workflow wf_gone is gone/);
+  assert.equal(rows[0].querySelector('button.btn[data-x-reset="0"]').textContent, 'Reset to default', 'a row way is a button()');
+  assert.equal(rows[1].querySelector('button'), null);
+  assert.equal(rows[1].textContent, 'Guardrails <old>');
+  const ways = [...n.querySelectorAll('.choice-note-ways > button')];
+  assert.deepEqual(ways.map((b) => b.textContent), ['Start from origin/main', 'Cancel']);
+  assert.match(ways[0].className, /btn-primary/);
+  assert.match(ways[1].className, /btn-quiet/);
+});
+
+test('choiceNote (COV-2): a note that only tells is grey, no ways, and its end slot as given', () => {
+  const g = dom(C.choiceNote({ needsYou: false, text: 'team policy' }));
+  assert.match(g.className, /\bis-grey\b/);
+  assert.ok(g.querySelector('.status-dot.is-grey'));
+  assert.equal(g.querySelector('.choice-note-ways'), null, 'no ways, no button row');
+  assert.equal(g.querySelector('.rc-detail'), null, 'no means, no detail');
+  const e = dom(C.choiceNote({ text: 'Codex cannot enforce …', end: C.checkbox({ label: 'Allow unguarded', attrs: { 'data-x-allow': '' } }) }));
+  assert.ok(e.querySelector('.choice-note-end input[type="checkbox"][data-x-allow]'), 'end is not escaped');
+});
+
+test('COV-3 #9 and #5: filesCard draws Show in ‹label› only with revealLabel and a file\'s reveal; youTurn\'s object files are chip buttons that open; without them both are as before', () => {
+  const files = [{ name: 'a.png', image: true }, { name: 'b.txt', meta: '2 KB' }];
+  const before = C.filesCard({ files });
+  assert.equal(C.filesCard({ files, revealLabel: 'Finder' }), before, 'no file says how to reveal it: unchanged');
+  assert.equal(C.filesCard({ files: files.map((f) => ({ ...f, reveal: { 'data-x': f.name } })) }), before, 'no label (the server offers none): unchanged');
+  const r = C.filesCard({ revealLabel: 'Finder', files: files.map((f) => ({ ...f, reveal: { 'data-reveal': f.name } })) });
+  assert.match(r, /<button[^>]*data-reveal="a\.png"[^>]*>Show in Finder<\/button>/);
+  assert.match(r, /<button[^>]*data-reveal="b\.txt"[^>]*>Show in Finder<\/button>/);
+  assert.match(r, /class="btn btn-sm btn-quiet"[^>]*data-reveal="b\.txt"/, 'a quiet button');
+  const view = C.filesCard({ files: [{ name: 'q.png', image: true, download: false }, { name: 'q.txt', download: false }] });
+  assert.doesNotMatch(view, /Download/, 'download: false (a run question\'s files, which classic only views): no Download');
+  assert.match(view, /aria-label="View q\.png"/); assert.match(view, />View<\/button>/);
+  const y0 = C.youTurn({ text: 'Same bug?', files: ['x.pdf'] });
+  assert.equal(y0, '<div class="convo-you">Same bug?<span class="you-files"><span class="kind-chip">' + C.icon('file', 12) + 'x.pdf</span></span></div>', 'string files: as before');
+  const y = C.youTurn({ text: 'Same bug?', files: ['x.pdf', { name: 'shot.png', attrs: { 'data-open-file': 'att_1' } }] });
+  assert.match(y, /<span class="kind-chip">[^]*?x\.pdf<\/span>/);
+  assert.match(y, /<button type="button" class="kind-chip"[^>]*title="Opens shot\.png"[^>]*data-open-file="att_1"[^>]*>[^]*?shot\.png<\/button>/);
+});
+
+test('COV-1 folderName: the last segment, without a trailing slash', () => {
+  assert.equal(C.folderName('/a/b/'), 'b');
+  assert.equal(C.folderName('~/src/web-app'), 'web-app');
+  assert.equal(C.folderName(''), '');
+});
+
+test('COV-1 folderBrowser: single and multi titles and steps, Up off at the top, No subfolders., a failed load keeps the list', () => {
+  const one = dom(C.folderBrowser({ path: '/src', parent: '/', dirs: [{ name: 'a', path: '/src/a' }] }));
+  assert.equal(one.querySelector('.dlg-title').textContent, 'Select a folder');
+  assert.equal(one.querySelector('[data-dialog="yes"]').textContent, 'Select this folder');
+  assert.equal(one.querySelector('[data-dialog="yes"]').disabled, false);
+  assert.equal(one.querySelector('[data-fb-pick]'), null, 'single: no checkboxes');
+  assert.equal(one.querySelector('[data-fb-go="/src/a"]').textContent, 'a');
+  assert.equal(one.querySelector('.fb-nav [data-fb-go="/"]').textContent, 'Up');
+  assert.ok(one.querySelector('[data-fb-home]'));
+  assert.equal(one.querySelector('.fb-path').title, '/src');
+  const top = dom(C.folderBrowser({ path: '/', parent: null, dirs: [] }));
+  const up = [...top.querySelectorAll('button')].find((b) => b.textContent === 'Up');
+  assert.equal(up.disabled, true);
+  assert.match(top.textContent, /No subfolders\./);
+  const many = dom(C.folderBrowser({ multiple: true, path: '/src', dirs: [{ name: 'a', path: '/src/a' }, { name: 'b', path: '/src/b' }], picked: ['/src/a', '/x'] }));
+  assert.equal(many.querySelector('.dlg-title').textContent, 'Select folders');
+  assert.equal(many.querySelector('[data-dialog="yes"]').textContent, 'Add 2 selected');
+  assert.equal(many.querySelector('.dlg-status').textContent, '2 folders selected');
+  assert.equal(many.querySelector('[data-fb-pick="/src/a"]').checked, true);
+  assert.equal(many.querySelector('[data-fb-pick="/src/b"]').checked, false);
+  assert.equal(many.querySelector('[data-fb-pick="/src/b"]').getAttribute('aria-label'), 'Select b');
+  const none = dom(C.folderBrowser({ multiple: true, path: '/src', dirs: [] }));
+  assert.equal(none.querySelector('[data-dialog="yes"]').disabled, true, 'multi yes is off at 0 picks');
+  const failed = dom(C.folderBrowser({ path: '/src', dirs: [{ name: 'a', path: '/src/a' }], error: 'permission denied <x>' }));
+  assert.equal(failed.querySelector('.dlg-status').textContent, 'permission denied <x>');
+  assert.ok(failed.querySelector('[data-fb-go="/src/a"]'), 'the last listing stays');
+  assert.match(dom(C.folderBrowser({ path: '/src', state: 'loading' })).textContent, /Loading folders/);
+  const lim = dom(C.folderBrowser({ path: '/a', note: 'Only these folders', roots: ['/a', '/b'] }));
+  assert.match(lim.querySelector('.fb-note').textContent, /Only these folders/);
+  assert.ok(lim.querySelector('.fb-note [data-fb-go="/b"]'));
+});
+
+test('COV-1 folderProbe: every detectModel row, the #693 action, unknown is no refusal', () => {
+  const words = (p, o) => [...dom(`<div>${C.folderProbe(p, o).html}</div>`).querySelectorAll('.kind-chip')].map((c) => c.textContent);
+  assert.deepEqual(C.folderProbe(null), { html: '', refused: false, useGit: false });
+  assert.deepEqual(C.folderProbe({ path: '/x' }), { html: '', refused: false, useGit: false });
+  assert.deepEqual(words({ exists: false }), ['Not found']);
+  assert.equal(C.folderProbe({ exists: false }).refused, true);
+  assert.ok(dom(`<div>${C.folderProbe({ exists: false }).html}</div>`).querySelector('.fb-warn svg'), 'a warn chip has the warn icon');
+  assert.deepEqual(words({ exists: true, isDir: false }), ['Not a folder']);
+  assert.equal(C.folderProbe({ exists: true, isDir: false }).refused, true);
+  const part = C.folderProbe({ exists: true, isDir: true, insideRepo: true, partOf: 'web-app', repoRoot: '/src/web-app' });
+  assert.deepEqual(words({ exists: true, isDir: true, insideRepo: true, partOf: 'web-app' }), ['Git', 'Part of web-app']);
+  assert.equal(part.refused, true);
+  assert.deepEqual(part.action, { kind: 'open', name: 'web-app' });
+  assert.equal(dom(`<div>${part.html}</div>`).querySelector('[data-fb-root]').textContent, 'Open web-app');
+  const inside = C.folderProbe({ exists: true, isDir: true, insideRepo: true, repoRoot: '/src/mono/' });
+  assert.deepEqual(words({ exists: true, isDir: true, insideRepo: true }), ['Git', 'Inside a git repository']);
+  assert.deepEqual(inside.action, { kind: 'add', path: '/src/mono/' });
+  assert.equal(dom(`<div>${inside.html}</div>`).querySelector('[data-fb-root="/src/mono/"]').textContent, 'Add mono');
+  const nested = C.folderProbe({ exists: true, isDir: true, nestedHint: 'Remove its .git' });
+  assert.deepEqual(words({ exists: true, isDir: true, nestedHint: 'x' }), ['Git', 'Nested repository']);
+  assert.equal(nested.refused, false);
+  assert.equal(nested.note, 'Remove its .git');
+  assert.deepEqual(words({ exists: true, isDir: true, vcs: 'git' }), ['Git']);
+  assert.equal(C.folderProbe({ exists: true, isDir: true, vcs: 'git' }).useGit, false);
+  assert.deepEqual(words({ exists: true, isDir: true, vcs: 'none', files: 1 }), ['Folder', 'No git', '1 file']);
+  assert.deepEqual(words({ exists: true, isDir: true, vcs: 'none', files: 214 }), ['Folder', 'No git', '214 files']);
+  assert.deepEqual(words({ exists: true, isDir: true, vcs: 'none', files: 5000, filesCapped: true }), ['Folder', 'No git', '5000+ files']);
+  assert.equal(C.folderProbe({ exists: true, isDir: true, vcs: 'none' }).useGit, true);
+  assert.deepEqual(words({ exists: true, isDir: true, vcs: 'none' }, { git: false }), ['Folder'], 'no No git without git');
+  assert.equal(C.folderProbe({ exists: true, isDir: true, vcs: 'none' }, { git: false }).useGit, false);
+});
+
+test('COV-1 folderReview: Added locks, a reason stays, the pending count names the step; reviewSummary and REVIEW_EMPTY', () => {
+  const rows = [{ path: '/s/a', name: 'a', include: true, status: 'added' }, { path: '/s/b', name: 'b', include: true, status: 'skipped', reason: 'already registered' }, { path: '/s/c', name: 'c', include: false }];
+  const r = dom(`<div>${C.folderReview({ rows })}</div>`);
+  assert.equal(r.querySelector('[data-fr-name="0"]').disabled, true);
+  assert.match(r.querySelector('[data-fr-row="0"]').textContent, /Added/);
+  assert.match(r.querySelector('[data-fr-row="1"]').textContent, /already registered/);
+  assert.equal(r.querySelector('[data-fr-name="1"]').disabled, false);
+  assert.equal(r.querySelector('[data-fr-name="1"]').getAttribute('maxlength'), '80');
+  assert.equal(r.querySelector('[data-fr-pick="2"]').checked, false);
+  assert.equal(r.querySelector('[data-fr-pick="1"]').getAttribute('aria-label'), 'Add b');
+  assert.equal(r.querySelector('[data-confirm="yes"]').textContent, 'Add 1 project');
+  const none = dom(`<div>${C.folderReview({ rows: [{ path: '/s/c', name: 'c', include: false }] })}</div>`);
+  assert.equal(none.querySelector('[data-confirm="yes"]').disabled, true);
+  const saving = dom(`<div>${C.folderReview({ rows: rows.slice(1), saving: true })}</div>`);
+  assert.equal(saving.querySelector('[data-confirm="yes"]').textContent, 'Adding…');
+  assert.equal(saving.querySelector('[data-confirm="yes"]').disabled, true);
+  assert.equal(C.reviewSummary({ added: ['a', 'b', 'c'], skipped: [{ name: 'beta', reason: 'already registered' }] }), 'Added 3 projects. Skipped 1: beta (already registered).');
+  assert.equal(C.reviewSummary({ added: ['a'], skipped: [] }), 'Added “a”.');
+  assert.equal(C.REVIEW_EMPTY, 'Tick at least one folder to add.');
+});
+
+test('COV-1 folderBrowser ask, folderReview error and folderWay: the markup is the component\'s, not the page\'s', () => {
+  const ask = dom(C.folderBrowser({ multiple: true, path: '/s', dirs: [], picked: ['/s/a', '/s/b'], ask: true }));
+  assert.equal(ask.querySelector('.dlg-body').firstElementChild.getAttribute('role'), 'alertdialog', 'the strip leads the body');
+  assert.match(ask.querySelector('.rc-confirm').textContent, /Drop 2 picked folders\?.*Drop them.*Keep picking/s);
+  assert.equal(dom(C.folderBrowser({ multiple: true, path: '/s', picked: [], ask: true })).querySelector('.rc-confirm'), null, 'nothing picked: no ask');
+  const err = dom(`<div>${C.folderReview({ rows: [], error: C.REVIEW_EMPTY })}</div>`).querySelector('.fb-err');
+  assert.equal(err.getAttribute('role'), 'alert'); assert.equal(err.textContent, C.REVIEW_EMPTY);
+  const way = dom(`<div>${C.folderWay({ pick: { label: 'Choose folder…', hook: 'data-x-pick', title: 'Pick' }, git: { on: true, hook: 'data-x-git', why: 'Runs git init' } })}</div>`);
+  assert.equal(way.querySelector('.fb-way [data-x-pick]').textContent.trim(), 'Choose folder…');
+  assert.equal(way.querySelector('.fb-way [data-x-git]').getAttribute('aria-checked'), 'true');
 });

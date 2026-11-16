@@ -64,6 +64,7 @@ test('a chat opened by its address draws its project and its cards once the stor
   src.runLinks = { links }; src.threads.threads = src.threads.threads.map((t) => (t.id === 'ask_1' ? { ...t, context: { projectKey: 'web' } } : t));
   for (const type of ['ask-run-status', 'ask-labels-changed']) sockets.at(-1).onmessage({ data: JSON.stringify({ type }) });
   await settle(400);
+  w.RailConversation.flushPaints();   // the store's repaint waits for a frame (comp.live-paint)
   assert.equal(w.location.hash, '#chat/ask_1');
   assert.ok(d.querySelector('#route-chat [data-anchor="card_run"]'), 'the TaskCard is drawn');
   assert.match(d.querySelector('#route-chat .convo-head').textContent, /^web/);
@@ -83,7 +84,23 @@ test('a paused task offers Stop and Resume, never the fixes of a failure; Resume
   assert.ok(items.includes('Stop'), items.join(', '));
   for (const no of ['Ask Worca to fix it', 'Tell Worca how to fix it']) assert.ok(!items.includes(no), `${no} is for a failure`);
   d.querySelector('#route-chat [data-card-act="run-a|Resume now"]').click(); await settle(40);
-  assert.deepEqual(posts(calls).at(-1), ['POST', '/api/resume', { pipelineId: 'pa' }]);
+  assert.deepEqual(posts(calls).at(-1), ['POST', '/api/resume', { pipelineId: 'pa', baseCheck: true }]);
+});
+
+// F-G-G2-03: a card's Resume now sends baseCheck; a moved base asks "Resume anyway" in the card's confirm row, and yes resends
+// the same resume with baseAck (as the task page and classic do), never a silent resume or a bare refusal
+test('F-G-G2-03: the card\'s Resume now on a moved base asks Resume anyway; yes resends with baseAck', async () => {
+  let n = 0;
+  const { w, d, calls } = await liveHost({ sources: withRun({ status: 'paused', pendingQuestion: null }), write: (u) => (u === '/api/resume' && !n++ ? [409, { error: 'dev moved 2 commits since the run started', code: 'base-moved' }] : [200, { ok: true }]) });
+  await go(w, '#chat/ask_1');
+  d.querySelector('#route-chat [data-card-act="run-a|Resume now"]').click(); await settle(60);
+  const ask = d.querySelector('#route-chat [data-card-yes="run-a"]');
+  assert.ok(ask, 'the card asks before resuming on the moved base');
+  assert.equal(ask.textContent.trim(), 'Resume anyway');
+  assert.match(d.querySelector('#route-chat').textContent, /dev moved 2 commits since the (run|task) started/);
+  assert.doesNotMatch(toastText(d), /Could not resume/, 'a prompt, not a refusal');
+  ask.click(); await settle(60);
+  assert.deepEqual(posts(calls).filter(([, u]) => u === '/api/resume'), [['POST', '/api/resume', { pipelineId: 'pa', baseCheck: true }], ['POST', '/api/resume', { pipelineId: 'pa', baseCheck: true, baseAck: true }]]);
 });
 
 test('a task waiting on its question can be stopped from its card', async () => {
@@ -104,7 +121,7 @@ test('a failed run reads Failed on its card, never Stopped', async () => {
 });
 
 test('a finished task with its branch is Ready: Create PR and View changes, and its stage bar stops at PR', async () => {
-  const { w, d, calls } = await liveHost({ sources: savedRun({ status: 'done', branch: 'feat/x', survived: true, projectKey: 'web-1a2b3c4d', projectDir: '/src/web' }) });
+  const { w, d, calls } = await liveHost({ sources: savedRun({ status: 'done', branch: 'feat/x', sourceBranch: 'main', survived: true, projectKey: 'web-1a2b3c4d', projectDir: '/src/web' }) });
   const opened = [], was = globalThis.open;
   globalThis.open = (u) => { opened.push(u); return {}; };   // chat-live.mjs openTab: the page's window.open (set once the host is up)
   after(() => { globalThis.open = was; });
@@ -143,4 +160,90 @@ test('Pulse and search open a live task at its card in its starting chat; a task
   w.RailShell.openRun('run/question', 'B task', 'run-b');   // ask_2 only follows run-b: no starting chat
   await settle(40);
   assert.equal(w.location.hash, '#run/run-b', 'its own page, by its id, never the case (#1266)');
+});
+
+// F-a1-04: a running ("spending") run's ⋯ Stop. A live frame rebuilds the store's tasks (chats-model seed), so the card's
+// confirm must outlive the task object it was opened on.
+const runTask = (w) => w.RailChats.data().chats.flatMap((c) => c.tasks || []).find((t) => (t.run || t.id) === 'run-a');
+// a frame that really changes the history row's PR (B2.3: a frame that repeats the PR on screen, or names no row on
+// screen, draws nothing); the fixture's row `pa` has no projectKey
+let redraws = 0;
+const redraw = async (w, sockets) => {
+  const n = ++redraws;
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'history-pr', token: w.RailTaskLive.prLookup().token, items: [{ id: 'pa', pr: { url: `https://x/pull/${n}`, number: n, state: 'OPEN' } }] }) });
+  await settle(60);
+};
+const openStop = async (w, d) => {
+  await go(w, '#chat/ask_1');
+  assert.ok((await cardItems(d, 'run-a')).includes('Stop'));
+  d.querySelector('#route-chat [data-menu-pick="card:run-a|Stop"]').click(); await settle(10);
+};
+const stopRow = (d) => d.querySelector('#route-chat [data-card-yes="run-a"]');
+
+test('F-a1-04: ⋯ Stop on a running card shows its confirm and sends nothing yet', async () => {
+  const { w, d, calls } = await liveHost({ sources: withRun({ pendingQuestion: null }) });
+  await openStop(w, d);
+  assert.ok(stopRow(d), 'the confirm\'s Stop');
+  assert.ok(d.querySelector('#route-chat [data-card-no="run-a"]'), 'the confirm\'s Cancel');
+  assert.match(stopRow(d).closest('.turn-row').textContent, /Stop the task\? The branch and changes stay\./);
+  assert.ok(!posts(calls).some(([, u]) => u === '/api/stop'), 'nothing sent before the confirm');
+});
+
+test('F-a1-04: the confirm survives a redraw from a live frame; Confirm sends exactly one stop with the run\'s id', async () => {
+  const { w, d, calls, sockets } = await liveHost({ sources: withRun({ pendingQuestion: null }) });
+  await openStop(w, d);
+  const was = runTask(w);
+  await redraw(w, sockets);
+  assert.notEqual(runTask(w), was, 'the frame rebuilt the store\'s task');
+  assert.ok(stopRow(d), 'the confirm is still up after the redraw');
+  stopRow(d).click(); await settle(40);
+  assert.deepEqual(posts(calls).filter(([, u]) => u === '/api/stop'), [['POST', '/api/stop', { runId: 'run-a' }]]);
+  assert.equal(stopRow(d), null, 'the confirm is gone');
+});
+
+test('F-a1-04: Cancel after a redraw closes the confirm and sends nothing', async () => {
+  const { w, d, calls, sockets } = await liveHost({ sources: withRun({ pendingQuestion: null }) });
+  await openStop(w, d);
+  const was = runTask(w);
+  await redraw(w, sockets);
+  assert.notEqual(runTask(w), was, 'the frame rebuilt the store\'s task');
+  assert.ok(stopRow(d), 'the confirm is still up after the redraw');
+  d.querySelector('#route-chat [data-card-no="run-a"]').click(); await settle(20);
+  assert.equal(stopRow(d), null, 'Cancel closes it');
+  const again = runTask(w);
+  await redraw(w, sockets);
+  assert.notEqual(runTask(w), again, 'a second rebuild');
+  assert.equal(stopRow(d), null, 'the confirm does not come back');
+  assert.deepEqual(posts(calls), [], 'no request of any kind');
+});
+
+test('F-a1-04: an open Stop confirm goes when the run ends under it; nothing is sent', async () => {
+  const { w, d, calls, sockets } = await liveHost({ sources: withRun({ pendingQuestion: null }) });
+  await openStop(w, d);
+  assert.ok(stopRow(d), 'the confirm is up while it runs');
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'done', runId: 'run-a', status: 'done' }) });
+  await settle(60);
+  await go(w, '#chat/ask_1');
+  assert.equal(stopRow(d), null, 'a finished run offers no Stop, so its confirm is gone');
+  assert.ok(!posts(calls).some(([, u]) => u === '/api/stop'), 'no stop request');
+});
+
+// F-a1-04: Stop sends classic's body (app.js stopRun): a live run's runId, with its pipeline id once paused; a paused run
+// this server does not hold live (a saved row) by its pipeline id alone, never as a runId
+const stopOn = async (w, d, calls, id) => {
+  await go(w, '#chat/ask_1');
+  assert.ok((await cardItems(d, id)).includes('Stop'));
+  d.querySelector(`#route-chat [data-menu-pick="card:${id}|Stop"]`).click(); await settle(10);
+  d.querySelector(`#route-chat [data-card-yes="${id}"]`).click(); await settle(40);
+  return posts(calls).filter(([, u]) => u === '/api/stop');
+};
+
+test('F-a1-04: a paused card\'s Stop sends classic\'s body: its runId and its pipeline id', async () => {
+  const { w, d, calls } = await liveHost({ sources: withRun({ status: 'paused', pendingQuestion: null }) });
+  assert.deepEqual(await stopOn(w, d, calls, 'run-a'), [['POST', '/api/stop', { runId: 'run-a', pipelineId: 'pa' }]]);
+});
+
+test('F-a1-04: a paused saved run\'s Stop sends its pipeline id alone, never as a runId', async () => {
+  const { w, d, calls } = await liveHost({ sources: savedRun({ status: 'paused' }) });
+  assert.deepEqual(await stopOn(w, d, calls, 'pa'), [['POST', '/api/stop', { pipelineId: 'pa' }]]);
 });

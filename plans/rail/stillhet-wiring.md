@@ -8,6 +8,7 @@ One map, from the prototype's own code (the places list in `shell/shell.js`, the
 |---|---|---|---|
 | Statistics | Insights (a center) | the statistics API and aggregation in `src/shared/` | `#stats`, `#stats/…`, `#statistics` |
 | Team metrics | Insights (a center) | the team metrics API and `src/shared/team-metrics/` | `#team-metrics`, `#team-metrics/…` |
+| Team metrics › Timeline | Insights › By person, a person's row opens their work in place | `src/shared/team-metrics/timeline.mjs` (`buildWorkItems`, `groupByPerson`, `prLookupFor`), `POST /api/team-metrics/prs`, `GET /api/team-metrics/pr-events` | `#team-metrics/timeline` |
 | Runs | Tasks | the runs API and live run frames | `#runs` (Tasks at its own address), `#history`, `#history/…` |
 | Pipelines | Tasks | the pipelines API and the run page's data | `#pipelines`, `#running/…`, `#feature/…`, `#group/…` |
 | Activity | Pulse | the activity feed and the notification frames | `#activity` (Chat, with Pulse open on Now) |
@@ -24,10 +25,15 @@ One map, from the prototype's own code (the places list in `shell/shell.js`, the
 With Stillhet on, every old address lands through one table, `ui/public/stillhet/shell/old-addresses.js` (`docs/rail/navigation.md` `nav.old-address`), in place; with it off they stay dev's.
 
 Dev data the design lacks (add to the design first: rule, catalog entry, component, test, gallery):
-- add to the design first: the person filter on Insights.
-- add to the design first: Shaper spend on Insights.
-- add to the design first: the Quarter and Year ranges on Insights.
-- add to the design first: the team heat grid on Insights.
+- built in slice 10 (D15): the person filter on Insights (`docs/rail/lists.md` `list.sentence-person`), and the team scope choice (`list.sentence-scope`).
+- built in slice 10 (D13): Shaper spend on Insights, the Shaping page (`insights/shaping`).
+- built in slice 10 (D7): the Quarter and Year ranges on Insights, this quarter and this year (`docs/rail/look.md` `look.chart-play`).
+- built in slice 10 (D14): the team heat grid on Insights, Who spends where (`insights/heat`; `docs/rail/look.md` `look.heat-grid`, the `HeatGrid` component).
+- built in #1310: a person's work on By person (`docs/rail/look.md` `look.time-track`, `docs/rail/lists.md` `list.row-opens-in-place`, `docs/rail/thing-page.md` `thing.read-only`; the `TimeTrack`, `WorkBar`, `MarkLegend` and `TaskView` components).
+- dev's Timeline team-wide items view, grouped by project (items mode): add to the design first (owner decision).
+- dev's Timeline tiles (Shipped, In review, Needs attention, Median lead time, Agent spend) and their filters: add to the design first (owner decision).
+- dev's Timeline "PRs outside Worca" switch (Stillhet always shows them): add to the design first (owner decision).
+- dev's Timeline merged-per-period strip and per-run segment colours: add to the design first (owner decision).
 
 New in the design (new: build it): each action the run page model lists as new (`runs/run-page-model.js`, `PROPOSED`) is built for real and added here when its slice starts.
 
@@ -46,12 +52,13 @@ Every action the prototype answers with a "Would…" sentence is `window.RailWou
 | `ui/public/stillhet/settings/settings-model.js` | open a Settings link in a new tab, send a test to a model, report a bug, suggest an improvement, copy the policy for a PR, the Labs guide | wire to | the models and engines routes, the team policy routes, the Labs guide in `docs/feature-flags.md` |
 | `ui/public/stillhet/settings/settings.js` | copy a setting's value | wire to | the clipboard and the settings routes |
 | `ui/public/stillhet/pulse/pulse.js` | ask Chat from a page, send a test notification; on pulse.html only (no shell): open a search result, open Statistics, open what a Pulse row names, a place that is off, New run's start and schedule | wired | dev's routes with dev's bodies: `POST /api/resume` (Resume, Try again, Restart Build; a confirm opens the task), `POST /api/schedules/:id/run-now`, `POST /api/actions/instances/:instanceId/stop`, `POST /api/notifications/:id/read` and `/read-all` (the read of run-outcome updates kept in `worca-rail.pulse-read`, this browser, shared across tabs), `POST /api/settings` (`uiLevel`, `keepAwake`, `nightModeToggle`); a refusal toasts `Could not ACTION: REASON` and changes nothing |
-| `ui/public/stillhet/workflows/workflows.js` | import a workflow, export a workflow, run the saved cases | wire to | the workflows routes and `src/shared/` graph export |
+| `ui/public/stillhet/workflows/workflows.js` | import a workflow, export a workflow, run the saved cases | wired | slice 7: `live/workflow-live.mjs` (its `WORKFLOW_ACTIONS` table) on dev's workflow, agent, script and pin routes; the graph from dev's template (`graph-entry.mjs` `fromTpl`) |
 | `ui/public/stillhet/requirements/requirements.js` | copy a requirement as Markdown, save specs | wire to | the requirements routes |
-| `ui/public/stillhet/marketplace/marketplace.js` | open a plugin's source, open a market on GitHub | wire to | the Marketplace routes |
+| `ui/public/stillhet/marketplace/marketplace.js` | open a plugin's source, open a market on GitHub | wired | slice 8: `live/market-live.mjs` (its `MARKET_ACTIONS` table) on dev's plugin and marketplace routes (`ui/routes/marketplace/plugins.mjs`): install, update (preview, then apply), update all, remove, set it up (`GET`/`PUT /api/plugins/:name/config`), sync, add and remove a source; the records from `live/market-map.mjs` |
 | `ui/public/stillhet/centers/centers.js` | attach files | new: built | New task… › More options › Add files…: the system file picker; the files go as dev's New run sends them (`POST /api/run` `extras`, `[{name, dataBase64}]`) |
-| `ui/public/stillhet/insights/insights.js` | copy a link to this page | new: build it | page links with the new Insights addresses |
-| `ui/public/stillhet/workspaces/workspaces.js` | open a workspace in your editor | wire to | the workspaces routes |
+| `ui/public/stillhet/insights/insights.js` | copy a link to this page | wired | slice 10 D16: the page's address with only what you narrowed (`RailInsightsModel.linkOf`, `stateOfLink`), written with `navigator.clipboard.writeText`; it sends nothing (`docs/rail/actions.md` `act.copy-link`) |
+| `ui/public/stillhet/projects/projects.js` | add, rename, locate a moved folder, remove, sync, check origin, use git, link a remote, its settings, team memory, cost tags and Labels | wired | slice 9: `live/projects-live.mjs` (its `PROJECT_ACTIONS` table) on dev's project routes (`POST /api/projects`, `/api/projects/clone`, `PATCH /api/projects/:key`, `DELETE /api/projects`, `POST /api/projects/:key/sync`, `/git-init`, `GET`/`PATCH /api/projects/:key/settings`, `GET`/`PUT /api/projects/:key/tags/defaults`); the records from `live/live-map.mjs` and `live/projects-map.mjs` |
+| `ui/public/stillhet/workspaces/workspaces.js` | open a question's file in your editor, make a workspace and edit it by hand, scan again, sync what is behind, delete, answer a question, cost tags and Labels | wired | slice 9: `live/projects-live.mjs` (its `PROJECT_ACTIONS` table) on dev's workspace routes (`POST /api/workspaces`, `PATCH /api/workspaces/:id`, `POST /api/workspaces/:id/members`, `DELETE /api/workspaces/:id`, `POST /api/workspaces/:id/scan`, `PUT /api/workspaces/:id/map/edges/:edgeId`, `POST /api/workspaces/:id/open-in-editor`, `GET`/`PUT /api/workspaces/:id/defaults`) |
 
 ## Seeded figures
 
@@ -64,9 +71,9 @@ Each model file seeds figures the live adapter replaces. One row per file here; 
 | `ui/public/stillhet/runs/run-page-model.js` | a run's stages, times, cost, loops and PR | wired | the live page's stages, cost, cap, time and PR are `ui/public/stillhet/live/task-page.mjs` taskPageOf (`GET /api/history/:key/:id`, state frames, `GET /api/pr/checks`); Changes, documents, Logs, Agents, Sessions and Step usage are `RailTaskLive.parts` (the diff, `GET /api/runs/:id/artifacts`, the log, the steps, `GET /api/runs/:id/sessions`, `GET /api/runs/:id/telemetry`); the design's sample step times and notes are blanked (M.liveRun); a group's page is `M.liveGroup` over `GET /api/run-groups` |
 | `ui/public/stillhet/chat/chats-model.js` | the chats and their turns | wired | `ui/public/stillhet/live/live-adapter.mjs`: `GET /api/ask/threads?show=all` and `GET /api/ask/run-links` (each chat's started and followed tasks, `live-map.mjs` `chatOf`); a thread's turns from `GET /api/ask/threads/:id` and the `ask-*` frames (`live/chat-live.mjs`, `live/chat-turns.mjs`) |
 | `ui/public/stillhet/pulse/pulse-model.js` | the Pulse updates, away and budget figures | wired | `ui/public/stillhet/live/live-adapter.mjs`: `GET /api/notifications` and run outcomes (updates), `GET /api/budget` (spend), limit pauses (usage), `GET /api/actions/running`, `GET /api/away-mode` |
-| `ui/public/stillhet/schedules/schedules-model.js` | the schedules and their next times | wire to | the schedules API |
+| `ui/public/stillhet/schedules/schedules-model.js` | the schedules and their next times | wired | `ui/public/stillhet/live/live-map.mjs` `scheduleOf` over `GET /api/schedules` (with `skippedRunAt`, the Expert facts, preset, run-after, ended); each schedule's runs from `GET /api/schedules/:id` `history` (`live/schedule-live.mjs` `runs`, `runsOf`) |
 | `ui/public/stillhet/settings/settings-model.js` | every Settings value and model list | wire to | the settings, models and providers routes |
-| `ui/public/stillhet/insights/insights-model.js` | spend, runs and team figures | wire to | the statistics and team-metrics APIs; the person filter, Shaper spend, Quarter and Year ranges and the team heat grid are "add to the design first" |
+| `ui/public/stillhet/insights/insights-model.js` | spend, runs and team figures | wired | slice 10: `live/insights-live.mjs` reads `GET /api/stats` (`report=1`), `/api/tag-dimensions`, `/api/team-metrics/scopes`, `/api/team-metrics` and `/api/policy`; `live/insights-map.mjs` maps them with dev's `allocate`, `aggregate`, `recordFacts`, `heatGrid` and `missingKeyTodos` (`src/shared/`); six pages are not offered live (Insights figure rows) |
 
 ## Action rows
 
@@ -104,7 +111,7 @@ One row per action: `npm run stillhet:wiring` lists every `window.RailWould(...)
 | `design-system/components/run-state.mjs › copy the link to {pr}` | wired | on a chat TaskCard (`RailChatLive.flow`, `ui/public/stillhet/live/chat-live.mjs` FLOW): Copy PR link writes the run's `pr.url` (runs API) to the clipboard; a run with no PR does not offer it |
 | `design-system/components/run-state.mjs › copy: git switch {groupBranch}` | not offered live | a feature's one branch exists only once dev's ship-group combine made it (`ui/public/ship-group-dialog.mjs`); the live group page (`M.liveGroup`) offers Merge #N and Fix checks on #N, and each member's page its own Copy git commands (for the controller: Check out the whole feature needs dev's combine run first) |
 | `design-system/components/run-state.mjs › download the patch` | wired | on a chat TaskCard (`RailChatLive.flow`, `ui/public/stillhet/live/chat-live.mjs` FLOW): Download patch opens `GET /api/runs/:id/recovery-patch` (a folder run: `GET /api/runs/:id/changes/patch`) in a new tab |
-| `design-system/components/run-state.mjs › open Settings › Projects; point it at the folder, then Start now` | not offered live | a missed ticket's project is the Schedules slice's; the Tasks live map never draws the ticket-failed case |
+| `design-system/components/run-state.mjs › open Settings › Projects; point it at the folder, then Start now` | wired | a failed ticket's Open project is now a real step (`go: 'projects/{project}'`): the schedule page's ticket card opens `projects/KEY` through `RailShell.go`, and its Start now posts `POST /api/schedules/:id/run-now` for that ticket; pointing it at the folder is the Projects slice's (`plans/rail/findings.md`) |
 | `design-system/components/run-state.mjs › open Settings › Tasks › Budget` | wired | on a chat TaskCard (`RailChatLive.flow`, `ui/public/stillhet/live/chat-live.mjs` FLOW): Open budget settings goes to `settings/runs` (Budget) through `RailShell.go` |
 | `design-system/components/run-state.mjs › open Settings › Tasks › Budget; Resume opens once there is room` | wired | on a chat TaskCard (`RailChatLive.flow`, `ui/public/stillhet/live/chat-live.mjs` FLOW): Open Settings goes to `settings/runs` (Budget) through `RailShell.go` |
 | `design-system/components/run-state.mjs › open Settings › Team › Policy` | wired | on a chat TaskCard (`RailChatLive.flow`, `ui/public/stillhet/live/chat-live.mjs` FLOW): Open Team policy goes to `settings/team` through `RailShell.go` |
@@ -115,16 +122,31 @@ One row per action: `npm run stillhet:wiring` lists every `window.RailWould(...)
 | `design-system/components/run-state.mjs › open the copy in a terminal` | not offered live | the live mapper never draws the design's folder cases (folder, failed-folder, stopped-folder, applied): dev's folder runs show as git-less tasks, whose Terminal (⋯) opens the copy; the folder-only labels are not drawn (for the controller: the folder case needs its own live mapping) |
 | `design-system/components/run-state.mjs › open the fix task under this task’s rounds` | wired | a fix round folds under its origin's rounds (live-map `foldRounds`, no row of its own; a live or needy round lights its origin's row) and its page still opens at `#run/ID`; View fix task's stand-in is not drawn |
 | `design-system/components/run-state.mjs › open the merged {pr} on GitHub` | wired | on a chat TaskCard (`RailChatLive.flow`, `ui/public/stillhet/live/chat-live.mjs` FLOW): View PR opens the run's `pr.url` in a new tab |
-| `design-system/components/run-state.mjs › open the workflow` | not offered live | Review the workflow belongs to the auto case (Auto's workflow question), which a live task answers in its chat (slice 4's question card); the Workflows place is its own slice |
+| `design-system/components/run-state.mjs › open the workflow` | wired | the task's Workflow dialog has Open in Workflows: `#workflows/workflow:ID`, the workflow its stepper names (`task-page.mjs` `workflow`, slice 7) |
 | `design-system/components/run-state.mjs › open worca-api #212 on GitHub` | not offered live | the live mapper (`ui/public/stillhet/live/live-map.mjs` caseOf) never draws the design's workspace cases: dev keeps a workspace run as one task whose members each open their PR through View PR; the three-PR stand-ins are not drawn (for the controller: dev has no one-call "every member's PR" link) |
 | `design-system/components/run-state.mjs › open worca-api #212, worca-web #88 and worca-docs #31 on GitHub` | not offered live | the live mapper (`ui/public/stillhet/live/live-map.mjs` caseOf) never draws the design's workspace cases: dev keeps a workspace run as one task whose members each open their PR through View PR; the three-PR stand-ins are not drawn (for the controller: dev has no one-call "every member's PR" link) |
 | `design-system/components/run-state.mjs › open {folder}` | not offered live | the live mapper never draws the design's folder cases (folder, failed-folder, stopped-folder, applied): dev's folder runs show as git-less tasks, whose Terminal (⋯) opens the copy; the folder-only labels are not drawn (for the controller: the folder case needs its own live mapping) |
 | `design-system/components/run-state.mjs › open {pr} on GitHub` | wired | on a chat TaskCard (`RailChatLive.flow`, `ui/public/stillhet/live/chat-live.mjs` FLOW): View PR opens the run's `pr.url` in a new tab; a run with no PR does not offer it |
 | `design-system/components/run-state.mjs › open {pr}, {pr2} and {pr3} on GitHub` | wired | a live group page lists each member with its PR; each member's page opens it (View PR, `pr.url`); the three-at-once stand-in is not drawn |
 | `design-system/components/run-state.mjs › save plans/unified-page-navigation.md` | wired | on a chat TaskCard (`RailChatLive.flow`, `ui/public/stillhet/live/chat-live.mjs` FLOW): Save to plans/ posts `POST /api/runs/:id/plan/save` (also in the live PlanCard's ⋯) |
-| `insights/insights.js › copy a link to this page` | new: build it | page links with the new Insights addresses |
-| `marketplace/marketplace.js › open it on GitHub` | wire to | the Marketplace routes |
-| `marketplace/marketplace.js › open … at … on GitHub` | wire to | the Marketplace routes |
+| `insights/insights.js › copy a link to this page` | wired | slice 10 D16: `RailInsightsModel.linkOf` writes `#insights/ID?…` with only the keys that differ from the page's defaults (days as ISO days); `navigator.clipboard.writeText`, then the toast `Copied a link to NAME`; a refused clipboard says so; no request |
+| `insights/insights.js › Download CSV` | wired | slice 10 D24: dev's `reportCsv` (`src/shared/cost/allocation.mjs`) over dev's `allocate` of the page's facts, the Cost report's own CSV (`insights-map.mjs` `statsCsv`); the team pages download the rows as drawn |
+| `insights/insights.js › Tag these N tasks` | wired | slice 10 D24: the design's hand-over to Chat (`RailConversation.handOver`), N the live `client` Unallocated row's `runs` |
+| `insights/insights.js › Set a default for a project` | wired | slice 10 D24: `RailProjects.editTags` for the live project with the most runs without a client (the Unallocated client row's project children) |
+| `insights/insights.js › Save this view` | wired | slice 10 D18: kept in this browser, `localStorage['worca-rail.insights-views']` (`insights-live.mjs` `saveView`, `dropView`); a refusing storage says `Could not save NAME: your browser did not keep it` |
+| `insights/insights.js › the team scope` | wired | slice 10 D3: `GET /api/team-metrics/scopes`, one enabled scope read at a time (`GET /api/team-metrics?scope=ID&range=all&aggregate=0&defer=1`), as dev's page does; with 2 or more the sentence's "of" lists them under team (`list.sentence-scope`) |
+| `insights/insights.js › open a person's work` | wired | #1310: a person's row on By person opens their work in place (`RailInsightsWork.detail`): live `RailInsightsLive.work` over the scope's `GET /api/team-metrics` records, dev's `buildWorkItems` and `groupByPerson` (`live/work-map.mjs` `personWork`); demo `RailInsightsModel.workOf` |
+| `insights/insights.js › Hide` | wired | #1310: closes the open row (page state `st.open`), focus back on the row; Esc does the same |
+| `insights/insights.js › Show N more` | wired | #1310: shows all the rest of the person's tasks at once, focus on the first revealed task |
+| `insights/insights.js › open your task` | wired | #1310 D3: a task this Worca knows (`RailWorld.find`) opens your task page, `RailShell.go('run/ID')` |
+| `insights/insights.js › open a teammate's task` | wired | #1310 D2: `#insights/team?task=RUNID`, read only (`TaskView`, `RailInsightsLive.task` over the scope's records) |
+| `insights/insights.js › open the pull request` | wired | #1310: the PR mark is a link to the PR's url at its host (`POST /api/team-metrics/prs`, `GET /api/team-metrics/pr-events`), in a new tab; the demo says Opens #N at its host |
+| `insights/insights.js › Try again (pull requests)` | wired | #1310 D5: `RailInsightsLive.retryWork` drops the PR caches and asks `POST /api/team-metrics/prs` again |
+| `insights/insights.js › Back to By person` | wired | #1310: from a teammate's task back to `#insights/team`, the person's row still open and focused |
+| `shell/shell.js › the not-live look of Insights and Requirements` | wired | live, `NOT_LIVE` names where each lives with Stillhet off (Statistics and Team metrics; Requirements, under Build) through the library's NotInStillhet, with Back to Chat; the bar shows home (#1298); Insights is live since slice 10, so only Requirements draws it now |
+| `marketplace/marketplace.js › open it on GitHub` | wired | `GET /api/plugins/:name` `webUrl` (the pinned commit) for an installed plugin, else the market snapshot's commit (`githubWebUrl`), opened in a new tab; a plugin from a local folder offers no View its source (slice 8 D15) |
+| `marketplace/marketplace.js › open … at … on GitHub` | wired | the market's URL in Where plugins come from is a text link to its synced commit on GitHub (`githubWebUrl` of `GET /api/marketplaces` `url` and `lastSync.sha`), opened in a new tab (slice 8 D15) |
+| `marketplace/marketplace.js › the first sync of a never-synced builtin` | wired | `live/market-live.mjs` `firstSync`: `POST /api/marketplaces/:id/refresh` (the `sync` entry of `MARKET_ACTIONS`), once per page load for a builtin with `lastSync: null` and no `needsGit`, then both lists read again; Loading the catalogue… meanwhile, and an empty catalogue's No plugins yet offers Sync (#1298) |
 | `pulse/pulse.js › (a phrase built from data)` | wired | in the app host each reaches its real target: Chat hand-over (`RailConversation.handOver`), `RailShell.go` / `openRun` / `openSchedule` (`insights/spend` for Statistics), New run is Chat's `RailConversation.start('task')`, and Send test is the browser `Notification` API after permission (D16); the demo sentences stay on the standalone `pulse.html` only |
 | `pulse/pulse.js › ask Chat: …` | wired | in the app host each reaches its real target: Chat hand-over (`RailConversation.handOver`), `RailShell.go` / `openRun` / `openSchedule` (`insights/spend` for Statistics), New run is Chat's `RailConversation.start('task')`, and Send test is the browser `Notification` API after permission (D16); the demo sentences stay on the standalone `pulse.html` only |
 | `pulse/pulse.js › open Statistics` | wired | in the app host each reaches its real target: Chat hand-over (`RailConversation.handOver`), `RailShell.go` / `openRun` / `openSchedule` (`insights/spend` for Statistics), New run is Chat's `RailConversation.start('task')`, and Send test is the browser `Notification` API after permission (D16); the demo sentences stay on the standalone `pulse.html` only |
@@ -139,6 +161,7 @@ One row per action: `npm run stillhet:wiring` lists every `window.RailWould(...)
 | `runs/run-page-model.js › open worca-docs #31 on GitHub` | not offered live | the live mapper (`ui/public/stillhet/live/live-map.mjs` caseOf) never draws the design's workspace cases: dev keeps a workspace run as one task whose members each open their PR through View PR; the three-PR stand-ins are not drawn (for the controller: dev has no one-call "every member's PR" link) |
 | `runs/run-page-model.js › open worca-web #88 on GitHub` | not offered live | the live mapper (`ui/public/stillhet/live/live-map.mjs` caseOf) never draws the design's workspace cases: dev keeps a workspace run as one task whose members each open their PR through View PR; the three-PR stand-ins are not drawn (for the controller: dev has no one-call "every member's PR" link) |
 | `runs/run-page.js › (a phrase built from data)` | wired | in the live kind `RailTaskLive` (`ui/public/stillhet/live/task-live.mjs`) calls dev's run route; a label no route answers is not drawn (`liveAction`, `liveMore`) |
+| `runs/run-page.js › send the direction` | wired | ⋯ › Send a direction on a live, unfinished task: `RailTaskLive.act('run-direction')`, dev's `POST /api/runs/:id/directions {text}` (COV-3 #1); the demo answers only on the prototype |
 | `runs/run-page.js › check out on this machine and open a local copy` | wired | ⋯ › Try it: `POST /api/runs/:id/checkout`, then the first service's `POST /api/runs/:id/actions/:actionId/start` |
 | `runs/run-page.js › check out on this machine; the PR waits for you` | wired | Changes › Check out (`POST /api/runs/:id/checkout`); the PR dialog's Try it first is the same Try it |
 | `runs/run-page.js › check out …` | wired | Changes › Check out: `RailTaskLive.flow('Check out')`, dev's `POST /api/runs/:id/checkout` |
@@ -166,11 +189,47 @@ One row per action: `npm run stillhet:wiring` lists every `window.RailWould(...)
 | `settings/settings-model.js › send a test to …` | wire to | the models and engines routes, the team policy routes, the Labs guide in `docs/feature-flags.md` |
 | `settings/settings-model.js › send … one tiny prompt` | wire to | the models and engines routes, the team policy routes, the Labs guide in `docs/feature-flags.md` |
 | `settings/settings.js › copy: …` | wire to | the clipboard and the settings routes |
-| `workflows/workflows.js › ask for a file to import` | wire to | the workflows routes and `src/shared/` graph export |
-| `workflows/workflows.js › export …` | wire to | the workflows routes and `src/shared/` graph export |
-| `workflows/workflows.js › export … as …` | wire to | the workflows routes and `src/shared/` graph export |
-| `workflows/workflows.js › run the … saved … of …` | wire to | the workflows routes and `src/shared/` graph export |
-| `workspaces/workspaces.js › open … in your editor` | wire to | the workspaces routes |
+| `workflows/workflows.js › ask for a file to import` | wired | a `.json` file, then `POST /api/workflows/import-json` `{dryRun:true}`, a confirm when it runs scripts, then the import (`acceptScripts` only on Yes) |
+| `workflows/workflows.js › export …` | wired | the canvas's Export: `GET /api/workflows/:id/json`, downloaded |
+| `workflows/workflows.js › export … as …` | wired | a JSON file: `GET /api/workflows/:id/json`; a Claude Code skill: `POST /api/workflows/:id/export` `{destination:'global', dryRun:true}`, then the apply when nothing conflicts; a Worca plugin: `{destination:'plugin', pluginDir}` |
+| `workflows/workflows.js › run the … saved … of …` | wired | `POST /api/scripts/bench` `{key, all:true}`, read from its `scriptbench-done` or `scriptbench-error` frame |
+| `workflows/workflows.js › the Team way` | not offered live | dev has no workflow sharing with a team (no route under `ui/routes/workflows/`), so the Team way stays the design's empty state until the owner decides (slice 7 Open question 3) |
+| `marketplace/marketplace.js › the For you way` | not offered live | dev has no plugin suggestion source (no route under `ui/routes/marketplace/` says which plugin fits how you work, nor why), and each For you card must name its reason, so the shelf and its bar way stay empty live until the owner decides (slice 8 Open question 1) |
+| `workspaces/workspaces.js › open … in your editor` | wired | slice 9 D15: the question's `at` link (`file:line` of the edge's first evidence) sends `POST /api/workspaces/:id/open-in-editor` `{projectKey, file}`; dev opens the member's file in the editor (the file, not its line) |
+| `projects/projects.js › Sync` | wired | slice 9 D6: `POST /api/projects/:key/sync` `{mode:'ff'}`; RailProjects.sync and a workspace's Sync what is behind use the same call |
+| `pulse/pulse.js › Sync on a behind project's Needs you item` | wired | `RailProjects.sync`: `POST /api/projects/:key/sync` `{mode:'ff'}`, the same call as the project page's Sync; the row's click opens the project at its fix (`RailProjects.openNeed`) (#1298) |
+| `projects/projects.js › Check origin now` | wired | slice 9 D6: `POST /api/projects/:key/sync` `{mode:'fetch'}` |
+| `projects/projects.js › Retry` | wired | slice 9 D6: `POST /api/projects/:key/sync` `{mode:'fetch'}` |
+| `projects/projects.js › Use git` | wired | slice 9 D6: `POST /api/projects/:key/git-init` `{}` |
+| `projects/projects.js › Link a repository… and Link a remote…` | wired | slice 9 D6: a one-field form asks its repository address (`form.link-remote`), then `POST /api/projects/:key/git-init` `{remoteUrl}` |
+| `projects/projects.js › Rename…` | wired | slice 9 D7: `PATCH /api/projects/:key` `{name}` (`form.rename-project`); the key never changes |
+| `projects/projects.js › Locate folder…` | wired | slice 9 D8: `PATCH /api/projects/:key` `{path}`, which re-keys the project and answers the new key; the page goes to it |
+| `projects/projects.js › Remove…` | wired | slice 9 D10: `DELETE /api/projects?name=` once the undo window closes, `&deleteFolder=1` for a folder Worca made (`form.remove-owned`) |
+| `projects/projects.js › Add a project by hand` | wired | slice 9 D11: a path is `POST /api/projects` `{name, path}`, plus `useGit:true` when Use git is on for a plain folder (COV-1); a repository address is `POST /api/projects/clone` `{url}`, followed by its `clone-changed` frames |
+| `projects/project-add.js › Choose folder…` | wired | COV-1: the FolderBrowser reads `GET /api/fs/dirs?path=` (a seed that fails opens at the top); `GET /api/git` says whether Use git is offered |
+| `projects/project-add.js › New folder` | wired | COV-1: `POST /api/projects/create` `{name, useGit?, dryRun:true}` says where it is made; Create sends `{name, useGit?}` and opens the project once listed |
+| `projects/project-add.js › Several folders…` | wired | COV-1: the FolderBrowser in multi mode (`GET /api/fs/dirs?path=`), then the review list sends `POST /api/projects/bulk` `{projects:[{name, path}]}`; skipped rows keep their reasons to rename and retry |
+| `projects/project-add.js › the probe line` | wired | COV-1: `GET /api/projects/probe?path=` under the One folder field (classic's detectModel rules); a refused probe blocks Add |
+| `projects/projects.js › How its tasks run` | wired | slice 9 D16: read with `GET /api/projects/:key/settings`; a pick is `PATCH /api/projects/:key/settings` `{settingId: value}`, Use yours sends null |
+| `projects/projects.js › Team memory` | wired | slice 9 D16: `PATCH /api/projects/:key/settings` `{'memory.team': on}`; a refusal keeps the switch |
+| `projects/projects.js › Cost tags, Who pays and Labels` | wired | slice 9 D16, D19: `GET`/`PUT /api/projects/:key/tags/defaults` `{tags, labels}` |
+| `projects/projects.js › Branch names` | not offered live | dev's runs carry no `{type}` or `{ticket}` and branch naming is the engine's; Settings › Projects (slice 12) owns this setting, so the live page does not draw the row (Open question 1) |
+| `projects/projects.js › This month's spend` | wired | slice 10 D19: `RailInsightsLive.monthSpend(name)`, the `project` row of this month's `GET /api/stats` answer by project name (`insights-map.mjs` `monthSpendOf`); not drawn while the read is pending; the workspace head sums its members |
+| `workspaces/workspaces.js › Make a workspace by hand` | wired | slice 9 D12: a client draft until Save, then `POST /api/workspaces` `{name, projectPaths}` |
+| `workspaces/workspaces.js › Edit by hand` | wired | slice 9 D13: Save sends `PATCH /api/workspaces/:id` `{name}`, one `POST /api/workspaces/:id/members` `{add}`, then one `{remove, rescan:'none'}` per member taken out; it stops at the first refusal |
+| `workspaces/workspaces.js › Scan again` | wired | slice 9 D14: `POST /api/workspaces/:id/scan` `{}` |
+| `workspaces/workspaces.js › Sync what is behind` | wired | slice 9 D14: `POST /api/projects/:key/sync` `{mode:'ff'}` for each member that is behind, in turn |
+| `workspaces/workspaces.js › Delete…` | wired | slice 9 D14: `DELETE /api/workspaces/:id` once the undo window closes |
+| `workspaces/workspaces.js › Is this right (a question's answer)` | wired | slice 9 D3: `PUT /api/workspaces/:id/map/edges/:edgeId` `{state}` through the live module |
+| `workspaces/workspaces.js › Cost tags and Labels` | wired | slice 9 D19: `GET`/`PUT /api/workspaces/:id/defaults` `{tags, labels}` |
+| `projects/dev-tab-team › #projects/KEY/team` | wired | stopgap: lands on the project page; slice 12 gives it a home (`shell/old-addresses.js` `dev-projects`) |
+| `projects/dev-tab-settings › #projects/KEY/settings` | wired | stopgap: lands on the project page; slice 12 gives it a home (`shell/old-addresses.js` `dev-projects`) |
+| `projects/dev-tab-mcp › #projects/KEY/mcp` | wired | stopgap: lands on the project page; slice 12 gives it a home (`shell/old-addresses.js` `dev-projects`) |
+| `projects/dev-tab-actions › #projects/KEY/actions` | wired | stopgap: lands on the project page; slice 12 gives it a home (`shell/old-addresses.js` `dev-projects`) |
+| `projects/dev-tab-automations › #projects/KEY/automations` | wired | stopgap: lands on the project page; slice 12 gives it a home (`shell/old-addresses.js` `dev-projects`) |
+| `projects/dev-tab-away › #projects/KEY/away` | wired | stopgap: lands on the project page; slice 12 gives it a home (`shell/old-addresses.js` `dev-projects`) |
+| `projects/dev-tab-memory › #projects/KEY/memory` | wired | stopgap: lands on the project page; slice 12 gives it a home (`shell/old-addresses.js` `dev-projects`) |
+| `projects/dev-tab-memory-note › #projects/KEY/memory/NAME` | wired | stopgap: lands on the project page; slice 12 gives it a home (`shell/old-addresses.js` `dev-projects`) |
 
 ## Figure rows
 
@@ -193,6 +252,7 @@ One row per seeded figure: each data key and seed getter of the globals a model 
 | `shell/world.js › RailDemoState.conn` | wired | `ui/public/stillhet/live/live-adapter.mjs`: `list` is loading until the first snapshot, failed, or refresh after a failed refetch; `conn` is offline while the socket is down and session on a 401 or close code 4001, through `RailWorld.setState` / `load` (D8, D20) |
 | `shell/world.js › RailDemoState.task` | wired | `ui/public/stillhet/live/task-live.mjs`: a task page is loading until the list's first load and `GET /api/history/:key/:id` answer, failed on a 5xx or no answer, gone when neither the runs nor the store hold it or History answers 404 (`RailTaskLive.state`); the demo reads it from `?state=task-…` (fail.task-page) |
 | `shell/world.js › RailDemoState.thread` | wired | `ui/public/stillhet/live/chat-live.mjs`: an open chat is loading while `GET /api/ask/threads/:id` is out, failed on a 5xx or no answer, gone on a 404 (`RailChatLive.state`); the demo reads it from `?state=thread-…` |
+| `shell/world.js › RailDemoState.market` | wired | a demo-kind input only (`?state=update-asks`: the demo Jira's update asks for something new, form.update-asks); live, the same confirm comes from dev's update preview `access` (`live/market-live.mjs`, slice 8 D9) |
 | `shell/world.js › RailWorld.data` | wired | `ui/public/stillhet/live/live-adapter.mjs`: `GET /api/history`, `hello.runs` and the run frames (`run-created`, `state`, `question`, `question-resolved`, `done`, `error`, `title`), mapped by `live/live-map.mjs`; Needs you is dev's rule (`src/shared/needs-you.mjs`) |
 | `pulse/pulse-model.js › PulseModel.BUDGET_RESETS` | wired | `GET /api/budget` `windowEndMs`, through `RailWorld.part('costs')` |
 | `pulse/pulse-model.js › PulseModel.FINDS` | wired | the places, then the store's projects, schedules and chats (`GET /api/projects`, `GET /api/schedules`, `GET /api/ask/threads?show=all`) |
@@ -211,8 +271,8 @@ One row per seeded figure: each data key and seed getter of the globals a model 
 | `runs/runs-model.js › RunsListModel.DAYS` | wired | the demo days; a live row's day is `dayOf` from its start |
 | `chat/chats-model.js › ChatsListModel.seed` | wired | in the live kind the chats, their groups and their tasks come from `RailWorld.part('chats')` and `part('chatGroups')` (`live/live-map.mjs` `chatOf`: `GET /api/ask/threads?show=all`, `GET /api/ask/groups`, `GET /api/ask/run-links`); the day sections are dev's `dayBucket` |
 | `chat/chats-model.js › ChatsListModel.DAYS` | wired | in the live kind the chats, their groups and their tasks come from `RailWorld.part('chats')` and `part('chatGroups')` (`live/live-map.mjs` `chatOf`: `GET /api/ask/threads?show=all`, `GET /api/ask/groups`, `GET /api/ask/run-links`); the day sections are dev's `dayBucket` |
-| `schedules/schedules-model.js › SchedulesModel.seed` | wire to | the schedules API |
-| `schedules/schedules-model.js › SchedulesModel.TODAY` | wire to | the schedules API |
+| `schedules/schedules-model.js › SchedulesModel.seed` | wired | the demo's seed; live, the store's schedules (`RailWorld.part('schedules')`, `GET /api/schedules`) with each one's runs (`RailScheduleLive.runs`) |
+| `schedules/schedules-model.js › SchedulesModel.TODAY` | wired | the demo's fixed today; live, the local midnight of the real today, and every next time is the server's `nextRunAt` |
 | `settings/settings-model.js › SettingsModel.ICONS` | wire to | the models and engines routes, the team policy routes, the Labs guide in `docs/feature-flags.md` |
 | `settings/settings-model.js › SettingsModel.SECTION_ICONS` | wire to | the models and engines routes, the team policy routes, the Labs guide in `docs/feature-flags.md` |
 | `settings/settings-model.js › SettingsModel.GROUPS` | wire to | the models and engines routes, the team policy routes, the Labs guide in `docs/feature-flags.md` |
@@ -222,14 +282,36 @@ One row per seeded figure: each data key and seed getter of the globals a model 
 | `settings/settings-model.js › SettingsModel.FIRST` | wire to | the models and engines routes, the team policy routes, the Labs guide in `docs/feature-flags.md` |
 | `settings/settings-model.js › SettingsModel.VALUE_NAMES` | wire to | the models and engines routes, the team policy routes, the Labs guide in `docs/feature-flags.md` |
 | `settings/settings-model.js › SettingsModel.VALUE_WORDS` | wire to | the models and engines routes, the team policy routes, the Labs guide in `docs/feature-flags.md` |
-| `insights/insights-model.js › RailInsightsModel.STANDS` | wire to | the statistics and team-metrics APIs; the person filter, Shaper spend, Quarter and Year ranges and the team heat grid are "add to the design first" |
-| `insights/insights-model.js › RailInsightsModel.SUBS` | wire to | the statistics and team-metrics APIs; the person filter, Shaper spend, Quarter and Year ranges and the team heat grid are "add to the design first" |
-| `insights/insights-model.js › RailInsightsModel.SUB` | wire to | the statistics and team-metrics APIs; the person filter, Shaper spend, Quarter and Year ranges and the team heat grid are "add to the design first" |
-| `insights/insights-model.js › RailInsightsModel.DIM` | wire to | the statistics and team-metrics APIs; the person filter, Shaper spend, Quarter and Year ranges and the team heat grid are "add to the design first" |
-| `insights/insights-model.js › RailInsightsModel.DIM_GROUPS` | wire to | the statistics and team-metrics APIs; the person filter, Shaper spend, Quarter and Year ranges and the team heat grid are "add to the design first" |
-| `insights/insights-model.js › RailInsightsModel.TIME` | wire to | the statistics and team-metrics APIs; the person filter, Shaper spend, Quarter and Year ranges and the team heat grid are "add to the design first" |
-| `insights/insights-model.js › RailInsightsModel.FILTERS` | wire to | the statistics and team-metrics APIs; the person filter, Shaper spend, Quarter and Year ranges and the team heat grid are "add to the design first" |
-| `insights/insights-model.js › RailInsightsModel.WHEN` | wire to | the statistics and team-metrics APIs; the person filter, Shaper spend, Quarter and Year ranges and the team heat grid are "add to the design first" |
+| `insights/insights-model.js › RailInsightsModel.STANDS` | not offered live | the standouts of Why it cost and Review need rework spend and review rounds per project, which no dev API returns (slice 10 D12); owner: the Insights measures run |
+| `insights/insights.js › page insights/spend` | wired | slice 10 D11, Spend: GET /api/stats totals.spentUsd (`insights-map.mjs` `FIGURE_SOURCE`) |
+| `insights/insights.js › page insights/per-task` | wired | slice 10 D11, Per task: GET /api/stats totals.spentUsd ÷ totals.runs (`insights-map.mjs` `FIGURE_SOURCE`) |
+| `insights/insights.js › page insights/budget` | wired | slice 10 D11, Budget: GET /api/stats totals.spentUsd against GET /api/budget totalLimitUsd; in the bar only with a budget (`insights-map.mjs` `FIGURE_SOURCE`) |
+| `insights/insights.js › page insights/time-saved` | wired | slice 10 D11, Time saved: GET /api/stats totals.savedUsd (`insights-map.mjs` `FIGURE_SOURCE`) |
+| `insights/insights.js › page insights/value` | wired | slice 10 D11, Value for spend: GET /api/stats totals.savedUsd ÷ totals.spentUsd (`insights-map.mjs` `FIGURE_SOURCE`) |
+| `insights/insights.js › page insights/ends` | wired | slice 10 D11, How tasks end: GET /api/stats totals.finished, totals.failed, totals.stopped (`insights-map.mjs` `FIGURE_SOURCE`) |
+| `insights/insights.js › page insights/fails` | wired | slice 10 D11, Where it fails: GET /api/stats report.runs (failed or stopped) through allocate().total; by project live (`insights-map.mjs` `FIGURE_SOURCE`) |
+| `insights/insights.js › page insights/shipped` | wired | slice 10 D11, Shipped: GET /api/stats totals.prsMerged and totals.prsOpened (`insights-map.mjs` `FIGURE_SOURCE`) |
+| `insights/insights.js › page insights/throughput` | wired | slice 10 D11, Throughput: GET /api/stats totals.finished (`insights-map.mjs` `FIGURE_SOURCE`) |
+| `insights/insights.js › page insights/team` | wired | slice 10 D11, By person: GET /api/team-metrics records through aggregate().kpis.spendUsd; the pooled budget from GET /api/policy caps.pooled (`insights-map.mjs` `FIGURE_SOURCE`) |
+| `insights/insights.js › page insights/untagged` | wired | slice 10 D11, Missing cost tags: GET /api/team-metrics records through missingKeyTodos().rows for the first GET /api/tag-dimensions key; in the bar only with one (`insights-map.mjs` `FIGURE_SOURCE`) |
+| `insights/insights.js › page insights/shaping` | wired | slice 10 D11, Shaping: GET /api/stats shaping.groups (`insights-map.mjs` `FIGURE_SOURCE`) |
+| `insights/insights.js › page insights/heat` | wired | slice 10 D11, Who spends where: GET /api/team-metrics records through heatGrid() (`insights-map.mjs` `FIGURE_SOURCE`) |
+| `insights/insights.js › page insights/why` | not offered live | Why it cost: spend per cycle is stored (pipeline_steps.cycle, cost_ledger), but no dev API splits it into review, retry and PR-fix rework; it needs a new aggregate. The page stays in the demo; live it is out of the bar, search and has (D12); owner: the Insights measures run |
+| `insights/insights.js › page insights/review` | not offered live | Review: GET /api/stats has no review rounds per bucket or project (team reviewCyclesMean is one scope average, shaping avgReviewCycles is per size); it needs a new aggregate. The page stays in the demo; live it is out of the bar, search and has (D12); owner: the Insights measures run |
+| `insights/insights.js › page insights/autonomy` | not offered live | Autonomy: records keep interventions, but no dev API counts the runs with none (team autonomy is active time over wall time, another measure); it needs a new aggregate. The page stays in the demo; live it is out of the bar, search and has (D12); owner: the Insights measures run |
+| `insights/insights.js › page insights/cache` | not offered live | Cache: run cache tokens are never stored: pipeline_steps and cost_ledger have no token columns. The page stays in the demo; live it is out of the bar, search and has (D12); owner: the Insights measures run |
+| `insights/insights.js › page insights/merge` | not offered live | Start to merge: runs have no pr_merged_at; the team Timeline medianLeadMs is another source and window. The page stays in the demo; live it is out of the bar, search and has (D12); owner: the Insights measures run |
+| `insights/insights.js › page insights/waiting` | not offered live | Waiting on you: clarify rows have no asked or answered times. The page stays in the demo; live it is out of the bar, search and has (D12); owner: the Insights measures run |
+| `insights/insights-model.js › RailInsightsModel.SUBS` | wired | the statistics and team-metrics APIs through `live/insights-live.mjs` and `live/insights-map.mjs` (slice 10): the pages, their sources and dims, the ranges this quarter and this year, the person filter |
+| `insights/insights-model.js › RailInsightsModel.SUB` | wired | the statistics and team-metrics APIs through `live/insights-live.mjs` and `live/insights-map.mjs` (slice 10): the pages, their sources and dims, the ranges this quarter and this year, the person filter |
+| `insights/insights-model.js › RailInsightsModel.DIM` | wired | the statistics and team-metrics APIs through `live/insights-live.mjs` and `live/insights-map.mjs` (slice 10): the pages, their sources and dims, the ranges this quarter and this year, the person filter |
+| `insights/insights-model.js › RailInsightsModel.DIM_GROUPS` | wired | the statistics and team-metrics APIs through `live/insights-live.mjs` and `live/insights-map.mjs` (slice 10): the pages, their sources and dims, the ranges this quarter and this year, the person filter |
+| `insights/insights-model.js › RailInsightsModel.TIME` | wired | the statistics and team-metrics APIs through `live/insights-live.mjs` and `live/insights-map.mjs` (slice 10): the pages, their sources and dims, the ranges this quarter and this year, the person filter |
+| `insights/insights-model.js › RailInsightsModel.FILTERS` | wired | the statistics and team-metrics APIs through `live/insights-live.mjs` and `live/insights-map.mjs` (slice 10): the pages, their sources and dims, the ranges this quarter and this year, the person filter |
+| `insights/insights-model.js › RailInsightsModel.WHEN` | wired | the statistics and team-metrics APIs through `live/insights-live.mjs` and `live/insights-map.mjs` (slice 10): the pages, their sources and dims, the ranges this quarter and this year, the person filter |
+| `insights/insights-model.js › RailInsightsModel.workOf` | wired | #1310: live, `RailInsightsLive.work` (`live/work-map.mjs` `personWork` over the scope's records, the PR lookups and events); the demo's own tasks stay in the prototype |
+| `insights/insights-work.js › the work head counts` | wired | #1310: merged, open for review, closed, failed, stopped, done from dev's `ITEM_STATUSES` (`live/work-map.mjs` `WORDS`, `workHead`) |
+| `insights/insights-work.js › the read-only view's figures` | wired | #1310: cost, time working, runs and review rounds of dev's work item (`live/work-map.mjs` `taskViewOf`), its runs' records |
 | `bar › Pulse badge: the Needs you count` | wired | the Needs you rows of the store: `countNeedsYou` over `hello.runs` and `GET /api/history`, plus `counts.missed` of `GET /api/schedules`, plus the projects that need you (D22) |
 | `bar › Pulse: the unread updates` | wired | `GET /api/notifications` (unread problems) and the failed and paused run outcomes of `GET /api/history`, session read state |
 | `bar › Pulse: the running tasks` | wired | `hello.runs` and the run frames |
@@ -243,6 +325,7 @@ One row per seeded figure: each data key and seed getter of the globals a model 
 | `profile › the interface mode` | wired | dev's `uiLevel`: the `data-level` stamp at start, `POST /api/settings {uiLevel}` on a person's pick only |
 | `profile › Keep awake` | wired | `keepAwake` of `GET /api/settings`; `POST /api/settings {keepAwake}` |
 | `profile › Away` | wired | `GET /api/away-mode`; `POST /api/settings {nightModeToggle}` with dev's Away switch body |
+| `centers/centers.js › this week's tasks and cost` | wired | B3.6 (F-3-10): GET /api/stats?range=week `totals.runs` and `totals.spentUsd` for every project, else the chosen project's `allocate(report.runs, by project)` row (`insights-map.mjs` `weekTotalsOf`); while the read is pending or failed the head draws no week figures, and a visit to Tasks reads a failed week again. The count opens the list's week (the chosen project's when one is chosen); live its tip says the two can differ. The chosen project's row matches by name: the list's project (projectName, else the registry name or the folder's name) against the stats fact's (projectName, else the key without its hash); they agree when projectName is set, an older run without one can read 0 (follow-up). Demo: a per-run sum, each run by its own date |
 
 ## Dev surfaces
 
@@ -250,6 +333,14 @@ One row per surface of today's UI that Stillhet must carry (gate.prototype in `d
 
 | Surface | Status | Where in Stillhet, or why not yet |
 |---|---|---|
+| `route › /api/runs/:param/directions` | wired | Tasks › the task page's ⋯ Send a direction (`live/task-live.mjs` `run-direction`, COV-3 #1) |
+| `route › /api/runs/:param/restore` | wired | Tasks › the archived task page's ⋯ Restore, scoped as classic's runActionQuery (`live/task-live.mjs` `restore`, COV-3 #3); multi-select keeps `POST /api/runs/bulk` |
+| `route › /api/runs/:param/ask-files/:param/:param` | wired | Chat › a TaskCard's live question: its files as a FilesCard, View by index (`live/chat-live.mjs` `OPENS['ask-file']`, COV-3 #2) |
+| `route › /api/run-links/:param` | wired | Tasks › an old `#run/ID` link opens the saved task it became (`live/task-live.mjs` `openTask`, COV-3 #11) |
+| `route › /api/ask/reveal` | wired | Chat › FilesCard: the probe that draws Show in ‹file manager›, read once (`live/chat-live.mjs` `revealInfo`, COV-3 #9) |
+| `route › /api/ask/threads/:param/attachments/:param` | wired | Chat › FilesCard View and Download, a YouTurn's file chip, a proposal's files read for Start's extras (`live/chat-live.mjs` `OPENS.file`, `download`, COV-3 #5–#8) |
+| `route › /api/ask/threads/:param/attachments/:param/reveal` | wired | Chat › FilesCard Show in ‹file manager› (`live/chat-live.mjs` `ACTIONS['file-reveal']`, COV-3 #9) |
+| `route › /api/ask/threads/:param/directions` | wired | Chat › a followed TaskCard's ⋯ Send a direction (`live/chat-live.mjs` `ACTIONS.direction`) |
 | `route › /api/prompt-check/grade` | wired | Chat › composer sentence row: `stillhet/chat/prompt-check.mjs` grades the draft through dev's `prompt-check/grader.mjs` (the Prompt check chip row above) |
 | `route › /api/prompt-check/kind-correction` | wired | Chat › composer sentence row: a kind pick on the chip, ids and kinds only, posted by `stillhet/chat/prompt-check.mjs` (a new chat's after its first send) |
 | `route › /api/prompt-check/improve` | wired | Chat › composer: Improve on a Needs detail chip, through dev's `prompt-check/improve-view.mjs` in `stillhet/chat/prompt-check.mjs` (the Prompt check Improve row above) |
@@ -266,6 +357,21 @@ One row per surface of today's UI that Stillhet must carry (gate.prototype in `d
 | `ui/public/run-head.mjs` | wire to | the PR number parsed from a Gitea-family /pulls/N URL on the run head (#1238): Stillhet's run page PR chip is not built yet |
 | `ui/public/team-metrics-timeline.mjs` | wire to | the per-host Gitea, Forgejo and Codeberg token notices under the timeline (#1238): Stillhet's team metrics surface is not built yet |
 | `ui/public/ask-panel.mjs` | wire to | the clone card's host label for Gitea-family repository URLs (#1238): Stillhet's chat clone card is not built yet |
+| `route › /api/team-metrics/prs` | wired | Insights › By person, a person's open row and a teammate's task: the PR states of the scope's runs (`live/insights-live.mjs` `work`, #1310) |
+| `route › /api/team-metrics/pr-events` | wired | Insights › By person, a person's open row: their pull requests made outside Worca (`live/insights-live.mjs` `work`, #1310) |
+
+## Classic controls
+
+One classic control's coverage decided by hand (`tools/classic-inventory.mjs` reads this table by id): app.js's folder
+browser and bulk review list serve Projects › Add project, which the tool's page map reads as Tasks.
+
+| Classic control | Status | Where in Stillhet |
+|---|---|---|
+| `ui/public/app.js › button › (folder-item)` | wired | Projects › Add a project by hand › Choose folder… / Several folders…: a folder row of the FolderBrowser (`projects/project-add.js`, `GET /api/fs/dirs` in `live/projects-live.mjs`) |
+| `ui/public/app.js › button › No subfolders.` | wired | the FolderBrowser's No subfolders. line (`projects/project-add.js`, `GET /api/fs/dirs`) |
+| `ui/public/app.js › toggle › Select …` | wired | the FolderBrowser's tick per folder in Several folders… (`projects/project-add.js`) |
+| `ui/public/app.js › toggle › Add …` | wired | the review list's tick per picked folder (`projects/project-add.js`, `POST /api/projects/bulk`) |
+| `ui/public/app.js › field › Project name for …` | wired | the review list's name per picked folder (`projects/project-add.js`, `POST /api/projects/bulk`) |
 
 ## Opt-in
 
@@ -289,6 +395,7 @@ Every dev chat capability (`ui/public/ask-panel.mjs`, `ui/public/chat/`, `ui/rou
 |---|---|---|---|
 | Send | `POST /api/ask/threads`, `POST /api/ask/threads/:id/messages` | the composer, Chat home and a conversation | wired: the message carries the chosen model and effort (and on Chat home the chosen project, set as the new chat's scope first, and its Sets); a refusal keeps the text |
 | Stop a reply | `POST /api/ask/threads/:id/stop` | the composer's Stop | wired |
+| Queue a message (`form.composer-queue`) | `POST /api/ask/threads/:id/messages`, after `ask-done` | the composer while a reply runs: its Queue button, its Queued rows, Remove and Send now | wired: a send while a reply runs (or answered 409 `turn in flight`) waits in `stillhet/live/chat-live.mjs`'s per-chat queue, up to 3; a clean end posts the oldest, one per reply; a stop, a failure or an end in a chat no mount shows pauses it until Send now |
 | Attachments | `attachments` of the message route | the composer's + › Files | wired |
 | `@` mentions | dev's model reads a run's id as its ref (`src/shared/chip-refs.mjs`) | the composer's `@` menu | wired: a mention writes the task's name and its run id into the message |
 | Answer chips (run, PR and chat refs in Worca's answers) | `POST /api/ask/refs/resolve`, `src/shared/chip-refs.mjs` (dev's `ui/public/ask-ref-chips.mjs`) | Worca's words in a conversation: a RefChip per ref (`panel.answer-refs`) | wired: `chat-turns.mjs` `partsOf` (`RailChatLive.partsOf`) finds dev's refs (and a PR's written-out link) once the answer is done, inside Prose's rendered words: per text node outside code and links, and per link whose href is one ref; `RailChatLive.ref` asks dev's resolve, 50 at a time; a confirmed run is a chip that lands on its card in the chat that started it, a chat's opens it, a PR's opens it in a new tab; an unconfirmed id stays words (or its link) |
@@ -359,6 +466,32 @@ status, with the live record the chat seed (`tools/stillhet-seed-chat-cards.mjs`
 | Per-requirement coverage of the plan | `plan.coverage`, `plan.check` | at the head of the PlanCard's Read the plan (`planCard` `coverage`) | wired: one row per requirement, covered by which step or not covered, and the review line counts what is still to fix |
 | Per-role review verdicts and open decisions with their options | `plan.roleReviews`, `plan.decisions` | the PlanCard's Reviewed by fold; the decisions as OptionLists under the card | wired: each role's findings fixed, disputed and open (`roleSummaries`); a criteria hold's decisions or the last round's conflicts are OptionLists set to Worca's pick, and Approve and build, Ask for changes and Fix all carry the picks (`POST /api/runs/:id/answer` now passes `conflicts` and `decisions` to dev's validator) |
 
+## Schedules capabilities
+
+Every Schedules action and figure, live (slice 6). Each action goes through `ui/public/stillhet/live/schedule-live.mjs` (`RailScheduleLive.act`) and the screen moves only on the frame named here.
+
+| Capability (dev's Schedules page, `ui/public/schedules-view.mjs`) | Stillhet home | Status | Route and frame |
+|---|---|---|---|
+| Run now (a series or a missed ticket) | page head, bar row ⋯, center card, Chat card, Pulse's missed ticket | wired | `POST /api/schedules/:id/run-now`; `schedules-changed` run-now, then the task's run frames |
+| Stop the running fire | page head | wired | `POST /api/stop` `{ pipelineId }`; the task's run frames and `pipelines-changed` |
+| Pause / Resume | page head and ⋯, bar row ⋯, center card, Chat card | wired | `POST /api/schedules/:id/pause` / `resume`; `schedules-changed` |
+| Skip next time | page ⋯, bar row ⋯, Chat card | wired | `POST /api/schedules/:id/skip-next`; `schedules-changed` |
+| Keep next time (new) | the same item while a time is skipped | wired | `POST /api/schedules/:id/keep-next` (`ui/routes/scheduled-runs/keep-next.mjs`); `schedules-changed` keep-next |
+| Delete (a series) and cancel (a one-off) | page ⋯, bar row ⋯, Chat card More; Undo in the notice | wired | `DELETE /api/schedules/:id` once the Undo window ends (`deferDelete`); `schedules-changed` deleted; a refusal brings the row back |
+| Edit the repeat and time; Expert: overlap, failures before pause, if missed; a one-off's time | the page's sentence and its Expert line, as a draft (`RailDrafts`, DraftBar) | wired | `PATCH /api/schedules/:id` on Save (`schedule-rule.mjs` `ruleOf`, keeping the saved rule's end; a time-only change moves the saved rule's time); `schedules-changed` updated |
+| New schedule | the Schedules +: Ask in chat, or the legacy form (its zone is the browser's) | wired | `POST /api/run` `{ projectDir, prompt, title, workflowId, engine, sourceBranch, repeat: { rule (with its end), overlap, maxFailures } }`; `schedules-changed` created |
+| One-off tickets | listed as `Once` schedules; Missed in Needs you | wired | `GET /api/schedules` `tickets` |
+| Run-after chains | a ticket that waits says `after TITLE` | wired | `GET /api/schedules` `tickets[].after` |
+| Presets | `from PRESET` or `preset deleted` in the facts | wired | `GET /api/schedules` `presetName` |
+| Alarms (missed, failed, paused itself) | the bell and Pulse's rows | wired | `GET /api/notifications` |
+| History of a series | the page's TaskCards, one per fire | wired | `GET /api/schedules/:id` `history` (last 50) |
+| An ended series | its own section, Ended | wired | `GET /api/schedules` status ended |
+| Grace window (how late a missed time may still start) | the Expert line, after "run late if missed", as a picker in the same draft | wired | `PATCH /api/schedules/:id` `{ graceMin }` on Save; `schedules-changed` updated |
+| Change what a one-off waits for (dev's Change… on a chained ticket) | the page's `after TITLE` picker, in the draft | wired | `PATCH /api/schedules/:id` `{ after: { kind, id } }` on Save; `schedules-changed` updated |
+| Dependents note (the runs that wait for this one) | Delete's notice names them: "Deleted X · Y was waiting for it" (they are marked missed) | wired | the store's one-offs whose `after.id` is this one (`GET /api/schedules` `tickets[].after`, the same set as `GET /api/schedules/dependents`) |
+| Schedule next… (a run that starts after this one) | **Run after this** on a one-off still to come (page ⋯, bar row ⋯): the New task form, "It starts once TITLE ends" | wired | `POST /api/run` `{ …, after: { kind: 'ticket', id }, afterPolicy: 'done' }`; `schedules-changed` created |
+| Dev's Schedules tabs (`#schedules/once`, `/repeating`, `/activity`) | the Schedules place, with Stillhet on | wired | `ui/public/stillhet/shell/old-addresses.js` |
+
 ## Tasks capabilities
 
 Every dev run and pipeline capability (`ui/routes/runs/`, `ui/routes/history/`, dev's History and run pages) and its home in the
@@ -369,8 +502,8 @@ kind does not draw it, for the reason given, for the controller to decide.
 
 | Capability (dev route) | Home in the prototype | Status |
 |---|---|---|
-| Pause, Resume, Stop (`POST /api/pause`, `/api/resume`, `/api/stop`) | the task page's action slot and ▾, the card's ⋯, the bar's row menu | wired |
-| Answer, plan approval (`POST /api/answer`, `POST /api/runs/:id/answer`) | the page's question part, Approve and build, the center's Approve | wired |
+| Pause, Resume, Stop (`POST /api/pause`, `/api/resume`, `/api/stop`) | the task page's action slot and ▾, the card's ⋯, the bar's row menu; every resume (Resume now, Continue without cap, Raise the cap, Retry, Switch model…, Resume on…) is classic's `resumeBody` (`baseCheck`, chat-live.mjs `resumeBody`), and on the page a moved base asks Resume anyway, which resends it with `baseAck` (F-G-G2-03) | wired |
+| Answer, plan approval (`POST /api/answer`, `POST /api/runs/:id/answer`) | the page's question part: a live task's own clarify or questions ask (task-page.mjs `questionsOf`), one by one, sent together as Chat's `run-answer` `{answers}`; an ask it cannot draw shows no question, never the design's sample (F-G-G2-02); Approve and build, the center's Approve | wired |
 | Continue without cap; the team-cap reason (`POST /api/resume` `ignoreCostCap`, `pastTeamCap`, `policyReason`) | the capped case's ▾ and the team-cap dialog | wired |
 | Raise the cap (`POST /api/resume` `costCapUsd`, `pipelines.cost_cap_usd`) | the capped case's main action and its `cap` dialog | new: built |
 | Restart Build on a stopped or errored run (`POST /api/runs/:id/restart-build`) | the failed and stopped cases, c17's Retry | new: built |
@@ -383,9 +516,17 @@ kind does not draw it, for the reason given, for the controller to decide.
 | A group's page (`GET /api/run-groups`, Merge #N, Fix checks on #N) | `#run/group:ID` (and dev's `#feature/ID`, a re-planned feature followed to its newest through `GET /api/shape/features/:id`, and `#group/ID`; a Run-after chain's `#group/p:PID` opens its first task, `#group/t:ID` Schedules); its tasks fold under one row in the bar | wired |
 | A group's Ship it, one PR or several (`GET /api/run-groups/:id/combine`, `POST /api/run-groups/:id/ship` `one`/`separate`, `POST /api/shape/features/:id/ship` `one`/`stacked`) | the group page's Create PR once every task is ready, its ▾'s "… instead", asked in its confirm; One PR waits for the combine check and says dev's reason when it is off. A departure from the design, for the owner: the prototype draws the Create PR dialog here, live asks in a confirm, because dev's ship takes only the mode (`one`/`separate`/`stacked`) and writes each PR's title and body itself, so the dialog's fields would send nothing | wired |
 | Create PR, PR describe, Watch, Resolve, mergeable, checks (`POST /api/pr`, `/api/pr/describe`, `/api/pr/watch`, `/api/pr/resolve`, `GET /api/pr/checks`) | the ready and in-review cases, the PR dialog, Watch in ▾ | wired |
-| Start a new task (`POST /api/run`: `engine`, `syncBeforeStart` and `pr.open` only when picked, else the project's setting; `sourceBranch` from `GET /api/branches`; `noProject` for No project; `costCapUsd` stored in `pipelines.cost_cap_usd`) | the stopped, discarded, interrupted and cancelled cases; + › New task…'s Agent, base, source, then and Cost cap | wired |
+| Task page › Link remote (no-remote case: the project's `GET /api/sync/projects` block has no remote; no route of its own) | the no-remote case's main action on a live task page opens `#projects/KEY`, whose More menu holds Link a remote…; it writes nothing, so no confirm; the form is B3.2. A task whose base is unknown reads `no-base` (Publish branch, Discard), never Create PR (B1.7) | wired |
+| Start a new task (`POST /api/run`: `engine`, `syncBeforeStart` and `pr.open` only when picked, else the project's setting; `sourceBranch` from `GET /api/branches`; `noProject` for No project; `costCapUsd` stored in `pipelines.cost_cap_usd`; the project picker lists dev's projects (`GET /api/projects`, the store's projects part), defaulting to the newest task's registered project; a missing folder is listed, never preselected (F-a4-06, `test/stillhet-new-task-projects-host.test.mjs`)) | the stopped, discarded, interrupted and cancelled cases; + › New task…'s Agent, base, source, then and Cost cap | wired |
 | New task…'s Agents (a model for every step: `POST /api/run` `overlay.nodes`, one entry per agent node of the picked workflow, checked by dev's `checkRunOverlay` in `src/core/run-overlay.mjs`) | + › New task… › More options › Agents: the workflow's own, or one of dev's models (`GET /api/ask/models`) for the run's engine on every agent step; Auto offers none (it decides its agents at start) | wired |
 | New task…'s "merge when checks pass" | + › New task… in the demo only: dev's `POST /api/run` has no auto-merge at start (`checkRunPrBody` takes `open` and `slices`; a merge happens only through `POST /api/pr/merge` on a PR that exists). Building it is an engine feature, for the owner to decide (build it, or keep it out) | not offered live |
+| New task…'s saved run defaults (COV-2: `GET /api/run-defaults?projectDir=…`; its `engine.value` fills an untouched Agent, its `tags` an untouched Cost tags; Save as default is `PUT /api/projects/:key/tags/defaults {tags}`, as classic's New run; `test/stillhet-new-task-options-host.test.mjs`) | + › New task…: the Agent picker and More options › Cost tags with its quiet Save as default; Chat's TaskProposal shows and sends the saved engine and tags when the card names none (`test/stillhet-chat-proposal-options-host.test.mjs`) | wired |
+| New task…'s workflow defaults (COV-2: `GET /api/config` `activeWorkflowId` preselects Workflow; a pick is `PATCH /api/config {projectDir, activeWorkflowId}`, skipped under a preset; Save as the workflow's defaults is `PATCH /api/workflows/:id/defaults` then `DELETE /api/config/workflow`, Reset the DELETE alone). A departure for the owner: classic promotes its per-node rows, Stillhet's one Agents pick goes on every agent node | + › New task… › More options › Agents: Save as the workflow's defaults, Reset to the workflow's defaults (`test/stillhet-new-task-options-host.test.mjs`) | wired |
+| New task…'s presets (COV-2: `GET /api/presets`, `POST /api/presets/:id/check`, `PUT /api/presets/:id {setup, basis}`, `POST /api/presets/:id/duplicate`; Start sends `presetId` and what the preset carries; a 409 `preset-broken` repaints the note; creating one stays the task page's ⋯ › Save as preset) | + › New task…: `from PRESET ▾` in the frame, its menu's Update preset and Duplicate, the broken ChoiceNote with Reset to default (`test/stillhet-new-task-presets-host.test.mjs`) | wired |
+| New task…'s ticket source (COV-2: `GET /api/sources`, `GET` and `PUT /api/source-bindings`, `POST /api/sources/call` `validateConfig`, an input's `optionsFrom` (GitHub's `listProjects`), `listTasks` and `getTask`; Start sends `source` in place of `prompt`) | + › New task…: a segment per plugin source, the profile gate ChoiceNote, the connection check (not connected: Open the Marketplace page, Test connection), the source's inputs (Repository, Filter), the search, the ticket list and its preview (`test/stillhet-new-task-source-host.test.mjs`, `test/stillhet-new-task-source-connect-host.test.mjs`) | wired |
+| Sync before start and the engine refusal (COV-2: `POST /api/run`'s 409 `sync-diverged` / `sync-fetch-failed` resend with `syncPolicy`; 409 `engine-refused` and `allowUnguardedEngine`) | + › New task… and Chat's TaskProposal: the sync and engine ChoiceNotes (`test/stillhet-new-task-refusals-host.test.mjs`, `test/stillhet-chat-proposal-options-host.test.mjs`) | wired |
+| The team policy notes (COV-2: `GET /api/policy/notes?scope=project:KEY&guardrailsId=…&models=…`) | + › New task… and Chat's TaskProposal: the grey or amber policy ChoiceNote (`test/stillhet-new-task-options-host.test.mjs`) | wired |
+| Classic's step-slot rows (`GET /api/run-defaults` `steps`) and its per-node agent editor; the PR defaults (`pr`) | Stillhet's Agents is one pick for every step, and the `then` picker already defers to the project's own PR setting; add per-node rows to the design first if the owner wants them | not offered live |
 | Run report (`POST /api/pipelines/:id/report-issue`) | ⋯ › Report this task | wired |
 | Check out (`POST /api/runs/:id/checkout`) | the Changes part's Check out | wired |
 | The check-out diff and Try it (`GET /api/history/:key/:id/diff`, `GET /api/runs/:id/live-diff`, checkout, the services) | ⋯ › Try it, Changes' files and Open the whole diff | wired |
@@ -404,3 +545,34 @@ kind does not draw it, for the reason given, for the controller to decide.
 New sources this slice built (`new: built`): `ui/public/stillhet/live/task-live.mjs` (task fetches, the checks cache, the
 Tasks actions), `ui/public/stillhet/live/task-page.mjs` (the page and card mapper), and the engine additions in
 `plans/rail/task-engine-additions.md`.
+
+### Classic run and chat extras (COV-3)
+
+Classic's run and chat controls (rail off), derived from their call sites (#1390), each with its home in Stillhet. The
+controls below the table are classic's too but are not counted, for the reason given.
+
+| Capability (dev route) | Home in the prototype | Status |
+|---|---|---|
+| 1. Pinpoint tray Send to run (`POST /api/runs/:id/directions {text}`) | the task page's ⋯ Send a direction on a live, unfinished task: a field under the StatusLine | new: built |
+| 2. A pending run question's files (`GET /api/runs/:runId/ask-files/:askId/:index`) | a Chat TaskCard's live question: its files as a FilesCard (Its files), View by index | new: built |
+| 3. History Restore (`POST /api/runs/:id/restore?projectKey…`, no body) | the task page's ⋯ Restore on an archived task, per run; with no scope, the bulk route for that one id; the TaskCard ⋯ Restore is wired through the same flow but a chat lists no archived task today, so it does not show | new: built |
+| 4. Chat engine switch (`POST /api/ask/threads/:id/engine {engine, model, effort, dropTurns?}`) | the composer's model picker (`conversation.js` engineSwitch); the server's confirm-dropped-turns stands in for classic's dry-run preview | wired |
+| 5. A sent message's attachment pill (`GET /api/ask/threads/:id/attachments/:attId`) | a YouTurn's file chip opens it | new: built |
+| 6. A run proposal's Start carries its pills (`POST /api/run` `extras:[{name, dataBase64}]`) | the live TaskProposal's files under its brief (the message it answers), × removes one; over 100 MB or a failed read posts nothing | new: built |
+| 7. FilesCard view (`GET …/attachments/:attId`) | FilesCard View | wired |
+| 8. FilesCard Download (`<a download>`) | FilesCard Download saves the file (`chat-live.mjs` `download`) | new: built |
+| 9. FilesCard Show in ‹file manager› (`GET /api/ask/reveal`, then `POST …/attachments/:attId/reveal {}`) | FilesCard: a per-file Show in ‹label›, only when the probe says so | new: built |
+| 10. Pinpoint Propose fix run (a chat message, no route of its own) | none yet: Stillhet has no Pinpoint surface | not in this slice: Pinpoint slice |
+| 11. Stale `#running/ID` bounce (`GET /api/run-links/:runId`) | an old task link opens the saved task, else gone; one lookup per id | new: built |
+| 12. Run banner Resume on ‹Engine› (`POST /api/resume {pipelineId, baseCheck:true, engine}`) | the task page's Resume ▾ on a usage-limit pause, confirm first; a moved base asks, then sends baseAck | new: built |
+| 13. Run banner Switch model… (`POST /api/resume {pipelineId, model}`) | the task page's Switch model… (`task-live.mjs` `switch-model`) | wired |
+| 14. Run page Resume ▾ Resume on ‹Engine› | as 12 | new: built |
+| 15. Run page Resume ▾ Switch model… | as 13 | wired |
+| 16. History Resume ▾ Resume on ‹Engine› | as 12, on the saved paused task's page | new: built |
+| 17. History Resume ▾ Switch model… | as 13, on the saved paused task's page | wired |
+
+Not counted:
+- the History twin `GET /api/history/:key/:id/ask-files/…`: a saved run's answered ask, which Stillhet's task page does not draw;
+- the Design chat and Workflows dock thumbnails: other surfaces, each its own slice;
+- Resume at…: already wired (`task-live.mjs` `resume-at`); plain Resume: already wired;
+- the engine refusal's "Allow unguarded" retry (409 `engine-refused`, `overridable`): a known gap; Stillhet shows the server's reason and has no home for the consent yet.

@@ -151,6 +151,8 @@ export function cardTurn(b, ctx = {}) {
   if (!c.type) {
     if (b.state === 'started') return taskTurn(b, ctx);
     if (b.state === 'dismissed') return { t: 'notice', text: `Not started: ${str(c.title) || 'the task'}` };
+    // scheduled from the chat (server.mjs flipCard): the schedule's own card, its series or its one-off ticket
+    if (b.state === 'scheduled' && (str(c.scheduleId) || str(c.runId))) return { t: 'schedule', id: str(b.id), task: str(c.scheduleId) || str(c.runId) };
     return { t: 'proposal', id: str(b.id), title: str(c.title) || 'A task', brief: str(c.brief), why: str(c.note), workflow: str(c.workflowName) || 'Default', project: str(c.projectName) || str(c.workspaceName) || 'No project', card: str(b.id), raw: c };
   }
   const f = CARD_TURN[c.type];
@@ -206,7 +208,9 @@ function assistantTurns(m, ctx) {
 function userTurn(m) {
   const blocks = arr(m.blocks), synthetic = blocks.find((b) => b && b.kind === 'notice' && b.synthetic);
   if (synthetic) return { t: 'notice', text: str(synthetic.text) };
-  const files = blocks.filter((b) => b && b.kind === 'attachment').map((b) => str(b.name)).filter(Boolean);
+  // COV-3 #5: an attachment dev named keeps its id (its chip opens it) and its size (a proposal's Start reads it); one with
+  // no id (an echo before the snapshot) stays a plain name
+  const files = blocks.filter((b) => b && b.kind === 'attachment' && str(b.name)).map((b) => (str(b.id) ? { name: str(b.name), att: str(b.id), bytes: Number(b.bytes) || 0 } : str(b.name)));
   return { t: 'you', id: str(m.id), text: str(m.text), ...(files.length ? { files } : {}), ...atOf(m) };
 }
 
@@ -221,6 +225,22 @@ export function turnsOf({ messages = [], runLinks = [], inFlight = null } = {}, 
     else if (m.role === 'assistant') out.push(...assistantTurns(m, ctx));
     // dev writes a project switch as a system message with its divider block (ui/server.mjs switchThreadScope)
     else if (m.role === 'system') for (const b of arr(m.blocks)) if (b && b.kind === 'divider') out.push({ t: 'divider', text: str(b.text) });
+  }
+  return withFeatureMembers(out, arr(tasks));
+}
+// F-a2-03: a feature's other members have no card of their own in the chat (the scheduler starts them, unlinked). Each
+// started one draws its TaskCard right after the card of the member the chat started, in position order, keyed
+// `cardId:memberId` so a repaint keeps it. A member not started yet has no stages and nothing to act on: no card.
+const notStarted = (t) => t.case === 'scheduled' || str(t.case).startsWith('ticket-');
+function withFeatureMembers(out, tasks) {
+  const drawn = new Set(out.filter((x) => x.t === 'task').map((x) => x.task));
+  for (let i = 0; i < out.length; i++) {
+    const turn = out[i], own = turn.t === 'task' ? tasks.find((x) => x && x.id === turn.task) : null;
+    if (!own || !own.group) continue;
+    const add = tasks.filter((x) => x && x.group === own.group && !drawn.has(x.id) && !notStarted(x)).sort((a, b) => (a.pos ?? 0) - (b.pos ?? 0))
+      .map((x) => { drawn.add(x.id); return { t: 'task', id: `${turn.id}:${x.id}`, task: x.id }; });
+    out.splice(i + 1, 0, ...add);
+    i += add.length;
   }
   return out;
 }

@@ -1,0 +1,106 @@
+{
+  "rule": "D19 (plans/rail/test-results/PLAN.md §3C C1): budgets come from measured values and only go down; exclusions only shrink",
+  "budgets": {
+    "chatIdleMutations": {
+      "value": 0,
+      "target": 0,
+      "test": "test/stillhet-perf-budgets-chat-host.test.mjs",
+      "findings": [
+        "F-a1-02",
+        "F-a1-10"
+      ]
+    },
+    "prNoChangeWorldChanges": {
+      "value": 0,
+      "target": 0,
+      "test": "test/stillhet-perf-budgets-chat-host.test.mjs",
+      "findings": [
+        "F-a1-02"
+      ]
+    },
+    "prNoChangeShellRenders": {
+      "value": 0,
+      "target": 0,
+      "test": "test/stillhet-perf-budgets-chat-host.test.mjs",
+      "findings": [
+        "F-a1-02"
+      ]
+    },
+    "prNoChangeConvoPaints": {
+      "value": 1,
+      "target": 0,
+      "test": "test/stillhet-perf-budgets-chat-host.test.mjs",
+      "findings": [
+        "F-a1-02"
+      ]
+    },
+    "liveUpdateTurnsReplaced": {
+      "value": 1,
+      "target": 1,
+      "test": "test/stillhet-perf-budgets-chat-host.test.mjs",
+      "findings": [
+        "F-a1-10"
+      ]
+    },
+    "tasksIdleMutations": {
+      "value": 0,
+      "target": 0,
+      "test": "test/stillhet-perf-budgets-tasks-host.test.mjs",
+      "findings": [
+        "F-a1-02"
+      ]
+    },
+    "shellNoChangeMutations": {
+      "value": 0,
+      "target": 0,
+      "test": "test/stillhet-perf-budgets-tasks-host.test.mjs",
+      "findings": [
+        "F-a1-02",
+        "F-a4-02",
+        "F-a4-10"
+      ]
+    },
+    "projectsNoChangeMutations": {
+      "value": 0,
+      "target": 0,
+      "test": "test/stillhet-keep-open-projects-host.test.mjs",
+      "findings": [
+        "F-6-01",
+        "F-a1-02"
+      ]
+    },
+    "settingsNoChangeMutations": {
+      "value": 0,
+      "target": 0,
+      "test": "test/stillhet-pulse-redraw-host.test.mjs",
+      "findings": [
+        "F-a1-02"
+      ]
+    },
+    "tasksNoChangeMutations": {
+      "value": 0,
+      "target": 0,
+      "test": "test/stillhet-perf-budgets-tasks-host.test.mjs",
+      "findings": [
+        "F-fm-01"
+      ]
+    }
+  },
+  "exclusions": [
+    {
+      "id": "think-step",
+      "selector": "[data-think-at] .think-w",
+      "why": "the working row's step text moves on with the time (conversation.js, a 250 ms tick)"
+    },
+    {
+      "id": "think-secs",
+      "selector": "[data-think-at] .think-t",
+      "why": "the working row's seconds tick (conversation.js, a 250 ms tick)"
+    },
+    {
+      "id": "orb",
+      "selector": "canvas[data-orb]",
+      "why": "the thinking orb's data-orb follows the working row's phase (conversation.js, a 250 ms tick)"
+    }
+  ]
+}

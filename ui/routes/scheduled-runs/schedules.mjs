@@ -7,7 +7,7 @@ import { actorOf, byActor } from '../../../src/core/identity.mjs';
 import { listNotifications, unreadCount } from '../../../src/core/notifications.mjs';
 import { listProjects } from '../../../src/core/projects.mjs';
 import { readPreset } from '../../../src/core/run-presets-store.mjs';
-import { AFTER_POLICIES, afterRefOf, createTicket, dependentsOfRun, dependentsOfWorkflow, getSchedule, getTicket, listSchedules, listTickets, previousBranchesOf, resolveAfterRef, resumeWaitError, runChains, scheduleCounts } from '../../../src/core/scheduler.mjs';
+import { AFTER_POLICIES, afterRefOf, createTicket, dependentsOfRun, dependentsOfWorkflow, getSchedule, getTicket, listSchedules, listTickets, previousBranchesOf, resolveAfterRef, resumeWaitError, runChains, scheduleCounts, skippedNextOf, skippedSlots } from '../../../src/core/scheduler.mjs';
 import { scheduleDefaults } from '../../../src/core/settings.mjs';
 import { chainFeature } from '../../../src/core/shape/features.mjs';
 import { projectKey } from '../../../src/core/store.mjs';
@@ -46,8 +46,10 @@ app.get('/api/schedules', (req, res) => {
     const projectDir = resolveProjectDir(req.query.projectDir) || null;
     const workspaceId = typeof req.query.workspaceId === 'string' && req.query.workspaceId.trim() ? req.query.workspaceId.trim() : null;
     const all = req.query.all === '1' || req.query.all === 'true';
+    const skipped = skippedSlots();
     res.json({
-      schedules: listSchedules({ projectDir, workspaceId }).map(schedulePresetName),
+      // skippedRunAt (Stillhet's Keep next time): the slot keep-next would restore, additive (dev's view ignores it)
+      schedules: listSchedules({ projectDir, workspaceId }).map(schedulePresetName).map((s) => ({ ...s, skippedRunAt: skipped.get(s.id) || null })),
       tickets: listTickets({ projectDir, workspaceId, all }).map(withAfter).map(ticketPresetName),
       // Run progress (P8): every open "Run after" chain, unscoped (a chain may cross projects).
       chains: withChainFeatures(runChains({ isLive: liveProbe, keepDone: true })),
@@ -245,7 +247,7 @@ app.get('/api/schedules/:id', (req, res) => {
   const found = findScheduleItem(req.params.id);
   if (!found) return res.status(404).json({ error: 'schedule not found' });
   const history = found.kind === 'recurring' ? listTickets({ scheduleId: found.item.id, all: true, limit: 50, newestFirst: true }) : [];
-  res.json({ ...found, item: found.kind === 'once' ? ticketPresetName(withAfter(found.item)) : schedulePresetName(found.item), history, notifications: listNotifications({ scheduleId: found.kind === 'recurring' ? found.item.id : null, limit: 50, reader: notifReader(req) }).filter((n) => found.kind === 'recurring' || n.ticketId === found.item.id) });
+  res.json({ ...found, item: found.kind === 'once' ? ticketPresetName(withAfter(found.item)) : { ...schedulePresetName(found.item), skippedRunAt: skippedNextOf(found.item.id) }, history, notifications: listNotifications({ scheduleId: found.kind === 'recurring' ? found.item.id : null, limit: 50, reader: notifReader(req) }).filter((n) => found.kind === 'recurring' || n.ticketId === found.item.id) });
 });
 
 // PATCH /api/schedules/:id — a ticket: { scheduledFor?, ifMissed?, graceMin? };

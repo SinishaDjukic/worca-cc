@@ -133,7 +133,7 @@
         ofRun('q1', 'run.done', 'h1', '18 min · $1.42', '09:15', 'Today')] },
     // A shared sign-in with one of every kind: the card, the team's note, every Vitals section and event.
     { id: 'every', label: 'Every kind, shared sign-in', desktop: 'on', task: { title: 'Add rate limiting to the public API' },
-      identity: { people: ['Emil Angelov', 'Dana Ruiz'], via: 'Through your team\'s sign-in' }, teamSetup: true, newVersion: '1.20.0', chatUnread: true,
+      identity: { people: ['Sam Rivera', 'Dana Ruiz'], via: 'Through your team\'s sign-in' }, teamSetup: true, newVersion: '1.20.0', chatUnread: true,
       away: { status: 'away-hours', hours: ['18:00', '08:00'] },
       updates: [
         NEW_VERSION('e-upd'),
@@ -345,9 +345,11 @@
     [['paused', 'interrupted', 'capped'], 'Clears when you resume or stop it'],
     [['failed'], 'Clears once you open it'],   // dev counts a failed run nobody opened yet
     [['pr-changes', 'failing', 'conflicts', 'checks', 'approved', 'pr-behind', 'pr-blocked'], 'Clears when its pull request no longer needs you'],
-    [['ready', 'no-remote'], 'Clears when you create its pull request or discard it'],
+    [['ready', 'no-remote', 'no-base'], 'Clears when you create its pull request or discard it'],
     [['missed'], 'Clears when you run it or cancel it'],
-    [['project'], 'Clears when the project is fixed'],
+    [['project-behind'], 'Clears when you sync it'],   // a project by its state, each naming its one fix (projects.js needOf)
+    [['project-diverged'], 'Clears when you bring them together'],
+    [['project-missing'], 'Clears when you locate its folder'],
   ];
   /** The phrase for a state id or row kind; '' for one not in the table (never guessed from its word). */
   function clearsWhen(key) {

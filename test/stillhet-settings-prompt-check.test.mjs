@@ -33,8 +33,12 @@ test('the row sits right after "Suggest a next prompt after each reply", reads "
   const sw = await openAbilities(w);
   assert.ok(sw, 'the switch is drawn');
   assert.equal(sw.getAttribute('aria-checked'), 'false');
-  const switches = [...w.document.querySelectorAll('[data-svsw]')].map((s) => s.dataset.svsw);
-  assert.equal(switches[switches.indexOf('nextPrompt') + 1], 'promptCheck');
+  const rows = [...w.document.querySelectorAll('#route-settings .set-row')];
+  const names = rows.map((r) => r.querySelector('.set-name').textContent.trim());
+  assert.equal(names[names.indexOf('Suggestions') + 1], 'Prompt check', 'Suggestions is directly followed by Prompt check');
+  const sugg = rows[names.indexOf('Suggestions')];
+  assert.equal(sugg.querySelector('.set-text').textContent, 'Not in Stillhet yet: turn Stillhet off from the top-bar switch to use it');
+  assert.equal(sugg.querySelector('[data-svsw]'), null, 'live Suggestions has no switch');
   assert.match(nameOf(sw).textContent, /Check how clear a task prompt is/);
   assert.match(nameOf(sw).textContent, /Prompt check/);
 });
@@ -65,16 +69,12 @@ test('demo: a toggle changes sv.promptCheck and sends 0 requests; the Abilities 
   assert.deepEqual(calls.slice(n), []);
 });
 
-test('other Abilities switches (no sw.live) toggle locally with 0 requests, as before', async () => {
+test('other Abilities switches (no sw.live) are not drawn on live, and opening Abilities sends 0 requests', async () => {
   const h = await live();
   const n = h.posts.length;
-  await openAbilities(h.w);
-  const sw = h.d.querySelector('[data-svsw="nextPrompt"]');
-  const was = sw.getAttribute('aria-checked');
-  sw.click();
-  await settle(30);
+  assert.ok(await openAbilities(h.w), 'Prompt check is drawn');
+  for (const k of ['scripts', 'summaries', 'nextPrompt']) assert.equal(h.d.querySelector(`[data-svsw="${k}"]`), null, `no ${k} switch: a sample row reads the not-live sentence (set.not-live)`);
   assert.equal(h.posts.length, n);
-  assert.equal(h.d.querySelector('[data-svsw="nextPrompt"]').getAttribute('aria-checked'), was, 'the live kind still refuses an unwired switch');
 });
 
 test('live: the switch seeds from GET /api/settings chat.promptCheck (true and false)', async () => {

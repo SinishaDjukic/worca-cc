@@ -2,19 +2,27 @@
 // boot.js's order, data-adapter="live"); the host and its helpers are test/helpers/stillhet-chat-live-host.mjs.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { LISTS, SOURCES, THREAD, clone, go, liveHost, posts, saidText, settle, toastText, withRun, closeHosts } from './helpers/stillhet-chat-live-host.mjs';
+import { LISTS, SOURCES, THREAD, clone, go, liveHost, posts, saidText, settle, toastText, until, withRun, closeHosts } from './helpers/stillhet-chat-live-host.mjs';
 
 afterEach(closeHosts);   // each test's window closes when the test ends
-test('panel.answer-refs: a run Worca names is a RefChip once dev confirms it, and it lands on the card in the chat that started it; an unconfirmed id stays words', async () => {
+// A feature's Figures need chat-live's own read of dev's run-groups (CL().feature, apart from the store's), then a repaint
+// on a frame; under CI's load that outruns any fixed wait, so these tests wait for what they check (null on time-out)
+const seen = (fn) => until(fn, 15000).catch(() => null);
+test('panel.answer-refs (F-refchip): a run Worca names is a RefChip once dev confirms it, and it lands on the card in the chat that started it; an unconfirmed id stays words', async () => {
   const said = { thread: { id: 'ask_2', title: 'Writing' }, messages: [{ id: 'w1', role: 'assistant', status: 'done', text: 'It is the same as 0a1b2c3d, not 9f9f9f9f.', createdAt: THREAD.messages[0].createdAt, blocks: [] }], runLinks: [], inFlight: null };
-  const { w, d, calls } = await liveHost({ thread: (url) => (url.endsWith('ask_2') ? [200, said] : [200, THREAD]), write: (url) => (url === '/api/ask/refs/resolve' ? [200, { refs: { 'run:0a1b2c3d': { ok: true, kind: 'run', id: 'pa', runId: 'run-a', title: 'Ask me', status: 'running' }, 'run:9f9f9f9f': { ok: false } } }] : [200, {}]) });
-  await go(w, '#chat/ask_2', 120);
-  assert.ok(calls.some((c) => c.url === '/api/ask/refs/resolve'), 'dev\'s resolve is asked');
-  const chip = d.querySelector('#route-chat .convo-words [data-ref-run]');
+  let release; const gate = new Promise((r) => { release = r; });
+  const { w, d, calls } = await liveHost({ hold: (url) => (url === '/api/ask/refs/resolve' ? gate : null), thread: (url) => (url.endsWith('ask_2') ? [200, said] : [200, THREAD]), write: (url) => (url === '/api/ask/refs/resolve' ? [200, { refs: { 'run:0a1b2c3d': { ok: true, kind: 'run', id: 'pa', runId: 'run-a', title: 'Ask me', status: 'running' }, 'run:9f9f9f9f': { ok: false } } }] : [200, {}]) });
+  await go(w, '#chat/ask_2');
+  assert.ok(await until(() => calls.some((c) => c.url === '/api/ask/refs/resolve')), 'dev\'s resolve is asked');
+  const words = d.querySelector('#route-chat .convo-words');
+  assert.equal(words.querySelector('[data-ref-run]'), null, 'no RefChip before dev confirms it');
+  assert.match(words.textContent, /0a1b2c3d/, 'the run id stays words while dev\'s answer is held');
+  release();
+  const chip = await until(() => d.querySelector('#route-chat .convo-words [data-ref-run]'));
   assert.ok(chip, 'a RefChip in Worca\'s words');
   assert.equal(chip.textContent, 'Ask me');
   assert.match(d.querySelector('#route-chat .convo-words').textContent, /not 9f9f9f9f\./, 'an unconfirmed id stays words');
-  chip.click(); await settle(60);
+  chip.click(); await until(() => w.location.hash === '#chat/ask_1');
   assert.equal(w.location.hash, '#chat/ask_1', 'the chat that started it');
 });
 
@@ -71,11 +79,26 @@ test('panel.plan-folds: the live PlanCard draws dev\'s role verdicts, coverage u
 test('panel.plan-folds: a run in a feature shows the feature\'s total cost and time in its folded Figures, from dev\'s run-groups', async () => {
   const { w, d } = await liveHost({ lists: { ...LISTS, '/api/run-groups': { groups: [{ id: 'f1', kind: 'feature', title: 'CSV', planning: null, members: [{ pipelineId: 'pa', position: 1 }, { pipelineId: 'h1', position: 2 }], cost: { usd: 3.5, byPipeline: {} } }] } } });
   await go(w, '#chat/ask_1', 120);
-  const figs = d.querySelector('#route-chat [data-figs]');
+  const figs = await seen(() => d.querySelector('#route-chat [data-figs]'));
   assert.ok(figs, 'the Figures fold is offered');
-  figs.click(); await settle(60);
+  figs.click();
+  await seen(() => /\$3\.50\s*the feature so far/.test(d.getElementById('route-chat').textContent));
   assert.match(d.getElementById('route-chat').textContent, /\$3\.50\s*the feature so far/);
   assert.match(d.getElementById('route-chat').textContent, /since its first task · 2 tasks/);
+});
+
+test('F-a2-03: a chat whose run is a feature member shows the other started member\'s card, and its Figures read the feature total', async () => {
+  // h1 is a member of the feature with no run link (the scheduler started it): its card still draws in the chat
+  const { w, d } = await liveHost({ lists: { ...LISTS, '/api/run-groups': { groups: [{ id: 'f1', kind: 'feature', title: 'CSV', planning: null, members: [{ pipelineId: 'pa', position: 1 }, { pipelineId: 'h1', position: 2 }], cost: { usd: 3.5, byPipeline: {} } }] } } });
+  await go(w, '#chat/ask_1', 120);
+  assert.ok(await seen(() => d.querySelector('#route-chat [data-anchor="card_run"]')), 'the card the chat started');
+  const other = await seen(() => d.querySelector('#route-chat [data-anchor="card_run:h1"]'));
+  assert.ok(other, 'the other member\'s TaskCard, right under it');
+  const figs = await seen(() => d.querySelector('#route-chat [data-anchor="card_run:h1"] [data-figs]'));
+  assert.ok(figs, 'its Figures fold is offered');
+  figs.click();
+  await seen(() => /\$3\.50\s*the feature so far/.test(d.querySelector('#route-chat [data-anchor="card_run:h1"]')?.textContent));
+  assert.match(d.querySelector('#route-chat [data-anchor="card_run:h1"]').textContent, /\$3\.50\s*the feature so far/);
 });
 
 test('panel.ship-card: a feature\'s ship marks each requirement (dev\'s acceptance PUT), ships one PR or stacked (dev\'s feature ship), and Create PR waits for every mark', async () => {
@@ -92,6 +115,7 @@ test('panel.ship-card: a feature\'s ship marks each requirement (dev\'s acceptan
   d.querySelector('#route-chat [data-ship-why="card_ship"]').value = 'not needed';
   d.querySelector('#route-chat [data-ship-why-save="card_ship"]').click(); await settle(60);
   assert.deepEqual(posts(calls).at(-1), ['PUT', '/api/shape/features/f1/acceptance', { entries: [{ id: 'R-2', mark: 'dropped', reason: 'not needed' }] }]);
+  w.RailConversation.flushPaints();   // the acceptance read's repaint waits for a frame (comp.live-paint)
   assert.equal(go1().disabled, false, 'every requirement is marked: Create PR is on');
   d.querySelector('#route-chat [data-menu="shiphow-card_ship"]').click(); await settle(5);
   d.querySelector('#route-chat [data-menu-pick="shiphow-card_ship|as stacked PRs"]').click(); await settle(10);

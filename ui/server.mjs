@@ -63,7 +63,7 @@ import {
   deleteDiffComment, unresolvedCounts, onDiffCommentsChanged, stampSentRunId,
   peekPendingCardComments, clearPendingCardComments, DiffCommentError, DC_ID_RE,
 } from '../src/core/diff-comments.mjs';
-import { listProjects, runOnboarded, addProject, addProjects, removeProject, normalizeProjectPath, countProjects, worcaHome, getProjectByPath, displayPath,
+import { listProjects, runOnboarded, currentKey, holdStart, addProject, addProjects, removeProject, normalizeProjectPath, countProjects, worcaHome, getProjectByPath, displayPath,
   getProjectByName, ownsProjectFolder, removeProjectAndFolder, enclosingRepoOf, nestedInRepoMessage, worcaNestedRepoOf, worcaNestedRepoHint } from '../src/core/projects.mjs';
 import { effectiveWorkMode, workModeOfRow, workModeForStart, samePath } from '../src/core/project-kind.mjs';
 import { renderIndexHtml, INDEX_THEME_ANCHOR, FLAG_GATES_ANCHOR, SHELL_CSP } from '../src/core/index-html.mjs';
@@ -1278,8 +1278,8 @@ function askFrameComposer(obj) {
 // Because the client always SETS counts to an absolute value (never +1/-1), a tab
 // receiving its own echo is idempotent. A tab disconnected at mutation time recovers
 // on its next view switch / reload (the agreed product behavior).
-function emitChanged(type, action) {
-  broadcast({ type, action: action || null });
+function emitChanged(type, action, ids) {   // ids (optional): a single run's { runId, pipelineId, key }
+  broadcast({ type, action: action || null, ...ids });
 }
 // CONTRACT §1.7: every open Marketplace tab re-reads its lists after a plugin action (install, update, enable, remove,
 // purge, link, config; P2 adds the marketplace actions).
@@ -1466,6 +1466,8 @@ function announceRun(entry) {
     labels: entry.labels || [],
   });
 }
+// F-7a-02: a page keyed by run id learns the pipeline id once it is known (new run: after its first naming state frame; resume: right after run-created). Not buffered, like run-created.
+function announcePipeline(entry) { broadcast({ type: 'run-pipeline', runId: entry.id, pipelineId: entry.pipelineId }); }
 
 // ---------------------------------------------------------------------------
 // Wire a core orchestrator's events onto the WebSocket, tagged with runId.
@@ -1574,12 +1576,10 @@ function wireRun(entry) {
         // Mirror status from the snapshot when present. (Pending questions are
         // cleared explicitly on answer/done/error, not from state snapshots.)
         if (payload.status) entry.status = payload.status;
-        // Capture the on-disk pipeline short id the orchestrator stamps onto
-        // state.id after createPipeline. Guard so null in pre-createPipeline
-        // snapshots cannot overwrite a previously-captured value.
+        // Capture the pipeline short id stamped onto state.id after createPipeline (null earlier never overwrites it); the first capture sends run-pipeline after this state frame.
         if (typeof payload.id === 'string' && payload.id) {
           const first = !entry.pipelineId;
-          entry.pipelineId = payload.id;
+          entry.pipelineId = payload.id; if (first) entry._announcePipeline = true;
           // Scheduled runs: the ticket learns the pipeline it became (provenance columns).
           if (first && entry.ticketId) {
             try { setTicketPipeline(entry.ticketId, payload.id); } catch (err) { console.error(`[worca-ui] ticket link failed: ${err && err.message ? err.message : err}`); }
@@ -1655,7 +1655,7 @@ function wireRun(entry) {
         } catch (err) { console.error(`[worca-ui] round frame failed: ${err && err.message ? err.message : err}`); }
       }
 
-      record(event);
+      record(event); if (entry._announcePipeline) { entry._announcePipeline = false; announcePipeline(entry); }
       if (name === 'done') settleRunEntry(entry);
       // Only the events that can change status or pendingQuestion; log/token frames are far too
       // frequent for a flag check (it reads settings.json synchronously).
@@ -2725,7 +2725,7 @@ const presetEngineMessage = (presetRow, runEngine, msg) => (presetRow ? `Preset 
 const startRunHandler = async (req, res) => {
   // B2: a draining server starts nothing new (the scan arm and the scheduler come through here too).
   if (DRAIN.on) return res.status(503).json(DRAIN_REFUSAL);
-  try {
+  const unhold = holdStart(req); try {   // the start holds its target until it answers: no relocate slips in (slice 9 D9)
     const body = req.body || {};
     const proposedOn = flagEnabled('proposedPerspectives'); // read once per start; off: drop the perspective fields first
     if (!proposedOn) { delete body.perspectives; delete body.perspectiveProposal; }
@@ -3563,7 +3563,7 @@ const startRunHandler = async (req, res) => {
         syncKeepAwake();
       })
       // #620: the harness's post-run base check landed after the run's last frame; History re-reads it.
-      .finally(() => { entry.settled = true; emitChanged('pipelines-changed', 'updated'); afterRunSettled(orch); });
+      .finally(() => { entry.settled = true; emitChanged('pipelines-changed', 'updated', { runId, pipelineId: entry.pipelineId || orch.state?.id, ...(entry.projectDir && !entry.workspaceId ? { key: projectKey(entry.projectDir) } : {}) }); afterRunSettled(orch); });
 
     // A scan's launcher needs the card attribution the wizard cannot compute (the key is a hash).
     res.json(scanTarget
@@ -3571,7 +3571,7 @@ const startRunHandler = async (req, res) => {
       : noProject ? { runId, pipelineId: entry.pipelineId } : { runId });
   } catch (err) {
     res.status(500).json({ error: err && err.message ? err.message : String(err) });
-  }
+  } finally { unhold(); }
 };
 
 // ---------------------------------------------------------------------------
@@ -3755,10 +3755,10 @@ function resumeTargetOf(ticket) {
 }
 
 /** The onboarded project dir for a pipelines.project_key, or null. */
-async function projectDirForKey(key) {
-  const list = await listProjects();
-  for (const p of list) if (p.key === key) return p.path;            // the stored key wins (S7)
-  for (const p of list) if (projectKey(p.path) === key) return p.path;
+async function projectDirForKey(raw) {
+  const list = await listProjects();   // the raw key first; currentKey only for a key no project holds (a Locate folder, slice 9 D9)
+  for (const key of new Set([raw, currentKey(raw)])) {   // per key, the stored key wins over the path's (S7)
+    const p = list.find((x) => x.key === key) || list.find((x) => projectKey(x.path) === key); if (p) return p.path; }
   return null;
 }
 
@@ -4162,7 +4162,7 @@ function afterRunSettled(orch) {
     // PR when the run finishes, after the Ship card exists (a ship flips it); never throws.
     card = Promise.resolve(card).then(() => prAutoFinisher()?.afterSettled(st)).catch((err) => console.error(`[worca-ui] PR when done failed: ${err?.message || err}`));
     if (!ranMergeBack(st)) return card;
-    emitChanged('pipelines-changed', 'updated');
+    emitChanged('pipelines-changed', 'updated', { pipelineId: st.id });
     setTimeout(() => { void schedulerTick(); }, 0);
   } catch { /* a refresh hint only */ }
   return card;
@@ -4922,7 +4922,7 @@ async function stopPausedPipelineOnce(pipelineId, by = 'local') {
     throw err;
   }
   cancelScheduledResumes(pipelineId, { by, reason: `the run was stopped${byActor(by || 'local')}` });
-  emitChanged('pipelines-changed', 'stopped');
+  emitChanged('pipelines-changed', 'stopped', { pipelineId });
   // Run chains without a wired entry: a run waiting on this one decides now, not at the next
   // 30 s tick (a wired entry's done frame nudges them through wireRun).
   if (!entry) {
@@ -5545,7 +5545,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
   runs.set(runId, entry);
   markResumedRescan(entry);   // before the paused lineage is evicted below
   wireRun(entry);
-  announceRun(entry);
+  announceRun(entry); announcePipeline(entry);
 
   // A card-linked run keeps reporting to its chat across the resume: the link
   // row moves to the new runId and a fresh follower takes over (the old one
@@ -5589,7 +5589,7 @@ async function resumeRun(pipelineId, { ignoreCostCap = false, mock = false, past
       broadcast(event);
       syncKeepAwake();
     })
-    .finally(() => { entry.settled = true; emitChanged('pipelines-changed', 'updated'); afterRunSettled(orch); });   // #620, as /api/run's
+    .finally(() => { entry.settled = true; emitChanged('pipelines-changed', 'updated', { runId, pipelineId: entry.pipelineId || orch.state?.id, ...(entry.projectDir && !entry.workspaceId ? { key: projectKey(entry.projectDir) } : {}) }); afterRunSettled(orch); });   // #620, as /api/run's
 
   return { ok: true, runId, pipelineId };
 }

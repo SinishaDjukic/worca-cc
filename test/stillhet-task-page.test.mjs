@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readServerSource } from '../src/core/read-server-source.mjs';
-import { taskPageOf, taskCardOf, newTaskBodyOf, NEW_TASK_KEYS, stagesOf, stageOfStep, patchFiles, docsOf, logLinesOf, actionsOf, groupOf, commentsByPath, DIFF_PREVIEW } from '../ui/public/stillhet/live/task-page.mjs';
+import { taskPageOf, taskCardOf, newTaskBodyOf, NEW_TASK_KEYS, stagesOf, gateOf, stageOfStep, patchFiles, docsOf, logLinesOf, logStepsOf, stepNamesOf, actionsOf, groupOf, planOf, commentsByPath, DIFF_PREVIEW } from '../ui/public/stillhet/live/task-page.mjs';
 import { taskPageErrors } from '../ui/public/stillhet/live/model-shape.mjs';
 import { TASK_DETAILS, NOW, PR_URL } from './helpers/stillhet-live-fixture.mjs';
 import { shortDetail } from '../ui/public/stillhet/live/live-map.mjs';
@@ -152,8 +152,12 @@ test('the page\'s parts on dev\'s data (D4): a patch, artifacts, the log, the wo
   assert.match(ws.full['web/src/x.mjs'], /^\+c$/m);
   assert.deepEqual(commentsByPath({ comments: [{ projectKey: 'web', path: 'src/x.mjs', lineText: 'c', body: 'ok', author: 'user' }] }), { 'web/src/x.mjs': [{ who: 'You', line: 'c', t: 'ok' }] });
   assert.deepEqual(docsOf([{ relPath: 'docs/plan.md', stepKey: 'plan' }, { relPath: 'live-log.ndjson', kind: 'live-log' }, null]), [['plan.md', 'plan', 'docs/plan.md']]);
-  const log = logLinesOf([JSON.stringify({ source: 'sync', level: 'info', text: 'fetched', ts: '2026-11-12T08:00:01Z', executionId: 'x:sync:1' }), 'not json', JSON.stringify({ source: 'agent', level: 'warn', text: 'Bash ls', desc: 'List files', nodeId: 'n_impl', cycle: 2 })].join('\n'));
-  assert.deepEqual(log.map((l) => [l.t, l.step, l.lvl, l.cycle, l.sum, l.raw]), [['08:00:01', 'Sync', 'info', '1', 'fetched', 'fetched'], ['', 'n_impl', 'warn', '2', 'List files', 'Bash ls']]);
+  const prevTz = process.env.TZ;
+  process.env.TZ = 'UTC';
+  try {
+    const log = logLinesOf([JSON.stringify({ source: 'sync', level: 'info', text: 'fetched', ts: '2026-11-12T08:00:01Z', executionId: 'x:sync:1' }), 'not json', JSON.stringify({ source: 'agent', level: 'warn', text: 'Bash ls', desc: 'List files', nodeId: 'n_impl', cycle: 2 })].join('\n'));
+    assert.deepEqual(log.map((l) => [l.t, l.step, l.node, l.lvl, l.cycle, l.sum, l.raw]), [['08:00:01', 'Sync', '', 'info', '1', 'fetched', 'fetched'], ['', 'n_impl', 'n_impl', 'warn', '2', 'List files', 'Bash ls']]);
+  } finally { if (prevTz === undefined) delete process.env.TZ; else process.env.TZ = prevTz; }
   const a = actionsOf({ enabled: false, members: [{ projectKey: 'web', state: 'checked-out', actions: [{ id: 'dev', label: 'Dev server' }], builtins: [{ key: 'editor', label: 'Editor' }] }],
     instances: [{ actionId: 'dev', member: 'web', status: 'running', ports: { PORT: 4417 }, url: 'http://localhost:4417' }] });
   assert.deepEqual(a, { services: [{ key: 'web/dev', id: 'dev', name: 'Dev server', port: 4417, running: true, url: 'http://localhost:4417', member: 'web' }], builtins: [{ key: 'web/editor', id: 'editor', label: 'Editor', member: 'web' }], stacks: [], enabled: false, checkedOut: true });
@@ -170,12 +174,55 @@ test('the page\'s parts on dev\'s data (D4): a patch, artifacts, the log, the wo
   assert.deepEqual(commentsByPath({ comments: [{ path: 'a.mjs', lineText: 'new', body: 'why?', author: 'user', authorName: 'Maya' }, { path: 'a.mjs', parentId: 'c1', body: 'a reply' }] }), { 'a.mjs': [{ who: 'Maya', line: 'new', t: 'why?' }] });
 });
 
+const withTz = (tz, fn) => { const prev = process.env.TZ; process.env.TZ = tz; try { return fn(); } finally { if (prev === undefined) delete process.env.TZ; else process.env.TZ = prev; } };
+
+test('F-3-11: a log line\'s time is the browser\'s local time, HH:MM:SS', () => withTz('Asia/Kolkata', () => {
+  const at = '2026-11-12T08:00:01Z';
+  const log = logLinesOf([{ ts: at, text: 'a' }, { ts: Date.parse(at), text: 'b' }, { text: 'c' }, { ts: 'nonsense', text: 'd' }].map((e) => JSON.stringify(e)).join('\n'));
+  assert.deepEqual(log.map((l) => l.t), ['13:30:01', '13:30:01', '', ''], 'local (UTC+05:30), 24-hour with seconds; no time is blank, never now');
+}));
+
+test('F-3-11: a log line from n_plan names its step Plan, as the step list does; the id only when nothing names it', () => withTz('Asia/Kolkata', () => {
+  const nodes = [{ id: 'n_plan', kind: 'agent', key: 'planner', label: 'Plan', progressStage: 'plan' }, { id: 'n_impl', kind: 'agent', key: 'implementer', progressStage: 'build' }];
+  const state = { stepper: { graph: { nodes } }, steps: [{ nodeId: 'n_plan', agentKey: 'planner', status: 'done' }, { nodeId: 'n_x', agentKey: 'tester', status: 'done' }] };
+  const lines = logLinesOf([{ nodeId: 'n_plan', ts: '2026-11-12T08:00:01Z', text: 'p' }, { nodeId: 'n_impl', text: 'i' }, { nodeId: 'n_x', text: 'x' }, { nodeId: 'n_unknown', text: 'u' },
+    { executionId: 'x:sync:1', source: 'sync', text: 's' }].map((e) => JSON.stringify(e)).join('\n'));
+  const before = JSON.stringify(lines);
+  const named = logStepsOf(lines, state);
+  assert.deepEqual(named.map((l) => l.step), ['Plan', 'implementer', 'tester', 'n_unknown', 'Sync']);
+  assert.deepEqual([named[0].t, named[0].step], ['13:30:01', 'Plan'], 'the acceptance case: local time and the workflow\'s label');
+  const listed = stagesOf(state.steps, nodes).flatMap((s) => s.steps.map((x) => x.name));
+  for (const n of named.slice(0, 3)) assert.ok(listed.includes(n.step), `the step list names ${n.step} too, so its Log button finds the line`);
+  assert.equal(JSON.stringify(lines), before, 'the cached lines are never mutated');
+  assert.equal(logStepsOf(null, state), null, 'not read yet stays null');
+  assert.deepEqual(logStepsOf(lines, {}).map((l) => l.step), ['n_plan', 'n_impl', 'n_x', 'n_unknown', 'Sync'], 'no state yet: the ids');
+  assert.equal(stepNamesOf(null).size, 0);
+}));
+
 test('groupOf: dev\'s run group in stack order, each member\'s case and cost read from its store row', () => {
   const rows = { p1: { case: 'merged', cost: 1.2, title: 'One' }, p2: { case: 'approved', cost: 0.5 } };
   const g = groupOf({ id: 'G', kind: 'feature', title: 'Pager', cost: { usd: 1.7 }, members: [
     { position: 2, title: 'Two', pipelineId: 'p2', pr: { url: 'https://github.com/o/r/pull/960' } }, { position: 1, title: '', pipelineId: 'p1', pr: null }] }, (id) => rows[id]);
   assert.deepEqual(g, { id: 'G', title: 'Pager', kind: 'Feature', cost: 1.7, members: [
     { pipelineId: 'p1', title: 'One', case: 'merged', pr: '', prUrl: '', cost: 1.2 }, { pipelineId: 'p2', title: 'Two', case: 'approved', pr: '#960', prUrl: 'https://github.com/o/r/pull/960', cost: 0.5 }] });
+});
+
+test('groupOf (F-a4-09): a member not started (no pipeline, no row) has no case, never working', () => {
+  const rows = { p1: { case: 'ready', cost: 0.8 } };
+  const g = groupOf({ id: 'G', kind: 'feature', title: 'Pager', members: [
+    { position: 1, title: 'One', pipelineId: 'p1' }, { position: 2, title: 'Two', pipelineId: null, status: null, ticket: { id: 'tk' } },
+    { position: 3, title: 'Three', pipelineId: 'p3' }] }, (id) => rows[id]);
+  assert.deepEqual(g.members.map((m) => [m.title, m.case]), [['One', 'ready'], ['Two', ''], ['Three', '']], 'no row is not started: never a working sample');
+});
+
+test('planOf (F-a4-11): a plan artifact is a plan; none is none; none in a truncated list is unknown', () => {
+  assert.equal(planOf({ artifacts: [{ kind: 'prompt', relPath: 'prompt.md' }, { kind: 'plan', relPath: 'plan.md' }], truncated: false }), true);
+  assert.equal(planOf({ artifacts: [{ kind: 'plan', relPath: 'plan.md' }], truncated: true }), true, 'a plan in the page is a plan');
+  assert.equal(planOf({ artifacts: [{ kind: 'prompt', relPath: 'prompt.md' }], truncated: false }), false);
+  assert.equal(planOf({ artifacts: [] }), false);
+  assert.equal(planOf({ artifacts: [{ kind: 'prompt' }], truncated: true }), null, 'the cut may hold the plan');
+  for (const x of [null, undefined, 'x', 3]) assert.equal(planOf(x), null);
+  assert.equal(planOf({ artifacts: [null, 'x'] }), false, 'junk rows never throw');
 });
 
 test('the page\'s plan review is the run\'s own: its role findings, its shape check and its concern, else none', () => {
@@ -198,6 +245,12 @@ test('a plan waiting for approval has no reason line under its word (the prototy
   assert.equal(taskPageOf({ ...TASK_DETAILS.plan, row: { ...TASK_DETAILS.plan.row, detail: 'Waits for your OK on the plan' } }).detail, '');
 });
 
+test('slice 7 D17: taskPageOf names the task\'s workflow from stepper.template, and null without one', () => {
+  const input = { ...TASK_DETAILS.approved, state: { ...TASK_DETAILS.approved.state, stepper: { template: { id: 'wf_full', name: 'Full' } } } };
+  assert.deepEqual(taskPageOf(input, { now: NOW }).workflow, { id: 'wf_full', name: 'Full' });
+  assert.equal(taskPageOf({ ...TASK_DETAILS.approved, state: { ...TASK_DETAILS.approved.state, stepper: null } }, { now: NOW }).workflow, null);
+});
+
 test('stageOf returns the case\'s labels: a task with no PR ends at Done, a ready one at Merged (#1266)', () => {
   const window = { RailUI: R, RailWould: (p) => 'Would ' + p };
   vm.runInNewContext(readFileSync(new URL('../ui/public/stillhet/runs/run-page-model.js', import.meta.url), 'utf8'), { window, console, Math, Object, String, Set, JSON, parseFloat, Error });
@@ -205,4 +258,142 @@ test('stageOf returns the case\'s labels: a task with no PR ends at Done, a read
   assert.deepEqual([...M.stageOf('finished-nogit').labels], ['Plan', 'Build', 'Review', 'Done']);
   assert.deepEqual([...M.stageOf('ready').labels].slice(-2), ['PR', 'Merged']);
   assert.deepEqual({ ...M.stageOf('no-such-case') }, {});
+});
+
+// B1.6 (#1318): a live task at its review gate. dev's gate question (src/core/graph/scheduler.mjs askGate) and its
+// workflow's own nodes; the review node's verdict blocked, so the gate's nodeId is n_rev.
+const gNode = (id, label, progressStage) => ({ id, kind: 'agent', key: id.slice(2), label, progressStage });
+const GATE_NODES = [gNode('n_plan', 'Plan', 'plan'), gNode('n_impl', 'Implementation', 'build'), gNode('n_rev', 'Review implementation', 'review'), gNode('n_manual', 'Manual tests checklist', 'review'), { id: 'n_end', kind: 'end', key: null, label: 'End' }];
+const gRow = (nodeId, status, n = 1) => ({ key: `x:${nodeId}:${n}`, executionId: `x:${nodeId}:${n}`, nodeId, agentKey: nodeId.slice(2), status });
+const GATE_Q = { id: 'gate-w5-3', kind: 'gate', wireId: 'w5', nodeId: 'n_rev', executionId: 'x:n_rev:3', deliveryNo: 3, holdNo: 0,
+  issues: [{ severity: 'major', title: 'The pager loses its place', file: 'ui/pager.mjs', line: 42 }, { severity: 'minor', title: '', file: 'ui/pager.css' }] };
+const gateInput = (state = {}, row = {}) => ({ row: { id: 'run-g', case: 'question', title: 'Pager', detail: 'Asks you something', ...row },
+  state: { id: 'pg', status: 'running', steps: [gRow('n_plan', 'done'), gRow('n_impl', 'done'), gRow('n_rev', 'done'), gRow('n_impl', 'done', 2), gRow('n_rev', 'done', 2)],
+    stepper: { graph: { nodes: GATE_NODES } }, pendingQuestion: GATE_Q, ...state } });
+const marks = (stages) => stages.map((s) => [s.key, s.state, s.steps.map((x) => `${x.name}:${x.state}`)]);
+
+test('O1, O4: a pending review gate is the gate case; its node\'s step asks in Review, Plan asks nothing; the gate\'s issues are the review\'s rows', () => {
+  const page = taskPageOf(gateInput(), { now: NOW });
+  assert.equal(page.case, 'gate');
+  assert.equal(taskCardOf(gateInput()).case, 'gate', 'the chat TaskCard reads the same case (D1)');
+  const issues = [{ sev: 'Major', t: 'The pager loses its place', at: 'ui/pager.mjs:42' }, { sev: 'Minor', t: '(untitled issue)', at: 'ui/pager.css' }];
+  assert.deepEqual(page.gate, { id: 'gate-w5-3', nodeId: 'n_rev', issues, count: 2, line: '2 open issues: accept as is, or run another cycle?' });
+  assert.deepEqual(marks(page.stages), [['plan', 'done', ['Plan:done']], ['build', 'done', ['Implementation:done']],
+    ['review', 'ask', ['Review implementation:ask', 'Manual tests checklist:next']]]);
+  assert.equal(page.stages.flatMap((s) => s.steps).filter((x) => x.state === 'ask').length, 1, 'exactly one step asks (I3)');
+  assert.equal(page.detail, 'Review implementation reached its cycle limit');
+  assert.doesNotMatch(page.detail, /Asks you something/);
+  assert.deepEqual(page.review, { roles: [], issues });
+  // no issues: the line asks without a count
+  assert.equal(taskPageOf(gateInput({ pendingQuestion: { ...GATE_Q, issues: [] } })).gate.line, 'Accept as is, or run another cycle?');
+  // role reviews ride the gate: they are the rows, and its issues are not listed again (D8)
+  const roleReviews = { rounds: [{ pass: 1, round: 1, target: 'diff', node: 'n_rev', roles: [{ key: 'qa', label: 'QA', findings: [{ id: 'qa-1', title: 'No test for page 2', status: 'open' }] }] }] };
+  const withRoles = taskPageOf(gateInput({ pendingQuestion: { ...GATE_Q, roleReviews } }));
+  assert.deepEqual([withRoles.review.roles.map((r) => [r.role, r.n]), withRoles.review.issues], [[['QA', 1]], []]);
+  // no gate: gateOf is null
+  assert.equal(gateOf({ status: 'running', pendingQuestion: { id: 'q-plan', kind: 'plan' } }), null);
+  assert.equal(gateOf({ status: 'running', pendingQuestion: { kind: 'gate', id: '' } }), null);
+  assert.equal(gateOf({ status: 'done', pendingQuestion: GATE_Q }), null);
+  assert.equal(taskPageOf(TASK_DETAILS.approved).gate, null);
+});
+
+test('O2: a review forced on with open issues is blocked, never done; a node with no open issues stays done', () => {
+  const openIssues = [{ nodeId: 'n_rev', wireId: 'w5', executionId: 'x:n_rev:3', count: 2, critical: 0, major: 1, titles: ['a', 'b'] }, { nodeId: 'n_impl', count: 0 }];
+  const steps = [gRow('n_plan', 'done'), gRow('n_impl', 'done'), gRow('n_rev', 'done'), gRow('n_manual', 'start')];
+  const st = stagesOf(steps, GATE_NODES, { openIssues });
+  assert.deepEqual(marks(st), [['plan', 'done', ['Plan:done']], ['build', 'done', ['Implementation:done']],
+    ['review', 'now', ['Review implementation:blocked', 'Manual tests checklist:now']]]);
+  assert.equal(st[2].steps[0].open, 2);
+  // a finished run: the stage's state is its rows' (done); its step stays blocked
+  const done = stagesOf([gRow('n_plan', 'done'), gRow('n_impl', 'done'), gRow('n_rev', 'done'), gRow('n_manual', 'done')], GATE_NODES, { openIssues });
+  assert.deepEqual(marks(done)[2], ['review', 'done', ['Review implementation:blocked', 'Manual tests checklist:done']]);
+  // the page passes the run's openIssues through
+  const page = taskPageOf(gateInput({ pendingQuestion: null, status: 'done', openIssues, steps: [...steps.slice(0, 3), gRow('n_manual', 'done')] }));
+  assert.equal(page.stages[2].steps[0].state, 'blocked');
+  assert.equal(page.gate, null);
+  // a loose ledger row (no graph) is blocked by its own nodeId
+  assert.deepEqual(stagesOf([{ agentKey: 'reviewer', nodeId: 'n_reviewer', status: 'done' }], [], { openIssues: [{ nodeId: 'n_reviewer', count: 1 }] })[2].steps.map((x) => [x.state, x.open]), [['blocked', 1]]);
+});
+
+test('O4: a gate whose node is not in the graph asks on the Review stage\'s last step that ran', () => {
+  const st = stagesOf([gRow('n_plan', 'done'), gRow('n_impl', 'done'), gRow('n_rev', 'done')], GATE_NODES, { gate: { nodeId: 'n_gone' } });
+  assert.deepEqual(marks(st)[2], ['review', 'ask', ['Review implementation:ask', 'Manual tests checklist:next']]);
+  // nothing ran in Review: its last step asks
+  const none = stagesOf([gRow('n_plan', 'done'), gRow('n_impl', 'done')], GATE_NODES, { gate: { nodeId: 'n_gone' } });
+  assert.deepEqual(marks(none)[2], ['review', 'ask', ['Review implementation:next', 'Manual tests checklist:ask']]);
+  // a gate on a plan-review loop asks under its own node's stage
+  const planGate = stagesOf([gRow('n_plan', 'done')], GATE_NODES, { gate: { nodeId: 'n_plan' } });
+  assert.deepEqual(marks(planGate)[0], ['plan', 'ask', ['Plan:ask']]);
+  assert.ok(!planGate[2].steps.some((x) => x.state === 'ask'));
+});
+
+test('I7: a gate on a paused or stopped task keeps its case; stagesOf with no third argument is unchanged', () => {
+  for (const c of ['paused', 'stopped', 'failed', 'plan', 'recovery', 'capped']) assert.equal(taskPageOf(gateInput({}, { case: c })).case, c, c);
+  assert.equal(taskPageOf(gateInput({}, { case: 'working' })).case, 'gate');
+  assert.equal(taskPageOf(gateInput({}, { case: '' })).case, 'gate');
+  // a paused gate keeps its paused head, never the gate's reason
+  assert.notEqual(taskPageOf(gateInput({}, { case: 'paused', detail: 'Paused by you' })).detail, 'Review implementation reached its cycle limit');
+  const steps = gateInput().state.steps;
+  assert.deepEqual(stagesOf(steps, GATE_NODES, {}), stagesOf(steps, GATE_NODES));
+  assert.ok(!stagesOf(steps, GATE_NODES).flatMap((s) => s.steps).some((x) => /^(ask|blocked)$/.test(x.state)));
+});
+
+// B1.7 (#1321): the base is the PR's when known, else (no PR) the run's recorded base; never the source branch for a PR
+const FIN = (state = {}, row = {}) => ({ row: { id: 'pz', case: 'ready', title: 'Fin', detail: 'Finished', pr: '', ...row },
+  state: { id: 'pz', title: 'Fin', status: 'done', projectKey: 'web-1', branch: { source: 'docs/rail-agreed', feature: 'feat/x', branchKept: true }, steps: [], ...state } });
+const MERGED = { url: 'https://github.com/acme/web/pull/1307', state: 'MERGED' };
+
+test('F-3-02: a task with no PR takes its base from branch.source (docs/rail-agreed)', () => {
+  const card = taskCardOf(FIN());
+  assert.equal(card.base, 'docs/rail-agreed');
+  assert.equal(taskPageOf(FIN(), { now: NOW }).base, 'docs/rail-agreed');
+  // a closed-unmerged PR counts as none: the run's own base
+  assert.equal(taskCardOf(FIN({ pr: { url: PR_URL, state: 'CLOSED' } }, { pr: PR_URL })).base, 'docs/rail-agreed');
+});
+
+test('F-3-02: a merged PR with no checks entry has no base, never the source branch; an open PR\'s checks.base wins', () => {
+  const merged = FIN({ pr: MERGED, branch: { source: 'feat/run-4-slice-9-projects-and', feature: 'feat/x', branchKept: true } }, { case: 'merged', pr: MERGED.url });
+  assert.equal(taskCardOf(merged).base, undefined);
+  assert.equal(taskPageOf(merged, { now: NOW }).base, '');
+  assert.equal(taskPageOf(merged, { now: NOW }).pr, '#1307');
+  // the row alone (no state.pr) still says a PR stands
+  assert.equal(taskCardOf(FIN({}, { case: 'checks', pr: PR_URL })).base, undefined);
+  const open = FIN({ pr: { url: PR_URL, state: 'OPEN' } }, { case: 'checks', pr: PR_URL });
+  assert.equal(taskCardOf({ ...open, checks: { checks: { state: 'pending' }, base: 'docs/rail-agreed' } }).base, 'docs/rail-agreed');
+  assert.equal(taskCardOf({ ...open, checks: { checks: { state: 'pending' }, base: null } }).base, undefined, 'no base yet: none, never the source');
+});
+
+test('F-3-03: the no-remote card and page say \'This project has no git remote\'', () => {
+  const nr = FIN({}, { case: 'no-remote' });
+  assert.equal(taskCardOf(nr).detail, 'This project has no git remote');
+  const page = taskPageOf(nr, { now: NOW });
+  assert.equal(page.case, 'no-remote');
+  assert.equal(page.detail, 'This project has no git remote');
+  assert.equal(page.base, 'docs/rail-agreed', 'a known base still shows');
+});
+
+test('B1.7 unknown base: the no-base card and page say \'Base unknown: …\' and carry no base', () => {
+  // one fixture for the store and the page: the row's sourceBranch and the state's branch.source are the same SHA (I4)
+  const SHA = 'a1b2c3d4e5f6';
+  const nb = FIN({ branch: { source: SHA, feature: 'feat/x', branchKept: true } }, { case: 'no-base' });
+  const card = taskCardOf(nb);
+  assert.equal(card.detail, 'Base unknown: Worca cannot tell where to open a PR');
+  assert.equal(card.base, undefined);
+  const page = taskPageOf(nb, { now: NOW });
+  assert.deepEqual([page.case, page.detail, page.base, page.branch], ['no-base', 'Base unknown: Worca cannot tell where to open a PR', '', 'feat/x']);
+  assert.equal(taskCardOf(FIN({ branch: { source: '', feature: 'feat/x' } })).base, undefined);
+});
+
+test('COV-3 #12: resumeEngines follows usageLimitSwitches with classic\'s words; empty for any other pause, or a run that is not paused', async () => {
+  const { usageLimitSwitches, engineLabel, engineSwitchNote } = await import('../src/shared/engine-switch.mjs');
+  const limit = { status: 'paused', pauseReason: 'usage_limit', limitEngine: 'claude' };
+  const page = taskPageOf({ row: { id: 'p1', case: 'paused-limit' }, state: limit }, { now: NOW });
+  const want = usageLimitSwitches({ reason: 'usage_limit', limitEngine: 'claude' });
+  assert.ok(want.length > 0);
+  assert.deepEqual(page.resumeEngines, want.map((id) => ({ id, label: engineLabel(id), note: engineSwitchNote(id) })));
+  assert.ok(!page.resumeEngines.some((e) => e.id === 'claude'), 'never the engine that hit its limit');
+  assert.deepEqual(taskPageErrors(page), []);
+  assert.deepEqual(taskPageOf({ row: { id: 'p1' }, state: { ...limit, pauseReason: 'cost_cap' } }).resumeEngines, [], 'another pause: none');
+  assert.deepEqual(taskPageOf({ row: { id: 'p1' }, state: { ...limit, limitEngine: null } }).resumeEngines, [], 'a provider\'s limit (no limitEngine): none');
+  assert.deepEqual(taskPageOf({ row: { id: 'p1' }, state: { ...limit, status: 'running' } }).resumeEngines, [], 'running: none');
 });

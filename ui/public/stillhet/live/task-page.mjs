@@ -4,8 +4,9 @@
 //     `state`, patched by the live run's `state` frames), checks: the task's checks entry (task-live.mjs, GET /api/pr/checks),
 //     group, plan, diff }.
 // A field dev cannot fill is left out, so the part that draws it hides (D3).
-import { prCaseOf, stageOfStep, STAGE_LABEL, failureItems, shortDetail } from './live-map.mjs';
+import { prCaseOf, stageOfStep, STAGE_LABEL, failureItems, shortDetail, knownBase } from './live-map.mjs';
 import { currentPass } from '../../../../src/shared/shape/role-review.mjs';
+import { usageLimitSwitches, engineLabel, engineSwitchNote } from '../../../../src/shared/engine-switch.mjs';
 
 export { stageOfStep };
 
@@ -25,13 +26,17 @@ const bookend = (s = {}) => !s.agentKey && (/^x:(preflight|sync|done):/.test(str
 const STEP_KINDS = /^(agent|script)$/;
 const WORK_STAGE = /^(plan|build|review)$/;
 const stageOfNode = (n) => (WORK_STAGE.test(str(n.progressStage)) ? n.progressStage : stageOfStep(n));
+// a workflow node's name on the page: its label, else its key, else its id (the step list and the log name it alike)
+const stepNameOf = (n) => str(n.label) || str(n.key) || str(n.id);
 const rowState = (rows) => (rows.some((r) => STEP_STATE[lc(r.status)] === 'now') ? 'now' : STEP_STATE[lc(rows.at(-1)?.status)] || 'next');
-/** dev's steps folded into the page's three work stages: [{ key, label, state: done|now|failed|paused|stopped|next, costUsd,
- *  activeMs, steps: [{ name, state }] }]. `nodes`: the workflow's graph nodes (state.stepper.graph.nodes): a stage's steps are
+/** dev's steps folded into the page's three work stages: [{ key, label, state: done|now|failed|ask|paused|stopped|next, costUsd,
+ *  activeMs, steps: [{ name, state, open? }] }]. `nodes`: the workflow's graph nodes (state.stepper.graph.nodes): a stage's steps are
  *  its nodes, named by their labels and marked by their ledger rows; a stage none of them is in, and no step ran in, is left
  *  out (a Restart Build round's workflow has no planner). An empty list (Auto still deciding) keeps all three, and its steps
- *  are the ledger's own. */
-export function stagesOf(steps = [], nodes = []) {
+ *  are the ledger's own. `gate` (gateOf): its node's step asks (B1.6 D4); `question` (questionsOf): its node's step asks,
+ *  else the step working now, else the last that ran (F-G-G2-02); `openIssues` (the run state's, forceClean): a step
+ *  whose node a review forced on with open issues is `blocked`, with `open` its count (D5). */
+export function stagesOf(steps = [], nodes = [], { gate = null, question = null, openIssues = [] } = {}) {
   const flow = arr(nodes).filter((n) => n && !bookend(n) && (!n.kind || STEP_KINDS.test(str(n.kind))));
   // a ledger row for a node of the graph that is no step (the Task input, End, a gate) is no stage's step either
   const notStep = new Set(arr(nodes).filter((n) => n && !flow.includes(n)).map((n) => str(n.id)));
@@ -39,18 +44,42 @@ export function stagesOf(steps = [], nodes = []) {
   const byId = new Map(flow.map((n) => [str(n.id), n]));
   const stageOfRow = (s) => (byId.has(str(s.nodeId)) ? stageOfNode(byId.get(str(s.nodeId))) : stageOfStep(s));
   const has = flow.map(stageOfNode);
-  return ['plan', 'build', 'review'].filter((key) => !has.length || has.includes(key) || work.some((s) => stageOfRow(s) === key)).map((key) => {
+  const stages = ['plan', 'build', 'review'].filter((key) => !has.length || has.includes(key) || work.some((s) => stageOfRow(s) === key)).map((key) => {
     const mine = work.filter((s) => stageOfRow(s) === key);
     const states = mine.map((s) => STEP_STATE[lc(s.status)] || 'next');
     const state = !mine.length ? 'next' : states.includes('failed') ? 'failed' : states.includes('now') ? 'now'
       : states.includes('paused') ? 'paused' : states.includes('stopped') ? 'stopped' : states.every((x) => x === 'done') ? 'done' : 'now';
     // the workflow's nodes in this stage, then any step the ledger ran that no node names, once per node or agent
-    const own = flow.filter((n) => stageOfNode(n) === key).map((n) => ({ name: str(n.label) || str(n.key) || str(n.id), rows: mine.filter((s) => str(s.nodeId) === str(n.id)) }));
+    const own = flow.filter((n) => stageOfNode(n) === key).map((n) => ({ name: stepNameOf(n), ids: [str(n.id)], rows: mine.filter((s) => str(s.nodeId) === str(n.id)) }));
     const loose = new Map();
     for (const s of mine.filter((x) => !byId.has(str(x.nodeId)))) { const k = str(s.agentKey) || str(s.nodeId) || str(s.key); (loose.get(k) || loose.set(k, []).get(k)).push(s); }
-    const list = own.concat([...loose].map(([name, rows]) => ({ name, rows })));
+    const list = own.concat([...loose].map(([name, rows]) => ({ name, ids: rows.map((r) => str(r.nodeId)).filter(Boolean), rows })));
     return { key, label: STAGE_LABEL[key], state, costUsd: mine.reduce((a, s) => a + (num(s.costUsd) || 0), 0), activeMs: mine.reduce((a, s) => a + (num(s.activeMs) || 0), 0),
-      steps: list.map((x) => ({ name: x.name, state: rowState(x.rows) })) };
+      steps: list.map((x) => ({ name: x.name, state: rowState(x.rows) })), list };
+  });
+  // the step that asks: the gate's node's, else the Review stage's last step that ran, else its last step (exactly one)
+  let ask = null;
+  const asker = gate || question;
+  if (asker) {
+    const id = str(asker.nodeId);
+    for (const st of stages) { const i = id ? st.list.findIndex((x) => x.ids.includes(id)) : -1; if (i >= 0) { ask = [st, i]; break; } }
+    const rev = !ask && gate && stages.find((st) => st.key === 'review');
+    if (rev && rev.list.length) { const ran = rev.list.map((x) => x.rows.length > 0).lastIndexOf(true); ask = [rev, ran >= 0 ? ran : rev.list.length - 1]; }
+    if (!ask && !gate) {   // a question with no node of the graph: the step working now, else the last that ran
+      const at = stages.flatMap((st) => st.steps.map((x, i) => [st, i, x.state])), states = at.map((x) => x[2]);
+      const k = states.lastIndexOf('now') >= 0 ? states.lastIndexOf('now') : states.lastIndexOf('done');
+      if (k >= 0) ask = [at[k][0], at[k][1]];
+    }
+  }
+  const open = new Map(arr(openIssues).filter((o) => o && str(o.nodeId) && (num(o.count) || 0) > 0).map((o) => [str(o.nodeId), o.count]));
+  return stages.map(({ list, ...st }) => {
+    const asks = ask && ask[0].key === st.key;
+    const steps = st.steps.map((x, i) => {
+      if (asks && ask[1] === i) return { ...x, state: 'ask' };
+      const n = list[i].ids.map((id) => open.get(id)).find((c) => c);
+      return n ? { ...x, state: 'blocked', open: n } : x;
+    });
+    return { ...st, state: asks && st.state !== 'failed' ? 'ask' : st.state, steps };
   });
 }
 
@@ -73,13 +102,55 @@ const prOf = (row, state) => {
   const pr = state?.pr && typeof state.pr === 'object' ? state.pr : null;
   return { url: str(pr?.url) || str(row?.pr), state: str(pr?.state).toUpperCase() || (str(row?.pr) ? 'OPEN' : '') };
 };
+/** The task's base (B1.7 D1): its PR's (the checks entry's), else, with no standing PR, the run's recorded base when it is a
+ *  branch name. A PR that stands (open or merged) with no known base has none: never the source branch, never a sample. */
+function baseOf({ row = {}, state = {}, checks = null }) {
+  if (str(checks?.base)) return checks.base;
+  const pr = prOf(row, state);
+  if (pr.url && pr.state !== 'CLOSED') return '';
+  return knownBase(state.branch?.source);
+}
+// why a finished task with its branch offers no Create PR (B1.7 D7): no-remote's words are the prototype's case detail
+const NO_PR_WHY = { 'no-remote': 'This project has no git remote', 'no-base': 'Base unknown: Worca cannot tell where to open a PR' };
 const prNumber = (url) => (/\/(?:pull|pullrequest|pull-requests)\/(\d+)/.exec(str(url)) || [])[1] || '';
+
+const sevWord = (v) => { const t = str(v) || 'suggestion'; return t[0].toUpperCase() + t.slice(1).toLowerCase(); };
+/** dev's pending review gate (src/core/graph/scheduler.mjs askGate) as the page draws it: { id, nodeId, issues: [{ sev, t,
+ *  at }], count, line }, or null when the task waits at no gate (or has ended). */
+export function gateOf(state = {}) {
+  const q = state?.pendingQuestion;
+  if (!q || typeof q !== 'object' || q.kind !== 'gate' || !str(q.id) || ENDED.test(lc(state.status))) return null;
+  const issues = arr(q.issues).filter((i) => i && typeof i === 'object').map((i) => ({ sev: sevWord(i.severity), t: str(i.title) || '(untitled issue)',
+    at: str(i.file) ? str(i.file) + (num(i.line) != null ? `:${i.line}` : '') : '' }));
+  const count = issues.length;
+  return { id: q.id, nodeId: str(q.nodeId), issues, count,
+    line: count ? `${count} open ${count === 1 ? 'issue' : 'issues'}: accept as is, or run another cycle?` : 'Accept as is, or run another cycle?' };
+}
+
+/** F-G-G2-02: the run's own questions (dev's clarify or questions ask: `questions[{ id, question, options, recommended }]`, the
+ *  ones Stillhet Chat answers under its card) as the task page's answer part draws them: { id, nodeId, questions: [{ id, q,
+ *  why, options, pick }] }. null for any other ask (a plan, a gate, a recovery, a form) and once the task has ended: the
+ *  page then shows no question, never the design's sample. */
+export function questionsOf(state = {}) {
+  const q = state?.pendingQuestion;
+  if (!q || typeof q !== 'object' || !str(q.id) || q.kind === 'plan' || ENDED.test(lc(state.status))) return null;
+  const qs = arr(q.questions).filter((x) => x && typeof x === 'object' && str(x.question));
+  if (!qs.length) return null;
+  return { id: q.id, nodeId: str(q.nodeId), questions: qs.map((x) => {
+    const options = arr(x.options).filter((v) => typeof v === 'string' && v.trim()), k = options.indexOf(x.recommended);
+    return { id: x.id, q: str(x.question), why: str(x.why) || str(x.context), options, pick: k >= 0 ? k : 0 };
+  }) };
+}
 
 /** The case both places show: an open PR's from its checks entry, else the store's (D5). */
 function caseFor({ row = {}, state = {}, checks = null }) {
   const pr = prOf(row, state);
   const fromChecks = pr.url && pr.state === 'OPEN' && row.case !== 'merged' ? prCaseOf(checks) : null;
-  return fromChecks || str(row.case) || 'working';
+  if (fromChecks) return fromChecks;
+  // a pending review gate (B1.6 D1): the store's row reads it as a question; a paused, stopped, failed, plan or recovery
+  // case is kept (I7)
+  if (gateOf(state) && /^(|question|working)$/.test(str(row.case))) return 'gate';
+  return str(row.case) || 'working';
 }
 
 /** The PR's state mark (GitMark): branch only, open, checks pass or failing, conflicts, merged. */
@@ -110,12 +181,12 @@ export function taskCardOf(input = {}) {
   const c = caseFor(input);
   const pr = prOf(row, state);
   const branch = str(state.branch?.feature);
-  const base = str(checks?.base) || str(state.branch?.source);
+  const base = baseOf(input);
   const fail = failureOf(state);
   const why = fail ? fail.items : /^(approved|failing|conflicts|checks)$/.test(c) ? checksWhy(checks) : [];
   // R-arch-3: the card's failure line is the one Pulse and the bell draw (live-map.mjs shortDetail)
   const failed = fail ? arr(state.steps).filter((s) => FAILED_STEP.test(lc(s?.status))).at(-1) : null;
-  const detail = fail ? shortDetail({ status: 'failed', error: str(failed?.error) || str(state.error) || str(state.pauseDetail), step: failed || null }) : '';
+  const detail = fail ? shortDetail({ status: 'failed', error: str(failed?.error) || str(state.error) || str(state.pauseDetail), step: failed || null }) : NO_PR_WHY[c] || '';
   const git = gitOf(c, pr, branch);
   const w = checks?.watch;
   const watch = w && typeof w === 'object' ? (w.status === 'fixing' || w.status === 'starting' ? 'fix' : w.watching ? 'idle' : '') : '';
@@ -146,11 +217,15 @@ const FIXED = /^(fixed|resolved|withdrawn)$/;
 function reviewOf(state = {}) {
   const q = state.pendingQuestion && typeof state.pendingQuestion === 'object' ? state.pendingQuestion : null;
   const p = q?.plan && typeof q.plan === 'object' ? q.plan : {};
-  const last = currentPass(state.roleReviews || p.roleReviews)?.rounds?.at(-1);
+  // a review gate's findings are its own (B1.6 D8): its role reviews, else its issues, never listed twice
+  const gate = gateOf(state);
+  // (a gate's rounds are its node's, as dev attaches them: src/shared/shape/role-review.mjs attachRoleReviews)
+  const last = (gate ? currentPass(q.roleReviews, { node: q.nodeId }) : currentPass(state.roleReviews || p.roleReviews))?.rounds?.at(-1);
   const roles = arr(last?.roles).filter((r) => r && !r.skipped).map((r) => {
     const findings = arr(r.findings).filter((f) => f && !FIXED.test(lc(f.status))).map((f) => str(f.title) || str(f.id)).filter(Boolean);
     return { role: str(r.label) || str(r.key), n: findings.length, t: findings.length ? `${findings.length} ${findings.length === 1 ? 'finding' : 'findings'}` : 'Passed · no findings', findings };
   });
+  if (gate) return { roles, issues: roles.length ? [] : gate.issues };
   const issues = arr((p.check || state.plan?.check)?.items).filter((it) => it && !it.pass).map((it) => ({ sev: 'To fix', t: str(it.label) || str(it.id), at: str(it.detail) }));
   const concern = q?.concern || state.concern;
   const said = typeof concern === 'string' ? concern : str(concern?.text) || str(concern?.title) || str(concern?.summary);
@@ -175,15 +250,22 @@ export function taskPageOf(input = {}, { now = 0 } = {}) {
   // c17 on the page: a bold head and one row per failure; the page's head then says nothing of it (each fact once)
   const fail = failureOf(state);
   const failure = fail ? { head: card.detail, rows: fail.items.map((l) => l.replace(/^✗\s*/, '')) } : null;
+  const gate = gateOf(state), ask = gate ? null : questionsOf(state);
+  const stages = ENDED.test(lc(state.status)) && !arr(state.steps).some((s) => s && !bookend(s)) && !arr(state.stepper?.graph?.nodes).length ? []
+    : stagesOf(state.steps, state.stepper?.graph?.nodes, { gate, question: ask, openIssues: state.openIssues });
+  // the gate's head says why the task waits (D7): its asking step reached its cycle limit
+  const asking = card.case === 'gate' ? stages.flatMap((st) => st.steps).find((x) => x.state === 'ask') : null;
   return {
     id: str(row.id) || str(state.id),
-    case: card.case,
+    // an archived task's page is the design's archived case (its ⋯ offers Restore, COV-3 #3); its card keeps its own
+    case: row.archived ? 'archived' : card.case,
     title: str(row.title) || str(state.title) || 'Untitled task',
     branch: card.branch || '',
     base: card.base || '',
     pr: pr.url ? `#${prNumber(pr.url)}` : '',
     prUrl: pr.url,
-    detail: failure ? '' : card.detail || reasonOf(row, state),
+    // F-G-G2-04: an archived task says only that it is archived, as classic's list does (runs-list.mjs: word Archived, no detail)
+    detail: failure || row.archived ? '' : card.detail || (card.case === 'gate' ? `${asking ? asking.name : 'Review'} reached its cycle limit` : reasonOf(row, state)),
     failure,
     review: reviewOf(state),
     checks: checksOf(input.checks),
@@ -200,9 +282,16 @@ export function taskPageOf(input = {}, { now = 0 } = {}) {
     tags: arr(state.tags).map((t) => (typeof t === 'string' ? t.replace(/:\s*/, ': ') : t && t.key ? (t.value ? `${t.key}: ${t.value}` : str(t.key)) : '')).filter(Boolean),
     prompt: str(state.prompt),
     // a task that ended with no ledger and no graph (dev kept no steps): no work stage, never three "Not yet" ones
-    stages: ENDED.test(lc(state.status)) && !arr(state.steps).some((s) => s && !bookend(s)) && !arr(state.stepper?.graph?.nodes).length ? [] : stagesOf(state.steps, state.stepper?.graph?.nodes),
+    stages,
+    gate,
+    ask,
     ...(failedChecks ? { failedChecks } : {}),
     pauseAfterStep: state.pauseAfterStep === true,
+    // the workflow the task ran (its stepper's template, slice 7 D17): the Workflow dialog opens it in Workflows
+    workflow: str(state.stepper?.template?.id) ? { id: str(state.stepper.template.id), name: str(state.stepper.template.name) || str(state.stepper.template.id) } : null,
+    // COV-3 #12: a run its own engine's usage limit paused may go on on another (classic's paintResumeEngineItems), in the
+    // same words: `engineLabel`, and `engineSwitchNote` as the item's help and its confirm
+    resumeEngines: lc(state.status) === 'paused' ? usageLimitSwitches({ reason: state.pauseReason || null, limitEngine: state.limitEngine || null }).map((id) => ({ id, label: engineLabel(id), note: engineSwitchNote(id) })) : [],
   };
 }
 
@@ -266,6 +355,13 @@ export function docsOf(artifacts) {
   return arr(artifacts).filter((a) => a && DOC.test(str(a.relPath))).map((a) => [str(a.relPath).split('/').pop(), str(a.stepKey) || str(a.nodeId) || str(a.kind), str(a.relPath)]);
 }
 export const SYNC_STEP = 'Sync';
+const pad = (n) => String(n).padStart(2, '0');
+// a log record's time on the reader's clock: local HH:MM:SS, 24-hour; '' when it has none (never now)
+function clock(ts) {
+  if (typeof ts !== 'string' && typeof ts !== 'number') return '';
+  const d = new Date(ts);
+  return Number.isNaN(d.getTime()) ? '' : `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
 /** dev's run log (NDJSON, GET /api/history/:key/:id/log) → the page's log lines; the base sync's lines are the Sync step. */
 export function logLinesOf(text) {
   const out = [];
@@ -273,11 +369,25 @@ export function logLinesOf(text) {
     if (!l.trim()) continue;
     let e; try { e = JSON.parse(l); } catch { continue; }
     if (!e || typeof e !== 'object') continue;
-    const step = e.executionId === 'x:sync:1' || e.nodeId === 'sync' ? SYNC_STEP : str(e.nodeId) || str(e.source) || 'worca';
-    const t = /T(\d\d:\d\d:\d\d)/.exec(str(e.ts));
-    out.push({ t: t ? t[1] : '', step, from: str(e.source) || 'worca', lvl: str(e.level) || 'info', cycle: String(num(e.cycle) || 1), session: str(e.session), sum: str(e.desc) || str(e.text), raw: str(e.text) });
+    const sync = e.executionId === 'x:sync:1' || e.nodeId === 'sync';
+    const step = sync ? SYNC_STEP : str(e.nodeId) || str(e.source) || 'worca';
+    out.push({ t: clock(e.ts), step, node: sync ? '' : str(e.nodeId), from: str(e.source) || 'worca', lvl: str(e.level) || 'info', cycle: String(num(e.cycle) || 1), session: str(e.session), sum: str(e.desc) || str(e.text), raw: str(e.text) });
   }
   return out;
+}
+/** A run state → node id → the name the step list shows it by: a graph node's stepNameOf, a ledger row no node names its agent. */
+export function stepNamesOf(state) {
+  const names = new Map();
+  for (const n of arr(state?.stepper?.graph?.nodes)) if (n && str(n.id)) names.set(n.id, stepNameOf(n));
+  for (const s of arr(state?.steps)) if (s && str(s.nodeId) && !names.has(s.nodeId)) names.set(s.nodeId, str(s.agentKey) || s.nodeId);
+  return names;
+}
+/** logLinesOf's lines with each step named as the step list names it (read time: the log can land before the state). null stays
+ *  null (not read yet); the lines given are never changed. */
+export function logStepsOf(lines, state) {
+  if (!Array.isArray(lines)) return lines;
+  const names = stepNamesOf(state);
+  return lines.map((l) => (l && l.node && names.has(l.node) ? { ...l, step: names.get(l.node) } : l));
 }
 /** dev's worktree actions (GET /api/runs/:id/actions) → { services: [{key, id, name, port, running, url, member}], builtins: [{key, id, label, member}],
  *  stacks: [{id, name, steps, status, step, error}], checkedOut, enabled }. A service's and a built-in tool's `key` is its member and its id. A service's port is the one its running instance holds. */
@@ -302,13 +412,21 @@ export function actionsOf(data) {
   });
   return { services, builtins, stacks, enabled: data.enabled !== false, checkedOut: arr(data.members).some((m) => m.state === 'checked-out') };
 }
-/** A run group (GET /api/run-groups) → the group page's facts: { id, title, kind, members: [{pipelineId, title, case, pr, prUrl}], cost }. */
+/** dev's run artifacts (GET /api/runs/:id/artifacts) → whether the run saved a plan (the server's NO_PLAN filter, F-a4-11):
+ *  true, false, or null when unknown (a truncated list without one may hold it past the cut; not an object). */
+export function planOf(data) {
+  if (!data || typeof data !== 'object') return null;
+  if (arr(data.artifacts).some((a) => a && a.kind === 'plan')) return true;
+  return data.truncated ? null : false;
+}
+/** A run group (GET /api/run-groups) → the group page's facts: { id, title, kind, members: [{pipelineId, title, case, pr, prUrl}], cost }.
+ *  A member without a store row (not started, or not in the store yet) has no case: never a working sample (F-a4-09). */
 export function groupOf(g, rowOf = () => null) {
   if (!g || typeof g !== 'object') return null;
   const members = arr(g.members).slice().sort((a, b) => (num(a.position) ?? 0) - (num(b.position) ?? 0)).map((m) => {
     const prUrl = str(m.pr?.url) || str(m.pr);
     const row = rowOf(str(m.pipelineId)) || {};
-    return { pipelineId: str(m.pipelineId), title: str(m.title) || str(row.title) || 'Untitled task', case: str(row.case) || 'working', pr: prUrl ? `#${prNumber(prUrl)}` : '', prUrl, cost: num(row.cost) ?? 0 };
+    return { pipelineId: str(m.pipelineId), title: str(m.title) || str(row.title) || 'Untitled task', case: str(row.case), pr: prUrl ? `#${prNumber(prUrl)}` : '', prUrl, cost: num(row.cost) ?? 0 };
   });
   return { id: str(g.id), title: str(g.title) || 'Untitled group', kind: g.kind === 'feature' ? 'Feature' : 'Group', members, cost: num(g.cost?.usd) ?? 0 };
 }

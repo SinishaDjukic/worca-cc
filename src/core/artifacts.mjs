@@ -22,7 +22,7 @@ import { harvestWork, WORK_ARTIFACT_KIND } from './no-project-work.mjs';
 import { updateRunManifest } from './run-manifest.mjs';
 import { listProjects, worcaHome, runOnboarded } from './projects.mjs';
 import { claimRunDir, claimRunExtras, shareFailureReason } from './agent-pool.mjs';
-import { branchExists, diffShortstat, anyPrHost, findPrForBranch, commitsAhead, withRefSnapshot } from './git-info.mjs';
+import { branchExists, diffShortstat, anyPrHost, findPrForBranch, lookupPrForBranch, commitsAhead, withRefSnapshot } from './git-info.mjs';
 import { getDb, tx } from './db.mjs';
 import { cleanOutcome } from './shape/rounds.mjs';
 import { rollupMemberPrs, workspaceMembers, changedFileCount } from './workspace-prs.mjs';
@@ -2464,7 +2464,24 @@ function wireRoundOf(m) {
     ...(outcome ? { outcome } : {}) };
 }
 
+// F-3-09: the run's workflow, read from the head of its stepper JSON. Parsing the whole stepper (~10 KB on a real
+// run) for every row made GET /api/history measurably slower, so SQL hands over only its first STEPPER_HEAD_CHARS.
+// buildGraphManifest (src/shared/graph/manifest.mjs) writes `{"version":2,"template":{"id":…,"name":…},…`, so the
+// template sits in that head; a head that is the whole stepper (a short one) is parsed in full; anything else has none.
+const STEPPER_HEAD_CHARS = 1024;
+const STEPPER_TEMPLATE_RE = /^\{"version":2,"template":(\{"id":"(?:[^"\\]|\\.)*","name":"(?:[^"\\]|\\.)*"\})/;
+function workflowOfStepperHead(head) {
+  if (typeof head !== 'string') return null;
+  try {
+    const m = STEPPER_TEMPLATE_RE.exec(head);
+    if (m) return JSON.parse(m[1]);
+    if (head.length < STEPPER_HEAD_CHARS) return JSON.parse(head)?.template ?? null;
+  } catch { /* invalid JSON: no workflow */ }
+  return null;
+}
+
 async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
+  const wf = workflowOfStepperHead(row.stepper_head);
   const branchObj = j(row.branch, null);
   const feature = branchObj?.feature ?? (typeof branchObj === 'string' ? branchObj : null);
   const source = branchObj?.source ?? null;
@@ -2504,6 +2521,10 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     // E2/2.3: the done-run caveat (open issues left by a forced loop, End not reached). Only on a v2 row.
     ...(row.open_issue_count ? { openIssueCount: Number(row.open_issue_count) } : {}),
     ...(row.end_reached === 0 ? { endReached: false } : row.end_reached === 1 ? { endReached: true } : {}),
+    // F-3-09: the run's workflow as it started (stepper.template); only listAllPipelines selects stepper_head, and a run
+    // with no template (old, v1, Auto bootstrap) carries neither key.
+    ...(typeof wf?.id === 'string' && wf.id.trim() ? { workflowId: wf.id } : {}),
+    ...(typeof wf?.name === 'string' && wf.name.trim() ? { workflowName: wf.name } : {}),
     retainedWork: retainedWorkFor(row),
     checkout: checkoutRecordsFor(row),
     baseCheck: baseCheckSummaryFor(row),
@@ -2558,15 +2579,22 @@ async function rowToHistoryEntry(row, repoDir = null, opts = {}) {
     // the unchanged primary-only lookup, pr_url first — never overwritten with null.
     // The fresh lookup wins over the stored row (a PR merged since the last refresh, or a newer PR for the branch);
     // stored fields (the CI verdict) are used only for the same URL. Persisting is the enrich path's job.
-    const found = (await anyPrHost())
-      ? await findPrForBranch({ projectDir: repoDir, head: feature, prUrl: row.pr_url || null, withVerdict: true })
-      : null;
+    // A failed lookup (quota, network) never reads as "no PR" (C-2): the stored PR, else the shared store's last, stale.
+    const res = (await anyPrHost())
+      ? await lookupPrForBranch({ projectDir: repoDir, head: feature, prUrl: row.pr_url || null, withVerdict: true,
+        runEndedAt: row.updated_at ? (Date.parse(row.updated_at) || null) : null })
+      : { ok: true, pr: null };
+    const found = keepMerged(res.ok ? res.pr : null, row.pr_url ? readPrState(row.id) : null);
     if (found) {
       const { verdict, ...fresh } = found;
       const stored = readPrState(row.id);
       entry.pr = { ...(stored && stored.url === fresh.url ? stored : {}), ...fresh, ...(verdict || {}),
         ...(watchActive(getWatch(fresh.url)) ? { fixing: true } : {}) };
-    } else entry.pr = null;
+    } else if (res.ok) entry.pr = null;
+    else {
+      const known = readPrState(row.id) || lastPr(res.last);
+      entry.pr = known ? { ...known, stale: true } : null;
+    }
   }
   return entry;
 }
@@ -2665,13 +2693,14 @@ async function listAllPipelinesNow(opts, { batchSize = 16 } = {}) {
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitEngine') AS limit_engine,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.limitResetAt') AS limit_reset_at,
            resume_point IS NOT NULL AS has_resume_point,
+           substr(stepper, 1, ${STEPPER_HEAD_CHARS}) AS stepper_head,
            ${RUN_ENGINE_SQL} AS run_engine,
            ${OUTCOME_NOTE_SQL}
     FROM pipelines
-    WHERE archived_at IS ${opts.archived ? 'NOT NULL' : 'NULL'} AND deleted_at IS NULL
+    WHERE archived_at IS ${opts.archived ? 'NOT NULL' : 'NULL'} AND deleted_at IS NULL${opts.id ? ' AND id = ?' : ''}
     ORDER BY COALESCE(updated_at, started_at) DESC, project_key, id
     LIMIT ?
-  `).all(Number.isInteger(opts.limit) && opts.limit > 0 ? opts.limit : -1); // -1 = unlimited (SQLite)
+  `).all(...(opts.id ? [opts.id] : []), Number.isInteger(opts.limit) && opts.limit > 0 ? opts.limit : -1); // -1 = unlimited (SQLite); opts.id: one row
 
   const metaCache = new Map(); // store key -> meta object (or null)
   const meta = (k) => {
@@ -2765,6 +2794,21 @@ export function countPipelines({ archived = false } = {}) {
   return row ? Number(row.n) : 0;
 }
 
+// enrichPipelinesPr's marker for a row left out of its batch (a failed lookup with nothing stored).
+const OMIT = Symbol('omit');
+
+/** A recorded MERGED is final (C1): a cached or late OPEN answer for the same PR URL never reopens it. */
+function keepMerged(found, stored) {
+  return found?.state === 'OPEN' && stored?.state === 'MERGED' && stored.url === found.url ? { ...found, state: 'MERGED' } : found;
+}
+
+/** A failed lookup's `last` (the shared PR-status store's answer) in the row shape: its verdict flattened, `fixing` added. */
+function lastPr(last) {
+  if (!last) return null;
+  const { verdict, ...pr } = last;
+  return { ...pr, ...(verdict || {}), ...(watchActive(getWatch(pr.url)) ? { fixing: true } : {}) };
+}
+
 /**
  * Re-walk the skeleton and resolve live PR state per branch, pushed to `onBatch`
  * in parallel batches. Each item sends ONLY `pr`: findPrForBranch's
@@ -2777,6 +2821,11 @@ export function countPipelines({ archived = false } = {}) {
  * spinner provably clears. A workspace item (a row WITH member facts) also carries
  * `members: [{ memberKey, pr }]`, each `pr` in the same shape; its `pr` is the rollup
  * of the open and merged ones.
+ * `null` means a lookup that succeeded and found no PR, never a failure (F-3-01). On a failed lookup
+ * (lookupPrForBranch ok:false: quota, network, gh error) nothing is persisted: the row resends its stored PR with
+ * `stale: true`, or is left out of the batch when nothing is stored. A failed member resends its stored PR stale
+ * (null when none); the rollup is then `stale` too, and a row whose every member failed with nothing stored is left
+ * out. `stale` is only ever present as `true`. A batch may hence be shorter than its slice, even empty.
  */
 export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
   if (!(await anyPrHost())) { await onBatch([], true); return; } // no PR host: one empty final batch
@@ -2792,18 +2841,35 @@ export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
       if (isWs(r)) {
         // Per member: pr_url-first lookup, positive observations persisted (+ rollup).
         const known = readMemberPrStates(r.id);
+        let failed = 0;
         const members = await Promise.all(r.members.map(async (m) => {
-          const pr = m.projectDir && m.branch
-            ? (await findPrForBranch({ projectDir: m.projectDir, head: m.branch, prUrl: known[m.memberKey]?.url || null, includeClosed: true })) || null
-            : null;
+          const res = m.projectDir && m.branch
+            ? await lookupPrForBranch({ projectDir: m.projectDir, head: m.branch, prUrl: known[m.memberKey]?.url || null, includeClosed: true, runEndedAt: r.mtime || null })
+            : { ok: true, pr: null };
+          if (!res.ok) {
+            // A failed member lookup resends its stored PR (else the shared store's last) stale, null when neither, and writes nothing.
+            failed++;
+            const stored = known[m.memberKey] || res.last || null;
+            return { memberKey: m.memberKey, pr: stored ? withFixing({ ...stored, stale: true }) : null };
+          }
+          const pr = res.pr || null;
           if (pr && pr.state !== 'CLOSED') persistMemberPrState(r.id, m.memberKey, pr);   // a closed PR is shown, never recorded
           return { memberKey: m.memberKey, pr: withFixing(pr) };
         }));
-        const pr = rollupMemberPrs(Object.fromEntries(members.filter((m) => m.pr).map((m) => [m.memberKey, m.pr])));
+        if (failed === members.length && !members.some((m) => m.pr)) return OMIT;
+        const rollup = rollupMemberPrs(Object.fromEntries(members.filter((m) => m.pr).map((m) => [m.memberKey, m.pr])));
+        const pr = rollup && failed ? { ...rollup, stale: true } : rollup;
         return { projectKey: r.projectKey, id: r.id, pr, members };
       }
       const prUrl = readPrState(r.id)?.url || null;
-      const found = (await findPrForBranch({ projectDir: r.projectDir, head: r.branch, prUrl, withVerdict: true, includeClosed: true })) || null;
+      const res = await lookupPrForBranch({ projectDir: r.projectDir, head: r.branch, prUrl, withVerdict: true, includeClosed: true, runEndedAt: r.mtime || null });
+      if (!res.ok) {
+        // A failed lookup is no evidence of "no PR": resend the last known PR (the DB's, else the shared store's) stale,
+        // or omit the row. Writes nothing; `res.last` is never persisted.
+        const known = readPrState(r.id) || lastPr(res.last);
+        return known ? { projectKey: r.projectKey, id: r.id, pr: { ...known, stale: true } } : OMIT;
+      }
+      const found = keepMerged(res.pr || null, prUrl ? readPrState(r.id) : null);
       // Positive observations only (null never clears). A closed PR is shown, never
       // recorded: pr_url keeps naming the open or merged PR the other readers act on.
       // The recorded PR itself closing is recorded, so it stops counting as open (a chain's ship ends, Create PR again).
@@ -2816,7 +2882,7 @@ export async function enrichPipelinesPr(onBatch, { batchSize = 16 } = {}) {
         ...(watchActive(getWatch(fresh.url)) ? { fixing: true } : {}) };
       return { projectKey: r.projectKey, id: r.id, pr };
     }));
-    await onBatch(items, i + batchSize >= targets.length); // (items, isFinal)
+    await onBatch(items.filter((it) => it !== OMIT), i + batchSize >= targets.length); // (items, isFinal)
   }
 }
 

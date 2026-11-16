@@ -5,6 +5,7 @@
 import { needsYou, needsYouItems, prNeedsOf, FAILED, roundMarkerOf } from '../../../../src/shared/needs-you.mjs';
 import { dayBucket } from '../../../../src/shared/day-buckets.mjs';
 import { pick } from './model-shape.mjs';
+import { repeatOf, atOf } from './schedule-rule.mjs';
 
 const lc = (v) => String(v || '').toLowerCase();
 const str = (v) => (typeof v === 'string' ? v : '');
@@ -45,7 +46,7 @@ const CALM_CASE = { created: 'starting', starting: 'starting', running: 'working
 // a PR that still stands (open or merged): a closed-unmerged one is gone, its run reads Ready again (Create PR)
 const prUrlOf = (pr) => (pr?.url && lc(pr.state) !== 'closed' ? str(pr.url) : '');
 // a saved row whose PR is still open: the rows the checks cache is read for (D5)
-const openPrOf = (row) => !!prUrlOf(row?.pr) && lc(row.pr.state || 'open') === 'open';
+const openPrOf = (row) => !!prUrlOf(row?.pr) && lc(row.pr.state) === 'open';   // F-G-G1-01: a PR of unknown state is not known open
 // D5: an open PR's case from its checks entry (task-live.mjs owns the cache; rows, cards and pages pass the same entry):
 // approved once the checks pass and it merges cleanly, conflicts, failing, else checks (still running). null = no entry.
 export function prCaseOf(checks) {
@@ -73,13 +74,14 @@ export function caseOf(item = {}, { checks = null } = {}) {
   if (s === 'done' && item.merged) return 'merged';
   // a finished run whose PR is open: In review (View PR), never Create PR again
   if (open) return 'checks';
-  // a finished run whose branch is still there and not in its base yet: Ready, its PR still to make (Create PR)
-  if (s === 'done' && item.branch && item.survived) return 'ready';
+  // a finished run whose branch is still there and not in its base yet: Ready, its PR still to make (Create PR); with no
+  // git remote, or no known base, Ready without Create PR (B1.7): no remote first, linking one is the first fix
+  if (s === 'done' && item.branch && item.survived) return item.noRemote ? 'no-remote' : item.noBase ? 'no-base' : 'ready';
   return CALM_CASE[s] || (item.kind === 'live' ? 'working' : 'finished-nogit');
 }
 /** A calm task whose state word would sort it into Needs you (Failed, Ready) is `over`: it sorts into Recent, as the
  *  demo's over runs (world.js sectionRaw), so its section stays dev's needsYouItems (D7). */
-export const overOf = (item = {}, c = caseOf(item)) => c === 'failed' || c === 'ready' ? !('needs' in item ? !!item.needs : needsYou(item)) : false;
+export const overOf = (item = {}, c = caseOf(item)) => c === 'failed' || c === 'ready' || c === 'no-remote' || c === 'no-base' ? !('needs' in item ? !!item.needs : needsYou(item)) : false;
 // ---- one short line (D6): Pulse's, the bell's and a task row's detail, at most 2 parts after the project ----
 /** A step's stage on the page and the card: Plan (clarify, plan, refine), Build (implement, test), else Review. */
 export function stageOfStep(step = {}) {
@@ -125,21 +127,29 @@ const detailOf = (r, ask) => (ask ? questionOf(r.pendingQuestion) : lc(r.status)
 // a finished task whose PR needs you says why: its failing checks or its conflicts (prCaseOf), never Finished
 const prLine = (c, checks) => { const n = num(checks?.checks?.failed); return c === 'failing' ? (n ? `${n} ${n === 1 ? 'check' : 'checks'} failing` : 'Checks failing') : c === 'conflicts' ? 'Conflicts with its base' : ''; };
 const labelsOf = (r) => (Array.isArray(r.labels) ? r.labels : []).map((l) => (typeof l === 'string' ? l : str(l?.name))).filter(Boolean);
+/** A base a PR can open into (B1.7 D2): a branch name; '' when empty or a commit SHA (dev records a SHA in
+ *  `branch.source` when the run started from a ref, src/core/run-harness.mjs). The page and the store judge it alike. */
+export const knownBase = (name) => (typeof name === 'string' && name.trim() && !/^[0-9a-f]{7,40}$/i.test(name.trim()) ? name : '');
+// a workspace task: its remote and base are per member (row.members[]), so its case keeps today's rule (B1.7 D14)
+const isWorkspace = (r) => r.kind === 'workspace-run' || r.target === 'workspace' || str(r.projectKey).startsWith('workspaces/') || Array.isArray(r.members);
 const kindOf = (r) => (r.kind === 'workspace-run' || r.target === 'workspace' ? 'Workspace' : r.workMode === 'folder' ? 'Folder' : 'Git');
 const byOf = (r) => str(r.startedBy) || str(r.startedBy?.name);
 const liveItem = (run) => ({ kind: 'live', status: run.status, ask: !!run.pendingQuestion, askKind: str(run.pendingQuestion?.kind), unread: !!run.unread, limitEngine: run.limitEngine, pauseReason: run.pauseReason, pipelineId: run.pipelineId || null });
 // a workspace row's own `survived` is its primary project's; each project's is in `members[]` (src/core/artifacts.mjs workspaceMemberFacts)
-const savedItem = (row) => ({ kind: 'hist', id: row.id, status: row.status, prNeeds: prNeedsOf(row), limitEngine: row.limitEngine, pauseReason: row.pauseReason, merged: lc(row.pr?.state) === 'merged' || row.mergeBack?.merged === true || !!row.inBase, branch: str(row.branch), survived: !!row.survived || (Array.isArray(row.members) && row.members.some((m) => m && m.survived)), pr: row.pr, mtime: row.mtime, startedAt: row.startedAt, roundOf: row.roundOf });
+// `sync`: the task's project's GET /api/sync/projects block; one loaded with no remote is no-remote (classic's recHasNoRemote),
+// none loaded is unknown and keeps Create PR (B1.7 D3)
+const savedItem = (row, { sync = null } = {}) => ({ kind: 'hist', id: row.id, status: row.status, prNeeds: prNeedsOf(row), limitEngine: row.limitEngine, pauseReason: row.pauseReason, merged: lc(row.pr?.state) === 'merged' || row.mergeBack?.merged === true || !!row.inBase, branch: str(row.branch), survived: !!row.survived || (Array.isArray(row.members) && row.members.some((m) => m && m.survived)), pr: row.pr, mtime: row.mtime, startedAt: row.startedAt, roundOf: row.roundOf,
+  noRemote: !isWorkspace(row) && !!sync && typeof sync === 'object' && !sync.remote, noBase: !isWorkspace(row) && !knownBase(row.sourceBranch) });
 
 /** A live run: a `hello.runs` entry or a `run-created` frame, patched by its frames (live-adapter.mjs). */
 export function taskOfLive(run = {}, { now = 0, projects = [], needs, checks = null } = {}) {
   const item = liveItem(run), it = needs === undefined ? item : { ...item, needs }, c = caseOf(it, { checks });
-  return pick('task', { id: str(run.runId), case: c, ...(overOf(it, c) ? { over: true } : {}), ...(lc(run.status) === 'interrupted' ? { interrupted: true } : {}), ...(lc(run.status) === 'paused' ? { paused: true } : {}), title: str(run.title) || 'Untitled task', project: str(run.projectName) || projectName(run.projectDir, projects), detail: detailOf(run, item.ask), time: timeOf(run.startedAt, now), day: dayOf(run.startedAt, now), labels: labelsOf(run), cost: num(run.totalCostUsd), archived: false, unread: !!run.unread, pr: '', group: '', kind: kindOf(run), by: byOf(run), workflow: '' });
+  return pick('task', { id: str(run.runId), case: c, ...(overOf(it, c) ? { over: true } : {}), ...(lc(run.status) === 'interrupted' ? { interrupted: true } : {}), ...(lc(run.status) === 'paused' ? { paused: true } : {}), title: str(run.title) || 'Untitled task', project: str(run.projectName) || projectName(run.projectDir, projects), detail: detailOf(run, item.ask), time: timeOf(run.startedAt, now), day: dayOf(run.startedAt, now), labels: labelsOf(run), cost: num(run.totalCostUsd), archived: false, unread: !!run.unread, pr: '', group: '', kind: kindOf(run), by: byOf(run), workflow: str(run.stepper?.template?.name) });
 }
 /** A saved run: a `GET /api/history` row. */
-export function taskOfSaved(row = {}, { now = 0, needs, checks = null } = {}) {
-  const item = savedItem(row), at = Number.isFinite(ms(row.mtime)) ? row.mtime : row.startedAt, it = needs === undefined ? item : { ...item, needs }, c = caseOf(it, { checks });
-  return pick('task', { id: str(row.id), case: c, ...(overOf(it, c) ? { over: true } : {}), ...(lc(row.status) === 'interrupted' ? { interrupted: true } : {}), ...(lc(row.status) === 'paused' ? { paused: true } : {}), title: str(row.title) || 'Untitled task', project: str(row.projectName), detail: lc(row.status) === 'paused' ? shortDetail(row) : prLine(c, checks) || DETAIL[lc(row.status)] || '', time: timeOf(at, now), day: dayOf(at, now), labels: labelsOf(row), cost: num(row.totalCostUsd), archived: !!row.archived, unread: false, pr: prUrlOf(row.pr), group: '', kind: kindOf(row), by: byOf(row), workflow: '' });
+export function taskOfSaved(row = {}, { now = 0, needs, checks = null, sync = null } = {}) {
+  const item = savedItem(row, { sync }), at = Number.isFinite(ms(row.mtime)) ? row.mtime : row.startedAt, it = needs === undefined ? item : { ...item, needs }, c = caseOf(it, { checks });
+  return pick('task', { id: str(row.id), case: c, ...(overOf(it, c) ? { over: true } : {}), ...(lc(row.status) === 'interrupted' ? { interrupted: true } : {}), ...(lc(row.status) === 'paused' ? { paused: true } : {}), title: str(row.title) || 'Untitled task', project: str(row.projectName), detail: lc(row.status) === 'paused' ? shortDetail(row) : prLine(c, checks) || DETAIL[lc(row.status)] || '', time: timeOf(at, now), day: dayOf(at, now), labels: labelsOf(row), cost: num(row.totalCostUsd), archived: !!row.archived, unread: false, pr: prUrlOf(row.pr), group: '', kind: kindOf(row), by: byOf(row), workflow: str(row.workflowName) });
 }
 
 // ---- chats ----
@@ -152,11 +162,18 @@ export function projectKeyOf(thread = {}) {
   const c = thread && typeof thread.context === 'object' ? thread.context : null;
   return c && c.pinned !== false ? str(c.projectKey) : '';
 }
-export function chatOf(thread = {}, { now = 0, unread = [], links = [], tasks = [], projects = [], livePids = new Map() } = {}) {
+/** The workspace a chat works in (F-G-G4-03): dev's context holds a projectKey, else a workspaceId (scope.mjs chatScopeOf);
+ *  '' when it is pinned to a project or to none. */
+export function workspaceIdOf(thread = {}) {
+  const c = thread && typeof thread.context === 'object' ? thread.context : null;
+  return c && c.pinned !== false && !str(c.projectKey) ? str(c.workspaceId) : '';
+}
+export function chatOf(thread = {}, { now = 0, unread = [], links = [], tasks = [], projects = [], livePids = new Map(), schedules = [], groups = [] } = {}) {
+  const featureIds = new Set(arr(groups).filter((g) => g && g.kind === 'feature').map((g) => g.id));
   const key = projectKeyOf(thread), project = key ? str(arr(projects).find((p) => p && p.key === key)?.name) || key : '';
   const state = thread.waiting ? 'needs-you' : thread.inFlight ? 'replying' : 'idle';
   const o = thread.origin && typeof thread.origin === 'object' ? { platform: str(thread.origin.platform) || str(thread.origin.plugin), label: str(thread.origin.label) } : null;
-  return pick('chat', { id: str(thread.id), title: str(thread.title) || 'New chat', state, kind: (thread.startedRuns || 0) > 0 ? 'started' : (thread.runLinks || 0) > 0 ? 'tracks' : 'chat', project, time: timeOf(thread.updatedAt, now), day: dayOf(thread.updatedAt, now), cost: num(thread.totals?.costUsd), pinned: !!thread.pinnedAt, archived: !!thread.archivedAt, unread: unread.includes(thread.id), group: str(thread.groupId), origin: o, rank: 0, labels: arr(thread.labels).filter((l) => typeof l === 'string'), tasks: chatTasks(str(thread.id), links, tasks, livePids) });
+  return pick('chat', { id: str(thread.id), title: str(thread.title) || 'New chat', state, kind: (thread.startedRuns || 0) > 0 ? 'started' : (thread.runLinks || 0) > 0 ? 'tracks' : 'chat', project, time: timeOf(thread.updatedAt, now), day: dayOf(thread.updatedAt, now), cost: num(thread.totals?.costUsd), pinned: !!thread.pinnedAt, archived: !!thread.archivedAt, unread: unread.includes(thread.id), group: str(thread.groupId), origin: o, rank: 0, labels: arr(thread.labels).filter((l) => typeof l === 'string'), tasks: [...chatTasks(str(thread.id), links, tasks, livePids, featureIds), ...chatSchedules(str(thread.id), schedules)] });
 }
 // A chat's task: the store's task (its id is the run id live, the pipeline id saved), as chats-model.js's chat tasks read.
 // Resume gives a run a new run id while its link keeps the first one: the live run holding the link's pipeline id
@@ -165,17 +182,31 @@ const taskOfLink = (l, tasks, livePids) => {
   const now = l.pipelineId ? livePids.get(l.pipelineId) : '';
   return (now && tasks.find((t) => t.id === now)) || tasks.find((t) => t.id === l.runId || (l.pipelineId && t.id === l.pipelineId));
 };
-function chatTasks(threadId, links, tasks, livePids = new Map()) {
-  const out = [];
+// an open PR offers Watch (chats-column.js); whether it is watched is dev's GET /api/pr/watch, read when it is toggled
+const chatTaskOf = (t, pid, o = {}) => ({ id: t.id, run: t.id, pid, title: t.title, case: t.case, detail: t.detail, project: t.project, ...(t.pr && t.case !== 'merged' ? { git: 'open' } : {}), ...o });
+// F-a2-03: a feature's other members are started by the scheduler, with no link: a chat holding one member lists them all
+function chatTasks(threadId, links, tasks, livePids = new Map(), featureIds = new Set()) {
+  const out = [], feats = [];
   for (const l of arr(links)) {
     if (!l || l.threadId !== threadId) continue;
     const t = taskOfLink(l, tasks, livePids);
     if (!t || out.some((x) => x.run === t.id)) continue;
-    // an open PR offers Watch (chats-column.js); whether it is watched is dev's GET /api/pr/watch, read when it is toggled
-    out.push({ id: t.id, run: t.id, pid: str(l.pipelineId) || t.id, title: t.title, case: t.case, detail: t.detail, project: t.project, ...(t.pr && t.case !== 'merged' ? { git: 'open' } : {}), ...(l.started ? {} : { followed: true }) });
+    const inFeature = featureIds.has(t.group);
+    out.push(chatTaskOf(t, str(l.pipelineId) || t.id, { ...(inFeature ? { group: t.group, pos: t.pos } : {}), ...(l.started ? {} : { followed: true }) }));
+    if (inFeature && !feats.includes(t.group)) feats.push(t.group);
+  }
+  // a live member's store id is its run id; dev's per-task acts take its pipeline id
+  const pidOf = new Map([...livePids].map(([pid, runId]) => [runId, pid]));
+  for (const gid of feats) {
+    for (const t of arr(tasks).filter((x) => x && x.group === gid).sort((a, b) => (a.pos ?? 0) - (b.pos ?? 0))) {
+      if (!out.some((x) => x.run === t.id)) out.push(chatTaskOf(t, pidOf.get(t.id) || t.id, { group: gid, pos: t.pos }));
+    }
   }
   return out;
 }
+// A schedule made from the chat (its `askThreadId`, scheduleOf's `chat`) is the chat's schedule task, as chats-model.js's
+// are; its card reads its word and why from RailSchedules
+const chatSchedules = (threadId, schedules) => arr(schedules).filter((s) => s && s.chat && s.chat === threadId).map((s) => ({ id: s.id, kind: 'schedule', title: s.title, time: s.time, detail: s.every }));
 /** The chat that started a run, by its run id or pipeline id: the first started link (the route answers oldest first);
  *  '' for a run a chat only follows or no chat linked. */
 export function chatOfRun(links = [], id = '') {
@@ -194,19 +225,48 @@ export function unreadOf(prev = [], frame = null, { openChat = '', hidden = fals
 
 // ---- schedules ----
 const PERIOD = { daily: 'today', weekly: 'this week', monthly: 'this month' };
-/** A schedule: a ticket (once) or a series (recurring) of `GET /api/schedules`. */
+// F-G-fid-03: a series has one time, its rule's wall time in its rule's zone (as its card and page say it), so its row's
+// clock is the rule's, never the instant's local clock; the day word stays the instant's
+const wallWord = (word, wall) => (wall && word ? word.replace(/\d{2}:\d{2}$/, wall) : word);
+// F-G-fid-04: the card's line under its title is what the schedule runs: the first line of its prompt, else its ticket source's task
+const whatOf = (sum) => { const o = sum && typeof sum === 'object' ? sum : {}; return str(o.prompt).split(/\r?\n/).map((l) => l.trim()).find(Boolean) || str(o.source?.title); };
+/** A schedule: a ticket (once) or a series (recurring) of `GET /api/schedules`, with the D10 fields the page reads. */
 export function scheduleOf(item = {}, { now = 0, projects = [] } = {}) {
-  const once = item.kind === 'once', missed = once && item.status === 'missed', paused = !once && item.status === 'paused';
-  const at = once ? item.runAt || item.scheduledFor : item.nextRunAt;
+  const once = item.kind === 'once', missed = once && item.status === 'missed', paused = !once && item.status === 'paused', ended = !once && item.status === 'ended';
+  const afterTitle = once && item.after ? str(item.after.title) || 'the run before it' : '';
+  const at = once ? (afterTitle ? null : item.runAt || item.scheduledFor) : item.nextRunAt;
+  const skip = !once && !paused && !ended && Number.isFinite(ms(item.skippedRunAt)) ? str(item.skippedRunAt) || new Date(item.skippedRunAt).toISOString() : '';
   const name = projects.find((p) => p && (p.key === item.projectKey || p.path === item.projectDir))?.name || baseName(item.projectDir);
-  return pick('schedule', { id: str(item.id), title: str(item.title) || 'A schedule', project: name, chat: str(item.askThreadId), every: once ? 'Once' : str(item.sentence), at: Number.isFinite(ms(at)) ? clock(ms(at)) : '', next: missed ? `Missed ${timeOf(at, now)}` : paused ? 'Paused' : at ? `Next ${nextWord(at, now)}` : '', ...(missed || paused ? {} : { day: whenOf(at, now) }), state: missed ? 'diverged' : paused ? 'paused' : 'scheduled', time: missed ? timeOf(at, now) : nextWord(at, now), section: missed ? 'needs' : paused ? 'paused' : 'next', labels: [], what: str(item.summary), cost: null, started: Number.isFinite(ms(item.createdAt)) ? dateWord(ms(item.createdAt)) : '', runs: [], ...(missed ? { missed: dateWord(ms(at)), missedWhy: str(item.failReason) || 'Worca was not running' } : {}), nextAt: missed || !Number.isFinite(ms(at)) ? null : ms(at) });
+  const word = once ? 'Once' : repeatOf(item.rule) || str(item.sentence);
+  // dev's own pause is 'user' (Paused by you); a series that paused itself says after how many failures, read after the word Paused (F-G-fid-05)
+  const streak = num(item.failureStreak) || num(item.maxFailures) || 0;
+  const why = !paused || !item.pauseReason || item.pauseReason === 'user' ? '' : item.pauseReason === 'failure_streak' ? `itself after ${streak} failure${streak === 1 ? '' : 's'} in a row` : str(item.pauseReason);
+  const next = missed ? `Missed ${timeOf(at, now)}` : paused ? (why ? 'Paused' : 'Paused by you') : ended ? '' : afterTitle ? `after ${afterTitle}` : skip ? 'Skips next time, then as usual' : at ? `Next ${wallWord(nextWord(at, now), !once && atOf(item.rule))}` : '';
+  return pick('schedule', { id: str(item.id), title: str(item.title) || 'A schedule', project: name, chat: str(item.askThreadId), every: word, at: (!once && atOf(item.rule)) || (Number.isFinite(ms(at)) ? clock(ms(at)) : ''), next, ...(missed || paused || ended ? {} : { day: whenOf(at, now) }), state: missed ? 'diverged' : paused ? 'paused' : ended ? 'ended' : 'scheduled', time: missed ? timeOf(at, now) : afterTitle ? 'after' : wallWord(nextWord(at, now), !once && atOf(item.rule)), section: missed ? 'needs' : paused ? 'paused' : ended ? 'ended' : 'next', labels: [], what: whatOf(item.summary), cost: null, started: Number.isFinite(ms(item.createdAt)) ? dateWord(ms(item.createdAt)) : '', runs: [], ...(missed ? { missed: dateWord(ms(at)), missedWhy: str(item.failReason) || 'Worca was not running' } : {}), nextAt: missed || ended || !Number.isFinite(ms(at)) ? null : ms(at),
+    skip, projectDir: str(item.projectDir), workspaceId: str(item.workspaceId), overlap: str(item.overlap), fails: num(item.maxFailures), ifMissed: str(item.ifMissed), tz: str(item.tz || item.rule?.tz), pauseWhy: why,
+    preset: item.presetId ? str(item.presetName) || 'preset deleted' : '', after: afterTitle, ended,
+    rule: !once && item.rule && typeof item.rule === 'object' ? item.rule : null, grace: num(item.graceMin) ?? null,
+    afterRef: once && item.after?.id ? { kind: str(item.after.kind), id: str(item.after.id), policy: str(item.after.policy) || 'done' } : null });
+}
+// a fire that never became a task reads as its ticket's case (run-page-model.js "A scheduled run before it is a run")
+const TICKET_CASE = { firing: 'ticket-firing', failed: 'ticket-failed', missed: 'ticket-missed', skipped: 'ticket-skipped', canceled: 'ticket-canceled' };
+/** A series' fires (the `history` of `GET /api/schedules/:id`, newest first) as the page's runs: a started fire is the
+ *  store's task with its pipeline id (its case, its words); one that never started, its ticket's case. A pending ticket is no fire. */
+export function runsOf(history = [], tasks = [], { now = 0 } = {}) {
+  const byId = new Map(arr(tasks).filter(Boolean).map((t) => [t.id, t]));
+  return arr(history).filter((t) => t && t.status !== 'scheduled').map((t) => {
+    const task = t.status === 'fired' ? byId.get(t.pipelineId) || byId.get(t.id) : null, when = ms(t.runAt);
+    const kase = task ? str(task.case) : t.status === 'fired' ? 'finished-nogit' : TICKET_CASE[t.status] || 'ticket-ended';
+    return { day: Number.isFinite(when) ? dayOf(when, now) : 'older', date: Number.isFinite(when) ? dateWord(when) : '', time: timeOf(when, now), title: str(t.title) || 'A schedule', case: kase, stage: 0,
+      git: kase === 'merged' ? 'merged' : /fail/.test(kase) ? 'fail' : 'branch', meta: task ? str(task.detail) : str(t.failReason), wid: task ? str(task.id) : str(t.id) };
+  });
 }
 // A ticket or series still to come, and a missed one, are rows of the store too (world.js `when`, `missed`): Pulse's
 // Scheduled and Needs you read them there, as the demo's waiting rows.
 function waitingTask(item, now, projects) {
   const once = item.kind === 'once', missed = once && item.status === 'missed', at = once ? item.runAt || item.scheduledFor : item.nextRunAt;
   const s = scheduleOf(item, { now, projects });
-  return pick('task', { id: `sched:${item.id}`, case: missed ? 'ticket-missed' : item.status === 'firing' ? 'ticket-firing' : 'scheduled', title: s.title, project: s.project, detail: missed ? 'Missed: it never started' : s.every, time: s.time, day: 'upcoming', labels: [], cost: null, archived: false, unread: false, pr: '', group: '', kind: 'Git', by: '', workflow: '', when: missed ? 'missed' : whenOf(at, now), ...(missed ? { missed: true } : {}) });
+  return pick('task', { id: `sched:${item.id}`, case: missed ? 'ticket-missed' : item.status === 'firing' ? 'ticket-firing' : 'scheduled', title: s.title, project: s.project, detail: missed ? 'Missed: it never started' : s.every, time: s.time, day: 'upcoming', labels: [], cost: null, archived: false, unread: false, pr: '', group: '', kind: 'Git', by: '', workflow: '', when: missed ? 'missed' : whenOf(at, now), ...(missed ? { missed: true } : {}), scheduleId: str(item.scheduleId) || str(item.id) });   // F-G-G5-02: the page it opens (a series' ticket opens its series)
 }
 
 // ---- projects ----
@@ -216,8 +276,11 @@ const ORIGIN_OF = { 'up-to-date': 'ok', ahead: 'ok', behind: 'behind', diverged:
 export function projectOf(project = {}, sync = null) {
   const git = project.vcs ? project.vcs === 'git' : project.workMode !== 'folder';
   const s = sync && typeof sync === 'object' ? sync : null, state = lc(s?.state);
-  const origin = project.exists === false ? 'missing' : !git ? 'folder' : s?.fetchError ? 'offline' : ORIGIN_OF[state] || 'ok';
-  return pick('project', { id: str(project.key), name: str(project.name) || str(project.key), kind: git ? 'Git' : 'Folder', path: str(project.displayPath) || str(project.path), ...(s?.base ? { branch: str(s.base), base: `${str(s.remote) || 'origin'}/${str(s.base)}` } : {}), origin, ...(s ? { ahead: num(s.ahead), behind: num(s.behind) } : {}), ...(s?.fetchedAt ? { checked: timeOf(s.fetchedAt, Date.parse(s.fetchedAt)) } : {}), needs: project.exists === false || state === 'behind' || state === 'diverged' });
+  // F-6-03: dev's block names its remote, null when the repository has none (src/core/project-sync.mjs)
+  const noRemote = !!s && 'remote' in s && s.remote == null;
+  // F-6-03: a loaded block with no remote is a project only on this computer (the prototype's `local`: Link a remote…)
+  const origin = project.exists === false ? 'missing' : !git ? 'folder' : s?.fetchError ? 'offline' : noRemote ? 'local' : ORIGIN_OF[state] || 'ok';
+  return pick('project', { id: str(project.key), name: str(project.name) || str(project.key), kind: git ? 'Git' : 'Folder', path: str(project.displayPath) || str(project.path), ...(s?.base ? { branch: str(s.base), ...(noRemote ? {} : { base: `${str(s.remote) || 'origin'}/${str(s.base)}` }) } : {}), origin, ...(s ? { ahead: num(s.ahead), behind: num(s.behind) } : {}), ...(s?.fetchedAt ? { checked: timeOf(s.fetchedAt, Date.parse(s.fetchedAt)) } : {}), needs: project.exists === false || state === 'behind' || state === 'diverged', autoSync: s ? s.settings?.beforeRun !== false : true, devPath: str(project.path), ownedFolder: project.ownedFolder === true, vcs: git ? 'git' : 'none' });
 }
 
 // ---- costs ----
@@ -255,10 +318,10 @@ const EVENTS = {
   'schedule.missed': ['schedules', 'problem'], 'schedule.failed': ['schedules', 'problem'], 'schedule.run_error': ['schedules', 'problem'], 'schedule.run_paused': ['schedules', 'problem'],
   'schedule.self_paused': ['schedules', 'problem'], 'schedule.late': ['schedules', 'info'], 'schedule.retrying': ['schedules', 'info'], 'schedule.skipped': ['schedules', 'info'],
   'schedule.canceled': ['schedules', 'info'], 'schedule.ended': ['schedules', 'info'], 'schedule.completed': ['schedules', 'info'],
-  'run.done': ['runs', 'info'], 'run.failed': ['runs', 'problem'], 'run.paused_limit': ['runs', 'problem'], 'run.paused_error': ['runs', 'problem'], 'run.cost_cap': ['runs', 'needs'],
+  'run.done': ['runs', 'info'], 'run.failed': ['runs', 'problem'], 'run.paused_limit': ['runs', 'problem'], 'run.paused_error': ['runs', 'problem'], 'run.paused_stopped': ['runs', 'problem'], 'run.cost_cap': ['runs', 'needs'],
 };
 const NOTIF_EVENT = { missed: 'schedule.missed', failed: 'schedule.failed', run_error: 'schedule.run_error', run_paused: 'schedule.run_paused', paused: 'schedule.self_paused', late: 'schedule.late', retrying: 'schedule.retrying', skipped: 'schedule.skipped', canceled: 'schedule.canceled', ended: 'schedule.ended', completed: 'schedule.completed' };
-const NAMES = { 'schedule.missed': 'Start missed', 'schedule.failed': 'Could not start', 'schedule.run_error': 'Scheduled run failed', 'schedule.run_paused': 'Run paused', 'schedule.self_paused': 'Series paused itself', 'schedule.late': 'Started late', 'schedule.retrying': 'Retrying a start', 'schedule.skipped': 'Start skipped', 'schedule.canceled': 'Start canceled', 'schedule.ended': 'Series ended', 'schedule.completed': 'Scheduled run finished', 'run.done': 'Run finished', 'run.failed': 'Task failed', 'run.paused_limit': 'Usage limit reached', 'run.paused_error': 'Paused on error', 'run.cost_cap': 'Cost cap reached' };
+const NAMES = { 'schedule.missed': 'Start missed', 'schedule.failed': 'Could not start', 'schedule.run_error': 'Scheduled run failed', 'schedule.run_paused': 'Run paused', 'schedule.self_paused': 'Series paused itself', 'schedule.late': 'Started late', 'schedule.retrying': 'Retrying a start', 'schedule.skipped': 'Start skipped', 'schedule.canceled': 'Start canceled', 'schedule.ended': 'Series ended', 'schedule.completed': 'Scheduled run finished', 'run.done': 'Run finished', 'run.failed': 'Task failed', 'run.paused_limit': 'Usage limit reached', 'run.paused_error': 'Paused on error', 'run.paused_stopped': 'Worca was stopped', 'run.cost_cap': 'Cost cap reached' };
 const updDay = (at, now) => { const d = dayOf(at, now); return d === 'today' ? 'Today' : d === 'yesterday' ? 'Yesterday' : 'Earlier'; };
 const update = (id, e, title, meta, at, now, o = {}) => ({ id, e, g: EVENTS[e][0], sev: EVENTS[e][1], title, meta, time: timeOf(at, now) || '', day: updDay(at, now), unread: EVENTS[e][1] !== 'info' && !o.read, go: o.go || 'runs', to: o.to || 'Tasks', ...(o.run ? { run: o.run } : {}), ...(o.about ? { about: o.about } : {}), ...(o.fix ? { fix: o.fix } : {}), ...(Number.isFinite(o.work) ? { work: o.work } : {}) });
 
@@ -284,8 +347,10 @@ export function updateOf(n = {}, { now = 0 } = {}) {
  *  same event, while a later write that is no new attempt (a smart title landing after the failure) keeps it (#1268). */
 export function updateOfOutcome(row = {}, { now = 0 } = {}) {
   const s = lc(row.status), at = Number.isFinite(ms(row.mtime)) ? row.mtime : row.startedAt;
-  const capped = s === 'paused' && COST.test(lc(row.pauseReason));
-  const e = s === 'done' ? 'run.done' : FAILED.has(s) ? 'run.failed' : capped ? 'run.cost_cap' : s === 'paused' ? (row.limitEngine ? 'run.paused_limit' : 'run.paused_error') : '';
+  const reason = lc(row.pauseReason), capped = s === 'paused' && !row.limitEngine && COST.test(reason);
+  // F-7a-06: a pause reads by its kind; one you made yourself (no reason) needs nothing from you, so it is no update
+  const pause = row.limitEngine || reason === 'usage_limit' ? 'run.paused_limit' : capped ? 'run.cost_cap' : reason === 'drain' ? 'run.paused_stopped' : reason ? 'run.paused_error' : '';
+  const e = s === 'done' ? 'run.done' : FAILED.has(s) ? 'run.failed' : s === 'paused' ? pause : '';
   if (!e) return null;
   const cap = capOf(row.pauseDetail), line = capped ? (cap ? `paused at $${cap}` : 'paused at its cap') : shortDetail(row);
   return update(`o${row.id}`, e, `${NAMES[e]} · ${str(row.title) || 'Untitled task'}`, [str(row.projectName), line].filter(Boolean).join(' · '), at, now, { go: 'run', to: 'the run page', run: str(row.id), fix: FAILED.has(s) ? 'Try again' : s === 'paused' ? 'Resume' : '', work: Number.isFinite(row.totalActiveMs) ? Math.round(row.totalActiveMs) : 0 });
@@ -346,7 +411,8 @@ export function foldRounds(runs, liveRuns = [], saved = [], needs = new Set()) {
   return runs;
 }
 
-/** Every source's answer into the store's parts. Archived rows go; a pipeline both live and saved is kept once, live.
+/** Every source's answer into the store's parts. History's archived rows go (the `archived` source's stay, archived); a
+ *  pipeline both live and saved is kept once, live.
  *  `checksOf(pipelineId)`: task-live.mjs's checks entry (D5), asked only for a row whose PR is open, so a row reads the
  *  same case as its page and its card (R-arch-11). */
 export function snapshotOf(src = {}, { now = 0, unread = [], checksOf = null } = {}) {
@@ -356,13 +422,15 @@ export function snapshotOf(src = {}, { now = 0, unread = [], checksOf = null } =
   const livePids = new Set(liveRuns.map((r) => r.pipelineId).filter(Boolean));
   const savedOnly = saved.filter((r) => !livePids.has(r.id));
   // Needs you is dev's rule over the same inputs the Runs badge counts (D6, D7)
-  const ny = needsYouItems({ live: liveRuns.map(liveItem).map((x, i) => ({ ...x, runId: liveRuns[i].runId })), history: savedOnly.map(savedItem) });
+  const ny = needsYouItems({ live: liveRuns.map(liveItem).map((x, i) => ({ ...x, runId: liveRuns[i].runId })), history: savedOnly.map((r) => savedItem(r)) });
   const needLive = new Set(ny.live.map((x) => x.runId)), needSaved = new Set(ny.history.map((x) => x.id));
-  const sched = src.schedules || {}, items = [...arr(sched.tickets), ...arr(sched.schedules)];
+  // F-a4-05: a series' own tickets (scheduleId set) are its next fires, which its series row already stands for: never a
+  // Schedules row, never a waiting row; a missed one stays a waiting row, as Pulse's Run now names it (updateOf)
+  const sched = src.schedules || {}, ownTickets = arr(sched.tickets).filter((t) => t && !t.scheduleId), items = [...ownTickets, ...arr(sched.schedules)];
   const runs = [
     ...liveRuns.map((r) => taskOfLive(r, { now, projects: projectsRaw, needs: needLive.has(r.runId) })),
-    ...savedOnly.map((r) => taskOfSaved(r, { now, needs: needSaved.has(r.id), checks: checksOf && openPrOf(r) ? checksOf(str(r.id), { pr: str(r.pr.url), projectKey: str(r.projectKey), projectDir: str(r.projectDir) }) || null : null })),
-    ...arr(sched.tickets).filter((t) => ['missed', 'scheduled', 'firing'].includes(t.status)).map((t) => waitingTask(t, now, projectsRaw)),
+    ...savedOnly.map((r) => taskOfSaved(r, { now, needs: needSaved.has(r.id), sync: syncs[r.projectKey] || null, checks: checksOf && openPrOf(r) ? checksOf(str(r.id), { pr: str(r.pr.url), projectKey: str(r.projectKey), projectDir: str(r.projectDir) }) || null : null })),
+    ...arr(sched.tickets).filter((t) => t && (t.scheduleId ? t.status === 'missed' : ['missed', 'scheduled', 'firing'].includes(t.status))).map((t) => waitingTask(t, now, projectsRaw)),
     ...arr(sched.schedules).filter((x) => x.status === 'active' && x.nextRunAt).map((x) => waitingTask(x, now, projectsRaw)),
   ];
   const outcomes = saved.filter((r) => now - ms(Number.isFinite(ms(r.mtime)) ? r.mtime : r.startedAt) < OUTCOME_DAYS * DAY).slice(0, OUTCOMES_MAX).map((r) => updateOfOutcome(r, { now })).filter(Boolean);
@@ -370,15 +438,21 @@ export function snapshotOf(src = {}, { now = 0, unread = [], checksOf = null } =
   const away = src.away || {};
   foldRounds(runs, liveRuns, saved, new Set([...needLive, ...needSaved]));
   const rowIdOf = new Map([...savedOnly.map((r) => [str(r.id), str(r.id)]), ...liveRuns.filter((r) => r.pipelineId).map((r) => [str(r.pipelineId), str(r.runId)])]);
-  const { groups, inGroup } = runGroupsOf(src.runGroups, runs, { now, rowIdOf });
+  const { groups, inGroup, members } = runGroupsOf(src.runGroups, runs, { now, rowIdOf });
+  runs.push(...members);
   for (const r of runs) { const gid = inGroup.get(r.id); if (gid) r.group = gid; }
+  // F-a4-07: the Archived view's rows (GET /api/history?archived=1). A pipeline is one row: live, then active, then archived.
+  // They are plain rows: no Needs you, outcome, group, round or chat reads them.
+  const heldPids = new Set([...livePids, ...saved.map((r) => r.id)]);
+  const archivedRuns = arr(src.archived?.pipelines).filter((r) => r && !heldPids.has(r.id)).map((r) => taskOfSaved({ ...r, archived: true }, { now, needs: false, sync: syncs[r.projectKey] || null }));
+  const schedules = items.filter((x) => x.kind === 'recurring' || ['missed', 'scheduled', 'firing'].includes(x.status)).map((x) => scheduleOf(x, { now, projects: projectsRaw }));
   return {
-    runs, groups, userGroups: [],
+    runs: archivedRuns.length ? [...runs, ...archivedRuns] : runs, groups, userGroups: [],
     // the Chats Needs-you number: the server's count over every thread, not the first page's rows
     chatsNeeds: num(src.threads?.counts?.needs),
-    chats: arr(src.threads?.threads).filter((t) => t && !t.archivedAt && !t.archived).map((t) => chatOf(t, { now, unread, links: arr(src.runLinks?.links), tasks: runs, projects: projectsRaw, livePids: new Map(liveRuns.filter((r) => r.pipelineId).map((r) => [r.pipelineId, str(r.runId)])) })),
+    chats: arr(src.threads?.threads).filter((t) => t && !t.archivedAt && !t.archived).map((t) => chatOf(t, { now, unread, links: arr(src.runLinks?.links), tasks: runs, projects: projectsRaw, livePids: new Map(liveRuns.filter((r) => r.pipelineId).map((r) => [r.pipelineId, str(r.runId)])), schedules, groups })),
     chatGroups: arr(src.groups?.groups).map((g) => ({ id: str(g.id), name: str(g.name), total: num(g.count) ?? 0 })),
-    schedules: items.filter((x) => x.kind === 'recurring' ? x.status !== 'ended' : ['missed', 'scheduled', 'firing'].includes(x.status)).map((x) => scheduleOf(x, { now, projects: projectsRaw })),
+    schedules,
     projects: projectsRaw.map((p) => projectOf(p, syncs[p.key] || null)),
     costs: costsOf(src.budget, liveRuns, { now, limits: src.usageLimits }),
     updates: [...notes, ...outcomes],
@@ -397,27 +471,51 @@ const PULSE_FOR_IDS = ['until-read', '10s', '1m', 'never'];
 
 /** dev's run groups (GET /api/run-groups) → the store's groups, and which task each member is (by its pipeline id, or
  *  the live run of it). A group's case is its tasks' (below); its page is
- *  #run/group:GID (task-live.mjs). A group none of whose members the store holds is left out. */
+ *  #run/group:GID (task-live.mjs). A group none of whose members the store holds is left out.
+ *  F-3-06: a member not started yet (no pipeline id) is a task too: its ticket's `sched:` row when the store holds it, else a
+ *  new one (`members`, which the caller adds to the store), as the demo's waiting slice (world.js `wait`). A feature's own
+ *  slice reads its slice title (dev's member `title`), never its run title. */
 const GROUP_WORKS = new Set(['starting', 'working']);
 export function runGroupsOf(src, runs, { now = 0, rowIdOf = new Map() } = {}) {
-  const inGroup = new Map(), groups = [];
+  const inGroup = new Map(), groups = [], members = [];
   const byPid = new Map(runs.map((r) => [r.id, r]));
   for (const g of arr(src?.groups)) {
-    const held = arr(g.members).map((m) => [m, rowIdOf.get(str(m.pipelineId)) || str(m.pipelineId)]).filter(([, id]) => byPid.has(id));
-    if (!held.length) continue;
-    for (const [, id] of held) inGroup.set(id, str(g.id));
+    const gid = str(g.id), list = arr(g.members).filter(Boolean);
+    const started = list.filter((m) => m.pipelineId).map((m) => [m, rowIdOf.get(str(m.pipelineId)) || str(m.pipelineId)]).filter(([, id]) => byPid.has(id));
+    const waiting = list.filter((m) => !m.pipelineId);
+    if (!started.length && !waiting.length) continue;
+    // a native member reads its slice title; an ad-hoc one (or one with none) keeps its run's
+    for (const [m, id] of started) if (!m.adhoc && str(m.title)) byPid.get(id).title = str(m.title);
+    const titleAt = (pos) => { const m = list.find((x) => num(x.position) === pos); const id = m?.pipelineId && (rowIdOf.get(str(m.pipelineId)) || str(m.pipelineId)); return (m && !m.adhoc && str(m.title)) || (id && byPid.get(id)?.title) || str(m?.title); };
+    const project = started.map(([, id]) => str(byPid.get(id).project)).find(Boolean) || '';
+    const held = [...started];
+    for (const m of waiting) {
+      const prev = num(m.after) != null ? titleAt(num(m.after)) : '';
+      const detail = prev ? `Starts when “${prev}” finishes` : 'Not started yet';
+      const row = m.ticketId ? byPid.get(`sched:${str(m.ticketId)}`) : null;
+      if (row) {
+        Object.assign(row, { title: str(m.title) || row.title, detail, when: 'after' });
+        held.push([m, row.id]);
+        continue;
+      }
+      const t = pick('task', { id: `member:${gid}:${num(m.position) ?? held.length + 1}`, case: TICKET_CASE[lc(m.ticket?.status)] || 'scheduled', title: str(m.title) || 'Untitled task', project, detail, time: '', day: 'upcoming', labels: [], cost: null, archived: false, unread: false, pr: '', group: '', kind: 'Git', by: '', workflow: '', when: 'after' });
+      members.push(t); byPid.set(t.id, t); held.push([m, t.id]);
+    }
+    held.sort(([a], [b]) => (num(a.position) ?? 0) - (num(b.position) ?? 0));
+    for (const [, id] of held) inGroup.set(id, gid);
     const ms = held.map(([, id]) => byPid.get(id));
     // a member put there by hand (dev's member `adhoc`): the list offers Remove from group (runs-list.js `adhoc`), at dev's position
     held.forEach(([src, id]) => { const m = byPid.get(id); m.adhoc = !!src.adhoc; m.pos = num(src.position) ?? 0; });
-    const at = arr(g.members).map((m) => m.startedAt).find(Boolean) || '';
+    const at = list.map((m) => m.startedAt).find(Boolean) || '';
     // the group reads as its tasks: 'feature' (Working) while one starts or works, else its first unmerged one's case in
     // stack order (an approved task alone in a group is Ready to merge, never Working), 'merged' once all merged
-    const next = held.slice().sort(([a], [b]) => (num(a.position) ?? 0) - (num(b.position) ?? 0)).map(([, id]) => byPid.get(id)).find((m) => m.case !== 'merged');
+    const next = ms.find((m) => m.case !== 'merged');
     const kase = !next ? 'merged' : ms.some((m) => GROUP_WORKS.has(m.case)) ? 'feature' : next.case;
-    groups.push(pick('group', { id: str(g.id), kind: g.kind === 'feature' ? 'feature' : 'user', case: kase, title: str(g.title) || 'Untitled group',
-      project: str(ms[0].project), time: ms[0].time || timeOf(at, now), day: ms[0].day || dayOf(at, now), cost: num(g.cost?.usd) }));
+    const first = ms.find((m) => m.project) || ms[0];
+    groups.push(pick('group', { id: gid, kind: g.kind === 'feature' ? 'feature' : 'user', case: kase, title: str(g.title) || 'Untitled group',
+      project: str(first.project), time: first.time || timeOf(at, now), day: first.day || dayOf(at, now), cost: num(g.cost?.usd) }));
   }
-  return { groups, inGroup };
+  return { groups, inGroup, members };
 }
 
 /** dev's workspaces (GET /api/workspaces; `maps`: each one's GET /api/workspaces/:id/map, absent when its read failed) →
@@ -426,21 +524,23 @@ export function runGroupsOf(src, runs, { now = 0, rowIdOf = new Map() } = {}) {
 // dev's live edges (src/shared/workspace-map/overrides.mjs LIVE_STATES: auto, confirmed, manual) plus a rejected one, which the
 // page keeps only to offer its Undo; stale and missing edges never draw, order or ask (dev's eval.mjs drops them too)
 const LINK_STATES = new Set(['auto', 'confirmed', 'manual', 'rejected']);
+// slice 9 D5/D15: where Worca read a link, `file:line` of its first evidence on the `from` side, or nothing
+const evidenceAtOf = (e) => { const ev = arr(e.evidence?.from)[0]; return ev && str(ev.file) ? { at: Number.isFinite(ev.line) ? `${str(ev.file)}:${ev.line}` : str(ev.file) } : {}; };
 export function spacesOf(src = null) {
   const maps = src?.maps && typeof src.maps === 'object' ? src.maps : {};
   return arr(src?.workspaces).filter((w) => w && str(w.id)).map((w) => {
     const exists = arr(w.exists), scannedAt = ms(w.mapSummary?.scannedAt);
     const links = arr(maps[w.id]?.edges).filter((e) => e && str(e.id) && str(e.from) && str(e.to) && LINK_STATES.has(str(e.state) || 'auto'))
-      .map((e) => ({ id: str(e.id), from: str(e.from), to: str(e.to), kind: str(e.kind), how: 'connects to', sure: str(e.confidence), state: str(e.state) || 'auto' }));
+      .map((e) => ({ id: str(e.id), from: str(e.from), to: str(e.to), kind: str(e.kind), how: 'connects to', sure: str(e.confidence), state: str(e.state) || 'auto', ...evidenceAtOf(e) }));
     return pick('space', { id: str(w.id), title: str(w.name) || 'A workspace', home: '', runs: null, scanned: Number.isFinite(scannedAt) ? dateWord(scannedAt) : 'never', model: '', about: str(w.description),
-      projects: arr(w.projectKeys).map((k, i) => [str(k), exists[i] === false ? 'missing' : 'ok']), links });
+      projects: arr(w.projectKeys).map((k, i) => [str(k), exists[i] === false ? 'missing' : 'ok']), links, paths: arr(w.projectPaths).map(str) });
   });
 }
 
 // What each source feeds: a refetch of one source replaces only these parts (D11).
 export const SOURCE_PARTS = Object.freeze({
-  hello: ['runs', 'costs', 'chats', 'groups'], history: ['runs', 'updates', 'chats', 'groups'], threads: ['chats', 'chatsNeeds'], runLinks: ['chats'], groups: ['chatGroups'], runGroups: ['groups', 'runs'], schedules: ['schedules', 'runs'],
-  projects: ['projects', 'runs'], sync: ['projects'], budget: ['costs'], usageLimits: ['costs'], workspaces: ['spaces'], actions: ['actions'], notifications: ['updates'], away: ['away'], settings: ['keep', 'chatPrefs', 'pulseFor'],
+  hello: ['runs', 'costs', 'chats', 'groups'], archived: ['runs'], history: ['runs', 'updates', 'chats', 'groups'], threads: ['chats', 'chatsNeeds'], runLinks: ['chats'], groups: ['chatGroups'], runGroups: ['groups', 'runs', 'chats'], schedules: ['schedules', 'runs', 'groups', 'chats'],
+  projects: ['projects', 'runs'], sync: ['projects', 'runs', 'chats', 'groups'], budget: ['costs'], usageLimits: ['costs'], workspaces: ['spaces'], actions: ['actions'], notifications: ['updates'], away: ['away'], settings: ['keep', 'chatPrefs', 'pulseFor'],
 });
 /** The parts a single-source refetch replaces: `answer` stands for `source` among the last answers `sources`. */
 export function partOf(source, answer, sources = {}, { now = 0, unread = [], checksOf = null } = {}) {

@@ -78,6 +78,14 @@ test('GET /api/workflows lists the built-in default first (7-node graph, then wf
   ]);
 });
 
+test('GET /api/workflow-usage answers 200 {usage} (Stillhet Workflows figures; never swallowed by /:id)', async () => {
+  const r = await fetch(`${base}/api/workflow-usage`);
+  assert.equal(r.status, 200);
+  const j = await r.json();
+  assert.equal(typeof j.usage, 'object');
+  assert.ok(j.usage && !Array.isArray(j.usage));
+});
+
 test('POST /api/workflows creates a valid template -> 201, then it lists', async () => {
   const r = await fetch(`${base}/api/workflows`, {
     method: 'POST', headers: JSONH,

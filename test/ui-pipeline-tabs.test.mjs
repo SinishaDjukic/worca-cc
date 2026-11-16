@@ -261,3 +261,22 @@ test('run-created broadcast lists the run under its project without a reload', a
   assert.equal(row.closest('.runs-sec').dataset.section, 'running', 'listed under Running without a reload');
   assert.equal(window.document.querySelector('#nav-running-count').textContent, '1');
 });
+
+// F-7a-02 (server part): the server now sends { type: 'run-pipeline', runId, pipelineId } after the first state frame that
+// names the pipeline. Classic app.js does not read it yet: the frame must change nothing (no phantom row, no status reset).
+test('F-7a-02 classic: a run-pipeline frame after run-created and state changes nothing', async () => {
+  const { window, recv } = await boot();
+  recv({ type: 'hello', runs: [] });
+  recv({ type: 'run-created', runId: 'fresh', title: 'fresh run', projectDir: PROJECT, kind: 'run', status: 'starting', startedAt: '10:00:00' });
+  recv({ type: 'state', runId: 'fresh', id: 'pl_fresh', status: 'running' });
+  await showRuns(window);
+  const doc = window.document;
+  const before = { list: doc.querySelector('#runs-list').innerHTML, badge: doc.querySelector('#nav-running-count').textContent,
+    rows: doc.querySelectorAll('#runs-list a.runs-row').length };
+  assert.ok(groupRow(doc, 'fresh'), 'the run is listed before the frame');
+  recv({ type: 'run-pipeline', runId: 'fresh', pipelineId: 'pl_fresh' });
+  await settle();
+  assert.equal(doc.querySelectorAll('#runs-list a.runs-row').length, before.rows, 'no phantom row');
+  assert.equal(doc.querySelector('#nav-running-count').textContent, before.badge);
+  assert.equal(doc.querySelector('#runs-list').innerHTML, before.list, 'the list markup is identical');
+});

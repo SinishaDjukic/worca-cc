@@ -1,0 +1,1536 @@
+{
+ "pages": {
+  "spend": {
+   "T": {
+    "spend": 412,
+    "hours": 47,
+    "saved": 1233,
+    "tasks": 49
+   },
+   "P": {
+    "spend": 323,
+    "hours": 36,
+    "saved": 944,
+    "tasks": 36
+   },
+   "v": 412,
+   "p": 323,
+   "labels": [
+    "Nov 1",
+    "Nov 2",
+    "Nov 3",
+    "Nov 4",
+    "Nov 5",
+    "Nov 6",
+    "Nov 7",
+    "Nov 8"
+   ],
+   "days": 8,
+   "points": [
+    38,
+    61,
+    22,
+    74,
+    55,
+    9,
+    93,
+    60
+   ],
+   "before": [
+    29,
+    44,
+    30,
+    51,
+    40,
+    14,
+    66,
+    49
+   ],
+   "timeWord": "this month",
+   "rowCount": 4,
+   "rows": [
+    {
+     "name": "billing-api",
+     "spend": 186,
+     "hours": 21,
+     "saved": 549,
+     "tasks": 22
+    },
+    {
+     "name": "web-app",
+     "spend": 131,
+     "hours": 14,
+     "saved": 359,
+     "tasks": 16
+    },
+    {
+     "name": "worca-cc",
+     "spend": 72,
+     "hours": 9,
+     "saved": 243,
+     "tasks": 8
+    },
+    {
+     "name": "docs-site",
+     "spend": 23,
+     "hours": 3,
+     "saved": 82,
+     "tasks": 3
+    }
+   ]
+  },
+  "per-task": {
+   "T": {
+    "spend": 412,
+    "hours": 47,
+    "saved": 1233,
+    "tasks": 49
+   },
+   "P": {
+    "spend": 323,
+    "hours": 36,
+    "saved": 944,
+    "tasks": 36
+   },
+   "v": 8.408163265306122,
+   "p": 8.972222222222221,
+   "labels": [
+    "Nov 1",
+    "Nov 2",
+    "Nov 3",
+    "Nov 4",
+    "Nov 5",
+    "Nov 6",
+    "Nov 7",
+    "Nov 8"
+   ],
+   "days": 8,
+   "points": [
+    7.6,
+    7.625,
+    11,
+    8.222222222222221,
+    7.857142857142857,
+    9,
+    8.454545454545455,
+    10
+   ],
+   "before": [
+    9.666666666666666,
+    8.8,
+    10,
+    8.5,
+    8,
+    7,
+    9.428571428571429,
+    9.8
+   ],
+   "timeWord": "this month",
+   "rowCount": 4,
+   "rows": [
+    {
+     "name": "billing-api",
+     "spend": 186,
+     "hours": 21,
+     "saved": 549,
+     "tasks": 22
+    },
+    {
+     "name": "web-app",
+     "spend": 131,
+     "hours": 14,
+     "saved": 359,
+     "tasks": 16
+    },
+    {
+     "name": "worca-cc",
+     "spend": 72,
+     "hours": 9,
+     "saved": 243,
+     "tasks": 8
+    },
+    {
+     "name": "docs-site",
+     "spend": 23,
+     "hours": 3,
+     "saved": 82,
+     "tasks": 3
+    }
+   ]
+  },
+  "why": {
+   "T": {
+    "spend": 131,
+    "tasks": 30
+   },
+   "P": {
+    "spend": 74,
+    "tasks": 20
+   },
+   "v": 131,
+   "p": 74,
+   "labels": [
+    "Nov 1",
+    "Nov 2",
+    "Nov 3",
+    "Nov 4",
+    "Nov 5",
+    "Nov 6",
+    "Nov 7",
+    "Nov 8"
+   ],
+   "days": 8,
+   "points": [
+    12,
+    21,
+    4,
+    28,
+    16,
+    2,
+    31,
+    17
+   ],
+   "before": [
+    7,
+    12,
+    8,
+    11,
+    9,
+    4,
+    14,
+    9
+   ],
+   "timeWord": "this month",
+   "rowCount": 4,
+   "rows": [
+    {
+     "name": "Review sent it back",
+     "spend": 69,
+     "tasks": 11
+    },
+    {
+     "name": "Failed or stopped tasks",
+     "spend": 33,
+     "tasks": 6
+    },
+    {
+     "name": "Retries",
+     "spend": 18,
+     "tasks": 9
+    },
+    {
+     "name": "PR fix rounds",
+     "spend": 11,
+     "tasks": 4
+    }
+   ]
+  },
+  "budget": {
+   "T": {
+    "spend": 412,
+    "hours": 47,
+    "saved": 1233,
+    "tasks": 49
+   },
+   "P": {
+    "spend": 323,
+    "hours": 36,
+    "saved": 944,
+    "tasks": 36
+   },
+   "v": 412,
+   "p": 323,
+   "labels": [
+    "Nov 1",
+    "Nov 2",
+    "Nov 3",
+    "Nov 4",
+    "Nov 5",
+    "Nov 6",
+    "Nov 7",
+    "Nov 8"
+   ],
+   "days": 8,
+   "points": [
+    38,
+    61,
+    22,
+    74,
+    55,
+    9,
+    93,
+    60
+   ],
+   "before": [
+    29,
+    44,
+    30,
+    51,
+    40,
+    14,
+    66,
+    49
+   ],
+   "timeWord": "this month",
+   "rowCount": 4,
+   "rows": [
+    {
+     "name": "billing-api",
+     "spend": 186,
+     "hours": 21,
+     "saved": 549,
+     "tasks": 22
+    },
+    {
+     "name": "web-app",
+     "spend": 131,
+     "hours": 14,
+     "saved": 359,
+     "tasks": 16
+    },
+    {
+     "name": "worca-cc",
+     "spend": 72,
+     "hours": 9,
+     "saved": 243,
+     "tasks": 8
+    },
+    {
+     "name": "docs-site",
+     "spend": 23,
+     "hours": 3,
+     "saved": 82,
+     "tasks": 3
+    }
+   ]
+  },
+  "time-saved": {
+   "T": {
+    "spend": 412,
+    "hours": 47,
+    "saved": 1233,
+    "tasks": 49
+   },
+   "P": {
+    "spend": 323,
+    "hours": 36,
+    "saved": 944,
+    "tasks": 36
+   },
+   "v": 1233,
+   "p": 944,
+   "labels": [
+    "Nov 1",
+    "Nov 2",
+    "Nov 3",
+    "Nov 4",
+    "Nov 5",
+    "Nov 6",
+    "Nov 7",
+    "Nov 8"
+   ],
+   "days": 8,
+   "points": [
+    105,
+    184,
+    79,
+    210,
+    157,
+    26,
+    262,
+    210
+   ],
+   "before": [
+    79,
+    131,
+    79,
+    157,
+    131,
+    52,
+    184,
+    131
+   ],
+   "timeWord": "this month",
+   "rowCount": 4,
+   "rows": [
+    {
+     "name": "billing-api",
+     "spend": 186,
+     "hours": 21,
+     "saved": 549,
+     "tasks": 22
+    },
+    {
+     "name": "web-app",
+     "spend": 131,
+     "hours": 14,
+     "saved": 359,
+     "tasks": 16
+    },
+    {
+     "name": "worca-cc",
+     "spend": 72,
+     "hours": 9,
+     "saved": 243,
+     "tasks": 8
+    },
+    {
+     "name": "docs-site",
+     "spend": 23,
+     "hours": 3,
+     "saved": 82,
+     "tasks": 3
+    }
+   ]
+  },
+  "value": {
+   "T": {
+    "spend": 412,
+    "hours": 47,
+    "saved": 1233,
+    "tasks": 49
+   },
+   "P": {
+    "spend": 323,
+    "hours": 36,
+    "saved": 944,
+    "tasks": 36
+   },
+   "v": 2.9927184466019416,
+   "p": 2.9226006191950464,
+   "labels": [
+    "Nov 1",
+    "Nov 2",
+    "Nov 3",
+    "Nov 4",
+    "Nov 5",
+    "Nov 6",
+    "Nov 7",
+    "Nov 8"
+   ],
+   "days": 8,
+   "points": [
+    2.763157894736842,
+    3.0163934426229506,
+    3.590909090909091,
+    2.8378378378378377,
+    2.8545454545454545,
+    2.888888888888889,
+    2.817204301075269,
+    3.5
+   ],
+   "before": [
+    2.7241379310344827,
+    2.977272727272727,
+    2.6333333333333333,
+    3.0784313725490198,
+    3.275,
+    3.7142857142857144,
+    2.787878787878788,
+    2.673469387755102
+   ],
+   "timeWord": "this month",
+   "rowCount": 4,
+   "rows": [
+    {
+     "name": "billing-api",
+     "spend": 186,
+     "hours": 21,
+     "saved": 549,
+     "tasks": 22
+    },
+    {
+     "name": "web-app",
+     "spend": 131,
+     "hours": 14,
+     "saved": 359,
+     "tasks": 16
+    },
+    {
+     "name": "worca-cc",
+     "spend": 72,
+     "hours": 9,
+     "saved": 243,
+     "tasks": 8
+    },
+    {
+     "name": "docs-site",
+     "spend": 23,
+     "hours": 3,
+     "saved": 82,
+     "tasks": 3
+    }
+   ]
+  },
+  "ends": {
+   "T": {
+    "finished": 43,
+    "failed": 4,
+    "stopped": 2
+   },
+   "P": {
+    "finished": 31,
+    "failed": 4,
+    "stopped": 1
+   },
+   "v": 43,
+   "p": 31,
+   "labels": [
+    "Nov 1",
+    "Nov 2",
+    "Nov 3",
+    "Nov 4",
+    "Nov 5",
+    "Nov 6",
+    "Nov 7",
+    "Nov 8"
+   ],
+   "days": 8,
+   "points": [
+    5,
+    7,
+    2,
+    8,
+    6,
+    1,
+    9,
+    5
+   ],
+   "before": [
+    3,
+    4,
+    3,
+    5,
+    4,
+    2,
+    6,
+    4
+   ],
+   "timeWord": "this month",
+   "rowCount": 4,
+   "rows": [
+    {
+     "name": "worca-cc",
+     "finished": 20,
+     "failed": 1,
+     "stopped": 1
+    },
+    {
+     "name": "web-app",
+     "finished": 12,
+     "failed": 2,
+     "stopped": 0
+    },
+    {
+     "name": "billing-api",
+     "finished": 10,
+     "failed": 1,
+     "stopped": 1
+    },
+    {
+     "name": "docs-site",
+     "finished": 1,
+     "failed": 0,
+     "stopped": 0
+    }
+   ]
+  },
+  "review": {
+   "T": {
+    "rounds": 53,
+    "tasks": 38,
+    "reviews": 71,
+    "fixed": 78,
+    "disputed": 9,
+    "open": 3,
+    "first": 27
+   },
+   "P": {
+    "rounds": 43,
+    "tasks": 31,
+    "reviews": 58,
+    "fixed": 63,
+    "disputed": 7,
+    "open": 2,
+    "first": 22
+   },
+   "v": 1.394736842105263,
+   "p": 1.3870967741935485,
+   "labels": [
+    "Nov 1",
+    "Nov 2",
+    "Nov 3",
+    "Nov 4",
+    "Nov 5",
+    "Nov 6",
+    "Nov 7",
+    "Nov 8"
+   ],
+   "days": 8,
+   "points": [
+    1.5,
+    1.3333333333333333,
+    1.5,
+    1.5714285714285714,
+    1.4,
+    1,
+    1.25,
+    1.4
+   ],
+   "before": [
+    1.3333333333333333,
+    1.5,
+    1.3333333333333333,
+    1.4,
+    1.5,
+    1.5,
+    1.3333333333333333,
+    1.25
+   ],
+   "timeWord": "this month",
+   "rowCount": 4,
+   "rows": [
+    {
+     "name": "worca-cc",
+     "rounds": 16,
+     "tasks": 12,
+     "reviews": 26,
+     "fixed": 26,
+     "disputed": 4,
+     "open": 0,
+     "first": 10
+    },
+    {
+     "name": "web-app",
+     "rounds": 21,
+     "tasks": 14,
+     "reviews": 24,
+     "fixed": 29,
+     "disputed": 3,
+     "open": 2,
+     "first": 8
+    },
+    {
+     "name": "billing-api",
+     "rounds": 15,
+     "tasks": 11,
+     "reviews": 20,
+     "fixed": 22,
+     "disputed": 2,
+     "open": 1,
+     "first": 8
+    },
+    {
+     "name": "docs-site",
+     "rounds": 1,
+     "tasks": 1,
+     "reviews": 1,
+     "fixed": 1,
+     "disputed": 0,
+     "open": 0,
+     "first": 1
+    }
+   ]
+  },
+  "fails": {
+   "T": {
+    "count": 6,
+    "spend": 33
+   },
+   "P": {
+    "count": 5,
+    "spend": 27
+   },
+   "v": 6,
+   "p": 5,
+   "labels": [
+    "Nov 1",
+    "Nov 2",
+    "Nov 3",
+    "Nov 4",
+    "Nov 5",
+    "Nov 6",
+    "Nov 7",
+    "Nov 8"
+   ],
+   "days": 8,
+   "points": [
+    0,
+    1,
+    0,
+    1,
+    1,
+    0,
+    2,
+    1
+   ],
+   "before": [
+    1,
+    0,
+    1,
+    1,
+    0,
+    0,
+    1,
+    1
+   ],
+   "timeWord": "this month",
+   "rowCount": 4,
+   "rows": [
+    {
+     "name": "Plan",
+     "count": 1,
+     "spend": 6
+    },
+    {
+     "name": "Build",
+     "count": 3,
+     "spend": 17
+    },
+    {
+     "name": "Review",
+     "count": 1,
+     "spend": 6
+    },
+    {
+     "name": "PR",
+     "count": 1,
+     "spend": 4
+    }
+   ]
+  },
+  "autonomy": {
+   "T": {
+    "alone": 32,
+    "tasks": 49
+   },
+   "P": {
+    "alone": 23,
+    "tasks": 36
+   },
+   "v": 0.6530612244897959,
+   "p": 0.6388888888888888,
+   "labels": [
+    "Nov 1",
+    "Nov 2",
+    "Nov 3",
+    "Nov 4",
+    "Nov 5",
+    "Nov 6",
+    "Nov 7",
+    "Nov 8"
+   ],
+   "days": 8,
+   "points": [
+    0.8,
+    0.75,
+    0.5,
+    0.6666666666666666,
+    0.5714285714285714,
+    1,
+    0.5454545454545454,
+    0.6666666666666666
+   ],
+   "before": [
+    0.6666666666666666,
+    0.6,
+    0.6666666666666666,
+    0.6666666666666666,
+    0.6,
+    0.5,
+    0.7142857142857143,
+    0.6
+   ],
+   "timeWord": "this month",
+   "rowCount": 4,
+   "rows": [
+    {
+     "name": "worca-cc",
+     "alone": 13,
+     "tasks": 20
+    },
+    {
+     "name": "billing-api",
+     "alone": 10,
+     "tasks": 15
+    },
+    {
+     "name": "web-app",
+     "alone": 8,
+     "tasks": 12
+    },
+    {
+     "name": "docs-site",
+     "alone": 1,
+     "tasks": 2
+    }
+   ]
+  },
+  "cache": {
+   "T": {
+    "read": 155,
+    "input": 254
+   },
+   "P": {
+    "read": 110,
+    "input": 202
+   },
+   "v": 0.610236220472441,
+   "p": 0.5445544554455446,
+   "labels": [
+    "Nov 1",
+    "Nov 2",
+    "Nov 3",
+    "Nov 4",
+    "Nov 5",
+    "Nov 6",
+    "Nov 7",
+    "Nov 8"
+   ],
+   "days": 8,
+   "points": [
+    0.6086956521739131,
+    0.6052631578947368,
+    0.5714285714285714,
+    0.6222222222222222,
+    0.6176470588235294,
+    0.5,
+    0.6140350877192983,
+    0.6216216216216216
+   ],
+   "before": [
+    0.5,
+    0.5357142857142857,
+    0.5263157894736842,
+    0.5625,
+    0.56,
+    0.5555555555555556,
+    0.5609756097560976,
+    0.5333333333333333
+   ],
+   "timeWord": "this month",
+   "rowCount": 3,
+   "rows": [
+    {
+     "name": "Opus 5.5",
+     "read": 88,
+     "input": 132
+    },
+    {
+     "name": "Sonnet 5.5",
+     "read": 56,
+     "input": 98
+    },
+    {
+     "name": "Haiku 5",
+     "read": 11,
+     "input": 24
+    }
+   ]
+  },
+  "shipped": {
+   "T": {
+    "prs": 27,
+    "days": 567
+   },
+   "P": {
+    "prs": 21,
+    "days": 515
+   },
+   "v": 27,
+   "p": 21,
+   "labels": [
+    "Nov 1",
+    "Nov 2",
+    "Nov 3",
+    "Nov 4",
+    "Nov 5",
+    "Nov 6",
+    "Nov 7",
+    "Nov 8"
+   ],
+   "days": 8,
+   "points": [
+    2,
+    4,
+    1,
+    5,
+    3,
+    0,
+    7,
+    5
+   ],
+   "before": [
+    2,
+    3,
+    1,
+    4,
+    3,
+    1,
+    4,
+    3
+   ],
+   "timeWord": "this month",
+   "rowCount": 4,
+   "rows": [
+    {
+     "name": "billing-api",
+     "prs": 12,
+     "days": 252
+    },
+    {
+     "name": "web-app",
+     "prs": 9,
+     "days": 189
+    },
+    {
+     "name": "worca-cc",
+     "prs": 5,
+     "days": 110
+    },
+    {
+     "name": "docs-site",
+     "prs": 1,
+     "days": 16
+    }
+   ]
+  },
+  "merge": {
+   "T": {
+    "prs": 27,
+    "days": 567
+   },
+   "P": {
+    "prs": 21,
+    "days": 515
+   },
+   "v": 21,
+   "p": 24.523809523809526,
+   "labels": [
+    "Nov 1",
+    "Nov 2",
+    "Nov 3",
+    "Nov 4",
+    "Nov 5",
+    "Nov 6",
+    "Nov 7",
+    "Nov 8"
+   ],
+   "days": 8,
+   "points": [
+    20,
+    22,
+    22,
+    21,
+    20.666666666666668,
+    null,
+    21.428571428571427,
+    20
+   ],
+   "before": [
+    25,
+    24,
+    28,
+    25,
+    25,
+    30,
+    23,
+    22.666666666666668
+   ],
+   "timeWord": "this month",
+   "rowCount": 4,
+   "rows": [
+    {
+     "name": "billing-api",
+     "prs": 12,
+     "days": 252
+    },
+    {
+     "name": "web-app",
+     "prs": 9,
+     "days": 189
+    },
+    {
+     "name": "worca-cc",
+     "prs": 5,
+     "days": 110
+    },
+    {
+     "name": "docs-site",
+     "prs": 1,
+     "days": 16
+    }
+   ]
+  },
+  "throughput": {
+   "T": {
+    "finished": 43
+   },
+   "P": {
+    "finished": 31
+   },
+   "v": 43,
+   "p": 31,
+   "labels": [
+    "Nov 1",
+    "Nov 2",
+    "Nov 3",
+    "Nov 4",
+    "Nov 5",
+    "Nov 6",
+    "Nov 7",
+    "Nov 8"
+   ],
+   "days": 8,
+   "points": [
+    5,
+    7,
+    2,
+    8,
+    6,
+    1,
+    9,
+    5
+   ],
+   "before": [
+    3,
+    4,
+    3,
+    5,
+    4,
+    2,
+    6,
+    4
+   ],
+   "timeWord": "this month",
+   "rowCount": 4,
+   "rows": [
+    {
+     "name": "worca-cc",
+     "finished": 20
+    },
+    {
+     "name": "web-app",
+     "finished": 12
+    },
+    {
+     "name": "billing-api",
+     "finished": 10
+    },
+    {
+     "name": "docs-site",
+     "finished": 1
+    }
+   ]
+  },
+  "waiting": {
+   "T": {
+    "waits": 31,
+    "mins": 558
+   },
+   "P": {
+    "waits": 25,
+    "mins": 600
+   },
+   "v": 18,
+   "p": 24,
+   "labels": [
+    "Nov 1",
+    "Nov 2",
+    "Nov 3",
+    "Nov 4",
+    "Nov 5",
+    "Nov 6",
+    "Nov 7",
+    "Nov 8"
+   ],
+   "days": 8,
+   "points": [
+    14,
+    21,
+    15,
+    21,
+    16.5,
+    null,
+    19,
+    14
+   ],
+   "before": [
+    25,
+    24,
+    22,
+    26,
+    25,
+    20,
+    24,
+    21.666666666666668
+   ],
+   "timeWord": "this month",
+   "rowCount": 4,
+   "rows": [
+    {
+     "name": "Plan",
+     "waits": 9,
+     "mins": 180
+    },
+    {
+     "name": "Build",
+     "waits": 5,
+     "mins": 60
+    },
+    {
+     "name": "Review",
+     "waits": 12,
+     "mins": 228
+    },
+    {
+     "name": "PR",
+     "waits": 5,
+     "mins": 90
+    }
+   ]
+  },
+  "team": {
+   "T": {
+    "spend": 2860,
+    "hours": 330,
+    "saved": 8580,
+    "tasks": 305
+   },
+   "P": {
+    "spend": 2400,
+    "hours": 277,
+    "saved": 7200,
+    "tasks": 256
+   },
+   "v": 2860,
+   "p": 2400,
+   "labels": [
+    "Nov 1",
+    "Nov 2",
+    "Nov 3",
+    "Nov 4",
+    "Nov 5",
+    "Nov 6",
+    "Nov 7",
+    "Nov 8"
+   ],
+   "days": 8,
+   "points": [
+    240,
+    410,
+    180,
+    520,
+    390,
+    60,
+    610,
+    450
+   ],
+   "before": [
+    200,
+    340,
+    160,
+    440,
+    340,
+    60,
+    500,
+    360
+   ],
+   "timeWord": "this month",
+   "rowCount": 5,
+   "rows": [
+    {
+     "name": "Maya",
+     "spend": 920,
+     "hours": 108,
+     "saved": 2808,
+     "tasks": 102
+    },
+    {
+     "name": "Jonas",
+     "spend": 780,
+     "hours": 88,
+     "saved": 2288,
+     "tasks": 81
+    },
+    {
+     "name": "Priya",
+     "spend": 510,
+     "hours": 59,
+     "saved": 1534,
+     "tasks": 56
+    },
+    {
+     "name": "Sam",
+     "spend": 412,
+     "hours": 47,
+     "saved": 1233,
+     "tasks": 49
+    },
+    {
+     "name": "Lee",
+     "spend": 238,
+     "hours": 28,
+     "saved": 717,
+     "tasks": 17
+    }
+   ]
+  },
+  "untagged": {
+   "T": {
+    "tasks": 18,
+    "spend": 148
+   },
+   "P": {
+    "tasks": 17,
+    "spend": 116
+   },
+   "v": 18,
+   "p": 17,
+   "labels": [
+    "Nov 1",
+    "Nov 2",
+    "Nov 3",
+    "Nov 4",
+    "Nov 5",
+    "Nov 6",
+    "Nov 7",
+    "Nov 8"
+   ],
+   "days": 8,
+   "points": [
+    2,
+    3,
+    1,
+    3,
+    2,
+    0,
+    4,
+    3
+   ],
+   "before": [
+    2,
+    2,
+    2,
+    3,
+    2,
+    1,
+    3,
+    2
+   ],
+   "timeWord": "this month",
+   "rowCount": 4,
+   "rows": [
+    {
+     "name": "web-app",
+     "tasks": 7,
+     "spend": 58
+    },
+    {
+     "name": "billing-api",
+     "tasks": 6,
+     "spend": 51
+    },
+    {
+     "name": "worca-cc",
+     "tasks": 4,
+     "spend": 31
+    },
+    {
+     "name": "docs-site",
+     "tasks": 1,
+     "spend": 8
+    }
+   ]
+  }
+ },
+ "defaults": {
+  "spend": {
+   "by": "project",
+   "then": "",
+   "as": "bars",
+   "against": "none",
+   "when": "this month",
+   "filter": [],
+   "narrow": null
+  },
+  "per-task": {
+   "by": "project",
+   "then": "",
+   "as": "bars",
+   "against": "none",
+   "when": "this month",
+   "filter": [],
+   "narrow": null
+  },
+  "why": {
+   "by": "why",
+   "then": "",
+   "as": "bars",
+   "against": "none",
+   "when": "this month",
+   "filter": [],
+   "narrow": null
+  },
+  "budget": {
+   "by": "project",
+   "then": "",
+   "as": "running",
+   "against": "budget",
+   "when": "this month",
+   "filter": [],
+   "narrow": null
+  },
+  "time-saved": {
+   "by": "project",
+   "then": "",
+   "as": "bars",
+   "against": "none",
+   "when": "this month",
+   "filter": [],
+   "narrow": null
+  },
+  "value": {
+   "by": "project",
+   "then": "",
+   "as": "bars",
+   "against": "none",
+   "when": "this month",
+   "filter": [],
+   "narrow": null
+  },
+  "ends": {
+   "by": "project",
+   "then": "",
+   "as": "bars",
+   "against": "none",
+   "when": "this month",
+   "filter": [],
+   "narrow": null
+  },
+  "review": {
+   "by": "project",
+   "then": "",
+   "as": "bars",
+   "against": "none",
+   "when": "this month",
+   "filter": [],
+   "narrow": null
+  },
+  "fails": {
+   "by": "stage",
+   "then": "",
+   "as": "bars",
+   "against": "none",
+   "when": "this month",
+   "filter": [],
+   "narrow": null
+  },
+  "autonomy": {
+   "by": "project",
+   "then": "",
+   "as": "bars",
+   "against": "none",
+   "when": "this month",
+   "filter": [],
+   "narrow": null
+  },
+  "cache": {
+   "by": "model",
+   "then": "",
+   "as": "bars",
+   "against": "none",
+   "when": "this month",
+   "filter": [],
+   "narrow": null
+  },
+  "shipped": {
+   "by": "project",
+   "then": "",
+   "as": "bars",
+   "against": "none",
+   "when": "this month",
+   "filter": [],
+   "narrow": null
+  },
+  "merge": {
+   "by": "project",
+   "then": "",
+   "as": "bars",
+   "against": "none",
+   "when": "this month",
+   "filter": [],
+   "narrow": null
+  },
+  "throughput": {
+   "by": "project",
+   "then": "",
+   "as": "bars",
+   "against": "none",
+   "when": "this month",
+   "filter": [],
+   "narrow": null
+  },
+  "waiting": {
+   "by": "stage",
+   "then": "",
+   "as": "bars",
+   "against": "none",
+   "when": "this month",
+   "filter": [],
+   "narrow": null
+  },
+  "team": {
+   "by": "person",
+   "then": "",
+   "as": "bars",
+   "against": "none",
+   "when": "this month",
+   "filter": [],
+   "narrow": null
+  },
+  "untagged": {
+   "by": "project",
+   "then": "",
+   "as": "bars",
+   "against": "none",
+   "when": "this month",
+   "filter": [],
+   "narrow": null
+  }
+ },
+ "extra": {
+  "spend-client-workflow-last-month": {
+   "T": {
+    "spend": 1318,
+    "hours": 150,
+    "saved": 3946,
+    "tasks": 157
+   },
+   "P": {
+    "spend": 1121,
+    "hours": 128,
+    "saved": 3354,
+    "tasks": 133
+   },
+   "v": 1318,
+   "p": 1121,
+   "labels": [
+    "Oct 1-7",
+    "Oct 8-14",
+    "Oct 15-21",
+    "Oct 22-28",
+    "Oct 29-31"
+   ],
+   "days": 31,
+   "points": [
+    237,
+    316,
+    264,
+    290,
+    211
+   ],
+   "before": [
+    202,
+    269,
+    224,
+    247,
+    179
+   ],
+   "timeWord": "last month",
+   "rowCount": 3,
+   "rows": [
+    {
+     "name": "acme",
+     "spend": 553,
+     "hours": 61,
+     "saved": 1552,
+     "tasks": 61,
+     "kids": [
+      {
+       "name": "Default",
+       "spend": 323,
+       "hours": 36,
+       "saved": 909,
+       "tasks": 36
+      },
+      {
+       "name": "Full",
+       "spend": 137,
+       "hours": 14,
+       "saved": 384,
+       "tasks": 14
+      },
+      {
+       "name": "Quick Fix",
+       "spend": 93,
+       "hours": 11,
+       "saved": 259,
+       "tasks": 11
+      }
+     ]
+    },
+    {
+     "name": "No client",
+     "spend": 474,
+     "hours": 54,
+     "saved": 1453,
+     "tasks": 58,
+     "kids": [
+      {
+       "name": "Default",
+       "spend": 277,
+       "hours": 32,
+       "saved": 851,
+       "tasks": 34
+      },
+      {
+       "name": "Full",
+       "spend": 117,
+       "hours": 13,
+       "saved": 359,
+       "tasks": 13
+      },
+      {
+       "name": "Quick Fix",
+       "spend": 80,
+       "hours": 9,
+       "saved": 243,
+       "tasks": 11
+      }
+     ]
+    },
+    {
+     "name": "globex",
+     "spend": 291,
+     "hours": 35,
+     "saved": 941,
+     "tasks": 38,
+     "kids": [
+      {
+       "name": "Default",
+       "spend": 170,
+       "hours": 21,
+       "saved": 551,
+       "tasks": 22
+      },
+      {
+       "name": "Full",
+       "spend": 72,
+       "hours": 8,
+       "saved": 233,
+       "tasks": 9
+      },
+      {
+       "name": "Quick Fix",
+       "spend": 49,
+       "hours": 6,
+       "saved": 157,
+       "tasks": 7
+      }
+     ]
+    }
+   ]
+  }
+ }
+}

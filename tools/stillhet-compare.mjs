@@ -63,6 +63,77 @@ export const TASK_STATES = [['task-loading-run', '?state=task-loading#run/workin
 for (const [id, q] of TASK_STATES) PARTS.push({ id: `state-${id}`, route: true, app: { route: q }, proto: { route: q } });
 PARTS.push({ id: 'action-failed-run', route: true, seed: ['#card [data-key="act-main"]', '#card [data-confirm="yes"]'], wait: 1400, app: { route: '?state=action-failed#run/approved' }, proto: { route: '?state=action-failed#run/approved' } });
 PARTS.push({ id: 'terminal-chat', route: true, seed: '#route-chat [data-terminal]', app: { route: '#chat/c2' }, proto: { route: '#chat/c2' } });   // c2: its failed command opens itself, so Show in terminal is in view
+// Workflows' own cells (slice 7): its ways, its list states, the canvas, a draft, the delete, export and import confirms, an
+// agent's draft, a thing not found, a workflow built by hand, and a task's Workflow dialog. A seed is the clicks that open it.
+const SF = '#workflows/workflow:security-first', more = (v) => ['[data-menu="wf-more"]', `[data-menu-pick="wf-more|${v}"]`];
+export const WORKFLOWS_STATES = [
+  ['wf-way-agents', '#workflows/~agents'], ['wf-way-scripts', '#workflows/~scripts'], ['wf-way-drafts-empty', '#workflows/~drafts'], ['wf-way-for-you', '#workflows/~for-you'], ['wf-way-team-empty', '#workflows/~team'],
+  ['wf-list-loading', '?state=loading#workflows'], ['wf-list-failed', '?state=failed#workflows'],
+  ['wf-canvas', '#workflows/edit:security-first'], ['wf-canvas-picked', '#workflows/edit:security-first', ['#wf-canvas-g [data-node-id="n1"]']],
+  ['wf-draft', SF, ['[data-menu="wfm-0"]', '[data-menu-pick="wfm-0|Sonnet 5.5"]']],
+  ['wf-delete-confirm', SF, more('delete')], ['wf-export-form', SF, more('export')], ['wf-export-plugin', SF, [...more('export'), '[data-menu="wf-as"]', '[data-menu-pick="wf-as|a Worca plugin"]']],
+  ['wf-import-scripts', '#workflows/edit:security-first', ['[data-menu="ed-io"]', '[data-menu-pick="ed-io|import"]']],
+  ['wf-agent-draft', '#workflows/agent:security', ['[data-wf-sw="asks"]']], ['wf-not-found', '#workflows/workflow:nope'],
+  ['wf-fresh', '#workflows', (w) => [...(w <= 760 ? ['#mbar-menu'] : []), '#bar-head [data-bar-new="place"]', '[data-menu-pick="bar-new|hand"]']],   // narrow: the bar is the drawer
+  ['run-graph-open-workflow', '#run/approved', ['[data-tab="activity"]', '[data-graph]']],
+];
+/** A part's clicks at one width: a list, or a function of the width (the bar's + sits in the drawer at 360). */
+export const seedsOf = (part, width) => [].concat((typeof part.seed === 'function' ? part.seed(width) : part.seed) || []);
+for (const [id, q, seed] of WORKFLOWS_STATES) PARTS.push({ id, route: true, ...(seed ? { seed } : {}), app: { route: q }, proto: { route: q } });
+// Schedules' own cells (Schedules D14): the bar's list states on the Schedules center, a skipped next time, and two that open by
+// a click in both hosts: a time picked (the DraftBar) and Delete (its notice with Undo).
+export const SCHEDULE_STATES = [['schedules-empty', '?state=empty#schedules'], ['schedules-loading', '?state=loading#schedules'], ['schedules-failed', '?state=failed#schedules'], ['schedule-skipped', '#schedule/s6']];
+for (const [id, q] of SCHEDULE_STATES) PARTS.push({ id, route: true, app: { route: q }, proto: { route: q } });
+PARTS.push({ id: 'schedule-draft', route: true, seed: ['#route-schedule [data-menu="sc-at"]', '#route-schedule [data-menu-pick="sc-at|10:00"]'], app: { route: '#schedule/s2' }, proto: { route: '#schedule/s2' } });
+PARTS.push({ id: 'schedule-deleted-undo', route: true, seed: ['#route-schedule [data-menu="sc-more"]', '#route-schedule [data-menu-pick="sc-more|delete"]'], app: { route: '#schedule/s2' }, proto: { route: '#schedule/s2' } });
+/** Every Schedules cell (the PR's pair table): the center, its states, the shown schedule page and the six above. */
+export const SCHEDULES_CELL_IDS = Object.freeze(['route-schedules', 'route-schedule-s1', ...SCHEDULE_STATES.map(([id]) => id), 'schedule-draft', 'schedule-deleted-undo']);
+// Marketplace's own cells (slice 8): its ways, its list states, the install, remove, set-up and update-asks forms, the Needs
+// set-up word, the Add error and a plugin not found. Compared in Expert, demo against demo.
+export const MARKETPLACE_STATES = [
+  ['mk-way-updates', '#marketplace/~updates'], ['mk-way-installed', '#marketplace/~installed'], ['mk-way-for-you', '#marketplace/~for-you'], ['mk-way-all', '#marketplace/~all'],
+  ['mk-way-shelf', '#marketplace/~shelf-0'], ['mk-way-shelf-new-empty', '#marketplace/~shelf-3-new'], ['mk-way-source', '#marketplace/~src-official'],
+  ['mk-list-loading', '?state=loading#marketplace'], ['mk-list-failed', '?state=failed#marketplace'],
+  ['mk-install-form', '#marketplace/slack-chat', ['[data-mk-step]']], ['mk-remove-confirm', '#marketplace/telegram-chat', ['[data-menu="mk-more"]', '[data-menu-pick="mk-more|remove"]']],
+  ['mk-setup-form', '#marketplace/telegram-chat', ['[data-mk-step]']], ['mk-needs-setup', '#marketplace/notion-mcp'],
+  ['mk-update-asks', '?state=update-asks#marketplace/jira-source', ['[data-mk-step]']], ['mk-add-error', '#marketplace', ['[data-mk-addgo]']], ['mk-not-found', '#marketplace/nope'],
+];
+for (const [id, q, seed] of MARKETPLACE_STATES) PARTS.push({ id, route: true, ...(seed ? { seed } : {}), app: { route: q }, proto: { route: q } });
+// Projects' and Workspaces' own cells (slice 9): the list states, the by-project cards, the design-first forms (Rename, the
+// owned-folder Remove, Link a remote, a workspace's Name row), Locate folder, Remove, Add and Make by hand, a fresh draft,
+// a workspace's Delete and its links, and a project not found. Compared in Expert, demo against demo. A seed is the clicks
+// (and a typed { fill, text }) that open it; the bar's + sits in the drawer at 360, which the pick closes over the form. A
+// strip's seed ends on its own sentence, so the pointer rests on no row and no row's tooltip races the shot.
+const barNew = (pick) => (w) => [...(w <= 760 ? ['#mbar-menu'] : []), '#bar-head [data-bar-new="place"]', `[data-menu-pick="bar-new|${pick}"]`];   // narrow: the pick closes the drawer itself
+const pjMore = (v) => ['[data-menu="pj-more"]', `[data-menu-pick="pj-more|${v}"]`], wsMore = (v) => ['[data-menu="ws-more"]', `[data-menu-pick="ws-more|${v}"]`];
+export const PROJECTS_STATES = [
+  ['pj-list-loading', '?state=loading#projects'], ['pj-list-failed', '?state=failed#projects'],
+  ['pj-by-project', '#projects', ['[data-menu="pc-by"]', '[data-menu-pick="pc-by|project"]']],
+  ['pj-rename-form', '#projects/worca-cc', pjMore('rename')], ['pj-remove-confirm', '#projects/worca-cc', [...pjMore('remove'), '.rc-confirm-t']], ['pj-remove-owned', '#projects/docs-site', [...pjMore('remove'), '.rc-confirm-t']],
+  ['pj-locate-form', '#projects/legacy-billing', ['[data-pj-act]']], ['pj-link-remote', '#projects/firmware-sdk', ['[data-pj-act]']],
+  ['pj-hand-project', '#projects', barNew('hand-project')], ['pj-hand-project-error', '#projects', (w) => [...barNew('hand-project')(w), '[data-confirm="yes"]']],
+  ['ws-hand-form', '#projects', barNew('hand-space')], ['ws-fresh-draft', '#projects', (w) => [...barNew('hand-space')(w), { fill: '#pj-hand-v', text: 'Web store' }, '[data-confirm="yes"]']],
+  ['ws-edit', '#projects/ws:web-shop', wsMore('edit')], ['ws-delete-confirm', '#projects/ws:web-shop', wsMore('delete')], ['ws-links-open', '#projects/ws:web-shop', ['[data-ws-links]']],
+  ['pj-not-found', '#projects/nope'],
+];
+for (const [id, q, seed] of PROJECTS_STATES) PARTS.push({ id, route: true, ...(seed ? { seed } : {}), app: { route: q }, proto: { route: q } });
+// Insights (slice 10): its list states, the design-first parts (the person filter, this quarter and this year, Who spends where
+// by workflow, the team scope choice), the copied-link toast and a link opened cold. Expert, demo against demo; the copy-link
+// cell has the clipboard permission on both hosts.
+const inPick = (menu, v) => [`[data-menu="${menu}"]`, `[data-pick="${menu}|${v}"]`];
+export const INSIGHTS_STATES = [
+  ['in-list-loading', '?state=loading#insights/spend'], ['in-list-failed', '?state=failed#insights/spend'],
+  ['in-team-empty', '?state=empty#insights/team'],
+  ['in-spend-person', '#insights/spend', inPick('in-of', 'person:Maya')],
+  ['in-spend-quarter', '#insights/spend', inPick('in-when', 'this quarter')], ['in-spend-year', '#insights/spend', inPick('in-when', 'this year')],
+  ['in-heat-workflow', '#insights/heat', inPick('in-by', 'workflow')],
+  ['in-team-scope', '#insights/team', ['[data-menu="in-of"]']],
+  ['in-link-copied', '#insights/spend', ['[data-menu="in-more"]', '[data-menu-pick="in-more|link"]']],
+  ['in-spend-link', '#insights/spend?by=client&when=this%20quarter'],
+];
+for (const [id, q, seed] of INSIGHTS_STATES) PARTS.push({ id, route: true, ...(seed ? { seed } : {}), ...(id === 'in-link-copied' ? { clipboard: true } : {}), app: { route: q }, proto: { route: q } });
+/** One seed step: a click on a selector, or { fill, text } typed into a field. */
+const seedStep = (page, sel) => (typeof sel === 'string' ? page.locator(sel).first().click() : page.locator(sel.fill).first().fill(sel.text));
 export const PAGES = ['components.html', 'run-page.html', 'pulse.html'];
 // The deep routes, read from the prototype's own route list once it has drawn (it runs inside the page): RailShell.routes()
 // (ui/public/stillhet/shell/shell.js) less the top-level places, which ROUTES compares as whole pages.
@@ -78,6 +149,22 @@ export const deepPart = (hash) => ({ id: `route-${hash.replace(/[^\w@.-]+/g, '-'
 // page route, the task page's own states, the failed action and the chat TaskCards c17 and c18.
 export const TASKS_CELL_IDS = Object.freeze(['route-runs', ...STATES.filter(([s, r]) => r === 'runs').map(([s]) => `state-${s}`),
   ...TASK_STATES.map(([id]) => `state-${id}`), 'action-failed-run', 'route-chat-c17', 'route-chat-c18', 'route-run-failed', 'route-run-approved']);
+// Every Workflows cell: its whole page, its own states above, and (derived from the prototype's routes, never a count) every
+// deep route under workflows/.
+export const WORKFLOWS_CELL_IDS = Object.freeze(['route-workflows', ...WORKFLOWS_STATES.map(([id]) => id)]);
+export const workflowsCellIds = (deep = []) => [...WORKFLOWS_CELL_IDS, ...deep.filter((h) => h.startsWith('workflows/')).map((h) => deepPart(h).id)];
+// Every Marketplace cell: its whole page, its own states above, and (derived from the prototype's routes, never a count)
+// every deep route under marketplace/.
+export const MARKETPLACE_CELL_IDS = Object.freeze(['route-marketplace', ...MARKETPLACE_STATES.map(([id]) => id)]);
+export const marketplaceCellIds = (deep = []) => [...MARKETPLACE_CELL_IDS, ...deep.filter((h) => h.startsWith('marketplace/')).map((h) => deepPart(h).id)];
+// Every Projects and Workspaces cell: the whole page, its own states above, and (derived from the prototype's routes, never
+// a count) every deep route under projects/.
+export const PROJECTS_CELL_IDS = Object.freeze(['route-projects', ...PROJECTS_STATES.map(([id]) => id)]);
+export const projectsCellIds = (deep = []) => [...PROJECTS_CELL_IDS, ...deep.filter((h) => h.startsWith('projects/')).map((h) => deepPart(h).id)];
+// Every Insights cell: the whole page, its own states above, and (derived from the prototype's routes, never a count) every
+// deep route under insights/, Shaping and Who spends where included.
+export const INSIGHTS_CELL_IDS = Object.freeze(['route-insights', ...INSIGHTS_STATES.map(([id]) => id)]);
+export const insightsCellIds = (deep = []) => [...INSIGHTS_CELL_IDS, ...deep.filter((h) => h.startsWith('insights/')).map((h) => deepPart(h).id)];
 /** The Tasks cells a run's cells lack: one line per id, theme and width of CELLS that has no compared cell. */
 export function tasksCoverage(cells, ids = TASKS_CELL_IDS) {
   const have = new Set(cells.map((c) => `${c.part}|${c.theme}|${c.width}`));
@@ -375,7 +462,7 @@ async function pagesMain() {
  *  shows, a page that hangs) fails alone; the rest still run. */
 export async function shootCell(browser, app, part, theme, width, outRoot) {
   const out = join(outRoot, part.dir || '');
-  const ctx = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: theme, reducedMotion: 'reduce' });
+  const ctx = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: theme, reducedMotion: 'reduce', ...(part.clipboard ? { permissions: ['clipboard-read', 'clipboard-write'] } : {}) });
   const errors = [];
   let cell;
   try {
@@ -384,7 +471,7 @@ export async function shootCell(browser, app, part, theme, width, outRoot) {
     if (part.route) { await freezeClock(a); await a.addInitScript(setLook, theme); }
     await a.goto(app.base + '/' + part.app.route);
     await a.evaluate((t) => { document.documentElement.dataset.theme = t; }, theme);
-    for (const sel of [].concat(part.seed || [])) { await a.locator(sel).first().click(); await a.waitForTimeout(part.wait || 300); }   // a part opened by a click (terminal-chat)
+    for (const sel of seedsOf(part, width)) { await seedStep(a, sel); await a.waitForTimeout(part.wait || 300); }   // a part opened by a click (terminal-chat)
     const A = await shoot(a, part.id, join(out, `${part.id}-${theme}-${width}-app.png`), part.route);
     const p = await ctx.newPage();
     watch(p, 'prototype', errors);
@@ -394,7 +481,7 @@ export async function shootCell(browser, app, part, theme, width, outRoot) {
     if (!part.route) await p.goto(protoUrl);
     if (!part.route) await p.evaluate((t) => { localStorage.setItem('worca-rail.mode', 'expert'); localStorage.setItem('worca-rail.appearance', t); localStorage.removeItem('worca-rail.stillhetAsked'); }, theme);
     await p.goto(protoUrl.replace(/index\.html.*$/, 'index.html') + part.proto.route);
-    for (const sel of [].concat(part.seed || [])) { await p.locator(sel).first().click(); await p.waitForTimeout(part.wait || 300); }
+    for (const sel of seedsOf(part, width)) { await seedStep(p, sel); await p.waitForTimeout(part.wait || 300); }
     const P = await shoot(p, part.id, join(out, `${part.id}-${theme}-${width}-proto.png`), part.route);
     const diff = A.box.w === P.box.w && A.box.h === P.box.h ? countDiffPixels(A.rgba, P.rgba, A.w, A.h) : A.w * A.h;
     cell = { part: part.id, theme, width, appBox: A.box, protoBox: P.box, diff, errors };

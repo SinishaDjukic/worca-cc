@@ -96,13 +96,15 @@ test('the Tasks center in the live kind: a card\'s step writes nothing to the st
   assert.equal(bellN(d), BELL, 'Open acknowledges it through the adapter');
 });
 
-test('a workspace question\'s Yes sends dev\'s edge PUT and the page changes only on its 200; a 500 keeps the question with a refusal (D10)', async () => {
+test('a workspace question\'s Yes sends dev\'s edge PUT and the page changes only on its 200 and the map read after it; a 500 keeps the question with a refusal (D10)', async () => {
   let status = 500;
-  const { w, d, posts, hello } = await liveHost({ sources: withWorkspaces(), read: mapRead(), level: 'advanced', post: () => [status, status < 300 ? { edge: {} } : { error: 'the map is being written' }] });
+  const answered = new Map(), base = mapRead();   // dev's map, as it reads after each answer dev accepted
+  const read = (u) => { const a = base(u); if (!a || a[0] !== 200) return a; const m = structuredClone(a[1]); for (const e of m.edges || []) if (answered.has(e.id)) e.state = answered.get(e.id); return [200, m]; };
+  const { w, d, posts, sockets, hello } = await liveHost({ sources: withWorkspaces(), read, level: 'advanced', post: (u, b) => { if (status < 300) answered.set(decodeURIComponent(u.split('/').pop()), b.state); return [status, status < 300 ? { edge: {} } : { error: 'the map is being written' }]; } });
   await hello(); await settle(60);
   w.location.hash = '#projects/ws:w1'; await settle(60);
   const yes = () => d.querySelector('#route-place [data-ws-yes]');
-  const asked = () => d.querySelectorAll('#route-place [data-ws-yes]').length;
+  const asked = () => [...d.querySelectorAll('#route-place .turn-row')].filter((r) => /Is this right/.test(r.textContent)).length;
   assert.equal(asked(), WS_QUESTIONS);
   yes().click(); await settle(60);
   assert.deepEqual(posts.map((p) => [p.method, p.url, p.body]), [['PUT', '/api/workspaces/w1/map/edges/x_000000000001', { state: 'confirmed' }]]);
@@ -111,10 +113,14 @@ test('a workspace question\'s Yes sends dev\'s edge PUT and the page changes onl
   status = 200;
   yes().click();
   assert.equal(asked(), WS_QUESTIONS, 'nothing changes before the server answers');
+  assert.ok([...d.querySelectorAll('#route-place button[disabled]')].some((b) => b.textContent.trim() === 'Saving…'), 'its Yes says Saving…, disabled (D22)');
   await settle(60);
-  assert.equal(asked(), WS_QUESTIONS - 1, 'answered: the question is gone');
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'workspaces-changed', action: 'map' }) });
+  await settle(400);
+  assert.equal(asked(), WS_QUESTIONS - 1, 'answered: the question is gone once the map is read again');
   assert.equal(bellN(d), BELL + WS_QUESTIONS - 1);
-  for (const gone of ['Delete…', 'Edit by hand', 'Start a task across all']) assert.ok(!d.querySelector('#route-place').textContent.includes(gone), `${gone}: the Projects slice's`);
+  assert.ok(d.querySelector('#route-place [data-menu="ws-more"]'), 'its ⋯ menu (Edit by hand, Sync, Delete): wired by the Projects slice');
+  assert.ok(d.querySelector('#route-place').textContent.includes('Start a task across all'), 'Start a task across all: wired by the Projects slice');
   // dev's manual edge is a link of its own with no Undo; a stale or missing edge is never drawn (code review r1)
   d.querySelector('#route-place [data-ws-links]').click(); await settle(30);
   const rows = [...d.querySelectorAll('#route-place .ws-links .set-row')].filter((r) => r.textContent.includes('Added by hand'));

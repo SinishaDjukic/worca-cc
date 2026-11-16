@@ -1248,6 +1248,29 @@ export async function updateWorkspaceDescription(id, text) {
   return updateWorkspace(id, { description: typeof text === 'string' ? text : '' });
 }
 
+
+/** A workspace's own New run defaults (Stillhet slice 9 D19), stored as JSON in workspaces.defaults: { tags, labels },
+ *  each [] when none. Null for an unknown workspace. Sync; a corrupt column reads as none. */
+export function readWorkspaceDefaults(id) {
+  getDb();
+  const row = prepare('SELECT defaults FROM workspaces WHERE id = ?').get(id);
+  if (!row) return null;
+  let doc = null;
+  try { doc = JSON.parse(row.defaults || 'null'); } catch { /* unreadable: none */ }
+  return { tags: Array.isArray(doc?.tags) ? doc.tags : [], labels: Array.isArray(doc?.labels) ? doc.labels : [] };
+}
+
+/** Replace a workspace's defaults with already-normalised lists; both empty clears the column. Null for an unknown one. */
+export function writeWorkspaceDefaults(id, { tags = [], labels = [] } = {}) {
+  getDb();
+  let changes = 0;
+  tx(() => {
+    changes = Number(prepare('UPDATE workspaces SET defaults = ? WHERE id = ?')
+      .run(tags.length || labels.length ? JSON.stringify({ tags, labels }) : null, id).changes);
+  });
+  return changes ? { tags, labels } : null;
+}
+
 /** Thin setter: rename only. Never recomputes the id (D1). */
 export async function renameWorkspace(id, name) {
   return updateWorkspace(id, { name: typeof name === 'string' ? name : '' });

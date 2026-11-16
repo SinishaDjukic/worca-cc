@@ -1225,7 +1225,7 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .jump-latest{position:absolute;left:50%;top:-44px;translate:-50% 4px;opacity:0;visibility:hidden;pointer-events:none;transition:opacity var(--motion-change) var(--ease),translate var(--motion-change) var(--ease),visibility var(--motion-change) var(--ease);background:var(--bg);box-shadow:0 0 0 1px var(--line-2);}   /* ds-ok: floats just above the input */
 .convo:has(> .convo-scroll[data-far-below]) .jump-latest{opacity:1;visibility:visible;translate:-50% 0;pointer-events:auto;}   /* only while the end is well below: near it, the pill would sit on the last row */
 @media (prefers-reduced-motion: reduce){.jump-latest{transition:none;}}
-.convo-dock .composer{width:calc(100% - 32px);max-width:648px;margin:0 auto;translate:16px 0;}   /* ds-ok: on the cards' rail (32px in), as wide as the cards */
+.convo-dock .composer,.convo-dock > .composer-queue,.convo-dock > .composer-queue + .composer-note{width:calc(100% - 32px);max-width:648px;margin-inline:auto;translate:16px 0;}   /* ds-ok: the composer, its queue and its line on the cards' rail (32px in), as wide as the cards */
 .convo-dock-note{max-width:680px;margin:4px auto 0;font-size:var(--fs-caption);color:var(--ink-3);}
 
 /* Composer: the one way to start anything. */
@@ -1551,6 +1551,32 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .ask-changes{display:flex;flex-direction:column;align-items:stretch;gap:8px;margin:8px 0 0 32px;}   /* the card's width, on its text edge */
 .ask-changes .tp-actions{align-self:flex-start;}
 .card-form{margin:8px 0 0 32px;}
+/* FolderBrowser (form.add-project): the folder list in its Dialog, the probe line under a path, the review list of picked folders */
+.fb .dlg-body{display:flex;flex-direction:column;gap:8px;}
+.fb-nav{display:flex;align-items:center;gap:4px;}
+.fb-path{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:12px/18px var(--mono);color:var(--ink-2);}
+.fb-note{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
+.fb-list,.fb-review{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px;}
+.fb-row{display:flex;align-items:center;gap:8px;}
+.fb-none{margin:0;color:var(--ink-3);}
+.fb-probe{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;flex:1 1 100%;font-size:var(--fs-meta);}
+.fb-warn{display:inline-flex;align-items:center;gap:4px;color:var(--red-ink-strong);}
+.fb-probe-note{flex:1 1 100%;color:var(--ink-2);}
+.fb-way{flex:1 1 100%;display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.fb-review{flex:1 1 100%;gap:6px;container-type:inline-size;}   /* its rows read their own width (F-cov1-05) */
+.fb-rev{display:grid;grid-template-columns:auto minmax(0,14em) minmax(8em,1fr) minmax(0,auto);align-items:center;gap:8px;}   /* F-cov1-05: a reason never squeezes the path to nothing */
+@container (max-width: 520px){   /* F-cov1-05: narrow, a row stacks: its tick, then its name, path and reason under each other */
+  .fb-rev{grid-template-columns:auto minmax(0,1fr);gap:2px 8px;}
+  .fb-rev > .fb-rev-path,.fb-rev > .fb-st{grid-column:2;}
+}
+.rc-confirm.is-form .seg{flex-wrap:wrap;max-width:100%;}   /* F-cov1-05: a form's Segmented wraps between its ways, never inside a label */
+.rc-confirm.is-form .seg button{white-space:nowrap;}
+.fb-rev .fld{flex:none;}
+.fb-rev-path{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:12px/18px var(--mono);color:var(--ink-2);}
+.fb-st{font-size:var(--fs-meta);}
+.fb-st.is-ok{color:var(--ink-2);}
+.fb-st.is-fail{color:var(--red-ink-strong);}
+.fb-err{flex:1 1 100%;margin:0;font-size:var(--fs-meta);color:var(--red-ink-strong);}
 /* commands (CommandRow, CommandGroup): no mark, the words say how it went; one fold opens the command and its output */
 .cmd-line{display:flex;align-items:center;gap:8px;}
 .cmd-line > .tr-line{flex:1 1 auto;min-width:0;}
@@ -1622,8 +1648,9 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .bc-bar{width:min(14px,70%);background:var(--ink-3);border-radius:4px 4px 0 0;}   /* ds-ok: a data end's own rounding */
 .bc-col:hover .bc-bar,.bc-col:focus-visible .bc-bar{background:var(--ink-2);}
 .bc-col.is-now .bc-bar{background:var(--ink-2);}
-.bc-v{font-size:var(--fs-caption);color:var(--ink-2);margin-bottom:4px;font-variant-numeric:tabular-nums;min-height:1em;}
+.bc-v{font-size:var(--fs-caption);color:var(--ink-2);margin-bottom:4px;font-variant-numeric:tabular-nums;min-height:1em;white-space:nowrap;}   /* F-FM2-05: a number never wraps in its column */
 .bc-x{position:relative;top:6px;height:0;font-size:var(--fs-caption);color:var(--ink-2);white-space:nowrap;}
+@media (max-width:720px){.bar-chart.is-thin .bc-col:not(.is-tick) .bc-x{visibility:hidden;}}   /* look.chart: a narrow screen names at most eight bars */
 .bc-table{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;}
 @media (max-width: 760px){.is-attn::before{inset:-10px -16px;--attn-fx:16px;--attn-fy:10px;}}   /* on a phone the feather stays inside the screen */
 
@@ -1678,7 +1705,10 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .cc-proof{font-size:var(--fs-meta);line-height:1.5;color:var(--ink-3);}
 .cc-lbl{position:relative;}
 .cc-lbl > .seg{position:absolute;right:0;top:-6px;}
-.cc-lbl > .seg button{height:24px;padding:0 10px;font-size:var(--fs-meta);}
+.cc-lbl > .seg button, .cc-src > .seg button{height:24px;padding:0 10px;font-size:var(--fs-meta);}
+/* F-G-G3-01: a ticket source has no label row for the tabs to sit beside: they take their own row, its note and inputs under them */
+.cc-src{display:grid;gap:12px;}
+.cc-src > .seg{justify-self:end;}
 .cc-fold{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding-top:10px;border-top:1px solid var(--line);font-size:var(--fs-meta);color:var(--ink-2);}
 .cc-fold > .btn-quiet{padding-left:0;}
 .cc-more{display:grid;gap:12px;font-size:var(--fs-body);color:var(--ink-2);line-height:1.75;}
@@ -1751,18 +1781,22 @@ button.q-fact{cursor:pointer;text-decoration:underline;text-decoration-color:var
 /* WorkflowStory (panel.workflow-story): a workflow as a storyboard, a panel a step, the loop drawn back in words */
 .ws{margin:14px 0 6px;}
 .ws-board{position:relative;display:grid;grid-template-columns:repeat(var(--ws-n),minmax(0,1fr));gap:22px;margin:0 0 14px;}   /* ds-ok: --ws-n is the story's own count of steps */
-.ws-board.has-loop{margin-bottom:58px;}
+.ws-board.has-loop{margin-bottom:calc(58px + (var(--ws-loops, 1) - 1) * 34px);}   /* ds-ok: --ws-loops is the story's own count of arcs */
 .ws-p{position:relative;display:grid;gap:4px;align-content:start;min-width:0;}
 .ws-p + .ws-p::before{content:'';position:absolute;left:-18px;top:11px;width:14px;border-top:1px solid var(--ink-3);}
-.ws-n{display:flex;align-items:center;gap:8px;font:600 var(--fs-body)/1.3 var(--sans);min-width:0;}
+.ws-n{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font:600 var(--fs-body)/1.3 var(--sans);min-width:0;}
+.ws-name{min-width:0;overflow-wrap:break-word;}   /* a name too long beside its number goes under it, whole: it breaks between words */
 .ws-k{width:22px;height:22px;border-radius:50%;border:1px solid var(--line-2);display:grid;place-items:center;font:500 var(--fs-meta)/1 var(--sans);color:var(--ink-2);flex:none;}
 .ws-p.is-check .ws-k{border-color:var(--amber-ink);color:var(--amber-ink);}
-.ws-t{font-size:var(--fs-body);line-height:var(--lh-body);overflow-wrap:anywhere;} .ws-m{font-size:var(--fs-meta);color:var(--ink-3);font-variant-numeric:tabular-nums;}
-.ws-loop{position:absolute;bottom:-40px;height:30px;font-size:var(--fs-meta);color:var(--ink);text-align:center;}
+.ws-t{font-size:var(--fs-body);line-height:var(--lh-body);overflow-wrap:break-word;} .ws-m{font-size:var(--fs-meta);color:var(--ink-3);font-variant-numeric:tabular-nums;}
+.ws-again{font-size:var(--fs-meta);color:var(--ink-2);}
+.ws-loop{position:absolute;left:var(--ws-a);width:var(--ws-w);bottom:calc(-40px - var(--ws-row, 0) * 34px);height:30px;font-size:var(--fs-meta);color:var(--ink);text-align:center;}
 .ws-loop svg{position:absolute;inset:0 0 auto 0;width:100%;height:16px;overflow:visible;} .ws-loop path{fill:none;stroke:var(--ink);stroke-dasharray:2 2;}
-.ws-loop span{position:absolute;left:-40%;right:-40%;top:16px;white-space:nowrap;}
+.ws-loop span{position:absolute;left:-40%;right:-40%;top:16px;text-wrap:balance;}   /* wider than its arc (a loop at the end of five steps): two lines, never past the board */
 .ws-by{margin:8px 0 0;font-size:var(--fs-meta);color:var(--ink-3);display:flex;gap:6px;align-items:center;}
-@media (max-width:720px){.ws-board{grid-template-columns:1fr;gap:12px;} .ws-p + .ws-p::before{display:none;} .ws-board.has-loop{margin-bottom:14px;} .ws-loop{position:static;height:auto;text-align:left;} .ws-loop svg{display:none;} .ws-loop span{position:static;white-space:normal;}}
+/* more than five steps (is-long) read as the narrow screen's list: a column each would break their words (F-G-fid-09) */
+.ws-board.is-long{grid-template-columns:1fr;gap:12px;} .ws-board.is-long .ws-p + .ws-p::before{display:none;} .ws-board.is-long.has-loop{margin-bottom:14px;} .ws-board.is-long .ws-loop{position:static;width:auto;height:auto;text-align:left;} .ws-board.is-long .ws-loop svg{display:none;} .ws-board.is-long .ws-loop span{position:static;white-space:normal;}
+@media (max-width:720px){.ws-board{grid-template-columns:1fr;gap:12px;} .ws-p + .ws-p::before{display:none;} .ws-board.has-loop{margin-bottom:14px;} .ws-loop{position:static;width:auto;height:auto;text-align:left;} .ws-loop svg{display:none;} .ws-loop span{position:static;white-space:normal;}}
 
 /* Workflows (Wave 3): a way's sentence, the graph's well wider than the reading column, the Expert canvas */
 .wf-sent{display:flex;gap:6px;align-items:center;font-size:var(--fs-meta);color:var(--ink-2);margin:14px 0 8px;}
@@ -1902,6 +1936,57 @@ button.fr-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .fr-row.is-sub .fr-name{font-weight:400;}
 .fr-c{text-align:right;line-height:1.2;white-space:nowrap;}
 @media (max-width:640px){.fr-list{grid-template-columns:minmax(0,1fr) repeat(2,auto);}.fr-c.is-wide{display:none;}}
+/* FigureRows that open in place (list.row-opens-in-place): the open row is tinted, its detail full width under it */
+.fr-row.is-open{background:var(--hover);}
+.fr-detail{grid-column:1 / -1;padding:10px 0 14px 18px;border-top:1px solid var(--line);}
+.fr-d-head{display:flex;align-items:baseline;gap:12px;font-size:var(--fs-meta);color:var(--ink-2);}
+.fr-d-t{flex:1;min-width:0;}
+.fr-d-t b{font-weight:600;color:var(--ink);}
+.fr-d-head .btn{margin-left:6px;}
+/* TimeTrack (look.time-track): a day axis, one row per task, its lane's work, wait and PR mark; no hue */
+.tt{--tt-name:230px;margin-top:8px;}   /* ds-ok: the name column's width, the axis and every lane line up on it */
+.tt-axis,.tt-row{display:grid;grid-template-columns:var(--tt-name) minmax(0,1fr);align-items:center;}
+.tt-ticks{position:relative;height:20px;font-size:var(--fs-meta);color:var(--ink-2);}
+.tt-tick{position:absolute;top:2px;white-space:nowrap;}
+.tt-row{border-top:1px solid var(--line);min-height:48px;}
+.tt-open{display:flex;align-items:center;gap:10px;min-width:0;height:100%;padding:6px 8px 6px 0;border:0;background:none;font:inherit;color:var(--ink);text-align:left;cursor:pointer;}
+.tt-open:hover{background:var(--hover);}
+.tt-open:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.tt-t{display:flex;flex-direction:column;min-width:0;}
+.tt-title{font-size:var(--fs-body);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.tt-sub{font-size:var(--fs-meta);color:var(--ink-2);}
+.tt-lane{position:relative;align-self:stretch;min-height:44px;background-image:repeating-linear-gradient(to right,var(--line) 0 1px,transparent 1px calc(100% / var(--tt-days)));}   /* ds-ok: --tt-days is the count TimeTrack sets; faint day lines */
+.tt-work,.tt-wait{position:absolute;top:50%;height:0;min-width:2px;}   /* ds-ok: a zero-width span still draws */
+.tt-work{border-top:2px solid var(--ink);}
+.tt-work.is-cut{mask-image:linear-gradient(to right,transparent,#000 8px);}   /* it began before the window: its start fades in */
+.tt-wait{border-top:2px dashed var(--ink-3);}
+.tt-end{position:absolute;top:50%;display:inline-flex;align-items:center;justify-content:center;min-width:24px;min-height:24px;padding:5px;margin:0;border:0;background:none;color:var(--ink);transform:translate(-50%,-50%);cursor:pointer;}
+.tt-end:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;border-radius:var(--r-md);}
+.tline-card.is-track{right:auto;top:auto;bottom:calc(50% + 14px);left:var(--tc-x);margin-top:0;visibility:hidden;}   /* ds-ok: --tc-x is where TimelineCard sits on its track */
+.tline-card.is-track.is-flip{transform:translateX(-100%);}
+.tt-end:hover + .tline-card.is-track,.tt-end:focus + .tline-card.is-track{visibility:visible;}
+.tt-lane[data-card-off] .tline-card.is-track{visibility:hidden;}
+.tt-legend{margin-top:10px;}
+@media (max-width:600px){.tline-card.is-track,.tline-card.is-track.is-flip{max-width:min(260px,100%);transform:translateX(calc(-1 * var(--tc-x)));}}   /* ds-ok: a narrow lane has no room to flip at 60%; the card slides with its mark and stays inside the lane */
+.tt-legend .git-mark{display:inline-flex;}
+.tt-more{margin:8px 0 0;}
+@media (max-width:600px){.tt-axis,.tt-row{grid-template-columns:minmax(0,1fr);}.tt-axis > span:first-child{display:none;}.tt-tick:not(:first-child):not(:last-child){visibility:hidden;}.tt-tick:last-child{transform:translateX(-100%);}}
+/* TaskView (thing.read-only): a teammate's task, read only */
+.task-view{--rail:20px;--gap:12px;display:flex;flex-direction:column;gap:10px;}
+.task-view .rc-word{font-size:var(--fs-section);}
+.tv-back{margin:0;font-size:var(--fs-meta);}
+.tv-title{display:flex;align-items:center;gap:10px;margin:0;font-size:var(--fs-section);font-weight:600;}
+.tv-meta{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
+.tv-pr{display:flex;align-items:center;gap:6px;margin:0;font-size:var(--fs-body);}
+.tv-pr-link{color:var(--ink);}
+/* HeatGrid (look.heat-grid): people by values, ink shades scaled to the largest cell, never a hue */
+.heat-grid{position:relative;display:grid;grid-template-columns:minmax(0,max-content) repeat(var(--hg-n),minmax(40px,1fr));gap:3px;margin:12px 0 4px;}   /* ds-ok: --hg-n is the count HeatGrid sets */
+.hg-row{display:contents;}
+.hg-col{font-size:var(--fs-meta);color:var(--ink-2);text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-bottom:2px;}
+.hg-name{font-size:var(--fs-body);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:8px;align-self:center;}
+.hg-cell{display:block;height:24px;border-radius:var(--r-xs);background:var(--hover);outline:none;}
+.hg-cell.is-h1{background:var(--line-2);} .hg-cell.is-h2{background:var(--ink-3);} .hg-cell.is-h3{background:var(--ink-2);} .hg-cell.is-h4{background:var(--ink);}
+.hg-cell:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 /* comp.menu-groups: two columns at most, a head never parted from its options, inside the window */
 .menu-g{display:contents;}
 .pz-menu.is-two-cols{display:block;width:min(440px,calc(100vw - 32px));height:auto;max-height:min(420px,calc(100vh - 32px));overflow-y:auto;}
@@ -1954,3 +2039,8 @@ button.fr-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 /* comp.menu-sub: a group's opener ends in its ›; the open group's back row holds its ‹ where a choice holds its tick */
 .menu-sub-chev{display:inline-flex;margin-left:auto;padding-left:8px;color:var(--ink-2);}
 .menu-back-i{display:inline-flex;margin-right:4px;vertical-align:-1px;color:var(--ink-2);}
+/* ChoiceNote (F-cov23-05): at any card width its title wraps, each detail line takes its own row, unclamped (a note's
+   message is read whole), and its rows and ways wrap their buttons under the words: never the 420px card rule's row 2 */
+.choice-note .rc-word{white-space:normal;overflow-wrap:anywhere;}
+.choice-note > .rc-detail{grid-row:auto;display:block;white-space:normal;overflow:visible;-webkit-line-clamp:unset;overflow-wrap:anywhere;}
+.choice-note > .choice-note-row,.choice-note > .choice-note-ways{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;}

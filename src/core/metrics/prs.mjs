@@ -29,6 +29,7 @@ import { forgejoHosts } from '../forgejo-credentials.mjs';
 import { giteaPrUrl, parseGiteaPrUrl } from '../../shared/gitea-remote.mjs';
 import { parseCodebergPrUrl } from '../../shared/codeberg-remote.mjs';
 import { familyForgeOfHost, isFamilyForge } from '../forge.mjs';
+import { quotaBlocked, noteQuotaExhausted, isRateLimitText, formatResetTime, _testing as quotaTesting } from '../github-quota.mjs';
 
 export const PR_EVENTS_DIR = 'prs';
 export const MAX_EVENT_FILE_BYTES = 64 * 1024;
@@ -167,18 +168,26 @@ function fromGhNode(repo, n) {
 /**
  * @returns {Promise<{results: Map<string, object[]>, error: string|null}>} key "repo#branch"
  *   (lower-cased repo) → PRs. A lookup GitHub could not answer (no access, unknown repo) is
- *   left out, so it is asked again next time rather than cached as "no PR".
+ *   left out, so it is asked again next time rather than cached as "no PR". While the machine-wide GraphQL quota
+ *   window is open (github-quota.mjs, F-X-02) no batch runs; a rate-limited batch opens it and stops the loop.
  */
 export async function lookupBranchesViaGh(lookups) {
   const results = new Map();
   let error = null;
+  const exhausted = (until) => `GitHub API quota exhausted until ${formatResetTime(until)}`;
   for (let i = 0; i < lookups.length; i += GH_BATCH) {
+    const blocked = quotaBlocked('graphql', { now: _now() });
+    if (blocked) { error = exhausted(blocked.until); break; }
     const batch = lookups.slice(i, i + GH_BATCH);
     const r = await _run('gh', ['api', 'graphql', '-f', `query=${buildBranchQuery(batch)}`], { timeout: 30_000 });
     let body = null;
     try { body = JSON.parse(r.stdout || 'null'); } catch { body = null; }
     // gh exits non-zero when ANY alias errors (an unknown repo), but still prints the partial data.
-    if (!body || typeof body !== 'object' || !body.data) { error ||= String(r.stderr || 'gh api graphql failed').trim().split('\n')[0]; continue; }
+    if (!body || typeof body !== 'object' || !body.data) {
+      if (isRateLimitText(r.stderr)) { error = exhausted(noteQuotaExhausted('graphql', { now: _now() }).until); break; }
+      error ||= String(r.stderr || 'gh api graphql failed').trim().split('\n')[0];
+      continue;
+    }
     batch.forEach((l, j) => {
       const repoNode = body.data[`q${j}`];
       if (!repoNode) return;
@@ -624,7 +633,8 @@ export async function installPrWorkflow(projectDir, { force = false } = {}) {
 }
 
 export const _testing = {
-  setRunner(fn) { _run = typeof fn === 'function' ? fn : defaultRun; _ghStatus = null; },
+  // A scripted runner sees no shared quota window unless a test opts in (github-quota's useDir).
+  setRunner(fn) { _run = typeof fn === 'function' ? fn : defaultRun; _ghStatus = null; if (_run !== defaultRun) quotaTesting.suspend(); },
   setNow(fn) { _now = typeof fn === 'function' ? fn : () => Date.now(); },
-  reset() { _run = defaultRun; _now = () => Date.now(); _ghStatus = null; },
+  reset() { _run = defaultRun; _now = () => Date.now(); _ghStatus = null; quotaTesting.reset(); },
 };

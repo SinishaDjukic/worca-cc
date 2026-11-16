@@ -132,9 +132,13 @@ export function timeline({ ticks, view = [0, 1], label = 'Timeline' }) {
  * @param {string} o.title
  * @param {string} [o.line]
  * @param {number} [o.at]    how far down its strip, 0 to 1
+ * @param {number} [o.x]     on a TimeTrack (look.time-track): how far along its lane, 0 to 1; past 0.6 it opens to the left
+ * @param {string} [o.id]    the id its mark names in aria-describedby
  */
-export function timelineCard({ mark, title, line = '', at = 0 }) {
-  return `<div class="tline-card" role="status" style="top:${at * 100}%">${mark}<span><b>${esc(title)}</b>${line ? `<span>${esc(line)}</span>` : ''}</span></div>`;
+export function timelineCard({ mark, title, line = '', at = 0, x, id }) {
+  const body = `${mark}<span><b>${esc(title)}</b>${line ? `<span>${esc(line)}</span>` : ''}</span></div>`;
+  if (x == null) return `<div class="tline-card" role="status" style="top:${at * 100}%">${body}`;
+  return `<div class="tline-card is-track${x > 0.6 ? ' is-flip' : ''}"${attrs({ id, role: 'tooltip', style: `--tc-x:${+(x * 100).toFixed(2)}%` })}>${body}`;
 }
 
 /**
@@ -201,6 +205,33 @@ export function thinkingRow({ done = false, step = '', secs = '', steps = [], ph
  */
 export function composer({ value = '', placeholder, sentence, detail = '', tools, send, attrs: a = {} }) {
   return `<form class="composer${sentence ? '' : ' is-plain'}"${attrs(a)}><textarea class="composer-t" rows="2" data-composer-t${attrs({ placeholder, 'aria-label': placeholder })}>${esc(value)}</textarea>${detail}<div class="composer-f">${tools ? `<span class="composer-tools">${tools}</span>` : ''}${sentence ? `<div class="composer-s">${sentence}</div>` : ''}<span class="composer-send">${send}</span></div></form>`;
+}
+
+/**
+ * ComposerQueue: what you sent while Worca replies, waiting above the composer (form.composer-queue). Oldest first, one
+ * Queued row each with its Remove; one line under them says when they go, or why they wait, with Send now.
+ * @param {object} o
+ * @param {{key: string, text: string}[]} o.items   plain text, escaped here
+ * @param {number} [o.max]        how many may wait
+ * @param {''|'stopped'|'failed'|'away'|'refused'} [o.paused]
+ * @param {string} [o.why]        refused: the reason
+ */
+export function composerQueue({ items = [], max = 3, paused = '', why = '' } = {}) {
+  if (!items.length) return '';
+  const rows = items.map((q, k) => turnRow({ mark: icon('clock', 14), text: `<b>Queued</b> ${esc(q.text)}`, end: button({ label: `Remove queued message ${k + 1}`, kind: 'quiet', iconOnly: true, icon: icon('x', 12), attrs: { 'data-q-drop': q.key } }), attrs: { role: 'listitem' } })).join('');
+  const PAUSED = { stopped: 'Queue paused: the reply was stopped', failed: 'Queue paused: the reply failed', away: 'Queue paused: the reply ended while this chat was closed', refused: `Queue paused: could not send it: ${why}` };
+  const words = PAUSED[paused] || (items.length >= max ? 'Queue full: sends when the reply finishes' : 'Sends when the reply finishes');
+  const now = PAUSED[paused] ? ` ${button({ label: 'Send now', kind: 'quiet', attrs: { 'data-q-send': '' } })}` : '';
+  return `<div class="composer-queue" role="list" aria-label="Queued messages">${rows}</div><div class="composer-note" data-q-note aria-live="polite">${esc(words)}${now}</div>`;
+}
+
+/**
+ * ComposerQueueButton: while Worca replies, the quiet Queue beside Stop in the composer's send slot (form.composer-queue).
+ * It queues what you wrote exactly as Enter does; its word is its name, its tooltip says when it goes.
+ * @returns {string}
+ */
+export function composerQueueButton() {
+  return button({ label: 'Queue', kind: 'quiet', attrs: { 'data-cp-queue': '', title: 'Sends it when the reply finishes' } });
 }
 
 /**
@@ -414,13 +445,17 @@ export function planCard({ title, summary = '', version, roles, open = false, me
 /**
  * FilesCard: files Worca shows you: pictures as tiles, other files as rows, each with Download; View opens it.
  * @param {object} o
- * @param {{name:string, meta?:string, image?:boolean, view?:object, download?:object}[]} o.files
+ * @param {{name:string, meta?:string, image?:boolean, view?:object, download?:object|false, reveal?:object}[]} o.files   (download false: view only)
  * @param {string} [o.label]
+ * @param {string} [o.revealLabel]   the file manager's name (Finder): with a file's `reveal` hook, its Show in ‹label›
  */
-export function filesCard({ files, label = 'Files' }) {
+export function filesCard({ files, label = 'Files', revealLabel = '' }) {
   const pics = files.filter((f) => f.image), docs = files.filter((f) => !f.image);
-  const tile = (f) => `<figure class="fc-tile"><button type="button" class="fc-pic"${attrs({ 'aria-label': `View ${f.name}`, ...(f.view || {}) })}>${icon('image', 20)}</button><figcaption><span>${esc(f.name)}</span>${button({ label: `Download ${f.name}`, kind: 'quiet', iconOnly: true, icon: icon('download', 14), attrs: f.download || {} })}</figcaption></figure>`;
-  const row = (f) => turnRow({ mark: icon('file', 14), text: `<b>${esc(f.name)}</b> ${esc(f.meta || '')}`, end: button({ label: 'View', kind: 'quiet', attrs: f.view || {} }) + button({ label: `Download ${f.name}`, kind: 'quiet', iconOnly: true, icon: icon('download', 14), attrs: f.download || {} }) });
+  // Show in ‹file manager›: only where the server offers it (its label) and the file says how (its reveal hook)
+  const show = (f) => (revealLabel && f.reveal ? button({ label: `Show in ${revealLabel}`, kind: 'quiet', attrs: f.reveal }) : '');
+  const dl = (f) => (f.download === false ? '' : button({ label: `Download ${f.name}`, kind: 'quiet', iconOnly: true, icon: icon('download', 14), attrs: f.download || {} }));   // false: a file to view only
+  const tile = (f) => `<figure class="fc-tile"><button type="button" class="fc-pic"${attrs({ 'aria-label': `View ${f.name}`, ...(f.view || {}) })}>${icon('image', 20)}</button><figcaption><span>${esc(f.name)}</span>${dl(f)}${show(f)}</figcaption></figure>`;
+  const row = (f) => turnRow({ mark: icon('file', 14), text: `<b>${esc(f.name)}</b> ${esc(f.meta || '')}`, end: button({ label: 'View', kind: 'quiet', attrs: f.view || {} }) + dl(f) + show(f) });
   return `<div class="files-card"${attrs({ role: 'group', 'aria-label': label })}>${pics.length ? `<div class="fc-grid">${pics.map(tile).join('')}</div>` : ''}${docs.map(row).join('')}</div>`;
 }
 
@@ -442,14 +477,15 @@ export function refChip({ text, mark = '', title = '', attrs: a = {} }) {
  * @param {object} o
  * @param {string} o.text
  * @param {string} [o.quote]
- * @param {string[]} [o.files]
+ * @param {Array<string|{name:string, attrs:object}>} [o.files]   a name, or a chip that opens the file (its hook)
  * @param {{text:string, mark?:string, attrs?:object}[]} [o.refs]   tasks named in it: chips that lead to their cards
  * @param {object} [o.attrs]
  * @param {string} [o.time]   its TurnTime (turn-time.mjs turnTime), the bubble's last child
  */
 export function youTurn({ text, quote = '', files = [], refs = [], attrs: a = {}, time = '' }) {
   const chips = refs.map((r) => refChip(r)).join('');
-  return `<div class="convo-you"${attrs(a)}>${quote ? `<blockquote class="you-quote">${esc(quote)}</blockquote>` : ''}${esc(text)}${files.length || chips ? `<span class="you-files">${files.map((f) => `<span class="kind-chip">${icon('file', 12)}${esc(f)}</span>`).join('')}${chips}</span>` : ''}${time}</div>`;
+  return `<div class="convo-you"${attrs(a)}>${quote ? `<blockquote class="you-quote">${esc(quote)}</blockquote>` : ''}${esc(text)}${files.length || chips ? `<span class="you-files">${files.map((f) => (typeof f === 'string' ? `<span class="kind-chip">${icon('file', 12)}${esc(f)}</span>`
+    : `<button type="button" class="kind-chip"${attrs({ title: `Opens ${f.name}`, ...(f.attrs || {}) })}>${icon('file', 12)}${esc(f.name)}</button>`)).join('')}${chips}</span>` : ''}${time}</div>`;
 }
 
 /**

@@ -25,6 +25,8 @@ export function workParts(p) {
   if (p.onSource && p.hidden) return [br(p.hidden), w('not merged into'), { kind: 'copy', text: p.branch }];
   if (p.onSource && !p.finished) return [w('on'), br(), w('then to'), base];
   if (p.onSource || p.base === 'origin/main') return [br(), w('to'), base];
+  // no known base: the branch and its PR, never a dangling "into"
+  if (!p.base) return [...(p.pr && !p.merged ? [pr, w('merges')] : []), br(), ...(p.pr && p.merged ? [w('merged by'), pr] : [])];
   return [...(p.pr && !p.merged ? [pr, w('merges')] : []), br(), w(p.merged ? 'merged into' : 'into'), base, ...(p.pr && p.merged ? [w('by'), pr] : [])];
 }
 

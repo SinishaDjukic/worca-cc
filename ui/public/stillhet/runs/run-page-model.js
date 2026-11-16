@@ -58,6 +58,7 @@
       stages: run({ build: [s('Implementation', 'failed', '1h 30m', { loops: 3, live: 'Tests still failing after every retry' })], review: allNext(REVIEW) }) },
     { id: 'ready', group: 'Ready', label: 'Ready', figs: DONE_FIGS, stages: run({}) },
     { id: 'no-remote', group: 'Ready', label: 'Ready, no git remote', detail: 'This project has no git remote', figs: DONE_FIGS, stages: run({ pr: [next('Create PR', { live: 'Needs a git remote' }), next('Checks'), next('Approval')] }) },
+    { id: 'no-base', group: 'Ready', label: 'Ready, base unknown', detail: 'Base unknown: Worca cannot tell where to open a PR', figs: DONE_FIGS, stages: run({ pr: [next('Create PR', { live: 'Needs a known base' }), next('Checks'), next('Approval')] }) },
     { id: 'mock-run', group: 'Ready', label: 'Mock task', detail: 'No model was called; it adds nothing to Saved', mock: true, diff: '+1 \u22120', files: [['README.md', 1, 0]], figs: [['Time', '2m'], ['Cost', '$0.00']], stages: run({ pr: [next('Create PR', { live: 'A mock task’s change is a placeholder' }), next('Checks'), next('Approval')] }).map((st) => Object.assign({}, st, { subs: st.subs.map((y) => Object.assign({}, y, { time: '', loops: 0, cost: '$0.00' })) })) },
     { id: 'checks', group: 'Pull requests', label: 'Checks running', figs: DONE_FIGS,
       stages: run({ pr: PR_OPEN(s('Checks', 'now', '', { live: '3 of 7 passed', when: 'running' }), next('Approval')) }) },
@@ -222,7 +223,7 @@
       stages: run({ build: [s('Implementation', 'now', '12m', { live: 'Editing app.js', when: '3s ago' })], review: [next('Not in this workflow')] }) },
 
     // Finished, with something to say
-    { id: 'ready-issues', state: 'ready', group: 'Ready', label: 'Ready, open issues', detail: '2 open issues · not in dev yet', figs: DONE_FIGS, stages: run({ review: [ok('Review implementation', '37m 21s', { loops: 3, live: 'Ran out of cycles · 2 open issues' }), REVIEW[1], REVIEW[2]] }), issues: true, shaped: true, evidence: 'Tests pass · Review ran out of cycles · Manual test passed' },
+    { id: 'ready-issues', state: 'ready', group: 'Ready', label: 'Ready, open issues', detail: '2 open issues · not in dev yet', figs: DONE_FIGS, stages: run({ review: [s('Review implementation', 'problem', '37m 21s', { loops: 3, live: 'Blocked · accepted with 2 open issues' }), REVIEW[1], REVIEW[2]] }), issues: true, shaped: true, evidence: 'Tests pass · Review ran out of cycles · Manual test passed' },
     { id: 'ready-end', state: 'ready', group: 'Ready', label: 'Ready, end not reached', detail: 'End not reached · part of the workflow did not run', over: true, figs: DONE_FIGS, stages: run({ review: [REVIEW[0], REVIEW[1], next('Manual web UI testing', { live: 'Did not run' })] }), evidence: 'Tests pass · Review passed on round 3 · Manual test did not run' },
     { id: 'ready-moved', state: 'ready-moved', group: 'Ready', label: 'Ready, base moved', detail: 'Not in dev yet · dev moved while it ran', figs: DONE_FIGS, stages: run({}), baseMoved: true },
     { id: 'ready-held', state: 'ready', group: 'Ready', label: 'Ready, branch held', figs: DONE_FIGS, stages: run({}), heldBy: 'Breadcrumb tests for saved runs' },
@@ -462,6 +463,8 @@
   // A form behind a step: its words and its one field or choice (docs/rail/forms.md).
   const FORMS = {
     model: { title: 'Switch model', yes: 'Resume', text: 'Every remaining step runs on the model you pick; the task resumes from {step}.', options: ['Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5'], pick: 1 },
+    // Resume on ‹Engine› (COV-3): classic's confirm, named for the engine; live, its sentence is dev's engineSwitchNote
+    engine: { title: 'Resume on {engine}?', yes: 'Resume on {engine}', text: 'Starts the paused step fresh; a model {engine} cannot run falls back to its default.' },
     'resume-at': { title: 'Resume at a time', yes: 'Schedule the resume', text: 'The task stays paused until then, and you can cancel it.', field: { label: 'Time', value: '15:30', hint: 'Today, in your time zone', time: true } },
     report: { title: 'Report this task', yes: 'Send report', text: 'Files a GitHub issue with this task’s redacted report and your note.', field: { label: 'Note', value: '', hint: 'What went wrong, or what you expected', multiline: true } },
     cap: { title: 'Raise the cap', yes: 'Raise it and go on', text: 'A new cost cap for this task; it goes on from {step}.', field: { label: 'New cap', value: '$180', hint: 'It is at $120' } },
@@ -560,7 +563,8 @@
     if (c.id === 'plan') focus = { kind: 'plan', items: PLAN_ITEMS.map((t) => ({ t, state: 'next' })), issues: ui && ui.fixed && ui.fixed.plan ? [] : DETAIL.planIssues };
     else if (c.reqsCheck) focus = { kind: 'reqs', items: DETAIL.criteria, left: reqLeft(ui) };
     else if (c.id === 'requirements') focus = { kind: 'criteria', items: DETAIL.criteria };
-    else if (c.id === 'gate') focus = { kind: 'findings', title: 'What Review still holds open', issues: DETAIL.issues, roles: DETAIL.roles };
+    // live: the run's own review (the gate's rows, B1.6 D8), never the design's sample
+    else if (c.id === 'gate') focus = { kind: 'findings', title: 'What Review still holds open', issues: c.liveId ? (c.review && c.review.issues) || [] : DETAIL.issues, roles: c.liveId ? (c.review && c.review.roles) || [] : DETAIL.roles };
     else if (c.requested) focus = { kind: 'findings', title: 'What the reviewer asked', issues: DETAIL.requested, roles: [] };
     else if (c.issues) focus = { kind: 'findings', title: '2 open issues', note: 'A review ran out of cycles with these open, and the task went on past them', issues: DETAIL.issues, roles: DETAIL.roles };
     else if (ev) focus = { kind: 'broke', ev };
@@ -599,6 +603,8 @@
       : over.focus && over.focus.kind === 'broke' && (c.why || []).length ? { kind: 'broke', ev: over.focus.ev, own: c.why } : null;
     return Object.assign({}, over, { focus: broke, checklist: null, outcome: [], ask: null, evidence: '', task: c.task || '', artifacts: LP.docs || [], areas: over.areas.length ? areasOf(files) : [] });
   }
+  // The question a task waits on (F-G-G2-02, gate.no-demo): a live task's first own question, else none; a design case's sample.
+  const askOf = (c) => (c.liveId ? (c.liveAsk && c.liveAsk.questions[0]) || null : DETAIL.asks[c.id] || null);
   // A feature reads from the task that holds it up: failed first, then one that asks, one paused, one stopped.
   const HOLD = [['Failed', 'group-failed', (k, n) => 'Task ' + k + ' of ' + n + ' · failed'], [R.runState('group-needs').word, 'group-needs', (k, n) => 'Task ' + k + ' of ' + n + ' · needs you'],
     ['Paused', 'group-paused', (k, n, m) => 'Task ' + k + ' of ' + n + ' · ' + ((m.detail || 'paused').split(' · ')[0].toLowerCase())], ['Stopped', 'group-stopped', (k) => 'Stopped at task ' + k]];
@@ -770,7 +776,8 @@
     if (ui.watched !== null && ui.watched !== undefined && !c.watchOff) c = Object.assign({}, c, { stages: c.stages.map((st) => { if (st.key !== 'pr') return st; const rest = st.subs.filter((x) => x.name !== 'Watch'); return Object.assign({}, st, { subs: watching ? rest.concat(s('Watch', 'now', '', { live: 'Watching · fixes failing checks' })) : rest }); }) });
     const published = !!(ui.fixed && ui.fixed.published);
     if (published && /^Ready$/.test(c.word) && !c.detail) c = Object.assign({}, c, { detail: 'On origin · no PR yet' });
-    const clarifying = c.id === 'clarify' ? DETAIL.asks.clarify.questions : null;
+    // F-G-G2-02: a live task's questions are its own (liveRun liveAsk), several asked one by one as Clarify does; never the design's
+    const clarifying = c.liveId ? (c.liveAsk && c.liveAsk.questions.length > 1 ? c.liveAsk.questions : null) : c.id === 'clarify' ? DETAIL.asks.clarify.questions : null;
     const qIndex = clarifying ? Math.min(ui.question || 0, clarifying.length - 1) : 0;
     if (clarifying && qIndex < clarifying.length - 1) c = Object.assign({}, c, { action: Object.assign({}, c.action, { label: 'Next question', icon: 'chevron', items: c.action.items.concat(qIndex ? ['Previous question'] : []) }) });
     else if (clarifying && qIndex) c = Object.assign({}, c, { action: Object.assign({}, c.action, { items: c.action.items.concat('Previous question') }) });
@@ -818,6 +825,7 @@
       if (c.reqsCheck && left) offs[label] = 'Mark every requirement before you create the PR · ' + left + ' left';
       const alt = sh ? [pick === 'one' ? 'Create ' + sh.runs.length + ' ' + stackWord + ' PRs instead' : 'Create one PR instead'] : [];
       if (published) offs['Publish branch'] = 'It is already on origin';
+      if (c.restartOff) offs['Restart Build'] = c.restartOff;   // the server would refuse it (task-live restartOff, F-a4-11)
       if (c.watchOff) offs.Watch = c.watchOff;
       const rest = liveNow && c.stages.some((x) => x.run) && c.stages.some((x) => x.run && x.subs.every((y) => y.state === 'next'));
       const stopWord = c.stages.some((x) => x.run) && liveRun >= 0 ? 'Stop task ' + (liveRun + 1) : 'Stop the task';
@@ -859,7 +867,8 @@
       kind: runStages.length && c.kind ? c.kind : '',   // the stepper already counts the tasks
       crumbs, pager: g ? { index: par.index, n: g.stages.filter((x) => x.run).length, prev: sibling(par.index - 1), next: sibling(par.index + 1), group: g.id } : null,
       // The place line: where the code lives and where it goes, the PR once it exists. Each part once on the page.
-      place: { branch, copy: !!branch && branch !== 'main', base: c.base || (c.onSource ? 'origin' : branch === 'main' ? 'origin/main' : branch ? 'dev' : ''), onSource: !!c.onSource, hidden: seed ? '' : c.hidden || '',
+      // a live task's base is its own or none, never the demo's sample (B1.7 D10); the base-unknown case has none either
+      place: { branch, copy: !!branch && branch !== 'main', base: c.liveId || c.id === 'no-base' ? c.base || '' : c.base || (c.onSource ? 'origin' : branch === 'main' ? 'origin/main' : branch ? 'dev' : ''), onSource: !!c.onSource, hidden: seed ? '' : c.hidden || '',
         pr: c.pr !== undefined && c.pr !== '' ? c.pr : prOpen(c) && !c.liveId ? '#959' : '', folder: c.folder || '', repos: c.repos || [],
         merged: c.stages.some((x) => x.key === 'merged' && x.subs.length && x.subs.every((y) => y.state === 'merged')), applied: c.word === 'Applied' },
       chips: (ui.chips || []).filter((x) => x.kind !== 'group'), inGroup: !!g || runStages.length > 0, addedGroup: ((ui.chips || []).find((x) => x.kind === 'group') || {}).text || '',
@@ -900,7 +909,7 @@
       }).concat(gone || c.noDiff || (!buildStarted && !groupBuilt.length) ? [] : [runStages.length ? (() => { const sum = groupBuilt.reduce((a, i) => { const [p, m] = SIZE(sizesOf(c)[i] || '+0 \u22120'); return [a[0] + p, a[1] + m]; }, [0, 0]); return { k: 'Changes', v: '+' + sum[0] + ' \u2212' + sum[1], tab: '' }; })()
         : { k: 'Changes', v: c.diff || '+' + files.reduce((a, x) => a + x[1], 0) + ' \u2212' + files.reduce((a, x) => a + x[2], 0), tab: 'changes' }]),
       // A tab shows only what exists: no diff before Build, no decisions before anything was decided.
-      tabs: (runStages.length ? GROUP_TABS : RUN_TABS).filter(([id]) => (id === 'changes' ? hasChanges : id === 'decisions' ? decisionsOf(c, runStages).length > 0 || !!DETAIL.asks[c.id] : true)).map(([id, l], i, all) => ({ id, l, n: id === 'changes' && !gone ? String(files.length) + (over.artifacts.length ? ' · ' + over.artifacts.length + ' docs' : '') : id === 'decisions' ? String(decisionsOf(c, runStages).length + (DETAIL.asks[c.id] ? 1 : 0)) : '',
+      tabs: (runStages.length ? GROUP_TABS : RUN_TABS).filter(([id]) => (id === 'changes' ? hasChanges : id === 'decisions' ? decisionsOf(c, runStages).length > 0 || !!askOf(c) : true)).map(([id, l], i, all) => ({ id, l, n: id === 'changes' && !gone ? String(files.length) + (over.artifacts.length ? ' · ' + over.artifacts.length + ' docs' : '') : id === 'decisions' ? String(decisionsOf(c, runStages).length + (askOf(c) ? 1 : 0)) : '',
         sel: id === (all.some((x) => x[0] === ui.tab) ? ui.tab : all[0][0]) })),
       activity: c.stages.map((x) => {
         // live: the stage's own cost (taskPageOf); its steps keep the design's names, never its sample prices, models or evidence
@@ -923,11 +932,11 @@
       // A group's next run, under the task it follows: whether it starts by itself or asks first is set right there.
       then: c.independent || hold ? null : (() => { const k = runStages.findIndex((x) => stageState(x.subs) === 'live'); const nx = k >= 0 && runStages[k + 1]; return nx && nx.subs.every((y) => y.state === 'next') && open === runStages[k].key ? { n: k + 2, title: nx.title } : null; })(),
       planHead: runStages.length > 0 && open === 'plan',
-      runCases: c.runCases || [], parent: par, over, ask: clarifying ? Object.assign({}, clarifying[qIndex], { n: (qIndex + 1) + ' of ' + clarifying.length }) : (c.id === 'question' && seed?.question) || DETAIL.asks[c.id] || null, under: /^(gate|plan|outline)$/.test(c.id) ? (c.liveId ? { issues: (c.review && c.review.issues) || [], roles: (c.review && c.review.roles) || [] } : { issues: c.id === 'gate' ? DETAIL.issues : [], roles: DETAIL.roles }) : null,   // live: the run's own review, never the design's sample
+      runCases: c.runCases || [], parent: par, over, ask: clarifying ? Object.assign({}, clarifying[qIndex], { n: (qIndex + 1) + ' of ' + clarifying.length }) : c.liveId ? askOf(c) : (c.id === 'question' && seed?.question) || DETAIL.asks[c.id] || null, under: /^(gate|plan|outline)$/.test(c.id) ? (c.liveId ? { issues: (c.review && c.review.issues) || [], roles: (c.review && c.review.roles) || [] } : { issues: c.id === 'gate' ? DETAIL.issues : [], roles: DETAIL.roles }) : null,   // live: the run's own review, never the design's sample
       flow: flowOf(c, stateId, liveCtx), state: stateId, event: EVENT_OF(c, stateId, liveCtx), runFlow: R.runFlow(liveCtx), liveRun: runStages.findIndex((x) => stageState(x.subs) === 'live' && x.member && /^(Working|Starting)$/.test(x.member.word)), formCtx: liveCtx,
       hasSetup: LP ? !!LP.setup : !c.noSetup && !runStages.length, dependents: c.dependents || 0, heldBy: c.heldBy || '', hosted: LP ? !!(LP.actions && !LP.actions.enabled) : !!c.hosted, baseMoved: !!c.baseMoved, independent: !!c.independent, reqsLeft: left, reqsCheck: !!c.reqsCheck, holdIndex: c.k ? c.k - 1 : -1,
       // live: the log, agents, sessions and step usage are the task's own (its log, steps, sessions and telemetry)
-      logs: logsGone ? [] : LP ? LP.log || [] : logsOf(c), agents: logsGone ? [] : LP ? LP.agents || [] : agentsOf(c), sessions: logsGone ? [] : LP ? LP.sessions || [] : sessionsOf(c), usage: LP ? LP.usage || [] : usageOf(c), graph: graphOf(c, ui), agentsUnknown: !!c.agentsUnknown, isWorkspace: !!(c.repos && c.repos.length), docsHere: !hasChanges, outlineN, outlineRuns: ui.outline || RUNS, rounds: c.liveId ? {} : DETAIL.rounds,
+      logs: logsGone ? [] : LP ? LP.log || [] : logsOf(c), agents: logsGone ? [] : LP ? LP.agents || [] : agentsOf(c), sessions: logsGone ? [] : LP ? LP.sessions || [] : sessionsOf(c), usage: LP ? LP.usage || [] : usageOf(c), graph: graphOf(c, ui), workflow: c.workflow || null, agentsUnknown: !!c.agentsUnknown, isWorkspace: !!(c.repos && c.repos.length), docsHere: !hasChanges, outlineN, outlineRuns: ui.outline || RUNS, rounds: c.liveId ? {} : DETAIL.rounds,
       tabData: Object.assign({}, DETAIL, seed ? { plan: seed.plan, docBody: Object.assign({}, DETAIL.docBody, { 'plan.md': '## The plan\n' + seed.plan.map((t) => '- ' + t).join('\n') }) } : {}, { files, decisions: decisionsOf(c, runStages) },
         LP ? { fileMeta: LP.changes?.fileMeta || {}, hunks: LP.changes?.hunks || {}, comments: LP.comments || {}, artifacts: LP.docs || [], services: LP.actions?.services || [], builtins: LP.actions?.builtins || [], stacks: LP.actions?.stacks || [], members: [], noChangeMembers: [] } : {},
         // live: what dev does not give the page yet is empty, so its row hides (never the design's skills, memory, worktree or cost lines)
@@ -963,10 +972,15 @@
   // a step of dev's in the prototype's shape: a stopped one is the design's stopped look (paused, Stopped by you), a
   // capped task's paused one says it is at its cap
   const liveSub = (page, x) => (x.state === 'stopped' ? s(x.name, 'paused', '', { live: 'Stopped by you' })
+    // a review gate's asking step says what you pick (B1.6 D7); a review forced on with open issues is a problem, never a tick (D5)
+    : x.state === 'ask' ? s(x.name, 'ask', '', { live: (page.gate && page.gate.line) || askLine(page.ask) })
+    : x.state === 'blocked' ? s(x.name, 'problem', '', { live: 'Blocked · accepted with ' + x.open + ' open issue' + (x.open === 1 ? '' : 's') })
     : x.state === 'paused' && page.case === 'capped' ? s(x.name, 'paused', '', { live: 'Paused at its cap' })
     // dev's failure policy holds a failed step paused: on a failed task it is the step that broke, its line what broke
     : x.state === 'paused' && page.failure ? s(x.name, 'failed', '', { live: String(page.failure.head || '').replace(/^[^·]*·\s*/, '') })
     : s(x.name, STAGE_SUB[x.state] || 'next'));
+  // F-G-G2-02: the asking step's line is the run's own question (and how many it asks), never the design's sample
+  const askLine = (a) => (!a ? '' : a.questions[0].q + (a.questions.length > 1 ? ' · 1 of ' + a.questions.length + ' questions' : ''));
   // the PR stage's lines from the PR's own facts: Create PR "Opened #N", Checks "2 failed" or "3 of 3 passed"
   const checksLine = (k) => (!k || !k.total ? '' : k.failed ? k.failed + ' failed' : (k.total - k.pending) + ' of ' + k.total + ' passed');
   const prSub = (page, x) => (x.name === 'Create PR' && page.pr ? Object.assign({}, x, { live: 'Opened ' + page.pr }) : x.name === 'Checks' && page.pr && checksLine(page.checks) ? Object.assign({}, x, { live: checksLine(page.checks) }) : x);
@@ -986,6 +1000,8 @@
       const st = Object.assign({}, st0, { subs: (st0.subs || []).map(bare) });
       const own = (page.stages || []).find((x) => x.key === st.key);
       if (st.key === 'pr') return Object.assign({}, st, { subs: st.subs.map((x) => prSub(page, x)) });
+      // a landing stage is marked merged only when the task's own PR merged (F-G-G2-02 sweep: the archived case's design reads Merged)
+      if (SHIP.test(st.key) && !(page.git === 'merged' || page.case === 'merged')) return Object.assign({}, st, { subs: st.subs.map((x) => (x.state === 'merged' ? Object.assign({}, x, { state: 'next' }) : x)) });
       if (!own || st.run || SHIP.test(st.key)) return st;
       // its steps are the task's workflow's own, named and marked by dev (taskPageOf stages[].steps); a stage whose steps
       // are not known yet (Auto still deciding) is one step under its own name, in its own state
@@ -995,12 +1011,13 @@
     // the task's own facts only: an empty branch, time or cost stays empty, never the design's sample (BRANCH, the case's figures)
     const at = page.startedAt ? new Date(page.startedAt) : null;
     const figs = (base.figs || [['Time', ''], ['Cost', '']]).map(([k, v]) => [k, k === 'Time' ? fmtMin(page.mins || 0) : k === 'Cost' ? '$' + (page.cost || 0).toFixed(2) : v]);
-    const going = (page.stages || []).some((x) => x.state === 'now' || x.state === 'paused');
+    // a running task whose pipeline is known (task-live liveRunning, B1.9 D7) is going even before its steps arrive
+    const going = page.liveRunning === true || (page.stages || []).some((x) => x.state === 'now' || x.state === 'paused' || x.state === 'ask');
     return Object.assign({}, base, { id: base.id, title: page.title, project: page.project || '', over: !going, branch: page.branch || '', base: page.base || '', pr: page.pr || '', diff: '', task: page.prompt || '', figs,
       startedWord: at ? 'Started ' + at.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ', ' + at.toTimeString().slice(0, 5) : '',
       detail: page.detail || '', why: page.why || [], failure: page.failure || null, review: page.review || { roles: [], issues: [] }, stages, spent: { mins: page.mins || 0, cost: page.cost || 0 }, budget: page.cap || null, movedFrom: base.id, liveId: page.id,
       // no live decisions source yet: the design's sample decisions never reach a real task
-      decisions: [], failedChecks: page.failedChecks || 0, stageCost: Object.fromEntries((page.stages || []).map((x) => [x.key, x.costUsd || 0])) });
+      decisions: [], liveAsk: page.ask || null, failedChecks: page.failedChecks || 0, restartOff: page.restartOff || '', workflow: page.workflow || null, stageCost: Object.fromEntries((page.stages || []).map((x) => [x.key, x.costUsd || 0])) });
   }
   // The live kind's group page (#run/group:GID, D5): dev's run group (GET /api/run-groups), its members in stack order,
   // each drawn as its own store task's case. Its one action merges the next PR in order, or fixes the first failing one,
@@ -1023,7 +1040,14 @@
     const flow = ship ? { 'Create PR': { confirm: 'Create one PR for the ' + ms.length + ' tasks? Their branches combine into one branch for one review.', live: 'Ship group', ship: 'one', say: 'Created the PR' },
       ['Create ' + toOpen + ' PRs']: { confirm: 'Create ' + toOpen + ' ' + word + ' PRs? ' + (feature ? 'Each goes into the one before.' : 'Each goes into its base.'), live: 'Ship group', ship: word, say: 'Created ' + toOpen + ' PRs' } } : {};
     // its head's word and mark are its state's (a member that failed needs you: chain), as every task page's
-    const state = merged ? 'merged' : ms.some((m) => m.case === 'failed') ? 'chain' : ms.some((m) => m.pr) ? 'ship-applied' : 'feature';
+    // Working only while a member works (F-a4-09, classic groupModel's order): else the first member still on its way
+    // speaks for it (a question, a gate, a stop), then one not started yet is Waiting, then the PRs, then the members' end
+    const known = (id) => { try { R.runState(id, {}); return true; } catch { return false; } };
+    const done = (m) => !!m.pr || /^(merged|ready|approved)$/.test(m.case);
+    const on = ms.find((m) => m.case && !done(m) && known(m.case)), end = (ms.find((m) => m.case !== 'merged') || {}).case;
+    const byPriority = [[merged, 'merged'], [ms.some((m) => m.case === 'failed'), 'chain'], [ms.some((m) => /^(starting|working)$/.test(m.case)), 'feature'],
+      [on, on && on.case], [ms.some((m) => !m.case), 'scheduled'], [ms.some((m) => m.pr), 'ship-applied'], [end && known(end), end]];
+    const state = (byPriority.find(([when]) => when) || [true, 'featureready'])[1];
     const look = R.runState(state, {});
     return { word: look.word, dot: look.dot, sym: look.sym, id: 'group:' + g.id, liveId: 'group:' + g.id, liveGroup: g, project: '', group: 'Groups', label: g.title, kind: g.kind, title: g.title, task: g.title, branch: '', over: true, follows: g.kind === 'Feature', independent: g.kind !== 'Feature',
       state, decisions: [], noDiff: true,

@@ -21,7 +21,7 @@ export const LISTS = {
 // each test's window closes when that test ends: the pages keep timers on it, and 48 open windows slow every later test
 export const closers = [];
 // `read(url)`: a GET the test answers itself ([status, data], or null for the default): a task's history detail, its checks.
-export async function liveHost({ sources = SOURCES, thread = () => [200, THREAD], write = () => [200, {}], hash = '#chat', lists = LISTS, beforeScripts = () => {}, hold = () => null, read = () => null } = {}) {
+export async function liveHost({ sources = SOURCES, thread = () => [200, THREAD], write = () => [200, {}], hash = '#chat', search = '', lists = LISTS, beforeScripts = () => {}, hold = () => null, read = () => null } = {}) {
   const calls = [], sockets = [];
   const fetch = async (u, o = {}) => {
     const url = String(u), method = o.method || 'GET', body = o.body ? JSON.parse(o.body) : undefined;
@@ -31,9 +31,10 @@ export async function liveHost({ sources = SOURCES, thread = () => [200, THREAD]
     if (own && own[0] === 0) throw new TypeError('Failed to fetch');   // a network failure
     // a store source the fixture has no answer for falls back to the test's own lists (GET /api/run-groups is both)
     const [status, data] = own || (method !== 'GET' ? await write(url, body, method) : BY_URL[url] && (sources[BY_URL[url]] !== undefined || !lists[url]) ? [200, clone(sources[BY_URL[url]] ?? {})] : lists[url] ? [200, lists[url]] : url.startsWith('/api/ask/threads/') ? await thread(url) : [404, {}]);
-    return { ok: status < 300, status, json: async () => clone(data), text: async () => (typeof data === 'string' ? data : JSON.stringify(data ?? {})) };   // a diff or a log is text
+    const text = () => (typeof data === 'string' ? data : JSON.stringify(data ?? {}));
+    return { ok: status < 300, status, json: async () => clone(data), text: async () => text(), arrayBuffer: async () => new TextEncoder().encode(text()).buffer };   // a diff or a log is text; an attachment is bytes
   };
-  const w = stillhetHost({ adapter: 'live', hash, fetch, after: (fn) => closers.push(fn), beforeScripts: (win) => {
+  const w = stillhetHost({ adapter: 'live', hash, search, fetch, after: (fn) => closers.push(fn), beforeScripts: (win) => {
     win.WebSocket = class { constructor(url) { this.url = url; this.readyState = 1; sockets.push(this); } close() {} send() {} };
     win.Date.now = () => NOW;
     win.Element.prototype.scrollIntoView = function () {};
@@ -47,6 +48,16 @@ export async function liveHost({ sources = SOURCES, thread = () => [200, THREAD]
   return { w, d: w.document, calls, sockets };
 }
 export const go = async (w, hash, ms = 60) => { w.location.hash = hash; await settle(ms); };
+// a condition wait: polls `fn` (sync) until it is truthy and returns that value; a fixed tick races a loaded runner
+export async function until(fn, ms = 2000, step = 10) {
+  const end = Date.now() + ms;
+  for (;;) {
+    const v = fn();
+    if (v) return v;
+    if (Date.now() >= end) throw new Error('until: timed out after ' + ms + ' ms');
+    await settle(step);
+  }
+}
 export const store = (w) => clone({ data: w.RailWorld.data(), chats: w.RailWorld.part('chats') });
 // Step 7's DISABLED_OK: the only controls the live kind may draw disabled, each for its runtime reason. At rest none of
 // them holds, so the walk finds no disabled control at all; a pending one is checked in its own test above.

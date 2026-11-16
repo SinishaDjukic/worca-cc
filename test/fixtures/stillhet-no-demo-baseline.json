@@ -1,0 +1,667 @@
+{
+  "sites": {
+    "chat/chats-model.js › would › apply 3 files to docs-site": {
+      "class": "prototype-only",
+      "why": "A seeded chat's card: on live seed() serves the store's chats only (chat/chats-model.js:71) and thread() reads RailChatLive.turns (:98)."
+    },
+    "chat/chats-model.js › would › open PR #1104 into main": {
+      "class": "prototype-only",
+      "why": "A seeded chat's card: on live seed() serves the store's chats only (chat/chats-model.js:71) and thread() reads RailChatLive.turns (:98)."
+    },
+    "chat/chats-model.js › would › open the 12 changed files": {
+      "class": "prototype-only",
+      "why": "A seeded chat's card: on live seed() serves the store's chats only (chat/chats-model.js:71) and thread() reads RailChatLive.turns (:98)."
+    },
+    "chat/chats-model.js › would › run scripts/release-notes.sh": {
+      "class": "prototype-only",
+      "why": "A seeded chat's card: on live seed() serves the store's chats only (chat/chats-model.js:71) and thread() reads RailChatLive.turns (:98)."
+    },
+    "chat/conversation.js › would › (a phrase built from data)": {
+      "class": "wired",
+      "why": "doOr (chat/conversation.js:45) draws data-live on live instead of the would sentence; liveClick sends it to RailChatLive.act (:1343).",
+      "via": "test/stillhet-chat-live.test.mjs"
+    },
+    "chat/conversation.js › would › be saved as …": {
+      "class": "wired",
+      "why": "Live says 'Saved as …' (chat/conversation.js:807) and Save to plans/ calls RailChatLive.act('plan-save') (:1174).",
+      "via": "ui/public/stillhet/live/chat-live.mjs"
+    },
+    "chat/conversation.js › would › be …": {
+      "class": "wired",
+      "why": "The menu help is LIVE() ? 'Saved as…' : RailWould(…) (chat/conversation.js:806); the action is plan-save on live (:1174).",
+      "via": "ui/public/stillhet/live/chat-live.mjs"
+    },
+    "chat/conversation.js › would › copy": {
+      "class": "wired",
+      "why": "wouldSay (chat/conversation.js:28) is used only at doAct's demo tail; the if (LIVE()) branch (:548) runs the live flow and returns first.",
+      "via": "test/stillhet-chat-live.test.mjs"
+    },
+    "chat/conversation.js › would › copy … lines": {
+      "class": "wired",
+      "why": "if (LIVE()) RailChatLive.act('copy') and says Copied only on ok, before the would line (chat/conversation.js:1447). The via tests act('copy') writing the clipboard (:145); no test clicks data-dl-copy itself.",
+      "via": "test/stillhet-chat-live.test.mjs"
+    },
+    "chat/conversation.js › would › download": {
+      "class": "wired",
+      "why": "wouldSay (chat/conversation.js:28) is reached only after doAct's if (LIVE()) branch (:548) has returned.",
+      "via": "test/stillhet-chat-live.test.mjs"
+    },
+    "chat/conversation.js › would › open": {
+      "class": "wired",
+      "why": "wouldSay (chat/conversation.js:28) is reached only after doAct's if (LIVE()) branch (:548) has returned.",
+      "via": "test/stillhet-chat-live.test.mjs"
+    },
+    "chat/conversation.js › would › open PR #1107 into dev · …": {
+      "class": "wired",
+      "why": "On live liveClick handles data-ship with RailChatLive.act('ship') (chat/conversation.js:1373) before the demo handler (:1499).",
+      "via": "test/stillhet-chat-app-host-3.test.mjs"
+    },
+    "chat/conversation.js › would › open a file picker": {
+      "class": "wired",
+      "why": "v === 'Files' && LIVE() calls pickFiles() (chat/conversation.js:1230), a real <input type=file> that attaches the chosen files (:1272), before the demo line. No test drives the picker; test/stillhet-chat-app-host-2.test.mjs:98 only checks the live menu offers Files.",
+      "via": "ui/public/stillhet/chat/conversation.js"
+    },
+    "chat/conversation.js › would › open a file picker: … stands in": {
+      "class": "wired",
+      "why": "v === 'Files' && LIVE() calls pickFiles() (chat/conversation.js:1230), a real <input type=file> that attaches the chosen files (:1272), before the demo line. No test drives the picker; test/stillhet-chat-app-host-2.test.mjs:98 only checks the live menu offers Files.",
+      "via": "ui/public/stillhet/chat/conversation.js"
+    },
+    "chat/conversation.js › would › save it as …": {
+      "class": "wired",
+      "why": "if (LIVE()) RailChatLive.act('plan-save') returns before the demo would line (chat/conversation.js:1174).",
+      "via": "ui/public/stillhet/live/chat-live.mjs"
+    },
+    "chat/conversation.js › would › start building": {
+      "class": "wired",
+      "why": "liveClick handles data-cp-apply with card-apply (chat/conversation.js:1390) and returns before the demo handler (:1542).",
+      "via": "test/stillhet-chat-live.test.mjs"
+    },
+    "chat/conversation.js › would › write it into the project’s plans folder": {
+      "class": "wired",
+      "why": "The help is LIVE() ? 'Writes it into the project’s plans folder' : RailWould(…) (chat/conversation.js:806); the action is plan-save (:1174).",
+      "via": "ui/public/stillhet/live/chat-live.mjs"
+    },
+    "chat/conversation.js › would › … …": {
+      "class": "wired",
+      "why": "liveClick handles data-cp-apply with card-apply, card-decline or revert (chat/conversation.js:1390) before the demo state flip (:1542).",
+      "via": "test/stillhet-chat-live.test.mjs"
+    },
+    "marketplace/marketplace.js › would › open it on GitHub": {
+      "class": "wired",
+      "why": "The would help shows only under !isLive(); live draws View its source with the real webUrl (marketplace/marketplace.js:122), opened by openSource (:257).",
+      "via": "test/stillhet-marketplace-host-page.test.mjs"
+    },
+    "marketplace/marketplace.js › would › open … at … on GitHub": {
+      "class": "wired",
+      "why": "if (LIVE()) LIVE().openMarket(m.id) else say(RailWould(…)) (marketplace/marketplace.js:237).",
+      "via": "test/stillhet-market-live.test.mjs"
+    },
+    "marketplace/marketplace.js › would › open … at … on GitHub #2": {
+      "class": "wired",
+      "why": "else if (LIVE()) LIVE().openSource(p.id) else say(RailWould(…)) (marketplace/marketplace.js:257).",
+      "via": "test/stillhet-market-live.test.mjs"
+    },
+    "pulse/pulse.js › would › (a phrase built from data)": {
+      "class": "prototype-only",
+      "why": "data-nr-start is in the standalone New run popover only; with the shell (always in the app host) [data-newrun] hands off to Chat first (pulse/pulse.js:970)."
+    },
+    "pulse/pulse.js › would › (a phrase built from data) #2": {
+      "class": "prototype-only",
+      "why": "if (!SHELL) { toast(RailWould(…)); return; } (pulse/pulse.js:1080); the app host always has RailShell."
+    },
+    "pulse/pulse.js › would › ask Chat: …": {
+      "class": "prototype-only",
+      "why": "if (SHELL) RailConversation.handOver(…) else toast(RailWould(…)) (pulse/pulse.js:695); the app host always has RailShell."
+    },
+    "pulse/pulse.js › would › open Statistics": {
+      "class": "prototype-only",
+      "why": "if (SHELL) SHELL.go('insights/spend') else toast(RailWould('open Statistics')) (pulse/pulse.js:969)."
+    },
+    "pulse/pulse.js › would › open …": {
+      "class": "prototype-only",
+      "why": "sidebar() (pulse/pulse.js:190) is drawn only by paintAlone, the standalone page; the app host renders in the shell (:840)."
+    },
+    "pulse/pulse.js › would › open … · …": {
+      "class": "prototype-only",
+      "why": "goTo returns from its if (SHELL) branch before the would toast (pulse/pulse.js:681)."
+    },
+    "pulse/pulse.js › would › schedule it: …": {
+      "class": "prototype-only",
+      "why": "data-nr-wait is in the standalone New run popover only, which the shell's [data-newrun] hand-off shadows (pulse/pulse.js:970)."
+    },
+    "pulse/pulse.js › would › send a test notification": {
+      "class": "prototype-only",
+      "why": "if (SHELL) sendTest(); else toast(RailWould(…)) (pulse/pulse.js:1026); the app host always has RailShell."
+    },
+    "requirements/requirements.js › would › copy … as Markdown": {
+      "class": "not-in-stillhet",
+      "why": "Requirements is a not-live place (shell.js:31 NOT_LIVE), so live draws notInStillhet and requirements.js never draws.",
+      "rule": "nav.not-live"
+    },
+    "requirements/requirements.js › would › save specs/….md in …": {
+      "class": "not-in-stillhet",
+      "why": "Requirements is a not-live place (shell.js:31 NOT_LIVE), so live draws notInStillhet and requirements.js never draws.",
+      "rule": "nav.not-live"
+    },
+    "runs/run-page-model.js › would › (a phrase built from data)": {
+      "class": "wired",
+      "why": "tryIt (runs/run-page-model.js:919) shows only through run-page.js:896; on live Try it goes to liveDirect first (:895) and other labels without a route are dropped by canFlow (:552).",
+      "via": "test/stillhet-task-tools-host-1.test.mjs"
+    },
+    "runs/run-page-model.js › would › open worca-api #212 on GitHub": {
+      "class": "prototype-only",
+      "why": "INSTANCE_FLOW is keyed to the demo case 'workspace' (runs/run-page-model.js:943); no live task maps to it and canFlow drops it (run-page.js:552)."
+    },
+    "runs/run-page-model.js › would › open worca-docs #31 on GitHub": {
+      "class": "prototype-only",
+      "why": "INSTANCE_FLOW is keyed to the demo case 'workspace' (runs/run-page-model.js:943); no live task maps to it and canFlow drops it (run-page.js:552)."
+    },
+    "runs/run-page-model.js › would › open worca-web #88 on GitHub": {
+      "class": "prototype-only",
+      "why": "INSTANCE_FLOW is keyed to the demo case 'workspace' (runs/run-page-model.js:943); no live task maps to it and canFlow drops it (run-page.js:552)."
+    },
+    "runs/run-page.js › would › (a phrase built from data)": {
+      "class": "wired",
+      "why": "act() sends a label without a flow to liveDirect (RailTaskLive.flow) on live (runs/run-page.js:900) before the toast; only canFlow labels are drawn.",
+      "via": "ui/public/stillhet/live/task-live.mjs"
+    },
+    "runs/run-page.js › would › (a phrase built from data) #2": {
+      "class": "wired",
+      "why": "Service start and stop call liveTool on live (runs/run-page.js:1112) before the demo branch (:1128).",
+      "via": "test/stillhet-task-tools-host-1.test.mjs"
+    },
+    "runs/run-page.js › would › (a phrase built from data) #3": {
+      "class": "prototype-only",
+      "why": "try:start/stop come from the Try-it header; on live liveMore keeps only LIVE_MORE ids (runs/run-page.js:641), so try:* is never drawn."
+    },
+    "runs/run-page.js › would › send the direction": {
+      "class": "wired",
+      "why": "On live, Send direction posts RailTaskLive.act('run-direction') before the demo branch, which runs only when !LIVE_PAGE() (runs/run-page.js:1128).",
+      "via": "test/stillhet-classic-extras-task-host.test.mjs"
+    },
+    "runs/run-page.js › would › check out on this machine and open a local copy": {
+      "class": "wired",
+      "why": "On live more:try goes to liveDirect('Try it') (runs/run-page.js:1181) before the demo branch.",
+      "via": "test/stillhet-task-tools-host-1.test.mjs"
+    },
+    "runs/run-page.js › would › check out on this machine; the PR waits for you": {
+      "class": "prototype-only",
+      "why": "The Try it first button is drawn only when !LIVE_PAGE() (runs/run-page.js:979)."
+    },
+    "runs/run-page.js › would › check out …": {
+      "class": "wired",
+      "why": "On live data-checkout goes to liveDirect('Check out'), POST /api/runs/:id/checkout (runs/run-page.js:1129).",
+      "via": "test/stillhet-task-live.test.mjs"
+    },
+    "runs/run-page.js › would › check out … on this machine": {
+      "class": "prototype-only",
+      "why": "The workspace Check out N of M button is wrapped in unlessLive() (runs/run-page.js:203)."
+    },
+    "runs/run-page.js › would › copy the error details: id E-7F3A, with the message and stack": {
+      "class": "wired",
+      "why": "DETAILS is drawn only inside unlessLive() (runs/run-page.js:366, :446); live draws data-copy with the error's own text (:917, :1091).",
+      "via": "test/stillhet-tasks-walk-host.test.mjs"
+    },
+    "runs/run-page.js › would › copy the link to this …": {
+      "class": "wired",
+      "why": "On live more:link goes to liveDirect('Copy link') (task-live copyLink) before the demo line (runs/run-page.js:1190).",
+      "via": "test/stillhet-task-live.test.mjs"
+    },
+    "runs/run-page.js › would › copy …": {
+      "class": "wired",
+      "why": "On live the session's Copy its id is data-copy with the real id (runs/run-page.js:306), copied at :1091.",
+      "via": "test/stillhet-tasks-walk-host.test.mjs"
+    },
+    "runs/run-page.js › would › copy … #2": {
+      "class": "wired",
+      "why": "On live the branch chip is data-copy of the real branch (runs/run-page.js:398), copied at :1091.",
+      "via": "test/stillhet-tasks-refusals-host-2.test.mjs"
+    },
+    "runs/run-page.js › would › copy … log lines": {
+      "class": "wired",
+      "why": "On live the log Copy is data-copy with the shown lines (runs/run-page.js:295), copied at :1091.",
+      "via": "test/stillhet-tasks-walk-host.test.mjs"
+    },
+    "runs/run-page.js › would › copy: git fetch && git switch …": {
+      "class": "wired",
+      "why": "On live ch:copy writes the real git commands to the clipboard (runs/run-page.js:1212) before CH_SAY.",
+      "via": "ui/public/stillhet/runs/run-page.js"
+    },
+    "runs/run-page.js › would › download the patch": {
+      "class": "wired",
+      "why": "On live ch:patch goes to liveDirect('Download patch') (runs/run-page.js:1210), routed by chat-live.mjs:515.",
+      "via": "test/stillhet-chat-live.test.mjs"
+    },
+    "runs/run-page.js › would › download …": {
+      "class": "wired",
+      "why": "On live the document Download is data-dl (runs/run-page.js:243), which calls RailTaskLive.download (:1108).",
+      "via": "test/stillhet-task-tools-host-1.test.mjs"
+    },
+    "runs/run-page.js › would › download … #2": {
+      "class": "wired",
+      "why": "On live the doc viewer's Download is data-dl or left out (runs/run-page.js:325); handled at :1108.",
+      "via": "test/stillhet-task-tools-host-1.test.mjs"
+    },
+    "runs/run-page.js › would › open a terminal in the worktree": {
+      "class": "wired",
+      "why": "MORE_SAY more:terminal (runs/run-page.js:647) is reached only after the live branches call openTerminal() (:1214).",
+      "via": "test/stillhet-task-tools-host-1.test.mjs"
+    },
+    "runs/run-page.js › would › open a terminal in the worktree #2": {
+      "class": "wired",
+      "why": "On live Ctrl+` calls openTerminal() or does nothing without a worktree, and returns before the toast (runs/run-page.js:1280).",
+      "via": "test/stillhet-terminal-live.test.mjs"
+    },
+    "runs/run-page.js › would › open localhost:…": {
+      "class": "wired",
+      "why": "On live a running service's Open is data-svcopen with the real URL (runs/run-page.js:195), opened at :1109.",
+      "via": "ui/public/stillhet/runs/run-page.js"
+    },
+    "runs/run-page.js › would › open localhost:… #2": {
+      "class": "prototype-only",
+      "why": "try:open (runs/run-page.js:1184) is a try:* item that liveMore filters out on live (:641)."
+    },
+    "runs/run-page.js › would › open the Sync log": {
+      "class": "wired",
+      "why": "On live more:sync opens Activity › Logs on the real Sync step (runs/run-page.js:1216).",
+      "via": "test/stillhet-task-tools-host-1.test.mjs"
+    },
+    "runs/run-page.js › would › open the whole diff of the file": {
+      "class": "wired",
+      "why": "On live the button is data-fulldiff (runs/run-page.js:237), which opens RailTaskLive.wholeDiff (:1107).",
+      "via": "test/stillhet-task-tools-host-1.test.mjs"
+    },
+    "runs/run-page.js › would › open … on GitHub": {
+      "class": "wired",
+      "why": "On live place.pr is set only with dev's PR url, so prAttrs is a real link (runs/run-page.js:399).",
+      "via": "test/stillhet-task-page.test.mjs"
+    },
+    "runs/run-page.js › would › open … on GitHub #2": {
+      "class": "wired",
+      "why": "On live the rc-pr link is an a href to the PR url (runs/run-page.js:400); the data-say form needs a PR without a url, which live never makes.",
+      "via": "test/stillhet-tasks-walk-host.test.mjs"
+    },
+    "runs/run-page.js › would › refresh the diff from the worktree": {
+      "class": "wired",
+      "why": "On live ch:refresh re-reads the task through RailTaskLive.open (runs/run-page.js:1211) before CH_SAY.",
+      "via": "ui/public/stillhet/live/task-live.mjs"
+    },
+    "runs/run-page.js › would › run …": {
+      "class": "wired",
+      "why": "On live built-in tools are data-builtin (runs/run-page.js:197), which call liveTool('builtin') (:1111).",
+      "via": "test/stillhet-task-tools-host-1.test.mjs"
+    },
+    "runs/runs-list.js › would › open PR … on GitHub (it leaves Worca)": {
+      "class": "wired",
+      "why": "W.live && view-pr goes to liveAct, which window.opens the real PR url (runs/runs-list.js:194, :199).",
+      "via": "ui/public/stillhet/runs/runs-list.js"
+    },
+    "settings/settings-model.js › demo-row › About": {
+      "class": "not-in-stillhet",
+      "why": "The sample About section (settings/settings-model.js) is only: 'demo'; live draws its own About, the Version row read from GET /api/app/version (F-G-G5-04).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Away mode": {
+      "class": "not-in-stillhet",
+      "why": "The sample Away mode section reads NotLiveRow on live (settings.js:242).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Budget": {
+      "class": "prototype-only",
+      "why": "Budget is only:'demo' (settings/settings-model.js:463); vis() drops it on live (settings.js:46)."
+    },
+    "settings/settings-model.js › demo-row › Catalogue": {
+      "class": "not-in-stillhet",
+      "why": "The sample Models › Catalogue section reads NotLiveRow on live (settings.js:242).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Channels": {
+      "class": "not-in-stillhet",
+      "why": "The sample Chat › Channels section reads NotLiveRow on live (settings.js:242).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Chat history": {
+      "class": "not-in-stillhet",
+      "why": "The sample Chat history row returns NotLiveRow on live (settings.js:110); Delete all chats stays wired.",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Connectors": {
+      "class": "not-in-stillhet",
+      "why": "The sample Chat › Connectors row returns NotLiveRow on live (settings.js:110).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Defaults": {
+      "class": "not-in-stillhet",
+      "why": "The sample Models › Defaults section reads NotLiveRow on live (settings.js:242).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Engine": {
+      "class": "not-in-stillhet",
+      "why": "The sample Chat › Engine row returns NotLiveRow on live before its folds are built (settings.js:110).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Installed": {
+      "class": "prototype-only",
+      "why": "The demo Installed section is only:'demo' (settings/settings-model.js:712), dropped on live (settings.js:46); the only:'live' one lists /api/plugins."
+    },
+    "settings/settings-model.js › demo-row › Jobs": {
+      "class": "not-in-stillhet",
+      "why": "The sample Models › Jobs section reads NotLiveRow on live (settings.js:242).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Labels": {
+      "class": "not-in-stillhet",
+      "why": "The sample Labels section reads NotLiveRow on live (settings.js:242).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Limits": {
+      "class": "not-in-stillhet",
+      "why": "The sample Tasks › Limits section reads NotLiveRow on live (settings.js:242).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Limits #2": {
+      "class": "not-in-stillhet",
+      "why": "The sample Chat › Limits row returns NotLiveRow on live (settings.js:110).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Machine": {
+      "class": "not-in-stillhet",
+      "why": "The sample Tasks › Machine section reads NotLiveRow on live (settings.js:242).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Notes": {
+      "class": "not-in-stillhet",
+      "why": "The sample Memory › Notes section reads NotLiveRow on live (settings.js:242).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Presets": {
+      "class": "not-in-stillhet",
+      "why": "The sample Presets section reads NotLiveRow on live (settings.js:242).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Proposals": {
+      "class": "not-in-stillhet",
+      "why": "The sample Memory › Proposals section reads NotLiveRow on live (settings.js:242).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Restore points": {
+      "class": "not-in-stillhet",
+      "why": "The sample Memory › Restore points section reads NotLiveRow on live (settings.js:242).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Scripts": {
+      "class": "not-in-stillhet",
+      "why": "The sample Abilities › Scripts row returns NotLiveRow on live (settings.js:110).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Servers": {
+      "class": "not-in-stillhet",
+      "why": "The sample Connectors › Servers section reads NotLiveRow on live (settings.js:242).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Sets": {
+      "class": "not-in-stillhet",
+      "why": "The sample Guardrails › Sets section reads NotLiveRow on live (settings.js:242).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Sets #2": {
+      "class": "not-in-stillhet",
+      "why": "The sample Connectors › Sets section reads NotLiveRow on live (settings.js:242).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Setup": {
+      "class": "not-in-stillhet",
+      "why": "The sample General › Setup section reads NotLiveRow on live (settings.js:242).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Setup assistant": {
+      "class": "prototype-only",
+      "why": "Setup assistant is only:'demo' (settings/settings-model.js:364); vis() drops it on live (settings.js:46)."
+    },
+    "settings/settings-model.js › demo-row › Sign-ins": {
+      "class": "not-in-stillhet",
+      "why": "The sample Models › Sign-ins section reads NotLiveRow on live (settings.js:242).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Skills": {
+      "class": "not-in-stillhet",
+      "why": "The sample Connectors › Skills section reads NotLiveRow on live (settings.js:242).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Speech": {
+      "class": "not-in-stillhet",
+      "why": "The sample Chat › Speech section reads NotLiveRow on live (settings.js:242).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Spending": {
+      "class": "not-in-stillhet",
+      "why": "The sample Tasks › Spending section reads NotLiveRow on live (settings.js:242): no sample spend or caps.",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Starting": {
+      "class": "not-in-stillhet",
+      "why": "The sample Tasks › Starting section reads NotLiveRow on live (settings.js:242).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Storage": {
+      "class": "not-in-stillhet",
+      "why": "The sample General › Storage section reads NotLiveRow on live (settings.js:242).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Suggestions": {
+      "class": "not-in-stillhet",
+      "why": "The sample Abilities › Suggestions row returns NotLiveRow on live (settings.js:110).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Summaries": {
+      "class": "not-in-stillhet",
+      "why": "The sample Abilities › Summaries row returns NotLiveRow on live (settings.js:110).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Team memory": {
+      "class": "not-in-stillhet",
+      "why": "The sample Memory › Team memory section reads NotLiveRow on live (settings.js:242).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › demo-row › Team policy": {
+      "class": "not-in-stillhet",
+      "why": "Team policy (only:'demo') is drawn on live as notInStillhet with Back to Chat (settings.js:235-238).",
+      "rule": "nav.not-live"
+    },
+    "settings/settings-model.js › demo-row › Web": {
+      "class": "not-in-stillhet",
+      "why": "The sample Chat › Web row returns NotLiveRow on live (settings.js:110).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › would › copy it, to paste into .worca-policy/policy.json on a pull request": {
+      "class": "not-in-stillhet",
+      "why": "Copy for PR sits in Team policy, which live draws as the not-live place (settings.js:235-238).",
+      "rule": "nav.not-live"
+    },
+    "settings/settings-model.js › would › open a new bug issue on GitHub in a new tab": {
+      "class": "not-in-stillhet",
+      "why": "Report a bug is in the sample About section, which live does not draw (only: 'demo'; F-G-G5-04).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › would › open a new enhancement issue on GitHub in a new tab": {
+      "class": "not-in-stillhet",
+      "why": "Suggest an improvement is in the sample About section, which live does not draw (only: 'demo'; F-G-G5-04).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › would › open the Labs guide in a new tab": {
+      "class": "refused",
+      "why": "Not connected to Worca yet. Labs › Guide › Open (settings/settings-model.js:457) is drawn on live and only toasts the refusal (settings.js:324); nothing changes."
+    },
+    "settings/settings-model.js › would › open … in a new tab": {
+      "class": "not-in-stillhet",
+      "why": "opens() is used only by About's links (settings/settings-model.js:391, :395), in the sample About section, not drawn on live (only: 'demo').",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › would › send a test to …": {
+      "class": "not-in-stillhet",
+      "why": "The channel Test belongs to the sample Chat › Channels section, not drawn on live (only: 'demo'; F-G-G5-04).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › would › send … one tiny prompt": {
+      "class": "not-in-stillhet",
+      "why": "The job Test is drawn only under the sample Models › Jobs section, not drawn on live (only: 'demo'; F-G-G5-04).",
+      "rule": "set.not-live"
+    },
+    "settings/settings-model.js › would › send … one tiny prompt #2": {
+      "class": "not-in-stillhet",
+      "why": "The chat model Test is a fold of the sample Chat › Engine row, which returns NotLiveRow on live (settings.js:110).",
+      "rule": "set.not-live"
+    },
+    "settings/settings.js › would › copy: …": {
+      "class": "not-in-stillhet",
+      "why": "The copy fallback (settings/settings.js:321) is reached only from About › Command, in the sample About section, not drawn on live (only: 'demo').",
+      "rule": "set.not-live"
+    },
+    "stillhet-wiring.md › wire-to › Action rows › requirements/requirements.js › copy … as Markdown": {
+      "class": "not-in-stillhet",
+      "why": "Live shows only the Requirements not-live place (shell.js:31), so the copy is never reached.",
+      "rule": "nav.not-live"
+    },
+    "stillhet-wiring.md › wire-to › Action rows › requirements/requirements.js › save specs/….md in …": {
+      "class": "not-in-stillhet",
+      "why": "Live shows only the Requirements not-live place (shell.js:31), so Save specs is never reached.",
+      "rule": "nav.not-live"
+    },
+    "stillhet-wiring.md › wire-to › Action rows › settings/settings-model.js › copy it, to paste into .worca-policy/policy.json on a pull request": {
+      "class": "not-in-stillhet",
+      "why": "Copy for PR sits in Team policy, which live draws as the not-live place (settings.js:235-238).",
+      "rule": "nav.not-live"
+    },
+    "stillhet-wiring.md › wire-to › Action rows › settings/settings-model.js › open a new bug issue on GitHub in a new tab": {
+      "class": "not-in-stillhet",
+      "why": "Report a bug is in the sample About section, not drawn on live (only: 'demo'; F-G-G5-04).",
+      "rule": "set.not-live"
+    },
+    "stillhet-wiring.md › wire-to › Action rows › settings/settings-model.js › open a new enhancement issue on GitHub in a new tab": {
+      "class": "not-in-stillhet",
+      "why": "Suggest an improvement is in the sample About section, not drawn on live (only: 'demo'; F-G-G5-04).",
+      "rule": "set.not-live"
+    },
+    "stillhet-wiring.md › wire-to › Action rows › settings/settings-model.js › open the Labs guide in a new tab": {
+      "class": "refused",
+      "why": "Not connected to Worca yet. Labs › Guide › Open is drawn on live and only toasts the refusal (settings.js:324); nothing opens."
+    },
+    "stillhet-wiring.md › wire-to › Action rows › settings/settings-model.js › open … in a new tab": {
+      "class": "not-in-stillhet",
+      "why": "opens() is used only inside the sample About section, not drawn on live (only: 'demo'; F-G-G5-04).",
+      "rule": "set.not-live"
+    },
+    "stillhet-wiring.md › wire-to › Action rows › settings/settings-model.js › send a test to …": {
+      "class": "not-in-stillhet",
+      "why": "The channel Test belongs to the sample Chat › Channels section, not drawn on live (only: 'demo'; F-G-G5-04).",
+      "rule": "set.not-live"
+    },
+    "stillhet-wiring.md › wire-to › Action rows › settings/settings-model.js › send … one tiny prompt": {
+      "class": "not-in-stillhet",
+      "why": "Both Test sites sit in sample rows (Models › Jobs, Chat › Engine), NotLiveRow on live (settings.js:242, :110).",
+      "rule": "set.not-live"
+    },
+    "stillhet-wiring.md › wire-to › Action rows › settings/settings.js › copy: …": {
+      "class": "not-in-stillhet",
+      "why": "The copy fallback's only reachable caller, About › Command, is in the sample About section, not drawn on live (only: 'demo').",
+      "rule": "set.not-live"
+    },
+    "stillhet-wiring.md › wire-to › Actions › ui/public/stillhet/requirements/requirements.js": {
+      "class": "not-in-stillhet",
+      "why": "The Requirements module is never mounted on live: the shell draws the not-live place (shell.js:31).",
+      "rule": "nav.not-live"
+    },
+    "stillhet-wiring.md › wire-to › Actions › ui/public/stillhet/settings/settings-model.js": {
+      "class": "refused",
+      "why": "Not connected to Worca yet. Of this module's would actions only Labs › Guide is drawn on live and it toasts the refusal; the rest sit in sample sections or Team policy (settings.js:110, :235-242)."
+    },
+    "stillhet-wiring.md › wire-to › Actions › ui/public/stillhet/settings/settings.js": {
+      "class": "not-in-stillhet",
+      "why": "The module's only would action, the copy fallback (settings.js:321), is reached only from the sample About section.",
+      "rule": "set.not-live"
+    },
+    "stillhet-wiring.md › wire-to › Figure rows › settings/settings-model.js › SettingsModel.FIRST": {
+      "class": "wired",
+      "why": "FIRST (settings/settings-model.js:846) is the design's structure, the place Settings opens on, not a demo value.",
+      "via": "ui/public/stillhet/pulse/pulse.js"
+    },
+    "stillhet-wiring.md › wire-to › Figure rows › settings/settings-model.js › SettingsModel.FLAGS": {
+      "class": "wired",
+      "why": "On live Labs lists exactly GET /api/flags (settings/settings-model.js:165) and the live adapter copies the server's flags into prefs (live-adapter.mjs:73).",
+      "via": "test/stillhet-settings-labs-notifications-live.test.mjs"
+    },
+    "stillhet-wiring.md › wire-to › Figure rows › settings/settings-model.js › SettingsModel.GROUPS": {
+      "class": "wired",
+      "why": "GROUPS (settings/settings-model.js:831) is the design's Settings menu structure, with no data in it.",
+      "via": "ui/public/stillhet/pulse/pulse.js"
+    },
+    "stillhet-wiring.md › wire-to › Figure rows › settings/settings-model.js › SettingsModel.ICONS": {
+      "class": "wired",
+      "why": "ICONS (settings/settings-model.js:845) is design chrome, an icon per place, not a demo value.",
+      "via": "ui/public/stillhet/pulse/pulse.js"
+    },
+    "stillhet-wiring.md › wire-to › Figure rows › settings/settings-model.js › SettingsModel.SECTIONS": {
+      "class": "offender",
+      "why": "Settings › Automations (settings/settings-model.js:553-565) has no sample mark, so on live with gitAutomations on it shows the demo Issue #1088 / PR #1087 records, and Approve adds a task to the store locally only.",
+      "finding": "B1.10",
+      "owner": "B1"
+    },
+    "stillhet-wiring.md › wire-to › Figure rows › settings/settings-model.js › SettingsModel.SECTION_ICONS": {
+      "class": "wired",
+      "why": "SECTION_ICONS (settings/settings-model.js:845) maps section titles to icons: design chrome with no demo value.",
+      "via": "ui/public/stillhet/settings/settings-model.js"
+    },
+    "stillhet-wiring.md › wire-to › Figure rows › settings/settings-model.js › SettingsModel.STATE": {
+      "class": "not-in-stillhet",
+      "why": "STATE (settings/settings-model.js:173) holds demo values, but every row that shows them is sample and draws NotLiveRow on live (settings.js:110, :242).",
+      "rule": "set.not-live"
+    },
+    "stillhet-wiring.md › wire-to › Figure rows › settings/settings-model.js › SettingsModel.VALUE_NAMES": {
+      "class": "wired",
+      "why": "VALUE_NAMES (settings/settings-model.js:840) are fixed labels for the Changed-dot tooltip (settings.js:78): design wording, no demo data.",
+      "via": "ui/public/stillhet/settings/settings.js"
+    },
+    "stillhet-wiring.md › wire-to › Figure rows › settings/settings-model.js › SettingsModel.VALUE_WORDS": {
+      "class": "wired",
+      "why": "VALUE_WORDS (settings/settings-model.js:844) are formatters used by defaultWords (settings.js:74), with no demo value of their own.",
+      "via": "ui/public/stillhet/settings/settings.js"
+    },
+    "stillhet-wiring.md › wire-to › Seeded figures › ui/public/stillhet/settings/settings-model.js": {
+      "class": "offender",
+      "why": "Most seeded Settings figures read NotLiveRow on live, but the unmarked Automations lists (settings/settings-model.js:553-565) show demo records on live when gitAutomations is on.",
+      "finding": "B1.10",
+      "owner": "B1"
+    },
+    "workflows/workflows.js › would › ask for a file to import": {
+      "class": "wired",
+      "why": "On live importing is set only by LIVE().importFile's confirm, which carries resolve (workflows/workflows.js:238), so the would branch (:273) never runs.",
+      "via": "test/stillhet-workflow-live.test.mjs"
+    },
+    "workflows/workflows.js › would › ask for a file to import #2": {
+      "class": "wired",
+      "why": "id === 'ed-io' && LIVE() opens the file input or exportAs and returns (workflows/workflows.js:294).",
+      "via": "test/stillhet-workflow-live.test.mjs"
+    },
+    "workflows/workflows.js › would › export …": {
+      "class": "wired",
+      "why": "id === 'ed-io' && LIVE() calls LIVE().exportAs and returns (workflows/workflows.js:294).",
+      "via": "test/stillhet-workflow-live.test.mjs"
+    },
+    "workflows/workflows.js › would › export … as …": {
+      "class": "wired",
+      "why": "exporting && LIVE() calls LIVE().exportAs and returns (workflows/workflows.js:326).",
+      "via": "test/stillhet-workflow-live.test.mjs"
+    },
+    "workflows/workflows.js › would › run the … saved … of …": {
+      "class": "wired",
+      "why": "data-wf-run && LIVE() calls LIVE().runCases and returns (workflows/workflows.js:323).",
+      "via": "test/stillhet-workflow-live.test.mjs"
+    },
+    "workspaces/workspaces.js › would › open … in your editor": {
+      "class": "wired",
+      "why": "data-ws-at && LIVE() calls LIVE().openInEditor and returns (workspaces/workspaces.js:125).",
+      "via": "test/stillhet-workspaces-host-actions.test.mjs"
+    }
+  },
+  "live": []
+}

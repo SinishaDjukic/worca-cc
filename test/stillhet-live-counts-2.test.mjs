@@ -19,33 +19,24 @@ test('Projects: a project whose key is not its name joins its tasks by name (api
   assert.ok(!titles.some((t) => t.includes('Busy')), 'and not another project\'s');
 });
 
-test('Projects in the live kind: its actions write nothing to the store and say they are not in Stillhet yet', async () => {
-  const { w, d, hello } = await liveHost({ hash: '#projects' });
+test('Projects in the live kind (slice 9): each action sends dev\'s route; the store moves only on a read', async () => {
+  const { w, d, posts, hello } = await liveHost({ hash: '#projects' });
   await hello();
   w.location.hash = '#projects/api-2'; await settle();
   const was = store(w);
   const page = () => d.getElementById('route-place');
-  const tried = [];
-  const clickIf = (q, label) => { const b = page().querySelector(q); if (b) { b.click(); tried.push(label); } };
-  const pick = (v) => { page().querySelector('[data-menu="pj-more"]')?.click(); const b = page().querySelector(`[data-menu-pick="pj-more|${v}"]`); if (b) { b.click(); tried.push(v); } };
-  pick('fetch'); pick('remove');
-  assert.equal(page().querySelector('[data-confirm="yes"]'), null, 'Remove asks nothing it cannot do');
-  clickIf('[data-pj-team]', 'team memory');
-  page().querySelector('[data-menu="pjs-pr"]')?.click(); clickIf('[data-menu-pick="pjs-pr|open no PR"]', 'a setting');
-  clickIf('[data-def-edit="tags"]', 'tags edit');
-  const f = d.getElementById('def-tags'); if (f) f.value = 'team: web';
-  clickIf('[data-def-edit="tags"]', 'tags done');
-  w.RailProjects.sync('api-2');
-  clickIf('[data-pj-act]', 'origin act');   // diverged: Bring together hands over to a chat, writing nothing
-  await settle();
-  for (const x of ['origin act', 'fetch', 'remove', 'team memory', 'a setting', 'tags done']) assert.ok(tried.includes(x), `reached ${x}`);
-  assert.deepEqual(store(w), was, 'no store write outside load');
-  assert.equal(w.RailProjects.list().find((p) => p.id === 'api-2').teamMemory, undefined);
+  const pick = (v) => { page().querySelector('[data-menu="pj-more"]').click(); page().querySelector(`[data-menu-pick="pj-more|${v}"]`).click(); };
+  pick('fetch'); await settle();
+  w.RailProjects.sync('api-2'); await settle();
+  page().querySelector('[data-pj-act]').click(); await settle();   // diverged: Bring together hands over to a chat, writing nothing
+  assert.deepEqual(posts.map((p) => [p.method, p.url, p.body]), [['POST', '/api/projects/api-2/sync', { mode: 'fetch' }], ['POST', '/api/projects/api-2/sync', { mode: 'ff' }]]);
+  assert.deepEqual(store(w), was, 'no store write outside a read');
   w.location.hash = '#projects/gone-3'; await settle();
-  page().querySelector('[data-pj-act]').click(); await settle();
-  assert.equal(page().querySelector('#pj-hand-v'), null, 'Locate folder opens no form that would fake a move');
-  assert.match(toastText(d), /not in Stillhet yet/);
-  assert.deepEqual(store(w), was);
+  page().querySelector('[data-pj-act]').click(); await settle(80);
+  page().querySelector('#pj-hand-v').value = '~/src/gone-3-here';
+  page().querySelector('[data-confirm="yes"]').click(); await settle();
+  assert.deepEqual(posts.at(-1), { url: '/api/projects/gone-3', method: 'PATCH', body: { path: '~/src/gone-3-here' } }, 'Locate folder sends dev\'s PATCH (D8)');
+  assert.doesNotMatch(toastText(d), /not in Stillhet yet/);
 });
 
 test('R-arch-10: every action of an area this slice does not wire goes through the adapter, refuses and changes nothing', async () => {
@@ -54,23 +45,12 @@ test('R-arch-10: every action of an area this slice does not wire goes through t
   const acts = [];
   const act = w.RailAdapter.act; w.RailAdapter.act = (id, args) => { const r = act(id, args); acts.push(`${id}: ${r.ok ? 'done' : r.text}`); return r; };
   const html = (id) => d.getElementById(id)?.innerHTML ?? '';
-  const pickIn = (root, menu, v) => { d.querySelector(`${root} [data-menu="${menu}"]`).click(); const b = d.querySelector(`${root} [data-menu-pick="${menu}|${v}"]`); assert.ok(b, `${menu}|${v} is offered`); b.click(); };
-  const sched = async () => { w.location.hash = '#chat'; await settle(); w.location.hash = '#schedule/sr1'; await settle(); };
   const cases = [
-    // Schedules (slice 6): the page's Run now, its ⋯ menu and its time pickers; the API other pages call
-    ['schedules.run', sched, () => d.querySelector('#route-schedule [data-sched-now]').click(), 'route-schedule'],
-    ...['pause', 'skip', 'delete'].map((v) => [`schedules.${v}`, sched, () => pickIn('#route-schedule', 'sc-more', v), 'route-schedule']),
-    ['schedules.sc-at', sched, () => { d.querySelector('#route-schedule [data-menu="sc-at"]').click(); [...d.querySelectorAll('#route-schedule [data-menu-pick^="sc-at|"]')].find((b) => !b.dataset.menuPick.endsWith('|02:00')).click(); }, 'route-schedule'],
-    ['schedules.add', null, () => w.RailSchedules.add({ id: 'x1', title: 'Made up', every: 'every day', at: '03:00', runs: [] }), 'bar-schedules'],
-    // the Tasks center's Run now on a missed schedule (the reviewer's path to RailWorld.add)
-    ['schedules.run', async () => { w.location.hash = '#runs'; await settle(); }, () => d.querySelector('[data-c-sact="run|tk1"]').click(), 'app'],
+    // Schedules: wired by the Schedules slice (test/stillhet-schedules-actions-host.test.mjs), so none of its actions refuses here
     // the Tasks center's New task… form is wired by the Tasks slice (D12b, test/stillhet-tasks-list-host.test.mjs)
     // Chat (slice 4): the composer, the dock under a schedule, the chat list's row menu
-    // Projects' workspaces (the Projects slice)
-    ['workspaces.add', null, () => assert.equal(w.RailSpaces.add({ title: 'Made up' }), ''), 'app'],
-    // Settings: a switch and an edit that would say "saved"
-    ['settings.sync', async () => { w.location.hash = '#settings'; await settle(); }, () => d.querySelector('[data-svsw="sync"]').click(), 'app'],
-    ['settings.save', async () => { w.location.hash = '#settings'; await settle(); }, () => { d.querySelector('[data-svdo="runs/Spending/Budget/Change…"]').click(); const f = d.querySelector('dialog input, .dlg input'); f.value = '5'; f.dispatchEvent(new w.Event('input', { bubbles: true })); d.querySelector('[data-dialog="yes"]').click(); }, 'app'],
+    // Settings: settings.sync left with #1324: on a live instance the sample Sync row reads "Not in Stillhet yet" with no switch (B1.2, F-7b-03…F-7b-13), so there is nothing to refuse (test/stillhet-settings-not-live-rows.test.mjs)
+    // settings.save (Spending › Budget › Change…) left with #1315: on a live instance the sample Budget row is not drawn at all (B1.1), so there is nothing to refuse
   ];
   for (const [id, go, run, root] of cases) {
     if (go) await go();
@@ -85,6 +65,8 @@ test('R-arch-10: every action of an area this slice does not wire goes through t
     assert.equal(posts.length, p, `${id}: nothing sent to Worca`);
     w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   }
+  w.location.hash = '#settings'; await settle();
+  assert.equal(d.querySelector('[data-svsw="sync"]'), null, 'live Settings draws no Sync switch to refuse (B1.2)');
   assert.equal(w.RailSpaces.list().length, 0);
 });
 
@@ -176,4 +158,72 @@ test('a resume that dev answers with a confirm opens the task instead', async ()
   w.RailPulse.open('updates');
   d.querySelector('#app .pz-popover [data-fix="oh1"]').click(); await settle();
   assert.equal(w.location.hash, '#run/h1', 'the task oh1 names (history row h1), by its id, never the case (#1266)');
+});
+
+// Pulse Needs you, project items (#1298): each names its figures, its effect and its one fix
+const quiet = (edit) => { const s = clone(SOURCES); s.hello.runs = [s.hello.runs[1]]; s.history.pipelines = s.history.pipelines.filter((p) => p.status !== 'paused'); edit?.(s); return s; };   // no task waits on api
+const behind = (settings) => quiet((s) => { s.sync.projects['api-2'] = { base: 'main', remote: 'origin', state: 'behind', ahead: 0, behind: 3, fetchedAt: SOURCES.sync.projects['api-2'].fetchedAt, ...(settings ? { settings } : {}) }; });
+const needRow = (d, key) => d.querySelector(`#app .pz-popover [data-open="np:projects/${key}"]`);
+
+test('Pulse Needs you, a behind project: its count, effect and \'Clears when you sync it\'; Sync on the item posts /api/projects/KEY/sync {mode:\'ff\'} and the item leaves after the re-read', async () => {
+  const src = behind();
+  let release; const held = new Promise((r) => { release = r; });
+  const { w, d, posts, hello } = await liveHost({ sources: src, post: async (u) => { if (u === '/api/projects/api-2/sync') { await held; src.sync.projects['api-2'] = { ...src.sync.projects['api-2'], state: 'up-to-date', behind: 0 }; return [200, { sync: { ff: { ok: true } } }]; } return [200, {}]; } });
+  await hello();
+  d.querySelector('[data-pop]').click();
+  const item = needRow(d, 'api-2');
+  assert.ok(item, 'the behind project is in Needs you');
+  assert.match(item.textContent, /3 commits behind origin\/main · Each new task syncs it first · Clears when you sync it/);
+  const hash = w.location.hash;
+  const sync = () => d.querySelector('#app .pz-popover [data-fix="np:projects/api-2"]');
+  assert.equal(sync().textContent.trim(), 'Sync');
+  sync().click(); await settle();
+  assert.equal(sync().textContent.trim(), 'Syncing…', 'it says what it is doing');
+  assert.equal(sync().disabled, true, 'and a second press is out of reach');
+  sync().click(); await settle();
+  assert.equal(w.location.hash, hash, 'Sync does not open the row');
+  release(); await settle(400);   // the store's re-read is debounced (DEBOUNCE_MS)
+  assert.deepEqual(posts.filter((p) => p.url === '/api/projects/api-2/sync').map((p) => p.body), [{ mode: 'ff' }], 'two presses, one POST');
+  if (!d.querySelector('#app .pz-popover')) d.querySelector('[data-pop]').click();
+  assert.equal(needRow(d, 'api-2'), null, 'synced: the item left Needs you after the re-read');
+  closeHosts();
+  // dev's before-run sync off: the effect says so; a dirty copy is refused by dev and the item stays
+  const off = await liveHost({ sources: behind({ beforeRun: false }), post: (u) => (u === '/api/projects/api-2/sync' ? [200, { sync: { ff: { ok: false, kind: 'dirty' } } }] : [200, {}]) });
+  await off.hello();
+  off.d.querySelector('[data-pop]').click();
+  assert.match(needRow(off.d, 'api-2').textContent, /3 commits behind origin\/main · New tasks start from older code · Clears when you sync it/);
+  off.d.querySelector('#app .pz-popover [data-fix="np:projects/api-2"]').click(); await settle(80);
+  assert.match(toastText(off.d), /Could not sync api: it has uncommitted changes/);
+  if (!off.d.querySelector('#app .pz-popover')) off.d.querySelector('[data-pop]').click();
+  assert.ok(needRow(off.d, 'api-2'), 'refused: the item stays, so Sync can be pressed again');
+});
+
+test('a diverged project\'s item opens its page with Bring together… focused; with a task question waiting, the More menu opens on it; a missing one opens Locate folder', async () => {
+  const landedOn = (d) => { const a = d.activeElement; return [a?.querySelector('.mi-l')?.textContent.trim() || a?.textContent.trim(), a?.hasAttribute('data-landed')]; };
+  const plain = await liveHost({ sources: quiet() });
+  await plain.hello();
+  plain.d.querySelector('[data-pop]').click();
+  assert.match(needRow(plain.d, 'api-2').textContent, /1 ahead, 2 behind origin\/main · The next task asks how to bring them together · Clears when you bring them together/);
+  assert.equal(needRow(plain.d, 'api-2').querySelector('[data-fix]'), null, 'no button on a diverged item');
+  needRow(plain.d, 'api-2').click(); await settle(120);
+  assert.equal(plain.w.location.hash, '#projects/api-2');
+  assert.ok(plain.d.activeElement?.matches('[data-pj-act]'), 'the head\'s fix has the focus');
+  assert.deepEqual(landedOn(plain.d), ['Bring together…', true]);
+  closeHosts();
+  // run-a's question waits on api, in its chat: the head holds the question's button, so the fix is the More menu's act item
+  const onApi = clone(SOURCES);
+  onApi.threads.threads = onApi.threads.threads.map((t) => (t.id === 'ask_1' ? { ...t, context: { projectKey: 'api-2' } } : t));   // its chat works in api
+  const asks = await liveHost({ sources: onApi });
+  await asks.hello();
+  asks.d.querySelector('[data-pop]').click();
+  needRow(asks.d, 'api-2').click(); await settle(120);
+  assert.ok(asks.d.querySelector('#route-place [data-menu-pick="pj-more|act"]'), 'the More menu is open');
+  assert.ok(asks.d.activeElement?.matches('[data-menu-pick="pj-more|act"]'));
+  assert.deepEqual(landedOn(asks.d), ['Bring together…', true]);
+  // gone-3's folder is missing: Locate folder's form
+  asks.d.querySelector('[data-pop]').click();
+  assert.match(needRow(asks.d, 'gone-3').textContent, /Its folder is gone · New tasks cannot start here · Clears when you locate its folder/);
+  needRow(asks.d, 'gone-3').click(); await settle(120);
+  assert.equal(asks.w.location.hash, '#projects/gone-3');
+  assert.ok(asks.d.querySelector('#route-place #pj-hand-v'), 'the Locate folder form is open');
 });

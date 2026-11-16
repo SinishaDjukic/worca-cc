@@ -4,7 +4,8 @@
 //                 its fine-tuning folds under Customise (`more`);
 //   a record    → ListRow in a List: the row opens what it does not already show, or nothing; its one action a button, more in its ⋯;
 //   Change…     → a Dialog with Fields (`edit`), stepped when it has `steps`; a yes or no → the ConfirmStrip.
-// A value lives in `sv`, a Labs flag in R.prefs. Every control acts on them; nothing is saved (a prototype).
+// A value lives in `sv`, a Labs flag in R.prefs. Every control acts on them; nothing is saved (a prototype). Live, Labs
+// reads the server's flags (GET /api/flags) and changes none: its switches are disabled with the not-live sentence.
 (function () {
   const SM = window.SettingsModel, R = window.RailUI;
   for (const f of SM.FLAGS) R.prefs.setFlag(f.key, f.on);   // a Labs switch's default, for every page that reads a flag
@@ -38,7 +39,11 @@
   const optsOf = (p, sv) => (typeof p.options === 'function' ? p.options(sv) : p.options);
   const optText = (p, v, sv) => (optsOf(p, sv).find((o) => o[0] === v) || [v, v])[1];
   const words = (t, c) => c.esc(t || '').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`(.+?)`/g, '<code>$1</code>');
-  const vis = (x, c) => R.shows(x.min, c.level) && (!x.flag || R.prefs.flag(x.flag)) && (!x.when || x.when(c.sv));
+  // `only: 'demo' | 'live'`: a sample row the live kind does not draw, or a live row the demo does not
+  const liveOn = () => !!window.RailWorld?.live;
+  // `sample: true` (docs/rail/settings.md `set.not-live`): a section or a row still sample data; live, it reads NotLiveRow
+  const notLive = (x) => !!x.sample && liveOn();
+  const vis = (x, c) => R.shows(x.min, c.level) && (!x.flag || R.prefs.flag(x.flag)) && (!x.when || x.when(c.sv)) && (!x.only || (x.only === 'live') === liveOn());
   const textOf = (v, sv) => (typeof v === 'function' ? v(sv) : v);
 
   function sentence(r, sv, c) {
@@ -68,6 +73,7 @@
   const same = (a, b) => String(a ?? '') === String(b ?? '');
   const defaultWords = (k, v, fallback) => (SM.VALUE_WORDS[k] ? SM.VALUE_WORDS[k](v, SM.STATE) : fallback ?? (v === '' || v == null ? 'none' : String(v)));
   function changesOf(r, sv, c) {
+    if (notLive(r)) return [];
     const out = [], seen = new Set();
     const add = (k, name, start, words) => { if (seen.has(k)) return; seen.add(k); if (!same(sv[k], start)) out.push({ name: SM.VALUE_NAMES[k] || name, was: defaultWords(k, start, words) }); };
     for (const [k, p] of Object.entries(r.picks || {})) add(k, p.name || r.name, p.value, optText(p, p.value, sv));
@@ -78,14 +84,14 @@
     }
     for (const [k, v] of Object.entries(r.vals || {})) if (typeof v !== 'function') add(k, r.name, v);
     if (r.sw && r.sw.key) add(r.sw.key, r.name, !!r.sw.on, r.sw.on ? 'on' : 'off');
-    if (r.sw && r.sw.flag) { const on = !!(SM.FLAGS.find((f) => f.key === r.sw.flag) || {}).on; if (R.prefs.flag(r.sw.flag) !== on) out.push({ name: r.name, was: on ? 'on' : 'off' }); }
+    if (r.sw && r.sw.flag && !r.sw.real) { const on = !!(SM.FLAGS.find((f) => f.key === r.sw.flag) || {}).on; if (R.prefs.flag(r.sw.flag) !== on) out.push({ name: r.name, was: on ? 'on' : 'off' }); }
     return [...out, ...(r.more || []).filter((m) => vis(m, c)).flatMap((m) => changesOf(m, sv, c))];
   }
   // An action: a jump to another section (go), a Dialog (edit), a ConfirmStrip (confirm), a copy, a change (do), or a
   // place outside Settings (page, click), with a toast (say). What it needs when off: `off(sv)` says why.
   function act(a, where, c) {
     const label = textOf(a.label, c.sv), key = where + '/' + (a.id || label);
-    const known = a.go || a.edit || a.confirm || a.copy || a.do || a.page || a.click || a.say;
+    const known = a.go || a.edit || a.confirm || a.copy || a.do || a.page || a.click || a.say || a.live;
     if (!known) throw new Error(`settings-model: "${label}" at ${where} does nothing`);
     REG.set(key, a);
     if (a.copy) return R.copyButton({ text: textOf(a.copy, c.sv), label: label, attrs: { 'data-svdo': key, 'data-key': 'sv:' + key } });
@@ -95,11 +101,13 @@
   }
   function swOf(r, label, sv, c) {
     const s = r.sw; if (!s) return '';
+    if (s.real) return c.R.tooltip({ text: R.NOT_LIVE_SENTENCE, off: true, html: c.R.switchButton({ on: s.on, label, why: R.NOT_LIVE_SENTENCE, disabled: true, attrs: { 'data-svsw': 'flag:' + s.flag } }) });   // a server flag, read-only (B1.3)
     const off = c.locked || s.locked || (s.off && s.off(sv)) || '';
     return c.R.switchButton({ on: s.flag ? R.prefs.flag(s.flag) : sv[s.key], label, why: off || s.why || '', disabled: !!off, attrs: { 'data-svsw': s.flag ? 'flag:' + s.flag : s.key } });
   }
   const chipOf = (x, sv, c) => { const t = x.chip && textOf(x.chip, sv); return t ? c.R.chip({ text: t, title: x.chipTip || '' }) : ''; };
   function row(r, sv, c, where) {
+    if (notLive(r)) return c.R.notLiveRow({ name: r.name, help: r.help || '' });   // before anything registers: nothing to click
     const key = 'more:' + where + '/' + r.name, open = sv.__open === key;
     const folds = !!r.moreList || (r.more || []).some((m) => vis(m, c));   // nothing to open, no Customise
     const inner = open ? (r.more || []).filter((m) => vis(m, c)).map((m) => row(m, sv, c, where + '/' + r.name)).join('') : '';
@@ -188,7 +196,7 @@
     }
     if (f.check) return c.R.checkbox({ label: f.label, checked: !!d.vals[f.key], attrs: { 'data-svdo': 'dlgchk:' + f.key, 'data-key': key } });
     if (f.button) return c.R.button({ label: f.button, kind: 'quiet', attrs: { 'data-svdo': 'dlgbtn:' + f.key, 'data-key': key, title: f.hint || null } });
-    return c.R.field({ id: 'sv-f-' + f.key, label: f.label, value: String(d.vals[f.key] ?? ''), hint: f.hint || '', multiline: !!f.multiline, type: f.type || 'text', placeholder: f.placeholder || '' });
+    return c.R.field({ id: 'sv-f-' + f.key, label: f.label, value: String(d.vals[f.key] ?? ''), hint: f.hint || '', multiline: !!f.multiline, type: f.type || 'text', placeholder: f.placeholder || '', attrs: { 'data-keep': key } });
   }
   function dialogHtml(sv, c) {
     const d = sv.__dialog; if (!d) return '';
@@ -224,13 +232,21 @@
       const f = SM.FLAGS.find((x) => x.key === sec.flag);
       return c.R.emptyState({ title: `${f.name} is off`, text: 'Turn it on in Labs.', actions: c.R.button({ label: 'Open Labs', kind: 'quiet', attrs: { 'data-sset': 'experimental' } }) });
     }
+    if (sec.only === 'demo' && liveOn()) {   // a place that is all sample data: the library's not-live page, its Back to Chat ours
+      const key = id + '/not-live/chat';
+      REG.set(key, { page: 'chat', say: '' });
+      return c.R.notInStillhet({ place: sec.title, today: sec.notLive, attrs: { 'data-svdo': key, 'data-key': 'sv:' + key } });
+    }
     const locked = sec.lock && !R.atLevel(level, sec.lock.level) ? sec.lock.why : '';
     return dialogHtml(sv, c) + sec.sections.filter((s) => vis(s, c)).map((s) => {
+      if (notLive(s)) return c.R.settingsSection({ icon: '', title: s.bare ? '' : s.title, meta: '', action: '', rows: c.R.notLiveRow({}) });
       const where = id + '/' + s.title, cc = { ...c, locked };
       const head = (s.actions || []).filter((a) => vis(a, c)).map((a) => act(a, where, cc)).join('');
       const rows = ((c.extra && c.extra[s.title]) || '') + (s.rows || []).filter((r) => vis(r, c)).map((r) => row(r, sv, cc, where)).join('');
       const table = s.table ? c.R.table({ ...s.table, rows: textOf(s.table.rows, sv) }) : '';
-      const list = s.list && (!s.listWhen || s.listWhen(sv)) ? records(s.list, sv, cc, where, s.empty) : '';
+      // a live list (`liveList(sv)`) is read again on every draw: its records are never this page's own copy
+      if (s.liveList) delete sv.__recs[where];
+      const list = s.liveList ? records(s.liveList(sv), sv, cc, where, textOf(s.empty, sv)) : s.list && (!s.listWhen || s.listWhen(sv)) ? records(s.list, sv, cc, where, textOf(s.empty, sv)) : '';
       return c.R.settingsSection({ icon: ''   /* the place's icon is in the bar beside; a section's head is its words */, title: s.bare ? '' : s.title, meta: textOf(s.meta, sv) || '', action: head, rows: rows + table + list + groupsHtml(s, sv, cc, where) });
     }).join('');
   }
@@ -255,7 +271,6 @@
   }
   // A switch with `sw.live` ('chat.promptCheck') is wired in the live kind: it shows the server's value (the store's
   // chatPrefs, refetched on settings-changed) and a toggle POSTs dev's own body. Every other switch is as before.
-  const liveOn = () => !!window.RailWorld?.live;
   const liveValue = (path) => { const [area, k] = path.split('.'); return area === 'chat' ? window.RailWorld.part('chatPrefs')?.[k] === true : false; };
   function syncLive(sv) {
     if (!liveOn()) return;
@@ -272,6 +287,7 @@
   }
   function toggle(sv, key) {
     if (key.startsWith('flag:')) {
+      if (liveOn()) return '';   // live Labs shows the server's flags and changes none: no write, no toast (B1.3)
       const k = key.slice(5), f = SM.FLAGS.find((x) => x.key === k);
       R.prefs.setFlag(k, !R.prefs.flag(k));
       const hidden = R.prefs.flag(k) && f.min && !R.shows(f.min, R.prefs.mode());   // on, but this mode does not draw what it adds: the toast says so
