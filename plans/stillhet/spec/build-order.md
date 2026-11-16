@@ -21,6 +21,7 @@ verdicts and what must not be built twice). The checks a step owes are the cells
 | R8 | The full suite and the gate run once per batch, outside runs, on a quiet machine; at most four runs are open at once | lesson 29, the owner |
 | R9 | Nothing is pushed or merged without the owner's yes; a tick names the test or the gate step that proves it | lesson 31, the owner |
 | R10 | After every step the app with the flag off is classic, exactly; a step that cannot show it does not merge | lesson 32, `gate.flag-off` |
+| R11 | Stillhet is a full front-end build with new functions, not a reskin: its own page code beside classic, and the shell and Chat before any other page. No page is enrolled alone ahead of that order | lessons 34, 35, 36 |
 
 ## 2. The file map: who owns what
 

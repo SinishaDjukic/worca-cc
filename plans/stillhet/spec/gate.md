@@ -215,7 +215,7 @@ The batch's record (`batches/batch-N.md`) goes to the owner: what was built, eac
 stayed open and why. The owner reviews wide and narrow and says yes or no. **Nothing is pushed or merged without that
 yes**, and a run never merges itself.
 
-## Lessons 25 to 33: what holds each
+## Lessons 25 to 37: what holds each
 
 | Lesson | Held by |
 |---|---|
@@ -228,3 +228,7 @@ yes**, and a run never merges itself.
 | 31 Ticks that did not hold | **Proven by** on every wiring row; the wiring check; the batch record; fails at once |
 | 32 Stillhet's styles inside classic's | Section 5; the file map freezes `ui/public/design-system/*.css`; G2 after every step (R10) |
 | 33 Rules and code drifted | `test/stillhet-docs.test.mjs`; the L lane changes rule, catalog, component, test and gallery in one run (R6) |
+| 34 Started as a reskin | build-order R11 and R10; the file map (classic's pages are nobody's); G2 after every step |
+| 35 One page enrolled alone | build-order's waves (Wave 0, then the shell and Chat); the wiring check fails a row that names a route or field that does not exist |
+| 36 Waves on a demo base | `gate.no-demo` at zero; B1 to B9 before the first page; G3 to G5 (the real-data walk) before a wave merges |
+| 37 Quality that leaned on the model | R2, R9; **Proven by** on every wiring row; the library gate; section 1's order |
