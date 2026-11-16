@@ -98,7 +98,9 @@
   function render(el, id) {
     if (page !== el) { page = el; wire(); }
     if (current !== id) { menu = ''; if (confirm && confirm.id !== id) confirm = null; }
-    current = id; const w = data.spaces.find((x) => x.id === id); if (!w) { go(''); return; }
+    current = id; const w = data.spaces.find((x) => x.id === id);
+    if (!w && window.RailWorld?.live && window.RailDemoState?.list === 'loading') { el.innerHTML = R.listState({ state: 'loading', noun: 'this workspace' }); return; }   // F-G-G4-01: a fresh load or a shared link waits for the first read, never the home
+    if (!w) { go(''); return; }
     el.innerHTML = pageHtml(w);
     window.RailConversation?.dock(document.getElementById('ws-dock'), { kind: 'workspace', title: w.title, chat: '', ref: { pageWorkspaceId: w.id } });   // D16: the page's workspace, as dev's context
   }
