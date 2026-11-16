@@ -13,9 +13,11 @@
 //           (aria-haspopup) and presses Escape. Every request but GET is aborted, so it cannot write.
 //           It writes plans/rail/coverage/classic-walk.json; the static run joins it by id and by label.
 //
-// Classification (classify): a route Stillhet's own code fetches is wired; else the status of a plans/rail/stillhet-wiring.md
-// row that names it; else planned when plans/rail/test-results/PLAN.md, plans/rail/test-results/FINDINGS.md or an Open row
-// of plans/rail/findings.md names it; else MISSING. A Settings key: wired when Stillhet's live code reads it, else the same
+// Classification (classify): a route Stillhet's own code fetches from the control's own place is wired (the page's `places`:
+// folders of ui/public/stillhet/, a live/ file by LIVE_PLACE; a call from another place clears nothing); else the status of a
+// plans/rail/stillhet-wiring.md row that names it (a `wired` row only when it names a file of that place or sits in its
+// section); else planned when plans/rail/test-results/PLAN.md, plans/rail/test-results/FINDINGS.md or an Open row of
+// plans/rail/findings.md names it; else MISSING. A Settings key: wired when Stillhet's live code reads it, else the same
 // order. A control with no route and no key is a view control: its page's place decides (PAGES). A control's status is its
 // worst part (MISSING, planned, not offered, wired). A `## Classic controls` row in stillhet-wiring.md overrides one control.
 //
@@ -84,29 +86,30 @@ const PAGE_RULES = [
   [/account|topnav|search|activity|shell|phone drawer|band|away|connection|limit-notice|feedback/i, 'Shell'],
 ];
 
-// Each page's Stillhet place: what a view control (no route, no key) there counts as.
+// Each page's Stillhet place: what a view control (no route, no key) there counts as; and the Stillhet places (folders of
+// ui/public/stillhet/, LIVE_PLACE for live/) whose calls cover its routes; '*' is every place.
 export const PAGES = {
-  Chat: { status: 'wired', where: 'Chat' },
-  Tasks: { status: 'wired', where: 'Tasks and the task page' },
-  'New run': { status: 'wired', where: 'Chat and + › New task…' },
-  Schedules: { status: 'wired', where: 'Schedules' },
-  Projects: { status: 'wired', where: 'Projects' },
-  Workspaces: { status: 'wired', where: 'Projects (workspaces)' },
-  Workflows: { status: 'wired', where: 'Workflows' },
-  Marketplace: { status: 'wired', where: 'Marketplace' },
-  Statistics: { status: 'wired', where: 'Insights' },
-  'Team metrics': { status: 'wired', where: 'Insights' },
-  Shell: { status: 'wired', where: 'the shell (top bar, Pulse, profile)' },
-  'Feature (Shaper)': { status: 'wired', where: 'the group page and Chat\'s PlanCard' },
-  Settings: { status: 'planned', where: 'Settings, wave 3 slice 12 (PLAN.md 4b, D22/D24)' },
-  Connectors: { status: 'planned', where: 'Settings › Connectors, wave 3 slice 12 (PLAN.md 4b)' },
-  Models: { status: 'planned', where: 'Settings › Models, wave 3 slice 12 (PLAN.md 4b, F-7b-08)' },
-  Providers: { status: 'planned', where: 'Settings › Models, wave 3 slice 12 (PLAN.md 4b)' },
-  'Team policy': { status: 'planned', where: 'Settings › Team, wave 3 slice 12 (PLAN.md 4b, F-7b-05)' },
-  Requirements: { status: 'planned', where: 'Requirements, wave 3 slice 11 (PLAN.md 4b, D2, B8.7)' },
-  'Getting started': { status: 'planned', where: 'Onboarding, wave 3 slice 13 (PLAN.md 4b, D13, B8.6)' },
-  Design: { status: 'planned', where: 'D1 (B8.2): a home or retire, owner decision' },
-  Profile: { status: 'planned', where: 'D1 (B8.2): a home or retire, owner decision' },
+  Chat: { status: 'wired', where: 'Chat', places: ['chat'] },
+  Tasks: { status: 'wired', where: 'Tasks and the task page', places: ['runs', 'chat'] },
+  'New run': { status: 'wired', where: 'Chat and + › New task…', places: ['centers', 'chat'] },
+  Schedules: { status: 'wired', where: 'Schedules', places: ['schedules'] },
+  Projects: { status: 'wired', where: 'Projects', places: ['projects'] },
+  Workspaces: { status: 'wired', where: 'Projects (workspaces)', places: ['workspaces', 'projects'] },
+  Workflows: { status: 'wired', where: 'Workflows', places: ['workflows'] },
+  Marketplace: { status: 'wired', where: 'Marketplace', places: ['marketplace'] },
+  Statistics: { status: 'wired', where: 'Insights', places: ['insights'] },
+  'Team metrics': { status: 'wired', where: 'Insights', places: ['insights'] },
+  Shell: { status: 'wired', where: 'the shell (top bar, Pulse, profile)', places: ['*'] },   // the page of code no rule places
+  'Feature (Shaper)': { status: 'wired', where: 'the group page and Chat\'s PlanCard', places: ['chat'] },
+  Settings: { status: 'planned', where: 'Settings, wave 3 slice 12 (PLAN.md 4b, D22/D24)', places: ['settings'] },
+  Connectors: { status: 'planned', where: 'Settings › Connectors, wave 3 slice 12 (PLAN.md 4b)', places: ['settings'] },
+  Models: { status: 'planned', where: 'Settings › Models, wave 3 slice 12 (PLAN.md 4b, F-7b-08)', places: ['settings'] },
+  Providers: { status: 'planned', where: 'Settings › Models, wave 3 slice 12 (PLAN.md 4b)', places: ['settings'] },
+  'Team policy': { status: 'planned', where: 'Settings › Team, wave 3 slice 12 (PLAN.md 4b, F-7b-05)', places: ['settings'] },
+  Requirements: { status: 'planned', where: 'Requirements, wave 3 slice 11 (PLAN.md 4b, D2, B8.7)', places: ['requirements'] },
+  'Getting started': { status: 'planned', where: 'Onboarding, wave 3 slice 13 (PLAN.md 4b, D13, B8.6)', places: [] },
+  Design: { status: 'planned', where: 'D1 (B8.2): a home or retire, owner decision', places: [] },
+  Profile: { status: 'planned', where: 'D1 (B8.2): a home or retire, owner decision', places: ['shell'] },
 };
 
 // The walk's hash → page.
@@ -623,37 +626,59 @@ export function sameRoute(call, other) {
 }
 const routeHits = (call, mention) => mention.endsWith('/*') ? (call + '/').startsWith(mention.slice(0, -1)) : sameRoute(call, mention);
 
+// A live/ file's place by its name; the rest of live/ and the files at the root (the shared loader, the host) serve every place.
+const LIVE_PLACE = [[/^(chat-live|chat-turns)\./, 'chat'], [/^(task-live|task-page|terminal-live)\./, 'runs'], [/^projects-/, 'projects'],
+  [/^market-/, 'marketplace'], [/^schedule-/, 'schedules'], [/^workflow-/, 'workflows'], [/^insights-/, 'insights'], [/^run-options-/, 'centers']];
+/** A Stillhet file's place (`stillhet/projects/x.js` → projects, `stillhet/live/task-live.mjs` → runs), or '*' for shared code. */
+export function placeOf(file) {
+  const m = /stillhet\/(?:([\w-]+)\/)?([\w.-]+)$/.exec(file);
+  if (!m || !m[1]) return '*';
+  if (m[1] !== 'live') return m[1];
+  const hit = LIVE_PLACE.find(([re]) => re.test(m[2]));
+  return hit ? hit[1] : '*';
+}
+
+// A wiring section's place: its rows are that place's capabilities.
+const SECTION_PLACE = [[/^Chat capabilities/, 'chat'], [/^Schedules capabilities/, 'schedules'], [/^Tasks capabilities/, 'runs']];
+
+/** Stillhet's files as [file, place]; a module of today's UI it imports takes its importer's place. */
 function stillhetFiles(root) {
   const files = walkDir(root, 'ui/public/stillhet').filter((f) => !/\/(components|graph)\.js$/.test(f));
-  const deps = new Set();
+  const deps = new Map();
   for (const f of files) {
     for (const m of readFileSync(join(root, f), 'utf8').matchAll(/(?:from|import\()\s*['"]((?:\.\.\/)+[\w\-/]+\.mjs)['"]/g)) {
       const abs = join(root, f, '..', m[1]); const rel = relative(root, abs).split('\\').join('/');
-      if (rel.startsWith('ui/public/') && !rel.startsWith('ui/public/stillhet/') && existsSync(abs)) deps.add(rel);
+      if (rel.startsWith('ui/public/') && !rel.startsWith('ui/public/stillhet/') && existsSync(abs) && !deps.has(rel)) deps.set(rel, placeOf(f));
     }
   }
-  return [...files, ...deps];
+  return [...files.map((f) => [f, placeOf(f)]), ...deps];
 }
 
 /** Everything classify reads: Stillhet's fetches and live keys, the wiring rows, the plan texts. */
 export function classifyIndex(root = ROOT) {
-  const stillhetRoutes = new Map(), liveText = [];
-  for (const f of stillhetFiles(root)) {
+  const stillhetRoutes = new Map(), liveText = [], fileNames = new Map();
+  for (const [f, place] of stillhetFiles(root)) {
     const t = readFileSync(join(root, f), 'utf8');
-    for (const p of callPathsOf(t)) if (!stillhetRoutes.has(p)) stillhetRoutes.set(p, f.replace('ui/public/', ''));
+    if (f.startsWith('ui/public/stillhet/')) fileNames.set(f.split('/').pop(), place);
+    for (const p of callPathsOf(t)) { if (!stillhetRoutes.has(p)) stillhetRoutes.set(p, []); stillhetRoutes.get(p).push([f.replace('ui/public/', ''), place]); }
     if (/stillhet\/(live|pulse|chat)\//.test(f)) liveText.push(t);
   }
   const wiring = readFileSync(join(root, WIRING), 'utf8');
   const rows = [];
-  let section = '';
+  let section = '', top = '';
   for (const line of wiring.split('\n')) {
     if (line.startsWith('#')) section = line.replace(/^#+\s*/, '');
+    if (line.startsWith('## ')) top = section;
     if (!line.startsWith('|') || /^\|\s*-/.test(line)) continue;
     const cells = line.split(/(?<!\\)\|/).slice(1, -1).map((c) => c.trim());
     let st = null;
     for (const c of [...cells].reverse()) { const m = ROW_STATUS.exec(c.replace(/`/g, '')); if (m) { st = STATUS_OF[m[1]]; break; } }
     if (!st) continue;
-    rows.push({ section, id: cells[0].replace(/`/g, ''), status: st, routes: docRoutes(line), line });
+    // The places of the Stillhet files a row names (`live/task-live.mjs`, `projects/project-add.js › …`), and its section's.
+    const places = [...new Set([...line.matchAll(/([\w-]+\.m?js)\b/g)].map((x) => fileNames.get(x[1])).filter(Boolean))];
+    const sp = SECTION_PLACE.find(([re]) => re.test(top));
+    if (sp && !places.includes(sp[1])) places.push(sp[1]);
+    rows.push({ section, id: cells[0].replace(/`/g, ''), status: st, routes: docRoutes(line), places, line });
   }
   const plans = [];
   const ledger = readFileSync(join(root, LEDGER), 'utf8');
@@ -676,19 +701,26 @@ export function classifyIndex(root = ROOT) {
   return { stillhetRoutes, live: liveText.join('\n'), rows: rows.filter((r) => r.section !== 'Classic controls'), plans, overrides, keyMemo: new Map(), routeMemo: new Map() };
 }
 
-/** One route's status: { status, where }. `/api/settings` itself is carried by its keys. */
-export function routeStatus(cx, r) {
-  if (cx.routeMemo.has(r)) return cx.routeMemo.get(r);
+/** One route's status for a classic page: { status, where }. `/api/settings` itself is carried by its keys. Wired only when
+ *  Stillhet calls it, or a `wired` row names it, from one of the page's places: a call from another place clears nothing. */
+export function routeStatus(cx, r, page) {
+  const memo = `${page}|${r}`;
+  if (cx.routeMemo.has(memo)) return cx.routeMemo.get(memo);
+  const places = PAGES[page]?.places || [];
+  const ours = (place) => place === '*' || places.includes('*') || places.includes(place);
   let out = null;
-  for (const [p, f] of cx.stillhetRoutes) if (sameRoute(r, p)) { out = { status: 'wired', where: `stillhet/${f.replace(/^stillhet\//, '')}` }; break; }
+  for (const [p, fs] of cx.stillhetRoutes) {
+    const f = fs.find(([, place]) => ours(place));
+    if (f && sameRoute(r, p)) { out = { status: 'wired', where: `stillhet/${f[0].replace(/^stillhet\//, '')}` }; break; }
+  }
   if (!out) {
-    const hit = cx.rows.filter((row) => row.routes.some((m) => routeHits(r, m)));
+    const hit = cx.rows.filter((row) => row.routes.some((m) => routeHits(r, m)) && (row.status !== 'wired' || row.places.some(ours)));
     const best = hit.sort((a, b) => ORDER[a.status] - ORDER[b.status])[0];
     if (best) out = { status: best.status, where: `stillhet-wiring.md ${best.section}: ${best.id.slice(0, 70)}` };
   }
   if (!out) { const p = cx.plans.find((x) => !x.own && x.routes.some((m) => routeHits(r, m))); if (p) out = { status: 'planned', where: p.cite }; }
   out = out || { status: 'MISSING', where: '' };
-  cx.routeMemo.set(r, out);
+  cx.routeMemo.set(memo, out);
   return out;
 }
 
@@ -711,7 +743,7 @@ export function classify(cx, c) {
   const ov = cx.overrides.get(c.id);
   if (ov) return { status: ov.status, where: `stillhet-wiring.md Classic controls: ${ov.line.split('|')[3]?.trim().slice(0, 90) || ''}`, missing: [] };
   const parts = [];
-  for (const r of c.routes) if (r !== '/api/settings') parts.push([`route ${r}`, routeStatus(cx, r)]);
+  for (const r of c.routes) if (r !== '/api/settings') parts.push([`route ${r}`, routeStatus(cx, r, c.page)]);
   for (const k of c.keys) parts.push([`setting ${k}`, keyStatus(cx, k)]);
   if (!parts.length) {
     const p = PAGES[c.page];
