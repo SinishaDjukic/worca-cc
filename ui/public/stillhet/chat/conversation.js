@@ -43,7 +43,7 @@
   const Q_MAX = 3;   // form.composer-queue: how many may wait (chat-live.mjs QUEUE_MAX)
   let proseReady = false;   // the markdown renderer answered: a cached words turn drawn as plain words is built again
   // a control that only says what it would do in the demo, and does it in the live kind (`data-live="id|{args}"`)
-  const doOr = (phrase, id, args = {}) => (LIVE() ? { 'data-live': `${id}|${JSON.stringify(args)}` } : { 'data-say': window.StillhetWould(phrase) });
+  const doOr = (phrase, id, args = {}) => (LIVE() ? { 'data-live': `${id}|${JSON.stringify(args)}` } : id === 'diff' ? { 'data-view-diff': `${args.task || ''}|${args.file || ''}`, title: 'Opens the diff on the task’s page' } : { 'data-say': window.StillhetWould(phrase) });
   // chat labels, live: the labels in use come from dev's GET /api/ask/labels (read each time the picker opens); a change is
   // PUT /api/ask/threads/:id/labels, and nothing changes or is said before the server answers ok (a refusal toasts)
   let liveLabels = [];
@@ -245,10 +245,13 @@
     const mode = comp.intent ? '' : pk('mode', comp.mode === 'ask' ? 'Ask' : comp.mode === 'task' ? 'Task' : 'Schedule', MODES, 'Ask, start a task, or schedule one');   // an armed starter's chip says what it is
     const project = WP('on', pk('project', comp.project, scopes(), 'Where it runs: a project or, from Advanced, a workspace'));
     const engine = modelPicker(DEMO_MODELS, comp.engine) + pk('effort', comp.effort || 'high', ['low', 'medium', 'high'], 'How hard it thinks');
-    if (comp.mode === 'ask') return mode + project + engine;
+    // Ask too: which workflow a task from this chat would use; "Default" always says what it is
+    const flows = [...new Set(['Default', 'Lean', 'Shaper', 'Architecture (C4)', comp.workflow])], flowWord = (w) => (w === 'Default' ? 'the Default workflow' : w);
+    const workflow = WP('with', R.sentencePicker({ id: 'cp-workflow', text: flowWord(comp.workflow), tip: 'Which workflow a task from here uses', items: flows.map((w) => ({ id: w, text: flowWord(w), help: WORKFLOWS[w] || '', checked: w === comp.workflow })), open: menu === 'cp-workflow', chevron: R.icon('chevron', 10) }));
+    if (comp.mode === 'ask') return mode + project + workflow + engine;
     if (comp.mode === 'schedule') return mode + project + pk('every', comp.every, R.REPEATS, 'When it repeats') + (comp.every === 'every hour' ? '' : WP('at', pk('at', comp.at, R.TIMES_OF_DAY, 'What time')));
     const preset = comp.preset ? W('·') + pk('preset', comp.preset, ['No preset', ...PRESETS], 'The preset that filled it') : '';
-    return mode + project + WP('with', pk('workflow', comp.workflow, [...new Set(['Default', 'Lean', 'Shaper', 'Architecture (C4)', comp.workflow])], 'Which workflow')) + W('on') + engine + WP('from', pk('from', comp.from, ['origin · latest', 'local copy', 'the source branch'], 'Where it starts')) + WP('then', pk('then', comp.then, ['open a PR', 'leave a branch', 'push to the source'], 'What happens when it is done')) + preset;
+    return mode + project + workflow + W('on') + engine + WP('from', pk('from', comp.from, ['origin · latest', 'local copy', 'the source branch'], 'Where it starts')) + WP('then', pk('then', comp.then, ['open a PR', 'leave a branch', 'push to the source'], 'What happens when it is done')) + preset;
   }
   function detail() {
     if (comp.mode !== 'task' || LIVE()) return '';   // live: Worca proposes the task, and its proposal holds the setup
@@ -264,10 +267,10 @@
   const chipsHtml = () => (comp.files.length || aboutNow() ? `<span class="composer-chips">${aboutNow() ? R.handedChip({ kind: comp.about.kind, name: comp.about.name, attrs: { 'data-cp-unabout': '' } }) : ''}${comp.files.map((f) => R.button({ label: f, kind: 'quiet', icon: R.icon('x', 11), attrs: { 'data-cp-unfile': f, title: `Removes ${f}` } })).join('')}</span>` : '');
   // ---- starting: a starter only arms the composer (its chip and its placeholder); nothing is sent until you send ----
   const STARTERS = [
-    { id: 'task', label: 'New task', icon: 'kind-task', ph: 'Describe the task…' },
-    { id: 'workflow', label: 'Build workflow', icon: 'kind-workflow', ph: 'Describe the workflow…' },
-    { id: 'schedule', label: 'Schedule a task', icon: 'clock', ph: 'What should run, and when?' },
-    { id: 'track', label: 'Follow a task', icon: 'track', ph: 'Which task to follow?' },
+    { id: 'task', label: 'New task', icon: 'kind-task', ph: 'Describe the task…', says: 'One job on a project, from a plan to a pull request' },
+    { id: 'workflow', label: 'Build workflow', icon: 'kind-workflow', ph: 'Describe the workflow…', says: 'Describe the stages you want; Worca drafts the workflow for you to check' },
+    { id: 'schedule', label: 'Schedule a task', icon: 'clock', ph: 'What should run, and when?', says: 'A task that starts by itself, once or on a repeat' },
+    { id: 'track', label: 'Follow a task', icon: 'track', ph: 'Which task to follow?', says: 'Brings a running task into this chat, so you can ask about it' },
   ];
   const MORE = [
     { id: 'explain', label: 'Explain a diff', icon: 'pr', ph: 'Which task’s changes?' },
@@ -349,12 +352,20 @@
   const handHere = (kind, name, ph, text) => { comp.about = { kind, name, ph, binds: '', was: '' }; if (text != null) comp.text = text; menu = ''; paint(false); root.querySelector('[data-composer-t]')?.focus(); };
   function startersHtml() {
     if (LIVE()) loadPins();   // StillhetChatLive starts after the pages load: the first live paint asks dev for the pins
-    const tile = (x, pin) => R.button({ label: x.label, kind: 'quiet', icon: R.icon(x.icon, 14), attrs: { 'data-starter': x.id, ...(pin ? { 'data-pin': x.label, title: `${x.label}: ${WORKFLOWS[x.label] || 'a workflow you pinned'}. Fills the box; unpin it with a right-click` } : { title: `Fills the box: ${x.ph}` }) } });
+    // Chat home's starters are cards: an icon, a name and one plain line of what it does, the whole card one button; the
+    // rarely used ones are behind the last card, More
+    const card = R.starterCard || R.composer.starterCard, grid = R.starterGrid || R.composer.starterGrid;
+    const PIN_SAYS = { Shaper: 'Asks you a few questions first, then writes a plan you approve' };
+    const tile = (x, pin) => card({ icon: R.icon(x.icon, 18), label: x.label, says: x.says, attrs: { 'data-starter': x.id, ...(pin ? { 'data-pin': x.label, title: 'A workflow you pinned. Unpin it with a right-click' } : {}), ...(x.id === 'track' ? { 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'starter-track') } : {}) } });
     const live = liveTasks();
     const pick = (id, items, head) => (menu === id ? R.compactMenu({ label: head, items: [{ header: head }, ...items] }) : '');
     const trackMenu = pick('starter-track', live.map(({ t }) => ({ id: `starter-track|${t.id}`, text: t.title, mark: taskMark(t, 14) })), live.length ? 'Live' : 'Nothing running');
-    const more = R.moreMenu({ id: 'starter-more', label: 'More', icon: R.icon('more', 16), open: menu === 'starter-more', items: [...MORE.filter((x) => R.shows('advanced') || !['workspace', 'model', 'metrics'].includes(x.id)).map((x) => ({ id: `starter|${x.id}`, text: x.label, mark: R.icon(x.icon, 14) })), ...(LIVE() ? [] : [{ sep: true }, { header: 'Start from a preset' }, ...PRESETS.map((p) => ({ id: `starter-preset|${p}`, text: p, mark: R.icon('set-presets', 14) }))]), { sep: true }, { header: 'Pinned workflows' }, ...pinChoices().map((w) => (shownPins().includes(w) ? { id: `starter-unpin|${w}`, text: `Unpin ${w}`, mark: R.icon('pin', 14) } : { id: `starter-pin|${w}`, text: `Pin ${w}`, mark: R.icon('pin', 14) }))] });
-    return `<div class="home-starters" role="group" aria-label="Start something">${shownPins().map((w) => tile({ id: `pin:${w}`, label: w, icon: w === 'Shaper' ? 'kind-feature' : 'kind-workflow' }, true)).join('')}${STARTERS.map((x) => x.id === 'track' ? `<span class="rc-pop">${tile(x)}${trackMenu}</span>` : tile(x)).join('')}<span class="rc-pop">${more}</span></div>`;
+    // Chat is the one place a task or a schedule is started: the labelled forms open from here (the forms are Centers')
+    const C = window.StillhetCenters, forms = [...(C?.newTask ? [{ id: 'starter-form|task', text: 'New task form…', mark: R.icon('kind-task', 14), help: 'The same task, as labelled fields' }] : []), ...(C?.newSchedule ? [{ id: 'starter-form|schedule', text: 'New schedule form…', mark: R.icon('clock', 14), help: 'The same schedule, as labelled fields' }] : [])];
+    const moreItems = [...(forms.length ? [{ header: 'Fill in a form' }, ...forms, { sep: true }] : []), ...MORE.filter((x) => R.shows('advanced') || !['workspace', 'model', 'metrics'].includes(x.id)).map((x) => ({ id: `starter|${x.id}`, text: x.label, mark: R.icon(x.icon, 14) })), ...(LIVE() ? [] : [{ sep: true }, { header: 'Start from a preset' }, ...PRESETS.map((p) => ({ id: `starter-preset|${p}`, text: p, mark: R.icon('set-presets', 14) }))]), { sep: true }, { header: 'Pinned workflows' }, ...pinChoices().map((w) => (shownPins().includes(w) ? { id: `starter-unpin|${w}`, text: `Unpin ${w}`, mark: R.icon('pin', 14) } : { id: `starter-pin|${w}`, text: `Pin ${w}`, mark: R.icon('pin', 14) }))];
+    const more = card({ icon: R.icon('more', 18), label: 'More', says: 'The task and schedule forms, explain a diff, write a script, add a project', more: true, attrs: { 'data-menu': 'starter-more', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'starter-more') } }) + (menu === 'starter-more' ? R.compactMenu({ items: moreItems.map((x) => (x.sep || x.header ? x : { ...x, id: `starter-more|${x.id}` })) }) : '');
+    const cards = shownPins().map((w) => tile({ id: `pin:${w}`, label: w, icon: w === 'Shaper' ? 'kind-feature' : 'kind-workflow', says: PIN_SAYS[w] || WORKFLOWS[w] || 'A workflow you pinned' }, true)).join('') + STARTERS.map((x) => (x.id === 'track' ? `<span class="rc-pop">${tile(x)}${trackMenu}</span>` : tile(x))).join('') + `<span class="rc-pop">${more}</span>`;
+    return grid({ cards });
   }
   const intentChip = () => { const x = comp.intent && intentOf(comp.intent); return x ? R.intentChip({ icon: R.icon(x.icon, 12), label: x.label, clear: { 'data-intent-clear': '' } }) : ''; };
   // ---- the prompt check chip (docs/stillhet/panels.md panel.chat-composer; dev's grader and Improve, prompt-check.mjs) ----
@@ -458,7 +469,11 @@
       : comp.mode === 'ask' ? R.button({ label: 'Send', kind: sendKind, iconOnly: true, icon: R.icon('up', 14), attrs: { 'data-cp-send': '', title: 'Sends it to Worca' } })
         : R.button({ label: words, kind: sendKind, attrs: { 'data-cp-send': '', title: comp.mode === 'schedule' ? 'Saves the schedule' : 'Shows the task to check; you start it there' } });
     const hearing = comp.listening || comp.handsFree;   // the mic is on: the button stays pressed, the box says so
-    return queueHtml() + mentionMenu() + (promptCheckOn() ? '<div data-pc-improve></div>' : '') + R.composer({ value: comp.text, placeholder: hearing ? 'Listening… press the mic to stop' : comp.intent ? intentOf(comp.intent)?.ph || 'Ask Worca…' : aboutNow()?.ph ? aboutNow().ph : comp.mode === 'schedule' ? 'What should run each time?' : comp.mode === 'task' ? 'What should the task do?' : 'Ask Worca…', sentence: intentChip() + pcheckHtml() + chipsHtml() + sentence(), detail: detail(), tools: plus, send: meter() + R.button({ label: hearing ? 'Stop listening' : 'Speak', kind: 'quiet', iconOnly: true, icon: R.icon('mic', 15), attrs: { 'data-cp-mic': '', 'aria-pressed': String(!!hearing), disabled: comp.micOff ? true : null, title: comp.micOff || (hearing ? 'Stops listening' : 'Speak instead of typing') } }) + `<span class="rc-pop">${R.button({ label: 'Voice options', kind: 'quiet', iconOnly: true, icon: R.icon('sliders', 14), attrs: { 'data-menu': 'cp-voice', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'cp-voice') } })}${menu === 'cp-voice' ? R.compactMenu({ items: [{ id: 'cp-voice|hands', text: comp.handsFree ? 'Turn hands-free off' : 'Turn hands-free on', help: 'Listens and answers aloud until you stop it' }] }) : ''}</span>` + send, attrs: { 'data-composer': '' } });
+    // Voice is one button. At rest it opens the ways of talking (speak, hands-free, voice options); while it listens,
+    // the same button is pressed and one press stops it.
+    const voiceHtml = (on) => (on ? R.button({ label: 'Stop listening', kind: 'quiet', iconOnly: true, icon: R.icon('mic', 15), attrs: { 'data-cp-mic': '', 'aria-pressed': 'true', title: comp.handsFree ? 'Hands-free is on. Stops listening' : 'Stops listening' } })
+      : `<span class="rc-pop is-right">${R.button({ label: 'Voice', kind: 'quiet', iconOnly: true, icon: R.icon('mic', 15), attrs: { 'data-menu': 'cp-voice', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'cp-voice'), disabled: comp.micOff ? true : null, title: comp.micOff || 'Voice: speak, hands-free, voice options' } })}${menu === 'cp-voice' ? R.compactMenu({ label: 'Voice', items: [{ id: 'cp-voice|speak', text: 'Speak', help: 'Say it instead of typing; press the mic again to stop' }, { id: 'cp-voice|hands', text: 'Hands-free', help: 'Listens and answers aloud until you stop it' }, { sep: true }, { id: 'cp-voice|options', text: 'Voice options', help: 'Settings: the language it hears and the voice that answers' }] }) : ''}</span>`);
+    return queueHtml() + mentionMenu() + (promptCheckOn() ? '<div data-pc-improve></div>' : '') + R.composer({ value: comp.text, placeholder: hearing ? 'Listening… press the mic to stop' : comp.intent ? intentOf(comp.intent)?.ph || 'Ask Worca…' : aboutNow()?.ph ? aboutNow().ph : comp.mode === 'schedule' ? 'What should run each time?' : comp.mode === 'task' ? 'What should the task do?' : 'Ask Worca…', sentence: intentChip() + pcheckHtml() + chipsHtml() + sentence(), detail: detail(), tools: plus, send: meter() + voiceHtml(hearing) + send, attrs: { 'data-composer': '' } });
   }
 
   // ---- a turn ----
@@ -490,7 +505,7 @@
     const merged = endsDone(u, labels, tn);   // every stage done: merged, or a task with no PR stage that finished at its page's last stage
     const partsOf = (i) => { const s = D?.steps[i]; if (!s || (i > k && !merged)) return ''; const lines = D.log.filter((l) => l.s === i).length, arts = (s.arts || []).length; return (lines ? R.stagePart({ label: 'Log', says: `${lines} lines`, open: v.open === `${i}|log`, attrs: { 'data-dl-open': `${u.id}|${i}|log` } }) : '') + (arts ? R.stagePart({ label: 'Artifacts', says: String(arts), open: v.open === `${i}|arts`, attrs: { 'data-dl-open': `${u.id}|${i}|arts` } }) : ''); };
     const metaOf = (i, name) => (D?.steps[i] && (merged || i <= k) ? D.steps[i].meta : merged || i < k ? 'done' : i === k ? (u.detail || st2.word).replace(new RegExp(`^${name} · `), '') : '');
-    return `<div class="own-stages">${labels.map((name, i) => R.stageLine({ mark: merged || i < k ? R.stepDot({ dotCls: 'is-done', word: 'Done', icon: 'check' }) : i === k ? R.kindMark({ kind: 'task', tone: tn, stage: k, size: 16 }) : R.stepDot({ dotCls: 'is-future', word: 'Not yet', icon: '' }), label: i === k && D && !merged ? `${name} · now` : name, meta: metaOf(i, name), parts: D ? partsOf(i) : '', next: !merged && i > k, body: (i === k && tn === 'fail' && u.why ? u.why.map((w) => `<p class="cmd-s">${esc(w)}</p>`).join('') : '') + (D ? depthBody(u, i) : '') + (D && i === k && !merged ? findingsHtml(u) : '') })).join('')}${R.shows('expert') ? R.textLink({ label: 'Open its full page', attrs: u.id ? { 'data-open-task-page': u.id } : { 'data-open-slice': `${u.case}|${u.title}`, 'data-open-slice-run': taskId(u) || null } }) : ''}</div>`;
+    return `<div class="own-stages">${labels.map((name, i) => R.stageLine({ mark: merged || i < k ? R.stepDot({ dotCls: 'is-done', word: 'Done', icon: 'check' }) : i === k ? R.kindMark({ kind: 'task', tone: tn, stage: k, size: 16 }) : R.stepDot({ dotCls: 'is-future', word: 'Not yet', icon: '' }), label: i === k && D && !merged ? `${name} · now` : name, meta: metaOf(i, name), parts: D ? partsOf(i) : '', next: !merged && i > k, body: (i === k && tn === 'fail' && u.why ? u.why.map((w) => `<p class="cmd-s">${/^✗/.test(w) ? R.icon('alert', 13) : ''}${esc(w.replace(/^✗\s*/, ''))}</p>`).join('') : '') + (D ? depthBody(u, i) : '') + (D && i === k && !merged ? findingsHtml(u) : '') })).join('')}${R.shows('expert') ? R.textLink({ label: 'Open its full page', attrs: u.id ? { 'data-open-task-page': u.id } : { 'data-open-slice': `${u.case}|${u.title}`, 'data-open-slice-run': taskId(u) || null } }) : ''}</div>`;
   }
   const schedWord = (t) => { const S = window.StillhetSchedules; return S?.find(t.id) ? [S.wordOf(t.id), S.nextOf(t.id)].filter(Boolean).join(' · ') : ''; };   // a schedule's own word and why, as its page and bar row say them
   const taskMark = (t, size) => (t.kind === 'schedule' ? R.kindMark({ kind: 'schedule', size, title: schedWord(t) || t.detail }) : R.kindMark({ kind: 'task', tone: R.markTone(stOf(t)), stage: t.stage, size, title: `${stOf(t).word} · ${t.detail || ''}` }));
@@ -503,12 +518,12 @@
     const sched = t.kind === 'schedule', paused = sched && window.StillhetSchedules?.find(t.id)?.state === 'paused', expert = R.shows('expert');
     const action = t.case === 'scheduled' ? R.button({ label: 'Start now', attrs: { 'data-start-now': t.id } }) + R.button({ label: 'Cancel', kind: 'quiet', attrs: { 'data-cancel-task': t.id } })
       : sched && t.gone ? ''   // deleted: the card says so, nothing left to run or open
-      : sched ? (t.time === 'Paused' ? R.button({ label: 'Resume', attrs: { 'data-sched-card': `${t.id}|pause`, title: 'Runs again on its repeat' } }) : '') + (t.time === 'Paused' ? '' : R.button({ label: 'Run now', attrs: { 'data-sched-card': `${t.id}|run`, disabled: window.StillhetSchedules?.running(t.id), title: window.StillhetSchedules?.running(t.id) ? 'Its task is running; it can start again when that ends' : null } })) + (expert ? R.button({ label: 'Open', kind: 'quiet', attrs: { 'data-open-sched': t.id } }) : R.button({ label: x.open ? 'Hide its runs' : 'Show its runs', kind: 'quiet', attrs: { 'data-open-task': t.id, 'aria-expanded': String(!!x.open) } }))
-        + cardMore(t, [{ id: paused ? 'Resume' : 'Pause', text: paused ? 'Resume' : 'Pause', help: paused ? 'Runs at its times again' : 'Skips its times until you resume it' }, { id: 'Skip', ...window.StillhetSchedules?.skipItem(t.id) }, { sep: true }, { id: 'Delete', text: 'Delete', danger: true, help: 'Removes the schedule; the tasks it ran stay. Undo in the notice' }])
+      : sched ? (t.time === 'Paused' ? R.button({ label: 'Resume', attrs: { 'data-sched-card': `${t.id}|pause`, title: 'Runs again on its repeat' } }) : '') + (t.time === 'Paused' ? '' : R.button({ label: 'Run now', attrs: { 'data-sched-card': `${t.id}|run`, disabled: window.StillhetSchedules?.running(t.id), title: window.StillhetSchedules?.running(t.id) ? 'Its task is running; it can start again when that ends' : null } })) + (expert ? R.button({ label: 'Open', kind: 'quiet', attrs: { 'data-open-sched': t.id } }) : R.button({ label: x.open ? 'Hide its tasks' : 'Show its tasks', kind: 'quiet', attrs: { 'data-open-task': t.id, 'aria-expanded': String(!!x.open) } }))
+        + cardMore(t, [{ id: paused ? 'Resume' : 'Pause', text: paused ? 'Resume' : 'Pause', help: paused ? 'Runs at its times again' : 'Skips its times until you resume it' }, { id: 'Skip', ...window.StillhetSchedules?.skipItem(t.id) }, { id: 'Edit…', text: 'Edit…', help: 'Changes when it runs and what it does' }, { sep: true }, { id: 'Delete', text: 'Delete', danger: true, help: 'Removes the schedule; the tasks it ran stay. Undo in the notice' }])
         : R.button({ label: 'Open', kind: 'quiet', attrs: { 'data-open-task': t.id } });
     const runs = sched && x.open && !expert ? window.StillhetSchedules?.find(t.id)?.runs || [] : [];   // stillhet.stay-in-chat: its runs under its card
     const S = sched && window.StillhetSchedules?.find(t.id) ? window.StillhetSchedules : null;   // a schedule's card reads its own word and why (wordOf / nextOf), as its page does
-    return R.taskCard({ compact: true, title: t.title, mark: taskMark(t), word: S ? S.wordOf(t.id) : t.title, detail: S ? S.nextOf(t.id) : t.detail, action, attrs: { 'data-anchor': x.id } }) + (t.confirm ? confirmRow(t) : '') + (sched && x.open && !expert ? `<div class="tc-rows">${runs.length ? runs.map((r) => R.turnRow({ mark: R.kindMark({ kind: 'task', tone: R.markTone(R.runState(RM.stateOf(r.case))), stage: r.stage, size: 16 }), text: `<b>${esc(r.title)}</b> ${esc(r.meta || '')} · ${esc(r.day)}` })).join('') : R.turnRow({ mark: '', text: 'No runs yet' })}</div>` : '');
+    return R.taskCard({ compact: true, title: t.title, mark: taskMark(t), word: S ? S.wordOf(t.id) : t.title, detail: S ? S.nextOf(t.id) : t.detail, action, attrs: { 'data-anchor': x.id } }) + (t.confirm ? confirmRow(t) : '') + (sched && x.open && !expert ? `<div class="tc-rows">${runs.length ? runs.map((r) => R.turnRow({ mark: R.kindMark({ kind: 'task', tone: R.markTone(R.runState(RM.stateOf(r.case))), stage: r.stage, size: 16 }), text: `<b>${esc(r.title)}</b> ${esc(r.meta || '')} · ${esc(r.day)}` })).join('') : R.turnRow({ mark: '', text: 'No tasks yet' })}</div>` : '');
   };
   // A task card's actions act here, from the same table the task page reads (run-state's actionFlow): a move to its next
   // state, a confirm under the card, or (a dialog) its page, which still holds the dialogs.
@@ -551,6 +566,7 @@
     const ANY = { 'Send a direction': {}, 'View changes': {}, Restore: { say: 'The record is back in Tasks' }, Pause: live.pauseNow, Stop: live.stop, 'Report this task': live.report, Archive: live.archive, 'Save as preset': { dialog: 'preset', say: 'Saved as a preset: {value}' }, 'Run after…': { dialog: 'after', say: `{value} starts after ${t.title}` }, 'Start a follow-up': { followUp: true }, 'Tell Worca how to fix it': { followUp: true, fix: true }, 'Ask Worca to fix it': { autofix: true }, 'Show the log': { page: true }, 'Label…': { dialog: 'label', say: 'Labelled {value}' }, 'Move to group…': { dialog: 'group', say: 'Moved to {value}' } };
     const f = R.actionFlow(RM.stateOf(t.case), { ...ctx, would: LIVE() ? (p) => p : window.StillhetWould })[label] || ANY[label];   // D12: live, StillhetChatLive.flow carries it out (doAct)
     if (!f || !offers(t, label)) { if (!LIVE()) say(label); return; }   // live: a card offers only what it can do (FLOW)
+    if (label === 'View changes' && !LIVE()) { window.StillhetRunPage?.openDiff(''); window.StillhetShell.openTaskPage(t.case, chatId, t.title, taskId(t)); return; }   // its whole diff, on its page
     if (f.page) { if (R.shows('expert')) window.StillhetShell.openTaskPage(t.case, chatId, t.title, taskId(t)); else openHere(t, 'log'); return; }
     if (f.autofix && LIVE()) { busyFor(`[data-card-act="${t.id}|${label}"]`, CL().act('changes', { threadId: chatId, pipelineId: t.pid || t.run, text: `Fix what failed: ${(t.why || []).map((w) => w.replace(/^✗\s*/, '')).join('; ') || t.detail}` }).then((r) => { if (r.ok) say('Sent to Worca: it fixes what failed'); return r; })); return; }   // dev's Ask for changes, with what failed
     if (f.autofix && !LIVE()) { fixTry(t, 1); return; }   /* the log lives on its page, under What broke */
@@ -768,7 +784,7 @@
     const targets = ['No project', ...(r.projectDir ? ['Project'] : []), ...(r.workspaceId ? ['Workspace'] : [])];
     ppRead(x);
     const eng = ppEngine(x), engLabel = eng ? window.StillhetTaskLive?.engines?.().find((e) => e.id === eng)?.label || eng : '';
-    const sentence = W('Task') + W('on') + W(esc(x.target === 'No project' ? 'no project' : x.project)) + W('with') + W(esc(x.workflow)) + (engLabel ? W('run by') + W(esc(engLabel)) : '');
+    const rows = [{ label: 'Project', value: esc(x.target === 'No project' ? 'No project' : x.project) }, { label: 'Workflow', value: esc(x.workflow) + livePersp(x) }, ...(engLabel ? [{ label: 'Model', value: esc(engLabel) }] : [])];
     // COV-3 #6: the files of the message it answers (the you-turn before it), under the brief as the design draws them; × drops one
     // the files are read again while none have ids yet (an echo before the snapshot) and none were removed
     if (x.ppFiles === undefined || (!x.ppFiles.length && !x.ppCut)) { const all = threads.get(chatId) || [], k = all.findIndex((y) => y === x || (y.id === x.id && y.t === x.t)), you = all.slice(0, Math.max(0, k)).reverse().find((y) => y.t === 'you'); x.ppFiles = (you?.files || []).filter((f) => f && typeof f === 'object' && f.att); }
@@ -780,28 +796,36 @@
         + row('Run on the source branch', R.switchButton({ on: !!x.onSource, label: 'Run on the source branch', attrs: { 'data-pp-onsource': x.id } })))
       + row('Guardrails', pp('guard', guardText, liveGuards || [], 'Applies to every agent in this task'));
     const ppMenu = R.moreMenu({ id: `ppm:${x.id}`, label: `More for ${x.title}`, icon: R.icon('more', 16), open: menu === `ppm:${x.id}`, items: [{ id: 'composer', text: 'Edit in the composer', help: 'Puts all of it in the box to change; this card stays until you send' }] });
-    return R.taskProposal({ menu: ppMenu, title: x.title, why: x.why, sentence: sentence + livePersp(x), more: brief + more, open: x.open, nudge: '', hooks: { title: { 'data-pp-title': x.id }, more: { 'data-pp-more': x.id }, start: { 'data-pp-start': x.id }, later: { 'data-pp-later': x.id } }, start: 'Start', alts: null, kicker: 'Proposed', extra: ppNoteHtml(x), attrs: { 'data-anchor': x.id } });
+    return R.taskProposal({ menu: ppMenu, title: x.title, why: x.why, rows, files: x.open ? [] : (x.ppFiles || []).map((f) => f.name), more: brief + more, open: x.open, nudge: '', hooks: { title: { 'data-pp-title': x.id }, more: { 'data-pp-more': x.id }, start: { 'data-pp-start': x.id }, later: { 'data-pp-later': x.id } }, start: 'Start', alts: null, kicker: 'Proposed task', extra: ppNoteHtml(x), attrs: { 'data-anchor': x.id } });
   }
   // Run with (D3): a one-stage workflow Worca proposed only to run a task is one TaskProposal; Start saves it and starts its
   // task (StillhetChatLive 'run-with'), Customise holds its steps and a plain Save workflow (dev's save, no start)
   function runWithHtml(x) {
     const waiting = CL().runWith(chatId)?.cardId === x.card, pend = waiting ? { disabled: '', 'aria-busy': 'true' } : {};
     const steps = (x.rows || []).find((r) => r.name === 'Steps')?.after || '';
-    const sentence = W('Runs') + W(`<b>${esc(x.workflow)}</b>${steps ? `: ${esc(steps)}` : ''}`);
+    const rows = [{ label: 'Workflow', value: `<b>${esc(x.workflow)}</b>` }, ...(steps ? [{ label: 'Stages', value: esc(steps) }] : [])];
     const more = (x.rows || []).map((r) => R.settingsRow({ name: r.name, sentence: esc(r.after) })).join('') + R.button({ label: 'Save workflow', kind: 'quiet', attrs: { 'data-cp-apply': x.id, ...pend } });
-    return R.taskProposal({ title: x.title, why: x.why, sentence, more, open: x.open, nudge: '', hooks: { title: { 'data-pp-title': x.id, readonly: '' }, more: { 'data-pp-more': x.id }, start: { 'data-rw-start': x.id, ...pend }, later: { 'data-cp-decline': x.id } }, start: waiting ? R.workingWord('Run with') : `Run with ${x.workflow}`, alts: null, kicker: 'Proposed', attrs: { 'data-anchor': x.id } });
+    return R.taskProposal({ title: x.title, why: x.why, rows, more, open: x.open, nudge: '', hooks: { title: { 'data-pp-title': x.id, readonly: '' }, more: { 'data-pp-more': x.id }, start: { 'data-rw-start': x.id, ...pend }, later: { 'data-cp-decline': x.id } }, start: waiting ? R.workingWord('Run with') : `Run with ${x.workflow}`, alts: null, kicker: 'Proposed task', attrs: { 'data-anchor': x.id } });
   }
   function proposalHtml(x) {
     if (LIVE() && x.raw) return liveProposalHtml(x);
     if (x.later) return R.turnRow({ mark: R.kindMark({ kind: 'task', tone: 'idle', size: 16 }), text: `Not now: <b>${esc(x.title)}</b>`, end: R.button({ label: 'Bring back', kind: 'quiet', attrs: { 'data-pp-back': x.id } }) });
     const pp = (f, text, items, tip) => R.sentencePicker({ id: `pp-${x.id}-${f}`, text, tip, items: items.map((v) => (typeof v === 'string' ? { id: v, text: v, checked: v === text } : v.id ? { ...v, checked: v.id === text } : v)), open: menu === `pp-${x.id}-${f}`, chevron: R.icon('chevron', 10) });
     const shaper = x.workflow === 'Shaper', later = x.when && x.when !== 'now';
-    const sentence = W(/^every/.test(x.when || '') ? 'Schedule' : 'Task') + W('on') + pp('project', x.project, PROJECTS, 'Which project') + W('with') + pp('workflow', x.workflow, Object.keys(WORKFLOWS), 'Which workflow') + W('on') + pp('engine', x.engine, ENGINE_ITEMS, 'Which engine, then its model') + W('·') + pp('effort', x.effort || 'high', EFFORT, 'How hard it thinks') + pp('when', x.when || 'now', WHEN, 'When it starts: now, at a time, repeating, or after another task') + W('then') + pp('then', x.then, ['open a PR', 'leave a branch', 'merge into dev'], 'What happens when it is done');
+    // what you scan or choose: a labelled picker each, always in the same place; a value the proposal changed from what
+    // you picked says so in its row (x.asked holds what you had)
+    const was = (f) => (x.asked && x.asked[f] && x.asked[f] !== x[f] ? x.asked[f] : '');
+    const rows = [{ label: 'Project', value: pp('project', x.project, PROJECTS, 'Which project'), was: was('project') },
+      { label: 'Workflow', value: pp('workflow', x.workflow, Object.keys(WORKFLOWS), 'Which workflow'), was: was('workflow') },
+      { label: 'Model', value: pp('engine', x.engine, ENGINE_ITEMS, 'Which engine, then its model') + pp('effort', x.effort || 'high', EFFORT, 'How hard it thinks'), was: was('engine') },
+      { label: 'Starts', value: pp('when', x.when || 'now', WHEN, 'When it starts: now, at a time, repeating, or after another task') },
+      { label: 'Then', value: pp('then', x.then, ['open a PR', 'leave a branch', 'merge into dev'], 'What happens when it is done') }];
     const brief = `<div class="tp-brief">${R.field({ id: `pp-brief-${x.id}`, label: 'Brief: what the first agent reads · Markdown', value: x.brief ?? x.why.replace(/^From this chat: /, ''), multiline: true, hint: `${(x.brief ?? x.why.replace(/^From this chat: /, '')).length} characters`, attrs: { 'data-pp-brief': x.id } })}${(x.files || []).length ? `<span class="you-files">${x.files.map((f) => R.button({ label: f, kind: 'quiet', icon: R.icon('x', 11), attrs: { 'data-pp-unfile': `${x.id}|${f}`, title: `Removes ${f}` } })).join('')}</span>` : ''}</div>`;
     // Shaper's perspectives: a picker in the sentence ("reviewed by Product, Security"), each a tick; Product always reviews
     const pl = x.persp || ['Product'];
     const persp = shaper ? perspPicker(x, pl.join(', '), PERSPECTIVES.map((v) => ({ id: v, text: v, checked: pl.includes(v), off: v === 'Product', help: v === 'Product' ? 'Always reviews' : '' }))) : '';
-    const what = `<p class="tp-what">${esc(WORKFLOWS[x.workflow] || '')}${later ? ` · starts ${esc(x.when)}` : ''}</p>`;
+    const what = `${WORKFLOWS[x.workflow] ? `${x.workflow === 'Default' ? 'The Default workflow' : x.workflow}: ${WORKFLOWS[x.workflow].replace(/^./, (c) => c.toLowerCase())}` : ''}${later ? ` · starts ${x.when}` : ''}`;
+    if (shaper) rows[1].value += persp;
     const row = (k, v) => `<div class="cr"><span>${k}</span><span>${v}</span></div>`;
     const target = pp('target', x.target || 'Project', ['No project', 'Project', 'Workspace'], 'Where it runs');
     const agents = R.shows('expert') ? `<div class="tp-agents"><span class="tp-label">Agents ${R.button({ label: 'Reset to proposal', kind: 'quiet', attrs: { 'data-pp-reset': x.id } })}${R.button({ label: 'Save as project defaults', kind: 'quiet', attrs: { 'data-pp-save': x.id } })}</span>${['Plan', 'Build', 'Review'].map((a) => { const g = (x.agents || {})[a] || {}; return `<div class="cr"><span>${a}</span><span>${pp(`model${a}`, g.model || x.engine, ENGINES, `${a}'s model`)}${W('·')}${pp(`eff${a}`, g.effort || x.effort || 'high', EFFORT, `${a}'s effort`)}${W('·')}${pp(`sub${a}`, g.sub || 'no sub-agents', ['no sub-agents', '2 sub-agents', '4 sub-agents'], `${a}'s sub-agents`)}${W('·')}${pp(`fan${a}`, g.fan || 'one at a time', ['one at a time', 'fan out 3'], `${a}'s fan-out`)}</span></div>`; }).join('')}</div>` : '';
@@ -821,14 +845,15 @@
         + row('If Worca was off', pp('missed', x.missed || 'run it when Worca is back', ['run it when Worca is back', 'skip it'], 'A start missed while Worca was not running'))
         + row('If the last still runs', pp('overlap', x.overlap || 'wait for it', ['wait for it', 'skip this one', 'run both'], 'When a start comes while the one before still runs'))
         + row('Pause it after', pp('fails', x.fails || '3 failures in a row', ['3 failures in a row', '5 failures in a row', 'never'], 'Stops repeating when it keeps failing'))
-        + row('Ends', pp('ends', x.ends || 'never', ['never', 'after 10 runs', 'at the end of the month'], 'When the schedule stops by itself')) : '')
+        + row('Ends', pp('ends', x.ends || 'never', ['never', 'after 10 tasks', 'at the end of the month'], 'When the schedule stops by itself')) : '')
       + (R.shows('advanced') ? row('Tools', pp('mcp', x.mcp || 'Project defaults', ['Project defaults', 'None', 'All I have'], 'Which MCP servers and skills its agents can use')) : '')
       + agents;
     const nudge = x.nudge && !shaper ? `${R.kindMark({ kind: 'task', tone: 'ask', size: 14 })}<span>This has open decisions: Shaper can ask them first (≈ $12 · ~40 min, against ≈ $8 · ~25 min as is).</span>` : '';
     const alts = x.nudge && !shaper ? { open: menu === `ppalt-${x.id}`, attrs: { 'data-menu': `ppalt-${x.id}` }, menu: R.compactMenu({ items: [{ id: `ppalt-${x.id}|asis`, text: 'Run as is', hint: '≈ $8 · ~25 min' }, { id: `ppalt-${x.id}|shape`, text: 'Shape it first', hint: '≈ $12 · ~40 min' }] }) } : null;
-    const kicker = x.ticket ? `Proposed · from ${x.ticket}` : x.preset ? `Proposed · from preset ${x.preset}` : 'Proposed';
+    const kind = /^every/.test(x.when || '') ? 'Proposed schedule' : 'Proposed task';
+    const kicker = x.ticket ? `${kind} · from ${x.ticket}` : x.preset ? `${kind} · from preset ${x.preset}` : kind;
     const ppMenu = R.moreMenu({ id: `ppm:${x.id}`, label: `More for ${x.title}`, icon: R.icon('more', 16), open: menu === `ppm:${x.id}`, items: [{ id: 'composer', text: 'Edit in the composer', help: 'Puts all of it in the box to change; this card stays until you send' }, { id: 'preset', text: 'Save as preset', help: 'Starts the next task with this setup' }] });
-    const card = R.taskProposal({ menu: ppMenu, title: x.title, why: x.why, sentence: sentence + persp + what, more: brief + more, open: x.open, nudge, hooks: { title: { 'data-pp-title': x.id }, more: { 'data-pp-more': x.id }, start: { 'data-pp-start': x.id }, later: { 'data-pp-later': x.id } }, start: later ? 'Schedule' : shaper ? 'Start planning' : 'Start', alts, kicker, attrs: { 'data-anchor': x.id } });
+    const card = R.taskProposal({ menu: ppMenu, title: x.title, why: x.why, rows, line: what, files: x.open ? [] : x.files || [], more: brief + more, open: x.open, nudge, hooks: { title: { 'data-pp-title': x.id }, more: { 'data-pp-more': x.id }, start: { 'data-pp-start': x.id }, later: { 'data-pp-later': x.id } }, start: later ? 'Schedule' : shaper ? 'Start planning' : 'Start', alts, kicker, attrs: { 'data-anchor': x.id } });
     return card;
   }
 
@@ -915,6 +940,15 @@
       // a workflow proposed at dev's depth: each step a row with its model and effort to change in place, its loop, what it adds in cost
       const wpick = (id, text, items, tip) => R.sentencePicker({ id, text, tip, items: items.map((v) => ({ id: v, text: v, checked: v === text })), open: menu === id, chevron: R.icon('chevron', 10) });
       const graph = x.steps && x.state !== 'applied' ? `<div class="set-rows" style="margin:6px 0 0">${x.steps.map(([n, who, m, e], k) => R.settingsRow({ name: `${k + 1}. ${n}`, sentence: `${esc(who)} on ${wpick(`wfs-${x.id}-${k}-m`, m, ENGINES, 'Its model')} ${wpick(`wfs-${x.id}-${k}-e`, e, ['low', 'medium', 'high'], 'How hard it thinks')}` })).join('')}${x.loop ? R.settingsRow({ name: 'Loop', sentence: `${esc(x.loop[0])} sends it back to ${esc(x.loop[1])} up to ${wpick(`wfl-${x.id}`, x.loop[2], ['1', '2', '3', '5'], 'How many rounds')} ${x.loop[2] === '1' ? 'time' : 'times'}` }) : ''}</div>${x.cost ? `<p class="convo-head" style="margin:6px 0 0">${esc(x.cost)}</p>` : ''}` : '';
+      // feedback 15: what each stage does in plain words and what comes out of it (WorkflowStory), the project it is for
+      // by name, and Run once beside Save workflow
+      const SAYS = { Plan: ['Reads the code and writes a plan', 'a plan you can read'], Build: ['Writes the code and its tests on a branch', 'commits on its branch'], Implementation: ['Writes the code and its tests on a branch', 'commits on its branch'], Security: ['Looks for ways the change could be misused', 'a list of findings, or a pass'], Review: ['Reads the diff and runs the tests', 'a review: pass, or what to fix'], PR: ['Opens a pull request into dev', 'a PR to merge'] };
+      const isFlow = x.kind === 'Workflow' && x.state === 'proposed' && (x.steps || x.graph);
+      const flowSteps = !isFlow ? [] : x.steps ? x.steps.map(([n, who, m, e]) => ({ name: n, says: `${(SAYS[n] || SAYS[who] || [who])[0]}. Out comes ${(SAYS[n] || SAYS[who] || ['', 'its result'])[1]}.`, meta: `${m} · ${e}`, check: /review|security/i.test(n) })) : STEPS.map(([k, v]) => ({ name: k, says: `${(SAYS[k] || [v])[0]}. Out comes ${(SAYS[k] || ['', 'its result'])[1]}.`, meta: v }));
+      const story = isFlow ? R.workflowStory({ steps: flowSteps, loop: x.loop ? { from: x.steps.findIndex(([n]) => n === x.loop[0]), to: x.steps.findIndex(([n]) => n === x.loop[1]), text: `sends it back up to ${x.loop[2]} ${x.loop[2] === '1' ? 'time' : 'times'}` } : null }) : '';
+      const flowFacts = isFlow ? [{ label: 'Project', value: esc(chat()?.project || comp.project || 'Every project') }, { label: 'Stages', value: esc(String(flowSteps.length)) }] : null;
+      const once = isFlow && !LIVE() ? { label: 'Run once', attrs: { 'data-cp-once': x.id, title: 'Starts one task with it; nothing is saved' } } : null;
+      if (isFlow) x.apply = 'Save workflow';
       const choice = x.choice ? `<div class="tp-sentence"><span>${esc(x.choice.label)}</span>${R.sentencePicker({ id: `cpch-${x.id}`, text: x.picked || x.choice.rec, tip: `${x.choice.label}: ${x.choice.rec} is what Worca recommends`, items: x.choice.items.map((v) => ({ id: v, text: v, help: v === x.choice.rec ? 'Worca recommends it' : '', checked: (x.picked || x.choice.rec) === v })), open: menu === `cpch-${x.id}`, chevron: R.icon('chevron', 10) })}</div>` : '';
       const HOW = { Folder: ['a folder on this machine', 'Add'], Clone: ['a repository URL', 'Clone'], New: ['a new, empty project', 'Create'] };
       const pf = (k, label, v, ph) => R.field({ id: `pj-${x.id}-${k}`, label, value: x.f?.[k] ?? v, placeholder: ph || '', attrs: { 'data-pj-field': `${x.id}|${k}`, maxlength: 1024 } });
@@ -929,7 +963,7 @@
       if (x.done) return R.turnRow({ mark: R.icon('check', 14), text: `<b>${esc(x.title)}</b> ${esc(x.done)}` });
       const cfm = x.confirmDelete ? R.turnRow({ mark: R.kindMark({ kind: 'task', tone: 'ask', size: 16 }), text: `<b>${esc(x.confirmDelete)}?</b> Its times end; the tasks it ran stay`, end: R.button({ label: 'Delete', kind: 'quiet', cls: 'is-danger', attrs: { 'data-chg-yes': x.id } }) + R.button({ label: 'Cancel', kind: 'quiet', attrs: { 'data-chg-no': x.id } }) }) : '';   // act.confirm
       const cpMenu = R.moreMenu({ id: `chg:${x.id}`, label: `More for ${x.title}`, icon: R.icon('more', 16), open: menu === `chg:${x.id}`, items: [...(x.menuItems || []), 'Ask about it', ...(x.actions?.some(([l]) => l === 'Not now') ? [] : ['Not now'])] });   // the card's own Not now is enough
-      return askChanges(x) ? R.changeProposal({ menu: cpMenu, actions: acts, kind: x.kind, title: x.title, why: x.why || '', rows: x.rows || [], body: graph + choice + diff, state: x.state, apply: x.apply || 'Apply', hooks: { apply: { 'data-cp-apply': x.id }, decline: { 'data-cp-decline': x.id }, revert: LIVE() && !x.revert ? null : { 'data-cp-revert': x.id } }, attrs: { 'data-anchor': x.id } }) + askChanges(x) + cfm : cfm + R.changeProposal({ menu: cpMenu, actions: acts, kind: x.kind, title: x.title, why: x.why || '', rows: x.rows || (x.graph ? STEPS.map(([k, v]) => ({ name: k, before: '', after: v })) : []), body: graph + choice + project + diff, state: x.state, apply: x.apply || 'Apply', hooks: { apply: { 'data-cp-apply': x.id }, decline: { 'data-cp-decline': x.id }, revert: LIVE() && !x.revert ? null : { 'data-cp-revert': x.id } }, attrs: { 'data-anchor': x.id } });
+      return askChanges(x) ? R.changeProposal({ menu: cpMenu, actions: acts, facts: flowFacts, second: once, kind: x.kind, title: x.title, why: x.why || '', rows: x.rows || [], body: story + graph + choice + diff, state: x.state, apply: x.apply || 'Apply', hooks: { apply: { 'data-cp-apply': x.id }, decline: { 'data-cp-decline': x.id }, revert: LIVE() && !x.revert ? null : { 'data-cp-revert': x.id } }, attrs: { 'data-anchor': x.id } }) + askChanges(x) + cfm : cfm + R.changeProposal({ menu: cpMenu, actions: acts, facts: flowFacts, second: once, kind: x.kind, title: x.title, why: x.why || '', rows: x.rows || (x.graph && !isFlow ? STEPS.map(([k, v]) => ({ name: k, before: '', after: v })) : []), body: story + graph + choice + project + diff, state: x.state, apply: x.apply || 'Apply', hooks: { apply: { 'data-cp-apply': x.id }, decline: { 'data-cp-decline': x.id }, revert: LIVE() && !x.revert ? null : { 'data-cp-revert': x.id } }, attrs: { 'data-anchor': x.id } });
     }
     if (x.t === 'think') return R.thinkingRow({ done: true, secs: (x.text.match(/\d+s/) || ['a moment'])[0], steps: x.steps || THOUGHT, open: opened.has(i), attrs: fold() });
     if (x.t === 'cmds') return R.turnRow({ mark: R.icon(opened.has(i) ? 'chevron' : 'chevR', 14), text: esc(x.text), end: x.end, body: esc(x.body), open: opened.has(i), attrs: fold() });
@@ -968,24 +1002,31 @@
     const op = LIVE() ? opening.get(t.run || t.id) : null;   // D6: the one place that says it
     // live: a Restart Build the server would refuse (no plan, a workspace task) is off with its reason, as on its page (F-a4-11)
     const offWhy = LIVE() && st.action?.label === 'Restart Build' ? window.StillhetTaskLive?.restartOff?.(t.pid || t.run || t.id) || '' : '';
-    const main = below || t.confirm ? '' : op ? R.button({ label: 'Opening the PR…', kind: 'primary', attrs: { 'data-card-act': `${t.id}|${op.was}`, disabled: '', 'aria-busy': 'true' } }) : fixFirst && st.action ? R.button({ label: R.cardAction(RM.stateOf(t.case)).label, kind: 'primary', attrs: { 'data-card-act': `${t.id}|${st.action.label}`, title: offWhy || 'Runs it again as it is', disabled: offWhy ? '' : null } }) : st.action ?   /* while a confirm asks, its row holds the one button */ R.button({ label: st.action.label, kind: tone === 'fail' && !t.confirm && !t.form ? 'primary' : '', attrs: { 'data-card-act': `${t.id}|${st.action.label}`, ...(offWhy ? { disabled: '', title: offWhy } : {}) } })
+    const main = below || t.confirm ? '' : op ? R.button({ label: op.was, busy: { label: 'Opening the PR…' }, kind: 'primary', attrs: { 'data-card-act': `${t.id}|${op.was}` } }) : fixFirst && st.action ? R.button({ label: R.cardAction(RM.stateOf(t.case)).label, kind: 'primary', attrs: { 'data-card-act': `${t.id}|${st.action.label}`, title: offWhy || 'Runs it again as it is', disabled: offWhy ? '' : null } }) : st.action ?   /* while a confirm asks, its row holds the one button */ R.button({ label: st.action.label, kind: tone === 'fail' && !t.confirm && !t.form ? 'primary' : '', attrs: { 'data-card-act': `${t.id}|${st.action.label}`, ...(offWhy ? { disabled: '', title: offWhy } : {}) } })
       : live ? R.button({ label: 'Pause', attrs: { 'data-card-act': `${t.id}|Pause`, title: 'Stops at once; Resume starts the current step again' } }) : '';
+    // a gate offers its second choice beside the first (Run another cycle beside Accept as is), not only in ⋯
+    const second = main && !op && tone === 'act' && st.action ? (st.action.items || []).filter((w) => typeof w === 'string' && w !== 'Stop' && offers(t, w)).slice(0, 1).map((w) => R.button({ label: w, attrs: { 'data-card-act': `${t.id}|${w}`, title: 'The other way on from here' } })).join('') : '';
+    // a card that asks shows what it asks about (the review's result, or the plan), each open decision by name, and a way to the whole
+    const openFind = t.depth?.findings && !t.depth.sent ? [{ text: `Confirm these findings · ${t.depth.findings.length}`, attrs: { 'data-open-task': t.id, 'data-ask-find': t.id, title: 'Opens them here, under its stage' } }] : [];
+    const asksLines = (tone === 'act' || tone === 'ask') && !x.open ? (t.why || []).map((w) => w.replace(/^✗\s*/, '')) : [];
+    const askSaid = below ? [] : asksLines.slice(0, 4);   // a question or a plan under the card says what it asks; the open decisions still show here
+    const asks = !x.open && (askSaid.length || openFind.length) ? { label: !askSaid.length ? 'Open decisions' : /^(plan|outline|clarify)/.test(t.case) ? 'The plan, in short' : tone === 'act' ? 'What the review found' : 'What it asks about', lines: askSaid, decisions: openFind, more: { label: 'Read it on the task page', attrs: { 'data-card-stage': `${t.id}|${labelsOf(t)[Math.max(0, t.stage ?? 0)] || ''}`, title: 'Opens the task at this stage' } } } : null;
     // the card's ⋯: its state's own steps, then what any task can do, named as on its page (one ⋯, the same words)
     const done = ['ok', 'merged', 'stop', 'closed', 'idle'].includes(tone);
-    const more = cardMore(t, [...(failed ? [...(fixFirst ? [{ id: 'Ask Worca to fix it', text: 'Ask Worca to fix it', help: 'Worca reads what broke, picks where to start again and how, and tries up to 3 times before it asks you' }] : st.action ? [{ id: st.action.label, text: st.action.label, help: 'Runs it again as it is, without a fix' }] : []), { id: 'Tell Worca how to fix it', text: 'Tell Worca how to fix it', help: 'A follow-up on its branch, with what failed already written' }, { id: 'Show the log', text: 'Show the log', help: R.shows('expert') ? 'Opens its page at What broke, with the log' : 'Opens its stages here, with the log' }] : []), ...(st.action?.items || []).filter((w) => typeof w === 'string'), ...(LIVE() && t.case === 'ready' ? [{ id: 'View changes', text: 'View changes', help: 'Opens its changes as a patch' }] : []), ...(stoppable ? [{ id: 'Stop', text: 'Stop', danger: true, help: 'Asks first; the branch and changes stay' }] : []), { sep: true },
+    const more = cardMore(t, [...(failed ? [...(fixFirst ? [{ id: 'Ask Worca to fix it', text: 'Ask Worca to fix it', help: 'Worca reads what broke, picks where to start again and how, and tries up to 3 times before it asks you' }] : st.action ? [{ id: st.action.label, text: st.action.label, help: 'Runs it again as it is, without a fix' }] : []), { id: 'Tell Worca how to fix it', text: 'Tell Worca how to fix it', help: 'A follow-up on its branch, with what failed already written' }, { id: 'Show the log', text: 'Show the log', help: R.shows('expert') ? 'Opens its page at What broke, with the log' : 'Opens its stages here, with the log' }] : []), ...(st.action?.items || []).filter((w) => typeof w === 'string'), ...((LIVE() ? t.case === 'ready' : !!(t.facts?.files || /^(ready|approved|checks|failing|gate)/.test(t.case))) ? [{ id: 'View changes', text: 'View changes', help: LIVE() ? 'Opens its changes as a patch' : 'Opens its diff on its page, side by side where it fits' }] : []), ...(stoppable ? [{ id: 'Stop', text: 'Stop', danger: true, help: 'Asks first; the branch and changes stay' }] : []), { sep: true },
       ...(done ? [{ id: 'Start a follow-up', text: 'Start a follow-up', help: 'A new task on this one’s branch, with what you ask' }] : []), { id: 'Run after…', text: 'Run after…', help: 'Another task starts when this one finishes' },
       { id: 'Label…', text: 'Label…', help: 'Adds a label to this task' }, t.inGroup ? { id: 'Leave group', text: `Leave ${t.inGroup}`, help: 'The task leaves the group; its labels stay' } : { id: 'Move to group…', text: 'Move to group…', help: 'Tracks it with related tasks' }, { id: 'Save as preset', text: 'Save as preset', help: 'Starts the next task with this one’s setup' },
       ...(done ? [{ id: 'Report this task', text: 'Report this task', help: 'Asks for a note, then sends it with the logs to the Worca team' }, { id: 'Archive', text: 'Archive', help: 'Removes the branch, worktree and logs; the remote branch and PR stay' }] : []),
       ...(LIVE() ? [{ id: 'Restore', text: 'Restore', help: 'Brings the record back to Tasks; its branch, worktree and logs stay gone' }] : []),   // COV-3 #3: an archived task's (canFlow)
-      ...(LIVE() && t.followed ? [{ id: 'Send a direction', text: 'Send a direction', help: 'Tells the run something it reads at its next step' }] : []),
-      ...(R.shows('expert') ? [{ sep: true }, { id: 'open', text: 'Open its page', help: 'The task page, while the card does not hold everything yet' }] : [])].filter((it) => typeof it === 'string' ? offers(t, it) : it.sep || offers(t, it.id)).filter((it, k, l) => !it.sep || (k > 0 && k < l.length - 1 && !l[k - 1].sep)));
+      ...(LIVE() && t.followed ? [{ id: 'Send a direction', text: 'Send a direction', help: 'Tells the task something it reads at its next step' }] : []),
+      { sep: true }, { id: 'open', text: 'Open task', help: 'Its own page: every stage, its changes and its decisions' }].filter((it) => typeof it === 'string' ? offers(t, it) : it.sep || offers(t, it.id)).filter((it, k, l) => !it.sep || (k > 0 && k < l.length - 1 && !l[k - 1].sep)));
     const confirm = t.confirm ? confirmRow(t) : '';
     const toPage = R.shows('expert');   // stillhet.stay-in-chat: only Expert leaves the chat; else each fact opens its own part here
     const facts = t.facts && !x.open && x.figures ? R.factsLine([{ n: t.facts.cost, word: 'so far', ...(toPage ? { attrs: { 'data-fact': `cost|${t.id}`, title: 'Opens Insights › Spend, for this task' } } : {}) }, { n: t.facts.time, word: '' }, { n: String(t.facts.agents), word: t.facts.agents === 1 ? 'agent' : 'agents', attrs: { 'data-open-task': t.id, title: 'Shows its stages and who works on them' } }, { n: String(t.facts.files), word: t.facts.files === 1 ? 'file' : 'files', attrs: toPage ? { 'data-fact': `page|${t.id}`, title: 'Opens its changes' } : { 'data-fact-files': x.id, 'aria-expanded': String(!!x.filesOpen), title: x.filesOpen ? 'Folds the list' : 'Lists the files it changed' } }, ...(t.facts.artifacts ? [{ n: String(t.facts.artifacts), word: t.facts.artifacts === 1 ? 'artifact' : 'artifacts', attrs: toPage ? { 'data-fact': `page|${t.id}`, title: 'Opens its artifacts' } : { 'data-fact-arts': t.id, title: 'Opens its artifacts under the stage that made them' } }] : [])]) : '';
     // panel.plan-folds: a feature's total cost and time since its first run, in the same folded Figures (dev's run-groups)
     const ft = LIVE() && t.run ? CL().feature(t.run, chatId) : null;
     const featFacts = ft && !x.open && x.figures ? R.factsLine([...(ft.usd != null ? [{ n: `$${ft.usd.toFixed(2)}`, word: 'the feature so far' }] : []), ...(ft.ms != null ? [{ n: spanWord(ft.ms), word: `since its first task · ${ft.runs} ${ft.runs === 1 ? 'task' : 'tasks'}` }] : [])]) : '';
-    const changed = facts && x.filesOpen && !toPage && t.depth?.changed ? R.list({ groups: [{ title: `Changed · ${t.depth.changed.length} files`, rows: t.depth.changed.map(([f, n]) => R.listRow({ title: f, meta: n, mark: R.kindMark({ kind: 'plugin', icon: 'file' }), open: doOr(`open ${f}: its lines, added and removed`, 'diff', { pipelineId: t.run || '' }) })) }] }) : '';
+    const changed = facts && x.filesOpen && !toPage && t.depth?.changed ? R.list({ groups: [{ title: `Changed · ${t.depth.changed.length} files`, rows: t.depth.changed.map(([f, n]) => R.listRow({ title: f, meta: n, mark: R.kindMark({ kind: 'plugin', icon: 'file' }), open: doOr(`open ${f}: its lines, added and removed`, 'diff', { pipelineId: t.run || '', task: t.id, file: f }) })) }] }) : '';
     const why = t.why && ['fail', 'ask', 'act', 'ok'].includes(tone) ? t.why.map((w) => R.turnRow({ mark: '', text: `<span class="cmd-s">${/^✗/.test(w) ? R.icon('alert', 13) : ''}${esc(w.replace(/^✗\s*/, ''))}</span>` })).join('') : '';   // why it failed, on the card: the failing tests by name
     const pg = LIVE() ? CL().progress(t.run) : {}, stage = pg.stage ?? t.stage;   // R-ux-12: live, its place from the run's own stages
     // live: the head says the state once; the line says where it is (its stage's words), never the state word again
@@ -994,7 +1035,9 @@
     // a live task's bar is ink up to its PR; Merged is lit only once it is merged
     const ended = LIVE() && t.case !== 'merged' && ['ok', 'done'].includes(tone);
     const bar = ended && hasPr ? { stage: labels.indexOf('PR'), tone: 'run' } : ended && endsDone(t, labels, tone) ? { stage: labels.length - 1, tone: 'done', noStep: true } : { stage, tone };
-    return R.taskCard({ rows: x.open ? '' : why, figures: facts + featFacts + changed, title: t.title, place: `${t.branch ? `<span class="rc-mid"><span class="rc-mid-a">${esc(t.branch)}</span></span>` : ''}${LIVE() ? (t.branch && t.base ? `<span>into ${esc(t.base)}</span>` : '') : '<span>into dev</span>'}${gitOf(t)}${t.inGroup ? `<span>in ${esc(t.inGroup)}</span>` : ''}${(t.labels || []).map((l) => R.chip({ text: l })).join('')}`, mark: taskMark(t), word, detail: below ? '' : (LIVE() && prError.get(t.run || t.id)) || line, /* stillhet.one-place: the question below says what it asks */ action: main, menu: more, stages: R.stageBar({ labels, stage: bar.stage, tone: bar.tone, step: bar.noStep ? null : LIVE() ? pg.step : t.step || R.stageStep(t.detail), key: t.id }), foot: R.button({ label: x.open ? 'Hide its stages' : 'Show its stages', kind: 'quiet', icon: R.icon(x.open ? 'chevron' : 'chevR', 12), attrs: { 'data-open-task': t.id, 'aria-expanded': String(!!x.open), title: x.open ? 'Folds its stages' : 'Opens its stages here, as its page has them' } }) + ((t.facts || ft) && !x.open ? R.figuresToggle({ card: true, open: !!x.figures, attrs: { 'data-figs': x.id } }) : ''), open: !!x.open, stream: own({ ...t, stage }), attrs: { 'data-anchor': x.id } }) + confirm + formHtml(t) + livePlanHtml(x, t) + liveAsksHtml(x, t) + askChanges(x) + directionHtml(x);
+    // the branch is written as on its page (WorkPlace): it loses its middle, never its end
+    const where = t.branch ? R.workPlace({ branch: t.branch, base: LIVE() ? t.base || '' : 'dev' }) : LIVE() ? '' : '<span>into dev</span>';
+    return R.taskCard({ rows: x.open || asks?.lines.length ? '' : why, asks, from: t.followed ? 'Task · followed in this chat' : 'Task · started from this chat', titleAttrs: { 'data-open-task-page': t.id, title: `Open the page of ${t.title}` }, figures: facts + featFacts + changed, title: t.title, place: `${where}${gitOf(t)}${t.inGroup ? `<span>in ${esc(t.inGroup)}</span>` : ''}${(t.labels || []).map((l) => R.chip({ text: l })).join('')}`, mark: taskMark(t), word, detail: below ? '' : (LIVE() && prError.get(t.run || t.id)) || line, /* stillhet.one-place: the question below says what it asks */ action: main + second, menu: more, stages: R.stageBar({ labels, stage: bar.stage, tone: bar.tone, step: bar.noStep ? null : LIVE() ? pg.step : t.step || R.stageStep(t.detail), key: t.id, does: 'open the task at this stage', knot: (i, l) => ({ 'data-card-stage': `${t.id}|${l}`, title: `Open the task at ${l}` }) }), foot: R.button({ label: x.open ? 'Hide its stages' : 'Show its stages', kind: 'quiet', icon: R.icon(x.open ? 'chevron' : 'chevR', 12), attrs: { 'data-open-task': t.id, 'aria-expanded': String(!!x.open), title: x.open ? 'Folds its stages' : 'Opens its stages here, as its page has them' } }) + ((t.facts || ft) && !x.open ? R.figuresToggle({ card: true, open: !!x.figures, attrs: { 'data-figs': x.id } }) : ''), open: !!x.open, stream: own({ ...t, stage }), attrs: { 'data-anchor': x.id } }) + confirm + formHtml(t) + livePlanHtml(x, t) + liveAsksHtml(x, t) + askChanges(x) + directionHtml(x);
   }
 
   // ---- the timeline: what is worth finding, where it really is ----
@@ -1103,7 +1146,7 @@
     placeImprove();   // before the focus comes back: a focused Use this is found again in its moved view
     const mine = [...busy].filter(([, c]) => c === (chatId || '')).map(([sel]) => sel);   // another chat's pending control stays its own
     const still = new Set(mine.flatMap((sel) => [...root.querySelectorAll(sel)]));
-    for (const b of dimmed) if (!still.has(b)) { if (b.isConnected) b.disabled = false; dimmed.delete(b); }
+    for (const b of dimmed) if (!still.has(b)) { if (b.isConnected) b.disabled = false; busyDone.get(b)?.(); busyDone.delete(b); dimmed.delete(b); }
     for (const b of still) dim(b);
     if (!mine.length || !fm?.sel || !mine.includes(fm.sel)) focusBack(fm);
     const t = root.querySelector('[data-composer-t]');
@@ -1170,7 +1213,7 @@
     // in a chat that has a task, "change it" is a follow-up on that task (its branch, its PR), never an unrelated new one
     const last = [...(chat()?.tasks || [])].reverse().find((t) => t.kind !== 'schedule');
     if (last && /\b(change it|change that|also|follow[- ]up|ask for changes|add .* to it|on top of)\b/i.test(text)) return [{ t: 'words', html: `A follow-up on <b>${esc(last.title)}</b>, on its branch. Check it, then start it:` },
-      { t: 'proposal', id: `p${n}`, title: clip(`${last.title}: ${text.replace(/^change it:?\s*/i, '')}`), why: `On top of ${last.title}${last.branch ? `, on ${last.branch}` : ''}`, project: chat()?.project || comp.project, workflow: 'Lean', engine: comp.engine, then: ['open', 'pass', 'fail', 'conflict'].includes(last.git) ? 'update its PR' : 'open a PR', feature: last.branch || '', open: false, nudge: false }];
+      { t: 'proposal', id: `p${n}`, title: clip(`${last.title}: ${text.replace(/^change it:?\s*/i, '')}`), why: `On top of ${last.title}${last.branch ? `, on ${last.branch}` : ''}`, asked: { project: comp.project, workflow: comp.workflow, engine: comp.engine }, project: chat()?.project || comp.project, workflow: 'Lean', engine: comp.engine, then: ['open', 'pass', 'fail', 'conflict'].includes(last.git) ? 'update its PR' : 'open a PR', feature: last.branch || '', open: false, nudge: false }];
     if (!/\b(add|fix|build|make|implement|create|change|update|remove|rename|migrate)\b/i.test(text)) return [{ t: 'words', html: `Worca answers here from <b>${esc(comp.project || 'the project')}</b>'s code, naming the files it read. Ask for a change and it proposes a task.` }];   // a question gets an answer, never a build offer
     const core = text.replace(/^(can you|could you|please|let's)\s+/i, '').split(/,?\s+(?:or|and should|should it)\b|[?.!]/i)[0].trim();
     const title = nameOf(core);   // a whole clause, never cut mid-phrase
@@ -1300,7 +1343,10 @@
       if (x) x.reqs[+sm[2]].v = v; paint(); return;
     }
     if (id === 'cp-mention') { const [cs, title] = v.split('|'); comp.refs = [...(comp.refs || []), { case: cs, title, ...(LIVE() ? { run: cs } : {}) }];   /* live: cs is the task's run id */ comp.text = comp.text.replace(/@[^@\s]*$/, LIVE() ? `@${title} (${cs}) ` : `@${title} `); menu = ''; paint(false); const t = root.querySelector('[data-composer-t]'); if (t) { t.focus(); t.setSelectionRange(t.value.length, t.value.length); } return; }
+    if (id === 'cp-voice' && v === 'options') { menu = ''; paint(); window.StillhetShell?.go('settings/chat'); return; }
+    if (id === 'cp-voice' && v === 'speak') { menu = ''; comp.listening = true; comp.handsFree = false; voiceOf().then((vc) => vc?.dictate()); paint(); return; }
     if (id === 'cp-voice') { comp.handsFree = !comp.handsFree; if (!comp.handsFree) comp.listening = false; const on = comp.handsFree; voiceOf().then((v) => v?.handsFree(on)); menu = ''; paint(); say(comp.handsFree ? 'Hands-free on' : 'Hands-free off'); return; }
+    if (id === 'starter-form') { menu = ''; paint(); if (v === 'task') window.StillhetCenters?.newTask?.(); else window.StillhetCenters?.newSchedule?.(); return; }
     if (id === 'starter-more') { const [k, ...rest] = v.split('|'); pickMenu(k, rest.join('|')); return; }   // More's items carry its id first
     if (id === 'starter') { arm(v); return; }
     if (id === 'starter-preset') { comp = { ...comp, ...SAVED[v], intent: '', mode: 'task', preset: v, more: true }; menu = ''; paint(); root.querySelector('[data-composer-t]')?.focus(); say(`Preset ${v}: check it, then start`); return; }
@@ -1313,7 +1359,7 @@
     if (pq) { const x = turns().find((y) => y.id === pq[1]); if (x && LIVE() && x.raw) { if (v !== 'product') { const l = x.pkeys || []; x.pkeys = CL().perspectiveChoices(l.includes(v) ? l.filter((w) => w !== v) : [...l, v]).picked; } } else if (x && v !== 'Product') { const l = x.persp || ['Product']; x.persp = l.includes(v) ? l.filter((w) => w !== v) : [...l, v]; } paint(); return; }   // ticks stay open to pick several
     if (id.startsWith('ppm:')) { menu = ''; const x = turns().find((y) => y.id === id.slice(4)); if (x && v === 'preset') { const name = clip(x.title, 39); if (PRESETS.includes(name)) say(`There is already a preset called ${name}`); else { PRESETS.push(name); SAVED[name] = { workflow: x.workflow, engine: x.engine, then: x.then }; say(`Saved as a preset: ${name}`); } paint(); return; }
       if (x && v === 'composer') { comp = { ...comp, mode: 'task', text: x.brief ?? x.title, project: x.project, workflow: x.workflow, engine: x.engine, then: x.then, more: true }; paint(); root.querySelector('[data-composer-t]')?.focus(); say('In the composer: change anything, then start it'); } else paint(); return; }
-    if (pm) { const x = turns().find((y) => y.id === pm[1]); if (x) { if (pm[3]) { x.agents = x.agents || {}; const g = (x.agents[pm[4]] = x.agents[pm[4]] || {}); g[{ model: 'model', eff: 'effort', sub: 'sub', fan: 'fan' }[pm[3]]] = v; } else x[pm[2]] = v; } menu = ''; paint(); return; }
+    if (pm) { const x = turns().find((y) => y.id === pm[1]); if (x) { if (pm[3]) { x.agents = x.agents || {}; const g = (x.agents[pm[4]] = x.agents[pm[4]] || {}); g[{ model: 'model', eff: 'effort', sub: 'sub', fan: 'fan' }[pm[3]]] = v; } else { x[pm[2]] = v; if (x.asked) delete x.asked[pm[2]]; } } menu = ''; paint(); return; }
     if (id === 'cl-label' && LIVE()) { menu = ''; const c = chat(); if (c) liveLabel(c, ...toggledLabel(c, v)); paint(); return; }
     if (id === 'cl-label') { const c = chat(); c.labels = (c.labels || []).includes(v) ? c.labels.filter((l) => l !== v) : [...(c.labels || []), v]; window.StillhetChats.refresh(); menu = ''; refreshAll(); return; }
     if (LIVE() && ['cp-project', 'cp-engine', 'cp-effort'].includes(id)) { livePick(id, v); return; }
@@ -1416,7 +1462,14 @@
   // D9: a control whose action is out is drawn disabled on every paint until dev answers. Its focus is noted BEFORE it is
   // disabled (Chromium blurs a focused button the moment it is disabled) and given back to the redrawn control after.
   const selOf = (btn) => { const a = btn && [...btn.attributes].find((y) => y.name.startsWith('data-') && y.name !== 'data-key'); return a ? `[${a.name}="${CSS.escape(a.value)}"]` : ''; };
-  function dim(b) { if (!b.disabled) { b.disabled = true; dimmed.add(b); } }
+  const busyWord = (label) => (R.busy.word ? R.busy.word(label) : `${label}…`);
+  const busyDone = new WeakMap();   // a dimmed button's busy look ends when its action is answered
+  function dim(b) {
+    if (b.disabled) return;
+    dimmed.add(b);
+    if (b.matches?.('.btn:not(.btn-icon)')) { let done; R.busy(b, { label: busyWord(b.textContent.trim()), until: new Promise((r) => { done = r; }) }); busyDone.set(b, done); }
+    b.disabled = true;
+  }
   function busyFor(sel, p, had = false) {
     const c = chatId || '';
     if (sel) busy.set(sel, c);
@@ -1449,7 +1502,7 @@
     if ((x = turn('data-direction-send'))) {
       const v = root.querySelector(`[data-direction="${CSS.escape(x.id)}"]`)?.value.trim(); if (!v) { say('Say what it should take into account first'); return true; }
       const t = taskOf(x.task); x.dirValue = v;
-      busyBtn(hit, CL().act('direction', { threadId: chatId, runId: t?.run || '', text: v }).then((r) => { if (r.ok) { now(x, (y) => { y.directing = false; y.dirValue = ''; }); say('Sent: the run reads it at its next step'); } return r; })); return true;
+      busyBtn(hit, CL().act('direction', { threadId: chatId, runId: t?.run || '', text: v }).then((r) => { if (r.ok) { now(x, (y) => { y.directing = false; y.dirValue = ''; }); say('Sent: the task reads it at its next step'); } return r; })); return true;
     }
     if ((hit = on('[data-rq]'))) { const [id, k, n] = hit.dataset.rq.split('|'); x = turns().find((y) => y.id === id); if (x) { x.rqPick = { ...(x.rqPick || {}), [k]: +n }; paint(); } return true; }
     if ((x = turn('data-rq-go')) || (x = turn('data-rq-picks'))) {
@@ -1510,6 +1563,24 @@
   }
   // the TerminalPane's input line: Enter sends the line to the shell through dev's line editor (terminal-live.mjs)
   root.addEventListener('keydown', (e) => { const inp = e.target.closest?.('[data-term-input]'); if (!inp || e.key !== 'Enter') return; e.preventDefault(); const id = inp.dataset.termInput.split('|')[0], x = turns().find((y) => y.id === id) || turns()[+id]; if (x?.term) { x.term.send(inp.value); inp.value = ''; } });
+  // The demo's wait: a button that would wait on the server is busy (the knot, present-tense words) for a short moment
+  // before its step happens, as on the live kind. The host sets how long (window.StillhetDemoDelay, ms); with none it
+  // acts at once.
+  const WAITS = '[data-card-act], [data-card-yes], [data-answer-go], [data-form-go], [data-pp-start], [data-rw-start], [data-cp-apply], [data-cp-once], [data-plan-approve], [data-dl-send], [data-ship], [data-start-now]';
+  const passing = new WeakSet();
+  root.addEventListener('click', (e) => {
+    const wait = +window.StillhetDemoDelay || 0; if (LIVE() || !wait) return;
+    const b = e.target.closest?.(WAITS); if (!b || !root.contains(b) || b.disabled || passing.has(b) || !b.matches('.btn:not(.btn-icon)')) return;
+    const sel = selOf(b); if (!sel) return;
+    e.stopImmediatePropagation(); e.preventDefault();
+    const had = document.activeElement === b;
+    busyFor(sel, new Promise((r) => setTimeout(r, wait)).then(() => {
+      busy.delete(sel);
+      const again = root.querySelector(sel); if (!again) return;
+      busyDone.get(again)?.(); busyDone.delete(again); dimmed.delete(again); again.disabled = false;
+      return Promise.resolve().then(() => { passing.add(again); again.disabled = false; again.click(); });
+    }), had);
+  }, true);
   root.addEventListener('click', (e) => {
     if (e.target.closest('#card')) return;   // inside an open card's stages: the task page answers its own clicks
     const on = (q) => e.target.closest(q); let hit;
@@ -1525,7 +1596,7 @@
     if ((hit = on('[data-tick]'))) { goTo(hit.dataset.tick); return; }
     if ((hit = on('[data-menu-pick^="dl-"]'))) { const [id, val] = hit.dataset.menuPick.split('|'), [, t, k] = id.split('-'); dv[t][k] = val; menu = ''; paint(); return; }
     if ((hit = on('[data-menu-pick^="wfs-"], [data-menu-pick^="wfl-"]'))) { const [id, v] = hit.dataset.menuPick.split('|'), parts = id.split('-'), x = turns().find((y) => y.id === parts[1]), was = x && (parts[0] === 'wfl' ? x.loop[2] : x.steps[+parts[2]][parts[3] === 'm' ? 2 : 3]); if (x) { if (parts[0] === 'wfl') x.loop[2] = v; else x.steps[+parts[2]][parts[3] === 'm' ? 2 : 3] = v; } menu = ''; paint(); if (was !== v) say('Changed: Save keeps it'); return; }
-    if ((hit = on('[data-menu-pick]'))) { const [id, ...r] = hit.dataset.menuPick.split('|'); if (id === 'tick') goTo(r.join('|')); else if (id.startsWith('cf-')) { const t = taskOf(id.slice(3)); if (t?.form) t.form.value = r.join('|'); menu = ''; paint(); } else if (id.startsWith('card:')) { menu = ''; const t = taskOf(id.slice(5)), label = r.join('|'); if (t?.kind === 'schedule') { window.StillhetSchedules?.act(t.id, { Pause: 'pause', Resume: 'pause', Skip: 'skip', Delete: 'delete' }[label]); paint(); return; } if (t) { if (label === 'open' || !label) window.StillhetShell.openTaskPage(t.case, chatId, t.title, taskId(t)); else cardAct(t, label); } } else pickMenu(id, r.join('|')); return; }
+    if ((hit = on('[data-menu-pick]'))) { const [id, ...r] = hit.dataset.menuPick.split('|'); if (id === 'tick') goTo(r.join('|')); else if (id.startsWith('cf-')) { const t = taskOf(id.slice(3)); if (t?.form) t.form.value = r.join('|'); menu = ''; paint(); } else if (id.startsWith('card:')) { menu = ''; const t = taskOf(id.slice(5)), label = r.join('|'); if (t?.kind === 'schedule') { window.StillhetSchedules?.act(t.id, { Pause: 'pause', Resume: 'pause', Skip: 'skip', Delete: 'delete', 'Edit…': 'edit' }[label]); paint(); return; } if (t) { if (label === 'open' || !label) window.StillhetShell.openTaskPage(t.case, chatId, t.title, taskId(t)); else cardAct(t, label); } } else pickMenu(id, r.join('|')); return; }
     if ((hit = on('[data-listtoggle^="label|"]'))) { const v = hit.dataset.listtoggle.slice(6), c = chat(); if (c && LIVE()) { liveLabel(c, ...toggledLabel(c, v)); return; } if (c) { c.labels = (c.labels || []).includes(v) ? c.labels.filter((l) => l !== v) : [...(c.labels || []), v]; window.StillhetChats.refresh(); refreshAll(); keepLabelQ(); } return; }
     if ((hit = on('[data-card-form] [data-confirm]'))) { e.preventDefault(); const t = taskOf(hit.closest('[data-card-form]').dataset.cardForm); if (!t?.form) return; const fm = t.form; setCardAsk(t, { form: null });
       if (hit.dataset.confirm !== 'yes') { paint(); return; }
@@ -1555,6 +1626,9 @@
     if ((hit = on('[data-dl-find]'))) { const [id, f, st] = hit.dataset.dlFind.split('|'), x = taskOf(id).depth.findings.find((y) => y.id === f); x.state = x.state === st ? '' : st; paint(); return; }
     if ((hit = on('[data-dl-all]'))) { taskOf(hit.dataset.dlAll).depth.findings.forEach((f) => { f.state = 'confirmed'; }); paint(); return; }
     if ((hit = on('[data-dl-send]'))) { const t = taskOf(hit.dataset.dlSend), F = t.depth.findings, n = F.filter((f) => f.state === 'confirmed').length; t.depth.sent = `${n} ${n === 1 ? 'finding' : 'findings'}${t.depth.note ? ' and your notes' : ''} · cycle 3 starts with ${n === 1 ? 'it' : 'them'}`; paint(); say('Sent to Review: its next cycle starts'); return; }
+    if ((hit = on('[data-cp-once]'))) { const x = turns().find((y) => y.id === hit.dataset.cpOnce), l = turns(), i = l.indexOf(x); if (x) { const k = Date.now().toString(36);
+      l.splice(i + 1, 0, { t: 'words', html: `One task with <b>${esc(x.title)}</b>; the workflow is not saved. Check it, then start it:` }, { t: 'proposal', id: `p${k}`, title: clip(`Try ${x.title}`), why: 'Runs the proposed workflow once', project: chat()?.project || comp.project, workflow: x.title, engine: comp.engine, then: 'open a PR', open: false, nudge: false });
+      paint(); say(`Runs once with ${x.title}; nothing is saved`); } return; }
     if ((hit = on('[data-cp-act]')) && hit.dataset.cpAct.endsWith('|1')) { const x = turns().find((y) => y.id === hit.dataset.cpAct.split('|')[0]); if (x?.diff) { x.diffOpen = !x.diffOpen; paint(); return; } }   // Show the diff opens under the card
     if ((hit = on('[data-fact]'))) { const [k, id] = hit.dataset.fact.split('|'), t = taskOf(id); if (k === 'cost') window.StillhetShell.go('insights/spend'); else if (t) window.StillhetShell.openTaskPage(t.case, chatId, t.title, taskId(t)); return; }
     if ((hit = on('[data-figs]'))) { const x = turns().find((y) => y.id === hit.dataset.figs); if (x) { x.figures = !x.figures; if (x.figures && LIVE()) { const t = taskOf(x.task); if (t?.run) CL().feature(t.run, chatId, { fresh: true }); } paint(); } return; }
@@ -1562,6 +1636,8 @@
     if ((hit = on('[data-fact-arts]'))) { const t = taskOf(hit.dataset.factArts); if (t) openHere(t, 'arts'); return; }
     if ((hit = on('[data-open-slice]'))) { const [cs, ...w] = hit.dataset.openSlice.split('|'); window.StillhetShell.openTaskPage(cs, chatId, w.join('|'), hit.dataset.openSliceRun); return; }
     if ((hit = on('[data-chg-yes], [data-chg-no]'))) { const x = turns().find((y) => y.id === (hit.dataset.chgYes || hit.dataset.chgNo)); if (x) { const yes = !!hit.dataset.chgYes, what = x.confirmDelete; x.confirmDelete = ''; if (yes) { x.done = 'Deleted'; if (window.StillhetSchedules?.find(x.schedule)) window.StillhetSchedules.act(x.schedule, 'delete'); else say(`Deleted: ${what}`); } paint(); } return; }
+    if ((hit = on('[data-card-stage]'))) { const [id, ...k] = hit.dataset.cardStage.split('|'), t = taskOf(id); if (t) { window.StillhetRunPage?.atStage(k.join('|')); window.StillhetShell.openTaskPage(t.case, chatId, t.title, taskId(t)); } return; }
+    if ((hit = on('[data-view-diff]'))) { const [id, ...f] = hit.dataset.viewDiff.split('|'), t = taskOf(id) || (chat()?.tasks || [])[0]; window.StillhetRunPage?.openDiff(f.join('|')); window.StillhetShell.openTaskPage(t?.case || 'ready', chatId, t?.title || '', t ? taskId(t) : ''); return; }
     if ((hit = on('[data-open-task-page]'))) { const t = taskOf(hit.dataset.openTaskPage); if (t) window.StillhetShell.openTaskPage(t.case, chatId, t.title, taskId(t)); return; }
     if ((hit = on('[data-sched-card]'))) { const [id, how] = hit.dataset.schedCard.split('|'); window.StillhetSchedules?.act(id, how || 'run'); paint(); return; }
     if ((hit = on('[data-card-act]'))) { const [id, ...l] = hit.dataset.cardAct.split('|'), t = taskOf(id); if (t) cardAct(t, l.join('|')); return; }   // the button's own label, never its tone: View PR opens the PR
@@ -1623,7 +1699,7 @@
       if (px.t === 'task') {   // a follow-up on a task: on its branch, updating its PR, not a stranger
         const t = taskOf(px.task), k = Date.now().toString(36), at = l.indexOf(px) + 1;
         l.splice(at, 0, { t: 'you', id: `y${k}`, text: v, when: 'now', quote: t.title }, { t: 'words', html: `A follow-up on <b>${esc(t.title)}</b>, on its branch. Check it, then start it:` },
-          { t: 'proposal', id: `p${k}`, title: clip(`${t.title}: ${v}`), why: `On top of ${t.title}${t.branch ? `, on ${t.branch}` : ''}`, project: chat()?.project || comp.project, workflow: 'Lean', engine: comp.engine, then: ['open', 'pass', 'fail', 'conflict'].includes(t.git) ? 'update its PR' : 'open a PR', feature: t.branch || '', open: false, nudge: false });
+          { t: 'proposal', id: `p${k}`, title: clip(`${t.title}: ${v}`), why: `On top of ${t.title}${t.branch ? `, on ${t.branch}` : ''}`, asked: { project: comp.project, workflow: comp.workflow, engine: comp.engine }, project: chat()?.project || comp.project, workflow: 'Lean', engine: comp.engine, then: ['open', 'pass', 'fail', 'conflict'].includes(t.git) ? 'update its PR' : 'open a PR', feature: t.branch || '', open: false, nudge: false });
         paint(); say('Follow-up proposed'); return;
       } l.splice(l.indexOf(px) + 1, 0, { t: 'change', id: `cg${Date.now().toString(36)}`, kind: 'Changes', title: px.title, why: `“${v}”`, rows: [{ name: 'Where it lands', before: '', after: 'a new round of the plan' }], actions: [['Start round 2', 'primary', 'Round 2 started'], ['Not now', 'quiet', 'Not now']], state: 'proposed' }); paint(); say('Asked for changes'); return; }
     if ((hit = on('[data-cmd-stop]'))) { const x = turns()[+hit.dataset.cmdStop]; if (x) { x.stopped = true; paint(); say('Stopped the command'); } return; }
@@ -1704,6 +1780,7 @@
     const on = ticks().find((t) => t.id === hover);
     if (on) host.insertAdjacentHTML('beforeend', `<div class="tl-hover">${R.timelineCard({ mark: on.mark, title: on.title, line: on.line, at: on.at })}</div>`);
   }
+  root.addEventListener('focusin', (e) => { const t = e.target.closest?.('[data-tick]'); const id = t ? t.dataset.tick : null; if (id !== hover) { hover = id; paintTimelineHover(); } });
   root.addEventListener('pointerover', (e) => { const t = e.target.closest('[data-tick]'); const id = t ? t.dataset.tick : null; if (id !== hover) { hover = id; paintTimelineHover(); } });
   root.addEventListener('focusin', (e) => { const t = e.target.closest('[data-tick]'); if (t && t.dataset.tick !== hover) { hover = t.dataset.tick; paintTimelineHover(); } });
   root.addEventListener('contextmenu', (e) => { const p = e.target.closest('[data-pin]'); if (!p) return; e.preventDefault(); setPins(shownPins().filter((w) => w !== p.dataset.pin), `Unpinned ${p.dataset.pin}`); });
@@ -1851,6 +1928,10 @@
   // ---- a task's or a schedule's own page: its question goes to its chat, or starts one ----
   function dock(host, { kind, title, chat: linked, warning = false, ref = null }) {   // ref: the page's own ids (D16, dev's context keys)
     if (!host) return;
+    // a task is the work, a chat is where you talk about it: the task's page has no chat box (it says where the task
+    // began and leads there); a schedule's page keeps its box
+    host.hidden = kind === 'task';
+    if (kind === 'task') { host.innerHTML = ''; return; }
     const name = linked ? data().chats.find((c) => c.id === linked)?.title : '';
     let chip = kind === 'task' && title !== 'this task';   // stillhet.hand-to-chat: what the question is about, removable
     host.innerHTML = `${R.composer({ placeholder: `${kind === 'schedule' ? 'Ask about this schedule, or change it' : kind === 'task' ? 'Ask about this task' : `Ask about this ${kind}, or change it`} · ${name ? `in ${name}` : 'in a new chat'}`, sentence: chip ? R.handedChip({ kind: 'Task', name: title, attrs: { 'data-dock-unchip': '' } }) : '', tools: '', send: R.button({ label: 'Send', kind: warning ? '' : 'primary', iconOnly: true, icon: R.icon('up', 14), attrs: { 'data-dock-send': '', title: name ? `Goes to ${name}` : 'Starts a chat about it' } }), attrs: { 'data-dock': '' } })}`;

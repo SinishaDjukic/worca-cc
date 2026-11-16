@@ -8,6 +8,7 @@
   --field:light-dark(#F4F4F5,#1F1F23); --surface:light-dark(#F4F4F5,#1F1F23);   /* ds-ok: the Stillhet look's table */
   --hover:light-dark(#F0F0F2,#222227); --side-sel-bg:light-dark(#F0F0F2,#26262B);   /* ds-ok: the Stillhet look's table */
   --ink:light-dark(#18181B,#EDEDEF); --ink-2:light-dark(#63636B,#A1A1A9); --ink-3:light-dark(#A1A1A9,#6E6E76); --advisory:var(--ink);   /* ds-ok: the Stillhet look's table */
+  --ink-hint:light-dark(#6F6F78,#8D8D96);   /* ds-ok: the Stillhet look's table: placeholder and hint text, 4.5:1 on its field in both themes (--ink-3 is for marks) */
   --line:light-dark(#EEEEF0,#26262B); --line-2:light-dark(#E2E2E6,#35353B);   /* ds-ok: the Stillhet look's table */
   --float:light-dark(#FFFFFF,#1D1D21); --float-line:light-dark(#EEEEF0,#323238);   /* ds-ok: the Stillhet look's table */
   /* running is ink, never a colour (look.running-needs-apart): the old working gold and the app's blue map to ink, so no page brings them back */
@@ -60,27 +61,11 @@ body{-webkit-font-smoothing:antialiased;}
 :is(.rc-board,.pz-app,.app) .btn-quiet:not(.btn-icon){border-color:var(--line-2);color:var(--ink);background:var(--panel);}
 :is(.rc-board,.pz-app,.app) .btn-quiet:not(.btn-icon):hover:not(:disabled){background-color:var(--hover);}
 
-/* FilterRow (list.filters; from classic's tabs and dropdown filters): tabs with counts, then labelled pickers of a
-   fixed width. Nothing in it changes size when a value changes. */
-.filter-row{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px 12px;min-width:0;}
-.filter-tabs{display:inline-flex;align-items:center;gap:2px;padding:2px;border-radius:var(--r-sm);background:var(--field);flex:none;max-width:100%;}
-.filter-tab,.pd-base.filter-tab{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;margin:0;border:0;border-radius:var(--r-xs);background:none;color:var(--ink-2);font:500 var(--fs-meta)/1 var(--sans);white-space:nowrap;cursor:pointer;}
-.filter-tab:hover{color:var(--ink);}
-.filter-tab[aria-pressed="true"],.pd-base.filter-tab.is-on{background:var(--panel);color:var(--ink);box-shadow:0 0 0 1px var(--line-2);}
-.filter-tab .n{font-size:var(--fs-caption);color:var(--ink-2);font-variant-numeric:tabular-nums;}
-.filter-tab:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
-.filter-field{display:inline-flex;flex-direction:column;gap:4px;min-width:0;flex:0 1 auto;}
-.filter-l{font:400 var(--fs-caption)/1 var(--sans);color:var(--ink-2);}
+/* A field-shaped picker (FilterRow's and a form's PickField, list.filters, form.dialog): a bordered button whose value
+   cuts short, so a pick never moves what is beside it. FilterRow's own rules are in shell/shell.css (.fr). */
 .pd-base.is-words.is-field{display:inline-flex;align-items:center;justify-content:space-between;gap:6px;width:148px;max-width:100%;height:32px;padding:0 8px 0 10px;margin:0;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);color:var(--ink);font:500 var(--fs-meta)/1 var(--sans);overflow:hidden;}
 .pd-base.is-words.is-field:hover,.pd-base.is-words.is-field[aria-expanded="true"]{background:var(--hover);}
 .pd-base.is-words.is-field svg{flex:none;}
-.filter-field .pz-pick{display:block;max-width:100%;}
-.filter-row .pz-pick{position:relative;}
-/* in a bar the fields share the bar's width two to a row */
-.bar-list .filter-row,.bar-back .filter-row{display:flex;gap:8px;margin:0 0 8px;}
-.bar-list .filter-tabs,.bar-back .filter-tabs{flex:1 1 100%;}
-.bar-list .filter-field,.bar-back .filter-field{flex:1 1 0;}
-.bar-list .pd-base.is-words.is-field,.bar-back .pd-base.is-words.is-field{width:100%;}
-.bar-list .list-sentence,.bar-back .list-sentence{display:block;line-height:normal;}
-.filter-tabs{overflow:hidden;}
-.bar-list .filter-tab,.bar-back .filter-tab{flex:1 1 auto;justify-content:center;padding:0 6px;min-width:0;}
+
+/* Placeholder and hint text hold 4.5:1 (look.state-contrast): --ink-hint, never --ink-3. */
+:is(.rc-board,.pz-app,.app) :is(input,textarea)::placeholder,.composer-t::placeholder,.qfree::placeholder{color:var(--ink-hint);}

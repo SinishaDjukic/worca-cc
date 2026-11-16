@@ -57,3 +57,81 @@ export function watchKeepOpen(doc) {
   const carry = () => { for (const [key, k] of kept) if (!k.el.isConnected) carryOne(key, k); };
   new win.MutationObserver(() => { if (kept.size) carry(); }).observe(doc.documentElement, { childList: true, subtree: true });
 }
+
+// ---- The focus is never dropped to the page (docs/stillhet/keyboard.md): a draw that replaces the control that had the
+// focus gives it to the control drawn in its place (a switch after Space, a radio after an arrow key); when that control
+// is gone, to what opened it: a menu's item to its trigger, a dialog's control to the dialog's opener.
+const VOLATILE = /^data-(placed|motion|tip-text|tip|flash|lifted)$/;
+const quoted = (v) => String(v).replace(/["\\]/g, '\\$&');
+
+/**
+ * Where a control is, in words a later draw can find again: `{ sel, n }`, the n-th match of a selector. Its `data-key`
+ * first, then its id, its own data-* hooks, its role and name, its place in a named radio group. null: nothing names it.
+ * @param {Element|null} el
+ * @returns {{sel: string, n: number}|null}
+ */
+export function controlAddress(el) {
+  if (!el?.getAttribute || !el.ownerDocument || el === el.ownerDocument.body) return null;
+  const one = (sel) => ({ sel, n: 0 });
+  for (const a of ['data-key', 'data-keep']) if (el.getAttribute(a)) return one(`[${a}="${quoted(el.getAttribute(a))}"]`);
+  if (el.id) return one(`[id="${quoted(el.id)}"]`);
+  const data = [...el.attributes].filter((a) => a.name.startsWith('data-') && !VOLATILE.test(a.name));
+  if (data.length) return one(data.map((a) => `[${a.name}="${quoted(a.value)}"]`).join(''));
+  const role = el.getAttribute('role'), label = el.getAttribute('aria-label');
+  if (role && label) return one(`[role="${role}"][aria-label="${quoted(label)}"]`);
+  const group = el.closest('[role="radiogroup"][aria-label], [role="menu"][aria-label], [role="group"][aria-label]');
+  if (group) {
+    const sel = `[role="${group.getAttribute('role')}"][aria-label="${quoted(group.getAttribute('aria-label'))}"] ${el.tagName.toLowerCase()}`;
+    return { sel, n: [...group.querySelectorAll(el.tagName.toLowerCase())].indexOf(el) };
+  }
+  return null;
+}
+
+/** The control an address names in a document now, or null. */
+export const atAddress = (doc, addr) => (addr ? doc.querySelectorAll(addr.sel)[addr.n] || null : null);
+
+/** What opened the menu a control sits in: the expanded trigger beside the menu, else the page's one expanded trigger. */
+export function triggerOf(el) {
+  const menu = el?.closest?.('.menu'); if (!menu) return null;
+  const near = menu.parentElement?.querySelector('[aria-haspopup][aria-expanded="true"]');
+  if (near && !menu.contains(near)) return near;
+  const all = [...el.ownerDocument.querySelectorAll('[aria-haspopup][aria-expanded="true"]')].filter((t) => !menu.contains(t));
+  return all[all.length - 1] || null;
+}
+
+const FOCUS_BACK_MS = 1500;   // a draw this long after the focus was lost is no longer its answer
+const backs = new WeakMap();
+
+/**
+ * Keeps the focus across every draw of a document. Returns the two hooks a Dialog reports through.
+ * @param {Document} doc
+ * @returns {{opened: () => void, closed: () => void}}
+ */
+export function watchFocusBack(doc) {
+  if (backs.has(doc)) return backs.get(doc);
+  const win = doc.defaultView;
+  let last = null;      // { el, addr, back }: the control that had the focus last, and what opened it
+  let opener = null;    // the address of what opened the dialog that is up
+  let lostAt = 0;
+  const lost = () => !doc.activeElement || doc.activeElement === doc.body;
+  doc.addEventListener('focusin', (e) => {
+    const el = e.target; if (!el || el === doc.body) return;
+    const inDialog = !!el.closest?.('.viewer-modal');
+    last = { el, addr: controlAddress(el), back: controlAddress(triggerOf(el)) || (inDialog ? opener : null) };
+    lostAt = 0;
+  }, true);
+  const restore = () => {
+    if (!last || last.el.isConnected || !lost()) return;
+    const now = Date.now(); lostAt ||= now;
+    if (now - lostAt > FOCUS_BACK_MS) { last = null; return; }
+    const to = atAddress(doc, last.addr) || atAddress(doc, last.back);
+    if (to && !to.disabled) to.focus({ preventScroll: true });
+  };
+  if (win.MutationObserver && doc.body) new win.MutationObserver(restore).observe(doc.body, { subtree: true, childList: true });
+  const hooks = {
+    opened: () => { opener = last && (last.el.isConnected || lost()) ? last.addr : controlAddress(doc.activeElement); },
+    closed: () => { const to = lost() ? atAddress(doc, opener) : null; opener = null; if (to) to.focus({ preventScroll: true }); },
+  };
+  backs.set(doc, hooks);
+  return hooks;
+}

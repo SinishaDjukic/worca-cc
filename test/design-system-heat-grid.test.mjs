@@ -29,7 +29,12 @@ test('heatGrid: a cell reads "Maya, billing-api: $186, 21 tasks"; an empty cell 
   const g = dom(grid()), cells = g.querySelectorAll('.hg-cell');
   assert.equal(cells[0].getAttribute('aria-label'), 'Maya, billing-api: $186, 21 tasks');
   assert.equal(cells[2].getAttribute('aria-label'), 'Maya, worca-cc: none');
-  assert.equal(cells[0].getAttribute('title'), "Maya, billing-api: $186, 21 tasks · The whole team's numbers: Tasks lists your own");
+  // the redesign: the number shows in the cell's own card on hover, focus and tap (a title shows on hover only), and
+  // why a cell opens nothing is one line under the grid
+  assert.equal(cells[0].getAttribute('title'), null);
+  assert.equal(cells[0].querySelector('.hg-tip').textContent, '$186, 21 tasks');
+  assert.equal(cells[2].querySelector('.hg-tip').textContent, 'none');
+  assert.match(grid(), /<p class="hg-note">The whole team's numbers: Tasks lists your own<\/p>/);
   assert.equal(g.querySelectorAll('button, a').length, 0);
 });
 

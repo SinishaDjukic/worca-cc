@@ -31,10 +31,12 @@ test('stillhetInvitation adds no markup of its own', () => {
 });
 
 test('busy states', () => {
+  // a busy button (comp.button-busy) shows its present-tense label once and says it once more for a screen reader
+  const shown = (x) => x.querySelector('.btn-busy-t')?.textContent ?? x.textContent;
   let b = [...doc({ busy: 'yes' }).querySelectorAll('button')];
-  assert.equal(b[0].textContent, 'Turning on…'); assert.equal(b[0].disabled, true);
+  assert.equal(shown(b[0]), 'Turning on…'); assert.equal(b[0].disabled, true);
   b = [...doc({ busy: 'no' }).querySelectorAll('button')];
-  assert.equal(b[1].textContent, 'Saving…'); assert.ok(b.every((x) => x.disabled));
+  assert.equal(shown(b[1]), 'Saving…'); assert.ok(b.every((x) => x.disabled));
 });
 
 test('failed states name the reason and escape it', () => {

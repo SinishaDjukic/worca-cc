@@ -1,1 +1,106 @@
-/* Stillhet: settings. Rules for this place only; what every page shares is in css/stillhet-look.css and css/stillhet.css. */
+/* Stillhet: settings. Rules for this place only; what every page shares is in css/stillhet-look.css and css/stillhet.css.
+   The second half holds the library's new rules from the Settings redesign (Dialog, menus, RowPicker, toast): they serve
+   every page and move to css/stillhet.css when the redesign is merged. */
+
+/* ---- A settings tab: the value leads (docs/stillhet/settings.md) ---- */
+/* Section heads lead: larger and heavier than a row's name, more space above than below. */
+.cfg-body .set-sec{margin-top:40px;}
+.cfg-body .set-sec + .set-sec{margin-top:32px;padding-top:32px;}
+.cfg-body > .set-sec:first-child,.cfg-body > .rc-confirm + .set-sec{margin-top:24px;}
+.set-sec-h{font:600 var(--fs-section)/var(--lh-title) var(--sans);color:var(--ink);}
+.set-sec-head{margin-bottom:4px;}
+.set-rows > .set-row + .set-row{border-top:1px solid var(--line);}   /* divided rows, on the names' edge */
+.set-row{position:relative;padding:12px 0;}
+.set-name{font:500 var(--fs-body)/var(--lh-body) var(--sans);}
+.set-text{display:flex;flex-direction:column;gap:2px;font-size:var(--fs-body);}
+.set-value{color:var(--ink);font:400 var(--fs-body)/var(--lh-body) var(--sans);overflow-wrap:anywhere;}
+.set-value code{font:400 var(--fs-meta) var(--mono);color:var(--ink);}
+.set-note{color:var(--ink-2);font:400 var(--fs-meta)/1.45 var(--sans);}
+.set-note b{font-weight:500;color:var(--ink-2);}   /* a supporting line never shouts: the value above it leads */
+.set-end{align-items:center;align-self:start;min-height:32px;gap:8px;}
+.set-end::before{display:none;}
+.set-row > .set-name,.set-row > .set-text{padding-top:5px;}   /* the first line shares the baseline of a 32px control's words */
+
+/* The line of pickers under a row's supporting line: each under its own small label, on the value's edge. */
+.set-picks{display:flex;flex-wrap:wrap;gap:8px 12px;margin-top:6px;}
+.set-pick{position:relative;display:inline-flex;flex-direction:column;gap:4px;min-width:0;}
+.set-pick-l{font:400 var(--fs-caption)/1 var(--sans);color:var(--ink-2);}
+.pd-base.is-words.is-field.set-pick-b{width:208px;cursor:pointer;text-align:left;}
+.set-picks .pd-base.is-words.is-field.set-pick-b{width:168px;}
+.set-pick-b:disabled{color:var(--ink-2);cursor:not-allowed;}
+.set-pick-b:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.set-pick-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.set-pick > .spick-menu{top:calc(100% + 6px);left:0;}
+.set-pick > .spick-menu.is-right{left:auto;right:0;}
+
+/* A row that opens: its whole line is the trigger (one button under the words), a chevron at its end turns. */
+.set-row > .set-open{grid-column:1 / -1;grid-row:1;align-self:stretch;margin:-6px -8px;padding:0;border:0;border-radius:var(--r-sm);background:none;cursor:pointer;}
+.set-row.is-opens > :is(.set-name,.set-text,.set-end){grid-row:1;position:relative;pointer-events:none;}
+.set-row.is-opens > .set-name{grid-column:1;}
+.set-row.is-opens > .set-text{grid-column:2;}
+.set-row.is-opens > .set-end{grid-column:3;}
+.set-row.is-opens > .set-end > :not(.set-chev),.set-row.is-opens > .set-text .set-pick{pointer-events:auto;}
+.set-row > .set-open:hover{background:var(--hover);}
+.set-row > .set-open:focus-visible{outline:2px solid var(--ink);outline-offset:0;}
+.set-chev{display:inline-flex;align-items:center;justify-content:center;width:20px;height:32px;color:var(--ink-2);transition:rotate 140ms var(--ease);}
+.set-row.is-open > .set-end > .set-chev{rotate:90deg;}
+.set-row.is-opens > .set-detail{grid-row:2;}
+@media (prefers-reduced-motion: reduce){.set-chev{transition:none;}}
+@container (max-width: 560px){
+  .set-row.is-opens > .set-name{grid-column:1;grid-row:1;padding-right:28px;}
+  .set-row.is-opens > .set-text{grid-column:1;grid-row:2;}
+  .set-row.is-opens > .set-end{grid-column:1;grid-row:3;}
+  .set-row > .set-open{grid-row:1 / 4;}
+  .set-row.is-opens > .set-detail{grid-row:4;}
+  .set-row.is-opens > .set-end > .set-chev{position:absolute;right:0;bottom:100%;}   /* the chevron keeps the row's top right corner */
+  .set-row > .set-name,.set-row > .set-text{padding-top:0;}
+  .set-detail{padding-left:12px;}
+  .set-pick > .spick-menu.is-right{left:0;right:auto;}
+  .pd-base.is-words.is-field.set-pick-b{width:min(100%,240px);}
+}
+
+/* Appearance: a choice of two or three is a Segmented at the row's end. */
+.set-end > .seg{flex:none;}
+
+/* ---- The library's new rules (they serve every page) ---- */
+/* One focus ring on every menu item (A20): 2px, inside the menu's edge, never only a fill. */
+.menu-item:focus-visible,.menu .mi:focus-visible,.theme-ic:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+[role="radio"]:focus-visible,.switch:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* One Dialog (panels.md): lifted to the top layer by the library, its scrim is the window's. */
+.viewer-modal[popover]{inset:0;width:auto;height:auto;max-width:none;max-height:none;margin:0;border:0;padding:24px;overflow:visible;color:inherit;}
+.viewer-modal[popover]::backdrop{background:none;}
+/* A Dialog's rows (a provider's settings): divided as a tab's rows are. */
+.dlg-rows{margin-top:8px;}
+.dlg-rows > .set-row{grid-template-columns:120px minmax(0,1fr) auto;}
+
+/* A toast has its own corner (A8): the bottom left of the page column, clear of every title, filter row and confirm
+   strip at the top, and of the composer in the middle of the bottom edge. */
+body > .rc-toast{top:auto;bottom:24px;left:calc(var(--bar-w,280px) + 24px);transform:none;max-width:min(360px,calc(100vw - var(--bar-w,280px) - 48px));}
+body > .rc-toast.is-on{transform:none;}
+body.bar-hidden > .rc-toast{left:80px;max-width:min(360px,calc(100vw - 104px));}
+body:has(.wf-canvas) > .rc-toast{top:auto;}
+@media (max-width:760px){
+  body > .rc-toast,body.bar-hidden > .rc-toast{left:16px;right:16px;bottom:16px;width:auto;max-width:none;}
+}
+
+/* Pulse's count is read at a glance: never under 12px (A23). */
+.pz-pulse-b .topnav-badge{min-width:18px;height:18px;padding:0 5px;font-size:var(--fs-caption);line-height:18px;top:-4px;right:-6px;}
+
+/* A menu item's supporting line (a mode says what it adds): shown under its words, in the secondary style. */
+:is(.rc,.pz-app) .menu-item.has-line{height:auto;padding-top:6px;padding-bottom:6px;align-items:start;white-space:normal;}
+:is(.rc,.pz-app) .menu-item.has-line > .mi-l{overflow:visible;white-space:normal;text-align:left;}
+.mi-line{display:block;margin-top:1px;font:400 var(--fs-caption)/1.35 var(--sans);color:var(--ink-2);white-space:normal;}
+.menu-item.has-line[role="menuitemradio"]::before{margin-top:3px;}
+.acct-menu .pz-usage-item .mi-hint{color:var(--ink-2);font:400 var(--fs-caption)/1.3 var(--sans);white-space:nowrap;}
+/* Usage and costs names the limit its figure is of, on a line of its own under the words. */
+.acct-menu .mi.pz-usage-item{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;column-gap:10px;align-items:center;height:auto;padding-top:5px;padding-bottom:5px;}
+.acct-menu .mi.pz-usage-item > :first-child{grid-row:1 / span 2;}
+.acct-menu .mi.pz-usage-item > .mi-lbl{grid-column:2;grid-row:1;}
+.acct-menu .mi.pz-usage-item > .mi-hint{grid-column:2;grid-row:2;margin-left:0;text-align:left;overflow:hidden;text-overflow:ellipsis;}
+.acct-menu .mi.pz-usage-item > .mi-val{grid-column:3;grid-row:1 / span 2;}
+.acct-menu .mi.pz-usage-item > .mi-chev{grid-column:4;grid-row:1 / span 2;}
+/* In a conversation the composer is docked at the bottom: the toast's corner is just above it, never over its controls. */
+body:has(#route-chat:not([hidden]) .convo-dock) > .rc-toast{bottom:calc(24px + 124px);}
+/* A toast said while a Dialog is up joins it in the top layer (pulse.js liftToast): the same corner, the same look. */
+.rc-toast[popover]{margin:0;border:0;right:auto;overflow:hidden;}
+.rc-toast[popover]:not(:popover-open){display:flex;}

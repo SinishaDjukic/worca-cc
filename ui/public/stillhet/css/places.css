@@ -1,1 +1,102 @@
 /* Stillhet: the places (Projects, Workflows, Marketplace, Insights, Requirements, Workspaces). Rules for these places only. */
+
+/* ---- the page frame and what every place shares ---- */
+/* stillhet.page-frame: every place's page is Tasks' column, `.convo-col.is-center` (720 wide, one left edge, one title size) */
+/* stillhet.card-opens: a card that opens its thing shows the pointer; the title link's rules are in the Workflows part */
+.pg-card[data-mk-open],.pg-card[data-pj-go]{cursor:pointer;}
+.pg-card[data-mk-open]:hover .pg-t .dc-link,.pg-card[data-pj-go]:hover .pg-t .dc-link{text-decoration:underline;text-underline-offset:3px;}
+/* PageFilters, until FilterRow draws its own `end` slot: the row, then the page's small tools at the end of the same line */
+.center-filters{display:flex;align-items:center;gap:8px;min-width:0;}
+.center-filters > .filter-row{flex:1 1 auto;}
+.center-filters-end{display:flex;gap:6px;flex:none;margin-left:auto;}
+
+/* ---- Projects and workspaces ---- */
+/* a project's tabs (from classic's project tabs): one row that scrolls sideways when narrow, never wraps */
+.pj-tabs{display:flex;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;margin:4px 0 0;}
+.pj-tabs::-webkit-scrollbar{display:none;}
+.pj-tabs .tab{flex:none;white-space:nowrap;}
+.pj-panel{display:flex;flex-direction:column;gap:14px;min-width:0;}
+.pj-panel:focus{outline:none;}
+.pj-say{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
+.pj-acts{display:flex;flex-wrap:wrap;gap:8px;}
+.pj-check.is-ok{color:var(--ink-2);}
+.pj-check.is-no{color:var(--amber-ink);font-weight:500;}
+.pj-panel .set-row .btn + .btn,.set-sec-head .btn + .btn{margin-left:6px;}
+
+/* ---- Marketplace and a plugin's page ---- */
+.mk-health{font-weight:500;color:var(--ink);}
+.mk-health.is-act{color:var(--amber-ink);} .mk-health.is-fail{color:var(--red);}
+/* a form of several labelled fields: each field takes its own line, the buttons end it */
+[data-mk-channel-form] form .fld,[data-pj-sub] form .fld{flex:1 1 100%;max-width:420px;}
+
+/* ---- Requirements ---- */
+
+/* ---- Workflows (the list, a workflow's page, the editor, the graph) ---- */
+/* stillhet.card-opens: a card's title is a link (the pointer, an underline on hover), and the card itself opens its thing */
+.pg-t .dc-link{font:inherit;color:inherit;text-align:left;text-decoration:none;cursor:pointer;padding:0;border:0;background:none;max-width:100%;overflow-wrap:anywhere;}
+.pg-t .dc-link:hover{text-decoration:underline;text-underline-offset:3px;}
+.pg-t .dc-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
+.pg-card[data-wf-open]{cursor:pointer;}
+.pg-card[data-wf-open]:hover .pg-t .dc-link{text-decoration:underline;text-underline-offset:3px;}
+/* panel.graph-box: the graph sits in a box that scrolls inside itself; its tools stay above it, in view */
+.wf-gtools{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 92px 6px 8px;min-height:44px;box-sizing:border-box;border-bottom:1px solid var(--line);font-size:var(--fs-meta);color:var(--ink-2);}
+.wf-gpct{min-width:40px;text-align:center;font-variant-numeric:tabular-nums;}
+.wf-gsay{margin-left:6px;}
+.wf-gscroll{overflow:auto;max-width:100%;scrollbar-width:thin;}
+.wf-gscroll:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.wf-gscroll .wf-well{width:auto;max-width:none;margin:0 auto;border:0;border-radius:0;background:none;overflow:visible;}
+.xf.is-open .wf-gtools{padding-left:0;border-bottom:0;}
+.xf.is-open .wf-gscroll{overflow:visible;}
+/* the graph's words: 12px or more at any size it fits at (the engine's own floor is 9px); under a readable size, asked
+   for by hand in the editor, they shrink with their cards */
+.gv-skin:not(.is-small) .gv-world :is(.nlabel,.nlabel .lm,.prow .pn,.prow .pt,.prow .chip,.ncap,.ncap.desc,.nsess,.wbadge,.bchip){font-size:max(12px,calc(12px * var(--gv-scale)));}
+.gv-skin:not(.is-small) .gv-world .ncap.desc{line-height:1.3;padding-top:calc(5px * var(--gv-scale));}
+/* panel.editor-bar: one row at 1280; the name gives way first, the buttons never wrap or hide */
+.wf-ed-top{gap:8px;}
+.wf-ed-top .fld{flex:0 1 220px;min-width:120px;}
+.wf-ed-st{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.wf-ed-st b{font-size:var(--fs-meta);color:var(--advisory);font-weight:600;}
+.wf-ed-acts{display:flex;align-items:center;gap:6px;flex:none;}
+.wf-ed-gap{width:6px;flex:none;}
+/* the canvas scrolls inside its stage; the size tools belong to the stage, so no zoom or scroll hides Fit */
+.wf-stage{position:relative;display:grid;min-width:0;min-height:0;}
+.wf-stage .wf-canvas{padding-bottom:64px;}
+.wf-stage .wf-ed-tools{right:12px;bottom:12px;padding:4px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel);}
+@media (max-width:900px){
+  .wf-ed-top{flex-wrap:wrap;}
+  .wf-ed-top .fld{flex:1 1 160px;}
+  .wf-ed-acts{flex:0 1 auto;flex-wrap:wrap;}
+  .wf-ed-gap{display:none;}
+  .wf-stage .wf-canvas{min-height:360px;max-height:60vh;padding:16px 16px 104px;}
+  .wf-stage .wf-ed-tools{left:8px;right:8px;bottom:8px;flex-wrap:wrap;justify-content:center;}
+  .wf-gtools{padding-right:8px;padding-top:44px;}
+}
+
+/* ---- Insights ---- */
+.in-narrowed{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
+.in-narrowed b{font-weight:600;color:var(--ink);}
+.in-acts{margin-top:16px;}
+.in-acts > .btn-quiet:first-child{padding-left:10px;}   /* a bordered button keeps its own padding */
+/* FigureRows: a row that cannot open is text, not a control; nothing leaves at a narrow width, the rows scroll in their own box */
+.fr-list{grid-template-columns:minmax(96px,1fr) repeat(var(--fr-n),auto) 12px;}   /* ds-ok: --fr-n is the count FigureRows sets; the last column is the chevron of a row that opens */
+.fr-row.is-static{cursor:default;}
+.fr-go{display:inline-flex;align-items:center;justify-content:flex-end;color:var(--ink-3);}
+button.fr-row:hover .fr-go{color:var(--ink);}
+.fr-name{position:sticky;left:0;background:var(--bg);padding-right:8px;}
+button.fr-row:hover .fr-name,.fr-row.is-open .fr-name{background:var(--hover);}
+.fr-d-head .btn{flex:none;}
+.fr-detail{contain:inline-size;}   /* an open row's detail takes the rows' width; it never widens them */
+/* HeatGrid: a cell is not a control; its number shows in a small card on hover, focus and tap; the legend holds in both themes */
+.hg-cell{position:relative;cursor:default;}
+.hg-tip{display:none;position:absolute;z-index:3;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);padding:4px 8px;border-radius:var(--r-xs);background:var(--ink);color:var(--bg);font-size:var(--fs-caption);line-height:1.3;white-space:nowrap;pointer-events:none;}
+.hg-cell.is-first .hg-tip{left:0;transform:none;}
+.hg-cell.is-last .hg-tip{left:auto;right:0;transform:none;}
+.hg-cell:hover .hg-tip,.hg-cell:focus .hg-tip{display:block;}
+.hg-legend{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin:8px 0 0;font-size:var(--fs-caption);color:var(--ink-2);}
+.hg-key{display:inline-block;width:16px;height:12px;border-radius:var(--r-xs);}
+.hg-key.is-h1{background:var(--line-2);} .hg-key.is-h2{background:var(--ink-3);} .hg-key.is-h3{background:var(--ink-2);} .hg-key.is-h4{background:var(--ink);}
+.hg-legend-t{margin-left:8px;}
+.hg-note{margin:4px 0 0;font-size:var(--fs-caption);color:var(--ink-2);}
+/* narrow: the rows scroll sideways in their own box (wide, they fit, and an open row's cards may reach past the box) */
+@media (max-width:640px){.fr-scroll{overflow-x:auto;max-width:100%;}.fr-list{min-width:max-content;}}
+

@@ -89,10 +89,8 @@
 
 /* New run is a Dialog (Worca's .viewer-modal and its card), here inside the mock window: the sentence that frames the
    step, the task Field, the note when the run will not fit, then Cancel and the start button. */
-.pz-app .viewer-modal{position:absolute;z-index:47;border-radius:var(--r-card);padding:16px;}
-/* A Dialog on a long page (Settings) stays in view: it sits near the top of the window as the page scrolls. */
-.pz-app .viewer-modal:has(> .rl-dialog){place-items:start center;}
-.pz-app .viewer-modal > .rl-dialog{position:sticky;top:64px;}
+/* One Dialog (panels.md): the library lifts every dialog to the window (dialog.mjs watchDialogs): its scrim covers the
+   bar and the top bar too, its card is centred in the window, and the page under it does not move. No rule here places it. */
 .pz-app .viewer-modal > .card.pz-newrun{width:min(460px,100%);max-height:none;padding:0;overflow:visible;display:flex;flex-direction:column;box-shadow:var(--shadow-pop);}
 .pz-nr{display:flex;flex-direction:column;gap:12px;padding:16px 16px 12px 4px;}
 .pz-nr > :not(.pz-advice){margin-left:var(--edge);}

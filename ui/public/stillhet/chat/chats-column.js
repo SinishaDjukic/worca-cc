@@ -40,18 +40,22 @@
   const LEVEL_TONE = { 3: 'fail', 2: 'ask', 1: 'ok' };   // a parent chat wears the ring of the highest level under it; the task holds the fill (one light per thing)
   const markOf = (state, kind, breathe = false, lit = '') => R.kindMark({ breathe, kind: kind === 'workflow' && state === 'idle' ? 'workflow' : 'chat', tone: lit || toneOf(state), advisory: lit === 'ok', outline: lit === 'fail', title: state === 'idle' ? R.CHAT_KINDS[kind]?.label || 'Chat' : R.chatState(state).word });
   const RM = window.RunCardModel;
-  const taskMenu = (t) => [{ id: 'open-task', text: t.kind === 'schedule' ? 'Open schedule' : 'Open task', help: 'Opens its card in its chat' }, { id: 'in-view', text: window.StillhetShell?.inView.has(t.kind === 'schedule' ? 'schedule' : 'task', t.id) ? 'Out of view' : 'Keep in view', help: 'Its live mark in the top bar, on every page' }, ...(t.git === 'open' || t.git === 'fail' ? [{ id: 'watch', text: t.watch ? 'Stop watching' : 'Watch', help: 'Worca follows the PR and fixes failing checks for you' }] : []), { id: 'label-task', text: 'Label…', hint: hint('L'), help: 'Adds a label to this task' }, ...(has('advanced') ? [{ id: 'add-to-group', text: 'Add to group…', hint: hint('G'), help: 'Find a group, or make a new one' }] : []), { sep: true }, { id: 'archive', text: 'Archive', hint: hint('E'), help: 'Undo in the notice' }];
-  // What hangs under a chat: its tasks and schedules, in their order of waiting.
+  const taskMenu = (t) => [{ id: 'open-task', text: t.kind === 'schedule' ? 'Open schedule' : 'Open task', help: 'Opens its own page' }, { id: 'open-chat', text: 'Open its chat', help: 'Opens its card in its chat' }, { id: 'in-view', text: window.StillhetShell?.inView.has(t.kind === 'schedule' ? 'schedule' : 'task', t.id) ? 'Out of view' : 'Keep in view', help: 'Its live mark in the top bar, on every page' }, ...(t.git === 'open' || t.git === 'fail' ? [{ id: 'watch', text: t.watch ? 'Stop watching' : 'Watch', help: 'Worca follows the PR and fixes failing checks for you' }] : []), { id: 'label-task', text: 'Label…', hint: hint('L'), help: 'Adds a label to this task' }, ...(has('advanced') ? [{ id: 'add-to-group', text: 'Add to group…', hint: hint('G'), help: 'Find a group, or make a new one' }] : []), { sep: true }, { id: 'archive', text: 'Archive', hint: hint('E'), help: 'Undo in the notice' }];
+  // the task whose page is open, when it was opened from its chat (list.current): the demo's cases are shared, so by its name too
+  const pageOf = (t) => (W.live ? t.pid || t.run || '' : t.case);
+  const onTask = () => /^#run\//.test(location.hash);
+  const isOpenTask = (c, t) => location.hash === `#run/${pageOf(t)}` && window.StillhetShell?.taskChat?.() === c.id && (W.live || RM.titles?.[t.case] === t.title);
+  // What hangs under a chat: its tasks and schedules, in their order of waiting. list.row-facts: each says its state on a second quiet line.
   const treeOf = (c, list) => list.filter((t) => !t.gone).map((t) => {   // a deleted schedule leaves the bar
     const x = { t, c, key: `task:${t.id}` };
-    if (t.kind === 'schedule') return { pick: false, key: x.key, _x: x, title: t.title, mark: R.kindMark({ kind: 'schedule', title: t.detail }), end: t.time, tip: `${t.title}\n${t.detail}\nOpens the schedule`, current: false, menu: taskMenu(t) };
+    if (t.kind === 'schedule') return { pick: false, key: x.key, _x: x, title: t.title, meta: t.detail || '', mark: R.kindMark({ kind: 'schedule', title: t.detail }), end: t.time, current: location.hash === `#schedule/${t.id}`, menu: taskMenu(t) };
     const st = R.runState(RM.stateOf(t.case));
-    return { pick: false, key: x.key, _x: x, title: t.title, mark: R.kindMark({ breathe: c.id !== current, kind: 'task', tone: R.markTone(st), advisory: R.markTone(st) === 'ok' && sectionOfChat(c) === 'needs', stage: t.stage, title: `${st.word} · ${t.detail || ''}` }), end: t.git ? '' : t.endWord || '', tip: `${t.title}\n${st.word} · ${t.detail || ''}${(t.labels || []).length ? `\n${t.labels.join(', ')}` : ''}\nOpens the task`, tree: t.after ? treeOf(c, t.after) : undefined, menu: taskMenu(t) };
+    return { pick: false, key: x.key, _x: x, title: t.title, mark: R.kindMark({ breathe: c.id !== current, kind: 'task', tone: R.markTone(st), advisory: R.markTone(st) === 'ok' && sectionOfChat(c) === 'needs', stage: t.stage, title: `${st.word} · ${t.detail || ''}` }), meta: [st.word, t.detail === st.word ? '' : t.detail].filter(Boolean).join(' · '), end: t.git ? '' : t.endWord || '', current: isOpenTask(c, t), tree: t.after ? treeOf(c, t.after) : undefined, menu: taskMenu(t) };
   });
 
   // ---- the view ----
-  const SHOWS = [{ id: 'all', text: 'all', help: 'Every chat that is not archived', test: (c) => !c.archived }, { id: 'needs', text: NEEDS().toLowerCase(), title: NEEDS(), help: 'A run a chat follows asks you something', test: (c) => !c.archived && sectionOfChat(c) === 'needs' },
-    { id: 'running', text: 'running', help: 'Replying, running a command or following a run', test: (c) => !c.archived && sectionOfChat(c) === 'running' }, { id: 'archived', text: 'archived', help: 'Chats you archived', test: (c) => c.archived }];
+  const SHOWS = [{ id: 'all', text: 'all', help: 'Every chat that is not archived', test: (c) => !c.archived }, { id: 'needs', text: NEEDS().toLowerCase(), title: NEEDS(), help: 'A task a chat follows asks you something', test: (c) => !c.archived && sectionOfChat(c) === 'needs' },
+    { id: 'running', text: 'running', help: 'Replying, running a command or following a task', test: (c) => !c.archived && sectionOfChat(c) === 'running' }, { id: 'archived', text: 'archived', help: 'Chats you archived', test: (c) => c.archived }];
   const showOf = (id) => SHOWS.find((x) => x.id === id);
   const passes = (c, v) => showOf(v.show).test(c) && (v.from === 'all' || (c.project || 'No project') === v.from);
   const count = (p) => String(data.chats.filter((c) => passes(c, { ...view, ...p })).length);
@@ -62,8 +66,8 @@
 
   // ---- rows ----
   function chatRow(c, member) {
-    const st = R.chatState(c.state), x = { c, key: `chat:${c.id}` };
-    const r = { key: x.key, _x: x, title: c.title, lead: `${c.pinned ? `<span class="lr-pin" title="Pinned">${R.icon('pin', 12)}</span>` : ''}${c.origin ? R.originMark(c.origin) : ''}`, mark: markOf(c.state, c.kind, ownAttn(c), sectionOfChat(c) === 'needs' ? LEVEL_TONE[levelOf(c)] || '' : ''), unread: c.unread, current: current === c.id, tip: [c.title, [c.project || 'No project', ...(c.labels || [])].join(' · '), [st.line || (c.state === 'idle' ? R.CHAT_KINDS[c.kind]?.label : ''), c.time].filter(Boolean).join(' · '), c.pinned ? 'Pinned' : ''].filter(Boolean).join('\n'), end: c.time, tree: c.tasks?.length ? treeOf(c, c.tasks) : undefined,
+    const x = { c, key: `chat:${c.id}` };
+    const r = { key: x.key, _x: x, title: c.title, lead: `${c.pinned ? `<span class="lr-pin" title="Pinned">${R.icon('pin', 12)}</span>` : ''}${c.origin ? R.originMark(c.origin) : ''}`, mark: markOf(c.state, c.kind, ownAttn(c), sectionOfChat(c) === 'needs' ? LEVEL_TONE[levelOf(c)] || '' : ''), unread: c.unread, current: current === c.id && !onTask(), holds: current === c.id && onTask(), end: c.time, tree: c.tasks?.length ? treeOf(c, c.tasks) : undefined,
       meta: '' };
     r.menu = [{ id: 'toggle', text: 'Select', hint: hint('Space') }, { id: 'in-view', text: window.StillhetShell?.inView.has('chat', c.id) ? 'Out of view' : 'Keep in view', help: 'Its live mark in the top bar, on every page' }, { id: 'rename', text: 'Rename…', hint: hint('R'), help: 'Give it another name' }, { id: 'pin', text: c.pinned ? 'Unpin' : 'Pin', hint: hint('P'), help: 'A pinned chat leads its section' },
       ...(has('advanced') ? [{ id: 'add-to-group', text: 'Add to group…', hint: hint('G'), help: 'Find a group, or make a new one' }, ...(c.group ? [{ id: 'leave-group', text: 'Remove from group', hint: hint('shift', 'G'), help: 'It stays in Chats, in no group' }] : [])] : []),
@@ -76,10 +80,8 @@
     const needs = list.some((c) => sectionOfChat(c) === 'needs'), busy = list.find(busyOf);
     const state = needs ? 'needs-you' : busy ? busy.state : 'idle';
     const kinds = Object.keys(R.CHAT_KINDS), kind = kinds.find((k) => list.some((c) => c.kind === k)) || 'chat';
-    const ps = [...new Set(list.map((c) => c.project).filter(Boolean))];
-    const where = ps.length > 1 ? `${ps.length} projects` : ps[0] || 'No project';
-    const cost = list.reduce((a, c) => a + (c.cost || 0), 0), x = { g, key: `cgroup:${g.id}` };
-    return { key: x.key, _x: x, title: g.name, mark: markOf(state, kind, false), count: String(list.length), noun: 'chats', open: needs || !!busy, holds: list.some((c) => c.id === current), tip: `${g.name}\n${where} · ${list.length} chats\n${R.chatState(state).line || ''}`.trim(), end: list[0]?.time,
+    const x = { g, key: `cgroup:${g.id}` };
+    return { key: x.key, _x: x, title: g.name, mark: markOf(state, kind, false), count: String(list.length), noun: 'chats', open: needs || !!busy, holds: list.some((c) => c.id === current), end: list[0]?.time,
       meta: '', members: list.map((c) => chatRow(c, true)),
       menu: [{ id: 'rename', text: 'Rename…', hint: hint('R'), help: 'Give the group another name' }, { id: 'ungroup', text: 'Ungroup', help: 'The chats stay, in no group; Undo in the notice' }, { sep: true },
         { id: 'archive', text: 'Archive group', hint: hint('E'), off: !!busy, help: busy ? `“${busy.title}”: ${busyOf(busy).toLowerCase()}` : 'Undo in the notice' }, ...(has('advanced') ? [{ id: 'delete', text: 'Delete group…', hint: hint('Backspace'), danger: true, help: 'Removes the group and its chats for good; asks first' }] : [])] };
@@ -126,7 +128,7 @@
   function parts0() {
     const projects = [...new Set(data.chats.map((c) => c.project || 'No project'))].sort();
     return [{ word: 'Showing', id: 'show', tabs: ['all', 'needs', 'running'], text: showOf(view.show).text, tip: 'Which chats the list shows', items: SHOWS.map((x) => ({ id: x.id, text: x.text, help: x.help, checked: view.show === x.id, hint: count({ show: x.id }) })) },
-      { word: 'from', id: 'from', text: view.from === 'all' ? 'all projects' : view.from, tip: 'Which project they belong to', items: [{ id: 'all', text: 'all projects', checked: view.from === 'all', hint: count({ from: 'all' }) }, { sep: true }, ...projects.map((p) => ({ id: p, text: p, checked: view.from === p, hint: count({ from: p }) }))] },
+      { word: 'from', id: 'from', raw: true, text: view.from === 'all' ? 'All projects' : view.from, tip: 'Which project they belong to', items: [{ id: 'all', text: 'All projects', checked: view.from === 'all', hint: count({ from: 'all' }) }, { sep: true }, ...projects.map((p) => ({ id: p, text: p, checked: view.from === p, hint: count({ from: p }) }))] },
       R.byPart({ by: view.by, choices: [{ id: 'day' }, { id: 'state', help: `${NEEDS()}, Running, Recent` }, { id: 'project' }, { id: 'topic', help: 'One section per group, then Ungrouped' }, { id: 'ai', help: 'A helper job names the topics (Models › Jobs: Haiku); your groups are kept' }] })];
   }
   const SORTS = [['activity', 'Recent', 'Last activity first'], ['created', 'Created', 'Newest chat first'], ['title', 'A to Z', 'By title'], ['cost', 'Cost', 'Most spent first']];
@@ -144,11 +146,11 @@
   function act(id, rows0, { bulk, viaKey } = {}) {
     const rows = rows0.map((r) => r._x), x = rows[0], snap = snapshot(), pick = ctl.state.pick;
     if (id === 'in-view' && x) { if (x.t) window.StillhetShell.inView.toggle({ type: x.t.kind === 'schedule' ? 'schedule' : 'task', id: x.t.id, chat: x.c.id, title: x.t.title, case: x.t.case }); else if (x.c) window.StillhetShell.inView.toggle({ type: 'chat', id: x.c.id, title: x.c.title }); ctl.paint(); return; }
-    if (window.StillhetWorld.live && id !== 'open-task') { liveAct(id, rows, x, { bulk }); return; }   // D6: the live kind calls dev's routes
+    if (id === 'open-task' && x?.t) { openUnder(x); return; }
+    if (id === 'open-chat' && x?.t) { if (W.live && x.t.kind !== 'schedule') window.StillhetConversation?.openTask(x.c.id, x.t.id); else if (x.t.kind === 'schedule') { window.StillhetShell.go(`chat/${x.c.id}`); requestAnimationFrame(() => requestAnimationFrame(() => window.StillhetConversation?.focus({ id: x.t.id }))); } else window.StillhetShell.openTask(x.t.case, x.c.id, x.t.title); return; }   // the one way from a row to its card in its chat
+    if (window.StillhetWorld.live) { liveAct(id, rows, x, { bulk }); return; }   // D6: the live kind calls dev's routes
     if (x?.t && !bulk && id !== 'add-to-group') {
       const t = x.t;
-      if (id === 'open-task' && window.StillhetWorld.live && t.kind !== 'schedule') { window.StillhetConversation?.openTask(x.c.id, t.id); return; }   // live: the chat it is listed under, its card in view
-      if (id === 'open-task') { if (t.kind === 'schedule') window.StillhetShell.openSchedule(t.id); else window.StillhetShell.openTask(t.case, x.c.id, t.title); return; }
       if (id === 'watch') { t.watch = t.watch ? '' : 'idle'; ctl.paint(); say(t.watch ? 'Watching: Worca fixes failing checks' : 'Stopped watching', undoTo(snap, pick, 'As it was')); return; }
       if (id === 'label-task') { const focus = `[data-open="${CSS.escape(x.key)}"]`; ctl.dialog({ title: 'Label this task', label: 'Label', value: '', max: 40, yes: 'Add label', back: focus, run: (v) => {
         const word = v.toLowerCase(); if ((t.labels || []).includes(word)) { ctl.paint({ focus }); return; }   // already on it: nothing happened, nothing to say
@@ -265,6 +267,8 @@
     ctl.closePicker(); ctl.clear(); ctl.openGroup(`cgroup:${g.id}`); ctl.paint(); ctl.landOn(`chat:${chats[0].id}`);
     say(`Added to ${g.name} · ${chats.length === 1 ? chats[0].title : plural(chats.length, 'chat')}`, undoTo(snap, pick, 'Puts them back where they were'));
   }
+  // nav.row-opens-page: a task or a schedule under a chat opens its own page, in every mode; the bar stays on Chat
+  function openUnder(x) { const t = x.t; if (t.kind === 'schedule') window.StillhetShell.openSchedule(t.id); else window.StillhetShell.openTaskPage(t.case, x.c.id, t.title, pageOf(t)); }
   function openChat(id) { const c = data.chats.find((x) => x.id === id); if (c) c.unread = false; window.StillhetShell.go(`chat/${id}`); }
   const goHome = () => { current = ''; window.StillhetShell.go('chat'); };
   function newChat(title = 'New chat', project = '', o = {}) { const id = `n${Date.now().toString(36)}`; data.chats.unshift({ id, title, state: 'idle', kind: 'chat', project, time: 'now', day: 'today', cost: null, pinned: false, archived: false, unread: false, group: '', origin: null, labels: [], tasks: [], ...o }); ctl.paint(); return id; }
@@ -275,13 +279,13 @@
   const neighbour = (dir) => { const ids = ctl.state.order.filter((k) => k.startsWith('chat:')).map((k) => k.slice(5)), i = ids.indexOf(current); return ids[i < 0 ? (dir > 0 ? 0 : ids.length - 1) : i + dir]; };
 
   ctl = R.listController({ root, spec: {
-    noun: 'chats', label: 'Selected chats', scopes: ['chat'],
+    noun: 'chats', name: 'Chats', label: 'Selected chats', scopes: ['chat'],
     view: () => ({ state: listCase === 'loading' ? (ctl?.state.waited ? 'loading' : 'waiting') : ['offline', 'failed'].includes(listCase) ? listCase : 'ready', parts: parts(),
-      tools: [{ id: 'select', text: 'Select', hint: `${R.keyHint(['mod'], R.isMac(window))} click`, help: 'Tick chats to act on several at once' }, R.resetViewTool({ changed: JSON.stringify({ show: view.show, from: view.from, by: view.by, sort: view.sort }) !== JSON.stringify({ show: FRESH.show, from: FRESH.from, by: FRESH.by, sort: FRESH.sort }), to: 'all chats, from all projects, by date' }), { sep: true }, { header: 'Sort' }, ...SORTS.map(([id, text, help]) => ({ id: `sort:${id}`, text, help, checked: view.sort === id })), { sep: true }, { id: 'keys', text: 'Keyboard shortcuts', hint: '?', help: 'The keys of this list' }],
+      tools: [{ id: 'select', text: 'Select', hint: `${R.keyHint(['mod'], R.isMac(window))} click`, help: 'Tick chats to act on several at once' }, R.resetViewTool({ changed: JSON.stringify({ show: view.show, from: view.from, by: view.by, sort: view.sort }) !== JSON.stringify({ show: FRESH.show, from: FRESH.from, by: FRESH.by, sort: FRESH.sort }), to: 'all chats, from all projects, grouped by date' }), { sep: true }, { header: 'Sort' }, ...SORTS.map(([id, text, help]) => ({ id: `sort:${id}`, text, help, checked: view.sort === id })), { sep: true }, { id: 'keys', text: 'Keyboard shortcuts', hint: '?', help: 'The keys of this list' }],
       sections: sections().map((s) => ({ ...s, count: s.rows.reduce((n, r) => n + (r.members ? (s.id === 'needs' ? Math.max(1, r.members.filter((m) => sectionOfChat(m._x.c) === 'needs').length) : r.members.length) : 1), 0) })) /* one unit: chats, a folded group by its members */, empty: { text: listCase === 'empty' ? 'No chats yet.' : view.show === 'needs' ? 'No chat needs you.' : view.show === 'archived' ? 'No archived chats.' : view.show === 'running' ? 'No chat is running.' : 'No chats yet.', action: listCase === 'empty' ? 'New chat' : '' } }),
     can: () => ['menu', 'fold', 'archive', 'rename', 'pin', ...(has('advanced') ? ['group', 'delete'] : [])],
     bulk: bulkActions, count: (rows) => chatsOf(rows.map((r) => r._x)).length, act,
-    open: (r) => { if (r._x.g) { ctl.toggleGroup(r.key); return; } if (r._x.t) { if (window.StillhetWorld.live && r._x.t.kind !== 'schedule') { window.StillhetConversation?.openTask(r._x.c.id, r._x.t.id); return; } if (r._x.t.kind === 'schedule') window.StillhetShell.openSchedule(r._x.t.id); else window.StillhetShell.openTask(r._x.t.case, r._x.c.id, r._x.t.title); return; } openChat(r._x.c.id); },
+    open: (r) => { if (r._x.g) { ctl.toggleGroup(r.key); return; } if (r._x.t) { openUnder(r._x); return; } openChat(r._x.c.id); },
     word: (id, v) => { view = { ...view, [id]: v }; set(STORE_V, JSON.stringify(view)); return false; },
     tool: (v) => { if (v === 'reset') { view = { ...FRESH }; set(STORE_V, JSON.stringify(view)); say('View reset'); return; } if (v.startsWith('sort:')) { view = { ...view, sort: v.slice(5) }; set(STORE_V, JSON.stringify(view)); } },
     key: (act) => {

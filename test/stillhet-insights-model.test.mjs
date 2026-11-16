@@ -15,9 +15,15 @@ const eq = (a, b, m) => assert.deepEqual(plain(a), plain(b), m);
 const rowPin = (r, fields) => ({ name: r.name, ...Object.fromEntries(fields.map((f) => [f, r[f]])), ...(r.kids ? { kids: r.kids.map((k) => rowPin(k, fields)) } : {}) });
 const pin = (sub, st) => { const c = M.compute(sub, st), f = sub.src.fields; return plain({ T: c.T, P: c.P, v: c.v, p: c.p, labels: c.labels, days: c.days, points: c.points, before: c.before, timeWord: c.timeWord, rowCount: c.rowCount, rows: c.rows.map((r) => rowPin(r, f)) }); };
 
-test('Invariant 1: the 17 checkpoint pages at their default state, and Spend by client then workflow last month, equal the golden', () => {
+// The redesign took six pages out of the place: no measure stands behind them yet (assessment.md, Decisions 5; the live
+// kind never offered them, insights-map.mjs NOT_LIVE_PAGES). The golden still holds their old figures; the eleven that
+// stay are pinned against it unchanged.
+const REMOVED = ['why', 'review', 'autonomy', 'cache', 'merge', 'waiting'];
+test('Invariant 1: the checkpoint pages that stay, at their default state, and Spend by client then workflow last month, equal the golden; the six with no measure are gone', () => {
   assert.equal(Object.keys(GOLDEN.pages).length, 17);
-  for (const id of Object.keys(GOLDEN.pages)) {
+  for (const id of REMOVED) assert.equal(M.SUB[id], undefined, `${id} is not a page`);
+  assert.equal(Object.keys(GOLDEN.pages).filter((id) => !REMOVED.includes(id)).length, 11);
+  for (const id of Object.keys(GOLDEN.pages).filter((x) => !REMOVED.includes(x))) {
     const sub = M.SUB[id];
     assert.ok(sub, id);
     eq(plain(M.defaults(sub)), GOLDEN.defaults[id], `${id}: defaults`);
@@ -26,16 +32,18 @@ test('Invariant 1: the 17 checkpoint pages at their default state, and Spend by 
   eq(pin(M.SUB.spend, { ...M.defaults(M.SUB.spend), by: 'client', then: 'workflow', when: 'last month' }), GOLDEN.extra['spend-client-workflow-last-month']);
 });
 
-test('D15: the person filter: person rows come last in money, ends and prs; Maya ticked is Maya\'s own rows', () => {
+// The redesign: your own pages hold your own work, so their one person is you, with the very figures of your row on the
+// team's page (the same $412 was "yours" on Spend and four other people's by person). The filter itself stays (live).
+test('D15: the person filter stays; on your own pages the one person is you, the same row as on the team\'s page', () => {
   assert.ok(M.FILTERS.includes('person'));
   const money = M.SUB.spend.src;
   assert.equal(Object.keys(money.rows).at(-1), 'person');
   assert.equal(M.dimsOf(money, M.defaults(M.SUB.spend)).filter((d) => !M.TIME.has(d) && d !== 'hour').includes('person'), true);
-  eq(money.rows.person.map((r) => r.name), ['Maya', 'Jonas', 'Priya', 'Lee']);
-  const maya = money.rows.person.find((r) => r.name === 'Maya');
-  const c = M.compute(M.SUB.spend, { ...M.defaults(M.SUB.spend), filter: ['person:Maya'] });
-  assert.equal(c.T.spend, maya.spend);
-  assert.equal(c.T.saved, maya.saved);
+  assert.equal(money.rows.person.length, 1);
+  const you = money.rows.person[0], onTeam = M.SUB.team.src.rows.person.find((r) => r.name === you.name);
+  assert.ok(onTeam, 'you are a row of the team');
+  for (const f of ['spend', 'hours', 'saved', 'tasks']) assert.equal(you[f], onTeam[f], f);
+  assert.equal(M.compute(M.SUB.spend, M.defaults(M.SUB.spend)).T.spend, you.spend, 'Your spend is your row');
   for (const id of ['ends', 'shipped']) assert.equal(Object.keys(M.SUB[id].src.rows).at(-1), 'person', id);
   for (const [id, f] of [['spend', 'spend'], ['ends', 'finished'], ['shipped', 'prs']]) assert.equal(M.sum(M.SUB[id].src.rows.person.map((r) => r[f])), M.sum(M.SUB[id].src.rows.project.map((r) => r[f])), `${id}: the people add up to the projects`);
 });
@@ -59,10 +67,10 @@ test('D16: linkOf writes only what differs from the defaults', () => {
 
 test('Invariant 8: stateOfLink round-trips every key, drops what is unknown or impossible, clamps a day past the labels', () => {
   const sub = M.SUB.spend;
-  const q = 'by=client&then=workflow&when=last%20month&of=client%3Aacme,person%3AMaya&as=table&vs=before&from=2026-10-08&to=2026-10-21';
+  const q = 'by=client&then=workflow&when=last%20month&of=client%3Aacme,person%3ASam&as=table&vs=before&from=2026-10-08&to=2026-10-21';
   const st = M.stateOfLink(q, sub);
   assert.equal(st.by, 'client'); assert.equal(st.then, 'workflow'); assert.equal(st.when, 'last month');
-  eq(st.filter, ['client:acme', 'person:Maya']); assert.equal(st.as, 'table'); assert.equal(st.against, 'before');
+  eq(st.filter, ['client:acme', 'person:Sam']);   // the redesign: your own pages hold one person, you assert.equal(st.as, 'table'); assert.equal(st.against, 'before');
   eq(st.narrow, [1, 2]);
   assert.equal(M.linkOf('spend', st), `insights/spend?${q}`);
   assert.equal(M.stateOfLink('by=bogus', sub).by, 'project');

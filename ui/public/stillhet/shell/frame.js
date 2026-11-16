@@ -27,7 +27,7 @@
 
   function topBar() {
     return el(R.topBarFrame({
-      title: 'Runs',
+      title: 'Tasks',
       left: R.menuButton() + R.sideToggle() + R.button({ label: 'Show the bar', kind: 'quiet', iconOnly: true, icon: R.icon('bar-show', 16), cls: 'bar-show', attrs: { id: 'bar-show' } }),
       centre: R.search({ label: 'Search or ask', bar: { kbd: R.keyHint(['mod', 'K'], R.isMac(window)) } }),
       right: `<span id="in-view-slot"></span>${R.askButton({ mark: R.askWorcaMark() })}<span id="stillhet-pulse-slot"></span>${R.stillhetSwitch({ on: window.StillhetHost ? window.StillhetHost.stillhetOn() : false, locked: !!(window.StillhetHost && window.StillhetHost.stillhetLocked && window.StillhetHost.stillhetLocked()) })}<span id="stillhet-conn"></span>`,

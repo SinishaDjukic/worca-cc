@@ -36,7 +36,7 @@
   /** A teammate's task (D2, thing.read-only): loading, the view, or gone. */
   function task(c, runId, st, who = '') {
     const r = isLive() ? (K() ? K().task(runId, st) : { state: 'loading' }) : { state: 'ready', item: M.workTask(runId, c.labels, st.by === 'person' ? c.rows : undefined) };
-    const wrap = (h) => `<div class="convo"><div class="convo-scroll"><div class="convo-col">${h}</div></div></div>`;
+    const wrap = (h) => `<div class="convo"><div class="convo-scroll"><div class="convo-col is-center">${h}</div></div></div>`;
     if (r.state !== 'ready') return wrap(R.listState({ state: 'loading', noun: 'task' }));
     if (!r.item) return wrap(R.emptyState({ title: "This task is no longer in the team's records", actions: R.button({ label: 'Back to By person', kind: 'quiet', attrs: { 'data-in-back': '' } }) }));
     const v = K().taskViewOf(r.item);

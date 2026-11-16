@@ -66,7 +66,7 @@ function align(g) { const pos = autoLayout(g.tpl, g.portsFn, { describe: true })
  * @param {{width?:number, zoom?:number, mode?:'static'|'edit', aligned?:boolean, select?:string, says?:(ref:string)=>string, g?:object}} [o]
  *   zoom: the graph's real size (1 is full size; the view never magnifies past it) and the host takes its width; 0 fits width.
  *   A fit (zoom undefined or 0) never goes below READABLE_FIT: a wider graph scrolls sideways; an explicit zoom is drawn as is
- * @returns {{g:object, view:object, fit:number, whole:number}}   g is the drawn template (keep it for Undo); fit is the zoom it
+ * @returns {{g:object, view:object, fit:number, whole:number, wide:boolean}}   wide: at this size it is wider than the width given (its box scrolls sideways); g is the drawn template (keep it for Undo); fit is the zoom it
  *   opens at (the width's fit, at READABLE_FIT or more); whole is the zoom that shows the whole width
  */
 function mount(host, wf, { width = 680, zoom, mode = 'static', aligned = false, select = '', says = null, g = null } = {}) {
@@ -78,6 +78,7 @@ function mount(host, wf, { width = 680, zoom, mode = 'static', aligned = false, 
   const zoomMin = zoom ? Math.min(zoom, (MODE_ZOOM[mode] || MODE_ZOOM.edit).min) : null;
   const view = createGraphView(host, { doc: host.ownerDocument, mode, zoomMin, portsFn: graph.portsFn, agents: graph.agents, describe: true, modelLabel: modelWords, fitFloor: fits ? READABLE_FIT : null });
   view.render(graph.tpl, {});
+  const box = width;   // the width given: what the graph is wide against
   const full = view.bounds(60)?.w || width, whole = Math.min(1, width / full);   // fitToWidth measures with this padding
   const fit = Math.min(1, Math.max(READABLE_FIT, whole));
   if (zoom !== undefined) { width = Math.round(full * (zoom || fit)); host.style.width = `${width}px`; }
@@ -86,7 +87,10 @@ function mount(host, wf, { width = 680, zoom, mode = 'static', aligned = false, 
   host.querySelectorAll('.wbadge').forEach((w) => { if (mode === 'static') w.textContent = w.textContent.replace(/≤\s*(\d+)/, 'sends fixes back, up to $1×'); });
   if (mode === 'static') host.querySelectorAll('[tabindex]').forEach((n) => n.removeAttribute('tabindex'));   // a drawing: nothing in it takes a key
   if (select) host.querySelector(`[data-node-id="${select}"]`)?.classList.add('is-picked');
-  return { g: graph, view, fit, whole };
+  // at a readable size or more the skin keeps every word at 12px or over (places.css); under it (the editor's Zoom out to
+  // the whole graph, asked for by hand) the words shrink with their cards
+  host.classList.toggle('is-small', (zoom || fit) < READABLE_FIT - 0.001);
+  return { g: graph, view, fit, whole, wide: full * (zoom || fit) > box + 0.5 };
 }
 
 window.StillhetGraph = { mount, build, align, fromTpl, demo };

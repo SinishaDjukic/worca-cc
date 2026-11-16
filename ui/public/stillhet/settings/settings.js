@@ -46,17 +46,39 @@
   const vis = (x, c) => R.shows(x.min, c.level) && (!x.flag || R.prefs.flag(x.flag)) && (!x.when || x.when(c.sv)) && (!x.only || (x.only === 'live') === liveOn());
   const textOf = (v, sv) => (typeof v === 'function' ? v(sv) : v);
 
-  function sentence(r, sv, c) {
-    return words(textOf(r.say, sv), c).replace(/\{(\w+)\}/g, (m, k) => {
-      const p = r.picks && r.picks[k];
-      if (p) {
-        if (c.locked) return `<b>${c.esc(optText(p, sv[k], sv))}</b>`;
-        return c.R.sentencePicker({ id: 'sv:' + k, text: optText(p, sv[k], sv), open: c.open === 'sv:' + k, tip: p.tip || '', chevron: c.svg('chevron', 12), right: !!p.right,
-          items: optsOf(p, sv).map(([id, text, help, off]) => ({ id, text, help, off: !!off, checked: sv[k] === id })) });
-      }
-      if (r.vals && k in r.vals) return c.esc(typeof r.vals[k] === 'function' ? r.vals[k](sv) : sv[k]);
-      return m;   // a literal {word}
-    });
+  // The value leads (docs/stillhet/settings.md): a row is its value, short; one supporting line; and its pickers, each a
+  // labelled field (one: at the row's end, the row's name its label; several: a line under the supporting line).
+  // `value` and `note` are the model's own words; a row without them is read from its sentence: the sentence, in plain
+  // words, is the supporting line, and every {pick} in it is a picker. `{key}` fills as in a sentence.
+  const fill = (t, r, sv) => String(t || '').replace(/\{(\w+)\}/g, (m, k) => {
+    const p = r.picks && r.picks[k];
+    if (p) return optText(p, sv[k], sv);
+    if (r.vals && k in r.vals) return String(typeof r.vals[k] === 'function' ? r.vals[k](sv) : sv[k]);
+    return m;   // a literal {word}
+  });
+  // a sentence's word as a value: a capital, unless it is a name written small (gpt-5, local-llama, xhigh)
+  const cap = (t) => (t && /^[a-z]+(\s|$)/.test(t) && !/^xhigh\b/.test(t) ? t[0].toUpperCase() + t.slice(1) : t);
+  // a picker's own word for a value: the model's short word, else the sentence's word with a capital
+  const pickWord = (p, v, sv) => (p.short && p.short[v]) || cap(optText(p, v, sv));
+  const picksIn = (r, sv) => { const out = []; for (const m of String(textOf(r.say, sv) || '').matchAll(/\{(\w+)\}/g)) if (r.picks && r.picks[m[1]] && !out.includes(m[1])) out.push(m[1]); return out; };
+  function partsOf(r, sv) {
+    const own = r.value !== undefined || r.note !== undefined, say = String(textOf(r.say, sv) || ''), picks = picksIn(r, sv);
+    let value = fill(textOf(r.value, sv), r, sv);
+    // a sentence that is only its picker says nothing the picker does not
+    let note = own ? fill(textOf(r.note, sv), r, sv) : /^\{\w+\}$/.test(say) && picks.length ? '' : fill(say, r, sv);
+    if (!own && /^(`[^`]+`|\*\*[^*]+\*\*)$/.test(note)) { value = note.replace(/\*\*/g, ''); note = ''; }   // a sentence that is only a value is the value
+    return { value, note, picks };
+  }
+  const plain = (t) => String(t || '').replace(/\*\*(.+?)\*\*/g, '$1').replace(/`(.+?)`/g, '$1');
+  // The row as plain words: gates/settings-sentences.mjs reads every part for every option.
+  function partsText(r, sv) {
+    const P = partsOf(r, sv);
+    return { value: plain(P.value), note: plain(P.note), picks: P.picks.map((k) => ({ key: k, label: r.picks[k].label || r.picks[k].name || r.name, text: pickWord(r.picks[k], sv[k], sv), options: optsOf(r.picks[k], sv).map((o) => pickWord(r.picks[k], o[0], sv)) })) };
+  }
+  function picker(r, k, sv, c, many) {
+    const p = r.picks[k];
+    return c.R.settingsRow.picker({ id: 'sv:' + k, label: p.label || p.name || r.name, text: pickWord(p, sv[k], sv), open: c.open === 'sv:' + k, showLabel: many, left: many, tip: c.locked || p.tip || '', off: !!c.locked, chevron: c.svg('chevron', 12),
+      items: optsOf(p, sv).map(([id, , help, off]) => ({ id, text: pickWord(p, id, sv), help, off: !!off, checked: sv[k] === id })) });
   }
   // The sentence as plain words, the same fill as above: a toast says it, and gates/settings-sentences.mjs reads it.
   function sentenceText(r, sv) {
@@ -118,7 +140,9 @@
     const inner = open ? (r.more || []).filter((m) => vis(m, c)).map((m) => row(m, sv, c, where + '/' + r.name)).join('') : '';
     const detail = open && r.moreList ? records(r.moreList, sv, c, where + '/' + r.name, r.empty) : '';
     const acts = (r.acts || []).filter((a) => vis(a, c)).map((a) => act(a, where + '/' + r.name, c)).join('');
-    return c.R.settingsRow({ name: r.name, help: r.help || '', changed: changesOf(r, sv, c), sentence: sentence(r, sv, c), end: chipOf(r, sv, c) + acts + swOf(r, r.name, sv, c), detailRows: inner, detail, fold: folds ? { open, label: r.foldLabel, attrs: { 'data-svdo': key, 'data-key': 'sv:' + key } } : null });
+    const P = partsOf(r, sv), one = P.picks.length === 1;
+    return c.R.settingsRow({ name: r.name, help: r.help || '', changed: changesOf(r, sv, c), value: words(P.value, c), note: words(P.note, c), picks: one ? '' : P.picks.map((k) => picker(r, k, sv, c, true)).join(''),
+      end: chipOf(r, sv, c) + (one ? picker(r, P.picks[0], sv, c, false) : '') + acts + swOf(r, r.name, sv, c), detailRows: inner, detail, fold: folds ? { open, label: r.foldLabel, attrs: { 'data-svdo': key, 'data-key': 'sv:' + key } } : null });
   }
 
   // ---- records: each list's own copy, so a rename or a delete holds until the case changes ----
@@ -212,7 +236,7 @@
     const body = strip + (note ? `<p class="dlg-note">${words(note, c)}</p>` : '')
       + (s.list ? records(s.list, sv, c, s.where) : '')
       + (facts ? c.R.list({ groups: [{ rows: facts.map((x) => c.R.listRow({ title: x.title, meta: x.meta || '', mark: '' })) }] }) : '')
-      + (s.rows || []).map((r) => row(r, sv, c, 'dlg')).join('')
+      + ((s.rows || []).length ? `<div class="set-rows dlg-rows">${s.rows.map((r) => row(r, sv, c, 'dlg')).join('')}</div>` : '')
       + (s.fields || []).map((f) => fieldHtml(f, d, sv, c)).join('');
     const steps = d.steps ? c.R.stepper({ label: 'Steps', stages: d.steps.map((x, i) => ({ key: 'sa-' + i, label: x.label, selected: i === d.at, cells: [i < d.at ? 'is-done' : i === d.at ? 'is-now' : 'is-next'], attrs: { 'data-svdo': 'step:' + i } })) }) : '';
     return c.R.dialog({ title: d.title, yes: last ? d.yes || 'Save' : 'Next', status: c.esc(d.status || ''), close: c.svg('x', 14), id: 'sv-dlg-t', body, steps, back: !!d.steps && d.at > 0, view: !!d.view });
@@ -243,17 +267,24 @@
       return c.R.notInStillhet({ place: sec.title, today: sec.notLive, attrs: { 'data-svdo': key, 'data-key': 'sv:' + key } });
     }
     const locked = sec.lock && !R.atLevel(level, sec.lock.level) ? sec.lock.why : '';
-    return dialogHtml(sv, c) + sec.sections.filter((s) => vis(s, c)).map((s) => {
+    // the Dialog is drawn after the sections: the page under it does not move by a pixel when it opens
+    return sec.sections.filter((s) => vis(s, c)).map((s) => {
       if (notLive(s)) return c.R.settingsSection({ icon: '', title: s.bare ? '' : s.title, meta: '', action: '', rows: c.R.notLiveRow({}) });
       const where = id + '/' + s.title, cc = { ...c, locked };
-      const head = (s.actions || []).filter((a) => vis(a, c)).map((a) => act(a, where, cc)).join('');
-      const rows = ((c.extra && c.extra[s.title]) || '') + (s.rows || []).filter((r) => vis(r, c)).map((r) => row(r, sv, cc, where)).join('');
+      const acts = (s.actions || []).filter((a) => vis(a, c));
+      // a draft's two answers are the DraftBar's (stillhet.drafts): Discard, quiet, and the step that publishes, filled
+      const drafted = s.draft && acts.length === 2 && !cc.locked;
+      if (drafted) acts.forEach((a) => act(a, where, cc));   // registered as any action; the bar's buttons carry their keys
+      const hook = (a) => { const k = where + '/' + (a.id || textOf(a.label, sv)); return { 'data-svdo': k, 'data-key': 'sv:' + k, title: a.help || null }; };
+      const bar = drafted ? c.R.draftBar({ changes: s.draft(sv), save: textOf(acts[1].label, sv), hooks: { discard: hook(acts[0]), save: hook(acts[1]) } }) : '';
+      const head = drafted ? '' : acts.map((a) => act(a, where, cc)).join('');
+      const rows = bar + ((c.extra && c.extra[s.title]) || '') + (s.rows || []).filter((r) => vis(r, c)).map((r) => row(r, sv, cc, where)).join('');
       const table = s.table ? c.R.table({ ...s.table, rows: textOf(s.table.rows, sv) }) : '';
       // a live list (`liveList(sv)`) is read again on every draw: its records are never this page's own copy
       if (s.liveList) delete sv.__recs[where];
       const list = s.liveList ? records(s.liveList(sv), sv, cc, where, textOf(s.empty, sv)) : s.list && (!s.listWhen || s.listWhen(sv)) ? records(s.list, sv, cc, where, textOf(s.empty, sv)) : '';
       return c.R.settingsSection({ icon: ''   /* the place's icon is in the bar beside; a section's head is its words */, title: s.bare ? '' : s.title, meta: textOf(s.meta, sv) || '', action: head, rows: rows + table + list + groupsHtml(s, sv, cc, where) });
-    }).join('');
+    }).join('') + dialogHtml(sv, c);
   }
 
   // The strip of a yes or no on the page, drawn under the top bar by the page around Settings (docs/stillhet/actions.md).
@@ -351,5 +382,5 @@
     if (yes && c && !c.live && refused('confirm')) return '';   // a live confirm (`live: true`) is wired to dev; the rest are not yet
     return yes && c ? c.then(sv) || '' : '';
   }
-  window.SettingsView = { fresh, section, strip, sentenceText, changesOf, rowsOf, pick, toggle, act: doAct, dialog, confirm };
+  window.SettingsView = { fresh, section, strip, sentenceText, partsText, changesOf, rowsOf, pick, toggle, act: doAct, dialog, confirm };
 })();

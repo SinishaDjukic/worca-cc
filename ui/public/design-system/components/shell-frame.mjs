@@ -50,10 +50,10 @@ export function sideToggle({ expanded = true } = {}) {
  * MenuButton: the phone's hamburger, which opens the bar as a drawer.
  * @param {object} [o]
  * @param {boolean} [o.expanded]
- * @param {boolean} [o.rollup]  draw the needs-you roll-up dot (hidden until a run needs you)
+ * @param {boolean} [o.rollup]  draw the needs-you roll-up dot (hidden until a task needs you)
  */
 export function menuButton({ expanded = false, rollup = true } = {}) {
-  const dot = rollup ? '<span class="nav-rollup" id="mbar-rollup" hidden title="A pipeline needs your input"></span>' : '';
+  const dot = rollup ? '<span class="nav-rollup" id="mbar-rollup" hidden title="A task needs you"></span>' : '';
   return iconBtn('mbar-menu', 'Menu', HAMBURGER + dot, { id: 'mbar-menu', 'aria-controls': 'side-rail', 'aria-expanded': String(expanded) });
 }
 
@@ -98,3 +98,61 @@ const ASK_PLUS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" str
 export function askButton({ mark = '', expanded = false } = {}) {
   return `<button type="button" class="btn btn-quiet topnav-ask" id="topnav-ask" data-min-level="simple"${attrs({ 'aria-expanded': String(expanded), 'aria-controls': 'ask-side', 'aria-label': 'Ask worca', title: 'Ask worca' })}><span class="ask-ic" aria-hidden="true">${mark}</span>${ASK_PLUS}<span class="topnav-ask-label">Ask worca</span><span class="topnav-ask-dot" id="topnav-ask-dot" hidden></span></button>`;
 }
+
+/**
+ * PlaceButton (nav.place-button; from classic's sidebar, where a place's whole name is the control): the bar's name and
+ * its chevron as ONE button, at least 28px high, that opens the list of places.
+ * @param {object} o
+ * @param {string} o.title     the place's name ("Tasks")
+ * @param {boolean} [o.open]   its menu shows
+ * @param {object} [o.attrs]
+ */
+export function placeButton({ title, open = false, attrs: a = {} }) {
+  return `<button type="button" class="place-btn"${attrs({ 'aria-haspopup': 'menu', 'aria-expanded': String(!!open), 'aria-label': `${title}: go to another place`, title: 'Go to another place', ...a })}><span class="place-btn-t">${esc(title)}</span>${icon('chevron', 12)}</button>`;
+}
+
+/**
+ * The items of the place button's menu: the place's own home first, then every place with its count where it has one,
+ * the current one checked. A pick reports `<prefix><id>`.
+ * @param {object} o
+ * @param {{id:string, label:string}} [o.home]     the current place's home ("Tasks home")
+ * @param {{id:string, label:string, count?:number|string, current?:boolean, lab?:boolean, icon?:string}[]} o.places
+ * @param {string} [o.prefix]
+ */
+export function placeItems({ home = null, places, prefix = 'bar-go|' }) {
+  const hint = (p) => (p.count || p.count === 0 ? String(p.count) : p.lab ? 'Labs' : undefined);
+  return [...(home ? [{ id: `${prefix}${home.id}`, text: home.label, mark: icon('home', 14) }, { sep: true }] : []),
+    ...places.map((p) => ({ id: `${prefix}${p.id}`, text: p.label, checked: !!p.current, hint: hint(p), mark: p.icon || '' }))];
+}
+
+/**
+ * BarPlaceHead: the bar's head. The W mark alone goes home; the place's name is the PlaceButton; then the place's + and
+ * Hide. On the home bar, which lists the places itself, the name is plain text.
+ * @param {object} o
+ * @param {string} o.title
+ * @param {string} [o.logo]     the product's mark (markup)
+ * @param {boolean} [o.places]  the name opens the places (false on the home bar)
+ * @param {boolean} [o.open]    the places menu shows
+ * @param {string} [o.menu]     the places menu's markup, when open
+ * @param {string} [o.action]   the place's + (markup)
+ * @param {string} [o.hide]     the Hide button (markup)
+ * @param {{home?:object, place?:object}} [o.hooks]  the page's attrs on the W and on the PlaceButton
+ */
+export function barPlaceHead({ title, logo = '', places = true, open = false, menu = '', action = '', hide = '', hooks = {} }) {
+  const home = `<button type="button" class="bar-house"${attrs({ 'data-bar-home': '', title: 'Home', 'aria-label': 'Home', ...(hooks.home || {}) })}>${logo || icon('home', 16)}</button>`;
+  const name = places ? placeButton({ title, open, attrs: { 'data-bar-house': '', ...(hooks.place || {}) } }) : `<span class="bar-title-w">${esc(title)}</span>`;
+  return `<div class="bar-head">${home}<h2 class="bar-title">${name}</h2>${open && menu ? `<span class="rc-pop bar-quick">${menu}</span>` : ''}${action}${hide}</div>`;
+}
+
+/**
+ * SkipLink (key.skip-link): the page's first Tab stop; it shows only while focused and moves the focus to the content.
+ * @param {object} [o]
+ * @param {string} [o.to]     the id of the content
+ * @param {string} [o.label]
+ */
+export function skipLink({ to = 'main-content', label = 'Skip to content' } = {}) {
+  return `<a class="skip-link"${attrs({ href: `#${to}`, 'data-skip': to })}>${esc(label)}</a>`;
+}
+
+// Until index.mjs exports them, a page reaches the new parts through an exported neighbour: R.sidebarFrame.parts.
+sidebarFrame.parts = { placeButton, placeItems, barPlaceHead, skipLink };

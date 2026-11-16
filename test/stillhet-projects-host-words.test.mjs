@@ -76,13 +76,14 @@ test('F-6-19: the project page draws before history; the store fills it in witho
   const items = [...page(h.d).querySelectorAll('[data-menu-pick^="pj-more|"]')].map((b) => b.dataset.menuPick.split('|')[1]);
   assert.deepEqual(items.filter((i) => !['task', 'tasks'].includes(i)), [], 'an early record offers no write that reads the store');
   assert.equal(page(h.d).querySelector('[data-pj-act]'), null, 'no origin action');
-  const dock = h.d.getElementById('pj-dock');
+  // the redesign: a project's page has no composer (stillhet.chat-first); the frame is its column
+  const dock = page(h.d).querySelector('[data-pj-page]');
   assert.ok(dock);
   g.open(); await settle(200);
   h.sockets.at(-1)?.onmessage({ data: JSON.stringify({ type: 'hello', bootId: 'b', runs: [] }) }); await settle(200);
   assert.doesNotMatch(text(page(h.d)), /Loading tasks/);
   assert.match(text(page(h.d)), /Up to date/, 'the store\'s record took over');
-  assert.equal(h.d.getElementById('pj-dock'), dock, 'the same dock: the frame was not rebuilt');
+  assert.equal(page(h.d).querySelector('[data-pj-page]'), dock, 'the same column: the frame was not rebuilt');
   assert.deepEqual(sent(h.calls), [], 'nothing written');
 });
 

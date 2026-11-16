@@ -1,6 +1,8 @@
 // Insights on Stillhet (Wave 3): one feature; its bar holds its sub-features, grouped. Every page says the answer in a sentence
-// (the PlaceHead), draws one chart (bars unless you ask otherwise, look.chart-play), says what it shows in one sentence of
-// pickers, lists breakdown rows that open their tasks and ends with the composer. The numbers come from insights-model.js.
+// (the PlaceHead, which also says what the figure measures and whose it is), draws one chart (bars unless you ask otherwise,
+// look.chart-play), holds what it shows as one row of labelled fields (list.filters) and lists breakdown rows; a row that
+// can open its tasks is a button, one that cannot is text. No composer here: Ask about it in chat hands the page to Chat
+// (stillhet.chat-first). The address follows the view. The numbers come from insights-model.js.
 (function () {
   const R = window.StillhetUI, M = window.StillhetInsightsModel;
   const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -9,7 +11,7 @@
   const AGAINST = { none: 'no comparison', before: 'the period before', budget: 'the budget' };
   const HINT = 'Drag across to narrow';
   const TEAM_EMPTY = 'No project shares its team numbers yet';   // D3: turning sharing on stays in the project's settings
-  const ALIAS = { saved: 'time-saved', outcomes: 'ends', time: 'merge' };   // old links to what the page used to be called
+  const ALIAS = { saved: 'time-saved', outcomes: 'ends' };   // old links to what the page used to be called
   const views = [{ id: 'v1', name: 'By client, then workflow', sub: 'spend', st: { by: 'client', then: 'workflow' } }, { id: 'v2', name: 'Monthly for finance', sub: 'spend', st: { by: 'costcenter', when: 'last month', as: 'table' } }];
   const states = {};
   const unchecked = new Set();   // live: a state from a link or a saved view, checked once against the data it reads (ledger row 3)
@@ -58,27 +60,34 @@
   const wholeOf = (sub, st) => (sub.src.live ? sub.src.whole || { labels: sub.src.labels, days: sub.src.days, last: sub.src.last } : null);
   const atDay = (w, iso, end) => { if (!iso || !w.days.length) return end ? w.days.length - 1 : 0; const i = end ? w.days.map((d) => d <= iso).lastIndexOf(true) : w.last.findIndex((d) => d >= iso); return i < 0 ? (end ? 0 : w.days.length - 1) : i; };
   function againsts(sub, st, c) { return ['none', ...(c.P ? ['before'] : []), ...(sub.budget && st.when === 'this month' ? ['budget'] : [])]; }
+  // the filters (list.filters): Show, By, Then by, Time, Of, As, Compared with: each a labelled field in its own place
+  const narrowedBy = (st) => (st.linked && st.filter.length ? R.namesWord(st.filter.map((k) => k.slice(k.indexOf(':') + 1))) : '');
   function sentence(sub, st, c) {
-    const dims = dimsNow(sub, st);
-    const part = (word, id, text, items, extra = {}) => ({ word, id, text, items, ...extra });
+    const dims = dimsNow(sub, st), thenDims = sub.src.heat ? [] : dims.filter((d) => d !== st.by && !M.TIME.has(d));   // a grid has its two sides already
+    const part = (label, id, text, items, cls = '', tip = '') => ({ cls, part: { label, id, text, items, tip } });
     const w = wholeOf(sub, st), days = w ? w.labels : M.compute(sub, { ...st, narrow: null }).labels, [fromAt, toAt] = w ? [atDay(w, st.from, false), atDay(w, st.to, true)] : st.narrow || [0, days.length - 1], dayItems = (cur, ok) => days.map((d, i) => ({ id: String(i), text: d, checked: i === cur })).filter((_, i) => ok(i));
     const check = (list, cur) => list.map((v) => ({ id: v, text: v, checked: v === cur }));
-    const start = [
-      part('Showing', 'in-what', sub.noun, M.SUBS.filter((s) => s.group === sub.group && (!s.team || team())).map((s) => ({ id: s.id, text: s.noun, checked: s.id === sub.id })), { tip: 'What it shows' }),
-      part('by', 'in-by', M.DIM[st.by], [...pick(dims).map((it) => (it.header ? it : { ...it, checked: it.id === st.by })), ...(dims.some((d) => d !== st.by && !M.TIME.has(d)) ? [{ sep: true }, { id: '+then', text: st.then ? `Then by ${M.DIM[st.then]}` : 'Then by' }] : [])], { tip: 'What it is broken down by' }),
-      ...(st.then ? [part('then', 'in-then', M.DIM[st.then], [...pick(dims.filter((d) => d !== st.by)).map((it) => (it.header ? it : { ...it, checked: it.id === st.then })), { sep: true }, { id: 'none', text: 'No second level' }], { tip: 'The level under it' })] : []),
-      part('', 'in-when', st.custom ? 'custom' : c.timeWord, [...check(M.WHEN, st.narrow || st.from ? '' : st.when), { id: 'custom', text: 'custom', checked: !!st.custom }], { tip: 'When' }),
-      ...(st.custom ? [part('from', 'in-from', days[fromAt], dayItems(fromAt, (i) => i <= toAt), { tip: 'The first day' }), part('to', 'in-to', days[toAt], dayItems(toAt, (i) => i >= fromAt), { tip: 'The last day' })] : []),
+    const narrowed = !!(st.narrow || (sub.src.live && st.from)) && !st.custom;
+    const fields = [
+      part('Show', 'in-what', sub.noun, M.SUBS.filter((s) => s.group === sub.group && (!s.team || team())).map((s) => ({ id: s.id, text: s.noun, checked: s.id === sub.id })), '', 'What it shows'),
+      part('By', 'in-by', M.DIM[st.by], pick(dims).map((it) => (it.header ? it : { ...it, checked: it.id === st.by })), ' is-two-cols', 'What it is broken down by'),
+      ...(thenDims.length ? [part('Then by', 'in-then', st.then ? M.DIM[st.then] : 'nothing', [{ id: 'none', text: 'nothing', checked: !st.then }, ...pick(thenDims).map((it) => (it.header ? it : { ...it, checked: it.id === st.then }))], ' is-two-cols', 'The level under it')] : []),
+      part('Time', 'in-when', st.custom ? 'custom' : c.timeWord, [...check(M.WHEN, st.narrow || st.from ? '' : st.when), { id: 'custom', text: 'custom', checked: !!st.custom }], '', 'When'),
+      ...(st.custom ? [part('From', 'in-from', days[fromAt], dayItems(fromAt, (i) => i <= toAt), '', 'The first day'), part('To', 'in-to', days[toAt], dayItems(toAt, (i) => i >= fromAt), '', 'The last day')] : []),
+      part('Of', 'in-of', filterWord(st, sub), filterItems(sub, st), ' is-two-cols', 'Which of it'),
+      ...(sub.forms.length < 2 ? [] : [part('As', 'in-as', AS[st.as], sub.forms.filter((f) => f !== 'lines' || !noLines(sub, st)).map((f) => ({ id: f, text: AS[f], checked: f === st.as })), '', 'How it is drawn'),
+        part('Compared with', 'in-vs', st.against === 'none' ? 'nothing' : AGAINST[st.against], againsts(sub, st, c).map((v) => ({ id: v, text: v === 'none' ? 'nothing' : AGAINST[v], checked: v === st.against })), '', 'What it is set against')]),
     ];
-    const clear = st.narrow || (sub.src.live && st.from && !st.custom) ? R.button({ label: 'Back to the whole period', iconOnly: true, kind: 'quiet', icon: R.icon('x', 11), cls: 'ch-clear', attrs: { 'data-in-clear': '' } }) : '';
-    const rest = [
-      part('of', 'in-of', filterWord(st, sub), filterItems(sub, st), { tip: 'Which of it' }),
-      ...(sub.forms.length < 2 ? [] : [part('as', 'in-as', AS[st.as], sub.forms.filter((f) => f !== 'lines' || !noLines(sub, st)).map((f) => ({ id: f, text: AS[f], checked: f === st.as })), { tip: 'How it is drawn' }),
-      part(st.against === 'none' ? 'with' : 'against', 'in-vs', AGAINST[st.against], againsts(sub, st, c).map((v) => ({ id: v, text: AGAINST[v], checked: v === st.against })), { tip: 'What it is set against' })]),
+    const chevron = R.icon('chevron', 12);
+    // one compact line; the open picker's own menu class (two columns for the long lists); the page's small tools end the line
+    const tools = R.button({ label: 'Save this view', attrs: { 'data-in-save': '', title: 'Keeps this page as you set it, under Your views' } }) + R.button({ label: 'Copy a link', attrs: { 'data-in-link': '', title: 'To this page, as you narrowed it' } }) + R.button({ label: 'Download CSV', attrs: { 'data-in-csv': '', title: 'The rows below, as a file' } });
+    const row = R.centerSentence.filters({ parts: fields.map((f) => f.part), pick: menu, chevron, menuCls: fields.find((f) => f.part.id === menu)?.cls || '', end: tools });
+    // a filter a link set (a project's spend, a copied link) holds for this visit, and the page says so (list.narrowed)
+    const by = narrowedBy(st), lines = [
+      by ? `<p class="in-narrowed" data-in-narrowed>Narrowed to <b>${esc(by)}</b> · ${R.button({ label: 'Clear', kind: 'quiet', attrs: { 'data-in-unlink': '', title: 'Shows everything again' } })}</p>` : '',
+      narrowed || st.custom ? `<p class="in-narrowed">Showing <b>${esc(c.timeWord)}</b> only · ${R.button({ label: 'Back to the whole period', kind: 'quiet', cls: 'ch-clear', attrs: { 'data-in-clear': '' } })}</p>` : '',
     ];
-    const open = { open: menu, chevron: R.icon('chevron', 10) };
-    const words = (l, cls = '') => R.listSentence({ parts: l, ...open, menuCls: cls });
-    return `<div class="list-sentence">${words(start.slice(0, 1))} ${words(start.slice(1, 2), ' is-two-cols')} ${st.then ? words([start[2]], ' is-two-cols') : ''} ${words(start.filter((p) => ['in-when', 'in-from', 'in-to'].includes(p.id)))}${clear} ${words(rest.slice(0, 1), ' is-two-cols')} ${words(rest.slice(1))}</div>`;
+    return row + lines.join('');
   }
   // ---- the chart ----
   // what the chart shows when the rows are by something else, and a budget's pace while it is the whole month (look.chart-play)
@@ -125,7 +134,7 @@
     const g = sub.src.heat?.[st.by];
     if (!g) return '';
     const tasks = (n) => `${n} ${n === 1 ? 'task' : 'tasks'}`;
-    return R.heatGrid({ label: `${sub.title} by ${M.DIM[st.by]}, ${c.timeWord}`, rows: g.rows, columns: g.columns, max: g.max, off: "The whole team's numbers: Tasks lists your own",
+    return R.heatGrid({ label: `${sub.title} by ${M.DIM[st.by]}, ${c.timeWord}`, rows: g.rows, columns: g.columns, max: g.max, off: "A cell opens nothing: these are the whole team's numbers, and Tasks lists your own",
       cells: g.cells.map((row) => row.map((x) => ({ value: x.value, text: x.value ? `${M.usd(x.value)}, ${tasks(x.runs)}` : '' }))) });
   }
   function chartHtml(sub, st, c) {
@@ -197,14 +206,14 @@
     const opens = (r, i) => { const open = c.st.open === r.name; return { id: `in-work-${i}`, open, label: `${r.name}'s work`, ...(open ? window.StillhetInsightsWork.detail(c, r.name, c.st, c.st.shown || window.StillhetInsightsWork.FIRST) : {}) }; };
     const rowOf = (r, parent, s, i) => {
       if (isPerson(c, r, parent)) return { name: r.name, cells: cellsOf(sub, c, r), sub: s, opens: opens(r, i), attrs: { 'data-in-person': r.name, title: `Shows ${r.name}'s work` } };
-      const f = r.other || r.kind ? null : tasksOf(c, c.st, r.name, parent); return { name: r.name, cells: cellsOf(sub, c, r), sub: s, quiet: /^No /.test(r.name) || r.name === 'Other' || !!r.other || !!r.kind, attrs: f ? { 'data-in-row': JSON.stringify(f), title: `Opens Tasks, narrowed to ${parent ? `${parent}, ` : ''}${r.name}` } : { disabled: true, title: c.sub.team ? "The whole team's numbers: Tasks lists your own" : sub.closed || `Tasks narrow by project, time or status, not by ${byWord(c.st)}` } };
+      const f = r.other || r.kind ? null : tasksOf(c, c.st, r.name, parent); return { name: r.name, cells: cellsOf(sub, c, r), sub: s, quiet: /^No /.test(r.name) || r.name === 'Other' || !!r.other || !!r.kind, ...(f ? { attrs: { 'data-in-row': JSON.stringify(f), title: `Opens Tasks, narrowed to ${parent ? `${parent}, ` : ''}${r.name}` } } : { why: c.sub.team ? "The whole team's numbers: Tasks lists your own" : sub.closed || `Tasks narrow by project, time or status, not by ${byWord(c.st)}` }) };
     };
     return R.figureRows({ label: `By ${M.DIM[c.st.by]}`, columns: columns(sub), rows: c.rows.flatMap((r, i) => [rowOf(r, '', false, i), ...(r.kids || []).map((k) => rowOf(k, r.name, true, i))]) });
   }
   function actions(sub, st, c) {
     const tag = sub.id === 'untagged' || (M.SUB[sub.id]?.src === M.SUB.spend.src && st.by === 'client');   // the money pages, demo or live
     const noClient = sub.id === 'untagged' ? c.T.tasks : c.rows.find((r) => r.name === 'No client' || (c.live && r.kind === 'none'))?.tasks;   // live: dev's Unallocated row
-    return `<div class="in-acts">${tag && noClient ? `${R.button({ label: `Tag these ${noClient} tasks`, attrs: { 'data-in-tag': noClient } })}${R.button({ label: 'Set a default for a project', kind: 'quiet', attrs: { 'data-in-default': '' } })}` : ''}${R.button({ label: 'Download CSV', kind: 'quiet', attrs: { 'data-in-csv': '' } })}${R.button({ label: 'Save this view', kind: 'quiet', attrs: { 'data-in-save': '' } })}</div>`;
+    return `<div class="in-acts">${tag && noClient ? `${R.button({ label: `Tag these ${noClient} tasks`, attrs: { 'data-in-tag': noClient } })}${R.button({ label: 'Set a default for a project', kind: 'quiet', attrs: { 'data-in-default': '' } })}` : ''}</div>`;
   }
   function pageHtml(sub, st, c) {
     const plain = st.when === 'this month' && !st.narrow && !st.from && !st.filter.length;
@@ -212,15 +221,18 @@
     const word = sub.wordAlways ? sub.wordAlways(c) : plain ? sub.word(c) : c.live && c.v == null ? `Not known ${scope}` : `${sub.text(c.v)} ${scope}`;
     const why = sub.whyAlways ? sub.whyAlways(c) : st.against === 'before' ? M.cmp(c, sub) : plain ? sub.why(c) : '';   // no comparison asked for: none in the headline; sub.why never compares
     const pace = sub.pace && plain;   // over budget at this pace: Advisory, in ink (look.alert-ladder); live: the words of D10 (no budget, or under it: no pace)
-    const head = R.placeHead({ center: arg === 'spend' ? null : { label: 'Insights', to: 'insights' }, title: viewList().find((v) => v.id === arg)?.name || sub.title, mark: pace ? R.kindMark({ kind: 'figure', tone: 'ok', icon: sub.icon, title: sub.pace }) : R.kindMark({ kind: 'plugin', icon: sub.icon }), tone: pace ? 'ok' : '', word: pace ? sub.pace : word, why: pace ? [word, ...why.split(' · ').filter((x) => !/on pace for/i.test(x))].join(' · ') : why, menu: R.moreMenu({ id: 'in-more', label: `More for ${sub.title}`, icon: R.icon('more', 16), open: menu === 'in-more', items: [{ id: 'link', text: 'Copy a link', help: 'To this page, as you narrowed it' }] }) });
-    const stands = sub.id === 'why' ? `<p class="in-stands">A small change to try: <b>web-app</b> ${esc(M.STANDS.why.outcome)}</p><p class="in-stands">${esc(M.STANDS.why.because)}</p><div class="in-acts">${R.button({ label: 'Try Opus 5.5 on web-app', attrs: { 'data-in-try': '' } })}</div><p class="wf-ed-m">Try starts a new chat for you to send; nothing changes until you do. You can switch back to Sonnet 5.5 at any time.</p>` : sub.id === 'review' ? `<p class="in-stands">What stands out: <b>web-app</b> ${esc(M.STANDS.review)}</p><div class="in-acts">${R.button({ label: 'Ask why web-app goes back', attrs: { 'data-in-ask': '' } })}</div>` : '';
-    return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${head}${sentence(sub, st, c)}${chartHtml(sub, st, c)}${st.as === 'table' && (stacks(sub, st, c) || (st.against === 'before' && !axisIsRows(sub, st))) ? '' : rowsHtml(sub, c)}${stands}${actions(sub, st, c)}</div></div><div class="convo-dock" id="in-dock"></div></div>`;
+    const measures = typeof sub.measures === 'function' ? sub.measures(sub) : sub.measures || '';
+    const head = R.placeHead({ center: arg === 'spend' ? null : { label: 'Insights', to: 'insights' }, title: viewList().find((v) => v.id === arg)?.name || sub.head || sub.title, facts: esc(measures), mark: pace ? R.kindMark({ kind: 'figure', tone: 'ok', icon: sub.icon, title: sub.pace }) : R.kindMark({ kind: 'plugin', icon: sub.icon }), tone: pace ? 'ok' : '', word: pace ? sub.pace : word, why: pace ? [word, ...why.split(' · ').filter((x) => !/on pace for/i.test(x))].join(' · ') : why,
+      action: R.button({ label: 'Ask about it in chat', attrs: { 'data-in-chat': '', title: 'Opens Chat with this page attached' } }) });
+    return frame(`${head}${sentence(sub, st, c)}${chartHtml(sub, st, c)}${st.as === 'table' && (stacks(sub, st, c) || (st.against === 'before' && !axisIsRows(sub, st))) ? '' : rowsHtml(sub, c)}${actions(sub, st, c)}`);
   }
+  // one page frame (stillhet.one-frame): the column every place shares, its title on the same edge as Tasks
+  const frame = (h) => `<div class="convo"><div class="convo-scroll"><div class="convo-col is-center">${h}</div></div></div>`;
   const here = () => (location.hash.slice(1) || '').split('/')[0] === 'insights';   // the page area is shared by every place: draw only while this one is open
   // the live kind's list states (D8): loading, failed with Try again, and the team pages' empty state
   function listStateHtml(sub, r) {
     const state = r.state === 'loading' ? 'loading' : r.state === 'failed' ? 'failed' : 'empty';
-    return `<div class="stillhet-locked">${R.placeHead({ center: { label: 'Insights', to: 'insights' }, title: sub.title })}${R.listState({ state, noun: sub.noun, title: r.state === 'failed' ? `Could not load ${sub.title}: ${r.text}` : '', text: r.text || '', retry: r.state === 'failed' ? { 'data-in-retry': '' } : null })}</div>`;
+    return frame(`${R.placeHead({ center: { label: 'Insights', to: 'insights' }, title: sub.head || sub.title })}${R.listState({ state, noun: sub.noun, title: r.state === 'failed' ? `Could not load ${sub.title}: ${r.text}` : '', text: r.text || '', retry: r.state === 'failed' ? { 'data-in-retry': '' } : null })}`);
   }
   // live: the page's live sub (the design's SUB with dev's figures); a state its source lacks falls back to the defaults
   function liveSub(sub, st) {
@@ -259,12 +271,11 @@
     const c = M.compute(sub, st);
     if (taskId && sub.id === 'team' && window.StillhetInsightsWork) { bar.innerHTML = barHtml(); page.innerHTML = window.StillhetInsightsWork.task(c, taskId, st, st.open || ''); page.querySelector('[data-in-back]')?.focus({ preventScroll: true }); return; }
     const had = keyOf(document.activeElement);
-    const scroll = page.querySelector('.convo-scroll')?.scrollTop || 0, draft = page.querySelector('#in-dock [data-composer-t]')?.value || '';
+    const scroll = page.querySelector('.convo-scroll')?.scrollTop || 0;
     bar.innerHTML = barHtml();
     page.innerHTML = pageHtml(sub, st, c);
-    window.StillhetConversation?.dock(document.getElementById('in-dock'), { kind: 'question', title: sub.title, chat: '' });
     const scroller = page.querySelector('.convo-scroll'); if (scroller) scroller.scrollTop = scroll;
-    const box = page.querySelector('#in-dock [data-composer-t]'); if (box && draft) box.value = draft;
+    follow(sub, st);
     R.watchChart(page.querySelector('[data-chart]'), {
       open: (i) => { const f = targetOf(sub, st, c, i); if (f) window.StillhetRunsList.filter(f); },
       narrow: axisIsRows(sub, st) ? undefined : (a, b) => { if (c.live) { st.from = c.src.days[a]; st.to = c.src.last[b]; } else { const base = st.narrow ? st.narrow[0] : 0; st.narrow = [base + a, base + b]; }   /* live: a re-read over the dragged days (D7) */ menu = ''; dragged = true; try { localStorage.setItem(DRAGGED, '1'); } catch { /* remembering is a nicety */ } draw(); },
@@ -272,6 +283,14 @@
     if (back) { page.querySelector(`[data-menu="${back}"]`)?.focus({ preventScroll: true }); back = ''; }
     else if (focusRow) { personRow(focusRow)?.focus({ preventScroll: true }); focusRow = ''; }
     else if (had) page.querySelector(had)?.focus({ preventScroll: true });   // a live answer redrew the open row: focus stays where it was
+  }
+  // the address follows the view (act.copy-link): what you picked is in the address, so a reload or Back shows it again.
+  // A saved view and a teammate's task keep their own address; nothing is sent, and no route runs.
+  function follow(sub, st) {
+    if (taskId || viewList().some((v) => v.id === arg) || !M.SUB[sub.id]) return;
+    const link = M.linkOf(sub.id, st), now = location.hash.slice(1);
+    if (now === link || (now === 'insights' && link === 'insights/spend')) return;
+    try { history.replaceState(history.state, '', `#${link}`); applied = link.slice('insights/'.length); } catch { /* an address that cannot follow changes nothing on the page */ }
   }
   // what to focus again after a redraw: a control of the open row, by its own hook
   const q = (v) => String(v).replace(/["\\]/g, '\\$&');   // a value inside an attribute selector
@@ -288,7 +307,6 @@
     const sub = subOf(arg), st = stateOf();
     if (id === 'in-what') { menu = ''; if (v !== sub.id) window.StillhetShell.go(`insights/${v}`); else draw(); return; }
     if (id === 'in-by') {
-      if (v === '+then') { st.then = st.then || dimsNow(sub, st).find((d) => d !== st.by && !M.TIME.has(d)) || ''; menu = 'in-then'; draw(); return; }
       st.by = v; if (st.then === v) st.then = '';
     }
     if (id === 'in-then') st.then = v === 'none' ? '' : v;
@@ -304,6 +322,7 @@
     const w = isLive() ? wholeOf(liveSub(sub, st).sub || sub, st) : null;
     if (id === 'in-from') { if (w) st.from = w.days[+v]; else st.narrow = [+v, st.narrow[1]]; }
     if (id === 'in-to') { if (w) st.to = w.last[+v]; else st.narrow = [st.narrow[0], +v]; }
+    if (id === 'in-of') st.linked = false;   // your own pick: it stays until you change it
     if (id === 'in-of' && v.startsWith('scope:')) { st.scope = v.slice(6); st.filter = []; back = id; menu = ''; draw(); return; }   // one team at a time: a new read
     if (id === 'in-of') {
       if (v === 'all') st.filter = [];
@@ -372,8 +391,9 @@
       const shown = isLive() ? liveSub(sub, st).sub || sub : sub;
       if (on('[data-in-csv]')) { csv(shown, st); return; }
       if (on('[data-in-save]')) { save(shown, st); return; }
-      if (on('[data-in-try]')) { window.StillhetConversation?.handOver({ project: 'web-app', about: { kind: 'Project', name: 'web-app' }, ph: "Try Opus 5.5 for web-app's coding step?" }); return; }
-      if (on('[data-in-ask]')) { window.StillhetConversation?.handOver({ project: 'web-app', about: { kind: 'Project', name: 'web-app' }, ph: 'Why does review send web-app back so often?' }); return; }
+      if (on('[data-in-link]')) { copyLink(shown, st); return; }
+      if (on('[data-in-unlink]')) { st.filter = []; st.linked = false; menu = ''; draw(); page.querySelector('[data-menu="in-of"]')?.focus({ preventScroll: true }); return; }
+      if (on('[data-in-chat]')) { window.StillhetConversation?.handOver({ about: { kind: 'Insights', name: [shown.head || shown.title, st.filter.length ? `of ${filterWord(st, shown)}` : '', M.compute(shown, st).timeWord].filter(Boolean).join(', ') }, ph: `Ask about ${(shown.head || shown.title).toLowerCase()}` }); return; }
       if ((hit = on('[data-in-tag]'))) { window.StillhetConversation?.handOver({ about: { kind: 'Insights', name: [sub.title, st.filter.length ? `of ${filterWord(st, shown)}` : '', M.compute(shown, st).timeWord].filter(Boolean).join(', ') }, ph: `How should the ${hit.dataset.inTag} tasks without a client be tagged?` }); return; }
       if (on('[data-in-default]')) {
         const top = topUntagged(shown, st), p = isLive() ? (window.StillhetProjects?.all() || []).find((x) => (x.name || x.id) === top) : { id: top };
@@ -391,7 +411,6 @@
       if ((hit = on('[data-in-work-url]'))) { window.open(hit.dataset.inWorkUrl, '_blank', 'noopener'); return; }   // work outside Worca: its pull request
       if ((hit = on('[data-in-pr]'))) { say(`Opens ${hit.dataset.inPr} at its host`); return; }   // D13: the demo's PRs have no host
       if ((hit = on('[data-pick]'))) { const t = hit.dataset.pick, at = t.indexOf('|'); choose(t.slice(0, at), t.slice(at + 1)); return; }
-      if ((hit = on('[data-menu-pick]'))) { menu = ''; if (hit.dataset.menuPick === 'in-more|link') copyLink(shown, st); draw(); return; }
       if ((hit = on('[data-menu]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); }
     });
     // Esc in the open row: a mark's card first (D8), then the detail itself, focus back on the row (docs/stillhet/keyboard.md)
@@ -404,13 +423,15 @@
     });
     const cardBack = (e) => { if (e.target.closest?.('.tt-end')) e.target.closest('.tt-lane')?.removeAttribute('data-card-off'); };   // leaving the mark brings its card back next time
     page.addEventListener('focusout', cardBack); page.addEventListener('mouseout', cardBack);
+    // a filter a link set holds for that visit only: leaving Insights drops it, and Back to the link sets it again
+    window.addEventListener('hashchange', () => { if (here()) return; applied = ''; for (const st of Object.values(states)) if (st.linked) { st.filter = []; st.linked = false; } });
     R.dismissOnOutside(document, { open: () => here() && !!menu, inside: '#route-place .spick, #route-place .rc-pop, #route-place .pz-pick', back: () => null, close: () => { menu = ''; }, paint: draw });
   }
   window.StillhetPlaces = window.StillhetPlaces || {};
   window.StillhetPlaces.insights = {
     sample: 'spend',
     redraw: () => draw(),
-    spendOf: (project) => { Object.assign(stateOf('spend'), { filter: [`project:${project}`], narrow: null, when: 'this month', from: null, to: null, custom: false }); window.StillhetShell.go('insights/spend'); },   // a project's $ this month opens Spend narrowed to it, this month
+    spendOf: (project) => { Object.assign(stateOf('spend'), { filter: [`project:${project}`], linked: true, narrow: null, when: 'this month', from: null, to: null, custom: false }); window.StillhetShell.go('insights/spend'); },   // a project's $ this month opens Spend narrowed to it, this month
     search: (q) => [...M.SUBS.filter((s) => (!s.team || team()) && offered(s)).map((s) => ({ label: s.title, where: `Insights · ${barGroup(s)}`, hash: `insights/${s.id}` })), ...viewList().map((v) => ({ label: v.name, where: 'Insights · Your views', hash: `insights/${v.id}` }))].filter((x) => x.label.toLowerCase().includes(q)),
     // a link carries its state after `?` (act.copy-link); live, a page dev has no figure for is not found (D12)
     has: (a0) => {
@@ -430,7 +451,7 @@
       const query = at >= 0 ? a.slice(at + 1) : '', task = /(?:^|&)task=([^&]*)/.exec(query);
       try { taskId = task ? decodeURIComponent(task[1]) : ''; } catch { taskId = ''; }
       const onlyTask = task && query.split('&').filter(Boolean).length === 1;   // D2: a task address keeps the page's own state (the open person)
-      if (at >= 0 && !onlyTask && a !== applied && M.SUB[next]) { applied = a; states[next] = M.stateOfLink(query, M.SUB[next], { live: isLive() }); if (isLive()) unchecked.add(next); }   // a link's state, once
+      if (at >= 0 && !onlyTask && a !== applied && M.SUB[next]) { applied = a; states[next] = M.stateOfLink(query, M.SUB[next], { live: isLive() }); states[next].linked = states[next].filter.length > 0; if (isLive()) unchecked.add(next); }   // a link's state, once
       draw();
     },
   };

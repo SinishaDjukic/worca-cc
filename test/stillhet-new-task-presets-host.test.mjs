@@ -34,7 +34,7 @@ const note = (d) => q(d, '.choice-note');
 
 test('COV-2 presets: the menu lists only the presets for any project or this one, then No preset', async () => {
   const { d } = await open();
-  assert.equal(shown(d, 'preset'), 'no preset');
+  assert.equal(shown(d, 'preset'), 'No preset');
   assert.deepEqual(await menuOf(d), ['Bug fix', 'Web only', 'Gone bits', 'No preset']);
 });
 
@@ -157,7 +157,7 @@ test('COV-2 presets: No preset clears it; the start body has no preset id', asyn
   const { w, d, calls } = await open();
   await pick(d, 'preset', 'p:rp_fix');
   await pick(d, 'preset', 'none');
-  assert.equal(shown(d, 'preset'), 'no preset');
+  assert.equal(shown(d, 'preset'), 'No preset');
   type(w, d, '#cc-text', 'Add a pager'); await start(d);
   const [b] = runs(calls);
   assert.equal(b.presetId, undefined); assert.equal(b.guardrailsId, undefined);
@@ -187,6 +187,6 @@ test('COV-2 presetSelect / Clear preset / Update preset (demo): from Docs pass â
   const m = await menuOf(d);
   assert.ok(m.includes('Update preset') && m.at(-1) === 'No preset', JSON.stringify(m));
   await pick(d, 'preset', 'none');
-  assert.equal(shown(d, 'preset'), 'no preset', 'the clause no longer names a preset');
+  assert.equal(shown(d, 'preset'), 'No preset', 'the clause no longer names a preset');
   assert.doesNotMatch(q(d, '.cc-frame').textContent, /Docs pass/);
 });

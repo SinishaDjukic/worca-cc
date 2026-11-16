@@ -1,4 +1,4 @@
-// The parts of a list (docs/stillhet/lists.md): its sentence, a group row with its members, a run's stacked fix rounds, the
+// The parts of a list (docs/stillhet/lists.md): its filters, a group row with its members, a run's stacked fix rounds, the
 // list's own state, and a chat's marks. list.mjs holds the row and the list; list-page.mjs joins them to a page.
 import { attrs, esc } from './html.mjs';
 import { button } from './button.mjs';
@@ -39,29 +39,69 @@ const FILTER_LABELS = { Showing: 'Show', from: 'Project', by: 'Group by', 'start
 const sentenceCase = (t) => String(t).charAt(0).toUpperCase() + String(t).slice(1);
 
 /**
- * FilterRow (list.filters; from classic's tabs and dropdown filters): what a list shows, as controls that keep their
- * place. A part with `tabs` is a row of tabs, each with its count; the choices not named there sit behind a last tab,
- * More. Every other part is a labelled picker of a fixed width whose value cuts short, so picking one never moves
- * another. A pick reports `data-pick="<id>|<item>"`, from a tab as from a menu.
+ * FilterRow (list.filters; from classic's tabs and dropdown filters): what a list shows, on ONE compact line, 32px high.
+ * A part with `tabs` draws its main views as small plain text tabs with their counts; the current one is underlined.
+ * Folded (`fold`, a bar): every other choice lives behind one small Filter control, a floating menu with a labelled
+ * group per part, and a filter that is not at its default shows on the line as a small chip with ✕ ("web-app ✕").
+ * Not folded (a page): each other part is a picker on the line with its label inside ("Order: Most urgent ▾"), and the
+ * choices a tabs part does not show sit behind More. A pick reports `data-pick="<id>|<item>"`, from a tab, a menu or a
+ * chip's ✕ alike; a picker and the Filter control open by `data-menu` (the part's id; `filters` for the Filter control).
  * @param {object} o
- * @param {{id:string, word?:string, label?:string, text:string, items:object[], tip?:string, tabs?:string[]}[]} o.parts
- *   `label` names the field (else the old sentence word's label); `tabs` lists the item ids drawn as tabs
+ * @param {{id:string, word?:string, label?:string, text:string, items:object[], tip?:string, tabs?:string[], raw?:boolean, chip?:boolean, reset?:string}[]} o.parts
+ *   `label` names the part (else the old sentence word's label); `tabs` lists the item ids drawn as tabs; `raw` for a
+ *   part whose choices are names (a project, a person): they show as written, never recased; `chip: false` for a part
+ *   that arranges and does not narrow (Group by); `reset` the default item's id (else the first tab, or the first item)
  * @param {string} [o.open]     the id of the open menu
+ * @param {boolean} [o.fold]    one Filter control and chips, for a bar
+ * @param {string} [o.end]      markup at the end of the line (a Figures toggle)
  * @param {string} [o.chevron]
  * @param {string} [o.menuCls]
  */
-export function filterRow({ parts, open = '', chevron = '', menuCls = '' }) {
+export function filterRow({ parts, open = '', chevron = '', menuCls = '', fold = false, end = '' }) {
   const labelOf = (p) => p.label || FILTER_LABELS[p.word] || sentenceCase(p.word || p.id);
-  const field = (p) => `<span class="filter-field"><span class="filter-l" id="fl-${esc(p.id)}">${esc(labelOf(p))}</span>${listWord({ ...p, text: sentenceCase(p.text), field: labelOf(p) }, { open, chevron, menuCls })}</span>`;
-  const tabsOf = (p) => {
-    const real = p.items.filter((it) => !it.sep && !it.header);
-    const shown = p.tabs.map((id) => real.find((it) => it.id === id)).filter(Boolean), rest = real.filter((it) => !shown.includes(it));
-    const cur = rest.find((it) => it.checked);
-    const tab = (it) => `<button type="button" class="filter-tab"${attrs({ 'data-pick': `${p.id}|${it.id}`, 'data-key': `pick:${p.id}:${it.id}`, 'aria-pressed': String(!!it.checked), title: it.help || null })}>${esc(sentenceCase(it.text))}${it.hint !== undefined && it.hint !== '' ? `<span class="n">${esc(it.hint)}</span>` : ''}</button>`;
-    const more = rest.length ? listWord({ id: p.id, text: cur ? sentenceCase(cur.text) : 'More', items: rest, tip: p.tip, field: labelOf(p), tab: true, on: !!cur }, { open, chevron, menuCls }) : '';
-    return `<span class="filter-tabs" role="group"${attrs({ 'aria-label': labelOf(p) })}>${shown.map(tab).join('')}${more}</span>`;
+  // a choice starts with a capital, in its tab, its picker and its menu alike; a part of names (`raw`) shows them as written
+  const say = (p, t) => (p.raw ? String(t) : sentenceCase(t));
+  const cased = (p) => p.items.map((it) => (it.sep || it.header ? it : { ...it, text: say(p, it.text) }));
+  const real = (p) => cased(p).filter((it) => !it.sep && !it.header);
+  const resetOf = (p) => (p.reset !== undefined ? p.reset : p.tabs ? p.tabs[0] : real(p)[0]?.id);
+  const chev = chevron || icon('chevron', 12);
+  const menuOf = (id, items, cls = '') => compactMenu({ items, cls: `pz-menu${cls}${menuCls}`, pickAttr: 'data-pick', motion: false, label: id === 'filters' ? 'Filter' : undefined });
+  const picks = (p, items) => items.map((it) => (it.sep || it.header ? it : { ...it, id: `${p.id}|${it.id}` }));
+
+  const tab = (p, it) => `<button type="button" class="fr-tab"${attrs({ 'data-pick': `${p.id}|${it.id}`, 'data-key': `pick:${p.id}:${it.id}`, 'aria-pressed': String(!!it.checked), title: it.help || null })}><span class="fr-tab-t">${esc(it.text)}</span>${it.hint !== undefined && it.hint !== '' ? `<span class="n">${esc(it.hint)}</span>` : ''}</button>`;
+  const tabsOf = (p) => { const all = real(p); return `<span class="fr-tabs" role="group"${attrs({ 'aria-label': labelOf(p) })}>${p.tabs.map((id) => all.find((it) => it.id === id)).filter(Boolean).map((it) => tab(p, it)).join('')}</span>`; };
+  // a picker on the line, its label inside it
+  const picker = (p, { label = labelOf(p), text = say(p, p.text), items = cased(p), on = false } = {}) => `<span class="pz-pick fr-pick-w"><button type="button" class="fr-pick${on ? ' is-on' : ''}"${attrs({ 'data-menu': p.id, 'aria-haspopup': 'menu', 'aria-expanded': String(open === p.id), 'aria-label': label ? `${label}: ${text}` : text, title: p.tip || null })}>${label ? `<span class="fr-pick-l">${esc(label)}:</span>` : ''}<span class="fr-pick-v">${esc(text)}</span>${chev}</button>${open === p.id ? menuOf(p.id, picks(p, items)) : ''}</span>`;
+  const moreOf = (p) => { const rest = real(p).filter((it) => !p.tabs.includes(it.id)), cur = rest.find((it) => it.checked); return rest.length ? picker(p, { label: '', text: cur ? cur.text : 'More', items: rest, on: !!cur }) : ''; };
+  const chip = (p, it, cls = '') => `<span class="fr-chip${cls}"><span class="fr-chip-t"${attrs({ title: `${labelOf(p)}: ${it.text}` })}>${esc(it.text)}</span><button type="button" class="fr-chip-x"${attrs({ 'data-pick': `${p.id}|${resetOf(p) ?? ''}`, 'aria-label': `Clear ${labelOf(p)}: ${it.text}`, title: 'Clear' })}>${icon('sym-x', 10)}</button></span>`;
+  // a part's chip: its choice, when that is not the default (a tabs part: when no tab shows it; its third tab on, as a
+  // chip the look shows only where that tab is hidden)
+  const chipOf = (p) => {
+    if (p.chip === false) return '';
+    const cur = real(p).find((it) => it.checked);
+    if (p.tabs) return !cur ? '' : !p.tabs.includes(cur.id) ? chip(p, cur) : p.tabs.indexOf(cur.id) > 1 ? chip(p, cur, ' is-narrow') : '';
+    if (cur) return cur.id === resetOf(p) ? '' : chip(p, cur);
+    return p.text && real(p).length ? chip(p, { text: say(p, p.text) }) : '';   // several chosen at once (labels): its words
   };
-  return `<span class="filter-row">${parts.map((p) => (p.tabs ? tabsOf(p) : field(p))).join('')}</span>`;
+  const tabbed = parts.filter((p) => p.tabs), rest = parts.filter((p) => !p.tabs);
+  const tail = end ? `<span class="fr-end">${end}</span>` : '';
+  if (!fold) return `<span class="fr">${tabbed.map((p) => tabsOf(p) + moreOf(p)).join('')}${rest.map((p) => picker(p)).join('')}${tail}</span>`;
+  const chips = parts.map(chipOf).join('');
+  const groups = parts.flatMap((p) => [{ header: labelOf(p) }, ...picks(p, real(p))]);
+  const on = parts.some((p) => chipOf(p));
+  const filter = groups.length ? `<span class="pz-pick fr-filter"><button type="button" class="fr-filter-b${on ? ' is-on' : ''}"${attrs({ 'data-menu': 'filters', 'aria-haspopup': 'menu', 'aria-expanded': String(open === 'filters'), 'aria-label': on ? 'Filter: the list is narrowed' : 'Filter', title: 'Filter' })}>${icon('sliders', 14)}<span class="fr-filter-l">Filter</span></button>${open === 'filters' ? menuOf('filters', groups, ' fr-pop') : ''}</span>` : '';
+  return `<span class="fr is-fold">${tabbed.map(tabsOf).join('')}<span class="fr-chips">${chips}</span>${filter}${tail}</span>`;
+}
+
+/**
+ * NarrowedLine (list.narrowed-visit): a filter that came with a link from another page holds for that visit only. While
+ * it is on, one line under the filters says what the list is narrowed to and offers Clear.
+ * @param {object} o
+ * @param {string} o.to       what it is narrowed to, in the list's words ("web-app")
+ * @param {object} [o.clear]  Clear's attrs
+ */
+export function narrowedLine({ to, clear = {} }) {
+  return `<p class="list-narrowed" role="status"><span class="list-narrowed-t">Narrowed to <b>${esc(to)}</b></span>${button({ label: 'Clear', attrs: { 'data-narrow-clear': '', title: 'Back to the view you had', ...clear } })}</p>`;
 }
 
 /** The list's filters. The name is the old one: a list's "sentence" is a FilterRow now (list.filters). */
@@ -89,7 +129,7 @@ export const BY_DEFAULT = 'day';
 export function byPart({ by, choices }) {
   const has = new Map(choices.map((c) => [c.id, c]));
   const items = BY_CHOICES.filter(([id]) => has.has(id)).map(([id, text, help]) => ({ id, text, help: has.get(id).help || help, hint: has.get(id).hint, checked: by === id }));
-  return { word: 'by', id: 'by', text: (BY_CHOICES.find(([id]) => id === by) || [by, by])[1], tip: 'How the list is grouped', items };
+  return { word: 'by', id: 'by', chip: false, text: (BY_CHOICES.find(([id]) => id === by) || [by, by])[1], tip: 'How the list is grouped', items };
 }
 /**
  * A list by date: what waits on you first (head), then one section per day, each folding; Older shows 3.
@@ -157,7 +197,7 @@ export const DAY_SECTIONS = Object.freeze([['upcoming', 'Waiting'], ['today', 'T
 export function groupRow({ count, shown, noun, toggle, rows = '', end = '', ...row }) {
   const foldName = `${shown ? 'Hide' : 'Show'} the ${noun} in ${row.title}`;   // the chevron and the mark fold the same thing: one name
   const fold = button({ label: foldName, kind: 'quiet', iconOnly: true, title: false, icon: icon(shown ? 'chevron' : 'chevR', 14), attrs: { 'aria-expanded': String(shown), ...toggle } });
-  return listRow({ ...row, endText: count, end: fold + end, markFold: { open: shown, attrs: toggle, label: foldName }, after: shown && rows ? `<div class="lr-members" role="list"><div class="list-rows">${rows}</div></div>` : '' });   // its mark folds it too
+  return listRow({ ...row, endText: count, end: fold + end, markFold: { open: shown, attrs: toggle, label: foldName }, after: shown && rows ? `<div class="lr-members"><div class="list-rows" role="list"${attrs({ 'aria-label': `The ${noun} in ${row.title}` })}>${rows}</div></div>` : '' });   // its mark folds it too
 }
 
 /**

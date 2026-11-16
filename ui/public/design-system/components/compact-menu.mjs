@@ -18,6 +18,7 @@ import { icon } from './icons.mjs';
  * @property {string} [mark]     a small mark before its words: an area's icon, a KindMark
  * @property {MenuItem[]} [sub]  its items: it opens them in place (comp.menu-sub), and picks nothing itself
  * @property {boolean} [back]    the open sub-menu's way back (drawn by compactMenu only)
+ * @property {string} [line]     one supporting line under its words, shown (a mode says what it adds); `help` stays the tooltip
  */
 
 /**
@@ -34,10 +35,10 @@ export function menuItem(it, { pickAttr = 'data-menu-pick', attrs: a = {} } = {}
     return `<button type="button" class="menu-item"${attrs({ role: 'menuitem', 'aria-haspopup': 'menu', 'aria-expanded': 'false', 'aria-disabled': it.off ? 'true' : null, 'data-menu-sub': it.id || it.text, title: it.help || null, ...a })}>${it.mark || ''}<span class="mi-l">${esc(it.text)}</span>${ticked ? `<span class="menu-check">${icon('check', 12)}</span>` : ''}<span class="menu-sub-chev">${icon('chevR', 12)}</span></button>`;
   }
   const choice = it.checked !== undefined;
-  return `<button type="button" class="menu-item${it.danger ? ' is-danger' : ''}"${attrs({
+  return `<button type="button" class="menu-item${it.danger ? ' is-danger' : ''}${it.line ? ' has-line' : ''}"${attrs({
     role: choice ? 'menuitemradio' : 'menuitem', 'aria-disabled': it.off ? 'true' : null,
     'aria-checked': choice ? String(!!it.checked) : null, ...(pickAttr ? { [pickAttr]: it.id || it.text } : {}), title: it.help || null, ...a,
-  })}>${it.mark || ''}<span class="mi-l">${esc(it.text)}</span>${it.hint ? `<span class="mi-hint">${esc(it.hint)}</span>` : ''}${it.mark && it.checked ? `<span class="menu-check">${icon('check', 12)}</span>` : ''}</button>`;   // comp.menu-tick: a mark takes the choice's place, so the choice is a tick at the end
+  })}>${it.mark || ''}<span class="mi-l">${esc(it.text)}${it.line ? `<span class="mi-line">${esc(it.line)}</span>` : ''}</span>${it.hint ? `<span class="mi-hint">${esc(it.hint)}</span>` : ''}${it.mark && it.checked ? `<span class="menu-check">${icon('check', 12)}</span>` : ''}</button>`;   // comp.menu-tick: a mark takes the choice's place, so the choice is a tick at the end
 }
 
 /**
@@ -114,4 +115,112 @@ export function menuKeys(e, { openSub, closeSub }) {
   if (e.key === 'ArrowRight') return take();
   if (!off) item.click();
   return take();
+}
+
+// ---- Menus and radio groups by keyboard, on every page (docs/stillhet/keyboard.md): one listener per document, ahead of
+// a page's own shortcuts, so the bar never takes an arrow key that belongs to an open menu or a group of answers.
+const MENU = '.menu[role="menu"], .menu[role="dialog"]';
+const RADIO = '[role="radio"]:not([disabled]):not([aria-disabled="true"])';
+const keyed = new WeakSet();
+
+/**
+ * Where a key moves inside a list of choices: ↓ → next, ↑ ← previous (both wrap), Home first, End last.
+ * @param {number} count  how many choices
+ * @param {number} from   the one that has the focus (-1: none)
+ * @param {string} key
+ * @returns {number} the index to move to; -1 when the key does not move
+ */
+export function choiceMove(count, from, key) {
+  if (!count) return -1;
+  if (key === 'Home') return 0;
+  if (key === 'End') return count - 1;
+  if (key === 'ArrowDown' || key === 'ArrowRight') return (from + 1) % count;
+  if (key === 'ArrowUp' || key === 'ArrowLeft') return (Math.max(from, 0) - 1 + count) % count;
+  return -1;
+}
+
+/**
+ * Type-ahead: the next choice after `from` whose words start with what was typed.
+ * @param {string[]} texts  each choice's words
+ * @param {number} from
+ * @param {string} typed
+ * @returns {number} -1 when none does
+ */
+export function typeAhead(texts, from, typed) {
+  const t = typed.toLowerCase(); if (!t) return -1;
+  for (let i = 1; i <= texts.length; i++) { const at = (Math.max(from, -1) + i) % texts.length; if (texts[at].trim().toLowerCase().startsWith(t)) return at; }
+  return -1;
+}
+
+/** The menu a trigger opened: the one drawn beside it, else the page's one open pop-up menu. */
+function menuOf(trigger) {
+  const near = trigger.parentElement?.querySelector(MENU);
+  if (near && !near.contains(trigger)) return near;
+  // a trigger inside a menu (a side menu's opener) opened another: the one pop-up menu it is not in
+  const all = [...trigger.ownerDocument.querySelectorAll(MENU)].filter((m) => !m.contains(trigger) && m.ownerDocument.defaultView.getComputedStyle(m).position !== 'static');
+  return all.length === 1 ? all[0] : null;
+}
+const firstOf = (menu) => menu.querySelector('input:not([disabled]), textarea') || menu.querySelector('.menu-item[role="menuitemradio"][aria-checked="true"]:not([aria-disabled="true"])') || menu.querySelector(ITEM);   // the chosen answer of a choice, else the first item
+
+/**
+ * A menu that has just opened takes the focus: on its field when it holds one, else on the chosen item, else on the first.
+ * Only when the focus is on its trigger or nowhere: a menu redrawn while you are inside it is left alone.
+ */
+export function focusMenu(menu) {
+  const doc = menu.ownerDocument, a = doc.activeElement;
+  if (a && a !== doc.body && !(a.matches?.('[aria-haspopup]') && menuOf(a) === menu)) return false;
+  const to = firstOf(menu); if (!to) return false;
+  to.focus({ preventScroll: true });
+  return true;
+}
+
+/** Arrow keys, Home, End and type-ahead in every menu; arrow keys in every radio group; Tab from a trigger into its open menu. */
+export function watchChoiceKeys(doc) {
+  if (keyed.has(doc)) return;
+  keyed.add(doc);
+  const win = doc.defaultView;
+  let typed = '', typedAt = 0;
+  win.addEventListener('keydown', (e) => {
+    const t = e.target; if (!t?.closest || e.altKey || e.ctrlKey || e.metaKey) return;
+    const take = () => { e.preventDefault(); e.stopPropagation(); };
+    // a radio group: an arrow moves the choice, and the choice follows the focus
+    const radio = t.closest('[role="radio"]'), group = radio?.closest('[role="radiogroup"]');
+    if (group) {
+      const all = [...group.querySelectorAll(RADIO)], to = all[choiceMove(all.length, all.indexOf(radio), e.key)];
+      if (!to || e.key === 'Home' || e.key === 'End') return;
+      take();
+      to.focus({ preventScroll: true });
+      if (to.getAttribute('aria-checked') !== 'true') to.click();
+      return;
+    }
+    // a trigger: ↓ opens its menu, or goes into the open one; Tab goes into the open one, which is next after its trigger
+    const trigger = t.closest('[aria-haspopup="menu"], [aria-haspopup="dialog"][data-menu]');
+    if (trigger && !t.closest(MENU)) {
+      const isOpen = trigger.getAttribute('aria-expanded') === 'true', menu = isOpen ? menuOf(trigger) : null;
+      if (e.key === 'ArrowDown' && !isOpen && !trigger.matches('input, textarea')) { take(); trigger.click(); return; }
+      if ((e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) && menu) { const to = firstOf(menu); if (to) { take(); to.focus({ preventScroll: true }); } }
+      return;
+    }
+    const menu = t.closest(MENU); if (!menu) return;
+    const item = t.closest('.menu-item'), all = [...menu.querySelectorAll(ITEM)];
+    if (t.matches('input, textarea')) {   // a menu's own field: ↓ goes to its first item, every other key is the field's
+      if (e.key === 'ArrowDown' && all[0]) { take(); all[0].focus({ preventScroll: true }); }
+      return;
+    }
+    if (e.key === 'Tab') {   // Tab leaves a menu the way it came: back to its trigger (Shift), or on from it
+      const back = [...doc.querySelectorAll('[aria-haspopup][aria-expanded="true"]')].filter((x) => !menu.contains(x)).pop();
+      if (e.shiftKey && back && item === all[0]) { take(); back.focus({ preventScroll: true }); }
+      return;
+    }
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
+      const to = all[choiceMove(all.length, all.indexOf(item), e.key)];
+      if (to) { take(); to.focus({ preventScroll: true }); }
+      return;
+    }
+    if (e.key.length === 1 && e.key !== ' ' && item) {
+      const now = Date.now(); typed = now - typedAt > 700 ? e.key : typed + e.key; typedAt = now;
+      const to = all[typeAhead(all.map((x) => x.textContent || ''), typed.length > 1 ? all.indexOf(item) - 1 : all.indexOf(item), typed)];
+      if (to) { take(); to.focus({ preventScroll: true }); }
+    }
+  }, true);
 }

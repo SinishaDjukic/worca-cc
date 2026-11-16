@@ -9,7 +9,7 @@ import { dialog } from './dialog.mjs';
 import { field } from './field.mjs';
 import { icon } from './icons.mjs';
 import { list, listRow, moreMenu } from './list.mjs';
-import { groupRow, listSentence, listState, roundRows } from './list-parts.mjs';
+import { filterRow, groupRow, listState, narrowedLine, roundRows } from './list-parts.mjs';
 import { land } from './motion.mjs';
 import { selectionAction, selectApply, selectClear, selectPrune, selectStart, selectStep, selectAllState, keepFocus } from './selection.mjs';
 import { bindLongPress, selectionBar } from './selection-bar.mjs';
@@ -61,9 +61,10 @@ export function fitMenu(m, vw) {
  * @param {object} o
  * @param {Element} o.root
  * @param {object} o.spec
- * @param {string} o.spec.noun           "runs": its words in Loading and Could not load
+ * @param {string} o.spec.noun           "tasks": its words in Loading and Could not load
+ * @param {string} [o.spec.name]         what a screen reader calls the list (the noun, capitalised, by default)
  * @param {string} o.spec.label          the selection bar's name
- * @param {() => object} o.spec.view     { parts, tools, sections: [{id,title,chip,limit,fold,rows}], state, empty, retry }; a section with fold folds from its head, and stays folded
+ * @param {() => object} o.spec.view     { parts, tools, sections: [{id,title,chip,limit,fold,rows}], state, empty, retry, narrowed }; `narrowed` names what a link narrowed this visit to (NarrowedLine; Clear reports tool 'clear-narrowed'); a section with fold folds from its head, and stays folded
  * @param {() => string[]} o.spec.can    the list's actions, for its keys and its sheet
  * @param {string[]} [o.spec.scopes]     more of the keys' table (Chat's)
  * @param {(rows) => object[]} o.spec.bulk   the selection bar's actions
@@ -97,11 +98,11 @@ export function listController({ root, spec }) {
   function rowHtml(r) {
     const selecting = s.pick.on;
     const base = { title: r.title, meta: r.meta, mark: r.mark, lead: r.lead, unread: r.unread, current: r.current, holds: r.holds, flash: s.flash === r.key,
-      open: { 'data-open': r.key, title: r.tip || r.title }, attrs: { 'data-row': r.key },
+      open: { 'data-open': r.key, title: r.tip || r.title, 'data-cut-tip': r.tip ? null : '' }, attrs: { 'data-row': r.key },
       menu: r.menu ? { id: `row:${r.key}`, label: `More for ${r.title}`, icon: dots(), items: r.menu, open: s.menu === `row:${r.key}` } : null,
       check: selecting && r.pick !== false ? s.pick.ids.includes(r.key) : undefined, boxAttrs: { 'data-sel': r.key } };
     if (r.tree && r.treeShut && !s.treeSeen.has(r.key)) { s.treeSeen.add(r.key); if (!r.tree.some((c) => c.current)) s.treeShut.add(r.key); }   // list.bar-model: a healthy parent starts folded; the row you are on keeps it open
-    if (r.tree) { base.after = `<div class="lr-members lr-tree" role="list"><div class="list-rows">${r.tree.map(rowHtml).join('')}</div></div>`; if (r.tree.length) base.markFold = { open: !s.treeShut.has(r.key), attrs: { 'data-fold-tree': r.key } }; }
+    if (r.tree) { base.after = `<div class="lr-members lr-tree"><div class="list-rows" role="list"${attrs({ 'aria-label': `Under ${r.title}` })}>${r.tree.map(rowHtml).join('')}</div></div>`; if (r.tree.length) base.markFold = { open: !s.treeShut.has(r.key), attrs: { 'data-fold-tree': r.key } }; }
     if (r.endMark) base.end = r.endMark;
     if (r.members) return groupRow({ ...base, count: r.count, noun: r.noun, shown: groupOpen(r), toggle: { 'data-fold': r.key }, rows: r.members.map(rowHtml).join('') });
     let after = '';
@@ -138,7 +139,8 @@ export function listController({ root, spec }) {
     const strip = s.confirm ? confirmStrip({ text: s.confirm.text, yes: s.confirm.yes, danger: s.confirm.danger, id: `${spec.noun}-strip-t` }) : '';
     // the strip that asks about the selection stays with it, in sight however far the list has scrolled
     const selection = s.pick.on ? strip + selectionBar({ label: spec.label, count: spec.count ? spec.count(picked) : picked.length, actions: spec.bulk(picked), all: s.top.length ? selectAllState(s.pick, s.top) : undefined }) : '';
-    return (s.pick.on ? '' : strip) + list({ sentence: listSentence({ parts: v.parts, open: s.menu }), tools, groups, empty, selection }) + popHtml() + dialogHtml();
+    const narrowed = v.narrowed ? narrowedLine({ to: v.narrowed }) : '';
+    return (s.pick.on ? '' : strip) + list({ sentence: filterRow({ parts: v.parts, open: s.menu, fold: true }), tools, groups, empty, selection, note: narrowed, attrs: { role: 'region', 'aria-label': spec.name || `${spec.noun[0].toUpperCase()}${spec.noun.slice(1)}` } }) + popHtml() + dialogHtml();
   }
   const picks = () => s.pick.ids.map((k) => s.rows.get(k)).filter(Boolean);
   function popHtml() {
@@ -169,12 +171,11 @@ export function listController({ root, spec }) {
     const before = s.order, fromRow = a?.closest?.('[data-row]')?.dataset.row || s.focus;
     const out = html(spec.view()), d = s.drawn;
     if (ifChanged && owned && d && d.html === out && root.firstChild === d.first && root.childNodes.length === d.count) {
-      const stop = s.order.includes(s.focus) ? s.focus : s.order[0];
-      for (const b of root.querySelectorAll('[data-open]')) { const t = b.dataset.open === stop ? 0 : -1; if (b.tabIndex !== t) b.tabIndex = t; }
+      stops();
       if (focus && root.querySelector(focus)) root.querySelector(focus).focus();
       return;
     }
-    const scroller = root.closest('.main, .rl-side-body'), y = scroller?.scrollTop || 0;
+    const scroller = root.closest('.main, .rl-side-body, .bar-list'), y = scroller?.scrollTop || 0;
     const picked = (a?.dataset?.menuPick || a?.dataset?.pick || '').split('|')[0];
     const keep = focus || (picked ? `[data-menu="${q(picked)}"]` : ['data-menu', 'data-bulk', 'data-selall', 'data-fold', 'data-rounds'].filter((k) => a?.hasAttribute?.(k)).map((k) => `[${k}${a.getAttribute(k) && a.getAttribute(k) !== 'true' ? `="${q(a.getAttribute(k))}"` : ''}]`)[0]);
     const typed = root.querySelector('#list-pop-q')?.value, name = root.querySelector('[data-dlg-name]')?.value;
@@ -194,9 +195,9 @@ export function listController({ root, spec }) {
     for (const m of root.querySelectorAll('.pz-menu, .rc-pop > .menu')) fitMenu(m, doc.documentElement.clientWidth);
     placePop();
     if (scroller) scroller.scrollTop = y;
-    // one Tab stop in the list: the row last on, else the first
-    const stop = s.order.includes(s.focus) ? s.focus : s.order[0];
-    for (const b of root.querySelectorAll('[data-open]')) b.tabIndex = b.dataset.open === stop ? 0 : -1;
+    // a title's tooltip is for a title cut short: one that fits says nothing twice, and covers no row under it
+    for (const b of root.querySelectorAll('[data-cut-tip]')) { const t = b.querySelector('.lr-t'); if (t && t.scrollWidth <= t.clientWidth) b.removeAttribute('title'); }
+    stops();
     const pop = root.querySelector('#list-pop-q'), dlg = root.querySelector('[data-dlg-name]');
     if (pop) { if (typed !== undefined) pop.value = typed; pop.focus(); return; }
     if (dlg) { if (name !== undefined && !s.dialog.reset) dlg.value = name; s.dialog.reset = false; dlg.focus(); return; }
@@ -205,6 +206,16 @@ export function listController({ root, spec }) {
     (keep && root.querySelector(keep) || rowEl(keepFocus(before, s.order, fromRow)))?.focus();
   }
   const rowEl = (k) => (k ? root.querySelector(`[data-open="${q(k)}"]`) : null);
+  // key.list-stops: one Tab stop in the list, the row last on (else the first); that row's own fold and ⋯ follow it in the
+  // Tab order, every other row's are reached from their row (the arrows, then Tab, or the row's keys)
+  const OWN = '[data-menu^="row:"], [data-fold], [data-fold-tree], [data-rounds]';
+  function stops() {
+    const stop = s.order.includes(s.focus) ? s.focus : s.order[0];
+    for (const el of root.querySelectorAll('[data-row]')) {
+      const t = el.dataset.row === stop ? 0 : -1;
+      for (const b of el.querySelectorAll('[data-open], ' + OWN)) { if (b.closest('[data-row]') === el && b.tabIndex !== t) b.tabIndex = t; }
+    }
+  }
   const pickable = () => (spec.bulk?.([]) || []).length > 0;   // list.select: a list with nothing to do together has no selecting, by any way in
   const pickOrder = () => s.order.filter((k) => s.rows.get(k)?.pick !== false);
   const applyPick = (act, id) => { s.pick = selectApply(s.pick, act, { id, shown: pickOrder() }); paint(); };
@@ -264,6 +275,7 @@ export function listController({ root, spec }) {
       if (still || !group) { paint(); return; }
       group.classList.add('is-folding'); win.setTimeout(() => paint(), FOLD_MS); return;
     }
+    if ((el = t('[data-narrow-clear]'))) { spec.tool?.('clear-narrowed'); paint(); return; }
     if ((el = t('[data-retry]'))) { spec.retry?.(); paint(); return; }
     if ((el = t('[data-empty]'))) { spec.emptyAct?.(); return; }
     if ((el = t('[data-open]'))) {
@@ -275,6 +287,8 @@ export function listController({ root, spec }) {
       spec.open(s.rows.get(el.dataset.open));
       return;
     }
+    // act.row-opens: the whole row is the target; a click beside its title (the mark, the meta, the end) opens it too
+    if ((el = t('[data-row]')) && !t('button, a, input, label, .menu') && t('.lr-after')?.closest('[data-row]') !== el) { root.querySelector(`[data-open="${q(el.dataset.row)}"]`)?.click(); return; }
   });
   let stale = false;   // something closed from outside: draw again, unless a handler already did
   // an open popover belongs to its route (comp.keep-open): moving to another place or item closes it, its text with it
@@ -288,7 +302,7 @@ export function listController({ root, spec }) {
     if (e.target.id === 'list-pop-q') { s.pop.q = e.target.value; paint(); }
     else if (e.target.hasAttribute('data-dlg-name') && s.dialog) { s.dialog.value = e.target.value; s.dialog.typed = true; }
   });
-  root.addEventListener('focusin', (e) => { const r = e.target.closest('[data-row]'); if (r) s.focus = r.dataset.row; });
+  root.addEventListener('focusin', (e) => { const r = e.target.closest('[data-row]'); if (r && s.focus !== r.dataset.row) { s.focus = r.dataset.row; stops(); } });
   bindLongPress({ root, selector: '[data-row]', accept: (r) => pickable() && s.rows.get(r.dataset.row)?.pick !== false, onPress: (r) => { s.pick = selectStart(s.pick); applyPick(selectionAction({ press: true }), r.dataset.row); }, win });
 
   function openSheet() {
@@ -331,10 +345,13 @@ export function listController({ root, spec }) {
     if (act === 'clear') { e.preventDefault(); s.pick = selectClear(); paint(); return; }   // Esc ends selecting wherever the focus is
     if (e.target.closest?.('.ask-side:not(.chats-side), #app')) return;
     if (e.target.closest?.('.prose pre, .prose .rt-wrap')) return;   // a reply's code block or table scrolls under the arrows
+    // key.arrows-stay: the arrows move through the list only from inside it; from the page they scroll the page and the focus stays there
+    if (['down', 'up', 'extend-down', 'extend-up'].includes(act) && !root.contains(e.target)) return;
     e.preventDefault();
     const from = e.target.closest?.('[data-row]')?.dataset.row || s.focus, row = s.rows.get(from);
     if (act === 'help') { openSheet(); return; }
     if (act === 'down' || act === 'up') { rowEl(listMove(s.order, from, act === 'down' ? 1 : -1))?.focus(); return; }
+    if ((act === 'fold' || act === 'unfold') && row?.tree?.length) { if (act === 'fold') s.treeShut.add(row.key); else s.treeShut.delete(row.key); paint({ focus: `[data-open="${q(row.key)}"]` }); return; }
     if (act === 'open') { e.target.closest('[data-open]').click(); return; }
     if (act === 'toggle' || act === 'all' || act === 'extend-down' || act === 'extend-up') {
       if (!pickable() || (act !== 'all' && row?.pick === false)) return;

@@ -87,7 +87,7 @@
     const nameRow = R.settingsRow({ name: 'Name', sentence: R.field({ id: 'ws-name', label: 'Its name', quietLabel: true, value: w0.draft?.name ?? w0.title, attrs: { maxlength: 80, 'data-ws-name': '' } }) });
     const edit = editing === w0.id ? R.settingsSection({ title: 'Its projects', meta: 'By hand: a draft until you save it.', rows: nameRow + w.projects.map(([p], i) => R.settingsRow({ name: pn(p), sentence: others(w0, p).length ? `Also in ${esc(others(w0, p).map((x) => x.title).join(', '))}` : '', end: R.button({ label: 'Take out', kind: 'quiet', attrs: { 'data-ws-rm': i, title: `${pn(p)} leaves the workspace; the project stays` } }) })).join('')
       + (free.length ? R.settingsRow({ name: 'Add one', sentence: `Add ${R.sentencePicker({ id: 'ws-add', text: 'a project', items: free.map((o) => ({ id: o, text: pn(o) })), open: menu === 'ws-add', chevron: R.icon('chevron', 10) })}` }) : '') }) : '';
-    return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${head}${strip}${draft}${ask}${about}</div><div class="convo-col">${boxes}</div><div class="convo-col">${edit}${order}${links}${window.StillhetPlaces.projects.defaults(withDefaults(w0), [])}</div></div><div class="convo-dock" id="ws-dock"></div></div>`;
+    return `<div class="convo"><div class="convo-scroll"><div class="convo-col is-center">${head}${strip}${draft}${ask}${about}</div><div class="convo-col is-center">${boxes}</div><div class="convo-col is-center">${edit}${order}${links}${window.StillhetPlaces.projects.defaults(withDefaults(w0), [])}</div></div></div>`;
   }
   const here = () => location.hash === `#projects/ws:${current}`;   // this workspace is the one open: a click that just left the page is not ours
   // keys.esc-strip: Esc closes Edit by hand while nothing has changed; a draft stays until you save or discard it
@@ -102,7 +102,6 @@
     if (!w && window.StillhetWorld?.live && window.StillhetDemoState?.list === 'loading') { el.innerHTML = R.listState({ state: 'loading', noun: 'this workspace' }); return; }   // F-G-G4-01: a fresh load or a shared link waits for the first read, never the home
     if (!w) { go(''); return; }
     el.innerHTML = pageHtml(w);
-    window.StillhetConversation?.dock(document.getElementById('ws-dock'), { kind: 'workspace', title: w.title, chat: '', ref: { pageWorkspaceId: w.id } });   // D16: the page's workspace, as dev's context
   }
   // A link's answer in the live kind (D10, slice 9 D3): dev's edge PUT through the live module; the page changes only once
   // the server answered ok and the map is read again, and a refusal keeps the question with the shell's one line.

@@ -14,13 +14,13 @@ const svg = (name, size, cls) => R.icon(name, size, { cls });
 const caseOf = (id) => { const c = M.CASES.find((x) => x.id === id); return window.StillhetFirstRun && c ? { ...c, updates: [], teamSetup: false, actions: [] } : c; };   // the first run: nothing has happened yet
 const groupOf = (id) => M.GROUPS.find((g) => g.id === id);
 function freshSettings(c) {
-  return { desktop: c.desktop, badge: 'needs', sound: 'needs', pulseFor: (W.live && W.part('pulseFor')) || 'until-read', attnFor: '3', warnAt: 80, mine: 'suggest', auto: 'move', groups: Object.fromEntries(M.GROUPS.map((g) => [g.id, { level: g.level, where: g.where, ex: {} }])) };
+  return { desktop: c.desktop, badge: 'needs', sound: 'needs', pulseFor: (W.live && W.part('pulseFor')) || 'never',   /* still by default; live, dev's saved value */ attnFor: '3', warnAt: 80, mine: 'suggest', auto: 'move', groups: Object.fromEntries(M.GROUPS.map((g) => [g.id, { level: g.level, where: g.where, ex: {} }])) };
 }
 // a case starts fresh: nothing from the case before it carries over
 // Settings › Tasks › Budget reads the case's figures too.
 const budgetSv = (b) => (b ? { spentNow: b.spent, total: String(b.limit), period: 'month' } : { spentNow: 0 });
 const fresh = (caseId) => ({ caseId, page: 'runs', pop: false, popTab: 'vitals', acct: false, sub: '', nr: null, menu: '', show: 'unread', from: 'all', vitalsShow: 'all', vitalsFrom: 'all',
-  pick: R.selectClear(), rowKey: '', read: [], cleared: [], fixed: [], custom: '', confirm: '', toast: '', flash: '', awayStatus: caseOf(caseId).away.status, keep: W.live ? !!W.part('keep') : true, s: freshSettings(caseOf(caseId)), sset: '', sv: { ...SV.fresh(), ...(W.live ? {} : budgetSv(caseOf(caseId).budget)), gemQuota: caseOf(caseId).gemQuota || '', ...(caseOf(caseId).newVersion ? { latest: caseOf(caseId).newVersion, upd: 'available' } : {}) },
+  pick: R.selectClear(), rowKey: '', read: [], cleared: [], fixed: [], custom: '', confirm: '', ask: '', toast: '', flash: '', awayStatus: caseOf(caseId).away.status, keep: W.live ? !!W.part('keep') : true, s: freshSettings(caseOf(caseId)), sset: '', sv: { ...SV.fresh(), ...(W.live ? {} : budgetSv(caseOf(caseId).budget)), gemQuota: caseOf(caseId).gemQuota || '', ...(caseOf(caseId).newVersion ? { latest: caseOf(caseId).newVersion, upd: 'available' } : {}) },
   added: [], soundAt: null, stopped: [], teamSeen: false, chatSeen: false, unlock: null, session: false, person: 0, people: {} });
 let ui = fresh(M.CASES[0].id);   // the demo's first case, or the live kind's one case (pulse-model.js)
 // The live kind: dev's own routes for every action (D13). A refusal names what failed and changes nothing.
@@ -198,7 +198,7 @@ function sidebar() {
   </aside>`;
 }
 function topbar() {
-  const needs = vitalsRuns().needs.length, un = unread().length, run = vitalsRuns().running.length;
+  const needs = needsTotal(), un = unread().length, run = vitalsRuns().running.length;
   const badge = needs ? { n: needs, tone: masterTone() } : null;   // normal is off (look.alert-ladder): unread waits in Updates, no count at rest
   const words = [needsWords(), un && `${un} unread`, run && `${run} running`].filter(Boolean).join(' · ') || 'Nothing new';
   return `<header class="pz-top"><div class="pz-top-l">${R.search({ value: ui.q || '', label: 'Search or ask', results: searchResults() })}</div><div class="pz-top-r">
@@ -223,10 +223,54 @@ const runRow = (r, tip, meta = metaOf(r)) => row({ mark: runMark(r.state, r.stag
 // A Now row says on its meta line what clears it (D8): keyed by the run state's id, a missed time or a place's kind.
 // a paused run (on an error too) stays in Needs you until it is resumed or stopped: its status wins over its case
 const clearsKeyOf = (r) => (r.paused || r.interrupted ? 'paused' : window.RunCardModel.stateOf(r.case));
-const clearsMeta = (meta, key) => { const p = M.clearsWhen(key); return p ? [meta, p].filter(Boolean).join(' · ') : meta; };
+// what clears a Now row is said once, in its tooltip: the meta line holds the row's own facts (D8)
+const clearsTip = (tip, key) => { const p = M.clearsWhen(key); return p ? `${tip}\n${p}` : tip; };
+// A Now row that needs you carries its one action as a button: the step that fits its state, by the same rule as a
+// Tasks card (R.cardAction), so the two never name different steps. Retry, Resume, Approve, Create PR and Merge act from
+// here; an answer needs words, so Answer opens the task at its question. Live, only Resume and Retry have a route here:
+// any other step opens the task.
+const NOW_MOVES = { retry: ['starting', 'Plan is under way', 'Retrying'], resume: ['working', 'Picked up where it stopped', 'Resumed'], approve: ['approved', 'Approved · checks pass', 'Approved'], merge: ['merged', 'Merged', 'Merged'], pr: ['checks', 'PR opened · checks running', 'Pull request opened for'], 'fix-checks': ['fixing-checks', 'Fixing the failing checks', 'Fixing the checks of'] };
+function nowAct(r) {
+  if (r.missed) return { label: 'Run now', does: 'run', tip: 'Starts it now; the row then leaves Needs you' };
+  if (r.isGroup) return { label: 'Open', does: 'open', tip: 'Opens the group at the task that waits' };
+  const st = window.RunCardModel.stateOf(r.case), a = r.paused || r.interrupted || /^(interrupted|capped)/.test(st) ? { label: 'Resume', does: 'resume' } : st === 'recovery' ? { label: 'Retry', does: 'retry' } : R.cardAction(st);
+  const here = a.does === 'resume' || a.does === 'retry' || (!LIVE && !!NOW_MOVES[a.does]);
+  if (!here && a.does !== 'answer') return { label: 'Open', does: 'open', tip: 'Opens the task at what it asks' };
+  return { ...a, tip: here ? `${a.label} from here; the row then leaves Needs you` : 'Opens the task at its question' };
+}
+// Past a used-up budget a task resumes only after a yes, asked at the button, with the amount (A15).
+const pastBudget = () => { const b = C().budget; return budgetGone() ? { limit: b.limit, over: Math.max(0, b.spent - b.limit) } : null; };
+const askText = (b) => `Resume past the ${M.usd(b.limit)} budget? ${b.over ? `${M.usd(b.over)} over so far` : 'It is used up: what this task spends goes over it'}`;
+const askStrip = (key) => (ui.ask === key && pastBudget() ? R.confirmStrip({ text: askText(pastBudget()), yes: 'Resume', id: 'pz-ask-t', attrs: { 'data-ask': key } }) : '');
+// the question opens in the row's place and takes the focus on its safe answer
+const askAt = (key) => { ui.ask = key; render(); document.querySelector('.pz-popover .rc-confirm [data-confirm="no"]')?.focus(); };
+// An update's step is stale once the thing moved on elsewhere: the task was resumed or answered, the missed time was run, the budget raised.
+function staleFix(u) {
+  if (!u.fix) return false;
+  if (u.fixLand) return String(u.e || '').startsWith('budget') && !budgetGone();
+  const r = u.run && W.find(u.run); if (!r) return false;
+  if (u.e === 'schedule.missed') return !r.missed;
+  // the step fits the state the update reported: a failed task can still be tried again after it was opened, a paused
+  // one resumed elsewhere cannot be resumed twice
+  const fits = FIX_FITS[u.fix]; if (!fits) return false;
+  return !fits.includes(R.runState(window.RunCardModel.stateOf(r.case)).word);
+}
+const FIX_FITS = { 'Try again': ['Failed'], 'Restart Build': ['Failed'], Resume: ['Paused'] };
+function nowStep(id) {
+  const r = W.tops().find((x) => x.id === id); if (!r) return;
+  const a = nowAct(r), key = 'r:' + id;
+  if (a.does === 'open' || a.does === 'answer') { openTarget(r.scheduleId ? `schedule/${r.scheduleId}` : 'run/' + r.case, r.title, a.tip, r.id); render(); return; }
+  if (a.does === 'resume' && pastBudget() && ui.ask !== key) { askAt(key); return; }   // asked first, at the button
+  ui.ask = '';
+  if (LIVE) { liveStep({ id: 'now:' + id, run: id, fix: a.label }); return; }
+  if (a.does === 'run') { W.move(id, 'starting', 'Started by you', { missed: false }); toast(`Run now: ${r.title}`); }
+  else { const [to, detail, said] = NOW_MOVES[a.does]; W.move(id, to, detail); toast(`${said} ${r.title}`); }
+  window.StillhetRunsList?.show();
+  render();
+}
 function updateRow(u, withCheck) {
   return row({ mark: R.kindMark({ kind: 'event', tone: dotOf(u) ? 'ask' : 'idle', size: 16, icon: 'signal' }), title: u.title, meta: `${groupOf(u.g).name} · ${u.meta}`, time: u.time, key: u.id, check: withCheck ? ui.pick.ids.includes(u.id) : undefined,
-    unreadDot: isUnread(u), resolved: u.resolved || isFixed(u), fix: !isFixed(u) && !ui.pick.on ? u.fix : '', fixLand: u.fixLand, fixTip: u.fixLand ? `${u.fix}: opens Settings › Tasks, on Budget` : `${u.fix} from here; the row then reads Resolved`, flash: ui.flash === u.id, tip: `Opens ${u.to}${isUnread(u) ? ' and marks it read' : ''}` });
+    unreadDot: isUnread(u), resolved: u.resolved || isFixed(u) || staleFix(u), fix: !isFixed(u) && !staleFix(u) && !ui.pick.on ? u.fix : '', fixLand: u.fixLand, fixTip: u.fixLand ? `${u.fix}: opens Settings › Tasks, on Budget` : `${u.fix} from here; the row then reads Resolved`, flash: ui.flash === u.id, tip: `Opens ${u.to}${isUnread(u) ? ' and marks it read' : ''}` }) + askStrip(u.id);
 }
 function vitalsSections() {
   const c = vitalsShown(), lim = c.limits;
@@ -235,7 +279,7 @@ function vitalsSections() {
     { word: 'from', id: 'vitalsFrom', text: ui.vitalsFrom === 'all' ? 'all projects' : ui.vitalsFrom, items: [{ id: 'all', text: 'all projects', checked: ui.vitalsFrom === 'all', hint: String(vitalsN(vitalsShown(ui.vitalsShow, 'all'))) }, { sep: true }].concat(vitalsProjects().map((p) => ({ id: p, text: p, checked: ui.vitalsFrom === p, hint: String(vitalsN(vitalsShown(ui.vitalsShow, p))) }))), tip: 'Which project\'s runs it shows; limits belong to a harness and show for every project' }])}</span></div>`;
   const sec = (h, n, rows, note) => (n ? `<section class="pz-sec"><h3 class="pz-h">${h} <span class="n">${n}${note ? ` · ${note}` : ''}</span></h3><div class="pz-list">${rows}</div></section>` : '');
   const levelOfRun = (r) => (r.missed ? 2 : R.alertLevel(R.markTone(R.runState(window.RunCardModel.stateOf(r.case)))));
-  const needRows = [...c.needs.map((r) => [levelOfRun(r), r.missed ? row({ mark: R.kindMark({ kind: 'schedule', tone: 'act', size: 16 }), title: r.title, meta: clearsMeta(metaOf(r, schedWords(r) || undefined), 'missed'), time: r.time, key: 'r:' + r.id, tip: 'A missed time never started: it needs you and is not a task' }) : runRow(r, 'Opens the run page at what it asks', clearsMeta(metaOf(r), clearsKeyOf(r)))]), ...c.places.map((x) => [R.alertLevel(x.tone), row({ mark: R.kindMark({ kind: x.kind, tone: x.tone, size: 16 }), title: x.title, meta: clearsMeta(x.meta, x.clear || x.kind), key: `np:${x.go}`, tip: x.tip, fix: x.fix, fixTip: 'Fast-forwards to the remote; nothing of yours is touched', fixBusy: x.fix === 'Syncing…' })])].sort((a, b) => b[0] - a[0]);   // highest level first (look.alert-ladder)
+  const needRows = [...c.needs.map((r) => { const a = nowAct(r), key = 'r:' + r.id, act = { fix: a.label, fixTip: a.tip }; return [levelOfRun(r), (r.missed ? row({ mark: R.kindMark({ kind: 'schedule', tone: 'act', size: 16 }), title: r.title, meta: metaOf(r, schedWords(r) || undefined), time: r.time, key, tip: clearsTip('A missed time never started: it needs you and is not a task', 'missed'), ...act }) : row({ mark: runMark(r.state, r.stage ?? -1), title: r.title, meta: metaOf(r), time: r.time, key, tip: clearsTip('Opens the task at what it asks', clearsKeyOf(r)), ...act })) + askStrip(key)]; }), ...c.places.map((x) => [R.alertLevel(x.tone), row({ mark: R.kindMark({ kind: x.kind, tone: x.tone, size: 16 }), title: x.title, meta: x.meta, key: `np:${x.go}`, tip: clearsTip(x.tip, x.clear || x.kind), fix: x.fix || 'Open', fixTip: x.fix ? 'Fast-forwards to the remote; nothing of yours is touched' : x.tip, fixBusy: x.fix === 'Syncing…' })])].sort((a, b) => b[0] - a[0]);   // highest level first (look.alert-ladder)
   const out = sec(R.runState('question').word, needRows.length, needRows.map(([, h]) => h).join(''), needsWords().includes('(') ? needsWords().replace(/^\d+ needs? you \((.*)\)$/, '$1') : '')
     + sec('Limits', lim.length, lim.map((l, i) => row({ mark: R.kindMark({ kind: 'event', tone: l.tone === 'over' ? 'fail' : 'act', size: 16, icon: 'signal' }), title: l.title, meta: l.detail, time: l.time, key: 'lim' + i, tip: `${l.tip} · opens Usage and costs` })).join(''))
     + sec('Running', c.running.length, c.running.map((r) => runRow(r, 'Opens the live run')).join(''))
@@ -296,7 +340,7 @@ function popover() {
 }
 
 // ---- the profile menu: Worca's own menu (index.html #acct-menu); its spend card is now Usage and costs, the last row ----
-const LEVELS_UI = [['simple', 'Simple', 'The essentials: start runs, answer them, see what shipped'], ['advanced', 'Advanced', 'Also schedules, statistics and the Marketplace'], ['expert', 'Expert', 'Everything: team metrics, agents and engines']];
+const LEVELS_UI = [['simple', 'Simple', 'The essentials: start tasks, answer them, see what shipped'], ['advanced', 'Advanced', 'Adds schedules, statistics and the Marketplace'], ['expert', 'Expert', 'Adds team metrics, agents and engines']];
 const cap = (w) => w[0].toUpperCase() + w.slice(1);
 function acctMenu() {
   if (!ui.acct) return '';
@@ -322,7 +366,7 @@ function acctMenu() {
       ${R.accountItem({ label: 'Keep awake', cls: 'sw-item', mark: svg('cup', 16, 'mi-ic'), sw: true, attrs: { role: 'menuitemcheckbox', 'aria-checked': String(!!ui.keep), 'data-sw': 'keep', title: 'Keeps the computer awake while runs are working. The display may still turn off.' } })}
     </div>
     <div class="msect" role="group" aria-label="Usage">${raise}
-      ${R.accountItem({ label: 'Usage and costs', mark: gone ? gring(100, 'pz-mi-ring', 'over') : top ? gring(top.pct, 'pz-mi-ring', top.tone) : gring(0, 'pz-mi-ring', 'idle'), value: val, valueAlways: true, chev: svg('chevR', 14, 'mi-chev'), attrs: { ...sub('usage'), title: gone ? `Budget of ${M.usd(c.budget.limit)} used up: runs stay paused until it resets or you raise it` : top ? `Closest to its limit: ${top.line}` : 'Limits per harness and the spend' } })}
+      ${R.accountItem({ label: 'Usage and costs', cls: 'pz-usage-item', hint: gone ? 'The budget' : top ? `${top.who}, ${top.what.toLowerCase()} limit` : c.budget ? 'Spent this month' : 'No limit reported', mark: gone ? gring(100, 'pz-mi-ring', 'over') : top ? gring(top.pct, 'pz-mi-ring', top.tone) : gring(0, 'pz-mi-ring', 'idle'), value: val, valueAlways: true, chev: svg('chevR', 14, 'mi-chev'), attrs: { ...sub('usage'), title: gone ? `Budget of ${M.usd(c.budget.limit)} used up: runs stay paused until it resets or you raise it` : top ? `Closest to its limit: ${top.line}` : 'Limits per harness and the spend' } })}
     </div>
   ` }) + usageFly() + lvlFly() + lookFly();
 }
@@ -350,8 +394,8 @@ function usageFly() {
 // The spend card as account-menu.mjs paints it today (renderSpendCard): figures, never a ring.
 function spendCard(c) {
   const b = c.budget; if (!b) return '';
-  const pct = M.spendPct(b), t = pct == null ? '' : M.tone(pct, ui.s.warnAt);
-  const rows = `${b.limit ? `<dt>Budget</dt><dd>${M.usd(b.limit)}</dd>` : ''}<dt>Spent</dt><dd class="${t}">${M.usd(b.spent)}</dd>${b.saved ? `<dt title="What these runs would have cost at API prices, less what you spent">Saved</dt><dd class="pos">${M.usd(b.saved)}</dd>` : ''}`;
+  const pct = M.spendPct(b), t = pct == null ? '' : M.tone(pct, ui.s.warnAt), saved = W.saved();   // one Saved figure: the world's
+  const rows = `${b.limit ? `<dt>Budget</dt><dd>${M.usd(b.limit)}</dd>` : ''}<dt>Spent</dt><dd class="${t}">${M.usd(b.spent)}</dd>${saved ? `<dt title="${esc(saved.measure)}. The same figure as Insights">Time saved</dt><dd class="pos">${M.usd(saved.usd)}</dd>` : ''}`;
   return `<div class="mcard spend-card" role="group" aria-label="Spend ${b.period}" title="Estimated spend ${b.period}: ${M.usd(b.spent)}${b.limit ? ` of ${M.usd(b.limit)}` : ''}. An estimate from Claude Code, not your bill"><div class="mc-head">${R.cardTitleLink({ label: `Spend ${b.period}`, attrs: { 'data-details': true, title: 'Opens Statistics: spend per run, model and day' } })}</div><dl class="mc-rows">${rows}</dl></div>`;
 }
 // A background on Chat home and the away screen: one family, built on the same dots.
@@ -375,19 +419,19 @@ function lookFly() {
 }
 function lvlFly() {
   if (ui.sub !== 'lvl') return '';
-  return R.navFlyout({ label: 'Interface mode', cls: `lvl-menu pz-fly${inCls('sub')}`, body: `${back('Interface mode')}${LEVELS_UI.map(([id, t, h]) => R.menuItem({ text: t, checked: R.prefs.mode() === id, help: h }, { pickAttr: null, attrs: { 'data-level': id } })).join('')}` });
+  return R.navFlyout({ label: 'Interface mode', cls: `lvl-menu pz-fly${inCls('sub')}`, body: `${back('Interface mode')}${LEVELS_UI.map(([id, t, h]) => R.menuItem({ text: t, checked: R.prefs.mode() === id, line: h }, { pickAttr: null, attrs: { 'data-level': id } })).join('')}` });
 }
 
 // ---- New run: where a limit is about to be spent, the one place it warns before starting ----
 const MINE = [
-  { id: 'suggest', text: 'suggest another provider with room', help: 'New run and Resume say which limit is near and offer a harness with room, or a start after the reset; you choose' },
-  { id: 'move', text: 'pick another provider with room', help: 'Worca picks the harness with the most room and says why; you can change it back in the sentence' },
-  { id: 'wait', text: 'start after the reset', help: 'The start button becomes Start at, the time the limit resets' },
-  { id: 'asis', text: 'start as chosen', help: 'Only a line saying it may pause' }];
+  { id: 'suggest', short: 'Suggest another provider', text: 'suggest another provider with room', help: 'New run and Resume say which limit is near and offer a harness with room, or a start after the reset; you choose' },
+  { id: 'move', short: 'Pick another provider', text: 'pick another provider with room', help: 'Worca picks the harness with the most room and says why; you can change it back in the sentence' },
+  { id: 'wait', short: 'Start after the reset', text: 'start after the reset', help: 'The start button becomes Start at, the time the limit resets' },
+  { id: 'asis', short: 'Start as chosen', text: 'start as chosen', help: 'Only a line saying it may pause' }];
 const AUTO = [
-  { id: 'move', text: 'moves to another provider with room', help: 'It starts on the harness with the most room and keeps it to the end; with none, it waits for the reset. Each move or wait is an update in Pulse' },
-  { id: 'wait', text: 'waits for the reset', help: 'It starts when the limit resets; an update in Pulse says so' },
-  { id: 'asis', text: 'starts anyway', help: 'It starts as planned and may pause; it resumes by itself after the reset' }];
+  { id: 'move', short: 'Move to another provider', text: 'moves to another provider with room', help: 'It starts on the harness with the most room and keeps it to the end; with none, it waits for the reset. Each move or wait is an update in Pulse' },
+  { id: 'wait', short: 'Wait for the reset', text: 'waits for the reset', help: 'It starts when the limit resets; an update in Pulse says so' },
+  { id: 'asis', short: 'Start anyway', text: 'starts anyway', help: 'It starts as planned and may pause; it resumes by itself after the reset' }];
 // New run checks the harness against the warning line.
 function openNewRun() {
   const preset = ui.sv.__preset; ui.sv.__preset = null;
@@ -479,56 +523,61 @@ function runsPage() {
 // disabled, with the not-live sentence as the reason. LIVE is read when called, after it is defined below.
 const OFF_LIVE = (id) => LIVE && (['badge', 'sound', 'attnFor'].includes(id) || /^(lvl|whr|ev):/.test(id));
 const offLive = (html) => R.tooltip({ text: R.NOT_LIVE_SENTENCE, off: true, html });
-const sp = (id, text, items, tip, right) => (OFF_LIVE(id) ? offLive('<b>' + esc(text) + '</b>') : R.sentencePicker({ id, text, items, open: ui.menu === id, tip, chevron: svg('chevron', 12), right }));
+// A choice is a labelled picker of fixed width (docs/stillhet/settings.md: the value leads): one at the row's end, the
+// row's name its label; several in a line under the row's words, each under its own label. `choices`: { id, short|text, help }.
+const word = (x) => x.short || x.text;
+const rp = (id, label, choices, value, tip, many) => R.settingsRow.picker({ id, label, text: word(choices.find((x) => String(x.id) === String(value)) || choices[0]), open: ui.menu === id, showLabel: !!many, left: !!many,
+  tip: OFF_LIVE(id) ? R.NOT_LIVE_SENTENCE : tip, off: OFF_LIVE(id), chevron: svg('chevron', 12), items: choices.map((x) => ({ id: String(x.id), text: word(x), help: x.help, checked: String(x.id) === String(value) })) });
 const sectionId = () => ui.sset || (R.shows('advanced') ? SM.FIRST : 'general');   /* a newcomer lands on General, not on budgets */
 const menuGroups = () => SM.GROUPS.map((g) => ({ title: g.title, items: g.items.filter((id) => SM.visible(id, R.prefs.mode())).map((id) => ({ label: SM.title(id), icon: SM.ICONS?.[id] || '', current: id === sectionId(), attrs: { 'data-sset': id } })) })).filter((g) => g.items.length);   // a group with nothing at this mode has no head
 const settingsMenu = () => R.sideMenu({ label: 'Settings', cls: swapCls.trim(), back: SHELL ? null : { label: 'Back to Worca', icon: svg('chevL', 14), attrs: { 'data-go': 'runs', title: 'Back to the page you came from' } }, groups: menuGroups() });
 // The narrow screen's first view: the same menu as a list in the page.
 const settingsIndex = () => `<div class="cfg-index"><div class="pz-head"><h1 class="pz-title">Settings</h1></div>${R.sideMenu({ label: 'Settings', list: true, chevron: svg('chevR', 14), groups: menuGroups().map((g) => ({ ...g, items: g.items.map((x) => ({ ...x, current: false })) })) })}</div>`;
 
-const levelText = (id) => M.LEVELS.find((l) => l.id === id).text;
-const whereText = (id) => M.WHERE.find((w) => w.id === id).text;
+const levelText = (id) => word(M.LEVELS.find((l) => l.id === id));
+const whereText = (id) => word(M.WHERE.find((w) => w.id === id));
 const effWhere = (g, ev) => { const gs = ui.s.groups[g.id]; return gs.ex[ev[0]] || (M.qualifies(gs.level, ev[2]) ? gs.where : 'pulse'); };
 const quiet = (label, a) => R.button({ label, kind: 'quiet', attrs: a });
 // What differs from a value's start: the ChangedDot's lines (docs/stillhet/settings.md `set.changed`).
 const startOf = () => freshSettings(C());
 const changedFrom = (key, name, words) => (ui.s[key] !== startOf()[key] ? [{ name, was: words(startOf()[key]) }] : []);
-const ATTN_FOR = [{ id: '1', text: 'for 1 second' }, { id: '3', text: 'for 3 seconds' }, { id: '5', text: 'for 5 seconds' }, { id: 'act', text: 'until you act on it' }];
+const ATTN_FOR = [{ id: '1', short: '1 second', text: 'for 1 second' }, { id: '3', short: '3 seconds', text: 'for 3 seconds' }, { id: '5', short: '5 seconds', text: 'for 5 seconds' }, { id: 'act', short: 'Until you act on it', text: 'until you act on it' }];
 // Pulse icon: how long Pulse's icon shakes with news (dev's settings.json pulseFor; until-read is the default)
-const PULSE_FOR = [{ id: 'until-read', text: 'shakes until you read or act on it' }, { id: '10s', text: 'shakes for 10 seconds' }, { id: '1m', text: 'shakes for 1 minute' }, { id: 'never', text: 'stays still' }];
+const PULSE_FOR = [{ id: 'never', short: 'Stays still', text: 'stays still' }, { id: '10s', short: 'Moves for 10 seconds', text: 'shakes for 10 seconds' }, { id: '1m', short: 'Moves for 1 minute', text: 'shakes for 1 minute' }, { id: 'until-read', short: 'Moves until you read it', text: 'shakes until you read or act on it' }];
+// Still by default (A8, feedback): the icon moves only when the person turns it on here. Live, dev's saved value rules.
+const PULSE_FOR_DEFAULT = 'never';
 const PULSE_FOR_MS = { '10s': 10000, '1m': 60000 };
 function notifications() {
   const s = ui.s;
   const BADGE = M.BADGE;
   const desk = s.desktop === 'blocked'
-    ? R.settingsRow({ name: 'Desktop', sentence: 'Desktop notifications are <b>blocked in this browser</b>', end: R.button({ label: 'How to allow', kind: 'quiet', attrs: { 'data-how': '', title: 'Allow notifications for this site in the browser\'s site settings, then come back' } }) })
-    : s.desktop === 'unsupported' ? R.settingsRow({ name: 'Desktop', sentence: 'This browser does not support desktop notifications' })
-    : s.desktop === 'insecure' ? R.settingsRow({ name: 'Desktop', sentence: 'Desktop notifications need a secure address: open Worca on https:// or localhost' })
-    : R.settingsRow({ name: 'Desktop', changed: changedFrom('desktop', 'Desktop', (v) => (v === 'on' ? 'on' : 'off')), sentence: 'Desktop notifications in this browser', end: R.button({ label: 'Send test', kind: 'quiet', attrs: { 'data-test': '', disabled: s.desktop !== 'on', title: s.desktop === 'on' ? 'Sends one test notification' : 'Turn desktop notifications on to send a test' } })
+    ? R.settingsRow({ name: 'Desktop', value: 'Blocked in this browser', note: 'Allow notifications for this site in the browser\'s site settings', end: R.button({ label: 'How to allow', kind: 'quiet', attrs: { 'data-how': '', title: 'Allow notifications for this site in the browser\'s site settings, then come back' } }) })
+    : s.desktop === 'unsupported' ? R.settingsRow({ name: 'Desktop', value: 'Not supported', note: 'This browser does not support desktop notifications' })
+    : s.desktop === 'insecure' ? R.settingsRow({ name: 'Desktop', value: 'Needs a secure address', note: 'Open Worca on https:// or localhost' })
+    : R.settingsRow({ name: 'Desktop', changed: changedFrom('desktop', 'Desktop', (v) => (v === 'on' ? 'on' : 'off')), note: 'Desktop notifications in this browser', end: R.button({ label: 'Send test', kind: 'quiet', attrs: { 'data-test': '', disabled: s.desktop !== 'on', title: s.desktop === 'on' ? 'Sends one test notification' : 'Turn desktop notifications on to send a test' } })
       + (LIVE ? offLive(R.switchButton({ on: s.desktop === 'on', label: 'Desktop notifications in this browser', why: R.NOT_LIVE_SENTENCE, disabled: true }))
         : R.switchButton({ on: s.desktop === 'on', label: 'Desktop notifications in this browser', why: s.desktop === 'on' ? 'On: what a group sends to desktop shows as a notification' : 'Off: no desktop notifications from any group', attrs: { 'data-desk': '' } })) });
   const channels = desk
-    + R.settingsRow({ name: 'Badge', changed: changedFrom('badge', 'Badge', (v) => BADGE.find((b) => b.id === v).text), sentence: `The tab title ${sp('badge', BADGE.find((b) => b.id === s.badge).text, BADGE.map((b) => ({ ...b, checked: b.id === s.badge })), 'What the count in the tab title counts')}` })
-    + R.settingsRow({ name: 'Sound', changed: changedFrom('sound', 'Sound', (v) => R.SOUND_CHOICES.find((x) => x.id === v).text), sentence: `${sp('sound', R.SOUND_CHOICES.find((x) => x.id === s.sound).text, R.SOUND_CHOICES.map((x) => ({ ...x, checked: x.id === s.sound })), 'What makes a sound as it arrives. Never during away hours; a burst plays once')}` })
-    + R.settingsRow({ name: 'Pulse icon', changed: s.pulseFor !== 'until-read' ? [{ name: 'Pulse icon', was: PULSE_FOR[0].text }] : [], sentence: `When something new arrives, Pulse's icon ${sp('pulseFor', PULSE_FOR.find((x) => x.id === s.pulseFor).text, PULSE_FOR.map((x) => ({ ...x, checked: x.id === s.pulseFor })), 'How long Pulse\'s icon shakes when something new arrives')}` })
-    + R.settingsRow({ name: 'Breathing', changed: changedFrom('attnFor', 'Breathing', (v) => ATTN_FOR.find((x) => x.id === v).text), sentence: `What needs you keeps breathing ${sp('attnFor', ATTN_FOR.find((x) => x.id === s.attnFor).text, ATTN_FOR.map((x) => ({ ...x, checked: x.id === s.attnFor })), 'How long it breathes once you open it, before it counts as seen')}${s.attnFor === 'act' ? '' : ' once you open it'}` })
-    + R.settingsRow({ name: 'Chat channels', sentence: esc(M.chatWords(SM.workingChannels(ui.sv))), end: R.shows('advanced', R.prefs.mode()) ? quiet('Channels', { 'data-sset': 'ask', title: 'Their switches and allow-lists are in Settings › Chat' }) : '' });
+    + R.settingsRow({ name: 'Badge', changed: changedFrom('badge', 'Badge', (v) => word(BADGE.find((b) => b.id === v))), note: 'What the count in the tab title counts', end: rp('badge', 'Badge', BADGE, s.badge, 'What the count in the tab title counts') })
+    + R.settingsRow({ name: 'Sound', changed: changedFrom('sound', 'Sound', (v) => word(R.SOUND_CHOICES.find((x) => x.id === v))), note: 'What plays a sound as it arrives. Never in away hours; a burst plays once', end: rp('sound', 'Sound', R.SOUND_CHOICES, s.sound, 'What makes a sound as it arrives') })
+    + R.settingsRow({ name: 'Pulse icon', changed: s.pulseFor !== PULSE_FOR_DEFAULT ? [{ name: 'Pulse icon', was: word(PULSE_FOR[0]) }] : [], note: 'Whether Pulse\'s icon moves when something new arrives', end: rp('pulseFor', 'Pulse icon', PULSE_FOR, s.pulseFor, 'How long Pulse\'s icon moves when something new arrives') })
+    + R.settingsRow({ name: 'Breathing', changed: changedFrom('attnFor', 'Breathing', (v) => word(ATTN_FOR.find((x) => x.id === v))), note: 'How long what needs you keeps breathing once you open it', end: rp('attnFor', 'Breathing', ATTN_FOR, s.attnFor, 'How long it breathes once you open it, before it counts as seen') })
+    + R.settingsRow({ name: 'Chat channels', note: esc(M.chatWords(SM.workingChannels(ui.sv))), end: R.shows('advanced', R.prefs.mode()) ? quiet('Channels', { 'data-sset': 'ask', title: 'Their switches and allow-lists are in Settings › Chat' }) : '' });
   const groups = groupsShown().map((g) => {
     const gs = s.groups[g.id], g0 = startOf().groups[g.id], open = ui.custom === g.id, nEx = Object.keys(gs.ex).length;
     const groupWhere = (ev) => (M.qualifies(gs.level, ev[2]) ? gs.where : 'pulse');
-    const evChange = (ev) => (gs.ex[ev[0]] ? [{ name: ev[1], was: whereText(groupWhere(ev)) }] : []);
-    const detailRows = open && !LIVE ? g.events.map((ev) => {
-      const w = effWhere(g, ev);
-      return R.settingsRow({ name: ev[1], help: `${ev[0]} · ${ev[2] === 'needs' ? 'needs you' : ev[2]}`, changed: evChange(ev), sentence: `${w === 'pulse' ? '' : 'Goes to '}${sp('ev:' + ev[0], whereText(w), M.WHERE.map((x) => ({ ...x, checked: x.id === w })), `Where ${ev[1]} goes`)}` });
-    }).join('') : '';
+    const evChange = (ev) => (gs.ex[ev[0]] ? [{ name: ev[1], was: word(M.WHERE.find((w) => w.id === groupWhere(ev))) }] : []);
+    const detailRows = open && !LIVE ? g.events.map((ev) => R.settingsRow({ name: ev[1], help: `${ev[0]} · ${ev[2] === 'needs' ? 'needs you' : ev[2]}`, changed: evChange(ev), end: rp('ev:' + ev[0], `${ev[1]} goes to`, M.WHERE, effWhere(g, ev), `Where ${ev[1]} goes`) })).join('') : '';
     const detailAction = open && nEx ? quiet('Back to the group', { 'data-backgroup': g.id, title: 'Every event follows the group again' }) : '';
     // Usage's limits are Runs': one row, in the section that owns it (docs/stillhet/settings.md)
-    const end = g.id === 'usage' ? quiet('Limits', { 'data-land': 'runs|Warning line', title: 'What a run does near a limit: Settings › Tasks › Limits' }) : '';
+    const end = g.id === 'usage' ? quiet('Limits', { 'data-land': 'runs|Warning line', title: 'What a task does near a limit: Settings › Tasks › Limits' }) : '';
+    // Both pickers keep their place whatever is chosen. Pulse keeps everything, so with Pulse only there is no level to
+    // choose: the level picker stays, shows its value and says why it is off.
+    const lvl = gs.where === 'pulse' ? R.settingsRow.picker({ id: 'lvl:' + g.id, label: 'How much', text: word(M.LEVELS.find((l) => l.id === gs.level)), showLabel: true, left: true, off: true, tip: OFF_LIVE('lvl:' + g.id) ? R.NOT_LIVE_SENTENCE : 'Pulse keeps everything: choose a place beyond Pulse to choose how much goes there', chevron: svg('chevron', 12) })
+      : rp('lvl:' + g.id, 'How much', M.LEVELS, gs.level, `How much of ${g.name} reaches you`, true);
     return R.settingsRow({ name: g.name, end, detailRows, detailAction, changed: [...(gs.level !== g0.level ? [{ name: 'How much', was: levelText(g0.level) }] : []), ...(gs.where !== g0.where ? [{ name: 'Where', was: whereText(g0.where) }] : []), ...g.events.flatMap(evChange)],
-      // Pulse keeps everything, so with Pulse only there is no level to choose.
-      sentence: gs.where === 'pulse' ? sp('whr:' + g.id, whereText(gs.where), M.WHERE.map((x) => ({ ...x, checked: x.id === gs.where })), `Where ${g.name} goes beyond Pulse`)
-        : `Send ${sp('lvl:' + g.id, levelText(gs.level), M.LEVELS.map((l) => ({ ...l, checked: l.id === gs.level })), `How much of ${g.name} reaches you`)} to ${sp('whr:' + g.id, whereText(gs.where), M.WHERE.map((x) => ({ ...x, checked: x.id === gs.where })), `Where ${g.name} goes beyond Pulse`, true)}`,
-      fold: LIVE ? null : { open, attrs: { 'data-custom': g.id }, help: open ? 'Close the events' : 'Choose per event: ' + g.events.map((e) => e[1]).join(', ') } });
+      picks: rp('whr:' + g.id, 'Goes to', M.WHERE, gs.where, `Where ${g.name} goes beyond Pulse`, true) + lvl,
+      fold: LIVE ? null : { open, label: 'each event', attrs: { 'data-custom': g.id }, help: open ? 'Close the events' : 'Choose per event: ' + g.events.map((e) => e[1]).join(', ') } });
   }).join('');
   const atDefaults = JSON.stringify(s.groups) === JSON.stringify(freshSettings(C()).groups);
   const reset = quiet('Reset to defaults', { 'data-reset': '', title: 'Every group back to its defaults; asks first' });
@@ -537,18 +586,39 @@ function notifications() {
     + R.settingsSection({ title: 'Updates', meta: `What each kind of update sends beyond Pulse. Pulse keeps everything for 90 days; a problem clears when you act on it.${s.desktop === 'on' ? '' : ' Desktop notifications are off, so nothing shows there.'}`, rows: groups, action: LIVE ? resetOff(R.NOT_LIVE_SENTENCE) : atDefaults ? resetOff('Nothing to reset: every group is at its default') : reset });
 }
 // What a run does near a limit is a run's business, so it sits in Settings › Tasks; Notifications only says how you hear of it.
+const WARN_AT = [70, 80, 90].map((v) => ({ id: String(v), text: v + '%', help: `Rings turn amber, Vitals shows the limit and an update is sent at ${v}%` }));
 function limitsRows() {
   const s = ui.s;
-  const warnRow = R.settingsRow({ name: 'Warning line', changed: changedFrom('warnAt', 'Warning line', (v) => v + '%'), sentence: `Warn at ${sp('warn', s.warnAt + '%', [70, 80, 90].map((v) => ({ id: String(v), text: v + '%', checked: s.warnAt === v, help: `Rings turn amber, Vitals shows the limit and an update is sent at ${v}%` })), 'The warning line for usage and spend')} of a limit` });
-  const limits = warnRow + R.settingsRow({ name: 'Manual starts', changed: changedFrom('mine', 'Manual starts', (v) => MINE.find((m) => m.id === v).text), sentence: `New run and Resume near a limit ${sp('mine', MINE.find((m) => m.id === s.mine).text, MINE.map((m) => ({ ...m, checked: m.id === s.mine })), 'What New run and Resume do when the harness is near its limit')}` })
-    + R.settingsRow({ name: 'Automatic starts', changed: changedFrom('auto', 'Automatic starts', (v) => AUTO.find((m) => m.id === v).text), sentence: `A slice or scheduled run near a limit ${sp('auto', AUTO.find((m) => m.id === s.auto).text, AUTO.map((m) => ({ ...m, checked: m.id === s.auto })), 'What a start with nobody there to ask does near a limit. One that waits never holds up the line: the next start on a harness with room goes ahead')}` });
-  return limits;
+  return R.settingsRow({ name: 'Warning line', changed: changedFrom('warnAt', 'Warning line', (v) => v + '%'), note: 'The share of a limit where rings turn amber and an update is sent', end: rp('warn', 'Warning line', WARN_AT, s.warnAt, 'The warning line for usage and spend') })
+    + R.settingsRow({ name: 'Manual starts', changed: changedFrom('mine', 'Manual starts', (v) => word(MINE.find((m) => m.id === v))), note: 'What New task and Resume do near a limit', end: rp('mine', 'Manual starts', MINE, s.mine, 'What New task and Resume do when the harness is near its limit') })
+    + R.settingsRow({ name: 'Automatic starts', changed: changedFrom('auto', 'Automatic starts', (v) => word(AUTO.find((m) => m.id === v))), note: 'What a slice or a scheduled task does near a limit, with nobody there to ask', end: rp('auto', 'Automatic starts', AUTO, s.auto, 'One that waits never holds up the line: the next start on a harness with room goes ahead') });
+}
+// ---- Settings › Appearance: how Worca looks on this device. The viewer's own, kept in this browser; the profile menu's
+// Appearance holds the same theme and background (one value, two ways in). ----
+const KEY_TEXT = 'worca-stillhet.text';
+const TEXT_SIZES = [['small', 'Small'], ['default', 'Default'], ['large', 'Large']];
+const readText = () => { try { const v = localStorage.getItem(KEY_TEXT) || ''; return v === 'small' || v === 'large' ? v : 'default'; } catch { return 'default'; } };
+function setText(v) {
+  const h = document.documentElement;
+  if (v === 'small' || v === 'large') h.dataset.text = v; else delete h.dataset.text;   // Default is no attribute: the tokens' own scale
+  try { if (v === 'small' || v === 'large') localStorage.setItem(KEY_TEXT, v); else localStorage.removeItem(KEY_TEXT); } catch { /* private mode: for this session */ }
+}
+setText(readText());
+const THEMES = [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']];
+function appearancePage() {
+  const size = readText(), bg = ui.bg || 'dots';
+  const look = R.settingsRow({ name: 'Theme', note: 'Light, dark, or the same as this device', end: R.segmented({ label: 'Theme', hook: 'appearance', items: THEMES.map(([id, label]) => ({ id, label, pressed: appearance === id })) }) })
+    + R.settingsRow({ name: 'Background', note: 'The picture behind Chat home and the away screen', end: rp('bg', 'Background', BACKGROUNDS.map(([id, text, help]) => ({ id, text, help })), bg, 'One family, built on the same dots') })
+    + R.settingsRow({ name: 'Breathing background', note: 'The same picture, slowly brighter and quieter. Still when your system reduces motion', end: R.switchButton({ on: readBreathe(), label: 'Breathing background', attrs: { 'data-bg-breathes': '', 'data-key': 'look:breathes' } }) });
+  const text = R.settingsRow({ name: 'Text size', note: 'Every text in Worca, one step smaller or larger', end: R.segmented({ label: 'Text size', hook: 'textsize', items: TEXT_SIZES.map(([id, label]) => ({ id, label, pressed: size === id })) }) });
+  const motion = R.settingsRow({ name: 'Pulse icon', note: 'Whether Pulse\'s icon moves when something new arrives', end: rp('pulseFor', 'Pulse icon', PULSE_FOR, ui.s.pulseFor, 'How long Pulse\'s icon moves when something new arrives') });
+  return R.settingsSection({ title: 'Look', rows: look }) + R.settingsSection({ title: 'Text', rows: text }) + R.settingsSection({ title: 'Motion', rows: motion });
 }
 function settingsPage() {
   const id = sectionId();
   const min = SM.min(id), need = min ? cap(min) : '';
   const body = !SM.shows(min, R.prefs.mode()) ? R.emptyState({ title: `${SM.title(id)} needs ${need}`, actions: R.button({ label: `Switch to ${need}`, kind: 'quiet', attrs: { 'data-unlock': 'mode:' + min } }) })
-    : id === 'notifications' ? notifications() : SV.section(id, ui.sv, { R, svg, open: ui.menu, esc, level: R.prefs.mode(), extra: id === 'runs' ? { Limits: limitsRows() } : {} });
+    : id === 'notifications' ? notifications() : id === 'appearance' ? appearancePage() : SV.section(id, ui.sv, { R, svg, open: ui.menu, esc, level: R.prefs.mode(), extra: id === 'runs' ? { Limits: limitsRows() } : {} });
   return `<div class="cfg-page${ui.sset ? '' : ' is-index'}">${settingsIndex()}
     <div class="cfg-section">${R.backLink({ label: 'Settings', icon: svg('chevL', 14), attrs: { 'data-sset': '', class: null } })}
     <div class="pz-head"><h1 class="pz-title">${esc(SM.title(id))}</h1></div>
@@ -804,8 +874,9 @@ const pulseNews = (n, unreadIds = []) => {
 // the master light wears the highest level that waits (look.alert-ladder)
 // The bell's one number: the rows of Needs you: tasks and missed times from the store, projects and workspace questions from Projects (small-rules)
 const placeNeeds = () => window.StillhetProjects?.needItems() || [];
-const needsTotal = () => vitalsRuns().needs.length + placeNeeds().length;
-const needsWords = () => { const l = vitalsRuns().needs, m = l.filter((r) => r.missed).length, t = l.length - m, more = placeNeeds(), q = more.filter((x) => x.kind === 'workspace').length, p = more.length - q, n = l.length + more.length; return n ? `${plural(n, 'needs you', 'need you')}${m || more.length ? ` (${[t && plural(t, 'task'), m && plural(m, 'missed schedule'), p && plural(p, 'project'), q && plural(q, 'question')].filter(Boolean).join(', ')})` : ''}` : ''; };   // panel.task-truth: a missed time needs you, and is not a task
+// One count (A1): the number is the world's (shell/world.js `needs()`), the same list every bar shows its part of.
+const needsTotal = () => W.count();
+const needsWords = () => { const n = W.count(), t = W.countOf('task'), m = W.countOf('schedule'), p = W.countOf('project'), q = W.countOf('proposal'); return n ? `${plural(n, 'needs you', 'need you')}${t !== n ? ` (${[t && plural(t, 'task'), m && plural(m, 'missed schedule'), p && plural(p, 'project'), q && plural(q, 'question')].filter(Boolean).join(', ')})` : ''}` : ''; };   // panel.task-truth: a missed time needs you, and is not a task
 const masterTone = () => (vitalsRuns().needs.some((r) => R.alertLevel(R.markTone(R.runState(window.RunCardModel.stateOf(r.case)))) === 3) || placeNeeds().some((x) => x.tone === 'fail') ? 'warn' : 'need');
 function pulseButton() {
   const ul = unread(), needs = needsTotal(), un = ul.length, run = vitalsRuns().running.length, news = pulseNews(needs + un, ul.map((u) => u.id));
@@ -944,14 +1015,24 @@ const toastEl = () => document.querySelector('body > .rc-toast');   // the page'
 let toastTimer = 0, undo = null;   // { tip, run }: what the toast's Undo does
 let toastSaid = 0, toastPainted = 0;   // a repaint writes the toast only when Pulse said something new: a toast another page said (the adapter's refusal) stays
 function paintToast() {
-  if (toastPainted === toastSaid) return;
-  toastPainted = toastSaid;
-  const t = toastEl(); t.innerHTML = ui.toast ? R.toastText(ui.toast, undo ? R.toastUndo({ title: undo.tip }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
+  if (toastPainted !== toastSaid) {
+    toastPainted = toastSaid;
+    const t = toastEl(); t.innerHTML = ui.toast ? R.toastText(ui.toast, undo ? R.toastUndo({ title: undo.tip }) : '') : ''; t.classList.toggle('is-on', !!ui.toast);
+  }
+  // after the library lifted the dialog this draw made (its observer's microtask): the toast goes over it again
+  if (ui.toast || toastEl()?.hasAttribute('popover')) queueMicrotask(() => liftToast(toastEl()));
+}
+// A Dialog is in the top layer (dialog.mjs): a toast said while one is up joins it there, or it would sit under the scrim.
+function liftToast(t) {
+  if (!t || typeof t.showPopover !== 'function') return;
+  const over = !!ui.toast && !!document.querySelector('.viewer-modal');
+  try { if (t.matches(':popover-open')) t.hidePopover(); } catch { /* it was not shown */ }
+  if (over) { t.setAttribute('popover', 'manual'); try { t.showPopover(); } catch { /* not attached */ } } else t.removeAttribute('popover');
 }
 function toast(text, canUndo) {
   window.StillhetScheduleLive?.pending?.()?.flush();   // a schedule's Delete waiting out its Undo: this notice replaces its Undo, so it is sent now (Schedules D8)
   toastSaid++; ui.toast = text; undo = typeof canUndo === 'function' ? { tip: 'Undo', run: canUndo } : canUndo || null; clearTimeout(toastTimer);   // a place's Undo is a function, or { tip, run }
-  toastTimer = setTimeout(() => { ui.toast = ''; undo = null; const el = toastEl(); if (el) { el.classList.remove('is-on'); el.textContent = ''; } }, 5000);
+  toastTimer = setTimeout(() => { ui.toast = ''; undo = null; const el = toastEl(); if (el) { el.classList.remove('is-on'); el.textContent = ''; liftToast(el); } }, 5000);
 }
 
 function pick(id, v) {
@@ -971,6 +1052,7 @@ function pick(id, v) {
   else if (id === 'attnFor') { s.attnFor = v; window.StillhetAttnFor = v; }
   else if (id === 'pulseFor' && LIVE) A.post('/api/settings', { pulseFor: v }).then((r) => { if (!r.ok) { refused('change the Pulse icon', r); return; } ui.s.pulseFor = v; armNews(); render(); });
   else if (id === 'pulseFor') { s.pulseFor = v; armNews(); }
+  else if (id === 'bg') { ui.bg = v; setBg(v); }
   else if (id === 'badge') s.badge = v;   // the sentence has changed before your eyes: no toast repeats it
   else if (id === 'sound') s.sound = v;
   else if (id === 'mine') s.mine = v;
@@ -1009,7 +1091,20 @@ document.addEventListener('click', (e) => {
   if ((el = tg('[data-pulse-retry]'))) { if (LIVE) A.retry(); else { window.StillhetDemoState.list = ''; render(); } return; }
   if ((el = tg('[data-land]'))) { e.preventDefault(); const [sset, label, list] = el.dataset.land.split('|'); land({ sset, label, list: !!list }); return; }
   if ((el = tg('[data-unlock]'))) { window.StillhetPulse.unlock(el.dataset.unlock); return; }
-  if ((el = tg('[data-fix]'))) { if (el.dataset.fix.startsWith('np:projects/')) { window.StillhetProjects?.sync(el.dataset.fix.slice(12)); render(); return; } takeStep(C().updates.find((x) => x.id === el.dataset.fix)); return; }   // a behind project's Sync acts in place; the row does not open
+  if ((el = tg('.pz-popover [data-confirm]')) && ui.ask) {   // Resume past a used-up budget: the yes, at the button
+    const key = ui.ask, yes = el.dataset.confirm === 'yes';
+    if (!yes) { ui.ask = ''; render(); document.querySelector(`.pz-popover [data-fix="${CSS.escape(key)}"]`)?.focus(); return; }
+    if (key.startsWith('r:')) { nowStep(key.slice(2)); return; }
+    ui.ask = ''; takeStep(C().updates.find((x) => x.id === key)); return;
+  }
+  if ((el = tg('[data-fix]'))) {
+    const key = el.dataset.fix;
+    if (key.startsWith('np:')) { const x = placeNeeds().find((y) => `np:${y.go}` === key); if (x?.fix && key.startsWith('np:projects/')) { window.StillhetProjects?.sync(key.slice(12)); render(); return; } el.closest('[data-row]')?.querySelector('[data-open]')?.click(); return; }   // a behind project's Sync acts in place; any other place opens at its fix
+    if (key.startsWith('r:')) { nowStep(key.slice(2)); return; }
+    const u = C().updates.find((x) => x.id === key);
+    if (u?.fix === 'Resume' && pastBudget() && ui.ask !== key) { askAt(key); return; }
+    takeStep(u); return;
+  }   // a behind project's Sync acts in place; the row does not open
   if ((el = tg('[data-team]'))) { ui.teamSeen = true; ui.acct = false; if (SHELL) { SHELL.closeDrawer(); SHELL.go('settings/team'); } else { ui.page = 'settings'; ui.sset = 'team'; } render(); return; }
   if ((el = tg('[data-pop]'))) { ui.pop = !ui.pop; ui.acct = false; ui.nr = null; if (ui.pop) opening = 'pop'; render(); return; }
   if ((el = tg('[data-acct]'))) { ui.acct = !ui.acct; ui.sub = ''; ui.pop = false; ui.nr = null; if (ui.acct) opening = 'acct'; render(); return; }
@@ -1035,6 +1130,7 @@ document.addEventListener('click', (e) => {
     ui.keep = !ui.keep; render(); return;
   }
   if ((el = tg('[data-appearance]'))) { applyAppearance(el.dataset.appearance); render(); return; }
+  if ((el = tg('[data-textsize]'))) { setText(el.dataset.textsize); render(); return; }
   if ((el = tg('[data-details]'))) { ui.acct = false; ui.sub = ''; if (SHELL) { SHELL.closeDrawer(); SHELL.go('insights/spend'); } else toast(window.StillhetWould('open Statistics')); render(); return; }
   if (SHELL && (el = tg('[data-newrun]'))) { window.StillhetConversation?.start('task'); return; }
   if ((el = tg('[data-bg-pick]'))) { ui.bg = el.dataset.bgPick; setBg(ui.bg); render(); return; }
@@ -1202,7 +1298,7 @@ const shut = (fn) => () => { fn(); stale = true; };
 const layer = (o) => R.dismissOnOutside(document, { paint: repaint, ...o, close: shut(o.close) });
 layer({ rank: 3, open: () => !!ui.menu, inside: (t) => !!t.closest('.menu, .pz-menu, .spick-menu') || t.closest?.('[data-menu]')?.dataset.menu === ui.menu, back: () => `[data-menu="${CSS.escape(ui.menu)}"]`, close: () => { ui.menu = ''; } });
 layer({ rank: 3, open: () => !!ui.sub, inside: '.nav-fly, [data-sub]', back: () => `[data-sub="${CSS.escape(ui.sub)}"]`, close: () => { ui.sub = ''; } });
-layer({ open: () => !!ui.pop, inside: '.pz-popover, [data-pop]', back: () => '[data-pop]', close: () => { ui.pop = false; }, esc: () => { if (!ui.pick.on) return false; ui.pick = R.selectClear(); stale = true; return true; } });
+layer({ open: () => !!ui.pop, inside: '.pz-popover, [data-pop]', back: () => '[data-pop]', close: () => { ui.pop = false; ui.ask = ''; }, esc: () => { if (ui.ask) { const key = ui.ask; ui.ask = ''; stale = true; return `.pz-popover [data-fix="${CSS.escape(key)}"]`; } if (!ui.pick.on) return false; ui.pick = R.selectClear(); stale = true; return true; } });
 layer({ open: () => !!ui.acct, inside: '.nav-fly, [data-acct]', back: () => '[data-acct]', close: () => { ui.acct = false; ui.sub = ''; } });
 layer({ dialog: true, open: () => !!ui.nr, inside: '.pz-newrun, [data-newrun]', back: () => '[data-newrun]', close: () => { ui.nr = null; } });
 layer({ dialog: true, open: () => !!ui.sv.__dialog, inside: '.viewer-modal .card', back: () => null, close: () => { ui.sv.__dialog = null; } });
@@ -1232,7 +1328,7 @@ window.StillhetPulse = {
     if (landing) { const e = landing; landing = null; landRow(e); }
   },
   say: (text, canUndo) => { toast(text, canUndo); render(); },
-  hasSection: (id) => id === 'notifications' || !!SM.SECTIONS[id],
+  hasSection: (id) => id === 'notifications' || id === 'appearance' || !!SM.SECTIONS[id],
 
   // A place or a section above the mode or behind Labs: its one way on (the page's EmptyState).
   unlock: (lock, to) => {

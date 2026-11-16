@@ -114,7 +114,8 @@ test('F-5-15 (live): jira-source reads pinned `PIN` sha7 · update available: `S
 
 test('F-5-16 / V3-13: What it asks for names each row from the manifest (Jira API token, the site\'s label); no two rows read Token; the set-up form\'s field labels are the same; a not-installed plugin\'s rows read plain words with the key after', async () => {
   const { w, d } = await marketplaceHost({ hash: '#marketplace/jira-source' });
-  assert.deepEqual(rowsOf(d, 'What it asks for').map(([n, t]) => [n, t.replace(/\s*Set up\s*$/, '')]), [['Jira API token', 'Secret'], ['Jira site', 'Setting']]);
+  // the redesign: an installed plugin's page holds these as Its settings, each saying whether it is set, with Change or Set up
+  assert.deepEqual(rowsOf(d, 'Its settings').map(([n, t]) => [n, t.replace(/\s*(Set up|Change)\s*$/, '').replace(/ · (not )?set$/, '')]), [['Jira API token', 'Secret'], ['Jira site', 'Setting']]);
   d.querySelector('[data-mk-setup]').click(); await settle(80);
   assert.deepEqual([...d.querySelectorAll('form[data-form="setup"] label')].map((l) => l.textContent.trim()).filter(Boolean), ['Jira API token', 'Jira site']);
   await go(w, '#marketplace/slack-chat', 60);
@@ -122,7 +123,7 @@ test('F-5-16 / V3-13: What it asks for names each row from the manifest (Jira AP
   assert.ok([...d.querySelectorAll('#route-place .set-text code')].some((c) => c.textContent === 'botToken'), 'the key is the secondary text');
   const demo = stillhetHost({ after, hash: '#chat' });
   demo.StillhetUI.prefs.setMode('expert'); await go(demo, '#marketplace/jira-source', 50);
-  assert.deepEqual(rowsOf(demo.document, 'What it asks for').map(([n]) => n), ['Jira API token', 'Jira site'], 'the demo kind names them the same way');
+  assert.deepEqual(rowsOf(demo.document, 'Its settings').map(([n]) => n), ['Jira API token', 'Jira site'], 'the demo kind names them the same way');
 });
 
 test('F-5-18: leaving #marketplace and opening it again sends GET /api/plugins and GET /api/marketplaces again; moving to a plugin\'s page inside it does not', async () => {

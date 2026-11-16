@@ -29,6 +29,8 @@
 
   if (typeof module !== 'undefined' && module.exports) module.exports = { list: list };   // test/stillhet-boot.test.mjs reads the list
   if (!self) return;
+  // Appearance › Text size (look.text-size), set before the first paint so the page never jumps to its size
+  try { var ts = localStorage.getItem('worca-stillhet.text'); if (ts === 'small' || ts === 'large') document.documentElement.setAttribute('data-text', ts); } catch (e) { /* no storage: the default size */ }
   var l = list(host);
   l.styles.forEach(function (f) {
     var link = document.createElement('link'); link.rel = 'stylesheet'; link.href = url(f); document.head.appendChild(link);

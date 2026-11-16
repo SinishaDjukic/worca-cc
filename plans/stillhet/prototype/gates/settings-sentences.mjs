@@ -1,4 +1,5 @@
-// Every Settings sentence reads right for every option (docs/stillhet/settings.md, set.sentence), without a browser. A
+// Every Settings row reads right for every option (docs/stillhet/settings.md: the value leads), without a browser: its
+// value, its one supporting line and its pickers' words (settings.js `partsText`), and the sentence search still reads. A
 // head sentence reads values from its fold, so each row is read against every option of every picker in the model,
 // every switch flipped, and the money and notes cases below. It fails on what a wrong fill leaves behind: literal
 // markup, an unfilled {key}, `1 runs`, and phrasing that only fits the default (`after never`, `at no limit`).
@@ -24,6 +25,24 @@ const BAD = [
 const found = new Map();
 const check = (where, text, why) => { for (const [re, what] of BAD) if (re.test(text)) { const k = `${what}: ${where}: "${text}"`; if (!found.has(k)) found.set(k, why); } };
 const rows = SV.rowsOf();
+// The row's shape (the value leads): a short value, one supporting line that does not repeat it, pickers with short words,
+// each under a label of its own when the row has several, and no value left inside a sentence in bold.
+const VALUE_MAX = 64, NOTE_MAX = 150, PICK_MAX = 24;
+function shape(r, sv, why) {
+  const P = SV.partsText(r, sv), say = String(typeof r.say === 'function' ? r.say(sv) : r.say || '');
+  const bad = (what) => { const k = `${what}: ${r.name}`; if (!found.has(k)) found.set(k, why); };
+  check(`${r.name} (value)`, P.value, why); check(`${r.name} (supporting line)`, P.note, why);
+  if (P.value.length > VALUE_MAX) bad(`a value over ${VALUE_MAX} characters ("${P.value}")`);
+  if (P.note.length > NOTE_MAX) bad(`a supporting line over ${NOTE_MAX} characters`);
+  if (P.value && P.value === P.note) bad('a supporting line that repeats the value');
+  if (/\*\*/.test(say) && r.value === undefined) bad('a value in bold inside a sentence, with no value of its own');
+  for (const p of P.picks) {
+    check(`${r.name} (picker ${p.key})`, p.text, why);
+    for (const o of p.options) if (o.length > PICK_MAX) bad(`a picker word over ${PICK_MAX} characters ("${o}")`);
+    if (P.picks.length > 1 && (!p.label || p.label === r.name)) bad(`a picker with no label of its own (${p.key})`);
+  }
+  if (P.picks.length > 1 && new Set(P.picks.map((p) => p.label)).size === 1) bad('pickers that share one label');
+}
 const unfilled = (r, sv) => { const t = String(typeof r.say === 'function' ? r.say(sv) : r.say).replace(/`[^`]*`/g, ''); for (const m of t.matchAll(/\{(\w+)\}/g)) if (!(r.picks && r.picks[m[1]]) && !(r.vals && m[1] in r.vals)) return m[0]; return ''; };
 const records = (o) => Object.values(SM.SECTIONS).flatMap((x) => x.sections).flatMap((s) => [...(s.list || []), ...(s.groups || []).flatMap((g) => g.list || [])]);
 function readAll(sv, why) {
@@ -31,6 +50,7 @@ function readAll(sv, why) {
     if (r.when && !r.when(sv)) continue;
     const u = unfilled(r, sv); if (u) found.set(`an unfilled ${u}: ${r.name}`, why);
     check(r.name, SV.sentenceText(r, sv), why);
+    shape(r, sv, why);
   }
   for (const it of records()) if (it.live && (!it.when || it.when(sv, it))) check(it.title, it.live(sv, { ...it, id: 'r' }), why);
   for (const s of Object.values(SM.SECTIONS).flatMap((x) => x.sections)) if (typeof s.meta === 'function') check(s.title, s.meta(sv), why);

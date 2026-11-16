@@ -253,14 +253,112 @@ body:has(.wf-canvas) > .rc-toast{top:112px;}   /* ds-ok: under the canvas's own 
 #side-rail .side-menu{padding-top:0;}
 #side-rail .side-group:first-child .side-g{margin-top:0;}
 #side-rail .stillhet-side-settings .side-menu{padding-right:12px;}
-.bar-list .list-row.is-current{position:relative;isolation:isolate;}
-.bar-list .list-row.is-current > .lr-main{position:static;background:none;}
-.bar-list .list-row.is-current > .lr-main::after{content:'';position:absolute;z-index:-1;left:26px;right:0;top:0;height:28px;background:var(--field);border-radius:var(--r-sm);}
-.bar-list .lr-tree .list-row.is-current > .lr-main::after{left:40px;}
-/* list.bar-row-size on touch: the row keeps the list's 40px rail, so the title, the end and the current fill follow it and line up with the mark. */
+/* list.bar-row-size on touch: the row keeps the list's 40px rail, so the title and the end follow it and line up with the mark. */
 @media (pointer:coarse),(pointer:none){
   :is(.bar-list,.bar-back) .lr-main{padding-top:9px;padding-bottom:9px;}
   :is(.bar-list,.bar-back) .lr-end{padding-top:11px;}
   .bar-list .lr-end:has(> [data-fold]){padding-top:8px;}
-  .bar-list .list-row.is-current > .lr-main::after{height:40px;}
 }
+
+/* ================= The shell redesign: the place button, New task, the bars' filters and rows, skip link, search ================= */
+
+/* key.skip-link: the first Tab stop; it shows only while it has the focus. */
+.skip-link{position:fixed;left:8px;top:8px;z-index:100;padding:8px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);color:var(--ink);font:500 var(--fs-body)/1 var(--sans);text-decoration:none;box-shadow:var(--shadow-pop);transform:translateY(-200%);}
+.skip-link:focus{transform:none;outline:2px solid var(--ink);outline-offset:2px;}
+#main-content:focus{outline:0;}
+#main-content :is(h1,h2,.place-title,[data-title],.rc-title)[tabindex="-1"]:focus-visible{outline:2px solid var(--ink);outline-offset:4px;border-radius:var(--r-xs);}
+#task-dock:empty{display:none;}   /* the task page has no chat box */
+
+/* nav.place-button: the place's name and its chevron are one bordered button, 32px high; the W beside it goes home. */
+.place-btn{display:inline-flex;align-items:center;gap:6px;max-width:100%;height:32px;padding:0 8px 0 10px;border:1px solid var(--line);border-radius:var(--r-sm);background:none;color:inherit;font:inherit;letter-spacing:inherit;cursor:pointer;}
+.place-btn:hover,.place-btn[aria-expanded="true"]{background:var(--hover);border-color:var(--line-2);}
+.place-btn:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.place-btn svg{flex:none;color:var(--ink-2);}
+.place-btn-t{min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.bar-head .bar-title{display:flex;align-items:center;overflow:visible;}
+.bar-quick .menu{min-width:220px;}
+
+/* key.search: the field shows where the focus is. At rest it is small and starts at the left of the top bar's content;
+   on focus (a click, the shortcut) or while it shows results it grows to its full width, the width alone, in the change
+   timing. It grows into its own column, so the icons at the right never move. A phone folds it into its button. */
+.tsearch-field:focus-within{outline:2px solid var(--ink);outline-offset:1px;}
+@media (min-width: 761px){
+  #topnav{grid-template-columns:auto minmax(240px,1fr) auto;}
+  #topnav .topnav-c{justify-content:flex-start;}
+  #topnav .tsearch{width:240px;max-width:100%;transition:width var(--motion-change) var(--ease);}
+  #topnav .tsearch:is(:focus-within, :has(.rl-search-res)){width:min(100%, 440px);}
+}
+@media (prefers-reduced-motion: reduce){ #topnav .tsearch{transition:none;} }
+
+/* list.narrowed-visit: one line under the filters while a link from another page narrows the list. */
+.list-narrowed{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 12px;padding:4px 4px 4px 10px;border-radius:var(--r-sm);background:var(--field);font-size:var(--fs-meta);color:var(--ink-2);}
+.list-narrowed-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.list-narrowed b{font-weight:500;color:var(--ink);}
+
+/* FilterRow (list.filters): one line, 32px high, on a page and in a bar. Plain text tabs with their counts, the current
+   one underlined; then, on a page, pickers with their label inside; in a bar (folded), chips for what is narrowed, one
+   small Filter control and the list's own ⋯, all on that line. */
+.fr{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;min-width:0;min-height:32px;font-size:var(--fs-meta);}
+.fr.is-fold{flex-wrap:nowrap;height:32px;}
+.fr .pz-pick{position:relative;}
+.fr-tabs{display:flex;align-items:center;gap:14px;flex:none;margin-right:4px;}
+.fr-tab{display:inline-flex;align-items:baseline;gap:4px;height:32px;margin:0;padding:0;border:0;border-radius:0;background:none;box-shadow:inset 0 -2px 0 transparent;color:var(--ink-2);font:500 var(--fs-meta)/32px var(--sans);white-space:nowrap;cursor:pointer;}
+.fr-tab:hover{color:var(--ink);}
+.fr-tab[aria-pressed="true"]{color:var(--ink);box-shadow:inset 0 -2px 0 var(--ink);}
+.fr-tab .n{font-size:var(--fs-caption);font-weight:400;color:var(--ink-2);font-variant-numeric:tabular-nums;}
+.fr-tab:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
+.fr-pick-w{flex:0 1 auto;min-width:0;}
+.fr-pick,.fr-filter-b{display:inline-flex;align-items:center;gap:5px;max-width:100%;height:28px;margin:0;padding:0 6px 0 8px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);color:var(--ink);font:400 var(--fs-meta)/1 var(--sans);white-space:nowrap;cursor:pointer;}
+.fr-pick:hover,.fr-pick[aria-expanded="true"],.fr-filter-b:hover,.fr-filter-b[aria-expanded="true"]{background:var(--hover);}
+.fr-pick:focus-visible,.fr-filter-b:focus-visible,.fr-chip-x:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+.fr-pick svg,.fr-filter-b svg{flex:none;color:var(--ink-2);}
+.fr-pick-l{flex:none;color:var(--ink-2);}
+.fr-pick-v{min-width:0;max-width:160px;overflow:hidden;text-overflow:ellipsis;font-weight:500;}
+.fr-chips{display:flex;align-items:center;justify-content:flex-end;gap:4px;flex:1 1 0;min-width:0;overflow:hidden;}
+.fr-chip{display:inline-flex;align-items:center;flex:0 1 auto;min-width:40px;height:24px;padding:0 1px 0 7px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);color:var(--ink);font-size:var(--fs-caption);}
+.fr-chip.is-narrow{display:none;}
+.fr-chip-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.fr-chip-x{flex:none;display:grid;place-items:center;width:20px;height:20px;margin:0;padding:0;border:0;border-radius:var(--r-xs);background:none;color:var(--ink-2);cursor:pointer;}
+.fr-chip-x:hover{background:var(--hover);color:var(--ink);}
+.fr-filter{flex:none;}
+.fr-filter-b{padding:0 8px;font-weight:500;}
+.fr-filter-b.is-on{border-color:var(--ink);}
+.fr-filter .pz-menu.fr-pop{left:auto;right:0;min-width:208px;max-height:min(60vh, 480px);overflow-y:auto;}
+.fr-end{display:inline-flex;align-items:center;gap:8px;flex:none;margin-left:auto;}
+/* in a bar: the line is the whole head; under 340px the Filter control is its icon, the third tab gives way (it stays
+   in Filter, and shows as a chip while it is the view), and while a chip shows only the view you are on keeps its tab,
+   so nothing wraps and no chip is cut to a letter at the default width */
+.bar-list{container-type:inline-size;}
+.bar-list .list-head{display:flex;align-items:center;gap:2px;margin:0 0 8px;}
+.bar-list .list-head > .list-sentence{display:block;flex:1 1 auto;min-width:0;margin:0;line-height:normal;}
+.bar-list .list-head > .list-tools{flex:none;display:flex;margin:0;}
+.bar-list .list-head > .list-tools .rc-pop > .btn.btn-icon{width:28px;height:28px;}
+@container (max-width: 340px){
+  .fr.is-fold .fr-tabs{gap:12px;margin-right:0;}
+  .fr.is-fold .fr-tab:nth-child(n+3){display:none;}
+  .fr.is-fold .fr-chip.is-narrow{display:inline-flex;}
+  .fr.is-fold:has(.fr-chip) .fr-tab:not([aria-pressed="true"]){display:none;}   /* narrowed: the view you are on and what narrows it; the other views are in Filter until you clear it */
+  .fr.is-fold .fr-filter-l{display:none;}
+  .fr.is-fold .fr-filter-b{width:28px;padding:0;justify-content:center;}
+}
+/* list.row-mark: a row with two lines holds its mark at its middle */
+.list-row:has(> .lr-main > .lr-m) > .lr-rail{align-self:center;}
+
+/* act.row-opens in a bar: the whole row is the target and lights as one, in the hover fill, with the radius of the rows
+   beside it; the row you are on keeps the field fill. A row with rows under it lights its own line only. */
+.bar-list .list-row{position:relative;isolation:isolate;cursor:pointer;}
+.bar-list .list-row::after{content:'';position:absolute;grid-column:1 / -1;grid-row:1;inset:0 -4px;z-index:-1;border-radius:var(--r-sm);pointer-events:none;transition:background-color 100ms var(--ease);}
+.bar-list .list-row:hover:not(:has(.list-row:hover))::after{background:var(--hover);}
+.bar-list .list-row.is-current::after,.bar-list .list-row.is-current:hover::after{background:var(--field);}
+.bar-list button.lr-main:hover,.bar-list .list-row.is-current > .lr-main,.bar-list .list-row.is-holds > .lr-main{background:none;}
+.bar-list .lr-after{cursor:auto;}
+.bar-list .lr-m{font-size:var(--fs-caption);line-height:16px;}
+/* list.row-more in a bar: ⋯ is 28px wide; it shows on hover, on focus, on touch, and always on the row you are on. A row
+   with a second line holds it under its time, so it never covers the title. */
+.bar-list .list-row .lr-end .rc-pop > .btn.btn-icon{width:28px;height:22px;}
+.bar-list .list-row.is-current > .lr-end .rc-pop{opacity:1;pointer-events:auto;}
+.bar-list .lr-end .rc-pop{background:none;}
+.bar-list .list-row:not(:has(> .lr-main > .lr-m)) > .lr-end .rc-pop{background:var(--side-bg);}
+.bar-list .list-row:has(> .lr-main > .lr-m) > .lr-end:not(:has(> [data-fold])){display:flex;flex-direction:column;align-items:flex-end;gap:0;min-width:28px;}
+.bar-list .list-row:has(> .lr-main > .lr-m) > .lr-end:not(:has(> [data-fold])) .rc-pop{position:static;}
+.bar-list .list-row:has(> .lr-main > .lr-m) > .lr-end:not(:has(> [data-fold])) > .lr-fig{line-height:20px;}

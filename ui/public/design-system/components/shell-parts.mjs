@@ -7,7 +7,7 @@ import { icon } from './icons.mjs';
 import { compactMenu } from './compact-menu.mjs';
 
 /** The connection dropped: a quiet line at the end of the top bar, grey dot, until it reconnects. */
-export function offlineLine({ text = 'Offline · retrying', tip = 'Worca lost its connection to the server. Your runs keep going there; this page catches up by itself.' } = {}) {
+export function offlineLine({ text = 'Offline · retrying', tip = 'Worca lost its connection to the server. Your tasks keep going there; this page catches up by itself.' } = {}) {
   return `<span class="rc-conn rl-offline" role="status"${attrs({ title: tip })}>${statusDot({ tone: 'is-grey' })}<span class="rl-offline-t">${esc(text)}</span></span>`;
 }
 

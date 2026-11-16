@@ -80,7 +80,28 @@
     }
     return null;
   }
-  var api = { TABLE: TABLE, resolve: resolve };
+  // Classic's names as search words (key.search): [old name, what it is called now, where it lives, where it opens, the
+  // place whose icon it wears]. The one search finds a thing by the name a classic user knows and lands on today's place.
+  var WORDS = [
+    ['providers', 'Models', 'Settings · was Providers', 'settings/models', 'settings'],
+    ['import models', 'Models', 'Settings · was Import models', 'settings/models', 'settings'],
+    ['runs', 'Tasks', 'was Runs', 'runs', 'runs'],
+    ['statistics', 'Insights', 'was Statistics', 'insights', 'insights'],
+    ['activity', 'Pulse', 'in the top bar · was Activity', 'activity', 'chat'],
+    ['new run', 'New task', 'in Chat · was New run', '~new-task', 'chat'],
+  ];
+  /** What a search for `q` finds among classic's names: [{ label, where, hash, id }], one per place, at three letters or more. */
+  function words(q) {
+    var t = String(q || '').trim().toLowerCase(), out = [], seen = {};
+    if (t.length < 3) return out;
+    for (var i = 0; i < WORDS.length; i++) {
+      var w = WORDS[i];
+      if (w[0].indexOf(t) < 0 || seen[w[3]]) continue;
+      seen[w[3]] = true; out.push({ label: w[1], where: w[2], hash: w[3], id: w[4] });
+    }
+    return out;
+  }
+  var api = { TABLE: TABLE, WORDS: WORDS, resolve: resolve, words: words };
   if (typeof window !== 'undefined') window.StillhetOldAddresses = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;   // test/stillhet-old-addresses.test.mjs reads it
 })();

@@ -468,6 +468,10 @@
       "why": "The sample Abilities › Summaries row returns NotLiveRow on live (settings.js:110).",
       "rule": "set.not-live"
     },
+    "settings/settings-model.js › demo-row › Team caps": {
+      "class": "prototype-only",
+      "why": "Team caps is only:'demo' (settings/settings-model.js:621), a row of its own beside Budget since the redesign; vis() drops it on live (settings.js)."
+    },
     "settings/settings-model.js › demo-row › Team memory": {
       "class": "not-in-stillhet",
       "why": "The sample Memory › Team memory section reads NotLiveRow on live (settings.js:242).",
@@ -477,6 +481,10 @@
       "class": "not-in-stillhet",
       "why": "Team policy (only:'demo') is drawn on live as notInStillhet with Back to Chat (settings.js:235-238).",
       "rule": "nav.not-live"
+    },
+    "settings/settings-model.js › demo-row › Usage": {
+      "class": "prototype-only",
+      "why": "Usage is only:'demo' (settings/settings-model.js:622), a row of its own beside Budget since the redesign; vis() drops it on live (settings.js)."
     },
     "settings/settings-model.js › demo-row › Web": {
       "class": "not-in-stillhet",

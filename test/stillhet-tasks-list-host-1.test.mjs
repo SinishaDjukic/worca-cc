@@ -184,7 +184,7 @@ test('F-a4-07: the Showing menu\'s archived count is the API\'s archived rows; p
   const { w, d, calls } = await liveHost({ sources: s });
   await go(w, '#runs', 150);
   const root = d.querySelector('#runs-root');   // the bar's Tasks list
-  root.querySelector('[data-menu="show"]').click(); await settle(20);
+  root.querySelector('[data-menu="filters"]').click(); await settle(20);   // the list's views beyond its tabs are in its Filter control (list.filters)
   const item = root.querySelector('[data-pick="show|archived"]');
   assert.ok(item, 'the Showing menu offers Archived');
   assert.match(item.textContent.trim(), /3$/, `the archived count is the API's (${item.textContent.trim()})`);
@@ -204,7 +204,7 @@ test('F-a4-07 (review minor): a failing archived read leaves the Tasks list draw
   const root = d.querySelector('#runs-root');
   assert.ok(root.querySelector('[data-open="run:h3"]'), 'the rest of the list draws');
   assert.doesNotMatch(root.textContent, /Could not load/);
-  root.querySelector('[data-menu="show"]').click(); await settle(20);
+  root.querySelector('[data-menu="filters"]').click(); await settle(20);   // the list's views beyond its tabs are in its Filter control (list.filters)
   root.querySelector('[data-pick="show|archived"]').click(); await settle(400);
   assert.match(root.textContent, /Could not load the tasks/, 'the Archived view says it could not load');
   const again = [...root.querySelectorAll('[data-retry]')].find((b) => b.textContent.trim() === 'Try again');

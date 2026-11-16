@@ -40,3 +40,78 @@ export function dialog({ title, body, yes, status = '', busy = false, busyLabel 
 export function dialogFrame({ label, body, cls = '', scrimCls = '' }) {
   return `<div class="viewer-modal${scrimCls ? ' ' + scrimCls : ''}"><div class="card${cls ? ' ' + cls : ''}" role="dialog" aria-modal="true"${attrs({ 'aria-label': label })}>${body}</div></div>`;
 }
+
+// ---- One Dialog, one behaviour (docs/stillhet/panels.md): the library lifts every dialog a page draws, wherever the page
+// drew it. The scrim covers the whole window (the bar and the top bar too), the card is centred in the window, the focus
+// moves in and stays in, Esc closes, and the focus goes back to what opened it. No page needs a host of its own.
+const lifted = new WeakSet();
+const CAN_FOCUS = ['button:not([disabled])', 'a[href]', 'input:not([disabled]):not([type="hidden"])', 'select:not([disabled])', 'textarea:not([disabled])', '[tabindex]'].map((x) => x + ':not([tabindex="-1"])').join(', ');   // a radio group is one stop: its chosen answer
+const FIRST = '[autofocus], .dlg-body input:not([type="checkbox"]):not([type="radio"]):not([disabled]), .dlg-body textarea:not([disabled]), .dlg-body [role="radio"][aria-checked="true"], .dlg-body [role="radio"]';
+
+/** The dialogs that show in a document, the top one last. */
+export const openDialogs = (doc) => [...doc.querySelectorAll('.viewer-modal')].filter((m) => !m.hidden && (m.matches('[role="dialog"]') || m.querySelector('[role="dialog"]')));
+
+/** What takes the focus inside `root`, in Tab order. */
+export const focusables = (root) => [...root.querySelectorAll(CAN_FOCUS)].filter((el) => !el.hidden && el.getAttribute('aria-hidden') !== 'true' && !el.closest('[hidden]'));
+
+/**
+ * Where Tab goes inside a dialog: the next control, the first after the last, the last before the first (Shift).
+ * @param {Element[]} list  the dialog's controls, in order
+ * @param {Element|null} from  the one that has the focus
+ * @param {boolean} back  Shift+Tab
+ * @returns {Element|null}
+ */
+export function trapNext(list, from, back) {
+  if (!list.length) return null;
+  const i = list.indexOf(from);
+  if (i < 0) return back ? list[list.length - 1] : list[0];
+  return list[(i + (back ? -1 : 1) + list.length) % list.length];
+}
+
+/**
+ * Lifts every dialog in a document, now and whenever one is drawn.
+ * @param {Document} doc
+ * @param {object} [o]
+ * @param {(el: Element|null) => void} [o.opened]  told what had the focus when the first dialog opened
+ * @param {() => void} [o.closed]                  told when the last one closed
+ */
+export function watchDialogs(doc, { opened = () => {}, closed = () => {} } = {}) {
+  if (lifted.has(doc)) return;
+  lifted.add(doc);
+  const win = doc.defaultView;
+  let up = false;
+  const lift = (m) => {
+    if (m.dataset.lifted !== undefined) return;
+    m.dataset.lifted = '';
+    // the top layer: over every page, bar and panel, whatever box the page drew it in; the window is its box
+    Object.assign(m.style, { position: 'fixed', inset: '0', width: 'auto', height: 'auto', maxWidth: 'none', maxHeight: 'none', margin: '0', border: '0', overflow: 'visible', color: 'inherit' });
+    if (typeof m.showPopover === 'function') { m.setAttribute('popover', 'manual'); try { m.showPopover(); } catch { /* not attached yet: it stays where it was drawn */ } }
+  };
+  const check = () => {
+    const all = openDialogs(doc), top = all[all.length - 1];
+    if (!top) { if (up) { up = false; closed(); } return; }
+    if (!up) { up = true; opened(doc.activeElement && doc.activeElement !== doc.body ? doc.activeElement : null); }
+    all.forEach(lift);
+    if (top.contains(doc.activeElement)) return;
+    (top.querySelector(FIRST) || focusables(top)[0])?.focus?.({ preventScroll: true });
+  };
+  check();
+  if (win.MutationObserver && doc.body) new win.MutationObserver(check).observe(doc.body, { subtree: true, childList: true });
+  // Tab stays inside the top dialog
+  win.addEventListener('keydown', (e) => {
+    if (e.key !== 'Tab') return;
+    const top = openDialogs(doc).pop(); if (!top) return;
+    const to = trapNext(focusables(top), doc.activeElement, e.shiftKey);
+    e.preventDefault();
+    to?.focus();
+  }, true);
+  // Esc closes it, when the page's own layer did not answer the key (a dialog with something typed keeps it)
+  doc.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || e.defaultPrevented) return;
+    const top = openDialogs(doc).pop(); if (!top || top.matches('.keys-modal')) return;
+    const out = top.querySelector('[data-dialog="close"], [data-dialog="cancel"]:not([hidden])');
+    if (!out) return;
+    e.preventDefault();
+    out.click();
+  });
+}

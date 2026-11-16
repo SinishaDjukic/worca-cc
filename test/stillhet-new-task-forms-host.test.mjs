@@ -131,9 +131,14 @@ for (const [hash, root] of [['#schedules', '#bar-schedules'], ['#chat', '#chats-
     key(w, d.body, 'ArrowDown'); await settle(20);
     assert.equal(d.activeElement, d.body, 'no row took the focus behind the form');
     key(w, d.querySelector('#center-dlg .viewer-modal'), 'Escape'); await settle(20);
+    // key.arrows-stay: with the form closed the list has its keys again, from inside the list; from the page an arrow
+    // never pulls the focus into the bar
     d.activeElement.blur();
     key(w, d.body, 'ArrowDown'); await settle(20);
-    assert.ok(d.activeElement.closest(root), 'a row has the focus once the form is closed');
+    assert.equal(d.activeElement, d.body, 'an arrow from the page leaves the focus where it is');
+    const first = d.querySelector(`${root} [data-open]`); first.focus();
+    key(w, first, 'ArrowDown'); await settle(20);
+    assert.ok(d.activeElement.closest(root) && d.activeElement !== first, 'the list key moves the row once the form is closed');
   });
 }
 
@@ -239,11 +244,11 @@ test('COV-2 Workspace (demo): the project picker lists the demo workspaces under
   await dpick(d, 'project', titles[0]);
   assert.equal(shown(d), titles[0]);
   assert.equal(dq(d, '[data-c-tagsave]'), null, 'a workspace has no project defaults to save');
-  assert.equal(dq(d, '[data-menu="f-base"]').textContent.trim(), 'each project\'s own branch');
+  assert.equal(dq(d, '[data-menu="f-base"]').textContent.trim(), 'Each project\'s own branch');   // a field's value starts with a capital
   dq(d, '[data-dialog="cancel"]').click(); await settle(20);
   w.StillhetCenters.newTask({ after: { kind: 'ticket', id: 's-docs', title: 'Nightly docs' } }); await settle(60);
   await dpick(d, 'project', titles[0]);
-  assert.equal(dq(d, '[data-menu="f-base"]').textContent.trim(), 'the task before it\'s branch', 'waiting for a run, its branch stays the base');
+  assert.equal(dq(d, '[data-menu="f-base"]').textContent.trim(), 'The task before it\'s branch', 'waiting for a run, its branch stays the base');
 });
 
 test('COV-2 Project name / folder field / Cancel / Save, F-cov1-09 (demo): Add project… shows the name and folder fields; Save is off while empty; Browse… shows the folderBrowser dialog (title Select a folder) and Select this folder fills the path; Save adds the project through StillhetProjects.add and picks it; Cancel returns with the project picker focused; typing in the name field changes no other field on the page (no document-level listener)', async () => {

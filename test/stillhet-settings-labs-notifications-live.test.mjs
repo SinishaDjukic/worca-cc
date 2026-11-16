@@ -73,13 +73,14 @@ test('F-7b-01: a failed /api/flags read says so and draws no switch', async () =
 test('F-7b-02: live Badge, Sound and Breathing show their default value, disabled, with the sentence; Channels\' meta says it', async () => {
   const { d } = await live({ hash: '#settings/notifications' });
   for (const id of ['badge', 'sound', 'attnFor']) assert.equal(page(d).querySelectorAll(`[data-menu="${id}"]`).length, 0, id);
-  const want = { Badge: 'counts what needs you', Sound: null, Breathing: 'for 3 seconds' };
+  // the redesign (settings.md: the value leads): the value is a picker at the row's end; live, the field shows it, disabled
+  const want = { Badge: 'What needs you', Sound: null, Breathing: '3 seconds' };
   for (const [name, words] of Object.entries(want)) {
-    const r = rowOf(d, name), tip = r.querySelector('.set-text .tip-wrap');
+    const r = rowOf(d, name), tip = r.querySelector('.set-end .tip-wrap');
     assert.ok(tip, `${name} has the disabled tooltip`);
     assert.equal(tip.title, SENTENCE, name);
-    const b = tip.querySelector('b');
-    assert.ok(b && b.textContent.trim(), `${name} shows its value in bold`);
+    const b = tip.querySelector('button.set-pick-b');
+    assert.ok(b && b.disabled && b.textContent.trim(), `${name} shows its value in a disabled field`);
     if (words) assert.equal(b.textContent.trim(), words, name);
   }
   assert.equal(metaOf(secOf(d, 'Channels')), SENTENCE);
@@ -148,7 +149,7 @@ test('prototype keeps its demo: a Labs switch flips and toasts; Badge and Deskto
   assert.equal(metaOf(secOf(d, 'Channels')), '');
   d.querySelector('[data-menu="badge"]').click(); await settle();
   d.querySelector('[data-menu-pick="badge|none"]').click(); await settle();
-  assert.match(rowOf(d, 'Badge').textContent, /shows no count/);
+  assert.equal(rowOf(d, 'Badge').querySelector('[data-menu="badge"]').textContent.trim(), 'No count');
   const desk = d.querySelector('[data-desk]');
   const was = desk.getAttribute('aria-checked');
   desk.click(); await settle();

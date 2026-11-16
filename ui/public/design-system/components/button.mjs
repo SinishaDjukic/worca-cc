@@ -81,6 +81,20 @@ export function busy(el, { label, until } = {}) {
   });
 }
 
+// What a button says while its action is out, in the present tense: "Create PR" → "Creating PR…".
+const ING = { Create: 'Creating', Merge: 'Merging', Retry: 'Retrying', Restart: 'Restarting', Approve: 'Approving', Accept: 'Accepting', Answer: 'Sending the answer', Send: 'Sending', Resume: 'Resuming', Stop: 'Stopping', Start: 'Starting', Save: 'Saving', Pause: 'Pausing', Run: 'Starting', Fix: 'Fixing', Apply: 'Applying', Schedule: 'Scheduling', Archive: 'Archiving', Discard: 'Discarding', Delete: 'Deleting', Update: 'Updating', Push: 'Pushing', Confirm: 'Confirming', Make: 'Making', Open: 'Opening', Add: 'Adding', Clone: 'Cloning' };
+/**
+ * The present-tense words for a busy button, from its own label.
+ * @param {string} label  "Create PR", "Save workflow", "Stop"
+ * @returns {string}      "Creating PR…", "Saving workflow…", "Stopping…"
+ */
+export function busyWord(label) {
+  const [verb, ...rest] = String(label || '').trim().split(/\s+/);
+  if (verb === 'Answer' || verb === 'Retry') return `${ING[verb]}…`;
+  return ING[verb] ? `${[ING[verb], ...rest].join(' ')}…` : `${String(label || 'Working').trim()}…`;
+}
+busy.word = busyWord;   // until index.mjs exports busyWord, a page reaches it through busy
+
 /**
  * A main step with its alternatives behind ▾ (StatusLine's action slot, a section's own action). The ▾ opens
  * `menuHtml` (a CompactMenu, given when open) and takes the main button's kind, so the pair reads as one control.

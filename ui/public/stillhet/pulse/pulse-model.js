@@ -37,18 +37,19 @@
   // Vitals › Scheduled, top to bottom.
   const SCHED = [['missed', 'Missed'], ['today', 'Today'], ['tomorrow', 'Tomorrow'], ['week', 'This week'], ['later', 'Later'], ['after', 'After a run'], ['reset', 'After a reset'], ['paused', 'Paused']];
   const LEVELS = [
-    { id: 'needs', text: 'what needs you', help: 'Only what waits for you: questions, gates, a watched PR that needs a person' },
-    { id: 'problems', text: 'what needs you and problems', help: 'Also what went wrong while nobody was waiting: a failed run, a missed start, a limit' },
-    { id: 'all', text: 'everything', help: 'Also what simply happened: a run finished, a fix was published, a limit reset' },
+    { id: 'needs', short: 'What needs you', text: 'what needs you', help: 'Only what waits for you: questions, gates, a watched PR that needs a person' },
+    { id: 'problems', short: 'Problems too', text: 'what needs you and problems', help: 'Also what went wrong while nobody was waiting: a failed run, a missed start, a limit' },
+    { id: 'all', short: 'Everything', text: 'everything', help: 'Also what simply happened: a run finished, a fix was published, a limit reset' },
   ];
   const WHERE = [
-    { id: 'pulse', text: 'Stays in Pulse only', help: 'Kept in Pulse; nothing leaves Worca' },
-    { id: 'desktop', text: 'desktop', help: 'Also a desktop notification, in browsers that allow it' },
-    { id: 'chat', text: 'chat', help: 'Also a message to your working chat channels' },
-    { id: 'both', text: 'desktop and chat', help: 'Also a desktop notification and a chat message' },
+    { id: 'pulse', short: 'Pulse only', text: 'Stays in Pulse only', help: 'Kept in Pulse; nothing leaves Worca' },
+    { id: 'desktop', short: 'Desktop', text: 'desktop', help: 'Also a desktop notification, in browsers that allow it' },
+    { id: 'chat', short: 'Chat', text: 'chat', help: 'Also a message to your working chat channels' },
+    { id: 'both', short: 'Desktop and chat', text: 'desktop and chat', help: 'Also a desktop notification and a chat message' },
   ];
   // Notifications' other sentences: each reads right for every choice (gates/settings-sentences.mjs).
-  const BADGE = [{ id: 'needs', text: 'counts what needs you', help: 'The tab title, the favicon\'s dot and the app icon show while 2 runs wait for you' }, { id: 'problems', text: 'counts what needs you and problems', help: 'Also unread problems: a failed run, a missed start, a limit' }, { id: 'none', text: 'shows no count', help: 'The tab title never shows a count' }];
+  // `short`: the value as a picker shows it (the value leads); `text` reads inside the sentence search finds
+  const BADGE = [{ id: 'needs', short: 'What needs you', text: 'counts what needs you', help: 'The tab title, the favicon\'s dot and the app icon show while 2 runs wait for you' }, { id: 'problems', short: 'Problems too', text: 'counts what needs you and problems', help: 'Also unread problems: a failed run, a missed start, a limit' }, { id: 'none', short: 'No count', text: 'shows no count', help: 'The tab title never shows a count' }];
   const chatWords = (names) => (names.length ? `Sent to ${names.join(', ')}` : 'No chat channel is working');
   const RANK = { needs: 0, problem: 1, info: 2 };
   const LEVEL_MAX = { needs: 0, problems: 1, all: 2 };
@@ -276,7 +277,7 @@
     for (const [slot, kinds] of [['session', ['session']], ['long', LONG]]) {
       let best = null;
       for (const u of c.usage) for (const w of u.win) if (kinds.includes(w.k) && (!best || w.pct > best.pct)) best = { ...w, p: u.p };
-      if (best) out.push({ slot, pct: best.pct, tone: tone(best.pct, warnAt),
+      if (best) out.push({ slot, pct: best.pct, tone: tone(best.pct, warnAt), what: R.usageWindow(best.k), who: PROVIDER[best.p].name,   // which limit it is: the profile menu names it beside the figure
         line: R.usageTip({ what: R.usageWindow(best.k), who: PROVIDER[best.p].name, figure: `${best.pct}%`, resets: best.resets }) });
     }
     return out;

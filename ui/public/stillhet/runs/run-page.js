@@ -15,6 +15,8 @@ R.watchScrollbars(document);
 let ui = fresh('working');
 
 const statusDot = (v) => (SHELL ? R.kindMark({ kind: 'task', tone: R.markTone(v), ...M.stageOf(ui.caseId), title: v.word }) : R.statusDot({ tone: v.dot, sym: v.sym, glyph: R.ICONS[v.sym === 'q' ? 'question' : 'alert'] }));
+// One name per action: the card and Tasks say Retry, so the page does too (its step stays Restart Build underneath).
+const SHOWN = { 'Restart Build': 'Retry' };
 // A menu: an optional line on what the main action does, then each item with its one-line help.
 // One compact menu everywhere, as the app's View menu: one line per item, a leading check for a choice, a hint on the
 // right (a count or a shortcut), the help in the tooltip; danger items come last, after a rule.
@@ -69,7 +71,7 @@ function outlineMenu(r) {
   const id = 'cut' + r.index; const last = r.index === r.total - 1; const two = r.total <= 2;
   const items = [{ id: `cut:merge|${r.index}`, text: 'Merge with next', off: last, help: last ? 'The last task has no next task' : 'Makes this task and the next one run' }]
     .concat(ui.outlineEdited ? [{ id: 'cut:undo|0', text: 'Undo edits', help: 'Back to the split as Worca wrote it' }] : [])
-    .concat({ id: `cut:remove|${r.index}`, text: 'Remove', danger: true, off: two, help: two ? 'A cut has at least 2 runs; Don’t split builds it as one' : 'Leaves this task out of the plan' });
+    .concat({ id: `cut:remove|${r.index}`, text: 'Remove', danger: true, off: two, help: two ? 'A cut has at least 2 tasks; Don’t split builds it as one' : 'Leaves this task out of the plan' });
   return `<span class="rc-pop is-right">${R.button({ label: 'More for task ' + (r.index + 1), kind: 'quiet', iconOnly: true, title: false, icon: DOTS, attrs: { 'data-menu': id, 'data-key': 'menu:' + id, 'aria-haspopup': 'menu', 'aria-expanded': String(ui.menu === id) } })}${ui.menu === id ? R.compactMenu({ items }) : ''}</span>`;
 }
 function stackHtml(k) {
@@ -194,10 +196,10 @@ function actionsHtml(v) {
   // a workspace's stack: its projects' services started together, in order; one row like a service's (dev's Start stack)
   const stk = stacks.map((x) => { const st = lv ? x.status : ui.services['stack:' + x.id] ? 'running' : ''; const on = /^(starting|running)$/.test(st); const busy = ui.svcBusy === 'stack:' + x.id;
     const meta = st === 'starting' ? 'Starting · step ' + (x.step + 1) + ' of ' + x.steps : st === 'running' ? 'Running' : st === 'done' ? 'Done' : st === 'failed' ? 'Did not start: ' + (x.error || 'a step failed') : 'Not running · ' + M.plural(x.steps, 'step');
-    return R.listRow({ title: 'Stack: ' + x.name, meta, end: R.button({ label: busy ? (on ? 'Stopping…' : 'Starting…') : on ? 'Stop' : 'Start', kind: 'quiet', attrs: busy ? { disabled: true, title: 'Waiting for the stack', 'data-key': 'stack:' + x.id } : hook({ 'data-stack': x.id, 'data-key': 'stack:' + x.id }) }) }); });
+    return R.listRow({ title: 'Stack: ' + x.name, meta, end: R.button({ label: on ? 'Stop' : 'Start', busy: busy ? { label: on ? 'Stopping…' : 'Starting…' } : false, kind: 'quiet', attrs: busy ? { title: 'Waiting for the stack', 'data-key': 'stack:' + x.id } : hook({ 'data-stack': x.id, 'data-key': 'stack:' + x.id }) }) }); });
   const svc = d.services.map((x) => { const on = lv ? !!x.running : !!ui.services[x.id]; const sk = lv && x.key ? x.key : x.id;
     const openBtn = !on ? '' : lv ? (x.url ? R.button({ label: 'Open', kind: 'quiet', attrs: { 'data-svcopen': x.url, 'data-key': 'svc-open:' + x.id } }) : '') : R.button({ label: 'Open', kind: 'quiet', attrs: { 'data-say': window.StillhetWould('open localhost:' + x.port), 'data-key': 'svc-open:' + x.id } });
-    return R.listRow({ title: x.name, meta: on ? (x.port ? 'Running on port ' + x.port : 'Running') : x.port ? 'Port ' + x.port : 'Not running', end: R.button({ label: ui.svcBusy === sk ? (on ? 'Stopping…' : 'Starting…') : on ? 'Stop' : 'Start', kind: 'quiet', attrs: ui.svcBusy === sk ? { disabled: true, title: 'Waiting for the service', 'data-key': 'svc:' + sk } : hook({ 'data-service': sk, 'data-key': 'svc:' + sk }) }) + openBtn }); });
+    return R.listRow({ title: x.name, meta: on ? (x.port ? 'Running on port ' + x.port : 'Running') : x.port ? 'Port ' + x.port : 'Not running', end: R.button({ label: on ? 'Stop' : 'Start', busy: ui.svcBusy === sk ? { label: on ? 'Stopping…' : 'Starting…' } : false, kind: 'quiet', attrs: ui.svcBusy === sk ? { title: 'Waiting for the service', 'data-key': 'svc:' + sk } : hook({ 'data-service': sk, 'data-key': 'svc:' + sk }) }) + openBtn }); });
   const tools = d.builtins.map((t, i) => (lv ? R.button({ label: t.label, kind: 'quiet', attrs: hook({ 'data-builtin': t.key, 'data-key': 'builtin:' + i }) })
     : R.button({ label: t, kind: 'quiet', attrs: hook({ 'data-say': window.StillhetWould('run ' + t + ' in the worktree'), 'data-key': 'builtin:' + i }) }))).join('');   // quiet words, no grey boxes; Download patch is the Changes ▾'s (once)
   let members = '';
@@ -211,6 +213,15 @@ function actionsHtml(v) {
 }
 // Comments on a diff: the threads on this file's lines, and your own on a line you pick.
 // a file's changed rows, the ones a comment can sit on; a comment keeps the row's place, so two `}` lines stay apart
+// DiffView: side by side where it fits, unified when narrow (the library decides by its own width)
+const diffView = R.diffView || R.fileRow.diffView;
+// A file's whole diff: live, from the patch the page read; in the demo, the model's hunks for it (its first lines when it has no more)
+const diffOf = (d, path) => (LIVE_PAGE() ? diffView.parsePatch(window.StillhetTaskLive.wholeDiff(ui.taskId, path) || '') : null) || [];
+const hunksOf = (d, path) => { const live = diffOf(d, path); return live.length ? live : (d.diffs && d.diffs[path]) || [(d.hunks && d.hunks[path]) || d.hunk]; };
+function openDiff(path) {
+  const d = M.view(ui.caseId, ui).tabData, files = (path ? [path] : d.files.map(([p]) => p)).map((p) => ({ path: p, hunks: hunksOf(d, p) }));
+  ui.diff = { files }; ui.dialog = 'diff'; ui.menu = ''; pendingFocus = 'vd-close'; render();
+}
 const changedRows = (d, path) => ((d.hunks && d.hunks[path]) || d.hunk).lines.filter(([k]) => k !== ' ');
 const notesOf = (path, d) => ((d.comments[path] || []).length + (ui.comments[path] || []).length);
 function commentsHtml(path, d) {
@@ -237,14 +248,14 @@ function changesPanel(v) {
   const head = (name, n, a, dl) => `<li class="ch-dir ch-group"><span class="ch-gn">${name}</span><span class="rtab-dim">${n}</span>${a !== undefined ? `<span class="ct"><span class="add">+${a}</span><span class="del">−${dl}</span></span>` : ''}</li>`;
   const rows = kinds.map(([name, xs]) => head(name, `${xs.length} ${xs.length === 1 ? 'file' : 'files'}`, xs.reduce((s, x) => s + x.a, 0), xs.reduce((s, x) => s + x.dl, 0)) + xs.slice().sort((x, y) => (y.a + y.dl) - (x.a + x.dl)).map((r) => {
     const m = d.fileMeta[r.p] || { st: 'M' };
-    const hk = (d.hunks && d.hunks[r.p]) || d.hunk;   // live: this file's own diff (its first lines); the demo shows one sample
-    const full = LIVE_PAGE() ? { 'data-key': 'file-full', 'data-fulldiff': r.p } : { 'data-key': 'file-full', 'data-say': window.StillhetWould('open the whole diff of the file') };
-    const diff = open === r.i ? `<div class="ch-diff"><p class="ch-at">${esc(hk.at)}</p><pre>${hk.lines.map(([k, t]) => `<span class="${k === '+' ? 'add' : k === '-' ? 'del' : ''}">${esc(k + ' ' + t)}</span>`).join('\n')}</pre>${commentsHtml(r.p, d)}${R.button({ label: 'Open the whole diff', attrs: full })}</div>` : '';
+    const hk = (d.hunks && d.hunks[r.p]) || (d.diffs && d.diffs[r.p] && d.diffs[r.p][0]) || d.hunk;   // live: this file's own diff (its first lines); the demo: its first hunk, or one sample
+    const full = { 'data-key': 'file-full', 'data-fulldiff': r.p, title: 'Every change in this file, side by side where it fits' };
+    const diff = open === r.i ? `<div class="ch-diff">${diffView({ path: r.p, hunks: [hk], mode: ui.diffMode || 'split' })}${commentsHtml(r.p, d)}${R.button({ label: 'Open the whole diff', attrs: full })}</div>` : '';
     return `<li class="ch-file${open === r.i ? ' is-open' : ''}${ui.land === 'file:' + r.i ? ' is-flash' : ''}">${R.fileRow({ status: m.st, name: r.name, dir: r.dir, path: r.p, notes: notesOf(r.p, d), added: r.a, removed: r.dl, blocks: blocks(r.a, r.dl), open: open === r.i, attrs: { 'data-file': r.i, 'data-key': 'file:' + r.i } })}${diff}</li>`;
   }).join('')).join('');
   // Documents its steps wrote: they stay with the task and are not in the PR. A name opens it; one download at the end.
   const arts = v.over.artifacts;
-  const docs = arts.length ? head('Not in the code', String(arts.length)) + `<li class="ch-gnote">Written by the task’s steps; they stay with the task and are not in the PR</li>` + arts.map(([doc, step], i) => `<li class="ch-file ch-doc${ui.land === 'doc:' + i ? ' is-flash' : ''}"><span class="ch-st" aria-hidden="true"></span><span class="ch-name">${R.documentLink({ name: doc, attrs: { 'data-key': 'art:' + i, 'data-doc': i, title: 'Open ' + doc } })}<span class="ch-path">from ${esc(step)}</span></span>${R.button({ label: 'Download ' + doc, kind: 'quiet', iconOnly: true, icon: svg('download', 14), attrs: LIVE_PAGE() ? { 'data-key': 'dl:' + i, 'data-dl': i } : { 'data-key': 'dl:' + i, 'data-say': window.StillhetWould('download ' + doc) } })}</li>`).join('') : '';
+  const docs = arts.length ? head('Documents, not code', String(arts.length)) + `<li class="ch-gnote">Written by the task’s steps; they stay with the task and are not in the PR</li>` + arts.map(([doc, step], i) => `<li class="ch-file ch-doc${ui.land === 'doc:' + i ? ' is-flash' : ''}"><span class="ch-st" aria-hidden="true"></span><span class="ch-name">${R.documentLink({ name: doc, attrs: { 'data-key': 'art:' + i, 'data-doc': i, title: 'Open ' + doc } })}<span class="ch-path">from ${esc(step)}</span></span>${R.button({ label: 'Download ' + doc, kind: 'quiet', iconOnly: true, icon: svg('download', 14), attrs: LIVE_PAGE() ? { 'data-key': 'dl:' + i, 'data-dl': i } : { 'data-key': 'dl:' + i, 'data-say': window.StillhetWould('download ' + doc) } })}</li>`).join('') : '';
   const where = v.place.folder ? `In a copy of ${v.place.folder}; Apply writes them into the folder.` : v.place.branch ? (v.place.base ? `${v.place.branch} into ${v.place.base}` : v.place.branch) : '';
   // The code's own actions sit in the Changes head, as the card's action does: Check out, the rest in its ▾.
   const chItems = (v.bar.stop ? [{ id: 'ch:refresh', text: 'Refresh', help: 'Reload the diff from the worktree' }] : [])
@@ -255,7 +266,8 @@ function changesPanel(v) {
   // is dev's patch, and the git commands copy for real
   const tools = v.place.folder || (LIVE_PAGE() && !v.place.branch) ? '' : R.splitButton({ main: { label: ui.copy && !LIVE_PAGE() ? 'Unlink' : 'Check out', title: coWhy || (ui.copy ? 'Lets go of the local copy; the branch stays' : 'Check the branch out on this machine'), attrs: { 'data-key': 'ch:checkout', 'data-checkout': true, disabled: !!coWhy } },
     moreLabel: 'More for these changes', chevron: svg('chevron', 14), open: ui.menu === 'ch', menuHtml: menu('ch', chItems), moreAttrs: { 'data-menu': 'ch', 'data-key': 'menu:ch' }, cls: 'rc-pop is-right ch-act' });
-  return `<section class="rtab"><div class="ch-head"><div class="ch-sum"><h2 class="rtab-h">${f.length} ${f.length === 1 ? 'file' : 'files'} <span class="ct"><span class="add">+${add}</span><span class="del">−${del}</span></span></h2><span class="rtab-dim" title="${esc(where)}">${v.place.folder ? esc(where) : R.workPlace({ branch: v.place.branch, base: v.place.base })}</span></div>${tools}</div>
+  const whole = f.length ? R.button({ label: 'View changes', attrs: { 'data-fulldiff': '', 'data-key': 'ch:whole', title: 'Every changed file, side by side where it fits' } }) : '';
+  return `<section class="rtab"><div class="ch-head"><div class="ch-sum"><h2 class="rtab-h">${f.length} ${f.length === 1 ? 'file' : 'files'} <span class="ct"><span class="add">+${add}</span><span class="del">−${del}</span></span></h2><span class="rtab-dim" title="${esc(where)}">${v.place.folder ? esc(where) : R.workPlace({ branch: v.place.branch, base: v.place.base })}</span></div>${whole}${tools}</div>
     ${actionsHtml(v)}<ul class="ch-list">${rows}${docs}</ul></section>`;
 }
 function activityPanel(v) {
@@ -336,7 +348,7 @@ function viewDialogHtml(v) {
       download: lv ? { 'data-dl': at, 'data-key': 'doc-dl' } : { 'data-say': window.StillhetWould('download ' + d.name), 'data-key': 'doc-dl' } } }));
   }
   // live: one file's whole diff, from the patch the page read (Changes › Open the whole diff)
-  if (ui.dialog === 'diff') return viewDialog(ui.diff.path, `<pre class="rtab-ev-l">${esc(ui.diff.text)}</pre>`);
+  if (ui.dialog === 'diff') { const fs = ui.diff.files; return viewDialog(fs.length === 1 ? fs[0].path : `Changes · ${M.plural(fs.length, 'file')}`, `<div class="diff-files">${fs.map((f, i) => diffView({ path: f.path, hunks: f.hunks, mode: ui.diffMode || 'split', seg: i === 0 })).join('')}</div>`); }
   // live: a shell in the task's worktree (dev's POST /api/runs/:id/terminal), drawn by the library's TerminalPane
   if (ui.dialog === 'terminal' && ui.term) return viewDialog('Terminal', R.terminalPane({ title: M.view(ui.caseId, ui).place.branch || 'the worktree', lines: ui.term.lines, closed: ui.term.closed, hooks: { stop: { 'data-term-stop': '1', 'data-key': 'term-stop' }, close: { 'data-viewclose': true, 'data-key': 'term-close' }, send: { 'data-term-input': '1', 'data-key': 'term-in', 'data-keep': 'term-in' } } }));
   // Commands you run yourself stay until you close them, with a copy button: never a toast that fades.
@@ -383,7 +395,7 @@ function formDialogHtml() {
 // (conversation.js directionHtml): a field, Send direction, Not now
 function directionHtml() {
   if (!ui.directing) return '';
-  return `<div class="ask-changes">${R.field({ id: 'page-dir', label: 'Direction', quietLabel: true, placeholder: 'What should it take into account?', value: ui.dirValue || '', multiline: true, attrs: { 'data-key': 'page-dir' } })}<span class="tp-actions">${R.button({ label: ui.dirBusy ? R.workingWord('Send direction') : 'Send direction', kind: 'primary', attrs: { 'data-page-direction-send': '', 'data-key': 'page-dir-send', disabled: !!ui.dirBusy } })}${R.button({ label: 'Not now', kind: 'quiet', attrs: { 'data-page-direction-cancel': '', 'data-key': 'page-dir-cancel' } })}</span></div>`;
+  return `<div class="ask-changes">${R.field({ id: 'page-dir', label: 'Direction', quietLabel: true, placeholder: 'What should it take into account?', value: ui.dirValue || '', multiline: true, attrs: { 'data-key': 'page-dir' } })}<span class="tp-actions">${R.button({ label: 'Send direction', busy: ui.dirBusy ? { label: 'Sending the direction…' } : false, kind: 'primary', attrs: { 'data-page-direction-send': '', 'data-key': 'page-dir-send' } })}${R.button({ label: 'Not now', kind: 'quiet', attrs: { 'data-page-direction-cancel': '', 'data-key': 'page-dir-cancel' } })}</span></div>`;
 }
 function decisionsPanel(v) {
   const ds = v.tabData.decisions;
@@ -416,9 +428,11 @@ function render() {
   pendingFocus = '';
   const v = M.view(ui.caseId, ui);
   logsGone = v.has.logsGone;
-  const a = v.action && LIVE_PAGE() ? liveAction(v, v.action) : v.action;
+  const a0 = v.action && LIVE_PAGE() ? liveAction(v, v.action) : v.action;
+  // the page keeps what answers the state it shows; what starts new work (Run another cycle) is on the task's card in its chat
+  const a = a0 && a0.items ? Object.assign({}, a0, { items: a0.items.filter((it) => !/^Run another cycle$/.test(it && (it.text || it.id || it))) }) : a0;
   // The task's controls sit together on the status line: its one action (with ▾), then ⋯ for everything else.
-  const split = a ? R.splitButton({ main: { label: ui.busy && !ui.confirm && !ui.dialog ? R.workingWord(ui.busy.label) : a.label, kind: a.primary && R.alertLevel(R.markTone(v)) === 3 ? 'primary' : '', icon: svg(a.icon, 14), title: a.offWhy || a.help, attrs: { 'data-key': 'act-main', 'data-label': a.label, disabled: !!a.offWhy || !!ui.busy } },
+  const split = a ? R.splitButton({ main: { label: SHOWN[a.label] || a.label, busy: ui.busy && !ui.confirm && !ui.dialog ? { label: R.busy.word ? R.busy.word(SHOWN[ui.busy.label] || ui.busy.label) : R.workingWord(ui.busy.label) } : false, kind: a.primary && R.alertLevel(R.markTone(v)) === 3 ? 'primary' : '', icon: svg(a.icon, 14), title: a.offWhy || a.help, attrs: { 'data-key': 'act-main', 'data-label': a.label, disabled: !!a.offWhy || !!ui.busy } },
     moreLabel: a.items.length ? 'More actions' : '', chevron: svg('chevron', 14), open: ui.menu === 'act', menuHtml: menu('act', a.items), moreAttrs: { 'data-menu': 'act', 'data-key': 'menu:act' }, cls: 'rc-action rc-pop is-right' }) : '';
   const action = `<div class="rc-side">${split}<span class="rc-pop is-right">${R.button({ label: 'More for this task', kind: SHELL ? 'quiet' : '', iconOnly: true, title: false, icon: DOTS, attrs: { 'aria-haspopup': 'menu', 'aria-expanded': String(ui.menu === 'more'), 'data-menu': 'more', 'data-key': 'menu:more' } })}${ui.menu === 'groups' ? groupEditorHtml() : menu('more', moreItems(v))}</span></div>`;
   // Many labels and tags, one group: a task already in a feature or chain, or a group page, joins none; a task you
@@ -452,6 +466,13 @@ function render() {
   const scope = v.bar.scope ? ` title="Applies to the whole ${esc(v.bar.scope)}: the running task and the ones after it"` : '';
 
   const o = v.open;
+  // A task is the work; a chat is where you talk about it. The page has no chat box: it says where the task began and
+  // leads there (a task from a chat), or offers to ask about it in a chat (a task from the form).
+  const fromChat = SHELL ? (LIVE_PAGE() ? window.StillhetConversation?.chatOfTask?.({ run: ui.taskId }) : window.StillhetConversation?.chatOfTask?.({ title: v.title }) || window.StillhetConversation?.chatOfCase?.(ui.caseId)) || '' : '';
+  const fromName = fromChat ? window.StillhetConversation?.chatTitle?.(fromChat) || '' : '';
+  const fromLine = !SHELL || v.kind ? '' : fromChat
+    ? `<p class="rc-from"><span>Started from the chat <b>${esc(fromName || 'of this task')}</b></span>${R.button({ label: 'Open the chat', attrs: { 'data-from-chat': fromChat, 'data-key': 'from-chat', title: 'Its questions and what you said are there' } })}${v.runAfter ? R.textLink({ label: 'Start a follow-up in its chat', attrs: { 'data-from-chat': fromChat, 'data-key': 'from-follow', title: 'New work from this task starts on its card, in its chat' } }) : ''}</p>`
+    : `<p class="rc-from"><span>Started from New task</span>${R.button({ label: 'Ask about it in chat', attrs: { 'data-from-ask': '1', 'data-key': 'from-ask', title: 'Starts a chat about this task' } })}</p>`;
   const enter = o.key !== lastOpen; lastOpen = o.key;   // the steps fade in only when another stage opens, never on a repaint
   const head = o.isRun ? `<div class="sc-head"><span class="sc-run" title="${esc(o.title)}">${esc(o.title)}</span>${v.independent ? R.chip({ text: 'Independent', title: 'It does not start from another task’s branch' }) : ''}${o.meta ? `<span class="rtab-dim sc-run-cost">${esc(o.meta)}</span>` : ''}${o.canOpen && !(a && a.label === 'Open task ' + (o.runIndex + 1)) ? `${R.button({ label: 'Open task', attrs: { 'data-open-run': o.runIndex, 'data-key': 'open-run' } })}` : v.bar.stop ? R.button({ label: 'Re-plan from here', title: 'The planner re-cuts this task and the ones after it', attrs: { 'data-replan': o.runIndex, 'data-key': 'replan' } }) : ''}</div>`
     : v.planHead ? `<div class="sc-head"><span class="sc-run">How the work was cut into tasks</span>${R.button({ label: 'Open the plan', attrs: { 'data-key': 'open-plan', 'data-doc': 0 } })}</div>` : '';
@@ -463,21 +484,21 @@ function render() {
 
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
   R.morph(document.getElementById('card'), `
-  <div class="rc">
+  <div class="rc${SHELL ? ' is-task' : ''}">
     <div class="rc-bar">${crumbs}${ui.offline ? `<span class="rc-conn" role="status" title="Worca lost its connection to the server; your runs keep going and it reconnects by itself">${R.statusDot({ tone: 'is-grey' })}Offline · retrying</span>` : ''}${pager}</div>
-    ${stripHtml(v)}
-    <div class="rc-head"><div class="rc-title-row"><h1 class="rc-heading${ui.titleOpen ? ' is-open' : ''}" title="${esc(v.title)}" tabindex="-1" data-title>${esc(v.title)}</h1>${SHELL ? R.button({ label: 'Keep in view', kind: 'quiet', iconOnly: true, icon: R.icon('eye', 16), attrs: { 'data-keep-view': ui.caseId, 'aria-pressed': 'false', title: 'Keep in view: its mark stays in the top bar, on every page' } }) : ''}</div>${facts ? `<div class="rc-facts">${facts}</div>` : ''}</div>
+    ${SHELL ? '' : stripHtml(v)}
+    <div class="rc-head"><div class="rc-title-row"><h1 class="rc-heading${ui.titleOpen ? ' is-open' : ''}" title="${esc(v.title)}" tabindex="-1" data-title>${esc(v.title)}</h1>${SHELL ? R.button({ label: 'Keep in view', kind: 'quiet', iconOnly: true, icon: R.icon('eye', 16), attrs: { 'data-keep-view': ui.caseId, 'aria-pressed': 'false', title: 'Keep in view: its mark stays in the top bar, on every page' } }) : ''}</div>${facts ? `<div class="rc-facts">${facts}</div>` : ''}${fromLine}</div>
     <section class="rc-card" aria-label="Task status">
-      ${R.statusLine({ dot: statusDot(v), word: v.word, action, detail: v.detail })}${directionHtml()}
-      <div class="rc-zone"><div class="rc-span">${SHELL ? stageBarOf(v) : R.stepper({ stages: v.stages, deepen: '' })}</div></div>
+      ${R.statusLine({ dot: statusDot(v), word: v.word, action, detail: v.detail })}${directionHtml()}${SHELL ? stripHtml(v) : ''}
+      ${SHELL ? `<div class="rc-train">${stageBarOf(v)}</div>` : `<div class="rc-zone"><div class="rc-span">${R.stepper({ stages: v.stages, deepen: '' })}</div></div>`}
       ${SHELL ? stageStream(v, `${head}${panel}${then}`) : `<div class="rc-zone is-ruled" role="tabpanel" id="stage-panel" aria-labelledby="st-${o.key}">${head}${panel}${then}</div>`}
       <div class="rc-zone is-ruled">${R.figures((SHELL ? v.figs.filter((f) => f.k !== 'Changes') : v.figs).map((f) => figHtml(f, v)))}</div>
     </section>
     ${SHELL ? '' : R.tabs({ label: 'Run detail', controls: 'rtab-panel', cls: 'rc-tabs', items: v.tabs.map((t) => ({ id: t.id, label: t.l, count: t.n, selected: t.sel })) })}
     ${prDialogHtml(v)}${viewDialogHtml(v)}${formDialogHtml()}
     ${R.toast({ text: ui.toast || '' })}
-    ${SHELL && PART_STAGE[ui.tab] && v.stages.some((st) => st.key === PART_STAGE[ui.tab]) ? '' : `<div class="rtab-panel" role="tabpanel" id="rtab-panel" aria-labelledby="tab-${sel}" tabindex="-1">${panelHtml(v)}</div>`}
-    ${ui.crash ? R.errorToast({ title: 'Something went wrong', text: 'Worca hit an error it did not expect. Your runs keep going.', icon: svg('alert', 15), count: ui.crash.n,
+    ${SHELL ? (sel === v.tabs[0].id ? `<div class="rtab-panel" role="region" id="rtab-panel" aria-label="${esc(v.tabs[0].l)}" tabindex="-1">${panelHtml(v)}</div>` : '') : `<div class="rtab-panel" role="tabpanel" id="rtab-panel" aria-labelledby="tab-${sel}" tabindex="-1">${panelHtml(v)}</div>`}
+    ${ui.crash ? R.errorToast({ title: 'Something went wrong', text: 'Worca hit an error it did not expect. Your tasks keep going.', icon: svg('alert', 15), count: ui.crash.n,
     actions: R.button({ label: 'Reload', attrs: { 'data-crash': 'reload', 'data-key': 'crash-reload' } }) + unlessLive(R.button({ label: 'Copy details', kind: 'quiet', attrs: { 'data-say': DETAILS, 'data-key': 'crash-details' } })),
     close: R.button({ label: 'Close', kind: 'quiet', iconOnly: true, title: false, icon: svg('x', 14), attrs: { 'data-crash': 'close', 'data-key': 'crash-close' } }) }) : ''}
   </div>`, { motion: !jump });
@@ -514,18 +535,13 @@ function partNow(v, caseId) {
   return '';
 }
 function stageStream(v, open) {
-  const tab = (id) => v.tabs.find((t) => t.id === id);
-  const partAt = PART_STAGE[ui.tab] && tab(ui.tab) ? PART_STAGE[ui.tab] : '';
-  const partBtn = (id) => { const t = tab(id); return t ? R.stagePart({ label: t.l, says: partSays(v, t), open: ui.tab === id, attrs: { 'data-tab': ui.tab === id ? v.tabs[0].id : id, 'data-key': `tab:${id}`, title: ui.tab === id ? `Closes ${t.l}` : `Opens ${t.l} under this stage` } }) : ''; };
-  const line = (st) => {
-    const live = st.live, done = st.cells.every((c) => /is-(done|merged)/.test(c)), next = st.cells.every((c) => /is-next/.test(c));
-    const mark = live ? R.kindMark({ kind: 'task', tone: R.markTone(v), stage: -1, size: 16 }) : svg(done ? 'check' : 'now', 14);
-    const parts = Object.entries(PART_STAGE).filter(([, k]) => k === st.key).map(([id]) => partBtn(id)).join('');
-    return R.stageLine({ mark, label: st.label, meta: st.meta || '', parts, next, attrs: { 'data-stage-line': st.key }, body: (st.selected && !ui.stageShut ? `<div class="rc-zone" role="tabpanel" id="stage-panel" aria-labelledby="st-${esc(st.key)}">${open}</div>` : '') + (partAt === st.key ? `<div class="rtab-panel stage-part" id="rtab-panel" tabindex="-1">${panelHtml(v)}</div>` : '') });
-  };
-  // what has no stage of its own (a group's runs) sits after the stages, as links
-  const rest = v.tabs.slice(1).filter((t) => !(PART_STAGE[t.id] && v.stages.some((st) => st.key === PART_STAGE[t.id]))).map((t) => partBtn(t.id)).join('');
-  return `<div class="stage-stream">${v.stages.map(line).join('')}${rest ? `<div class="stage-parts">${rest}</div>` : ''}</div>`;
+  const sel = ui.stageShut ? null : v.stages.find((st) => st.selected);
+  // the stage a knot opened: its steps, under the train
+  const panel = sel ? `<div class="train-panel stage-stream" role="region" id="stage-panel" aria-label="${esc(sel.label)}: its steps"><p class="train-panel-h">${esc(sel.label)}</p><div class="rc-zone">${open}</div></div>` : '';
+  // its parts (Changes, Activity, Decisions; a group's tasks): each an open-line that opens in place, always in the same order
+  const part = (t) => R.stagePart({ label: t.l, says: partSays(v, t), open: ui.tab === t.id, body: ui.tab === t.id ? `<div class="rtab-panel stage-part" role="region" id="rtab-panel" aria-label="${esc(t.l)}" tabindex="-1">${panelHtml(v)}</div>` : '', attrs: { 'data-tab': ui.tab === t.id ? v.tabs[0].id : t.id, 'data-key': `tab:${t.id}`, title: ui.tab === t.id ? `Closes ${t.l}` : `Opens ${t.l} here` } });
+  const folds = v.tabs.slice(1).map(part).join('');
+  return `${panel}${folds ? `<div class="train-folds">${folds}</div>` : ''}`;
 }
 
 // An open menu or picker stays inside the window: shifted back from whichever edge it would cross, 16px gutter.
@@ -618,10 +634,17 @@ function livePage(id, keep) {
   ui.run = M.liveRun(Object.assign({}, page, { id })); ui.pauseAfter = page.pauseAfterStep;   // its parts are read by the id it opened with
   ui.chips = (page.labels || []).map((text) => ({ kind: 'label', text })).concat((page.tags || []).map((text) => ({ kind: 'tag', text })));   // dev's, not the design's
   if (!keep) { liveModels = []; window.StillhetTaskLive.models?.(id).then((list) => { if (ui.taskId !== id) return; liveModels = list || []; render(); }); }   // another task's late list never lands
-  if (!keep) ui.tab = partNow(M.view(ui.caseId, ui), ui.caseId);
+  if (!keep) { ui.tab = partNow(M.view(ui.caseId, ui), ui.caseId); landNext(); }
   render();
 }
-window.StillhetRunPage = { pick, openLive: (id, keep) => livePage(id, !!keep) };   // the shell moves the page to the case its address names through this picker, in both hosts
+let nextStage = '', nextDiff = null;
+function landNext() {
+  const v = M.view(ui.caseId, ui);
+  if (nextStage) { const st = v.stages.find((x) => x.key === nextStage || x.label === nextStage); nextStage = ''; if (st) { ui.open = st.key; ui.stageShut = false; pendingFocus = `stage:${st.key}`; } }
+  if (nextDiff !== null) { const path = nextDiff; nextDiff = null; if (v.tabs.some((t) => t.id === 'changes')) { ui.tab = 'changes'; const d = v.tabData, known = path && d.files.find(([p]) => p === path || p.endsWith('/' + path)); ui.diff = { files: (known ? [known[0]] : d.files.map(([p]) => p)).map((p) => ({ path: p, hunks: hunksOf(d, p) })) }; ui.dialog = 'diff'; pendingFocus = 'vd-close'; } }
+}
+// atStage: the page opens at that stage (a card's knot); openDiff: with its whole diff open (a chat's View changes)
+window.StillhetRunPage = { pick, openLive: (id, keep) => livePage(id, !!keep), atStage: (key) => { nextStage = key || ''; }, openDiff: (path) => { nextDiff = path || ''; } };   // the shell moves the page to the case its address names through this picker, in both hosts
 
 const groups = M.caseGroups;   // by what you check
 pick.innerHTML = groups.map((g) => `<optgroup label="${g}">${M.cases.filter((c) => c.group === g).map((c) => `<option value="${c.id}"${c.id === ui.caseId ? ' selected' : ''}>${esc(c.label)}</option>`).join('')}</optgroup>`).join('');
@@ -629,7 +652,7 @@ pick.addEventListener('change', () => {
   // #run/<case>/<part> opens that part under its stage; with none named, the part that matters now
   const named = SHELL ? (location.hash.match(/^#run\/[^/]+\/(\w+)/) || [])[1] : '';
   if (SHELL) history.replaceState(null, '', '#run/' + pick.value); jump = true; ui = Object.assign(fresh(pick.value), { chips: (M.cases.find((c) => c.id === pick.value) || {}).chips || [] });
-  if (SHELL) { const v0 = M.view(ui.caseId, ui); ui.tab = v0.tabs.some((t) => t.id === named) ? named : partNow(v0, ui.caseId); }
+  if (SHELL) { const v0 = M.view(ui.caseId, ui); ui.tab = v0.tabs.some((t) => t.id === named) ? named : partNow(v0, ui.caseId); if (!nextStage && v0.stages.some((st) => st.key === named)) nextStage = named; landNext(); }
   render();
 });
 // The prototype's flow (RunCardModel.flow): an action moves the task to its next case or does its job in place and
@@ -639,7 +662,10 @@ const AWAY = [{ id: 'away:auto', text: 'As set up', help: 'Follows Settings and 
 function stageBarOf(v) {
   const reach = v.stages.reduce((n, st, i) => (st.cells.some((c) => !/is-next/.test(c)) ? i : n), 0);
   const cells = v.stages[reach]?.cells || [], k = cells.filter((c) => !/is-next/.test(c)).length;   // its steps: those begun, of all
-  return R.stageBar({ labels: v.stages.map((st) => st.label), bare: true, stage: reach, tone: R.markTone(v), step: cells.length > 1 ? [Math.max(1, k), cells.length] : null, key: `page:${v.title}` });   // the stage list right under it names them (stillhet.one-place)
+  const open = ui.stageShut ? -1 : v.stages.findIndex((st) => st.selected);
+  // the train: a knot a stage with its name and time under it; a knot opens that stage's details under the train
+  return R.stageBar({ labels: v.stages.map((st) => st.label), metas: v.stages.map((st) => st.meta || ''), stage: reach, tone: R.markTone(v), step: cells.length > 1 ? [Math.max(1, k), cells.length] : null, key: `page:${v.title}`, open,
+    knot: (i) => ({ 'data-stage-line': v.stages[i].key, 'data-key': `stage:${v.stages[i].key}`, 'aria-controls': open === i ? 'stage-panel' : null }) });
 }
 function moreItems(v) {
   const group = !!v.kind; const live = v.bar.stop;
@@ -654,8 +680,8 @@ function moreItems(v) {
   }
   if (live && !group) items.push({ header: 'Away mode' }, ...AWAY.map((x) => Object.assign({ checked: (ui.away || 'away:auto') === x.id }, x)), { sep: true });
   // COV-3 #1: a direction straight to the run, while it can still read it (live: StillhetTaskLive says when)
-  if (!group && (LIVE_PAGE() ? !!ui.taskId && window.StillhetTaskLive.canFlow('Send a direction', { taskId: ui.taskId, page: true }) : live)) items.push({ id: 'more:direction', text: 'Send a direction', help: 'The run reads it at its next step' });
-  if (v.runAfter) items.push({ id: 'more:after', text: v.runAfter.label, help: v.runAfter.help });
+  if (!group && (LIVE_PAGE() ? !!ui.taskId && window.StillhetTaskLive.canFlow('Send a direction', { taskId: ui.taskId, page: true }) : live)) items.push({ id: 'more:direction', text: 'Send a direction', help: 'The task reads it at its next step' });
+  // the page inspects: new work from this task (a follow-up, Run after…) starts on its card in its chat, never here
   if (!group && !v.inGroup) items.push(v.addedGroup ? { id: 'ungroup', text: 'Leave ' + v.addedGroup, help: 'The task leaves the group; its labels and tags stay' } : { id: 'more:group', text: 'Move to group…', help: 'Tracks it with related tasks on one page' });
   if (v.hasSetup) items.push({ id: 'more:preset', text: 'Save as preset', help: 'Starts the next task with this task’s setup' });
   // Try it: a local copy to run; another task can hold it, and once open it says so here and in Changes.
@@ -1153,7 +1179,9 @@ async function liveChips(next, kind, say) {
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 document.addEventListener('click', (e) => {
   const sl = SHELL && e.target.closest?.('#card [data-stage-line]');
-  if (sl && !e.target.closest('.rc-zone')) { const k = sl.dataset.stageLine, isOpen = M.view(ui.caseId, ui).stages.find((st) => st.selected)?.key === k && !ui.stageShut; ui.open = k; ui.stageShut = isOpen; ui.menu = ''; render(); return; }   // a stage's line opens its detail; on the open one, closes it
+  const fc = SHELL && e.target.closest?.('#card [data-from-chat], #card [data-from-ask]');
+  if (fc) { if (fc.dataset.fromChat) SHELL.go('chat/' + fc.dataset.fromChat); else window.StillhetConversation?.handOver({ about: { kind: 'Task', name: M.view(ui.caseId, ui).title }, ph: 'Ask about this task' }); return; }
+  if (sl) { const k = sl.dataset.stageLine, isOpen = M.view(ui.caseId, ui).stages.find((st) => st.selected)?.key === k && !ui.stageShut; ui.open = k; ui.stageShut = isOpen; ui.menu = ''; render(); return; }   // a stage's line opens its detail; on the open one, closes it
   if (SHELL && !SHELL.owns('run', e.target)) return;
   // in the one Worca the trail's first step is the Runs list itself
   if (SHELL && e.target.closest('#card [data-key="crumb:0"]')) { e.preventDefault(); SHELL.back(); return; }
@@ -1211,7 +1239,7 @@ document.addEventListener('click', (e) => {
     window.StillhetTaskLive.act('run-direction', { taskId: u.taskId, text }).then((r) => {
       if (ui !== u) return;
       ui.dirBusy = false;
-      if (r && r.ok) { ui.directing = false; ui.dirValue = ''; toast('Sent: the run reads it at its next step'); pendingFocus = 'menu:more'; } else pendingFocus = 'page-dir';
+      if (r && r.ok) { ui.directing = false; ui.dirValue = ''; toast('Sent: the task reads it at its next step'); pendingFocus = 'menu:more'; } else pendingFocus = 'page-dir';
       render();
     });
     return;
@@ -1220,7 +1248,8 @@ document.addEventListener('click', (e) => {
   if (d.crumbto !== undefined && LIVE_PAGE()) { window.StillhetRunsList?.filter?.({ project: d.crumbto }); SHELL.go('runs'); return; }
   if (d.viewclose !== undefined && ui.term) { ui.term.close(); ui.term = null; }
   if (d.termStop !== undefined && ui.term) { ui.term.stop(); return; }
-  if (d.fulldiff !== undefined && LIVE_PAGE()) { ui.diff = { path: d.fulldiff, text: window.StillhetTaskLive.wholeDiff(ui.taskId, d.fulldiff) }; ui.dialog = 'diff'; pendingFocus = 'vd-close'; render(); return; }
+  if (d.fulldiff !== undefined) { openDiff(d.fulldiff); return; }
+  if (d.diffMode) { ui.diffMode = d.diffMode; pendingFocus = 'diff-mode:' + d.diffMode; render(); return; }
   if (d.dl !== undefined && LIVE_PAGE()) { const a = M.view(ui.caseId, ui).tabData.artifacts[+d.dl]; if (a) window.StillhetTaskLive.download(ui.taskId, a[2]); return; }
   if (d.svcopen !== undefined) { window.open(d.svcopen, '_blank'); return; }
   if (d.builtin !== undefined && LIVE_PAGE()) { const b = v0().tabData.builtins.find((x) => x.key === d.builtin); if (b) liveTool('builtin', { builtin: b.id, name: b.label, member: b.member }, t.dataset.key); return; }
@@ -1308,7 +1337,7 @@ document.addEventListener('click', (e) => {
     else if (d.menuPick === 'try:actions') { ui.tab = 'changes'; ui.menu = ''; pendingFocus = 'menu:more'; }
     else if (d.menuPick === 'more:unlink' || d.menuPick === 'ch:discard-copy' || d.menuPick === 'more:discard-copy') { const unlink = d.menuPick === 'more:unlink'; ui.copy = false; ui.menu = ''; pendingFocus = 'menu:more'; toast(unlink ? 'Unlinked the local copy; the branch stays' : 'Discarded the local copy; the branch stays'); }
     else if (d.menuPick === 'more:preset') { ui.menu = ''; ui.dialogF = { dialog: 'preset', say: 'Saved as preset “{value}”' }; ui.dialogLabel = 'Save as preset'; follow(ui.dialogF, 'Save as preset'); }
-    else if (d.menuPick === 'more:delete') { const noun = v0().kind.toLowerCase(); follow({ leave: true, say: 'Deleted the ' + noun + ' and its runs; their PRs stay', confirm: 'Delete this ' + noun + ' and its runs? This cannot be undone; their PRs stay.' }, 'Delete'); }
+    else if (d.menuPick === 'more:delete') { const noun = v0().kind.toLowerCase(); follow({ leave: true, say: 'Deleted the ' + noun + ' and its tasks; their PRs stay', confirm: 'Delete this ' + noun + ' and its tasks? This cannot be undone; their PRs stay.' }, 'Delete'); }
     else if (d.menuPick === 'more:report') { ui.menu = ''; follow(v0().runFlow.report, 'Report this ' + (v0().kind ? v0().kind.toLowerCase() : 'task')); }
     else if (d.menuPick === 'more:link' && LIVE_PAGE()) { ui.menu = ''; pendingFocus = 'menu:more'; liveDirect('Copy link', 'Copied the link'); }
     else if (d.menuPick === 'more:direction') { ui.menu = ''; ui.directing = true; ui.dirValue = ''; pendingFocus = 'page-dir'; }
@@ -1353,7 +1382,7 @@ document.addEventListener('click', (e) => {
     else if (LIVE_PAGE()) { liveChips(has ? ui.chips.filter((c) => !(c.kind === k && c.text === tx)) : ui.chips.concat({ kind: k, text: tx }), k, (has ? 'Removed ' : 'Added ') + tx); return; }
     else { ui.chips = has ? ui.chips.filter((c) => !(c.kind === k && c.text === tx)) : ui.chips.concat({ kind: k, text: tx }); pendingFocus = t.dataset.key; }
   }
-  else if (d.replan !== undefined) { const n = +d.replan + 1; follow({ say: 'The planner re-cut runs ' + n + ' and on; runs before it stay', confirm: 'Re-plan from run ' + n + '? The planner re-cuts runs ' + n + ' and on; runs 1' + (n > 2 ? '–' + (n - 1) : '') + ' stay as they are.' }, 'Re-plan from here'); }
+  else if (d.replan !== undefined) { const n = +d.replan + 1; follow({ say: 'The planner re-cut tasks ' + n + ' and on; runs before it stay', confirm: 'Re-plan from run ' + n + '? The planner re-cuts tasks ' + n + ' and on; runs 1' + (n > 2 ? '–' + (n - 1) : '') + ' stay as they are.' }, 'Re-plan from here'); }
   else if (d.openRun !== undefined && LIVE_PAGE() && ui.run && ui.run.liveGroup) { const pid = ui.run.liveGroup.members[+d.openRun]?.pipelineId; if (pid) SHELL.go('run/' + pid); return; }
   else if (d.openRun !== undefined) { ui.back = { caseId: ui.caseId, open: ui.open, tab: ui.tab }; goMember(ui.caseId, +d.openRun); }
   else if (d.sib !== undefined && d.sib !== '') { const v = M.view(ui.caseId, ui); goMember(v.parent.caseId, +d.sib); pendingFocus = t.dataset.key; }

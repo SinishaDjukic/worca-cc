@@ -54,13 +54,14 @@ test('D3: with no team sharing its numbers, By person says so; with two, "of" li
   assert.match(text(none.d), /No project shares its team numbers yet/);
   closeHosts();
   const two = await insightsHost({ hash: '#insights/team', scopes: 2 });
-  assert.match(text(two.d), /of the billing-api team/);
+  // the redesign: Of is a labelled field (list.filters), no longer a word of a sentence
+  assert.equal(page(two.d).querySelector('[data-menu="in-of"]').getAttribute('aria-label'), 'Of: The billing-api team');
   page(two.d).querySelector('[data-menu="in-of"]').click(); await settle(40);
   const menu = page(two.d).textContent;
   assert.match(menu, /team/); assert.match(menu, /Shop/);
   page(two.d).querySelector('[data-pick="in-of|scope:workspace:wks-shop"]').click(); await settle(200);
   assert.ok(insightsCalls(two.calls).some((u) => u.startsWith('/api/team-metrics?scope=workspace%3Awks-shop&')));
-  assert.match(text(two.d), /of the Shop team/);
+  assert.equal(page(two.d).querySelector('[data-menu="in-of"]').getAttribute('aria-label'), 'Of: The Shop team');
 });
 
 test('Spend reads totals.spentUsd; ticking Maya sends nothing and draws her total; this quarter re-reads as custom', async () => {
@@ -86,7 +87,7 @@ test('R-qa-5: a link opened cold draws loading, sends its one custom read, then 
   closeHosts();
   const r = await insightsHost({ hash: '#insights/spend?from=2026-11-02&to=2026-11-03' });
   assert.ok(insightsCalls(r.calls).includes('/api/stats?range=custom&from=2026-11-02&to=2026-11-03&report=1&byTag=1&tagKey=client'));
-  assert.match(text(r.d), /custom/, 'a from-to link opens as a custom stretch, its from and to pickers shown');
+  assert.equal(page(r.d).querySelector('[data-menu="in-when"]').getAttribute('aria-label'), 'Time: Custom', 'the redesign: Time is a labelled field'); assert.ok(page(r.d).querySelector('[data-menu="in-from"]') && page(r.d).querySelector('[data-menu="in-to"]'), 'a from-to link opens as a custom stretch, its from and to pickers shown');
   await pick(r.d, 'in-when', 'this month'); await settle(150);
   assert.equal(insightsCalls(r.calls).filter((u) => u.startsWith('/api/stats')).at(-1), '/api/stats?range=month&report=1&byTag=1&tagKey=client', 'leaving custom reads the month again');
   assert.match(text(r.d), /\$412 of \$100/);

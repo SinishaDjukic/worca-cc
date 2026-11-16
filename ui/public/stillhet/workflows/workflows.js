@@ -4,7 +4,10 @@
 // workflow's page tells it as a WorkflowStory (Simple's drawing); Advanced and Expert show dev's real graph under it, one
 // pick from the story, and change a step's model and effort in place; Expert edits it by hand on dev's canvas (Stillhet's
 // skin, the bar becomes its Library, Auto-align is dev's auto-layout). Everything else is made and changed in a chat.
-// Edit a copy by hand opens a never-saved draft; Save creates it under a free name (F-5-08).
+// Edit on a built-in opens a never-saved draft of a copy; Save creates it under a free name (F-5-08).
+// The redesign: a card's title opens its page; the lists' views are tabs with counts and a labelled Sort by (FilterRow);
+// Edit is on every workflow's page; the graph sits in a box that scrolls inside itself with Fit always in view; the
+// editor's bar is Undo, Redo, Import, Export, Discard, Save; no composer here, one Ask about it in chat in the head.
 (function () {
   const R = window.StillhetUI;
   const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -54,9 +57,10 @@
   const forYou = () => src().workflow.filter((w) => !w.own && !w.plugin && w.tasks < 5);   // a suggestion; what you just installed is not one
   const marketCount = () => window.StillhetPlaces?.marketplace?.notInstalled?.(3) ?? 0;   // what the row opens: the agents and workflows the Marketplace still has for you
   const kindOfWay = { workflows: 'workflow', agents: 'agent', scripts: 'script' };
-  const WAYS = ['workflows', 'agents', 'scripts', 'drafts', 'for-you', 'team'];   // an address may name only these
+  const WAYS = ['workflows', 'agents', 'scripts', 'drafts', 'for-you', 'team', 'built-in'];   // an address may name only these
   let wide = false, current = '', menu = '', confirm = null, ctl = null, bar = null, page = null, sort = 'most used', show = 'the graph', exporting = false;   // Advanced and Expert open on the real graph; Expand reads it large (panel.expand)
   let importing = null, exportDir = '', fileInput = null;   // the import's confirm ({ name, n, resolve }); the plugin export's folder; the import's file picker (outside the page: a redraw must not replace it while the picker is open)
+  let vz = 0;   // the page's graph: its size, 0 for Fit (never under a size you can read)
   let ed = null, edMore = false;   // the canvas: { id, wf (a working copy), g, picked, more, saved, past:[], next:[] }
   const find = (k) => { const [kind, id] = k.split(':'), key = kind === 'edit' ? 'workflow' : kind; return { kind, x: Object.hasOwn(src(), key) ? src()[key].find((y) => y.id === id) : undefined }; };
   const titleOf = (id) => src().agent.find((a) => a.id === id)?.title || src().script.find((s) => s.id === id)?.title || id;
@@ -120,25 +124,41 @@
 
 
   // ---- the cards of a way ----
+  // a card opens its thing (stillhet.card-opens): its title is a link, and a click anywhere on the card that is no button opens it too
+  const titleLink = (kind, x) => R.textLink({ label: x.title, attrs: { 'data-wf-open': `${kind}:${x.id}`, title: `Opens ${x.title}` } });
   function cardOf(kind, x) {
     const open = { 'data-wf-open': `${kind}:${x.id}` };
-    if (kind === 'workflow' && x.fresh) return R.pluginCard({ mark: R.kindMark({ kind: 'workflow', tone: 'idle', advisory: true }), kicker: `Draft · never saved · ${stepsWord(x.draft.steps.length)}`, title: x.title, what: x.what, facts: 'Nothing can run it until you save it', action: R.button({ label: atLeast('expert') ? 'Go on editing' : 'Finish it in a chat', attrs: atLeast('expert') ? { 'data-wf-edit': x.id } : { 'data-wf-chat': `workflow:${x.id}` } }), attrs: open });
-    if (kind === 'workflow') return R.pluginCard({ mark: R.kindMark({ kind: 'workflow', tone: x.running ? 'run' : 'idle', advisory: !x.running && !!x.draft }), kicker: x.draft ? `${shape(x)} · a draft waits, ${x.draft.changes} ${x.draft.changes === 1 ? 'change' : 'changes'}` : shape(x), title: x.title, what: x.what, facts: factsOf(x), action: R.button({ label: 'Use it', attrs: { 'data-wf-use': x.id, title: 'Starts a task in a chat with this workflow in its sentence' } }), more: R.button({ label: 'Change it in a chat', kind: 'quiet', attrs: { 'data-wf-chat': `${kind}:${x.id}` } }), attrs: open });
+    if (kind === 'workflow' && x.fresh) return R.pluginCard({ mark: R.kindMark({ kind: 'workflow', tone: 'idle', advisory: true }), kicker: `Draft · never saved · ${stepsWord(x.draft.steps.length)}`, title: x.title, titleHtml: titleLink(kind, x), what: x.what, facts: 'Nothing can run it until you save it', action: R.button({ label: atLeast('expert') ? 'Go on editing' : 'Finish it in a chat', attrs: atLeast('expert') ? { 'data-wf-edit': x.id } : { 'data-wf-chat': `workflow:${x.id}` } }), attrs: open });
+    if (kind === 'workflow') return R.pluginCard({ mark: R.kindMark({ kind: 'workflow', tone: x.running ? 'run' : 'idle', advisory: !x.running && !!x.draft }), kicker: x.draft ? `${shape(x)} · a draft waits, ${x.draft.changes} ${x.draft.changes === 1 ? 'change' : 'changes'}` : shape(x), title: x.title, titleHtml: titleLink(kind, x), what: x.what, facts: factsOf(x), action: R.button({ label: 'Use it', attrs: { 'data-wf-use': x.id, title: 'Starts a task in a chat with this workflow' } }), attrs: open });
     const kicker = kind === 'agent' ? `${{ producer: 'Makes something', verifier: 'Checks', clarifier: 'Asks you' }[x.type]} · ${x.model}` : `A script · ${x.runtime}`;
     const what = kind === 'agent' ? `Takes ${x.ins}; gives ${x.outs}.` : `${x.what}.`;
-    return R.pluginCard({ mark: markOf(kind), kicker, title: x.title, what, facts: usedIn(x.id).length ? `In ${usedIn(x.id).join(', ')}` : 'In no workflow yet', action: R.button({ label: 'Open', attrs: open }), more: R.button({ label: 'Change it in a chat', kind: 'quiet', attrs: { 'data-wf-chat': `${kind}:${x.id}` } }), attrs: open });
+    return R.pluginCard({ mark: markOf(kind), kicker, title: x.title, titleHtml: titleLink(kind, x), what, facts: usedIn(x.id).length ? `In ${usedIn(x.id).join(', ')}` : 'In no workflow yet', action: R.button({ label: 'Open', attrs: open }), attrs: open });
   }
+  // the workflow lists' views (list.filters): one row of tabs with counts, the same on each, so a pick moves nothing
+  const VIEWS = [['workflows', 'All'], ['for-you', 'For you'], ['team', 'Your team’s'], ['built-in', 'Built in']];
+  const viewList = (way) => (way === 'for-you' ? forYou() : way === 'team' ? teamOf() : src().workflow.filter((x) => !x.fresh && (way !== 'built-in' || !x.own)));
+  const SORT = { 'most used': (a, b) => (b.tasks || 0) - (a.tasks || 0), cheapest: (a, b) => costOf(a) - costOf(b), 'A–Z': (a, b) => a.title.localeCompare(b.title) };
+  // why a view is empty, and one way on
+  const EMPTY = {
+    workflows: ['No workflows yet.', 'A workflow is the steps a task goes through. Describe one in a chat and Worca builds it.', 'Build a workflow', { 'data-wf-new': '' }],
+    'for-you': ['Nothing to suggest yet.', 'Worca suggests a workflow here once it has seen a few of your tasks: which steps you add, skip or send back. Until then the built-in ones are a good start.', 'See the built-in ones', { 'data-wf-goto': 'workflows/~built-in' }],
+    team: ['Your team has shared no workflow yet.', 'A workflow shows here when someone on your team shares one; nothing is wrong. Yours stay private until you share them.', 'See all workflows', { 'data-wf-goto': 'workflows' }],
+    'built-in': ['No built-in workflows here.', 'The ones Worca comes with show here; this instance has none.', 'See all workflows', { 'data-wf-goto': 'workflows' }],
+  };
+  const frame = (body) => `<div class="convo"><div class="convo-scroll"><div class="convo-col is-center wf-col">${body}</div></div></div>`;   // the one page column (Tasks': .convo-col.is-center)
   function wayHtml(way) {
     const kind = kindOfWay[way] || 'workflow';
-    const SORT = { 'most used': (a, b) => (b.tasks || 0) - (a.tasks || 0), cheapest: (a, b) => costOf(a) - costOf(b), 'A–Z': (a, b) => a.title.localeCompare(b.title) };
-    let list = src()[kind].filter((x) => !x.fresh);   // one never saved is only a draft, listed and counted there
-    if (way === 'drafts') { const d = allDrafts(); return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${R.placeHead({ center: { label: 'Workflows', to: 'workflows' }, title: 'Drafts', facts: esc(`${d.length} ${d.length === 1 ? 'draft' : 'drafts'} · changed by hand, not saved · tasks run the saved ones`) })}${d.length ? `<div class="pg-grid">${d.map(([k, x]) => cardOf(k, x)).join('')}</div>` : R.emptyState({ title: 'No drafts.', text: 'A change you make by hand waits here until you save it.', actions: R.button({ label: 'Go to All workflows', kind: 'quiet', attrs: { 'data-wf-goto': 'workflows' } }) })}</div></div></div>`; }
-    if (way === 'for-you') list = forYou();
-    if (way === 'team') list = teamOf();
-    if (kind === 'workflow') list.sort(SORT[sort] || SORT['most used']);
-    const T = { workflows: ['Your workflows', `${savedCount()} workflows · each made in a chat`], agents: ['Your agents', `${src().agent.length} agents · the steps workflows are made of`], scripts: ['Your scripts', `${src().script.length} scripts · checks a workflow runs`], 'for-you': ['For you', 'Workflows Worca thinks fit how you work'], team: ['Your team’s', `${teamOf().length} shared by your team · use one and it is yours too`] }[way] || ['Your workflows', ''];
-    const sentence = kind === 'workflow' && list.length > 1 ? `<div class="wf-sent">Showing ${R.sentencePicker({ id: 'wf-sort', text: sort, tip: 'How they are ordered', items: Object.keys(SORT).map((v) => ({ id: v, text: v, checked: v === sort })), open: menu === 'wf-sort', chevron: R.icon('chevron', 10) })} ${R.figuresToggle({ open: figs, attrs: { 'data-wf-figs': '' } })}</div>` : '';
-    return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${R.placeHead({ center: way === 'workflows' ? null : { label: 'Workflows', to: 'workflows' }, title: T[0], facts: esc(T[1]) })}${sentence}${list.length ? `<div class="pg-grid">${list.map((x) => cardOf(kind, x)).join('')}</div>` : R.emptyState({ title: way === 'team' ? 'Your team has shared nothing yet.' : 'Nothing to suggest yet.', text: way === 'team' ? 'A workflow your team shares shows here, ready to use.' : 'Worca suggests workflows once it has seen how you work.', actions: R.button({ label: 'Go to All workflows', kind: 'quiet', attrs: { 'data-wf-goto': 'workflows' } }) })}</div></div></div>`;
+    if (way === 'drafts') { const d = allDrafts(); return frame(`${R.placeHead({ center: { label: 'Workflows', to: 'workflows' }, title: 'Drafts', facts: esc(`${d.length} ${d.length === 1 ? 'draft' : 'drafts'} · changed by hand, not saved · tasks run the saved ones`) })}${d.length ? `<div class="pg-grid">${d.map(([k, x]) => cardOf(k, x)).join('')}</div>` : R.emptyState({ title: 'No drafts.', text: 'A change you make by hand waits here until you save it.', actions: R.button({ label: 'See all workflows', kind: 'quiet', attrs: { 'data-wf-goto': 'workflows' } }) })}`); }
+    if (kind !== 'workflow') {
+      const list = src()[kind], T = kind === 'agent' ? ['Your agents', `${list.length} agents · the steps workflows are made of`] : ['Your scripts', `${list.length} scripts · checks a workflow runs`];
+      return frame(`${R.placeHead({ center: { label: 'Workflows', to: 'workflows' }, title: T[0], facts: esc(T[1]) })}${list.length ? `<div class="pg-grid">${list.map((x) => cardOf(kind, x)).join('')}</div>` : R.emptyState({ title: kind === 'agent' ? 'No agents yet.' : 'No scripts yet.', text: kind === 'agent' ? 'An agent is one step of a workflow. Worca makes one when a workflow you build needs it.' : 'A script is a check a workflow runs. Worca writes one when a workflow you build needs it.', actions: R.button({ label: 'See all workflows', kind: 'quiet', attrs: { 'data-wf-goto': 'workflows' } }) })}`);
+    }
+    const view = VIEWS.some(([id]) => id === way) ? way : 'workflows', list = [...viewList(view)].sort(SORT[sort] || SORT['most used']);
+    const filters = R.centerSentence.filters({ pick: menu, end: R.centerSentence.figuresButton({ open: figs, attrs: { 'data-wf-figs': '' } }), parts: [
+      { id: 'wf-view', label: 'Which workflows', text: VIEWS.find(([id]) => id === view)[1], tabs: VIEWS.map(([id]) => id), items: VIEWS.map(([id, text]) => ({ id, text, checked: id === view, hint: String(viewList(id).length) })) },
+      { id: 'wf-sort', label: 'Sort by', text: sort, tip: 'How they are ordered', items: Object.keys(SORT).map((v) => ({ id: v, text: v.charAt(0).toUpperCase() + v.slice(1), checked: v === sort })) }] });
+    const E = EMPTY[view];
+    return frame(`${R.placeHead({ title: 'Your workflows', facts: esc(`${savedCount()} ${savedCount() === 1 ? 'workflow' : 'workflows'} · each made in a chat`) })}${filters}${list.length ? `<div class="pg-grid">${list.map((x) => cardOf(kind, x)).join('')}</div>` : R.emptyState({ title: E[0], text: E[1], actions: R.button({ label: E[2], kind: 'quiet', attrs: E[3] }) })}`);
   }
 
   // ---- a thing's page ----
@@ -151,19 +171,22 @@
     const strip = confirm?.x === x0 ? R.confirmStrip({ text: `Delete ${x.title}? ${x0.draft && !x0.fresh ? `Its draft of ${x0.draft.changes} unsaved ${x0.draft.changes === 1 ? 'change' : 'changes'} goes with it. ` : ''}${kind === 'workflow' ? `${x.running ? 'Its first task is still running and will finish. ' : ''}Tasks it ran keep their history; schedules that use it stop.` : usedIn(x.id).length ? `The step stays in ${usedIn(x.id).join(', ')}, and those workflows go on running it.` : 'No workflow uses it.'}`, yes: 'Delete', danger: true }) : '';
     const exp = exporting ? `<div class="card-form">${R.confirmForm({ form: 'export', id: 'wf-export-t', text: `Export ${x.title}`, body: `<span class="tp-sentence">As ${pick('wf-as', x.as || 'a JSON file', ['a JSON file', 'a Claude Code skill', 'a Worca plugin'], 'What it becomes')} with the agents it uses</span>`
       + (x.as === 'a Worca plugin' ? R.field({ id: 'wf-export-dir', label: 'Folder', value: exportDir, placeholder: '~/worca-plugins/my-plugin', hint: 'The plugin is written into this folder', attrs: { 'data-wf-export-dir': '' } }) : '') + R.confirmActions({ yes: 'Export' }) })}</div>` : '';
-    const chat = R.button({ label: 'Change it in a chat', attrs: { 'data-wf-chat': `${kind}:${x.id}`, title: 'Worca proposes the change as a card; you apply it' } });
+    // stillhet.chat-first: no composer on the page; this hands the page to Chat as a chip
+    const chat = R.button({ label: 'Ask about it in chat', kind: 'quiet', attrs: { 'data-wf-chat': `${kind}:${x.id}`, title: 'Opens Chat with this page attached: ask about it, or say what should change' } });
     if (kind === 'workflow') {
       const delta = costOf(x) - costOf(src().workflow[0]);
       const head = R.placeHead({ center: { label: 'Workflows', to: 'workflows' }, title: x.title, facts: esc(`${shape(x)} · ${x.from}`), mark: R.kindMark({ kind: 'workflow', tone: x.running ? 'run' : 'idle' }), word: x.running ? 'Running' : measured(x) ? `${money(costOf(x))} a task` : 'No tasks yet',
         why: x.running ? (isLive() ? 'Its first task is running' : `${money(4.8)} so far`) : !measured(x) ? (x.id === 'default' || x.id === 'wf_default' ? 'what every task runs' : '') : `${x.id === 'default' || x.id === 'wf_default' ? 'what every task runs' : `${money(Math.abs(delta))} ${delta >= 0 ? 'more' : 'less'} than Default`} · ${mergedOf(x)}`,
-        action: chat + (atLeast('expert') ? R.button({ label: ro ? 'Edit a copy by hand' : 'Edit by hand', kind: 'quiet', attrs: ro ? { 'data-wf-copy-edit': x.id, title: 'A built-in reads as it is: this makes a copy of yours, on the canvas' } : { 'data-wf-edit': x.id, title: 'The graph, on the canvas' } }) : ''), menu: more }) + draft;
-      const toggle = atLeast('advanced') ? `<div class="wf-sent">Showing ${pick('wf-show', show, ['the graph', 'the story only'], 'The real graph under the story, or the story alone')}</div>` : '';
-      const well = atLeast('advanced') && show === 'the graph' ? R.expandFrame({ open: wide, name: `the graph of ${esc(x.title)}`, body: `${wide ? `<h2 class="wf-ed-h">${esc(x.title)}</h2>` : ''}<div class="wf-well gv-skin is-view" id="wf-graph"></div>`, attrs: { 'data-wf-wide': '' } }) : '';
+        action: (atLeast('expert') ? R.button({ label: x0.fresh ? 'Go on editing' : 'Edit', kind: 'quiet', attrs: ro ? { 'data-wf-copy-edit': x.id, title: 'Opens the graph editor on a copy of yours, a draft until you save it: a built-in itself stays as it is' } : { 'data-wf-edit': x.id, title: 'Opens it in the graph editor, a draft until you save it' } }) : '') + chat, menu: more }) + draft;
+      const toggle = atLeast('advanced') ? R.centerSentence.filters({ pick: menu, parts: [{ id: 'wf-show', label: 'Show', text: show, tip: 'The real graph under the story, or the story alone', tabs: ['the graph', 'the story only'], items: [{ id: 'the graph', text: 'Story and graph', checked: show === 'the graph' }, { id: 'the story only', text: 'Story only', checked: show !== 'the graph' }] }] }) : '';
+      // the graph in its box: the box scrolls inside itself, and its tools (the size, Fit) stay in view above it (panel.graph-box)
+      const gtools = `<div class="wf-gtools" role="group" aria-label="The graph's size">${R.button({ label: 'Zoom out', kind: 'quiet', attrs: { 'data-wf-zoom': '-1' } })}<span class="wf-gpct" aria-live="polite"></span>${R.button({ label: 'Zoom in', kind: 'quiet', attrs: { 'data-wf-zoom': '1' } })}${R.button({ label: 'Fit', kind: 'quiet', attrs: { 'data-wf-fit': '' } })}<span class="wf-gsay"></span></div>`;
+      const well = atLeast('advanced') && show === 'the graph' ? R.expandFrame({ open: wide, name: `the graph of ${esc(x.title)}`, body: `${wide ? `<h2 class="wf-ed-h">${esc(x.title)}</h2>` : ''}${gtools}<div class="wf-gscroll" tabindex="0" role="group" aria-label="The graph of ${R.esc(x.title)}"><div class="wf-well gv-skin is-view" id="wf-graph"></div></div>`, attrs: { 'data-wf-wide': '' } }) : '';
       // thing.one-telling: the story says what each step does and costs, the graph how they connect; this holds only what you can change
       const steps = atLeast('advanced') && !ro ? R.settingsSection({ title: 'Change a step', meta: 'Its model and effort here, or anything in a chat.',
         rows: x.steps.map(([name, , model, effort], i) => (model ? R.settingsRow({ name: `${i + 1}. ${name}`, sentence: `Runs on ${pick(`wfm-${i}`, model, MODELS, 'Its model')} ${pick(`wfe-${i}`, effort, EFFORTS, 'How hard it thinks')}` }) : '')).join('')
           + x.loops.map((l, i) => { const k = loopEnds(x.steps, l).from; return R.settingsRow({ name: 'Loop', sentence: `${esc(k >= 0 ? stepName(x.steps, k) : l[0])} sends fixes back up to ${pick(`wfl-${i}`, String(l[2]), ['1', '2', '3', '5'], 'How many rounds')} ${roundsWord(l[2])}` }); }).join('') }) : '';
-      return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${head}${strip}${exp}${storyOf(x)}${labsRows(x)}${toggle}${well}${steps}<div class="wf-acts">${R.button({ label: 'Use it', attrs: { 'data-wf-use': x.id, disabled: x0.fresh ? true : null, title: x0.fresh ? 'Save it first: nothing can run a draft' : 'Starts a task in a chat with this workflow in its sentence' } })}${x0.fresh ? '<span class="wf-ed-m">Save it first: nothing can run a draft</span>' : ''}</div></div></div><div class="convo-dock" id="wf-dock"></div></div>`;
+      return frame(`${head}${strip}${exp}${storyOf(x)}${labsRows(x)}${toggle}${well}${steps}<div class="wf-acts">${R.button({ label: 'Use it', attrs: { 'data-wf-use': x.id, disabled: x0.fresh ? true : null, title: x0.fresh ? 'Save it first: nothing can run a draft' : 'Starts a task in a chat with this workflow' } })}${x0.fresh ? '<span class="wf-ed-m">Save it first: nothing can run a draft</span>' : ''}</div>`);
     }
     const head = R.placeHead({ center: { label: 'Workflows', to: 'workflows' }, title: x.title, facts: esc(`${x.domain} · ${kind === 'agent' ? x.type : x.runtime}`), mark: markOf(kind), word: x.own ? 'Yours' : 'Built-in', why: usedIn(x.id).length ? `In ${usedIn(x.id).join(', ')}` : 'In no workflow yet', action: chat, menu: more }) + draft;
     let body;
@@ -176,7 +199,7 @@
       body = R.settingsSection({ title: 'Its work', rows: [R.settingsRow({ name: 'Does', sentence: esc(x.what) }), R.settingsRow({ name: 'Written in', sentence: `${esc(x.runtime)}, stopped after ${esc(x.timeout)}` }), R.settingsRow({ name: esc(x.param[0]), sentence: `<b>${esc(x.param[1])}</b> unless a workflow says otherwise` })].join('') })
         + R.settingsSection({ title: 'Its tests', rows: R.settingsRow({ name: 'Cases', sentence: `${x.cases} saved ${x.cases === 1 ? 'case' : 'cases'}`, end: R.button({ label: 'Run all', kind: 'quiet', attrs: { 'data-wf-run': x.id } }) }) });
     }
-    return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${head}${strip}${exp}${body}</div></div><div class="convo-dock" id="wf-dock"></div></div>`;
+    return frame(`${head}${strip}${exp}${body}`);
   }
 
   // the import's confirm (D10): a file that runs scripts asks before anything is imported
@@ -198,9 +221,15 @@
       ...(edMore ? ['<div class="ed-more">' + R.settingsRow({ name: 'Session', sentence: `${pick(`ed-s-${i}`, st[7] || 'its own session', ['its own session', 'one conversation with the step before'], 'Which session it runs in')}` }), R.settingsRow({ name: 'Sub-agents', sentence: `${pick(`ed-sa-${i}`, st[8] || 'on', ['on', 'off'], 'Whether it sends helpers')}` }) + '</div>'] : [])].join('') })}
       <div class="wf-acts open-line">${R.button({ label: edMore ? 'Fewer settings' : 'More settings', kind: 'quiet', icon: R.icon(edMore ? 'chevron' : 'chevR', 12), attrs: { 'data-ed-more': '', 'aria-expanded': String(edMore), 'data-folds': '.ed-more' } })}</div><div class="wf-acts">${R.button({ label: 'Try it on a task', kind: 'quiet', attrs: { 'data-ed-try': String(i), disabled: src().workflow.find((y) => y.id === ed.id)?.fresh ? true : null, title: src().workflow.find((y) => y.id === ed.id)?.fresh ? 'Save it first: nothing can run a draft' : 'Starts a task in a chat with this step named' } })}${R.button({ label: 'Remove', kind: 'quiet', attrs: { 'data-ed-remove': String(i) } })}</div>${src().workflow.find((y) => y.id === ed.id)?.fresh ? '<p class="wf-ed-m">Try it on a task once it is saved: nothing can run a draft.</p>' : ''}`
       : `<h2 class="wf-ed-h">${ed.picked === 'n_end' ? 'End' : 'Task'}</h2><p class="wf-ed-m">${ed.picked === 'n_end' ? 'What the workflow comes to: a pull request' : 'Where your task comes in: its words and the files you add'}</p><p class="wf-ed-m">Pick a step on the canvas to change it.</p>`;
-    const io = `<span class="rc-pop">${R.button({ label: 'Import, Export', kind: 'quiet', attrs: { 'data-menu': 'ed-io', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'ed-io') } })}${menu === 'ed-io' ? R.compactMenu({ items: [{ id: 'ed-io|import', text: 'Import…', help: 'A JSON file, a Claude Code skill' }, { id: 'ed-io|export', text: 'Export…', help: 'As a file, a skill or a plugin' }] }) : ''}</span>`;
-    return `<div class="wf-ed">${importStrip()}<div class="wf-ed-top">${R.button({ label: `Back to ${w.title}`, kind: 'quiet', iconOnly: true, icon: R.icon('chevL', 14), attrs: { 'data-ed-back': '' } })}${R.field({ id: 'ed-name', label: 'Workflow name', quietLabel: true, value: w.title, attrs: { 'data-ed-name': '', maxlength: 40, title: '40 characters at most' } })}${src().workflow.find((y) => y.id === ed.id)?.draft ? '' : '<span>saved · tasks run this</span>'}<span class="wf-ed-sp"></span>${R.button({ label: 'Undo', kind: 'quiet', attrs: { 'data-ed-undo': '', disabled: ed.past.length ? null : true, title: ed.past.length ? null : 'Nothing to undo yet' } })}${R.button({ label: 'Redo', kind: 'quiet', attrs: { 'data-ed-redo': '', disabled: ed.next.length ? null : true, title: ed.next.length ? null : 'Nothing undone to bring back' } })}${io}${R.button({ label: 'Ask Worca', kind: 'quiet', icon: R.icon('ask-worca', 14), attrs: { 'data-ed-ask': '' } })}${barOfDraft(src().workflow.find((y) => y.id === ed.id) || {})}</div>
-      <div class="wf-ed-body"><div class="wf-canvas"><div class="gv-skin is-edit" id="wf-canvas-g"></div><div class="wf-ed-tools">${R.button({ label: 'Auto-align', kind: 'quiet', attrs: { 'data-ed-align': '', title: 'Tidies every step into place; Undo puts it back' } })}${R.button({ label: 'Zoom out', kind: 'quiet', attrs: { 'data-ed-zoom': '-1', disabled: (ed.z || ed.fit || 1) > ed.whole + 0.001 ? null : true, title: (ed.z || ed.fit || 1) > ed.whole + 0.001 ? null : 'The whole graph already shows' } })}<span>${Math.round((ed.z || ed.fit || 1) * 100)}%</span>${R.button({ label: 'Zoom in', kind: 'quiet', attrs: { 'data-ed-zoom': '1', disabled: (ed.z || ed.fit) >= 1 ? true : null, title: (ed.z || ed.fit) >= 1 ? 'It is at full size' : null } })}${R.button({ label: 'Fit', kind: 'quiet', attrs: { 'data-ed-fit': '', disabled: ed.z ? null : true, title: ed.z ? 'Back to the width, at a size you can read' : 'It already fits the width' } })}</div></div><aside class="wf-insp">${insp}</aside></div></div>`;
+    // the editor's bar (panel.editor-bar; classic's toolbar): the name, how it stands, then Undo, Redo, Import, Export,
+    // Discard and Save, each a bordered button in a fixed place; one that cannot act now is off and says why
+    const rec = src().workflow.find((y) => y.id === ed.id) || {}, d = rec.draft, n = d ? d.changes : 0;
+    const stands = d ? `<span class="wf-ed-st" role="status"><b>Draft</b> ${esc(rec.fresh ? 'never saved · nothing can run it yet' : `${n} ${n === 1 ? 'change' : 'changes'} · tasks still run the saved one`)}</span>` : '<span class="wf-ed-st" role="status">Saved · tasks run this</span>';
+    const b = (label, hook, off, kind = 'quiet') => R.button({ label, kind, attrs: { ...hook, disabled: off ? true : null, title: off || null } });
+    const acts = `<div class="wf-ed-acts">${b('Undo', { 'data-ed-undo': '' }, ed.past.length ? '' : 'Nothing to undo yet')}${b('Redo', { 'data-ed-redo': '' }, ed.next.length ? '' : 'Nothing undone to bring back')}<span class="wf-ed-gap"></span>${R.button({ label: 'Import', kind: 'quiet', attrs: { 'data-ed-io': 'import', title: 'A JSON file or a Claude Code skill' } })}${R.button({ label: 'Export', kind: 'quiet', attrs: { 'data-ed-io': 'export', title: 'As a JSON file' } })}<span class="wf-ed-gap"></span>${b('Discard', { 'data-draft-discard': '' }, d ? '' : 'Nothing to discard: it is as saved')}${b('Save', { 'data-draft-save': '' }, d ? '' : 'Nothing to save yet', 'primary')}</div>`;
+    const z = ed.z || ed.fit || 1;
+    return `<div class="wf-ed">${importStrip()}<div class="wf-ed-top">${R.button({ label: `Back to ${w.title}`, kind: 'quiet', iconOnly: true, icon: R.icon('chevL', 14), attrs: { 'data-ed-back': '' } })}${R.field({ id: 'ed-name', label: 'Workflow name', quietLabel: true, value: w.title, attrs: { 'data-ed-name': '', maxlength: 40, title: '40 characters at most' } })}${stands}<span class="wf-ed-sp"></span>${acts}${R.button({ label: 'Ask about it in chat', kind: 'quiet', iconOnly: true, icon: R.icon('ask-worca', 14), attrs: { 'data-ed-ask': '' } })}</div>
+      <div class="wf-ed-body"><div class="wf-stage"><div class="wf-canvas"><div class="gv-skin is-edit" id="wf-canvas-g"></div></div><div class="wf-ed-tools" role="group" aria-label="The canvas's size">${R.button({ label: 'Auto-align', kind: 'quiet', attrs: { 'data-ed-align': '', title: 'Tidies every step into place; Undo puts it back' } })}${R.button({ label: 'Zoom out', kind: 'quiet', attrs: { 'data-ed-zoom': '-1', disabled: z > ed.whole + 0.001 ? null : true, title: z > ed.whole + 0.001 ? null : 'The whole graph already shows' } })}<span>${Math.round(z * 100)}%</span>${R.button({ label: 'Zoom in', kind: 'quiet', attrs: { 'data-ed-zoom': '1', disabled: (ed.z || ed.fit) >= 1 ? true : null, title: (ed.z || ed.fit) >= 1 ? 'It is at full size' : null } })}${R.button({ label: 'Fit', kind: 'quiet', attrs: { 'data-ed-fit': '', disabled: ed.z ? null : true, title: ed.z ? 'Back to the width, at a size you can read' : 'It already fits the width' } })}</div></div><aside class="wf-insp">${insp}</aside></div></div>`;
   }
   function edMount() {
     const host = document.getElementById('wf-canvas-g'); if (!host) return;
@@ -226,7 +255,7 @@
     ctl?.paint();
     if (current.startsWith('edit:')) {
       if (listNow() !== 'ready') { page.innerHTML = `<div class="stillhet-locked">${R.listState({ state: listNow(), noun: 'workflows', retry: listNow() === 'failed' ? { 'data-wf-retry': '' } : null })}</div>`; return; }
-      const { x } = find(current); if (!x || !atLeast('expert') || !x.own) { window.StillhetShell.go(x ? `workflows/workflow:${x.id}` : 'workflows'); return; }   // a built-in reads as it is
+      const { x } = find(current); if (!x || !atLeast('expert') || !x.own) { window.StillhetShell.go(x ? `workflows/workflow:${x.id}` : 'workflows'); return; }   // Edit on a built-in's page opens a copy's draft (data-wf-copy-edit)   // a built-in reads as it is
       const k0 = x.loops.length ? loopEnds(x.steps, x.loops[0]).from : 0;   // it opens on the step that sends the first loop back
       if (!ed || ed.id !== x.id) ed = { id: x.id, wf: structuredClone(shown(x)), g: null, picked: x.steps[k0]?.[9] || `n${k0}`, saved: true, past: [], next: [], z: 0, fit: 0, whole: 0 };
       page.innerHTML = edHtml(); edMount(); return;
@@ -237,9 +266,24 @@
     if (!x && /^(agent|script):/.test(current)) { const way = `${kind}s`; page.innerHTML = `<div class="stillhet-locked">${R.notFound({ what: kind, name: current.split(':')[1], back: way.charAt(0).toUpperCase() + way.slice(1), attrs: { 'data-wf-goto': `workflows/~${way}` } })}</div>`; return; }   // nav.not-found, with this thing's own noun
     if (!x) { page.innerHTML = wayHtml(current.startsWith('~') ? current.slice(1) : 'workflows'); return; }
     page.innerHTML = pageHtml(kind, x);
-    const gEl = document.getElementById('wf-graph'); if (gEl) window.StillhetGraph?.mount(gEl, isLive() && x.tpl && x.draft ? { ...shown(x), tpl: LIVE().preview(x.id, x.draft) } : shown(x), { width: gEl.clientWidth || 900 });   // thing.one-telling: the story says what a step does
-    window.StillhetConversation?.dock(document.getElementById('wf-dock'), { kind, title: x.title, chat: '' });
+    viewMount(x);
   }
+  // the page's graph (panel.graph-box): drawn at a size you can read, never smaller; wider than its box, the box scrolls
+  // inside itself and says so. Its tools sit above the box, so Fit is in view wherever the graph is scrolled.
+  function viewMount(x) {
+    const gEl = document.getElementById('wf-graph'), box = gEl?.closest('.wf-gscroll'); if (!gEl || !window.StillhetGraph) return;
+    const r = window.StillhetGraph.mount(gEl, isLive() && x.tpl && x.draft ? { ...shown(x), tpl: LIVE().preview(x.id, x.draft) } : shown(x), { width: Math.max(320, (box?.clientWidth || gEl.clientWidth || 900) - 2), zoom: vz }) || {};   // thing.one-telling: the story says what a step does
+    const fit = r.fit || 1, z = vz || fit, q = (sel) => page.querySelector(sel), off = (el, why) => { if (!el) return; el.disabled = !!why; if (why) el.title = why; else el.removeAttribute('title'); };
+    if (q('.wf-gpct')) q('.wf-gpct').textContent = `${Math.round(z * 100)}%`;
+    off(q('[data-wf-zoom="-1"]'), z <= fit + 0.001 ? 'Smaller than this its words are too small to read' : '');
+    off(q('[data-wf-zoom="1"]'), z >= 1 ? 'It is at full size' : '');
+    off(q('[data-wf-fit]'), !vz && !r.wide ? 'It already fits its box' : '');
+    if (q('[data-wf-fit]') && !q('[data-wf-fit]').disabled) q('[data-wf-fit]').title = vz ? 'Back to a size that fits, never smaller than you can read' : 'Back to its first step';
+    if (q('.wf-gsay')) q('.wf-gsay').textContent = r.wide ? (wide ? 'Wider than the page: scroll sideways' : 'Wider than this box: scroll sideways, or Expand') : '';
+    box?.classList.toggle('is-wide', !!r.wide);
+    viewFit = fit;
+  }
+  let viewFit = 1;
   // a copy's name (F-5-08, D2): "T copy", then "T copy N", the first no workflow (saved or a draft) nor a refused try has
   const copyName = (title, tried = new Set()) => {
     const taken = (t) => tried.has(t.toLowerCase()) || src().workflow.some((w) => w.title.toLowerCase() === t.toLowerCase());
@@ -286,7 +330,7 @@
   function handNew() { const c = { id: `new-${Date.now() % 1e5}`, title: 'New workflow', own: true, domain: 'coding', what: 'Built by hand.', tasks: 0, merged: 0, from: 'Built by hand', fresh: true, steps: [], loops: [], draft: { steps: [['Plan', 'planner', 'Opus 5.5', 'high', 3, 0.30], ['Build', 'implementer', 'Sonnet 5.5', 'high', 9, 0.22]], loops: [], changes: 0 } }; src().workflow.push(c); window.StillhetShell.go(`workflows/edit:${c.id}`); }
   function wire(b, pg) {
     bar = b; page = pg;
-    const way = (key, title, mark, n) => ({ key: `way:${key}`, _way: key, title, mark, end: n === '' ? '' : String(n), current: current === `~${key}` || (key === 'workflows' && (current === '' || current.startsWith('workflow:'))) || (kindOfWay[key] && current.startsWith(`${kindOfWay[key]}:`)), tip: `${title}${n === '' ? '' : ` · ${n}`}` });
+    const way = (key, title, mark, n) => ({ key: `way:${key}`, _way: key, title, mark, end: n === '' ? '' : String(n), current: current === `~${key}` || (key === 'workflows' && (current === '' || current === '~built-in' || current.startsWith('workflow:'))) || (kindOfWay[key] && current.startsWith(`${kindOfWay[key]}:`)), tip: `${title}${n === '' ? '' : ` · ${n}`}` });
     const lib = (kind, x) => ({ key: `lib:${kind}:${x.id}`, _lib: [kind, x], title: x.title, mark: markOf(kind), end: kind === 'agent' ? x.model : x.runtime, tip: `Adds ${x.title} after the step you picked` });
     const flow = ['AND: waits for all', 'OR: the first wins', 'Combine'].map((t) => ({ key: `lib:flow:${t}`, _lib: ['flow', { title: t.split(':')[0] }], title: t, mark: R.kindMark({ kind: 'workflow' }), tip: `${t}: say where it goes, in a chat` }));
     ctl = R.listController({ root: bar, spec: { noun: 'workflows', label: 'Selected', retry: () => LIVE()?.load(), view: () => ({ state: listNow(), parts: [],
@@ -310,6 +354,13 @@
       if ((hit = on('[data-wf-goto]'))) { window.StillhetShell.go(hit.dataset.wfGoto); return; }
       if (on('[data-wf-figs]')) { figs = !figs; draw(); return; }
       if (on('[data-wf-wide]')) { wide = !wide; draw(); return; }
+      if (on('[data-wf-new]')) { window.StillhetConversation?.starter('workflow'); return; }
+      if (on('[data-wf-fit]')) { vz = 0; draw(); const sc = page.querySelector('.wf-gscroll'); if (sc) sc.scrollLeft = 0; page.querySelector('[data-wf-zoom="1"]')?.focus(); return; }
+      if ((hit = on('[data-wf-zoom]'))) { const dir = +hit.dataset.wfZoom, z = Math.min(1, Math.max(viewFit, (vz || viewFit) + 0.1 * dir)); vz = z <= viewFit + 0.001 ? 0 : z; draw(); (page.querySelector(`[data-wf-zoom="${dir}"]:not(:disabled)`) || page.querySelector('[data-wf-fit]:not(:disabled)') || page.querySelector('[data-wf-zoom]:not(:disabled)'))?.focus(); return; }
+      if ((hit = on('[data-pick]'))) { const [id, v] = hit.dataset.pick.split('|'); menu = '';   // the FilterRow's tabs and pickers
+        if (id === 'wf-view') { window.StillhetShell.go(v === 'workflows' ? 'workflows' : `workflows/~${v}`); setTimeout(() => page.querySelector(`[data-pick="wf-view|${v}"]`)?.focus(), 0); return; }   // the address follows the view; focus stays on its tab
+        if (id === 'wf-sort') sort = v; else if (id === 'wf-show') show = v;
+        draw(); page.querySelector(`[data-pick="${id}|${v}"], [data-menu="${id}"]`)?.focus(); return; }
       if ((hit = on('[data-wf-use]'))) { const x = src().workflow.find((w) => w.id === hit.dataset.wfUse); if (x) act('use', 'workflow', x); return; }
       if ((hit = on('[data-wf-chat]'))) { const { kind: k, x } = find(hit.dataset.wfChat); if (x) window.StillhetConversation?.handOver({ about: { kind: k.charAt(0).toUpperCase() + k.slice(1), name: x.title }, ph: `What should change in ${x.title}?` }); return; }
       if (on('[data-wf-ways]')) { waysOpen = !waysOpen; draw(); return; }
@@ -328,16 +379,17 @@
         if (on('[data-ed-more]')) { edMore = !edMore; draw(); return; }   // remembered while you edit
         if (on('[data-ed-ask]')) { window.StillhetConversation?.handOver({ about: { kind: 'Workflow', name: ed.wf.title }, ph: `What should change in ${ed.wf.title}?` }); return; }
         if ((hit = on('[data-ed-try]'))) { window.StillhetConversation?.handOver({ mode: 'task', workflow: ed.wf.title, about: { kind: `Step ${ed.wf.steps[+hit.dataset.edTry][0]}`, name: ed.wf.title }, ph: `Which task should ${ed.wf.steps[+hit.dataset.edTry][0]} try?` }); return; }
-        if (on('[data-ed-save], [data-draft-save]') && LIVE()) { const x = src().workflow.find((w) => w.id === ed.id); x.draft ||= blank('workflow', ed.wf); LIVE().save('workflow', ed.id, copyRename(x)).then((a) => { if (a.ok) ed = null; if (location.hash === `#workflows/edit:${x.id}`) draw(); if (a.text) say(a.text); }); return; }   // a saved new one went to its page: a redraw here would send it back to the list   // D6: checked here, then POST /api/workflows
+        if ((hit = on('[data-ed-io]'))) { const v = hit.dataset.edIo;
+          if (LIVE()) { if (v === 'import') fileInput.click(); else R.busy(hit, { label: 'Exporting…', until: LIVE().exportAs(ed.id, 'a JSON file').then((a) => say(a.text)) }); return; }   // D10, D11
+          if (v === 'import') { importing = { name: 'Release checklist.json', n: 1 }; draw(); return; }   // the demo's sample file: it runs one script
+          say(window.StillhetWould(`export ${ed.wf.title}`)); return; }
+        if ((hit = on('[data-ed-save], [data-draft-save]')) && LIVE()) { const x = src().workflow.find((w) => w.id === ed.id); x.draft ||= blank('workflow', ed.wf); R.busy(hit, { label: 'Saving…' }); LIVE().save('workflow', ed.id, copyRename(x)).then((a) => { if (a.ok) ed = null; if (location.hash === `#workflows/edit:${x.id}`) draw(); if (a.text) say(a.text); }); return; }   // a saved new one went to its page: a redraw here would send it back to the list   // D6: checked here, then POST /api/workflows
         if (on('[data-ed-save], [data-draft-save]')) { const x = src().workflow.find((w) => w.id === ed.id); x.draft ||= blank('workflow', ed.wf); saveDraft(x); ed.past = []; ed.next = []; ed.laid = false; draw(); say(`Saved ${x.title}`); return; }
         if ((hit = on('[data-ed-remove]'))) { const k = +hit.dataset.edRemove, name = ed.wf.steps[k][0];
           if (src().workflow.find((w) => w.id === ed.id)?.chain === false) { say(`Could not remove ${name}: ${BRANCHES}`); return; }   // D7
           edChange(() => { ed.wf.loops = ed.wf.loops.filter((l) => { const e = loopEnds(ed.wf.steps, l); return e.from !== k && e.to !== k; }); ed.wf.steps.splice(k, 1); ed.g = null; ed.picked = 'n_task'; }, `Removed ${name}`); return; }
         if ((hit = on('#wf-canvas-g [data-node-id]'))) { ed.picked = hit.dataset.nodeId; draw(); return; }
         if ((hit = on('[data-menu-pick]'))) { const [id, v] = hit.dataset.menuPick.split('|'); menu = '';
-          if (id === 'ed-io' && LIVE()) { if (v === 'import') fileInput.click(); else LIVE().exportAs(ed.id, 'a JSON file').then((a) => say(a.text)); draw(); return; }   // D10, D11
-          if (id === 'ed-io' && v === 'import') { importing = { name: 'Release checklist.json', n: 1 }; draw(); return; }   // the demo's sample file: it runs one script
-          if (id === 'ed-io') { say(v === 'import' ? window.StillhetWould('ask for a file to import') : window.StillhetWould(`export ${ed.wf.title}`)); draw(); return; }
           const [, k, n] = id.split('-'), st = ed.wf.steps[+n], sent = () => ed.wf.loops.find((l) => loopEnds(ed.wf.steps, l).from === +n);   // the loop this step sends
           const was = { m: st[2], e: st[3], l: String(sent()?.[2]), t: st[6] || '30 min', s: st[7] || 'its own session', sa: st[8] || 'on' }[k]; if (v === was) { draw(); return; }   // the same value is no change
           edChange(() => { if (k === 'm') reprice(st, v, st[3]); else if (k === 'e') reprice(st, st[2], v); else if (k === 'l') sent()[2] = +v; else if (k === 't') st[6] = v; else if (k === 's') st[7] = v; else if (k === 'sa') st[8] = v; ed.g = null; }); return; }
@@ -348,8 +400,6 @@
       const { kind, x } = current && !current.startsWith('~') ? find(current) : {};
       if ((hit = on('[data-menu-pick]'))) {
         const [id, v] = hit.dataset.menuPick.split('|'); menu = '';
-        if (id === 'wf-sort') { sort = v; draw(); return; }
-        if (id === 'wf-show') { show = v; draw(); return; }
         if (!x) return;
         if (id === 'wf-more') { act(v, kind, x); return; }
         if (id === 'wf-as') { x.as = v; draw(); return; }
@@ -361,13 +411,13 @@
       if ((hit = on('[data-menu]'))) { menu = menu === hit.dataset.menu ? '' : hit.dataset.menu; draw(); return; }
       if (!x) return;
       if ((hit = on('[data-wf-sw]'))) { const k = hit.dataset.wfSw; touch(kind, x, (d) => { d[k] = !d[k]; }); draw(); say(x.draft ? `${x.title}: kept as a draft` : `${x.title}: back to what is saved`); return; }
-      if (on('[data-draft-save]') && LIVE()) { LIVE().save(kind, x.id, copyRename(x)).then((a) => { draw(); if (a.text) say(a.text); }); return; }   // D6, D15
+      if ((hit = on('[data-draft-save]')) && LIVE()) { R.busy(hit, { label: 'Saving…', until: LIVE().save(kind, x.id, copyRename(x)).then((a) => { draw(); if (a.text) say(a.text); }) }); return; }   // D6, D15: busy while the save is out
       if (on('[data-draft-save]')) { saveDraft(x); draw(); say(`Saved ${x.title}: tasks run it from now`); return; }
       if (on('[data-draft-discard]')) { const before = x.draft; if (x.fresh) { LIVE()?.abandon(kind, x.id); const l = src()[kind], i = l.indexOf(x); l.splice(i, 1); say(`Discarded ${x.title}`, () => { l.splice(i, 0, x); draw(); }); window.StillhetShell.go('workflows'); return; } if (LIVE()) LIVE().discard(kind, x.id); else delete x.draft; draw(); say(`Discarded the draft of ${x.title}`, () => { x.draft = before; draw(); }); return; }
-      if ((hit = on('[data-wf-run]')) && LIVE()) { LIVE().runCases(x.id).then((a) => say(a.text === 'busy' ? `${x.title}: its cases are already running` : a.text)); return; }   // D12: dev's script bench
+      if ((hit = on('[data-wf-run]')) && LIVE()) { R.busy(hit, { label: 'Running…', until: LIVE().runCases(x.id).then((a) => say(a.text === 'busy' ? `${x.title}: its cases are already running` : a.text)) }); return; }   // D12: dev's script bench
       if ((hit = on('[data-wf-run]'))) { say(window.StillhetWould(`run the ${x.cases} saved ${x.cases === 1 ? 'case' : 'cases'} of ${x.title}`)); return; }
       if ((hit = on('[data-confirm]'))) {
-        if (exporting && LIVE()) { const dir = page.querySelector('[data-wf-export-dir]')?.value?.trim() || ''; exporting = false; draw(); if (hit.dataset.confirm === 'yes') LIVE().exportAs(x.id, x.as || 'a JSON file', { pluginDir: dir }).then((a) => say(a.text)); return; }   // D11
+        if (exporting && LIVE()) { const dir = page.querySelector('[data-wf-export-dir]')?.value?.trim() || ''; exporting = false; draw(); if (hit.dataset.confirm === 'yes') { const more = page.querySelector('[data-menu="wf-more"]'), out = LIVE().exportAs(x.id, x.as || 'a JSON file', { pluginDir: dir }).then((a) => say(a.text)); if (more) R.busy(more, { label: 'Exporting…', until: out }); } return; }   // D11
         if (exporting) { exporting = false; draw(); if (hit.dataset.confirm === 'yes') say(window.StillhetWould(`export ${x.title} as ${x.as || 'a JSON file'}`)); return; }
         if (hit.dataset.confirm === 'yes' && LIVE()) { confirm = null; const u = LIVE().deferDelete(kind, x.id, UNDO_MS); say(`Deleted ${x.title}`, () => { if (!u.undo()) say(`Too late to undo: ${x.title} is being deleted`); }); window.StillhetShell.go('workflows'); }   // D14: the module hides it and sends DELETE once the undo window closes
         else if (hit.dataset.confirm === 'yes') { const l = src()[kind], i = l.indexOf(x); l.splice(i, 1); confirm = null; say(`Deleted ${x.title}`, () => { l.splice(i, 0, x); draw(); }); window.StillhetShell.go('workflows'); } else { confirm = null; draw(); }
@@ -388,7 +438,7 @@
         if (ed.wf.steps.some((s) => s[0] === v)) { t.value = old; say(`Kept ${old}: another step is called ${v}`); return; }   // loops name their steps
         edChange(() => { const ends = ed.wf.loops.map((l) => loopEnds(ed.wf.steps, l)); st[0] = v; ed.wf.loops.forEach((l, j) => { if (ends[j].from === k) l[0] = v; if (ends[j].to === k) l[1] = v; }); ed.g = null; }, `Renamed to ${v}`); }   // only this step's loops (the draft save matches them by node)
     });
-    R.dismissOnOutside(document, { open: () => here() && !!menu, inside: '#route-place .spick, #route-place .rc-pop', back: () => null, close: () => { menu = ''; }, paint: draw });
+    R.dismissOnOutside(document, { open: () => here() && !!menu, inside: '#route-place .spick, #route-place .rc-pop, #route-place .pz-pick', back: () => null, close: () => { menu = ''; }, paint: draw });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && wide && here()) { wide = false; draw(); } });
     window.addEventListener('hashchange', () => { if (!here()) wide = false; });   // Expand belongs to the page you expanded on
     document.addEventListener('keydown', (e) => { if (e.key !== 'Escape' || !here() || menu || !(exporting || confirm)) return; exporting = false; confirm = null; draw(); }, true);   // capture: an open menu takes Esc first
@@ -398,6 +448,6 @@
   window.StillhetPlaces.workflows = { records: () => src(), changed: () => { if (here()) draw(); }, names: () => src().workflow.filter((w) => !w.fresh).map((w) => ({ title: w.title, steps: w.steps.map((s) => s[0]) })), has: (a) => (isLive() && listNow() !== 'ready') || (a.startsWith('~') ? WAYS.includes(a.slice(1)) : !!find(a).x || /^(agent|script):/.test(a)),   // an unknown agent or script says so on the page, in its own noun
     // what an installed plugin brings: read as built-ins, gone when it is removed (the Marketplace calls this)
     plugin: (id, name, gives, on) => { for (const kind of ['agent', 'workflow']) { data[kind] = data[kind].filter((x) => x.plugin !== id); if (on) (gives?.[kind] || []).forEach((x) => { if (x.says) SAYS[x.id] = x.says; data[kind].push({ domain: 'coding', tasks: 0, merged: 0, loops: [], from: `From the plugin ${name}`, ...structuredClone(x), own: false, plugin: id }); }); } },
-    search: (q) => Object.entries(src()).flatMap(([k, l]) => l.filter((x) => x.title.toLowerCase().includes(q)).map((x) => ({ label: x.title, where: `${k === 'workflow' ? 'Workflow' : k === 'agent' ? 'Agent' : 'Script'} · ${x.own ? 'yours' : 'built-in'}`, hash: `workflows/${k}:${x.id}` }))), sample: 'workflow:default', newLabel: 'Build workflow', newAct: () => window.StillhetConversation?.starter('workflow'), newMenu: () => (atLeast('expert') ? [{ header: 'Ask in chat' }, { id: 'bar-new|chat', text: 'Build a workflow' }, { sep: true }, { header: 'Legacy approach' }, { id: 'bar-new|hand', text: 'Build it by hand…' }] : [{ id: 'bar-new|chat', text: 'Build a workflow' }]), newPick: (id) => { if (id === 'hand') handNew(); else window.StillhetConversation?.starter('workflow'); },
-    show: ({ bar: b, page: pg, arg }) => { if (b !== bar) wire(b, pg); if (current !== arg) { menu = ''; exporting = false; wide = false; if (confirm && `${confirm.kind}:${confirm.x.id}` !== arg) confirm = null; } current = arg || ''; draw(); } };
+    search: (q) => Object.entries(src()).flatMap(([k, l]) => l.filter((x) => x.title.toLowerCase().includes(q)).map((x) => ({ label: x.title, where: `${k === 'workflow' ? 'Workflow' : k === 'agent' ? 'Agent' : 'Script'} · ${x.own ? 'yours' : 'built-in'}`, hash: `workflows/${k}:${x.id}` }))), sample: 'workflow:default', newLabel: 'Build workflow', newAct: () => window.StillhetConversation?.starter('workflow'), newMenu: () => (atLeast('expert') ? [{ id: 'bar-new|hand', text: 'New workflow…', help: 'The graph editor, on a new draft' }, { id: 'bar-new|chat', text: 'Ask in chat', help: 'Describe it; Worca builds it' }] : [{ id: 'bar-new|chat', text: 'Build a workflow' }]), newPick: (id) => { if (id === 'hand') handNew(); else window.StillhetConversation?.starter('workflow'); },
+    show: ({ bar: b, page: pg, arg }) => { if (b !== bar) wire(b, pg); if (current !== arg) { menu = ''; exporting = false; wide = false; vz = 0; if (confirm && `${confirm.kind}:${confirm.x.id}` !== arg) confirm = null; } current = arg || ''; draw(); } };
 })();

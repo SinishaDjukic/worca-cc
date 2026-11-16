@@ -22,7 +22,7 @@ test('a checks read that fails leaves the card In review, with no Merge', async 
   await go(w, '#chat/ask_1', 400);
   const card = chat(d).querySelector('[data-anchor="card_run"]');
   assert.match(card.textContent, /In review/);
-  assert.ok(![...card.querySelectorAll('button')].some((b) => /^Merge/.test(b.textContent.trim())));
+  assert.ok(![...card.querySelectorAll('button:not(.sb-stop)')].some((b) => /^Merge/.test(b.textContent.trim())));   // the stage train's Merged stop is a stage, not the Merge action
 });
 
 test('a branch on a card sits in .rc-mid, which the stylesheet draws in the text face (look.md, D5)', async () => {

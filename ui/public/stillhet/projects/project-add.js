@@ -1,6 +1,7 @@
 // Projects' Add a project by hand (form.add-project, COV-1): every way classic adds a project, in the one card form.
-// One folder (a path or a repository address, Choose folder… and the probe line), New folder (a name, Use git, where it
-// is made) and Several folders… (the FolderBrowser, then the review list). Live, every request goes through
+// One folder (a path, Choose folder… and the probe line), New folder (a name, Use git, where it is made), Several
+// folders (the FolderBrowser, then the review list) and Clone (a repository address, its branch and folder name): the
+// choice is a Segmented, and each way's labelled fields sit under it. An address typed into One folder still clones. Live, every request goes through
 // StillhetProjectsLive; the demo answers from a small folder tree and adds to the demo's list. projects.js calls make(ctx).
 (function () {
   const NOT_ANSWERING = 'Worca is not answering';
@@ -29,7 +30,9 @@
     const live = () => ctx.live();
     // live but the module is not up yet: nothing fake, every action says so (D8)
     const down = () => ctx.onLive() && !live();
-    const busy = () => (ctx.onLive() ? live()?.pending('add') || '' : '');
+    // the button is busy with what it is doing while its action is out (comp.button-busy); the demo's server takes a moment too
+    const busy = () => (ctx.onLive() ? live()?.pending('add') || '' : s.busyWord || '');
+    const demoTurn = async (word) => { const mine = s; s.busyWord = word; ctx.draw(); await new Promise((ok) => setTimeout(ok, 450)); if (s !== mine) return false; s.busyWord = ''; return true; };
     const val = (id) => document.getElementById(id)?.value.trim() ?? '';
     const focus = (q) => setTimeout(() => document.querySelector(q)?.focus(), 0);
     const nameOfPath = (v) => (v.split(/[/:]/).filter(Boolean).pop() || '').replace(/\.git$/, '');
@@ -112,7 +115,7 @@
       const id = (repo && s.cloneName) || nameOfPath(v);
       const same = (a, b) => (repo ? String(a).toLowerCase() === b.toLowerCase() : a === b);   // dev compares a clone's name case-blind (clone-project.mjs)
       const tooLong = id.length > NAME_MAX ? `A project's name holds ${NAME_MAX} characters; this folder's has ${id.length}` : ctx.projects().some((x) => same(ctx.nameOf(x), id)) ? `${id} is already a project` : '';
-      const wrong = !v || !id ? 'It needs a folder or a repository' : ctx.pathWrong(v, true) || tooLong;
+      const wrong = s.way === 'clone' && !repo ? 'It needs a repository address: one that starts with https://, ssh:// or git@' : !v || !id ? 'It needs a folder or a repository' : ctx.pathWrong(v, true) || tooLong;
       if (wrong) { fail(wrong, wrong === tooLong && repo && s.cloneName ? 'pj-clone-name' : ''); return; }
       if (down()) { ctx.say(NOT_ANSWERING); return; }
       s.err = '';
@@ -131,6 +134,7 @@
         finish(r.text, r.key, from);
         return;
       }
+      if (!(await demoTurn(repo ? 'Cloning…' : 'Adding…'))) return;
       ctx.addDemo(repo ? { id, path: v, kind: 'Git', origin: 'local', branch: s.branch || 'main' } : { id, path: v, kind: s.useGit || s.probe?.vcs === 'git' ? 'Git' : 'Folder', origin: s.probe?.vcs === 'git' || s.useGit ? 'local' : 'folder', branch: 'main' });
       finish(`Added ${id}`, id, from);
     }
@@ -151,6 +155,7 @@
         return;
       }
       if (ctx.projects().some((p) => ctx.nameOf(p) === name)) { s.newErr = `A folder called ${name} already exists`; ctx.draw(); return; }
+      if (!(await demoTurn('Creating…'))) return;
       ctx.addDemo({ id: name, path: `${DEMO_NEW}/${name}`, kind: useGit ? 'Git' : 'Folder', origin: useGit ? 'local' : 'folder', branch: 'main', ownedFolder: true });
       finish(`Created ${name}`, name, from);
     }
@@ -165,6 +170,7 @@
       let a;
       if (ctx.onLive()) { const p = live().addMany(body); ctx.draw(); a = await p; }
       else {
+        if (!(await demoTurn('Adding…'))) return;
         const results = body.map((r, index) => (ctx.projects().some((p) => ctx.nameOf(p) === r.name) ? { index, status: 'skipped', name: r.name, path: r.path, reason: 'a project with this name already exists' } : (ctx.addDemo({ id: r.name, path: r.path, kind: 'Git', origin: 'local', branch: 'main' }), { index, status: 'added', key: r.name, name: r.name, path: r.path })));
         const added = results.filter((x) => x.status === 'added'), skipped = results.filter((x) => x.status === 'skipped');
         a = { ok: true, results, added, skipped, text: R.reviewSummary({ added: added.map((x) => x.name), skipped }), ...(added.length === 1 && !skipped.length ? { key: added[0].key } : {}) };
@@ -176,7 +182,7 @@
     }
 
     // ---- the form ----
-    const WAYS = [['folder', 'One folder'], ['new', 'New folder'], ['many', 'Several folders…']];
+    const WAYS = [['folder', 'One folder'], ['new', 'New folder'], ['many', 'Several folders'], ['clone', 'Clone']];
     function body() {
       const b = busy();
       if (s.way === 'new') {
@@ -189,14 +195,14 @@
         return R.folderReview({ rows: s.review.map((r) => ({ ...r, name: r.shown })), saving: !!b, error: s.reviewErr });
       }
       const m = model();
-      const repo = REPO.test(s.typed);
-      return R.field({ id: 'pj-hand-v', label: 'Folder or repository', placeholder: '~/src/your-project', value: s.shown, error: s.errOn ? '' : s.err, attrs: { maxlength: 200, 'data-keep': 'pj-hand:project:' } })
+      const clone = s.way === 'clone', repo = clone || REPO.test(s.typed);
+      return R.field({ id: 'pj-hand-v', label: clone ? 'Repository address' : 'Folder or repository', placeholder: clone ? 'https://github.com/you/project.git' : '~/src/your-project', hint: clone ? 'Worca clones it into its projects folder and adds it' : '', value: s.shown, error: s.errOn ? '' : s.err, attrs: { maxlength: 200, 'data-keep': clone ? 'pj-hand:clone:' : 'pj-hand:project:' } })
         + (repo ? R.field({ id: 'pj-clone-branch', label: 'Branch (optional)', placeholder: "the repository's default branch", value: s.branchShown, error: s.errOn === 'pj-clone-branch' ? s.err : '', attrs: { maxlength: 200, 'data-keep': 'pj-hand:branch:' } })
           + R.field({ id: 'pj-clone-name', label: 'Folder name (optional)', placeholder: nameOfPath(s.typed) || 'the repository name', value: s.cloneNameShown, error: s.errOn === 'pj-clone-name' ? s.err : '', attrs: { maxlength: 100, 'data-keep': 'pj-hand:clone-name:' } }) : '')
-        + R.folderWay({ pick: { label: 'Choose folder…', hook: 'data-pa-choose', title: 'Pick a folder on this computer' } })
-        + m.html
-        + (m.useGit ? R.folderWay({ git: { on: s.useGit, hook: 'data-pa-git', why: 'Runs git init in it when it is added' } }) : '')
-        + R.confirmActions({ yes: b || 'Add', busy: !!b || m.refused || !!(s.probeErr && s.probeFor === s.typed) });
+        + (clone ? '' : R.folderWay({ pick: { label: 'Choose folder…', hook: 'data-pa-choose', title: 'Pick a folder on this computer' } }))
+        + (clone ? '' : m.html)
+        + (m.useGit && !clone ? R.folderWay({ git: { on: s.useGit, hook: 'data-pa-git', why: 'Runs git init in it when it is added' } }) : '')
+        + R.confirmActions({ yes: b || (clone ? 'Clone and add' : 'Add'), busy: !!b || (!clone && (m.refused || !!(s.probeErr && s.probeFor === s.typed))) });
     }
     function browserHtml() {
       const b = s.browser; if (!b) return '';
@@ -207,7 +213,7 @@
     function setWay(w) {
       s.way = w; s.reviewErr = ''; s.shown = s.typed; s.newShown = s.newName; s.branchShown = s.branch; s.cloneNameShown = s.cloneName;   // the way's field comes back with what was typed
       ctx.draw();
-      if (w === 'new') { checkNow(); focus('#pj-new-name'); } else if (w === 'folder') focus('#pj-hand-v');
+      if (w === 'new') { checkNow(); focus('#pj-new-name'); } else if (w === 'folder' || w === 'clone') focus('#pj-hand-v');
     }
     function click(t) {
       let hit;

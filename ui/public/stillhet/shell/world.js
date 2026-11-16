@@ -171,8 +171,39 @@
     }
     return out;
   }
+  // ---- One count for what needs you (docs/stillhet/small-rules.md; A1). What needs you is counted once, here, by Pulse's
+  // rule: every top-level task that waits on a person, every missed schedule time, and what a place adds (a project to
+  // fix, a link between projects Worca proposes and asks about). Each thing once, with its kind. The Pulse badge is
+  // count(); a place shows its own part, countOf(kind), and says so with needsLabel(kind).
+  const NEED_KINDS = ['task', 'schedule', 'project', 'proposal'];
+  const NEED_WORDS = { task: 'tasks', schedule: 'missed schedules', project: 'projects', proposal: 'proposals' };
+  const needSources = [];   // what a place adds through addNeeds: () => [{ id, kind, title, project? }]
+  function needs() {
+    const out = tops().filter((r) => r.section === 'needs').map((r) => ({ id: r.id, kind: r.missed ? 'schedule' : 'task', title: r.title, project: r.project || '' }));
+    const fromProjects = typeof window.StillhetProjects?.needItems === 'function' ? window.StillhetProjects.needItems() : [];
+    for (const x of fromProjects) out.push({ id: x.key, kind: x.kind === 'workspace' ? 'proposal' : 'project', title: x.title, project: x.project || '' });
+    for (const fn of needSources) for (const x of fn() || []) if (NEED_KINDS.includes(x.kind) && !out.some((o) => o.id === x.id)) out.push(x);
+    return out;
+  }
+  const count = () => needs().length;
+  const countOf = (...kinds) => { const ks = kinds.flat(); for (const k of ks) if (!NEED_KINDS.includes(k)) throw new Error(`world: unknown kind of need "${k}"`); return needs().filter((x) => ks.includes(x.kind)).length; };
+  // A place's section head: "Needs you 3", and in its tooltip how that sits in the one count: "3 of 8: the tasks. Pulse has all 8"
+  function needsLabel(...kinds) {
+    const ks = kinds.flat(), n = countOf(ks), total = count(), words = ks.map((k) => NEED_WORDS[k]);
+    const list = words.length < 2 ? words.join('') : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
+    return { n, total, text: `Needs you ${n}`, tip: n === total ? `${total}: everything that needs you` : `${n} of ${total}: the ${list}. Pulse has all ${total}` };
+  }
+  // One "Saved" figure (A15): what the tasks of this month would have cost by hand, at Settings › Tasks › Hourly rate. The
+  // profile menu and Insights both read it here.
+  const SAVED_MEASURE = 'The hours your tasks would have taken by hand, at your hourly rate';
+  function saved() {
+    const b = LIVE ? parts.costs.budget : CASES[current].budget;
+    return b && b.saved ? { usd: b.saved, period: b.period || 'this month', measure: SAVED_MEASURE } : null;
+  }
   build(current);
   window.StillhetWorld = {
+    needs, count, countOf, needsLabel, NEED_KINDS, saved,
+    addNeeds: (fn) => { needSources.push(fn); return () => { const i = needSources.indexOf(fn); if (i >= 0) needSources.splice(i, 1); }; },
     current: () => current,
     set: (id) => { if (LIVE) return; current = id; build(id); listeners.forEach((fn) => fn()); },   // the demo's case picker; nothing in the live kind
     live: LIVE,

@@ -48,11 +48,18 @@ test('T-7 touch: on the 40px rail the title, the end and the current fill line u
   assert.ok(end && has(end.body, 'padding-top', '11px'), end?.body);
   const fold = ruleFor(SHELL, /^\.bar-list \.lr-end:has\(> \[data-fold\]\)$/, { media: touch });
   assert.ok(fold && has(fold.body, 'padding-top', '8px'), fold?.body);
-  const fill = ruleFor(SHELL, /^\.bar-list \.list-row\.is-current > \.lr-main::after$/, { media: touch });
-  assert.ok(fill && has(fill.body, 'height', '40px'), fill?.body);
-  // later in the file than the unscoped rules it overrides (same specificity)
-  const base = ruleFor(SHELL, /^\.bar-list \.list-row\.is-current > \.lr-main::after$/);
-  assert.ok(fill.line > base.line, `touch fill at ${fill.line} must follow ${base.line}`);
+  // act.row-opens: the hover and current fill is the row's own first line (its grid row), so it follows the row's height
+  // on every pointer and needs no height of its own; its corners are the small radius, as the rows beside it
+  assert.equal(SHELL.filter((r) => /\.lr-main::after/.test(r.sel)).length, 0, 'no fill sized by hand on the title');
+  const fill = ruleFor(SHELL, /^\.bar-list \.list-row::after$/);
+  assert.ok(fill && has(fill.body, 'grid-row', '1') && has(fill.body, 'border-radius', 'var(--r-sm)'), fill?.body);
+  assert.ok(!/(^|;)\s*height:/.test(fill.body), fill.body);
+  const cur = SHELL.find((r) => /(^|,)\s*\.bar-list \.list-row\.is-current::after/.test(norm(r.sel)));
+  assert.ok(cur && has(cur.body, 'background', 'var(--field)'), cur?.body);
+});
+
+test('look.radius: a washed or lit row never has rounder corners than the rows beside it', () => {
+  for (const r of [...RAIL, ...SHELL].filter((x) => /\.list-row[^,{]*::(before|after)$/.test(norm(x.sel)) && /border-radius:/.test(x.body))) assert.ok(has(r.body, 'border-radius', 'var(--r-sm)'), `${r.line}: ${r.sel} { ${/border-radius:[^;]+/.exec(r.body)[0]} }`);
 });
 
 test('T-3: .lr-unread is a 6px round dot in Advisory ink', () => {

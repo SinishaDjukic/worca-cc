@@ -3,7 +3,8 @@
 // each bar says its value on hover and focus; a table under it says the same to a screen reader. No legend for one
 // series (the title names it), no grid, no second axis, no colour: colour stays for what needs you.
 import { attrs, esc } from './html.mjs';
-import { textLink } from './text-link.mjs';
+import { button } from './button.mjs';
+import { icon } from './icons.mjs';
 
 /**
  * @param {object} o
@@ -164,16 +165,28 @@ export function watchChart(fig, { open, narrow } = {}) {
 }
 
 /**
- * FigureRows: the same figures across rows, each whole row one target (its tasks); a second level sits under its parent.
+ * FigureRows: the same figures across rows; a second level sits under its parent. A row that opens something (its
+ * tasks, or its detail in place) is a button: the pointer, a hover fill, a chevron at its end. A row that cannot open is
+ * plain text in the same grid: no button, no pointer, no hover fill (actions.clickable-looks). No column leaves on a
+ * narrow screen: the rows scroll sideways inside their own box, the name staying in place.
  * @param {object} o
  * @param {string} o.label
- * @param {{label:string, narrow?:boolean}[]} o.columns   after the name; narrow:false leaves on a narrow screen
- * @param {{name:string, cells:string[], sub?:boolean, quiet?:boolean, attrs?:object, opens?:{id:string, open:boolean, label:string, head?:string, body?:string}}[]} o.rows
+ * @param {{label:string, narrow?:boolean}[]} o.columns   after the name
+ * @param {{name:string, cells:string[], sub?:boolean, quiet?:boolean, attrs?:object, why?:string, opens?:{id:string, open:boolean, label:string, head?:string, body?:string}}[]} o.rows
+ *   `attrs`: what its click does; without them (or with `attrs.disabled`) the row is not a control, and `why` (or its
+ *   `attrs.title`) says why as its tooltip.
  *   `opens` (list.row-opens-in-place): the row opens its detail in place, full width under it, with its head (markup), Hide and body (markup)
  */
 export function figureRows({ label, columns, rows }) {
-  const cell = (t, c) => `<span class="fr-c${c.narrow === false ? ' is-wide' : ''}">${esc(t ?? '')}</span>`;
-  const detail = (o) => (o && o.open ? `<div class="fr-detail"${attrs({ id: o.id, role: 'region', 'aria-label': o.label })}><div class="fr-d-head"><span class="fr-d-t">${o.head || ''}</span>${textLink({ label: 'Hide', attrs: { 'data-fr-hide': o.id } })}</div>${o.body || ''}</div>` : '');
+  const cell = (t, c) => `<span class="fr-c">${esc(t ?? '')}</span>`;
+  const detail = (o) => (o && o.open ? `<div class="fr-detail"${attrs({ id: o.id, role: 'region', 'aria-label': o.label })}><div class="fr-d-head"><span class="fr-d-t">${o.head || ''}</span>${button({ label: 'Hide', kind: 'quiet', attrs: { 'data-fr-hide': o.id } })}</div>${o.body || ''}</div>` : '');
   const opened = (o) => (o ? { 'aria-expanded': String(!!o.open), 'aria-controls': o.id } : {});
-  return `<div class="fr-list" role="group" style="--fr-n:${columns.length}"${attrs({ 'aria-label': label })}><div class="fr-row is-head" aria-hidden="true"><span></span>${columns.map((c) => cell(c.label, c)).join('')}</div>${rows.map((r) => `<button type="button" class="fr-row${r.sub ? ' is-sub' : ''}${r.quiet ? ' is-quiet' : ''}${r.opens?.open ? ' is-open' : ''}"${attrs({ 'aria-label': `${r.name}: ${columns.map((c, i) => `${c.label} ${r.cells[i]}`).join(', ')}`, ...opened(r.opens), ...(r.attrs || {}) })}><span class="fr-name">${esc(r.name)}</span>${columns.map((c, i) => cell(r.cells[i], c)).join('')}</button>${detail(r.opens)}`).join('')}</div>`;
+  const said = (r) => `${r.name}: ${columns.map((c, i) => `${c.label} ${r.cells[i]}`).join(', ')}`;
+  const opensIt = (r) => !!(r.opens || (r.attrs && !r.attrs.disabled && Object.keys(r.attrs).some((k) => k.startsWith('data-'))));
+  const inner = (r, go) => `<span class="fr-name">${esc(r.name)}</span>${columns.map((c, i) => cell(r.cells[i], c)).join('')}<span class="fr-go" aria-hidden="true">${go ? icon(r.opens ? (r.opens.open ? 'chevron' : 'chevR') : 'chevR', 12) : ''}</span>`;
+  const klass = (r) => `fr-row${r.sub ? ' is-sub' : ''}${r.quiet ? ' is-quiet' : ''}${r.opens?.open ? ' is-open' : ''}`;
+  const one = (r) => (opensIt(r)
+    ? `<button type="button" class="${klass(r)}"${attrs({ 'aria-label': said(r), ...opened(r.opens), ...(r.attrs || {}) })}>${inner(r, true)}</button>${detail(r.opens)}`
+    : `<div class="${klass(r)} is-static" role="group"${attrs({ 'aria-label': said(r), title: r.why || r.attrs?.title || null })}>${inner(r, false)}</div>`);
+  return `<div class="fr-scroll"><div class="fr-list" role="group" style="--fr-n:${columns.length}"${attrs({ 'aria-label': label })}><div class="fr-row is-head" aria-hidden="true"><span></span>${columns.map((c) => cell(c.label, c)).join('')}<span class="fr-go"></span></div>${rows.map(one).join('')}</div></div>`;
 }

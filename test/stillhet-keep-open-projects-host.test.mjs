@@ -124,8 +124,8 @@ test('B2.7 F-6-01: a live redraw that changes nothing keeps every node of the pr
   pickMore(h.d, 'rename'); await settle(80);
   type(h.w, field(h.d), 'abc');
   await redraw(h.w);
-  const before = nodes(page(h.d)), dock = page(h.d).querySelector('#pj-dock');
-  assert.ok(dock.children.length, 'the composer is docked');
+  const before = nodes(page(h.d)), dock = page(h.d).querySelector('[data-pj-page]');   // the redesign: no composer on a project's page; the tabs are its last fixed part
+  assert.ok(dock.querySelector('.pj-tabs'), 'the page has its tabs');
   await redraw(h.w);
   assert.deepEqual(nodes(page(h.d)), before, 'every node kept');
   assert.equal(field(h.d).value, 'abc');
@@ -139,7 +139,7 @@ test('B2.7 F-6-01: a redraw that changes one part (a task finishes: on-it and la
   await redraw(h.w);
   const c = col(h.d), onIt = c.querySelector(':scope > p.convo-head');
   assert.match(onIt.textContent, /working/, 'the task is on it');
-  const head = nodes(c.querySelector('.place-head, header') || c.firstElementChild), form = field(h.d), dock = nodes(page(h.d).querySelector('#pj-dock'));
+  const head = nodes(c.querySelector('.place-head, header') || c.firstElementChild), form = field(h.d), dock = nodes(page(h.d).querySelector('.pj-tabs'));   // the redesign: no composer; the tabs keep their nodes
   state.now = 'merged';
   await redraw(h.w);
   assert.equal(col(h.d), c, 'the same frame');
@@ -147,7 +147,7 @@ test('B2.7 F-6-01: a redraw that changes one part (a task finishes: on-it and la
   assert.match(c.textContent, /Lately/, 'the finished task moved to Lately');
   assert.deepEqual(nodes(c.querySelector('.place-head, header') || c.firstElementChild), head, 'head kept');
   assert.equal(field(h.d), form, 'locate (the open form) kept');
-  assert.deepEqual(nodes(page(h.d).querySelector('#pj-dock')), dock, 'the dock kept');
+  assert.deepEqual(nodes(page(h.d).querySelector('.pj-tabs')), dock, 'the tabs kept');
 });
 
 test('B2.7 F-6-01: the home page\'s form field and card grid keep their nodes through an idle redraw; going home → project → home rebuilds the frame once', async () => {

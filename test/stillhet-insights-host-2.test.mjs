@@ -22,14 +22,14 @@ test('R-qa-5: Copy a link writes the page as narrowed and says so; a refused cli
   Object.defineProperty(h.w.navigator, 'clipboard', { configurable: true, value: { writeText: (t) => { clip = t; return Promise.resolve(); } } });
   await pick(h.d, 'in-by', 'client');
   const n = h.calls.length;
-  page(h.d).querySelector('[data-menu="in-more"]').click(); await settle(30);
-  page(h.d).querySelector('[data-menu-pick="in-more|link"]').click(); await settle(60);
+  // the redesign: Copy a link is a bordered button on the page, no longer an item behind ⋯
+  page(h.d).querySelector('[data-in-link]').click(); await settle(60);
   assert.match(clip, /#insights\/spend\?by=client$/);
   assert.match(saidText(h.d), /Copied a link to Spend/);
   assert.equal(h.calls.length, n);
   Object.defineProperty(h.w.navigator, 'clipboard', { configurable: true, value: { writeText: () => Promise.reject(new Error('denied')) } });
-  page(h.d).querySelector('[data-menu="in-more"]').click(); await settle(30);
-  page(h.d).querySelector('[data-menu-pick="in-more|link"]').click(); await settle(60);
+  // the redesign: Copy a link is a bordered button on the page, no longer an item behind ⋯
+  page(h.d).querySelector('[data-in-link]').click(); await settle(60);
   assert.match(saidText(h.d), /Could not copy the link: your browser did not allow it/);
 });
 

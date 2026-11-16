@@ -63,8 +63,8 @@ test('ledger row 3: live Copy link on a team page carries no scope=, as classic\
   Object.defineProperty(h.w.navigator, 'clipboard', { value: { writeText: (t) => { copied = t; return Promise.resolve(); } }, configurable: true });
   h.d.querySelector('#route-place [data-menu="in-of"]').click(); await settle(30);
   h.d.querySelector('#route-place [data-pick="in-of|scope:workspace:wks-shop"]').click(); await settle(200);
-  h.d.querySelector('#route-place [data-menu="in-more"]').click(); await settle(20);
-  h.d.querySelector('#route-place [data-menu-pick="in-more|link"]').click(); await settle(60);
+  // the redesign: Copy a link is a bordered button on the page, no longer an item behind ⋯
+  h.d.querySelector('#route-place [data-in-link]').click(); await settle(60);
   assert.match(copied, /#insights\/team/);
   assert.doesNotMatch(copied, /scope=/);
 });
@@ -75,8 +75,8 @@ test('ledger row 3: a link whose of= names something the live data lacks opens w
   assert.match(saidText(h.d), /gone-app/);
   let copied = '';
   Object.defineProperty(h.w.navigator, 'clipboard', { value: { writeText: (t) => { copied = t; return Promise.resolve(); } }, configurable: true });
-  h.d.querySelector('#route-place [data-menu="in-more"]').click(); await settle(20);
-  h.d.querySelector('#route-place [data-menu-pick="in-more|link"]').click(); await settle(60);
+  // the redesign: Copy a link is a bordered button on the page, no longer an item behind ⋯
+  h.d.querySelector('#route-place [data-in-link]').click(); await settle(60);
   assert.match(copied, /of=project%3Aweb-app$|of=project:web-app$/);
   assert.doesNotMatch(copied, /gone-app/);
 });

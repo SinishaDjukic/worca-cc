@@ -52,14 +52,14 @@
   function pageHtml(f) {
     const done = checks(f).filter(([, ok]) => ok).length;
     const head = R.placeHead({ center: { label: 'Requirements', to: 'requirements' }, title: f.title, facts: esc(`${f.id} · ${f.project} · ${f.cost} so far`), mark: mark(f, 20, true), word: st(f).word, why: st(f).why(f),
-      action: f.state === 'decide' ? '' : R.button({ label: st(f).act, kind: ['turn', 'ready'].includes(f.state) ? 'primary' : '', attrs: { 'data-rq-next': '' } }),   // Decide: the step is the assumptions' own Confirm, below
+      action: (f.state === 'decide' ? '' : R.button({ label: st(f).act, kind: ['turn', 'ready'].includes(f.state) ? 'primary' : '', attrs: { 'data-rq-next': '' } })) + R.button({ label: f.chat ? 'Open its chat' : 'Ask about it in chat', attrs: { 'data-rq-chat': '', title: f.chat ? 'Opens the chat this feature is shaped in' : 'Opens Chat with this feature attached' } }),   // Decide: the step is the assumptions' own Confirm, below
       menu: R.moreMenu({ id: 'rq-more', label: `More for ${f.id}`, icon: R.icon('more', 16), open: menu === 'rq-more', items: [{ id: 'specs', text: 'Save to specs/', help: `As specs/${f.id.toLowerCase()}.md in ${f.project}` }, { id: 'copy', text: 'Copy as Markdown', help: 'The spec, ready to paste' }, ...(f.state === 'archived' ? [] : [{ sep: true }, { id: 'archive', text: 'Archive', help: 'Out of the way; nothing is deleted' }])] }) });
     const spec = R.settingsSection({ title: 'The spec', meta: 'What a task builds from; change any part by saying so in its chat.', rows: [R.settingsRow({ name: 'Goal', sentence: esc(f.goal || 'Not yet') }), R.settingsRow({ name: 'Who', sentence: esc(f.actors || 'Not yet') }),
       R.settingsRow({ name: 'Done when', sentence: f.criteria.length ? f.criteria.map(esc).join('; ') : 'Not yet' })].join('') });
     const assume = f.assumptions.length ? R.settingsSection({ title: 'Assumptions', meta: f.assumptions.some((a) => !a.v) ? 'A rejected one comes back as a question' : 'All decided', attrs: { 'data-rq-sec': 'assume' },
       rows: f.assumptions.map((a, i) => R.settingsRow({ name: a.v === 'ok' ? 'Confirmed' : a.v === 'no' ? 'Rejected' : 'To decide', sentence: esc(a.t), end: a.v ? R.button({ label: 'Undo', kind: 'quiet', attrs: { 'data-rq-undo': i } }) : R.button({ label: 'Confirm', attrs: { 'data-rq-yes': i } }) + R.button({ label: 'Reject', kind: 'quiet', attrs: { 'data-rq-no': i } }) })).join('') }) : '';
     const ready = R.settingsSection({ title: `Ready to start · ${done} of 6`, rows: checks(f).map(([t, ok]) => R.settingsRow({ name: ok ? 'Done' : 'Not yet', sentence: esc(t) })).join('') });
-    return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${head}${spec}${assume}${ready}</div></div><div class="convo-dock" id="rq-dock"></div></div>`;
+    return `<div class="convo"><div class="convo-scroll"><div class="convo-col is-center" data-rq-page>${head}${spec}${assume}${ready}</div></div></div>`;
   }
   const here = () => (location.hash.slice(1) || '').split('/')[0] === 'requirements';   // the page area is shared by every place: draw only while this one is open
   function draw() {
@@ -68,9 +68,6 @@
     const f = data.features.find((x) => x.id === current);
     if (!f) { home ||= window.StillhetConversation?.mount(page, { mode: 'ask', where: '#route-place', title: 'Shape a feature', note: 'Describe it in a few sentences; Worca interviews you, then writes the spec a task builds from.' }); home?.show(''); return; }
     home = null; page.innerHTML = pageHtml(f);
-    const dock = document.getElementById('rq-dock');
-    if (f.chat) window.StillhetConversation?.dock(dock, { kind: 'feature', title: f.title, chat: f.chat });
-    else dock.innerHTML = R.composer({ placeholder: 'Ask about this feature, or change it · in a new chat', sentence: '', tools: '', send: R.button({ label: 'Send', kind: 'primary', iconOnly: true, icon: R.icon('up', 14), attrs: { 'data-rq-send': '', title: 'Takes it to a new chat, on its project' } }), attrs: { 'data-dock': '' } });   // no chat yet: what you write is handed over, with its project
   }
   function wire(b, pg) {
     bar = b; page = pg;
@@ -82,13 +79,11 @@
       empty: { text: 'No features here.', action: 'Shape a feature' } }),
       can: () => ['menu'], bulk: () => [], act: (id, rows) => rows[0] && act(id, rows[0]._f), open: (r) => window.StillhetShell.go(`requirements/${r._f.id}`), word: (id, v) => { view[id] = v; return false; }, say,
       active: () => /^#requirements/.test(location.hash), emptyAct: () => window.StillhetConversation?.starter('pin:Shaper') } });
-    const sendDock = (f) => { const t = page.querySelector('#rq-dock [data-composer-t]'), text = t.value.trim(); if (!text) { t.focus(); say('Say what to ask first'); return; } handOver(f, '', text); };
-    page.addEventListener('submit', (e) => { const f = data.features.find((x) => x.id === current); if (here() && f && !f.chat && e.target.closest('#rq-dock')) { e.preventDefault(); sendDock(f); } });
     page.addEventListener('click', (e) => {
       if (!here()) return;   /* another place's page is showing */
-      const on = (q) => e.target.closest(q); let hit; const f = data.features.find((x) => x.id === current); if (!f || !page.querySelector('#rq-dock')) return;
+      const on = (q) => e.target.closest(q); let hit; const f = data.features.find((x) => x.id === current); if (!f || !page.querySelector('[data-rq-page]')) return;
       if (on('[data-rq-next]')) { if (e.detail <= 1) act('next', f); return; }   // the second click of a double click never lands on the step that just appeared
-      if (on('[data-rq-send]')) { e.preventDefault(); sendDock(f); return; }
+      if (on('[data-rq-chat]')) { if (f.chat) window.StillhetShell.go(`chat/${f.chat}`); else handOver(f, `Ask about ${f.title}`); return; }   // stillhet.chat-first: no composer on the page; its chat, or a new one with the feature attached
       if ((hit = on('[data-rq-yes], [data-rq-no], [data-rq-undo]'))) {
         const i = +(hit.dataset.rqYes ?? hit.dataset.rqNo ?? hit.dataset.rqUndo), a = f.assumptions[i];
         a.v = hit.dataset.rqYes !== undefined ? 'ok' : hit.dataset.rqNo !== undefined ? 'no' : '';

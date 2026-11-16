@@ -17,7 +17,7 @@ const yes = (d) => page(d).querySelector('[data-confirm="yes"]');
 /** The button at the end of the settings row named `name` (its control). */
 const rowButton = (d, name) => [...page(d).querySelectorAll('.set-name')].find((n) => n.textContent.trim().startsWith(name))?.closest('.set-row')?.querySelector('.set-end button') || null;
 /** R-qa-3: that very control carries the label and is disabled (a label elsewhere on the page does not count). */
-const heldWith = (el, label) => !!el && el.disabled === true && (el.textContent.trim() === label || el.title === label);
+const heldWith = (el, label) => !!el && el.disabled === true && ((el.querySelector('.btn-busy-t') || el).textContent.trim() === label || el.title === label);   // the redesign (comp.button-busy): the busy words show once, in .btn-busy-t
 
 test('the bar lists dev\'s projects, seed-moved reads Folder missing; while the first read is held the list says Loading and has() is true', async () => {
   const g = gate();
@@ -121,7 +121,7 @@ test('F-5-05 = F-6-02: Add by hand and Locate folder open the page of what was a
   page(h.d).querySelector('#pj-hand-v').value = '~/src/seed-moved-now'; yes(h.d).click(); await until(() => h.w.location.hash === `#projects/${NEW}`); await settle(100);
   assert.equal(h.w.location.hash, `#projects/${NEW}`, 'D8: the page goes to the new key');
   noGone();
-  assert.ok(page(h.d).querySelector('#pj-dock'), 'the moved project\'s page');
+  assert.ok(page(h.d).querySelector('[data-pj-page]'), 'the moved project\'s page');
   await go(h.w, '#projects', 150);
   h.w.StillhetPlaces.projects.newPick('hand-project'); await settle(100);
   page(h.d).querySelector('#pj-hand-v').value = '~/src/brand-new'; yes(h.d).click(); await settle(60);
@@ -131,7 +131,7 @@ test('F-5-05 = F-6-02: Add by hand and Locate folder open the page of what was a
   assert.equal(h.w.location.hash, `#projects/${ADDED}`);
   noGone();
   assert.match(page(h.d).textContent, /brand-new/, 'its page, with its name');
-  assert.ok(page(h.d).querySelector('#pj-dock'));
+  assert.ok(page(h.d).querySelector('[data-pj-page]'));
   await go(h.w, '#projects', 150);   // D4: a person who moves on during the wait stays where they went
   h.w.StillhetPlaces.projects.newPick('hand-project'); await settle(100);
   const lists = () => h.calls.filter((c) => c.method === 'GET' && c.url === '/api/projects').length, before = lists();

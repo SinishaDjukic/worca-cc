@@ -2,6 +2,7 @@
 // says a task the same way on each. A page says what each thing is; the words and the drawing are here.
 import { attrs, esc } from './html.mjs';
 import { button } from './button.mjs';
+import { filterRow } from './list-parts.mjs';
 import { list, listRow } from './list.mjs';
 import { figuresToggle, figuresLine } from './figures.mjs';
 import { cardAction, runState } from './run-state.mjs';
@@ -49,6 +50,30 @@ export function taskActions(tasks = []) {
 export function centerSentence({ words, open = false, attrs: a = {}, facts = '' }) {
   return `<div class="center-sent">${words} ${figuresToggle({ open, attrs: a })}</div>${open ? figuresLine(facts) : ''}`;
 }
+
+/**
+ * PageFilters (list.filters on a page; replaces a center's "Showing … by …" sentence): one FilterRow, one compact line,
+ * with the page's small tools (Figures, Save this view, Copy a link) as small bordered buttons in the row's `end` slot.
+ * A page calls this and never lays the row out itself. Until FilterRow draws its own `end`, the tools follow the row here.
+ * A pick reports `data-pick="<id>|<item>"`.
+ * @param {object} o
+ * @param {object[]} o.parts    FilterRow's parts
+ * @param {string} [o.pick]     the id of the open picker
+ * @param {string} [o.end]      markup: the small tools, bordered buttons
+ * @param {string} [o.chevron]
+ * @param {string} [o.menuCls]
+ */
+export function centerFilters({ parts, pick = '', end = '', chevron = '', menuCls = '' }) {
+  const row = filterRow({ parts, open: pick, chevron, menuCls, end });
+  return end && !row.includes(end) ? `<div class="center-filters">${row}<span class="center-filters-end">${end}</span></div>` : row;
+}
+/** Figures as a small bordered button for a filter row's end: pressed while the totals show (look.figures-on-demand). */
+export function figuresButton({ open = false, attrs: a = {} } = {}) {
+  return button({ label: 'Figures', attrs: { 'aria-expanded': String(!!open), title: open ? 'Folds the figures' : 'Shows the counts and costs', ...a } });
+}
+// Until the index exports it by name: a page reaches it as R.centerSentence.filters.
+centerSentence.filters = centerFilters;
+centerSentence.figuresButton = figuresButton;
 
 /**
  * QuietLine: what has nothing going on, folded into one line that opens.

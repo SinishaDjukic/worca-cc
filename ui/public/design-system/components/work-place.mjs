@@ -49,5 +49,5 @@ export function workPlace(p) {
     base: (t) => `<code class="rc-base">${esc(t)}</code>`,
     pr: (t) => `<a class="rc-pr"${attrs({ href: p.prUrl || '#', 'data-key': 'pr', ...(p.prAttrs || {}), title: `Open ${t} on ${p.host || 'GitHub'}` })}>${esc(t)}</a>`,
   };
-  return `<span class="rc-place">${parts.map((x) => DRAW[x.kind](x.text)).join('')}</span>`;
+  return `<span class="rc-place">${parts.map((x) => DRAW[x.kind](x.text)).join(' ')}</span>`;   // a space between its parts: read and copied as words ("fix/x into dev")
 }

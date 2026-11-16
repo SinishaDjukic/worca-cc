@@ -63,5 +63,28 @@ export function backLink({ label, icon = '', attrs: a = {} }) {
 const GLASS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>';
 function barSearch({ placeholder, label, results, kbd = '' }) {
   const ic = (c) => GLASS.replace('<svg ', `<svg${c} `);
-  return `<div class="tsearch"><button type="button" class="btn btn-quiet btn-icon tsearch-open" id="tsearch-open" data-min-level="simple" aria-label="Search" title="Search">${GLASS}</button><div class="tsearch-field">${ic(' class="tsearch-ic"')}<input type="search" class="tsearch-input" id="tsearch-input" data-search placeholder="${esc(placeholder)}" aria-label="${esc(label)}" aria-autocomplete="list" aria-expanded="false" aria-controls="tsearch-pop" aria-keyshortcuts="Meta+K Control+K" autocomplete="off" spellcheck="false"><kbd class="tsearch-kbd" aria-hidden="true">${esc(kbd)}</kbd><button type="button" class="btn btn-quiet btn-icon tsearch-close" id="tsearch-close" data-min-level="simple" aria-label="Close search" title="Close search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"></path></svg></button><div data-search-res>${results}</div></div></div>`;
+  return `<div class="tsearch"><button type="button" class="btn btn-quiet btn-icon tsearch-open" id="tsearch-open" data-min-level="simple" aria-label="Search" title="Search">${GLASS}</button><div class="tsearch-field">${ic(' class="tsearch-ic"')}<input type="search" class="tsearch-input" id="tsearch-input" data-search placeholder="${esc(placeholder)}" aria-label="${esc(label)}" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="tsearch-pop" aria-keyshortcuts="Meta+K Control+K" autocomplete="off" spellcheck="false"><kbd class="tsearch-kbd" aria-hidden="true">${esc(kbd)}</kbd><button type="button" class="btn btn-quiet btn-icon tsearch-close" id="tsearch-close" data-min-level="simple" aria-label="Close search" title="Close search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"></path></svg></button><div data-search-res id="tsearch-pop">${results}</div></div></div>`;
 }
+
+/**
+ * The search's state and its one own key (key.search), for every Search in a document: the field says aria-expanded
+ * while results show, and ArrowUp from the field goes to the last result. The rest is the menu's (compact-menu.mjs):
+ * ArrowDown from the field goes to the first result, the arrows move through them, Enter opens the one in focus.
+ * @param {Document} doc
+ */
+const watched = new WeakSet();
+export function watchSearch(doc) {
+  if (watched.has(doc)) return;
+  watched.add(doc);
+  const resOf = (input) => input.closest('.tsearch-field, .rl-search')?.querySelector('[data-search-res]');
+  const sync = () => { for (const input of doc.querySelectorAll('[data-search]')) { const on = String(!!resOf(input)?.querySelector('.menu')); if (input.getAttribute('aria-expanded') !== on) input.setAttribute('aria-expanded', on); } };
+  const Obs = doc.defaultView?.MutationObserver;
+  if (Obs) new Obs(sync).observe(doc.documentElement, { subtree: true, childList: true });
+  doc.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowUp' || !e.target.matches?.('[data-search]')) return;
+    const items = [...(resOf(e.target)?.querySelectorAll('.menu-item:not([aria-disabled="true"])') || [])]; if (!items.length) return;
+    e.preventDefault(); items[items.length - 1].focus();
+  }, true);
+  sync();
+}
+search.watch = watchSearch;   // until index.mjs exports it: R.search.watch(document)

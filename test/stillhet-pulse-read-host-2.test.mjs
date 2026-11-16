@@ -192,11 +192,16 @@ test('Now rows say how they clear, and a task opens by its own id', async () => 
 
   // wording
   w.StillhetPulse.open('now');
+  // the redesign: the clause is said once, in the row's tooltip; the meta line holds the row's own facts, and the row
+  // carries its one action as a button instead (Resume, Answer)
   const meta = (id) => pop(d).querySelector(`[data-open="r:${id}"] .pz-row-m`)?.textContent || '';
-  assert.match(meta('run-c'), /Clears when you resume or stop it/, 'a paused-at-a-limit row');
-  assert.match(meta('run-a'), /Clears when you answer it/, 'a question row');
-  assert.match(meta('run-g'), /Clears when you resume or stop it/, 'a run paused on an error stays until resumed or stopped');
-  assert.match(pop(d).querySelector('[data-open="r:run-c"]').textContent, /Clears when you resume or stop it/, 'in the button\'s own text, not only its title');
+  const tip = (id) => { const b = pop(d).querySelector(`[data-open="r:${id}"]`); return b?.getAttribute('title') || b?.dataset.tipText || ''; };
+  assert.match(tip('run-c'), /Clears when you resume or stop it/, 'a paused-at-a-limit row');
+  assert.match(tip('run-a'), /Clears when you answer it/, 'a question row');
+  assert.match(tip('run-g'), /Clears when you resume or stop it/, 'a run paused on an error stays until resumed or stopped');
+  for (const id of ['run-c', 'run-a', 'run-g']) assert.doesNotMatch(meta(id), /Clears when/, 'not repeated on every meta line');
+  assert.equal(pop(d).querySelector('[data-fix="r:run-c"]').textContent, 'Resume', 'a paused row carries Resume');
+  assert.equal(pop(d).querySelector('[data-fix="r:run-a"]').textContent, 'Answer', 'a question carries Answer');
   const M = w.PulseModel;
   const TABLE = { question: 'Clears when you answer it', clarify: 'Clears when you answer it', recovery: 'Clears when you retry or stop it', gate: 'Clears when you approve it or ask for changes', plan: 'Clears when you approve it or ask for changes', outline: 'Clears when you approve it or ask for changes',
     'paused-limit': 'Clears when you resume or stop it', paused: 'Clears when you resume or stop it', interrupted: 'Clears when you resume or stop it', capped: 'Clears when you resume or stop it', failed: 'Clears once you open it',

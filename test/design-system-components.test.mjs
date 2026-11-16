@@ -241,7 +241,9 @@ test('listController: the arrows on a reply\'s code block or table scroll it, no
   C.listController({ root, spec: { noun: `scroll-${Math.random()}`, label: 'x', can: () => [], bulk: () => [], act: () => {}, word: () => false, say: () => {}, active: () => true, open: () => {}, view: () => ({ state: 'ready', parts: [], sections: [{ id: 's', title: 'S', rows }] }) } }).paint();
   const press = (el, key) => { const e = new d.defaultView.KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }); el.dispatchEvent(e); return e.defaultPrevented; };
   for (const sel of ['.prose pre', '.prose .rt-wrap']) for (const key of ['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp']) assert.equal(press(d.querySelector(sel), key), false, `${sel} ${key}`);
-  assert.equal(press(d.getElementById('other'), 'ArrowDown'), true, 'elsewhere the list still owns the arrows');
+  // key.arrows-stay: from the page the arrows are the page's (they never pull the focus into the list); inside the list they move through its rows
+  assert.equal(press(d.getElementById('other'), 'ArrowDown'), false, 'outside the list the arrows are left alone');
+  assert.equal(press(root.querySelector('[data-open="g"]'), 'ArrowDown'), true, 'inside the list it owns the arrows');
 });
 
 test('compactMenu: two columns live inside what scrolls (comp.menu-groups)', () => {
@@ -478,7 +480,7 @@ test('confirmStrip: asks, works, then fails with the reason and Try again', () =
   assert.deepEqual([...ask.querySelectorAll('button')].map((b) => b.textContent), ['Merge', 'Cancel']);
   assert.match(ask.querySelector('[data-confirm="yes"]').className, /btn-primary/);
   const busy = dom(C.confirmStrip({ text: 'x', yes: 'Merge', busy: 'Merging…' }));
-  assert.equal(busy.querySelector('[data-confirm="yes"]').textContent, 'Merging…');
+  assert.equal(busy.querySelector('[data-confirm="yes"] .btn-busy-t').textContent, 'Merging…');   // the busy Button (comp.button-busy): the knot, then the words
   assert.ok(busy.querySelector('[data-confirm="yes"]').disabled);
   const err = dom(C.confirmStrip({ text: 'x', yes: 'Stop', danger: true, err: { title: 'Could not stop', detail: 'It had just finished. Nothing changed.' } }));
   assert.equal(err.querySelector('[role="alert"]').firstChild.textContent, 'Could not stop');
@@ -727,24 +729,28 @@ test('listRow fold: Customise shows what is under the record, Done hides it; a L
 });
 
 test('settingsRow fold.label names what a fold holds; settingsSection with no title has no head to repeat the tab', () => {
+  // the redesign (settings.md: the value leads): the whole line is the trigger, and it names what it holds; no word swaps on open
   const r = dom(C.settingsRow({ name: 'Browser extension', sentence: 's', fold: { open: false, label: 'Paired browsers' } }));
-  assert.ok([...r.querySelectorAll('button')].some((b) => b.textContent === 'Paired browsers'));
+  assert.equal(r.querySelector('button.set-open').getAttribute('aria-label'), 'Browser extension: Paired browsers');
   const open = dom(C.settingsRow({ name: 'Browser extension', sentence: 's', detail: '<p></p>', fold: { open: true, label: 'Paired browsers' } }));
-  assert.ok([...open.querySelectorAll('button')].some((b) => b.textContent === 'Done'));
+  assert.equal(open.querySelector('button.set-open').getAttribute('aria-label'), 'Browser extension: Paired browsers');
+  assert.equal([...open.querySelectorAll('button')].some((b) => b.textContent === 'Done'), false);
   const s = dom(C.settingsSection({ rows: '<div class="x"></div>' }));
   assert.equal(s.querySelector('.set-sec-head'), null);
   assert.ok(s.querySelector('.x'));
 });
 
-test('settingsRow fold: Customise opens its rows, a small label over each sentence, and its one foot action; Done closes', () => {
+test('settingsRow fold: the row\'s line opens its rows and its one foot action; a chevron turns, no word changes', () => {
   const closed = dom(C.settingsRow({ name: 'Network', sentence: 'A direct connection', fold: { open: false, attrs: { 'data-fold': 'net' } }, detailRows: C.settingsRow({ name: 'Proxy' }) }));
-  const btn = closed.querySelector('.set-end .btn-quiet');
-  assert.equal(btn.textContent, 'Customise');
+  const btn = closed.querySelector('button.set-open');
+  assert.equal(btn.textContent, '', 'the trigger is the line itself: it holds no word to swap');
   assert.equal(btn.getAttribute('aria-expanded'), 'false');
   assert.equal(btn.dataset.fold, 'net');
   assert.equal(closed.querySelector('.set-detail'), null);
+  assert.ok(closed.querySelector('.set-end > .set-chev'), 'a chevron at its end says it opens');
   const open = dom(C.settingsRow({ name: 'Network', fold: { open: true }, detailRows: C.settingsRow({ name: 'Proxy' }), detailAction: '<button class="btn btn-quiet">Back to the group</button>' }));
-  assert.equal(open.querySelector('.set-end .btn-quiet').textContent, 'Done');
+  assert.equal(open.querySelector('button.set-open').getAttribute('aria-expanded'), 'true');
+  assert.match(open.className, /\bis-open\b/);
   assert.ok(open.querySelector('.set-detail > .set-rows > .set-row'));
   assert.ok(open.querySelector('.set-detail > .set-foot > .btn-quiet'));
 });
@@ -1385,12 +1391,14 @@ test('openShortcutsSheet: one at a time, holds the keys, Esc or Close closes and
   assert.equal(d.querySelector('.keys-modal'), null); assert.equal(reached, 0, 'its click stays its own');
 });
 
-test('listSentence, listWord: its words, one menu open, a pick reports its id and each choice its count', () => {
+test('filterRow (listSentence is its old name), listWord: pickers with their label inside, one menu open, a pick reports its id and each choice its count', () => {
+  // list.filters: the list's "sentence" is a FilterRow: each part a picker with its label inside, never a word in a sentence
   const p = new JSDOM(`<div>${C.listSentence({ open: 'by', parts: [{ word: 'Showing', id: 'show', text: 'a<ll', items: [] }, { word: 'by', id: 'by', text: 'state', items: [{ id: 'day', text: 'day', hint: '5', checked: false }] }] })}</div>`).window.document.body.firstElementChild;
-  assert.match(p.textContent, /^Showing a<ll by state/);
-  assert.equal(p.querySelectorAll('.list-part').length, 2, 'each word stays with its picker');
-  assert.equal(p.querySelectorAll('[data-menu]').length, 2);
+  assert.equal(p.querySelectorAll('.list-part').length, 0, 'no sentence words');
+  assert.deepEqual([...p.querySelectorAll('.fr-pick > .fr-pick-l')].map((x) => x.textContent), ['Show:', 'Group by:'], 'each picker holds its label');
+  assert.deepEqual([...p.querySelectorAll('.fr-pick[data-menu]')].map((x) => x.getAttribute('aria-label')), ['Show: A<ll', 'Group by: State'], 'the label names the picker; the value starts with a capital');
   assert.equal(p.querySelector('[data-pick="by|day"] .mi-hint').textContent, '5');
+  assert.equal(p.querySelector('[data-pick="by|day"] .mi-l').textContent, 'Day', 'a choice reads the same in its menu as in its picker');
   assert.equal(dom(`<div>${C.listWord({ id: 'x', text: 't', items: [] })}</div>`).querySelector('.menu'), null);
 });
 
@@ -1450,7 +1458,8 @@ test('listController: draws what a page names; selecting, the sentence, Show N m
   click('[data-open="c"]', { shiftKey: true }); assert.deepEqual(ctl.state.pick.ids, ['a', 'b', 'c']);
   click('[data-bulk="stop"]'); assert.deepEqual(did.pop(), ['stop', ['a', 'b', 'c']]);
   click('[data-bulk="cancel"]'); assert.equal(root.querySelector('.runs-bulk'), null);
-  click('[data-menu="by"]'); click('[data-pick="by|y"]'); assert.equal(by, 'y');
+  click('[data-menu="filters"]'); click('[data-pick="by|y"]'); assert.equal(by, 'y');   // a list's filters fold behind its one Filter control (list.filters)
+  assert.equal(root.querySelector('.fr-pop'), null, 'a pick closes it');
   let ran = 0; ctl.confirm({ text: 'Sure?', yes: 'Go', run: () => { ran++; } });
   click('[data-confirm="yes"]'); assert.equal(ran, 1); assert.equal(root.querySelector('.rc-confirm'), null);
 });
@@ -2368,7 +2377,8 @@ test('choiceNote (COV-2): an amber note, its rows with their ways, its ways as b
   assert.match(n.className, /\bchoice-note\b/);
   assert.match(n.className, /\bis-amber\b/, 'the tone class');
   assert.ok(n.querySelector('.rc-rail > .status-dot.is-amber'), 'the dot is statusDot');
-  assert.equal(n.querySelector('.rc-word').textContent, 'This preset needs <attention>', 'text is escaped');
+  assert.equal(n.querySelector('.choice-note-t').textContent, 'This preset needs <attention>', 'text is escaped');
+  assert.equal(n.querySelector('.rc-word'), null, 'a note is body size: never the status zone\'s headline word');
   assert.equal(n.querySelector('.rc-detail').textContent, 'Start waits until it is fixed');
   const rows = n.querySelectorAll('.choice-note-row');
   assert.equal(rows.length, 2);
@@ -2495,7 +2505,7 @@ test('COV-1 folderReview: Added locks, a reason stays, the pending count names t
   const none = dom(`<div>${C.folderReview({ rows: [{ path: '/s/c', name: 'c', include: false }] })}</div>`);
   assert.equal(none.querySelector('[data-confirm="yes"]').disabled, true);
   const saving = dom(`<div>${C.folderReview({ rows: rows.slice(1), saving: true })}</div>`);
-  assert.equal(saving.querySelector('[data-confirm="yes"]').textContent, 'Adding…');
+  assert.equal(saving.querySelector('[data-confirm="yes"] .btn-busy-t').textContent, 'Adding…');   // the busy Button (comp.button-busy)
   assert.equal(saving.querySelector('[data-confirm="yes"]').disabled, true);
   assert.equal(C.reviewSummary({ added: ['a', 'b', 'c'], skipped: [{ name: 'beta', reason: 'already registered' }] }), 'Added 3 projects. Skipped 1: beta (already registered).');
   assert.equal(C.reviewSummary({ added: ['a'], skipped: [] }), 'Added “a”.');

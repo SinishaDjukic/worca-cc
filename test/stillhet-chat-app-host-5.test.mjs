@@ -100,7 +100,7 @@ const prFrame = (sockets, f) => sockets.at(-1).onmessage({ data: JSON.stringify(
 test('Create PR: the card reads Opening the PR… until the PR frame', async () => {
   const url = 'https://github.com/acme/web/pull/42';
   const { w, d, sockets } = await createPr(() => [200, { ok: true, url }]);
-  assert.equal(mainBtn(d).textContent, 'Opening the PR…');
+  assert.equal(mainBtn(d).querySelector('.btn-busy-t').textContent, 'Opening the PR…');   // a busy button: the knot and its words (comp.button-busy)
   assert.equal(mainBtn(d).disabled, true);
   assert.equal(w.StillhetTaskLive.card('pa').prUrl, undefined, 'never the POST\'s url as the PR');
   assert.equal(d.querySelector('#route-chat [data-card-act="pa|View PR"]'), null);
@@ -124,7 +124,7 @@ test('Create PR: a failed create clears Opening and shows the error', async () =
 
 test('Create PR: a lookup that ends without the PR clears Opening', async () => {
   const { w, d, sockets } = await createPr(() => [200, { ok: true, url: 'https://github.com/acme/web/pull/42' }]);
-  assert.equal(mainBtn(d).textContent, 'Opening the PR…');
+  assert.equal(mainBtn(d).querySelector('.btn-busy-t').textContent, 'Opening the PR…');   // a busy button: the knot and its words (comp.button-busy)
   const token = w.StillhetTaskLive.prLookup().token;
   prFrame(sockets, { token, done: true, items: [] });
   await settle(60);

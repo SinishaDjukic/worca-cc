@@ -33,7 +33,7 @@ test('COV-2 proposal: the team policy note sits in the card, in classic\'s words
 
 test('COV-2 proposal: the project\'s saved engine and tags are shown and sent when the card names none', async () => {
   const { d, calls } = await open({ reads: CODEX });
-  assert.match(card(d).querySelector('.tp-sentence').textContent, /run by\s*OpenAI Codex/);
+  assert.match(card(d).querySelector('.tp-rows').textContent, /Model\s*OpenAI Codex/);   // a proposal is labelled rows (panel.proposal-keeps-picks), no sentence
   await start(d);
   const [b] = runs(calls);
   assert.equal(b.engine, 'codex'); assert.deepEqual(b.tags, ['client']);
@@ -41,7 +41,7 @@ test('COV-2 proposal: the project\'s saved engine and tags are shown and sent wh
 
 test('COV-2 proposal: a Claude default and no saved tags leave Start\'s body as it was', async () => {
   const { d, calls } = await open({ reads: { [DEFAULTS]: [200, { engine: { value: 'claude' }, tags: [], projectKey: 'web-1' }] } });
-  assert.doesNotMatch(card(d).querySelector('.tp-sentence').textContent, /run by/);
+  assert.doesNotMatch(card(d).querySelector('.tp-rows').textContent, /Model/);   // no Model row when the default engine runs it
   await start(d);
   const [b] = runs(calls);
   assert.equal(b.engine, undefined); assert.equal(b.tags, undefined);

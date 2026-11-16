@@ -63,6 +63,7 @@ export const alertLevel = (tone) => (tone === 'fail' ? 3 : tone === 'ask' || ton
  * @param {boolean} [o.landed]    just landed and not seen yet: green until seen (look.running-needs-apart)
  */
 export function kindMark({ kind = 'task', tone = 'idle', stage = -1, stages = STAGES, size = 20, title = '', keepType = false, breathe = false, icon: own = '', advisory = false, landed = false, outline = false } = {}) {
+  if (tone === 'run') size = Math.max(16, size);   // the running sign is never smaller than 16px: one slow breath on a mark you can see (look.running-sign)
   if (kind === 'plugin' && tone !== 'fail') tone = 'idle';   // a plugin is one ink, whatever its state (look.one-icon)
   const noRing = kind === 'event' || kind === 'plugin' ||   /* a plugin has no stages */ tone === 'idle' || tone === 'merged' || tone === 'done' || (kind === 'schedule' && tone === 'wait');
   const reach = tone === 'wait' ? 0 : stage < 0 ? 1 : Math.min(1, (stage + 1) / stages);
@@ -208,6 +209,23 @@ export function composer({ value = '', placeholder, sentence, detail = '', tools
 }
 
 /**
+ * StarterCard: one way to start, on Chat home: its icon, its name and one plain line saying what it does. The whole card is
+ * one button; cards stand in a calm grid under the composer (StarterGrid: three across, two on a tablet, one on a phone).
+ * @param {object} o
+ * @param {string} o.icon     an icon's markup
+ * @param {string} o.label    its name: New task, Shaper
+ * @param {string} o.says     what it does, one plain line, always visible
+ * @param {boolean} [o.more]  it opens a menu of the rarely used ones (aria-haspopup, a chevron)
+ * @param {object} [o.attrs]
+ */
+export function starterCard({ icon: mark, label, says, more = false, attrs: a = {} }) {
+  return `<button type="button" class="starter-card"${attrs(a)}><span class="st-i" aria-hidden="true">${mark}</span><span class="st-n">${esc(label)}${more ? icon('chevron', 12) : ''}</span><span class="st-s">${esc(says)}</span></button>`;
+}
+/** StarterGrid: the cards, as one group. `cards` is markup (StarterCards; one that opens a menu sits in its own popover span). */
+export const starterGrid = ({ cards, label = 'Start something' }) => `<div class="home-starters starter-grid" role="group"${attrs({ 'aria-label': label })}>${cards}</div>`;
+composer.starterCard = starterCard; composer.starterGrid = starterGrid;   // until index.mjs exports them, a page reaches them through Composer
+
+/**
  * ComposerQueue: what you sent while Worca replies, waiting above the composer (form.composer-queue). Oldest first, one
  * Queued row each with its Remove; one line under them says when they go, or why they wait, with Send now.
  * @param {object} o
@@ -246,9 +264,18 @@ export function composerQueueButton() {
  * @param {string} [o.why]
  * @param {string} [o.facts]        markup
  * @param {string} [o.menu]         its ⋯, at the head's right
+ * @param {string} [o.from]         what it is and where it began, quiet, after the kicker: "Task · started from this chat"
+ * @param {object} [o.titleAttrs]   the title opens its thing's page: it is a button with these hooks
  */
-export function cardHead({ mark, kicker, kickerHtml = '', title = '', titleHtml = '', why = '', facts = '', menu = '' }) {
-  return `<div class="rc-head"><p class="tp-kicker">${mark}<span>${kickerHtml || esc(kicker)}</span>${menu ? `<span class="tp-menu">${menu}</span>` : ''}</p>${titleHtml || `<h3 class="rc-heading tc-title"${attrs({ title })}>${esc(title)}</h3>`}${facts ? `<div class="rc-facts">${facts}</div>` : ''}${why ? `<p class="tp-why">${esc(why)}</p>` : ''}</div>`;
+export function cardHead({ mark, kicker, kickerHtml = '', title = '', titleHtml = '', why = '', facts = '', menu = '', from = '', titleAttrs = null }) {
+  const heading = titleAttrs ? `<button type="button" class="tc-title-b"${attrs({ title: `Open ${title}`, ...titleAttrs })}>${esc(title)}</button>` : esc(title);
+  return `<div class="rc-head"><div class="tp-kicker">${mark}<span>${kickerHtml || esc(kicker)}</span>${from ? `<small class="tp-from">${esc(from)}</small>` : ''}${menu ? `<span class="tp-menu">${menu}</span>` : ''}</div>${titleHtml || `<h3 class="rc-heading tc-title"${attrs({ title })}>${heading}</h3>`}${facts ? `<div class="rc-facts">${facts}</div>` : ''}${why ? `<p class="tp-why">${esc(why)}</p>` : ''}</div>`;
+}
+
+/** What a card that asks shows (TaskCard's `asks`): a few lines of the review's result or the plan, each open decision by name, a way to the whole. */
+export function taskAsks({ label, lines = [], more = null, decisions = [] }) {
+  const open = decisions.map((d) => `<li class="tc-ask-d">${kindMark({ kind: 'task', tone: 'ask', size: 16 })}${d.attrs ? `<button type="button" class="tc-ask-b"${attrs(d.attrs)}>${esc(d.text)}</button>` : `<span>${esc(d.text)}</span>`}</li>`).join('');
+  return `<div class="tc-asks" role="group"${attrs({ 'aria-label': label })}><p class="tc-asks-h">${esc(label)}</p>${lines.length ? `<ul class="tc-asks-l">${lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>` : ''}${open ? `<ul class="tc-asks-d" aria-label="Open decisions">${open}</ul>` : ''}${more ? button({ label: more.label, kind: 'quiet', attrs: more.attrs || {} }) : ''}</div>`;
 }
 
 /**
@@ -270,11 +297,16 @@ export function cardHead({ mark, kicker, kickerHtml = '', title = '', titleHtml 
  * @param {string} [o.stream]   what How it ran opens (markup)
  * @param {boolean} [o.open]
  * @param {boolean} [o.compact]
+ * @param {string} [o.from]     what it is and where it began: "Task · started from this chat"
+ * @param {object} [o.titleAttrs]  the title opens the task's page (a button with these hooks)
+ * @param {{label:string, lines:string[], more?:{label:string, attrs:object}, decisions?:{text:string, attrs?:object}[]}} [o.asks]
+ *   a card that asks shows what it asks about: the review's result or the plan in a few lines, a link to it on the page,
+ *   and every open decision by name, on the folded card
  * @param {object} [o.attrs]
  */
-export function taskCard({ title, place = '', mark, word, detail = '', action = '', menu = '', stages = '', rows = '', foot = '', figures = '', stream = '', open = false, compact = false, attrs: a = {} }) {
+export function taskCard({ title, place = '', mark, word, detail = '', action = '', menu = '', stages = '', rows = '', foot = '', figures = '', stream = '', open = false, compact = false, from = '', titleAttrs = null, asks = null, attrs: a = {} }) {
   if (compact) return `<article class="task-card rc is-compact"${attrs(a)}>${turnRow({ mark, text: `<b>${esc(title)}</b> ${esc(detail)}`, end: action })}</article>`;
-  return `<article class="task-card rc${open ? ' is-open' : ''}"${attrs(a)}>${cardHead({ mark, kicker: word, title, why: detail, facts: place, menu })}<section class="rc-card tp-body"${attrs({ 'aria-label': `${title}: ${word}` })}>${stages}${rows ? `<div class="tc-rows">${rows}</div>` : ''}${action ? `<div class="tp-actions">${action}</div>` : ''}</section>${foot ? `<div class="tc-foot">${foot}</div>` : ''}${figures}${open && stream ? `<div class="tc-stream">${stream}</div>` : ''}</article>`;
+  return `<article class="task-card rc${open ? ' is-open' : ''}"${attrs(a)}>${cardHead({ mark, kicker: word, title, why: detail, facts: place, menu, from, titleAttrs })}<section class="rc-card tp-body"${attrs({ 'aria-label': `${title}: ${word}` })}>${stages}${rows ? `<div class="tc-rows">${rows}</div>` : ''}${asks ? taskAsks(asks) : ''}${action ? `<div class="tp-actions">${action}</div>` : ''}</section>${foot ? `<div class="tc-foot">${foot}</div>` : ''}${figures}${open && stream ? `<div class="tc-stream">${stream}</div>` : ''}</article>`;
 }
 
 /**
@@ -360,13 +392,23 @@ export function runOutcomes({ runs = [], says = '', tip = 'The last 7 runs' }) {
  * @param {string} [o.extra]      a quiet action at the row's far end (kept for old callers; prefer the ⋯)
  * @param {{open:boolean, menu:string, attrs:object}} [o.alts]   other ways to start (Run as is, Shape it first): Start's ▾
  * @param {object} [o.hooks]      { title, more, start, later }: each control's attributes
+ * @param {{label:string, value:string, was?:string}[]} [o.rows]   in place of the sentence: what you scan or choose, a
+ *   labelled value or picker each, always in the same place (Project, Workflow, Model, Starts, Then). A row the
+ *   proposal changed from what you picked says so: its `was` is what you had
+ * @param {string} [o.line]       one short supporting line under the rows (plain words)
+ * @param {string} [o.story]      what the workflow does, as markup (a WorkflowStory), under the rows
+ * @param {string[]} [o.files]    attached files, shown on the closed card
+ * @param {{label:string, attrs?:object}} [o.second]   a second way beside the first (Run once beside Save workflow)
  * @param {object} [o.attrs]
  */
-export function taskProposal({ title, why = '', sentence, more = '', open = false, nudge = '', start = 'Start', kicker = 'Proposed task', menu = '', extra = '', alts = null, hooks = {}, attrs: a = {} }) {
+export function proposalRows(rows = []) {
+  return `<dl class="tp-rows">${rows.map((r) => `<div class="tp-row${r.was ? ' is-changed' : ''}"><dt>${esc(r.label)}</dt><dd>${r.value}${r.was ? `<span class="tp-was"><span class="sr-only">Changed. You picked </span><s>${esc(r.was)}</s> changed</span>` : ''}</dd></div>`).join('')}</dl>`;
+}
+export function taskProposal({ title, why = '', sentence = '', more = '', open = false, nudge = '', start = 'Start', kicker = 'Proposed task', menu = '', extra = '', alts = null, hooks = {}, rows = null, line = '', story = '', files = [], second = null, attrs: a = {} }) {
   const btn = (label, kind, h, extra = {}) => button({ label, kind, attrs: { ...extra, ...(h || {}) } });
   return `<article class="task-card rc tp"${attrs(a)}>${cardHead({ mark: kindMark({ kind: 'task', tone: 'idle', size: 16 }), kicker, titleHtml: `<span class="tp-title-w"><input class="tp-title"${attrs({ value: title, 'aria-label': 'Task title', spellcheck: 'false', ...(hooks.title || {}) })}><span class="tp-edit" aria-hidden="true">${icon('edit', 13)}</span></span>`, why, menu })}`
-    + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Proposed: ${title}` })}><div class="tp-sentence">${sentence}</div>${nudge ? `<p class="tp-nudge">${nudge}</p>` : ''}`
-    + `<div class="tp-actions">${alts ? splitButton({ main: { label: start, kind: 'primary', attrs: hooks.start || {} }, moreLabel: 'Other ways to start', chevron: icon('chevron', 12), open: alts.open, menuHtml: alts.menu, moreAttrs: alts.attrs || {} }) : btn(start, 'primary', hooks.start)}${btn('Not now', 'quiet', hooks.later)}${extra ? `<span class="tp-extra">${extra}</span>` : ''}</div></section>`
+    + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Proposed: ${title}` })}>${rows ? `${proposalRows(rows)}${sentence ? `<div class="tp-sentence">${sentence}</div>` : ''}` : `<div class="tp-sentence">${sentence}</div>`}${line ? `<p class="tp-what">${esc(line)}</p>` : ''}${story}${files.length ? `<p class="tp-files" aria-label="Attached files">${files.map((f) => `<span class="kind-chip">${icon('file', 12)}${esc(f)}</span>`).join('')}</p>` : ''}${nudge ? `<p class="tp-nudge">${nudge}</p>` : ''}`
+    + `<div class="tp-actions">${alts ? splitButton({ main: { label: start, kind: 'primary', attrs: hooks.start || {} }, moreLabel: 'Other ways to start', chevron: icon('chevron', 12), open: alts.open, menuHtml: alts.menu, moreAttrs: alts.attrs || {} }) : btn(start, 'primary', hooks.start)}${second ? btn(second.label, '', second.attrs) : ''}${btn('Not now', 'quiet', hooks.later)}${extra ? `<span class="tp-extra">${extra}</span>` : ''}</div></section>`
     + `<div class="tc-foot">${button({ label: open ? 'Hide Customise' : 'Customise', kind: 'quiet', icon: icon(open ? 'chevron' : 'chevR', 12), attrs: { 'aria-expanded': String(!!open), title: 'Title, labels, branch, memory, guardrails and more', ...(hooks.more || {}) } })}</div>${open && more ? `<div class="tp-custom composer-more">${more}</div>` : ''}</article>`;
 }
 
@@ -388,15 +430,17 @@ const KIND_ICON = { Schedule: 'clock', Workflow: 'kind-workflow', 'Web access': 
  * @param {{label:string, kind?:string, attrs?:object}[]} [o.actions]   instead, a kind's own choices (web access: Allow in chat, Always allow, Deny; a schedule: Run now, Move, Apply, Delete)
  * @param {string} [o.menu]      its ⋯
  * @param {object} [o.hooks]     { apply, decline, revert }
+ * @param {{label:string, value:string, was?:string}[]} [o.facts]   labelled values in fixed places above the change (Project: billing-api)
+ * @param {{label:string, attrs?:object}} [o.second]   a second way beside Apply (Run once beside Save workflow)
  * @param {object} [o.attrs]
  */
-export function changeProposal({ kind, title, why = '', rows = [], body = '', state = 'proposed', apply = 'Apply', actions = null, menu = '', hooks = {}, attrs: a = {} }) {
+export function changeProposal({ kind, title, why = '', rows = [], body = '', state = 'proposed', apply = 'Apply', actions = null, menu = '', hooks = {}, facts = null, second = null, attrs: a = {} }) {
   const btn = (label, k, h, c = '') => button({ label, kind: k, cls: c, attrs: h || {} });
   if (state === 'applied') return turnRow({ mark: icon('check', 14), text: `<b>${esc(title)}</b> ${esc(rows.map((r) => `${r.name}: ${r.after}`).join(' · ') || kind)}`, end: hooks.revert ? btn('Revert', 'quiet', hooks.revert) : '', attrs: a });   // no Revert where the change cannot be undone
   if (state !== 'proposed') return turnRow({ mark: kindMark({ kind: 'task', tone: state === 'failed' ? 'fail' : 'idle', size: 16 }), text: `${state === 'failed' ? 'Could not change' : 'Not changed'}: <b>${esc(title)}</b>`, attrs: a });
   const list = rows.length ? `<dl class="cp-rows">${rows.map((r) => `<div class="cp-row"><dt>${esc(r.name)}</dt><dd>${r.before && r.before !== '—' ? `<s>${esc(r.before)}</s><span aria-hidden="true">→</span>` : ''}<b>${esc(r.after)}</b></dd></div>`).join('')}</dl>` : '';
   return `<article class="task-card rc cp"${attrs(a)}>${cardHead({ mark: icon(KIND_ICON[kind] || 'set-general', 14), kicker: kind, title, why, menu })}`
-    + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Proposed change: ${title}` })}>${list}${body}<div class="tp-actions">${actions ? actions.map((x) => (x.kind === 'danger' ? btn(x.label, 'quiet', x.attrs, 'is-danger') : btn(x.label, x.kind || 'quiet', x.attrs))).join('') : `${btn(apply, 'primary', hooks.apply)}${btn('Not now', 'quiet', hooks.decline)}`}</div></section></article>`;
+    + `<section class="rc-card tp-body"${attrs({ 'aria-label': `Proposed change: ${title}` })}>${facts ? proposalRows(facts) : ''}${list}${body}<div class="tp-actions">${actions ? actions.map((x) => (x.kind === 'danger' ? btn(x.label, 'quiet', x.attrs, 'is-danger') : btn(x.label, x.kind || 'quiet', x.attrs))).join('') : `${btn(apply, 'primary', hooks.apply)}${second ? btn(second.label, '', second.attrs) : ''}${btn('Not now', 'quiet', hooks.decline)}`}</div></section></article>`;
 }
 
 /**
@@ -505,15 +549,20 @@ export function stageLine({ mark, label, meta = '', parts = '', body = '', next 
 }
 
 /**
- * StagePart: a part of a task at its stage's end, saying what is inside before it opens; open, it shows under the stage.
+ * StagePart: a part that opens in place (Changes, Activity, Decisions, a step's log), saying what is inside before it
+ * opens. Its open-line: a hairline runs from its words to its chevron, closed and open, and what it opens hangs on that
+ * line and ends with a hairline of its own, so you see where the part starts and where it ends. The words never change;
+ * the chevron turns.
  * @param {object} o
  * @param {string} o.label   the part: Decisions, Changes, Activity
  * @param {string} [o.says]  what is inside, in a few words: 5 files +358 −144
  * @param {boolean} [o.open]
+ * @param {string} [o.body]  what it opens (markup), drawn under it while open
  * @param {object} [o.attrs]
  */
-export function stagePart({ label, says = '', open = false, attrs: a = {} }) {
-  return `<button type="button" class="stage-part-b${open ? ' is-open' : ''}"${attrs({ 'aria-expanded': String(!!open), ...a })}><b>${esc(label)}</b>${says ? `<span>${esc(says)}</span>` : ''}${icon('chevron', 10)}</button>`;
+export function stagePart({ label, says = '', open = false, body = '', attrs: a = {} }) {
+  const head = `<button type="button" class="stage-part-b${open ? ' is-open' : ''}"${attrs({ 'aria-expanded': String(!!open), ...a })}><b>${esc(label)}</b>${says ? `<span>${esc(says)}</span>` : ''}<i class="sp-rule" aria-hidden="true"></i>${icon('chevron', 12)}</button>`;
+  return open && body ? `<div class="sp-open">${head}<div class="sp-body">${body}</div></div>` : head;
 }
 
 /**
@@ -530,13 +579,40 @@ export function stagePart({ label, says = '', open = false, attrs: a = {} }) {
 /** The step a detail names ("Review · step 2 of 3"), for a StageBar: [2, 3], or null. */
 export const stageStep = (detail) => { const m = /step (\d+) of (\d+)/.exec(String(detail || '')); return m ? [+m[1], +m[2]] : null; };
 
-export function stageBar({ labels, stage, tone = 'run', step = null, bare = false, key = '' }) {   // key: the thing it belongs to, so its advance plays once (motion.stage-advance)   // bare: the line alone, where a stage list under it names them (stillhet.one-place)
+const TRAIN_WORD = { run: 'working', wait: 'waiting', ask: 'asks you', act: 'needs your approval', fail: 'failed', pause: 'paused', stop: 'stopped', closed: 'closed', ok: 'ready', done: 'done', merged: 'merged', idle: 'not started' };
+
+/**
+ * The stage train (look.stage-line): one line, a knot a stage, each stage's name under its knot. Done knots are filled
+ * in ink (done is ink, never green); the one it is on is marked in its state's colour and named with its step
+ * ("Review 2 of 3"). With `knot`, each stop is a real button named for what it opens ("Build: done, open its details"),
+ * the current one aria-current="step"; the train says where the task is in words for a screen reader
+ * ("Stage 3 of 5: Review, working").
+ * @param {object} o
+ * @param {string[]} o.labels
+ * @param {number} o.stage    the one it is on, from 0
+ * @param {string} [o.tone]   markTone's answer
+ * @param {[number, number]} [o.step]   the step it is on within the stage, and how many: [2, 3]
+ * @param {boolean} [o.bare]  the line alone, no names
+ * @param {string} [o.key]    the thing it belongs to, so its advance plays once (motion.stage-advance)
+ * @param {(i:number, label:string) => object} [o.knot]   each stop's hook: with it a stop is a button
+ * @param {string} [o.does]   what a stop's click does, for its name: "open its details" (a page), "open the task at this stage" (a card)
+ * @param {number} [o.open]   on a page: the stage whose details are open under the train (aria-expanded)
+ * @param {string[]} [o.metas]   one quiet line under each name (its time)
+ */
+export function stageBar({ labels, stage, tone = 'run', step = null, bare = false, key = '', knot = null, does = 'open its details', open = null, metas = null }) {
   const n = labels.length, whole = tone === 'ok' || tone === 'done' || tone === 'merged';   // done and merged are ink all along; a failure, a question, a pause only where it is
-  const at = (i) => (i / n) * 100, W = 100 / n, live = !whole && stage >= 0 && stage < n;
+  const at = (i) => +(((i + 0.5) / n) * 100).toFixed(2), W = 100 / n, live = !whole && stage >= 0 && stage < n;   // a knot stands over the middle of its name
   const [k, m] = live && step && step[1] > 1 ? step : [0, 0];
-  const notches = m ? Array.from({ length: m }, (_, j) => `<i class="sl-step${j < k - 1 ? ' is-done' : j === k - 1 ? ' is-now' : ''}" style="left:calc(${at(stage) + 1.5 + (j * (W - 3)) / m}% + 6px);width:calc(${(W - 3) / m}% - 9px)"></i>`).join('') : '';
-  const knots = labels.map((_, i) => `<i class="sl-knot${whole || i < stage ? ' is-done' : i === stage ? ' is-now' : ''}" style="left:${at(i)}%"></i>`).join('');
-  return `<div class="stage-bar is-${tone}" style="--n:${n}"${attrs({ 'data-advance': key || null, 'data-stage': key ? String(whole ? n : stage) : null })}><div class="sl" aria-hidden="true"><i class="sl-base" style="right:${100 - at(n - 1)}%"></i><i class="sl-done${whole ? ' is-whole' : ''}" style="width:${whole ? at(n - 1) : at(Math.max(0, stage))}%"></i>${notches}${knots}</div>${bare ? '' : `<div class="sb-labels">${labels.map((l, i) => (i === stage ? `<b>${esc(l)}${m ? `<small>${k} of ${m}</small>` : ''}</b>` : `<span>${esc(l)}</span>`)).join('')}</div>`}</div>`;
+  const notches = m && stage < n - 1 ? Array.from({ length: m }, (_, j) => `<i class="sl-step${j < k - 1 ? ' is-done' : j === k - 1 ? ' is-now' : ''}" style="left:calc(${+(at(stage) + 1.5 + (j * (W - 3)) / m).toFixed(2)}% + 6px);width:calc(${+((W - 3) / m).toFixed(2)}% - 9px)"></i>`).join('') : '';
+  const state = (i) => (whole || i < stage ? 'done' : i === stage ? 'now' : 'next');
+  const knots = labels.map((_, i) => `<i class="sl-knot${state(i) === 'next' ? '' : ` is-${state(i)}`}" style="left:${at(i)}%"></i>`).join('');
+  const word = TRAIN_WORD[tone] || tone, said = (i) => (state(i) === 'done' ? 'done' : state(i) === 'now' ? `${m ? `step ${k} of ${m}, ` : ''}${word}` : 'not started');
+  const says = whole ? `All ${n} stages done${tone === 'done' ? '' : `: ${word}`}` : live ? `Stage ${stage + 1} of ${n}: ${labels[stage]}, ${word}` : `${n} stages, not started`;
+  const name = (l, i) => `${esc(l)}${i === stage && m ? `<small>${k} of ${m}</small>` : ''}${metas?.[i] ? `<span class="sb-meta">${esc(metas[i])}</span>` : ''}`;
+  const stop = (l, i) => (knot
+    ? `<button type="button" class="sb-stop is-${state(i)}"${attrs({ 'aria-label': `${l}: ${said(i)}, ${does}`, 'aria-current': i === stage && !whole ? 'step' : null, 'aria-expanded': open == null ? null : String(open === i), ...(knot(i, l) || {}) })}>${name(l, i)}</button>`
+    : i === stage ? `<b>${name(l, i)}</b>` : `<span>${name(l, i)}</span>`);
+  return `<div class="stage-bar is-${tone}" style="--n:${n}"${attrs({ role: 'group', 'aria-label': says, 'data-advance': key || null, 'data-stage': key ? String(whole ? n : stage) : null })}><div class="sl" aria-hidden="true"><i class="sl-base" style="left:${at(0)}%;right:${+(100 - at(n - 1)).toFixed(2)}%"></i><i class="sl-done${whole ? ' is-whole' : ''}" style="left:${at(0)}%;width:${+(((whole ? n - 1 : Math.max(0, stage)) / n) * 100).toFixed(2)}%"></i>${notches}${knots}</div>${bare ? '' : `<div class="sb-labels">${labels.map(stop).join('')}</div>`}</div>`;
 }
 
 /**

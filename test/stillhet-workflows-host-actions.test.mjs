@@ -131,7 +131,7 @@ test('canvas Import: the input the picker opened on survives the redraw; its cha
   const clicked = [];
   const { w, d, calls } = await host({ hash: '#workflows/edit:wf_mine', write: (u, b) => (u === '/api/workflows/import-json' ? (b.dryRun ? [200, { scriptNodes: [] }] : [201, { workflow: { id: 'wf_rel', name: 'Release' } }]) : [200, { ok: true }]),
     beforeScripts: (win) => { win.HTMLInputElement.prototype.click = function () { clicked.push(this); }; } });
-  await pick(d, 'ed-io', 'import');
+  d.querySelector('[data-ed-io="import"]').click(); await settle(40);   // the redesign: Import is its own button in the editor's bar, no longer an item of an "Import, Export" menu
   assert.equal(clicked.length, 1, 'the picker opened');
   const input = clicked[0];
   assert.ok(input.isConnected, 'still in the document after the redraw');

@@ -13,6 +13,9 @@ const noWould = (win) => { const orig = win.StillhetWould; win.__would = []; win
 async function host(o = {}) { const h = await marketplaceHost({ ...o, beforeScripts: (w) => { o.beforeScripts?.(w); } }); noWould(h.w); return h; }
 const card = (d, id) => d.querySelector(`[data-mk-card="${id}"]`);
 
+// the redesign (comp.button-busy): a busy button shows a knot and its present-tense words once; a screen reader hears them from its status
+const busyWords = (b) => (b.querySelector('.btn-busy-t') || b).textContent.trim();
+
 test('Install: confirm, then Installing… disabled while POST /api/plugins/install is pending, with the full sha; then Installed', async () => {
   const g = gate();
   const { w, d, calls } = await host({ hash: '#marketplace/slack-chat', hold: (u) => (u === '/api/plugins/install' ? g.p : null) });
@@ -20,7 +23,7 @@ test('Install: confirm, then Installing… disabled while POST /api/plugins/inst
   assert.equal(sent(calls).length, 0, 'nothing before Yes');
   d.querySelector('[data-confirm="yes"]').click(); await settle(30);
   const yes = d.querySelector('[data-confirm="yes"]');
-  assert.equal(yes.textContent.trim(), 'Installing…'); assert.equal(yes.disabled, true);
+  assert.equal(busyWords(yes), 'Installing…'); assert.equal(yes.disabled, true);
   assert.deepEqual(sent(calls), [['POST', '/api/plugins/install', { repoUrl: 'https://github.com/SinishaDjukic/worca-cc', name: 'slack-chat', sha: SHA, subdir: 'plugins/slack-chat', marketplace: 'worca-official' }]]);
   assert.equal(SHA.length, 40);
   g.open(); await settle(80);
@@ -44,9 +47,9 @@ test('Update: Updating… disabled through the preview and the apply; the bodies
   const { d, calls } = await host({ hash: '#marketplace/~updates', hold: (u) => (u === '/api/plugins/jira-source/update' ? (n++ === 0 ? gp.p : ga.p) : null),
     write: (u, b) => (u === '/api/plugins/jira-source/update' ? (b.confirm ? [200, { ok: true, updated: true, ...preview().preview }] : [200, preview()]) : [200, { ok: true }]) });
   card(d, 'jira-source').click(); await settle(30);
-  assert.equal(card(d, 'jira-source').textContent.trim(), 'Updating…'); assert.equal(card(d, 'jira-source').disabled, true);
+  assert.equal(busyWords(card(d, 'jira-source')), 'Updating…'); assert.equal(card(d, 'jira-source').disabled, true);
   gp.open(); await settle(30);
-  assert.equal(card(d, 'jira-source').textContent.trim(), 'Updating…', 'still, through the apply');
+  assert.equal(busyWords(card(d, 'jira-source')), 'Updating…', 'still, through the apply');
   assert.deepEqual(sent(calls).map((c) => c[2]), [{}, { confirm: true, candidateSha: SHA }]);
   ga.open(); await settle(80);
   assert.match(saidText(d), /Updated Jira to 0\.2\.0/);
@@ -95,7 +98,8 @@ test('Set up: the fields are the config schema\'s required fields; Save PUTs {so
   g.open(); await settle(80);
   assert.match(saidText(d), /Seed tracker is set up/);
   assert.ok(!d.querySelector('[data-confirm]'), 'the form closed');
-  assert.ok(d.activeElement?.matches('[data-mk-step]'), 'the focus stays on the plugin\'s step');
+  // the redesign: a set-up plugin has no step in its head; its settings rows hold Change, and the focus lands there
+  assert.ok(d.activeElement?.matches('[data-mk-step], [data-mk-setup]'), 'the focus stays on the plugin\'s step');
 });
 
 test('Set up while dev still reads Needs set-up: never "is set up"; the form opens again on what is left', async () => {
@@ -154,7 +158,7 @@ test('Sync sends the refresh; Add a source reads Adding… while held; Remove a 
   d.querySelector('[data-mk-add]').value = 'acme/x'; adding = true;
   d.querySelector('[data-mk-addgo]').click(); await settle(30);
   const add = d.querySelector('[data-mk-addgo]');
-  assert.equal(add.textContent.trim(), 'Adding…'); assert.equal(add.disabled, true);
+  assert.equal(busyWords(add), 'Adding…'); assert.equal(add.disabled, true);
   assert.deepEqual(sent(calls).at(-1), ['POST', '/api/marketplaces', { url: 'acme/x' }]);
   g.open(); await settle(80);
   const w = d.defaultView; await go(w, '#marketplace', 60);

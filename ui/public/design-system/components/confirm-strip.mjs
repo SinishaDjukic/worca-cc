@@ -32,9 +32,10 @@ function linkHtml(link) {
   return ` <a class="dc-link"${attrs({ href: link.href, target: '_blank', rel: 'noopener noreferrer' })}>${esc(link.label)}</a>`;
 }
 
-/** The strip's two buttons, shared with a strip that holds a short form. */
+/** The strip's two buttons, shared with a strip that holds a short form. While the step is out (`busy`) its button is
+ *  the busy Button: the breathing knot and `yes`, which then holds the present-tense words ("Merging…"). */
 export function confirmActions({ yes, no = 'Cancel', danger = false, busy = false, noBusy = false, kind }) {
-  return `<span class="rc-confirm-acts">${button({ label: yes, kind: kind || (danger ? 'danger' : 'primary'), attrs: { 'data-confirm': 'yes', 'data-key': 'confirm:yes', 'data-motion': 'swap', disabled: busy || noBusy } })}${button({ label: no, kind: 'quiet', attrs: { 'data-confirm': 'no', 'data-key': 'confirm:no', disabled: noBusy } })}</span>`;
+  return `<span class="rc-confirm-acts">${button({ label: yes, kind: kind || (danger ? 'danger' : 'primary'), busy: busy ? { label: yes } : false, attrs: { 'data-confirm': 'yes', 'data-key': 'confirm:yes', 'data-motion': 'swap', disabled: busy || noBusy } })}${button({ label: no, kind: 'quiet', attrs: { 'data-confirm': 'no', 'data-key': 'confirm:no', disabled: noBusy } })}</span>`;
 }
 
 /**

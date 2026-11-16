@@ -89,7 +89,7 @@ test('a no-project finished card shows Plan, Build, Review, Done and one word, a
   assert.doesNotMatch(text, /\bPR\b|Merged|Ready/);
   assert.equal(text.match(/Finished/g)?.length, 1, 'the state is said once');
   await go(w, '#run/pa', 300);
-  assert.deepEqual(lineLabels(d.querySelector('#card .stage-stream')), STAGES, 'the page has the same stages');
+  assert.deepEqual(barLabels(d.querySelector('#card .rc-train')), STAGES, 'the page has the same stages, on its stage train');
   assert.match(d.querySelector('#card').textContent, /Finished/);
 });
 
@@ -98,7 +98,7 @@ test('a ready task with a PR still shows PR and Merged, its bar at PR', async ()
   await go(w, '#chat/ask_1', 250);
   const labels = barLabels(card(d));
   assert.deepEqual(labels.slice(-2), ['PR', 'Merged']);
-  assert.equal(card(d).querySelector('.sb-labels > b')?.firstChild.textContent, 'PR');
+  assert.equal(card(d).querySelector('.sb-labels > [aria-current="step"]')?.firstChild.textContent, 'PR');   // the train's stops are buttons; the one it is on is aria-current
 });
 
 test('the prototype\'s demo chat holds a finished no-project card with the same four stages (R-ux-7)', async (t) => {

@@ -379,6 +379,21 @@
     // Per file: added or modified, review comments, and the first hunk shown when the file opens.
     fileMeta: { 'ui/public/run-head.mjs': { st: 'A', notes: 2 }, 'test/ui-run-head.test.mjs': { st: 'A' }, 'ui/public/nav/routes.mjs': { st: 'M', notes: 1 } },
     hunk: { at: '@@ ui/public/app.js:36,380', lines: [[' ', 'function paintRunHead(run, el) {'], ['-', '  el.append(backButton(run));'], ['-', '  el.append(groupList(run));'], ['+', '  el.append(breadcrumb(ROUTES.parentOf(run)));'], ['+', '  el.append(titleRow(run), actions(run));'], [' ', '}']] },
+    // The demo's whole diffs, for a few files (DiffView): what "Open the whole diff" and "View changes" show.
+    diffs: {
+      'ui/public/run-head.mjs': [
+        { at: '@@ -0,0 +1,9 @@', lines: [['+', "import { breadcrumb } from './nav/breadcrumb.mjs';"], ['+', "import { ROUTES } from './nav/routes.mjs';"], ['+', ''], ['+', '// One head for the task and group pages: the trail, the title, the actions.'], ['+', 'export function runHead(run) {'], ['+', "  const head = document.createElement('header');"], ['+', '  head.append(breadcrumb(ROUTES.parentOf(run)), titleRow(run), actions(run));'], ['+', '  return head;'], ['+', '}']] },
+        { at: '@@ -0,0 +24,6 @@', lines: [['+', 'function titleRow(run) {'], ['+', "  const row = document.createElement('div');"], ['+', "  row.className = 'run-title-row';"], ['+', '  row.append(title(run), kindChip(run));'], ['+', '  return row;'], ['+', '}']] }],
+      'ui/public/app.js': [
+        { at: '@@ -36,6 +36,6 @@ function paintRunHead(run, el) {', lines: [[' ', 'function paintRunHead(run, el) {'], ['-', '  el.append(backButton(run));'], ['-', '  el.append(groupList(run));'], ['+', '  el.append(breadcrumb(ROUTES.parentOf(run)));'], ['+', '  el.append(titleRow(run), actions(run));'], [' ', '}'], [' ', '']] },
+        { at: '@@ -378,8 +378,7 @@ function route() {', lines: [[' ', '  const run = RUNS.get(id);'], ['-', '  if (!run) return showRuns();'], ['-', '  topBar.setTitle(run.title);'], ['+', '  if (!run) return showRuns({ missing: id });'], [' ', '  paintRunHead(run, head);'], [' ', '  paintTabs(run, body);'], [' ', '}']] }],
+      'ui/public/style.css': [
+        { at: '@@ -212,9 +212,6 @@ .run-head {', lines: [[' ', '.run-head{display:flex;align-items:center;gap:12px;}'], ['-', '.run-back{flex:none;width:28px;height:28px;}'], ['-', '.run-group-list{margin:0;padding:0;list-style:none;}'], ['-', '.run-group-list li{display:inline-flex;}'], ['+', '.run-title-row{display:flex;align-items:center;gap:8px;min-width:0;}'], [' ', '.run-title{min-width:0;overflow:hidden;text-overflow:ellipsis;}']] }],
+      'test/ui-run-head.test.mjs': [
+        { at: '@@ -0,0 +1,8 @@', lines: [['+', "import { test } from 'node:test';"], ['+', "import assert from 'node:assert/strict';"], ['+', "import { runHead } from '../ui/public/run-head.mjs';"], ['+', ''], ['+', "test('a task page and a group page share one head', () => {"], ['+', "  const head = runHead({ id: 'r1', title: 'Fix flaky login test', project: 'worca-cc' });"], ['+', "  assert.equal(head.querySelectorAll('.run-title-row').length, 1);"], ['+', '});']] }],
+      'ui/public/nav/routes.mjs': [
+        { at: '@@ -12,5 +12,14 @@ export const ROUTES = {', lines: [[' ', "  run: (id) => `#run/${id}`,"], ['-', "  group: (id) => `#group/${id}`,"], ['+', "  group: (id) => `#run/group:${id}`,"], ['+', '  // the page above a task: its group, else its project'], ['+', '  parentOf(run) {'], ['+', '    if (!run) return ROUTES.runs;'], ['+', '    return run.group ? ROUTES.group(run.group) : ROUTES.project(run.project);'], ['+', '  },'], [' ', '};']] }],
+    },
     // What the task says it did, once Build has made something.
     outcome: ['Run and group pages share one head: the breadcrumb, the title and the actions', 'Back is gone from group pages; the breadcrumb goes up a level', 'Under 760px the bar shows one link, ‹ Parent name', '14 new tests in test/ui-run-head.test.mjs'],
     // The approved plan, item by item.

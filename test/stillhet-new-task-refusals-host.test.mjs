@@ -121,16 +121,16 @@ test('COV-2 Start now instead / Start run / Start run now (demo): the waiting cl
 
 test('COV-2 Branch off the run before it (demo): with a run before it, the base picker offers and defaults to the run before it\'s branch; without one it is absent', async () => {
   const { w, d } = await demo(AFTER);
-  assert.equal(q(d, '[data-menu="f-base"]').textContent.trim(), 'the task before it\'s branch');
-  assert.deepEqual(await baseItems(d), ['the task before it\'s branch', 'main', 'dev']);
+  assert.equal(q(d, '[data-menu="f-base"]').textContent.trim(), 'The task before it\'s branch');   // a field's value starts with a capital
+  assert.deepEqual(await baseItems(d), ['The task before it\'s branch', 'main (the project\'s default branch)', 'dev']   /* the default branch says what it is */);
   q(d, '[data-dialog="cancel"]').click(); await settle(20);
   w.StillhetCenters.newTask(); await settle(60);
-  assert.equal(q(d, '[data-menu="f-base"]').textContent.trim(), 'main');
+  assert.equal(q(d, '[data-menu="f-base"]').textContent.trim(), 'main (the project\'s default branch)');
   assert.deepEqual(await baseItems(d), ['main', 'dev']);
 });
 
 test('COV-2 Branch off the run before it (demo): Schedule… from a waiting task does not carry the task before it\'s branch', async () => {
   const { d } = await demo(AFTER);
   q(d, '[data-c-tosched]').click(); await settle(30);
-  assert.equal(q(d, '[data-menu="f-base"]').textContent.trim(), 'main');
+  assert.equal(q(d, '[data-menu="f-base"]').textContent.trim(), 'main (the project\'s default branch)');
 });

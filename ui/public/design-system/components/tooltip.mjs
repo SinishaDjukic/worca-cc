@@ -71,7 +71,7 @@ export function watchTooltips(doc) {
     if (doc.querySelector('[role="menu"]') && !el.closest('[role="menu"]')) { hide(); return; }
     if (el.closest('[aria-expanded="true"]')) { hide(); return; }   // a trigger whose own popup is open (Pulse, a picker): the popup speaks for it
     tip = doc.createElement('div'); tip.className = 'stillhet-tip'; tip.setAttribute('role', 'tooltip'); tip.textContent = el.dataset.tipText;
-    doc.body.append(tip);
+    (el.closest('[popover]') || doc.body).append(tip);   // a lifted Dialog is in the top layer: its tips go with it
     // a menu's item: past every menu open beside it (the profile menu and its side menu), never over the next option
     const boxes = el.closest('[role="menu"]') ? [...doc.querySelectorAll('[role="menu"]')].map((m) => m.getBoundingClientRect()).filter((b) => b.width) : [];
     const beside = boxes.length ? { left: Math.min(...boxes.map((b) => b.left)), right: Math.max(...boxes.map((b) => b.right)),

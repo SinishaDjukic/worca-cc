@@ -88,18 +88,7 @@
       label: [['billing', 188], ['no label', 128], ['hotfix', 96]],
       hour: [['14:00', 64], ['10:00', 58], ['15:00', 57], ['11:00', 51], ['16:00', 49], ['13:00', 41], ['09:00', 34], ['17:00', 31], ['20:00', 27]],
       timeofday: [['Morning', 142], ['Afternoon', 178], ['Evening', 61], ['Night', 31]],
-      person: [['Maya', 160, 18, 480, 19], ['Jonas', 120, 14, 360, 14], ['Priya', 82, 10, 246, 10], ['Lee', 50, 5, 147, 6]],   // last: source()'s first dim stays project
-    },
-  });
-  const waste = source({
-    fields: ['spend', 'tasks'],
-    series: { spend: [12, 21, 4, 28, 16, 2, 31, 17], tasks: [3, 5, 1, 6, 4, 1, 6, 4] }, before: { spend: [7, 12, 8, 11, 9, 4, 14, 9], tasks: [2, 3, 2, 4, 3, 1, 3, 2] },
-    dims: {
-      why: [['Review sent it back', 69, 11], ['Failed or stopped tasks', 33, 6], ['Retries', 18, 9], ['PR fix rounds', 11, 4]],
-      project: [['web-app', 61, 14], ['billing-api', 49, 10], ['worca-cc', 16, 5], ['docs-site', 5, 1]],
-      workflow: [['Default', 86, 19], ['Full', 31, 7], ['Quick Fix', 14, 4]],
-      stage: [['Build', 57, 13], ['Review', 51, 12], ['PR', 23, 5]],
-      model: [['Sonnet 5.5', 68, 16], ['Opus 5.5', 54, 11], ['Haiku 5', 9, 3]],
+      person: [['Sam', 412, 47, 1233, 49]],   // your own pages hold your own work: one person, the same row as the team's (last: source()'s first dim stays project)
     },
   });
   const ends = source({
@@ -110,15 +99,7 @@
       workflow: [['Default', 26, 2, 1], ['Full', 9, 2, 0], ['Quick Fix', 8, 0, 1]],
       model: [['Opus 5.5', 20, 1, 1], ['Sonnet 5.5', 17, 2, 1], ['Haiku 5', 6, 1, 0]],
       client: [['acme', 18, 1, 0], ['globex', 10, 1, 1], ['No client', 15, 2, 1]],
-      person: [['Maya', 16, 1, 1], ['Jonas', 12, 2, 0], ['Priya', 10, 1, 1], ['Lee', 5, 0, 0]],
-    },
-  });
-  const review = source({
-    fields: ['rounds', 'tasks', 'reviews', 'fixed', 'disputed', 'open', 'first'],
-    series: { rounds: [6, 8, 3, 11, 7, 1, 10, 7], tasks: [4, 6, 2, 7, 5, 1, 8, 5] }, before: { rounds: [4, 6, 4, 7, 6, 3, 8, 5], tasks: [3, 4, 3, 5, 4, 2, 6, 4] },
-    lastK: { rounds: 3.45 },   // October ran 1.5 rounds a task
-    dims: {
-      project: [['billing-api', 15, 11, 20, 22, 2, 1, 8], ['web-app', 21, 14, 24, 29, 3, 2, 8], ['worca-cc', 16, 12, 26, 26, 4, 0, 10], ['docs-site', 1, 1, 1, 1, 0, 0, 1]],
+      person: [['Sam', 43, 4, 2]],
     },
   });
   const fails = source({
@@ -131,46 +112,19 @@
       model: [['Sonnet 5.5', 3, 18], ['Opus 5.5', 2, 11], ['Haiku 5', 1, 4]],
     },
   });
-  const alone = source({
-    fields: ['alone', 'tasks'],
-    series: { alone: [4, 6, 1, 6, 4, 1, 6, 4], tasks: [5, 8, 2, 9, 7, 1, 11, 6] }, before: { alone: [2, 3, 2, 4, 3, 1, 5, 3], tasks: [3, 5, 3, 6, 5, 2, 7, 5] },
-    dims: {
-      project: [['billing-api', 10], ['web-app', 8], ['worca-cc', 13], ['docs-site', 1]],
-      workflow: [['Default', 19, 29], ['Full', 6, 11], ['Quick Fix', 7, 9]],
-      away: [['At the desk', 18, 33], ['Away', 14, 16]],
-    },
-  });
-  const cache = source({
-    fields: ['read', 'input'],
-    series: { read: [14, 23, 8, 28, 21, 3, 35, 23], input: [23, 38, 14, 45, 34, 6, 57, 37] }, before: { read: [9, 15, 10, 18, 14, 5, 23, 16], input: [18, 28, 19, 32, 25, 9, 41, 30] },
-    dims: {
-      model: [['Opus 5.5', 88, 132], ['Sonnet 5.5', 56, 98], ['Haiku 5', 11, 24]],
-      project: [['billing-api', 72, 118], ['web-app', 49, 82], ['worca-cc', 26, 41], ['docs-site', 8, 13]],
-      stage: [['Plan', 18, 31], ['Build', 84, 141], ['Review', 37, 57], ['PR', 16, 25]],
-    },
-  });
   const prs = source({
     fields: ['prs', 'days'],
     series: { prs: [2, 4, 1, 5, 3, 0, 7, 5], days: [40, 88, 22, 105, 62, 0, 150, 100] }, before: { prs: [2, 3, 1, 4, 3, 1, 4, 3], days: [50, 72, 28, 100, 75, 30, 92, 68] },
     dims: {
       project: [['billing-api', 12, 252], ['web-app', 9, 189], ['worca-cc', 5, 110], ['docs-site', 1, 16]],
       workflow: [['Default', 16, 322], ['Full', 6, 165], ['Quick Fix', 5, 80]],
-      person: [['Maya', 10, 210], ['Jonas', 8, 170], ['Priya', 6, 120], ['Lee', 3, 67]],
+      person: [['Sam', 27, 547]],
     },
   });
   const done = source({
     fields: ['finished'],
     series: { finished: [5, 7, 2, 8, 6, 1, 9, 5] }, before: { finished: [3, 4, 3, 5, 4, 2, 6, 4] },
     dims: { project: [['billing-api', 10], ['web-app', 12], ['worca-cc', 20], ['docs-site', 1]], workflow: [['Default', 26], ['Full', 9], ['Quick Fix', 8]] },
-  });
-  const waits = source({
-    fields: ['waits', 'mins'],
-    series: { waits: [3, 5, 2, 6, 4, 0, 7, 4], mins: [42, 105, 30, 126, 66, 0, 133, 56] }, before: { waits: [2, 4, 2, 5, 3, 1, 5, 3], mins: [50, 96, 44, 130, 75, 20, 120, 65] },
-    dims: {
-      stage: [['Plan', 9, 180], ['Build', 5, 60], ['Review', 12, 228], ['PR', 5, 90]],
-      project: [['billing-api', 13, 252], ['web-app', 10, 170], ['worca-cc', 6, 106], ['docs-site', 2, 30]],
-      away: [['At the desk', 20, 220], ['Away', 11, 338]],
-    },
   });
   const team = source({
     fields: ['spend', 'hours', 'saved', 'tasks'],
@@ -218,15 +172,12 @@
     },
   });
 
-  // what a round back costs and what Opus would change on web-app: "Review sent it back" over the rounds past each task's first
-  const webApp = review.rows.project.find((r) => r.name === 'web-app'), webBack = webApp.rounds - webApp.tasks;
-  const roundBack = waste.rows.why.find((r) => r.name === 'Review sent it back').spend / (sum(review.series.rounds) - sum(review.series.tasks));
-  const OPUS_MORE = 1.9;   // what each of web-app's Builds would cost more, at Opus 5.5's prices
-  const webSaved = (webBack / webApp.tasks) * roundBack - OPUS_MORE, noOwner = money.rows.client.find((r) => r.name === 'No client');
-  const STANDS = {
-    why: { outcome: `on Opus 5.5 would save about ${usd2(webSaved)} a task, ${usd2(webSaved * webApp.tasks)} over its ${webApp.tasks} tasks this month.`, because: `Review sends web-app's code back more than any other project's, on Sonnet 5.5. Opus 5.5 costs about ${usd2(OPUS_MORE)} more a task and saves about one round every two tasks, at about ${usd2(roundBack)} a round.` },
-    review: `takes the most, ${(webApp.rounds / webApp.tasks).toFixed(1)} rounds a task: ${webBack} rounds back over its ${webApp.tasks} tasks, ${(webBack / webApp.tasks).toFixed(1)} back per task, about ${usd(webBack * roundBack)} this month. ${pct(webApp.first / webApp.tasks)} pass the first time.`,
-  };
+  const noOwner = money.rows.client.find((r) => r.name === 'No client');
+  // One budget fact each (build.one-mock): the amount and where it is set. Every page that names a budget reads it here.
+  const DAYS_GONE = 8, DAYS_IN_MONTH = 30;
+  const budgetOf = (src, usdAmount, from, whose) => { const spent = sum(src.series.spend), pace = Math.round((spent / DAYS_GONE) * DAYS_IN_MONTH); return { usd: usdAmount, from, whose, spent, pace, over: Math.max(0, pace - usdAmount), usedPct: Math.round((spent / usdAmount) * 100) }; };
+  const BUDGET = { yours: budgetOf(money, 1000, 'Settings \u203a Limits', 'your'), team: budgetOf(team, 12000, 'Settings \u203a Team policy', "the team's") };
+  const paceWord = (b) => (b.over ? `On pace for ${usd(b.pace)}, ${usd(b.over)} over` : '');
 
   // ---- the periods of the time word ----
   const NOV = ['Nov 1', 'Nov 2', 'Nov 3', 'Nov 4', 'Nov 5', 'Nov 6', 'Nov 7', 'Nov 8'];
@@ -255,7 +206,6 @@
 
   // ---- the sub-features ----
   const moneyCols = (mid = ['Cost per hour saved', (r) => (r.hours ? usd2(r.spend / r.hours) : '-')]) => [['AI spend', (r) => usd(r.spend)], ['Hours saved', (r) => `${Math.round(r.hours)} h`], ['Saved', (r) => usd(r.saved)], mid, ['Tasks', (r) => String(r.tasks)]];
-  const wasteCols = [['AI spend', (r) => usd(r.spend)], ['Tasks affected', (r) => String(r.tasks)]];
   const SUM = ['bars', 'lines', 'running', 'table'], COUNT = ['bars', 'lines', 'table'], RATE = ['bars', 'lines', 'table'];
   const cmp = (c, sub, w = 'in the period before') => {
     if (c.p == null || !isFinite(c.p)) return '';
@@ -265,57 +215,40 @@
     return sub.den || c.p <= 0 ? `${up ? 'Up' : 'Down'} from ${sub.text(c.p)} ${w}` : `${up ? 'Up' : 'Down'} ${Math.abs(Math.round(((c.v - c.p) / c.p) * 100))}% from ${sub.text(c.p)} ${w}`;
   };
   const SUBS = [
-    { id: 'spend', title: 'Spend', group: 'Cost', pace: 'On pace for $1,545, $545 over', icon: 'set-spending', noun: 'AI spend', src: money, num: 'spend', text: usd, forms: SUM, budget: 1000, cols: moneyCols(), share: 'spend',
-      word: (c) => `${usd(c.v)} of $1,000`, why: (c) => (c.st.by === 'client' ? `${usd(noOwner.spend)} has no client` : `Saved about ${usd(c.T.saved)}, 3× what it cost · on pace for $1,545 · ${usd(noOwner.spend)} has no client`) },
-    { id: 'per-task', title: 'Per task', group: 'Cost', icon: 'list', noun: 'cost a task', src: money, num: 'spend', den: 'tasks', text: usd2, forms: RATE, cols: moneyCols(['Per task', (r) => (r.tasks ? usd2(r.spend / r.tasks) : '-')]), share: 'spend',
+    { id: 'spend', title: 'Spend', head: 'Your spend', measures: 'What your own tasks cost in AI use. The team\'s spend is under Team.', group: 'Cost', pace: paceWord(BUDGET.yours), icon: 'set-spending', noun: 'AI spend', src: money, num: 'spend', text: usd, forms: SUM, budget: BUDGET.yours.usd, cols: moneyCols(), share: 'spend',
+      word: (c) => `${usd(c.v)} of your ${usd(BUDGET.yours.usd)} budget`, why: (c) => (c.st.by === 'client' ? `${usd(noOwner.spend)} has no client` : `Saved about ${usd(c.T.saved)}, ${Math.round(c.T.saved / c.T.spend)}× what it cost · on pace for ${usd(BUDGET.yours.pace)} · ${usd(noOwner.spend)} has no client`) },
+    { id: 'per-task', title: 'Per task', head: 'Your cost per task', measures: 'Your AI spend divided by your tasks.', group: 'Cost', icon: 'list', noun: 'cost a task', src: money, num: 'spend', den: 'tasks', text: usd2, forms: RATE, cols: moneyCols(['Per task', (r) => (r.tasks ? usd2(r.spend / r.tasks) : '-')]), share: 'spend',
       word: (c) => (c.v == null ? 'Cost a task not known' : `${usd2(c.v)} a task`), why: (c) => (c.T.spend == null ? `${plural(c.T.tasks, 'task')}, their cost not known` : `${usd(c.T.spend)} across ${c.T.tasks} tasks`) },
-    { id: 'why', title: 'Why it cost', group: 'Cost', icon: 'refresh', noun: 'rework and waste', src: waste, by: 'why', num: 'spend', text: usd, forms: SUM, cols: wasteCols, share: 'base',
-      wordAlways: (c) => `${usd(c.v)} of ${usd(c.base)} went on rework and waste`, whyAlways: (c) => (c.P && c.st.against === 'before' ? `${pct(c.v / c.base)}, up from ${pct(c.P.spend / c.pbase)} ${c.whole && c.st.when === 'this month' ? 'last month' : 'in the period before'}` : pct(c.v / c.base)) },
-    { id: 'budget', title: 'Budget', group: 'Cost', pace: 'On pace for $1,545, $545 over', icon: 'set-limits', noun: 'budget used', src: money, num: 'spend', text: usd, forms: SUM, as: 'running', against: 'budget', budget: 1000, cols: moneyCols(), share: 'spend',
-      word: (c) => `${Math.round((c.v / 1000) * 100)}% of $1,000 used`, why: (c) => `${usd(c.v)} so far · on pace for $1,545, $545 over · 8 of 30 days gone` },
-    { id: 'shaping', title: 'Shaping', group: 'Cost', icon: 'dollar', noun: 'cost a shaped task', src: shaping, by: 'size', num: 'usd', den: 'runs', text: usd2, forms: RATE, noShare: true,
+    { id: 'budget', title: 'Budget', head: 'Your budget', measures: (sub) => `Your spend against your monthly budget${sub.budget ? ` of ${usd(sub.budget)}` : ''}, set in ${BUDGET.yours.from}.`, group: 'Cost', pace: paceWord(BUDGET.yours), icon: 'set-limits', noun: 'budget used', src: money, num: 'spend', text: usd, forms: SUM, as: 'running', against: 'budget', budget: BUDGET.yours.usd, cols: moneyCols(), share: 'spend',
+      word: (c) => `${Math.round((c.v / BUDGET.yours.usd) * 100)}% of your ${usd(BUDGET.yours.usd)} budget used`, why: (c) => `${usd(c.v)} so far · ${paceWord(BUDGET.yours).replace(/^On/, 'on')} · ${DAYS_GONE} of ${DAYS_IN_MONTH} days gone` },
+    { id: 'shaping', title: 'Shaping', head: 'What shaping changes', measures: 'Your finished tasks, shaped and unshaped, by size.', group: 'Cost', icon: 'dollar', noun: 'cost a shaped task', src: shaping, by: 'size', num: 'usd', den: 'runs', text: usd2, forms: RATE, noShare: true,
       caption: 'Shaped tasks, by size. Unshaped in the rows below', closed: 'Tasks do not narrow by size',
       cols: [['Shaped runs', (r) => String(r.runs)], ['Shaped average cost', (r) => (r.runs ? usd2(r.usd / r.runs) : '-')], ['Unshaped average cost', (r) => (r.uruns ? usd2(r.uusd / r.uruns) : '-')], ['Shaped average time', (r) => (r.runs ? `${Math.round(r.mins / r.runs)} min` : '-')], ['Shaped review rounds', (r) => (r.runs ? (r.cycles / r.runs).toFixed(1) : '-')]],
       word: (c) => (c.T.runs ? `Shaped tasks cost ${usd2(c.T.usd / c.T.runs)} on average${c.T.uruns ? `, unshaped ${usd2(c.T.uusd / c.T.uruns)}` : ''}` : 'No shaped task finished'), why: (c) => `${plural(c.T.runs, 'shaped task')} and ${plural(c.T.uruns, 'unshaped task')}` },
-    { id: 'time-saved', title: 'Time saved', group: 'Value', icon: 'hourglass', noun: 'money saved', src: money, num: 'saved', text: usd, forms: SUM, cols: moneyCols(), share: 'saved',
+    { id: 'time-saved', title: 'Time saved', head: 'Your time saved', measures: 'The hours your tasks would have taken by hand, at your hourly rate.', group: 'Value', icon: 'hourglass', noun: 'money saved', src: money, num: 'saved', text: usd, forms: SUM, cols: moneyCols(), share: 'saved',
       word: (c) => `${usd(c.v)} saved`, why: (c) => `About ${hoursWord(c.T.hours)} of work` },
-    { id: 'value', title: 'Value for spend', group: 'Value', icon: 'sparkle', noun: 'saved for each dollar', src: money, num: 'saved', den: 'spend', text: (n) => `${n.toFixed(1)}×`, forms: RATE, cols: moneyCols(), share: 'spend',
+    { id: 'value', title: 'Value for spend', head: 'Your value for spend', measures: 'What your tasks saved for each dollar they cost.', group: 'Value', icon: 'sparkle', noun: 'saved for each dollar', src: money, num: 'saved', den: 'spend', text: (n) => `${n.toFixed(1)}×`, forms: RATE, cols: moneyCols(), share: 'spend',
       word: (c) => `${c.v.toFixed(1)}× what it cost`, why: (c) => `${usd(c.T.saved)} saved on ${usd(c.T.spend)} · ${usd2(c.T.spend / c.T.hours)} for each hour saved` },
-    { id: 'ends', title: 'How tasks end', group: 'Quality', icon: 'page-ends', noun: 'finished tasks', src: ends, num: 'finished', text: (n) => plural(n, 'task'), forms: COUNT, share: 'finished', shareLabel: 'Share of finished',
+    { id: 'ends', title: 'How tasks end', head: 'How your tasks end', measures: 'Your tasks that ended, by how: finished, failed or stopped.', group: 'Quality', icon: 'page-ends', noun: 'finished tasks', src: ends, num: 'finished', text: (n) => plural(n, 'task'), forms: COUNT, share: 'finished', shareLabel: 'Share of finished',
       cols: [['Ended', (r) => String(r.finished + r.failed + r.stopped)], ['Finished', (r) => String(r.finished)], ['Failed', (r) => String(r.failed)], ['Stopped', (r) => String(r.stopped)]],
       word: (c) => `${c.T.finished} of ${c.T.finished + c.T.failed + c.T.stopped} finished`, why: (c) => `${c.T.failed} failed, ${c.T.stopped} stopped · ${pct(c.T.finished / (c.T.finished + c.T.failed + c.T.stopped))} finish` },
-    { id: 'review', title: 'Review', group: 'Quality', icon: 'page-review', noun: 'rounds a task', src: review, note: "A round is one review and its fixes; a round back is any after a task's first", num: 'rounds', den: 'tasks', text: (n) => `${n.toFixed(1)} rounds`, forms: RATE, share: 'reviews', noShare: true,
-      cols: [['Rounds a task', (r) => (r.tasks ? (r.rounds / r.tasks).toFixed(1) : '-')], ['First-time pass', (r) => (r.tasks ? pct(r.first / r.tasks) : '-')], ['Raised', (r) => String(r.fixed + r.disputed + r.open)], ['Fixed', (r) => String(r.fixed)], ['You rejected', (r) => String(r.disputed)], ['Open', (r) => String(r.open)]],
-      word: (c) => `${c.T.rounds} rounds over ${c.T.tasks} reviewed tasks, ${c.v.toFixed(1)} a task`, why: (c) => { const back = c.T.rounds - c.T.tasks; return `${back} rounds back, about ${usd(back * roundBack)}`; } },
-    { id: 'fails', title: 'Where it fails', group: 'Quality', icon: 'page-fails', noun: 'tasks that did not finish', src: fails, by: 'stage', num: 'count', text: (n) => plural(n, 'task'), forms: COUNT, share: 'count',
+    { id: 'fails', title: 'Where it fails', head: 'Where your tasks fail', measures: 'Your tasks that did not finish, by the stage they stopped at.', group: 'Quality', icon: 'page-fails', noun: 'tasks that did not finish', src: fails, by: 'stage', num: 'count', text: (n) => plural(n, 'task'), forms: COUNT, share: 'count',
       cols: [['Did not finish', (r) => String(r.count)], ['AI spend', (r) => usd(r.spend)]],
       word: (c) => `${c.T.count} tasks did not finish, ${usd(c.T.spend)}`, why: (c) => `Most at Build: 3 of ${c.T.count}` },
-    { id: 'autonomy', title: 'Autonomy', group: 'Quality', icon: 'away', noun: 'tasks that ran without you', src: alone, num: 'alone', den: 'tasks', text: pct, forms: RATE, share: 'alone', shareLabel: 'Share of without you',
-      cols: [['Tasks', (r) => String(r.tasks)], ['Without you', (r) => String(r.alone)], ['Asked you', (r) => String(r.tasks - r.alone)], ['Rate', (r) => (r.tasks ? pct(r.alone / r.tasks) : '-')]],
-      word: (c) => `${c.T.alone} of ${c.T.tasks} ran without you`, why: (c) => `${pct(c.v)} of tasks` },
-    { id: 'cache', title: 'Cache', group: 'Quality', icon: 'set-memory', noun: 'input from the cache', src: cache, by: 'model', num: 'read', den: 'input', text: pct, forms: RATE, share: 'read',
-      cols: [['From the cache', (r) => `${(r.read / 10).toFixed(1)}M`], ['All input', (r) => `${(r.input / 10).toFixed(1)}M`], ['Rate', (r) => (r.input ? pct(r.read / r.input) : '-')]],
-      word: (c) => `${pct(c.v)} of input from the cache`, why: (c) => `${(c.T.read / 10).toFixed(1)}M of ${(c.T.input / 10).toFixed(1)}M tokens` },
-    { id: 'shipped', title: 'Shipped', group: 'Flow', icon: 'page-shipped', noun: 'PRs merged', src: prs, num: 'prs', text: (n) => plural(n, 'PR'), forms: COUNT, share: 'prs',
+    { id: 'shipped', title: 'Shipped', head: 'What you shipped', measures: 'Pull requests from your tasks that were merged.', group: 'Flow', icon: 'page-shipped', noun: 'PRs merged', src: prs, num: 'prs', text: (n) => plural(n, 'PR'), forms: COUNT, share: 'prs',
       cols: [['PRs merged', (r) => String(r.prs)], ['Days each', (r) => (r.prs ? (r.days / r.prs / 10).toFixed(1) : '-')]],
       liveCols: [['PRs merged', (r) => String(r.prs)], ['Opened', (r) => String(r.opened)]],   // live: dev counts opened and merged, not days to merge
       word: (c) => `${c.T.prs} PRs merged`, why: (c) => '6 in review, 3 need attention' },
-    { id: 'merge', title: 'Start to merge', group: 'Flow', icon: 'after', noun: 'days to merge', src: prs, num: 'days', den: 'prs', text: (n) => `${(n / 10).toFixed(1)} days`, forms: RATE, share: 'prs',
-      cols: [['PRs merged', (r) => String(r.prs)], ['Days each', (r) => (r.prs ? (r.days / r.prs / 10).toFixed(1) : '-')]],
-      word: (c) => `${(c.v / 10).toFixed(1)} days from start to merge`, why: (c) => `Over ${c.T.prs} PRs merged` },
-    { id: 'throughput', title: 'Throughput', group: 'Flow', icon: 'track', noun: 'tasks finished', src: done, num: 'finished', text: (n) => plural(n, 'task'), forms: COUNT, share: 'finished',
+    { id: 'throughput', title: 'Throughput', head: 'Your throughput', measures: 'Your tasks that finished, per day.', group: 'Flow', icon: 'track', noun: 'tasks finished', src: done, num: 'finished', text: (n) => plural(n, 'task'), forms: COUNT, share: 'finished',
       cols: [['Finished', (r) => String(r.finished)], ['A day', (r, c) => (r.finished / c.days).toFixed(1)]],
       word: (c) => `${(c.v / c.days).toFixed(1)} tasks finished a day`, why: (c) => `${c.v} in ${c.days} days` },
-    { id: 'waiting', title: 'Waiting on you', group: 'Flow', icon: 'page-waiting', noun: 'minutes a question', src: waits, by: 'stage', num: 'mins', den: 'waits', text: (n) => `${Math.round(n)} min`, forms: RATE, share: 'mins',
-      cols: [['Times', (r) => String(r.waits)], ['Waited', (r) => `${Math.floor(r.mins / 60)} h ${r.mins % 60} min`], ['Each', (r) => (r.waits ? `${Math.round(r.mins / r.waits)} min` : '-')]],
-      word: (c) => `${Math.round(c.v)} min a question`, why: (c) => `${c.T.waits} times, ${Math.floor(c.T.mins / 60)} h ${c.T.mins % 60} min in all` },
-    { id: 'team', title: 'By person', group: 'Team', team: true, icon: 'nav-team-metrics', noun: 'team spend', src: team, by: 'person', num: 'spend', text: usd, forms: SUM, budget: 12000, cols: moneyCols(), share: 'spend',
-      word: (c) => `${usd(c.v)} of $12,000`, why: () => 'Five people · on pace for $10,725 · pooled budget at 24%' },
-    { id: 'untagged', title: 'Missing cost tags', group: 'Team', team: true, icon: 'tag', noun: 'tasks without a client', src: untagged, num: 'tasks', text: (n) => plural(n, 'task'), forms: COUNT, share: 'tasks',
+    { id: 'team', title: 'By person', head: "The team's spend", measures: (sub) => `What everyone's tasks cost in AI use, you included, from the projects that share their numbers.${sub.budget ? ` The team's budget of ${usd(sub.budget)} is set in ${BUDGET.team.from}.` : ''}`, group: 'Team', team: true, icon: 'nav-team-metrics', noun: 'team spend', src: team, by: 'person', num: 'spend', text: usd, forms: SUM, budget: BUDGET.team.usd, cols: moneyCols(), share: 'spend',
+      word: (c) => `${usd(c.v)} of the team's ${usd(BUDGET.team.usd)} budget`, why: () => `${plural(team.rows.person.length, 'person').replace(/persons$/, 'people')}, you included · on pace for ${usd(BUDGET.team.pace)} · ${BUDGET.team.usedPct}% used` },
+    { id: 'untagged', title: 'Missing cost tags', head: "The team's missing cost tags", measures: "The team's tasks with no client tag, and what they cost.", group: 'Team', team: true, icon: 'tag', noun: 'tasks without a client', src: untagged, num: 'tasks', text: (n) => plural(n, 'task'), forms: COUNT, share: 'tasks',
       cols: [['Without a client', (r) => String(r.tasks)], ['AI spend', (r) => usd(r.spend)]],
       word: (c) => `${c.T.tasks} tasks without a client`, why: (c) => `${usd(c.T.spend)} has no client` },
-    { id: 'heat', title: 'Who spends where', group: 'Team', team: true, icon: 'globe', noun: 'team spend by person', src: heatSrc, by: 'project', num: 'spend', text: usd, forms: ['grid'], cols: [['AI spend', (r) => usd(r.spend)], ['Tasks', (r) => String(r.tasks)]], share: 'spend',
-      word: (c) => `${usd(c.v)} across ${plural(c.src.heat[c.st.by]?.rows.length || 0, 'person').replace(/persons$/, 'people')}`, why: () => 'The darker the cell, the more it spent' },
+    { id: 'heat', title: 'Who spends where', head: 'Who spends where in the team', measures: "The team's spend, each person's part of a project, workflow or client.", group: 'Team', team: true, icon: 'globe', noun: 'spend by person', src: heatSrc, by: 'project', num: 'spend', text: usd, forms: ['grid'], cols: [['AI spend', (r) => usd(r.spend)], ['Tasks', (r) => String(r.tasks)]], share: 'spend',
+      word: (c) => `${usd(c.v)} across ${plural(c.src.heat[c.st.by]?.rows.length || 0, 'person').replace(/persons$/, 'people')}`, why: () => '' },   // the grid's own legend says how to read it, once
   ];
   const SUB = Object.fromEntries(SUBS.map((s) => [s.id, s]));
 
@@ -398,7 +331,7 @@
       c.T[f] = Math.round(sum(now) * share); c.F[f] = allocate(now, c.T[f]);
       if (c.B) { const was = s.before.slice(a, b + 1); c.P[f] = Math.round(sum(was) * share); c.B[f] = allocate(was, c.P[f]); }
     }
-    const counted = src === money || src === alone, range = rangeIn(c.labels, st);
+    const counted = src === money, range = rangeIn(c.labels, st);
     if (counted && st.when === 'this month' && !st.narrow && !st.filter.length && window.StillhetRunsList) {   // the plain month: the headline is the list too
       c.T.tasks = sum(src.rows.project.map((r) => listCount('project', r.name, null))); c.F.tasks = allocate(periodSeries(src, 'tasks', st.when).now, c.T.tasks);
     }
@@ -420,7 +353,7 @@
     const sort = (rows, dim) => (ORDERED.has(dim) ? rows : [...rows].sort((x, y) => y[rowField] - x[rowField]));
     let rows = cut(baseRows(c, st.by), c.T, fields);
     if (c.dayCut && st.narrow) rows.forEach((r) => { const k = c.dayCut.names.indexOf(r.name); if (k >= 0) r[sub.num] = sum(c.dayCut.perDay.map((d) => d[k])); });
-    if (counted && ['project', 'workspace'].includes(st.by) && st.when === 'this month' && !st.narrow && !st.filter.length) rows.forEach(   /* the plain month is the list; any other stretch cuts the same per-day tasks the bars read, so rows and days add up */(r) => { const n = listCount(st.by, r.name, range); if (n == null) return; r.tasks = n; if (r.alone > n) r.alone = n; });
+    if (counted && ['project', 'workspace'].includes(st.by) && st.when === 'this month' && !st.narrow && !st.filter.length) rows.forEach(   /* the plain month is the list; any other stretch cuts the same per-day tasks the bars read, so rows and days add up */(r) => { const n = listCount(st.by, r.name, range); if (n == null) return; r.tasks = n; });
     rows = sort(rows, st.by);
     c.rowCount = rows.length;
     if (!all && !ordered) rows = topFive(rows, fields);
@@ -582,5 +515,12 @@
         rows: item.runs.map((r) => ({ started: timeW(r.s), result: RESULT[r.result] || 'Finished', cost: money2(r.costUsd), time: durW(r.activeMs) })) },
     };
   }
-  window.StillhetInsightsModel = { rangeOf, rangeIn, STANDS, SUBS, SUB, DIM, DIM_GROUPS, TIME, FILTERS, WHEN, usd, cmp, compute, defaults, dimsOf, allocate, sum, rangeWord, linkOf, stateOfLink, spanOf, workOf, workTask, workHead, cardOf, taskViewOf };
+  /** A project's month, the one fact Projects and Insights both read (build.one-mock): your spend there and the tasks the Tasks list holds for it; null for a project with no figures. */
+  function projectMonth(name) {
+    const r = money.rows.project.find((x) => x.name === name);
+    if (!r) return null;
+    const listed = listCount('project', name, null);
+    return { spend: r.spend, tasks: listed == null ? r.tasks : listed };
+  }
+  window.StillhetInsightsModel = { BUDGET, projectMonth, rangeOf, rangeIn, SUBS, SUB, DIM, DIM_GROUPS, TIME, FILTERS, WHEN, usd, cmp, compute, defaults, dimsOf, allocate, sum, rangeWord, linkOf, stateOfLink, spanOf, workOf, workTask, workHead, cardOf, taskViewOf };
 })();

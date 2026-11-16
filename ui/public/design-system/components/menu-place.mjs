@@ -2,6 +2,10 @@
 // there is no room under it and more room above; it slides sideways to stay inside, and taller than its room it scrolls
 // inside. "Inside" is the window and every box around it that clips (a sidebar, a scrolling list). A page draws its menus
 // as it always did; one watcher places them all.
+import { watchFocusBack } from './keep-open.mjs';
+import { watchDialogs } from './dialog.mjs';
+import { focusMenu, watchChoiceKeys } from './compact-menu.mjs';
+
 const GAP = 6, EDGE = 8;
 const seen = new WeakSet();
 
@@ -56,6 +60,11 @@ export function watchMenus(doc) {
   if (seen.has(doc)) return;
   seen.add(doc);
   const win = doc.defaultView;
+  // what every menu, radio group and Dialog does by keyboard, and where the focus goes when one closes: the library's, in
+  // this order (the focus is given back first, then a Dialog takes it, then a menu that has just opened)
+  const back = watchFocusBack(doc);
+  watchDialogs(doc, back);
+  watchChoiceKeys(doc);
   // comp.menu-off: a disabled item never acts, in any menu; it stays open and the page is told why
   win.addEventListener('click', (e) => {
     const off = e.target.closest?.('.menu-item[aria-disabled="true"]'); if (!off) return;
@@ -65,7 +74,9 @@ export function watchMenus(doc) {
   const place = () => {
     for (const m of doc.querySelectorAll('.menu:is([role="menu"], [role="dialog"]):not([data-placed])')) {
       m.dataset.placed = '';
-      if (win.getComputedStyle(m).position !== 'absolute') continue;   // a menu in the flow (a panel's own list) is not a pop-up
+      const pos = win.getComputedStyle(m).position;
+      if (pos === 'absolute' || pos === 'fixed') focusMenu(m);   // it has just opened: the focus goes in (keys.menu-focus)
+      if (pos !== 'absolute') continue;   // a menu in the flow (a panel's own list) is not a pop-up; a fixed one places itself
       const a = m.parentElement.getBoundingClientRect(), room = roomOf(m, win);
       if (m.matches('.is-two-cols')) m.style.maxHeight = `${Math.max(room.bottom - EDGE - a.bottom - GAP, a.top - GAP - EDGE - room.top, m.clientHeight)}px`;   // comp.menu-groups: a grouped menu takes the free height before it scrolls
       const h = m.getBoundingClientRect().height;

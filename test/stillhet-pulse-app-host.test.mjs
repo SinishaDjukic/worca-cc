@@ -150,6 +150,7 @@ test('Pulse icon until read: is-news stays after 5 minutes and goes when the new
   const { w } = appHost();
   const { useAppTimers } = await import('./helpers/app-timers.mjs');
   const clock = useAppTimers(t);
+  pickPulseFor(w, 'until-read');   // the icon is still by default (the redesign): the person turns the motion on
   w.StillhetPulse.newEvent('problem');
   assert.equal(isNews(w), true);
   await clock.advance(150000);
@@ -181,6 +182,7 @@ test('the demo kind keeps read in memory: opening an update writes nothing under
 
 test('Settings › Notifications › Pulse icon: picking never removes is-news from the running icon without a reload', () => {
   const { w } = appHost();
+  pickPulseFor(w, 'until-read');
   w.StillhetPulse.newEvent('problem');
   assert.equal(isNews(w), true);
   pickPulseFor(w, 'never');
@@ -191,6 +193,7 @@ test('Settings › Notifications › Pulse icon: switching until read to 10s end
   const { w } = appHost();
   const { useAppTimers } = await import('./helpers/app-timers.mjs');
   const clock = useAppTimers(t);
+  pickPulseFor(w, 'until-read');
   w.StillhetPulse.newEvent('problem');
   await clock.advance(30000);
   assert.equal(isNews(w), true);
@@ -201,17 +204,23 @@ test('Settings › Notifications › Pulse icon: switching until read to 10s end
   assert.equal(isNews(w), false);
 });
 
-test('the Pulse icon row reads a whole sentence for each value', () => {
+// The redesign (settings.md: the value leads): the row is its supporting line and a picker of fixed width at its end; the
+// icon stays still unless the person turns its motion on, so "Stays still" is the default and carries no Changed dot.
+test('the Pulse icon row: a supporting line, its value in a picker at the row\'s end, still by default', () => {
   const { w } = appHost();
-  const row = () => [...w.document.querySelectorAll('.set-row')].find((r) => /Pulse icon/.test(r.textContent));
+  const row = () => [...w.document.querySelectorAll('.set-row')].find((r) => /Pulse icon/.test(r.querySelector('.set-name').textContent));
   w.StillhetPulse.show('settings', 'notifications');
-  assert.match(row().textContent, /When something new arrives, Pulse's icon\s*shakes until you read or act on it/);
+  assert.equal(row().querySelector('.set-note').textContent, 'Whether Pulse\'s icon moves when something new arrives');
+  assert.equal(row().querySelector('.set-end [data-menu="pulseFor"]').textContent.trim(), 'Stays still');
   assert.equal(row().querySelector('.set-dot'), null, 'no changed dot at the default');
+  w.StillhetPulse.newEvent('problem');
+  assert.equal(isNews(w), false, 'still by default: a new event does not move the icon');
+  w.StillhetPulse.show('settings', 'notifications');
   w.document.querySelector('[data-menu="pulseFor"]').click();
   const words = [...w.document.querySelectorAll('[data-menu-pick^="pulseFor|"]')].map((b) => b.textContent.trim());
-  assert.deepEqual(words, ['shakes until you read or act on it', 'shakes for 10 seconds', 'shakes for 1 minute', 'stays still']);
+  assert.deepEqual(words, ['Stays still', 'Moves for 10 seconds', 'Moves for 1 minute', 'Moves until you read it']);
   w.document.querySelector('[data-menu-pick="pulseFor|1m"]').click();
-  assert.match(row().textContent, /Pulse's icon\s*shakes for 1 minute/);
+  assert.equal(row().querySelector('.set-end [data-menu="pulseFor"]').textContent.trim(), 'Moves for 1 minute');
   assert.ok(row().querySelector('.set-dot'), 'the changed dot shows off the default');
 });
 

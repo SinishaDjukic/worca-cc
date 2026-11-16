@@ -102,13 +102,17 @@ test('a chat mention (a ref Worca named) opens #run/pa', async () => {
   noCase();
 });
 
-test('the card\'s title is no link: a click on it writes no #run/ hash', async () => {
+// The redesign (thing.from-chat): a task is the work, a chat is where you talk about it, so the card's title opens the
+// task's own page. (It held "the title is no link" while everything stayed in Chat.)
+test('the card\'s title opens the task\'s page: a click on it goes to #run/ID', async () => {
   const { w, d, noCase } = await host();
   await go(w, '#chat/ask_1', 200);
   const head = d.querySelector('#route-chat [data-anchor="card_run"] .rc-head');
-  assert.equal(head.querySelectorAll('a, [data-open-task-page], [data-open-slice]').length, 0, 'the head holds no link');
-  head.querySelector('.rc-title, [data-title], h3, b')?.click(); await settle(60);
-  assert.equal(w.location.hash, '#chat/ask_1');
+  const title = head.querySelector('h3 > button[data-open-task-page]');
+  assert.ok(title, 'the title is a real button');
+  assert.equal(head.querySelector('.tp-from')?.textContent, 'Task · started from this chat');
+  title.click(); await settle(60);
+  assert.match(w.location.hash, /^#run\//);
   noCase();
 });
 

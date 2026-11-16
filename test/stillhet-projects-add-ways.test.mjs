@@ -39,10 +39,10 @@ const create = (u, b, m, st) => {
   return [201, { project: { key: `${b.name}-1234abcd`, name: b.name }, projects: st.list, ...ROOT }];
 };
 
-test('COV-1: the add form offers the three ways as one Segmented', async () => {
+test('COV-1: the add form offers its ways as one Segmented', async () => {
   const h = await addHost('folder');
   const ways = [...page(h.d).querySelectorAll('[data-pa-way]')];
-  assert.deepEqual(ways.map((b) => b.textContent), ['One folder', 'New folder', 'Several folders…']);
+  assert.deepEqual(ways.map((b) => b.textContent), ['One folder', 'New folder', 'Several folders', 'Clone']);
   assert.equal(ways[0].getAttribute('aria-pressed'), 'true');
   assert.ok(page(h.d).querySelector('#pj-hand-v'), 'One folder: today\'s field');
   assert.ok(page(h.d).querySelector('[data-pa-choose]'), 'and Choose folder…');
