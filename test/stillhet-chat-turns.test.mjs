@@ -36,7 +36,7 @@ test('blocks and messages: you, words, think, notice, divider, the run proposal,
   assert.deepEqual(ts, ['you', 'think', 'words', 'proposal', 'task', 'notice', 'divider', 'you', 'failed']);
   const you = turns[0];
   assert.equal(you.text, 'Add a CSV export');
-  assert.deepEqual(you.files, ['spec.md']);
+  assert.deepEqual(you.files, [{ name: 'spec.md', att: 'att1', bytes: 120 }], 'COV-3 #5: with its id, its chip opens it');
   assert.equal(turns[2].html, 'I will start a task: &lt;b&gt;safe&lt;/b&gt;<br>with two lines', 'answer text is escaped, never raw HTML');
   assert.equal(turns[3].title, 'CSV export', 'a card with no type is the run proposal');
   assert.equal(turns[4].task, 'run-a', 'a started proposal is its run\'s TaskCard, through its link');
@@ -247,4 +247,11 @@ test('F-a2-03: a started feature member\'s card draws right after the card the c
   assert.ok(!turns.some((x) => x.task === 't3'), 'an unstarted member has no card');
   assert.deepEqual(turnsOf(thread, { tasks, now: NOW }), turns, 'stable across repaints');
   for (const x of turns) assert.deepEqual(turnErrors(x), [], x.t);
+});
+
+test('COV-3 #5: a you-turn keeps each attachment\'s id and size, so its chip opens it; a block with no id stays a name', () => {
+  const m = { id: 'u1', role: 'user', text: 'see these', createdAt: '2026-11-12T14:00:00Z', blocks: [{ kind: 'attachment', id: 'att_1', name: 'a.png', bytes: 120, attKind: 'image' }, { kind: 'attachment', id: null, name: 'old.txt' }] };
+  const [y] = turnsOf({ messages: [m], runLinks: [], inFlight: null }, { tasks: [], now: NOW });
+  assert.deepEqual(y.files, [{ name: 'a.png', att: 'att_1', bytes: 120 }, 'old.txt']);
+  assert.deepEqual(turnErrors(y), []);
 });

@@ -6,17 +6,17 @@ Sources: a static scan of today's UI (204 files) and a read-only browser walk of
 
 | Status | Controls |
 |---|---|
-| wired | 918 (of them 805 view controls with no route or key, carried by their place) |
+| wired | 926 (of them 805 view controls with no route or key, carried by their place) |
 | planned | 442 (of them 425 view controls of a place still to be built) |
 | not offered (decision) | 0 |
-| MISSING | 509 |
+| MISSING | 501 |
 | total | 1869 |
 
 ## By page
 
 | Page | Stillhet place | Controls | wired | planned | not offered | MISSING |
 |---|---|---|---|---|---|---|
-| Chat | Chat | 129 | 99 | 0 | 0 | 30 |
+| Chat | Chat | 123 | 101 | 0 | 0 | 22 |
 | Connectors | Settings › Connectors, wave 3 slice 12 (PLAN.md 4b) | 30 | 2 | 23 | 0 | 5 |
 | Design | D1 (B8.2): a home or retire, owner decision | 73 | 0 | 43 | 0 | 30 |
 | Feature (Shaper) | the group page and Chat's PlanCard | 70 | 62 | 0 | 0 | 8 |
@@ -32,7 +32,7 @@ Sources: a static scan of today's UI (204 files) and a read-only browser walk of
 | Settings | Settings, wave 3 slice 12 (PLAN.md 4b, D22/D24) | 277 | 11 | 182 | 0 | 84 |
 | Shell | the shell (top bar, Pulse, profile) | 160 | 146 | 0 | 0 | 14 |
 | Statistics | Insights | 27 | 23 | 0 | 0 | 4 |
-| Tasks | Tasks and the task page | 256 | 188 | 0 | 0 | 68 |
+| Tasks | Tasks and the task page | 262 | 194 | 0 | 0 | 68 |
 | Team metrics | Insights | 41 | 33 | 0 | 0 | 8 |
 | Team policy | Settings › Team, wave 3 slice 12 (PLAN.md 4b, F-7b-05) | 58 | 0 | 55 | 0 | 3 |
 | Workflows | Workflows | 197 | 128 | 0 | 0 | 69 |
@@ -112,29 +112,21 @@ Each MISSING control, grouped by its finding (`plans/rail/findings.md`, PLAN.md 
 
 | Page | Control | Kind | Missing | Source |
 |---|---|---|---|---|
-| Tasks | (artifact-bulk-toggle) | button | `route /api/runs/:param/directions` | ui/public/app.js:33585 |
-| Shell | (button) | button | `route /api/config/workflow`, `route /api/pipelines/:param/pr-auto`, `route /api/policy/scopes`, `route /api/pr/remotes`, `route /api/projects/:param/readiness`, `route /api/run-groups/suggest-name`, `route /api/run-links/:param`, `route /api/runs/:param/ask-files/:param/:param`, `route /api/source-bindings`, `route /api/sources`, `route /api/sources/call`, `route /api/sync/all`, `route /api/terminal`, `route /api/workspaces/:param/runs/:param/log` | ui/public/app.js:5407 |
+| Shell | (button) | button | `route /api/config/workflow`, `route /api/pipelines/:param/pr-auto`, `route /api/policy/scopes`, `route /api/pr/remotes`, `route /api/projects/:param/readiness`, `route /api/run-groups/suggest-name`, `route /api/source-bindings`, `route /api/sources`, `route /api/sources/call`, `route /api/sync/all`, `route /api/terminal`, `route /api/workspaces/:param/runs/:param/log` | ui/public/app.js:5407 |
 | Chat | (hint) | button | `route /api/runs/:param/artifacts`, `route /api/runs/:param/directions`, `route /api/scripts/:param` | ui/public/app.js:33901 |
-| Shell | Resume on … | button | `route /api/engines`, `route /api/run-links/:param` | ui/public/app.js:31105 |
-| Shell | Switch model… | button | `route /api/engines`, `route /api/run-links/:param` | ui/public/app.js:31121 |
+| Shell | Resume on … | button | `route /api/engines` | ui/public/app.js:31105 |
+| Shell | Switch model… | button | `route /api/engines` | ui/public/app.js:31121 |
 | Settings | Open | menu item | `route /api/plugins/:param/config`, `route /api/plugins/:param/profiles`, `route /api/plugins/:param/profiles/:param`, `route /api/providers/copilot/login/:param`, `route /api/runs/:param/restore`, `route /api/sources`, `route /api/sources/call`, `route /api/workspaces/:param` | ui/public/app.js:18007 |
-| Chat | Review again | menu item | `route /api/ask/threads/:param/engine` | ui/public/ask-panel.mjs:2575 |
-| Chat | (ask-filescard-thumb) | button | `route /api/ask/threads/:param/attachments/:param` | ui/public/chat/files-card.mjs:137 |
 | Tasks | Pause | button | `route /api/ask/runs/:param`, `route /api/schedules/:param/run-now` | ui/public/chat/run-card.mjs:286 |
 | Tasks | Stop | button | `route /api/ask/runs/:param`, `route /api/schedules/:param/run-now` | ui/public/chat/run-card.mjs:287 |
-| Chat | … | button | `route /api/runs/:param/directions` | ui/public/pinpoint-surfaces.mjs:138 |
-| Chat | Clear | button | `route /api/runs/:param/directions` | ui/public/pinpoint-surfaces.mjs:137 |
-| Chat | Pending change … | button | `route /api/runs/:param/directions` | ui/public/pinpoint-surfaces.mjs:101 |
-| Chat | Propose fix run | button | `route /api/ask/runs/:param`, `route /api/run-groups/:param/combine`, `route /api/schedules/:param/run-now`, `route /api/shape/features/:param` | ui/public/pinpoint-surfaces.mjs:321 |
-| Chat | Remove change … | button | `route /api/runs/:param/directions` | ui/public/pinpoint-surfaces.mjs:133 |
-| Chat | Send to chat | button | `route /api/runs/:param/directions` | ui/public/pinpoint-surfaces.mjs:138 |
+| Tasks | Propose fix run | button | `route /api/ask/runs/:param`, `route /api/schedules/:param/run-now` | ui/public/pinpoint-surfaces.mjs:321 |
 | Feature (Shaper) | Full plan | button | `route /api/runs/:param/directions` | ui/public/shape/plan-body.mjs:199 |
 
 ### COV-4: A workspace task: its comments, diff and log per member; a workspace's settings and the impact of removing a member
 
 | Page | Control | Kind | Missing | Source |
 |---|---|---|---|---|
-| Tasks | (artifact-row) | button | `route /api/runs/:param/directions`, `route /api/workspaces/:param/runs/:param/:param` | ui/public/app.js:33556 |
+| Tasks | (artifact-row) | button | `route /api/workspaces/:param/runs/:param/:param` | ui/public/app.js:33556 |
 | Tasks | (hd-cmt-btn) | button | `route /api/scripts/:param`, `route /api/workspaces/:param/runs/:param/comments` | ui/public/app.js:28450 |
 | Workflows | (hd-cmt-tab) | button | `route /api/history/:param/:param/comments`, `route /api/workspaces/:param/runs/:param/comments` | ui/public/app.js:28529 |
 | Tasks | Add projects | button | `route /api/mcp/preview`, `route /api/mcp/sets`, `route /api/policy/scopes`, `route /api/team-metrics/scopes`, `route /api/workspaces/:param/settings` | ui/public/app.js:9721 |
@@ -215,7 +207,7 @@ Each MISSING control, grouped by its finding (`plans/rail/findings.md`, PLAN.md 
 | Tasks | Runs use this tool | button | `route /api/projects/:param/readiness` | ui/public/app.js:13579 |
 | Tasks | Stop ignoring | button | `route /api/projects/:param/readiness` | ui/public/app.js:13447 |
 | Tasks | Sync all (…) | button | `route /api/projects/:param/sync/settings` | ui/public/app.js:14218 |
-| Tasks | Retry | menu item | `route /api/policy`, `route /api/policy/scopes`, `route /api/projects/:param/policy/enable`, `route /api/projects/:param/team-metrics/enable`, `route /api/run-links/:param`, `route /api/runs/:param/restore`, `route /api/schedules/dependents`, `route /api/scripts/:param`, `route /api/sync/all`, `route /api/tag-dimensions`, `route /api/team-metrics/discover`, `route /api/team-metrics/flush`, `route /api/team-metrics/pr-events`, `route /api/team-metrics/prs`, `route /api/team-metrics/scopes`, `route /api/workspaces/:param`, `route /api/workspaces/:param/runs/:param/log` | ui/public/app.js:13149 |
+| Tasks | Retry | menu item | `route /api/policy`, `route /api/policy/scopes`, `route /api/projects/:param/policy/enable`, `route /api/projects/:param/team-metrics/enable`, `route /api/schedules/dependents`, `route /api/scripts/:param`, `route /api/sync/all`, `route /api/tag-dimensions`, `route /api/team-metrics/discover`, `route /api/team-metrics/flush`, `route /api/team-metrics/pr-events`, `route /api/team-metrics/prs`, `route /api/team-metrics/scopes`, `route /api/workspaces/:param`, `route /api/workspaces/:param/runs/:param/log` | ui/public/app.js:13149 |
 | Tasks | Undo | menu item | `route /api/projects/:param/readiness` | ui/public/app.js:13403 |
 | Tasks | Skip … | toggle | `route /api/projects/:param/readiness` | ui/public/app.js:13622 |
 | Projects | (button) | button | `route /api/projects/:param/house-brief` | ui/public/house-brief-view.mjs:16 |
@@ -723,17 +715,17 @@ None: no classic control reaches a `not offered live` or `not a dev capability` 
 
 ## Wired
 
-113 controls reach a route or key Stillhet carries; 805 are view controls (no route, no key) of a page whose place Stillhet has. Where they land:
+121 controls reach a route or key Stillhet carries; 805 are view controls (no route, no key) of a page whose place Stillhet has. Where they land:
 
 | Stillhet code or row | Controls |
 |---|---|
-| stillhet/live/chat-live.mjs | 39 |
+| stillhet/live/chat-live.mjs | 45 |
 | stillhet/live/live-adapter.mjs | 17 |
 | stillhet/live/projects-live.mjs | 16 |
 | stillhet/live/market-live.mjs | 12 |
 | Stillhet live code reads it | 11 |
 | stillhet/live/schedule-live.mjs | 3 |
-| stillhet-wiring.md Chat capabilities: Directions to a followed run | 2 |
+| stillhet-wiring.md Dev surfaces: route › /api/ask/threads/:param/directions | 2 |
 | stillhet/live/task-live.mjs | 2 |
 | stillhet/host-app.js | 2 |
 | stillhet-wiring.md Seeded figures: ui/public/stillhet/chat/chats-model.js | 2 |
@@ -744,5 +736,7 @@ None: no classic control reaches a `not offered live` or `not a dev capability` 
 | stillhet-wiring.md Classic controls: the review list's name per picked folder (`projects/project-add.js`, `POST /api/pro | 1 |
 | stillhet-wiring.md Classic controls: the review list's tick per picked folder (`projects/project-add.js`, `POST /api/pro | 1 |
 | stillhet-wiring.md Classic controls: the FolderBrowser's tick per folder in Several folders… (`projects/project-add.js`) | 1 |
+| stillhet-wiring.md Classic run and chat extras (COV-3): 4. Chat engine switch (POST /api/ask/threads/:id/engine {engine, | 1 |
+| stillhet-wiring.md Dev surfaces: route › /api/ask/threads/:param/attachments/:param | 1 |
 
 Every control, with its routes, keys, source line and the walk pages it was seen on: `classic-controls.json`. One control: `node tools/classic-inventory.mjs --show TEXT`.

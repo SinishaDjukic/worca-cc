@@ -2079,7 +2079,8 @@
       "code": "ui/public/design-system/components/kind-mark.mjs#filesCard",
       "kind": "moving",
       "needs": [
-        "files Worca shows in a conversation: pictures as tiles, files as rows, each with Download"
+        "files Worca shows in a conversation: pictures as tiles, files as rows, each with Download",
+        "a file's Show in ‹file manager› (revealLabel and the file's reveal), only where the server offers it"
       ],
       "rules": [
         "panel.conversation-cards"
@@ -2104,7 +2105,8 @@
       "code": "ui/public/design-system/components/kind-mark.mjs#youTurn",
       "kind": "showing",
       "needs": [
-        "what you said in a conversation, with the quote you answered and the files you attached"
+        "what you said in a conversation, with the quote you answered and the files you attached",
+        "an attached file as a chip that opens it ({name, attrs}); a plain name stays a plain chip"
       ],
       "rules": [
         "panel.conversation-cards"

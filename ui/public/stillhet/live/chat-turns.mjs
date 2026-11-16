@@ -208,7 +208,9 @@ function assistantTurns(m, ctx) {
 function userTurn(m) {
   const blocks = arr(m.blocks), synthetic = blocks.find((b) => b && b.kind === 'notice' && b.synthetic);
   if (synthetic) return { t: 'notice', text: str(synthetic.text) };
-  const files = blocks.filter((b) => b && b.kind === 'attachment').map((b) => str(b.name)).filter(Boolean);
+  // COV-3 #5: an attachment dev named keeps its id (its chip opens it) and its size (a proposal's Start reads it); one with
+  // no id (an echo before the snapshot) stays a plain name
+  const files = blocks.filter((b) => b && b.kind === 'attachment' && str(b.name)).map((b) => (str(b.id) ? { name: str(b.name), att: str(b.id), bytes: Number(b.bytes) || 0 } : str(b.name)));
   return { t: 'you', id: str(m.id), text: str(m.text), ...(files.length ? { files } : {}), ...atOf(m) };
 }
 

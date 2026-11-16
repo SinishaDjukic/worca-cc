@@ -68,3 +68,9 @@ test('#1310: a person\'s work over time is Closed by this PR; the Timeline\'s no
   assert.equal(left[5], 'open (owner: owner decision)');
   assert.ok(!open.some((r) => r[2].includes('Timeline tab has no Stillhet home yet')), 'the old row is narrowed, not kept');
 });
+
+test('F-cov23-09 (#1392): a proposal\'s files on the closed card stay Open for feature 3', () => {
+  const row = rows('Open').find((r) => /F-cov23-09/.test(r[2]));
+  assert.ok(row, 'an Open row');
+  assert.equal(row[5], 'open (owner: feature 3)');
+});

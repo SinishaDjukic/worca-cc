@@ -67,7 +67,7 @@
   const thinkNow = (x) => { const ms = Date.now() - (x.at || Date.now()), steps = x.steps || THINKING, n = Math.min(steps.length, 1 + Math.floor(ms / 600)); return { step: steps[n - 1], secs: `${Math.max(1, Math.round(ms / 1000))}s`, n, phase: n === steps.length ? 'write' : n === 3 ? 'tool' : 'think' }; };   // searching is a tool; the last step writes
   // The live kind's turns: RailChatLive's, read again on its onChange; what a person opened or typed under a turn stays
   const UI_KEYS = ['open', 'asking', 'askValue', 'rqPick', 'planPick', 'how', 'shipMarking', 'forPlan', 'planRoles', 'planFull', 'planText', 'savedAs', 'directing', 'figures', 'filesOpen', 'openSlice', 'pick', 'rowOpen', 'details', 'term', 'shellClosed', 'target', 'guard', 'src', 'feature', 'onSource', 'diffOpen', 'pkeys'];
-  const PROPOSAL_KEYS = ['title', 'brief'];   // what a person edits on a proposal before Start
+  const PROPOSAL_KEYS = ['title', 'brief', 'ppFiles', 'ppCut'];   // what a person edits on a proposal before Start (its files: COV-3 #6)
   function liveTurns(id) {
     const was = threads.get(id) || [], next = CL().turns(id);
     for (const x of next) { const y = x.id && was.find((z) => z.id === x.id && z.t === x.t); if (y) for (const k of [...UI_KEYS, ...(x.t === 'proposal' || x.t === 'runwith' ? PROPOSAL_KEYS : [])]) if (y[k] !== undefined) x[k] = y[k]; }
@@ -524,7 +524,7 @@
     if (!label) return;
     if (label === 'Leave group') { const g = t.inGroup; t.inGroup = ''; paint(); say(`Left ${g}`); return; }
     const ctx = { ...cardCtx(t), step: STAGES[t.stage] || 'the current step', value: '{value}' }, live = R.runFlow(ctx);   // {value} is the form's choice, filled when you act
-    const ANY = { 'Send a direction': {}, 'View changes': {}, Pause: live.pauseNow, Stop: live.stop, 'Report this task': live.report, Archive: live.archive, 'Save as preset': { dialog: 'preset', say: 'Saved as a preset: {value}' }, 'Run after…': { dialog: 'after', say: `{value} starts after ${t.title}` }, 'Start a follow-up': { followUp: true }, 'Tell Worca how to fix it': { followUp: true, fix: true }, 'Ask Worca to fix it': { autofix: true }, 'Show the log': { page: true }, 'Label…': { dialog: 'label', say: 'Labelled {value}' }, 'Move to group…': { dialog: 'group', say: 'Moved to {value}' } };
+    const ANY = { 'Send a direction': {}, 'View changes': {}, Restore: { say: 'The record is back in Tasks' }, Pause: live.pauseNow, Stop: live.stop, 'Report this task': live.report, Archive: live.archive, 'Save as preset': { dialog: 'preset', say: 'Saved as a preset: {value}' }, 'Run after…': { dialog: 'after', say: `{value} starts after ${t.title}` }, 'Start a follow-up': { followUp: true }, 'Tell Worca how to fix it': { followUp: true, fix: true }, 'Ask Worca to fix it': { autofix: true }, 'Show the log': { page: true }, 'Label…': { dialog: 'label', say: 'Labelled {value}' }, 'Move to group…': { dialog: 'group', say: 'Moved to {value}' } };
     const f = R.actionFlow(RM.stateOf(t.case), { ...ctx, would: LIVE() ? (p) => p : window.RailWould })[label] || ANY[label];   // D12: live, RailChatLive.flow carries it out (doAct)
     if (!f || !offers(t, label)) { if (!LIVE()) say(label); return; }   // live: a card offers only what it can do (FLOW)
     if (f.page) { if (R.shows('expert')) window.RailShell.openTaskPage(t.case, chatId, t.title, taskId(t)); else openHere(t, 'log'); return; }
@@ -655,11 +655,23 @@
   // OptionList each, your own words, Answer and Use Worca's picks, all one POST /api/answer {runId, id, payload: {answers}}
   const runQs = (t) => { const q = LIVE() && t?.run ? CL().ask(t.run) : null; return q && q.kind !== 'plan' && Array.isArray(q.questions) && q.questions.length ? q : null; };
   const recOf = (qq) => { const o = (qq.options || []).filter((v) => typeof v === 'string' && v.trim()); const k = o.indexOf(qq.recommended); return k >= 0 ? k : 0; };
+  // COV-3 #9: the file manager's name from dev's reveal probe ('' until it answers, or when the server offers none)
+  let revealAt = null;
+  const revealLabel = () => { if (!revealAt) { revealAt = { label: '' }; CL().revealInfo().then((r) => { if (r?.label) { revealAt.label = r.label; paint(); } }); } return revealAt.label; };
+  // COV-3 #2: a live run's question that came with files (dev's ask envelope: askId, files[{index, name, mime}]) shows them
+  // above its Answer row, each View opening that file of the question by its index (classic's askFileUrl); view only
+  function askFilesHtml(t) {
+    const q = LIVE() && t?.run ? CL().ask(t.run) : null;
+    const files = q && q.askId && Array.isArray(q.files) ? q.files.filter((f) => f && f.name) : [];
+    if (!files.length) return '';
+    return R.filesCard({ label: 'Its files', files: files.map((f, i) => ({ name: f.name, ...(/^image\//.test(f.mime || '') ? { image: true } : {}), download: false, view: doOr(`open ${f.name}`, 'ask-file', { runId: t.run, askId: q.askId, index: f.index ?? i }) })) });
+  }
   function liveAsksHtml(x, t) {
-    const q = runQs(t); if (!q) return '';
+    const fc = askFilesHtml(t);
+    const q = runQs(t); if (!q) return fc ? `<div data-anchor="askfiles-${x.id}">${fc}</div>` : '';
     const picks = x.rqPick || {};
     const one = (qq, k) => { const opts = (qq.options || []).filter((v) => typeof v === 'string' && v.trim()); return `${R.turnRow({ mark: R.kindMark({ kind: 'task', tone: 'ask', stage: -1, size: 16 }), text: `<b>${esc(qq.question || '')}</b>` })}<div class="convo-answer">${R.optionList({ label: qq.question || 'Its question', options: opts, selected: picks[k] ?? recOf(qq), recommended: recOf(qq), optAttrs: (n) => ({ 'data-rq': `${x.id}|${k}|${n}` }), own: R.field({ id: `rq-own-${x.id}-${k}`, label: 'Your own answer', quietLabel: true, placeholder: 'Or write your own answer', attrs: { 'data-rq-own': `${x.id}|${k}` } }) })}</div>`; };
-    return `<div data-anchor="ask-${x.id}">${q.questions.map(one).join('')}<div class="convo-answer-go">${R.button({ label: 'Answer', attrs: { 'data-rq-go': x.id } })}${R.button({ label: 'Use Worca’s picks', kind: 'quiet', attrs: { 'data-rq-picks': x.id, title: 'Takes Worca’s pick for each question' } })}</div></div>`;
+    return `<div data-anchor="ask-${x.id}">${q.questions.map(one).join('')}${fc}<div class="convo-answer-go">${R.button({ label: 'Answer', attrs: { 'data-rq-go': x.id } })}${R.button({ label: 'Use Worca’s picks', kind: 'quiet', attrs: { 'data-rq-picks': x.id, title: 'Takes Worca’s pick for each question' } })}</div></div>`;
   }
   // A direction to a followed run, under its card (dev's POST …/directions): a field, Send direction, Not now
   const directionHtml = (x) => (x.directing ? `<div class="ask-changes">${R.field({ id: `dir-${x.id}`, label: 'Direction', quietLabel: true, placeholder: 'What should it take into account?', value: x.dirValue || '', multiline: true, attrs: { 'data-direction': x.id } })}<span class="tp-actions">${R.button({ label: 'Send direction', kind: 'primary', attrs: { 'data-direction-send': x.id } })}${R.button({ label: 'Not now', kind: 'quiet', attrs: { 'data-direction-cancel': x.id } })}</span></div>` : '');
@@ -687,7 +699,10 @@
     const row = (k, v) => `<div class="cr"><span>${k}</span><span>${v}</span></div>`;
     const targets = ['No project', ...(r.projectDir ? ['Project'] : []), ...(r.workspaceId ? ['Workspace'] : [])];
     const sentence = W('Task') + W('on') + W(esc(x.target === 'No project' ? 'no project' : x.project)) + W('with') + W(esc(x.workflow));
-    const brief = `<div class="tp-brief">${R.field({ id: `pp-brief-${x.id}`, label: 'Brief: what the first agent reads · Markdown', value: x.brief ?? '', multiline: true, hint: `${(x.brief ?? '').length} characters`, attrs: { 'data-pp-brief': x.id } })}</div>`;
+    // COV-3 #6: the files of the message it answers (the you-turn before it), under the brief as the design draws them; × drops one
+    // the files are read again while none have ids yet (an echo before the snapshot) and none were removed
+    if (x.ppFiles === undefined || (!x.ppFiles.length && !x.ppCut)) { const all = threads.get(chatId) || [], k = all.findIndex((y) => y === x || (y.id === x.id && y.t === x.t)), you = all.slice(0, Math.max(0, k)).reverse().find((y) => y.t === 'you'); x.ppFiles = (you?.files || []).filter((f) => f && typeof f === 'object' && f.att); }
+    const brief = `<div class="tp-brief">${R.field({ id: `pp-brief-${x.id}`, label: 'Brief: what the first agent reads · Markdown', value: x.brief ?? '', multiline: true, hint: `${(x.brief ?? '').length} characters`, attrs: { 'data-pp-brief': x.id } })}${x.ppFiles.length ? `<span class="you-files">${x.ppFiles.map((f) => R.button({ label: f.name, kind: 'quiet', icon: R.icon('x', 11), attrs: { 'data-pp-unfile': `${x.id}|${f.att}`, title: `Removes ${f.name}` } })).join('')}</span>` : ''}</div>`;
     const guardText = (liveGuards || []).find((g) => g.id === x.guard)?.text || x.guard;
     const more = row('Where it runs', pp('target', x.target, targets, 'Where it runs'))
       + (x.target === 'No project' ? '' : row('Source branch', R.field({ id: `pp-src-${x.id}`, label: 'Source branch', quietLabel: true, value: x.src, placeholder: 'The project’s default branch', attrs: { 'data-pp-src': x.id } }))
@@ -752,7 +767,8 @@
     const fold = () => ({ 'data-fold-turn': String(i), ...(x.id ? { 'data-anchor': x.id } : {}) });
     // panel.turn-time: a you or words turn takes the focus and carries its time, shown on hover, focus or a tap; its first
     // data-* attribute is its key, so focusMark finds it again after a repaint
-    if (x.t === 'you') { const html = R.youTurn({ text: x.text, quote: x.quote || '', files: x.files || [], refs: (x.refs || []).map((r) => ({ text: r.title, mark: R.kindMark({ kind: 'task', tone: 'idle', size: 14 }), attrs: { 'data-open-ref': r.case, 'data-open-ref-run': r.run || null } })), attrs: { 'data-anchor': x.id || '', tabindex: '0' }, time: R.turnTime({ at: x.at, now: Date.now() }) }); return x.id && timeShown === x.id ? html.replace('class="convo-you"', 'class="convo-you is-time-shown"') : html; }
+    // COV-3 #5: an attachment dev named is a chip that opens it (dev's GET …/attachments/:attId), as classic's pill links it
+    if (x.t === 'you') { const html = R.youTurn({ text: x.text, quote: x.quote || '', files: (x.files || []).map((f) => (typeof f === 'string' ? f : f.att ? { name: f.name, attrs: doOr(`open ${f.name}`, 'file', { threadId: chatId, attId: f.att }) } : f.name)), refs: (x.refs || []).map((r) => ({ text: r.title, mark: R.kindMark({ kind: 'task', tone: 'idle', size: 14 }), attrs: { 'data-open-ref': r.case, 'data-open-ref-run': r.run || null } })), attrs: { 'data-anchor': x.id || '', tabindex: '0' }, time: R.turnTime({ at: x.at, now: Date.now() }) }); return x.id && timeShown === x.id ? html.replace('class="convo-you"', 'class="convo-you is-time-shown"') : html; }
     // commands are dev's on Rail's rail (CommandRow, CommandGroup): a group folded to its head, a failure opening it and
     // itself; no marks, the words say how each went; one fold opens the command and its output, each with Copy
     const TERMINAL = { 'data-terminal': String(i) };   // panel.terminal: the TerminalPane under the command, in both kinds
@@ -809,7 +825,9 @@
       const extra = x.savedAs ? `<p class="cmd-s">${esc(LIVE() ? `Saved as ${x.savedAs}` : window.RailWould(`be saved as ${x.savedAs}`))}</p>` : '';   // one line before the actions: who reviewed it (the shape check and perspectives are in it, and in ⋯)
       return askChanges(x) ? R.planCard({ menu: planMenu, extra, check: 'shape check passed', title: x.title, summary: x.summary, version, roles: x.roles, open: !!x.open, hooks: { roles: { 'data-plan-roles': x.id }, approve: { 'data-plan-approve': x.id }, changes: { 'data-plan-changes': x.id }, full: { 'data-plan-full': x.id } }, full, fullOpen: !!x.fullOpen, attrs: { 'data-anchor': x.id } }) + askChanges(x) : R.planCard({ menu: planMenu, extra, check: 'shape check passed', title: x.title, summary: x.summary, version, roles: x.roles, open: !!x.open, hooks: { roles: { 'data-plan-roles': x.id }, approve: { 'data-plan-approve': x.id }, changes: { 'data-plan-changes': x.id }, full: { 'data-plan-full': x.id } }, full, fullOpen: !!x.fullOpen, attrs: { 'data-anchor': x.id } });
     }
-    if (x.t === 'filesgrid') return R.filesCard({ label: x.label || 'Files', files: x.files.map((f) => ({ ...f, view: doOr(`open ${f.name}`, 'file', { threadId: chatId, attId: f.att }), download: doOr(`download ${f.name}`, 'file', { threadId: chatId, attId: f.att }) })) });
+    // COV-3 #8, #9: live, Download saves the file (RailChatLive.download), and Show in ‹file manager› is drawn once the server
+    // said it can (its probe, read once)
+    if (x.t === 'filesgrid') return R.filesCard({ label: x.label || 'Files', revealLabel: LIVE() ? revealLabel() : '', files: x.files.map((f) => ({ ...f, view: doOr(`open ${f.name}`, 'file', { threadId: chatId, attId: f.att }), download: LIVE() ? { 'data-file-dl': `${f.att}|${f.name}` } : doOr(`download ${f.name}`, 'file', { threadId: chatId, attId: f.att }), reveal: LIVE() ? doOr(`show ${f.name} in its folder`, 'file-reveal', { threadId: chatId, attId: f.att }) : null })) });
     if (x.t === 'words') { const key = x.key || String(i); return `<div class="convo-words${timeShown === key ? ' is-time-shown' : ''}"${R.attrs({ 'data-words-turn': key, tabindex: '0' })}>${x.md ? R.prose({ text: x.md, doc: document, ...(LIVE() ? { refs: (t) => CL().partsOf(t), chip: chipOf } : {}) }) : x.html}${R.turnTime({ at: x.at, now: Date.now() })}</div>`; }   // panel.rendered-prose: finished words through Prose, in a div; no data-anchor: a timeline tick is a you turn or a card
     if (x.t === 'failed') return R.turnRow({ mark: R.kindMark({ kind: 'chat', tone: 'fail', size: 16 }), text: `<b>${esc(x.text)}</b>${x.details ? ` ${esc(x.detail)}` : ''}`, end: R.button({ label: x.details ? 'Hide details' : 'Details', kind: 'quiet', attrs: { 'data-failed-details': x.id, 'aria-expanded': String(!!x.details) } }) + R.button({ label: 'Try again', kind: 'quiet', attrs: { 'data-failed-retry': x.id } }), attrs: { 'data-anchor': x.id } });   // fail.no-raw: the raw error behind Details
     if (x.t === 'proposal') return proposalHtml(x);
@@ -888,6 +906,7 @@
       ...(done ? [{ id: 'Start a follow-up', text: 'Start a follow-up', help: 'A new task on this one’s branch, with what you ask' }] : []), { id: 'Run after…', text: 'Run after…', help: 'Another task starts when this one finishes' },
       { id: 'Label…', text: 'Label…', help: 'Adds a label to this task' }, t.inGroup ? { id: 'Leave group', text: `Leave ${t.inGroup}`, help: 'The task leaves the group; its labels stay' } : { id: 'Move to group…', text: 'Move to group…', help: 'Tracks it with related tasks' }, { id: 'Save as preset', text: 'Save as preset', help: 'Starts the next task with this one’s setup' },
       ...(done ? [{ id: 'Report this task', text: 'Report this task', help: 'Asks for a note, then sends it with the logs to the Worca team' }, { id: 'Archive', text: 'Archive', help: 'Removes the branch, worktree and logs; the remote branch and PR stay' }] : []),
+      ...(LIVE() ? [{ id: 'Restore', text: 'Restore', help: 'Brings the record back to Tasks; its branch, worktree and logs stay gone' }] : []),   // COV-3 #3: an archived task's (canFlow)
       ...(LIVE() && t.followed ? [{ id: 'Send a direction', text: 'Send a direction', help: 'Tells the run something it reads at its next step' }] : []),
       ...(R.shows('expert') ? [{ sep: true }, { id: 'open', text: 'Open its page', help: 'The task page, while the card does not hold everything yet' }] : [])].filter((it) => typeof it === 'string' ? offers(t, it) : it.sep || offers(t, it.id)).filter((it, k, l) => !it.sep || (k > 0 && k < l.length - 1 && !l[k - 1].sep)));
     const confirm = t.confirm ? confirmRow(t) : '';
@@ -1348,6 +1367,7 @@
     // a live block dev gave no id cannot reach a route: it refuses, and never falls through to the demo's handlers
     const noId = (words) => { window.RailAdapter.toast(`Could not ${words}: this card has no id`); return true; };
     const turn = (attr) => { const h = on(`[${attr}]`); if (!h) return null; hit = h; const v = h.getAttribute(attr); return turns().find((y) => y.id === v.split('|')[0]) || turns()[+v] || null; };
+    if ((hit = on('[data-file-dl]'))) { const [att, ...n] = hit.dataset.fileDl.split('|'); busyBtn(hit, CL().download({ threadId: chatId, attId: att, name: n.join('|') })); return true; }   // COV-3 #8: saved, not a tab
     if ((hit = on('[data-live]'))) { const [id, ...a] = hit.dataset.live.split('|'), args = JSON.parse(a.join('|') || '{}'); busyBtn(hit, CL().act(id, args).then((r) => { if (id === 'folder' && r.ok) folderPicked(args.turn, r.data || {}); return r; })); return true; }
     if ((x = turn('data-changes-send'))) {   // Ask for changes under a live card: dev's changes route; the words stay until it answers ok
       const v = root.querySelector(`[data-ask-changes="${CSS.escape(x.id)}"]`)?.value.trim(); if (!v) { say('Say what should change first'); return true; }
@@ -1405,7 +1425,7 @@
       busyBtn(hit, CL().act('answer', { ...cardArgs(x), ...(own ? { text: own } : { choice: x.optionIds?.[x.pick ?? 0] }) })); return true;
     }
     if ((hit = on('[data-pp-start]'))) { x = turns().find((y) => y.id === hit.dataset.ppStart); if (!x?.card) return noId('start the task'); const r = x.raw || {}, target = TARGET_OF[x.target] || r.target;
-      busyBtn(hit, CL().act('start', { ...cardArgs(x), card: r, picks: { title: x.title, brief: x.brief, target, guardrailsId: x.guard || r.guardrailsId, ...(x.pkeys && R.prefs.flag('proposedPerspectives') ? { perspectives: x.pkeys } : {}), ...(target === 'none' ? {} : { sourceBranch: x.src ?? r.sourceBranch, featureBranch: x.feature ?? r.featureBranch, sameAsSource: x.onSource ?? !!r.sameAsSource }) } })); return true; }
+      busyBtn(hit, CL().act('start', { ...cardArgs(x), card: r, files: (x.ppFiles || []).slice(), picks: { title: x.title, brief: x.brief, target, guardrailsId: x.guard || r.guardrailsId, ...(x.pkeys && R.prefs.flag('proposedPerspectives') ? { perspectives: x.pkeys } : {}), ...(target === 'none' ? {} : { sourceBranch: x.src ?? r.sourceBranch, featureBranch: x.feature ?? r.featureBranch, sameAsSource: x.onSource ?? !!r.sameAsSource }) } })); return true; }
     if ((hit = on('[data-pp-later]'))) { x = turns().find((y) => y.id === hit.dataset.ppLater); if (!x?.card) return noId('set the proposal aside'); busyBtn(hit, CL().act('card-later', { ...cardArgs(x), run: true })); return true; }
     if ((x = turn('data-cmd-stop'))) { if (!x.session) return noId('stop the command'); busyBtn(hit, CL().act('cmd-stop', { sessionId: x.session })); return true; }
     if ((x = turn('data-term-stop'))) { if (x.term) busyBtn(hit, x.term.stop()); return true; }
@@ -1555,7 +1575,7 @@
     if ((px = pp('data-pp-back'))) { px.later = false; paint(); return; }
     if ((px = pp('data-pp-asis'))) { px.nudge = false; paint(); say('Runs as is'); return; }
     if ((hit = on('[data-pp-persp]'))) { const [id, v] = hit.dataset.ppPersp.split('|'), x = turns().find((y) => y.id === id); if (x) { const l = x.persp || ['Product']; x.persp = l.includes(v) ? l.filter((z) => z !== v) : [...l, v]; paint(); } return; }
-    if ((hit = on('[data-pp-unfile]'))) { const [id, f] = hit.dataset.ppUnfile.split('|'), x = turns().find((y) => y.id === id); if (x) { x.files = (x.files || []).filter((z) => z !== f); paint(); } return; }
+    if ((hit = on('[data-pp-unfile]'))) { const v = hit.dataset.ppUnfile, cut = v.indexOf('|'), id = v.slice(0, cut), f = v.slice(cut + 1), x = turns().find((y) => y.id === id); if (x) { if (x.ppFiles) { x.ppFiles = x.ppFiles.filter((z) => z.att !== f); x.ppCut = true; } else x.files = (x.files || []).filter((z) => z !== f); paint(); } return; }
     if ((hit = on('[data-pp-target]'))) { const [id, v] = hit.dataset.ppTarget.split('|'), x = turns().find((y) => y.id === id); if (x) { x.target = v; paint(); } return; }
     if ((px = pp('data-pp-onsource'))) { px.onSource = !px.onSource; paint(); return; }
     if ((px = pp('data-pp-reset'))) { px.agents = {}; paint(); say('Agents back to the proposal'); return; }

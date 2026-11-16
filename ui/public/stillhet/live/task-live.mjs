@@ -4,7 +4,7 @@
 // writes before a route answers `ok`.
 import { actionRunner, FLOW as CHAT_FLOW, openTab } from './chat-live.mjs';
 import { taskPageOf, taskCardOf, newTaskBodyOf, patchFiles, docsOf, logLinesOf, logStepsOf, actionsOf, groupOf, planOf, sessionRowsOf, agentRowsOf, usageRowsOf, commentsByPath } from './task-page.mjs';
-import { ENGINES, ENGINE_NAMES } from '../../../../src/shared/engine-switch.mjs';
+import { ENGINES, ENGINE_NAMES, engineLabel } from '../../../../src/shared/engine-switch.mjs';
 
 const str = (v) => (typeof v === 'string' ? v : '');
 const enc = encodeURIComponent;
@@ -42,7 +42,7 @@ export const TASK_ACTIONS = Object.freeze({
   // Save as preset is dev's run-page save (POST /api/pipelines/:id/preset): the run's own stored setup, under a name
   preset: ['save the preset', (a) => ['POST', `/api/pipelines/${enc(a.pipelineId)}/preset`, { name: str(a.value).trim(), scope: { kind: str(a.projectKey).startsWith('workspaces/') ? 'workspace' : 'project' } }]],
   // Switch model and Resume at… are dev's resume with a model and dev's timed resume (POST /api/schedules/resume)
-  'switch-model': ['switch the model', (a) => ['POST', '/api/resume', { pipelineId: a.pipelineId, model: a.model }]],
+  'switch-model': ['switch the model', (a) => ['POST', '/api/resume', { pipelineId: a.pipelineId, baseCheck: true, ...(a.baseAck ? { baseAck: true } : {}), model: a.model }]],   // classic's resumeBody (F-cov23-08)
   'resume-at': ['schedule the resume', (a) => ['POST', '/api/schedules/resume', { pipelineId: a.pipelineId, scheduledFor: a.scheduledFor }]],
   // Publish branch (dev's `git push -u`), a task's away mode, a diff line's comment
   publish: ['publish the branch', (a) => ['POST', `/api/runs/${enc(a.pipelineId)}/publish`, { ...(a.projectKey ? { projectKey: a.projectKey } : { projectDir: a.projectDir }), ...(a.memberKey ? { memberKey: a.memberKey } : {}) }]],
@@ -59,6 +59,12 @@ export const TASK_ACTIONS = Object.freeze({
   // id is the pending gate's, read at act time (B1.6 D3)
   'gate-continue': ['accept the review as is', (a) => ['POST', '/api/answer', { runId: a.runId, id: a.gateId, payload: { decision: 'continue' } }]],
   'gate-another': ['run another cycle', (a) => ['POST', '/api/answer', { runId: a.runId, id: a.gateId, payload: { decision: 'another' } }]],
+  // COV-3: classic's run extras. Restore of one task is History's per-run route, scoped as runActionQuery scopes it, with no
+  // body; a direction goes straight to the run (classic's Pinpoint "Send to run"); Resume on ‹Engine› is the run banner's
+  // and Resume ▾'s resume on the other engine, in classic's resumeBody
+  restore: ['restore the task', (a) => ['POST', `/api/runs/${enc(a.pipelineId)}/restore?${a.qs}`, undefined]],
+  'run-direction': ['send the direction', (a) => ['POST', `/api/runs/${enc(a.pipelineId)}/directions`, { text: a.text }]],
+  'resume-engine': ['resume on the other engine', (a) => ['POST', '/api/resume', { pipelineId: a.pipelineId, baseCheck: true, ...(a.baseAck ? { baseAck: true } : {}), engine: a.engine }]],
 });
 // a workspace task's store key is `workspaces/ID`: its saved run, log, diff and comments are dev's workspace routes
 // (ui/routes/workspace-map/runs.mjs, run-comments.mjs); a project's are History's
@@ -75,6 +81,16 @@ export function nextAt(value, now) {
   return d.toISOString();
 }
 // a workspace task's store key is `workspaces/ID`: dev's run routes take it as workspaceId (chat-live.mjs patchUrl)
+/** classic's runActionQuery (app.js): a workspace row's id without its prefix, else its store key, else its folder; null
+ *  when the task names none (its restore then goes through dev's bulk route, which finds a run by its id alone). */
+function scopeQuery(r) {
+  const qs = new URLSearchParams(), key = str(r.projectKey);
+  if (key.startsWith('workspaces/')) qs.set('workspaceId', key.slice('workspaces/'.length));
+  else if (key) qs.set('projectKey', key);
+  else if (str(r.projectDir)) qs.set('projectDir', r.projectDir);
+  else return null;
+  return qs;
+}
 const scopeQ = (a) => (str(a.projectKey).startsWith('workspaces/') ? `workspaceId=${enc(a.projectKey.slice('workspaces/'.length))}`
   : a.projectKey ? `projectKey=${enc(a.projectKey)}` : `projectDir=${enc(a.projectDir)}`);
 function prScope(a) { return { id: a.pipelineId, ...(a.projectKey ? { projectKey: a.projectKey } : { projectDir: a.projectDir }), ...(a.memberKey ? { memberKey: a.memberKey } : {}) }; }
@@ -112,10 +128,13 @@ const TASK_FLOW = Object.freeze({
   'Try it': { act: 'try-it' }, 'Publish branch': { act: 'publish' }, 'Ship group': { act: 'ship-group' },
   // a task waiting at its review gate (B1.6): dev's answer API, on the gate case only
   'Accept as is': { act: 'gate-continue', cases: ['gate'] }, 'Run another cycle': { act: 'gate-another', cases: ['gate'] },
+  // COV-3: Restore only on an archived task (canFlow reads its row); a direction to a live, unfinished run; Resume on ‹Engine›
+  Restore: { act: 'restore' }, 'Send a direction': { act: 'run-direction' }, 'Resume on…': { act: 'resume-engine' },
 });
 const NEEDS_PR = new Set(['Merge PR', 'Merge', 'Fix checks', 'Re-run checks']);
 // the page's own: a card has no TerminalPane to draw the shell in and no model list for Switch model…
-const PAGE_ONLY = new Set(['Terminal', 'Switch model…']);
+// (COV-3: a card's Send a direction is its chat's own, and only the page lists the other engines)
+const PAGE_ONLY = new Set(['Terminal', 'Switch model…', 'Send a direction', 'Resume on…']);
 const FAILED_OR_STUCK = new Set(['failed', 'failed-kept', 'stopped', 'error', 'recovery', 'interrupted-dead']);
 const BASE_PROMPT = new Set(['base-moved', 'base-missing']);
 // what a live task may do before its run names its pipeline (B1.9 D3, D4): these post only the run id, or no pipeline id
@@ -136,6 +155,10 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
   // keeps finding its task through the pipeline id it last resolved to.
   const alias = new Map();   // run id → pipeline id
   const keptLabels = new Map();   // task id → the labels dev saved, until the store's row reads them too
+  // COV-3 #11: an id no source holds is asked of dev's run links once (classic's bounceUnknownRun): null while asked, then
+  // its pipeline id, or '' when dev knows no saved run for it
+  const linked = new Map();
+  const linkRetry = new Set();   // ids whose lookup failed without a definitive answer (a network failure, a 5xx)
 
   /** The task's ids and scope, by its run id or its pipeline id (D1). null when neither the runs nor the store know it. */
   function resolve(id) {
@@ -183,7 +206,20 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
     }
     if (!listLoaded()) { if (e.state !== 'loading') { e.state = 'loading'; notify(id); } return Promise.resolve(e); }
     const r = resolve(id);
-    if (!r) { e.state = 'gone'; notify(id); return Promise.resolve(e); }
+    if (!r && force && linkRetry.delete(id)) linked.delete(id);   // Try again asks a lookup that failed once more
+    if (!r && !linked.has(id)) {   // an old #run link: the saved task its run became, else gone (one lookup per id)
+      linked.set(id, null);
+      e.state = 'loading';
+      e.loading = request('GET', `/api/run-links/${enc(id)}`).then((x) => {
+        const pid = x.ok ? str(x.data?.pipelineId) : '';
+        if (!x.ok && x.status !== 404) linkRetry.add(id);   // only a 200 or a 404 is definitive
+        linked.set(id, pid); e.loading = null;
+        if (pid && pid !== id) alias.set(id, pid);
+        return openTask(id);
+      });
+      return e.loading;
+    }
+    if (!r) { e.state = linkRetry.has(id) ? 'failed' : 'gone'; notify(id); return Promise.resolve(e); }   // a lookup that could not answer offers Try again
     const wasReady = e.state === 'ready';
     if (!wasReady) e.state = 'loading';
     if (r.live && !r.pidKnown) e.pidless = true;   // no history read until the run names its pipeline (B1.9 D2): learned() opens it again
@@ -421,6 +457,9 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
     if (id === 'night' && !a.runId) return refuse(wordsOf(id, a), { ok: false, error: 'the task is not running' }, args.quiet);
     if (id === 'preset' && !str(args.value).trim()) return refuse(wordsOf(id, a), { ok: false, error: 'name the preset first' }, args.quiet);
     if (id === 'switch-model' && !a.model) return refuse(wordsOf(id, a), { ok: false, error: 'pick a model first' }, args.quiet);
+    if (id === 'resume-engine' && !str(a.engine)) return refuse(wordsOf(id, a), { ok: false, error: 'pick an engine first' }, args.quiet);
+    if (id === 'run-direction' && !str(args.text).trim()) return refuse(wordsOf(id, a), { ok: false, error: 'say what it should take into account first' }, args.quiet);
+    if (id === 'restore') { const qs = scopeQuery(a); if (!qs) return list('restore', { ids: [args.taskId || a.pipelineId] }); a.qs = qs.toString(); }
     if (id === 'resume-at') { a.scheduledFor = nextAt(args.value, now()); if (!a.scheduledFor) return refuse(wordsOf(id, a), { ok: false, error: 'write the time as HH:MM, like 15:30' }, args.quiet); }
     if (id === 'try-it') return tryIt(a, args);
     // dev answers 200 even to a gate that is gone (run-harness answer only warns): post only to the one pending now (D3)
@@ -447,10 +486,10 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
       const [method, url, body] = def[1](a);
       const res = await request(method, url, body);
       // Retry on a moved base is a prompt, not a refusal (D10): the strip asks, Resume anyway posts baseAck.
-      if (!res.ok && id === 'retry' && BASE_PROMPT.has(res.code)) return { ...res, prompt: 'base' };
+      if (!res.ok && (id === 'retry' || id === 'resume-engine' || id === 'switch-model') && BASE_PROMPT.has(res.code)) return { ...res, prompt: 'base' };
       if (!res.ok) return refuse(words, { ...res, words }, args.quiet);
       // a resume answers the pipeline's new run id: it is the same task, so its old ids keep finding it
-      if (res.data?.runId && a.pipelineId && (id === 'retry' || id === 'raise-cap' || id === 'switch-model')) alias.set(str(res.data.runId), a.pipelineId);
+      if (res.data?.runId && a.pipelineId && (id === 'retry' || id === 'raise-cap' || id === 'switch-model' || id === 'resume-engine')) alias.set(str(res.data.runId), a.pipelineId);
       if (id === 'report' && res.data && res.data.ok === false) {
         const u = str(res.data.issue?.url);
         if (u && open(u) !== null) return { ok: true, data: res.data, say: 'Opened the issue form on GitHub' };
@@ -462,6 +501,7 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
       if (id === 'comment') { loadParts(args.taskId || a.pipelineId); return { ...res, say: 'Comment added; the review sees it' }; }
       if (id === 'switch-model') return { ...res, say: `Resumed on ${str(args.modelLabel) || a.model}` };
       if (id === 'resume-at') return { ...res, say: `Resumes at ${str(args.value).trim()}` };
+      if (id === 'resume-engine') return { ...res, say: `Resumed on ${engineLabel(a.engine)}` };
       if (id === 'tags' || id === 'labels') keepSaved(args.taskId || a.pipelineId, id, id === 'tags' ? a.tags : a.labels);
       if (/^(service-start|service-stop|stack-start|stack-stop|builtin|checkout|discard|apply)$/.test(id)) loadParts(args.taskId || a.pipelineId);
       if (id === 'checkout') {
@@ -559,6 +599,10 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
     if (r?.live && !r.pidKnown && !RUN_ID_LABELS.has(label) && !RUN_ID_ACTS.has(TASK_FLOW[label]?.act)) return false;
     if (NEEDS_PR.has(label) && !a.pr) return false;
     if (NEEDS_PR.has(label) && (a.taskId || a.pipelineId) && wsOf(resolve(a.taskId || a.pipelineId)?.projectKey) && !memberKeyOf(a.taskId || a.pipelineId)) return false;   // a PR per project (the page's task or a chat card's run)
+    // COV-3: Restore is an archived task's; a direction goes only to a live run that can still read it (dev refuses done,
+    // error and stopped: DIRECTIONS_CLOSED)
+    if (label === 'Restore') return !!rowOf(a.taskId || a.pipelineId)?.archived;
+    if (label === 'Send a direction') { const lr = resolve(a.taskId || a.pipelineId)?.live; return !!lr && !/^(done|error|stopped|failed)$/.test(lc(lr.status)); }
     if (label === 'Re-run checks') return !/bitbucket\.org/.test(str(a.pr));
     if (TASK_FLOW[label]?.cases) return TASK_FLOW[label].cases.includes(str(a.case));
     return !!TASK_FLOW[label] || (!!CHAT_FLOW[label] && (!CHAT_FLOW[label].needsPr || !!a.pr));
@@ -620,7 +664,7 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
     // a group's page (#run/group:GID) is read from dev's run groups; a task's from its history and frames
     open: (id, o) => (isGroup(id) ? loadGroups(!!o?.force) : openTask(id, o)),
     // side-effect free for a group until its list is read: open() loads it, so a failed load is not asked again on every paint
-    state: (id) => (isGroup(id) ? (!groupList ? (groupFailed ? 'failed' : 'loading') : ({ null: 'loading', false: 'gone' })[String(group(id.slice(6)))] || 'ready') : !listLoaded() ? (listFailed() ? 'failed' : 'loading') : !resolve(id) ? 'gone' : tasks.get(id)?.state || 'loading'),
+    state: (id) => (isGroup(id) ? (!groupList ? (groupFailed ? 'failed' : 'loading') : ({ null: 'loading', false: 'gone' })[String(group(id.slice(6)))] || 'ready') : !listLoaded() ? (listFailed() ? 'failed' : 'loading') : !resolve(id) ? (linked.get(id) === null ? 'loading' : linkRetry.has(id) ? 'failed' : 'gone') : tasks.get(id)?.state || 'loading'),
     // liveRunning (B1.9 D7): a running task whose pipeline is known is not over, even before its steps arrive (F-a4-03)
     detail: (id) => (isGroup(id) ? groupDetail(id) : { ...taskPageOf(inputOf(id), { now: now() }), liveRunning: liveRunning(id), restartOff: restartOff(id) }),
     card: (id) => taskCardOf(inputOf(id)),

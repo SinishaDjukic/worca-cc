@@ -1998,6 +1998,25 @@ test('composerQueueButton (F-gb235-03): a quiet text button named Queue, data-cp
   assert.equal(b.getAttribute('title'), 'Sends it when the reply finishes');
 });
 
+test('COV-3 #9 and #5: filesCard draws Show in ‹label› only with revealLabel and a file\'s reveal; youTurn\'s object files are chip buttons that open; without them both are as before', () => {
+  const files = [{ name: 'a.png', image: true }, { name: 'b.txt', meta: '2 KB' }];
+  const before = C.filesCard({ files });
+  assert.equal(C.filesCard({ files, revealLabel: 'Finder' }), before, 'no file says how to reveal it: unchanged');
+  assert.equal(C.filesCard({ files: files.map((f) => ({ ...f, reveal: { 'data-x': f.name } })) }), before, 'no label (the server offers none): unchanged');
+  const r = C.filesCard({ revealLabel: 'Finder', files: files.map((f) => ({ ...f, reveal: { 'data-reveal': f.name } })) });
+  assert.match(r, /<button[^>]*data-reveal="a\.png"[^>]*>Show in Finder<\/button>/);
+  assert.match(r, /<button[^>]*data-reveal="b\.txt"[^>]*>Show in Finder<\/button>/);
+  assert.match(r, /class="btn btn-sm btn-quiet"[^>]*data-reveal="b\.txt"/, 'a quiet button');
+  const view = C.filesCard({ files: [{ name: 'q.png', image: true, download: false }, { name: 'q.txt', download: false }] });
+  assert.doesNotMatch(view, /Download/, 'download: false (a run question\'s files, which classic only views): no Download');
+  assert.match(view, /aria-label="View q\.png"/); assert.match(view, />View<\/button>/);
+  const y0 = C.youTurn({ text: 'Same bug?', files: ['x.pdf'] });
+  assert.equal(y0, '<div class="convo-you">Same bug?<span class="you-files"><span class="kind-chip">' + C.icon('file', 12) + 'x.pdf</span></span></div>', 'string files: as before');
+  const y = C.youTurn({ text: 'Same bug?', files: ['x.pdf', { name: 'shot.png', attrs: { 'data-open-file': 'att_1' } }] });
+  assert.match(y, /<span class="kind-chip">[^]*?x\.pdf<\/span>/);
+  assert.match(y, /<button type="button" class="kind-chip"[^>]*title="Opens shot\.png"[^>]*data-open-file="att_1"[^>]*>[^]*?shot\.png<\/button>/);
+});
+
 test('COV-1 folderName: the last segment, without a trailing slash', () => {
   assert.equal(C.folderName('/a/b/'), 'b');
   assert.equal(C.folderName('~/src/web-app'), 'web-app');

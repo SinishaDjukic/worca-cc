@@ -346,9 +346,15 @@ function formDialogHtml() {
   const F = ui.form; if (!F || ui.dialog !== F.id) return '';
   const def = F.def;
   const body = (def.text ? `<p class="pd-hint">${esc(R.fill(def.text, F.ctx || {}))}</p>` : '') + (def.options ? R.optionList({ label: def.title, options: def.options, selected: F.pick, recommended: -1, optAttrs: (i) => ({ 'data-fopt': i, 'data-key': 'fopt:' + i }) })
-    : R.field({ id: 'fd-value', label: def.field.label, value: F.value, hint: F.hint ?? (def.field.hint || ''), error: F.fieldErr || '', multiline: !!def.field.multiline, attrs: { 'data-key': 'fd-value' } }))
+    : def.field ? R.field({ id: 'fd-value', label: def.field.label, value: F.value, hint: F.hint ?? (def.field.hint || ''), error: F.fieldErr || '', multiline: !!def.field.multiline, attrs: { 'data-key': 'fd-value' } }) : '')   // a confirm with no field (Resume on ‹Engine›): its sentence only
     + (F.err ? `<p class="rc-confirm-t is-err" role="alert">${esc(F.err.title)}<span class="rc-confirm-why">${esc(F.err.detail)}</span></p>` : '');   // a refusal is one line, as the ConfirmStrip's row
   return R.dialog({ title: def.title, id: 'fd-h', close: svg('x', 14), body, yes: def.yes, busy: !!ui.busy, busyLabel: 'Working…', hooks: { close: { 'data-fd': 'cancel', 'data-key': 'fd-close' }, cancel: { 'data-fd': 'cancel', 'data-key': 'fd-cancel' }, yes: { 'data-fd': 'ok', 'data-key': 'fd-ok' } } });
+}
+// COV-3 #1: a direction straight to the live run (⋯ Send a direction), under the status line, in Chat's own parts
+// (conversation.js directionHtml): a field, Send direction, Not now
+function directionHtml() {
+  if (!ui.directing) return '';
+  return `<div class="ask-changes">${R.field({ id: 'page-dir', label: 'Direction', quietLabel: true, placeholder: 'What should it take into account?', value: ui.dirValue || '', multiline: true, attrs: { 'data-key': 'page-dir' } })}<span class="tp-actions">${R.button({ label: ui.dirBusy ? R.workingWord('Send direction') : 'Send direction', kind: 'primary', attrs: { 'data-page-direction-send': '', 'data-key': 'page-dir-send', disabled: !!ui.dirBusy } })}${R.button({ label: 'Not now', kind: 'quiet', attrs: { 'data-page-direction-cancel': '', 'data-key': 'page-dir-cancel' } })}</span></div>`;
 }
 function decisionsPanel(v) {
   const ds = v.tabData.decisions;
@@ -433,7 +439,7 @@ function render() {
     ${stripHtml(v)}
     <div class="rc-head"><div class="rc-title-row"><h1 class="rc-heading${ui.titleOpen ? ' is-open' : ''}" title="${esc(v.title)}" tabindex="-1" data-title>${esc(v.title)}</h1>${SHELL ? R.button({ label: 'Keep in view', kind: 'quiet', iconOnly: true, icon: R.icon('eye', 16), attrs: { 'data-keep-view': ui.caseId, 'aria-pressed': 'false', title: 'Keep in view: its mark stays in the top bar, on every page' } }) : ''}</div>${facts ? `<div class="rc-facts">${facts}</div>` : ''}</div>
     <section class="rc-card" aria-label="Task status">
-      ${R.statusLine({ dot: statusDot(v), word: v.word, action, detail: v.detail })}
+      ${R.statusLine({ dot: statusDot(v), word: v.word, action, detail: v.detail })}${directionHtml()}
       <div class="rc-zone"><div class="rc-span">${SHELL ? stageBarOf(v) : R.stepper({ stages: v.stages, deepen: '' })}</div></div>
       ${SHELL ? stageStream(v, `${head}${panel}${then}`) : `<div class="rc-zone is-ruled" role="tabpanel" id="stage-panel" aria-labelledby="st-${o.key}">${head}${panel}${then}</div>`}
       <div class="rc-zone is-ruled">${R.figures((SHELL ? v.figs.filter((f) => f.k !== 'Changes') : v.figs).map((f) => figHtml(f, v)))}</div>
@@ -509,6 +515,7 @@ document.addEventListener('input', (e) => {
   if (e.target.id === 'after-task') ui.afterDraft = e.target.value;
   if (e.target.id === 'changes-text') ui.changesText = e.target.value;
   if (e.target.id === 'fd-value' && ui.form) ui.form.value = e.target.value;
+  if (e.target.id === 'page-dir') ui.dirValue = e.target.value;
   if (e.target.id === 'cmt-text' && ui.commentOn) ui.commentOn.text = e.target.value;
   if (e.target.id === 'pd-version' && ui.pr) ui.pr.version = e.target.value;
   if (e.target.id === 'log-q') { ui.log.q = e.target.value; pendingFocus = 'log-q'; render(); return; }
@@ -538,7 +545,7 @@ const LIVE_PAGE = () => !!(SHELL && window.RailWorld?.live && window.RailTaskLiv
 // it" (R-fit-4): each one does its real thing (copy, open the PR) or is left out until it is wired.
 const unlessLive = (html) => (LIVE_PAGE() ? '' : html);
 const livePrUrl = () => (LIVE_PAGE() && ui.taskId ? window.RailTaskLive.detail(ui.taskId)?.prUrl || '' : '');
-const LIVE_MORE = new Set(['away:auto', 'away:on', 'away:off', 'more:archive', 'more:restore', 'more:report', 'more:link', 'more:terminal', 'more:sync', 'more:preset', 'more:group', 'more:try']);
+const LIVE_MORE = new Set(['away:auto', 'away:on', 'away:off', 'more:archive', 'more:restore', 'more:report', 'more:link', 'more:terminal', 'more:sync', 'more:preset', 'more:group', 'more:try', 'more:direction']);
 // Switch model's choices in the live kind: dev's models for this task's engine, read when its page opens
 let liveModels = [];
 /** The action slot in the live kind: only the labels RailTaskLive runs (canFlow); the first one left is the main. */
@@ -551,7 +558,9 @@ function liveAction(v, a) {
   }
   const ok = (label) => typeof label === 'string' && !(label === 'Switch model…' && !liveModels.length) && (label === 'Full plan' ? livePlanDoc() >= 0 : label === 'Link remote' ? ui.caseId === 'no-remote' : T.canFlow((((v.flow || {})[label] || {}).live) || LIVE_ACT_LABEL[label] || label, { pr, case: ui.caseId, page: true, taskId: ui.taskId }));
   // the ▾ items are menu entries ({ text, … }); a separator or a header has no action of its own and goes with them
-  const items = (a.items || []).filter((it) => it && !it.sep && !it.header && ok(it.text));
+  // COV-3 #12/#14/#16: a usage-limit pause lists dev's other engines (the task's resumeEngines), after its own resumes
+  const engines = (T.detail(ui.taskId)?.resumeEngines || []).map((x) => ({ text: 'Resume on ' + x.label, help: x.note }));
+  const items = (a.items || []).filter((it) => it && !it.sep && !it.header && ok(it.text)).concat(engines);
   if (ok(a.label)) return Object.assign({}, a, { items });
   return items.length ? Object.assign({}, a, { label: items[0].text, icon: 'refresh', items: items.slice(1) }) : null;
 }
@@ -615,6 +624,8 @@ function moreItems(v) {
     return LIVE_PAGE() ? liveMore(items) : items;
   }
   if (live && !group) items.push({ header: 'Away mode' }, ...AWAY.map((x) => Object.assign({ checked: (ui.away || 'away:auto') === x.id }, x)), { sep: true });
+  // COV-3 #1: a direction straight to the run, while it can still read it (live: RailTaskLive says when)
+  if (!group && (LIVE_PAGE() ? !!ui.taskId && window.RailTaskLive.canFlow('Send a direction', { taskId: ui.taskId, page: true }) : live)) items.push({ id: 'more:direction', text: 'Send a direction', help: 'The run reads it at its next step' });
   if (v.runAfter) items.push({ id: 'more:after', text: v.runAfter.label, help: v.runAfter.help });
   if (!group && !v.inGroup) items.push(v.addedGroup ? { id: 'ungroup', text: 'Leave ' + v.addedGroup, help: 'The task leaves the group; its labels and tags stay' } : { id: 'more:group', text: 'Move to group…', help: 'Tracks it with related tasks on one page' });
   if (v.hasSetup) items.push({ id: 'more:preset', text: 'Save as preset', help: 'Starts the next task with this task’s setup' });
@@ -666,6 +677,8 @@ const follow = R.stepFlow({
     if (f.dialog !== 'pr') { const def = M.forms[f.dialog]; ui.form = { id: f.dialog, def, ctx: M.view(ui.caseId, ui).formCtx, pick: def.options ? def.pick : 0, value: def.field ? (f.dialog === 'preset' ? M.view(ui.caseId, ui).title : def.field.value) : '', err: null, fieldErr: '' };
       // live, the cap field starts at this task's own cap and its hint says it (never the demo's $180 and $120)
       if (f.dialog === 'model' && LIVE_PAGE()) { ui.form.def = Object.assign({}, def, { options: liveModels.map((m) => m.label), pick: 0 }); ui.form.pick = 0; ui.form.models = liveModels; }
+      // Resume on ‹Engine›: classic's confirmEngineSwitch, its words named for the engine picked (the note is dev's)
+      if (f.dialog === 'engine') { const n = f.engineLabel || ''; ui.form.def = Object.assign({}, def, { title: def.title.replace('{engine}', n), yes: def.yes.replace('{engine}', n), text: f.note || def.text.replace('{engine}', n) }); pendingFocus = 'fd-ok'; return; }
       if (f.dialog === 'cap' && LIVE_PAGE()) { const cap = window.RailTaskLive.detail(ui.taskId)?.cap, at = cap == null ? '' : '$' + (cap % 1 ? cap.toFixed(2) : String(cap)); ui.form.value = at; ui.form.hint = at ? 'It is at ' + at : ''; }
       pendingFocus = def.options ? 'fopt:' + def.pick : 'fd-value'; return; }
     if (f.dialog === 'pr') { const v = M.view(ui.caseId, ui); ui.pr = { title: v.title, desc: '', mode: 'write', gen: false, genTitle: false, titleN: 0, titleSuggested: false, draft: false, watch: true, base: (LIVE_PAGE() && window.RailTaskLive.detail(ui.taskId)?.base) || 'dev' }; if (!v.runs.length || !/^Create \d/.test(label)) { generateTitle(); generate(); } else startStack(v); pendingFocus = v.runs.length ? 'pd-ok' : 'pd-close'; }
@@ -694,15 +707,15 @@ let liveSaid = '', liveNext = null, liveFailWords = '';
 async function liveDo(f, label) {
   const asked = !!(f.confirm || f.dialog || f.fromDialog);
   const u = ui;   // the page this step started on
-  const m = u.form && u.form.models ? u.form.models[u.form.pick] : null;   // Switch model: the picked model's id and name
-  const res = await window.RailTaskLive.flow(f.live || LIVE_LABEL[label] || label, Object.assign({ taskId: f.taskId || u.taskId, value: u.form ? u.form.value : undefined, baseAck: !!f.baseAck, quiet: asked }, m ? { model: m.id, modelLabel: m.label } : {},
+  const m = (u.form && u.form.models ? u.form.models[u.form.pick] : null) || f.model || null;   // Switch model: the picked model's id and name (kept for Resume anyway)
+  const res = await window.RailTaskLive.flow(f.live || LIVE_LABEL[label] || label, Object.assign({ taskId: f.taskId || u.taskId, value: u.form ? u.form.value : undefined, baseAck: !!f.baseAck, quiet: asked }, m ? { model: m.id, modelLabel: m.label } : {}, f.engine ? { engine: f.engine } : {},
     f.ship && u.run && u.run.liveGroup ? { ship: f.ship, groupId: u.run.liveGroup.id, groupKind: u.run.liveGroup.kind } : {},
     // Create PR's dialog: what you wrote and picked goes to dev's POST /api/pr (title, description, draft, watch, base)
     u.dialog === 'pr' && u.pr && !f.ship ? { title: u.pr.title, body: u.pr.desc, draft: !!u.pr.draft, watch: !!u.pr.watch, base: u.pr.base } : {}));
   // Left behind (another task opened meanwhile): the reply never lands on the page now shown, as the demo's perform does.
   if (ui !== u) return new Promise(() => {});
   ui.busy = null;
-  if (res && res.prompt === 'base') { liveNext = { confirm: res.error, baseAck: true, say: 'Resumed on the moved base' }; return { ok: true }; }
+  if (res && res.prompt === 'base') { liveNext = Object.assign({ confirm: res.error, baseAck: true, say: 'Resumed on the moved base' }, f.engine ? { live: 'Resume on…', engine: f.engine } : m ? { live: 'Switch model…', model: m } : {}); return { ok: true }; }   // Resume anyway keeps the engine picked
   liveSaid = (res && res.say) || '';
   // a new task, a restarted Build or a resume answers the run it started: the page follows it (a resume's new run id is
   // the same task; its old one is dropped from the live runs)
@@ -840,7 +853,15 @@ async function liveTool(id, args, key) {
   ui.svcBusy = ''; if (res.ok) toast(res.say || (/-start$/.test(id) ? 'Started ' : /-stop$/.test(id) ? 'Stopped ' : 'Opened ') + (args.name || ''));
   pendingFocus = key; render();
 }
+// COV-3 #12/#14/#16: a Resume on ‹Engine› item, live from the task's resumeEngines, in the demo its case's own item and flow
+function resumeEngineOf(label) {
+  if (LIVE_PAGE()) { const x = (window.RailTaskLive.detail(ui.taskId)?.resumeEngines || []).find((e) => 'Resume on ' + e.label === label); return x ? { live: 'Resume on…', engine: x.id, engineLabel: x.label, note: x.note, say: 'Resumed on ' + x.label } : null; }
+  const m = /^Resume on (.+)$/.exec(label), f = m && (M.view(ui.caseId, ui).flow || {})[label];
+  return f ? Object.assign({}, f, { engineLabel: m[1] }) : null;
+}
 function act(label) {
+  const eng = resumeEngineOf(label);
+  if (eng) { ui.menu = ''; follow(Object.assign({}, eng, { dialog: 'engine' }), label); return; }   // asks first, as classic's confirmEngineSwitch
   if (label === 'Ask for changes' || label === 'Revise') { const v = M.view(ui.caseId, ui); ui.changesFor = label; ui.dialog = 'changes'; ui.changesText = ''; ui.menu = ''; if (!LIVE_PAGE() && (v.id === 'plan' || v.id === 'outline')) { draft('changes'); pendingFocus = 'draft-stop'; } else pendingFocus = 'changes-text'; return; }
   if (label === 'Full plan') { openDoc(LIVE_PAGE() ? livePlanDoc() : 0); return; }
   // live: Link remote opens the task's project, whose More menu holds Link a remote… (B1.7 D12); it changes nothing, so no confirm
@@ -1100,6 +1121,21 @@ document.addEventListener('click', (e) => {
     // live: a dialog's step always waits for its route (a `say`-only step would otherwise end without calling it)
     F.fieldErr = ''; F.err = null; const f = ui.dialogF; follow(Object.assign({}, f, { dialog: '', fromDialog: true, value: val, say: String(f.say || '').replace('{value}', val) }, LIVE_PAGE() && !f.run ? { run: () => {} } : {}), ui.dialogLabel); render(); return;
   }
+  if (d.pageDirectionCancel !== undefined) { ui.directing = false; ui.dirValue = ''; pendingFocus = 'menu:more'; render(); return; }
+  if (d.pageDirectionSend !== undefined) {
+    const text = ui.dirValue || '';
+    if (!text.trim()) { toast('Say what it should take into account first'); pendingFocus = 'page-dir'; render(); return; }
+    if (!LIVE_PAGE()) { ui.directing = false; ui.dirValue = ''; toast(window.RailWould('send the direction')); pendingFocus = 'menu:more'; render(); return; }
+    // live: the field closes only once dev took it; a refusal (a run that finished meanwhile) keeps the text
+    const u = ui; ui.dirBusy = true; render();
+    window.RailTaskLive.act('run-direction', { taskId: u.taskId, text }).then((r) => {
+      if (ui !== u) return;
+      ui.dirBusy = false;
+      if (r && r.ok) { ui.directing = false; ui.dirValue = ''; toast('Sent: the run reads it at its next step'); pendingFocus = 'menu:more'; } else pendingFocus = 'page-dir';
+      render();
+    });
+    return;
+  }
   if (d.fopt !== undefined) { ui.form.pick = +d.fopt; pendingFocus = 'fopt:' + d.fopt; render(); return; }
   if (d.crumbto !== undefined && LIVE_PAGE()) { window.RailRunsList?.filter?.({ project: d.crumbto }); SHELL.go('runs'); return; }
   if (d.viewclose !== undefined && ui.term) { ui.term.close(); ui.term = null; }
@@ -1188,7 +1224,8 @@ document.addEventListener('click', (e) => {
     else if (d.menuPick === 'more:delete') { const noun = v0().kind.toLowerCase(); follow({ leave: true, say: 'Deleted the ' + noun + ' and its runs; their PRs stay', confirm: 'Delete this ' + noun + ' and its runs? This cannot be undone; their PRs stay.' }, 'Delete'); }
     else if (d.menuPick === 'more:report') { ui.menu = ''; follow(v0().runFlow.report, 'Report this ' + (v0().kind ? v0().kind.toLowerCase() : 'task')); }
     else if (d.menuPick === 'more:link' && LIVE_PAGE()) { ui.menu = ''; pendingFocus = 'menu:more'; liveDirect('Copy link', 'Copied the link'); }
-    else if (d.menuPick === 'more:restore' && LIVE_PAGE()) { ui.menu = ''; const u = ui; window.RailTaskLive.list('restore', { ids: [u.taskId] }).then((r) => { if (ui !== u || !r?.ok) return; toast('The record is back in Tasks'); window.RailTaskLive.open(u.taskId, { force: true }); }); }
+    else if (d.menuPick === 'more:direction') { ui.menu = ''; ui.directing = true; ui.dirValue = ''; pendingFocus = 'page-dir'; }
+    else if (d.menuPick === 'more:restore' && LIVE_PAGE()) { ui.menu = ''; const u = ui; window.RailTaskLive.flow('Restore', { taskId: u.taskId }).then((r) => { if (ui !== u || !r?.ok) return; toast('The record is back in Tasks'); window.RailTaskLive.open(u.taskId, { force: true }); }); }
     else if (d.menuPick === 'more:link') { toast(window.RailWould('copy the link to this ' + (v0().kind ? v0().kind.toLowerCase() : 'task'))); pendingFocus = 'menu:more'; ui.menu = ''; }
     else if (d.menuPick === 'group:toggle') { ui.askEach = !ui.askEach; ui.menu = ''; pendingFocus = 'menu:more'; toast(ui.askEach ? 'Worca asks before each task starts' : 'Each task starts by itself'); }
     else if (d.menuPick.startsWith('base:')) { ui.pr.base = d.menuPick.slice(5); ui.menu = ''; pendingFocus = 'menu:pdbase'; }
