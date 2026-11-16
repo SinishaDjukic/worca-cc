@@ -186,6 +186,7 @@ other library calls, never a person's text: a person's text goes through the lib
 | A state's words filled with the task's facts | `fill` | States |
 | Every state there is | `stateIds` | States |
 | The section of a list a state goes in | `sectionOf` | States |
+| Whether a run is still going, as a schedule's skip if still going counts it | `stillGoing` | States |
 | Whether a step is done | `isDone` | States |
 | A stage's state from its steps: live, done or next | `stageState` | States |
 | The one state that speaks for a stage's steps | `subState` | States |
