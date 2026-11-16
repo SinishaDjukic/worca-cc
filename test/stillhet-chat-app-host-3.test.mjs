@@ -5,24 +5,25 @@ import assert from 'node:assert/strict';
 import { LISTS, SOURCES, THREAD, clone, go, liveHost, posts, saidText, settle, toastText, until, withRun, closeHosts } from './helpers/stillhet-chat-live-host.mjs';
 
 afterEach(closeHosts);   // each test's window closes when the test ends
-// A feature's Figures need chat-live's own read of dev's run-groups (CL().feature, apart from the store's), then a repaint
-// on a frame; under CI's load that outruns any fixed wait, so these tests wait for what they check (null on time-out)
+// A RefChip needs dev's resolve answer and a redraw; a feature's Figures need chat-live's own read of dev's run-groups
+// (CL().feature, apart from the store's), then a repaint on a frame. Under CI's load either chain outruns a fixed wait and
+// until's 2 s default, so these tests wait up to 15 s for what they check (null on time-out, so the assertion names it)
 const seen = (fn) => until(fn, 15000).catch(() => null);
 test('panel.answer-refs (F-refchip): a run Worca names is a RefChip once dev confirms it, and it lands on the card in the chat that started it; an unconfirmed id stays words', async () => {
   const said = { thread: { id: 'ask_2', title: 'Writing' }, messages: [{ id: 'w1', role: 'assistant', status: 'done', text: 'It is the same as 0a1b2c3d, not 9f9f9f9f.', createdAt: THREAD.messages[0].createdAt, blocks: [] }], runLinks: [], inFlight: null };
   let release; const gate = new Promise((r) => { release = r; });
   const { w, d, calls } = await liveHost({ hold: (url) => (url === '/api/ask/refs/resolve' ? gate : null), thread: (url) => (url.endsWith('ask_2') ? [200, said] : [200, THREAD]), write: (url) => (url === '/api/ask/refs/resolve' ? [200, { refs: { 'run:0a1b2c3d': { ok: true, kind: 'run', id: 'pa', runId: 'run-a', title: 'Ask me', status: 'running' }, 'run:9f9f9f9f': { ok: false } } }] : [200, {}]) });
   await go(w, '#chat/ask_2');
-  assert.ok(await until(() => calls.some((c) => c.url === '/api/ask/refs/resolve')), 'dev\'s resolve is asked');
+  assert.ok(await seen(() => calls.some((c) => c.url === '/api/ask/refs/resolve')), 'dev\'s resolve is asked');
   const words = d.querySelector('#route-chat .convo-words');
   assert.equal(words.querySelector('[data-ref-run]'), null, 'no RefChip before dev confirms it');
   assert.match(words.textContent, /0a1b2c3d/, 'the run id stays words while dev\'s answer is held');
   release();
-  const chip = await until(() => d.querySelector('#route-chat .convo-words [data-ref-run]'));
+  const chip = await seen(() => d.querySelector('#route-chat .convo-words [data-ref-run]'));
   assert.ok(chip, 'a RefChip in Worca\'s words');
   assert.equal(chip.textContent, 'Ask me');
   assert.match(d.querySelector('#route-chat .convo-words').textContent, /not 9f9f9f9f\./, 'an unconfirmed id stays words');
-  chip.click(); await until(() => w.location.hash === '#chat/ask_1');
+  chip.click(); await seen(() => w.location.hash === '#chat/ask_1');
   assert.equal(w.location.hash, '#chat/ask_1', 'the chat that started it');
 });
 
