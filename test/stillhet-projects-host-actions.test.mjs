@@ -35,8 +35,9 @@ test('the bar lists dev\'s projects, seed-moved reads Folder missing; while the 
 
 test('every project-side pending label shows on its control, disabled, while dev answers, then the control rests', async () => {
   const held = new Map();
-  const hold = (u) => { for (const [k, g] of held) if (u.includes(k)) return g.p; return null; };
-  const h = await projectsHost({ hash: `#projects/${KEYS.behind}`, hold });
+  const hold = (u) => { for (const [k, g] of held) if (u.includes(k) && !u.includes('/probe?')) return g.p; return null; };   // COV-1: Add's probe is a read, never held here
+  const dirs = { path: '/src', parent: '/', home: '/home/me', dirs: [{ name: 'a', path: '/src/a' }, { name: 'b', path: '/src/b' }] };
+  const h = await projectsHost({ hash: `#projects/${KEYS.behind}`, hold, read: (u) => (u.startsWith('/api/fs/dirs') ? [200, dirs] : null) });
   noWould(h.w);
   // read from the table, not typed: every project-side action with a pending label is pressed below
   const PRESSED = new Set();
@@ -67,6 +68,9 @@ test('every project-side pending label shows on its control, disabled, while dev
   await press('defaults', `/api/projects/${KEYS.ok}/tags/defaults`, async () => { page(h.d).querySelector('[data-def-edit="labels"]').click(); await settle(30); h.d.getElementById('def-labels').value = 'billing'; page(h.d).querySelector('[data-def-edit="labels"]').click(); }, () => rowButton(h.d, 'Labels'));
   await go(h.w, '#projects', 150);
   await press('add', '/api/projects', async () => { h.w.RailPlaces.projects.newPick('hand-project'); await settle(100); page(h.d).querySelector('#pj-hand-v').value = '~/src/brand-new'; yes(h.d).click(); }, () => yes(h.d));
+  const way = async (w) => { h.w.RailPlaces.projects.newPick('hand-project'); await settle(100); page(h.d).querySelector(`[data-pa-way="${w}"]`).click(); await settle(60); };
+  await press('create', '/api/projects/create', async () => { await way('new'); page(h.d).querySelector('#pj-new-name').value = 'alpha'; yes(h.d).click(); }, () => yes(h.d));
+  await press('bulk', '/api/projects/bulk', async () => { await way('many'); yes(h.d).click(); await settle(120); for (const p of ['/src/a', '/src/b']) page(h.d).querySelector(`[data-fb-pick="${p}"]`).click(); page(h.d).querySelector('.fb [data-dialog="yes"]').click(); await settle(40); yes(h.d).click(); }, () => yes(h.d));
   const projectSide = Object.entries(PROJECT_ACTIONS).filter(([id, [, label]]) => label && !id.startsWith('space-') && !['scan', 'answer', 'open-editor', 'clone'].includes(id)).map(([id]) => id);
   assert.deepEqual(projectSide.filter((id) => !PRESSED.has(id)), [], 'every project-side pending label was pressed');
   assert.deepEqual(h.w.__would, []);
