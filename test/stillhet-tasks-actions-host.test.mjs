@@ -5,6 +5,8 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { liveHost, go, settle, closeHosts, clone, SOURCES, posts } from './helpers/stillhet-chat-live-host.mjs';
 import { TASK_DETAILS, PR_URL } from './helpers/stillhet-live-fixture.mjs';
+import { hostStorage } from './helpers/stillhet-host.mjs';
+hostStorage['worca-stillhet.card-layout'] = 'card';   // these read the task page's folds: Task details set to Inside the card
 
 afterEach(closeHosts);
 const DETAIL = { h3: TASK_DETAILS.failed, h2: TASK_DETAILS.approved, h5: TASK_DETAILS.failing, h1: TASK_DETAILS.capped };

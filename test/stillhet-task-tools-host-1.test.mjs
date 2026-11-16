@@ -6,6 +6,8 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { liveHost, go, settle, closeHosts, clone, SOURCES, posts, toastText } from './helpers/stillhet-chat-live-host.mjs';
 import { TASK_DETAILS, PR_URL } from './helpers/stillhet-live-fixture.mjs';
+import { hostStorage } from './helpers/stillhet-host.mjs';
+hostStorage['worca-stillhet.card-layout'] = 'card';   // these read the task page's folds: Task details set to Inside the card
 
 afterEach(closeHosts);
 const PATCH = ['diff --git a/src/pager.mjs b/src/pager.mjs', 'new file mode 100644', '--- /dev/null', '+++ b/src/pager.mjs', '@@ -0,0 +1,3 @@',

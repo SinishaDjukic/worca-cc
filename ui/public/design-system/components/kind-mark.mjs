@@ -7,7 +7,6 @@ import { statusLine } from './status-line.mjs';
 import { orbMark } from './orb.mjs';
 import { button, splitButton } from './button.mjs';
 import { trail } from './navigation.mjs';
-import { detailPanel } from './detail-panel.mjs';
 
 const STAGES = 5;
 const R = 9, L = 2 * Math.PI * R;
@@ -273,7 +272,6 @@ export function cardHead({ mark, kicker, kickerHtml = '', title = '', titleHtml 
 }
 
 /** What a card that asks shows (TaskCard's `asks`): a few lines of the review's result or the plan, each open decision by name, a way to the whole. */
-taskCard.detailPanel = detailPanel;   // until index.mjs exports it
 
 export function taskAsks({ label, lines = [], more = null, decisions = [] }) {
   const open = decisions.map((d) => `<li class="tc-ask-d">${kindMark({ kind: 'task', tone: 'ask', size: 16 })}${d.attrs ? `<button type="button" class="tc-ask-b"${attrs(d.attrs)}>${esc(d.text)}</button>` : `<span>${esc(d.text)}</span>`}</li>`).join('');

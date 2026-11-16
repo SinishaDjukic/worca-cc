@@ -506,63 +506,60 @@
     return `<div class="td-find" data-anchor="find-${u.id}">${R.turnRow({ mark: R.kindMark({ kind: 'task', tone: 'ask', size: 16 }), text: '<b>Confirm these findings</b> Review found them; what you confirm goes to its next cycle' })}<div class="set-rows">${F.map((f) => R.settingsRow({ name: f.sev, sentence: `${esc(f.text)} · ${R.shows('expert') ? R.textLink({ label: f.at, attrs: { 'data-fact': `page|${u.id}`, title: `Opens ${f.at} in its changes` } }) : esc(f.at)}`, end: `<span class="td-fx">${R.button({ label: f.state === 'confirmed' ? 'Confirmed' : 'Confirm', kind: 'quiet', attrs: { 'data-dl-find': `${u.id}|${f.id}|confirmed`, 'aria-pressed': String(f.state === 'confirmed') } })}${R.button({ label: f.state === 'dismissed' ? 'Dismissed' : 'Dismiss', kind: 'quiet', attrs: { 'data-dl-find': `${u.id}|${f.id}|dismissed`, 'aria-pressed': String(f.state === 'dismissed') } })}</span>` })).join('')}</div>
       ${R.field({ id: `dl-note-${u.id}`, label: 'Notes', quietLabel: true, value: u.depth.note || '', placeholder: 'Anything the next cycle should know (optional)', multiline: true, attrs: { 'data-dl-note': u.id } })}<div class="td-fx">${R.button({ label: n ? `Send ${n} to Review` : 'Send to Review', kind: 'primary', attrs: { 'data-dl-send': u.id, disabled: F.some((f) => !f.state) ? true : null, title: F.some((f) => !f.state) ? 'Confirm or dismiss each first' : 'Review starts its next cycle with them' } })}${F.some((f) => f.state !== 'confirmed') ? R.button({ label: 'Confirm all', kind: 'quiet', attrs: { 'data-dl-all': u.id } }) : ''}</div></div>`;
   }
-  function own(u, inPanel = false) {   // the task's own stages (panel.task-card: what it shows is this task's): done, the one it is on, still to come
+  function own(u, inPanel = false, bare = false) {   // the task's own stages (panel.task-card: what it shows is this task's): done, the one it is on, still to come
     const labels = labelsOf(u), k = Math.max(0, u.stage ?? 0), st2 = R.runState(RM.stateOf(u.case)), tn = R.markTone(st2), D = u.depth, v = dv[u.id] || {};
     const merged = endsDone(u, labels, tn);   // every stage done: merged, or a task with no PR stage that finished at its page's last stage
     const partsOf = (i) => { const s = D?.steps[i]; if (!s || (i > k && !merged)) return ''; const lines = D.log.filter((l) => l.s === i).length, arts = (s.arts || []).length; return (lines ? R.stagePart({ label: 'Log', says: `${lines} lines`, open: v.open === `${i}|log`, attrs: { 'data-dl-open': `${u.id}|${i}|log` } }) : '') + (arts ? R.stagePart({ label: 'Artifacts', says: String(arts), open: v.open === `${i}|arts`, attrs: { 'data-dl-open': `${u.id}|${i}|arts` } }) : ''); };
     const metaOf = (i, name) => (D?.steps[i] && (merged || i <= k) ? D.steps[i].meta : merged || i < k ? 'done' : i === k ? (u.detail || st2.word).replace(new RegExp(`^${name} · `), '') : '');
-    return `<div class="own-stages">${labels.map((name, i) => R.stageLine({ mark: merged || i < k ? R.stepDot({ dotCls: 'is-done', word: 'Done', icon: 'check' }) : i === k ? R.kindMark({ kind: 'task', tone: tn, stage: k, size: 16 }) : R.stepDot({ dotCls: 'is-future', word: 'Not yet', icon: '' }), label: i === k && D && !merged ? `${name} · now` : name, meta: metaOf(i, name), parts: D ? partsOf(i) : '', next: !merged && i > k, body: (i === k && tn === 'fail' && u.why ? u.why.map((w) => `<p class="cmd-s">${/^✗/.test(w) ? R.icon('alert', 13) : ''}${esc(w.replace(/^✗\s*/, ''))}</p>`).join('') : '') + (D ? depthBody(u, i) : '') + (D && i === k && !merged && !inPanel ? findingsHtml(u) : '') })).join('')}${R.shows('expert') && !inPanel ? R.textLink({ label: 'Open its full page', attrs: u.id ? { 'data-open-task-page': u.id } : { 'data-open-slice': `${u.case}|${u.title}`, 'data-open-slice-run': taskId(u) || null } }) : ''}</div>`;
+    return `<div class="own-stages">${labels.map((name, i) => R.stageLine({ mark: merged || i < k ? R.stepDot({ dotCls: 'is-done', word: 'Done', icon: 'check' }) : i === k ? R.kindMark({ kind: 'task', tone: tn, stage: k, size: 16 }) : R.stepDot({ dotCls: 'is-future', word: 'Not yet', icon: '' }), label: i === k && D && !merged ? `${name} · now` : name, meta: metaOf(i, name), parts: D && !bare ? partsOf(i) : '', next: !merged && i > k, body: (i === k && tn === 'fail' && u.why ? u.why.map((w) => `<p class="cmd-s">${/^✗/.test(w) ? R.icon('alert', 13) : ''}${esc(w.replace(/^✗\s*/, ''))}</p>`).join('') : '') + (D && !bare ? depthBody(u, i) : '') + (D && i === k && !merged && !inPanel ? findingsHtml(u) : '') })).join('')}${R.shows('expert') && !inPanel ? R.textLink({ label: 'Open its full page', attrs: u.id ? { 'data-open-task-page': u.id } : { 'data-open-slice': `${u.case}|${u.title}`, 'data-open-slice-run': taskId(u) || null } }) : ''}</div>`;
   }
   // ---- the detail panel (DetailPanel): what you open to investigate a task lives beside the chat, never in its card ----
   // The card keeps the state, the one action, one message, the train and the vitals. The Prototype corner's switch
   // (worca-stillhet.card-layout = 'card') brings the in-card layout back, to compare the two on the same tasks.
-  const sidePanel = () => { try { return localStorage.getItem('worca-stillhet.card-layout') !== 'card'; } catch (e) { return true; } };
-  window.addEventListener('stillhet-settings', () => { if (!root.hidden) paint(); });   // Settings › Appearance › Task details changed
-  const DP_KEY = 'worca-stillhet.detail-panel';
-  let dp = { task: '', tab: '', wide: false, last: '' };
-  try { const k = JSON.parse(localStorage.getItem(DP_KEY) || '{}'); dp.wide = !!k.wide; dp.last = k.tab || ''; } catch (e) { /* a private window: nothing remembered */ }
-  const dpKeep = () => { try { localStorage.setItem(DP_KEY, JSON.stringify({ wide: dp.wide, tab: dp.tab || dp.last })); } catch (e) { /* not kept */ } };
-  const dpModal = () => window.matchMedia?.('(max-width: 1024px)').matches || false;   // a sheet on a tablet, full screen on a phone: a dialog
-  const dpTabOf = (t) => { const tn = R.markTone(stOf(t)); return tn === 'fail' ? 'checks' : tn === 'ask' || tn === 'act' ? 'decisions' : tn === 'ok' || tn === 'merged' ? 'changes' : 'activity'; };
-  let dpFrom = '';   // the control that opened it: Escape and Close give the focus back to it
-  function dpOpen(id, tab, from) {
-    const t = taskOf(id); if (!t) return;
-    const to = tab || dp.last || dpTabOf(t);
-    if (dp.task === id && (dp.tab === to || !tab)) { dpClose(); return; }   // the same trigger again closes it
-    dp.task = id; dp.tab = to; dp.last = to; dpFrom = from || dpFrom; dpKeep(); menu = ''; paint();
-    root.querySelector('[data-dp-title]')?.focus();
-  }
-  function dpClose() {
-    if (!dp.task) return; dp.task = ''; paint();
-    const back = dpFrom && root.querySelector(`[data-dp-open="${CSS.escape(dpFrom)}"]`); dpFrom = ''; back?.focus();
-  }
+  // Its behaviour is the library's (R.detailPanelController): this page says only what a task is and where to paint it.
+  const dpTabOf = (t) => { const tn = R.markTone(stOf(t)); return tn === 'fail' ? 'checks' : tn === 'ask' || tn === 'act' ? 'decisions' : tn === 'ok' || tn === 'merged' ? 'changes' : 'steps'; };
+  const DP = R.detailPanelController({ root, host: () => root.querySelector(':scope > .convo > [data-detail]'), resolve: (id) => panelOf(id), repaint: () => { menu = ''; paint(); }, held: () => !!menu,
+    // a knot opens the log of its stage
+    point: (hit, id) => { const t = taskOf(id), st = hit.dataset.dpStage; if (!t || st == null || !t.depth) return false; const i = +st; if (!t.depth.log.some((l) => l.s === i) || dv[id]?.open === `${i}|log`) return false; dv[id] = { ...(dv[id] || {}), open: `${i}|log` }; return true; } });
+  const dp = DP.state, sidePanel = DP.sidePanel;
   // the card's one message, in Worca's words: what happened and what you can do, with the link that opens the panel there
   function cardMessage(t, tone, line, below) {
     const cs = String(t.case || ''), n = t.depth?.findings && !t.depth.sent ? t.depth.findings.length : 0, why = (t.why || []).map((w) => w.replace(/^✗\s*/, ''));
-    const link = (label, tab) => R.textLink({ label, attrs: { 'data-dp-open': `${t.id}|${tab}`, 'aria-expanded': String(dp.task === t.id && dp.tab === tab), title: 'Opens the details beside the chat' } });
+    const link = (label, tab) => R.textLink({ label, attrs: { 'data-dp-open': `${t.id}|${tab}`, 'aria-expanded': String(dp.id === t.id && dp.tab === tab), title: 'Opens the details beside the chat' } });
     const said = line ? `${esc(line.replace(/[.]$/, ''))}. ` : '';
     if (tone === 'fail') return `${said || 'It failed. '}${why[0] ? `${esc(why[0])}. ` : ''}Retry runs it again as it is. ${link('See what broke', 'checks')}`;
     if (n) return `${said}Review found ${n} ${n === 1 ? 'thing' : 'things'} for you to confirm before it goes on. ${link(`Open ${n === 1 ? 'the decision' : `the ${n} decisions`}`, 'decisions')}`;
-    if (tone === 'ask') return below ? `It waits for your answer: the question is under this card. ${link('What it has done so far', 'activity')}` : `${said || 'It waits for you. '}${link('Open the decision', 'decisions')}`;
+    if (tone === 'ask') return below ? `It waits for your answer: the question is under this card. ${link('What it has done so far', 'steps')}` : `${said || 'It waits for you. '}${link('Open the decision', 'decisions')}`;
     if (tone === 'act') return /^(plan|outline|clarify)/.test(cs) ? `${said}The plan waits for your OK: approve it, or ask for changes. ${link('Read the plan', 'decisions')}` : `${said}Accept the review as it is, or run another cycle. ${link('Read what the review found', 'decisions')}`;
     if (/^failing/.test(cs)) return `${said || 'Checks fail on its PR. '}Fix checks starts a short task on its branch. ${link('See the checks', 'checks')}`;
     if (/^(checks|round|pr)/.test(cs)) return `${said || 'Its PR is open. '}It goes on by itself when the checks and the review are in. ${link('See the checks', 'checks')}`;
     if (/^approved/.test(cs)) return `${said || 'Approved, and checks pass. '}Merge it when you are ready. ${link('See the changes', 'changes')}`;
-    if (tone === 'run') return `${said || 'It is working. '}Nothing needs you now. ${link('Follow its steps', 'activity')}`;
-    if (tone === 'pause') return `${said || 'It is paused. '}Nothing runs until you resume it. ${link('See where it stopped', 'activity')}`;
-    if (tone === 'stop') return `${said || 'Stopped. '}The branch and its changes stay. ${link('See how far it came', 'activity')}`;
+    if (tone === 'run') return `${said || 'It is working. '}Nothing needs you now. ${link('Follow its steps', 'steps')}`;
+    if (tone === 'pause') return `${said || 'It is paused. '}Nothing runs until you resume it. ${link('See where it stopped', 'steps')}`;
+    if (tone === 'stop') return `${said || 'Stopped. '}The branch and its changes stay. ${link('See how far it came', 'steps')}`;
     if (tone === 'merged') return `Merged into ${esc(LIVE() ? t.base || 'its base' : 'dev')}. Nothing is left to do. ${link('See what changed', 'changes')}`;
     if (tone === 'ok') return `${said || 'The work is done. '}Look at the changes, then open its PR. ${link('See the changes', 'changes')}`;
-    return `${said}${link('Open the details', 'activity')}`;
+    return `${said}${link('Open the details', 'steps')}`;
   }
   function dpBody(t, tab) {
     const tone = R.markTone(stOf(t)), why = (t.why || []), none = (s) => `<p class="dp-none">${esc(s)}</p>`;
-    if (tab === 'activity') return own(t, true);
+    if (tab === 'steps') return own(t, true, true);
+    if (tab === 'log') {   // one stage's log at a time, its artifacts under it
+      const D = t.depth, v = dv[t.id] || (dv[t.id] = {}), has = STAGES.map((_, i) => i).filter((i) => D.log.some((l) => l.s === i)), k = Math.max(0, t.stage ?? 0);
+      const [oi] = (v.open || '').split('|'), at = has.includes(+oi) && v.open ? +oi : has.includes(k) ? k : has[has.length - 1], keep = v.open;
+      const pick = `<div class="dp-pick"><span class="dp-pick-l">Step</span>${R.segmented({ label: 'Step', hook: 'dlstage', items: has.map((i) => ({ id: `${t.id}|${i}`, label: labelsOf(t)[i] || STAGES[i], pressed: i === at })) })}</div>`;
+      v.open = `${at}|log`; const log = depthBody(t, at); v.open = `${at}|arts`; const arts = (D.steps[at]?.arts || []).length ? depthBody(t, at) : ''; v.open = keep && +oi === at ? keep : `${at}|log`;
+      return pick + log + arts;
+    }
+    if (tab === 'cost') {
+      const D = t.depth, f = t.facts || {}, labels = labelsOf(t), rows = D ? D.steps.map((st, i) => (st?.meta ? R.listRow({ title: labels[i] || STAGES[i], endText: st.meta }) : '')).filter(Boolean) : [];
+      return `<p class="dp-lead">${esc([f.cost, f.time].filter(Boolean).join(' · '))}${f.cost ? ' so far' : ''}</p>${rows.length ? R.list({ groups: [{ title: 'By stage', rows }] }) : ''}`;
+    }
     if (tab === 'changes') {
       const files = t.depth?.changed || [], n = files.length || t.facts?.files || 0;
       if (!n) return none(tone === 'run' || tone === 'wait' ? 'No changes yet: they show here as soon as Build writes them.' : 'This task changed no files.');
       const whole = R.button({ label: 'Open the whole diff', kind: 'quiet', attrs: { 'data-view-diff': `${t.id}|`, title: 'Opens every file wide, side by side where it fits' } });
-      return `<p class="dp-lead">${n} ${n === 1 ? 'file' : 'files'} changed${t.branch ? ` on ${esc(t.branch)}` : ''}. A file opens its diff wide.</p>${files.length ? R.list({ groups: [{ title: 'Changed files', rows: files.map(([f, m]) => R.listRow({ title: f, meta: m, mark: R.kindMark({ kind: 'plugin', icon: 'file' }), open: { 'data-view-diff': `${t.id}|${f}`, title: `Opens the diff of ${f}` } })) }] }) : ''}<div class="dp-acts">${whole}</div>`;
+      return `<p class="dp-lead">${n} ${n === 1 ? 'file' : 'files'} changed${t.branch ? ` on ${esc(t.branch)}` : ''}. A file opens its diff wide.</p>${files.length ? R.list({ groups: [{ title: 'Changed files', rows: files.map(([f, m]) => R.listRow({ title: f, endText: m, mark: R.kindMark({ kind: 'plugin', icon: 'file' }), open: { 'data-view-diff': `${t.id}|${f}`, title: `Opens the diff of ${f}` } })) }] }) : ''}<div class="dp-acts">${whole}</div>`;
     }
     if (tab === 'decisions') {
       const find = findingsHtml(t), q = turns().find((y) => (y.t === 'question' && !y.answered) || (y.t === 'plan' && !y.approved));
@@ -577,26 +574,15 @@
     const G = { pass: 'Every check on its PR passes.', fail: 'A check on its PR fails.', open: 'Its PR is open; checks are running.', conflict: 'Its PR conflicts with its base.' };
     return none((/^(checks|failing|approved|round|pr)/.test(t.case) && G[t.git]) || (tone === 'merged' ? 'Every check passed before it merged.' : 'No PR yet: checks run once it is open. The tests of each step are in Activity.'));
   }
-  function panelHtml() {
-    const t = dp.task && taskOf(dp.task); if (!t || t.kind === 'schedule') { dp.task = ''; return ''; }
+  function panelOf(id) {
+    const t = taskOf(id); if (!t || t.kind === 'schedule') return null;
     const n = t.depth?.findings && !t.depth.sent ? t.depth.findings.length : 0, files = t.depth?.changed?.length || t.facts?.files || 0;
-    const modal = dpModal();
-    return (modal ? '<div class="dp-scrim" data-dp-close></div>' : '') + R.taskCard.detailPanel({ title: t.title, mark: taskMark(t, 16), word: R.needsReason(RM.stateOf(t.case)), tab: dp.tab, wide: dp.wide, modal,
-      tabs: [{ id: 'activity', label: 'Activity' }, { id: 'changes', label: 'Changes', count: files || '' }, { id: 'decisions', label: 'Decisions', count: n || '' }, { id: 'checks', label: 'Checks' }],
-      body: dpBody(t, dp.tab), foot: t.slice ? '' : R.button({ label: 'Open task', kind: 'quiet', attrs: { 'data-open-task-page': t.id, title: 'Its own page: every stage, its changes and its decisions' } }), hooks: { close: { 'data-dp-close': '' }, widen: { 'data-dp-widen': '' } }, attrs: { 'data-dp': t.id } });
+    const full = (tab) => !/^<p class="dp-none"/.test(dpBody(t, tab));   // a tab with nothing to show is left out
+    return { title: t.title, mark: taskMark(t, 16), word: R.needsReason(RM.stateOf(t.case)), tab: dpTabOf(t), body: (tab) => dpBody(t, tab),
+      tabs: R.detailTabs({ steps: true, log: !!t.depth?.log?.length, changes: files || false, checks: full('checks'), decisions: full('decisions') && (n || true), cost: !!(t.facts?.cost || t.facts?.time) }),
+      foot: t.slice ? '' : R.button({ label: 'Open task', kind: 'quiet', attrs: { 'data-open-task-page': t.id, title: 'Its own page: every stage, its changes and its decisions' } }) };
   }
-  let dpWas = '';
-  function paintPanel() {
-    const host = root.querySelector(':scope > .convo > [data-detail]'); if (!host) return;
-    const html = sidePanel() ? panelHtml() : ''; if (!sidePanel()) dp.task = '';
-    const frame = host.parentElement; frame.classList.toggle('has-detail', !!html); frame.classList.toggle('is-detail-wide', !!html && dp.wide);
-    if (html === dpWas && host.firstChild) return;
-    if (html && host.querySelector('.detail-panel') && !dpWas) { dpWas = html; const now = document.createElement('div'); now.innerHTML = html; if (now.innerHTML === host.innerHTML) return; }   // widened in place: nothing to redraw
-    const y = host.querySelector('.dp-body')?.scrollTop, same = host.querySelector('.detail-panel')?.dataset.dp === dp.task, hadFocus = host.contains(document.activeElement) && document.activeElement, key = hadFocus && (hadFocus.id ? `#${CSS.escape(hadFocus.id)}` : selOf(hadFocus));
-    host.innerHTML = html; dpWas = html;
-    if (same && y) { const b = host.querySelector('.dp-body'); if (b) b.scrollTop = y; }
-    if (hadFocus && !host.contains(document.activeElement)) (key && host.querySelector(key) || host.querySelector('[data-dp-title]'))?.focus();
-  }
+  const paintPanel = () => DP.paint();
   const schedWord = (t) => { const S = window.StillhetSchedules; return S?.find(t.id) ? [S.wordOf(t.id), S.nextOf(t.id)].filter(Boolean).join(' · ') : ''; };   // a schedule's own word and why, as its page and bar row say them
   const taskMark = (t, size) => (t.kind === 'schedule' ? R.kindMark({ kind: 'schedule', size, title: schedWord(t) || t.detail }) : R.kindMark({ kind: 'task', tone: R.markTone(stOf(t)), stage: t.stage, size, title: `${stOf(t).word} · ${t.detail || ''}` }));
   const gitOf = (t) => (t.git ? R.gitMark({ status: t.git, watch: t.watch || '', title: t.watch ? `Watching · ${t.detail}` : `${t.branch || ''}` }) : '');
@@ -997,7 +983,7 @@
       const slTone = (s) => (s.off ? 'idle' : R.markTone(R.runState(RM.stateOf(s.case))));   // a slice cancelled or stopped by you is over, whatever it was
       const rows = x.slices.map((sl, k) => R.turnRow({ mark: R.kindMark({ kind: 'task', tone: slTone(sl), stage: sl.stage, size: 16 }), text: `<b>${esc(sl.title)}</b> ${esc(sl.detail)}`,
         end: sidePanel()
-          ? R.button({ label: dp.task === `slice:${x.id}:${k}` ? `Close the details of ${sl.title}` : `Open the details of ${sl.title}`, kind: 'quiet', iconOnly: true, icon: R.icon('bar-show', 14), attrs: { 'data-dp-open': `slice:${x.id}:${k}|activity`, 'aria-expanded': String(dp.task === `slice:${x.id}:${k}`), title: 'Its stages, changes, decisions and checks, beside the chat' } })
+          ? R.button({ label: dp.id === `slice:${x.id}:${k}` ? `Close the details of ${sl.title}` : `Open the details of ${sl.title}`, kind: 'quiet', iconOnly: true, icon: R.icon('bar-show', 14), attrs: { 'data-dp-open': `slice:${x.id}:${k}|steps`, 'aria-expanded': String(dp.id === `slice:${x.id}:${k}`), title: 'Its stages, changes, decisions and checks, beside the chat' } })
           : R.button({ label: x.openSlice === k ? 'Hide its stages' : 'Show its stages', kind: 'quiet', icon: R.icon(x.openSlice === k ? 'chevron' : 'chevR', 12), attrs: { 'data-slice-open': `${x.id}|${k}`, 'aria-expanded': String(x.openSlice === k) } }) })).join('');
       const sl = sidePanel() ? null : x.slices[x.openSlice], sliceStream = sl ? R.turnRow({ mark: R.kindMark({ kind: 'task', tone: R.markTone(R.runState(RM.stateOf(sl.case))), stage: sl.stage, size: 16 }), text: `<b>${esc(sl.title)}</b> its stages`, end: R.button({ label: 'Hide its stages', kind: 'quiet', icon: R.icon('chevron', 12), attrs: { 'data-slice-open': `${x.id}|${x.openSlice}`, 'aria-expanded': 'true' } }), attrs: { 'data-slice-head': '' } }) + own(sl) : '';   // whose stages these are, from the slice itself
       if (x.split) {
@@ -1136,11 +1122,11 @@
     // the branch is written as on its page (WorkPlace): it loses its middle, never its end
     const where = t.branch ? R.workPlace({ branch: t.branch, base: LIVE() ? t.base || '' : 'dev' }) : LIVE() ? '' : '<span>into dev</span>';
     if (sidePanel()) {   // the slim card: state and action, one message, the train, the vitals; the rest is in the panel
-      const isOpen = dp.task === t.id, opens = (tab) => ({ 'data-dp-open': `${t.id}|${tab}`, 'aria-expanded': String(isOpen && dp.tab === tab) });
-      const f = t.facts, vit = [f?.time ? R.button({ label: f.time, kind: 'quiet', icon: R.icon('clock', 12), attrs: { ...opens('activity'), title: 'Time so far. Opens its steps' } }) : '', f?.cost ? R.button({ label: f.cost, kind: 'quiet', attrs: { ...opens('activity'), 'data-dp-vital': 'cost', title: 'Cost so far. Opens its steps, each with its cost' } }) : '', f?.files ? R.button({ label: `${f.files} ${f.files === 1 ? 'file' : 'files'} changed`, kind: 'quiet', attrs: { ...opens('changes'), 'data-dp-vital': 'files', title: 'Opens its changes' } }) : ''].join('');
+      const isOpen = dp.id === t.id, opens = (tab) => ({ 'data-dp-open': `${t.id}|${tab}`, 'aria-expanded': String(isOpen && dp.tab === tab) });
+      const f = t.facts, vit = [f?.time ? R.button({ label: f.time, kind: 'quiet', icon: R.icon('clock', 12), attrs: { ...opens('cost'), title: 'Time so far. Opens time and cost by stage' } }) : '', f?.cost ? R.button({ label: f.cost, kind: 'quiet', attrs: { ...opens('cost'), 'data-dp-vital': 'cost', title: 'Cost so far. Opens time and cost by stage' } }) : '', f?.files ? R.button({ label: `${f.files} ${f.files === 1 ? 'file' : 'files'} changed`, kind: 'quiet', attrs: { ...opens('changes'), 'data-dp-vital': 'files', title: 'Opens its changes' } }) : ''].join('');
       const details = R.button({ label: isOpen ? 'Close the details' : 'Open the details', kind: 'quiet', iconOnly: true, icon: R.icon('bar-show', 14), attrs: { 'data-dp-open': `${t.id}|`, 'aria-expanded': String(isOpen), title: isOpen ? 'Closes the details' : 'Activity, changes, decisions and checks, beside the chat' } });
       return R.taskCard({ slim: true, message: (LIVE() && prError.get(t.run || t.id) ? `${esc(prError.get(t.run || t.id))} ` : '') + cardMessage(t, tone, line, below), vitals: vit, from: t.followed ? 'Task · followed in this chat' : 'Task · started from this chat', titleAttrs: { 'data-open-task-page': t.id, title: `Open the page of ${t.title}` }, title: t.title, place: `${where}${gitOf(t)}${t.inGroup ? `<span>in ${esc(t.inGroup)}</span>` : ''}${(t.labels || []).map((l) => R.chip({ text: l })).join('')}`, mark: taskMark(t), word, action: main + second, trainEnd: details, menu: more,
-        stages: R.stageBar({ labels, stage: bar.stage, tone: bar.tone, step: bar.noStep ? null : LIVE() ? pg.step : t.step || R.stageStep(t.detail), key: t.id, does: 'open its details at this stage', knot: (i, l) => ({ 'data-dp-open': `${t.id}|activity`, 'data-dp-stage': String(i), title: `Open the details at ${l}` }) }), attrs: { 'data-anchor': x.id } }) + confirm + formHtml(t) + livePlanHtml(x, t) + liveAsksHtml(x, t) + askChanges(x) + directionHtml(x);
+        stages: R.stageBar({ labels, stage: bar.stage, tone: bar.tone, step: bar.noStep ? null : LIVE() ? pg.step : t.step || R.stageStep(t.detail), key: t.id, does: 'open its details at this stage', knot: (i, l) => ({ 'data-dp-open': `${t.id}|steps`, 'data-dp-stage': String(i), title: `Open the details at ${l}` }) }), attrs: { 'data-anchor': x.id } }) + confirm + formHtml(t) + livePlanHtml(x, t) + liveAsksHtml(x, t) + askChanges(x) + directionHtml(x);
     }
     return R.taskCard({ rows: x.open || asks?.lines.length ? '' : why, asks, from: t.followed ? 'Task · followed in this chat' : 'Task · started from this chat', titleAttrs: { 'data-open-task-page': t.id, title: `Open the page of ${t.title}` }, figures: facts + featFacts + changed, title: t.title, place: `${where}${gitOf(t)}${t.inGroup ? `<span>in ${esc(t.inGroup)}</span>` : ''}${(t.labels || []).map((l) => R.chip({ text: l })).join('')}`, mark: taskMark(t), word, detail: below ? '' : (LIVE() && prError.get(t.run || t.id)) || line, /* stillhet.one-place: the question below says what it asks */ action: main + second, menu: more, stages: R.stageBar({ labels, stage: bar.stage, tone: bar.tone, step: bar.noStep ? null : LIVE() ? pg.step : t.step || R.stageStep(t.detail), key: t.id, does: 'open the task at this stage', knot: (i, l) => ({ 'data-card-stage': `${t.id}|${l}`, title: `Open the task at ${l}` }) }), foot: R.button({ label: x.open ? 'Hide its stages' : 'Show its stages', kind: 'quiet', icon: R.icon(x.open ? 'chevron' : 'chevR', 12), attrs: { 'data-open-task': t.id, 'aria-expanded': String(!!x.open), title: x.open ? 'Folds its stages' : 'Opens its stages here, as its page has them' } }) + ((t.facts || ft) && !x.open ? R.figuresToggle({ card: true, open: !!x.figures, attrs: { 'data-figs': x.id } }) : ''), open: !!x.open, stream: own({ ...t, stage }), attrs: { 'data-anchor': x.id } }) + confirm + formHtml(t) + livePlanHtml(x, t) + liveAsksHtml(x, t) + askChanges(x) + directionHtml(x);
   }
@@ -1239,7 +1225,7 @@
       const fk = `${chatId}|${side ? 'side' : 'main'}|${st}`;
       let box = root.querySelector(':scope > .convo > .convo-scroll');
       if (fk !== frameKey || !box || !root.querySelector(':scope > .convo > .convo-dock')) {
-        root.innerHTML = '<div class="convo"><div class="convo-scroll"><div class="convo-col"></div></div><div data-timeline></div><div class="convo-dock"></div><div data-detail></div></div>'; dpWas = '';
+        root.innerHTML = '<div class="convo"><div class="convo-scroll"><div class="convo-col"></div></div><div data-timeline></div><div class="convo-dock"></div><div data-detail></div></div>';
         frameKey = fk; box = root.querySelector('.convo-scroll');
         box.addEventListener('scroll', paintTimeline, { passive: true });
       }
@@ -1689,16 +1675,10 @@
   root.addEventListener('click', (e) => {
     if (e.target.closest('#card')) return;   // inside an open card's stages: the task page answers its own clicks
     const on = (q) => e.target.closest(q); let hit;
-    if ((hit = on('[data-dp-close]'))) { dpClose(); return; }
-    if ((hit = on('[data-dp-widen]'))) { dp.wide = !dp.wide; dpKeep(); const p = hit.closest('.detail-panel'); p.classList.toggle('is-wide', dp.wide); p.parentElement.parentElement.classList.toggle('is-detail-wide', dp.wide); hit.setAttribute('aria-pressed', String(dp.wide)); hit.setAttribute('aria-label', dp.wide ? 'Narrow the panel' : 'Widen the panel'); hit.setAttribute('title', dp.wide ? 'Narrow the panel' : 'Widen the panel'); dpWas = ''; return; }   // the same control stays under the pointer and keeps the focus
-    if ((hit = on('.detail-panel [data-tab]'))) { dp.tab = dp.last = hit.dataset.tab; dpKeep(); paint(); root.querySelector(`#dp-tab-${dp.tab}`)?.focus(); return; }
-    if ((hit = on('[data-dp-log]'))) { const t = taskOf(hit.dataset.dpLog), D = t?.depth; if (D) { const k = Math.max(0, t.stage ?? 0), e2 = D.log.find((l) => l.s === k && l.lvl === 'error'); dv[t.id] = { ...(dv[t.id] || {}), open: `${k}|log`, mode: 'raw', cyc: e2 ? `cycle ${e2.c}` : '', who: '' }; dp.tab = dp.last = 'activity'; paint(); root.querySelector('.detail-panel .is-error, .detail-panel .td-body')?.scrollIntoView({ block: 'center' }); } return; }
-    if ((hit = on('[data-dp-goto]'))) { const id = hit.dataset.dpGoto; if (dpModal()) dpClose(); goTo(id); return; }
-    if ((hit = on('[data-dp-open]'))) {
-      const [id, tab] = hit.dataset.dpOpen.split('|'), t = taskOf(id), st = hit.dataset.dpStage;
-      if (t && st != null && t.depth) { const i = +st, has = t.depth.log.some((l) => l.s === i); if (has && !(dp.task === id && dp.tab === 'activity' && dv[id]?.open === `${i}|log`)) { dv[id] = { ...(dv[id] || {}), open: `${i}|log` }; if (dp.task === id && dp.tab === 'activity') { paint(); return; } } }
-      dpOpen(id, tab, hit.dataset.dpOpen); return;
-    }
+    if (DP.click(e)) return;
+    if ((hit = on('[data-dlstage]'))) { const [id, i] = hit.dataset.dlstage.split('|'); dv[id] = { ...(dv[id] || {}), open: `${i}|log`, art: 0 }; paint(); return; }   // the Log tab's step
+    if ((hit = on('[data-dp-log]'))) { const t = taskOf(hit.dataset.dpLog), D = t?.depth; if (D) { const k = Math.max(0, t.stage ?? 0), e2 = D.log.find((l) => l.s === k && l.lvl === 'error'); dv[t.id] = { ...(dv[t.id] || {}), open: `${k}|log`, mode: 'raw', cyc: e2 ? `cycle ${e2.c}` : '', who: '' }; DP.set(t.id, 'log'); paint(); root.querySelector('.detail-panel .is-error, .detail-panel .td-body')?.scrollIntoView({ block: 'center' }); } return; }
+    if ((hit = on('[data-dp-goto]'))) { const id = hit.dataset.dpGoto; if (DP.modal()) DP.close(); goTo(id); return; }
     if (on('[data-pc-improve-open]')) { e.preventDefault(); pcImprove(); return; }
     if ((hit = on('.spick [data-menu-sub]:not([aria-disabled="true"])'))) { menuSub = hit.dataset.menuSub; paint(); return; }   // a maker opens in place; the back row returns (comp.menu-sub)
     if (LIVE() && liveClick(e, on)) return;
@@ -1868,7 +1848,7 @@
       if (px.workflow === 'Shaper' && t.case !== 'scheduled') { const k = Date.now().toString(36); l.splice(i + 1, 0, { t: 'words', html: 'A few questions before the plan:' }, { t: 'question', id: `q1${k}`, text: `A · For “${clip(px.title, 48)}”, what matters most?`, options: ['The smallest change that works', 'Configurable from the start'], pick: 0, many: `q2${k}`, shaper: px.id, when: 'now' }, { t: 'question', id: `q2${k}`, text: 'B · How should it reach people?', options: [(px.persp || []).includes('Security') ? 'Behind a flag, after a security review' : 'Behind a flag first', 'To everyone at once'], pick: 0, shaper: px.id, when: 'now' }); }
       window.StillhetChats.refresh(); paint(); say(t.case === 'scheduled' ? `Scheduled: starts ${px.when}` : px.workflow === 'Shaper' ? 'Planning started' : 'Task started'); return;
     }
-    if ((hit = on('[data-open-task]'))) { const all = turns(), x = all.find((y) => y.task === hit.dataset.openTask && (y.t === 'task' || y.t === 'schedule')); if (x) { const was = x.open; all.forEach((y) => { y.open = false; y.openSlice = -1; }); x.open = !was; paint(); if (x.open) requestAnimationFrame(() => root.querySelector(`[data-anchor="${x.id}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })); } return; }   // How it ran opens the card in place, one at a time
+    if ((hit = on('[data-open-task]'))) { const all = turns(), x = all.find((y) => y.task === hit.dataset.openTask && (y.t === 'task' || y.t === 'schedule')); if (x && x.t === 'schedule' && sidePanel()) { window.StillhetShell.go(`schedule/${x.task}`); return; }   /* panel.detail-where: with the side panel a schedule's card opens its page */ if (x) { const was = x.open; all.forEach((y) => { y.open = false; y.openSlice = -1; }); x.open = !was; paint(); if (x.open) requestAnimationFrame(() => root.querySelector(`[data-anchor="${x.id}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })); } return; }   // How it ran opens the card in place, one at a time
     if ((hit = on('[data-open-sched]'))) { window.StillhetShell.go(`schedule/${hit.dataset.openSched}`); return; }   // its runs, by day
     if ((hit = on('[data-start-now]'))) { const t = taskOf(hit.dataset.startNow); if (t) { t.case = 'starting'; t.stage = 0; t.detail = 'Plan is under way'; put(chat(), t); window.StillhetChats.refresh(); paint(); say('Started now'); } return; }
     if ((hit = on('[data-cancel-task]'))) { const t = taskOf(hit.dataset.cancelTask); if (t) { t.cancelled = true; paint(); say('Cancelled'); } return; }
@@ -1956,7 +1936,6 @@
   root.addEventListener('keydown', (e) => R.menuKeys(e, { openSub: (id) => { menuSub = id; paint(); }, closeSub: () => { menuSub = ''; paint(); } }));   // a picker's keys (comp.menu-sub), before Enter-to-send
   root.addEventListener('keydown', (e) => { if (e.target.matches('[data-composer-t]') && e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
   root.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.matches('[data-card-form] input')) { e.preventDefault(); e.target.closest('[data-card-form]').querySelector('[data-confirm="yes"]')?.click(); } });   // a form under a card: Enter is its action
-  document.addEventListener('keydown', (e) => { if (e.key !== 'Escape' || !dp.task || menu || e.defaultPrevented || root.hidden || !root.isConnected || document.querySelector('dialog[open], .menu')) return; if (!dpModal() && !root.contains(e.target) && e.target !== document.body) return; e.preventDefault(); dpClose(); });   // Esc closes the detail panel and gives the focus back to what opened it
   document.addEventListener('keydown', (e) => {
     if (side || opts.where || (e.key !== '[' && e.key !== ']') || root.hidden || e.target.matches?.('input, textarea, select')) return;
     const list = ticks(); if (!list.length) return;

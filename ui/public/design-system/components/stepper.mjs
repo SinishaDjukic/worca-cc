@@ -29,6 +29,7 @@ export const stepDot = ({ dotCls, word, icon: name, size = 10 }) => `<span class
  * @param {string} r.name
  * @param {string} r.rowCls, r.dotCls, r.icon, r.word   the step's look (stepLook)
  * @param {string} [r.ref]      opens the step in Activity
+ * @param {string} [r.refIn]    where its name leads, for its tooltip: Activity (the default), Log
  * @param {string} [r.akey]     the step's key in Activity, when it can take the focus
  * @param {string} [r.time]
  * @param {number} [r.loops]
@@ -44,7 +45,7 @@ export const stepDot = ({ dotCls, word, icon: name, size = 10 }) => `<span class
  * @param {string} [o.below]    what sits under the row (its evidence)
  */
 export function stepRow(r, { full = false, action = '', below = '' } = {}) {
-  const name = r.ref ? `<button type="button" class="sc-step rd-route-name sc-name" data-ref="${esc(r.ref)}" data-key="ref:${esc(r.ref)}" title="Open ${esc(r.name)} in Activity">${esc(r.name)}</button>`
+  const name = r.ref ? `<button type="button" class="sc-step rd-route-name sc-name" data-ref="${esc(r.ref)}" data-key="ref:${esc(r.ref)}" title="Open ${esc(r.name)} in ${esc(r.refIn || 'Activity')}">${esc(r.name)}</button>`
     : `<span class="rd-route-name sc-name" title="${esc(r.name)}"${r.akey ? ` tabindex="-1" data-key="act:${esc(r.akey)}"` : ''}>${esc(r.name)}</span>`;
   const loopIcon = icon('refresh', 11);
   const loops = !r.loops ? '' : r.roundsKey ? `<button type="button" class="sc-loop is-btn" aria-expanded="${!!r.roundsOpen}" data-rounds="${esc(r.roundsKey)}" data-key="rounds:${esc(r.roundsKey)}" title="${r.roundsOpen ? 'Hide' : 'Show'} the ${r.loops} rounds">${loopIcon}${r.loops}</button>`

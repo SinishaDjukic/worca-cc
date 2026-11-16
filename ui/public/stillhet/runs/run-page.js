@@ -307,7 +307,8 @@ function logsHtml(v) {
   const q = L.q.trim().toLowerCase(); const summaries = R.prefs.flag('commandSummaries'); const raw = !summaries || L.raw;
   const lines = v.logs.filter((l) => fs.every((f) => { const want = L[f.state || f.key]; return want === 'all' || String(l[f.key]) === want; }) && (!q || (l.sum + ' ' + l.raw).toLowerCase().includes(q)));
   const expert = R.runPartShows('logFilters', R.prefs.mode());
-  const sentence = expert ? `<div class="rl-sentence">Showing ${fs.map((f) => { const cur = L[f.state || f.key]; return R.sentencePicker({ id: f.id, text: cur === 'all' ? f.all : (f.key === 'cycle' ? 'cycle ' + cur : cur), open: ui.menu === f.id, chevron: svg('chevron', 12), items: [{ id: 'all', text: f.all, checked: cur === 'all' }].concat(f.vals.map((x) => ({ id: x, text: f.key === 'cycle' ? 'cycle ' + x : x, checked: cur === x }))) }); }).join(' · ')}</div>` : '';
+  const shown = expert ? fs : side() ? fs.filter((f) => f.key === 'step') : [];   // in the panel's Log tab the step is always picked at its top
+  const sentence = shown.length ? `<div class="rl-sentence">${expert ? 'Showing' : 'Step'} ${shown.map((f) => { const cur = L[f.state || f.key]; return R.sentencePicker({ id: f.id, text: cur === 'all' ? f.all : (f.key === 'cycle' ? 'cycle ' + cur : cur), open: ui.menu === f.id, chevron: svg('chevron', 12), items: [{ id: 'all', text: f.all, checked: cur === 'all' }].concat(f.vals.map((x) => ({ id: x, text: f.key === 'cycle' ? 'cycle ' + x : x, checked: cur === x }))) }); }).join(' · ')}</div>` : '';
   const list = lines.length ? R.logLines({ label: 'Log', lines: lines.map((l) => ({ t: l.t, from: l.step, lvl: l.lvl, text: raw ? l.raw : l.sum })) }) : R.emptyState({ title: 'Nothing in the log matches', text: 'Change the filters or the search.' });
   return `<section class="rtab rl-sec" id="act-logs"><h2 class="rtab-h">Logs <span class="n">${lines.length} of ${v.logs.length} lines</span></h2>${sentence}
     <div class="rl-tools">${R.field({ id: 'log-q', label: 'Search the log', value: L.q, attrs: { 'data-key': 'log-q' } })}${summaries ? R.segmented({ label: 'Show', hook: 'logview', items: [{ id: 'sum', label: 'Summaries', pressed: !L.raw }, { id: 'raw', label: 'Raw', pressed: L.raw }] }) : ''}${v.bar.stop ? R.checkbox({ label: 'Auto-scroll', checked: L.follow, attrs: { id: 'log-follow', 'data-key': 'log-follow' } }) : ''}${R.button({ label: 'Copy', kind: 'quiet', attrs: LIVE_PAGE() ? { 'data-key': 'log-copy', 'data-copy': lines.map((l) => [l.t, l.step, raw ? l.raw : l.sum].filter(Boolean).join(' ')).join('\n') } : { 'data-key': 'log-copy', 'data-say': window.StillhetWould(`copy ${lines.length} log lines`) } })}</div>${list}</section>`;
@@ -408,19 +409,19 @@ function decisionsPanel(v) {
   return `<section class="rtab"><div class="ch-head"><h2 class="rtab-h">${ds.length ? ds.length + (ds.length === 1 ? ' decision' : ' decisions') : 'Nothing decided yet'}</h2><span class="rtab-dim">${esc(sum)}</span></div>
     <ol class="rd-route-list dc-list">${waiting}${ds.map((x) => R.row({ kind: 'route', cls: 'is-done', rail: R.stepDot({ dotCls: 'dc-who is-' + x.who, word: WHO[x.who] || x.by, icon: ICON_WHO[x.who] || ICON_WHO.you, size: 11 }), text: `<div class="dc-body"><p class="rtab-q">${esc(x.q)}</p><p class="dc-a">${esc(x.a)}</p><p class="rtab-dim">${esc([x.step, WHO[x.who] || x.by, x.note, x.when].filter(Boolean).join(' · '))}</p></div>` })).join('')}</ol></section>`;
 }
-function panelHtml(v) {
-  const t = v.tabs.find((x) => x.sel) || v.tabs[0]; const id = t.id;
+function panelHtml(v, part) {
+  const t = (part && v.tabs.find((x) => x.id === part)) || v.tabs.find((x) => x.sel) || v.tabs[0]; const id = t.id;
   // a part that cannot be drawn says so in its own place; the rest of the page keeps working
   if (ui.broken) return R.emptyState({ title: R.failureOf(`Show the ${t.l.toLowerCase()}`).title, text: 'Something went wrong here. The rest of the page still works.', error: true,
     actions: R.button({ label: 'Reload this part', kind: 'quiet', attrs: { 'data-fixpart': true, 'data-key': 'fix-part' } }) + unlessLive(R.button({ label: 'Details', kind: 'quiet', attrs: { 'data-say': DETAILS, 'data-key': 'part-details' } })) });
   return ({ summary: summaryPanel, changes: changesPanel, activity: activityPanel, decisions: decisionsPanel })[id](v);
 }
 function figHtml(f, v) {
-  if (f.k === 'Cost' && v) {
+  if (f.k === 'Cost' && v && !f.tab) {
     const html = R.figureBreakdown({ label: 'Cost by stage', rows: v.activity.filter((st) => st.meta).map((st) => [st.label, st.meta]), total: f.v, help: `${f.title || ''}. Each step’s cost and model are in Activity.` });
     return R.figure({ k: f.k, v: f.v, of: f.of, warn: f.warn, title: f.title || '', pop: { open: ui.menu === 'cost', html, attrs: { 'data-menu': 'cost', 'data-key': 'menu:cost' } } });
   }
-  if (f.tab) return R.figure({ k: f.k, v: f.v, tab: f.tab, title: 'Open Changes', current: ui.tab === f.tab });
+  if (f.tab) return R.figure({ k: f.k, v: f.v, tab: f.tab, title: 'Open ' + (f.tab === 'cost' ? 'Cost' : 'Changes'), current: ui.tab === f.tab });
   return R.figure({ k: f.k, v: f.v, of: f.of, warn: f.warn, title: f.title });
 }
 
@@ -429,6 +430,10 @@ function render() {
   const keep = pendingFocus || document.activeElement?.dataset?.key || '';
   pendingFocus = '';
   const v = M.view(ui.caseId, ui);
+  // Task details in the side panel (panel.detail-where): nothing folds open in the column; the panel follows ui.tab
+  const inSide = side();
+  if (DP) { if (inSide && ui.tab === 'activity') ui.tab = 'steps'; const want = inSide && PARTS.includes(ui.tab) ? ui.tab : ''; if (inSide) ui.stageShut = false; DP.set(want ? dpId(v) : '', want); }
+  const vh = inSide && (ui.open || ui.tab) ? M.view(ui.caseId, Object.assign({}, ui, { open: null, tab: '' })) : v;   // the column stays on the stage that is live, whatever the panel points at
   logsGone = v.has.logsGone;
   const a0 = v.action && LIVE_PAGE() ? liveAction(v, v.action) : v.action;
   // the page keeps what answers the state it shows: a gate's two answers (Accept as is, Run another cycle) sit side by side.
@@ -482,13 +487,6 @@ function render() {
   const fromLine = !SHELL || v.kind ? '' : fromChat
     ? `<p class="rc-from"><span>Started from the chat <b>${esc(fromName || 'of this task')}</b></span>${R.button({ label: 'Open the chat', kind: 'quiet', attrs: { 'data-from-chat': fromChat, 'data-key': 'from-chat', title: 'Its questions and what you said are there' } })}${v.runAfter || startsNew ? R.textLink({ label: 'Start a follow-up in its chat', attrs: { 'data-from-chat': fromChat, 'data-key': 'from-follow', title: 'New work from this task starts on its card, in its chat' } }) : ''}</p>`
     : `<p class="rc-from"><span>Started from New task</span>${R.button({ label: 'Ask about it in chat', kind: 'quiet', attrs: { 'data-from-ask': '1', 'data-key': 'from-ask', title: 'Starts a chat about this task' } })}${v.runAfter || startsNew ? R.textLink({ label: 'Start a follow-up in Chat', attrs: { 'data-from-ask': 'follow', 'data-key': 'from-follow', title: 'New work from this task starts in a chat about it' } }) : ''}</p>`;
-  const enter = o.key !== lastOpen; lastOpen = o.key;   // the steps fade in only when another stage opens, never on a repaint
-  const head = o.isRun ? `<div class="sc-head"><span class="sc-run" title="${esc(o.title)}">${esc(o.title)}</span>${v.independent ? R.chip({ text: 'Independent', title: 'It does not start from another task’s branch' }) : ''}${o.meta ? `<span class="rtab-dim sc-run-cost">${esc(o.meta)}</span>` : ''}${o.canOpen && !(a && a.label === 'Open task ' + (o.runIndex + 1)) ? `${R.button({ label: 'Open task', kind: 'quiet', attrs: { 'data-open-run': o.runIndex, 'data-key': 'open-run' } })}` : v.bar.stop ? R.button({ label: 'Re-plan from here', kind: 'quiet', title: 'The planner re-cuts this task and the ones after it', attrs: { 'data-replan': o.runIndex, 'data-key': 'replan' } }) : ''}</div>`
-    : v.planHead ? `<div class="sc-head"><span class="sc-run">How the work was cut into tasks</span>${R.button({ label: 'Open the plan', kind: 'quiet', attrs: { 'data-key': 'open-plan', 'data-doc': 0 } })}</div>` : '';
-  // the next task of a group, under the task it follows: starts by itself, or asks first
-  const then = v.then ? `<div class="sc-then">Then <b title="${esc(v.then.title)}">Run ${v.then.n} · ${esc(v.then.title)}</b>${wordPick('then', ui.askEach ? 'asks me first' : 'starts by itself', `When task ${v.then.n} starts`, [{ id: 'group:go', text: 'Starts by itself', checked: !ui.askEach, help: 'Each task starts when the one before it is ready' }, { id: 'group:ask', text: 'Asks me first', checked: !!ui.askEach, help: 'Stops for your OK before the next task starts' }], 'pd-ship')}</div>` : '';
-  const ask = v.ask && o.rows.some((r) => /is-ask/.test(r.rowCls)) ? answerHtml(v.ask) : v.under && o.rows.some((r) => /is-ask/.test(r.rowCls)) ? underHtml(v.under) : '';
-  const panel = o.stack ? stackHtml(Object.assign({}, o.stack, { enter })) + (v.under && v.id === 'outline' ? `<div class="sc-then">${esc(v.under.roles.length + ' roles reviewed the split · ' + (ui.fixed.outline ? 'no open issues' : '1 open issue'))}</div>` : '') : `<ol class="rd-route-list sc-subs${enter ? ' is-enter' : ''}" aria-label="${esc(o.label)} steps" style="grid-column:1 / -1">${o.rows.map((r) => rowHtml(r) + (/is-ask/.test(r.rowCls) ? ask : '')).join('')}</ol>`;
   const sel = (v.tabs.find((t) => t.sel) || v.tabs[0]).id;
 
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
@@ -500,18 +498,20 @@ function render() {
     <section class="rc-card" aria-label="Task status">
       ${R.statusLine({ dot: statusDot(v), word: v.word, action, detail: v.detail })}${directionHtml()}${SHELL ? stripHtml(v) : ''}${SHELL && v.over.focus?.kind === 'broke' ? `<div class="rc-broke">${focusHtml(v)}</div>` : ''}
       ${SHELL ? `<div class="rc-train">${stageBarOf(v)}</div>` : `<div class="rc-zone"><div class="rc-span">${R.stepper({ stages: v.stages, deepen: '' })}</div></div>`}
-      ${SHELL ? stageStream(v, `${head}${panel}${then}`) : `<div class="rc-zone is-ruled" role="tabpanel" id="stage-panel" aria-labelledby="st-${o.key}">${head}${panel}${then}</div>`}
-      <div class="rc-zone is-ruled">${R.figures((SHELL ? v.figs.filter((f) => f.k !== 'Changes') : v.figs).map((f) => figHtml(f, v)))}</div>
+      ${SHELL ? (inSide ? sideEntries(v, openStage(vh, a, 'ask')) : stageStream(v, openStage(v, a))) : `<div class="rc-zone is-ruled" role="tabpanel" id="stage-panel" aria-labelledby="st-${o.key}">${openStage(v, a)}</div>`}
+      <div class="rc-zone is-ruled">${R.figures((SHELL && !inSide ? v.figs.filter((f) => f.k !== 'Changes') : v.figs).map((f) => figHtml(inSide && /^(Time|Cost)$/.test(f.k) && v.tabs.some((t) => t.id === 'activity') ? Object.assign({}, f, { tab: 'cost' }) : f, v)))}</div>
     </section>
     ${SHELL ? '' : R.tabs({ label: 'Run detail', controls: 'rtab-panel', cls: 'rc-tabs', items: v.tabs.map((t) => ({ id: t.id, label: t.l, count: t.n, selected: t.sel })) })}
     ${prDialogHtml(v)}${viewDialogHtml(v)}${formDialogHtml()}
     ${R.toast({ text: ui.toast || '' })}
-    ${SHELL ? (sel === v.tabs[0].id ? `<div class="rtab-panel" role="region" id="rtab-panel" aria-label="${esc(v.tabs[0].l)}" tabindex="-1">${panelHtml(v)}</div>` : '') : `<div class="rtab-panel" role="tabpanel" id="rtab-panel" aria-labelledby="tab-${sel}" tabindex="-1">${panelHtml(v)}</div>`}
+    ${SHELL ? (inSide || sel === v.tabs[0].id ? `<div class="rtab-panel" role="region" id="rtab-panel" aria-label="${esc(v.tabs[0].l)}" tabindex="-1">${panelHtml(vh, v.tabs[0].id)}</div>` : '') : `<div class="rtab-panel" role="tabpanel" id="rtab-panel" aria-labelledby="tab-${sel}" tabindex="-1">${panelHtml(v)}</div>`}
     ${ui.crash ? R.errorToast({ title: 'Something went wrong', text: 'Worca hit an error it did not expect. Your tasks keep going.', icon: svg('alert', 15), count: ui.crash.n,
     actions: R.button({ label: 'Reload', attrs: { 'data-crash': 'reload', 'data-key': 'crash-reload' } }) + unlessLive(R.button({ label: 'Copy details', kind: 'quiet', attrs: { 'data-say': DETAILS, 'data-key': 'crash-details' } })),
     close: R.button({ label: 'Close', kind: 'quiet', iconOnly: true, title: false, icon: svg('x', 14), attrs: { 'data-crash': 'close', 'data-key': 'crash-close' } }) }) : ''}
   </div>`, { motion: !jump });
   jump = false;
+  DP?.paint();
+  if (pointed) { pointed = false; BOARD.querySelector('.detail-panel .is-pointed')?.scrollIntoView({ block: 'start' }); }
 
   if (scroller.scrollTop !== keepY) scroller.scrollTop = keepY;   // nothing moves by itself: a repaint never scrolls the page
   R.fitTags(document);
@@ -530,6 +530,88 @@ const PART_STAGE = { decisions: 'plan', changes: 'build', activity: 'review' };
 // What a part holds, said before it opens: the files and lines, the decisions and the one open, the steps.
 // a task that ended adds no steps (a failed one only through a restart, which makes it run again); idle is also an unknown state's tone, so it keeps "so far"
 const ENDED = ['done', 'ok', 'merged', 'stop', 'closed', 'fail'];
+// The open stage's steps: its head (a member's name), its steps with the question answered under the step that asks,
+// and what comes next. `only`: 'ask' the asking step and its answer alone (the column, with the side panel);
+// 'steps' the steps without the answer (the panel: the answer stays in the column).
+function openStage(v, a, only = '') {
+  const o = v.open;
+  const enter = !only && o.key !== lastOpen; if (!only) lastOpen = o.key;   // the steps fade in only when another stage opens, never on a repaint
+  const head = o.isRun ? `<div class="sc-head"><span class="sc-run" title="${esc(o.title)}">${esc(o.title)}</span>${v.independent ? R.chip({ text: 'Independent', title: 'It does not start from another task’s branch' }) : ''}${o.meta ? `<span class="rtab-dim sc-run-cost">${esc(o.meta)}</span>` : ''}${o.canOpen && !(a && a.label === 'Open task ' + (o.runIndex + 1)) ? `${R.button({ label: 'Open task', kind: 'quiet', attrs: { 'data-open-run': o.runIndex, 'data-key': 'open-run' } })}` : v.bar.stop ? R.button({ label: 'Re-plan from here', kind: 'quiet', title: 'The planner re-cuts this task and the ones after it', attrs: { 'data-replan': o.runIndex, 'data-key': 'replan' } }) : ''}</div>`
+    : v.planHead ? `<div class="sc-head"><span class="sc-run">How the work was cut into tasks</span>${R.button({ label: 'Open the plan', kind: 'quiet', attrs: { 'data-key': 'open-plan', 'data-doc': 0 } })}</div>` : '';
+  // the next task of a group, under the task it follows: starts by itself, or asks first
+  const then = v.then ? `<div class="sc-then">Then <b title="${esc(v.then.title)}">Run ${v.then.n} · ${esc(v.then.title)}</b>${wordPick('then', ui.askEach ? 'asks me first' : 'starts by itself', `When task ${v.then.n} starts`, [{ id: 'group:go', text: 'Starts by itself', checked: !ui.askEach, help: 'Each task starts when the one before it is ready' }, { id: 'group:ask', text: 'Asks me first', checked: !!ui.askEach, help: 'Stops for your OK before the next task starts' }], 'pd-ship')}</div>` : '';
+  const asks = (r) => /is-ask/.test(r.rowCls);
+  const ask = only === 'steps' ? '' : v.ask && o.rows.some(asks) ? answerHtml(v.ask) : v.under && o.rows.some(asks) ? underHtml(v.under) : '';
+  if (only === 'head') return `${head}${o.stack ? stackHtml(Object.assign({}, o.stack, { enter: false })) : ''}${then}`;
+  if (only === 'ask') return ask && !o.stack ? `<ol class="rd-route-list sc-subs" aria-label="${esc(o.label)}: what it asks" style="grid-column:1 / -1">${o.rows.filter(asks).map((r) => rowHtml(r) + ask).join('')}</ol>` : '';
+  const panel = o.stack ? stackHtml(Object.assign({}, o.stack, { enter })) + (v.under && v.id === 'outline' ? `<div class="sc-then">${esc(v.under.roles.length + ' roles reviewed the split · ' + (ui.fixed.outline ? 'no open issues' : '1 open issue'))}</div>` : '') : `<ol class="rd-route-list sc-subs${enter ? ' is-enter' : ''}" aria-label="${esc(o.label)} steps" style="grid-column:1 / -1">${o.rows.map((r) => rowHtml(r) + (asks(r) ? ask : '')).join('')}</ol>`;
+  return `${head}${panel}${then}`;
+}
+// ---- the detail panel beside the page (panel.detail-panel, panel.detail-where): its behaviour is the library's ----
+// With Task details on Side panel the column keeps the head, the state, the train, what it asks and the figures; the
+// stage's steps and the parts (Activity, Changes, Decisions) open in the one panel, from a knot, a figure or a part's row.
+const BOARD = SHELL ? document.getElementById('route-run') : null;
+const PARTS = R.DETAIL_TABS.map(([id]) => id);   // the panel's tabs, the library's set and order
+let pointed = false;   // a knot was pressed: its stage is scrolled to in Steps
+const dpId = (v) => `st:${v.open.key}`;   // the stage (on a feature: the member) the panel follows
+const DP = BOARD ? R.detailPanelController({ root: BOARD, resolve: () => detailOf(), repaint: () => render(), held: () => !!(ui.menu || ui.dialog || ui.confirm),
+  host: () => BOARD.querySelector(':scope > [data-detail]') || BOARD.appendChild(Object.assign(document.createElement('div'), { innerHTML: '<div data-detail data-run-tools></div>' }).firstChild),
+  changed: (s) => { ui.tab = s.id ? s.tab : ''; ui.menu = ''; },
+  point: (hit) => { const k = hit.dataset.dpStage; if (k) { ui.open = k; ui.stageShut = false; pointed = true; } } }) : null;
+const side = () => !!DP && DP.sidePanel() && document.getElementById('card')?.parentElement === BOARD;   // lent to a chat's card it keeps its folds
+const begun = (r) => !/\bis-next\b/.test(r.rowCls), troubled = (r) => /is-(ask|problem|failed)/.test(r.rowCls);
+// Steps: the stages as one list on the rail, each step once, a line each; a step's name opens it in Log
+function stepsTab(v, a) {
+  const any = v.activity.some((st) => st.rows.some(troubled)), only = any && ui.actFilter === 'problems';
+  const seg = any ? `<div class="rtab-bar">${R.segmented({ label: 'Show', hook: 'filter', items: [{ id: 'all', label: 'All steps', pressed: !only }, { id: 'problems', label: 'Problems and questions', pressed: only }] })}</div>` : '';
+  const logs = logsShow() && !logsGone;
+  const rows = v.activity.map((st) => {
+    const steps = st.rows.filter((r) => !only || troubled(r)); if (only && !steps.length) return '';
+    const at = st.key === v.open.key;
+    return `<li class="sc-stage-row${at ? ' is-pointed' : ''}"${at ? ' aria-current="step"' : ''}><h2 class="rtab-h">${esc(st.label)}${st.title ? ' · ' + esc(st.title) : ''}</h2></li>` + steps.map((r) => {
+      const name = st.label.startsWith('Task ') ? st.label + ' · ' + r.name : r.name;
+      const ev = r.evidence ? `<div class="rtab-ev"><p class="rtab-ev-t">${esc(r.evidence.title)}</p><pre class="rtab-ev-l">${r.evidence.lines.map(esc).join('\n')}</pre></div>` : '';
+      return R.stepRow(Object.assign({}, r, { ref: logs && begun(r) ? 'log:' + name : '', refIn: 'Log', akey: '' }), { below: ev });
+    }).join('');
+  }).join('');
+  const head = openStage(v, a, 'head');
+  return `${head ? `<div class="train-panel stage-stream"><div class="rc-zone">${head}</div></div>` : ''}${seg}<section class="rtab rtab-stage"><ol class="rd-route-list sc-subs" aria-label="Steps">${rows}</ol></section>`;
+}
+// Checks: what the tests said, what the review found, the PR's own steps; each a short group
+function checksTab(v) {
+  const f = v.over.focus, sec = (h, body) => `<section class="rtab rl-sec"><h2 class="rtab-h">${esc(h)}</h2>${body}</section>`, out = [];
+  const ev = v.activity.flatMap((st) => st.rows.filter((r) => r.evidence).map((r) => `<div class="rtab-ev"><p class="rtab-ev-t">${esc(r.name)}: ${esc(r.evidence.title)}</p><pre class="rtab-ev-l">${r.evidence.lines.map(esc).join('\n')}</pre>${logsShow() && !logsGone ? R.button({ label: r.evidence.log, kind: 'quiet', attrs: { 'data-key': 'ck-log:' + r.name, 'data-logstep': r.name } }) : ''}</div>`));
+  if (ev.length) out.push(sec('What broke', ev.join('')));
+  else if (v.over.evidence) out.push(sec('Tests and review', `<p class="rl-note">${esc(v.over.evidence)}</p>`));
+  if (f && f.kind === 'findings') out.push(sec(f.title, `${f.note ? `<p class="rl-note">${esc(f.note)}</p>` : ''}${issuesHtml(f.issues)}${f.roles.length ? rolesHtml(f.roles, 'ck') : ''}`));
+  const pr = v.activity.find((st) => st.key === 'pr'), prRows = pr ? pr.rows.filter(begun) : [];
+  if (prRows.length) out.push(`<section class="rtab rtab-stage"><ol class="rd-route-list sc-subs" aria-label="The PR's checks"><li class="sc-stage-row"><h2 class="rtab-h">The PR</h2></li>${prRows.map((r) => R.stepRow(Object.assign({}, r, { ref: '', akey: '' }))).join('')}</ol></section>`);
+  return out.join('');
+}
+// Cost: the total and the budget, then each stage with its steps, their model, time and cost
+function costTab(v) {
+  const fig = (k) => v.figs.find((f) => f.k === k), c = fig('Cost'), t = fig('Time'); if (!c && !t) return '';
+  const lead = `<section class="rtab rl-sec"><h2 class="rtab-h">${esc([c && c.v, t && t.v].filter(Boolean).join(' · '))}${c && c.of ? ` <span class="n">${esc(c.of)}</span>` : ''}</h2>${c && c.title ? `<p class="rl-note">${esc(c.title)}</p>` : ''}</section>`;
+  const stages = v.activity.map((st) => { const rows = st.rows.filter(begun).map((r) => ({ name: r.name, model: r.model || '', time: r.time || '', cost: r.cost || '' })); return rows.length ? `<section class="rtab rl-sec"><h2 class="rtab-h">${esc(st.label)}${st.meta ? ` <span class="n">${esc(st.meta)}</span>` : ''}</h2>${R.table({ label: `${st.label}: its steps`, columns: [{ id: 'name', label: 'Step' }, { id: 'model', label: 'Model' }, ...(rows.some((r) => r.time) ? [{ id: 'time', label: 'Time', num: true }] : []), { id: 'cost', label: 'Cost', num: true }], rows })}</section>` : ''; }).join('');
+  return lead + stages + costHtml(v) + usageHtml(v);
+}
+function detailOf() {
+  if (!side()) return null;
+  const v = M.view(ui.caseId, ui), o = v.open, tab = (id) => v.tabs.find((t) => t.id === id), act = !!tab('activity');
+  const a = v.action && LIVE_PAGE() ? liveAction(v, v.action) : v.action;
+  const bodies = { steps: () => stepsTab(v, a), log: () => { if (!ui.logSet) { ui.logSet = true; const at = v.activity.flatMap((st) => st.rows.filter(begun).map((r) => (st.label.startsWith('Task ') ? st.label + ' · ' + r.name : r.name))).pop(); if (ui.log.step === 'all' && at && v.logs.some((l) => String(l.step) === at)) ui.log = Object.assign({}, ui.log, { step: at }); } return logsHtml(v) + agentsHtml(v) + sessionsHtml(v); }, /* Log opens at the running or failed step */ changes: () => panelHtml(v, 'changes'), checks: () => checksTab(v), decisions: () => panelHtml(v, 'decisions'), cost: () => costTab(v) };
+  const tabs = R.detailTabs({ steps: act && v.activity.length > 0, log: act && !!logsHtml(v), changes: tab('changes') ? String(tab('changes').n || '').split(' · ')[0] || true : false, checks: act && !!checksTab(v), decisions: tab('decisions') ? tab('decisions').n || true : false, cost: act && v.has.started && !!costTab(v) });
+  if (!tabs.length) return null;
+  const graph = act && !logsGone && R.runPartShows('graph', R.prefs.mode()) ? R.button({ label: 'Open the graph', kind: 'quiet', attrs: { 'data-key': 'graph', 'data-graph': true } }) : '';
+  return { title: o.isRun ? o.title : v.title, word: o.isRun ? o.label : v.word, mark: R.kindMark({ kind: 'task', tone: R.markTone(v), ...M.stageOf(ui.caseId), size: 16 }), tab: 'steps', tabs, foot: graph,
+    body: (id) => `<div class="rc is-task dp-page"><div class="rtab-panel stage-part">${ui.broken ? panelHtml(v, 'changes') : (bodies[id] || bodies.steps)()}</div></div>` };
+}
+// the column's ways into the panel: what it asks stays here, then one row a part, saying what it holds
+function sideEntries(v, ask) {
+  const id = dpId(v), s = DP.state, r = detailOf(), says = { steps: partSays(v, { id: 'activity' }), changes: partSays(v, v.tabs.find((t) => t.id === 'changes') || {}), decisions: partSays(v, v.tabs.find((t) => t.id === 'decisions') || {}) };
+  const rows = (r ? r.tabs : []).filter((t) => t.id !== 'log' && t.id !== 'cost').map((t) => R.listRow({ title: t.label, meta: says[t.id] || '', open: { 'data-dp-open': `${id}|${t.id}`, 'data-key': `part:${t.id}`, 'aria-expanded': String(s.id === id && s.tab === t.id), title: `Opens ${t.label} beside the page` } }));
+  return `${ask ? `<div class="train-panel stage-stream"><div class="rc-zone">${ask}</div></div>` : ''}${rows.length ? `<div class="train-parts">${R.list({ groups: [{ rows }] })}</div>` : ''}`;
+}
 function partSays(v, t) {
   if (t.id === 'changes') { const [files, docs] = String(t.n || '').split(' · '), diff = (v.figs.find((f) => f.k === 'Changes') || {}).v || ''; return [files ? `${M.plural(+files, 'file')} ${diff}`.trim() : diff, docs].filter(Boolean).join(' · '); }
   if (t.id === 'decisions') return t.n ? `${t.n}${v.ask ? ' · 1 open' : ''}` : '';
@@ -538,6 +620,7 @@ function partSays(v, t) {
 }
 // The part that matters now opens by itself: Decisions while Plan waits on you, Changes once the task is ready.
 function partNow(v, caseId) {
+  if (side()) return '';   // the panel opens only when asked (panel.detail-panel)
   const live = v.stages.find((st) => st.live), has = (id) => v.tabs.some((t) => t.id === id);
   if (v.ask && live?.key === 'plan' && has('decisions')) return 'decisions';
   if (/^(ready|approved)$/.test(M.stateOf(caseId)) && has('changes')) return 'changes';
@@ -556,7 +639,7 @@ function stageStream(v, open) {
 // An open menu or picker stays inside the window: shifted back from whichever edge it would cross, 16px gutter.
 function fitMenus() {
   const vw = document.documentElement.clientWidth;
-  document.querySelectorAll('#card .menu').forEach((m) => {
+  document.querySelectorAll('#card .menu, #route-run > [data-detail] .menu').forEach((m) => {
     const r = m.getBoundingClientRect();
     let dx = r.right > vw - 16 ? vw - 16 - r.right : 0;
     if (r.left + dx < 16) dx = 16 - r.left;
@@ -685,10 +768,11 @@ const AWAY = [{ id: 'away:auto', text: 'As set up', help: 'Follows Settings and 
 function stageBarOf(v) {
   const reach = v.stages.reduce((n, st, i) => (st.cells.some((c) => !/is-next/.test(c)) ? i : n), SHELL ? -1 : 0);   // nothing begun (it waits, or was cancelled before it started): no stop is marked
   const cells = v.stages[reach]?.cells || [], k = cells.filter((c) => !/is-next/.test(c)).length;   // its steps: those begun, of all
-  const open = ui.stageShut ? -1 : v.stages.findIndex((st) => st.selected);
+  const inSide = side(), at = inSide && DP.state.id && DP.state.tab === 'steps' ? DP.state.id : '';
+  const open = inSide ? v.stages.findIndex((st) => at === `st:${st.key}`) : ui.stageShut ? -1 : v.stages.findIndex((st) => st.selected);
   // the train: a knot a stage with its name and time under it; a knot opens that stage's details under the train
-  return R.stageBar({ labels: v.stages.map((st) => st.label), metas: v.stages.map((st) => st.meta || ''), stage: reach, tone: R.markTone(v), step: SHELL && !LIVE_PAGE() ? (v.ownStep && reach === 2 ? v.ownStep : null) : cells.length > 1 ? [Math.max(1, k), cells.length] : null, unit: SHELL && !LIVE_PAGE() && v.ownStep ? 'cycle' : '', key: `page:${v.title}`, open,
-    knot: (i) => ({ 'data-stage-line': v.stages[i].key, 'data-key': `stage:${v.stages[i].key}`, 'aria-controls': open === i ? 'stage-panel' : null }) });
+  return R.stageBar({ labels: v.stages.map((st) => st.label), metas: v.stages.map((st) => st.meta || ''), stage: reach, tone: R.markTone(v), step: SHELL && !LIVE_PAGE() ? (v.ownStep && reach === 2 ? v.ownStep : null) : cells.length > 1 ? [Math.max(1, k), cells.length] : null, unit: SHELL && !LIVE_PAGE() && v.ownStep ? 'cycle' : '', key: `page:${v.title}`, open, does: inSide ? 'open its details at this stage' : 'open its details',
+    knot: (i) => (inSide && v.tabs.some((t) => t.id === 'activity') ? { 'data-dp-open': `st:${v.stages[i].key}|steps`, 'data-dp-stage': v.stages[i].key, 'data-key': `stage:${v.stages[i].key}` } : { 'data-stage-line': v.stages[i].key, 'data-key': `stage:${v.stages[i].key}`, 'aria-controls': open === i ? 'stage-panel' : null }) });
 }
 function moreItems(v) {
   const group = !!v.kind; const live = v.bar.stop;
@@ -1202,6 +1286,7 @@ async function liveChips(next, kind, say) {
 
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 document.addEventListener('click', (e) => {
+  if (DP && !BOARD.hidden && DP.click(e)) return;
   const sl = SHELL && e.target.closest?.('#card [data-stage-line]');
   const fc = SHELL && e.target.closest?.('#card [data-from-chat], #card [data-from-ask]');
   if (fc) { if (fc.dataset.fromChat && fc.dataset.key === 'from-follow' && window.StillhetConversation?.followUp?.({ title: M.view(ui.caseId, ui).title, cs: ui.caseId })) return;   /* its card's follow-up box, open and focused */
@@ -1224,9 +1309,9 @@ document.addEventListener('click', (e) => {
     document.querySelectorAll('[data-theme-pick]').forEach((b) => b.setAttribute('aria-pressed', String(b === t)));
     return;
   }
-  const sayEl = e.target.closest('#card [data-say]');
+  const sayEl = e.target.closest('#card [data-say], #route-run > [data-detail] [data-say]');
   if (sayEl) { e.preventDefault(); toast(sayEl.dataset.say); pendingFocus = sayEl.dataset.key || ''; ui.menu = ''; render(); return; }
-  const offItem = e.target.closest('#card .menu-item[aria-disabled="true"]');
+  const offItem = e.target.closest('#card .menu-item[aria-disabled="true"], #route-run > [data-detail] .menu-item[aria-disabled="true"]');
   if (offItem) { toast(offItem.title || 'Not available here'); ui.menu = ''; render(); return; }
   const zone = e.target.closest('[data-tagzone]');
   if (zone && !e.target.closest('[data-untag], [data-menu]')) { const opening = ui.menu !== 'tags'; ui.menu = opening ? 'tags' : ''; ui.tagHint = false; pendingFocus = opening ? 'tag-input' : 'menu:tags'; render(); return; }
@@ -1239,7 +1324,7 @@ document.addEventListener('click', (e) => {
     return;
   }
   if (!t && e.target.closest('[data-title]')) { ui.titleOpen = !ui.titleOpen; render(); return; }
-  if (!t || !t.closest('#card')) return;
+  if (!t || !t.closest('#card, #route-run > [data-detail]')) return;   // the page, and its parts in the detail panel
   const d = t.dataset;
   // the live kind says Copied only once the clipboard took it; a refusal says why (the demo copies and says so at once)
   if (d.copy && LIVE_PAGE()) { Promise.resolve().then(() => navigator.clipboard.writeText(d.copy)).then(() => R.copied(t), (err) => { toast('Could not copy: ' + ((err && err.message) || 'the browser said no')); render(); }); return; }
@@ -1294,7 +1379,7 @@ document.addEventListener('click', (e) => {
   if (d.doc !== undefined) { openDoc(+d.doc, /^doc-(prev|next)$/.test(d.key || '') ? d.key : ''); render(); return; }
   if (d.transcript !== undefined && LIVE_PAGE()) { const x = M.view(ui.caseId, ui).sessions[+d.transcript]; if (x) window.StillhetTaskLive.transcript(ui.taskId, x.sid); return; }
   if (d.transcript !== undefined) { const x = M.view(ui.caseId, ui).sessions[+d.transcript]; ui.doc = { name: 'Transcript · ' + x.name, body: '## ' + x.name + '\n- You: go on with this step\n- Agent: read 12 files, edited 3\n- Agent: the step is done' }; ui.dialog = 'doc'; pendingFocus = 'vd-close'; render(); return; }
-  if (d.logstep !== undefined) { ui.dialog = ''; ui.graphNode = null; ui.tab = 'activity'; ui.log = Object.assign({}, ui.log, { step: d.logstep || 'all', from: 'all', level: 'all', cycle: 'all', session: 'all', q: '' }); render(); document.getElementById('act-logs')?.scrollIntoView({ block: 'nearest', behavior: reduced() ? 'auto' : 'smooth' }); return; }
+  if (d.logstep !== undefined) { ui.dialog = ''; ui.graphNode = null; ui.tab = side() ? 'log' : 'activity'; ui.log = Object.assign({}, ui.log, { step: d.logstep || 'all', from: 'all', level: 'all', cycle: 'all', session: 'all', q: '' }); render(); document.getElementById('act-logs')?.scrollIntoView({ block: 'nearest', behavior: reduced() ? 'auto' : 'smooth' }); return; }
   if (d.line) { ui.lines = ui.lines.includes(d.line) ? ui.lines.filter((x) => x !== d.line) : ui.lines.concat(d.line); pendingFocus = 'line:' + d.line; render(); return; }
   if (d.showmet !== undefined) { ui.showMet = !ui.showMet; pendingFocus = 'show-met'; render(); return; }
   if (d.showearlier !== undefined) { ui.showEarlier = !ui.showEarlier; pendingFocus = 'show-earlier'; render(); return; }
@@ -1391,7 +1476,7 @@ document.addEventListener('click', (e) => {
     else if (CH_SAY[d.menuPick]) { toast(CH_SAY[d.menuPick](M.view(ui.caseId, ui))); pendingFocus = 'menu:ch'; ui.menu = ''; }
     else if (d.menuPick === 'more:terminal' && LIVE_PAGE()) { openTerminal(); return; }
     else if (/^more:terminal:/.test(d.menuPick) && LIVE_PAGE()) { openTerminal(d.menuPick.slice('more:terminal:'.length)); return; }
-    else if (d.menuPick === 'more:sync' && LIVE_PAGE()) { ui.menu = ''; ui.tab = 'activity'; ui.log = Object.assign({}, ui.log, { step: 'Sync', from: 'all', level: 'all', cycle: 'all', session: 'all', q: '' }); render(); document.getElementById('act-logs')?.scrollIntoView({ block: 'nearest', behavior: reduced() ? 'auto' : 'smooth' }); return; }
+    else if (d.menuPick === 'more:sync' && LIVE_PAGE()) { ui.menu = ''; ui.tab = side() ? 'log' : 'activity'; ui.log = Object.assign({}, ui.log, { step: 'Sync', from: 'all', level: 'all', cycle: 'all', session: 'all', q: '' }); render(); document.getElementById('act-logs')?.scrollIntoView({ block: 'nearest', behavior: reduced() ? 'auto' : 'smooth' }); return; }
     else if (MORE_SAY[d.menuPick]) { toast(MORE_SAY[d.menuPick]); pendingFocus = 'menu:more'; ui.menu = ''; }
     else if (ui.menu === 'act') act(d.menuPick);
     else if (d.menuPick === 'ungroup') { const g = (ui.chips.find((c) => c.kind === 'group') || {}).text; ui.chips = ui.chips.filter((c) => c.kind !== 'group'); ui.menu = ''; pendingFocus = 'menu:more'; toast('Left ' + g); }
@@ -1419,7 +1504,9 @@ document.addEventListener('click', (e) => {
     pick.value = ui.caseId; pendingFocus = 'open-run'; if (/^#run\//.test(location.hash)) location.hash = 'run/' + (LIVE_PAGE() ? ui.taskId : ui.caseId);
   }
   else if (d.stage) { ui.open = d.stage; ui.menu = ''; }
+  else if (d.tab && PARTS.includes(d.tab) && side()) { DP.open(dpId(v0()), d.tab, d.key ? `[data-key="${d.key}"]` : ''); return; }   // a figure, a line of the overview: the panel, at that part
   else if (d.tab) { ui.tab = d.tab; ui.focus = ''; if (t.classList.contains('rc-fig-link')) pendingFocus = 'tab:' + d.tab; }
+  else if (d.ref && d.ref.startsWith('log:') && side()) { ui.tab = 'log'; ui.log = Object.assign({}, ui.log, { step: d.ref.slice(4), from: 'all', level: 'all', cycle: 'all', session: 'all', q: '' }); pendingFocus = 'log-q'; }   // a step of Steps: its log
   else if (d.ref) { ui.tab = 'activity'; ui.view = 'steps'; ui.focus = d.ref; pendingFocus = 'act:' + d.ref; render(); document.querySelector('.is-focus')?.scrollIntoView({ block: 'center', behavior: reduced() ? 'auto' : 'smooth' }); return; }
   else if (d.view) ui.view = d.view;
   else if (d.go) {

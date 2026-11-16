@@ -12,6 +12,9 @@ const boot = { module: { exports: {} } };
 vm.runInNewContext(readStillhet('boot.js'), boot);
 export const appScripts = () => boot.module.exports.list('app').scripts.filter((x) => !['components.js', 'graph.js'].includes(x));
 
+// What a test file's hosts start with in localStorage: a file that reads the task page's folds sets
+// hostStorage['worca-stillhet.card-layout'] = 'card' (Task details: Inside the card; the default is the side panel).
+export const hostStorage = {};
 export function stillhetHost({ adapter = '', stillhetLocked = false, level = 'expert', hash = '#chat', search = '', fetch, beforeScripts, after } = {}) {
   const stamp = (adapter ? ` data-adapter="${adapter}"` : '') + (stillhetLocked ? ' data-stillhet-locked="true"' : '');
   const dom = new JSDOM(`<!doctype html><html data-level="${level}"${stamp}><body><div class="app" id="worca"></div><div class="pz-app stillhet-layer" id="app"></div>${R.toast({})}</body></html>`, { runScripts: 'outside-only', url: `http://localhost/${search}${hash}`, pretendToBeVisual: true });
@@ -21,6 +24,7 @@ export function stillhetHost({ adapter = '', stillhetLocked = false, level = 'ex
   w.scrollTo = () => {};
   w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   w.fetch = fetch || (async () => ({ ok: false, json: async () => ({}) }));
+  for (const [k, v] of Object.entries(hostStorage)) w.localStorage.setItem(k, v);
   if (beforeScripts) beforeScripts(w);
   for (const f of appScripts()) w.eval(readStillhet(f));
   return w;

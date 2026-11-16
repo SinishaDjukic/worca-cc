@@ -2022,6 +2022,13 @@ test('the Stillhet stylesheets close every rule: one open brace would swallow al
   }
 });
 
+test('detailPanel: a named region beside the page, a dialog as a sheet; its tabs name the open one and its title takes the focus', () => {
+  const html = C.detailPanel({ title: 'Add CSV', word: 'Working', tab: 'changes', tabs: [{ id: 'activity', label: 'Activity' }, { id: 'changes', label: 'Changes', count: 5 }], body: '<p>five files</p>', hooks: { close: { 'data-dp-close': '' } } });
+  assert.match(html, /<aside class="detail-panel" role="region" aria-label="Details of Add CSV"/); assert.match(html, /id="dp-tab-changes"[^>]*aria-selected="true"/);
+  assert.match(html, /<h2 class="dp-title" tabindex="-1" data-dp-title title="Add CSV">Add CSV<\/h2>/); assert.match(html, /data-dp-close/); assert.match(html, /role="tabpanel"[^>]*aria-labelledby="dp-tab-changes"[^>]*><p>five files<\/p>/);
+  assert.match(C.detailPanel({ title: 'x', tab: 'a', tabs: [{ id: 'a', label: 'A' }], modal: true, wide: true }), /class="detail-panel is-wide" role="dialog" aria-modal="true"/);
+});
+
 test('taskCard: every chat card\'s head (its word as kicker), stage bar, actions; opens its stream in place; compact is one line', () => {
   const full = C.taskCard({ title: 'Add CSV', place: 'a into dev', mark: '<i></i>', word: 'Working', detail: 'Plan', stages: C.stageBar({ labels: ['a'], stage: 0 }) });
   assert.match(full, /rc-heading/); assert.match(full, /rc-facts/); assert.match(full, /rc-card/); assert.match(full, /stage-bar/);

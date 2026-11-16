@@ -3,7 +3,7 @@
 export { esc, attrs, cls, toElement } from './html.mjs';
 export { button, splitButton, busy, busyWord } from './button.mjs';
 export { diffView, parsePatch, diffFind, findSpans, watchDiffFind } from './diff-view.mjs';
-export { detailPanel } from './detail-panel.mjs';
+export { detailPanel, detailPanelController, detailsInPanel, detailTabs, DETAIL_TABS } from './detail-panel.mjs';
 export { terminalPane } from './terminal-pane.mjs';
 export { compactMenu, menuItem, menuKeys, choiceMove, typeAhead, focusMenu, watchChoiceKeys } from './compact-menu.mjs';
 export { MAKERS, ENGINE_WORDS, makerOf, modelText, modelMakers, makerItems } from './model-makers.mjs';

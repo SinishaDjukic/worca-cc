@@ -226,3 +226,41 @@ test('DiffView find: a Find field in the head of the view that owns the Segmente
   assert.equal(input.value, ''); assert.equal(count(), ''); assert.equal(d.querySelectorAll('mark').length, 0);
   assert.equal(d.querySelector('.dv-c').textContent, 'const a = 1;', 'the code is as it was');
 });
+
+test('the detail panel\'s controller: a trigger opens it with the focus on its title, the same trigger closes it, Esc gives the focus back, it follows another thing and remembers the tab', async () => {
+  const { detailPanelController } = await import('../ui/public/design-system/components/index.mjs');
+  const win = new JSDOM('<body><div id="page"><button data-dp-open="a|changes">A</button><button data-dp-open="b|">B</button><div data-detail></div></div></body>', { url: 'http://localhost/' }).window;
+  const doc = win.document, root = doc.getElementById('page'), kept = new Map();
+  const storage = { getItem: (k) => kept.get(k) ?? null, setItem: (k, v) => kept.set(k, v) };
+  const things = { a: 'Add CSV', b: 'Fix login' };
+  const make = () => detailPanelController({ root, host: () => root.querySelector('[data-detail]'), storage,
+    resolve: (id) => things[id] && { title: things[id], word: 'Working', tabs: [{ id: 'activity', label: 'Activity' }, { id: 'changes', label: 'Changes' }], body: (tab) => `<p>${id} ${tab}</p>` } });
+  const dp = make();
+  const click = (el) => { const e = { target: el }; return dp.click(e); };
+  const [a, b] = root.querySelectorAll('[data-dp-open]'), panel = () => root.querySelector('.detail-panel');
+  assert.equal(click(doc.body), false, 'a click elsewhere is not the panel\'s and leaves it as it is');
+  a.focus(); assert.equal(click(a), true);
+  assert.equal(panel().getAttribute('aria-label'), 'Details of Add CSV'); assert.equal(root.querySelector('.dp-body').textContent, 'a changes');
+  assert.ok(doc.activeElement.hasAttribute('data-dp-title'), 'the focus goes to its title');
+  assert.ok(root.classList.contains('has-detail'), 'the frame makes room for it');
+  click(a); assert.equal(panel(), null, 'the same trigger again closes it'); assert.equal(doc.activeElement, a, 'and the focus is back on the trigger');
+  click(a); click(b);
+  assert.equal(panel().getAttribute('aria-label'), 'Details of Fix login', 'it follows the thing you point at'); assert.equal(root.querySelector('.dp-body').textContent, 'b changes', 'at the tab you were on');
+  click(root.querySelector('.dp-tabs [data-tab="activity"]')); assert.equal(root.querySelector('.dp-body').textContent, 'b activity');
+  doc.body.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+  assert.equal(panel(), null, 'Esc closes it'); assert.equal(doc.activeElement, b, 'and gives the focus back to what opened it');
+  click(root.querySelector('[data-dp-open]')); click(root.querySelector('[data-dp-widen]')); assert.ok(panel().classList.contains('is-wide'));
+  assert.deepEqual(JSON.parse(kept.get('worca-stillhet.detail-panel')), { wide: true, tab: 'changes' });
+  const next = make(); next.open('b', ''); assert.equal(next.state.tab, 'changes', 'another visit opens at the remembered tab'); assert.equal(next.state.wide, true);
+  kept.set('worca-stillhet.card-layout', 'card'); assert.equal(next.sidePanel(), false); assert.equal(next.html(), '', 'with Inside the card there is no panel');
+});
+
+test('the detail panel\'s tabs: one set and order for every place, an empty tab left out, and a tab remembered as Activity opens Steps', async () => {
+  const { detailTabs, detailPanelController } = await import('../ui/public/design-system/components/index.mjs');
+  assert.deepEqual(detailTabs({ cost: true, steps: true, log: true, changes: 5, checks: true, decisions: 2 }).map((t) => t.label), ['Steps', 'Log', 'Changes', 'Checks', 'Decisions', 'Cost']);
+  assert.deepEqual(detailTabs({ steps: true, changes: 0, checks: false, decisions: 2 }), [{ id: 'steps', label: 'Steps', count: '' }, { id: 'decisions', label: 'Decisions', count: 2 }]);
+  const win = new JSDOM('<body><div id="page"><div data-detail></div></div></body>', { url: 'http://localhost/' }).window, root = win.document.getElementById('page');
+  const storage = { getItem: (k) => (k === 'worca-stillhet.detail-panel' ? '{"tab":"activity"}' : null), setItem() {} };
+  const dp = detailPanelController({ root, host: root.firstChild, storage, resolve: () => ({ title: 'T', tabs: detailTabs({ steps: true, log: true }), body: (tab) => tab }) });
+  dp.open('a', ''); assert.equal(dp.state.tab, 'steps'); assert.equal(root.querySelector('.dp-body').textContent, 'steps');
+});

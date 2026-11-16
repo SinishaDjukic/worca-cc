@@ -2505,6 +2505,19 @@
       "rules": [
         "panel.question-forms"
       ]
+    },
+    {
+      "name": "DetailPanel",
+      "code": "ui/public/design-system/components/detail-panel.mjs#detailPanel",
+      "needs": [
+        "what you open to investigate a thing, beside where it is shown: its card in a chat, its own page, a member of a feature",
+        "a thing's Steps, Log, Changes, Checks, Decisions and Cost in tabs, each one kind of thing"
+      ],
+      "rules": [
+        "panel.detail-panel",
+        "panel.detail-remembers",
+        "panel.detail-where"
+      ]
     }
   ],
   "logic": [
@@ -3626,15 +3639,35 @@
       ]
     },
     {
-      "name": "DetailPanel",
-      "code": "ui/public/design-system/components/detail-panel.mjs#detailPanel",
+      "name": "DetailPanelController",
+      "code": "ui/public/design-system/components/detail-panel.mjs#detailPanelController",
       "needs": [
-        "what you open to investigate a task, beside the chat",
-        "a task's Activity, Changes, Decisions and Checks in tabs"
+        "the detail panel at work on a page: its triggers (data-dp-open), the same trigger closing it, Esc and the focus back, the sheet on a narrow window, the remembered tab and width"
       ],
       "rules": [
         "panel.detail-panel",
-        "panel.detail-remembers"
+        "panel.detail-remembers",
+        "panel.detail-where"
+      ]
+    },
+    {
+      "name": "DetailsInPanel",
+      "code": "ui/public/design-system/components/detail-panel.mjs#detailsInPanel",
+      "needs": [
+        "where a thing's details open, by the person's setting: the side panel or inside the card"
+      ],
+      "rules": [
+        "panel.detail-where"
+      ]
+    },
+    {
+      "name": "DetailTabs",
+      "code": "ui/public/design-system/components/detail-panel.mjs#detailTabs",
+      "needs": [
+        "the detail panel's tabs, the same set and order in every place (Steps, Log, Changes, Checks, Decisions, Cost), leaving out a tab with nothing to show"
+      ],
+      "rules": [
+        "panel.detail-panel"
       ]
     },
     {
@@ -4177,6 +4210,12 @@
       "name": "barHead",
       "kind": "part",
       "why": "The old bar head; the shell calls BarPlaceHead. Kept only until the library drops it"
+    },
+    {
+      "name": "DETAIL_TABS",
+      "code": "ui/public/design-system/components/detail-panel.mjs#DETAIL_TABS",
+      "kind": "constant",
+      "why": "the detail panel's tab ids and names, read through detailTabs"
     }
   ],
   "lookOptions": [
