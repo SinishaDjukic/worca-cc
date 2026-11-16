@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { JSDOM } from 'jsdom';
 import * as R from '../../ui/public/design-system/components/index.mjs';
+import * as RunOptions from '../../ui/public/stillhet/live/run-options-live.mjs';
 
 export const readStillhet = (p) => readFileSync(new URL('../../ui/public/stillhet/' + p, import.meta.url), 'utf8');
 const boot = { module: { exports: {} } };
@@ -24,3 +25,7 @@ export function stillhetHost({ adapter = '', railLocked = false, level = 'expert
   for (const f of appScripts()) w.eval(readStillhet(f));
   return w;
 }
+
+// New task in the demo kind, as the prototype draws it: the run options' words (adapter.js imports them only when served
+// over http) and the person's mode (shell.js reads worca-rail.mode at boot)
+export const demoTaskHost = ({ mode = 'expert', after } = {}) => stillhetHost({ hash: '#runs', after, beforeScripts: (w) => { w.localStorage.setItem('worca-rail.mode', mode); w.RailRunOptions = RunOptions; } });

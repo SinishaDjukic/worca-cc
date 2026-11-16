@@ -1,9 +1,10 @@
 // test/stillhet-new-task-presets-host.test.mjs — COV-2 D7 (docs/rail/forms.md form.run-options): New task picks, applies and
 // checks a saved preset; its broken items block Start until reset; Update and Duplicate are its menu's; Start sends its
 // id and what it carries. Live app host (jsdom), the real shell, a stubbed fetch.
-import { test, afterEach } from 'node:test';
+import { test, afterEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { liveHost, go, settle, closeHosts, posts, LISTS } from './helpers/stillhet-chat-live-host.mjs';
+import { demoTaskHost } from './helpers/stillhet-host.mjs';
 
 afterEach(closeHosts);
 const DEFAULTS = '/api/run-defaults?projectDir=%2Fsrc%2Fweb';
@@ -171,4 +172,21 @@ test('F-G-G3-02: a refused Save as default leaves its error under Cost tags unti
   await pick(d, 'preset', 'p:rp_fix');
   assert.equal(q(d, '#cc-tags').value, 'bugfix');
   assert.equal(q(d, '#cc-tags-note'), null, 'the tags changed: the old refusal goes');
+});
+
+test('COV-2 presetSelect / Clear preset / Update preset (demo): from Docs pass ▾ lists Update preset after an edit and No preset; No preset drops the clause', async () => {
+  const w = demoTaskHost({ after }), d = w.document; await settle(60);
+  w.RailCenters.maker('tasks').newPick('form'); await settle(60);
+  await pick(d, 'project', 'worca-cc');
+  assert.ok((await menuOf(d)).includes('Docs pass'), 'the project\'s own preset is offered');
+  await pick(d, 'preset', 'p:rp_docs');
+  assert.equal(shown(d, 'preset'), 'Docs pass');
+  assert.equal(shown(d, 'base'), 'dev', 'the preset\'s picks fill the frame');
+  assert.ok(!(await menuOf(d)).includes('Update preset'), 'nothing changed yet');
+  await pick(d, 'base', 'main');
+  const m = await menuOf(d);
+  assert.ok(m.includes('Update preset') && m.at(-1) === 'No preset', JSON.stringify(m));
+  await pick(d, 'preset', 'none');
+  assert.equal(shown(d, 'preset'), 'no preset', 'the clause no longer names a preset');
+  assert.doesNotMatch(q(d, '.cc-frame').textContent, /Docs pass/);
 });
