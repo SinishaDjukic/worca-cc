@@ -273,21 +273,34 @@ function roundDecisions(r, step, viewer = '') {
     const a = str(answers.find((x) => x.id === q.id)?.choice).trim();
     if (!a) return [];
     const n = who === 'away' ? notes.find((x) => x.id === q.id) : null, why = str(n?.rationale).trim().replace(/\.$/, '');
-    return [{ step, q: q.question, a, who, ...person, ...(why ? { note: (n.flagged ? 'please check: ' : '') + why } : {}) }];
+    const d = { step, q: q.question, a, who, ...person, ...(why ? { note: (n.flagged ? 'please check: ' : '') + why } : {}) };
+    return [Object.defineProperty(d, 'qid', { value: str(q.id) })];   // decisionsOf's dedupe key, never drawn
   });
 }
 /** F-3-04: dev's `clarify` and `stepQuestions` (qa) → the Decisions part's rows: [{ step, q, a, who: you|away|person, by?, note? }].
  *  The run's clarify first (step Clarify), then each round in dev's order, named as the step list names its node, `· cycle N`
- *  past the first. `viewer`: the shared sign-in's name ('' when people are not shown): another person's answer names them. */
+ *  past the first, `· round N` for a later round; the clarify step's own copy of `clarify` once (F-W3a1-03). `viewer`: the shared sign-in's name ('' when people are not shown): another person's answer names them. */
 export function decisionsOf(qa = null, state = {}, viewer = '') {
   if (!isObj(qa)) return [];
   const names = stepNamesOf(state);
-  const out = isObj(qa.clarify) ? roundDecisions(qa.clarify, 'Clarify', viewer) : [];
+  const clarify = isObj(qa.clarify) ? roundDecisions(qa.clarify, 'Clarify', viewer) : [];
+  const out = [...clarify];
+  // F-W3a1-03: the clarify step's own round holds the same Q&A as `clarify`: a question with the same answer is shown once,
+  // the record that says more (who answered, Away mode's note) kept under Clarify
+  const clarifyKey = new Set(arr(state?.stepper?.graph?.nodes).filter((n) => n && n.key === 'clarify').map((n) => n.id));
+  const same = (x, d) => x.a === d.a && (x.qid && d.qid ? x.qid === d.qid : x.q === d.q);
+  const says = (d) => (d.who !== 'you' ? 1 : 0) + (d.by ? 1 : 0) + (d.note ? 1 : 0);
   for (const r of arr(qa.stepQuestions)) {
     if (!isObj(r)) continue;
-    const cycle = Number((/#(\d+)$/.exec(str(r.stepKey)) || [])[1]);
-    const step = (names.get(str(r.nodeId)) || str(r.agentKey) || str(r.nodeId)) + (cycle > 1 ? ` · cycle ${cycle}` : '');
-    out.push(...roundDecisions(r, step, viewer));
+    const cycle = Number((/#(\d+)$/.exec(str(r.stepKey)) || [])[1]), round = Number(r.round);
+    const step = (names.get(str(r.nodeId)) || str(r.agentKey) || str(r.nodeId)) + (cycle > 1 ? ` · cycle ${cycle}` : '') + (round > 1 ? ` · round ${round}` : '');
+    const isClarify = lc(r.agentKey) === 'clarify' || r.nodeId === 'n_clarify' || clarifyKey.has(r.nodeId);
+    for (const d of roundDecisions(r, step, viewer)) {
+      const twin = isClarify ? clarify.find((x) => same(x, d)) : null;
+      if (!twin) { out.push(d); continue; }
+      const i = clarify.indexOf(twin);   // clarify's rows lead `out`, in order
+      if (says(d) > says(out[i])) out[i] = Object.defineProperty({ ...d, step: twin.step }, 'qid', { value: twin.qid });
+    }
   }
   return out;
 }
@@ -416,10 +429,12 @@ export function docsOf(artifacts) {
 }
 /** docsOf's documents with each step named as the step list names it (read time, as logStepsOf: the artifacts can land
  *  before the state). A list not read yet is returned as is; the given list is never changed. */
+// F-W3a1-04: the run's own documents (no step wrote them) by what they are, never dev's artifact kind
+const DOC_KIND_WORDS = { prompt: 'the brief', extra: 'the brief', 'diff-patch': 'the diff', results: 'results', 'workspace-description': 'the workspace' };
 export function docStepsOf(docs, state) {
   if (!Array.isArray(docs)) return docs;
   const names = stepNamesOf(state);
-  return docs.map((d) => (Array.isArray(d) && names.has(d[1]) ? [d[0], names.get(d[1]), d[2]] : d));
+  return docs.map((d) => (!Array.isArray(d) ? d : names.has(d[1]) ? [d[0], names.get(d[1]), d[2]] : Object.hasOwn(DOC_KIND_WORDS, d[1]) ? [d[0], DOC_KIND_WORDS[d[1]], d[2]] : d));
 }
 export const SYNC_STEP = 'Sync';
 const pad = (n) => String(n).padStart(2, '0');

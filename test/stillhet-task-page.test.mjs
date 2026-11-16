@@ -494,3 +494,34 @@ test('F-3-12: docStepsOf names each document\'s step by its node label, as the s
   assert.equal(docStepsOf(null, QA_STATE), null, 'not read yet stays null');
   assert.deepEqual(docStepsOf(docs, {}), docs, 'no state yet: the ids');
 });
+
+// gate G F-W3a1-03: a saved run holds the clarify Q&A twice, in `clarify` and in the clarify step's own round
+// (stepQuestions, nodeId n_clarify); Decisions listed every question twice. Each question shows once, the richer record
+// kept; a real later round of the same step is its own round, named so.
+test('F-W3a1-03: decisionsOf shows a clarify question once when the saved run holds it in clarify and in the clarify round', () => {
+  const state = { stepper: { graph: { nodes: [{ id: 'n_clarify', kind: 'agent', key: 'clarify', label: 'Clarify' }, ...QA_STATE.stepper.graph.nodes] } }, steps: [] };
+  const qs = [{ id: 'q1', question: 'Keep the old address working?' }, { id: 'q2', question: 'Which dates?' }];
+  const qa = {
+    clarify: { questions: qs, answers: [{ id: 'q1', choice: 'Redirect it' }, { id: 'q2', choice: 'The invoice date' }] },
+    stepQuestions: [
+      { stepKey: '1:n_clarify#1', round: 1, nodeId: 'n_clarify', agentKey: 'clarify', questions: qs, answers: [{ id: 'q1', choice: 'Redirect it' }, { id: 'q2', choice: 'The invoice date' }], answeredBy: 'mara@acme.dev' },
+      { stepKey: '1:n_clarify#1', round: 2, nodeId: 'n_clarify', agentKey: 'clarify', questions: [{ id: 'q3', question: 'Which time zone?' }], answers: [{ id: 'q3', choice: 'UTC' }] },
+      { stepKey: '3:n_impl#1', round: 1, nodeId: 'n_impl', agentKey: 'implementer', questions: [{ id: 's1', question: 'Use the shared pager?' }], answers: [{ id: 's1', choice: 'Yes' }] },
+    ],
+  };
+  assert.deepEqual(decisionsOf(qa, state, 'sam@acme.dev'), [
+    { step: 'Clarify', q: 'Keep the old address working?', a: 'Redirect it', who: 'person', by: 'mara@acme.dev' },
+    { step: 'Clarify', q: 'Which dates?', a: 'The invoice date', who: 'person', by: 'mara@acme.dev' },
+    { step: 'Clarify · round 2', q: 'Which time zone?', a: 'UTC', who: 'you' },
+    { step: 'Implementation', q: 'Use the shared pager?', a: 'Yes', who: 'you' },
+  ]);
+  // no state graph: the clarify round is known by its agent; still once
+  assert.equal(decisionsOf({ clarify: qa.clarify, stepQuestions: [qa.stepQuestions[0]] }, {}).length, 2);
+});
+
+// gate G F-W3a1-04: a document no step wrote (the run's own: its brief, attached files, the diff, results) read
+// "from extra / prompt / diff-patch / results" under Changes › Not in the code; it is said in words
+test('F-W3a1-04: docStepsOf words a run document\'s kind when no step wrote it', () => {
+  const docs = docsOf([{ relPath: 'prompt.md', kind: 'prompt' }, { relPath: 'extras/spec.md', kind: 'extra' }, { relPath: 'diff.patch', kind: 'diff-patch' }, { relPath: 'results.json', kind: 'results' }, { relPath: 'plan.md', kind: 'plan' }]);
+  assert.deepEqual(docStepsOf(docs, {}).map((d) => d[1]), ['the brief', 'the brief', 'the diff', 'results', 'plan']);
+});
