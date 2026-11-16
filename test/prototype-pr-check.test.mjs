@@ -95,7 +95,7 @@ function write(root, files) {
 function repo(baseFiles, prFiles) {
   const root = mkdtempSync(join(tmpdir(), 'prototype-pr-check-'));
   git(root, 'init', '-q', '-b', 'main');
-  write(root, { 'ui/public/app.js': "fetch('/api/x')\n", 'plans/stillhet/stillhet-wiring.md': wiring(), 'tools/parity/route-classes.json': '{"GET /api/x": {}}\n', ...baseFiles });
+  write(root, { 'ui/public/app.js': "fetch('/api/x')\n", 'test/fixtures/stillhet-first-wiring/stillhet-wiring.md': wiring(), 'tools/parity/route-classes.json': '{"GET /api/x": {}}\n', ...baseFiles });
   git(root, 'add', '-A'); git(root, 'commit', '-q', '-m', 'base');
   const base = git(root, 'rev-parse', 'HEAD');
   write(root, prFiles);
@@ -119,12 +119,12 @@ test('main: a today\'s-UI change alone fails and names the file', async () => {
 test('main: the same change passes with a Stillhet file, or with a wire-to row added in the PR', async () => {
   let r = await run(repo({ 'ui/public/stillhet/x.js': '1\n' }, { ...APP_CHANGE, 'ui/public/stillhet/x.js': '2\n' }));
   assert.equal(r.code, 0); assert.match(r.text, /prototype/);
-  r = await run(repo({}, { ...APP_CHANGE, 'plans/stillhet/stillhet-wiring.md': wiring(APP_ROW) }));
+  r = await run(repo({}, { ...APP_CHANGE, 'test/fixtures/stillhet-first-wiring/stillhet-wiring.md': wiring(APP_ROW) }));
   assert.equal(r.code, 0); assert.match(r.text, /wiring/);
 });
 
 test('main: a row already on base does not count', async () => {
-  const { code, text } = await run(repo({ 'plans/stillhet/stillhet-wiring.md': wiring(APP_ROW) }, APP_CHANGE));
+  const { code, text } = await run(repo({ 'test/fixtures/stillhet-first-wiring/stillhet-wiring.md': wiring(APP_ROW) }, APP_CHANGE));
   assert.equal(code, 1);
   assert.match(text, /update its why/);
 });

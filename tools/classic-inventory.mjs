@@ -11,13 +11,13 @@
 //   walk    `--walk URL`: a real browser (Playwright) on a running classic instance, in the mode the server has (the tool
 //           never changes it). It opens every page, records every visible control, opens each menu and dialog
 //           (aria-haspopup) and presses Escape. Every request but GET is aborted, so it cannot write.
-//           It writes plans/stillhet/coverage/classic-walk.json; the static run joins it by id and by label.
+//           It writes test/fixtures/stillhet-first-wiring/coverage/classic-walk.json; the static run joins it by id and by label.
 //
 // Classification (classify): a route Stillhet's own code fetches from the control's own place is wired (the page's `places`:
 // folders of ui/public/stillhet/, a live/ file by LIVE_PLACE; a call from another place clears nothing); else the status of a
-// plans/stillhet/stillhet-wiring.md row that names it (a `wired` row only when it names a file of that place or sits in its
-// section); else planned when plans/stillhet/test-results/PLAN.md, plans/stillhet/test-results/FINDINGS.md or an Open row of
-// plans/stillhet/findings.md names it; else MISSING. A Settings key: wired when Stillhet's live code reads it, else the same
+// test/fixtures/stillhet-first-wiring/stillhet-wiring.md row that names it (a `wired` row only when it names a file of that place or sits in its
+// section); else planned when test/fixtures/stillhet-first-wiring/test-results/PLAN.md, test/fixtures/stillhet-first-wiring/test-results/FINDINGS.md or an Open row of
+// test/fixtures/stillhet-first-wiring/findings.md names it; else MISSING. A Settings key: wired when Stillhet's live code reads it, else the same
 // order. A control with no route and no key is a view control: its page's place decides (PAGES). A control's status is its
 // worst part (MISSING, planned, not offered, wired). A `## Classic controls` row in stillhet-wiring.md overrides one control.
 //
@@ -31,7 +31,7 @@ import * as acorn from 'acorn';
 import { callPathsOf } from './stillhet-surfaces.mjs';
 
 export const ROOT = fileURLToPath(new URL('..', import.meta.url));
-export const DIR = 'plans/stillhet/coverage';
+export const DIR = 'test/fixtures/stillhet-first-wiring/coverage';
 export const CONTROLS = `${DIR}/classic-controls.json`;
 export const WALK = `${DIR}/classic-walk.json`;
 export const REPORT = `${DIR}/COVERAGE.md`;
@@ -581,10 +581,10 @@ export function sanitizeWalk(w, controls) {
 }
 
 // ── Classification ────────────────────────────────────────────────────────────────────────────────────────────────
-const WIRING = 'plans/stillhet/stillhet-wiring.md';
-const PLAN = 'plans/stillhet/test-results/PLAN.md';
-const FINDINGS_RESULTS = 'plans/stillhet/test-results/FINDINGS.md';
-const LEDGER = 'plans/stillhet/findings.md';
+const WIRING = 'test/fixtures/stillhet-first-wiring/stillhet-wiring.md';
+const PLAN = 'test/fixtures/stillhet-first-wiring/test-results/PLAN.md';
+const FINDINGS_RESULTS = 'test/fixtures/stillhet-first-wiring/test-results/FINDINGS.md';
+const LEDGER = 'test/fixtures/stillhet-first-wiring/findings.md';
 const ROW_STATUS = /^\**(wired \(partial\)|wired|new: built|wire to|new: build it|add to the design first|not offered live|not a dev capability)\b/;
 const STATUS_OF = { wired: 'wired', 'wired (partial)': 'wired', 'new: built': 'wired', 'wire to': 'planned', 'new: build it': 'planned',
   'add to the design first': 'planned', 'not offered live': 'not offered', 'not a dev capability': 'not offered' };
@@ -779,7 +779,7 @@ export function report(controls, classified, baseline, walkData, titles = {}) {
     const k = (s) => cs.filter((c) => c.status === s).length;
     L.push(`| ${p} | ${PAGES[p]?.where || ''} | ${cs.length} | ${k('wired')} | ${k('planned')} | ${k('not offered')} | ${k('MISSING')} |`);
   }
-  L.push('', '## MISSING', '', 'Each MISSING control, grouped by its finding (`plans/stillhet/findings.md`, PLAN.md B9). A finding closes when its controls are wired or decided.', '');
+  L.push('', '## MISSING', '', 'Each MISSING control, grouped by its finding (`test/fixtures/stillhet-first-wiring/findings.md`, PLAN.md B9). A finding closes when its controls are wired or decided.', '');
   const groups = new Map();
   for (const c of classified.filter((x) => x.status === 'MISSING')) {
     const g = baseline[c.id] || '(no finding yet)';

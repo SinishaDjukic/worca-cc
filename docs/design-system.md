@@ -24,7 +24,7 @@ a `color-mix()` recipe used twice is a named token (`--btn-hover`, `--red-tint`,
 | slate | `--slate*` | neutral metadata: a source, "Official", policy (`.badge.slate`) | a state |
 Status-dot exceptions: peach = working (it pulses), violet = merged. They are the dots only, never a badge.
 Working and needs you must read as two states at dot size. The Stillhet look makes `--peach` a warm yellow apart from
-`--amber` (› The Stillhet look); it arrives with Wave 1 behind the `stillhet` flag, and today's `--peach` stays one orange.
+`--amber` (› The Stillhet look); it comes with the `stillhet` flag, and today's `--peach` stays one orange.
 Surfaces: `--panel` page, `--surface` raised, `--field` field and tint fill; `--line` dividers, `--line-2` control borders.
 `--row-selected` is `--ink` at 8% over transparent (no new hue): the selected Runs row, one ink step over whatever it
 sits on, so it reads on the panel and on the Needs-you amber tint alike. Its PR chips take the `-ink-strong` shades to

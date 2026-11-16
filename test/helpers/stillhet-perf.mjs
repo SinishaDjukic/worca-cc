@@ -1,4 +1,4 @@
-// test/helpers/stillhet-perf.mjs — B2.4 C1 (plans/stillhet/test-results/PLAN.md §3C, D19): the performance budgets' harness.
+// test/helpers/stillhet-perf.mjs — B2.4 C1 (test/fixtures/stillhet-first-wiring/test-results/PLAN.md §3C, D19): the performance budgets' harness.
 // The ratchet (readBudgets, checkBudget), the fixtures (longThread, tasksScaleSources) and a live Stillhet host on virtual
 // time: setInterval is a registry that runs only when the clock advances, Date.now, a no-argument new Date() and
 // performance.now read that clock and requestAnimationFrame is a manual queue. setTimeout stays real, so boot, fetch and

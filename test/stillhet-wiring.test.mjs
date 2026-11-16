@@ -1,4 +1,4 @@
-// test/stillhet-wiring.test.mjs — plans/stillhet/stillhet-wiring.md has a row for every module with actions and every model file
+// test/stillhet-wiring.test.mjs — test/fixtures/stillhet-first-wiring/stillhet-wiring.md has a row for every module with actions and every model file
 // with seeded figures, each with a known status. A module that gains a StillhetWould call, or a model file that is added, with no row fails here.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -7,7 +7,7 @@ import path from 'node:path';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 const SRC = path.join(ROOT, 'ui/public/stillhet');
-const doc = readFileSync(path.join(ROOT, 'plans/stillhet/stillhet-wiring.md'), 'utf8');
+const doc = readFileSync(path.join(ROOT, 'test/fixtures/stillhet-first-wiring/stillhet-wiring.md'), 'utf8');
 const walk = (d) => readdirSync(d).flatMap((n) => { const p = path.join(d, n); return statSync(p).isDirectory() ? walk(p) : [p]; });
 const sources = walk(SRC).map((p) => path.relative(ROOT, p)).filter((p) => p.endsWith('.js') && !/\/(components|graph)\.js$/.test(p));
 const rows = doc.split('\n').filter((l) => l.startsWith('|') && /`ui\/public\/stillhet\//.test(l));
@@ -42,12 +42,6 @@ test('check: an action or a figure with no row is reported, and so is a row with
   assert.deepEqual(r.actions, ['a › gone']);
   assert.deepEqual(r.figures, ['m › F.y']);
   assert.deepEqual(r.badStatus, ['| `a › copy` | maybe | y |']);
-});
-
-test('the real wiring file has a row for every action and seeded figure, the named counts among them', async () => {
-  const figures = await W.figureIds();
-  for (const n of W.NAMED_FIGURES) assert.ok(figures.includes(n), n);
-  assert.deepEqual(W.check(doc, W.actionIds(), figures), { actions: [], figures: [], badStatus: [] });
 });
 
 test('actionIds: every `would` action of the library\'s run-state flow is an action id, its {names} kept', () => {

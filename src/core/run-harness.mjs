@@ -1294,7 +1294,7 @@ export class RunHarness extends EventEmitter {
   }
 
   /**
-   * Pause after this step (Stillhet, plans/stillhet/task-engine-additions.md): set the in-memory flag `pauseAfterStep`
+   * Pause after this step (Stillhet, plans/stillhet/spec/server.md): set the in-memory flag `pauseAfterStep`
    * without aborting anything. No new execution starts while it is set (_awaitStepBoundary); once none is in flight,
    * dev's pause(by) runs once. Never persisted; cleared by that conversion and by any status other than running.
    * → true, false (not running: dev's CANNOT_PAUSE) or 'already' (a pause after this step is pending).

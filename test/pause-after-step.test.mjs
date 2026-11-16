@@ -1,4 +1,4 @@
-// test/pause-after-step.test.mjs — Stillhet's Pause after this step (plans/stillhet/task-engine-additions.md): the
+// test/pause-after-step.test.mjs — Stillhet's Pause after this step (plans/stillhet/spec/server.md): the
 // in-memory flag lets every running step finish (a fan-out's siblings too, never aborted), starts nothing new, then
 // pauses once. The flag never persists; pause, stop and finish drop it.
 import { test, after } from 'node:test';

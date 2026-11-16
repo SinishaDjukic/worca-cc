@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // tools/stillhet-no-demo.mjs — the static half of gate.no-demo (docs/stillhet/gate.md, B1.10). Lists every demo-answer site under
-// ui/public/stillhet/ and every `wire to` row of plans/stillhet/stillhet-wiring.md, and checks each against its classification in
+// ui/public/stillhet/ and every `wire to` row of test/fixtures/stillhet-first-wiring/stillhet-wiring.md, and checks each against its classification in
 // test/fixtures/stillhet-no-demo-baseline.json (wired, refused, not-in-stillhet, prototype-only, offender). The offenders can
 // only shrink: --update drops gone sites, refuses an unclassified one and refuses a new offender.
 //   node tools/stillhet-no-demo.mjs            exit 1 on an unclassified, stale or badly evidenced site

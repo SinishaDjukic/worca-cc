@@ -1,4 +1,4 @@
-// test/stillhet-perf-budgets-tasks-host.test.mjs — B2.4 C1 (plans/stillhet/test-results/PLAN.md §3C, D19): the Tasks page's
+// test/stillhet-perf-budgets-tasks-host.test.mjs — B2.4 C1 (test/fixtures/stillhet-first-wiring/test-results/PLAN.md §3C, D19): the Tasks page's
 // idle budget in the live Stillhet host (jsdom) on virtual time (test/helpers/stillhet-perf.mjs). #runs with a real-size
 // world (300 tasks), every fold and "Show N more" opened, idle for 10 s: its DOM mutations, counted with Chat's
 // exclusions, are held to tasksIdleMutations in test/fixtures/stillhet-perf-budgets.json (budgets only go down).

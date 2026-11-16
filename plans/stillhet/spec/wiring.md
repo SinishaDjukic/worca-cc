@@ -536,7 +536,7 @@ No chat box. The head says "Started from the chat NAME · Open the chat" (`GET /
 
 ## What the old map said that the code does not do
 
-`plans/stillhet/stillhet-wiring.md` against today's code. Of the 153 routes it names on rows marked "wired", all but one (`GET /api/schedules/dependents`) are called somewhere under `ui/public/stillhet/` (checked by script, then by eye for templated paths); what differs is where and how.
+`test/fixtures/stillhet-first-wiring/stillhet-wiring.md` against today's code. Of the 153 routes it names on rows marked "wired", all but one (`GET /api/schedules/dependents`) are called somewhere under `ui/public/stillhet/` (checked by script, then by eye for templated paths); what differs is where and how.
 
 | The old map said | The code |
 |---|---|

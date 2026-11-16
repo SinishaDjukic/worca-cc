@@ -1,6 +1,6 @@
 # Stillhet test findings: delivery plan
 
-Sources: `the test worktree, plans/stillhet/test-results/`. Read FINDINGS.md, v1-chat-shell.md, v2-tasks-wf.md, v3-proj-ins-mk-set.md and a1…a7b. Paths are under `ui/public/stillhet/` unless they start with `ui/`, `src/`, `docs/`, `test/` or `plans/`.
+Sources: `the test worktree, test/fixtures/stillhet-first-wiring/test-results/`. Read FINDINGS.md, v1-chat-shell.md, v2-tasks-wf.md, v3-proj-ins-mk-set.md and a1…a7b. Paths are under `ui/public/stillhet/` unless they start with `ui/`, `src/`, `docs/`, `test/` or `plans/`.
 
 **Already done or in flight**
 - #1312 Create PR demo body (merged).
@@ -38,8 +38,8 @@ Sources: `the test worktree, plans/stillhet/test-results/`. Read FINDINGS.md, v1
   - `docs/stillhet/components.md`
   - `plans/stillhet/prototype/components.html`
   - `ui/public/design-system/components/index.mjs`
-  - `plans/stillhet/findings.md`
-  - `plans/stillhet/stillhet-wiring.md`
+  - `test/fixtures/stillhet-first-wiring/findings.md`
+  - `test/fixtures/stillhet-first-wiring/stillhet-wiring.md`
   - `test/fixtures/stillhet-library-gate-baseline.json`
   - `stillhet-surfaces-baseline.json`
   - the no-demo baseline (B1.10)
@@ -298,7 +298,7 @@ Each is blocked by its decision. "Drop" closes it with its row in the gate basel
 ---
 
 ### B9: Classic functions missing in Stillhet (coverage)
-From gate.coverage (`tools/classic-inventory.mjs`, `plans/stillhet/coverage/COVERAGE.md`): every classic control was mapped to Stillhet; these are the classic functions no Stillhet code, wiring row or plan reaches. Each item is one finding (`plans/stillhet/findings.md`, COV-N) and lists the classic API it needs and the Stillhet place it belongs in by the design's rules; where the design has no home yet the item is design first (rule, catalog entry, component, test, gallery) or waits on its decision. Ordered by user impact. Each closes when its controls leave the MISSING baseline (`test/fixtures/stillhet-coverage-baseline.json`, `test/stillhet-coverage.test.mjs`).
+From gate.coverage (`tools/classic-inventory.mjs`, `test/fixtures/stillhet-first-wiring/coverage/COVERAGE.md`): every classic control was mapped to Stillhet; these are the classic functions no Stillhet code, wiring row or plan reaches. Each item is one finding (`test/fixtures/stillhet-first-wiring/findings.md`, COV-N) and lists the classic API it needs and the Stillhet place it belongs in by the design's rules; where the design has no home yet the item is design first (rule, catalog entry, component, test, gallery) or waits on its decision. Ordered by user impact. Each closes when its controls leave the MISSING baseline (`test/fixtures/stillhet-coverage-baseline.json`, `test/stillhet-coverage.test.mjs`).
 
 1. **COV-1** Add a project: New (make the folder), Several folders… (add many at once) and the in-app folder browser (23 controls) · classic `/api/fs/dirs`, `/api/git`, `/api/projects/bulk`, `/api/projects/create`, `/api/projects/probe` · Stillhet place: Projects › + › Add a project by hand (one folder or repository only today) · owner: Projects slice
 2. **COV-2** New run form: saved run defaults, presets (apply, check, duplicate, update), a workflow's defaults, a ticket source, sync before start, engine check, policy scope and notes (52 controls) · classic `/api/engines`, `/api/policy/notes`, `/api/policy/scopes`, `/api/presets/:param`, `/api/presets/:param/check`, `/api/presets/:param/duplicate` and 5 more · Stillhet place: + › New task… › More options, and Chat's TaskProposal · owner: feature 2 final check
@@ -336,7 +336,7 @@ The Settings, Requirements and onboarding items (COV-11 … COV-21) go into wave
 
 **A. No action without backend**
 - **Rule:** a live control never shows demo data, a would-answer, or a success that was only local.
-- **A1 (B1.10):** a gate test reads every demo-answer call site in Stillhet code (70 grep hits in 14 files; the owner counts 66), each of which must never reach a live control. It also reads the 19 `wire to` rows in `plans/stillhet/stillhet-wiring.md` § Dev surfaces.
+- **A1 (B1.10):** a gate test reads every demo-answer call site in Stillhet code (70 grep hits in 14 files; the owner counts 66), each of which must never reach a live control. It also reads the 19 `wire to` rows in `test/fixtures/stillhet-first-wiring/stillhet-wiring.md` § Dev surfaces.
   - It classifies each site as wired, refused with a reason, not in Stillhet yet (words only), or prototype-only.
   - The live instance fails on any site that is not classified.
   - The baseline can only shrink.

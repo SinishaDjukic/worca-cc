@@ -1,6 +1,6 @@
 # Stillhet browser test, pass 1: findings and fix proposals
 
-Source: agent files in this folder (a1, a2, a3, a4, a5, a7a, a7b, owner-reports), `plans/stillhet/findings.md` rows "owner real test (4317)", protocol `plans/stillhet/test-protocol.md`. Code: `docs/rail-agreed` at a29b53a53; paths below are under `ui/public/stillhet/` unless they start with `ui/` or `src/`. Causes marked ✓ were re-read in the code for this report; the rest are as the agents reported.
+Source: agent files in this folder (a1, a2, a3, a4, a5, a7a, a7b, owner-reports), `test/fixtures/stillhet-first-wiring/findings.md` rows "owner real test (4317)", protocol `plans/stillhet/test-protocol.md`. Code: `docs/rail-agreed` at a29b53a53; paths below are under `ui/public/stillhet/` unless they start with `ui/` or `src/`. Causes marked ✓ were re-read in the code for this report; the rest are as the agents reported.
 
 Already in flight, not re-proposed here: **#1312** (Create PR demo body "Closes #942"), **#1297** (Chat repaint: keyed per-turn patch, debounce, skip when hidden, orb kept, per-run status read, spend re-read), **#1310** (Timeline in By person).
 

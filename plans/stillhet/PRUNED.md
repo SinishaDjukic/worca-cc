@@ -42,13 +42,14 @@ Classic, the server and tests that are not Stillhet's were not touched.
 | `pulse.md` | `docs/stillhet/panels.md` and `settings.md` where it is design; `spec/server.md` (S23 to S29, E5 to E8) for the engine rules near a limit, the usage windows and events; `spec/stillhet-features.md` (Pulse) |
 | `test-protocol.md` | `spec/gate.md` |
 
-## Kept, and why
+## Moved out of the plans
 
-| File | Why it stays |
-|---|---|
-| `stillhet-wiring.md`, `findings.md`, `test-results/PLAN.md`, `test-results/FINDINGS.md` | Read by the gate's tools and their tests in `npm test` (`tools/stillhet-wiring.mjs`, `stillhet-surfaces.mjs`, `stillhet-no-demo.mjs`, `classic-inventory.mjs`, `prototype-pr-check.mjs`). They describe the first wiring, which `spec/wiring.md` replaces for people. Step B2 of `spec/build-order.md` points the tools at one file per place (`spec/places/`), and these four go in that step. Do not add rows to them |
-| `task-engine-additions.md` | The three server additions on this branch (raise the cap, Restart Build, pause after a step) are cited from server code this branch does not edit. Its facts are also in `spec/server.md` |
-| `coverage/` | The generated inventory of classic's controls (`tools/classic-inventory.mjs`). Regenerated against dev for the build |
+`plans/stillhet/` holds only this file, the README, the prototype and the spec.
+
+| What | Where it is now | Why it is kept at all |
+|---|---|---|
+| `stillhet-wiring.md`, `findings.md`, `test-results/PLAN.md`, `test-results/FINDINGS.md`, `coverage/` | `test/fixtures/stillhet-first-wiring/` | They are the first wiring's ledgers, read by the gate's tools and their tests (`tools/stillhet-wiring.mjs`, `stillhet-surfaces.mjs`, `stillhet-no-demo.mjs`, `classic-inventory.mjs`, `prototype-pr-check.mjs`). They are frozen inputs now, not plans: `spec/wiring.md` replaces them for people. Step B2 of `spec/build-order.md` points the tools at one file per place, and this folder goes then. Do not add rows to them |
+| `task-engine-additions.md` | deleted | Its three server additions (raise the cap, Restart Build, pause after a step) are in `spec/server.md`; the three code comments that cited it point there |
 
 ## Tests retired with the redesign
 
@@ -58,6 +59,8 @@ Host tests of the first wiring that only held something the redesign removed on 
 |---|---|
 | `test/stillhet-task-follow-up-host.test.mjs` (the file) and three cases of `stillhet-task-tools-host-1` | They opened "Start a follow-up task / Run after…" from the task page's ⋯. A task's page starts no new work; a follow-up starts on the task's card in its chat |
 | Ten cases of `stillhet-schedules-drafts-host`, one of `stillhet-schedules-page-host`, the "Run after this" half of the drafts' delete case, the Save row of the schedules refusal table | A schedule's page is an inspect view: its draft fields, DraftBar and "Run after this" are gone; a schedule is changed from Chat |
+
+| Three cases of `stillhet-no-demo-on-live` (every demo-answer site classified, no stale baseline entry, each demo string still in its source) and one of `stillhet-wiring` (the real wiring file has a row for every action) | They compared the first wiring's frozen ledgers with page code the redesign has since changed. The check itself (`gate.no-demo`, a row for every action) is rebuilt in step B2 on one file per place, with its baseline at zero |
 
 ## Tests not settled yet
 

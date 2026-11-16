@@ -23,7 +23,7 @@ export const SEEDED_SCHEDULES = Object.freeze([
   { key: 'paused', what: 'paused by you', chat: true },
   { key: 'failing', what: 'paused after failures: its start failed for real (the folder is gone) and it paused itself', chat: false },
   { key: 'missed', what: 'a one-off ticket that missed its start', chat: false },
-  { key: 'running', what: 'a series whose Run now is running a task', chat: false },   // not from a chat: dev refuses Run now on a chat-made series ("card is scheduled", plans/stillhet/findings.md)
+  { key: 'running', what: 'a series whose Run now is running a task', chat: false },   // not from a chat: dev refuses Run now on a chat-made series ("card is scheduled", test/fixtures/stillhet-first-wiring/findings.md)
   { key: 'waiting', what: 'a one-off ticket waiting for its time', chat: false },
   { key: 'ended', what: 'a series that reached its end', chat: false },
 ]);

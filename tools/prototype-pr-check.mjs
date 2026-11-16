@@ -3,7 +3,7 @@
 // A PR that changes today's UI (ui/public/ outside stillhet/ and design-system/, or a ui/routes/ or ui/server.mjs change
 // that adds a route today's UI fetches) passes only when it also:
 //   1. changes a file under ui/public/stillhet/, plans/stillhet/prototype/ or docs/stillhet/, or
-//   2. adds or changes a `wire to` row with a why under `## Dev surfaces` in plans/stillhet/stillhet-wiring.md for each such file, or
+//   2. adds or changes a `wire to` row with a why under `## Dev surfaces` in test/fixtures/stillhet-first-wiring/stillhet-wiring.md for each such file, or
 //   3. carries the no-ui-change label and a "No UI change: …" line in its body.
 //   node tools/prototype-pr-check.mjs --base origin/dev [--pr-json FILE]   (FILE: `gh pr view --json labels,body`)
 // Exit 0 pass, 1 fail, 2 base or usage error. Only node: built-ins and tools/stillhet-*.mjs, so CI runs it without npm ci.
@@ -16,7 +16,7 @@ import { browserPaths, isTodaysUi, pathMatches } from './stillhet-surfaces.mjs';
 export const PROTOTYPE_DIRS = ['ui/public/stillhet/', 'plans/stillhet/prototype/', 'docs/stillhet/'];
 export const LABEL = 'no-ui-change';
 export const BODY_LINE = /^[ \t]*No UI change:[ \t]*\S/m;
-const WIRING = 'plans/stillhet/stillhet-wiring.md';
+const WIRING = 'test/fixtures/stillhet-first-wiring/stillhet-wiring.md';
 const ROUTES = 'tools/parity/route-classes.json';
 
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });

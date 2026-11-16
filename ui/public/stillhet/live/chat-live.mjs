@@ -661,7 +661,7 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
   return api;
 }
 // The run-state flow's labels a chat TaskCard reaches (run-state.mjs FLOW for the live cases, live-map.mjs caseOf, plus
-// runFlow's and the card's own ⋯), each onto dev's real target (plans/stillhet/stillhet-wiring.md run-state rows). A label
+// runFlow's and the card's own ⋯), each onto dev's real target (test/fixtures/stillhet-first-wiring/stillhet-wiring.md run-state rows). A label
 // that is not here is not offered on a live card.
 export const FLOW = Object.freeze({
   Pause: { act: 'task-pause' }, 'Pause now': { act: 'task-pause' },

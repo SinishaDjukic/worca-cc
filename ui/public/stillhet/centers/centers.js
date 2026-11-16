@@ -378,7 +378,7 @@
   // project's own setting holds, as dev's New run); Cost cap is the run's own cap (costCapUsd, pipelines.cost_cap_usd).
   // Agents is dev's per-run agent pick (POST /api/run `overlay.nodes`, checked by checkRunOverlay): one model for every agent
   // node of the picked workflow, from dev's models for the run's engine; Auto decides its agents at start, so it offers none.
-  // dev has no auto-merge at start, so the live form draws no 'merge when checks pass' (plans/stillhet/stillhet-wiring.md).
+  // dev has no auto-merge at start, so the live form draws no 'merge when checks pass' (test/fixtures/stillhet-first-wiring/stillhet-wiring.md).
   const LIVE_AGENT = 'the project\'s default';
   const LIVE_SETUP = 'as the project is set up';
   const LIVE_THEN = { 'open a PR': 'ready', 'leave it on the branch': 'none' };

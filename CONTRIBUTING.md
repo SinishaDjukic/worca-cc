@@ -183,7 +183,7 @@ pages are frozen by a ratchet that can only shrink: after moving a page to the l
 the component, its test and its gallery example; `test/stillhet-docs.test.mjs` checks they agree.
 
 A PR that changes today's UI must change the Stillhet prototype too, or add a `wire to` row under `## Dev surfaces` in
-`plans/stillhet/stillhet-wiring.md`, or carry the `no-ui-change` label plus a "No UI change: …" line in its body (CI's
+`test/fixtures/stillhet-first-wiring/stillhet-wiring.md`, or carry the `no-ui-change` label plus a "No UI change: …" line in its body (CI's
 `prototype` job, `gate.prototype` in [docs/stillhet/gate.md](docs/stillhet/gate.md)); re-run that job after a label or body
 edit, and on a fork PR a maintainer applies the label.
 

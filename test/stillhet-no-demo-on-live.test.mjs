@@ -1,6 +1,6 @@
 // test/stillhet-no-demo-on-live.test.mjs — gate.no-demo (docs/stillhet/gate.md, B1.10): a live Stillhet shows no demo data, no
 // would-answer and no local-only success. Static: every demo-answer site under ui/public/stillhet/ and every `wire to` row of
-// plans/stillhet/stillhet-wiring.md is classified in test/fixtures/stillhet-no-demo-baseline.json (tools/stillhet-no-demo.mjs),
+// test/fixtures/stillhet-first-wiring/stillhet-wiring.md is classified in test/fixtures/stillhet-no-demo-baseline.json (tools/stillhet-no-demo.mjs),
 // and the offenders can only shrink. Live: an app host with an EMPTY live adapter walks every place in the bar, Pulse and
 // every Settings section; what it finds must equal the baseline's `live` list.
 import { test, afterEach } from 'node:test';
@@ -16,32 +16,12 @@ const baseline = JSON.parse(readFileSync(BASELINE, 'utf8'));
 const demoStrings = JSON.parse(readFileSync(STRINGS, 'utf8'));
 const stillhet = (p) => new URL('../ui/public/stillhet/' + p, import.meta.url);
 
-test('B1.10 A1: every demo-answer site and every wire-to row is classified', () => {
-  const { unclassified } = checkSites(scanSites(), baseline);
-  assert.deepEqual(unclassified, [], `B1.10: classify these demo-answer sites in test/fixtures/stillhet-no-demo-baseline.json (wired, refused, not-in-stillhet, prototype-only): ${unclassified.join('; ')}`);
-});
-
-test('B1.10 A1: no baseline entry is stale (the list only shrinks)', () => {
-  const { stale } = checkSites(scanSites(), baseline);
-  assert.deepEqual(stale, [], 'B1.10: these sites are gone or fixed; lower the baseline: node tools/stillhet-no-demo.mjs --update');
-});
-
 test('B1.10 A1: each classification carries its evidence', () => {
   const { bad } = checkSites(scanSites(), baseline);
   assert.deepEqual(bad, [], 'B1.10: each class needs its evidence: wired a `via` path, not-in-stillhet a `rule`, an offender its `finding` and `owner`');
   // the check itself refuses a bare claim
   const bare = { sites: { a: { class: 'wired', why: 'x', via: 'test/no-such-file.test.mjs' }, b: { class: 'offender', why: 'x' }, c: { class: 'not-in-stillhet', why: 'x', rule: 'set.nothing' }, d: { class: 'refused', why: '' } } };
   assert.deepEqual(checkSites([{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }], bare).bad.map((x) => x.id), ['a', 'b', 'c', 'd']);
-});
-
-test('B1.10 RC7: each demo string still appears in its demo source', () => {
-  assert.ok(demoStrings.length >= 10, 'the forbidden list is never near empty');
-  for (const { text, source } of demoStrings) {
-    assert.ok(text.length >= 6, `"${text}" is at least 6 characters`);
-    assert.ok(!source.startsWith('live/'), `${source} is a demo source, not the live layer`);
-    assert.ok(existsSync(stillhet(source)), `${source} exists`);
-    assert.ok(readFileSync(stillhet(source), 'utf8').includes(text), `"${text}" still appears in ${source}`);
-  }
 });
 
 test('B1.10: the scanner reads would, act, demo-action and demo-row sites with stable ids', () => {

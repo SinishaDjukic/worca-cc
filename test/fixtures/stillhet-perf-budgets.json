@@ -1,5 +1,5 @@
 {
-  "rule": "D19 (plans/stillhet/test-results/PLAN.md §3C C1): budgets come from measured values and only go down; exclusions only shrink",
+  "rule": "D19 (test/fixtures/stillhet-first-wiring/test-results/PLAN.md §3C C1): budgets come from measured values and only go down; exclusions only shrink",
   "budgets": {
     "chatIdleMutations": {
       "value": 0,

@@ -1,6 +1,6 @@
 # Gaps: what the prototype lacks compared with classic
 
-Classic is the code on `dev`. Sources: the inventory of classic's controls (`plans/stillhet/coverage/COVERAGE.md`: 1,869
+Classic is the code on `dev`. Sources: the inventory of classic's controls (`test/fixtures/stillhet-first-wiring/coverage/COVERAGE.md`: 1,869
 controls, 953 offered in Stillhet, 444 in places not built yet, 472 with no home), and a classic user's side-by-side
 walk of classic and the prototype (baseline round, [assessment.md](assessment.md)).
 

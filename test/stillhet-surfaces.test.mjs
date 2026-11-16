@@ -1,5 +1,5 @@
 // test/stillhet-surfaces.test.mjs — every Settings key and every path today's UI fetches has a `## Dev surfaces` row in
-// plans/stillhet/stillhet-wiring.md, or sits in the frozen baseline (test/fixtures/stillhet-surfaces-baseline.json), which only
+// test/fixtures/stillhet-first-wiring/stillhet-wiring.md, or sits in the frozen baseline (test/fixtures/stillhet-surfaces-baseline.json), which only
 // shrinks (tools/stillhet-surfaces.mjs, gate.prototype in docs/stillhet/gate.md).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -59,11 +59,11 @@ test('nextBaseline refuses any added id, even one swapped for another at an equa
 // A temp root with one Settings key, one today's-UI fetch, one Stillhet fetch (not gated) and a wiring file.
 function tempRoot(wiring) {
   const root = mkdtempSync(join(tmpdir(), 'stillhet-surfaces-'));
-  for (const d of ['test/fixtures', 'plans/stillhet', 'ui/public/chat', 'ui/public/stillhet']) mkdirSync(join(root, d), { recursive: true });
+  for (const d of ['test/fixtures/stillhet-first-wiring', 'ui/public/chat', 'ui/public/stillhet']) mkdirSync(join(root, d), { recursive: true });
   writeFileSync(join(root, 'test/fixtures/settings-api-keys.json'), JSON.stringify(['brandNew', 'keepAwake']));
   writeFileSync(join(root, 'ui/public/chat/a.mjs'), "fetch('/api/chat/' + id)");
   writeFileSync(join(root, 'ui/public/stillhet/s.js'), "fetch('/api/stillhet-only')");
-  writeFileSync(join(root, 'plans/stillhet/stillhet-wiring.md'), wiring);
+  writeFileSync(join(root, 'test/fixtures/stillhet-first-wiring/stillhet-wiring.md'), wiring);
   return root;
 }
 const capture = () => { const lines = []; return { lines, out: { log: (s) => lines.push(String(s)) } }; };
@@ -105,7 +105,7 @@ test('main --update: refuses a grown set and writes nothing; seeds an absent fil
     rmSync(baseline);
     assert.equal(S.main(['--update'], { root, baseline, out: capture().out }), 0);
     assert.equal(readFileSync(baseline, 'utf8'), JSON.stringify(['route › /api/chat', 'setting › brandNew'], null, 2) + '\n');
-    writeFileSync(join(root, 'plans/stillhet/stillhet-wiring.md'), doc('| `setting › keepAwake` | wired | x |', '| `setting › brandNew` | wire to | later |'));
+    writeFileSync(join(root, 'test/fixtures/stillhet-first-wiring/stillhet-wiring.md'), doc('| `setting › keepAwake` | wired | x |', '| `setting › brandNew` | wire to | later |'));
     assert.equal(S.main(['--update'], { root, baseline, out: capture().out }), 0);
     assert.deepEqual(JSON.parse(readFileSync(baseline, 'utf8')), ['route › /api/chat']);
     c = capture();
@@ -123,7 +123,7 @@ test('the baseline is a sorted, duplicate-free array of setting and route ids', 
 });
 
 test('the real tree: every Settings key and today\'s-UI fetch has a row or is in the baseline, and the baseline is current', () => {
-  const wiring = readFileSync(join(S.ROOT, 'plans/stillhet/stillhet-wiring.md'), 'utf8');
+  const wiring = readFileSync(join(S.ROOT, 'test/fixtures/stillhet-first-wiring/stillhet-wiring.md'), 'utf8');
   assert.ok(wiring.includes('\n## Dev surfaces\n'));
   assert.deepEqual(S.compare(S.surfaceIds(), wiring, JSON.parse(readFileSync(S.BASELINE, 'utf8'))), { grew: [], shrank: [], badStatus: [] });
 });

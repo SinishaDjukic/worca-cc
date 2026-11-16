@@ -1,5 +1,5 @@
 // ui/public/stillhet/shell/old-addresses.js — dev's old addresses with Stillhet on (docs/stillhet/navigation.md nav.old-address,
-// plans/stillhet/stillhet-wiring.md Moves). One table for the app and the prototype: window.StillhetOldAddresses = { TABLE,
+// test/fixtures/stillhet-first-wiring/stillhet-wiring.md Moves). One table for the app and the prototype: window.StillhetOldAddresses = { TABLE,
 // resolve(hash) }. resolve answers null for every Stillhet address, else { hash, pulse }: where the thing lives now, and a
 // Pulse tab to open there ('' for none). shell.js route() asks it first and replaces the address in place, so Back never
 // loops. Dev's own router (app.js MOVED_ROUTES) is untouched; with Stillhet off these addresses stay dev's.

@@ -1,4 +1,4 @@
-// test/stillhet-perf-budgets-chat-host.test.mjs — B2.4 C1 (plans/stillhet/test-results/PLAN.md §3C, D19): Chat's performance
+// test/stillhet-perf-budgets-chat-host.test.mjs — B2.4 C1 (test/fixtures/stillhet-first-wiring/test-results/PLAN.md §3C, D19): Chat's performance
 // budgets in the live Stillhet host (jsdom) on virtual time (test/helpers/stillhet-perf.mjs). An idle 200-turn chat, a
 // history-pr frame that changes nothing and one live update are measured and held to test/fixtures/stillhet-perf-budgets.json:
 // a number above its budget fails, one below fails until the JSON is lowered (budgets only go down).

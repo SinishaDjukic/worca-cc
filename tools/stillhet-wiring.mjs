@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // tools/stillhet-wiring.mjs — lists every prototype action and every seeded figure of ui/public/stillhet/, and reports the ones
-// with no row in plans/stillhet/stillhet-wiring.md ("Action rows" and "Figure rows", keyed by the id in the first column).
+// with no row in test/fixtures/stillhet-first-wiring/stillhet-wiring.md ("Action rows" and "Figure rows", keyed by the id in the first column).
 //   action  `module › phrase`: each window.StillhetWould(...) call (the phrase with every ${…} read as …), each StillhetAdapter.act('id')
 //           call, and each key of demo/demo-actions.js but `would`; plus `design-system/components/run-state.mjs › phrase`
 //           for each `would` phrase of the library's run-state flow (its {names} kept)
@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const SRC = path.join(ROOT, 'ui/public/stillhet');
-export const WIRING = path.join(ROOT, 'plans/stillhet/stillhet-wiring.md');
+export const WIRING = path.join(ROOT, 'test/fixtures/stillhet-first-wiring/stillhet-wiring.md');
 const GENERATED = /\/(components|graph)\.js$/;
 const SKIP = /\/(adapter|demo-actions)\.js$/;   // the seam itself: it answers the calls, it holds no action
 

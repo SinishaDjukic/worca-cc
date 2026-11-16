@@ -40,7 +40,7 @@ Sources: a static scan of today's UI (204 files) and a read-only browser walk of
 
 ## MISSING
 
-Each MISSING control, grouped by its finding (`plans/stillhet/findings.md`, PLAN.md B9). A finding closes when its controls are wired or decided.
+Each MISSING control, grouped by its finding (`test/fixtures/stillhet-first-wiring/findings.md`, PLAN.md B9). A finding closes when its controls are wired or decided.
 
 ### COV-1: Add a project: New (make the folder), Several folders… (add many at once) and the in-app folder browser
 
