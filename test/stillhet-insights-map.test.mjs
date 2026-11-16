@@ -327,3 +327,46 @@ test('F-6-12: How tasks end\'s headline, bars and rows count the same runs over 
   assert.deepEqual(m.series.failed, ANSWER.series.map((s) => s.failed));
   assert.deepEqual(pick(m.prev), pick(ANSWER.prev), 'the period before keeps dev\'s prev');
 });
+
+// ---- B4.9 review minors (impl-review-cycle1) ----
+test('B4.9 F-6-08 review: Per task under all time draws the shown months only and names that span (seriesSpan); the totals stay all time', () => {
+  const MB = [new Date(2026, 8, 1).getTime(), new Date(2026, 9, 1).getTime(), new Date(2026, 10, 1).getTime()];
+  const runs = [
+    fact('old', { usd: 900, hours: 0, startedMs: MB[0] - 40 * 86_400_000, spend: [] }),
+    fact('a', { usd: 10, hours: 0, startedMs: MB[0] + 1, spend: [[0, 10]] }),
+    fact('b', { usd: 20, hours: 0, startedMs: MB[2] + 1, spend: [[2, 20]] }),
+  ];
+  const all = { range: 'all', bucket: 'month', windowStartMs: MB[0], windowEndMs: new Date(2026, 11, 1).getTime(), humanRateUsd: 0,
+    totals: { runs: 3, finished: 3, failed: 0, stopped: 0, spentUsd: 930, pipelineSpendUsd: 930, humanHours: 0, savedUsd: -930 }, prev: null,
+    series: MB.map((b) => ({ bucketStartMs: b, spentUsd: 0, finished: 0, failed: 0, stopped: 0 })), report: { buckets: MB, runs, prevRuns: null } };
+  const s = statsSource(all, { page: 'per-task', now: NOW });
+  assert.equal(s.totals.spend, 930, 'the headline stays all time');
+  assert.equal(s.totals.tasks, 3);
+  assert.equal(s.seriesSpan, 'the last 3 months');
+  assert.deepEqual(s.series.tasks, [1, 0, 1], 'a task begun before the first month is not drawn in it');
+  assert.deepEqual(s.series.spend, [10, 0, 20]);
+  assert.equal(statsSource(ANSWER, { page: 'per-task' }).seriesSpan, null, 'a bounded range: the bars are the whole period');
+});
+
+test('B4.9 F-6-08 review: with no runs spend known, Per task keeps tasks and hours and leaves spend and saved unknown (null), never 0', () => {
+  const blind = { ...ANSWER, totals: { ...ANSWER.totals, runs: 107, humanHours: 50 }, prev: { ...ANSWER.prev }, report: { buckets: B } };
+  const s = statsSource(blind, { page: 'per-task', now: B[2] + 3600_000 });
+  assert.equal(s.totals.tasks, 107);
+  assert.equal(s.totals.hours, 50);
+  assert.equal(s.totals.spend, null);
+  assert.equal(s.totals.saved, null);
+  assert.equal(s.prev, null, 'no period before to compare with');
+  assert.deepEqual(s.series.spend, [null, null, null]);
+  const sub = { ...MODEL.SUB['per-task'], src: s }, c = MODEL.compute(sub, MODEL.defaults(sub));
+  assert.equal(c.v, null);
+  assert.equal(sub.word(c), 'Cost a task not known');
+  assert.equal(sub.why(c), '107 tasks, their cost not known');
+  assert.equal(MODEL.cmp(c, sub), '');
+});
+
+test('B4.9 F-6-11 review: against a zero base the comparison says new this period, never "Up from $0"', () => {
+  assert.equal(MODEL.cmp({ p: 0, v: 10 }, MODEL.SUB.spend), 'New this period, none in the period before');
+  assert.equal(MODEL.cmp({ p: 0, v: -12 }, MODEL.SUB['time-saved']), 'New this period, none in the period before');
+  assert.equal(MODEL.cmp({ p: 0, v: 0 }, MODEL.SUB.spend), 'About the same as $0 in the period before');
+  assert.equal(MODEL.cmp({ p: 0, v: 4 }, MODEL.SUB['per-task']), 'New this period, none in the period before');
+});

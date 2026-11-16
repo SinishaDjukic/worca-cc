@@ -158,7 +158,7 @@ test('F-6-11 = V3-10: a negative amount reads −$ before the number; −0 reads
   assert.equal(why({ T: { hours: 18224.66 } }), 'About 18225 hours of work');
   assert.equal(why({ T: { hours: 1 } }), 'About 1 hour of work');
   assert.equal(M.cmp({ p: -4, v: 10 }, M.SUB.spend), 'Up from −$4 in the period before');
-  assert.equal(M.cmp({ p: 0, v: 10 }, M.SUB.spend), 'Up from $0 in the period before');
+  assert.equal(M.cmp({ p: 0, v: 10 }, M.SUB.spend), 'New this period, none in the period before');
   assert.equal(M.cmp({ p: 0, v: 0 }, M.SUB.spend), 'About the same as $0 in the period before');
   assert.equal(M.cmp({ p: 100, v: 101 }, M.SUB.spend), 'About the same as $100 in the period before');
   assert.equal(M.cmp({ p: 100, v: 150 }, M.SUB.spend), 'Up 50% from $100 in the period before');

@@ -127,7 +127,7 @@ function cohortSeries(facts, buckets, fields, rate, spendSeries) {
   }
   if (out.hours) out.hours = hours;
   if (out.spend) out.spend = spendSeries;
-  if (out.saved) out.saved = hours.map((h, i) => savedUsd(h, rate, spendSeries[i]));
+  if (out.saved) out.saved = hours.map((h, i) => (spendSeries[i] == null ? null : savedUsd(h, rate, spendSeries[i])));
   return out;
 }
 const sumRows = (series, n) => Array.from({ length: n }, (_, i) => series.reduce((a, s) => a + (s.values[i] || 0), 0));
@@ -186,20 +186,26 @@ export function statsSource(answer, { by = 'project', thenBy = '', filter = [], 
   const shown = outcome ? sel.filter((f) => f.inCohort && (answer.range !== 'all' || (n && Number.isFinite(f.startedMs) && f.startedMs >= buckets[0]))) : sel;
   const fromFacts = whole && !outcome;
   // F-6-08: a runs-only page's whole money is the runs' (pipelineSpendUsd, else the facts summed), Saved against it
-  const runsTotals = (tt, list) => { const S = runsSpendOf(tt, list); return S == null ? fromSum(allocate(list || [], { by: 'project', rate }).total, fields) : fromSum({ ...tt, spentUsd: S, savedUsd: savedUsd(tt.humanHours, rate, S) }, fields); };
+  // B4.9 review: no runs spend known: the counts stay dev's, spend and Saved are unknown (null), never a made-up 0
+  const runsTotals = (tt, list) => { const S = runsSpendOf(tt, list); return S == null ? { ...fromSum(tt, fields), spend: null, saved: null } : fromSum({ ...tt, spentUsd: S, savedUsd: savedUsd(tt.humanHours, rate, S) }, fields); };
   const totals = !fromFacts ? fromSum(allocate(shown, { by: 'project', rate }).total, fields) : runsOnly ? runsTotals(t, rep.runs) : fromSum(t, fields);
-  const prev = answer.prev == null || !rep.prevRuns && !whole ? null : whole ? (runsOnly ? runsTotals(answer.prev, rep.prevRuns) : fromSum(answer.prev, fields)) : fromSum(allocate(select(rep.prevRuns), { by: 'project', rate }).total, fields);
-  const spendSeries = whole && !runsOnly ? (answer.series || []).map((s) => s.spentUsd)
-    : sumRows(allocationSeries(allocate(shown, { by: 'project', top: Infinity }), shown, { buckets }), n);
-  const series = cohortSeries(shown, buckets, fields, rate, spendSeries);
+  const prevOf = () => { const p = runsTotals(answer.prev, rep.prevRuns); return p.spend == null ? null : p; };
+  const prev = answer.prev == null || !rep.prevRuns && !whole ? null : whole ? (runsOnly ? prevOf() : fromSum(answer.prev, fields)) : fromSum(allocate(select(rep.prevRuns), { by: 'project', rate }).total, fields);
+  // B4.9 review: all time's buckets are the last months only; a runs-only page draws the runs begun in them and names that span
+  const allTime = answer.range === 'all' && n > 0;
+  const drawn = runsOnly && allTime ? shown.filter((f) => !Number.isFinite(f.startedMs) || f.startedMs >= buckets[0]) : shown;
+  const spendSeries = runsOnly && totals.spend == null ? new Array(n).fill(null) : whole && !runsOnly ? (answer.series || []).map((s) => s.spentUsd)
+    : sumRows(allocationSeries(allocate(drawn, { by: 'project', top: Infinity }), drawn, { buckets }), n);
+  const series = cohortSeries(drawn, buckets, fields, rate, spendSeries);
+  const seriesSpan = allTime && !outcome ? `the last ${n} ${n === 1 ? 'month' : 'months'}` : null;
   if (fromFacts) for (const k of ['finished', 'failed', 'stopped']) if (series[k]) series[k] = (answer.series || []).map((s) => s[k]);
   if (series.count && fromFacts) series.count = (answer.series || []).map((s) => s.failed + s.stopped);
   const dims = ['project', 'workflow', 'person', 'status', ...tagDims(facts, tagKeys)];
   const { rows, kids } = rowsAndKids(shown, { dims, by, thenBy, rate, extras, fields, share, totals });
   if (whole && !runsOnly) { const m = allocate([], { by: 'project', rate, ...extras }); const o = m.rows.map((r) => rowOf(r, fields, share, totals)); if (o.length) rows.origin = o; }
   const { days, last } = daysOf(buckets, answer.bucket, answer.windowEndMs);
-  const cut = cutOf(shown, { by, rate, extras, fields, buckets, rep, whole: whole && !runsOnly });
-  return { live: true, fields, labels: labelsOf(buckets, answer.bucket), days, last, dayCount: dayCountOf(answer.bucket, buckets, answer.windowStartMs, answer.windowEndMs, now), series, before: null, totals, prev, rows, kids, cut, none: 'Unallocated' };
+  const cut = cutOf(drawn, { by, rate, extras, fields, buckets, rep, whole: whole && !runsOnly });
+  return { live: true, fields, labels: labelsOf(buckets, answer.bucket), days, last, dayCount: dayCountOf(answer.bucket, buckets, answer.windowStartMs, answer.windowEndMs, now), series, before: null, totals, prev, rows, kids, cut, none: 'Unallocated', seriesSpan };
 }
 
 /** The Cost report's model for a page as drawn (D24's Download CSV): dev's allocate over the same facts, then reportCsv. */

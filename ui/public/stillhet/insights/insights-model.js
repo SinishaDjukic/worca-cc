@@ -261,13 +261,14 @@
     if (c.p == null || !isFinite(c.p)) return '';
     const up = c.v > c.p, near = c.p > 0 ? Math.abs(c.v - c.p) / c.p < 0.03 : c.p === 0 && c.v === 0;
     if (near) return `About the same as ${sub.text(c.p)} ${w}`;
+    if (c.p === 0) return `New this period, none ${w}`;   // B4.9 review: nothing to be up from
     return sub.den || c.p <= 0 ? `${up ? 'Up' : 'Down'} from ${sub.text(c.p)} ${w}` : `${up ? 'Up' : 'Down'} ${Math.abs(Math.round(((c.v - c.p) / c.p) * 100))}% from ${sub.text(c.p)} ${w}`;
   };
   const SUBS = [
     { id: 'spend', title: 'Spend', group: 'Cost', pace: 'On pace for $1,545, $545 over', icon: 'set-spending', noun: 'AI spend', src: money, num: 'spend', text: usd, forms: SUM, budget: 1000, cols: moneyCols(), share: 'spend',
       word: (c) => `${usd(c.v)} of $1,000`, why: (c) => (c.st.by === 'client' ? `${usd(noOwner.spend)} has no client` : `Saved about ${usd(c.T.saved)}, 3× what it cost · on pace for $1,545 · ${usd(noOwner.spend)} has no client`) },
     { id: 'per-task', title: 'Per task', group: 'Cost', icon: 'list', noun: 'cost a task', src: money, num: 'spend', den: 'tasks', text: usd2, forms: RATE, cols: moneyCols(['Per task', (r) => (r.tasks ? usd2(r.spend / r.tasks) : '-')]), share: 'spend',
-      word: (c) => `${usd2(c.v)} a task`, why: (c) => `${usd(c.T.spend)} across ${c.T.tasks} tasks` },
+      word: (c) => (c.v == null ? 'Cost a task not known' : `${usd2(c.v)} a task`), why: (c) => (c.T.spend == null ? `${plural(c.T.tasks, 'task')}, their cost not known` : `${usd(c.T.spend)} across ${c.T.tasks} tasks`) },
     { id: 'why', title: 'Why it cost', group: 'Cost', icon: 'refresh', noun: 'rework and waste', src: waste, by: 'why', num: 'spend', text: usd, forms: SUM, cols: wasteCols, share: 'base',
       wordAlways: (c) => `${usd(c.v)} of ${usd(c.base)} went on rework and waste`, whyAlways: (c) => (c.P && c.st.against === 'before' ? `${pct(c.v / c.base)}, up from ${pct(c.P.spend / c.pbase)} ${c.whole && c.st.when === 'this month' ? 'last month' : 'in the period before'}` : pct(c.v / c.base)) },
     { id: 'budget', title: 'Budget', group: 'Cost', pace: 'On pace for $1,545, $545 over', icon: 'set-limits', noun: 'budget used', src: money, num: 'spend', text: usd, forms: SUM, as: 'running', against: 'budget', budget: 1000, cols: moneyCols(), share: 'spend',
@@ -371,10 +372,10 @@
   function computeLive(sub, st, all) {
     const src = sub.src, rowField = sub.share === 'base' ? 'spend' : sub.share;
     const c = { sub, st, src, live: true, labels: src.labels, days: src.dayCount, F: src.series, B: null, T: { ...src.totals }, P: src.prev ? { ...src.prev } : null, whole: !st.narrow && !st.from };
-    const val = (A, i) => (sub.den ? (A[sub.den][i] ? A[sub.num][i] / A[sub.den][i] : null) : A[sub.num][i]);
+    const val = (A, i) => (A[sub.num][i] == null ? null : sub.den ? (A[sub.den][i] ? A[sub.num][i] / A[sub.den][i] : null) : A[sub.num][i]);
     c.points = c.labels.map((_, i) => val(c.F, i));
     c.before = null;
-    const whole = (T) => (sub.den ? (T[sub.den] ? T[sub.num] / T[sub.den] : 0) : T[sub.num]);
+    const whole = (T) => (T[sub.num] == null ? null : sub.den ? (T[sub.den] ? T[sub.num] / T[sub.den] : 0) : T[sub.num]);   // B4.9 review: not known stays null
     c.v = whole(c.T); c.p = c.P ? whole(c.P) : null; c.base = 0;
     c.timeWord = st.from && c.labels.length ? rangeWord(c.labels) : st.when;
     const sort = (rows, dim) => (ORDERED.has(dim) ? rows : [...rows].sort((x, y) => y[rowField] - x[rowField]));
