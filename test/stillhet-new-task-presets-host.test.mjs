@@ -161,3 +161,14 @@ test('COV-2 presets: No preset clears it; the start body has no preset id', asyn
   const [b] = runs(calls);
   assert.equal(b.presetId, undefined); assert.equal(b.guardrailsId, undefined);
 });
+
+test('F-G-G3-02: a refused Save as default leaves its error under Cost tags until a preset replaces the tags', async () => {
+  const { w, d } = await open({ write: (u) => (u.endsWith('/tags/defaults') ? [400, { error: 'tag "x y" has a space' }] : [200, { runId: 'r-new' }]) });
+  q(d, '[data-c-more]').click(); await settle(20);
+  type(w, d, '#cc-tags', 'x y');
+  q(d, '[data-c-tagsave]').click(); await settle(40);
+  assert.equal(q(d, '#cc-tags-note').textContent, 'tag "x y" has a space');
+  await pick(d, 'preset', 'p:rp_fix');
+  assert.equal(q(d, '#cc-tags').value, 'bugfix');
+  assert.equal(q(d, '#cc-tags-note'), null, 'the tags changed: the old refusal goes');
+});

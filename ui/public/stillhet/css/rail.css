@@ -1704,7 +1704,10 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .cc-proof{font-size:var(--fs-meta);line-height:1.5;color:var(--ink-3);}
 .cc-lbl{position:relative;}
 .cc-lbl > .seg{position:absolute;right:0;top:-6px;}
-.cc-lbl > .seg button{height:24px;padding:0 10px;font-size:var(--fs-meta);}
+.cc-lbl > .seg button, .cc-src > .seg button{height:24px;padding:0 10px;font-size:var(--fs-meta);}
+/* F-G-G3-01: a ticket source has no label row for the tabs to sit beside: they take their own row, its note and inputs under them */
+.cc-src{display:grid;gap:12px;}
+.cc-src > .seg{justify-self:end;}
 .cc-fold{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding-top:10px;border-top:1px solid var(--line);font-size:var(--fs-meta);color:var(--ink-2);}
 .cc-fold > .btn-quiet{padding-left:0;}
 .cc-more{display:grid;gap:12px;font-size:var(--fs-body);color:var(--ink-2);line-height:1.75;}
