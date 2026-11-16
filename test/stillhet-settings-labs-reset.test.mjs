@@ -17,11 +17,11 @@ test('T9 set.flags: an ok PATCH (no frame) turns Labels on at once and off again
   click(w, switchOf(d, 'Run labels')); await settle(120);
   assert.ok([...d.querySelectorAll('[data-sset="labels"]')].length > 0, 'the side menu lists Labels');
   await go(w, '#settings/labels');
-  assert.ok(!page(d).textContent.includes('Run labels is off'), 'Labels draws');
+  assert.ok(!page(d).textContent.includes('Task labels is off'), 'Labels draws');
   await go(w, '#settings/experimental');
   click(w, switchOf(d, 'Run labels')); await settle(120);
   await go(w, '#settings/labels');
-  assert.ok(page(d).textContent.includes('Run labels is off'));
+  assert.ok(page(d).textContent.includes('Task labels is off'));
   await go(w, '#settings/experimental');
   const before = patches(posts).length;
   click(w, switchOf(d, 'Git event automations')); await settle(60);
@@ -101,7 +101,7 @@ test('T12 Reset all with stillhet changed: the confirm says Stillhet turns off; 
   assert.deepEqual(only.calls, [false]);
 });
 
-test('T13 prototype: the demo kind shows Saving then refused on Requirements first, Run telemetry locked, Run labels at once; no /api/flags', async () => {
+test('T13 prototype: the demo kind shows Saving then refused on Requirements first, Task telemetry locked, Task labels at once; no /api/flags', async () => {
   const gets = [];
   const w = stillhetHost({ hash: '#settings/experimental', fetch: async (u) => { gets.push(String(u)); return { ok: false, json: async () => ({}) }; }, after: (fn) => demoClosers.push(fn) });
   const d = w.document;
@@ -119,9 +119,9 @@ test('T13 prototype: the demo kind shows Saving then refused on Requirements fir
   assert.ok(textOf(d, 'Requirements first').endsWith('. Could not turn it on: the settings file is read-only'));
   const tel = d.querySelector('[data-svsw="flag:runTelemetry"]');
   assert.equal(tel.disabled, true);
-  assert.ok(textOf(d, 'Run telemetry').endsWith('. Locked by WORCA_FLAGS'));
+  assert.ok(textOf(d, 'Task telemetry').endsWith('. Locked by WORCA_FLAGS'));
   click(w, d.querySelector('[data-svsw="flag:runLabels"]')); await settle();
-  assert.equal(toastText(d), 'Run labels: on');
+  assert.equal(toastText(d), 'Task labels: on');
   assert.ok(!gets.includes('/api/flags'), 'the demo never reads /api/flags');
 });
 

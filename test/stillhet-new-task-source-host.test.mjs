@@ -12,8 +12,8 @@ const BINDING = '/api/source-bindings?projectDir=%2Fsrc%2Fweb&plugin=jira&source
 const TICKETS = [{ id: 'WEB-1', title: 'WEB-1 Pager breaks on page 2', labels: ['bug'] }, { id: 'WEB-2', title: 'WEB-2 Export to CSV' }];
 async function open({ sources = SOURCES, binding = [200, { profile: 'work', via: 'binding' }], call = (b) => [200, { ok: true, result: b.op === 'validateConfig' ? { ok: true } : b.op === 'getTask' ? { title: 'WEB-1 Pager breaks on page 2', body: 'Page 2 shows page 1.' } : { tasks: TICKETS.filter((t) => t.title.toLowerCase().includes(String(b.args.search || '').toLowerCase())) } }], hold, write = () => [200, { runId: 'r-new' }] } = {}) {
   const h = await liveHost({ lists: LISTS, hold, read: (u) => (u === '/api/sources' ? [200, sources] : u === BINDING ? binding : null), write: (u, b, m) => (u === '/api/sources/call' ? call(b) : write(u, b, m)) });
-  await go(h.w, '#runs', 120);
-  h.w.StillhetCenters.maker('tasks').newPick('form'); await settle(80);
+  await go(h.w, '#runs', 200);
+  h.w.StillhetCenters.newTask(); await settle(80);
   return h;
 }
 const q = (d, sel) => d.querySelector(`#center-dlg ${sel}`);

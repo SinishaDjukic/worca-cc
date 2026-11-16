@@ -154,7 +154,7 @@ test('a proposal is labelled rows in fixed places with one supporting line; a ch
   const d = dom(taskProposal({ title: 'Add tax', rows: [{ label: 'Project', value: '<b>billing-api</b>' }, { label: 'Workflow', value: 'Lean', was: 'Default' }, { label: 'Model', value: 'Opus' }, { label: 'Starts', value: 'now' }, { label: 'Then', value: 'open a PR' }], line: 'Lean: build and a quick review', files: ['spec.pdf'] }));
   assert.deepEqual([...d.querySelectorAll('.tp-rows dt')].map((e) => e.textContent), ['Project', 'Workflow', 'Model', 'Starts', 'Then']);
   assert.equal(d.querySelectorAll('.tp-row.is-changed').length, 1);
-  assert.match(d.querySelector('.tp-row.is-changed .tp-was').textContent, /You picked Default changed/);
+  assert.match(d.querySelector('.tp-row.is-changed .tp-was').textContent, /You picked · was Default/);
   assert.equal(d.querySelector('.tp-what').textContent, 'Lean: build and a quick review');
   assert.equal(d.querySelector('.tp-files .kind-chip').textContent, 'spec.pdf', 'attached files show on the closed card');
   assert.equal(d.querySelector('.tp-sentence'), null, 'no sentence of pickers');

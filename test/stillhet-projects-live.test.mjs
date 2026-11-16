@@ -605,7 +605,7 @@ test('F-6-15 facts: the three GETs once per key, then the cache; each fact lands
   const f = r.live.facts('shop-1111aaaa');
   assert.equal(f.readiness.status, 'ready');
   assert.equal(f.readiness.value.word, 'Partly ready');
-  assert.equal(f.metrics.value.word, 'on · 2 runs');
+  assert.equal(f.metrics.value.word, 'on · 2 tasks');
   assert.equal(f.policy.value.word, 'home');
   assert.ok(r.changes() >= 3, 'on() fires as each read lands');
   assert.deepEqual(r.writes(), [], 'a fact never writes');

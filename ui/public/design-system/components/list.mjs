@@ -20,6 +20,11 @@ import { icon } from './icons.mjs';
  * @param {(string|object)[]} o.items   the actions, a word or a MenuItem; Remove, Revoke, Delete, Uninstall and Reject come last, after one rule
  * @param {boolean} [o.open]
  */
+/** list.news: a mark with the small light dot of new activity on its corner; `need` gives it the level's colour. */
+export function newsMark(mark, need = false) {
+  return `<span class="lr-news-w">${mark}<span class="lr-news${need ? ' is-need' : ''}" role="img" aria-label="new activity"></span></span>`;
+}
+
 export function moreMenu({ id, label, icon, items, open = false }) {
   const DANGER = /^(Remove|Revoke|Delete|Uninstall|Reject)$/;
   const item = (x) => (typeof x === 'string' ? { text: x, danger: DANGER.test(x) } : x);
@@ -42,6 +47,8 @@ export function moreMenu({ id, label, icon, items, open = false }) {
  * @param {boolean} [o.check]       selecting: is it ticked; its tick box takes the mark's place. Undefined: not selecting
  * @param {string} [o.boxAttrs]     the tick box's attrs
  * @param {string} [o.lead]         before the title: a chat's origin logo (markup)
+ * @param {boolean} [o.wrap]        its second line is the news (why it needs you): it wraps to two lines, never cut (list.row-facts)
+ * @param {boolean|'need'} [o.news]  list.news: new activity you have not seen; a light dot on its mark (takes the place of `unread`'s bold title)
  * @param {boolean} [o.unread]
  * @param {boolean} [o.current]     it is the one open now
  * @param {boolean} [o.holds]       a folded group holding the one open now
@@ -51,18 +58,21 @@ export function moreMenu({ id, label, icon, items, open = false }) {
  *   trigger and a chevron at its end turns, as on a SettingsRow (no word swap). A row that also opens a page keeps its name as the
  *   way there, and the chevron alone is the trigger
  */
-export function listRow({ title, meta = '', mark = '', end = '', endText = '', open = null, menu = null, attrs: a = {}, check, boxAttrs = {}, lead = '', unread = false, current = false, holds = false, flash = false, after = '', fold = null, markFold = null }) {
+export function listRow({ title, meta = '', mark = '', end = '', endText = '', open = null, menu = null, attrs: a = {}, check, boxAttrs = {}, lead = '', unread = false, current = false, holds = false, flash = false, after = '', fold = null, markFold = null, wrap = false, news = false }) {
   const body = `<span class="lr-t">${lead}${esc(title)}</span>${meta ? `<span class="lr-m">${esc(meta)}</span>` : ''}`;
   const foldAttrs = fold ? { 'aria-expanded': String(!!fold.open), 'aria-label': `${title}: ${fold.label || 'more settings'}`, title: fold.help || null, ...(fold.attrs || {}) } : null;
   const main = open ? `<button type="button" class="lr-main"${attrs(open)}>${body}</button>` : fold ? `<button type="button" class="lr-main lr-opens"${attrs(foldAttrs)}>${body}</button>` : `<span class="lr-main">${body}</span>`;
   const more = menu ? moreMenu(menu) : '';
   // a row with rows under it folds from its mark (list.fold-by-mark): the root icon is the trigger, its name still opens it
+  // list.news: something happened here that you have not seen: a small light dot on the mark's corner, and never the
+  // bold title too (one sign); `news: 'need'` wears its level's colour because it needs you
+  if (news && mark) mark = newsMark(mark, news === 'need');
   const railMark = markFold ? `<button type="button" class="lr-mark-fold"${attrs({ 'aria-expanded': String(!!markFold.open), title: markFold.label || `${markFold.open ? 'Fold' : 'Show'} what is under ${title}`, 'aria-label': markFold.label || `${markFold.open ? 'Fold' : 'Show'} what is under ${title}`, ...(markFold.attrs || {}) })}>${mark}</button>` : mark;
   const rail = check === undefined ? railMark : checkbox({ cls: 'lr-check', why: 'Select', checked: !!check, attrs: { 'aria-label': `Select ${title}`, ...boxAttrs } });
   const chev = `<span class="set-chev" aria-hidden="true">${icon('chevR', 14)}</span>`;
   const foldBtn = !fold ? '' : open ? `<button type="button" class="lr-fold"${attrs(foldAttrs)}>${chev}</button>` : chev;
   const shown = (!fold || fold.open) && (!markFold || markFold.open) ? after : '';
-  const state = [fold && 'is-opens', fold && fold.open && 'is-open', unread && 'is-unread', current && 'is-current', holds && 'is-holds', flash && 'is-flash', check && 'is-sel'].filter(Boolean).join(' ');
+  const state = [fold && 'is-opens', fold && fold.open && 'is-open', wrap && 'is-wrap', unread && !news && 'is-unread', news && 'has-news', current && 'is-current', holds && 'is-holds', flash && 'is-flash', check && 'is-sel'].filter(Boolean).join(' ');
   return row({ kind: 'list', rail, text: main, cls: state, end: `${endText ? `<span class="lr-fig">${esc(endText)}</span>` : ''}${foldBtn}${end}`, more, attrs: { role: 'listitem', ...(current ? { 'aria-current': 'true' } : {}), ...a }, after: shown ? `<div class="lr-after">${shown}</div>` : '' });
 }
 
@@ -72,7 +82,7 @@ export function listRow({ title, meta = '', mark = '', end = '', endText = '', o
  * chevron, and folded it keeps its head and count and hides its rows.
  * @param {object} o
  * @param {string} [o.sentence]   the list's filters: a FilterRow's markup
- * @param {{title?:string, meta?:string, count?:string|number, chip?:string, rows:string[], more?:{n:number, attrs:object}, fold?:{open:boolean, attrs:object}}[]} o.groups
+ * @param {{title?:string, meta?:string, count?:string|number, of?:string|number, chip?:string, rows:string[], more?:{n:number, attrs:object}, fold?:{open:boolean, attrs:object}}[]} o.groups
  * @param {string} [o.empty]      EmptyState markup when every group is empty
  * @param {string} [o.tools]      at the sentence's right: Select all while selecting, the list's ⋯
  * @param {string} [o.selection]  under the head, kept in sight while the list scrolls: the SelectionBar
@@ -81,7 +91,9 @@ export function listRow({ title, meta = '', mark = '', end = '', endText = '', o
  * @param {object} [o.attrs]
  */
 function groupHtml(g, H = 'h3') {
-  const shut = g.fold && !g.fold.open, n = g.count !== undefined ? ` <span class="n">${esc(g.count)}</span>` : '';
+  // small.one-count: a place that holds a part of the one count says so in words: "Needs you 6 · of 11"
+  const of = g.of !== undefined && g.of !== '' && g.of !== null ? ` <span class="n n-of">· of ${esc(g.of)}</span>` : '';
+  const shut = g.fold && !g.fold.open, n = (g.count !== undefined ? ` <span class="n">${esc(g.count)}</span>` : '') + of;
   const head = !g.title ? '' : g.fold
     ? `<${H} class="list-h"><button type="button" class="list-h-b"${attrs({ ...g.fold.attrs, 'aria-expanded': String(!shut), title: shut ? `Shows ${g.title}` : `Folds ${g.title}` })}>${icon('chevron', 10)}${esc(g.title)}</button>${n}${g.chip || ''}</${H}>`
     : `<${H} class="list-h">${esc(g.title)}${n}${g.chip || ''}</${H}>`;

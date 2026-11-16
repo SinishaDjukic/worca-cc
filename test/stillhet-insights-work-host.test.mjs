@@ -47,7 +47,7 @@ test('1: a click on Maya\'s row opens one detail under it: head, 6 tasks, legend
   assert.equal(headText(d).trim(), "Maya's work, this month · newest first · 7 merged, 1 open for review, 1 closed, 6 failed");
   assert.equal(detail(d).querySelector('.fr-d-head [data-fr-hide]').textContent, 'Hide');
   assert.equal(detail(d).querySelectorAll('.tt-row').length, 6);
-  assert.deepEqual([...detail(d).querySelectorAll('.tt-legend .ch-key')].map((k) => k.textContent), ['Agent working, first run to last', 'Waiting for review', 'Merged', 'Open', 'Closed']);
+  assert.deepEqual([...detail(d).querySelectorAll('.tt-legend .ch-key')].map((k) => k.textContent), ['Agent working, first task to last', 'Waiting for review', 'Merged', 'Open', 'Closed']);
   assert.equal(detail(d).querySelector('[data-in-more]').textContent, 'Show 9 more');
   const order = [r, ...detail(d).querySelectorAll('button, a[href]')].map((e) => (e === r ? 'row' : e.matches('[data-fr-hide]') ? 'hide' : e.matches('.tt-open') ? `open:${e.closest('.tt-row').dataset.ttRow}` : e.matches('.tt-end') ? `mark:${e.closest('.tt-row').dataset.ttRow}` : e.matches('[data-in-more]') ? 'more' : 'other'));
   assert.deepEqual(order.slice(0, 2), ['row', 'hide']); assert.equal(order.at(-1), 'more'); assert.ok(!order.includes('other'));

@@ -29,7 +29,7 @@
     run('r8', 'ready', 'Dark mode for the marketing site', 'marketing-site', 'Checks pass', '10:58', 'today', { cost: 9.9, labels: ['ui'] }),
     run('r9', 'approved', 'Add pager to the audit log', 'worca-cc', 'Approved · checks pass', '10:20', 'today', { pr: '#959', cost: 5.2, short: 'audit pager' }),
     run('r10', 'working', 'Fix flaky login test', 'web-app', 'Review · checking it in a browser', '12 min', 'today', { labels: ['ui', 'tests'], cost: 1.6 }),
-    run('r11', 'checks', 'Rename settings keys', 'worca-cc', 'Checks running', '4 min', 'today', { pr: '#960', labels: ['backend'], cost: 2.7, rounds: { line: 'Round 2 · merge dev in · running', list: [round(2, 'merge dev in · running', '')] } }),
+    run('r11', 'checks', 'Rename settings keys', 'worca-cc', 'Checks running', '4 min', 'today', { pr: '#960', prState: 'review', reviewer: 'Dana Ruiz', labels: ['backend'], cost: 2.7, rounds: { line: 'Round 2 · merge dev in · running', list: [round(2, 'merge dev in · running', '')] } }),
     run('r12', 'starting', 'Add rate limiting to the public API', 'billing-api', 'Plan is under way', 'now', 'today', { cost: 0 }),
     run('r13', 'network', 'Write the API reference', 'docs-site', 'Waiting for the network', '2 min', 'today', { kind: 'Folder', cost: 0.4 }),
     wait('r14', 'scheduled', 'after', 'Deploy docs site', 'docs-site', 'Starts when “Write the API reference” finishes', ''),
@@ -70,7 +70,7 @@
     wait('m3', 'scheduled', 'after', 'Deep links', 'worca-cc', 'Starts when “Pager between runs” finishes', '', { group: 'g-nav', pos: 3 }),
     // a chain: approved, checks, failing
     run('m4', 'approved', 'Export: the table', 'billing-api', 'Approved', '09:44', 'today', { group: 'g-stack', pos: 1, pr: '#970', cost: 9 }),
-    run('m5', 'checks', 'Export: the button', 'billing-api', 'Checks running', '10:30', 'today', { group: 'g-stack', pos: 2, pr: '#971', cost: 8.5 }),
+    run('m5', 'checks', 'Export: the button', 'billing-api', 'Checks running', '10:30', 'today', { group: 'g-stack', pos: 2, pr: '#971', prState: 'draft', cost: 8.5 }),
     run('m6', 'failing', 'Export: the email', 'billing-api', 'Checks failing', '11:30', 'today', { group: 'g-stack', pos: 3, pr: '#972', cost: 11 }),
     // a person's group: runs that can move
     run('m7', 'working', 'Remove unused CSS', 'web-app', 'Review · 1 of 2', '6 min', 'today', { group: 'g-q3', cost: 3.5, adhoc: true }),
@@ -192,7 +192,8 @@
   function needsLabel(...kinds) {
     const ks = kinds.flat(), n = countOf(ks), total = count(), words = ks.map((k) => NEED_WORDS[k]);
     const list = words.length < 2 ? words.join('') : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
-    return { n, total, text: `Needs you ${n}`, tip: n === total ? `${total}: everything that needs you` : `${n} of ${total}: the ${list}. Pulse has all ${total}` };
+    // small.one-count: a place that holds a part says so in words where it shows ("Needs you 6 · of 11"); `of` is '' where it holds all
+    return { n, total, of: n === total ? '' : total, text: n === total ? `Needs you ${n}` : `Needs you ${n} · of ${total}`, tip: n === total ? `${total}: everything that needs you` : `${n} of ${total}: the ${list}. Pulse has all ${total}` };
   }
   // Does this task count? By its id: a top-level task, or a member that raises its group (the chat list asks, per task).
   const needsHas = (id) => { const r = data.runs.find((x) => x.id === id); if (!r) return false; if (!r.group) return needs().some((x) => x.id === id); const g = data.groups.find((x) => x.id === r.group); return !!g && raises(r) && needs().some((x) => x.id === g.id); };
@@ -205,9 +206,20 @@
     const b = LIVE ? parts.costs.budget : CASES[current].budget;
     return b && b.saved ? { usd: b.saved, period: b.period || 'this month', measure: SAVED_MEASURE } : null;
   }
+  // One budget figure each (A15): yours and the team's, read by Settings, Team policy, Usage and costs and Insights
+  // alike. Settings holds what a person can change (Pulse registers its values with budgetSource); the demo case holds
+  // what was spent. `where` names the Settings section that sets it, `hash` opens it.
+  let budgetSrc = null;
+  function budget(who = 'yours') {
+    const b = LIVE ? parts.costs.budget : CASES[current].budget, sv = budgetSrc ? budgetSrc() : null;
+    const team = sv ? +sv.team : 2000;
+    if (who === 'team') return { usd: team, period: 'month', where: 'Settings \u203a Team policy \u203a Spending', hash: 'settings/team' };
+    const own = sv && sv.total && sv.period === 'month' ? +sv.total : b ? b.limit : 0, limit = LIVE ? own : Math.min(own || team, team);
+    return b || own ? { usd: limit, spent: sv && sv.spent != null ? sv.spent : b ? b.spent : 0, period: (sv && sv.period) || (b && b.period) || 'month', where: 'Settings \u203a Tasks \u203a Budget', hash: 'settings/runs' } : null;
+  }
   build(current);
   window.StillhetWorld = {
-    needs, count, countOf, needsLabel, needsHas, holdLabel, NEED_KINDS, saved,
+    needs, count, countOf, needsLabel, needsHas, holdLabel, NEED_KINDS, saved, budget, budgetSource: (fn) => { budgetSrc = fn; },
     addNeeds: (fn) => { needSources.push(fn); return () => { const i = needSources.indexOf(fn); if (i >= 0) needSources.splice(i, 1); }; },
     current: () => current,
     set: (id) => { if (LIVE) return; current = id; build(id); listeners.forEach((fn) => fn()); },   // the demo's case picker; nothing in the live kind
@@ -230,7 +242,7 @@
     title: (id) => data.runs.find((r) => r.id === id)?.title ?? table()[id]?.title,
     project: (id) => data.runs.find((r) => r.id === id)?.project ?? table()[id]?.project,
     // a task started this session (in a chat, by a schedule): into the store, heard everywhere
-    add: (o) => { const r = { ...run(o.id, o.case || 'starting', o.title, o.project || '', o.detail || '', o.time || 'now', o.day || 'today'), ...o }; data.runs.unshift(r); titles(); tell(r.id); return r; },
+    add: (o) => { const known = LIVE ? null : table()[o.id]; const r = { ...run(o.id, o.case || 'starting', o.title, o.project || '', o.detail || '', o.time || 'now', o.day || 'today'), ...(known ? { pr: known.pr || '', prState: known.prState, reviewer: known.reviewer } : {}), ...o };   /* a seeded task keeps its own PR */ data.runs.unshift(r); titles(); tell(r.id); return r; },
     remove: (id) => { if (LIVE) return; data.runs = data.runs.filter((x) => x.id !== id); titles(); tell(id); },   // a deleted schedule's waiting row
     onMove: (fn) => moved.push(fn),
     touch: () => { titles(); tell(); },   // the Tasks list changed the store itself (archive, delete, Undo): everything reads it again

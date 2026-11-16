@@ -112,6 +112,11 @@ export function watchFocusBack(doc) {
   const win = doc.defaultView;
   let last = null;      // { el, addr, back, home }: the control that had the focus last, what opened it, and the thing it sat in
   let opener = null;    // the address of what opened the dialog that is up
+  let before = null;   // what had the focus just before it went into a dialog
+  let openerBack = null, dismissedAt = 0;   // the opener's own trigger (a menu's); when a dialog was last closed without its step
+  // on the window: before any layer that answers the key and stops it
+  win.addEventListener('keydown', (e) => { if (e.key === 'Escape' && doc.querySelector('.viewer-modal')) dismissedAt = Date.now(); }, true);
+  win.addEventListener('click', (e) => { if (e.target.closest?.('.viewer-modal [data-dialog="cancel"], .viewer-modal [data-dialog="close"]')) dismissedAt = Date.now(); }, true);
   let lostAt = 0;
   const lost = () => !doc.activeElement || doc.activeElement === doc.body;
   doc.addEventListener('focusin', (e) => {
@@ -121,6 +126,8 @@ export function watchFocusBack(doc) {
     // nothing is drawn in its place, the focus stays with that thing: on its first control, else on the thing itself
     const homes = [];
     for (let box = el.parentElement?.closest?.('[data-anchor], [data-key], [id]'); box && box !== doc.body && homes.length < 5; box = box.parentElement?.closest?.('[data-anchor], [data-key], [id]')) homes.push(box.getAttribute('data-anchor') ? { sel: `[data-anchor="${quoted(box.getAttribute('data-anchor'))}"]`, n: 0 } : controlAddress(box));
+    // a page that puts the focus into its dialog as it draws it: what had the focus before is what opened it
+    if (inDialog && last && !last.el.closest?.('.viewer-modal')) before = { addr: last.addr, back: last.back };
     last = { el, addr: controlAddress(el), back: controlAddress(triggerOf(el)) || (inDialog ? opener : null), homes };
     lostAt = 0;
   }, true);
@@ -138,8 +145,12 @@ export function watchFocusBack(doc) {
   };
   if (win.MutationObserver && doc.body) new win.MutationObserver(restore).observe(doc.body, { subtree: true, childList: true });
   const hooks = {
-    opened: () => { opener = last && (last.el.isConnected || lost()) ? last.addr : controlAddress(doc.activeElement); },
-    closed: () => { const to = lost() ? atAddress(doc, opener) : null; opener = null; if (to) to.focus({ preventScroll: true }); },
+    // what opened it, and when that was a menu's item (gone with its menu), the control that opened the menu: "More › New
+    // schedule form…" gives the focus back to More
+    opened: () => { const inside = !!doc.activeElement?.closest?.('.viewer-modal'), own = last && (last.el.isConnected || lost()); if (inside && before) { opener = before.addr; openerBack = before.back; } else { opener = own ? last.addr : controlAddress(doc.activeElement); openerBack = own ? last.back : null; } before = null; },
+    // closed without its step (Esc, Cancel, Close): the focus goes back to what opened it, wherever a draw has put it since;
+    // closed by its step, only when the focus was dropped (the page may have moved on)
+    closed: () => { const seen = (x) => (x && x.getClientRects().length ? x : null), to = seen(atAddress(doc, opener)) || seen(atAddress(doc, openerBack)); const force = Date.now() - dismissedAt < 600; opener = null; openerBack = null; if (to && (lost() || force) && doc.activeElement !== to) to.focus({ preventScroll: true }); },
   };
   backs.set(doc, hooks);
   return hooks;

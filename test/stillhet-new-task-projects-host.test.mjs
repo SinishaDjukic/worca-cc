@@ -20,7 +20,7 @@ const items = async (d) => {
   return got;
 };
 const shown = (d) => d.querySelector('#center-dlg [data-menu="f-project"]').textContent.trim();
-const openTask = async (w) => { w.StillhetCenters.maker('tasks').newPick('form'); await settle(60); };
+const openTask = async (w) => { w.StillhetCenters.newTask(); await settle(60); };
 const type = (w, d, sel, v) => { const t = d.querySelector(sel); t.value = v; t.dispatchEvent(new w.Event('input', { bubbles: true })); };
 const yes = async (d) => { d.querySelector('#center-dlg [data-dialog="yes"]').click(); await settle(100); };
 // no live runs; the newest saved task (pa) is in `old`, a project dev no longer lists
@@ -30,7 +30,7 @@ const write = (u) => (u === '/api/run' ? [200, { runId: 'r-new' }] : [200, {}]);
 test('the live picker lists every registered project, one with no tasks too, and No project last (F-a4-06, F-5-04)', async () => {
   const s = clone(SOURCES); s.projects.projects.push({ key: 'docs-4', name: 'docs', path: '/src/docs', displayPath: '~/src/docs', exists: true, vcs: 'git' });
   const { w, d, calls } = await liveHost({ sources: s });
-  await go(w, '#runs', 120);
+  await go(w, '#runs', 200);
   const before = calls.length;
   await openTask(w);
   assert.deepEqual(await items(d), ['web', 'api', 'gone', 'docs', 'No project'], 'dev\'s projects in its order, then No project');
@@ -42,7 +42,7 @@ test('the live picker lists every registered project, one with no tasks too, and
 test('a removed project is not offered or defaulted; the newest task of a registered project is (F-a4-06, F-5-04)', async () => {
   const s = removedNewest();
   const { w, d, calls } = await liveHost({ sources: s, write });
-  await go(w, '#runs', 120);
+  await go(w, '#runs', 200);
   await openTask(w);
   assert.ok(!(await items(d)).includes('old'), 'a project dev does not list is not offered');
   assert.equal(shown(d), 'api', 'the next task\'s registered project');
@@ -55,7 +55,7 @@ test('a removed project is not offered or defaulted; the newest task of a regist
 test('a project whose folder is missing is listed but never preselected (F-a4-06, F-5-04)', async () => {
   const s = clone(SOURCES); s.hello.runs = []; s.history.pipelines.find((p) => p.id === 'pa').projectName = 'gone';
   const { w, d } = await liveHost({ sources: s });
-  await go(w, '#runs', 120);
+  await go(w, '#runs', 200);
   await openTask(w);
   assert.ok((await items(d)).includes('gone'), 'it can still be picked on purpose');
   assert.equal(shown(d), 'api', 'the next task\'s present project');
@@ -64,7 +64,7 @@ test('a project whose folder is missing is listed but never preselected (F-a4-06
 test('with no tasks, the default is the first registered project whose folder exists (F-a4-06, F-5-04)', async () => {
   const s = clone(SOURCES); s.hello.runs = []; s.history.pipelines = []; s.projects.projects[0].exists = false;
   const { w, d } = await liveHost({ sources: s });
-  await go(w, '#runs', 120);
+  await go(w, '#runs', 200);
   await openTask(w);
   assert.deepEqual(await items(d), ['web', 'api', 'gone', 'No project']);
   assert.equal(shown(d), 'api');
@@ -72,7 +72,7 @@ test('with no tasks, the default is the first registered project whose folder ex
 
 test('a project in its Remove undo window is neither offered nor defaulted (F-a4-06, F-5-04)', async () => {
   const { w, d, calls } = await liveHost({ sources: clone(SOURCES) });
-  await go(w, '#runs', 120);
+  await go(w, '#runs', 200);
   w.StillhetProjectsLive.deferRemove('web-1', 5000); await settle(20);
   await openTask(w);
   assert.deepEqual(await items(d), ['api', 'gone', 'No project']);
@@ -82,8 +82,8 @@ test('a project in its Remove undo window is neither offered nor defaulted (F-a4
 
 test('New schedule… offers the same list and default, and saving sends the registered project\'s folder (F-a4-06, F-5-04)', async () => {
   const { w, d, calls } = await liveHost({ sources: removedNewest(), write });
-  await go(w, '#runs', 120);
-  w.StillhetCenters.maker('schedules').newPick('form'); await settle(60);
+  await go(w, '#runs', 200);
+  w.StillhetCenters.newSchedule(); await settle(60);
   assert.deepEqual(await items(d), ['web', 'api', 'gone', 'No project']);
   assert.equal(shown(d), 'api');
   type(w, d, '#cc-name', 'Nightly pager'); type(w, d, '#cc-text', 'Add a pager'); await yes(d);
@@ -94,7 +94,7 @@ test('New schedule… offers the same list and default, and saving sends the reg
 
 test('Run after this with a removed project opens New task on the default, not on it (F-a4-06, F-5-04)', async () => {
   const { w, d } = await liveHost({ sources: removedNewest() });
-  await go(w, '#runs', 120);
+  await go(w, '#runs', 200);
   w.StillhetCenters.newTask({ project: 'old' }); await settle(60);
   assert.equal(shown(d), 'api');
   w.StillhetCenters.newTask({ project: 'gone' }); await settle(60);
@@ -115,23 +115,25 @@ const q = (d, sel) => d.querySelector(`#center-dlg ${sel}`);
 const menuOf = async (d, id) => { q(d, `[data-menu="f-${id}"]`).click(); await settle(20); const m = q(d, '.spick-menu'); const got = { picks: [...m.querySelectorAll('[data-menu-pick]')].map((x) => x.dataset.menuPick.slice(id.length + 3)), heads: [...m.querySelectorAll('.menu-h')].map((x) => x.textContent) }; q(d, `[data-menu="f-${id}"]`).click(); await settle(20); return got; };
 const pickIn = async (d, id, v) => { q(d, `[data-menu="f-${id}"]`).click(); await settle(20); q(d, `[data-menu-pick="f-${id}|${v}"]`).click(); await settle(40); };
 
-test('COV-2 live kind unchanged (R-arch-4): More options shows no Guardrails and no Human in the loop, the open project menu lists no Workspaces header and no Add project…, the Agent menu lists no Copilot item, and a task waiting for a run shows no Start now instead link and no "the run before it\'s branch" base item', async () => {
+test('COV-2 live kind (R-arch-4): More options shows no Guardrails, the open project menu lists no Workspaces header and no Add project…, the Engine menu lists the eight engines of dev, and a task waiting for a run shows no Start now instead link and no "the run before it\'s branch" base item', async () => {
   const { w, d } = await liveHost({ sources: clone(SOURCES) });
-  await go(w, '#runs', 120);
+  await go(w, '#runs', 200);
   await openTask(w);
   q(d, '[data-c-more]').click(); await settle(20);
-  assert.doesNotMatch(q(d, '.cc-more').textContent, /Guardrails/, 'guard');
+  assert.doesNotMatch(q(d, '.fld-fold').textContent, /Guardrails/, 'guard');
   assert.equal(q(d, '[data-menu="f-guard"]'), null, 'guard');
   await pickIn(d, 'workflow', 'Auto');
-  assert.equal(q(d, '[data-c-hitl]'), null, 'hitl');
+  assert.ok(q(d, 'input[data-c-hitl]'), 'Ask me at each step is one of More options\' switches in both kinds');
   const project = await menuOf(d, 'project');
   assert.ok(!project.heads.includes('Workspaces'), 'workspace');
   assert.ok(!project.picks.includes('+add'), 'addProject');
   const agent = await menuOf(d, 'agent');
-  assert.ok(!agent.picks.includes('Copilot'), 'engineCheck');
+  assert.equal(agent.picks.length, 9, 'the project\'s default, then dev\'s eight run engines');
+  for (const name of ['Claude Code', 'OpenAI Codex', 'GitHub Copilot', 'Cursor', 'Gemini CLI', 'Goose', 'OpenCode', 'Qwen Code']) assert.ok(agent.picks.includes(name), name);
+  assert.ok(!agent.picks.includes('Copilot'), 'the demo\'s locked item is not on the live kind');
   q(d, '[data-dialog="cancel"]').click(); await settle(20);
   w.StillhetCenters.newTask({ after: { kind: 'ticket', id: 's-docs', title: 'Nightly docs' } }); await settle(60);
-  assert.match(q(d, '.cc-frame').textContent, /It starts once Nightly docs ends/);
+  assert.match(q(d, '.fld-read').textContent, /Starts once Nightly docs ends/);
   assert.equal(q(d, '[data-c-nowinstead]'), null, 'nowInstead');
   assert.ok(!(await menuOf(d, 'base')).picks.includes('the task before it\'s branch'), 'previous');
 });
@@ -144,7 +146,7 @@ test('COV-2 Workspace (simple level, demo): the open project menu lists no Works
   assert.ok(!project.heads.includes('Workspaces'));
   assert.ok(!w.StillhetSpaces.list().some((x) => project.picks.includes(x.title)), 'no workspace is offered');
   q(d, '[data-c-more]').click(); await settle(20);
-  assert.match(q(d, '.cc-more').textContent, /Guardrails: Team default/);
+  assert.equal(q(d, '[data-menu="f-guard"]').textContent.trim(), 'Team default', 'the Guardrails field');
   await pickIn(d, 'workflow', 'Auto');
-  assert.ok(q(d, '[data-c-hitl]'), 'Human in the loop');
+  assert.ok(q(d, 'input[data-c-hitl]'), 'Ask me at each step (Human in the loop)');
 });

@@ -23,3 +23,9 @@ the rule is corrected in the same change. A real conflict is a question for a pe
 then the pages ([`docs/stillhet/build.md`](../../docs/stillhet/build.md)).
 
 **To build the live app:** start at [`spec/`](spec/).
+
+**Tests.** The tests that guard the design system and the flag pass:
+`node --test test/design-system-*.test.mjs test/stillhet-docs.test.mjs test/stillhet-library-gate.test.mjs test/stillhet-default.test.mjs test/stillhet-look-options.test.mjs test/stillhet-state-contrast.test.mjs test/stillhet-css-fit.test.mjs test/run-page-model.test.mjs test/stillhet-boot.test.mjs test/stillhet.test.mjs test/flags-api.test.mjs test/ui-flags.test.mjs test/index-html.test.mjs`
+and `node tools/test.mjs test/stillhet-flag-off.test.mjs test/ui-stillhet.test.mjs`. The host tests of the first live
+wiring are not all settled: see [`PRUNED.md`](PRUNED.md), Tests not settled yet.
+

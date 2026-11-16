@@ -7,6 +7,7 @@ import { statusLine } from './status-line.mjs';
 import { orbMark } from './orb.mjs';
 import { button, splitButton } from './button.mjs';
 import { trail } from './navigation.mjs';
+import { detailPanel } from './detail-panel.mjs';
 
 const STAGES = 5;
 const R = 9, L = 2 * Math.PI * R;
@@ -272,6 +273,8 @@ export function cardHead({ mark, kicker, kickerHtml = '', title = '', titleHtml 
 }
 
 /** What a card that asks shows (TaskCard's `asks`): a few lines of the review's result or the plan, each open decision by name, a way to the whole. */
+taskCard.detailPanel = detailPanel;   // until index.mjs exports it
+
 export function taskAsks({ label, lines = [], more = null, decisions = [] }) {
   const open = decisions.map((d) => `<li class="tc-ask-d">${kindMark({ kind: 'task', tone: 'ask', size: 16 })}${d.attrs ? `<button type="button" class="tc-ask-b"${attrs(d.attrs)}>${esc(d.text)}</button>` : `<span>${esc(d.text)}</span>`}</li>`).join('');
   return `<div class="tc-asks" role="group"${attrs({ 'aria-label': label })}><p class="tc-asks-h">${esc(label)}</p>${lines.length ? `<ul class="tc-asks-l">${lines.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>` : ''}${open ? `<ul class="tc-asks-d" aria-label="Open decisions">${open}</ul>` : ''}${more ? button({ label: more.label, kind: 'quiet', attrs: more.attrs || {} }) : ''}</div>`;
@@ -301,9 +304,16 @@ export function taskAsks({ label, lines = [], more = null, decisions = [] }) {
  * @param {{label:string, lines:string[], more?:{label:string, attrs:object}, decisions?:{text:string, attrs?:object}[]}} [o.asks]
  *   a card that asks shows what it asks about: the review's result or the plan in a few lines, a link to it on the page,
  *   and every open decision by name, on the folded card
+ * @param {boolean} [o.slim]     the card that only answers "what is its state" and "what do I do now": the state word and
+ *   the main action, one message, the stage train and the vitals. Nothing on it folds open: what you investigate lives in
+ *   the DetailPanel beside the chat (rows, asks, foot, figures and stream are not drawn)
+ * @param {string} [o.message]  slim: one information message in Worca's words (what happened, what you can do), as markup:
+ *   a waiting decision is said here with a link that opens the panel at it
+ * @param {string} [o.vitals]   slim: time, cost and changes, each a control that opens the panel (markup)
  * @param {object} [o.attrs]
  */
-export function taskCard({ title, place = '', mark, word, detail = '', action = '', menu = '', stages = '', rows = '', foot = '', figures = '', stream = '', open = false, compact = false, from = '', titleAttrs = null, asks = null, attrs: a = {} }) {
+export function taskCard({ title, place = '', mark, word, detail = '', action = '', menu = '', stages = '', rows = '', foot = '', figures = '', stream = '', open = false, compact = false, from = '', titleAttrs = null, asks = null, slim = false, message = '', vitals = '', attrs: a = {} }) {
+  if (slim) return `<article class="task-card rc is-slim"${attrs(a)}>${cardHead({ mark, kicker: word, title, facts: place, menu, from, titleAttrs })}<section class="rc-card tp-body"${attrs({ 'aria-label': `${title}: ${word}` })}>${message ? `<p class="tc-msg">${message}</p>` : ''}${stages}${action ? `<div class="tp-actions">${action}</div>` : ''}${vitals ? `<div class="tc-vitals" role="group" aria-label="Time, cost and changes">${vitals}</div>` : ''}</section></article>`;
   if (compact) return `<article class="task-card rc is-compact"${attrs(a)}>${turnRow({ mark, text: `<b>${esc(title)}</b> ${esc(detail)}`, end: action })}</article>`;
   return `<article class="task-card rc${open ? ' is-open' : ''}"${attrs(a)}>${cardHead({ mark, kicker: word, title, why: detail, facts: place, menu, from, titleAttrs })}<section class="rc-card tp-body"${attrs({ 'aria-label': `${title}: ${word}` })}>${stages}${rows ? `<div class="tc-rows">${rows}</div>` : ''}${asks ? taskAsks(asks) : ''}${action ? `<div class="tp-actions">${action}</div>` : ''}</section>${foot ? `<div class="tc-foot">${foot}</div>` : ''}${figures}${open && stream ? `<div class="tc-stream">${stream}</div>` : ''}</article>`;
 }
@@ -404,7 +414,7 @@ export function runOutcomes({ runs = [], says = '', tip = 'The last 7 tasks' }) 
  * @param {object} [o.attrs]
  */
 export function proposalRows(rows = []) {
-  return `<dl class="tp-rows">${rows.map((r) => `<div class="tp-row${r.was ? ' is-changed' : ''}"><dt>${esc(r.label)}</dt><dd>${r.value}${r.was ? `<span class="tp-was"><span class="sr-only">Changed. You picked </span><s>${esc(r.was)}</s> changed</span>` : ''}</dd></div>`).join('')}</dl>`;
+  return `<dl class="tp-rows">${rows.map((r) => `<div class="tp-row${r.was ? ' is-changed' : ''}"><dt>${esc(r.label)}</dt><dd>${r.value}${r.was ? `<span class="tp-was"><span class="sr-only">Changed. You picked </span><span aria-hidden="true">· was </span>${esc(r.was)}</span>` : ''}</dd></div>`).join('')}</dl>`;
 }
 export function taskProposal({ title, why = '', sentence = '', more = '', open = false, nudge = '', start = 'Start', kicker = 'Proposed task', menu = '', extra = '', alts = null, hooks = {}, rows = null, line = '', story = '', files = [], second = null, attrs: a = {} }) {
   const btn = (label, kind, h, extra = {}) => button({ label, kind, attrs: { ...extra, ...(h || {}) } });
@@ -600,17 +610,20 @@ const TRAIN_WORD = { run: 'working', wait: 'waiting', ask: 'asks you', act: 'nee
  * @param {string} [o.does]   what a stop's click does, for its name: "open its details" (a page), "open the task at this stage" (a card)
  * @param {number} [o.open]   on a page: the stage whose details are open under the train (aria-expanded)
  * @param {string[]} [o.metas]   one quiet line under each name (its time)
+ * @param {string} [o.unit]   what `step` counts, when it is not the stage's steps: "cycle" (Review, cycle 2 of 3)
  */
-export function stageBar({ labels, stage, tone = 'run', step = null, bare = false, key = '', knot = null, does = 'open its details', open = null, metas = null }) {
-  const n = labels.length, whole = tone === 'ok' || tone === 'done' || tone === 'merged';   // done and merged are ink all along; a failure, a question, a pause only where it is
-  const at = (i) => +(((i + 0.5) / n) * 100).toFixed(2), W = 100 / n, live = !whole && stage >= 0 && stage < n;   // a knot stands over the middle of its name
+export function stageBar({ labels, stage, tone = 'run', step = null, bare = false, key = '', knot = null, does = 'open its details', open = null, metas = null, unit = '' }) {
+  // done and merged are ink all along; a failure, a question, a pause only where it is. Ready (ok) is ink as far as the work
+  // has come and no further: a task that is ready with no PR has not been to PR or Merged (thing.follows-state)
+  const n = labels.length, upTo = tone === 'ok' && stage >= 0 && stage < n - 1, whole = !upTo && (tone === 'ok' || tone === 'done' || tone === 'merged');
+  const at = (i) => +(((i + 0.5) / n) * 100).toFixed(2), W = 100 / n, live = !whole && !upTo && stage >= 0 && stage < n;   // a knot stands over the middle of its name
   const [k, m] = live && step && step[1] > 1 ? step : [0, 0];
   const notches = m && stage < n - 1 ? Array.from({ length: m }, (_, j) => `<i class="sl-step${j < k - 1 ? ' is-done' : j === k - 1 ? ' is-now' : ''}" style="left:calc(${+(at(stage) + 1.5 + (j * (W - 3)) / m).toFixed(2)}% + 6px);width:calc(${+((W - 3) / m).toFixed(2)}% - 9px)"></i>`).join('') : '';
-  const state = (i) => (whole || i < stage ? 'done' : i === stage ? 'now' : 'next');
+  const state = (i) => (whole || i < stage || (upTo && i === stage) ? 'done' : i === stage ? 'now' : 'next');
   const knots = labels.map((_, i) => `<i class="sl-knot${state(i) === 'next' ? '' : ` is-${state(i)}`}" style="left:${at(i)}%"></i>`).join('');
-  const word = TRAIN_WORD[tone] || tone, said = (i) => (state(i) === 'done' ? 'done' : state(i) === 'now' ? `${m ? `step ${k} of ${m}, ` : ''}${word}` : 'not started');
-  const says = whole ? `All ${n} stages done${tone === 'done' ? '' : `: ${word}`}` : live ? `Stage ${stage + 1} of ${n}: ${labels[stage]}, ${word}` : `${n} stages, not started`;
-  const name = (l, i) => `${esc(l)}${i === stage && m ? `<small>${k} of ${m}</small>` : ''}${metas?.[i] ? `<span class="sb-meta">${esc(metas[i])}</span>` : ''}`;
+  const word = TRAIN_WORD[tone] || tone, said = (i) => (state(i) === 'done' ? 'done' : state(i) === 'now' ? `${m ? `${unit || 'step'} ${k} of ${m}, ` : ''}${word}` : 'not started');
+  const says = whole ? `All ${n} stages done${tone === 'done' ? '' : `: ${word}`}` : live || upTo ? `Stage ${stage + 1} of ${n}: ${labels[stage]}, ${word}` : `${n} stages, not started`;
+  const name = (l, i) => `${esc(l)}${i === stage && m ? `<small>${unit ? `${esc(unit)} ` : ''}${k} of ${m}</small>` : ''}${metas?.[i] ? `<span class="sb-meta">${esc(metas[i])}</span>` : ''}`;
   const stop = (l, i) => (knot
     ? `<button type="button" class="sb-stop is-${state(i)}"${attrs({ 'aria-label': `${l}: ${said(i)}, ${does}`, 'aria-current': i === stage && !whole ? 'step' : null, 'aria-expanded': open == null ? null : String(open === i), ...(knot(i, l) || {}) })}>${name(l, i)}</button>`
     : i === stage ? `<b>${name(l, i)}</b>` : `<span>${name(l, i)}</span>`);

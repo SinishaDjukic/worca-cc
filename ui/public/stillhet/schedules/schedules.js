@@ -22,7 +22,7 @@
     if (s.state !== 'paused' && !s.ended && !W.find(`sch-${s.id}`)) W.add({ id: `sch-${s.id}`, ...ticketOf(s), ticket: s.id, title: s.title, project: s.project || '', time: s.at, day: 'upcoming', when: whenOf(s) });
     s.runs.forEach((r, i) => { r.wid ||= `sr-${s.id}-${i}`; if (!W.find(r.wid)) W.add({ id: r.wid, case: r.case, title: r.title, project: s.project || '', detail: r.meta, time: r.time || 'now', day: r.day, schedule: s.id, cost: s.cost, over: !!r.over, workflow: s.workflow || 'Default' }); }); } };
   toStore(); window.StillhetWorld?.onChange(toStore);
-  let current = '', view = { show: 'all', by: R.BY_DEFAULT }, ctl = null, menu = '';
+  let current = '', view = { show: 'all', from: '', by: R.BY_DEFAULT }, ctl = null, menu = '';
   const say = (t, undo) => window.StillhetPulse?.say(t, undo);
   // the demo's server takes a moment to answer, as a real one does, so a waiting button shows it waits
   const answered = () => (LIVE() ? Promise.resolve() : new Promise((ok) => setTimeout(ok, 450)));
@@ -45,7 +45,7 @@
   const flowWord = (s) => `${s.workflow && s.workflow !== 'Default' ? s.workflow : 'Default'} workflow`;
   const menuItems = (s) => (s.ended ? [{ id: 'delete', text: 'Delete', danger: true, help: 'Removes the schedule; the tasks it ran stay. Undo in the notice' }]
     : [{ id: 'run', text: 'Run now', off: isRunning(s), help: isRunning(s) ? 'Its task is running; it can start again when that ends' : 'Starts a task now; the schedule keeps its times' }, { id: 'in-view', text: window.StillhetShell?.inView.has('schedule', s.id) ? 'Out of view' : 'Keep in view', help: 'Its mark in the top bar, on every page' }, ...(s.every === 'Once' ? [] : [{ id: 'pause', text: s.state === 'paused' ? 'Resume' : 'Pause', help: s.state === 'paused' ? 'It runs at its next time again' : 'It stops starting tasks until you resume it' }, { id: 'skip', ...skipItem(s) }]), { sep: true }, { id: 'delete', text: 'Delete', danger: true, help: 'Removes the schedule; the tasks it ran stay. Undo in the notice' }]);
-  const rowOf = (s) => ({ key: `sched:${s.id}`, _s: s, title: s.title, meta: [flowWord(s), s.what].filter(Boolean).join(' · '),   /* its workflow and its prompt, on the row */ mark: R.kindMark({ breathe: s.id !== current, kind: 'schedule', tone: toneOf(s), title: `${word(s)} · ${s.ended ? 'Ended' : s.next}` }), end: sectionNow(s) === 'running' ? (runningRun(s)?.time || 'now') : sectionNow(s) === 'needs' ? 'Missed' : s.state === 'paused' || s.ended ? '' : s.time, current: s.id === current, tip: `${s.title}\n${s.what ? `${s.what}\n` : ''}${s.project || 'No project'} · ${flowWord(s)} · ${s.chat ? 'from a chat' : 'no chat'}\nRuns ${s.ended ? 'no more' : R.scheduleWords(s).runs} · ${s.ended ? 'Ended' : s.next}`,
+  const rowOf = (s) => ({ key: `sched:${s.id}`, _s: s, title: s.title, meta: `${s.project || 'No project'} · ${word(s)}`,   /* list.row-facts: project · state; its workflow and its prompt are in its tooltip and on its page */ mark: R.kindMark({ breathe: s.id !== current, kind: 'schedule', tone: toneOf(s), title: `${word(s)} · ${s.ended ? 'Ended' : s.next}` }), end: sectionNow(s) === 'running' ? (runningRun(s)?.time || 'now') : sectionNow(s) === 'needs' ? 'Missed' : s.state === 'paused' || s.ended ? '' : s.time, current: s.id === current, tip: `${s.title}\n${s.what ? `${s.what}\n` : ''}${s.project || 'No project'} · ${flowWord(s)} · ${s.chat ? 'from a chat' : 'no chat'}\nRuns ${s.ended ? 'no more' : R.scheduleWords(s).runs} · ${s.ended ? 'Ended' : s.next}`,
     menu: menuItems(s) });
   // Run now is one thing wherever you press it: a real task in the one store, on this schedule's page, and in its chat
   const liveWord = 'Plan · writing the plan';
@@ -84,12 +84,18 @@
       s.state = s.state === 'paused' ? 'scheduled' : 'paused'; s.section = s.state === 'paused' ? 'paused' : 'next'; s.next = s.state === 'paused' ? 'Paused by you' : R.scheduleWords(s).next; s.day = R.scheduleWords(s).day; s.skip = ''; toStore(); follow(s); draw(); say(s.state === 'paused' ? `Paused ${s.title}` : `Resumed ${s.title}`); }
   }
   ctl = R.listController({ root: bar, spec: { noun: 'schedules', label: 'Selected schedules', view: () => ({ state: 'ready',
-    parts: [{ word: 'Showing', id: 'show', text: view.show, tip: 'Which schedules the list shows', items: ['all', 'paused'].map((x) => ({ id: x, text: x, checked: view.show === x })) },
+    parts: [{ word: 'Showing', id: 'show', tabs: ['all', 'repeating', 'once'], text: view.show, tip: 'Which schedules the list shows', items: SHOWS.map(([x, help]) => ({ id: x, text: x, help, checked: view.show === x, hint: String(list().filter((s) => inFrom(s) && shows(s, x)).length) })) },
+      { word: 'from', id: 'from', raw: true, text: view.from || 'All projects', tip: 'Which project they belong to', items: [{ id: 'all', text: 'All projects', checked: !view.from }, { sep: true }, ...projectsOf().map((p) => ({ id: p, text: p, checked: view.from === p }))] },
       R.byPart({ by: view.by, choices: [{ id: 'day', help: 'By the next task: Today, Tomorrow, This week, Later; paused ones last' }, { id: 'state', help: `${SECTIONS.map(([, t]) => t).join(', ')}` }] })],
     sections: sections(), empty: { text: 'No schedules yet.', action: 'Start one in Chat' } }),
-    can: () => ['menu'], bulk: () => [], act, open: (r) => window.StillhetShell.go(`schedule/${r._s.id}`),   /* a row opens the schedule's own page (thing-page) */ word: (id, v) => { view = { ...view, [id]: v }; if (!current) window.StillhetCenters?.schedules(page); return false; }, say,
+    can: () => ['menu'], bulk: () => [], act, open: (r) => window.StillhetShell.go(`schedule/${r._s.id}`),   /* a row opens the schedule's own page (thing-page) */ word: (id, v) => { view = { ...view, [id]: id === 'from' && v === 'all' ? '' : v }; if (!current) window.StillhetCenters?.schedules(page); return false; }, say,
     active: () => /^#schedule/.test(location.hash) && !document.querySelector('.pz-popover, .keys-modal, .viewer-modal, #app .nav-fly'), emptyAct: () => window.StillhetConversation?.start('schedule') } });
-  const showing = (s) => view.show === 'all' || s.state === 'paused';
+  // Show: classic's two tabs (Once, Repeating) beside All and Paused; Project narrows bar and page together (one filter per place)
+  const SHOWS = [['all', 'Every schedule'], ['paused', 'Only the paused ones'], ['once', 'One-off: runs a single time'], ['repeating', 'Runs again and again']];
+  const shows = (s, show) => show === 'all' || (show === 'paused' ? s.state === 'paused' : show === 'once' ? s.every === 'Once' : show === 'repeating' ? s.every !== 'Once' : true);
+  const inFrom = (s) => !view.from || (s.project || 'No project') === view.from;
+  const projectsOf = () => [...new Set(list().map((s) => s.project || 'No project'))].sort();
+  const showing = (s) => inFrom(s) && shows(s, view.show);
   // By date (the default): what waits on you first, then by the next run, each day folding; paused ones, then ended ones last, as they have none.
   function sections() {
     const shown = list().filter(showing), at = (id) => shown.filter((s) => sectionNow(s) === id);
@@ -169,18 +175,22 @@
       v('Project', s.project || 'No project'), v('Workflow', s.workflow && s.workflow !== 'Default' ? s.workflow : 'Default workflow'),
       v('Engine and model', s.agent || 'The project\'s default engine'), s.preset ? v('Preset', s.preset === 'preset deleted' ? 'Preset deleted' : s.preset) : '<span></span>', ...expert] });
     // the head's controls respond to what exists: its running task, its times, its next time; a change is asked for in its chat
-    const btn = (label, hook, title) => R.button({ label, attrs: { ...hook, title } });
+    // the button ladder: ONE default action for the state (Run now when a time was missed, Resume when paused); the others are quiet
+    const missedNow = s.section === 'needs' && !running;
+    const btn = (label, hook, title, lead = false) => R.button({ label, kind: lead ? '' : 'quiet', attrs: { ...hook, title } });
     const skip = skipItem(s);
     const action = s.ended ? '' : [
-      running ? btn('Stop', { 'data-sched-stop': s.id }, 'Stops the task that is running; the schedule keeps its times') : btn('Run now', { 'data-sched-now': s.id }, paused ? 'Starts a task now; it stays paused after' : 'Starts a task now; the schedule keeps its times'),
-      once ? '' : paused ? btn('Resume', { 'data-sched-resume': s.id }, 'Runs at its times again') : btn('Pause', { 'data-sched-pause': s.id }, 'Skips its times until you resume it'),
+      running ? btn('Stop', { 'data-sched-stop': s.id }, 'Stops the task that is running; the schedule keeps its times') : btn('Run now', { 'data-sched-now': s.id }, paused ? 'Starts a task now; it stays paused after' : missedNow ? 'Starts a task now to catch up; the schedule keeps its times' : 'Starts a task now; the schedule keeps its times', missedNow),
+      once ? '' : paused ? btn('Resume', { 'data-sched-resume': s.id }, 'Runs at its times again', true) : btn('Pause', { 'data-sched-pause': s.id }, 'Skips its times until you resume it'),
       once || paused ? '' : btn(skip.text, { 'data-sched-skip': s.id }, skip.help),
     ].join('');
     const change = s.ended ? '' : btn('Change it in chat', { 'data-sched-chat': s.id }, s.chat ? 'Opens its chat, to say what should change' : 'Opens a chat about it, to say what should change');
+    // the state head follows the alert ladder as a task's does: a missed time, or a task of its that waits on you, is a Caution
+    const level = missedNow || waitsOnYou(s) ? 'act' : '';
     const items = [{ id: 'in-view', text: window.StillhetShell?.inView.has('schedule', s.id) ? 'Out of view' : 'Keep in view', help: 'Its mark in the top bar, on every page' }, { sep: true }, { id: 'delete', text: 'Delete', danger: true, help: 'Removes the schedule; the tasks it ran stay. Undo in the notice' }];
-    return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${R.placeHead({ center: { label: 'Schedules', to: 'schedules' }, title: s.title, actions: change, facts: `${esc(s.project || 'No project')} · ${esc(flowWord(s))}${(s.labels || []).map((l) => R.chip({ text: l })).join('')}`, mark: R.kindMark({ kind: 'schedule', tone: toneOf(s), title: word(s) }), word: word(s), why: `${why(s)}${s.chat ? ' · from a chat' : ''}`,   /* the word already says it */ action, menu: R.moreMenu({ id: 'sc-more', label: `More for ${s.title}`, icon: R.icon('more', 16), open: menu === 'sc-more', items }) })}
+    return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${R.placeHead({ center: { label: 'Schedules', to: 'schedules' }, title: s.title, actions: change, facts: `${esc(s.project || 'No project')} · ${esc(flowWord(s))}${(s.labels || []).map((l) => R.chip({ text: l })).join('')}`, mark: R.kindMark({ kind: 'schedule', tone: level || toneOf(s), title: word(s) }), tone: level, word: word(s), why: `${why(s)}${s.chat ? ' · from a chat' : ''}`,   /* the word already says it */ action, menu: R.moreMenu({ id: 'sc-more', label: `More for ${s.title}`, icon: R.icon('more', 16), open: menu === 'sc-more', items }) })}
       <div class="sched-form">${facts}${F.readback(readback(s))}</div>
-      ${cards || R.emptyState({ title: 'It has not run yet.' })}
+      ${cards || (missedNow ? '' : R.emptyState({ title: 'It has not run yet.' }))}
     </div></div></div>`;   // no chat box here (a schedule's page is for inspecting): "Change it in chat" in its head leads there
   }
   // Change it in chat: its own chat with the schedule in focus, or, with no chat yet, Chat's composer with the schedule as its chip
@@ -298,7 +308,10 @@
     follow(s); draw();
     return { ok: true };
   }
-  window.StillhetSchedules = { all: list, showing: () => view.show, get TODAY() { return M.TODAY; }, nextDates, nextLine, dateWord, runningRun, openRun, find: sOf,
+  window.StillhetSchedules = { all: list, showing: () => view.show,
+    // the bar's view, read by the Schedules page so bar and page show the same schedules: { show, from, by }; `shows(s, show)`
+    // is the Show rule itself, and `narrow(project)` sets the bar's Project ('' clears it)
+    view: () => ({ ...view }), shows, narrow: (project = '') => { view = { ...view, from: project || '' }; ctl.paint(); if (!current) window.StillhetCenters?.schedules(page); }, get TODAY() { return M.TODAY; }, nextDates, nextLine, dateWord, runningRun, openRun, find: sOf,
     add: (s) => { const w = R.scheduleWords(s); Object.assign(s, { day: w.day, time: w.time }); data.schedules.unshift(s); toStore(); ctl.paint(); } /* the demo's New schedule; live, the server's frame lists it */,
     act: (id, v) => { const s = sOf(id); if (s && v) more(s, v); }, running: (id) => { const s = sOf(id); return !!s && isRunning(s); },
     // the one source every surface reads (page, center card, bar row, chat card, Pulse): its word, why it stands there, its skip item

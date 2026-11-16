@@ -9,8 +9,8 @@
 //   #settings[/<id>]   the Stillhet Settings, on one of its sections
 // pulse/pulse.js mounts Pulse, the profile menu, the search's results and Settings into it; runs/run-page.js draws the
 // run page into #card. Each owns its own clicks (window.StillhetShell.owns).
-// The shell itself holds the sidebar's three widths (docs/stillhet/narrow.md), the Ask worca side column (docs/stillhet/panels.md)
-// and what a place needs of the interface mode and Labs (the sidebar follows; a deep link above them gets one line).
+// The shell itself holds the sidebar's three widths (docs/stillhet/narrow.md), Ask worca's hand-over to Chat (chat-first: Chat is
+// the only place to type) and what a place needs of the interface mode and Labs (the sidebar follows; a deep link above them gets one line).
 (function () {
   const R = window.StillhetUI;
   // places Stillhet redesigns (plans/stillhet/README.md): until then, what each will hold, said plainly
@@ -41,7 +41,11 @@
   const needsOf = (view0) => { const view = view0 === 'schedule' ? 'schedules' : view0; const b = document.querySelector(`#side-rail nav.nav [data-nav="${view}"]`); return b ? { min: b.dataset.minLevel || '', flag: b.dataset.flag || '' } : {}; };
   const lockOf = (view) => { const n = needsOf(view); return !R.shows(n.min) ? { min: n.min } : n.flag && !R.prefs.flag(n.flag) ? { flag: n.flag } : null; };
   // A page inside a place may need more than the place (nav.locked); a schedule made in a chat opens in any mode, with its chat.
-  const lockHere = (view, arg) => (view === 'schedule' && window.StillhetSchedules?.find(arg)?.chat ? null : lockOf(view) || placeMod(view)?.needs?.(arg) || null);
+  // One table for what a mode offers (levels.offers): a schedule's own page opens in every mode (nav.row-opens-page), so a
+  // schedule made in Simple, from a chat or the form, is shown; the Schedules list stays Advanced, and in Simple the page
+  // keeps Chat's bar, where its schedule lives.
+  const lockHere = (view, arg) => (view === 'schedule' && window.StillhetSchedules?.find(arg) ? null : lockOf(view) || placeMod(view)?.needs?.(arg) || null);
+  const inChatBar = (view) => view === 'schedule' && !!lockOf('schedules');
   // The sidebar draws again when the interface mode or a Labs flag changes; a group with no place left goes, with its head.
   function applyPrefs() {
     const nav = document.querySelector('#side-rail nav.nav');
@@ -59,7 +63,7 @@
   // ---- the sidebar's three widths: the column above 1080px (it may be collapsed, and that is kept), the 60px rail from
   // 761 to 1080px, a drawer at 760px and below ----
   const store = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch { /* private mode: a remembered choice is a nicety */ } } };
-  const KEY_RAIL = 'worca-stillhet.sidebar.collapsed', KEY_ASK = 'worca-stillhet.ask.width';
+  const KEY_RAIL = 'worca-stillhet.sidebar.collapsed';
   let collapsed = store.get(KEY_RAIL) === '1', tabletOpen = false;   // narrow.nav: 761 to 1080px starts as the strip; opened there, it stays open until reload, and a wide screen's choice is kept apart
   const inTablet = () => innerWidth > 760 && innerWidth <= 1080;
   const isStrip = () => (innerWidth <= 760 ? false : inTablet() ? !tabletOpen : collapsed);
@@ -101,14 +105,8 @@
     if (e.shiftKey && a === stops[0]) { e.preventDefault(); stops[stops.length - 1].focus(); } else if (!e.shiftKey && a === stops[stops.length - 1]) { e.preventDefault(); stops[0].focus(); }
   }, true);
 
-  // ---- Ask worca: the side column, with today's Chat capture inside. Pushes above 1080px, covers to 761px, takes the
-  // window below (shell.css); dragged between 360 and 680px and kept; fades in, closes at once. ----
-  const clampAsk = (px) => Math.min(680, Math.max(360, Math.round(+px) || 440));
-  let askW = clampAsk(store.get(KEY_ASK)), askOpen = false;
-  const setAskW = (px) => {
-    askW = clampAsk(px); document.documentElement.style.setProperty('--ask-side-w', askW + 'px'); store.set(KEY_ASK, askW);
-    document.querySelector('#ask-side .ask-side-grip')?.setAttribute('aria-valuenow', askW);
-  };
+  // ---- Ask worca (chat-first): Chat is the only place to type. The top bar's Ask and ⌘J hand the page you are on to Chat
+  // as a chip (stillhet.hand-to-chat); Back returns to the page. On Chat they point to the box that asks. ----
   const LIST_SUG = {
     marketplace: ['Which plugins fit how I work?', 'What does a plugin ask for, and why?', 'Which of my plugins have an update?'],
     workflows: ['Which workflow fits my task?', 'How could my workflows cost less?', 'Which workflow ran most this week?'],
@@ -131,40 +129,30 @@
     const kind = v === 'run' ? 'task' : ({ projects: 'project', schedule: 'schedule', insights: 'question', workflows: 'workflow', marketplace: 'plugin', workspaces: 'workspace', requirements: 'feature' })[v] || 'page';
     return { view: v, kind, name, project: v === 'projects' ? name : '', suggest: SUG[v] || ['What needs me?', 'What is ready to ship?', 'What happened while I was away?'] };
   }
-  function drawAsk(side) {
-    side.innerHTML = R.sideColumn({ title: 'Ask worca', width: askW, close: R.icon('x', 14), body: '<div class="stillhet-ask-body side-col-convo" id="ask-convo"></div>', hooks: { close: { 'data-ask-close': '' } } });
-    window.StillhetConversation?.mount(document.getElementById('ask-convo'));
-  }
-  // Ask worca's icon says what it does: three dots while Worca writes in its column, filled while the column is open
-  let askBusy = false;
-  function drawAskMark() { const ic = document.querySelector('#topnav-ask .ask-ic'); if (ic) ic.innerHTML = R.askWorcaMark({ answering: askBusy, open: askOpen }); }
-  document.addEventListener('stillhet:replying', (e) => { if (!e.target.closest?.('#ask-side')) return; askBusy = !!e.detail?.busy; drawAskMark(); });
   function syncAsk(view) {
-    const side = document.getElementById('ask-side'), btn = document.getElementById('topnav-ask');
-    // on Chat the page is the chat: Ask worca stays in its place, off, and says why (the top bar never shifts)
-    const here = view === 'chat'; if (here) askOpen = false;
-    if (btn) { btn.hidden = false; btn.setAttribute('aria-expanded', String(askOpen)); btn.setAttribute('aria-disabled', String(here)); btn.title = here ? 'You are in Chat: the box below asks Worca' : `Ask worca, beside any page (${R.keyHint(['mod', 'J'], R.isMac(window))})`; }
-    if (askOpen && !here) window.StillhetConversation?.sideRefresh?.();   /* a new page: its own questions */
-    drawAskMark();
-    const show = askOpen;
-    if (show && side.hidden) { if (!side.firstChild) drawAsk(side); side.classList.add('is-in'); setTimeout(() => side.classList.remove('is-in'), 300); }
-    side.hidden = !show;
-    if (show) window.StillhetConversation?.paintIfStale?.();   // comp.live-paint: what changed while it was closed is drawn once
-    document.body.classList.toggle('ask-side-open', show);
+    const btn = document.getElementById('topnav-ask'), here = view === 'chat'; if (!btn) return;
+    btn.hidden = false; btn.removeAttribute('aria-expanded'); btn.removeAttribute('aria-controls'); btn.removeAttribute('aria-disabled');
+    btn.title = here ? 'You are in Chat: the box below asks Worca' : `Ask worca about this page, in Chat (${R.keyHint(['mod', 'J'], R.isMac(window))})`;
+    const ic = btn.querySelector('.ask-ic'); if (ic && !ic.firstChild) ic.innerHTML = R.askWorcaMark({});
+  }
+  function askHere() {
+    if (routed.view === 'chat') { document.querySelector('#route-chat [data-composer-t]')?.focus(); return; }
+    const c = pageContext(), kind = c.kind === 'list' || c.kind === 'page' ? 'Page' : c.kind[0].toUpperCase() + c.kind.slice(1);
+    window.StillhetConversation?.handOver({ about: { kind, name: c.name }, ph: `Ask about ${c.name}`, ...(c.project ? { project: c.project } : {}) });
   }
 
   function build() {
     const app = document.getElementById('worca');
     app.innerHTML = '';
     const col = el('<div class="main-col"></div>');
-    col.append(topBar(), el('<div id="stillhet-strip"></div>'), el('<div id="main-row" class="main-row"><main class="main" id="main-content" tabindex="-1"><div class="page-bg" aria-hidden="true"><div class="chat-home-bg"></div></div><div id="route-today"></div><div id="route-chat" hidden></div><div id="route-schedule" hidden></div><div id="route-place" hidden></div><div id="route-runs" class="pz-app stillhet-page" hidden></div><div id="route-run" class="rc-board" hidden><div id="card"></div><div id="task-timeline"></div></div><div id="route-settings" class="pz-app stillhet-page" hidden></div></main><aside id="ask-side" class="ask-side" aria-label="Ask worca" hidden></aside></div>'));
+    col.append(topBar(), el('<div id="stillhet-strip"></div>'), el('<div id="main-row" class="main-row"><main class="main" id="main-content" tabindex="-1"><div class="page-bg" aria-hidden="true"><div class="chat-home-bg"></div></div><div id="route-today"></div><div id="route-chat" hidden></div><div id="route-schedule" hidden></div><div id="route-place" hidden></div><div id="route-runs" class="pz-app stillhet-page" hidden></div><div id="route-run" class="rc-board" hidden><div id="card"></div><div id="task-timeline"></div></div><div id="route-settings" class="pz-app stillhet-page" hidden></div></main></div>'));
     app.append(el(R.skipLink()), el('<div class="nav-scrim" id="nav-scrim" hidden></div>'), sidebar(), col);   // key.skip-link: the first Tab stop
     syncRail(); applyPrefs();
   }
 
   // the current place, marked in the bar
   function markNav(view) {
-    const place = view === 'run' ? 'runs' : view === 'schedule' ? 'schedules' : view;
+    const place = view === 'run' ? 'runs' : view === 'schedule' ? (inChatBar(view) ? 'chat' : 'schedules') : view;
     for (const b of document.querySelectorAll('#side-rail nav.nav [data-nav]')) {
       const on = b.dataset.nav === place;
       b.classList.toggle('active', on); b.classList.toggle('is-on', on); if (on) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
@@ -179,11 +167,13 @@
   // what needs you there, from the one count (StillhetWorld.countOf): the bar, its tab, this menu and Pulse never disagree
   const NEED_KINDS = { chat: ['task'], runs: ['task', 'schedule'], schedules: ['schedule'], projects: ['project', 'proposal'] };
   const countOf = (place) => (NEED_KINDS[place] && window.StillhetWorld?.countOf ? window.StillhetWorld.countOf(NEED_KINDS[place]) || '' : '');
-  const placeOf = (view) => (view === 'run' ? (taskChat ? 'chat' : 'runs') : view === 'schedule' ? 'schedules' : view);
-  const placeList = () => [...document.querySelectorAll('#side-rail nav.nav [data-nav]')].filter((b) => !b.hidden && !b.closest('[hidden]') && b.style.display !== 'none').map((b) => ({ id: b.dataset.nav, label: b.querySelector('.nav-label, .pz-nav-l, span')?.textContent.trim() || b.textContent.trim(), count: countOf(b.dataset.nav), current: b.dataset.nav === placeOf(routed.view), lab: !!b.dataset.flag, icon: R.icon(`nav-${b.dataset.nav}`, 14) }));   /* nav.labs: the word follows the row */
+  // list.news: any chat with something you have not seen ('need' when one of them needs you)
+  const chatNews = () => { const cs = (window.StillhetChats?.data().chats || []).filter((c) => c.unread && !c.archived); return !cs.length ? false : cs.some((c) => c.state === 'needs-you') ? 'need' : true; };
+  const placeOf = (view) => (view === 'run' ? (taskChat ? 'chat' : 'runs') : view === 'schedule' ? (inChatBar(view) ? 'chat' : 'schedules') : view);
+  const placeList = () => [...document.querySelectorAll('#side-rail nav.nav [data-nav]')].filter((b) => !b.hidden && !b.closest('[hidden]') && b.style.display !== 'none').map((b) => ({ id: b.dataset.nav, label: b.querySelector('.nav-label, .pz-nav-l, span')?.textContent.trim() || b.textContent.trim(), count: countOf(b.dataset.nav), news: b.dataset.nav === 'chat' && chatNews(), current: b.dataset.nav === placeOf(routed.view), lab: !!b.dataset.flag, icon: R.icon(`nav-${b.dataset.nav}`, 14) }));   /* nav.labs: the word follows the row */
   let barMenu = false;   // the + as a menu, where a place makes things more than one way (list.bar-model)
   let homeNext = false, homeOpen = false, taskChat = '', lastThing = null, visited = [], pinsAll = false;
-  const barOf = (view) => (routed.locked || notLiveOf(view) ? 'home' : placeMod(view) ? 'place' : view === 'chat' ? 'chat' : view === 'runs' ? 'tasks' : view === 'run' ? (taskChat ? 'chat' : 'tasks') : view === 'schedules' || view === 'schedule' ? 'schedules' : view === 'settings' ? 'settings' : 'home');
+  const barOf = (view) => (routed.locked || notLiveOf(view) ? 'home' : placeMod(view) ? 'place' : view === 'chat' ? 'chat' : view === 'runs' ? 'tasks' : view === 'run' ? (taskChat ? 'chat' : 'tasks') : inChatBar(view) ? 'chat' : view === 'schedules' || view === 'schedule' ? 'schedules' : view === 'settings' ? 'settings' : 'home');
   // who makes things from this bar's +: a place (Workflows, Projects, Marketplace) and Chat. Tasks and Schedules are for
   // looking at what exists: they have no +; a task or a schedule starts in Chat (nav.start-in-chat)
   const plainMenu = (items) => items.filter((it) => !(it.header && /legacy/i.test(it.header)));   // a place's own menu never says which way is the old one
@@ -281,7 +271,7 @@
     const kinds = [['chat', 'chat', 'Chats', window.StillhetChats?.summary()], ['runs', 'task', 'Tasks', window.StillhetRunsList?.summary()], ['schedules', 'schedule', 'Schedules', window.StillhetSchedules?.summary()]];
     document.getElementById('bar-mini').innerHTML = R.barStrip({ items: kinds.filter(([place]) => !lockOf(place)).map(([place, kind, word, c]) => {
       const n = c?.n || 0, needs = c?.needs || 0;
-      return { label: [`${word}: ${n} open`, needs ? `${needs} need you` : ''].filter(Boolean).join(' · '), icon: R.kindMark({ kind, stage: -1, keepType: true, size: 20 }), n, tone: needs ? 'need' : '', attrs: { 'data-mini': place } };
+      return { label: [`${word}: ${n} open`, needs ? `${needs} need you` : ''].filter(Boolean).join(' · '), icon: R.kindMark({ kind, stage: -1, keepType: true, size: 20 }), n, news: place === 'chat' && chatNews(), tone: needs ? 'need' : '', attrs: { 'data-mini': place } };
     }) });
   }
 
@@ -386,6 +376,7 @@
     }
     if (view === 'runs') { window.StillhetRunsList?.show(); window.StillhetCenters?.tasks(pane.runs); }
     if (view === 'schedules' || view === 'schedule') window.StillhetSchedules?.show(view === 'schedule' ? arg : '');
+    if (inChatBar(view) && !lock) window.StillhetChats?.show('');   // Simple: a schedule's page keeps Chat's bar
     if (placeMod(view) && !lock && !notLive) { const again = openedAgain && lastPlace === location.hash; placeMod(view).show({ bar: document.getElementById('bar-place'), page: pane.place, arg: decodeURIComponent(arg || '') }); if (again) R.land(pane.place.querySelector('.place-head')); }   /* the row you are on, opened again by you: its page's head lands; a flag or a redraw on the same address never flashes */
     lastPlace = placeMod(view) && !lock ? location.hash : ''; openedAgain = false;
     if (view === 'run' && !notLive) {
@@ -467,8 +458,7 @@
     if (on('#side-close')) { drawer(false); return; }
     if (on('#tsearch-open')) { searchFold(true); return; }
     if (on('#tsearch-close')) { searchFold(false); return; }
-    if (on('#topnav-ask')) { if (routed.view === 'chat') { document.querySelector('#route-chat [data-composer-t]')?.focus(); return; } askOpen = !askOpen; syncAsk(routed.view); return; }   // on Chat it points to the box that asks
-    if (on('[data-ask-close]')) { askOpen = false; syncAsk(routed.view); document.getElementById('topnav-ask')?.focus(); return; }
+    if (on('#topnav-ask')) { askHere(); return; }   // the page goes to Chat as a chip; on Chat it points to the box that asks
     // a control on a captured page says where it goes
     if ((hit = on('#route-today [data-nav]'))) {
       e.preventDefault();
@@ -501,14 +491,8 @@
   document.addEventListener('pointerup', () => { if (barDrag) { barDrag = false; document.body.classList.remove('is-resizing-bar'); } });
   document.addEventListener('dblclick', (e) => { if (e.target.closest?.('.bar-grip')) setBarW(BAR_W); });
   document.addEventListener('keydown', (e) => { if (e.target.closest?.('.bar-grip') && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); setBarW(barW + (e.key === 'ArrowRight' ? 20 : -20)); } });
-  // The column's grip: a drag, or the arrow keys, 20px a step.
-  let drag = false;
-  document.addEventListener('pointerdown', (e) => { const g = e.target.closest?.('#ask-side .ask-side-grip'); if (g) { drag = true; e.preventDefault(); document.getElementById('ask-side').classList.add('is-resizing'); } });
-  document.addEventListener('pointermove', (e) => { if (drag) setAskW(innerWidth - e.clientX); });
-  document.addEventListener('pointerup', () => { if (drag) { drag = false; document.getElementById('ask-side').classList.remove('is-resizing'); } });
   document.addEventListener('keydown', (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === '\\' && innerWidth > 760) { e.preventDefault(); if (isStrip()) { setStrip(false); syncRail(); drawBar(); } else hideBar(); return; }
-    if (e.target.closest?.('#ask-side .ask-side-grip') && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); setAskW(askW + (e.key === 'ArrowLeft' ? 20 : -20)); return; }
+    if ((e.metaKey || e.ctrlKey) && e.key === '\\' && innerWidth > 760) { e.preventDefault(); if (isStrip()) { setStrip(false); syncRail(); drawBar(); } else hideBar(); }
   });
   // a disabled menu item says why (comp.menu-off); on a strip's icon the strip stays, so the icon can be clicked: anywhere else on it, it opens
   document.addEventListener('stillhet:disabled', (e) => { if (e.detail?.why) window.StillhetPulse?.say(e.detail.why); });
@@ -554,7 +538,7 @@
       if (!target?.isConnected) return false;   // a list page already answered it, and drew again
       const inRun = !!target?.closest?.('#card, [data-run-tools]');
       // today's pages and the sidebar's places are the shell's own: neither the run page nor Pulse answers there
-      const inShell = !!target?.closest?.('#in-view-slot, #bar-back, #route-today, #route-runs, #route-chat, #route-schedule, #route-place, #bar-place, #task-timeline, #side-rail nav.nav, #bar-head, #bar-chat, #bar-tasks, #bar-schedules, #ask-side');
+      const inShell = !!target?.closest?.('#in-view-slot, #bar-back, #route-today, #route-runs, #route-chat, #route-schedule, #route-place, #bar-place, #task-timeline, #side-rail nav.nav, #bar-head, #bar-chat, #bar-tasks, #bar-schedules');
       return who === 'run' ? inRun : !inRun && !inShell;
     },
     runActive: () => !document.getElementById('route-run')?.hidden,
@@ -562,6 +546,9 @@
     pageContext: () => pageContext(),
     needs: (view) => needsOf(view),
     locked: (view) => !!lockOf(view),
+    // levels.offers: may this mode be offered a way to this place or form? One table (the bar's own data-min-level and
+    // Labs flags): 'schedules', 'insights', 'marketplace'…; a form that makes a thing is offered when its thing can be shown
+    offers: (what) => (what === 'schedule' || what === 'schedule-form' || what === 'task' || what === 'task-form' ? true : !lockOf(what)),
     go: (hash) => { if (hash === NEW_TASK) { window.StillhetConversation?.handOver({ mode: 'task', ph: 'What should the task do?' }); return; } if (location.hash.slice(1) === hash) { openedAgain = true; route(); } else location.hash = hash; },
     // a task opened from Pulse or the search carries its own title
     openRun: (hash, title, run) => window.StillhetShell.openTaskPage(hash.split('/')[1], '', title, run),   // nav.row-opens-page: its own page
@@ -639,7 +626,7 @@
   R.dismissOnOutside(document, { open: () => document.body.classList.contains('nav-open'), inside: '#side-rail, #mbar-menu', back: () => '#mbar-menu', close: () => drawer(false), paint: () => {} });
   R.dismissOnOutside(document, { open: () => !!document.querySelector('#topnav .tsearch.is-open'), inside: '.tsearch, #tsearch-open', back: () => '#tsearch-open', close: () => searchFold(false), paint: () => {} });
   build();
-  setAskW(askW); setBarW(barW);
+  setBarW(barW);
   for (const t of ['pointerenter', 'pointerleave']) document.getElementById('side-rail').addEventListener(t, barInert);
   R.watchSearch(document);   // key.search: the arrows reach the results, the field says when they show
   R.watchClickGuard(document); R.watchOrbs(document); R.watchTooltips(document); R.watchMenus(document); R.watchStrips(document); R.watchScrollFades(document); R.watchFolds(document); R.watchStageAdvance(document);
@@ -673,7 +660,7 @@
       focusHeading();
     }, 120);
   });
-  document.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') { e.preventDefault(); if (routed.view === 'chat') { document.querySelector('#route-chat [data-composer-t]')?.focus(); return; } askOpen = !askOpen; syncAsk(routed.view); if (askOpen) setTimeout(() => document.querySelector('#ask-side [data-composer-t]')?.focus(), 50); } });   // ⌘J: Ask worca beside this page
+  document.addEventListener('keydown', (e) => { if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'j') { e.preventDefault(); askHere(); } });   // ⌘J: this page, to Chat
   // another Pulse case: the run page in view takes its title from it
   window.StillhetWorld.onChange(() => { drawInView(); if (routed.view === 'run') { reopen = true; route(); } });
   // the live kind (D20): the connection and the strip follow every load and list change; a task frame repaints the strip
@@ -689,7 +676,7 @@
     const { from, to, title } = e.detail || {}; if (!title) return;
     const r = window.StillhetWorld.rows().find((x) => x.case === from && x.title === title);
     if (r) window.StillhetWorld.move(r.id, to, R.runState(RM.stateOf(to)).word);
-    if (routed.view === 'run') { for (const c of window.StillhetChats?.data().chats || []) for (const t of allTasksOf(c)) if (t.case === from && t.title === title) { t.case = to; t.detail = ''; const st = RM.stageOf?.(to); if (st?.stage >= 0) t.stage = st.stage; } window.StillhetChats?.refresh(); }   /* lent to a card, its chat does this itself */
+    if (routed.view === 'run') { for (const c of window.StillhetChats?.data().chats || []) for (const t of allTasksOf(c)) if (t.case === from && t.title === title) { t.case = to; t.detail = ''; const st = RM.stageOf?.(to); if (st?.stage >= 0) t.stage = st.stage; /* one store: answered on its page, its chat no longer waits on you */ const needs = (y) => { try { return R.sectionOf(R.runState(RM.stateOf(y.case)).word, RM.stateOf(y.case)) === 'needs'; } catch { return false; } }; if (c.state === 'needs-you' && !allTasksOf(c).some(needs)) c.state = 'idle'; } window.StillhetChats?.refresh(); }   /* lent to a card, its chat does this itself */
     for (const x of inViewList) if (x.case === from && x.title === title) x.case = to;
     RM.titles[to] = title;   // the store names a state after its first task: this page stays this task
     drawBar();

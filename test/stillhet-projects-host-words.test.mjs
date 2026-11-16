@@ -45,7 +45,7 @@ test('V3-05: no empty On it now line when nothing runs', async () => {
 test('F-6-14: the bar\'s by-name order follows names, not keys', async () => {
   const P = (key, name) => ({ key, name, path: `/src/${name}`, displayPath: `~/src/${name}`, exists: true, vcs: 'git' });
   const h = await projectsHost({ hash: '#projects', sources: { projects: { projects: [P('aaa-11112222', 'zeta'), P('mmm-33334444', 'mid'), P('zzz-55556666', 'alpha')] }, sync: { projects: {} }, workspaces: { workspaces: [] } } });
-  bar(h.d).querySelector('[data-menu="by"]').click(); await settle(30);
+  bar(h.d).querySelector('[data-menu="filters"]').click(); await settle(30);   // the bar's one Filter holds Show and Group by
   bar(h.d).querySelector('[data-pick="by|name"]').click(); await settle(60);
   const order = ['alpha', 'mid', 'zeta'].map((n) => text(bar(h.d)).indexOf(n));
   assert.ok(order.every((i) => i >= 0) && order[0] < order[1] && order[1] < order[2], `alpha, mid, zeta: ${text(bar(h.d))}`);
@@ -58,7 +58,7 @@ test('F-6-14: a project in two workspaces and an unknown member read names; no k
   assert.match(text(also), /seed-behind/, 'centerAlso shows its name');
   assert.doesNotMatch(text(page(h.d)), KEY_TEXT);
   assert.doesNotMatch(text(bar(h.d)), KEY_TEXT, 'no key in the bar');
-  bar(h.d).querySelector('[data-fold-tree="ws:wks-b-2222"]').click(); await settle(60);   // a healthy workspace starts folded
+  bar(h.d).querySelector('[data-open="more:wks-b-2222"]').click(); await settle(60);   // a workspace that needs you lists what needs you; the rest is behind "N more"
   assert.match(text(bar(h.d)), /ghost-folder/, 'the unknown member reads its folder');
   assert.doesNotMatch(text(bar(h.d)), KEY_TEXT, 'nor with its members shown');
   await go(h.w, `#projects/${KEYS.behind}`, 200);

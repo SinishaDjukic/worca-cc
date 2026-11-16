@@ -46,7 +46,7 @@ function storeOf(doc) {
     const l = opened()[0];
     if (!l) return;
     e.preventDefault(); e.stopImmediatePropagation();
-    if (l.dialog && l.typed) return;
+    if (l.dialog && l.typed && l.keepTyped !== false) return;   // a form keeps what was typed; a one-field Rename closes (nothing is lost that a rename cannot redo)
     const to = l.esc?.();   // a step before it closes: Esc ends selecting first, or leaves a sub-menu for its opener
     if (to) { l.paint(); if (to !== true) (typeof to === 'string' ? doc.querySelector(to) : to)?.focus?.({ preventScroll: true }); return; }
     const back = l.back?.();

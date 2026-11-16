@@ -145,7 +145,7 @@ export function intentChip({ icon: ic, label, clear = {} }) {
  *   for as long as Settings › Notifications › Pulse icon says (never while reduced motion is on)
  */
 export function barStrip({ items, label = 'Your work' }) {
-  return `<nav class="bar-strip"${attrs({ 'aria-label': label })}>${items.map((x) => `<button type="button" class="bar-strip-i"${attrs({ ...(x.attrs || {}), title: x.label, 'aria-label': x.label })}>${x.icon}${x.n ? countBadge({ n: x.n, tone: x.tone, corner: true }) : ''}</button>`).join('')}</nav>`;
+  return `<nav class="bar-strip"${attrs({ 'aria-label': label })}>${items.map((x) => `<button type="button" class="bar-strip-i"${attrs({ ...(x.attrs || {}), title: x.label, 'aria-label': x.news ? `${x.label} · new activity` : x.label })}>${x.icon}${x.news ? `<span class="lr-news is-strip${x.news === 'need' ? ' is-need' : ''}" aria-hidden="true"></span>` : ''}${x.n ? countBadge({ n: x.n, tone: x.tone, corner: true }) : ''}</button>`).join('')}</nav>`;
 }
 
 export function topBarAction({ label, icon, labelCls, kind = '', full = false, badge = null, news = false, cls: c = '', title = '', attrs: a = {} }) {

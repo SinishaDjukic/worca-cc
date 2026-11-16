@@ -28,4 +28,6 @@ export async function page(id, { src = sources(), write = () => [200, { ok: true
   return h;
 }
 export const head = (d) => ['.place-head', '.convo-card-line'].map((q) => d.querySelector(`#route-schedule ${q}`)?.textContent || '').join(' · ');
-export const more = async (d, v) => { d.querySelector('#route-schedule [data-menu="sc-more"]').click(); await settle(5); d.querySelector(`#route-schedule [data-menu-pick="sc-more|${v}"]`).click(); await settle(80); };
+// the page's actions on what exists are buttons in its state head (Run now, Stop, Pause, Resume, Skip next time); its ⋯ holds the rest
+const HEAD_BTN = { run: 'data-sched-now', stop: 'data-sched-stop', pause: 'data-sched-pause', resume: 'data-sched-resume', skip: 'data-sched-skip' };
+export const more = async (d, v) => { const b = HEAD_BTN[v] && d.querySelector(`#route-schedule [${HEAD_BTN[v]}]`); if (b) { b.click(); await settle(80); return; } d.querySelector('#route-schedule [data-menu="sc-more"]').click(); await settle(5); d.querySelector(`#route-schedule [data-menu-pick="sc-more|${v}"]`).click(); await settle(80); };

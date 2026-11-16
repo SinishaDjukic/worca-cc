@@ -14,8 +14,10 @@
 .bar-grip:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 /* a chart's bars and points, a heat cell: the ring is on the mark that has the focus */
 :is(.bc-col, .ch-hit, .ch-col):focus-visible{outline:2px solid var(--ink);outline-offset:1px;border-radius:var(--r-sm);}
-/* a heading that took the focus after a page change or the skip link (key.page-heading): a quiet ring, never the browser's blue box */
-:is(h1, h2, #main-content)[tabindex="-1"]:focus-visible{outline:2px solid var(--ink);outline-offset:4px;border-radius:var(--r-sm);}
+/* a page title is not a control: a heading that took the focus after a page change or the skip link (key.page-heading)
+   shows no box; the page itself, when it has no heading, keeps the quiet ring */
+:is(h1, h2, h3, .place-title, .rc-title, [data-title])[tabindex="-1"]:is(:focus, :focus-visible){outline:none;}
+#main-content[tabindex="-1"]:focus-visible{outline:2px solid var(--ink);border-radius:var(--r-sm);}
 #main-content[tabindex="-1"]:focus-visible{outline-offset:-2px;}
 
 /* ---- Targets (WCAG 2.5.8): on a phone, or under a finger, nothing you must hit is under 24 by 24 CSS px. The marks keep

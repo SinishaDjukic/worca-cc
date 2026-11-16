@@ -19,8 +19,8 @@ async function open({ presets = Object.values(P), check = () => [200, { broken: 
   const list = { presets };
   const h = await liveHost({ lists: LISTS, read: (u) => (u === '/api/presets' ? [200, list] : u === DEFAULTS ? [200, { engine: { value: 'claude' }, tags: [], projectKey: 'web-1' }] : null),
     write: (u, b, m) => (/\/check$/.test(u) ? check(u, b) : write(u, b, m, list)) });
-  await go(h.w, '#runs', 120);
-  h.w.StillhetCenters.maker('tasks').newPick('form'); await settle(80);
+  await go(h.w, '#runs', 200);
+  h.w.StillhetCenters.newTask(); await settle(80);
   return { ...h, list };
 }
 const q = (d, sel) => d.querySelector(`#center-dlg ${sel}`);
@@ -49,9 +49,9 @@ test('COV-2 presets: picking one fills the pickers and checks it for this projec
   assert.equal(shown(d, 'preset'), 'Bug fix');
   assert.equal(shown(d, 'workflow'), 'Lean');
   assert.equal(shown(d, 'agent'), 'OpenAI Codex');
-  assert.equal(shown(d, 'source'), 'my local copy');
-  assert.equal(shown(d, 'then'), 'leave it on the branch');
-  q(d, '[data-c-more]').click(); await settle(20);
+  q(d, '[data-c-more]').click(); await settle(20);   // Start from, When it is done and Cost tags are More options' fields
+  assert.equal(shown(d, 'source'), 'My local copy');
+  assert.equal(shown(d, 'then'), 'Leave it on the branch');
   assert.equal(q(d, '#cc-tags').value, 'bugfix');
   assert.deepEqual(posts(calls).filter(([, u]) => /check$/.test(u)), [['POST', '/api/presets/rp_fix/check', { projectDir: '/src/web' }]]);
 });
@@ -176,7 +176,7 @@ test('F-G-G3-02: a refused Save as default leaves its error under Cost tags unti
 
 test('COV-2 presetSelect / Clear preset / Update preset (demo): from Docs pass â–¾ lists Update preset after an edit and No preset; No preset drops the clause', async () => {
   const w = demoTaskHost({ after }), d = w.document; await settle(60);
-  w.StillhetCenters.maker('tasks').newPick('form'); await settle(60);
+  w.StillhetCenters.newTask(); await settle(60);
   await pick(d, 'project', 'worca-cc');
   assert.ok((await menuOf(d)).includes('Docs pass'), 'the project\'s own preset is offered');
   await pick(d, 'preset', 'p:rp_docs');
@@ -188,5 +188,5 @@ test('COV-2 presetSelect / Clear preset / Update preset (demo): from Docs pass â
   assert.ok(m.includes('Update preset') && m.at(-1) === 'No preset', JSON.stringify(m));
   await pick(d, 'preset', 'none');
   assert.equal(shown(d, 'preset'), 'No preset', 'the clause no longer names a preset');
-  assert.doesNotMatch(q(d, '.cc-frame').textContent, /Docs pass/);
+  assert.doesNotMatch(q(d, '.dlg-body').textContent, /Docs pass/);
 });

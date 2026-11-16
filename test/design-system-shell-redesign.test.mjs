@@ -11,7 +11,7 @@ import * as R from '../ui/public/design-system/components/index.mjs';
 import { filterRow, narrowedLine, groupRow } from '../ui/public/design-system/components/list-parts.mjs';
 import { list, listRow } from '../ui/public/design-system/components/list.mjs';
 import { listController } from '../ui/public/design-system/components/list-page.mjs';
-import { search, watchSearch } from '../ui/public/design-system/components/side-menu.mjs';
+import { search, searchResults, watchSearch } from '../ui/public/design-system/components/side-menu.mjs';
 
 const dom = (html) => new JSDOM(`<body>${html}</body>`).window.document.body.firstElementChild;
 
@@ -30,7 +30,8 @@ test('placeItems: the place\'s home first, then each place with its count, the c
   const items = placeItems({ home: { id: 'runs', label: 'Tasks home' }, places: [{ id: 'chat', label: 'Chat', count: 8 }, { id: 'runs', label: 'Tasks', count: 10, current: true }, { id: 'workflows', label: 'Workflows' }, { id: 'requirements', label: 'Requirements', lab: true }] });
   assert.equal(items[0].id, 'bar-go|runs'); assert.equal(items[0].text, 'Tasks home'); assert.equal(items[0].checked, undefined, 'the home is a way, not a choice');
   assert.deepEqual(items[1], { sep: true });
-  assert.deepEqual(items.slice(2).map((x) => [x.id, x.text, x.hint, x.checked]), [['bar-go|chat', 'Chat', '8', false], ['bar-go|runs', 'Tasks', '10', true], ['bar-go|workflows', 'Workflows', undefined, false], ['bar-go|requirements', 'Requirements', 'Labs', false]]);
+  assert.deepEqual(items[2], { header: 'Places', end: 'need you' }, 'small.one-count: one quiet caption says what the numbers count');
+  assert.deepEqual(items.slice(3).map((x) => [x.id, x.text, x.hint, x.checked]), [['bar-go|chat', 'Chat', '8', false], ['bar-go|runs', 'Tasks', '10', true], ['bar-go|workflows', 'Workflows', undefined, false], ['bar-go|requirements', 'Requirements', 'Labs', false]]);
   assert.equal(placeItems({ places: [{ id: 'chat', label: 'Chat' }] }).length, 1, 'no home, no rule');
 });
 
@@ -75,7 +76,14 @@ test('filterRow on a page: one line of plain tabs with counts, More, and pickers
   assert.equal(from.textContent, 'Project:web-app'); assert.equal(from.getAttribute('aria-label'), 'Project: web-app', 'a project keeps its own letters');
   assert.equal(by.textContent, 'Group by:State'); assert.equal(by.getAttribute('aria-expanded'), 'false');
   assert.deepEqual([...f.querySelectorAll('.pz-menu [data-pick]')].map((x) => [x.dataset.pick, x.querySelector('.mi-l').textContent]), [['from|all', 'All projects'], ['from|web-app', 'web-app']], 'one menu open, under its picker');
-  assert.equal(f.querySelector('.fr-chip, .fr-filter'), null, 'the pickers say their values: no chips, no Filter control');
+  assert.equal(f.querySelector('.fr-chip, .fr-more'), null, 'the pickers say their values: no chips, no More filters under five pickers');
+  assert.ok([more, from, by].every((b) => /^--fr-w:\d+$/.test(b.getAttribute('style'))), 'each picker has its filter\'s width, never its value\'s');
+  assert.equal(from.getAttribute('style'), dom(filterRow({ parts: PARTS().map((p) => (p.id === 'from' ? { ...p, text: 'All projects', items: p.items.map((it) => (it.sep ? it : { ...it, checked: it.id === 'all' })) } : p)) })).querySelectorAll('.fr-pick')[1].getAttribute('style'), 'a pick moves nothing');
+  const phone = f.querySelector('.fr-filter.fr-phone > button'); assert.equal(phone.dataset.menu, 'filters', 'on a phone: the tabs and this one Filter control');
+  // more than four pickers: the first four, the rest behind More filters
+  const many = dom(filterRow({ parts: ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => ({ id: `in-${id}`, label: id.toUpperCase(), text: 'x', items: [{ id: 'x', text: 'x', checked: true }, { id: 'y', text: 'y' }] })), open: 'in-more' }));
+  assert.equal(many.querySelectorAll(':scope > .fr-pick-w').length, 4); assert.equal(many.querySelector('.fr-more > button').dataset.menu, 'in-more', 'the page\'s own menu prefix');
+  assert.deepEqual([...many.querySelectorAll('.fr-more .menu-h')].map((x) => x.textContent), ['E', 'F']);
   assert.ok(f.lastElementChild.matches('.fr-end') && f.querySelector('.fr-end > #fig'));
 });
 
@@ -91,10 +99,11 @@ test('filterRow folded (a bar): tabs, a chip with ✕ for each filter off its de
   assert.deepEqual([...f.querySelectorAll('.fr-pop .menu-h')].map((x) => x.textContent), ['Show', 'Project', 'Group by'], 'a labelled group per part');
   assert.equal(f.querySelectorAll('.fr-pop [data-pick^="show|"]').length, 4, 'every view is in Filter, the tabs\' too');
   assert.equal(f.querySelector('.fr-pop [data-pick="by|day"] .mi-l').textContent, 'Date');
-  // at its defaults: no chip, the control at rest; a third tab that is the view is a chip the look shows where that tab hides
+  assert.equal(b.querySelector('.fr-filter-n').textContent, '2', 'narrowed: the control says by how many, so a chip with no room can drop whole');
+  // at its defaults: no chip, the control at rest; a third tab that is the view is said by its tab (the look keeps it)
   const rest = PARTS(); rest[0].items.forEach((it) => { it.checked = it.id === 'running'; }); rest[1].items.forEach((it) => { if (!it.sep) it.checked = it.id === 'all'; });
   const g = dom(filterRow({ parts: rest, fold: true }));
-  assert.deepEqual([...g.querySelectorAll('.fr-chip')].map((c) => c.className), ['fr-chip is-narrow']);
+  assert.equal(g.querySelectorAll('.fr-chip').length, 0); assert.equal(g.querySelector('.fr-filter-n'), null);
   assert.equal(g.querySelector('.fr-pop'), null);
   rest[0].items.forEach((it) => { it.checked = it.id === 'all'; });
   const h = dom(filterRow({ parts: rest, fold: true }));
@@ -161,18 +170,23 @@ test('listController: a visit narrowed by a link says so under the filters; Clea
   assert.equal(listWorld().root.querySelector('.list-narrowed'), null, 'no line while nothing narrows it');
 });
 
-test('search in the top bar is a combobox: expanded while results show; ArrowUp from the field reaches the last result', () => {
+test('search in the top bar is a combobox over a listbox: the arrows walk the results from the field, the active one is named', () => {
   const w = new JSDOM(`<body>${search({ label: 'Search or ask', bar: { kbd: 'K' } })}</body>`, { pretendToBeVisual: true }).window, d = w.document;
   const input = d.querySelector('[data-search]'), res = d.querySelector('[data-search-res]');
   assert.equal(input.getAttribute('role'), 'combobox'); assert.equal(input.getAttribute('aria-controls'), res.id);
   watchSearch(d);
   assert.equal(input.getAttribute('aria-expanded'), 'false');
-  res.innerHTML = '<div class="menu" role="menu"><button class="menu-item" id="one">a</button><button class="menu-item" aria-disabled="true">off</button><button class="menu-item" id="two">b</button></div>';
+  res.innerHTML = searchResults([{ id: 'srch|0', text: 'a' }, { id: 'srch|1', text: 'b' }], 'Nothing matches', { tail: [{ id: 'none', text: 'off', off: true }] });
+  assert.equal(res.querySelector('.menu').getAttribute('role'), 'listbox'); assert.equal(res.querySelectorAll('[role="option"][id]').length, 3);
   return new Promise((done) => setTimeout(() => {
     assert.equal(input.getAttribute('aria-expanded'), 'true');
     input.focus();
-    const e = new w.KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }); input.dispatchEvent(e);
-    assert.equal(d.activeElement.id, 'two'); assert.ok(e.defaultPrevented);
+    const key = (k) => { const e = new w.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }); input.dispatchEvent(e); return e; };
+    const active = () => d.getElementById(input.getAttribute('aria-activedescendant'));
+    assert.ok(key('ArrowDown').defaultPrevented); assert.equal(active().dataset.menuPick, 'srch|0'); assert.equal(d.activeElement, input, 'the focus stays in the field');
+    key('ArrowDown'); assert.equal(active().dataset.menuPick, 'srch|1'); assert.equal(active().getAttribute('aria-selected'), 'true');
+    key('ArrowDown'); assert.equal(active().dataset.menuPick, 'srch|0', 'it wraps, past the disabled one');
+    key('ArrowUp'); assert.equal(active().dataset.menuPick, 'srch|1'); assert.ok(active().classList.contains('is-active'));
     res.innerHTML = '';
     setTimeout(() => { assert.equal(input.getAttribute('aria-expanded'), 'false'); done(); }, 0);
   }, 0));

@@ -70,6 +70,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     guardDeny: (v) => plural(linesOf(v).length, 'deny rule'), guardPaths: (v) => plural(linesOf(v).length, 'protected path'), allowEngines: (v) => v || 'any', allowModels: (v) => v || 'any' };
   const was = (sv, ...keys) => { const ch = pending(sv, keys); return ch.length ? ` · was ${ch.map((k) => WAS[k](sv.pol[k])).join(', ')}` : ''; };
   const pendingChip = (...keys) => (sv) => (pending(sv, keys).length ? 'Not published' : '');
+  const TEAM_MODELS = [...MODEL.map((m) => m[1]), 'GPT-5.2 Codex', 'Gemini 3 Pro', 'Opus via Acme gateway'];   // what a team can allow: every engine's models and the team's gateways
   const polEdit = (title, fields, check = () => '') => ({ label: 'Change…', edit: { title, yes: 'Add to changes', note: 'Nothing reaches your team until you publish.', fields, check, then: (v, sv) => { Object.assign(sv, Object.fromEntries(Object.entries(v).map(([k, x]) => [k, typeof x === 'string' ? x.trim() : x]))); return pendingWords(sv); } } });
   // A cap has one behaviour: a task pauses at it (docs/stillhet/settings.md › Spending). The tighter of yours and your team's wins.
   const runCap = (sv) => (!sv.perRun ? `**${usd(sv.pol.capRun)}** (your team's)` : +sv.perRun <= +sv.pol.capRun ? `**${usd(sv.perRun)}**` : `**${usd(sv.pol.capRun)}** (your team's; yours is ${usd(sv.perRun)})`);
@@ -505,7 +506,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
   const SECTIONS = {
     general: { title: 'General', meta: 'Setup, storage, and which version of Worca runs.', sections: [
       { title: 'Setup', sample: true, rows: [
-        { name: 'Setup assistant', only: 'demo', say: 'Checks this machine, the network, model access and your limits', acts: [{ label: 'Task setup', edit: setup }] },
+        { name: 'Setup assistant', only: 'demo', say: 'Checks this machine, the network, model access and your limits', acts: [{ label: 'Run setup', edit: setup }] },
         { name: 'Getting started', say: 'The Getting started chat: sign in, add a project, then your first task{gsWords}', vals: { gsWords: (sv) => (sv.gsShown ? ': back in the sidebar' : '') }, acts: [{ label: 'Show again', off: (sv) => (sv.gsShown ? 'The checklist is already showing' : ''), do: (sv) => { sv.gsShown = true; return 'The Getting started checklist is back in the sidebar'; } }] },
         { name: 'Browser extension', help: 'Works with a local Worca only', say: 'Add Worca to {browser}', picks: { browser: P('chrome', O(['chrome', 'Chrome'], ['edge', 'Edge'], ['firefox', 'Firefox']), 'Which browser to install it in') }, foldLabel: 'Paired browsers',
           acts: [{ label: 'How to install', edit: (sv) => ({ title: `Install in ${{ chrome: 'Chrome', edge: 'Edge', firefox: 'Firefox' }[sv.browser]}`, view: true, yes: 'Close', note: 'Load the folder `~/.worca-cc/extension` in the browser\'s extensions page, or take the zip from the latest release. It pairs on first use.' }) }],
@@ -572,7 +573,9 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
       ], rows: [
         { name: 'Model access', help: 'What a task or a chat on this team may run on', chip: pendingChip('allowEngines', 'allowModels'), value: (sv) => `${sv.allowEngines || 'Any engine'}${was(sv, 'allowEngines')}`, note: (sv) => `Models: ${sv.allowModels || 'any'}${pending(sv, ['allowModels']).length ? ` (was ${sv.pol.allowModels || 'any'})` : ''}. A start on anything else is refused, and says so`,
           say: (sv) => `The team may use ${sv.allowEngines || 'any engine'} with ${sv.allowModels || 'any model'}`,
-          acts: [polEdit('Change what the team may use', [{ key: 'allowEngines', label: 'Engines', hint: 'Comma-separated, such as Claude, Codex. Empty allows every engine' }, { key: 'allowModels', label: 'Models', multiline: true, hint: 'Comma-separated. Empty allows every model' }])] },
+          // a pick list of the engines and models that exist, never free text; an empty list would stop every start, so it is refused here and Publish never sees one
+          acts: [polEdit('Change what the team may use', [{ key: 'allowEngines', label: 'Engines', checks: ENGINES.map((e) => e[1].replace(' (beta)', '')), hint: 'A start on an engine not ticked is refused, and says so' }, { key: 'allowModels', label: 'Models', checks: TEAM_MODELS, hint: 'The models of the ticked engines, and the team\'s own gateways' }],
+            (v) => (!String(v.allowEngines || '').trim() ? 'Tick at least one engine: with none, no task could start' : !String(v.allowModels || '').trim() ? 'Tick at least one model: with none, no task could start' : ''))] },
       ], groups: [
         { title: 'Required plugins', meta: 'Installing shows its source and what it ships, and waits for your click.', list: [
           ...REQUIRED.map((t) => ({ title: t, meta: 'Installed', live: (sv) => (installed(sv, t) ? 'Installed' : 'Missing on this machine'), mark: (sv) => (installed(sv, t) ? '' : 'is-amber') })),
@@ -719,6 +722,8 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
 
     models: { min: 'expert', title: 'Models', meta: 'The models every project can pick from, and the sign-ins they run through.', sections: [
       { title: 'Defaults', sample: true, rows: [
+        // the team's allow list, read-only where a model is picked (set.one-fact: it is set in Team policy)
+        { name: 'Your team allows', only: 'demo', value: (sv) => { const m = (sv.pol.allowModels || '').split(',').map((x) => x.trim()).filter(Boolean); return `${sv.pol.allowEngines || 'Any engine'} · ${m.length ? `${m.length} ${m.length === 1 ? 'model' : 'models'}` : 'any model'}`; }, note: 'A start on anything else is refused, and says so. Set in Settings \u203a Team policy \u203a Model access', say: (sv) => `Your team allows ${sv.pol.allowEngines || 'any engine'} with ${sv.pol.allowModels || 'any model'}`, acts: [{ label: 'Team policy', id: 'team-models', go: 'team', help: 'Opens Settings \u203a Team policy' }] },
         { name: 'Roles', value: (sv) => `${roleName(sv, 'deep')} · ${roleName(sv, 'every')} · ${roleName(sv, 'quick')}`, note: 'On Claude: plans and reviews, writes the code, quick jobs. Every engine keeps its own', say: (sv) => `On Claude, **${roleName(sv, 'deep')}** plans and reviews, **${roleName(sv, 'every')}** writes the code, **${roleName(sv, 'quick')}** does quick jobs; every engine keeps its own`, help: 'Roles open at Simple through the link from a task or the setup assistant', more: ENGINES.map(roleRow) },
         { name: 'Engine', say: (sv) => { const e = pickText(ENGINES, sv.eng).replace(' (beta)', ''); return sv.eng === 'claude' || sv.eng === 'codex' ? `New tasks use {eng}; each step and helper job uses its ${e} role, unless set below` : `New tasks use {eng}; each step uses its ${e} role, unless set below; helper jobs stay on Claude`; }, picks: { eng: { ...P('claude', ENGINES, 'The engine a new task starts on'), then: (sv) => engineChanged(sv) } } },
       ] },
@@ -830,7 +835,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
       { title: 'Sets', sample: true, actions: [{ label: 'New set', min: 'expert', edit: (sv) => ({ title: 'New guardrail set', yes: 'Create set', fields: [{ key: 'name', label: 'Name', value: '' }], check: (v) => (v.name.trim() ? '' : 'A set needs a name'), then: (v) => { (sv.__recs['guardrails/Sets'] ||= recsSeed('guardrails', 'Sets')).unshift(editable(v.name, 'no project', { deny: [], paths: [] })); return `Set created: ${v.name}`; } }) }], list: [
         readOnlySet('Default', 'Built in', '5 projects'),
         editable('Strict', '1 project'),
-        readOnlySet('Team policy', 'From the team policy', 'read-only', 'Ships with acme/worca-policy; a change is published there, from Team policy.'),
+        readOnlySet('Team policy', 'From the team policy', 'read-only here · a lead edits it in Settings \u203a Team policy \u203a Guardrail sets', 'Ships with acme/worca-policy. A lead edits its rules in Settings \u203a Team policy \u203a Guardrail sets, as a draft, then publishes.'),
       ] },
     ] },
 
@@ -996,11 +1001,11 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
   function recsSeed(id, title) { return SECTIONS[id].sections.find((s) => s.title === title).list.map((it, i) => ({ ...it, id: 'r' + i })); }
 
   const GROUPS = [
+    { title: 'Worca', items: ['general', 'appearance', 'notifications', 'experimental'] },
     { title: 'Work', items: ['runs', 'presets', 'labels', 'automations'] },
     { title: 'AI', items: ['models', 'ask', 'memory'] },
     { title: 'Access', items: ['team', 'guardrails'] },
     { title: 'Add-ons', items: ['plugins', 'connectors'] },
-    { title: 'Worca', items: ['general', 'appearance', 'notifications', 'experimental'] },
   ];
   const NOTIFICATIONS = { title: 'Notifications', meta: 'Pulse keeps everything; these choices say what else reaches you.' };
   // Appearance is the viewer's own, kept in this browser: pulse.js draws it (theme, background, text size, motion)

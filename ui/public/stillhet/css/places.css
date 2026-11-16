@@ -5,6 +5,17 @@
 /* stillhet.card-opens: a card that opens its thing shows the pointer; the title link's rules are in the Workflows part */
 .pg-card[data-mk-open],.pg-card[data-pj-go]{cursor:pointer;}
 .pg-card[data-mk-open]:hover .pg-t .dc-link,.pg-card[data-pj-go]:hover .pg-t .dc-link{text-decoration:underline;text-underline-offset:3px;}
+/* CenterCard (Tasks, Schedules): the whole card opens its thing; the project in its kicker is a link that narrows */
+.pg-card[data-card-opens]{cursor:pointer;}
+.pg-card[data-card-opens]:hover .pg-t .dc-link{text-decoration:underline;text-underline-offset:3px;}
+.pg-card .pg-k .dc-link{color:inherit;text-decoration:underline;text-underline-offset:3px;}
+.pg-card .pg-k .dc-link:hover{color:var(--ink);}
+.pg-card [role="alertdialog"]{cursor:auto;}
+/* panel.place-head: a thing's state word is the Headline size on every thing's page, in its level's colour (look.alert-ladder) */
+:is(#route-schedule,#route-place) .convo-card-line > .convo-card-w{font-size:var(--fs-page);}
+
+/* Field (field.mjs): a typed field and a PickField share one look: bordered, on the panel (form.fields) */
+.fld > :is(.input,.textarea):where(:not(:focus)){background:var(--panel);border-color:var(--line-2);}
 
 /* ---- Projects and workspaces ---- */
 /* a project's tabs (from classic's project tabs): one row that scrolls sideways when narrow, never wraps */
@@ -18,6 +29,9 @@
 .pj-check.is-ok{color:var(--ink-2);}
 .pj-check.is-no{color:var(--amber-ink);font-weight:500;}
 .pj-panel .set-row .btn + .btn,.set-sec-head .btn + .btn{margin-left:6px;}
+
+/* a project's task rows are divided, as every list's rows are (list.divided) */
+.pj-panel .list-row + .list-row{border-top:1px solid var(--line);}
 
 /* ---- Marketplace and a plugin's page ---- */
 .mk-health{font-weight:500;color:var(--ink);}
@@ -69,6 +83,32 @@
 }
 
 /* ---- Insights ---- */
+/* HeatGrid (heat-grid.mjs): a cell says its number at rest where it is wide enough, and always on a narrow screen */
+.hg-cell{container-type:inline-size;}
+.hg-cell:hover,.hg-cell:focus{z-index:3;}
+.hg-n{display:none;font-size:var(--fs-caption);line-height:24px;text-align:center;font-variant-numeric:tabular-nums;color:var(--ink);white-space:nowrap;overflow:hidden;}
+.hg-cell.is-h3 .hg-n,.hg-cell.is-h4 .hg-n{color:var(--bg);}
+@container (min-width:44px){.hg-n{display:block;}}
+@media (max-width:560px){.hg-n{display:block;}}
+/* Charts (chart.mjs): four series are told apart without a hue: an ink shade and a pattern each (solid, hatched, solid mid, outlined) */
+.ch-seg.is-s1,.ch-swatch.is-s1:not(.is-line){background:repeating-linear-gradient(45deg,var(--ink-2) 0 2px,var(--line) 2px 5px);}
+.ch-seg.is-s2,.ch-swatch.is-s2:not(.is-line){background:var(--ink-3);}
+.ch-seg.is-s3,.ch-swatch.is-s3:not(.is-line){background:var(--panel);box-shadow:inset 0 0 0 1px var(--ink-2);}
+.ch-swatch:not(.is-line):not(.is-main):not(.is-before):not(.is-limit){width:12px;height:12px;}
+.ch-l.is-p1{stroke:var(--ink);stroke-dasharray:6 3;} .ch-l.is-p2{stroke:var(--ink-2);stroke-dasharray:2 3;} .ch-l.is-p3{stroke:var(--ink-2);stroke-dasharray:10 3 2 3;}
+.ch-swatch.is-line{width:22px;height:0;background:none;border-top:2px solid var(--ink);}
+.ch-swatch.is-line.is-s1{border-top-style:dashed;} .ch-swatch.is-line.is-s2{border-top:2px dotted var(--ink-2);} .ch-swatch.is-line.is-s3{border-top:2px dashed var(--ink-2);width:26px;}
+/* an open row's detail (a person's work) is as wide as what you see, not as the scrolled table: it stays in view while the rows scroll sideways */
+@media (max-width:640px){
+  .fr-scroll{container-type:inline-size;}
+  .fr-detail{position:sticky;left:0;width:100cqw;box-sizing:border-box;padding-left:0;}
+  .tt-legend{gap:4px 12px;}
+}
+/* the views in the bar: the one you are on is told from the one under the pointer (weight and an ink edge, not only a fill) */
+.side-i[data-in-go][aria-current="page"]{font-weight:600;box-shadow:inset 2px 0 0 var(--ink);}
+.side-i[data-in-later]{cursor:default;color:var(--ink-2);font-weight:400;}
+.side-i[data-in-later]:hover{background:none;color:var(--ink-2);}
+.side-i[data-in-later] .side-n{margin-left:auto;font-size:var(--fs-caption);color:var(--ink-2);white-space:nowrap;}
 .in-narrowed{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
 .in-narrowed b{font-weight:600;color:var(--ink);}
 .in-acts{margin-top:16px;}

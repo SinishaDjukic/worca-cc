@@ -65,7 +65,7 @@ test('Try Stillhet sends one PATCH and ignores clicks while it is pending; a fai
   d.querySelector('[data-confirm="yes"]').click();
   d.querySelector('[data-confirm="no"]').click();
   assert.deepEqual(sent, [['PATCH', '/api/flags', { stillhet: true }]]);
-  assert.equal(d.querySelector('[data-confirm="yes"]').textContent, 'Turning on…');
+  assert.equal(d.querySelector('[data-confirm="yes"] .btn-busy-t').textContent, 'Turning on…');   // the busy button: its words once on screen, once for a screen reader
   release(); await sleep(); await sleep();
   assert.match(d.getElementById('stillhet-strip').textContent, /Stillhet could not be turned on.*read-only/);
   assert.equal(d.querySelector('[data-confirm="yes"]').textContent, 'Try again');

@@ -10,7 +10,7 @@ import { TASK_DETAILS, PR_URL } from './helpers/stillhet-live-fixture.mjs';
 
 afterEach(closeHosts);
 const WEEK_URL = '/api/stats?range=week&report=1';
-const LIVE_TIP = 'Opens this week\'s tasks in the list. The figure counts every run Worca recorded this week, so the two can differ';
+const LIVE_TIP = 'Opens this week\'s tasks in the list. The figure counts every task Worca recorded this week, so the two can differ';
 const fact = (id, project, usd) => ({ id, person: 'Maya', project, workflow: 'Default', status: 'finished', pr: null, tags: {}, usd, hours: 1, inCohort: true, startedMs: 1, hourBucket: 0, spend: [[0, usd]] });
 const WEEK = { bucket: 'day', windowStartMs: 0, windowEndMs: 1, humanRateUsd: 0, prev: null, series: [],
   totals: { spentUsd: 6321.75, pipelineSpendUsd: 2551.75, humanHours: 0, savedUsd: 0, runs: 49, finished: 49, failed: 0, stopped: 0, prsMerged: 0, prsOpened: 0 },
@@ -62,13 +62,13 @@ test('F-3-10 live: while /api/stats is pending (hold) or 500, the head shows no 
   const { w, d } = await liveHost({ sources: sources(), hold: (u) => (u === WEEK_URL ? gate : null), read: (u) => (u === WEEK_URL ? [200, WEEK] : null) });
   await go(w, '#runs', 200);
   assert.equal(facts(d), '', 'pending: no figures');
-  assert.doesNotMatch(d.querySelector('#route-runs').textContent, /tasks? this week|\$\d/);
+  assert.doesNotMatch(headText(d), /tasks? this week|\$\d/);
   open(); await settle(80);
   assert.equal(facts(d), '49 tasks this week · $2,551.75 this week', 'the landed read repaints the center');
   const bad = await liveHost({ sources: sources(), read: (u) => (u === WEEK_URL ? [500, { error: 'boom' }] : null) });
   await go(bad.w, '#runs', 200);
   assert.equal(facts(bad.d), '', 'failed: no figures');
-  assert.match(bad.d.querySelector('#route-runs').textContent, /Your tasks/);
+  assert.match(bad.d.querySelector('#route-runs').textContent, /Tasks/);
 });
 
 test('F-3-10 live: a chosen project reads its own allocation row', async () => {
@@ -124,30 +124,34 @@ function readySources(titles) {
   return s;
 }
 const checksRead = (u) => { if (u === WEEK_URL) return [200, WEEK]; return /^\/api\/pr\/checks\?id=(h2|h7)/.test(u) ? [200, TASK_DETAILS.approved.checks] : null; };
-const readyCard = (d) => [...d.querySelectorAll('#route-runs .pg-card, #route-runs [class*="card"]')].find((c) => c.querySelectorAll('[data-c-act^="merge|"]').length === 2);
+const mergeCards = (d) => [...d.querySelectorAll('#route-runs .pg-card')].filter((c) => c.querySelector('[data-c-act^="merge|"]'));
+// the page's head and its line, without the cards (a card says its own task's cost)
+const headText = (d) => { const c = d.querySelector('#route-runs .convo-col').cloneNode(true); c.querySelectorAll('.pg-grid, .center-quiet').forEach((x) => x.remove()); return c.textContent; };
 
-test('F-3-16: a Ready card with two approved tasks draws one line per task, no \';\'', async () => {
+test('one card per thing that needs you: two approved tasks are two cards, each with its one Merge (panel.card-opens)', async () => {
   const { w, d } = await liveHost({ sources: readySources(['Add pager', 'Fix flaky login']), read: checksRead });
   await go(w, '#runs', 900);
-  const card = readyCard(d);
-  assert.ok(card, 'one card holds both approved tasks');
-  const what = card.querySelector('.pg-w');
-  assert.equal(what.querySelectorAll('br').length, 1, 'one break between the two tasks');
-  assert.doesNotMatch(what.textContent, /;/);
-  assert.match(what.innerHTML, /Add pager[\s\S]*<br>[\s\S]*Fix flaky login|Fix flaky login[\s\S]*<br>[\s\S]*Add pager/);
+  const cards = mergeCards(d);
+  assert.equal(cards.length, 2, 'a card each');
+  for (const c of cards) {
+    assert.equal(c.querySelectorAll('.pg-a .btn').length, 1, 'one action on a card, and no "Only project" button');
+    assert.equal(c.querySelector('.pg-w').querySelectorAll('br').length, 0, 'one task, one line');
+    assert.ok(c.hasAttribute('data-c-go'), 'the whole card opens its task');
+    assert.ok(c.querySelector('.pg-k .dc-link[data-c-filter]'), 'its project in the kicker narrows');
+  }
+  assert.deepEqual(cards.map((c) => c.querySelector('.pg-t').textContent.trim()).sort(), ['Add pager', 'Fix flaky login']);
 });
 
-test('V-TW-01 / V3-01: two waiting live tasks with long titles get buttons at most verb + 25 characters; the full title stays in the tooltip; demo short names unchanged', async () => {
+test('V-TW-01 / V3-01: a card\'s button is its verb alone and keeps the full title in its tooltip; two named buttons keep the demo\'s short names', async () => {
   const long = ['Add pager to the audit log page so long lists stay fast', 'Supercalifragilisticexpialidocious'];
   const { w, d } = await liveHost({ sources: readySources(long), read: checksRead });
   await go(w, '#runs', 900);
-  const btns = [...readyCard(d).querySelectorAll('[data-c-act^="merge|"]')];
+  const btns = mergeCards(d).map((c) => c.querySelector('[data-c-act^="merge|"]'));
   const byId = Object.fromEntries(btns.map((b) => [b.dataset.cAct.split('|')[1], b]));
-  assert.equal(byId.h2.textContent.trim(), 'Merge Add pager to the audit…');
+  assert.equal(byId.h2.textContent.trim(), 'Merge');
   assert.equal(byId.h2.title, `Merge: ${long[0]}`);
-  assert.equal(byId.h7.textContent.trim(), 'Merge Supercalifragilisticexp…', 'one long word: 23 characters and …');
+  assert.equal(byId.h7.textContent.trim(), 'Merge');
   assert.equal(byId.h7.title, `Merge: ${long[1]}`);
-  for (const b of btns) assert.ok(b.textContent.trim().length <= 'Merge '.length + 25, b.textContent);
   // the demo's own short names win (its seed rows r2 and r9, shell/world.js), through the same actionsOf
   const seed = [{ id: 'r2', case: 'gate', title: 'Migrate cron parser', short: 'cron parser' }, { id: 'r9', case: 'approved', title: 'Add pager to the audit log', short: 'audit pager' }];
   const box = d.createElement('div'); box.innerHTML = w.StillhetCenters.actionsOf(seed);

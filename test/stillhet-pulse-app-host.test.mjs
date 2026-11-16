@@ -92,10 +92,10 @@ test('with no usage reading, Usage and costs wears an empty ring glyph and the d
   assert.match(row.textContent, /\$/);
 });
 
-// ---- Settings › Notifications › Pulse icon: how long the icon animates (is-news), driven by window timers ----
+// ---- Settings › Appearance › Pulse icon (its one home; Notifications says its value and links there): how long the icon animates (is-news), driven by window timers ----
 const isNews = (w) => w.document.querySelector('#stillhet-pulse-slot .pz-pulse-b').classList.contains('is-news');
 const pickPulseFor = (w, v) => {
-  w.StillhetPulse.show('settings', 'notifications');
+  w.StillhetPulse.show('settings', 'appearance');
   w.document.querySelector('[data-menu="pulseFor"]').click();
   w.document.querySelector(`[data-menu-pick="pulseFor|${v}"]`).click();
 };
@@ -209,13 +209,16 @@ test('Settings › Notifications › Pulse icon: switching until read to 10s end
 test('the Pulse icon row: a supporting line, its value in a picker at the row\'s end, still by default', () => {
   const { w } = appHost();
   const row = () => [...w.document.querySelectorAll('.set-row')].find((r) => /Pulse icon/.test(r.querySelector('.set-name').textContent));
+  // set.one-fact: Notifications says the value and links to its one home; it holds no second picker
   w.StillhetPulse.show('settings', 'notifications');
+  assert.equal(row().querySelector('[data-menu="pulseFor"]'), null); assert.ok(row().querySelector('[data-sset="appearance"]'));
+  w.StillhetPulse.show('settings', 'appearance');
   assert.equal(row().querySelector('.set-note').textContent, 'Whether Pulse\'s icon moves when something new arrives');
   assert.equal(row().querySelector('.set-end [data-menu="pulseFor"]').textContent.trim(), 'Stays still');
   assert.equal(row().querySelector('.set-dot'), null, 'no changed dot at the default');
   w.StillhetPulse.newEvent('problem');
   assert.equal(isNews(w), false, 'still by default: a new event does not move the icon');
-  w.StillhetPulse.show('settings', 'notifications');
+  w.StillhetPulse.show('settings', 'appearance');
   w.document.querySelector('[data-menu="pulseFor"]').click();
   const words = [...w.document.querySelectorAll('[data-menu-pick^="pulseFor|"]')].map((b) => b.textContent.trim());
   assert.deepEqual(words, ['Stays still', 'Moves for 10 seconds', 'Moves for 1 minute', 'Moves until you read it']);

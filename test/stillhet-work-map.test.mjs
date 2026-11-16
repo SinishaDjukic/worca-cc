@@ -124,10 +124,10 @@ test('isOwn: an item is yours when this Worca knows one of its runs', () => {
 });
 
 test('cardOf: the PR, its time and the lead time from the first run', () => {
-  assert.deepEqual(cardOf(byTitle(work(), 'Retry failed webhook deliveries')), { title: 'Retry failed webhook deliveries', line: '#1418 merged Nov 8, 11:00 · 1d 1h from first run · opens the pull request' });
+  assert.deepEqual(cardOf(byTitle(work(), 'Retry failed webhook deliveries')), { title: 'Retry failed webhook deliveries', line: '#1418 merged Nov 8, 11:00 · 1d 1h from first task · opens the pull request' });
   const tv = taskViewOf(byTitle(work(), 'Tax ID validation'), { now: NOW });
   assert.equal(tv.state.word, 'Failed'); assert.equal(tv.state.detail, 'The last attempt failed.');
-  assert.deepEqual(tv.figures.map((f) => f.k), ['Cost', 'Time working', 'Runs', 'Review rounds']);
+  assert.deepEqual(tv.figures.map((f) => f.k), ['Cost', 'Time working', 'Tasks', 'Review rounds']);
   assert.equal(tv.runs.rows.length, 1); assert.equal(tv.pr, null);
 });
 

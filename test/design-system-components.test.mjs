@@ -182,7 +182,7 @@ test('T-8 the busy knot breathes as the stage line\'s now step and stands still 
 
 test('T-8 motion.md keeps no spinners: the busy button is no exception', () => {
   const md = readFileSync('docs/stillhet/motion.md', 'utf8');
-  const never = md.slice(md.indexOf('- **Never:**'), md.indexOf('- **Reduced motion**'));
+  const never = md.split('\n').find((l) => l.startsWith('| `motion.never` |')) || '';
   assert.match(never, /spinner/); assert.doesNotMatch(never, /busy/);
 });
 

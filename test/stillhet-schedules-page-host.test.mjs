@@ -10,17 +10,7 @@ afterEach(closeHosts);
 const toastText = (d) => [...d.querySelectorAll('body > .rc-toast')].map((e) => e.textContent).filter(Boolean).join(' | ');
 const line = (d) => d.querySelector('#route-schedule .convo-card-line')?.textContent || '';
 const facts = (d) => d.querySelector('#route-schedule .place-head')?.textContent || '';
-
-test('demo: a picker change shows the DraftBar with 1 change; Discard drops it', async () => {
-  const w = stillhetHost({ hash: '#schedule/s2', after }); await settle(200);
-  const d = w.document;
-  d.querySelector('#route-schedule [data-menu="sc-at"]').click(); await settle(10);
-  d.querySelector('#route-schedule [data-menu-pick="sc-at|10:00"]').click(); await settle(20);
-  assert.match(d.querySelector('#route-schedule .draft-bar').textContent, /1 change/);
-  assert.equal(w.StillhetSchedules.find('s2').at, '09:00', 'the schedule keeps its time until Save');
-  d.querySelector('#route-schedule [data-sched-discard]').click(); await settle(20);
-  assert.equal(d.querySelector('#route-schedule .draft-bar'), null);
-});
+const form = (d) => d.querySelector('#route-schedule .sched-form')?.textContent || '';   // the page's facts: each a label over its value
 
 test('demo: Delete hides the schedule and says "Deleted TITLE" with Undo; Undo brings it back', async () => {
   const w = stillhetHost({ hash: '#schedule/s2', after }); await settle(200);
@@ -35,7 +25,7 @@ test('demo: Delete hides the schedule and says "Deleted TITLE" with Undo; Undo b
 test('demo: a preset-backed schedule says where it comes from; an ended one reads Ended, with no Run now, in its own section', async () => {
   const w = stillhetHost({ hash: '#schedule/s7', after }); await settle(200);
   const d = w.document;
-  assert.match(facts(d), /from Flaky sweep/);
+  assert.match(form(d), /PresetFlaky sweep/, 'its preset is a fact of the page');
   w.location.hash = '#schedule/s8'; await settle(80);
   assert.match(line(d), /^Ended/);
   assert.equal(d.querySelector('#route-schedule [data-sched-now]'), null);
@@ -100,14 +90,14 @@ test('live: the page lists one TaskCard per fire of its history', async () => {
   await go(w, '#schedule/sch_next', 150); await settle(400);
   assert.equal(d.querySelectorAll('#route-schedule .task-card, #route-schedule [data-sched-run], #route-schedule [data-sched-ticket$="|now"]').length >= 3, true);
   assert.equal(w.StillhetSchedules.find('sch_next').runs.length, 3);
-  assert.match(facts(d), /from Nightly preset/);
+  assert.match(form(d), /PresetNightly preset/);
 });
 
 test('live: each seeded state reads the same word, why and skip item on its page, its center card, its bar row and its Pulse row', async () => {
   const { w, d } = await liveWorld();
   await go(w, '#schedules', 150); await settle(500);
   const S = w.StillhetSchedules, fails = [];
-  d.querySelector('#bar-schedules [data-menu="by"]').click(); await settle(10);
+  d.querySelector('#bar-schedules [data-menu="filters"]').click(); await settle(10);   // the bar's one Filter holds Show, Project and Group by
   d.querySelector('#bar-schedules [data-pick="by|state"]').click(); await settle(40);   // every section open: one row per schedule
   for (const [state, x, word, skip] of STATES) {
     const got = S.wordOf(x.id);
@@ -144,7 +134,7 @@ test('live: each seeded state reads the same word, why and skip item on its page
   assert.equal(S.nextOf('sch_end'), '');
   assert.equal(S.nextOf('tk_after'), 'after Ask me', 'a run-after ticket says what it waits for in place of a time');
   await go(w, '#schedule/sch_pfail', 120);
-  assert.match(facts(d), /preset deleted/);
+  assert.match(form(d), /PresetPreset deleted/);
 });
 
 test('live: a schedule made from a chat has its Chat card, with the same word and why as its page; the other states have none', async () => {
@@ -183,5 +173,6 @@ test('F-G-fid-03: a series in another zone names it on its page head, as its car
   const src = clone(SOURCES);
   src.schedules.schedules[0] = { ...src.schedules.schedules[0], rule: { freq: 'daily', interval: 1, time: '02:00', tz: 'Pacific/Kiritimati' }, tz: 'Pacific/Kiritimati' };
   const h = await liveHost({ sources: src }); await go(h.w, '#schedule/sr1', 150); await settle(300);
-  assert.match(facts(h.d), /at 02:00.{0,40}Pacific\/Kiritimati/);
+  assert.match(form(h.d), /At02:00 Pacific\/Kiritimati/, 'its At says the zone');
+  assert.match(form(h.d), /at 02:00 Pacific\/Kiritimati/, 'and the line that reads it back');
 });

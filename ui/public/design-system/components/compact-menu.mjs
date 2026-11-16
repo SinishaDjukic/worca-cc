@@ -13,7 +13,7 @@ import { icon } from './icons.mjs';
  * @property {boolean} [checked] a choice: true or false (absent: a plain step)
  * @property {boolean} [danger]  cannot be taken back: last, after a rule
  * @property {boolean} [off]     disabled; its help says why
- * @property {string} [header]   a group heading instead of an item
+ * @property {string} [header]   a group heading instead of an item; with `end`, a quiet caption over the items' hints ("need you")
  * @property {boolean} [sep]     a rule instead of an item
  * @property {string} [mark]     a small mark before its words: an area's icon, a KindMark
  * @property {MenuItem[]} [sub]  its items: it opens them in place (comp.menu-sub), and picks nothing itself
@@ -65,7 +65,7 @@ export function compactMenu({ items, role = 'menu', label, cls = '', pickAttr = 
   const endGroup = () => { const end = inGroup ? '</div>' : ''; inGroup = false; return end; };
   const body = items.map((it, i) => {
     if (it.sep) return `${endGroup()}<div class="menu-sep" role="separator"></div>`;
-    if (it.header) { const end = endGroup(); inGroup = true; return `${end}<div class="menu-g"><p class="menu-h">${it.mark || ''}${esc(it.header)}</p>`; }
+    if (it.header) { const end = endGroup(); inGroup = true; return `${end}<div class="menu-g"><p class="menu-h${it.end ? ' has-end' : ''}">${it.mark || ''}${esc(it.header)}${it.end ? `<span class="menu-h-end">${esc(it.end)}</span>` : ''}</p>`; }
     const prev = items[i - 1];
     const rule = it.danger && !ruled && i > 0 && !(prev && prev.sep) ? '<div class="menu-sep" role="separator"></div>' : '';
     if (it.danger) ruled = true;

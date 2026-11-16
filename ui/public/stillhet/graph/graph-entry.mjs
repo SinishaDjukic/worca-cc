@@ -15,8 +15,11 @@ const ICON = '<circle cx="12" cy="8" r="3.6"/><path d="M5 20c1.2-5.4 12.8-5.4 14
 /**
  * A prototype workflow ({steps:[[name, ref, model, effort, …, node]], loops:[[from, to, n, fromNode, toNode]]}) as dev's
  * template and its agent sidecars. A step's node is its [9], else nN; loops find their ends by node (loopEnds, V-TW-06).
+ * `cols` (the page's graph, panel.graph-box): the nodes are laid in rows of that many, left to right, so the whole graph
+ * fits its box at a size you can read; without it, the layout below (the editor's, as before).
  */
-function demo(wf) {
+const COL = 280, ROW = 240, NODE_W = 232, PAD = 60;   // a node's pitch in a wrapped layout; its drawn width; fitToWidth's padding
+function demo(wf, cols = 0) {
   const agentsByKey = {}, ends = wf.loops.map((l) => loopEnds(wf.steps, l)), id = (i) => wf.steps[i]?.[9] || `n${i}`;
   const sends = (i) => ends.some((e) => e.from === i), takes = (i) => ends.some((e) => e.to === i);
   wf.steps.forEach(([name, ref], i) => {
@@ -28,11 +31,12 @@ function demo(wf) {
   // two rows when it loops: the step that sends work back, and what follows it, sit under the step it sends back to, so
   // the graph draws large and the loop is a short return (Auto-align lays it out as dev does)
   const src = wf.loops.length ? ends[0].from : -1, dst = src >= 0 ? ends[0].to : -1, two = src > 0 && dst >= 0 && dst < src;
-  const at = (i) => (two && i >= src ? [320 + (dst + i - src) * 280, 300] : [320 + i * 280, 40]);
-  const endAt = at(wf.steps.length - 1);
+  const wrapAt = (p) => [40 + (p % cols) * COL, 40 + Math.floor(p / cols) * ROW];   // the task is place 0, the steps follow, the end is last
+  const at = (i) => (cols ? wrapAt(i + 1) : two && i >= src ? [320 + (dst + i - src) * 280, 300] : [320 + i * 280, 40]);
+  const last = at(wf.steps.length - 1), endAt = cols ? wrapAt(wf.steps.length + 1) : [last[0] + 280, last[1]];
   const nodes = [{ id: 'n_task', kind: 'task', x: 40, y: 40, config: {} },
     ...wf.steps.map(([, , model, effort], i) => ({ id: id(i), kind: 'agent', key: `s${i}`, x: at(i)[0], y: at(i)[1], config: model ? { model: modelIdOf(model), effort } : {} })),
-    { id: 'n_end', kind: 'end', x: endAt[0] + 280, y: endAt[1], config: {} }];
+    { id: 'n_end', kind: 'end', x: endAt[0], y: endAt[1], config: {} }];
   const outOf = (i) => (sends(i) ? 'ok' : 'out');
   const wires = [{ id: 'w_in', from: { node: 'n_task', port: 'task' }, to: { node: id(0), port: 'in' } },
     ...wf.steps.slice(1).map((_, k) => ({ id: `w${k}`, from: { node: id(k), port: outOf(k) }, to: { node: id(k + 1), port: 'in' } })),
@@ -50,8 +54,8 @@ function fromTpl(wf, says) {
 }
 
 /** A prototype workflow as dev's template and its agents: its demo template, drawn as fromTpl draws a live one. */
-function build(wf, says) {
-  const g = fromTpl(demo(wf));
+function build(wf, says, cols = 0) {
+  const g = fromTpl(demo(wf, cols));
   wf.steps.forEach(([, ref], i) => { if (g.agents[`s${i}`]) g.agents[`s${i}`].description = says?.(ref) || ''; });
   return g;
 }
@@ -63,15 +67,17 @@ function align(g) { const pos = autoLayout(g.tpl, g.portsFn, { describe: true })
  * Draws a workflow into host, fitted to width.
  * @param {HTMLElement} host
  * @param {object} wf          the prototype's workflow (a live one carries dev's template as `tpl`, and its agentsByKey)
- * @param {{width?:number, zoom?:number, mode?:'static'|'edit', aligned?:boolean, select?:string, says?:(ref:string)=>string, g?:object}} [o]
+ * @param {{width?:number, zoom?:number, mode?:'static'|'edit', aligned?:boolean, select?:string, says?:(ref:string)=>string, g?:object, wrap?:boolean}} [o]
+ *   wrap: a prototype workflow is laid in as many columns as fit `width` at a readable size, so Fit shows all of it
  *   zoom: the graph's real size (1 is full size; the view never magnifies past it) and the host takes its width; 0 fits width.
  *   A fit (zoom undefined or 0) never goes below READABLE_FIT: a wider graph scrolls sideways; an explicit zoom is drawn as is
  * @returns {{g:object, view:object, fit:number, whole:number, wide:boolean}}   wide: at this size it is wider than the width given (its box scrolls sideways); g is the drawn template (keep it for Undo); fit is the zoom it
  *   opens at (the width's fit, at READABLE_FIT or more); whole is the zoom that shows the whole width
  */
-function mount(host, wf, { width = 680, zoom, mode = 'static', aligned = false, select = '', says = null, g = null } = {}) {
+function mount(host, wf, { width = 680, zoom, mode = 'static', aligned = false, select = '', says = null, g = null, wrap = false } = {}) {
+  const cols = wrap && !wf.tpl ? Math.max(1, Math.floor((width / READABLE_FIT - 2 * PAD - NODE_W) / COL) + 1) : 0;
   // a live workflow carries dev's template (D5); the same layout rule on both paths: aligned runs Auto-align, else the stored x/y
-  let graph = g || (wf.tpl ? fromTpl(wf, says) : build(wf, says)); if (!g && aligned) graph = align(graph);
+  let graph = g || (wf.tpl ? fromTpl(wf, says) : build(wf, says, cols)); if (!g && aligned) graph = align(graph);
   host.innerHTML = ''; host.style.removeProperty('overflow-x');   // a reused host drops an earlier floored view's sideways scroll
   const fits = !zoom;   // undefined (the detail well) or 0 (the editor's Fit): opens at a readable size
   // an explicit zoom below the mode's minimum (the editor's Zoom out to the whole graph) is drawn, not clamped

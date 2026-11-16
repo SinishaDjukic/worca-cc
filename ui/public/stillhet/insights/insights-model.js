@@ -176,7 +176,33 @@
   // One budget fact each (build.one-mock): the amount and where it is set. Every page that names a budget reads it here.
   const DAYS_GONE = 8, DAYS_IN_MONTH = 30;
   const budgetOf = (src, usdAmount, from, whose) => { const spent = sum(src.series.spend), pace = Math.round((spent / DAYS_GONE) * DAYS_IN_MONTH); return { usd: usdAmount, from, whose, spent, pace, over: Math.max(0, pace - usdAmount), usedPct: Math.round((spent / usdAmount) * 100) }; };
-  const BUDGET = { yours: budgetOf(money, 1000, 'Settings \u203a Limits', 'your'), team: budgetOf(team, 12000, 'Settings \u203a Team policy', "the team's") };
+  // The amounts and the Settings section that sets each are StillhetWorld's (budget('yours'), budget('team')): the same
+  // figures Settings, Team policy and the profile menu show. Read at each use, so a change in Settings shows here too.
+  // The team's figure is its cap: all of a person's tasks pause at it, so the team's total is never set against it.
+  const worldBudget = (who) => (typeof window !== 'undefined' && window.StillhetWorld?.budget?.(who)) || null;
+  const BUDGET = {
+    get yours() { const b = worldBudget('yours'); return budgetOf(money, b?.usd || 1000, b?.where || 'Settings \u203a Tasks \u203a Budget', 'your'); },
+    get team() { const b = worldBudget('team'); return budgetOf(team, b?.usd || 2000, b?.where || 'Settings \u203a Team policy \u203a Spending', "the team's"); },
+  };
+  // One "Saved" figure: this month's saved money is StillhetWorld's saved(), the one the profile menu shows. The source's
+  // saved figures are scaled to it once, so its days, its rows and its total all add up to that figure.
+  (function sameSaved(src, target) {
+    const was = sum(src.series.saved); if (!target || !was || Math.abs(target - was) < 0.005) return;
+    const k = target / was, days = src.series.saved.map((v) => Math.round(v * k * 100) / 100);
+    days[days.length - 1] = Math.round((target - sum(days.slice(0, -1))) * 100) / 100;
+    src.series.saved = days; src.before.saved = src.before.saved.map((v) => Math.round(v * k));
+    for (const rows of Object.values(src.rows)) { const vals = allocate(rows.map((r) => r.saved), Math.round(target)); rows.forEach((r, i) => { r.saved = vals[i]; }); }
+  })(money, typeof window !== 'undefined' ? window.StillhetWorld?.saved?.()?.usd : 0);
+  // the same person in the team's numbers saved the same: their row takes the figure, and the team's days and rows add up to the new total
+  (function sameInTeam(src, name, target) {
+    const me = src.rows.person?.find((r) => r.name === name); if (!me || !target || me.saved === target) return;
+    const total = sum(src.series.saved) + (target - me.saved);
+    me.saved = target; src.series.saved = allocate(src.series.saved, total);
+    for (const [dim, rows] of Object.entries(src.rows)) if (dim !== 'person') { const vals = allocate(rows.map((r) => r.saved), total); rows.forEach((r, i) => { r.saved = vals[i]; }); }
+  })(team, 'Sam', Math.round((typeof window !== 'undefined' && window.StillhetWorld?.saved?.()?.usd) || 0));
+  // the whole month's saved figure is written as the profile menu writes it, cents and all ($2,310.50); a part of it is rounded
+  const worldSaved = () => (typeof window !== 'undefined' && window.StillhetWorld?.saved?.()?.usd) || 0;
+  const usdSame = (n) => { const w = worldSaved(); return w && Math.round(w) === Math.round(n) && Math.abs(w - Math.round(w)) >= 0.005 ? `$${w.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : usd(n); };
   const paceWord = (b) => (b.over ? `On pace for ${usd(b.pace)}, ${usd(b.over)} over` : '');
 
   // ---- the periods of the time word ----
@@ -215,20 +241,20 @@
     return sub.den || c.p <= 0 ? `${up ? 'Up' : 'Down'} from ${sub.text(c.p)} ${w}` : `${up ? 'Up' : 'Down'} ${Math.abs(Math.round(((c.v - c.p) / c.p) * 100))}% from ${sub.text(c.p)} ${w}`;
   };
   const SUBS = [
-    { id: 'spend', title: 'Spend', head: 'Your spend', measures: 'What your own tasks cost in AI use. The team\'s spend is under Team.', group: 'Cost', pace: paceWord(BUDGET.yours), icon: 'set-spending', noun: 'AI spend', src: money, num: 'spend', text: usd, forms: SUM, budget: BUDGET.yours.usd, cols: moneyCols(), share: 'spend',
-      word: (c) => `${usd(c.v)} of your ${usd(BUDGET.yours.usd)} budget`, why: (c) => (c.st.by === 'client' ? `${usd(noOwner.spend)} has no client` : `Saved about ${usd(c.T.saved)}, ${Math.round(c.T.saved / c.T.spend)}× what it cost · on pace for ${usd(BUDGET.yours.pace)} · ${usd(noOwner.spend)} has no client`) },
+    { id: 'spend', title: 'Spend', head: 'Your spend', measures: 'What your own tasks cost in AI use. The team\'s spend is under Team.', group: 'Cost', get pace() { return paceWord(BUDGET.yours); }, icon: 'set-spending', noun: 'AI spend', src: money, num: 'spend', text: usd, forms: SUM, get budget() { return BUDGET.yours.usd; }, cols: moneyCols(), share: 'spend',
+      word: (c) => `${usd(c.v)} of your ${usd(BUDGET.yours.usd)} budget`, why: (c) => (c.st.by === 'client' ? `${usd(noOwner.spend)} has no client` : `Saved ${usdSame(c.T.saved)}, ${Math.round(c.T.saved / c.T.spend)}× what it cost · on pace for ${usd(BUDGET.yours.pace)} · ${usd(noOwner.spend)} has no client`) },
     { id: 'per-task', title: 'Per task', head: 'Your cost per task', measures: 'Your AI spend divided by your tasks.', group: 'Cost', icon: 'list', noun: 'cost a task', src: money, num: 'spend', den: 'tasks', text: usd2, forms: RATE, cols: moneyCols(['Per task', (r) => (r.tasks ? usd2(r.spend / r.tasks) : '-')]), share: 'spend',
       word: (c) => (c.v == null ? 'Cost a task not known' : `${usd2(c.v)} a task`), why: (c) => (c.T.spend == null ? `${plural(c.T.tasks, 'task')}, their cost not known` : `${usd(c.T.spend)} across ${c.T.tasks} tasks`) },
-    { id: 'budget', title: 'Budget', head: 'Your budget', measures: (sub) => `Your spend against your monthly budget${sub.budget ? ` of ${usd(sub.budget)}` : ''}, set in ${BUDGET.yours.from}.`, group: 'Cost', pace: paceWord(BUDGET.yours), icon: 'set-limits', noun: 'budget used', src: money, num: 'spend', text: usd, forms: SUM, as: 'running', against: 'budget', budget: BUDGET.yours.usd, cols: moneyCols(), share: 'spend',
+    { id: 'budget', title: 'Budget', head: 'Your budget', measures: (sub) => `Your spend against your monthly budget${sub.budget ? ` of ${usd(sub.budget)}` : ''}, set in ${BUDGET.yours.from}.`, group: 'Cost', get pace() { return paceWord(BUDGET.yours); }, icon: 'set-limits', noun: 'budget used', src: money, num: 'spend', text: usd, forms: SUM, as: 'running', against: 'budget', get budget() { return BUDGET.yours.usd; }, cols: moneyCols(), share: 'spend',
       word: (c) => `${Math.round((c.v / BUDGET.yours.usd) * 100)}% of your ${usd(BUDGET.yours.usd)} budget used`, why: (c) => `${usd(c.v)} so far · ${paceWord(BUDGET.yours).replace(/^On/, 'on')} · ${DAYS_GONE} of ${DAYS_IN_MONTH} days gone` },
     { id: 'shaping', title: 'Shaping', head: 'What shaping changes', measures: 'Your finished tasks, shaped and unshaped, by size.', group: 'Cost', icon: 'dollar', noun: 'cost a shaped task', src: shaping, by: 'size', num: 'usd', den: 'runs', text: usd2, forms: RATE, noShare: true,
       caption: 'Shaped tasks, by size. Unshaped in the rows below', closed: 'Tasks do not narrow by size',
       cols: [['Shaped tasks', (r) => String(r.runs)], ['Shaped average cost', (r) => (r.runs ? usd2(r.usd / r.runs) : '-')], ['Unshaped average cost', (r) => (r.uruns ? usd2(r.uusd / r.uruns) : '-')], ['Shaped average time', (r) => (r.runs ? `${Math.round(r.mins / r.runs)} min` : '-')], ['Shaped review rounds', (r) => (r.runs ? (r.cycles / r.runs).toFixed(1) : '-')]],
       word: (c) => (c.T.runs ? `Shaped tasks cost ${usd2(c.T.usd / c.T.runs)} on average${c.T.uruns ? `, unshaped ${usd2(c.T.uusd / c.T.uruns)}` : ''}` : 'No shaped task finished'), why: (c) => `${plural(c.T.runs, 'shaped task')} and ${plural(c.T.uruns, 'unshaped task')}` },
     { id: 'time-saved', title: 'Time saved', head: 'Your time saved', measures: 'The hours your tasks would have taken by hand, at your hourly rate.', group: 'Value', icon: 'hourglass', noun: 'money saved', src: money, num: 'saved', text: usd, forms: SUM, cols: moneyCols(), share: 'saved',
-      word: (c) => `${usd(c.v)} saved`, why: (c) => `About ${hoursWord(c.T.hours)} of work` },
+      word: (c) => `${usdSame(c.v)} saved`, why: (c) => `About ${hoursWord(c.T.hours)} of work` },
     { id: 'value', title: 'Value for spend', head: 'Your value for spend', measures: 'What your tasks saved for each dollar they cost.', group: 'Value', icon: 'sparkle', noun: 'saved for each dollar', src: money, num: 'saved', den: 'spend', text: (n) => `${n.toFixed(1)}×`, forms: RATE, cols: moneyCols(), share: 'spend',
-      word: (c) => `${c.v.toFixed(1)}× what it cost`, why: (c) => `${usd(c.T.saved)} saved on ${usd(c.T.spend)} · ${usd2(c.T.spend / c.T.hours)} for each hour saved` },
+      word: (c) => `${c.v.toFixed(1)}× what it cost`, why: (c) => `${usdSame(c.T.saved)} saved on ${usd(c.T.spend)} · ${usd2(c.T.spend / c.T.hours)} for each hour saved` },
     { id: 'ends', title: 'How tasks end', head: 'How your tasks end', measures: 'Your tasks that ended, by how: finished, failed or stopped.', group: 'Quality', icon: 'page-ends', noun: 'finished tasks', src: ends, num: 'finished', text: (n) => plural(n, 'task'), forms: COUNT, share: 'finished', shareLabel: 'Share of finished',
       cols: [['Ended', (r) => String(r.finished + r.failed + r.stopped)], ['Finished', (r) => String(r.finished)], ['Failed', (r) => String(r.failed)], ['Stopped', (r) => String(r.stopped)]],
       word: (c) => `${c.T.finished} of ${c.T.finished + c.T.failed + c.T.stopped} finished`, why: (c) => `${c.T.failed} failed, ${c.T.stopped} stopped · ${pct(c.T.finished / (c.T.finished + c.T.failed + c.T.stopped))} finish` },
@@ -242,8 +268,8 @@
     { id: 'throughput', title: 'Throughput', head: 'Your throughput', measures: 'Your tasks that finished, per day.', group: 'Flow', icon: 'track', noun: 'tasks finished', src: done, num: 'finished', text: (n) => plural(n, 'task'), forms: COUNT, share: 'finished',
       cols: [['Finished', (r) => String(r.finished)], ['A day', (r, c) => (r.finished / c.days).toFixed(1)]],
       word: (c) => `${(c.v / c.days).toFixed(1)} tasks finished a day`, why: (c) => `${c.v} in ${c.days} days` },
-    { id: 'team', title: 'By person', head: "The team's spend", measures: (sub) => `What everyone's tasks cost in AI use, you included, from the projects that share their numbers.${sub.budget ? ` The team's budget of ${usd(sub.budget)} is set in ${BUDGET.team.from}.` : ''}`, group: 'Team', team: true, icon: 'nav-team-metrics', noun: 'team spend', src: team, by: 'person', num: 'spend', text: usd, forms: SUM, budget: BUDGET.team.usd, cols: moneyCols(), share: 'spend',
-      word: (c) => `${usd(c.v)} of the team's ${usd(BUDGET.team.usd)} budget`, why: () => `${plural(team.rows.person.length, 'person').replace(/persons$/, 'people')}, you included · on pace for ${usd(BUDGET.team.pace)} · ${BUDGET.team.usedPct}% used` },
+    { id: 'team', title: 'By person', head: "The team's spend", measures: () => `What everyone's tasks cost in AI use, you included, from the projects that share their numbers. The team's cap, ${usd(BUDGET.team.usd)} a month for all of a person's tasks, is set in ${BUDGET.team.from}.`, group: 'Team', team: true, icon: 'nav-team-metrics', noun: 'team spend', src: team, by: 'person', num: 'spend', text: usd, forms: SUM, pooled: true, cols: moneyCols(), share: 'spend',   // pooled: live, dev's pooled team budget; the demo's team figure is a cap for each person, so no total is set against it
+      word: (c) => `${usd(c.v)} this month`, why: () => `${plural(team.rows.person.length, 'person').replace(/persons$/, 'people')}, you included · on pace for ${usd(BUDGET.team.pace)} · each person's tasks pause at ${usd(BUDGET.team.usd)} a month` },
     { id: 'untagged', title: 'Missing cost tags', head: "The team's missing cost tags", measures: "The team's tasks with no client tag, and what they cost.", group: 'Team', team: true, icon: 'tag', noun: 'tasks without a client', src: untagged, num: 'tasks', text: (n) => plural(n, 'task'), forms: COUNT, share: 'tasks',
       cols: [['Without a client', (r) => String(r.tasks)], ['AI spend', (r) => usd(r.spend)]],
       word: (c) => `${c.T.tasks} tasks without a client`, why: (c) => `${usd(c.T.spend)} has no client` },

@@ -51,9 +51,21 @@
   const filterTo = (project) => window.StillhetRunsList.filter({ project: project || 'No project' });
   const finished = (t) => t.section === 'recent';   // what still needs you counts there, once: the Showing counts add up to all
   const readyToShip = (t) => t.word === 'Ready' && (t.run?.kind || 'Git') === 'Git' && !t.run?.pr;
+  // A task's open PR (list.pull-requests): its number, where it stands and who must act. A merged, stopped or archived
+  // task has no open PR. The demo reads it from the task's own case; `prState` on a row says draft or review.
+  const PR_OVER = ['merged', 'stopped', 'ticket-canceled', 'round'];
+  const openPr = (r) => !!r.pr && !r.archived && !PR_OVER.includes(r.case);
+  function prFacts(r) {
+    const num = prNumOf(r.pr), name = num ? `PR #${num}` : 'PR', st = stateOf(r);
+    const [state, who] = r.prState === 'draft' ? ['draft', 'Worca is on it'] : st === 'approved' || st === 'ready' ? ['ready to merge', 'waits on you'] : st === 'failing' || st === 'failed' ? ['checks failing', raises(r) ? 'waits on you' : 'Worca is on it']
+      : r.prState === 'review' || st === 'in-review' ? ['waiting for review', r.reviewer || 'a reviewer'] : st === 'checks' ? ['checks running', 'Worca is on it'] : sectionOfRun(r) === 'needs' ? [wordOf(r).toLowerCase(), 'waits on you'] : ['waiting for review', r.reviewer || 'a reviewer'];
+    return { num, state, who, line: `${name} · ${state} · ${who}` };
+  }
+  const prRuns = (t) => (t.run ? [t.run] : membersOf(t.group)).filter(openPr);
   const SHOWS = [
     { id: 'all', text: 'all', help: 'Every task that is not archived', test: (t) => !t.archived },
     { id: 'needs', text: NEEDS().toLowerCase(), help: 'Waiting on a person: a question, a gate, a pause, a failure, ready to ship', title: NEEDS(), test: (t) => !t.archived && t.section === 'needs' },
+    { id: 'prs', text: 'pull requests', help: 'Tasks with an open PR: its number, where it stands and who must act', title: 'Pull requests', n: (ts) => ts.reduce((n2, t) => n2 + prRuns(t).length, 0), test: (t) => !t.archived && prRuns(t).length > 0 },
     { id: 'running', text: 'running', help: 'Working now', test: (t) => !t.archived && t.section === 'running' },
     { id: 'waiting', text: 'waiting', help: 'Not started yet: after another task, or at a time', test: (t) => !t.archived && t.section === 'scheduled' },
     { id: 'finished', text: 'finished', help: 'Ended, with nothing left for you to do', test: (t) => !t.archived && finished(t) },
@@ -68,7 +80,7 @@
     && (!labelsOn() || !v.labels.length || t.labels.some((l) => v.labels.includes(l)));
   const labelsOn = () => R.prefs.flag('runLabels');
   const shared = () => listCase === 'shared';
-  const count = (patch) => String(tops().filter((t) => passes(t, { ...view, ...patch })).length);
+  const count = (patch) => { const v = { ...view, ...patch }, ts = tops().filter((t) => passes(t, v)), n2 = showOf(v.show).n; return String(n2 ? n2(ts) : ts.length); };   // the Pull requests view counts PRs, a group's each
 
   // ---- the row ----
   const has = (need) => R.shows(need);
@@ -96,10 +108,11 @@
   // list.row-facts: a row says what it is at the bar's width: its title, and on a second quiet line its project and its
   // state (a row that needs you: why). Three tasks with one title are told apart without a tooltip; the time is its end.
   const whyOf = (r, section) => (section === 'needs' ? R.needsReason(stateOf(r)) : wordOf(r));
-  const factsOf = (project, word) => [view.by !== 'project' ? project || 'No project' : '', word].filter(Boolean).join(' · ');
-  const row = (r, section, member) => {
+  // a row that needs you leads with the reason, the project after it; the project drops when the list is narrowed to one
+  const factsOf = (project, word, needs) => { const p = view.by !== 'project' && view.from === 'all' ? project || 'No project' : ''; return (needs ? [word, p] : [p, word]).filter(Boolean).join(' · '); };
+  const row = (r, section, member, meta) => {
     const x = { r };
-    const base = { key: `run:${r.id}`, _x: x, title: member && r.pos ? `${r.pos} · ${r.title}` : r.title, meta: member ? whyOf(r, raises(r) ? 'needs' : '') : factsOf(r.project, whyOf(r, section)), mark: markOf(stateOf(r), 'task', r.archived ? null : r.case, r.id, section === 'needs'), end: r.time,
+    const base = { key: `run:${r.id}`, _x: x, title: member && r.pos ? `${r.pos} · ${r.title}` : r.title, meta: meta || (member ? whyOf(r, raises(r) ? 'needs' : '') : factsOf(r.project, whyOf(r, section), section === 'needs')), mark: markOf(stateOf(r), 'task', r.archived ? null : r.case, r.id, section === 'needs'), end: r.time, wrap: !!meta || section === 'needs' || (member && raises(r)),
       unread: r.unread, current: isOpen(r), menu: null };
     x.key = base.key;
     base.menu = menuOf(x);
@@ -112,7 +125,7 @@
     const state = section === 'needs' && needy && R.sectionOf(R.runState(groupState(g)).word, groupState(g)) !== 'needs' ? stateOf(needy) : groupState(g);
     const why = section === 'needs' && needy ? `Task ${needy.pos || ms.indexOf(needy) + 1} ${wordOf(needy).toLowerCase()}` : R.runState(state).word;
     const x = { g, key: `group:${g.id}` };
-    return { key: x.key, _x: x, title: g.title, meta: factsOf(g.project, why), mark: markOf(state, 'feature'), count: `${done}/${ms.length}`, noun: 'tasks', holds: ms.some(isOpen),
+    return { key: x.key, _x: x, title: g.title, meta: factsOf(g.project, why, section === 'needs'), wrap: section === 'needs', mark: markOf(state, 'feature'), count: `${done}/${ms.length}`, noun: 'tasks', holds: ms.some(isOpen),
       open: !(['Ready', 'Stopped', 'Merged', 'Failed'].includes(R.runState(groupState(g)).word)), menu: menuOf(x), members: ms.map((m) => row(m, '', true)) };
   }
   const rowOf = (t, section) => (t.group ? groupRowOf(t.group, section) : row(t.run, section, false));
@@ -121,11 +134,11 @@
   // this place, its tasks and its missed schedule times (StillhetWorld.needsLabel), the same rule Pulse counts by; a
   // filtered view counts its own rows
   const oneCount = () => (W.needsLabel && view.from === 'all' && !view.day && !view.range && !view.person && !view.labels.length && !view.workflow && !view.schedule ? W.needsLabel('task', 'schedule') : null);
-  const needsCount = () => (oneCount() ? { count: oneCount().n } : {});
+  const needsCount = () => (oneCount() ? { count: oneCount().n, of: oneCount().of } : {});   // small.one-count: "Needs you 6 · of 11" where this place holds a part
   // ---- the filters ----
   function parts() {
     const projects = [...new Set(tops().map((t) => t.project || 'No project'))].sort();
-    const out = [{ word: 'Showing', id: 'show', tabs: ['all', 'needs', 'running'], text: showOf(view.show).text, tip: 'Which tasks the list shows', items: SHOWS.map((x) => ({ id: x.id, text: x.text, help: x.id === 'needs' && oneCount() ? oneCount().tip : x.help, checked: view.show === x.id, hint: x.id === 'needs' ? String(oneCount() ? oneCount().n : +count({ show: 'needs' }) + missedNow().length) : count({ show: x.id }) })) }];
+    const out = [{ word: 'Showing', id: 'show', tabs: ['all', 'needs', 'prs'], text: showOf(view.show).text, tip: 'Which tasks the list shows', items: SHOWS.map((x) => ({ id: x.id, text: x.text, help: x.id === 'needs' && oneCount() ? oneCount().tip : x.help, checked: view.show === x.id, hint: x.id === 'needs' ? String(oneCount() ? oneCount().n : +count({ show: 'needs' }) + missedNow().length) : count({ show: x.id }) })) }];
     if (shared()) out.push({ word: 'started by', id: 'person', raw: true, text: view.person || 'Everyone', tip: 'Whose tasks it shows, on a shared sign-in', items: [{ id: '', text: 'Everyone', checked: !view.person, hint: count({ person: '' }) }, { sep: true }, ...M.PEOPLE.map((p) => ({ id: p, text: p, checked: view.person === p, hint: count({ person: p }) }))] });
     if (!view.schedule || view.from !== 'all') out.push({ word: 'from', id: 'from', raw: true, text: view.from === 'all' ? 'All projects' : view.from, tip: 'Which project they come from', items: [{ id: 'all', text: 'All projects', checked: view.from === 'all', hint: count({ from: 'all' }) }, { sep: true }, ...projects.map((p) => ({ id: p, text: p, checked: view.from === p, hint: count({ from: p }) }))] });
     if (view.workflow) out.push({ word: 'using', id: 'workflow', raw: true, text: view.workflow, tip: 'Only tasks that ran this workflow', items: [{ id: '', text: 'Any workflow', hint: count({ workflow: '' }) }, { sep: true }, { id: view.workflow, text: view.workflow, checked: true, hint: count({}) }] });
@@ -140,13 +153,15 @@
     }
     return out;
   }
-  const EMPTY = { needs: 'Nothing needs you.', running: 'No running tasks.', waiting: 'Nothing is waiting.', finished: 'No finished tasks yet.', ready: 'Nothing is ready to ship.', archived: 'No archived tasks.' };
+  const EMPTY = { prs: 'No open pull requests.', needs: 'Nothing needs you.', running: 'No running tasks.', waiting: 'Nothing is waiting.', finished: 'No finished tasks yet.', ready: 'Nothing is ready to ship.', archived: 'No archived tasks.' };
   // A missed schedule time is not a task (panel.task-truth), but it needs you: its own clock row in Needs you, in the count; never in a day or project's tasks
   const missedNow = () => (view.day || view.range || view.person || view.labels.length || view.workflow || view.schedule ? [] : W.tops().filter((r) => r.missed && (view.from === 'all' || (r.project || 'No project') === view.from)));
-  const missedRow = (r) => { const x = { m: r, key: `missed:${r.id}` }; return { key: x.key, _x: x, pick: false, title: r.title, meta: factsOf(r.project, 'Missed its time'), mark: R.kindMark({ kind: 'schedule', tone: 'act', title: r.detail }), end: '', menu: null }; };
+  const missedRow = (r) => { const x = { m: r, key: `missed:${r.id}` }; return { key: x.key, _x: x, pick: false, title: r.title, meta: factsOf(r.project, 'Missed its time', true), wrap: true, mark: R.kindMark({ kind: 'schedule', tone: 'act', title: r.detail }), end: '', menu: null }; };
   function sections() {
     const list = tops().filter((t) => passes(t, view));
     const rows = (ts, s) => ts.map((t) => rowOf(t, s));
+    // Pull requests: one row per open PR (a group's members each), what waits on you first
+    if (view.show === 'prs') { const prs = list.flatMap(prRuns).map((r) => ({ r, f: prFacts(r) })).sort((a, b) => (a.f.who === 'waits on you' ? 0 : 1) - (b.f.who === 'waits on you' ? 0 : 1)); return [{ id: 'prs', title: 'Pull requests', rows: prs.map(({ r, f }) => row(r, '', false, f.line)) }]; }
     if (view.show !== 'all') return [{ id: view.show, ...(view.show === 'needs' ? needsCount() : {}), title: showOf(view.show).title || cap(showOf(view.show).text), rows: [...rows(list, view.show === 'needs' || view.show === 'running' ? view.show : ''), ...(view.show === 'needs' ? missedNow().map(missedRow) : [])] }];
     const needs = list.filter((t) => t.section === 'needs'), rest = list.filter((t) => t.section !== 'needs');
     const urgent = (t) => { const s = t.run ? stateOf(t.run) : ''; return (3 - R.alertLevel(R.markTone(R.runState(s || 'working')))) * 10 + (s === 'question' ? 0 : 1); };   // highest level first (look.alert-ladder)
@@ -292,8 +307,8 @@
     openRound: (row, n2) => { const rd = row._x.r.rounds.list.find((x) => x.n === n2); window.StillhetShell.openTaskPage(rd.case, '', `${row._x.r.title} · Round ${n2}`, W.live ? rd.task?.id || rd.case : undefined); },   // live: a round's case is its task's id
     word: (id, v) => {
       visit = null;   // a filter you pick yourself is your own view from here on: it is kept
-      if (id === 'labels') { if (!v) { view.labels = []; store.set(view); return false; } view.labels = view.labels.includes(v) ? view.labels.filter((l) => l !== v) : [...view.labels, v]; store.set(view); return view.labels.length > 0; }
-      if (id === 'range') { if (!v) view = { ...view, range: null }; store.set(view); return false; }
+      if (id === 'labels') { if (!v) { view.labels = []; store.set(view); centers(); return false; } view.labels = view.labels.includes(v) ? view.labels.filter((l) => l !== v) : [...view.labels, v]; store.set(view); centers(); return view.labels.length > 0; }
+      if (id === 'range') { if (!v) view = { ...view, range: null }; store.set(view); centers(); return false; }
       if (id === 'show' && v === 'archived' && W.live) window.StillhetAdapter?.refresh?.('archived');   // F-a4-07: the Archived view reads its rows again
       view = { ...view, [id]: v }; store.set(view); centers(); return false;
     },
@@ -323,6 +338,14 @@
     rows: () => tops().filter((t) => !t.archived),
     summary: () => { const t = tops().filter((x) => !x.archived); return { n: t.filter((x) => x.section === 'running' || x.section === 'needs').length, needs: t.filter((x) => x.section === 'needs').length }; },
     from: () => view.from,   // the project the list is narrowed to: the Tasks center follows it
+    // list.one-filter: the bar's Filter is the place's one filter. The page reads it here and draws the same tasks:
+    // view() is what is chosen (show: a SHOWS id; project: 'all' or a name; by: day, state or project; narrowed: the
+    // words of a visit's filter, or ''), shown() the very tasks and groups the bar lists now (each { run } or { group },
+    // with section, project, word), and pr(run) a task's open PR ({ num, state, who, line }) or null. A change of the
+    // filter calls StillhetCenters.paint().
+    view: () => ({ show: view.show, project: view.from, by: view.by, day: view.day, person: view.person, labels: [...view.labels], workflow: view.workflow, schedule: view.schedule, narrowed: visit?.words || '', changed: !(view.show === FRESH.show && view.from === FRESH.from && !view.day && !view.range && !view.person && !view.labels.length && !view.workflow && !view.schedule) }),
+    shown: () => tops().filter((t) => passes(t, view)),
+    pr: (r) => (r && openPr(r) ? prFacts(r) : null),
     // a group crumb on a task's page: Tasks with that group open; a group the page named for this task joins the store
     showGroup: (title, taskTitle) => {
       visit = null; view = { ...FRESH, by: view.by }; store.set(view); ctl.clear();

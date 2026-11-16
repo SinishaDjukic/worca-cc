@@ -5,7 +5,23 @@ are six separate agents who each walked today's prototype by clicking, at 1280 a
 each other's notes or any plan: the baseline round, before any redesign.
 
 Each item is answered **Fixed** (in the prototype now), **Planned** (in the redesign, step 6, or in the build spec),
-or **Declined** with the reason. At this checkpoint nothing is Fixed yet; the column is filled in again after the redesign.
+or **Declined** with the reason. **Planned** in the tables below was written before the redesign; the redesign has since built what the answers describe unless "The second round" above or `PRUNED.md` says otherwise. Items that need the server stay planned (`server.md`).
+
+## The second round
+
+The same six personas walked the redesigned prototype (before the last fix batch and the detail side panel).
+
+| Persona | Before | After | What moved it | What still held it back then |
+|---|---|---|---|---|
+| New user | 7 | 8 | A card that asks shows what the review found; starter cards say what they do | An oversized notice in chats (fixed since), a schedule made in Simple with nowhere to see it (fixed since), a task page at odds with its card |
+| Classic user | 6 | 8 | A row opens the task's page; labelled forms; project tabs; bordered buttons | Design, Plans tab, Live view, editing a built-in workflow in place |
+| Power user | 6 | 7 | Rows keep the list; a real diff; Pulse acts in place | The composer's workflow pick was dropped (fixed since); a schedule cannot be changed from Chat yet |
+| Team lead | 6 | 7 | A person's work opens; team guardrails and model access can be edited | No list of pull requests on the page (the bar has the view now); two budget figures (one source now) |
+| UX reviewer | 6 | 7.5 | Buttons look like buttons; the task page; one Dialog; value-first Settings | Every button looked equal (a ladder since); the filter line shifted (fixed widths since) |
+| Keyboard | 5 | 8 | Answers by arrows; focus never dropped; one focus ring; skip link | The Ask worca side column (removed since); search results by arrows (fixed since) |
+
+Their full reports are kept outside the repository with the shaping notes. Not yet checked by personas: the last fix
+batch and the task card with its detail side panel (owner direction O10).
 
 ## The baseline scores
 

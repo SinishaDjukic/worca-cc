@@ -225,6 +225,8 @@
       const sel = f.options.findIndex((o) => o[0] === d.vals[f.key]);
       return `<div class="dlg-choice"><span class="fld-l">${c.esc(f.label)}</span>${c.R.optionList({ label: f.label, options: f.options.map((o) => o[1]), selected: sel, optAttrs: (i) => ({ 'data-svdo': `dlgopt:${f.key}:${i}`, 'data-key': `${key}:${i}` }) })}</div>`;
     }
+    // a pick list (set.pick-list): what exists, each a checkbox; the value is the ticked names, in the list's order
+    if (f.checks) { const on = String(d.vals[f.key] || '').split(',').map((x) => x.trim()).filter(Boolean); return `<div class="dlg-choice dlg-checks" role="group" aria-label="${c.esc(f.label)}"><span class="fld-l">${c.esc(f.label)}</span>${f.checks.map((name, i) => c.R.checkbox({ label: name, checked: on.includes(name), attrs: { 'data-svdo': `dlgset:${f.key}:${i}`, 'data-key': `${key}:${i}` } })).join('')}${f.hint ? `<span class="fld-hint">${c.esc(f.hint)}</span>` : ''}</div>`; }
     if (f.check) return c.R.checkbox({ label: f.label, checked: !!d.vals[f.key], attrs: { 'data-svdo': 'dlgchk:' + f.key, 'data-key': key } });
     if (f.button) return c.R.button({ label: f.button, kind: 'quiet', attrs: { 'data-svdo': 'dlgbtn:' + f.key, 'data-key': key, title: f.hint || null } });
     return c.R.field({ id: 'sv-f-' + f.key, label: f.label, value: String(d.vals[f.key] ?? ''), hint: f.hint || '', multiline: !!f.multiline, type: f.type || 'text', placeholder: f.placeholder || '', attrs: { 'data-keep': key } });
@@ -345,6 +347,12 @@
     if (d && say.startsWith('dlgopt:')) {
       const [, key, i] = say.split(':'), f = (d.steps ? d.steps[d.at] : d).fields.find((x) => x.key === key);
       d.vals[key] = f.options[+i][0]; if (f.then) f.then(d.vals);
+      return '';
+    }
+    if (d && say.startsWith('dlgset:')) {
+      const [, key, i] = say.split(':'), f = (d.steps ? d.steps[d.at] : d).fields.find((x) => x.key === key), name = f.checks[+i];
+      const on = new Set(String(d.vals[key] || '').split(',').map((x) => x.trim()).filter(Boolean)); if (on.has(name)) on.delete(name); else on.add(name);
+      d.vals[key] = [...f.checks.filter((x) => on.has(x)), ...[...on].filter((x) => !f.checks.includes(x))].join(', '); d.status = '';
       return '';
     }
     if (d && say.startsWith('dlgchk:')) { const k = say.slice(7); d.vals[k] = !d.vals[k]; return ''; }

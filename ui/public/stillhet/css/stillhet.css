@@ -31,7 +31,7 @@ html,body{height:auto;overflow:visible;margin:0;}
 .rc-mid-a{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
 .rc-mid-b{flex:none;}
 .rc-to{color:var(--ink-3);}
-.rc-base{flex:0 1 auto;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2);}   /* a long base ends in an ellipsis instead of running off the card */
+.rc-base{flex:0 0 auto;min-width:0;max-width:min(100%,24ch);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2);}   /* the base never gives way to the branch ("into dev", never "into d…"): the branch folds its middle; only a base past 24 characters ends in an ellipsis */
 .rc-pr{color:var(--ink);text-decoration:none;font-weight:500;font-variant-numeric:tabular-nums;}
 .rc-pr:hover{text-decoration:underline;text-underline-offset:3px;}
 .rc-sep{color:var(--ink-3);}
@@ -1323,16 +1323,17 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .tc-foot{margin-top:-2px;}
 .composer-chips{display:flex;flex-wrap:wrap;gap:4px;}
 
-/* The background (look.backgrounds, look.background-clear): the same on every page. It lives in two opposite corners of
-   the page, top right and bottom left, and fades out softly before it reaches the reading column, so no word ever sits
-   on it. Each corner is as wide as the margin beside the column (--col-w is the column's width, 680px unless a page says
-   otherwise); where the margins are too thin there is no background. It never moves. */
-.page-bg{position:absolute;inset:0;pointer-events:none;--bg-clear:calc(var(--col-w,680px) / 2 + 40px);--bg-w:calc(50% - var(--bg-clear));
-  -webkit-mask-image:radial-gradient(ellipse 100% 100% at 100% 0,#000 0,rgba(0,0,0,.55) 45%,transparent 100%),radial-gradient(ellipse 100% 100% at 0 100%,#000 0,rgba(0,0,0,.55) 45%,transparent 100%);
-  mask-image:radial-gradient(ellipse 100% 100% at 100% 0,#000 0,rgba(0,0,0,.55) 45%,transparent 100%),radial-gradient(ellipse 100% 100% at 0 100%,#000 0,rgba(0,0,0,.55) 45%,transparent 100%);
-  -webkit-mask-size:var(--bg-w) 62%;mask-size:var(--bg-w) 62%;-webkit-mask-position:right top,left bottom;mask-position:right top,left bottom;-webkit-mask-repeat:no-repeat;mask-repeat:no-repeat;}   /* ds-ok: a mask, not a colour */
+/* The background (look.backgrounds, look.background-clear): the same on every page. It fills the page softly, and a
+   clear area with round corners sits over the reading column, so no word is ever on it. Around the clear area it comes
+   back in three levels, each a rounded ring a little stronger than the one inside it. --col-w is the column's width
+   (680px unless a page says otherwise). It never moves. */
+.page-bg{position:absolute;inset:0;pointer-events:none;overflow:hidden;--bg-clear-w:calc(var(--col-w,680px) + 96px);}
+.page-bg .chat-home-bg{-webkit-mask-image:none !important;mask-image:none !important;opacity:.85;}   /* ds-ok: the pattern is even on every side; the clear area does the fading */
+.page-bg::after{content:'';position:absolute;top:28px;bottom:28px;left:50%;width:var(--bg-clear-w);max-width:calc(100% - 96px);transform:translateX(-50%);border-radius:32px;background:var(--bg);
+  box-shadow:0 0 0 18px color-mix(in srgb,var(--bg) 80%,transparent),0 0 0 40px color-mix(in srgb,var(--bg) 55%,transparent),0 0 0 66px color-mix(in srgb,var(--bg) 28%,transparent);}   /* ds-ok: the page's own colour at three strengths, the levels of the fade */
 .page-bg .chat-home-bg{position:absolute;inset:0;}
-[data-bg="dots"] .page-bg .chat-home-bg{-webkit-mask-image:none;mask-image:none;}   /* the corners do the fading */
+body:has(#route-chat:not([hidden]) .has-detail) .page-bg{display:none;}   /* with the detail panel open the chat is off centre: no background, so no word sits on it */
+.detail-panel .dp-title:focus{outline:none;}   /* the panel's title takes the focus when it opens; a title is not a control */
 .chat-home > .chat-home-bg{display:none;}   /* a home has no background of its own: the page's one background, in its corners, is the same everywhere */
 @media (max-width: 1180px){ .page-bg{display:none;} }
 .stage-stream{display:flex;flex-direction:column;gap:8px;padding-top:10px;}
@@ -2121,12 +2122,11 @@ button.fr-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 
 /* A toast has its own corner (A8): the bottom left of the page column, clear of every title, filter row and confirm
    strip at the top, and of the composer in the middle of the bottom edge. */
-body > .rc-toast{top:auto;bottom:24px;left:calc(var(--bar-w,280px) + 24px);transform:none;max-width:min(360px,calc(100vw - var(--bar-w,280px) - 48px));}
-body > .rc-toast.is-on{transform:none;}
-body.bar-hidden > .rc-toast{left:80px;max-width:min(360px,calc(100vw - 104px));}
-body:has(.wf-canvas) > .rc-toast{top:auto;}
+.rc-toast{top:auto;bottom:24px;left:calc(var(--bar-w,280px) + 24px);right:auto;height:auto;transform:none;max-width:min(360px,calc(100vw - var(--bar-w,280px) - 48px));}
+.rc-toast.is-on{transform:none;}
+body.bar-hidden .rc-toast{left:80px;max-width:min(360px,calc(100vw - 104px));}
 @media (max-width:760px){
-  body > .rc-toast,body.bar-hidden > .rc-toast{left:16px;right:16px;bottom:16px;width:auto;max-width:none;}
+  .rc-toast,body.bar-hidden .rc-toast{left:16px;right:16px;bottom:16px;width:auto;max-width:none;}
 }
 
 
@@ -2144,7 +2144,11 @@ body:has(.wf-canvas) > .rc-toast{top:auto;}
 .acct-menu .mi.pz-usage-item > .mi-val{grid-column:3;grid-row:1 / span 2;}
 .acct-menu .mi.pz-usage-item > .mi-chev{grid-column:4;grid-row:1 / span 2;}
 /* In a conversation the composer is docked at the bottom: the toast's corner is just above it, never over its controls. */
-body:has(#route-chat:not([hidden]) .convo-dock) > .rc-toast{bottom:calc(24px + 124px);}
+body:has(#route-chat:not([hidden]) .convo-dock) .rc-toast{bottom:calc(24px + 124px);}
+@supports (bottom:anchor(--a top)){
+  #route-chat:not([hidden]) .convo-dock{anchor-name:--convo-dock;}
+  body:has(#route-chat:not([hidden]) .convo-dock) .rc-toast{bottom:calc(anchor(--convo-dock top, 124px) + 12px);}
+}
 /* A toast said while a Dialog is up joins it in the top layer (pulse.js liftToast): the same corner, the same look. */
 .rc-toast[popover]{margin:0;border:0;right:auto;overflow:hidden;}
 .rc-toast[popover]:not(:popover-open){display:flex;}

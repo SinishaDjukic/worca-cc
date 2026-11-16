@@ -27,11 +27,22 @@
     <label title="A new event arrives in Pulse and plays the chime, if Settings › Notifications › Sound says so">Event <select class="select select-sm" id="new-event-kind"><option value="needs">Needs you</option><option value="problem">Problem</option><option value="info">Info</option></select></label>
     <span class="mk-row"><button type="button" class="btn btn-sm" id="new-event" title="A new event arrives now: try it twice for a burst, or under Away for silence">New event</button></span>
     <span class="mk-row"><button type="button" class="btn btn-sm" id="play-away" title="Plays the away screensaver now, without the 5 idle minutes; any input hides it">Play screensaver</button></span>
+    <div class="seg" role="group" aria-label="Task card layout" title="Compare the two task card layouts on the same tasks. The product ships the side panel"><button type="button" data-card-layout="panel">Side panel</button><button type="button" data-card-layout="card">In the card</button></div>
     <div class="seg" role="group" aria-label="Theme"><button type="button" data-theme-pick="light">Light</button><button type="button" data-theme-pick="dark">Dark</button></div>
     <p class="mk-note">Other pages keep today's design in the Stillhet colours. Explorers: <a href="run-page.html">run page cases</a> · <a href="pulse.html">Pulse cases</a> · <a href="stillhet-switch.html">Stillhet switch and icons (mock)</a> · <a href="components.html">components</a>.</p>
   </div>
 </details>
 
 <script src="../../../ui/public/stillhet/boot.js" data-host="prototype"></script>
+<script>
+// The prototype's switch between the two task card layouts: details in a side panel (the default) or inside the card.
+(function () {
+  var KEY = 'worca-stillhet.card-layout';
+  function now() { try { return localStorage.getItem(KEY) === 'card' ? 'card' : 'panel'; } catch (e) { return 'panel'; } }
+  function mark() { document.querySelectorAll('[data-card-layout]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.cardLayout === now())); }); }
+  document.addEventListener('click', function (e) { var b = e.target.closest('[data-card-layout]'); if (!b) return; try { localStorage.setItem(KEY, b.dataset.cardLayout); } catch (err) { /* not kept */ } mark(); if (window.StillhetConversation && window.StillhetConversation.refresh) window.StillhetConversation.refresh(); });
+  mark();
+})();
+</script>
 </body>
 </html>

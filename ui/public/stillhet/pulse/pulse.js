@@ -51,6 +51,8 @@ const C = () => { const c = M.refreshed(M.withQuota(caseOf(ui.caseId), ui.sv.gem
 // Raising the budget in Settings is what Usage and costs and New run read.
 const liveBudget = (b) => (!W.live && b && ui.sv.total && ui.sv.period === 'month' ? { ...b, limit: +ui.sv.total, spent: ui.sv.spentNow } : b);
 const budgetGone = () => M.budgetGone(C().budget);
+// One budget figure each (A15): the world answers budget('yours') and budget('team') from Settings' own values.
+W.budgetSource?.(() => ({ team: ui.sv.pol?.capAll, total: ui.sv.total, period: ui.sv.period, spent: ui.sv.spentNow }));
 // A row's read state is the person's own on a shared sign-in; a problem clears when it is acted on; info rows arrive read.
 const isFixed = (u) => ui.fixed.includes(u.id);
 // Read in the live kind (#1268, docs/stillhet/panels.md `panel.pulse-read`): a notification's read is the server's, per reader;
@@ -560,7 +562,8 @@ function notifications() {
   const channels = desk
     + R.settingsRow({ name: 'Badge', changed: changedFrom('badge', 'Badge', (v) => word(BADGE.find((b) => b.id === v))), note: 'What the count in the tab title counts', end: rp('badge', 'Badge', BADGE, s.badge, 'What the count in the tab title counts') })
     + R.settingsRow({ name: 'Sound', changed: changedFrom('sound', 'Sound', (v) => word(R.SOUND_CHOICES.find((x) => x.id === v))), note: 'What plays a sound as it arrives. Never in away hours; a burst plays once', end: rp('sound', 'Sound', R.SOUND_CHOICES, s.sound, 'What makes a sound as it arrives') })
-    + R.settingsRow({ name: 'Pulse icon', changed: s.pulseFor !== PULSE_FOR_DEFAULT ? [{ name: 'Pulse icon', was: word(PULSE_FOR[0]) }] : [], note: 'Whether Pulse\'s icon moves when something new arrives', end: rp('pulseFor', 'Pulse icon', PULSE_FOR, s.pulseFor, 'How long Pulse\'s icon moves when something new arrives') })
+    // set.one-fact: Pulse icon has one home, Appearance › Motion; here it is said and linked, never set twice
+    + R.settingsRow({ name: 'Pulse icon', value: word(PULSE_FOR.find((x) => x.id === s.pulseFor) || PULSE_FOR[0]), note: 'Whether Pulse\'s icon moves when something new arrives. Set in Appearance', end: quiet('Appearance', { 'data-sset': 'appearance', title: 'Opens Settings › Appearance › Motion, where it is set' }) })
     + R.settingsRow({ name: 'Breathing', changed: changedFrom('attnFor', 'Breathing', (v) => word(ATTN_FOR.find((x) => x.id === v))), note: 'How long what needs you keeps breathing once you open it', end: rp('attnFor', 'Breathing', ATTN_FOR, s.attnFor, 'How long it breathes once you open it, before it counts as seen') })
     + R.settingsRow({ name: 'Chat channels', note: esc(M.chatWords(SM.workingChannels(ui.sv))), end: R.shows('advanced', R.prefs.mode()) ? quiet('Channels', { 'data-sset': 'ask', title: 'Their switches and allow-lists are in Settings › Chat' }) : '' });
   const groups = groupsShown().map((g) => {
@@ -608,10 +611,10 @@ const THEMES = [['system', 'System'], ['light', 'Light'], ['dark', 'Dark']];
 function appearancePage() {
   const size = readText(), bg = ui.bg || 'dots';
   const look = R.settingsRow({ name: 'Theme', note: 'Light, dark, or the same as this device', end: R.segmented({ label: 'Theme', hook: 'appearance', items: THEMES.map(([id, label]) => ({ id, label, pressed: appearance === id })) }) })
-    + R.settingsRow({ name: 'Background', note: 'The picture behind Chat home and the away screen', end: rp('bg', 'Background', BACKGROUNDS.map(([id, text, help]) => ({ id, text, help })), bg, 'One family, built on the same dots') })
+    + R.settingsRow({ name: 'Background', note: 'The two soft corners behind every page, and the away screen', end: rp('bg', 'Background', BACKGROUNDS.map(([id, text, help]) => ({ id, text, help })), bg, 'One family, built on the same dots') })
     + R.settingsRow({ name: 'Breathing background', note: 'The same picture, slowly brighter and quieter. Still when your system reduces motion', end: R.switchButton({ on: readBreathe(), label: 'Breathing background', attrs: { 'data-bg-breathes': '', 'data-key': 'look:breathes' } }) });
   const text = R.settingsRow({ name: 'Text size', note: 'Every text in Worca, one step smaller or larger', end: R.segmented({ label: 'Text size', hook: 'textsize', items: TEXT_SIZES.map(([id, label]) => ({ id, label, pressed: size === id })) }) });
-  const motion = R.settingsRow({ name: 'Pulse icon', note: 'Whether Pulse\'s icon moves when something new arrives', end: rp('pulseFor', 'Pulse icon', PULSE_FOR, ui.s.pulseFor, 'How long Pulse\'s icon moves when something new arrives') });
+  const motion = R.settingsRow({ name: 'Pulse icon', changed: ui.s.pulseFor !== PULSE_FOR_DEFAULT ? [{ name: 'Pulse icon', was: word(PULSE_FOR[0]) }] : [], note: 'Whether Pulse\'s icon moves when something new arrives', end: rp('pulseFor', 'Pulse icon', PULSE_FOR, ui.s.pulseFor, 'How long Pulse\'s icon moves when something new arrives') });
   return R.settingsSection({ title: 'Look', rows: look }) + R.settingsSection({ title: 'Text', rows: text }) + R.settingsSection({ title: 'Motion', rows: motion });
 }
 function settingsPage() {
@@ -755,13 +758,23 @@ function searchHits() {
   const places = Object.entries(window.StillhetPlaces || {}).flatMap(([k, m]) => (m.search ? m.search(q).slice(0, 4).map((x) => ({ ...x, area: m.area || k.charAt(0).toUpperCase() + k.slice(1), ...(SHELL?.needs(k) || {}) })) : []));
   // classic's names are search words too (old-addresses.js WORDS): "providers", "runs", "new run" land on today's place
   const classic = (window.StillhetOldAddresses?.words?.(q) || []).map((x) => ({ ...x, area: x.sset ? 'Settings' : 'Places' }));
-  const named = [...own, ...places, ...classic, ...M.find(q).slice(0, 14)];
+  // what you can do and the views that have a name are found by their words too: "new task", "pull requests", a person
+  const words = (list, e) => (list.some((w) => w.includes(q) || (q.length > 3 && q.includes(w))) ? [e] : []);
+  const acts = !SHELL ? [] : [
+    ...words(['new task', 'start a task', 'create a task', 'add a task'], { label: 'New task', where: 'in Chat', area: 'Actions', hash: '~new-task' }),
+    ...words(['new chat', 'start a chat'], { label: 'New chat', where: 'in Chat', area: 'Actions', act: () => window.StillhetConversation?.start('ask') }),
+    ...words(['new schedule', 'schedule a task'], { label: 'New schedule', where: 'in Chat', area: 'Actions', act: () => window.StillhetConversation?.handOver({ mode: 'schedule', ph: 'What should it do, and when?' }) }),
+    ...words(['pull requests', 'prs', 'open prs', 'merge', 'review'], { label: 'Pull requests', where: 'Tasks · the tasks with an open PR', area: 'Tasks', act: () => window.StillhetRunsList?.filter({ show: 'prs' }) }),
+  ];
+  let people = []; try { people = ((window.StillhetInsightsModel?.SUBS || []).find((x) => x.id === 'team')?.src?.rows?.person || []).map((r) => String(r.name || r[0] || '')).filter(Boolean); } catch { people = []; }
+  const persons = people.filter((n) => plain(n).includes(q)).map((n) => ({ label: n, where: 'Insights › By person · their tasks and spend', area: 'Insights', hash: 'insights/team', ...(SHELL?.needs('insights') || {}) }));
+  const named = [...acts, ...own, ...places, ...persons, ...classic, ...M.find(q).slice(0, 14)];
   // a setting found only by the words of its sentence counts when nothing is found by name
   const rest = [...named, ...(named.length || setByName.length ? setByName : set)].sort((a, b) => score(a) - score(b));
   return [...page, ...rest].filter((e) => { const k = `${e.sset ? 'set|' : ''}${plain(e.label)}`; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 14);
 }
 // One search, everything it finds under the area it belongs to.
-const AREAS = [['On this page', 'eye'], ['Places', 'home'], ['Marketplace', 'nav-marketplace'], ['Projects', 'nav-projects'], ['Workflows', 'nav-workflows'], ['Requirements', 'nav-requirements'], ['Insights', 'nav-insights'], ['Chats', 'kind-chat'], ['Tasks', 'kind-task'], ['Schedules', 'kind-schedule'], ['Settings', 'set-general'], ['Other', 'list']];
+const AREAS = [['On this page', 'eye'], ['Actions', 'plus'], ['Places', 'home'], ['Marketplace', 'nav-marketplace'], ['Projects', 'nav-projects'], ['Workflows', 'nav-workflows'], ['Requirements', 'nav-requirements'], ['Insights', 'nav-insights'], ['Chats', 'kind-chat'], ['Tasks', 'kind-task'], ['Schedules', 'kind-schedule'], ['Settings', 'set-general'], ['Other', 'list']];
 const areaOf = (e) => e.area || (e.sset ? 'Settings' : e.kind === 'place' ? 'Places' : /^(Runs|Run )/.test(e.where || '') || e.run ? 'Tasks' : /^Chat/.test(e.where || '') ? 'Chats' : /^Schedule/.test(e.where || '') ? 'Schedules' : 'Other');
 function searchResults() {
   if (!plain(ui.q).trim()) return '';
@@ -770,6 +783,8 @@ function searchResults() {
   const RMM = window.RunCardModel;
   const markOf = (e, area) => {
     if (area === 'On this page') return R.icon('eye', 14);
+    if (area === 'Actions') return R.icon('plus', 14);
+    if (e.act && area === 'Tasks') return R.icon('nav-runs', 14);
     if (['Marketplace', 'Projects', 'Workflows', 'Requirements', 'Insights'].includes(area)) return R.icon(`nav-${area.toLowerCase()}`, 14);
     if (area === 'Chats') return R.kindMark({ kind: 'chat', size: 16 });
     if (area === 'Tasks') { const cs = e.hash?.startsWith('run/') ? e.hash.slice(4) : e.case || e.run?.case; try { return R.kindMark({ kind: 'task', tone: cs ? R.markTone(R.runState(RMM.stateOf(cs))) : 'idle', stage: -1, size: 16 }); } catch { return R.kindMark({ kind: 'task', size: 16 }); } }
@@ -825,6 +840,7 @@ function pickResult(v) {
     render(); return;
   }
   const e = found[+v]; if (!e) return;
+  if (e.act) { closeOverlays(); render(); e.act(); return; }   // an action or a named view
   if (e.look) { closeOverlays(); ui.acct = true; ui.sub = e.sub || 'look'; opening = 'acct'; render(); return; }
   if (e.el) { closeOverlays(); render(); R.land(e.el.closest('.pg-card, .list-row, .set-row, .rc, .place-head, section') || e.el); return; }   // on this page: it lands where it is
   if (e.hash) { closeOverlays(); if (e.chat || e.run) SHELL.openTask(e.hash.split('/')[1], e.chat, LIVE ? e.label : undefined, e.run); else SHELL.go(e.hash); render(); return; }
@@ -1274,7 +1290,12 @@ document.addEventListener('keydown', (e) => {
   const act = R.shortcutAction(R.keyFacts(e, ROW), { scopes, selecting: ui.pick.on });
   if (act === 'search') { if (somethingUp()) return; e.preventDefault(); if (SHELL && innerWidth <= 760) document.getElementById('tsearch-open')?.click(); document.querySelector('[data-search]')?.focus(); return; }
   if (act === 'help') { if (somethingUp() || ui.menu || ui.acct) return; if (SHELL?.listKeys?.() && !ui.pop) return; e.preventDefault(); openSheet(); return; }
-  if (e.key === 'Enter' && e.target.matches?.('[data-search]') && ui.q) { document.querySelector('.rl-search-res [data-menu-pick]')?.click(); return; }
+  // Pulse's tabs switch with the arrow keys (a tablist), and the focus follows the tab
+  if ((e.key === 'ArrowRight' || e.key === 'ArrowLeft' || e.key === 'Home' || e.key === 'End') && e.target.matches?.('.pz-ptabs [data-ptab]')) {
+    const tabs = [...e.target.closest('.pz-ptabs').querySelectorAll('[data-ptab]')], i = tabs.indexOf(e.target), to = tabs[e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : (i + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length];
+    e.preventDefault(); e.stopPropagation(); if (to && to !== e.target) { const id = to.dataset.ptab; to.click(); document.querySelector(`.pz-ptabs [data-ptab="${id}"]`)?.focus(); } return;
+  }
+  if (e.key === 'Enter' && e.target.matches?.('[data-search]') && ui.q) { (document.querySelector('.rl-search-res .menu-item.is-active[data-menu-pick]') || document.querySelector('.rl-search-res [data-menu-pick]'))?.click(); return; }   // key.search: the active result, else the first
   if (SHELL && SHELL.runActive() && !ui.pop && !ui.acct && !ui.nr && !ui.menu) return;   // the run page's keys
   if (act && act !== 'close' && act !== 'clear') { e.preventDefault(); panelKey(act, e); return; }
   if (!act) return;

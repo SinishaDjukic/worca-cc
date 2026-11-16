@@ -4,3 +4,16 @@
 /* Appearance: a choice of two or three is a Segmented at the row's end. */
 .set-end > .seg{flex:none;}
 
+
+/* set.pick-list: a dialog's pick list: one checkbox a line, in two columns where there is room */
+.dlg-checks{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:6px 16px;margin:0 0 14px;}
+.dlg-checks > .fld-l, .dlg-checks > .fld-hint{grid-column:1 / -1;}
+.dlg-checks > .fld-hint{font-size:var(--fs-caption);color:var(--ink-2);}
+
+/* thing.page-frame: Settings uses the frame of every place: the same left edge and 720px column as Tasks (its sections
+   live in the bar, so its page is one column like theirs) */
+@media (min-width: 761px){
+  body.view-settings #route-settings{padding:0 64px 0 0;}   /* ds-ok: the 32px mark rail hangs left of the text edge, so the text column is Tasks' own: 720 wide, the same left edge */
+  body.view-settings #route-settings .pz-page{max-width:752px;margin-inline:auto;padding-inline:0;}
+}
+body.view-settings #route-settings .pz-title{font-size:var(--fs-subpage);}   /* a place's title size (look.type-roles) */

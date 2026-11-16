@@ -149,7 +149,7 @@ test('F-5-01/F-5-02/F-7b-05: live search offers no demo Settings row', async () 
     return d.querySelector('[data-search-res]').textContent.replace(/Ask Chat:[\s\S]*$/, '');   // the tail always echoes the words
   };
   // F-7b-16 (D9): the demo-only row is never offered as a setting; its home is found with the not-live words only
-  assert.equal(await find('Setup assistant'), `SettingsSetup assistantGeneral › Setup · ${NOT_LIVE_SENTENCE}`);
+  assert.equal(await find('Setup assistant'), `SettingsSetup assistant General › Setup · ${NOT_LIVE_SENTENCE}`);
   assert.doesNotMatch(await find('Jira'), /Jira/);
   assert.doesNotMatch(await find('Gateway'), /Gateway team policy/);
   assert.match(await find('github-source'), /github-source/);

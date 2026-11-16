@@ -101,7 +101,7 @@ const tmState = (s) => (s.hasOrigin === false ? 'no-origin' : !s.enabled ? 'off'
 export function metricsOf(status) {
   const s = obj(status);
   if (!s) return null;
-  const state = tmState(s), excluded = s.record === false, runs = Number.isFinite(s.runs) ? `${s.runs} run${s.runs === 1 ? '' : 's'}` : '';
+  const state = tmState(s), excluded = s.record === false, runs = Number.isFinite(s.runs) ? `${s.runs} task${s.runs === 1 ? '' : 's'}` : '';   // a run is a task in every word a person reads
   const word = { 'no-origin': 'not available', off: 'off', 'delegate-invalid': 'delegate invalid', blocked: 'on · not recording', rejected: 'push failed', pending: `on · ${s.pending} pending push`,
     delegated: excluded ? `via ${s.delegateTo} · yours excluded` : `via ${s.delegateTo}`, on: excluded ? 'on · yours excluded' : runs ? `on · ${runs}` : 'on' }[state];
   const scope = ['no-origin', 'off'].includes(state) ? '' : s.delegateTo ? `via ${s.delegateTo}` : 'this project';

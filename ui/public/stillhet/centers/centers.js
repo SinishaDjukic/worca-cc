@@ -17,7 +17,13 @@
   const filterHook = (f) => ({ 'data-c-filter': JSON.stringify(f) });
   let menu = '', tasksHost = null, schedHost = null, quietOpen = false;
   let asking = null;   // a card's step that asks first (act.confirm), in a ConfirmStrip at the card it was pressed on (the Projects center: under its head): { does, id, label, f, busy, where }
-  let view = { sort: 'most urgent', by: 'project', sSort: 'most urgent', from: '' }, figs = { tasks: false, sched: false };
+  let view = { sort: 'most urgent', sSort: 'most urgent' }, figs = { tasks: false, sched: false };
+  // One filter per place (list.bar-model): Show, Project and Group by are the bar's Filter, and the page follows it. The
+  // page's own line keeps Order and Figures. StillhetRunsList.view() says what is chosen and shown() is the very rows the bar lists.
+  const barView = () => { const v = List().view?.(); return v ? { show: v.show, from: v.project || 'all', by: v.by, narrowed: v.narrowed || '' } : { show: 'all', from: List().from(), by: '', narrowed: '' }; };
+  const byNow = () => (barView().by === 'workflow' ? 'workflow' : 'project');
+  const sView = () => Sch().view?.() || { show: Sch().showing(), from: '', by: '' };
+  const centerCard = R.centerCard || R.taskActions.card;
   // Cards never move under the pointer: the order is the one the page had when it was opened (or its Order was picked);
   // a card acted on stays where it was and shows its new state, and the order settles on the next visit.
   const frozen = { tasks: null, sched: null }, acted = new Map(), actedS = new Map();   // acted, actedS: a task, a schedule acted on this visit → the name of the card it stood on
@@ -50,22 +56,22 @@
   // V-TW-01: a button names its task in at most 24 characters, whole words, "…" when cut; its tooltip keeps the full title
   const SHORT = 24;
   const shortOf = (title) => { const s = String(title || '').trim(); if (s.length <= SHORT) return s; let out = ''; for (const w of s.split(/\s+/)) { const next = out ? `${out} ${w}` : w; if (next.length > SHORT) break; out = next; } return `${out || s.slice(0, SHORT - 1)}…`; };
-  const actionsOf = (rs) => R.taskActions(rs.map((t) => ({ id: t.id, title: t.title, short: t.short || shortOf(t.title), state: stateOf(t) })));
+  const actionsOf = (rs, o) => R.taskActions(rs.map((t) => ({ id: t.id, title: t.title, short: t.short || shortOf(t.title), state: stateOf(t) })), o);
   const schedLink = (s) => (advanced() ? link(s.title, { 'data-c-sched': s.id }, `Opens ${s.title}`) : esc(s.title));   // Simple: Schedules is locked, so no links lead there
   // a task's own page (thing-page: a card's title opens its thing, in every mode)
   const openPage = (r) => { if (!W.live) r.unread = false; const S = window.StillhetShell; if (S.openTaskPage) S.openTaskPage(r.case, '', r.title, r.opens || r.id); else S.go(`run/${r.opens || r.id}`); };
 
   // ---- the Tasks center ----
-  const inFrom = (project) => { const f = List().from(); return f === 'all' || (project || 'No project') === f; };   // the list's "from": the page shows the same project
-  const fromRows = () => List().rows().filter((t) => inFrom(t.project));
+  const inFrom = (project) => { const f = barView().from || 'all'; return f === 'all' || (project || 'No project') === f; };   // the list's "from": the page shows the same project
+  const fromRows = () => (List().shown ? List().shown().filter((t) => !t.archived) : List().rows().filter((t) => inFrom(t.project)));
   function groups() {
-    const rows = fromRows(), key = (t) => (view.by === 'workflow' ? t.workflow || 'Default' : t.project || 'No project');
+    const rows = fromRows(), key = (t) => (byNow() === 'workflow' ? t.workflow || 'Default' : t.project || 'No project');
     const map = new Map();
     const of = (k) => { if (!map.has(k)) map.set(k, { name: k, rows: [], missed: [], live: [] }); return map.get(k); };
     rows.forEach((t) => of(key(t)).rows.push(t));
     for (const s of Sch().all()) {
       if (!inFrom(s.project)) continue;
-      const k = view.by === 'workflow' ? s.workflow || 'Default' : s.project || 'No project';
+      const k = byNow() === 'workflow' ? s.workflow || 'Default' : s.project || 'No project';
       if (s.section === 'needs') of(k).missed.push(s); else if (Sch().running(s.id)) of(k).live.push(s);
     }
     return [...map.values()].map((g) => {
@@ -77,7 +83,7 @@
   }
   const urgency = (g) => (g.needs.length ? RANK(stateOf(taskOf(g.needs[0]))) : g.missed.length ? 2.5 : g.running.length || g.live.length ? 5 : 6);
   const SORTS = { 'most urgent': (a, b) => urgency(a) - urgency(b) || a.name.localeCompare(b.name), 'most spent': (a, b) => b.cost - a.cost, 'A–Z': (a, b) => a.name.localeCompare(b.name) };
-  const groupFilter = (g, more = {}) => ({ ...(view.by === 'workflow' ? { workflow: g.name } : { project: g.name }), ...more });
+  const groupFilter = (g, more = {}) => ({ ...(byNow() === 'workflow' ? { workflow: g.name } : { project: g.name }), ...more });
   function factsOf(g) {
     const parts = [[g.running.length, 'running', { show: 'running' }], [g.waiting.length, 'waiting', { show: 'waiting' }]];
     if (g.recent.length) parts.push([g.recent.length, g.recent.every((t) => t.word === 'Merged') ? 'merged' : 'finished', { show: 'finished', range: WEEK }]);
@@ -96,50 +102,57 @@
   function actionOf(g) {
     if (g.held) return openBtn(g.held);
     if (g.heldS) { const run = Sch().runningRun(g.heldS), t = run?.wid && W.find(run.wid); return t ? openBtn(t) : ''; }
-    if (g.needs.length) return actionsOf(g.needs.slice(0, 2).map(taskOf).filter(Boolean));   // the one action, named when two things wait
+    if (g.needs.length) return actionsOf([taskOf(g.needs[0])].filter(Boolean));   // the card's one action (panel.card-opens)
     if (g.missed.length) return runNowBtn(g.missed[0]);
     const lead = leadOf(g);
     return lead ? openBtn(lead) : '';
   }
-  // the shortcut to the list, narrowed to this card's project or workflow: a separate control that says what it does
-  const onlyBtn = (g) => (g.held || g.heldS || (view.by === 'project' && List().from() !== 'all') ? '' : R.button({ label: `Only ${shortOf(g.name)}`, kind: 'quiet', attrs: { 'data-c-filter': JSON.stringify(groupFilter(g)), title: `Shows only ${g.name}'s tasks in the list` } }));
-  // one card per level (look.alert-ladder): Advisory never rides under Caution, a missed time and what runs each have their own
-  const isReady = (t) => ['ready', 'approved'].includes(stateOf(taskOf(t)));
+  // One card per thing that needs you (panel.card-opens): each task that waits and each missed time has its own card, with
+  // its one action; what runs in a project shares one card. The bar's Show narrows the cards as it narrows the list.
   function partsOf(g) {
-    const lit = g.needs.filter((t) => !isReady(t)), ready = g.needs.filter(isReady), only = (o) => ({ ...g, needs: [], missed: [], live: [], running: [], ...o });
-    const parts = [...(lit.length ? [only({ needs: lit })] : []), ...(ready.length ? [only({ needs: ready })] : []), ...(g.missed.length ? [only({ missed: g.missed })] : []), ...(!g.needs.length && (g.running.length || g.live.length) ? [only({ running: g.running, live: g.live })] : [])];
-    return parts.length ? parts : [g];
+    const only = (o) => ({ ...g, needs: [], missed: [], live: [], running: [], one: true, ...o }), show = barView().show;
+    const needs = [...g.needs.map((t) => only({ needs: [t] })), ...(['all', 'needs'].includes(show) ? g.missed.map((x) => only({ missed: [x] })) : [])];   // the rows are the bar's own (shown()); a missed time is a schedule, listed under All and Needs you
+    const liveS = ['all', 'running'].includes(show) ? g.live : [];
+    const runs = g.running.length || liveS.length ? [only({ running: g.running, live: liveS, one: false })] : [];
+    return [...needs, ...runs];
   }
-  // what the card's own task says, under its title: why it stands where it does (the title already names it)
-  const saysOf = (r) => liveSays(r) || r.detail || R.runState(stateOf(r)).word;
+  // what the card's own task says, under its title: why it stands where it does. The state word is the card's first word
+  // already, so it is never said again here.
+  const saysOf = (r) => { const t = liveSays(r) || r.detail || '', w = R.runState(stateOf(r)).word; const lead = [w, R.needsReason(stateOf(r))].find((x) => x && (t === x || t.startsWith(`${x} · `))); return lead ? t.slice(lead.length).replace(/^ · /, '') : t; };
+  // a single task's own facts: when, and what it has cost
+  const ownFacts = (r) => [r.time && r.time !== 'now' ? r.time : '', r.cost > 0 ? usd(r.cost) : ''].filter(Boolean).join(' · ');
   function cardOf(g) {
     const top = topOf(g), lead = leadOf(g), sch = schedOf(g), st = top ? R.runState(stateOf(top)) : null;
     const word = g.heldS ? Sch().wordOf(g.heldS.id) : g.held ? st.word : top ? R.needsReason(stateOf(top)) : g.missed.length ? 'Missed' : g.running.length || g.live.length ? R.runState('working').word : 'Quiet';
     const tone = g.heldS ? (Sch().running(g.heldS.id) ? 'run' : 'idle') : top ? R.markTone(st) : g.missed.length ? 'act' : g.running.length || g.live.length ? 'run' : 'idle';
-    const others = [...g.needs.slice(lead && !g.held ? 1 : 0, 2).map((t) => clause(taskOf(t))), ...g.missed.filter((x) => x !== sch).map((x) => `${schedLink(x)} missed ${esc(x.missed)}`), ...(lead ? [] : g.live.filter((x) => x !== sch).map((x) => `${schedLink(x)} is running`))];   // a running task leads: its schedule is not said twice
+    const others = lead ? [] : g.live.filter((x) => x !== sch).map((x) => `${schedLink(x)} is running`);   // a running task leads: its schedule is not said twice
     const first = lead ? esc(saysOf(lead)) : g.heldS ? esc(Sch().running(sch.id) ? 'Its task is running' : cap1(Sch().nextOf(sch.id) || '')) : sch ? (g.missed.includes(sch) ? `Missed ${esc(sch.missed)} · ${esc(sch.missedWhy || '')}` : 'Its task is running') : 'Nothing is going on here.';
     const facts = factsOf(g);
-    const kind = lead ? 'task' : sch ? 'schedule' : view.by === 'workflow' ? 'workflow' : 'project';   // the mark says how it stands (list.kind-mark)
+    const kind = lead ? 'task' : sch ? 'schedule' : byNow() === 'workflow' ? 'workflow' : 'project';   // the mark says how it stands (list.kind-mark)
     const title = lead ? lead.title : sch ? sch.title : g.name;
-    const titleHtml = lead ? link(lead.title, { 'data-c-open': lead.id }, `Opens ${lead.title}`) : sch ? schedLink(sch) : '';
+    const titleHtml = lead ? link(lead.title, { 'data-c-open': lead.id }, `Opens ${lead.title}`) : sch ? schedLink(sch) : link(g.name, filterHook(groupFilter(g)), `Shows only ${g.name}'s tasks in the list`);
+    // the whole card opens its thing; the project in its kicker narrows the place to it (panel.center-narrow)
+    const opens = lead ? { 'data-c-go': `t:${lead.id}` } : sch && advanced() ? { 'data-c-go': `s:${sch.id}` } : null;
+    const narrows = (lead || sch) && !(byNow() === 'project' && barView().from !== 'all' && barView().from) ? { name: g.name, attrs: { ...filterHook(groupFilter(g)), title: `Shows only ${g.name}'s tasks` } } : null;
+    const own = g.one && lead ? ownFacts(lead) : '';
     // a step that asks first asks here, at its own card (act.confirm): the strip takes the place of the buttons it came from
-    const mine = asking && asking.where === 'tasks' && (g.held ? g.held.id === asking.id : g.needs.slice(0, 2).some((t) => taskOf(t)?.id === asking.id));
-    return R.pluginCard({ mark: R.kindMark({ kind, tone, advisory: tone === 'ok', breathe: !g.held && !!(top || g.missed.length) }), word, kicker: lead || sch ? `· ${g.name}` : '', tone, title, titleHtml,
-      whatHtml: [first, ...others].slice(0, 2).join('<br>'), action: mine ? stripOf(asking) : actionOf(g), more: mine ? '' : onlyBtn(g), factsHtml: facts.html, factsTip: facts.tip, attrs: { 'data-c-key': keyOfCard(g) } });
+    const mine = asking && asking.where === 'tasks' && (g.held ? g.held.id === asking.id : g.needs.some((t) => taskOf(t)?.id === asking.id));
+    return centerCard({ mark: R.kindMark({ kind, tone, advisory: tone === 'ok', breathe: !g.held && !!(top || g.missed.length) }), word, project: narrows, kicker: !narrows && (lead || sch) ? `· ${g.name}` : '', opens, tone, title, titleHtml,
+      whatHtml: [first, ...others].filter(Boolean).slice(0, 2).join('<br>'), action: mine ? stripOf(asking) : actionOf(g), ...(g.one ? { facts: own } : { factsHtml: facts.html, factsTip: facts.tip }), attrs: { 'data-c-key': keyOfCard(g) } });
   }
   const cap1 = (t) => String(t).charAt(0).toUpperCase() + String(t).slice(1);
   const part = (id, label, text, items, tip) => ({ id, label, text, tip, items: items.map((v) => (typeof v === 'object' ? v : { id: v, text: cap1(v), checked: v === text })) });
   // a center's filters (list.filters): FilterRow's one compact line, each picker with its label inside it; at its end
   // Figures, a small toggle button with its pressed state, and the one quiet way to Chat for new work
-  const filters = (parts, which, facts) => `${R.filterRow({ parts: parts.map((x) => ({ raw: x.id === 'c-from' || x.id === 'c-sfrom', ...x })), open: menu, end: `${R.button({ label: 'Figures', cls: 'cf-figs', attrs: { 'data-c-figs': which, 'aria-pressed': String(figs[which]), title: figs[which] ? 'Hides the counts and costs' : 'Shows the counts and costs' } })}` })}${figs[which] ? R.figuresLine(facts) : ''}`;
+  const filters = (parts, which, facts) => `${R.filterRow({ parts: parts.map((x) => ({ raw: x.id === 'c-from' || x.id === 'c-sfrom', ...x })), open: menu, end: `${R.button({ label: 'Figures', kind: 'quiet', cls: 'cf-figs', attrs: { 'data-c-figs': which, 'aria-pressed': String(figs[which]), title: figs[which] ? 'Hides the counts and costs' : 'Shows the counts and costs' } })}` })}${figs[which] ? R.figuresLine(facts) : ''}`;
   // The centers are for looking at work and answering it; new work starts in Chat. The head's one quiet way there:
-  const startBtn = (which) => R.button({ label: 'Start one in Chat', attrs: { 'data-c-start': which, title: which === 'task' ? 'Opens Chat, ready for a new task' : 'Opens Chat, ready for a new schedule' } });
+  const startBtn = (which) => R.button({ kind: 'quiet', label: 'Start one in Chat', attrs: { 'data-c-start': which, title: which === 'task' ? 'Opens Chat, ready for a new task' : 'Opens Chat, ready for a new schedule' } });
   function tasksHtml() {
     // the list's own first-load looks (D15): never "No tasks yet." while the first load is out
     const ls = window.StillhetDemoState?.list || '';
-    if (ls === 'loading' || ls === 'failed') return wrap(`${R.placeHead({ title: 'Your tasks', facts: 'New work starts in Chat' })}${R.listState({ state: ls, noun: 'tasks', retry: ls === 'failed' ? { 'data-c-retry': '', 'data-key': 'c-retry' } : null })}`);
+    if (ls === 'loading' || ls === 'failed') return wrap(`${R.placeHead({ title: 'Tasks', facts: 'New work starts in Chat' })}${R.listState({ state: ls, noun: 'tasks', retry: ls === 'failed' ? { 'data-c-retry': '', 'data-key': 'c-retry' } : null })}`);
     const rows = fromRows(), all = groups().sort(SORTS[view.sort]);
-    if (!rows.length) return wrap(`${R.placeHead({ title: 'Your tasks', facts: 'New work starts in Chat' })}${R.emptyState({ title: 'No tasks yet.', actions: startBtn('task') })}`);
+    if (!List().rows().length) return wrap(`${R.placeHead({ title: 'Tasks', facts: 'New work starts in Chat' })}${R.emptyState({ title: 'No tasks yet.', actions: startBtn('task') })}`);
     // F-3-10: live, the API's week (every project, or the chosen one's row), nothing while it is read; demo, the per-run sum
     const week = W.live ? (() => { const f = List().from(), t = window.StillhetInsightsLive?.weekTotals?.(f === 'all' ? null : f); return t ? { n: t.runs, cost: t.spentUsd } : null; })() : weekOf(rows);
     const live = all.filter((g) => !g.quiet).flatMap(partsOf).sort(SORTS[view.sort]), quiet = all.filter((g) => g.quiet);
@@ -153,14 +166,15 @@
     // the count opens the chosen project's week; live, the list can hold fewer than the API counted, and the tip says so
     const f = List().from(), wk = filterHook({ range: WEEK, ...(f === 'all' ? {} : { project: f }) }), wTip = W.live ? 'Opens this week\'s tasks in the list. The figure counts every task Worca recorded this week, so the two can differ' : 'Opens this week\'s tasks';
     const facts = week ? `${count(`${plural(week.n, 'task')} this week`, wk, wTip)}${week.cost > 0 ? ` · ${count(`${usd(week.cost)} this week`, wk, wTip)}` : ''}` : '';
-    const names = [...new Set(List().rows().map((t) => t.project || 'No project'))];
-    const bar = filters([part('c-sort', 'Order', view.sort, Object.keys(SORTS), 'How the cards are ordered'), part('c-by', 'Group by', view.by, ['project', 'workflow'], 'What a card stands in'),
-      { id: 'c-from', label: 'Project', text: f === 'all' ? 'All projects' : f, tip: 'Which project the cards and the list show', items: [{ id: 'all', text: 'All projects', checked: f === 'all' }, ...names.map((n) => ({ id: n, text: n, checked: n === f }))] }], 'tasks', facts);
-    const calm = !all.some((g) => g.needs.length || g.missed.length);
-    const noun = view.by === 'workflow' ? 'workflow' : 'project';
+    // the page's line: Order and Figures. Which tasks, which project and the grouping are the bar's Filter (one filter per place)
+    const bar = filters([part('c-sort', 'Order', view.sort, Object.keys(SORTS), 'How the cards are ordered')], 'tasks', facts);
+    const narrowed = f !== 'all' || barView().narrowed ? R.narrowedLine({ to: barView().narrowed || f, clear: { 'data-c-clear': 'tasks', title: 'Shows every project again' } }) : '';
+    const calm = barView().show === 'all' && !barView().narrowed && !all.some((g) => g.needs.length || g.missed.length);
+    const nothing = !shown.length && !quiet.length ? R.emptyState({ title: 'No tasks in this view.' }) : '';
+    const noun = byNow() === 'workflow' ? 'workflow' : 'project';
     const quietFacts = (() => { return quiet.map((g) => g.name).join(', '); })();
     const quietRow = quiet.length ? `${R.quietLine({ n: quiet.length, noun, names: quietFacts, open: quietOpen, hook: { 'data-c-quiet': '' } })}${quietOpen ? `<div class="pg-grid">${quiet.map(cardOf).join('')}</div>` : ''}` : '';
-    return wrap(`${R.placeHead({ title: 'Your tasks', say: calm ? 'Nothing needs you' : '', actions: startBtn('task') })}${bar}<div class="pg-grid">${shown.map(cardOf).join('')}</div>${quietRow}`);
+    return wrap(`${R.placeHead({ title: 'Tasks', say: calm ? 'Nothing needs you' : '', actions: startBtn('task') })}${bar}${narrowed}${nothing}<div class="pg-grid">${shown.map(cardOf).join('')}</div>${quietRow}`);
   }
   const wrap = (body) => `<div class="convo"><div class="convo-scroll"><div class="convo-col is-center">${body}</div></div></div>`;
   const stripOf = (a) => R.confirmStrip({ ...R.confirmOf(a.f, a.label), busy: a.busy ? R.workingWord(a.label) : '', id: 'c-confirm-t', attrs: { 'data-c-ask': '' } });
@@ -198,22 +212,27 @@
   function schedCard(s) {
     // its word and why are the schedule's own (StillhetSchedules.wordOf / nextOf): the same on its page, its row and its chat card
     const sec = sectionNow(s), word = Sch().wordOf(s.id), next = Sch().nextOf(s.id);
-    const [kicker, tone] = sec === 'needs' ? [`${s.missed}, ${s.at} · ${s.missedWhy}`, 'act'] : sec === 'running' ? [next, 'run'] : [next, 'idle'];
-    const fact = `${s.project || 'No project'} · ${R.REPEATS.includes(s.every) ? R.scheduleWords(s).says : s.every}${s.tz && s.tz !== homeTz() ? ` ${s.tz}` : ''} · ${flowWord(s.workflow)}${s.preset ? ` · ${s.preset === 'preset deleted' ? s.preset : `from ${s.preset}`}` : ''}`;   // its project, when it runs and its workflow (its prompt is the line above)
+    const project = s.project || 'No project', tone = sec === 'needs' ? 'act' : sec === 'running' ? 'run' : 'idle';
+    // its kicker: the state word, its project (a link that narrows Schedules to it) and when it runs next; a missed one says when and why in the line under its title
+    const kicker = sec === 'needs' ? '' : next, what = sec === 'needs' ? `Missed ${s.missed}, ${s.at} · ${s.missedWhy}` : s.what || R.scheduleWords(s).says;
+    const fact = `${R.REPEATS.includes(s.every) ? R.scheduleWords(s).says : s.every}${s.tz && s.tz !== homeTz() ? ` ${s.tz}` : ''} · ${flowWord(s.workflow)}${s.preset ? ` · ${s.preset === 'preset deleted' ? s.preset : `from ${s.preset}`}` : ''}`;   // when it runs and its workflow
+    const narrowed = sView().from === project;
     // Run now, Stop and Resume are one kind of button: bordered, never filled, so the row of cards reads evenly
     const act = sec === 'ended' ? null : sec === 'running' ? ['Stop', 'stop'] : sec === 'paused' ? ['Resume', 'pause'] : ['Run now', 'run'];   // an ended one runs no more
-    return R.pluginCard({ mark: R.kindMark({ kind: 'schedule', tone: sec === 'needs' ? 'act' : sec === 'paused' ? 'pause' : sec === 'running' ? 'run' : 'idle', breathe: sec === 'needs' }), word, kicker, tone, title: s.title, titleHtml: link(s.title, { 'data-c-sched': s.id }, `Opens ${s.title}`), what: s.what || R.scheduleWords(s).says, line: schedLine(s), facts: fact, action: act ? R.button({ label: act[0], attrs: { 'data-c-sact': `${act[1]}|${s.id}`, 'aria-label': `${act[0]}: ${s.title}`, title: `${act[0]}: ${s.title}` } }) : '', attrs: { 'data-c-card': s.id, 'data-c-key': `s:${s.id}`, title: s.cost ? `${usd(s.cost)} a task` : null } });
+    return centerCard({ mark: R.kindMark({ kind: 'schedule', tone: sec === 'needs' ? 'act' : sec === 'paused' ? 'pause' : sec === 'running' ? 'run' : 'idle', breathe: sec === 'needs' }), word, kicker: narrowed ? `· ${[project, kicker].filter(Boolean).join(' · ')}` : kicker, project: narrowed ? null : { name: project, attrs: { 'data-c-snarrow': project, title: `Shows only ${project}'s schedules` } }, opens: { 'data-c-go': `s:${s.id}` }, tone, title: s.title, titleHtml: link(s.title, { 'data-c-sched': s.id }, `Opens ${s.title}`), what, line: schedLine(s), facts: fact, action: act ? R.button({ label: act[0], attrs: { 'data-c-sact': `${act[1]}|${s.id}`, 'aria-label': `${act[0]}: ${s.title}`, title: `${act[0]}: ${s.title}` } }) : '', attrs: { 'data-c-card': s.id, 'data-c-key': `s:${s.id}`, title: s.cost ? `${usd(s.cost)} a task` : null } });
   }
   function schedulesHtml() {
-    const all = Sch().all(), sorted = all.filter((s) => (!view.from || (s.project || 'No project') === view.from) && (Sch().showing() === 'all' || s.state === 'paused')).sort(SCHED_SORTS[view.sSort]);
-    if (!all.length) return wrap(`${R.placeHead({ title: 'Your schedules', facts: 'New work starts in Chat' })}${R.emptyState({ title: 'No schedules yet.', actions: startBtn('schedule') })}`);
+    // which schedules: the bar's Filter (Show, Project), so bar and page show the same ones (one filter per place)
+    const v = sView(), shows = Sch().shows || ((s, show) => show === 'all' || s.state === 'paused');
+    const all = Sch().all(), sorted = all.filter((s) => (!v.from || (s.project || 'No project') === v.from) && shows(s, v.show)).sort(SCHED_SORTS[view.sSort]);
+    if (!all.length) return wrap(`${R.placeHead({ title: 'Schedules', facts: 'New work starts in Chat' })}${R.emptyState({ title: 'No schedules yet.', actions: startBtn('schedule') })}`);
     const list = hold('sched', sorted, (s) => s.id);
     const runs = all.flatMap((s) => s.runs.filter((r) => r.case !== 'stopped').slice(0, 7)).filter((r) => OUT(r) !== 'run'), won = runs.filter((r) => OUT(r) === 'ok').length;
     const facts = [esc(plural(all.length, 'schedule')), runs.length ? count(`${won} of ${runs.length} runs succeeded in 7 days`, filterHook({ schedule: 'any', show: 'finished' }), 'Opens the runs that succeeded in Tasks') : '', `times in ${DEFAULT_TZ}${all.some((s) => s.tz && s.tz !== DEFAULT_TZ) ? ', unless a card says' : ''}`].filter(Boolean).join(' · ');
-    const projects = [...new Set(all.map((s) => s.project || 'No project'))];
-    const bar = filters([part('c-ssort', 'Order', view.sSort, Object.keys(SCHED_SORTS), 'How the cards are ordered'),
-      { id: 'c-sfrom', label: 'Project', text: view.from || 'All projects', tip: 'Which project', items: [{ id: 'all', text: 'All projects', checked: !view.from }, ...projects.map((n) => ({ id: n, text: n, checked: n === view.from }))] }], 'sched', facts);
-    return wrap(`${R.placeHead({ title: 'Your schedules', actions: startBtn('schedule') })}${bar}${list.length ? `<div class="pg-grid">${list.map(schedCard).join('')}</div>` : R.emptyState({ title: 'No paused schedules here.' })}`);
+    const bar = filters([part('c-ssort', 'Order', view.sSort, Object.keys(SCHED_SORTS), 'How the cards are ordered')], 'sched', facts);
+    const narrowed = v.from ? R.narrowedLine({ to: v.from, clear: { 'data-c-clear': 'sched', title: 'Shows every project again' } }) : '';
+    const none = { paused: 'No paused schedules here.', once: 'No one-off schedules here.', repeating: 'No repeating schedules here.' }[v.show] || 'No schedules here.';
+    return wrap(`${R.placeHead({ title: 'Schedules', actions: startBtn('schedule') })}${bar}${narrowed}${list.length ? `<div class="pg-grid">${list.map(schedCard).join('')}</div>` : R.emptyState({ title: none })}`);
   }
 
   // ---- paint ----
@@ -241,18 +260,29 @@
     if (does === 'pr') { W.move(id, 'checks', 'PR opened · checks running'); say(LIVE_SAY.pr(r.title), back); }
     if (does === 'fix-checks') { W.move(id, 'fixing-checks', 'Fixing the failing checks'); say(`A short task is fixing ${r.title}\u2019s checks`, back); }
   }
-  const cardNameOf = (r) => { const t = List().rows().find((x) => taskOf(x)?.id === r.id || x.id === r.id); return view.by === 'workflow' ? t?.workflow || r.workflow || 'Default' : r.project || t?.project || 'No project'; };
+  const cardNameOf = (r) => { const t = List().rows().find((x) => taskOf(x)?.id === r.id || x.id === r.id); return byNow() === 'workflow' ? t?.workflow || r.workflow || 'Default' : r.project || t?.project || 'No project'; };
   // The live kind (Tasks, Step 8): a card's action is the same StillhetTaskLive id the task page runs; nothing moves here before
   // its route answers ok, and a refusal is the shell's one `Could not ACTION: REASON`.
   const LIVE_LABEL = { retry: 'Retry', resume: 'Resume', approve: 'Approve and build', merge: 'Merge PR', pr: 'Create PR', 'fix-checks': 'Fix checks' };
   const LIVE_SAY = { retry: (t) => `Retrying ${t}`, resume: (t) => `Resumed ${t}`, approve: (t) => `Approved ${t}`, merge: (t) => `Merged ${t}`, pr: (t) => `Created a PR for ${t}`, 'fix-checks': (t) => `A short task is fixing ${t}\u2019s checks` };
   // A step the task page confirms first (its state's flow in the library's table: Merge PR, Fix checks) asks here too, in
   // the same words, filled with the task's own PR, base and failing count (run-page-model.js liveFacts).
+  // Resume past a used-up budget asks first, at the button (act.confirm): the budget is the one StillhetWorld holds
+  const usd0 = (n) => `$${Math.round(n).toLocaleString('en-US')}`;
+  const budgetNow = () => { const b = W.budget?.('yours'); if (b) return { limit: b.usd, spent: b.spent }; return W.facts?.().budget || null; };
+  function budgetAsk(does, r) {
+    if (does !== 'resume' || stateOf(r) !== 'paused-budget') return null;
+    const b = budgetNow(); if (!b || !Number.isFinite(b.limit)) return null;
+    const over = Math.max(0, (b.spent || 0) - b.limit);
+    return { does, id: r.id, label: 'Resume', busy: false, f: { confirm: `Resume past the ${usd0(b.limit)} budget? ${over > 0 ? `${usd0(over)} over so far` : `All ${usd0(b.limit)} of it is spent`}` } };
+  }
   function demoAsk(does, r) {
+    const past = budgetAsk(does, r); if (past) return past;
     const label = LIVE_LABEL[does], f = label ? RM.flow[r.case]?.[label] : null;
     return f && f.confirm ? { does, id: r.id, label, f, busy: false } : null;
   }
   function liveAsk(does, r) {
+    const past = budgetAsk(does, r); if (past) return past;
     const v = window.StillhetTaskLive?.detail?.(r.id), label = LIVE_LABEL[does];
     // the base: the page's (once its detail is in), else the PR's own from its checks entry
     const f = v ? R.actionFlow(stateOf(r), RM.liveFacts({ ...v, base: v.base || window.StillhetTaskLive.checks?.(r.id)?.base || '' }))[label] : null;
@@ -286,6 +316,8 @@
     if ((hit = on('[data-c-ask] [data-confirm]'))) { if (!hit.disabled) answerAsk(hit.dataset.confirm === 'yes'); return; }
     if ((hit = on('[data-c-retry]'))) { window.StillhetAdapter?.retry?.(); return; }
     if ((hit = on('[data-c-figs]'))) { const w = hit.dataset.cFigs; figs[w] = !figs[w]; paint(); (w === 'sched' ? schedHost : tasksHost)?.querySelector(`[data-c-figs="${w}"]`)?.focus({ preventScroll: true }); return; }
+    if ((hit = on('[data-narrow-clear][data-c-clear]'))) { if (hit.dataset.cClear === 'sched') Sch().narrow?.(''); else List().filter({}); return; }
+    if ((hit = on('[data-c-snarrow]'))) { settle('sched'); Sch().narrow?.(hit.dataset.cSnarrow); schedHost?.querySelector('[data-narrow-clear]')?.focus({ preventScroll: true }); return; }   // a schedule card's project narrows Schedules to it, bar and page
     if ((hit = on('[data-c-filter]'))) { List().filter(JSON.parse(hit.dataset.cFilter)); return; }
     if ((hit = on('[data-c-open]'))) { act('open', hit.dataset.cOpen); return; }
     if ((hit = on('[data-c-act]'))) {
@@ -298,7 +330,7 @@
     }
     if ((hit = on('[data-c-sact]'))) {
       const [d, id] = hit.dataset.cSact.split('|'), s0 = Sch().find(id); if (hit.disabled) return;
-      if (s0 && whereNow() === 'tasks') actedS.set(id, view.by === 'workflow' ? s0.workflow || 'Default' : s0.project || 'No project');   // its card stays where it is
+      if (s0 && whereNow() === 'tasks') actedS.set(id, byNow() === 'workflow' ? s0.workflow || 'Default' : s0.project || 'No project');   // its card stays where it is
       press(hit, d === 'pause' && s0?.state !== 'paused' ? 'Pausing…' : BUSY_WORD[d] || 'Working…', () => answered().then(() => { Sch().act(id, d); paint(); }));
       return;
     }
@@ -308,12 +340,16 @@
     if (on('[data-c-quiet]')) { quietOpen = !quietOpen; paint(); return; }
     if ((hit = on('[data-pick^="c-"]'))) {
       const [id, ...rest] = hit.dataset.pick.split('|'), v = rest.join('|'); menu = '';
-      settle(id === 'c-ssort' || id === 'c-sfrom' ? 'sched' : 'tasks');   // a new order is asked for: the cards may move now
-      if (id === 'c-sort') view.sort = v; if (id === 'c-by') view.by = v; if (id === 'c-ssort') view.sSort = v; if (id === 'c-sfrom') view.from = v === 'all' ? '' : v;
-      if (id === 'c-from') { List().filter(v === 'all' ? {} : { project: v }); backTo(id); return; }   // the list beside the cards shows the same project
+      settle(id === 'c-ssort' ? 'sched' : 'tasks');   // a new order is asked for: the cards may move now
+      if (id === 'c-sort') view.sort = v; if (id === 'c-ssort') view.sSort = v;
       paint(); backTo(id); return;
     }
-    if ((hit = on('[data-menu^="c-"]'))) { const id = hit.dataset.menu; menu = menu === id ? '' : id; paint(); backTo(id); }
+    if ((hit = on('[data-menu^="c-"]'))) { const id = hit.dataset.menu; menu = menu === id ? '' : id; paint(); backTo(id); return; }
+    // the whole card opens its thing (panel.card-opens): a click that landed on no control of its own
+    if ((hit = on('[data-c-go]')) && !on('button, a, input, select, textarea, label, [role="alertdialog"]') && !String(window.getSelection?.() || '')) {
+      const [k, ...rest] = hit.dataset.cGo.split(':'), id = rest.join(':');
+      if (k === 't') act('open', id); else window.StillhetShell.go(`schedule/${id}`);
+    }
   }
   const backTo = (id) => document.querySelector(`#route-runs [data-menu="${id}"], #route-schedule [data-menu="${id}"]`)?.focus({ preventScroll: true });   // the picker keeps the focus over a redraw
   let wired = false;
@@ -323,7 +359,7 @@
     for (const [el, where] of [['route-runs', 'tasks'], ['route-place', 'place']]) document.getElementById(el).addEventListener('keydown', (e) => { if (e.key === 'Escape' && asking?.where === where && !asking.busy) { e.stopPropagation(); answerAsk(false); } });   // Esc is the strip's safe side
     for (const el of ['route-runs', 'route-schedule']) document.getElementById(el).addEventListener('keydown', (e) => { if (e.key === 'Escape' && menu && !form) { e.stopPropagation(); const m = menu; menu = ''; paint(); backTo(m); } });   // Esc closes an open picker, back on its button
     document.getElementById('route-schedule').addEventListener('click', onClick);
-    document.getElementById('route-place').addEventListener('click', (e) => { if (e.target.closest('[data-c-filter], [data-c-open], [data-c-act], [data-c-sact], [data-c-sched], [data-c-ask]')) onClick(e); });   // the Projects center's cards act the same way
+    document.getElementById('route-place').addEventListener('click', (e) => { if (e.target.closest('[data-c-filter], [data-c-open], [data-c-act], [data-c-sact], [data-c-sched], [data-c-ask], [data-c-go]')) onClick(e); });   // the Projects center's cards act the same way
     W.onMove(paint); W.onChange(paint); R.prefs.onChange(paint);
     R.dismissOnOutside(document, { open: () => !!menu && !form, inside: '#route-runs .pz-pick, #route-schedule .fr .pz-pick', back: () => null, close: () => { menu = ''; }, paint });
   }
@@ -410,8 +446,13 @@
   const LOCKS = () => OPT()?.locks || {};
   let presetList = null, sourceList = null;   // per form open: dev's presets and plugin task sources (null: not read, or refused)
   const dirOf = (project = form.project) => (project === 'No project' ? '' : W.live ? window.StillhetTaskLive?.projectDirOf(project) || '' : `/demo/${project}`);
-  const engineLabelOf = (id) => (W.live ? engines().find((e) => e.id === id)?.label || '' : id ? id[0].toUpperCase() + id.slice(1) : '');
-  const engineIdOf = (label) => (W.live ? engines().find((e) => e.label === label)?.id || '' : String(label || '').toLowerCase());
+  // The engine list is the eight engines Settings › Models knows (its ENGINES, in its order and by its names). One that is
+  // not set up is listed and off, and says where to set it up; the demo's set-up ones are those with a sign-in that is signed in.
+  const ALL_ENGINES = () => (window.SettingsModel?.ENGINES || [['claude', 'Claude'], ['codex', 'Codex (beta)'], ['copilot', 'Copilot (beta)'], ['cursor', 'Cursor (beta)'], ['gemini', 'Gemini CLI (beta)'], ['goose', 'Goose (beta)'], ['opencode', 'OpenCode (beta)'], ['qwen', 'Qwen Code (beta)']]).map(([id, label]) => ({ id, label: String(label).replace(' (beta)', '') }));
+  const DEMO_SIGN_INS = ['claude', 'codex', 'copilot', 'gemini'], NOT_SET_UP = 'Not set up: Settings › Models';
+  const setUp = (id) => (W.live ? engines().some((e) => e.id === id) : DEMO_SIGN_INS.includes(id) && R.prefs.connected(id));
+  const engineLabelOf = (id) => (W.live ? engines().find((e) => e.id === id)?.label || '' : ALL_ENGINES().find((e) => e.id === id)?.label || '');
+  const engineIdOf = (label) => (W.live ? engines().find((e) => e.label === label)?.id || '' : ALL_ENGINES().find((e) => e.label === label)?.id || String(label || '').toLowerCase());
   const slugOf = (t) => `wf_${String(t).toLowerCase().replace(/[^a-z0-9]+/g, '_')}`;
   const flowId = (title = form.workflow) => (W.live ? flows().find((x) => x.title === title)?.id || '' : title === 'Default' ? '' : slugOf(title));
   const flowOfId = (id) => flows().find((x) => (W.live ? x.id : slugOf(x.title)) === id) || null;
@@ -627,6 +668,8 @@
     const prev = form.preview ? R.prose({ text: `${form.preview.title}\n\n${form.preview.body}` }) : '';
     return `${own}${R.field({ id: 'cc-search', label: `Search ${name}`, error: errOf('#cc-search'), value: form.search, placeholder: `Search ${name}…`, attrs: { 'data-f': 'search' } })}${rows ? `<div class="cc-tickets">${rows}</div>` : ''}${empty}${fail}${prev}`;
   }
+  // set.spend-word: a cap is never called soft or hard, and the pipeline's cap is "the task's cost cap" in words a person reads
+  const capWords = (t) => String(t).replace(/\s*\((?:hard|soft)\)/gi, '').replace(/\bpipeline cap (\$[\d.,]+)/gi, 'the task\'s cost cap is $1').replace(/^Team caps?:\s*the/i, 'The');
   // the one note under the text (form.run-options): the newest refusal, else the broken preset, else the team policy
   function noteHtml() {
     const n = form.note, busy = form.busy ? { disabled: true } : {};
@@ -634,7 +677,7 @@
     if (n?.kind === 'sync') return R.choiceNote({ text: n.title, means: n.note || '', rows: n.rows.map((text) => ({ text })), ways: [{ label: 'Cancel', kind: 'quiet', attrs: { 'data-c-sync': 'cancel', ...busy } }, ...(n.primary ? [{ label: n.primary.label, kind: 'primary', attrs: { 'data-c-sync': n.primary.policy, ...busy } }] : [])] });
     if (form.broken?.length) { const b = RO().brokenNoteOf(form.broken); return R.choiceNote({ text: b.title, means: 'Start waits until each item is fixed', rows: b.rows.map((x, i) => ({ text: x.reset ? x.text : `${x.text} · Edit the preset's scope in Settings › Presets`, ...(x.reset ? { way: { label: 'Reset to default', attrs: { 'data-c-preset-reset': String(i) } } } : {}) })) }); }
     const p = form.policy;
-    return p ? R.choiceNote({ needsYou: p.tone === 'amber', text: p.head, rows: [...p.rows.map((x) => ({ text: x.text })), ...(p.caps ? [{ text: p.caps }] : [])] }) : '';
+    return p ? R.choiceNote({ needsYou: p.tone === 'amber', text: p.head, rows: [...p.rows.map((x) => ({ text: x.text })), ...(p.caps ? [{ text: cap(capWords(p.caps)) }] : [])] }) : '';
   }
 
   // live: dev's GET /api/projects (the store's projects part, less a Remove's undo window), never task rows (F-a4-06)
@@ -663,10 +706,15 @@
   }
   const DEMO_BRANCH = 'main';   // the demo projects' default branch
   const baseList = () => { const own = W.live ? [LIVE_BASE, ...liveBranches.list] : form?.target === 'workspace' ? [EACH_BASE] : [DEMO_BRANCH, 'dev']; return offers('afterBranch') && form?.after ? [PREVIOUS_BASE, ...own] : own; };
-  const engineItems = () => [...LISTS().agent, ...Object.keys(LOCKS())].map((v) => ({ id: v, text: textOf('agent', v), checked: v === form.agent, ...(LOCKS()[v] ? { off: true, help: LOCKS()[v] } : {}) }));
+  function engineItems() {
+    const item = (v, off = '') => ({ id: v, text: textOf('agent', v), checked: v === form.agent, ...(off ? { off: true, help: off, hint: off === NOT_SET_UP ? 'Not set up' : '' } : {}) });
+    const listed = [...new Set([...LISTS().agent, ...Object.keys(LOCKS())])], ids = W.live ? engines().map((e) => e.id) : [];
+    const rest = ALL_ENGINES().filter((e) => !listed.includes(e.label) && !ids.includes(e.id));
+    return [...listed.map((v) => item(v, LOCKS()[v] || '')), ...rest.map((e) => item(e.label, NOT_SET_UP))];
+  }
   const SLICES = { one: 'one PR for the whole feature', each: 'a PR per slice' };
   const NOTIFY = ['only when a task fails', 'after every task', 'never'];
-  const LISTS = () => ({ project: projectItems(), workflow: flows().map((w) => w.title), agent: W.live ? [LIVE_AGENT, ...engines().map((e) => e.label)] : ['Claude', 'Codex', 'Gemini'], base: baseList(), into: [SAME_BRANCH, ...baseList().filter((b) => ![PREVIOUS_BASE, EACH_BASE, LIVE_BASE].includes(b))], guard: GUARDS(), source: W.live ? [LIVE_SETUP, ...Object.keys(LIVE_SOURCE)] : ['the latest version from origin', 'my local copy'], then: W.live ? [LIVE_SETUP, ...Object.keys(LIVE_THEN)] : Object.keys(THEN).filter((t) => offers('autoMerge') || !/^merge/.test(t)), slices: Object.keys(SLICES), every: R.REPEATS.filter((x) => x !== 'every hour'), tz: [...new Set([homeTz(), 'Europe/Sofia', 'UTC', 'Europe/Berlin', 'America/New_York'])], ends: ['no end date', 'after 10 tasks', 'after 30 days'], overlap: ['skip if still going', 'queue if still going'], fails: ['pause after 3 failures', 'pause after 5 failures', 'never pause'], notify: NOTIFY, cap: ['the workflow\'s own', 'at $5', 'at $20'], agents: W.live ? [AGENTS_OWN, ...liveAgentPicks().map((x) => x.text)] : [AGENTS_OWN, 'Sonnet for every step', 'Opus for every step'] });
+  const LISTS = () => ({ project: projectItems(), workflow: flows().map((w) => w.title), agent: W.live ? [LIVE_AGENT, ...engines().map((e) => e.label)] : ALL_ENGINES().filter((e) => setUp(e.id) && !LOCKS()[e.label]).map((e) => e.label), base: baseList(), into: [SAME_BRANCH, ...baseList().filter((b) => ![PREVIOUS_BASE, EACH_BASE, LIVE_BASE].includes(b))], guard: GUARDS(), source: W.live ? [LIVE_SETUP, ...Object.keys(LIVE_SOURCE)] : ['the latest version from origin', 'my local copy'], then: W.live ? [LIVE_SETUP, ...Object.keys(LIVE_THEN)] : Object.keys(THEN).filter((t) => offers('autoMerge') || !/^merge/.test(t)), slices: Object.keys(SLICES), every: R.REPEATS.filter((x) => x !== 'every hour'), tz: [...new Set([homeTz(), 'Europe/Sofia', 'UTC', 'Europe/Berlin', 'America/New_York'])], ends: ['no end date', 'after 10 tasks', 'after 30 days'], overlap: ['skip if still going', 'queue if still going'], fails: ['pause after 3 failures', 'pause after 5 failures', 'never pause'], notify: NOTIFY, cap: ['the workflow\'s own', 'at $5', 'at $20'], agents: W.live ? [AGENTS_OWN, ...liveAgentPicks().map((x) => x.text)] : [AGENTS_OWN, 'Sonnet for every step', 'Opus for every step'] });
   const blank = (kind, keep = {}) => { const f = blank0(kind, keep); f.target = targetOf(f.project); if (offers('afterBranch') && f.after) f.base = PREVIOUS_BASE; return f; };   // a task waiting for a run branches off it
   const blank0 = (kind, keep) => ({ kind, project: defaultProject(), workflow: 'Default', agent: W.live ? LIVE_AGENT : 'Claude', base: W.live ? LIVE_BASE : DEMO_BRANCH, into: SAME_BRANCH, source: W.live ? LIVE_SETUP : 'the latest version from origin', then: W.live ? LIVE_SETUP : 'open a PR', text: '', path: '', src: 'write', name: '', more: false, title: '', branch: '', tags: '', files: [], agents: 'the workflow\'s own', cap: 'the workflow\'s own', every: 'every weekday', at: '09:00', date: '', tz: homeTz(), ends: 'no end date', overlap: 'skip if still going', fails: 'pause after 3 failures', notify: NOTIFY[0], err: '', ...OPTS_BLANK(), ...keep });
   // COV-2: what the run options keep while the form is open (form.run-options)
@@ -758,14 +806,13 @@
       R.field({ id: 'cc-branch', label: 'New branch', value: form.branch, placeholder: 'Worca makes one', attrs: { 'data-f': 'branch', ...(form.sameAsSource ? { disabled: true } : {}) } }),
       fPick('source', 'Start from', { hint: 'The copy of the source branch it starts on' }),
       fPick('then', 'When it is done', { disabled: form.sameAsSource, tip: form.sameAsSource ? 'It runs on the source branch, so there is no PR' : '' }),
-      ...(shaper ? [fPick('slices', 'Pull requests', { hint: 'Shaper builds a feature in slices' })] : []),
       ...(GUARDS().length ? [fPick('guard', 'Guardrails', { hint: 'Applies to every agent in this task' })] : []),
       fPick('cap', 'Cost cap'),
       { html: `${R.field({ id: 'cc-tags', label: 'Cost tags', error: errOf('#cc-tags'), value: form.tags, placeholder: 'Comma separated', attrs: { 'data-f': 'tags' } })}${tagsSave}` },
       { html: `<div class="cc-opts">${switches.join('')}</div>`, wide: true },
-      { html: `<div class="cc-acts">${R.button({ label: 'Add files…', attrs: { 'data-c-files': '', title: 'Attaches files to the task' } })}${form.files.length ? `<span class="fld-hint">${esc(form.files.map((x) => x.name).join(', '))}</span>` : ''}</div>`, wide: true },
+      { html: `<div class="cc-acts">${R.button({ kind: 'quiet', label: 'Add files…', attrs: { 'data-c-files': '', title: 'Attaches files to the task' } })}${form.files.length ? `<span class="fld-hint">${esc(form.files.map((x) => x.name).join(', '))}</span>` : ''}</div>`, wide: true },
     ];
-    const body = `${F.grid({ fields: [fPick('project', 'Project', { tip: 'The project you used last' }), preset || '<span></span>', { html: `${what}${task ? noteHtml() : ''}`, wide: true }, fPick('workflow', 'Workflow'), { html: `${engine}${flowBtns}` }, fPick('base', 'Source branch', { disabled: none, tip: none ? 'No project has no branches' : '' }), offers('intoBranch') ? fPick('into', 'Base branch', { disabled: none || form.sameAsSource, hint: 'The branch its PR goes into' }) : '<span></span>'] })}${F.readback(proof())}${now}${F.fold({ label: 'More options', open: form.more, says: 'Title, branch, pull request, guardrails, cost, memory, files', attrs: { 'data-c-more': '' }, body: F.grid({ fields: moreFields }) })}`;
+    const body = `${F.grid({ fields: [fPick('project', 'Project', { tip: 'The project you used last' }), preset || '<span></span>', { html: `${what}${task ? noteHtml() : ''}`, wide: true }, fPick('workflow', 'Workflow'), { html: `${engine}${flowBtns}` }, ...(shaper ? [fPick('slices', 'One PR, or a PR per slice', { hint: 'Shaper builds a feature in slices', disabled: none || form.sameAsSource, tip: none ? 'Needs a project' : form.sameAsSource ? 'It runs on the source branch, so there is no PR' : '' }), '<span></span>'] : []), fPick('base', 'Source branch', { disabled: none, tip: none ? 'No project has no branches' : '' }), offers('intoBranch') ? fPick('into', 'Base branch', { disabled: none || form.sameAsSource, hint: 'The branch its PR goes into' }) : '<span></span>'] })}${F.readback(proof())}${now}${F.fold({ label: 'More options', open: form.more, says: 'Title, branch, pull request, guardrails, cost, memory, files', attrs: { 'data-c-more': '' }, body: F.grid({ fields: moreFields }) })}`;
     return R.dialog({ title: 'New task', body, yes: form.after ? 'Start after it' : 'Start task', busy: !!form.busy, busyLabel: 'Starting task…', status: R.button({ label: 'Schedule…', kind: 'quiet', attrs: { 'data-c-tosched': '', title: 'The same task, at a time' } }), close: R.icon('x', 15), id: 'cc-t', cls: 'cc-dlg', hooks: hooksOf() });
   }
   const hooksOf = () => ({ close: {}, cancel: {}, yes: {} });
@@ -816,7 +863,7 @@
   const escAnywhere = (e) => { if (e.key === 'Escape' && form && !host().contains(e.target)) dlgKey(e); };
   const formOff = () => { form = null; menu = ''; document.removeEventListener('keydown', escAnywhere, true); };
   // the control the form was opened from, found again after a redraw replaced it (the focus goes back to its opener)
-  const selOf = (el) => { const d = el?.dataset || {}; return d.menu ? `[data-menu="${d.menu}"]` : d.row ? `[data-row="${d.row}"] [data-more], [data-row="${d.row}"]` : ''; };
+  const selOf = (el0) => { const trig = el0?.closest?.('[role="menu"]')?.parentElement?.querySelector('[aria-haspopup]'), el = trig || el0, d = el?.dataset || {}; if (trig?.id) return `#${CSS.escape(trig.id)}`; return d.menu ? `[data-menu="${d.menu}"]` : d.row ? `[data-row="${d.row}"] [data-more], [data-row="${d.row}"]` : ''; };
   let openerSel = '';
   function openForm(kind, keep) { menu = ''; opener = document.activeElement; openerSel = selOf(opener); form = blank(kind, keep); document.addEventListener('keydown', escAnywhere, true); loadFlows(); loadBranches(); loadOptions(); paintForm(kind === 'schedule' && !form.editing ? '#cc-name' : '#cc-text'); }
   // Edit… on a schedule (its card, its row's ⋯, its chat card): the same Dialog, holding what it has now; Save changes it
@@ -824,7 +871,7 @@
     const s0 = Sch().find(id); if (!s0) return;
     wire();
     const once = s0.every === 'Once', at = timeOk(s0.at) ? s0.at : '09:00', d = Number.isFinite(s0.nextAt) ? new Date(s0.nextAt) : Sch().nextDates(s0)[0];
-    openForm('schedule', { editing: id, name: s0.title, text: s0.what || '', project: s0.project || 'No project', every: once ? 'once' : s0.every, at, date: once && d ? isoDay(d) : '', tz: s0.tz || homeTz(), was: { name: s0.title, text: s0.what || '', every: once ? 'once' : s0.every, at, date: once && d ? isoDay(d) : '' } });
+    openForm('schedule', { editing: id, name: s0.title, text: s0.what || s0.title, project: s0.project || 'No project', every: once ? 'once' : s0.every, at, date: once && d ? isoDay(d) : '', tz: s0.tz || homeTz(), was: { name: s0.title, text: s0.what || s0.title, every: once ? 'once' : s0.every, at, date: once && d ? isoDay(d) : '' } });
   }
   // a route change closes the form, as the account menu does (pulse.js): only a redraw of the same page keeps it; the next page owns the focus
   addEventListener('hashchange', () => { if (!form) return; formOff(); opener = null; paintForm(); });
@@ -867,7 +914,19 @@
     const once = form.every === 'once', next = nextRun(), every = once ? 'Once' : form.every, w = R.scheduleWords({ every, at: form.at, nowAt: nowAt() });
     const s = { id: `n${k}`, title: form.name.trim(), project, chat: '', every, at: form.at, tz: form.tz, next: once ? `Next ${Sch().dateWord(next)} at ${form.at}` : w.next, day: w.day, state: 'scheduled', time: w.time, section: 'next', labels: [], what: words.endsWith('.') ? words : `${words}.`, cost: 0, started: Sch().dateWord(Sch().TODAY), workflow: form.workflow, agent: form.agent, base: form.base, then: form.then, ends: form.ends, notify: form.notify, overlap: policiesOf(form).overlap, fails: policiesOf(form).maxFailures, ...(once ? { nextAt: next.getTime() } : {}), runs: [] };
     closeForm(); Sch().add(s); say(`Scheduled ${s.title}: ${once ? `once, on ${dayWords(next)} at ${s.at}` : R.scheduleWords(s).runs}`);
-    window.StillhetShell.go(`schedule/${s.id}`);   // after saving you land on the schedule you made
+    if (advanced()) { window.StillhetShell.go(`schedule/${s.id}`); return; }   // after saving you land on the schedule you made
+    toChatCard(s);   // Simple has no Schedules place: you land in its chat, on its card
+  }
+  // a schedule made from the form where Schedules is not offered: its card in a chat (the one you are in, else one of its own)
+  function toChatCard(s) {
+    const C = window.StillhetChats; if (!C) return;
+    const here = /^#chat\/([^/?]+)/.exec(location.hash)?.[1], chats = () => C.data().chats;
+    const cid = here && chats().some((x) => x.id === here) ? here : C.newChat(s.title, s.project || '', { fromTask: true });
+    const c = chats().find((x) => x.id === cid); if (!c) return;
+    s.chat = cid;
+    window.StillhetConversation?.join(c, { t: 'schedule', id: `k-${s.id}`, task: s.id });   // joined before it is listed: a thread built now would draw it twice
+    c.tasks = [...(c.tasks || []), { id: s.id, kind: 'schedule', title: s.title, detail: `Runs ${R.scheduleWords(s).runs}`, time: s.at }]; C.refresh();
+    window.StillhetShell.go(`chat/${cid}`);
   }
   // Edit…'s Save: only what changed is sent, through the schedule's own edit (schedules.js: the demo applies it, the live kind PATCHes it)
   async function saveEdit() {
@@ -980,7 +1039,7 @@
     if (form !== f) return;
     if (!res?.ok) { form.err = `Could not create the schedule: ${res?.error || 'no answer'}`; form.errAt = form.src === 'write' ? '#cc-text' : '#cc-path'; paintForm(form.errAt); return; }
     closeForm(); say(`Scheduled ${f.name.trim()}: ${once ? `once, on ${dayWords(next)} at ${f.at}` : R.scheduleWords({ every: f.every, at: f.at }).runs}`);
-    const made = res.data?.id || res.data?.ticketId || res.data?.scheduleId; if (made) window.StillhetShell.go(`schedule/${made}`);   // you land on the schedule you made, once the server names it
+    const made = res.data?.id || res.data?.ticketId || res.data?.scheduleId; if (made && advanced()) window.StillhetShell.go(`schedule/${made}`);   // you land on the schedule you made, once the server names it
   }
   // a project pick (or one added here): its base, preset and source; a workspace has no project folder, so no defaults, config or policy read
   function pickedProject() {
@@ -1067,6 +1126,9 @@
     if (e.key === 'Enter' && e.target.matches('input[data-f]')) { e.preventDefault(); save(); return; }
   }
 
+  // the project a form opens on: the one given, else the composer's (Chat's own accessor once it has one), else the open chat's
+  const chatProject = () => { const own = window.StillhetConversation?.project?.(); if (own) return own; const id = /^#chat\/([^/?]+)/.exec(location.hash)?.[1]; return (id && window.StillhetChats?.data?.().chats.find((x) => x.id === id)?.project) || ''; };
+  const keepOf = (keep) => { const project = keep.project || chatProject(); return { ...keep, ...(project ? { project: projects().includes(project) ? project : defaultProject() } : {}) }; };
   const ask = (which) => window.StillhetConversation?.handOver({ mode: which === 'task' ? 'task' : 'schedule', ph: which === 'task' ? 'What should the task do?' : 'What should run, and when?' });
   window.StillhetCenters = {
     tasks: (el) => { wire(); settle('tasks'); tasksHost = el; menu = ''; asking = null; if (W.live) window.StillhetInsightsLive?.retryWeek?.(); paint(); },   // a visit reads a failed week again
@@ -1074,8 +1136,8 @@
     visit: (which) => settle(which),   // a new visit: the cards take their settled order
     editSchedule,   // Edit… from a schedule's row, card or chat card, in every mode
     // the forms, opened from Chat only (its starters and cards): New task, New schedule, and a schedule's Edit…
-    newSchedule: (keep = {}) => { wire(); openForm('schedule', { ...keep, ...(keep.project && !projects().includes(keep.project) ? { project: defaultProject() } : {}) }); },
-    newTask: (keep = {}) => { wire(); openForm('task', { ...keep, ...(keep.project && !projects().includes(keep.project) ? { project: defaultProject() } : {}) }); },   // Run after this: the New task form, waiting for that one
+    newSchedule: (keep = {}) => { wire(); openForm('schedule', keepOf(keep)); },
+    newTask: (keep = {}) => { wire(); openForm('task', keepOf(keep)); },   // Run after this: the New task form, waiting for that one
     // the Projects center's strip, under its home's head; a strip asked there is dropped once its home is left
     askStrip: () => (asking?.where === 'place' && W.find(asking.id) ? stripOf(asking) : ''), unask: () => { if (asking?.where === 'place') asking = null; },
     paint, wire, taskOf, stateOf, clause, actionsOf, schedLink, link, inWeek,

@@ -75,7 +75,7 @@ test('the strip, Pulse\'s tabs and sections equal their rows, and each opens wha
   assert.equal(tabN('updates'), new Set([...pop().querySelectorAll('[data-open]')].map((x) => x.dataset.open)).size, 'Updates counts its rows');
   pop().querySelector('[data-ptab="vitals"]').click();
   pop().querySelector('[data-open="r:run-a"]').click(); await settle();
-  assert.equal(w.location.hash, '#chat/ask_1', 'a Needs-you row opens its task at its card, in the chat that started it');
+  assert.equal(w.location.hash, '#run/run-a', 'a Needs-you row opens its task\'s own page (nav.row-opens-page), in every mode');
   for (const n of DEMO_NAMES) assert.ok(!d.getElementById('route-chat').textContent.includes(n), `no seeded ${n}`);
 });
 

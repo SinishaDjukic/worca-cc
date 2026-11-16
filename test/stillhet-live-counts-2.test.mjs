@@ -95,16 +95,16 @@ test('every Step 5 action, refused: one toast "Could not ACTION: REASON", the st
     assert.equal(toastText(d), `Could not ${what}: ${REFUSE.error}`, name);
     assert.deepEqual(store(w), before, `${name}: the store is unchanged`);
     assert.equal(w.StillhetUI.prefs.mode(), mode, `${name}: the mode is unchanged`);
-    if (name === 'Pulse icon') assert.match(pulseForRow(d).textContent, /shakes until you read or act on it/, 'the Pulse icon keeps its value');
+    if (name === 'Pulse icon') assert.match(pulseForRow(d).textContent, /Moves until you read it/, 'the Pulse icon keeps its value');
     if (name === 'Keep awake') { openAcct(d); assert.equal(d.querySelector('[data-sw="keep"]').getAttribute('aria-checked'), 'true', 'Keep awake stays on'); }
     w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   }
 });
 
-// Settings › Notifications › Pulse icon in the live kind: dev's settings.json pulseFor through /api/settings
+// Settings › Appearance › Pulse icon in the live kind: dev's settings.json pulseFor through /api/settings
 const pulseForRow = (d) => [...d.querySelectorAll('.set-row')].find((r) => /Pulse icon/.test(r.textContent));
 async function openPulseFor(w, d) {
-  w.location.hash = '#settings/notifications'; await settle();
+  w.location.hash = '#settings/appearance'; await settle();   // set.one-fact: Pulse icon has one home, Appearance › Motion (Notifications links to it)
   d.querySelector('[data-menu="pulseFor"]').click();
 }
 const pulseNews = (d) => d.querySelector('#stillhet-pulse-slot .pz-pulse-b').classList.contains('is-news');
@@ -115,7 +115,7 @@ test('live: picking Pulse icon posts {pulseFor} to /api/settings and keeps the v
   await openPulseFor(w, d);
   d.querySelector('[data-menu-pick="pulseFor|10s"]').click(); await settle();
   assert.deepEqual(posts.map((p) => [p.url, p.body]), [['/api/settings', { pulseFor: '10s' }]]);
-  assert.match(pulseForRow(d).textContent, /shakes for 10 seconds/);
+  assert.match(pulseForRow(d).textContent, /Moves for 10 seconds/);
 });
 
 test('live: a settings-changed re-fetch with pulseFor \'never\' stops a running icon', async () => {
@@ -173,7 +173,7 @@ test('Pulse Needs you, a behind project: its count, effect and \'Clears when you
   d.querySelector('[data-pop]').click();
   const item = needRow(d, 'api-2');
   assert.ok(item, 'the behind project is in Needs you');
-  assert.match(item.textContent, /3 commits behind origin\/main · Each new task syncs it first · Clears when you sync it/);
+  assert.match(item.textContent, /3 commits behind origin\/main · Each new task syncs it first/);
   const hash = w.location.hash;
   const sync = () => d.querySelector('#app .pz-popover [data-fix="np:projects/api-2"]');
   assert.equal(sync().textContent.trim(), 'Sync');
@@ -191,7 +191,7 @@ test('Pulse Needs you, a behind project: its count, effect and \'Clears when you
   const off = await liveHost({ sources: behind({ beforeRun: false }), post: (u) => (u === '/api/projects/api-2/sync' ? [200, { sync: { ff: { ok: false, kind: 'dirty' } } }] : [200, {}]) });
   await off.hello();
   off.d.querySelector('[data-pop]').click();
-  assert.match(needRow(off.d, 'api-2').textContent, /3 commits behind origin\/main · New tasks start from older code · Clears when you sync it/);
+  assert.match(needRow(off.d, 'api-2').textContent, /3 commits behind origin\/main · New tasks start from older code/);
   off.d.querySelector('#app .pz-popover [data-fix="np:projects/api-2"]').click(); await settle(80);
   assert.match(toastText(off.d), /Could not sync api: it has uncommitted changes/);
   if (!off.d.querySelector('#app .pz-popover')) off.d.querySelector('[data-pop]').click();
@@ -203,7 +203,7 @@ test('a diverged project\'s item opens its page with Bring together… focused; 
   const plain = await liveHost({ sources: quiet() });
   await plain.hello();
   plain.d.querySelector('[data-pop]').click();
-  assert.match(needRow(plain.d, 'api-2').textContent, /1 ahead, 2 behind origin\/main · The next task asks how to bring them together · Clears when you bring them together/);
+  assert.match(needRow(plain.d, 'api-2').textContent, /1 ahead, 2 behind origin\/main · The next task asks how to bring them together/);
   assert.equal(needRow(plain.d, 'api-2').querySelector('[data-fix]'), null, 'no button on a diverged item');
   needRow(plain.d, 'api-2').click(); await settle(120);
   assert.equal(plain.w.location.hash, '#projects/api-2');
@@ -222,7 +222,7 @@ test('a diverged project\'s item opens its page with Bring together… focused; 
   assert.deepEqual(landedOn(asks.d), ['Bring together…', true]);
   // gone-3's folder is missing: Locate folder's form
   asks.d.querySelector('[data-pop]').click();
-  assert.match(needRow(asks.d, 'gone-3').textContent, /Its folder is gone · New tasks cannot start here · Clears when you locate its folder/);
+  assert.match(needRow(asks.d, 'gone-3').textContent, /Its folder is gone · New tasks cannot start here/);
   needRow(asks.d, 'gone-3').click(); await settle(120);
   assert.equal(asks.w.location.hash, '#projects/gone-3');
   assert.ok(asks.d.querySelector('#route-place #pj-hand-v'), 'the Locate folder form is open');

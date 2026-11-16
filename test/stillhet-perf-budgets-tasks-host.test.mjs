@@ -26,7 +26,7 @@ async function openTasks() {
 test('B2.4 C1 harness: #runs on the real-size world draws every task the page counts, and far more than 50', async () => {
   const h = await openTasks();
   const drawn = h.d.querySelectorAll(ROWS).length;
-  const counted = [...h.d.querySelectorAll('#runs-root .list-h .n')].reduce((s, n) => s + Number(n.textContent), 0);
+  const counted = [...h.d.querySelectorAll('#runs-root .list-h .n:not(.n-of)')].reduce((s, n) => s + Number(n.textContent), 0);
   assert.ok(counted >= 300, `the section heads count ${counted} tasks`);
   assert.ok(drawn >= counted, `${drawn} rows drawn of the ${counted} the page counts`);
   assert.ok(drawn > 50);

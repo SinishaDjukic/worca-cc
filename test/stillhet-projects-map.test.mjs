@@ -96,8 +96,8 @@ test('F-6-15 readinessLine: the word then the counts, zeros dropped; none failin
 test('F-6-15 metricsOf: every state in classic\'s words, its scope and its last push', () => {
   const on = { hasOrigin: true, enabled: true, pending: 0, runs: 3, lastSyncAt: '2026-11-14T07:00:00.000Z' };
   assert.equal(metricsOf(null), null);
-  assert.deepEqual(metricsOf(on), { state: 'on', word: 'on · 3 runs', scope: 'this project', lastPush: '2026-11-14T07:00:00.000Z' });
-  assert.equal(metricsOf({ ...on, runs: 1 }).word, 'on · 1 run');
+  assert.deepEqual(metricsOf(on), { state: 'on', word: 'on · 3 tasks', scope: 'this project', lastPush: '2026-11-14T07:00:00.000Z' });
+  assert.equal(metricsOf({ ...on, runs: 1 }).word, 'on · 1 task');
   assert.equal(metricsOf({ ...on, runs: null }).word, 'on');
   assert.equal(metricsOf({ ...on, record: false }).word, 'on · yours excluded');
   assert.deepEqual(metricsOf({ hasOrigin: false, enabled: false }), { state: 'no-origin', word: 'not available', scope: '', lastPush: null });

@@ -20,7 +20,7 @@ test('PageFilters: one FilterRow with the page\'s small tools at its end; a pick
 test('Figures at a filter row\'s end is a bordered button that says whether the totals show', async () => {
   const { figuresButton } = await import('../ui/public/design-system/components/center.mjs');
   const shut = figuresButton({ attrs: { 'data-figs': '' } }), open = figuresButton({ open: true });
-  assert.match(shut, /^<button type="button" class="btn btn-sm"/, 'a real button, not the quiet text look');
+  assert.match(shut, /^<button type="button" class="btn btn-sm btn-quiet"/, 'a bordered button of the quiet kind: a tool, by the button ladder');
   assert.ok(shut.includes('aria-expanded="false"') && open.includes('aria-expanded="true"'));
   assert.ok(shut.includes('data-figs'));
 });
@@ -148,7 +148,8 @@ test('Workflows: the lists use FilterRow, the pages have no composer, and the ed
     const word = (id) => { const s = M.SUB[id]; return s.word(M.compute(s, M.defaults(s))); };
     assert.equal(word('spend'), '$412 of your $1,000 budget');
     assert.equal(word('budget'), '41% of your $1,000 budget used');
-    assert.equal(word('team'), "$2,860 of the team's $12,000 budget");
+    assert.equal(word('team'), '$2,860 this month', "the team's figure is a cap for each person: the total is never set against it");
+    assert.equal(B.team.usd, 2000, 'the one team figure, the same as Team policy');
     assert.equal(M.SUB.spend.pace, `On pace for $${B.yours.pace.toLocaleString('en-US')}, $${B.yours.over} over`);
     // the same $412 is yours on Spend and your row among the team's five
     const you = M.SUB.spend.src.rows.person;

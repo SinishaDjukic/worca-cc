@@ -35,7 +35,7 @@ const labelsOf = async (d) => {
   return [main, ...items];
 };
 
-test('F-3-02: a live task based on docs/rail-agreed shows that base in its head, PR stage and Changes label; no \'into dev\'', async () => {
+test('F-3-02: a live task based on docs/rail-agreed shows that base in its head and PR stage, once; no \'into dev\'', async () => {
   const { w, d } = await finished();
   assert.equal(w.StillhetTaskLive.detail('h2').base, 'docs/rail-agreed');
   assert.match(card(d).querySelector('.rc-place')?.textContent || '', /feat\/x\s*into\s*docs\/rail-agreed/);
@@ -43,7 +43,9 @@ test('F-3-02: a live task based on docs/rail-agreed shows that base in its head,
   assert.equal(v.place.base, 'docs/rail-agreed');
   const tab = card(d).querySelector('[data-key="tab:changes"]');
   if (tab.getAttribute('aria-expanded') !== 'true') { tab.click(); await settle(80); }
-  assert.match(card(d).querySelector('.ch-sum')?.textContent || '', /docs\/rail-agreed/, 'the Changes label names the base');
+  // the branch and its base are said once, in the page's head (fix 2): Changes counts files, it does not repeat the place
+  assert.doesNotMatch(card(d).querySelector('.ch-sum')?.textContent || '', /docs\/rail-agreed|feat\/x/, 'Changes does not say the branch again');
+  assert.equal(card(d).textContent.split('docs/rail-agreed').length - 1 >= 1, true);
   assert.doesNotMatch(card(d).textContent, /into dev\b|Into dev\b/);
   const none = await finished({ source: '' });
   assert.doesNotMatch(card(none.d).textContent, /into dev\b|Into dev\b/, 'no base: never the sample dev');

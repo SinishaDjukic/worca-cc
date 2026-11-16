@@ -69,10 +69,10 @@ test('T-3: .lr-unread is a 6px round dot in Advisory ink', () => {
 });
 
 // Overflow on real data (PLAN.md 1d): the per-id evidence is gone, so each test names the place the probe reproduced it in.
-test('Overflow, base shrink: a long base branch on the run card ends in an ellipsis instead of running off the card', () => {
+test('Overflow, base: a long base branch on the task card is capped and ends in an ellipsis; the base never gives way to the branch', () => {
   const r = ruleFor(RAIL, /^\.rc-base$/);
   assert.ok(r, 'a .rc-base rule');
-  for (const [p, v] of [['flex', '0 1 auto'], ['min-width', '0'], ['max-width', '100%'], ['overflow', 'hidden'], ['text-overflow', 'ellipsis'], ['white-space', 'nowrap']]) assert.ok(has(r.body, p, v), `${p}:${v} in ${r.body}`);
+  for (const [p, v] of [['flex', '0 0 auto'], ['min-width', '0'], ['max-width', 'min(100%,24ch)'], ['overflow', 'hidden'], ['text-overflow', 'ellipsis'], ['white-space', 'nowrap']]) assert.ok(has(r.body, p, v), `${p}:${v} in ${r.body}`);
   assert.ok(!has(r.body, 'flex', 'none'), 'no longer flex:none');
 });
 

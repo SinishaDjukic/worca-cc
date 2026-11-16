@@ -83,7 +83,7 @@ const confirmIf = async (d) => { const y = d.querySelector('#card [data-confirm=
 test('O1, O4: a task waiting at its review gate shows its line and issue rows under Review, Accept as is with Run another cycle, and no sample decision', async () => {
   const { d } = await gatePage();
   const c = card(d);
-  assert.match(c.textContent, /Needs you/);
+  assert.match(c.textContent, /Needs approval/);   // the gate's one word, on its card and on its page
   assert.match(c.textContent, /Review implementation reached its cycle limit/);
   assert.doesNotMatch(c.textContent, /Asks you something/);
   const ask = c.querySelector('.sc-subs .is-ask');
@@ -95,9 +95,13 @@ test('O1, O4: a task waiting at its review gate shows its line and issue rows un
   assert.match(under.textContent, /The pager loses its place/);
   assert.match(under.textContent, /ui\/pager\.mjs:42/);
   assert.equal(c.querySelector('[data-key="act-main"]').dataset.label, 'Accept as is');
+  // the gate's two answers sit side by side, as on its card: the second one is a quiet button, not a row in the ▾
+  const second = c.querySelector('[data-key="act-second"]');
+  assert.equal(second?.textContent.trim(), 'Run another cycle');
+  assert.ok(second.classList.contains('btn-quiet'), 'the second answer is the quiet kind');
   c.querySelector('[data-key="menu:act"]').click(); await settle(30);
   const items = [...card(d).querySelectorAll('[data-menu-pick]')].map((x) => x.dataset.menuPick);
-  assert.ok(items.includes('Run another cycle'), items.join(' | '));
+  assert.ok(!items.includes('Run another cycle'), items.join(' | '));
   // I5: never the design's sample ask or issues
   assert.doesNotMatch(card(d).textContent, /· 1 open|Decisions\s*1|Group pages keep an unused Back|The trail wraps/);
 });
@@ -108,10 +112,9 @@ test('O1: Accept as is sends POST /api/answer with decision continue', async () 
   assert.deepEqual(answers(calls), [['POST', '/api/answer', { runId: 'run-a', id: 'gate-w5-3', payload: { decision: 'continue' } }]]);
 });
 
-test('O1: Run another cycle from the ▾ sends POST /api/answer with decision another', async () => {
+test('O1: Run another cycle, the button beside Accept as is, sends POST /api/answer with decision another', async () => {
   const { d, calls } = await gatePage();
-  card(d).querySelector('[data-key="menu:act"]').click(); await settle(30);
-  card(d).querySelector('[data-menu-pick="Run another cycle"]').click(); await settle(60); await confirmIf(d);
+  card(d).querySelector('[data-key="act-second"]').click(); await settle(60); await confirmIf(d);
   assert.deepEqual(answers(calls), [['POST', '/api/answer', { runId: 'run-a', id: 'gate-w5-3', payload: { decision: 'another' } }]]);
 });
 

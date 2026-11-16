@@ -2,6 +2,7 @@
 // Their ids and classes are the names the Stillhet stylesheets address; the library defines them here.
 import { attrs, esc } from './html.mjs';
 import { icon } from './icons.mjs';
+import { newsMark } from './list.mjs';
 
 const iconBtn = (c, label, svg, a = {}, tip = label) => `<button type="button" class="btn btn-quiet btn-icon ${c}"${attrs({ ...a, 'aria-label': label, title: tip })}>${svg}</button>`;
 const CLOSE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>';
@@ -90,13 +91,12 @@ export { icon };
 const ASK_PLUS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4H6.5A2.5 2.5 0 0 0 4 6.5V20l3.6-2.7h9.9a2.5 2.5 0 0 0 2.5-2.5V12"></path><path d="M18 3v6M15 6h6"></path></svg>';
 
 /**
- * AskButton: the top bar's door to the Ask worca column; its mark says whether Worca is answering or the column is open.
+ * AskButton: the top bar's Ask worca. Chat is the only place to type (chat-first): it hands the page you are on to Chat as a chip.
  * @param {object} [o]
  * @param {string} [o.mark]      the Ask worca mark's SVG
- * @param {boolean} [o.expanded]
  */
-export function askButton({ mark = '', expanded = false } = {}) {
-  return `<button type="button" class="btn btn-quiet topnav-ask" id="topnav-ask" data-min-level="simple"${attrs({ 'aria-expanded': String(expanded), 'aria-controls': 'ask-side', 'aria-label': 'Ask worca', title: 'Ask worca' })}><span class="ask-ic" aria-hidden="true">${mark}</span>${ASK_PLUS}<span class="topnav-ask-label">Ask worca</span><span class="topnav-ask-dot" id="topnav-ask-dot" hidden></span></button>`;
+export function askButton({ mark = '' } = {}) {
+  return `<button type="button" class="btn btn-quiet topnav-ask" id="topnav-ask" data-min-level="simple"${attrs({ 'aria-label': 'Ask worca', title: 'Ask worca about this page, in Chat' })}><span class="ask-ic" aria-hidden="true">${mark}</span>${ASK_PLUS}<span class="topnav-ask-label">Ask worca</span><span class="topnav-ask-dot" id="topnav-ask-dot" hidden></span></button>`;
 }
 
 /**
@@ -121,8 +121,11 @@ export function placeButton({ title, open = false, attrs: a = {} }) {
  */
 export function placeItems({ home = null, places, prefix = 'bar-go|' }) {
   const hint = (p) => (p.count || p.count === 0 ? String(p.count) : p.lab ? 'Labs' : undefined);
+  // small.one-count: the numbers are what needs you there; one quiet caption at the menu's top says so
+  const counted = places.some((p) => p.count || p.count === 0);
   return [...(home ? [{ id: `${prefix}${home.id}`, text: home.label, mark: icon('home', 14) }, { sep: true }] : []),
-    ...places.map((p) => ({ id: `${prefix}${p.id}`, text: p.label, checked: !!p.current, hint: hint(p), mark: p.icon || '' }))];
+    ...(counted ? [{ header: 'Places', end: 'need you' }] : []),
+    ...places.map((p) => ({ id: `${prefix}${p.id}`, text: p.label, checked: !!p.current, hint: hint(p), mark: p.news && p.icon ? newsMark(p.icon, p.news === 'need') : p.icon || '' }))];   // list.news
 }
 
 /**

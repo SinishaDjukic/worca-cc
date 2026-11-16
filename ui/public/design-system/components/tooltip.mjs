@@ -27,6 +27,22 @@ export function tipPlace(anchor, tip, vw, vh, beside = null) {
   return { top: level, left: vw - aRight >= anchor.left ? aRight + GAP : anchor.left - GAP - tip.width };
 }
 
+/**
+ * The other places a tip may take when its first one covers a neighbour (small.one-tooltip): above, then to the right
+ * and to the left of its anchor, level with it. Only the ones that fit inside the window.
+ */
+export function tipSpots(anchor, tip, vw, vh) {
+  const aRight = anchor.right ?? anchor.left + anchor.width;
+  const centred = Math.max(EDGE, Math.min(vw - EDGE - tip.width, anchor.left + (aRight - anchor.left) / 2 - tip.width / 2));
+  const level = Math.max(EDGE, Math.min(vh - EDGE - tip.height, anchor.top + ((anchor.bottom - anchor.top) - tip.height) / 2));
+  return [{ top: anchor.bottom + GAP, left: centred }, { top: anchor.top - GAP - tip.height, left: centred }, { top: level, left: aRight + GAP }, { top: level, left: anchor.left - GAP - tip.width }]
+    .filter((p) => p.top >= EDGE && p.left >= EDGE && p.top + tip.height <= vh - EDGE && p.left + tip.width <= vw - EDGE);
+}
+
+const HEADING = 'h1, h2, h3, h4, h5, h6, [role="heading"]';   // a page title is not a control: it never shows a tip
+const ROW = '.lr-main, .pz-row-main, .list-row, .fr-row, [role="option"]';   // a row says itself: the focus on it shows no tip that repeats it
+const NEIGHBOUR = 'button, a[href], input, select, textarea, [role="tab"], [role="option"], .list-row, .pz-row, .fr-chip, h1, h2, h3, p, .lr-meta, .rc-branch, .place-sub';
+
 const CONTROL = 'button, a[href], input, select, textarea, ' + ['button', 'menuitem', 'menuitemradio', 'tab', 'switch', 'option', 'checkbox', 'link'].map((r) => `[role=${r}]`).join(', ');
 
 /**
@@ -67,6 +83,7 @@ export function watchTooltips(doc) {
   const hide = () => { win.clearTimeout(timer); win.clearInterval(watch); tip?.remove(); tip = null; give(); el = null; };
   const show = () => {
     if (!el?.isConnected || !el.dataset.tipText) { hide(); return; }
+    if (el.matches(HEADING)) return;   // its title stays taken away while the pointer is on it, so the browser's own never shows either
     // a menu open over the page owns the moment: nothing outside it shows a tooltip, its own trigger least of all (it would cover the first item)
     if (doc.querySelector('[role="menu"]') && !el.closest('[role="menu"]')) { hide(); return; }
     if (el.closest('[aria-expanded="true"]')) { hide(); return; }   // a trigger whose own popup is open (Pulse, a picker): the popup speaks for it
@@ -76,7 +93,13 @@ export function watchTooltips(doc) {
     const boxes = el.closest('[role="menu"]') ? [...doc.querySelectorAll('[role="menu"]')].map((m) => m.getBoundingClientRect()).filter((b) => b.width) : [];
     const beside = boxes.length ? { left: Math.min(...boxes.map((b) => b.left)), right: Math.max(...boxes.map((b) => b.right)),
       top: Math.min(...boxes.map((b) => b.top)), bottom: Math.max(...boxes.map((b) => b.bottom)) } : null;
-    const at = tipPlace(el.getBoundingClientRect(), tip.getBoundingClientRect(), win.innerWidth, win.innerHeight, beside);
+    const aBox = el.getBoundingClientRect(), tBox = tip.getBoundingClientRect();
+    let at = tipPlace(aBox, tBox, win.innerWidth, win.innerHeight, beside);
+    // never over the row or line next to its control: the first spot that covers no neighbour, else the usual one
+    if (!beside && doc.elementsFromPoint) {
+      const covers = (p) => [0.1, 0.5, 0.9].some((f) => doc.elementsFromPoint(p.left + tBox.width * f, p.top + tBox.height / 2).some((x) => x !== tip && !x.contains(el) && !el.contains(x) && x.matches(NEIGHBOUR)));
+      if (covers(at)) at = tipSpots(aBox, tBox, win.innerWidth, win.innerHeight).find((p) => !covers(p)) || at;
+    }
     tip.style.top = `${at.top}px`; tip.style.left = `${at.left}px`;
     watch = win.setInterval(() => { if (!el?.isConnected) hide(); }, 250);   // what it belongs to was drawn away
   };
@@ -89,7 +112,10 @@ export function watchTooltips(doc) {
     timer = win.setTimeout(show, wait);
   };
   doc.addEventListener('pointerover', (e) => { if (e.pointerType !== 'touch') { if (el && el.contains(e.target)) return; start(e.target, SHOW_MS); } });
-  doc.addEventListener('focusin', (e) => { if (e.target.matches?.(':focus-visible')) start(e.target, SHOW_MS); });
+  // on keyboard focus only: a focus a script moved (a drawer or a page taking the focus as it opens) shows no tip
+  let keyAt = 0;
+  win.addEventListener('keydown', (e) => { if (/^(Tab|Arrow|Home|End|Page)/.test(e.key)) keyAt = Date.now(); }, true);   // the keys that move the focus
+  doc.addEventListener('focusin', (e) => { if (Date.now() - keyAt < 600 && e.target.matches?.(':focus-visible') && !e.target.matches(`${HEADING}, ${ROW}`)) start(e.target, SHOW_MS); });
   doc.addEventListener('focusout', hide);
   doc.addEventListener('pointerdown', (e) => { if (e.pointerType === 'touch') start(e.target, TOUCH_MS); else hide(); });
   doc.addEventListener('pointerup', (e) => { if (e.pointerType !== 'touch') return; if (tip) { win.clearTimeout(timer); timer = win.setTimeout(hide, TOUCH_STAY_MS); } else hide(); });

@@ -208,20 +208,11 @@ test('F-a4-12: a Create PR refused after the push says the branch is on the remo
   assert.equal(n, 2);
 });
 
-test('V-TW-15: a done task\'s ⋯ offers Start a follow-up task, Report and Archive; Start run posts dev\'s POST /api/run and opens the new task', async () => {
-  const { w, d, calls } = await page('#run/h2', (u) => (u === '/api/run' ? [200, { runId: 'r9' }] : [200, { ok: true }]));
+test('V-TW-15: a done task\'s ⋯ offers Report and Archive; new work from it starts in its chat, never from the page\'s ⋯', async () => {
+  const { d } = await page('#run/h2');
   card(d).querySelector('[data-menu="more"]').click(); await settle(20);
   const items = [...card(d).querySelectorAll('[data-menu-pick]')].map((x) => x.textContent.trim());
-  for (const t of ['Start a follow-up task', 'Report this task', 'Archive']) assert.ok(items.some((x) => x.startsWith(t)), `${t} in ${items.join(' | ')}`);
-  card(d).querySelector('[data-menu-pick="more:after"]').click(); await settle(40);
-  assert.match(card(d).querySelector('#after-when-t').textContent, /Now, as a follow-up/);
-  const inp = card(d).querySelector('#after-task'); inp.value = 'Add paging tests'; inp.dispatchEvent(new d.defaultView.Event('input', { bubbles: true }));
-  card(d).querySelector('[data-confirm="yes"]').click(); await settle(150);
-  const [post] = sent(calls);
-  assert.equal(post[1], '/api/run');
-  assert.equal(post[2].prompt, 'Add paging tests');
-  assert.equal(post[2].projectDir, w.StillhetTaskLive.resolve('h2').projectDir || w.StillhetTaskLive.input('h2').state.projectDir);
-  assert.equal(post[2].source, undefined);
-  assert.equal(post[2].after, undefined, 'a done task starts it now');
-  assert.equal(w.location.hash, '#run/r9');
+  for (const t of ['Report this task', 'Archive']) assert.ok(items.some((x) => x.startsWith(t)), `${t} in ${items.join(' | ')}`);
+  assert.ok(!items.some((x) => /follow-up|Run after|Schedule a task after/.test(x)), items.join(' | '));
+  assert.equal(card(d).querySelector('[data-menu-pick="more:after"]'), null);
 });

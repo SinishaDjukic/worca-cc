@@ -143,13 +143,13 @@
   function manageHtml(p) {
     if (!manageOn(p)) return '';
     const h = healthOf(p), off = p.on === false;
-    const health = R.settingsSection({ title: 'How it is doing', rows: R.settingsRow({ name: 'Health', sentence: `<span class="mk-health is-${h.tone}">${esc(h.word)}</span> · ${esc(h.says)}`, end: off || p.needsSetup ? R.tooltip({ text: off ? 'Turn it on first' : 'Set it up first', off: true, html: R.button({ label: 'Test connection', attrs: { disabled: true } }) }) : R.button({ label: 'Test connection', attrs: { 'data-mk-test': '', title: `Asks ${nameOf(p)} for an answer; changes nothing` } }) })
+    const health = R.settingsSection({ title: 'How it is doing', rows: R.settingsRow({ name: 'Health', sentence: `<span class="mk-health is-${h.tone}">${esc(h.word)}</span> · ${esc(h.says)}`, end: off || p.needsSetup ? R.tooltip({ text: off ? 'Turn it on first' : 'Set it up first', off: true, html: R.button({ kind: 'quiet', label: 'Test connection', attrs: { disabled: true } }) }) : R.button({ kind: 'quiet', label: 'Test connection', attrs: { 'data-mk-test': '', title: `Asks ${nameOf(p)} for an answer; changes nothing` } }) })
       + R.settingsRow({ name: 'Enabled', sentence: off ? 'Off: what it adds is not offered to tasks or chats' : 'On: tasks and chats can use what it adds', end: R.switchButton({ on: !off, label: `${nameOf(p)} enabled`, attrs: { 'data-mk-enable': '' } }) }) });
     if (!isChannel(p)) return health;
     const c = channelOf(p), editing = form?.id === p.id && form.k === 'channel';
     const channel = editing ? R.settingsSection({ title: 'Its channel', attrs: { 'data-mk-channel-form': '' }, rows: R.confirmForm({ form: 'channel', id: 'mk-channel-t', text: `Edit the channel ${c.name}`, body: CH_FIELDS.map(([k, label, max]) => R.field({ id: `mk-ch-${k}`, label, value: form.typed?.[k] ?? c[k], error: form.errors?.[k] || '', attrs: { 'data-mk-ch': k, maxlength: max, autocomplete: 'off' } })).join('') + R.confirmActions({ yes: 'Save' }) }) })
       : R.settingsSection({ title: 'Its channel', meta: 'Where Worca writes to you, and what it sends. Settings › Chat links here.', attrs: { 'data-mk-channel': '' },
-        action: R.button({ label: 'Edit', attrs: { 'data-mk-ch-edit': '', title: 'Change its name, where it writes and what it sends' } }) + (off ? '' : R.button({ label: 'Send a test message', attrs: { 'data-mk-ch-test': '' } })),
+        action: R.button({ kind: 'quiet', label: 'Edit', attrs: { 'data-mk-ch-edit': '', title: 'Change its name, where it writes and what it sends' } }) + (off ? '' : R.button({ kind: 'quiet', label: 'Send a test message', attrs: { 'data-mk-ch-test': '' } })),
         rows: CH_FIELDS.map(([k, label]) => R.settingsRow({ name: label, sentence: esc(c[k]) })).join('') });
     return health + channel;
   }
@@ -158,7 +158,7 @@
     const asking = form?.id === p.id && !['remove', 'purge', 'channel'].includes(form.k);   // the form below holds the one step
     // an installed plugin with nothing to update or set up has no step in its head: its settings are rows below
     const settled = p.installed && !p.update && !p.needsSetup;
-    const ask = R.button({ label: 'Ask about it in chat', attrs: { 'data-mk-chat': '', title: 'Opens Chat with this plugin attached' } });
+    const ask = R.button({ kind: 'quiet', label: 'Ask about it in chat', attrs: { 'data-mk-chat': '', title: 'Opens Chat with this plugin attached' } });
     const head = R.placeHead({ center: { label: 'Marketplace', to: 'marketplace' }, title: nameOf(p), facts: esc(`${p.kind.replace(/s$/, '')} · ${p.id} ${p.ver}`), mark: markOf(p), word: p.installed && p.on === false ? 'Installed, off' : st.word, why: p.what,
       action: asking || settled ? '' : stepBtn(p, { 'data-mk-step': '' }), actions: ask,   // no Warning here: outlined (stillhet.one-action)
       menu: R.moreMenu({ id: 'mk-more', label: `More for ${p.id}`, icon: R.icon('more', 16), open: menu === 'mk-more', items: [...(!isLive() ? [{ id: 'source', text: 'View its source', help: window.StillhetWould('open it on GitHub') }] : p.source?.webUrl ? [{ id: 'source', text: 'View its source', help: 'On GitHub, in a new tab' }] : []), ...(p.installed ? [{ sep: true }, ...(manageOn(p) ? [{ id: 'purge', text: 'Purge its settings…', danger: true, help: 'Deletes its settings and secrets; it stays installed' }] : []), { id: 'remove', text: 'Remove…', danger: true, help: 'Asks first; says what stops working' }] : [])] }) });
@@ -214,7 +214,7 @@
     const ups = key === 'updates' && list.length > 1 ? R.button({ label: `Update all ${list.length}`, busy: updatingAll ? { label: WORKING.update } : false, attrs: { 'data-mk-update-all': '' } }) : '';
     return `<div class="convo"><div class="convo-scroll"><div class="convo-col is-center">${R.placeHead({ center: { label: 'Marketplace', to: 'marketplace' }, title: w.title, facts: esc(`${list.length} ${list.length === 1 ? 'plugin' : 'plugins'} · ${w.meta}`), ...(ups ? { mark: R.kindMark({ kind: 'plugin', icon: 'refresh', tone: 'act' }), word: `${list.length} to update`, why: 'Each asks for nothing new', action: ups } : {}) })}
       ${filtersHtml(VIEWS.some(([id]) => id === key) ? key : '', list.length > 1)}
-      ${list.length ? `<div class="pg-grid">${list.slice(0, n).map((p) => cardOf(p, w.why)).join('')}</div>${list.length > n ? `<div style="margin:12px 0 0">${R.button({ label: `Show ${list.length - n} more`, attrs: { 'data-mk-more': key } })}</div>` : ''}` : emptyOf(key, w)}
+      ${list.length ? `<div class="pg-grid">${list.slice(0, n).map((p) => cardOf(p, w.why)).join('')}</div>${list.length > n ? `<div style="margin:12px 0 0">${R.button({ kind: 'quiet', label: `Show ${list.length - n} more`, attrs: { 'data-mk-more': key } })}</div>` : ''}` : emptyOf(key, w)}
     </div></div></div>`;
   }
   function homeHtml() {
@@ -226,7 +226,7 @@
       ${noCatalogue() ? (firstSyncing() ? catalogueLoading() : catalogueEmpty()) : ''}
       ${shelf('For you', 'Worca suggests these from how you work; each says why.', yours, 'pg-for')}
       ${SHELVES.map(([t, meta, kinds]) => shelf(t, meta, rest.filter((p) => kinds.includes(p.kind)))).join('')}
-      ${R.settingsSection({ title: 'Where plugins come from', rows: m.map((x) => R.settingsRow({ name: x.name, sentence: `${x.webUrl ? R.textLink({ label: x.url, attrs: { 'data-mk-market': x.id, title: 'Opens it on GitHub, in a new tab' } }) : esc(x.url)}${esc([`synced ${x.synced}`, x.sha, x.error ? `can't reach it: ${firstLine(x.error)}` : ''].filter(Boolean).map((t) => ` · ${t}`).join(''))}`, end: R.button({ label: 'Sync', busy: busyOf(`source:${x.id}`) ? { label: 'Syncing…' } : false, attrs: { 'data-mk-sync': x.id } }) + (x.builtin ? '' : R.button({ label: 'Remove', attrs: { 'data-mk-unsource': x.id, title: 'Stops looking here; Undo brings it back' } })) })).join('') + R.settingsRow({ name: 'Add one', sentence: R.field({ id: 'mk-add', label: 'Repository or folder', quietLabel: true, placeholder: 'owner/repo, a GitHub URL or a folder', value: addVal, error: addErr, attrs: { 'data-mk-add': '' } }), end: R.button({ label: 'Add', busy: busyOf('source:add') ? { label: 'Adding…' } : false, attrs: { 'data-mk-addgo': '' } }) }) })}</div></div></div>`;
+      ${R.settingsSection({ title: 'Where plugins come from', rows: m.map((x) => R.settingsRow({ name: x.name, sentence: `${x.webUrl ? R.textLink({ label: x.url, attrs: { 'data-mk-market': x.id, title: 'Opens it on GitHub, in a new tab' } }) : esc(x.url)}${esc([`synced ${x.synced}`, x.sha, x.error ? `can't reach it: ${firstLine(x.error)}` : ''].filter(Boolean).map((t) => ` · ${t}`).join(''))}`, end: R.button({ label: 'Sync', busy: busyOf(`source:${x.id}`) ? { label: 'Syncing…' } : false, attrs: { 'data-mk-sync': x.id } }) + (x.builtin ? '' : R.button({ kind: 'quiet', label: 'Remove', attrs: { 'data-mk-unsource': x.id, title: 'Stops looking here; Undo brings it back' } })) })).join('') + R.settingsRow({ name: 'Add one', sentence: R.field({ id: 'mk-add', label: 'Repository or folder', quietLabel: true, placeholder: 'owner/repo, a GitHub URL or a folder', value: addVal, error: addErr, attrs: { 'data-mk-add': '' } }), end: R.button({ label: 'Add', busy: busyOf('source:add') ? { label: 'Adding…' } : false, attrs: { 'data-mk-addgo': '' } }) }) })}</div></div></div>`;
   }
   const here = () => (location.hash.slice(1) || '').split('/')[0] === 'marketplace';   // the page area is shared by every place: draw only while this one is open
   function draw() {

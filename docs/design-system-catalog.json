@@ -3624,6 +3624,48 @@
       "rules": [
         "list.filters"
       ]
+    },
+    {
+      "name": "DetailPanel",
+      "code": "ui/public/design-system/components/detail-panel.mjs#detailPanel",
+      "needs": [
+        "what you open to investigate a task, beside the chat",
+        "a task's Activity, Changes, Decisions and Checks in tabs"
+      ],
+      "rules": [
+        "panel.detail-panel",
+        "panel.detail-remembers"
+      ]
+    },
+    {
+      "name": "CenterCard",
+      "code": "ui/public/design-system/components/center.mjs#centerCard",
+      "needs": [
+        "one thing that needs you on a place's home: its state, one action, and the whole card opens it"
+      ],
+      "rules": [
+        "panel.card-opens"
+      ]
+    },
+    {
+      "name": "NewsMark",
+      "code": "ui/public/design-system/components/list.mjs#newsMark",
+      "needs": [
+        "a small light dot on a mark when the thing has activity you have not seen"
+      ],
+      "rules": [
+        "list.news"
+      ]
+    },
+    {
+      "name": "TipSpots",
+      "code": "ui/public/design-system/components/tooltip.mjs#tipSpots",
+      "needs": [
+        "where a tooltip may sit so it covers no neighbour"
+      ],
+      "rules": [
+        "small.one-tooltip"
+      ]
     }
   ],
   "telling": [
@@ -4418,6 +4460,12 @@
       "option": "menuCls",
       "status": "allowed",
       "why": "passed straight to its FilterRow: a motion state on the menu (its fade), set by the menu code, never a look"
+    },
+    {
+      "code": "ui/public/design-system/components/detail-panel.mjs#detailPanel",
+      "option": "wide",
+      "status": "allowed",
+      "why": "the panel's own state, set by its widen control for logs and diffs (panel.detail-remembers), never a page's look"
     }
   ]
 }

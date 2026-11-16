@@ -52,4 +52,18 @@ Classic, the server and tests that are not Stillhet's were not touched.
 
 ## Tests retired with the redesign
 
-Listed here when the test pass is done: host tests of the first wiring that only held a design the redesign replaced.
+Host tests of the first wiring that only held something the redesign removed on purpose.
+
+| Test | Why it went |
+|---|---|
+| `test/stillhet-task-follow-up-host.test.mjs` (the file) and three cases of `stillhet-task-tools-host-1` | They opened "Start a follow-up task / Run after…" from the task page's ⋯. A task's page starts no new work; a follow-up starts on the task's card in its chat |
+| Ten cases of `stillhet-schedules-drafts-host`, one of `stillhet-schedules-page-host`, the "Run after this" half of the drafts' delete case, the Save row of the schedules refusal table | A schedule's page is an inspect view: its draft fields, DraftBar and "Run after this" are gone; a schedule is changed from Chat |
+
+## Tests not settled yet
+
+The tests that guard the design system and the flag pass (571, see `README.md`). The host tests of the first live
+wiring (`test/stillhet-*-host.test.mjs` and friends, about 150 files) were written against the old design; each area's
+tests were updated where the redesign's agents reached them, and the rest still fail or were not run again. They are
+rewritten with their place in the build (`spec/build-order.md` names the tests each step owns). Known to fail now: the
+chat host tests that read the in-card layout (the side panel is the default), `stillhet-projects-host-words`,
+`stillhet-insights-work-host`, `stillhet-live-counts-3`, `stillhet-task-page-states-host`.

@@ -17,8 +17,8 @@ const ISSUES = [{ id: '12', title: '#12 Pager breaks' }];
 const connected = (b) => [200, { ok: true, result: b.op === 'validateConfig' ? { ok: true } : b.op === 'listProjects' ? REPOS : { tasks: ISSUES } }];
 async function open({ call = connected } = {}) {
   const h = await liveHost({ lists: LISTS, read: (u) => (u === '/api/sources' ? [200, SOURCES] : null), write: (u, b) => (u === '/api/sources/call' ? call(b) : [200, { runId: 'r-new' }]) });
-  await go(h.w, '#runs', 120);
-  h.w.StillhetCenters.maker('tasks').newPick('form'); await settle(80);
+  await go(h.w, '#runs', 200);
+  h.w.StillhetCenters.newTask(); await settle(80);
   return h;
 }
 const q = (d, sel) => d.querySelector(`#center-dlg ${sel}`);

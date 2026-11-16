@@ -151,37 +151,6 @@ test('F-3-12: the document viewer steps through the task\'s documents and opens 
   assert.match(toastText(d) + d.body.textContent, /Could not open the document: the browser blocked the new tab/);
 });
 
-test('V-TW-15: an unfinished live task schedules after it, with no "When its PR merges"; a refusal adds nothing and keeps the text', async () => {
-  const s = sources();
-  Object.assign(s.history.pipelines.find((p) => p.id === 'h1'), { projectKey: 'web-1', pr: { url: PR_URL, state: 'OPEN' } });
-  let answer = [200, { ok: true, scheduled: true }];
-  const h = await liveHost({ sources: s, read: (u) => (u === '/api/history/web-1/h1' ? [200, { state: { ...TASK_DETAILS.capped.state, id: 'h1', projectKey: 'web-1', projectDir: '/src/web' } }] : read(u)), write: (u) => (u === '/api/run' ? answer : [200, { ok: true }]) });
-  await go(h.w, '#run/h1', 200); await settle(400);
-  const { d, calls } = h;
-  const follow = async (text) => {
-    card(d).querySelector('[data-menu="more"]').click(); await settle(20);
-    card(d).querySelector('[data-menu-pick="more:after"]').click(); await settle(40);
-    const inp = card(d).querySelector('#after-task'); inp.value = text; inp.dispatchEvent(new d.defaultView.Event('input', { bubbles: true }));
-    card(d).querySelector('[data-confirm="yes"]').click(); await settle(150);
-  };
-  answer = [409, { error: 'the project is busy' }];
-  await follow('Add paging tests');
-  assert.match(card(d).querySelector('#after-when-t').textContent, /When this task finishes/);
-  assert.doesNotMatch(card(d).textContent, /When its PR merges/);
-  assert.equal(card(d).querySelector('#after-task').value, 'Add paging tests', 'a refusal keeps the text');
-  assert.doesNotMatch(card(d).textContent, /Runs after this/);
-  assert.match(toastText(d) + d.body.textContent, /Could not start the task: the project is busy/);
-  const [post] = sent(calls);
-  assert.equal(post[1], '/api/run');
-  assert.deepEqual(post[2].after, { kind: 'pipeline', id: 'h1' });
-  assert.equal(post[2].afterPolicy, 'done');
-  assert.equal(post[2].prompt, 'Add paging tests');
-  answer = [200, { ok: true, scheduled: true }];
-  card(d).querySelector('[data-confirm="yes"]').click(); await settle(150);
-  assert.match(toastText(d) + d.body.textContent, /Scheduled: Add paging tests · when this task finishes/);
-  assert.equal(card(d).querySelector('#after-task'), null, 'the form closes once dev took it');
-});
-
 // B5.6 review: a feature group of one ready task recommends its one PR; the other way is "Create 1 stacked PR instead",
 // which the live action slot keeps (liveAction's own())
 test('B5.6 review: a live feature group of one keeps "Create 1 stacked PR instead" in its ▾', async () => {
@@ -199,34 +168,3 @@ test('B5.6 review: a live feature group of one keeps "Create 1 stacked PR instea
 
 // B5.6 review: Start a follow-up task, live: an empty text is refused in the form itself, and a second press while dev
 // has not answered sends nothing more and says nothing
-const followUp = async (d, text) => {
-  card(d).querySelector('[data-menu="more"]').click(); await settle(20);
-  card(d).querySelector('[data-menu-pick="more:after"]').click(); await settle(40);
-  const inp = card(d).querySelector('#after-task'); inp.value = text; inp.dispatchEvent(new d.defaultView.Event('input', { bubbles: true }));
-};
-test('B5.6 review: an empty follow-up is refused in place: the field says why, no toast, nothing sent', async () => {
-  const { d, calls } = await page('#run/h2');
-  await followUp(d, '   ');
-  card(d).querySelector('[data-confirm="yes"]').click(); await settle(60);
-  const inp = card(d).querySelector('#after-task');
-  assert.equal(inp.getAttribute('aria-invalid'), 'true');
-  const note = card(d).querySelector('#' + inp.getAttribute('aria-describedby'));
-  assert.equal(note?.textContent, 'Say what the next task should do');
-  assert.equal(note.getAttribute('role'), 'alert');
-  assert.doesNotMatch(toastText(d), /Say what the next task should do/, 'not a toast');
-  assert.equal(d.activeElement?.id, 'after-task');
-  assert.deepEqual(sent(calls), []);
-  inp.value = 'Add paging tests'; card(d).querySelector('[data-confirm="yes"]').click(); await settle(150);
-  assert.equal(sent(calls).length, 1, 'with words it is sent');
-});
-test('B5.6 review: a second Start run while the follow-up\'s POST is on its way sends nothing and says nothing', async () => {
-  let release; const held = new Promise((r) => { release = r; });
-  const { w, d, calls } = await page('#run/h2', (u) => (u === '/api/run' ? held.then(() => [200, { runId: 'r9' }]) : [200, { ok: true }]));
-  await followUp(d, 'Add paging tests');
-  card(d).querySelector('[data-confirm="yes"]').click(); await settle(30);
-  card(d).querySelector('[data-confirm="yes"]')?.click(); await settle(30);
-  assert.equal(sent(calls).length, 1, 'one POST');
-  assert.doesNotMatch(toastText(d) + d.body.textContent, /already on its way/);
-  release(); await settle(150);
-  assert.equal(w.location.hash, '#run/r9');
-});

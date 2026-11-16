@@ -29,7 +29,7 @@ test('taskView shows its seven slots: back, title, metadata, StatusLine, figures
   assert.match(d.querySelector('.rc-figs').textContent, /Cost \$12\.40.*Time working 24m.*Runs 2.*Review rounds 1/);
   assert.ok(d.querySelector('.tv-pr .git-mark'));
   assert.equal(d.querySelector('.tv-pr a').getAttribute('href'), 'https://github.com/acme/web-app/pull/1418');
-  assert.equal(d.querySelector('table.rt').getAttribute('aria-label'), 'Runs');
+  assert.equal(d.querySelector('table.rt').getAttribute('aria-label'), 'Tasks');   // "run" as a noun is "task" in every word a user reads
 });
 
 test('taskView has no ⋯ and an empty action slot', () => {

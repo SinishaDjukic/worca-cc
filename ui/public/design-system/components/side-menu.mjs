@@ -43,10 +43,14 @@ export function search({ value = '', placeholder = 'Search or ask', label = 'Sea
  */
 export function searchResults(items, empty = 'Nothing matches', { areas = [], tail = [] } = {}) {
   const line = (x) => ({ id: x.id, text: x.text, hint: x.where, mark: x.mark });
-  if (!items.length) return compactMenu({ cls: 'rl-search-res', label: 'Found', items: [{ id: 'none', text: empty, off: true }, ...tail] });
+  // key.search: a listbox the field owns (aria-controls); each result is an option with an id, so the field can name the
+  // active one (aria-activedescendant) while the focus stays in the field
+  let n = 0;
+  const box = (html) => html.replace(/role="menuitem(?:radio)?"/g, () => `role="option" aria-selected="false" id="tsearch-opt-${n++}"`);
+  if (!items.length) return box(compactMenu({ cls: 'rl-search-res', role: 'listbox', label: 'Found', items: [{ id: 'none', text: empty, off: true }, ...tail] }));
   // what it finds, under the area it belongs to, each with its own mark (set.search)
   const grouped = areas.length ? areas.flatMap(([area, mark]) => { const hits = items.filter((x) => x.area === area); return hits.length ? [{ header: area, mark }, ...hits.map(line)] : []; }) : items.map(line);
-  return compactMenu({ cls: 'rl-search-res', label: 'Found', items: [...grouped, ...(tail.length ? [{ sep: true }, ...tail] : [])] });
+  return box(compactMenu({ cls: 'rl-search-res', role: 'listbox', label: 'Found', items: [...grouped, ...(tail.length ? [{ sep: true }, ...tail] : [])] }));
 }
 
 /**
@@ -67,9 +71,9 @@ function barSearch({ placeholder, label, results, kbd = '' }) {
 }
 
 /**
- * The search's state and its one own key (key.search), for every Search in a document: the field says aria-expanded
- * while results show, and ArrowUp from the field goes to the last result. The rest is the menu's (compact-menu.mjs):
- * ArrowDown from the field goes to the first result, the arrows move through them, Enter opens the one in focus.
+ * The search's state and its keys (key.search), for every Search in a document: the field says aria-expanded while
+ * results show; ArrowDown and ArrowUp walk the results (a listbox; the active option is the field's
+ * aria-activedescendant) and Enter opens the active one.
  * @param {Document} doc
  */
 const watched = new WeakSet();
@@ -80,11 +84,24 @@ export function watchSearch(doc) {
   const sync = () => { for (const input of doc.querySelectorAll('[data-search]')) { const on = String(!!resOf(input)?.querySelector('.menu')); if (input.getAttribute('aria-expanded') !== on) input.setAttribute('aria-expanded', on); } };
   const Obs = doc.defaultView?.MutationObserver;
   if (Obs) new Obs(sync).observe(doc.documentElement, { subtree: true, childList: true });
+  // the arrows walk the results from the field: the active one is named by aria-activedescendant, Enter opens it (the
+  // page's own Enter reads `.is-active`), Home and End go to the first and the last, and the focus never leaves the field
+  const optsOf = (input) => [...(resOf(input)?.querySelectorAll('.menu-item:not([aria-disabled="true"])') || [])];
+  const setActive = (input, el) => {
+    for (const o of optsOf(input)) { const on = o === el; o.classList.toggle('is-active', on); if (o.getAttribute('role') === 'option') o.setAttribute('aria-selected', String(on)); }
+    if (el?.id) input.setAttribute('aria-activedescendant', el.id); else input.removeAttribute('aria-activedescendant');
+    el?.scrollIntoView?.({ block: 'nearest' });
+  };
   doc.addEventListener('keydown', (e) => {
-    if (e.key !== 'ArrowUp' || !e.target.matches?.('[data-search]')) return;
-    const items = [...(resOf(e.target)?.querySelectorAll('.menu-item:not([aria-disabled="true"])') || [])]; if (!items.length) return;
-    e.preventDefault(); items[items.length - 1].focus();
+    if (!e.target.matches?.('[data-search]') || !['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) return;
+    const items = optsOf(e.target); if (!items.length) return;
+    const at = items.findIndex((o) => o.classList.contains('is-active'));
+    if ((e.key === 'Home' || e.key === 'End') && at < 0) return;   // not walking yet: the keys are the field's own
+    e.preventDefault(); e.stopPropagation();
+    setActive(e.target, items[e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : e.key === 'ArrowDown' ? (at + 1) % items.length : (at < 0 ? items.length - 1 : (at - 1 + items.length) % items.length)]);
   }, true);
+  // new words, new results: nothing is active until an arrow says so
+  doc.addEventListener('input', (e) => { if (e.target.matches?.('[data-search]')) e.target.removeAttribute('aria-activedescendant'); }, true);
   sync();
 }
 

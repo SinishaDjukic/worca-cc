@@ -50,7 +50,7 @@
     const x = { t, c, key: `task:${t.id}` };
     if (t.kind === 'schedule') return { pick: false, key: x.key, _x: x, title: t.title, meta: t.detail || '', mark: R.kindMark({ kind: 'schedule', title: t.detail }), end: t.time, current: location.hash === `#schedule/${t.id}`, menu: taskMenu(t) };
     const st = R.runState(RM.stateOf(t.case));
-    return { pick: false, key: x.key, _x: x, title: t.title, mark: R.kindMark({ breathe: c.id !== current, kind: 'task', tone: R.markTone(st), advisory: R.markTone(st) === 'ok' && sectionOfChat(c) === 'needs', stage: t.stage, title: `${st.word} · ${t.detail || ''}` }), meta: [st.word, t.detail === st.word ? '' : t.detail].filter(Boolean).join(' · '), end: t.git ? '' : t.endWord || '', current: isOpenTask(c, t), tree: t.after ? treeOf(c, t.after) : undefined, menu: taskMenu(t) };
+    return { pick: false, key: x.key, _x: x, title: t.title, mark: R.kindMark({ breathe: c.id !== current, kind: 'task', tone: R.markTone(st), advisory: R.markTone(st) === 'ok' && sectionOfChat(c) === 'needs', stage: t.stage, title: `${st.word} · ${t.detail || ''}` }), meta: [st.word, t.detail === st.word ? '' : t.detail].filter(Boolean).join(' · '), wrap: R.sectionOf(st.word, RM.stateOf(t.case)) === 'needs' /* list.row-facts: the reason is never cut */, end: t.git ? '' : t.endWord || '', current: isOpenTask(c, t), tree: t.after ? treeOf(c, t.after) : undefined, menu: taskMenu(t) };
   });
 
   // ---- the view ----
@@ -67,7 +67,7 @@
   // ---- rows ----
   function chatRow(c, member) {
     const x = { c, key: `chat:${c.id}` };
-    const r = { key: x.key, _x: x, title: c.title, lead: `${c.pinned ? `<span class="lr-pin" title="Pinned">${R.icon('pin', 12)}</span>` : ''}${c.origin ? R.originMark(c.origin) : ''}`, mark: markOf(c.state, c.kind, ownAttn(c), sectionOfChat(c) === 'needs' ? LEVEL_TONE[levelOf(c)] || '' : ''), unread: c.unread, current: current === c.id && !onTask(), holds: current === c.id && onTask(), end: c.time, tree: c.tasks?.length ? treeOf(c, c.tasks) : undefined,
+    const r = { key: x.key, _x: x, title: c.title, lead: `${c.pinned ? `<span class="lr-pin" title="Pinned">${R.icon('pin', 12)}</span>` : ''}${c.origin ? R.originMark(c.origin) : ''}`, mark: markOf(c.state, c.kind, ownAttn(c), sectionOfChat(c) === 'needs' ? LEVEL_TONE[levelOf(c)] || '' : ''), unread: c.unread, news: c.unread ? (c.state === 'needs-you' ? 'need' : true) : false /* list.news: a light dot on its mark until you open it */, current: current === c.id && !onTask(), holds: current === c.id && onTask(), end: c.time, tree: c.tasks?.length ? treeOf(c, c.tasks) : undefined,
       meta: '' };
     r.menu = [{ id: 'toggle', text: 'Select', hint: hint('Space') }, { id: 'in-view', text: window.StillhetShell?.inView.has('chat', c.id) ? 'Out of view' : 'Keep in view', help: 'Its live mark in the top bar, on every page' }, { id: 'rename', text: 'Rename…', hint: hint('R'), help: 'Give it another name' }, { id: 'pin', text: c.pinned ? 'Unpin' : 'Pin', hint: hint('P'), help: 'A pinned chat leads its section' },
       ...(has('advanced') ? [{ id: 'add-to-group', text: 'Add to group…', hint: hint('G'), help: 'Find a group, or make a new one' }, ...(c.group ? [{ id: 'leave-group', text: 'Remove from group', hint: hint('shift', 'G'), help: 'It stays in Chats, in no group' }] : [])] : []),
@@ -285,7 +285,7 @@
     noun: 'chats', name: 'Chats', label: 'Selected chats', scopes: ['chat'],
     view: () => ({ state: listCase === 'loading' ? (ctl?.state.waited ? 'loading' : 'waiting') : ['offline', 'failed'].includes(listCase) ? listCase : 'ready', parts: parts(),
       tools: [{ id: 'select', text: 'Select', hint: `${R.keyHint(['mod'], R.isMac(window))} click`, help: 'Tick chats to act on several at once' }, R.resetViewTool({ changed: JSON.stringify({ show: view.show, from: view.from, by: view.by, sort: view.sort }) !== JSON.stringify({ show: FRESH.show, from: FRESH.from, by: FRESH.by, sort: FRESH.sort }), to: 'all chats, from all projects, grouped by date' }), { sep: true }, { header: 'Sort' }, ...SORTS.map(([id, text, help]) => ({ id: `sort:${id}`, text, help, checked: view.sort === id })), { sep: true }, { id: 'keys', text: 'Keyboard shortcuts', hint: '?', help: 'The keys of this list' }],
-      sections: sections().map((s) => ({ ...s, count: s.rows.reduce((n, r) => n + (r.members ? (s.id === 'needs' ? Math.max(1, r.members.filter((m) => sectionOfChat(m._x.c) === 'needs').length) : r.members.length) : 1), 0) })) /* one unit: chats, a folded group by its members */, empty: { text: listCase === 'empty' ? 'No chats yet.' : view.show === 'needs' ? 'No chat needs you.' : view.show === 'archived' ? 'No archived chats.' : view.show === 'running' ? 'No chat is running.' : 'No chats yet.', action: listCase === 'empty' ? 'New chat' : '' } }),
+      sections: sections().map((s) => { const n0 = s.rows.reduce((n, r) => n + (r.members ? (s.id === 'needs' ? Math.max(1, r.members.filter((m) => sectionOfChat(m._x.c) === 'needs').length) : r.members.length) : 1), 0); return { ...s, count: n0, ...(s.id === 'needs' && view.from === 'all' && W.count && W.count() > n0 ? { of: W.count() } : {}) }; })   /* small.one-count: "Needs you 5 · of 11" */ /* one unit: chats, a folded group by its members */, empty: { text: listCase === 'empty' ? 'No chats yet.' : view.show === 'needs' ? 'No chat needs you.' : view.show === 'archived' ? 'No archived chats.' : view.show === 'running' ? 'No chat is running.' : 'No chats yet.', action: listCase === 'empty' ? 'New chat' : '' } }),
     can: () => ['menu', 'fold', 'archive', 'rename', 'pin', ...(has('advanced') ? ['group', 'delete'] : [])],
     bulk: bulkActions, count: (rows) => chatsOf(rows.map((r) => r._x)).length, act,
     open: (r) => { if (r._x.g) { ctl.toggleGroup(r.key); return; } if (r._x.t) { openUnder(r._x); return; } openChat(r._x.c.id); },
@@ -312,7 +312,7 @@
   R.prefs.onChange(() => ctl.paint());
   let toTop = false;
   window.StillhetChats = {
-    show: (id) => { current = id || ''; ctl.paint(); if (toTop) { toTop = false; requestAnimationFrame(() => { bar.scrollTop = 0; }); } return true; },   // after the route has shown the bar: a hidden one cannot scroll
+    show: (id) => { current = id || ''; const seen = id && data.chats.find((x) => x.id === id); if (seen) seen.unread = false;   /* list.news: opening it clears its dot, by any way in */ ctl.paint(); if (toTop) { toTop = false; requestAnimationFrame(() => { bar.scrollTop = 0; }); } return true; },   // after the route has shown the bar: a hidden one cannot scroll
     opened: () => true,
     /** nav.one-bar: the bar as it starts: the fresh view, nothing selected, no chat open, at the top. */
     home: () => { view = { ...FRESH }; set(STORE_V, JSON.stringify(view)); current = ''; ctl.clear(); ctl.paint(); toTop = true; },

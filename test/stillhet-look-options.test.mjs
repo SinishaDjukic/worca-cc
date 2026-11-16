@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import * as LIB from '../ui/public/design-system/components/index.mjs';
 
 // Lower it in the same change that removes a look option; never raise it.
-const LOOK_OPTIONS_CEILING = 52;   // 52: PageFilters passes FilterRow's own menuCls through (the redesign, with the owner's authority)
+const LOOK_OPTIONS_CEILING = 53;   // 52: PageFilters passes FilterRow's own menuCls through; 53: DetailPanel's wide, its widen control's state (the redesign, with the owner's authority)
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const DIR = 'ui/public/design-system/components';

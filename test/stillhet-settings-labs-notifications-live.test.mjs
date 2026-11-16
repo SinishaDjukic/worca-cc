@@ -128,7 +128,7 @@ test('F-7b-02: the live Updates pickers, fold and Reset are disabled; nothing ch
 });
 
 test('F-7b-02: Pulse icon stays wired on live', async () => {
-  const { d, posts } = await live({ hash: '#settings/notifications' });
+  const { d, posts } = await live({ hash: '#settings/appearance' });
   d.querySelector('[data-menu="pulseFor"]').click(); await settle();
   d.querySelector('[data-menu-pick="pulseFor|10s"]').click(); await settle();
   assert.deepEqual(posts.map((p) => [p.url, p.body]), [['/api/settings', { pulseFor: '10s' }]]);
@@ -141,7 +141,7 @@ test('prototype keeps its demo: a Labs switch flips and toasts; Badge and Deskto
   await settle(120);
   assert.equal(metaOf(secOf(d, 'Features')).startsWith('Labs features may change'), true);
   d.querySelector('[data-svsw="flag:runLabels"]').click(); await settle();
-  assert.equal(toastText(d), 'Run labels: on');
+  assert.equal(toastText(d), 'Task labels: on');
   assert.equal(d.querySelector('[data-svsw="flag:runLabels"]').getAttribute('aria-checked'), 'true');
   assert.ok(!gets.includes('/api/flags'), 'the demo never reads /api/flags');
 

@@ -393,3 +393,52 @@ test('B5.6 review: prPushOf: a 422 before the push is not pushed; a group\'s par
   assert.equal(M.prPushOf({ status: 500, error: 'git push failed: rejected', group: true }), 'not-pushed');
   assert.equal(M.prPushOf({ status: 500, error: 'GitHub pull request failed: x', group: true }), 'pushed');
 });
+
+// thing.one-source (fix 2): the demo's page is the task you opened, never its case's sample
+test('a page lent to a task of the store shows that task\'s own branch, time, cost, line and findings', () => {
+  const task = { id: 't1', title: 'Migrate cron parser', case: 'gate', stage: 2, branch: 'refactor/cron-parser', detail: 'Waits for your OK on the review', facts: { cost: '$6.10', time: '31 min' },
+    why: ['Review passed with 2 small notes', 'A name in parser.mjs', 'A leap-year test'] };
+  window.StillhetWorld = { rows: () => [{ id: 'r2', case: 'gate', title: 'Migrate cron parser', project: 'web-app', detail: 'Waits for your OK on the review', cost: 6.1, time: '13:40' }] };
+  window.StillhetChats = { data: () => ({ chats: [{ id: 'c16', tasks: [task] }] }) };
+  M.titles.gate = 'Migrate cron parser';
+  try {
+    const v = M.view('gate', {});
+    assert.equal(v.own, true);
+    assert.equal(v.title, 'Migrate cron parser');
+    assert.equal(v.place.branch, 'refactor/cron-parser');
+    assert.equal(v.crumbs[1].t, 'web-app');
+    assert.equal(figure(v, 'Time'), '31 min'); assert.equal(figure(v, 'Cost'), '$6.10');
+    assert.equal(v.detail, 'Waits for your OK on the review');
+    assert.deepEqual(v.under.issues.map((x) => x.t), ['A name in parser.mjs', 'A leap-year test'], 'the findings are the task\'s, the same lines its card shows');
+    assert.equal(v.under.roles.length, 0);
+    assert.equal(v.over.checklist, null, 'no sample checklist');
+    const text = JSON.stringify([v.stages, v.open, v.figs, v.detail, v.under, v.over.focus]);
+    assert.doesNotMatch(text, /4h 15m|82\.65|sent it back 3 times|375px|37m 21s/, 'nothing of the case\'s sample is lent');
+    // a task with no figures of its own shows none
+    delete task.facts; window.StillhetWorld = { rows: () => [{ id: 'r2', case: 'gate', title: 'Migrate cron parser', project: 'web-app', detail: '', cost: null }] };
+    const bare = M.view('gate', {});
+    assert.equal(figure(bare, 'Time'), undefined); assert.equal(figure(bare, 'Cost'), undefined);
+    // a task one minute into Plan is drawn at Plan, not at its case's sample Review
+    Object.assign(task, { case: 'working', stage: 0, detail: 'Plan · writing the plan', why: undefined }); M.titles.working = 'Migrate cron parser';
+    window.StillhetWorld = { rows: () => [{ id: 'r2', case: 'working', title: 'Migrate cron parser', project: 'web-app', detail: 'Plan · writing the plan', cost: null, time: 'now' }] };
+    const early = M.view('working', {});
+    assert.equal(early.stages.map((st) => (st.cells.some((c) => c !== 'is-next') ? 1 : 0)).join(''), '10000');
+    assert.ok(!tab(early, 'changes'), 'Build has not run: no Changes');
+    assert.equal(figure(early, 'Time'), '1 min');
+  } finally { delete window.StillhetWorld; delete window.StillhetChats; delete M.titles.gate; delete M.titles.working; }
+});
+
+test('a case nobody opened as a task keeps its sample; the gate\'s step says cycles, never rounds', () => {
+  const v = M.view('gate', {});
+  assert.equal(v.own, false);
+  assert.match(JSON.stringify(v.open), /after 3 cycles/);
+  assert.doesNotMatch(JSON.stringify([v.open, v.over]), /\brounds?\b/);
+});
+
+test('the stage train at Ready is ink as far as the work has come: PR and Merged are not filled before there is a PR', () => {
+  const html = R.stageBar({ labels: ['Plan', 'Build', 'Review', 'PR', 'Merged'], stage: 2, tone: 'ok', knot: () => ({}) });
+  assert.deepEqual([...html.matchAll(/class="sb-stop is-(\w+)"/g)].map((m) => m[1]), ['done', 'done', 'done', 'next', 'next']);
+  assert.match(html, /aria-label="Stage 3 of 5: Review, ready"/);
+  const merged = R.stageBar({ labels: ['Plan', 'Build', 'Review', 'PR', 'Merged'], stage: 4, tone: 'merged', knot: () => ({}) });
+  assert.equal([...merged.matchAll(/class="sb-stop is-done"/g)].length, 5);
+});

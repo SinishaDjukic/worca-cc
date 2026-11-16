@@ -12,8 +12,8 @@ const DIVERGED = { error: 'main has diverged from origin/main (2 ahead, 3 behind
 const ENGINE = { error: 'OpenAI Codex cannot enforce the guardrails Strict', code: 'engine-refused', overridable: true };
 async function open({ reads = {}, write = () => [200, { runId: 'r-new' }], hold, lists = FLOWS } = {}) {
   const h = await liveHost({ lists, write, hold, read: (u) => reads[u] || null });
-  await go(h.w, '#runs', 120);
-  h.w.StillhetCenters.maker('tasks').newPick('form'); await settle(80);
+  await go(h.w, '#runs', 200);
+  h.w.StillhetCenters.newTask(); await settle(80);
   return h;
 }
 const q = (d, sel) => d.querySelector(`#center-dlg ${sel}`);
@@ -84,7 +84,7 @@ test('COV-2 sync: a failed fetch offers Start anyway with last-fetch; a forbidde
   assert.match(note(d).textContent, /origin could not be reached\. Worca will start from the last fetch instead\./);
   q(d, '[data-c-sync="last-fetch"]').click(); await settle(80);
   assert.equal(runs(calls)[1].syncPolicy, 'last-fetch');
-  w.StillhetCenters.maker('tasks').newPick('form'); await settle(80);
+  w.StillhetCenters.newTask(); await settle(80);
   type(w, d, '#cc-text', 'Again'); await start(d);
   assert.match(note(d).textContent, /This project's sync setting does not allow starting from the remote\./);
   assert.deepEqual([...note(d).querySelectorAll('button')].map((b) => b.textContent), ['Cancel']);
@@ -107,15 +107,16 @@ const baseItems = async (d) => { q(d, '[data-menu="f-base"]').click(); await set
 
 test('COV-2 Start now instead / Start run / Start run now (demo): the waiting clause\'s link drops it and the yes button reads Start task', async () => {
   const { w, d } = await demo(AFTER);
-  assert.match(q(d, '.cc-frame').textContent, /It starts once Nightly docs ends/);
+  assert.match(q(d, '.dlg-body').textContent, /It starts once Nightly docs ends/);
   assert.equal(q(d, '[data-dialog="yes"]').textContent, 'Start after it');
   q(d, '[data-c-nowinstead]').click(); await settle(20);
-  assert.doesNotMatch(q(d, '.cc-frame').textContent, /It starts once/);
+  assert.doesNotMatch(q(d, '.dlg-body').textContent, /It starts once/);
   assert.equal(q(d, '[data-c-nowinstead]'), null);
   assert.equal(q(d, '[data-dialog="yes"]').textContent, 'Start task');
   assert.equal(d.activeElement, q(d, '[data-dialog="yes"]'));
   assert.notEqual(q(d, '[data-menu="f-base"]').textContent.trim(), 'the task before it\'s branch', 'no run before it, no such base');
   type(w, d, '#cc-text', 'Write the release notes'); await start(d);
+  await settle(500);   // the demo's server answers after a moment, as a real one does: the button is busy until then
   assert.ok(w.StillhetWorld.rows().some((r) => r.title === 'Write the release notes' && r.case === 'starting'), 'Start task starts it now');
 });
 
@@ -126,11 +127,12 @@ test('COV-2 Branch off the run before it (demo): with a run before it, the base 
   q(d, '[data-dialog="cancel"]').click(); await settle(20);
   w.StillhetCenters.newTask(); await settle(60);
   assert.equal(q(d, '[data-menu="f-base"]').textContent.trim(), 'main (the project\'s default branch)');
-  assert.deepEqual(await baseItems(d), ['main', 'dev']);
+  assert.deepEqual(await baseItems(d), ['main (the project\'s default branch)', 'dev']);
 });
 
 test('COV-2 Branch off the run before it (demo): Schedule… from a waiting task does not carry the task before it\'s branch', async () => {
   const { d } = await demo(AFTER);
   q(d, '[data-c-tosched]').click(); await settle(30);
+  q(d, '[data-c-more]').click(); await settle(20);   // a schedule's Source branch is one of More options' fields
   assert.equal(q(d, '[data-menu="f-base"]').textContent.trim(), 'main (the project\'s default branch)');
 });

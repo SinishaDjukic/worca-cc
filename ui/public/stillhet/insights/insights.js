@@ -11,6 +11,7 @@
   const AGAINST = { none: 'no comparison', before: 'the period before', budget: 'the budget' };
   const HINT = 'Drag across to narrow, or hold Shift and press the arrow keys. The Time filter narrows it too.';
   const TEAM_EMPTY = 'No project shares its team numbers yet';   // D3: turning sharing on stays in the project's settings
+  const LATER = ['Why it cost', 'Review rounds', 'Autonomy', 'Cache', 'Start to merge', 'Waiting on you'];   // views taken out until they are measured
   const ALIAS = { saved: 'time-saved', outcomes: 'ends' };   // old links to what the page used to be called
   const views = [{ id: 'v1', name: 'By client, then workflow', sub: 'spend', st: { by: 'client', then: 'workflow' } }, { id: 'v2', name: 'Monthly for finance', sub: 'spend', st: { by: 'costcenter', when: 'last month', as: 'table' } }];
   const states = {};
@@ -39,7 +40,9 @@
     const k = key(), item = (id, label, icon, count) => ({ label, icon, count, current: id === k, attrs: { 'data-in-go': id } });
     const groups = [NEEDS_YOU, 'Cost', 'Value', 'Quality', 'Flow', 'Team'].flatMap((g) => { const items = M.SUBS.filter((s) => barGroup(s) === g && (!s.team || team()) && offered(s)).map((s) => item(s.id, s.title, s.icon, s.count)); return items.length ? [{ title: g, items }] : []; });
     const mine = viewList();
-    return R.sideMenu({ label: 'Insights', groups: [...groups, ...(mine.length ? [{ title: 'Your views', items: mine.map((v) => item(v.id, v.name, 'sliders')) }] : [])] });
+    // More: the views that are known and coming, each one quiet line, so nobody takes them for lost (they open nothing yet)
+    const later = isLive() ? [] : [{ title: 'More', items: LATER.map((label) => ({ label, count: 'Not measured yet', attrs: { 'aria-disabled': 'true', 'data-in-later': '', title: `${label} is not measured yet: it is known and coming` } })) }];
+    return R.sideMenu({ label: 'Insights', groups: [...groups, ...(mine.length ? [{ title: 'Your views', items: mine.map((v) => item(v.id, v.name, 'sliders')) }] : []), ...later] });
   }
   // ---- the sentence ----
   const simple = () => !R.shows('advanced');   // workspaces start at Advanced
@@ -80,7 +83,7 @@
     ];
     const chevron = R.icon('chevron', 12);
     // one compact line; the open picker's own menu class (two columns for the long lists); the page's small tools end the line
-    const tools = R.button({ label: 'Save this view', attrs: { 'data-in-save': '', title: 'Keeps this page as you set it, under Your views' } }) + R.button({ label: 'Copy a link', attrs: { 'data-in-link': '', title: 'To this page, as you narrowed it' } }) + R.button({ label: 'Download CSV', attrs: { 'data-in-csv': '', title: 'The rows below, as a file' } });
+    const tools = R.button({ label: 'Save this view', kind: 'quiet', attrs: { 'data-in-save': '', title: 'Keeps this page as you set it, under Your views' } }) + R.button({ label: 'Copy a link', kind: 'quiet', attrs: { 'data-in-link': '', title: 'To this page, as you narrowed it' } }) + R.button({ label: 'Download CSV', kind: 'quiet', attrs: { 'data-in-csv': '', title: 'The rows below, as a file' } });
     const row = R.centerFilters({ parts: fields.map((f) => f.part), pick: menu, chevron, menuCls: fields.find((f) => f.part.id === menu)?.cls || '', end: tools });
     // a filter a link set (a project's spend, a copied link) holds for this visit, and the page says so (list.narrowed)
     const by = narrowedBy(st), lines = [
@@ -135,7 +138,7 @@
     if (!g) return '';
     const tasks = (n) => `${n} ${n === 1 ? 'task' : 'tasks'}`;
     return R.heatGrid({ label: `${sub.title} by ${M.DIM[st.by]}, ${c.timeWord}`, rows: g.rows, columns: g.columns, max: g.max, off: "A cell opens nothing: these are the whole team's numbers, and Tasks lists your own",
-      cells: g.cells.map((row) => row.map((x) => ({ value: x.value, text: x.value ? `${M.usd(x.value)}, ${tasks(x.runs)}` : '' }))) });
+      cells: g.cells.map((row) => row.map((x) => ({ value: x.value, short: x.value ? M.usd(x.value) : '', text: x.value ? `${M.usd(x.value)}, ${tasks(x.runs)}` : '' }))) });
   }
   function chartHtml(sub, st, c) {
     if (sub.src.heat) return heatHtml(sub, st, c);
@@ -223,7 +226,7 @@
     const pace = sub.pace && plain;   // over budget at this pace: Advisory, in ink (look.alert-ladder); live: the words of D10 (no budget, or under it: no pace)
     const measures = typeof sub.measures === 'function' ? sub.measures(sub) : sub.measures || '';
     const head = R.placeHead({ center: arg === 'spend' ? null : { label: 'Insights', to: 'insights' }, title: viewList().find((v) => v.id === arg)?.name || sub.head || sub.title, facts: esc(measures), mark: pace ? R.kindMark({ kind: 'figure', tone: 'ok', icon: sub.icon, title: sub.pace }) : R.kindMark({ kind: 'plugin', icon: sub.icon }), tone: pace ? 'ok' : '', word: pace ? sub.pace : word, why: pace ? [word, ...why.split(' · ').filter((x) => !/on pace for/i.test(x))].join(' · ') : why,
-      actions: R.button({ label: 'Ask about it in chat', attrs: { 'data-in-chat': '', title: 'Opens Chat with this page attached' } }) });
+      actions: R.button({ kind: 'quiet', label: 'Ask about it in chat', attrs: { 'data-in-chat': '', title: 'Opens Chat with this page attached' } }) });
     return frame(`${head}${sentence(sub, st, c)}${chartHtml(sub, st, c)}${st.as === 'table' && (stacks(sub, st, c) || (st.against === 'before' && !axisIsRows(sub, st))) ? '' : rowsHtml(sub, c)}${actions(sub, st, c)}`);
   }
   // one page frame (stillhet.one-frame): the column every place shares, its title on the same edge as Tasks
@@ -278,7 +281,7 @@
     follow(sub, st);
     R.watchChart(page.querySelector('[data-chart]'), {
       open: (i) => { const f = targetOf(sub, st, c, i); if (f) window.StillhetRunsList.filter(f); },
-      narrow: axisIsRows(sub, st) ? undefined : (a, b) => { if (c.live) { st.from = c.src.days[a]; st.to = c.src.last[b]; } else { const base = st.narrow ? st.narrow[0] : 0; st.narrow = [base + a, base + b]; }   /* live: a re-read over the dragged days (D7) */ menu = ''; dragged = true; try { localStorage.setItem(DRAGGED, '1'); } catch { /* remembering is a nicety */ } draw(); },
+      narrow: axisIsRows(sub, st) ? undefined : (a, b) => { if (c.live) { st.from = c.src.days[a]; st.to = c.src.last[b]; } else { const base = st.narrow ? st.narrow[0] : 0; st.narrow = [base + a, base + b]; }   /* live: a re-read over the dragged days (D7) */ menu = ''; dragged = true; try { localStorage.setItem(DRAGGED, '1'); } catch { /* remembering is a nicety */ } draw(); (page.querySelector('[data-chart] [tabindex="0"]') || page.querySelector('[data-chart] [tabindex]'))?.focus({ preventScroll: true }); },   // the focus stays on the chart you narrowed
     });
     if (back) { page.querySelector(`[data-menu="${back}"]`)?.focus({ preventScroll: true }); back = ''; }
     else if (focusRow) { personRow(focusRow)?.focus({ preventScroll: true }); focusRow = ''; }

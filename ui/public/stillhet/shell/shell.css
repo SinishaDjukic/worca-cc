@@ -12,11 +12,11 @@
 #route-run{padding:24px 32px 56px;}
 #route-run #card{max-width:720px;margin-inline:auto;}
 
-/* The sidebar as Settings' menu: on a wide screen the SideMenu shows instead of today's nav; below 760px the sidebar
-   stays Worca's (its narrow rail) and Settings opens on its menu as a list in the page. */
+/* The sidebar as Settings' menu: the SideMenu shows instead of today's nav, in the bar on a wide screen and in the
+   drawer on a phone (where Settings also opens on its menu as a list in the page). */
 .stillhet-side-settings{flex:1 1 auto;min-height:0;overflow:auto;}
 @media (min-width: 761px){ #side-rail.is-settings nav.nav{display:none;} }
-@media (max-width: 760px){ .stillhet-side-settings{display:none;} }
+/* on a phone the drawer on Settings lists Settings' sections, as the bar does on a wide screen (it was empty) */
 /* On the 60px rail the sidebar stays Worca's too: its icons, and Settings' menu as a list in the page, with ‹ Settings. */
 .has-rail #side-rail.is-settings nav.nav{display:flex;}
 .has-rail .stillhet-side-settings{display:none;}
@@ -42,20 +42,6 @@
 /* A confirm under the top bar (the search's hand-off), and the one line of a page above the mode. */
 .stillhet-locked{padding:24px 32px;}
 
-/* Ask worca: 761 to 1080px it covers the page's right side at its own width, with its grip; push and window as the app.
-   It fades in, the page narrowing with it above 1080px; at 1080px and below it covers the page and only fades, as Pulse
-   does; it closes at once. */
-@media (min-width: 761px) and (max-width: 1080px){
-  .ask-side{width:var(--ask-side-w, 440px);border-left:1px solid var(--line);box-shadow:var(--shadow-pop);}
-  .ask-side-grip{display:block;}
-}
-@media (min-width: 1081px){ .ask-side.is-in{animation:stillhet-ask-in var(--motion-quick) var(--ease);} }
-@media (max-width: 1080px){ .ask-side.is-in{animation:stillhet-ask-fade var(--motion-quick) var(--ease);} }
-@keyframes stillhet-ask-in{from{width:0;opacity:0;}}
-@keyframes stillhet-ask-fade{from{opacity:0;}}
-@media (prefers-reduced-motion: reduce){ .ask-side.is-in{animation:none;} }
-.stillhet-ask-body{height:100%;min-height:0;display:flex;flex-direction:column;}
-.stillhet-ask-body > section.view{flex:1 1 auto;min-height:0;display:flex;flex-direction:column;}
 
 /* The prototype's own controls, folded into a corner (not Worca). */
 .mk-tools{position:fixed;right:12px;bottom:12px;z-index:60;max-width:min(360px, calc(100vw - 24px));background:var(--float, var(--panel));
@@ -221,8 +207,6 @@ body.bar-hidden .bar-show{display:inline-flex;}   /* nav.one-bar: hidden, the wa
 
 /* notices come in under the top bar, by Pulse: never over the composer's controls */
 body .toasts{top:60px;bottom:auto;}   /* ds-ok: just under the 48px top bar */
-body > .rc-toast{top:60px;bottom:auto;}   /* ds-ok: the same place: never over a page's last rows or a canvas's zoom */
-body:has(.wf-canvas) > .rc-toast{top:112px;}   /* ds-ok: under the canvas's own head */
 
 .place-title{margin:0;font:600 var(--fs-subpage)/1.3 var(--sans);letter-spacing:-.02em;}   /* panel.place-head: a thing's page's title */
 
@@ -278,7 +262,7 @@ body:has(.wf-canvas) > .rc-toast{top:112px;}   /* ds-ok: under the canvas's own 
 .bar-list .lr-m{font-size:var(--fs-caption);line-height:16px;}
 /* list.row-more in a bar: ⋯ is 28px wide; it shows on hover, on focus, on touch, and always on the row you are on. A row
    with a second line holds it under its time, so it never covers the title. */
-.bar-list .list-row .lr-end .rc-pop > .btn.btn-icon{width:28px;height:22px;}
+.bar-list .list-row .lr-end .rc-pop > .btn.btn-icon{width:28px;height:24px;}   /* a target is at least 24 by 24 at every width (WCAG 2.5.8) */
 .bar-list .list-row.is-current > .lr-end .rc-pop{opacity:1;pointer-events:auto;}
 .bar-list .lr-end .rc-pop{background:none;}
 .bar-list .list-row:not(:has(> .lr-main > .lr-m)) > .lr-end .rc-pop{background:var(--side-bg);}
@@ -304,22 +288,30 @@ body:has(.wf-canvas) > .rc-toast{top:112px;}   /* ds-ok: under the canvas's own 
 .fr-tab[aria-pressed="true"]{color:var(--ink);box-shadow:inset 0 -2px 0 var(--ink);}
 .fr-tab .n{font-size:var(--fs-caption);font-weight:400;color:var(--ink-2);font-variant-numeric:tabular-nums;}
 .fr-tab:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
-.fr-pick-w{flex:0 1 auto;min-width:0;}
+.fr-pick-w{flex:0 0 auto;min-width:0;max-width:100%;}
+.fr-pick{width:calc(var(--fr-w,16) * .5em + 46px);justify-content:space-between;}   /* ds-ok: --fr-w is the count of letters of the filter's widest choice (FilterRow sets it): the picker never follows its value */
 .fr-pick,.fr-filter-b{display:inline-flex;align-items:center;gap:5px;max-width:100%;height:28px;margin:0;padding:0 6px 0 8px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);color:var(--ink);font:400 var(--fs-meta)/1 var(--sans);white-space:nowrap;cursor:pointer;}
 .fr-pick:hover,.fr-pick[aria-expanded="true"],.fr-filter-b:hover,.fr-filter-b[aria-expanded="true"]{background:var(--hover);}
 .fr-pick:focus-visible,.fr-filter-b:focus-visible,.fr-chip-x:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
 .fr-pick svg,.fr-filter-b svg{flex:none;color:var(--ink-2);}
 .fr-pick-l{flex:none;color:var(--ink-2);}
-.fr-pick-v{min-width:0;max-width:160px;overflow:hidden;text-overflow:ellipsis;font-weight:500;}
-.fr-chips{display:flex;align-items:center;justify-content:flex-end;gap:4px;flex:1 1 0;min-width:0;overflow:hidden;}
-.fr-chip{display:inline-flex;align-items:center;flex:0 1 auto;min-width:40px;height:24px;padding:0 1px 0 7px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);color:var(--ink);font-size:var(--fs-caption);}
-.fr-chip.is-narrow{display:none;}
+.fr-pick-v{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;font-weight:500;text-align:left;}
+.fr-chips{display:flex;flex-wrap:wrap;align-content:flex-start;justify-content:flex-end;gap:8px 4px;flex:1 1 0;min-width:0;height:24px;overflow:hidden;}   /* a chip with no room drops to a line that is not shown: whole or not at all */
+.fr-chips::before{content:"";flex:none;width:0;height:24px;margin-right:-4px;}   /* holds the shown line, so a chip wider than the room leaves it too */
+.fr-chip{display:inline-flex;align-items:center;flex:none;height:24px;padding:0 1px 0 7px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);color:var(--ink);font-size:var(--fs-caption);}
 .fr-chip-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .fr-chip-x{flex:none;display:grid;place-items:center;width:20px;height:20px;margin:0;padding:0;border:0;border-radius:var(--r-xs);background:none;color:var(--ink-2);cursor:pointer;}
 .fr-chip-x:hover{background:var(--hover);color:var(--ink);}
 .fr-filter{flex:none;}
 .fr-filter-b{padding:0 8px;font-weight:500;}
 .fr-filter-b.is-on{border-color:var(--ink);}
+.fr-filter-n{min-width:14px;font-size:var(--fs-caption);font-weight:600;font-variant-numeric:tabular-nums;text-align:center;}
+.fr-phone{display:none;}
+@media (max-width:760px){
+  .fr:not(.is-fold) > .fr-pick-w, .fr:not(.is-fold) > .fr-more{display:none;}
+  .fr:not(.is-fold) > .fr-phone{display:inline-flex;}
+  .fr:not(.is-fold) > .fr-tabs{flex:0 1 auto;min-width:0;overflow:hidden;}
+}
 .fr-filter .pz-menu.fr-pop{left:auto;right:0;min-width:208px;max-height:min(60vh, 480px);overflow-y:auto;}
 .fr-end{display:inline-flex;align-items:center;gap:8px;flex:none;margin-left:auto;}
 /* in a bar: the line is the whole head; under 340px the Filter control is its icon, the third tab gives way (it stays
@@ -332,11 +324,37 @@ body:has(.wf-canvas) > .rc-toast{top:112px;}   /* ds-ok: under the canvas's own 
 .bar-list .list-head > .list-tools .rc-pop > .btn.btn-icon{width:28px;height:28px;}
 @container (max-width: 340px){
   .fr.is-fold .fr-tabs{gap:12px;margin-right:0;}
-  .fr.is-fold .fr-tab:nth-child(n+3){display:none;}
-  .fr.is-fold .fr-chip.is-narrow{display:inline-flex;}
+  .fr.is-fold .fr-tab:nth-child(n+3):not([aria-pressed="true"]){display:none;}   /* the third view keeps its tab while you are on it; the second gives way */
+  .fr.is-fold .fr-tabs:has(.fr-tab:nth-child(n+3)[aria-pressed="true"]) .fr-tab:nth-child(2){display:none;}
   .fr.is-fold:has(.fr-chip) .fr-tab:not([aria-pressed="true"]){display:none;}   /* narrowed: the view you are on and what narrows it; the other views are in Filter until you clear it */
   .fr.is-fold .fr-filter-l{display:none;}
-  .fr.is-fold .fr-filter-b{width:28px;padding:0;justify-content:center;}
+  .fr.is-fold .fr-filter-b{min-width:28px;padding:0 6px;justify-content:center;}
 }
 /* list.row-mark: a row with two lines holds its mark at its middle */
 .list-row:has(> .lr-main > .lr-m) > .lr-rail{align-self:center;}
+
+/* small.one-count: the place menu's numbers are what needs you there: one quiet caption over them; a section that holds a part says "· of 11" */
+.menu-h.has-end{display:flex;align-items:baseline;justify-content:space-between;gap:12px;}
+.menu-h-end{font-size:var(--fs-caption);font-weight:400;color:var(--ink-2);}
+.list-h .n.n-of{margin-left:-4px;}
+/* list.row-facts: a row whose second line is the news (why it needs you, where its PR stands) wraps to two lines; it is never cut */
+.list-row.is-wrap .lr-m{white-space:normal;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere;}
+.rl-search-res .menu-item.is-active{background:var(--hover);outline:2px solid var(--ink);outline-offset:-2px;}   /* key.search: the result the arrows are on */
+/* list.news: new activity you have not seen: a 6px light dot on the mark's corner; the level's colour only when it needs you */
+.lr-news-w{position:relative;display:inline-flex;}
+.lr-news{position:absolute;top:-2px;right:-2px;width:6px;height:6px;border-radius:50%;background:color-mix(in srgb, var(--ink) 45%, var(--bg));box-shadow:0 0 0 1.5px var(--bg);pointer-events:none;}
+.lr-news.is-need{background:var(--amber);}
+.bar-strip-i{position:relative;}
+.lr-news.is-strip{top:auto;bottom:6px;right:8px;}
+.menu-item > .lr-news-w{display:contents;}   /* in a menu the icon keeps its own place; the dot sits on its corner */
+.menu-item > .lr-news-w > .lr-news{position:relative;top:-6px;right:auto;flex:none;margin-left:-14px;margin-right:6px;}
+/* form.dialog: a dialog is pinned at its top edge, about a tenth of the window down, and grows downward: opening a fold
+   in it moves nothing above the fold */
+.viewer-modal[popover]:has(.card.rl-dialog){align-items:start;align-content:start;padding-top:max(24px, 10vh);}
+.viewer-modal[popover] .card.rl-dialog.rl-dialog.rl-dialog{max-height:calc(100dvh - max(24px, 10vh) - 24px);}
+@media (max-width:760px){ .viewer-modal[popover]:has(.card.rl-dialog){padding-top:24px;} .viewer-modal[popover] .card.rl-dialog.rl-dialog.rl-dialog{max-height:calc(100dvh - 32px);} }
+/* targets at 1280 too: a row's fold and a group's head are at least 24px; the search's key hint holds 12px and 4.5:1 */
+.lr-mark-fold{min-width:24px;min-height:24px;margin:-2px;}
+.list-h-b{min-height:24px;align-items:center;}
+.tsearch-kbd{font-size:var(--fs-caption);color:var(--ink-2);}
+.fr-tab.is-only{cursor:default;color:var(--ink-2);}   /* list.bar-model: a list with one view says what it holds; it is not a control */

@@ -99,7 +99,7 @@ export function listController({ root, spec }) {
 
   function rowHtml(r) {
     const selecting = s.pick.on;
-    const base = { title: r.title, meta: r.meta, mark: r.mark, lead: r.lead, unread: r.unread, current: r.current, holds: r.holds, flash: s.flash === r.key,
+    const base = { title: r.title, meta: r.meta, wrap: !!r.wrap, news: r.news || false, mark: r.mark, lead: r.lead, unread: r.unread, current: r.current, holds: r.holds, flash: s.flash === r.key,
       open: { 'data-open': r.key, title: r.tip || r.title, 'data-cut-tip': r.tip ? null : '' }, attrs: { 'data-row': r.key },
       menu: r.menu ? { id: `row:${r.key}`, label: `More for ${r.title}`, icon: dots(), items: r.menu, open: s.menu === `row:${r.key}` } : null,
       check: selecting && r.pick !== false ? s.pick.ids.includes(r.key) : undefined, boxAttrs: { 'data-sel': r.key } };
@@ -130,7 +130,7 @@ export function listController({ root, spec }) {
       const rows = shut ? [] : all ? x.rows : [...x.rows.slice(0, limit), ...x.rows.slice(limit).filter((r) => r.current || r.holds)];
       const walk = (r) => { s.order.push(r.key); (r.tree || []).forEach(walk); if (r.members && groupOpen(r)) r.members.forEach(walk); }; rows.forEach(walk);
       s.top.push(...rows.filter((r) => r.pick !== false).map((r) => r.key));   // Select all: a group's row stands for its members, so a count never counts one twice
-      return { title: x.title, count: x.noCount ? '' : x.count ?? x.rows.length, chip: x.chip, rows: shut ? [''] : rows.map(rowHtml), fold: x.fold ? { open: !shut, attrs: { 'data-fold-section': x.id } } : null, more: shut || x.rows.length <= limit ? null : s.more.has(x.id) ? { less: true, attrs: { 'data-less': x.id } } : rows.length >= x.rows.length ? null : { n: x.rows.length - rows.length, attrs: { 'data-more': x.id } } };
+      return { title: x.title, count: x.noCount ? '' : x.count ?? x.rows.length, of: x.of, chip: x.chip, rows: shut ? [''] : rows.map(rowHtml), fold: x.fold ? { open: !shut, attrs: { 'data-fold-section': x.id } } : null, more: shut || x.rows.length <= limit ? null : s.more.has(x.id) ? { less: true, attrs: { 'data-less': x.id } } : rows.length >= x.rows.length ? null : { n: x.rows.length - rows.length, attrs: { 'data-more': x.id } } };
     }) : [];
     s.pick = selectPrune(s.pick, [...s.rows.keys()]);
     const shown = s.order;
@@ -142,7 +142,12 @@ export function listController({ root, spec }) {
     // the strip that asks about the selection stays with it, in sight however far the list has scrolled
     const selection = s.pick.on ? strip + selectionBar({ label: spec.label, count: spec.count ? spec.count(picked) : picked.length, actions: spec.bulk(picked), all: s.top.length ? selectAllState(s.pick, s.top) : undefined }) : '';
     const narrowed = v.narrowed ? narrowedLine({ to: v.narrowed }) : '';
-    return (s.pick.on ? '' : strip) + list({ sentence: filterRow({ parts: v.parts, open: s.menu, fold: true }), tools, groups, empty, selection, note: narrowed, attrs: { role: 'region', 'aria-label': spec.name || `${spec.noun[0].toUpperCase()}${spec.noun.slice(1)}` } }) + popHtml() + dialogHtml();
+    // list.bar-model: every bar has the same one-line head. A list with nothing to filter draws no blank band: with tools,
+    // the line says what the list holds and how many ("Projects 7") before its ⋯; with none, there is no line at all
+    const name = spec.name || `${spec.noun[0].toUpperCase()}${spec.noun.slice(1)}`;
+    const lead = `${esc(name)}${ready && s.top.length ? ` <span class="n">${s.top.length}</span>` : ''}`;
+    const sentence = (v.parts || []).length ? filterRow({ parts: v.parts, open: s.menu, fold: true, lead }) : tools ? `<span class="fr is-fold"><span class="fr-tabs"><span class="fr-tab is-only">${lead}</span></span></span>` : '';
+    return (s.pick.on ? '' : strip) + list({ sentence, tools, groups, empty, selection, note: narrowed, attrs: { role: 'region', 'aria-label': spec.name || `${spec.noun[0].toUpperCase()}${spec.noun.slice(1)}` } }) + popHtml() + dialogHtml();
   }
   const picks = () => s.pick.ids.map((k) => s.rows.get(k)).filter(Boolean);
   function popHtml() {
@@ -305,7 +310,7 @@ export function listController({ root, spec }) {
   const repaint = () => { if (stale) paint(); };
   dismissOnOutside(doc, { rank: 3, open: () => !!s.menu, inside: (t) => !!t.closest('.menu') || t.closest?.('[data-menu]')?.dataset.menu === s.menu, back: () => root.querySelector(`[data-menu="${q(s.menu)}"]`), close: () => { s.menu = ''; stale = true; }, paint: repaint });
   dismissOnOutside(doc, { rank: 3, open: () => !!s.pop, inside: '.list-pop', back: () => (s.pop ? root.querySelector(s.pop.anchor) : null), close: () => { s.pop = null; stale = true; }, paint: repaint });
-  dismissOnOutside(doc, { dialog: true, open: () => !!s.dialog, inside: (t) => root.contains(t) && !!t.closest('.viewer-modal .card'), back: () => (s.dialog?.back ? root.querySelector(s.dialog.back) : null), close: () => { s.dialog = null; stale = true; }, paint: repaint });
+  dismissOnOutside(doc, { dialog: true, keepTyped: false, open: () => !!s.dialog, inside: (t) => root.contains(t) && !!t.closest('.viewer-modal .card'), back: () => (s.dialog?.back ? root.querySelector(s.dialog.back) : null), close: () => { s.dialog = null; stale = true; }, paint: repaint });
   root.addEventListener('input', (e) => {
     if (e.target.id === 'list-pop-q') { s.pop.q = e.target.value; paint(); }
     else if (e.target.hasAttribute('data-dlg-name') && s.dialog) { s.dialog.value = e.target.value; s.dialog.typed = true; }
@@ -349,9 +354,11 @@ export function listController({ root, spec }) {
     if ([...doc.querySelectorAll('[role="menu"]')].some((m) => m.getClientRects().length)) return;   // a menu open anywhere on the page owns the keys: typing in it never renames or archives a row
     const scopes = ['selecting', 'list', ...(spec.scopes || []), 'anywhere'];
     const act = shortcutAction(keyFacts(e, '[data-open]'), { scopes, selecting: s.pick.on, can: spec.can() });
+    // key.list-ends: Home and End go to the list's first and last row, from a row (never from a field or a menu)
+    if ((e.key === 'Home' || e.key === 'End') && !e.metaKey && !e.ctrlKey && !e.altKey && root.contains(e.target) && e.target.closest?.('.list-row') && !e.target.closest('input, textarea, .menu') && s.order.length) { e.preventDefault(); rowEl(s.order[e.key === 'Home' ? 0 : s.order.length - 1])?.focus(); return; }
     if (!act || act === 'search' || act === 'close') return;
     if (act === 'clear') { e.preventDefault(); s.pick = selectClear(); paint(); return; }   // Esc ends selecting wherever the focus is
-    if (e.target.closest?.('.ask-side:not(.chats-side), #app')) return;
+    if (e.target.closest?.('#app')) return;
     if (e.target.closest?.('.prose pre, .prose .rt-wrap')) return;   // a reply's code block or table scrolls under the arrows
     // key.arrows-stay: the arrows move through the list only from inside it; from the page they scroll the page and the focus stays there
     if (['down', 'up', 'extend-down', 'extend-up'].includes(act) && !root.contains(e.target)) return;

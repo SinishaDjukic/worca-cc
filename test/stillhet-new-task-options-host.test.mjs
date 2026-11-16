@@ -12,8 +12,8 @@ const DEFAULTS = '/api/run-defaults?projectDir=%2Fsrc%2Fweb', CONFIG = '/api/con
 const FLOWS = { ...LISTS, '/api/workflows': { workflows: [{ id: 'wf_shape', name: 'Shaper' }, { id: 'wf_lean', name: 'Lean', nodes: [{ id: 'plan', kind: 'agent' }, { id: 'build', kind: 'agent' }] }] } };
 async function open({ reads = {}, write = () => [200, { runId: 'r-new' }], hold, lists = FLOWS } = {}) {
   const h = await liveHost({ lists, write, hold, read: (u) => reads[u] || null });
-  await go(h.w, '#runs', 120);
-  h.w.StillhetCenters.maker('tasks').newPick('form'); await settle(80);
+  await go(h.w, '#runs', 200);
+  h.w.StillhetCenters.newTask(); await settle(80);
   return h;
 }
 const q = (d, sel) => d.querySelector(`#center-dlg ${sel}`);
@@ -100,7 +100,7 @@ test('COV-2 policy: the team policy notes line in classic\'s words, amber when a
   assert.match(n.className, /is-amber/);
   assert.match(n.textContent, /team policy · acme\/policy · 1 note · nothing here blocks the task/);
   assert.match(n.textContent, /Guardrails Normal rank below the team minimum \(Strict\)\./);
-  assert.match(n.textContent, /pipeline cap \$20 \(hard\)/);
+  assert.match(n.textContent, /The task's cost cap is \$20$/, 'a cap is never called soft or hard (set.spend-word)');
 });
 
 test('COV-2 policy: the old project\'s policy answer landing after a pick of No project paints nothing', async () => {
@@ -129,41 +129,40 @@ test('COV-2 one start at a time: a second press while the first is out sends not
 });
 
 // ---- COV-2: Guardrails and Human in the loop, drawn in the demo kind ----
-const demo = async () => { const w = demoTaskHost({ after }); await settle(60); w.StillhetCenters.maker('tasks').newPick('form'); await settle(60); return { w, d: w.document }; };
+const demo = async () => { const w = demoTaskHost({ after }); await settle(60); w.StillhetCenters.newTask(); await settle(60); return { w, d: w.document }; };
 const menuItems = async (d, id) => { q(d, `[data-menu="f-${id}"]`).click(); await settle(10); const got = [...d.querySelectorAll(`#center-dlg [data-menu-pick^="f-${id}|"]`)].map((x) => x.textContent.trim()); q(d, `[data-menu="f-${id}"]`).click(); await settle(10); return got; };
 
-test('COV-2 Guardrails (demo): More options shows Guardrails: Team default, and a pick of Strict is shown in the frame summary', async () => {
+test('COV-2 Guardrails (demo): More options holds a Guardrails field on Team default, and a pick of Strict shows in it', async () => {
   const { d } = await demo();
   await more(d);
-  assert.match(q(d, '.cc-more').textContent, /Guardrails: Team default/);
+  assert.equal(q(d, '[data-menu="f-guard"]').closest('.fld').querySelector('.fld-l').textContent, 'Guardrails', 'a labelled field');
+  assert.equal(shown(d, 'guard'), 'Team default');
   assert.deepEqual(await menuItems(d, 'guard'), ['Team default', 'Strict', 'Read only']);
-  assert.doesNotMatch(q(d, '.cc-frame .cc-proof').textContent, /Strict/);
   await pick(d, 'guard', 'Strict');
   assert.equal(shown(d, 'guard'), 'Strict');
-  assert.match(q(d, '.cc-frame .cc-proof').textContent, /Guardrails: Strict/);
 });
 
-test('COV-2 humanInLoop (demo): the switch shows only for Auto, and flips aria-checked on click', async () => {
+test('COV-2 humanInLoop (demo): "Ask me at each step" is a checkbox in More options, on by default, and a click flips it', async () => {
   const { d } = await demo();
   await more(d);
-  assert.equal(q(d, '[data-c-hitl]'), null, 'Default has no Human in the loop');
+  const sw = () => q(d, 'input[data-c-hitl]');
+  assert.equal(sw().checked, true, 'on by default');
+  assert.match(sw().closest('label').textContent, /Ask me at each step.*Human in the loop/, 'its name, and classic\'s in its help');
   await pick(d, 'workflow', 'Auto');
-  const sw = () => q(d, '[data-c-hitl]');
-  assert.equal(sw().getAttribute('aria-checked'), 'true', 'on by default');
-  assert.equal(sw().getAttribute('aria-label'), 'Human in the loop');
+  assert.equal(sw().checked, true, 'on for Auto too');
   sw().click(); await settle(20);
-  assert.equal(sw().getAttribute('aria-checked'), 'false');
+  assert.equal(sw().checked, false);
   sw().click(); await settle(20);
-  assert.equal(sw().getAttribute('aria-checked'), 'true');
+  assert.equal(sw().checked, true);
 });
 
-test('COV-2 humanInLoop (demo): with No project the switch is disabled and its title reads Needs a project', async () => {
+test('COV-2 humanInLoop (demo): with No project the checkbox is disabled and its help reads Needs a project', async () => {
   const { d } = await demo();
   await more(d);
   await pick(d, 'workflow', 'Auto');
   await pick(d, 'project', 'No project');
-  const sw = q(d, '[data-c-hitl]');
-  assert.ok(sw.hasAttribute('disabled'));
-  assert.equal(sw.getAttribute('title'), 'Needs a project');
-  assert.equal(sw.getAttribute('aria-checked'), 'false', 'off with No project');
+  const sw = q(d, 'input[data-c-hitl]');
+  assert.ok(sw.disabled);
+  assert.match(sw.closest('label').textContent, /Needs a project/, 'its help says why');
+  assert.equal(sw.checked, false, 'off with No project');
 });

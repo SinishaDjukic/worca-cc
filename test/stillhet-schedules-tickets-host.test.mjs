@@ -27,13 +27,12 @@ test('Pulse\'s missed ticket Run now goes through StillhetScheduleLive.act', asy
 test('New schedule (D9): the form posts POST /api/run with repeat.rule; a 400 keeps what was typed', async () => {
   const { w, d, calls } = await page('sr1', { write: (u) => (u === '/api/run' ? [400, { error: 'prompt is too short' }] : [200, {}]) });
   await go(w, '#schedules', 150);
-  d.querySelector('#bar-head [data-bar-new]').click(); await settle(20);
-  d.querySelector('#bar-head [data-menu-pick="bar-new|form"]').click(); await settle(80);
+  w.StillhetCenters.newSchedule(); await settle(80);   // the form opens from Chat: Schedules has no + any more
   const type = (sel, v) => { const f = d.querySelector(sel); f.value = v; f.dispatchEvent(new w.Event('input', { bubbles: true })); };
   type('#cc-name', 'Weekly lint'); type('#cc-text', 'Run the linter');
   d.querySelector('[data-c-more]').click(); await settle(20);
   const pick = async (id, v) => { d.querySelector(`[data-menu="f-${id}"]`).click(); await settle(5); d.querySelector(`[data-menu-pick="f-${id}|${v}"]`).click(); await settle(20); };
-  await pick('ends', 'after 10 runs'); await pick('overlap', 'queue if still going'); await pick('fails', 'never pause');
+  await pick('ends', 'after 10 tasks'); await pick('overlap', 'queue if still going'); await pick('fails', 'never pause');
   d.querySelector('[data-dialog="yes"]').click(); await settle(120);
   const [[method, url, body]] = sent(calls);
   assert.deepEqual([method, url, body.title, body.prompt, body.repeat.rule.freq, body.repeat.rule.time], ['POST', '/api/run', 'Weekly lint', 'Run the linter', 'weekly', '09:00']);

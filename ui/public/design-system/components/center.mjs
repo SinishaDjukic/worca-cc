@@ -6,7 +6,8 @@ import { filterRow } from './list-parts.mjs';
 import { list, listRow } from './list.mjs';
 import { figuresToggle, figuresLine } from './figures.mjs';
 import { cardAction, runState } from './run-state.mjs';
-import { alertLevel, kindMark, markTone } from './kind-mark.mjs';
+import { alertLevel, kindMark, markTone, pluginCard } from './kind-mark.mjs';
+import { textLink } from './text-link.mjs';
 
 /** How urgent a task's state is on a center: failed first, ready to merge last of what needs you (look.alert-ladder). */
 export const taskRank = (id) => (id === 'failed' ? 0 : id === 'question' ? 1 : id === 'gate' ? 2 : id === 'ready' || id === 'approved' ? 3 : 4);
@@ -29,11 +30,13 @@ export function taskClause({ state, name, detail = '' }) {
 /**
  * A card's actions for the tasks that wait, named when two do; only a Warning's is filled (stillhet.one-action).
  * @param {{id:string, title:string, short?:string, state:string}[]} tasks  at most two are drawn
+ * @param {{first?:boolean}} [o]  first: a card of several things (a project) draws only the most urgent task's action,
+ *   still named when two wait, so the card keeps ONE action (panel.card-opens)
  * @returns {string} Buttons, each `data-c-act="does|id"`
  */
-export function taskActions(tasks = []) {
+export function taskActions(tasks = [], { first = false } = {}) {
   const two = tasks.slice(0, 2);
-  return two.map((t) => {
+  return (first ? two.slice(0, 1) : two).map((t) => {
     const a = cardAction(t.state), warn = alertLevel(markTone(runState(t.state))) === 3;
     return button({ label: two.length > 1 ? `${a.label} ${t.short || t.title}` : a.label, kind: warn ? 'primary' : '', attrs: { 'data-c-act': `${a.does}|${t.id}`, 'aria-label': `${a.label}: ${t.title}`, title: `${a.label}: ${t.title}` } });
   }).join('');
@@ -68,7 +71,7 @@ export function centerFilters({ parts, pick = '', end = '', chevron = '', menuCl
 }
 /** Figures as a small bordered button for a filter row's end: pressed while the totals show (look.figures-on-demand). */
 export function figuresButton({ open = false, attrs: a = {} } = {}) {
-  return button({ label: 'Figures', attrs: { 'aria-expanded': String(!!open), title: open ? 'Folds the figures' : 'Shows the counts and costs', ...a } });
+  return button({ label: 'Figures', kind: 'quiet', attrs: { 'aria-expanded': String(!!open), title: open ? 'Folds the figures' : 'Shows the counts and costs', ...a } });
 }
 
 /**
@@ -113,3 +116,20 @@ export function centerShelf({ title, count = '', link = '', word = '', tone = ''
 export function centerAlso({ mark, name, where, link }) {
   return `<p class="center-also">${mark}<span><b>${esc(name)}</b> · Also in ${esc(where)} · ${link}</span></p>`;
 }
+
+/**
+ * CenterCard (panel.card-opens, panel.center-narrow): a center's card of ONE thing. It is a PluginCard whose whole
+ * surface opens the thing (`opens`, the page's hook: the pointer, and the title underlined on hover), with one
+ * default-kind action, and whose project in the kicker is a TextLink that narrows the place to that project. A card
+ * never carries an "Only X" button: the project's name is that way.
+ * @param {object} o          PluginCard's options, and:
+ * @param {{name:string, attrs?:object}} [o.project]  the project in the kicker, and the hook that narrows to it; `kicker` then follows it
+ * @param {object} [o.opens]  the hook on the card itself (data-*): a click on its body opens its thing
+ */
+export function centerCard({ project = null, opens = null, attrs: a = {}, ...card }) {
+  const HOLD = '\u0001';   // the kicker's place while PluginCard draws: the link is put in after
+  const html = pluginCard({ ...card, kicker: project ? HOLD : card.kicker || '', attrs: { ...a, ...(opens ? { 'data-card-opens': '', ...opens } : {}) } });
+  if (!project) return html;
+  return html.replace(HOLD, `${card.word ? '· ' : ''}${textLink({ label: project.name, attrs: { title: `Shows only ${project.name}`, ...(project.attrs || {}) } })}${card.kicker ? ` · ${esc(card.kicker)}` : ''}`);
+}
+taskActions.card = centerCard;   // until the index exports centerCard

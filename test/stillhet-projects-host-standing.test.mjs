@@ -1,5 +1,5 @@
-// Stillhet B4.5 (F-6-15): how a project stands, on its page, read-only. Readiness as one summary line with its details
-// folded, Metrics and Policy as facts with links (Expert), its last run and its done/stopped split from the store's tasks.
+// Stillhet B4.5 (F-6-15): how a project stands, on its page, read-only. Readiness as one summary line on Overview with its
+// checks on the Readiness tab, Metrics and Policy as facts with links on the Settings tab (Expert), its last run and its done/stopped split from the store's tasks.
 // Nothing here writes, and a refused read says so on its own row. The host is test/helpers/stillhet-projects-host.mjs.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -13,45 +13,45 @@ const page = (d) => d.getElementById('route-place');
 const section = (d, title) => [...page(d).querySelectorAll('.set-sec')].find((s) => s.querySelector('.set-sec-h')?.textContent.trim() === title) || null;
 const row = (d, name) => [...page(d).querySelectorAll('.set-name')].find((n) => n.textContent.trim() === name)?.closest('.set-row') || null;
 const sentence = (d, name) => row(d, name)?.querySelector('.set-text')?.textContent.trim() ?? null;
+const tabTo = async (d, id) => { d.querySelector(`#pjtab-${id}`).click(); await settle(40); };   // a project's parts are tabs
 const FACT_URL = /\/readiness|\/team-metrics|\/api\/policy/;
 // dev's history for seed-ok, newest first (dev's order, which the store keeps): done, stopped, failed, done, and a paused one
 const at = (h) => new Date(NOW - h * 3600e3).toISOString();
 const saved = (id, title, status, h, extra = {}) => ({ id, title, status, projectName: 'seed-ok', startedAt: at(h + 1), mtime: Date.parse(at(h)), ...extra });
 const HISTORY = { history: { pipelines: [saved('s1', 'Newest change', 'done', 1), saved('s2', 'Stopped one', 'stopped', 2), saved('s3', 'Broke it', 'error', 3), saved('s4', 'Older change', 'done', 4), saved('s5', 'Held', 'paused', 5, { pauseReason: 'manual' }), saved('s6', 'Put away', 'done', 6, { archived: true })] }, hello: { ...clone(SOURCES.hello), runs: [] } };
 
-test('F-6-15: readiness summary, its fold, no controls', async () => {
+test('F-6-15: readiness summary on Overview; its checks on the Readiness tab, no controls', async () => {
   const h = await projectsHost({ hash: `#projects/${KEYS.ok}` });
   const stands = section(h.d, 'How it stands');
   assert.ok(stands, 'the How it stands section');
   assert.equal(sentence(h.d, 'Readiness'), 'Partly ready · 2 must fix, 3 should fix');
-  assert.equal(page(h.d).querySelector('.convo-col .set-sec'), stands, 'right under the head, before what is on it');
-  const fold = row(h.d, 'Readiness').querySelector('[data-pj-ready]');
-  assert.equal(fold.textContent.trim(), 'What it checks');
-  assert.equal(row(h.d, 'Must fix'), null, 'folded');
-  fold.click(); await settle(30);
+  const see = row(h.d, 'Readiness').querySelector('[data-pj-tab="readiness"]');
+  assert.equal(see.textContent.trim(), 'See the checks');
+  assert.equal(row(h.d, 'Tools'), null, 'the checks are not on Overview');
+  see.click(); await settle(40);
+  assert.match(h.w.location.hash, /\/readiness$/, 'the tab is in the address');
   assert.equal(sentence(h.d, 'Tools'), 'Claude Code: Ready, OpenAI Codex: Partly ready', 'the run engine first');
   assert.equal(sentence(h.d, 'Not judged'), 'Gemini CLI');
-  assert.equal(sentence(h.d, 'Must fix'), 'Has a README, Has tests');
-  assert.equal(sentence(h.d, 'Should fix'), 'Has a lockfile, Ignores dist, Has a guide');
   assert.equal(sentence(h.d, 'Advice'), 'Has an editorconfig');
-  assert.equal([...row(h.d, 'Must fix').querySelectorAll('[title]')].find((s) => s.textContent === 'Has a README')?.title, 'Add a README.md', 'a fix is its tooltip');
-  assert.doesNotMatch(section(h.d, 'How it stands').textContent, /Recheck|\bIgnore\b|Not used here/);
-  row(h.d, 'Readiness').querySelector('[data-pj-ready]').click(); await settle(30);
-  assert.equal(row(h.d, 'Must fix'), null, 'Done folds it again');
+  assert.equal(sentence(h.d, 'Has a README'), 'Must fix · Add a README.md', 'a failing check: its level and its fix');
+  assert.match(sentence(h.d, 'Has tests'), /^Must fix/);
+  for (const name of ['Has a lockfile', 'Ignores dist', 'Has a guide']) assert.match(sentence(h.d, name), /^Should fix/, name);
+  assert.doesNotMatch(h.d.getElementById('pj-panel').textContent, /Recheck|\bIgnore\b|Not used here/, 'live: nothing here writes');
 });
 
 test('F-6-15: a report\'s strings are text', async () => {
   const bad = clone(READINESS); bad.readiness.checks[0].title = '<img src=x onerror="window.__x=1">'; bad.readiness.checks[0].fix = '"><b>fix</b>';
   const h = await projectsHost({ hash: `#projects/${KEYS.ok}`, read: (u) => (u.endsWith(`${KEYS.ok}/readiness`) ? [200, bad] : null) });
-  row(h.d, 'Readiness').querySelector('[data-pj-ready]').click(); await settle(30);
-  assert.equal(section(h.d, 'How it stands').querySelector('img, b'), null);
-  assert.match(sentence(h.d, 'Must fix'), /<img src=x onerror/);
+  await tabTo(h.d, 'readiness');
+  assert.equal(h.d.getElementById('pj-panel').querySelector('img, b'), null);
+  assert.match(sentence(h.d, '<img src=x onerror="window.__x=1">'), /"><b>fix<\/b>/);
   assert.equal(h.w.__x, undefined);
 });
 
 test('F-6-15: metrics and policy are facts with links', async () => {
   const h = await projectsHost({ hash: `#projects/${KEYS.ok}` });
-  assert.ok(section(h.d, 'Team'), 'Expert shows the Team section');
+  await tabTo(h.d, 'settings');
+  assert.ok(section(h.d, 'Team'), 'Expert shows the Team section, on the Settings tab');
   assert.equal(sentence(h.d, 'Metrics'), 'on · 3 tasks · this project · last push 2 h ago');
   assert.equal(sentence(h.d, 'Policy'), 'follows acme/gateway', 'its scope is named once');
   assert.equal(row(h.d, 'Metrics').querySelector('.set-end').textContent.trim(), 'In Insights');
@@ -91,6 +91,7 @@ test('F-6-15: no tasks yet; the split is left out', async () => {
 test('F-6-15: a refused read says so on its row only', async () => {
   const h = await projectsHost({ hash: `#projects/${KEYS.ok}`, read: (u) => (u.endsWith('/readiness') ? [500, { error: 'boom', code: 'X' }] : u === '/api/policy/scopes' ? [0] : null) });
   assert.equal(sentence(h.d, 'Readiness'), 'Could not read its readiness; open the page again to retry');
+  await tabTo(h.d, 'settings');
   assert.equal(sentence(h.d, 'Policy'), 'Could not read its team policy; open the page again to retry');
   assert.equal(sentence(h.d, 'Metrics'), 'on · 3 tasks · this project · last push 2 h ago', 'the others still show');
   assert.doesNotMatch(page(h.d).textContent, /HTTP|500|boom/);
@@ -98,9 +99,11 @@ test('F-6-15: a refused read says so on its row only', async () => {
 
 test('no control acts on readiness, metrics or policy; each page open reads them again', async () => {
   const h = await projectsHost({ hash: `#projects/${KEYS.ok}` });
-  row(h.d, 'Readiness').querySelector('[data-pj-ready]').click(); await settle(30);
-  const controls = [...section(h.d, 'How it stands').querySelectorAll('button, input, a[href]')].filter((b) => !b.matches('[data-pj-ready], [data-c-open]'));
-  assert.deepEqual(controls.map((b) => b.outerHTML), [], 'only the fold and links to tasks');
+  const controls = [...section(h.d, 'How it stands').querySelectorAll('button, input, a[href]')].filter((b) => !b.matches('[data-pj-tab], [data-c-open]'));
+  assert.deepEqual(controls.map((b) => b.outerHTML), [], 'only the way to its checks and links to tasks');
+  await tabTo(h.d, 'readiness');
+  assert.deepEqual([...h.d.getElementById('pj-panel').querySelectorAll('button, input, a[href]')].map((b) => b.outerHTML), [], 'live: the Readiness tab has no control');
+  await tabTo(h.d, 'overview');
   assert.deepEqual(sent(h.calls).filter(([, u]) => FACT_URL.test(u)), [], 'never a write');
   const readsOf = () => h.calls.filter((c) => c.url.endsWith(`${KEYS.ok}/readiness`)).length;
   const once = readsOf();
@@ -135,9 +138,11 @@ test('F-6-15 demo: readiness and last run first', async (t) => {
   const names = [...stands.querySelectorAll(':scope > .set-rows > .set-row .set-name')].map((n) => n.textContent.trim());
   assert.deepEqual(names.slice(0, 2), ['Readiness', 'Last task']);
   assert.equal(sentence(d, 'Readiness'), 'Partly ready · 2 must fix, 3 should fix');
+  await tabTo(d, 'settings');
   assert.equal(sentence(d, 'Metrics'), 'on · 12 tasks · this project · last push 2 h ago');
   assert.equal(sentence(d, 'Policy'), 'follows acme/gateway');
   w.location.hash = '#projects/docs-site'; await settle(100);
   assert.equal(sentence(d, 'Readiness'), 'Not judged yet');
+  await tabTo(d, 'settings');
   assert.equal(row(d, 'Metrics'), null, 'no metrics fact: no row');
 });

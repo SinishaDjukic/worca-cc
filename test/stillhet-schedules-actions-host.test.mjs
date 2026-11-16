@@ -32,8 +32,7 @@ test('pause, resume, skip and keep: one request each, and the page moves only on
 
 test('Run now posts run-now once; Stop posts /api/stop with the running fire\'s pipeline id and the page moves on pipelines-changed', async () => {
   let h = await page('sr2');
-  h.d.querySelector('#route-schedule [data-sched-menu], #route-schedule [data-menu="sc-more"]').click(); await settle(5);
-  h.d.querySelector('#route-schedule [data-menu-pick="sc-more|run"]').click(); await settle(80);
+  await more(h.d, 'run');
   assert.deepEqual(sent(h.calls), [['POST', '/api/schedules/sr2/run-now', {}]]);
   closeHosts();
 
@@ -82,7 +81,6 @@ test('every page action refused with a 409 or a network failure: one "Could not 
     ['run', 'sr1', (d) => d.querySelector('#route-schedule [data-sched-now]').click(), 'run it now'],
     ['pause', 'sr1', (d) => more(d, 'pause'), 'pause it'],
     ['skip', 'sr1', (d) => more(d, 'skip'), 'skip next time'],
-    ['save', 'sr1', async (d) => { d.querySelector('#route-schedule [data-menu="sc-at"]').click(); await settle(5); d.querySelector('#route-schedule [data-menu-pick="sc-at|09:00"]').click(); await settle(40); d.querySelector('#route-schedule [data-sched-save]').click(); }, 'save the changes'],
     ['resume', 'sr2', (d) => d.querySelector('#route-schedule [data-sched-resume]').click(), 'resume it'],
     ['keep', 'sr3', (d) => more(d, 'skip'), 'keep next time'],
     ['stop', 'sr3', (d) => d.querySelector('#route-schedule [data-sched-stop]').click(), 'stop its task'],

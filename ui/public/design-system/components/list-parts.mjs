@@ -36,6 +36,7 @@ export function namesWord(names = [], shown = 2) {
 
 // What a part of the old sentence is called as a field (list.filters): the label over its picker.
 const FILTER_LABELS = { Showing: 'Show', from: 'Project', by: 'Group by', 'started by': 'Started by', using: 'Workflow', on: 'Days', in: 'Period', of: 'Of', as: 'As', 'this': 'Time', 'then by': 'Then by', 'compared with': 'Compared with' };
+const MAX_PICKERS = 4;   // list.filters: more than four pickers on a page fold into More filters
 const sentenceCase = (t) => String(t).charAt(0).toUpperCase() + String(t).slice(1);
 
 /**
@@ -43,7 +44,8 @@ const sentenceCase = (t) => String(t).charAt(0).toUpperCase() + String(t).slice(
  * A part with `tabs` draws its main views as small plain text tabs with their counts; the current one is underlined.
  * Folded (`fold`, a bar): every other choice lives behind one small Filter control, a floating menu with a labelled
  * group per part, and a filter that is not at its default shows on the line as a small chip with ✕ ("web-app ✕").
- * Not folded (a page): each other part is a picker on the line with its label inside ("Order: Most urgent ▾"), and the
+ * Not folded (a page): each other part is a picker on the line with its label inside ("Order: Most urgent ▾"), of a fixed
+ * width for its filter; more than four fold into More filters; on a phone the line is the tabs and one Filter control. The
  * choices a tabs part does not show sit behind More. A pick reports `data-pick="<id>|<item>"`, from a tab, a menu or a
  * chip's ✕ alike; a picker and the Filter control open by `data-menu` (the part's id; `filters` for the Filter control).
  * @param {object} o
@@ -54,10 +56,11 @@ const sentenceCase = (t) => String(t).charAt(0).toUpperCase() + String(t).slice(
  * @param {string} [o.open]     the id of the open menu
  * @param {boolean} [o.fold]    one Filter control and chips, for a bar
  * @param {string} [o.end]      markup at the end of the line (a Figures toggle)
+ * @param {string} [o.lead]     folded, with no tabs part: markup that says what the list holds ("Projects 7"), so the Filter control is never a lone icon
  * @param {string} [o.chevron]
  * @param {string} [o.menuCls]
  */
-export function filterRow({ parts, open = '', chevron = '', menuCls = '', fold = false, end = '' }) {
+export function filterRow({ parts, open = '', chevron = '', menuCls = '', fold = false, end = '', lead = '' }) {
   const labelOf = (p) => p.label || FILTER_LABELS[p.word] || sentenceCase(p.word || p.id);
   // a choice starts with a capital, in its tab, its picker and its menu alike; a part of names (`raw`) shows them as written
   const say = (p, t) => (p.raw ? String(t) : sentenceCase(t));
@@ -70,27 +73,37 @@ export function filterRow({ parts, open = '', chevron = '', menuCls = '', fold =
 
   const tab = (p, it) => `<button type="button" class="fr-tab"${attrs({ 'data-pick': `${p.id}|${it.id}`, 'data-key': `pick:${p.id}:${it.id}`, 'aria-pressed': String(!!it.checked), title: it.help || null })}><span class="fr-tab-t">${esc(it.text)}</span>${it.hint !== undefined && it.hint !== '' ? ` <span class="n">${esc(it.hint)}</span>` : ''}</button>`;
   const tabsOf = (p) => { const all = real(p); return `<span class="fr-tabs" role="group"${attrs({ 'aria-label': labelOf(p) })}>${p.tabs.map((id) => all.find((it) => it.id === id)).filter(Boolean).map((it) => tab(p, it)).join('')}</span>`; };
-  // a picker on the line, its label inside it
-  const picker = (p, { label = labelOf(p), text = say(p, p.text), items = cased(p), on = false } = {}) => `<span class="pz-pick fr-pick-w"><button type="button" class="fr-pick${on ? ' is-on' : ''}"${attrs({ 'data-menu': p.id, 'aria-haspopup': 'menu', 'aria-expanded': String(open === p.id), 'aria-label': label ? `${label}: ${text}` : text, title: String(text).length > 18 ? text : p.tip || null })}>${label ? `<span class="fr-pick-l">${esc(label)}:</span>` : ''}<span class="fr-pick-v">${esc(text)}</span>${chev}</button>${open === p.id ? menuOf(p.id, picks(p, items)) : ''}</span>`;
-  const moreOf = (p) => { const rest = real(p).filter((it) => !p.tabs.includes(it.id)), cur = rest.find((it) => it.checked); return rest.length ? picker(p, { label: '', text: cur ? cur.text : 'More', items: rest, on: !!cur }) : ''; };
+  const nPick = parts.filter((p) => !p.tabs).length, CAP = nPick > MAX_PICKERS ? 15 : nPick === MAX_PICKERS ? 18 : 24;   // letters, label and value: four pickers and More filters fit a 720px page; fewer pickers have more room
+  // a picker on the line, its label inside it. Its width is its filter's (the widest of its choices, capped), never its
+  // value's: a pick moves nothing beside it; a value that does not fit is cut, whole in the tooltip (list.filters)
+  const widthOf = (label, items) => Math.min(CAP, (label ? label.length + 2 : 0) + Math.max(4, ...items.filter((it) => !it.sep && !it.header).map((it) => String(it.text).length)));
+  const picker = (p, { label = labelOf(p), text = say(p, p.text), items = cased(p), on = false, rest: words = '' } = {}) => { const all = words ? [...items, { text: words }] : items, cut = (label ? label.length + 2 : 0) + String(text).length > CAP; return `<span class="pz-pick fr-pick-w"><button type="button" class="fr-pick${on ? ' is-on' : ''}"${attrs({ 'data-menu': p.id, 'aria-haspopup': 'menu', 'aria-expanded': String(open === p.id), 'aria-label': label ? `${label}: ${text}` : text, title: cut ? text : p.tip || null, style: `--fr-w:${widthOf(label, all)}` })}>${label ? `<span class="fr-pick-l">${esc(label)}:</span>` : ''}<span class="fr-pick-v">${esc(text)}</span>${chev}</button>${open === p.id ? menuOf(p.id, picks(p, items)) : ''}</span>`; };
+  const moreOf = (p) => { const rest = real(p).filter((it) => !p.tabs.includes(it.id)), cur = rest.find((it) => it.checked); return rest.length ? picker(p, { label: '', text: cur ? cur.text : 'More', items: rest, on: !!cur, rest: 'More' }) : ''; };
   const chip = (p, it, cls = '') => `<span class="fr-chip${cls}"><span class="fr-chip-t"${attrs({ title: `${labelOf(p)}: ${it.text}` })}>${esc(it.text)}</span><button type="button" class="fr-chip-x"${attrs({ 'data-pick': `${p.id}|${resetOf(p) ?? ''}`, 'aria-label': `Clear ${labelOf(p)}: ${it.text}`, title: 'Clear' })}>${icon('sym-x', 10)}</button></span>`;
-  // a part's chip: its choice, when that is not the default (a tabs part: when no tab shows it; its third tab on, as a
-  // chip the look shows only where that tab is hidden)
+  // a part's chip: its choice, when that is not the default (a tabs part: when no tab shows it)
   const chipOf = (p) => {
     if (p.chip === false) return '';
     const cur = real(p).find((it) => it.checked);
-    if (p.tabs) return !cur ? '' : !p.tabs.includes(cur.id) ? chip(p, cur) : p.tabs.indexOf(cur.id) > 1 ? chip(p, cur, ' is-narrow') : '';
+    if (p.tabs) return cur && !p.tabs.includes(cur.id) ? chip(p, cur) : '';   // a view with a tab is said by its tab (the look keeps the tab you are on)
     if (cur) return cur.id === resetOf(p) ? '' : chip(p, cur);
     return p.text && real(p).length ? chip(p, { text: say(p, p.text) }) : '';   // several chosen at once (labels): its words
   };
   const tabbed = parts.filter((p) => p.tabs), rest = parts.filter((p) => !p.tabs);
   const tail = end ? `<span class="fr-end">${end}</span>` : '';
-  if (!fold) return `<span class="fr">${tabbed.map((p) => tabsOf(p) + moreOf(p)).join('')}${rest.map((p) => picker(p)).join('')}${tail}</span>`;
+  const groupsOf = (ps) => ps.flatMap((p) => [{ header: labelOf(p) }, ...picks(p, real(p))]);
+  const narrowed = (ps) => ps.filter((p) => chipOf(p)).length;
+  // the one Filter control: a floating menu with a labelled group per part; narrowed, it says by how many
+  const control = (id, ps, word, cls = '') => { const n = narrowed(ps); return ps.length ? `<span class="pz-pick fr-filter${cls}"><button type="button" class="fr-filter-b${n ? ' is-on' : ''}"${attrs({ 'data-menu': id, 'aria-haspopup': 'menu', 'aria-expanded': String(open === id), 'aria-label': n ? `${word}: ${n} on` : word, title: word })}>${icon('sliders', 14)}<span class="fr-filter-l">${esc(word)}</span>${n ? `<span class="fr-filter-n" aria-hidden="true">${n}</span>` : ''}</button>${open === id ? menuOf('filters', groupsOf(ps), ' fr-pop') : ''}</span>` : ''; };
+  if (!fold) {
+    // a page: four pickers at most on the line, the rest behind More filters; on a phone the tabs and one Filter control
+    const pre = rest.length && rest.every((p) => /^[a-z]+-/.test(p.id) && p.id.split('-')[0] === rest[0].id.split('-')[0]) ? `${rest[0].id.split('-')[0]}-` : '';   // a page that names its menus "c-…" opens this one too
+    const shown = rest.length > MAX_PICKERS ? rest.slice(0, MAX_PICKERS) : rest, more = rest.slice(shown.length);
+    return `<span class="fr">${tabbed.map((p) => tabsOf(p) + moreOf(p)).join('')}${shown.map((p) => picker(p)).join('')}${control(`${pre}more`, more, 'More filters', ' fr-more')}${control(`${pre}filters`, [...tabbed.map((p) => ({ ...p, items: p.items.filter((it) => !it.sep && !it.header && !p.tabs.includes(it.id)) })).filter((p) => p.items.length), ...rest], 'Filter', ' fr-phone')}${tail}</span>`;
+  }
+  // a bar: chips show whole or not at all (the look drops the ones with no room; the Filter control keeps the count)
   const chips = parts.map(chipOf).join('');
-  const groups = parts.flatMap((p) => [{ header: labelOf(p) }, ...picks(p, real(p))]);
-  const on = parts.some((p) => chipOf(p));
-  const filter = groups.length ? `<span class="pz-pick fr-filter"><button type="button" class="fr-filter-b${on ? ' is-on' : ''}"${attrs({ 'data-menu': 'filters', 'aria-haspopup': 'menu', 'aria-expanded': String(open === 'filters'), 'aria-label': on ? 'Filter: the list is narrowed' : 'Filter', title: 'Filter' })}>${icon('sliders', 14)}<span class="fr-filter-l">Filter</span></button>${open === 'filters' ? menuOf('filters', groups, ' fr-pop') : ''}</span>` : '';
-  return `<span class="fr is-fold">${tabbed.map(tabsOf).join('')}<span class="fr-chips">${chips}</span>${filter}${tail}</span>`;
+  const only = !tabbed.length && lead ? `<span class="fr-tabs"><span class="fr-tab is-only">${lead}</span></span>` : '';   // no fixed views: the line says what the list holds, never a lone icon
+  return `<span class="fr is-fold">${tabbed.map(tabsOf).join('')}${only}<span class="fr-chips">${chips}</span>${control('filters', parts.filter((p) => real(p).length), 'Filter')}${tail}</span>`;
 }
 
 /**
