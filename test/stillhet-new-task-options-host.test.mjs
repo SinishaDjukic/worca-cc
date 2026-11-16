@@ -67,13 +67,14 @@ test('COV-2 workflow: the project\'s activeWorkflowId is preselected; a pick sen
 
 test('COV-2 workflow: Save as the workflow\'s defaults sends the PATCH, then the DELETE; a refusal names its step', async () => {
   let refuse = false;
-  const { d, calls } = await open({ write: (u, b, m) => (refuse && m === 'PATCH' ? [400, { error: 'workflow not found' }] : [200, {}]) });
+  const reads = { [CONFIG]: [200, { config: {} }], '/api/agents': [200, { agents: [] }], '/api/workflows/wf_lean': [200, { nodes: [{ id: 'plan', kind: 'agent', config: { subagentModel: 'haiku' } }, { id: 'build', kind: 'agent' }] }] };
+  const { d, calls } = await open({ reads, write: (u, b, m) => (refuse && m === 'PATCH' ? [400, { error: 'workflow not found' }] : [200, {}]) });
   await pick(d, 'workflow', 'Lean'); await more(d);
   assert.equal(q(d, '[data-c-flowsave]'), null, 'no model picked: nothing to save');
   await pick(d, 'agents', 'Opus 5.5 for every step');
   q(d, '[data-c-flowsave]').click(); await settle(40);
   const sent = posts(calls).filter(([, u]) => /workflows\/wf_lean|config\/workflow/.test(u));
-  assert.deepEqual(sent, [['PATCH', '/api/workflows/wf_lean/defaults', { defaults: { plan: { model: 'opus' }, build: { model: 'opus' } } }], ['DELETE', '/api/config/workflow?projectDir=%2Fsrc%2Fweb&workflowId=wf_lean', undefined]]);
+  assert.deepEqual(sent, [['PATCH', '/api/workflows/wf_lean/defaults', { defaults: { plan: { model: 'opus', fanOut: false, subagentModel: 'haiku' }, build: { model: 'opus', fanOut: false } } }], ['DELETE', '/api/config/workflow?projectDir=%2Fsrc%2Fweb&workflowId=wf_lean', undefined]]);
   assert.equal(q(d, '[data-c-flowsave]').textContent, 'Saved');
   refuse = true; await settle(2100);
   q(d, '[data-c-flowsave]').click(); await settle(40);

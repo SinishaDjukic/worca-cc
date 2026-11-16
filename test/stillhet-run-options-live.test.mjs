@@ -134,14 +134,26 @@ test('COV-2 a connector refusal in a 200 is a refusal, with its message', async 
   assert.deepEqual(await live.call('jira', 'issues', 'listTasks', {}), { ok: false, status: 200, error: 'token expired' });
 });
 
-test('COV-2 saveWorkflowDefaults: the PATCH, then the DELETE; it stops at the PATCH refusal and names its step', async () => {
-  const ok = stub();
-  assert.equal((await ok.live.saveWorkflowDefaults('wf_lean', { plan: { model: 'opus' } }, '/src/web')).ok, true);
-  assert.deepEqual(ok.calls.map((c) => [c.method, c.url, c.body]), [['PATCH', '/api/workflows/wf_lean/defaults', { defaults: { plan: { model: 'opus' } } }], ['DELETE', '/api/config/workflow?projectDir=%2Fsrc%2Fweb&workflowId=wf_lean', undefined]]);
-  const no = stub(() => [400, { error: 'defaults must be an object keyed by node id' }]);
-  const r = await no.live.saveWorkflowDefaults('wf_lean', {}, '/src/web');
+test('F-cov23-02 saveWorkflowDefaults: each agent node\'s full effective block (classic effectiveDefaultsOf), then the DELETE; a refusal names its step', async () => {
+  const WF = { id: 'wf_lean', version: 2, nodes: [{ id: 'plan', kind: 'agent', key: 'planner', config: { model: 'opus', effort: 'high', askQuestions: false } }, { id: 'build', kind: 'agent', key: 'builder', config: { model: 'sonnet', effort: 'low', subagentModel: 'haiku' } }, { id: 'gate', kind: 'script' }] };
+  const AGENTS = { agents: [{ key: 'planner', asksQuestions: true, questionsDefault: true }, { key: 'builder', fanOut: true, asksQuestions: true, questionsLocked: true }] };
+  const CONFIG = { config: { workflows: { wf_lean: { nodes: { build: { fanOut: false } } } } } };
+  const reads = { '/api/workflows/wf_lean': WF, '/api/agents': AGENTS, '/api/config?projectDir=%2Fsrc%2Fweb': CONFIG };
+  const ok = stub((u, m) => (m === 'GET' ? [reads[u] ? 200 : 404, reads[u] || {}] : [200, {}]));
+  assert.equal((await ok.live.saveWorkflowDefaults('wf_lean', 'opus', '/src/web')).ok, true);
+  const writes = ok.calls.filter((c) => c.method !== 'GET').map((c) => [c.method, c.url, c.body]);
+  assert.deepEqual(writes, [['PATCH', '/api/workflows/wf_lean/defaults', { defaults: {
+    plan: { model: 'opus', effort: 'high', fanOut: false, askQuestions: false },   // the same model keeps its effort; the authored askQuestions stays
+    build: { model: 'opus', fanOut: false, subagentModel: 'haiku' },               // another model drops the effort; the project's fanOut and the subagent model stay; a locked toggle is never sent
+  } }], ['DELETE', '/api/config/workflow?projectDir=%2Fsrc%2Fweb&workflowId=wf_lean', undefined]]);
+  const unread = stub((u, m) => (m === 'GET' && u === '/api/agents' ? [500, { error: 'boom' }] : [200, reads[u] || {}]));
+  const r0 = await unread.live.saveWorkflowDefaults('wf_lean', 'opus', '/src/web');
+  assert.deepEqual([r0.ok, r0.step], [false, 'read the workflow\'s agents']);
+  assert.equal(unread.calls.filter((c) => c.method !== 'GET').length, 0, 'nothing is written from a partial read');
+  const no = stub((u, m) => (m === 'GET' ? [200, reads[u] || {}] : [400, { error: 'defaults must be an object keyed by node id' }]));
+  const r = await no.live.saveWorkflowDefaults('wf_lean', 'opus', '/src/web');
   assert.deepEqual([r.ok, r.error, r.step], [false, 'defaults must be an object keyed by node id', 'save the workflow\'s defaults']);
-  assert.equal(no.calls.length, 1, 'no DELETE after a refused PATCH');
+  assert.equal(no.calls.filter((c) => c.method !== 'GET').length, 1, 'no DELETE after a refused PATCH');
 });
 
 test('COV-2 no state before ok: a refused write answers the refusal and the module keeps nothing', async () => {

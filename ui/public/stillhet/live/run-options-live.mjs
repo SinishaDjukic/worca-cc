@@ -126,6 +126,31 @@ export function defaultsOf(data) {
   return { engine: ENGINE_NAMES.includes(e) ? e : '', tags: arr(data?.tags).filter((t) => typeof t === 'string'), projectKey: str(data?.projectKey) };
 }
 
+/** Save as the workflow's defaults (F-cov23-02): classic's promote sends each agent node's FULL effective block (app.js
+ *  effectiveDefaultsOf over buildNodeConfigRows), since dev replaces a node's defaults whole. The node's effective
+ *  settings resolve as classic's node-tunables resolveNodeTunables does (the project's own pick, then the workflow's,
+ *  then the agent registry); `model` (the one pick for every agent) replaces each model, keeping its effort only when it
+ *  is the same model. `wf` is GET /api/workflows/:id, `agents` GET /api/agents' list, `nodes` the project's
+ *  config.workflows[id].nodes. */
+export function workflowDefaultsOf(wf, agents, nodes, model) {
+  const reg = Object.fromEntries(arr(agents).filter((a) => a && a.key).map((a) => [a.key, a]));
+  const agentNodes = Array.isArray(wf?.nodes) ? wf.nodes.filter((n) => n && n.kind === 'agent' && n.id).map((n) => [n, n.config])
+    : arr(wf?.steps).flatMap((g) => arr(g)).filter((n) => n && n.id).map((n) => [n, n.defaults]);
+  const own = nodes && typeof nodes === 'object' ? nodes : {};
+  return Object.fromEntries(agentNodes.map(([node, authored]) => {
+    const saved = own[node.id] || {}, d = authored && typeof authored === 'object' ? authored : {}, meta = reg[node.key] || {};
+    const pick = (k, isT, dflt) => (isT(saved[k]) ? saved[k] : isT(d[k]) ? d[k] : dflt);
+    const isStr = (v) => typeof v === 'string' && v !== '', isBool = (v) => typeof v === 'boolean';
+    const was = isStr(saved.model) ? saved.model : str(d.model);
+    const effort = isStr(saved.model) ? str(saved.effort) : isStr(saved.effort) ? saved.effort : typeof d.model === 'string' ? str(d.effort) : '';
+    const out = { model, ...(model === was && effort ? { effort } : {}), fanOut: !!pick('fanOut', isBool, meta.fanOut === true) };
+    if (meta.asksQuestions && !meta.questionsLocked) out.askQuestions = !!pick('askQuestions', isBool, !!meta.questionsDefault);
+    const sub = pick('subagentModel', isStr, '');
+    if (sub) out.subagentModel = sub;
+    return [node.id, out];
+  }));
+}
+
 /** `fetch` and `toast` come in; every method answers the runner's `{ok, data}` or `{ok:false, …}`. */
 export function startRunOptionsLive({ fetch, toast = () => {} } = {}) {
   const { request } = actionRunner({ fetch, toast });
@@ -141,7 +166,13 @@ export function startRunOptionsLive({ fetch, toast = () => {} } = {}) {
     config: (projectDir) => request('GET', `/api/config?${qs({ projectDir })}`),
     setActiveWorkflow: (projectDir, id) => request('PATCH', '/api/config', { projectDir, activeWorkflowId: id }),
     // classic's promote, then its reset: the defaults go to the workflow, the project's own picks are cleared
-    async saveWorkflowDefaults(id, defaults, projectDir) {
+    // F-cov23-02: the workflow, the agents and the project's own picks are read first, so nothing a node holds is lost
+    async saveWorkflowDefaults(id, model, projectDir) {
+      const [w, g, c] = await Promise.all([request('GET', `/api/workflows/${enc(id)}`), request('GET', '/api/agents'), request('GET', `/api/config?${qs({ projectDir })}`)]);
+      const bad = [w, g, c].find((r) => !r.ok);
+      if (bad) return { ...bad, step: 'read the workflow\'s agents' };
+      if (!Array.isArray(w.data?.nodes) && !Array.isArray(w.data?.steps)) return { ok: false, error: 'the workflow has no agents', step: 'read the workflow\'s agents' };
+      const defaults = workflowDefaultsOf(w.data, g.data?.agents, c.data?.config?.workflows?.[id]?.nodes, model);
       const a = await request('PATCH', `/api/workflows/${enc(id)}/defaults`, { defaults });
       if (!a.ok) return { ...a, step: 'save the workflow\'s defaults' };
       const b = await request('DELETE', `/api/config/workflow?${qs({ projectDir, workflowId: id })}`);

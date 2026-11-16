@@ -382,7 +382,7 @@
   function saveFlow(reset) {
     const o = OPT(), f = form, id = flowId(), dir = dirOf(); if (!o || !id || !dir) return;
     const model = agentModel();
-    const p = reset ? o.resetWorkflow(dir, id) : o.saveWorkflowDefaults(id, Object.fromEntries(agentIds().map((n) => [n, { model }])), dir);
+    const p = reset ? o.resetWorkflow(dir, id) : o.saveWorkflowDefaults(id, model, dir);
     p.then((r) => {
       if (form !== f) return;
       if (r.ok) { said('flowSaid', reset ? 'Reset' : 'Saved'); return; }
