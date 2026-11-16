@@ -6,10 +6,10 @@ Sources: a static scan of today's UI (204 files) and a read-only browser walk of
 
 | Status | Controls |
 |---|---|
-| wired | 949 (of them 805 view controls with no route or key, carried by their place) |
-| planned | 441 (of them 425 view controls of a place still to be built) |
+| wired | 953 (of them 805 view controls with no route or key, carried by their place) |
+| planned | 444 (of them 425 view controls of a place still to be built) |
 | not offered (decision) | 0 |
-| MISSING | 479 |
+| MISSING | 472 |
 | total | 1869 |
 
 ## By page
@@ -25,7 +25,7 @@ Sources: a static scan of today's UI (204 files) and a read-only browser walk of
 | Models | Settings › Models, wave 3 slice 12 (PLAN.md 4b, F-7b-08) | 51 | 0 | 42 | 0 | 9 |
 | New run | Chat and + › New task… | 74 | 45 | 0 | 0 | 29 |
 | Profile | D1 (B8.2): a home or retire, owner decision | 10 | 0 | 8 | 0 | 2 |
-| Projects | Projects | 91 | 66 | 1 | 0 | 24 |
+| Projects | Projects | 91 | 70 | 4 | 0 | 17 |
 | Providers | Settings › Models, wave 3 slice 12 (PLAN.md 4b) | 49 | 0 | 48 | 0 | 1 |
 | Requirements | Requirements, wave 3 slice 11 (PLAN.md 4b, D2, B8.7) | 88 | 0 | 29 | 0 | 59 |
 | Schedules | Schedules | 45 | 35 | 0 | 0 | 10 |
@@ -80,7 +80,7 @@ Each MISSING control, grouped by its finding (`plans/rail/findings.md`, PLAN.md 
 | New run | Branch off the run before it | toggle | `route /api/branches`, `route /api/chat/status`, `route /api/plugins/:param`, `route /api/plugins/install`, `route /api/sync` | ui/public/new-run/new.html:252 |
 | New run | humanInLoop | toggle | `route /api/mcp/preview`, `route /api/mcp/projects/:param/mcpjson`, `route /api/scripts`, `route /api/workspaces/:param/scan` | ui/public/new-run/new.html:314 |
 | Projects | Use git | button | `route /api/sync/all` | ui/public/projects/project-add.html:90 |
-| Projects | Add project | dialog | `route /api/ask/groups/undo`, `route /api/naming/config`, `route /api/policy/scopes`, `route /api/projects/:param/readiness`, `route /api/source-bindings`, `route /api/sync/all`, `route /api/team-metrics/scopes` | ui/public/projects/project-add.html:2 |
+| Projects | Add project | dialog | `route /api/ask/groups/undo`, `route /api/naming/config`, `route /api/source-bindings`, `route /api/sync/all`, `route /api/team-metrics/scopes` | ui/public/projects/project-add.html:2 |
 | Projects | Remote URL (optional) | field | `route /api/sync/all` | ui/public/projects/project-add.html:83 |
 | Projects | Repository URL | field | `route /api/sync/all` | ui/public/projects/project-add.html:48 |
 | Tasks | Cancel | button | `route /api/agents`, `route /api/scripts`, `route /api/workflows/:param` | ui/public/run-setup-overlay.mjs:114 |
@@ -94,13 +94,13 @@ Each MISSING control, grouped by its finding (`plans/rail/findings.md`, PLAN.md 
 | Shell | Keeps the computer awake while runs are working. The display may still | menu item | `route /api/engines` | ui/public/shell/sidebar.html:186 |
 | Team policy | Scope | field | `route /api/policy`, `route /api/policy/scopes` | ui/public/team-policy/team-policy.html:10 |
 | Models | Team | button | `route /api/policy/scopes`, `route /api/team-metrics/scopes` | walk #models |
-| Projects | Team | tab | `route /api/policy/scopes`, `route /api/team-metrics/scopes` | walk #projects/KEY |
+| Projects | Team | tab | `route /api/team-metrics/scopes` | walk #projects/KEY |
 
 ### COV-3: Run and chat extras: a direction straight to a run, a run's files for Chat, restore a run, a chat's engine switch, a chat attachment, Propose fix run, Resume on / Switch model from a run link
 
 | Page | Control | Kind | Missing | Source |
 |---|---|---|---|---|
-| Shell | (button) | button | `route /api/pipelines/:param/pr-auto`, `route /api/policy/scopes`, `route /api/pr/remotes`, `route /api/projects/:param/readiness`, `route /api/run-groups/suggest-name`, `route /api/sync/all`, `route /api/terminal`, `route /api/workspaces/:param/runs/:param/log` | ui/public/app.js:5407 |
+| Shell | (button) | button | `route /api/pipelines/:param/pr-auto`, `route /api/pr/remotes`, `route /api/run-groups/suggest-name`, `route /api/sync/all`, `route /api/terminal`, `route /api/workspaces/:param/runs/:param/log` | ui/public/app.js:5407 |
 | Chat | (hint) | button | `route /api/runs/:param/artifacts`, `route /api/runs/:param/directions`, `route /api/scripts/:param` | ui/public/app.js:33901 |
 | Settings | Open | menu item | `route /api/plugins/:param/config`, `route /api/plugins/:param/profiles`, `route /api/plugins/:param/profiles/:param`, `route /api/providers/copilot/login/:param`, `route /api/runs/:param/restore`, `route /api/sources`, `route /api/sources/call`, `route /api/workspaces/:param` | ui/public/app.js:18007 |
 | Tasks | Propose fix run | button | `route /api/ask/runs/:param`, `route /api/schedules/:param/run-now` | ui/public/pinpoint-surfaces.mjs:321 |
@@ -199,15 +199,8 @@ Each MISSING control, grouped by its finding (`plans/rail/findings.md`, PLAN.md 
 | Projects | Remove | button | `route /api/projects/:param/house-brief` | ui/public/house-brief-view.mjs:49 |
 | Projects | Add a line every rebuild keeps | field | `route /api/projects/:param/house-brief` | ui/public/house-brief-view.mjs:23 |
 | New run | New branch (optional) | field | `route /api/projects/:param/sync/settings` | ui/public/new-run/new.html:262 |
-| Projects | Add project | button | `route /api/projects/:param/team-metrics` | ui/public/projects/project-add.html:64 |
-| Projects | Cancel | button | `route /api/projects/:param/team-metrics` | ui/public/projects/project-add.html:63 |
 | Tasks | + | button | `route /api/projects/:param/terminal` | ui/public/terminal-pane.mjs:578 |
 | Tasks | (term-member) | field | `route /api/projects/:param/terminal` | ui/public/terminal-pane.mjs:617 |
-| Projects | Detect | button | `route /api/projects/:param/readiness` | walk #projects/KEY/settings |
-| Projects | Not used | button | `route /api/projects/:param/readiness` | walk #projects/KEY/settings |
-| Projects | Used | button | `route /api/projects/:param/readiness` | walk #projects/KEY/settings |
-| Projects | View report | button | `route /api/projects/:param/readiness` | walk #projects/KEY/settings |
-| Projects | Settings | tab | `route /api/projects/:param/readiness` | walk #projects/KEY |
 
 ### COV-8
 
@@ -684,8 +677,10 @@ Each plan or row that carries planned controls, with how many and a few of them.
 | PLAN.md F-7b-13 | 4 | Settings › Archive finished runs after; Settings › Longest wait; Settings › Runs at once; Settings › networkWaitEnabled |
 | PLAN.md F-7b-03 | 3 | Settings › smartNamingBranch; Settings › smartNamingRunId; Settings › smartNamingTitle |
 | PLAN.md F-7b-10 | 2 | Settings › Delete…; Settings › Rename… |
+| stillhet-wiring.md Classic controls: as Detect: COV-7 / B8.1 | 2 | Projects › Not used; Projects › Used |
 | PLAN.md F-7b-08 | 1 | Settings › stepModels |
 | PLAN.md F-6-04 | 1 | Settings › Use default |
+| stillhet-wiring.md Classic controls: a project's readiness tool choice (Detect / Used / Not used, `PATCH /api/projects/: | 1 | Projects › Detect |
 
 ## Not offered (decision)
 
@@ -693,13 +688,13 @@ None: no classic control reaches a `not offered live` or `not a dev capability` 
 
 ## Wired
 
-144 controls reach a route or key Stillhet carries; 805 are view controls (no route, no key) of a page whose place Stillhet has. Where they land:
+148 controls reach a route or key Stillhet carries; 805 are view controls (no route, no key) of a page whose place Stillhet has. Where they land:
 
 | Stillhet code or row | Controls |
 |---|---|
 | stillhet/live/chat-live.mjs | 46 |
-| stillhet/live/live-adapter.mjs | 21 |
-| stillhet/live/projects-live.mjs | 16 |
+| stillhet/live/live-adapter.mjs | 22 |
+| stillhet/live/projects-live.mjs | 18 |
 | stillhet/live/market-live.mjs | 12 |
 | Stillhet live code reads it | 11 |
 | stillhet/live/run-options-live.mjs | 8 |
@@ -725,5 +720,6 @@ None: no classic control reaches a `not offered live` or `not a dev capability` 
 | stillhet-wiring.md Classic controls: Projects › Add a project by hand › One folder, under a repository address: Folder n | 1 |
 | stillhet-wiring.md Tasks capabilities: New task…'s presets (COV-2: GET /api/presets, POST /api/presets/:id/ch | 1 |
 | stillhet-wiring.md Classic controls: the task page's plan case › Full plan (`design-system/components/run-state.mjs` pla | 1 |
+| stillhet-wiring.md Classic controls: B4.5: the project page's Readiness row and its What it checks fold (`projects/proje | 1 |
 
 Every control, with its routes, keys, source line and the walk pages it was seen on: `classic-controls.json`. One control: `node tools/classic-inventory.mjs --show TEXT`.

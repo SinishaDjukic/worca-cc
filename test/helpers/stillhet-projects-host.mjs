@@ -1,7 +1,7 @@
 // test/helpers/stillhet-projects-host.mjs — Stillhet Projects and Workspaces in the live kind (slice 9): the app host over
 // dev-shaped answers. PJ_SOURCES are the store's reads (projects, their sync, workspaces); PJ_LISTS the reads a page makes
 // on open (a workspace's map with evidence, a project's settings and defaults, a workspace's defaults).
-import { liveHost, LISTS, SOURCES, settle, go, clone, toastText, closeHosts } from './stillhet-chat-live-host.mjs';
+import { liveHost, LISTS, SOURCES, NOW, settle, go, clone, toastText, closeHosts } from './stillhet-chat-live-host.mjs';
 export { settle, go, clone, toastText, closeHosts };
 
 const at = (h) => new Date(Date.UTC(2026, 10, 14, h)).toISOString();
@@ -22,7 +22,19 @@ export const PJ_SOURCES = Object.freeze({
 export const SETTINGS = { own: {}, roles: [],
   effective: { 'pr.open': { value: 'none', source: 'user' }, 'run.engine': { value: 'claude', source: 'user' }, pipelineCostLimitUsd: { value: 50, source: 'user' }, 'memory.team': { value: false, source: 'default' }, runUserClaudeSettings: { value: true, source: 'user' } },
   layers: { 'pr.open': { user: 'none', default: 'none' }, 'run.engine': { user: 'claude', default: 'claude' }, pipelineCostLimitUsd: { user: 50, default: null }, 'memory.team': { default: false }, runUserClaudeSettings: { user: true, default: false } } };
+// B4.5 (F-6-15): a project page's read-only facts, as dev answers them: readiness (src/core/repo-readiness/report.mjs),
+// team metrics ({ status }) and the policy scopes (one row per project)
+export const READINESS = { readiness: { level: 'partial', checkedAt: at(8),
+  engines: { claude: { used: true, level: 'ready', reasons: [{ kind: 'run-engine', text: 'runs tasks' }] }, codex: { used: true, level: 'partial', reasons: [] }, gemini: { used: false, level: 'unused', reasons: [] } },
+  checks: [{ id: 'r1', title: 'Has a README', scope: 'repository', status: 'fail', severity: 'blocker', fix: 'Add a README.md' }, { id: 'r2', title: 'Has tests', scope: 'repository', status: 'fail', severity: 'blocker' },
+    { id: 'r3', title: 'Has a lockfile', scope: 'repository', status: 'fail', severity: 'warn' }, { id: 'r4', title: 'Ignores dist', scope: 'repository', status: 'fail', severity: 'warn' }, { id: 'r5', title: 'Has a guide', scope: 'repository', status: 'fail', severity: 'warn' },
+    { id: 'r6', title: 'Has an editorconfig', scope: 'repository', status: 'fail', severity: 'info' }],
+  counts: { mustFix: 2, shouldFix: 3, passed: 4, applicable: 9 } } };
+export const METRICS = { status: { hasOrigin: true, enabled: true, pending: 0, runs: 3, lastSyncAt: new Date(NOW - 2 * 3600e3).toISOString() } };   // the host's clock is NOW: 2 h ago
+export const SCOPES = { projects: Object.values(KEYS).map((key) => ({ key, hasOrigin: true, present: true, delegateTo: 'acme/gateway', delegateState: 'ok' })) };
 export const PJ_LISTS = Object.freeze({
+  '/api/policy/scopes': SCOPES,
+  ...Object.fromEntries(Object.values(KEYS).flatMap((k) => [[`/api/projects/${k}/readiness`, READINESS], [`/api/projects/${k}/team-metrics`, METRICS]])),
   [`/api/workspaces/${WS}/map`]: { edges: [{ id: 'e_shop_1', from: KEYS.ok, to: KEYS.local, kind: 'http', confidence: 'heuristic', state: 'auto', evidence: { from: [{ file: 'src/client.js', line: 3, match: 'GET /invoices' }], to: [] } }] },
   [`/api/workspaces/${WS}/defaults`]: { tags: ['team:shop'], labels: ['shop'] },
   ...Object.fromEntries(Object.values(KEYS).flatMap((k) => [[`/api/projects/${k}/settings`, SETTINGS], [`/api/projects/${k}/tags/defaults`, { tags: ['team:web'], labels: [] }]])),

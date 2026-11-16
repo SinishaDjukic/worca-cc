@@ -216,6 +216,11 @@ One row per action: `npm run stillhet:wiring` lists every `window.RailWould(...)
 | `projects/projects.js › How its tasks run` | wired | slice 9 D16: read with `GET /api/projects/:key/settings`; a pick is `PATCH /api/projects/:key/settings` `{settingId: value}`, Use yours sends null |
 | `projects/projects.js › Team memory` | wired | slice 9 D16: `PATCH /api/projects/:key/settings` `{'memory.team': on}`; a refusal keeps the switch |
 | `projects/projects.js › Cost tags, Who pays and Labels` | wired | slice 9 D16, D19: `GET`/`PUT /api/projects/:key/tags/defaults` `{tags, labels}` |
+| `projects/projects.js › Readiness` | wired | B4.5 (F-6-15): `GET /api/projects/:key/readiness` on each page open, mapped by `live/projects-map.mjs` `readinessOf` (one line, the failing repository checks folded under What it checks); read only: Recheck, Ignore and Not used here stay out (COV-7, B8.1) |
+| `projects/projects.js › Last run` | wired | B4.5 (F-6-15): the store's newest task of the project (`RailWorld.tops()`, dev's history order), its title opening it, its time and state |
+| `projects/projects.js › So far` | wired | B4.5 (F-6-15): the store's tasks of the project counted done, stopped and failed by run state (`live/projects-map.mjs` `endsOf`) |
+| `projects/projects.js › Metrics` | wired | B4.5 (F-6-15): `GET /api/projects/:key/team-metrics` on each page open, mapped by `live/projects-map.mjs` `metricsOf`; read only, In Insights goes to `insights/team` (Expert) |
+| `projects/projects.js › Policy` | wired | B4.5 (F-6-15): `GET /api/policy/scopes`, the project's row mapped by `live/projects-map.mjs` `policyOf`; read only, In Settings goes to `settings/team` (Expert) |
 | `projects/projects.js › Branch names` | not offered live | dev's runs carry no `{type}` or `{ticket}` and branch naming is the engine's; Settings › Projects (slice 12) owns this setting, so the live page does not draw the row (Open question 1) |
 | `projects/projects.js › This month's spend` | wired | slice 10 D19: `RailInsightsLive.monthSpend(name)`, the `project` row of this month's `GET /api/stats` answer by project name (`insights-map.mjs` `monthSpendOf`); not drawn while the read is pending; the workspace head sums its members |
 | `workspaces/workspaces.js › Make a workspace by hand` | wired | slice 9 D12: a client draft until Save, then `POST /api/workspaces` `{name, projectPaths}` |
@@ -373,6 +378,10 @@ COV-3's run controls whose Stillhet control already does the same job (Resume on
 | `ui/public/app.js › toggle › Select …` | wired | the FolderBrowser's tick per folder in Several folders… (`projects/project-add.js`) |
 | `ui/public/app.js › toggle › Add …` | wired | the review list's tick per picked folder (`projects/project-add.js`, `POST /api/projects/bulk`) |
 | `ui/public/app.js › field › Project name for …` | wired | the review list's name per picked folder (`projects/project-add.js`, `POST /api/projects/bulk`) |
+| `walk › Projects › button › Detect` | add to the design first | a project's readiness tool choice (Detect / Used / Not used, `PATCH /api/projects/:key/settings`): COV-7 / B8.1, left out of B4.5's read-only Readiness row |
+| `walk › Projects › button › Used` | add to the design first | as Detect: COV-7 / B8.1 |
+| `walk › Projects › button › Not used` | add to the design first | as Detect: COV-7 / B8.1 |
+| `walk › Projects › button › View report` | wired (partial) | B4.5: the project page's Readiness row and its What it checks fold (`projects/projects.js`, `GET /api/projects/:key/readiness`); the per-tool report is COV-7 / B8.1 |
 | `ui/public/projects/project-add.html › field › Branch (optional)` | wired | Projects › Add a project by hand › One folder, under a repository address: Branch (`projects/project-add.js`, `POST /api/projects/clone` `{url, branch?}` in `live/projects-live.mjs`) |
 | `ui/public/projects/project-add.html › field › Folder name (optional)` | wired | Projects › Add a project by hand › One folder, under a repository address: Folder name (`projects/project-add.js`, `POST /api/projects/clone` `{url, name?}` in `live/projects-live.mjs`; it names the project and the clone job) |
 | `ui/public/app.js › button › Resume on …` | wired | the task page's Resume ▾ › Resume on ‹Engine› on a usage-limit pause, from the task's `resumeEngines` (`runs/run-page.js`, `live/task-live.mjs` `resume-engine`, `POST /api/resume` with `engine`; COV-3 rows 12, 14, 16). It sits in Resume ▾ and confirms first; classic is a banner button |

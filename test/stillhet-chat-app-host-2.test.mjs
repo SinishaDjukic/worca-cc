@@ -166,7 +166,8 @@ test('a page\'s dock hands over with the page as dev\'s context (D16)', async ()
 test('a real page hands over with its own id: a diverged project\'s page sends its project key as dev\'s context (R-req-2-8)', async () => {
   const { w, d, calls } = await liveHost({ write: (url, body, method) => (url === '/api/ask/threads' && method === 'POST' ? [201, { thread: { id: 'ask_new' } }] : [202, { userMessageId: 'u1' }]) });
   await go(w, '#projects/api-2');
-  const btn = d.querySelector('[data-pj-act="api-2"]');
+  d.querySelector('[data-menu="pj-more"]').click(); await settle();   // B4.5: Old pause waits on you here, so the head offers it and ⋯ the hand-over
+  const btn = d.querySelector('[data-menu-pick="pj-more|act"]');
   assert.ok(btn, 'the diverged project offers its hand-over');
   btn.click(); await settle(80);
   const t = d.querySelector('#route-chat [data-composer-t]');
