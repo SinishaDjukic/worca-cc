@@ -1299,6 +1299,13 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .sl-step.is-done{background:currentColor;} .sl-step.is-now{background:currentColor;animation:sl-breath 2.4s ease-in-out infinite;}
 @keyframes sl-breath{0%,100%{opacity:.35;}50%{opacity:1;}}
 @media (prefers-reduced-motion: reduce){.sl-step.is-now{animation:none;}}
+/* Button busy (comp.button-busy): says what it is doing, the stage line's breathing knot (sl-breath, as the now step)
+   before a present-tense label; never narrower than at rest (busy() sets its min-width), steady until it settles */
+.btn.rail-busy{gap:6px;white-space:nowrap;overflow:hidden;}
+.btn.rail-busy:disabled{opacity:1;cursor:progress;}
+.btn-knot{flex:none;width:8px;height:8px;border-radius:50%;background:currentColor;animation:sl-breath 2.4s ease-in-out infinite;}   /* ds-ok: the stage line's knot, at the button's size */
+.btn-busy-t{min-width:0;overflow:hidden;text-overflow:ellipsis;}
+@media (prefers-reduced-motion: reduce){.btn-knot{animation:none;}}
 .sb-labels small{margin-left:4px;font-size:var(--fs-caption);font-weight:400;color:var(--ink-2);}
 .sb-labels{margin-top:4px;font-size:var(--fs-caption);color:var(--ink-2);}
 .sb-labels b{font-weight:500;color:var(--ink);}
