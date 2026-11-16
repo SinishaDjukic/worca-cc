@@ -96,7 +96,7 @@ test('the center\'s card actions run the same routes: Resume on a paused task', 
   const { w, d, calls } = await liveHost({ sources: sources() });
   await go(w, '#runs', 150);
   d.querySelector('#route-runs [data-c-act="resume|h1"]').click(); await settle(80);
-  assert.deepEqual(sent(calls), [['POST', '/api/resume', { pipelineId: 'h1' }]]);
+  assert.deepEqual(sent(calls), [['POST', '/api/resume', { pipelineId: 'h1', baseCheck: true }]]);
   assert.doesNotMatch(toastText(d), /not in Stillhet yet/);
 });
 
