@@ -111,7 +111,9 @@
     const says = (ref) => (live ? w.agentsByKey?.[ref]?.description || w.scriptsByKey?.[ref]?.description || '' : SAYS[ref] || `${titleOf(ref)}.`);
     const checks = new Set(arcs.map((l) => l.from));
     return R.workflowStory({ steps: w.steps.map(([name, ref, , , min, cost], i) => ({ name, says: says(ref), meta: fig ? `about ${min} min · ${money(cost || 0)}` : '', check: checks.has(i) })),
-      loops: loops.map((l) => ({ from: l.from, to: l.to, text: l.from === l.to ? `found something? runs again, at most ${times(l.n)}` : `found something? back to ${l.back}, at most ${times(l.n)}` })),
+      loops: loops.map((l, _, all) => { const line = (x) => (x.from === x.to ? `found something? runs again, at most ${times(x.n)}` : `found something? back to ${x.back}, at most ${times(x.n)}`);
+        const twin = all.some((o) => o !== l && line(o) === line(l));   // F-W3a2-12: two lines that would read the same name their sending step
+        return { from: l.from, to: l.to, text: twin ? `${stepName(w.steps, l.from)} ${line(l)}` : line(l) }; }),
       ways: !atLeast('advanced') || waysOpen ? ways : [], byline: atLeast('advanced') && !live ? `Told by Haiku 5.5 from this workflow${w.tasks ? ` and its last ${w.tasks} ${w.tasks === 1 ? 'task' : 'tasks'}` : ''}` : '' })
       + (atLeast('advanced') ? `<div class="wf-acts open-line">${R.button({ label: waysOpen ? 'Fold how a task goes through it' : `How a task goes through it · ${ways.length} ${ways.length === 1 ? 'way' : 'ways'}`, kind: 'quiet', icon: R.icon(waysOpen ? 'chevron' : 'chevR', 12), attrs: { 'data-wf-ways': '', 'aria-expanded': String(waysOpen), 'data-folds': '.ws .list' } })}</div>` : '');
   }
@@ -383,7 +385,7 @@
         if (!v) { t.value = old; say(`Kept ${old}: a step needs a name`); return; }
         if (v === old) { t.value = old; return; }
         if (ed.wf.steps.some((s) => s[0] === v)) { t.value = old; say(`Kept ${old}: another step is called ${v}`); return; }   // loops name their steps
-        edChange(() => { const ends = ed.wf.loops.map((l) => loopEnds(ed.wf.steps, l)); st[0] = v; ed.wf.loops.forEach((l, j) => { if (ends[j].from === k) l[0] = v; if (ends[j].to === k) l[1] = v; }); ed.g = null; }, `Renamed to ${v}`); }   // only this step's loops: the draft save still matches labels
+        edChange(() => { const ends = ed.wf.loops.map((l) => loopEnds(ed.wf.steps, l)); st[0] = v; ed.wf.loops.forEach((l, j) => { if (ends[j].from === k) l[0] = v; if (ends[j].to === k) l[1] = v; }); ed.g = null; }, `Renamed to ${v}`); }   // only this step's loops (the draft save matches them by node)
     });
     R.dismissOnOutside(document, { open: () => here() && !!menu, inside: '#route-place .spick, #route-place .rc-pop', back: () => null, close: () => { menu = ''; }, paint: draw });
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && wide && here()) { wide = false; draw(); } });

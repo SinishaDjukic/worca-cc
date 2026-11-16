@@ -111,7 +111,7 @@ export function workflowOf(tpl, { usage = {}, agentsByKey = {}, scriptsByKey = {
   }
   // a loop wire into a flow card (wf_full's Review → OR → Build) names the step that card feeds
   const target = (id, hops = 0) => { const n = byId.get(id); if (keyed(n) || hops > 4) return n; const w = (tpl.wires || []).find((x) => x.from?.node === id); return w ? target(w.to.node, hops + 1) : n; };
-  // [from, to, rounds, fromNode, toNode] (V-TW-06): the labels stay first, as workflow-draft.mjs matches them; the nodes tell same-named steps apart
+  // [from, to, rounds, fromNode, toNode] (V-TW-06): the labels for the words; the nodes tell same-named steps apart (workflow-draft.mjs saves by them)
   const loops = (tpl.wires || []).filter((w) => loops0.loopWireIds.has(w.id)).map((w) => { const t = target(w.to.node);
     return [labelOf(byId.get(w.from.node), agentsByKey, scriptsByKey), labelOf(t, agentsByKey, scriptsByKey), Number(w.config?.maxCycles) || DEFAULT_MAX_CYCLES, w.from.node, t?.id]; });
   const plugin = pluginOf(tpl.origin), own = !plugin && !NOT_OWN_IDS.includes(tpl.id) && tpl.createdAt !== '1970-01-01T00:00:00.000Z';

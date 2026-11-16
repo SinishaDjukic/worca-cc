@@ -153,6 +153,10 @@ test('V-TW-06 / F-5-10: two loops to two "Build" steps draw two arcs', async () 
   const fullArcs = [...page(full.d).querySelectorAll('.ws-loop')];
   assert.equal(fullArcs.length, 2);
   for (const a of fullArcs) { assert.match(text(a), /back to Implementation, at most 3 times/); assert.ok(arcAt(a)[1] > 0, 'from ≠ to'); }
+  // F-W3a2-12: two loop lines that would read the same name the step that sends each
+  assert.notEqual(text(fullArcs[0]), text(fullArcs[1]));
+  const names = [...page(full.d).querySelectorAll('.ws-name')].map(text);
+  for (const a of fullArcs) assert.ok(names.some((n) => text(a).startsWith(`${n} found something?`)), text(a));
 });
 
 test('V-TW-06: the canvas Loop row, Remove and the loop picker follow the node', async () => {
