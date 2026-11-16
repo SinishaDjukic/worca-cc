@@ -10,6 +10,11 @@ afterEach(closeHosts);
 // The fixture's saved runs with their store keys, so the page can read their History detail.
 const sources = () => { const s = clone(SOURCES); for (const p of s.history.pipelines) p.projectKey = 'web-1'; return s; };
 const text = (d) => (d.querySelector('#route-today:not([hidden])')?.textContent || '').replace(/\s+/g, ' ').trim();
+// jsdom lays nothing out, so getClientRects() is always empty. The shell's page-heading rule (key.page-heading: 120 ms
+// after an address change the focus lands on the heading unless it already is on something showing) reads that as
+// "the focus is on nothing" and moves it to <main>. A browser never does (checked by keyboard on ?state=task-failed and
+// ?state=task-gone). The focus tests give the host a browser's answer: what is connected and not hidden shows.
+const showing = (w) => { w.Element.prototype.getClientRects = function () { return this.isConnected && !this.closest('[hidden]') ? [{}] : []; }; };
 
 test('a task page loads: the loading look first, then the prototype\'s failed page with the task\'s own title, branch and reason', async () => {
   let release;
@@ -50,6 +55,7 @@ test('a failed task\'s What broke lists the same failing items as its card (R-ux
 test('a failed load says "Could not load this task" with Try again; Try again draws the page and focuses its heading', async () => {
   let fail = true;
   const { w, d } = await liveHost({ sources: sources(), read: (u) => (u === '/api/history/web-1/h3' ? (fail ? [500, { error: 'boom' }] : [200, { state: TASK_DETAILS.failed.state }]) : null) });
+  showing(w);
   await go(w, '#run/h3', 100);
   assert.match(text(d), /Could not load this task/);
   assert.match(text(d), /Nothing changed\./);
@@ -58,6 +64,8 @@ test('a failed load says "Could not load this task" with Try again; Try again dr
   d.querySelector('[data-task-retry]').click(); await settle(100);
   assert.ok(d.querySelector('#route-run:not([hidden]) #card [data-title]'), 'the page draws');
   assert.equal(d.activeElement, d.querySelector('#card [data-title]'));
+  await settle(80);   // past the page-heading rule's 120 ms
+  assert.equal(d.activeElement, d.querySelector('#card [data-title]'), 'and the focus stays on the heading');
 });
 
 test('a cold deep link whose task list fails to load says "Could not load this task"; Try again reads the list and draws the page (web-UI review cycle 2)', async () => {
@@ -75,11 +83,14 @@ test('a cold deep link whose task list fails to load says "Could not load this t
 
 test('Try again while the load still fails keeps the focus on the new Try again (web-UI review cycle 3)', async () => {
   const { w, d } = await liveHost({ sources: sources(), read: (u) => (u === '/api/history/web-1/h3' ? [500, { error: 'boom' }] : null) });
+  showing(w);
   await go(w, '#run/h3', 100);
   d.querySelector('[data-task-retry]').focus();
   d.querySelector('[data-task-retry]').click(); await settle(100);
   assert.match(text(d), /Could not load this task/);
   assert.equal(d.activeElement, d.querySelector('[data-task-retry]'));
+  await settle(80);   // past the page-heading rule's 120 ms
+  assert.equal(d.activeElement, d.querySelector('[data-task-retry]'), 'and the focus stays on Try again');
 });
 
 test('a network failure reads the same as a 5xx', async () => {
@@ -90,6 +101,7 @@ test('a network failure reads the same as a 5xx', async () => {
 
 test('gone: an id neither the runs nor the store hold, or a 404, says "This task no longer exists" with a Tasks button and no Try again', async () => {
   const { w, d } = await liveHost({ sources: sources(), read: (u) => (u === '/api/history/web-1/h2' ? [404, { error: 'pipeline not found' }] : null) });
+  showing(w);
   for (const id of ['nope-123', 'h2']) {
     await go(w, `#run/${id}`, 100);
     assert.match(text(d), /This task no longer exists/, id);
@@ -100,6 +112,8 @@ test('gone: an id neither the runs nor the store hold, or a 404, says "This task
   d.querySelector('#route-today [data-nav="runs"]').click(); await settle(60);
   assert.equal(w.location.hash, '#runs');
   assert.ok(d.querySelector('#runs-root').contains(d.activeElement), `focus lands in the Tasks list, not on ${d.activeElement?.tagName}`);
+  await settle(140);   // past the page-heading rule's 120 ms
+  assert.ok(d.querySelector('#runs-root').contains(d.activeElement), `and stays there, not on ${d.activeElement?.tagName}`);
 });
 
 test('no task at all: the Tasks list says "No tasks yet." and Start a task hands over to Chat (D12c)', async () => {

@@ -297,9 +297,10 @@ function activityPanel(v) {
   const graphBtn = R.runPartShows('graph', R.prefs.mode()) ? R.button({ label: 'Open the graph', kind: 'quiet', attrs: { 'data-key': 'graph', 'data-graph': true } }) : '';
   return `<div class="rtab-bar">${seg}${logsGone ? '' : graphBtn}</div><section class="rtab rtab-stage"><ol class="rd-route-list sc-subs is-full" aria-label="Steps">${rows || '<li class="sc-stage-row"><p class="rtab-dim rtab-p">No problems or questions in this task.</p></li>'}</ol></section>${logsHtml(v)}${agentsHtml(v)}${sessionsHtml(v)}${usageHtml(v)}${costHtml(v)}`;
 }
-// Logs (Advanced): the sentence narrows them (Expert), Summaries or Raw (flag commandSummaries), search and copy.
+// Logs (Advanced): one line narrows them (list.filters): the Step first, the other pickers (Expert) only where the task
+// has more than one choice, Find, then Raw (flag commandSummaries), Follow live and Copy at the line's end.
 const LOG_FILTERS = (v) => { const uniq = (k) => [...new Set(v.logs.map((l) => String(l[k])))];
-  return [{ id: 'log-from', key: 'from', all: 'every source', vals: uniq('from') }, { id: 'log-level', key: 'lvl', state: 'level', all: 'any level', vals: uniq('lvl') }, { id: 'log-step', key: 'step', all: 'every step', vals: uniq('step') }, { id: 'log-cycle', key: 'cycle', all: 'any cycle', vals: uniq('cycle') }, { id: 'log-session', key: 'session', all: 'any session', vals: uniq('session') }]; };
+  return [{ id: 'log-step', key: 'step', label: 'Step', all: 'All steps', vals: uniq('step') }, { id: 'log-from', key: 'from', label: 'Source', all: 'All', vals: uniq('from') }, { id: 'log-level', key: 'lvl', state: 'level', label: 'Level', all: 'All', vals: uniq('lvl') }, { id: 'log-cycle', key: 'cycle', label: 'Cycle', all: 'All', vals: uniq('cycle') }, { id: 'log-session', key: 'session', label: 'Session', all: 'All', vals: uniq('session') }]; };
 function logsHtml(v) {
   if (!logsShow() || !v.has.started) return '';
   if (logsGone) return `<section class="rtab rl-sec" id="act-logs"><h2 class="rtab-h">Logs</h2>${R.emptyState({ title: 'The logs are gone', text: 'They went with the worktree.' })}</section>`;
@@ -308,10 +309,15 @@ function logsHtml(v) {
   const lines = v.logs.filter((l) => fs.every((f) => { const want = L[f.state || f.key]; return want === 'all' || String(l[f.key]) === want; }) && (!q || (l.sum + ' ' + l.raw).toLowerCase().includes(q)));
   const expert = R.runPartShows('logFilters', R.prefs.mode());
   const shown = expert ? fs : side() ? fs.filter((f) => f.key === 'step') : [];   // in the panel's Log tab the step is always picked at its top
-  const sentence = shown.length ? `<div class="rl-sentence">${expert ? 'Showing' : 'Step'} ${shown.map((f) => { const cur = L[f.state || f.key]; return R.sentencePicker({ id: f.id, text: cur === 'all' ? f.all : (f.key === 'cycle' ? 'cycle ' + cur : cur), open: ui.menu === f.id, chevron: svg('chevron', 12), items: [{ id: 'all', text: f.all, checked: cur === 'all' }].concat(f.vals.map((x) => ({ id: x, text: f.key === 'cycle' ? 'cycle ' + x : x, checked: cur === x }))) }); }).join(' · ')}</div>` : '';
+  const cur = (f) => L[f.state || f.key], say = (f, x) => (f.key === 'cycle' ? 'Cycle ' + x : x);
+  // a picker with one choice says nothing: it is left out (the Step always shows where the step is picked)
+  const parts = shown.filter((f) => f.key === 'step' || f.vals.length > 1).map((f) => ({ id: f.id, label: f.label, raw: true, text: cur(f) === 'all' ? f.all : say(f, cur(f)), tip: cur(f) === 'all' ? f.label : say(f, cur(f)), reset: 'all', chip: f.key !== 'step',   /* the Step is said by its own picker, never counted in Filter */
+    items: [{ id: 'all', text: f.all, checked: cur(f) === 'all' }].concat(f.vals.map((x) => ({ id: x, text: say(f, x), checked: cur(f) === x }))) }));
+  const find = R.field({ id: 'log-q', label: 'Find in the log', quietLabel: true, placeholder: 'Find', value: L.q, attrs: { 'data-key': 'log-q', autocomplete: 'off', spellcheck: 'false' } });
+  const end = `${find}${summaries ? R.button({ label: 'Raw', kind: 'quiet', attrs: { 'data-logview': L.raw ? 'sum' : 'raw', 'data-key': 'logview', 'aria-pressed': String(!!L.raw), title: L.raw ? 'Every line as it was written. Press for summaries' : 'Summaries. Press for every line as it was written' } }) : ''}${v.bar.stop ? R.button({ label: 'Follow live', kind: 'quiet', iconOnly: true, icon: svg('download', 14), title: L.follow ? 'Follows new lines. Press to stay where you are' : 'Stays where you are. Press to follow new lines', attrs: { 'data-logfollow': '', 'data-key': 'log-follow', 'aria-pressed': String(!!L.follow) } }) : ''}${R.button({ label: `Copy ${M.plural(lines.length, 'line')}`, kind: 'quiet', iconOnly: true, icon: svg('copy', 14), attrs: LIVE_PAGE() ? { 'data-key': 'log-copy', 'data-copy': lines.map((l) => [l.t, l.step, raw ? l.raw : l.sum].filter(Boolean).join(' ')).join('\n') } : { 'data-key': 'log-copy', 'data-say': window.StillhetWould(`copy ${lines.length} log lines`) } })}`;
+  const head = `<div class="rl-head${parts.length > 1 ? ' has-more' : ''}">${R.filterRow({ parts, open: ui.menu, chevron: svg('chevron', 12), end })}</div>`;
   const list = lines.length ? R.logLines({ label: 'Log', lines: lines.map((l) => ({ t: l.t, from: l.step, lvl: l.lvl, text: raw ? l.raw : l.sum })) }) : R.emptyState({ title: 'Nothing in the log matches', text: 'Change the filters or the search.' });
-  return `<section class="rtab rl-sec" id="act-logs"><h2 class="rtab-h">Logs <span class="n">${lines.length} of ${v.logs.length} lines</span></h2>${sentence}
-    <div class="rl-tools">${R.field({ id: 'log-q', label: 'Search the log', value: L.q, attrs: { 'data-key': 'log-q' } })}${summaries ? R.segmented({ label: 'Show', hook: 'logview', items: [{ id: 'sum', label: 'Summaries', pressed: !L.raw }, { id: 'raw', label: 'Raw', pressed: L.raw }] }) : ''}${v.bar.stop ? R.checkbox({ label: 'Auto-scroll', checked: L.follow, attrs: { id: 'log-follow', 'data-key': 'log-follow' } }) : ''}${R.button({ label: 'Copy', kind: 'quiet', attrs: LIVE_PAGE() ? { 'data-key': 'log-copy', 'data-copy': lines.map((l) => [l.t, l.step, raw ? l.raw : l.sum].filter(Boolean).join(' ')).join('\n') } : { 'data-key': 'log-copy', 'data-say': window.StillhetWould(`copy ${lines.length} log lines`) } })}</div>${list}</section>`;
+  return `<section class="rtab rl-sec" id="act-logs"><h2 class="rtab-h">Logs <span class="n">${lines.length} of ${v.logs.length} lines</span></h2>${head}${list}</section>`;
 }
 function agentsHtml(v) {
   if (!R.runPartShows('agents', R.prefs.mode()) || !v.agents.length) return '';
@@ -321,8 +327,8 @@ function sessionsHtml(v) {
   if (!R.runPartShows('sessions', R.prefs.mode()) || !v.sessions.length) return '';
   const k = Math.min(ui.session, v.sessions.length - 1); const x = v.sessions[k];
   return `<section class="rtab rl-sec"><h2 class="rtab-h">Sessions <span class="n">${v.sessions.length}</span></h2>${R.table({ label: 'Sessions', columns: [{ id: 'name', label: 'Session' }, { id: 'turns', label: 'Turns', num: true, narrow: false }, { id: 'in', label: 'In', num: true, narrow: false }, { id: 'out', label: 'Out', num: true, narrow: false }, { id: 'cache', label: 'Cache', num: true, narrow: false }, { id: 'cost', label: 'Cost', num: true }], rows: v.sessions })}
-    <div class="rl-sentence">Session ${R.sentencePicker({ id: 'session', text: x.name, open: ui.menu === 'session', chevron: svg('chevron', 12), items: v.sessions.map((y, i) => ({ id: String(i), text: y.name, checked: i === k })) })}</div>
-    <div class="rl-tools">${R.button({ label: 'Open the transcript', kind: 'quiet', attrs: { 'data-transcript': k, 'data-key': 'session-open' } })}${R.button({ label: 'Copy its id', kind: 'quiet', attrs: LIVE_PAGE() ? { 'data-copy': x.id, 'data-key': 'session-copy' } : { 'data-say': window.StillhetWould('copy ' + x.id), 'data-key': 'session-copy' } })}</div></section>`;
+    <div class="rl-head">${R.filterRow({ parts: [{ id: 'session', label: 'Session', raw: true, text: x.name, tip: x.name, chip: false, items: v.sessions.map((y, i) => ({ id: String(i), text: y.name, checked: i === k })) }], open: ui.menu, chevron: svg('chevron', 12),
+      end: R.button({ label: 'Open the transcript', kind: 'quiet', attrs: { 'data-transcript': k, 'data-key': 'session-open' } }) + R.button({ label: 'Copy its id', kind: 'quiet', iconOnly: true, icon: svg('copy', 14), attrs: LIVE_PAGE() ? { 'data-copy': x.id, 'data-key': 'session-copy' } : { 'data-say': window.StillhetWould('copy ' + x.id), 'data-key': 'session-copy' } }) })}</div></section>`;
 }
 function usageHtml(v) {
   if (!R.prefs.flag('runTelemetry') || !v.usage.length) return '';
@@ -511,7 +517,6 @@ function render() {
   </div>`, { motion: !jump });
   jump = false;
   DP?.paint();
-  if (pointed) { pointed = false; BOARD.querySelector('.detail-panel .is-pointed')?.scrollIntoView({ block: 'start' }); }
 
   if (scroller.scrollTop !== keepY) scroller.scrollTop = keepY;   // nothing moves by itself: a repaint never scrolls the page
   R.fitTags(document);
@@ -520,7 +525,7 @@ function render() {
   const selTab = document.querySelector('.rc-tabs .tab[aria-selected="true"]'); const strip = selTab?.parentElement;
   if (strip) { const l = selTab.offsetLeft - strip.offsetLeft, r = l + selTab.offsetWidth; if (l < strip.scrollLeft) strip.scrollLeft = l; else if (r > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = r - strip.clientWidth; }
   if (keep) {
-    const el = keep === 'menu-first' ? document.querySelector('.menu .menu-item') : document.querySelector(`[data-key="${CSS.escape(keep)}"]`) || (keep.startsWith('lst:') ? document.getElementById('tag-input') : null);   // a removed custom label has no row left
+    const el = keep === 'menu-first' ? document.querySelector('.menu .menu-item') : document.querySelector(`[data-key="${CSS.escape(keep)}"]`) || (keep.startsWith('pick:') ? [...document.querySelectorAll(`.rl-head [data-menu="${CSS.escape(keep.slice(5))}"], .rl-head .fr-filter-b`)].find((b) => b.offsetParent) : null) || (keep.startsWith('lst:') ? document.getElementById('tag-input') : null);   // a removed custom label has no row left
     el?.focus({ preventScroll: true });
   }
 }
@@ -552,12 +557,11 @@ function openStage(v, a, only = '') {
 // stage's steps and the parts (Activity, Changes, Decisions) open in the one panel, from a knot, a figure or a part's row.
 const BOARD = SHELL ? document.getElementById('route-run') : null;
 const PARTS = R.DETAIL_TABS.map(([id]) => id);   // the panel's tabs, the library's set and order
-let pointed = false;   // a knot was pressed: its stage is scrolled to in Steps
 const dpId = (v) => `st:${v.open.key}`;   // the stage (on a feature: the member) the panel follows
 const DP = BOARD ? R.detailPanelController({ root: BOARD, resolve: () => detailOf(), repaint: () => render(), held: () => !!(ui.menu || ui.dialog || ui.confirm),
   host: () => BOARD.querySelector(':scope > [data-detail]') || BOARD.appendChild(Object.assign(document.createElement('div'), { innerHTML: '<div data-detail data-run-tools></div>' }).firstChild),
   changed: (s) => { ui.tab = s.id ? s.tab : ''; ui.menu = ''; },
-  point: (hit) => { const k = hit.dataset.dpStage; if (k) { ui.open = k; ui.stageShut = false; pointed = true; } } }) : null;
+  point: (hit) => { const k = hit.dataset.dpStage; if (k) { ui.open = k; ui.stageShut = false; } } }) : null;   // the controller scrolls Steps to the pointed stage
 const side = () => !!DP && DP.sidePanel() && document.getElementById('card')?.parentElement === BOARD;   // lent to a chat's card it keeps its folds
 const begun = (r) => !/\bis-next\b/.test(r.rowCls), troubled = (r) => /is-(ask|problem|failed)/.test(r.rowCls);
 // Steps: the stages as one list on the rail, each step once, a line each; a step's name opens it in Log
@@ -664,7 +668,6 @@ document.addEventListener('input', (e) => {
 document.addEventListener('change', (e) => {
   if (SHELL && !SHELL.owns('run', e.target)) return;
   if (e.target.id === 'break' && e.target.value && e.target.value !== 'step') { const k = e.target.value; e.target.value = ''; breakNow(k); return; }
-  if (e.target.id === 'log-follow') { ui.log.follow = e.target.checked; toast(e.target.checked ? 'The log follows new lines' : 'The log stays where it is'); render(); return; }
   if (e.target.dataset && e.target.dataset.marktext) { pendingFocus = e.target.dataset.key; render(); return; }
   if (e.target.dataset && e.target.dataset.pickall !== undefined) { const all = M.view(ui.caseId, ui).tabData.members.map((m) => m.name); ui.picked = e.target.checked ? all : []; pendingFocus = 'pick-all'; render(); return; }
   if (e.target.dataset && e.target.dataset.pick) { const all = M.view(ui.caseId, ui).tabData.members.map((m) => m.name); const cur = ui.picked || all; ui.picked = e.target.checked ? cur.concat(e.target.dataset.pick) : cur.filter((x) => x !== e.target.dataset.pick); pendingFocus = e.target.dataset.key; render(); return; }
@@ -1384,7 +1387,8 @@ document.addEventListener('click', (e) => {
   if (d.showmet !== undefined) { ui.showMet = !ui.showMet; pendingFocus = 'show-met'; render(); return; }
   if (d.showearlier !== undefined) { ui.showEarlier = !ui.showEarlier; pendingFocus = 'show-earlier'; render(); return; }
   if (d.mark) { const [id, m] = d.mark.split('|'); ui.marks = Object.assign({}, ui.marks, { [id]: m }); pendingFocus = m === 'met' ? 'mark:' + d.mark : 'mark-' + id; render(); return; }
-  if (d.logview) { ui.log = Object.assign({}, ui.log, { raw: d.logview === 'raw' }); pendingFocus = 'logview:' + d.logview; render(); return; }
+  if (d.logview) { ui.log = Object.assign({}, ui.log, { raw: d.logview === 'raw' }); pendingFocus = 'logview'; render(); return; }
+  if ('logfollow' in d) { ui.log = Object.assign({}, ui.log, { follow: !ui.log.follow }); pendingFocus = 'log-follow'; toast(ui.log.follow ? 'The log follows new lines' : 'The log stays where it is'); render(); return; }
   if (d.service) { const id = d.service; const on = !ui.services[id]; ui.svcBusy = id; pendingFocus = 'svc:' + id; render(); setTimeout(() => { ui.svcBusy = ''; ui.services = Object.assign({}, ui.services, { [id]: on }); const x = v0().tabData.services.find((y) => y.id === id); toast(window.StillhetWould((on ? 'start ' : 'stop ') + x.name + ' on localhost:' + x.port)); pendingFocus = 'svc:' + id; render(); }, 500); return; }
   if (d.checkout !== undefined && LIVE_PAGE()) { liveDirect('Check out'); pendingFocus = 'ch:checkout'; return; }
   if (d.checkout !== undefined) { ui.copy = !ui.copy; toast(ui.copy ? window.StillhetWould('check out ' + (v0().place.branch || 'the branch') + ' on this machine') : 'Unlinked the local copy; the branch stays'); pendingFocus = 'ch:checkout'; render(); return; }
@@ -1426,8 +1430,8 @@ document.addEventListener('click', (e) => {
   else if (d.run === 'stop') follow(M.runFlow.stop, 'Stop the task');
   else if (d.act) act(d.act);
   else if (d.menu) { const opening = ui.menu !== d.menu; ui.menu = opening ? d.menu : ''; if (opening) pendingFocus = d.menu === 'tags' ? 'tag-input' : 'menu-first'; }
-  else if (d.menuPick) {
-    const [pid, pval] = d.menuPick.split('|');
+  else if (d.menuPick || /^(log-[a-z]+|session)\|/.test(d.pick || '')) {   // a FilterRow's menu picks with data-pick
+    const [pid, pval] = (d.menuPick || d.pick).split('|');
     if (/^log-/.test(pid)) { const k = { 'log-from': 'from', 'log-level': 'level', 'log-step': 'step', 'log-cycle': 'cycle', 'log-session': 'session' }[pid]; ui.log = Object.assign({}, ui.log, { [k]: pval }); ui.menu = ''; pendingFocus = 'pick:' + pid; }
     else if (pid === 'session') { ui.session = +pval; ui.menu = ''; pendingFocus = 'pick:session'; }
     else if (pid === 'cmtline') { const r = changedRows(v0().tabData, ui.commentOn.path)[+pval]; if (r) Object.assign(ui.commentOn, { row: +pval, line: r[1].trim() }); ui.menu = ''; pendingFocus = 'pick:cmtline'; }

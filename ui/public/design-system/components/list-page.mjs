@@ -9,7 +9,7 @@ import { dialog } from './dialog.mjs';
 import { field } from './field.mjs';
 import { icon } from './icons.mjs';
 import { list, listRow, moreMenu } from './list.mjs';
-import { filterRow, groupRow, listState, narrowedLine, roundRows } from './list-parts.mjs';
+import { childLine, filterRow, groupRow, listState, narrowedLine, roundRows } from './list-parts.mjs';
 import { land } from './motion.mjs';
 import { selectionAction, selectApply, selectClear, selectPrune, selectStart, selectStep, selectAllState, keepFocus } from './selection.mjs';
 import { bindLongPress, selectionBar } from './selection-bar.mjs';
@@ -80,6 +80,7 @@ export function fitMenu(m, vw) {
  * @param {() => boolean} o.spec.active  this list takes keys now
  * @param {() => void} [o.spec.retry]
  * @param {() => void} [o.spec.emptyAct]
+ * A row under another row (in `tree` or `members`) is one line (childLine): give it `state` (a runState id), and `stage`, `stages`, `after` as rowEndWord takes them.
  * A row: { key, title, meta, mark, lead, end, endMark, tree (what hangs under it, always open), tip, unread, current, holds, menu, members, open (a group's first state), noun, count, rounds }.
  */
 const OWNER = new WeakMap();   // root → the controller whose rows it shows
@@ -97,16 +98,19 @@ export function listController({ root, spec }) {
   const isShut = (x) => x.fold && (s.shut.has(x.id) || (!s.opened.has(x.id) && !openByDefault(x.id) && !x.rows.some((r) => r.current || r.holds)));
   const groupOpen = (r) => (s.groups.has(r.key) ? s.groups.get(r.key) : !!r.open || !!r.holds);   // a group that holds the row you are on starts open (list.fold-keeps-current)
 
-  function rowHtml(r) {
+  // list.child-row: a row under another row is one line; its detail is its tooltip and its name
+  const childHtml = (r) => rowHtml(r, true);
+  function rowHtml(r, child) {
     const selecting = s.pick.on;
-    const base = { title: r.title, meta: r.meta, wrap: !!r.wrap, news: r.news || false, mark: r.mark, lead: r.lead, unread: r.unread, current: r.current, holds: r.holds, flash: s.flash === r.key,
-      open: { 'data-open': r.key, title: r.tip || r.title, 'data-cut-tip': r.tip ? null : '' }, attrs: { 'data-row': r.key },
+    const one = child === true ? childLine(r) : null;
+    const base = { title: r.title, meta: one ? '' : r.meta, wrap: !one && !!r.wrap, news: r.news || false, mark: r.mark, lead: r.lead, unread: r.unread, current: r.current, holds: r.holds, flash: s.flash === r.key,
+      open: one ? { 'data-open': r.key, title: one.tip, 'aria-label': one.name, 'data-cut-tip': one.tip === r.title ? '' : null } : { 'data-open': r.key, title: r.tip || r.title, 'data-cut-tip': r.tip ? null : '' }, attrs: { 'data-row': r.key },
       menu: r.menu ? { id: `row:${r.key}`, label: `More for ${r.title}`, icon: dots(), items: r.menu, open: s.menu === `row:${r.key}` } : null,
       check: selecting && r.pick !== false ? s.pick.ids.includes(r.key) : undefined, boxAttrs: { 'data-sel': r.key } };
     if (r.tree && r.treeShut && !s.treeSeen.has(r.key)) { s.treeSeen.add(r.key); if (!r.tree.some((c) => c.current)) s.treeShut.add(r.key); }   // list.bar-model: a healthy parent starts folded; the row you are on keeps it open
-    if (r.tree) { base.after = `<div class="lr-members lr-tree"><div class="list-rows" role="list"${attrs({ 'aria-label': `Under ${r.title}` })}>${r.tree.map(rowHtml).join('')}</div></div>`; if (r.tree.length) base.markFold = { open: !s.treeShut.has(r.key), attrs: { 'data-fold-tree': r.key } }; }
+    if (r.tree) { base.after = `<div class="lr-members lr-tree"><div class="list-rows" role="list"${attrs({ 'aria-label': `Under ${r.title}` })}>${r.tree.map(childHtml).join('')}</div></div>`; if (r.tree.length) base.markFold = { open: !s.treeShut.has(r.key), attrs: { 'data-fold-tree': r.key } }; }
     if (r.endMark) base.end = r.endMark;
-    if (r.members) return groupRow({ ...base, count: r.count, noun: r.noun, shown: groupOpen(r), toggle: { 'data-fold': r.key }, rows: r.members.map(rowHtml).join('') });
+    if (r.members) return groupRow({ ...base, count: r.count, noun: r.noun, shown: groupOpen(r), toggle: { 'data-fold': r.key }, rows: r.members.map(childHtml).join('') });
     let after = '';
     if (r.rounds) {
       const k = r.key, open = s.rounds.has(k), all = s.roundsAll.has(k) || r.rounds.list.length <= ROUNDS_SHOWN;
@@ -114,7 +118,7 @@ export function listController({ root, spec }) {
         rounds: (all ? r.rounds.list : r.rounds.list.slice(0, ROUNDS_SHOWN)).map((x) => ({ n: x.n, words: x.words, time: x.time, attrs: { 'data-open-round': `${k}|${x.n}`, title: `Opens round ${x.n}` } })),
         more: all ? null : { n: r.rounds.list.length - ROUNDS_SHOWN, attrs: { 'data-rounds-all': k } } });
     }
-    return listRow({ ...base, endText: r.end, after: base.after || after });
+    return listRow({ ...base, endText: one ? one.end : r.end, after: base.after || after });
   }
 
   function html(v) {
@@ -130,7 +134,7 @@ export function listController({ root, spec }) {
       const rows = shut ? [] : all ? x.rows : [...x.rows.slice(0, limit), ...x.rows.slice(limit).filter((r) => r.current || r.holds)];
       const walk = (r) => { s.order.push(r.key); (r.tree || []).forEach(walk); if (r.members && groupOpen(r)) r.members.forEach(walk); }; rows.forEach(walk);
       s.top.push(...rows.filter((r) => r.pick !== false).map((r) => r.key));   // Select all: a group's row stands for its members, so a count never counts one twice
-      return { title: x.title, count: x.noCount ? '' : x.count ?? x.rows.length, of: x.of, chip: x.chip, rows: shut ? [''] : rows.map(rowHtml), fold: x.fold ? { open: !shut, attrs: { 'data-fold-section': x.id } } : null, more: shut || x.rows.length <= limit ? null : s.more.has(x.id) ? { less: true, attrs: { 'data-less': x.id } } : rows.length >= x.rows.length ? null : { n: x.rows.length - rows.length, attrs: { 'data-more': x.id } } };
+      return { title: x.title, count: x.noCount ? '' : x.count ?? x.rows.length, of: x.of, chip: x.chip, rows: shut ? [''] : rows.map((r) => rowHtml(r)), fold: x.fold ? { open: !shut, attrs: { 'data-fold-section': x.id } } : null, more: shut || x.rows.length <= limit ? null : s.more.has(x.id) ? { less: true, attrs: { 'data-less': x.id } } : rows.length >= x.rows.length ? null : { n: x.rows.length - rows.length, attrs: { 'data-more': x.id } } };
     }) : [];
     s.pick = selectPrune(s.pick, [...s.rows.keys()]);
     const shown = s.order;

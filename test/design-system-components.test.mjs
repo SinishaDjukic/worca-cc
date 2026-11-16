@@ -235,6 +235,27 @@ test('listController: selected counts in the actions\' unit (list.select-bar)', 
   assert.match(root.querySelector('.runs-bulk-n').textContent, /^3 selected/);
 });
 
+test('listController: a row under another row is one line (list.child-row)', () => {
+  const d = new JSDOM('<body><div id="r"></div></body>', { pretendToBeVisual: true }).window.document, root = d.getElementById('r');
+  const kid = { key: 'k', title: 'Invoices export', meta: 'Waiting · Starts after Add CSV export', state: 'scheduled', after: true };
+  const task = { key: 't', title: 'Add CSV export to billing', meta: 'Needs you · Review asks which date format', wrap: true, state: 'question', tree: [kid] };
+  const rows = [{ key: 'c', title: 'Billing CSV export', meta: 'Chat', end: '14:32', tree: [task, { key: 's', title: 'Nightly export check', meta: 'Every day at 02:00', end: '02:00' }, { key: 'p', title: 'web-app', meta: '1 task needs you', end: '' }] },
+    { key: 'g', title: 'Unified page navigation', meta: 'Feature', count: '1/3', noun: 'tasks', open: true, members: [{ key: 'm', title: '2 · Pager between runs', meta: 'Working · 12:04', state: 'working', stage: 1 }] }];
+  C.listController({ root, spec: { noun: `kid-${Math.random()}`, label: 'x', can: () => [], bulk: () => [], act: () => {}, word: () => false, say: () => {}, active: () => true, open: () => {}, view: () => ({ state: 'ready', parts: [], sections: [{ id: 's', title: 'S', rows }] }) } }).paint();
+  const row = (k) => root.querySelector(`[data-row="${k}"]`), main = (k) => row(k).querySelector(':scope > .lr-main'), end = (k) => row(k).querySelector(':scope > .lr-end > .lr-fig')?.textContent;
+  for (const [k, word] of [['t', 'Asks'], ['k', 'after it'], ['s', '02:00'], ['m', 'Build']]) {
+    assert.equal(main(k).querySelector('.lr-m'), null, `${k}: no second line`);
+    assert.ok(!row(k).classList.contains('is-wrap'), `${k}: nothing wraps`);
+    assert.equal(end(k), word, `${k}: its one end word`);
+  }
+  assert.equal(main('t').title, 'Add CSV export to billing\nNeeds you · Review asks which date format', 'the detail is its tooltip, with the full title');
+  assert.equal(main('t').getAttribute('aria-label'), 'Add CSV export to billing, Needs you · Review asks which date format', 'and its name');
+  assert.ok(!main('t').hasAttribute('data-cut-tip'), 'the tooltip stays when the title fits');
+  assert.equal(main('c').querySelector('.lr-m').textContent, 'Chat', 'a top-level row keeps its lines');
+  assert.equal(main('c').getAttribute('aria-label'), null);
+  assert.equal(main('p').querySelector('.lr-m').textContent, '1 task needs you', 'a child with no end word keeps its two lines');
+});
+
 test('listController: the arrows on a reply\'s code block or table scroll it, not the list', () => {
   const d = new JSDOM('<body><div id="r"></div><div class="prose"><pre tabindex="0"><code>x</code></pre><div class="rt-wrap" tabindex="0"></div></div><p tabindex="0" id="other"></p></body>', { pretendToBeVisual: true }).window.document, root = d.getElementById('r');
   const rows = [{ key: 'g', title: 'g', meta: '', members: [{ key: 'm', title: 'm' }] }, { key: 'c', title: 'c', meta: '' }];

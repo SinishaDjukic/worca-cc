@@ -553,10 +553,11 @@ export function youTurn({ text, quote = '', files = [], refs = [], attrs: a = {}
  * @param {string} [o.parts]   buttons
  * @param {string} [o.body]    what is open under it
  * @param {boolean} [o.next]   not started: quiet
+ * @param {boolean} [o.pointed]   the stage a knot pointed at (panel.detail-panel): marked, and the panel scrolls to it
  * @param {object} [o.attrs]   on its line (the click that opens it)
  */
-export function stageLine({ mark, label, meta = '', parts = '', body = '', next = false, attrs: a = {} }) {
-  return `<div class="stage-line${body ? ' is-open' : ''}${next ? ' is-next' : ''}"><div class="stage-head">${turnRow({ mark, text: `<b>${esc(label)}</b>`, end: esc(meta), open: !!body, attrs: Object.keys(a).length ? { 'data-fold-turn': '', ...a } : a })}${parts ? `<span class="stage-tools">${parts}</span>` : ''}</div>${body}</div>`;
+export function stageLine({ mark, label, meta = '', parts = '', body = '', next = false, pointed = false, attrs: a = {} }) {
+  return `<div class="stage-line${body ? ' is-open' : ''}${next ? ' is-next' : ''}${pointed ? ' is-pointed' : ''}"${pointed ? ' aria-current="step"' : ''}><div class="stage-head">${turnRow({ mark, text: `<b>${esc(label)}</b>`, end: esc(meta), open: !!body, attrs: Object.keys(a).length ? { 'data-fold-turn': '', ...a } : a })}${parts ? `<span class="stage-tools">${parts}</span>` : ''}</div>${body}</div>`;
 }
 
 /**

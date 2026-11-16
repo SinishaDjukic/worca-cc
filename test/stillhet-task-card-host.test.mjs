@@ -41,11 +41,17 @@ test('the approved PR (c18): its checks, "Approved by NAME" and Merge PR; its pa
   const { w, d } = await liveHost({ sources: sources({ status: 'done', pr: { url: PR_URL, state: 'OPEN' } }), read: (u) => (u === '/api/history/web-1/pa' ? [200, { state }]
     : u.startsWith('/api/pr/checks?id=pa') ? [200, TASK_DETAILS.approved.checks] : null) });
   await go(w, '#chat/ask_1', 250);
+  // the slim card (panel.task-card): the branch, one message and the one action; the PR's own facts are in the panel's Checks
   const text = card(d).textContent.replace(/\s+/g, ' ');
   assert.match(text, /feat\/audit-log-pager/);
-  assert.match(text, /All 12 checks pass/);
-  assert.match(text, /Approved by maya/);
-  assert.match(text, /Merge/);
+  assert.match(text, /Approved, and checks pass/);
+  assert.ok(card(d).querySelector('[data-card-act="pa|Merge PR"]'), 'the card offers Merge PR');
+  assert.equal(d.querySelector('.detail-panel'), null, 'the panel opens only when asked');
+  card(d).querySelector('[data-dp-open="pa|"]').click(); await settle(80);
+  d.querySelector('.detail-panel #dp-tab-checks').click(); await settle(80);
+  const checks = d.querySelector('.detail-panel .dp-body').textContent.replace(/\s+/g, ' ');
+  assert.match(checks, /All 12 checks pass/);
+  assert.match(checks, /Approved by maya/);
   assert.equal(w.StillhetTaskLive.card('pa').case, 'approved');
   await go(w, '#run/pa', 200);
   assert.equal(d.querySelector('#card [data-key="act-main"]').dataset.label, 'Merge PR');
@@ -81,10 +87,13 @@ test('a no-project finished card shows Plan, Build, Review, Done and one word, a
   const STAGES = ['Plan', 'Build', 'Review', 'Done'];
   assert.deepEqual(barLabels(card(d)), STAGES);
   assert.ok(card(d).querySelector('.stage-bar.is-done'), 'all of it in ink');
-  card(d).querySelector('[data-open-task="pa"]').click(); await settle(80);
-  const own = card(d).querySelector('.own-stages');
+  // the card's stages open in the detail panel beside the chat, from a knot; the knot's stage is the one marked there
+  assert.equal(card(d).querySelector('.own-stages'), null, 'the slim card holds no stage list');
+  card(d).querySelector('[data-dp-open="pa|steps"][data-dp-stage="3"]').click(); await settle(80);
+  const own = d.querySelector('.detail-panel .own-stages');
   assert.deepEqual(lineLabels(own), STAGES);
   assert.equal(own.querySelectorAll('.is-future').length, 0, 'every stage is done');
+  assert.deepEqual([...own.querySelectorAll('.stage-line.is-pointed[aria-current="step"] .tr-text b')].map((e) => e.textContent), ['Done'], 'the knot\'s stage is marked');
   const text = card(d).textContent;
   assert.doesNotMatch(text, /\bPR\b|Merged|Ready/);
   assert.equal(text.match(/Finished/g)?.length, 1, 'the state is said once');
@@ -117,8 +126,8 @@ test('a no-PR card with tone ok keeps its last stage to come, as its page does',
   w.StillhetConversation.refresh(); await settle(80);
   const c = () => w.document.querySelector('#route-chat [data-anchor="a4c"]');
   assert.deepEqual(barLabels(c()), ['Plan', 'Build', 'Review', 'Push']);
-  c().querySelector('[data-open-task="t9n"]').click(); await settle(80);
-  const own = c().querySelector('.own-stages');
+  c().querySelector('[data-dp-open="t9n|steps"]').click(); await settle(80);   // a knot opens its stages in the detail panel
+  const own = w.document.querySelector('.detail-panel .own-stages');
   assert.deepEqual(lineLabels(own), ['Plan', 'Build', 'Review', 'Push']);
   assert.equal(own.querySelectorAll('.is-future').length, 1, 'Push is still to come');
 });

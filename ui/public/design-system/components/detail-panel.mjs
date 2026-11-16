@@ -56,7 +56,8 @@ export function detailsInPanel(store) {
  * DetailPanel's behaviour, the same wherever a thing is shown (its card in a chat, its own page, a member of a feature).
  * It owns the state (which thing, which tab, wide, the trigger that gets the focus back), the triggers
  * (`data-dp-open="ID|tab"`, with `data-dp-stage` for a knot; `data-dp-close`; `data-dp-widen`; the panel's own tabs),
- * Esc, the focus in and back, the sheet at 1024px and under, and what it remembers (the last tab and wide). The page
+ * the stage a knot pointed at (`state.stage`: the page marks that stage `is-pointed` in its Steps, the controller
+ * scrolls the panel to it), Esc, the focus in and back, the sheet at 1024px and under, and what it remembers (the last tab and wide). The page
  * gives it only what a thing is and where to paint.
  * @param {object} o
  * @param {Element} o.root      holds the triggers and the panel; hidden, the panel leaves the keys alone
@@ -69,12 +70,12 @@ export function detailsInPanel(store) {
  * @param {(state:object) => void} [o.changed]   after the person changed the state, before the redraw
  * @param {() => boolean} [o.held]   something of the page holds Esc now (an open menu)
  * @param {Storage} [o.storage]
- * @returns {{state:{id:string, tab:string, wide:boolean}, sidePanel:() => boolean, modal:() => boolean, open:Function, set:Function, close:Function, html:() => string, paint:() => void, click:(e:Event) => boolean}}
+ * @returns {{state:{id:string, tab:string, wide:boolean, stage:string}, sidePanel:() => boolean, modal:() => boolean, open:Function, set:Function, close:Function, html:() => string, paint:() => void, click:(e:Event) => boolean}}
  */
 export function detailPanelController({ root, resolve, host = null, repaint = null, point = null, changed = null, held = null, storage = null }) {
   const doc = root.ownerDocument, win = doc.defaultView;
   const store = storage || (() => { try { return win.localStorage; } catch (e) { return null; } })();
-  const s = { id: '', tab: '', wide: false, last: '' };
+  const s = { id: '', tab: '', wide: false, last: '', stage: '' };
   let from = '', was = '';
   try { const k = JSON.parse(store?.getItem(KEPT) || '{}'); s.wide = !!k.wide; s.last = k.tab || ''; } catch (e) { /* a private window: nothing remembered */ }
   const keep = () => { try { store?.setItem(KEPT, JSON.stringify({ wide: s.wide, tab: s.tab || s.last })); } catch (e) { /* not kept */ } };
@@ -85,18 +86,21 @@ export function detailPanelController({ root, resolve, host = null, repaint = nu
   const tabOf = (r, tab) => { const ids = (r.tabs || []).map((t) => t.id), now = (x) => (x === 'activity' && !ids.includes(x) ? 'steps' : x);   // a tab remembered under its old name
     return [tab, s.last, r.tab, ids[0]].map(now).find((x) => x && ids.includes(x)) || ''; };
 
+  // the stage a knot pointed at is brought to the top of the panel's body; the page behind does not move
+  const toPointed = () => { const b = s.stage !== '' && root.querySelector('.detail-panel .dp-body'), p = b && b.querySelector('.is-pointed'); if (p) b.scrollTop = Math.max(0, b.scrollTop + p.getBoundingClientRect().top - b.getBoundingClientRect().top - 8); };
   function open(id, tab, by) {
     const r = sidePanel() && resolve(id); if (!r) return false;
     const to = tabOf(r, tab);
     if (s.id === id && (s.tab === to || !tab)) { close(); return true; }   // the same trigger again closes it
     s.id = id; s.tab = s.last = to; from = by || from; keep(); draw();
     root.querySelector('[data-dp-title]')?.focus();
+    toPointed();
     return true;
   }
   // the page's own code moved it (an address, a link in one of its parts): no toggle, no focus move, no redraw
   function set(id, tab) { s.id = id || ''; if (id && tab) { s.tab = s.last = tab; keep(); } }
   function close() {
-    if (!s.id) return; s.id = ''; draw();
+    if (!s.id) return; s.id = ''; s.stage = ''; draw();
     const back = from && root.querySelector(from); from = ''; back?.focus();   // Close and Esc give the focus back to what opened it
   }
   function html() {
@@ -120,7 +124,9 @@ export function detailPanelController({ root, resolve, host = null, repaint = nu
     if ((hit = on('.detail-panel .dp-tabs [data-tab]'))) { s.tab = s.last = hit.dataset.tab; keep(); draw(); root.querySelector(`#dp-tab-${s.tab}`)?.focus(); return true; }
     if ((hit = on('[data-dp-open]'))) {
       const [id, tab = ''] = hit.dataset.dpOpen.split('|'), st = hit.dataset.dpStage;
-      if (point?.(hit, id, tab) && s.id === id && s.tab === (tab || s.tab)) { draw(); return true; }   // the open panel moves to the spot
+      const moved = st != null && st !== s.stage, spot = point?.(hit, id, tab);
+      s.stage = st ?? '';   // a knot points at its stage; any other trigger points at none
+      if ((spot || moved) && s.id === id && s.tab === (tab || s.tab)) { draw(); toPointed(); return true; }   // the open panel moves to the spot
       open(id, tab, `[data-dp-open="${quoted(hit.dataset.dpOpen)}"]${st != null ? `[data-dp-stage="${quoted(st)}"]` : ''}`);
       return true;
     }

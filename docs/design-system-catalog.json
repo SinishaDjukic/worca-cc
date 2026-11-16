@@ -1404,7 +1404,8 @@
         "state mark on the rail (dot, or tick box while selecting), centred against a two-line row (list.row-mark)",
         "title line",
         "a quiet second line saying what it is: project · state, or why it needs you (list.row-facts)",
-        "time or figure at the right, its ⋯ under it"
+        "time or figure at the right, its ⋯ under it",
+        "under another row: one line, its end one word from rowEndWord, its detail in its tooltip (list.child-row)"
       ],
       "rules": [
         "never a box per item",
@@ -2087,10 +2088,12 @@
       "code": "ui/public/design-system/components/kind-mark.mjs#stageLine",
       "kind": "showing",
       "needs": [
-        "a stage of a task, read down, its parts at its end"
+        "a stage of a task, read down, its parts at its end",
+        "the stage a knot pointed at, marked in the panel's Steps (pointed)"
       ],
       "rules": [
-        "thing.parts-under-train"
+        "thing.parts-under-train",
+        "panel.detail-panel"
       ]
     },
     {
@@ -3109,6 +3112,20 @@
       ]
     },
     {
+      "name": "rowEndWord",
+      "code": "ui/public/design-system/components/list-parts.mjs#rowEndWord",
+      "kind": "telling",
+      "needs": [
+        "the one word at the end of a row that hangs under another row, from the task's state"
+      ],
+      "rules": [
+        "list.child-row",
+        "Failed · Asks · Approve · Ready · Merge · Review · Paused; a working task its stage (Build); a waiting one `after it` or Waiting; a schedule its time",
+        "one word or a time, never a phrase; the detail is the row's tooltip and its accessible name (childLine)"
+      ],
+      "example": "rowEndWord({ state: 'working', stage: 1 }) → Build"
+    },
+    {
       "name": "namesWord",
       "code": "ui/public/design-system/components/list-parts.mjs#namesWord",
       "kind": "telling",
@@ -3642,7 +3659,7 @@
       "name": "DetailPanelController",
       "code": "ui/public/design-system/components/detail-panel.mjs#detailPanelController",
       "needs": [
-        "the detail panel at work on a page: its triggers (data-dp-open), the same trigger closing it, Esc and the focus back, the sheet on a narrow window, the remembered tab and width"
+        "the detail panel at work on a page: its triggers (data-dp-open), the same trigger closing it, Esc and the focus back, the sheet on a narrow window, the remembered tab and width, the stage a knot pointed at (state.stage: Steps marks it, the panel scrolls to it)"
       ],
       "rules": [
         "panel.detail-panel",
@@ -3976,6 +3993,11 @@
     "reducedMotion": "every timing 0; breathing and shimmer still"
   },
   "internal": [
+    {
+      "name": "childLine",
+      "kind": "part",
+      "why": "ListController's own: a child row's end word, tooltip and accessible name (list.child-row); a page gives the row its state"
+    },
     {
       "name": "STILLHET_NAME",
       "kind": "constant",

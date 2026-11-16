@@ -118,3 +118,29 @@
 .task-card.is-slim .tc-train > :first-child{flex:1 1 auto;min-width:0;}
 .task-card.is-slim .tc-train > .btn{flex:none;margin-top:-4px;}
 .task-card.is-slim .tc-msg{margin-top:4px;}
+
+/* The Log's head (list.filters, thing.log-head): one line of 32px, never two. The Step picker comes first and is the
+   part that gives way; Find is small at rest and grows on focus; Raw, Follow live and Copy stand at the line's end. */
+.rl-head{container-type:inline-size;position:relative;z-index:2;min-width:0;}   /* it reads its own width, in a task's page, the panel and a chat's card alike */
+.rl-head .fr{flex-wrap:nowrap;height:32px;gap:6px;}
+.rl-head .fr > .fr-pick-w{flex:0 1 auto;min-width:88px;}
+.rl-head .fr-pick{max-width:100%;}
+.rl-head .fr-end{gap:4px;padding-left:2px;}
+.rl-head .fld{position:relative;flex:none;width:64px;height:28px;margin:0;}
+.rl-head .fld .input{position:absolute;top:0;right:0;z-index:1;width:64px;height:28px;padding:0 8px;font-size:var(--fs-meta);transition:width var(--motion-change) var(--ease);}
+.rl-head .fld .input:focus{width:176px;}   /* it grows over the pickers left of it: nothing on the line moves */
+.rl-head .fr-filter-n{display:none;}   /* narrowed is said by the control's ink border: a count would move the line */
+.rl-head .btn{height:28px;min-height:0;}
+.rl-head .btn:not(.btn-icon){padding:0 8px;white-space:nowrap;}
+.rl-head .btn.btn-icon{width:28px;padding:0;}
+.rl-head .btn[aria-pressed="true"]{color:var(--ink);background:var(--hover);box-shadow:inset 0 0 0 1px var(--ink-3);}
+.rl-head .fr:not(.is-fold) > .fr-pick-w:first-child{display:block;}   /* the Step stays on the line on a phone too */
+.rl-head:not(.has-more) .fr:not(.is-fold) > .fr-phone{display:none;}  /* one picker: nothing left to fold */
+/* in the panel (and any narrow place) the rarely used pickers fold into the one Filter control */
+@container (max-width: 600px){
+  .rl-head.has-more .fr > .fr-pick-w ~ .fr-pick-w,.rl-head .fr > .fr-more{display:none;}
+  .rl-head.has-more .fr:not(.is-fold) > .fr-phone{display:inline-flex;}
+}
+.rl-head .fr-phone .fr-filter-l{display:none;}
+.rl-head .fr-phone .fr-filter-b{min-width:28px;padding:0 6px;justify-content:center;}
+@media (prefers-reduced-motion: reduce){ .rl-head .fld .input{transition:none;} }

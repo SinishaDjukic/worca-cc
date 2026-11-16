@@ -264,3 +264,18 @@ test('the detail panel\'s tabs: one set and order for every place, an empty tab 
   const dp = detailPanelController({ root, host: root.firstChild, storage, resolve: () => ({ title: 'T', tabs: detailTabs({ steps: true, log: true }), body: (tab) => tab }) });
   dp.open('a', ''); assert.equal(dp.state.tab, 'steps'); assert.equal(root.querySelector('.dp-body').textContent, 'steps');
 });
+
+test('a knot points at its stage: Steps marks it, another knot moves the mark with the panel open, the same knot closes it, and any other trigger points at none', async () => {
+  const { detailPanelController, stageLine } = await import('../ui/public/design-system/components/index.mjs');
+  const win = new JSDOM('<body><div id="page"><button data-dp-open="t|steps" data-dp-stage="0">Plan</button><button data-dp-open="t|steps" data-dp-stage="1">Build</button><button data-dp-open="t|steps">Follow its steps</button><div data-detail></div></div></body>', { url: 'http://localhost/' }).window;
+  const root = win.document.getElementById('page'), storage = { getItem: () => null, setItem() {} };
+  const dp = detailPanelController({ root, host: () => root.querySelector('[data-detail]'), storage,
+    resolve: () => ({ title: 'T', tabs: [{ id: 'steps', label: 'Steps' }], body: () => ['Plan', 'Build'].map((label, i) => stageLine({ mark: '', label, pointed: dp.state.stage !== '' && +dp.state.stage === i })).join('') }) });
+  const [plan, build, link] = root.querySelectorAll('[data-dp-open]'), click = (el) => dp.click({ target: el });
+  const marked = () => [...root.querySelectorAll('.detail-panel .stage-line.is-pointed[aria-current="step"] b')].map((b) => b.textContent);
+  click(build); assert.equal(dp.state.stage, '1'); assert.deepEqual(marked(), ['Build']);
+  click(plan); assert.ok(root.querySelector('.detail-panel'), 'another knot keeps the panel open'); assert.deepEqual(marked(), ['Plan'], 'and moves the mark');
+  click(plan); assert.equal(root.querySelector('.detail-panel'), null, 'the same knot again closes it'); assert.equal(dp.state.stage, '');
+  click(link); assert.deepEqual(marked(), [], 'a link points at no stage');
+  assert.doesNotMatch(stageLine({ mark: '', label: 'Plan' }), /is-pointed|aria-current/);
+});

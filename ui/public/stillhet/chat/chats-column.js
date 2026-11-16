@@ -45,12 +45,13 @@
   const pageOf = (t) => (W.live ? t.pid || t.run || '' : t.case);
   const onTask = () => /^#run\//.test(location.hash);
   const isOpenTask = (c, t) => location.hash === `#run/${pageOf(t)}` && window.StillhetShell?.taskChat?.() === c.id && (W.live || RM.titles?.[t.case] === t.title);
-  // What hangs under a chat: its tasks and schedules, in their order of waiting. list.row-facts: each says its state on a second quiet line.
-  const treeOf = (c, list) => list.filter((t) => !t.gone).map((t) => {   // a deleted schedule leaves the bar
+  // What hangs under a chat: its tasks and schedules, in their order of waiting. list.child-row: each is one line; the list
+  // picks its end word from `state` (R.rowEndWord) and holds `meta` in its tooltip and its name.
+  const treeOf = (c, list, under) => list.filter((t) => !t.gone).map((t) => {   // a deleted schedule leaves the bar
     const x = { t, c, key: `task:${t.id}` };
     if (t.kind === 'schedule') return { pick: false, key: x.key, _x: x, title: t.title, meta: t.detail || '', mark: R.kindMark({ kind: 'schedule', title: t.detail }), end: t.time, current: location.hash === `#schedule/${t.id}`, menu: taskMenu(t) };
     const st = R.runState(RM.stateOf(t.case));
-    return { pick: false, key: x.key, _x: x, title: t.title, mark: R.kindMark({ breathe: c.id !== current, kind: 'task', tone: R.markTone(st), advisory: R.markTone(st) === 'ok' && sectionOfChat(c) === 'needs', stage: t.stage, title: `${st.word} · ${t.detail || ''}` }), meta: [st.word, t.detail === st.word ? '' : t.detail].filter(Boolean).join(' · '), wrap: R.sectionOf(st.word, RM.stateOf(t.case)) === 'needs' /* list.row-facts: the reason is never cut */, end: t.git ? '' : t.endWord || '', current: isOpenTask(c, t), tree: t.after ? treeOf(c, t.after) : undefined, menu: taskMenu(t) };
+    return { pick: false, key: x.key, _x: x, title: t.title, mark: R.kindMark({ breathe: c.id !== current, kind: 'task', tone: R.markTone(st), advisory: R.markTone(st) === 'ok' && sectionOfChat(c) === 'needs', stage: t.stage, title: `${st.word} · ${t.detail || ''}` }), meta: [st.word, t.detail === st.word ? '' : t.detail].filter(Boolean).join(' · '), state: RM.stateOf(t.case), stage: t.stage, after: !!t.endWord || !!under, current: isOpenTask(c, t), tree: t.after ? treeOf(c, t.after, t) : undefined, menu: taskMenu(t) };
   });
 
   // ---- the view ----

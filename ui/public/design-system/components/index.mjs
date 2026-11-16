@@ -56,7 +56,7 @@ export { tryStep } from './run-state.mjs';
 export { watchScrollbars, thumbBox, SCROLL_SHOW_MS } from './scrollbars.mjs';
 export { SHORTCUTS, RESERVED, FIELD, chordId, isMac, keyGlyph, keyHint, keyFacts, shortcutAction, listMove, shortcutSections, shortcutsSheet, openShortcutsSheet } from './shortcuts.mjs';
 export { PRESS_MS, selectClear, selectStart, selectToggle, selectRange, selectAll, selectPrune, selectCount, selectAllState, selectExtend, selectStep, selectionAction, selectApply, keepFocus } from './selection.mjs';
-export { scheduleDates, scheduleButton, DAY_SECTIONS, BY_CHOICES, BY_DEFAULT, byPart, dateSections, NEXT_RUN_SECTIONS, REPEATS, scheduleWords, TIMES_OF_DAY, listWord, namesWord, listSentence, filterRow, narrowedLine, groupRow, roundRows, listState, resetViewTool, originMark, chatKindIcon } from './list-parts.mjs';
+export { scheduleDates, scheduleButton, DAY_SECTIONS, BY_CHOICES, BY_DEFAULT, byPart, dateSections, NEXT_RUN_SECTIONS, REPEATS, scheduleWords, TIMES_OF_DAY, listWord, namesWord, listSentence, filterRow, narrowedLine, groupRow, rowEndWord, childLine, roundRows, listState, resetViewTool, originMark, chatKindIcon } from './list-parts.mjs';
 export { listController, LIST_SHOWN, BREATHE, calmMarks, fitMenu } from './list-page.mjs';
 export { planBulk, skipText, bulkConfirm } from '../../../../src/shared/run-bulk.mjs';
 export { watchKeepOpen, keptRoute, controlAddress, atAddress, triggerOf, watchFocusBack } from './keep-open.mjs';

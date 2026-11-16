@@ -1124,7 +1124,9 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 /* The tree's lines hang on each row's mark, so they meet it however many lines the row has: an elbow into the mark, and
    a trunk from the mark up to the top of the tree. The tree clips only its top edge, where the trunk meets the row
    that holds it; nothing hangs below the last row. */
-.lr-tree{clip-path:inset(-6px -200vw -200vh -40px);}
+.lr-tree{--tree-up:12px;clip-path:inset(calc(-1 * var(--tree-up)) -200vw -200vh -40px);}   /* how far up the trunk runs to reach the mark of the row that holds the tree: a 40px rail */
+@media (pointer:fine){ :is(.bar-list,.bar-back) .lr-tree{--tree-up:6px;} }   /* a bar's 28px rail (list.bar-row-size) */
+.list-row:has(> .lr-main > .lr-m) > .lr-after > .lr-tree{--tree-up:13px;}   /* under a row of two lines, whose mark sits at its middle */
 .lr-tree > .list-rows > .list-row > .lr-rail{position:relative;}
 .lr-tree > .list-rows > .list-row > .lr-rail::before{content:"";position:absolute;left:-14px;bottom:50%;width:14px;height:12px;pointer-events:none;border-left:1.5px solid var(--step-done);border-bottom:1.5px solid var(--step-done);border-bottom-left-radius:9px;}
 .lr-tree > .list-rows > .list-row > .lr-rail::after{content:"";position:absolute;left:-14px;bottom:calc(50% + 10px);height:4000px;pointer-events:none;border-left:1.5px solid var(--step-done);}
@@ -2430,6 +2432,7 @@ body:has(#route-run.has-detail:not([hidden])) .page-bg{display:none;}
   .convo.has-detail{display:flex;}
   .convo.has-detail > [data-detail]{display:block;}
   #route-run.has-detail > [data-detail]{display:block;width:auto;}
+  #route-run.has-detail,#route-chat:has(> .convo.has-detail){z-index:41;}   /* a dialog: its scrim covers the strip of the left bar too (z 40) */
   .dp-scrim{display:block;position:fixed;inset:0;z-index:59;background:var(--scrim,rgba(0,0,0,.32));}
   .detail-panel{position:fixed;top:0;right:0;bottom:0;z-index:60;width:min(520px,92vw);box-shadow:-8px 0 24px rgba(0,0,0,.12);}
   .detail-panel.is-wide{width:min(760px,96vw);}
@@ -2477,10 +2480,10 @@ body:has(#route-run.has-detail:not([hidden])) .page-bg{display:none;}
 .detail-panel > .dp-tabs::-webkit-scrollbar{display:none;}
 .detail-panel > .dp-tabs .tab{flex:none;margin:0;padding-left:0;padding-right:0;font-size:var(--fs-body);white-space:nowrap;}
 .detail-panel > .dp-tabs .tab .n{font-size:var(--fs-caption);margin-left:3px;}
-.dp-pick{display:flex;align-items:center;gap:10px;margin:0 0 10px;min-width:0;}
-.dp-pick-l{flex:none;color:var(--ink-2);font-size:var(--fs-meta);}
-.dp-pick .seg{min-width:0;overflow-x:auto;scrollbar-width:none;}
-.dp-page .sc-stage-row.is-pointed .rtab-h{text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:5px;}
+.dp-body .td-body > .rl-head{margin-bottom:8px;}
+/* the stage a knot pointed at (panel.detail-panel): one mark, the same on a task's page and in a chat */
+.dp-page .sc-stage-row.is-pointed .rtab-h,.dp-body .stage-line.is-pointed .tr-text > b{text-decoration:underline;text-decoration-thickness:2px;text-underline-offset:5px;}
+.dp-body .stage-line.is-pointed .tr-text > b{text-underline-offset:2px;}   /* its line cuts what hangs lower */
 .dp-page .sc-stage-row{scroll-margin-top:8px;}
 .dp-foot{flex-wrap:wrap;}
 .detail-panel .dp-body table.rt{table-layout:fixed;width:100%;}   /* every stage's table shares its columns, so Model and Cost stand under each other down the tab */

@@ -485,8 +485,7 @@
   // ---- a turn ----
   // a task's depth on its card (panel.task-depth): each stage's time, cycles and cost; its Log and Artifacts open under it
   const dv = {};   // per task: { open: 'i|log' | 'i|arts', art, mode, cyc, who }
-  const dpick = (id, text, items, tip) => R.sentencePicker({ id, text, tip, items: items.map((v) => ({ id: v, text: v, checked: v === text })), open: menu === id, chevron: R.icon('chevron', 10) });
-  function depthBody(u, i) {
+  function depthBody(u, i, steps = null) {   // steps: the stages that have a log, when the log's head picks the step (the panel's Log tab)
     const D = u.depth, v = dv[u.id] || (dv[u.id] = {}), [oi, part] = (v.open || '').split('|');
     if (+oi !== i || !part) return '';
     if (part === 'log') {
@@ -494,7 +493,13 @@
       const mode = v.mode || 'summaries', cyc = v.cyc || `cycle ${cycles[cycles.length - 1]}`, who = v.who || 'every agent';
       const lines = all.filter((l) => (mode === 'raw' || l.sum) && (cyc === 'every cycle' || `cycle ${l.c}` === cyc) && (who === 'every agent' || l.from === who));
       const err = all.some((l) => l.lvl === 'error'), live = i === Math.max(0, u.stage ?? 0);
-      const head = `<div class="td-log-h"><span>Showing</span>${dpick(`dl-${u.id}-mode`, mode, ['summaries', 'raw'], 'Summaries or every line')}<span>of</span>${dpick(`dl-${u.id}-cyc`, cyc, [...cycles.map((c) => `cycle ${c}`), ...(cycles.length > 1 ? ['every cycle'] : [])], 'Which cycle')}<span>by</span>${dpick(`dl-${u.id}-who`, who, ['every agent', ...agents], 'Whose lines')}<span class="av-sp"></span>${err ? R.button({ label: 'First error', kind: 'quiet', attrs: { 'data-dl-err': u.id } }) : ''}${R.button({ label: 'Copy', kind: 'quiet', attrs: { 'data-dl-copy': String(lines.length), title: 'Copies these lines' } })}${live ? `${R.switchButton({ on: v.follow !== false, label: 'Follow live', attrs: { 'data-dl-follow': u.id } })}<span>Follow live</span>` : ''}</div>`;
+      // the log's head (list.filters): one line. The Step first (in the panel), then a picker only where there is a choice
+      const pk = (key, label, cur, items) => ({ id: `dl-${u.id}-${key}`, label, raw: true, chip: key !== 'step', text: items.find((it) => it.id === cur)?.text || cur, tip: label, items: items.map((it) => ({ ...it, checked: it.id === cur })) });
+      const parts = [steps ? pk('step', 'Step', String(i), steps.map((k2) => ({ id: String(k2), text: labelsOf(u)[k2] || STAGES[k2] }))) : null,
+        cycles.length > 1 ? pk('cyc', 'Cycle', cyc, [...cycles.map((c) => ({ id: `cycle ${c}`, text: String(c) })), { id: 'every cycle', text: 'All' }]) : null,
+        agents.length > 1 ? pk('who', 'Agent', who, [{ id: 'every agent', text: 'All' }, ...agents.map((a) => ({ id: a, text: a }))]) : null].filter(Boolean);
+      const end = `${R.button({ label: 'Raw', kind: 'quiet', attrs: { 'data-dl-mode': u.id, 'aria-pressed': String(mode === 'raw'), title: mode === 'raw' ? 'Every line as it was written. Press for summaries' : 'Summaries. Press for every line as it was written' } })}${err ? R.button({ label: 'First error', kind: 'quiet', attrs: { 'data-dl-err': u.id } }) : ''}${live ? R.button({ label: 'Follow live', kind: 'quiet', iconOnly: true, icon: R.icon('download', 14), title: v.follow !== false ? 'Follows new lines. Press to stay where you are' : 'Stays where you are. Press to follow new lines', attrs: { 'data-dl-follow': u.id, 'aria-pressed': String(v.follow !== false) } }) : ''}${R.button({ label: `Copy ${lines.length} ${lines.length === 1 ? 'line' : 'lines'}`, kind: 'quiet', iconOnly: true, icon: R.icon('copy', 14), attrs: { 'data-dl-copy': String(lines.length) } })}`;
+      const head = `<div class="rl-head${parts.length > 1 ? ' has-more' : ''}">${R.filterRow({ parts, open: menu, chevron: R.icon('chevron', 12), end })}</div>`;
       return `<div class="td-body">${head}${lines.length ? R.logLines({ label: `${STAGES[i]}'s log`, lines: lines.map((l) => ({ t: l.t, from: l.from, text: l.text, lvl: l.lvl })) }) : `<p class="cmd-s">No lines for that: change what it shows above</p>`}</div>`;
     }
     const names = v.allArts ? D.arts.map((a) => a.name) : D.steps[i].arts || [], arts = names.map((n) => D.arts.find((a) => a.name === n)), at = Math.min(v.art || 0, arts.length - 1), a = arts[at];
@@ -511,7 +516,7 @@
     const merged = endsDone(u, labels, tn);   // every stage done: merged, or a task with no PR stage that finished at its page's last stage
     const partsOf = (i) => { const s = D?.steps[i]; if (!s || (i > k && !merged)) return ''; const lines = D.log.filter((l) => l.s === i).length, arts = (s.arts || []).length; return (lines ? R.stagePart({ label: 'Log', says: `${lines} lines`, open: v.open === `${i}|log`, attrs: { 'data-dl-open': `${u.id}|${i}|log` } }) : '') + (arts ? R.stagePart({ label: 'Artifacts', says: String(arts), open: v.open === `${i}|arts`, attrs: { 'data-dl-open': `${u.id}|${i}|arts` } }) : ''); };
     const metaOf = (i, name) => (D?.steps[i] && (merged || i <= k) ? D.steps[i].meta : merged || i < k ? 'done' : i === k ? (u.detail || st2.word).replace(new RegExp(`^${name} · `), '') : '');
-    return `<div class="own-stages">${labels.map((name, i) => R.stageLine({ mark: merged || i < k ? R.stepDot({ dotCls: 'is-done', word: 'Done', icon: 'check' }) : i === k ? R.kindMark({ kind: 'task', tone: tn, stage: k, size: 16 }) : R.stepDot({ dotCls: 'is-future', word: 'Not yet', icon: '' }), label: i === k && D && !merged ? `${name} · now` : name, meta: metaOf(i, name), parts: D && !bare ? partsOf(i) : '', next: !merged && i > k, body: (i === k && tn === 'fail' && u.why ? u.why.map((w) => `<p class="cmd-s">${/^✗/.test(w) ? R.icon('alert', 13) : ''}${esc(w.replace(/^✗\s*/, ''))}</p>`).join('') : '') + (D && !bare ? depthBody(u, i) : '') + (D && i === k && !merged && !inPanel ? findingsHtml(u) : '') })).join('')}${R.shows('expert') && !inPanel ? R.textLink({ label: 'Open its full page', attrs: u.id ? { 'data-open-task-page': u.id } : { 'data-open-slice': `${u.case}|${u.title}`, 'data-open-slice-run': taskId(u) || null } }) : ''}</div>`;
+    return `<div class="own-stages">${labels.map((name, i) => R.stageLine({ mark: merged || i < k ? R.stepDot({ dotCls: 'is-done', word: 'Done', icon: 'check' }) : i === k ? R.kindMark({ kind: 'task', tone: tn, stage: k, size: 16 }) : R.stepDot({ dotCls: 'is-future', word: 'Not yet', icon: '' }), label: i === k && D && !merged ? `${name} · now` : name, meta: metaOf(i, name), pointed: inPanel && DP.state.id === u.id && DP.state.stage !== '' && +DP.state.stage === i, parts: D && !bare ? partsOf(i) : '', next: !merged && i > k, body: (i === k && tn === 'fail' && u.why ? u.why.map((w) => `<p class="cmd-s">${/^✗/.test(w) ? R.icon('alert', 13) : ''}${esc(w.replace(/^✗\s*/, ''))}</p>`).join('') : '') + (D && !bare ? depthBody(u, i) : '') + (D && i === k && !merged && !inPanel ? findingsHtml(u) : '') })).join('')}${R.shows('expert') && !inPanel ? R.textLink({ label: 'Open its full page', attrs: u.id ? { 'data-open-task-page': u.id } : { 'data-open-slice': `${u.case}|${u.title}`, 'data-open-slice-run': taskId(u) || null } }) : ''}</div>`;
   }
   // ---- the detail panel (DetailPanel): what you open to investigate a task lives beside the chat, never in its card ----
   // The card keeps the state, the one action, one message, the train and the vitals. The Prototype corner's switch
@@ -519,7 +524,7 @@
   // Its behaviour is the library's (R.detailPanelController): this page says only what a task is and where to paint it.
   const dpTabOf = (t) => { const tn = R.markTone(stOf(t)); return tn === 'fail' ? 'checks' : tn === 'ask' || tn === 'act' ? 'decisions' : tn === 'ok' || tn === 'merged' ? 'changes' : 'steps'; };
   const DP = R.detailPanelController({ root, host: () => root.querySelector(':scope > .convo > [data-detail]'), resolve: (id) => panelOf(id), repaint: () => { menu = ''; paint(); }, held: () => !!menu,
-    // a knot opens the log of its stage
+    // a knot marks its stage in Steps (the controller scrolls to it) and sets the Log tab's step to it
     point: (hit, id) => { const t = taskOf(id), st = hit.dataset.dpStage; if (!t || st == null || !t.depth) return false; const i = +st; if (!t.depth.log.some((l) => l.s === i) || dv[id]?.open === `${i}|log`) return false; dv[id] = { ...(dv[id] || {}), open: `${i}|log` }; return true; } });
   const dp = DP.state, sidePanel = DP.sidePanel;
   // the card's one message, in Worca's words: what happened and what you can do, with the link that opens the panel there
@@ -547,9 +552,8 @@
     if (tab === 'log') {   // one stage's log at a time, its artifacts under it
       const D = t.depth, v = dv[t.id] || (dv[t.id] = {}), has = STAGES.map((_, i) => i).filter((i) => D.log.some((l) => l.s === i)), k = Math.max(0, t.stage ?? 0);
       const [oi] = (v.open || '').split('|'), at = has.includes(+oi) && v.open ? +oi : has.includes(k) ? k : has[has.length - 1], keep = v.open;
-      const pick = `<div class="dp-pick"><span class="dp-pick-l">Step</span>${R.segmented({ label: 'Step', hook: 'dlstage', items: has.map((i) => ({ id: `${t.id}|${i}`, label: labelsOf(t)[i] || STAGES[i], pressed: i === at })) })}</div>`;
-      v.open = `${at}|log`; const log = depthBody(t, at); v.open = `${at}|arts`; const arts = (D.steps[at]?.arts || []).length ? depthBody(t, at) : ''; v.open = keep && +oi === at ? keep : `${at}|log`;
-      return pick + log + arts;
+      v.open = `${at}|log`; const log = depthBody(t, at, has); v.open = `${at}|arts`; const arts = (D.steps[at]?.arts || []).length ? depthBody(t, at) : ''; v.open = keep && +oi === at ? keep : `${at}|log`;
+      return log + arts;
     }
     if (tab === 'cost') {
       const D = t.depth, f = t.facts || {}, labels = labelsOf(t), rows = D ? D.steps.map((st, i) => (st?.meta ? R.listRow({ title: labels[i] || STAGES[i], endText: st.meta }) : '')).filter(Boolean) : [];
@@ -571,6 +575,8 @@
     const D = t.depth, k = Math.max(0, t.stage ?? 0), hasLog = D?.log?.some((l) => l.s === k);
     const log = hasLog ? R.button({ label: 'Open the log at the failing lines', kind: 'quiet', attrs: { 'data-dp-log': t.id } }) : '';
     if (tone === 'fail' || why.some((w) => /^✗/.test(w))) return `<h3 class="dp-h">What broke</h3><ul class="dp-lines is-fail">${(why.length ? why : [t.detail || 'It failed']).map((w) => `<li>${R.kindMark({ kind: 'task', tone: 'fail', size: 16 })}<span>${esc(w.replace(/^✗\s*/, ''))}</span></li>`).join('')}</ul>${log ? `<div class="dp-acts">${log}</div>` : ''}`;
+    // its PR's own facts (how many checks pass, who approved): the slim card does not hold them, so they are said here
+    if (/^(checks|failing|approved|round|pr)/.test(t.case) && why.length) return `<h3 class="dp-h">On its PR</h3><ul class="dp-lines">${why.map((w) => `<li>${esc(w.replace(/^[✓✗]\s*/, ''))}</li>`).join('')}</ul>`;
     const G = { pass: 'Every check on its PR passes.', fail: 'A check on its PR fails.', open: 'Its PR is open; checks are running.', conflict: 'Its PR conflicts with its base.' };
     return none((/^(checks|failing|approved|round|pr)/.test(t.case) && G[t.git]) || (tone === 'merged' ? 'Every check passed before it merged.' : 'No PR yet: checks run once it is open. The tests of each step are in Activity.'));
   }
@@ -1676,7 +1682,11 @@
     if (e.target.closest('#card')) return;   // inside an open card's stages: the task page answers its own clicks
     const on = (q) => e.target.closest(q); let hit;
     if (DP.click(e)) return;
-    if ((hit = on('[data-dlstage]'))) { const [id, i] = hit.dataset.dlstage.split('|'); dv[id] = { ...(dv[id] || {}), open: `${i}|log`, art: 0 }; paint(); return; }   // the Log tab's step
+    if ((hit = on('[data-pick^="dl-"]'))) {   // the log's head: its Step (the panel's Log tab), cycle and agent
+      const [pid, val] = hit.dataset.pick.split('|'), m = /^dl-(.+)-(step|cyc|who)$/.exec(pid); if (!m) return; const [, id, k] = m;
+      if (k === 'step') dv[id] = { ...(dv[id] || {}), open: `${val}|log`, art: 0, cyc: '', who: '' }; else dv[id][k] = val;
+      menu = ''; paint(); [...root.querySelectorAll(`.rl-head [data-menu="${pid}"], .rl-head .fr-phone .fr-filter-b`)].find((b) => b.offsetParent)?.focus(); return; }
+    if ((hit = on('[data-dl-mode]'))) { const v = dv[hit.dataset.dlMode]; v.mode = v.mode === 'raw' ? 'summaries' : 'raw'; paint(); root.querySelector(`[data-dl-mode="${hit.dataset.dlMode}"]`)?.focus(); return; }
     if ((hit = on('[data-dp-log]'))) { const t = taskOf(hit.dataset.dpLog), D = t?.depth; if (D) { const k = Math.max(0, t.stage ?? 0), e2 = D.log.find((l) => l.s === k && l.lvl === 'error'); dv[t.id] = { ...(dv[t.id] || {}), open: `${k}|log`, mode: 'raw', cyc: e2 ? `cycle ${e2.c}` : '', who: '' }; DP.set(t.id, 'log'); paint(); root.querySelector('.detail-panel .is-error, .detail-panel .td-body')?.scrollIntoView({ block: 'center' }); } return; }
     if ((hit = on('[data-dp-goto]'))) { const id = hit.dataset.dpGoto; if (DP.modal()) DP.close(); goTo(id); return; }
     if (on('[data-pc-improve-open]')) { e.preventDefault(); pcImprove(); return; }
@@ -1689,7 +1699,6 @@
     if ((hit = on('[data-term-stop]'))) { const id = hit.dataset.termStop.split('|')[0], x = turns().find((y) => y.id === id) || turns()[+id]; x?.term?.stop(); return; }
     if ((hit = on('.menu-item[aria-disabled="true"]'))) { if (hit.title) say(hit.title); return; }   // small.disabled-why: an item that cannot act never acts, and says why
     if ((hit = on('[data-tick]'))) { goTo(hit.dataset.tick); return; }
-    if ((hit = on('[data-menu-pick^="dl-"]'))) { const [id, val] = hit.dataset.menuPick.split('|'), [, t, k] = id.split('-'); dv[t][k] = val; menu = ''; paint(); return; }
     if ((hit = on('[data-menu-pick^="wfs-"], [data-menu-pick^="wfl-"]'))) { const [id, v] = hit.dataset.menuPick.split('|'), parts = id.split('-'), x = turns().find((y) => y.id === parts[1]), was = x && (parts[0] === 'wfl' ? x.loop[2] : x.steps[+parts[2]][parts[3] === 'm' ? 2 : 3]); if (x) { if (parts[0] === 'wfl') x.loop[2] = v; else x.steps[+parts[2]][parts[3] === 'm' ? 2 : 3] = v; } menu = ''; paint(); if (was !== v) say('Changed: Save keeps it'); return; }
     if ((hit = on('[data-menu-pick]'))) { const [id, ...r] = hit.dataset.menuPick.split('|'); if (id === 'tick') goTo(r.join('|')); else if (id.startsWith('cf-')) { const t = taskOf(id.slice(3)); if (t?.form) t.form.value = r.join('|'); menu = ''; paint(); } else if (id.startsWith('card:')) { menu = ''; const t = taskOf(id.slice(5)), label = r.join('|'); if (t?.kind === 'schedule') { window.StillhetSchedules?.act(t.id, { Pause: 'pause', Resume: 'pause', Skip: 'skip', Delete: 'delete', 'Edit…': 'edit' }[label]); paint(); return; } if (t) { if (label === 'open' || !label) window.StillhetShell.openTaskPage(t.case, chatId, t.title, taskId(t)); else cardAct(t, label); } } else pickMenu(id, r.join('|')); return; }
     if ((hit = on('[data-listtoggle^="label|"]'))) { const v = hit.dataset.listtoggle.slice(6), c = chat(); if (c && LIVE()) { liveLabel(c, ...toggledLabel(c, v)); return; } if (c) { c.labels = (c.labels || []).includes(v) ? c.labels.filter((l) => l !== v) : [...(c.labels || []), v]; window.StillhetChats.refresh(); refreshAll(); keepLabelQ(); } return; }
@@ -1717,7 +1726,7 @@
     if ((hit = on('[data-dl-art]'))) { const [id, k] = hit.dataset.dlArt.split('|'); dv[id].art = +k; paint(); root.querySelector(`[data-dl-art="${id}|${k}"]`)?.focus(); return; }
     if ((hit = on('[data-dl-err]'))) { const t = taskOf(hit.dataset.dlErr), v = dv[t.id], [i] = v.open.split('|'), e = t.depth.log.find((l) => l.s === +i && l.lvl === 'error'); v.mode = 'raw'; v.cyc = `cycle ${e.c}`; v.who = 'every agent'; paint(); say(`The first error: ${e.text}`); return; }
     if ((hit = on('[data-dl-copy]'))) { if (LIVE()) { CL().act('copy', { text: [...root.querySelectorAll('.td-body .log-line, .td-body li')].map((l) => l.textContent).join('\n') }).then((r) => { if (r.ok) say(`Copied ${hit.dataset.dlCopy} lines`); }); return; } say(window.StillhetWould(`copy ${hit.dataset.dlCopy} lines`)); return; }
-    if ((hit = on('[data-dl-follow]'))) { const v = dv[hit.dataset.dlFollow]; v.follow = v.follow === false; paint(); say(v.follow ? 'Follows new lines as they come' : 'Stays where you are'); return; }
+    if ((hit = on('[data-dl-follow]'))) { const v = dv[hit.dataset.dlFollow]; v.follow = v.follow === false; paint(); root.querySelector(`[data-dl-follow="${hit.dataset.dlFollow}"]`)?.focus(); say(v.follow ? 'Follows new lines as they come' : 'Stays where you are'); return; }
     if ((hit = on('[data-dl-find]'))) { const [id, f, st] = hit.dataset.dlFind.split('|'), x = taskOf(id).depth.findings.find((y) => y.id === f); x.state = x.state === st ? '' : st; paint(); return; }
     if ((hit = on('[data-dl-all]'))) { taskOf(hit.dataset.dlAll).depth.findings.forEach((f) => { f.state = 'confirmed'; }); paint(); return; }
     if ((hit = on('[data-dl-send]'))) { const t = taskOf(hit.dataset.dlSend), F = t.depth.findings, n = F.filter((f) => f.state === 'confirmed').length; t.depth.sent = `${n} ${n === 1 ? 'finding' : 'findings'}${t.depth.note ? ' and your notes' : ''} · cycle 3 starts with ${n === 1 ? 'it' : 'them'}`; paint(); say('Sent to Review: its next cycle starts'); return; }

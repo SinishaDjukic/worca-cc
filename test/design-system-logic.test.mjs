@@ -543,3 +543,32 @@ test('keptRoute (comp.keep-open): the place and its item, without a side panel o
   assert.equal(R.keptRoute('#chat'), '#chat');
   assert.equal(R.keptRoute(''), '');
 });
+
+test('rowEndWord (list.child-row): one word from the task\'s state, never a phrase', () => {
+  const end = (state, o = {}) => R.rowEndWord({ state, ...o });
+  assert.equal(end('failed'), 'Failed');
+  assert.equal(end('question'), 'Asks');
+  assert.equal(end('gate'), 'Approve'); assert.equal(end('plan'), 'Approve');
+  assert.equal(end('ready'), 'Ready');
+  assert.equal(end('approved'), 'Merge');
+  assert.equal(end('checks'), 'Review');
+  assert.equal(end('paused'), 'Paused'); assert.equal(end('capped'), 'Paused', 'a cap is Paused, not Failed, though its mark is red');
+  assert.equal(end('working', { stage: 1 }), 'Build', 'a working task says its stage, by its place');
+  assert.equal(end('working', { stage: 0, stages: ['Outline', 'Write'] }), 'Outline', 'in its own stage names');
+  assert.equal(end('working', { stage: 'Review' }), 'Review', 'or by its name');
+  assert.equal(end('working'), 'Working', 'with no stage, its word');
+  assert.equal(end('scheduled', { after: true }), 'after it');
+  assert.equal(end('scheduled'), 'Waiting');
+  assert.equal(end('merged'), 'Merged');
+  for (const id of R.stateIds()) assert.match(end(id), /^[A-Z][a-z]+$/, `${id}: one word`);
+  assert.throws(() => end('nope'), /unknown state/);
+});
+
+test('childLine (list.child-row): the end word, the tooltip with the detail, and the name a screen reader hears', () => {
+  assert.deepEqual(R.childLine({ title: 'Update Node to 24', meta: 'Failed · Build · 3 tests failed', state: 'failed' }),
+    { end: 'Failed', tip: 'Update Node to 24\nFailed · Build · 3 tests failed', name: 'Update Node to 24, Failed · Build · 3 tests failed' });
+  assert.deepEqual(R.childLine({ title: 'Nightly export check', meta: 'Every day at 02:00', end: '02:00' }),
+    { end: '02:00', tip: 'Nightly export check\nEvery day at 02:00', name: 'Nightly export check, Every day at 02:00' }, 'a schedule ends in its time');
+  assert.equal(R.childLine({ title: 'Deep links', state: 'scheduled', after: true }).name, 'Deep links, after it', 'with no detail the name still says the state');
+  assert.equal(R.childLine({ title: 'web-app', meta: '1 task needs you', end: '' }), null, 'nothing for its end: the row stays as it is');
+});

@@ -109,7 +109,7 @@ and spacing come with it. A need with no row in either table is a question for a
 | Moving through a long conversation | Timeline, a slim track on the reading column's right edge, its TimelineCard on hover or focus (`panel.timeline`) | You · 14:32 (its time is TurnTime's) |
 | A person's tasks over the page's days | TimeTrack (its axis from `dayTicks`, each time placed by `trackX`), a WorkBar in each row's lane, a MarkLegend under it | Retry failed webhook deliveries · billing-api · #1418 |
 | A teammate's task, read only | TaskView: head, metadata, StatusLine with no action, Figures, runs, PR | Failed · The last attempt failed. |
-| What hangs under a row | the rounded tree under it (`tree` on a list's row) | a chat's tasks |
+| What hangs under a row | the rounded tree under it (`tree` on a list's row), each row one line ending in `rowEndWord`'s word (`list.child-row`) | a chat's tasks: Add CSV export to billing · Asks |
 | How far along, and its steps | Stepper, then StepRow on the rail | Plan · Build · Review |
 | One line that opens its detail in place | LineRow | Did all 3 parts you asked |
 | A changed file | FileRow, opening its DiffView: side by side where it fits, else unified (`thing.diff`) | app.js +12 −3 |

@@ -115,6 +115,7 @@
     const base = { key: `run:${r.id}`, _x: x, title: member && r.pos ? `${r.pos} · ${r.title}` : r.title, meta: meta || (member ? whyOf(r, raises(r) ? 'needs' : '') : factsOf(r.project, whyOf(r, section), section === 'needs')), mark: markOf(stateOf(r), 'task', r.archived ? null : r.case, r.id, section === 'needs'), end: r.time, wrap: !!meta || section === 'needs' || (member && raises(r)),
       unread: r.unread, current: isOpen(r), menu: null };
     x.key = base.key;
+    if (member) { const so = r.archived ? {} : RM.stageOf(r.case); Object.assign(base, { state: stateOf(r), stage: so.stage, stages: so.labels, after: r.pos > 1, meta: [base.meta, r.time].filter(Boolean).join(' · ') }); }   // list.child-row: the list picks its end word; this line is its tooltip
     base.menu = menuOf(x);
     if (r.rounds) base.rounds = r.rounds;
     return base;

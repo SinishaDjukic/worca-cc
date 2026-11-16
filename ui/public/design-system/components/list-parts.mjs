@@ -8,6 +8,8 @@ import { listRow } from './list.mjs';
 import { wordPicker } from './settings-row.mjs';
 import { icon } from './icons.mjs';
 import { ORIGIN_MARKS, originLabel } from '../../chat-origin.mjs';
+import { runState } from './run-state.mjs';
+import { markTone } from './kind-mark.mjs';
 
 /**
  * One word of a sentence: the chosen words and a chevron, its menu under it while open. A pick reports `data-pick="<id>|<item>"`.
@@ -196,6 +198,47 @@ export const TIMES_OF_DAY = Object.freeze(Array.from({ length: 48 }, (_, i) => `
 
 /** The sections of a list by day, newest first (docs/stillhet/lists.md). */
 export const DAY_SECTIONS = Object.freeze([['upcoming', 'Waiting'], ['today', 'Today'], ['yesterday', 'Yesterday'], ['week', 'Previous 7 days'], ['month', 'Previous 30 days'], ['older', 'Older']]);
+
+// list.child-row: what hangs under a row in a list (a chat's tasks and schedules, a feature's tasks) is one line: its
+// title, and at its end one word its mark cannot say. The line it used to hold under the title is its tooltip.
+const STAGE_NAMES = ['Plan', 'Build', 'Review', 'PR', 'Merged'];
+const END_BY_TONE = { act: 'Approve', ask: 'Asks' };
+const END_BY_WORD = { 'Ready to merge': 'Merge', 'In review': 'Review', 'Mock task': 'Mock' };
+
+/**
+ * The one word at a child row's end, from the task's state: never a phrase.
+ * Failed "Failed" · a gate or a plan "Approve" · a question or anything else that needs you "Asks" · working or starting
+ * its stage ("Build") · waiting on the task before it "after it", else "Waiting" · approved "Merge" · in review "Review" ·
+ * every other state its own word ("Ready", "Paused", "Merged", "Stopped").
+ * @param {object} o
+ * @param {string} o.state            a runState id
+ * @param {number|string} [o.stage]   the stage it is on: its name, or its place from 0 in `stages`
+ * @param {string[]} [o.stages]       its stage names, when they are not the usual five
+ * @param {boolean} [o.after]         it waits on the task before it
+ */
+export function rowEndWord({ state, stage = '', stages = STAGE_NAMES, after = false } = {}) {
+  const st = runState(state), w = st.word, tone = markTone(st);
+  if (w === 'Failed') return 'Failed';
+  if (w === 'Paused') return 'Paused';
+  if (END_BY_TONE[tone]) return END_BY_TONE[tone];
+  if (w === 'Waiting') return after ? 'after it' : 'Waiting';
+  if (w === 'Working' || w === 'Starting') return (typeof stage === 'number' ? stages[stage] : stage) || w;
+  return END_BY_WORD[w] || w;
+}
+
+/**
+ * A child row's one line (list.child-row), from the row a page gives a list: its end word (from `state`; with none,
+ * the row's own short `end`, a schedule's time), the tooltip that holds the full title and the detail, and the name a
+ * screen reader hears, which keeps the state and the detail.
+ * @param {{title:string, meta?:string, end?:string, tip?:string, state?:string, stage?:number|string, stages?:string[], after?:boolean}} r
+ * @returns {{end:string, tip:string, name:string}|null}
+ */
+export function childLine(r) {
+  const end = r.state ? rowEndWord(r) : r.end || '';
+  if (!end) return null;   // nothing to say at its end (a workspace's project): the row stays as its page gave it
+  const detail = r.meta || end;
+  return { end, tip: [r.tip || r.title, detail].filter(Boolean).join('\n'), name: [r.title, detail].filter(Boolean).join(', ') };
+}
 
 /**
  * A group row: a feature, a chain, a person's group, a chat group. A ListRow with its count, its ⌄, and its members under
