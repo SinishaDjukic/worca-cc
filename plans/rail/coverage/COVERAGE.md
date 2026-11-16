@@ -6,10 +6,10 @@ Sources: a static scan of today's UI (204 files) and a read-only browser walk of
 
 | Status | Controls |
 |---|---|
-| wired | 919 (of them 805 view controls with no route or key, carried by their place) |
+| wired | 918 (of them 805 view controls with no route or key, carried by their place) |
 | planned | 442 (of them 425 view controls of a place still to be built) |
 | not offered (decision) | 0 |
-| MISSING | 508 |
+| MISSING | 509 |
 | total | 1869 |
 
 ## By page
@@ -25,7 +25,7 @@ Sources: a static scan of today's UI (204 files) and a read-only browser walk of
 | Models | Settings › Models, wave 3 slice 12 (PLAN.md 4b, F-7b-08) | 51 | 0 | 42 | 0 | 9 |
 | New run | Chat and + › New task… | 74 | 35 | 1 | 0 | 38 |
 | Profile | D1 (B8.2): a home or retire, owner decision | 10 | 0 | 8 | 0 | 2 |
-| Projects | Projects | 91 | 65 | 1 | 0 | 25 |
+| Projects | Projects | 91 | 64 | 1 | 0 | 26 |
 | Providers | Settings › Models, wave 3 slice 12 (PLAN.md 4b) | 49 | 0 | 48 | 0 | 1 |
 | Requirements | Requirements, wave 3 slice 11 (PLAN.md 4b, D2, B8.7) | 88 | 0 | 29 | 0 | 59 |
 | Schedules | Schedules | 45 | 31 | 0 | 0 | 14 |
@@ -48,6 +48,7 @@ Each MISSING control, grouped by its finding (`plans/rail/findings.md`, PLAN.md 
 |---|---|---|---|---|
 | New run | Browse… | button | `route /api/fs/dirs` | ui/public/new-run/new.html:63 |
 | New run | Several folders… | button | `route /api/fs/dirs` | ui/public/new-run/new.html:64 |
+| Projects | Choose folder… | button | `route /api/fs/pick-folder` | ui/public/projects/project-add.html:37 |
 | Workflows | Browse… | button | `route /api/fs/dirs`, `route /api/fs/pick-folder` | ui/public/workflows/export.html:55 |
 
 ### COV-2: New run form: saved run defaults, presets (apply, check, duplicate, update), a workflow's defaults, a ticket source, sync before start, engine check, policy scope and notes
@@ -722,7 +723,7 @@ None: no classic control reaches a `not offered live` or `not a dev capability` 
 
 ## Wired
 
-114 controls reach a route or key Stillhet carries; 805 are view controls (no route, no key) of a page whose place Stillhet has. Where they land:
+113 controls reach a route or key Stillhet carries; 805 are view controls (no route, no key) of a page whose place Stillhet has. Where they land:
 
 | Stillhet code or row | Controls |
 |---|---|
@@ -743,6 +744,5 @@ None: no classic control reaches a `not offered live` or `not a dev capability` 
 | stillhet-wiring.md Classic controls: the review list's name per picked folder (`projects/project-add.js`, `POST /api/pro | 1 |
 | stillhet-wiring.md Classic controls: the review list's tick per picked folder (`projects/project-add.js`, `POST /api/pro | 1 |
 | stillhet-wiring.md Classic controls: the FolderBrowser's tick per folder in Several folders… (`projects/project-add.js`) | 1 |
-| stillhet-wiring.md Classic controls: One folder's Choose folder… opens the in-app FolderBrowser (`projects/project-add.j | 1 |
 
 Every control, with its routes, keys, source line and the walk pages it was seen on: `classic-controls.json`. One control: `node tools/classic-inventory.mjs --show TEXT`.

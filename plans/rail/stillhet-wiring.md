@@ -359,7 +359,6 @@ browser and bulk review list serve Projects › Add project, which the tool's pa
 | `ui/public/app.js › toggle › Select …` | wired | the FolderBrowser's tick per folder in Several folders… (`projects/project-add.js`) |
 | `ui/public/app.js › toggle › Add …` | wired | the review list's tick per picked folder (`projects/project-add.js`, `POST /api/projects/bulk`) |
 | `ui/public/app.js › field › Project name for …` | wired | the review list's name per picked folder (`projects/project-add.js`, `POST /api/projects/bulk`) |
-| `ui/public/projects/project-add.html › button › Choose folder…` | wired | One folder's Choose folder… opens the in-app FolderBrowser (`projects/project-add.js`, `GET /api/fs/dirs`); classic's native OS picker (`POST /api/fs/pick-folder`) is not used there, the in-app browser is classic's own fallback |
 
 ## Opt-in
 
