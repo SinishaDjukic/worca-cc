@@ -98,6 +98,23 @@ Design issues the first build recorded and left open. All **Planned**, in the pl
 | Settings | No Appearance section; unlabelled theme and background swatches |
 | Shell | A toast over an open confirm strip; one table of place by mode for navigation, locks and gates |
 
+## The owner's directions during shaping
+
+Given while the redesign was being built (16 November). Each is a requirement; the redesign and the rules follow them.
+
+| # | Direction | Where it is now |
+|---|---|---|
+| O1 | Sentence-style UI is a good idea that became overkill: tone it down everywhere, do not remove it. Facts lead; a sentence is one short supporting line | `stillhet.scan-first`; filters, forms, proposals, Settings rows, a schedule's page |
+| O2 | Filters are one compact line. Tabs in two rows plus labelled pickers were "ugly and bulky, almost a fifth of the screen" | `list.filters`: FilterRow, about 32px; in a bar one Filter control with chips; on a page pickers with the label inside |
+| O3 | Work starts in Chat and its cards only. Tasks and Schedules are views to inspect: nothing new is dispatched from there. No New task button in the top bar | `stillhet.chat-first`; Tasks and Schedules have no +; the forms open from Chat's starters; a schedule's page is labelled values with Change it in chat |
+| O4 | A round state mark is centred against a two-line row or card. Figures does not take a row of its own | `list.row-mark`; Figures at the end of the filter line |
+| O5 | Chat home is more than a row of buttons: starters are cards | `panel.starters` (StarterCard) |
+| O6 | The chat's timeline anchors sit at the upper left of the chat as compressed thin bars; hovering pops their details up with a short animation | `panel.timeline` |
+| O7 | A small light dot on a chat's icon when the chat has an update | `list.news` |
+| O8 | The search is left aligned and smaller, and grows when used, minding the In view tabs | `keys.search`, `nav.top-bar` |
+| O9 | The background is harmonic on every page: smooth, around a clear area with round corners for the text, fading in levels | `look.backgrounds`, `look.background-clear` |
+| O10 | **The task card and its detail side panel.** A card answers "what is its state" and "what do I do now": it holds only the state word and main action, one message in Worca's words, the stage train and the vitals (time, cost, changes). Nothing on the card opens in place. Everything you investigate lives in ONE side panel beside the chat, in tabs (Activity, Changes, Decisions, Checks): logs open in it at the relevant spot with failing lines marked, a diff opens wide. The panel opens only on intent (a link in the message, a knot, a vital, the card's panel button), never by itself; it closes with its control, Esc or the same trigger, and stays open while you click elsewhere in the chat; it follows the task you point at and names it. Status speaks from the card only, never again as a chat message. On a tablet it is a sheet, on a phone full screen. It should remember open, tab and width per person, widen for logs and diffs, mark a tab quietly when something new arrives, and take deep links. The prototype has a switch to compare the in-card and side-panel layouts; the product ships the side panel | `panel.task-card`, `panel.detail-panel`; DetailPanel in the library; the task's own page keeps the same parts as the full inspect view |
+
 ## Decisions for the owner
 
 Real calls where a direction had to be chosen. **The owner agreed to all eight on 16 November**; the redesign builds on them.
