@@ -43,7 +43,7 @@
     menu: menuItems(s) });
   // Run now is one thing wherever you press it: a real task in the one store, on this schedule's page, and in its chat
   const liveWord = 'Plan · writing the plan';
-  function runningRun(s) { const W = window.RailWorld; return s.runs.find((r) => { const w = r.wid && W?.find(r.wid); return w && W.section(w) === 'running'; }); }
+  function runningRun(s) { const W = window.RailWorld; return s.runs.find((r) => { const w = r.wid && W?.find(r.wid); return w && !w.archived && R.stillGoing(RM.stateOf(w.case)); }); }   // logic.still-going: a fire waiting on a question is still going (F-G-G3-03)
   function isRunning(s) { return !!runningRun(s); }
   // the live kind (D5): one request through RailScheduleLive; nothing here moves until its frame reloads the store
   async function live(id, s, args = {}, ok = '') {
@@ -143,9 +143,16 @@
   const graceOf = (s) => (Number.isFinite(s.grace) ? s.grace : 360);
   const graceWords = (g) => (GRACE[g] ? GRACE : { ...GRACE, [g]: `at most ${g} minutes late` });
   const refKey = (ref) => (ref && ref.id ? `${ref.kind || 'ticket'}:${ref.id}` : '');
-  // what a one-off can wait for: the other one-offs still to come in its project, and its project's running tasks (dev's after-candidates)
+  // what a one-off can wait for: the other one-offs still to come in its project, and its project's running tasks (dev's after-candidates);
+  // live, what dev's after-candidates route answers through RailScheduleLive.candidates (SC-11), never the one-off itself or one that waits for it
   function afterChoices(s) {
     const W = window.RailWorld, mine = refKey(s.afterRef);
+    if (LIVE()) {
+      const c = SL()?.candidates?.({ projectDir: s.projectDir, workspaceId: s.workspaceId }) || { runs: [], tickets: [] };
+      const all = [...c.runs.filter((r) => r.pipelineId).map((r) => ({ id: `pipeline:${r.pipelineId}`, text: String(r.title || r.pipelineId) })),
+        ...c.tickets.filter((t) => t.id && t.id !== s.id && t.after?.id !== s.id).map((t) => ({ id: `ticket:${t.id}`, text: String(t.title || t.id) }))];
+      return mine && !all.some((x) => x.id === mine) ? [{ id: mine, text: s.after || 'the run before it' }, ...all] : all;
+    }
     const tickets = list().filter((x) => x.id !== s.id && x.every === 'Once' && !x.ended && x.section === 'next' && (x.project || '') === (s.project || '') && x.afterRef?.id !== s.id).map((x) => ({ id: `ticket:${x.id}`, text: x.title }));
     const tasks = (W?.tops?.() || []).filter((t) => t && (t.project || '') === (s.project || '') && W.section(t) === 'running').map((t) => ({ id: `pipeline:${t.id}`, text: t.title }));
     const all = [...tickets, ...tasks];
@@ -177,6 +184,8 @@
     if (s.section === 'next' && !s.skip) s.next = w.next;   // a paused one and a missed one keep what they say
     D().discard(keyOf(s)); follow(s); draw(); say(s.state === 'paused' ? `It stays paused; once resumed it runs ${w.runs}` : `Saved: runs ${w.runs}`);
   }
+  // F-G-fid-03: a series in a zone other than this browser's names it beside its time, as its card does (centers.js schedCard)
+  const zoneWord = (s) => (LIVE() && s.tz && s.tz !== Intl.DateTimeFormat().resolvedOptions().timeZone ? ` ${esc(s.tz)}` : '');
   function pageHtml(s0) {
     const s = shown(s0), dayOf = Object.fromEntries(R.DAY_SECTIONS), cards = R.DAY_SECTIONS.flatMap(([d]) => s.runs.filter((r) => r.day === d)).map((r) => runCard(r, dayOf[r.day], s0)).join('');   // one stream, newest first, as a chat's
     const paused = s.state === 'paused', changes = D()?.changes(keyOf(s0)) || 0;
@@ -187,7 +196,7 @@
     const afterPick = () => R.sentencePicker({ id: 'sc-after', text: afterNow, items: afters.map((x) => ({ id: x.id, text: x.text, checked: x.id === afterKey })), open: menu === 'sc-after', chevron: R.icon('chevron', 10) });
     const repeat = s.every === 'Once' ? `Once${s.after ? ` · after ${afterPick()}` : ` at ${pick('sc-at', s.at, R.TIMES_OF_DAY)}`}`
       : s.ended ? `Repeated ${esc(s.every)}${s.at ? ` at ${esc(s.at)}` : ''}`
-      : `Repeats ${pick('sc-every', s.every, R.REPEATS.filter((x) => x !== 'once').concat(R.REPEATS.includes(s.every) ? [] : [s.every]))}${s.every === 'every hour' ? '' : ` at ${pick('sc-at', s.at, R.TIMES_OF_DAY)}`}`;
+      : `Repeats ${pick('sc-every', s.every, R.REPEATS.filter((x) => x !== 'once').concat(R.REPEATS.includes(s.every) ? [] : [s.every]))}${s.every === 'every hour' ? '' : ` at ${pick('sc-at', s.at, R.TIMES_OF_DAY)}${zoneWord(s)}`}`;
     const preset = s.preset ? ` · ${s.preset === 'preset deleted' ? 'preset deleted' : `from ${esc(s.preset)}`}` : '';
     const expert = R.shows('expert') && s.every !== 'Once' && !s.ended ? R.turnRow({ mark: '', text: `<span class="cmd-s">${words('sc-overlap', OVERLAP, s.overlap || 'skip')} · ${R.sentencePicker({ id: 'sc-fails', text: failsWord(Number.isFinite(s.fails) ? s.fails : 3), items: FAILS.map((n) => ({ id: String(n), text: failsWord(n), checked: n === (Number.isFinite(s.fails) ? s.fails : 3) })), open: menu === 'sc-fails', chevron: R.icon('chevron', 10) })} · ${words('sc-missed', MISSED, s.ifMissed || 'run')}${(s.ifMissed || 'run') === 'run' ? `, ${words('sc-grace', graceWords(s.grace ?? graceOf(s0)), String(s.grace ?? graceOf(s0)))}` : ''}${s.tz ? ` · ${esc(s.tz)}` : ''}</span>` }) : '';
     const action = s.ended ? '' : isRunning(s) ? R.button({ label: 'Stop', attrs: { 'data-sched-stop': s.id, title: 'Stops the task that is running; the schedule keeps its times' } }) : paused ? R.button({ label: 'Resume', attrs: { 'data-sched-resume': s.id, title: 'Runs at its times again' } }) : R.button({ label: 'Run now', attrs: { 'data-sched-now': s.id } });
@@ -202,6 +211,7 @@
   function draw() {
     ctl.paint();
     const s = byId(current);
+    if (!s && current && LIVE() && window.RailDemoState?.list === 'loading') { page.innerHTML = R.listState({ state: 'loading', noun: 'this schedule' }); return; }   // F-G-fid-01: a fresh load waits for the first read
     if (!s) { window.RailCenters?.schedules(page); return; }
     page.innerHTML = pageHtml(s);
     if (s) { const host = document.getElementById('sched-dock'); window.RailConversation?.dock(host, { kind: 'schedule', title: s.title, chat: s.chat }); dockSend(host, s); }

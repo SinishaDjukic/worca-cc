@@ -13,7 +13,7 @@ export const SHAPES = Object.freeze({
     // Schedules D10: `skip` is the skipped slot, any non-empty string (live: the ISO Keep next time restores; demo: the words
     // it said before the skip); dev's Expert facts, the paused reason, the preset, the run-after title, an ended series;
     // the saved rule (Save keeps its end), the grace window in minutes, and the run-after ref ({kind, id, policy}) a change starts from
-    skip: 'string?', overlap: 'string?', fails: 'number|null?', ifMissed: 'string?', tz: 'string?', pauseWhy: 'string?', preset: 'string?', after: 'string?', ended: 'boolean?',
+    skip: 'string?', projectDir: 'string?', workspaceId: 'string?', overlap: 'string?', fails: 'number|null?', ifMissed: 'string?', tz: 'string?', pauseWhy: 'string?', preset: 'string?', after: 'string?', ended: 'boolean?',
     rule: 'object|null?', grace: 'number|null?', afterRef: 'object|null?' },
   project: { id: 'string', name: 'string?', kind: 'string', path: 'string', branch: 'string?', base: 'string?', origin: 'string', ahead: 'number|null?', behind: 'number|null?', checked: 'string?', needs: 'boolean?', autoSync: 'boolean?', devPath: 'string?', ownedFolder: 'boolean?', vcs: 'string?' },   // slice 9 D5: dev's raw path (what writes send), a folder Worca made, git or none
   costs: { budget: 'object|null', usage: 'array' },

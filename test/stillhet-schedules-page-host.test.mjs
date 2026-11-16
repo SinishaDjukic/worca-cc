@@ -4,7 +4,7 @@
 import { test, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { stillhetHost } from './helpers/stillhet-host.mjs';
-import { liveHost, go, settle, closeHosts, clone, SOURCES, THREAD } from './helpers/stillhet-chat-live-host.mjs';
+import { liveHost, go, settle, closeHosts, clone, SOURCES, THREAD, URLS } from './helpers/stillhet-chat-live-host.mjs';
 
 afterEach(closeHosts);
 const toastText = (d) => [...d.querySelectorAll('body > .rc-toast')].map((e) => e.textContent).filter(Boolean).join(' | ');
@@ -163,4 +163,25 @@ test('live: a schedule made from a chat has its Chat card, with the same word an
   // its More menu offers the series' own skip item, as the page's does
   d.querySelector('#route-chat [data-menu="card:sch_skip"]').click(); await settle(10);
   assert.ok(d.querySelector('#route-chat [data-menu-pick="card:sch_skip|Skip"]').textContent.includes(S.skipItem('sch_skip').text));
+});
+
+test('F-G-fid-01: a fresh load of #schedule/ID (a reload or a shared link) waits for the list, then opens the page; an unknown id says so once the list is in', async () => {
+  let release; const held = new Promise((r) => { release = r; });
+  const h = await liveHost({ hash: '#schedule/sr1', hold: (u) => (u === URLS.schedules ? held : null) });
+  await settle(200);
+  assert.doesNotMatch(h.d.body.textContent, /There is no schedule called/, 'not gone while the list is still out');
+  release(); await settle(100);
+  h.sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'hello', bootId: 'b', runs: SOURCES.hello.runs }) }); await settle(500);   // the socket opens once the first read is in
+  assert.equal(h.w.location.hash, '#schedule/sr1');
+  assert.match(facts(h.d), /Nightly/, 'the page, once the list is in');
+  closeHosts();
+  const g = await liveHost({ hash: '#schedule/nope' }); await settle(500);
+  assert.match(g.d.body.textContent, /There is no schedule called nope/);
+});
+
+test('F-G-fid-03: a series in another zone names it on its page head, as its card does', async () => {
+  const src = clone(SOURCES);
+  src.schedules.schedules[0] = { ...src.schedules.schedules[0], rule: { freq: 'daily', interval: 1, time: '02:00', tz: 'Pacific/Kiritimati' }, tz: 'Pacific/Kiritimati' };
+  const h = await liveHost({ sources: src }); await go(h.w, '#schedule/sr1', 150); await settle(300);
+  assert.match(facts(h.d), /at 02:00.{0,40}Pacific\/Kiritimati/);
 });

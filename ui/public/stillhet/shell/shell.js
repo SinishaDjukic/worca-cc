@@ -260,13 +260,15 @@
   };
   // nav.not-found: an address that names nothing here. null when it names something, or nothing in particular.
   const NOUNS = { projects: 'project', workflows: 'workflow', requirements: 'feature', marketplace: 'plugin', insights: 'view' };
+  let schedWaits = false;   // a #schedule/ID routed before the first list read landed
   function goneOf(kind, arg0) {
     let arg = arg0 || ''; try { arg = decodeURIComponent(arg); } catch { /* a stray % stays as typed */ }
     if (!TITLES[kind] && !['run', 'settings', 'schedule'].includes(kind)) return { lost: true, what: 'page', name: kind, back: 'Chat', to: 'chat' };
     if (!arg) return null;
     // live: a chat the bar has not listed (just made, or past its first page) is read by the conversation, which says when it is gone
     if (kind === 'chat') return window.RailWorld?.live || (window.RailChats?.data().chats || []).some((c) => c.id === arg) ? null : { what: 'chat', name: arg, back: 'Chat', to: 'chat' };
-    if (kind === 'schedule') return window.RailSchedules?.find(arg) ? null : { what: 'schedule', name: arg, back: 'Chat', to: 'chat' };
+    // F-G-fid-01: live, a fresh load or a shared link waits for the first list read (the page says Loading), then routes again
+    if (kind === 'schedule') { if (window.RailSchedules?.find(arg)) return null; if (LIVE && window.RailDemoState?.list === 'loading') { schedWaits = true; return null; } return { what: 'schedule', name: arg, back: 'Chat', to: 'chat' }; }
     if (kind === 'run') { if (LIVE) return null; try { RM.stateOf(arg); return null; } catch { return { lost: true, what: 'task', name: arg, back: 'Chat', to: 'chat' }; } }   // live: RailTaskLive says when a task is gone (D15)
     if (kind === 'settings') return window.RailPulse?.hasSection?.(arg) !== false ? null : { lost: true, what: 'setting', name: arg, back: 'Settings', to: 'settings' };
     const has = placeMod(kind)?.has; return !has || has(arg) ? null : { what: arg.startsWith('ws:') ? 'workspace' : NOUNS[kind] || 'page', name: arg.replace(/^[a-z]+:/, ''), back: TITLES[kind], to: kind };
@@ -627,6 +629,7 @@
     // after the lists have read the store again (they listen later): the strip counts their rows
     const later = (fn) => setTimeout(fn, 0);
     window.RailWorld.onChange(() => { setConn(window.RailDemoState?.conn || 'ok'); later(() => { if (routed.view) drawBar(); else drawMini(); }); });
+    window.RailWorld.onChange(() => { if (!schedWaits || window.RailDemoState?.list === 'loading') return; schedWaits = false; later(() => { if (routed.view === 'schedule') route(); }); });   // F-G-fid-01: the list is in: the page, or gone
     window.RailWorld.onMove(() => later(drawMini));
   }
   // a step taken on a task's page moves the task everywhere: its row, the bar's and Pulse's counts, In view

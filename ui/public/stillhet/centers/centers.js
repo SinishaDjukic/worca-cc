@@ -402,7 +402,7 @@
     if (pf.sourceBranch) f.base = pf.sourceBranch;
     if (pf.syncBeforeStart !== null) f.source = W.live ? Object.keys(LIVE_SOURCE).find((k) => LIVE_SOURCE[k] === pf.syncBeforeStart) : pf.syncBeforeStart ? 'the latest version from origin' : 'my local copy';
     if (pf.pr?.open) f.then = W.live ? Object.keys(LIVE_THEN).find((k) => LIVE_THEN[k] === pf.pr.open) || f.then : pf.pr.open === 'none' ? 'leave it on the branch' : 'open a PR';
-    if (pf.tags.length) f.tags = pf.tags.join(', ');
+    if (pf.tags.length) { const t = pf.tags.join(', '); if (t !== f.tags && f.errAt === '#cc-tags') Object.assign(f, { err: '', errAt: '' }); f.tags = t; }   // F-G-G3-02: new tags, the old refusal goes
     if (pf.featureBranch) f.branch = pf.featureBranch;
     f.presetBase = presetView();
     checkPreset(); loadPolicy();
@@ -575,7 +575,7 @@
     const frame = `<div class="cc-frame"><span>A task on ${fPick('project', 'The project you used last')}${from} using the ${fPick('workflow')} workflow, run by ${fPick('agent')},<br> from ${fPick('base')}, ${fPick('source')}, then ${fPick('then')}${after}</span><span class="cc-proof">${esc(proof())}</span></div>`;
     const src = R.segmented({ label: 'Task source', hook: 'c-src', items: [{ id: 'write', label: 'Write it', pressed: form.src === 'write' }, { id: 'file', label: 'From file', pressed: form.src === 'file' }, ...(task ? (sourceList || []).map((x, i) => ({ id: `plugin:${i}`, label: x.displayName || x.sourceId, pressed: form.src === `plugin:${i}` })) : [])] });
     const plugin = task ? pluginOf() : null;
-    const what = plugin ? `<div class="cc-lbl">${sourceHtml(plugin)}${src}</div>${noteHtml()}` : `<div class="cc-lbl">${form.src === 'write' ? R.field({ id: 'cc-text', label: 'What should it do', multiline: true, error: errOf('#cc-text'), value: form.text, placeholder: sched ? 'What should each run do?' : 'Describe the software task to build…', attrs: { 'data-f': 'text', rows: 5 } }) : R.field({ id: 'cc-path', label: 'What should it do', error: errOf('#cc-path'), value: form.path, placeholder: 'A file in the project: docs/task.md', attrs: { 'data-f': 'path' } })}${src}</div>${task ? noteHtml() : ''}`;
+    const what = plugin ? `<div class="cc-src">${src}${sourceHtml(plugin)}</div>${noteHtml()}` : `<div class="cc-lbl">${form.src === 'write' ? R.field({ id: 'cc-text', label: 'What should it do', multiline: true, error: errOf('#cc-text'), value: form.text, placeholder: sched ? 'What should each run do?' : 'Describe the software task to build…', attrs: { 'data-f': 'text', rows: 5 } }) : R.field({ id: 'cc-path', label: 'What should it do', error: errOf('#cc-path'), value: form.path, placeholder: 'A file in the project: docs/task.md', attrs: { 'data-f': 'path' } })}${src}</div>${task ? noteHtml() : ''}`;
     const fold = (label, says) => `<div class="cc-fold">${R.button({ label, kind: 'quiet', icon: R.icon(form.more ? 'chevron' : 'chevR', 12), attrs: { 'data-c-more': '', 'aria-expanded': String(form.more) } })}<span>${esc(says)}</span></div>`;
     if (sched) {
       const body = `${frame}${R.field({ id: 'cc-name', label: 'Name', error: errOf('#cc-name'), value: form.name, placeholder: 'What to call this schedule', attrs: { 'data-f': 'name', maxlength: 80 } })}${what}

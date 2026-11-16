@@ -49,6 +49,16 @@ test('Run now posts run-now once; Stop posts /api/stop with the running fire\'s 
   assert.equal(h.d.querySelector('#route-schedule [data-sched-stop]'), null, 'the task left running: Run now again');
 });
 
+test('F-G-G3-03: a fire waiting on a question is still going: the head shows Stop, never Run now, and Stop sends its pipeline id', async () => {
+  const src = sources();
+  src.hello.runs = src.hello.runs.map((r) => (r.runId === 'run-b' ? { ...r, pendingQuestion: { questions: [{ question: 'Which format?' }] } } : r));
+  const h = await page('sr1', { src, history: HISTORY });
+  assert.equal(h.d.querySelector('#route-schedule [data-sched-now]'), null, 'no Run now beside a fire still going');
+  assert.ok(h.d.querySelector('#route-schedule [data-sched-stop]'), 'Stop, as for a working fire');
+  h.d.querySelector('#route-schedule [data-sched-stop]').click(); await settle(80);
+  assert.deepEqual(sent(h.calls), [['POST', '/api/stop', { pipelineId: 'pb' }]]);
+});
+
 // Each refusal leaves the store as it was, so one host per failure kind walks every page action (the 9 ids x 2 failures
 // are proven request by request in test/stillhet-schedule-live.test.mjs; New and Delete's refusals have their own cases below).
 test('every page action refused with a 409 or a network failure: one "Could not …" toast, the store deep-equal, no retry', async () => {
