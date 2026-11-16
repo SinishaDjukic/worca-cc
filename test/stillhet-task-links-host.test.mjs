@@ -110,7 +110,7 @@ test('the card\'s title opens the task\'s page: a click on it goes to #run/ID', 
   const head = d.querySelector('#route-chat [data-anchor="card_run"] .rc-head');
   const title = head.querySelector('h3 > button[data-open-task-page]');
   assert.ok(title, 'the title is a real button');
-  assert.equal(head.querySelector('.tp-from')?.textContent, 'Task · started from this chat');
+  assert.match(head.querySelector('.tp-from')?.textContent, /^Task · (started from|followed in) this chat$/);
   title.click(); await settle(60);
   assert.match(w.location.hash, /^#run\//);
   noCase();

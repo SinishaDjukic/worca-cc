@@ -48,7 +48,6 @@
 .rc-from{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin:12px 0 0;font-size:var(--fs-meta);color:var(--ink-2);}
 .rc-from > span{min-width:0;overflow-wrap:anywhere;}
 .rc-from b{font-weight:500;color:var(--ink);}
-#task-dock[hidden]{display:none;}
 /* one rail (the state mark, a step's dot) and one text edge after it: the title, where it began, the state word, a stage's
    steps, each part's name and every section head start on the same line */
 .rc.is-task .rtab-panel{margin-inline:0;min-height:0;}
@@ -177,3 +176,7 @@
 .stage-head .turn-row .tr-line{grid-template-columns:20px max-content minmax(0,1fr);}
 .stage-head .tr-end{display:block;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right;}
 .starter-card{align-content:start;}
+
+/* Chat home (chat/conversation.js): the line under the starters holds one bordered button on the text line */
+.chat-home-new{min-height:28px;display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;}
+.chat-home-new > .dc-link{margin:0;}

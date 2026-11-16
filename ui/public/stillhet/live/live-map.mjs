@@ -233,7 +233,7 @@ const whatOf = (sum) => { const o = sum && typeof sum === 'object' ? sum : {}; r
 /** A schedule: a ticket (once) or a series (recurring) of `GET /api/schedules`, with the D10 fields the page reads. */
 export function scheduleOf(item = {}, { now = 0, projects = [] } = {}) {
   const once = item.kind === 'once', missed = once && item.status === 'missed', paused = !once && item.status === 'paused', ended = !once && item.status === 'ended';
-  const afterTitle = once && item.after ? str(item.after.title) || 'the run before it' : '';
+  const afterTitle = once && item.after ? str(item.after.title) || 'the task before it' : '';
   const at = once ? (afterTitle ? null : item.runAt || item.scheduledFor) : item.nextRunAt;
   const skip = !once && !paused && !ended && Number.isFinite(ms(item.skippedRunAt)) ? str(item.skippedRunAt) || new Date(item.skippedRunAt).toISOString() : '';
   const name = projects.find((p) => p && (p.key === item.projectKey || p.path === item.projectDir))?.name || baseName(item.projectDir);
@@ -321,7 +321,7 @@ const EVENTS = {
   'run.done': ['runs', 'info'], 'run.failed': ['runs', 'problem'], 'run.paused_limit': ['runs', 'problem'], 'run.paused_error': ['runs', 'problem'], 'run.paused_stopped': ['runs', 'problem'], 'run.cost_cap': ['runs', 'needs'],
 };
 const NOTIF_EVENT = { missed: 'schedule.missed', failed: 'schedule.failed', run_error: 'schedule.run_error', run_paused: 'schedule.run_paused', paused: 'schedule.self_paused', late: 'schedule.late', retrying: 'schedule.retrying', skipped: 'schedule.skipped', canceled: 'schedule.canceled', ended: 'schedule.ended', completed: 'schedule.completed' };
-const NAMES = { 'schedule.missed': 'Start missed', 'schedule.failed': 'Could not start', 'schedule.run_error': 'Scheduled run failed', 'schedule.run_paused': 'Run paused', 'schedule.self_paused': 'Series paused itself', 'schedule.late': 'Started late', 'schedule.retrying': 'Retrying a start', 'schedule.skipped': 'Start skipped', 'schedule.canceled': 'Start canceled', 'schedule.ended': 'Series ended', 'schedule.completed': 'Scheduled run finished', 'run.done': 'Run finished', 'run.failed': 'Task failed', 'run.paused_limit': 'Usage limit reached', 'run.paused_error': 'Paused on error', 'run.paused_stopped': 'Worca was stopped', 'run.cost_cap': 'Cost cap reached' };
+const NAMES = { 'schedule.missed': 'Start missed', 'schedule.failed': 'Could not start', 'schedule.run_error': 'Scheduled task failed', 'schedule.run_paused': 'Task paused', 'schedule.self_paused': 'Series paused itself', 'schedule.late': 'Started late', 'schedule.retrying': 'Retrying a start', 'schedule.skipped': 'Start skipped', 'schedule.canceled': 'Start canceled', 'schedule.ended': 'Series ended', 'schedule.completed': 'Scheduled task finished', 'run.done': 'Task finished', 'run.failed': 'Task failed', 'run.paused_limit': 'Usage limit reached', 'run.paused_error': 'Paused on error', 'run.paused_stopped': 'Worca was stopped', 'run.cost_cap': 'Cost cap reached' };
 const updDay = (at, now) => { const d = dayOf(at, now); return d === 'today' ? 'Today' : d === 'yesterday' ? 'Yesterday' : 'Earlier'; };
 const update = (id, e, title, meta, at, now, o = {}) => ({ id, e, g: EVENTS[e][0], sev: EVENTS[e][1], title, meta, time: timeOf(at, now) || '', day: updDay(at, now), unread: EVENTS[e][1] !== 'info' && !o.read, go: o.go || 'runs', to: o.to || 'Tasks', ...(o.run ? { run: o.run } : {}), ...(o.about ? { about: o.about } : {}), ...(o.fix ? { fix: o.fix } : {}), ...(Number.isFinite(o.work) ? { work: o.work } : {}) });
 
@@ -353,7 +353,7 @@ export function updateOfOutcome(row = {}, { now = 0 } = {}) {
   const e = s === 'done' ? 'run.done' : FAILED.has(s) ? 'run.failed' : s === 'paused' ? pause : '';
   if (!e) return null;
   const cap = capOf(row.pauseDetail), line = capped ? (cap ? `paused at $${cap}` : 'paused at its cap') : shortDetail(row);
-  return update(`o${row.id}`, e, `${NAMES[e]} · ${str(row.title) || 'Untitled task'}`, [str(row.projectName), line].filter(Boolean).join(' · '), at, now, { go: 'run', to: 'the run page', run: str(row.id), fix: FAILED.has(s) ? 'Try again' : s === 'paused' ? 'Resume' : '', work: Number.isFinite(row.totalActiveMs) ? Math.round(row.totalActiveMs) : 0 });
+  return update(`o${row.id}`, e, `${NAMES[e]} · ${str(row.title) || 'Untitled task'}`, [str(row.projectName), line].filter(Boolean).join(' · '), at, now, { go: 'run', to: 'the task page', run: str(row.id), fix: FAILED.has(s) ? 'Try again' : s === 'paused' ? 'Resume' : '', work: Number.isFinite(row.totalActiveMs) ? Math.round(row.totalActiveMs) : 0 });
 }
 
 // Away, as the profile menu's row reads it (pulse-model.js awayRow): away now, or here with or without away hours
@@ -456,7 +456,7 @@ export function snapshotOf(src = {}, { now = 0, unread = [], checksOf = null } =
     projects: projectsRaw.map((p) => projectOf(p, syncs[p.key] || null)),
     costs: costsOf(src.budget, liveRuns, { now, limits: src.usageLimits }),
     updates: [...notes, ...outcomes],
-    actions: arr(src.actions).filter((a) => ['starting', 'running', 'ready'].includes(a?.status)).map((a) => ({ id: str(a.instanceId), runId: str(a.runId), run: str(a.runTitle) || 'A removed run', label: str(a.label), go: a.runId ? 'run' : '' })),
+    actions: arr(src.actions).filter((a) => ['starting', 'running', 'ready'].includes(a?.status)).map((a) => ({ id: str(a.instanceId), runId: str(a.runId), run: str(a.runTitle) || 'A removed task', label: str(a.label), go: a.runId ? 'run' : '' })),
     away: awayOf(away),
     keep: src.settings?.keepAwake !== false,   // dev's rule: on unless turned off
     chatPrefs: { promptCheck: src.settings?.chat?.promptCheck === true },   // Settings' live switches (sw.live: 'chat.…'); off unless on

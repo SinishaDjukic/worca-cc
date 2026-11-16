@@ -77,7 +77,7 @@
   }
   function picker(r, k, sv, c, many) {
     const p = r.picks[k];
-    return c.R.settingsRow.picker({ id: 'sv:' + k, label: p.label || p.name || r.name, text: pickWord(p, sv[k], sv), open: c.open === 'sv:' + k, showLabel: many, left: many, tip: c.locked || p.tip || '', off: !!c.locked, chevron: c.svg('chevron', 12),
+    return c.R.rowPicker({ id: 'sv:' + k, label: p.label || p.name || r.name, text: pickWord(p, sv[k], sv), open: c.open === 'sv:' + k, showLabel: many, left: many, tip: c.locked || p.tip || '', off: !!c.locked, chevron: c.svg('chevron', 12),
       items: optsOf(p, sv).map(([id, , help, off]) => ({ id, text: pickWord(p, id, sv), help, off: !!off, checked: sv[k] === id })) });
   }
   // The sentence as plain words, the same fill as above: a toast says it, and gates/settings-sentences.mjs reads it.

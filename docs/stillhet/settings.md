@@ -2,119 +2,86 @@
 
 | Rule | What | Why | Held by |
 |---|---|---|---|
-| `set.one-place` | Settings opens from the profile menu only; the sidebar holds places | A setting and a place are different things | worca-sweep |
-| `set.one-row` | One row per decision: its name, then its value first and short, at most one supporting line under it, and its control at the row's end (`stillhet.scan-first`); fine-tuning opens under the row | The value is found without reading a sentence | align-check |
+| `set.one-place` | Settings opens from the profile menu only and turns the bar into its side menu; the sidebar holds places. A setting is a choice about how Worca behaves, set rarely; a place is where you do work and come back to | A setting and a place are different things | worca-sweep |
+| `set.one-row` | One row per decision, in the section that owns it: its name, then its value first and short (body size, full ink), at most one supporting line under it, and its control at the row's end (`stillhet.scan-first`; from classic's Settings cards: a label, its value, its control at the right) | The value is found without reading a sentence | design-system-settings-redesign |
+| `set.one-edge` | A tab's title, its section heads, the rows' names and the dividers share one left edge, and every control one right edge; a section head is section size, 600, with 40px above it and 4px below | A tab is read straight down, and a head is never weaker than its rows | align-check |
 | `set.at-once` | A row takes effect at once; only a reset of many, and a step others see, confirm | No Save button | by hand |
-| `set.sentence` | A row's supporting line is built from its values and reads right for every option | A hard-coded summary goes stale, and a line written for the default breaks on the rest | settings-sentences |
-| `set.one-fact` | One fact has one home; everywhere else reads it, never a copy | Copies drift: a channel on here and off there | by hand |
-| `set.one-choice` | A choice among a few values is a labelled picker at the row's end, taking effect at once: not ⋯, Dialog, Save. A ⋯ with one item is a button. A row that has more to show clicks as a whole and says so with a chevron; a row with nothing more has no click | One step where three were | by hand |
-| `set.fold` | A row that opens in place keeps its trigger's word and width (its chevron turns), and the opened part sits in a container on the row's line: a vertical line at its side from the row to its end. A fold only fine-tunes its row; a list or a set of links gets its own place | You see where an opened part starts and ends, and a fold is not a junk drawer | by hand |
-| `set.records` | A record is a ListRow in a List after the rows, never a SettingsRow | Different things look different | by hand |
-| `set.search` | Search finds every row, folded row and record, and lands on it; in the one Worca it finds chats, tasks and schedules too, each under its area's head with its mark. There is one search, the top bar's: no page, list or bar has a field of its own. What is on the page you are on comes first (On this page), then each place's own things (Marketplace, Projects, Workflows…), then Settings and the rest | Nothing is hard to find, and you always know where it lives | pulse-sweep |
-| `set.changed` | A row with a value off Worca's default has one tiny neutral dot after its name; its tooltip says `Changed`, then each value with its default. A fold's row shows it if anything inside differs, and the exact row inside does too. No reset on a row | You see what you moved, and from what, without a word on every row or a button to mis-press | design-system-components |
-| `set.flags` | A Labs switch writes the one flag store; what it gates follows, and a section it gates says how to turn it on. A switch about how work runs shows, while on, on the thing it changes (Shared session on a workflow's page, Requirements first in Shaper's own line). A switch set by the server stays off and says so. A write it waits for shows Saving; a refusal ends its sentence | A switch that changes nothing is a lie | by hand |
-| `set.read-level` | A section read at one mode and changed at a higher one shows its edits off, each saying why | You see the rule that binds you, and who can change it | by hand |
-| `set.not-live` | On a live Stillhet, a Settings section that is all sample shows its title and one line, and a sample row in a mixed section shows its name and the line. The line reads "Not in Stillhet yet: turn Stillhet off from the top-bar switch to use it". It shows no value and holds nothing to click; the demo keeps its sample. A control that is real but not wired yet is disabled, shows its value, and gives the sentence as its reason (`NOT_LIVE_SENTENCE`); the section that holds such controls says the sentence once, in its meta | A sample value reads as Worca's real setting | stillhet-settings-not-live-rows |
+| `set.sentence` | A row's value, its supporting line and its pickers' words are built from its values and read right for every option; a value stays under 64 characters, a line under 150, a picker's word under 24 | A hard-coded summary goes stale, and a line written for the default breaks on the rest | settings-sentences |
+| `set.one-fact` | One fact has one home; everywhere else reads it, never a copy (a cap is Team policy's and Tasks reads it; a channel's set-up is its plugin's and Chat links to it) | Copies drift: a channel on here and off there | by hand |
+| `set.one-choice` | A choice among a few values is a RowPicker at the row's end: a labelled field 208px wide that takes effect at once, never ⋯, a Dialog or Save. A long value folds inside it with its whole text in the tooltip | One step where three were, and a pick never moves the row | design-system-settings-redesign |
+| `set.picks-line` | A row with several choices holds them in one line under its supporting line, each a 168px RowPicker under its own label | Each choice keeps its name and its place | design-system-settings-redesign |
+| `set.fold` | A row with more to show clicks as a whole line: it highlights on hover, its chevron turns, no word changes and nothing moves. The opened part sits behind a 2px line at its side, its values on the parent's value edge | You see where an opened part starts and ends | design-system-settings-redesign |
+| `set.fold-fine-tunes` | A fold only fine-tunes its row; a list or a set of links gets rows of its own (Budget's Team caps and Usage are two rows, each with its button). A row with nothing more has no click | A fold is not a junk drawer, and nothing pressable does nothing | by hand |
+| `set.long-value` | A value that is a path, a list or a text shows as words with `Change…`, which opens a Dialog with its Fields | A long value is read on the row and edited where there is room | by hand |
+| `set.row-actions` | A row's actions are quiet bordered buttons; a ⋯ with one item is a button. A red button lives only in a Dialog or the ConfirmStrip, and a reset of many rows is its section head's action and asks first | The page stays calm, and what cannot be taken back asks | by hand |
+| `set.records` | A record (a preset, a label, a model, a plugin, a rule) is a ListRow in a List after the rows, under its own head, never a SettingsRow; the row opens the thing and its own actions are in its ⋯ | Different things look different | by hand |
+| `set.search` | The top bar's search finds every section, row, folded row and record by its name or its words and lands on it with the flash, opening its fold or its Dialog; a folded row its state hides lands on the row it folds under | Nothing is hard to find, and you always know where it lives | pulse-sweep |
+| `set.changed` | A row with a value off Worca's default has one tiny neutral dot after its name; its tooltip says `Changed`, then each value with its default. A fold's row shows it if anything inside differs, and the row inside does too; no reset on a row | You see what you moved, and from what, without a button to mis-press | design-system-components |
+| `set.levels` | A section's level is its most open content's, and what is above it inside says so by its own `min`; a link to a section above your level is not offered | A mode hides what it must and never leads to a dead end | by hand |
+| `set.read-level` | A section read at one mode and changed at a higher one shows its edits off, each saying why (Team policy reads at Advanced and changes at Expert) | You see the rule that binds you, and who can change it | by hand |
+| `set.appearance` | Appearance is the viewer's own, kept in this browser: Theme, Background, Breathing background, Text size (`look.text-size`) and Pulse icon motion, which is still by default | How Worca looks on a device is that device's, never the team's | by hand |
+| `set.sign-ins` | Models › Sign-ins lists each provider as a row that opens its settings: what it is, its state with Sign in, Sign out or Edit, its usage, its models with Import models. A provider not set up says in its row that no task can run through it | Every link about a sign-in, a key or a quota lands in one place | by hand |
+| `set.team-draft` | An edit to Team policy only waits: a DraftBar (Discard quiet, Publish filled) shows while a change waits, and every staged change says what it was (`$3,000 a month · was $2,000 a month`). Until Publish, Effective policy and Tasks read what is published | A policy change reaches the team in one deliberate step | by hand |
+| `set.spend-word` | A cap pauses: Settings never says soft or hard, and the table's Kind says `Pauses`. The tighter of yours and your team's wins, and Budget says the effective value and whose | One word for what a cap does, as the app behaves | by hand |
+| `set.flags` | A Labs switch writes the one flag store, and what it gates follows at once; a section it gates, opened while off, says so and offers Open Labs | A switch that changes nothing is a lie | by hand |
+| `set.flag-shows` | A switch about how work runs shows, while on, on the thing it changes (Shared session on a workflow's page, Requirements first in Shaper's own line) | You see the switch where it acts | by hand |
+| `set.flag-locked` | A switch set by the server stays off and its tooltip says `Locked by WORCA_FLAGS`; a write it waits for shows Saving, and a refusal says why at the end of its line | A switch you cannot move says who holds it | stillhet-settings-labs-live |
+| `set.not-live` | On a live Stillhet, a section that is all sample shows its title and one line, and a sample row shows its name and the line: `Not in Stillhet yet: turn Stillhet off from the top-bar switch to use it`. It shows no value and holds nothing to click | A sample value reads as Worca's real setting | stillhet-settings-not-live-rows |
+| `set.not-wired` | A control that is real but not wired yet is disabled, shows its value, and gives the same sentence as its reason (`NOT_LIVE_SENTENCE`); its section says the sentence once, in its meta | You see the real value and why you cannot change it here | stillhet-settings-not-live-rows |
 
-**Settings**: one place, opened from the profile menu (the sidebar holds places in Worca, never Settings; Interface
-mode, Appearance and going away live in the profile menu only). Opening it turns the sidebar into its menu, its content
-fading over `change` while the page changes at once: `‹ Back to Worca`, then the sections under five group heads, in
-this order (Work: Runs, Presets, Labels, Automations · AI: Models, Chat, Memory · Access: Team policy, Guardrails ·
-Add-ons: Plugins, Connectors · Worca: General, Notifications, Labs). It opens on the first section the mode shows; a group
-with nothing at this mode has no head. **Levels:** a section's level is its most open content's, and what is above it
-inside says so by its own `min` (Models is Expert; Speech is Expert inside Chat). Team policy can be read at Advanced and changed at Expert: everyone a policy constrains sees why a choice is
-locked; only an admin changes it. **One row per decision, in the section that owns it:** limits are Runs': the warning line, what a start does near a
-limit, and what a paused run does. Notifications says only how you hear of them; its Usage row links to Runs › Limits. **A setting or a place:** a setting is a choice about how
-Worca behaves, set rarely, taking effect at once; a place is where you do work and come back to. So the Marketplace
-*store* is a place in the sidebar, while what you installed (Plugins), Connectors, Models and Team policy are
-settings. On a narrow screen Worca's sidebar stays, Settings opens
-on its menu as a list, and a section has `‹ Settings` above its title. The top bar's search finds every section head, group, row, folded
-row and record by its name or its words, and lands on it with the flash, opening its Customise (or its Dialog). A folded
-row its state hides lands on the row it folds under.
+## A row, built
 
-**Sections, in order.** Moving a row never removes it: it stays reachable, and search finds it.
-- Runs: Spending · Starting (with Schedules) · Limits · Away mode · Machine (Capacity, Tools, Network).
-- Presets, Labels, Guardrails: one section each.
-- Automations: Waiting · Projects · Recent.
-- Models: Defaults · Jobs · Sign-ins (Claude sign-in and each provider's record) · Catalogue (Built-in models, Import and
-  Sharing fold under its Sources row).
-- Chat: Assistant · Channels · Speech (each URL folds under its row) · History.
-  Chat › Assistant › Abilities holds "Check how clear a task prompt is" (Prompt check) right under "Suggestions": a
-  library switch row, off by default, saved live to the chat pref `chat.promptCheck` (a row's `sw.live`), shown in the
-  composer's sentence (`panel.chat-composer`).
-- Memory: Notes (health is its meta line; Defragment now, Expert, is its head's action) · Restore points · Proposals · Team memory.
-- Team policy: Not published (while a change waits) · Effective policy · Defaults · Rules (groups: Required plugins, Blocked, Guardrail sets, Models, MCP servers) ·
-  Editing (Home and Consent fold under its row).
-- Plugins: Installed (groups: Trackers, Chat channels, Others; Ticket updates folds under its tracker; Sources is the head's action).
-- Connectors: Servers · Sets · Skills.
-- General: Setup (Browser extension, its paired browsers under its fold) · Storage · Credentials · About.
-- Notifications: Channels · Updates.
-- Labs: Features, grouped by stage, Beta first.
+```js
+R.settingsRow({ name: 'Budget', value: '$1,000 a month', note: 'All tasks pause when it is spent',
+  end: R.button({ label: 'Change…', kind: 'quiet' }) })
+R.settingsRow({ name: 'Archive', value: 'Never', end: R.rowPicker({ id: 'arch', label: 'Archive', text: 'Never', items }) })
+```
 
-**A settings tab** (a section of Settings): its title, then one meta line saying what it decides, then its sections
-(SettingsSection). A row (SettingsRow) is its name on the left and one sentence beside it, the choice a SentencePicker in
-it (`Send [what needs you ▾] to [desktop ▾]`), and at its right end a Switch when it is only on or off, then its
-buttons; it takes effect at once. More detail
-folds under the row behind Customise. A row off its default or its group carries the Changed dot (`Total: default $1,000 a month`); a record has none, the rows folded under it do. A reset of many rows sits in
-its section's head and confirms in the strip, under the top bar and on screen wherever the page is scrolled. **One row per decision a person makes**, saying the
-current state in words (`All runs pause at $1,000 a month; one run at $50 (your team's)`), built from the values, never a summary typed by hand; its fine-tuning folds under Customise,
-never a row of its own on the page. A folded row belongs to its row: it sits in the sentence's column, its name a small
-label (Meta size, `--ink`) over its sentence, never the page's name column again. A row's actions are quiet buttons,
-one besides Customise; a bordered or red button lives only in a Dialog or the ConfirmStrip (a step that cannot be
-taken back, such as deleting every chat, is the section head's action and asks first). A value that is a path, a list or a text shows as words with `Change…`, which opens
-a Dialog with its Fields. **A record is not a setting**: a tab that keeps records (presets, labels, models, plugins,
-rules, an event log) puts them as a List of ListRows after its rows, under its own head; the row opens the thing, its
-own actions are in its ⋯ (one action is a button on the row; the one answer it waits for, Approve, is too), never a SettingsRow per record. A row that shows
-everything it has opens nothing: no click, no Dialog repeating its line. Choosing a model is a picker in a sentence
-(Models' Helper jobs, Roles, Chat's engine models), and clearing it is picking the default. A link to a section above your
-level is not offered. A record's meta wraps here, so a problem can always be read on touch. A tab that is one list has no
-section head repeating its title. **One fact, one home:** a channel's switch and state are Chat's, a plugin's being installed
-is Plugins'; a cap is Team policy's and Runs reads it; a count reads its list.
+`picks` holds a line of RowPickers (`set.picks-line`); `fold` makes the whole line the trigger (`set.fold`); a Switch
+goes in `end` when the row is only on or off.
 
-**Labs.** One row per flag, under its stage (SettingsGroup; Beta, then Experimental): its name, what it does, its Switch. The section's meta says Labs features
-may change, break or disappear in any release. A flag locked by `WORCA_FLAGS` has its Switch off, the tooltip saying
-`Locked by WORCA_FLAGS`. Reset all is off, saying why, while every feature is at its default. A row or section a flag
-gates carries `flag` in the model and follows the switch at once; Labels, Automations, Naming, Summaries and Ticket
-updates do. Opened directly while off, a section says so and offers Open Labs.
+## The side menu, in order
 
-**What the tab rows mean, where it matters.**
-- Folders: changing the Worca folder does not move data. Worca starts fresh under the new folder and leaves the old one.
-- Diagnostics write to the run log, never a credential; a set `WORCA_DEBUG_SPAWN` overrides the switch.
-- Chat's turn limit is 1 to 500, per message.
-- Copilot's usage comes from GitHub. A Gemini quota is set by the person (Google reports none) and Worca counts against it.
-- Levels: Sync is Advanced, the proxy Simple, New guardrail set Expert. A row that needs git says so in its tip and is
-  hidden on a machine without git; the same goes for a version from a source checkout, which offers no Update.
+A group with nothing at this mode has no head; Settings opens on the first section the mode shows. Moving a row never
+removes it: it stays reachable, and search finds it.
 
-**About** is one row: `Version 1.19 · Up to date` (or `New version: 1.20`, or what failed), Update when
-there is one, Try again after a failure, Check now when not. A small state machine under its Customise: Other versions,
-Updates, Release notes; when behind, Command (copyable), Last update (the failed result in the words of a failure, with Dismiss, and its npm output; a
-failed Update opens the fold); then Repository and the two ways to report.
-Live, About is its Version row read from `GET /api/app/version` (the same answer as today's About card and its sidebar
-marker): `Version 1.19 · New version: 1.20`, Up to date or Source build, and Check now posts `/api/app/version/check`.
+| Group | Tab | Its sections |
+|---|---|---|
+| Work | Tasks | Spending (Budget, Team caps, Usage) · Starting · Limits · Away mode · Machine |
+| Work | Presets (Advanced) | Presets |
+| Work | Labels (flag `runLabels`) | Labels |
+| Work | Automations (Advanced, flag `gitAutomations`) | Waiting · Projects · Recent |
+| AI | Models (Expert) | Defaults · Jobs · Sign-ins · Catalogue |
+| AI | Chat (Advanced) | Assistant · Channels · Speech · History |
+| AI | Memory (Advanced) | Notes · Restore points · Proposals · Team memory |
+| Access | Team policy (reads at Advanced, changes at Expert) | Not published (while a change waits) · Effective policy · Defaults · Rules · Editing |
+| Access | Guardrails (Advanced) | Sets |
+| Add-ons | Plugins (Advanced) | Installed (Sources is its head's action) |
+| Add-ons | Connectors (Advanced) | Servers · Sets · Skills |
+| Worca | General | Setup · Storage · Credentials · About |
+| Worca | Appearance | Theme · Background · Breathing background · Text size · Pulse icon motion |
+| Worca | Notifications | Channels · Updates |
+| Worca | Labs | Features, by stage, Beta first |
 
-**A stepped Dialog** (Forms): Setup assistant's Run setup: Check, Network, Access, Models, Limits, Review; the last step's
-button is Apply. Nothing changes until then. A choice inside it is an OptionList.
+## What the rows mean, where it matters
 
-**Team policy** reads at Advanced, its edits off with the reason; at Expert they act, as the app's editor does: every
-edit (a picker, a Change…, Edit policy, Unblock) only waits, marked `Not published`, and the head section lists what waits.
-`Publish to worca-policy` asks in the strip, then makes one commit on the home's `worca-policy` branch, which every
-teammate's Worca reads. `Cancel editing` drops the changes; `Copy for PR` gives the JSON, for whoever cannot push there.
-Until then Effective policy and Runs still read what is published. There is no pull request of Worca's own. Sections:
-Effective policy (Table), Defaults (Create a PR when a run finishes, its spending caps, workspace runs), Rules, Editing.
-
-**Spending: one word.** A cap *pauses*. At a cap a run stops at its next step and waits; you can continue past it, and past a
-team cap that is recorded for the team (once per run, or once per period for a total). The tighter of yours and your team's
-wins, and Budget says the effective value, and whose. A hard cap does not exist: the app treats `hard` as soft, and
-an unattended run only warns, as nobody can continue it. So Settings never says soft or hard: the table's Kind says `Pauses`.
-
-**Models** keeps roles per engine, one sentence each, under Roles' Customise. A step or helper job is one sentence that follows
-its role until another model is picked, with Test; what it offers follows the Engine, and a job set to a model the new engine
-lacks goes back to its role. There are 11 helper jobs. Roles and Memory defragment keep the app's words: the action is
-`Defragment now`, never tidy. A factory default says `(default)`;
-signed out of Claude Code, one line says which lose theirs, and a run that needs one is refused, never given another
-model. **Chat** lists its chat channels as records: Switch (off until set up, saying why), state (Chip: Connected, Off or Not set up), Test, and what stops it working in its meta line. A channel's plugin in **Plugins** installs and sets it up and links here; Notifications lists working channels only.
-**Plugins**: a tracker folds its Ticket updates under its record (ListRow `fold`, behind the flag): its projects, All
-projects, and a rule per project as records. **Sources** is the Installed head's action: a Dialog with its records.
-**Models › Sign-ins** holds what was Providers: every link about a sign-in, a key or a quota lands there.
-**Memory** has Team memory: which notes load, sync, sharing and undo, and each note's state.
-
+| Row | Means |
+|---|---|
+| Tasks › Limits | The warning line, what a start does near a limit, and what a paused task does. Notifications only says how you hear of them and links here |
+| A cap | At a cap a task stops at its next step and waits; you can continue past it, and past a team cap that is recorded for the team. An unattended task only warns, as nobody can continue it |
+| Chat › Assistant › Abilities › Prompt check | A switch, off by default, saved to the chat pref `chat.promptCheck`; shown in the composer (`panel.chat-composer`) |
+| Chat › Channels | Each chat channel is a record: Switch (off until set up, saying why), its state, Test, and what stops it in its meta. Its set-up is on its plugin's page (`panel.plugin-manage`) |
+| Chat's turn limit | 1 to 500, per message |
+| Models › Jobs | A step or helper job follows its role until another model is picked, with Test; a job set to a model the new engine lacks goes back to its role. A factory default says `(default)` |
+| Signed out of Claude Code | One line says which jobs lose their model; a task that needs one is refused, never given another model |
+| Copilot's usage, a Gemini quota | Copilot's comes from GitHub; a Gemini quota is set by the person and Worca counts against it |
+| Memory | The action is `Defragment now`, never tidy |
+| Team policy › Rules › Model access | The engines and models the team may use |
+| Team policy › Publish | `Publish to worca-policy` asks in the strip, then makes one commit on the home's `worca-policy` branch, which every teammate's Worca reads; `Copy for PR` gives the JSON for whoever cannot push there |
+| Plugins › a tracker | Its Ticket updates fold under its record (behind its flag): its projects, All projects, and a rule per project |
+| General › Folders | Changing the Worca folder does not move data: Worca starts fresh under the new folder and leaves the old one |
+| General › Diagnostics | Write to the task's log, never a credential; a set `WORCA_DEBUG_SPAWN` overrides the switch |
+| General › Setup assistant | A stepped Dialog (`form.stepped`): Check, Network, Access, Models, Limits, Review; the last step's button is Apply |
+| General › About | One row: `Version 1.19 · Up to date` (or `New version: 1.20`, or what failed), with Update, Try again or Check now. Live it reads `GET /api/app/version`, and Check now posts `/api/app/version/check` |
+| A row that needs git | Says so in its tip and is hidden on a machine without git; a version from a source checkout offers no Update |
+| Labs | One row per flag under its stage: its name, what it does, its Switch. Reset all is off, saying why, while every feature is at its default |

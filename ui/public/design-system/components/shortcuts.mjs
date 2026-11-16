@@ -52,7 +52,7 @@ export const SHORTCUTS = Object.freeze([
     { do: 'prev-chat', label: 'Previous chat', keys: [['alt', 'ArrowUp']] },
     { do: 'next-chat', label: 'Next chat', keys: [['alt', 'ArrowDown']] },
   ] },
-  { scope: 'run', title: 'Run page', col: 2, rows: [
+  { scope: 'run', title: 'Task page', col: 2, rows: [
     { do: 'labels', label: 'Labels', keys: [['L']] },
     { do: 'terminal', label: 'Terminal', keys: [['ctrl', '`']] },
     { do: 'next', label: 'Next item', keys: [['ArrowRight'], ['ArrowDown']], inField: true },

@@ -101,7 +101,7 @@ export function policyNoteOf(res) {
   const p = res?.policy; if (!p) return null;
   const notes = arr(res.notes), n = notes.length, caps = p.caps || {};
   const capLine = [...(caps.pipeline ? [capText('pipeline', caps.pipeline)] : []), ...(caps.total ? [capText('total', caps.total, caps.resetPeriod)] : []), ...(caps.pooled ? [`pooled budget ${usd(caps.pooled.value)} / ${caps.pooled.window}`] : [])].join(' · ');
-  return { tone: notes.some((x) => x.level === 'warn') ? 'amber' : 'grey', head: `team policy · ${p.home || '—'}${n ? ` · ${n} note${n === 1 ? '' : 's'} · nothing here blocks the run` : ' · nothing to note'}`, rows: notes.map((x) => ({ text: str(x.text), warn: x.level === 'warn' })), caps: capLine };
+  return { tone: notes.some((x) => x.level === 'warn') ? 'amber' : 'grey', head: `team policy · ${p.home || '—'}${n ? ` · ${n} note${n === 1 ? '' : 's'} · nothing here blocks the task` : ' · nothing to note'}`, rows: notes.map((x) => ({ text: str(x.text), warn: x.level === 'warn' })), caps: capLine };
 }
 
 /** POST /api/run's `source` for a picked ticket (app.js startRun): no prompt rides with it. */
@@ -116,7 +116,7 @@ export function gateOf(binding, source, scopeLabel = '') {
   const name = source.displayName || source.sourceId || 'This source';
   const profiles = arr(source.profiles).map((p) => (typeof p === 'string' ? p : str(p?.id))).filter(Boolean);
   if (!profiles.length) return { text: `${name} has no profiles configured yet.`, profiles: [], conflict: false };
-  if (binding?.via === 'conflict') { const c = arr(binding.candidates); return { text: `The projects in ${scopeLabel || 'this workspace'} disagree about which ${name} profile to use (${c.join(', ')}). Pick the one this run should read from.`, profiles: c.length ? c : profiles, conflict: true }; }
+  if (binding?.via === 'conflict') { const c = arr(binding.candidates); return { text: `The projects in ${scopeLabel || 'this workspace'} disagree about which ${name} profile to use (${c.join(', ')}). Pick the one this task should read from.`, profiles: c.length ? c : profiles, conflict: true }; }
   return { text: `Which ${name} profile does ${scopeLabel || 'this project'} pull from? Asked once, then remembered.`, profiles, conflict: false };
 }
 

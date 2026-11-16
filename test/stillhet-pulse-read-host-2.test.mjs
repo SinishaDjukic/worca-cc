@@ -222,7 +222,7 @@ test('Now rows say how they clear, and a task opens by its own id', async () => 
   w.location.hash = '#chat'; await settle();
   w.StillhetPulse.open('now');
   assert.ok(pop(d).querySelector('[data-open="r:run-f"]'), 'the failed task is in Now');
-  assert.match(meta('run-f'), /Clears once you open it/);
+  assert.match(tip('run-f'), /Clears once you open it/);
   pop(d).querySelector('[data-open="r:run-f"]').click(); await settle();
   assert.deepEqual(seen, ['run-f'], 'seenRun with its id');
   w.StillhetPulse.open('now');

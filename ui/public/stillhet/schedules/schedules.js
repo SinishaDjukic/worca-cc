@@ -85,10 +85,10 @@
   }
   ctl = R.listController({ root: bar, spec: { noun: 'schedules', label: 'Selected schedules', view: () => ({ state: 'ready',
     parts: [{ word: 'Showing', id: 'show', text: view.show, tip: 'Which schedules the list shows', items: ['all', 'paused'].map((x) => ({ id: x, text: x, checked: view.show === x })) },
-      R.byPart({ by: view.by, choices: [{ id: 'day', help: 'By the next run: Today, Tomorrow, This week, Later; paused ones last' }, { id: 'state', help: `${SECTIONS.map(([, t]) => t).join(', ')}` }] })],
+      R.byPart({ by: view.by, choices: [{ id: 'day', help: 'By the next task: Today, Tomorrow, This week, Later; paused ones last' }, { id: 'state', help: `${SECTIONS.map(([, t]) => t).join(', ')}` }] })],
     sections: sections(), empty: { text: 'No schedules yet.', action: 'Start one in Chat' } }),
     can: () => ['menu'], bulk: () => [], act, open: (r) => window.StillhetShell.go(`schedule/${r._s.id}`),   /* a row opens the schedule's own page (thing-page) */ word: (id, v) => { view = { ...view, [id]: v }; if (!current) window.StillhetCenters?.schedules(page); return false; }, say,
-    active: () => /^#schedule/.test(location.hash) && !document.querySelector('.pz-popover, .keys-modal, #app .viewer-modal, #center-dlg .viewer-modal, #app .nav-fly'), emptyAct: () => window.StillhetConversation?.start('schedule') } });
+    active: () => /^#schedule/.test(location.hash) && !document.querySelector('.pz-popover, .keys-modal, .viewer-modal, #app .nav-fly'), emptyAct: () => window.StillhetConversation?.start('schedule') } });
   const showing = (s) => view.show === 'all' || s.state === 'paused';
   // By date (the default): what waits on you first, then by the next run, each day folding; paused ones, then ended ones last, as they have none.
   function sections() {
@@ -147,14 +147,14 @@
   // how late a missed time may still start (dev's grace window, minutes), when a missed time runs late
   const GRACE = { 30: 'at most 30 minutes late', 60: 'at most 1 hour late', 120: 'at most 2 hours late', 360: 'at most 6 hours late', 720: 'at most 12 hours late', 1440: 'at most a day late' };
   const graceOf = (s) => (Number.isFinite(s.grace) ? s.grace : 360);
-  const NOTIFY = { fail: 'only when a run fails', every: 'after every run', never: 'never' };
+  const NOTIFY = { fail: 'only when a task fails', every: 'after every task', never: 'never' };
   const dayOf = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
   // what Edit… may change through the adapter: dev's PATCH takes a schedule's times; its words are the demo's until dev takes them
   const canEdit = (field) => !LIVE() || ['every', 'at', 'date'].includes(field);
   // F-G-fid-03: a series in a zone other than this browser's names it beside its time, as its card does (centers.js schedCard)
   const zoneWord = (s) => (LIVE() && s.tz && s.tz !== Intl.DateTimeFormat().resolvedOptions().timeZone ? ` ${esc(s.tz)}` : '');
   // the library's form parts, by name once the index exports them (field.mjs attaches them to Field until then)
-  const F = { value: R.fieldValue || R.field.value, grid: R.formGrid || R.field.grid, readback: R.formReadback || R.field.readback };
+  const F = { value: R.fieldValue, grid: R.formGrid, readback: R.formReadback };
   const cap = (t) => String(t).charAt(0).toUpperCase() + String(t).slice(1);
   const dayWords = (d) => d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }).replace(/,/g, '');
   const repeatWords = (e) => (e === 'every weekday' ? 'weekdays' : e === 'every weekend' ? 'at weekends' : e);
@@ -176,7 +176,7 @@
     const fails = Number.isFinite(s.fails) ? s.fails : 3, missed = s.ifMissed || 'run', grace = graceOf(s);
     const when = s.after ? v('Runs after', s.after) : s.every === 'every hour' ? '<span></span>' : once && Number.isFinite(s.nextAt) ? v('Date and time', `${dayWords(new Date(s.nextAt))}, ${s.at}`) : v('At', `${s.at}${zoneWord(s)}`);
     const expert = R.shows('expert') && !once ? [
-      v('While one still runs', cap(OVERLAP[s.overlap || 'skip'])), v('When runs fail', cap(failsWord(fails))),
+      v('While one still runs', cap(OVERLAP[s.overlap || 'skip'])), v('When tasks fail', cap(failsWord(fails))),
       v('A missed time', cap(MISSED[missed])), missed === 'run' ? v('How late it may start', cap(GRACE[grace] || `at most ${grace} minutes late`)) : '<span></span>',
       v('Stop after', cap(s.ends || 'no end date')), v('Notify', cap(NOTIFY[s.notify] || NOTIFY.fail)),
     ] : [];
@@ -190,10 +190,10 @@
       running ? btn('Stop', { 'data-sched-stop': s.id }, 'Stops the task that is running; the schedule keeps its times') : btn('Run now', { 'data-sched-now': s.id }, paused ? 'Starts a task now; it stays paused after' : 'Starts a task now; the schedule keeps its times'),
       once ? '' : paused ? btn('Resume', { 'data-sched-resume': s.id }, 'Runs at its times again') : btn('Pause', { 'data-sched-pause': s.id }, 'Skips its times until you resume it'),
       once || paused ? '' : btn(skip.text, { 'data-sched-skip': s.id }, skip.help),
-      btn('Change it in chat', { 'data-sched-chat': s.id }, s.chat ? 'Opens its chat, to say what should change' : 'Opens a chat about it, to say what should change'),
     ].join('');
+    const change = s.ended ? '' : btn('Change it in chat', { 'data-sched-chat': s.id }, s.chat ? 'Opens its chat, to say what should change' : 'Opens a chat about it, to say what should change');
     const items = [{ id: 'in-view', text: window.StillhetShell?.inView.has('schedule', s.id) ? 'Out of view' : 'Keep in view', help: 'Its mark in the top bar, on every page' }, { sep: true }, { id: 'delete', text: 'Delete', danger: true, help: 'Removes the schedule; the tasks it ran stay. Undo in the notice' }];
-    return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${R.placeHead({ center: { label: 'Schedules', to: 'schedules' }, title: s.title, facts: `${esc(s.project || 'No project')} · ${esc(flowWord(s))}${(s.labels || []).map((l) => R.chip({ text: l })).join('')}`, mark: R.kindMark({ kind: 'schedule', tone: toneOf(s), title: word(s) }), word: word(s), why: `${why(s)}${s.chat ? ' · from a chat' : ''}`,   /* the word already says it */ action, menu: R.moreMenu({ id: 'sc-more', label: `More for ${s.title}`, icon: R.icon('more', 16), open: menu === 'sc-more', items }) })}
+    return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${R.placeHead({ center: { label: 'Schedules', to: 'schedules' }, title: s.title, actions: change, facts: `${esc(s.project || 'No project')} · ${esc(flowWord(s))}${(s.labels || []).map((l) => R.chip({ text: l })).join('')}`, mark: R.kindMark({ kind: 'schedule', tone: toneOf(s), title: word(s) }), word: word(s), why: `${why(s)}${s.chat ? ' · from a chat' : ''}`,   /* the word already says it */ action, menu: R.moreMenu({ id: 'sc-more', label: `More for ${s.title}`, icon: R.icon('more', 16), open: menu === 'sc-more', items }) })}
       <div class="sched-form">${facts}${F.readback(readback(s))}</div>
       ${cards || R.emptyState({ title: 'It has not run yet.' })}
     </div></div><div class="convo-dock" id="sched-dock"></div></div>`;

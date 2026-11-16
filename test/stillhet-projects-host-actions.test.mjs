@@ -15,6 +15,8 @@ const pickMore = (d, v) => { page(d).querySelector('[data-menu="pj-more"]').clic
 const until = async (f, ms = 8000) => { for (let t = 0; t < ms && !f(); t += 50) await settle(50); };
 const yes = (d) => page(d).querySelector('[data-confirm="yes"]');
 /** The button at the end of the settings row named `name` (its control). */
+// the redesign: a project's page is in tabs (classic's project tabs); its settings are on the Settings tab
+const toTab = async (d, id) => { page(d).querySelector(`#pjtab-${id}`).click(); await settle(40); };
 const rowButton = (d, name) => [...page(d).querySelectorAll('.set-name')].find((n) => n.textContent.trim().startsWith(name))?.closest('.set-row')?.querySelector('.set-end button') || null;
 /** R-qa-3: that very control carries the label and is disabled (a label elsewhere on the page does not count). */
 const heldWith = (el, label) => !!el && el.disabled === true && ((el.querySelector('.btn-busy-t') || el).textContent.trim() === label || el.title === label);   // the redesign (comp.button-busy): the busy words show once, in .btn-busy-t
@@ -63,6 +65,7 @@ test('every project-side pending label shows on its control, disabled, while dev
   await go(h.w, `#projects/${KEYS.moved}`, 150);
   await press('relocate', `/api/projects/${KEYS.moved}`, async () => { act().click(); await settle(80); page(h.d).querySelector('#pj-hand-v').value = '~/src/seed-moved-now'; yes(h.d).click(); }, () => yes(h.d));
   await go(h.w, `#projects/${KEYS.ok}`, 250);
+  await toTab(h.d, 'settings');
   await press('set', `/api/projects/${KEYS.ok}/settings`, async () => { page(h.d).querySelector('[data-menu="pjs-pr"]').click(); page(h.d).querySelector('[data-menu-pick="pjs-pr|create a draft PR"]').click(); }, () => rowButton(h.d, 'Pull requests'));
   await press('team', `/api/projects/${KEYS.ok}/settings`, () => page(h.d).querySelector('[data-pj-team]').click(), () => page(h.d).querySelector('[data-pj-team]'));
   await press('defaults', `/api/projects/${KEYS.ok}/tags/defaults`, async () => { page(h.d).querySelector('[data-def-edit="labels"]').click(); await settle(30); h.d.getElementById('def-labels').value = 'billing'; page(h.d).querySelector('[data-def-edit="labels"]').click(); }, () => rowButton(h.d, 'Labels'));
@@ -161,6 +164,7 @@ test('Remove sends the DELETE only after the undo window; an owned folder\'s str
 test('How its tasks run sends PATCH …/settings; Use yours sends null; Cost tags send PUT …/tags/defaults; a refused Team memory keeps the switch', async () => {
   const h = await projectsHost({ hash: `#projects/${KEYS.ok}`, write: (u, b, m) => (b && 'memory.team' in b ? [400, { error: 'This project has no origin', code: 'NO_ORIGIN' }] : m === 'PATCH' ? [200, { own: { 'pr.open': b['pr.open'] }, effective: { 'pr.open': { value: b['pr.open'] ?? 'none', source: b['pr.open'] ? 'project' : 'user' } }, layers: { 'pr.open': { user: 'none', default: 'none' } } }] : [200, b]) });
   await settle(150);
+  await toTab(h.d, 'settings');
   page(h.d).querySelector('[data-menu="pjs-pr"]').click(); page(h.d).querySelector('[data-menu-pick="pjs-pr|create a draft PR"]').click(); await settle(120);
   assert.deepEqual(sent(h.calls).at(-1), ['PATCH', `/api/projects/${KEYS.ok}/settings`, { 'pr.open': 'draft' }]);
   page(h.d).querySelector('[data-pj-reset="pr"]').click(); await settle(120);
@@ -180,6 +184,7 @@ test('fit: while its settings are still being read (or failed), Change, Who pays
   const g = gate();
   const h = await projectsHost({ hash: `#projects/${KEYS.ok}`, hold: (u) => (u === `/api/projects/${KEYS.ok}/settings` ? g.p : null) });
   await settle(150);
+  await toTab(h.d, 'settings');
   const change = rowButton(h.d, 'Labels');
   assert.ok(change && change.disabled, 'Change is off while the settings are read');
   change.click(); await settle(60);
@@ -204,7 +209,10 @@ test('live, the page holds no stand-in: no "not in Stillhet yet", no StillhetWou
   assert.ok(!/not in Stillhet yet/.test(t));
   assert.ok(!/Branch names/.test(t), 'D19: Branch names (slice 12) is not drawn live');
   assert.match(t, /\$12\s*this month/, 'the project row of this month\'s stats answer');
-  assert.ok(/Pull requests/.test(t), 'its settings are drawn from dev\'s answer');
+  // the redesign: its settings are on the Settings tab; the tabs with no live read say so, and that is the one "not in Stillhet yet" a live page holds
+  await toTab(h.d, 'settings');
+  assert.ok(/Pull requests/.test(page(h.d).textContent), 'its settings are drawn from dev\'s answer');
+  assert.ok(!/Branch names|Step models|Chat turn limit/.test(page(h.d).textContent), 'no demo-only row is drawn live');
   assert.deepEqual(h.w.__would, []);
   assert.ok(h.calls.filter((c) => c.url === MONTH).length >= 1);
 });

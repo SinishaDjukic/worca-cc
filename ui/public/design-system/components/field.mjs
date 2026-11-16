@@ -64,7 +64,7 @@ export function pickField({ id, label, text, items = [], open = false, hint = ''
   const prefix = (list) => list.map((it) => (it.sep || it.header ? it : it.sub ? { ...it, id: it.id ?? it.text, sub: prefix(it.sub) } : { ...it, id: `${id}|${it.id ?? it.text}` }));
   const note = error ? `<span class="fld-err" id="${esc(id)}-note" role="alert">${esc(error)}</span>` : hint ? `<span class="fld-hint" id="${esc(id)}-note">${esc(hint)}</span>` : '';
   const menu = open && !disabled ? compactMenu({ items: prefix(items), cls: 'spick-menu fld-pick-menu', openSub }) : '';
-  const btn = `<button type="button" class="pd-base is-words is-field fld-pick-b"${attrs({ id: `${id}-b`, 'data-menu': id, 'data-key': 'pick:' + id, 'aria-haspopup': 'menu', 'aria-expanded': String(open && !disabled), 'aria-label': `${label}: ${text}`, 'aria-describedby': note ? id + '-note' : null, title: tip || null, disabled })}><span class="fld-pick-t">${esc(text)}</span>${icon('chevron', 12)}</button>`;
+  const btn = `<button type="button" class="pd-base is-words is-field fld-pick-b"${attrs({ id: `${id}-b`, 'data-menu': id, 'data-key': 'pick:' + id, 'aria-haspopup': 'menu', 'aria-expanded': String(open && !disabled), 'aria-label': `${label}: ${text}`, 'aria-describedby': note ? id + '-note' : null, title: tip || (String(text).length > 24 ? text : null), disabled })}><span class="fld-pick-t">${esc(text)}</span>${icon('chevron', 12)}</button>`;
   return `<div class="fld fld-pick">${quietLabel ? '' : `<span class="fld-l" aria-hidden="true">${esc(label)}</span>`}<span class="spick fld-spick">${btn}${menu}</span>${note}</div>`;
 }
 
@@ -124,5 +124,3 @@ export function fieldValue({ label, value, hint = '' }) {
   return `<div class="fld fld-value"><span class="fld-l">${esc(label)}</span><span class="fld-v">${esc(value)}</span>${hint ? `<span class="fld-hint">${esc(hint)}</span>` : ''}</div>`;
 }
 
-// Reachable from page code as R.field.pick / .pair / .grid / .fold / .readback / .value until the index exports them by name.
-Object.assign(field, { pick: pickField, pair: fieldPair, grid: formGrid, fold: fieldFold, readback: formReadback, value: fieldValue });

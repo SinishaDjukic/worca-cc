@@ -48,7 +48,7 @@ export function retimed(rule, at) {
 
 /** The New schedule form's end words as dev's rule.end: null (no end), a run count, or a last day (local YYYY-MM-DD). */
 export function endOf(words, { today = new Date() } = {}) {
-  const runs = /^after (\d+) runs?$/.exec(String(words || ''));
+  const runs = /^after (\d+) (?:tasks?|runs?)$/.exec(String(words || ''));
   if (runs) return { type: 'count', count: Number(runs[1]) };
   const days = /^after (\d+) days?$/.exec(String(words || ''));
   if (!days) return null;

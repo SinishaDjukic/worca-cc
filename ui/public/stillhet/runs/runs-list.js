@@ -117,10 +117,15 @@
   }
   const rowOf = (t, section) => (t.group ? groupRowOf(t.group, section) : row(t.run, section, false));
 
-  // ---- the sentence ----
+  // One count for what needs you (A1): with no filter on, the Needs you tab and section say the store's own number for
+  // this place, its tasks and its missed schedule times (StillhetWorld.needsLabel), the same rule Pulse counts by; a
+  // filtered view counts its own rows
+  const oneCount = () => (W.needsLabel && view.from === 'all' && !view.day && !view.range && !view.person && !view.labels.length && !view.workflow && !view.schedule ? W.needsLabel('task', 'schedule') : null);
+  const needsCount = () => (oneCount() ? { count: oneCount().n } : {});
+  // ---- the filters ----
   function parts() {
     const projects = [...new Set(tops().map((t) => t.project || 'No project'))].sort();
-    const out = [{ word: 'Showing', id: 'show', tabs: ['all', 'needs', 'running'], text: showOf(view.show).text, tip: 'Which tasks the list shows', items: SHOWS.map((x) => ({ id: x.id, text: x.text, help: x.help, checked: view.show === x.id, hint: x.id === 'needs' ? String(+count({ show: 'needs' }) + missedNow().length) : count({ show: x.id }) })) }];
+    const out = [{ word: 'Showing', id: 'show', tabs: ['all', 'needs', 'running'], text: showOf(view.show).text, tip: 'Which tasks the list shows', items: SHOWS.map((x) => ({ id: x.id, text: x.text, help: x.id === 'needs' && oneCount() ? oneCount().tip : x.help, checked: view.show === x.id, hint: x.id === 'needs' ? String(oneCount() ? oneCount().n : +count({ show: 'needs' }) + missedNow().length) : count({ show: x.id }) })) }];
     if (shared()) out.push({ word: 'started by', id: 'person', raw: true, text: view.person || 'Everyone', tip: 'Whose tasks it shows, on a shared sign-in', items: [{ id: '', text: 'Everyone', checked: !view.person, hint: count({ person: '' }) }, { sep: true }, ...M.PEOPLE.map((p) => ({ id: p, text: p, checked: view.person === p, hint: count({ person: p }) }))] });
     if (!view.schedule || view.from !== 'all') out.push({ word: 'from', id: 'from', raw: true, text: view.from === 'all' ? 'All projects' : view.from, tip: 'Which project they come from', items: [{ id: 'all', text: 'All projects', checked: view.from === 'all', hint: count({ from: 'all' }) }, { sep: true }, ...projects.map((p) => ({ id: p, text: p, checked: view.from === p, hint: count({ from: p }) }))] });
     if (view.workflow) out.push({ word: 'using', id: 'workflow', raw: true, text: view.workflow, tip: 'Only tasks that ran this workflow', items: [{ id: '', text: 'Any workflow', hint: count({ workflow: '' }) }, { sep: true }, { id: view.workflow, text: view.workflow, checked: true, hint: count({}) }] });
@@ -142,11 +147,11 @@
   function sections() {
     const list = tops().filter((t) => passes(t, view));
     const rows = (ts, s) => ts.map((t) => rowOf(t, s));
-    if (view.show !== 'all') return [{ id: view.show, title: showOf(view.show).title || cap(showOf(view.show).text), rows: [...rows(list, view.show === 'needs' || view.show === 'running' ? view.show : ''), ...(view.show === 'needs' ? missedNow().map(missedRow) : [])] }];
+    if (view.show !== 'all') return [{ id: view.show, ...(view.show === 'needs' ? needsCount() : {}), title: showOf(view.show).title || cap(showOf(view.show).text), rows: [...rows(list, view.show === 'needs' || view.show === 'running' ? view.show : ''), ...(view.show === 'needs' ? missedNow().map(missedRow) : [])] }];
     const needs = list.filter((t) => t.section === 'needs'), rest = list.filter((t) => t.section !== 'needs');
     const urgent = (t) => { const s = t.run ? stateOf(t.run) : ''; return (3 - R.alertLevel(R.markTone(R.runState(s || 'working')))) * 10 + (s === 'question' ? 0 : 1); };   // highest level first (look.alert-ladder)
     const sorted = [...needs].sort((a, b) => urgent(a) - urgent(b)), lit = sorted.filter((t) => urgent(t) < 20), missed = missedNow().map(missedRow);
-    const head = needs.length || missed.length ? [{ id: 'needs', title: NEEDS(), rows: [...rows(lit, 'needs'), ...missed, ...rows(sorted.filter((t) => urgent(t) >= 20), 'needs')] }] : [];   // Warnings and Cautions, then a missed time, then Advisory
+    const head = needs.length || missed.length ? [{ id: 'needs', ...needsCount(), title: NEEDS(), rows: [...rows(lit, 'needs'), ...missed, ...rows(sorted.filter((t) => urgent(t) >= 20), 'needs')] }] : [];   // Warnings and Cautions, then a missed time, then Advisory
     if (view.by === 'project') {
       const names = [...new Set(rest.map((t) => t.project || 'No project'))];
       return [...head, ...names.map((p) => { const ts = rest.filter((t) => (t.project || 'No project') === p), kinds = ts.map((t) => t.run?.kind).filter(Boolean); return { id: `project:${p}`, title: p, chip: kinds.length ? R.chip({ text: kinds[0] }) : '', rows: rows(ts, '') }; })];

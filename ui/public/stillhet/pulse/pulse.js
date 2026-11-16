@@ -132,8 +132,8 @@ const limitsNow = () => M.limits(C(), ui.s.warnAt);
 // the project and goes only with its own choice.
 const VITALS_SHOWS = [{ id: 'all', text: 'everything', help: 'Every section: what needs you, limits, what is running and what is scheduled' },
   { id: 'needs', text: 'needs you', help: 'Runs waiting on a person: questions, gates, cost caps, a pause, a failure, ready to ship' }, { id: 'running', text: 'running', help: 'Runs working now' },
-  { id: 'actions', text: 'running actions', help: 'What keeps running after a run: dev servers, previews; each with its Stop' },
-  { id: 'scheduled', text: 'scheduled', help: 'Starts coming up: slices, queued and scheduled runs' }, { id: 'limits', text: 'limits', help: 'Usage and spend at or over the warning line, per harness' }];
+  { id: 'actions', text: 'running actions', help: 'What keeps running after a task: dev servers, previews; each with its Stop' },
+  { id: 'scheduled', text: 'scheduled', help: 'Starts coming up: slices, queued and scheduled tasks' }, { id: 'limits', text: 'limits', help: 'Usage and spend at or over the warning line, per harness' }];
 const vitalsRuns = () => M.vitalsRuns();
 // What keeps running after a run, until someone stops it: it never needs a person, so it stays out of Pulse's badge.
 const runningActions = () => C().actions.filter((a) => !ui.stopped.includes(a.id));
@@ -163,7 +163,7 @@ const gring = (pct, cls, t) => R.usageRing({ pct, warnAt: ui.s.warnAt, tone: t, 
 function avatar() {
   const rs = M.rings(C(), ui.s.warnAt);
   const c = C(), lines = rs.map((r) => r.line);
-  if (budgetGone()) lines.unshift(`Budget of ${M.usd(c.budget.limit)} used up: no run goes on until ${M.BUDGET_RESETS}`);
+  if (budgetGone()) lines.unshift(`Budget of ${M.usd(c.budget.limit)} used up: no task goes on until ${M.BUDGET_RESETS}`);
   const tip = lines.length ? lines.join('\n\n') : !c.usage.length ? 'No provider connected' : c.usage.some((u) => u.noQuota) ? 'No quota set: see Usage and costs' : 'Billed per token: see Usage and costs';
   return `<span class="pz-ava-wrap" title="${esc(tip)}">${rs.map((r, i) => gring(r.pct, 'pz-ring-' + i, r.tone)).join('')}<span class="pz-ava">${esc(initials())}</span><i class="acct-dot pz-ava-dot" aria-hidden="true">${R.icon('away', 8)}</i></span>`;
 }
@@ -193,7 +193,7 @@ function sidebar() {
   return `<aside class="pz-side">
     <div class="pz-brand"><span class="pz-word${swapCls}">${ui.page === 'settings' ? 'Settings' : 'Worca'}</span></div>
     ${ui.page === 'settings' ? settingsMenu() : ''}
-    <nav class="pz-nav${ui.page === 'settings' ? ' is-app' : ''}${swapCls}">${NAV.map(([ic, t]) => ic === 'runs' ? navGo('runs', ic, t, 'Runs: the page behind Pulse in this prototype') : R.navItem({ label: t, icon: svg(ic, 16), off: true, title: window.StillhetWould(`open ${t}`) })).join('')}</nav>
+    <nav class="pz-nav${ui.page === 'settings' ? ' is-app' : ''}${swapCls}">${NAV.map(([ic, t]) => ic === 'runs' ? navGo('runs', ic, t, 'Tasks: the page behind Pulse in this prototype') : R.navItem({ label: t, icon: svg(ic, 16), off: true, title: window.StillhetWould(`open ${t}`) })).join('')}</nav>
     <div class="pz-foot">${sideFoot()}</div>
   </aside>`;
 }
@@ -203,7 +203,7 @@ function topbar() {
   const words = [needsWords(), un && `${un} unread`, run && `${run} running`].filter(Boolean).join(' · ') || 'Nothing new';
   return `<header class="pz-top"><div class="pz-top-l">${R.search({ value: ui.q || '', label: 'Search or ask', results: searchResults() })}</div><div class="pz-top-r">
     ${R.topBarAction({ label: 'Pulse', icon: svg('signal', 16), labelCls: 'pz-pulse-l', kind: 'quiet', cls: 'topnav-act pz-pulse-b', badge, title: 'Pulse: ' + words, attrs: { 'data-pop': true, 'aria-haspopup': 'dialog', 'aria-expanded': String(!!ui.pop) } })}
-    ${R.topBarAction({ label: 'New run', icon: svg('plus', 14), labelCls: 'pz-new-l', kind: 'primary', title: 'Start a run', attrs: { 'data-newrun': true } })}
+    ${R.topBarAction({ label: 'New run', icon: svg('plus', 14), labelCls: 'pz-new-l', kind: 'primary', title: 'Start a task', attrs: { 'data-newrun': true } })}
   </div></header>`;
 }
 
@@ -282,8 +282,8 @@ function vitalsSections() {
   const needRows = [...c.needs.map((r) => { const a = nowAct(r), key = 'r:' + r.id, act = { fix: a.label, fixTip: a.tip }; return [levelOfRun(r), (r.missed ? row({ mark: R.kindMark({ kind: 'schedule', tone: 'act', size: 16 }), title: r.title, meta: metaOf(r, schedWords(r) || undefined), time: r.time, key, tip: clearsTip('A missed time never started: it needs you and is not a task', 'missed'), ...act }) : row({ mark: runMark(r.state, r.stage ?? -1), title: r.title, meta: metaOf(r), time: r.time, key, tip: clearsTip('Opens the task at what it asks', clearsKeyOf(r)), ...act })) + askStrip(key)]; }), ...c.places.map((x) => [R.alertLevel(x.tone), row({ mark: R.kindMark({ kind: x.kind, tone: x.tone, size: 16 }), title: x.title, meta: x.meta, key: `np:${x.go}`, tip: clearsTip(x.tip, x.clear || x.kind), fix: x.fix || 'Open', fixTip: x.fix ? 'Fast-forwards to the remote; nothing of yours is touched' : x.tip, fixBusy: x.fix === 'Syncing…' })])].sort((a, b) => b[0] - a[0]);   // highest level first (look.alert-ladder)
   const out = sec(R.runState('question').word, needRows.length, needRows.map(([, h]) => h).join(''), needsWords().includes('(') ? needsWords().replace(/^\d+ needs? you \((.*)\)$/, '$1') : '')
     + sec('Limits', lim.length, lim.map((l, i) => row({ mark: R.kindMark({ kind: 'event', tone: l.tone === 'over' ? 'fail' : 'act', size: 16, icon: 'signal' }), title: l.title, meta: l.detail, time: l.time, key: 'lim' + i, tip: `${l.tip} · opens Usage and costs` })).join(''))
-    + sec('Running', c.running.length, c.running.map((r) => runRow(r, 'Opens the live run')).join(''))
-    + sec('Running actions', c.actions.length, c.actions.map((a) => R.pulseRow({ mark: runMark('working'), title: a.run, meta: a.label, time: '', id: 'act:' + a.id, tip: a.go ? `Opens ${a.run}` : 'Its run is gone; it can still be stopped',
+    + sec('Running', c.running.length, c.running.map((r) => runRow(r, 'Opens the live task')).join(''))
+    + sec('Running actions', c.actions.length, c.actions.map((a) => R.pulseRow({ mark: runMark('working'), title: a.run, meta: a.label, time: '', id: 'act:' + a.id, tip: a.go ? `Opens ${a.run}` : 'Its task is gone; it can still be stopped',
       action: R.button({ label: 'Stop', kind: 'quiet', attrs: { 'data-act-stop': a.id, title: `Stop ${a.label} and free its port` } }) })).join(''))
     + scheduledSection(c.scheduled);
   const all = ui.vitalsShow === 'all' && ui.vitalsFrom === 'all';
@@ -299,7 +299,7 @@ const schedWords = (r) => { const id = schedIdOf(r), S = window.StillhetSchedule
 function scheduledSection(all) {
   const list = all.filter((r) => !schedGone(r));
   if (!list.length) return '';
-  const rowOf = (r) => row({ mark: R.kindMark({ kind: 'schedule', tone: r.when === 'missed' ? 'act' : 'idle', size: 16 }), title: r.title, meta: metaOf(r, schedWords(r) || (r.on && !r.resumes ? startDetail(r) : r.detail)), time: r.time, key: 'r:' + r.id, tip: r.resumes ? 'Opens the run: it resumes by itself' : r.queued ? 'Opens the run: it waits for a free slot' : 'Opens the run' });
+  const rowOf = (r) => row({ mark: R.kindMark({ kind: 'schedule', tone: r.when === 'missed' ? 'act' : 'idle', size: 16 }), title: r.title, meta: metaOf(r, schedWords(r) || (r.on && !r.resumes ? startDetail(r) : r.detail)), time: r.time, key: 'r:' + r.id, tip: r.resumes ? 'Opens the task: it resumes by itself' : r.queued ? 'Opens the task: it waits for a free slot' : 'Opens the task' });
   const groups = M.SCHED.filter(([id]) => list.some((r) => r.when === id)).map(([id, name]) => `<h4 class="pz-h pz-day">${name}</h4><div class="pz-list">${list.filter((r) => r.when === id).map(rowOf).join('')}</div>`).join('');
   return `<section class="pz-sec"><h3 class="pz-h">Scheduled <span class="n">${list.length}</span></h3>${groups}</section>`;
 }
@@ -351,7 +351,7 @@ function acctMenu() {
   // Who is looking, only on a shared sign-in; your team's new setup, until you look at it; the way past a blocked budget.
   const idn = identity(), id = idn ? `<div class="mcard id-card" role="group" aria-label="Signed in as"><span class="mc-k">Signed in as</span><b>${esc(LIVE ? acct.name : personName())}</b><small>${esc(idn.via)}</small></div>` : '';
   const team = c.teamSetup && !ui.teamSeen ? R.accountItem({ label: 'Your team updated the recommended setup', cls: 'pz-team', mark: R.statusDot({ tone: 'is-amber' }), value: 'Review', attrs: { 'data-team': true, title: 'Opens Settings › Team policy; the note goes once you have looked' } }) : '';
-  const raise = gone ? R.accountItem({ label: 'Raise budget', mark: svg('up', 16, 'mi-ic'), value: M.usd(c.budget.limit), attrs: { 'data-land': 'runs|Budget', title: 'Runs pause until the budget resets. Opens Settings › Tasks, on Budget' } }) : '';
+  const raise = gone ? R.accountItem({ label: 'Raise budget', mark: svg('up', 16, 'mi-ic'), value: M.usd(c.budget.limit), attrs: { 'data-land': 'runs|Budget', title: 'Tasks pause until the budget resets. Opens Settings › Tasks, on Budget' } }) : '';
   const sub = (id) => ({ 'data-sub': id, 'aria-haspopup': 'menu', 'aria-expanded': String(ui.sub === id) });
   // Top to bottom, rarest to most used, since the menu opens up from the avatar: how Worca looks and the door to
   // Settings; you today (Away, Keep awake); what the rings say, right above the avatar that wears them.
@@ -363,7 +363,7 @@ function acctMenu() {
     </div>
     <div class="msect" role="group" aria-label="You">
       ${R.accountItem({ label: 'Away', cls: 'away-item sw-item', mark: svg('away', 16, 'mi-ic'), hint: away.hint, sw: true, attrs: { role: 'menuitemcheckbox', 'aria-checked': String(away.state === 'away'), 'data-state': away.state, 'aria-disabled': away.disabled ? 'true' : null, 'data-sw': 'away', title: away.tip } })}
-      ${R.accountItem({ label: 'Keep awake', cls: 'sw-item', mark: svg('cup', 16, 'mi-ic'), sw: true, attrs: { role: 'menuitemcheckbox', 'aria-checked': String(!!ui.keep), 'data-sw': 'keep', title: 'Keeps the computer awake while runs are working. The display may still turn off.' } })}
+      ${R.accountItem({ label: 'Keep awake', cls: 'sw-item', mark: svg('cup', 16, 'mi-ic'), sw: true, attrs: { role: 'menuitemcheckbox', 'aria-checked': String(!!ui.keep), 'data-sw': 'keep', title: 'Keeps the computer awake while tasks are working. The display may still turn off.' } })}
     </div>
     <div class="msect" role="group" aria-label="Usage">${raise}
       ${R.accountItem({ label: 'Usage and costs', cls: 'pz-usage-item', hint: gone ? 'The budget' : top ? `${top.who}, ${top.what.toLowerCase()} limit` : c.budget ? 'Spent this month' : 'No limit reported', mark: gone ? gring(100, 'pz-mi-ring', 'over') : top ? gring(top.pct, 'pz-mi-ring', top.tone) : gring(0, 'pz-mi-ring', 'idle'), value: val, valueAlways: true, chev: svg('chevR', 14, 'mi-chev'), attrs: { ...sub('usage'), title: gone ? `Budget of ${M.usd(c.budget.limit)} used up: runs stay paused until it resets or you raise it` : top ? `Closest to its limit: ${top.line}` : 'Limits per harness and the spend' } })}
@@ -386,7 +386,7 @@ function usageFly() {
     return `<div class="pz-ublock"><div class="pz-uhead"><span class="pz-uname">${esc(pr.name)}</span><span class="pz-uplan" title="${esc(`${pr.vendor} · ${u.plan}`)}">${esc(pr.vendor)} · ${esc(u.plan)}</span><span class="pz-uas" title="As fresh as the last turn that used ${esc(pr.name)}">as of ${esc(u.asOf)}</span></div>${rows}${noSession}</div>`;
   };
   return R.navFlyout({ label: 'Usage and costs', cls: `pz-fly${inCls('sub')}`, body: `${back('Usage and costs')}
-    <span class="nav-fly-k" title="What can stop a run, per harness: the rings around your avatar show the closest of each">Limits</span>
+    <span class="nav-fly-k" title="What can stop a task, per harness: the rings around your avatar show the closest of each">Limits</span>
     <div class="pz-ublocks">${c.usage.length ? c.usage.map(block).join('') : `<p class="pz-unote">No provider connected. ${R.textLink({ label: 'Open Sign-ins', attrs: { 'data-land': 'models|GitHub Copilot|list', title: 'Opens Settings › Models › Sign-ins' } })}</p>`}</div>${spendCard(c)}
     <div class="msect" role="group">${R.accountItem({ label: 'Limit settings', mark: svg('gear', 16, 'mi-ic'), attrs: { 'data-land': 'runs|Warning line', title: 'The warning line, and what Worca does when a limit is near: Settings › Tasks › Limits' } })}</div>
   ` });
@@ -396,7 +396,7 @@ function spendCard(c) {
   const b = c.budget; if (!b) return '';
   const pct = M.spendPct(b), t = pct == null ? '' : M.tone(pct, ui.s.warnAt), saved = W.saved();   // one Saved figure: the world's
   const rows = `${b.limit ? `<dt>Budget</dt><dd>${M.usd(b.limit)}</dd>` : ''}<dt>Spent</dt><dd class="${t}">${M.usd(b.spent)}</dd>${saved ? `<dt title="${esc(saved.measure)}. The same figure as Insights">Time saved</dt><dd class="pos">${M.usd(saved.usd)}</dd>` : ''}`;
-  return `<div class="mcard spend-card" role="group" aria-label="Spend ${b.period}" title="Estimated spend ${b.period}: ${M.usd(b.spent)}${b.limit ? ` of ${M.usd(b.limit)}` : ''}. An estimate from Claude Code, not your bill"><div class="mc-head">${R.cardTitleLink({ label: `Spend ${b.period}`, attrs: { 'data-details': true, title: 'Opens Statistics: spend per run, model and day' } })}</div><dl class="mc-rows">${rows}</dl></div>`;
+  return `<div class="mcard spend-card" role="group" aria-label="Spend ${b.period}" title="Estimated spend ${b.period}: ${M.usd(b.spent)}${b.limit ? ` of ${M.usd(b.limit)}` : ''}. An estimate from Claude Code, not your bill"><div class="mc-head">${R.cardTitleLink({ label: `Spend ${b.period}`, attrs: { 'data-details': true, title: 'Opens Statistics: spend per task, model and day' } })}</div><dl class="mc-rows">${rows}</dl></div>`;
 }
 // A background on Chat home and the away screen: one family, built on the same dots.
 const BACKGROUNDS = [['dots', 'Dots', 'The quiet grid, fading down'], ['aurora-dots', 'Aurora dots', 'The same grid, cool at the top'], ['dusk-dots', 'Dusk dots', 'The same grid, warm from below'], ['mist', 'Mist', 'A faint wash under quiet dots'], ['none', 'None', 'A plain page']];
@@ -455,11 +455,11 @@ function newRun() {
   let advice = '';
   const signedOut = !C().usage.some((u) => M.PROVIDER[u.p].runs), gone = budgetGone(), offline = connOffline();
   if (signedOut) advice = note('is-amber', `Nothing that can run is signed in. Only mock runs work until you sign in.`, quiet('Open Sign-ins', { 'data-land': 'models|GitHub Copilot|list', title: 'Opens Settings › Models › Sign-ins' }));
-  else if (gone) advice = note('is-red', `The budget of ${M.usd(C().budget.limit)} is used up until ${M.BUDGET_RESETS}. A run can start once it resets or you raise it.`, R.button({ label: 'Raise budget', title: 'Opens Settings › Tasks, on Budget', attrs: { 'data-land': 'runs|Budget' } }));
+  else if (gone) advice = note('is-red', `The budget of ${M.usd(C().budget.limit)} is used up until ${M.BUDGET_RESETS}. A task can start once it resets or you raise it.`, R.button({ label: 'Raise budget', title: 'Opens Settings › Tasks, on Budget', attrs: { 'data-land': 'runs|Budget' } }));
   else if (ui.nr.moved) advice = note('', `${ui.nr.moved}.`);
   else if (lim) {
     const say = reached ? `${lim.name}'s ${lim.what} is used up until ${lim.resets}.`
-      : `${lim.name}'s ${lim.what} is at ${lim.pct}% and resets ${lim.resets}. This run may pause before it finishes.`;
+      : `${lim.name}'s ${lim.what} is at ${lim.pct}% and resets ${lim.resets}. This task may pause before it finishes.`;
     const other = rm.length ? R.button({ label: `Use ${pname(rm[0])}`, title: `${pname(rm[0])} has room: ${hint(rm[0])}. Each agent runs the same tier on it`, attrs: { 'data-nr-use': rm[0] } }) : '';
     if (waits) advice = note(reached ? 'is-red' : 'is-amber', `${say} It starts at ${lim.resets}, when that resets.${rm.length ? '' : ' No other harness has room.'}`,
       other + (reached ? '' : R.button({ label: 'Start now instead', kind: 'quiet', title: 'Start now: it may pause and resume by itself after the reset', attrs: { 'data-nr-now': true } })));
@@ -467,7 +467,7 @@ function newRun() {
     else advice = note('is-amber', say + (rm.length ? ` ${pname(rm[0])} has room.` : ' No other harness has room.'), other + R.button({ label: `Start at ${lim.resets}`, kind: 'quiet', title: 'Schedules it for when the limit resets', attrs: { 'data-nr-wait': true } }));
   }
   const start = waits && !gone ? `Start at ${lim.resets}` : 'Start run';
-  const cannot = signedOut ? 'Sign in first: nothing that can run is signed in' : offline ? 'Offline: Worca cannot start a run until the connection is back' : gone ? `The budget is used up: raise it, or wait for ${M.BUDGET_RESETS}` : '';
+  const cannot = signedOut ? 'Sign in first: nothing that can run is signed in' : offline ? 'Offline: Worca cannot start a task until the connection is back' : gone ? `The budget is used up: raise it, or wait for ${M.BUDGET_RESETS}` : '';
   return R.dialogFrame({ label: 'New run', cls: 'pz-newrun', scrimCls: inCls('nr').trim(), body: `
     <div class="pz-nr"><h2 class="pz-nr-h">New run</h2>
       <div class="pz-sentence">A task on ${items.length > 1 ? picker('nr-on', pname(h), items, 'Which harness runs it: each shows how much of its limits is used') : `<span class="pz-strong" title="The one harness that can run it: ${esc(hint(h))}">${esc(pname(h))}</span>`} in ${picker('nr-project', ui.nr.project, PROJECTS.map((x) => ({ id: x, text: x, checked: x === ui.nr.project })), 'Which project it runs in')}</div>
@@ -510,7 +510,7 @@ function bulkBar() {
 }
 // The page behind Pulse on pulse.html: Runs is drawn by the one Worca (index.html); Pulse opens over any page.
 function runsPage() {
-  return `<div class="pz-head"><h1 class="pz-title">Runs</h1></div>
+  return `<div class="pz-head"><h1 class="pz-title">Tasks</h1></div>
     <p class="pz-meta"><span>Runs is drawn by the one Worca. Pulse opens from the top bar over any page.</span></p>`;
 }
 
@@ -526,7 +526,7 @@ const offLive = (html) => R.tooltip({ text: R.NOT_LIVE_SENTENCE, off: true, html
 // A choice is a labelled picker of fixed width (docs/stillhet/settings.md: the value leads): one at the row's end, the
 // row's name its label; several in a line under the row's words, each under its own label. `choices`: { id, short|text, help }.
 const word = (x) => x.short || x.text;
-const rp = (id, label, choices, value, tip, many) => R.settingsRow.picker({ id, label, text: word(choices.find((x) => String(x.id) === String(value)) || choices[0]), open: ui.menu === id, showLabel: !!many, left: !!many,
+const rp = (id, label, choices, value, tip, many) => R.rowPicker({ id, label, text: word(choices.find((x) => String(x.id) === String(value)) || choices[0]), open: ui.menu === id, showLabel: !!many, left: !!many,
   tip: OFF_LIVE(id) ? R.NOT_LIVE_SENTENCE : tip, off: OFF_LIVE(id), chevron: svg('chevron', 12), items: choices.map((x) => ({ id: String(x.id), text: word(x), help: x.help, checked: String(x.id) === String(value) })) });
 const sectionId = () => ui.sset || (R.shows('advanced') ? SM.FIRST : 'general');   /* a newcomer lands on General, not on budgets */
 const menuGroups = () => SM.GROUPS.map((g) => ({ title: g.title, items: g.items.filter((id) => SM.visible(id, R.prefs.mode())).map((id) => ({ label: SM.title(id), icon: SM.ICONS?.[id] || '', current: id === sectionId(), attrs: { 'data-sset': id } })) })).filter((g) => g.items.length);   // a group with nothing at this mode has no head
@@ -573,7 +573,7 @@ function notifications() {
     const end = g.id === 'usage' ? quiet('Limits', { 'data-land': 'runs|Warning line', title: 'What a task does near a limit: Settings › Tasks › Limits' }) : '';
     // Both pickers keep their place whatever is chosen. Pulse keeps everything, so with Pulse only there is no level to
     // choose: the level picker stays, shows its value and says why it is off.
-    const lvl = gs.where === 'pulse' ? R.settingsRow.picker({ id: 'lvl:' + g.id, label: 'How much', text: word(M.LEVELS.find((l) => l.id === gs.level)), showLabel: true, left: true, off: true, tip: OFF_LIVE('lvl:' + g.id) ? R.NOT_LIVE_SENTENCE : 'Pulse keeps everything: choose a place beyond Pulse to choose how much goes there', chevron: svg('chevron', 12) })
+    const lvl = gs.where === 'pulse' ? R.rowPicker({ id: 'lvl:' + g.id, label: 'How much', text: word(M.LEVELS.find((l) => l.id === gs.level)), showLabel: true, left: true, off: true, tip: OFF_LIVE('lvl:' + g.id) ? R.NOT_LIVE_SENTENCE : 'Pulse keeps everything: choose a place beyond Pulse to choose how much goes there', chevron: svg('chevron', 12) })
       : rp('lvl:' + g.id, 'How much', M.LEVELS, gs.level, `How much of ${g.name} reaches you`, true);
     return R.settingsRow({ name: g.name, end, detailRows, detailAction, changed: [...(gs.level !== g0.level ? [{ name: 'How much', was: levelText(g0.level) }] : []), ...(gs.where !== g0.where ? [{ name: 'Where', was: whereText(g0.where) }] : []), ...g.events.flatMap(evChange)],
       picks: rp('whr:' + g.id, 'Goes to', M.WHERE, gs.where, `Where ${g.name} goes beyond Pulse`, true) + lvl,
@@ -629,8 +629,9 @@ function settingsPage() {
 // ---- search: runs, projects, workspaces, workflows, schedules, tickets, labels (label:), settings, add-ons, plugins and
 // chats, each with where it lives. What the mode or Labs hides is still found, with its lock note; picking it hands you to
 // the unlock and then on to it. The last row asks Chat. ----
-const NOTIF_ROWS = ['Desktop', 'Badge', 'Sound', 'Pulse icon', 'Breathing', 'Chat', 'Runs', 'Schedules', 'Automations', 'Pull requests', 'Usage', 'Away mode', 'Projects', 'Worca'];
+const NOTIF_ROWS = ['Desktop', 'Badge', 'Sound', 'Pulse icon', 'Breathing', 'Chat', 'Tasks', 'Schedules', 'Automations', 'Pull requests', 'Usage', 'Away mode', 'Projects', 'Worca'];
 const RUNS_LIMIT_ROWS = ['Warning line', 'Manual starts', 'Automatic starts'];
+const APPEARANCE_ROWS = ['Theme', 'Background', 'Breathing background', 'Text size'];
 const strict = (...ms) => ms.filter(Boolean).sort((a, b) => R.MODES.indexOf(b) - R.MODES.indexOf(a))[0] || '';
 const text = (x) => (typeof x === 'function' ? x(ui.sv) : x);
 // F-7b-16: classic Settings' card names (ui/public/settings-index.mjs CARDS, which Stillhet may not import: the import guard)
@@ -639,7 +640,7 @@ const text = (x) => (typeof x === 'function' ? x(ui.sv) : x);
 // test/stillhet-search-classic-names-host.test.mjs keeps this copy equal to CARDS.
 const CLASSIC_SETTINGS = Object.freeze([
   ['setup-assistant-card', 'Setup assistant', ['setup', 'install', 'onboarding', 'wizard', 'configure'], { sset: 'general', path: ['Setup', 'Setup assistant'] }],
-  ['appearance-card', 'Appearance', ['theme', 'dark mode', 'light mode', 'dark theme', 'colour', 'color', 'look', 'night mode', 'display'], { look: 'look' }],
+  ['appearance-card', 'Appearance', ['theme', 'dark mode', 'light mode', 'dark theme', 'colour', 'color', 'look', 'night mode', 'display'], { sset: 'appearance', path: ['Appearance'] }],   // Settings › Appearance since the redesign (it was the profile menu's alone)
   ['alerts-card', 'Alerts', ['notifications', 'sound', 'desktop notifications', 'notify'], { sset: 'notifications', path: ['Desktop'] }],
   ['extension-settings-card', 'Browser extension', ['chrome', 'browser', 'pinpoint'], { sset: 'general', path: ['Setup', 'Browser extension'] }],
   ['mode-settings-card', 'Interface mode', ['mode', 'simple', 'advanced', 'expert', 'level', 'complexity'], { look: 'lvl' }],
@@ -683,7 +684,7 @@ function classicFinds(out) {
   return out;
 }
 function settingsFinds() {
-  const out = [{ label: 'Settings', sset: SM.FIRST, where: 'Your menu' }, { label: SM.title('notifications'), sset: 'notifications', where: 'Settings' }, ...NOTIF_ROWS.map((n) => ({ label: n, sset: 'notifications', where: 'Notifications' })), ...RUNS_LIMIT_ROWS.map((n) => ({ label: n, sset: 'runs', where: 'Runs › Limits' }))];
+  const out = [{ label: 'Settings', sset: SM.FIRST, where: 'Your menu' }, { label: SM.title('notifications'), sset: 'notifications', where: 'Settings' }, { label: SM.title('appearance'), sset: 'appearance', where: 'Settings' }, ...APPEARANCE_ROWS.map((n) => ({ label: n, sset: 'appearance', where: 'Appearance' })), ...NOTIF_ROWS.map((n) => ({ label: n, sset: 'notifications', where: 'Notifications' })), ...RUNS_LIMIT_ROWS.map((n) => ({ label: n, sset: 'runs', where: 'Tasks › Limits' }))];
   const shown = (x) => !x.only || (x.only === 'live') === !!W.live;   // a sample row the live kind does not draw is not found either
   const sampleLive = (x) => !!x.sample && !!W.live;   // live, a sample section or row is found by its name only (set.not-live)
   for (const g of SM.GROUPS) for (const id of g.items) {
@@ -752,14 +753,15 @@ function searchHits() {
     if (page.length >= 5) break;
   }
   const places = Object.entries(window.StillhetPlaces || {}).flatMap(([k, m]) => (m.search ? m.search(q).slice(0, 4).map((x) => ({ ...x, area: m.area || k.charAt(0).toUpperCase() + k.slice(1), ...(SHELL?.needs(k) || {}) })) : []));
-  const named = [...own, ...places, ...M.find(q).slice(0, 14)];
+  // classic's names are search words too (old-addresses.js WORDS): "providers", "runs", "new run" land on today's place
+  const classic = (window.StillhetOldAddresses?.words?.(q) || []).map((x) => ({ ...x, area: x.sset ? 'Settings' : 'Places' }));
+  const named = [...own, ...places, ...classic, ...M.find(q).slice(0, 14)];
   // a setting found only by the words of its sentence counts when nothing is found by name
   const rest = [...named, ...(named.length || setByName.length ? setByName : set)].sort((a, b) => score(a) - score(b));
-  const look = q.length > 2 && /\b(appearance|theme|dark|light|system|background)/.test(q) ? [{ label: 'Appearance', where: 'Theme and background · your menu', area: 'Settings', look: true }] : [];   // lives in the profile menu, not in Settings
-  return [...page, ...look, ...rest].filter((e) => { const k = `${e.sset ? 'set|' : ''}${plain(e.label)}`; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 14);
+  return [...page, ...rest].filter((e) => { const k = `${e.sset ? 'set|' : ''}${plain(e.label)}`; if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 14);
 }
 // One search, everything it finds under the area it belongs to.
-const AREAS = [['On this page', 'eye'], ['Places', 'home'], ['Marketplace', 'nav-marketplace'], ['Projects', 'nav-projects'], ['Workflows', 'nav-workflows'], ['Requirements', 'nav-requirements'], ['Chats', 'kind-chat'], ['Tasks', 'kind-task'], ['Schedules', 'kind-schedule'], ['Settings', 'set-general'], ['Other', 'list']];
+const AREAS = [['On this page', 'eye'], ['Places', 'home'], ['Marketplace', 'nav-marketplace'], ['Projects', 'nav-projects'], ['Workflows', 'nav-workflows'], ['Requirements', 'nav-requirements'], ['Insights', 'nav-insights'], ['Chats', 'kind-chat'], ['Tasks', 'kind-task'], ['Schedules', 'kind-schedule'], ['Settings', 'set-general'], ['Other', 'list']];
 const areaOf = (e) => e.area || (e.sset ? 'Settings' : e.kind === 'place' ? 'Places' : /^(Runs|Run )/.test(e.where || '') || e.run ? 'Tasks' : /^Chat/.test(e.where || '') ? 'Chats' : /^Schedule/.test(e.where || '') ? 'Schedules' : 'Other');
 function searchResults() {
   if (!plain(ui.q).trim()) return '';
@@ -768,7 +770,7 @@ function searchResults() {
   const RMM = window.RunCardModel;
   const markOf = (e, area) => {
     if (area === 'On this page') return R.icon('eye', 14);
-    if (['Marketplace', 'Projects', 'Workflows', 'Requirements'].includes(area)) return R.icon(`nav-${area.toLowerCase()}`, 14);
+    if (['Marketplace', 'Projects', 'Workflows', 'Requirements', 'Insights'].includes(area)) return R.icon(`nav-${area.toLowerCase()}`, 14);
     if (area === 'Chats') return R.kindMark({ kind: 'chat', size: 16 });
     if (area === 'Tasks') { const cs = e.hash?.startsWith('run/') ? e.hash.slice(4) : e.case || e.run?.case; try { return R.kindMark({ kind: 'task', tone: cs ? R.markTone(R.runState(RMM.stateOf(cs))) : 'idle', stage: -1, size: 16 }); } catch { return R.kindMark({ kind: 'task', size: 16 }); } }
     if (area === 'Schedules') return R.kindMark({ kind: 'schedule', size: 16 });
@@ -793,6 +795,8 @@ function landRow(e) {
 }
 function land(e) {
   if (!e) return;
+  // a hit that names its row by a path (Catalogue › Sources › Import): the fold on the way opens, the last name is the row
+  if (e.path && e.path.length > 1) e = { ...e, label: e.path.at(-1), ...(e.path.length > 2 ? { open: e.open || `more:${e.sset}/${e.path.slice(0, -1).join('/')}`, parent: e.path.at(-2) } : {}) };
   closeOverlays();
   ui.sv.__open = e.open || ''; ui.sv.__confirm = null; ui.sv.__dialog = null;
   if (SHELL) { landing = e; SHELL.closeDrawer(); SHELL.go('settings/' + e.sset); return; }
@@ -939,7 +943,7 @@ function tabTitle() {
   return n ? `(${n}) Worca` : 'Worca';
 }
 // Session expired, Stillhet's way: a Dialog with its one step.
-const sessionDialog = () => (ui.session ? R.dialog({ title: 'Session expired', body: '<p class="pz-sess">Your sign-in has expired. Your runs keep going; this page catches up when you are back.</p>', yes: 'Sign in again', hooks: { cancel: { hidden: true } }, id: 'pz-sess-t' }) : '');
+const sessionDialog = () => (ui.session ? R.dialog({ title: 'Session expired', body: '<p class="pz-sess">Your sign-in has expired. Your tasks keep going; this page catches up when you are back.</p>', yes: 'Sign in again', hooks: { cancel: { hidden: true } }, id: 'pz-sess-t' }) : '');
 
 // ---- the away screensaver: Away, Keep awake, the window focused, 5 idle minutes; never under reduced motion (Motion's
 // one exception). Any input hides it, and that input does not reach the page. ----
@@ -1244,7 +1248,7 @@ const pickRow = (action, id) => { ui.pick = R.selectApply(ui.pick, action, { id,
 function openTarget(go, title, say, run) {
   ui.pop = false;
   if (!SHELL) { ui.pop = true; toast(window.StillhetWould(say.replace(/^Opens\b/, 'open'))); return; }
-  if (go.startsWith('run/')) SHELL.openRun(go, title, LIVE ? run : undefined); else SHELL.go(go);
+  if (go.startsWith('run/')) { if (LIVE && run) A.seenRun?.(run);   /* opening it from Pulse acknowledges it, whichever page the shell opens (dev's acknowledgeRun) */ SHELL.openRun(go, title, LIVE ? run : undefined); } else SHELL.go(go);
 }
 // The keys come from the library's table (docs/stillhet/keyboard.md); this owns what they do here. The panel's lists take
 // them wherever the focus is: Updates all of them, Vitals moving and opening only.

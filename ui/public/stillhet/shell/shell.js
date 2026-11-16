@@ -13,7 +13,6 @@
 // and what a place needs of the interface mode and Labs (the sidebar follows; a deep link above them gets one line).
 (function () {
   const R = window.StillhetUI;
-  const P = R.sidebarFrame.parts;   // the shell's new parts, until the library's index exports them (shell-frame.mjs)
   // places Stillhet redesigns (plans/stillhet/README.md): until then, what each will hold, said plainly
   const SOON = {
     workflows: ['Workflows: being redesigned with Stillhet', 'Your workflows, agents and scripts as one list beside the chat; building one happens in Chat today (Build workflow).'],
@@ -142,8 +141,8 @@
     const app = document.getElementById('worca');
     app.innerHTML = '';
     const col = el('<div class="main-col"></div>');
-    col.append(topBar(), el('<div id="stillhet-strip"></div>'), el('<div id="main-row" class="main-row"><main class="main" id="main-content" tabindex="-1"><div class="page-bg" aria-hidden="true"><div class="chat-home-bg"></div></div><div id="route-today"></div><div id="route-chat" hidden></div><div id="route-schedule" hidden></div><div id="route-place" hidden></div><div id="route-runs" class="pz-app stillhet-page" hidden></div><div id="route-run" class="rc-board" hidden><div id="card"></div><div id="task-dock" class="convo-dock"></div><div id="task-timeline"></div></div><div id="route-settings" class="pz-app stillhet-page" hidden></div></main><aside id="ask-side" class="ask-side" aria-label="Ask worca" hidden></aside></div>'));
-    app.append(el(P.skipLink()), el('<div class="nav-scrim" id="nav-scrim" hidden></div>'), sidebar(), col);   // key.skip-link: the first Tab stop
+    col.append(topBar(), el('<div id="stillhet-strip"></div>'), el('<div id="main-row" class="main-row"><main class="main" id="main-content" tabindex="-1"><div class="page-bg" aria-hidden="true"><div class="chat-home-bg"></div></div><div id="route-today"></div><div id="route-chat" hidden></div><div id="route-schedule" hidden></div><div id="route-place" hidden></div><div id="route-runs" class="pz-app stillhet-page" hidden></div><div id="route-run" class="rc-board" hidden><div id="card"></div><div id="task-timeline"></div></div><div id="route-settings" class="pz-app stillhet-page" hidden></div></main><aside id="ask-side" class="ask-side" aria-label="Ask worca" hidden></aside></div>'));
+    app.append(el(R.skipLink()), el('<div class="nav-scrim" id="nav-scrim" hidden></div>'), sidebar(), col);   // key.skip-link: the first Tab stop
     syncRail(); applyPrefs();
   }
 
@@ -161,7 +160,9 @@
   let inviteBack = false;   // Esc took the Invitation back: closed for this load, asked again on the next
   let quickNav = false;   // nav.place-button: the place's name and its chevron are one button; this is its menu
   // the places this mode has, each with how many of its things are open, the current one checked
-  const countOf = (place) => ({ chat: window.StillhetChats?.summary(), runs: window.StillhetRunsList?.summary(), schedules: window.StillhetSchedules?.summary() })[place]?.n || '';
+  // what needs you there, from the one count (StillhetWorld.countOf): the bar, its tab, this menu and Pulse never disagree
+  const NEED_KINDS = { chat: ['task'], runs: ['task', 'schedule'], schedules: ['schedule'], projects: ['project', 'proposal'] };
+  const countOf = (place) => (NEED_KINDS[place] && window.StillhetWorld?.countOf ? window.StillhetWorld.countOf(NEED_KINDS[place]) || '' : '');
   const placeOf = (view) => (view === 'run' ? (taskChat ? 'chat' : 'runs') : view === 'schedule' ? 'schedules' : view);
   const placeList = () => [...document.querySelectorAll('#side-rail nav.nav [data-nav]')].filter((b) => !b.hidden && !b.closest('[hidden]') && b.style.display !== 'none').map((b) => ({ id: b.dataset.nav, label: b.querySelector('.nav-label, .pz-nav-l, span')?.textContent.trim() || b.textContent.trim(), count: countOf(b.dataset.nav), current: b.dataset.nav === placeOf(routed.view), lab: !!b.dataset.flag, icon: R.icon(`nav-${b.dataset.nav}`, 14) }));   /* nav.labs: the word follows the row */
   let barMenu = false;   // the + as a menu, where a place makes things more than one way (list.bar-model)
@@ -179,8 +180,8 @@
     const plus = act ? `<span class="rc-pop">${R.button({ label: act[0], kind: 'quiet', iconOnly: true, icon: R.icon('plus', 15), attrs: { 'data-bar-new': act[1], ...(act[1] === 'place' && maker?.newMenu ? { 'aria-haspopup': 'menu', 'aria-expanded': String(barMenu) } : {}) } })}${barMenu && act[1] === 'place' && maker?.newMenu ? R.compactMenu({ label: act[0], items: maker.newMenu() }) : ''}</span>` : '';
     const hide = isStrip() ? R.button({ label: 'Keep the bar open', kind: 'quiet', iconOnly: true, icon: R.icon('bar-show', 15), attrs: { 'data-bar-pin': '', title: `Keep the bar open (${R.keyHint(['mod', '\\'], R.isMac(window))})` } }) : R.button({ label: 'Hide the bar', kind: 'quiet', iconOnly: true, icon: R.icon('bar-hide', 15), attrs: { 'data-bar-hide': '', title: `Hide the bar: it opens under the pointer (${R.keyHint(['mod', '\\'], R.isMac(window))})` } });
     // nav.place-button: the W alone goes home; the place's name and its chevron are one button that opens the places
-    document.getElementById('bar-head').innerHTML = P.barPlaceHead({ title, logo: R.icon('worca-w', 20), places: which !== 'home', open: quickNav,
-      menu: quickNav ? R.compactMenu({ label: 'Places', items: P.placeItems({ home: homeId ? { id: homeId, label: `${title} home` } : null, places: placeList() }) }) : '', action: plus, hide });
+    document.getElementById('bar-head').innerHTML = R.barPlaceHead({ title, logo: R.icon('worca-w', 20), places: which !== 'home', open: quickNav,
+      menu: quickNav ? R.compactMenu({ label: 'Places', items: R.placeItems({ home: homeId ? { id: homeId, label: `${title} home` } : null, places: placeList() }) }) : '', action: plus, hide });
     barInert();
     // the bar switching places cross-fades: the list that comes in fades in (nav.bar-switch)
     for (const [id, b] of [['bar-chat', 'chat'], ['bar-tasks', 'tasks'], ['bar-schedules', 'schedules'], ['bar-place', 'place'], ['bar-back', 'home']]) {
@@ -379,7 +380,7 @@
         if (taskState === 'ready' && retryFocus === arg) { retryFocus = ''; document.querySelector('#card [data-title]')?.focus({ preventScroll: true }); } }
       else if (pick && arg && (pick.value !== arg || reopen)) { reopen = false; pick.value = arg; pick.dispatchEvent(new Event('change', { bubbles: true })); }
       if (taskChat) window.StillhetChats?.show(taskChat); else window.StillhetRunsList?.show();
-      // a task is the work, a chat is where you talk about it: the task page has no chat box (#task-dock stays empty)
+      // a task is the work, a chat is where you talk about it: the task page has no chat box
       drawTaskParts();
       scrollTo(0, 0);
     }
@@ -537,7 +538,7 @@
       if (!target?.isConnected) return false;   // a list page already answered it, and drew again
       const inRun = !!target?.closest?.('#card, [data-run-tools]');
       // today's pages and the sidebar's places are the shell's own: neither the run page nor Pulse answers there
-      const inShell = !!target?.closest?.('#in-view-slot, #bar-back, #route-today, #route-runs, #route-chat, #route-schedule, #route-place, #bar-place, #task-dock, #task-timeline, #side-rail nav.nav, #bar-head, #bar-chat, #bar-tasks, #bar-schedules, #ask-side');
+      const inShell = !!target?.closest?.('#in-view-slot, #bar-back, #route-today, #route-runs, #route-chat, #route-schedule, #route-place, #bar-place, #task-timeline, #side-rail nav.nav, #bar-head, #bar-chat, #bar-tasks, #bar-schedules, #ask-side');
       return who === 'run' ? inRun : !inRun && !inShell;
     },
     runActive: () => !document.getElementById('route-run')?.hidden,
@@ -609,8 +610,6 @@
     if (!h.hasAttribute('tabindex')) h.setAttribute('tabindex', '-1');
     h.focus({ preventScroll: h === main });
   }
-  // classic's names are search words (old-addresses.js WORDS): the one search finds "providers", "runs", "new run" and lands on today's place
-  window.StillhetPlaces['~classic'] = { area: 'Places', search: (q) => window.StillhetOldAddresses?.words?.(q) || [] };
   // a task by its name, in the chats' store copy: its branch for its page (the page shows this task, not its case's fixture)
   const findTask = (title) => { for (const c of window.StillhetChats?.data().chats || []) { const w = (l) => { for (const t of l || []) { if (t.title === title) return t; const f = w(t.after); if (f) return f; } return null; }; const t = w(c.tasks); if (t) return t; } return null; };
   let lastLent = '';
@@ -626,7 +625,7 @@
   build();
   setAskW(askW); setBarW(barW);
   for (const t of ['pointerenter', 'pointerleave']) document.getElementById('side-rail').addEventListener(t, barInert);
-  R.search.watch(document);   // key.search: the arrows reach the results, the field says when they show
+  R.watchSearch(document);   // key.search: the arrows reach the results, the field says when they show
   R.watchClickGuard(document); R.watchOrbs(document); R.watchTooltips(document); R.watchMenus(document); R.watchStrips(document); R.watchScrollFades(document); R.watchFolds(document); R.watchStageAdvance(document);
   // The live kind: dev's uiLevel, as the server stamped it (data-level), and nothing posted at start (D21). The demo: a new
   // person starts in Simple; the mode they pick is remembered (docs/ui-levels.md)

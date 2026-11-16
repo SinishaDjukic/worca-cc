@@ -111,5 +111,3 @@ export function fileRow({ status, name, dir, path, notes = 0, added, removed, bl
 export function stackedPrRow({ n, title, line, meta, open = false, made = false, body = '', attrs: a = {} }) {
   return `<li class="st-row"><button type="button" class="st-head"${attrs({ ...a, 'aria-expanded': String(!!open), disabled: !!made, title: made ? 'This PR is already open; there is nothing to set' : null })}>${icon(open ? 'chevron' : 'chevSide', 14)}<span class="st-num">PR ${esc(n)}</span><span class="st-mid"><span class="st-t"${attrs({ title })}>${esc(title)}</span>${line}</span><span class="st-meta">${meta.map((m) => `<span>${esc(m)}</span>`).join('')}</span></button>${open && !made ? `<div class="st-body">${body}</div>` : ''}</li>`;
 }
-// Until index.mjs exports DiffView, a page reaches it through the row that opens a file's diff.
-fileRow.diffView = diffView;

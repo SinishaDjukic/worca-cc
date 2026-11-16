@@ -137,13 +137,13 @@ test('B2.7 F-6-01: a redraw that changes one part (a task finishes: on-it and la
   const state = seedTask(h.w);
   pickMore(h.d, 'rename'); await settle(80);
   await redraw(h.w);
-  const c = col(h.d), onIt = c.querySelector(':scope > p.convo-head');
+  const c = col(h.d), onIt = c.querySelector('.pj-panel > p.convo-head');
   assert.match(onIt.textContent, /working/, 'the task is on it');
   const head = nodes(c.querySelector('.place-head, header') || c.firstElementChild), form = field(h.d), dock = nodes(page(h.d).querySelector('.pj-tabs'));   // the redesign: no composer; the tabs keep their nodes
   state.now = 'merged';
   await redraw(h.w);
   assert.equal(col(h.d), c, 'the same frame');
-  assert.notEqual(c.querySelector(':scope > p.convo-head'), onIt, 'on-it was redrawn');
+  assert.notEqual(c.querySelector('.pj-panel > p.convo-head'), onIt, 'on-it was redrawn');
   assert.match(c.textContent, /Lately/, 'the finished task moved to Lately');
   assert.deepEqual(nodes(c.querySelector('.place-head, header') || c.firstElementChild), head, 'head kept');
   assert.equal(field(h.d), form, 'locate (the open form) kept');

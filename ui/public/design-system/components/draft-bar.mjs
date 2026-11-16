@@ -8,10 +8,11 @@ import { button } from './button.mjs';
  * @param {object} o
  * @param {number} o.changes        how many changes the draft holds
  * @param {boolean} [o.fresh]       never saved: nothing can run it yet
- * @param {string} [o.save]         Save's word
+ * @param {string} [o.save]         Save's word; where saving is publishing ("Publish"), the bar says "the published one"
  * @param {object} [o.hooks]        { save, discard }: attributes on each button
  */
 export function draftBar({ changes, fresh = false, save = 'Save', hooks = {} }) {
-  const said = fresh ? 'never saved · nothing can run it yet' : `${changes} ${changes === 1 ? 'change' : 'changes'} · tasks still run the saved one`;
+  const kept = /^Publish/.test(save) ? 'published' : 'saved';
+  const said = fresh ? `never ${kept} · nothing can run it yet` : `${changes} ${changes === 1 ? 'change' : 'changes'} · tasks still run the ${kept} one`;
   return `<div class="draft-bar" role="status"><b>Draft</b><span>${esc(said)}</span><span class="draft-sp"></span>${button({ label: 'Discard', kind: 'quiet', attrs: hooks.discard || {} })}${button({ label: save, kind: 'primary', attrs: hooks.save || {} })}</div>`;
 }

@@ -5,11 +5,11 @@ import assert from 'node:assert/strict';
 // ---- the shared parts ----
 test('PageFilters: one FilterRow with the page\'s small tools at its end; a pick reports data-pick', async () => {
   const { centerSentence, centerFilters, figuresButton } = await import('../ui/public/design-system/components/center.mjs');
-  assert.equal(centerSentence.filters, centerFilters, 'a page reaches it as R.centerSentence.filters until the index names it');
+  assert.equal(centerSentence.filters, undefined, 'a page calls R.centerFilters: no bridge on CenterSentence');
   const parts = [{ id: 'sort', label: 'Sort by', text: 'most urgent', items: [{ id: 'most urgent', text: 'most urgent', checked: true }, { id: 'A–Z', text: 'A–Z' }] }];
   const end = figuresButton({ open: false, attrs: { 'data-figs': '' } });
   const html = centerFilters({ parts, pick: 'sort', end });
-  assert.equal(html.match(/class="filter-row"/g).length, 1, 'one FilterRow, never one per field');
+  assert.equal(html.match(/class="fr"/g).length, 1, 'one FilterRow, never one per field');
   assert.ok(html.includes('data-pick="sort|A–Z"'), 'the open picker lists its choices as picks');
   assert.equal(html.split(end).length, 2, 'the tools are drawn once, whether FilterRow has an end slot or not');
   assert.ok(html.indexOf(end) > html.indexOf('data-menu="sort"'), 'the tools come after the pickers');
@@ -57,7 +57,7 @@ test('Workflows: StillhetGraph.mount says when the graph is wider than its box, 
 test('Workflows: the lists use FilterRow, the pages have no composer, and the editor bar holds Undo, Redo, Import, Export, Discard, Save', async () => {
   const { readFileSync } = await import('node:fs');
   const js = readFileSync(new URL('../ui/public/stillhet/workflows/workflows.js', import.meta.url), 'utf8');
-  assert.match(js, /R\.centerSentence\.filters\(/);   // PageFilters: the one FilterRow call the places share
+  assert.match(js, /R\.centerFilters\(/);   // PageFilters: the one FilterRow call the places share
   assert.doesNotMatch(js, /Showing \$\{/, 'no filter sentence');
   assert.doesNotMatch(js, /convo-dock|StillhetConversation\?\.dock\(/, 'no composer on a Workflows page (stillhet.chat-first)');
   assert.doesNotMatch(js, /Legacy approach/);
@@ -130,8 +130,8 @@ test('Workflows: the lists use FilterRow, the pages have no composer, and the ed
     const labels = ['Show', 'By', 'Then by', 'Time', 'Of', 'As', 'Compared with'];
     const html = labels.map((label, i) => filterRow({ parts: [{ label, id: `f${i}`, text: 'value', items: [{ id: 'a', text: 'value', checked: true }] }] })).join('');
     const d = body(html);
-    assert.deepEqual([...d.querySelectorAll('.filter-l')].map((e) => e.textContent), labels);
-    assert.equal(d.querySelectorAll('.filter-field [data-menu]').length, labels.length);
+    assert.deepEqual([...d.querySelectorAll('.fr-pick-l')].map((e) => e.textContent), labels.map((l) => `${l}:`));
+    assert.equal(d.querySelectorAll('.fr-pick[data-menu]').length, labels.length);
     assert.equal(d.querySelector('[data-menu="f2"]').getAttribute('aria-label'), 'Then by: Value');
   });
 

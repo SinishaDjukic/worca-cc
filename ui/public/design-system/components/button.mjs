@@ -93,7 +93,6 @@ export function busyWord(label) {
   if (verb === 'Answer' || verb === 'Retry') return `${ING[verb]}…`;
   return ING[verb] ? `${[ING[verb], ...rest].join(' ')}…` : `${String(label || 'Working').trim()}…`;
 }
-busy.word = busyWord;   // until index.mjs exports busyWord, a page reaches it through busy
 
 /**
  * A main step with its alternatives behind ▾ (StatusLine's action slot, a section's own action). The ▾ opens

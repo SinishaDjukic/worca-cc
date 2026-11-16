@@ -2,58 +2,25 @@
 
 | Rule | What | Why | Held by |
 |---|---|---|---|
-| `small.names` | A name is the thing, 1–3 words, a plain noun; one thing, one name. What Worca runs is a task on every screen, before and after an action; "run" stays only as a verb | The same word everywhere | ds-check |
-| `small.words-at-source` | The product's words are written once, where they are made; nothing rewords text at draw time. A task is a "task" in every word a person reads (the verb stays: Run now) | A rewrite at draw time reached people's own titles and messages | by hand |
-| `small.disabled-why` | A disabled control says why in its tooltip | It teaches what is coming and where | click-check |
+| `small.names` | A name (a page, a menu item, a section head, a settings row) is the thing itself as its users call it, 1 to 3 words, a plain noun first (Budget, Labels, Away mode). The same thing keeps its name everywhere: a menu item's name is its page's title | The same word everywhere | ds-check |
+| `small.names-never` | A name is never two things joined by "&" or "and", never Your, My or This, never a phrase or a question, never a word made up for the screen. The two exceptions are Now (Pulse's tab) and Usage and costs, which is one thing | Two things get two names, and a name is not a sentence | ds-check |
+| `small.words-at-source` | The product's words are written once, where they are made; nothing rewords text at draw time. What Worca runs is a "task" in every word a person reads; "run" stays only as a verb (Run now) | A rewrite at draw time reached people's own titles and messages | by hand |
+| `small.money-words` | Money is a budget, a window is a limit, and a task's own ceiling is its Cost cap | Three things that stop work, never one word for two | by hand |
+| `small.one-count` | What needs you is counted once, by Pulse's rule (`StillhetWorld.needs()`: each task, missed schedule, project and proposal, once). A place shows its own part and says so: Needs you 4, its tooltip "4 of 10: the tasks. Pulse has all 10" | Two counts for one list read as two lists | by hand |
+| `small.disabled-why` | A disabled control says why in its tooltip; what cannot be done yet stays visible and off | It teaches what is coming and where | click-check |
+| `small.hover-tint` | Hover is a tint, never a lift or a change of size | Nothing moves under the pointer | by hand |
+| `small.no-emoji` | No emoji and no exclamation marks | Calm | by hand |
 | `small.label-short` | A label holds 40 characters at most; its field stops there and says so | A label is a word or two: it has to fit its picker, its chip and a notice | by hand |
 | `small.name-short` | A chat's or a group's name holds 80 characters at most; its rename field stops there and says so | A name has to fit its row, its head and a notice | by hand |
-| `small.schedule-words` | A schedule's repeat and time read from one function (`scheduleWords`); every hour has no time of day | The sentence, the status, the row and its section cannot drift | design-system-components |
-| `small.sentence-pair` | In a sentence of pickers, a linking word (on, with, from, then, at) stays on one line with its picker | A word left at a line's end reads as a broken sentence | by hand |
-| `small.names-short` | A picker that holds several names says the first two and how many more (a, b, +3): `namesWord` | However many you tick, the sentence stays inside its column | by hand |
-| `small.no-emoji` | No emoji and no exclamation marks | Calm | by hand |
-| `small.sound` | A new event plays one soft chime for what the person chose; info never, a burst once, never in away hours | Hearing it is for what needs you; a sound that cries wolf gets turned off | design-system-logic |
-| `small.usage-rings` | Rings around the avatar show live usage of connected providers only, refreshed every minute; figures and money live in Usage and costs; the Usage and costs row always wears the ring glyph; with no reading it is an empty track and never a percent | What is drawn is what can stop a run now | worca-sweep |
-| `small.appearance` | The profile menu's Appearance opens the theme and the background, each a row of small pictures, its name in the tooltip; the menu row repeats neither | One place for how Worca looks | by hand |
-| `small.top-icons` | The top bar's own buttons are icons with their names in tooltips: Ask worca (Worca's W in a bubble), Pulse with its CountBadge | The top bar stays quiet; the search leads it | by hand |
-| `small.tooltip` | Every `title` is the library's Tooltip: quick on hover and on keyboard focus, a long-press on touch, inside the window; a menu item's tip sits beside the menu, level with the item, never over the next option | Help lives in tooltips, so they must be there when you look | design-system-components |
-| `small.one-tooltip` | A control has one tip: its own `title`, or the OffTip wrapper's, never both, and no titled child, `data-tip` or `aria-describedby` tooltip beside it (`doubleTips` finds them); a tip never covers its own control or, beside a menu, the menu and its next option (`tipPlace`) | Two tips over one control cover each other and say different things | design-system-components |
-
-- **Names** (a page, a menu item, a section head, a settings row): the thing itself, as the people who use it call it,
-  in 1–3 words, a plain noun first (`Budget`, `Labels`, `Away mode`, `Team policy`). One thing, one name: never two
-  things joined by `&` or `and` (two things get two names); never `Your …`, `My …` or `This …`; never a phrase or a
-  question (`What it may do`, `Up to date`); never a word made up for the screen. The same thing keeps its name
-  everywhere: a menu item's name is its page's title. `ds-check` reads every name on a Stillhet page by this rule. Two
-  exceptions: `Now`, the Pulse tab, a made-up word which only makes sense under Pulse; and `Usage and costs`, which is one thing.
-- Money is a **budget**, a window is a **limit**: `Budget`, `Raise budget`, `Limit settings`, the Limits of Usage and costs.
-  A run's own ceiling is its `Cost cap`.
-- Hover is a tint, never a lift.
-- A row with no state to show (an idle chat) may show its kind's line icon in the dot's place, in `--ink-2`; a row with
-  a state shows its dot.
-- A row that asks the person something shows its one answer as a quiet button at its right (`Approve`); the rest is in
-  its ⋯.
-- A disabled control says why in its tooltip. What the build cannot do yet stays visible and off, with the reason on a
-  second line: it teaches what is coming and where.
-- Progress cells stay neutral; colour sits only on the dot and the state word.
-- No emoji and no exclamation marks in the interface.
-- In a list you can select, the tick box takes the mark's place on the rail only while selecting, so the list keeps
-  one text edge.
-- Usage is rings around the avatar, outside in: session and the long window (week, day or month). They show live usage
-  and nothing else: only providers connected right now (signing one out removes it at once), refreshed every minute; offline,
-  the last figures stay with their time. Money is never a ring: a budget is set in Settings › Tasks › Budget (a day, a week or
-  a month) and read in Usage and costs. A ring's tooltip says what it shows, on two lines: `Weekly · Claude Code: 55%`, then
-  `Resets Wed 5:00 PM`. With nothing connected no ring is drawn and Usage and costs says so, with its link. Each ring shows
-  its tightest harness and shades along its arc: `--ink-2` at the start, `--amber` at
-  the warning line, `--red` at the limit; used up, full and solid red. Never green, never violet. Its figures live in
-  one place, the profile menu's Usage and costs flyout; a limit interrupts a start only in New run, Resume
-  and the confirm of a step that starts agent work, and only when the provider is at or past the warning line.
-- The bell has one number, the same on every page: the rows of Pulse's Needs you: each task, missed schedule, project that
-  needs you (Folder missing, Out of sync) and, from Advanced, workspace link question, once. A place's own Needs you counts
-  its own rows, in its own unit; the Runs row stays a place.
-- Pulse is the panel under its top-bar button, with no page of its own. Every notification setting lives in one
-  Settings tab, Notifications.
-- Sound: `Play a sound for [what needs you ▾]` in Notifications › Channels; choices what needs you (the default), also
-  problems, nothing. Only those play; info never does. A burst plays one sound. No sound during away hours. The chime is
-  two soft notes generated in the browser (`playChime`), no audio file, and no error when the browser blocks it before
-  the first click.
-
-**Menus.** A menu opens under what opened it, and above when there is no room under it and more room above; it slides sideways to stay inside, and scrolls inside when taller than its room. Its room is the window and every box around it that clips, such as a sidebar (watchMenus places them all). A menu with any toggle keeps the toggle's room on every item, so its words start on one edge. While a menu is open over the page, nothing outside it shows a tooltip.
+| `small.names-short` | A picker that holds several names says the first two and how many more (a, b, +3): `namesWord` | However many you tick, the picker keeps its width | by hand |
+| `small.sentence-pair` | In the composer's line a linking word (on, with) stays on one line with its picker | A word left at a line's end reads as broken | by hand |
+| `small.schedule-words` | A schedule's repeat and time read from one function (`scheduleWords`); every hour has no time of day | The read-back, the status, the row and its section cannot drift | design-system-components |
+| `small.top-icons` | The top bar's own buttons are icons with their names in tooltips: Ask worca (Worca's W in a bubble) and Pulse with its CountBadge. The search leads the bar | The top bar stays quiet | by hand |
+| `small.appearance` | How Worca looks has one value and two ways in: Settings › Appearance, and the profile menu's Appearance (the theme and the background, each a row of small pictures with its name in the tooltip) | One place for how Worca looks | by hand |
+| `small.usage-rings` | Rings around the avatar show live usage of the connected providers only, refreshed every minute; with none connected no ring is drawn, and with no reading a ring is an empty track, never a percent. Money is never a ring | What is drawn is what can stop a task now | worca-sweep |
+| `small.ring-look` | The rings read outside in: the session, then the long window. Each shows its tightest harness and shades along its arc: `--ink-2`, `--amber` at the warning line, `--red` at the limit, full solid red when used up; never green or violet | A ring warns in the ladder's own colours | design-system-components |
+| `small.ring-tip` | A ring's tooltip says what it shows on two lines (`Weekly · Claude Code: 55%`, then `Resets Wed 5:00 PM`); the figures themselves live in the profile menu's Usage and costs, whose row always wears the ring glyph | One home for the figures; the ring only signals | design-system-components |
+| `small.limit-interrupts` | A limit interrupts a start only in the New task form, on Resume and in the confirm of a step that starts agent work (`act.limit-note`), and only at or past the provider's warning line | You are asked when it matters, not on every start | by hand |
+| `small.sound` | A new event plays one soft chime for what the person chose in Notifications › Channels (what needs you by default, also problems, or nothing). Info never plays, a burst plays once, and nothing plays in away hours | A sound that cries wolf gets turned off | design-system-logic |
+| `small.tooltip` | Every `title` is the library's Tooltip: quick on hover and on keyboard focus, a long-press on touch, kept inside the window. A menu item's tip sits beside the menu, level with the item | Help lives in tooltips, so they must be there when you look | design-system-components |
+| `small.one-tooltip` | A control has one tip: its own `title` or its OffTip wrapper's, never both (`doubleTips` finds them). A tip never covers its own control or, beside a menu, the menu and its next option (`tipPlace`) | Two tips over one control cover each other and say different things | design-system-components |

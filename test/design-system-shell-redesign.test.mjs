@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
-import { placeButton, placeItems, barPlaceHead, skipLink, sidebarFrame } from '../ui/public/design-system/components/shell-frame.mjs';
+import { placeButton, placeItems, barPlaceHead, skipLink } from '../ui/public/design-system/components/shell-frame.mjs';
+import * as R from '../ui/public/design-system/components/index.mjs';
 import { filterRow, narrowedLine, groupRow } from '../ui/public/design-system/components/list-parts.mjs';
 import { list, listRow } from '../ui/public/design-system/components/list.mjs';
 import { listController } from '../ui/public/design-system/components/list-page.mjs';
@@ -45,10 +46,10 @@ test('barPlaceHead: the W alone goes home; the place\'s name is the one PlaceBut
   assert.equal(home.querySelector('.place-btn'), null); assert.equal(home.querySelector('.bar-title-w').textContent, 'Worca');
 });
 
-test('skipLink: the first Tab stop names where it goes; the new parts are reachable from a page', () => {
+test('skipLink: the first Tab stop names where it goes; the new parts are the library\'s exports', () => {
   const s = dom(skipLink());
   assert.equal(s.tagName, 'A'); assert.equal(s.getAttribute('href'), '#main-content'); assert.equal(s.dataset.skip, 'main-content'); assert.equal(s.textContent, 'Skip to content');
-  for (const k of ['placeButton', 'placeItems', 'barPlaceHead', 'skipLink']) assert.equal(typeof sidebarFrame.parts[k], 'function', `${k} is reachable from a page`);
+  for (const k of ['placeButton', 'placeItems', 'barPlaceHead', 'skipLink', 'narrowedLine', 'watchSearch']) assert.equal(typeof R[k], 'function', `${k} is exported`);
 });
 
 test('narrowedLine: says what the visit is narrowed to and offers Clear, a real button', () => {
@@ -181,9 +182,10 @@ test('classic\'s names are search words: each finds today\'s place once, from th
   const mod = { module: { exports: {} } };
   vm.runInNewContext(readFileSync(new URL('../ui/public/stillhet/shell/old-addresses.js', import.meta.url), 'utf8'), mod);
   const A = mod.module.exports;
-  const one = (q) => Array.from(A.words(q), (x) => `${x.label} > ${x.hash}`);
-  assert.deepEqual(one('providers'), ['Models > settings/models']);
-  assert.deepEqual(one('Import Models'), ['Models > settings/models']);
+  const one = (q) => Array.from(A.words(q), (x) => `${x.label} > ${x.hash || `${x.sset}${x.path ? ` / ${Array.from(x.path).join(' / ')}` : ''}`}`);
+  assert.deepEqual(one('providers'), ['Sign-ins > models']); assert.equal(A.words('providers')[0].head, true, 'it lands on the Sign-ins head of Settings › Models');
+  assert.deepEqual(one('Import Models'), ['Import > models / Catalogue / Sources / Import']);
+  for (const q of ['appearance', 'text size', 'font size']) assert.deepEqual(one(q), ['Appearance > appearance'], q);
   assert.deepEqual(one('runs'), ['Tasks > runs']);
   assert.deepEqual(one('statistics'), ['Insights > insights']);
   assert.deepEqual(one('activity'), ['Pulse > activity']);

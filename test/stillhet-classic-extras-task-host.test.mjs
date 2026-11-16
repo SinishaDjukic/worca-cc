@@ -43,7 +43,7 @@ test('COV-3 #1: ⋯ Send a direction opens the field; an empty send asks nothing
   card(d).querySelector('[data-page-direction-send]').click(); await settle(80);
   assert.deepEqual(sent(h.calls), [['POST', '/api/runs/pb/directions', { text: 'Use the v2 API' }]]);
   assert.equal(card(d).querySelector('#page-dir'), null, 'the field closes once dev took it');
-  assert.match(toastText(d) + card(d).textContent, /Sent: the run reads it at its next step/);
+  assert.match(toastText(d) + card(d).textContent, /Sent: the task reads it at its next step/);
   await pickMore(d, 'more:direction');
   card(d).querySelector('[data-page-direction-cancel]').click(); await settle(30);
   assert.equal(card(d).querySelector('#page-dir'), null);

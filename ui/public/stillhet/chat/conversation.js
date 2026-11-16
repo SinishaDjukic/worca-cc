@@ -354,7 +354,7 @@
     if (LIVE()) loadPins();   // StillhetChatLive starts after the pages load: the first live paint asks dev for the pins
     // Chat home's starters are cards: an icon, a name and one plain line of what it does, the whole card one button; the
     // rarely used ones are behind the last card, More
-    const card = R.starterCard || R.composer.starterCard, grid = R.starterGrid || R.composer.starterGrid;
+    const card = R.starterCard, grid = R.starterGrid;
     const PIN_SAYS = { Shaper: 'Asks you a few questions first, then writes a plan you approve' };
     const tile = (x, pin) => card({ icon: R.icon(x.icon, 18), label: x.label, says: x.says, attrs: { 'data-starter': x.id, ...(pin ? { 'data-pin': x.label, title: 'A workflow you pinned. Unpin it with a right-click' } : {}), ...(x.id === 'track' ? { 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'starter-track') } : {}) } });
     const live = liveTasks();
@@ -367,6 +367,9 @@
     const cards = shownPins().map((w) => tile({ id: `pin:${w}`, label: w, icon: w === 'Shaper' ? 'kind-feature' : 'kind-workflow', says: PIN_SAYS[w] || WORKFLOWS[w] || 'A workflow you pinned' }, true)).join('') + STARTERS.map((x) => (x.id === 'track' ? `<span class="rc-pop">${tile(x)}${trackMenu}</span>` : tile(x))).join('') + `<span class="rc-pop">${more}</span>`;
     return grid({ cards });
   }
+  // New task and Schedule a task both set the composer; the same thing as a labelled form is one click away, beside the chip
+  const FORM_OF = { task: 'newTask', schedule: 'newSchedule' };
+  const formLine = () => { const id = comp.intent; if (!FORM_OF[id] || !window.StillhetCenters?.[FORM_OF[id]]) return ''; return `<p class="chat-home-new chat-home-form">${id === 'task' ? 'Describe the task above, or fill in its fields:' : 'Say what should run and when above, or fill in its fields:'} ${R.button({ label: id === 'task' ? 'New task form…' : 'New schedule form…', attrs: { 'data-intent-form': id, title: 'What you typed and the project go with you' } })}</p>`; };
   const intentChip = () => { const x = comp.intent && intentOf(comp.intent); return x ? R.intentChip({ icon: R.icon(x.icon, 12), label: x.label, clear: { 'data-intent-clear': '' } }) : ''; };
   // ---- the prompt check chip (docs/stillhet/panels.md panel.chat-composer; dev's grader and Improve, prompt-check.mjs) ----
   // Live only, with Settings › Chat › Prompt check on. The module loads with import() the first time a draft is typed with
@@ -401,7 +404,7 @@
   }
   function pcInner() {
     const s = pc?.state(); if (!s?.visible || !s.kind) return '';
-    const kinds = pc.kinds(), name = kinds.find((k) => k.id === s.kind)?.label || s.kind, g = s.grade ? pcMod.GRADE_LABELS[s.grade] : '';
+    const kinds = pc.kinds().map((k) => ({ ...k, label: k.label.replace(/\ba run\b/, 'a task') })), name = kinds.find((k) => k.id === s.kind)?.label || s.kind, g = s.grade ? pcMod.GRADE_LABELS[s.grade] : '';
     const pick = R.sentencePicker({ id: 'cp-pcheck', text: name, label: `Prompt kind: ${name}${g ? `, ${g}` : ''}`, tip: 'What kind of task this is. Pick another to check it again', items: kinds.map((k) => ({ id: k.id, text: k.label, checked: k.id === s.kind })), open: menu === 'cp-pcheck', chevron: R.icon('chevron', 10) });
     const say = `<span data-pc-say aria-live="polite">${g ? R.chip({ text: g, cls: s.grade === 'needs-detail' ? 'pcheck-grade is-needs-detail' : 'pcheck-grade' }) : ''}</span>`;
     const improve = s.grade === 'needs-detail' && (s.improve === 'hidden' || s.improve === 'busy') ? R.button({ label: 'Improve', kind: 'quiet', attrs: { 'data-pc-improve-open': '', disabled: s.improve === 'busy' ? true : null, title: 'Suggests a clearer prompt; nothing changes until you use it' } }) : '';
@@ -636,7 +639,7 @@
       const persp = p?.persp || ['Product'];
       l.splice(at, 0, { t: 'change', id: `rq${k}`, from, kind: 'Requirements', title: `What “${clip(task, 40)}” must do`, why: `${persp.length + 2} requirements from your answers, by perspective`, rows: [
         { name: 'Product', before: '', after: qs[0]?.answered || 'The smallest change that works' }, { name: 'Product', before: '', after: 'It works for every account, not only yours' },
-        ...persp.filter((v) => v !== 'Product').map((v) => ({ name: v, before: '', after: { Security: 'Only people allowed to see it can use it', UX: 'It says what it does in plain words', Data: 'Numbers stay exact', Performance: 'Large exports stream', Operations: 'Every run is logged' }[v] || 'Reviewed' })),
+        ...persp.filter((v) => v !== 'Product').map((v) => ({ name: v, before: '', after: { Security: 'Only people allowed to see it can use it', UX: 'It says what it does in plain words', Data: 'Numbers stay exact', Performance: 'Large exports stream', Operations: 'Every task is logged' }[v] || 'Reviewed' })),
         { name: 'Rollout', before: '', after: qs[1]?.answered || 'Behind a flag first' }],
         actions: [['Agree and plan', 'primary', 'Requirements agreed'], ['Ask for changes', 'quiet', '']], menuItems: ['Try again'], state: 'proposed' });
       const own = p?.task && taskOf(p.task); if (own) { Object.assign(own, { case: 'question', detail: 'Requirements wait for your OK' }); put(chat(), own); }
@@ -946,7 +949,7 @@
       const isFlow = x.kind === 'Workflow' && x.state === 'proposed' && (x.steps || x.graph);
       const flowSteps = !isFlow ? [] : x.steps ? x.steps.map(([n, who, m, e]) => ({ name: n, says: `${(SAYS[n] || SAYS[who] || [who])[0]}. Out comes ${(SAYS[n] || SAYS[who] || ['', 'its result'])[1]}.`, meta: `${m} · ${e}`, check: /review|security/i.test(n) })) : STEPS.map(([k, v]) => ({ name: k, says: `${(SAYS[k] || [v])[0]}. Out comes ${(SAYS[k] || ['', 'its result'])[1]}.`, meta: v }));
       const story = isFlow ? R.workflowStory({ steps: flowSteps, loop: x.loop ? { from: x.steps.findIndex(([n]) => n === x.loop[0]), to: x.steps.findIndex(([n]) => n === x.loop[1]), text: `sends it back up to ${x.loop[2]} ${x.loop[2] === '1' ? 'time' : 'times'}` } : null }) : '';
-      const flowFacts = isFlow ? [{ label: 'Project', value: esc(chat()?.project || comp.project || 'Every project') }, { label: 'Stages', value: esc(String(flowSteps.length)) }] : null;
+      const flowFacts = isFlow ? [{ label: 'Project', value: esc(chat()?.project || comp.project || 'All projects') }, { label: 'Stages', value: esc(String(flowSteps.length)) }] : null;
       const once = isFlow && !LIVE() ? { label: 'Run once', attrs: { 'data-cp-once': x.id, title: 'Starts one task with it; nothing is saved' } } : null;
       if (isFlow) x.apply = 'Save workflow';
       const choice = x.choice ? `<div class="tp-sentence"><span>${esc(x.choice.label)}</span>${R.sentencePicker({ id: `cpch-${x.id}`, text: x.picked || x.choice.rec, tip: `${x.choice.label}: ${x.choice.rec} is what Worca recommends`, items: x.choice.items.map((v) => ({ id: v, text: v, help: v === x.choice.rec ? 'Worca recommends it' : '', checked: (x.picked || x.choice.rec) === v })), open: menu === `cpch-${x.id}`, chevron: R.icon('chevron', 10) })}</div>` : '';
@@ -1124,7 +1127,7 @@
     const c = chat();
     if (!chatId || !c) {
       frameKey = '';
-      root.innerHTML = side ? sideHome() : `<div class="chat-home" data-home><div class="chat-home-in"><h1>${esc(opts.title || 'What\'s next?')}</h1>${composerHtml()}${opts.mode ? '' : startersHtml() + newHere()}</div></div>`;
+      root.innerHTML = side ? sideHome() : `<div class="chat-home" data-home><div class="chat-home-in"><h1>${esc(opts.title || 'What\'s next?')}</h1>${composerHtml()}${opts.mode ? '' : startersHtml() + (formLine() || newHere())}</div></div>`;
     } else {
       const labels = (c.labels || []).map((l) => R.chip({ text: l })).join('');
       const st = LIVE() ? CL().state(c.id) : window.StillhetDemoState?.thread || 'ready', body = st === 'ready' || !st ? calmCards(turns()) : [{ key: 'state', html: threadState(st) }];
@@ -1462,7 +1465,7 @@
   // D9: a control whose action is out is drawn disabled on every paint until dev answers. Its focus is noted BEFORE it is
   // disabled (Chromium blurs a focused button the moment it is disabled) and given back to the redrawn control after.
   const selOf = (btn) => { const a = btn && [...btn.attributes].find((y) => y.name.startsWith('data-') && y.name !== 'data-key'); return a ? `[${a.name}="${CSS.escape(a.value)}"]` : ''; };
-  const busyWord = (label) => (R.busy.word ? R.busy.word(label) : `${label}…`);
+  const busyWord = R.busyWord;
   const busyDone = new WeakMap();   // a dimmed button's busy look ends when its action is answered
   function dim(b) {
     if (b.disabled) return;
@@ -1674,6 +1677,7 @@
     if ((hit = on('[data-q-drop]'))) { comp.queue.splice(+hit.dataset.qDrop, 1); if (!comp.queue.length) comp.queuePaused = ''; paint(); say('Removed from the queue'); return; }
     if (on('[data-q-send]')) { comp.queuePaused = ''; if (!comp.busy && (comp.queue || []).length) { comp.text = comp.queue.shift(); send(); } else paint(); return; }   // Send now
     if ((hit = on('[data-starter]'))) { const id = hit.dataset.starter; if (id === 'track') { menu = menu === 'starter-track' ? '' : 'starter-track'; paint(); } else arm(id); return; }
+    if ((hit = on('[data-intent-form]'))) { const id = hit.dataset.intentForm, keep = { ...(comp.text.trim() ? { text: comp.text.trim() } : {}), ...(comp.project && comp.project !== 'No project' ? { project: comp.project } : {}) }; comp.intent = ''; comp.text = ''; paint(); window.StillhetCenters[FORM_OF[id]](keep); return; }
     if (on('[data-intent-clear]')) { comp.intent = ''; paint(); root.querySelector('[data-composer-t]')?.focus(); return; }
     const pp = (attr) => { const h = on(`[${attr}]`); return h ? turns().find((y) => y.id === h.getAttribute(attr)) : null; };
     let px;

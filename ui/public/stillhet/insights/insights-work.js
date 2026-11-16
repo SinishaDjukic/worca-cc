@@ -6,7 +6,7 @@
   const isLive = () => window.StillhetAdapter?.kind === 'live';
   const K = () => (isLive() ? window.StillhetInsightsLive || null : M);   // the words: live/work-map.mjs, or the demo's equal copy
   const FIRST = 6;   // D9: rows shown before Show N more
-  const legend = () => R.markLegend({ items: [{ line: 'solid', text: 'Agent working, first run to last' }, { line: 'dashed', text: 'Waiting for review' }, { mark: R.gitMark({ status: 'merged' }), text: 'Merged' }, { mark: R.gitMark({ status: 'open' }), text: 'Open' }, { mark: R.gitMark({ status: 'closed' }), text: 'Closed' }] });
+  const legend = () => R.markLegend({ items: [{ line: 'solid', text: 'Agent working, first task to last' }, { line: 'dashed', text: 'Waiting for review' }, { mark: R.gitMark({ status: 'merged' }), text: 'Merged' }, { mark: R.gitMark({ status: 'open' }), text: 'Open' }, { mark: R.gitMark({ status: 'closed' }), text: 'Closed' }] });
   // D3: yours when this Worca knows one of its runs (live/work-map.mjs isOwn); your newest local run opens
   const ownRun = (it) => (isLive() ? [...it.runs].reverse().find((r) => window.StillhetWorld?.find?.(r.id))?.id || '' : '');
   function dataOf(c, name, st) {

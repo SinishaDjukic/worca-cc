@@ -1129,7 +1129,7 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .bar-house{display:grid;place-items:center;flex:none;width:28px;height:28px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);cursor:pointer;}
 .bar-house:hover,.bar-house.is-on{background:var(--field);color:var(--ink);}
 .bar-house:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
-.bar-title-w{padding:2px 0;} .bar-chev{margin-left:0!important;padding:2px 4px!important;}   /* nav.center-home: the word and the ▾ are two controls */
+.bar-title-w{padding:2px 0;}
 .rc-crumbs:has(+ .place-head){margin:0 0 6px;font-size:var(--fs-meta);color:var(--ink-2);} .rc-crumbs span.rc-crumb{color:var(--ink-2);}
 .bar-title{flex:1 1 auto;min-width:0;margin:0;font:600 var(--fs-section)/1.2 var(--sans);letter-spacing:-.01em;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .bar-list .pz-sentence,.bar-list .list-head{font-size:var(--fs-meta);}
@@ -1689,7 +1689,6 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .ro-sqs{display:inline-flex;gap:3px;flex:none;}
 .ro-sq{width:9px;height:9px;border-radius:2px;box-sizing:border-box;}   /* ds-ok: a square at this size */
 .ro-sq.is-ok{background:var(--ink-2);} .ro-sq.is-fail{position:relative;} .ro-sq.is-fail::after{content:'!';position:absolute;inset:-3px 0;text-align:center;font:600 12px/15px var(--sans);color:var(--ink);}   /* ds-ok: a run cell's mark */ .ro-sq.is-run{border:1.5px solid var(--ink-2);} .ro-sq.is-miss{border:1.5px solid var(--amber);}
-.center-sent{display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:var(--fs-meta);color:var(--ink-2);}
 .figs-line{margin:-2px 0 6px;font-size:var(--fs-meta);color:var(--ink-2);}
 .place-say{margin:3px 0 0;font-size:var(--fs-body);font-weight:500;color:var(--ink);}
 .tc-foot{display:flex;gap:6px;}
@@ -1704,11 +1703,10 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .center-also{display:flex;align-items:center;gap:12px;margin:12px 0 0;padding-top:12px;border-top:1px solid var(--line);font-size:var(--fs-body);color:var(--ink-2);}
 .center-also b{font-weight:500;color:var(--ink);}
 .center-flat{margin-top:14px;}
-/* The Legacy approach's forms (form.dialog) */
+/* The labelled forms that open from Chat (form.dialog) */
 .viewer-modal .card.rl-dialog.cc-dlg{width:min(640px,100%);max-height:calc(100vh - 48px);}
 .cc-dlg .dlg-body{display:flex;flex-direction:column;gap:16px;}
 .cc-dlg .dlg-body > *{margin:0;}
-.cc-frame{display:grid;gap:2px;font-size:var(--fs-body);line-height:1.75;color:var(--ink-2);}
 .cc-proof{font-size:var(--fs-meta);line-height:1.5;color:var(--ink-3);}
 .cc-lbl{position:relative;}
 .cc-lbl > .seg{position:absolute;right:0;top:-6px;}
@@ -1716,11 +1714,7 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 /* F-G-G3-01: a ticket source has no label row for the tabs to sit beside: they take their own row, its note and inputs under them */
 .cc-src{display:grid;gap:12px;}
 .cc-src > .seg{justify-self:end;}
-.cc-fold{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding-top:10px;border-top:1px solid var(--line);font-size:var(--fs-meta);color:var(--ink-2);}
-.cc-fold > .btn-quiet{padding-left:0;}
-.cc-more{display:grid;gap:12px;font-size:var(--fs-body);color:var(--ink-2);line-height:1.75;}
 .dlg-status > .btn-quiet:first-child{padding-left:0;}
-@media (max-width: 760px){.cc-frame br{display:none;}}
 
 /* list.fold-by-mark: a row's mark folds what is under it; it reads as the mark, with a hover like the row's */
 .lr-mark-fold{display:inline-grid;place-items:center;padding:0;margin:0;border:0;background:none;color:inherit;cursor:pointer;border-radius:50%;}
@@ -2050,3 +2044,18 @@ button.fr-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .choice-note .rc-word{white-space:normal;overflow-wrap:anywhere;}
 .choice-note > .rc-detail{grid-row:auto;display:block;white-space:normal;overflow:visible;-webkit-line-clamp:unset;overflow-wrap:anywhere;}
 .choice-note > .choice-note-row,.choice-note > .choice-note-ways{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;}
+
+/* PlaceHead (kind-mark.mjs placeHead): its `actions` slot. What the head offers whatever the state sits at the title's end;
+   on a narrow screen it takes its own line under the title. */
+.place-head-row{display:flex;align-items:flex-start;gap:8px 12px;min-width:0;}
+.place-head-row > .place-title{flex:1 1 auto;min-width:0;}
+.place-acts{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;flex:none;max-width:60%;}
+@media (max-width: 560px){ .place-head-row{flex-wrap:wrap;} .place-acts{max-width:none;justify-content:flex-start;} }
+
+/* ListRow (list.mjs listRow): a record that opens its own fine-tuning. The whole line is the trigger and the chevron at its
+   end turns, as on a SettingsRow; nothing swaps its word. */
+.list-row.is-opens > .lr-main.lr-opens{cursor:pointer;}
+.list-row.is-open .set-chev{rotate:90deg;}
+.lr-fold{display:inline-grid;place-items:center;min-width:28px;min-height:28px;padding:0;border:0;border-radius:var(--r-sm);background:none;color:inherit;cursor:pointer;}
+.lr-fold:hover{background:var(--hover);}
+.lr-fold:focus-visible,.lr-main.lr-opens:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}

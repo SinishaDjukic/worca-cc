@@ -47,18 +47,22 @@ export function moreMenu({ id, label, icon, items, open = false }) {
  * @param {boolean} [o.holds]       a folded group holding the one open now
  * @param {boolean} [o.flash]       it just landed here: lights once
  * @param {string} [o.after]        under the row, in its text column: members, rounds (markup)
- * @param {{open:boolean, attrs?:object, help?:string}} [o.fold]  a record's own fine-tuning: Customise shows `after`, Done hides it
+ * @param {{open:boolean, attrs?:object, help?:string, label?:string}} [o.fold]  a record's own fine-tuning, shown under it: the whole line is the
+ *   trigger and a chevron at its end turns, as on a SettingsRow (no word swap). A row that also opens a page keeps its name as the
+ *   way there, and the chevron alone is the trigger
  */
 export function listRow({ title, meta = '', mark = '', end = '', endText = '', open = null, menu = null, attrs: a = {}, check, boxAttrs = {}, lead = '', unread = false, current = false, holds = false, flash = false, after = '', fold = null, markFold = null }) {
   const body = `<span class="lr-t">${lead}${esc(title)}</span>${meta ? `<span class="lr-m">${esc(meta)}</span>` : ''}`;
-  const main = open ? `<button type="button" class="lr-main"${attrs(open)}>${body}</button>` : `<span class="lr-main">${body}</span>`;
+  const foldAttrs = fold ? { 'aria-expanded': String(!!fold.open), 'aria-label': `${title}: ${fold.label || 'more settings'}`, title: fold.help || null, ...(fold.attrs || {}) } : null;
+  const main = open ? `<button type="button" class="lr-main"${attrs(open)}>${body}</button>` : fold ? `<button type="button" class="lr-main lr-opens"${attrs(foldAttrs)}>${body}</button>` : `<span class="lr-main">${body}</span>`;
   const more = menu ? moreMenu(menu) : '';
   // a row with rows under it folds from its mark (list.fold-by-mark): the root icon is the trigger, its name still opens it
   const railMark = markFold ? `<button type="button" class="lr-mark-fold"${attrs({ 'aria-expanded': String(!!markFold.open), title: markFold.label || `${markFold.open ? 'Fold' : 'Show'} what is under ${title}`, 'aria-label': markFold.label || `${markFold.open ? 'Fold' : 'Show'} what is under ${title}`, ...(markFold.attrs || {}) })}>${mark}</button>` : mark;
   const rail = check === undefined ? railMark : checkbox({ cls: 'lr-check', why: 'Select', checked: !!check, attrs: { 'aria-label': `Select ${title}`, ...boxAttrs } });
-  const foldBtn = fold ? button({ label: fold.open ? 'Done' : 'Customise', kind: 'quiet', attrs: { 'aria-expanded': String(!!fold.open), title: fold.help || null, ...(fold.attrs || {}) } }) : '';
+  const chev = `<span class="set-chev" aria-hidden="true">${icon('chevR', 14)}</span>`;
+  const foldBtn = !fold ? '' : open ? `<button type="button" class="lr-fold"${attrs(foldAttrs)}>${chev}</button>` : chev;
   const shown = (!fold || fold.open) && (!markFold || markFold.open) ? after : '';
-  const state = [unread && 'is-unread', current && 'is-current', holds && 'is-holds', flash && 'is-flash', check && 'is-sel'].filter(Boolean).join(' ');
+  const state = [fold && 'is-opens', fold && fold.open && 'is-open', unread && 'is-unread', current && 'is-current', holds && 'is-holds', flash && 'is-flash', check && 'is-sel'].filter(Boolean).join(' ');
   return row({ kind: 'list', rail, text: main, cls: state, end: `${endText ? `<span class="lr-fig">${esc(endText)}</span>` : ''}${foldBtn}${end}`, more, attrs: { role: 'listitem', ...(current ? { 'aria-current': 'true' } : {}), ...a }, after: shown ? `<div class="lr-after">${shown}</div>` : '' });
 }
 

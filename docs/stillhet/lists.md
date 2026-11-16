@@ -2,83 +2,86 @@
 
 | Rule | What | Why | Held by |
 |---|---|---|---|
-| `list.bar-model` | Every place's bar is one model, Chat's: the head (W, the place, its +, hide), its sentence and then air, then sections: what needs you first and never folds, empty sections not drawn; a thing that holds things is a tree under its row, folding from its mark, starting folded when healthy; each row one line, kind mark, title, one end; under Needs you that end is one short reason. A place whose bar is ways in (Workflows, Marketplace) or a side menu (Settings, Insights) has no sentence; a section of ways in counts on its rows, not its head. The + is where the place makes things, a menu when there is more than one way (Ask in chat, By hand); an action is never a row | Learn one bar, know them all | design-system-components |
-| `list.filters` | What a list shows is set in a FilterRow above it: tabs with counts for its few fixed views, then labelled pickers of a fixed width (Project, Group by, Order). A pick never moves another control (from classic's tabs and dropdown filters) | Narrowed the same way everywhere, and each control keeps its place | design-system-components |
-| `list.sentence-person` | The sentence's "of" lists people under the header person only when the numbers come from 2 or more; one person is no choice. Ticking people narrows every number on the page to what they started | Your own numbers and a colleague's read the same way, without a second page | stillhet-insights-model |
-| `list.sentence-scope` | On a team's page, the sentence's "of" lists the teams that share their numbers under the header team, only when 2 or more do. It is a single choice that replaces what is read, and the sentence names it: of the billing-api team | You see one team's numbers at a time, as the team keeps them, and always know whose | stillhet-insights-host-1 |
-| `list.reset-view` | Reset view comes from resetViewTool: changed, it says the default in the sentence's own words; at the default it is off and says why | A disabled control's tooltip is its reason, never its action | design-system-components |
-| `list.sections` | Sections in a fixed order; empty ones not drawn; a long one shows less, never folds | Nothing hides | design-system-components |
-| `list.one-unit` | A section's count, its heading and the sentence's hint count one unit; where a section mixes kinds (a workspace and a project) it counts the unit the place lists, through the section's `count` | "5 need you" means the same 5 everywhere | design-system-components |
+| `list.bar-model` | Every place's bar is one model: its head, its one filter line, then sections; each row is a kind mark, a title and one end | Learn one bar, know them all | design-system-components |
+| `list.bar-head` | A bar's head is the W, the place button (`nav.place-button`), a + only where the place makes things by hand (Chat's New chat, Workflows, Projects, Marketplace), and Hide the bar. Tasks and Schedules have no + (`stillhet.chat-first`), and an action is never a row | The head says where you are and what the place can make, nothing else | design-system-shell-redesign |
+| `list.bar-tree` | A thing that holds things is a tree under its row, starting folded when healthy; under Needs you a row's second line is its one short reason | What depends on what is seen without leaving the bar | design-system-components |
+| `list.filters` | What a list shows is set on one FilterRow of about 32px: small text tabs with counts for its few fixed views, then on a page pickers with the label inside (Order: Most urgent), in a bar a chip for each filter off its default and one Filter control holding every part; its `end` slot holds the page's small tools (Figures). Never a label row above it, never two rows (from classic's tabs and dropdown filters) | Narrowed the same way everywhere, on one line that is scanned, not read | design-system-shell-redesign |
+| `list.filters-narrow` | In a bar under 340px the Filter control is its icon and two tabs show; while a chip shows, only the current tab stays | A chip is never cut to a letter | by hand |
+| `list.narrowed-visit` | A filter set by a link narrows the list for that visit only and is never stored: a NarrowedLine under the filters says `Narrowed to web-app` with Clear; leaving the place or Clear restores your view, and picking a filter yourself makes it yours | A link can show you a part without changing how your list is set | design-system-shell-redesign |
+| `list.sentence-person` | The filter's Of picker lists people under the header person only when the numbers come from 2 or more; ticking people narrows every number on the page to what they started | Your own numbers and a colleague's read the same way, without a second page | stillhet-insights-model |
+| `list.sentence-scope` | On a team's page the Of picker lists the teams that share their numbers under the header team, only when 2 or more do; it is a single choice and the page names it (the billing-api team) | You see one team's numbers at a time and always know whose | stillhet-insights-host-1 |
+| `list.reset-view` | Reset view comes from resetViewTool: changed, it names the default it returns to; at the default it is off and says why | A disabled control's tooltip is its reason, never its action | design-system-components |
+| `list.sections` | Sections come in a fixed order; an empty one is not drawn; a long one shows less behind Show N more, and never folds away what needs you | Nothing hides | design-system-components |
+| `list.one-unit` | A section's count, its heading and a tab's count count one unit; where a section mixes kinds it counts the unit the place lists, through the section's `count` | "5 need you" means the same 5 everywhere | design-system-components |
 | `list.fold-keeps-current` | The row you are on never folds behind Show N more; a group that holds it starts open | You never lose your place | worca-sweep |
 | `list.fold-by-mark` | A row with rows under it (a chat's tasks, a group's chats) folds and opens from its mark; its name still opens it | One trigger for folding in every bar, where the eye already is | design-system-components |
-| `list.sections-start-folded` | In a bar's list every period but Today starts folded; Needs you never folds, and a period holding the row you are on starts open; a period you open or fold stays so for that list | The bar shows today's work first; the rest is one click away | design-system-components |
-| `list.ways-in` | A bar whose items can grow without end (plugins, a catalogue) lists no items: only ways in, each with its count (Updates 12, Installed 40, a shelf, a source); each opens on the page, sorted, six at a time with Show N more. Lists you work through one by one (chats, tasks, schedules) stay lists | A bar stays the same size at ten items or a thousand | by hand |
-| `list.row-one-target` | The whole row highlights on hover and a click opens its default action, the thing's own page; a fact in it is text (from classic's rows that open on click) | You click what you see, and there are no second links in a row | by hand |
-| `list.row-opens-in-place` | A figure row may instead open its detail in place: one row open at a time, the detail full width directly under the row, with a head and Hide; the row carries aria-expanded and aria-controls, Esc inside the detail closes it and focus goes back to the row | A person's own work is read where the person is, without leaving the page | design-system-components |
-| `list.row-more` | A row's ⋯ holds its full list of actions. On a list page it is visible at rest; in a bar it shows on hover, on focus, on the current row and on touch. Its target is at least 28px, it is reached from the row by keyboard, and its menu floats over the rows after it | Hover is one way in, never the only one | by hand |
-| `list.select` | Selecting works one way in every list that has it; a list with no bulk action has no selecting, by any way in. Only Cancel, Esc or a finished action end it: unticking the last row keeps selecting | One habit; nothing vanishes under the pointer | design-system-logic |
-| `list.select-bar` | While selecting, one bar stays in sight at the top of the list, however far it scrolls: Select all, how many are selected, Cancel, then the actions, each with how many it applies to; what asks about them (the strip) stays with it. Selected and the actions count one unit: where a row stands for several, the spec's `count` says it in the actions' unit. Select all takes a list's rows, a group's row standing for its members; what hangs under a row and is not acted on in bulk has no box | How to act on several, and how to stop, is never below the fold | design-system-components |
-| `list.one-code` | A list calls the library for its sentence, selecting, keys and states; stillhet-library-gate sees its rows' markup only, the rest is by review | A list cannot drift | stillhet-library-gate |
+| `list.sections-start-folded` | In a bar's list every period but Today starts folded; Needs you never folds, a period holding the row you are on starts open, and a period you open or fold stays so for that list | The bar shows today's work first; the rest is one click away | design-system-components |
+| `list.ways-in` | A bar whose items can grow without end (plugins, a catalogue) lists only ways in, each with its count; each opens on the page, six at a time with Show N more. Lists you work through one by one (chats, tasks, schedules) stay lists | A bar stays the same size at ten items or a thousand | by hand |
+| `list.row-one-target` | The whole row highlights on hover and a click opens its default action, the thing's own page; a fact in it is text (from classic's rows that open on click) | You click what you see, and there are no second links in a row | design-system-shell-redesign |
+| `list.row-opens-in-place` | A figure row that has something to open is a button with a chevron and may open its detail in place, one at a time, full width under the row with a head and Hide; a row with nothing to open is plain text that says why | A person's own work is read where the person is, and nothing looks pressable that is not | design-system-components |
+| `list.row-facts` | A bar row says what it is without a tooltip, on two lines: its title, then a quiet `project · state` (for a row that needs you, why), with its time at the end; a tooltip shows only when the title is cut, and cost never shows in the bar | Three rows with the same title can be told apart at a glance | by hand |
+| `list.row-mark` | A round state mark is centred against a row or card of two lines | The mark belongs to the whole row, not to its first line | by hand |
+| `list.row-more` | A row's ⋯ holds its full list of actions in a target of at least 28px: visible at rest on a list page; in a bar on hover, on focus, on touch and always on the current row. Its menu floats over the rows after it, and the keyboard reaches it from its row (`keys.list-stops`) | Hover is one way in, never the only one | by hand |
+| `list.named-list` | A list is `role=list` with a name and its rows are list items; a bar's list is a named region | A screen reader says which list it is in and how long it is | design-system-shell-redesign |
+| `list.select` | Selecting works one way in every list that has it; a list with no bulk action has no selecting. Only Cancel, Esc or a finished action end it: unticking the last row keeps selecting | One habit; nothing vanishes under the pointer | design-system-logic |
+| `list.select-bar` | While selecting, one bar sticks to the top of the list: Select all, how many are selected, Cancel, then the actions, each with how many it applies to and off at 0 with its reason | How to act on several, and how to stop, is never below the fold | design-system-components |
+| `list.select-unit` | Selected and the actions count one unit: a row that stands for several says so through the spec's `count`, and what hangs under a row and is not acted on in bulk has no box | A count is what will happen | design-system-components |
+| `list.one-code` | A list calls the library for its filters (FilterRow), selecting, keys and states, and `listController` draws it from the rows a page names | A list cannot drift | stillhet-library-gate |
 | `list.state-source` | A row's state and section come from runState and sectionOf on its real case | A list can never call Paused or Stopped Ready | design-system-logic |
-| `list.opens-page` | A row opens a full page; coming back restores the sentence, the scroll and the selection | One way to move | worca-sweep |
-| `list.kind-mark` | A row's mark says what it is and how it stands, and there is one per row (a task's git mark is on its card): the type's icon in a ring in its level's colour (`look.alert-ladder`). A task's glyph shows its state: running play, waiting dots, paused, a question, an approval pencil (a plan waiting for your approval wears the pencil, as a gate does), ready a check in a ring, finished a plain check with no ring, failed filled "!", stopped square, merged a branch in full ink with no ring; a project or workspace that stopped shows the Warning's "!"; a chat keeps its bubble and a schedule its clock, in the ring's colour; each task under a chat shows its own state, and a Shaper card's own head keeps its type until it needs you. What needs you breathes until you open it (motion.attention); never a dot beside an icon. A plugin's mark is the plug or its service's mark, in one ink; its word is Update available, Needs set-up (installed, a required value still empty: its one action is Set it up), Installed or Not installed. Every task stays its own row; how far a feature is lives in its card | One thing to read, for every kind of row | design-system-components |
-| `list.needs-wash` | A row that needs you carries its level's wash across the whole row, one width on every row, slim (1px inside the row's height, 4px past its sides), with slightly curved ends (`--r-md`) and a 10px fade at each side; every row that needs you has it, whether or not its mark is one of the three that breathe, and Caution's wash is lighter than Warning's | It reads as one object, and the column stays straight | design-system-components |
-| `list.calm-motion` | One breath per tree, three per list: in a row with work under it only the deepest live thing breathes (a chat running a task: the task), and only the first three live marks of a list breathe (`BREATHE`); the rest hold still, their ring still saying they run. The list controller does it (`calmMarks`), so no page counts | Motion points at the one thing working, not at every row | design-system-components |
-| `list.one-end` | A row in the bar says what it is without a tooltip: its mark, its title and one thing at its end (its state, git's icon or its time), and where titles repeat a quiet second line with its project. Cost never shows in the bar | Three rows with the same title can be told apart at a glance | by hand |
-| `list.bar-row-size` | A one-line row in a bar (the Chat bar, the bar home's Pinned and recent) is 32px on a fine pointer: a 28px rail and its end on the title's line; on touch (pointer:coarse) the rail keeps the list's 40px. An unread row leads its title with a 6px round dot in Advisory's ink (`.lr-unread`), in the slot a pin takes | Every bar reads at one rhythm, and a finger still gets its target | stillhet-css-fit |
+| `list.opens-page` | A row opens a full page, and the bar stays where it was: its filters, its scroll and its selection, with the row you are on marked | One way to move, and the list is still there when you look back | worca-sweep |
+| `list.kind-mark` | A row has one mark that says what it is and how it stands: the type's icon in a ring in its level's colour (`look.alert-ladder`), never a dot beside an icon; the glyphs are the table below | One thing to read, for every kind of row | design-system-components |
+| `list.needs-wash` | A row that needs you carries its level's wash across the whole row, with the row's own corners (`--r-sm`) and a soft fade at each side; Caution's wash is lighter than Warning's | It reads as one object, and the column stays straight | stillhet-css-fit |
+| `list.calm-motion` | One breath per tree, three per list: in a row with work under it only the deepest live thing breathes, and only the first three live marks of a list (`calmMarks`); the rest hold still | Motion points at the one thing working, not at every row | design-system-components |
+| `list.bar-row-size` | A bar row's rail is 28px on a fine pointer and 40px on touch, its end on the title's line; an unread row leads its title with a 6px dot in Advisory's ink | Every bar reads at one rhythm, and a finger still gets its target | stillhet-css-fit |
 | `list.news` | A row whose state changes pulses its mark once, and its title stays bold until you open it; no new symbol | You notice a change without a badge to clear | design-system-components |
-| `list.tree` | What hangs under a row (a chat's tasks, a task that waits on another) is a rounded tree, always open | You see what depends on what without opening anything | design-system-components |
+| `list.tree` | What hangs under a row (a chat's tasks, a task that waits on another) is a rounded tree | You see what depends on what | design-system-components |
+| `list.group-row` | A group row (a feature, a chain, a chat group) wears its most urgent member's mark and ends in its count (2/3) and a fold; a member that needs you raises the group into Needs you, and its second line says why | A group reads as one row until something in it wants you | design-system-components |
+| `list.chat-row` | An idle chat shows its kind's icon as its mark (`chatState`, `CHAT_KINDS`), a chat that a chat integration opened wears that service's logo (`originMark`), and a pinned chat leads its section | A chat's row says how it began and whether it works, in one mark | design-system-components |
+| `list.bulk` | Bulk actions read the shared table (`planBulk`, `skipText`): a count is what will happen and its tooltip names what it skips; what can be taken back offers Undo in its Toast, what cannot asks in the strip | The same answer for one row and for fifty | design-system-logic |
+| `list.states` | A list's states come from `listState`: nothing for 300ms, then loading; offline and could not load with Try again; empty in the filter's own words or, with nothing at all, its one way on. Rows on screen stay when a refresh fails, and one Toast says so | A list never flashes and never reads as empty when it failed | design-system-components |
 
-**Reference for Wave 2.** The Runs list and Chats below describe the prototype's reference pages, not Wave 1's work: Wave 2 Shaping decides them. A list's sentence, selecting and bulk hold now for what Pulse uses.
+## A task's mark, by state
 
-**A list page** (Runs; reference for Wave 2; never for a new tracked thing, which is A list in its place, `build.default`): the top bar's trail, then the title row with the page's one action at its right
-(`New schedule`), then a list. **A list** (runs, updates, files, PRs): divided ListRows on the rail. A row is its state mark on the rail (a status
-dot, or a tick box while selecting), a title line, a meta line, its time or figure at the right; the whole row opens
-its one target, so a fact in the row is text, never a second link. The row's own actions are a small ⋯ (22px, a 14px mark, centred on its title's line, inside the row) at its right end
-(the Runs list's row ⋯), the same CompactMenu as on its page. Rows sit in sections in a fixed order, newest first in each; a section with no rows is not drawn. Every list groups
-the same way, from the library (`byPart`, `BY_CHOICES`): **by date by default** (`dateSections`: what waits on you first,
-then Today, Yesterday, Previous 7 days, Previous 30 days, Older; what is still to come by its next run: Today, Tomorrow,
-This week, Later), then state, project, topic and AI topics where a list has them, always in that order and those words.
-A date section folds from its head (a chevron turns) and stays folded for that list; What waits on you never folds. A long
-section shows its newest rows, then one quiet row, `Show 21 more`, opens the rest in place (Older shows 3), and becomes `Show less`. The row you are on never folds behind it: it stays under the first rows, so a chat that moved (merged, answered) is still where you look (`list.fold-keeps-current`). What the list shows is a sentence above it (`Showing [unread ▾] from [all groups ▾]`), not a
-filter button; grouping is one more word in it (`by [day ▾]`), each choice in its menu with its count. Every
-list (Runs, Chats, Pulse's Now and Updates, Schedules) uses this one sentence, so a list is narrowed the same way everywhere. Selecting is only for a list whose rows a person can act on together (Runs, Chats, Pulse's Updates); a list of states that leave by themselves (Pulse's Now) has the sentence and no selection. Selecting works the same in every list that has it. You start it from the list's menu
-(`Select`), with ⌘ or Ctrl-click, with Shift-click for a range, with Space or ⌘A, or with a long-press on touch.
-The sentence stays. The selection bar (`.runs-bulk`, `list.select-bar`) sits under it and sticks to the top of the list while it scrolls:
-`Select all · 2 selected · Cancel`, then `Archive 2 · Delete 2`. Each action shows how many rows it applies to and is disabled at 0, its tooltip saying why, so
-what cannot apply to this selection cannot be pressed. Cancel or Esc ends selecting, wherever the focus is, and so does an action once it has finished; its Toast says how many it acted on. An action that can be taken back does not confirm and offers Undo in its Toast; one that cannot confirms in the strip.
-A list that has selecting calls the library: `selectionAction` and `selectApply` (`selection.mjs`) for what a click, a
-long-press or a key means, `selectionBar`, `selectAllBox` and `bindLongPress` (`selection-bar.mjs`) for its parts. On
-touch a list shows its marks by default, since state comes first; the tick boxes take the mark's place only while selecting, started by a
-long-press or `Select`, and while selecting a tap on a row ticks it instead of opening it. Unticking the last row keeps selecting, at `0 selected`. The keys are in [keyboard.md](keyboard.md).
-Empty is EmptyState's one sentence and, when there is one, the way forward as its one quiet action (`No schedules
-yet.` · New schedule).
+| State | Glyph |
+|---|---|
+| Running | Play, in a ring that breathes (`look.running-sign`) |
+| Waiting to start | Three dots |
+| Paused | Two bars |
+| A question | ? |
+| Needs approval (a plan or a gate) | Pencil |
+| Ready | A check in a ring |
+| Finished | A plain check, no ring |
+| Failed | A filled ! |
+| Stopped | Square |
+| Merged | A branch in full ink, no ring |
 
-**The one code.** `listSentence` draws the sentence for Pulse's Now and Updates, the Tasks list and the Chat list in the bar;
-`listController` (`list-page.mjs`) is what a list page does: it draws the list from the rows a page names, and owns its
-menus, selecting, keys, `Show N more`, a group's ⌄, the strip, a Dialog and its editor. A page only names its rows, its
-sentence and what an action does. A row's end column holds its PR, its time or its count; its labels are text in its meta.
+A chat keeps its bubble and a schedule its clock, in the ring's colour; a project or workspace that stopped shows the
+Warning's !. A plugin's mark is the plug or its service's mark in one ink, and its word is Update available, Needs
+set-up, Installed or Not installed.
 
-**The sentence's words.** `Showing [what ▾]`, then `started by [everyone ▾]` on a shared sign-in, `from [where ▾]`,
-`by [grouping ▾]`, and `labelled [hotfix ▾]` while a label narrows it: the top bar's search sets it (`label:hotfix`), and
-that menu's `any label` lifts it. An order is not what a list shows, so Sort is a choice in the list's ⋯, with `Select`,
-`Reset view` (off at the defaults) and `Keyboard shortcuts`.
+## Grouping, in this order and these words
 
-**A group row** (a feature, a chain, a person's group, a chat group): its mark is its most urgent run's or chat's, its
-end its count (`2/3`) and ⌄. It is open while it is not finished, and the person's ⌄ wins for the session. A section
-never folds; a group's members do, since they are a row's parts. A chat group has no page, so its row folds too. A member
-that needs you raises its group into Needs you, and the group's meta says why (`Run 3 needs you · Checks failing`).
+From the library (`byPart`, `BY_CHOICES`, `dateSections`): by date by default, then state, project, topic and AI topics
+where a list has them.
 
-**A run's PR fix rounds** stack under it: the newest round's line and `7 rounds`; open, each is a row to its page, 5, then
-`+n earlier`. A round whose run has gone lists alone as `… · Round 3`.
+| By date | Sections |
+|---|---|
+| What has happened | Needs you (never folds), Today, Yesterday, Previous 7 days, Previous 30 days, Older |
+| What is still to come | Today, Tomorrow, This week, Later |
 
-**Bulk actions** read the shared table (`planBulk`, `skipText`), so a count is what will happen and its tooltip names
-what it skips. Archive (`act.archive`), Restore, Label, Add to group and Pin take Undo; Stop and Delete ask in the strip. Delete and the
-group actions need Advanced; Label needs `runLabels`.
+## Selecting
 
-**States.** `listState`: nothing for 300ms, then `Loading runs…`; offline and could not load with Try again; empty in
-the filter's own words, or, with nothing at all, its one way on. Rows on screen stay when a refresh fails, and one Toast says so.
+| Start it | End it |
+|---|---|
+| Select in the list's ⋯, ⌘ or Ctrl-click, Shift-click for a range, Space, ⌘A, a long-press on touch | Cancel, Esc, or an action that finished |
 
-**Chats** (reference for Wave 2) are this list in a side column ([panels.md](panels.md)): Needs you first, then Running, then Recent; an idle
-chat shows its kind's icon in the dot's place (`chatState`, `CHAT_KINDS`), a chat a chat integration opened wears its logo
-(`originMark`). A pinned chat leads its section.
+A list that has selecting calls `selectionAction` and `selectApply` (`selection.mjs`) for what a click, a long-press or
+a key means, and `selectionBar`, `selectAllBox` and `bindLongPress` (`selection-bar.mjs`) for its parts. On touch the
+tick boxes take the mark's place only while selecting. The keys are in [keyboard.md](keyboard.md).
+
+## Bulk actions
+
+| Action | Asks or Undo | Needs |
+|---|---|---|
+| Archive (`act.archive`), Restore, Label, Add to group, Pin | Undo in its Toast | Label needs `runLabels`; the group actions need Advanced |
+| Stop, Delete | Asks in the strip | Delete needs Advanced |

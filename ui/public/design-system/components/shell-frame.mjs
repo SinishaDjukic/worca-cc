@@ -153,6 +153,3 @@ export function barPlaceHead({ title, logo = '', places = true, open = false, me
 export function skipLink({ to = 'main-content', label = 'Skip to content' } = {}) {
   return `<a class="skip-link"${attrs({ href: `#${to}`, 'data-skip': to })}>${esc(label)}</a>`;
 }
-
-// Until index.mjs exports them, a page reaches the new parts through an exported neighbour: R.sidebarFrame.parts.
-sidebarFrame.parts = { placeButton, placeItems, barPlaceHead, skipLink };

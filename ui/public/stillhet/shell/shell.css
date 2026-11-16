@@ -104,13 +104,11 @@
 body.view-stillhet-chat .main{display:flex;flex-direction:column;overflow:hidden;}
 .convo-answer{margin:6px 0 0 32px;}.convo-answer-go{margin-top:8px;}
 #route-run{position:relative;}
-#task-dock{position:sticky;bottom:0;background:var(--bg);padding:10px 56px 12px 24px;}
 #task-timeline .timeline{position:fixed;top:60px;right:8px;bottom:110px;}
-@media (max-width: 760px){ #task-timeline{display:none;} #task-dock{padding:8px 12px;} }
+@media (max-width: 760px){ #task-timeline{display:none;} }
 body.view-run .main{display:flex;flex-direction:column;overflow:hidden;}
 #route-run:not([hidden]){flex:1 1 auto;min-height:0;display:flex;flex-direction:column;padding:0;}
 #route-run > #card{flex:1 1 auto;min-height:0;overflow:auto;padding:32px 56px 32px 32px;}
-#task-dock{flex:none;position:static;}
 @media (max-width: 760px){ #route-run > #card{padding:16px;} }
 .bar-list .list-rows,.bar-list .list-row,.bar-back .list-row,.convo-col .list-rows,.convo-col .list-row{margin-left:0!important;}
 .convo-col .list-row{grid-template-columns:20px minmax(0,1fr) auto;column-gap:12px;}
@@ -127,7 +125,6 @@ body.is-resizing-bar{cursor:col-resize;user-select:none;}
 body.view-stillhet-chat .main,body.view-run .main{padding:0;}
 #route-run > #card{width:100%;max-width:none;align-self:stretch;box-sizing:border-box;}
 #route-run > #card > *{width:100%;max-width:720px;margin-inline:auto;}
-#task-dock .composer,#task-dock .convo-dock-note{max-width:720px;}
 @media (max-width: 760px){ #side-rail{position:fixed;width:280px;flex:none;} }
 #task-timeline .timeline{right:4px;}
 /* The prototype's own corner sits in the top bar's free left, clear of the composer. */
@@ -140,9 +137,7 @@ body.view-stillhet-chat .main,body.view-run .main{padding:0;}
 .bar-back.stillhet-page{padding-left:10px;}
 @media (max-width: 760px){ .mk-tools .mk-stamp{display:none;} }
 .main{position:relative;}
-/* One background rule (look.backgrounds): every reading page, Chat home, a chat, a task, the Tasks and Schedules homes and
-   Settings, shows the page's background faded into its column; only the away screen has it full. */
-body:not(.view-stillhet-chat):not(.view-run):not(.view-settings):not(.view-runs) .page-bg{display:none;}
+/* One background rule (look.backgrounds): the page's background is the same on every page (css/stillhet.css .page-bg). */
 #route-chat,#route-schedule,#route-place,#route-run,#route-settings,#route-runs{position:relative;z-index:1;}
 #route-run.rc-board,#route-settings,#route-settings .pz-page{background:transparent;}
 /* A row's ⋯: its own, never its parent's too. */
@@ -267,7 +262,6 @@ body:has(.wf-canvas) > .rc-toast{top:112px;}   /* ds-ok: under the canvas's own 
 .skip-link:focus{transform:none;outline:2px solid var(--ink);outline-offset:2px;}
 #main-content:focus{outline:0;}
 #main-content :is(h1,h2,.place-title,[data-title],.rc-title)[tabindex="-1"]:focus-visible{outline:2px solid var(--ink);outline-offset:4px;border-radius:var(--r-xs);}
-#task-dock:empty{display:none;}   /* the task page has no chat box */
 
 /* nav.place-button: the place's name and its chevron are one bordered button, 32px high; the W beside it goes home. */
 .place-btn{display:inline-flex;align-items:center;gap:6px;max-width:100%;height:32px;padding:0 8px 0 10px;border:1px solid var(--line);border-radius:var(--r-sm);background:none;color:inherit;font:inherit;letter-spacing:inherit;cursor:pointer;}

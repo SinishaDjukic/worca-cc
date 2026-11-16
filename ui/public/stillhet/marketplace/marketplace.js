@@ -160,7 +160,7 @@
     const settled = p.installed && !p.update && !p.needsSetup;
     const ask = R.button({ label: 'Ask about it in chat', attrs: { 'data-mk-chat': '', title: 'Opens Chat with this plugin attached' } });
     const head = R.placeHead({ center: { label: 'Marketplace', to: 'marketplace' }, title: nameOf(p), facts: esc(`${p.kind.replace(/s$/, '')} · ${p.id} ${p.ver}`), mark: markOf(p), word: p.installed && p.on === false ? 'Installed, off' : st.word, why: p.what,
-      action: `${asking || settled ? '' : stepBtn(p, { 'data-mk-step': '' })}${ask}`,   // no Warning here: outlined (stillhet.one-action)
+      action: asking || settled ? '' : stepBtn(p, { 'data-mk-step': '' }), actions: ask,   // no Warning here: outlined (stillhet.one-action)
       menu: R.moreMenu({ id: 'mk-more', label: `More for ${p.id}`, icon: R.icon('more', 16), open: menu === 'mk-more', items: [...(!isLive() ? [{ id: 'source', text: 'View its source', help: window.StillhetWould('open it on GitHub') }] : p.source?.webUrl ? [{ id: 'source', text: 'View its source', help: 'On GitHub, in a new tab' }] : []), ...(p.installed ? [{ sep: true }, ...(manageOn(p) ? [{ id: 'purge', text: 'Purge its settings…', danger: true, help: 'Deletes its settings and secrets; it stays installed' }] : []), { id: 'remove', text: 'Remove…', danger: true, help: 'Asks first; says what stops working' }] : [])] }) });
     const install = form?.k === 'channel' ? '' : formHtml(p), setting = form?.id === p.id && form.k === 'setup';   // its rows' Set up would open the same form again
     const asks = R.settingsSection({ title: p.installed ? 'Its settings' : 'What it asks for', rows: p.asks.length ? needsOf(p).map((n) => R.settingsRow({ name: bare(n.label), sentence: `${n.secret ? 'Secret' : 'Setting'}${p.installed ? (p.needsSetup ? ' · not set' : ' · set') : ''}${n.key ? ` · <code>${esc(n.key)}</code>` : ''}`, end: !p.installed ? '' : setting ? R.tooltip({ text: 'The set-up form above is open', off: true, html: R.button({ label: 'Set up', attrs: { 'data-mk-setup': '', disabled: true } }) }) : R.button({ label: p.needsSetup ? 'Set up' : 'Change', attrs: { 'data-mk-setup': '' } }) })).join('') : R.settingsRow({ name: 'Setup', sentence: 'No secrets, nothing to do' }) });
@@ -205,7 +205,7 @@
   const VIEWS = [['all', 'All', () => true], ['installed', 'Installed', (p) => p.installed], ['updates', 'Updates', (p) => p.update], ['new', 'Not installed', (p) => !p.installed]];
   function filtersHtml(key, sortable) {
     const sort = sortNow(), SORTS = sorts();
-    return R.centerSentence.filters({ pick: menu, parts: [{ id: 'mk-view', label: 'Which plugins', text: (VIEWS.find(([id]) => id === key) || VIEWS[0])[1], tabs: VIEWS.map(([id]) => id), items: VIEWS.map(([id, text, test]) => ({ id, text, checked: id === key, hint: String(src().plugins.filter(test).length) })) },
+    return R.centerFilters({ pick: menu, parts: [{ id: 'mk-view', label: 'Which plugins', text: (VIEWS.find(([id]) => id === key) || VIEWS[0])[1], tabs: VIEWS.map(([id]) => id), items: VIEWS.map(([id, text, test]) => ({ id, text, checked: id === key, hint: String(src().plugins.filter(test).length) })) },
       ...(sortable ? [{ id: 'mk-sort', label: 'Sort by', text: SORTS[sort], tip: 'How the plugins are ordered', items: Object.entries(SORTS).map(([id, text]) => ({ id, text, checked: id === sort })) }] : [])] });
   }
   function wayHtml(key) {

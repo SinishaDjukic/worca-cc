@@ -223,7 +223,7 @@
       word: (c) => `${Math.round((c.v / BUDGET.yours.usd) * 100)}% of your ${usd(BUDGET.yours.usd)} budget used`, why: (c) => `${usd(c.v)} so far · ${paceWord(BUDGET.yours).replace(/^On/, 'on')} · ${DAYS_GONE} of ${DAYS_IN_MONTH} days gone` },
     { id: 'shaping', title: 'Shaping', head: 'What shaping changes', measures: 'Your finished tasks, shaped and unshaped, by size.', group: 'Cost', icon: 'dollar', noun: 'cost a shaped task', src: shaping, by: 'size', num: 'usd', den: 'runs', text: usd2, forms: RATE, noShare: true,
       caption: 'Shaped tasks, by size. Unshaped in the rows below', closed: 'Tasks do not narrow by size',
-      cols: [['Shaped runs', (r) => String(r.runs)], ['Shaped average cost', (r) => (r.runs ? usd2(r.usd / r.runs) : '-')], ['Unshaped average cost', (r) => (r.uruns ? usd2(r.uusd / r.uruns) : '-')], ['Shaped average time', (r) => (r.runs ? `${Math.round(r.mins / r.runs)} min` : '-')], ['Shaped review rounds', (r) => (r.runs ? (r.cycles / r.runs).toFixed(1) : '-')]],
+      cols: [['Shaped tasks', (r) => String(r.runs)], ['Shaped average cost', (r) => (r.runs ? usd2(r.usd / r.runs) : '-')], ['Unshaped average cost', (r) => (r.uruns ? usd2(r.uusd / r.uruns) : '-')], ['Shaped average time', (r) => (r.runs ? `${Math.round(r.mins / r.runs)} min` : '-')], ['Shaped review rounds', (r) => (r.runs ? (r.cycles / r.runs).toFixed(1) : '-')]],
       word: (c) => (c.T.runs ? `Shaped tasks cost ${usd2(c.T.usd / c.T.runs)} on average${c.T.uruns ? `, unshaped ${usd2(c.T.uusd / c.T.uruns)}` : ''}` : 'No shaped task finished'), why: (c) => `${plural(c.T.runs, 'shaped task')} and ${plural(c.T.uruns, 'unshaped task')}` },
     { id: 'time-saved', title: 'Time saved', head: 'Your time saved', measures: 'The hours your tasks would have taken by hand, at your hourly rate.', group: 'Value', icon: 'hourglass', noun: 'money saved', src: money, num: 'saved', text: usd, forms: SUM, cols: moneyCols(), share: 'saved',
       word: (c) => `${usd(c.v)} saved`, why: (c) => `About ${hoursWord(c.T.hours)} of work` },
@@ -500,7 +500,7 @@
   }
   function cardOf(item) {
     const e = item.end, n = item.prNumber != null ? `#${item.prNumber}` : 'The pull request';
-    const what = e.status === 'open' ? `${n} open since ${timeW(item.wait ? item.wait[0] : e.at)}` : `${n} ${e.status} ${timeW(e.at)} · ${durW(e.at - item.work[0])} from first run`;
+    const what = e.status === 'open' ? `${n} open since ${timeW(item.wait ? item.wait[0] : e.at)}` : `${n} ${e.status} ${timeW(e.at)} · ${durW(e.at - item.work[0])} from first task`;
     return { title: item.title, line: `${what} · opens the pull request` };
   }
   function taskViewOf(item) {
@@ -509,7 +509,7 @@
       tone: item.tone, title: item.title,
       meta: [item.actor, item.project, item.workflow, item.ticket, item.branch, item.diff].filter(Boolean),
       state: { tone: WORK_DOT[item.state], word: item.word, detail: item.reason },
-      figures: [{ k: 'Cost', v: money2(item.costUsd) }, { k: 'Time working', v: durW(item.activeMs) }, { k: 'Runs', v: String(item.runs.length) }, { k: 'Review rounds', v: String(item.reviewCycles) }],
+      figures: [{ k: 'Cost', v: money2(item.costUsd) }, { k: 'Time working', v: durW(item.activeMs) }, { k: 'Tasks', v: String(item.runs.length) }, { k: 'Review rounds', v: String(item.reviewCycles) }],
       pr: item.end ? { status: item.end.status, label: `${item.prNumber != null ? `#${item.prNumber}` : 'Pull request'} ${item.end.status === 'open' ? 'open' : `${item.end.status} ${dayW(item.end.at)}`}`, url: item.prUrl } : null,
       runs: { columns: [{ id: 'started', label: 'Started' }, { id: 'result', label: 'Result' }, { id: 'cost', label: 'Cost', num: true }, { id: 'time', label: 'Time working', num: true }],
         rows: item.runs.map((r) => ({ started: timeW(r.s), result: RESULT[r.result] || 'Finished', cost: money2(r.costUsd), time: durW(r.activeMs) })) },

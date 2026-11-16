@@ -21,6 +21,8 @@ import { keptRoute } from './keep-open.mjs';
 const FOLD_MS = 200;
 /** How long a new row's drop and tint last: the Stillhet's flash timing. */
 const ARRIVE_MS = 1200;
+/** How long a list takes to fill after its first paint: rows that land in that time are not arrivals. */
+const SETTLE_MS = 1500;
 /** How many live marks in a list may breathe at once; the rest hold still (docs/stillhet/lists.md, list.calm-motion). */
 export const BREATHE = 3;
 /**
@@ -181,12 +183,16 @@ export function listController({ root, spec }) {
     const typed = root.querySelector('#list-pop-q')?.value, name = root.querySelector('[data-dlg-name]')?.value;
     const toneOf = (el) => { const m = el.querySelector(':scope > .lr-rail .kind-mark, :scope > .lr-rail .status-dot'); return m ? `${m.className.replace(/ ?is-(news|still)/g, '')}|${m.querySelectorAll('circle[style]').length}` : ''; };   // its state and how far its ring has filled
     const was = new Map([...root.querySelectorAll('[data-row]')].map((el) => [el.dataset.row, toneOf(el)]));
+    // list.arrives is for a row that comes while you look: while the list is still filling (its first SETTLE_MS, as each
+    // source lands) nothing arrives, so no row wears the arrival's tint at rest after a load
+    if (!s.firstAt) s.firstAt = Date.now();
+    const settled = Date.now() - s.firstAt > SETTLE_MS;
     root.innerHTML = out;
     s.drawn = { html: out, first: root.firstChild, count: root.childNodes.length };
     // a row whose state changed since the last paint says so once: its mark pulses (list.news)
     // a row whose state or stage changed since the last paint says so once: its ring fills to where it is, then it pulses (list.news);
     // a row never seen before drops into its place, briefly tinted (list.arrives); none of it on the first paint
-    for (const el of root.querySelectorAll('[data-row]')) { const k = el.dataset.row; if (was.has(k) && was.get(k) && was.get(k) !== toneOf(el)) el.querySelector(':scope > .lr-rail .kind-mark, :scope > .lr-rail .status-dot')?.classList.add('is-news'); else if (s.seen.size && !s.seen.has(k)) s.arrived.set(k, Date.now());
+    for (const el of root.querySelectorAll('[data-row]')) { const k = el.dataset.row; if (was.has(k) && was.get(k) && was.get(k) !== toneOf(el)) el.querySelector(':scope > .lr-rail .kind-mark, :scope > .lr-rail .status-dot')?.classList.add('is-news'); else if (settled && s.seen.size && !s.seen.has(k)) s.arrived.set(k, Date.now());
       // an arrival lasts its whole drop, through any repaint in between: it carries on where it was
       const at = s.arrived.get(k); if (at !== undefined) { const gone = Date.now() - at; if (gone < ARRIVE_MS) { el.classList.add('is-arrived'); el.style.animationDelay = `-${gone}ms`; } else s.arrived.delete(k); } }
     for (const k of s.rows.keys()) s.seen.add(k);   // a row is new once: a filter or a fold showing it again is not an arrival

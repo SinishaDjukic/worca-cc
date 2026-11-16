@@ -36,7 +36,7 @@
     run('r15', 'ticket-firing', 'Weekly digest', 'worca-cc', 'Starts now · every Friday', 'now', 'upcoming'),
     wait('r16', 'waiting-interrupted', 'after', 'Publish the changelog', 'worca-cc', 'Waits on “Move sessions to Redis”, which was interrupted', ''),
     wait('r17', 'ticket-missed', 'missed', 'Nightly dependency bump', 'web-app', 'Worca was not running', '03:00'),
-    wait('r27', 'scheduled', 'after', 'Refresh the demo data', 'worca-cc', 'Queued behind the run before it', ''),
+    wait('r27', 'scheduled', 'after', 'Refresh the demo data', 'worca-cc', 'Queued behind the task before it', ''),
     wait('r28', 'scheduled', 'today', 'Sync the price list', 'billing-api', 'Could not start · retrying', '16:00'),
     run('r29', 'recovery', 'Port the cron worker', 'worca-cc', 'The same step failed three times', '14:10', 'today', { cost: 1.2 }),
     run('r30', 'plan', 'Add audit log', 'worca-cc', 'Shaper proposes a workflow', '14:02', 'today', { cost: 0.6 }),
@@ -115,7 +115,7 @@
     quiet: { runs: {}, actions: [], usage: [{ p: 'claude', plan: 'Pro', asOf: '09:15', win: [{ k: 'session', pct: 5, resets: '13:30' }, { k: 'week', pct: 12, resets: 'Thu 08:00' }] }],
       budget: month(18.2, 1000, 402.1), chats: { quiet: true } },
     every: { runs: Object.fromEntries(['r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8', 'r9', 'r10', 'r11', 'r12', 'r13', 'r14', 'r15', 'r16', 'r17', 'r27', 'r28', 'r29', 'r30', 'r31', 'r32', 'r33', 'r34', 'r35', 'r26', 'r36', 'r37', 's2', 's3'].map((id) => [id, 0])), groups: Object.keys(GROUPS),
-      actions: [['a1', 'r10', 'Dev server :4417'], ['a2', '', 'Tunnel :8080', 'A removed run']],
+      actions: [['a1', 'r10', 'Dev server :4417'], ['a2', '', 'Tunnel :8080', 'A removed task']],
       usage: [CLAUDE_MAX(86, 52), CODEX('14:24', 20, 44), COPILOT, { p: 'gemini', plan: 'CLI', asOf: '13:02', win: [] }], budget: month(92, 100), chats: { needs: ['c2', 'c3', 'c5', 'c9'], unread: ['c2'] } },
   };
   let current = 'afternoon', data = null;
@@ -158,8 +158,9 @@
   const sectionRaw = (r) => (r.archived || r.over ? 'recent' : r.missed ? 'needs' : r.resumes ? 'scheduled' : R.sectionOf(wordOf(r), stateOf(r)));
   const section = (r) => { const s = sectionRaw(r); return r.peek && s === 'needs' ? 'recent' : s; };
   const membersOf = (g) => data.runs.filter((r) => r.group === g.id).sort((a, b) => (a.pos || 0) - (b.pos || 0));
-  // A member that waits on a person raises its group; one that is simply ready ships with the group.
-  const raises = (m) => section(m) === 'needs' && ![R.runState('ready').word, R.runState('approved').word].includes(wordOf(m));
+  // One rule for what needs you (small-rules "one count"): a member that waits on a person raises its group, a slice that is
+  // ready for its PR included. So the chat that holds it, the Tasks list and Pulse all count it, once, as its group's row.
+  const raises = (m) => !m.archived && section(m) === 'needs';
   const groupSection = (g) => (membersOf(g).filter((m) => !m.archived).some(raises) ? 'needs' : R.sectionOf(R.runState(RM.stateOf(g.case)).word, RM.stateOf(g.case)));
   // What the list shows at its top level: a run, or a group as one row. Vitals reads the same rows, so the counts agree.
   function tops() {
@@ -176,7 +177,7 @@
   // fix, a link between projects Worca proposes and asks about). Each thing once, with its kind. The Pulse badge is
   // count(); a place shows its own part, countOf(kind), and says so with needsLabel(kind).
   const NEED_KINDS = ['task', 'schedule', 'project', 'proposal'];
-  const NEED_WORDS = { task: 'tasks', schedule: 'missed schedules', project: 'projects', proposal: 'proposals' };
+  const NEED_WORDS = { task: 'tasks', schedule: 'missed schedules', project: 'projects', proposal: 'questions' };
   const needSources = [];   // what a place adds through addNeeds: () => [{ id, kind, title, project? }]
   function needs() {
     const out = tops().filter((r) => r.section === 'needs').map((r) => ({ id: r.id, kind: r.missed ? 'schedule' : 'task', title: r.title, project: r.project || '' }));
@@ -193,6 +194,10 @@
     const list = words.length < 2 ? words.join('') : `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
     return { n, total, text: `Needs you ${n}`, tip: n === total ? `${total}: everything that needs you` : `${n} of ${total}: the ${list}. Pulse has all ${total}` };
   }
+  // Does this task count? By its id: a top-level task, or a member that raises its group (the chat list asks, per task).
+  const needsHas = (id) => { const r = data.runs.find((x) => x.id === id); if (!r) return false; if (!r.group) return needs().some((x) => x.id === id); const g = data.groups.find((x) => x.id === r.group); return !!g && raises(r) && needs().some((x) => x.id === g.id); };
+  // A list whose rows hold what needs you (chats): its head counts its rows, and the tip ties that to the one count.
+  const holdLabel = (rows, noun, ...kinds) => { const l = needsLabel(...kinds), s = rows === 1 ? '' : 's'; return { ...l, n: rows, text: `Needs you ${rows}`, tip: `${rows} ${noun}${s} hold${rows === 1 ? 's' : ''} the ${l.n} ${kinds.flat().length === 1 && kinds.flat()[0] === 'task' ? (l.n === 1 ? 'task that needs' : 'tasks that need') : 'that need'} you. Pulse has all ${l.total}` }; };
   // One "Saved" figure (A15): what the tasks of this month would have cost by hand, at Settings › Tasks › Hourly rate. The
   // profile menu and Insights both read it here.
   const SAVED_MEASURE = 'The hours your tasks would have taken by hand, at your hourly rate';
@@ -202,7 +207,7 @@
   }
   build(current);
   window.StillhetWorld = {
-    needs, count, countOf, needsLabel, NEED_KINDS, saved,
+    needs, count, countOf, needsLabel, needsHas, holdLabel, NEED_KINDS, saved,
     addNeeds: (fn) => { needSources.push(fn); return () => { const i = needSources.indexOf(fn); if (i >= 0) needSources.splice(i, 1); }; },
     current: () => current,
     set: (id) => { if (LIVE) return; current = id; build(id); listeners.forEach((fn) => fn()); },   // the demo's case picker; nothing in the live kind

@@ -214,7 +214,7 @@ function actionsHtml(v) {
 // Comments on a diff: the threads on this file's lines, and your own on a line you pick.
 // a file's changed rows, the ones a comment can sit on; a comment keeps the row's place, so two `}` lines stay apart
 // DiffView: side by side where it fits, unified when narrow (the library decides by its own width)
-const diffView = R.diffView || R.fileRow.diffView;
+const diffView = R.diffView;
 // A file's whole diff: live, from the patch the page read; in the demo, the model's hunks for it (its first lines when it has no more)
 const diffOf = (d, path) => (LIVE_PAGE() ? diffView.parsePatch(window.StillhetTaskLive.wholeDiff(ui.taskId, path) || '') : null) || [];
 const hunksOf = (d, path) => { const live = diffOf(d, path); return live.length ? live : (d.diffs && d.diffs[path]) || [(d.hunks && d.hunks[path]) || d.hunk]; };
@@ -389,7 +389,7 @@ function formDialogHtml() {
   const body = (def.text ? `<p class="pd-hint">${esc(R.fill(def.text, F.ctx || {}))}</p>` : '') + (def.options ? R.optionList({ label: def.title, options: def.options, selected: F.pick, recommended: -1, optAttrs: (i) => ({ 'data-fopt': i, 'data-key': 'fopt:' + i }) })
     : def.field ? R.field({ id: 'fd-value', label: def.field.label, value: F.value, hint: F.hint ?? (def.field.hint || ''), error: F.fieldErr || '', multiline: !!def.field.multiline, attrs: { 'data-key': 'fd-value' } }) : '')   // a confirm with no field (Resume on ‹Engine›): its sentence only
     + (F.err ? `<p class="rc-confirm-t is-err" role="alert">${esc(F.err.title)}<span class="rc-confirm-why">${esc(F.err.detail)}</span></p>` : '');   // a refusal is one line, as the ConfirmStrip's row
-  return R.dialog({ title: def.title, id: 'fd-h', close: svg('x', 14), body, yes: def.yes, busy: !!ui.busy, busyLabel: 'Working…', hooks: { close: { 'data-fd': 'cancel', 'data-key': 'fd-close' }, cancel: { 'data-fd': 'cancel', 'data-key': 'fd-cancel' }, yes: { 'data-fd': 'ok', 'data-key': 'fd-ok' } } });
+  return R.dialog({ title: def.title, id: 'fd-h', close: svg('x', 14), body, yes: def.yes, busy: !!ui.busy, hooks: { close: { 'data-fd': 'cancel', 'data-key': 'fd-close' }, cancel: { 'data-fd': 'cancel', 'data-key': 'fd-cancel' }, yes: { 'data-fd': 'ok', 'data-key': 'fd-ok' } } });
 }
 // COV-3 #1: a direction straight to the live run (⋯ Send a direction), under the status line, in Chat's own parts
 // (conversation.js directionHtml): a field, Send direction, Not now
@@ -429,10 +429,13 @@ function render() {
   const v = M.view(ui.caseId, ui);
   logsGone = v.has.logsGone;
   const a0 = v.action && LIVE_PAGE() ? liveAction(v, v.action) : v.action;
-  // the page keeps what answers the state it shows; what starts new work (Run another cycle) is on the task's card in its chat
-  const a = a0 && a0.items ? Object.assign({}, a0, { items: a0.items.filter((it) => !/^Run another cycle$/.test(it && (it.text || it.id || it))) }) : a0;
+  // the page keeps what answers the state it shows; what starts new work (Run another cycle, Start a new task) is on the task's
+  // card in its chat: a state whose one step is a new task (cancelled, dead) shows the link "Start a follow-up in its chat" instead
+  const NEW_WORK = /^(Run another cycle|Start a new task)$/, nameOf = (it) => it && (it.text || it.id || it);
+  const startsNew = !!a0 && (a0.label === 'Start a new task' || (a0.items || []).some((it) => nameOf(it) === 'Start a new task'));
+  const a = !a0 || a0.label === 'Start a new task' ? null : a0.items ? Object.assign({}, a0, { items: a0.items.filter((it) => !NEW_WORK.test(nameOf(it))) }) : a0;
   // The task's controls sit together on the status line: its one action (with ▾), then ⋯ for everything else.
-  const split = a ? R.splitButton({ main: { label: SHOWN[a.label] || a.label, busy: ui.busy && !ui.confirm && !ui.dialog ? { label: R.busy.word ? R.busy.word(SHOWN[ui.busy.label] || ui.busy.label) : R.workingWord(ui.busy.label) } : false, kind: a.primary && R.alertLevel(R.markTone(v)) === 3 ? 'primary' : '', icon: svg(a.icon, 14), title: a.offWhy || a.help, attrs: { 'data-key': 'act-main', 'data-label': a.label, disabled: !!a.offWhy || !!ui.busy } },
+  const split = a ? R.splitButton({ main: { label: SHOWN[a.label] || a.label, busy: ui.busy && !ui.confirm && !ui.dialog ? { label: R.busyWord(SHOWN[ui.busy.label] || ui.busy.label) } : false, kind: a.primary && R.alertLevel(R.markTone(v)) === 3 ? 'primary' : '', icon: svg(a.icon, 14), title: a.offWhy || a.help, attrs: { 'data-key': 'act-main', 'data-label': a.label, disabled: !!a.offWhy || !!ui.busy } },
     moreLabel: a.items.length ? 'More actions' : '', chevron: svg('chevron', 14), open: ui.menu === 'act', menuHtml: menu('act', a.items), moreAttrs: { 'data-menu': 'act', 'data-key': 'menu:act' }, cls: 'rc-action rc-pop is-right' }) : '';
   const action = `<div class="rc-side">${split}<span class="rc-pop is-right">${R.button({ label: 'More for this task', kind: SHELL ? 'quiet' : '', iconOnly: true, title: false, icon: DOTS, attrs: { 'aria-haspopup': 'menu', 'aria-expanded': String(ui.menu === 'more'), 'data-menu': 'more', 'data-key': 'menu:more' } })}${ui.menu === 'groups' ? groupEditorHtml() : menu('more', moreItems(v))}</span></div>`;
   // Many labels and tags, one group: a task already in a feature or chain, or a group page, joins none; a task you
@@ -471,8 +474,8 @@ function render() {
   const fromChat = SHELL ? (LIVE_PAGE() ? window.StillhetConversation?.chatOfTask?.({ run: ui.taskId }) : window.StillhetConversation?.chatOfTask?.({ title: v.title }) || window.StillhetConversation?.chatOfCase?.(ui.caseId)) || '' : '';
   const fromName = fromChat ? window.StillhetConversation?.chatTitle?.(fromChat) || '' : '';
   const fromLine = !SHELL || v.kind ? '' : fromChat
-    ? `<p class="rc-from"><span>Started from the chat <b>${esc(fromName || 'of this task')}</b></span>${R.button({ label: 'Open the chat', attrs: { 'data-from-chat': fromChat, 'data-key': 'from-chat', title: 'Its questions and what you said are there' } })}${v.runAfter ? R.textLink({ label: 'Start a follow-up in its chat', attrs: { 'data-from-chat': fromChat, 'data-key': 'from-follow', title: 'New work from this task starts on its card, in its chat' } }) : ''}</p>`
-    : `<p class="rc-from"><span>Started from New task</span>${R.button({ label: 'Ask about it in chat', attrs: { 'data-from-ask': '1', 'data-key': 'from-ask', title: 'Starts a chat about this task' } })}</p>`;
+    ? `<p class="rc-from"><span>Started from the chat <b>${esc(fromName || 'of this task')}</b></span>${R.button({ label: 'Open the chat', attrs: { 'data-from-chat': fromChat, 'data-key': 'from-chat', title: 'Its questions and what you said are there' } })}${v.runAfter || startsNew ? R.textLink({ label: 'Start a follow-up in its chat', attrs: { 'data-from-chat': fromChat, 'data-key': 'from-follow', title: 'New work from this task starts on its card, in its chat' } }) : ''}</p>`
+    : `<p class="rc-from"><span>Started from New task</span>${R.button({ label: 'Ask about it in chat', attrs: { 'data-from-ask': '1', 'data-key': 'from-ask', title: 'Starts a chat about this task' } })}${v.runAfter || startsNew ? R.textLink({ label: 'Start a follow-up in Chat', attrs: { 'data-from-ask': 'follow', 'data-key': 'from-follow', title: 'New work from this task starts in a chat about it' } }) : ''}</p>`;
   const enter = o.key !== lastOpen; lastOpen = o.key;   // the steps fade in only when another stage opens, never on a repaint
   const head = o.isRun ? `<div class="sc-head"><span class="sc-run" title="${esc(o.title)}">${esc(o.title)}</span>${v.independent ? R.chip({ text: 'Independent', title: 'It does not start from another task’s branch' }) : ''}${o.meta ? `<span class="rtab-dim sc-run-cost">${esc(o.meta)}</span>` : ''}${o.canOpen && !(a && a.label === 'Open task ' + (o.runIndex + 1)) ? `${R.button({ label: 'Open task', attrs: { 'data-open-run': o.runIndex, 'data-key': 'open-run' } })}` : v.bar.stop ? R.button({ label: 'Re-plan from here', title: 'The planner re-cuts this task and the ones after it', attrs: { 'data-replan': o.runIndex, 'data-key': 'replan' } }) : ''}</div>`
     : v.planHead ? `<div class="sc-head"><span class="sc-run">How the work was cut into tasks</span>${R.button({ label: 'Open the plan', attrs: { 'data-key': 'open-plan', 'data-doc': 0 } })}</div>` : '';
@@ -485,7 +488,7 @@ function render() {
   const scroller = document.scrollingElement || document.documentElement; const keepY = scroller.scrollTop;
   R.morph(document.getElementById('card'), `
   <div class="rc${SHELL ? ' is-task' : ''}">
-    <div class="rc-bar">${crumbs}${ui.offline ? `<span class="rc-conn" role="status" title="Worca lost its connection to the server; your runs keep going and it reconnects by itself">${R.statusDot({ tone: 'is-grey' })}Offline · retrying</span>` : ''}${pager}</div>
+    <div class="rc-bar">${crumbs}${ui.offline ? `<span class="rc-conn" role="status" title="Worca lost its connection to the server; your tasks keep going and it reconnects by itself">${R.statusDot({ tone: 'is-grey' })}Offline · retrying</span>` : ''}${pager}</div>
     ${SHELL ? '' : stripHtml(v)}
     <div class="rc-head"><div class="rc-title-row"><h1 class="rc-heading${ui.titleOpen ? ' is-open' : ''}" title="${esc(v.title)}" tabindex="-1" data-title>${esc(v.title)}</h1>${SHELL ? R.button({ label: 'Keep in view', kind: 'quiet', iconOnly: true, icon: R.icon('eye', 16), attrs: { 'data-keep-view': ui.caseId, 'aria-pressed': 'false', title: 'Keep in view: its mark stays in the top bar, on every page' } }) : ''}</div>${facts ? `<div class="rc-facts">${facts}</div>` : ''}${fromLine}</div>
     <section class="rc-card" aria-label="Task status">
@@ -699,7 +702,7 @@ function moreItems(v) {
   if (!group && v.place.branch && R.shows('advanced')) items.push({ id: 'more:sync', text: 'Sync log', help: 'How its base was brought up to date before it started (dev: the header’s Sync)' });
   items.push({ id: 'more:link', text: 'Copy link', help: 'Paste it in Chat or an issue' });
   if (v.finished && v.has.report) items.push({ id: 'more:report', text: 'Report this ' + noun, help: 'Asks for a note, then sends it with the logs to the Worca team' });
-  if (v.finished && !v.archived && v.has.started) items.push({ id: 'more:archive', text: 'Archive', help: v.dependents ? M.plural(v.dependents, 'run waits', 'runs wait') + ' on this one and will start without it. Removes the branch, worktree and logs' : 'Removes the branch, worktree and logs; the remote branch and PR stay' });
+  if (v.finished && !v.archived && v.has.started) items.push({ id: 'more:archive', text: 'Archive', help: v.dependents ? M.plural(v.dependents, 'task waits', 'runs wait') + ' on this one and will start without it. Removes the branch, worktree and logs' : 'Removes the branch, worktree and logs; the remote branch and PR stay' });
   if (group && !v.archived && !live && R.shows('advanced')) items.push({ id: 'more:delete', text: 'Delete', help: 'Removes it and its tasks from Tasks; their PRs stay' });
   return LIVE_PAGE() ? liveMore(items) : items;
 }
@@ -1001,7 +1004,7 @@ function act(label) {
     return;
   }
   const stopRun = /^Stop task (\d+)$/.exec(label);
-  if (stopRun) { follow({ member: 'stopped', index: +stopRun[1] - 1, say: 'Stopped run ' + stopRun[1] + '; its branch and changes stay', confirm: 'Stop task ' + stopRun[1] + '? Its branch and changes stay; the tasks after it do not start.' }, label); return; }
+  if (stopRun) { follow({ member: 'stopped', index: +stopRun[1] - 1, say: 'Stopped task ' + stopRun[1] + '; its branch and changes stay', confirm: 'Stop task ' + stopRun[1] + '? Its branch and changes stay; the tasks after it do not start.' }, label); return; }
   const flowNow = M.view(ui.caseId, ui).flow || {};
   const run = { Pause: 'pauseNow', 'Pause after this step': 'pauseAfter', 'Stop the task': 'stop' }[label];
   if (run && !flowNow[label]) {
@@ -1010,7 +1013,7 @@ function act(label) {
     if (rf.pauseAfter && LIVE_PAGE()) { liveDirect('Pause after this step', rf.say); return; }
     if (rf.pauseAfter) { ui.pauseAfter = !ui.pauseAfter; ui.menu = ''; toast(ui.pauseAfter ? rf.say : 'It goes on after this step'); pendingFocus = 'act-main'; return; }
     // On a group's page Pause and Stop are the running task's; the group stays where it is and reads from it.
-    if (vNow.liveRun >= 0 && run === 'pauseNow') { follow(Object.assign({}, rf, { to: undefined, member: rf.to, index: vNow.liveRun, say: 'Paused run ' + (vNow.liveRun + 1) + '; Resume goes on from where it was' }), 'Pause'); return; }
+    if (vNow.liveRun >= 0 && run === 'pauseNow') { follow(Object.assign({}, rf, { to: undefined, member: rf.to, index: vNow.liveRun, say: 'Paused task ' + (vNow.liveRun + 1) + '; Resume goes on from where it was' }), 'Pause'); return; }
     follow(rf, label === 'Stop the task' ? 'Stop the task' : 'Pause'); return;
   }
   if (label === 'Try it' && LIVE_PAGE()) { liveDirect('Try it'); return; }
@@ -1021,7 +1024,7 @@ function act(label) {
   if (LIVE_PAGE() && (!f || (f.say && !f.dialog && !f.confirm && !f.to && !f.run && !f.fix && !f.leave && f.member === undefined))) { liveDirect(label, f && f.say); return; }
   if (f) follow(f, label); else toast(window.StillhetWould(label.charAt(0).toLowerCase() + label.slice(1)));
 }
-const EVENT = { starting: 'Plan is under way', working: 'Review passed', checks: '2 checks failed', failing: 'dev moved on: 2 files conflict', conflicts: 'Checks green, a reviewer approved', feature: 'Runs 2 and 3 finished', chain: 'The next PR’s checks pass and a reviewer approves' };
+const EVENT = { starting: 'Plan is under way', working: 'Review passed', checks: '2 checks failed', failing: 'dev moved on: 2 files conflict', conflicts: 'Checks green, a reviewer approved', feature: 'Tasks 2 and 3 finished', chain: 'The next PR’s checks pass and a reviewer approves' };
 const chainNext = () => (ui.stackSt || M.chainStart).findIndex((x) => x === 'checks' || x === 'review' || x === 'fixing');
 function nextEvent() {
   if (ui.caseId === 'chain') { const i = chainNext(); if (i < 0) return; const st = (ui.stackSt || M.chainStart).slice(); const fx = st[i] === 'fixing'; st[i] = fx ? 'checks' : 'ready'; ui.stackSt = st; toast('Event: ' + M.chainPrs[i] + (fx ? ' fix is pushed; checks run again' : ' checks passed and a reviewer approved')); render(); return; }
@@ -1091,7 +1094,7 @@ function prDialogHtml(v) {
   // The sentence says what opens, from where, into what; how many PRs is a picker in it, like the base.
   const shipPick = sh ? `${wordPick('pdship', sh.pick === 'one' ? 'One PR' : sh.n + ' ' + sh.word + ' PRs', 'How many PRs', [
     { id: 'ship:stack', text: sh.n + ' ' + sh.word + ' PRs', checked: sh.pick !== 'one', hint: sh.rec !== 'one' ? 'Suggested' : '', help: sh.word === 'separate' ? 'One PR per task, each into dev' : 'One PR per task, each into the one before' },
-    { id: 'ship:one', text: 'One PR', checked: sh.pick === 'one', hint: sh.rec === 'one' ? 'Suggested' : '', off: !!sh.oneBlocked, help: sh.oneBlocked || 'Every run in one review' }], 'pd-ship')}<span>from</span>` : '';
+    { id: 'ship:one', text: 'One PR', checked: sh.pick === 'one', hint: sh.rec === 'one' ? 'Suggested' : '', off: !!sh.oneBlocked, help: sh.oneBlocked || 'Every task in one review' }], 'pd-ship')}<span>from</span>` : '';
   const shipHint = sh ? `<span class="pd-hint">${esc((sh.pick === sh.rec ? 'Worca suggests this: ' : 'Worca suggests ' + (sh.rec === 'one' ? 'one PR' : sh.n + ' ' + sh.word + ' PRs') + ': ') + sh.reason)}</span>` : '';
   const into = `<div class="pd-f"><div class="pd-into">${shipPick}<code class="pd-br" title="${esc(branch)}">${esc(branch)}</code><span>into</span>${wordPick('pdbase', pr.base, 'Base branch · pushes to origin', [...new Set([pr.base, 'dev', 'main'])].map((x) => ({ id: 'base:' + x, text: x, checked: pr.base === x })))}</div>
     ${shipHint}${LIVE_PAGE() || (v.baseMoved && pr.base === 'dev') ? '' : `<span class="pd-hint${pr.base === 'main' ? ' is-warn' : ''}">${pr.base === 'main' ? 'main is 41 commits behind dev; the PR would carry them too' : 'dev has 2 new commits since the task started; they merge cleanly'}</span>`}</div>`;
@@ -1105,7 +1108,7 @@ function prDialogHtml(v) {
   const busy = !!ui.busy;
   // The Dialog component: its head (title, Close), the one scrolling body, its foot (Cancel, the step naming what happens).
   return R.dialog({ title: ui.dialogLabel, id: 'pd-h', close: svg('x', 14), body: `${into}${moved}${remotes}${rowsHtml}${title}${opts}${release}${tryFirst}${alert}`,
-    yes: ui.dialogLabel, busy, busyLabel: R.workingWord(ui.dialogLabel),
+    yes: ui.dialogLabel, busy, busyLabel: R.busyWord(ui.dialogLabel),
     hooks: { close: { 'data-pd': 'cancel', 'data-key': 'pd-close' }, cancel: { 'data-pd': 'cancel', 'data-key': 'pd-cancel' }, yes: { 'data-pd': 'ok', 'data-key': 'pd-ok' } } });
 }
 // Writing for you (the violet shimmer): the title quickly, the description from the task; Stop ends it.
@@ -1180,7 +1183,7 @@ const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 document.addEventListener('click', (e) => {
   const sl = SHELL && e.target.closest?.('#card [data-stage-line]');
   const fc = SHELL && e.target.closest?.('#card [data-from-chat], #card [data-from-ask]');
-  if (fc) { if (fc.dataset.fromChat) SHELL.go('chat/' + fc.dataset.fromChat); else window.StillhetConversation?.handOver({ about: { kind: 'Task', name: M.view(ui.caseId, ui).title }, ph: 'Ask about this task' }); return; }
+  if (fc) { if (fc.dataset.fromChat) SHELL.go('chat/' + fc.dataset.fromChat); else window.StillhetConversation?.handOver({ about: { kind: 'Task', name: M.view(ui.caseId, ui).title }, ph: fc.dataset.fromAsk === 'follow' ? 'What should the follow-up do?' : 'Ask about this task' }); return; }
   if (sl) { const k = sl.dataset.stageLine, isOpen = M.view(ui.caseId, ui).stages.find((st) => st.selected)?.key === k && !ui.stageShut; ui.open = k; ui.stageShut = isOpen; ui.menu = ''; render(); return; }   // a stage's line opens its detail; on the open one, closes it
   if (SHELL && !SHELL.owns('run', e.target)) return;
   // in the one Worca the trail's first step is the Runs list itself
@@ -1356,7 +1359,7 @@ document.addEventListener('click', (e) => {
       window.StillhetTaskLive.act('night', { taskId: u.taskId, mode: id.slice(5) }).then((r) => { if (ui !== u || !r.ok) return; ui.away = id; toast('Away mode on this task: ' + AWAY.find((x) => x.id === id).text); render(); }); return; }
     else if (d.menuPick.startsWith('away:')) { ui.away = d.menuPick; ui.menu = ''; pendingFocus = 'menu:more'; toast('Away mode on this task: ' + AWAY.find((x) => x.id === d.menuPick).text); }
     else if (d.menuPick === 'more:after') { ui.dialog = 'after'; ui.afterErr = ''; ui.menu = ''; pendingFocus = 'after-task'; }
-    else if (d.menuPick === 'more:archive') { const vm = v0(); const a = vm.runFlow.archive; follow(Object.assign({}, a, { confirm: (vm.dependents ? M.plural(vm.dependents, 'run waits', 'runs wait') + ' on this one and will start without it. ' : '') + a.confirm.replace('this task', 'this ' + (vm.kind ? vm.kind.toLowerCase() : 'run')) }), 'Archive'); }
+    else if (d.menuPick === 'more:archive') { const vm = v0(); const a = vm.runFlow.archive; follow(Object.assign({}, a, { confirm: (vm.dependents ? M.plural(vm.dependents, 'task waits', 'runs wait') + ' on this one and will start without it. ' : '') + a.confirm.replace('this task', 'this ' + (vm.kind ? vm.kind.toLowerCase() : 'run')) }), 'Archive'); }
     else if (d.menuPick === 'more:restore') { landOn(M.restored(ui)); toast('The record is back in Tasks; its branch, worktree and logs are not'); }
     else if (d.menuPick === 'group:ask' || d.menuPick === 'group:go') { const ask = d.menuPick === 'group:ask'; ui.menu = ''; pendingFocus = 'menu:then';
       toast(ask === ui.askEach ? (ask ? 'Already asks first' : 'Already starts by itself') : ask ? 'Worca asks before each task starts' : 'Each task starts by itself'); ui.askEach = ask; }
@@ -1407,7 +1410,7 @@ document.addEventListener('click', (e) => {
   }
   else if ('askopen' in d) { ui.askOpen = !ui.askOpen; pendingFocus = 'ask-open'; }
   else if ('goanswer' in d) { ui.open = v0().stages.find((st) => st.live)?.key || ui.open; ui.stageShut = false; pendingFocus = v0().ask.kind === 'auto' ? 'auto-review' : v0().ask.options ? 'answer:' + (ui.answer ?? v0().ask.pick) : 'act-main'; ui.flashAnswer = true; render(); ui.flashAnswer = false; document.querySelector('.sc-answer')?.scrollIntoView({ block: 'center', behavior: reduced() ? 'auto' : 'smooth' }); return; }
-  else if (d.unafter !== undefined) { ui.after = ui.after.filter((_, i) => i !== +d.unafter); toast('Scheduled run cancelled'); pendingFocus = 'menu:more'; }
+  else if (d.unafter !== undefined) { ui.after = ui.after.filter((_, i) => i !== +d.unafter); toast('Scheduled task cancelled'); pendingFocus = 'menu:more'; }
   else if (d.answer !== undefined) { ui.answer = +d.answer; pendingFocus = 'answer:' + d.answer; }
   else if (d.file !== undefined) { ui.file = ui.file === +d.file ? null : +d.file; pendingFocus = 'file:' + d.file; }
   else if (d.filter) { ui.actFilter = d.filter; pendingFocus = 'filter:' + d.filter; }
@@ -1448,8 +1451,6 @@ document.addEventListener('keydown', (e) => {
   if (t.closest('.menu')) { next.focus(); return; }
   pendingFocus = next.dataset.key; next.click();
 });
-// Enter in the task's Ask box sends it, as in every composer; Shift+Enter is a new line.
-document.addEventListener('keydown', (e) => { if (!SHELL || e.key !== 'Enter' || e.shiftKey || e.isComposing || !e.target.closest?.('#task-dock [data-composer-t]')) return; e.preventDefault(); e.target.closest('#task-dock').querySelector('[data-dock-send]')?.click(); });
 // A case named in the address (#question) opens on load, so a review sheet can show every state at once.
 R.prefs.onChange(render);
 // A menu, a picker, an editor and a Dialog close on a click outside or Esc (docs/stillhet/panels.md).

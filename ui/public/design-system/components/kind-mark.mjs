@@ -223,7 +223,6 @@ export function starterCard({ icon: mark, label, says, more = false, attrs: a = 
 }
 /** StarterGrid: the cards, as one group. `cards` is markup (StarterCards; one that opens a menu sits in its own popover span). */
 export const starterGrid = ({ cards, label = 'Start something' }) => `<div class="home-starters starter-grid" role="group"${attrs({ 'aria-label': label })}>${cards}</div>`;
-composer.starterCard = starterCard; composer.starterGrid = starterGrid;   // until index.mjs exports them, a page reaches them through Composer
 
 /**
  * ComposerQueue: what you sent while Worca replies, waiting above the composer (form.composer-queue). Oldest first, one
@@ -319,14 +318,17 @@ export function taskCard({ title, place = '', mark, word, detail = '', action = 
  * @param {string} [o.mark]    its KindMark
  * @param {string} [o.word]    its state word
  * @param {string} [o.why]     one line after the word
- * @param {string} [o.action]  its one action (a Button)
+ * @param {string} [o.action]  its one action (a Button), on the state line
+ * @param {string} [o.actions] markup: what the head itself offers whatever the state ("Ask about it in chat", "Start one in
+ *   Chat"): bordered Buttons at the title's end; under the title on a narrow screen
  * @param {string} [o.menu]    its ⋯ (a MoreMenu)
  * @param {string} [o.say]     one line under the title (Nothing needs you)
  * @param {string} [o.tone]    the word's level when it is lit (markTone: act for a Caution)
  */
-export function placeHead({ title, facts = '', mark = '', word = '', why = '', action = '', menu = '', say = '', tone = '', center = null }) {   // center: { label, to, via? }: the crumb to its center's home (nav.center-home)
+export function placeHead({ title, facts = '', mark = '', word = '', why = '', action = '', actions = '', menu = '', say = '', tone = '', center = null }) {   // center: { label, to, via? }: the crumb to its center's home (nav.center-home)
   const crumbs = center ? trail({ items: [{ label: center.label, button: true, attrs: { 'data-center-go': center.to } }, ...(center.via || []).map((v) => ({ ...v, button: true })), { label: title, current: true }] }) : '';
-  const head = `${crumbs}<div class="place-head"><h1 class="place-title">${esc(title)}</h1>${say ? `<p class="place-say">${esc(say)}</p>` : ''}${facts ? `<div class="convo-head">${facts}</div>` : ''}</div>`;
+  const h1 = `<h1 class="place-title">${esc(title)}</h1>`;
+  const head = `${crumbs}<div class="place-head">${actions ? `<div class="place-head-row">${h1}<span class="place-acts">${actions}</span></div>` : h1}${say ? `<p class="place-say">${esc(say)}</p>` : ''}${facts ? `<div class="convo-head">${facts}</div>` : ''}</div>`;
   return head + (word ? `<div class="convo-card-line${tone ? ` is-${tone}` : ''}">${mark}<span class="convo-card-w">${esc(word)}${why ? `<span>${esc(why)}</span>` : ''}</span>${action}${menu}</div>` : '');
 }
 
@@ -366,7 +368,7 @@ export function pluginCard({ titleHtml = '', mark, kicker = '', update = '', tit
  * @param {string} [o.says]   the line beside, as markup (a TextLink in it)
  * @param {string} [o.tip]
  */
-export function runOutcomes({ runs = [], says = '', tip = 'The last 7 runs' }) {
+export function runOutcomes({ runs = [], says = '', tip = 'The last 7 tasks' }) {
   const WORD = { ok: 'succeeded', fail: 'failed', run: 'running', miss: 'missed' };
   const squares = runs.map((r) => `<i class="ro-sq is-${esc(r)}"></i>`).join('');
   const label = runs.length ? `${tip}: ${runs.map((r) => WORD[r] || r).join(', ')}` : null;

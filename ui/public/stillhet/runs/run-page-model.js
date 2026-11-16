@@ -49,7 +49,7 @@
     { id: 'starting', group: 'Running', label: 'Starting', figs: [['Time', '0m 12s'], ['Cost', '$0.00']],
       stages: run({ plan: [s('Clarify', 'now', '', { live: 'Setting up the worktree', when: 'now', cost: '$0.00' }), next('Plan'), next('Refine plan'), next('Plan review')], build: allNext(BUILD), review: allNext(REVIEW) }) },
     { id: 'working', group: 'Running', label: 'Working', figs: LIVE_FIGS,
-      stages: run({ review: [REVIEW[0], REVIEW[1], s('Manual web UI testing', 'now', '21m', { live: 'Opening the Runs page at 375px to check the breadcrumb', when: '8s ago' })] }) },
+      stages: run({ review: [REVIEW[0], REVIEW[1], s('Manual web UI testing', 'now', '21m', { live: 'Opening the Tasks page at 375px to check the breadcrumb', when: '8s ago' })] }) },
     { id: 'question', group: NEEDS_YOU, label: R.runState('question').word, figs: LIVE_FIGS,
       stages: run({ review: [s('Review implementation', 'ask', '12m', { live: 'Keep the breadcrumb on phones under 600px, or show only Back there?', when: '4m' }), next('Manual tests checklist'), next('Manual web UI testing')] }) },
     { id: 'paused', group: 'Paused', label: 'Paused', detail: 'Usage limit · resumes at 14:00', figs: [['Time', '2h 40m'], ['Cost', '$48.30']],
@@ -147,7 +147,7 @@
         member(1, RUNS[0], ['done', 'done', 'done', 'done'], { times: ['8m', '31m', '12m'] }), member(2, RUNS[1], ['done', 'done', 'done', 'done'], { times: ['6m', '22m', '9m'] }),
         { key: 'pr', label: 'PRs', subs: [next('#1'), next('#2')] }] },
     { id: 'featureblocked', n: 3, group: 'Groups', runCases: ['ready', 'ready', 'ready'], label: 'Feature ready, One PR off', kind: 'Feature', title: 'Unified page navigation', branch: '', figs: [['Time', '5h 02m'], ['Cost', '$92.40']], tabs: GROUP_TABS,
-      stack: { mode: 'create', runs: RUNS, rec: 'stack', sizes: ['+278 \u221264', '+41 \u221258', '+39 \u221222'], oneBlocked: 'Not possible: tasks 2 and 3 started from the same branch and both change ui/public/app.js lines 36,380\u201336,412, so they conflict on one branch.', reason: 'Runs 2 and 3 don\u2019t build on each other and conflict; stacked, each lands on top of the one before.' },
+      stack: { mode: 'create', runs: RUNS, rec: 'stack', sizes: ['+278 \u221264', '+41 \u221258', '+39 \u221222'], oneBlocked: 'Not possible: tasks 2 and 3 started from the same branch and both change ui/public/app.js lines 36,380\u201336,412, so they conflict on one branch.', reason: 'Tasks 2 and 3 don\u2019t build on each other and conflict; stacked, each lands on top of the one before.' },
       stages: [{ key: 'plan', label: 'Plan', subs: [ok('Clarify', '34s'), ok('Plan', '33m 57s'), ok('Cut into tasks', '7m')] },
         member(1, RUNS[0], ['done', 'done', 'done', 'done'], { times: ['22m', '58m', '31m'] }), member(2, RUNS[1], ['done', 'done', 'done', 'done'], { times: ['18m', '1h 2m', '27m'] }),
         member(3, RUNS[2], ['done', 'done', 'done', 'done'], { times: ['12m', '44m', '19m'] }),
@@ -214,7 +214,7 @@
     { id: 'recovery-auth', state: 'recovery', group: NEEDS_YOU, label: 'Sign-in expired', detail: 'The Claude token has expired · run claude setup-token, then Retry', figs: LIVE_FIGS, ev: AUTH_EV,
       stages: run({ build: [s('Implementation', 'problem', '1h 2m', { live: R.failureOf('Reach the model').title })], review: allNext(REVIEW) }) },
     { id: 'parallel', state: 'working', group: 'Running', label: 'Parallel steps', figs: LIVE_FIGS,
-      stages: run({ review: [s('Review implementation', 'now', '12m', { live: 'Reading the diff', when: '2s ago' }), s('Manual tests checklist', 'now', '9m', { live: 'Writing the checklist', when: '5s ago' }), s('Manual web UI testing', 'now', '3m', { live: 'Opening the Runs page', when: '1s ago' })] }) },
+      stages: run({ review: [s('Review implementation', 'now', '12m', { live: 'Reading the diff', when: '2s ago' }), s('Manual tests checklist', 'now', '9m', { live: 'Writing the checklist', when: '5s ago' }), s('Manual web UI testing', 'now', '3m', { live: 'Opening the Tasks page', when: '1s ago' })] }) },
     { id: 'roles-live', state: 'working', group: 'Running', label: 'Role reviews running', figs: LIVE_FIGS,
       stages: run({ review: [s('Security review', 'done', '6m', { live: 'Passed · no findings' }), s('Design review', 'now', '4m', { live: 'Reading the diff', when: '3s ago' }), s('Backend review', 'now', '4m', { live: 'Checking the routes', when: '9s ago' }), next('Manual web UI testing')] }) },
     { id: 'nodes', state: 'working', group: 'Running', label: 'A workflow without stages', title: 'Weekly issue triage', figs: [['Time', '6m'], ['Cost', '$0.82']], noDiff: true, branch: '',
@@ -298,17 +298,17 @@
     groupOf('feature-needs', 'Groups', 'Feature, a task asks', ['ready', 'question', '']),
     groupOf('feature-stopped', 'Groups', 'Feature, stopped', ['ready', 'stopped', '']),
     groupOf('feature-asks', 'Groups', 'Feature, asks before run 3', ['ready', 'ready', ''], { state: 'group-asks', k: 3, follows: false, detail: 'Task 2 is ready · task 3 waits for your OK', askEach: true }),
-    groupOf('ship-waiting', 'Groups', 'Ship, waiting for runs', ['ready', 'slice', ''], { shipWaiting: 'Waiting for run 2' }),
+    groupOf('ship-waiting', 'Groups', 'Ship, waiting for tasks', ['ready', 'slice', ''], { shipWaiting: 'Waiting for run 2' }),
     { id: 'ship-declined', n: 3, group: 'Groups', runCases: ['ready', 'ready', 'ready'], label: 'Ship, not now', kind: 'Feature', title: 'Unified page navigation', detail: 'Not shipped yet · ship it from here', branch: '', figs: [['Time', '5h 02m'], ['Cost', '$92.40']], tabs: GROUP_TABS, stack: READY3(), stages: READY_STAGES },
     { id: 'ship-applied', group: 'Groups', runCases: ['approved', 'approved', 'approved'], runPRs: ['#959', '#959', '#959'], label: 'Ship, applied', kind: 'Feature', title: 'Unified page navigation', detail: 'Shipped as one PR · closed 3 drafts · release v1.20.0 drafted', branch: '', figs: [['Time', '5h 02m'], ['Cost', '$92.40']], tabs: GROUP_TABS,
       stages: READY_STAGES.slice(0, -1).concat({ key: 'pr', label: 'PRs', subs: [ok('#959', '', { live: 'All 3 tasks · into dev' })] }) },
     { id: 'feature-reqs', state: 'featureblocked', n: 3, group: 'Groups', runCases: ['ready', 'ready', 'ready'], label: 'Feature, requirements to mark', kind: 'Feature', title: 'Unified page navigation', branch: '', figs: [['Time', '5h 02m'], ['Cost', '$92.40']], tabs: GROUP_TABS, reqsCheck: true, shaped: true, stack: READY3(), stages: READY_STAGES },
     { id: 'chain-loose', state: 'featureblocked', n: 3, group: 'Groups', runCases: ['ready', 'ready', 'ready'], label: 'Chain, One PR off', kind: 'Chain', title: 'Unified page navigation', branch: '', figs: [['Time', '5h 02m'], ['Cost', '$92.40']], tabs: GROUP_TABS, stack: READY3({ oneBlocked: 'A task does not start from the previous task’s branch', reason: 'Stacked, each task lands on top of the one before.' }), stages: READY_STAGES },
-    { id: 'chain-owned', state: 'featureblocked', n: 3, group: 'Groups', runCases: ['ready', 'ready', 'ready'], label: 'Feature, a task has a PR', kind: 'Feature', title: 'Unified page navigation', branch: '', figs: [['Time', '5h 02m'], ['Cost', '$92.40']], tabs: GROUP_TABS, flow: { 'Create 2 PRs': { to: 'chain', say: 'Created #960 and #961, on top of #959', dialog: 'pr' } }, stack: READY3({ owned: { 0: '#959' }, oneBlocked: 'A task already has a PR', reason: 'Run 1 already has its PR; the others stack on it.' }), stages: READY_STAGES.slice(0, -1).concat({ key: 'pr', label: 'PRs', subs: [s('#959', 'review'), next('#2'), next('#3')] }) },
+    { id: 'chain-owned', state: 'featureblocked', n: 3, group: 'Groups', runCases: ['ready', 'ready', 'ready'], label: 'Feature, a task has a PR', kind: 'Feature', title: 'Unified page navigation', branch: '', figs: [['Time', '5h 02m'], ['Cost', '$92.40']], tabs: GROUP_TABS, flow: { 'Create 2 PRs': { to: 'chain', say: 'Created #960 and #961, on top of #959', dialog: 'pr' } }, stack: READY3({ owned: { 0: '#959' }, oneBlocked: 'A task already has a PR', reason: 'Task 1 already has its PR; the others stack on it.' }), stages: READY_STAGES.slice(0, -1).concat({ key: 'pr', label: 'PRs', subs: [s('#959', 'review'), next('#2'), next('#3')] }) },
     userGroup('group-working', 'Group, in any order', ['ready', 'working'], { state: 'feature', follows: true, flow: { next: 'group-ready' }, detail: 'Any order · 1 of 2 running', sizes: ['+120 −40', '+38 −22'] }),
     userGroup('group-shipped', 'Group, shipped', ['approved', 'approved'], { state: 'ship-applied', runPRs: ['#959', '#960'], detail: 'Shipped as 2 PRs', stages: [member(1, GROUP_RUNS[0], ['done', 'done', 'done', 'done']), member(2, GROUP_RUNS[1], ['done', 'done', 'done', 'done']), { key: 'pr', label: 'PRs', subs: [s('#959', 'review'), s('#960', 'review')] }] }),
     userGroup('group-ready', 'Group, ready', ['ready', 'ready'], { state: 'featureone', n: 2, flow: GROUP_SHIP, stack: { mode: 'create', separate: true, runs: GROUP_RUNS, rec: 'stack', sizes: ['+120 −40', '+38 −22'], reason: 'independent tasks, so each gets its own review. They also combine cleanly, so One PR is open to you.' } }),
-    userGroup('group-checking', 'Group, One PR being checked', ['ready', 'ready'], { state: 'featureone', n: 2, flow: Object.assign({ next: 'group-ready', event: 'The runs combine cleanly' }, GROUP_SHIP), stack: { mode: 'create', separate: true, runs: GROUP_RUNS, rec: 'stack', sizes: ['+120 −40', '+38 −22'], oneBlocked: 'Checking whether the tasks combine…', reason: 'each task has its own PR until the check says they combine.' } }),
+    userGroup('group-checking', 'Group, One PR being checked', ['ready', 'ready'], { state: 'featureone', n: 2, flow: Object.assign({ next: 'group-ready', event: 'The tasks combine cleanly' }, GROUP_SHIP), stack: { mode: 'create', separate: true, runs: GROUP_RUNS, rec: 'stack', sizes: ['+120 −40', '+38 −22'], oneBlocked: 'Checking whether the tasks combine…', reason: 'each task has its own PR until the check says they combine.' } }),
     { id: 'workspace-fixing', group: 'Kinds', label: 'Workspace, fixing', detail: 'Fixing worca-docs #31’s conflicts', branch: 'feat/billing-export', project: 'billing workspace', repos: ['worca-api', 'worca-web', 'worca-docs'], figs: [['Time', '3h 05m'], ['Cost', '$52.70']],
       stages: run({ tail: [{ key: 'pr', label: 'PRs', subs: [s('worca-api #212', 'merged', '', { live: 'Merged into main' }), s('worca-web #88', 'now', '', { live: 'Checks running · 5 of 7' }), s('worca-docs #31', 'now', '', { live: 'Fixing the conflicts', when: 'now' })] }, { key: 'merged', label: 'Merged', subs: [s('1 of 3 repositories', 'next', '', { live: 'worca-api is in main' })] }] }) },
     { id: 'workspace-partly', group: 'Kinds', label: 'Workspace, partly shipped', detail: '1 of 2 merged · worca-docs has no PR yet', branch: 'feat/billing-export', project: 'billing workspace', repos: ['worca-api', 'worca-web', 'worca-docs'], figs: [['Time', '3h 05m'], ['Cost', '$52.70']],
@@ -367,7 +367,7 @@
     task: 'One head for the task and group pages: Back, the breadcrumb and the task’s actions in the top bar, and the page title once.',
     // Before you ship: what needs your eyes, each with why it is there and its one way to act.
     check: [{ t: 'On phones under 600px only Back shows, not the breadcrumb: try it on a phone', why: 'Worca decided this while you were away', act: 'Change it', go: 'tab:decisions' },
-      { t: 'Back on a group page now goes to Runs, not the group list', why: 'A change you did not ask for' },
+      { t: 'Back on a group page now goes to Tasks, not the group list', why: 'A change you did not ask for' },
       { t: 'run-head.mjs is new and has 2 review notes', why: 'The largest change', act: 'Open it', go: 'file:0' }],
     // The ask, part by part, with what was done; and what it did unasked.
     ask: [['One head for the task and group pages', 'The breadcrumb, the title and the actions share one row'],
@@ -395,17 +395,17 @@
         { at: '@@ -12,5 +12,14 @@ export const ROUTES = {', lines: [[' ', "  run: (id) => `#run/${id}`,"], ['-', "  group: (id) => `#group/${id}`,"], ['+', "  group: (id) => `#run/group:${id}`,"], ['+', '  // the page above a task: its group, else its project'], ['+', '  parentOf(run) {'], ['+', '    if (!run) return ROUTES.runs;'], ['+', '    return run.group ? ROUTES.group(run.group) : ROUTES.project(run.project);'], ['+', '  },'], [' ', '};']] }],
     },
     // What the task says it did, once Build has made something.
-    outcome: ['Run and group pages share one head: the breadcrumb, the title and the actions', 'Back is gone from group pages; the breadcrumb goes up a level', 'Under 760px the bar shows one link, ‹ Parent name', '14 new tests in test/ui-run-head.test.mjs'],
+    outcome: ['Task and group pages share one head: the breadcrumb, the title and the actions', 'Back is gone from group pages; the breadcrumb goes up a level', 'Under 760px the bar shows one link, ‹ Parent name', '14 new tests in test/ui-run-head.test.mjs'],
     // The approved plan, item by item.
     plan: ['Add ROUTES.parentOf for run, group and slice pages', 'Build the breadcrumb from the parent chain', 'Move Back, Pause and Stop into the top bar', 'One title row: title, kind chip, actions', 'Phone: ‹ Parent under 760px', 'Tests for every page type'],
-    planIssues: ['Slices: the parent is the feature, not the project', 'Saved runs have no live parent: fall back to Runs'],
+    planIssues: ['Slices: the parent is the feature, not the project', 'Saved tasks have no live parent: fall back to Tasks'],
     // A step that ran more than once: each round and why it went round again.
     rounds: {
-      'Refine plan': [['9m 40s', 'Sent back: no phone layout'], ['11m 02s', 'Sent back: slices had no parent'], ['10m 13s', 'Sent back: tests missing for saved runs'], ['9m 10s', 'Accepted']],
+      'Refine plan': [['9m 40s', 'Sent back: no phone layout'], ['11m 02s', 'Sent back: slices had no parent'], ['10m 13s', 'Sent back: tests missing for saved tasks'], ['9m 10s', 'Accepted']],
       Implementation: [['48m', 'Review found 3 failing tests'], ['41m', 'Review: bar has two primaries'], ['35m', 'Accepted']],
       'Review implementation': [['14m', 'Sent back to Build'], ['12m', 'Sent back to Build'], ['11m 21s', 'Passed']] },
     decisions: [
-      { step: 'Clarify', q: 'Which pages get the breadcrumb?', a: 'Run and group pages', who: 'you', when: '08:33' },
+      { step: 'Clarify', q: 'Which pages get the breadcrumb?', a: 'Task and group pages', who: 'you', when: '08:33' },
       { step: 'Plan', q: 'Approve the plan', a: 'Approved · 6 steps, 2 open issues fixed', who: 'you', when: '09:12' },
       { step: 'Review implementation', q: 'Keep the breadcrumb on phones under 600px?', a: 'Show only Back there', who: 'away', when: '12:48', note: 'Sonnet 5.5 · $0.32' }],
     issue: '#942',
@@ -422,7 +422,7 @@
     prTemplate: (i, titles, feature) => ['Part of ' + feature + ': slice ' + (i + 1) + ' of ' + titles.length, ...titles.map((t, j) => j === i ? null : '- Slice ' + (j + 1) + ', ' + t + ': not opened yet').filter(Boolean), '', titles[i]].concat(i === titles.length - 1 ? ['', 'Closes #942'] : []).join('\n'),
     // Every suggestion runs on a helper job's model (Models › Helper jobs), named in the sparkle's tooltip.
     helper: { pr: { job: 'PR description', model: 'Haiku 5.5' }, draft: { job: 'Drafts', model: 'Haiku 5.5' } },
-    prBodyStack: (i, titles, feature) => ['## Summary', '- ' + ['Run and group pages share one head: the breadcrumb, the title and the actions in one row', 'The breadcrumb takes its parent from the route, a slice from its feature', 'Under 760px the bar shows one link, ‹ Parent name'][i % 3], '',
+    prBodyStack: (i, titles, feature) => ['## Summary', '- ' + ['Task and group pages share one head: the breadcrumb, the title and the actions in one row', 'The breadcrumb takes its parent from the route, a slice from its feature', 'Under 760px the bar shows one link, ‹ Parent name'][i % 3], '',
       '## Stack', ...titles.map((t, j) => (j + 1) + '. ' + (j === i ? '**This PR**: ' : '') + t + ' → ' + (j === 0 ? 'dev' : j === i + 1 ? 'this PR' : 'PR ' + j)), '',
       '## How it was checked', '- ' + [41, 33, 22][i % 3] + ' new tests in test/ui-run-head.test.mjs', '',
       'Part ' + (i + 1) + ' of ' + titles.length + ' of “' + feature + '”' + (i === titles.length - 1 ? '\n\nCloses #942' : '')].join('\n'),
@@ -430,21 +430,21 @@
     asks: {
       question: { q: 'Keep the breadcrumb on phones under 600px, or show only Back there?', why: 'Review implementation found the trail wraps to two lines at 375px.',
         options: ['Keep the full breadcrumb, truncate the middle crumbs', 'Show only ‹ Parent under 600px', 'Hide the breadcrumb on phones'], pick: 1 },
-      clarify: { questions: [{ q: 'Which pages get the breadcrumb?', why: 'The task names the task page; group and saved run pages share its head.', options: ['Run pages only', 'Run and group pages', 'Every page with a parent'], pick: 1 },
-        { q: 'What does Back do on a group page?', why: 'Today it goes to the group list; the breadcrumb already does that.', options: ['Goes to Runs', 'Goes to the group list'], pick: 0 },
+      clarify: { questions: [{ q: 'Which pages get the breadcrumb?', why: 'The task names the task page; group and saved task pages share its head.', options: ['Task pages only', 'Task and group pages', 'Every page with a parent'], pick: 1 },
+        { q: 'What does Back do on a group page?', why: 'Today it goes to the group list; the breadcrumb already does that.', options: ['Goes to Tasks', 'Goes to the group list'], pick: 0 },
         { q: 'What shows on phones?', why: 'The full trail wraps to two lines at 375px.', options: ['The full trail', 'Only ‹ Parent'], pick: 1 }] },
       requirements: { q: 'On phones, does the page keep its full trail?', why: 'Security and Design disagree · 4 requirements agreed by the reviewers', options: ['Keep the full trail', 'Show only ‹ Parent under 600px'], pick: 1 },
       auto: { kind: 'auto', q: 'Run this workflow?', why: 'A medium change in two areas, with UI: Worca adds a plan review and a manual test, and leaves out the security review.' } },
     budget: 120,
     // What the plan answers to: the requirements the perspectives agreed, and the one that needs you.
-    criteria: [['R-po-1', 'Run and group pages share one head'], ['R-po-2', 'The breadcrumb goes up one level, never to the page itself'], ['R-po-3', 'Under 760px the bar shows one link, ‹ Parent name'], ['R-sec-1', 'No route exposes another person’s run']],
+    criteria: [['R-po-1', 'Task and group pages share one head'], ['R-po-2', 'The breadcrumb goes up one level, never to the page itself'], ['R-po-3', 'Under 760px the bar shows one link, ‹ Parent name'], ['R-sec-1', 'No route exposes another person’s run']],
     // What a reviewer asked to change on the PR.
     requested: [{ sev: 'Change', t: 'Keep the group list reachable from a group page', at: 'ui/public/run-head.mjs:41' }, { sev: 'Change', t: 'Name the new test after the page it covers', at: 'test/ui-run-head.test.mjs:12' }],
     // A review's findings, by role, and the issues a gate still holds open.
     issues: [{ sev: 'Minor', t: 'The trail wraps to two lines at 375px', at: 'ui/public/run-head.mjs:41' }, { sev: 'Minor', t: 'Group pages keep an unused Back handler', at: 'ui/public/app.js:36,392' }],
     roles: [{ role: 'Security', n: 0, t: 'Passed · no findings', findings: [] }, { role: 'Design', n: 1, t: '1 finding', findings: ['The trail wraps to two lines at 375px'] }, { role: 'Backend', n: 1, t: '1 finding', findings: ['Group pages keep an unused Back handler'] }],
     // A perspective's checklist, one review cycle each: what is not met stays open, with its evidence.
-    checklist: { cycle: 3, met: ['Every route has a parent', 'The bar holds one primary', 'Saved runs fall back to Runs', 'Tests cover every page type'], unmet: [['Phone layout checked at 375px', 'The manual test ran at 390px only']], earlier: [['Cycle 2', '3 of 5 met'], ['Cycle 1', '2 of 5 met']] },
+    checklist: { cycle: 3, met: ['Every route has a parent', 'The bar holds one primary', 'Saved tasks fall back to Tasks', 'Tests cover every page type'], unmet: [['Phone layout checked at 375px', 'The manual test ran at 390px only']], earlier: [['Cycle 2', '3 of 5 met'], ['Cycle 1', '2 of 5 met']] },
     skills: ['frontend-design', 'testing', 'worca-pr-flow'],
     memory: ['Added: the breadcrumb takes its parent from the route', 'Changed: phones under 600px show ‹ Parent'],
     worktree: '~/.worca-cc/worktrees/run-7b0bfb1e',
@@ -454,21 +454,21 @@
     stacks: [{ id: 'api-docs', name: 'API and docs', steps: 2, status: '', step: 0, error: '' }],
     members: [{ name: 'worca-api', files: 12 }, { name: 'worca-docs', files: 3 }],
     noChangeMembers: ['worca-web'],
-    comments: { 'ui/public/run-head.mjs': [{ line: 'el.append(breadcrumb(ROUTES.parentOf(run)));', who: 'Review implementation', t: 'parentOf can be null on a saved run' }, { line: 'el.append(titleRow(run), actions(run));', who: 'Review implementation', t: 'One primary only in actions' }], 'ui/public/nav/routes.mjs': [{ line: 'el.append(groupList(run));', who: 'Review implementation', t: 'Group list moves to the trail' }] },
+    comments: { 'ui/public/run-head.mjs': [{ line: 'el.append(breadcrumb(ROUTES.parentOf(run)));', who: 'Review implementation', t: 'parentOf can be null on a saved task' }, { line: 'el.append(titleRow(run), actions(run));', who: 'Review implementation', t: 'One primary only in actions' }], 'ui/public/nav/routes.mjs': [{ line: 'el.append(groupList(run));', who: 'Review implementation', t: 'Group list moves to the trail' }] },
     tunables: [['Review cycles', '3', 'How many times Review may send it back'], ['Cost cap', '$120', 'Pauses the task here'], ['Step time limit', '1h', 'Pauses a step that runs longer'], ['Model for Build', 'Opus 5.5', 'From the task’s size']],
     autoWhy: 'A medium change in two areas, with UI: Worca adds a plan review and a manual test, and leaves out the security review.',
-    costOther: [['Away mode', '$0.32'], ['Auto workflow', '$0.12'], ['Run title', '$0.01']],
+    costOther: [['Away mode', '$0.32'], ['Auto workflow', '$0.12'], ['Task title', '$0.01']],
     costApart: [['Reviews you stopped', 'at least $0.20'], ['Agent turns you stopped', 'at least $1.10']],
-    docBody: { 'plan.md': '## The plan\n- Add ROUTES.parentOf for run, group and slice pages\n- Build the breadcrumb from the parent chain\n- Move Back, Pause and Stop into the top bar\n- One title row: title, kind chip, actions\n- Phone: ‹ Parent under 760px\n- Tests for every page type', 'review-3.md': '## Review, round 3\nPassed. One minor note: the trail wraps at 375px.', 'checklist.md': '## Manual tests\n- Run page at 375px\n- Group page at 900px\n- Saved run with no live parent' },
+    docBody: { 'plan.md': '## The plan\n- Add ROUTES.parentOf for run, group and slice pages\n- Build the breadcrumb from the parent chain\n- Move Back, Pause and Stop into the top bar\n- One title row: title, kind chip, actions\n- Phone: ‹ Parent under 760px\n- Tests for every page type', 'review-3.md': '## Review, round 3\nPassed. One minor note: the trail wraps at 375px.', 'checklist.md': '## Manual tests\n- Task page at 375px\n- Group page at 900px\n- Saved task with no live parent' },
   };
   // What a failed or blocked step shows in Activity: what broke, the last lines, and where in the log.
   const EVIDENCE = {
     'build/Implementation': { title: '3 tests failed in test/ui-run-head.test.mjs', log: 'Open log at line 1,284',
       lines: ['\u2716 breadcrumb hides under 600px (12ms)', '  AssertionError: expected [ \'Back\' ] to equal [ \'Back\', \'Runs\' ]', '\u2716 group page Back goes to Runs (4ms)', '\u2716 bar keeps one primary (3ms)'] },
-    'pr/Checks/one': { title: '1 check failed: e2e', log: 'Open the failing check', lines: ['e2e  \u2716 run page at 375px: breadcrumb overflows by 18px'] },
+    'pr/Checks/one': { title: '1 check failed: e2e', log: 'Open the failing check', lines: ['e2e  \u2716 task page at 375px: breadcrumb overflows by 18px'] },
     'pr/Checks': { title: '2 checks failed: unit, e2e', log: 'Open the failing check',
-      lines: ['unit \u2716 test/ui-run-head.test.mjs \u203a bar keeps one primary', 'e2e  \u2716 run page at 375px: breadcrumb overflows by 18px'] },
-    'review/Manual web UI testing': { title: 'The end-of-run commit failed', log: 'Open the hook output',
+      lines: ['unit \u2716 test/ui-run-head.test.mjs \u203a bar keeps one primary', 'e2e  \u2716 task page at 375px: breadcrumb overflows by 18px'] },
+    'review/Manual web UI testing': { title: 'The end-of-task commit failed', log: 'Open the hook output',
       lines: ['pre-commit: eslint ui/public/run-head.mjs', '  41:7  error  \'crumbs\' is assigned but never used', 'hook exited 1 · nothing committed; the work is kept in a copy'] },
     'pr/Conflicts with dev': { title: 'Conflicts in 2 files', log: 'Open the conflicts',
       lines: ['ui/public/app.js  lines 36,380\u201336,412', 'ui/public/style.css  lines 5,210\u20135,214'] },
@@ -483,8 +483,8 @@
     'resume-at': { title: 'Resume at a time', yes: 'Schedule the resume', text: 'The task stays paused until then, and you can cancel it.', field: { label: 'Time', value: '15:30', hint: 'Today, in your time zone', time: true } },
     report: { title: 'Report this task', yes: 'Send report', text: 'Files a GitHub issue with this task’s redacted report and your note.', field: { label: 'Note', value: '', hint: 'What went wrong, or what you expected', multiline: true } },
     cap: { title: 'Raise the cap', yes: 'Raise it and go on', text: 'A new cost cap for this task; it goes on from {step}.', field: { label: 'New cap', value: '$180', hint: 'It is at $120' } },
-    'team-cap': { title: 'Continue past team cap', yes: 'Continue past the cap', text: 'Your team’s cap is $200 a run. Going past it is recorded with your reason.', field: { label: 'Reason', value: '', hint: 'Your team’s policy asks for one', required: true } },
-    preset: { title: 'Save as preset', yes: 'Save preset', text: 'The next run can start from this task’s setup: its workflow, models and budget.', field: { label: 'Name', value: 'Unified page navigation', required: true } },
+    'team-cap': { title: 'Continue past team cap', yes: 'Continue past the cap', text: 'Your team’s cap is $200 a task. Going past it is recorded with your reason.', field: { label: 'Reason', value: '', hint: 'Your team’s policy asks for one', required: true } },
+    preset: { title: 'Save as preset', yes: 'Save preset', text: 'The next task can start from this task’s setup: its workflow, models and budget.', field: { label: 'Name', value: 'Unified page navigation', required: true } },
   };
 
   const INSTANCE_HELP = { 'worca-api #212': 'Merged into main', 'worca-web #88': 'Checks running', 'worca-docs #31': 'Conflicts with main' };
@@ -498,7 +498,7 @@
     ['Fix checks', 'Starts a short task that fixes failing checks, like Fix conflicts does today for conflicts.'],
     ['Re-run checks', 'Runs a PR\'s checks again from Worca; today that is on GitHub.'],
     ['Merge PR', 'Merges from Worca, one PR at a time in stack order, and moves the next PR onto dev; today you merge on GitHub and nothing moves the next PR.'],
-    ['Restart Build', 'Runs one stage again with what earlier stages made; today a failed run resumes or starts over.'],
+    ['Restart Build', 'Runs one stage again with what earlier stages made; today a failed task resumes or starts over.'],
     ['Raise the cap', 'Sets a new cost cap and goes on; today the choices are Continue without cap or Settings.'],
     ['Copy link', 'Copies a link to the task from ⋯, for Chat or an issue.'],
   ];
@@ -521,7 +521,7 @@
   function asMember(c0, g, i) {
     const chain = g.kind === 'Chain'; const groupWord = g.kind.toLowerCase(); const titles = g.runTitles || RUNS;
     let stages = chain ? c0.stages : c0.stages.filter((x) => !SHIP.test(x.key))
-      .concat({ key: 'ship', label: 'Ship', subs: [next('With the ' + groupWord, { live: c0.shipLive || 'From the ' + groupWord + ' page, with the other runs' })] });
+      .concat({ key: 'ship', label: 'Ship', subs: [next('With the ' + groupWord, { live: c0.shipLive || 'From the ' + groupWord + ' page, with the other tasks' })] });
     // What gets the task moving stays on its page; what ships it is the group's, also in its ▾.
     // A main the group owns gives way to the first step it leaves here (a stopped run's Restart Build).
     const mine = c0.action ? [c0.action.label].concat(c0.action.items).filter(R.memberKeeps) : [];
@@ -656,7 +656,7 @@
     const rows = [];
     c.stages.forEach((st) => st.subs.forEach((y) => { if (y.state === 'next' || st.run) return;
       rows.push({ name: y.name, type: /review/i.test(y.name) ? 'Reviewer' : /plan/i.test(y.name) ? 'Planner' : 'Builder', model: MODEL_OF[y.name] || 'Sonnet 5.5', cycle: String(y.loops || 1), tokens: Math.round(money(COST_OF[y.name] || '$0.40') * 41) + 'k', skills: /Impl/.test(y.name) ? '3' : '0', graph: /Impl|Plan/.test(y.name) ? '12' : '0' }); }));
-    return !rows.length ? rows : rows.concat([{ name: 'Away mode answers', type: 'Worca', model: 'Sonnet 5.5', cycle: '1', tokens: '4k', skills: '0', graph: '0' }, { name: 'Run title', type: 'Worca', model: 'Haiku 5.5', cycle: '1', tokens: '1k', skills: '0', graph: '0' }]);
+    return !rows.length ? rows : rows.concat([{ name: 'Away mode answers', type: 'Worca', model: 'Sonnet 5.5', cycle: '1', tokens: '4k', skills: '0', graph: '0' }, { name: 'Task title', type: 'Worca', model: 'Haiku 5.5', cycle: '1', tokens: '1k', skills: '0', graph: '0' }]);
   }
   function sessionsOf(c) {
     return c.stages.flatMap((st) => st.subs.filter((y) => y.state !== 'next' && !st.run).map((y) => { const k = money(COST_OF[y.name] || '$0.40'); return { name: y.name, id: 'sess_' + y.name.toLowerCase().replace(/[^a-z]/g, '').slice(0, 8), turns: String(Math.max(2, Math.round(k * 3))), in: Math.round(k * 22) + 'k', out: Math.round(k * 6) + 'k', cache: Math.round(k * 80) + 'k', cost: COST_OF[y.name] || '$0.40' }; }));
@@ -757,7 +757,7 @@
   /** This run after an action: `raw` is where it is, `to` the state it moves to. */
   function move(raw, to0, f = {}) {
     const to = to0 === 'ready' ? readyOf(raw) : to0;
-    const t = caseFor(to); if (!t) throw new Error(`no run case for ${to}`);
+    const t = caseFor(to); if (!t) throw new Error(`no task case for ${to}`);
     if (raw.runCases) return Object.assign(moveGroup(raw, t, to, f), { movedFrom: raw.id });
     // Resume goes back to where it was: its own step, its own state.
     if (raw.resumeTo && LIVE_STATES.test(t.state || t.id) && !f.step) return raw.resumeTo;
@@ -1124,5 +1124,5 @@
     if (str(after)) Object.assign(body, { after: { kind: 'pipeline', id: after }, afterPolicy: 'done' });
     return body;
   }
-  window.RunCardModel = { plural, prPushOf, prFailDetail, followUpBodyOf, liveRun, liveFacts: liveFactsOf, liveGroup, stageOf, move: moveIn, memberAt, moveMember, restored, caseGroups: CASE_GROUPS, stateOf: (id) => { const c = caseFor(id); if (!c) throw new Error(`no run case ${id}`); return c.state || c.id; }, forms: FORMS, titles: TITLES, chainStart: CHAIN_START, chainPrs: CHAIN_PRS.map((x) => x[0]), proposed: PROPOSED, isNew: (t) => NEW.has(t), flow: FLOW, runFlow: RUN_FLOW, cases: CASES.map((c) => ({ id: c.id, label: c.label, group: c.group, chips: c.chips || [] })), view, add: ADD };
+  window.RunCardModel = { plural, prPushOf, prFailDetail, followUpBodyOf, liveRun, liveFacts: liveFactsOf, liveGroup, stageOf, move: moveIn, memberAt, moveMember, restored, caseGroups: CASE_GROUPS, stateOf: (id) => { const c = caseFor(id); if (!c) throw new Error(`no task case ${id}`); return c.state || c.id; }, forms: FORMS, titles: TITLES, chainStart: CHAIN_START, chainPrs: CHAIN_PRS.map((x) => x[0]), proposed: PROPOSED, isNew: (t) => NEW.has(t), flow: FLOW, runFlow: RUN_FLOW, cases: CASES.map((c) => ({ id: c.id, label: c.label, group: c.group, chips: c.chips || [] })), view, add: ADD };
 })();

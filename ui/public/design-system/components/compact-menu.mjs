@@ -168,7 +168,7 @@ const firstOf = (menu) => menu.querySelector('input:not([disabled]), textarea') 
  */
 export function focusMenu(menu) {
   const doc = menu.ownerDocument, a = doc.activeElement;
-  if (a && a !== doc.body && !(a.matches?.('[aria-haspopup]') && menuOf(a) === menu)) return false;
+  if (a && a !== doc.body && (a.matches?.('input, textarea, select, [contenteditable="true"]') || !(a.matches?.('[aria-haspopup]') && menuOf(a) === menu))) return false;   // typing is never interrupted
   const to = firstOf(menu); if (!to) return false;
   to.focus({ preventScroll: true });
   return true;

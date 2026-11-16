@@ -1,6 +1,6 @@
 // test/stillhet-default.test.mjs — a feature with no design lands on Stillhet's default (docs/stillhet/build.md › build.default):
 // what it is picks the pattern (build.md's Which pattern table, the catalog's featureKinds, kept equal here), "A place"
-// is a pattern of catalog parts and real rules, and a thing's page starts with a PlaceHead while a task's keeps its line.
+// is a pattern of catalog parts and real rules, and a thing's page starts with a PlaceHead while a task's keeps its line and its train.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -52,21 +52,23 @@ test('A place has its bar, home, way page, item page and states, from catalog pa
   for (const part of ['bar:', 'home:', 'way page:', 'item page:', 'states:']) assert.ok(p.slots.some((s) => s.startsWith(part)), `no ${part} slot`);
   const known = new Set([...cat.components, ...cat.logic].map((e) => e.name));
   for (const u of p.uses) assert.ok(known.has(u), `${u} is not a component or logic`);
-  for (const u of ['PlaceHead', 'PluginCard', 'CenterShelf', 'SettingsSection', 'SettingsRow', 'EmptyState', 'NotFound', 'SentencePicker', "A list page's behaviour"]) assert.ok(p.uses.includes(u), `A place uses ${u}`);
+  for (const u of ['PlaceHead', 'PluginCard', 'CenterShelf', 'SettingsSection', 'SettingsRow', 'EmptyState', 'NotFound', 'PageFilters', "A list page's behaviour"]) assert.ok(p.uses.includes(u), `A place uses ${u}`);
   const ids = new Set(ruleIds.map((r) => r.id));
   for (const id of p.rules) assert.ok(ids.has(id), `${id} is not a rule`);
-  for (const id of ['panel.place-head', 'nav.center-home', 'list.bar-model', 'list.ways-in', 'panel.plugin-card']) assert.ok(p.rules.includes(id), `A place follows ${id}`);
+  for (const id of ['panel.place-head', 'nav.center-home', 'nav.place-button', 'list.bar-model', 'list.ways-in', 'list.filters', 'panel.plugin-card', 'panel.card-opens', 'stillhet.chat-first']) assert.ok(p.rules.includes(id), `A place follows ${id}`);
   const states = p.slots.find((s) => s.startsWith('states:'));
   for (const s of ['empty', 'loading', 'could not load', 'not found', '375px']) assert.ok(states.includes(s), `states: ${s}`);
 });
 
-test("A thing's page starts with a PlaceHead; only A task's page keeps StatusLine, Figures and Tabs", () => {
+test("A thing's page starts with a PlaceHead; only A task's page keeps StatusLine and the stage train; neither has Tabs or a composer", () => {
   const thing = pattern("A thing's page"); const task = pattern("A task's page");
   assert.match(thing.slots[1], /PlaceHead/);
   for (const s of thing.slots) assert.doesNotMatch(s, /StatusLine|Tabs/);
   assert.doesNotMatch(thing.for, /\brun\b/);
-  for (const part of ['StatusLine', 'Figures', 'Tabs']) assert.ok(task.slots.some((s) => s.includes(part)), `A task's page holds ${part}`);
-  assert.match(task.for, /\brun\b/); assert.match(task.for, /\bgroup\b/);
+  for (const part of ['StatusLine', 'StageBar', 'StagePart']) assert.ok(task.slots.some((s) => s.includes(part)), `A task's page holds ${part}`);
+  for (const s of task.slots) assert.doesNotMatch(s, /\bTabs\b/, 'a task has no tab strip (thing.parts-under-train)');
+  for (const p of [thing, task]) assert.ok(p.slots.some((s) => /^no composer/.test(s)), `${p.name} has no composer (stillhet.chat-first)`);
+  assert.match(task.for, /\btask\b/); assert.match(task.for, /\bgroup\b/);
   const doc = read('docs/stillhet/thing-page.md');
   assert.match(doc, /A task's page/); assert.match(doc, /panel\.place-head/);
   assert.match(ruleIds.find((r) => r.id === 'thing.slots').what, /^A task's page:/);

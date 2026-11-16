@@ -155,6 +155,3 @@ export function settingsGroup({ title, rows }) {
 export function settingsSection({ title = '', rows, action = '', meta = '', icon: mark = '', attrs: a = {} }) {
   return `<section class="set-sec"${attrs(a)}>${title || action ? `<div class="set-sec-head">${title ? `<h2 class="set-sec-h">${mark}${esc(title)}</h2>` : ''}${action}</div>` : ''}${meta ? `<p class="set-sec-meta">${esc(meta)}</p>` : ''}<div class="set-rows">${rows}</div></section>`;
 }
-
-// Until the index exports it by name: a page reaches the RowPicker as R.settingsRow.picker.
-settingsRow.picker = rowPicker;

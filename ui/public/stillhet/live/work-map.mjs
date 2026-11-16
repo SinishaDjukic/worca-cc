@@ -94,7 +94,7 @@ export function workHead(name, when, counts, pr = {}) {
 /** The PR mark's TimelineCard: "#1418 merged Nov 8, 11:00 · 1d 1h from first run · opens the pull request". */
 export function cardOf(item) {
   const e = item.end, n = item.prNumber != null ? `#${item.prNumber}` : 'The pull request';
-  const what = e.status === 'open' ? `${n} open since ${timeWord(item.wait ? item.wait[0] : e.at)}` : `${n} ${e.status} ${timeWord(e.at)} · ${durWord(e.at - item.work[0])} from first run`;
+  const what = e.status === 'open' ? `${n} open since ${timeWord(item.wait ? item.wait[0] : e.at)}` : `${n} ${e.status} ${timeWord(e.at)} · ${durWord(e.at - item.work[0])} from first task`;
   return { title: item.title, line: `${what} · opens the pull request` };
 }
 
@@ -104,7 +104,7 @@ export function taskViewOf(item) {
     tone: item.tone, title: item.title,
     meta: [item.actor, item.project, item.workflow, item.ticket, item.branch, item.diff].filter(Boolean),
     state: { tone: DOT[item.state], word: item.word, detail: item.reason },
-    figures: [{ k: 'Cost', v: usd(item.costUsd) }, { k: 'Time working', v: durWord(item.activeMs) }, { k: 'Runs', v: String(item.runs.length) }, { k: 'Review rounds', v: String(item.reviewCycles) }],
+    figures: [{ k: 'Cost', v: usd(item.costUsd) }, { k: 'Time working', v: durWord(item.activeMs) }, { k: 'Tasks', v: String(item.runs.length) }, { k: 'Review rounds', v: String(item.reviewCycles) }],
     pr: item.end ? { status: item.end.status, label: `${item.prNumber != null ? `#${item.prNumber}` : 'Pull request'} ${item.end.status === 'open' ? 'open' : `${item.end.status} ${dayWord(item.end.at)}`}`, url: item.prUrl } : null,
     runs: { columns: [{ id: 'started', label: 'Started' }, { id: 'result', label: 'Result' }, { id: 'cost', label: 'Cost', num: true }, { id: 'time', label: 'Time working', num: true }],
       rows: item.runs.map((r) => ({ started: timeWord(r.s), result: RESULT[r.result] || 'Finished', cost: usd(r.costUsd), time: durWord(r.activeMs) })) },

@@ -81,7 +81,7 @@
     const chevron = R.icon('chevron', 12);
     // one compact line; the open picker's own menu class (two columns for the long lists); the page's small tools end the line
     const tools = R.button({ label: 'Save this view', attrs: { 'data-in-save': '', title: 'Keeps this page as you set it, under Your views' } }) + R.button({ label: 'Copy a link', attrs: { 'data-in-link': '', title: 'To this page, as you narrowed it' } }) + R.button({ label: 'Download CSV', attrs: { 'data-in-csv': '', title: 'The rows below, as a file' } });
-    const row = R.centerSentence.filters({ parts: fields.map((f) => f.part), pick: menu, chevron, menuCls: fields.find((f) => f.part.id === menu)?.cls || '', end: tools });
+    const row = R.centerFilters({ parts: fields.map((f) => f.part), pick: menu, chevron, menuCls: fields.find((f) => f.part.id === menu)?.cls || '', end: tools });
     // a filter a link set (a project's spend, a copied link) holds for this visit, and the page says so (list.narrowed)
     const by = narrowedBy(st), lines = [
       by ? `<p class="in-narrowed" data-in-narrowed>Narrowed to <b>${esc(by)}</b> · ${R.button({ label: 'Clear', kind: 'quiet', attrs: { 'data-in-unlink': '', title: 'Shows everything again' } })}</p>` : '',
@@ -223,7 +223,7 @@
     const pace = sub.pace && plain;   // over budget at this pace: Advisory, in ink (look.alert-ladder); live: the words of D10 (no budget, or under it: no pace)
     const measures = typeof sub.measures === 'function' ? sub.measures(sub) : sub.measures || '';
     const head = R.placeHead({ center: arg === 'spend' ? null : { label: 'Insights', to: 'insights' }, title: viewList().find((v) => v.id === arg)?.name || sub.head || sub.title, facts: esc(measures), mark: pace ? R.kindMark({ kind: 'figure', tone: 'ok', icon: sub.icon, title: sub.pace }) : R.kindMark({ kind: 'plugin', icon: sub.icon }), tone: pace ? 'ok' : '', word: pace ? sub.pace : word, why: pace ? [word, ...why.split(' · ').filter((x) => !/on pace for/i.test(x))].join(' · ') : why,
-      action: R.button({ label: 'Ask about it in chat', attrs: { 'data-in-chat': '', title: 'Opens Chat with this page attached' } }) });
+      actions: R.button({ label: 'Ask about it in chat', attrs: { 'data-in-chat': '', title: 'Opens Chat with this page attached' } }) });
     return frame(`${head}${sentence(sub, st, c)}${chartHtml(sub, st, c)}${st.as === 'table' && (stacks(sub, st, c) || (st.against === 'before' && !axisIsRows(sub, st))) ? '' : rowsHtml(sub, c)}${actions(sub, st, c)}`);
   }
   // one page frame (stillhet.one-frame): the column every place shares, its title on the same edge as Tasks

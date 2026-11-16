@@ -1,57 +1,69 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Stillhet · Pulse</title>
-<!-- Worca's own stylesheet, the Stillhet layer, then Pulse's own layer (spec: plans/stillhet/pulse.md). -->
+<title>Stillhet · Pulse cases</title>
+<!-- A case explorer: it draws nothing of its own. It opens the prototype (index.html) at each case, so what shows here is
+     the same page code the prototype runs. -->
 <link rel="stylesheet" href="../../../ui/public/stillhet/app.css">
 <link rel="stylesheet" href="../../../ui/public/stillhet/css/stillhet-look.css">
 <link rel="stylesheet" href="../../../ui/public/stillhet/css/stillhet.css">
-<link rel="stylesheet" href="../../../ui/public/stillhet/pulse/pulse.css">
-<link rel="stylesheet" href="../../../ui/public/stillhet/shell/shell.css">
-<link rel="stylesheet" href="../../../ui/public/stillhet/runs/task.css">
-<link rel="stylesheet" href="../../../ui/public/stillhet/centers/forms.css">
-<link rel="stylesheet" href="../../../ui/public/stillhet/settings/settings.css">
-<link rel="stylesheet" href="../../../ui/public/stillhet/css/places.css">
 <link rel="stylesheet" href="../../../ui/public/stillhet/css/access.css">
 <style>
-  @font-face{font-family:'Poppins';font-weight:400;src:url('../../../ui/public/fonts/poppins-latin-400-normal.woff2') format('woff2');}
-  @font-face{font-family:'Poppins';font-weight:500;src:url('../../../ui/public/fonts/poppins-latin-500-normal.woff2') format('woff2');}
-  @font-face{font-family:'Poppins';font-weight:600;src:url('../../../ui/public/fonts/poppins-latin-600-normal.woff2') format('woff2');}
-  @font-face{font-family:'Poppins';font-weight:700;src:url('../../../ui/public/fonts/poppins-latin-700-normal.woff2') format('woff2');}
-  @font-face{font-family:'JetBrains Mono';font-weight:400;src:url('../../../ui/public/fonts/jetbrains-mono-latin-400-normal.woff2') format('woff2');}
-  .mk-wrap{max-width:960px;margin:0 auto;}
-  .mk-bar{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between;margin-bottom:24px;}
-  .mk-bar .seg{flex-wrap:wrap;max-width:100%;}
-  .mk-intro{margin:0 0 16px;font-size:var(--fs-meta);color:var(--ink-2);max-width:65ch;}
-  .mk-rev{margin:-8px 0 16px;font-size:var(--fs-caption);color:var(--ink-2);font-variant-numeric:tabular-nums;}
-  @media (max-width:600px){body.rc-board{padding:16px;}}
+  html,body{height:100%;margin:0;}
+  body{display:flex;flex-direction:column;background:var(--bg);color:var(--ink);font-family:var(--sans);}
+  .mk-bar{flex:none;display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;padding:8px 16px;border-bottom:1px solid var(--line);font-size:var(--fs-meta);color:var(--ink-2);}
+  .mk-bar h1{margin:0;font:600 var(--fs-body)/1.3 var(--sans);color:var(--ink);}
+  .mk-bar label{display:flex;align-items:center;gap:8px;}
+  .mk-bar .select{min-width:200px;}
+  .mk-sp{flex:1 1 auto;}
+  .mk-frame{flex:1 1 auto;width:100%;min-height:0;border:0;}
 </style>
 </head>
-<body class="rc-board">
-<div class="mk-wrap">
-  <p class="mk-intro">Pulse is one hub for what is happening (Vitals) and what happened (Updates): the panel under its button, with no page of its own. The rings around the avatar show usage for every harness. New run checks the run's estimate (its size and what runs like it used) against what is left, and warns only when it will not fit. Settings › Notifications holds every notification setting. New: all of Settings, its sidebar turned into its menu, every section drawn from the Stillhet components and checked for alignment. Pick a case, then open Pulse, the avatar, New run or Settings; the Every kind case holds one of each event. <a href="run-page.html" style="color:var(--ink)">The run page</a>.</p>
-  <div class="mk-bar">
-    <label style="display:flex;align-items:center;gap:8px;font-size:var(--fs-meta);color:var(--ink-2)">Case <select class="select" id="case" style="width:220px"></select></label>
-    <label title="A new event arrives in Pulse and plays the chime, if Settings › Notifications › Sound says so">Event <select class="select select-sm" id="new-event-kind"><option value="needs">Needs you</option><option value="problem">Problem</option><option value="info">Info</option></select></label>
-    <span class="mk-row"><button type="button" class="btn btn-sm" id="new-event" title="A new event arrives now: try it twice for a burst, or under Away for silence">New event</button></span>
-    <div class="seg" role="group" aria-label="Theme">
-      <button type="button" data-theme-pick="light">Light</button>
-      <button type="button" data-theme-pick="dark" aria-pressed="true">Dark</button>
-    </div>
-  </div>
-  <div id="app"></div>
+<body>
+<div class="mk-bar">
+  <h1>Pulse cases</h1>
+  <label>Case <select class="select select-sm" id="case" aria-label="Case"></select></label>
+  <label>Mode <select class="select select-sm" id="mode" aria-label="Interface mode" style="min-width:110px"><option value="simple">Simple</option><option value="advanced">Advanced</option><option value="expert" selected>Expert</option></select></label>
+  <div class="seg" role="group" aria-label="Theme"><button type="button" data-theme-pick="light">Light</button><button type="button" data-theme-pick="dark">Dark</button></div>
+  <span class="mk-sp"></span>
+  <span>Every state of Pulse, drawn by the prototype itself.</span>
+  <a class="dc-link" id="open" href="index.html">Open the prototype</a>
 </div>
-<div class="rc-toast" role="status" aria-live="polite"></div>
-<script src="../../../ui/public/stillhet/components.js"></script>
-<script src="../../../ui/public/stillhet/demo/demo-actions.js"></script>
-<script src="../../../ui/public/stillhet/adapter.js"></script>
-<script src="../../../ui/public/stillhet/runs/run-page-model.js"></script>
-<script src="../../../ui/public/stillhet/shell/world.js"></script>
-<script src="../../../ui/public/stillhet/pulse/pulse-model.js"></script>
-<script src="../../../ui/public/stillhet/settings/settings-model.js"></script>
-<script src="../../../ui/public/stillhet/settings/settings.js"></script>
-<script src="../../../ui/public/stillhet/pulse/pulse.js"></script>
+<iframe class="mk-frame" id="proto" title="The prototype, at this case" src="index.html"></iframe>
+<script>
+(function () {
+  var KIND = 'pulse', frame = document.getElementById('proto'), pick = document.getElementById('case'), mode = document.getElementById('mode');
+  var win = function () { return frame.contentWindow; }, doc = function () { return frame.contentDocument; };
+  try { mode.value = localStorage.getItem('worca-stillhet.mode') || 'expert'; } catch (e) { /* no storage: Expert */ }
+  var wanted = (location.hash || '').slice(1);
+  function fill() {
+    if (pick.options.length) return;
+    if (KIND === 'task') {
+      var groups = {};
+      win().RunCardModel.cases.forEach(function (c) { (groups[c.group || 'Other'] = groups[c.group || 'Other'] || []).push(c); });
+      Object.keys(groups).forEach(function (g) { var og = document.createElement('optgroup'); og.label = g; groups[g].forEach(function (c) { var o = document.createElement('option'); o.value = c.id; o.textContent = c.label; og.append(o); }); pick.append(og); });
+    } else {
+      Array.prototype.forEach.call(doc().querySelectorAll('#pulse-case option'), function (o) { pick.append(o.cloneNode(true)); });
+    }
+    if (wanted && pick.querySelector('option[value="' + wanted.replace(/"/g, '') + '"]')) pick.value = wanted; else if (KIND === 'task') pick.value = 'working';
+  }
+  function show() {
+    var id = pick.value; if (!id) return;
+    history.replaceState(null, '', '#' + id);
+    if (KIND === 'task') { win().location.hash = '#run/' + id; document.getElementById('open').href = 'index.html#run/' + id; return; }
+    var sel = doc().getElementById('pulse-case'); if (!sel) return;
+    sel.value = id; sel.dispatchEvent(new (win().Event)('change', { bubbles: true }));
+    var b = doc().querySelector('.pz-pulse-b'); if (b && b.getAttribute('aria-expanded') !== 'true') b.click();
+  }
+  // the prototype builds itself after its scripts load: wait for the part this explorer drives
+  function ready() { try { return KIND === 'task' ? !!(win().RunCardModel && win().StillhetShell) : !!(doc().querySelector('#pulse-case option') && doc().querySelector('.pz-pulse-b')); } catch (e) { return false; } }
+  frame.addEventListener('load', function () { var n = 0, t = setInterval(function () { if (ready()) { clearInterval(t); fill(); show(); } else if (++n > 100) clearInterval(t); }, 100); });
+  pick.addEventListener('change', show);
+  mode.addEventListener('change', function () { try { localStorage.setItem('worca-stillhet.mode', mode.value); } catch (e) { /* no storage */ } win().location.reload(); });
+  document.addEventListener('click', function (e) { var b = e.target.closest('[data-theme-pick]'); if (!b) return; var t = doc().querySelector('[data-theme-pick="' + b.dataset.themePick + '"]'); if (t) t.click(); document.documentElement.dataset.theme = b.dataset.themePick; });
+})();
+</script>
 </body>
 </html>

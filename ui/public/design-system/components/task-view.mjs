@@ -22,5 +22,5 @@ import { table } from './table.mjs';
  */
 export function taskView({ back, mark, title, meta, state, figures, pr = null, runs }) {
   const prLine = pr ? `<p class="tv-pr">${gitMark({ status: pr.status, size: 14 })}${isWebUrl(pr.url) ? `<a class="tv-pr-link" href="${esc(pr.url)}" target="_blank" rel="noopener noreferrer">${esc(pr.label)}</a>` : `<span class="tv-pr-link">${esc(pr.label)}</span>`}</p>` : '';
-  return `<div class="task-view"><p class="tv-back">${textLink(back)}</p><h2 class="tv-title">${mark}<span>${esc(title)}</span></h2><p class="tv-meta">${esc(meta.filter(Boolean).join(' · '))}</p>${statusLine({ dot: statusDot({ tone: state.tone }), word: state.word, detail: state.detail || '', action: '' })}${figuresLine(figures.map((f) => figure({ k: f.k, v: f.v })))}${prLine}${table({ label: 'Runs', columns: runs.columns, rows: runs.rows })}</div>`;
+  return `<div class="task-view"><p class="tv-back">${textLink(back)}</p><h2 class="tv-title">${mark}<span>${esc(title)}</span></h2><p class="tv-meta">${esc(meta.filter(Boolean).join(' · '))}</p>${statusLine({ dot: statusDot({ tone: state.tone }), word: state.word, detail: state.detail || '', action: '' })}${figuresLine(figures.map((f) => figure({ k: f.k, v: f.v })))}${prLine}${table({ label: 'Tasks', columns: runs.columns, rows: runs.rows })}</div>`;
 }

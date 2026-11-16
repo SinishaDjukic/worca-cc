@@ -101,7 +101,7 @@ export const CARD_TURN = Object.freeze({
   workflow: (b, ctx) => (oneStageRun(b) ? runWithTurn(b) : change(b, ctx, { graph: true, apply: SAVE })),
   'workflow-build': (b, ctx) => change(b, ctx, { graph: true, apply: SAVE }),
   // the words are dev's own cards' (ui/public/chat/action-cards.mjs, ui/public/shape/changes-card.mjs, route-card.mjs)
-  'run-stop': (b) => act(b, `<b>Stop ${esc(str(b.card.title) || 'the task')}?</b> A stopped run can't be resumed. Its work so far stays on its branch.`, [['Stop run', 'danger', 'Stopped', 'card-apply'], [b.card.status === 'paused' ? 'Keep paused' : 'Keep running', 'quiet', 'Not now', 'card-later']]),
+  'run-stop': (b) => act(b, `<b>Stop ${esc(str(b.card.title) || 'the task')}?</b> A stopped task can't be resumed. Its work so far stays on its branch.`, [['Stop run', 'danger', 'Stopped', 'card-apply'], [b.card.status === 'paused' ? 'Keep paused' : 'Keep running', 'quiet', 'Not now', 'card-later']]),
   // D4: an opened PR shows on its run's TaskCard alone (Ready to merge, its checks, Merge PR); with no TaskCard in the
   // thread it is one row naming its number, never the URL (one fact, one place)
   'pull-request': (b, ctx) => {

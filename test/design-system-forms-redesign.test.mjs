@@ -85,9 +85,11 @@ test('Field: a date and a time are the browser\'s own pickers, so any time can b
   assert.match(field({ id: 'd', label: 'Date', type: 'date', value: '2026-11-17' }), /type="date" value="2026-11-17"/);
 });
 
-test('the new parts are reachable from page code through Field until the index exports them', () => {
-  assert.equal(field.pick, pickField); assert.equal(field.pair, fieldPair); assert.equal(field.grid, formGrid);
-  assert.equal(field.fold, fieldFold); assert.equal(field.readback, formReadback); assert.equal(field.value, fieldValue);
+test('the new parts are named exports of the library; Field carries no bridge to them', async () => {
+  const C = await import('../ui/public/design-system/components/index.mjs');
+  assert.equal(C.pickField, pickField); assert.equal(C.fieldPair, fieldPair); assert.equal(C.formGrid, formGrid);
+  assert.equal(C.fieldFold, fieldFold); assert.equal(C.formReadback, formReadback); assert.equal(C.fieldValue, fieldValue);
+  assert.equal(field.pick, undefined); assert.equal(field.value, undefined);
 });
 
 test('Checkbox: with help, its label and one line of help are two spans beside the box', () => {

@@ -178,7 +178,7 @@ const STATES = {
     }
   },
   gate: {
-    word: "Needs you",
+    word: "Needs approval",
     sym: "q",
     action: {
       label: "Accept as is",
@@ -524,7 +524,7 @@ const HELP = {
   "Create 3 PRs": "Creates one PR per task, each into the one before",
   "Create 2 PRs": "Creates one PR per task, the second into the first",
   "Try it": "Checks the branch out locally so you can run it; in a stack, each task’s branch holds the tasks before it",
-  "Check out the whole feature": "Checks out the top of the stack, which holds every run",
+  "Check out the whole feature": "Checks out the top of the stack, which holds every task",
   "Open the copy": "Opens a terminal in the copy the task changed",
   "Push main": "Pushes the commits straight to origin/main, no PR",
   Push: "Pushes the source branch, with the task’s work merged back, to origin; no PR",
@@ -841,7 +841,7 @@ export function chatState(id) {
   return s;
 }
 export const CHAT_KINDS = Object.freeze({
-  started: { label: 'Started a run', icon: 'runs' }, tracks: { label: 'Follows a run', icon: 'track' },
+  started: { label: 'Started a task', icon: 'runs' }, tracks: { label: 'Follows a task', icon: 'track' },
   workflow: { label: 'Proposed a workflow', icon: 'workflow' }, chat: { label: 'Chat', icon: 'chat' },
 });
 

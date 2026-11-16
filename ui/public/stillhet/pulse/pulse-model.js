@@ -6,15 +6,15 @@
   // (went wrong while nobody waited), info (simply happened). A group with a `flag` follows that Labs feature.
   // Your own Pause and a drain (the server stopping) wait on nobody: they are not events and never notify.
   const GROUPS = [
-    { id: 'runs', name: 'Runs', level: 'problems', where: 'both', events: [
+    { id: 'runs', name: 'Tasks', level: 'problems', where: 'both', events: [
       ['run.questions', 'Questions waiting', 'needs'], ['run.gate', 'Approval needed', 'needs'], ['run.recovery', 'Recovery decision needed', 'needs'],
       ['run.workflow', 'Workflow to review', 'needs'], ['run.cost_cap', 'Cost cap reached', 'needs'], ['run.failed', 'Task failed', 'problem'],
       ['run.paused_limit', 'Usage limit reached', 'problem'], ['run.paused_error', 'Paused on error', 'problem'], ['run.paused_night', 'Night guardrail reached', 'problem'],
-      ['run.paused_time', 'Time limit reached', 'problem'], ['run.paused_stopped', 'Worca was stopped', 'problem'], ['run.done', 'Run finished', 'info'], ['run.resumed', 'Resumed after limit', 'info']] },
+      ['run.paused_time', 'Time limit reached', 'problem'], ['run.paused_stopped', 'Worca was stopped', 'problem'], ['run.done', 'Task finished', 'info'], ['run.resumed', 'Resumed after limit', 'info']] },
     { id: 'schedules', name: 'Schedules', level: 'problems', where: 'both', events: [
-      ['schedule.missed', 'Start missed', 'problem'], ['schedule.failed', 'Could not start', 'problem'], ['schedule.run_error', 'Scheduled run failed', 'problem'], ['schedule.run_paused', 'Run paused', 'problem'],
+      ['schedule.missed', 'Start missed', 'problem'], ['schedule.failed', 'Could not start', 'problem'], ['schedule.run_error', 'Scheduled task failed', 'problem'], ['schedule.run_paused', 'Task paused', 'problem'],
       ['schedule.self_paused', 'Series paused itself', 'problem'], ['schedule.late', 'Started late', 'info'], ['schedule.retrying', 'Retrying a start', 'info'], ['schedule.skipped', 'Start skipped', 'info'],
-      ['schedule.canceled', 'Start canceled', 'info'], ['schedule.ended', 'Series ended', 'info'], ['schedule.completed', 'Scheduled run finished', 'info']] },
+      ['schedule.canceled', 'Start canceled', 'info'], ['schedule.ended', 'Series ended', 'info'], ['schedule.completed', 'Scheduled task finished', 'info']] },
     { id: 'automations', name: 'Automations', level: 'problems', where: 'both', flag: 'gitAutomations', events: [
       ['automation.approval', 'Waiting for approval', 'needs'], ['automation.failed', 'Automation failed', 'problem'], ['automation.started', 'Automation started', 'info'],
       ['automation.skipped', 'Automation skipped', 'info'], ['automation.queued', 'Automation queued', 'info'], ['automation.done', 'Automation done', 'info']] },
@@ -35,11 +35,11 @@
   ];
   const EVENT = Object.fromEntries(GROUPS.flatMap((g) => g.events.map(([id, name, sev]) => [id, { id, name, sev, g: g.id }])));
   // Vitals › Scheduled, top to bottom.
-  const SCHED = [['missed', 'Missed'], ['today', 'Today'], ['tomorrow', 'Tomorrow'], ['week', 'This week'], ['later', 'Later'], ['after', 'After a run'], ['reset', 'After a reset'], ['paused', 'Paused']];
+  const SCHED = [['missed', 'Missed'], ['today', 'Today'], ['tomorrow', 'Tomorrow'], ['week', 'This week'], ['later', 'Later'], ['after', 'After a task'], ['reset', 'After a reset'], ['paused', 'Paused']];
   const LEVELS = [
     { id: 'needs', short: 'What needs you', text: 'what needs you', help: 'Only what waits for you: questions, gates, a watched PR that needs a person' },
-    { id: 'problems', short: 'Problems too', text: 'what needs you and problems', help: 'Also what went wrong while nobody was waiting: a failed run, a missed start, a limit' },
-    { id: 'all', short: 'Everything', text: 'everything', help: 'Also what simply happened: a run finished, a fix was published, a limit reset' },
+    { id: 'problems', short: 'Problems too', text: 'what needs you and problems', help: 'Also what went wrong while nobody was waiting: a failed task, a missed start, a limit' },
+    { id: 'all', short: 'Everything', text: 'everything', help: 'Also what simply happened: a task finished, a fix was published, a limit reset' },
   ];
   const WHERE = [
     { id: 'pulse', short: 'Pulse only', text: 'Stays in Pulse only', help: 'Kept in Pulse; nothing leaves Worca' },
@@ -49,7 +49,7 @@
   ];
   // Notifications' other sentences: each reads right for every choice (gates/settings-sentences.mjs).
   // `short`: the value as a picker shows it (the value leads); `text` reads inside the sentence search finds
-  const BADGE = [{ id: 'needs', short: 'What needs you', text: 'counts what needs you', help: 'The tab title, the favicon\'s dot and the app icon show while 2 runs wait for you' }, { id: 'problems', short: 'Problems too', text: 'counts what needs you and problems', help: 'Also unread problems: a failed run, a missed start, a limit' }, { id: 'none', short: 'No count', text: 'shows no count', help: 'The tab title never shows a count' }];
+  const BADGE = [{ id: 'needs', short: 'What needs you', text: 'counts what needs you', help: 'The tab title, the favicon\'s dot and the app icon show while 2 tasks wait for you' }, { id: 'problems', short: 'Problems too', text: 'counts what needs you and problems', help: 'Also unread problems: a failed task, a missed start, a limit' }, { id: 'none', short: 'No count', text: 'shows no count', help: 'The tab title never shows a count' }];
   const chatWords = (names) => (names.length ? `Sent to ${names.join(', ')}` : 'No chat channel is working');
   const RANK = { needs: 0, problem: 1, info: 2 };
   const LEVEL_MAX = { needs: 0, problems: 1, all: 2 };
@@ -81,7 +81,7 @@
   // world's run it is about (it must be in the case). `chat`: the chat it opens. `fix`: the step that deals with a problem;
   // taking it resolves the row, or `fixLand` takes you to where it is done.
   const up = (id, e, about, meta, time, day, o = {}) => ({ id, e, g: EVENT[e].g, sev: EVENT[e].sev, title: o.title || `${EVENT[e].name} · ${about}`, meta, time, day, unread: EVENT[e].sev !== 'info' && !o.read,
-    ...(o.chat ? { go: `chat/${o.chat}`, to: 'the chat' } : DEST[e] || DEST[e.split('.')[0]] || (o.run ? { go: 'run', to: 'the run page' } : { go: 'runs', to: 'Runs' })), ...o });
+    ...(o.chat ? { go: `chat/${o.chat}`, to: 'the chat' } : DEST[e] || DEST[e.split('.')[0]] || (o.run ? { go: 'run', to: 'the task page' } : { go: 'runs', to: 'Tasks' })), ...o });
   // An update about one of the world's runs: its title and project are the run's own.
   const ofRun = (id, e, runId, meta, time, day, o = {}) => up(id, e, W.title(runId), `${W.project(runId)} · ${meta}`, time, day, { run: runId, ...o });
   const NEW_VERSION = (id) => up(id, 'app.update_available', '', 'you run 1.19', '08:40', 'Today', { title: 'New version: 1.20' });
@@ -91,32 +91,32 @@
       updates: [
         NEW_VERSION('u-upd'),
         ofRun('u1', 'run.questions', 'r1', 'Review asks which date format', '14:32', 'Today', { open: true, to: 'its card in its chat, at its question' }),
-        up('u10', 'chat.run', 'Ship the CSV export', 'a run waits for your OK', '14:05', 'Today', { open: true, chat: 'c1' }),
-        ofRun('u2', 'run.failed', 'r5', 'Test step · 3 tests failed', '12:40', 'Today', { to: 'the run page, on the step that stopped', fix: 'Restart Build' }),
-        up('u3', 'pr.published', '#962 Retry on 502', 'web-app · watched PR · checks running', '13:10', 'Today', { run: 'r7', to: 'the fix run' }),
+        up('u10', 'chat.run', 'Ship the CSV export', 'a task waits for your OK', '14:05', 'Today', { open: true, chat: 'c1' }),
+        ofRun('u2', 'run.failed', 'r5', 'Test step · 3 tests failed', '12:40', 'Today', { to: 'the task page, on the step that stopped', fix: 'Restart Build' }),
+        up('u3', 'pr.published', '#962 Retry on 502', 'web-app · watched PR · checks running', '13:10', 'Today', { run: 'r7', to: 'the fix task' }),
         up('u4', 'schedule.missed', 'Nightly dependency bump', 'web-app · Worca was not running at 03:00', '09:02', 'Today', { run: 'r17', fix: 'Run now' }),
         ofRun('u5', 'run.done', 'h1', '18 min · $1.42', '08:40', 'Today'),
-        up('u6', 'usage.reset', '', 'OpenAI · Plus · Session', '17:05', 'Yesterday', { title: 'Codex session reset · 1 run resumed', run: 'r10', to: 'the resumed run' }),
+        up('u6', 'usage.reset', '', 'OpenAI · Plus · Session', '17:05', 'Yesterday', { title: 'Codex session reset · 1 run resumed', run: 'r10', to: 'the resumed task' }),
         ofRun('u7', 'run.questions', 'h2', 'answered at 11:20', '11:02', 'Yesterday', { read: true, resolved: true }),
-        up('u8', 'schedule.missed', 'Run after: Breadcrumb tests', 'worca-cc · started late, when the run before it resumed', '10:40', 'Yesterday', { read: true, resolved: true }),
+        up('u8', 'schedule.missed', 'Run after: Breadcrumb tests', 'worca-cc · started late, when the task before it resumed', '10:40', 'Yesterday', { read: true, resolved: true }),
         up('u9', 'project.clone_done', 'acme/design-tokens', '2.1 MB', '10:15', 'Yesterday')] },
     { id: 'near', label: 'Session near its limit', desktop: 'unsupported', task: { title: 'Add rate limiting to the public API' },
       away: { status: 'no-hours' },
       updates: [
-        up('n0', 'usage.moved', '', 'web-app · Claude Code\'s session was at 84% · the slice keeps Codex to the end', '14:24', 'Today', { title: 'Slice 2 of 4 moved to Codex · Rate limiting', run: 's2', to: 'the slice\'s run page' }),
+        up('n0', 'usage.moved', '', 'web-app · Claude Code\'s session was at 84% · the slice keeps Codex to the end', '14:24', 'Today', { title: 'Slice 2 of 4 moved to Codex · Rate limiting', run: 's2', to: 'the slice\'s task page' }),
         up('n1', 'usage.near', '', 'Claude · Max · runs on it may pause before it resets', '14:20', 'Today', { title: 'Claude Code session at 80% · resets 16:40' }),
         ofRun('n2', 'run.done', 'h1', '18 min · $1.42', '13:40', 'Today'),
-        up('n3', 'pr.fix_started', '#962 Retry on 502', 'web-app · watched PR · 2 checks failing', '11:30', 'Today', { run: 'r7', to: 'the fix run' })] },
+        up('n3', 'pr.fix_started', '#962 Retry on 502', 'web-app · watched PR · 2 checks failing', '11:30', 'Today', { run: 'r7', to: 'the fix task' })] },
     { id: 'reached', label: 'Weekly limit reached', desktop: 'on', task: { title: 'Add rate limiting to the public API' },
       away: { status: 'paused' },
       updates: [
-        up('r1', 'usage.reached', '', 'OpenAI · Plus · it resumes by itself Mon 09:05', '11:05', 'Today', { title: 'Codex weekly limit reached · 1 run paused' }),
-        ofRun('r2', 'run.failed', 'r5', 'Test step · 3 tests failed', '09:58', 'Today', { to: 'the run page, on the step that stopped', fix: 'Restart Build' }),
+        up('r1', 'usage.reached', '', 'OpenAI · Plus · it resumes by itself Mon 09:05', '11:05', 'Today', { title: 'Codex weekly limit reached · 1 task paused' }),
+        ofRun('r2', 'run.failed', 'r5', 'Test step · 3 tests failed', '09:58', 'Today', { to: 'the task page, on the step that stopped', fix: 'Restart Build' }),
         up('r3', 'usage.near', '', 'OpenAI · Plus', '16:12', 'Yesterday', { title: 'Codex week at 80% · resets Mon 09:00', read: true })] },
     { id: 'budget', label: 'Spend near its budget', desktop: 'off', task: { title: 'Add rate limiting to the public API' },
       away: { status: 'away-now' },
       updates: [
-        ofRun('b1', 'run.cost_cap', 'r1', 'paused at $5.00 · raise the cap or stop', '10:12', 'Today', { open: true, to: 'the run page at its cost cap' }),
+        ofRun('b1', 'run.cost_cap', 'r1', 'paused at $5.00 · raise the cap or stop', '10:12', 'Today', { open: true, to: 'the task page at its cost cap' }),
         up('b2', 'budget.threshold', '', 'Budget · $80.40 of $100', '09:30', 'Today', { title: 'Budget at 80% of $100' })] },
     // The budget is used up: every run is paused, and nothing starts until it resets or is raised.
     { id: 'spent', label: 'Budget used up', desktop: 'on', task: { title: 'Add rate limiting to the public API' },
@@ -139,11 +139,11 @@
       updates: [
         NEW_VERSION('e-upd'),
         ofRun('e01', 'run.questions', 'r1', 'Review asks which date format', '14:32', 'Today', { open: true, to: 'its card in its chat, at its question' }),
-        ofRun('e02', 'run.gate', 'r2', 'approve the plan', '13:40', 'Today', { open: true, to: 'the run page at its gate' }),
+        ofRun('e02', 'run.gate', 'r2', 'approve the plan', '13:40', 'Today', { open: true, to: 'the task page at its gate' }),
         ofRun('e03', 'run.recovery', 'r29', 'the same step failed three times', '14:10', 'Today', { open: true }),
         ofRun('e04', 'run.workflow', 'r30', 'Shaper proposes a workflow', '14:02', 'Today', { open: true }),
-        ofRun('e05', 'run.cost_cap', 'r4', 'paused at $120', '12:58', 'Today', { open: true, to: 'the run page at its cost cap' }),
-        ofRun('e06', 'run.failed', 'r5', 'Test step · 3 tests failed', '12:40', 'Today', { to: 'the run page, on the step that stopped', fix: 'Restart Build' }),
+        ofRun('e05', 'run.cost_cap', 'r4', 'paused at $120', '12:58', 'Today', { open: true, to: 'the task page at its cost cap' }),
+        ofRun('e06', 'run.failed', 'r5', 'Test step · 3 tests failed', '12:40', 'Today', { to: 'the task page, on the step that stopped', fix: 'Restart Build' }),
         ofRun('e07', 'run.paused_limit', 'r3', 'Gemini refused: daily quota', '13:12', 'Today', { fix: 'Resume' }),
         ofRun('e08', 'run.paused_error', 'r32', 'lost the connection to the model', '13:30', 'Today', { fix: 'Resume' }),
         ofRun('e09', 'run.paused_night', 'r33', '20 answers while you were away', '02:10', 'Today', { fix: 'Resume' }),
@@ -158,29 +158,29 @@
         up('e24', 'schedule.self_paused', 'Weekly digest', 'worca-cc · 3 failures in a row', '06:00', 'Yesterday', { fix: 'Resume' }),
         up('e25', 'schedule.late', 'Nightly dependency bump', 'web-app · started 40 min late', '03:40', 'Yesterday'),
         up('e26', 'schedule.retrying', 'Nightly dependency bump', 'web-app · try 2 of 3 in 5 min', '03:05', 'Yesterday'),
-        up('e27', 'schedule.skipped', 'Tidy project memory', 'worca-cc · the last run is still going', '03:00', 'Yesterday'),
+        up('e27', 'schedule.skipped', 'Tidy project memory', 'worca-cc · the last task is still going', '03:00', 'Yesterday'),
         up('e28', 'schedule.canceled', 'Deploy docs site', 'docs-site · canceled by you', '02:50', 'Yesterday'),
         up('e29', 'schedule.ended', 'Quarterly licence check', 'web-app · reached its end', '02:40', 'Yesterday'),
         up('e30', 'schedule.completed', 'Tidy project memory', 'worca-cc · 4 min · $0.20', '02:30', 'Yesterday'),
-        up('e40', 'automation.approval', 'Issue #88 opened', 'web-app · a rule wants to start a run', '11:02', 'Yesterday', { open: true }),
+        up('e40', 'automation.approval', 'Issue #88 opened', 'web-app · a rule wants to start a task', '11:02', 'Yesterday', { open: true }),
         up('e41', 'automation.failed', 'Issue #87 opened', 'web-app · the workflow is missing', '10:58', 'Yesterday'),
-        up('e42', 'automation.started', 'PR #961 opened', 'web-app · run started', '10:50', 'Yesterday'),
+        up('e42', 'automation.started', 'PR #961 opened', 'web-app · task started', '10:50', 'Yesterday'),
         up('e43', 'automation.skipped', 'Issue #86 opened', 'web-app · no rule matched its labels', '10:40', 'Yesterday'),
         up('e44', 'automation.queued', 'Issue #85 opened', 'web-app · waits for a free slot', '10:30', 'Yesterday'),
-        up('e45', 'automation.done', 'Issue #84 opened', 'web-app · run finished', '10:20', 'Yesterday'),
-        up('e50', 'chat.run', 'Plan the API rewrite', 'a run waits for your OK', '10:12', 'Yesterday', { open: true, chat: 'c5' }),
+        up('e45', 'automation.done', 'Issue #84 opened', 'web-app · task finished', '10:20', 'Yesterday'),
+        up('e50', 'chat.run', 'Plan the API rewrite', 'a task waits for your OK', '10:12', 'Yesterday', { open: true, chat: 'c5' }),
         up('e51', 'chat.web', 'Why did the build fail', 'wants to reach npmjs.com', '10:08', 'Yesterday', { open: true, chat: 'c2' }),
         up('e52', 'chat.workflow', 'Release checklist', 'a workflow waits for your OK', '10:04', 'Yesterday', { open: true, chat: 'c9' }),
         up('e53', 'chat.schedule', 'Tidy the migrations', 'a schedule waits for your OK', '10:00', 'Yesterday', { open: true, chat: 'c3' }),
         up('e60', 'pr.needs_person', '#960 Rename settings keys', 'worca-cc · two reviewers disagree', '09:50', 'Earlier', { open: true, run: 'r11' }),
         ofRun('e61', 'pr.open_failed', 'r8', 'GitHub refused the push', '09:40', 'Earlier', { fix: 'Open PR' }),
-        up('e62', 'pr.fix_started', '#962 Retry on 502', 'web-app · round 7 · 2 checks failing', '09:30', 'Earlier', { run: 'r7', to: 'the fix run' }),
-        up('e63', 'pr.published', '#962 Retry on 502', 'web-app · round 5 · pushed 19ab20c', '09:20', 'Earlier', { run: 'r7', to: 'the fix run' }),
+        up('e62', 'pr.fix_started', '#962 Retry on 502', 'web-app · round 7 · 2 checks failing', '09:30', 'Earlier', { run: 'r7', to: 'the fix task' }),
+        up('e63', 'pr.published', '#962 Retry on 502', 'web-app · round 5 · pushed 19ab20c', '09:20', 'Earlier', { run: 'r7', to: 'the fix task' }),
         up('e70', 'usage.near', '', 'Claude · Max', '09:10', 'Earlier', { title: 'Claude Code session at 80% · resets 16:40' }),
-        up('e71', 'usage.reached', '', 'OpenAI · Plus', '09:00', 'Earlier', { title: 'Codex weekly limit reached · 1 run paused' }),
-        up('e72', 'usage.reset', '', 'OpenAI · Plus', '08:50', 'Earlier', { title: 'Codex session reset · 1 run resumed', run: 'r12', to: 'the resumed run' }),
-        up('e73', 'usage.moved', '', 'web-app · the slice keeps Codex to the end', '08:40', 'Earlier', { title: 'Slice 2 of 4 moved to Codex · Rate limiting', run: 's2', to: 'the slice\'s run page' }),
-        up('e74', 'usage.held', '', 'web-app · no harness has room', '08:30', 'Earlier', { title: 'Slice 3 of 4 waits for 16:40 · Rate limiting', run: 's3', to: 'the slice\'s run page' }),
+        up('e71', 'usage.reached', '', 'OpenAI · Plus', '09:00', 'Earlier', { title: 'Codex weekly limit reached · 1 task paused' }),
+        up('e72', 'usage.reset', '', 'OpenAI · Plus', '08:50', 'Earlier', { title: 'Codex session reset · 1 run resumed', run: 'r12', to: 'the resumed task' }),
+        up('e73', 'usage.moved', '', 'web-app · the slice keeps Codex to the end', '08:40', 'Earlier', { title: 'Slice 2 of 4 moved to Codex · Rate limiting', run: 's2', to: 'the slice\'s task page' }),
+        up('e74', 'usage.held', '', 'web-app · no harness has room', '08:30', 'Earlier', { title: 'Slice 3 of 4 waits for 16:40 · Rate limiting', run: 's3', to: 'the slice\'s task page' }),
         up('e75', 'budget.threshold', '', 'Budget · $80.40 of $100', '08:20', 'Earlier', { title: 'Budget at 80% of $100' }),
         up('e76', 'budget.exceeded', '', 'Budget · it reset on Nov 1', '08:10', 'Earlier', { title: 'Budget of $100 used up in October', read: true, resolved: true }),
         up('e80', 'away.started', '', 'Until 08:00', '18:00', 'Earlier', { title: 'Away hours started' }),
@@ -206,21 +206,21 @@
   }
 
   // The Away row in the profile menu: its hint and tip, from where the person stands (the app's describeAwayRow).
-  const TURN_ON = 'Turn Away on to have Worca answer waiting run questions for you.';
+  const TURN_ON = 'Turn Away on to have Worca answer waiting task questions for you.';
   function awayRow({ status, hours }) {
     const here = { state: 'here', disabled: false }, away = { state: 'away', disabled: false };
     switch (status) {
       case 'here': return { ...here, hint: `away at ${hours[0]}`, tip: `Away hours run ${hours[0]} to ${hours[1]}. ${TURN_ON}` };
       case 'no-hours': return { ...here, hint: '', tip: `No away hours are set. ${TURN_ON}` };
       case 'paused': return { ...here, hint: 'Away mode paused', tip: 'Away mode is paused: Worca answers nothing. Turn Away on to have Worca answer for you.' };
-      case 'away-now': return { ...away, hint: '', tip: 'You said you are away. Worca answers waiting run questions for you until you turn Away off.' };
+      case 'away-now': return { ...away, hint: '', tip: 'You said you are away. Worca answers waiting task questions for you until you turn Away off.' };
       case 'away-hours': return { ...away, hint: `until ${hours[1]}`, tip: `Away hours until ${hours[1]}. Turn Away off to count as here until they end.` };
       default: return { ...here, hint: '', disabled: true, tip: 'Could not read away mode. Worca tries again by itself.' };
     }
   }
   // What the away screensaver says: the most pressing thing wins.
   function awayLine(needs, running) {
-    if (needs) return needs === 1 ? 'When you have a moment, a run would like an answer.' : `When you have a moment, ${needs} runs would like an answer.`;
+    if (needs) return needs === 1 ? 'When you have a moment, a task would like an answer.' : `When you have a moment, ${needs} runs would like an answer.`;
     return running ? 'Everything is under control.' : 'All quiet. Enjoy the break.';
   }
 
@@ -239,13 +239,13 @@
     F('workspace', 'platform-core', 'Workspace', 'workspaces', { min: 'advanced' }),
     F('workflow', 'Default', 'Workflow · 5 agents', 'workflows'), F('workflow', 'Lean', 'Workflow · 4 agents', 'workflows'), F('workflow', 'Shaper', 'Workflow · 6 agents', 'workflows'), F('workflow', 'Promo video', 'Workflow · 8 agents', 'workflows'), F('workflow', 'Architecture (C4)', 'Workflow · 2 agents', 'workflows'),
     F('schedule', 'Nightly dependency bump', 'Schedule · every day', 'schedules', { min: 'advanced' }), F('schedule', 'Weekly digest', 'Schedule · every Friday', 'schedules', { min: 'advanced' }),
-    F('ticket', 'Deploy docs site', 'Scheduled once · after a run', 'schedules', { min: 'advanced' }), F('ticket', 'Tidy project memory', 'Scheduled once · today 18:00', 'schedules', { min: 'advanced' }),
-    F('label', 'hotfix', 'Label · Runs', 'runs', { flag: 'runLabels' }), F('label', 'ui', 'Label · Runs', 'runs', { flag: 'runLabels' }), F('label', 'billing', 'Label · Runs', 'runs', { flag: 'runLabels' }), F('label', 'backend', 'Label · Runs', 'runs', { flag: 'runLabels' }), F('label', 'tests', 'Label · Runs', 'runs', { flag: 'runLabels' }),
+    F('ticket', 'Deploy docs site', 'Scheduled once · after a task', 'schedules', { min: 'advanced' }), F('ticket', 'Tidy project memory', 'Scheduled once · today 18:00', 'schedules', { min: 'advanced' }),
+    F('label', 'hotfix', 'Label · Tasks', 'runs', { flag: 'runLabels' }), F('label', 'ui', 'Label · Tasks', 'runs', { flag: 'runLabels' }), F('label', 'billing', 'Label · Tasks', 'runs', { flag: 'runLabels' }), F('label', 'backend', 'Label · Tasks', 'runs', { flag: 'runLabels' }), F('label', 'tests', 'Label · Tasks', 'runs', { flag: 'runLabels' }),
     F('plugin', 'github-source', 'Plugin · Marketplace', 'marketplace', { min: 'advanced' }), F('plugin', 'jira-source', 'Plugin · Marketplace', 'marketplace', { min: 'advanced' }), F('plugin', 'telegram-chat', 'Plugin · Marketplace', 'marketplace', { min: 'advanced' }),
     F('plugin', 'slack-chat', 'Plugin · Marketplace', 'marketplace', { min: 'advanced' }), F('plugin', 'discord-chat', 'Plugin · Marketplace', 'marketplace', { min: 'advanced' }),
     F('chat', 'Why did the build fail', 'Chat · today', 'chat/c2'), F('chat', 'Plan the API rewrite', 'Chat · today', 'chat/c5'), F('chat', 'Release checklist', 'Chat · yesterday', 'chat/c9'),
   ];
-  const FLAG_ROW = { requirements: 'Requirements', runLabels: 'Run labels', gitAutomations: 'Git event automations' };
+  const FLAG_ROW = { requirements: 'Requirements', runLabels: 'Task labels', gitAutomations: 'Git event automations' };
   // `label:ui`: the runs with that label. Otherwise the name, or a word of where it lives, anywhere in the text.
   // The runs are the world's, as they are now.
   const runFinds = () => W.rows().filter((r) => !r.archived).map((r) => F('run', r.title, `Task · ${r.project || 'No project'}`, `run/${r.case}`, { labels: r.labels, run: r.id }));

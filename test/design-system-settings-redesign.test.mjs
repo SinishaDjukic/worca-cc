@@ -95,7 +95,7 @@ test('rowPicker: a long value folds inside the field and is whole in its tooltip
   assert.equal(off.querySelector('[data-menu]'), null, 'no menu hook: nothing a click could open');
   assert.equal(off.querySelector('.tip-wrap').getAttribute('title'), 'Pulse keeps everything', 'the reason is the OffTip\'s: a disabled button shows none of its own');
   assert.equal(off.querySelector('button').hasAttribute('title'), false, 'one tooltip');
-  assert.equal(C.settingsRow.picker, rowPicker, 'a page reaches it as R.settingsRow.picker until the index exports it');
+  assert.equal(C.rowPicker, rowPicker, 'a page calls R.rowPicker'); assert.equal(C.settingsRow.picker, undefined, 'no bridge on SettingsRow');
 });
 
 // ---- a menu item's supporting line ----

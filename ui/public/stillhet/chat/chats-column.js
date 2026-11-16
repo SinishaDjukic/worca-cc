@@ -125,9 +125,12 @@
   function parts() {
     return parts0();
   }
+  // One count for what needs you (A1): the Needs you tab counts chats, the rows it opens; its tooltip ties that to the one
+  // count ("5 chats hold the 5 tasks that need you. Pulse has all 11", StillhetWorld.holdLabel)
+  const needsTip = (n) => (view.from === 'all' && W.holdLabel ? W.holdLabel(+n, 'chat', 'task').tip : '');
   function parts0() {
     const projects = [...new Set(data.chats.map((c) => c.project || 'No project'))].sort();
-    return [{ word: 'Showing', id: 'show', tabs: ['all', 'needs', 'running'], text: showOf(view.show).text, tip: 'Which chats the list shows', items: SHOWS.map((x) => ({ id: x.id, text: x.text, help: x.help, checked: view.show === x.id, hint: count({ show: x.id }) })) },
+    return [{ word: 'Showing', id: 'show', tabs: ['all', 'needs', 'running'], text: showOf(view.show).text, tip: 'Which chats the list shows', items: SHOWS.map((x) => ({ id: x.id, text: x.text, help: x.id === 'needs' ? needsTip(count({ show: 'needs' })) || x.help : x.help, checked: view.show === x.id, hint: count({ show: x.id }) })) },
       { word: 'from', id: 'from', raw: true, text: view.from === 'all' ? 'All projects' : view.from, tip: 'Which project they belong to', items: [{ id: 'all', text: 'All projects', checked: view.from === 'all', hint: count({ from: 'all' }) }, { sep: true }, ...projects.map((p) => ({ id: p, text: p, checked: view.from === p, hint: count({ from: p }) }))] },
       R.byPart({ by: view.by, choices: [{ id: 'day' }, { id: 'state', help: `${NEEDS()}, Running, Recent` }, { id: 'project' }, { id: 'topic', help: 'One section per group, then Ungrouped' }, { id: 'ai', help: 'A helper job names the topics (Models › Jobs: Haiku); your groups are kept' }] })];
   }

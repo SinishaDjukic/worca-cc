@@ -545,7 +545,7 @@ test('slice 10: the catalog\'s HeatGrid code resolves to heatGrid, exported by t
   assert.equal(hg.code, 'ui/public/design-system/components/heat-grid.mjs#heatGrid');
   const C = await import(new URL('../ui/public/design-system/components/index.mjs', import.meta.url));
   assert.equal(typeof C.heatGrid, 'function');
-  assert.match(C.heatGrid({ label: 'x', rows: [{ label: 'Maya' }], columns: [{ label: 'a' }], cells: [[{ value: 1, text: '$1, 1 task' }]], max: 1 }), /class="hg-cell is-h4"/);
+  assert.match(C.heatGrid({ label: 'x', rows: [{ label: 'Maya' }], columns: [{ label: 'a' }], cells: [[{ value: 1, text: '$1, 1 task' }]], max: 1 }), /class="hg-cell is-h4[ "]/);   // the redesign: a cell may also say it is first or last in its row (its number card's side)
 });
 
 test('morph keeps what stays, adds what is new, drops what left, and draws the same DOM as innerHTML', () => {
@@ -666,7 +666,9 @@ test('dialog: head, the one scrolling body, a foot with its status, Cancel and t
   assert.ok(d.querySelector('.dlg-body > p'));
   assert.deepEqual([...d.querySelectorAll('.dlg-acts button')].map((b) => b.textContent), ['Cancel', 'Move it']);
   const busy = dom(C.dialog({ title: 't', body: '', yes: 'Move it', busy: true, busyLabel: 'Moving…' }));
-  assert.equal(busy.querySelector('[data-dialog="yes"]').textContent, 'Moving…');
+  assert.equal(busy.querySelector('[data-dialog="yes"] .btn-busy-t').textContent, 'Moving…');   // the busy Button: the knot, then the words
+  assert.ok(busy.querySelector('[data-dialog="yes"] .btn-knot'));
+  assert.equal(dom(C.dialog({ title: 't', body: '', yes: 'Create PR', busy: true })).querySelector('.btn-busy-t').textContent, 'Creating PR…');
   assert.ok(busy.querySelector('[data-dialog="yes"]').disabled);
 });
 
@@ -716,13 +718,18 @@ test('settingsGroup: a small head over its own rows', () => {
   assert.equal(g.querySelector('.set-rows .set-name').textContent, 'Summaries');
 });
 
-test('listRow fold: Customise shows what is under the record, Done hides it; a List group has one meta line', () => {
+test('listRow fold: the whole line is the trigger and a chevron turns, as on a SettingsRow (no Customise or Done); a List group has one meta line', () => {
   const shut = dom(C.listRow({ title: 'Jira', after: '<p class="x"></p>', fold: { open: false, attrs: { 'data-f': 'j' } } }));
-  assert.equal(shut.querySelector('[data-f]').textContent, 'Customise');
+  assert.ok(shut.querySelector('button.lr-main.lr-opens[data-f][aria-expanded="false"]'), 'the line itself is the trigger');
+  assert.equal(shut.querySelector('[data-f]').getAttribute('aria-label'), 'Jira: more settings');
+  assert.ok(shut.querySelector('.set-chev'), 'the same chevron as SettingsRow');
+  assert.doesNotMatch(shut.textContent, /Customise|Done/);
   assert.equal(shut.querySelector('.x'), null);
   const open = dom(C.listRow({ title: 'Jira', after: '<p class="x"></p>', fold: { open: true } }));
   assert.ok(open.querySelector('.lr-after .x'));
-  assert.equal(open.querySelector('[aria-expanded="true"]').textContent, 'Done');
+  assert.ok(open.matches('.is-opens.is-open') && open.querySelector('[aria-expanded="true"]'));
+  const both = dom(C.listRow({ title: 'Jira', open: { 'data-open': 'j' }, after: '<p></p>', fold: { open: false, attrs: { 'data-f': 'j' } } }));
+  assert.ok(both.querySelector('button.lr-main[data-open]') && both.querySelector('button.lr-fold[data-f] .set-chev'), 'a row that opens a page keeps its name; the chevron alone folds');
   assert.ok(dom(C.listRow({ title: 'Run', after: '<p class="x"></p>' })).querySelector('.x'), 'without a fold, after always shows');
   const l = dom(C.list({ groups: [{ title: 'Blocked', meta: 'Recorded as off-policy', rows: ['<div></div>'] }] }));
   assert.equal(l.querySelector('.list-h + .list-m').textContent, 'Recorded as off-policy');
@@ -1371,7 +1378,7 @@ test('shortcutsSheet: a Dialog with only Close, drawn from the table, ⌘ or Ctr
   const pc = [...dom(C.shortcutsSheet({ mac: false })).querySelectorAll('.keys-row')].find((r) => r.textContent.includes('Search or ask'));
   assert.deepEqual([...pc.querySelectorAll('kbd')].map((k) => k.textContent), ['Ctrl', 'K']);
   const only = dom(C.shortcutsSheet({ sections: C.shortcutSections({ scopes: ['run'] }) }));
-  assert.deepEqual([...only.querySelectorAll('.keys-h')].map((h) => h.textContent), ['Run page']);
+  assert.deepEqual([...only.querySelectorAll('.keys-h')].map((h) => h.textContent), ['Task page']);
 });
 
 test('openShortcutsSheet: one at a time, holds the keys, Esc or Close closes and the focus goes back', () => {
@@ -1438,7 +1445,7 @@ test('listState, originMark, chatKindIcon: a list with no rows; a chat\'s marks 
   assert.doesNotMatch(brief, /did not answer/);
   assert.equal(dom(C.originMark({ platform: 'slack' })).title, 'From Slack');
   assert.equal(dom(C.originMark({ platform: 'x', label: 'Matter' })).title, 'From Matter');
-  assert.equal(dom(C.chatKindIcon(C.CHAT_KINDS.started)).title, 'Started a run');
+  assert.equal(dom(C.chatKindIcon(C.CHAT_KINDS.started)).title, 'Started a task');
 });
 
 test('listController: draws what a page names; selecting, the sentence, Show N more and a confirm work by clicks', () => {
@@ -1532,11 +1539,13 @@ test('watchChart: focus reads a point, Enter opens it, a drag across narrows', (
 });
 test('figureRows: each whole row is one button, a second level is marked', () => {
   const c = dom(C.figureRows({ label: 'By project', columns: [{ label: 'Share' }, { label: 'AI spend', narrow: false }], rows: [{ name: 'a<b', cells: ['45%', '$186'], attrs: { 'data-x': '1' } }, { name: 'sub', cells: ['1%', '$2'], sub: true }] }));
-  assert.equal(c.querySelectorAll('button.fr-row').length, 2); assert.equal(c.querySelector('button .fr-name').textContent, 'a<b'); assert.ok(c.querySelector('button.fr-row.is-sub'));
+  // the redesign (A14): only a row that opens something is a button; the second level here opens nothing, so it is a static row
+  assert.equal(c.querySelectorAll('button.fr-row').length, 1); assert.equal(c.querySelector('button .fr-name').textContent, 'a<b'); assert.ok(c.querySelector('.fr-row.is-sub.is-static'));
   assert.match(c.querySelector('button').getAttribute('aria-label'), /Share 45%, AI spend \$186/); assert.equal(c.querySelector('button').querySelectorAll('button').length, 0);
 });
 // I2: without the new options the output is byte-identical to before (captured from the untouched components)
-const FR_TODAY = '<div class="fr-list" role="group" style="--fr-n:2" aria-label="By person"><div class="fr-row is-head" aria-hidden="true"><span></span><span class="fr-c">Share</span><span class="fr-c is-wide">Tasks</span></div><button type="button" class="fr-row" aria-label="Maya: Share 32%, Tasks 102" title="Shows it"><span class="fr-name">Maya</span><span class="fr-c">32%</span><span class="fr-c is-wide">102</span></button><button type="button" class="fr-row is-quiet" aria-label="Other: Share 8%, Tasks 17" disabled title="No"><span class="fr-name">Other</span><span class="fr-c">8%</span><span class="fr-c is-wide">17</span></button></div>';
+// the redesign (Insights, A14): a row that cannot open is text in a static row, never a dead button; rows sit in their own scroll box and no column is dropped
+const FR_TODAY = '<div class="fr-scroll"><div class="fr-list" role="group" style="--fr-n:2" aria-label="By person"><div class="fr-row is-head" aria-hidden="true"><span></span><span class="fr-c">Share</span><span class="fr-c">Tasks</span><span class="fr-go"></span></div><div class="fr-row is-static" role="group" aria-label="Maya: Share 32%, Tasks 102" title="Shows it"><span class="fr-name">Maya</span><span class="fr-c">32%</span><span class="fr-c">102</span><span class="fr-go" aria-hidden="true"></span></div><div class="fr-row is-quiet is-static" role="group" aria-label="Other: Share 8%, Tasks 17" title="No"><span class="fr-name">Other</span><span class="fr-c">8%</span><span class="fr-c">17</span><span class="fr-go" aria-hidden="true"></span></div></div></div>';
 const TC_TODAY = '<div class="tline-card" role="status" style="top:50%"><i></i><span><b>Which date format?</b><span>Waiting for you · 14:32</span></span></div>';
 const frRows = (opens) => C.figureRows({ label: 'By person', columns: [{ label: 'Share' }, { label: 'Tasks', narrow: false }], rows: [{ name: 'Maya', cells: ['32%', '102'], attrs: { title: 'Shows it' }, ...(opens ? { opens } : {}) }, { name: 'Other', cells: ['8%', '17'], quiet: true, attrs: { disabled: true, title: 'No' } }] });
 test('figureRows and timelineCard without the new options render as before (fixtures)', () => {
@@ -1807,7 +1816,7 @@ test('runOutcomes: a square per run, oldest first, named the last 7 runs (panel.
   const c = dom(C.runOutcomes({ runs: ['ok', 'fail', 'run', 'miss'], says: '3 of 4' }));
   assert.equal(c.querySelectorAll('.ro-sq').length, 4);
   assert.ok(c.querySelector('.ro-sq.is-fail') && c.querySelector('.ro-sq.is-miss'));
-  assert.match(c.querySelector('.ro-sqs').getAttribute('title'), /last 7 runs/);
+  assert.match(c.querySelector('.ro-sqs').getAttribute('title'), /last 7 tasks/);
   assert.match(c.textContent, /3 of 4/);
   assert.equal(dom('<div>' + C.runOutcomes({ runs: [], says: 'No runs in 7 days' }) + '</div>').querySelector('.ro-sqs'), null);
 });

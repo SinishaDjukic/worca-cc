@@ -87,4 +87,4 @@ export function watchSearch(doc) {
   }, true);
   sync();
 }
-search.watch = watchSearch;   // until index.mjs exports it: R.search.watch(document)
+

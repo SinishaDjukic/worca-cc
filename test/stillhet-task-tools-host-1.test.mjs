@@ -51,8 +51,12 @@ test('Changes are the task\'s own diff: its file, its lines, and Open the whole 
   assert.doesNotMatch(card(d).textContent, /run-head\.mjs/, 'never the design\'s sample files');
   card(d).querySelector('[data-file]').click(); await settle(30);
   assert.match(card(d).querySelector('.ch-diff').textContent, /export const PAGE = 50;/);
-  card(d).querySelector('[data-fulldiff]').click(); await settle(30);
-  assert.match(card(d).querySelector('.viewer-modal').textContent, /new file mode 100644/);
+  card(d).querySelector('[data-key="file-full"]').click(); await settle(30);
+  // the whole patch is drawn as a DiffView (thing.diff): its hunks with line numbers, not the raw patch text and its header
+  const whole = card(d).querySelector('.viewer-modal .diff-view');
+  assert.equal(whole.getAttribute('aria-label'), 'Changes in src/pager.mjs');
+  assert.match(whole.querySelector('.dv-unified').textContent, /export const PAGE = 50;/);
+  assert.equal(whole.querySelectorAll('.dv-unified tr.dv-add').length, 3);
 });
 
 test('a document opens with its own text, and its Download opens dev\'s raw artifact with ?download=1', async () => {

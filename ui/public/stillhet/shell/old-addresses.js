@@ -80,24 +80,28 @@
     }
     return null;
   }
-  // Classic's names as search words (key.search): [old name, what it is called now, where it lives, where it opens, the
-  // place whose icon it wears]. The one search finds a thing by the name a classic user knows and lands on today's place.
+  // Classic's names as search words (key.search): [the words, what the search shows and opens]. The one search finds a
+  // thing by the name a classic user knows and lands on today's place: a Settings section and its row or head by name (`sset`, `label`, `head`, `path`; pulse.js lands on it), or an
+  // address (`hash`). `id` is the place whose icon it wears.
   var WORDS = [
-    ['providers', 'Models', 'Settings · was Providers', 'settings/models', 'settings'],
-    ['import models', 'Models', 'Settings · was Import models', 'settings/models', 'settings'],
-    ['runs', 'Tasks', 'was Runs', 'runs', 'runs'],
-    ['statistics', 'Insights', 'was Statistics', 'insights', 'insights'],
-    ['activity', 'Pulse', 'in the top bar · was Activity', 'activity', 'chat'],
-    ['new run', 'New task', 'in Chat · was New run', '~new-task', 'chat'],
+    [['providers'], { label: 'Sign-ins', where: 'Settings › Models · was Providers', sset: 'models', head: true, id: 'settings' }],
+    [['import models'], { label: 'Import', where: 'Settings › Models › Catalogue · was Import models', sset: 'models', path: ['Catalogue', 'Sources', 'Import'], id: 'settings' }],
+    [['appearance', 'text size', 'font size'], { label: 'Appearance', where: 'Settings', sset: 'appearance', id: 'settings' }],
+    [['runs'], { label: 'Tasks', where: 'was Runs', hash: 'runs', id: 'runs' }],
+    [['statistics'], { label: 'Insights', where: 'was Statistics', hash: 'insights', id: 'insights' }],
+    [['activity'], { label: 'Pulse', where: 'in the top bar · was Activity', hash: 'activity', id: 'chat' }],
+    [['new run'], { label: 'New task', where: 'in Chat · was New run', hash: '~new-task', id: 'chat' }],
   ];
-  /** What a search for `q` finds among classic's names: [{ label, where, hash, id }], one per place, at three letters or more. */
+  /** What a search for `q` finds among classic's names: a copy of each hit, one per row, at three letters or more. */
   function words(q) {
-    var t = String(q || '').trim().toLowerCase(), out = [], seen = {};
+    var t = String(q || '').trim().toLowerCase(), out = [];
     if (t.length < 3) return out;
     for (var i = 0; i < WORDS.length; i++) {
-      var w = WORDS[i];
-      if (w[0].indexOf(t) < 0 || seen[w[3]]) continue;
-      seen[w[3]] = true; out.push({ label: w[1], where: w[2], hash: w[3], id: w[4] });
+      var w = WORDS[i], hit = false;
+      for (var j = 0; j < w[0].length; j++) if (w[0][j].indexOf(t) >= 0) hit = true;
+      if (!hit) continue;
+      var o = {}; for (var k in w[1]) o[k] = k === 'path' ? w[1][k].slice() : w[1][k];
+      out.push(o);
     }
     return out;
   }
