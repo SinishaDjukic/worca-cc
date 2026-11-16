@@ -64,7 +64,7 @@ export function startInsightsLive({ fetch, on = () => {}, now = Date.now, setTim
   function retryKey(e) { for (const [k, v] of cache) if (v === e) read(k); on(); }
   function subOf(id, src, words, extra = {}) {
     const design = model().SUB[id];
-    return { ...design, src, ...(design.liveCols ? { cols: design.liveCols } : {}), ...(words.word != null ? { word: () => words.word } : {}), ...(words.why != null ? { why: () => words.why } : {}), pace: words.pace || '', ...extra };
+    return { ...design, src, ...(design.liveCols ? { cols: design.liveCols } : {}), ...(words.word != null ? { word: () => words.word } : {}), ...(words.why != null ? { why: () => words.why } : {}), pace: words.pace || '', ...extra, budget: design.budget ? extra.budget : undefined };   // F-G-fid-17: a budget is money: only the design's money pages carry it
   }
 
   function statsPage(id, st, keys) {
