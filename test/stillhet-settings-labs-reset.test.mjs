@@ -25,7 +25,7 @@ test('T9 set.flags: an ok PATCH (no frame) turns Labels on at once and off again
   await go(w, '#settings/experimental');
   const before = patches(posts).length;
   click(w, switchOf(d, 'Git event automations')); await settle(60);
-  assert.equal(stripText(d), 'Turn on Git event automations? It needs Run labels, which turn on too.');
+  assert.equal(stripText(d), 'Turn on Git event automations? It needs Run labels, which will be turned on too.');   // F-W3a2-04: classic's words, right for one or several
   await answer(w, d, false);
   assert.equal(patches(posts).length, before, 'No sends nothing');
   click(w, switchOf(d, 'Git event automations')); await settle(60);

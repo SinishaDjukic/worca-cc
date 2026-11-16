@@ -132,7 +132,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
     reset: 'Turn every Labs feature back to its default?', resetRail: 'Stillhet is one of them: it turns off, and Worca opens in its classic look.', resetDone: 'Labs: back to its defaults', demoRefusal: 'the settings file is read-only' };
   const refusedLine = (on, error) => `Could not turn it ${on ? 'on' : 'off'}: ${error}`;
   const resetFailed = (error) => `Could not reset Labs: ${error}`;
-  const needsLine = (title, names) => `Turn on ${title}? It needs ${andList(names)}, which turn on too.`;
+  const needsLine = (title, names) => `Turn on ${title}? It needs ${andList(names)}, which will be turned on too.`;   // F-W3a2-04: classic's words (flags-view.mjs), right for one or several
   const DEMO_ANSWER_MS = 600;   // the demo's one refusing flag waits this long, so its Saving shows
   const FLAGS = [
     { key: 'commandSummaries', name: 'Command summaries', stage: 'Beta', on: true, say: 'Commands in Chat show as one line saying what they do', why: 'Adds Chat › Summaries, which needs Advanced', min: 'advanced' },
