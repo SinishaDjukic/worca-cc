@@ -16,7 +16,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import { createGraphView } from '../ui/public/graph/view.mjs';
+import { createGraphView, READABLE_FIT } from '../ui/public/graph/view.mjs';
+import { fitBounds } from '../src/shared/graph/geometry.mjs';
 import { manifestPortsFn, manifestTemplate } from '../src/shared/graph/manifest.mjs';
 import { open } from './helpers/composer-shell.mjs';
 import { checkRows } from './helpers/rows.mjs';
@@ -164,4 +165,97 @@ test('middle-button and Space+drag pan by the exact delta, outrank the hit-test 
       assert.equal(s.c.gesture().type, 'node', 'and the hit-test is back in charge');
     } },
   ]);
+});
+
+// ─── V-TW-09: the opt-in readable fit floor ──────────────────────────────────
+// A 14-step chain, nodes 280px apart, in a 900×400 viewport: its unfloored fit is far below the floor.
+const WIDE = (() => {
+  const ag = (i) => ({ id: `n${i}`, kind: 'agent', key: 'planner', x: i * 280, y: 0, label: `Step ${i}`, color: 'violet',
+    ports: { inputs: [{ id: 'task', type: 'md', loop: false }], outputs: [{ id: 'plan', type: 'md', when: 'always' }], await: true } });
+  const nodes = Array.from({ length: 14 }, (_, i) => ag(i));
+  const wires = nodes.slice(1).map((n, i) => ({ id: `w${i}`, from: { node: `n${i}`, port: 'plan' }, to: { node: n.id, port: 'task' }, loop: false }));
+  return { version: 2, template: { id: 'wf_wide', name: 'Wide' }, graph: { nodes, wires } };
+})();
+
+function mountWide({ mode = 'static', fitFloor, layout, overflowX = '' } = {}) {
+  const dom = new JSDOM('<!doctype html><div id="h"></div>');
+  const host = dom.window.document.getElementById('h');
+  if (overflowX) host.style.overflowX = overflowX;
+  const view = createGraphView(host, {
+    mode, doc: dom.window.document, portsFn: manifestPortsFn(WIDE), agents: {}, layout,
+    raf: (fn) => { fn(); return 1; },
+    viewport: () => ({ left: 0, top: 0, width: 900, height: 400 }),
+    ...(fitFloor === undefined ? {} : { fitFloor }),
+  });
+  view.render(manifestTemplate(WIDE), {});
+  return { host, view };
+}
+const near = (a, b, msg) => assert.ok(Math.abs(a - b) < 1e-9, `${msg}: ${a} vs ${b}`);
+
+test('V-TW-09: with fitFloor a 14-step workflow at 900px fits at READABLE_FIT, left-aligned, and the host scrolls sideways; a width that fits clears both styles', () => {
+  assert.equal(READABLE_FIT, 0.82);
+  const { host, view } = mountWide({ fitFloor: READABLE_FIT });
+  assert.equal(view.fitFloor, READABLE_FIT);
+  view.fitToWidth(900);
+  const b = view.bounds(60), t = view.getTransform();
+  assert.equal(t.z, READABLE_FIT);
+  near(t.x, -b.x * t.z, 'the first step sits at the left edge');
+  assert.equal(view.stage.style.width, `${Math.ceil(b.w * t.z)}px`, 'the stage is as wide as the drawing');
+  assert.ok(Math.ceil(b.w * t.z) > 900);
+  assert.equal(host.style.overflowX, 'auto', 'the host scrolls sideways');
+  // a width the graph fits: centred as today, both styles gone
+  view.fitToWidth(Math.ceil(b.w) + 100);
+  const f = fitBounds(b, { width: Math.ceil(b.w) + 100, height: Number.MAX_SAFE_INTEGER }, { zoomMin: READABLE_FIT, zoomMax: 1 });
+  assert.equal(view.getTransform().z, 1);
+  near(view.getTransform().x, f.tx, 'centred');
+  assert.equal(view.stage.style.width, '');
+  assert.equal(host.style.overflowX, '');
+});
+
+test('V-TW-09: without fitFloor, fit() goes below zoomMin and fitToWidth clamps at zoomMin exactly as today (values equal fitBounds), no stage width, host overflow untouched', () => {
+  const mon = mountWide({ mode: 'monitor', overflowX: 'hidden' });
+  assert.equal(mon.view.fitFloor, null);
+  mon.view.fit();
+  const b = mon.view.bounds(60), f = fitBounds(b, { width: 900, height: 400 }, { zoomMin: 0, zoomMax: 1 });
+  assert.ok(f.z < mon.view.zoomMin, 'the unfloored fit is below zoomMin');
+  assert.deepEqual(mon.view.getTransform(), { x: f.tx, y: f.ty, z: f.z });
+  assert.equal(mon.view.zoomFloor(), f.z);
+  const st = mountWide({ overflowX: 'hidden' });
+  st.view.fitToWidth(900);
+  const b2 = st.view.bounds(60), f2 = fitBounds(b2, { width: 900, height: Number.MAX_SAFE_INTEGER }, { zoomMin: 0.3, zoomMax: 1 });
+  assert.deepEqual(st.view.getTransform(), { x: f2.tx, y: (400 - b2.h * f2.z) / 2 - b2.y * f2.z, z: 0.3 });
+  for (const { host, view } of [mon, st]) {
+    assert.equal(view.stage.style.width, '');
+    assert.equal(host.style.overflowX, 'hidden', 'a host\'s own overflow is never touched');
+  }
+});
+
+test('V-TW-09: fit() with fitFloor opens at the floor, zoomFloor() is the whole-graph fit, zoomAbout reaches it', () => {
+  const { host, view } = mountWide({ mode: 'monitor', fitFloor: READABLE_FIT });
+  view.fit();
+  const b = view.bounds(60), t = view.getTransform();
+  const whole = fitBounds(b, { width: 900, height: 400 }, { zoomMin: 0, zoomMax: 1 }).z;
+  const f = fitBounds(b, { width: 900, height: 400 }, { zoomMin: READABLE_FIT, zoomMax: 1 });
+  assert.equal(t.z, READABLE_FIT);
+  near(t.x, -b.x * READABLE_FIT, 'the first step sits at the stage\'s left');
+  near(t.y, f.ty, 'y as fitBounds gives');
+  assert.equal(view.zoomFloor(), whole);
+  view.zoomAbout(0.01, 450, 200);
+  assert.equal(view.getTransform().z, whole, 'zoom-out reaches the whole graph');
+  assert.equal(view.stage.style.width, '', 'a pan canvas gets no stage width');
+  assert.equal(host.style.overflowX, '');
+});
+
+test('fitFloor: 0, negative, NaN, a string and null are off; above 1 clamps to 1; a flow host ignores it', () => {
+  for (const v of [0, -0.5, NaN, '0.9', null, Infinity]) assert.equal(mountWide({ fitFloor: v }).view.fitFloor, null, String(v));
+  const big = mountWide({ fitFloor: 1.5 });
+  assert.equal(big.view.fitFloor, 1);
+  big.view.fitToWidth(900);
+  assert.equal(big.view.getTransform().z, 1);
+  const flow = mountWide({ fitFloor: READABLE_FIT, layout: 'flow' });
+  const lay = flow.view.fitToWidth(900);
+  assert.ok(lay && lay.height > 0, 'flow returns its relayout');
+  assert.deepEqual(flow.view.getTransform(), { x: 0, y: 0, z: 1 });
+  assert.equal(flow.view.stage.style.width, '');
+  assert.equal(flow.host.style.overflowX, '');
 });

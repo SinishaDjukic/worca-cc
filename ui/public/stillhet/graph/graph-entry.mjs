@@ -2,7 +2,7 @@
 // its auto-layout (src/shared/graph/layout.mjs), on the prototype's workflows. Bundled to graph.js by
 // gates/components-js.mjs; it sets window.RailGraph. Rail is the skin (rail.css › .gv-skin): plain words on the view, ports
 // and their types on the Expert canvas. The engine is dev's, unchanged.
-import { createGraphView } from '../../graph/view.mjs';
+import { createGraphView, READABLE_FIT, MODE_ZOOM } from '../../graph/view.mjs';
 import { buildGraphManifest, manifestPortsFn, manifestTemplate } from '../../../../src/shared/graph/manifest.mjs';
 import { manifestAgents } from '../../graph/run-decor.mjs';
 import { autoLayout } from '../../../../src/shared/graph/layout.mjs';
@@ -64,23 +64,29 @@ function align(g) { const pos = autoLayout(g.tpl, g.portsFn, { describe: true })
  * @param {HTMLElement} host
  * @param {object} wf          the prototype's workflow (a live one carries dev's template as `tpl`, and its agentsByKey)
  * @param {{width?:number, zoom?:number, mode?:'static'|'edit', aligned?:boolean, select?:string, says?:(ref:string)=>string, g?:object}} [o]
- *   zoom: the graph's real size (1 is full size; the view never magnifies past it) and the host takes its width; 0 fits width
- * @returns {{g:object, view:object, fit:number}}   g is the drawn template (keep it for Undo); fit is the zoom that fits width
+ *   zoom: the graph's real size (1 is full size; the view never magnifies past it) and the host takes its width; 0 fits width.
+ *   A fit (zoom undefined or 0) never goes below READABLE_FIT: a wider graph scrolls sideways; an explicit zoom is drawn as is
+ * @returns {{g:object, view:object, fit:number, whole:number}}   g is the drawn template (keep it for Undo); fit is the zoom it
+ *   opens at (the width's fit, at READABLE_FIT or more); whole is the zoom that shows the whole width
  */
 function mount(host, wf, { width = 680, zoom, mode = 'static', aligned = false, select = '', says = null, g = null } = {}) {
   // a live workflow carries dev's template (D5); the same layout rule on both paths: aligned runs Auto-align, else the stored x/y
   let graph = g || (wf.tpl ? fromTpl(wf, says) : build(wf, says)); if (!g && aligned) graph = align(graph);
-  host.innerHTML = '';
-  const view = createGraphView(host, { doc: host.ownerDocument, mode, portsFn: graph.portsFn, agents: graph.agents, describe: true, modelLabel: modelWords });
+  host.innerHTML = ''; host.style.removeProperty('overflow-x');   // a reused host drops an earlier floored view's sideways scroll
+  const fits = !zoom;   // undefined (the detail well) or 0 (the editor's Fit): opens at a readable size
+  // an explicit zoom below the mode's minimum (the editor's Zoom out to the whole graph) is drawn, not clamped
+  const zoomMin = zoom ? Math.min(zoom, (MODE_ZOOM[mode] || MODE_ZOOM.edit).min) : null;
+  const view = createGraphView(host, { doc: host.ownerDocument, mode, zoomMin, portsFn: graph.portsFn, agents: graph.agents, describe: true, modelLabel: modelWords, fitFloor: fits ? READABLE_FIT : null });
   view.render(graph.tpl, {});
-  const full = view.bounds(60)?.w || width, fit = Math.min(1, width / full);   // fitToWidth measures with this padding
+  const full = view.bounds(60)?.w || width, whole = Math.min(1, width / full);   // fitToWidth measures with this padding
+  const fit = Math.min(1, Math.max(READABLE_FIT, whole));
   if (zoom !== undefined) { width = Math.round(full * (zoom || fit)); host.style.width = `${width}px`; }
-  const b = view.bounds(24); if (b) host.style.height = `${Math.ceil(b.h * Math.min(1, width / b.w)) + 8}px`;
+  const b = view.bounds(24); if (b) { const k = Math.min(1, width / b.w); host.style.height = `${Math.ceil(b.h * (fits ? Math.max(fit, k) : k)) + 8}px`; }
   view.fitToWidth(width);
   host.querySelectorAll('.wbadge').forEach((w) => { if (mode === 'static') w.textContent = w.textContent.replace(/≤\s*(\d+)/, 'sends fixes back, up to $1×'); });
   if (mode === 'static') host.querySelectorAll('[tabindex]').forEach((n) => n.removeAttribute('tabindex'));   // a drawing: nothing in it takes a key
   if (select) host.querySelector(`[data-node-id="${select}"]`)?.classList.add('is-picked');
-  return { g: graph, view, fit };
+  return { g: graph, view, fit, whole };
 }
 
 window.RailGraph = { mount, build, align, fromTpl, demo };

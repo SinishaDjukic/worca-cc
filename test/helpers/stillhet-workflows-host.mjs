@@ -35,14 +35,15 @@ export const WF_LISTS = Object.freeze({
   '/api/chat-home/pins': { pins: ['wf_shape'] },
 });
 
-/** The live app host with the Workflows answers; `read`/`write` as liveHost's. Returns liveHost's answer plus `mounts`. */
-export async function workflowsHost({ hash = '#workflows', read = () => null, write = () => [200, { ok: true }], lists = WF_LISTS, beforeScripts = () => {} } = {}) {
+/** The live app host with the Workflows answers; `read`/`write` as liveHost's; `graph` is the stub mount's `{fit, whole}`.
+ *  Returns liveHost's answer plus `mounts`. */
+export async function workflowsHost({ hash = '#workflows', read = () => null, write = () => [200, { ok: true }], lists = WF_LISTS, beforeScripts = () => {}, graph = { fit: 1 } } = {}) {
   const mounts = [];
   // GET /api/workflows/:id (Save's re-read, D9) answers the row from the list unless the test answers it
   const one = (u) => { const m = /^\/api\/workflows\/([^/?]+)$/.exec(u), t = m && (lists['/api/workflows']?.workflows || []).find((w) => w.id === decodeURIComponent(m[1])); return t ? [200, clone(t)] : null; };
   const h = await liveHost({ hash: '#chat', lists: { ...LISTS, ...clone(lists) }, read: async (u) => (await read(u)) || one(u), write, beforeScripts: (win) => { win.structuredClone ||= structuredClone; beforeScripts(win); } });   // jsdom has none; the page copies drafts with it
   // graph.js (the bundled renderer) is not among the host's scripts: the stub records what the page asks it to draw
-  h.w.RailGraph = { ...(h.w.RailGraph || {}), mount: (host, wf, o) => { mounts.push({ wf, o }); return { g: null, view: null, fit: 1 }; }, align: (g) => g, build: () => ({}) };
+  h.w.RailGraph = { ...(h.w.RailGraph || {}), mount: (host, wf, o) => { mounts.push({ wf, o }); return { g: null, view: null, ...graph }; }, align: (g) => g, build: () => ({}) };
   await go(h.w, hash, 200);
   await settle(200);
   return { ...h, mounts };

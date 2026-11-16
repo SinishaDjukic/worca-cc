@@ -54,6 +54,11 @@ export const MODE_ZOOM = {
   static: { min: 0.3, max: 1 },
 };
 
+/** The readable fit floor a host may opt into (`fitFloor`). node-graph.css floors every graph font at 9px; a reader reads
+ *  the graph by the step name (.nlabel, 11.5px) and its description (.ncap, 11px). 9 / 11 = 0.818, rounded up: at 0.82
+ *  the name draws at 9.4px and the description at 9.0px. Below it the words are smaller than the CSS's own floor. */
+export const READABLE_FIT = 0.82;
+
 /** The caption footer (CAP_H, paintFoot) each captioned kind closes with. */
 const CAPTIONS = { task: 'prompt + attached files', end: 'pipeline result', or: 'forwards freshest input' };
 
@@ -114,11 +119,13 @@ export function createGraphView(host, {
   engine = 'claude',          // the engine a session tray names (the composer: the default engine; run hosts: the run's)
   sessionVerified = SESSION_SUBAGENTS_VERIFIED,   // the sub-agents gate per engine (tests open it)
   sessionsOn = null,          // the Labs flag sessionGroups as a boolean; null reads it per render (Task 24)
+  fitFloor = null,            // opt-in: a fit never goes below this zoom (> 1 clamps to 1); a wider graph scrolls sideways
 } = {}) {
   const win = doc.defaultView || globalThis;
   const clamps = MODE_ZOOM[mode] || MODE_ZOOM.edit;
   const zMin = zoomMin == null ? clamps.min : zoomMin;
   const zMax = zoomMax == null ? clamps.max : zoomMax;
+  const floor = typeof fitFloor === 'number' && Number.isFinite(fitFloor) && fitFloor > 0 ? Math.min(1, fitFloor) : null;
   const schedule = raf || ((fn) => (win.requestAnimationFrame ? win.requestAnimationFrame(fn) : setTimeout(fn, 16)));
   let agents = agentsIn || {};
   const S = Number(scale) > 0 ? Number(scale) : 1;
@@ -815,6 +822,21 @@ export function createGraphView(host, {
   /** The zoom-out floor: zMin, or the last fit() when the graph only fits below it — until the next fit(). */
   let zFloor = zMin;
 
+  /** fitFloor hosts: a fitted drawing wider than the host gets a stage that wide and a host that scrolls sideways
+   *  (`px`), or loses both again (0). Only what this sets is undone; the host's own overflow-x comes back. */
+  let hostOverflowX = null;           // the host's own inline overflow-x while ours is set, else null
+  function scrollWide(px) {
+    if (px) {
+      if (hostOverflowX == null) hostOverflowX = host.style.overflowX;
+      stage.style.width = `${px}px`;
+      host.style.overflowX = 'auto';
+    } else if (hostOverflowX != null) {
+      stage.style.removeProperty('width');
+      if (hostOverflowX) host.style.overflowX = hostOverflowX; else host.style.removeProperty('overflow-x');
+      hostOverflowX = null;
+    }
+  }
+
   /** Zoom about a stage-local point s: w = (s − t)/z is invariant ⇒ t' = s − w·z'. */
   function zoomAbout(zNext, sx, sy) {
     const z2 = clamp(zNext, zFloor, zMax);
@@ -837,7 +859,7 @@ export function createGraphView(host, {
 
   const view = {
     stage, world, wiresEl, ghostEl: ghost, mode, stats, schedule,
-    zoomMin: zMin, zoomMax: zMax,
+    zoomMin: zMin, zoomMax: zMax, fitFloor: floor,
     render,
     setTransform,
     getTransform: () => ({ ...T }),
@@ -1082,7 +1104,15 @@ export function createGraphView(host, {
       const b = bounds(pad);
       if (!b) return;
       const measured = r.width > 0 && r.height > 0;
-      const f = applyFit(b, Math.max(1, (r.width || 0) - insetRight), Math.max(1, (r.height || 0) - insetBottom), 1, measured ? 0 : zMin);   // never past 1×
+      const w = Math.max(1, (r.width || 0) - insetRight), h = Math.max(1, (r.height || 0) - insetBottom);
+      if (floor != null && measured) {   // opens at the readable floor; zoom-out still reaches the whole graph
+        const whole = fitBounds(b, { width: w, height: h }, { zoomMin: 0, zoomMax: 1 }).z;
+        const f = applyFit(b, w, h, 1, floor);
+        if (b.w * f.z > w + 0.5) setTransform({ x: -b.x * f.z, y: f.ty, z: f.z });   // wider than the stage: from its first step
+        zFloor = Math.min(zMin, whole);
+        return;
+      }
+      const f = applyFit(b, w, h, 1, measured ? 0 : zMin);   // never past 1×
       zFloor = Math.min(zMin, f.z);
     },
     /** The zoom-out floor zoomAbout clamps to (see fit). */
@@ -1094,8 +1124,10 @@ export function createGraphView(host, {
       const b = bounds(60);
       if (!b) return;
       const vw = Math.max(1, w || r.width || 0);
-      const f = fitBounds(b, { width: vw, height: Number.MAX_SAFE_INTEGER }, { zoomMin: zMin, zoomMax: 1 });   // width decides z
-      setTransform({ x: f.tx, y: (Math.max(1, r.height || 0) - b.h * f.z) / 2 - b.y * f.z, z: f.z });
+      const f = fitBounds(b, { width: vw, height: Number.MAX_SAFE_INTEGER }, { zoomMin: floor == null ? zMin : Math.max(zMin, floor), zoomMax: 1 });   // width decides z
+      const wide = floor != null && b.w * f.z > vw + 0.5;   // floored past the width: it scrolls from its first step
+      setTransform({ x: wide ? -b.x * f.z : f.tx, y: (Math.max(1, r.height || 0) - b.h * f.z) / 2 - b.y * f.z, z: f.z });
+      if (floor != null) scrollWide(wide ? Math.ceil(b.w * f.z) : 0);
     },
     /** Wheel zoom + (Task 2) left-drag pan for `monitor` hosts. `static` gets
      *  nothing; `edit` binds its own richer pipeline in composer.mjs and does NOT

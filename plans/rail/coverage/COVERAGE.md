@@ -275,7 +275,7 @@ Each MISSING control, grouped by its finding (`plans/rail/findings.md`, PLAN.md 
 
 | Page | Control | Kind | Missing | Source |
 |---|---|---|---|---|
-| Shell | (button) | button | `route /api/setup/detect`, `route /api/setup/team` | ui/public/graph/view.mjs:435 |
+| Shell | (button) | button | `route /api/setup/detect`, `route /api/setup/team` | ui/public/graph/view.mjs:442 |
 | Getting started | (guide-next) | button | `route /api/setup/apply`, `route /api/setup/detect`, `route /api/setup/team` | ui/public/guide-spot.mjs:108 |
 | Getting started | Skip | button | `route /api/setup/apply`, `route /api/setup/detect`, `route /api/setup/team` | ui/public/guide-spot.mjs:100 |
 | Marketplace | Try again | button | `route /api/setup/apply`, `route /api/setup/team/draft` | ui/public/marketplace/install-sheet.mjs:82 |
