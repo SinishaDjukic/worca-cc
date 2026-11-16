@@ -79,7 +79,7 @@ const plural = (n, one) => `${n} ${n === 1 ? one : `${one}s`}`;
 
 export function startProjectsLive({ fetch, toast = () => {}, refresh = () => {}, world = () => ({ projects: [], spaces: [] }), go = () => {}, at = () => globalThis.location?.hash || '', on = () => {}, setTimeout: later = globalThis.setTimeout, clearTimeout: cancel = globalThis.clearTimeout }) {
   const busy = new Map(), hide = new Map(), gone = new Set(), moving = new Set(), fresh = new Map(), details = new Map(), spaceDetails = new Map(), clones = new Map(), factsOf = new Map();
-  let listRead = null, listAnswer = null;   // F-6-19: GET /api/projects, read once while the store loads
+  let listRead = null, listAnswer = null, listTries = 0;   // F-6-19: GET /api/projects, read once while the store loads (a refused read once more)
 
   async function send(id, args = {}) {
     const [, , build] = PROJECT_ACTIONS[id], [method, url, body] = build(args);
@@ -281,11 +281,12 @@ export function startProjectsLive({ fetch, toast = () => {}, refresh = () => {},
   const LOADING = { status: 'loading', value: null };
   function readFacts(key) {
     const held = factsOf.get(key) || {};
-    factsOf.set(key, Object.fromEntries(FACTS.map(([name]) => [name, held[name] || LOADING])));
+    const mine = Object.fromEntries(FACTS.map(([name]) => [name, held[name] || LOADING]));   // this read's record: a newer read replaces it
+    factsOf.set(key, mine);
     for (const [name, action, map] of FACTS) {
       send(action, { key }).then((a) => {
         const now = factsOf.get(key);
-        if (!now || gone.has(key)) return;   // dropped or removed meanwhile
+        if (now !== mine || gone.has(key)) return;   // dropped, superseded by a newer read, or removed meanwhile
         // one failed read never hides the others; a re-read that fails keeps what it held
         now[name] = a.ok ? { status: 'ready', value: map(a.data, key) } : now[name].status === 'ready' ? now[name] : { status: 'failed', value: null };
         on();
@@ -300,10 +301,12 @@ export function startProjectsLive({ fetch, toast = () => {}, refresh = () => {},
   }
   /** Drops the key's facts: the next facts() reads them again (each page open). */
   const refacts = (key) => { factsOf.delete(key); };
-  /** F-6-19: the project's early record from GET /api/projects (read once, shared), or null until it lands or when refused. */
+  /** F-6-19: the project's early record from GET /api/projects (read once, shared; a refused read is tried once more on the
+   *  next draw), or null until it lands or when refused twice. */
   function known(key) {
     if (!listRead) {
-      listRead = send('read-list').then((a) => { listAnswer = a.ok ? a.data : null; on(); });
+      listTries += 1;
+      listRead = send('read-list').then((a) => { listAnswer = a.ok ? a.data : null; if (!a.ok && listTries < 2) listRead = null; on(); });
       return null;
     }
     return listAnswer ? knownOf(listAnswer, key) : null;

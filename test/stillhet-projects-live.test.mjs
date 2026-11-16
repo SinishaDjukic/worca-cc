@@ -641,3 +641,33 @@ test('F-6-19 known: GET /api/projects once while the store loads, mapped to the 
   r2.live.known('x'); await tick(); await tick();
   assert.equal(r2.live.known('x'), null, 'a refused read: null');
 });
+
+test('F-6-15 facts (cycle-2 minor): a superseded read\'s late answer is dropped; only the latest read\'s answers stand', async () => {
+  const held = [], late = ['ready', 'partial'];   // answers in the order they land: the newer read lands first
+  let landed = 0;
+  const r = rig({ hold: (m, u) => { if (!u.endsWith('/readiness')) return null; const g = gate(); held.push(g); return g.p; },
+    answer: (m, u) => (u.endsWith('/readiness') ? [200, { readiness: { ...READY.readiness, level: late[landed++] } }] : factsAnswer()(m, u)) });
+  r.live.facts('shop-1111aaaa');
+  r.live.refacts('shop-1111aaaa');   // a new open: the first read is superseded
+  r.live.facts('shop-1111aaaa');
+  assert.equal(held.length, 2, 'two readiness reads in flight');
+  held[1].open(); await tick(); await tick();
+  assert.equal(r.live.facts('shop-1111aaaa').readiness.value.level, 'ready', 'the latest read lands');
+  held[0].open(); await tick(); await tick();
+  assert.equal(r.live.facts('shop-1111aaaa').readiness.value.level, 'ready', 'the superseded read\'s late answer is dropped');
+});
+
+test('F-6-19 known (cycle-2 minor): a refused GET /api/projects is retried once, then stays null', async () => {
+  let tries = 0;
+  const r = rig({ answer: (m, u) => (u === '/api/projects' ? (++tries === 1 ? 'down' : [200, { projects: [{ key: 'new-9999', name: 'fresh', path: '/src/fresh', exists: true, vcs: 'git' }] }]) : null) });
+  r.setWorld({ projects: [], spaces: [] });
+  r.live.known('new-9999'); await tick(); await tick();
+  assert.equal(r.live.known('new-9999'), null, 'the retry is on its way');
+  await tick(); await tick();
+  assert.equal(r.live.known('new-9999')?.name, 'fresh', 'the retry answered');
+  assert.equal(reads(r).filter((u) => u === '/api/projects').length, 2);
+  const r2 = rig({ answer: (m, u) => (u === '/api/projects' ? [500, {}] : null) });
+  for (let i = 0; i < 4; i++) { r2.live.known('x'); await tick(); await tick(); }
+  assert.equal(reads(r2).filter((u) => u === '/api/projects').length, 2, 'once more, never a loop');
+  assert.equal(r2.live.known('x'), null);
+});

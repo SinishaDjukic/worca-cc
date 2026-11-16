@@ -25,6 +25,11 @@ test('F-6-15/V3-12: the head counts this project\'s waits, says so, and lists th
   assert.ok(page(h.d).querySelector('[data-pj-open^="ask_1|"]'), 'a chat task opens in its chat');
   assert.ok([...page(h.d).querySelectorAll('[data-c-open]')].some((b) => b.closest('.lr-main, .list-row, [class*="lr"]')), 'a Tasks-only row opens through Tasks');
   assert.doesNotMatch(headWord(h.d), /tasks need you/, 'the head names its scope');
+  // cycle-2 minor: a Tasks-only row has no chat here, so its link never says it opens one
+  const missed = [...page(h.d).querySelectorAll('[data-c-open]')].filter((b) => /Missed one/.test(b.textContent) || /Missed one/.test(b.title));
+  assert.ok(missed.length, 'the Tasks-only row has its link');
+  for (const b of missed) assert.doesNotMatch(b.title, /in its chat/, `the Tasks-only row's tip: ${b.title}`);
+  assert.match(page(h.d).querySelector('[data-pj-open^="ask_1|"]').title, /in its chat/, 'the chat ask still says its chat');
 });
 
 test('V3-05: no empty On it now line when nothing runs', async () => {
