@@ -1998,6 +1998,37 @@ test('composerQueueButton (F-gb235-03): a quiet text button named Queue, data-cp
   assert.equal(b.getAttribute('title'), 'Sends it when the reply finishes');
 });
 
+test('choiceNote (COV-2): an amber note, its rows with their ways, its ways as buttons, escaped, role=status', () => {
+  const n = dom(C.choiceNote({ text: 'This preset needs <attention>', means: 'Start waits until it is fixed', rows: [{ text: 'Workflow wf_gone is gone', way: { label: 'Reset to default', attrs: { 'data-x-reset': '0' } } }, { text: 'Guardrails <old>' }],
+    ways: [{ label: 'Start from origin/main', kind: 'primary', attrs: { 'data-x-go': '' } }, { label: 'Cancel', kind: 'quiet', attrs: { 'data-x-cancel': '' } }] }));
+  assert.equal(n.getAttribute('role'), 'status');
+  assert.match(n.className, /\bchoice-note\b/);
+  assert.match(n.className, /\bis-amber\b/, 'the tone class');
+  assert.ok(n.querySelector('.rc-rail > .status-dot.is-amber'), 'the dot is statusDot');
+  assert.equal(n.querySelector('.rc-word').textContent, 'This preset needs <attention>', 'text is escaped');
+  assert.equal(n.querySelector('.rc-detail').textContent, 'Start waits until it is fixed');
+  const rows = n.querySelectorAll('.choice-note-row');
+  assert.equal(rows.length, 2);
+  assert.match(rows[0].textContent, /Workflow wf_gone is gone/);
+  assert.equal(rows[0].querySelector('button.btn[data-x-reset="0"]').textContent, 'Reset to default', 'a row way is a button()');
+  assert.equal(rows[1].querySelector('button'), null);
+  assert.equal(rows[1].textContent, 'Guardrails <old>');
+  const ways = [...n.querySelectorAll('.choice-note-ways > button')];
+  assert.deepEqual(ways.map((b) => b.textContent), ['Start from origin/main', 'Cancel']);
+  assert.match(ways[0].className, /btn-primary/);
+  assert.match(ways[1].className, /btn-quiet/);
+});
+
+test('choiceNote (COV-2): a note that only tells is grey, no ways, and its end slot as given', () => {
+  const g = dom(C.choiceNote({ needsYou: false, text: 'team policy' }));
+  assert.match(g.className, /\bis-grey\b/);
+  assert.ok(g.querySelector('.status-dot.is-grey'));
+  assert.equal(g.querySelector('.choice-note-ways'), null, 'no ways, no button row');
+  assert.equal(g.querySelector('.rc-detail'), null, 'no means, no detail');
+  const e = dom(C.choiceNote({ text: 'Codex cannot enforce …', end: C.checkbox({ label: 'Allow unguarded', attrs: { 'data-x-allow': '' } }) }));
+  assert.ok(e.querySelector('.choice-note-end input[type="checkbox"][data-x-allow]'), 'end is not escaped');
+});
+
 test('COV-3 #9 and #5: filesCard draws Show in ‹label› only with revealLabel and a file\'s reveal; youTurn\'s object files are chip buttons that open; without them both are as before', () => {
   const files = [{ name: 'a.png', image: true }, { name: 'b.txt', meta: '2 KB' }];
   const before = C.filesCard({ files });

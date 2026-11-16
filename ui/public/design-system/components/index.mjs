@@ -6,6 +6,7 @@ export { terminalPane } from './terminal-pane.mjs';
 export { compactMenu, menuItem, menuKeys } from './compact-menu.mjs';
 export { MAKERS, ENGINE_WORDS, makerOf, modelText, modelMakers, makerItems } from './model-makers.mjs';
 export { statusDot, statusDotClass, statusLine } from './status-line.mjs';
+export { choiceNote } from './choice-note.mjs';
 export { confirmStrip, confirmActions, confirmForm } from './confirm-strip.mjs';
 export { tabs } from './tabs.mjs';
 export { segmented } from './segmented.mjs';

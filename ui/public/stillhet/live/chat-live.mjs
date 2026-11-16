@@ -44,7 +44,8 @@ export function perspectiveChoices(picked) {
 
 /** POST /api/run's body for a TaskProposal's Start: the proposal card as dev's ask-panel.mjs collectCardBody reads it,
  *  with the person's `picks` (target, project folder, workflow, engine, guardrails, title, branches) over the card's own values.
- *  `picks.perspectives`: the "reviewed by" set (flag proposedPerspectives), sent as dev's run card sends it (`perspectives`). */
+ *  `picks.perspectives`: the "reviewed by" set (flag proposedPerspectives), sent as dev's run card sends it (`perspectives`).
+ *  COV-2: `picks.tags` (the project's saved tags, used when the card has none), `picks.syncPolicy` and `picks.allowUnguardedEngine`. */
 export function startBodyOf(card = {}, picks = {}) {
   const c = card || {}, p = picks || {};
   const target = p.target || c.target || 'project';
@@ -52,7 +53,11 @@ export function startBodyOf(card = {}, picks = {}) {
   const title = str(p.title || c.title).trim(); if (title) body.title = title;
   if (c.memoryScope && body.workflowId === 'wf_memory_defrag') body.memoryScope = c.memoryScope;
   if (Array.isArray(c.tags) && c.tags.length) body.tags = c.tags;
+  else if (Array.isArray(p.tags) && p.tags.length) body.tags = [...p.tags];   // COV-2: the project's saved tags, when the card names none
   if (p.engine || c.engine) body.engine = p.engine || c.engine;
+  // COV-2: a resend after a refusal is the same body plus one key: the base's sync policy, or the engine consent (never for Claude)
+  if (p.syncPolicy === 'origin' || p.syncPolicy === 'last-fetch') body.syncPolicy = p.syncPolicy;
+  if (p.allowUnguardedEngine === true && (body.engine || 'claude') !== 'claude') body.allowUnguardedEngine = true;
   if (Array.isArray(p.perspectives) && p.perspectives.length) body.perspectives = [...p.perspectives];
   if (Array.isArray(p.extras) && p.extras.length) body.extras = p.extras;   // COV-3 #6: the proposal's files, as classic's run card sends its pills
   if (c.source) { delete body.prompt; body.source = { type: 'plugin', plugin: c.source.plugin, sourceId: c.source.sourceId, taskId: c.source.taskId, ...(c.source.profile ? { profile: c.source.profile } : {}), ...(c.source.inputs ? { inputs: c.source.inputs } : {}) }; }

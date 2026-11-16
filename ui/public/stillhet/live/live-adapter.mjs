@@ -10,6 +10,8 @@ import { startScheduleLive } from './schedule-live.mjs';
 import { startMarketLive } from './market-live.mjs';
 import { startProjectsLive } from './projects-live.mjs';
 import { startInsightsLive } from './insights-live.mjs';
+import { startRunOptionsLive } from './run-options-live.mjs';
+export * as runOptionsWords from './run-options-live.mjs';   // its pure helpers: the words the New task form and the proposal draw (COV-2)
 import { progressOfState } from './chat-turns.mjs';
 import { workModeOf } from '../../../../src/shared/ask-run-snapshot.mjs';
 import { USAGE_REFRESH_MS } from '../../design-system/components/usage.mjs';
@@ -99,6 +101,9 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
         state: { status: l.status, title: l.title, branch: l.branch || null, steps: l.steps || [], totalCostUsd: l.totalCostUsd, totalActiveMs: l.totalActiveMs, pipelineCapUsd: l.pipelineCapUsd,
           pauseReason: l.pauseReason, pauseDetail: l.pauseDetail, limitEngine: l.limitEngine, startedAt: l.startedAt, stepper: l.stepper, ...(l.pauseAfterStep ? { pauseAfterStep: true } : {}) } };
     } });
+
+  // New task's run options (COV-2): run-options-live owns every read and write of the form's and the proposal's options
+  const runOptions = startRunOptionsLive({ fetch, toast });
 
   // Schedules (D4): schedule-live owns every Schedules request; the store still moves only on the server's frames
   const schedule = startScheduleLive({ fetch, setTimeout, clearTimeout, on, now, tasksOf: () => world.part?.('runs') || [] });
@@ -441,7 +446,7 @@ export function startLive({ fetch, WebSocket, location, world, host = {}, prefs 
   begin();
   armBudgetTick();
   return {
-    chat, task, workflow, schedule, market, projects: projectsLive, insights,
+    chat, task, workflow, schedule, market, projects: projectsLive, insights, runOptions,
     stop: () => { stopped = true; insights.stop(); clearTimeout(reconnect); clearTimeout(budgetTick); for (const t of [...Object.values(timers), ...runTimers.values()]) clearTimeout(t); sock?.close(); },
     refresh,
     retry,

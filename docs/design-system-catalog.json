@@ -222,6 +222,28 @@
       "example": "Sam Rivera ⇅"
     },
     {
+      "name": "ChoiceNote",
+      "code": "ui/public/design-system/components/choice-note.mjs#choiceNote",
+      "kind": "telling",
+      "needs": [
+        "a problem with a choice, its rows and its ways out"
+      ],
+      "parts": [
+        "status dot (needsYou: amber; it only tells: grey)",
+        "the note",
+        "what it means",
+        "one row per item, each with its own way out",
+        "the ways out, as Buttons",
+        "an end slot for a Checkbox"
+      ],
+      "rules": [
+        "it shows before the choice is made, on the rail, one at a time: the newest refusal wins (`form.run-options`)",
+        "a grey note never blocks and offers no way"
+      ],
+      "example": "This preset needs attention · Workflow is gone · Reset to default",
+      "notFor": "a dialog on top of a Dialog; something done (a Toast)"
+    },
+    {
       "name": "UsageRing",
       "code": "ui/public/design-system/components/usage.mjs#usageRing",
       "kind": "telling",
