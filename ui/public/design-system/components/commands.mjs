@@ -50,7 +50,7 @@ export function commandRow({ summary, cmd, state = 'ok', end = '', open = false,
   const n = out ? out.split('\n').length : 0;
   const line = `<button type="button" class="tr-line"${attrs({ 'aria-expanded': String(open), title: cmd, ...(hooks.toggle || {}) })}><span class="tr-mark"></span><span class="tr-text"><span class="cmd-s">${esc(summary)}</span></span><span class="tr-end"><span class="cmd-s think-t">${esc(end)}</span>${icon(open ? 'chevron' : 'chevR', 12)}</span></button>`;
   const stop = state === 'run' ? button({ label: 'Stop', kind: 'quiet', cls: 'is-danger', attrs: { title: 'Stops this command', ...(hooks.stop || {}) } }) : '';
-  const detail = open ? `<div class="cmd-detail"><div class="cmd-code">${commandLine(cmd)}${copyButton({ text: cmd, label: 'Copy command' })}</div>`
+  const detail = open ? `<div class="cmd-detail"><div class="cmd-code">${commandLine(cmd)}${copyButton({ text: cmd, kind: 'code', label: 'Copy command' })}</div>`
     + `${dir || hooks.terminal ? `<div class="cmd-where"><span>${dir ? `in ${esc(dir)}` : ''}</span>${button({ label: 'Show in terminal', kind: 'quiet', attrs: hooks.terminal || {} })}</div>` : ''}`
     + `${out ? `<div class="cmd-out"><div class="cmd-out-h"><span>Output · ${last ? 'last ' : ''}${plural(n, 'line')}</span>${copyButton({ text: out, label: 'Copy output' })}</div><pre>${esc(out)}</pre></div>` : ''}</div>` : '';
   return `<div class="turn-row cmd-row is-${state}${open ? ' is-open' : ''}"${attrs(a)}><div class="cmd-line">${line}${stop}</div>${detail}</div>`;
