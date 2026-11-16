@@ -195,3 +195,13 @@ test('prototype keeps its demo: a Labs switch flips and toasts; Badge and Deskto
   assert.notEqual(d.querySelector('[data-desk]').getAttribute('aria-checked'), was);
   assert.ok(d.querySelector('[data-custom]') && d.querySelector('[data-menu^="lvl:"], [data-menu^="whr:"]'), 'the demo keeps the Updates pickers and fold');
 });
+
+test('F-G-G4-07: live Labs › Guide › Open is disabled with the not-live sentence; it toasts nothing and sends nothing', async () => {
+  const { w, d, posts } = await live({ hash: '#settings/experimental' });
+  const b = buttonOf(rowOf(d, 'Guide'), 'Open');
+  assert.equal(b.disabled, true);
+  assert.equal(b.closest('.tip-wrap')?.title, SENTENCE);
+  b.dispatchEvent(new w.MouseEvent('click', { bubbles: true })); await settle();
+  assert.equal(toastText(d), '');
+  assert.deepEqual(nonGets(posts), []);
+});

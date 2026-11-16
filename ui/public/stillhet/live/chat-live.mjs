@@ -6,7 +6,7 @@
 import { createThreadModel } from '../../../../src/shared/ask-model.mjs';
 import { turnsOf, planView, planPicks, runWithTurn, partsOf } from './chat-turns.mjs';
 import { createTerminalLive } from './terminal-live.mjs';
-import { projectKeyOf } from './live-map.mjs';
+import { projectKeyOf, workspaceIdOf } from './live-map.mjs';
 import { perspectivesWith, chipsHiddenFor, DEFAULT_PERSPECTIVES } from '../../../../src/shared/shape/perspectives.mjs';
 import { ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 } from '../../../../src/shared/attach-bytes.mjs';
 
@@ -613,6 +613,7 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
     worktrees: (id) => threads.get(id)?.model?.worktrees?.() || [],   // dev's chat worktrees (snapshot + ask-worktrees)
     thread: (id) => threads.get(id)?.model?.thread?.() || null,
     projectKey: (id) => projectKeyOf(threads.get(id)?.model?.thread?.() || {}),   // the project the chat works in
+    workspaceId: (id) => workspaceIdOf(threads.get(id)?.model?.thread?.() || {}),   // else the workspace it works in (F-G-G4-03)
     flow, canFlow: (label, a = {}) => !!FLOW[label] && (!FLOW[label].needsPr || !!a.pr),
     keyOf,
     // F-a2-01: the composer's queue (a copy), Remove, Send now, and which chat each mount shows

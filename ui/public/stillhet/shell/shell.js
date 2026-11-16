@@ -93,8 +93,15 @@
     askW = clampAsk(px); document.documentElement.style.setProperty('--ask-side-w', askW + 'px'); store.set(KEY_ASK, askW);
     document.querySelector('#ask-side .ask-side-grip')?.setAttribute('aria-valuenow', askW);
   };
+  const LIST_SUG = {
+    marketplace: ['Which plugins fit how I work?', 'What does a plugin ask for, and why?', 'Which of my plugins have an update?'],
+    workflows: ['Which workflow fits my task?', 'How could my workflows cost less?', 'Which workflow ran most this week?'],
+    projects: ['Which project is behind, and is it safe to sync?', 'What ran this week, and what did it cost?', 'What needs me here?'],
+  };
   function pageContext() {
-    const v = routed.view, name = [...document.querySelectorAll('#main-row main .place-title, #main-row main [data-title], #card .rc-title')].find((x) => x.getClientRects().length)?.textContent?.trim() || TITLES[v === 'schedule' ? 'schedules' : v] || 'this page';   /* what shows: the task page waits hidden behind every other page */
+    const v = routed.view, list = ['marketplace', 'workflows', 'projects', 'requirements'].includes(v) && (!routed.arg || routed.arg.startsWith('~'));   // F-G-G5-05, F-7a-08: a place's list is no one thing
+    if (list) return { view: v, kind: 'list', name: TITLES[v], project: '', suggest: LIST_SUG[v] || ['What needs me?', 'What is ready to ship?', 'What happened while I was away?'] };
+    const name = [...document.querySelectorAll('#main-row main .place-title, #main-row main [data-title], #card .rc-title')].find((x) => x.getClientRects().length)?.textContent?.trim() || TITLES[v === 'schedule' ? 'schedules' : v] || 'this page';   /* what shows: the task page waits hidden behind every other page */
     const SUG = {
       run: ['Why did it stop?', 'What does it need from me?', 'What did it change?'],
       projects: [`Why is ${name} behind, and is it safe to sync?`, 'What ran here this week, and what did it cost?', 'What needs me here?'],
@@ -231,7 +238,8 @@
   // a task's own page keeps it in view by its case: the one already kept from its chat counts, never twice
   function toggleCaseInView(cs, title) {
     const name = title || RM?.titles?.[cs] || 'This task', had = inViewList.find((x) => { const t = inViewNow(x)?.task; return t?.cs === cs && t.title === name; });
-    toggleInView(had || { type: 'task', id: `case-${cs}-${name.replace(/:/g, ' ')}`, case: cs, chat: '', title: name });
+    const run = LIVE && routed.view === 'run' ? routed.arg || '' : '';   // F-G-G5-03: the live kind reopens it by its own id
+    toggleInView(had || { type: 'task', id: `case-${cs}-${name.replace(/:/g, ' ')}`, case: cs, chat: '', title: name, run });
   }
   function toggleInView(item) {
     const had = isInView(item.type, item.id);
@@ -519,8 +527,10 @@
       ])].sort();
     },
     // nav.stillhet-ask: the Invitation under the top bar while the address says ?invite=stillhet and the demo has not answered
-    inviteStrip: () => (new URLSearchParams(location.search).get('invite') === 'stillhet' && !store.get('worca-rail.stillhetAsked') && !inviteBack ? R.stillhetInvitation({ bugsUrl: 'https://github.com/' }) : ''),
-    answerInvite: (answer) => { if (answer === 'yes' || answer === 'no') store.set('worca-rail.stillhetAsked', '1'); else inviteBack = true; },
+    // F-G-G5-01: live, `rail` is on, and the opt-in rule (ui/public/stillhet.mjs shouldAskStillhet) never asks while it is on:
+    // the real question, its Labs flag write and its stillhetAsked answer, is today's app's (mountStillhetAsk), never this demo strip
+    inviteStrip: () => (!LIVE && new URLSearchParams(location.search).get('invite') === 'stillhet' && !store.get('worca-rail.stillhetAsked') && !inviteBack ? R.stillhetInvitation({ bugsUrl: 'https://github.com/' }) : ''),
+    answerInvite: (answer) => { if (LIVE) return; if (answer === 'yes' || answer === 'no') store.set('worca-rail.stillhetAsked', '1'); else inviteBack = true; },
     // which script answers a click or a key: the run page owns #card and its tools; Pulse owns the rest of the Rail pieces
     owns: (who, target) => {
       if (!target?.isConnected) return false;   // a list page already answered it, and drew again

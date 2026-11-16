@@ -21,7 +21,7 @@ export const LISTS = {
 // each test's window closes when that test ends: the pages keep timers on it, and 48 open windows slow every later test
 export const closers = [];
 // `read(url)`: a GET the test answers itself ([status, data], or null for the default): a task's history detail, its checks.
-export async function liveHost({ sources = SOURCES, thread = () => [200, THREAD], write = () => [200, {}], hash = '#chat', lists = LISTS, beforeScripts = () => {}, hold = () => null, read = () => null } = {}) {
+export async function liveHost({ sources = SOURCES, thread = () => [200, THREAD], write = () => [200, {}], hash = '#chat', search = '', lists = LISTS, beforeScripts = () => {}, hold = () => null, read = () => null } = {}) {
   const calls = [], sockets = [];
   const fetch = async (u, o = {}) => {
     const url = String(u), method = o.method || 'GET', body = o.body ? JSON.parse(o.body) : undefined;
@@ -34,7 +34,7 @@ export async function liveHost({ sources = SOURCES, thread = () => [200, THREAD]
     const text = () => (typeof data === 'string' ? data : JSON.stringify(data ?? {}));
     return { ok: status < 300, status, json: async () => clone(data), text: async () => text(), arrayBuffer: async () => new TextEncoder().encode(text()).buffer };   // a diff or a log is text; an attachment is bytes
   };
-  const w = stillhetHost({ adapter: 'live', hash, fetch, after: (fn) => closers.push(fn), beforeScripts: (win) => {
+  const w = stillhetHost({ adapter: 'live', hash, search, fetch, after: (fn) => closers.push(fn), beforeScripts: (win) => {
     win.WebSocket = class { constructor(url) { this.url = url; this.readyState = 1; sockets.push(this); } close() {} send() {} };
     win.Date.now = () => NOW;
     win.Element.prototype.scrollIntoView = function () {};
