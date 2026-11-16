@@ -6,11 +6,29 @@ import { classifyLoops } from '../../../../src/shared/graph/loops.mjs';
 import { portsFnFor } from '../../../../src/shared/graph/ports.mjs';
 import { DEFAULT_MAX_CYCLES } from '../../../../src/shared/graph/constants.mjs';
 
-// The model words the prototype's pickers use, and dev's ids (graph-entry.mjs MODEL_IDS); any other id reads as itself.
+// The model words the prototype's pickers use, and dev's ids (graph-entry.mjs imports them). V-TW-19: an alias (opus,
+// sonnet, haiku: the .md frontmatter's) reads as its family's current words, any claude-* id as "Opus 4.1"; any other id
+// reads as itself.
 export const MODEL_IDS = Object.freeze({ 'Opus 5.5': 'claude-opus-5-5', 'Sonnet 5.5': 'claude-sonnet-5-5', 'Haiku 5.5': 'claude-haiku-5-5' });
 const MODEL_WORDS = Object.fromEntries(Object.entries(MODEL_IDS).map(([k, v]) => [v, k]));
-export const modelWords = (id) => (id ? MODEL_WORDS[id] || String(id) : '');
-export const modelIdOf = (words) => MODEL_IDS[words] || words;
+const ALIAS = Object.fromEntries(Object.keys(MODEL_IDS).map((w) => [w.split(' ')[0].toLowerCase(), w]));
+const cap = (f) => f.charAt(0).toUpperCase() + f.slice(1), ver = (maj, min) => (min ? `${maj}.${min}` : maj);
+const worded = new Map();   // words → the id they were made from: an untouched step saves back its own id, not the words
+export const modelWords = (id) => {
+  if (!id) return '';
+  const s = String(id);
+  if (MODEL_WORDS[s]) return MODEL_WORDS[s];
+  if (ALIAS[s.toLowerCase()]) return ALIAS[s.toLowerCase()];
+  const m = /^claude-(opus|sonnet|haiku|fable)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/.exec(s), o = !m && /^claude-(\d+)(?:-(\d{1,2}))?-(opus|sonnet|haiku)(?:-\d{8})?$/.exec(s);
+  const words = m ? `${cap(m[1])} ${ver(m[2], m[3])}` : o ? `${cap(o[3])} ${ver(o[1], o[2])}` : s;
+  if (words === s) return s;
+  // Two ids that word the same (a dated id and its alias, or a dated id of a picker's model): the later one, and any id
+  // whose words are a picker's, reads as itself, so each saves back exactly.
+  if (MODEL_IDS[words] || (worded.has(words) && worded.get(words) !== s)) return s;
+  worded.set(words, s);
+  return words;
+};
+export const modelIdOf = (words) => MODEL_IDS[words] || worded.get(words) || words;
 /** The words a step reads when its node sets no model: dev's run config decides it. */
 export const DEFAULT_MODEL = 'its default model';
 export const DEFAULT_EFFORT = 'default effort';
@@ -26,6 +44,17 @@ const TYPE = { producer: 'producer', verifier: 'verifier', clarifier: 'clarifier
 const round2 = (n) => Math.round(n * 100) / 100;
 const pluginOf = (origin) => (typeof origin === 'string' && origin.startsWith('plugin:') ? origin.slice(7) : '');
 const keyed = (n) => n && (n.kind === 'agent' || n.kind === 'script');
+
+/**
+ * Where a loop's ends are among the steps (V-TW-06), -1 for an end not found. A loop that carries both node ids
+ * ([3], [4]) matches the steps' [9]; one without them (a demo row, a draft from before) matches the first step by label.
+ * workflows/workflows.js keeps a copy of this rule (a classic script); both are pinned by tests.
+ */
+export function loopEnds(steps, loop) {
+  const l = Array.isArray(loop) ? loop : [], list = Array.isArray(steps) ? steps : [];
+  const byNode = l[3] && l[4], at = (k) => list.findIndex((s) => (byNode ? s?.[9] === l[k + 3] : s?.[0] === l[k]));
+  return { from: at(0), to: at(1) };
+}
 
 /** A step's name: its own label (a rename, D6), else its agent's or script's display name, else its key. */
 export function labelOf(node, agentsByKey = {}, scriptsByKey = {}) {
@@ -81,7 +110,9 @@ export function workflowOf(tpl, { usage = {}, agentsByKey = {}, scriptsByKey = {
   }
   // a loop wire into a flow card (wf_full's Review → OR → Build) names the step that card feeds
   const target = (id, hops = 0) => { const n = byId.get(id); if (keyed(n) || hops > 4) return n; const w = (tpl.wires || []).find((x) => x.from?.node === id); return w ? target(w.to.node, hops + 1) : n; };
-  const loops = (tpl.wires || []).filter((w) => loops0.loopWireIds.has(w.id)).map((w) => [labelOf(byId.get(w.from.node), agentsByKey, scriptsByKey), labelOf(target(w.to.node), agentsByKey, scriptsByKey), Number(w.config?.maxCycles) || DEFAULT_MAX_CYCLES]);
+  // [from, to, rounds, fromNode, toNode] (V-TW-06): the labels stay first, as workflow-draft.mjs matches them; the nodes tell same-named steps apart
+  const loops = (tpl.wires || []).filter((w) => loops0.loopWireIds.has(w.id)).map((w) => { const t = target(w.to.node);
+    return [labelOf(byId.get(w.from.node), agentsByKey, scriptsByKey), labelOf(t, agentsByKey, scriptsByKey), Number(w.config?.maxCycles) || DEFAULT_MAX_CYCLES, w.from.node, t?.id]; });
   const plugin = pluginOf(tpl.origin), own = !plugin && !NOT_OWN_IDS.includes(tpl.id) && tpl.createdAt !== '1970-01-01T00:00:00.000Z';
   const from = plugin ? `From the plugin ${plugin}` : !own ? 'Made with Worca' : tpl.origin === 'auto' ? 'Made in a chat' : 'Yours';
   return { id: tpl.id, title: tpl.name || tpl.id, own, domain: tpl.domain || 'coding', what: steps.length ? `${steps.map((s) => s[0]).join(', ')}.` : 'No steps yet.',

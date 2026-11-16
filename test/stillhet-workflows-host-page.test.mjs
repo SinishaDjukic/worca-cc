@@ -119,3 +119,66 @@ test('F-FM2-03: a never-run live workflow shows no zero figures; one with tasks 
   const full = await workflowsHost({ hash: '#workflows/workflow:wf_full' });
   assert.match(text(page(full.d)), /a task/, 'measured: its cost a task');
 });
+
+// V-TW-06: task → Build (n_b1) → Review (n_rev) → Build (n_b2) → Web UI (n_web) → end; Review sends back to the first Build
+// (at most twice), Web UI to the second (at most once). Ports as the wf_full seed's wires.
+const TWICE = { id: 'wf_twice', name: 'Twice', version: 2, domain: 'coding', origin: null, createdAt: '2026-11-01T00:00:00.000Z', updatedAt: '2026-11-01T00:00:00.000Z', archivedAt: null,
+  nodes: [{ id: 'n_task', kind: 'task', x: 60, y: 60, config: {} },
+    { id: 'n_b1', kind: 'agent', key: 'implementer', x: 360, y: 60, config: { label: 'Build' } },
+    { id: 'n_rev', kind: 'agent', key: 'reviewer', x: 660, y: 60, config: { label: 'Review' } },
+    { id: 'n_b2', kind: 'agent', key: 'implementer', x: 960, y: 60, config: { label: 'Build' } },
+    { id: 'n_web', kind: 'agent', key: 'manualWebUiTesting', x: 1260, y: 60, config: { label: 'Web UI' } },
+    { id: 'n_end', kind: 'end', x: 1560, y: 60, config: {} }],
+  wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_b1', port: 'task' } },
+    { id: 'w2', from: { node: 'n_b1', port: 'done' }, to: { node: 'n_rev', port: 'done' } },
+    { id: 'w3', from: { node: 'n_rev', port: 'review' }, to: { node: 'n_b1', port: 'fix' }, config: { maxCycles: 2 } },
+    { id: 'w4', from: { node: 'n_rev', port: 'pass' }, to: { node: 'n_b2', port: 'task' } },
+    { id: 'w5', from: { node: 'n_b2', port: 'done' }, to: { node: 'n_web', port: 'checklist' } },
+    { id: 'w6', from: { node: 'n_web', port: 'review' }, to: { node: 'n_b2', port: 'fix' }, config: { maxCycles: 1 } },
+    { id: 'w7', from: { node: 'n_web', port: 'pass' }, to: { node: 'n_end', port: 'result' } }] };
+const twiceLists = (edit = (t) => t, agents = WF_LISTS['/api/agents']) => ({ ...WF_LISTS, '/api/agents': agents, '/api/workflows': { workflows: [...WF_LISTS['/api/workflows'].workflows, edit(structuredClone(TWICE))] } });
+const arcAt = (a) => /--ws-a:([\d.]+)%;--ws-w:([\d.]+)%/.exec(a.getAttribute('style')).slice(1).map(Number);
+
+test('V-TW-06 / F-5-10: two loops to two "Build" steps draw two arcs', async () => {
+  const { d } = await workflowsHost({ hash: '#workflows/workflow:wf_twice', lists: twiceLists() });
+  const arcs = [...page(d).querySelectorAll('.ws-loop')];
+  assert.deepEqual(arcs.map(text), ['found something? back to Build (step 1), at most twice', 'found something? back to Build (step 3), at most once']);
+  assert.deepEqual(arcs.map(arcAt), [[12.5, 25], [62.5, 25]], 'Review → Build 1 and Web UI → Build 2, each between two distinct steps');
+  const t = text(page(d));
+  assert.match(t, /Review sends fixes back up to 2 times/); assert.match(t, /Web UI sends fixes back up to 1 time(?!s)/); assert.doesNotMatch(t, /up to 1 times/);
+  page(d).querySelector('[data-wf-ways][aria-expanded="false"]')?.click(); await settle(40);
+  assert.match(text(page(d)), /Review finds something/); assert.match(text(page(d)), /Back to Build \(step 1\), at most twice/); assert.match(text(page(d)), /Back to Build \(step 3\), at most once/);
+  assert.deepEqual([...page(d).querySelectorAll('.ws-name')].map(text), ['Build', 'Review', 'Build', 'Web UI'], 'a step\'s own panel keeps its plain name');
+  const full = await workflowsHost({ hash: '#workflows/workflow:wf_full' });
+  const fullArcs = [...page(full.d).querySelectorAll('.ws-loop')];
+  assert.equal(fullArcs.length, 2);
+  for (const a of fullArcs) { assert.match(text(a), /back to Implementation, at most 3 times/); assert.ok(arcAt(a)[1] > 0, 'from ≠ to'); }
+});
+
+test('V-TW-06: the canvas Loop row, Remove and the loop picker follow the node', async () => {
+  const { w, d } = await workflowsHost({ hash: '#workflows/edit:wf_twice', lists: twiceLists() });
+  const insp = () => text(d.querySelector('.wf-insp'));
+  assert.match(insp(), /^Review/); assert.match(insp(), /Sends fixes back to Build \(step 1\) up to 2 times/);
+  const at = async (id) => { const g = d.querySelector('#wf-canvas-g'); g.innerHTML = `<div data-node-id="${id}">x</div>`; g.firstChild.click(); await settle(40); };
+  await at('n_web');
+  assert.match(insp(), /Sends fixes back to Build \(step 3\) up to 1 time(?!s)/);
+  d.querySelector('[data-menu="ed-l-3"]').click(); await settle(20); d.querySelector('[data-menu-pick="ed-l-3|3"]').click(); await settle(40);
+  const draft = () => w.RailWorkflowLive.data().workflow.find((x) => x.id === 'wf_twice').draft;
+  assert.deepEqual(draft().loops.map((l) => [l[2], l[3]]), [[2, 'n_rev'], [3, 'n_web']], 'the picker changed the Web UI loop, not the first one');
+  await at('n_b2');
+  d.querySelector('[data-ed-remove="2"]').click(); await settle(60);
+  assert.equal(draft().loops.length, 1); assert.equal(draft().loops[0][3], 'n_rev');
+});
+
+test('V-TW-19: an agent with model: opus and a step on claude-opus-4-1 read as words', async () => {
+  const agents = { ...WF_LISTS['/api/agents'], agents: WF_LISTS['/api/agents'].agents.map((a) => (a.key === 'sec' ? { ...a, frontmatter: { ...a.frontmatter, model: 'opus' } } : a)) };
+  const lists = twiceLists((t) => { t.nodes[1].config.model = 'claude-opus-4-1'; return t; }, agents);
+  const { w, d } = await workflowsHost({ hash: '#workflows/~agents', lists });
+  const card = page(d).querySelector('[data-wf-open="agent:sec"]')?.closest('.pc, article, li, section');
+  assert.match(text(card), /Checks · Opus 5\.5/);
+  await go(w, '#workflows/agent:sec', 120);
+  assert.match(text(page(d)), /Opus 5\.5/); assert.doesNotMatch(text(page(d)), /\bopus\b|claude-/);
+  await go(w, '#workflows/workflow:wf_twice', 150);
+  assert.equal(text(page(d).querySelector('[data-menu="wfm-0"]')), 'Opus 4.1');
+  assert.doesNotMatch(text(page(d)), /claude-/);
+});
