@@ -194,7 +194,8 @@ body.bar-hidden .bar-show{display:inline-flex;}   /* nav.one-bar: hidden, the wa
 .bar-strip-i{position:relative;display:grid;place-items:center;width:36px;height:36px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);cursor:pointer;}
 .bar-strip-i:hover{background:var(--hover);}
 .bar-strip-i:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
-.topnav-badge.is-corner,.pz-pulse-b .topnav-badge{position:absolute;top:-1px;right:-3px;min-width:16px;height:16px;padding:0 4px;border-radius:var(--r-pill);font-size:10px;line-height:16px;}
+.topnav-badge.is-corner,.pz-pulse-b .topnav-badge{position:absolute;top:-1px;right:-3px;min-width:18px;height:18px;padding:0 5px;border-radius:var(--r-pill);font-size:var(--fs-caption);line-height:18px;}   /* a count is read at a glance: never under 12px */
+.pz-pulse-b .topnav-badge{top:-4px;right:-6px;}
 .topnav-badge.is-corner:not([data-tone]){background:var(--field);color:var(--ink-2);}
 #topnav-ask .ask-ic,#topnav-ask .ask-ic svg{width:20px;height:20px;}
 .pz-pulse-b svg,[data-stillhet="ui-icon"] svg{width:20px;height:20px;}

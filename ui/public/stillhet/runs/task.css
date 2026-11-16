@@ -1,45 +1,5 @@
 /* Stillhet: task. Rules for this place only; what every page shares is in css/stillhet-look.css and css/stillhet.css. */
 
-/* ---- The stage train (look.stage-line): a knot a stage, its name under its knot; a stop is a real button ---- */
-.stage-bar{position:relative;}
-.sb-labels{align-items:start;}
-.sb-labels > span,.sb-labels > b{min-width:0;overflow-wrap:break-word;}
-.sb-labels small{white-space:nowrap;}
-.sb-meta{display:block;margin-top:2px;font-weight:400;color:var(--ink-2);font-variant-numeric:tabular-nums;}
-.sb-stop{position:relative;display:block;min-width:0;min-height:44px;margin:-22px 0 0;padding:24px 2px 4px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);font:400 var(--fs-caption)/1.3 var(--sans);text-align:center;overflow-wrap:break-word;cursor:pointer;}
-.sb-stop:hover{background:color-mix(in srgb,var(--hover) 60%,transparent);color:var(--ink);}
-.sb-stop:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
-.sb-stop.is-done{color:var(--ink);}
-.sb-stop.is-now{font-weight:600;color:var(--ink);}
-.stage-bar:is(.is-ask,.is-act) .sb-stop.is-now{color:var(--amber-ink);}
-.stage-bar.is-fail .sb-stop.is-now{color:var(--red-ink);}
-.sb-stop[aria-expanded="true"]::after{content:'';position:absolute;left:50%;bottom:-7px;width:1px;height:8px;background:var(--line-2);}   /* its details hang under this stop */
-/* done is ink, never green; the stop it is on is ringed in its state's colour and, while it works, breathes once every 4s */
-.sl-knot.is-now{width:12px;height:12px;top:1px;margin-left:-6px;border-width:2px;}
-.stage-bar.is-run{color:var(--ink);}
-.stage-bar.is-run .sl-knot.is-now{animation:sl-breath 4s ease-in-out infinite;}
-.stage-bar.is-fail .sl-knot.is-now{background:currentColor;}
-.rd-route-dot.is-pulse,.status-dot.is-pulse{animation:sl-breath 4s ease-in-out infinite;}   /* the running step: the same one slow breath */
-@media (prefers-reduced-motion: reduce){ .stage-bar.is-run .sl-knot.is-now,.rd-route-dot.is-pulse,.status-dot.is-pulse,.kind-mark.is-run,.git-mark.is-watch.is-fix,.sc-cell.is-now{animation:none;} }
-/* the state word of a running task is full ink, on a card as on its page */
-.tp-kicker:has(> .kind-mark.is-run) > span:not(.kind-mark):not(.tp-menu){color:var(--ink);}
-
-/* ---- The open-line (StagePart): a hairline from the words to the chevron; what it opens hangs on it and ends with one ---- */
-.stage-part-b{text-align:left;font-size:var(--fs-meta);}
-.stage-part-b b{flex:none;font-size:var(--fs-body);}
-.stage-part-b span{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
-.sp-rule{flex:1 1 16px;min-width:16px;height:1px;background:var(--line);}
-.stage-part-b:hover{background:none;}
-.stage-part-b:hover .sp-rule,.stage-part-b.is-open .sp-rule{background:var(--line-2);}
-.stage-part-b:hover b{text-decoration:underline;text-underline-offset:3px;}
-.stage-part-b svg{width:14px;height:14px;color:var(--ink-2);}
-.sp-body{padding:4px 0 12px;border-bottom:1px solid var(--line-2);margin-bottom:4px;min-width:0;}
-.sp-body > .rtab-panel{margin:0;padding:0;}
-.stage-tools .stage-part-b{width:auto;height:28px;}
-.stage-tools .sp-rule{flex:none;width:12px;min-width:12px;}
-.stage-tools .stage-part-b b{font-size:var(--fs-meta);}
-.task-card.is-open > .tc-stream{padding-bottom:12px;border-bottom:1px solid var(--line-2);}   /* where the opened stages end */
-
 /* ---- The task page: one text edge, one state head, where it began ---- */
 .train-folds{display:flex;flex-direction:column;gap:2px;margin-top:8px;}
 .train-panel{margin-top:10px;padding:10px 0 4px;border-top:1px solid var(--line);}
@@ -61,79 +21,7 @@
 /* done is ink, never green: a finished step's ring and check */
 .rc.is-task .rd-route-dot.is-done,.task-card .rd-route-dot.is-done,.own-stages .rd-route-dot.is-done{color:var(--ink);}
 
-/* ---- DiffView: side by side where it fits, unified under 900px of its own width ---- */
-.diff-view{container-type:inline-size;min-width:0;}
-.dv-wrap{border:1px solid var(--line-2);border-radius:var(--r-sm);overflow:hidden;background:var(--bg);}
-.dv-head{display:flex;align-items:center;gap:12px;min-height:40px;padding:4px 12px;border-bottom:1px solid var(--line-2);font-size:var(--fs-meta);}
-.dv-path{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left;font:400 var(--fs-meta)/1.4 var(--mono);color:var(--ink);}
-.dv-seg{display:none;flex:none;}
-.dv-scroll{overflow:auto;max-height:70vh;}
-.dv-scroll:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
-.dv-t{width:100%;border-collapse:collapse;font:400 var(--fs-meta)/1.6 var(--mono);color:var(--ink);}
-.dv-t td{padding:0 8px;vertical-align:top;white-space:pre;}
-.dv-t .dv-n{width:1%;min-width:36px;text-align:right;color:var(--ink-2);font-variant-numeric:tabular-nums;user-select:none;}
-.dv-t .dv-s{width:1%;padding:0 2px 0 6px;font-weight:600;text-align:center;user-select:none;}
-.dv-t .dv-c{width:auto;}
-.dv-at td{padding:4px 12px;background:var(--field);color:var(--ink-2);}
-/* added and removed: a sign, a word for a screen reader, and a tint under ink text (the text keeps its contrast) */
-.dv-unified tr.dv-add td,.dv-split td.dv-add{background:color-mix(in srgb,var(--green) 16%,transparent);}
-.dv-unified tr.dv-del td,.dv-split td.dv-del{background:color-mix(in srgb,var(--red) 16%,transparent);}
-.dv-unified tr.dv-add .dv-s,.dv-split .dv-s.dv-add{color:var(--green-ink-strong,var(--green));box-shadow:inset 2px 0 0 var(--green);}
-.dv-unified tr.dv-del .dv-s,.dv-split .dv-s.dv-del{color:var(--red-ink-strong,var(--red));box-shadow:inset 2px 0 0 var(--red);}
-.dv-split td.dv-none{background:var(--field);}
-.dv-split{display:none;table-layout:fixed;}
-.dv-split .dv-cn{width:44px;}.dv-split .dv-cs{width:20px;}
-.dv-split td.dv-c{white-space:pre-wrap;overflow-wrap:anywhere;}
-.dv-split td:nth-child(4){border-left:1px solid var(--line-2);}
-@container (min-width: 900px){
-  .dv-seg{display:inline-flex;}
-  .diff-view[data-mode="split"] .dv-split{display:table;}
-  .diff-view[data-mode="split"] .dv-unified{display:none;}
-}
-.diff-files{display:flex;flex-direction:column;gap:16px;min-width:0;}
-.viewer-modal .card.dlg:has(.diff-files){width:min(1180px,100%);}
-
-/* ---- The task card in a chat: what it is, a title that opens its page, what it asks about ---- */
-.tp-from{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 var(--fs-caption)/1.3 var(--sans);color:var(--ink-2);}
-.tc-title-b{display:inline;max-width:100%;margin:0;padding:0;border:0;background:none;color:inherit;font:inherit;letter-spacing:inherit;text-align:left;cursor:pointer;overflow:hidden;text-overflow:ellipsis;}
-.tc-title-b:hover{text-decoration:underline;text-underline-offset:3px;}
-.tc-title-b:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
-.tc-asks{display:flex;flex-direction:column;align-items:flex-start;gap:6px;margin:10px 0 2px;padding:10px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);min-width:0;}
-.tc-asks-h{margin:0;font:500 var(--fs-meta)/1.3 var(--sans);color:var(--ink);}
-.tc-asks-l,.tc-asks-d{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;min-width:0;max-width:100%;}
-.tc-asks-l li{font-size:var(--fs-meta);line-height:1.45;color:var(--ink-2);overflow-wrap:anywhere;}
-.tc-ask-d{display:flex;align-items:center;gap:8px;font-size:var(--fs-meta);color:var(--ink);}
-.tc-ask-b{margin:0;padding:0;border:0;background:none;color:var(--ink);font:500 var(--fs-meta)/1.3 var(--sans);text-align:left;text-decoration:underline;text-underline-offset:3px;cursor:pointer;}
-.tc-ask-b:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-.tp-actions{flex-wrap:wrap;}
-/* a card's menu floats over the page, as the page's own does: it never pushes the card down */
-.task-card .tp-menu{position:relative;}
-.task-card .tp-menu > .menu,.task-card .tp-menu .rc-pop > .menu{position:absolute;right:0;top:100%;z-index:30;}
-
-/* ---- Proposals: labelled rows in fixed places, one supporting line ---- */
-.tp-rows{margin:0;display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 16px;align-items:baseline;}
-.tp-row{display:contents;}
-.tp-row dt{font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;}
-.tp-row dd{margin:0;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;min-width:0;font-size:var(--fs-body);color:var(--ink);}
-.tp-was{font-size:var(--fs-caption);color:var(--amber-ink);}
-.tp-was s{color:var(--ink-2);text-decoration-color:var(--ink-3);}
-.tp-files{margin:0;display:flex;flex-wrap:wrap;gap:6px;}
-.tp-files .kind-chip{display:inline-flex;align-items:center;gap:4px;}
-.tp-body > .ws{margin-top:4px;}
-
 /* ---- The composer: starters say what they do; one Voice button ---- */
-/* Chat home's starters: cards in a calm grid under the composer (3 across, 2 on a tablet, 1 on a phone) */
-.home-starters.starter-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:16px;}
-.starter-grid > .rc-pop{display:block;min-width:0;}
-.starter-card{display:grid;grid-template-columns:20px minmax(0,1fr);gap:4px 10px;align-items:center;width:100%;height:100%;min-height:76px;padding:12px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--bg);color:var(--ink);font:400 var(--fs-body)/1.3 var(--sans);text-align:left;cursor:pointer;}
-.starter-card:hover{background:var(--hover);border-color:var(--ink-3);}
-.starter-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
-.starter-card .st-i{grid-column:1;grid-row:1;display:grid;place-items:center;color:var(--ink-2);}
-.starter-card .st-n{grid-column:2;grid-row:1;display:flex;align-items:center;gap:4px;min-width:0;font-weight:500;}
-.starter-card .st-s{grid-column:2;grid-row:2;align-self:start;font-size:var(--fs-caption);line-height:1.4;color:var(--ink-2);}
-.starter-grid .rc-pop > .menu{top:calc(100% + 4px);}
-@media (max-width: 900px){ .home-starters.starter-grid{grid-template-columns:repeat(2,minmax(0,1fr));} }
-@media (max-width: 600px){ .home-starters.starter-grid{grid-template-columns:minmax(0,1fr);} .starter-card{min-height:0;} }
 
 /* The chat's timeline (the ticks you jump through a conversation with): a slim track on the reading column's right edge,
    a hairline at rest; its ticks and a tick's card show on hover or focus. Under 760px it is not drawn: Latest is the way back */

@@ -65,7 +65,7 @@
   const forYou = () => src().plugins.filter((p) => p.why && (!p.installed || p.keptForYou));
   // Update lives on the card that has it, once per plugin (stillhet.one-action)
   // stillhet.card-opens: the title is a link and the whole card opens the plugin's page; its one step is a bordered button
-  const stepBtn = (p, attrs) => R.button({ label: stOf(p).act, busy: WORKING[busyOf(p.id)] ? { label: WORKING[busyOf(p.id)] } : false, attrs: { ...attrs, disabled: !!busyOf(p.id) } });
+  const stepBtn = (p, attrs) => R.button({ label: stOf(p).act, busy: WORKING[busyOf(p.id)] ? { label: WORKING[busyOf(p.id)] } : false, attrs: { 'aria-label': `${stOf(p).act}: ${nameOf(p)}`, ...attrs, disabled: !!busyOf(p.id) } });
   const cardOf = (p, why = false) => R.pluginCard({ mark: markOf(p), kicker: `${p.kind.replace(/s$/, '')}${p.update ? '' : ` · ${p.installed ? (p.on === false ? 'installed, off' : 'installed') : p.ver}`}`, update: p.update || '', title: nameOf(p), titleHtml: R.textLink({ label: nameOf(p), attrs: { 'data-mk-open': p.id, title: `Opens ${nameOf(p)}` } }), what: p.what, why: why ? p.why : '', facts: factsOf(p),
     action: stepBtn(p, { 'data-mk-card': p.id }), attrs: { 'data-mk-plugin': p.id, 'data-mk-open': p.id } });
   const mkOf = (p) => src().markets.find((m) => m.id === p.market) || null;   // the plugin's own market (D15)

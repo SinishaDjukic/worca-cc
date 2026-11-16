@@ -16,7 +16,7 @@ codebase); with the flag off nothing here is loaded or drawn (`gate.flag-off`).
 
 ## Pulse: Now and Updates
 
-- **What it is:** one panel under one top-bar button, no page: Now (states that end by themselves) and Updates (events, stored, read and cleared). Rules: `panel.pulse-read`, `fail.pulse-list`, `small.top-icons`, `small.sound`, `look.alert-ladder`; the design is [pulse.md](../pulse.md).
+- **What it is:** one panel under one top-bar button, no page: Now (states that end by themselves) and Updates (events, stored, read and cleared). Rules: `panel.pulse-read`, `fail.pulse-list`, `small.top-icons`, `small.sound`, `look.alert-ladder`; the design is [server.md](server.md) (the engine rules).
 - **Build on:** classic's notification log `src/core/notifications.mjs` (it already has a `scope` column and per-person reads) with `GET /api/notifications`, `POST /api/notifications/:id/read`, `POST /api/notifications/read-all`; the Activity model `ui/public/activity-model.mjs` for what Now holds; `ui/public/alerts.mjs` for the desktop and badge values; `chatPrefs.notify` in `src/core/settings.mjs`; `GET /api/schedules`, `GET /api/actions/running`. Live code: the notification and section mapping in `live/live-map.mjs` (`test/stillhet-live-map.test.mjs`); the event catalogue and `clearsWhen` in `pulse/pulse-model.js`. Library: `pulseRow`, `tabs`, `filterRow`, `listState`, `selectionBar`, `countBadge`, `playChime`, `toastUndo`.
 - **Do not rebuild:** a second notification store beside classic's log; a browser-only read state; a Pulse page; a schedule's own activity feed ([gaps.md](gaps.md) drops it: Pulse, filtered to the schedule).
 - **Verdict:** **adapt** the model and the mapping; **rewrite** `pulse/pulse.js`: 1,265 lines that also hold the profile menu, the search, New task and Settings, with live branches inside the page (lessons 1, 16).
@@ -34,7 +34,7 @@ codebase); with the flag off nothing here is loaded or drawn (`gate.flag-off`).
 
 ## Usage rings, limits and the Usage and costs flyout
 
-- **What it is:** rings around the avatar for the session and the long window of the tightest connected harness, a Limits group in Now when one is near, and the profile menu's Usage and costs side menu with every harness's windows and the spend. Rules: `small.usage-rings`, `panel.over`; [pulse.md](../pulse.md) §4.1 to §4.3.
+- **What it is:** rings around the avatar for the session and the long window of the tightest connected harness, a Limits group in Now when one is near, and the profile menu's Usage and costs side menu with every harness's windows and the spend. Rules: `small.usage-rings`, `panel.over`; [server.md](server.md) (the engine rules) §4.1 to §4.3.
 - **Build on:** `src/core/usage-limits.mjs` and `GET /api/usage-limits` (`ui/routes/runs/drain-and-budget.mjs`), fed by the engines' limit events; `GET /api/budget` and `src/core/cost-budget.mjs`; classic's spend card model in `ui/public/account-menu.mjs` and `ui/public/stats-view.mjs` (figures only), `src/core/openrouter-free.mjs`. Library: `usageRing`, `usageWindow`, `connectedUsage`, `usageTip`, `USAGE_REFRESH_MS`, `accountButton`, `accountItem`, `navFlyout`. Live code: `costsOf` in `live/live-map.mjs`.
 - **Do not rebuild:** a second usage reader or a made-up percent where a harness reports nothing (no ring, and the menu says so); the spend ring on the avatar (it is usage only now); a budget figure computed in the page.
 - **Verdict:** **reuse** the server reader, the library and the mapping; the menu's drawing leaves `pulse/pulse.js` with the rewrite above.
@@ -43,7 +43,7 @@ codebase); with the flag off nothing here is loaded or drawn (`gate.flag-off`).
 
 ## What a start does near a limit
 
-- **What it is:** before a task starts on a harness at or over the warning line, New task and Resume say so and offer one with room or a start after the reset; a start Worca makes (a slice, a queued or scheduled task) moves, waits or goes ahead by one setting. Rules: `act.limit-note`; [pulse.md](../pulse.md) §4.5.
+- **What it is:** before a task starts on a harness at or over the warning line, New task and Resume say so and offer one with room or a start after the reset; a start Worca makes (a slice, a queued or scheduled task) moves, waits or goes ahead by one setting. Rules: `act.limit-note`; [server.md](server.md) (the engine rules) §4.5.
 - **Build on:** `src/core/usage-limits.mjs`; `src/core/limit-resume.mjs` and `src/core/recoverable-error.mjs` (resume after a reset); `src/core/model-tiers.mjs` and `src/core/engine-select.mjs` (the same tier on another harness); `GET /api/engines` and classic's `ui/public/engine-locks.mjs` rule; `src/core/scheduler.mjs` and `src/core/run-slots.mjs` for queued and scheduled starts; classic's `ui/public/limit-notice.mjs` stays the notice of a task already paused. Library: `choiceNote`, `dialog`, `field`, `button({ busy })`.
 - **Do not rebuild:** a limit check in the page (the server decides and says what it did); a second resume timer; a warning anywhere but New task, Resume, a slice's plan stop and a confirm that starts agent work.
 - **Verdict:** nothing live exists; build it, **server first**.
@@ -100,7 +100,7 @@ codebase); with the flag off nothing here is loaded or drawn (`gate.flag-off`).
 - **What it is:** a task reads the same on its page and on its card in a chat: status line, one action and ⋯, and its stages as one horizontal train that opens each stage's parts in place. Rules: `panel.task-card`, `panel.task-depth`, `thing.stage-train`, `thing.parts-in-stages`, `thing.slots`, `look.stage-line`, `motion.stage-advance`, `stillhet.work-and-talk`.
 - **Build on:** classic's run data: the run frames, `GET /api/history/:key/:id`, `src/shared/run-model.mjs`, `src/shared/run-progress.mjs`, the PR routes (`/api/pr`, `/api/pr/merge`, `/api/pr/fix-checks`). Library: `taskCard`, `stageBar`, `stageStep`, `stageLine`, `statusLine`, `taskView`, and all of `run-state.mjs` (`runState`, `cardAction`, `stageState`, `actionFlow`, `stepFlow`). Live code: `live/task-live.mjs`, `live/task-page.mjs` (`test/stillhet-task-live.test.mjs`, `test/stillhet-task-page.test.mjs`).
 - **Do not rebuild:** a state, an action or a stage word outside `run-state.mjs` (`build.logic`); a card of another shape for a workspace task or a slice; a tab strip on the task page; classic's progress bar.
-- **Verdict:** **reuse** the library and the model; **adapt** the live code to one id per task (lesson 19). Where [chat-cards.md](../chat-cards.md) says a row opens the card in its chat, `stillhet.work-and-talk` now governs: a row opens the task's page.
+- **Verdict:** **reuse** the library and the model; **adapt** the live code to one id per task (lesson 19). A row opens the task's page (`stillhet.work-and-talk`); the card is reached from the page's Open the chat.
 - **New server work:** the fields [wiring.md](wiring.md) finds missing on `/api/history` (the workflow id, the PR state: lesson 24).
 - **Done when:** `test/run-page-model.test.mjs`, `test/stillhet-task-card-host.test.mjs` and `run-page-sweep` pass; a draw-twice test keeps an open Stop confirm (lesson 17).
 
@@ -179,7 +179,7 @@ codebase); with the flag off nothing here is loaded or drawn (`gate.flag-off`).
 ## Old addresses
 
 - **What it is:** with Stillhet on, an address of classic (Statistics, Runs, Activity, Connectors, Workspaces and the rest) lands on the place that holds it now, replaced in place so Back never loops. Rules: `nav.old-address`, `nav.address`, `nav.not-found`.
-- **Build on:** the one table `ui/public/stillhet/shell/old-addresses.js` (`test/stillhet-old-addresses.test.mjs`); the Moves table of [stillhet-wiring.md](../stillhet-wiring.md). Classic's own `MOVED_ROUTES` in `ui/public/app.js` stays untouched.
+- **Build on:** the one table `ui/public/stillhet/shell/old-addresses.js` (`test/stillhet-old-addresses.test.mjs`); the moves it lists (also in [wiring.md](wiring.md), Shell and navigation). Classic's own `MOVED_ROUTES` in `ui/public/app.js` stays untouched.
 - **Do not rebuild:** a redirect inside a page; a server redirect; a second alias list (Insights had one of its own).
 - **Verdict:** **reuse**.
 - **New server work:** none.

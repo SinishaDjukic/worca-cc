@@ -179,7 +179,9 @@ export function listController({ root, spec }) {
     }
     const scroller = root.closest('.main, .rl-side-body, .bar-list'), y = scroller?.scrollTop || 0;
     const picked = (a?.dataset?.menuPick || a?.dataset?.pick || '').split('|')[0];
-    const keep = focus || (picked ? `[data-menu="${q(picked)}"]` : ['data-menu', 'data-bulk', 'data-selall', 'data-fold', 'data-rounds'].filter((k) => a?.hasAttribute?.(k)).map((k) => `[${k}${a.getAttribute(k) && a.getAttribute(k) !== 'true' ? `="${q(a.getAttribute(k))}"` : ''}]`)[0]);
+    // the focus was in a menu: it goes back to what opened that menu (the bar's one Filter control holds several parts)
+    const trig = a?.closest?.('.menu')?.parentElement?.querySelector?.(':scope > [data-menu]')?.dataset.menu;
+    const keep = focus || (trig ? `[data-menu="${q(trig)}"]` : picked ? `[data-menu="${q(picked)}"]` : ['data-menu', 'data-bulk', 'data-selall', 'data-fold', 'data-rounds'].filter((k) => a?.hasAttribute?.(k)).map((k) => `[${k}${a.getAttribute(k) && a.getAttribute(k) !== 'true' ? `="${q(a.getAttribute(k))}"` : ''}]`)[0]);
     const typed = root.querySelector('#list-pop-q')?.value, name = root.querySelector('[data-dlg-name]')?.value;
     const toneOf = (el) => { const m = el.querySelector(':scope > .lr-rail .kind-mark, :scope > .lr-rail .status-dot'); return m ? `${m.className.replace(/ ?is-(news|still)/g, '')}|${m.querySelectorAll('circle[style]').length}` : ''; };   // its state and how far its ring has filled
     const was = new Map([...root.querySelectorAll('[data-row]')].map((el) => [el.dataset.row, toneOf(el)]));

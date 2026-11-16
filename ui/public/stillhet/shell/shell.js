@@ -655,6 +655,13 @@
   // A change of mode or a Labs flag: the sidebar follows, and the page if that changes whether it is locked.
   R.prefs.onChange(() => { applyPrefs(); drawMini(); if (routed.view && (TITLES[routed.view] || routed.view === 'schedule') && !!lockHere(routed.view, routed.arg) !== routed.locked) route(); else if (routed.view) drawBar(); });
   addEventListener('hashchange', route);
+  // key.search: Esc on the empty search field leaves it for the page (its heading), so the single-key shortcuts (? and the
+  // rest) work again right after a search; Esc with words in it clears them first (the field's own answer)
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !e.target.matches?.('[data-search]')) return;
+    const field = e.target, was = field.value;
+    setTimeout(() => { if (document.activeElement === field && !was && !field.value) focusHeading(); }, 0);
+  });
   // key.page-heading: a page change never leaves the focus on nothing. Once the new page is drawn, the focus lands on its
   // heading, unless it is still somewhere that goes on (a bar's list you are walking, a field you are typing in, a dialog).
   let pageWas = location.hash.split('@')[0];

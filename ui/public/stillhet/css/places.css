@@ -74,26 +74,3 @@
 .in-narrowed b{font-weight:600;color:var(--ink);}
 .in-acts{margin-top:16px;}
 .in-acts > .btn-quiet:first-child{padding-left:10px;}   /* a bordered button keeps its own padding */
-/* FigureRows: a row that cannot open is text, not a control; nothing leaves at a narrow width, the rows scroll in their own box */
-.fr-list{grid-template-columns:minmax(96px,1fr) repeat(var(--fr-n),auto) 12px;}   /* ds-ok: --fr-n is the count FigureRows sets; the last column is the chevron of a row that opens */
-.fr-row.is-static{cursor:default;}
-.fr-go{display:inline-flex;align-items:center;justify-content:flex-end;color:var(--ink-3);}
-button.fr-row:hover .fr-go{color:var(--ink);}
-.fr-name{position:sticky;left:0;background:var(--bg);padding-right:8px;}
-button.fr-row:hover .fr-name,.fr-row.is-open .fr-name{background:var(--hover);}
-.fr-d-head .btn{flex:none;}
-.fr-detail{contain:inline-size;}   /* an open row's detail takes the rows' width; it never widens them */
-/* HeatGrid: a cell is not a control; its number shows in a small card on hover, focus and tap; the legend holds in both themes */
-.hg-cell{position:relative;cursor:default;}
-.hg-tip{display:none;position:absolute;z-index:3;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);padding:4px 8px;border-radius:var(--r-xs);background:var(--ink);color:var(--bg);font-size:var(--fs-caption);line-height:1.3;white-space:nowrap;pointer-events:none;}
-.hg-cell.is-first .hg-tip{left:0;transform:none;}
-.hg-cell.is-last .hg-tip{left:auto;right:0;transform:none;}
-.hg-cell:hover .hg-tip,.hg-cell:focus .hg-tip{display:block;}
-.hg-legend{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin:8px 0 0;font-size:var(--fs-caption);color:var(--ink-2);}
-.hg-key{display:inline-block;width:16px;height:12px;border-radius:var(--r-xs);}
-.hg-key.is-h1{background:var(--line-2);} .hg-key.is-h2{background:var(--ink-3);} .hg-key.is-h3{background:var(--ink-2);} .hg-key.is-h4{background:var(--ink);}
-.hg-legend-t{margin-left:8px;}
-.hg-note{margin:4px 0 0;font-size:var(--fs-caption);color:var(--ink-2);}
-/* narrow: the rows scroll sideways in their own box (wide, they fit, and an open row's cards may reach past the box) */
-@media (max-width:640px){.fr-scroll{overflow-x:auto;max-width:100%;}.fr-list{min-width:max-content;}}
-

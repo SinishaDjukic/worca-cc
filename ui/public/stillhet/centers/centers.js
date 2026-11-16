@@ -91,7 +91,7 @@
   const leadOf = (g) => { const top = topOf(g); if (top) return top; const runs = g.running.map(taskOf).filter(Boolean); return runs.find((t) => frozen.tasks?.includes(`t:${t.id}`)) || runs[0] || null; };
   const schedOf = (g) => g.heldS || (leadOf(g) ? null : g.missed[0] || g.live[0] || null);
   const keyOfCard = (g) => { const t = leadOf(g), sc = schedOf(g); return t ? `t:${t.id}` : sc ? `s:${sc.id}` : `g:${g.name}`; };
-  const runNowBtn = (s2) => R.button({ label: 'Run now', attrs: { 'data-c-sact': `run|${s2.id}`, title: `Runs ${s2.title} now to catch up` } });
+  const runNowBtn = (s2) => R.button({ label: 'Run now', attrs: { 'data-c-sact': `run|${s2.id}`, 'aria-label': `Run now: ${s2.title}`, title: `Runs ${s2.title} now to catch up` } });
   const openBtn = (r) => R.button({ label: 'Open', attrs: { 'data-c-open': r.id, title: `Opens ${r.title}` } });
   function actionOf(g) {
     if (g.held) return openBtn(g.held);
@@ -202,7 +202,7 @@
     const fact = `${s.project || 'No project'} · ${R.REPEATS.includes(s.every) ? R.scheduleWords(s).says : s.every}${s.tz && s.tz !== homeTz() ? ` ${s.tz}` : ''} · ${flowWord(s.workflow)}${s.preset ? ` · ${s.preset === 'preset deleted' ? s.preset : `from ${s.preset}`}` : ''}`;   // its project, when it runs and its workflow (its prompt is the line above)
     // Run now, Stop and Resume are one kind of button: bordered, never filled, so the row of cards reads evenly
     const act = sec === 'ended' ? null : sec === 'running' ? ['Stop', 'stop'] : sec === 'paused' ? ['Resume', 'pause'] : ['Run now', 'run'];   // an ended one runs no more
-    return R.pluginCard({ mark: R.kindMark({ kind: 'schedule', tone: sec === 'needs' ? 'act' : sec === 'paused' ? 'pause' : sec === 'running' ? 'run' : 'idle', breathe: sec === 'needs' }), word, kicker, tone, title: s.title, titleHtml: link(s.title, { 'data-c-sched': s.id }, `Opens ${s.title}`), what: s.what || R.scheduleWords(s).says, line: schedLine(s), facts: fact, action: act ? R.button({ label: act[0], attrs: { 'data-c-sact': `${act[1]}|${s.id}`, title: `${act[0]}: ${s.title}` } }) : '', attrs: { 'data-c-card': s.id, 'data-c-key': `s:${s.id}`, title: s.cost ? `${usd(s.cost)} a task` : null } });
+    return R.pluginCard({ mark: R.kindMark({ kind: 'schedule', tone: sec === 'needs' ? 'act' : sec === 'paused' ? 'pause' : sec === 'running' ? 'run' : 'idle', breathe: sec === 'needs' }), word, kicker, tone, title: s.title, titleHtml: link(s.title, { 'data-c-sched': s.id }, `Opens ${s.title}`), what: s.what || R.scheduleWords(s).says, line: schedLine(s), facts: fact, action: act ? R.button({ label: act[0], attrs: { 'data-c-sact': `${act[1]}|${s.id}`, 'aria-label': `${act[0]}: ${s.title}`, title: `${act[0]}: ${s.title}` } }) : '', attrs: { 'data-c-card': s.id, 'data-c-key': `s:${s.id}`, title: s.cost ? `${usd(s.cost)} a task` : null } });
   }
   function schedulesHtml() {
     const all = Sch().all(), sorted = all.filter((s) => (!view.from || (s.project || 'No project') === view.from) && (Sch().showing() === 'all' || s.state === 'paused')).sort(SCHED_SORTS[view.sSort]);

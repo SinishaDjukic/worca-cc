@@ -127,7 +127,7 @@ export function settingsRow({ name, value = '', note = '', sentence = '', picks 
   // the whole line is the trigger: one button under the row's words, so the controls at its end stay their own
   const opener = fold ? `<button type="button" class="set-open"${attrs({ 'aria-expanded': String(!!fold.open), 'aria-label': `${name}: ${fold.label || 'more settings'}`, title: fold.help || help || null, ...(fold.attrs || {}) })}></button>` : '';
   const chev = fold ? `<span class="set-chev" aria-hidden="true">${icon('chevR', 14)}</span>` : '';
-  const text = `${opener}<span class="set-name"${attrs({ title: fold ? null : help || null })}>${esc(name)}${changedDot(changed)}</span><span class="set-text">${value ? `<span class="set-value">${value}</span>` : ''}${say ? `<span class="set-note">${say}</span>` : ''}${picks ? `<span class="set-picks">${picks}</span>` : ''}</span>`;
+  const text = `${opener}<span class="set-name"${attrs({ title: fold ? null : help || null })}>${esc(name)}${changedDot(changed)}</span><span class="set-text">${value ? `<span class="set-value">${value}</span>` : ''}${say ? `<span class="set-note">${say}</span>` : ''}${picks ? `<span class="set-picks" role="group"${attrs({ 'aria-label': name })}>${picks}</span>` : ''}</span>`;
   return row({ kind: 'setting', cls: fold ? `is-opens${fold.open ? ' is-open' : ''}` : '', text, end: `${end}${chev}`, after: shown ? `<div class="set-detail" data-motion="open">${shown}</div>` : '', attrs: a });
 }
 

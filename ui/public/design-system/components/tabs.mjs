@@ -13,6 +13,6 @@ import { attrs, esc } from './html.mjs';
  */
 export function tabs({ items, label, controls, cls = '', idPrefix = 'tab-', hooks }) {
   const body = items.map((t) => `<button type="button" class="tab"${attrs(hooks ? { role: 'tab', 'aria-selected': String(!!t.selected), ...hooks(t) } : { role: 'tab', id: idPrefix + t.id, 'aria-controls': controls,
-    'aria-selected': String(!!t.selected), tabindex: t.selected ? 0 : -1, 'data-tab': t.id, 'data-key': 'tab:' + t.id })}>${esc(t.label)}${t.count ? `<span class="n">${esc(t.count)}</span>` : ''}</button>`).join('');
+    'aria-selected': String(!!t.selected), tabindex: t.selected ? 0 : -1, 'data-tab': t.id, 'data-key': 'tab:' + t.id })}>${esc(t.label)}${t.count ? ` <span class="n">${esc(t.count)}</span>` : ''}</button>`).join('');
   return `<div class="tabs${cls ? ' ' + cls : ''}" role="tablist"${attrs({ 'aria-label': label })}>${body}</div>`;
 }

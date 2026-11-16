@@ -119,7 +119,9 @@
     if (a.copy) return R.copyButton({ text: textOf(a.copy, c.sv), label: label, attrs: { 'data-svdo': key, 'data-key': 'sv:' + key } });
     const why = (c.locked && !a.read && !a.go && !a.page ? c.locked : '') || (a.off && a.off(c.sv)) || '';
     if (why) return c.R.tooltip({ text: why, off: true, html: c.R.button({ label, kind: a.kind ?? 'quiet', attrs: { disabled: true, 'data-key': 'sv:' + key } }) });
-    return c.R.button({ label, kind: a.kind ?? 'quiet', attrs: a.go ? { 'data-sset': a.go, title: a.help || null } : { 'data-svdo': key, 'data-key': 'sv:' + key, title: a.help || null } });
+    // a row's button says what it acts on ("Change: Budget"): the same word on ten rows is ten different steps
+    const row = where.split('/').length > 2 ? where.split('/').pop() : '', said = row && !label.includes(row) ? { 'aria-label': `${label.replace(/…$/, '')}: ${row}` } : {};
+    return c.R.button({ label, kind: a.kind ?? 'quiet', attrs: a.go ? { 'data-sset': a.go, title: a.help || null, ...said } : { 'data-svdo': key, 'data-key': 'sv:' + key, title: a.help || null, ...said } });
   }
   function swOf(r, label, sv, c) {
     const s = r.sw; if (!s) return '';

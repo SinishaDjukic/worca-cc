@@ -21,11 +21,12 @@
 /* ---- Targets (WCAG 2.5.8): on a phone, or under a finger, nothing you must hit is under 24 by 24 CSS px. The marks keep
    their drawn size; the box around them grows. ---- */
 @media (max-width: 760px), (pointer: coarse){
-  :is(.list-h-b, .spick-b, .dc-link:not(p .dc-link, li .dc-link, span .dc-link), .list-more, .tc-title-b, .tc-ask-b, .tr-line, .lr-round-line, .rc-crumb,
+  :is(.list-h-b, .spick-b, button.dc-link, .list-more, .tc-title-b, .tc-ask-b, .tr-line, .lr-round-line, .rc-crumb,
     .rc-branch, .sc-step, .q-fact, .rl-back, .fr-tab, .fr-chip-x, .tsearch-open){min-height:24px;}
-  :is(.dc-link, .list-more, .tc-ask-b, .rc-crumb, .rl-back, .q-fact){display:inline-flex;align-items:center;}
-  .btn.btn-sm.btn-icon, .btn.btn-icon{min-width:24px;min-height:24px;}
-  .list-row > .rc-pop > .btn, .bar-list .btn.btn-icon{min-width:28px;min-height:28px;}
+  :is(button.dc-link, .list-more, .tc-ask-b, .rc-crumb, .rl-back, .q-fact){display:inline-flex;align-items:center;}
+  .btn{min-width:24px !important;min-height:24px !important;}   /* a floor: a place's own small button never goes under it */
+  button.tr-line.tr-line{min-height:24px;}
+  .bar-list .list-row .lr-end .rc-pop > .btn.btn-icon{height:24px;}
   .lr-mark-fold{min-width:24px;min-height:24px;margin:-2px;}
   .rc-tags-mark{min-width:24px;min-height:24px;}
   /* a switch keeps its drawn 18px track inside a 24px box */
@@ -34,8 +35,7 @@
 }
 
 /* ---- Text is never under 12px (look.type-floor) ---- */
-.kind-chip, .composer-intent, .sc-ans-hint, .mi-hint, .topnav-badge, .count-badge, .bc-v, .bc-x, .ch-x, .ch-v, .sl-name, .sl-meta, .sb-stop, .pz-acct-av, .hg-tip{font-size:max(12px, 1em);}
-.kind-chip{font-size:var(--fs-caption);}
+.kind-chip.kind-chip, .rc .kind-chip, .pz-app .kind-chip{font-size:var(--fs-caption);}
 
 /* ---- Reduced motion: nothing animates, nothing glides. Each component already says what it shows instead (a still mark,
    an outline where a flash would be); this is the floor under all of them, so a new rule cannot forget. ---- */

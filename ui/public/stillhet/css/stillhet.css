@@ -2059,3 +2059,297 @@ button.fr-row:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .lr-fold{display:inline-grid;place-items:center;min-width:28px;min-height:28px;padding:0;border:0;border-radius:var(--r-sm);background:none;color:inherit;cursor:pointer;}
 .lr-fold:hover{background:var(--hover);}
 .lr-fold:focus-visible,.lr-main.lr-opens:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+
+/* ==== A form's labelled parts (field.mjs: PickField, FormGrid, FieldPair, FieldFold, FormReadback, FieldValue), Checkbox with help (checkbox.mjs), ChoiceNote ==== */
+/* PickField: a choice as a field. It fills its place and its value cuts short, so a pick never moves another field. */
+.fld-pick > .fld-spick{display:block;min-width:0;}
+.fld-pick .pd-base.is-words.is-field.fld-pick-b{width:100%;cursor:pointer;}
+.fld-pick-t{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;line-height:1.3;}
+.fld-pick .pd-base.is-words.is-field.fld-pick-b:disabled{background:var(--hover);color:var(--ink-2);cursor:default;}
+.fld-pick .pd-base.is-words.is-field.fld-pick-b:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.fld-pick-menu.spick-menu{left:0;min-width:max(100%,220px);max-height:min(320px,46vh);overflow-y:auto;}
+.fld .input:disabled,.fld .textarea:disabled{background:var(--hover);color:var(--ink-2);}
+.fld .input[type="time"],.fld .input[type="date"]{font-variant-numeric:tabular-nums;}
+/* FormGrid: two columns of fixed places; one column on a narrow screen. */
+.fld-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 16px;align-items:start;}
+.fld-cell{min-width:0;}
+.fld-cell.is-wide{grid-column:1 / -1;}
+.fld-grid .fld{margin:0;}
+.fld-cell > .fld + .fld{margin-top:12px;}
+/* FieldPair: two fields that are one choice, under one label. */
+.fld-pair-in{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
+.fld-pair.is-second > .fld-pair-in{grid-template-columns:minmax(0,2fr) minmax(0,3fr);}
+.fld-pair.is-first > .fld-pair-in{grid-template-columns:minmax(0,3fr) minmax(0,2fr);}
+.fld-pair-in > .fld:last-child .fld-pick-menu.spick-menu{left:auto;right:0;}
+/* FieldFold: a part of a form that opens in place, inside the border it opened from. */
+.fld-fold{border:1px solid var(--line-2);border-radius:var(--r-sm);}
+.fld-fold-b{display:flex;align-items:center;gap:8px;width:100%;min-height:36px;margin:0;padding:0 12px;border:0;border-radius:inherit;background:none;color:var(--ink);font:500 var(--fs-meta)/1.2 var(--sans);text-align:left;cursor:pointer;}
+.fld-fold-b:hover{background:var(--hover);}
+.fld-fold-b:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.fld-fold-b svg{flex:none;color:var(--ink-2);}
+.fld-fold-l{flex:none;}
+.fld-fold-s{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-2);font-weight:400;}
+.fld-fold.is-open > .fld-fold-b{border-bottom:1px solid var(--line);border-bottom-left-radius:0;border-bottom-right-radius:0;}
+.fld-fold-body{padding:14px 12px;}
+/* FormReadback: the one supporting line; it explains and is never a control. */
+.fld-read{margin:0;color:var(--ink-2);font:400 var(--fs-meta)/1.5 var(--sans);}
+/* FieldValue: a fact on an inspect view, in a field's place: its label over its value, nothing to press. */
+.fld-value{gap:2px;}
+.fld-value > .fld-l{color:var(--ink-2);font-weight:400;font-size:var(--fs-caption);}
+.fld-v{color:var(--ink);font:400 var(--fs-body)/1.45 var(--sans);overflow-wrap:anywhere;}
+/* Checkbox with one line of help under its label (an option in a form). */
+.pd-check.has-help{display:flex;align-items:flex-start;gap:10px;}
+.pd-check.has-help input{flex:none;margin-top:3px;}
+.pd-check-w{display:grid;gap:1px;min-width:0;}
+.pd-check-l{color:var(--ink);font:500 var(--fs-meta)/1.4 var(--sans);}
+.pd-check-h{color:var(--ink-2);font:400 var(--fs-caption)/1.4 var(--sans);}
+.pd-check.has-help:has(input:disabled){cursor:default;}
+.pd-check.has-help:has(input:disabled) .pd-check-l{color:var(--ink-2);}
+/* ChoiceNote: a note is body size wherever it stands, never the status zone's headline word. */
+.choice-note-t{color:var(--ink);font:500 var(--fs-body)/1.45 var(--sans);white-space:normal;overflow-wrap:anywhere;}
+
+
+/* ==== The library's shared behaviour: the menu item's focus ring and supporting line (compact-menu.mjs), one Dialog (dialog.mjs), the toast's corner (toast.mjs), the count badge, the account menu's usage row (account-menu.mjs) ==== */
+/* One focus ring on every menu item (A20): 2px, inside the menu's edge, never only a fill. */
+.menu-item:focus-visible,.menu .mi:focus-visible,.theme-ic:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+[role="radio"]:focus-visible,.switch:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+/* One Dialog (panels.md): lifted to the top layer by the library, its scrim is the window's. */
+.viewer-modal[popover]{inset:0;width:auto;height:auto;max-width:none;max-height:none;margin:0;border:0;padding:24px;overflow:visible;color:inherit;}
+.viewer-modal[popover]::backdrop{background:none;}
+/* A Dialog's rows (a provider's settings): divided as a tab's rows are. */
+.dlg-rows{margin-top:8px;}
+.dlg-rows > .set-row{grid-template-columns:120px minmax(0,1fr) auto;}
+
+/* A toast has its own corner (A8): the bottom left of the page column, clear of every title, filter row and confirm
+   strip at the top, and of the composer in the middle of the bottom edge. */
+body > .rc-toast{top:auto;bottom:24px;left:calc(var(--bar-w,280px) + 24px);transform:none;max-width:min(360px,calc(100vw - var(--bar-w,280px) - 48px));}
+body > .rc-toast.is-on{transform:none;}
+body.bar-hidden > .rc-toast{left:80px;max-width:min(360px,calc(100vw - 104px));}
+body:has(.wf-canvas) > .rc-toast{top:auto;}
+@media (max-width:760px){
+  body > .rc-toast,body.bar-hidden > .rc-toast{left:16px;right:16px;bottom:16px;width:auto;max-width:none;}
+}
+
+
+/* A menu item's supporting line (a mode says what it adds): shown under its words, in the secondary style. */
+:is(.rc,.pz-app) .menu-item.has-line{height:auto;padding-top:6px;padding-bottom:6px;align-items:start;white-space:normal;}
+:is(.rc,.pz-app) .menu-item.has-line > .mi-l{overflow:visible;white-space:normal;text-align:left;}
+.mi-line{display:block;margin-top:1px;font:400 var(--fs-caption)/1.35 var(--sans);color:var(--ink-2);white-space:normal;}
+.menu-item.has-line[role="menuitemradio"]::before{margin-top:3px;}
+.acct-menu .pz-usage-item .mi-hint{color:var(--ink-2);font:400 var(--fs-caption)/1.3 var(--sans);white-space:nowrap;}
+/* Usage and costs names the limit its figure is of, on a line of its own under the words. */
+.acct-menu .mi.pz-usage-item{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;column-gap:10px;align-items:center;height:auto;padding-top:5px;padding-bottom:5px;}
+.acct-menu .mi.pz-usage-item > :first-child{grid-row:1 / span 2;}
+.acct-menu .mi.pz-usage-item > .mi-lbl{grid-column:2;grid-row:1;}
+.acct-menu .mi.pz-usage-item > .mi-hint{grid-column:2;grid-row:2;margin-left:0;text-align:left;overflow:hidden;text-overflow:ellipsis;}
+.acct-menu .mi.pz-usage-item > .mi-val{grid-column:3;grid-row:1 / span 2;}
+.acct-menu .mi.pz-usage-item > .mi-chev{grid-column:4;grid-row:1 / span 2;}
+/* In a conversation the composer is docked at the bottom: the toast's corner is just above it, never over its controls. */
+body:has(#route-chat:not([hidden]) .convo-dock) > .rc-toast{bottom:calc(24px + 124px);}
+/* A toast said while a Dialog is up joins it in the top layer (pulse.js liftToast): the same corner, the same look. */
+.rc-toast[popover]{margin:0;border:0;right:auto;overflow:hidden;}
+.rc-toast[popover]:not(:popover-open){display:flex;}
+
+/* ==== SettingsRow and RowPicker (settings-row.mjs): the value leads, a row that opens, the pickers' line ==== */
+/* Section heads lead: larger and heavier than a row's name, more space above than below. */
+.cfg-body .set-sec{margin-top:40px;}
+.cfg-body .set-sec + .set-sec{margin-top:32px;padding-top:32px;}
+.cfg-body > .set-sec:first-child,.cfg-body > .rc-confirm + .set-sec{margin-top:24px;}
+.set-sec-h{font:600 var(--fs-section)/var(--lh-title) var(--sans);color:var(--ink);}
+.set-sec-head{margin-bottom:4px;}
+.set-rows > .set-row + .set-row{border-top:1px solid var(--line);}   /* divided rows, on the names' edge */
+.set-row{position:relative;padding:12px 0;}
+.set-name{font:500 var(--fs-body)/var(--lh-body) var(--sans);}
+.set-text{display:flex;flex-direction:column;gap:2px;font-size:var(--fs-body);}
+.set-value{color:var(--ink);font:400 var(--fs-body)/var(--lh-body) var(--sans);overflow-wrap:anywhere;}
+.set-value code{font:400 var(--fs-meta) var(--mono);color:var(--ink);}
+.set-note{color:var(--ink-2);font:400 var(--fs-meta)/1.45 var(--sans);}
+.set-note b{font-weight:500;color:var(--ink-2);}   /* a supporting line never shouts: the value above it leads */
+.set-end{align-items:center;align-self:start;min-height:32px;gap:8px;}
+.set-end::before{display:none;}
+.set-row > .set-name,.set-row > .set-text{padding-top:5px;}   /* the first line shares the baseline of a 32px control's words */
+
+/* The line of pickers under a row's supporting line: each under its own small label, on the value's edge. */
+.set-picks{display:flex;flex-wrap:wrap;gap:8px 12px;margin-top:6px;}
+.set-pick{position:relative;display:inline-flex;flex-direction:column;gap:4px;min-width:0;}
+.set-pick-l{font:400 var(--fs-caption)/1 var(--sans);color:var(--ink-2);}
+.pd-base.is-words.is-field.set-pick-b{width:208px;cursor:pointer;text-align:left;}
+.set-picks .pd-base.is-words.is-field.set-pick-b{width:168px;}
+.set-pick-b:disabled{color:var(--ink-2);cursor:not-allowed;}
+.set-pick-b:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.set-pick-t{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.set-pick > .spick-menu{top:calc(100% + 6px);left:0;}
+.set-pick > .spick-menu.is-right{left:auto;right:0;}
+
+/* A row that opens: its whole line is the trigger (one button under the words), a chevron at its end turns. */
+.set-row > .set-open{grid-column:1 / -1;grid-row:1;align-self:stretch;margin:-6px -8px;padding:0;border:0;border-radius:var(--r-sm);background:none;cursor:pointer;}
+.set-row.is-opens > :is(.set-name,.set-text,.set-end){grid-row:1;position:relative;pointer-events:none;}
+.set-row.is-opens > .set-name{grid-column:1;}
+.set-row.is-opens > .set-text{grid-column:2;}
+.set-row.is-opens > .set-end{grid-column:3;}
+.set-row.is-opens > .set-end > :not(.set-chev),.set-row.is-opens > .set-text .set-pick{pointer-events:auto;}
+.set-row > .set-open:hover{background:var(--hover);}
+.set-row > .set-open:focus-visible{outline:2px solid var(--ink);outline-offset:0;}
+.set-chev{display:inline-flex;align-items:center;justify-content:center;width:20px;height:32px;color:var(--ink-2);transition:rotate 140ms var(--ease);}
+.set-row.is-open > .set-end > .set-chev{rotate:90deg;}
+.set-row.is-opens > .set-detail{grid-row:2;}
+@media (prefers-reduced-motion: reduce){.set-chev{transition:none;}}
+@container (max-width: 560px){
+  .set-row.is-opens > .set-name{grid-column:1;grid-row:1;padding-right:28px;}
+  .set-row.is-opens > .set-text{grid-column:1;grid-row:2;}
+  .set-row.is-opens > .set-end{grid-column:1;grid-row:3;}
+  .set-row > .set-open{grid-row:1 / 4;}
+  .set-row.is-opens > .set-detail{grid-row:4;}
+  .set-row.is-opens > .set-end > .set-chev{position:absolute;right:0;bottom:100%;}   /* the chevron keeps the row's top right corner */
+  .set-row > .set-name,.set-row > .set-text{padding-top:0;}
+  .set-detail{padding-left:12px;}
+  .set-pick > .spick-menu.is-right{left:0;right:auto;}
+  .pd-base.is-words.is-field.set-pick-b{width:min(100%,240px);}
+}
+
+/* ==== StarterCard and StarterGrid (kind-mark.mjs): Chat home's ways to start ==== */
+/* Chat home's starters: cards in a calm grid under the composer (3 across, 2 on a tablet, 1 on a phone) */
+.home-starters.starter-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:16px;}
+.starter-grid > .rc-pop{display:block;min-width:0;}
+.starter-card{display:grid;grid-template-columns:20px minmax(0,1fr);gap:4px 10px;align-items:center;width:100%;height:100%;min-height:76px;padding:12px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--bg);color:var(--ink);font:400 var(--fs-body)/1.3 var(--sans);text-align:left;cursor:pointer;}
+.starter-card:hover{background:var(--hover);border-color:var(--ink-3);}
+.starter-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.starter-card .st-i{grid-column:1;grid-row:1;display:grid;place-items:center;color:var(--ink-2);}
+.starter-card .st-n{grid-column:2;grid-row:1;display:flex;align-items:center;gap:4px;min-width:0;font-weight:500;}
+.starter-card .st-s{grid-column:2;grid-row:2;align-self:start;font-size:var(--fs-caption);line-height:1.4;color:var(--ink-2);}
+.starter-grid .rc-pop > .menu{top:calc(100% + 4px);}
+@media (max-width: 900px){ .home-starters.starter-grid{grid-template-columns:repeat(2,minmax(0,1fr));} }
+@media (max-width: 600px){ .home-starters.starter-grid{grid-template-columns:minmax(0,1fr);} .starter-card{min-height:0;} }
+
+/* ==== TaskProposal and ChangeProposal (kind-mark.mjs): labelled rows in fixed places, one supporting line ==== */
+/* ---- Proposals: labelled rows in fixed places, one supporting line ---- */
+.tp-rows{margin:0;display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 16px;align-items:baseline;}
+.tp-row{display:contents;}
+.tp-row dt{font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;}
+.tp-row dd{margin:0;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;min-width:0;font-size:var(--fs-body);color:var(--ink);}
+.tp-was{font-size:var(--fs-caption);color:var(--amber-ink);}
+.tp-was s{color:var(--ink-2);text-decoration-color:var(--ink-3);}
+.tp-files{margin:0;display:flex;flex-wrap:wrap;gap:6px;}
+.tp-files .kind-chip{display:inline-flex;align-items:center;gap:4px;}
+.tp-body > .ws{margin-top:4px;}
+
+
+/* ==== TaskCard (kind-mark.mjs): what it is, a title that opens its page, what it asks about ==== */
+/* ---- The task card in a chat: what it is, a title that opens its page, what it asks about ---- */
+.tp-from{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 var(--fs-caption)/1.3 var(--sans);color:var(--ink-2);}
+.tc-title-b{display:inline;max-width:100%;margin:0;padding:0;border:0;background:none;color:inherit;font:inherit;letter-spacing:inherit;text-align:left;cursor:pointer;overflow:hidden;text-overflow:ellipsis;}
+.tc-title-b:hover{text-decoration:underline;text-underline-offset:3px;}
+.tc-title-b:focus-visible{outline:2px solid var(--ink);outline-offset:2px;border-radius:var(--r-xs);}
+.tc-asks{display:flex;flex-direction:column;align-items:flex-start;gap:6px;margin:10px 0 2px;padding:10px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);min-width:0;}
+.tc-asks-h{margin:0;font:500 var(--fs-meta)/1.3 var(--sans);color:var(--ink);}
+.tc-asks-l,.tc-asks-d{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px;min-width:0;max-width:100%;}
+.tc-asks-l li{font-size:var(--fs-meta);line-height:1.45;color:var(--ink-2);overflow-wrap:anywhere;}
+.tc-ask-d{display:flex;align-items:center;gap:8px;font-size:var(--fs-meta);color:var(--ink);}
+.tc-ask-b{margin:0;padding:0;border:0;background:none;color:var(--ink);font:500 var(--fs-meta)/1.3 var(--sans);text-align:left;text-decoration:underline;text-underline-offset:3px;cursor:pointer;}
+.tc-ask-b:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.tp-actions{flex-wrap:wrap;}
+/* a card's menu floats over the page, as the page's own does: it never pushes the card down */
+.task-card .tp-menu{position:relative;}
+.task-card .tp-menu > .menu,.task-card .tp-menu .rc-pop > .menu{position:absolute;right:0;top:100%;z-index:30;}
+
+
+/* ==== DiffView (diff-view.mjs): side by side where it fits, unified under 900px of its own width ==== */
+/* ---- DiffView: side by side where it fits, unified under 900px of its own width ---- */
+.diff-view{container-type:inline-size;min-width:0;}
+.dv-wrap{border:1px solid var(--line-2);border-radius:var(--r-sm);overflow:hidden;background:var(--bg);}
+.dv-head{display:flex;align-items:center;gap:12px;min-height:40px;padding:4px 12px;border-bottom:1px solid var(--line-2);font-size:var(--fs-meta);}
+.dv-path{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left;font:400 var(--fs-meta)/1.4 var(--mono);color:var(--ink);}
+.dv-seg{display:none;flex:none;}
+.dv-scroll{overflow:auto;max-height:70vh;}
+.dv-scroll:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.dv-t{width:100%;border-collapse:collapse;font:400 var(--fs-meta)/1.6 var(--mono);color:var(--ink);}
+.dv-t td{padding:0 8px;vertical-align:top;white-space:pre;}
+.dv-t .dv-n{width:1%;min-width:36px;text-align:right;color:var(--ink-2);font-variant-numeric:tabular-nums;user-select:none;}
+.dv-t .dv-s{width:1%;padding:0 2px 0 6px;font-weight:600;text-align:center;user-select:none;}
+.dv-t .dv-c{width:auto;}
+.dv-at td{padding:4px 12px;background:var(--field);color:var(--ink-2);}
+/* added and removed: a sign, a word for a screen reader, and a tint under ink text (the text keeps its contrast) */
+.dv-unified tr.dv-add td,.dv-split td.dv-add{background:color-mix(in srgb,var(--green) 16%,transparent);}
+.dv-unified tr.dv-del td,.dv-split td.dv-del{background:color-mix(in srgb,var(--red) 16%,transparent);}
+.dv-unified tr.dv-add .dv-s,.dv-split .dv-s.dv-add{color:var(--green-ink-strong,var(--green));box-shadow:inset 2px 0 0 var(--green);}
+.dv-unified tr.dv-del .dv-s,.dv-split .dv-s.dv-del{color:var(--red-ink-strong,var(--red));box-shadow:inset 2px 0 0 var(--red);}
+.dv-split td.dv-none{background:var(--field);}
+.dv-split{display:none;table-layout:fixed;}
+.dv-split .dv-cn{width:44px;}.dv-split .dv-cs{width:20px;}
+.dv-split td.dv-c{white-space:pre-wrap;overflow-wrap:anywhere;}
+.dv-split td:nth-child(4){border-left:1px solid var(--line-2);}
+@container (min-width: 900px){
+  .dv-seg{display:inline-flex;}
+  .diff-view[data-mode="split"] .dv-split{display:table;}
+  .diff-view[data-mode="split"] .dv-unified{display:none;}
+}
+.diff-files{display:flex;flex-direction:column;gap:16px;min-width:0;}
+.viewer-modal .card.dlg:has(.diff-files){width:min(1180px,100%);}
+
+
+/* ==== StageBar, the stage train, and StagePart, the open-line fold (kind-mark.mjs) ==== */
+/* ---- The stage train (look.stage-line): a knot a stage, its name under its knot; a stop is a real button ---- */
+.stage-bar{position:relative;}
+.sb-labels{align-items:start;}
+.sb-labels > span,.sb-labels > b{min-width:0;overflow-wrap:break-word;}
+.sb-labels small{white-space:nowrap;}
+.sb-meta{display:block;margin-top:2px;font-weight:400;color:var(--ink-2);font-variant-numeric:tabular-nums;}
+.sb-stop{position:relative;display:block;min-width:0;min-height:44px;margin:-22px 0 0;padding:24px 2px 4px;border:0;border-radius:var(--r-sm);background:none;color:var(--ink-2);font:400 var(--fs-caption)/1.3 var(--sans);text-align:center;overflow-wrap:break-word;cursor:pointer;}
+.sb-stop:hover{background:color-mix(in srgb,var(--hover) 60%,transparent);color:var(--ink);}
+.sb-stop:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
+.sb-stop.is-done{color:var(--ink);}
+.sb-stop.is-now{font-weight:600;color:var(--ink);}
+.stage-bar:is(.is-ask,.is-act) .sb-stop.is-now{color:var(--amber-ink);}
+.stage-bar.is-fail .sb-stop.is-now{color:var(--red-ink);}
+.sb-stop[aria-expanded="true"]::after{content:'';position:absolute;left:50%;bottom:-7px;width:1px;height:8px;background:var(--line-2);}   /* its details hang under this stop */
+/* done is ink, never green; the stop it is on is ringed in its state's colour and, while it works, breathes once every 4s */
+.sl-knot.is-now{width:12px;height:12px;top:1px;margin-left:-6px;border-width:2px;}
+.stage-bar.is-run{color:var(--ink);}
+.stage-bar.is-run .sl-knot.is-now{animation:sl-breath 4s ease-in-out infinite;}
+.stage-bar.is-fail .sl-knot.is-now{background:currentColor;}
+.rd-route-dot.is-pulse,.status-dot.is-pulse{animation:sl-breath 4s ease-in-out infinite;}   /* the running step: the same one slow breath */
+@media (prefers-reduced-motion: reduce){ .stage-bar.is-run .sl-knot.is-now,.rd-route-dot.is-pulse,.status-dot.is-pulse,.kind-mark.is-run,.git-mark.is-watch.is-fix,.sc-cell.is-now{animation:none;} }
+/* the state word of a running task is full ink, on a card as on its page */
+.tp-kicker:has(> .kind-mark.is-run) > span:not(.kind-mark):not(.tp-menu){color:var(--ink);}
+
+/* ---- The open-line (StagePart): a hairline from the words to the chevron; what it opens hangs on it and ends with one ---- */
+.stage-part-b{text-align:left;font-size:var(--fs-meta);}
+.stage-part-b b{flex:none;font-size:var(--fs-body);}
+.stage-part-b span{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.sp-rule{flex:1 1 16px;min-width:16px;height:1px;background:var(--line);}
+.stage-part-b:hover{background:none;}
+.stage-part-b:hover .sp-rule,.stage-part-b.is-open .sp-rule{background:var(--line-2);}
+.stage-part-b:hover b{text-decoration:underline;text-underline-offset:3px;}
+.stage-part-b svg{width:14px;height:14px;color:var(--ink-2);}
+.sp-body{padding:4px 0 12px;border-bottom:1px solid var(--line-2);margin-bottom:4px;min-width:0;}
+.sp-body > .rtab-panel{margin:0;padding:0;}
+.stage-tools .stage-part-b{width:auto;height:28px;}
+.stage-tools .sp-rule{flex:none;width:12px;min-width:12px;}
+.stage-tools .stage-part-b b{font-size:var(--fs-meta);}
+.task-card.is-open > .tc-stream{padding-bottom:12px;border-bottom:1px solid var(--line-2);}   /* where the opened stages end */
+
+
+/* ==== FigureRows (chart.mjs) and HeatGrid (heat-grid.mjs): rows that open or only show, the legend, the narrow box ==== */
+/* FigureRows: a row that cannot open is text, not a control; nothing leaves at a narrow width, the rows scroll in their own box */
+.fr-list{grid-template-columns:minmax(96px,1fr) repeat(var(--fr-n),auto) 12px;}   /* ds-ok: --fr-n is the count FigureRows sets; the last column is the chevron of a row that opens */
+.fr-row.is-static{cursor:default;}
+.fr-go{display:inline-flex;align-items:center;justify-content:flex-end;color:var(--ink-3);}
+button.fr-row:hover .fr-go{color:var(--ink);}
+.fr-name{position:sticky;left:0;background:var(--bg);padding-right:8px;}
+button.fr-row:hover .fr-name,.fr-row.is-open .fr-name{background:var(--hover);}
+.fr-d-head .btn{flex:none;}
+.fr-detail{contain:inline-size;}   /* an open row's detail takes the rows' width; it never widens them */
+/* HeatGrid: a cell is not a control; its number shows in a small card on hover, focus and tap; the legend holds in both themes */
+.hg-cell{position:relative;cursor:default;}
+.hg-tip{display:none;position:absolute;z-index:3;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);padding:4px 8px;border-radius:var(--r-xs);background:var(--ink);color:var(--bg);font-size:var(--fs-caption);line-height:1.3;white-space:nowrap;pointer-events:none;}
+.hg-cell.is-first .hg-tip{left:0;transform:none;}
+.hg-cell.is-last .hg-tip{left:auto;right:0;transform:none;}
+.hg-cell:hover .hg-tip,.hg-cell:focus .hg-tip{display:block;}
+.hg-legend{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin:8px 0 0;font-size:var(--fs-caption);color:var(--ink-2);}
+.hg-key{display:inline-block;width:16px;height:12px;border-radius:var(--r-xs);}
+.hg-key.is-h1{background:var(--line-2);} .hg-key.is-h2{background:var(--ink-3);} .hg-key.is-h3{background:var(--ink-2);} .hg-key.is-h4{background:var(--ink);}
+.hg-legend-t{margin-left:8px;}
+.hg-note{margin:4px 0 0;font-size:var(--fs-caption);color:var(--ink-2);}
+/* narrow: the rows scroll sideways in their own box (wide, they fit, and an open row's cards may reach past the box) */
+@media (max-width:640px){.fr-scroll{overflow-x:auto;max-width:100%;}.fr-list{min-width:max-content;}}
+

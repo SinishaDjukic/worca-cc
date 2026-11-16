@@ -35,7 +35,7 @@ export function taskActions(tasks = []) {
   const two = tasks.slice(0, 2);
   return two.map((t) => {
     const a = cardAction(t.state), warn = alertLevel(markTone(runState(t.state))) === 3;
-    return button({ label: two.length > 1 ? `${a.label} ${t.short || t.title}` : a.label, kind: warn ? 'primary' : '', attrs: { 'data-c-act': `${a.does}|${t.id}`, title: `${a.label}: ${t.title}` } });
+    return button({ label: two.length > 1 ? `${a.label} ${t.short || t.title}` : a.label, kind: warn ? 'primary' : '', attrs: { 'data-c-act': `${a.does}|${t.id}`, 'aria-label': `${a.label}: ${t.title}`, title: `${a.label}: ${t.title}` } });
   }).join('');
 }
 
