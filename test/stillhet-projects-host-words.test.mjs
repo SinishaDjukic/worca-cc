@@ -85,3 +85,21 @@ test('F-6-19: the project page draws before history; the store fills it in witho
   assert.equal(h.d.getElementById('pj-dock'), dock, 'the same dock: the frame was not rebuilt');
   assert.deepEqual(sent(h.calls), [], 'nothing written');
 });
+
+// F-W3a2-06: the head said "17 tasks here need you" and the bar row 16. A feature in Tasks' Needs you shares its title with
+// a stopped run in a chat; the head matched chat tasks to Needs rows by title and counted that run as well. One rule now
+// counts both: a chat task matches a Needs row by its id, and the bar row says the head's count.
+test('F-W3a2-06: the head and the bar row count the same waits; a stopped run is no wait for sharing a Needs feature\'s title', async () => {
+  const src = WORLD(), at0 = SOURCES.history.pipelines[0];
+  const h = await projectsHost({ hash: '#projects', sources: { ...src, hello: { ...clone(SOURCES.hello), runs: [] },
+    history: { pipelines: [{ id: 'pa', title: 'Stopped here', status: 'stopped', projectName: 'web', startedAt: at0.startedAt, mtime: at0.mtime }] } } });
+  assert.ok(h.w.RailChats.data().chats.find((c) => c.id === 'ask_1')?.tasks.some((t) => t.title === 'Stopped here'), 'a stopped task in its chat');
+  const tops = h.w.RailWorld.tops.bind(h.w.RailWorld);
+  h.w.RailWorld.tops = () => [...tops(), { id: 'feat_same', isGroup: true, section: 'needs', project: 'web', title: 'Stopped here', case: 'ready', archived: false }];
+  await go(h.w, '#projects/web-1', 200); await settle(120);
+  assert.match(headWord(h.d), /1 task here needs you/);
+  assert.equal([...page(h.d).querySelectorAll('.lr-t')].map((r) => r.textContent.trim())[0], 'Missed one');
+  const row = bar(h.d).querySelector('[data-row="proj:web-1"]');
+  assert.ok(row, text(bar(h.d)).slice(0, 300));
+  assert.match(text(row), /1 task needs you/, 'the bar row says the head\'s count');
+});

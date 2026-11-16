@@ -95,11 +95,11 @@
   const shortOf = (p) => (typeof o(p).short === 'function' ? o(p).short(p) : o(p).short);
   const tasksOf = (id) => (window.RailChats?.data().chats || []).filter((c) => c.project === id).flatMap((c) => (c.tasks || []).filter((t) => t.kind !== 'schedule').map((t) => ({ t, c })));
   const toneOfTask = (t) => R.markTone(R.runState(window.RunCardModel.stateOf(t.case)));
-  const inTasksNeeds = (id, t) => (window.RailWorld?.tops() || []).some((x) => !x.archived && x.section === 'needs' && x.project === id && x.title === t.title);
+  const inTasksNeeds = (id, t) => (window.RailWorld?.tops() || []).some((x) => !x.archived && x.section === 'needs' && x.project === id && x.id === t.id);   // by id: a feature in Needs can share a stopped run's title (F-W3a2-06)
   const waitingOn = (id, t) => ['ask', 'act'].includes(toneOfTask(t)) || inTasksNeeds(id, t);   // the same rows as Tasks' Needs you: an approved task ready to merge waits on you too
   const asking = (p) => tasksOf(nameOf(p)).filter(({ t }) => waitingOn(nameOf(p), t)).sort((a, b) => R.alertLevel(toneOfTask(b.t)) - R.alertLevel(toneOfTask(a.t)));   // the tasks here waiting on you, highest level first (look.alert-ladder)
   // F-6-15, V3-12: what waits on you here, each once (by title): its chats' asks and the Tasks list's Needs rows of this
-  // project, highest level first. The head counts these and the on-it list shows them first; the bar counts every project's
+  // project, highest level first. The head counts these and the on-it list shows them first; the bar row says the same count (F-W3a2-06)
   function waitsOf(p) {
     if (p.early) return [];   // F-6-19: the store has not loaded its tasks yet
     const chat = asking(p).map(({ t, c }) => ({ title: t.title, detail: t.detail, stage: t.stage, tone: toneOfTask(t), state: stateIdOf(t), open: { 'data-pj-open': `${c.id}|${t.title}` } }));
@@ -132,7 +132,7 @@
   const standsOut = (s) => litTone(s.tone);
   const markOf = (s, size) => R.kindMark({ kind: s.kind, tone: s.tone, advisory: s.tone === 'ok', breathe: standsOut(s), size, title: s.word || undefined });
   const needs = (p) => standsOut(standing(p)) || (inCenter() && standing(p).tasks.length > 0);
-  const endOf = (p) => { const s = standing(p), k = s.tasks.length; return k && !['fail'].includes(o(p).tone) ? `${k} ${k === 1 ? 'task needs you' : 'tasks need you'}` : standsOut(s) ? s.word : shortOf(p); };   // "question" is a workspace's: a link Worca is unsure of
+  const endOf = (p) => { const s = standing(p), k = waitsOf(p).length; return k && !['fail'].includes(o(p).tone) ? `${k} ${k === 1 ? 'task needs you' : 'tasks need you'}` : standsOut(s) ? s.word : shortOf(p); };   // "question" is a workspace's: a link Worca is unsure of
   const SHOWS = [{ id: 'all', text: 'all', test: () => true }, { id: 'needs', text: 'needs you', test: needs }, { id: 'behind', text: 'out of sync', test: (p) => p.origin === 'diverged' }, { id: 'folder', text: 'without git', test: (p) => p.kind === 'Folder' }];
   const stateIdOf = (t) => window.RunCardModel.stateOf(t.case);
   const markTone = (p) => { const w = waitsOf(p); return o(p).tone === 'fail' || !w.length ? o(p).tone : ['ask', 'act'].includes(w[0].tone) ? 'ask' : w[0].tone; };

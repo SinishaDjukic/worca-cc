@@ -115,6 +115,7 @@ test('D11: coming back to the same project from another place reads its facts ag
   const reads = () => [`${KEYS.ok}/readiness`, `${KEYS.ok}/team-metrics`].map((end) => h.calls.filter((c) => c.url.endsWith(end)).length);
   const policy = () => h.calls.filter((c) => c.url === '/api/policy/scopes').length;
   assert.deepEqual(reads(), [1, 1]);
+  assert.equal(policy(), 1, 'F-W3a2-07: one open reads each fact once, policy included');
   await go(h.w, '#insights/team', 150);
   const policyAway = policy();
   await go(h.w, `#projects/${KEYS.ok}`, 150);
