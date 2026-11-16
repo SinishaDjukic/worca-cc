@@ -334,7 +334,12 @@ const gitdirOf = (file) => {
 function gitDirLinks(g) {
   const out = [];
   const wts = path.join(g, 'worktrees');
-  if (existsSync(wts)) for (const n of readdirSync(wts)) if (existsSync(path.join(wts, n, 'gitdir'))) out.push({ kind: 'admin', file: path.join(wts, n, 'gitdir') });
+  if (existsSync(wts)) {
+    for (const n of readdirSync(wts)) {
+      if (existsSync(path.join(wts, n, 'gitdir'))) out.push({ kind: 'admin', file: path.join(wts, n, 'gitdir') });
+      if (existsSync(path.join(wts, n, 'commondir'))) out.push({ kind: 'commondir', file: path.join(wts, n, 'commondir') });
+    }
+  }
   for (const [kind, rel] of [['alternates', path.join('objects', 'info', 'alternates')], ['config', 'config']]) {
     if (existsSync(path.join(g, rel))) out.push({ kind, file: path.join(g, rel) });
   }
@@ -344,7 +349,7 @@ function gitDirLinks(g) {
 function linkTargets({ kind, file }) {
   const text = readFileSync(file, 'utf8');
   if (kind === 'dotgit') { const t = gitdirOf(file); return t ? [t] : []; }
-  if (kind === 'admin') return text.trim() ? [path.resolve(path.dirname(file), text.trim())] : [];
+  if (kind === 'admin' || kind === 'commondir') return text.trim() ? [path.resolve(path.dirname(file), text.trim())] : [];
   if (kind === 'alternates') return text.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => path.resolve(path.dirname(path.dirname(file)), l));
   return [...text.matchAll(/^\s*url\s*=\s*(.+)$/gm)].map((m) => m[1].trim()).filter((u) => u.startsWith('/') || u.startsWith('file://'))
     .map((u) => u.replace(/^file:\/\//, ''));
@@ -358,6 +363,28 @@ function gitLinks(home) {
     else out.push(...gitDirLinks(g));
   }
   return out;
+}
+
+/** Points every git link target still outside HOME at HOME/outside/… (which never exists), whether the target exists or
+ *  not: a .git file's gitdir, an alternates line, a worktree's commondir, a local remote URL. A git dir the store keeps as
+ *  plain data (a test fixture whose alternates lead to a gone /tmp dir) is made harmless this way. */
+function pinGitLinks(home) {
+  const homeC = canon(home);
+  const pin = (t) => (within(canon(t), homeC) ? t : path.join(home, 'outside', path.resolve(t)));
+  for (const l of gitLinks(home)) {
+    if (l.kind === 'admin') continue;   // an outside registration is dropped, never pinned
+    const text = readFileSync(l.file, 'utf8');
+    const dir = path.dirname(l.file);
+    let next = text;
+    if (l.kind === 'dotgit') next = text.replace(/^(gitdir:\s*)(.+)$/m, (m, k, v) => k + pin(path.resolve(dir, v.trim())));
+    else if (l.kind === 'commondir') next = text.trim() ? `${pin(path.resolve(dir, text.trim()))}\n` : text;
+    else if (l.kind === 'alternates') next = text.replace(/^(.+)$/gm, (m) => (m.trim() ? pin(path.resolve(path.dirname(dir), m.trim())) : m));
+    else next = text.replace(/^(\s*url\s*=\s*)(\S.*)$/gm, (m, k, u) => {
+      const v = u.trim();
+      return v.startsWith('/') || v.startsWith('file://') ? k + pin(v.replace(/^file:\/\//, '')) : m;
+    });
+    if (next !== text) writeFileSync(l.file, next);
+  }
 }
 
 /** The repos a path belongs to: its main repo (the git common dir's parent) and its own checkout top. Null when no repo. */
@@ -452,6 +479,7 @@ export function isolateCopy(store, { home, realStore, realHome, cp = cpStore }) 
     // a copied repo's registration of a checkout that is not in this copy (an owner worktree elsewhere) is dropped from the copy
     if (l.kind === 'admin' && linkTargets(l).some((t) => !within(canon(t), homeC))) rmSync(path.dirname(l.file), { recursive: true, force: true });
   }
+  pinGitLinks(home);
   const gitDirs = blockPushes(home);
   const { schedules, tickets } = stopCopiedSchedules(store);
   writeFileSync(path.join(store, COPY_RECORD), JSON.stringify({ copiedAt: new Date().toISOString(), schedules, tickets, gitDirs }, null, 2) + '\n');
@@ -590,10 +618,13 @@ export async function prepareHome(inst, { realHome = realHomeDefault(), fresh = 
   }
   if (inst.store === 'copy') {
     const bad = verifyIsolation(inst.home);
+    const listFile = path.join(inst.home, 'copy-not-isolated.txt');
+    rmSync(listFile, { force: true });
     if (bad.length) {
       if (copied !== 'kept') discard();
+      writeFileSync(listFile, bad.join('\n') + '\n');
       refuse('copy-not-isolated', `${inst.letter}'s copy still leads to ${bad.length} path(s) outside ${inst.home}, so a delete or archive `
-        + `there could change the owner's real repos; nothing was started. ${bad.slice(0, 5).join('; ')}`);
+        + `there could change the owner's real repos; nothing was started. Full list: ${listFile}. ${bad.slice(0, 5).join('; ')}`);
     }
   }
   const file = path.join(store, 'settings.json');

@@ -158,6 +158,9 @@ test('PLAN-Gc C1: a copy that names a path outside its HOME is refused before an
   const out = [], err = [];
   assert.equal(await main(['start', 'A', '--root', root, '--port', `A=${await freePort()}`], { out: (l) => out.push(l), err: (l) => err.push(l), realHome: o.realHome, tmp: scratch, serverPath: '/nonexistent' }), 2);
   assert.match(err.join('\n'), /^copy-not-isolated: .*outside/);
+  const listFile = join(a.home, 'copy-not-isolated.txt');
+  assert.ok(err.join('\n').includes(listFile), 'the message names the file with the full list');
+  assert.deepEqual(readFileSync(listFile, 'utf8').trim().split('\n'), verifyIsolation(a.home), 'the file holds every path, one per line');
   assert.ok(!existsSync(join(a.home, 'gate-instance.json')), 'no server was started');
 
   // a copied worktree whose .git file leads into the real repo is refused too
@@ -204,6 +207,29 @@ test('Gate 1 fix: a repo is copied as tracked content + .git (no untracked neste
   assert.equal(realpathSync(git(copyInner, 'rev-parse', '--path-format=absolute', '--git-common-dir')), realpathSync(join(copyMain, '.git')));
   const routes = readFileSync(join(a.home, '.worca-cc', 'ask', 'ask_1', 'out', 'verify', 'central-routes.json'), 'utf8');
   assert.ok(routes.includes('"path":"^/api/.*$"') && routes.includes('/^\\\\/vendor'), 'route patterns are left as they are');
+});
+
+test('Gate 2 fix: git dirs kept as plain data in the store (alternates to a gone /tmp dir or an existing outside dir) are pointed into HOME/outside', { skip: posixOnly, timeout: 120000 }, async () => {
+  const o = fakeOwner();
+  const gone = join('/tmp', `worca-gate-gone-${process.pid}-${Date.now()}`, 'heads', '.git', 'objects');
+  const existing = join(scratch, 'outside-fixture', '.git', 'objects');
+  mkdirSync(existing, { recursive: true });
+  const fixtures = { gone, existing };
+  const tree = (name) => join(o.realStore, 'store', 'proj-1', 'pipelines', 'p1', 't1', 'catch-up', name, 'tree');
+  for (const [name, target] of Object.entries(fixtures)) {
+    mkdirSync(tree(name), { recursive: true });
+    git(tree(name), 'init', '-q');
+    writeFileSync(join(tree(name), '.git', 'objects', 'info', 'alternates'), `${target}\n`);
+  }
+  const [a] = planInstances(parseArgs(['start', 'A', '--root', join(scratch, 'gates-store-git')]), { realHome: o.realHome, tmp: scratch });
+  await prepareHome(a, { realHome: o.realHome });
+  assert.deepEqual(verifyIsolation(a.home), []);
+  for (const [name, target] of Object.entries(fixtures)) {
+    const copied = join(a.home, '.worca-cc', 'store', 'proj-1', 'pipelines', 'p1', 't1', 'catch-up', name, 'tree', '.git', 'objects', 'info', 'alternates');
+    assert.equal(readFileSync(copied, 'utf8'), `${join(a.home, 'outside', target)}\n`, `${name}: the alternates point into HOME/outside`);
+    assert.equal(readFileSync(join(tree(name), '.git', 'objects', 'info', 'alternates'), 'utf8'), `${target}\n`, `${name}: the owner's file is untouched`);
+  }
+  assert.ok(!existsSync(join(a.home, 'copy-not-isolated.txt')));
 });
 
 const pushUrls = (repo) => git(repo, 'config', '--get-all', 'remote.origin.pushurl').split('\n');
