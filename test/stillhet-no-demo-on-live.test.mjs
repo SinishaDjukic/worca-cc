@@ -301,3 +301,25 @@ test('F-G-G5-01: live Stillhet never draws the demo Invitation for ?invite=still
   assert.equal(w.localStorage.getItem('worca-rail.stillhetAsked'), null, 'an answer is never kept in the browser alone');
   assert.deepEqual(calls.filter((c) => c.method !== 'GET'), [], 'and sends nothing');
 });
+
+// gate G F-G-fid-07/08: a live workflow's story says what dev knows, never the prototype's telling. Its steps read their
+// agents' own descriptions (not the demo's fixed sentences); no "Told by" a model that never wrote it; how a task goes
+// through it has no split dev never counted (half the tasks each way) and no "never yet".
+test('F-G-fid-07/F-G-fid-08: a live workflow shows its agents\' descriptions, no model byline, no made-up split', async () => {
+  const { workflowsHost, WF_LISTS, go: goWf } = await import('./helpers/stillhet-workflows-host.mjs');
+  const usage = { '/api/workflow-usage': { usage: { wf_default: { tasks: 2, merged: 0, running: 0, nodes: {} } } } };
+  const { w, d } = await workflowsHost({ hash: '#workflows/workflow:wf_default', lists: { ...WF_LISTS, ...usage } });
+  const page = () => (d.querySelector('#route-place') || d.body).textContent.replace(/\s+/g, ' ');
+  const planner = WF_LISTS['/api/agents'].agents.find((a) => a.key === 'planner');
+  for (const mode of ['simple', 'advanced', 'expert']) {
+    w.RailUI.prefs.setMode(mode); await goWf(w, '#workflows', 40); await goWf(w, '#workflows/workflow:wf_default', 120);
+    d.querySelector('[data-wf-ways][aria-expanded="false"]')?.click(); await settle(40);   // Advanced and Expert fold the ways: open them
+    const t = page();
+    assert.ok(t.includes(planner.description), `${mode}: Plan reads its agent's description`);
+    for (const fixed of ['Thinks before touching anything', 'Makes the change and runs your tests', 'Reads it the way a colleague would']) assert.ok(!t.includes(fixed), `${mode}: no demo sentence "${fixed}"`);
+    assert.doesNotMatch(t, /Told by/, `${mode}: no model byline on live`);
+    assert.match(t, /Straight through/, `${mode}: the ways are drawn`);
+    assert.doesNotMatch(t, /\d+ of \d+ tasks/, `${mode}: no split dev never counted`);
+    assert.doesNotMatch(t, /never yet/, `${mode}: no "never yet"`);
+  }
+});

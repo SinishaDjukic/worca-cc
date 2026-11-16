@@ -62,3 +62,19 @@ test('the prototype host: setStillhet(false) answers { ok: true } and stillhetOn
   assert.deepEqual({ ...w.RailHost.setStillhet(false) }, { ok: true });
   assert.equal(w.RailHost.stillhetOn(), false);
 });
+
+// gate G F-G-fid-16: the prototype opened from file:// (the compare's way) must not import a module: Chrome blocks it and
+// logs a console error on every page. Served over http (the app, a local server) the demo kind reads the run options words.
+function demoAdapterImports(protocol) {
+  let imported = 0; const timers = [];
+  const win = { RailHost: { name: 'prototype' }, addEventListener() {} };
+  const doc = { documentElement: { getAttribute: () => null }, readyState: 'complete', currentScript: { src: `${protocol}//x/ui/public/stillhet/adapter.js` }, querySelector: () => null };
+  vm.runInNewContext(readFileSync(DIR + 'adapter.js', 'utf8'), { window: win, document: doc, location: { protocol }, setTimeout: (fn) => { timers.push(fn); return 0; }, clearTimeout() {}, Promise });
+  win.RailAdapter.importRunOptions = () => { imported++; return Promise.resolve({}); };
+  for (const fn of timers) fn();
+  return imported;
+}
+test('F-G-fid-16: the demo kind imports no module from file://; over http it reads the run options words', () => {
+  assert.equal(demoAdapterImports('file:'), 0, 'file://: no module import (Chrome blocks it)');
+  assert.equal(demoAdapterImports('http:'), 1, 'http: the words are read');
+});

@@ -1613,9 +1613,51 @@ test('draftBar: a draft, its changes, that the saved one still runs, Discard and
 test('workflowStory: a panel a step, the loop drawn back in words under the steps it joins, how a task goes (panel.workflow-story)', () => {
   const s = dom(C.workflowStory({ steps: [{ name: 'Plan', says: 'Thinks', meta: '3 min' }, { name: 'Build', says: 'Makes' }, { name: 'Check', says: 'Looks', check: true }, { name: 'Review', says: 'Reads' }], loop: { from: 2, to: 1, text: 'back to Build' }, ways: [{ title: 'Straight through', meta: '18 min', tone: 'ok', stage: 4 }], byline: 'Told by a small model' }));
   assert.equal(s.querySelectorAll('.ws-p').length, 4); assert.ok(s.querySelectorAll('.ws-p')[2].classList.contains('is-check'));
-  const loop = s.querySelector('.ws-loop'); assert.equal(loop.style.left, '37.5%'); assert.equal(loop.style.width, '25%'); assert.match(loop.textContent, /back to Build/);
+  const loop = s.querySelector('.ws-loop'); assert.equal(loop.style.getPropertyValue('--ws-a'), '37.5%'); assert.equal(loop.style.getPropertyValue('--ws-w'), '25%'); assert.match(loop.textContent, /back to Build/);
   assert.match(s.querySelector('.list').textContent, /Straight through/); assert.match(s.querySelector('.ws-by').textContent, /small model/);
   assert.equal(dom(C.workflowStory({ steps: [{ name: 'A', says: 'a' }] })).querySelector('.ws-loop'), null, 'no loop, no arc');
+});
+test('workflowStory F-G-fid-06: every loop between two steps is an arc, one under the other; a self-loop is words in its panel', () => {
+  const steps = ['Clarify', 'Plan', 'Refine Plan', 'Implementation', 'Review'].map((name) => ({ name, says: name }));
+  const s = dom(C.workflowStory({ steps, loops: [{ from: 2, to: 2, text: 'runs again, at most once' }, { from: 4, to: 3, text: 'back to Implementation, at most 3 times', check: true }] }));
+  const arcs = s.querySelectorAll('.ws-loop');
+  assert.equal(arcs.length, 1, 'the self-loop draws no arc');
+  assert.match(arcs[0].textContent, /back to Implementation/); assert.equal(arcs[0].style.getPropertyValue('--ws-w'), '20%');
+  assert.match(s.querySelectorAll('.ws-p')[2].querySelector('.ws-again').textContent, /runs again, at most once/);
+  const two = dom(C.workflowStory({ steps, loops: [{ from: 4, to: 3, text: 'a' }, { from: 2, to: 1, text: 'b' }] }));
+  assert.equal(two.querySelectorAll('.ws-loop').length, 2, 'show all loops');
+  assert.equal(two.querySelectorAll('.ws-loop')[1].style.getPropertyValue('--ws-row'), '1', 'the second arc sits under the first');
+  assert.equal(two.querySelector('.ws-board').style.getPropertyValue('--ws-loops'), '2');
+  assert.equal(dom(C.workflowStory({ steps, loop: { from: 4, to: 3, text: 'a' } })).querySelectorAll('.ws-loop').length, 1, 'loop still reads as one loop');
+});
+test('workflowStory F-G-fid-09: a step name is its own element (it breaks between words); an empty says draws no line', () => {
+  const s = dom(C.workflowStory({ steps: [{ name: 'Review Implementation', says: '' }] }));
+  assert.equal(s.querySelector('.ws-n .ws-name').textContent, 'Review Implementation');
+  assert.equal(s.querySelector('.ws-t'), null);
+});
+test('barChart F-G-fid-15: more than eight bars mark evenly spaced ticks, so a narrow screen names at most eight', () => {
+  const bars = (n) => Array.from({ length: n }, (_, i) => ({ label: `Nov ${i + 1}`, value: i, text: String(i) }));
+  const f = dom(C.barChart({ label: 'x', bars: bars(16) }));
+  assert.ok(f.classList.contains('is-thin'));
+  assert.deepEqual([...f.querySelectorAll('.bc-col.is-tick .bc-x')].map((x) => x.textContent), ['Nov 1', 'Nov 3', 'Nov 5', 'Nov 7', 'Nov 9', 'Nov 11', 'Nov 13', 'Nov 15']);
+  assert.ok(dom(C.barChart({ label: 'x', bars: bars(31) })).querySelectorAll('.bc-col.is-tick').length <= 8);
+  const few = dom(C.barChart({ label: 'x', bars: bars(8) }));
+  assert.ok(!few.classList.contains('is-thin')); assert.equal(few.querySelectorAll('.is-tick').length, 0, 'eight or fewer: every bar named');
+});
+test('workflowStory F-G-fid-09: more than five steps read as a list (is-long), each loop in words under it', () => {
+  const steps = Array.from({ length: 11 }, (_, i) => ({ name: `Step number ${i + 1}`, says: 'Says what it does' }));
+  const s = dom(C.workflowStory({ steps, loops: [{ from: 9, to: 4, text: 'back to Step number 5' }] }));
+  assert.ok(s.querySelector('.ws-board').classList.contains('is-long'), 'eleven steps: the long telling');
+  assert.match(s.querySelector('.ws-loop').textContent, /back to Step number 5/);
+  assert.ok(!dom(C.workflowStory({ steps: steps.slice(0, 5) })).querySelector('.ws-board').classList.contains('is-long'), 'five steps stay columns');
+});
+test('chart parts F-FM2-04: a part\'s shade is its own (shade), not its place, in bars, mixes and legends', () => {
+  const parts = [{ label: 'web-app', values: [1, 2], shade: 2 }, { label: 'billing-api', values: [1, 1], shade: 0 }];
+  const b = dom(C.barChart({ label: 'x', bars: [{ label: 'a', value: 2, text: '2' }, { label: 'b', value: 3, text: '3' }], parts }));
+  assert.deepEqual([...b.querySelectorAll('.ch-key')].map((k) => [k.textContent, k.querySelector('.ch-swatch').classList.contains('is-s2') ? 2 : 0]), [['web-app', 2], ['billing-api', 0]]);
+  assert.ok(b.querySelector('.bc-col .ch-seg.is-s2'), 'its segment carries its shade');
+  const m = dom(C.mixChart({ label: 'x', labels: ['a', 'b'], parts }));
+  assert.ok(m.querySelector('.ch-seg.is-s2') && m.querySelector('.ch-legend .ch-swatch.is-s2'));
 });
 test('crafting: a sketch of its kind that draws itself, and what is being made (motion.crafting)', () => {
   const c = dom(C.crafting({ kind: 'workflow', label: 'Making the workflow', detail: 'from this chat' }));

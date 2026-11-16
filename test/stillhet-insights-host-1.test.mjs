@@ -101,3 +101,53 @@ test('D17: a project row opens Tasks narrowed to it; a person row narrows Tasks 
   [...page(h.d).querySelectorAll('[data-in-row]')].find((b) => /Jonas/.test(b.textContent)).click();
   assert.deepEqual(got.at(-1), { person: 'Jonas' });
 });
+
+// gate G F-G-fid-14: live Spend by project draws the prototype's stacked bars, with their legend and caption
+test('F-G-fid-14: Spend by project on live stacks each day by project, with a legend and "Per day, by project"', async () => {
+  const h = await insightsHost();
+  const fig = page(h.d).querySelector('.bar-chart');
+  assert.ok(fig, 'the bar chart');
+  assert.ok(fig.querySelector('.bc-bar.is-stack .ch-seg'), 'stacked bars');
+  const t = (e) => (e?.textContent || '').replace(/\s+/g, ' ').trim();
+  assert.match(t(fig.querySelector('.ch-legend')), /billing-api/);
+  assert.match(t(fig.querySelector('.ch-cap')), /^Per day, by project/);
+});
+
+// F-G-fid-14: a live source with no day cut (By person, from the team's records) draws whole bars, no legend, and says so
+test('F-G-fid-14: By person (no day cut on live) draws whole bars, no legend, and the caption says "all together"', async () => {
+  const h = await insightsHost({ hash: '#insights/team' });
+  const fig = page(h.d).querySelector('.bar-chart');
+  assert.ok(fig, 'the bar chart');
+  assert.equal(fig.querySelector('.ch-seg'), null, 'no parts');
+  assert.equal(fig.querySelector('.ch-legend'), null, 'no empty legend');
+  assert.match(fig.querySelector('.ch-cap').textContent, /^Per day, all together; by person in the rows below/);
+});
+
+// gate G (coordinator): a budget's daily pace is money: only a money chart draws it (look.chart-play), never How tasks end
+test('F-G-fid-17: How tasks end (a count) draws no budget pace and no "you average $"; Spend still does', async () => {
+  const ends = await insightsHost({ hash: '#insights/ends' });
+  const fig = page(ends.d).querySelector('.bar-chart');
+  assert.ok(fig, 'the bar chart');
+  assert.equal(fig.querySelector('.bc-limit'), null, 'no pace line');
+  assert.doesNotMatch(fig.textContent, /Budget pace|you average \$/);
+  const spend = await insightsHost();
+  assert.match(page(spend.d).querySelector('.bar-chart').textContent, /Budget pace/);
+});
+
+// F-FM2-04: a project keeps its shade when the view changes (look.chart-play): ticking Jonas reorders the parts, not the shades
+test('F-FM2-04: a project keeps one shade across views', async () => {
+  const h = await insightsHost();
+  const shadeOf = (name) => { const k = [...page(h.d).querySelectorAll('.bar-chart .ch-key')].find((x) => x.textContent.trim() === name); return k && [...k.querySelector('.ch-swatch').classList].find((c) => /^is-s\d$/.test(c)); };
+  const before = { billing: shadeOf('billing-api'), web: shadeOf('web-app') };
+  assert.ok(before.billing && before.web, 'both in the legend');
+  const pickIt = async (menu, v) => { page(h.d).querySelector(`[data-menu="${menu}"]`).click(); await settle(40); page(h.d).querySelector(`[data-pick="${menu}|${v}"]`).click(); await settle(200); };
+  await pickIt('in-of', 'person:Jonas');
+  assert.equal(shadeOf('web-app'), before.web, 'web-app keeps its shade though it is now the largest');
+  assert.equal(shadeOf('billing-api'), before.billing);
+});
+
+// F-FM2-05: a bar's number never wraps at 360 ("2 / tasks")
+test('F-FM2-05: a bar value is kept on one line', () => {
+  const css = readFileSync(new URL('../ui/public/stillhet/css/rail.css', import.meta.url), 'utf8');
+  assert.match(css, /\.bc-v\{[^}]*white-space:nowrap/);
+});
