@@ -85,6 +85,35 @@ test('the task Workflow dialog\'s "Open in Workflows" goes to #workflows/workflo
   assert.equal(w.location.hash, '#workflows/workflow:wf_full');
 });
 
+test('V-TW-09 editor: opens at the floored fit; Zoom out steps below it to the whole graph, then disables; Fit returns to the floor', async () => {
+  const { w, d, mounts } = await workflowsHost({ hash: '#workflows/edit:wf_mine', graph: { fit: 0.82, whole: 0.3 } });
+  const btn = (q) => page(d).querySelector(q);
+  const pct = () => text(page(d).querySelector('.wf-ed-tools span'));
+  const click = async (q) => { btn(q).dispatchEvent(new w.MouseEvent('click', { bubbles: true })); await settle(30); };
+  assert.equal(mounts.at(-1).o.zoom, 0, 'opens fitted');
+  assert.equal(pct(), '82%');
+  assert.equal(btn('[data-ed-fit]').disabled, true);
+  assert.equal(btn('[data-ed-fit]').title, 'It already fits the width');
+  assert.equal(btn('[data-ed-zoom="-1"]').disabled, false, 'Zoom out goes below the floor');
+  const seen = [];
+  for (let i = 0; i < 3; i += 1) { await click('[data-ed-zoom="-1"]'); seen.push(pct()); }
+  assert.deepEqual(seen, ['62%', '42%', '30%'], 'steps of 20, then the whole graph');
+  assert.equal(mounts.at(-1).o.zoom, 0.3);
+  assert.equal(btn('[data-ed-zoom="-1"]').disabled, true);
+  assert.equal(btn('[data-ed-zoom="-1"]').title, 'The whole graph already shows');
+  assert.equal(btn('[data-ed-fit]').disabled, false);
+  assert.equal(btn('[data-ed-fit]').title, 'Back to the width, at a size you can read');
+  await click('[data-ed-zoom="1"]'); await click('[data-ed-zoom="1"]');
+  assert.equal(pct(), '70%');
+  await click('[data-ed-zoom="1"]');
+  assert.equal(pct(), '82%', 'a step that crosses the fit lands on it');
+  assert.equal(mounts.at(-1).o.zoom, 0);
+  await click('[data-ed-zoom="-1"]');
+  await click('[data-ed-fit]');
+  assert.equal(pct(), '82%', 'Fit returns to the floor');
+  assert.equal(mounts.at(-1).o.zoom, 0);
+});
+
 // gate G F-G-fid-06: dev's Default has two loops, Refine Plan on itself (at most once) and Review → Implementation (3 times).
 // The story draws the one between two steps as the arc, rings Review, and says Refine Plan's in its own panel.
 test('F-G-fid-06: the story draws Review → Implementation as the arc and says Refine Plan\'s self-loop in its panel', async () => {

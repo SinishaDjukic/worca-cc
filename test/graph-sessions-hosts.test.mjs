@@ -216,3 +216,20 @@ test('flow order with two crossed sessions: both trays stay whole, and the one w
   assert.deepEqual(t.wires.filter((w) => order.indexOf(w.from.node) > order.indexOf(w.to.node)).map((w) => w.id), ['w5']);
   assert.deepEqual(order, ['n_task', 'n_x', 'n_y', 'n_p', 'n_q', 'n_end']);
 });
+
+test('V-TW-09 classic: mountStaticGraph of a 14-step workflow at 900px fits as today (z = 0.3, centred), no stage width, no host overflow', async () => {
+  const { mountStaticGraph } = await import('../ui/public/graph/view.mjs');
+  const { fitBounds } = await import('../src/shared/graph/geometry.mjs');
+  const { doc, host } = boot();
+  const nodes = Array.from({ length: 14 }, (_, i) => ({ id: `n${i}`, kind: 'agent', key: 'planner', x: i * 280, y: 0, config: {} }));
+  const wires = nodes.slice(1).map((n, i) => ({ id: `w${i}`, from: { node: `n${i}`, port: 'plan' }, to: { node: n.id, port: 'task' } }));
+  const view = mountStaticGraph(host, { id: 'wf_wide', name: 'Wide', version: 2, domain: 'coding', nodes, wires }, {
+    doc, portsFn: viewPorts, agents: AGENTS, width: 900, viewport: () => ({ left: 0, top: 0, width: 900, height: 400 }) });
+  const b = view.bounds(60), f = fitBounds(b, { width: 900, height: Number.MAX_SAFE_INTEGER }, { zoomMin: 0.3, zoomMax: 1 });
+  assert.equal(view.fitFloor ?? null, null, 'classic passes no floor');
+  assert.deepEqual(view.getTransform(), { x: f.tx, y: (400 - b.h * 0.3) / 2 - b.y * 0.3, z: 0.3 });
+  assert.notEqual(f.tx, -b.x * 0.3, 'centred, not pinned left');
+  assert.equal(view.stage.style.width, '');
+  assert.equal(host.style.overflowX, '');
+  view.destroy();
+});

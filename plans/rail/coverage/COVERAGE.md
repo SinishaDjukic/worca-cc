@@ -6,10 +6,10 @@ Sources: a static scan of today's UI (204 files) and a read-only browser walk of
 
 | Status | Controls |
 |---|---|
-| wired | 951 (of them 805 view controls with no route or key, carried by their place) |
+| wired | 953 (of them 805 view controls with no route or key, carried by their place) |
 | planned | 444 (of them 425 view controls of a place still to be built) |
 | not offered (decision) | 0 |
-| MISSING | 474 |
+| MISSING | 472 |
 | total | 1869 |
 
 ## By page
@@ -25,7 +25,7 @@ Sources: a static scan of today's UI (204 files) and a read-only browser walk of
 | Models | Settings › Models, wave 3 slice 12 (PLAN.md 4b, F-7b-08) | 51 | 0 | 42 | 0 | 9 |
 | New run | Chat and + › New task… | 74 | 45 | 0 | 0 | 29 |
 | Profile | D1 (B8.2): a home or retire, owner decision | 10 | 0 | 8 | 0 | 2 |
-| Projects | Projects | 91 | 68 | 4 | 0 | 19 |
+| Projects | Projects | 91 | 70 | 4 | 0 | 17 |
 | Providers | Settings › Models, wave 3 slice 12 (PLAN.md 4b) | 49 | 0 | 48 | 0 | 1 |
 | Requirements | Requirements, wave 3 slice 11 (PLAN.md 4b, D2, B8.7) | 88 | 0 | 29 | 0 | 59 |
 | Schedules | Schedules | 45 | 35 | 0 | 0 | 10 |
@@ -81,8 +81,6 @@ Each MISSING control, grouped by its finding (`plans/rail/findings.md`, PLAN.md 
 | New run | humanInLoop | toggle | `route /api/mcp/preview`, `route /api/mcp/projects/:param/mcpjson`, `route /api/scripts`, `route /api/workspaces/:param/scan` | ui/public/new-run/new.html:314 |
 | Projects | Use git | button | `route /api/sync/all` | ui/public/projects/project-add.html:90 |
 | Projects | Add project | dialog | `route /api/ask/groups/undo`, `route /api/naming/config`, `route /api/source-bindings`, `route /api/sync/all`, `route /api/team-metrics/scopes` | ui/public/projects/project-add.html:2 |
-| Projects | Branch (optional) | field | `route /api/sync/all` | ui/public/projects/project-add.html:52 |
-| Projects | Folder name (optional) | field | `route /api/sync/all` | ui/public/projects/project-add.html:56 |
 | Projects | Remote URL (optional) | field | `route /api/sync/all` | ui/public/projects/project-add.html:83 |
 | Projects | Repository URL | field | `route /api/sync/all` | ui/public/projects/project-add.html:48 |
 | Tasks | Cancel | button | `route /api/agents`, `route /api/scripts`, `route /api/workflows/:param` | ui/public/run-setup-overlay.mjs:114 |
@@ -270,7 +268,7 @@ Each MISSING control, grouped by its finding (`plans/rail/findings.md`, PLAN.md 
 
 | Page | Control | Kind | Missing | Source |
 |---|---|---|---|---|
-| Shell | (button) | button | `route /api/setup/detect`, `route /api/setup/team` | ui/public/graph/view.mjs:435 |
+| Shell | (button) | button | `route /api/setup/detect`, `route /api/setup/team` | ui/public/graph/view.mjs:442 |
 | Getting started | (guide-next) | button | `route /api/setup/apply`, `route /api/setup/detect`, `route /api/setup/team` | ui/public/guide-spot.mjs:108 |
 | Getting started | Skip | button | `route /api/setup/apply`, `route /api/setup/detect`, `route /api/setup/team` | ui/public/guide-spot.mjs:100 |
 | Marketplace | Try again | button | `route /api/setup/apply`, `route /api/setup/team/draft` | ui/public/marketplace/install-sheet.mjs:82 |
@@ -690,7 +688,7 @@ None: no classic control reaches a `not offered live` or `not a dev capability` 
 
 ## Wired
 
-146 controls reach a route or key Stillhet carries; 805 are view controls (no route, no key) of a page whose place Stillhet has. Where they land:
+148 controls reach a route or key Stillhet carries; 805 are view controls (no route, no key) of a page whose place Stillhet has. Where they land:
 
 | Stillhet code or row | Controls |
 |---|---|
@@ -718,6 +716,8 @@ None: no classic control reaches a `not offered live` or `not a dev capability` 
 | stillhet-wiring.md Dev surfaces: route › /api/ask/threads/:param/attachments/:param | 1 |
 | stillhet-wiring.md Classic controls: a Chat TaskCard's Pause on a live task (`chat/conversation.js` taskCard, `live/chat | 1 |
 | stillhet-wiring.md Classic controls: a Chat TaskCard's ⋯ › Stop, confirm first (`chat/conversation.js` taskCard `canStop | 1 |
+| stillhet-wiring.md Classic controls: Projects › Add a project by hand › One folder, under a repository address: Branch ( | 1 |
+| stillhet-wiring.md Classic controls: Projects › Add a project by hand › One folder, under a repository address: Folder n | 1 |
 | stillhet-wiring.md Tasks capabilities: New task…'s presets (COV-2: GET /api/presets, POST /api/presets/:id/ch | 1 |
 | stillhet-wiring.md Classic controls: the task page's plan case › Full plan (`design-system/components/run-state.mjs` pla | 1 |
 | stillhet-wiring.md Classic controls: B4.5: the project page's Readiness row and its What it checks fold (`projects/proje | 1 |

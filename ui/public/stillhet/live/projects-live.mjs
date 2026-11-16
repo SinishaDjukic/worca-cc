@@ -18,7 +18,7 @@ export const PROJECT_ACTIONS = Object.freeze({
   'git-available': ['read', '', () => ['GET', '/api/git']],
   create: ['create', 'Creating…', ({ name, useGit, dryRun }) => ['POST', '/api/projects/create', { name, ...(useGit ? { useGit: true } : {}), ...(dryRun ? { dryRun: true } : {}) }]],
   bulk: ['add', 'Adding…', ({ rows }) => ['POST', '/api/projects/bulk', { projects: rows.map(({ name, path }) => ({ name, path })) }]],
-  clone: ['clone', 'Adding…', ({ url }) => ['POST', '/api/projects/clone', { url }]],
+  clone: ['clone', 'Adding…', ({ url, branch, name }) => ['POST', '/api/projects/clone', { url, ...(branch ? { branch } : {}), ...(name ? { name } : {}) }]],
   rename: ['rename', 'Renaming…', ({ key, name }) => ['PATCH', `/api/projects/${enc(key)}`, { name }]],
   relocate: ['move', 'Moving…', ({ key, path }) => ['PATCH', `/api/projects/${enc(key)}`, { path }]],
   sync: ['sync', 'Syncing…', ({ key }) => ['POST', `/api/projects/${enc(key)}/sync`, { mode: 'ff' }]],
@@ -117,15 +117,21 @@ export function startProjectsLive({ fetch, toast = () => {}, refresh = () => {},
   }
 
   // ---- projects ----
-  function addProject(input, { useGit } = {}) {
+  function addProject(input, { useGit, branch, name: folder } = {}) {
     const v = String(input || '').trim();
     return once('add', REPO.test(v) ? 'clone' : 'add', async () => {
       const name = lastSeg(v);
       if (REPO.test(v)) {
-        const a = await send('clone', { url: v });
-        if (!a.ok) return a.status === 400 || a.status === 409 ? { ok: false, field: plainWhy(a) } : refused('clone', name, a);
-        clones.set(a.data.jobId || a.data.job?.id, { name: a.data.job?.name || name, from: at() });   // where the person was: it routes only if they still are
-        return { ok: true, text: `Cloning ${a.data.job?.name || name}…` };
+        const as = folder || name;   // F-cov1-06: the Folder name names the clone job
+        const a = await send('clone', { url: v, branch, name: folder });
+        if (!a.ok) {   // on: the field dev's words are about (clone-project.mjs planClone), so the page puts them under it
+          const on = /branch name/i.test(a.error || '') ? 'branch' : /folder name/i.test(a.error || '') ? 'name' : '';
+          // F-W3a2-10: WORCA_CLONE_ALLOW's refusal (403 not-allowed) is about the address too, so it lands under that field
+          const mine = a.status === 400 || a.status === 409 || (a.status === 403 && a.data?.code === 'not-allowed');
+          return mine ? { ok: false, field: plainWhy(a), ...(on ? { on } : {}) } : refused('clone', as, a);
+        }
+        clones.set(a.data.jobId || a.data.job?.id, { name: a.data.job?.name || as, from: at() });   // where the person was: it routes only if they still are
+        return { ok: true, text: `Cloning ${a.data.job?.name || as}…` };
       }
       const a = await send('add', { name, path: v, useGit });
       if (!a.ok) return a.status === 400 ? { ok: false, field: plainWhy(a) } : refused('add', name, a);
