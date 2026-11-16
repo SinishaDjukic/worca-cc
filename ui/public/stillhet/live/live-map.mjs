@@ -225,6 +225,11 @@ export function unreadOf(prev = [], frame = null, { openChat = '', hidden = fals
 
 // ---- schedules ----
 const PERIOD = { daily: 'today', weekly: 'this week', monthly: 'this month' };
+// F-G-fid-03: a series has one time, its rule's wall time in its rule's zone (as its card and page say it), so its row's
+// clock is the rule's, never the instant's local clock; the day word stays the instant's
+const wallWord = (word, wall) => (wall && word ? word.replace(/\d{2}:\d{2}$/, wall) : word);
+// F-G-fid-04: the card's line under its title is what the schedule runs: the first line of its prompt, else its ticket source's task
+const whatOf = (sum) => { const o = sum && typeof sum === 'object' ? sum : {}; return str(o.prompt).split(/\r?\n/).map((l) => l.trim()).find(Boolean) || str(o.source?.title); };
 /** A schedule: a ticket (once) or a series (recurring) of `GET /api/schedules`, with the D10 fields the page reads. */
 export function scheduleOf(item = {}, { now = 0, projects = [] } = {}) {
   const once = item.kind === 'once', missed = once && item.status === 'missed', paused = !once && item.status === 'paused', ended = !once && item.status === 'ended';
@@ -233,12 +238,12 @@ export function scheduleOf(item = {}, { now = 0, projects = [] } = {}) {
   const skip = !once && !paused && !ended && Number.isFinite(ms(item.skippedRunAt)) ? str(item.skippedRunAt) || new Date(item.skippedRunAt).toISOString() : '';
   const name = projects.find((p) => p && (p.key === item.projectKey || p.path === item.projectDir))?.name || baseName(item.projectDir);
   const word = once ? 'Once' : repeatOf(item.rule) || str(item.sentence);
-  // dev's own pause is 'user' (Paused by you); a series that paused itself says after how many failures
+  // dev's own pause is 'user' (Paused by you); a series that paused itself says after how many failures, read after the word Paused (F-G-fid-05)
   const streak = num(item.failureStreak) || num(item.maxFailures) || 0;
-  const why = !paused || !item.pauseReason || item.pauseReason === 'user' ? '' : item.pauseReason === 'failure_streak' ? `paused itself after ${streak} failure${streak === 1 ? '' : 's'} in a row` : str(item.pauseReason);
-  const next = missed ? `Missed ${timeOf(at, now)}` : paused ? (why ? 'Paused' : 'Paused by you') : ended ? '' : afterTitle ? `after ${afterTitle}` : skip ? 'Skips next time, then as usual' : at ? `Next ${nextWord(at, now)}` : '';
-  return pick('schedule', { id: str(item.id), title: str(item.title) || 'A schedule', project: name, chat: str(item.askThreadId), every: word, at: (!once && atOf(item.rule)) || (Number.isFinite(ms(at)) ? clock(ms(at)) : ''), next, ...(missed || paused || ended ? {} : { day: whenOf(at, now) }), state: missed ? 'diverged' : paused ? 'paused' : ended ? 'ended' : 'scheduled', time: missed ? timeOf(at, now) : afterTitle ? 'after' : nextWord(at, now), section: missed ? 'needs' : paused ? 'paused' : ended ? 'ended' : 'next', labels: [], what: str(item.summary), cost: null, started: Number.isFinite(ms(item.createdAt)) ? dateWord(ms(item.createdAt)) : '', runs: [], ...(missed ? { missed: dateWord(ms(at)), missedWhy: str(item.failReason) || 'Worca was not running' } : {}), nextAt: missed || ended || !Number.isFinite(ms(at)) ? null : ms(at),
-    skip, overlap: str(item.overlap), fails: num(item.maxFailures), ifMissed: str(item.ifMissed), tz: str(item.tz || item.rule?.tz), pauseWhy: why,
+  const why = !paused || !item.pauseReason || item.pauseReason === 'user' ? '' : item.pauseReason === 'failure_streak' ? `itself after ${streak} failure${streak === 1 ? '' : 's'} in a row` : str(item.pauseReason);
+  const next = missed ? `Missed ${timeOf(at, now)}` : paused ? (why ? 'Paused' : 'Paused by you') : ended ? '' : afterTitle ? `after ${afterTitle}` : skip ? 'Skips next time, then as usual' : at ? `Next ${wallWord(nextWord(at, now), !once && atOf(item.rule))}` : '';
+  return pick('schedule', { id: str(item.id), title: str(item.title) || 'A schedule', project: name, chat: str(item.askThreadId), every: word, at: (!once && atOf(item.rule)) || (Number.isFinite(ms(at)) ? clock(ms(at)) : ''), next, ...(missed || paused || ended ? {} : { day: whenOf(at, now) }), state: missed ? 'diverged' : paused ? 'paused' : ended ? 'ended' : 'scheduled', time: missed ? timeOf(at, now) : afterTitle ? 'after' : wallWord(nextWord(at, now), !once && atOf(item.rule)), section: missed ? 'needs' : paused ? 'paused' : ended ? 'ended' : 'next', labels: [], what: whatOf(item.summary), cost: null, started: Number.isFinite(ms(item.createdAt)) ? dateWord(ms(item.createdAt)) : '', runs: [], ...(missed ? { missed: dateWord(ms(at)), missedWhy: str(item.failReason) || 'Worca was not running' } : {}), nextAt: missed || ended || !Number.isFinite(ms(at)) ? null : ms(at),
+    skip, projectDir: str(item.projectDir), workspaceId: str(item.workspaceId), overlap: str(item.overlap), fails: num(item.maxFailures), ifMissed: str(item.ifMissed), tz: str(item.tz || item.rule?.tz), pauseWhy: why,
     preset: item.presetId ? str(item.presetName) || 'preset deleted' : '', after: afterTitle, ended,
     rule: !once && item.rule && typeof item.rule === 'object' ? item.rule : null, grace: num(item.graceMin) ?? null,
     afterRef: once && item.after?.id ? { kind: str(item.after.kind), id: str(item.after.id), policy: str(item.after.policy) || 'done' } : null });

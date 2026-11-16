@@ -205,3 +205,18 @@ test('R-arch-2: Insights\' pages, the live module and Projects read no dev field
   }
   assert.match(readFileSync('ui/public/stillhet/live/insights-live.mjs', 'utf8'), /\/api\//);
 });
+
+// gate G F-G-fid-14: a live chart by project stacks each day by its rows, as classic's cost report does (allocationSeries over
+// the same facts, Chat's series included): each day's parts add up to the day, each row's days to the row.
+test('F-G-fid-14: statsSource cuts each day by the rows of "by" from the facts; a time "by" has no cut', () => {
+  const s = statsSource(ANSWER, { page: 'spend', by: 'project', now: B[2] + 3600_000 });
+  assert.ok(s.cut, 'the day cut'); assert.equal(s.cut.by, 'project');
+  assert.deepEqual(s.cut.names, s.rows.project.map((r) => r.name));
+  const day = s.cut.perDay.spend;
+  assert.equal(day.length, 3);
+  day.forEach((parts, i) => assert.equal(Math.round(sum(parts) * 1e4), Math.round(s.series.spend[i] * 1e4), `day ${i} adds up`));
+  s.cut.names.forEach((n, k) => assert.equal(Math.round(sum(day.map((p) => p[k])) * 1e4), Math.round(s.rows.project[k].spend * 1e4), `${n} adds up`));
+  const ends = statsSource(ANSWER, { page: 'ends', by: 'project' });
+  ends.cut.perDay.finished.forEach((parts, i) => assert.equal(sum(parts), ends.series.finished[i], `ends day ${i}`));
+  assert.equal(statsSource(ANSWER, { page: 'spend', by: 'week' }).cut, null);
+});

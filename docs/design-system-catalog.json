@@ -1020,7 +1020,7 @@
       "code": "ui/public/design-system/components/workflow-story.mjs#workflowStory",
       "kind": "showing",
       "needs": [
-        "a workflow told in plain words: its steps, its loop, how a task goes through it"
+        "a workflow told in plain words: its steps, every loop (a step that runs again says so in its panel), how a task goes through it"
       ],
       "rules": [
         "panel.workflow-story",
@@ -2622,6 +2622,12 @@
           "code": "ui/public/design-system/components/run-state.mjs#sectionOf",
           "needs": [
             "The section of a list a state goes in"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/run-state.mjs#stillGoing",
+          "needs": [
+            "Whether a run is still going, as a schedule's skip if still going counts it"
           ]
         },
         {

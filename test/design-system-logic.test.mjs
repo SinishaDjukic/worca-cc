@@ -405,6 +405,12 @@ test('sectionOf: a list reads a real case: Paused and Stopped are never Ready, a
   assert.equal(R.sectionOf(R.runState('scheduled').word), 'scheduled');
 });
 
+test('stillGoing (F-G-G3-03): a run still going is classic\'s live run, a question or a gate included; paused, finished and in review are not', () => {
+  for (const id of ['starting', 'working', 'network', 'question', 'gate', 'plan', 'clarify', 'recovery', 'ticket-firing']) assert.equal(R.stillGoing(id), true, id);
+  for (const id of ['paused', 'paused-you', 'paused-limit', 'interrupted', 'failed', 'ready', 'checks', 'failing', 'merged', 'stopped', 'scheduled', 'ticket-missed']) assert.equal(R.stillGoing(id), false, id);
+  assert.throws(() => R.stillGoing('nope'), /unknown state/);
+});
+
 test('chatState, bulkStateOf: a chat sorts Needs you, Running, Recent; an unknown one throws; a run\'s word to the bulk table', () => {
   assert.equal(R.chatState('needs-you').word, R.runState('question').word);
   assert.deepEqual(['needs-you', 'replying', 'command', 'following', 'idle'].map((s) => R.chatState(s).section), ['needs', 'running', 'running', 'running', 'recent']);

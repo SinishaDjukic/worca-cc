@@ -84,3 +84,38 @@ test('the task Workflow dialog\'s "Open in Workflows" goes to #workflows/workflo
   open.click(); await settle(120);
   assert.equal(w.location.hash, '#workflows/workflow:wf_full');
 });
+
+// gate G F-G-fid-06: dev's Default has two loops, Refine Plan on itself (at most once) and Review → Implementation (3 times).
+// The story draws the one between two steps as the arc, rings Review, and says Refine Plan's in its own panel.
+test('F-G-fid-06: the story draws Review → Implementation as the arc and says Refine Plan\'s self-loop in its panel', async () => {
+  const { d } = await workflowsHost({ hash: '#workflows/workflow:wf_default' });
+  const arcs = [...page(d).querySelectorAll('.ws-loop')];
+  assert.equal(arcs.length, 1, 'one arc: the self-loop is no arc');
+  assert.match(text(arcs[0]), /back to Implementation, at most 3 times/);
+  const panels = [...page(d).querySelectorAll('.ws-p')], named = (n) => panels.find((p) => text(p.querySelector('.ws-name')) === n);
+  assert.ok(named('Review Implementation').classList.contains('is-check'), 'Review is ringed');
+  assert.ok(!named('Refine Plan').classList.contains('is-check'), 'Refine Plan is not ringed');
+  assert.match(text(named('Refine Plan').querySelector('.ws-again')), /at most once/);
+  page(d).querySelector('[data-wf-ways][aria-expanded="false"]')?.click(); await settle(40);   // Expert folds the ways
+  assert.match(text(page(d)), /Review Implementation finds something/);
+});
+
+// F-G-fid-10: a one-step workflow reads "1 step"
+test('F-G-fid-10: a workflow with one step reads "1 step", not "1 steps"', async () => {
+  const one = { id: 'wf_one', name: 'One', version: 1, domain: 'coding', origin: null, createdAt: '2026-11-01T00:00:00.000Z', updatedAt: '2026-11-01T00:00:00.000Z', archivedAt: null,
+    nodes: [{ id: 'n_task', kind: 'task', x: 0, y: 0, config: {} }, { id: 'n_impl', kind: 'agent', key: 'implementer', x: 300, y: 0, config: {} }, { id: 'n_end', kind: 'end', x: 600, y: 0, config: {} }],
+    wires: [{ id: 'w1', from: { node: 'n_task', port: 'task' }, to: { node: 'n_impl', port: 'task' } }, { id: 'w2', from: { node: 'n_impl', port: 'done' }, to: { node: 'n_end', port: 'result' } }] };
+  const { d } = await workflowsHost({ lists: { ...WF_LISTS, '/api/workflows': { workflows: [...WF_LISTS['/api/workflows'].workflows, one] } } });
+  const card = page(d).querySelector('[data-wf-open="workflow:wf_one"]')?.closest('.pc, article, li, section') || page(d);
+  assert.match(text(card), /\b1 step\b/); assert.doesNotMatch(text(page(d)), /\b1 steps\b/);
+});
+
+// F-FM2-03: a workflow no task has run has no measured figure: no "$0.00 a task", no "about 0 min"
+test('F-FM2-03: a never-run live workflow shows no zero figures; one with tasks shows its own', async () => {
+  const { d } = await workflowsHost({ hash: '#workflows/workflow:wf_mine' });
+  const t = text(page(d));
+  assert.doesNotMatch(t, /\$0\.00|about 0 min/, t.slice(0, 300));
+  assert.match(t, /No tasks yet/);
+  const full = await workflowsHost({ hash: '#workflows/workflow:wf_full' });
+  assert.match(text(page(full.d)), /a task/, 'measured: its cost a task');
+});

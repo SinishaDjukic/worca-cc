@@ -1648,8 +1648,9 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .bc-bar{width:min(14px,70%);background:var(--ink-3);border-radius:4px 4px 0 0;}   /* ds-ok: a data end's own rounding */
 .bc-col:hover .bc-bar,.bc-col:focus-visible .bc-bar{background:var(--ink-2);}
 .bc-col.is-now .bc-bar{background:var(--ink-2);}
-.bc-v{font-size:var(--fs-caption);color:var(--ink-2);margin-bottom:4px;font-variant-numeric:tabular-nums;min-height:1em;}
+.bc-v{font-size:var(--fs-caption);color:var(--ink-2);margin-bottom:4px;font-variant-numeric:tabular-nums;min-height:1em;white-space:nowrap;}   /* F-FM2-05: a number never wraps in its column */
 .bc-x{position:relative;top:6px;height:0;font-size:var(--fs-caption);color:var(--ink-2);white-space:nowrap;}
+@media (max-width:720px){.bar-chart.is-thin .bc-col:not(.is-tick) .bc-x{visibility:hidden;}}   /* look.chart: a narrow screen names at most eight bars */
 .bc-table{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;}
 @media (max-width: 760px){.is-attn::before{inset:-10px -16px;--attn-fx:16px;--attn-fy:10px;}}   /* on a phone the feather stays inside the screen */
 
@@ -1704,7 +1705,10 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .cc-proof{font-size:var(--fs-meta);line-height:1.5;color:var(--ink-3);}
 .cc-lbl{position:relative;}
 .cc-lbl > .seg{position:absolute;right:0;top:-6px;}
-.cc-lbl > .seg button{height:24px;padding:0 10px;font-size:var(--fs-meta);}
+.cc-lbl > .seg button, .cc-src > .seg button{height:24px;padding:0 10px;font-size:var(--fs-meta);}
+/* F-G-G3-01: a ticket source has no label row for the tabs to sit beside: they take their own row, its note and inputs under them */
+.cc-src{display:grid;gap:12px;}
+.cc-src > .seg{justify-self:end;}
 .cc-fold{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding-top:10px;border-top:1px solid var(--line);font-size:var(--fs-meta);color:var(--ink-2);}
 .cc-fold > .btn-quiet{padding-left:0;}
 .cc-more{display:grid;gap:12px;font-size:var(--fs-body);color:var(--ink-2);line-height:1.75;}
@@ -1777,18 +1781,22 @@ button.q-fact{cursor:pointer;text-decoration:underline;text-decoration-color:var
 /* WorkflowStory (panel.workflow-story): a workflow as a storyboard, a panel a step, the loop drawn back in words */
 .ws{margin:14px 0 6px;}
 .ws-board{position:relative;display:grid;grid-template-columns:repeat(var(--ws-n),minmax(0,1fr));gap:22px;margin:0 0 14px;}   /* ds-ok: --ws-n is the story's own count of steps */
-.ws-board.has-loop{margin-bottom:58px;}
+.ws-board.has-loop{margin-bottom:calc(58px + (var(--ws-loops, 1) - 1) * 34px);}   /* ds-ok: --ws-loops is the story's own count of arcs */
 .ws-p{position:relative;display:grid;gap:4px;align-content:start;min-width:0;}
 .ws-p + .ws-p::before{content:'';position:absolute;left:-18px;top:11px;width:14px;border-top:1px solid var(--ink-3);}
-.ws-n{display:flex;align-items:center;gap:8px;font:600 var(--fs-body)/1.3 var(--sans);min-width:0;}
+.ws-n{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;font:600 var(--fs-body)/1.3 var(--sans);min-width:0;}
+.ws-name{min-width:0;overflow-wrap:break-word;}   /* a name too long beside its number goes under it, whole: it breaks between words */
 .ws-k{width:22px;height:22px;border-radius:50%;border:1px solid var(--line-2);display:grid;place-items:center;font:500 var(--fs-meta)/1 var(--sans);color:var(--ink-2);flex:none;}
 .ws-p.is-check .ws-k{border-color:var(--amber-ink);color:var(--amber-ink);}
-.ws-t{font-size:var(--fs-body);line-height:var(--lh-body);overflow-wrap:anywhere;} .ws-m{font-size:var(--fs-meta);color:var(--ink-3);font-variant-numeric:tabular-nums;}
-.ws-loop{position:absolute;bottom:-40px;height:30px;font-size:var(--fs-meta);color:var(--ink);text-align:center;}
+.ws-t{font-size:var(--fs-body);line-height:var(--lh-body);overflow-wrap:break-word;} .ws-m{font-size:var(--fs-meta);color:var(--ink-3);font-variant-numeric:tabular-nums;}
+.ws-again{font-size:var(--fs-meta);color:var(--ink-2);}
+.ws-loop{position:absolute;left:var(--ws-a);width:var(--ws-w);bottom:calc(-40px - var(--ws-row, 0) * 34px);height:30px;font-size:var(--fs-meta);color:var(--ink);text-align:center;}
 .ws-loop svg{position:absolute;inset:0 0 auto 0;width:100%;height:16px;overflow:visible;} .ws-loop path{fill:none;stroke:var(--ink);stroke-dasharray:2 2;}
-.ws-loop span{position:absolute;left:-40%;right:-40%;top:16px;white-space:nowrap;}
+.ws-loop span{position:absolute;left:-40%;right:-40%;top:16px;text-wrap:balance;}   /* wider than its arc (a loop at the end of five steps): two lines, never past the board */
 .ws-by{margin:8px 0 0;font-size:var(--fs-meta);color:var(--ink-3);display:flex;gap:6px;align-items:center;}
-@media (max-width:720px){.ws-board{grid-template-columns:1fr;gap:12px;} .ws-p + .ws-p::before{display:none;} .ws-board.has-loop{margin-bottom:14px;} .ws-loop{position:static;height:auto;text-align:left;} .ws-loop svg{display:none;} .ws-loop span{position:static;white-space:normal;}}
+/* more than five steps (is-long) read as the narrow screen's list: a column each would break their words (F-G-fid-09) */
+.ws-board.is-long{grid-template-columns:1fr;gap:12px;} .ws-board.is-long .ws-p + .ws-p::before{display:none;} .ws-board.is-long.has-loop{margin-bottom:14px;} .ws-board.is-long .ws-loop{position:static;width:auto;height:auto;text-align:left;} .ws-board.is-long .ws-loop svg{display:none;} .ws-board.is-long .ws-loop span{position:static;white-space:normal;}
+@media (max-width:720px){.ws-board{grid-template-columns:1fr;gap:12px;} .ws-p + .ws-p::before{display:none;} .ws-board.has-loop{margin-bottom:14px;} .ws-loop{position:static;width:auto;height:auto;text-align:left;} .ws-loop svg{display:none;} .ws-loop span{position:static;white-space:normal;}}
 
 /* Workflows (Wave 3): a way's sentence, the graph's well wider than the reading column, the Expert canvas */
 .wf-sent{display:flex;gap:6px;align-items:center;font-size:var(--fs-meta);color:var(--ink-2);margin:14px 0 8px;}
