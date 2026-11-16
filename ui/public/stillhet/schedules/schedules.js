@@ -23,9 +23,9 @@
   toStore(); window.RailWorld?.onChange(toStore);
   let current = '', view = { show: 'all', by: R.BY_DEFAULT }, ctl = null, menu = '';
   const say = (t, undo) => window.RailPulse?.say(t, undo);
-  const st = (s) => R.runState(s.state === 'ended' ? 'scheduled' : s.state), toneOf = (s) => (isRunning(s) ? 'run' : s.ended || s.state === 'scheduled' ? 'idle' : R.markTone(st(s)));
+  const st = (s) => R.runState(s.state === 'ended' ? 'scheduled' : s.state), toneOf = (s) => (waitsOnYou(s) ? 'act' : isRunning(s) ? 'run' : s.ended || s.state === 'scheduled' ? 'idle' : R.markTone(st(s)));
   // one word for where a schedule stands, on its page, its card, its row, its chat card and Pulse (wordOf below)
-  const word = (s) => (isRunning(s) ? R.runState('working').word : s.ended ? 'Ended' : s.section === 'needs' ? 'Missed' : s.state === 'paused' ? R.runState('paused').word : 'Next up');
+  const word = (s) => (waitsOnYou(s) ? R.runState('question').word : isRunning(s) ? R.runState('working').word : s.ended ? 'Ended' : s.section === 'needs' ? 'Missed' : s.state === 'paused' ? R.runState('paused').word : 'Next up');
   const SECTIONS = [['needs', R.runState('question').word], ['running', 'Running'], ['next', 'Next up'], ['paused', R.runState('paused').word], ['ended', 'Ended']];
   const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'], dateWord = (d) => `${MON[d.getMonth()]} ${d.getDate()}`;
   // live: the server's next time first (nextAt, live-map.mjs), which already skips a skipped one; a once-ticket has no time after it
@@ -35,7 +35,7 @@
   // when it next runs, in dates: its card and its page's head say the same
   const nextLine = (s) => { const [d1] = nextDates(s, 1).map(dateWord); return s.after ? `after ${s.after}` : s.every === 'every hour' ? (s.skip ? 'skips the next one' : 'within the hour') : s.skip ? 'Skips next time, then as usual' : `${d1}, ${s.at}`; };
   // why it stands where it does, next to its word: the same on its page, its card, its chat card and its row (nextOf below)
-  const why = (s) => (isRunning(s) ? `for ${!runningRun(s).time || runningRun(s).time === 'now' ? 'a moment' : runningRun(s).time}` : s.ended ? '' : s.section === 'next' ? nextLine(s) : s.state === 'paused' ? s.pauseWhy || s.next.replace(/^Paused ?/, '') || 'by you' : s.next.replace(/^(Missed|Next) /, ''));
+  const why = (s) => (waitsOnYou(s) ? (liveRuns(s).length > 1 ? `its ${liveRuns(s).length} running tasks wait on you` : 'its running task waits on you') : isRunning(s) ? `for ${!runningRun(s).time || runningRun(s).time === 'now' ? 'a moment' : runningRun(s).time}` : s.ended ? '' : s.section === 'next' ? nextLine(s) : s.state === 'paused' ? s.pauseWhy || s.next.replace(/^Paused ?/, '') || 'by you' : s.next.replace(/^(Missed|Next) /, ''));
   const sectionNow = (s) => (s.section !== 'needs' && isRunning(s) ? 'running' : s.section);   // a run under way moves it, a paused one's too, and its end leaves it where it was
   const menuItems = (s) => (s.ended ? [{ id: 'delete', text: 'Delete', danger: true, help: 'Removes the schedule; the tasks it ran stay. Undo in the notice' }]
     : [{ id: 'run', text: 'Run now', off: isRunning(s), help: isRunning(s) ? 'Its task is running; it can start again when that ends' : 'Starts a task now; the schedule keeps its times' }, { id: 'in-view', text: window.RailShell?.inView.has('schedule', s.id) ? 'Out of view' : 'Keep in view', help: 'Its mark in the top bar, on every page' }, ...(afterItem(s) ? [afterItem(s)] : []), ...(s.every === 'Once' ? [] : [{ id: 'pause', text: s.state === 'paused' ? 'Resume' : 'Pause', help: s.state === 'paused' ? 'It runs at its next time again' : 'It stops starting tasks until you resume it' }, { id: 'skip', ...skipItem(s) }]), { sep: true }, { id: 'delete', text: 'Delete', danger: true, help: 'Removes the schedule; the tasks it ran stay. Undo in the notice' }]);
@@ -45,6 +45,9 @@
   const liveWord = 'Plan · writing the plan';
   function runningRun(s) { const W = window.RailWorld; return s.runs.find((r) => { const w = r.wid && W?.find(r.wid); return w && !w.archived && R.stillGoing(RM.stateOf(w.case)); }); }   // logic.still-going: a fire waiting on a question is still going (F-G-G3-03)
   function isRunning(s) { return !!runningRun(s); }
+  // F-FM2-01: the fires still going; while every one waits on you (a question, a gate), the schedule says Needs you, not Working
+  function liveRuns(s) { const W = window.RailWorld; return s.runs.map((r) => r.wid && W?.find(r.wid)).filter((w) => w && !w.archived && R.stillGoing(RM.stateOf(w.case))); }
+  function waitsOnYou(s) { const ws = liveRuns(s); return ws.length > 0 && ws.every((w) => window.RailWorld.section(w) === 'needs'); }
   // the live kind (D5): one request through RailScheduleLive; nothing here moves until its frame reloads the store
   async function live(id, s, args = {}, ok = '') {
     const r = await SL().act(id, { id: s.id, ...args });

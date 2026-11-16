@@ -59,6 +59,22 @@ test('F-G-G3-03: a fire waiting on a question is still going: the head shows Sto
   assert.deepEqual(sent(h.calls), [['POST', '/api/stop', { pipelineId: 'pb' }]]);
 });
 
+test('F-FM2-01: two fires both waiting on a question: the card counts neither as succeeded, and the head says it needs you, never Working for', async () => {
+  const src = sources();
+  const ask = { questions: [{ question: 'Which format?' }] };
+  src.hello.runs = src.hello.runs.map((r) => (r.runId === 'run-b' ? { ...r, pendingQuestion: ask } : r));
+  const history = { sr1: [{ id: 'run-b', status: 'fired', pipelineId: 'pb', runAt: new Date(2026, 10, 12, 14, 20).toISOString(), title: 'Nightly' }, { id: 'run-a', status: 'fired', pipelineId: 'pa', runAt: new Date(2026, 10, 12, 14, 10).toISOString(), title: 'Nightly' }] };
+  const h = await page('sr1', { src, history });
+  assert.doesNotMatch(head(h.d), /Working/, 'every fire waits on you: not Working for …');
+  assert.match(head(h.d), /Needs you/);
+  assert.ok(h.d.querySelector('#route-schedule [data-sched-stop]'), 'still going: Stop');
+  await go(h.w, '#schedules', 150); await settle(300);
+  const card = h.d.querySelector('[data-c-card="sr1"]')?.textContent || '';
+  assert.ok(card, 'the center draws its card');
+  assert.doesNotMatch(card, /succeeded/, 'a still-going fire is neither ok nor failed');
+  assert.match(card, /Needs you/);
+});
+
 // Each refusal leaves the store as it was, so one host per failure kind walks every page action (the 9 ids x 2 failures
 // are proven request by request in test/stillhet-schedule-live.test.mjs; New and Delete's refusals have their own cases below).
 test('every page action refused with a 409 or a network failure: one "Could not …" toast, the store deep-equal, no retry', async () => {

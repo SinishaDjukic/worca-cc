@@ -124,7 +124,8 @@
   function startAsk(a) { asking = { ...a, where: whereNow() || 'tasks' }; paint(); hostOf(asking.where)?.querySelector('[data-c-ask] [data-confirm="yes"]')?.focus({ preventScroll: true }); }
 
   // ---- the Schedules center ----
-  const OUT = (r) => { const t = RM.stateOf(r.case); return t === 'failed' ? 'fail' : R.sectionOf(R.runState(t).word) === 'running' ? 'run' : 'ok'; };
+  // F-FM2-01: a fire still going (a question or a gate included, logic.still-going) is neither ok nor failed
+  const OUT = (r) => { const t = RM.stateOf(r.case); return R.stillGoing(t) ? 'run' : t === 'failed' ? 'fail' : R.sectionOf(R.runState(t).word) === 'running' ? 'run' : 'ok'; };
   const sectionNow = (s) => (s.ended ? 'ended' : Sch().running(s.id) ? 'running' : s.state === 'paused' ? 'paused' : s.section === 'needs' ? 'needs' : 'next');
   const DEFAULT_TZ = 'Europe/Sofia';   // the demo's seed; live, a new schedule's zone is the browser's (homeTz)
   const homeTz = () => (W.live ? Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' : DEFAULT_TZ);
