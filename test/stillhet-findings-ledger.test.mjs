@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const doc = readFileSync(new URL('../plans/rail/findings.md', import.meta.url), 'utf8');
-const OWNERS = ['feature 3', 'Projects slice', 'final cleanup PR', 'owner decision', 'dev PR (owner to open the issue)', 'feature 2 final check'];
+const OWNERS = ['feature 3', 'Projects slice', 'final cleanup PR', 'owner decision', 'dev PR (owner to open the issue)', 'feature 2 final check', 'B4.10'];
 /** The rows of the table under `## title`: each a list of its cells. */
 function rows(title) {
   const at = doc.indexOf(`\n## ${title}\n`);
