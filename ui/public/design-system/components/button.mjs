@@ -1,10 +1,16 @@
 // Button (docs/rail/components.md): one look per role, never a size or colour of its own.
 // `kind` is the role: '' (secondary), 'primary' (the one main step of a state), 'quiet' (a step among many), 'danger'
 // (only inside the confirm of a step that cannot be taken back). An icon-only button names itself in `label`, which
-// becomes its aria-label; its tooltip is `title` (the label when not given).
+// becomes its aria-label; its tooltip is `title` (the label when not given). While its action is out it is busy: a spinner
+// inside over the hidden label, the same width, disabled and aria-busy (`busy: true` drawn, `busy(el, p)` live).
 import { attrs, cls, esc } from './html.mjs';
 
 const KIND = { primary: 'btn-primary', quiet: 'btn-quiet', danger: 'btn-danger', '': '' };
+// The busy state: the classic action-feedback hooks (its ring, ws-spin and the still ring under reduced motion) plus
+// rail-busy, the library's overlay (action-feedback.css), so the button never widens.
+const BUSY_CLS = ['is-busy', 'rail-busy'];
+const BUSY_ATTRS = { 'data-fb-state': 'busy', 'aria-busy': 'true' };
+const SPIN = '<span class="btn-spin" aria-hidden="true"></span>';
 
 /**
  * @param {object} o
@@ -16,12 +22,38 @@ const KIND = { primary: 'btn-primary', quiet: 'btn-quiet', danger: 'btn-danger',
  * @param {string|number} [o.count]  how many it applies to, after the words (a bulk action's count)
  * @param {string} [o.cls]        the page's hook class (never a look)
  * @param {object} [o.attrs]      data-*, aria-* and disabled, written as given
+ * @param {boolean} [o.busy]      its action is out: the spinner, disabled, aria-busy (as `busy(el, p)` makes it)
  */
-export function button({ label, kind = '', icon = '', iconOnly = false, title, count, cls: extra = '', attrs: a = {} }) {
+export function button({ label, kind = '', icon = '', iconOnly = false, title, count, cls: extra = '', attrs: a = {}, busy: isBusy = false }) {
   if (!(kind in KIND)) throw new Error(`button: unknown kind "${kind}"`);
   const tip = title ?? (iconOnly ? label : undefined);
   const name = iconOnly ? { 'aria-label': label } : {};
-  return `<button type="button" class="${cls('btn btn-sm', KIND[kind], iconOnly && 'btn-icon', extra)}"${attrs({ ...name, title: tip, ...a })}>${icon}${iconOnly ? '' : esc(label)}${count === undefined ? '' : ` <span class="runs-bulk-c">${esc(count)}</span>`}</button>`;
+  const on = isBusy ? { ...BUSY_ATTRS, disabled: true } : {};
+  return `<button type="button" class="${cls('btn btn-sm', KIND[kind], iconOnly && 'btn-icon', extra, isBusy && BUSY_CLS)}"${attrs({ ...name, title: tip, ...a, ...on })}>${isBusy ? SPIN : ''}${icon}${iconOnly ? '' : esc(label)}${count === undefined ? '' : ` <span class="runs-bulk-c">${esc(count)}</span>`}</button>`;
+}
+
+/**
+ * Busy while `p` is out: the same state `button({ busy: true })` draws. When it settles the button is back at rest,
+ * keeps the disabled it had, and takes the focus back if it had it. Settles like `p`; a removed button is left alone.
+ * @param {HTMLButtonElement} el
+ * @param {Promise|any} p
+ */
+export function busy(el, p) {
+  if (!el || el.classList.contains('rail-busy')) return Promise.resolve(p);
+  const had = el.ownerDocument.activeElement === el, wasDisabled = el.disabled;
+  el.classList.add(...BUSY_CLS);
+  for (const [k, v] of Object.entries(BUSY_ATTRS)) el.setAttribute(k, v);
+  el.disabled = true;
+  el.insertAdjacentHTML('afterbegin', SPIN);
+  const spin = el.firstElementChild;
+  return Promise.resolve(p).finally(() => {
+    if (!el.isConnected) return;
+    spin.remove();
+    el.classList.remove(...BUSY_CLS);
+    for (const k of Object.keys(BUSY_ATTRS)) el.removeAttribute(k);
+    el.disabled = wasDisabled;
+    if (had) el.focus();
+  });
 }
 
 /**

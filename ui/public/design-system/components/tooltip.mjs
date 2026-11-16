@@ -6,17 +6,52 @@ const seen = new WeakSet();
 /**
  * Where a tip goes: under its anchor, above when there is no room, always inside the window. With `beside` (what is open
  * around a menu's item) it goes to that box's right, else its left, level with the item, so it covers no other option;
- * only with no room on either side does it fall back.
+ * with no room on either side it goes above the box, else under it. It never covers its anchor or, beside a menu, the
+ * menu: with no free room, that wins over staying inside the window (small.one-tooltip), so it then takes the side of
+ * its anchor with more room.
  */
 export function tipPlace(anchor, tip, vw, vh, beside = null) {
+  const aRight = anchor.right ?? anchor.left + anchor.width;
+  const level = Math.max(EDGE, Math.min(vh - EDGE - tip.height, anchor.top));
+  const centred = Math.max(EDGE, Math.min(vw - EDGE - tip.width, anchor.left + (aRight - anchor.left) / 2 - tip.width / 2));
   if (beside) {
     const right = beside.right + GAP, left = beside.left - GAP - tip.width;
-    if (right + tip.width <= vw - EDGE || left >= EDGE) return { top: Math.max(EDGE, Math.min(vh - EDGE - tip.height, anchor.top)), left: right + tip.width <= vw - EDGE ? right : left };
+    if (right + tip.width <= vw - EDGE) return { top: level, left: right };
+    if (left >= EDGE) return { top: level, left };
+    const boxTop = Math.min(beside.top ?? anchor.top, anchor.top), boxBottom = Math.max(beside.bottom ?? anchor.bottom, anchor.bottom);
+    const above = boxTop - GAP - tip.height;
+    return { top: above >= EDGE ? above : boxBottom + GAP, left: centred };
   }
-  const below = anchor.bottom + GAP + tip.height <= vh - EDGE;
-  const top = below ? anchor.bottom + GAP : Math.max(EDGE, anchor.top - GAP - tip.height);
-  const left = Math.max(EDGE, Math.min(vw - EDGE - tip.width, anchor.left + anchor.width / 2 - tip.width / 2));
-  return { top, left };
+  if (anchor.bottom + GAP + tip.height <= vh - EDGE) return { top: anchor.bottom + GAP, left: centred };
+  if (anchor.top - GAP - tip.height >= EDGE) return { top: anchor.top - GAP - tip.height, left: centred };
+  return { top: level, left: vw - aRight >= anchor.left ? aRight + GAP : anchor.left - GAP - tip.width };
+}
+
+const CONTROL = 'button, a[href], input, select, textarea, ' + ['button', 'menuitem', 'menuitemradio', 'tab', 'switch', 'option', 'checkbox', 'link'].map((r) => `[role=${r}]`).join(', ');
+
+/**
+ * Controls that carry more than one tip (small.one-tooltip), in document order. `sources` names each: its own `title`
+ * (or the watcher's `data-tip-text`), a titled wrapper it alone fills (`wrapper-title`), a titled child (`child-title`),
+ * an `aria-describedby` tooltip (`describedby`), a `data-tip`. Pure: it reads and changes nothing.
+ * @param {Element} root
+ * @returns {Array<{ el: Element, sources: string[] }>}
+ */
+export function doubleTips(root) {
+  const doc = root.ownerDocument || root;
+  const has = (el, a) => !!el.getAttribute(a);
+  const out = [];
+  for (const el of [root, ...root.querySelectorAll(CONTROL)]) {
+    if (!el.matches?.(CONTROL)) continue;
+    const sources = [];
+    if (has(el, 'title') || has(el, 'data-tip-text')) sources.push('title');
+    const up = el.parentElement;
+    if (up && has(up, 'title') && up.children.length === 1) sources.push('wrapper-title');
+    if ([...el.querySelectorAll('[title]')].some((c) => has(c, 'title'))) sources.push('child-title');
+    if ((el.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean).some((id) => doc.getElementById(id)?.matches('[role="tooltip"], .rail-tip'))) sources.push('describedby');
+    if (el.hasAttribute('data-tip')) sources.push('data-tip');
+    if (sources.length >= 2) out.push({ el, sources });
+  }
+  return out;
 }
 
 /** Draws every `title` in a document as a Tooltip, from now on. */
@@ -37,7 +72,8 @@ export function watchTooltips(doc) {
     doc.body.append(tip);
     // a menu's item: past every menu open beside it (the profile menu and its side menu), never over the next option
     const boxes = el.closest('[role="menu"]') ? [...doc.querySelectorAll('[role="menu"]')].map((m) => m.getBoundingClientRect()).filter((b) => b.width) : [];
-    const beside = boxes.length ? { left: Math.min(...boxes.map((b) => b.left)), right: Math.max(...boxes.map((b) => b.right)) } : null;
+    const beside = boxes.length ? { left: Math.min(...boxes.map((b) => b.left)), right: Math.max(...boxes.map((b) => b.right)),
+      top: Math.min(...boxes.map((b) => b.top)), bottom: Math.max(...boxes.map((b) => b.bottom)) } : null;
     const at = tipPlace(el.getBoundingClientRect(), tip.getBoundingClientRect(), win.innerWidth, win.innerHeight, beside);
     tip.style.top = `${at.top}px`; tip.style.left = `${at.left}px`;
     watch = win.setInterval(() => { if (!el?.isConnected) hide(); }, 250);   // what it belongs to was drawn away

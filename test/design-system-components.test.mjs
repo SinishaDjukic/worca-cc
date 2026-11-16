@@ -24,6 +24,80 @@ test('button: one class per role, an icon-only button names itself', () => {
   assert.throws(() => C.button({ label: 'x', kind: 'big' }), /unknown kind/);
 });
 
+test('T-8 busy: false draws today\'s button', () => {
+  const o = { label: 'Save <it>', kind: 'primary', icon: '<svg></svg>', count: 2, cls: 'x-save', attrs: { 'data-k': '1' } };
+  const today = '<button type="button" class="btn btn-sm btn-primary x-save" data-k="1"><svg></svg>Save &lt;it&gt; <span class="runs-bulk-c">2</span></button>';
+  assert.equal(C.button(o), today); assert.equal(C.button({ ...o, busy: false }), today);
+});
+
+test('T-8 button({ busy: true }) draws the spinner and keeps the label: disabled, aria-busy, is-busy rail-busy, data-fb-state', () => {
+  const b = dom(C.button({ label: 'Save', kind: 'primary', icon: '<svg></svg>', busy: true, cls: 'x-save' }));
+  assert.equal(b.className, 'btn btn-sm btn-primary x-save is-busy rail-busy');
+  assert.equal(b.dataset.fbState, 'busy'); assert.equal(b.getAttribute('aria-busy'), 'true'); assert.equal(b.disabled, true);
+  assert.equal(b.firstElementChild.className, 'btn-spin'); assert.equal(b.firstElementChild.getAttribute('aria-hidden'), 'true');
+  assert.ok(b.querySelector('svg'), 'the icon stays'); assert.equal(b.textContent, 'Save', 'the label stays');
+});
+
+const restBusy = (b) => ({ cls: b.className, fb: b.dataset.fbState, aria: b.getAttribute('aria-busy'), off: b.disabled, spin: b.firstElementChild?.outerHTML });
+
+test('T-8 server-drawn and client busy agree', async () => {
+  const { window } = new JSDOM(`<body>${C.button({ label: 'Save', kind: 'quiet', cls: 'x' })}</body>`);
+  const b = window.document.querySelector('button');
+  let done; const p = new Promise((r) => { done = r; });
+  const out = C.busy(b, p);
+  assert.deepEqual(restBusy(b), restBusy(dom(C.button({ label: 'Save', kind: 'quiet', cls: 'x', busy: true }))));
+  done(); await out; window.close();
+});
+
+test('T-8 busy(): back on resolve and on reject, focus returns, the earlier disabled is kept; it settles like the promise', async () => {
+  const { window } = new JSDOM(`<body>${C.button({ label: 'Save' })}${C.button({ label: 'Off', attrs: { disabled: true } })}</body>`);
+  const [b, off] = window.document.querySelectorAll('button');
+  const desc = Object.getOwnPropertyDescriptor(window.HTMLButtonElement.prototype, 'disabled');
+  Object.defineProperty(b, 'disabled', { configurable: true, get() { return desc.get.call(this); }, set(v) { if (v) this.blur(); desc.set.call(this, v); } });   // as Chromium: disabling blurs
+  const rest = b.outerHTML;
+  b.focus();
+  assert.equal(await C.busy(b, Promise.resolve(42)), 42, 'the same value');
+  assert.equal(b.outerHTML, rest, 'back to rest'); assert.equal(window.document.activeElement, b, 'focus returns');
+  b.focus();
+  await assert.rejects(C.busy(b, Promise.reject(new Error('no'))), /no/, 'the same rejection');
+  assert.equal(b.outerHTML, rest); assert.equal(window.document.activeElement, b);
+  await C.busy(off, Promise.resolve());
+  assert.equal(off.disabled, true, 'an already disabled button stays disabled');
+  assert.equal(await C.busy(null, 7), 7, 'no button: it settles like the value');
+  window.close();
+});
+
+test('T-8 busy(): a removed button is left alone; a second call adds no second spinner', async () => {
+  const { window } = new JSDOM(`<body>${C.button({ label: 'Save' })}</body>`);
+  const b = window.document.querySelector('button');
+  let done; const p = new Promise((r) => { done = r; });
+  const first = C.busy(b, p); const second = C.busy(b, Promise.resolve('x'));
+  assert.equal(b.querySelectorAll('.btn-spin').length, 1);
+  assert.equal(await second, 'x');
+  assert.ok(b.classList.contains('rail-busy'), 'the second call changed nothing');
+  b.remove(); done(); await first;
+  assert.ok(b.classList.contains('rail-busy'), 'a removed button is left as it was'); assert.equal(b.disabled, true);
+  window.close();
+});
+
+test('T-8 the busy look overlays, never widens (action-feedback.css)', () => {
+  const css = readFileSync('ui/public/design-system/action-feedback.css', 'utf8');
+  assert.match(css, /\.btn\.rail-busy\{[^}]*position:relative/);
+  assert.match(css, /\.btn\.rail-busy \.btn-spin\{[^}]*position:absolute/);
+  assert.match(css, /\.btn\.rail-busy\{[^}]*-webkit-text-fill-color:transparent/);
+  // Spans keep their words in the accessible name (M1): opacity, never visibility; only the decorative svg is hidden.
+  assert.match(css, /\.btn\.rail-busy > span:not\(\.btn-spin\)\{opacity:0;?\}/);
+  assert.match(css, /\.btn\.rail-busy > svg\{visibility:hidden;?\}/);
+  assert.doesNotMatch(css, /rail-busy > span[^{]*\{[^}]*visibility:hidden/, 'a hidden span drops out of the name');
+  assert.match(css, /@media \(prefers-reduced-motion:reduce\)\{[^\n]*\.is-busy\[data-fb-state="busy"\] \.btn-spin\{animation:none;\}/, 'still under reduced motion');
+});
+
+test('T-8 motion.md names the busy spinner exception', () => {
+  const md = readFileSync('docs/rail/motion.md', 'utf8');
+  const never = md.slice(md.indexOf('- **Never:**'), md.indexOf('- **Reduced motion**'));
+  assert.match(never, /busy button/); assert.match(never, /`busy`/); assert.match(never, /still ring/);
+});
+
 test('splitButton: the ▾ takes the main kind and shows its menu only when open', () => {
   const closed = dom(C.splitButton({ main: { label: 'Merge', kind: 'primary' }, moreLabel: 'More actions', chevron: '<svg></svg>', menuHtml: '<div class="menu"></div>' }));
   const [main, more] = closed.querySelectorAll('button');
@@ -754,6 +828,81 @@ test('copyButton: a quiet icon button; the tick and Copied for a moment, then ba
   later(); assert.ok(!b.classList.contains('is-copied')); assert.equal(b.title, 'Copy branch');
 });
 
+test('T-6 copyButton: each kind names what it copies (Copy, Copy as markdown, Copy code); a given label wins; an unknown kind throws', () => {
+  for (const [kind, word] of [[undefined, 'Copy'], ['text', 'Copy'], ['markdown', 'Copy as markdown'], ['code', 'Copy code']]) {
+    const b = dom(C.copyButton({ text: 'x', kind }));
+    assert.equal(b.getAttribute('aria-label'), word); assert.equal(b.title, word); assert.equal(b.dataset.copyKind, kind || 'text');
+  }
+  assert.equal(dom(C.copyButton({ text: 'x', kind: 'code', label: 'Copy command' })).getAttribute('aria-label'), 'Copy command');
+  assert.throws(() => C.copyButton({ text: 'x', kind: 'html' }), /copyButton: unknown kind "html"/);
+});
+
+const copyStub = (fail = false) => { const got = []; return { got, clipboard: { writeText: (t) => { got.push(t); return fail ? Promise.reject(new Error('denied')) : Promise.resolve(); } } }; };
+
+test('T-6 copyFrom writes the source as written (markdown with its newlines and #) and says Copied', async () => {
+  const md = '# Plan\n\n- one *two*\n\n```js\n$ x\n```\n';
+  const b = dom(C.copyButton({ text: md, kind: 'markdown' }));
+  const { got, clipboard } = copyStub();
+  assert.equal(await C.copyFrom(b, { clipboard, wait: () => {} }), true);
+  assert.deepEqual(got, [md]);
+  assert.equal(b.title, 'Copied'); assert.equal(b.querySelector('[role=status]').textContent, 'Copied');
+  const { got: g2, clipboard: c2 } = copyStub();
+  assert.equal(await C.copyFrom(b, { text: 'given', clipboard: c2, wait: () => {} }), true); assert.deepEqual(g2, ['given'], 'a given text wins');
+});
+
+test('T-6 code: commandRow copies the command without its prompt', () => {
+  const r = dom(C.commandRow({ summary: 'Counted', cmd: 'ls | wc -l', open: true }));
+  const b = r.querySelector('[aria-label="Copy command"]');
+  assert.equal(b.dataset.copy, 'ls | wc -l'); assert.equal(b.dataset.copyKind, 'code');
+});
+
+test('T-6 copyFrom: a refusal says Could not copy in the status and the tooltip, then goes back', async () => {
+  const cases = [['reject', copyStub(true)], ['no clipboard', { got: [], clipboard: {} }], ['empty', copyStub()]];
+  for (const [name, { got, clipboard }] of cases) {
+    const b = dom(C.copyButton({ text: name === 'empty' ? '' : 'x', label: 'Copy path' }));
+    let later = null;
+    assert.equal(await C.copyFrom(b, { clipboard, wait: (fn) => { later = fn; }, clear: () => {} }), false, name);
+    assert.equal(b.title, 'Could not copy', name); assert.equal(b.querySelector('[role=status]').textContent, 'Could not copy', name);
+    assert.ok(!b.classList.contains('is-copied'), name);
+    later(); assert.equal(b.title, 'Copy path', name); assert.equal(b.querySelector('[role=status]').textContent, '', name);
+    if (name === 'empty') assert.deepEqual(got, [], 'nothing to copy: writeText is not called');
+  }
+  const b = dom(C.copyButton({ text: 'x' }));
+  assert.equal(await C.copyFrom(b, { clipboard: { writeText: () => { throw new Error('sync'); } }, wait: () => {} }), false, 'a synchronous throw');
+  assert.equal(await C.copyFrom(b, { clipboard: null, wait: () => {} }), false, 'no clipboard at all');
+});
+
+test('T-6 copyFrom keeps focus and the button\'s content; it is a real button (type=button, no tabindex)', async () => {
+  const { window } = new JSDOM(`<body>${C.copyButton({ text: 'feat/x', label: 'Copy branch' })}</body>`);
+  const b = window.document.querySelector('button');
+  assert.equal(b.type, 'button'); assert.equal(b.getAttribute('tabindex'), null);
+  b.focus();
+  const before = b.innerHTML.replace(/<span class="sr-only"[^]*?<\/span>/, '');
+  assert.equal(await C.copyFrom(b, { clipboard: copyStub().clipboard, wait: () => {} }), true);
+  assert.equal(window.document.activeElement, b, 'focus stays'); assert.equal(b.disabled, false);
+  assert.equal(b.innerHTML.replace(/<span class="sr-only"[^]*?<\/span>/, ''), before, 'nothing visible is added or removed: the width never changes');
+  window.close();
+});
+
+test('T-6 copied twice: the first timer never cuts the second short', () => {
+  const b = dom(C.copyButton({ text: 'x', label: 'Copy id' }));
+  const timers = new Map(); let n = 0; const cleared = [];
+  const wait = (fn) => { timers.set(++n, fn); return n; }, clear = (id) => { cleared.push(id); timers.delete(id); };
+  C.copied(b, { wait, clear }); C.copied(b, { wait, clear });
+  assert.deepEqual(cleared, [1], 'the second clears the first');
+  assert.equal(b.title, 'Copied');
+  [...timers.values()].forEach((fn) => fn());
+  assert.equal(b.title, 'Copy id', 'it ends on the label, never on Copied');
+});
+
+test('T-6 copied writes into data-tip-text while a tip shows', () => {
+  const b = dom(C.copyButton({ text: 'x', label: 'Copy id' }));
+  b.dataset.tipText = 'Copy id'; b.removeAttribute('title');   // the watcher holds the title
+  let later = null; C.copied(b, { wait: (fn) => { later = fn; } });
+  assert.equal(b.dataset.tipText, 'Copied'); assert.equal(b.getAttribute('title'), null);
+  later(); assert.equal(b.dataset.tipText, 'Copy id'); assert.equal(b.getAttribute('title'), null);
+});
+
 test('the shell pieces: offline line, side column, action row, away screen', () => {
   const off = dom(C.offlineLine());
   assert.equal(off.getAttribute('role'), 'status');
@@ -1002,7 +1151,83 @@ test('tipPlace: a menu item\'s tip sits beside the menu, else on its other side,
   const item = { top: 100, bottom: 120, left: 20, width: 200 }, tip = { width: 150, height: 30 };
   assert.deepEqual(C.tipPlace(item, tip, 1000, 700, { left: 10, right: 230 }), { top: 100, left: 236 });
   assert.deepEqual(C.tipPlace(item, tip, 300, 700, { left: 200, right: 290 }), { top: 100, left: 44 });
-  assert.equal(C.tipPlace(item, tip, 240, 700, { left: 8, right: 232 }).top, 126, 'no room either side: under it');
+  assert.equal(C.tipPlace(item, tip, 240, 700, { left: 8, right: 232 }).top, 64, 'no room either side: above the menu, never over its next option (small.one-tooltip)');
+});
+
+const meets = (a, t) => {   // whether the placed tip box meets the anchor box
+  const r = { top: t.top, left: t.left, bottom: t.top + t.height, right: t.left + t.width };
+  return r.left < a.right && r.right > a.left && r.top < a.bottom && r.bottom > a.top;
+};
+
+test('T-2 tipPlace never covers its anchor', () => {
+  const vw = 1024, vh = 730;
+  const anchors = [[0, 0, 20, 20], [1004, 0, 20, 20], [0, 710, 20, 20], [1004, 710, 20, 20], [500, 350, 40, 24], [500, 0, 200, 730], [0, 300, 1024, 40], [300, 690, 40, 30]]
+    .map(([left, top, width, height]) => ({ left, top, width, height, right: left + width, bottom: top + height }));
+  for (const a of anchors) for (const [width, height] of [[40, 20], [200, 40], [320, 120], [600, 300]]) {
+    const at = C.tipPlace(a, { width, height }, vw, vh);
+    assert.ok(!meets(a, { ...at, width, height }), `anchor ${JSON.stringify(a)}, tip ${width}x${height}: ${JSON.stringify(at)}`);
+  }
+  const roomy = C.tipPlace({ top: 100, bottom: 120, left: 100, right: 120, width: 20 }, { width: 100, height: 30 }, vw, vh);
+  assert.deepEqual(roomy, { top: 126, left: 60 }, 'with room it is under its anchor, centred');
+});
+
+test('T-2 tipPlace beside a menu never covers the menu', () => {
+  const item = { top: 100, bottom: 120 };
+  for (const [vw, menu, tip] of [[1000, { left: 10, right: 230 }, { width: 150, height: 30 }], [300, { left: 200, right: 290 }, { width: 150, height: 30 }],
+    [240, { left: 8, right: 232 }, { width: 150, height: 30 }], [240, { left: 8, right: 232, top: 90, bottom: 400 }, { width: 150, height: 30 }],
+    [240, { left: 8, right: 232, top: 20, bottom: 700 }, { width: 150, height: 30 }]]) {
+    const it = { ...item, left: menu.left, right: menu.right, width: menu.right - menu.left };   // the item lies in its menu
+    const box = { top: menu.top ?? it.top, bottom: menu.bottom ?? it.bottom, ...menu };
+    const at = C.tipPlace(it, tip, vw, 730, menu);
+    assert.ok(!meets(box, { ...at, ...tip }), `menu ${JSON.stringify(menu)} in ${vw}px: ${JSON.stringify(at)}`);
+    assert.ok(!meets(it, { ...at, ...tip }), 'nor its item');
+  }
+});
+
+test('T-2 doubleTips: a double is listed with its sources', () => {
+  const { window } = new JSDOM(`<body>
+    <span class="tip-wrap" title="Why it is off" tabindex="0"><button id="a" title="Merge" disabled>M</button></span>
+    <button id="b" title="Copy" data-tip="Copy it">C</button>
+    <button id="c" title="Stop" aria-describedby="t1">S</button><div class="rail-tip" id="t1">Stops it</div>
+    <a id="d" href="#x" title="Open"><span title="The run">r</span></a>
+    <div id="e" role="menuitem" data-tip-text="Held by the watcher"><i title="x"></i></div>
+  </body>`);
+  const found = C.doubleTips(window.document.body).map(({ el, sources }) => [el.id, sources]);
+  assert.deepEqual(found, [['a', ['title', 'wrapper-title']], ['b', ['title', 'data-tip']], ['c', ['title', 'describedby']], ['d', ['title', 'child-title']], ['e', ['title', 'child-title']]]);
+  window.close();
+});
+
+test('T-2 doubleTips: one tip is not listed', () => {
+  const { window } = new JSDOM(`<body>
+    <button title="One">x</button>
+    <span class="tip-wrap" title="Why it is off" tabindex="0"><button disabled>Merge</button></span>
+    <button aria-label="Close">×</button>
+    <button aria-describedby="n1" title="Save">S</button><span id="n1">a plain note, not a tip</span>
+    <div title="a row"><button>a</button><button>b</button></div>
+  </body>`);
+  const before = window.document.body.innerHTML;
+  assert.deepEqual(C.doubleTips(window.document.body), []);
+  assert.equal(window.document.body.innerHTML, before, 'pure: nothing changes');
+  window.close();
+});
+
+test('T-2 OffTip: one title, the detailed one', () => {
+  const html = C.button({ label: 'Copy', iconOnly: true, icon: '<svg></svg>', attrs: { disabled: true } });
+  const text = 'Checks are still running on #959';
+  for (const off of [true, false]) {
+    const { window } = new JSDOM(`<body>${C.tooltip({ text, html, off })}</body>`);
+    const titled = [...window.document.body.querySelectorAll('[title]')];
+    assert.equal(titled.length, 1, `off: ${off}`); assert.equal(titled[0].title, text);
+    assert.equal(window.document.querySelector('button').getAttribute('aria-label'), 'Copy', 'the name stays');
+    assert.deepEqual(C.doubleTips(window.document.body), []);
+    assert.equal((C.tooltip({ text, html, off }).match(/ title=/g) || []).length, 1, 'one title attribute in the markup');
+    window.close();
+  }
+});
+
+test('T-2 small-rules holds small.one-tooltip', () => {
+  const row = readFileSync('docs/rail/small-rules.md', 'utf8').split('\n').find((l) => l.startsWith('| `small.one-tooltip`'));
+  assert.ok(row); assert.match(row, /tipPlace/); assert.match(row, /doubleTips/);
 });
 
 test('selectAllBox: checked at all, mixed at some', () => {

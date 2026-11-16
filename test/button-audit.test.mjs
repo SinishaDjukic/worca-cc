@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { auditButtons, auditSizes, auditStray, auditSurface, auditType, BUTTON_SPEC, SIZE_SPEC, STRAY_SPEC, SURFACE_SPEC, TYPE_SPEC } from '../tools/button-audit.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { button } from '../ui/public/design-system/components/button.mjs';
 
 const OK = { borderTopLeftRadius: '6px', borderTopRightRadius: '6px', borderBottomRightRadius: '6px', borderBottomLeftRadius: '6px',
   backgroundImage: 'none', boxShadow: 'none' };
@@ -28,6 +29,11 @@ test('the Start run split button counts as one primary beside a secondary (D11)'
   assert.deepEqual(run(`<div><div class="btn-split"><button class="btn btn-lg btn-primary" data-h="40">Start run</button>
     <button class="btn btn-lg btn-primary btn-icon btn-split-more" data-h="40" aria-label="More ways to start"></button></div>
     <button class="btn btn-lg" data-h="40">Save</button></div>`), []);
+});
+
+test('T-8 a busy button passes the audit (one size, one variant)', () => {
+  assert.deepEqual(run(button({ label: 'Save', kind: 'primary', busy: true, attrs: { 'data-h': '28' } })), []);
+  assert.deepEqual(run(button({ label: 'Copy', kind: 'quiet', iconOnly: true, busy: true, attrs: { 'data-h': '28' } })), []);
 });
 
 test('a button that is not .btn fails as not-the-component (known bug 4)', () => {

@@ -452,11 +452,21 @@
         "danger (solid only inside a confirm)"
       ],
       "notFor": "going somewhere (Text link); on or off (Switch)",
+      "rules": [
+        "while its action is out it is busy: a spinner inside over its label, the same width, disabled and aria-busy; back at rest when it settles, focus returned; a still ring under reduced motion",
+        "a short verb plus its detail, on one line: it never overflows"
+      ],
       "also": [
         {
           "code": "ui/public/design-system/components/button.mjs#splitButton",
           "needs": [
             "One main action with alternatives under ▾"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/button.mjs#busy",
+          "needs": [
+            "A button whose action is out"
           ]
         },
         {
@@ -912,11 +922,16 @@
       "code": "ui/public/design-system/components/copy-button.mjs#copyButton",
       "kind": "acting",
       "needs": [
-        "copying text"
+        "copying text",
+        "copying markdown as written",
+        "copying code without its prompt"
       ],
       "rules": [
-        "a quiet 28px icon button",
-        "a tick for 1.2s, Copied in its tooltip and the live region",
+        "a real, quiet 28px icon button",
+        "its label names what it copies: Copy, Copy as markdown, Copy code",
+        "it copies the source exactly as passed: markdown as written, code without its prompt or line numbers",
+        "a tick for 1.2s, Copied in its tooltip and the live region; Could not copy when the clipboard refuses",
+        "focus stays on it",
         "its width never changes"
       ],
       "example": "a branch, a command, an id",
@@ -925,6 +940,12 @@
           "code": "ui/public/design-system/components/copy-button.mjs#copied",
           "needs": [
             "The tick after something was copied"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/copy-button.mjs#copyFrom",
+          "needs": [
+            "Writing a copy to the clipboard and saying Copied or Could not copy"
           ]
         }
       ]
@@ -1533,7 +1554,7 @@
       "example": "a long menu, the page"
     },
     {
-      "name": "Tooltip",
+      "name": "OffTip",
       "code": "ui/public/design-system/components/field.mjs#tooltip",
       "kind": "showing",
       "needs": [
@@ -1889,7 +1910,16 @@
         "help on any control, mark or clipped text"
       ],
       "rules": [
-        "small.tooltip"
+        "small.tooltip",
+        "small.one-tooltip"
+      ],
+      "also": [
+        {
+          "code": "ui/public/design-system/components/tooltip.mjs#doubleTips",
+          "needs": [
+            "Finding a control with two tips"
+          ]
+        }
       ]
     },
     {
