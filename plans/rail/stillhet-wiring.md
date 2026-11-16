@@ -204,7 +204,11 @@ One row per action: `npm run stillhet:wiring` lists every `window.RailWould(...)
 | `projects/projects.js › Rename…` | wired | slice 9 D7: `PATCH /api/projects/:key` `{name}` (`form.rename-project`); the key never changes |
 | `projects/projects.js › Locate folder…` | wired | slice 9 D8: `PATCH /api/projects/:key` `{path}`, which re-keys the project and answers the new key; the page goes to it |
 | `projects/projects.js › Remove…` | wired | slice 9 D10: `DELETE /api/projects?name=` once the undo window closes, `&deleteFolder=1` for a folder Worca made (`form.remove-owned`) |
-| `projects/projects.js › Add a project by hand` | wired | slice 9 D11: a path is `POST /api/projects` `{name, path}`; a repository address is `POST /api/projects/clone` `{url}`, followed by its `clone-changed` frames |
+| `projects/projects.js › Add a project by hand` | wired | slice 9 D11: a path is `POST /api/projects` `{name, path}`, plus `useGit:true` when Use git is on for a plain folder (COV-1); a repository address is `POST /api/projects/clone` `{url}`, followed by its `clone-changed` frames |
+| `projects/project-add.js › Choose folder…` | wired | COV-1: the FolderBrowser reads `GET /api/fs/dirs?path=` (a seed that fails opens at the top); `GET /api/git` says whether Use git is offered |
+| `projects/project-add.js › New folder` | wired | COV-1: `POST /api/projects/create` `{name, useGit?, dryRun:true}` says where it is made; Create sends `{name, useGit?}` and opens the project once listed |
+| `projects/project-add.js › Several folders…` | wired | COV-1: the FolderBrowser in multi mode (`GET /api/fs/dirs?path=`), then the review list sends `POST /api/projects/bulk` `{projects:[{name, path}]}`; skipped rows keep their reasons to rename and retry |
+| `projects/project-add.js › the probe line` | wired | COV-1: `GET /api/projects/probe?path=` under the One folder field (classic's detectModel rules); a refused probe blocks Add |
 | `projects/projects.js › How its tasks run` | wired | slice 9 D16: read with `GET /api/projects/:key/settings`; a pick is `PATCH /api/projects/:key/settings` `{settingId: value}`, Use yours sends null |
 | `projects/projects.js › Team memory` | wired | slice 9 D16: `PATCH /api/projects/:key/settings` `{'memory.team': on}`; a refusal keeps the switch |
 | `projects/projects.js › Cost tags, Who pays and Labels` | wired | slice 9 D16, D19: `GET`/`PUT /api/projects/:key/tags/defaults` `{tags, labels}` |
@@ -342,6 +346,19 @@ One row per surface of today's UI that Stillhet must carry (gate.prototype in `d
 | `ui/public/shape/` | wired | The perspective chips and their Product lock, Compliance and held-back Project fit (flag proposedPerspectives): Stillhet's TaskProposal "reviewed by" picker, from `src/shared/shape/perspectives.mjs` through `live/chat-live.mjs` `perspectiveChoices` (the Perspectives proposed on the run card row above) |
 | `route › /api/team-metrics/prs` | wired | Insights › By person, a person's open row and a teammate's task: the PR states of the scope's runs (`live/insights-live.mjs` `work`, #1310) |
 | `route › /api/team-metrics/pr-events` | wired | Insights › By person, a person's open row: their pull requests made outside Worca (`live/insights-live.mjs` `work`, #1310) |
+
+## Classic controls
+
+One classic control's coverage decided by hand (`tools/classic-inventory.mjs` reads this table by id): app.js's folder
+browser and bulk review list serve Projects › Add project, which the tool's page map reads as Tasks.
+
+| Classic control | Status | Where in Stillhet |
+|---|---|---|
+| `ui/public/app.js › button › (folder-item)` | wired | Projects › Add a project by hand › Choose folder… / Several folders…: a folder row of the FolderBrowser (`projects/project-add.js`, `GET /api/fs/dirs` in `live/projects-live.mjs`) |
+| `ui/public/app.js › button › No subfolders.` | wired | the FolderBrowser's No subfolders. line (`projects/project-add.js`, `GET /api/fs/dirs`) |
+| `ui/public/app.js › toggle › Select …` | wired | the FolderBrowser's tick per folder in Several folders… (`projects/project-add.js`) |
+| `ui/public/app.js › toggle › Add …` | wired | the review list's tick per picked folder (`projects/project-add.js`, `POST /api/projects/bulk`) |
+| `ui/public/app.js › field › Project name for …` | wired | the review list's name per picked folder (`projects/project-add.js`, `POST /api/projects/bulk`) |
 
 ## Opt-in
 

@@ -8,7 +8,7 @@ import { startProjectsLive, PROJECT_ACTIONS } from '../ui/public/stillhet/live/p
 const ALL = [];   // every request of every rig: checked against the table at the end
 after(() => {
   const known = Object.values(PROJECT_ACTIONS).map(([, , f]) => f);
-  const args = { key: 'X', id: 'X', name: 'X', path: 'X', url: 'X', edgeId: 'X', state: 'X', patch: {}, tags: [], labels: [], paths: [], projectKey: 'X', file: 'X', owned: false };
+  const args = { key: 'X', id: 'X', name: 'X', path: 'X', url: 'X', edgeId: 'X', state: 'X', patch: {}, tags: [], labels: [], paths: [], projectKey: 'X', file: 'X', owned: false, rows: [] };
   for (const c of ALL) {
     const fits = known.some((f) => { for (const owned of [false, true]) { const [m, u] = f({ ...args, owned }); const re = new RegExp(`^${u.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/X/g, '[^/&?]+')}$`); if (m === c.method && re.test(c.url)) return true; } return false; });
     assert.ok(fits, `${c.method} ${c.url} is not in PROJECT_ACTIONS`);
@@ -484,9 +484,84 @@ test('F-b23m2-02: a projects-changed frame that lands before the Locate PATCH an
 });
 
 test('source scan (R-arch-3): the pages hold none of dev\'s route or field names', () => {
-  for (const f of ['projects/projects.js', 'workspaces/workspaces.js']) {
+  for (const f of ['projects/projects.js', 'projects/project-add.js', 'workspaces/workspaces.js']) {
     const src = readFileSync(new URL(`../ui/public/stillhet/${f}`, import.meta.url), 'utf8');
     for (const word of ['/api/', 'projectPaths', 'remoteUrl', 'deleteFolder', 'projectKeys']) assert.ok(!src.includes(word), `${f} holds ${word}`);
     for (const word of ['notLive(', 'is not in Stillhet yet', "refuse('workspaces.add')"]) assert.ok(!src.includes(word), `${f} holds ${word}`);
   }
+});
+
+test('COV-1 PROJECT_ACTIONS: dirs, probe, git-available, create and bulk build classic\'s routes and bodies; add sends useGit only when asked', () => {
+  const b = (id, a) => PROJECT_ACTIONS[id][2](a);
+  assert.deepEqual(b('dirs', { path: '' }), ['GET', '/api/fs/dirs?path=']);
+  assert.deepEqual(b('dirs', { path: '/a b' }), ['GET', '/api/fs/dirs?path=%2Fa%20b']);
+  assert.deepEqual(b('probe', { path: '~/src/x' }), ['GET', '/api/projects/probe?path=~%2Fsrc%2Fx']);
+  assert.deepEqual(b('git-available', {}), ['GET', '/api/git']);
+  assert.deepEqual(b('create', { name: 'alpha', useGit: true, dryRun: true }), ['POST', '/api/projects/create', { name: 'alpha', useGit: true, dryRun: true }]);
+  assert.deepEqual(b('create', { name: 'alpha', useGit: false }), ['POST', '/api/projects/create', { name: 'alpha' }]);
+  assert.deepEqual(b('bulk', { rows: [{ name: 'a', path: '/a', include: true }] }), ['POST', '/api/projects/bulk', { projects: [{ name: 'a', path: '/a' }] }]);
+  assert.deepEqual(b('add', { name: 'n', path: '/p/n', useGit: true }), ['POST', '/api/projects', { name: 'n', path: '/p/n', useGit: true }]);
+  assert.deepEqual(b('add', { name: 'n', path: '/p/n', useGit: 'yes' }), ['POST', '/api/projects', { name: 'n', path: '/p/n' }]);
+  assert.equal(PROJECT_ACTIONS.create[1], 'Creating…');
+  assert.equal(PROJECT_ACTIONS.bulk[1], 'Adding…');
+});
+
+test('COV-1 folders, probe and gitAvailable: what dev answered, a refusal in plain words; git counts as there on any failure', async () => {
+  const r = rig({ answer: (m, u) => (u === '/api/fs/dirs?path=%2Fnope' ? [400, { error: 'no such directory' }] : u.startsWith('/api/fs/dirs') ? [200, { path: '/src', parent: '/', home: '/home/me', dirs: [{ name: 'a', path: '/src/a' }] }]
+    : u.startsWith('/api/projects/probe') ? [200, { path: '/src/a', exists: true, isDir: true, vcs: 'git' }] : u === '/api/git' ? 'down' : null) });
+  assert.deepEqual(await r.live.folders('/src'), { ok: true, path: '/src', parent: '/', home: '/home/me', dirs: [{ name: 'a', path: '/src/a' }], limited: false, roots: [] });
+  assert.deepEqual(await r.live.folders('/nope'), { ok: false, text: 'Could not open nope: no such directory' });
+  assert.deepEqual(await r.live.probe('/src/a'), { ok: true, probe: { path: '/src/a', exists: true, isDir: true, vcs: 'git' } });
+  assert.equal(await r.live.gitAvailable(), true, 'a failure counts as available, as classic does');
+  const r2 = rig({ answer: (m, u) => (u === '/api/git' ? [200, { available: false }] : u.startsWith('/api/projects/probe') ? [400, { error: 'path is required', code: 'INVALID' }] : 'down') });
+  assert.equal(await r2.live.gitAvailable(), false);
+  assert.deepEqual(await r2.live.probe('/x'), { ok: false, field: 'path is required' });
+  assert.deepEqual(await r2.live.folders('/src'), { ok: false, text: 'Worca is not answering' });
+});
+
+test('COV-1 checkNew: the dry run\'s where reads displayPath; a 400 is the field\'s error with the root', async () => {
+  const r = rig({ answer: (m, u, b) => (b?.name === 'taken' ? [400, { error: '/w/projects/taken already exists; pick another name', code: 'EXISTS', root: '/w/projects', rootDisplay: '~/worca/projects' }] : b?.name ? [200, { ok: true, root: '/w/projects', rootDisplay: '~/worca/projects', path: '/w/projects/alpha', displayPath: '~/worca/projects/alpha', name: 'alpha' }] : [400, { error: 'name is required', code: 'INVALID', root: '/w/projects', rootDisplay: '~/worca/projects' }]) });
+  assert.deepEqual(await r.live.checkNew({ name: 'alpha', useGit: true }), { ok: true, where: '~/worca/projects/alpha' });
+  assert.deepEqual(r.writes().at(-1), ['POST', '/api/projects/create', { name: 'alpha', useGit: true, dryRun: true }]);
+  assert.deepEqual(await r.live.checkNew({ name: 'taken' }), { ok: false, field: 'A folder called taken already exists', where: '~/worca/projects' });
+  assert.ok(!/pick another name|\/w\//.test((await r.live.checkNew({ name: 'taken' })).field), 'F-cov1-07: never dev\'s raw text');
+  assert.deepEqual(await r.live.checkNew({ name: '' }), { ok: true, where: '~/worca/projects' }, 'an empty name: the root, no field');
+});
+
+test('COV-1 createProject: 201 refreshes and answers the key once listed; 400 EXISTS is the field; 500 FAILED says Could not create; one at a time', async () => {
+  const g = gate();
+  const r = rig({ hold: (m, u) => (u === '/api/projects/create' ? g.p : null), answer: (m, u, b) => (b.name === 'taken' ? [400, { error: '/w/projects/taken already exists; pick another name', code: 'EXISTS' }] : b.name === 'dup' ? [400, { error: 'a project named "dup" already exists', code: 'EXISTS' }] : b.name === 'boom' ? [500, { error: 'disk full', code: 'FAILED' }] : [201, { project: { key: 'alpha-1234abcd', name: 'alpha' }, projects: [] }]) });
+  r.setWorld(withProject({ id: 'alpha-1234abcd', name: 'alpha', devPath: '/w/alpha' }));
+  const one = r.live.createProject({ name: 'alpha', useGit: true });
+  assert.equal(r.live.pending('add'), 'Creating…');
+  assert.deepEqual(await r.live.createProject({ name: 'alpha', useGit: true }), { ok: false, text: '' }, 'a second press sends nothing');
+  g.open();
+  assert.deepEqual(await one, { ok: true, text: 'Created alpha', key: 'alpha-1234abcd' });
+  assert.ok(r.refreshed.includes('projects'));
+  assert.deepEqual(r.writes(), [['POST', '/api/projects/create', { name: 'alpha', useGit: true }]]);
+  assert.deepEqual(await r.live.createProject({ name: 'taken' }), { ok: false, field: 'A folder called taken already exists' });
+  assert.deepEqual(await r.live.createProject({ name: 'dup' }), { ok: false, field: 'dup is already a project' }, 'F-cov1-07: Stillhet\'s words');
+  assert.deepEqual(await r.live.createProject({ name: 'boom' }), { ok: false, text: 'Could not create boom: disk full' });
+  assert.deepEqual(r.writes().at(-1), ['POST', '/api/projects/create', { name: 'boom' }]);
+});
+
+test('COV-1 addMany: sends {projects:[{name,path}]}, sorts added and skipped by index, a key only for one added row, refuses on 400', async () => {
+  const results = (b) => b.projects.map((p, index) => (p.name === 'beta' ? { index, status: 'skipped', name: p.name, path: p.path, reason: 'already registered' } : { index, status: 'added', key: `${p.name}-1111aaaa`, name: p.name, path: p.path, vcs: 'git' }));
+  const r = rig({ answer: (m, u, b) => (u === '/api/projects/bulk' ? (b.projects.length > 3 ? [400, { error: 'at most 100 projects' }] : [200, { projects: [], results: results(b) }]) : null) });
+  r.setWorld({ ...WORLD(), projects: [...WORLD().projects, { id: 'alpha-1111aaaa', name: 'alpha' }, { id: 'gamma-1111aaaa', name: 'gamma' }] });
+  const a = await r.live.addMany([{ name: 'alpha', path: '/s/alpha', include: true }, { name: 'beta', path: '/s/beta' }, { name: 'gamma', path: '/s/gamma' }]);
+  assert.deepEqual(r.writes().at(-1), ['POST', '/api/projects/bulk', { projects: [{ name: 'alpha', path: '/s/alpha' }, { name: 'beta', path: '/s/beta' }, { name: 'gamma', path: '/s/gamma' }] }]);
+  assert.equal(a.ok, true);
+  assert.deepEqual(a.added, [{ key: 'alpha-1111aaaa', name: 'alpha' }, { key: 'gamma-1111aaaa', name: 'gamma' }]);
+  assert.deepEqual(a.skipped, [{ index: 1, name: 'beta', path: '/s/beta', reason: 'already registered' }]);
+  assert.equal(a.text, 'Added 2 projects. Skipped 1: beta (already registered).');
+  assert.equal(a.key, undefined, 'no key when a row was skipped');
+  assert.equal(a.results.length, 3);
+  assert.ok(r.refreshed.includes('projects'));
+  const one = await r.live.addMany([{ name: 'alpha', path: '/s/alpha' }]);
+  assert.equal(one.key, 'alpha-1111aaaa', 'one added and none skipped: its key, once listed');
+  const r2 = rig({ answer: (m, u, b) => (u === '/api/projects/bulk' ? [200, { projects: [], results: results(b) }] : null) });
+  const none = await r2.live.addMany([{ name: 'beta', path: '/s/beta' }]);
+  assert.deepEqual([none.ok, none.added, r2.refreshed], [true, [], []], 'all skipped: nothing refreshes');
+  assert.deepEqual(await r.live.addMany([1, 2, 3, 4].map((n) => ({ name: `p${n}`, path: `/s/p${n}` }))), { ok: false, text: 'Could not add 4 projects: at most 100 projects' });
 });

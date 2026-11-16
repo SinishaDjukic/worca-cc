@@ -256,6 +256,53 @@
       ]
     },
     {
+      "name": "FolderBrowser",
+      "code": "ui/public/design-system/components/folder-browser.mjs#folderBrowser",
+      "kind": "choosing",
+      "needs": [
+        "picking one folder or several on this computer"
+      ],
+      "notFor": "a path the person types (Field)",
+      "rules": [
+        "in a Dialog: Up, Home and one row per folder; a row's name goes into it",
+        "several: a checkbox per row, picks survive moving between folders, Add N selected",
+        "a failed load keeps the last listing and says why in the status line"
+      ],
+      "example": "Choose folder…, Several folders…",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/folder-browser.mjs#folderName",
+          "needs": [
+            "a folder's name from its path"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/folder-browser.mjs#folderProbe",
+          "needs": [
+            "what a typed folder is, under its field: Git, Folder, Not found, Part of a project"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/folder-browser.mjs#folderReview",
+          "needs": [
+            "picked folders reviewed before they are added: a name each, Added or why it was skipped"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/folder-browser.mjs#reviewSummary",
+          "needs": [
+            "what a bulk add did, in one line"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/folder-browser.mjs#folderWay",
+          "needs": [
+            "an add way's own controls on the form: Choose folder…, Browse folders…, Use git"
+          ]
+        }
+      ]
+    },
+    {
       "name": "PanelFrame",
       "code": "ui/public/design-system/components/shell-parts.mjs#panelFrame",
       "kind": "showing",
@@ -3505,6 +3552,11 @@
       "name": "ENGINE_WORDS",
       "kind": "constant",
       "why": "How each engine reads in a model's name"
+    },
+    {
+      "name": "REVIEW_EMPTY",
+      "kind": "constant",
+      "why": "FolderReview's words when no folder is ticked"
     }
   ],
   "lookOptions": [
