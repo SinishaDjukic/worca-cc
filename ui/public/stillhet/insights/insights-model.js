@@ -249,7 +249,7 @@
   }
 
   // ---- the sub-features ----
-  const moneyCols = (mid = ['Cost per hour saved', (r) => (r.hours ? usd2(r.spend / r.hours) : '-')]) => [['AI spend', (r) => usd(r.spend)], ['Hours saved', (r) => `${r.hours} h`], ['Saved', (r) => usd(r.saved)], mid, ['Tasks', (r) => String(r.tasks)]];
+  const moneyCols = (mid = ['Cost per hour saved', (r) => (r.hours ? usd2(r.spend / r.hours) : '-')]) => [['AI spend', (r) => usd(r.spend)], ['Hours saved', (r) => `${Math.round(r.hours)} h`], ['Saved', (r) => usd(r.saved)], mid, ['Tasks', (r) => String(r.tasks)]];
   const wasteCols = [['AI spend', (r) => usd(r.spend)], ['Tasks affected', (r) => String(r.tasks)]];
   const SUM = ['bars', 'lines', 'running', 'table'], COUNT = ['bars', 'lines', 'table'], RATE = ['bars', 'lines', 'table'];
   const cmp = (c, sub, w = 'in the period before') => {
@@ -426,7 +426,7 @@
     c.rows = rows;
     return c;
   }
-  // ---- a link to a page as you narrowed it (act.copy-link): only what differs from the defaults; days as ISO days ----
+  // ---- a link to a page as you narrowed it ----
   const YEAR = 2026;   // the demo world's year: its labels name days of it
   const isoDay = (m, d) => `${YEAR}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
   // a demo label's first and last day ('Nov 3', 'Oct 8-14', 'Nov 1-8', 'Jul')
@@ -438,6 +438,8 @@
   }
   const realDay = (s) => { if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return null; const [y, m, d] = s.split('-').map(Number), t = new Date(Date.UTC(y, m - 1, d)); return t.getUTCMonth() === m - 1 && t.getUTCDate() === d ? s : null; };
   const AGAINSTS = ['none', 'before', 'budget'];
+  // act.copy-link: only what differs from the defaults; days as ISO days. No team scope: it is the reader's own team
+  // pick, and classic's #team-metrics link carries none (ledger row 3); stateOfLink still reads an old link's scope=
   function linkOf(id, st) {
     const sub = SUB[id], d = defaults(sub), q = [], put = (k, v) => q.push(`${k}=${encodeURIComponent(v)}`);
     if (st.by !== d.by) put('by', st.by);
@@ -446,7 +448,6 @@
     if (st.filter.length) q.push(`of=${st.filter.map(encodeURIComponent).join(',')}`);
     if (st.as !== d.as) put('as', st.as);
     if (st.against !== d.against) put('vs', st.against);
-    if (sub.team && st.scope) put('scope', st.scope);   // a team picked in the of sentence (the first is the default)
     let from = st.from || null, to = st.to || null;
     if (st.narrow) { const labels = compute(sub, { ...st, narrow: null }).labels; from = spanOf(labels[st.narrow[0]])[0]; to = spanOf(labels[st.narrow[1]])[1]; }
     if (from && to) { put('from', from); put('to', to); }

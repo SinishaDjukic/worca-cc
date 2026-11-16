@@ -383,3 +383,17 @@ test('B1.7 unknown base: the no-base card and page say \'Base unknown: …\' and
   assert.deepEqual([page.case, page.detail, page.base, page.branch], ['no-base', 'Base unknown: Worca cannot tell where to open a PR', '', 'feat/x']);
   assert.equal(taskCardOf(FIN({ branch: { source: '', feature: 'feat/x' } })).base, undefined);
 });
+
+test('COV-3 #12: resumeEngines follows usageLimitSwitches with classic\'s words; empty for any other pause, or a run that is not paused', async () => {
+  const { usageLimitSwitches, engineLabel, engineSwitchNote } = await import('../src/shared/engine-switch.mjs');
+  const limit = { status: 'paused', pauseReason: 'usage_limit', limitEngine: 'claude' };
+  const page = taskPageOf({ row: { id: 'p1', case: 'paused-limit' }, state: limit }, { now: NOW });
+  const want = usageLimitSwitches({ reason: 'usage_limit', limitEngine: 'claude' });
+  assert.ok(want.length > 0);
+  assert.deepEqual(page.resumeEngines, want.map((id) => ({ id, label: engineLabel(id), note: engineSwitchNote(id) })));
+  assert.ok(!page.resumeEngines.some((e) => e.id === 'claude'), 'never the engine that hit its limit');
+  assert.deepEqual(taskPageErrors(page), []);
+  assert.deepEqual(taskPageOf({ row: { id: 'p1' }, state: { ...limit, pauseReason: 'cost_cap' } }).resumeEngines, [], 'another pause: none');
+  assert.deepEqual(taskPageOf({ row: { id: 'p1' }, state: { ...limit, limitEngine: null } }).resumeEngines, [], 'a provider\'s limit (no limitEngine): none');
+  assert.deepEqual(taskPageOf({ row: { id: 'p1' }, state: { ...limit, status: 'running' } }).resumeEngines, [], 'running: none');
+});

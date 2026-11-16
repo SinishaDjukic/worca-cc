@@ -96,7 +96,7 @@ test('the center\'s card actions run the same routes: Resume on a paused task', 
   const { w, d, calls } = await liveHost({ sources: sources() });
   await go(w, '#runs', 150);
   d.querySelector('#route-runs [data-c-act="resume|h1"]').click(); await settle(80);
-  assert.deepEqual(sent(calls), [['POST', '/api/resume', { pipelineId: 'h1' }]]);
+  assert.deepEqual(sent(calls), [['POST', '/api/resume', { pipelineId: 'h1', baseCheck: true }]]);
   assert.doesNotMatch(toastText(d), /not in Stillhet yet/);
 });
 
@@ -176,4 +176,43 @@ test('F-3-09: the Tasks center by workflow groups tasks under their own workflow
   const facts = (name) => cards().find((c) => c.querySelector('.pg-t').textContent === name).getAttribute('title');
   assert.equal(facts('Lean'), '2 finished');
   assert.equal(facts('Default'), '1 finished', 'a task with no workflow is under Default');
+});
+
+test('F-a4-07: the Showing menu\'s archived count is the API\'s archived rows; picking Archived lists them and reads /api/history?archived=1 again', async () => {
+  const s = sources(), h3 = s.history.pipelines.find((p) => p.id === 'h3');
+  s.archived = { pipelines: ['x1', 'x2', 'x3'].map((id) => ({ ...h3, id, title: `Arch ${id}`, archived: true })) };
+  const { w, d, calls } = await liveHost({ sources: s });
+  await go(w, '#runs', 150);
+  const root = d.querySelector('#runs-root');   // the bar's Tasks list
+  root.querySelector('[data-menu="show"]').click(); await settle(20);
+  const item = root.querySelector('[data-pick="show|archived"]');
+  assert.ok(item, 'the Showing menu offers Archived');
+  assert.match(item.textContent.trim(), /3$/, `the archived count is the API's (${item.textContent.trim()})`);
+  const n = calls.filter((c) => c.method === 'GET' && c.url === URLS.archived).length;
+  item.click(); await settle(400);
+  for (const id of ['x1', 'x2', 'x3']) assert.ok(root.querySelector(`[data-open="run:${id}"]`), `${id} is listed`);
+  assert.ok(!root.querySelector('[data-open="run:h3"]'), 'an active row is not');
+  assert.equal(calls.filter((c) => c.method === 'GET' && c.url === URLS.archived).length, n + 1, 'the view\'s opening reads the archived feed once');
+});
+
+test('F-a4-07 (review minor): a failing archived read leaves the Tasks list drawn; the Archived view says it could not load, and its Try again reads only the archived feed', async () => {
+  let fail = true;
+  const s = sources(), h3 = s.history.pipelines.find((p) => p.id === 'h3');
+  s.archived = { pipelines: [{ ...h3, id: 'x1', title: 'Arch x1', archived: true }] };
+  const { w, d, calls } = await liveHost({ sources: s, read: (u) => (fail && u === URLS.archived ? [500, {}] : null) });
+  await go(w, '#runs', 150);
+  const root = d.querySelector('#runs-root');
+  assert.ok(root.querySelector('[data-open="run:h3"]'), 'the rest of the list draws');
+  assert.doesNotMatch(root.textContent, /Could not load/);
+  root.querySelector('[data-menu="show"]').click(); await settle(20);
+  root.querySelector('[data-pick="show|archived"]').click(); await settle(400);
+  assert.match(root.textContent, /Could not load the tasks/, 'the Archived view says it could not load');
+  const again = [...root.querySelectorAll('[data-retry]')].find((b) => b.textContent.trim() === 'Try again');
+  assert.ok(again, 'with Try again');
+  fail = false;
+  const n = calls.length;
+  again.click(); await settle(400);
+  assert.deepEqual(calls.slice(n).filter((c) => c.method === 'GET').map((c) => c.url), [URLS.archived], 'Try again reads the archived feed alone');
+  assert.ok(root.querySelector('[data-open="run:x1"]'), 'the archived row shows');
+  assert.doesNotMatch(root.textContent, /Could not load/);
 });

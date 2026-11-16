@@ -46,7 +46,7 @@ const CALM_CASE = { created: 'starting', starting: 'starting', running: 'working
 // a PR that still stands (open or merged): a closed-unmerged one is gone, its run reads Ready again (Create PR)
 const prUrlOf = (pr) => (pr?.url && lc(pr.state) !== 'closed' ? str(pr.url) : '');
 // a saved row whose PR is still open: the rows the checks cache is read for (D5)
-const openPrOf = (row) => !!prUrlOf(row?.pr) && lc(row.pr.state || 'open') === 'open';
+const openPrOf = (row) => !!prUrlOf(row?.pr) && lc(row.pr.state) === 'open';   // F-G-G1-01: a PR of unknown state is not known open
 // D5: an open PR's case from its checks entry (task-live.mjs owns the cache; rows, cards and pages pass the same entry):
 // approved once the checks pass and it merges cleanly, conflicts, failing, else checks (still running). null = no entry.
 export function prCaseOf(checks) {
@@ -162,6 +162,12 @@ export function projectKeyOf(thread = {}) {
   const c = thread && typeof thread.context === 'object' ? thread.context : null;
   return c && c.pinned !== false ? str(c.projectKey) : '';
 }
+/** The workspace a chat works in (F-G-G4-03): dev's context holds a projectKey, else a workspaceId (scope.mjs chatScopeOf);
+ *  '' when it is pinned to a project or to none. */
+export function workspaceIdOf(thread = {}) {
+  const c = thread && typeof thread.context === 'object' ? thread.context : null;
+  return c && c.pinned !== false && !str(c.projectKey) ? str(c.workspaceId) : '';
+}
 export function chatOf(thread = {}, { now = 0, unread = [], links = [], tasks = [], projects = [], livePids = new Map(), schedules = [], groups = [] } = {}) {
   const featureIds = new Set(arr(groups).filter((g) => g && g.kind === 'feature').map((g) => g.id));
   const key = projectKeyOf(thread), project = key ? str(arr(projects).find((p) => p && p.key === key)?.name) || key : '';
@@ -255,7 +261,7 @@ export function runsOf(history = [], tasks = [], { now = 0 } = {}) {
 function waitingTask(item, now, projects) {
   const once = item.kind === 'once', missed = once && item.status === 'missed', at = once ? item.runAt || item.scheduledFor : item.nextRunAt;
   const s = scheduleOf(item, { now, projects });
-  return pick('task', { id: `sched:${item.id}`, case: missed ? 'ticket-missed' : item.status === 'firing' ? 'ticket-firing' : 'scheduled', title: s.title, project: s.project, detail: missed ? 'Missed: it never started' : s.every, time: s.time, day: 'upcoming', labels: [], cost: null, archived: false, unread: false, pr: '', group: '', kind: 'Git', by: '', workflow: '', when: missed ? 'missed' : whenOf(at, now), ...(missed ? { missed: true } : {}) });
+  return pick('task', { id: `sched:${item.id}`, case: missed ? 'ticket-missed' : item.status === 'firing' ? 'ticket-firing' : 'scheduled', title: s.title, project: s.project, detail: missed ? 'Missed: it never started' : s.every, time: s.time, day: 'upcoming', labels: [], cost: null, archived: false, unread: false, pr: '', group: '', kind: 'Git', by: '', workflow: '', when: missed ? 'missed' : whenOf(at, now), ...(missed ? { missed: true } : {}), scheduleId: str(item.scheduleId) || str(item.id) });   // F-G-G5-02: the page it opens (a series' ticket opens its series)
 }
 
 // ---- projects ----
@@ -400,7 +406,8 @@ export function foldRounds(runs, liveRuns = [], saved = [], needs = new Set()) {
   return runs;
 }
 
-/** Every source's answer into the store's parts. Archived rows go; a pipeline both live and saved is kept once, live.
+/** Every source's answer into the store's parts. History's archived rows go (the `archived` source's stay, archived); a
+ *  pipeline both live and saved is kept once, live.
  *  `checksOf(pipelineId)`: task-live.mjs's checks entry (D5), asked only for a row whose PR is open, so a row reads the
  *  same case as its page and its card (R-arch-11). */
 export function snapshotOf(src = {}, { now = 0, unread = [], checksOf = null } = {}) {
@@ -429,9 +436,13 @@ export function snapshotOf(src = {}, { now = 0, unread = [], checksOf = null } =
   const { groups, inGroup, members } = runGroupsOf(src.runGroups, runs, { now, rowIdOf });
   runs.push(...members);
   for (const r of runs) { const gid = inGroup.get(r.id); if (gid) r.group = gid; }
+  // F-a4-07: the Archived view's rows (GET /api/history?archived=1). A pipeline is one row: live, then active, then archived.
+  // They are plain rows: no Needs you, outcome, group, round or chat reads them.
+  const heldPids = new Set([...livePids, ...saved.map((r) => r.id)]);
+  const archivedRuns = arr(src.archived?.pipelines).filter((r) => r && !heldPids.has(r.id)).map((r) => taskOfSaved({ ...r, archived: true }, { now, needs: false, sync: syncs[r.projectKey] || null }));
   const schedules = items.filter((x) => x.kind === 'recurring' || ['missed', 'scheduled', 'firing'].includes(x.status)).map((x) => scheduleOf(x, { now, projects: projectsRaw }));
   return {
-    runs, groups, userGroups: [],
+    runs: archivedRuns.length ? [...runs, ...archivedRuns] : runs, groups, userGroups: [],
     // the Chats Needs-you number: the server's count over every thread, not the first page's rows
     chatsNeeds: num(src.threads?.counts?.needs),
     chats: arr(src.threads?.threads).filter((t) => t && !t.archivedAt && !t.archived).map((t) => chatOf(t, { now, unread, links: arr(src.runLinks?.links), tasks: runs, projects: projectsRaw, livePids: new Map(liveRuns.filter((r) => r.pipelineId).map((r) => [r.pipelineId, str(r.runId)])), schedules, groups })),
@@ -523,7 +534,7 @@ export function spacesOf(src = null) {
 
 // What each source feeds: a refetch of one source replaces only these parts (D11).
 export const SOURCE_PARTS = Object.freeze({
-  hello: ['runs', 'costs', 'chats', 'groups'], history: ['runs', 'updates', 'chats', 'groups'], threads: ['chats', 'chatsNeeds'], runLinks: ['chats'], groups: ['chatGroups'], runGroups: ['groups', 'runs', 'chats'], schedules: ['schedules', 'runs', 'groups', 'chats'],
+  hello: ['runs', 'costs', 'chats', 'groups'], archived: ['runs'], history: ['runs', 'updates', 'chats', 'groups'], threads: ['chats', 'chatsNeeds'], runLinks: ['chats'], groups: ['chatGroups'], runGroups: ['groups', 'runs', 'chats'], schedules: ['schedules', 'runs', 'groups', 'chats'],
   projects: ['projects', 'runs'], sync: ['projects', 'runs', 'chats', 'groups'], budget: ['costs'], usageLimits: ['costs'], workspaces: ['spaces'], actions: ['actions'], notifications: ['updates'], away: ['away'], settings: ['keep', 'chatPrefs', 'pulseFor'],
 });
 /** The parts a single-source refetch replaces: `answer` stands for `source` among the last answers `sources`. */

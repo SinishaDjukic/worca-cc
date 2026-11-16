@@ -91,7 +91,7 @@
   // place outside Settings (page, click), with a toast (say). What it needs when off: `off(sv)` says why.
   function act(a, where, c) {
     const label = textOf(a.label, c.sv), key = where + '/' + (a.id || label);
-    const known = a.go || a.edit || a.confirm || a.copy || a.do || a.page || a.click || a.say;
+    const known = a.go || a.edit || a.confirm || a.copy || a.do || a.page || a.click || a.say || a.live;
     if (!known) throw new Error(`settings-model: "${label}" at ${where} does nothing`);
     REG.set(key, a);
     if (a.copy) return R.copyButton({ text: textOf(a.copy, c.sv), label: label, attrs: { 'data-svdo': key, 'data-key': 'sv:' + key } });
@@ -196,7 +196,7 @@
     }
     if (f.check) return c.R.checkbox({ label: f.label, checked: !!d.vals[f.key], attrs: { 'data-svdo': 'dlgchk:' + f.key, 'data-key': key } });
     if (f.button) return c.R.button({ label: f.button, kind: 'quiet', attrs: { 'data-svdo': 'dlgbtn:' + f.key, 'data-key': key, title: f.hint || null } });
-    return c.R.field({ id: 'sv-f-' + f.key, label: f.label, value: String(d.vals[f.key] ?? ''), hint: f.hint || '', multiline: !!f.multiline, type: f.type || 'text', placeholder: f.placeholder || '' });
+    return c.R.field({ id: 'sv-f-' + f.key, label: f.label, value: String(d.vals[f.key] ?? ''), hint: f.hint || '', multiline: !!f.multiline, type: f.type || 'text', placeholder: f.placeholder || '', attrs: { 'data-keep': key } });
   }
   function dialogHtml(sv, c) {
     const d = sv.__dialog; if (!d) return '';

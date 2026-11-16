@@ -222,6 +222,28 @@
       "example": "Sam Rivera ⇅"
     },
     {
+      "name": "ChoiceNote",
+      "code": "ui/public/design-system/components/choice-note.mjs#choiceNote",
+      "kind": "telling",
+      "needs": [
+        "a problem with a choice, its rows and its ways out"
+      ],
+      "parts": [
+        "status dot (needsYou: amber; it only tells: grey)",
+        "the note",
+        "what it means",
+        "one row per item, each with its own way out",
+        "the ways out, as Buttons",
+        "an end slot for a Checkbox"
+      ],
+      "rules": [
+        "it shows before the choice is made, on the rail, one at a time: the newest refusal wins (`form.run-options`)",
+        "a grey note never blocks and offers no way"
+      ],
+      "example": "This preset needs attention · Workflow is gone · Reset to default",
+      "notFor": "a dialog on top of a Dialog; something done (a Toast)"
+    },
+    {
       "name": "UsageRing",
       "code": "ui/public/design-system/components/usage.mjs#usageRing",
       "kind": "telling",
@@ -251,6 +273,53 @@
           "code": "ui/public/design-system/components/usage.mjs#connectedUsage",
           "needs": [
             "Only the providers that count: one signed out has no ring"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "FolderBrowser",
+      "code": "ui/public/design-system/components/folder-browser.mjs#folderBrowser",
+      "kind": "choosing",
+      "needs": [
+        "picking one folder or several on this computer"
+      ],
+      "notFor": "a path the person types (Field)",
+      "rules": [
+        "in a Dialog: Up, Home and one row per folder; a row's name goes into it",
+        "several: a checkbox per row, picks survive moving between folders, Add N selected",
+        "a failed load keeps the last listing and says why in the status line"
+      ],
+      "example": "Choose folder…, Several folders…",
+      "also": [
+        {
+          "code": "ui/public/design-system/components/folder-browser.mjs#folderName",
+          "needs": [
+            "a folder's name from its path"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/folder-browser.mjs#folderProbe",
+          "needs": [
+            "what a typed folder is, under its field: Git, Folder, Not found, Part of a project"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/folder-browser.mjs#folderReview",
+          "needs": [
+            "picked folders reviewed before they are added: a name each, Added or why it was skipped"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/folder-browser.mjs#reviewSummary",
+          "needs": [
+            "what a bulk add did, in one line"
+          ]
+        },
+        {
+          "code": "ui/public/design-system/components/folder-browser.mjs#folderWay",
+          "needs": [
+            "an add way's own controls on the form: Choose folder…, Browse folders…, Use git"
           ]
         }
       ]
@@ -1774,10 +1843,20 @@
       "code": "ui/public/design-system/components/scroll-fade.mjs#watchScrollFades",
       "kind": "telling",
       "needs": [
-        "a chat softens where it goes under the composer or the top bar, only while there is more past that edge (scrollEdges says which)"
+        "a chat softens where it goes under the composer or the top bar, only while there is more past that edge (scrollEdges says which)",
+        "a column measured only when it scrolls, resizes or its content changes (and every column around that change): a draw that changes nothing measures nothing"
+      ],
+      "also": [
+        {
+          "code": "ui/public/design-system/components/scroll-fade.mjs#pinnedToEnd",
+          "needs": [
+            "whether a chat sits at its end (its last PIN px in view), so a growing reply keeps it there"
+          ]
+        }
       ],
       "rules": [
-        "motion.scroll-fade"
+        "motion.scroll-fade",
+        "motion.follow-end"
       ]
     },
     {
@@ -2022,7 +2101,8 @@
       "code": "ui/public/design-system/components/kind-mark.mjs#filesCard",
       "kind": "moving",
       "needs": [
-        "files Worca shows in a conversation: pictures as tiles, files as rows, each with Download"
+        "files Worca shows in a conversation: pictures as tiles, files as rows, each with Download",
+        "a file's Show in ‹file manager› (revealLabel and the file's reveal), only where the server offers it"
       ],
       "rules": [
         "panel.conversation-cards"
@@ -2047,7 +2127,8 @@
       "code": "ui/public/design-system/components/kind-mark.mjs#youTurn",
       "kind": "showing",
       "needs": [
-        "what you said in a conversation, with the quote you answered and the files you attached"
+        "what you said in a conversation, with the quote you answered and the files you attached",
+        "an attached file as a chip that opens it ({name, attrs}); a plain name stays a plain chip"
       ],
       "rules": [
         "panel.conversation-cards"
@@ -2494,7 +2575,8 @@
       "code": "ui/public/design-system/components/list-page.mjs#listController",
       "needs": [
         "a list with its sentence, selecting, keys and states",
-        "selected counted in the actions' unit where a row stands for several (spec.count)"
+        "selected counted in the actions' unit where a row stands for several (spec.count)",
+        "an idle redraw that leaves the list as it was: paint({ ifChanged: true }) writes nothing when its drawing did not change (only paint writes inside the root)"
       ],
       "example": "listController({ root, spec })",
       "also": [
@@ -3494,6 +3576,11 @@
       "name": "ENGINE_WORDS",
       "kind": "constant",
       "why": "How each engine reads in a model's name"
+    },
+    {
+      "name": "REVIEW_EMPTY",
+      "kind": "constant",
+      "why": "FolderReview's words when no folder is ticked"
     }
   ],
   "lookOptions": [

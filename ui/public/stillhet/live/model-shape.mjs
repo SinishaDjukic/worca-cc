@@ -6,7 +6,7 @@
 // demo counts from its fixed today; live, the server's next time in ms) and an outcome update's `work` (its History row's
 // total active time in ms, which keys Pulse's stored read of that one outcome).
 export const SHAPES = Object.freeze({
-  task: { id: 'string', case: 'string', title: 'string', project: 'string', detail: 'string', time: 'string', day: 'string', labels: 'array', cost: 'number|null', archived: 'boolean', unread: 'boolean', pr: 'string', group: 'string', kind: 'string', by: 'string', workflow: 'string', when: 'string?', missed: 'boolean?', over: 'boolean?', rounds: 'object|null?', roundOf: 'string?', interrupted: 'boolean?', paused: 'boolean?' },   // interrupted: dev's status, which reads Paused (the bulk rules ask before archiving it); paused: dev's status, whatever its case (Pulse's Now says it clears on resume or stop)
+  task: { id: 'string', case: 'string', title: 'string', project: 'string', detail: 'string', time: 'string', day: 'string', labels: 'array', cost: 'number|null', archived: 'boolean', unread: 'boolean', pr: 'string', group: 'string', kind: 'string', by: 'string', workflow: 'string', when: 'string?', missed: 'boolean?', scheduleId: 'string?', over: 'boolean?', rounds: 'object|null?', roundOf: 'string?', interrupted: 'boolean?', paused: 'boolean?' },   // interrupted: dev's status, which reads Paused (the bulk rules ask before archiving it); paused: dev's status, whatever its case (Pulse's Now says it clears on resume or stop)
   group: { id: 'string', kind: 'string', case: 'string', title: 'string', project: 'string', time: 'string', day: 'string', cost: 'number|null' },
   chat: { id: 'string', title: 'string', state: 'string', kind: 'string', project: 'string', time: 'string', day: 'string', cost: 'number|null', pinned: 'boolean', archived: 'boolean', unread: 'boolean', group: 'string', origin: 'object|null', rank: 'number|null', labels: 'array', tasks: 'array' },
   schedule: { id: 'string', title: 'string', project: 'string', chat: 'string', every: 'string', at: 'string', next: 'string', day: 'string?', state: 'string', time: 'string', section: 'string', labels: 'array', what: 'string', cost: 'number|null', started: 'string', runs: 'array', missed: 'string?', missedWhy: 'string?', nextAt: 'number|null?',
@@ -115,7 +115,7 @@ export function turnErrors(turn) {
 export const TASK_PAGE_SHAPE = Object.freeze({
   id: 'string', case: 'string', title: 'string', branch: 'string', base: 'string', pr: 'string', prUrl: 'string', detail: 'string', why: 'array', git: 'string',
   cost: 'number|null', cap: 'number|null', mins: 'number|null', startedAgo: 'number|null', startedAt: 'string', project: 'string', labels: 'array', tags: 'array',
-  prompt: 'string', stages: 'array', pauseAfterStep: 'boolean', workflow: 'object|null',
+  prompt: 'string', stages: 'array', pauseAfterStep: 'boolean', workflow: 'object|null', resumeEngines: 'array',
 });
 /** [] when `page` has every TASK_PAGE_SHAPE field with its type, else one line per wrong field ("taskPage.cost: expected number|null"). */
 export function taskPageErrors(page) {

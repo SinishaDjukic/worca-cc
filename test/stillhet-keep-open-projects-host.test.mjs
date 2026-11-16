@@ -1,6 +1,6 @@
 // test/stillhet-keep-open-projects-host.test.mjs — comp.keep-open on Projects (B2.6): each inline form's one field keeps
 // what you typed, its caret and its focus through a live redraw (F-6-01, F-a4-02's Link a remote), and a route change
-// closes the form, so reopening starts empty. The host is test/helpers/stillhet-projects-host.mjs.
+// closes the form, so reopening starts empty. B2.8: an idle redraw keeps the sidebar's rows (listController paint({ ifChanged })). The host is test/helpers/stillhet-projects-host.mjs.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { projectsHost, KEYS, settle, go, closeHosts } from './helpers/stillhet-projects-host.mjs';
@@ -33,6 +33,42 @@ test('F-6-01: Add by hand keeps its text, caret and focus through a live redraw'
   const h = await projectsHost();
   h.w.RailPlaces.projects.newPick('hand-project'); await settle(100);
   await kept(h, 'pj-hand:project:');
+});
+
+test('F-6-01 COV-1: a Several folders review name keeps its text, caret and focus through a live redraw', async () => {
+  const dirs = { path: '/src', parent: '/', home: '/home/me', dirs: [{ name: 'a', path: '/src/a' }, { name: 'b', path: '/src/b' }] };
+  const h = await projectsHost({ read: (u) => (u.startsWith('/api/fs/dirs') ? [200, dirs] : null) });
+  h.w.RailPlaces.projects.newPick('hand-project'); await settle(100);
+  page(h.d).querySelector('[data-pa-way="many"]').click(); await settle(60);
+  page(h.d).querySelector('.card-form [data-form="hand"] [data-confirm="yes"]').click(); await settle(150);
+  for (const p of ['/src/a', '/src/b']) { page(h.d).querySelector(`[data-fb-pick="${p}"]`).click(); await settle(30); }
+  page(h.d).querySelector('.fb [data-dialog="yes"]').click(); await settle(100);
+  const before = page(h.d).querySelector('[data-fr-name="1"]');
+  assert.equal(before.getAttribute('data-keep'), 'fr:1');
+  type(h.w, before, 'bee');
+  await redraw(h.w);
+  const after = page(h.d).querySelector('[data-fr-name="1"]');
+  assert.equal(after, before, 'B2.7: the redraw kept the review name field');
+  assert.equal(after.value, 'bee');
+  assert.deepEqual([after.selectionStart, after.selectionEnd], [1, 1]);
+  assert.equal(h.d.activeElement, after);
+});
+
+test('F-cov1-02: in Several folders… a tick keeps the focus on its row, so Escape asks before it drops the picks', async () => {
+  const dirs = { path: '/src', parent: '/', home: '/home/me', dirs: [{ name: 'a', path: '/src/a' }, { name: 'b', path: '/src/b' }] };
+  const h = await projectsHost({ read: (u) => (u.startsWith('/api/fs/dirs') ? [200, dirs] : null) });
+  h.w.RailPlaces.projects.newPick('hand-project'); await settle(100);
+  page(h.d).querySelector('[data-pa-way="many"]').click(); await settle(60);
+  page(h.d).querySelector('.card-form [data-form="hand"] [data-confirm="yes"]').click(); await settle(150);
+  for (const p of ['/src/a', '/src/b']) {
+    const box = page(h.d).querySelector(`[data-fb-pick="${p}"]`);
+    box.focus(); box.click(); await settle(30);
+    assert.equal(h.d.activeElement?.getAttribute('data-fb-pick'), p, `the focus stays on ${p} after its tick`);
+  }
+  h.d.activeElement.dispatchEvent(new h.w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); await settle(30);
+  assert.ok(page(h.d).querySelector('.fb'), 'the browser stays open');
+  assert.match(page(h.d).querySelector('.fb .rc-confirm')?.textContent || '', /Drop 2 picked folders\?/);
+  assert.ok(page(h.d).querySelector('.card-form [data-form="hand"]'), 'the form stays');
 });
 
 test('F-6-01: Make a workspace keeps its text, caret and focus through a live redraw', async () => {
@@ -136,6 +172,20 @@ test('B2.7 F-6-01: the home page\'s form field and card grid keep their nodes th
   await redraw(h.w);
   assert.notEqual(col(h.d), foreign);
   assert.ok(page(h.d).querySelector('.pg-grid'), 'the home is drawn whole');
+});
+
+test('B2.8 F-6-01: a no-change Projects redraw keeps every sidebar row node and the focused row\'s focus', async () => {
+  const h = await projectsHost({ hash: `#projects/${KEYS.ok}` });
+  await redraw(h.w);
+  const bar = h.d.getElementById('bar-place'), row = bar.querySelector('[data-open^="proj:"]');
+  assert.ok(row, 'the Projects bar shows its projects');
+  row.focus();
+  const before = nodes(bar), stops = [...bar.querySelectorAll('[data-open]')].map((b) => b.tabIndex);
+  await redraw(h.w);
+  const after = nodes(bar);
+  assert.ok(after.length === before.length && after.every((n, i) => n === before[i]), 'every sidebar node kept (the same objects)');
+  assert.equal(h.d.activeElement, row, 'the focused row keeps the focus');
+  assert.deepEqual([...bar.querySelectorAll('[data-open]')].map((b) => b.tabIndex), stops, 'the row tab stops are unchanged');
 });
 
 test('B2.7 C1 F-6-01: a no-change Projects redraw makes no more DOM mutations than its budget', async (t) => {

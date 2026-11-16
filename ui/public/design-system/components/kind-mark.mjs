@@ -445,13 +445,17 @@ export function planCard({ title, summary = '', version, roles, open = false, me
 /**
  * FilesCard: files Worca shows you: pictures as tiles, other files as rows, each with Download; View opens it.
  * @param {object} o
- * @param {{name:string, meta?:string, image?:boolean, view?:object, download?:object}[]} o.files
+ * @param {{name:string, meta?:string, image?:boolean, view?:object, download?:object|false, reveal?:object}[]} o.files   (download false: view only)
  * @param {string} [o.label]
+ * @param {string} [o.revealLabel]   the file manager's name (Finder): with a file's `reveal` hook, its Show in ‹label›
  */
-export function filesCard({ files, label = 'Files' }) {
+export function filesCard({ files, label = 'Files', revealLabel = '' }) {
   const pics = files.filter((f) => f.image), docs = files.filter((f) => !f.image);
-  const tile = (f) => `<figure class="fc-tile"><button type="button" class="fc-pic"${attrs({ 'aria-label': `View ${f.name}`, ...(f.view || {}) })}>${icon('image', 20)}</button><figcaption><span>${esc(f.name)}</span>${button({ label: `Download ${f.name}`, kind: 'quiet', iconOnly: true, icon: icon('download', 14), attrs: f.download || {} })}</figcaption></figure>`;
-  const row = (f) => turnRow({ mark: icon('file', 14), text: `<b>${esc(f.name)}</b> ${esc(f.meta || '')}`, end: button({ label: 'View', kind: 'quiet', attrs: f.view || {} }) + button({ label: `Download ${f.name}`, kind: 'quiet', iconOnly: true, icon: icon('download', 14), attrs: f.download || {} }) });
+  // Show in ‹file manager›: only where the server offers it (its label) and the file says how (its reveal hook)
+  const show = (f) => (revealLabel && f.reveal ? button({ label: `Show in ${revealLabel}`, kind: 'quiet', attrs: f.reveal }) : '');
+  const dl = (f) => (f.download === false ? '' : button({ label: `Download ${f.name}`, kind: 'quiet', iconOnly: true, icon: icon('download', 14), attrs: f.download || {} }));   // false: a file to view only
+  const tile = (f) => `<figure class="fc-tile"><button type="button" class="fc-pic"${attrs({ 'aria-label': `View ${f.name}`, ...(f.view || {}) })}>${icon('image', 20)}</button><figcaption><span>${esc(f.name)}</span>${dl(f)}${show(f)}</figcaption></figure>`;
+  const row = (f) => turnRow({ mark: icon('file', 14), text: `<b>${esc(f.name)}</b> ${esc(f.meta || '')}`, end: button({ label: 'View', kind: 'quiet', attrs: f.view || {} }) + dl(f) + show(f) });
   return `<div class="files-card"${attrs({ role: 'group', 'aria-label': label })}>${pics.length ? `<div class="fc-grid">${pics.map(tile).join('')}</div>` : ''}${docs.map(row).join('')}</div>`;
 }
 
@@ -473,14 +477,15 @@ export function refChip({ text, mark = '', title = '', attrs: a = {} }) {
  * @param {object} o
  * @param {string} o.text
  * @param {string} [o.quote]
- * @param {string[]} [o.files]
+ * @param {Array<string|{name:string, attrs:object}>} [o.files]   a name, or a chip that opens the file (its hook)
  * @param {{text:string, mark?:string, attrs?:object}[]} [o.refs]   tasks named in it: chips that lead to their cards
  * @param {object} [o.attrs]
  * @param {string} [o.time]   its TurnTime (turn-time.mjs turnTime), the bubble's last child
  */
 export function youTurn({ text, quote = '', files = [], refs = [], attrs: a = {}, time = '' }) {
   const chips = refs.map((r) => refChip(r)).join('');
-  return `<div class="convo-you"${attrs(a)}>${quote ? `<blockquote class="you-quote">${esc(quote)}</blockquote>` : ''}${esc(text)}${files.length || chips ? `<span class="you-files">${files.map((f) => `<span class="kind-chip">${icon('file', 12)}${esc(f)}</span>`).join('')}${chips}</span>` : ''}${time}</div>`;
+  return `<div class="convo-you"${attrs(a)}>${quote ? `<blockquote class="you-quote">${esc(quote)}</blockquote>` : ''}${esc(text)}${files.length || chips ? `<span class="you-files">${files.map((f) => (typeof f === 'string' ? `<span class="kind-chip">${icon('file', 12)}${esc(f)}</span>`
+    : `<button type="button" class="kind-chip"${attrs({ title: `Opens ${f.name}`, ...(f.attrs || {}) })}>${icon('file', 12)}${esc(f.name)}</button>`)).join('')}${chips}</span>` : ''}${time}</div>`;
 }
 
 /**

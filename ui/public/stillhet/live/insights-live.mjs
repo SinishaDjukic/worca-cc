@@ -3,7 +3,7 @@
 // are dropped, never re-read. Answers go whole to insights-map.mjs, which is the only code that reads their fields.
 import {
   statsQuery, statsSource, statsCsv, rowsCsv, shapingSource, teamSource, heatOf, gridOf, untaggedSource, scopesOf, budgetOf, pooledOf,
-  monthSpendOf, errorOf, wordsOf, tagKeysOf, recordsOf, LIVE_PAGES, TEAM_PAGES, DIM_OF,
+  monthSpendOf, weekTotalsOf, errorOf, wordsOf, tagKeysOf, recordsOf, LIVE_PAGES, TEAM_PAGES, DIM_OF,
 } from './insights-map.mjs';
 import { lookupsFor, personWork, workItemOf, workHead, cardOf, taskViewOf } from './work-map.mjs';
 
@@ -18,7 +18,7 @@ const PRS = '/api/team-metrics/prs', EVENTS = '/api/team-metrics/pr-events', PR_
 export function startInsightsLive({ fetch, on = () => {}, now = Date.now, setTimeout = globalThis.setTimeout, clearTimeout = globalThis.clearTimeout, world = () => ({}),
   storage = globalThis.localStorage, model = () => globalThis.window?.RailInsightsModel } = {}) {
   const cache = new Map();   // url → { status: 'loading' | 'ready' | 'failed', data, text, seq }
-  let open = new Set(), monthAsked = false, timer = 0, stopped = false, eventsKey = '';
+  let open = new Set(), monthAsked = false, weekAsked = false, timer = 0, stopped = false, eventsKey = '';
   const prsBy = new Map();   // #1310 D5: scope → { map: run id → PRs, asked, inflight, why, token }; only the open scope's is kept
   let prToken = 0;
   const SOFT = (url) => url.startsWith('/api/policy') || url === TAGS;   // a refusal here is "none", never a failed page
@@ -46,10 +46,11 @@ export function startInsightsLive({ fetch, on = () => {}, now = Date.now, setTim
   const want = (url) => { open.add(url); return get(url); };
   function prune() {
     const keep = new Set([...open, TAGS, SCOPES, eventsKey]);
-    for (const k of cache.keys()) if (!keep.has(k) && !(monthAsked && k === monthKey())) cache.delete(k);
+    for (const k of cache.keys()) if (!keep.has(k) && !(monthAsked && k === monthKey()) && !(weekAsked && k === weekKey())) cache.delete(k);
   }
   const tagKeys = () => { const t = get(TAGS); return t.status === 'ready' ? tagKeysOf(t.data) : null; };
   function monthKey() { const keys = tagKeys(); return keys ? statsQuery('this month', { tagKeys: keys, now: now() }) : ''; }
+  const weekKey = () => statsQuery('this week', { now: now() });   // no tag keys: the totals are the same without them
   const statsUrl = (st, keys) => statsQuery(st.from && st.to ? 'custom' : st.when, { from: st.from, to: st.to, tagKeys: keys, now: now() });
 
   /** D11: is a page in the bar, search and has? null while that is not known yet (the budget or the tag keys unread). */
@@ -147,6 +148,15 @@ export function startInsightsLive({ fetch, on = () => {}, now = Date.now, setTim
     const e = get(key);
     return e.status === 'ready' ? monthSpendOf(e.data, name) : null;
   }
+
+  /** F-3-10: the Tasks center's week figures, { runs, spentUsd } for every project (null) or one; null while pending or failed. */
+  function weekTotals(project = null) {
+    weekAsked = true;
+    const e = get(weekKey());
+    return e.status === 'ready' ? weekTotalsOf(e.data, project) : null;
+  }
+  /** B3.6 review: a visit to Tasks reads a failed week again; a paint alone never does (a failed read would loop). */
+  function retryWeek() { const k = weekKey(), e = cache.get(k); if (e?.status === 'failed') read(k); }
 
   // ---- a person's work (#1310): dev's Timeline lookups over the scope's records, read for By person's open row ----
   /** The open team scope and its records, as the team page read them; null while either is not ready. */
@@ -252,5 +262,5 @@ export function startInsightsLive({ fetch, on = () => {}, now = Date.now, setTim
 
   function scopes() { const sc = get(SCOPES); return sc.status === 'ready' ? scopesOf(sc.data) : []; }
   function stop() { stopped = true; clearTimeout(timer); }
-  return { page, peek, scopes, offered, monthSpend, csv, rowsCsv, views, saveView, dropView, frame, retry, stop, work, task, retryWork, workHead, cardOf, taskViewOf };
+  return { page, peek, scopes, offered, monthSpend, weekTotals, retryWeek, csv, rowsCsv, views, saveView, dropView, frame, retry, stop, work, task, retryWork, workHead, cardOf, taskViewOf };
 }

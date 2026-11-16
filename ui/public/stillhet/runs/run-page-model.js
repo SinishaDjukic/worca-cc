@@ -463,6 +463,8 @@
   // A form behind a step: its words and its one field or choice (docs/rail/forms.md).
   const FORMS = {
     model: { title: 'Switch model', yes: 'Resume', text: 'Every remaining step runs on the model you pick; the task resumes from {step}.', options: ['Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5'], pick: 1 },
+    // Resume on ‹Engine› (COV-3): classic's confirm, named for the engine; live, its sentence is dev's engineSwitchNote
+    engine: { title: 'Resume on {engine}?', yes: 'Resume on {engine}', text: 'Starts the paused step fresh; a model {engine} cannot run falls back to its default.' },
     'resume-at': { title: 'Resume at a time', yes: 'Schedule the resume', text: 'The task stays paused until then, and you can cancel it.', field: { label: 'Time', value: '15:30', hint: 'Today, in your time zone', time: true } },
     report: { title: 'Report this task', yes: 'Send report', text: 'Files a GitHub issue with this task’s redacted report and your note.', field: { label: 'Note', value: '', hint: 'What went wrong, or what you expected', multiline: true } },
     cap: { title: 'Raise the cap', yes: 'Raise it and go on', text: 'A new cost cap for this task; it goes on from {step}.', field: { label: 'New cap', value: '$180', hint: 'It is at $120' } },
@@ -601,6 +603,8 @@
       : over.focus && over.focus.kind === 'broke' && (c.why || []).length ? { kind: 'broke', ev: over.focus.ev, own: c.why } : null;
     return Object.assign({}, over, { focus: broke, checklist: null, outcome: [], ask: null, evidence: '', task: c.task || '', artifacts: LP.docs || [], areas: over.areas.length ? areasOf(files) : [] });
   }
+  // The question a task waits on (F-G-G2-02, gate.no-demo): a live task's first own question, else none; a design case's sample.
+  const askOf = (c) => (c.liveId ? (c.liveAsk && c.liveAsk.questions[0]) || null : DETAIL.asks[c.id] || null);
   // A feature reads from the task that holds it up: failed first, then one that asks, one paused, one stopped.
   const HOLD = [['Failed', 'group-failed', (k, n) => 'Task ' + k + ' of ' + n + ' · failed'], [R.runState('group-needs').word, 'group-needs', (k, n) => 'Task ' + k + ' of ' + n + ' · needs you'],
     ['Paused', 'group-paused', (k, n, m) => 'Task ' + k + ' of ' + n + ' · ' + ((m.detail || 'paused').split(' · ')[0].toLowerCase())], ['Stopped', 'group-stopped', (k) => 'Stopped at task ' + k]];
@@ -772,7 +776,8 @@
     if (ui.watched !== null && ui.watched !== undefined && !c.watchOff) c = Object.assign({}, c, { stages: c.stages.map((st) => { if (st.key !== 'pr') return st; const rest = st.subs.filter((x) => x.name !== 'Watch'); return Object.assign({}, st, { subs: watching ? rest.concat(s('Watch', 'now', '', { live: 'Watching · fixes failing checks' })) : rest }); }) });
     const published = !!(ui.fixed && ui.fixed.published);
     if (published && /^Ready$/.test(c.word) && !c.detail) c = Object.assign({}, c, { detail: 'On origin · no PR yet' });
-    const clarifying = c.id === 'clarify' ? DETAIL.asks.clarify.questions : null;
+    // F-G-G2-02: a live task's questions are its own (liveRun liveAsk), several asked one by one as Clarify does; never the design's
+    const clarifying = c.liveId ? (c.liveAsk && c.liveAsk.questions.length > 1 ? c.liveAsk.questions : null) : c.id === 'clarify' ? DETAIL.asks.clarify.questions : null;
     const qIndex = clarifying ? Math.min(ui.question || 0, clarifying.length - 1) : 0;
     if (clarifying && qIndex < clarifying.length - 1) c = Object.assign({}, c, { action: Object.assign({}, c.action, { label: 'Next question', icon: 'chevron', items: c.action.items.concat(qIndex ? ['Previous question'] : []) }) });
     else if (clarifying && qIndex) c = Object.assign({}, c, { action: Object.assign({}, c.action, { items: c.action.items.concat('Previous question') }) });
@@ -904,7 +909,7 @@
       }).concat(gone || c.noDiff || (!buildStarted && !groupBuilt.length) ? [] : [runStages.length ? (() => { const sum = groupBuilt.reduce((a, i) => { const [p, m] = SIZE(sizesOf(c)[i] || '+0 \u22120'); return [a[0] + p, a[1] + m]; }, [0, 0]); return { k: 'Changes', v: '+' + sum[0] + ' \u2212' + sum[1], tab: '' }; })()
         : { k: 'Changes', v: c.diff || '+' + files.reduce((a, x) => a + x[1], 0) + ' \u2212' + files.reduce((a, x) => a + x[2], 0), tab: 'changes' }]),
       // A tab shows only what exists: no diff before Build, no decisions before anything was decided.
-      tabs: (runStages.length ? GROUP_TABS : RUN_TABS).filter(([id]) => (id === 'changes' ? hasChanges : id === 'decisions' ? decisionsOf(c, runStages).length > 0 || !!DETAIL.asks[c.id] : true)).map(([id, l], i, all) => ({ id, l, n: id === 'changes' && !gone ? String(files.length) + (over.artifacts.length ? ' · ' + over.artifacts.length + ' docs' : '') : id === 'decisions' ? String(decisionsOf(c, runStages).length + (DETAIL.asks[c.id] ? 1 : 0)) : '',
+      tabs: (runStages.length ? GROUP_TABS : RUN_TABS).filter(([id]) => (id === 'changes' ? hasChanges : id === 'decisions' ? decisionsOf(c, runStages).length > 0 || !!askOf(c) : true)).map(([id, l], i, all) => ({ id, l, n: id === 'changes' && !gone ? String(files.length) + (over.artifacts.length ? ' · ' + over.artifacts.length + ' docs' : '') : id === 'decisions' ? String(decisionsOf(c, runStages).length + (askOf(c) ? 1 : 0)) : '',
         sel: id === (all.some((x) => x[0] === ui.tab) ? ui.tab : all[0][0]) })),
       activity: c.stages.map((x) => {
         // live: the stage's own cost (taskPageOf); its steps keep the design's names, never its sample prices, models or evidence
@@ -927,7 +932,7 @@
       // A group's next run, under the task it follows: whether it starts by itself or asks first is set right there.
       then: c.independent || hold ? null : (() => { const k = runStages.findIndex((x) => stageState(x.subs) === 'live'); const nx = k >= 0 && runStages[k + 1]; return nx && nx.subs.every((y) => y.state === 'next') && open === runStages[k].key ? { n: k + 2, title: nx.title } : null; })(),
       planHead: runStages.length > 0 && open === 'plan',
-      runCases: c.runCases || [], parent: par, over, ask: clarifying ? Object.assign({}, clarifying[qIndex], { n: (qIndex + 1) + ' of ' + clarifying.length }) : (c.id === 'question' && seed?.question) || DETAIL.asks[c.id] || null, under: /^(gate|plan|outline)$/.test(c.id) ? (c.liveId ? { issues: (c.review && c.review.issues) || [], roles: (c.review && c.review.roles) || [] } : { issues: c.id === 'gate' ? DETAIL.issues : [], roles: DETAIL.roles }) : null,   // live: the run's own review, never the design's sample
+      runCases: c.runCases || [], parent: par, over, ask: clarifying ? Object.assign({}, clarifying[qIndex], { n: (qIndex + 1) + ' of ' + clarifying.length }) : c.liveId ? askOf(c) : (c.id === 'question' && seed?.question) || DETAIL.asks[c.id] || null, under: /^(gate|plan|outline)$/.test(c.id) ? (c.liveId ? { issues: (c.review && c.review.issues) || [], roles: (c.review && c.review.roles) || [] } : { issues: c.id === 'gate' ? DETAIL.issues : [], roles: DETAIL.roles }) : null,   // live: the run's own review, never the design's sample
       flow: flowOf(c, stateId, liveCtx), state: stateId, event: EVENT_OF(c, stateId, liveCtx), runFlow: R.runFlow(liveCtx), liveRun: runStages.findIndex((x) => stageState(x.subs) === 'live' && x.member && /^(Working|Starting)$/.test(x.member.word)), formCtx: liveCtx,
       hasSetup: LP ? !!LP.setup : !c.noSetup && !runStages.length, dependents: c.dependents || 0, heldBy: c.heldBy || '', hosted: LP ? !!(LP.actions && !LP.actions.enabled) : !!c.hosted, baseMoved: !!c.baseMoved, independent: !!c.independent, reqsLeft: left, reqsCheck: !!c.reqsCheck, holdIndex: c.k ? c.k - 1 : -1,
       // live: the log, agents, sessions and step usage are the task's own (its log, steps, sessions and telemetry)
@@ -968,12 +973,14 @@
   // capped task's paused one says it is at its cap
   const liveSub = (page, x) => (x.state === 'stopped' ? s(x.name, 'paused', '', { live: 'Stopped by you' })
     // a review gate's asking step says what you pick (B1.6 D7); a review forced on with open issues is a problem, never a tick (D5)
-    : x.state === 'ask' ? s(x.name, 'ask', '', { live: (page.gate && page.gate.line) || '' })
+    : x.state === 'ask' ? s(x.name, 'ask', '', { live: (page.gate && page.gate.line) || askLine(page.ask) })
     : x.state === 'blocked' ? s(x.name, 'problem', '', { live: 'Blocked · accepted with ' + x.open + ' open issue' + (x.open === 1 ? '' : 's') })
     : x.state === 'paused' && page.case === 'capped' ? s(x.name, 'paused', '', { live: 'Paused at its cap' })
     // dev's failure policy holds a failed step paused: on a failed task it is the step that broke, its line what broke
     : x.state === 'paused' && page.failure ? s(x.name, 'failed', '', { live: String(page.failure.head || '').replace(/^[^·]*·\s*/, '') })
     : s(x.name, STAGE_SUB[x.state] || 'next'));
+  // F-G-G2-02: the asking step's line is the run's own question (and how many it asks), never the design's sample
+  const askLine = (a) => (!a ? '' : a.questions[0].q + (a.questions.length > 1 ? ' · 1 of ' + a.questions.length + ' questions' : ''));
   // the PR stage's lines from the PR's own facts: Create PR "Opened #N", Checks "2 failed" or "3 of 3 passed"
   const checksLine = (k) => (!k || !k.total ? '' : k.failed ? k.failed + ' failed' : (k.total - k.pending) + ' of ' + k.total + ' passed');
   const prSub = (page, x) => (x.name === 'Create PR' && page.pr ? Object.assign({}, x, { live: 'Opened ' + page.pr }) : x.name === 'Checks' && page.pr && checksLine(page.checks) ? Object.assign({}, x, { live: checksLine(page.checks) }) : x);
@@ -993,6 +1000,8 @@
       const st = Object.assign({}, st0, { subs: (st0.subs || []).map(bare) });
       const own = (page.stages || []).find((x) => x.key === st.key);
       if (st.key === 'pr') return Object.assign({}, st, { subs: st.subs.map((x) => prSub(page, x)) });
+      // a landing stage is marked merged only when the task's own PR merged (F-G-G2-02 sweep: the archived case's design reads Merged)
+      if (SHIP.test(st.key) && !(page.git === 'merged' || page.case === 'merged')) return Object.assign({}, st, { subs: st.subs.map((x) => (x.state === 'merged' ? Object.assign({}, x, { state: 'next' }) : x)) });
       if (!own || st.run || SHIP.test(st.key)) return st;
       // its steps are the task's workflow's own, named and marked by dev (taskPageOf stages[].steps); a stage whose steps
       // are not known yet (Auto still deciding) is one step under its own name, in its own state
@@ -1008,7 +1017,7 @@
       startedWord: at ? 'Started ' + at.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) + ', ' + at.toTimeString().slice(0, 5) : '',
       detail: page.detail || '', why: page.why || [], failure: page.failure || null, review: page.review || { roles: [], issues: [] }, stages, spent: { mins: page.mins || 0, cost: page.cost || 0 }, budget: page.cap || null, movedFrom: base.id, liveId: page.id,
       // no live decisions source yet: the design's sample decisions never reach a real task
-      decisions: [], failedChecks: page.failedChecks || 0, restartOff: page.restartOff || '', workflow: page.workflow || null, stageCost: Object.fromEntries((page.stages || []).map((x) => [x.key, x.costUsd || 0])) });
+      decisions: [], liveAsk: page.ask || null, failedChecks: page.failedChecks || 0, restartOff: page.restartOff || '', workflow: page.workflow || null, stageCost: Object.fromEntries((page.stages || []).map((x) => [x.key, x.costUsd || 0])) });
   }
   // The live kind's group page (#run/group:GID, D5): dev's run group (GET /api/run-groups), its members in stack order,
   // each drawn as its own store task's case. Its one action merges the next PR in order, or fixes the first failing one,

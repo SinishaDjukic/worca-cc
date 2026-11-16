@@ -5,6 +5,9 @@ import assert from 'node:assert/strict';
 import { LISTS, SOURCES, THREAD, clone, go, liveHost, posts, saidText, settle, toastText, until, withRun, closeHosts } from './helpers/stillhet-chat-live-host.mjs';
 
 afterEach(closeHosts);   // each test's window closes when the test ends
+// A feature's Figures need chat-live's own read of dev's run-groups (CL().feature, apart from the store's), then a repaint
+// on a frame; under CI's load that outruns any fixed wait, so these tests wait for what they check (null on time-out)
+const seen = (fn) => until(fn, 15000).catch(() => null);
 test('panel.answer-refs (F-refchip): a run Worca names is a RefChip once dev confirms it, and it lands on the card in the chat that started it; an unconfirmed id stays words', async () => {
   const said = { thread: { id: 'ask_2', title: 'Writing' }, messages: [{ id: 'w1', role: 'assistant', status: 'done', text: 'It is the same as 0a1b2c3d, not 9f9f9f9f.', createdAt: THREAD.messages[0].createdAt, blocks: [] }], runLinks: [], inFlight: null };
   let release; const gate = new Promise((r) => { release = r; });
@@ -76,9 +79,10 @@ test('panel.plan-folds: the live PlanCard draws dev\'s role verdicts, coverage u
 test('panel.plan-folds: a run in a feature shows the feature\'s total cost and time in its folded Figures, from dev\'s run-groups', async () => {
   const { w, d } = await liveHost({ lists: { ...LISTS, '/api/run-groups': { groups: [{ id: 'f1', kind: 'feature', title: 'CSV', planning: null, members: [{ pipelineId: 'pa', position: 1 }, { pipelineId: 'h1', position: 2 }], cost: { usd: 3.5, byPipeline: {} } }] } } });
   await go(w, '#chat/ask_1', 120);
-  const figs = d.querySelector('#route-chat [data-figs]');
+  const figs = await seen(() => d.querySelector('#route-chat [data-figs]'));
   assert.ok(figs, 'the Figures fold is offered');
-  figs.click(); await settle(60);
+  figs.click();
+  await seen(() => /\$3\.50\s*the feature so far/.test(d.getElementById('route-chat').textContent));
   assert.match(d.getElementById('route-chat').textContent, /\$3\.50\s*the feature so far/);
   assert.match(d.getElementById('route-chat').textContent, /since its first task · 2 tasks/);
 });
@@ -87,12 +91,13 @@ test('F-a2-03: a chat whose run is a feature member shows the other started memb
   // h1 is a member of the feature with no run link (the scheduler started it): its card still draws in the chat
   const { w, d } = await liveHost({ lists: { ...LISTS, '/api/run-groups': { groups: [{ id: 'f1', kind: 'feature', title: 'CSV', planning: null, members: [{ pipelineId: 'pa', position: 1 }, { pipelineId: 'h1', position: 2 }], cost: { usd: 3.5, byPipeline: {} } }] } } });
   await go(w, '#chat/ask_1', 120);
-  assert.ok(d.querySelector('#route-chat [data-anchor="card_run"]'), 'the card the chat started');
-  const other = d.querySelector('#route-chat [data-anchor="card_run:h1"]');
+  assert.ok(await seen(() => d.querySelector('#route-chat [data-anchor="card_run"]')), 'the card the chat started');
+  const other = await seen(() => d.querySelector('#route-chat [data-anchor="card_run:h1"]'));
   assert.ok(other, 'the other member\'s TaskCard, right under it');
-  const figs = other.querySelector('[data-figs]');
+  const figs = await seen(() => d.querySelector('#route-chat [data-anchor="card_run:h1"] [data-figs]'));
   assert.ok(figs, 'its Figures fold is offered');
-  figs.click(); await settle(60);
+  figs.click();
+  await seen(() => /\$3\.50\s*the feature so far/.test(d.querySelector('#route-chat [data-anchor="card_run:h1"]')?.textContent));
   assert.match(d.querySelector('#route-chat [data-anchor="card_run:h1"]').textContent, /\$3\.50\s*the feature so far/);
 });
 

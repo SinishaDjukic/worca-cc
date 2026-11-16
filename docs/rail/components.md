@@ -8,7 +8,7 @@
 | `comp.menu-groups` | A menu's head stays with its options: CompactMenu makes them one block, so columns never part them, and a scrolling menu never ends on a head alone (`watchMenus`) and fades where there is more (`watchScrollFades`); two columns at most, it takes the free height before it scrolls, and a menu stays inside the window, scrolling inside it (the columns sit inside what scrolls: a height on a columned box only makes more columns) | A head alone at a column's foot names nothing | design-system-components |
 | `comp.click-guard` | A second click within 400 ms at the same spot is ignored when what is under the pointer is no longer the button just pressed (`watchClickGuard`, once for the page); the same button, even redrawn, can be pressed twice, and a keyboard's click always passes | A double click must never fire what swaps or moves under the pointer, such as Approve then Merge | design-system-components |
 | `comp.keyed-patch` | A page that redraws a list on live data patches it by key (`patchKeyed`): an item whose drawing did not change keeps its node; live redraws wait for the next frame (`frameBatch`); an orb in a redrawn item keeps its canvas (`carry`) | A live frame must not cost the whole page, reset focus, caret or scroll, or restart the orb | design-system-keyed-list |
-| `comp.patch-parts` | A region drawn from named parts (the shell's `#app`, a slot, a page's column) patches by part (`patchParts`): a part whose string did not change keeps its nodes; a redraw that changes nothing writes nothing; a kept open menu is fitted from where it would sit, so its shift never builds on the last (`fitMenu`); part names are never integer-like | A redraw must not cost an unchanged part its focus, caret, scroll or open menu | design-system-keyed-list |
+| `comp.patch-parts` | A region drawn from named parts (the shell's `#app`, a slot, a page's column) patches by part (`patchParts`): a part whose string did not change keeps its nodes; a redraw that changes nothing writes nothing; a kept open menu is fitted from where it would sit, so its shift never builds on the last (`fitMenu`); menus are fitted only after a part changed or the window's width did; a list's `paint({ ifChanged })` whose drawing did not change writes nothing (only `paint` writes inside a list's root: it checks the root's top level, not below); the shell's Settings page and its sidebar menu are parts; part names are never integer-like | A redraw must not cost an unchanged part its focus, caret, scroll or open menu | design-system-keyed-list |
 | `comp.keep-open` | An open menu, inline field or dialog whose control is marked `data-keep` keeps its value, caret, selection and focus across any redraw of its page (`watchKeepOpen`, once for the page, for a rebuilt control; `morph` leaves a kept control's typed value alone); a route change (the place and its item, `keptRoute`: a side panel opened after them, or another way in after `@`, is the same route) closes it and never carries its text; what the page means wins: a page resets a kept field by closing it, changing its key, clearing the control itself before the redraw, or drawing a new value, and that value stands | A live frame must never take what you are typing | design-system-keep-open |
 | `comp.live-paint` | A hidden place does not paint on live changes; it paints once when shown | A change nobody can see must not cost the page that is in view | stillhet-chat-repaint-host |
 | `comp.menu-off` | A disabled menu item never acts, in any menu: it stays open, shows no pointer or hover, and says why (`watchMenus`) | A control acts, or is disabled and says why | design-system-components |
@@ -60,6 +60,7 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | One pick from a long list, or a new one | ListEditor, single pick: find or create, recent first | Add to group |
 | **Entering** | | |
 | Text or a number in a form | Field | Branch, Budget |
+| Picking folders on this computer | FolderBrowser, in a Dialog (single, or multi with checkboxes) | Choose folder…, Several folders… |
 | Text Worca writes for you | SuggestionField | PR title and description, a drafted answer |
 | A field or menu that stays open while its page redraws | `data-keep` on its control, `watchKeepOpen` once for the page | Rename, Move to group…, Label |
 | A whole-text rewrite Worca suggests | RewriteSuggestion | Prompt check Improve |
@@ -111,6 +112,7 @@ A Rail page is built by naming needs, not looks. Find the need, use its componen
 | The same figures across many rows | Table: divided rows, tabular figures, no box per row, the name first; on a narrow screen the least needed columns go to the row's detail | sessions, cost by step |
 | **Telling** | | |
 | Something done, nothing to answer | Toast | PR merged |
+| A problem with a choice, its rows and its ways out | ChoiceNote, on the rail before the choice is made: amber needs you, grey only tells (`form.run-options`) | This preset needs attention · Reset to default |
 | Something failed | where you acted: the strip, the dialog's alert, the field's error line, the suggestion's grey line; a Toast only when there is no such place | Could not merge #959 |
 | Nothing here, loading, could not load | EmptyState: one line on the text edge; loading shows nothing for 300ms, then one line, never a spinner or skeleton | No runs yet |
 | A part of the page cannot be drawn | EmptyState's error, in that part only, with Reload this part | Could not show the changes |
@@ -145,6 +147,11 @@ other library calls, never a person's text: a person's text goes through the lib
 | Select every row shown, or none | `selectAllBox` | SelectionBar |
 | A long press on a row starts selecting, on touch | `bindLongPress` | SelectionBar |
 | A view in a Dialog without a form: its head, its body | `dialogFrame` | Dialog |
+| A folder's name from its path | `folderName` | FolderBrowser |
+| What a typed folder is, under its field: Git, Folder, Not found | `folderProbe` | FolderBrowser |
+| Picked folders reviewed before they are added: a name each, Added or why skipped | `folderReview` | FolderBrowser |
+| An add way's own controls on the form: Choose folder…, Browse folders…, Use git | `folderWay` | FolderBrowser |
+| What a bulk add did, in one line | `reviewSummary` | FolderBrowser |
 | A document's name that opens it | `documentLink` | Text link |
 | The tick after something was copied | `copied` | CopyButton |
 | Ask Worca to write a field | `suggestButton` | SuggestionField |
@@ -164,6 +171,7 @@ other library calls, never a person's text: a person's text goes through the lib
 | Undo right after a step | `toastUndo` | Toast |
 | What a toast says, two lines at most, the whole text in its tooltip | `toastText` | Toast |
 | The head of a group of commands: how many, how many failed, how long | `commandHead` | CommandGroup |
+| A chat at its end follows what arrives; scrolled up, it holds | `pinnedToEnd` | ScrollFade |
 | A redraw that moves what changed instead of jumping | `morph` | What a toggle opens, moving |
 | The flash on what you just went to | `land` | What a toggle opens, moving |
 | Esc or a click outside takes a strip back | `watchStrips` | Closing what lies over a page |

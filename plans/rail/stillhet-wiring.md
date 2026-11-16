@@ -161,6 +161,7 @@ One row per action: `npm run stillhet:wiring` lists every `window.RailWould(...)
 | `runs/run-page-model.js › open worca-docs #31 on GitHub` | not offered live | the live mapper (`ui/public/stillhet/live/live-map.mjs` caseOf) never draws the design's workspace cases: dev keeps a workspace run as one task whose members each open their PR through View PR; the three-PR stand-ins are not drawn (for the controller: dev has no one-call "every member's PR" link) |
 | `runs/run-page-model.js › open worca-web #88 on GitHub` | not offered live | the live mapper (`ui/public/stillhet/live/live-map.mjs` caseOf) never draws the design's workspace cases: dev keeps a workspace run as one task whose members each open their PR through View PR; the three-PR stand-ins are not drawn (for the controller: dev has no one-call "every member's PR" link) |
 | `runs/run-page.js › (a phrase built from data)` | wired | in the live kind `RailTaskLive` (`ui/public/stillhet/live/task-live.mjs`) calls dev's run route; a label no route answers is not drawn (`liveAction`, `liveMore`) |
+| `runs/run-page.js › send the direction` | wired | ⋯ › Send a direction on a live, unfinished task: `RailTaskLive.act('run-direction')`, dev's `POST /api/runs/:id/directions {text}` (COV-3 #1); the demo answers only on the prototype |
 | `runs/run-page.js › check out on this machine and open a local copy` | wired | ⋯ › Try it: `POST /api/runs/:id/checkout`, then the first service's `POST /api/runs/:id/actions/:actionId/start` |
 | `runs/run-page.js › check out on this machine; the PR waits for you` | wired | Changes › Check out (`POST /api/runs/:id/checkout`); the PR dialog's Try it first is the same Try it |
 | `runs/run-page.js › check out …` | wired | Changes › Check out: `RailTaskLive.flow('Check out')`, dev's `POST /api/runs/:id/checkout` |
@@ -204,7 +205,11 @@ One row per action: `npm run stillhet:wiring` lists every `window.RailWould(...)
 | `projects/projects.js › Rename…` | wired | slice 9 D7: `PATCH /api/projects/:key` `{name}` (`form.rename-project`); the key never changes |
 | `projects/projects.js › Locate folder…` | wired | slice 9 D8: `PATCH /api/projects/:key` `{path}`, which re-keys the project and answers the new key; the page goes to it |
 | `projects/projects.js › Remove…` | wired | slice 9 D10: `DELETE /api/projects?name=` once the undo window closes, `&deleteFolder=1` for a folder Worca made (`form.remove-owned`) |
-| `projects/projects.js › Add a project by hand` | wired | slice 9 D11: a path is `POST /api/projects` `{name, path}`; a repository address is `POST /api/projects/clone` `{url}`, followed by its `clone-changed` frames |
+| `projects/projects.js › Add a project by hand` | wired | slice 9 D11: a path is `POST /api/projects` `{name, path}`, plus `useGit:true` when Use git is on for a plain folder (COV-1); a repository address is `POST /api/projects/clone` `{url}`, followed by its `clone-changed` frames |
+| `projects/project-add.js › Choose folder…` | wired | COV-1: the FolderBrowser reads `GET /api/fs/dirs?path=` (a seed that fails opens at the top); `GET /api/git` says whether Use git is offered |
+| `projects/project-add.js › New folder` | wired | COV-1: `POST /api/projects/create` `{name, useGit?, dryRun:true}` says where it is made; Create sends `{name, useGit?}` and opens the project once listed |
+| `projects/project-add.js › Several folders…` | wired | COV-1: the FolderBrowser in multi mode (`GET /api/fs/dirs?path=`), then the review list sends `POST /api/projects/bulk` `{projects:[{name, path}]}`; skipped rows keep their reasons to rename and retry |
+| `projects/project-add.js › the probe line` | wired | COV-1: `GET /api/projects/probe?path=` under the One folder field (classic's detectModel rules); a refused probe blocks Add |
 | `projects/projects.js › How its tasks run` | wired | slice 9 D16: read with `GET /api/projects/:key/settings`; a pick is `PATCH /api/projects/:key/settings` `{settingId: value}`, Use yours sends null |
 | `projects/projects.js › Team memory` | wired | slice 9 D16: `PATCH /api/projects/:key/settings` `{'memory.team': on}`; a refusal keeps the switch |
 | `projects/projects.js › Cost tags, Who pays and Labels` | wired | slice 9 D16, D19: `GET`/`PUT /api/projects/:key/tags/defaults` `{tags, labels}` |
@@ -320,6 +325,7 @@ One row per seeded figure: each data key and seed getter of the globals a model 
 | `profile › the interface mode` | wired | dev's `uiLevel`: the `data-level` stamp at start, `POST /api/settings {uiLevel}` on a person's pick only |
 | `profile › Keep awake` | wired | `keepAwake` of `GET /api/settings`; `POST /api/settings {keepAwake}` |
 | `profile › Away` | wired | `GET /api/away-mode`; `POST /api/settings {nightModeToggle}` with dev's Away switch body |
+| `centers/centers.js › this week's tasks and cost` | wired | B3.6 (F-3-10): GET /api/stats?range=week `totals.runs` and `totals.spentUsd` for every project, else the chosen project's `allocate(report.runs, by project)` row (`insights-map.mjs` `weekTotalsOf`); while the read is pending or failed the head draws no week figures, and a visit to Tasks reads a failed week again. The count opens the list's week (the chosen project's when one is chosen); live its tip says the two can differ. The chosen project's row matches by name: the list's project (projectName, else the registry name or the folder's name) against the stats fact's (projectName, else the key without its hash); they agree when projectName is set, an older run without one can read 0 (follow-up). Demo: a per-run sum, each run by its own date |
 
 ## Dev surfaces
 
@@ -327,6 +333,14 @@ One row per surface of today's UI that Stillhet must carry (gate.prototype in `d
 
 | Surface | Status | Where in Stillhet, or why not yet |
 |---|---|---|
+| `route › /api/runs/:param/directions` | wired | Tasks › the task page's ⋯ Send a direction (`live/task-live.mjs` `run-direction`, COV-3 #1) |
+| `route › /api/runs/:param/restore` | wired | Tasks › the archived task page's ⋯ Restore, scoped as classic's runActionQuery (`live/task-live.mjs` `restore`, COV-3 #3); multi-select keeps `POST /api/runs/bulk` |
+| `route › /api/runs/:param/ask-files/:param/:param` | wired | Chat › a TaskCard's live question: its files as a FilesCard, View by index (`live/chat-live.mjs` `OPENS['ask-file']`, COV-3 #2) |
+| `route › /api/run-links/:param` | wired | Tasks › an old `#run/ID` link opens the saved task it became (`live/task-live.mjs` `openTask`, COV-3 #11) |
+| `route › /api/ask/reveal` | wired | Chat › FilesCard: the probe that draws Show in ‹file manager›, read once (`live/chat-live.mjs` `revealInfo`, COV-3 #9) |
+| `route › /api/ask/threads/:param/attachments/:param` | wired | Chat › FilesCard View and Download, a YouTurn's file chip, a proposal's files read for Start's extras (`live/chat-live.mjs` `OPENS.file`, `download`, COV-3 #5–#8) |
+| `route › /api/ask/threads/:param/attachments/:param/reveal` | wired | Chat › FilesCard Show in ‹file manager› (`live/chat-live.mjs` `ACTIONS['file-reveal']`, COV-3 #9) |
+| `route › /api/ask/threads/:param/directions` | wired | Chat › a followed TaskCard's ⋯ Send a direction (`live/chat-live.mjs` `ACTIONS.direction`) |
 | `route › /api/prompt-check/grade` | wired | Chat › composer sentence row: `stillhet/chat/prompt-check.mjs` grades the draft through dev's `prompt-check/grader.mjs` (the Prompt check chip row above) |
 | `route › /api/prompt-check/kind-correction` | wired | Chat › composer sentence row: a kind pick on the chip, ids and kinds only, posted by `stillhet/chat/prompt-check.mjs` (a new chat's after its first send) |
 | `route › /api/prompt-check/improve` | wired | Chat › composer: Improve on a Needs detail chip, through dev's `prompt-check/improve-view.mjs` in `stillhet/chat/prompt-check.mjs` (the Prompt check Improve row above) |
@@ -341,6 +355,19 @@ One row per surface of today's UI that Stillhet must carry (gate.prototype in `d
 | `ui/public/shape/` | wired | The perspective chips and their Product lock, Compliance and held-back Project fit (flag proposedPerspectives): Stillhet's TaskProposal "reviewed by" picker, from `src/shared/shape/perspectives.mjs` through `live/chat-live.mjs` `perspectiveChoices` (the Perspectives proposed on the run card row above) |
 | `route › /api/team-metrics/prs` | wired | Insights › By person, a person's open row and a teammate's task: the PR states of the scope's runs (`live/insights-live.mjs` `work`, #1310) |
 | `route › /api/team-metrics/pr-events` | wired | Insights › By person, a person's open row: their pull requests made outside Worca (`live/insights-live.mjs` `work`, #1310) |
+
+## Classic controls
+
+One classic control's coverage decided by hand (`tools/classic-inventory.mjs` reads this table by id): app.js's folder
+browser and bulk review list serve Projects › Add project, which the tool's page map reads as Tasks.
+
+| Classic control | Status | Where in Stillhet |
+|---|---|---|
+| `ui/public/app.js › button › (folder-item)` | wired | Projects › Add a project by hand › Choose folder… / Several folders…: a folder row of the FolderBrowser (`projects/project-add.js`, `GET /api/fs/dirs` in `live/projects-live.mjs`) |
+| `ui/public/app.js › button › No subfolders.` | wired | the FolderBrowser's No subfolders. line (`projects/project-add.js`, `GET /api/fs/dirs`) |
+| `ui/public/app.js › toggle › Select …` | wired | the FolderBrowser's tick per folder in Several folders… (`projects/project-add.js`) |
+| `ui/public/app.js › toggle › Add …` | wired | the review list's tick per picked folder (`projects/project-add.js`, `POST /api/projects/bulk`) |
+| `ui/public/app.js › field › Project name for …` | wired | the review list's name per picked folder (`projects/project-add.js`, `POST /api/projects/bulk`) |
 
 ## Opt-in
 
@@ -471,8 +498,8 @@ kind does not draw it, for the reason given, for the controller to decide.
 
 | Capability (dev route) | Home in the prototype | Status |
 |---|---|---|
-| Pause, Resume, Stop (`POST /api/pause`, `/api/resume`, `/api/stop`) | the task page's action slot and ▾, the card's ⋯, the bar's row menu | wired |
-| Answer, plan approval (`POST /api/answer`, `POST /api/runs/:id/answer`) | the page's question part, Approve and build, the center's Approve | wired |
+| Pause, Resume, Stop (`POST /api/pause`, `/api/resume`, `/api/stop`) | the task page's action slot and ▾, the card's ⋯, the bar's row menu; every resume (Resume now, Continue without cap, Raise the cap, Retry, Switch model…, Resume on…) is classic's `resumeBody` (`baseCheck`, chat-live.mjs `resumeBody`), and on the page a moved base asks Resume anyway, which resends it with `baseAck` (F-G-G2-03) | wired |
+| Answer, plan approval (`POST /api/answer`, `POST /api/runs/:id/answer`) | the page's question part: a live task's own clarify or questions ask (task-page.mjs `questionsOf`), one by one, sent together as Chat's `run-answer` `{answers}`; an ask it cannot draw shows no question, never the design's sample (F-G-G2-02); Approve and build, the center's Approve | wired |
 | Continue without cap; the team-cap reason (`POST /api/resume` `ignoreCostCap`, `pastTeamCap`, `policyReason`) | the capped case's ▾ and the team-cap dialog | wired |
 | Raise the cap (`POST /api/resume` `costCapUsd`, `pipelines.cost_cap_usd`) | the capped case's main action and its `cap` dialog | new: built |
 | Restart Build on a stopped or errored run (`POST /api/runs/:id/restart-build`) | the failed and stopped cases, c17's Retry | new: built |
@@ -489,6 +516,13 @@ kind does not draw it, for the reason given, for the controller to decide.
 | Start a new task (`POST /api/run`: `engine`, `syncBeforeStart` and `pr.open` only when picked, else the project's setting; `sourceBranch` from `GET /api/branches`; `noProject` for No project; `costCapUsd` stored in `pipelines.cost_cap_usd`; the project picker lists dev's projects (`GET /api/projects`, the store's projects part), defaulting to the newest task's registered project; a missing folder is listed, never preselected (F-a4-06, `test/stillhet-new-task-projects-host.test.mjs`)) | the stopped, discarded, interrupted and cancelled cases; + › New task…'s Agent, base, source, then and Cost cap | wired |
 | New task…'s Agents (a model for every step: `POST /api/run` `overlay.nodes`, one entry per agent node of the picked workflow, checked by dev's `checkRunOverlay` in `src/core/run-overlay.mjs`) | + › New task… › More options › Agents: the workflow's own, or one of dev's models (`GET /api/ask/models`) for the run's engine on every agent step; Auto offers none (it decides its agents at start) | wired |
 | New task…'s "merge when checks pass" | + › New task… in the demo only: dev's `POST /api/run` has no auto-merge at start (`checkRunPrBody` takes `open` and `slices`; a merge happens only through `POST /api/pr/merge` on a PR that exists). Building it is an engine feature, for the owner to decide (build it, or keep it out) | not offered live |
+| New task…'s saved run defaults (COV-2: `GET /api/run-defaults?projectDir=…`; its `engine.value` fills an untouched Agent, its `tags` an untouched Cost tags; Save as default is `PUT /api/projects/:key/tags/defaults {tags}`, as classic's New run; `test/stillhet-new-task-options-host.test.mjs`) | + › New task…: the Agent picker and More options › Cost tags with its quiet Save as default; Chat's TaskProposal shows and sends the saved engine and tags when the card names none (`test/stillhet-chat-proposal-options-host.test.mjs`) | wired |
+| New task…'s workflow defaults (COV-2: `GET /api/config` `activeWorkflowId` preselects Workflow; a pick is `PATCH /api/config {projectDir, activeWorkflowId}`, skipped under a preset; Save as the workflow's defaults is `PATCH /api/workflows/:id/defaults` then `DELETE /api/config/workflow`, Reset the DELETE alone). A departure for the owner: classic promotes its per-node rows, Stillhet's one Agents pick goes on every agent node | + › New task… › More options › Agents: Save as the workflow's defaults, Reset to the workflow's defaults (`test/stillhet-new-task-options-host.test.mjs`) | wired |
+| New task…'s presets (COV-2: `GET /api/presets`, `POST /api/presets/:id/check`, `PUT /api/presets/:id {setup, basis}`, `POST /api/presets/:id/duplicate`; Start sends `presetId` and what the preset carries; a 409 `preset-broken` repaints the note; creating one stays the task page's ⋯ › Save as preset) | + › New task…: `from PRESET ▾` in the frame, its menu's Update preset and Duplicate, the broken ChoiceNote with Reset to default (`test/stillhet-new-task-presets-host.test.mjs`) | wired |
+| New task…'s ticket source (COV-2: `GET /api/sources`, `GET` and `PUT /api/source-bindings`, `POST /api/sources/call` `validateConfig`, an input's `optionsFrom` (GitHub's `listProjects`), `listTasks` and `getTask`; Start sends `source` in place of `prompt`) | + › New task…: a segment per plugin source, the profile gate ChoiceNote, the connection check (not connected: Open the Marketplace page, Test connection), the source's inputs (Repository, Filter), the search, the ticket list and its preview (`test/stillhet-new-task-source-host.test.mjs`, `test/stillhet-new-task-source-connect-host.test.mjs`) | wired |
+| Sync before start and the engine refusal (COV-2: `POST /api/run`'s 409 `sync-diverged` / `sync-fetch-failed` resend with `syncPolicy`; 409 `engine-refused` and `allowUnguardedEngine`) | + › New task… and Chat's TaskProposal: the sync and engine ChoiceNotes (`test/stillhet-new-task-refusals-host.test.mjs`, `test/stillhet-chat-proposal-options-host.test.mjs`) | wired |
+| The team policy notes (COV-2: `GET /api/policy/notes?scope=project:KEY&guardrailsId=…&models=…`) | + › New task… and Chat's TaskProposal: the grey or amber policy ChoiceNote (`test/stillhet-new-task-options-host.test.mjs`) | wired |
+| Classic's step-slot rows (`GET /api/run-defaults` `steps`) and its per-node agent editor; the PR defaults (`pr`) | Stillhet's Agents is one pick for every step, and the `then` picker already defers to the project's own PR setting; add per-node rows to the design first if the owner wants them | not offered live |
 | Run report (`POST /api/pipelines/:id/report-issue`) | ⋯ › Report this task | wired |
 | Check out (`POST /api/runs/:id/checkout`) | the Changes part's Check out | wired |
 | The check-out diff and Try it (`GET /api/history/:key/:id/diff`, `GET /api/runs/:id/live-diff`, checkout, the services) | ⋯ › Try it, Changes' files and Open the whole diff | wired |
@@ -507,3 +541,34 @@ kind does not draw it, for the reason given, for the controller to decide.
 New sources this slice built (`new: built`): `ui/public/stillhet/live/task-live.mjs` (task fetches, the checks cache, the
 Tasks actions), `ui/public/stillhet/live/task-page.mjs` (the page and card mapper), and the engine additions in
 `plans/rail/task-engine-additions.md`.
+
+### Classic run and chat extras (COV-3)
+
+Classic's run and chat controls (rail off), derived from their call sites (#1390), each with its home in Stillhet. The
+controls below the table are classic's too but are not counted, for the reason given.
+
+| Capability (dev route) | Home in the prototype | Status |
+|---|---|---|
+| 1. Pinpoint tray Send to run (`POST /api/runs/:id/directions {text}`) | the task page's ⋯ Send a direction on a live, unfinished task: a field under the StatusLine | new: built |
+| 2. A pending run question's files (`GET /api/runs/:runId/ask-files/:askId/:index`) | a Chat TaskCard's live question: its files as a FilesCard (Its files), View by index | new: built |
+| 3. History Restore (`POST /api/runs/:id/restore?projectKey…`, no body) | the task page's ⋯ Restore on an archived task, per run; with no scope, the bulk route for that one id; the TaskCard ⋯ Restore is wired through the same flow but a chat lists no archived task today, so it does not show | new: built |
+| 4. Chat engine switch (`POST /api/ask/threads/:id/engine {engine, model, effort, dropTurns?}`) | the composer's model picker (`conversation.js` engineSwitch); the server's confirm-dropped-turns stands in for classic's dry-run preview | wired |
+| 5. A sent message's attachment pill (`GET /api/ask/threads/:id/attachments/:attId`) | a YouTurn's file chip opens it | new: built |
+| 6. A run proposal's Start carries its pills (`POST /api/run` `extras:[{name, dataBase64}]`) | the live TaskProposal's files under its brief (the message it answers), × removes one; over 100 MB or a failed read posts nothing | new: built |
+| 7. FilesCard view (`GET …/attachments/:attId`) | FilesCard View | wired |
+| 8. FilesCard Download (`<a download>`) | FilesCard Download saves the file (`chat-live.mjs` `download`) | new: built |
+| 9. FilesCard Show in ‹file manager› (`GET /api/ask/reveal`, then `POST …/attachments/:attId/reveal {}`) | FilesCard: a per-file Show in ‹label›, only when the probe says so | new: built |
+| 10. Pinpoint Propose fix run (a chat message, no route of its own) | none yet: Stillhet has no Pinpoint surface | not in this slice: Pinpoint slice |
+| 11. Stale `#running/ID` bounce (`GET /api/run-links/:runId`) | an old task link opens the saved task, else gone; one lookup per id | new: built |
+| 12. Run banner Resume on ‹Engine› (`POST /api/resume {pipelineId, baseCheck:true, engine}`) | the task page's Resume ▾ on a usage-limit pause, confirm first; a moved base asks, then sends baseAck | new: built |
+| 13. Run banner Switch model… (`POST /api/resume {pipelineId, model}`) | the task page's Switch model… (`task-live.mjs` `switch-model`) | wired |
+| 14. Run page Resume ▾ Resume on ‹Engine› | as 12 | new: built |
+| 15. Run page Resume ▾ Switch model… | as 13 | wired |
+| 16. History Resume ▾ Resume on ‹Engine› | as 12, on the saved paused task's page | new: built |
+| 17. History Resume ▾ Switch model… | as 13, on the saved paused task's page | wired |
+
+Not counted:
+- the History twin `GET /api/history/:key/:id/ask-files/…`: a saved run's answered ask, which Stillhet's task page does not draw;
+- the Design chat and Workflows dock thumbnails: other surfaces, each its own slice;
+- Resume at…: already wired (`task-live.mjs` `resume-at`); plain Resume: already wired;
+- the engine refusal's "Allow unguarded" retry (409 `engine-refused`, `overridable`): a known gap; Stillhet shows the server's reason and has no home for the consent yet.

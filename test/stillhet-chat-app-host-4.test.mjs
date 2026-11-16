@@ -84,7 +84,23 @@ test('a paused task offers Stop and Resume, never the fixes of a failure; Resume
   assert.ok(items.includes('Stop'), items.join(', '));
   for (const no of ['Ask Worca to fix it', 'Tell Worca how to fix it']) assert.ok(!items.includes(no), `${no} is for a failure`);
   d.querySelector('#route-chat [data-card-act="run-a|Resume now"]').click(); await settle(40);
-  assert.deepEqual(posts(calls).at(-1), ['POST', '/api/resume', { pipelineId: 'pa' }]);
+  assert.deepEqual(posts(calls).at(-1), ['POST', '/api/resume', { pipelineId: 'pa', baseCheck: true }]);
+});
+
+// F-G-G2-03: a card's Resume now sends baseCheck; a moved base asks "Resume anyway" in the card's confirm row, and yes resends
+// the same resume with baseAck (as the task page and classic do), never a silent resume or a bare refusal
+test('F-G-G2-03: the card\'s Resume now on a moved base asks Resume anyway; yes resends with baseAck', async () => {
+  let n = 0;
+  const { w, d, calls } = await liveHost({ sources: withRun({ status: 'paused', pendingQuestion: null }), write: (u) => (u === '/api/resume' && !n++ ? [409, { error: 'dev moved 2 commits since the run started', code: 'base-moved' }] : [200, { ok: true }]) });
+  await go(w, '#chat/ask_1');
+  d.querySelector('#route-chat [data-card-act="run-a|Resume now"]').click(); await settle(60);
+  const ask = d.querySelector('#route-chat [data-card-yes="run-a"]');
+  assert.ok(ask, 'the card asks before resuming on the moved base');
+  assert.equal(ask.textContent.trim(), 'Resume anyway');
+  assert.match(d.querySelector('#route-chat').textContent, /dev moved 2 commits since the (run|task) started/);
+  assert.doesNotMatch(toastText(d), /Could not resume/, 'a prompt, not a refusal');
+  ask.click(); await settle(60);
+  assert.deepEqual(posts(calls).filter(([, u]) => u === '/api/resume'), [['POST', '/api/resume', { pipelineId: 'pa', baseCheck: true }], ['POST', '/api/resume', { pipelineId: 'pa', baseCheck: true, baseAck: true }]]);
 });
 
 test('a task waiting on its question can be stopped from its card', async () => {

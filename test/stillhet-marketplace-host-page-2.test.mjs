@@ -75,3 +75,21 @@ test('while the set-up form is open, the rows\' Set up buttons are disabled and 
   d.querySelector('[data-confirm="no"]').click(); await settle(20);
   assert.ok(rows().every((b) => !b.disabled), 'back once the form closes');
 });
+
+test('F-G-G5-05: the side chat on a list names the list, not a plugin; a plugin\'s page names the plugin', async () => {
+  const { w, d } = await marketplaceHost();
+  await go(w, '#marketplace', 60);
+  d.getElementById('topnav-ask').click(); await settle(60);
+  const side = () => d.getElementById('ask-side')?.textContent.replace(/\s+/g, ' ') || '';
+  assert.match(side(), /List · Marketplace/, 'the chip names the list');
+  assert.match(side(), /Worca sees this list\./);
+  assert.doesNotMatch(side(), /Plugin · Marketplace|this plugin|What would Marketplace add/);
+  assert.equal(w.RailShell.pageContext().kind, 'list');
+  await go(w, '#marketplace/~all', 60);
+  assert.equal(w.RailShell.pageContext().kind, 'list', 'a side view is the list too');
+  await go(w, '#marketplace/jira-source', 60);
+  assert.equal(w.RailShell.pageContext().kind, 'plugin', 'a plugin\'s own page is the plugin');
+  // same cause as F-7a-08: the Projects list is no project
+  await go(w, '#projects', 60);
+  assert.deepEqual([w.RailShell.pageContext().kind, w.RailShell.pageContext().name, w.RailShell.pageContext().project], ['list', 'Projects', '']);
+});

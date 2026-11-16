@@ -67,7 +67,7 @@
   const thinkNow = (x) => { const ms = Date.now() - (x.at || Date.now()), steps = x.steps || THINKING, n = Math.min(steps.length, 1 + Math.floor(ms / 600)); return { step: steps[n - 1], secs: `${Math.max(1, Math.round(ms / 1000))}s`, n, phase: n === steps.length ? 'write' : n === 3 ? 'tool' : 'think' }; };   // searching is a tool; the last step writes
   // The live kind's turns: RailChatLive's, read again on its onChange; what a person opened or typed under a turn stays
   const UI_KEYS = ['open', 'asking', 'askValue', 'rqPick', 'planPick', 'how', 'shipMarking', 'forPlan', 'planRoles', 'planFull', 'planText', 'savedAs', 'directing', 'figures', 'filesOpen', 'openSlice', 'pick', 'rowOpen', 'details', 'term', 'shellClosed', 'target', 'guard', 'src', 'feature', 'onSource', 'diffOpen', 'pkeys'];
-  const PROPOSAL_KEYS = ['title', 'brief'];   // what a person edits on a proposal before Start
+  const PROPOSAL_KEYS = ['title', 'brief', 'ppFiles', 'ppCut'];   // what a person edits on a proposal before Start (its files: COV-3 #6)
   function liveTurns(id) {
     const was = threads.get(id) || [], next = CL().turns(id);
     for (const x of next) { const y = x.id && was.find((z) => z.id === x.id && z.t === x.t); if (y) for (const k of [...UI_KEYS, ...(x.t === 'proposal' || x.t === 'runwith' ? PROPOSAL_KEYS : [])]) if (y[k] !== undefined) x[k] = y[k]; }
@@ -132,7 +132,7 @@
     // a stored confirm whose label the card no longer offers (an open Stop on a run that has since ended) is dropped, so
     // a yes never sends what the card cannot do
     const ask = cardAsk.get(id);
-    if (ask?.confirm && !stillAsks(t, ask.confirm.label)) setCardAsk(t, { confirm: null });
+    if (ask?.confirm && !stillAsks(t, ask.confirm.flow?.live || ask.confirm.label)) setCardAsk(t, { confirm: null });   // Resume anyway: still asks while its resume does
     t.confirm = cardAsk.get(id)?.confirm || null; t.form = cardAsk.get(id)?.form || null;
     const o = opening.get(id);
     if (o && t.prUrl) opening.delete(id);   // the PR is the one the server sent, never the POST's url
@@ -179,6 +179,9 @@
   const PROJECTS = NO_SEED ? ['No project'] : ['billing-api', 'web-app', 'worca-cc', 'docs-site', 'No project'];   // the first run lists only what you add
   // live: the projects are the store's (dev's /api/projects), the models dev's chat catalog (GET /api/ask/models)
   const liveProjects = () => (window.RailWorld?.part?.('projects') || []).filter((p) => p && p.id);
+  const liveSpaces = () => (R.shows('advanced') ? window.RailSpaces?.list() || [] : []).filter((w) => w && w.id && !w.fresh);   // a draft is not in dev yet
+  // where a chat runs, as dev's scope (classic's ask-panel pickScope): a project's key, else a saved workspace's id; null: none
+  const liveScope = (name) => { const pr = liveProjects().find((p) => p.name === name); if (pr) return { pinned: true, projectKey: pr.id }; const w = liveSpaces().find((x) => x.title === name); return w ? { pinned: true, workspaceId: w.id } : null; };
   let liveCat = null;
   const liveModels = () => liveCat?.models || [];
   const modelOf = (id) => liveModels().find((m) => m.id === id) || null;
@@ -217,8 +220,8 @@
     if (liveCat && !comp.effort) comp.effort = d.effort || '';
     const th = chatId ? CL().thread(chatId) : null; if (!th) return;
     if (th.model) comp.engine = th.model; if (th.effort) comp.effort = th.effort;
-    const key = CL().projectKey(chatId);   // dev keeps the chat's project in its `context` (live-map.mjs projectKeyOf)
-    comp.project = key ? liveProjects().find((p) => p.id === key)?.name || key : 'No project';
+    const key = CL().projectKey(chatId), ws = key ? '' : CL().workspaceId(chatId);   // dev keeps the chat's project, else its workspace, in its `context` (live-map.mjs)
+    comp.project = key ? liveProjects().find((p) => p.id === key)?.name || key : ws ? liveSpaces().find((w) => w.id === ws)?.title || ws : 'No project';
   }
   // engine first, then its model: each engine's models under its name (Codex has its own)
   const ENGINE_MODELS = [['Claude Code', ['Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5']], ['Codex', ['Codex 5', 'Codex mini']], ['Gemini CLI', ['Gemini Pro', 'Gemini Flash']]];
@@ -234,7 +237,8 @@
     if (LIVE()) {   // what dev's message carries: where it runs, the model and its effort; the mode only words the ask
       const m = modelOf(comp.engine), efforts = (m?.efforts || []).filter((e) => e !== '-');
       const mode = comp.intent ? '' : pk('mode', comp.mode === 'ask' ? 'Ask' : comp.mode === 'task' ? 'Task' : 'Schedule', MODES, 'Ask, start a task, or schedule one');
-      const project = WP('on', pk('project', comp.project, [...liveProjects().map((p) => ({ id: p.name, text: p.name })), { id: 'No project', text: 'No project' }], 'Where it runs: the project this chat works in'));
+      const spaces = liveSpaces().map((w) => ({ id: w.title, text: w.title, hint: window.RailSpaces.hint(w) }));   // from Advanced, as classic's scope picker lists workspaces
+      const project = WP('on', pk('project', comp.project, [...liveProjects().map((p) => ({ id: p.name, text: p.name })), { id: 'No project', text: 'No project' }, ...(spaces.length ? [{ sep: true }, { header: 'Workspaces · projects that work together' }, ...spaces] : [])], 'Where it runs: the project or workspace this chat works in'));
       const model = modelPicker(liveModels(), m ? R.modelText(m) : comp.engine || 'Model');
       return mode + project + model + (efforts.length ? pk('effort', comp.effort || efforts[0], efforts, 'How hard it thinks') : '') + setsPicker();
     }
@@ -524,7 +528,7 @@
     if (!label) return;
     if (label === 'Leave group') { const g = t.inGroup; t.inGroup = ''; paint(); say(`Left ${g}`); return; }
     const ctx = { ...cardCtx(t), step: STAGES[t.stage] || 'the current step', value: '{value}' }, live = R.runFlow(ctx);   // {value} is the form's choice, filled when you act
-    const ANY = { 'Send a direction': {}, 'View changes': {}, Pause: live.pauseNow, Stop: live.stop, 'Report this task': live.report, Archive: live.archive, 'Save as preset': { dialog: 'preset', say: 'Saved as a preset: {value}' }, 'Run after…': { dialog: 'after', say: `{value} starts after ${t.title}` }, 'Start a follow-up': { followUp: true }, 'Tell Worca how to fix it': { followUp: true, fix: true }, 'Ask Worca to fix it': { autofix: true }, 'Show the log': { page: true }, 'Label…': { dialog: 'label', say: 'Labelled {value}' }, 'Move to group…': { dialog: 'group', say: 'Moved to {value}' } };
+    const ANY = { 'Send a direction': {}, 'View changes': {}, Restore: { say: 'The record is back in Tasks' }, Pause: live.pauseNow, Stop: live.stop, 'Report this task': live.report, Archive: live.archive, 'Save as preset': { dialog: 'preset', say: 'Saved as a preset: {value}' }, 'Run after…': { dialog: 'after', say: `{value} starts after ${t.title}` }, 'Start a follow-up': { followUp: true }, 'Tell Worca how to fix it': { followUp: true, fix: true }, 'Ask Worca to fix it': { autofix: true }, 'Show the log': { page: true }, 'Label…': { dialog: 'label', say: 'Labelled {value}' }, 'Move to group…': { dialog: 'group', say: 'Moved to {value}' } };
     const f = R.actionFlow(RM.stateOf(t.case), { ...ctx, would: LIVE() ? (p) => p : window.RailWould })[label] || ANY[label];   // D12: live, RailChatLive.flow carries it out (doAct)
     if (!f || !offers(t, label)) { if (!LIVE()) say(label); return; }   // live: a card offers only what it can do (FLOW)
     if (f.page) { if (R.shows('expert')) window.RailShell.openTaskPage(t.case, chatId, t.title, taskId(t)); else openHere(t, 'log'); return; }
@@ -552,7 +556,8 @@
       prError.delete(rid);
       const asked = window.RailTaskLive?.prLookup?.().token || 0;   // the lookup before the click: a later one is the PR's
       if (pr) opening.set(rid, { was: label, token: 0 });   // D6: Opening the PR… from here until its PR arrives
-      const fl = (taskFlow(label, t) ? window.RailTaskLive.flow : CL().flow)(label, { taskId: rid, ...flowArgs(t), ...(label === 'Stop' ? stopArgs(t) : {}), value: given.value ?? t.form?.value, ...(given.typed ? { title: given.typed } : {}), ...(given.value === 'a draft' ? { draft: true } : {}), ...(pr ? { quiet: true } : {}) });
+      const said = f.live || label;   // Resume anyway resends the resume it answers (F-G-G2-03)
+      const fl = (taskFlow(said, t) ? window.RailTaskLive.flow : CL().flow)(said, { taskId: rid, ...flowArgs(t), ...(label === 'Stop' ? stopArgs(t) : {}), ...(f.baseAck ? { baseAck: true } : {}), value: given.value ?? t.form?.value, ...(given.typed ? { title: given.typed } : {}), ...(given.value === 'a draft' ? { draft: true } : {}), ...(pr ? { quiet: true } : {}) });
       setCardAsk(t, { confirm: null, form: null }); paint();
       busyFor(`[data-card-act="${t.id}|${label}"]`, fl.then((r) => {
         if (pr) {   // D8: a refused create says why once, on its card; a taken one waits for the lookup afterPr just asked
@@ -560,6 +565,8 @@
           else if (opening.has(rid)) opening.get(rid).token = Math.max(window.RailTaskLive?.prLookup?.().token || 0, asked + 1);   // no lookup asked (no socket): wait for the next one
           return r;
         }
+        // F-G-G2-03: a moved base asks first, in the card's confirm row; yes resends the same resume with baseAck
+        if (r.prompt === 'base') { setCardAsk(t, { confirm: { label: 'Resume anyway', text: r.error, flow: { ...f, live: said, baseAck: true, say: 'Resumed on the moved base' } } }); paint(); return { ok: true }; }
         if (r.ok && !/^(View|Open|Download)/.test(label)) say(label === 'Copy PR link' ? 'Copied the PR link' : (f.say || label).replace('{value}', given.value || '').replace(/\{[a-z]+\}/g, '').trim());
         return r;
       }));
@@ -655,11 +662,23 @@
   // OptionList each, your own words, Answer and Use Worca's picks, all one POST /api/answer {runId, id, payload: {answers}}
   const runQs = (t) => { const q = LIVE() && t?.run ? CL().ask(t.run) : null; return q && q.kind !== 'plan' && Array.isArray(q.questions) && q.questions.length ? q : null; };
   const recOf = (qq) => { const o = (qq.options || []).filter((v) => typeof v === 'string' && v.trim()); const k = o.indexOf(qq.recommended); return k >= 0 ? k : 0; };
+  // COV-3 #9: the file manager's name from dev's reveal probe ('' until it answers, or when the server offers none)
+  let revealAt = null;
+  const revealLabel = () => { if (!revealAt) { revealAt = { label: '' }; CL().revealInfo().then((r) => { if (r?.label) { revealAt.label = r.label; paint(); } }); } return revealAt.label; };
+  // COV-3 #2: a live run's question that came with files (dev's ask envelope: askId, files[{index, name, mime}]) shows them
+  // above its Answer row, each View opening that file of the question by its index (classic's askFileUrl); view only
+  function askFilesHtml(t) {
+    const q = LIVE() && t?.run ? CL().ask(t.run) : null;
+    const files = q && q.askId && Array.isArray(q.files) ? q.files.filter((f) => f && f.name) : [];
+    if (!files.length) return '';
+    return R.filesCard({ label: 'Its files', files: files.map((f, i) => ({ name: f.name, ...(/^image\//.test(f.mime || '') ? { image: true } : {}), download: false, view: doOr(`open ${f.name}`, 'ask-file', { runId: t.run, askId: q.askId, index: f.index ?? i }) })) });
+  }
   function liveAsksHtml(x, t) {
-    const q = runQs(t); if (!q) return '';
+    const fc = askFilesHtml(t);
+    const q = runQs(t); if (!q) return fc ? `<div data-anchor="askfiles-${x.id}">${fc}</div>` : '';
     const picks = x.rqPick || {};
     const one = (qq, k) => { const opts = (qq.options || []).filter((v) => typeof v === 'string' && v.trim()); return `${R.turnRow({ mark: R.kindMark({ kind: 'task', tone: 'ask', stage: -1, size: 16 }), text: `<b>${esc(qq.question || '')}</b>` })}<div class="convo-answer">${R.optionList({ label: qq.question || 'Its question', options: opts, selected: picks[k] ?? recOf(qq), recommended: recOf(qq), optAttrs: (n) => ({ 'data-rq': `${x.id}|${k}|${n}` }), own: R.field({ id: `rq-own-${x.id}-${k}`, label: 'Your own answer', quietLabel: true, placeholder: 'Or write your own answer', attrs: { 'data-rq-own': `${x.id}|${k}` } }) })}</div>`; };
-    return `<div data-anchor="ask-${x.id}">${q.questions.map(one).join('')}<div class="convo-answer-go">${R.button({ label: 'Answer', attrs: { 'data-rq-go': x.id } })}${R.button({ label: 'Use Worca’s picks', kind: 'quiet', attrs: { 'data-rq-picks': x.id, title: 'Takes Worca’s pick for each question' } })}</div></div>`;
+    return `<div data-anchor="ask-${x.id}">${q.questions.map(one).join('')}${fc}<div class="convo-answer-go">${R.button({ label: 'Answer', attrs: { 'data-rq-go': x.id } })}${R.button({ label: 'Use Worca’s picks', kind: 'quiet', attrs: { 'data-rq-picks': x.id, title: 'Takes Worca’s pick for each question' } })}</div></div>`;
   }
   // A direction to a followed run, under its card (dev's POST …/directions): a field, Send direction, Not now
   const directionHtml = (x) => (x.directing ? `<div class="ask-changes">${R.field({ id: `dir-${x.id}`, label: 'Direction', quietLabel: true, placeholder: 'What should it take into account?', value: x.dirValue || '', multiline: true, attrs: { 'data-direction': x.id } })}<span class="tp-actions">${R.button({ label: 'Send direction', kind: 'primary', attrs: { 'data-direction-send': x.id } })}${R.button({ label: 'Not now', kind: 'quiet', attrs: { 'data-direction-cancel': x.id } })}</span></div>` : '');
@@ -679,6 +698,47 @@
     const text = ps.items.filter((i) => ps.picked.includes(i.key)).map((i) => i.label).join(', ');
     return perspPicker(x, text, ps.items.map((i) => ({ id: i.key, text: i.label, checked: ps.picked.includes(i.key), off: i.locked, help: i.help })));
   }
+  // COV-2 (D12): a live proposal's start-time options, kept per card beside its turn so a redraw keeps them: the project's
+  // saved engine and tags, the team policy notes, and a refused Start's engine or sync note (docs/rail/forms.md form.run-options)
+  const ppOpts = new Map();
+  const ppOf = (x) => { const k = `${chatId}|${x.card || x.id}`; if (!ppOpts.has(k)) ppOpts.set(k, { note: null, allow: false, read: false, engine: '', tags: [], policy: null }); return ppOpts.get(k); };
+  function ppRead(x) {
+    const o = ppOf(x), r = x.raw || {}, RO = window.RailRunOptions, L = window.RailRunOptionsLive;
+    if (o.read || !RO || !L || x.target !== 'Project' || !r.projectDir) return;
+    o.read = true;
+    L.defaults(r.projectDir).then((res) => {
+      if (!res.ok) return;
+      const d = RO.defaultsOf(res.data); o.engine = d.engine; o.tags = d.tags; paint();
+      if (d.projectKey) L.policyNotes({ projectKey: d.projectKey, guardrailsId: r.guardrailsId || '' }).then((p) => { o.policy = p.ok ? RO.policyNoteOf(p.data) : null; paint(); });
+    });
+  }
+  // the engine the card runs on when neither it nor the person named one: the project's saved one, unless it is Claude
+  const ppEngine = (x) => { const o = ppOf(x); return !x.raw?.engine && o.engine && o.engine !== 'claude' ? o.engine : ''; };
+  function ppNoteHtml(x) {
+    const o = ppOf(x), n = o.note, RO = window.RailRunOptions; if (!RO) return '';
+    if (n?.kind === 'engine') return R.choiceNote({ text: n.error, means: n.overridable ? RO.ENGINE_TICK : '', end: n.overridable ? R.checkbox({ label: RO.ENGINE_ALLOW, checked: o.allow, attrs: { 'data-pp-allow': x.id } }) : '' });
+    if (n?.kind === 'sync') return R.choiceNote({ text: n.title, means: n.note || '', rows: n.rows.map((text) => ({ text })), ways: [{ label: 'Cancel', kind: 'quiet', attrs: { 'data-pp-sync': `${x.id}|cancel` } }, ...(n.primary ? [{ label: n.primary.label, kind: 'primary', attrs: { 'data-pp-sync': `${x.id}|${n.primary.policy}` } }] : [])] });
+    const p = o.policy;
+    return p ? R.choiceNote({ needsYou: p.tone === 'amber', text: p.head, rows: [...p.rows.map((y) => ({ text: y.text })), ...(p.caps ? [{ text: p.caps }] : [])] }) : '';
+  }
+  // what Start sends from the card as it is now: a resend after a refusal reads it again, so an edit made since is never lost
+  function ppPicks(x) {
+    const r = x.raw || {}, target = TARGET_OF[x.target] || r.target, o = ppOf(x), eng = target === 'project' ? ppEngine(x) : '';
+    return { title: x.title, brief: x.brief, target, guardrailsId: x.guard || r.guardrailsId, ...(x.pkeys && R.prefs.flag('proposedPerspectives') ? { perspectives: x.pkeys } : {}), ...(target === 'none' ? {} : { sourceBranch: x.src ?? r.sourceBranch, featureBranch: x.feature ?? r.featureBranch, sameAsSource: x.onSource ?? !!r.sameAsSource }),
+      ...(eng ? { engine: eng } : {}), ...(target === 'project' && o.tags.length ? { tags: o.tags } : {}), ...(o.allow ? { allowUnguardedEngine: true } : {}) };
+  }
+  // Start, and a resend after a refusal: the note it may bring is the card's; any other refusal is the one toast
+  function ppStart(hit, x, picks) {
+    const o = ppOf(x), RO = window.RailRunOptions;
+    return busyBtn(hit, CL().act('start', { ...cardArgs(x), card: x.raw || {}, files: (x.ppFiles || []).slice(), picks, quiet: true }).then((res) => {
+      if (res.ok) { o.note = null; o.allow = false; return res; }
+      const r = RO?.refusalOf(res);
+      if (r?.kind === 'engine') o.note = { kind: 'engine', error: r.error, overridable: r.overridable };
+      else if (r?.kind === 'sync') o.note = { kind: 'sync', ...RO.syncNoteOf(r) };
+      else window.RailAdapter?.toast?.(`Could not start the task: ${res.error}`);
+      return res;
+    }));
+  }
   function liveProposalHtml(x) {
     const r = x.raw || {};
     if (!liveGuards) { liveGuards = []; CL().catalog('guardrails').then((g) => { if (g.ok) { liveGuards = (g.data?.guardrails || []).filter((y) => y.id !== 'permissive').map((y) => ({ id: y.id, text: y.name || y.id })); paint(); } else liveGuards = null; }); }
@@ -686,8 +746,13 @@
     const pp = (f, text, items, tip) => R.sentencePicker({ id: `pp-${x.id}-${f}`, text, tip, items: items.map((v) => (typeof v === 'string' ? { id: v, text: v, checked: v === text } : { ...v, checked: v.id === x[f] })), open: menu === `pp-${x.id}-${f}`, chevron: R.icon('chevron', 10) });
     const row = (k, v) => `<div class="cr"><span>${k}</span><span>${v}</span></div>`;
     const targets = ['No project', ...(r.projectDir ? ['Project'] : []), ...(r.workspaceId ? ['Workspace'] : [])];
-    const sentence = W('Task') + W('on') + W(esc(x.target === 'No project' ? 'no project' : x.project)) + W('with') + W(esc(x.workflow));
-    const brief = `<div class="tp-brief">${R.field({ id: `pp-brief-${x.id}`, label: 'Brief: what the first agent reads · Markdown', value: x.brief ?? '', multiline: true, hint: `${(x.brief ?? '').length} characters`, attrs: { 'data-pp-brief': x.id } })}</div>`;
+    ppRead(x);
+    const eng = ppEngine(x), engLabel = eng ? window.RailTaskLive?.engines?.().find((e) => e.id === eng)?.label || eng : '';
+    const sentence = W('Task') + W('on') + W(esc(x.target === 'No project' ? 'no project' : x.project)) + W('with') + W(esc(x.workflow)) + (engLabel ? W('run by') + W(esc(engLabel)) : '');
+    // COV-3 #6: the files of the message it answers (the you-turn before it), under the brief as the design draws them; × drops one
+    // the files are read again while none have ids yet (an echo before the snapshot) and none were removed
+    if (x.ppFiles === undefined || (!x.ppFiles.length && !x.ppCut)) { const all = threads.get(chatId) || [], k = all.findIndex((y) => y === x || (y.id === x.id && y.t === x.t)), you = all.slice(0, Math.max(0, k)).reverse().find((y) => y.t === 'you'); x.ppFiles = (you?.files || []).filter((f) => f && typeof f === 'object' && f.att); }
+    const brief = `<div class="tp-brief">${R.field({ id: `pp-brief-${x.id}`, label: 'Brief: what the first agent reads · Markdown', value: x.brief ?? '', multiline: true, hint: `${(x.brief ?? '').length} characters`, attrs: { 'data-pp-brief': x.id } })}${x.ppFiles.length ? `<span class="you-files">${x.ppFiles.map((f) => R.button({ label: f.name, kind: 'quiet', icon: R.icon('x', 11), attrs: { 'data-pp-unfile': `${x.id}|${f.att}`, title: `Removes ${f.name}` } })).join('')}</span>` : ''}</div>`;
     const guardText = (liveGuards || []).find((g) => g.id === x.guard)?.text || x.guard;
     const more = row('Where it runs', pp('target', x.target, targets, 'Where it runs'))
       + (x.target === 'No project' ? '' : row('Source branch', R.field({ id: `pp-src-${x.id}`, label: 'Source branch', quietLabel: true, value: x.src, placeholder: 'The project’s default branch', attrs: { 'data-pp-src': x.id } }))
@@ -695,7 +760,7 @@
         + row('Run on the source branch', R.switchButton({ on: !!x.onSource, label: 'Run on the source branch', attrs: { 'data-pp-onsource': x.id } })))
       + row('Guardrails', pp('guard', guardText, liveGuards || [], 'Applies to every agent in this task'));
     const ppMenu = R.moreMenu({ id: `ppm:${x.id}`, label: `More for ${x.title}`, icon: R.icon('more', 16), open: menu === `ppm:${x.id}`, items: [{ id: 'composer', text: 'Edit in the composer', help: 'Puts all of it in the box to change; this card stays until you send' }] });
-    return R.taskProposal({ menu: ppMenu, title: x.title, why: x.why, sentence: sentence + livePersp(x), more: brief + more, open: x.open, nudge: '', hooks: { title: { 'data-pp-title': x.id }, more: { 'data-pp-more': x.id }, start: { 'data-pp-start': x.id }, later: { 'data-pp-later': x.id } }, start: 'Start', alts: null, kicker: 'Proposed', attrs: { 'data-anchor': x.id } });
+    return R.taskProposal({ menu: ppMenu, title: x.title, why: x.why, sentence: sentence + livePersp(x), more: brief + more, open: x.open, nudge: '', hooks: { title: { 'data-pp-title': x.id }, more: { 'data-pp-more': x.id }, start: { 'data-pp-start': x.id }, later: { 'data-pp-later': x.id } }, start: 'Start', alts: null, kicker: 'Proposed', extra: ppNoteHtml(x), attrs: { 'data-anchor': x.id } });
   }
   // Run with (D3): a one-stage workflow Worca proposed only to run a task is one TaskProposal; Start saves it and starts its
   // task (RailChatLive 'run-with'), Customise holds its steps and a plain Save workflow (dev's save, no start)
@@ -752,7 +817,8 @@
     const fold = () => ({ 'data-fold-turn': String(i), ...(x.id ? { 'data-anchor': x.id } : {}) });
     // panel.turn-time: a you or words turn takes the focus and carries its time, shown on hover, focus or a tap; its first
     // data-* attribute is its key, so focusMark finds it again after a repaint
-    if (x.t === 'you') { const html = R.youTurn({ text: x.text, quote: x.quote || '', files: x.files || [], refs: (x.refs || []).map((r) => ({ text: r.title, mark: R.kindMark({ kind: 'task', tone: 'idle', size: 14 }), attrs: { 'data-open-ref': r.case, 'data-open-ref-run': r.run || null } })), attrs: { 'data-anchor': x.id || '', tabindex: '0' }, time: R.turnTime({ at: x.at, now: Date.now() }) }); return x.id && timeShown === x.id ? html.replace('class="convo-you"', 'class="convo-you is-time-shown"') : html; }
+    // COV-3 #5: an attachment dev named is a chip that opens it (dev's GET …/attachments/:attId), as classic's pill links it
+    if (x.t === 'you') { const html = R.youTurn({ text: x.text, quote: x.quote || '', files: (x.files || []).map((f) => (typeof f === 'string' ? f : f.att ? { name: f.name, attrs: doOr(`open ${f.name}`, 'file', { threadId: chatId, attId: f.att }) } : f.name)), refs: (x.refs || []).map((r) => ({ text: r.title, mark: R.kindMark({ kind: 'task', tone: 'idle', size: 14 }), attrs: { 'data-open-ref': r.case, 'data-open-ref-run': r.run || null } })), attrs: { 'data-anchor': x.id || '', tabindex: '0' }, time: R.turnTime({ at: x.at, now: Date.now() }) }); return x.id && timeShown === x.id ? html.replace('class="convo-you"', 'class="convo-you is-time-shown"') : html; }
     // commands are dev's on Rail's rail (CommandRow, CommandGroup): a group folded to its head, a failure opening it and
     // itself; no marks, the words say how each went; one fold opens the command and its output, each with Copy
     const TERMINAL = { 'data-terminal': String(i) };   // panel.terminal: the TerminalPane under the command, in both kinds
@@ -809,7 +875,9 @@
       const extra = x.savedAs ? `<p class="cmd-s">${esc(LIVE() ? `Saved as ${x.savedAs}` : window.RailWould(`be saved as ${x.savedAs}`))}</p>` : '';   // one line before the actions: who reviewed it (the shape check and perspectives are in it, and in ⋯)
       return askChanges(x) ? R.planCard({ menu: planMenu, extra, check: 'shape check passed', title: x.title, summary: x.summary, version, roles: x.roles, open: !!x.open, hooks: { roles: { 'data-plan-roles': x.id }, approve: { 'data-plan-approve': x.id }, changes: { 'data-plan-changes': x.id }, full: { 'data-plan-full': x.id } }, full, fullOpen: !!x.fullOpen, attrs: { 'data-anchor': x.id } }) + askChanges(x) : R.planCard({ menu: planMenu, extra, check: 'shape check passed', title: x.title, summary: x.summary, version, roles: x.roles, open: !!x.open, hooks: { roles: { 'data-plan-roles': x.id }, approve: { 'data-plan-approve': x.id }, changes: { 'data-plan-changes': x.id }, full: { 'data-plan-full': x.id } }, full, fullOpen: !!x.fullOpen, attrs: { 'data-anchor': x.id } });
     }
-    if (x.t === 'filesgrid') return R.filesCard({ label: x.label || 'Files', files: x.files.map((f) => ({ ...f, view: doOr(`open ${f.name}`, 'file', { threadId: chatId, attId: f.att }), download: doOr(`download ${f.name}`, 'file', { threadId: chatId, attId: f.att }) })) });
+    // COV-3 #8, #9: live, Download saves the file (RailChatLive.download), and Show in ‹file manager› is drawn once the server
+    // said it can (its probe, read once)
+    if (x.t === 'filesgrid') return R.filesCard({ label: x.label || 'Files', revealLabel: LIVE() ? revealLabel() : '', files: x.files.map((f) => ({ ...f, view: doOr(`open ${f.name}`, 'file', { threadId: chatId, attId: f.att }), download: LIVE() ? { 'data-file-dl': `${f.att}|${f.name}` } : doOr(`download ${f.name}`, 'file', { threadId: chatId, attId: f.att }), reveal: LIVE() ? doOr(`show ${f.name} in its folder`, 'file-reveal', { threadId: chatId, attId: f.att }) : null })) });
     if (x.t === 'words') { const key = x.key || String(i); return `<div class="convo-words${timeShown === key ? ' is-time-shown' : ''}"${R.attrs({ 'data-words-turn': key, tabindex: '0' })}>${x.md ? R.prose({ text: x.md, doc: document, ...(LIVE() ? { refs: (t) => CL().partsOf(t), chip: chipOf } : {}) }) : x.html}${R.turnTime({ at: x.at, now: Date.now() })}</div>`; }   // panel.rendered-prose: finished words through Prose, in a div; no data-anchor: a timeline tick is a you turn or a card
     if (x.t === 'failed') return R.turnRow({ mark: R.kindMark({ kind: 'chat', tone: 'fail', size: 16 }), text: `<b>${esc(x.text)}</b>${x.details ? ` ${esc(x.detail)}` : ''}`, end: R.button({ label: x.details ? 'Hide details' : 'Details', kind: 'quiet', attrs: { 'data-failed-details': x.id, 'aria-expanded': String(!!x.details) } }) + R.button({ label: 'Try again', kind: 'quiet', attrs: { 'data-failed-retry': x.id } }), attrs: { 'data-anchor': x.id } });   // fail.no-raw: the raw error behind Details
     if (x.t === 'proposal') return proposalHtml(x);
@@ -888,6 +956,7 @@
       ...(done ? [{ id: 'Start a follow-up', text: 'Start a follow-up', help: 'A new task on this one’s branch, with what you ask' }] : []), { id: 'Run after…', text: 'Run after…', help: 'Another task starts when this one finishes' },
       { id: 'Label…', text: 'Label…', help: 'Adds a label to this task' }, t.inGroup ? { id: 'Leave group', text: `Leave ${t.inGroup}`, help: 'The task leaves the group; its labels stay' } : { id: 'Move to group…', text: 'Move to group…', help: 'Tracks it with related tasks' }, { id: 'Save as preset', text: 'Save as preset', help: 'Starts the next task with this one’s setup' },
       ...(done ? [{ id: 'Report this task', text: 'Report this task', help: 'Asks for a note, then sends it with the logs to the Worca team' }, { id: 'Archive', text: 'Archive', help: 'Removes the branch, worktree and logs; the remote branch and PR stay' }] : []),
+      ...(LIVE() ? [{ id: 'Restore', text: 'Restore', help: 'Brings the record back to Tasks; its branch, worktree and logs stay gone' }] : []),   // COV-3 #3: an archived task's (canFlow)
       ...(LIVE() && t.followed ? [{ id: 'Send a direction', text: 'Send a direction', help: 'Tells the run something it reads at its next step' }] : []),
       ...(R.shows('expert') ? [{ sep: true }, { id: 'open', text: 'Open its page', help: 'The task page, while the card does not hold everything yet' }] : [])].filter((it) => typeof it === 'string' ? offers(t, it) : it.sep || offers(t, it.id)).filter((it, k, l) => !it.sep || (k > 0 && k < l.length - 1 && !l[k - 1].sep)));
     const confirm = t.confirm ? confirmRow(t) : '';
@@ -986,7 +1055,7 @@
   const dimmed = new Set();   // controls a pending action disabled (busyFor): enabled again once it is answered, a kept node too
   function paintOnly(keepText = true) {
     const fm = focusMark();
-    const had = root.querySelector('[data-composer-t]'), caret = had && document.activeElement === had, y = root.querySelector('.convo-scroll')?.scrollTop;
+    const had = root.querySelector('[data-composer-t]'), caret = had && document.activeElement === had, was = root.querySelector('.convo-scroll'), y = was?.scrollTop, follow = R.pinnedToEnd(was);   // motion.follow-end: read before the patch, as the reader left it
     const sel = caret ? [had.selectionStart, had.selectionEnd, had.selectionDirection] : null, draft = had ? had.value : null;   // where the writer left the caret, in which draft
     if (had && keepText) comp.text = had.value;
     const c = chat();
@@ -1008,7 +1077,7 @@
       }
       R.patchKeyed(box.querySelector('.convo-col'), [{ key: 'head', html: `<div class="convo-head">${shown ? `${esc(c.project || 'No project')}${labels ? ` · ${labels}` : ''}` : ''}${labelPick}${worktreesHtml()}<span class="tl-list-btn rc-pop" data-anchor-menu>${R.button({ label: 'Move through this chat', kind: 'quiet', iconOnly: true, icon: R.icon('list', 15), attrs: { 'data-anchor-open': '', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'anchors') } })}${anchorsMenu}</span></div>` }, { key: 'wt-confirm', html: wtConfirm() }, { key: 'eng-confirm', html: engConfirm() }, ...body], { carry: 'canvas[data-orb]' });
       R.patchKeyed(root.querySelector('.convo-dock'), [{ key: 'latest', html: `${R.button({ label: 'Latest', kind: 'quiet', icon: R.icon('chevron', 12), cls: 'jump-latest', attrs: { 'data-jump-latest': '', title: 'Back to the newest turn' } })}` }, { key: 'composer', html: composerHtml() }]);
-      if (y != null) box.scrollTop = y;
+      if (follow) box.scrollTop = box.scrollHeight; else if (y != null) box.scrollTop = y;
       paintTimeline();
     }
     placeImprove();   // before the focus comes back: a focused Use this is found again in its moved view
@@ -1095,9 +1164,9 @@
     if (comp.sending || sendingIn.has(from)) return;
     sendingIn.add(from); comp.sending = true; paint();
     const handed = aboutNow(), ctx = context || (handed ? { view: String(handed.kind || 'page').toLowerCase().replace(/[^a-z0-9-]+/g, '-').slice(0, 32), ...(handed.ref || {}) } : null);   // D16: the page it came from
-    const m = modelOf(comp.engine), pr = !chatId && comp.project !== 'No project' ? liveProjects().find((p) => p.name === comp.project) : null;
+    const m = modelOf(comp.engine), sc = !chatId && comp.project !== 'No project' ? liveScope(comp.project) : null;
     const checked = pc;   // the prompt check of the chat that sends: its held correction goes with this send's thread id
-    CL().act('send', { threadId: chatId || '', text, attachments: comp.attachments || [], ...(m ? { model: m.id, effort: comp.effort || (m.efforts || [])[0] } : {}), ...(pr ? { scope: { pinned: true, projectKey: pr.id } } : {}), ...(!chatId && comp.mcpOff ? { mcpOff: comp.mcpOff } : {}), ...(ctx ? { context: ctx } : {}), queue: true, key: `send:${chatId || 'new'}` }).then((r) => {
+    CL().act('send', { threadId: chatId || '', text, attachments: comp.attachments || [], ...(m ? { model: m.id, effort: comp.effort || (m.efforts || [])[0] } : {}), ...(sc ? { scope: sc } : {}), ...(!chatId && comp.mcpOff ? { mcpOff: comp.mcpOff } : {}), ...(ctx ? { context: ctx } : {}), queue: true, key: `send:${chatId || 'new'}` }).then((r) => {
       sendingIn.delete(from);
       if (r.ok) checked?.sent(text, { threadId: r.data?.threadId || from });   // a refused send posts nothing
       const here = (chatId || '') === from;
@@ -1253,7 +1322,7 @@
     if (efforts.length && !efforts.includes(next.effort)) next.effort = efforts[0];
     if (!chatId) { Object.assign(comp, next); paint(); return; }
     let p;
-    if (id === 'cp-project') { const pr = liveProjects().find((x) => x.name === v); p = CL().act('scope', { threadId: chatId, scope: pr ? { pinned: true, projectKey: pr.id } : { pinned: false } }); }
+    if (id === 'cp-project') p = CL().act('scope', { threadId: chatId, scope: liveScope(v) || { pinned: false } });
     else {
       // a chat with no reply yet has no engine: its model is the PATCH, and its first reply runs on it (dev's no-engine-yet)
       // dev's chatEngine: the thread's engine, else its model's, else claude, and none until its first reply (askChatEngine)
@@ -1348,6 +1417,7 @@
     // a live block dev gave no id cannot reach a route: it refuses, and never falls through to the demo's handlers
     const noId = (words) => { window.RailAdapter.toast(`Could not ${words}: this card has no id`); return true; };
     const turn = (attr) => { const h = on(`[${attr}]`); if (!h) return null; hit = h; const v = h.getAttribute(attr); return turns().find((y) => y.id === v.split('|')[0]) || turns()[+v] || null; };
+    if ((hit = on('[data-file-dl]'))) { const [att, ...n] = hit.dataset.fileDl.split('|'); busyBtn(hit, CL().download({ threadId: chatId, attId: att, name: n.join('|') })); return true; }   // COV-3 #8: saved, not a tab
     if ((hit = on('[data-live]'))) { const [id, ...a] = hit.dataset.live.split('|'), args = JSON.parse(a.join('|') || '{}'); busyBtn(hit, CL().act(id, args).then((r) => { if (id === 'folder' && r.ok) folderPicked(args.turn, r.data || {}); return r; })); return true; }
     if ((x = turn('data-changes-send'))) {   // Ask for changes under a live card: dev's changes route; the words stay until it answers ok
       const v = root.querySelector(`[data-ask-changes="${CSS.escape(x.id)}"]`)?.value.trim(); if (!v) { say('Say what should change first'); return true; }
@@ -1404,8 +1474,14 @@
       const own = root.querySelector(`[data-own="${hit.dataset.answerGo}"]`)?.value.trim();
       busyBtn(hit, CL().act('answer', { ...cardArgs(x), ...(own ? { text: own } : { choice: x.optionIds?.[x.pick ?? 0] }) })); return true;
     }
-    if ((hit = on('[data-pp-start]'))) { x = turns().find((y) => y.id === hit.dataset.ppStart); if (!x?.card) return noId('start the task'); const r = x.raw || {}, target = TARGET_OF[x.target] || r.target;
-      busyBtn(hit, CL().act('start', { ...cardArgs(x), card: r, picks: { title: x.title, brief: x.brief, target, guardrailsId: x.guard || r.guardrailsId, ...(x.pkeys && R.prefs.flag('proposedPerspectives') ? { perspectives: x.pkeys } : {}), ...(target === 'none' ? {} : { sourceBranch: x.src ?? r.sourceBranch, featureBranch: x.feature ?? r.featureBranch, sameAsSource: x.onSource ?? !!r.sameAsSource }) } })); return true; }
+    if ((hit = on('[data-pp-start]'))) { x = turns().find((y) => y.id === hit.dataset.ppStart); if (!x?.card) return noId('start the task'); ppStart(hit, x, ppPicks(x)); return true; }
+    if ((hit = on('input[data-pp-allow]'))) { x = turns().find((y) => y.id === hit.dataset.ppAllow); if (x) { ppOf(x).allow = hit.checked; paint(); root.querySelector(`[data-pp-allow="${CSS.escape(x.id)}"]`)?.focus(); } return true; }
+    if ((hit = on('[data-pp-sync]'))) {
+      const [id, policy] = hit.dataset.ppSync.split('|'); x = turns().find((y) => y.id === id); if (!x?.card) return noId('start the task');
+      const o = ppOf(x);
+      if (policy === 'cancel') { o.note = null; paint(); root.querySelector(`[data-pp-start="${CSS.escape(x.id)}"]`)?.focus(); say(window.RailRunOptions?.START_CANCELLED || 'Start cancelled'); return true; }
+      ppStart(hit, x, { ...ppPicks(x), syncPolicy: policy }); return true;   // the card as it is now, plus one key; the note stays, its button held, until dev answers
+    }
     if ((hit = on('[data-pp-later]'))) { x = turns().find((y) => y.id === hit.dataset.ppLater); if (!x?.card) return noId('set the proposal aside'); busyBtn(hit, CL().act('card-later', { ...cardArgs(x), run: true })); return true; }
     if ((x = turn('data-cmd-stop'))) { if (!x.session) return noId('stop the command'); busyBtn(hit, CL().act('cmd-stop', { sessionId: x.session })); return true; }
     if ((x = turn('data-term-stop'))) { if (x.term) busyBtn(hit, x.term.stop()); return true; }
@@ -1555,7 +1631,7 @@
     if ((px = pp('data-pp-back'))) { px.later = false; paint(); return; }
     if ((px = pp('data-pp-asis'))) { px.nudge = false; paint(); say('Runs as is'); return; }
     if ((hit = on('[data-pp-persp]'))) { const [id, v] = hit.dataset.ppPersp.split('|'), x = turns().find((y) => y.id === id); if (x) { const l = x.persp || ['Product']; x.persp = l.includes(v) ? l.filter((z) => z !== v) : [...l, v]; paint(); } return; }
-    if ((hit = on('[data-pp-unfile]'))) { const [id, f] = hit.dataset.ppUnfile.split('|'), x = turns().find((y) => y.id === id); if (x) { x.files = (x.files || []).filter((z) => z !== f); paint(); } return; }
+    if ((hit = on('[data-pp-unfile]'))) { const v = hit.dataset.ppUnfile, cut = v.indexOf('|'), id = v.slice(0, cut), f = v.slice(cut + 1), x = turns().find((y) => y.id === id); if (x) { if (x.ppFiles) { x.ppFiles = x.ppFiles.filter((z) => z.att !== f); x.ppCut = true; } else x.files = (x.files || []).filter((z) => z !== f); paint(); } return; }
     if ((hit = on('[data-pp-target]'))) { const [id, v] = hit.dataset.ppTarget.split('|'), x = turns().find((y) => y.id === id); if (x) { x.target = v; paint(); } return; }
     if ((px = pp('data-pp-onsource'))) { px.onSource = !px.onSource; paint(); return; }
     if ((px = pp('data-pp-reset'))) { px.agents = {}; paint(); say('Agents back to the proposal'); return; }
@@ -1691,7 +1767,7 @@
       el.classList.remove('is-flash'); void el.offsetWidth; el.classList.add('is-flash');
       return true;
     },
-    show: (id) => { if (LIVE()) { listen(); CL().look(root, id || '', () => !hiddenNow()); if (id) CL().open(id); } setTimeout(() => settle(id), 0); const other = id !== chatId; if (other) { drafts.set(chatId, { ...comp, text: root.querySelector('[data-composer-t]')?.value ?? comp.text, busy: false, queue: [], listening: false, sending: false }); opened = new Set(); hover = null; menu = ''; const was = drafts.get(id || ''); comp = was && (id || was.text || was.intent || was.mode !== 'ask') ? { ...was } : { ...fresh(), project: id ? data().chats.find((c) => c.id === id)?.project || 'No project' : lastProject };   /* a new chat starts on the project you added last */ comp.sending = sendingIn.has(id || ''); } chatId = id || ''; paint(!other); if (id) { const box = root.querySelector('.convo-scroll'); if (box) { box.scrollTop = 0; paintTimeline(); } } },
+    show: (id) => { if (LIVE()) { listen(); CL().look(root, id || '', () => !hiddenNow()); if (id) CL().open(id); } setTimeout(() => settle(id), 0); const other = id !== chatId; if (other) { drafts.set(chatId, { ...comp, text: root.querySelector('[data-composer-t]')?.value ?? comp.text, busy: false, queue: [], listening: false, sending: false }); opened = new Set(); hover = null; menu = ''; const was = drafts.get(id || ''); comp = was && (id || was.text || was.intent || was.mode !== 'ask') ? { ...was } : { ...fresh(), project: id ? data().chats.find((c) => c.id === id)?.project || 'No project' : lastProject };   /* a new chat starts on the project you added last */ comp.sending = sendingIn.has(id || ''); } chatId = id || ''; paint(!other); if (id) { const box = root.querySelector('.convo-scroll'); if (box) { box.scrollTop = box.scrollHeight; paintTimeline(); } } },
     start: (mode, text, project) => { chatId = ''; comp = { ...fresh(mode), text: text || '', ...(project ? { project } : {}) }; if (!side) window.RailShell.go('chat'); paint(false); root.querySelector('[data-composer-t]')?.focus(); },   /* what another place hands over stays in the box, on its project */
     pin: (w, on) => { const next = on ? [...new Set([...shownPins(), w])] : shownPins().filter((x) => x !== w); if (LIVE()) setPins(next, on ? `Pinned ${w}` : `Unpinned ${w}`); else { pins = next; refreshAll(); } },
     handOver: ({ mode = 'ask', about, text = '', ph = '', project, workflow, ref = null }) => {   // ref: the page's own ids, posted as context (D16)   // rail.hand-to-chat: the one way a place sends something to Chat

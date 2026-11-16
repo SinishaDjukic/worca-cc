@@ -149,6 +149,31 @@ test('listController: two lists on one bar, the rows showing answer (one owner p
   assert.deepEqual(opened, ['b']);
 });
 
+test('B2.8 F-6-01 listController: paint({ ifChanged }) with an unchanged drawing writes nothing; a changed one, or a bar another painter rewrote, paints', () => {
+  const win = new JSDOM('<div id="b"></div>').window, root = win.document.getElementById('b');
+  let title = 'T';
+  const mk = (n) => C.listController({ root, spec: { noun: `ifc-${n}-${Math.random()}`, label: 'x', can: () => [], bulk: () => [], act: () => {}, word: () => false, say: () => {}, active: () => true, open: () => {}, view: () => ({ state: 'ready', parts: [], sections: [{ id: 's', title: 'S', noCount: true, rows: [{ key: 'k', title }, { key: 'j', title: 'U' }] }] }) } });
+  const a = mk('a'), b = mk('b');
+  const seen = new win.MutationObserver(() => {});
+  seen.observe(root, { subtree: true, childList: true, attributes: true, characterData: true });
+  a.paint();
+  const row = root.querySelector('[data-open="k"]');
+  seen.takeRecords();
+  a.paint({ ifChanged: true });
+  assert.equal(seen.takeRecords().length, 0, 'nothing changed: nothing written');
+  assert.equal(root.querySelector('[data-open="k"]'), row, 'the row keeps its node');
+  a.paint({ ifChanged: true, focus: '[data-open="j"]' });
+  assert.equal(win.document.activeElement, root.querySelector('[data-open="j"]'), 'a passed focus still lands');
+  title = 'T2'; a.paint({ ifChanged: true });
+  assert.match(root.textContent, /T2/, 'a changed drawing paints');
+  b.paint(); a.paint({ ifChanged: true });
+  root.querySelector('[data-open]').click();
+  assert.notEqual(root.querySelector('[data-open="k"]'), null);
+  seen.takeRecords(); b.paint({ ifChanged: true }); assert.ok(seen.takeRecords().length > 0, 'another painter took the bar: it paints');
+  root.innerHTML = '<p>x</p>'; seen.takeRecords(); b.paint({ ifChanged: true });
+  assert.notEqual(root.querySelector('[data-open="k"]'), null, 'someone else wrote into the root: it paints');
+});
+
 test('listController: a dialog\'s name field stops at its limit and says so (small.name-short)', () => {
   const root = new JSDOM('<div id="b"></div>').window.document.getElementById('b');
   const ctl = C.listController({ root, spec: { noun: `max-${Math.random()}`, label: 'x', can: () => [], bulk: () => [], act: () => {}, word: () => false, say: () => {}, active: () => true, view: () => ({ state: 'ready', parts: [], sections: [] }) } });
@@ -1506,6 +1531,96 @@ test('ScrollFade: an edge fades only while there is more past it', () => {
   window.close();
 });
 
+// B2.8: a column is measured only when it scrolls, resizes or its content changes. `reads` counts scrollHeight reads per
+// element; `data-h` stands in for a column's content height.
+function fadeHost() {
+  const { window } = new JSDOM('<body><div id="a" class="convo-scroll" data-h="0"></div><div id="b" class="convo-scroll" data-h="0"></div><div id="other"></div></body>', { pretendToBeVisual: true });
+  const reads = [];
+  Object.defineProperty(window.Element.prototype, 'scrollHeight', { configurable: true, get() { reads.push(this.id || this.className); return Number(this.dataset.h || 0); } });
+  const frames = () => new Promise((r) => window.requestAnimationFrame(() => window.requestAnimationFrame(r)));
+  C.watchScrollFades(window.document);
+  return { window, doc: window.document, reads, frames };
+}
+
+test('B2.8 F-a1-02 ScrollFade: a mutation outside every column measures no column', async () => {
+  const { window, doc, reads, frames } = fadeHost();
+  await frames(); reads.length = 0;
+  doc.getElementById('other').append(doc.createElement('p'));
+  await frames();
+  assert.deepEqual(reads, []);
+  window.close();
+});
+
+test('B2.8 F-a1-02 ScrollFade: content added in one column measures that column only, and marks it', async () => {
+  const { window, doc, reads, frames } = fadeHost();
+  await frames(); reads.length = 0;
+  const a = doc.getElementById('a');
+  a.dataset.h = '900'; a.append(doc.createElement('p')); a.append(doc.createElement('p'));
+  await frames();
+  assert.ok(reads.length > 0 && reads.every((x) => x === 'a'), `read: ${reads}`);
+  assert.equal(a.hasAttribute('data-more-below'), true);
+  assert.equal(a.hasAttribute('data-far-below'), true, 'the Latest button still has its cue');
+  window.close();
+});
+
+test('B2.8 F-a1-02 ScrollFade: a resize measures every column; a new column is marked when it appears', async () => {
+  const { window, doc, reads, frames } = fadeHost();
+  await frames(); reads.length = 0;
+  window.dispatchEvent(new window.Event('resize'));
+  assert.ok(reads.includes('a') && reads.includes('b'), `read: ${reads}`);
+  const wrap = doc.createElement('section');
+  wrap.innerHTML = '<div id="c" data-scroll-fade data-h="500"></div>';
+  doc.getElementById('other').append(wrap);
+  await frames();
+  assert.equal(doc.getElementById('c').hasAttribute('data-more-below'), true);
+  window.close();
+});
+
+test('B2.8 F-a1-02 ScrollFade: content added in a column inside a column re-marks both', async () => {
+  const { window } = new JSDOM('<body><div id="outer" class="side-menu" data-h="0"><div id="inner" data-scroll-fade data-h="0"></div></div></body>', { pretendToBeVisual: true });
+  Object.defineProperty(window.Element.prototype, 'scrollHeight', { configurable: true, get() { return Number(this.dataset.h || 0); } });
+  const frames = () => new Promise((r) => window.requestAnimationFrame(() => window.requestAnimationFrame(r)));
+  const doc = window.document;
+  C.watchScrollFades(doc);
+  await frames();
+  const outer = doc.getElementById('outer'), inner = doc.getElementById('inner');
+  assert.equal(outer.hasAttribute('data-more-below'), false);
+  outer.dataset.h = '900'; inner.dataset.h = '900'; inner.append(doc.createElement('p'));
+  await frames();
+  assert.equal(inner.hasAttribute('data-more-below'), true, 'the inner column');
+  assert.equal(outer.hasAttribute('data-more-below'), true, 'the outer column grew too');
+  window.close();
+});
+
+test('B2.8 ScrollFade: a column that leaves the page is no longer observed', async () => {
+  const { window } = new JSDOM('<body><div id="a" class="convo-scroll"></div></body>', { pretendToBeVisual: true });
+  const watched = new Set();
+  let ro;
+  window.ResizeObserver = class { constructor(cb) { this.cb = cb; ro = this; } observe(el) { watched.add(el); } unobserve(el) { watched.delete(el); } };
+  const frames = () => new Promise((r) => window.requestAnimationFrame(() => window.requestAnimationFrame(r)));
+  const doc = window.document;
+  C.watchScrollFades(doc);
+  const a = doc.getElementById('a');
+  assert.equal(watched.has(a), true);
+  a.remove(); ro.cb([{ target: a }]);   // a removed box resizes to nothing
+  await frames();
+  assert.equal(watched.has(a), false, 'a removed column is unobserved');
+  window.close();
+});
+
+test('ScrollFade: pinnedToEnd — within 80px of the end is the end (#1381, motion.follow-end)', () => {
+  assert.equal(typeof C.pinnedToEnd, 'function', 'on the index');
+  assert.equal(C.pinnedToEnd({ scrollTop: 1520, scrollHeight: 2000, clientHeight: 400 }), true, '80px from the end');
+  assert.equal(C.pinnedToEnd({ scrollTop: 1519, scrollHeight: 2000, clientHeight: 400 }), false, '81px holds');
+  assert.equal(C.pinnedToEnd({ scrollTop: 1600, scrollHeight: 2000, clientHeight: 400 }), true, 'at the exact end');
+  assert.equal(C.pinnedToEnd({ scrollTop: 120, scrollHeight: 2000, clientHeight: 400 }), false, 'scrolled up');
+  assert.equal(C.pinnedToEnd({ scrollTop: 0, scrollHeight: 300, clientHeight: 400 }), true, 'content that fits');
+  assert.equal(C.pinnedToEnd(null), false);
+  assert.equal(C.pinnedToEnd(undefined), false);
+  assert.equal(C.pinnedToEnd({ scrollTop: 1599, scrollHeight: 2000, clientHeight: 400 }, 0), false, 'a custom near of 0');
+  assert.equal(C.pinnedToEnd({ scrollTop: 1600, scrollHeight: 2000, clientHeight: 400 }, 0), true);
+});
+
 test('commands: dev\'s group head, rows with no mark, Copy on the command and its output', () => {
   assert.equal(C.commandHead({ count: 3, failed: 1, dur: '5.4s' }), '<b>Ran 3 commands</b> · <span class="cmd-failed">1 failed</span> · 5.4s');
   assert.match(C.commandHead({ count: 3, running: true, current: 'Running the tests', dur: '2.1s' }), /^<b>Running the tests<\/b> · 3 commands · 2.1s$/);
@@ -1881,4 +1996,157 @@ test('composerQueueButton (F-gb235-03): a quiet text button named Queue, data-cp
   assert.equal(b.getAttribute('aria-label'), null, 'its name is its visible word');
   assert.equal(b.getAttribute('data-cp-queue'), '');
   assert.equal(b.getAttribute('title'), 'Sends it when the reply finishes');
+});
+
+test('choiceNote (COV-2): an amber note, its rows with their ways, its ways as buttons, escaped, role=status', () => {
+  const n = dom(C.choiceNote({ text: 'This preset needs <attention>', means: 'Start waits until it is fixed', rows: [{ text: 'Workflow wf_gone is gone', way: { label: 'Reset to default', attrs: { 'data-x-reset': '0' } } }, { text: 'Guardrails <old>' }],
+    ways: [{ label: 'Start from origin/main', kind: 'primary', attrs: { 'data-x-go': '' } }, { label: 'Cancel', kind: 'quiet', attrs: { 'data-x-cancel': '' } }] }));
+  assert.equal(n.getAttribute('role'), 'status');
+  assert.match(n.className, /\bchoice-note\b/);
+  assert.match(n.className, /\bis-amber\b/, 'the tone class');
+  assert.ok(n.querySelector('.rc-rail > .status-dot.is-amber'), 'the dot is statusDot');
+  assert.equal(n.querySelector('.rc-word').textContent, 'This preset needs <attention>', 'text is escaped');
+  assert.equal(n.querySelector('.rc-detail').textContent, 'Start waits until it is fixed');
+  const rows = n.querySelectorAll('.choice-note-row');
+  assert.equal(rows.length, 2);
+  assert.match(rows[0].textContent, /Workflow wf_gone is gone/);
+  assert.equal(rows[0].querySelector('button.btn[data-x-reset="0"]').textContent, 'Reset to default', 'a row way is a button()');
+  assert.equal(rows[1].querySelector('button'), null);
+  assert.equal(rows[1].textContent, 'Guardrails <old>');
+  const ways = [...n.querySelectorAll('.choice-note-ways > button')];
+  assert.deepEqual(ways.map((b) => b.textContent), ['Start from origin/main', 'Cancel']);
+  assert.match(ways[0].className, /btn-primary/);
+  assert.match(ways[1].className, /btn-quiet/);
+});
+
+test('choiceNote (COV-2): a note that only tells is grey, no ways, and its end slot as given', () => {
+  const g = dom(C.choiceNote({ needsYou: false, text: 'team policy' }));
+  assert.match(g.className, /\bis-grey\b/);
+  assert.ok(g.querySelector('.status-dot.is-grey'));
+  assert.equal(g.querySelector('.choice-note-ways'), null, 'no ways, no button row');
+  assert.equal(g.querySelector('.rc-detail'), null, 'no means, no detail');
+  const e = dom(C.choiceNote({ text: 'Codex cannot enforce …', end: C.checkbox({ label: 'Allow unguarded', attrs: { 'data-x-allow': '' } }) }));
+  assert.ok(e.querySelector('.choice-note-end input[type="checkbox"][data-x-allow]'), 'end is not escaped');
+});
+
+test('COV-3 #9 and #5: filesCard draws Show in ‹label› only with revealLabel and a file\'s reveal; youTurn\'s object files are chip buttons that open; without them both are as before', () => {
+  const files = [{ name: 'a.png', image: true }, { name: 'b.txt', meta: '2 KB' }];
+  const before = C.filesCard({ files });
+  assert.equal(C.filesCard({ files, revealLabel: 'Finder' }), before, 'no file says how to reveal it: unchanged');
+  assert.equal(C.filesCard({ files: files.map((f) => ({ ...f, reveal: { 'data-x': f.name } })) }), before, 'no label (the server offers none): unchanged');
+  const r = C.filesCard({ revealLabel: 'Finder', files: files.map((f) => ({ ...f, reveal: { 'data-reveal': f.name } })) });
+  assert.match(r, /<button[^>]*data-reveal="a\.png"[^>]*>Show in Finder<\/button>/);
+  assert.match(r, /<button[^>]*data-reveal="b\.txt"[^>]*>Show in Finder<\/button>/);
+  assert.match(r, /class="btn btn-sm btn-quiet"[^>]*data-reveal="b\.txt"/, 'a quiet button');
+  const view = C.filesCard({ files: [{ name: 'q.png', image: true, download: false }, { name: 'q.txt', download: false }] });
+  assert.doesNotMatch(view, /Download/, 'download: false (a run question\'s files, which classic only views): no Download');
+  assert.match(view, /aria-label="View q\.png"/); assert.match(view, />View<\/button>/);
+  const y0 = C.youTurn({ text: 'Same bug?', files: ['x.pdf'] });
+  assert.equal(y0, '<div class="convo-you">Same bug?<span class="you-files"><span class="kind-chip">' + C.icon('file', 12) + 'x.pdf</span></span></div>', 'string files: as before');
+  const y = C.youTurn({ text: 'Same bug?', files: ['x.pdf', { name: 'shot.png', attrs: { 'data-open-file': 'att_1' } }] });
+  assert.match(y, /<span class="kind-chip">[^]*?x\.pdf<\/span>/);
+  assert.match(y, /<button type="button" class="kind-chip"[^>]*title="Opens shot\.png"[^>]*data-open-file="att_1"[^>]*>[^]*?shot\.png<\/button>/);
+});
+
+test('COV-1 folderName: the last segment, without a trailing slash', () => {
+  assert.equal(C.folderName('/a/b/'), 'b');
+  assert.equal(C.folderName('~/src/web-app'), 'web-app');
+  assert.equal(C.folderName(''), '');
+});
+
+test('COV-1 folderBrowser: single and multi titles and steps, Up off at the top, No subfolders., a failed load keeps the list', () => {
+  const one = dom(C.folderBrowser({ path: '/src', parent: '/', dirs: [{ name: 'a', path: '/src/a' }] }));
+  assert.equal(one.querySelector('.dlg-title').textContent, 'Select a folder');
+  assert.equal(one.querySelector('[data-dialog="yes"]').textContent, 'Select this folder');
+  assert.equal(one.querySelector('[data-dialog="yes"]').disabled, false);
+  assert.equal(one.querySelector('[data-fb-pick]'), null, 'single: no checkboxes');
+  assert.equal(one.querySelector('[data-fb-go="/src/a"]').textContent, 'a');
+  assert.equal(one.querySelector('.fb-nav [data-fb-go="/"]').textContent, 'Up');
+  assert.ok(one.querySelector('[data-fb-home]'));
+  assert.equal(one.querySelector('.fb-path').title, '/src');
+  const top = dom(C.folderBrowser({ path: '/', parent: null, dirs: [] }));
+  const up = [...top.querySelectorAll('button')].find((b) => b.textContent === 'Up');
+  assert.equal(up.disabled, true);
+  assert.match(top.textContent, /No subfolders\./);
+  const many = dom(C.folderBrowser({ multiple: true, path: '/src', dirs: [{ name: 'a', path: '/src/a' }, { name: 'b', path: '/src/b' }], picked: ['/src/a', '/x'] }));
+  assert.equal(many.querySelector('.dlg-title').textContent, 'Select folders');
+  assert.equal(many.querySelector('[data-dialog="yes"]').textContent, 'Add 2 selected');
+  assert.equal(many.querySelector('.dlg-status').textContent, '2 folders selected');
+  assert.equal(many.querySelector('[data-fb-pick="/src/a"]').checked, true);
+  assert.equal(many.querySelector('[data-fb-pick="/src/b"]').checked, false);
+  assert.equal(many.querySelector('[data-fb-pick="/src/b"]').getAttribute('aria-label'), 'Select b');
+  const none = dom(C.folderBrowser({ multiple: true, path: '/src', dirs: [] }));
+  assert.equal(none.querySelector('[data-dialog="yes"]').disabled, true, 'multi yes is off at 0 picks');
+  const failed = dom(C.folderBrowser({ path: '/src', dirs: [{ name: 'a', path: '/src/a' }], error: 'permission denied <x>' }));
+  assert.equal(failed.querySelector('.dlg-status').textContent, 'permission denied <x>');
+  assert.ok(failed.querySelector('[data-fb-go="/src/a"]'), 'the last listing stays');
+  assert.match(dom(C.folderBrowser({ path: '/src', state: 'loading' })).textContent, /Loading folders/);
+  const lim = dom(C.folderBrowser({ path: '/a', note: 'Only these folders', roots: ['/a', '/b'] }));
+  assert.match(lim.querySelector('.fb-note').textContent, /Only these folders/);
+  assert.ok(lim.querySelector('.fb-note [data-fb-go="/b"]'));
+});
+
+test('COV-1 folderProbe: every detectModel row, the #693 action, unknown is no refusal', () => {
+  const words = (p, o) => [...dom(`<div>${C.folderProbe(p, o).html}</div>`).querySelectorAll('.kind-chip')].map((c) => c.textContent);
+  assert.deepEqual(C.folderProbe(null), { html: '', refused: false, useGit: false });
+  assert.deepEqual(C.folderProbe({ path: '/x' }), { html: '', refused: false, useGit: false });
+  assert.deepEqual(words({ exists: false }), ['Not found']);
+  assert.equal(C.folderProbe({ exists: false }).refused, true);
+  assert.ok(dom(`<div>${C.folderProbe({ exists: false }).html}</div>`).querySelector('.fb-warn svg'), 'a warn chip has the warn icon');
+  assert.deepEqual(words({ exists: true, isDir: false }), ['Not a folder']);
+  assert.equal(C.folderProbe({ exists: true, isDir: false }).refused, true);
+  const part = C.folderProbe({ exists: true, isDir: true, insideRepo: true, partOf: 'web-app', repoRoot: '/src/web-app' });
+  assert.deepEqual(words({ exists: true, isDir: true, insideRepo: true, partOf: 'web-app' }), ['Git', 'Part of web-app']);
+  assert.equal(part.refused, true);
+  assert.deepEqual(part.action, { kind: 'open', name: 'web-app' });
+  assert.equal(dom(`<div>${part.html}</div>`).querySelector('[data-fb-root]').textContent, 'Open web-app');
+  const inside = C.folderProbe({ exists: true, isDir: true, insideRepo: true, repoRoot: '/src/mono/' });
+  assert.deepEqual(words({ exists: true, isDir: true, insideRepo: true }), ['Git', 'Inside a git repository']);
+  assert.deepEqual(inside.action, { kind: 'add', path: '/src/mono/' });
+  assert.equal(dom(`<div>${inside.html}</div>`).querySelector('[data-fb-root="/src/mono/"]').textContent, 'Add mono');
+  const nested = C.folderProbe({ exists: true, isDir: true, nestedHint: 'Remove its .git' });
+  assert.deepEqual(words({ exists: true, isDir: true, nestedHint: 'x' }), ['Git', 'Nested repository']);
+  assert.equal(nested.refused, false);
+  assert.equal(nested.note, 'Remove its .git');
+  assert.deepEqual(words({ exists: true, isDir: true, vcs: 'git' }), ['Git']);
+  assert.equal(C.folderProbe({ exists: true, isDir: true, vcs: 'git' }).useGit, false);
+  assert.deepEqual(words({ exists: true, isDir: true, vcs: 'none', files: 1 }), ['Folder', 'No git', '1 file']);
+  assert.deepEqual(words({ exists: true, isDir: true, vcs: 'none', files: 214 }), ['Folder', 'No git', '214 files']);
+  assert.deepEqual(words({ exists: true, isDir: true, vcs: 'none', files: 5000, filesCapped: true }), ['Folder', 'No git', '5000+ files']);
+  assert.equal(C.folderProbe({ exists: true, isDir: true, vcs: 'none' }).useGit, true);
+  assert.deepEqual(words({ exists: true, isDir: true, vcs: 'none' }, { git: false }), ['Folder'], 'no No git without git');
+  assert.equal(C.folderProbe({ exists: true, isDir: true, vcs: 'none' }, { git: false }).useGit, false);
+});
+
+test('COV-1 folderReview: Added locks, a reason stays, the pending count names the step; reviewSummary and REVIEW_EMPTY', () => {
+  const rows = [{ path: '/s/a', name: 'a', include: true, status: 'added' }, { path: '/s/b', name: 'b', include: true, status: 'skipped', reason: 'already registered' }, { path: '/s/c', name: 'c', include: false }];
+  const r = dom(`<div>${C.folderReview({ rows })}</div>`);
+  assert.equal(r.querySelector('[data-fr-name="0"]').disabled, true);
+  assert.match(r.querySelector('[data-fr-row="0"]').textContent, /Added/);
+  assert.match(r.querySelector('[data-fr-row="1"]').textContent, /already registered/);
+  assert.equal(r.querySelector('[data-fr-name="1"]').disabled, false);
+  assert.equal(r.querySelector('[data-fr-name="1"]').getAttribute('maxlength'), '80');
+  assert.equal(r.querySelector('[data-fr-pick="2"]').checked, false);
+  assert.equal(r.querySelector('[data-fr-pick="1"]').getAttribute('aria-label'), 'Add b');
+  assert.equal(r.querySelector('[data-confirm="yes"]').textContent, 'Add 1 project');
+  const none = dom(`<div>${C.folderReview({ rows: [{ path: '/s/c', name: 'c', include: false }] })}</div>`);
+  assert.equal(none.querySelector('[data-confirm="yes"]').disabled, true);
+  const saving = dom(`<div>${C.folderReview({ rows: rows.slice(1), saving: true })}</div>`);
+  assert.equal(saving.querySelector('[data-confirm="yes"]').textContent, 'Adding…');
+  assert.equal(saving.querySelector('[data-confirm="yes"]').disabled, true);
+  assert.equal(C.reviewSummary({ added: ['a', 'b', 'c'], skipped: [{ name: 'beta', reason: 'already registered' }] }), 'Added 3 projects. Skipped 1: beta (already registered).');
+  assert.equal(C.reviewSummary({ added: ['a'], skipped: [] }), 'Added “a”.');
+  assert.equal(C.REVIEW_EMPTY, 'Tick at least one folder to add.');
+});
+
+test('COV-1 folderBrowser ask, folderReview error and folderWay: the markup is the component\'s, not the page\'s', () => {
+  const ask = dom(C.folderBrowser({ multiple: true, path: '/s', dirs: [], picked: ['/s/a', '/s/b'], ask: true }));
+  assert.equal(ask.querySelector('.dlg-body').firstElementChild.getAttribute('role'), 'alertdialog', 'the strip leads the body');
+  assert.match(ask.querySelector('.rc-confirm').textContent, /Drop 2 picked folders\?.*Drop them.*Keep picking/s);
+  assert.equal(dom(C.folderBrowser({ multiple: true, path: '/s', picked: [], ask: true })).querySelector('.rc-confirm'), null, 'nothing picked: no ask');
+  const err = dom(`<div>${C.folderReview({ rows: [], error: C.REVIEW_EMPTY })}</div>`).querySelector('.fb-err');
+  assert.equal(err.getAttribute('role'), 'alert'); assert.equal(err.textContent, C.REVIEW_EMPTY);
+  const way = dom(`<div>${C.folderWay({ pick: { label: 'Choose folder…', hook: 'data-x-pick', title: 'Pick' }, git: { on: true, hook: 'data-x-git', why: 'Runs git init' } })}</div>`);
+  assert.equal(way.querySelector('.fb-way [data-x-pick]').textContent.trim(), 'Choose folder…');
+  assert.equal(way.querySelector('.fb-way [data-x-git]').getAttribute('aria-checked'), 'true');
 });

@@ -12,6 +12,7 @@
   const ALIAS = { saved: 'time-saved', outcomes: 'ends', time: 'merge' };   // old links to what the page used to be called
   const views = [{ id: 'v1', name: 'By client, then workflow', sub: 'spend', st: { by: 'client', then: 'workflow' } }, { id: 'v2', name: 'Monthly for finance', sub: 'spend', st: { by: 'costcenter', when: 'last month', as: 'table' } }];
   const states = {};
+  const unchecked = new Set();   // live: a state from a link or a saved view, checked once against the data it reads (ledger row 3)
   let arg = 'spend', menu = '', bar = null, page = null, seq = 3, back = '', applied = '', retry = null, taskId = '', focusRow = '';   // taskId: a teammate's task, read only (#1310 D2)
   // the live kind (slice 10 D9): every read goes through RailInsightsLive (live/insights-live.mjs); the demo's seed otherwise
   const isLive = () => window.RailAdapter?.kind === 'live';
@@ -27,7 +28,7 @@
   const subOf = (a) => { const v = viewList().find((x) => x.id === a), s = M.SUB[v ? v.sub : a]; return s && (!s.team || team()) ? s : M.SUB.spend; };
   const key = () => (viewList().some((v) => v.id === arg) || (M.SUB[arg] && subOf(arg).id === arg) ? arg : 'spend');
   function stateOf(k = key()) {
-    if (!states[k]) { const v = viewList().find((x) => x.id === k); states[k] = { ...M.defaults(subOf(k)), ...(v ? v.st : {}), filter: [...(v?.st?.filter || [])] }; }
+    if (!states[k]) { const v = viewList().find((x) => x.id === k); states[k] = { ...M.defaults(subOf(k)), ...(v ? v.st : {}), filter: [...(v?.st?.filter || [])] }; if (v && isLive()) unchecked.add(k); }
     return states[k];
   }
   const NEEDS_YOU = R.runState('question').word, barGroup = (s) => (s.count ? NEEDS_YOU : s.group);   // what has a count needs you, first in the bar (list.bar-model)
@@ -217,6 +218,14 @@
     const dims = dimsNow(r.sub, st);
     if (!dims.includes(st.by)) { st.by = M.defaults(r.sub).by; r = LIVE().page(sub.id, st); }
     if (st.then && !dimsNow(r.sub, st).includes(st.then)) { st.then = ''; r = LIVE().page(sub.id, st); }
+    if (unchecked.has(key()) && st.filter.length) {   // an of= the live data lacks (a link, a saved view): opened without it, said once
+      const all = LIVE().page(sub.id, { ...st, filter: [] });
+      if (all.state !== 'ready') return r;
+      const has = (k) => { const at = k.indexOf(':'); return (all.sub.src.rows[k.slice(0, at)] || []).some((x) => !x.other && x.name === k.slice(at + 1)); };
+      const gone = st.filter.filter((k) => !has(k));
+      if (gone.length) { st.filter = st.filter.filter(has); r = LIVE().page(sub.id, st); say(`Opened without ${R.namesWord(gone.map((k) => k.slice(k.indexOf(':') + 1)))}: not in this data`); }
+    }
+    unchecked.delete(key());
     return r;
   }
   function draw() {
@@ -409,7 +418,7 @@
       const query = at >= 0 ? a.slice(at + 1) : '', task = /(?:^|&)task=([^&]*)/.exec(query);
       try { taskId = task ? decodeURIComponent(task[1]) : ''; } catch { taskId = ''; }
       const onlyTask = task && query.split('&').filter(Boolean).length === 1;   // D2: a task address keeps the page's own state (the open person)
-      if (at >= 0 && !onlyTask && a !== applied && M.SUB[next]) { applied = a; states[next] = M.stateOfLink(query, M.SUB[next], { live: isLive() }); }   // a link's state, once
+      if (at >= 0 && !onlyTask && a !== applied && M.SUB[next]) { applied = a; states[next] = M.stateOfLink(query, M.SUB[next], { live: isLive() }); if (isLive()) unchecked.add(next); }   // a link's state, once
       draw();
     },
   };

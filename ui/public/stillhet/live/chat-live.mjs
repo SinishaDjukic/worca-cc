@@ -6,8 +6,9 @@
 import { createThreadModel } from '../../../../src/shared/ask-model.mjs';
 import { turnsOf, planView, planPicks, runWithTurn, partsOf } from './chat-turns.mjs';
 import { createTerminalLive } from './terminal-live.mjs';
-import { projectKeyOf } from './live-map.mjs';
+import { projectKeyOf, workspaceIdOf } from './live-map.mjs';
 import { perspectivesWith, chipsHiddenFor, DEFAULT_PERSPECTIVES } from '../../../../src/shared/shape/perspectives.mjs';
+import { ATTACH_MAX_MESSAGE_BYTES, bytesToBase64 } from '../../../../src/shared/attach-bytes.mjs';
 
 const enc = encodeURIComponent;
 const T = (id) => `/api/ask/threads/${enc(id)}`;
@@ -43,7 +44,8 @@ export function perspectiveChoices(picked) {
 
 /** POST /api/run's body for a TaskProposal's Start: the proposal card as dev's ask-panel.mjs collectCardBody reads it,
  *  with the person's `picks` (target, project folder, workflow, engine, guardrails, title, branches) over the card's own values.
- *  `picks.perspectives`: the "reviewed by" set (flag proposedPerspectives), sent as dev's run card sends it (`perspectives`). */
+ *  `picks.perspectives`: the "reviewed by" set (flag proposedPerspectives), sent as dev's run card sends it (`perspectives`).
+ *  COV-2: `picks.tags` (the project's saved tags, used when the card has none), `picks.syncPolicy` and `picks.allowUnguardedEngine`. */
 export function startBodyOf(card = {}, picks = {}) {
   const c = card || {}, p = picks || {};
   const target = p.target || c.target || 'project';
@@ -51,8 +53,13 @@ export function startBodyOf(card = {}, picks = {}) {
   const title = str(p.title || c.title).trim(); if (title) body.title = title;
   if (c.memoryScope && body.workflowId === 'wf_memory_defrag') body.memoryScope = c.memoryScope;
   if (Array.isArray(c.tags) && c.tags.length) body.tags = c.tags;
+  else if (Array.isArray(p.tags) && p.tags.length) body.tags = [...p.tags];   // COV-2: the project's saved tags, when the card names none
   if (p.engine || c.engine) body.engine = p.engine || c.engine;
+  // COV-2: a resend after a refusal is the same body plus one key: the base's sync policy, or the engine consent (never for Claude)
+  if (p.syncPolicy === 'origin' || p.syncPolicy === 'last-fetch') body.syncPolicy = p.syncPolicy;
+  if (p.allowUnguardedEngine === true && (body.engine || 'claude') !== 'claude') body.allowUnguardedEngine = true;
   if (Array.isArray(p.perspectives) && p.perspectives.length) body.perspectives = [...p.perspectives];
+  if (Array.isArray(p.extras) && p.extras.length) body.extras = p.extras;   // COV-3 #6: the proposal's files, as classic's run card sends its pills
   if (c.source) { delete body.prompt; body.source = { type: 'plugin', plugin: c.source.plugin, sourceId: c.source.sourceId, taskId: c.source.taskId, ...(c.source.profile ? { profile: c.source.profile } : {}), ...(c.source.inputs ? { inputs: c.source.inputs } : {}) }; }
   if (target === 'none') { body.noProject = true; return body; }
   if (p.sameAsSource ?? c.sameAsSource) body.sameAsSource = true;
@@ -87,7 +94,7 @@ export const ACTIONS = Object.freeze({
   'card-verb': ['answer the card', (a) => ['POST', `${T(a.threadId)}/cards/${enc(a.cardId)}`, { ...(a.body || {}) }]],
   'card-offer': ['run the script', (a) => ['POST', `${T(a.threadId)}/cards/${enc(a.cardId)}`, { choice: a.choice }]],
   'task-pause': ['pause the task', (a) => ['POST', '/api/pause', { runId: a.runId }]],
-  'task-resume': ['resume the task', (a) => ['POST', '/api/resume', { pipelineId: a.pipelineId || a.runId, ...(a.ignoreCostCap ? { ignoreCostCap: true } : {}) }]],
+  'task-resume': ['resume the task', (a) => ['POST', '/api/resume', resumeBody(a.pipelineId || a.runId, { baseAck: a.baseAck, ...(a.ignoreCostCap ? { ignoreCostCap: true } : {}) })]],
   'task-archive': ['archive the task', (a) => ['POST', '/api/runs/bulk', { action: 'archive', targets: [{ pipelineId: a.pipelineId || a.runId }] }]],
   'chat-label': ['label the chat', (a) => ['PUT', `${T(a.threadId)}/labels`, { labels: a.labels }]],
   'task-label': ['label the task', (a) => ['PUT', `/api/runs/${enc(a.pipelineId || a.runId)}/labels`, { labels: a.labels }]],
@@ -101,7 +108,7 @@ export const ACTIONS = Object.freeze({
   pr: ['create the PR', (a) => ['POST', '/api/pr', prBodyOf(a)]],
   ship: ['create the PR', (a) => ['POST', `/api/shape/features/${enc(a.featureId)}/ship`, { mode: a.mode === 'stacked' ? 'stacked' : 'one' }]],
   'ship-mark': ['mark the requirement', (a) => ['PUT', `/api/shape/features/${enc(a.featureId)}/acceptance`, { entries: [a.entry] }]],
-  'file-reveal': ['show it in its folder', (a) => ['POST', `${T(a.threadId)}/attachments/${enc(a.attId)}/reveal`]],
+  'file-reveal': ['show it in its folder', (a) => ['POST', `${T(a.threadId)}/attachments/${enc(a.attId)}/reveal`, {}]],   // classic's revealFile posts {}
   folder: ['open the folder picker', () => ['POST', '/api/fs/pick-folder']],
   worktree: ['remove the worktree', (a) => ['DELETE', `${T(a.threadId)}/worktrees/${enc(a.worktreeId)}`]],
   'mcp-off': ['switch the sets', (a) => ['PATCH', T(a.threadId), { mcpOff: a.mcpOff }]],
@@ -136,6 +143,8 @@ export const OPENS = Object.freeze({
   diff: ['open the changes', patchUrl],
   url: ['open the PR', (a) => (/^https:\/\//.test(str(a.url)) ? a.url : '')],
   patch: ['download the patch', patchUrl],
+  // COV-3 #2: a live run's pending question's file, by its index, as classic's askFileUrl addresses it (never by its path)
+  'ask-file': ['open the question’s file', (a) => `/api/runs/${enc(a.runId)}/ask-files/${enc(a.askId)}/${enc(a.index)}`],
 });
 export const COPY_WORDS = 'copy', ATTACH_WORDS = 'attach the file';
 
@@ -146,6 +155,22 @@ export function openTab(u) {
   if (w) { try { w.opener = null; } catch { /* a cross-origin tab already has none */ } }
   return w;
 }
+
+/** COV-3 #8: a file saved, not shown: an `<a href download=NAME>` clicked, as classic's FilesCard Download is. false when
+ *  there is no page to click it in. */
+export function saveLink(url, name) {
+  const d = globalThis.document;
+  if (!d?.createElement || !d.body) return false;
+  const a = d.createElement('a');
+  a.href = url; a.download = str(name); a.rel = 'noopener';
+  d.body.appendChild(a); a.click(); a.remove();
+  return true;
+}
+
+/** Every POST /api/resume body Chat and Tasks send, as classic's resumeBody (app.js): dev checks the base first (baseCheck),
+ *  and the resend after "Resume anyway" acknowledges the move (baseAck). `extra`: the resume's own keys (ignoreCostCap,
+ *  costCapUsd, model, engine). F-G-G2-03. */
+export const resumeBody = (pipelineId, { baseAck = false, ...extra } = {}) => ({ pipelineId, baseCheck: true, ...(baseAck ? { baseAck: true } : {}), ...extra });
 
 /** D13: the one action path Chat and Tasks share. `request` answers `{ok, data}` or `{ok:false, status?, error, code?}`
  *  (a network failure too); `refuse(words, res)` says `Could not WORDS: REASON` once, unless the caller says it itself
@@ -172,7 +197,7 @@ export function actionRunner({ fetch, toast = () => {}, notify = () => {} } = {}
 
 /** `doc`-free: the page's toast and clock come in. `send(msg)` writes a socket message; `tasksOf(threadId)` is the chat's
  *  tasks (live-map.mjs chatOf), so a run card names its store task. */
-export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toast = () => {}, now = Date.now, tasksOf = () => [], clipboard = null, open: openUrl = openTab, go = () => {}, progressOf = () => ({}), askOf = () => null } = {}) {
+export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toast = () => {}, now = Date.now, tasksOf = () => [], clipboard = null, open: openUrl = openTab, go = () => {}, progressOf = () => ({}), askOf = () => null, save = saveLink } = {}) {
   const threads = new Map(), fns = new Set();
   const term = createTerminalLive({ fetch, send, now });   // D14: a command's TerminalPane
   let spare = '';   // D10: a new chat whose first message was refused and whose cleanup DELETE failed; the retry reuses it
@@ -489,6 +514,21 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
     return res;
   }
 
+  // COV-3 #6: the files a TaskProposal's Start carries, read as classic's collectCardExtras reads them: over the message cap,
+  // or any read that fails, and nothing is posted
+  async function extrasOf(threadId, files) {
+    const max = ATTACH_MAX_MESSAGE_BYTES;
+    if (files.reduce((n, f) => n + (Number(f.bytes) || 0), 0) > max) return { error: `attachments exceed ${max / (1024 * 1024)} MB: remove one` };
+    const extras = [];
+    for (const f of files) {
+      let res = null, buf = null;
+      try { res = await fetch(`${T(threadId)}/attachments/${enc(f.att)}`); } catch { res = null; }
+      if (!res || !res.ok || typeof res.arrayBuffer !== 'function') return { error: `could not read attachment ${str(f.name)}` };
+      try { buf = await res.arrayBuffer(); } catch { return { error: `could not read attachment ${str(f.name)}` }; }
+      extras.push({ name: str(f.name), dataBase64: bytesToBase64(new Uint8Array(buf)) });
+    }
+    return { extras };
+  }
   // keyOf (the runner's): the key a control is pending under, its own or the action and the card or chat it acts on.
   /** One Chat action (Step 7): a Promise of `{ok, error?, data?}`. `args.key` names the control while it is pending. */
   async function act(id, args = {}) {
@@ -504,6 +544,11 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
         if (!u) return refuse(OPENS[id][0], { ok: false, error: 'it has no web address' }, q);
         const w = openUrl(u);
         return w === null ? refuse(OPENS[id][0], { ok: false, error: 'the browser blocked the new tab' }, q) : { ok: true };
+      }
+      if (id === 'start' && arr(args.files).length) {   // the files are read first: Start posts all of them or nothing
+        const x = await extrasOf(args.threadId, arr(args.files).slice());
+        if (x.error) return refuse(ACTIONS.start[0], { ok: false, error: x.error }, q);
+        args = { ...args, picks: { ...(args.picks || {}), extras: x.extras } };
       }
       if (id === 'run-with') {   // the save; the start waits for the event turn's proposal (checkRunWith)
         const res = await runWith(args, q);
@@ -523,6 +568,8 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
       let res = await request(method, url, body);
       // POST /api/runs/bulk answers 200 with its refusals in `skipped`: none done is a refusal
       if (res.ok && Array.isArray(res.data?.skipped) && res.data.skipped.length && !(res.data.done || []).length) res = { ok: false, status: 200, error: str(res.data.skipped[0]?.reason) || 'it was skipped' };
+      // F-G-G2-03: a card's resume on a moved base is a prompt, not a refusal: the card asks Resume anyway, which resends with baseAck
+      if (!res.ok && id === 'task-resume' && /^base-(moved|missing)$/.test(str(res.code))) return { ...res, prompt: 'base' };
       if (!res.ok) return refuse(a[0], res, q);
       if (id === 'pr') afterPr();   // a PR now exists: the task's card reads it without a reload (dev's history skeleton has no PRs)
       if (args.threadId && threads.get(args.threadId)?.state === 'ready' && url.startsWith(T(args.threadId))) open(args.threadId, { force: true });
@@ -544,6 +591,7 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
     return Promise.resolve({ ok: true });
   }
 
+  let revealAsk = null;
   const api = {
     open, frame, turns, act, prBodyOf, startBodyOf, perspectiveChoices, ref, feature,
     partsOf,   // panel.answer-refs: words and refs of a text, for Prose's chips (conversation.js is a classic script)
@@ -551,6 +599,10 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
     // (GET /api/ask/history), then dev's DELETE /api/ask/threads. Not an act() id: no card or chat control can reach it.
     chatHistory: async () => { const r = await request('GET', '/api/ask/history'); return r.ok ? r : refuse('read the chat history', r); },
     deleteAllChats: async () => { const r = await request('DELETE', '/api/ask/threads'); return r.ok ? r : refuse('delete the chats', r); },
+    /** COV-3 #8: a FilesCard's Download, saved under its name (not a tab, which shows only pictures, PDFs and text). */
+    download: ({ threadId, attId, name } = {}) => Promise.resolve(save(OPENS.file[1]({ threadId, attId }), name) ? { ok: true } : refuse(`download ${str(name) || 'the file'}`, { ok: false, error: 'the browser blocked the download' })),
+    /** COV-3 #9: whether this server can show a file in its folder ({label}: Finder, Explorer…), asked once (GET /api/ask/reveal). */
+    revealInfo: () => (revealAsk ??= request('GET', '/api/ask/reveal').then((r) => (r.ok && r.data?.available && str(r.data.label) ? { label: r.data.label } : null))),
     plan: (runId) => { const q = askOf(runId); return q && q.kind === 'plan' ? planView(q) : null; },
     planPicks,
     terminal: (sessionId) => term.openSession(sessionId),
@@ -568,6 +620,7 @@ export function startChatLive({ fetch, send = () => {}, afterPr = () => {}, toas
     worktrees: (id) => threads.get(id)?.model?.worktrees?.() || [],   // dev's chat worktrees (snapshot + ask-worktrees)
     thread: (id) => threads.get(id)?.model?.thread?.() || null,
     projectKey: (id) => projectKeyOf(threads.get(id)?.model?.thread?.() || {}),   // the project the chat works in
+    workspaceId: (id) => workspaceIdOf(threads.get(id)?.model?.thread?.() || {}),   // else the workspace it works in (F-G-G4-03)
     flow, canFlow: (label, a = {}) => !!FLOW[label] && (!FLOW[label].needsPr || !!a.pr),
     keyOf,
     // F-a2-01: the composer's queue (a copy), Remove, Send now, and which chat each mount shows
