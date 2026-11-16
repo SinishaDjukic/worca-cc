@@ -5,6 +5,7 @@
 // (source-pane.mjs renderSourcePane). Live app host (jsdom), the real shell, a stubbed fetch.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { liveHost, go, settle, closeHosts, posts, LISTS } from './helpers/stillhet-chat-live-host.mjs';
 
 afterEach(closeHosts);
@@ -25,6 +26,15 @@ const gh = async (d) => { q(d, '[data-c-src="plugin:0"]').click(); await settle(
 const ops = (calls, op) => posts(calls).filter(([, u, b]) => u === '/api/sources/call' && b.op === op).map(([, , b]) => b);
 const start = async (d) => { q(d, '[data-dialog="yes"]').click(); await settle(80); };
 const NOT = (b) => [200, { ok: true, result: b.op === 'validateConfig' ? { ok: false, errors: [{ message: 'gh is not logged in' }] } : { tasks: [] } }];
+
+test('F-G-G3-01: with a ticket source the tabs take their own row above its note, never laid over it', async () => {
+  const { d } = await open({ call: NOT });
+  await gh(d);
+  const seg = q(d, '[data-c-src="plugin:0"]').closest('.seg'), n = q(d, '.choice-note');
+  assert.ok(!seg.parentElement.matches('.cc-lbl'), 'not the label row\'s absolutely placed tabs: there is no label row to sit beside');
+  assert.ok(seg.compareDocumentPosition(n) & 4, 'the tabs come first, the note under them');
+  assert.match(readFileSync(new URL('../ui/public/stillhet/css/rail.css', import.meta.url), 'utf8'), /\.cc-src > \.seg\{[^}]*justify-self:end/, 'the tabs keep their place at the end of their own row');
+});
 
 test('F-cov23-04: an unconnected source says so in classic\'s words, with Open the Marketplace page and Test connection; nothing is listed', async () => {
   const { d, calls } = await open({ call: NOT });

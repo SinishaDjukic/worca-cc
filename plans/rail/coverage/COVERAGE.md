@@ -6,10 +6,10 @@ Sources: a static scan of today's UI (204 files) and a read-only browser walk of
 
 | Status | Controls |
 |---|---|
-| wired | 938 (of them 805 view controls with no route or key, carried by their place) |
+| wired | 942 (of them 805 view controls with no route or key, carried by their place) |
 | planned | 441 (of them 425 view controls of a place still to be built) |
 | not offered (decision) | 0 |
-| MISSING | 490 |
+| MISSING | 486 |
 | total | 1869 |
 
 ## By page
@@ -28,7 +28,7 @@ Sources: a static scan of today's UI (204 files) and a read-only browser walk of
 | Projects | Projects | 91 | 64 | 1 | 0 | 26 |
 | Providers | Settings › Models, wave 3 slice 12 (PLAN.md 4b) | 49 | 0 | 48 | 0 | 1 |
 | Requirements | Requirements, wave 3 slice 11 (PLAN.md 4b, D2, B8.7) | 88 | 0 | 29 | 0 | 59 |
-| Schedules | Schedules | 45 | 31 | 0 | 0 | 14 |
+| Schedules | Schedules | 45 | 35 | 0 | 0 | 10 |
 | Settings | Settings, wave 3 slice 12 (PLAN.md 4b, D22/D24) | 277 | 11 | 182 | 0 | 84 |
 | Shell | the shell (top bar, Pulse, profile) | 160 | 146 | 0 | 0 | 14 |
 | Statistics | Insights | 27 | 23 | 0 | 0 | 4 |
@@ -220,12 +220,8 @@ Each MISSING control, grouped by its finding (`plans/rail/findings.md`, PLAN.md 
 
 | Page | Control | Kind | Missing | Source |
 |---|---|---|---|---|
-| Schedules | Open Schedules | menu item | `route /api/schedules/after-candidates`, `route /api/schedules/resume` | ui/public/app.js:27063 |
-| Schedules | Activity | button | `route /api/notifications/:param/read`, `route /api/notifications/read-all`, `route /api/schedules/after-candidates` | ui/public/scheduled-runs/schedules.html:16 |
-| Schedules | Change… | button | `route /api/schedules/after-candidates` | ui/public/schedules-view.mjs:235 |
-| Schedules | Dismiss | button | `route /api/schedules/after-candidates` | ui/public/schedules-view.mjs:244 |
-| Schedules | Resume now | button | `route /api/schedules/after-candidates` | ui/public/schedules-view.mjs:227 |
-| Schedules | Schedule next… | button | `route /api/schedules/after-candidates` | ui/public/schedules-view.mjs:269 |
+| Schedules | Open Schedules | menu item | `route /api/schedules/resume` | ui/public/app.js:27063 |
+| Schedules | Activity | button | `route /api/notifications/:param/read`, `route /api/notifications/read-all` | ui/public/scheduled-runs/schedules.html:16 |
 
 ### COV-9: The Shaper answerer: Fix all, Ask for changes, Agree and plan, Update plan on a feature or a requirement
 
@@ -704,12 +700,12 @@ None: no classic control reaches a `not offered live` or `not a dev capability` 
 
 ## Wired
 
-133 controls reach a route or key Stillhet carries; 805 are view controls (no route, no key) of a page whose place Stillhet has. Where they land:
+137 controls reach a route or key Stillhet carries; 805 are view controls (no route, no key) of a page whose place Stillhet has. Where they land:
 
 | Stillhet code or row | Controls |
 |---|---|
 | stillhet/live/chat-live.mjs | 46 |
-| stillhet/live/live-adapter.mjs | 17 |
+| stillhet/live/live-adapter.mjs | 21 |
 | stillhet/live/projects-live.mjs | 16 |
 | stillhet/live/market-live.mjs | 12 |
 | Stillhet live code reads it | 11 |
