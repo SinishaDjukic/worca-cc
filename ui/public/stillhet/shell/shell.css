@@ -94,9 +94,9 @@
 .bar-back .list-row{margin-left:0;grid-template-columns:20px minmax(0,1fr) auto;column-gap:6px;}
 .bar-back .lr-main{padding:3px 4px;margin:0;}
 .bar-list .list-row{margin-left:0;grid-template-columns:20px minmax(0,1fr) auto;column-gap:6px;}
-.bar-list .lr-rail{height:30px;}
 .bar-list .lr-main{padding:3px 4px;margin:0;}
-.bar-list .lr-end{padding-top:5px;position:relative;}
+:is(.bar-list,.bar-back) .lr-end{padding-top:5px;}   /* list.bar-row-size: the end lines up with the title on both bars */
+.bar-list .lr-end{position:relative;}
 .bar-list .lr-end .rc-pop{position:absolute;right:calc(100% + 2px);top:-3px;background:var(--side-bg);border-radius:var(--r-sm);opacity:0;pointer-events:none;}   /* always in the tab order (list.row-more) */
 .bar-list .lr-end .rc-pop > .btn:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 @media (hover:none){.bar-list .lr-end .rc-pop{position:static;background:none;opacity:1;pointer-events:auto;}}   /* no hover on a touch screen: it is simply there */
@@ -162,8 +162,8 @@ body:not(.view-rail-chat):not(.view-run):not(.view-settings):not(.view-runs) .pa
 .place-row{position:relative;}
 .place-row > .btn{position:absolute;right:4px;top:50%;transform:translateY(-50%);opacity:0;}
 .place-row:is(:hover,:focus-within) > .btn{opacity:1;}
-/* One-line rows in the bar. */
-.bar-list .lr-rail{height:28px;}
+/* list.bar-row-size: one-line rows in the bar home and the Chat bar are 32px on a fine pointer; touch keeps the list's 40px rail. */
+@media (pointer:fine){ :is(.bar-list,.bar-back) .lr-rail{height:28px;} }
 body.view-runs .main{display:flex;flex-direction:column;overflow:hidden;padding:0;}
 #route-runs:not([hidden]){flex:1 1 auto;min-height:0;display:flex;flex-direction:column;}
 #route-runs.rail-page{max-width:none;margin:0;padding:0;}
@@ -257,3 +257,10 @@ body:has(.wf-canvas) > .rc-toast{top:112px;}   /* ds-ok: under the canvas's own 
 .bar-list .list-row.is-current > .lr-main{position:static;background:none;}
 .bar-list .list-row.is-current > .lr-main::after{content:'';position:absolute;z-index:-1;left:26px;right:0;top:0;height:28px;background:var(--field);border-radius:var(--r-sm);}
 .bar-list .lr-tree .list-row.is-current > .lr-main::after{left:40px;}
+/* list.bar-row-size on touch: the row keeps the list's 40px rail, so the title, the end and the current fill follow it and line up with the mark. */
+@media (pointer:coarse),(pointer:none){
+  :is(.bar-list,.bar-back) .lr-main{padding-top:9px;padding-bottom:9px;}
+  :is(.bar-list,.bar-back) .lr-end{padding-top:11px;}
+  .bar-list .lr-end:has(> [data-fold]){padding-top:8px;}
+  .bar-list .list-row.is-current > .lr-main::after{height:40px;}
+}

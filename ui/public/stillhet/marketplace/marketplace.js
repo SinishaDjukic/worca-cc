@@ -13,14 +13,14 @@
     markets: [{ id: 'official', name: 'Worca CC Official', url: 'github.com/SinishaDjukic/worca-cc', branch: 'dev', sha: '42eb305', synced: 'just now', builtin: true, webUrl: 'https://github.com/SinishaDjukic/worca-cc/tree/42eb305' }],
     plugins: [
       { id: 'github-source', name: 'GitHub Issues', brand: 'brand-github', ver: '0.2.0', kind: 'Task sources', market: 'official', what: 'Pull tasks from GitHub Issues; close them when the PR merges.', adds: ['A task source: GitHub Issues'], asks: ['A GitHub token'], installed: false, uses: 120, why: 'Your projects live on GitHub' },
-      { id: 'jira-source', name: 'Jira', brand: 'brand-jira', ver: '0.1.0', kind: 'Task sources', market: 'official', what: 'Pull tasks from Jira issues; write the result back to the ticket.', adds: ['A task source: Jira'], asks: ['A Jira API token', 'Your Jira site'], installed: true, uses: 60, update: '0.2.0', ...(window.RailDemoState?.market === 'update-asks' ? { updateAsks: ['A Jira webhook secret'] } : {}) },
+      { id: 'jira-source', name: 'Jira', brand: 'brand-jira', ver: '0.1.0', kind: 'Task sources', market: 'official', what: 'Pull tasks from Jira issues; write the result back to the ticket.', adds: ['A task source: Jira'], asks: ['A Jira API token', 'Your Jira site'], installed: true, pinned: 'c3d9a17', uses: 60, update: '0.2.0', updateSha: '42eb305', ...(window.RailDemoState?.market === 'update-asks' ? { updateAsks: ['A Jira webhook secret'] } : {}) },
       { id: 'slack-chat', name: 'Slack', brand: 'brand-slack', ver: '0.2.0', kind: 'Chat channels', market: 'official', what: 'Talk to Worca from Slack: notices, and /status, /pause, /approve.', adds: ['A chat channel: Slack', 'Keeps a small worker running that listens for commands'], asks: ['A Slack bot token', 'A Slack app token'], installed: false, uses: 88, why: 'You step away most evenings: answer from your phone' },
-      { id: 'telegram-chat', name: 'Telegram', brand: 'brand-telegram', ver: '0.1.0', kind: 'Chat channels', market: 'official', what: 'Notices and answers from Telegram.', adds: ['A chat channel: Telegram'], asks: ['A Telegram bot token'], installed: true, uses: 21 },
+      { id: 'telegram-chat', name: 'Telegram', brand: 'brand-telegram', ver: '0.1.0', kind: 'Chat channels', market: 'official', what: 'Notices and answers from Telegram.', adds: ['A chat channel: Telegram'], asks: ['A Telegram bot token'], installed: true, pinned: '7b21e04', uses: 21 },
       { id: 'cloudflare-mcp', name: 'Cloudflare', brand: 'brand-cloudflare', ver: '0.1.0', kind: 'MCP servers', market: 'official', what: 'The whole Cloudflare API and its docs, for your tasks.', adds: ['2 MCP servers'], parts: [['MCP server', 'Cloudflare API'], ['MCP server', 'Cloudflare docs']], asks: ['A Cloudflare API token'], installed: false, uses: 45 },
-      { id: 'notion-mcp', name: 'Notion', brand: 'brand-notion', ver: '0.1.0', kind: 'MCP servers', market: 'official', what: 'Search, read and edit Notion pages and databases.', adds: ['An MCP server: Notion'], asks: ['A Notion integration token'], installed: true, uses: 52, needsSetup: true },
-      { id: 'azure-source', name: 'Azure Boards', ver: '0.1.0', kind: 'Task sources', market: 'official', what: 'Pull tasks from Azure Boards work items.', adds: ['A task source: Azure Boards'], asks: ['An Azure DevOps token'], installed: true, uses: 12 },
-      { id: 'discord-chat', name: 'Discord', ver: '0.1.0', kind: 'Chat channels', market: 'official', what: 'Notices and answers from Discord.', adds: ['A chat channel: Discord'], asks: ['A Discord bot token'], installed: true, uses: 18 },
-      { id: 'teams-chat', name: 'Teams', ver: '0.1.0', kind: 'Chat channels', market: 'official', what: 'Notices and answers from Microsoft Teams.', adds: ['A chat channel: Teams'], asks: ['A Teams bot token'], installed: true, uses: 30 },
+      { id: 'notion-mcp', name: 'Notion', brand: 'brand-notion', ver: '0.1.0', kind: 'MCP servers', market: 'official', what: 'Search, read and edit Notion pages and databases.', adds: ['An MCP server: Notion'], asks: ['A Notion integration token'], installed: true, pinned: '5e8f2c9', uses: 52, needsSetup: true },
+      { id: 'azure-source', name: 'Azure Boards', ver: '0.1.0', kind: 'Task sources', market: 'official', what: 'Pull tasks from Azure Boards work items.', adds: ['A task source: Azure Boards'], asks: ['An Azure DevOps token'], installed: true, pinned: 'a40d6b3', uses: 12 },
+      { id: 'discord-chat', name: 'Discord', ver: '0.1.0', kind: 'Chat channels', market: 'official', what: 'Notices and answers from Discord.', adds: ['A chat channel: Discord'], asks: ['A Discord bot token'], installed: true, pinned: '9f13e58', uses: 18 },
+      { id: 'teams-chat', name: 'Teams', ver: '0.1.0', kind: 'Chat channels', market: 'official', what: 'Notices and answers from Microsoft Teams.', adds: ['A chat channel: Teams'], asks: ['A Teams bot token'], installed: true, pinned: '2d7c4a1', uses: 30 },
       { id: 'sentry-mcp', name: 'Sentry', ver: '0.1.0', kind: 'MCP servers', market: 'official', what: 'Read issues and traces from Sentry, for your tasks.', adds: ['An MCP server: Sentry'], asks: ['A Sentry auth token'], installed: false, uses: 70 },
       { id: 'review-pack', name: 'Review pack', ver: '1.0.0', kind: 'Agents', market: 'official', what: 'A security and a performance reviewer, ready for your workflows.', adds: ['2 agents'], asks: [], installed: false, uses: 34,
         gives: { agent: [{ id: 'sec-review', title: 'Security review', type: 'verifier', ins: 'the change', outs: 'findings when it blocks', model: 'Opus 5.5', effort: 'high', asks: false, fan: false, says: 'Reviews the change for security problems.' }, { id: 'perf-review', title: 'Performance review', type: 'verifier', ins: 'the change', outs: 'findings when it blocks', model: 'Sonnet 5.5', effort: 'high', asks: false, fan: false, says: 'Reviews the change for what would run slowly.' }] } },
@@ -37,6 +37,9 @@
   const busyOf = (id) => LIVE()?.pending(id) || '';   // the action running on it (D8, D9, D14): its button says so, disabled
   const UNDO_MS = 5000;
   const view = { sort: '' };
+  // an open of the place (D9, F-5-18): true until the live layer has been told, and again once the address leaves #marketplace
+  let opening = true, watching = false;
+  const openIfDue = () => { if (opening && here() && LIVE()) { opening = false; LIVE().opened(); } };
   let current = '', form = null, ctl = null, home = null, bar = null, page = null, menu = '', addVal = '', addErr = '';
   const srcKey = (s) => s.trim().replace(/^(https?:\/\/)?(www\.)?/, '').replace(/^github\.com\//, '').replace(/\.git$/, '').replace(/\/$/, '').toLowerCase();
   const countOf = (m) => src().plugins.filter((p) => p.market === m.id).length;
@@ -65,14 +68,26 @@
     action: R.button({ label: actOf(p), kind: p.installed && !p.update && !p.needsSetup ? 'quiet' : '', attrs: { 'data-mk-card': p.id, disabled: !!busyOf(p.id) } }), more: R.button({ label: 'What it asks for', kind: 'quiet', attrs: { 'data-mk-open': p.id } }), attrs: { 'data-mk-plugin': p.id } });
   const mkOf = (p) => src().markets.find((m) => m.id === p.market) || null;   // the plugin's own market (D15)
   const marketOf = (p) => mkOf(p)?.name || 'linked';
+  // where it comes from (F-5-15): an installed plugin's own pinned commit, the catalogue's only as the update it offers; a
+  // plugin not installed, the catalogue's commit it would install
+  const whereOf = (p) => {
+    const mk = mkOf(p), own = `${p.pinned ? ` · pinned ${p.pinned}` : ''}${p.update ? ` · update available: ${p.updateSha || p.update}` : ''}`;
+    if (!mk) return `${p.source?.repoUrl || 'linked'}${p.installed ? own : ''}`;
+    return `${mk.url} on ${mk.branch}${p.installed ? own : mk.sha ? ` · ${mk.sha}` : ''}`;
+  };
+  // what it asks for (F-5-16, V3-13): the live record's needs (manifest labels; a key's plain words with the key kept), or the
+  // demo's asks with the site heuristic; each named without its article
+  const needsOf = (p) => p.needs || p.asks.map((a) => ({ label: a, key: '', secret: !/site$/i.test(a) }));
+  const bare = (a) => { const t = a.replace(/^(An?|Your) /, ''); return t.charAt(0).toUpperCase() + t.slice(1); };
+  const lowerArticle = (a) => a.replace(/^(An?|Your) /, (w) => w.toLowerCase());
   const rowOf = (p) => ({ key: `plug:${p.id}`, _p: p, title: nameOf(p), mark: markOf(p), end: p.update ? `Update ${p.update}` : p.installed ? 'Installed' : p.ver, current: p.id === current, tip: `${p.id} ${p.ver}\n${p.kind} · ${marketOf(p)}\n${p.what}`,
-    menu: [{ id: 'step', text: stOf(p).act, help: p.installed ? 'Set it up on its page' : `Adds ${p.adds.join(', ')}` }, { id: 'source', text: 'View its source', help: `${marketOf(p)} · ${mkOf(p)?.sha || ''}` }] });
+    menu: [{ id: 'step', text: stOf(p).act, help: p.installed ? 'Set it up on its page' : `Adds ${p.adds.join(', ')}` }, { id: 'source', text: 'View its source', help: whereOf(p) }] });
   const toPage = (p) => { if (current === p.id) draw(); else window.RailShell.go(`marketplace/${p.id}`); };
   // Set it up (form.plugin-setup, D12): a plugin that asks for nothing says so; one that asks, or that still needs set-up,
   // opens its form on its own page. "Is set up" is never said while it reads Needs set-up.
   function setUp(p) {
     if (!p.asks.length && !p.needsSetup) { say(`${nameOf(p)} is set up: it asks for nothing`); return; }
-    form = { k: 'setup', id: p.id, fields: isLive() ? null : p.asks.map((a, i) => ({ key: `ask-${i}`, label: a, secret: !/site$/i.test(a), set: !!p.installed && !p.needsSetup })) };
+    form = { k: 'setup', id: p.id, fields: isLive() ? null : needsOf(p).map((n, i) => ({ key: `ask-${i}`, label: bare(n.label), secret: n.secret, set: !!p.installed && !p.needsSetup })) };
     if (isLive()) { const f = form; LIVE().setupFields(p.id).then((a) => { if (form !== f) return;
       if (!a.ok || !a.fields.length) { form = null; say(a.ok ? `${nameOf(p)} still needs set-up, and nothing here is left to fill in` : a.text); } else f.fields = a.fields.map((x) => ({ ...x, key: x.name })); draw(); }); }
     toPage(p);
@@ -101,7 +116,7 @@
   const lowerFirst = (a) => a.charAt(0).toLowerCase() + a.slice(1);
   function formHtml(p) {
     if (form?.id !== p.id) return '';
-    if (form.k === 'install') return R.confirmForm({ form: 'install', id: 'mk-install-t', text: `Install ${p.id} ${p.ver}? It adds ${p.adds.map(lowerFirst).join(' and ')}${p.asks.length ? `, and asks for ${p.asks.map(lowerFirst).join(' and ')}: you set ${p.asks.length > 1 ? 'them' : 'it'} up here after` : ''}.`, body: busyOf(p.id) === 'install' ? R.confirmActions({ yes: WORKING.install, busy: true }) : R.confirmActions({ yes: 'Install' }) });
+    if (form.k === 'install') return R.confirmForm({ form: 'install', id: 'mk-install-t', text: `Install ${p.id} ${p.ver}? It adds ${p.adds.map(lowerFirst).join(' and ')}${p.asks.length ? `, and asks for ${p.asks.map(lowerArticle).join(' and ')}: you set ${p.asks.length > 1 ? 'them' : 'it'} up here after` : ''}.`, body: busyOf(p.id) === 'install' ? R.confirmActions({ yes: WORKING.install, busy: true }) : R.confirmActions({ yes: 'Install' }) });
     if (form.k === 'remove') return R.confirmStrip({ text: `Remove ${p.id}? What it adds stops working; its settings and secrets stay until you purge them.`, yes: 'Remove', danger: true, busy: busyOf(p.id) === 'remove' ? WORKING.remove : '' });
     if (form.k === 'update') return R.confirmStrip({ text: form.text, yes: 'Update', busy: busyOf(p.id) === 'update' ? WORKING.update : '', attrs: { 'data-mk-update-asks': '' } });
     if (form.k === 'setup') {
@@ -120,10 +135,10 @@
     const head = R.placeHead({ center: { label: 'Marketplace', to: 'marketplace' }, title: nameOf(p), facts: esc(`${p.kind.replace(/s$/, '')} · ${p.id} ${p.ver}`), mark: markOf(p), word: st.word, why: p.what,
       action: asking ? '' : R.button({ label: actOf(p), attrs: { 'data-mk-step': '', disabled: !!busyOf(p.id) } }),   // no Warning here: outlined (rail.one-action)
       menu: R.moreMenu({ id: 'mk-more', label: `More for ${p.id}`, icon: R.icon('more', 16), open: menu === 'mk-more', items: [...(!isLive() ? [{ id: 'source', text: 'View its source', help: window.RailWould('open it on GitHub') }] : p.source?.webUrl ? [{ id: 'source', text: 'View its source', help: 'On GitHub, in a new tab' }] : []), ...(p.installed ? [{ sep: true }, { id: 'remove', text: 'Remove…', danger: true, help: 'Asks first; says what stops working' }] : [])] }) });
-    const install = formHtml(p), mk = mkOf(p), setting = form?.id === p.id && form.k === 'setup';   // its rows' Set up would open the same form again
+    const install = formHtml(p), setting = form?.id === p.id && form.k === 'setup';   // its rows' Set up would open the same form again
     const rows = R.settingsSection({ title: 'What it adds', rows: partsOf(p).map(([kind, name]) => R.settingsRow({ name: esc(kind), sentence: esc(name) })).join('') })
-      + R.settingsSection({ title: 'What it asks for', rows: p.asks.length ? p.asks.map((a) => R.settingsRow({ name: /site$/.test(a) ? 'Site' : 'Token', sentence: esc(a.replace(/^(An?|Your) /, '').replace(/ (token|site)$/, '')), end: !p.installed ? '' : setting ? R.tooltip({ text: 'The set-up form above is open', off: true, html: R.button({ label: 'Set up', kind: 'quiet', attrs: { 'data-mk-setup': '', disabled: true } }) }) : R.button({ label: 'Set up', kind: 'quiet', attrs: { 'data-mk-setup': '' } }) })).join('') : R.settingsRow({ name: 'Setup', sentence: 'No secrets, nothing to do' }) })
-      + R.settingsSection({ title: 'Where it comes from', rows: R.settingsRow({ name: 'Repository', sentence: esc(mk ? `${mk.url} on ${mk.branch} · ${mk.sha}` : p.source?.repoUrl || 'linked') }) });
+      + R.settingsSection({ title: 'What it asks for', rows: p.asks.length ? needsOf(p).map((n) => R.settingsRow({ name: bare(n.label), sentence: `${n.secret ? 'Secret' : 'Setting'}${n.key ? ` · <code>${esc(n.key)}</code>` : ''}`, end: !p.installed ? '' : setting ? R.tooltip({ text: 'The set-up form above is open', off: true, html: R.button({ label: 'Set up', kind: 'quiet', attrs: { 'data-mk-setup': '', disabled: true } }) }) : R.button({ label: 'Set up', kind: 'quiet', attrs: { 'data-mk-setup': '' } }) })).join('') : R.settingsRow({ name: 'Setup', sentence: 'No secrets, nothing to do' }) })
+      + R.settingsSection({ title: 'Where it comes from', rows: R.settingsRow({ name: 'Repository', sentence: esc(whereOf(p)) }) });
     return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${head}${install}${rows}</div></div><div class="convo-dock" id="mk-dock"></div></div>`;
   }
   function wayOf(key) {
@@ -173,7 +188,7 @@
       ${noCatalogue() ? (firstSyncing() ? catalogueLoading() : catalogueEmpty()) : ''}
       ${shelf('For you', 'Worca suggests these from how you work; each says why.', yours, 'pg-for')}
       ${SHELVES.map(([t, meta, kinds]) => shelf(t, meta, rest.filter((p) => kinds.includes(p.kind)))).join('')}
-      ${R.settingsSection({ title: 'Where plugins come from', rows: m.map((x) => R.settingsRow({ name: x.name, sentence: `${x.webUrl ? R.textLink({ label: x.url, attrs: { 'data-mk-market': x.id, title: 'Opens it on GitHub, in a new tab' } }) : esc(x.url)}${esc([`synced ${x.synced}`, x.sha].filter(Boolean).map((t) => ` · ${t}`).join(''))}`, end: R.button({ label: busyOf(`source:${x.id}`) ? 'Syncing…' : 'Sync', kind: 'quiet', attrs: { 'data-mk-sync': x.id, disabled: !!busyOf(`source:${x.id}`) } }) + (x.builtin ? '' : R.button({ label: 'Remove', kind: 'quiet', attrs: { 'data-mk-unsource': x.id, title: 'Stops looking here; Undo brings it back' } })) })).join('') + R.settingsRow({ name: 'Add one', sentence: R.field({ id: 'mk-add', label: 'Repository or folder', quietLabel: true, placeholder: 'owner/repo, a GitHub URL or a folder', value: addVal, error: addErr, attrs: { 'data-mk-add': '' } }), end: R.button({ label: busyOf('source:add') ? 'Adding…' : 'Add', attrs: { 'data-mk-addgo': '', disabled: !!busyOf('source:add') } }) }) })}</div></div></div>`;
+      ${R.settingsSection({ title: 'Where plugins come from', rows: m.map((x) => R.settingsRow({ name: x.name, sentence: `${x.webUrl ? R.textLink({ label: x.url, attrs: { 'data-mk-market': x.id, title: 'Opens it on GitHub, in a new tab' } }) : esc(x.url)}${esc([`synced ${x.synced}`, x.sha, x.error ? `can't reach it: ${firstLine(x.error)}` : ''].filter(Boolean).map((t) => ` · ${t}`).join(''))}`, end: R.button({ label: busyOf(`source:${x.id}`) ? 'Syncing…' : 'Sync', kind: 'quiet', attrs: { 'data-mk-sync': x.id, disabled: !!busyOf(`source:${x.id}`) } }) + (x.builtin ? '' : R.button({ label: 'Remove', kind: 'quiet', attrs: { 'data-mk-unsource': x.id, title: 'Stops looking here; Undo brings it back' } })) })).join('') + R.settingsRow({ name: 'Add one', sentence: R.field({ id: 'mk-add', label: 'Repository or folder', quietLabel: true, placeholder: 'owner/repo, a GitHub URL or a folder', value: addVal, error: addErr, attrs: { 'data-mk-add': '' } }), end: R.button({ label: busyOf('source:add') ? 'Adding…' : 'Add', attrs: { 'data-mk-addgo': '', disabled: !!busyOf('source:add') } }) }) })}</div></div></div>`;
   }
   const here = () => (location.hash.slice(1) || '').split('/')[0] === 'marketplace';   // the page area is shared by every place: draw only while this one is open
   function draw() {
@@ -224,6 +239,7 @@
   const setOn = (p, on) => { if (on && p.why) p.keptForYou = true; p.installed = on; if (!on) delete p.update; window.RailPlaces.workflows?.plugin(p.id, nameOf(p), p.gives, on); };   // one truth: Workflows' lists and counts follow
   function wire(b, pg) {
     bar = b; page = pg;
+    if (!watching) { watching = true; window.addEventListener('hashchange', () => { if (!here()) opening = true; }); }   // a move inside the place is no open
     const way = (key, title, mark, n) => ({ key: `way:${key}`, _way: key, title, mark, end: String(n), current: current === `~${key}`, tip: `${title} · ${n}` });
     ctl = R.listController({ root: bar, spec: { noun: 'plugins', label: 'Selected plugins', retry: () => LIVE()?.load(), view: () => ({ state: listNow(), parts: [],
       sections: [{ id: 'yours', title: 'Yours', noCount: true, rows: [way('updates', 'Updates', R.kindMark({ kind: 'plugin', icon: 'refresh', tone: src().plugins.some((p) => p.update) ? 'act' : 'idle' }), src().plugins.filter((p) => p.update).length), way('installed', 'Installed', R.kindMark({ kind: 'plugin', icon: 'check' }), src().plugins.filter((p) => p.installed).length)] },
@@ -267,10 +283,10 @@
   window.RailPlaces = window.RailPlaces || {};
   const byName = (name) => src().plugins.find((p) => nameOf(p) === name);
   const isWay = (k) => (k.startsWith('shelf-') ? /^shelf-\d+(-new)?$/.test(k) && !!SHELVES[parseInt(k.slice(6), 10)] : k.startsWith('src-') ? src().markets.some((m) => m.id === k.slice(4)) : ['updates', 'installed', 'for-you', 'all'].includes(k));
-  window.RailPlaces.marketplace = { records: () => src(), changed: () => { if (here()) draw(); }, has: (a) => (isLive() && listNow() !== 'ready') || (a.startsWith('~') ? isWay(a.slice(1)) : src().plugins.some((p) => p.id === a)),
+  window.RailPlaces.marketplace = { records: () => src(), changed: () => { if (here()) { openIfDue(); draw(); } }, has: (a) => (isLive() && listNow() !== 'ready') || (a.startsWith('~') ? isWay(a.slice(1)) : src().plugins.some((p) => p.id === a)),
     // the one truth of what is installed: Settings › Plugins and Workflows read it (undefined: not a plugin of this list)
     isInstalled: (name) => byName(name)?.installed, setInstalled: (name, on) => { const p = byName(name); if (p && !isLive()) setOn(p, on); },   // live: Settings › Plugins changes nothing here (D19)
     hasUpdate: (name) => !!byName(name)?.update, update: (name) => { const p = byName(name); if (p?.update && !isLive()) { p.ver = p.update; delete p.update; } },
     notInstalled: (n) => src().plugins.filter((p) => SHELVES[n][2].includes(p.kind) && !p.installed).length,
-    search: (q) => src().plugins.filter((p) => `${nameOf(p)} ${p.id} ${p.what}`.toLowerCase().includes(q)).map((p) => ({ label: nameOf(p), where: `${p.kind.replace(/s$/, '')}${p.installed ? ' · installed' : ''}`, hash: `marketplace/${p.id}` })), sample: 'slack-chat', show: ({ bar: b, page: pg, arg }) => { if (b !== bar) wire(b, pg); if (current !== arg) menu = ''; if (form && form.id !== arg) form = null; current = arg || ''; draw(); } };
+    search: (q) => src().plugins.filter((p) => `${nameOf(p)} ${p.id} ${p.what}`.toLowerCase().includes(q)).map((p) => ({ label: nameOf(p), where: `${p.kind.replace(/s$/, '')}${p.installed ? ' · installed' : ''}`, hash: `marketplace/${p.id}` })), sample: 'slack-chat', show: ({ bar: b, page: pg, arg }) => { openIfDue(); if (b !== bar) wire(b, pg); if (current !== arg) menu = ''; if (form && form.id !== arg) form = null; current = arg || ''; draw(); } };
 })();

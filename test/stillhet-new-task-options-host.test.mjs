@@ -2,9 +2,10 @@
 // a workflow's defaults and the team policy notes, on dev's routes and in classic's words. The engine and sync refusals:
 // stillhet-new-task-refusals-host.test.mjs.
 // Live app host (jsdom), the real shell, a stubbed fetch.
-import { test, afterEach } from 'node:test';
+import { test, afterEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { liveHost, go, settle, closeHosts, posts, LISTS } from './helpers/stillhet-chat-live-host.mjs';
+import { demoTaskHost } from './helpers/stillhet-host.mjs';
 
 afterEach(closeHosts);
 const DEFAULTS = '/api/run-defaults?projectDir=%2Fsrc%2Fweb', CONFIG = '/api/config?projectDir=%2Fsrc%2Fweb', POLICY = '/api/policy/notes?scope=project%3Aweb-1';
@@ -125,4 +126,44 @@ test('COV-2 one start at a time: a second press while the first is out sends not
   q(d, '[data-dialog="yes"]')?.click(); await settle(20);
   release(); await settle(60);
   assert.equal(runs(calls).length, 1);
+});
+
+// ---- COV-2: Guardrails and Human in the loop, drawn in the demo kind ----
+const demo = async () => { const w = demoTaskHost({ after }); await settle(60); w.RailCenters.maker('tasks').newPick('form'); await settle(60); return { w, d: w.document }; };
+const menuItems = async (d, id) => { q(d, `[data-menu="f-${id}"]`).click(); await settle(10); const got = [...d.querySelectorAll(`#center-dlg [data-menu-pick^="f-${id}|"]`)].map((x) => x.textContent.trim()); q(d, `[data-menu="f-${id}"]`).click(); await settle(10); return got; };
+
+test('COV-2 Guardrails (demo): More options shows Guardrails: Team default, and a pick of Strict is shown in the frame summary', async () => {
+  const { d } = await demo();
+  await more(d);
+  assert.match(q(d, '.cc-more').textContent, /Guardrails: Team default/);
+  assert.deepEqual(await menuItems(d, 'guard'), ['Team default', 'Strict', 'Read only']);
+  assert.doesNotMatch(q(d, '.cc-frame .cc-proof').textContent, /Strict/);
+  await pick(d, 'guard', 'Strict');
+  assert.equal(shown(d, 'guard'), 'Strict');
+  assert.match(q(d, '.cc-frame .cc-proof').textContent, /Guardrails: Strict/);
+});
+
+test('COV-2 humanInLoop (demo): the switch shows only for Auto, and flips aria-checked on click', async () => {
+  const { d } = await demo();
+  await more(d);
+  assert.equal(q(d, '[data-c-hitl]'), null, 'Default has no Human in the loop');
+  await pick(d, 'workflow', 'Auto');
+  const sw = () => q(d, '[data-c-hitl]');
+  assert.equal(sw().getAttribute('aria-checked'), 'true', 'on by default');
+  assert.equal(sw().getAttribute('aria-label'), 'Human in the loop');
+  sw().click(); await settle(20);
+  assert.equal(sw().getAttribute('aria-checked'), 'false');
+  sw().click(); await settle(20);
+  assert.equal(sw().getAttribute('aria-checked'), 'true');
+});
+
+test('COV-2 humanInLoop (demo): with No project the switch is disabled and its title reads Needs a project', async () => {
+  const { d } = await demo();
+  await more(d);
+  await pick(d, 'workflow', 'Auto');
+  await pick(d, 'project', 'No project');
+  const sw = q(d, '[data-c-hitl]');
+  assert.ok(sw.hasAttribute('disabled'));
+  assert.equal(sw.getAttribute('title'), 'Needs a project');
+  assert.equal(sw.getAttribute('aria-checked'), 'false', 'off with No project');
 });

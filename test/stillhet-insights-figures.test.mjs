@@ -43,7 +43,7 @@ after(async () => {
 
 const M = (() => { const window = {}; vm.runInNewContext(readFileSync('ui/public/stillhet/insights/insights-model.js', 'utf8'), { window }); return window.RailInsightsModel; })();
 const map = await import('../ui/public/stillhet/live/insights-map.mjs');
-const { allocate } = await import('../src/shared/cost/allocation.mjs');
+const { allocate, savedUsd } = await import('../src/shared/cost/allocation.mjs');
 const { aggregate } = await import('../src/shared/team-metrics/aggregate.mjs');
 const { recordFacts, heatGrid, missingKeyTodos } = await import('../src/shared/team-metrics/cost-facts.mjs');
 const { costsOf } = await import('../ui/public/stillhet/live/live-map.mjs');
@@ -94,14 +94,19 @@ const computeOf = (id, src, st = {}) => M.compute(liveSub(id, src), { ...M.defau
 const TOTAL_FIELDS = { spend: 'spentUsd', hours: 'humanHours', saved: 'savedUsd', tasks: 'runs', finished: 'finished', failed: 'failed', stopped: 'stopped', prs: 'prsMerged', opened: 'prsOpened' };
 const STATS_PAGES = ['spend', 'per-task', 'budget', 'time-saved', 'value', 'ends', 'shipped', 'throughput'];
 
-test('totals: each stats page\'s headline, totals and period before are GET /api/stats totals and prev, to the cent', async () => {
+// F-6-08: Per task's money is the runs' only (pipelineSpendUsd), its Saved against that
+const TOTAL_FIELDS_OF = { 'per-task': { ...TOTAL_FIELDS, spend: 'pipelineSpendUsd' } };
+const totalOf = (id, tt, f, rate) => (id === 'per-task' && f === 'saved' ? savedUsd(tt.humanHours, rate, tt.pipelineSpendUsd) : tt[(TOTAL_FIELDS_OF[id] || TOTAL_FIELDS)[f]]);
+
+test('totals: each stats page\'s headline, totals and period before are GET /api/stats totals and prev, to the cent (F-6-08: Per task reads pipelineSpendUsd)', async () => {
   const a = await get(RANGE + TAG_Q);
   assert.equal(a.totals.runs, 10); eqUsd(a.totals.spentUsd, 165 + 2 + 1.5 + 0.75, 'seeded spend');
+  eqUsd(a.totals.pipelineSpendUsd, 165, 'the runs\' own spend');
   for (const id of STATS_PAGES) {
     const src = map.statsSource(a, { page: id, tagKeys: ['client', 'team', 'cost-center'] }), c = computeOf(id, src);
-    for (const f of src.fields) { eqUsd(c.T[f], a.totals[TOTAL_FIELDS[f]], `${id} ${f}`); eqUsd(c.P[f], a.prev[TOTAL_FIELDS[f]], `${id} prev ${f}`); }
+    for (const f of src.fields) { eqUsd(c.T[f], totalOf(id, a.totals, f, a.humanRateUsd), `${id} ${f}`); eqUsd(c.P[f], totalOf(id, a.prev, f, a.humanRateUsd), `${id} prev ${f}`); }
     const sub = M.SUB[id], whole = (T) => (sub.den ? (T[sub.den] ? T[sub.num] / T[sub.den] : 0) : T[sub.num]);
-    assert.equal(c.v, whole(Object.fromEntries(src.fields.map((f) => [f, a.totals[TOTAL_FIELDS[f]]]))), `${id}: the headline`);
+    assert.equal(c.v, whole(Object.fromEntries(src.fields.map((f) => [f, totalOf(id, a.totals, f, a.humanRateUsd)]))), `${id}: the headline`);
     asserted.add(id);
   }
   const fails = map.statsSource(a, { page: 'fails' }), fc = computeOf('fails', fails);

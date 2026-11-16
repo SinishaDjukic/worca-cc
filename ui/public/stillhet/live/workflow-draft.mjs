@@ -87,10 +87,13 @@ export function templateOfDraft(base, draft, { portsFn } = {}) {
     }
     n.config = cfg;
   });
-  // loop rounds: the base's loop wires, in the order workflowOf lists them
+  // loop rounds: the base's loop wires, in the order workflowOf lists them; a loop finds its wire by both ends' node ids
+  // (F-W3a2-11: labels repeat when two steps share a name); a loop without nodes (an older draft) by labels, then position
   const loopWires = base.tpl.wires.filter((w) => loopIds.has(w.id)).map((w) => w.id);
+  const ends = (b, l) => (l[3] == null ? b[0] === l[0] && b[1] === l[1] : b[3] === l[3] && b[4] === l[4]);
   draft.loops.forEach((l, i) => {
-    const w = tpl.wires.find((x) => x.id === loopWires[base.loops.findIndex((b) => b[0] === l[0] && b[1] === l[1])] || x.id === loopWires[i]);
+    const at = base.loops[i] && ends(base.loops[i], l) ? i : base.loops.findIndex((b) => ends(b, l)), k = at < 0 && l[3] == null ? i : at;
+    const w = tpl.wires.find((x) => x.id === loopWires[k]);
     if (w) w.config = { ...(w.config || {}), maxCycles: Number(l[2]) };
   });
   const v = validateGraph(tpl, pf);

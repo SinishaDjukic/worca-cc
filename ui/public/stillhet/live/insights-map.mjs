@@ -20,21 +20,25 @@ export const TEAM_PAGES = Object.freeze(['team', 'untagged', 'heat']);
 /** D17: every live page's figure and the one dev source it reads. */
 export const FIGURE_SOURCE = Object.freeze({
   spend: 'GET /api/stats totals.spentUsd',
-  'per-task': 'GET /api/stats totals.spentUsd ÷ totals.runs',
+  'per-task': 'GET /api/stats totals.pipelineSpendUsd (else report.runs usd summed) ÷ totals.runs',
   budget: 'GET /api/stats totals.spentUsd against GET /api/budget totalLimitUsd',
   'time-saved': 'GET /api/stats totals.savedUsd',
   value: 'GET /api/stats totals.savedUsd ÷ totals.spentUsd',
-  ends: 'GET /api/stats totals.finished, totals.failed, totals.stopped',
+  ends: 'GET /api/stats report.runs (in the shown buckets) through allocate().total',
   fails: 'GET /api/stats report.runs (failed or stopped) through allocate().total',
   shipped: 'GET /api/stats totals.prsMerged',
   throughput: 'GET /api/stats totals.finished',
-  team: 'GET /api/team-metrics records through aggregate().kpis.spendUsd',
+  team: 'GET /api/team-metrics records through aggregate().kpis.spendUsd; people: distinct named person in the records\' facts',
   untagged: 'GET /api/team-metrics records through missingKeyTodos().rows',
   shaping: 'GET /api/stats shaping.groups',
   heat: 'GET /api/team-metrics records through heatGrid()',
 });
 const FIELDS = { money: ['spend', 'hours', 'saved', 'tasks'], ends: ['finished', 'failed', 'stopped'], fails: ['count', 'spend'], shipped: ['prs', 'opened'], throughput: ['finished'], untagged: ['tasks', 'spend'], shaping: ['runs', 'usd', 'uruns', 'uusd', 'mins', 'cycles'] };
 const FIELDS_OF = { spend: FIELDS.money, 'per-task': FIELDS.money, budget: FIELDS.money, 'time-saved': FIELDS.money, value: FIELDS.money, ends: FIELDS.ends, fails: FIELDS.fails, shipped: FIELDS.shipped, throughput: FIELDS.throughput, team: FIELDS.money, heat: FIELDS.money, untagged: FIELDS.untagged };
+/** F-6-08: the pages whose money is the runs' only: no Chat, Requirements or Design spend in any figure, row, cut or CSV. */
+export const RUNS_ONLY = Object.freeze(['per-task']);
+/** F-6-12: the pages whose headline, bars and rows all count the cohort facts in the shown buckets. */
+const OUTCOME_PAGES = ['ends'];
 const SHARE_OF = { 'time-saved': 'saved', ends: 'finished', fails: 'count', shipped: 'prs', throughput: 'finished', untagged: 'tasks' };
 
 // ---- days ----
@@ -123,7 +127,7 @@ function cohortSeries(facts, buckets, fields, rate, spendSeries) {
   }
   if (out.hours) out.hours = hours;
   if (out.spend) out.spend = spendSeries;
-  if (out.saved) out.saved = hours.map((h, i) => savedUsd(h, rate, spendSeries[i]));
+  if (out.saved) out.saved = hours.map((h, i) => (spendSeries[i] == null ? null : savedUsd(h, rate, spendSeries[i])));
   return out;
 }
 const sumRows = (series, n) => Array.from({ length: n }, (_, i) => series.reduce((a, s) => a + (s.values[i] || 0), 0));
@@ -175,21 +179,33 @@ export function statsSource(answer, { by = 'project', thenBy = '', filter = [], 
   const ticks = ticksOf(filter), extra = page === 'fails' ? ['status:Failed', 'status:Stopped'] : [];
   const select = (list) => (ticks.length || extra.length ? selectFacts(selectFacts(list, ticks), extra) : list);
   const sel = select(facts), whole = !ticks.length && !extra.length;
-  const t = answer.totals || {}, extras = whole ? { askUsd: t.ask?.spendUsd || 0, requirementsUsd: t.requirements?.spendUsd || 0, designUsd: t.design?.spendUsd || 0 } : {};
-  const totals = whole ? fromSum(t, fields) : fromSum(allocate(sel, { by: 'project', rate }).total, fields);
-  const prev = answer.prev == null || !rep.prevRuns && !whole ? null : whole ? fromSum(answer.prev, fields) : fromSum(allocate(select(rep.prevRuns), { by: 'project', rate }).total, fields);
+  const runsOnly = RUNS_ONLY.includes(page), outcome = OUTCOME_PAGES.includes(page);
+  const t = answer.totals || {}, extras = whole && !runsOnly ? { askUsd: t.ask?.spendUsd || 0, requirementsUsd: t.requirements?.spendUsd || 0, designUsd: t.design?.spendUsd || 0 } : {};
   const buckets = rep.buckets || (answer.series || []).map((s) => s.bucketStartMs), n = buckets.length;
-  const spendSeries = whole ? (answer.series || []).map((s) => s.spentUsd)
-    : sumRows(allocationSeries(allocate(sel, { by: 'project', top: Infinity }), sel, { buckets }), n);
-  const series = cohortSeries(sel, buckets, fields, rate, spendSeries);
-  if (whole) for (const k of ['finished', 'failed', 'stopped']) if (series[k]) series[k] = (answer.series || []).map((s) => s[k]);
-  if (series.count && whole) series.count = (answer.series || []).map((s) => s.failed + s.stopped);
+  // F-6-12: How tasks end counts one fact set for its headline, bars and rows: the cohort facts in the shown buckets
+  const shown = outcome ? sel.filter((f) => f.inCohort && (answer.range !== 'all' || (n && Number.isFinite(f.startedMs) && f.startedMs >= buckets[0]))) : sel;
+  const fromFacts = whole && !outcome;
+  // F-6-08: a runs-only page's whole money is the runs' (pipelineSpendUsd, else the facts summed), Saved against it
+  // B4.9 review: no runs spend known: the counts stay dev's, spend and Saved are unknown (null), never a made-up 0
+  const runsTotals = (tt, list) => { const S = runsSpendOf(tt, list); return S == null ? { ...fromSum(tt, fields), spend: null, saved: null } : fromSum({ ...tt, spentUsd: S, savedUsd: savedUsd(tt.humanHours, rate, S) }, fields); };
+  const totals = !fromFacts ? fromSum(allocate(shown, { by: 'project', rate }).total, fields) : runsOnly ? runsTotals(t, rep.runs) : fromSum(t, fields);
+  const prevOf = () => { const p = runsTotals(answer.prev, rep.prevRuns); return p.spend == null ? null : p; };
+  const prev = answer.prev == null || !rep.prevRuns && !whole ? null : whole ? (runsOnly ? prevOf() : fromSum(answer.prev, fields)) : fromSum(allocate(select(rep.prevRuns), { by: 'project', rate }).total, fields);
+  // B4.9 review: all time's buckets are the last months only; a runs-only page draws the runs begun in them and names that span
+  const allTime = answer.range === 'all' && n > 0;
+  const drawn = runsOnly && allTime ? shown.filter((f) => !Number.isFinite(f.startedMs) || f.startedMs >= buckets[0]) : shown;
+  const spendSeries = runsOnly && totals.spend == null ? new Array(n).fill(null) : whole && !runsOnly ? (answer.series || []).map((s) => s.spentUsd)
+    : sumRows(allocationSeries(allocate(drawn, { by: 'project', top: Infinity }), drawn, { buckets }), n);
+  const series = cohortSeries(drawn, buckets, fields, rate, spendSeries);
+  const seriesSpan = allTime && !outcome ? `the last ${n} ${n === 1 ? 'month' : 'months'}` : null;
+  if (fromFacts) for (const k of ['finished', 'failed', 'stopped']) if (series[k]) series[k] = (answer.series || []).map((s) => s[k]);
+  if (series.count && fromFacts) series.count = (answer.series || []).map((s) => s.failed + s.stopped);
   const dims = ['project', 'workflow', 'person', 'status', ...tagDims(facts, tagKeys)];
-  const { rows, kids } = rowsAndKids(sel, { dims, by, thenBy, rate, extras, fields, share, totals });
-  if (whole) { const m = allocate([], { by: 'project', rate, ...extras }); const o = m.rows.map((r) => rowOf(r, fields, share, totals)); if (o.length) rows.origin = o; }
+  const { rows, kids } = rowsAndKids(shown, { dims, by, thenBy, rate, extras, fields, share, totals });
+  if (whole && !runsOnly) { const m = allocate([], { by: 'project', rate, ...extras }); const o = m.rows.map((r) => rowOf(r, fields, share, totals)); if (o.length) rows.origin = o; }
   const { days, last } = daysOf(buckets, answer.bucket, answer.windowEndMs);
-  const cut = cutOf(sel, { by, rate, extras, fields, buckets, rep, whole });
-  return { live: true, fields, labels: labelsOf(buckets, answer.bucket), days, last, dayCount: dayCountOf(answer.bucket, buckets, answer.windowStartMs, answer.windowEndMs, now), series, before: null, totals, prev, rows, kids, cut, none: 'Unallocated' };
+  const cut = cutOf(drawn, { by, rate, extras, fields, buckets, rep, whole: whole && !runsOnly });
+  return { live: true, fields, labels: labelsOf(buckets, answer.bucket), days, last, dayCount: dayCountOf(answer.bucket, buckets, answer.windowStartMs, answer.windowEndMs, now), series, before: null, totals, prev, rows, kids, cut, none: 'Unallocated', seriesSpan };
 }
 
 /** The Cost report's model for a page as drawn (D24's Download CSV): dev's allocate over the same facts, then reportCsv. */
@@ -200,7 +216,7 @@ export const rowsCsv = (header, rows) => rowsToCsv(header, rows);
 export function statsCsv(answer, { by = 'project', thenBy = '', filter = [], page = 'spend', byLabel, thenByLabel = '' } = {}) {
   const facts = selectFacts((answer.report || {}).runs || [], ticksOf(filter)), t = answer.totals || {}, whole = !ticksOf(filter).length;
   const dev = DIM_OF[by] && by !== 'origin' ? DIM_OF[by] : 'project', then = thenBy && DIM_OF[thenBy] && thenBy !== 'origin' ? DIM_OF[thenBy] : null;
-  const model = allocate(page === 'fails' ? selectFacts(facts, ['status:Failed', 'status:Stopped']) : facts, { by: dev, thenBy: then, rate: answer.humanRateUsd || 0, ...(whole && page !== 'fails' ? { askUsd: t.ask?.spendUsd || 0, requirementsUsd: t.requirements?.spendUsd || 0, designUsd: t.design?.spendUsd || 0 } : {}) });
+  const model = allocate(page === 'fails' ? selectFacts(facts, ['status:Failed', 'status:Stopped']) : facts, { by: dev, thenBy: then, rate: answer.humanRateUsd || 0, ...(whole && page !== 'fails' && !RUNS_ONLY.includes(page) ? { askUsd: t.ask?.spendUsd || 0, requirementsUsd: t.requirements?.spendUsd || 0, designUsd: t.design?.spendUsd || 0 } : {}) });
   return reportCsv(model, { byLabel, thenByLabel });
 }
 
@@ -233,7 +249,8 @@ export function teamSource(records, { when = 'this month', from = null, to = nul
   const dims = ['person', 'project', 'workflow', ...tagDims(facts.runs, [])];
   const { rows, kids } = rowsAndKids(sel, { dims, by, thenBy, rate, extras: {}, fields, share, totals });
   const { days, last } = daysOf(facts.buckets, facts.bucket, facts.windowEndMs, { utc: true });
-  return { live: true, fields, labels: labelsOf(facts.buckets, facts.bucket, { utc: true }), days, last, dayCount: dayCountOf(facts.bucket, facts.buckets, facts.windowStartMs, facts.windowEndMs, now), series, before: null, totals, prev, rows, kids, none: 'Unallocated', facts: sel };
+  const people = new Set(sel.map((f) => f.person).filter(Boolean)).size;   // F-6-10: named people, never the rows (top 5, Other, Unallocated)
+  return { live: true, fields, labels: labelsOf(facts.buckets, facts.bucket, { utc: true }), days, last, dayCount: dayCountOf(facts.bucket, facts.buckets, facts.windowStartMs, facts.windowEndMs, now), series, before: null, totals, prev, rows, kids, none: 'Unallocated', facts: sel, people };
 }
 
 /** D14: dev's heatGrid over the window's facts, or null. `by` is dev's dim (project, workflow, tag:client). */
@@ -263,7 +280,11 @@ export function untaggedSource(facts, key, base = {}) {
 }
 
 // ---- words (D10) ----
-const usd = (n) => `$${Math.round(n).toLocaleString('en-US')}`, usd2 = (n) => `$${n.toFixed(2)}`, pct = (n) => `${Math.round(n * 100)}%`;
+/** F-6-11: a minus (U+2212) before the currency, as classic signedUsd; a value that rounds to zero is never signed. */
+const signed = (r, text) => `${r < 0 ? '\u2212' : ''}$${text}`;
+const usd = (n) => { const r = Math.round(n); return signed(r, Math.abs(r).toLocaleString('en-US')); };
+const usd2 = (n) => { const r = Math.round(n * 100) / 100; return signed(r, Math.abs(r).toFixed(2)); };
+const pct = (n) => `${Math.round(n * 100)}%`;
 const DAY_START = (ms) => { const d = new Date(ms); return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime(); };
 
 /** The budget of the store's costs part (GET /api/budget through live-map costsOf), with its reset window; null unset. */
@@ -319,7 +340,7 @@ export function wordsOf(id, source, { budget = null, pooled = null, now = Date.n
   if (id === 'fails') { const top = [...(source.rows[by] || [])].sort((a, b) => b.count - a.count)[0]; return { why: top && T.count ? `Most at ${top.name}: ${top.count} of ${T.count}` : '' }; }
   if (id === 'shipped') return { why: `${T.opened} opened, ${T.prs} merged` };
   if (id === 'team') {
-    const n = (source.rows.person || []).length, pc = paceText(pooled);
+    const n = source.people, pc = paceText(pooled);
     return { word: `${usd(T.spend)}${pooled ? ` of ${usd(pooled.limit)}` : ''}`, why: join([`${n} ${n === 1 ? 'person' : 'people'}`, pc && `on pace for ${usd(pc.p.pace)}`, pooled && `pooled budget at ${pct(pooled.spent / pooled.limit)}`]) };
   }
   if (id === 'untagged') return { word: `${T.tasks} ${T.tasks === 1 ? 'task' : 'tasks'} without a ${key}`, why: `${usd(T.spend)} has no ${key}` };
@@ -334,6 +355,12 @@ export function monthSpendOf(answer, name) {
   return row ? row.spentUsd : null;
 }
 
+/** F-fm-02, F-6-08: the runs' own spend: totals.pipelineSpendUsd, else the facts' usd summed to the cent; null with neither. */
+export function runsSpendOf(totals, facts) {
+  if (Number.isFinite(totals?.pipelineSpendUsd)) return totals.pipelineSpendUsd;
+  return Array.isArray(facts) ? Math.round(facts.reduce((a, f) => a + (f.usd || 0), 0) * 100) / 100 : null;
+}
+
 /** F-3-10: this week's task count and spend for the Tasks center's head: the answer's totals for every project, else the
  *  project's allocation row (0 when it has none this week); null without totals, or without facts for a project.
  *  F-fm-02: the Tasks center counts tasks, so its cost is the runs' only (pipelineSpendUsd, else the runs' facts summed),
@@ -343,7 +370,7 @@ export function weekTotalsOf(answer, project = null) {
   if (!t) return null;
   const facts = answer.report?.runs;
   if (project == null) {
-    const runsUsd = Number.isFinite(t.pipelineSpendUsd) ? t.pipelineSpendUsd : Array.isArray(facts) ? Math.round(facts.reduce((a, f) => a + (f.usd || 0), 0) * 100) / 100 : null;
+    const runsUsd = runsSpendOf(t, facts);
     return runsUsd == null ? null : { runs: t.runs, spentUsd: runsUsd };
   }
   if (!Array.isArray(facts)) return null;

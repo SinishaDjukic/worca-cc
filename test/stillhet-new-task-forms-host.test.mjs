@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { liveHost, go, settle, closeHosts, clone, SOURCES, posts } from './helpers/stillhet-chat-live-host.mjs';
-import { stillhetHost } from './helpers/stillhet-host.mjs';
+import { stillhetHost, demoTaskHost } from './helpers/stillhet-host.mjs';
 
 afterEach(closeHosts);
 const sent = (calls) => posts(calls).filter(([, u]) => !/^\/api\/ask\//.test(u));
@@ -218,4 +218,63 @@ test('Esc with the focus on body closes the open form; once closed, the page has
   d.activeElement.blur();
   key(w, d.body, 'Escape'); await settle(20);
   assert.equal(heard, 1, 'with no form open, Esc goes on to the page');
+});
+
+// ---- COV-2 (docs/rail/forms.md form.run-options): the project picker's workspaces and Add project…, drawn in the demo kind ----
+const demo = async (o) => { const w = demoTaskHost({ after, ...o }); await settle(60); return { w, d: w.document }; };
+const dq = (d, sel) => d.querySelector(`#center-dlg ${sel}`);
+const dpick = async (d, id, v) => { dq(d, `[data-menu="f-${id}"]`).click(); await settle(20); dq(d, `[data-menu-pick="f-${id}|${v}"]`).click(); await settle(40); };
+
+test('COV-2 Workspace (demo): the project picker lists the demo workspaces under Workspaces; a pick hides Save as default, and with a run before it the base stays the run before it\'s branch', async () => {
+  const { w, d } = await demo();
+  await openTask(w);
+  dq(d, '[data-menu="f-project"]').click(); await settle(20);
+  assert.ok([...d.querySelectorAll('#center-dlg .menu-h')].some((h) => h.textContent === 'Workspaces'), 'a Workspaces header');
+  const titles = w.RailSpaces.list().map((x) => x.title);
+  assert.ok(titles.length > 1);
+  for (const t of titles) assert.ok(dq(d, `[data-menu-pick="f-project|${t}"]`), `${t} is offered`);
+  dq(d, '[data-menu="f-project"]').click(); await settle(20);
+  dq(d, '[data-c-more]').click(); await settle(20);
+  assert.ok(dq(d, '[data-c-tagsave]'), 'a project offers Save as default');
+  await dpick(d, 'project', titles[0]);
+  assert.equal(shown(d), titles[0]);
+  assert.equal(dq(d, '[data-c-tagsave]'), null, 'a workspace has no project defaults to save');
+  assert.equal(dq(d, '[data-menu="f-base"]').textContent.trim(), 'each project\'s own branch');
+  dq(d, '[data-dialog="cancel"]').click(); await settle(20);
+  w.RailCenters.newTask({ after: { kind: 'ticket', id: 's-docs', title: 'Nightly docs' } }); await settle(60);
+  await dpick(d, 'project', titles[0]);
+  assert.equal(dq(d, '[data-menu="f-base"]').textContent.trim(), 'the task before it\'s branch', 'waiting for a run, its branch stays the base');
+});
+
+test('COV-2 Project name / folder field / Cancel / Save, F-cov1-09 (demo): Add project… shows the name and folder fields; Save is off while empty; Browse… shows the folderBrowser dialog (title Select a folder) and Select this folder fills the path; Save adds the project through RailProjects.add and picks it; Cancel returns with the project picker focused; typing in the name field changes no other field on the page (no document-level listener)', async () => {
+  const { w, d } = await demo();
+  await openTask(w);
+  type(w, d, '#cc-text', 'Add a pager');
+  await dpick(d, 'project', '+add');
+  assert.equal(d.activeElement, dq(d, '[data-c-addname]'), 'the name field has the focus');
+  assert.equal(dq(d, '[data-c-addpath]').getAttribute('placeholder'), '/absolute/path/to/project');
+  const save = () => dq(d, '[data-c-addsave]');
+  assert.ok(save().disabled); assert.equal(save().getAttribute('title'), 'Give it a name and a folder');
+  const others = () => [...d.querySelectorAll('input, textarea')].filter((x) => !x.matches('[data-c-addname]')).map((x) => `${x.id}=${x.value}`);
+  const before = others();
+  type(w, d, '[data-c-addname]', 'notes-app'); await settle(20);
+  assert.deepEqual(others(), before, 'only the name changed');
+  assert.ok(save().disabled, 'still no folder');
+  dq(d, '[data-c-browse]').click(); await settle(20);
+  assert.equal(dq(d, '.fb .dlg-title').textContent, 'Select a folder');
+  const into = async () => { const b = [...d.querySelectorAll('#center-dlg .fb-list [data-fb-go]')][0]; const to = b.dataset.fbGo; b.click(); await settle(20); return to; };
+  await into(); const path = await into();
+  assert.equal(dq(d, '.fb-path').textContent, path);
+  dq(d, '.fb [data-dialog="yes"]').click(); await settle(20);
+  assert.equal(dq(d, '[data-c-addpath]').value, path, 'Select this folder fills the folder');
+  assert.equal(dq(d, '[data-c-addname]').value, 'notes-app');
+  assert.ok(!save().disabled);
+  save().click(); await settle(40);
+  assert.deepEqual([...w.RailProjects.list().filter((p) => p.id === 'notes-app').map((p) => p.path)], [path], 'one project list');
+  assert.equal(shown(d), 'notes-app', 'the new project is picked');
+  assert.equal(dq(d, '#cc-text').value, 'Add a pager', 'the task is as it was');
+  await dpick(d, 'project', '+add');
+  dq(d, '[data-c-addcancel]').click(); await settle(20);
+  assert.equal(dq(d, '.dlg-title').textContent, 'New task');
+  assert.equal(d.activeElement, dq(d, '[data-menu="f-project"]'), 'Cancel goes back to the project picker');
 });

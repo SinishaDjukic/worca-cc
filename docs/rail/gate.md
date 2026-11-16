@@ -29,7 +29,7 @@ The one table: each check, its command, when it runs and the widths it owes. Fro
 | `rail-default` | `node --test test/rail-default.test.mjs` | A change to a pattern, `featureKinds` or `build.md`; in `npm test` | none |
 | `rail-look-options` | `node --test test/rail-look-options.test.mjs` | Every change to the library; in `npm test` | none |
 | `settings-sentences` | `node G/settings-sentences.mjs` | A change to Settings' model | none |
-| Real-data browser test (`gate.real-data`) | browser agents walk `plans/rail/test-protocol.md` on four instances (classic and Stillhet; a copy of real data and an empty install, each with its own `HOME`) against the prototype | Before every Stillhet PR or fix batch merges; the touched items plus every item that passed before | 1280, 390 |
+| Real-data browser test (`gate.real-data`) | browser agents walk `plans/rail/test-protocol.md` on four instances (classic and Stillhet; a copy of real data and an empty install, each with its own `HOME`) against the prototype. Start A–D with `node tools/stillhet-gate-instances.mjs start` (own HOME each); leave a held review gate on a mock instance with `node tools/stillhet-seed-gate.mjs URL`. | Before every Stillhet PR or fix batch merges; the touched items plus every item that passed before | 1280, 390 |
 | `ds-check`, with `align-check` | `node G/ds-check.mjs` | A change to a Rail page, inside its run | 900, 400 |
 | `handover-check` | `node G/handover-check.mjs` | A change to anything that sends to Chat | 1280 |
 | `colour-check` | `node G/colour-check.mjs` (`--list` to see all) | A change to a colour, a token or a page's text | 1280, light and dark |
