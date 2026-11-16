@@ -1,8 +1,8 @@
 // test/stillhet-marketplace-host-page-2.test.mjs — second half of stillhet-marketplace-host-page (split to stay under CI's 300 s per file):
-// the set-up form's disabled rows and the fresh-install first sync. Live app host (jsdom).
+// the set-up form's disabled rows, the fresh-install first sync and B5.10 (pinned sha, asks from the manifest, fresh on open). Live app host (jsdom).
 import { test, afterEach, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { marketplaceHost, MK_LISTS, PIN, settle, go, closeHosts } from './helpers/stillhet-marketplace-host.mjs';
+import { marketplaceHost, MK_LISTS, PIN, SHA, settle, go, closeHosts } from './helpers/stillhet-marketplace-host.mjs';
 import { liveHost, LISTS } from './helpers/stillhet-chat-live-host.mjs';
 import { stillhetHost } from './helpers/stillhet-host.mjs';
 
@@ -92,4 +92,47 @@ test('F-G-G5-05: the side chat on a list names the list, not a plugin; a plugin\
   // same cause as F-7a-08: the Projects list is no project
   await go(w, '#projects', 60);
   assert.deepEqual([w.RailShell.pageContext().kind, w.RailShell.pageContext().name, w.RailShell.pageContext().project], ['list', 'Projects', '']);
+});
+
+// B5.10: a plugin's own pinned commit, its asks named from the manifest, the lists fresh on each open
+const rowsOf = (d, title) => { const s = [...d.querySelectorAll('#route-place .set-section, #route-place section')].find((x) => x.textContent.includes(title)); return s ? [...s.querySelectorAll('.set-name')].map((n) => [n.textContent.trim(), n.nextElementSibling?.textContent.trim() || '']) : []; };
+const whereText = (d) => rowsOf(d, 'Where it comes from').map(([, t]) => t).join(' ');
+
+test('F-5-15 (demo kind): the Jira page\'s Where it comes from reads pinned … · update available: 42eb305; Slack (not installed) reads the catalogue sha', async () => {
+  const w = stillhetHost({ after, hash: '#chat' });
+  w.RailUI.prefs.setMode('expert'); await go(w, '#marketplace/jira-source', 50);
+  assert.equal(whereText(w.document), 'github.com/SinishaDjukic/worca-cc on dev · pinned c3d9a17 · update available: 42eb305');
+  await go(w, '#marketplace/slack-chat', 50);
+  assert.equal(whereText(w.document), 'github.com/SinishaDjukic/worca-cc on dev · 42eb305');
+});
+
+test('F-5-15 (live): jira-source reads pinned `PIN` sha7 · update available: `SHA` sha7, never the market sha alone', async () => {
+  const { d } = await marketplaceHost({ hash: '#marketplace/jira-source' });
+  assert.equal(whereText(d), `github.com/SinishaDjukic/worca-cc on dev · pinned ${PIN.slice(0, 7)} · update available: ${SHA.slice(0, 7)}`);
+  assert.doesNotMatch(whereText(d), new RegExp(`on dev · ${SHA.slice(0, 7)}`));
+});
+
+test('F-5-16 / V3-13: What it asks for names each row from the manifest (Jira API token, the site\'s label); no two rows read Token; the set-up form\'s field labels are the same; a not-installed plugin\'s rows read plain words with the key after', async () => {
+  const { w, d } = await marketplaceHost({ hash: '#marketplace/jira-source' });
+  assert.deepEqual(rowsOf(d, 'What it asks for').map(([n, t]) => [n, t.replace(/\s*Set up\s*$/, '')]), [['Jira API token', 'Secret'], ['Jira site', 'Setting']]);
+  d.querySelector('[data-mk-setup]').click(); await settle(80);
+  assert.deepEqual([...d.querySelectorAll('form[data-form="setup"] label')].map((l) => l.textContent.trim()).filter(Boolean), ['Jira API token', 'Jira site']);
+  await go(w, '#marketplace/slack-chat', 60);
+  assert.deepEqual(rowsOf(d, 'What it asks for'), [['Bot token', 'Secret · botToken'], ['App token', 'Secret · appToken']]);
+  assert.ok([...d.querySelectorAll('#route-place .set-text code')].some((c) => c.textContent === 'botToken'), 'the key is the secondary text');
+  const demo = stillhetHost({ after, hash: '#chat' });
+  demo.RailUI.prefs.setMode('expert'); await go(demo, '#marketplace/jira-source', 50);
+  assert.deepEqual(rowsOf(demo.document, 'What it asks for').map(([n]) => n), ['Jira API token', 'Jira site'], 'the demo kind names them the same way');
+});
+
+test('F-5-18: leaving #marketplace and opening it again sends GET /api/plugins and GET /api/marketplaces again; moving to a plugin\'s page inside it does not', async () => {
+  const { w, calls } = await marketplaceHost();
+  const reads = () => calls.filter((c) => c.method === 'GET' && (c.url === '/api/plugins' || c.url === '/api/marketplaces')).length;
+  const first = reads();
+  assert.equal(first, 2, 'the first open reads both');
+  await go(w, '#marketplace/jira-source', 60); await go(w, '#marketplace/~all', 60);
+  assert.equal(reads(), first, 'a move inside the place reads nothing');
+  await go(w, '#chat', 60); await go(w, '#marketplace', 60); await settle(100);
+  assert.equal(reads(), first + 2, 'opening it again reads both lists');
+  assert.equal(calls.filter((c) => c.method === 'POST').length, 0, 'synced within 24 h: no sync');
 });

@@ -31,11 +31,15 @@ const ACCESS_WORDS = { secret: 'a secret', channelSecret: 'a chat channel secret
 /** The set-up form's name for one field (market-map.mjs setupFieldsOf). */
 export const fieldKey = (f) => [f.target, f.sourceId || f.channelId || '', f.key].join('|');
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
+/** A source last synced longer ago than this is synced quietly when the Marketplace opens (B5.10, F-5-18). */
+export const STALE_MS = 24 * 3600 * 1000;
 
 export function startMarketLive({ fetch, toast = () => {}, open = (u) => globalThis.window?.open(u, '_blank', 'noopener'), on = () => {}, setTimeout: later = globalThis.setTimeout, clearTimeout: cancel = globalThis.clearTimeout, now = () => Date.now() }) {
   let lists = {}, configs = {}, state = 'loading', started = null, records = { markets: [], plugins: [] };
   const busy = new Map(), hidden = new Map(), asked = new Map(), fields = new Map(), seq = {};
   const tried = new Set(), pending = new Set();   // the first sync (#1298): sent once per never-synced builtin per page load
+  const staleTried = new Set();   // the stale sync (F-5-18): `${id}@${lastSync.at}` once per page load, so a failed one is not retried
+  let staleDue = false;           // set by an open of the Marketplace; the next read that lands the markets runs the stale sync
 
   async function send(id, args = {}) {
     const [, build] = MARKET_ACTIONS[id], [method, url, body] = build(args);
@@ -69,7 +73,7 @@ export function startMarketLive({ fetch, toast = () => {}, open = (u) => globalT
     fresh.forEach((n) => { lists[n] = answers[names.indexOf(n)].data; });
     if (cfg && fresh.includes('plugins')) configs = cfg;
     state = 'ready'; rebuild(); on();
-    if (fresh.includes('markets')) firstSync();
+    if (fresh.includes('markets')) { firstSync(); if (staleDue) { staleDue = false; staleSync(); } }
     return true;
   }
   // a builtin that has never synced (dev seeds it with lastSync: null) is synced once, quietly: a failure shows on the
@@ -83,6 +87,16 @@ export function startMarketLive({ fetch, toast = () => {}, open = (u) => globalT
         .finally(() => { pending.delete(m.id); on(); });
     }
   }
+  // a source (builtin or added) last synced over STALE_MS ago is synced once when the Marketplace opens, as quietly as the
+  // first sync; one never synced is firstSync's, one that needs git or has no readable time is left alone
+  function staleSync() {
+    for (const m of marketsOf(lists.markets)) {
+      const t = Date.parse(m?.lastSync?.at || ''), key = `${m?.id}@${m?.lastSync?.at}`;
+      if (!m?.id || m.needsGit || !Number.isFinite(t) || now() - t <= STALE_MS || staleTried.has(key)) continue;
+      staleTried.add(key);
+      once(`source:${m.id}`, 'sync', async () => { await send('sync', { id: m.id }); await reread(); });
+    }
+  }
   /** True while a never-synced builtin's first sync is still to be sent or still runs: read from the lists, so the very
    *  draw that first shows them is already Loading the catalogue, never No plugins yet. */
   const firstSyncing = () => marketsOf(lists.markets).some((m) => neverSynced(m) && (!tried.has(m.id) || pending.has(m.id)));
@@ -93,6 +107,8 @@ export function startMarketLive({ fetch, toast = () => {}, open = (u) => globalT
   }
   const begin = () => { if (!started) load(); };
   const reread = () => refresh(...Object.keys(LISTS));
+  /** An open of the Marketplace (D7): both lists read again (the first read when none started), then the stale sync. */
+  const opened = () => { staleDue = true; return started ? reread() : load(); };
 
   const find = (id) => records.plugins.find((p) => p.id === id);
   const marketNamed = (id) => records.markets.find((m) => m.id === id) || null;
@@ -279,7 +295,7 @@ export function startMarketLive({ fetch, toast = () => {}, open = (u) => globalT
     load, refresh: (...n) => (started ? refresh(...(n.length ? n : Object.keys(LISTS))) : Promise.resolve(false)),
     data: () => { begin(); return records; },
     status: () => { begin(); return state; },
-    pending: (id) => busy.get(id) || '', firstSyncing,
+    pending: (id) => busy.get(id) || '', firstSyncing, opened,
     install, update, updateAll, remove, setupFields, saveSetup, sync, addSource, deferRemoveSource, openSource, openMarket,
   };
 }
