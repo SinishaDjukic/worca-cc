@@ -126,3 +126,42 @@ test('PLAN-Ga: listAllPipelines() without the option carries no storedPr (CLI an
     }
   }
 });
+
+test('PLAN-Ga: a row\'s rollup storedPr and its members\' storedPr agree within one response (one read)', async () => {
+  const MERGED = { ...WEB_PR, state: 'MERGED' };
+  try {
+    // The list's reads happen before its first await; a member PR write landing while the rows build
+    // (it refreshes the rollup in the same transaction) must not split the row from its members.
+    const pending = listAllPipelines({ storedPr: true });
+    persistMemberPrState(wsId, 'web-00000002', MERGED);
+    const row = (await pending).find((p) => p.id === wsId);
+    const web = row.members.find((m) => m.memberKey === 'web-00000002');
+    assert.deepEqual(web.storedPr, row.storedPr, 'member and rollup come from the same read');
+    assert.equal(web.storedPr.state, 'OPEN', 'both are the state at read time');
+    const after = (await listAllPipelines({ storedPr: true })).find((p) => p.id === wsId);
+    assert.deepEqual(after.storedPr, MERGED);
+    assert.deepEqual(after.members.find((m) => m.memberKey === 'web-00000002').storedPr, MERGED);
+  } finally {
+    getDb().prepare('UPDATE pipeline_member_prs SET pr_state = ? WHERE pipeline_id = ?').run('OPEN', wsId);
+    getDb().prepare('UPDATE pipelines SET pr_state = ? WHERE id = ?').run('OPEN', wsId);
+  }
+});
+
+test('PLAN-Ga: the member query is bounded to the listed workspace ids', async () => {
+  const db = getDb();
+  const orig = db.prepare;
+  const sqls = [];
+  db.prepare = function (sql) { sqls.push(sql); return orig.call(this, sql); };
+  try {
+    const memberSql = () => sqls.filter((s) => /FROM pipeline_member_prs/.test(s) && /pr_url/.test(s));
+    await listAllPipelines({ id: prId, storedPr: true });
+    assert.deepEqual(memberSql(), [], 'a one-row read of a plain run runs no member query');
+    sqls.length = 0;
+    const [ws] = await listAllPipelines({ id: wsId, storedPr: true });
+    assert.equal(memberSql().length, 1, 'one member query');
+    assert.match(memberSql()[0], /WHERE pipeline_id IN/, 'bounded to the listed ids');
+    assert.deepEqual(ws.members.find((m) => m.memberKey === 'web-00000002').storedPr, WEB_PR);
+  } finally {
+    db.prepare = orig;
+  }
+});

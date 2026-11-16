@@ -2690,12 +2690,19 @@ function storedPrOf(url, number, state) {
   return url ? { url, number: number ?? null, state: state || 'OPEN' } : null;
 }
 
-/** Attach each workspace member's stored PR (pipeline_member_prs) as `storedPr`, in ONE query. Best effort. */
-function attachMemberStoredPrs(entries) {
-  let rows;
+/** The stored member PRs of the listed workspace runs, bounded to their ids (one query; [] on none/any error). */
+function readMemberStoredPrRows(db, rows) {
+  const ids = rows.filter((r) => r.target === 'workspace' && r.workspace_key).map((r) => r.id);
+  if (ids.length === 0) return [];
   try {
-    rows = getDb().prepare('SELECT pipeline_id, member_key, pr_url, pr_number, pr_state FROM pipeline_member_prs').all();
-  } catch { return; }
+    return db.prepare(
+      'SELECT pipeline_id, member_key, pr_url, pr_number, pr_state FROM pipeline_member_prs WHERE pipeline_id IN (SELECT value FROM json_each(?))',
+    ).all(JSON.stringify(ids));
+  } catch { return []; }
+}
+
+/** Attach each workspace member's stored PR as `storedPr`, from rows read in the same snapshot as the list. */
+function attachMemberStoredPrs(entries, rows) {
   const byRun = new Map();
   for (const r of rows) {
     const pr = storedPrOf(r.pr_url, r.pr_number, r.pr_state);
@@ -2711,7 +2718,15 @@ function attachMemberStoredPrs(entries) {
 }
 
 async function listAllPipelinesNow(opts, { batchSize = 16 } = {}) {
-  const rows = getDb().prepare(`
+  const db = getDb();
+  // With storedPr, the list and the member PRs are read in ONE read snapshot (a deferred BEGIN takes no write
+  // lock), so a row's rollup storedPr and its members' storedPr agree within one response (persistMemberPrState
+  // writes both in one transaction). Inside a caller's transaction the reads already share its snapshot.
+  let snapshot = false;
+  if (opts.storedPr) { try { db.exec('BEGIN'); snapshot = true; } catch { /* already in a transaction */ } }
+  let rows, memberPrRows = [];
+  try {
+  rows = db.prepare(`
     SELECT id, project_key, workspace_key, target, title, status, started_at, updated_at,
            total_cost_usd, total_active_ms, branch, workspace_meta, guardrails_id, run_setup, started_by, pr_url, pr_number, pr_state, archived_at,
            json_extract(CASE WHEN json_valid(resume_point) THEN resume_point END, '$.pauseReason') AS pause_reason,
@@ -2727,6 +2742,10 @@ async function listAllPipelinesNow(opts, { batchSize = 16 } = {}) {
     ORDER BY COALESCE(updated_at, started_at) DESC, project_key, id
     LIMIT ?
   `).all(...(opts.id ? [opts.id] : []), Number.isInteger(opts.limit) && opts.limit > 0 ? opts.limit : -1); // -1 = unlimited (SQLite); opts.id: one row
+  if (opts.storedPr) memberPrRows = readMemberStoredPrRows(db, rows);
+  } finally {
+    if (snapshot) { try { db.exec('COMMIT'); } catch { /* read-only */ } }
+  }
 
   const metaCache = new Map(); // store key -> meta object (or null)
   const meta = (k) => {
@@ -2793,7 +2812,7 @@ async function listAllPipelinesNow(opts, { batchSize = 16 } = {}) {
     }));
     out.push(...built);
   }
-  if (opts.storedPr && out.some((e) => e.members?.length > 0)) attachMemberStoredPrs(out);
+  if (memberPrRows.length > 0) attachMemberStoredPrs(out, memberPrRows);
   const tagMap = readTagsFor(out.map((e) => e.id));
   for (const e of out) e.tags = tagMap.get(e.id) || [];
   const labelMap = readLabelsFor(out.map((e) => e.id));
