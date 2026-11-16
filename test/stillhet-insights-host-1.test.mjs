@@ -122,3 +122,14 @@ test('F-G-fid-14: By person (no day cut on live) draws whole bars, no legend, an
   assert.equal(fig.querySelector('.ch-legend'), null, 'no empty legend');
   assert.match(fig.querySelector('.ch-cap').textContent, /^Per day, all together; by person in the rows below/);
 });
+
+// gate G (coordinator): a budget's daily pace is money: only a money chart draws it (look.chart-play), never How tasks end
+test('F-G-fid-17: How tasks end (a count) draws no budget pace and no "you average $"; Spend still does', async () => {
+  const ends = await insightsHost({ hash: '#insights/ends' });
+  const fig = page(ends.d).querySelector('.bar-chart');
+  assert.ok(fig, 'the bar chart');
+  assert.equal(fig.querySelector('.bc-limit'), null, 'no pace line');
+  assert.doesNotMatch(fig.textContent, /Budget pace|you average \$/);
+  const spend = await insightsHost();
+  assert.match(page(spend.d).querySelector('.bar-chart').textContent, /Budget pace/);
+});
