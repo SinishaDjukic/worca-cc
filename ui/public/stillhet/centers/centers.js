@@ -286,9 +286,11 @@
   let liveModels = [];
   function loadFlows() {
     if (!W.live) return;
-    if (!liveFlows) window.RailChatLive?.catalog('workflows').then((r) => { if (!r?.ok) return; liveFlows = (r.data?.workflows || []).map((x) => ({ id: x.id, title: x.name || x.id, steps: [], auto: x.auto === true || x.id === 'wf_auto', agents: (Array.isArray(x.nodes) ? x.nodes : []).filter((n) => n && n.kind === 'agent' && n.id).map((n) => n.id) })); if (form) { applyActiveFlow(); paintForm(); } });
+    if (!liveFlows) window.RailChatLive?.catalog('workflows').then((r) => { if (!r?.ok) return; liveFlows = (r.data?.workflows || []).map((x) => ({ id: x.id, title: x.name || x.id, steps: [], auto: x.auto === true || x.id === 'wf_auto', agents: (Array.isArray(x.nodes) ? x.nodes : []).filter((n) => n && n.kind === 'agent' && n.id).map((n) => n.id) })); if (!liveFlows.some((x) => x.id === 'wf_auto')) liveFlows.unshift(AUTO_FLOW); if (form) { applyActiveFlow(); paintForm(); } });
     if (!liveModels.length) window.RailChatLive?.catalog('models').then((r) => { if (!r?.ok) return; liveModels = (r.data?.models || []).filter((m) => m && m.id).map((m) => ({ id: m.id, label: m.label || m.id, engine: m.engine || 'claude' })); if (form) paintForm(); });
   }
+  // F-cov23-03: Auto is classic's client-side constant (app.js AUTO_WORKFLOW): /api/workflows never lists it, its picker leads with it
+  const AUTO_FLOW = Object.freeze({ id: 'wf_auto', title: 'Auto', steps: [], auto: true, agents: [] });
   const AGENTS_OWN = 'the workflow\'s own';
   // the picked workflow (an unpicked Default is dev's wf_default) and the models its agents can each run, as `LABEL for every step`
   const liveFlow = () => flows().find((x) => x.title === form.workflow && x.id) || (liveFlows || []).find((x) => x.id === 'wf_default') || null;
@@ -357,7 +359,7 @@
       if (!f.tagsTouched && !f.preset && d.tags.length) f.tags = d.tags.join(', ');
       loadPolicy(); paintForm();
     });
-    o.config(dir).then((r) => { if (form !== f || f.project !== project || !r.ok) return; f.activeWf = String(r.data?.config?.activeWorkflowId || ''); applyActiveFlow(); paintForm(); });
+    o.config(dir).then((r) => { if (form !== f || f.project !== project || !r.ok) return; f.activeWf = String(r.data?.config?.activeWorkflowId || ''); f.hitl = r.data?.config?.humanInLoop !== false; applyActiveFlow(); paintForm(); });
   }
   // the team policy notes for the project, its guardrails and the Agents pick; only the newest read paints
   function loadPolicy() {
@@ -619,11 +621,13 @@
     const tags = form.tags.split(',').map((x) => x.trim()).filter(Boolean);
     const every = liveAgentPicks().find((x) => x.text === form.agents)?.model || '';   // one model for each agent node: dev's overlay.nodes
     const overlay = every ? { nodes: Object.fromEntries(liveFlow().agents.map((id) => [id, { model: every }])) } : null;
-    const body = { ...(none ? { noProject: true } : dir ? { projectDir: dir } : {}), prompt: words, ...runFields(none),
+    const body0 = runFields(none);
+    const body = { ...(none ? { noProject: true } : dir ? { projectDir: dir } : {}), prompt: words, ...body0,
       ...(!none && form.branch.trim() ? { featureBranch: form.branch.trim() } : {}), ...(usd ? { costCapUsd: usd } : {}), ...(overlay ? { overlay } : {}),
       ...(form.title.trim() ? { title: form.title.trim() } : {}),
       ...(tags.length ? { tags } : {}), ...(form.files.length ? { extras: form.files.map(({ name, dataBase64 }) => ({ name, dataBase64 })) } : {}),
-      ...(form.after ? { after: { kind: form.after.kind, id: form.after.id }, afterPolicy: 'done' } : {}) };
+      ...(form.after ? { after: { kind: form.after.kind, id: form.after.id }, afterPolicy: 'done' } : {}),
+      ...(body0.workflowId === 'wf_auto' ? { humanInLoop: form.hitl !== false } : {}) };   // Auto only: classic's switch, on unless the project turned it off
     if (form.preset) Object.assign(body, Object.fromEntries(Object.entries(form.carried).filter(([k]) => k !== 'overlay' || !overlay)), { presetId: form.preset });
     if (s && form.ticket) { delete body.prompt; body.source = RO().sourceBodyOf({ plugin: s.plugin, sourceId: s.sourceId, taskId: form.ticket, inputs: Object.fromEntries((s.inputs || []).filter((x) => x && x.key && x.type !== 'task-browser' && x.default !== undefined).map((x) => [x.key, x.default])), profile: form.profile }); }
     // dev's Claude default is not sent as a pick (classic startRun): the body stays as before the defaults were read
