@@ -31,7 +31,8 @@ test('a finished task with no branch, time or cap draws none of the design\'s: n
 });
 
 test('labels and cost tags are the task\'s own, and a change is dev\'s PUT labels or PUT tags', async () => {
-  const { d, calls } = await page();
+  const { d, calls, sockets } = await page();
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: 'flags', flags: { runLabels: true } }) }); await settle(60);   // Run labels on (F-b23-03)
   const chips = () => card(d).querySelector('.rc-tags')?.textContent || '';
   assert.match(chips(), /infra/);
   assert.match(chips(), /team: web/);
@@ -166,3 +167,68 @@ test('the cap dialog\'s refusal is one line (the ConfirmStrip\'s row), and a fie
 
 // B1.7 (#1321): a finished task with its branch and no PR. F-3-02 named the source branch (or `dev`) as its base; F-3-03
 // offered Create PR on a project with no git remote.
+
+test('F-5-19: Open in Workflows only for a workflow dev still lists', async () => {
+  const open = async (id) => {
+    const stepper = { ...GRAPH(NODE('n_task', 'Task', '', 'task'), NODE('n_impl', 'Implementation', 'build')), template: { id, name: id === 'wf_gone' ? 'Old flow' : 'Lean' } };
+    const state = { ...STATE, stepper, steps: [ROW('n_impl', 'done')] };
+    const h = await liveHost({ sources: sources(), read: (u) => (u === '/api/history/web-1/h2' ? [200, { state }] : u === '/api/workflows' ? [200, { workflows: [{ id: 'wf_lean', name: 'Lean' }] }] : null) });
+    h.w.RailUI.prefs.setMode('expert');
+    await go(h.w, '#run/h2', 200); await settle(400);
+    const part = card(h.d).querySelector('[data-key="tab:activity"]'); if (part.dataset.tab === 'activity') { part.click(); await settle(60); }
+    card(h.d).querySelector('[data-graph]').click(); await settle(200);
+    return h;
+  };
+  const gone = await open('wf_gone');
+  const dlg = () => card(gone.d).querySelector('.viewer-modal');
+  assert.ok(dlg(), 'the Workflow dialog');
+  assert.equal(card(gone.d).querySelector('[data-open-wf]'), null, 'no way into a workflow dev no longer lists');
+  assert.match(dlg().textContent, /Old flow/, 'its name shows');
+  const kept = await open('wf_lean');
+  assert.ok(card(kept.d).querySelector('[data-open-wf="wf_lean"]'), 'a listed workflow opens in Workflows');
+});
+
+test('B5.6 review: a later read of dev\'s workflow list that fails leaves only the name, never the list from before', async () => {
+  const stepper = { ...GRAPH(NODE('n_task', 'Task', '', 'task'), NODE('n_impl', 'Implementation', 'build')), template: { id: 'wf_lean', name: 'Lean' } };
+  const state = { ...STATE, stepper, steps: [ROW('n_impl', 'done')] };
+  let lists = 0, down = false;
+  const h = await liveHost({ sources: sources(), read: (u) => (u === '/api/history/web-1/h2' ? [200, { state }] : u === '/api/workflows' ? (lists++, !down ? [200, { workflows: [{ id: 'wf_lean', name: 'Lean' }] }] : [500, { error: 'down' }]) : null) });
+  h.w.RailUI.prefs.setMode('expert');
+  await go(h.w, '#run/h2', 200); await settle(400);
+  const part = card(h.d).querySelector('[data-key="tab:activity"]'); if (part.dataset.tab === 'activity') { part.click(); await settle(60); }
+  card(h.d).querySelector('[data-graph]').click(); await settle(200);
+  assert.ok(card(h.d).querySelector('[data-open-wf="wf_lean"]'), 'listed: it opens in Workflows');
+  card(h.d).querySelector('.viewer-modal [data-key="vd-close"]').click(); await settle(30);
+  const before = lists; down = true;
+  card(h.d).querySelector('[data-graph]').click(); await settle(200);
+  assert.ok(lists > before, 'the dialog read the list again');
+  assert.equal(card(h.d).querySelector('[data-open-wf]'), null, 'the read failed: no way in on an old list');
+  assert.match(card(h.d).querySelector('.viewer-modal').textContent, /Lean/);
+});
+
+test('F-b23-03: with runLabels off the task page has no labels: cost tags only, a word sends no PUT', async () => {
+  const { w, d, calls } = await page();
+  assert.equal(w.RailUI.prefs.flag('runLabels'), false);
+  const chips = () => card(d).querySelector('.rc-tags')?.textContent || '';
+  assert.doesNotMatch(chips(), /infra/, 'no label chip');
+  assert.match(chips(), /team: web/, 'cost tags stay');
+  d.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'l', bubbles: true })); await settle(30);
+  assert.equal(card(d).querySelector('#tag-input'), null, 'L opens nothing');
+  card(d).querySelector('[data-tagzone]').click(); await settle(20);
+  const ed = () => card(d).querySelector('.rc-list-ed');
+  assert.doesNotMatch(ed().textContent, /Labels/);
+  assert.match(ed().textContent, /Cost tags/);
+  const inp = card(d).querySelector('#tag-input');
+  inp.value = 'hotfix'; inp.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await settle(80);
+  assert.deepEqual(sent(calls), [], 'a plain word sends nothing');
+  assert.match(ed().textContent, /A cost tag is key: value, like team: web/);
+  const inp2 = card(d).querySelector('#tag-input');
+  inp2.value = 'client: acme'; inp2.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await settle(80);
+  assert.deepEqual(sent(calls), [['PUT', '/api/runs/h2/tags', { tags: ['team:web', 'client:acme'] }]]);
+  card(d).querySelector('[data-tagzone]').click(); await settle(20);   // closes the editor
+  w.RailUI.prefs.setFlag('runLabels', true); await settle(30);
+  assert.equal(card(d).querySelector('#tag-input'), null, 'the editor is closed');
+  assert.match(chips(), /infra/, 'Run labels on: the label is back');
+  d.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'l', bubbles: true })); await settle(30);
+  assert.ok(card(d).querySelector('#tag-input'), 'and L opens the editor again');
+});

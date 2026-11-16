@@ -562,9 +562,58 @@ function settingsPage() {
 const NOTIF_ROWS = ['Desktop', 'Badge', 'Sound', 'Pulse icon', 'Breathing', 'Chat', 'Runs', 'Schedules', 'Automations', 'Pull requests', 'Usage', 'Away mode', 'Projects', 'Worca'];
 const RUNS_LIMIT_ROWS = ['Warning line', 'Manual starts', 'Automatic starts'];
 const strict = (...ms) => ms.filter(Boolean).sort((a, b) => R.MODES.indexOf(b) - R.MODES.indexOf(a))[0] || '';
+const text = (x) => (typeof x === 'function' ? x(ui.sv) : x);
+// F-7b-16: classic Settings' card names (ui/public/settings-index.mjs CARDS, which Stillhet may not import: the import guard)
+// each find the Stillhet row or section that holds that setting. `at`: a Settings section and the labels from its
+// sub-section down (`['Machine', 'Network', 'Proxy']`: sub-section, row, folded row), the profile menu, or a place.
+// test/stillhet-search-classic-names-host.test.mjs keeps this copy equal to CARDS.
+const CLASSIC_SETTINGS = Object.freeze([
+  ['setup-assistant-card', 'Setup assistant', ['setup', 'install', 'onboarding', 'wizard', 'configure'], { sset: 'general', path: ['Setup', 'Setup assistant'] }],
+  ['appearance-card', 'Appearance', ['theme', 'dark mode', 'light mode', 'dark theme', 'colour', 'color', 'look', 'night mode', 'display'], { look: 'look' }],
+  ['alerts-card', 'Alerts', ['notifications', 'sound', 'desktop notifications', 'notify'], { sset: 'notifications', path: ['Desktop'] }],
+  ['extension-settings-card', 'Browser extension', ['chrome', 'browser', 'pinpoint'], { sset: 'general', path: ['Setup', 'Browser extension'] }],
+  ['mode-settings-card', 'Interface mode', ['mode', 'simple', 'advanced', 'expert', 'level', 'complexity'], { look: 'lvl' }],
+  ['root-settings-card', 'Worca root folder', ['data folder', 'storage', 'directory', 'history store', 'path'], { sset: 'general', path: ['Storage', 'Folders'] }],
+  ['debug-spawn-settings-card', 'Spawn diagnostics', ['debug', 'diagnostics', 'process', 'logging'], { sset: 'general', path: ['Storage', 'Diagnostics'] }],
+  ['getting-started-card', 'Getting started', ['tour', 'onboarding', 'guide', 'tutorial', 'welcome'], { sset: 'general', path: ['Setup', 'Getting started'] }],
+  ['about-card', 'About', ['version', 'update', 'licence', 'license'], { sset: 'general', path: ['About'] }],
+  ['tag-dims-settings-card', 'Cost tags', ['cost dimensions', 'tags', 'tagging'], { sset: 'runs', path: ['Spending', 'Cost tags'] }],
+  ['labels-settings-card', 'Labels', ['label', 'tags', 'categories'], { sset: 'labels', path: ['Labels'] }],
+  ['budget-settings-card', 'Budget & cost limits', ['budget', 'cost', 'spend', 'money', 'limit', 'cap', 'price'], { sset: 'runs', path: ['Spending', 'Budget'] }],
+  ['night-settings-card', 'Away mode', ['night', 'overnight', 'unattended', 'away', 'autopilot'], { sset: 'runs', path: ['Away mode'] }],
+  ['smart-naming-settings-card', 'Smart run naming', ['title', 'branch name', 'naming', 'rename'], { sset: 'runs', path: ['Starting', 'Naming'] }],
+  ['sync-settings-card', 'Sync before run', ['git', 'pull', 'fetch', 'up to date', 'rebase'], { sset: 'runs', path: ['Starting', 'Sync'] }],
+  ['schedule-settings-card', 'Scheduled runs', ['schedule', 'cron', 'timer', 'recurring', 'repeat'], { sset: 'runs', path: ['Starting', 'Schedules'] }],
+  ['network-proxy-settings-card', 'Network proxy', ['proxy', 'corporate proxy', 'ntlm', 'firewall', 'network'], { sset: 'runs', path: ['Machine', 'Network', 'Proxy'] }],
+  ['network-wait-settings-card', 'Wait for the network', ['offline', 'internet', 'connection', 'retry', 'wifi'], { sset: 'runs', path: ['Machine', 'Network', 'Offline'] }],
+  ['run-limits-settings-card', 'Machine load', ['queue', 'concurrent', 'parallel', 'cpu', 'workers', 'retention', 'prune', 'disk', 'cleanup'], { sset: 'runs', path: ['Machine', 'Capacity'] }],
+  ['actions-settings-card', 'Actions', ['ci', 'checks', 'github actions'], { sset: 'runs', path: ['Machine', 'Tools'] }],
+  ['pr-settings-card', 'Pull requests', ['pr', 'merge', 'github', 'review', 'draft'], { sset: 'runs', path: ['Starting', 'Pull requests'] }],
+  ['ws-scan-models-card', 'Workspaces', ['scan', 'workspace', 'monorepo'], { go: 'projects', where: 'Projects · by workspace', min: 'advanced' }],
+  ['chat-settings-card', 'Chat notifications', ['chat alerts', 'replies', 'notify'], { sset: 'notifications', path: ['Chat'] }],
+  ['ask-engine-card', 'Engine & models', ['engine', 'model', 'claude', 'codex', 'llm'], { sset: 'ask', path: ['Assistant', 'Engine'] }],
+  ['ask-settings-card', 'Limits & access', ['limits', 'access', 'tools', 'spend', 'read only'], { sset: 'ask', path: ['Assistant', 'Limits'] }],
+].map(([card, name, alts, at]) => Object.freeze({ card, name, alts: Object.freeze(alts), at: Object.freeze(at) })));
+const LOOK_WHERE = { look: 'Theme and background · your menu', lvl: 'Your menu' };
+// the classic words land on the Stillhet find that holds the setting; one not found (a live sample home, a demo-only row)
+// is found at its home with the not-live sentence (set.not-live), never nothing
+function classicFinds(out) {
+  for (const { name, alts, at } of CLASSIC_SETTINGS) {
+    const words = [name, ...alts].join(' · ');
+    if (at.look) { out.push({ label: name, words: alts.join(' · '), where: LOOK_WHERE[at.look], area: 'Settings', look: true, sub: at.look }); continue; }
+    if (at.go) { out.push({ label: name, words: alts.join(' · '), go: at.go, area: 'Projects', where: at.where, min: at.min }); continue; }
+    const { sset, path } = at, last = path.at(-1), parent = path.length > 2 ? path.at(-2) : '';
+    const hit = out.find((e) => e.sset === sset && e.label === last && (e.parent || '') === parent
+      && (path.length === 1 ? e.head || /^Settings( › |$)/.test(e.where) || sset === 'notifications' : path.length === 2 ? !e.head && e.where.endsWith(' › ' + path[0]) : true));
+    if (hit) { hit.words = [text(hit.words), words].filter(Boolean).join(' · '); continue; }
+    const sec = SM.SECTIONS[sset] || {}, sub = (sec.sections || []).find((x) => x.title === path[0]), row = sub && path.length > 1 ? (sub.rows || []).find((r) => r.name === path[1]) : null, fold = row && path.length > 2 ? (row.more || []).find((m) => m.name === last) : null;
+    const home = path.length > 2 ? `${SM.title(sset)} › ${parent}` : path.length > 1 ? `${SM.title(sset)} › ${path[0]}` : SM.title(sset);
+    out.push({ label: last, words, sset, min: strict(sec.min, sub?.min, row?.min, fold?.min), flag: sec.flag || sub?.flag || row?.flag || '', where: `${home} · ${R.NOT_LIVE_SENTENCE}` });
+  }
+  return out;
+}
 function settingsFinds() {
   const out = [{ label: 'Settings', sset: SM.FIRST, where: 'Your menu' }, { label: SM.title('notifications'), sset: 'notifications', where: 'Settings' }, ...NOTIF_ROWS.map((n) => ({ label: n, sset: 'notifications', where: 'Notifications' })), ...RUNS_LIMIT_ROWS.map((n) => ({ label: n, sset: 'runs', where: 'Runs › Limits' }))];
-  const text = (x) => (typeof x === 'function' ? x(ui.sv) : x);
   const shown = (x) => !x.only || (x.only === 'live') === !!W.live;   // a sample row the live kind does not draw is not found either
   const sampleLive = (x) => !!x.sample && !!W.live;   // live, a sample section or row is found by its name only (set.not-live)
   for (const g of SM.GROUPS) for (const id of g.items) {
@@ -604,7 +653,7 @@ function settingsFinds() {
       }
     }
   }
-  return out;
+  return classicFinds(out);
 }
 const plain = (t) => String(t || '').replace(/[*`{}]/g, '').toLowerCase();
 const locksOf = (e) => [...(e.min && !R.shows(e.min) ? [{ min: e.min }] : []), ...(e.flag && !R.prefs.flag(e.flag) ? [{ flag: e.flag }] : [])];
@@ -702,7 +751,7 @@ function pickResult(v) {
     render(); return;
   }
   const e = found[+v]; if (!e) return;
-  if (e.look) { closeOverlays(); ui.acct = true; ui.sub = 'look'; opening = 'acct'; render(); return; }
+  if (e.look) { closeOverlays(); ui.acct = true; ui.sub = e.sub || 'look'; opening = 'acct'; render(); return; }
   if (e.el) { closeOverlays(); render(); R.land(e.el.closest('.pg-card, .list-row, .set-row, .rc, .place-head, section') || e.el); return; }   // on this page: it lands where it is
   if (e.hash) { closeOverlays(); if (e.chat || e.run) SHELL.openTask(e.hash.split('/')[1], e.chat, LIVE ? e.label : undefined, e.run); else SHELL.go(e.hash); render(); return; }
   const locked = locksOf(e).length;
@@ -1169,6 +1218,7 @@ document.querySelectorAll('[data-theme-pick]').forEach((b) => b.addEventListener
 try { const look = localStorage.getItem(KEY_LOOK); if (['system', 'light', 'dark'].includes(look)) applyAppearance(look); } catch { /* remembering is a nicety */ }
 if (SHELL) { ui.bg = readBg(); setBg(ui.bg); setBreathe(readBreathe()); }
 window.RailPulse = {
+  classicSettings: CLASSIC_SETTINGS,   // F-7b-16: read-only, the coverage test compares it with classic CARDS
   refresh: () => render(),   // a task moved elsewhere (a card in a chat): the badge and the lists read it again
   // opens the popover on a tab ('now' or 'updates'): the bell, and #activity (shell/old-addresses.js)
   open: (tab = 'now') => { ui.pop = true; ui.acct = false; ui.nr = null; ui.popTab = tab === 'updates' ? 'updates' : 'vitals'; opening = 'pop'; render(); },

@@ -87,3 +87,53 @@ test('a finished task\'s Activity reads "N steps", without "so far" (tones done 
 test('a working task\'s Activity keeps "N steps so far" (tones run and idle)', async () => {
   for (const id of ['working', 'archived']) assert.match(await activityOf(id), /^\d+ steps? so far$/, id);
 });
+
+// F-3-19, F-a4-13: one count, one word on the demo page: a one-file task (mock-run) and a workspace whose one project had
+// no changes; a group with one PR left to open says "Create 1 PR" (test/run-page-model.test.mjs)
+const ONE_MANY = /(?:^|\D)1 (files|PRs|runs|docs|steps|projects)\b/;
+// each text node on its own: the card's parts sit side by side with no space between them
+const texts = (w) => { const out = [], it = w.document.createTreeWalker(w.document.querySelector('#card'), 4); while (it.nextNode()) out.push(it.currentNode.nodeValue.trim()); return out.filter(Boolean); };
+const demoPage = async (id) => {
+  const w = stillhetHost({ hash: `#run/${id}`, after: (f) => closers.push(f) }); await settle(300);
+  w.RailUI.prefs.setMode('expert'); await settle(30);   // a workspace's member picks are Changes › Actions (Advanced)
+  const c = w.document.querySelector('#card');
+  const ch = c.querySelector('[data-key="tab:changes"]'); if (ch && ch.dataset.tab === 'changes') { ch.click(); await settle(60); }
+  return w;
+};
+test('F-3-19, F-a4-13: the demo page says "1 file" and "1 project had no changes", never "1 files" or "1 projects"', async () => {
+  const one = await demoPage('mock-run');
+  assert.ok(texts(one).some((t) => /^1 file\b/.test(t)), texts(one).join(' | '));
+  assert.deepEqual(texts(one).filter((t) => ONE_MANY.test(t)), []);
+  const ws = await demoPage('workspace');
+  assert.ok(texts(ws).includes('1 project had no changes'));
+  assert.deepEqual(texts(ws).filter((t) => ONE_MANY.test(t)), []);
+});
+
+test('F-3-12: the demo document viewer shows "1 of 3", steps with Next, and its Open full says what it would do', async () => {
+  const w = await demoPage('ready');
+  const c = () => w.document.querySelector('#card');
+  c().querySelector('[data-doc="0"]').click(); await settle(60);
+  const view = () => c().querySelector('.viewer-modal .av');
+  assert.ok(view(), 'the ArtifactView');
+  assert.match(view().textContent, /1 of 3/);
+  assert.ok(c().querySelector('[data-key="doc-prev"]').disabled, 'Previous is off at the first');
+  const name0 = view().querySelector('.av-h b').textContent;
+  c().querySelector('[data-key="doc-next"]').click(); await settle(60);
+  assert.match(view().textContent, /2 of 3/);
+  assert.notEqual(view().querySelector('.av-h b').textContent, name0);
+  assert.ok(c().querySelector('[data-key="doc-full"][data-say]'), 'Open full is a demo data-say');
+});
+
+test('F-a4-12: the demo\'s refused Create PR failed after its push, so it says the branch is on the remote', async () => {
+  const w = stillhetHost({ hash: '#run/ready', after: (f) => closers.push(f), beforeScripts: (win) => { win.Element.prototype.scrollIntoView = function () {}; } }); await settle(300);
+  const c = () => w.document.querySelector('#card');
+  const main = c().querySelector('[data-key="act-main"]');
+  assert.equal(main.dataset.label, 'Create PR');
+  main.click(); await settle(900);
+  // the prototype's "Next one fails" switch (its tools panel; this host has none), checked once the title is written
+  const box = w.document.createElement('input'); box.type = 'checkbox'; box.id = 'fail-next'; box.checked = true; w.document.body.append(box);
+  c().querySelector('[data-key="pd-ok"]').click(); await settle(1200);
+  const alert = c().querySelector('.pd-alert')?.textContent || '';
+  assert.match(alert, /The branch is on the remote; no PR opened/);
+  assert.doesNotMatch(alert, /Nothing changed/);
+});
