@@ -12,6 +12,7 @@ import { kindMark } from './kind-mark.mjs';
  * @param {{from:number, to:number, text:string}} [o.loop]   the step that sends work back (index), where to, in words
  * @param {{from:number, to:number, text:string}[]} [o.loops]   every loop: one between two steps is an arc, one under the other;
  *   a step that sends work back to itself (from === to) says so in its own panel, never as an arc
+ *   more than five steps read as a list, as on a narrow screen: a column each would break their words (F-G-fid-09)
  * @param {{title:string, meta:string, tone:string, stage?:number}[]} [o.ways]   how a task goes through it
  * @param {string} [o.byline]   who told it (a small model, from the workflow and its tasks)
  * @param {object} [o.attrs]
@@ -25,5 +26,5 @@ export function workflowStory({ steps, loop = null, loops = null, ways = [], byl
     return `<div class="ws-loop" style="--ws-a:${((lo + 0.5) / n) * 100}%;--ws-w:${((hi - lo) / n) * 100}%${k ? `;--ws-row:${k}` : ''}"><svg viewBox="0 0 100 16" preserveAspectRatio="none" aria-hidden="true"><path d="M100 0 C100 14 0 14 0 0" vector-effect="non-scaling-stroke"/></svg><span>${esc(l.text)}</span></div>`;
   };
   const how = ways.length ? list({ groups: [{ title: 'How a task goes through it', rows: ways.map((w) => listRow({ title: w.title, meta: w.meta, mark: kindMark({ kind: 'workflow', tone: 'idle', advisory: true }) })) }] }) : '';   // a way through is not a state: one ink, no state's sign (look.one-icon)
-  return `<section class="ws"${attrs({ 'aria-label': 'This workflow in plain words', ...a })}><div class="ws-board${arcs.length ? ' has-loop' : ''}" style="--ws-n:${n}${arcs.length > 1 ? `;--ws-loops:${arcs.length}` : ''}">${panels}${arcs.map(arcOf).join('')}</div>${how}${byline ? `<p class="ws-by">${icon('sparkle', 12)} ${esc(byline)}</p>` : ''}</section>`;
+  return `<section class="ws"${attrs({ 'aria-label': 'This workflow in plain words', ...a })}><div class="ws-board${arcs.length ? ' has-loop' : ''}${n > 5 ? ' is-long' : ''}" style="--ws-n:${n}${arcs.length > 1 ? `;--ws-loops:${arcs.length}` : ''}">${panels}${arcs.map(arcOf).join('')}</div>${how}${byline ? `<p class="ws-by">${icon('sparkle', 12)} ${esc(byline)}</p>` : ''}</section>`;
 }

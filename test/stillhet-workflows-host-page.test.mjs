@@ -109,3 +109,13 @@ test('F-G-fid-10: a workflow with one step reads "1 step", not "1 steps"', async
   const card = page(d).querySelector('[data-wf-open="workflow:wf_one"]')?.closest('.pc, article, li, section') || page(d);
   assert.match(text(card), /\b1 step\b/); assert.doesNotMatch(text(page(d)), /\b1 steps\b/);
 });
+
+// F-FM2-03: a workflow no task has run has no measured figure: no "$0.00 a task", no "about 0 min"
+test('F-FM2-03: a never-run live workflow shows no zero figures; one with tasks shows its own', async () => {
+  const { d } = await workflowsHost({ hash: '#workflows/workflow:wf_mine' });
+  const t = text(page(d));
+  assert.doesNotMatch(t, /\$0\.00|about 0 min/, t.slice(0, 300));
+  assert.match(t, /No tasks yet/);
+  const full = await workflowsHost({ hash: '#workflows/workflow:wf_full' });
+  assert.match(text(page(full.d)), /a task/, 'measured: its cost a task');
+});

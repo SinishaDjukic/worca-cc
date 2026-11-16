@@ -91,6 +91,14 @@
   const stacks = (sub, st, c) => !compared(st) && !M.TIME.has(st.by) && !sub.den && c.rows.length > 1 && !!c.dayCut;   // live: dev's facts cut by "by" (F-G-fid-14); a source with no cut draws whole bars and says so
   const byWord = (st) => (st.by === 'why' ? 'reason' : M.DIM[st.by].replace(/ \(.*/, ''));
   // each period cut by the top rows of "by": a period's parts add up to the period, a row's parts over the periods to the row
+  // F-FM2-04 (look.chart-play): a name keeps its shade on the page however the view changes; a new name takes a free one
+  const shades = new Map();
+  function shaded(parts) {
+    const used = new Set();
+    for (const p of parts) { const k = shades.get(p.label); if (k != null && !used.has(k)) { p.shade = k; used.add(k); } }
+    for (const p of parts) if (p.shade == null) { let k = 0; while (used.has(k)) k++; p.shade = k; used.add(k); shades.set(p.label, k); }
+    return parts;
+  }
   function partsOf(sub, c) {
     const keep = c.rows.length > 4 ? 3 : 4, top = c.rows.slice(0, keep), rest = c.rows.slice(keep), weights = [...top, ...(rest.length ? [{ name: 'Other', [sub.num]: M.sum(rest.map((r) => r[sub.num])) }] : [])];
     const named = top.map((r) => c.dayCut.names.indexOf(r.name));   // the model's cut: the same whatever the drag; what is not on top is Other
@@ -121,7 +129,7 @@
     const rowAxis = axisIsRows(sub, st), rate = (r) => (sub.den ? (r[sub.den] ? r[sub.num] / r[sub.den] : null) : r[sub.num]);
     const axis = rowAxis ? c.rows.map((r) => r.name) : c.labels, values = rowAxis ? c.rows.map(rate) : c.points, tasksAt = rowAxis ? c.rows.map((r) => r.tasks) : c.F.tasks, before = st.against === 'before' && !rowAxis ? c.before : null;
     const label = `${sub.title} by ${rowAxis ? M.DIM[st.by] : 'day'}, ${c.timeWord}`, hint = !rowAxis && axis.length > 2 && !dragged ? HINT : '', cur = !rowAxis && !sub.den && c.whole && st.when === 'this month' ? axis.length - 1 : -1;   // a day's rate is not a day in progress: no darker bar
-    const caption = captionOf(sub, st, c), parts = stacks(sub, st, c) ? partsOf(sub, c) : null;
+    const caption = captionOf(sub, st, c), parts = stacks(sub, st, c) ? shaded(partsOf(sub, c)) : null;
     const taskField = sub.src.fields.includes('tasks') ? 'tasks' : '';
     const taskWords = (i) => (taskField ? `${tasksAt[i]} ${tasksAt[i] === 1 ? 'task' : 'tasks'}` : ''), reasonOf = () => (sub.team ? "The whole team's numbers: Tasks lists your own" : `Tasks narrow by project, time or status, not by ${byWord(st)}`);
     const pointAt = (v, i) => { const off = targetOf(sub, st, c, i) ? '' : sub.closed || reasonOf(); return { value: v ?? 0, text: v == null ? 'none' : sub.text(v), diff: before ? R.diffWords(v, before[i], sub.text) : '', off, note: off ? [taskWords(i), off].filter(Boolean).join(' · ') : rowAxis && M.TIME.has(st.by) ? taskWords(i) : taskField ? `${taskWords(i)}, opens them` : 'Opens its tasks' }; };
@@ -137,7 +145,7 @@
       const running = st.as === 'running', acc = (l) => { let t = 0; return l.map((v) => { t += v || 0; return t; }); };
       if (parts) {
         const say = (i) => parts.map((p) => `${p.label} ${sub.text(running ? acc(p.values)[i] : p.values[i])}`).join(' · ');
-        const series = parts.map((p, k) => ({ label: p.label, part: k, points: axis.map((_, i) => { const v = running ? acc(p.values)[i] : p.values[i]; return { ...(k ? {} : pointAt(values[i], i)), value: v, text: k ? sub.text(v) : (running ? sub.text(acc(values)[i]) : sub.text(values[i])), diff: '', note: k ? '' : `${say(i)} · ${pointAt(values[i], i).note}` }; }) }));
+        const series = parts.map((p, k) => ({ label: p.label, part: p.shade ?? k, points: axis.map((_, i) => { const v = running ? acc(p.values)[i] : p.values[i]; return { ...(k ? {} : pointAt(values[i], i)), value: v, text: k ? sub.text(v) : (running ? sub.text(acc(values)[i]) : sub.text(values[i])), diff: '', note: k ? '' : `${say(i)} · ${pointAt(values[i], i).note}` }; }) }));
         return R.lineChart({ label, labels: axis, series, limit: st.as === 'lines' ? paceLine : null, current: cur, hint, caption });
       }
       const now = running ? acc(values) : values, was = before ? (running ? acc(before) : before) : null;

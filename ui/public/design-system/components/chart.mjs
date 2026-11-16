@@ -14,12 +14,12 @@ import { textLink } from './text-link.mjs';
  * @param {boolean} [o.play]                  it is read and narrowed under the hand (watchChart)
  * @param {string} [o.hint]                   one quiet line under it
  * @param {string} [o.caption]                what it shows, above the plot, when the rows under it are not by time: "Per day, by project"
- * @param {{label:string, values:number[], texts?:string[]}[]} [o.parts]   what each bar is made of, at most four, the largest first; ink shades and a legend (look.chart-play)
+ * @param {{label:string, values:number[], texts?:string[], shade?:number}[]} [o.parts]   what each bar is made of, at most four, the largest first; ink shades and a legend (look.chart-play); `shade` (0–3) keeps a name's shade across views
  * @param {{value:number, text:string}} [o.limit]   a thin line across the plot, named once in the legend: the budget's daily pace
  */
 export function barChart({ label, bars, current = -1, height = 120, play = false, hint = '', caption = '', parts = null, limit = null }) {
   const high = Math.max(1, ...bars.map((b) => b.value)), max = Math.max(high, limit ? limit.value : 0), top = bars.findIndex((b) => b.value === high);
-  const segs = (i) => parts.filter((p) => p.values[i]).map((p) => `<i class="ch-seg is-s${parts.indexOf(p)}" style="flex-grow:${p.values[i]}"></i>`).join('');
+  const segs = (i) => parts.filter((p) => p.values[i]).map((p) => `<i class="ch-seg is-s${p.shade ?? parts.indexOf(p)}" style="flex-grow:${p.values[i]}"></i>`).join('');
   const partWords = (i) => parts.map((p) => `${p.label} ${p.texts ? p.texts[i] : p.values[i]}`).join(' · ');
   const noted = (b, i) => (parts ? { ...b, note: [partWords(i), b.note].filter(Boolean).join(' · ') } : b);
   const lineAt = limit ? Math.round((limit.value / max) * (height - 18)) : 0;
@@ -37,7 +37,7 @@ export function barChart({ label, bars, current = -1, height = 120, play = false
     ? srTable(label, ['All', ...parts.map((p) => p.label)], bars.map((b, i) => [b.label, b.text, ...parts.map((p) => (p.texts ? p.texts[i] : String(p.values[i])))]))
     : `<table class="bc-table"><caption>${esc(label)}</caption><tbody>${bars.map((b) => `<tr><th scope="row">${esc(b.label)}</th><td>${esc(b.text)}</td></tr>`).join('')}</tbody></table>`;
   const line = limit ? `<span class="bc-limit" style="bottom:${lineAt}px"></span>` : '';
-  const legend = legendOf([...(parts || []).map((p, k) => ({ cls: `is-s${k}`, text: p.label })), ...(limit ? [{ cls: 'is-limit', text: limit.text }] : [])]);
+  const legend = legendOf([...(parts || []).map((p, k) => ({ cls: `is-s${p.shade ?? k}`, text: p.label })), ...(limit ? [{ cls: 'is-limit', text: limit.text }] : [])]);
   return `<figure class="bar-chart${play ? ' is-read-able' : ''}${step ? ' is-thin' : ''}" style="--bc-h:${height}px"${play ? ` data-chart data-n="${bars.length}"` : ''}>${capOf(caption)}${play ? '<div class="ch-read" hidden></div>' : ''}<div class="bc-plot${limit ? ' has-limit' : ''}" aria-hidden="true">${cols}${line}</div>${legend}${hintOf(hint)}${table}</figure>`;
 }
 
@@ -99,9 +99,9 @@ export function lineChart({ label, labels, series, limit = null, current = -1, h
  */
 export function mixChart({ label, labels, parts, reads = [], height = 120, hint = '', caption = '' }) {
   const totals = labels.map((_, i) => parts.reduce((a, p) => a + (p.values[i] || 0), 0)), max = Math.max(1, ...totals);
-  const cols = labels.map((l, i) => `<span class="ch-col" data-i="${i}" tabindex="0" role="img" aria-label="${esc(`${l}: ${parts.map((p) => `${p.label} ${p.texts ? p.texts[i] : p.values[i]}`).join(', ')}`)}" data-read="${esc(readOf({ label: l, text: reads[i] || String(totals[i]), note: parts.map((p) => `${p.label} ${p.texts ? p.texts[i] : p.values[i]}`).join(' · ') }))}"><span class="ch-stack" style="height:${((totals[i] / max) * 100).toFixed(2)}%">${parts.map((p, k) => `<i class="ch-seg is-s${k}" style="flex-grow:${p.values[i] || 0}"></i>`).join('')}</span></span>`).join('');
+  const cols = labels.map((l, i) => `<span class="ch-col" data-i="${i}" tabindex="0" role="img" aria-label="${esc(`${l}: ${parts.map((p) => `${p.label} ${p.texts ? p.texts[i] : p.values[i]}`).join(', ')}`)}" data-read="${esc(readOf({ label: l, text: reads[i] || String(totals[i]), note: parts.map((p) => `${p.label} ${p.texts ? p.texts[i] : p.values[i]}`).join(' · ') }))}"><span class="ch-stack" style="height:${((totals[i] / max) * 100).toFixed(2)}%">${parts.map((p, k) => `<i class="ch-seg is-s${p.shade ?? k}" style="flex-grow:${p.values[i] || 0}"></i>`).join('')}</span></span>`).join('');
   const rows = labels.map((l, i) => [l, ...parts.map((p) => (p.texts ? p.texts[i] : String(p.values[i])))]);
-  return `<figure class="chart" style="--ch-h:${height}px" data-chart data-n="${labels.length}" data-last="${labels.length - 1}">${capOf(caption)}<div class="ch-read" hidden></div><div class="ch-plot"><div class="ch-hits is-cols" style="--ch-n:${labels.length}">${cols}</div></div>${axisOf(labels)}${legendOf(parts.map((p, k) => ({ cls: `is-s${k}`, text: p.label })))}${hintOf(hint)}${srTable(label, parts.map((p) => p.label), rows)}</figure>`;
+  return `<figure class="chart" style="--ch-h:${height}px" data-chart data-n="${labels.length}" data-last="${labels.length - 1}">${capOf(caption)}<div class="ch-read" hidden></div><div class="ch-plot"><div class="ch-hits is-cols" style="--ch-n:${labels.length}">${cols}</div></div>${axisOf(labels)}${legendOf(parts.map((p, k) => ({ cls: `is-s${p.shade ?? k}`, text: p.label })))}${hintOf(hint)}${srTable(label, parts.map((p) => p.label), rows)}</figure>`;
 }
 
 /**

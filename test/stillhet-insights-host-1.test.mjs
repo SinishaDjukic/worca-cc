@@ -133,3 +133,21 @@ test('F-G-fid-17: How tasks end (a count) draws no budget pace and no "you avera
   const spend = await insightsHost();
   assert.match(page(spend.d).querySelector('.bar-chart').textContent, /Budget pace/);
 });
+
+// F-FM2-04: a project keeps its shade when the view changes (look.chart-play): ticking Jonas reorders the parts, not the shades
+test('F-FM2-04: a project keeps one shade across views', async () => {
+  const h = await insightsHost();
+  const shadeOf = (name) => { const k = [...page(h.d).querySelectorAll('.bar-chart .ch-key')].find((x) => x.textContent.trim() === name); return k && [...k.querySelector('.ch-swatch').classList].find((c) => /^is-s\d$/.test(c)); };
+  const before = { billing: shadeOf('billing-api'), web: shadeOf('web-app') };
+  assert.ok(before.billing && before.web, 'both in the legend');
+  const pickIt = async (menu, v) => { page(h.d).querySelector(`[data-menu="${menu}"]`).click(); await settle(40); page(h.d).querySelector(`[data-pick="${menu}|${v}"]`).click(); await settle(200); };
+  await pickIt('in-of', 'person:Jonas');
+  assert.equal(shadeOf('web-app'), before.web, 'web-app keeps its shade though it is now the largest');
+  assert.equal(shadeOf('billing-api'), before.billing);
+});
+
+// F-FM2-05: a bar's number never wraps at 360 ("2 / tasks")
+test('F-FM2-05: a bar value is kept on one line', () => {
+  const css = readFileSync(new URL('../ui/public/stillhet/css/rail.css', import.meta.url), 'utf8');
+  assert.match(css, /\.bc-v\{[^}]*white-space:nowrap/);
+});

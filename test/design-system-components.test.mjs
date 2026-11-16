@@ -1378,6 +1378,21 @@ test('barChart F-G-fid-15: more than eight bars mark evenly spaced ticks, so a n
   const few = dom(C.barChart({ label: 'x', bars: bars(8) }));
   assert.ok(!few.classList.contains('is-thin')); assert.equal(few.querySelectorAll('.is-tick').length, 0, 'eight or fewer: every bar named');
 });
+test('workflowStory F-G-fid-09: more than five steps read as a list (is-long), each loop in words under it', () => {
+  const steps = Array.from({ length: 11 }, (_, i) => ({ name: `Step number ${i + 1}`, says: 'Says what it does' }));
+  const s = dom(C.workflowStory({ steps, loops: [{ from: 9, to: 4, text: 'back to Step number 5' }] }));
+  assert.ok(s.querySelector('.ws-board').classList.contains('is-long'), 'eleven steps: the long telling');
+  assert.match(s.querySelector('.ws-loop').textContent, /back to Step number 5/);
+  assert.ok(!dom(C.workflowStory({ steps: steps.slice(0, 5) })).querySelector('.ws-board').classList.contains('is-long'), 'five steps stay columns');
+});
+test('chart parts F-FM2-04: a part\'s shade is its own (shade), not its place, in bars, mixes and legends', () => {
+  const parts = [{ label: 'web-app', values: [1, 2], shade: 2 }, { label: 'billing-api', values: [1, 1], shade: 0 }];
+  const b = dom(C.barChart({ label: 'x', bars: [{ label: 'a', value: 2, text: '2' }, { label: 'b', value: 3, text: '3' }], parts }));
+  assert.deepEqual([...b.querySelectorAll('.ch-key')].map((k) => [k.textContent, k.querySelector('.ch-swatch').classList.contains('is-s2') ? 2 : 0]), [['web-app', 2], ['billing-api', 0]]);
+  assert.ok(b.querySelector('.bc-col .ch-seg.is-s2'), 'its segment carries its shade');
+  const m = dom(C.mixChart({ label: 'x', labels: ['a', 'b'], parts }));
+  assert.ok(m.querySelector('.ch-seg.is-s2') && m.querySelector('.ch-legend .ch-swatch.is-s2'));
+});
 test('crafting: a sketch of its kind that draws itself, and what is being made (motion.crafting)', () => {
   const c = dom(C.crafting({ kind: 'workflow', label: 'Making the workflow', detail: 'from this chat' }));
   assert.equal(c.getAttribute('role'), 'status'); assert.ok(c.querySelectorAll('.craft-art path[pathLength="1"]').length > 3);
