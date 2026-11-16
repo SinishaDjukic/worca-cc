@@ -2,16 +2,19 @@
 // tools/stillhet-gate-instances.mjs — starts, lists and stops the gate instances A–D of plans/rail/test-protocol.md §2,
 // each with its OWN HOME. settings.json is read and written at $HOME/.worca-cc (src/core/settings.mjs defaultRoot), never at
 // WORCA_HOME, so an instance started without its own HOME changes the owner's real settings (F-X-01). A and B get a copy of
-// the owner's store (an APFS clone where it can; the real store is only read), C and D an empty one. `rail` lives in each
+// the owner's store (an APFS clone where it can; the real store is only read) made independent of it: the repos it names are
+// cloned into the instance HOME and every record and git link points there, so nothing done on A or B reaches the owner's
+// real repos (C1, isolateCopy / verifyIsolation; a copy that still leads outside its HOME is refused). C and D start empty. `rail` lives in each
 // instance's own settings.json and never in WORCA_FLAGS, so it stays unlocked (P11). Stop kills only the processes this tool
 // started (a pid file per HOME, checked against the process's start time and command). `login-status` and `login X` check
 // and run the Claude CLI's own login under each HOME; the CLI's output is never printed, logged or stored.
 //
 // Run: node tools/stillhet-gate-instances.mjs start [A,B,C,D] [--root DIR] [--port A=4601] [--no-mock B] [--mock-env WORCA_MOCK_X=v]
 //        [--welcome] [--ui-level simple|advanced|expert] [--fresh]
-//      node tools/stillhet-gate-instances.mjs list | stop [letters] | login-status [letters] | login X | restore-branches X   [--root DIR]
+//      node tools/stillhet-gate-instances.mjs list | stop [letters] | login-status [letters] | login X   [--root DIR]
+import { createHash } from 'node:crypto';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { closeSync, constants as FS, cpSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, constants as FS, cpSync, existsSync, linkSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -129,7 +132,9 @@ export function buildInstanceEnv(inst, baseEnv = process.env) {
   for (const k of ['WORCA_FLAGS', 'CLAUDE_CONFIG_DIR', 'NODE_TEST_CONTEXT', 'WORCA_TEST_ALLOW_HOME_FALLBACK', ...CLAUDE_AUTH_ENV_KEYS, ...CLAUDE_AUTH_ENV_FLAGS]) delete env[k];
   env.HOME = inst.home;
   env.USERPROFILE = inst.home;
-  env.WORCA_HOME = path.join(inst.home, '.worca-cc');
+  // WORCA_HOME is the BASE: the store is WORCA_HOME/.worca-cc (src/core/projects.mjs worcaHome), the same folder as the
+  // settings, as on the owner's machine. HOME/.worca-cc here would open an empty HOME/.worca-cc/.worca-cc beside the copy.
+  env.WORCA_HOME = inst.home;
   env.PORT = String(inst.port);
   env.WORCA_AUTO_RESUME = '0';
   if (inst.mock) Object.assign(env, { WORCA_MOCK: '1' }, inst.mockEnv || {});
@@ -157,54 +162,227 @@ function cpStore(src, dst) {
   return 'copy';
 }
 
-/** The prefixes of the real store as they may appear in stored text: as given, through realpath, and JSON-escaped. */
-function storePrefixes(realStore, store) {
-  const pairs = new Map();
-  for (const from of new Set([path.resolve(realStore), canon(realStore)])) {
-    const a = from + path.sep, b = path.resolve(store) + path.sep;
-    pairs.set(a, b);
-    pairs.set(JSON.stringify(a).slice(1, -1), JSON.stringify(b).slice(1, -1));
+// ── C1: a copied instance can never change the owner's real repos ─────────────────────────────────────────────────────
+// The copy's records name the owner's real repos (projectDir, realDir, projects.path …) and its checkouts' .git files lead
+// into them, so a delete or archive of a copied run would `git branch -D` and `git worktree remove` there
+// (src/core/pipeline-delete.mjs → removeWorktree). isolateCopy makes the copy independent: every repo the copy names is
+// cloned into HOME/repos (APFS clone; the real repo is only read), every record and every git link is rewritten to the
+// copy, and a path that cannot be copied (missing, the real home, a dot folder in it) is pointed at HOME/outside/…, which
+// never exists. verifyIsolation then checks the result on every A/B start; anything still outside HOME refuses the start.
+const PATH_CHARS = 'A-Za-z0-9._\\-~@+';
+const PATH_COLUMN = /(^|_)(dir|path|cwd|root)$/i;
+const PATH_KEY = /(dir|path|root|cwd)$/i;
+const PROJECT_FIELD = /^(path|project_dir|projectDir|realDir|repoDir|projectPath)$/;
+const q = (name) => `"${name.replaceAll('"', '""')}"`;
+const gitOut = (args) => {
+  const r = spawnSync('git', args, { encoding: 'utf8', env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' }, stdio: ['ignore', 'pipe', 'ignore'] });
+  return r.status === 0 ? r.stdout.trim() : null;
+};
+
+/** Replaces paths in text. `prefix` pairs also map every path under `from`; exact pairs only `from` itself. A match never
+ *  starts or ends inside a longer path name (/x/repo never hits /x/repo-2). JSON-escaped spellings are mapped too. */
+export function pathRewriter(pairs) {
+  const all = new Map();
+  for (const p of pairs) {
+    for (const [from, to] of [[p.from, p.to], [JSON.stringify(p.from).slice(1, -1), JSON.stringify(p.to).slice(1, -1)]]) {
+      if (from && !all.has(from)) all.set(from, { from, to, prefix: p.prefix });
+    }
   }
-  return [...pairs];
+  if (!all.size) return (s) => s;
+  const esc = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const alts = [...all.values()].sort((a, b) => b.from.length - a.from.length)
+    .map((p) => `${esc(p.from)}(?![${PATH_CHARS}${p.prefix ? '' : '/'}])`);
+  const re = new RegExp(`(?<![${PATH_CHARS}/])(?:${alts.join('|')})`, 'g');
+  return (s) => s.replace(re, (m) => all.get(m).to);
 }
 
-/** Points the copied store at itself: every text value in the copy's DB and every runs/ID/run.json that names a path under
- *  the real store is rewritten to the instance's store. Without it, deleting or archiving a copied run on A or B would
- *  force-remove the owner's real worktree and run root (src/core/pipeline-delete.mjs → removeWorktree). Returns the count. */
-export function rewriteStorePaths(store, realStore) {
-  const pairs = storePrefixes(realStore, store);
-  let changed = 0;
+/** The DB's ordinary tables and their columns (FTS and other virtual tables and their shadow tables are left alone). */
+function plainTables(db) {
+  const rows = db.prepare("SELECT name, sql FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all();
+  const virtual = rows.filter((r) => /^CREATE VIRTUAL TABLE/i.test(r.sql || '')).map((r) => r.name);
+  return rows.filter((r) => !virtual.some((v) => r.name === v || r.name.startsWith(`${v}_`)))
+    .map((r) => ({ name: r.name, cols: db.prepare(`PRAGMA table_info(${q(r.name)})`).all().map((c) => c.name) }));
+}
+
+/** Every .json file of the store outside the checkouts (runs/ID/run.json, settings.json, run-slots, terminal, ask …). */
+function storeJsonFiles(store) {
+  if (!existsSync(store)) return [];
+  const r = spawnSync('find', [store, '(', '-name', 'repos', '-o', '-name', 'wt', '-o', '-name', 'node_modules', '-o', '-name', '.git', ')', '-prune',
+    '-o', '-type', 'f', '-name', '*.json', '-print'], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+  return r.stdout.split('\n').filter(Boolean);
+}
+
+function* jsonPaths(v, key = '') {
+  if (typeof v === 'string') { if (PATH_KEY.test(key) && path.isAbsolute(v)) yield { field: key, value: v }; return; }
+  if (Array.isArray(v)) { for (const x of v) yield* jsonPaths(x, key); return; }
+  if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) yield* jsonPaths(x, k);
+}
+function* textPaths(text, column) {
+  if (PATH_COLUMN.test(column) && path.isAbsolute(text) && !text.includes('\n')) yield { field: column, value: text };
+  else if (/^\s*[[{]/.test(text)) { let v; try { v = JSON.parse(text); } catch { return; } yield* jsonPaths(v); }
+}
+
+/** Every path a record of the store acts on: path columns, path keys inside JSON columns, and the store's .json files. */
+function* storeRecordPaths(store) {
   const dbFile = path.join(store, 'worca-cc.db');
   if (existsSync(dbFile)) {
-    const db = new DatabaseSync(dbFile);
+    const db = new DatabaseSync(dbFile, { readOnly: true });
     try {
-      const q = (name) => `"${name.replaceAll('"', '""')}"`;
-      for (const { name } of db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all()) {
-        for (const col of db.prepare(`PRAGMA table_info(${q(name)})`).all()) {
-          for (const [from, to] of pairs) {
-            const r = db.prepare(`UPDATE ${q(name)} SET ${q(col.name)} = replace(${q(col.name)}, ?, ?) WHERE typeof(${q(col.name)}) = 'text' AND instr(${q(col.name)}, ?) > 0`)
-              .run(from, to, from);
-            changed += Number(r.changes);
+      for (const { name, cols } of plainTables(db)) {
+        for (const col of cols) {
+          for (const row of db.prepare(`SELECT ${q(col)} AS v FROM ${q(name)} WHERE typeof(${q(col)}) = 'text' AND instr(${q(col)}, '/') > 0`).all()) {
+            for (const p of textPaths(row.v, col)) yield { where: `${name}.${col}`, ...p };
           }
         }
       }
     } finally { db.close(); }
   }
-  const runs = path.join(store, 'runs');
-  if (existsSync(runs)) {
-    for (const e of readdirSync(runs, { withFileTypes: true })) {
-      const file = path.join(runs, e.name, 'run.json');
-      if (!e.isDirectory() || !existsSync(file)) continue;
-      const text = readFileSync(file, 'utf8');
-      let next = text;
-      for (const [from, to] of pairs) next = next.split(from).join(to);
-      if (next !== text) { writeFileSync(file, next); changed++; }
-    }
+  for (const file of storeJsonFiles(store)) {
+    let v;
+    try { v = JSON.parse(readFileSync(file, 'utf8')); } catch { continue; }
+    for (const p of jsonPaths(v)) yield { where: path.relative(store, file), ...p };
   }
-  return changed;
 }
 
-/** Creates the instance HOME, copies the store into A/B the first time, and writes its settings by tmp and rename. */
+/** Rewrites every text value of the DB and every .json file of the store. */
+function rewriteStore(store, rw) {
+  const dbFile = path.join(store, 'worca-cc.db');
+  if (existsSync(dbFile)) {
+    const db = new DatabaseSync(dbFile);
+    try {
+      db.function('gate_rw', { deterministic: true }, (v) => (typeof v === 'string' ? rw(v) : v));
+      for (const { name, cols } of plainTables(db)) {
+        for (const c of cols.map(q)) {
+          db.prepare(`UPDATE ${q(name)} SET ${c} = gate_rw(${c}) WHERE typeof(${c}) = 'text' AND instr(${c}, '/') > 0 AND gate_rw(${c}) <> ${c}`).run();
+        }
+      }
+    } finally { db.close(); }
+  }
+  for (const file of storeJsonFiles(store)) {
+    const text = readFileSync(file, 'utf8');
+    const next = rw(text);
+    if (next !== text) writeFileSync(file, next);
+  }
+}
+
+/** Every `.git` under dir (node_modules skipped). */
+function gitEntries(dir) {
+  if (!existsSync(dir)) return [];
+  const r = spawnSync('find', [dir, '-name', 'node_modules', '-prune', '-o', '-name', '.git', '-print'], { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
+  return r.stdout.split('\n').filter(Boolean);
+}
+const gitdirOf = (file) => {
+  const m = /^gitdir:\s*(.+)$/m.exec(readFileSync(file, 'utf8'));
+  return m ? path.resolve(path.dirname(file), m[1].trim()) : null;
+};
+/** The link files of a git dir: each registered worktree's gitdir, the object alternates, the config (local remotes). */
+function gitDirLinks(g) {
+  const out = [];
+  const wts = path.join(g, 'worktrees');
+  if (existsSync(wts)) for (const n of readdirSync(wts)) if (existsSync(path.join(wts, n, 'gitdir'))) out.push({ kind: 'admin', file: path.join(wts, n, 'gitdir') });
+  for (const [kind, rel] of [['alternates', path.join('objects', 'info', 'alternates')], ['config', 'config']]) {
+    if (existsSync(path.join(g, rel))) out.push({ kind, file: path.join(g, rel) });
+  }
+  return out;
+}
+/** The paths one git link file leads to. */
+function linkTargets({ kind, file }) {
+  const text = readFileSync(file, 'utf8');
+  if (kind === 'dotgit') { const t = gitdirOf(file); return t ? [t] : []; }
+  if (kind === 'admin') return text.trim() ? [path.resolve(path.dirname(file), text.trim())] : [];
+  if (kind === 'alternates') return text.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => path.resolve(path.dirname(path.dirname(file)), l));
+  return [...text.matchAll(/^\s*url\s*=\s*(.+)$/gm)].map((m) => m[1].trim()).filter((u) => u.startsWith('/') || u.startsWith('file://'))
+    .map((u) => u.replace(/^file:\/\//, ''));
+}
+function gitLinks(home) {
+  const out = [];
+  for (const g of gitEntries(home)) {
+    let st;
+    try { st = statSync(g); } catch { continue; }
+    if (st.isFile()) out.push({ kind: 'dotgit', file: g });
+    else out.push(...gitDirLinks(g));
+  }
+  return out;
+}
+
+/** The repos a path belongs to: its main repo (the git common dir's parent) and its own checkout top. Null when no repo. */
+function gitRootsOf(value, isGitdir) {
+  let dir = value;
+  try { if (!isGitdir && statSync(value).isFile()) dir = path.dirname(value); } catch { return null; }
+  const at = isGitdir ? ['--git-dir', dir] : ['-C', dir];
+  const common = gitOut([...at, 'rev-parse', '--path-format=absolute', '--git-common-dir']);
+  if (!common) return null;
+  const main = path.basename(common) === '.git' ? path.dirname(common) : common;
+  const top = isGitdir ? null : gitOut([...at, 'rev-parse', '--path-format=absolute', '--show-toplevel']);
+  return [...new Set([main, top].filter(Boolean))];
+}
+/** A root that may be cloned: never the real home or above it, a dot folder in it (~/.claude, ~/.ssh), or above HOME. */
+function copyable(root, realHome, home) {
+  const r = canon(root), h = canon(realHome);
+  if (within(h, r) || within(canon(home), r)) return false;
+  const rel = path.relative(h, r);
+  return !(within(r, h) && rel.startsWith('.'));
+}
+
+/** Makes a freshly copied store independent of the owner's (C1). Returns `{ repos, placeholders }`. Exported for tests. */
+export function isolateCopy(store, { home, realStore, realHome, cp = cpStore }) {
+  const storePairs = [...new Set([path.resolve(realStore), canon(realStore)])].map((from) => ({ from, to: path.resolve(store), prefix: true }));
+  rewriteStore(store, pathRewriter(storePairs));
+
+  const sources = [];
+  for (const r of storeRecordPaths(store)) sources.push({ value: r.value, project: PROJECT_FIELD.test(r.field) });
+  // a checkout's .git file leads to its repo; a local remote is a repo too. A registration of a checkout outside the copy
+  // is not followed (it is dropped below), and alternates outside it are left for verifyIsolation to refuse.
+  for (const l of gitLinks(store)) if (l.kind === 'dotgit' || l.kind === 'config') for (const t of linkTargets(l)) sources.push({ value: t, gitdir: l.kind === 'dotgit' });
+  const homeC = canon(home);
+  const wanted = [];
+  const exact = new Map();
+  const seen = new Set();
+  sources.sort((a, b) => Number(!!b.project) - Number(!!a.project));   // a project field may clone a folder; decide that first
+  for (const s of sources) {
+    if (seen.has(s.value) || within(canon(s.value), homeC)) continue;
+    seen.add(s.value);
+    let roots = gitRootsOf(s.value, s.gitdir);
+    if (!roots && s.project && !s.gitdir) { try { if (statSync(s.value).isDirectory()) roots = [s.value]; } catch { /* missing */ } }
+    if (roots && roots.every((r) => copyable(r, realHome, home))) wanted.push({ value: s.value, roots: roots.map(canon) });
+    else exact.set(s.value, path.join(home, 'outside', path.resolve(s.value)));
+  }
+  const tops = [];
+  for (const r of [...new Set(wanted.flatMap((w) => w.roots))].sort((a, b) => a.length - b.length)) if (!tops.some((t) => within(r, t))) tops.push(r);
+  const dest = new Map(tops.map((t) => [t, path.join(home, 'repos', createHash('sha1').update(t).digest('hex').slice(0, 8), path.basename(t))]));
+  for (const [t, d] of dest) { mkdirSync(path.dirname(d), { recursive: true }); cp(t, d); }
+
+  const pairs = [...storePairs, ...[...dest].map(([from, to]) => ({ from, to, prefix: true }))];
+  for (const w of wanted) {   // the spelling a record uses (/var/… for /private/var/…) maps to the same copy
+    const c = canon(w.value), t = tops.find((x) => within(c, x));
+    if (t && path.resolve(w.value) !== c) pairs.push({ from: path.resolve(w.value), to: path.join(dest.get(t), path.relative(t, c)), prefix: true });
+  }
+  for (const [from, to] of exact) pairs.push({ from: path.resolve(from), to, prefix: false });
+  const rw = pathRewriter(pairs);
+  rewriteStore(store, rw);
+  for (const l of gitLinks(home)) {
+    const text = readFileSync(l.file, 'utf8');
+    const next = rw(text);
+    if (next !== text) writeFileSync(l.file, next);
+    // a copied repo's registration of a checkout that is not in this copy (an owner worktree elsewhere) is dropped from the copy
+    if (l.kind === 'admin' && linkTargets(l).some((t) => !within(canon(t), homeC))) rmSync(path.dirname(l.file), { recursive: true, force: true });
+  }
+  return { repos: tops.length, placeholders: exact.size };
+}
+
+/** Everything in an instance HOME that still leads outside it: a record's path, a .git file, a worktree registration,
+ *  object alternates or a local remote. Empty when the copy is independent. */
+export function verifyIsolation(home) {
+  const homeC = canon(home);
+  const store = path.join(home, '.worca-cc');
+  const bad = [];
+  for (const r of storeRecordPaths(store)) if (!within(canon(r.value), homeC)) bad.push(`${r.where} ${r.field}: ${r.value}`);
+  for (const l of gitLinks(home)) for (const t of linkTargets(l)) if (!within(canon(t), homeC)) bad.push(`${l.file} (${l.kind}): ${t}`);
+  return bad;
+}
+
+/** Creates the instance HOME, copies and isolates the store into A/B the first time, refuses a copy that still leads
+ *  outside its HOME, and writes its settings by tmp and rename. */
 export async function prepareHome(inst, { realHome = realHomeDefault(), fresh = false, cp = cpStore, welcome = false, uiLevel = null } = {}) {
   if (fresh && existsSync(inst.home)) {
     // only a HOME this tool made: it holds the tool's record or the server log
@@ -215,19 +393,29 @@ export async function prepareHome(inst, { realHome = realHomeDefault(), fresh = 
   }
   const store = path.join(inst.home, '.worca-cc');
   const realStore = path.join(realHome, '.worca-cc');
-  let copied = 'kept';
+  // a copy that is not independent is never left behind
+  const discard = () => { rmSync(store, { recursive: true, force: true }); rmSync(path.join(inst.home, 'repos'), { recursive: true, force: true }); };
+  let copied = 'kept', repos = null;
   if (!existsSync(store)) {
     if (inst.store === 'copy') {
       if (!existsSync(realStore)) refuse('no-store', `${inst.letter} copies ${realStore}, which is missing`);
       mkdirSync(inst.home, { recursive: true });
       copied = cp(realStore, store);
-      try { rewriteStorePaths(store, realStore); } catch (e) {
-        rmSync(store, { recursive: true, force: true });   // a copy that still points into the real store is never left behind
-        refuse('store-rewrite', `${inst.letter}'s copied store could not be pointed at ${store} (${e.message}); nothing was started`);
+      try { repos = isolateCopy(store, { home: inst.home, realStore, realHome, cp }).repos; } catch (e) {
+        discard();
+        refuse('store-rewrite', `${inst.letter}'s copied store could not be made independent of ${realStore} (${e.message}); nothing was started`);
       }
     } else {
       mkdirSync(store, { recursive: true });
       copied = 'empty';
+    }
+  }
+  if (inst.store === 'copy') {
+    const bad = verifyIsolation(inst.home);
+    if (bad.length) {
+      if (copied !== 'kept') discard();
+      refuse('copy-not-isolated', `${inst.letter}'s copy still leads to ${bad.length} path(s) outside ${inst.home}, so a delete or archive `
+        + `there could change the owner's real repos; nothing was started. ${bad.slice(0, 5).join('; ')}`);
     }
   }
   const file = path.join(store, 'settings.json');
@@ -235,69 +423,7 @@ export async function prepareHome(inst, { realHome = realHomeDefault(), fresh = 
   try { existing = JSON.parse(readFileSync(file, 'utf8')); } catch { /* none yet */ }
   writeFileSync(`${file}.tmp`, JSON.stringify(instanceSettings(existing, inst, { welcome, uiLevel }), null, 2) + '\n');
   renameSync(`${file}.tmp`, file);
-  return { copied };
-}
-
-export const BRANCHES_FILE = 'real-branches.json';
-const gitRead = (dir, args) => {
-  const r = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8', env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' }, stdio: ['ignore', 'pipe', 'ignore'] });
-  return r.status === 0 ? r.stdout : null;
-};
-
-/** The real repos the copied store's projects and runs name (projects.path, every project_dir column). */
-function realRepoDirs(store) {
-  const dirs = new Set();
-  const dbFile = path.join(store, 'worca-cc.db');
-  if (!existsSync(dbFile)) return [];
-  const db = new DatabaseSync(dbFile, { readOnly: true });
-  try {
-    const q = (name) => `"${name.replaceAll('"', '""')}"`;
-    for (const { name } of db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all()) {
-      for (const col of db.prepare(`PRAGMA table_info(${q(name)})`).all()) {
-        if (col.name !== 'project_dir' && !(name === 'projects' && col.name === 'path')) continue;
-        for (const row of db.prepare(`SELECT DISTINCT ${q(col.name)} AS d FROM ${q(name)} WHERE typeof(${q(col.name)}) = 'text'`).all()) {
-          if (path.isAbsolute(row.d)) dirs.add(row.d);
-        }
-      }
-    }
-  } finally { db.close(); }
-  return [...dirs].sort();
-}
-
-/** R2: the copied runs still name the owner's real repos, and deleting or archiving one on A or B runs `git branch -D` there
- *  (src/core/pipeline-delete.mjs → removeWorktree). Before each A/B start the branch tips of those repos are read (read-only
- *  `git for-each-ref`) into the instance HOME, so `restore-branches X` can bring a deleted branch back. Returns the file. */
-export function snapshotRealBranches(inst) {
-  const repos = {};
-  for (const dir of realRepoDirs(path.join(inst.home, '.worca-cc'))) {
-    if (!existsSync(dir)) continue;
-    const refs = gitRead(dir, ['for-each-ref', '--format=%(refname:short)%09%(objectname)', 'refs/heads']);
-    if (refs === null) continue;
-    repos[dir] = Object.fromEntries(refs.split('\n').filter(Boolean).map((l) => l.split('\t')));
-  }
-  const file = path.join(inst.home, BRANCHES_FILE);
-  writeFileSync(`${file}.tmp`, JSON.stringify({ takenAt: new Date().toISOString(), repos }, null, 2) + '\n');
-  renameSync(`${file}.tmp`, file);
-  return file;
-}
-
-/** Recreates every snapshot branch that no longer exists at its recorded tip. A branch that exists is never moved.
- *  Each entry: `{ repo, branch, sha, result: 'present' | 'restored' | 'lost' }` (lost: the commit is gone too). */
-export function restoreBranches(inst) {
-  const file = path.join(inst.home, BRANCHES_FILE);
-  let snap;
-  try { snap = JSON.parse(readFileSync(file, 'utf8')); } catch { refuse('no-snapshot', `${file} is missing; only A and B take one, at start`); }
-  const out = [];
-  for (const [repo, branches] of Object.entries(snap.repos || {})) {
-    for (const [branch, sha] of Object.entries(branches)) {
-      let result = 'present';
-      if (gitRead(repo, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]) === null) {
-        result = gitRead(repo, ['cat-file', '-e', `${sha}^{commit}`]) !== null && gitRead(repo, ['branch', branch, sha]) !== null ? 'restored' : 'lost';
-      }
-      out.push({ repo, branch, sha, result });
-    }
-  }
-  return out;
+  return { copied, repos };
 }
 
 /** `{ lstart, command }` of a live pid, or null. The real seam behind list and stop. */
@@ -322,27 +448,31 @@ async function portFree(port) {
 const readRecord = (home) => { try { return JSON.parse(readFileSync(path.join(home, RECORD_FILE), 'utf8')); } catch { return null; } };
 const isOurs = (rec, live) => !!live && live.lstart === rec.lstart && live.command.includes(rec.serverPath);
 
-/** Claims a letter under its root (an exclusive lock file holding this pid) so two starts of one letter cannot interleave.
+/** Claims a letter under its root so two starts of one letter cannot interleave. The lock appears atomically and never
+ *  empty: this pid is written to a private temp file that is then hard-linked to the lock name (link fails if it exists).
  *  A lock whose pid no longer runs is refused as stale, never taken over. Returns the release function. */
 export function claimInstance(inst) {
   const root = path.dirname(inst.home);
   mkdirSync(root, { recursive: true });
   const lock = path.join(root, `.${inst.letter}.lock`);
-  {
-    try {
-      const fd = openSync(lock, 'wx');
-      try { writeFileSync(fd, String(process.pid)); } finally { closeSync(fd); }
-      return () => rmSync(lock, { force: true });
-    } catch (e) {
-      if (e.code !== 'EEXIST') throw e;
-      const pid = Number(readFileSync(lock, 'utf8').trim());
-      let alive = false;
-      try { if (pid > 0) { process.kill(pid, 0); alive = true; } } catch (k) { alive = k.code === 'EPERM'; }
-      if (alive) refuse('already-running', `${inst.letter} is being started by pid ${pid}; wait for it or stop it first`);
-      // no takeover: two starts that both saw the dead pid could each remove the other's fresh lock and both win
-      refuse('stale-lock', `${lock} is held by pid ${pid}, which no longer runs; remove that file and start again`);
-    }
-  }
+  const mine = `${lock}.${process.pid}.${Date.now()}`;
+  writeFileSync(mine, String(process.pid));
+  try {
+    linkSync(mine, lock);
+    return () => rmSync(lock, { force: true });
+  } catch (e) {
+    if (e.code !== 'EEXIST') throw e;
+  } finally { rmSync(mine, { force: true }); }
+  let raw = '';
+  try { raw = readFileSync(lock, 'utf8').trim(); } catch { /* released meanwhile */ }
+  // not a pid (an old lock caught mid-write, or one just released): another start holds or held it this instant
+  if (!/^[1-9]\d*$/.test(raw)) refuse('already-running', `${inst.letter} is being started by another process (${lock}); wait for it and try again`);
+  const pid = Number(raw);
+  let alive = false;
+  try { process.kill(pid, 0); alive = true; } catch (k) { alive = k.code === 'EPERM'; }
+  if (alive) refuse('already-running', `${inst.letter} is being started by pid ${pid}; wait for it or stop it first`);
+  // no takeover: two starts that both saw the dead pid could each remove the other's fresh lock and both win
+  refuse('stale-lock', `${lock} is held by pid ${pid}, which no longer runs; remove that file and start again`);
 }
 
 const portInUse = (inst) => refuse('port-in-use', `port ${inst.port} is already in use; pick another with --port ${inst.letter}=N`);
@@ -498,11 +628,12 @@ export async function main(argv = process.argv.slice(2), io = {}) {
           const release = claimInstance(inst);   // first: a second start of this letter refuses before it copies or spawns
           try {
             await assertStartable(inst, defaultPs);   // before prepareHome: a refused start writes nothing into the HOME
-            await prepareHome(inst, { realHome, fresh: opts.fresh, welcome: opts.welcome, uiLevel: opts.uiLevel });
-            const branches = inst.store === 'copy' ? snapshotRealBranches(inst) : null;
+            const prep = await prepareHome(inst, { realHome, fresh: opts.fresh, welcome: opts.welcome, uiLevel: opts.uiLevel });
             const rec = await startInstance(inst, { serverPath: io.serverPath || SERVER_PATH, baseEnv });
             out(`${line(rec)}  pid=${rec.pid}`);
-            if (branches) out(`   do not delete or archive copied runs here: that deletes their branch in the real repo. Tips: ${branches} (restore-branches ${inst.letter})`);
+            if (inst.store === 'copy') {
+              out(`   independent copy: every path it names is inside ${inst.home}${prep.repos === null ? '' : ` (${prep.repos} repos cloned into ${path.join(inst.home, 'repos')})`}; a delete or archive here never reaches the owner's real repos`);
+            }
           } finally { release(); }
         }
         return 0;
@@ -539,15 +670,8 @@ export async function main(argv = process.argv.slice(2), io = {}) {
         if (s.state !== 'signed-in') { err(s.reason || loginReason(platform)); return 3; }
         return 0;
       }
-      case 'restore-branches': {
-        if (opts.letters.length !== 1) refuse('bad-arg', 'restore-branches takes one instance letter, e.g. restore-branches A');
-        const results = restoreBranches(plan[0]);
-        for (const r of results) if (r.result !== 'present') out(`${r.repo}  ${r.branch}  ${r.result}  ${r.sha}`);
-        out(`${results.filter((r) => r.result === 'present').length} branches already present`);
-        return 0;
-      }
       default:
-        refuse('bad-arg', 'commands: start, list, stop, login-status, login X, restore-branches X');
+        refuse('bad-arg', 'commands: start, list, stop, login-status, login X');
     }
   } catch (e) {
     if (e instanceof GateInstanceError) { err(`${e.code}: ${e.message}`); return 2; }

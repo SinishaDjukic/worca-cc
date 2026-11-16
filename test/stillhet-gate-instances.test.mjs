@@ -6,7 +6,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { spawn, execFileSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
@@ -15,8 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import {
   INSTANCES, RECORD_FILE, GateInstanceError, parseArgs, planInstances, buildInstanceEnv, instanceSettings, prepareHome,
-  startInstance, listInstances, stopInstances, loginStatus, loginReason, main, defaultPs, rewriteStorePaths, claimInstance,
-  snapshotRealBranches, restoreBranches, BRANCHES_FILE,
+  startInstance, listInstances, stopInstances, loginStatus, loginReason, main, defaultPs, isolateCopy, claimInstance,
 } from '../tools/stillhet-gate-instances.mjs';
 import { CLAUDE_AUTH_ENV_KEYS, CLAUDE_AUTH_ENV_FLAGS } from '../src/core/preflight.mjs';
 
@@ -57,7 +56,7 @@ function fakeRealHome() {
 }
 const branchOf = (store) => { const db = new DatabaseSync(join(store, 'worca-cc.db')); try { return db.prepare('SELECT branch, project_dir, n FROM pipelines').get(); } finally { db.close(); } };
 
-test('PLAN-Gc F-X-01: each instance env has its own HOME/USERPROFILE, WORCA_HOME under it, WORCA_AUTO_RESUME=0, its protocol port', () => {
+test('PLAN-Gc F-X-01: each instance env has its own HOME/USERPROFILE, WORCA_HOME = that HOME (the store is HOME/.worca-cc), WORCA_AUTO_RESUME=0, its protocol port', () => {
   const root = join(scratch, 'plan-root');
   const plan = planInstances(parseArgs(['start', '--root', root]), { realHome: fakeRealHome(), tmp: scratch });
   assert.deepEqual(plan.map((i) => i.letter), ['A', 'B', 'C', 'D']);
@@ -65,7 +64,8 @@ test('PLAN-Gc F-X-01: each instance env has its own HOME/USERPROFILE, WORCA_HOME
     const env = buildInstanceEnv(inst, { PATH: '/bin', HOME: '/owner', PORT: '4317' });
     assert.equal(env.HOME, join(root, inst.letter));
     assert.equal(env.USERPROFILE, join(root, inst.letter));
-    assert.equal(env.WORCA_HOME, join(root, inst.letter, '.worca-cc'));
+    // WORCA_HOME is the base the server appends .worca-cc to (src/core/projects.mjs worcaHome); the copy lives at HOME/.worca-cc
+    assert.equal(env.WORCA_HOME, join(root, inst.letter));
     assert.equal(env.WORCA_AUTO_RESUME, '0');
     assert.equal(env.PORT, String(INSTANCES[inst.letter].port));
     assert.equal(env.PATH, '/bin');
@@ -160,9 +160,10 @@ test('PLAN-Gc F-X-01: A/B copy a fake real store; the source is byte-identical a
     // C1: the copy names its own store, so deleting a copied run on A or B never reaches the owner's real worktree
     const row = branchOf(join(root, l, '.worca-cc'));
     assert.equal(JSON.parse(row.branch).worktreeDir, join(root, l, '.worca-cc', 'runs', 'r1', 'repos', 'x'));
-    assert.equal(row.project_dir, '/repos/owner', 'paths outside the real store are kept');
+    // C1: a repo path that cannot be copied (missing here) points at HOME/outside/…, which never exists
+    assert.equal(row.project_dir, join(root, l, 'outside', 'repos', 'owner'));
     assert.equal(row.n, 7);
-    assert.deepEqual(JSON.parse(readFileSync(join(root, l, '.worca-cc', 'runs', 'r1', 'run.json'), 'utf8')), { runRoot: join(root, l, '.worca-cc', 'runs', 'r1'), repo: '/repos/owner' });
+    assert.deepEqual(JSON.parse(readFileSync(join(root, l, '.worca-cc', 'runs', 'r1', 'run.json'), 'utf8')), { runRoot: join(root, l, '.worca-cc', 'runs', 'r1'), repo: join(root, l, 'outside', 'repos', 'owner') });
     assert.equal(readFileSync(join(root, l, '.worca-cc', 'store', 'p', 'plan.md'), 'utf8'), '# plan\n');
     const s = settingsOf(l);
     assert.equal(s.theme, 'dark');
@@ -204,7 +205,9 @@ test('PLAN-Gc F-X-01: A/B copy a fake real store; the source is byte-identical a
   const badA = planInstances(parseArgs(['start', 'A', '--root', fresh('bad-root')]), { realHome: badReal, tmp: scratch })[0];
   await assert.rejects(prepareHome(badA, { realHome: badReal }), (e) => e.code === 'store-rewrite');
   assert.ok(!existsSync(join(badA.home, '.worca-cc')));
-  assert.equal(rewriteStorePaths(fresh('no-db-store'), join(badReal, '.worca-cc')), 0, 'a store without a DB has nothing to rewrite');
+  const noDb = fresh('no-db-home');
+  mkdirSync(join(noDb, '.worca-cc'));
+  assert.deepEqual(isolateCopy(join(noDb, '.worca-cc'), { home: noDb, realStore: join(badReal, '.worca-cc'), realHome: badReal }), { repos: 0, placeholders: 0 }, 'a store without a DB has nothing to rewrite');
   const noStore = planInstances(parseArgs(['start', 'A', '--root', fresh('nostore')]), { realHome: fresh('empty-real'), tmp: scratch })[0];
   await assert.rejects(prepareHome(noStore, { realHome: fresh('empty-real') }), (e) => e.code === 'no-store');
 });
@@ -304,53 +307,35 @@ test('PLAN-Gc: a letter is claimed before its start: a second claim refuses alre
   assert.equal(readFileSync(lock, 'utf8'), String(2 ** 22 + 17), 'the stale lock is not touched');
   rmSync(lock);
   claimInstance(a)();
+  // m1: an empty lock is a start caught mid-claim, never "stale … pid 0" with advice to delete a live lock
+  writeFileSync(lock, '');
+  assert.throws(() => claimInstance(a), (e) => e.code === 'already-running' && !/pid 0/.test(e.message));
+  assert.equal(readFileSync(lock, 'utf8'), '', 'the lock is not touched');
+  rmSync(lock);
+  assert.deepEqual(readdirSync(root).filter((f) => f.startsWith('.A.lock')), [], 'no temp lock files are left behind');
 });
 
-test('PLAN-Gc R2: A/B snapshot the real repos\' branch tips; restore-branches recreates a branch a delete on A removed, never moves one', { skip: posixOnly, timeout: 30000 }, async () => {
-  const git = (dir, ...a) => execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', env: { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@t', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@t' } }).trim();
-  const repo = fresh('real-repo');
-  git(repo, 'init', '-q', '-b', 'main');
-  git(repo, 'commit', '-q', '--allow-empty', '-m', 'one');
-  git(repo, 'branch', 'feat/x');
-  git(repo, 'branch', 'feat/y');
-  const tipX = git(repo, 'rev-parse', 'feat/x');
-  const realHome = fakeRealHome();
-  const db = new DatabaseSync(join(realHome, '.worca-cc', 'worca-cc.db'));
-  db.exec('CREATE TABLE projects (key TEXT, path TEXT)');
-  db.prepare('INSERT INTO projects VALUES (?, ?)').run('k', repo);
-  db.prepare('UPDATE pipelines SET project_dir = ?').run(join(scratch, 'not-a-repo'));
-  db.close();
-  const root = fresh('branch-root');
-  const [a] = planInstances(parseArgs(['start', 'A', '--root', root]), { realHome, tmp: scratch });
-  await prepareHome(a, { realHome });
-  const refsBefore = git(repo, 'for-each-ref');
-
-  const file = snapshotRealBranches(a);
-  assert.equal(file, join(a.home, BRANCHES_FILE));
-  const snap = JSON.parse(readFileSync(file, 'utf8'));
-  assert.deepEqual(snap.repos[repo], { main: tipX, 'feat/x': tipX, 'feat/y': tipX });
-  assert.ok(!(join(scratch, 'not-a-repo') in snap.repos), 'a dir that is no repo is skipped');
-  assert.equal(git(repo, 'for-each-ref'), refsBefore, 'the snapshot only reads');
-
-  // what a delete of a copied run on A does in the real repo, and a branch the owner moved meanwhile
-  git(repo, 'branch', '-D', 'feat/x');
-  git(repo, 'commit', '-q', '--allow-empty', '-m', 'two');
-  git(repo, 'branch', '-f', 'feat/y', 'HEAD');
-  const tipY = git(repo, 'rev-parse', 'feat/y');
-  const results = restoreBranches(a);
-  assert.deepEqual(results.filter((r) => r.result === 'restored').map((r) => r.branch), ['feat/x']);
-  assert.equal(git(repo, 'rev-parse', 'feat/x'), tipX);
-  assert.equal(git(repo, 'rev-parse', 'feat/y'), tipY, 'an existing branch is never moved');
-
-  // through the CLI: restore-branches says what it did; C copies nothing, so it has no snapshot
-  const r = io({ realHome, tmp: scratch });
-  git(repo, 'branch', '-D', 'feat/x');
-  assert.equal(await main(['restore-branches', 'A', '--root', root], r.io), 0, r.err.join('\n'));
-  assert.match(r.out.join('\n'), /feat\/x\s+restored/);
-  assert.equal(git(repo, 'rev-parse', 'feat/x'), tipX);
-  const c = io({ realHome, tmp: scratch });
-  assert.equal(await main(['restore-branches', 'C', '--root', root], c.io), 2);
-  assert.match(c.err.join('\n'), /^no-snapshot: /);
+test('PLAN-Gc M1/m1: six processes claim one letter at once: exactly one wins, every other says already-running, none sees an empty or stale lock', { skip: posixOnly, timeout: 60000 }, async () => {
+  const root = fresh('lock-race');
+  const [a] = planInstances(parseArgs(['start', 'A', '--root', root]), { realHome: fakeRealHome(), tmp: scratch });
+  const tool = new URL('../tools/stillhet-gate-instances.mjs', import.meta.url).href;
+  const go = join(root, 'go');
+  const code = `import { claimInstance } from ${JSON.stringify(tool)}; import { existsSync } from 'node:fs';
+    while (!existsSync(${JSON.stringify(go)})) await new Promise((r) => setTimeout(r, 5));
+    try { const release = claimInstance(${JSON.stringify(a)}); console.log('won'); await new Promise((r) => setTimeout(r, 1500)); release(); }
+    catch (e) { console.log(e.code + ': ' + e.message); }`;
+  const runs = Array.from({ length: 6 }, () => new Promise((resolve) => {
+    const c = spawn(process.execPath, ['--input-type=module', '-e', code], { stdio: ['ignore', 'pipe', 'inherit'] });
+    let out = '';
+    c.stdout.on('data', (d) => { out += d; });
+    c.on('close', () => resolve(out.trim()));
+  }));
+  await new Promise((r) => setTimeout(r, 1000));
+  writeFileSync(go, '');
+  const results = await Promise.all(runs);
+  assert.equal(results.filter((r) => r === 'won').length, 1, results.join('\n'));
+  for (const r of results.filter((x) => x !== 'won')) assert.match(r, /^already-running: /);
+  assert.ok(!existsSync(join(root, '.A.lock')), 'the winner released its lock');
 });
 
 test('PLAN-Gc: stop kills its own fixture server and leaves a foreign live process (forged record) running, reported not-ours', { skip: posixOnly, timeout: 60000 }, async (t) => {
