@@ -15,7 +15,7 @@
 //      node tools/stillhet-gate-instances.mjs list | stop [letters] | login-status [letters] | login X   [--root DIR]
 import { createHash } from 'node:crypto';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { chmodSync, closeSync, constants as FS, cpSync, existsSync, linkSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, constants as FS, copyFileSync, cpSync, existsSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -219,7 +219,7 @@ function cpStore(src, dst) {
 // The copy's records name the owner's real repos (projectDir, realDir, projects.path …) and its checkouts' .git files lead
 // into them, so a delete or archive of a copied run would `git branch -D` and `git worktree remove` there
 // (src/core/pipeline-delete.mjs → removeWorktree). isolateCopy makes the copy independent: every repo the copy names is
-// cloned into HOME/repos (APFS clone; the real repo is only read), every record and every git link is rewritten to the
+// copied into HOME/repos (its .git and tracked files only, APFS clones; the real repo is only read), every record and every git link is rewritten to the
 // copy, and a path that cannot be copied (missing, the real home, a dot folder in it) is pointed at HOME/outside/…, which
 // never exists. verifyIsolation then checks the result on every A/B start; anything still outside HOME refuses the start.
 const PATH_CHARS = 'A-Za-z0-9._\\-~@+';
@@ -265,13 +265,15 @@ function storeJsonFiles(store) {
   return r.stdout.split('\n').filter(Boolean);
 }
 
+/** An absolute path, not a pattern: a route regex (`/^\/api\/(.+)$/`) in a `path` field is not a file system path. */
+const looksLikePath = (v) => path.isAbsolute(v) && !/[\n^$\\*?|]/.test(v);
 function* jsonPaths(v, key = '') {
-  if (typeof v === 'string') { if (PATH_KEY.test(key) && path.isAbsolute(v)) yield { field: key, value: v }; return; }
+  if (typeof v === 'string') { if (PATH_KEY.test(key) && looksLikePath(v)) yield { field: key, value: v }; return; }
   if (Array.isArray(v)) { for (const x of v) yield* jsonPaths(x, key); return; }
   if (v && typeof v === 'object') for (const [k, x] of Object.entries(v)) yield* jsonPaths(x, k);
 }
 function* textPaths(text, column) {
-  if (PATH_COLUMN.test(column) && path.isAbsolute(text) && !text.includes('\n')) yield { field: column, value: text };
+  if (PATH_COLUMN.test(column) && looksLikePath(text)) yield { field: column, value: text };
   else if (/^\s*[[{]/.test(text)) { let v; try { v = JSON.parse(text); } catch { return; } yield* jsonPaths(v); }
 }
 
@@ -377,6 +379,29 @@ function copyable(root, realHome, home) {
   return !(within(r, h) && rel.startsWith('.'));
 }
 
+/** Copies one repo or checkout: its `.git` (an APFS clone of the dir, or the checkout's .git file) and its tracked files as
+ *  they are in the working tree. Untracked and ignored files (node_modules, nested test stores, nested worktrees) are never
+ *  copied; a nested checkout a record names is copied on its own. A folder that is no repo top is copied whole. */
+function copyRepo(src, dst, cp) {
+  const top = gitOut(['-C', src, 'rev-parse', '--show-toplevel']);
+  if (!top || canon(top) !== canon(src)) { cp(src, dst); return; }
+  mkdirSync(dst, { recursive: true });
+  const dotGit = path.join(src, '.git');
+  if (statSync(dotGit).isDirectory()) cp(dotGit, path.join(dst, '.git'));
+  else copyFileSync(dotGit, path.join(dst, '.git'));
+  const r = spawnSync('git', ['-C', src, 'ls-files', '-z', '--cached'], { encoding: 'utf8', env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' }, maxBuffer: 1024 * 1024 * 1024 });
+  if (r.status !== 0) throw new Error(`git ls-files failed in ${src}`);
+  for (const rel of new Set(r.stdout.split('\0').filter(Boolean))) {
+    const from = path.join(src, rel), to = path.join(dst, rel);
+    let st;
+    try { st = lstatSync(from); } catch { continue; }   // deleted in the working tree
+    mkdirSync(path.dirname(to), { recursive: true });
+    if (st.isSymbolicLink()) symlinkSync(readlinkSync(from), to);
+    else if (st.isDirectory()) cp(from, to);   // a submodule
+    else copyFileSync(from, to, FS.COPYFILE_FICLONE);
+  }
+}
+
 /** Makes a freshly copied store independent of the owner's (C1). Returns `{ repos, placeholders }`. Exported for tests. */
 export function isolateCopy(store, { home, realStore, realHome, cp = cpStore }) {
   const storePairs = [...new Set([path.resolve(realStore), canon(realStore)])].map((from) => ({ from, to: path.resolve(store), prefix: true }));
@@ -401,9 +426,16 @@ export function isolateCopy(store, { home, realStore, realHome, cp = cpStore }) 
     else exact.set(s.value, path.join(home, 'outside', path.resolve(s.value)));
   }
   const tops = [];
-  for (const r of [...new Set(wanted.flatMap((w) => w.roots))].sort((a, b) => a.length - b.length)) if (!tops.some((t) => within(r, t))) tops.push(r);
+  const roots = [...new Set(wanted.flatMap((w) => w.roots))].sort((a, b) => a.length - b.length);
+  for (const r of roots) if (!tops.some((t) => within(r, t))) tops.push(r);
   const dest = new Map(tops.map((t) => [t, path.join(home, 'repos', createHash('sha1').update(t).digest('hex').slice(0, 8), path.basename(t))]));
-  for (const [t, d] of dest) { mkdirSync(path.dirname(d), { recursive: true }); cp(t, d); }
+  for (const [t, d] of dest) { mkdirSync(path.dirname(d), { recursive: true }); copyRepo(t, d, cp); }
+  for (const r of roots) {   // a checkout nested in a copied repo (untracked there, so not copied with it)
+    if (dest.has(r)) continue;
+    const t = tops.find((x) => within(r, x));
+    const d = path.join(dest.get(t), path.relative(t, r));
+    if (!existsSync(d)) { mkdirSync(path.dirname(d), { recursive: true }); copyRepo(r, d, cp); }
+  }
 
   const pairs = [...storePairs, ...[...dest].map(([from, to]) => ({ from, to, prefix: true }))];
   for (const w of wanted) {   // the spelling a record uses (/var/… for /private/var/…) maps to the same copy

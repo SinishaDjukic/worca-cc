@@ -169,6 +169,43 @@ test('PLAN-Gc C1: a copy that names a path outside its HOME is refused before an
   await assert.rejects(prepareHome(b, { realHome: o.realHome }), (e) => e.code === 'copy-not-isolated' && e.message.includes(o.main));
 });
 
+test('Gate 1 fix: a repo is copied as tracked content + .git (no untracked nested store), and a route regex in a "path" field is not a path', { skip: posixOnly, timeout: 120000 }, async () => {
+  const o = fakeOwner();
+  // an untracked nested test store in the real repo, whose checkout's .git file leads to an old temp dir outside
+  const gone = join(scratch, 'old-temp', 'repo');
+  const nested = join(o.main, '.worca-cc-test', '.worca-cc', 'runs', 'z', 'repos', 'q');
+  mkdirSync(nested, { recursive: true });
+  writeFileSync(join(nested, '.git'), `gitdir: ${join(gone, '.git', 'worktrees', 'q')}\n`);
+  writeFileSync(join(o.main, 'untracked.txt'), 'scratch\n');
+  // a worktree nested (untracked) in the real repo that a record names is still copied, on its own
+  const inner = join(o.main, '.claude', 'worktrees', 'inner');
+  git(o.main, 'worktree', 'add', '-q', '-b', 'feat/inner', inner, 'main');
+  mkdirSync(join(o.realStore, 'runs', 'r3'), { recursive: true });
+  writeFileSync(join(o.realStore, 'runs', 'r3', 'run.json'), JSON.stringify({ repos: [{ projectDir: o.proj, worktreeDir: inner }] }));
+  writeFileSync(join(o.main, 'README.md'), '# real, edited\n');   // an uncommitted edit of a tracked file is kept
+  // agent output in the store with route patterns in "path" fields
+  const out = join(o.realStore, 'ask', 'ask_1', 'out', 'verify');
+  mkdirSync(out, { recursive: true });
+  writeFileSync(join(out, 'central-routes.json'), JSON.stringify({ routes: [{ path: '^/api/.*$' }, { path: '/^\\/vendor\\/speech\\/hf\\/([^/]+)\\/resolve\\/(.+)$/' }] }));
+
+  const [a] = planInstances(parseArgs(['start', 'A', '--root', join(scratch, 'gates-tracked')]), { realHome: o.realHome, tmp: scratch });
+  await prepareHome(a, { realHome: o.realHome });
+  assert.deepEqual(verifyIsolation(a.home), []);
+  const clones = readdirSync(join(a.home, 'repos')).flatMap((h) => readdirSync(join(a.home, 'repos', h)).map((n) => join(a.home, 'repos', h, n)));
+  const copyMain = clones.find((c) => existsSync(join(c, '.git')) && statSync(join(c, '.git')).isDirectory());
+  assert.ok(copyMain, clones.join('\n'));
+  assert.ok(!existsSync(join(copyMain, '.worca-cc-test')), 'the untracked nested store is not copied');
+  assert.ok(!existsSync(join(copyMain, 'untracked.txt')), 'untracked files are not copied');
+  assert.equal(readFileSync(join(copyMain, 'README.md'), 'utf8'), '# real, edited\n', 'tracked files are copied as they are in the working tree');
+  assert.match(git(copyMain, 'for-each-ref', '--format=%(refname:short)'), /keep\/other/, 'the copy has every branch');
+  assert.equal(git(copyMain, 'status', '--porcelain', '--untracked-files=no'), 'M README.md', 'the copy\'s index and working tree match the owner\'s tracked state');
+  const copyInner = join(copyMain, '.claude', 'worktrees', 'inner');
+  assert.equal(git(copyInner, 'rev-parse', '--abbrev-ref', 'HEAD'), 'feat/inner', 'the named nested worktree is a working checkout of the copy');
+  assert.equal(realpathSync(git(copyInner, 'rev-parse', '--path-format=absolute', '--git-common-dir')), realpathSync(join(copyMain, '.git')));
+  const routes = readFileSync(join(a.home, '.worca-cc', 'ask', 'ask_1', 'out', 'verify', 'central-routes.json'), 'utf8');
+  assert.ok(routes.includes('"path":"^/api/.*$"') && routes.includes('/^\\\\/vendor'), 'route patterns are left as they are');
+});
+
 const pushUrls = (repo) => git(repo, 'config', '--get-all', 'remote.origin.pushurl').split('\n');
 const sqlite = (home) => new DatabaseSync(join(home, '.worca-cc', 'worca-cc.db'));
 
