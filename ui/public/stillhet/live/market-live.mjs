@@ -69,7 +69,7 @@ export function startMarketLive({ fetch, toast = () => {}, open = (u) => globalT
     const cfg = answers.every((a) => a.ok) && names.includes('plugins') ? await readConfigs(answers[names.indexOf('plugins')].data) : null;
     const fresh = names.filter((n) => seq[n] === mine[n]);
     if (!fresh.length) return answers.every((a) => a.ok);
-    if (answers.some((a) => !a.ok)) { if (state !== 'ready') state = 'failed'; on(); return false; }
+    if (answers.some((a) => !a.ok)) { staleDue = false; if (state !== 'ready') state = 'failed'; on(); return false; }   // a failed open owes no sync to a later read
     fresh.forEach((n) => { lists[n] = answers[names.indexOf(n)].data; });
     if (cfg && fresh.includes('plugins')) configs = cfg;
     state = 'ready'; rebuild(); on();
@@ -88,11 +88,11 @@ export function startMarketLive({ fetch, toast = () => {}, open = (u) => globalT
     }
   }
   // a source (builtin or added) last synced over STALE_MS ago is synced once when the Marketplace opens, as quietly as the
-  // first sync; one never synced is firstSync's, one that needs git or has no readable time is left alone
+  // first sync; one never synced is firstSync's, one hidden for removal, one that needs git or has no readable time is left alone
   function staleSync() {
     for (const m of marketsOf(lists.markets)) {
       const t = Date.parse(m?.lastSync?.at || ''), key = `${m?.id}@${m?.lastSync?.at}`;
-      if (!m?.id || m.needsGit || !Number.isFinite(t) || now() - t <= STALE_MS || staleTried.has(key)) continue;
+      if (!m?.id || hidden.has(m.id) || m.needsGit || !Number.isFinite(t) || now() - t <= STALE_MS || staleTried.has(key)) continue;
       staleTried.add(key);
       once(`source:${m.id}`, 'sync', async () => { await send('sync', { id: m.id }); await reread(); });
     }

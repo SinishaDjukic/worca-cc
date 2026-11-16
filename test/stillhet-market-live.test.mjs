@@ -407,3 +407,22 @@ test('F-5-18 (#1305 check): opened() on a never-synced builtin sends exactly one
   await r.live.opened(); await settleAll();
   assert.deepEqual(syncs(r), ['/api/marketplaces/worca-official/refresh']);
 });
+
+test('F-5-18: an open whose read fails leaves no stale sync owed: a later read that is no open sends nothing', async () => {
+  const old = aged((ms) => ms.map((m) => ({ ...m, lastSync: { ...m.lastSync, at: at(2 * STALE_MS) } })));
+  let down = false;
+  const r = rig({ lists: old, now: () => NOW, answer: (m, u) => (down && m === 'GET' && u === '/api/marketplaces' ? 'down' : null) });
+  await r.live.load(); await settleAll();
+  down = true; assert.equal(await r.live.opened(), false); await settleAll();
+  down = false; await r.live.refresh(); await settleAll();
+  assert.deepEqual(syncs(r), [], 'the failed open\'s sync is not run by a WS refresh');
+});
+
+test('F-5-18: on open, a source hidden for removal (inside its undo window) is not synced', async () => {
+  const old = aged((ms) => ms.map((m) => ({ ...m, lastSync: { ...m.lastSync, at: at(2 * STALE_MS) } })));
+  const r = rig({ lists: old, now: () => NOW });
+  await r.live.load(); await settleAll();
+  r.live.deferRemoveSource('team-plugins', 5000);
+  await r.live.opened(); await settleAll();
+  assert.deepEqual(syncs(r), ['/api/marketplaces/worca-official/refresh']);
+});
