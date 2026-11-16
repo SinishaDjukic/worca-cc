@@ -255,3 +255,19 @@ test('Updates and Limits rows draw the Pulse mark (signal) in their tones, never
   assert.ok(limits.length > 0);
   assert.ok(limits.every((m) => ['is-fail', 'is-act'].includes(m.tone) && m.glyph === signal), JSON.stringify(limits));
 });
+
+test('F-G-G5-02: a missed schedule row in Now opens the schedule\'s own page, never a dead task page', async () => {
+  const sources = withNotes();
+  sources.schedules.tickets.push({ id: 'tk3', kind: 'once', scheduleId: 'sr1', title: 'Nightly', status: 'missed', runAt: at(2), projectKey: 'web-1', createdAt: at(1) });
+  const h = await liveHost({ sources }), { w, d } = h;
+  await h.hello();
+  for (const [ticket, page] of [['tk1', '#schedule/tk1'], ['tk3', '#schedule/sr1']]) {
+    w.location.hash = '#chat'; await settle();
+    w.RailPulse.open('now');
+    const row = pop(d).querySelector(`[data-open="r:sched:${ticket}"]`);
+    assert.ok(row, `the missed ${ticket} is in Now`);
+    row.click(); await settle();
+    assert.equal(w.location.hash, page, `${ticket} opens its schedule`);
+    assert.doesNotMatch(d.body.textContent, /This task no longer exists/);
+  }
+});

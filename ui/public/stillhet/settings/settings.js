@@ -91,7 +91,7 @@
   // place outside Settings (page, click), with a toast (say). What it needs when off: `off(sv)` says why.
   function act(a, where, c) {
     const label = textOf(a.label, c.sv), key = where + '/' + (a.id || label);
-    const known = a.go || a.edit || a.confirm || a.copy || a.do || a.page || a.click || a.say;
+    const known = a.go || a.edit || a.confirm || a.copy || a.do || a.page || a.click || a.say || a.live;
     if (!known) throw new Error(`settings-model: "${label}" at ${where} does nothing`);
     REG.set(key, a);
     if (a.copy) return R.copyButton({ text: textOf(a.copy, c.sv), label: label, attrs: { 'data-svdo': key, 'data-key': 'sv:' + key } });
