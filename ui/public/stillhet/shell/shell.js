@@ -628,6 +628,7 @@
   build();
   setBarW(barW);
   for (const t of ['pointerenter', 'pointerleave']) document.getElementById('side-rail').addEventListener(t, barInert);
+  R.watchDiffFind(document);   // thing.diff-find: the Find field of a diff
   R.watchSearch(document);   // key.search: the arrows reach the results, the field says when they show
   R.watchClickGuard(document); R.watchOrbs(document); R.watchTooltips(document); R.watchMenus(document); R.watchStrips(document); R.watchScrollFades(document); R.watchFolds(document); R.watchStageAdvance(document);
   // The live kind: dev's uiLevel, as the server stamped it (data-level), and nothing posted at start (D21). The demo: a new

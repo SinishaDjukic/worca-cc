@@ -3666,6 +3666,37 @@
       "rules": [
         "small.one-tooltip"
       ]
+    },
+    {
+      "name": "DiffFind",
+      "code": "ui/public/design-system/components/diff-view.mjs#diffFind",
+      "needs": [
+        "finding text in a diff",
+        "search in the changes"
+      ],
+      "rules": [
+        "thing.diff-find"
+      ]
+    },
+    {
+      "name": "WatchDiffFind",
+      "code": "ui/public/design-system/components/diff-view.mjs#watchDiffFind",
+      "needs": [
+        "a diff's Find field at work: marks, the count, next and previous"
+      ],
+      "rules": [
+        "thing.diff-find"
+      ]
+    },
+    {
+      "name": "FindSpans",
+      "code": "ui/public/design-system/components/diff-view.mjs#findSpans",
+      "needs": [
+        "where a text is in a line, without regard to case"
+      ],
+      "rules": [
+        "thing.diff-find"
+      ]
     }
   ],
   "telling": [

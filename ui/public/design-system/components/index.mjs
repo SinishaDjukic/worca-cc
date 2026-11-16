@@ -2,7 +2,7 @@
 // module). Build a page from these: a component brings its look, so a page sets no size, colour, corner or shadow.
 export { esc, attrs, cls, toElement } from './html.mjs';
 export { button, splitButton, busy, busyWord } from './button.mjs';
-export { diffView, parsePatch } from './diff-view.mjs';
+export { diffView, parsePatch, diffFind, findSpans, watchDiffFind } from './diff-view.mjs';
 export { detailPanel } from './detail-panel.mjs';
 export { terminalPane } from './terminal-pane.mjs';
 export { compactMenu, menuItem, menuKeys, choiceMove, typeAhead, focusMenu, watchChoiceKeys } from './compact-menu.mjs';

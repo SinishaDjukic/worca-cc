@@ -193,3 +193,36 @@ test('the chat timeline: a slim track on the reading column\'s right edge, quiet
   assert.match(css, /\[data-timeline\] > \.timeline:is\(:hover,:focus-within\) \.tl-tick i\{opacity:1;\}/);
   assert.match(css, /@media \(max-width: 760px\)\{ \[data-timeline\]\{display:none;\}/);
 });
+
+test('DiffView find: a Find field in the head of the view that owns the Segmented; findSpans ignores case; the watcher marks, counts, steps and clears', async () => {
+  const { JSDOM } = await import('jsdom');
+  const C = await import('../ui/public/design-system/components/index.mjs');
+  assert.deepEqual(C.findSpans('const Total = total + 1', 'total'), [[6, 11], [14, 19]]);
+  assert.deepEqual(C.findSpans('abc', ''), []);
+  const hunks = [{ at: '@@ -1,3 +1,3 @@', lines: [[' ', 'const a = 1;'], ['-', 'let total = a;'], ['+', 'const total = a + 1;']] }];
+  const html = `<div class="diff-files">${C.diffView({ path: 'a.js', hunks, mode: 'unified' })}${C.diffView({ path: 'b.js', hunks, mode: 'unified', seg: false })}</div>`;
+  const dom = new JSDOM(`<body>${html}</body>`), d = dom.window.document;
+  assert.equal(d.querySelectorAll('[data-dv-find]').length, 1, 'one Find field for the files shown together');
+  assert.equal(new JSDOM(C.diffView({ path: 'a.js', hunks, find: false })).window.document.querySelector('[data-dv-find]'), null);
+  // jsdom lays nothing out: keep only the unified tables, as the screen would
+  for (const t of d.querySelectorAll('.dv-split')) t.remove();
+  C.watchDiffFind(d);
+  const input = d.querySelector('[data-dv-find]'), count = () => d.querySelector('.dv-find-n').textContent;
+  const type = (v) => { input.value = v; input.dispatchEvent(new dom.window.Event('input', { bubbles: true })); };
+  type('TOTAL');
+  assert.equal(d.querySelectorAll('mark.dv-hit').length, 4, 'both lines of both files');
+  assert.equal(count(), '1 of 4');
+  assert.equal(d.querySelector('[data-dv-step="1"]').disabled, false);
+  d.querySelector('[data-dv-step="1"]').click();
+  assert.equal(count(), '2 of 4'); assert.equal(d.querySelectorAll('mark.dv-hit.is-now').length, 1);
+  input.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }));
+  assert.equal(count(), '1 of 4');
+  input.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Enter', shiftKey: true, bubbles: true }));
+  assert.equal(count(), '4 of 4', 'it goes round the end');
+  type('nothing here');
+  assert.equal(count(), 'No match'); assert.equal(d.querySelectorAll('mark.dv-hit').length, 0);
+  type('a');
+  input.dispatchEvent(new dom.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  assert.equal(input.value, ''); assert.equal(count(), ''); assert.equal(d.querySelectorAll('mark').length, 0);
+  assert.equal(d.querySelector('.dv-c').textContent, 'const a = 1;', 'the code is as it was');
+});

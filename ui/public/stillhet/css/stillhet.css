@@ -2263,6 +2263,13 @@ body:has(#route-chat:not([hidden]) .convo-dock) .rc-toast{bottom:calc(24px + 124
 .dv-head{display:flex;align-items:center;gap:12px;min-height:40px;padding:4px 12px;border-bottom:1px solid var(--line-2);font-size:var(--fs-meta);}
 .dv-path{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left;font:400 var(--fs-meta)/1.4 var(--mono);color:var(--ink);}
 .dv-seg{display:none;flex:none;}
+.dv-find{display:inline-flex;align-items:center;gap:4px;flex:0 1 auto;min-width:0;}
+.dv-find-in{width:180px;min-width:0;height:28px;font-size:var(--fs-meta);}
+.dv-find-n{min-width:64px;font-size:var(--fs-caption);color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap;}
+.dv-prev svg{transform:rotate(180deg);}
+mark.dv-hit{background:color-mix(in srgb,var(--amber) 34%,transparent);color:inherit;border-radius:var(--r-xs);}
+mark.dv-hit.is-now{background:var(--amber);color:var(--on-signal);}   /* the match you are on: full amber under its own ink */
+@container (max-width: 560px){.dv-head{flex-wrap:wrap;}.dv-find{flex:1 1 100%;order:3;}.dv-find-in{flex:1 1 auto;width:auto;}}
 .dv-scroll{overflow:auto;max-height:70vh;}
 .dv-scroll:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .dv-t{width:100%;border-collapse:collapse;font:400 var(--fs-meta)/1.6 var(--mono);color:var(--ink);}
