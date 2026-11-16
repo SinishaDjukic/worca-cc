@@ -62,9 +62,12 @@
   const money = (n) => `$${n.toFixed(2)}`;
   const costOf = (w) => w.steps.reduce((a, s) => a + (s[5] || 0), 0), minOf = (w) => w.steps.reduce((a, s) => a + (s[4] || 0), 0);
   const mergedOf = (w) => (w.tasks ? `${w.merged}% merged` : 'no tasks yet');   // a copy starts with no history of its own
+  // F-FM2-03: live figures are dev's averages over the tasks that ran it; none ran it, nothing is measured (no $0.00)
+  const measured = (w) => !isLive() || w.tasks > 0;
   let figs = false;   // look.figures-on-demand: a card's cost and time open with the page's Figures
-  const factsOf = (w) => (figs ? (w.running ? (isLive() ? 'Its first task is running' : `Its first task is running · ${money(4.8)} so far`) : `${money(costOf(w))} a task · ${minOf(w)} min · ${mergedOf(w)}`) : (w.running ? 'Its first task is running' : ''));
-  const shape = (w) => `${w.steps.length} steps · ${w.tasks ? `used by ${w.tasks} ${w.tasks === 1 ? 'task' : 'tasks'}` : 'not used yet'}`;
+  const factsOf = (w) => (figs ? (w.running ? (isLive() ? 'Its first task is running' : `Its first task is running · ${money(4.8)} so far`) : measured(w) ? `${money(costOf(w))} a task · ${minOf(w)} min · ${mergedOf(w)}` : mergedOf(w)) : (w.running ? 'Its first task is running' : ''));
+  const stepsWord = (n) => `${n} ${n === 1 ? 'step' : 'steps'}`;   // F-G-fid-10
+  const shape = (w) => `${stepsWord(w.steps.length)} · ${w.tasks ? `used by ${w.tasks} ${w.tasks === 1 ? 'task' : 'tasks'}` : 'not used yet'}`;
   const markOf = (kind, size) => R.kindMark({ kind, size });
   // drafts (rail.drafts): a change by hand goes into the thing's draft; tasks keep running the saved one until you save
   const blank = (kind, x) => (kind === 'workflow' ? { title: x.title, steps: structuredClone(x.steps), loops: structuredClone(x.loops), changes: 0, ...(x.tpl ? { base: x.base || x.tpl } : {}) } : { model: x.model, effort: x.effort, asks: x.asks, fan: x.fan, changes: 0 });
@@ -83,22 +86,32 @@
     if (!R.prefs.flag('sessionGroups') || w.steps.length < 2) return '';
     return R.settingsSection({ title: 'Labs', meta: 'On in Settings › Labs.', rows: R.settingsRow({ name: 'Shared session', sentence: `Steps ${w.steps.slice(0, Math.min(3, w.steps.length)).map((s) => s[0]).join(', ')} run in one agent session and share what they learned` }) });
   }
+  // F-G-fid-06: every loop; one between two steps is an arc (the first one drawn is the one the ways tell), a step that sends
+  // work back to itself says so in its own panel. F-G-fid-07/-08: in the live kind a step says its agent's or script's own
+  // description, no model is named (none wrote the words), and the ways carry no task split dev never counted.
   function storyOf(w) {
-    const loop = w.loops[0], from = loop ? w.steps.findIndex((s) => s[0] === loop[0]) : -1, to = loop ? w.steps.findIndex((s) => s[0] === loop[1]) : -1;
-    const round = from >= 0 ? (w.steps[from][5] || 0) + (w.steps[to][5] || 0) : 0, roundMin = from >= 0 ? (w.steps[from][4] || 0) + (w.steps[to][4] || 0) : 0;
-    const half = Math.ceil(w.tasks / 2);
-    const ways = [{ title: 'Straight through', meta: `${w.steps.map((s) => s[0]).join(', ')} · about ${minOf(w)} min, ${money(costOf(w))}${w.tasks ? ` · ${w.tasks - (loop ? half : 0)} of ${w.tasks} tasks` : ''}`, tone: 'ok', stage: 4 },
-      ...(loop ? [{ title: `${loop[0]} finds something`, meta: `Back to ${loop[1]} once or twice · each round about ${roundMin} min, ${money(round)}${w.tasks ? ` · ${half} of ${w.tasks} tasks` : ''}`, tone: 'act', stage: 2 },
-        { title: `Still not right after ${loop[2]} ${+loop[2] === 1 ? 'round' : 'rounds'}`, meta: 'It stops and asks you what to do · never yet', tone: 'ask', stage: 2 }] : [])];
-    return R.workflowStory({ steps: w.steps.map(([name, ref, , , min, cost], i) => ({ name, says: SAYS[ref] || `${titleOf(ref)}.`, meta: `about ${min} min · ${money(cost || 0)}`, check: i === from })),
-      loop: loop ? { from, to, text: `found something? back to ${loop[1]}, at most ${+loop[2] === 1 ? 'once' : +loop[2] === 2 ? 'twice' : `${loop[2]} times`}` } : null, ways: !atLeast('advanced') || waysOpen ? ways : [], byline: atLeast('advanced') ? `Told by Haiku 5.5 from this workflow${w.tasks ? ` and its last ${w.tasks} ${w.tasks === 1 ? 'task' : 'tasks'}` : ''}` : '' })
+    const at = (name) => w.steps.findIndex((s) => s[0] === name), times = (n) => (n === 1 ? 'once' : n === 2 ? 'twice' : `${n} times`);
+    const loops = w.loops.map(([a, b, n]) => ({ from: at(a), to: at(b), back: b, n: +n })).filter((l) => l.from >= 0 && l.to >= 0);
+    const arcs = loops.filter((l) => l.from !== l.to), live = isLive();
+    const roundOf = (l) => [(w.steps[l.from][5] || 0) + (w.steps[l.to][5] || 0), (w.steps[l.from][4] || 0) + (w.steps[l.to][4] || 0)];
+    const loop = arcs[0], half = Math.ceil(w.tasks / 2), split = !live && w.tasks;   // the demo's telling; live has no per-way counts
+    const fig = measured(w), ways = [{ title: 'Straight through', meta: `${w.steps.map((s) => s[0]).join(', ')}${fig ? ` · about ${minOf(w)} min, ${money(costOf(w))}` : ''}${split ? ` · ${w.tasks - (loop ? half : 0)} of ${w.tasks} tasks` : ''}`, tone: 'ok', stage: 4 },
+      ...arcs.flatMap((l) => { const [round, roundMin] = roundOf(l), from = w.steps[l.from][0]; return [
+        { title: `${from} finds something`, meta: `${live ? `Back to ${l.back}, at most ${times(l.n)}` : `Back to ${l.back} once or twice`}${fig ? ` · each round about ${roundMin} min, ${money(round)}` : ''}${split && l === loop ? ` · ${half} of ${w.tasks} tasks` : ''}`, tone: 'act', stage: 2 },
+        { title: `Still not right after ${l.n} ${l.n === 1 ? 'round' : 'rounds'}`, meta: `It stops and asks you what to do${live ? '' : ' · never yet'}`, tone: 'ask', stage: 2 }]; })];
+    const says = (ref) => (live ? w.agentsByKey?.[ref]?.description || w.scriptsByKey?.[ref]?.description || '' : SAYS[ref] || `${titleOf(ref)}.`);
+    const checks = new Set(arcs.map((l) => l.from));
+    return R.workflowStory({ steps: w.steps.map(([name, ref, , , min, cost], i) => ({ name, says: says(ref), meta: fig ? `about ${min} min · ${money(cost || 0)}` : '', check: checks.has(i) })),
+      loops: loops.map((l) => ({ from: l.from, to: l.to, text: l.from === l.to ? `found something? runs again, at most ${times(l.n)}` : `found something? back to ${l.back}, at most ${times(l.n)}` })),
+      ways: !atLeast('advanced') || waysOpen ? ways : [], byline: atLeast('advanced') && !live ? `Told by Haiku 5.5 from this workflow${w.tasks ? ` and its last ${w.tasks} ${w.tasks === 1 ? 'task' : 'tasks'}` : ''}` : '' })
       + (atLeast('advanced') ? `<div class="wf-acts open-line">${R.button({ label: waysOpen ? 'Fold how a task goes through it' : `How a task goes through it · ${ways.length} ${ways.length === 1 ? 'way' : 'ways'}`, kind: 'quiet', icon: R.icon(waysOpen ? 'chevron' : 'chevR', 12), attrs: { 'data-wf-ways': '', 'aria-expanded': String(waysOpen), 'data-folds': '.ws .list' } })}</div>` : '');
   }
+
 
   // ---- the cards of a way ----
   function cardOf(kind, x) {
     const open = { 'data-wf-open': `${kind}:${x.id}` };
-    if (kind === 'workflow' && x.fresh) return R.pluginCard({ mark: R.kindMark({ kind: 'workflow', tone: 'idle', advisory: true }), kicker: `Draft · never saved · ${x.draft.steps.length} steps`, title: x.title, what: x.what, facts: 'Nothing can run it until you save it', action: R.button({ label: atLeast('expert') ? 'Go on editing' : 'Finish it in a chat', attrs: atLeast('expert') ? { 'data-wf-edit': x.id } : { 'data-wf-chat': `workflow:${x.id}` } }), attrs: open });
+    if (kind === 'workflow' && x.fresh) return R.pluginCard({ mark: R.kindMark({ kind: 'workflow', tone: 'idle', advisory: true }), kicker: `Draft · never saved · ${stepsWord(x.draft.steps.length)}`, title: x.title, what: x.what, facts: 'Nothing can run it until you save it', action: R.button({ label: atLeast('expert') ? 'Go on editing' : 'Finish it in a chat', attrs: atLeast('expert') ? { 'data-wf-edit': x.id } : { 'data-wf-chat': `workflow:${x.id}` } }), attrs: open });
     if (kind === 'workflow') return R.pluginCard({ mark: R.kindMark({ kind: 'workflow', tone: x.running ? 'run' : 'idle', advisory: !x.running && !!x.draft }), kicker: x.draft ? `${shape(x)} · a draft waits, ${x.draft.changes} ${x.draft.changes === 1 ? 'change' : 'changes'}` : shape(x), title: x.title, what: x.what, facts: factsOf(x), action: R.button({ label: 'Use it', attrs: { 'data-wf-use': x.id, title: 'Starts a task in a chat with this workflow in its sentence' } }), more: R.button({ label: 'Change it in a chat', kind: 'quiet', attrs: { 'data-wf-chat': `${kind}:${x.id}` } }), attrs: open });
     const kicker = kind === 'agent' ? `${{ producer: 'Makes something', verifier: 'Checks', clarifier: 'Asks you' }[x.type]} · ${x.model}` : `A script · ${x.runtime}`;
     const what = kind === 'agent' ? `Takes ${x.ins}; gives ${x.outs}.` : `${x.what}.`;
@@ -130,8 +143,8 @@
     const chat = R.button({ label: 'Change it in a chat', attrs: { 'data-wf-chat': `${kind}:${x.id}`, title: 'Worca proposes the change as a card; you apply it' } });
     if (kind === 'workflow') {
       const delta = costOf(x) - costOf(src().workflow[0]);
-      const head = R.placeHead({ center: { label: 'Workflows', to: 'workflows' }, title: x.title, facts: esc(`${shape(x)} · ${x.from}`), mark: R.kindMark({ kind: 'workflow', tone: x.running ? 'run' : 'idle' }), word: x.running ? 'Running' : `${money(costOf(x))} a task`,
-        why: x.running ? (isLive() ? 'Its first task is running' : `${money(4.8)} so far`) : `${x.id === 'default' || x.id === 'wf_default' ? 'what every task runs' : `${money(Math.abs(delta))} ${delta >= 0 ? 'more' : 'less'} than Default`} · ${mergedOf(x)}`,
+      const head = R.placeHead({ center: { label: 'Workflows', to: 'workflows' }, title: x.title, facts: esc(`${shape(x)} · ${x.from}`), mark: R.kindMark({ kind: 'workflow', tone: x.running ? 'run' : 'idle' }), word: x.running ? 'Running' : measured(x) ? `${money(costOf(x))} a task` : 'No tasks yet',
+        why: x.running ? (isLive() ? 'Its first task is running' : `${money(4.8)} so far`) : !measured(x) ? (x.id === 'default' || x.id === 'wf_default' ? 'what every task runs' : '') : `${x.id === 'default' || x.id === 'wf_default' ? 'what every task runs' : `${money(Math.abs(delta))} ${delta >= 0 ? 'more' : 'less'} than Default`} · ${mergedOf(x)}`,
         action: chat + (atLeast('expert') ? R.button({ label: ro ? 'Edit a copy by hand' : 'Edit by hand', kind: 'quiet', attrs: ro ? { 'data-wf-copy-edit': x.id, title: 'A built-in reads as it is: this makes a copy of yours, on the canvas' } : { 'data-wf-edit': x.id, title: 'The graph, on the canvas' } }) : ''), menu: more }) + draft;
       const toggle = atLeast('advanced') ? `<div class="wf-sent">Showing ${pick('wf-show', show, ['the graph', 'the story only'], 'The real graph under the story, or the story alone')}</div>` : '';
       const well = atLeast('advanced') && show === 'the graph' ? R.expandFrame({ open: wide, name: `the graph of ${esc(x.title)}`, body: `${wide ? `<h2 class="wf-ed-h">${esc(x.title)}</h2>` : ''}<div class="wf-well gv-skin is-view" id="wf-graph"></div>`, attrs: { 'data-wf-wide': '' } }) : '';

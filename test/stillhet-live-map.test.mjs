@@ -199,13 +199,25 @@ test('scheduleOf: the D10 fields (skip, overlap, fails, ifMissed, tz, pauseWhy, 
   assert.equal(scheduleOf({ id: 'x', kind: 'recurring', status: 'active', presetId: 'pr_2', presetName: null }, { now: NOW }).preset, 'preset deleted');
   const p = scheduleOf({ id: 'p', kind: 'recurring', status: 'paused', pauseReason: 'failed 3 times in a row' }, { now: NOW });
   assert.deepEqual([p.pauseWhy, p.skip, p.section], ['failed 3 times in a row', '', 'paused']);
-  assert.equal(scheduleOf({ id: 'q', kind: 'recurring', status: 'paused', pauseReason: 'failure_streak', failureStreak: 1, maxFailures: 1 }, { now: NOW }).pauseWhy, 'paused itself after 1 failure in a row');
+  assert.equal(scheduleOf({ id: 'q', kind: 'recurring', status: 'paused', pauseReason: 'failure_streak', failureStreak: 1, maxFailures: 1 }, { now: NOW }).pauseWhy, 'itself after 1 failure in a row', 'F-G-fid-05: after the word Paused, never "Paused paused itself"');
   assert.equal(scheduleOf({ id: 'u', kind: 'recurring', status: 'paused', pauseReason: 'user' }, { now: NOW }).next, 'Paused by you');
   const e = scheduleOf({ id: 'e', kind: 'recurring', status: 'ended', nextRunAt: null }, { now: NOW });
   assert.deepEqual([e.ended, e.section, e.next, e.nextAt], [true, 'ended', '', null]);
   const a = scheduleOf({ id: 'tk', kind: 'once', status: 'scheduled', runAt: '9999-12-31T00:00:00.000Z', after: { kind: 'pipeline', id: 'p-1', title: 'Build the API' } }, { now: NOW });
   assert.deepEqual([a.after, a.next], ['Build the API', 'after Build the API']);
   assert.ok(snapshotOf({ ...SOURCES, schedules: { schedules: [{ id: 'e', kind: 'recurring', status: 'ended' }], tickets: [] } }, { now: NOW }).schedules.some((x) => x.id === 'e' && x.ended), 'an ended series is listed (its own section)');
+});
+
+test('F-G-fid-03, F-G-fid-04: a series has one time, its rule\'s wall time, on its row as on its card and page; its card\'s line is its task, not its cadence again', () => {
+  // 02:00 on Nov 13 in Kiritimati (UTC+14) is Nov 12 12:00 UTC: whatever the machine's zone, the instant's local clock is not 02:00
+  const s = scheduleOf({ id: 'sch_k', kind: 'recurring', status: 'active', nextRunAt: '2026-11-12T12:00:00.000Z', rule: { freq: 'daily', interval: 1, time: '02:00', tz: 'Pacific/Kiritimati' }, tz: 'Pacific/Kiritimati',
+    summary: { target: 'project', workflowId: 'wf_default', prompt: 'Write the changelog digest\nfrom the PRs merged this week', source: null } }, { now: NOW });
+  assert.deepEqual(shapeErrors('schedule', s), []);
+  assert.equal(s.at, '02:00');
+  assert.match(s.time, /(^| )02:00$/, 'the bar row\'s time is the card\'s and the page\'s');
+  assert.equal(s.what, 'Write the changelog digest', 'F-G-fid-04: the first line of what it runs');
+  assert.equal(scheduleOf({ id: 'src', kind: 'recurring', status: 'active', summary: { prompt: '', source: { title: 'Issue #12 Pager breaks' } } }, { now: NOW }).what, 'Issue #12 Pager breaks', 'a ticket source\'s task when it has no prompt');
+  assert.equal(scheduleOf({ id: 'none', kind: 'recurring', status: 'active' }, { now: NOW }).what, '');
 });
 
 test('scheduleOf keeps the saved rule (Save keeps its end), the grace window and the run-after ref', () => {

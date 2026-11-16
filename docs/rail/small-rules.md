@@ -15,6 +15,7 @@
 | `small.appearance` | The profile menu's Appearance opens the theme and the background, each a row of small pictures, its name in the tooltip; the menu row repeats neither | One place for how Worca looks | by hand |
 | `small.top-icons` | The top bar's own buttons are icons with their names in tooltips: Ask worca (Worca's W in a bubble), Pulse with its CountBadge | The top bar stays quiet; the search leads it | by hand |
 | `small.tooltip` | Every `title` is the library's Tooltip: quick on hover and on keyboard focus, a long-press on touch, inside the window; a menu item's tip sits beside the menu, level with the item, never over the next option | Help lives in tooltips, so they must be there when you look | design-system-components |
+| `small.one-tooltip` | A control has one tip: its own `title`, or the OffTip wrapper's, never both, and no titled child, `data-tip` or `aria-describedby` tooltip beside it (`doubleTips` finds them); a tip never covers its own control or, beside a menu, the menu and its next option (`tipPlace`) | Two tips over one control cover each other and say different things | design-system-components |
 
 - **Names** (a page, a menu item, a section head, a settings row): the thing itself, as the people who use it call it,
   in 1–3 words, a plain noun first (`Budget`, `Labels`, `Away mode`, `Team policy`). One thing, one name: never two

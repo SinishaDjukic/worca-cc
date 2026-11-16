@@ -1,7 +1,7 @@
 // The Worca Rail components (docs/rail/; docs/design-system-catalog.json names each one's
 // module). Build a page from these: a component brings its look, so a page sets no size, colour, corner or shadow.
 export { esc, attrs, cls, toElement } from './html.mjs';
-export { button, splitButton } from './button.mjs';
+export { button, splitButton, busy } from './button.mjs';
 export { terminalPane } from './terminal-pane.mjs';
 export { compactMenu, menuItem, menuKeys } from './compact-menu.mjs';
 export { MAKERS, ENGINE_WORDS, makerOf, modelText, modelMakers, makerItems } from './model-makers.mjs';
@@ -34,11 +34,11 @@ export { suggestionField, suggestionFail, suggestButton, suggestedChip, stopWrit
 export { tagGroup, fitTags, listEditor } from './tag-group.mjs';
 export { stepper, stepDot, stepRow, stackRow, lineRow, fileRow, stackedPrRow } from './stepper.mjs';
 export { table } from './table.mjs';
-export { cardAction, fill, runState, needsReason, stateIds, actionHelp, actionLevel, actionFlow, runFlow, makeAction, memberKeeps, chatState, CHAT_KINDS, bulkStateOf, sectionOf, isDone, isLiveStep, stageState, subState, stepLook, defaultStage, stageMeta, toMin, fmtMin, STAGE_WORD, TRACKER_MOVES } from './run-state.mjs';
+export { cardAction, fill, runState, needsReason, stateIds, actionHelp, actionLevel, actionFlow, runFlow, makeAction, memberKeeps, chatState, CHAT_KINDS, bulkStateOf, sectionOf, stillGoing, isDone, isLiveStep, stageState, subState, stepLook, defaultStage, stageMeta, toMin, fmtMin, STAGE_WORD, TRACKER_MOVES } from './run-state.mjs';
 export { workingWord, confirmOf, failureOf, stepFlow } from './step-flow.mjs';
 export { foldMiddle, workParts, workPhrase, workPlace } from './work-place.mjs';
 export { MODES, atLevel, RUN_PAGE_LEVELS, runPartShows, prefs, shows } from './levels.mjs';
-export { copyButton, copied, COPIED_MS } from './copy-button.mjs';
+export { copyButton, copied, copyFrom, COPIED_MS } from './copy-button.mjs';
 export { brandRow, navSection, barGrip, sidebarFrame, sideToggle, menuButton, topBarFrame, askButton } from './shell-frame.mjs';
 export { offlineLine, sideColumn, awayScreen, awayShows, AWAY_IDLE_MS, navItem, accountButton, topBarAction, countBadge, barStrip, inView, askWorcaMark, intentChip, panelFrame } from './shell-parts.mjs';
 export { accountItem, navFlyout, themeChoice, cardTitleLink, describeAccount } from './account-menu.mjs';
@@ -67,7 +67,7 @@ export { stageStep } from './kind-mark.mjs';
 export { runOutcomes, handedChip, expandFrame, markTone, alertLevel, kindMark, partsWord, gitMark, timeline, timelineCard, barHead, turnRow, composer, composerQueue, composerQueueButton, stageBar, cardHead, taskCard, taskProposal, changeProposal, turnDivider, planCard, filesCard, refChip, youTurn, stageLine, stagePart, thinkingRow, placeHead, pluginCard } from './kind-mark.mjs';
 export { turnTime, turnTimeText } from './turn-time.mjs';
 export { prose, loadProse } from './prose.mjs';
-export { tipPlace, watchTooltips } from './tooltip.mjs';
+export { tipPlace, watchTooltips, doubleTips } from './tooltip.mjs';
 export { menuUp, menuShift, watchMenus } from './menu-place.mjs';
 export { secondClickIgnored, watchClickGuard } from './click-guard.mjs';
 export { patchKeyed, patchParts, frameBatch } from './keyed-list.mjs';
