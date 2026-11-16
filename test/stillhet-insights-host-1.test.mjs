@@ -101,3 +101,24 @@ test('D17: a project row opens Tasks narrowed to it; a person row narrows Tasks 
   [...page(h.d).querySelectorAll('[data-in-row]')].find((b) => /Jonas/.test(b.textContent)).click();
   assert.deepEqual(got.at(-1), { person: 'Jonas' });
 });
+
+// gate G F-G-fid-14: live Spend by project draws the prototype's stacked bars, with their legend and caption
+test('F-G-fid-14: Spend by project on live stacks each day by project, with a legend and "Per day, by project"', async () => {
+  const h = await insightsHost();
+  const fig = page(h.d).querySelector('.bar-chart');
+  assert.ok(fig, 'the bar chart');
+  assert.ok(fig.querySelector('.bc-bar.is-stack .ch-seg'), 'stacked bars');
+  const t = (e) => (e?.textContent || '').replace(/\s+/g, ' ').trim();
+  assert.match(t(fig.querySelector('.ch-legend')), /billing-api/);
+  assert.match(t(fig.querySelector('.ch-cap')), /^Per day, by project/);
+});
+
+// F-G-fid-14: a live source with no day cut (By person, from the team's records) draws whole bars, no legend, and says so
+test('F-G-fid-14: By person (no day cut on live) draws whole bars, no legend, and the caption says "all together"', async () => {
+  const h = await insightsHost({ hash: '#insights/team' });
+  const fig = page(h.d).querySelector('.bar-chart');
+  assert.ok(fig, 'the bar chart');
+  assert.equal(fig.querySelector('.ch-seg'), null, 'no parts');
+  assert.equal(fig.querySelector('.ch-legend'), null, 'no empty legend');
+  assert.match(fig.querySelector('.ch-cap').textContent, /^Per day, all together; by person in the rows below/);
+});

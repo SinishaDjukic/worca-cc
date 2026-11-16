@@ -1020,7 +1020,7 @@
       "code": "ui/public/design-system/components/workflow-story.mjs#workflowStory",
       "kind": "showing",
       "needs": [
-        "a workflow told in plain words: its steps, its loop, how a task goes through it"
+        "a workflow told in plain words: its steps, every loop (a step that runs again says so in its panel), how a task goes through it"
       ],
       "rules": [
         "panel.workflow-story",

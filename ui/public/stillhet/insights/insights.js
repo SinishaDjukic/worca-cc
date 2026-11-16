@@ -87,7 +87,7 @@
   const compared = (st) => st.against !== 'none';
   const axisIsRows = (sub, st) => !compared(st) && st.by !== 'day' && (M.TIME.has(st.by) || !!sub.den);
   const noLines = (sub, st) => !compared(st) && !!sub.den && !M.TIME.has(st.by);   // a line across projects would join what has no order
-  const stacks = (sub, st, c) => !compared(st) && !M.TIME.has(st.by) && !sub.den && c.rows.length > 1 && !!c.dayCut;   // live has no day cut: one bar a day
+  const stacks = (sub, st, c) => !compared(st) && !M.TIME.has(st.by) && !sub.den && c.rows.length > 1 && !!c.dayCut;   // live: dev's facts cut by "by" (F-G-fid-14); a source with no cut draws whole bars and says so
   const byWord = (st) => (st.by === 'why' ? 'reason' : M.DIM[st.by].replace(/ \(.*/, ''));
   // each period cut by the top rows of "by": a period's parts add up to the period, a row's parts over the periods to the row
   function partsOf(sub, c) {
@@ -104,7 +104,7 @@
     if (sub.note) return `Per ${per}, all together. ${sub.note}`;
     const allows = pace && st.as !== 'bars' && st.as !== 'lines' ? `, the budget allows ${M.usd(pace)}` : '';   // drawn, the line names it
     if (M.TIME.has(st.by)) return pace ? `You average ${M.usd(c.v / c.days)} a day${allows}` : '';
-    const by = stacks(sub, st, c) ? `, by ${byWord(st)}` : '';
+    const by = stacks(sub, st, c) ? `, by ${byWord(st)}` : c.rows.length > 1 && !c.dayCut ? `, all together; by ${byWord(st)} in the rows below` : '';   // look.chart-play: parts not known
     return `Per ${per}${by}${pace ? ` · you average ${M.usd(c.v / c.days)}${allows}` : ''}`;
   }
   // Who spends where (look.heat-grid): people by the top values of "by", in ink shades; its cells open nothing

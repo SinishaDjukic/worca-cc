@@ -23,20 +23,22 @@ export function barChart({ label, bars, current = -1, height = 120, play = false
   const partWords = (i) => parts.map((p) => `${p.label} ${p.texts ? p.texts[i] : p.values[i]}`).join(' · ');
   const noted = (b, i) => (parts ? { ...b, note: [partWords(i), b.note].filter(Boolean).join(' · ') } : b);
   const lineAt = limit ? Math.round((limit.value / max) * (height - 18)) : 0;
+  // more than eight bars: evenly spaced ticks from the first, at most eight; a narrow screen names only those (look.chart)
+  const step = bars.length > 8 ? Math.ceil(bars.length / 8) : 0, tick = (i) => (step && i % step === 0 ? ' is-tick' : '');
   const cols = bars.map((b, i) => {
     const h = Math.max(b.value ? 3 : 0, Math.round((b.value / max) * (height - 18)));
     const shown = i === top || i === current;
     // a number that would sit on the limit line goes beside its bar, under the line, so it never reads as the line's value
     const onLine = shown && limit && h <= lineAt && lineAt <= h + 20;
     const beside = onLine ? ` class="bc-v is-beside${i === 0 ? ' is-after' : ''}" style="bottom:${Math.max(0, h - 14)}px"` : ' class="bc-v"';
-    return `<span class="bc-col${i === current ? ' is-now' : ''}" data-i="${i}" tabindex="0"${b.off ? attrs({ 'data-off': b.off, 'aria-disabled': 'true', style: 'cursor:default' }) : ''}${play ? attrs({ 'data-read': readOf(noted(b, i)) }) : attrs({ title: `${b.label}: ${b.text}` })}><span${beside}>${shown ? esc(b.text) : ''}</span><span class="bc-bar${parts ? ' is-stack' : ''}" style="height:${h}px">${parts ? segs(i) : ''}</span><span class="bc-x">${esc(b.label)}</span></span>`;
+    return `<span class="bc-col${i === current ? ' is-now' : ''}${tick(i)}" data-i="${i}" tabindex="0"${b.off ? attrs({ 'data-off': b.off, 'aria-disabled': 'true', style: 'cursor:default' }) : ''}${play ? attrs({ 'data-read': readOf(noted(b, i)) }) : attrs({ title: `${b.label}: ${b.text}` })}><span${beside}>${shown ? esc(b.text) : ''}</span><span class="bc-bar${parts ? ' is-stack' : ''}" style="height:${h}px">${parts ? segs(i) : ''}</span><span class="bc-x">${esc(b.label)}</span></span>`;
   }).join('');
   const table = parts
     ? srTable(label, ['All', ...parts.map((p) => p.label)], bars.map((b, i) => [b.label, b.text, ...parts.map((p) => (p.texts ? p.texts[i] : String(p.values[i])))]))
     : `<table class="bc-table"><caption>${esc(label)}</caption><tbody>${bars.map((b) => `<tr><th scope="row">${esc(b.label)}</th><td>${esc(b.text)}</td></tr>`).join('')}</tbody></table>`;
   const line = limit ? `<span class="bc-limit" style="bottom:${lineAt}px"></span>` : '';
   const legend = legendOf([...(parts || []).map((p, k) => ({ cls: `is-s${k}`, text: p.label })), ...(limit ? [{ cls: 'is-limit', text: limit.text }] : [])]);
-  return `<figure class="bar-chart${play ? ' is-read-able' : ''}" style="--bc-h:${height}px"${play ? ` data-chart data-n="${bars.length}"` : ''}>${capOf(caption)}${play ? '<div class="ch-read" hidden></div>' : ''}<div class="bc-plot${limit ? ' has-limit' : ''}" aria-hidden="true">${cols}${line}</div>${legend}${hintOf(hint)}${table}</figure>`;
+  return `<figure class="bar-chart${play ? ' is-read-able' : ''}${step ? ' is-thin' : ''}" style="--bc-h:${height}px"${play ? ` data-chart data-n="${bars.length}"` : ''}>${capOf(caption)}${play ? '<div class="ch-read" hidden></div>' : ''}<div class="bc-plot${limit ? ' has-limit' : ''}" aria-hidden="true">${cols}${line}</div>${legend}${hintOf(hint)}${table}</figure>`;
 }
 
 // ---- Chart play (docs/rail/look.md › look.chart-play): other forms appear only when you ask for them ----
