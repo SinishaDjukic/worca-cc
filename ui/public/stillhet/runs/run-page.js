@@ -556,7 +556,7 @@ function liveAction(v, a) {
     const items = (a.items || []).filter((it) => it && own(it.text));
     return own(a.label) ? Object.assign({}, a, { items }) : items.length ? Object.assign({}, a, { label: items[0].text, items: items.slice(1) }) : null;
   }
-  const ok = (label) => typeof label === 'string' && !(label === 'Switch model…' && !liveModels.length) && (label === 'Full plan' ? livePlanDoc() >= 0 : label === 'Link remote' ? ui.caseId === 'no-remote' : T.canFlow((((v.flow || {})[label] || {}).live) || LIVE_ACT_LABEL[label] || label, { pr, case: ui.caseId, page: true, taskId: ui.taskId }));
+  const ok = (label) => typeof label === 'string' && !(label === 'Switch model…' && !liveModels.length) && (label === 'Full plan' ? livePlanDoc() >= 0 : label === 'Link remote' ? ui.caseId === 'no-remote' : /^(Next|Previous) question$/.test(label) ? !!(ui.run && ui.run.liveAsk) : T.canFlow((((v.flow || {})[label] || {}).live) || LIVE_ACT_LABEL[label] || label, { pr, case: ui.caseId, page: true, taskId: ui.taskId }));
   // the ▾ items are menu entries ({ text, … }); a separator or a header has no action of its own and goes with them
   // COV-3 #12/#14/#16: a usage-limit pause lists dev's other engines (the task's resumeEngines), after its own resumes
   const engines = (T.detail(ui.taskId)?.resumeEngines || []).map((x) => ({ text: 'Resume on ' + x.label, help: x.note }));
@@ -708,20 +708,30 @@ async function liveDo(f, label) {
   const asked = !!(f.confirm || f.dialog || f.fromDialog);
   const u = ui;   // the page this step started on
   const m = (u.form && u.form.models ? u.form.models[u.form.pick] : null) || f.model || null;   // Switch model: the picked model's id and name (kept for Resume anyway)
-  const res = await window.RailTaskLive.flow(f.live || LIVE_LABEL[label] || label, Object.assign({ taskId: f.taskId || u.taskId, value: u.form ? u.form.value : undefined, baseAck: !!f.baseAck, quiet: asked }, m ? { model: m.id, modelLabel: m.label } : {}, f.engine ? { engine: f.engine } : {},
+  const said = f.live || LIVE_LABEL[label] || label, value = u.form ? u.form.value : f.value;   // Resume anyway resends the cap you wrote
+  const res = await window.RailTaskLive.flow(said, Object.assign({ taskId: f.taskId || u.taskId, value, baseAck: !!f.baseAck, quiet: asked }, m ? { model: m.id, modelLabel: m.label } : {}, f.engine ? { engine: f.engine } : {},
+    said === 'Send answer' ? { choices: liveChoices(u) } : {},
     f.ship && u.run && u.run.liveGroup ? { ship: f.ship, groupId: u.run.liveGroup.id, groupKind: u.run.liveGroup.kind } : {},
     // Create PR's dialog: what you wrote and picked goes to dev's POST /api/pr (title, description, draft, watch, base)
     u.dialog === 'pr' && u.pr && !f.ship ? { title: u.pr.title, body: u.pr.desc, draft: !!u.pr.draft, watch: !!u.pr.watch, base: u.pr.base } : {}));
   // Left behind (another task opened meanwhile): the reply never lands on the page now shown, as the demo's perform does.
   if (ui !== u) return new Promise(() => {});
   ui.busy = null;
-  if (res && res.prompt === 'base') { liveNext = Object.assign({ confirm: res.error, baseAck: true, say: 'Resumed on the moved base' }, f.engine ? { live: 'Resume on…', engine: f.engine } : m ? { live: 'Switch model…', model: m } : {}); return { ok: true }; }   // Resume anyway keeps the engine picked
+  // Resume anyway resends the same resume (F-G-G2-03): its engine, model or cap, and Continue without cap stays without
+  if (res && res.prompt === 'base') { liveNext = Object.assign({ confirm: res.error, baseAck: true, say: 'Resumed on the moved base', live: said, value }, f.engine ? { live: 'Resume on…', engine: f.engine } : m ? { live: 'Switch model…', model: m } : {}); return { ok: true }; }   // Resume anyway keeps the engine picked
+  if (res && res.ok && /^(Send answer|Use the default answer)$/.test(said)) Object.assign(ui, { answer: null, answerOwn: '', answers: {}, question: 0 });   // the next question starts clean
   liveSaid = (res && res.say) || '';
   // a new task, a restarted Build or a resume answers the run it started: the page follows it (a resume's new run id is
   // the same task; its old one is dropped from the live runs)
   if (res && res.ok && res.data && res.data.runId && res.data.runId !== u.taskId) liveNext = { open: res.data.runId };
   liveFailWords = (res && !res.ok && res.words) || '';
   return res && res.ok ? { ok: true } : { ok: false, why: (res && res.error) || '' };
+}
+// F-G-G2-02: a live task's answers, one per question: the option you picked or your own words; '' takes Worca's pick
+function liveChoices(u) {
+  const qs = (u.run && u.run.liveAsk && u.run.liveAsk.questions) || [], at = Math.min(u.question || 0, Math.max(0, qs.length - 1));
+  const kept = Object.assign({}, u.answers, { [at]: { answer: u.answer, own: u.answerOwn } });
+  return qs.map((q, k) => { const x = kept[k] || {}; return String(x.own || '').trim() || (x.answer != null && x.answer >= 0 ? q.options[x.answer] || '' : ''); });
 }
 async function liveDirect(label, say, extra, onOk) {
   const keep = pendingFocus;
@@ -873,7 +883,11 @@ function act(label) {
   }
   if (label === 'Review the workflow') { ui.dialog = 'graph'; ui.graphNode = null; ui.menu = ''; pendingFocus = 'vd-close'; return; }
   if (label === 'Watch' || label === 'Watch PRs') { const it = M.view(ui.caseId, ui).action.items.find((x) => x.text === label); ui.watched = !(it && it.checked); ui.menu = ''; toast(ui.watched ? (label === 'Watch' ? 'Worca watches the PR and fixes failing checks' : 'Worca watches all three PRs') : 'Worca stopped watching'); pendingFocus = 'act-main'; return; }
-  if (label === 'Next question' || label === 'Previous question') { ui.question = (ui.question || 0) + (label === 'Next question' ? 1 : -1); ui.answer = null; ui.answerOwn = ''; ui.menu = ''; pendingFocus = 'act-main'; return; }
+  if (label === 'Next question' || label === 'Previous question') {   // each question keeps what you picked or wrote, for Send answer
+    const at = ui.question || 0; ui.answers = Object.assign({}, ui.answers, { [at]: { answer: ui.answer, own: ui.answerOwn } });
+    ui.question = at + (label === 'Next question' ? 1 : -1); const was = ui.answers[ui.question] || {};
+    ui.answer = was.answer ?? null; ui.answerOwn = was.own || ''; ui.menu = ''; pendingFocus = 'act-main'; return;
+  }
   if (/ ((stacked|separate) PRs|one PR) instead$/.test(label)) {
     const v = M.view(ui.caseId, ui); const it = v.action.items.find((x) => x.text === label);
     if (it && it.off) { toast(it.help); ui.menu = ''; pendingFocus = 'menu:act'; return; }

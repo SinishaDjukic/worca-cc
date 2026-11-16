@@ -128,3 +128,74 @@ test('O2: a saved run whose review was forced on draws that step as a problem, n
   assert.doesNotMatch(row.className, /is-done/);
   assert.match(row.textContent, /Blocked · accepted with 2 open issues/);
 });
+
+// F-G-G2-02 (= F-cov23-10, TK-15): a live task waiting on its question shows that question, answered in place on dev's
+// answer route (POST /api/answer {runId, id, payload: {answers}}, as classic and Stillhet Chat send it); never the
+// design's sample question, in its step or under Decisions
+const DEMO_ASKS = /Keep the breadcrumb on phones|Which pages get the breadcrumb|What does Back do on a group page|On phones, does the page keep its full trail|Run this workflow\?/;
+const Q1 = { id: 'q-g2-1', kind: 'clarify', questions: [{ id: 'arch', question: 'Should the export include archived invoices?', options: ['Yes', 'No'], recommended: 'No' }] };
+const Q2 = { id: 'q-g2-2', kind: 'questions', questions: [{ id: 'arch', question: 'Should the export include archived invoices?', options: ['Yes', 'No'], recommended: 'No' }, { id: 'sep', question: 'Which separator?', options: ['Comma', 'Semicolon'], recommended: 'Comma' }] };
+const askPage = (q, write = () => [200, { ok: true }]) => liveHost({ sources: sources(withRun({ pendingQuestion: q })), write,
+  read: detail('pa', { ...TASK_DETAILS.plan.state, pendingQuestion: q, stepper: { graph: { nodes: GATE_NODES } }, steps: [gRow('n_plan', 'done'), gRow('n_impl', 'start')] }) })
+  .then(async (h) => { await go(h.w, '#run/run-a', 200); await settle(300); return h; });
+
+test('F-G-G2-02: a task waiting on its question shows the run\'s own question and its options, never the design\'s sample', async () => {
+  const { d } = await askPage(Q1);
+  const c = card(d);
+  assert.doesNotMatch(c.textContent, DEMO_ASKS);
+  const ask = c.querySelector('.sc-subs .is-ask');
+  assert.ok(ask, 'the step that asks is marked');
+  assert.match(ask.textContent, /Should the export include archived invoices\?/);
+  const under = c.querySelector('.sc-answer');
+  assert.ok(under, 'the answer part sits under the asking step');
+  assert.deepEqual([...under.querySelectorAll('[data-answer]')].map((b) => b.textContent.replace(/\s+/g, ' ').trim().replace(/ ?Worca.*$/, '')), ['Yes', 'No']);
+  assert.equal(c.querySelector('[data-key="act-main"]').dataset.label, 'Send answer');
+  const dec = c.querySelector('[data-key="tab:decisions"]');
+  assert.ok(dec, 'Decisions holds the open question');
+  dec.click(); await settle(60);
+  assert.match(card(d).textContent, /Should the export include archived invoices\?/);
+  assert.doesNotMatch(card(d).textContent, DEMO_ASKS);
+});
+
+test('F-G-G2-02: Send answer posts the picked option on dev\'s answer route; Use the default answer posts Worca\'s pick', async () => {
+  const { d, calls } = await askPage(Q1);
+  card(d).querySelector('[data-answer="0"]').click(); await settle(30);
+  card(d).querySelector('[data-key="act-main"]').click(); await settle(80); await confirmIf(d);
+  assert.deepEqual(answers(calls), [['POST', '/api/answer', { runId: 'run-a', id: 'q-g2-1', payload: { answers: [{ id: 'arch', choice: 'Yes' }] } }]]);
+  const b = await askPage(Q1);
+  b.d.querySelector('#route-run:not([hidden]) #card [data-key="menu:act"]').click(); await settle(30);
+  card(b.d).querySelector('[data-menu-pick="Use the default answer"]').click(); await settle(80); await confirmIf(b.d);
+  assert.deepEqual(answers(b.calls), [['POST', '/api/answer', { runId: 'run-a', id: 'q-g2-1', payload: { answers: [{ id: 'arch', choice: 'No' }] } }]]);
+});
+
+test('F-G-G2-02: several questions are answered one by one, then sent together, your own words included', async () => {
+  const { w, d, calls } = await askPage(Q2);
+  assert.match(card(d).textContent, /Should the export include archived invoices\?/);
+  assert.equal(card(d).querySelector('[data-key="act-main"]').dataset.label, 'Next question');
+  card(d).querySelector('[data-answer="0"]').click(); await settle(30);
+  card(d).querySelector('[data-key="act-main"]').click(); await settle(60);
+  assert.match(card(d).textContent, /Which separator\?/);
+  const own = card(d).querySelector('#answer-own');
+  own.value = 'A tab'; own.dispatchEvent(new w.Event('input', { bubbles: true })); await settle(20);
+  assert.equal(card(d).querySelector('[data-key="act-main"]').dataset.label, 'Send answer');
+  card(d).querySelector('[data-key="act-main"]').click(); await settle(80); await confirmIf(d);
+  assert.deepEqual(answers(calls), [['POST', '/api/answer', { runId: 'run-a', id: 'q-g2-2', payload: { answers: [{ id: 'arch', choice: 'Yes' }, { id: 'sep', choice: 'A tab' }] } }]]);
+});
+
+test('F-G-G2-02: an ask the page cannot answer (a form) shows no sample question and no Send answer', async () => {
+  const { d } = await askPage({ id: 'f-1', kind: 'form', form: 'release', version: 1 });
+  assert.doesNotMatch(card(d).textContent, DEMO_ASKS);
+  assert.equal(card(d).querySelector('.sc-answer'), null);
+  assert.notEqual(card(d).querySelector('[data-key="act-main"]')?.dataset.label, 'Send answer');
+  assert.equal(card(d).querySelector('[data-key="tab:decisions"]'), null, 'no Decisions part holds a sample question');
+});
+
+// F-G-G2-04: an archived task says it is archived, in classic's words (runs-list.mjs: the word Archived, no other line)
+test('F-G-G2-04: an archived task reads Archived, never "Stopped by you · the branch and changes stay"', async () => {
+  const src = sources(); src.archived = { pipelines: [{ id: 'h8', title: 'Shelved', status: 'stopped', archived: true, projectName: 'web', projectKey: 'web-1', startedAt: '2026-11-14T06:00:00Z' }] };
+  const { d } = await page('h8', src, detail('h8', { ...TASK_DETAILS.stopped.state, id: 'h8', title: 'Shelved', archivedAt: '2026-11-14T07:00:00Z' }));
+  assert.match(card(d).textContent, /Archived/);
+  assert.doesNotMatch(card(d).textContent, /the branch and changes stay/);
+  // the no-demo sweep (F-G-G2-02): the archived design case's Merged landing never reaches a task whose PR did not merge
+  assert.doesNotMatch(card(d).textContent, /merged into/);
+});

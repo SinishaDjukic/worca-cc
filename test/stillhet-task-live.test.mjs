@@ -22,7 +22,7 @@ function host({ routes = {}, loaded = true, live = {}, rows = {}, clock = { t: 1
   };
   const t = startTaskLive({ fetch, toast: (s) => toasts.push(s), now: () => clock.t, listLoaded: () => loaded, flag: (k) => !!flags[k],
     rowOf: (id) => rows[id] || null, liveOf: (id) => live[id] || null,
-    runOf: (id) => (rows[id] ? (scopes[id] || { pipelineId: id, projectKey: 'web-1', projectDir: '/src/web' }) : {}) });
+    runOf: (id) => (rows[id] ? (scopes[id] || { pipelineId: id, projectKey: 'web-1', projectDir: '/src/web', prState: 'OPEN' }) : {}) });   // dev's history row says its PR is open (F-G-G1-01)
   return { t, calls, toasts, clock };
 }
 const failedRow = { ...TASK_DETAILS.failed.row };
@@ -122,7 +122,7 @@ test('act: each id\'s route and body; a second press is refused; a refusal says 
   const draft = host({ rows: { h2: approvedRow }, routes: { 'POST /api/pr/merge': [409, { error: 'This pull request is a draft; mark it ready for review first.', code: 'DRAFT' }] } });
   await draft.t.act('merge', { taskId: 'h2', pr: PR_URL });
   assert.deepEqual(draft.toasts, ['Could not merge #959: This pull request is a draft; mark it ready for review first.'], 'the server\'s own refusal words');
-  assert.equal(Object.keys(TASK_ACTIONS).length, 33, 'the ten Step 7 actions, the page\'s Check out, Apply and Discard, and its Terminal, service start and stop, built-in tool, preset, Switch model, Resume at…, Publish branch, away mode, a diff comment, labels and cost tags, a stack\'s start and stop, a group\'s Create PR, a review gate\'s two answers, and COV-3\'s restore, run direction and Resume on ‹Engine›');
+  assert.equal(Object.keys(TASK_ACTIONS).length, 34, 'the ten Step 7 actions and the page\'s Resume (F-G-G2-03), the page\'s Check out, Apply and Discard, and its Terminal, service start and stop, built-in tool, preset, Switch model, Resume at…, Publish branch, away mode, a diff comment, labels and cost tags, a stack\'s start and stop, a group\'s Create PR, a review gate\'s two answers, and COV-3\'s restore, run direction and Resume on ‹Engine›');
 });
 
 test('retry on a moved base is a prompt, not a refusal; Resume anyway posts baseAck', async () => {
@@ -132,7 +132,7 @@ test('retry on a moved base is a prompt, not a refusal; Resume anyway posts base
   assert.deepEqual([r.ok, r.prompt], [false, 'base']);
   assert.deepEqual(toasts, []);
   assert.equal((await t.act('retry', { taskId: 'h3', baseAck: true })).ok, true);
-  assert.deepEqual(calls.filter(([m]) => m === 'POST').map((c) => c[2]), [{ pipelineId: 'h3', baseCheck: true }, { pipelineId: 'h3', baseAck: true }]);
+  assert.deepEqual(calls.filter(([m]) => m === 'POST').map((c) => c[2]), [{ pipelineId: 'h3', baseCheck: true }, { pipelineId: 'h3', baseCheck: true, baseAck: true }]);
 });
 
 test('report: the reason follows the task; GitHub not filing opens the prefilled issue', async () => {
@@ -172,7 +172,7 @@ test('Raise the cap reads dollars as typed: "$180" posts 180; a value that is no
   assert.deepEqual(['$180', '1,200', ' 99.5 ', '$', 'abc', '-5', '12e3'].map(capOf), [180, 1200, 99.5, NaN, NaN, NaN, NaN]);
   const { t, calls, toasts } = host({ rows: { h1: { id: 'h1', case: 'capped' } }, routes: { 'POST /api/resume': [200, { ok: true, runId: 'r2' }] } });
   assert.equal((await t.act('raise-cap', { taskId: 'h1', value: '$180' })).ok, true);
-  assert.deepEqual(calls.filter(([m]) => m === 'POST').map((c) => c[2]), [{ pipelineId: 'h1', costCapUsd: 180 }]);
+  assert.deepEqual(calls.filter(([m]) => m === 'POST').map((c) => c[2]), [{ pipelineId: 'h1', baseCheck: true, costCapUsd: 180 }]);
   const bad = await t.act('raise-cap', { taskId: 'h1', value: 'a lot' });
   assert.equal(bad.ok, false);
   assert.equal(calls.filter(([m]) => m === 'POST').length, 1, 'nothing posted');
@@ -292,7 +292,7 @@ function wsHost({ projects = [{ projectKey: 'api-1', projectName: 'api' }], bran
     return { ok: status < 400, status, json: async () => data, text: async () => (typeof data === 'string' ? data : JSON.stringify(data)) };
   };
   const t = startTaskLive({ fetch, listLoaded: () => true, rowOf: (id) => (id === 'w1' ? { id: 'w1', case: 'approved', pr: PR_URL } : null),
-    runOf: (id) => (id === 'w1' ? { pipelineId: 'w1', projectKey: 'workspaces/ws-9', projectDir: '' } : {}) });
+    runOf: (id) => (id === 'w1' ? { pipelineId: 'w1', projectKey: 'workspaces/ws-9', projectDir: '', prState: 'OPEN' } : {}) });
   return { t, calls };
 }
 
@@ -745,4 +745,29 @@ test('COV-3 #11: a run-links network failure or 5xx reads failed (Try again), a 
   assert.equal(t.state('old-run'), 'ready');
   await t.open('old-run', { force: true }); await settle(20);
   assert.equal(asked(), 3, 'a definitive answer is kept');
+});
+
+// F-G-G2-03: Resume now, Continue without cap and Raise the cap are classic's resumeBody (baseCheck), and a moved base asks
+// before resuming, as Switch model… does; Resume anyway resends the same resume with baseAck
+test('F-G-G2-03: every resume sends baseCheck; a moved base is a prompt, and the resend keeps the cap or the no-cap', async () => {
+  for (const [label, given, body] of [['Resume now', {}, {}], ['Continue without cap', {}, { ignoreCostCap: true }], ['Raise the cap', { value: '$180' }, { costCapUsd: 180 }]]) {
+    let n = 0;
+    const { t, calls, toasts } = host({ rows: { h1: { id: 'h1', case: 'capped' } }, routes: { 'POST /api/resume': () => (++n === 1 ? [409, { error: 'main moved 1 commit', code: 'base-moved' }] : [200, { ok: true, runId: 'r2' }]) } });
+    const first = await t.flow(label, { taskId: 'h1', ...given });
+    assert.deepEqual([first.ok, first.prompt], [false, 'base'], `${label}: a moved base asks`);
+    assert.deepEqual(toasts, [], `${label}: a prompt, not a refusal`);
+    assert.equal((await t.flow(label, { taskId: 'h1', ...given, baseAck: true })).ok, true);
+    assert.deepEqual(calls.filter(([m]) => m === 'POST').map((c) => c[2]), [{ pipelineId: 'h1', baseCheck: true, ...body }, { pipelineId: 'h1', baseCheck: true, baseAck: true, ...body }], label);
+  }
+});
+
+// F-G-G1-01: checks are read only for a PR known to be open; a merged, closed or unknown-state PR asks nothing (dev answers
+// 400 for those, and a chat that opened its cards logged console errors)
+test('F-G-G1-01: GET /api/pr/checks only for a PR known open', async () => {
+  for (const [prState, asks] of [['OPEN', 1], ['MERGED', 0], ['CLOSED', 0], ['', 0]]) {
+    const { t, calls } = host({ rows: { h2: { id: 'h2', case: 'ready', pr: PR_URL } }, scopes: { h2: { pipelineId: 'h2', projectKey: 'web-1', projectDir: '/src/web', prState } },
+      routes: { 'GET /api/pr/checks': [200, TASK_DETAILS.approved.checks] } });
+    t.checks('h2'); await settle(10);
+    assert.equal(calls.filter(([m, u]) => m === 'GET' && u.startsWith('/api/pr/checks')).length, asks, `a PR whose state is "${prState}"`);
+  }
 });

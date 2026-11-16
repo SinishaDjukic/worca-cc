@@ -2,8 +2,8 @@
 // fetches, the PR checks cache and every Tasks action. live-adapter.mjs starts it and sets window.RailTaskLive. The page
 // (runs/run-page-model.js, run-page.js), the bar's list, the center and the chat TaskCard read from here; none of them
 // writes before a route answers `ok`.
-import { actionRunner, FLOW as CHAT_FLOW, openTab } from './chat-live.mjs';
-import { taskPageOf, taskCardOf, newTaskBodyOf, patchFiles, docsOf, logLinesOf, logStepsOf, actionsOf, groupOf, planOf, sessionRowsOf, agentRowsOf, usageRowsOf, commentsByPath } from './task-page.mjs';
+import { actionRunner, FLOW as CHAT_FLOW, openTab, resumeBody } from './chat-live.mjs';
+import { questionsOf, taskPageOf, taskCardOf, newTaskBodyOf, patchFiles, docsOf, logLinesOf, logStepsOf, actionsOf, groupOf, planOf, sessionRowsOf, agentRowsOf, usageRowsOf, commentsByPath } from './task-page.mjs';
 import { ENGINES, ENGINE_NAMES, engineLabel } from '../../../../src/shared/engine-switch.mjs';
 
 const str = (v) => (typeof v === 'string' ? v : '');
@@ -21,10 +21,12 @@ export const TASK_ACTIONS = Object.freeze({
   merge: [(a) => `merge #${a.prNumber || prNum(a.pr)}`, (a) => ['POST', '/api/pr/merge', prScope(a)]],
   'rerun-checks': ['run the checks again', (a) => ['POST', '/api/pr/rerun-checks', prScope(a)]],
   'fix-checks': ['start the checks fix', (a) => ['POST', '/api/pr/fix-checks', prScope(a)]],
-  'raise-cap': ['raise the cap', (a) => ['POST', '/api/resume', { pipelineId: a.pipelineId, costCapUsd: capOf(a.value) }]],
+  // every resume is classic's resumeBody (F-G-G2-03): baseCheck, then baseAck once you said Resume anyway
+  'raise-cap': ['raise the cap', (a) => ['POST', '/api/resume', resumeBody(a.pipelineId, { baseAck: a.baseAck, costCapUsd: capOf(a.value) })]],
+  resume: ['resume the task', (a) => ['POST', '/api/resume', resumeBody(a.pipelineId, { baseAck: a.baseAck, ...(a.ignoreCostCap ? { ignoreCostCap: true } : {}) })]],
   retry: ['retry the task', (a) => (a.recoveryId
     ? ['POST', '/api/answer', { runId: a.runId, id: a.recoveryId, payload: { decision: 'retry' } }]
-    : ['POST', '/api/resume', { pipelineId: a.pipelineId, ...(a.baseAck ? { baseAck: true } : { baseCheck: true }) }])],
+    : ['POST', '/api/resume', resumeBody(a.pipelineId, { baseAck: a.baseAck })])],
   'restart-build': ['restart Build', (a) => ['POST', `/api/runs/${enc(a.pipelineId)}/restart-build`, {}]],
   'plan-approve': ['approve the plan', (a) => ['POST', `/api/runs/${enc(a.runId)}/answer`, { id: a.questionId, decision: 'approve' }]],
   'new-task': ['start the task', (a) => ['POST', '/api/run', a.body]],
@@ -42,7 +44,7 @@ export const TASK_ACTIONS = Object.freeze({
   // Save as preset is dev's run-page save (POST /api/pipelines/:id/preset): the run's own stored setup, under a name
   preset: ['save the preset', (a) => ['POST', `/api/pipelines/${enc(a.pipelineId)}/preset`, { name: str(a.value).trim(), scope: { kind: str(a.projectKey).startsWith('workspaces/') ? 'workspace' : 'project' } }]],
   // Switch model and Resume at… are dev's resume with a model and dev's timed resume (POST /api/schedules/resume)
-  'switch-model': ['switch the model', (a) => ['POST', '/api/resume', { pipelineId: a.pipelineId, baseCheck: true, ...(a.baseAck ? { baseAck: true } : {}), model: a.model }]],   // classic's resumeBody (F-cov23-08)
+  'switch-model': ['switch the model', (a) => ['POST', '/api/resume', resumeBody(a.pipelineId, { baseAck: a.baseAck, model: a.model })]],   // classic's resumeBody (F-cov23-08)
   'resume-at': ['schedule the resume', (a) => ['POST', '/api/schedules/resume', { pipelineId: a.pipelineId, scheduledFor: a.scheduledFor }]],
   // Publish branch (dev's `git push -u`), a task's away mode, a diff line's comment
   publish: ['publish the branch', (a) => ['POST', `/api/runs/${enc(a.pipelineId)}/publish`, { ...(a.projectKey ? { projectKey: a.projectKey } : { projectDir: a.projectDir }), ...(a.memberKey ? { memberKey: a.memberKey } : {}) }]],
@@ -64,7 +66,7 @@ export const TASK_ACTIONS = Object.freeze({
   // and Resume ▾'s resume on the other engine, in classic's resumeBody
   restore: ['restore the task', (a) => ['POST', `/api/runs/${enc(a.pipelineId)}/restore?${a.qs}`, undefined]],
   'run-direction': ['send the direction', (a) => ['POST', `/api/runs/${enc(a.pipelineId)}/directions`, { text: a.text }]],
-  'resume-engine': ['resume on the other engine', (a) => ['POST', '/api/resume', { pipelineId: a.pipelineId, baseCheck: true, ...(a.baseAck ? { baseAck: true } : {}), engine: a.engine }]],
+  'resume-engine': ['resume on the other engine', (a) => ['POST', '/api/resume', resumeBody(a.pipelineId, { baseAck: a.baseAck, engine: a.engine })]],
 });
 // a workspace task's store key is `workspaces/ID`: its saved run, log, diff and comments are dev's workspace routes
 // (ui/routes/workspace-map/runs.mjs, run-comments.mjs); a project's are History's
@@ -115,7 +117,11 @@ export const LIST_ACTIONS = Object.freeze({
 // The rest of the page's run-state labels, onto dev's routes (Step 7): the shared ones are Chat's FLOW.
 const TASK_FLOW = Object.freeze({
   'Merge PR': { act: 'merge' }, Merge: { act: 'merge' }, 'Re-run checks': { act: 'rerun-checks' }, 'Fix checks': { act: 'fix-checks' },
-  'Raise the cap': { act: 'raise-cap' }, Retry: { act: 'retry' }, 'Try again': { act: 'retry' }, 'Restart Build': { act: 'restart-build' },
+  'Raise the cap': { act: 'raise-cap' },
+  // F-G-G2-03: the page's resumes are the Tasks resume (baseCheck, and Resume anyway on a moved base); a card's stay Chat's
+  Resume: { act: 'resume' }, 'Resume now': { act: 'resume' }, 'Continue without cap': { act: 'resume', args: { ignoreCostCap: true } },
+  // F-G-G2-02: a live task's own questions, answered on dev's answer route as Chat answers them under its card
+  'Send answer': { act: 'answer' }, 'Use the default answer': { act: 'answer', args: { defaults: true } }, Retry: { act: 'retry' }, 'Try again': { act: 'retry' }, 'Restart Build': { act: 'restart-build' },
   'Approve and build': { act: 'plan-approve' }, Approve: { act: 'plan-approve' }, 'Start a new task': { act: 'new-task' },
   'Pause after this step': { act: 'pause-after-step' }, 'Report this task': { act: 'report' }, Report: { act: 'report' },
   'Copy link': { copyLink: true },
@@ -137,8 +143,9 @@ const NEEDS_PR = new Set(['Merge PR', 'Merge', 'Fix checks', 'Re-run checks']);
 const PAGE_ONLY = new Set(['Terminal', 'Switch model…', 'Send a direction', 'Resume on…']);
 const FAILED_OR_STUCK = new Set(['failed', 'failed-kept', 'stopped', 'error', 'recovery', 'interrupted-dead']);
 const BASE_PROMPT = new Set(['base-moved', 'base-missing']);
+const RESUMES = new Set(['retry', 'resume', 'raise-cap', 'switch-model', 'resume-engine']);   // dev's resume: a moved base asks first
 // what a live task may do before its run names its pipeline (B1.9 D3, D4): these post only the run id, or no pipeline id
-const RUN_ID_ACTS = new Set(['pause-after-step', 'night', 'plan-approve', 'plan-changes', 'gate-continue', 'gate-another', 'new-task']);
+const RUN_ID_ACTS = new Set(['pause-after-step', 'night', 'plan-approve', 'plan-changes', 'gate-continue', 'gate-another', 'new-task', 'answer']);
 const RUN_ID_LABELS = new Set(['Pause', 'Pause now', 'Stop', 'Copy link']);
 const STARTING = 'the task is still starting; try again in a moment';
 
@@ -280,7 +287,8 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
   function prOfTask(id) {
     const d = tasks.get(id)?.detail, row = rowOf(id);
     const url = str(d?.pr?.url) || str(row?.pr);
-    const st = str(d?.pr?.state).toUpperCase() || (url ? 'OPEN' : '');
+    // F-G-G1-01: only a PR known to be open has checks to read (dev answers 400 for one merged or closed); unknown is not open
+    const st = str(d?.pr?.state).toUpperCase() || str(runOf(id)?.prState).toUpperCase();
     return url && st === 'OPEN' ? url : '';
   }
   /** The checks entry for a task, read by the row, the center card, the chat TaskCard and the page alike (D5). */
@@ -452,6 +460,16 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
       return chat?.act ? chat.act('plan-changes', { runId: a.runId, id: a.questionId, feedback: str(args.value).trim(), key: `plan-changes:${a.runId}` })
         : refuse('send your changes', { ok: false, error: 'Chat is not running' }, args.quiet);
     }
+    // F-G-G2-02: one answer per question, yours (`choices`, by question) or Worca's pick, all in one POST /api/answer (Chat's run-answer)
+    if (id === 'answer') {
+      const q = questionsOf({ status: input.state?.status || r.live?.status, pendingQuestion: pq }), words = "answer the task's question";
+      if (!q) return refuse(words, { ok: false, error: 'the question is no longer waiting for you' }, args.quiet);
+      if (!a.runId) return refuse(words, { ok: false, error: 'the task is not running' }, args.quiet);
+      if (!chat?.act) return refuse(words, { ok: false, error: 'Chat is not running' }, args.quiet);
+      const own = arr(args.choices);
+      const answers = q.questions.map((x, k) => ({ id: x.id, choice: (!args.defaults && str(own[k]).trim()) || x.options[x.pick] || 'auto' }));
+      return chat.act('run-answer', { runId: a.runId, id: q.id, payload: { answers }, key: `run-answer:${a.runId}`, quiet: args.quiet });
+    }
     if (id === 'new-task' && !a.body) a.body = newTaskBodyOf({ ...input.state, projectDir: a.projectDir || input.state?.projectDir });
     if (id === 'comment' && !str(args.value).trim()) return refuse(wordsOf(id, a), { ok: false, error: 'write the comment first' }, args.quiet);
     if (id === 'night' && !a.runId) return refuse(wordsOf(id, a), { ok: false, error: 'the task is not running' }, args.quiet);
@@ -486,10 +504,10 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
       const [method, url, body] = def[1](a);
       const res = await request(method, url, body);
       // Retry on a moved base is a prompt, not a refusal (D10): the strip asks, Resume anyway posts baseAck.
-      if (!res.ok && (id === 'retry' || id === 'resume-engine' || id === 'switch-model') && BASE_PROMPT.has(res.code)) return { ...res, prompt: 'base' };
+      if (!res.ok && RESUMES.has(id) && BASE_PROMPT.has(res.code)) return { ...res, prompt: 'base' };
       if (!res.ok) return refuse(words, { ...res, words }, args.quiet);
       // a resume answers the pipeline's new run id: it is the same task, so its old ids keep finding it
-      if (res.data?.runId && a.pipelineId && (id === 'retry' || id === 'raise-cap' || id === 'switch-model' || id === 'resume-engine')) alias.set(str(res.data.runId), a.pipelineId);
+      if (res.data?.runId && a.pipelineId && RESUMES.has(id)) alias.set(str(res.data.runId), a.pipelineId);
       if (id === 'report' && res.data && res.data.ok === false) {
         const u = str(res.data.issue?.url);
         if (u && open(u) !== null) return { ok: true, data: res.data, say: 'Opened the issue form on GitHub' };
@@ -577,7 +595,7 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
       const st = lc(inputOf(given.taskId || given.pipelineId || '').state?.status);
       return act(/^(stopped|error|failed)$/.test(st) && label !== 'Try again' ? 'restart-build' : 'retry', given);
     }
-    if (f?.act) return act(f.act, given);
+    if (f?.act) return act(f.act, { ...given, ...(f.args || {}) });
     if (f?.copyLink) {
       const link = `${origin || globalThis.location?.origin || ''}/#run/${given.taskId || given.pipelineId || ''}`;
       return runner.run(`copy-link:${given.taskId}`, 'copy the link', async () => {
@@ -605,6 +623,7 @@ export function startTaskLive({ fetch, toast = () => {}, now = Date.now, open = 
     if (label === 'Send a direction') { const lr = resolve(a.taskId || a.pipelineId)?.live; return !!lr && !/^(done|error|stopped|failed)$/.test(lc(lr.status)); }
     if (label === 'Re-run checks') return !/bitbucket\.org/.test(str(a.pr));
     if (TASK_FLOW[label]?.cases) return TASK_FLOW[label].cases.includes(str(a.case));
+    if (TASK_FLOW[label]?.act === 'answer') return !!questionsOf(inputOf(a.taskId || a.pipelineId).state);   // only a question the page can draw
     return !!TASK_FLOW[label] || (!!CHAT_FLOW[label] && (!CHAT_FLOW[label].needsPr || !!a.pr));
   }
 

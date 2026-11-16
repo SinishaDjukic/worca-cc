@@ -84,7 +84,7 @@ test('a paused task offers Stop and Resume, never the fixes of a failure; Resume
   assert.ok(items.includes('Stop'), items.join(', '));
   for (const no of ['Ask Worca to fix it', 'Tell Worca how to fix it']) assert.ok(!items.includes(no), `${no} is for a failure`);
   d.querySelector('#route-chat [data-card-act="run-a|Resume now"]').click(); await settle(40);
-  assert.deepEqual(posts(calls).at(-1), ['POST', '/api/resume', { pipelineId: 'pa' }]);
+  assert.deepEqual(posts(calls).at(-1), ['POST', '/api/resume', { pipelineId: 'pa', baseCheck: true }]);
 });
 
 test('a task waiting on its question can be stopped from its card', async () => {

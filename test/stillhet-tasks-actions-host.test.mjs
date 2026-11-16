@@ -70,7 +70,7 @@ test('raise-cap: the cap dialog starts at the task\'s own cap, and "$180" as typ
   assert.deepEqual(sent(calls), [], 'not money: nothing is posted');
   d.querySelector('#fd-value').value = '$180'; d.querySelector('#fd-value').dispatchEvent(new w.Event('input', { bubbles: true }));
   d.querySelector('[data-key="fd-ok"]').click(); await settle(80);
-  assert.deepEqual(sent(calls), [['POST', '/api/resume', { pipelineId: 'h1', costCapUsd: 180 }]]);
+  assert.deepEqual(sent(calls), [['POST', '/api/resume', { pipelineId: 'h1', baseCheck: true, costCapUsd: 180 }]]);
 });
 
 test('retry: Try again on a paused task posts /api/resume with baseCheck', async () => {
@@ -178,4 +178,30 @@ test('F-a4-03 + F-a1-09: a running task opened by its run id shows Pause and Sto
   assert.equal(sent(calls).length, 1, 'Stop is not sent before its confirm');
   await yes(d);
   assert.deepEqual(sent(calls).at(-1), ['POST', '/api/stop', { runId: 'run-b' }]);
+});
+
+// F-G-G2-03: on the page, Raise the cap on a moved base asks "Resume anyway" (as Switch model… does); yes resends the same
+// cap with baseAck, never a plain Retry
+test('F-G-G2-03: Raise the cap on a moved base asks first; Resume anyway resends costCapUsd with baseCheck and baseAck', async () => {
+  let n = 0;
+  const { w, d, calls } = await page('h1', { write: (u) => (u === '/api/resume' && !n++ ? [409, { error: 'main moved 1 commit since this task started', code: 'base-moved' }] : [200, { ok: true }]) });
+  main(d).click(); await settle(40);
+  const field = d.querySelector('#fd-value');
+  field.value = '$180'; field.dispatchEvent(new w.Event('input', { bubbles: true }));
+  d.querySelector('[data-key="fd-ok"]').click(); await settle(120);
+  assert.match(d.querySelector('#card').textContent, /main moved 1 commit since this task started/, 'the move is said before anything resumes');
+  await yes(d); await settle(80);
+  assert.deepEqual(sent(calls), [['POST', '/api/resume', { pipelineId: 'h1', baseCheck: true, costCapUsd: 180 }], ['POST', '/api/resume', { pipelineId: 'h1', baseCheck: true, baseAck: true, costCapUsd: 180 }]]);
+});
+
+test('F-G-G2-03: Continue without cap, confirmed, sends baseCheck; on a moved base Resume anyway keeps ignoreCostCap', async () => {
+  let n = 0;
+  const { d, calls } = await page('h1', { write: (u) => (u === '/api/resume' && !n++ ? [409, { error: 'main moved 1 commit', code: 'base-moved' }] : [200, { ok: true }]) });
+  d.querySelector('#card [data-key="menu:act"]').click(); await settle(30);
+  d.querySelector('#card [data-menu-pick="Continue without cap"]').click(); await settle(60);
+  if (d.querySelector('#card [data-confirm="yes"]') && !/main moved/.test(d.querySelector('#card').textContent)) await yes(d);
+  await settle(60);
+  assert.match(d.querySelector('#card').textContent, /main moved 1 commit/);
+  await yes(d); await settle(80);
+  assert.deepEqual(sent(calls), [['POST', '/api/resume', { pipelineId: 'h1', baseCheck: true, ignoreCostCap: true }], ['POST', '/api/resume', { pipelineId: 'h1', baseCheck: true, baseAck: true, ignoreCostCap: true }]]);
 });

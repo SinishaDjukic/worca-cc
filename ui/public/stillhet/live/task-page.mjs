@@ -33,9 +33,10 @@ const rowState = (rows) => (rows.some((r) => STEP_STATE[lc(r.status)] === 'now')
  *  activeMs, steps: [{ name, state, open? }] }]. `nodes`: the workflow's graph nodes (state.stepper.graph.nodes): a stage's steps are
  *  its nodes, named by their labels and marked by their ledger rows; a stage none of them is in, and no step ran in, is left
  *  out (a Restart Build round's workflow has no planner). An empty list (Auto still deciding) keeps all three, and its steps
- *  are the ledger's own. `gate` (gateOf): its node's step asks (B1.6 D4); `openIssues` (the run state's, forceClean): a step
+ *  are the ledger's own. `gate` (gateOf): its node's step asks (B1.6 D4); `question` (questionsOf): its node's step asks,
+ *  else the step working now, else the last that ran (F-G-G2-02); `openIssues` (the run state's, forceClean): a step
  *  whose node a review forced on with open issues is `blocked`, with `open` its count (D5). */
-export function stagesOf(steps = [], nodes = [], { gate = null, openIssues = [] } = {}) {
+export function stagesOf(steps = [], nodes = [], { gate = null, question = null, openIssues = [] } = {}) {
   const flow = arr(nodes).filter((n) => n && !bookend(n) && (!n.kind || STEP_KINDS.test(str(n.kind))));
   // a ledger row for a node of the graph that is no step (the Task input, End, a gate) is no stage's step either
   const notStep = new Set(arr(nodes).filter((n) => n && !flow.includes(n)).map((n) => str(n.id)));
@@ -58,11 +59,17 @@ export function stagesOf(steps = [], nodes = [], { gate = null, openIssues = [] 
   });
   // the step that asks: the gate's node's, else the Review stage's last step that ran, else its last step (exactly one)
   let ask = null;
-  if (gate) {
-    const id = str(gate.nodeId);
+  const asker = gate || question;
+  if (asker) {
+    const id = str(asker.nodeId);
     for (const st of stages) { const i = id ? st.list.findIndex((x) => x.ids.includes(id)) : -1; if (i >= 0) { ask = [st, i]; break; } }
-    const rev = !ask && stages.find((st) => st.key === 'review');
+    const rev = !ask && gate && stages.find((st) => st.key === 'review');
     if (rev && rev.list.length) { const ran = rev.list.map((x) => x.rows.length > 0).lastIndexOf(true); ask = [rev, ran >= 0 ? ran : rev.list.length - 1]; }
+    if (!ask && !gate) {   // a question with no node of the graph: the step working now, else the last that ran
+      const at = stages.flatMap((st) => st.steps.map((x, i) => [st, i, x.state])), states = at.map((x) => x[2]);
+      const k = states.lastIndexOf('now') >= 0 ? states.lastIndexOf('now') : states.lastIndexOf('done');
+      if (k >= 0) ask = [at[k][0], at[k][1]];
+    }
   }
   const open = new Map(arr(openIssues).filter((o) => o && str(o.nodeId) && (num(o.count) || 0) > 0).map((o) => [str(o.nodeId), o.count]));
   return stages.map(({ list, ...st }) => {
@@ -118,6 +125,21 @@ export function gateOf(state = {}) {
   const count = issues.length;
   return { id: q.id, nodeId: str(q.nodeId), issues, count,
     line: count ? `${count} open ${count === 1 ? 'issue' : 'issues'}: accept as is, or run another cycle?` : 'Accept as is, or run another cycle?' };
+}
+
+/** F-G-G2-02: the run's own questions (dev's clarify or questions ask: `questions[{ id, question, options, recommended }]`, the
+ *  ones Stillhet Chat answers under its card) as the task page's answer part draws them: { id, nodeId, questions: [{ id, q,
+ *  why, options, pick }] }. null for any other ask (a plan, a gate, a recovery, a form) and once the task has ended: the
+ *  page then shows no question, never the design's sample. */
+export function questionsOf(state = {}) {
+  const q = state?.pendingQuestion;
+  if (!q || typeof q !== 'object' || !str(q.id) || q.kind === 'plan' || ENDED.test(lc(state.status))) return null;
+  const qs = arr(q.questions).filter((x) => x && typeof x === 'object' && str(x.question));
+  if (!qs.length) return null;
+  return { id: q.id, nodeId: str(q.nodeId), questions: qs.map((x) => {
+    const options = arr(x.options).filter((v) => typeof v === 'string' && v.trim()), k = options.indexOf(x.recommended);
+    return { id: x.id, q: str(x.question), why: str(x.why) || str(x.context), options, pick: k >= 0 ? k : 0 };
+  }) };
 }
 
 /** The case both places show: an open PR's from its checks entry, else the store's (D5). */
@@ -228,9 +250,9 @@ export function taskPageOf(input = {}, { now = 0 } = {}) {
   // c17 on the page: a bold head and one row per failure; the page's head then says nothing of it (each fact once)
   const fail = failureOf(state);
   const failure = fail ? { head: card.detail, rows: fail.items.map((l) => l.replace(/^✗\s*/, '')) } : null;
-  const gate = gateOf(state);
+  const gate = gateOf(state), ask = gate ? null : questionsOf(state);
   const stages = ENDED.test(lc(state.status)) && !arr(state.steps).some((s) => s && !bookend(s)) && !arr(state.stepper?.graph?.nodes).length ? []
-    : stagesOf(state.steps, state.stepper?.graph?.nodes, { gate, openIssues: state.openIssues });
+    : stagesOf(state.steps, state.stepper?.graph?.nodes, { gate, question: ask, openIssues: state.openIssues });
   // the gate's head says why the task waits (D7): its asking step reached its cycle limit
   const asking = card.case === 'gate' ? stages.flatMap((st) => st.steps).find((x) => x.state === 'ask') : null;
   return {
@@ -242,7 +264,8 @@ export function taskPageOf(input = {}, { now = 0 } = {}) {
     base: card.base || '',
     pr: pr.url ? `#${prNumber(pr.url)}` : '',
     prUrl: pr.url,
-    detail: failure ? '' : card.detail || (card.case === 'gate' ? `${asking ? asking.name : 'Review'} reached its cycle limit` : reasonOf(row, state)),
+    // F-G-G2-04: an archived task says only that it is archived, as classic's list does (runs-list.mjs: word Archived, no detail)
+    detail: failure || row.archived ? '' : card.detail || (card.case === 'gate' ? `${asking ? asking.name : 'Review'} reached its cycle limit` : reasonOf(row, state)),
     failure,
     review: reviewOf(state),
     checks: checksOf(input.checks),
@@ -261,6 +284,7 @@ export function taskPageOf(input = {}, { now = 0 } = {}) {
     // a task that ended with no ledger and no graph (dev kept no steps): no work stage, never three "Not yet" ones
     stages,
     gate,
+    ask,
     ...(failedChecks ? { failedChecks } : {}),
     pauseAfterStep: state.pauseAfterStep === true,
     // the workflow the task ran (its stepper's template, slice 7 D17): the Workflow dialog opens it in Workflows

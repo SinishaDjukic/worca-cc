@@ -288,7 +288,7 @@ test('flow: Resume posts dev\'s pipelineId (POST /api/resume reads it), Continue
   await r.live.flow('Resume now', { runId: 'run-a', pipelineId: 'p1' });
   await r.live.flow('Continue without cap', { runId: 'run-a', pipelineId: 'p1' });
   await r.live.flow('Label…', { pipelineId: 'p1', labels: ['billing'], value: 'Hotfix' });
-  assert.deepEqual(r.calls.map((c) => [c.method, c.url, c.body]), [['POST', '/api/resume', { pipelineId: 'p1' }], ['POST', '/api/resume', { pipelineId: 'p1', ignoreCostCap: true }], ['PUT', '/api/runs/p1/labels', { labels: ['billing', 'hotfix'] }]]);
+  assert.deepEqual(r.calls.map((c) => [c.method, c.url, c.body]), [['POST', '/api/resume', { pipelineId: 'p1', baseCheck: true }], ['POST', '/api/resume', { pipelineId: 'p1', baseCheck: true, ignoreCostCap: true }], ['PUT', '/api/runs/p1/labels', { labels: ['billing', 'hotfix'] }]]);
 });
 
 test('flow: a card\'s Create PR and View changes carry the run\'s scope (the store\'s run, by its pipeline id): a branch run\'s changes are dev\'s recovery-patch', async () => {

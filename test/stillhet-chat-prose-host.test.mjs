@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { marked } from 'marked';
 import createDOMPurify from 'dompurify';
-import { liveHost, go, settle, clone, posts, THREAD } from './helpers/stillhet-chat-live-host.mjs';
+import { liveHost, go, settle, until, clone, posts, THREAD } from './helpers/stillhet-chat-live-host.mjs';
 import { stillhetHost } from './helpers/stillhet-host.mjs';
 
 const MODS = { marked, createDOMPurify };
@@ -19,6 +19,9 @@ async function open(t, text, { status = 'done', load, refs = {} } = {}) {
   await go(h.w, '#chat/ask_1', 120);
   return { ...h, q: (s) => h.d.querySelector(`#route-chat ${s}`), qa: (s) => [...h.d.querySelectorAll(`#route-chat ${s}`)] };
 }
+// A chip lands only after the renderer has loaded, dev's POST /api/ask/refs/resolve has answered and the turn has redrawn;
+// under CI's load that chain outruns any fixed wait, so a ref test waits for the confirmed chip itself (the CI flake)
+const chipLands = (q, sel) => until(() => q(sel), 15000);
 // a click on a link must not navigate jsdom away
 const noFollow = (d) => d.addEventListener('click', (e) => { if (e.target.closest('a')) e.preventDefault(); }, true);
 
@@ -57,6 +60,7 @@ test('an unsafe reply leaves nothing that runs: no planted data-* hook, and a cl
 
 test('a confirmed run ref inside a list item is a RefChip in that li; an unconfirmed id stays words', async (t) => {
   const { q } = await open(t, '- the same as 0a1b2c3d\n- not 9f9f9f9f', { refs: { 'run:0a1b2c3d': { ok: true, kind: 'run', id: 'pa', runId: 'run-a', title: 'Ask me' }, 'run:9f9f9f9f': { ok: false } } });
+  await chipLands(q, '.convo-words .prose li [data-ref-run]');
   const [a, b] = q('.convo-words .prose').querySelectorAll('li');
   assert.equal(a.querySelector('[data-ref-run]')?.textContent, 'Ask me');
   assert.equal(b.querySelectorAll('[data-ref-run]').length, 0);
@@ -99,12 +103,13 @@ test('a ## heading is an h2 inside .prose, with no class of its own (calm by rai
 
 test('a confirmed chat ref in a paragraph is a RefChip', async (t) => {
   const { q } = await open(t, 'We talked in ask_0123abcd about it.', { refs: { 'chat:ask_0123abcd': { ok: true, kind: 'chat', title: 'Billing questions' } } });
-  assert.equal(q('.convo-words .prose p [data-ref-chat]')?.getAttribute('data-ref-chat'), 'ask_0123abcd');
+  assert.equal((await chipLands(q, '.convo-words .prose p [data-ref-chat]')).getAttribute('data-ref-chat'), 'ask_0123abcd');
 });
 
 test('a PR written as a markdown link that dev confirms is a RefChip in place of the link', async (t) => {
   const PR = 'https://github.com/acme/web/pull/9';
   const { q, qa } = await open(t, `Here is [the PR](${PR}).`, { refs: { 'gh:acme/web#9': { ok: true, kind: 'pr', title: 'Fix totals' } } });
+  await chipLands(q, '.convo-words .prose [data-ref-url]');
   const chips = qa('.convo-words .prose [data-ref-url]');
   assert.equal(chips.length, 1, 'one chip, not a chip chipped again inside itself');
   const [chip] = chips;
