@@ -1,7 +1,8 @@
 // test/stillhet-settings-labs-notifications-live.test.mjs — Stillhet Settings › Labs and › Notifications in the live kind
 // (ui/public/stillhet/settings/settings-model.js, settings.js, pulse/pulse.js): what is real but not wired yet is disabled,
 // shows its value and says the not-live sentence as its reason (docs/rail/settings.md `set.not-live`). Labs lists exactly
-// the flags GET /api/flags returns, read-only; Notifications' Badge, Sound, Breathing, Desktop and Updates save nothing.
+// the flags GET /api/flags returns (its writes: stillhet-settings-labs-live.test.mjs); Notifications' Badge, Sound, Breathing,
+// Desktop and Updates save nothing.
 // The demo kind keeps every switch and picker. Each window is closed when its test ends.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -49,46 +50,6 @@ test('F-7b-01: each live Labs switch shows the server\'s state', async () => {
   for (const f of FLAGS_FIXTURE) assert.equal(switchOf(d, f.title).getAttribute('aria-checked'), String(f.on), f.title);
 });
 
-test('F-7b-01: a live Labs switch is disabled and gives the not-live sentence; Features\' meta says it', async () => {
-  const { d } = await live({ hash: '#settings/experimental' });
-  for (const f of FLAGS_FIXTURE) {
-    const sw = switchOf(d, f.title);
-    assert.equal(sw.disabled, true, f.title);
-    assert.equal(sw.closest('.tip-wrap')?.title, SENTENCE, f.title);
-    assert.equal(rowOf(d, f.title).querySelectorAll('.set-dot').length, 0, `${f.title}: no ChangedDot`);
-  }
-  assert.equal(metaOf(secOf(d, 'Features')), SENTENCE);
-});
-
-test('F-7b-01: clicking a live Labs switch sends nothing, changes nothing and toasts nothing', async () => {
-  const { w, d, posts } = await live({ hash: '#settings/experimental' });
-  const was = w.RailUI.prefs.flag('runLabels');
-  switchOf(d, 'Run labels').click(); await settle();
-  switchOf(d, 'Run labels').dispatchEvent(new w.MouseEvent('click', { bubbles: true })); await settle();
-  assert.deepEqual(nonGets(posts), []);
-  assert.equal(switchOf(d, 'Run labels').getAttribute('aria-checked'), 'false');
-  assert.equal(toastText(d), '');
-  assert.equal(w.RailUI.prefs.flag('runLabels'), was);
-});
-
-test('F-7b-01: SettingsView.toggle(\'flag:…\') on live returns \'\' and leaves prefs', async () => {
-  const { w, posts } = await live({ hash: '#settings/experimental' });
-  const was = w.RailUI.prefs.flag('runLabels');
-  assert.equal(w.SettingsView.toggle({}, 'flag:runLabels'), '');
-  assert.equal(w.RailUI.prefs.flag('runLabels'), was);
-  assert.deepEqual(nonGets(posts), []);
-});
-
-test('F-7b-01: Reset all is disabled with the sentence on live', async () => {
-  const { w, d, posts } = await live({ hash: '#settings/experimental' });
-  const b = buttonOf(secOf(d, 'Features'), 'Reset all');
-  assert.equal(b.disabled, true);
-  assert.equal(b.closest('.tip-wrap')?.title, SENTENCE);
-  b.dispatchEvent(new w.MouseEvent('click', { bubbles: true })); await settle();
-  assert.deepEqual(nonGets(posts), []);
-  assert.equal(toastText(d), '');
-});
-
 test('F-7b-01: a flags frame reads /api/flags again and the switch follows', async () => {
   let flags = FLAGS_FIXTURE;
   const { w, d, gets, sockets } = await live({ flags: () => [200, { flags }], hash: '#settings/experimental' });
@@ -98,7 +59,6 @@ test('F-7b-01: a flags frame reads /api/flags again and the switch follows', asy
   await settle(120);
   assert.equal(gets.filter((u) => u === '/api/flags').length, 2);
   assert.equal(switchOf(d, 'Run labels').getAttribute('aria-checked'), 'true');
-  assert.equal(switchOf(d, 'Run labels').disabled, true);
   void w;
 });
 
