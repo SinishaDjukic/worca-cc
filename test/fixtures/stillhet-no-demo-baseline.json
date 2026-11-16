@@ -293,7 +293,7 @@
     },
     "runs/runs-list.js › would › open PR … on GitHub (it leaves Worca)": {
       "class": "wired",
-      "why": "W.live && view-pr goes to liveAct, which window.opens the real PR url (runs/runs-list.js:194, :199).",
+      "why": "W.live && view-pr goes to liveAct, which window.opens the real PR url (runs/runs-list.js:201, :208).",
       "via": "ui/public/stillhet/runs/runs-list.js"
     },
     "settings/settings-model.js › demo-row › About": {
