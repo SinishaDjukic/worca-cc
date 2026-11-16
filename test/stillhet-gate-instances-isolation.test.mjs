@@ -232,6 +232,30 @@ test('Gate 2 fix: git dirs kept as plain data in the store (alternates to a gone
   assert.ok(!existsSync(join(a.home, 'copy-not-isolated.txt')));
 });
 
+test('Gate 3 fix: a copied repo with an owner worktree registered outside the copy (gitdir and commondir) starts, and the registration is dropped', { skip: posixOnly, timeout: 120000 }, async () => {
+  const o = fakeOwner();
+  const elsewhere = join(scratch, `o${owners}`, 'src', 'main-repo-wt', 'add-to-group');
+  git(o.main, 'worktree', 'add', '-q', '-b', 'feat/elsewhere', elsewhere, 'main');
+  assert.ok(existsSync(join(o.main, '.git', 'worktrees', 'add-to-group', 'commondir')), 'the real registration has a commondir');
+  const before = git(o.main, 'worktree', 'list', '--porcelain');
+  const [a] = planInstances(parseArgs(['start', 'A', '--root', join(scratch, 'gates-wt-outside')]), { realHome: o.realHome, tmp: scratch });
+  await prepareHome(a, { realHome: o.realHome });
+  assert.deepEqual(verifyIsolation(a.home), []);
+  const clones = readdirSync(join(a.home, 'repos')).flatMap((h) => readdirSync(join(a.home, 'repos', h)).map((n) => join(a.home, 'repos', h, n)));
+  const copyMain = clones.find((c) => statSync(join(c, '.git')).isDirectory());
+  assert.ok(!existsSync(join(copyMain, '.git', 'worktrees', 'add-to-group')), 'the outside registration is dropped from the copy');
+  assert.doesNotMatch(git(copyMain, 'worktree', 'list', '--porcelain'), /add-to-group/);
+  assert.equal(git(o.main, 'worktree', 'list', '--porcelain'), before, 'the real worktree list is unchanged');
+
+  // `prepare` copies, isolates and verifies without starting a server
+  const root = join(scratch, 'gates-prepare');
+  const out = [];
+  assert.equal(await main(['prepare', 'A', '--root', root], { out: (l) => out.push(l), err: (l) => out.push(l), realHome: o.realHome, tmp: scratch, serverPath: '/nonexistent' }), 0, out.join('\n'));
+  assert.match(out.join('\n'), /prepared .*no server started/);
+  assert.deepEqual(verifyIsolation(join(root, 'A')), []);
+  assert.ok(!existsSync(join(root, 'A', 'gate-instance.json')), 'no server was started');
+});
+
 const pushUrls = (repo) => git(repo, 'config', '--get-all', 'remote.origin.pushurl').split('\n');
 const sqlite = (home) => new DatabaseSync(join(home, '.worca-cc', 'worca-cc.db'));
 

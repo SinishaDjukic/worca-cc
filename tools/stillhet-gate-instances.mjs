@@ -13,6 +13,7 @@
 // Run: node tools/stillhet-gate-instances.mjs start [A,B,C,D] [--root DIR] [--port A=4601] [--no-mock B] [--mock-env WORCA_MOCK_X=v]
 //        [--welcome] [--ui-level simple|advanced|expert] [--fresh]
 //      node tools/stillhet-gate-instances.mjs list | stop [letters] | login-status [letters] | login X   [--root DIR]
+//      node tools/stillhet-gate-instances.mjs prepare [letters] [--root DIR] [--fresh]   (copy, isolate and verify only; no server)
 import { createHash } from 'node:crypto';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { chmodSync, closeSync, constants as FS, copyFileSync, cpSync, existsSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -472,13 +473,16 @@ export function isolateCopy(store, { home, realStore, realHome, cp = cpStore }) 
   for (const [from, to] of exact) pairs.push({ from: path.resolve(from), to, prefix: false });
   const rw = pathRewriter(pairs);
   rewriteStore(store, rw);
+  const dropped = [];
   for (const l of gitLinks(home)) {
     const text = readFileSync(l.file, 'utf8');
     const next = rw(text);
     if (next !== text) writeFileSync(l.file, next);
-    // a copied repo's registration of a checkout that is not in this copy (an owner worktree elsewhere) is dropped from the copy
-    if (l.kind === 'admin' && linkTargets(l).some((t) => !within(canon(t), homeC))) rmSync(path.dirname(l.file), { recursive: true, force: true });
+    // a copied repo's registration of a checkout that is not in this copy (an owner worktree elsewhere) is dropped from the
+    // copy, after the loop: its folder also holds the commondir link that comes next in the list
+    if (l.kind === 'admin' && linkTargets(l).some((t) => !within(canon(t), homeC))) dropped.push(path.dirname(l.file));
   }
+  for (const d of dropped) rmSync(d, { recursive: true, force: true });
   pinGitLinks(home);
   const gitDirs = blockPushes(home);
   const { schedules, tickets } = stopCopiedSchedules(store);
@@ -851,6 +855,16 @@ export async function main(argv = process.argv.slice(2), io = {}) {
         }
         return 0;
       }
+      case 'prepare': {   // copy, isolate and verify only; never spawns a server (a dry check on real data)
+        for (const inst of plan) {
+          const release = claimInstance(inst);
+          try {
+            const prep = await prepareHome(inst, { realHome, fresh: opts.fresh, welcome: opts.welcome, uiLevel: opts.uiLevel });
+            out(`${inst.letter}  HOME=${inst.home}  store=${inst.store}  prepared (${prep.copied}${prep.repos === null ? '' : `, ${prep.repos} repos`}); no server started`);
+          } finally { release(); }
+        }
+        return 0;
+      }
       case 'list': {
         const want = new Set(plan.map((i) => i.letter));
         for (const r of listInstances(root)) {
@@ -884,7 +898,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
         return 0;
       }
       default:
-        refuse('bad-arg', 'commands: start, list, stop, login-status, login X');
+        refuse('bad-arg', 'commands: start, prepare, list, stop, login-status, login X');
     }
   } catch (e) {
     if (e instanceof GateInstanceError) { err(`${e.code}: ${e.message}`); return 2; }
