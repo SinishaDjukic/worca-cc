@@ -53,12 +53,12 @@ test('enginesFor uses each adapter\'s own rule', () => {
   const stdio = enginesFor('x', { type: 'stdio' }, { getEngine: fake });
   assert.deepEqual(stdio.on, ENGINE_NAMES.map(engineLabel));
   const http = enginesFor('x', { type: 'http' }, { getEngine: fake });
-  assert.deepEqual(http.off.map((o) => o.engine), ['Codex']);
+  assert.deepEqual(http.off.map((o) => o.engine), [engineLabel('codex')]);
   assert.match(http.off[0].reason, /codex attaches stdio servers only/);
 });
 
 test('the real enginesFor: an http server is off on Codex and Goose', () => {
-  assert.deepEqual(enginesFor('x', { type: 'http' }).off.map((o) => o.engine), ['Codex', 'Goose']);
+  assert.deepEqual(enginesFor('x', { type: 'http' }).off.map((o) => o.engine), [engineLabel('codex'), engineLabel('goose')]);
 });
 
 const ADD = { kind: 'add', name: 'github', type: 'stdio', command: 'npx', args: ['-y', '@modelcontextprotocol/server-github'], env: { GITHUB_TOKEN: TOKEN } };
