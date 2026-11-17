@@ -41,7 +41,7 @@ export function detailTabs(has = {}) {
   return DETAIL_TABS.filter(([id]) => has[id]).map(([id, label]) => ({ id, label, count: has[id] === true ? '' : has[id] }));
 }
 
-const KEPT = 'worca-stillhet.detail-panel', WHERE = 'worca-stillhet.card-layout';
+const KEPT = 'worca-stillhet.detail-panel', WHERE = 'worca-stillhet.card-layout', OPEN = 'worca-stillhet.detail-open';
 const quoted = (s) => String(s).replace(/["\\]/g, '\\$&');
 
 /**
@@ -78,7 +78,15 @@ export function detailPanelController({ root, resolve, host = null, repaint = nu
   const s = { id: '', tab: '', wide: false, last: '', stage: '' };
   let from = '', was = '';
   try { const k = JSON.parse(store?.getItem(KEPT) || '{}'); s.wide = !!k.wide; s.last = k.tab || ''; } catch (e) { /* a private window: nothing remembered */ }
-  const keep = () => { try { store?.setItem(KEPT, JSON.stringify({ wide: s.wide, tab: s.tab || s.last })); } catch (e) { /* not kept */ } };
+  const keep = () => { try { store?.setItem(KEPT, JSON.stringify({ wide: s.wide, tab: s.tab || s.last })); } catch (e) { /* not kept */ } keepOpen(); };
+  // what was open comes back after a reload of the same address, in this browser tab only (panel.detail-remembers)
+  const tabStore = () => { try { return win.sessionStorage; } catch (e) { return null; } };
+  const keepOpen = () => { try { if (s.id) tabStore()?.setItem(OPEN, JSON.stringify({ at: win.location.hash, id: s.id, tab: s.tab })); else tabStore()?.removeItem(OPEN); } catch (e) { /* not kept */ } };
+  let reopened = false;
+  const reopen = () => {
+    if (reopened || s.id) return; reopened = true;
+    try { const k = JSON.parse(tabStore()?.getItem(OPEN) || 'null'); if (k && k.at === win.location.hash && sidePanel() && resolve(k.id)) { s.id = k.id; s.tab = s.last = k.tab || s.last; } } catch (e) { /* nothing to bring back */ }
+  };
   const modal = () => win.matchMedia?.('(max-width: 1024px)').matches || false;   // a sheet on a tablet, full screen on a phone: a dialog
   const sidePanel = () => detailsInPanel(store);
   const hostEl = () => (typeof host === 'function' ? host() : host);
@@ -100,10 +108,11 @@ export function detailPanelController({ root, resolve, host = null, repaint = nu
   // the page's own code moved it (an address, a link in one of its parts): no toggle, no focus move, no redraw
   function set(id, tab) { s.id = id || ''; if (id && tab) { s.tab = s.last = tab; keep(); } }
   function close() {
-    if (!s.id) return; s.id = ''; s.stage = ''; draw();
+    if (!s.id) return; s.id = ''; s.stage = ''; keepOpen(); draw();
     const back = from && root.querySelector(from); from = ''; back?.focus();   // Close and Esc give the focus back to what opened it
   }
   function html() {
+    reopen();
     const r = s.id && sidePanel() ? resolve(s.id) : null; if (!r) { s.id = ''; return ''; }
     s.tab = tabOf(r, s.tab);
     const m = modal();
@@ -137,6 +146,17 @@ export function detailPanelController({ root, resolve, host = null, repaint = nu
     if (e.key !== 'Escape' || !s.id || e.defaultPrevented || root.hidden || !root.isConnected || held?.() || doc.querySelector('dialog[open], .menu')) return;
     if (!modal() && !root.contains(e.target) && e.target !== doc.body) return;
     e.preventDefault(); close();
+  });
+  // as a sheet it is a dialog: Tab stays inside it
+  doc.addEventListener('keydown', (e) => {
+    if (e.key !== 'Tab' || !s.id || !modal() || root.hidden) return;
+    const panel = root.querySelector('.detail-panel'); if (!panel) return;
+    const stops = [...panel.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')].filter((x) => x.getClientRects().length);
+    if (!stops.length) return;
+    const first = stops[0], last = stops[stops.length - 1], at = doc.activeElement;
+    if (!panel.contains(at)) { e.preventDefault(); (e.shiftKey ? last : first).focus(); }
+    else if (e.shiftKey && at === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && at === last) { e.preventDefault(); first.focus(); }
   });
   win.addEventListener('stillhet-settings', () => { if (!root.hidden) draw(); });   // Settings › Appearance › Task details changed
   return { state: s, sidePanel, modal, open, set, close, html, paint, click };
