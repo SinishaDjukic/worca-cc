@@ -10,6 +10,8 @@ import { wellTemplate, readingOrder } from '../ui/public/graph/proposal-host.mjs
 import { manifestPortsFn, manifestTemplate } from '../src/shared/graph/manifest.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
+// jsdom's style serializer rounds the translate() numbers; the layout keeps raw floats, so compare to 3 decimals.
+const r3 = (n) => Math.round(n * 1000) / 1000;
 const xy = (el) => { const m = /translate\(([-\d.]+)px, ([-\d.]+)px\)/.exec(el.style.transform); return { x: Number(m[1]), y: Number(m[2]) }; };
 
 test('proposal body: card order, real graph rows agree with p.order, 4-per-row at 702px / 1 at 310px, and a bare relayout() keeps the construction width', async () => {
@@ -25,9 +27,9 @@ test('proposal body: card order, real graph rows agree with p.order, 4-per-row a
       assert.equal(lay.perRow, per);
       const firstRow = lay.order.slice(0, per).map((id) => xy(h.graph.nodeEl(id)));
       assert.ok(lay.rows[0].top > FLOW_PAD_Y, 'the first row sits under its label row');
-      assert.deepEqual(firstRow.map((q) => q.y), Array(per).fill(lay.rows[0].top));
-      assert.deepEqual(firstRow.map((q) => q.x), lay.order.slice(0, per).map((id) => lay.positions[id].x));
-      assert.deepEqual(firstRow.map((q) => q.x), Array.from({ length: per }, (_, i) => 20 + i * (NODE_W + 40) * FLOW_SCALE));
+      assert.deepEqual(firstRow.map((q) => r3(q.y)), Array(per).fill(r3(lay.rows[0].top)));
+      assert.deepEqual(firstRow.map((q) => r3(q.x)), lay.order.slice(0, per).map((id) => r3(lay.positions[id].x)));
+      assert.deepEqual(firstRow.map((q) => r3(q.x)), Array.from({ length: per }, (_, i) => r3(20 + i * (NODE_W + 40) * FLOW_SCALE)));
       assert.equal(lay.order[0], p.manifest.graph.nodes.find((n) => n.kind === 'task').id, 'Task first');
       assert.deepEqual(lay.order.slice(1, 1 + p.order.length), p.order, 'agents in dispatch order');
       assert.deepEqual(lay.order.filter((id) => p.nodes[id]), p.order, 'the graph rows and the tunables table (p.order) agree — A5 rank-first must reproduce the proposal order');
