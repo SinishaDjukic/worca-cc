@@ -310,6 +310,7 @@ body .toasts{top:60px;bottom:auto;}   /* ds-ok: just under the 48px top bar */
 @media (max-width:760px){
   .fr:not(.is-fold) > .fr-pick-w, .fr:not(.is-fold) > .fr-more{display:none;}
   .fr:not(.is-fold) > .fr-phone{display:inline-flex;}
+  .fr:not(.is-fold) > .fr-pick-w.fr-keep{display:block;}   /* a kept picker stays on the line (list.filter-widths) */
   .fr:not(.is-fold) > .fr-tabs{flex:0 1 auto;min-width:0;overflow:hidden;}
 }
 .fr-filter .pz-menu.fr-pop{left:auto;right:0;min-width:208px;max-height:min(60vh, 480px);overflow-y:auto;}

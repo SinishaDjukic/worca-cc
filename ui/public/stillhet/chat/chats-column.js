@@ -272,7 +272,7 @@
     say(`Added to ${g.name} · ${chats.length === 1 ? chats[0].title : plural(chats.length, 'chat')}`, undoTo(snap, pick, 'Puts them back where they were'));
   }
   // nav.row-opens-page: a task or a schedule under a chat opens its own page, in every mode; the bar stays on Chat
-  function openUnder(x) { const t = x.t; if (t.kind === 'schedule') window.StillhetShell.openSchedule(t.id); else window.StillhetShell.openTaskPage(t.case, x.c.id, t.title, pageOf(t)); }
+  function openUnder(x) { const t = x.t; if (t.kind === 'schedule') window.StillhetShell.openSchedule(t.id); else window.StillhetShell.openTaskPage(t.case, x.c.id, t.title, W.live ? pageOf(t) : t.run || ''); }
   function openChat(id) { const c = data.chats.find((x) => x.id === id); if (c) c.unread = false; window.StillhetShell.go(`chat/${id}`); }
   const goHome = () => { current = ''; window.StillhetShell.go('chat'); };
   function newChat(title = 'New chat', project = '', o = {}) { const id = `n${Date.now().toString(36)}`; data.chats.unshift({ id, title, state: 'idle', kind: 'chat', project, time: 'now', day: 'today', cost: null, pinned: false, archived: false, unread: false, group: '', origin: null, labels: [], tasks: [], ...o }); ctl.paint(); return id; }

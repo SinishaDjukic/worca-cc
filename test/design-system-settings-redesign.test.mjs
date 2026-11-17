@@ -270,3 +270,10 @@ test('watchFocusBack: a redraw gives the focus to the control drawn in the same 
   c.innerHTML = pick(false); await tick();
   assert.equal(doc.activeElement, c.querySelector('[data-menu="p"]'));
 });
+
+test('set.group-order: the side menu starts with Worca, then Work, AI, Access, Add-ons', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../ui/public/stillhet/settings/settings-model.js', import.meta.url), 'utf8');
+  const groups = src.slice(src.indexOf('const GROUPS = ['), src.indexOf('];', src.indexOf('const GROUPS = [')));
+  assert.deepEqual([...groups.matchAll(/title: '([^']+)'/g)].map((m) => m[1]), ['Worca', 'Work', 'AI', 'Access', 'Add-ons']);
+});

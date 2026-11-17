@@ -3,6 +3,7 @@
 | Rule | What | Why | Held by |
 |---|---|---|---|
 | `set.one-place` | Settings opens from the profile menu only and turns the bar into its side menu; the sidebar holds places. A setting is a choice about how Worca behaves, set rarely; a place is where you do work and come back to | A setting and a place are different things | worca-sweep |
+| `set.group-order` | The side menu's groups are in one order: **Worca** first (General, Appearance, Notifications, Labs), then Work, AI, Access, Add-ons | What every person sets first (how Worca looks and what reaches them) comes first; the rest follows how often it is used | design-system-settings-redesign |
 | `set.one-row` | One row per decision, in the section that owns it: its name, then its value first and short (body size, full ink), and its control at the row's end. A row with no value may say in one short line what its control does, when its name alone does not; beside a value that line is the row's hint (the name's tooltip, and read to a screen reader), never a second line, unless `keepLine` names the fact it holds (`list.one-line`). A line that restates the name or the value goes, and a row never has two quiet lines (`stillhet.scan-first`; from classic's Settings cards: a label, its value, its control at the right) | The value is found without reading a sentence | design-system-settings-redesign |
 | `set.one-edge` | A tab's title, its section heads, the rows' names and the dividers share one left edge, and every control one right edge; a section head is section size, 600, with 40px above it and 4px below | A tab is read straight down, and a head is never weaker than its rows | align-check |
 | `set.at-once` | A row takes effect at once; only a reset of many, and a step others see, confirm | No Save button | by hand |
@@ -47,6 +48,10 @@ removes it: it stays reachable, and search finds it.
 
 | Group | Tab | Its sections |
 |---|---|---|
+| Worca | General | Setup · Storage · Credentials · About |
+| Worca | Appearance | Theme · Background · Breathing background · Text size · Pulse icon motion |
+| Worca | Notifications | Channels · Updates |
+| Worca | Labs | Features, by stage, Beta first |
 | Work | Tasks | Spending (Budget, Team caps, Usage) · Starting · Limits · Away mode · Machine |
 | Work | Presets (Advanced) | Presets |
 | Work | Labels (flag `runLabels`) | Labels |
@@ -58,10 +63,6 @@ removes it: it stays reachable, and search finds it.
 | Access | Guardrails (Advanced) | Sets |
 | Add-ons | Plugins (Advanced) | Installed (Sources is its head's action) |
 | Add-ons | Connectors (Advanced) | Servers · Sets · Skills |
-| Worca | General | Setup · Storage · Credentials · About |
-| Worca | Appearance | Theme · Background · Breathing background · Text size · Pulse icon motion |
-| Worca | Notifications | Channels · Updates |
-| Worca | Labs | Features, by stage, Beta first |
 
 ## What the rows mean, where it matters
 

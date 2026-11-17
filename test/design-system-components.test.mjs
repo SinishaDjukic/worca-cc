@@ -853,6 +853,9 @@ test('sideMenu, backLink, search: the place\'s menu with its current section, it
   assert.equal(s.querySelector('input[data-search]').value, 'pro');
   assert.equal(s.querySelector('[data-menu-pick="srch|1"] .mi-hint').textContent, 'Runs › Network');
   assert.equal(dom(C.searchResults([], 'No setting matches')).querySelector('[aria-disabled="true"]').textContent, 'No setting matches');
+  // keys.search-results: one list, under a head for each area in the order the page gives
+  const found = dom(`<div>${C.searchResults([{ id: 'a', text: 'A', area: 'Settings' }, { id: 'b', text: 'B', area: 'This page' }], 'x', { areas: [['This page', ''], ['Settings', '']] })}</div>`);
+  assert.deepEqual([...found.querySelectorAll('[role="option"]')].map((o) => o.dataset.menuPick), ['b', 'a']);
 });
 
 test('the library takes real addresses and knows no page: a Trail step and a PR link go where they are told', () => {
@@ -1085,10 +1088,6 @@ test('the shell pieces: offline line, side column, action row, away screen', () 
   assert.equal(off.getAttribute('role'), 'status');
   assert.match(off.textContent, /Offline · retrying/);
   assert.ok(off.title);
-  const side = new JSDOM(`<body>${C.sideColumn({ title: 'Ask <worca>', body: '<p>x</p>', hooks: { close: { 'data-side-close': '' } } })}</body>`).window.document;
-  assert.equal(side.querySelector('.ask-side-grip').getAttribute('aria-valuemax'), '680');
-  assert.equal(side.querySelector('.rl-side-title').textContent, 'Ask <worca>');
-  assert.ok(side.querySelector('[data-side-close]'));
   const on = { away: true, keepAwake: true, focused: true, idleMs: C.AWAY_IDLE_MS, reduced: false };
   assert.equal(C.awayShows(on), true);
   for (const off2 of [{ away: false }, { keepAwake: false }, { focused: false }, { idleMs: C.AWAY_IDLE_MS - 1 }, { reduced: true }]) assert.equal(C.awayShows({ ...on, ...off2 }), false);
@@ -1718,14 +1717,7 @@ test('expandFrame: closed in its column, open over its page, one button either w
   const open = dom(C.expandFrame({ body: '<i></i>', open: true }));
   assert.ok(open.classList.contains('is-open')); assert.match(open.textContent, /Close/);
 });
-test('barHead: the W goes home; the ▾ opens the quick navigation inside the bar (nav.quick)', () => {
-  const h = C.barHead({ title: 'Workflows', home: true, menu: '<div class="menu"></div>' });
-  assert.match(h, /data-bar-home/); assert.match(h, /data-bar-house/); assert.match(h, /bar-quick/);
-});
 test('nav.center-home: the title word goes home, the ▾ stays the menu; a page in a center has one crumb to it', () => {
-  const h = dom(C.barHead({ title: 'Projects', center: 'projects' }));
-  assert.equal(h.querySelector('[data-center-go]').textContent, 'Projects'); assert.equal(h.querySelector('[data-bar-house]').textContent, ''); assert.notEqual(h.querySelector('[data-center-go]'), h.querySelector('[data-bar-house]'));
-  assert.equal(dom(C.barHead({ title: 'Home' })).querySelector('[data-center-go]'), null);
   const p = dom(`<div>${C.placeHead({ title: 'billing-api', center: { label: 'Projects', to: 'projects' } })}</div>`);
   assert.equal(p.querySelector('.rc-crumbs button[data-center-go="projects"]').textContent, 'Projects'); assert.equal(p.querySelector('.rc-crumbs [aria-current="page"]').textContent, 'billing-api');
   assert.equal(dom(`<div>${C.placeHead({ title: 'x' })}</div>`).querySelector('.rc-crumbs'), null);
@@ -1832,8 +1824,7 @@ test('Timeline and TimelineCard: each tick where its moment is', () => {
   assert.match(h, /top:50%/); assert.match(h, /is-ask/); assert.match(h, /data-tick="a"/); assert.match(h, /aria-label="A question, now"/);
   assert.match(C.timelineCard({ mark: '', title: 'A question', at: 0.25 }), /top:25%/);
 });
-test('BarHead, TurnRow, Composer, StageBar', () => {
-  assert.match(C.barHead({ title: 'Chat' }), /data-bar-house/);
+test('TurnRow, Composer, StageBar', () => {
   assert.match(C.turnRow({ mark: '', text: 'Ran', body: 'x', open: true, attrs: { 'data-fold-turn': '0' } }), /tr-body/);
   assert.doesNotMatch(C.turnRow({ mark: '', text: 'Ran', body: 'x', attrs: { 'data-fold-turn': '0' } }), /tr-body/);
   assert.match(C.composer({ placeholder: 'Ask', sentence: 's', tools: '', send: 'b' }), /data-composer-t/);
@@ -1913,8 +1904,6 @@ test('center parts: a task said one way, a shelf, the line for a shared project 
   const q = dom(C.quietLine({ n: 1, noun: 'project', names: 'a', hook: { 'data-q': '' } }));
   assert.match(q.textContent, /1 quiet project/); assert.ok(q.querySelector('[data-q][aria-expanded="false"]'));
   assert.equal(dom(C.quietLine({ n: 3, noun: 'project', names: 'zed', open: true })).textContent.includes('zed'), false);
-  const c = dom(`<div>${C.centerSentence({ words: 'Showing', open: true, facts: '4 running' })}</div>`);
-  assert.match(c.textContent, /4 running/); assert.doesNotMatch(dom(`<div>${C.centerSentence({ words: 'S', facts: '4 running' })}</div>`).textContent, /4 running/);
 });
 
 test('pluginCard in a center: its state first and in its colour, links in what it says, facts on one line (panel.center)', () => {

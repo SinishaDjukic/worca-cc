@@ -84,6 +84,10 @@ test('filterRow on a page: one line of plain tabs with counts, More, and pickers
   const many = dom(filterRow({ parts: ['a', 'b', 'c', 'd', 'e', 'f'].map((id) => ({ id: `in-${id}`, label: id.toUpperCase(), text: 'x', items: [{ id: 'x', text: 'x', checked: true }, { id: 'y', text: 'y' }] })), open: 'in-more' }));
   assert.equal(many.querySelectorAll(':scope > .fr-pick-w').length, 4); assert.equal(many.querySelector('.fr-more > button').dataset.menu, 'in-more', 'the page\'s own menu prefix');
   assert.deepEqual([...many.querySelectorAll('.fr-more .menu-h')].map((x) => x.textContent), ['E', 'F']);
+  // keep: a kept picker stays on the line when the others fold, and the folded Filter menu does not list it again
+  const kept = dom(filterRow({ parts: [{ id: 'step', label: 'Step', keep: true, text: 'Build', items: [{ id: 'b', text: 'Build', checked: true }] }, { id: 'who', label: 'Agent', text: 'All', items: [{ id: 'all', text: 'All', checked: true }, { id: 'x', text: 'x' }] }], open: 'filters' }));
+  assert.ok(kept.querySelector(':scope > .fr-pick-w.fr-keep > [data-menu="step"]')); assert.equal(kept.querySelectorAll(':scope > .fr-pick-w.fr-keep').length, 1);
+  assert.deepEqual([...kept.querySelectorAll('.fr-phone .menu-h')].map((x) => x.textContent), ['Agent']);
   assert.ok(f.lastElementChild.matches('.fr-end') && f.querySelector('.fr-end > #fig'));
 });
 

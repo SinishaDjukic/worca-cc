@@ -4,8 +4,7 @@ import assert from 'node:assert/strict';
 
 // ---- the shared parts ----
 test('PageFilters: one FilterRow with the page\'s small tools at its end; a pick reports data-pick', async () => {
-  const { centerSentence, centerFilters, figuresButton } = await import('../ui/public/design-system/components/center.mjs');
-  assert.equal(centerSentence.filters, undefined, 'a page calls R.centerFilters: no bridge on CenterSentence');
+  const { centerFilters, figuresButton } = await import('../ui/public/design-system/components/center.mjs');
   const parts = [{ id: 'sort', label: 'Sort by', text: 'most urgent', items: [{ id: 'most urgent', text: 'most urgent', checked: true }, { id: 'A–Z', text: 'A–Z' }] }];
   const end = figuresButton({ open: false, attrs: { 'data-figs': '' } });
   const html = centerFilters({ parts, pick: 'sort', end });

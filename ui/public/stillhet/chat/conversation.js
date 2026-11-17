@@ -272,10 +272,10 @@
   const chipsHtml = () => (comp.files.length || aboutNow() ? `<span class="composer-chips">${aboutNow() ? R.handedChip({ kind: comp.about.kind, name: comp.about.name, attrs: { 'data-cp-unabout': '' } }) : ''}${comp.files.map((f) => R.button({ label: f, kind: 'quiet', icon: R.icon('x', 11), attrs: { 'data-cp-unfile': f, title: `Removes ${f}` } })).join('')}</span>` : '');
   // ---- starting: a starter only arms the composer (its chip and its placeholder); nothing is sent until you send ----
   const STARTERS = [
-    { id: 'task', label: 'New task', icon: 'kind-task', ph: 'Describe the task…', says: 'One job on a project, from a plan to a pull request' },
-    { id: 'workflow', label: 'Build workflow', icon: 'kind-workflow', ph: 'Describe the workflow…', says: 'Describe the stages you want; Worca drafts the workflow for you to check' },
-    { id: 'schedule', label: 'Schedule a task', icon: 'clock', ph: 'What should run, and when?', says: 'A task that starts by itself, once or on a repeat' },
-    { id: 'track', label: 'Follow a task', icon: 'track', ph: 'Which task to follow?', says: 'Brings a running task into this chat, so you can ask about it' },
+    { id: 'task', label: 'New task', icon: 'kind-task', ph: 'Describe the task…', says: 'One job, from a plan to a pull request', hint: 'One job on a project, from a plan to a pull request' },
+    { id: 'workflow', label: 'Build workflow', icon: 'kind-workflow', ph: 'Describe the workflow…', says: 'Describe the stages; Worca drafts it', hint: 'Describe the stages you want; Worca drafts the workflow for you to check' },
+    { id: 'schedule', label: 'Schedule a task', icon: 'clock', ph: 'What should run, and when?', says: 'Starts by itself, once or on a repeat', hint: 'A task that starts by itself, once or on a repeat' },
+    { id: 'track', label: 'Follow a task', icon: 'track', ph: 'Which task to follow?', says: 'Brings a running task into this chat', hint: 'Brings a running task into this chat, so you can ask about it' },
   ];
   const MORE = [
     { id: 'explain', label: 'Explain a diff', icon: 'pr', ph: 'Which task’s changes?' },
@@ -362,14 +362,14 @@
     // rarely used ones are behind the last card, More
     const card = R.starterCard, grid = R.starterGrid;
     const PIN_SAYS = { Shaper: 'Asks you a few questions first, then writes a plan you approve' };
-    const tile = (x, pin) => card({ icon: R.icon(x.icon, 18), label: x.label, says: x.says, attrs: { 'data-starter': x.id, ...(pin ? { 'data-pin': x.label, title: 'A workflow you pinned. Unpin it with a right-click' } : {}), ...(x.id === 'track' ? { 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'starter-track') } : {}) } });
+    const tile = (x, pin) => card({ icon: R.icon(x.icon, 18), label: x.label, says: x.says, hint: x.hint, attrs: { 'data-starter': x.id, ...(pin ? { 'data-pin': x.label, title: 'A workflow you pinned. Unpin it with a right-click' } : {}), ...(x.id === 'track' ? { 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'starter-track') } : {}) } });
     const live = liveTasks();
     const pick = (id, items, head) => (menu === id ? R.compactMenu({ label: head, items: [{ header: head }, ...items] }) : '');
     const trackMenu = pick('starter-track', live.map(({ t }) => ({ id: `starter-track|${t.id}`, text: t.title, mark: taskMark(t, 14) })), live.length ? 'Live' : 'Nothing running');
     // Chat is the one place a task or a schedule is started: the labelled forms open from here (the forms are Centers')
     const C = window.StillhetCenters, forms = [...(C?.newTask ? [{ id: 'starter-form|task', text: 'New task form…', mark: R.icon('kind-task', 14), help: 'The same task, as labelled fields' }] : []), ...(C?.newSchedule ? [{ id: 'starter-form|schedule', text: 'New schedule form…', mark: R.icon('clock', 14), help: 'The same schedule, as labelled fields' }] : [])];
     const moreItems = [...(forms.length ? [{ header: 'Fill in a form' }, ...forms, { sep: true }] : []), ...MORE.filter((x) => R.shows('advanced') || !['workspace', 'model', 'metrics'].includes(x.id)).map((x) => ({ id: `starter|${x.id}`, text: x.label, mark: R.icon(x.icon, 14) })), ...(LIVE() ? [] : [{ sep: true }, { header: 'Start from a preset' }, ...PRESETS.map((p) => ({ id: `starter-preset|${p}`, text: p, mark: R.icon('set-presets', 14) }))]), { sep: true }, { header: 'Pinned workflows' }, ...pinChoices().map((w) => (shownPins().includes(w) ? { id: `starter-unpin|${w}`, text: `Unpin ${w}`, mark: R.icon('pin', 14) } : { id: `starter-pin|${w}`, text: `Pin ${w}`, mark: R.icon('pin', 14) }))];
-    const more = card({ icon: R.icon('more', 18), label: 'More', says: 'The task and schedule forms, explain a diff, write a script, add a project', more: true, attrs: { 'data-menu': 'starter-more', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'starter-more') } }) + (menu === 'starter-more' ? R.compactMenu({ items: moreItems.map((x) => (x.sep || x.header ? x : { ...x, id: `starter-more|${x.id}` })) }) : '');
+    const more = card({ icon: R.icon('more', 18), label: 'More', says: 'Forms, explain a diff, scripts, projects', hint: 'The task and schedule forms, explain a diff, write a script, add a project', more: true, attrs: { 'data-menu': 'starter-more', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'starter-more') } }) + (menu === 'starter-more' ? R.compactMenu({ items: moreItems.map((x) => (x.sep || x.header ? x : { ...x, id: `starter-more|${x.id}` })) }) : '');
     const cards = shownPins().map((w) => tile({ id: `pin:${w}`, label: w, icon: w === 'Shaper' ? 'kind-feature' : 'kind-workflow', says: PIN_SAYS[w] || WORKFLOWS[w] || 'A workflow you pinned' }, true)).join('') + STARTERS.map((x) => (x.id === 'track' ? `<span class="rc-pop">${tile(x)}${trackMenu}</span>` : tile(x))).join('') + `<span class="rc-pop">${more}</span>`;
     return grid({ cards });
   }
@@ -497,7 +497,7 @@
       const lines = all.filter((l) => (mode === 'raw' || l.sum) && (cyc === 'every cycle' || `cycle ${l.c}` === cyc) && (who === 'every agent' || l.from === who));
       const err = all.some((l) => l.lvl === 'error'), live = i === Math.max(0, u.stage ?? 0);
       // the log's head (list.filters): one line. The Step first (in the panel), then a picker only where there is a choice
-      const pk = (key, label, cur, items) => ({ id: `dl-${u.id}-${key}`, label, raw: true, chip: key !== 'step', text: items.find((it) => it.id === cur)?.text || cur, tip: label, items: items.map((it) => ({ ...it, checked: it.id === cur })) });
+      const pk = (key, label, cur, items) => ({ id: `dl-${u.id}-${key}`, label, raw: true, chip: key !== 'step', keep: key === 'step', text: items.find((it) => it.id === cur)?.text || cur, tip: label, items: items.map((it) => ({ ...it, checked: it.id === cur })) });
       const parts = [steps ? pk('step', 'Step', String(i), steps.map((k2) => ({ id: String(k2), text: labelsOf(u)[k2] || STAGES[k2] }))) : null,
         cycles.length > 1 ? pk('cyc', 'Cycle', cyc, [...cycles.map((c) => ({ id: `cycle ${c}`, text: String(c) })), { id: 'every cycle', text: 'All' }]) : null,
         agents.length > 1 ? pk('who', 'Agent', who, [{ id: 'every agent', text: 'All' }, ...agents.map((a) => ({ id: a, text: a }))]) : null].filter(Boolean);
@@ -506,7 +506,7 @@
       return `<div class="td-body">${head}${lines.length ? R.logLines({ label: `${STAGES[i]}'s log`, lines: lines.map((l) => ({ t: l.t, from: l.from, text: l.text, lvl: l.lvl })) }) : `<p class="cmd-s">No lines for that: change what it shows above</p>`}</div>`;
     }
     const names = v.allArts ? D.arts.map((a) => a.name) : D.steps[i].arts || [], arts = names.map((n) => D.arts.find((a) => a.name === n)), at = Math.min(v.art || 0, arts.length - 1), a = arts[at];
-    return `<div class="td-body">${R.list({ groups: [{ title: `Artifacts · ${arts.length}`, rows: arts.map((x, k) => R.listRow({ title: x.name, meta: `${x.step} · ${x.size}`, mark: R.kindMark({ kind: 'plugin', icon: x.icon }), current: k === at, open: { 'data-dl-art': `${u.id}|${k}`, title: `Opens ${x.name} here` } })) }] })}${R.artifactView({ name: a.name, meta: a.step, body: a.body, at, of: arts.length, hooks: { prev: { 'data-dl-art': `${u.id}|${at - 1}` }, next: { 'data-dl-art': `${u.id}|${at + 1}` }, ...(R.shows('expert') ? { full: { 'data-open-task-page': u.id } } : {}), download: doOr(`download ${a.name}`, 'artifact', { pipelineId: u.run, name: a.name, download: true }) } })}</div>`;
+    return `<div class="td-body">${R.list({ groups: [{ title: `Artifacts · ${arts.length}`, rows: arts.map((x, k) => R.listRow({ title: x.name, value: x.size, meta: x.step, mark: R.kindMark({ kind: 'plugin', icon: x.icon }), current: k === at, open: { 'data-dl-art': `${u.id}|${k}`, title: `Opens ${x.name} here` } })) }] })}${R.artifactView({ name: a.name, meta: a.step, body: a.body, at, of: arts.length, hooks: { prev: { 'data-dl-art': `${u.id}|${at - 1}` }, next: { 'data-dl-art': `${u.id}|${at + 1}` }, ...(R.shows('expert') ? { full: { 'data-open-task-page': u.id } } : {}), download: doOr(`download ${a.name}`, 'artifact', { pipelineId: u.run, name: a.name, download: true }) } })}</div>`;
   }
   function findingsHtml(u) {
     const F = u.depth?.findings; if (!F || u.depth.sent) return u.depth?.sent ? R.turnRow({ mark: R.icon('check', 14), text: `<b>Sent to Review</b> ${esc(u.depth.sent)}` }) : '';
@@ -1058,7 +1058,7 @@
       if (project) x.apply = HOW[x.how][1];
       const runningNow = x.kind === 'Schedule' && window.StillhetSchedules?.running(x.schedule);
       const acts = x.actions ? x.actions.map(([label, kind, done], k) => ({ label: x.diff && k === 1 && x.diffOpen ? 'Hide the diff' : label, kind, attrs: { 'data-cp-act': `${x.id}|${k}`, ...(runningNow && label === 'Run now' ? { disabled: true, title: 'Its task is running; it can start again when that ends' } : {}), ...(x.diff && k === 1 ? { 'aria-expanded': String(!!x.diffOpen) } : {}) } })) : null;
-      const diff = x.diff && x.diffOpen ? R.list({ groups: [{ title: `The diff · ${x.diff.length} files`, rows: x.diff.map(([f, n]) => R.listRow({ title: f, meta: n, mark: R.kindMark({ kind: 'plugin', icon: 'file' }), open: doOr(`open ${f}: its lines, added and removed`, 'diff', { pipelineId: x.run || '' }) })) }] }) : '';
+      const diff = x.diff && x.diffOpen ? R.list({ groups: [{ title: `The diff · ${x.diff.length} files`, rows: x.diff.map(([f, n]) => R.listRow({ title: f, value: n, mark: R.kindMark({ kind: 'plugin', icon: 'file' }), open: doOr(`open ${f}: its lines, added and removed`, 'diff', { pipelineId: x.run || '' }) })) }] }) : '';
       if (x.done) return R.turnRow({ mark: R.icon('check', 14), text: `<b>${esc(x.title)}</b> ${esc(x.done)}` });
       const cfm = x.confirmDelete ? R.turnRow({ mark: R.kindMark({ kind: 'task', tone: 'ask', size: 16 }), text: `<b>${esc(x.confirmDelete)}?</b> Its times end; the tasks it ran stay`, end: R.button({ label: 'Delete', kind: 'quiet', cls: 'is-danger', attrs: { 'data-chg-yes': x.id } }) + R.button({ label: 'Cancel', kind: 'quiet', attrs: { 'data-chg-no': x.id } }) }) : '';   // act.confirm
       const cpMenu = R.moreMenu({ id: `chg:${x.id}`, label: `More for ${x.title}`, icon: R.icon('more', 16), open: menu === `chg:${x.id}`, items: [...(x.menuItems || []), 'Ask about it', ...(x.actions?.some(([l]) => l === 'Not now' || l === 'Discard') ? [] : ['Not now'])] });   // the card's own Not now (a form's change: Discard) is enough
@@ -1125,7 +1125,7 @@
     // panel.plan-folds: a feature's total cost and time since its first run, in the same folded Figures (dev's run-groups)
     const ft = LIVE() && t.run ? CL().feature(t.run, chatId) : null;
     const featFacts = ft && !x.open && x.figures ? R.factsLine([...(ft.usd != null ? [{ n: `$${ft.usd.toFixed(2)}`, word: 'the feature so far' }] : []), ...(ft.ms != null ? [{ n: spanWord(ft.ms), word: `since its first task · ${ft.runs} ${ft.runs === 1 ? 'task' : 'tasks'}` }] : [])]) : '';
-    const changed = facts && x.filesOpen && !toPage && t.depth?.changed ? R.list({ groups: [{ title: `Changed · ${t.depth.changed.length} files`, rows: t.depth.changed.map(([f, n]) => R.listRow({ title: f, meta: n, mark: R.kindMark({ kind: 'plugin', icon: 'file' }), open: doOr(`open ${f}: its lines, added and removed`, 'diff', { pipelineId: t.run || '', task: t.id, file: f }) })) }] }) : '';
+    const changed = facts && x.filesOpen && !toPage && t.depth?.changed ? R.list({ groups: [{ title: `Changed · ${t.depth.changed.length} files`, rows: t.depth.changed.map(([f, n]) => R.listRow({ title: f, value: n, mark: R.kindMark({ kind: 'plugin', icon: 'file' }), open: doOr(`open ${f}: its lines, added and removed`, 'diff', { pipelineId: t.run || '', task: t.id, file: f }) })) }] }) : '';
     const why = t.why && ['fail', 'ask', 'act', 'ok'].includes(tone) ? t.why.map((w) => R.turnRow({ mark: '', text: `<span class="cmd-s">${/^✗/.test(w) ? R.icon('alert', 13) : ''}${esc(w.replace(/^✗\s*/, ''))}</span>` })).join('') : '';   // why it failed, on the card: the failing tests by name
     const pg = LIVE() ? CL().progress(t.run) : {}, stage = pg.stage ?? t.stage;   // R-ux-12: live, its place from the run's own stages
     // live: the head says the state once; the line says where it is (its stage's words), never the state word again
@@ -1191,7 +1191,7 @@
   }
   function sideHome() {
     const ctx = window.StillhetShell?.pageContext?.() || { name: 'this page', kind: 'page', suggest: [] }, chip = !sideNoPage && ctx.kind !== 'page';
-    const recent = [...data().chats].filter((c) => !c.archived).slice(0, 3).map((c) => R.listRow({ title: c.title, meta: [c.project || 'No project', c.tasks?.length ? `${c.tasks.length} ${c.tasks.length === 1 ? 'task' : 'tasks'}` : '', c.cost ? `$${c.cost.toFixed(2)}` : ''].filter(Boolean).join(' · '), mark: R.kindMark({ kind: 'chat', tone: c.state === 'needs-you' ? 'ask' : 'idle' }), open: { 'data-side-chat': c.id, title: `Opens ${c.title} here` } }));
+    const recent = [...data().chats].filter((c) => !c.archived).slice(0, 3).map((c) => R.listRow({ title: c.title, value: [c.project || 'No project', c.tasks?.length ? `${c.tasks.length} ${c.tasks.length === 1 ? 'task' : 'tasks'}` : '', c.cost ? `$${c.cost.toFixed(2)}` : ''].filter(Boolean).join(' · '), mark: R.kindMark({ kind: 'chat', tone: c.state === 'needs-you' ? 'ask' : 'idle' }), open: { 'data-side-chat': c.id, title: `Opens ${c.title} here` } }));
     return `<div class="side-home"><h2 class="side-home-h">${esc(ctx.kind === 'page' ? 'Ask Worca' : `Ask about ${ctx.kind === 'task' ? 'this task' : ctx.name}`)}</h2>${ctx.kind === 'page' ? '' : `<p class="side-home-m">Worca sees ${esc(ctx.kind === 'project' ? 'its branch, its tasks and its settings' : ctx.kind === 'task' ? 'its stages, its log and its changes' : `this ${ctx.kind}`)}.</p>`}
       <div class="side-home-sug">${ctx.suggest.map((q) => R.button({ label: q, kind: 'quiet', attrs: { 'data-side-sug': q, title: 'Puts it in the box; nothing is sent' } })).join('')}</div>
       ${R.list({ groups: [{ title: 'Recent chats', rows: recent }] })}</div>

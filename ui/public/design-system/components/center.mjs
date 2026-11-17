@@ -43,18 +43,6 @@ export function taskActions(tasks = [], { first = false } = {}) {
 }
 
 /**
- * CenterSentence: "Showing … by …", Figures at its end, its totals under it when open (look.figures-on-demand).
- * @param {object} o
- * @param {string} o.words   markup: the words and their SentencePickers
- * @param {boolean} [o.open]
- * @param {object} [o.attrs] on Figures
- * @param {string} [o.facts] markup: the totals
- */
-export function centerSentence({ words, open = false, attrs: a = {}, facts = '' }) {
-  return `<div class="center-sent">${words} ${figuresToggle({ open, attrs: a })}</div>${open ? figuresLine(facts) : ''}`;
-}
-
-/**
  * PageFilters (list.filters on a page; replaces a center's "Showing … by …" sentence): one FilterRow, one compact line,
  * with the page's small tools (Figures, Save this view, Copy a link) as small bordered buttons in the row's `end` slot.
  * A page calls this and never lays the row out itself.

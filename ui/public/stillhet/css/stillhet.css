@@ -1703,6 +1703,8 @@ canvas.dot-orb[data-orb]{border-radius:50%;outline:1px solid light-dark(var(--li
 .pg-a > .btn-quiet:first-child{padding-left:0;}
 .run-outs{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--fs-meta);color:var(--ink-2);}
 .ro-sqs{display:inline-flex;gap:3px;flex:none;}
+.pg-grid:has(> [data-card-opens]){grid-auto-rows:1fr;}   /* a center's cards are one height in their grid, with or without a facts line */
+.pg-card .ro-says{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}   /* a card's outcomes are one line (never two grey lines); the whole is its tooltip */
 .ro-sq{width:9px;height:9px;border-radius:2px;box-sizing:border-box;}   /* ds-ok: a square at this size */
 .ro-sq.is-ok{background:var(--ink-2);} .ro-sq.is-fail{position:relative;} .ro-sq.is-fail::after{content:'!';position:absolute;inset:-3px 0;text-align:center;font:600 12px/15px var(--sans);color:var(--ink);}   /* ds-ok: a run cell's mark */ .ro-sq.is-run{border:1.5px solid var(--ink-2);} .ro-sq.is-miss{border:1.5px solid var(--amber);}
 .figs-line{margin:-2px 0 6px;font-size:var(--fs-meta);color:var(--ink-2);}
@@ -1779,7 +1781,6 @@ button.q-fact{cursor:pointer;text-decoration:underline;text-decoration-color:var
 .av-body h3{margin:0 0 4px;font:600 var(--fs-body)/1.3 var(--sans);} .av-body p{margin:0 0 6px;} .av-body table{border-collapse:collapse;font-size:var(--fs-meta);font-variant-numeric:tabular-nums;} .av-body td,.av-body th{padding:3px 12px 3px 0;text-align:left;border-top:1px solid var(--line);}
 /* a task's depth on its card: a stage's log head, findings to confirm */
 .td-body{margin:4px 0 8px 32px;display:grid;gap:6px;min-width:0;}
-.td-log-h{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;font-size:var(--fs-meta);color:var(--ink-2);} .td-log-h .av-sp{flex:1;}
 .td-find{margin:4px 0 0 32px;display:grid;gap:6px;}
 .td-fx{display:flex;gap:6px;align-items:center;}
 .td-find textarea{min-height:0;height:56px;}
@@ -2225,12 +2226,12 @@ body:has(#route-chat:not([hidden]) .convo-dock) .rc-toast{bottom:calc(24px + 124
 /* Chat home's starters: cards in a calm grid under the composer (3 across, 2 on a tablet, 1 on a phone) */
 .home-starters.starter-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:16px;}
 .starter-grid > .rc-pop{display:block;min-width:0;}
-.starter-card{display:grid;grid-template-columns:20px minmax(0,1fr);gap:4px 10px;align-items:center;width:100%;height:100%;min-height:76px;padding:12px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--bg);color:var(--ink);font:400 var(--fs-body)/1.3 var(--sans);text-align:left;cursor:pointer;}
+.starter-card{display:grid;grid-template-columns:20px minmax(0,1fr);gap:4px 10px;align-items:center;width:100%;height:100%;min-height:0;padding:12px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--bg);color:var(--ink);font:400 var(--fs-body)/1.3 var(--sans);text-align:left;cursor:pointer;}
 .starter-card:hover{background:var(--hover);border-color:var(--ink-3);}
 .starter-card:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
 .starter-card .st-i{grid-column:1;grid-row:1;display:grid;place-items:center;color:var(--ink-2);}
 .starter-card .st-n{grid-column:2;grid-row:1;display:flex;align-items:center;gap:4px;min-width:0;font-weight:500;}
-.starter-card .st-s{grid-column:2;grid-row:2;align-self:start;font-size:var(--fs-caption);line-height:1.4;color:var(--ink-2);}
+.starter-card .st-s{grid-column:2;grid-row:2;align-self:start;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-caption);line-height:1.4;color:var(--ink-2);}
 .starter-grid .rc-pop > .menu{top:calc(100% + 4px);}
 @media (max-width: 900px){ .home-starters.starter-grid{grid-template-columns:repeat(2,minmax(0,1fr));} }
 @media (max-width: 600px){ .home-starters.starter-grid{grid-template-columns:minmax(0,1fr);} .starter-card{min-height:0;} }

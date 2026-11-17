@@ -134,7 +134,7 @@ For every place: what it reads, what a person can do there, the route and payloa
 | Follow up, run after | Card ⋯ › Start a follow-up, Run after… (moved here from the page) | `POST /api/run` with the task's setup (`newTaskBodyOf`) and the new prompt; `after: {kind, id}, afterPolicy: 'done'` | A new card in the same chat | As Start | `task-follow-up-host` | call exists, control changed |
 | Open the task, its changes, files, patch, terminal | Card title (opens `#run/ID`); View changes; ⋯ | `OPENS`: `/api/runs/:id/artifact-raw/NAME[?download=1]`, `/api/runs/:id/recovery-patch?projectKey=…` or `/changes/patch` (a folder task); `POST /api/runs/:id/resolve-terminal {}` | A new tab, or the page | "the browser blocked the new tab" | `chat-app-host-4`, `task-tools-host-1`; test to write: `task-card-terminal-host` | wired today |
 | Label, archive from the card | Card ⋯ | `PUT /api/runs/:id/labels {labels}`; `POST /api/runs/bulk {action: 'archive', targets: [{pipelineId}]}` (200 with `skipped` is a refusal when none done) | Chips; the card folds | The skip's reason | `task-card-host` | wired today |
-| A schedule's card: Run now, Pause, Resume, Skip, Edit… | The schedule card in its chat | As Schedules below; Edit… opens `StillhetCenters.editSchedule(id)` | | | `schedules-actions-host` | call exists, control changed |
+| A schedule's card: Run now, Pause, Resume, Skip, Edit schedule… | The schedule card in its chat | As Schedules below; Edit schedule… opens `StillhetCenters.editSchedule(id)`, whose Save posts a ChangeProposal (`panel.schedule-change`) | | | `schedules-actions-host` | call exists, control changed |
 
 ## New task and New schedule (the forms, opened from Chat)
 
@@ -174,7 +174,7 @@ Opened only from Chat: the starter card "New task", More › "New task form…",
 | Add a project from the form | Project picker › Add a project… | `POST /api/projects {name, path, useGit?}` | The project is picked | "Could not add" | `new-task-projects-host` | call exists, control changed |
 | Start near a limit | The dialog's warning with "Use ENGINE" or "Start after the reset" | E6, E7 | | | | server first: S23, S24 (E6, E7) |
 | Make a schedule | New schedule dialog: Name, What should it do, Project, Workflow, Engine and model, Repeats, At, Date for Once | Repeating: `POST /api/run {projectDir or noProject, …run fields, prompt, title, repeat: {rule (with `end`), overlap?, maxFailures?}}`; once: `POST /api/run {…, scheduledFor: ISO}` | Lands on the new schedule's page (`id`, `ticketId` or `scheduleId` in the answer) | A rule error (`rule.error`) at Repeats; unknown project refused before posting | `schedules-tickets-host`, `schedule-rule` | call exists, control changed |
-| Change a schedule | Edit schedule dialog, from the schedule's card and "Change it in chat" | `PATCH /api/schedules/:id` `patchOf`: a series `{rule?, overlap?, maxFailures?, ifMissed?, graceMin?}`; a one-off `{scheduledFor}` or `{after}` | The page shows the new facts | "Could not save the changes" at Name | `schedules-drafts-host` (holds the old draft bar) | call exists, control changed |
+| Change a schedule | Edit schedule dialog, from the card's "Edit schedule…" and the page's "Change in its chat"; Save posts a ChangeProposal in that chat, and its Apply sends the call (`panel.schedule-change`) | `PATCH /api/schedules/:id` `patchOf`: a series `{rule?, overlap?, maxFailures?, ifMissed?, graceMin?}`; a one-off `{scheduledFor}` or `{after}` | The page shows the new facts | "Could not save the changes" at Name | `schedules-drafts-host` (holds the old draft bar) | call exists, control changed |
 
 ## Tasks (inspect)
 
@@ -281,7 +281,7 @@ No chat box. The head says "Started from the chat NAME · Open the chat" (`GET /
 | Pause, resume | Card and row action | `POST /api/schedules/:id/pause {}`, `/resume {}` | The state word follows the frame | "Could not pause it" | `schedules-actions-host` | wired today |
 | Skip next time; keep next time | Row ⋯; the page's head | `POST /api/schedules/:id/skip-next {}`, `/keep-next {}` | "Next" moves | "Could not skip next time" | `schedules-actions-host`; `test/api-schedule-keep-next` | wired today |
 | Delete | Row ⋯ › Delete, Undo for 5 s; names the starts that waited for it | `DELETE /api/schedules/:id` after the Undo window (flushed on `pagehide`) | The row leaves | "Could not delete it"; the row returns | `schedules-delete-host` | wired today |
-| Create or change one | none here: "Start one in Chat", "Change it in chat" | See the forms | | | | dropped from this place (the owner): moved to Chat |
+| Create or change one | none here: "Start one in Chat", "Change in its chat" | See the forms | | | | dropped from this place (the owner): moved to Chat |
 | Its activity feed with Mark all read | none | | | | | dropped: Pulse holds it, filtered to the schedule |
 
 ## A schedule's page (inspect)
@@ -298,7 +298,7 @@ No chat box. The head says "Started from the chat NAME · Open the chat" (`GET /
 |---|---|---|---|---|---|---|
 | Run now, Stop, Pause, Resume, Skip, Keep | The head's buttons | As Schedules | | | `schedules-page-host` | wired today |
 | See its prompt and workflow | The facts | Read above | | | `schedules-page-host` | wired today |
-| Change its time or instruction | "Change it in chat" opens its chat with the schedule in focus, or `handOver({about})`; the chat's card has Edit… | `PATCH /api/schedules/:id` (see the forms) | | | new: `schedule-change-in-chat-host` | call exists, control changed |
+| Change its time or instruction | "Change in its chat" opens its chat with its form open (a schedule with no chat gets one); the chat's card has "Edit schedule…"; Save, or the change typed there, posts a ChangeProposal and Apply changes it (`panel.schedule-change`) | `PATCH /api/schedules/:id` (see the forms) | | | new: `schedule-change-in-chat-host` | call exists, control changed |
 | See its updates, in Pulse's terms | "Updates" fold; "All in Pulse" opens Pulse filtered | S13 | | | | server first: S13 |
 | Open a fire's task | A row | none | `#run/ID` | | `schedules-page-host` | wired today |
 

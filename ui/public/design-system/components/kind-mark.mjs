@@ -143,21 +143,6 @@ export function timelineCard({ mark, title, line = '', at = 0, x, id }) {
 }
 
 /**
- * BarHead: the one bar's head on every feature: the product's mark (the way to the places), what this bar is (its name, with
- * a ▾ saying it opens the places too), its one action, and Hide.
- * @param {object} o
- * @param {string} o.title
- * @param {boolean} [o.home]    the quick navigation is open
- * @param {string} [o.menu]    the quick navigation's markup, when open
- * @param {string} [o.action]   a button's markup
- * @param {string} [o.logo]     the product's mark (markup); the house icon when none
- * @param {string} [o.hide]     the Hide button's markup
- */
-export function barHead({ title, home = false, menu = '', action = '', logo = '', hide = '', center = '', atCenter = false }) {   // center: the word goes to that center's home (nav.center-home); the ▾ stays the quick menu
-  return `<div class="bar-head"><button type="button" class="bar-house"${attrs({ 'data-bar-home': '', title: 'Home', 'aria-label': 'Home' })}>${logo || icon('home', 16)}</button><h2 class="bar-title">${center ? `<button type="button" class="bar-title-b"${attrs({ 'data-center-go': center, 'aria-current': atCenter ? 'page' : null, title: `${title} home` })}>${esc(title)}</button>` : `<span class="bar-title-w">${esc(title)}</span>`}<button type="button" class="bar-title-b bar-chev"${attrs({ 'data-bar-house': '', 'aria-haspopup': 'menu', 'aria-expanded': String(home), 'aria-label': 'Go to another place', title: 'Go to another place' })}>${icon('chevron', 12)}</button></h2>${menu ? `<span class="rc-pop bar-quick">${menu}</span>` : ''}${action}${hide}</div>`;
-}
-
-/**
  * TurnRow: what Worca did in a conversation, on the rail: its mark, one quiet line, what it took. It folds; a failure opens itself.
  * @param {object} o
  * @param {string} o.mark
@@ -214,11 +199,13 @@ export function composer({ value = '', placeholder, sentence, detail = '', tools
  * @param {object} o
  * @param {string} o.icon     an icon's markup
  * @param {string} o.label    its name: New task, Shaper
- * @param {string} o.says     what it does, one plain line, always visible
+ * @param {string} o.says     what it does, one short line (about 40 characters; a longer one is cut with an ellipsis)
+ * @param {string} [o.hint]   the full sentence, as the tooltip (list.one-line); with none given, says
  * @param {boolean} [o.more]  it opens a menu of the rarely used ones (aria-haspopup, a chevron)
  * @param {object} [o.attrs]
  */
-export function starterCard({ icon: mark, label, says, more = false, attrs: a = {} }) {
+export function starterCard({ icon: mark, label, says, hint = '', more = false, attrs: a = {} }) {
+  a = { ...a, title: [a.title, hint || says].filter(Boolean).join('\n') };
   return `<button type="button" class="starter-card"${attrs(a)}><span class="st-i" aria-hidden="true">${mark}</span><span class="st-n">${esc(label)}${more ? icon('chevron', 12) : ''}</span><span class="st-s">${esc(says)}</span></button>`;
 }
 /** StarterGrid: the cards, as one group. `cards` is markup (StarterCards; one that opens a menu sits in its own popover span). */
@@ -381,7 +368,7 @@ export function runOutcomes({ runs = [], says = '', tip = 'The last 7 tasks' }) 
   const WORD = { ok: 'succeeded', fail: 'failed', run: 'running', miss: 'missed' };
   const squares = runs.map((r) => `<i class="ro-sq is-${esc(r)}"></i>`).join('');
   const label = runs.length ? `${tip}: ${runs.map((r) => WORD[r] || r).join(', ')}` : null;
-  return `<span class="run-outs">${squares ? `<span class="ro-sqs" role="img"${attrs({ title: tip, 'aria-label': label })}>${squares}</span>` : ''}${says ? `<span class="ro-says">${says}</span>` : ''}</span>`;
+  return `<span class="run-outs">${squares ? `<span class="ro-sqs" role="img"${attrs({ title: tip, 'aria-label': label })}>${squares}</span>` : ''}${says ? `<span class="ro-says"${attrs({ title: says.replace(/<[^>]+>/g, '') })}>${says}</span>` : ''}</span>`;
 }
 
 /**

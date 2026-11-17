@@ -222,13 +222,14 @@
     const chats = window.StillhetChats?.data().chats || [];
     if (x.type === 'chat') { const c = chats.find((y) => y.id === x.id); if (!c) return null; const st = R.chatState(c.state); return { label: `${c.title}\n${st.word}`, mark: R.kindMark({ kind: 'chat', tone: c.state === 'needs-you' ? 'ask' : c.state === 'idle' ? 'idle' : 'run', size: 20, title: '' }), hash: `chat/${c.id}` }; }
     if (x.type === 'schedule') return { label: `${x.title}\nSchedule`, mark: R.kindMark({ kind: 'schedule', size: 20 }), hash: `schedule/${x.id}` };
-    const t = x.chat ? allTasksOf(chats.find((c) => c.id === x.chat)).find((y) => y.id === x.id) : null, cs = t?.case || x.case;
+    const t = x.chat ? allTasksOf(chats.find((c) => c.id === x.chat)).find((y) => y.id === x.id) : null, rec = LIVE ? null : window.StillhetWorld.task(t?.run || x.run || ''), cs = rec?.case || t?.case || x.case;   // stillhet.one-place: its one record says its state
     if (!cs) return null;
-    const st = R.runState(RM.stateOf(cs)), run = LIVE ? t?.pid || t?.run || x.run || '' : t?.run || '';   // the live kind opens it by its own id
+    const st = R.runState(RM.stateOf(cs)), run = LIVE ? t?.pid || t?.run || x.run || '' : rec?.id || '';   // the live kind opens it by its own id
     return { label: `${x.title}\n${st.word}${t?.detail ? ` · ${t.detail}` : ''}`, mark: R.kindMark({ kind: 'task', tone: R.markTone(st), stage: t?.stage ?? RM.stageOf(cs).stage ?? -1, size: 20 }), hash: `run/${LIVE && run ? run : cs}`, task: { cs, chat: x.chat || '', title: x.title, run } };
   }
   // many tasks share a case: its tab is current on that very task's page (case and name), or in the chat its tab opens
-  const isOnTask = ({ cs, chat, title, run }) => LIVE && run && location.hash === `#run/${run}` ? true : location.hash === `#run/${cs}` ? RM?.titles?.[cs] === title : location.hash === `#chat/${chat || window.StillhetConversation?.chatOfTask({ run, title })}`;
+  const pageTask = () => (!LIVE && routed.view === 'run' && window.StillhetRunPage?.task?.()) || '';   // the id of the task whose page is open (the demo)
+  const isOnTask = ({ cs, chat, title, run }) => LIVE && run && location.hash === `#run/${run}` ? true : run && pageTask() ? run === pageTask() : location.hash === `#run/${cs}` ? RM?.titles?.[cs] === title : location.hash === `#chat/${chat || window.StillhetConversation?.chatOfTask({ run, title })}`;
   function drawInView() {
     const live = inViewList.map((x) => ({ x, now: inViewNow(x) })).filter((y) => y.now);
     const max = inViewMax(), shown = live.slice(0, max), hidden = live.slice(max), key = (x) => `${x.type}:${x.id}`;
@@ -247,7 +248,7 @@
   // the eye on a task's head says whether it is kept in view; set only when it changes, so the page's observer stays quiet
   function syncEye(live = inViewList.map((x) => ({ x, now: inViewNow(x) })).filter((y) => y.now)) {
     const eye = document.querySelector('[data-keep-view]'); if (!eye) return;
-    const named = document.querySelector('#card [data-title]')?.textContent, on = String(live.some(({ now }) => now.task?.cs === eye.dataset.keepView && now.task.title === named));   // many tasks share a case: this one, by its name
+    const named = document.querySelector('#card [data-title]')?.textContent, own = pageTask(), on = String(live.some(({ now }) => (own && now.task?.run ? now.task.run === own : now.task?.cs === eye.dataset.keepView && now.task.title === named)));   // many tasks share a case: this one, by its id (by its name where it has no record)
     if (eye.getAttribute('aria-pressed') === on) return;
     eye.setAttribute('aria-pressed', on); eye.setAttribute('aria-label', on === 'true' ? 'Out of view' : 'Keep in view');
     eye.title = on === 'true' ? 'Out of view: its mark leaves the top bar' : 'Keep in view: its mark stays in the top bar, on every page';
@@ -255,8 +256,8 @@
   const isInView = (type, id) => inViewList.some((x) => x.type === type && x.id === id);
   // a task's own page keeps it in view by its case: the one already kept from its chat counts, never twice
   function toggleCaseInView(cs, title) {
-    const name = title || RM?.titles?.[cs] || 'This task', had = inViewList.find((x) => { const t = inViewNow(x)?.task; return t?.cs === cs && t.title === name; });
-    const run = LIVE && routed.view === 'run' ? routed.arg || '' : '';   // F-G-G5-03: the live kind reopens it by its own id
+    const own = pageTask(), name = title || RM?.titles?.[cs] || 'This task', had = inViewList.find((x) => { const t = inViewNow(x)?.task; return own && t?.run ? t.run === own : t?.cs === cs && t.title === name; });
+    const run = LIVE && routed.view === 'run' ? routed.arg || '' : own;   // F-G-G5-03: the live kind reopens it by its own id
     toggleInView(had || { type: 'task', id: `case-${cs}-${name.replace(/:/g, ' ')}`, case: cs, chat: '', title: name, run });
   }
   function toggleInView(item) {
@@ -542,7 +543,7 @@
       return who === 'run' ? inRun : !inRun && !inShell;
     },
     runActive: () => !document.getElementById('route-run')?.hidden,
-    taskGone: (cs, title) => { const r = window.StillhetWorld.rows().find((x) => x.case === cs && x.title === title); if (r) window.StillhetWorld.remove(r.id); },
+    taskGone: (cs, title, id) => { const r = (id && window.StillhetWorld.task(id)) || window.StillhetWorld.rows().find((x) => x.case === cs && x.title === title);   /* by its id; by state and name only where the page has no record */ if (r) window.StillhetWorld.remove(r.id); },
     pageContext: () => pageContext(),
     needs: (view) => needsOf(view),
     locked: (view) => !!lockOf(view),
@@ -597,7 +598,7 @@
     },
     unembedRun: (from) => { const card = document.getElementById('card'); if (card && runAnchor && (!from || from.contains(card))) { runAnchor.after(card); card.classList.remove('is-lent'); } },
     // the live kind opens a task by its own id (pipeline or run id), never a case; a live call with no id has no page to open
-    openTaskPage: (cs, chat, title, run) => { if (LIVE && /^group:/.test(cs)) run = cs;   /* a live group's page is its own id */ if (LIVE && !run) { window.StillhetShell.go('runs'); window.StillhetPulse?.say('This task has no page to open'); return; } liveTask = { title: title || '' }; const t = title && findTask(title); if (RM && t?.branch) { RM.branches = RM.branches || {}; RM.branches[cs] = t.branch; } if (RM && t) { RM.asks = RM.asks || {}; RM.asks[cs] = t.ask || t.title; RM.whys = RM.whys || {}; RM.whys[cs] = t.why || null; }   /* the page says what this task was asked and what broke in it, never its mock's */ taskChat = chat || ''; if (RM && title) RM.titles[cs] = title; reopen = true; window.StillhetShell.go(`run/${LIVE ? run : cs}`); },
+    openTaskPage: (cs, chat, title, run) => { if (LIVE && /^group:/.test(cs)) run = cs;   /* a live group's page is its own id */ if (LIVE && !run) { window.StillhetShell.go('runs'); window.StillhetPulse?.say('This task has no page to open'); return; } if (!LIVE && run && window.StillhetWorld.task(run)?.case === cs) window.StillhetRunPage?.ofTask?.(run);   /* stillhet.one-place: the page shows this record, by its id */ liveTask = { title: title || '' }; const t = title && findTask(title); if (RM && t?.branch) { RM.branches = RM.branches || {}; RM.branches[cs] = t.branch; } if (RM && t) { RM.asks = RM.asks || {}; RM.asks[cs] = t.ask || t.title; RM.whys = RM.whys || {}; RM.whys[cs] = t.why || null; }   /* the page says what this task was asked and what broke in it, never its mock's */ taskChat = chat || ''; if (RM && title) RM.titles[cs] = title; reopen = true; window.StillhetShell.go(`run/${LIVE ? run : cs}`); },
     openSchedule: (sid) => window.StillhetShell.go(`schedule/${sid}`),   // nav.row-opens-page: a schedule opens its own page, in every mode
     back: () => window.StillhetShell.go(taskChat ? `chat/${taskChat}` : 'runs'),
     // the list pages take their own `?`, with their own actions in the sheet
@@ -674,7 +675,9 @@
   }
   // a step taken on a task's page moves the task everywhere: its row, the bar's and Pulse's counts, In view
   document.addEventListener('stillhet:task-moved', (e) => {
-    const { from, to, title } = e.detail || {}; if (!title) return;
+    const { from, to, title, id } = e.detail || {};
+    if (id) { for (const x of inViewList) if (x.run === id) x.case = to; drawBar(); return; }   // stillhet.one-place: its record moved by its id; its chat and the lists heard onMove
+    if (!title) return;
     const r = window.StillhetWorld.rows().find((x) => x.case === from && x.title === title);
     if (r) window.StillhetWorld.move(r.id, to, R.runState(RM.stateOf(to)).word);
     if (routed.view === 'run') { for (const c of window.StillhetChats?.data().chats || []) for (const t of allTasksOf(c)) if (t.case === from && t.title === title) { t.case = to; t.detail = ''; const st = RM.stageOf?.(to); if (st?.stage >= 0) t.stage = st.stage; /* one store: answered on its page, its chat no longer waits on you */ const needs = (y) => { try { return R.sectionOf(R.runState(RM.stateOf(y.case)).word, RM.stateOf(y.case)) === 'needs'; } catch { return false; } }; if (c.state === 'needs-you' && !allTasksOf(c).some(needs)) c.state = 'idle'; } window.StillhetChats?.refresh(); }   /* lent to a card, its chat does this itself */

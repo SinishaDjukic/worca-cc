@@ -51,10 +51,12 @@ const sentenceCase = (t) => String(t).charAt(0).toUpperCase() + String(t).slice(
  * choices a tabs part does not show sit behind More. A pick reports `data-pick="<id>|<item>"`, from a tab, a menu or a
  * chip's ✕ alike; a picker and the Filter control open by `data-menu` (the part's id; `filters` for the Filter control).
  * @param {object} o
- * @param {{id:string, word?:string, label?:string, text:string, items:object[], tip?:string, tabs?:string[], raw?:boolean, chip?:boolean, reset?:string}[]} o.parts
+ * @param {{id:string, word?:string, label?:string, text:string, items:object[], tip?:string, tabs?:string[], raw?:boolean, chip?:boolean, reset?:string, keep?:boolean}[]} o.parts
  *   `label` names the part (else the old sentence word's label); `tabs` lists the item ids drawn as tabs; `raw` for a
  *   part whose choices are names (a project, a person): they show as written, never recased; `chip: false` for a part
- *   that arranges and does not narrow (Group by); `reset` the default item's id (else the first tab, or the first item)
+ *   that arranges and does not narrow (Group by); `reset` the default item's id (else the first tab, or the first item);
+ *   `keep` for a picker that stays on the line when the others fold (a phone, More filters) and is not listed again in
+ *   the folded Filter menu (list.filter-widths)
  * @param {string} [o.open]     the id of the open menu
  * @param {boolean} [o.fold]    one Filter control and chips, for a bar
  * @param {string} [o.end]      markup at the end of the line (a Figures toggle)
@@ -79,7 +81,7 @@ export function filterRow({ parts, open = '', chevron = '', menuCls = '', fold =
   // a picker on the line, its label inside it. Its width is its filter's (the widest of its choices, capped), never its
   // value's: a pick moves nothing beside it; a value that does not fit is cut, whole in the tooltip (list.filters)
   const widthOf = (label, items) => Math.min(CAP, (label ? label.length + 2 : 0) + Math.max(4, ...items.filter((it) => !it.sep && !it.header).map((it) => String(it.text).length)));
-  const picker = (p, { label = labelOf(p), text = say(p, p.text), items = cased(p), on = false, rest: words = '' } = {}) => { const all = words ? [...items, { text: words }] : items, cut = (label ? label.length + 2 : 0) + String(text).length > CAP; return `<span class="pz-pick fr-pick-w"><button type="button" class="fr-pick${on ? ' is-on' : ''}"${attrs({ 'data-menu': p.id, 'aria-haspopup': 'menu', 'aria-expanded': String(open === p.id), 'aria-label': label ? `${label}: ${text}` : text, title: cut ? text : p.tip || null, style: `--fr-w:${widthOf(label, all)}` })}>${label ? `<span class="fr-pick-l">${esc(label)}:</span>` : ''}<span class="fr-pick-v">${esc(text)}</span>${chev}</button>${open === p.id ? menuOf(p.id, picks(p, items)) : ''}</span>`; };
+  const picker = (p, { label = labelOf(p), text = say(p, p.text), items = cased(p), on = false, rest: words = '' } = {}) => { const all = words ? [...items, { text: words }] : items, cut = (label ? label.length + 2 : 0) + String(text).length > CAP; return `<span class="pz-pick fr-pick-w${p.keep ? ' fr-keep' : ''}"><button type="button" class="fr-pick${on ? ' is-on' : ''}"${attrs({ 'data-menu': p.id, 'aria-haspopup': 'menu', 'aria-expanded': String(open === p.id), 'aria-label': label ? `${label}: ${text}` : text, title: cut ? text : p.tip || null, style: `--fr-w:${widthOf(label, all)}` })}>${label ? `<span class="fr-pick-l">${esc(label)}:</span>` : ''}<span class="fr-pick-v">${esc(text)}</span>${chev}</button>${open === p.id ? menuOf(p.id, picks(p, items)) : ''}</span>`; };
   const moreOf = (p) => { const rest = real(p).filter((it) => !p.tabs.includes(it.id)), cur = rest.find((it) => it.checked); return rest.length ? picker(p, { label: '', text: cur ? cur.text : 'More', items: rest, on: !!cur, rest: 'More' }) : ''; };
   const chip = (p, it, cls = '') => `<span class="fr-chip${cls}"><span class="fr-chip-t"${attrs({ title: `${labelOf(p)}: ${it.text}` })}>${esc(it.text)}</span><button type="button" class="fr-chip-x"${attrs({ 'data-pick': `${p.id}|${resetOf(p) ?? ''}`, 'aria-label': `Clear ${labelOf(p)}: ${it.text}`, title: 'Clear' })}>${icon('sym-x', 10)}</button></span>`;
   // a part's chip: its choice, when that is not the default (a tabs part: when no tab shows it)
@@ -99,8 +101,9 @@ export function filterRow({ parts, open = '', chevron = '', menuCls = '', fold =
   if (!fold) {
     // a page: four pickers at most on the line, the rest behind More filters; on a phone the tabs and one Filter control
     const pre = rest.length && rest.every((p) => /^[a-z]+-/.test(p.id) && p.id.split('-')[0] === rest[0].id.split('-')[0]) ? `${rest[0].id.split('-')[0]}-` : '';   // a page that names its menus "c-…" opens this one too
-    const shown = rest.length > MAX_PICKERS ? rest.slice(0, MAX_PICKERS) : rest, more = rest.slice(shown.length);
-    return `<span class="fr">${tabbed.map((p) => tabsOf(p) + moreOf(p)).join('')}${shown.map((p) => picker(p)).join('')}${control(`${pre}more`, more, 'More filters', ' fr-more')}${control(`${pre}filters`, [...tabbed.map((p) => ({ ...p, items: p.items.filter((it) => !it.sep && !it.header && !p.tabs.includes(it.id)) })).filter((p) => p.items.length), ...rest], 'Filter', ' fr-phone')}${tail}</span>`;
+    const kept = rest.filter((p) => p.keep), folds = rest.filter((p) => !p.keep);   // a kept picker stays on the line and is in no folded menu
+    const shown = folds.length > MAX_PICKERS ? [...kept, ...folds.slice(0, MAX_PICKERS)] : rest, more = folds.length > MAX_PICKERS ? folds.slice(MAX_PICKERS) : [];
+    return `<span class="fr">${tabbed.map((p) => tabsOf(p) + moreOf(p)).join('')}${shown.map((p) => picker(p)).join('')}${control(`${pre}more`, more, 'More filters', ' fr-more')}${control(`${pre}filters`, [...tabbed.map((p) => ({ ...p, items: p.items.filter((it) => !it.sep && !it.header && !p.tabs.includes(it.id)) })).filter((p) => p.items.length), ...folds], 'Filter', ' fr-phone')}${tail}</span>`;
   }
   // a bar: chips show whole or not at all (the look drops the ones with no room; the Filter control keeps the count)
   const chips = parts.map(chipOf).join('');

@@ -84,24 +84,6 @@
       "example": "Offline · retrying"
     },
     {
-      "name": "SideColumn",
-      "code": "ui/public/design-system/components/shell-parts.mjs#sideColumn",
-      "kind": "showing",
-      "needs": [
-        "a conversation beside the page"
-      ],
-      "parts": [
-        "the grip",
-        "the head: title and Close",
-        "the body, the only scroller"
-      ],
-      "rules": [
-        "pushes above 1080px, covers to 761px, takes the window below",
-        "dragged between 360 and 680px and kept; fades in, closes at once; one at a time"
-      ],
-      "example": "Ask worca"
-    },
-    {
       "name": "NavItem",
       "code": "ui/public/design-system/components/shell-parts.mjs#navItem",
       "kind": "acting",
@@ -599,6 +581,7 @@
         "small text tabs with their counts for the few fixed views (`tabs`), the current one underlined",
         "on a page: each other part a picker on the line with its label inside (Order: Most urgent ▾); the choices the tabs do not show sit behind More",
         "in a bar (`fold`): one Filter control whose menu holds a labelled group per part, and a chip with ✕ for each filter off its default (web-app ✕)",
+        "a part with `keep: true` stays on the line when the others fold (a phone, More filters) and is not listed in the folded Filter menu (list.filter-widths): the Log tab's Step",
         "an `end` slot for the small tools (Figures)"
       ],
       "rules": [
@@ -4231,16 +4214,6 @@
       "why": "FolderReview's words when no folder is ticked"
     },
     {
-      "name": "centerSentence",
-      "kind": "part",
-      "why": "The old Showing sentence of a center; pages call PageFilters (centerFilters). Kept only until the library drops it"
-    },
-    {
-      "name": "barHead",
-      "kind": "part",
-      "why": "The old bar head; the shell calls BarPlaceHead. Kept only until the library drops it"
-    },
-    {
       "name": "DETAIL_TABS",
       "code": "ui/public/design-system/components/detail-panel.mjs#DETAIL_TABS",
       "kind": "constant",
@@ -4439,12 +4412,6 @@
       "option": "wrapCls",
       "status": "allowed",
       "why": "a hook class a page's script finds the element by; it carries no look of its own"
-    },
-    {
-      "code": "ui/public/design-system/components/shell-parts.mjs#sideColumn",
-      "option": "width",
-      "status": "deprecated",
-      "why": "a free pixel width; the column brings its width and the person drags it; removed in the final cleanup PR"
     },
     {
       "code": "ui/public/design-system/components/shell-parts.mjs#countBadge",

@@ -828,7 +828,7 @@ function land(e) {
 function goTo(e) {
   if (e.sset) { land(e); return; }
   closeOverlays();
-  if (SHELL) { if (e.kind === 'label') window.StillhetRunsList?.label(e.label); if (e.go.startsWith('run/')) SHELL.openRun(e.go, e.label, LIVE ? e.run : undefined); else SHELL.go(e.go); render(); return; }
+  if (SHELL) { if (e.kind === 'label') window.StillhetRunsList?.label(e.label); if (e.go.startsWith('run/')) SHELL.openRun(e.go, e.label, e.run); else SHELL.go(e.go); render(); return; }
   toast(window.StillhetWould(`open ${e.label} · ${e.where}`)); render();
 }
 // The hand-off: a mode asks in the strip under the top bar; a flag goes to its row in Labs. Once nothing locks it, on to the result.
@@ -1271,7 +1271,7 @@ const pickRow = (action, id) => { ui.pick = R.selectApply(ui.pick, action, { id,
 function openTarget(go, title, say, run) {
   ui.pop = false;
   if (!SHELL) { ui.pop = true; toast(window.StillhetWould(say.replace(/^Opens\b/, 'open'))); return; }
-  if (go.startsWith('run/')) { if (LIVE && run) A.seenRun?.(run);   /* opening it from Pulse acknowledges it, whichever page the shell opens (dev's acknowledgeRun) */ SHELL.openRun(go, title, LIVE ? run : undefined); } else SHELL.go(go);
+  if (go.startsWith('run/')) { if (LIVE && run) A.seenRun?.(run);   /* opening it from Pulse acknowledges it, whichever page the shell opens (dev's acknowledgeRun) */ SHELL.openRun(go, title, run); } else SHELL.go(go);
 }
 // The keys come from the library's table (docs/stillhet/keyboard.md); this owns what they do here. The panel's lists take
 // them wherever the focus is: Updates all of them, Vitals moving and opening only.
