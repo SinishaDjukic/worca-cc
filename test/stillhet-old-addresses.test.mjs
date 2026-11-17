@@ -152,14 +152,16 @@ const DEV_WORKSPACE_FORMS = [
   ['#workspaces', '#projects'], ['#workspaces/w1', '#projects/ws:w1'], ['#workspaces/w1/map', '#projects/ws:w1'], ['#workspaces/w1/team', '#projects/ws:w1'],
   ['#workspaces/w1/actions', '#projects/ws:w1'], ['#workspaces/w1/automations', '#projects/ws:w1'], ['#workspace-create', '#projects'],
 ];
-const DEV_PROJECT_FORMS = ['team', 'settings', 'mcp', 'actions', 'automations', 'away', 'memory', 'memory/house-rules'].map((t) => [`#projects/web-1/${t}`, '#projects/web-1']);
+// a tab the project's page has itself (settings, actions, automations, memory) keeps its address, so a reload stays on it
+const DEV_PROJECT_FORMS = [...['team', 'mcp', 'away'].map((t) => [`#projects/web-1/${t}`, '#projects/web-1']), ['#projects/web-1/memory/house-rules', '#projects/web-1/memory']];
+const OWN_PROJECT_TABS = ['settings', 'actions', 'automations', 'memory'].map((t) => `#projects/web-1/${t}`);
 
 test('Stillhet on: each of dev\'s 7 workspace forms and 8 project-tab forms lands on its Projects route (never asking has); Stillhet\'s own Projects routes stay', () => {
   assert.equal(DEV_WORKSPACE_FORMS.length, 7);
-  assert.equal(DEV_PROJECT_FORMS.length, 8);
+  assert.equal(DEV_PROJECT_FORMS.length + OWN_PROJECT_TABS.length, 8);
   const has = () => { throw new Error('the Projects rules never ask has'); };
   for (const [from, to] of [...DEV_WORKSPACE_FORMS, ...DEV_PROJECT_FORMS]) { const r = resolve(from, { has }); assert.equal(r?.hash, to, from); assert.equal(r.pulse, '', from); }
-  for (const r of ['#projects', '#projects/web-1', '#projects/ws:w1', '#projects/web-1@w1', '#projects/web-1/bogus']) assert.equal(resolve(r, { has }), null, r);
+  for (const r of ['#projects', '#projects/web-1', '#projects/ws:w1', '#projects/web-1@w1', '#projects/web-1/bogus', ...OWN_PROJECT_TABS]) assert.equal(resolve(r, { has }), null, r);
 });
 
 test('Stillhet off: dev\'s workspace and project-tab forms are dev\'s (no MOVED_ROUTES key or prefix moves them; dev routes them itself)', () => {

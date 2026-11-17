@@ -50,8 +50,11 @@
   // gives each a home. Only the tail after KEY is read; a bare #projects, #projects/KEY, ws:ID, KEY@ID and any other tail
   // are Stillhet's own (it never asks `has`).
   var DEV_PROJECT_TABS = ['team', 'settings', 'mcp', 'actions', 'automations', 'away', 'memory'];
+  var OWN_PROJECT_TABS = ['settings', 'actions', 'automations', 'memory'];
   function devProjects(segs) {
     if (segs.length < 2 || /^ws:/.test(segs[0]) || DEV_PROJECT_TABS.indexOf(segs[1]) < 0) return null;
+    // a tab the project's page has itself keeps its address (a reload stays on the tab); a deeper tail lands on that tab
+    if (OWN_PROJECT_TABS.indexOf(segs[1]) >= 0) return segs.length === 2 ? null : 'projects/' + segs[0] + '/' + segs[1];
     return 'projects/' + segs[0];
   }
   var dec = function (x) { try { return decodeURIComponent(x); } catch (e) { return x; } };
