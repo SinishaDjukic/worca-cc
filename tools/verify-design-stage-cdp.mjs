@@ -294,6 +294,8 @@ try {
   if (!up) throw new Error(`server did not start on ${port}\n${serverLog}`);
   const postJson = (url, body) => fetch(`${API}${url}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   await postJson('/api/onboarding', { welcomeSeen: true });
+  // The worca-level welcome is a second boot-time dialog (it would sit over the stage and swallow the HUD clicks).
+  await postJson('/api/worca-level/ack', { what: 'welcome' });
   await postJson('/api/settings', { theme: 'light' });
 
   browser = await BROWSERS[NAME].launch(launchOptions(NAME, browserEnv));
