@@ -57,7 +57,7 @@ import { normalizeDecisions, conflictDecisions, validateDecisionPicks, decisionC
 import { createScheduler, sliceExecutionId, QUIESCENCE_WARNING } from './graph/scheduler.mjs';
 import { sigkillGraceMs } from './engines/spawn.mjs';
 import { runExecution, allocateOutputs, allocateVerdict, readDecomposition, decompositionProblems, CHECKLIST_REVIEWER_KEY, SLICE_PLANNER_KEY, SLICE_SCOPE_AGENT_KEYS, _testing as executorTesting } from './graph/executor.mjs';
-import { serialQueue, measureCodeCursor, collectStepEvidence } from './graph/human-evidence.mjs';
+import { serialQueue, measureCodeCursor, collectStepEvidence, withoutMembers } from './graph/human-evidence.mjs';
 import { estimateStepHours, resolveConstants, sumStepHours } from '../shared/human-estimate.mjs';
 import { diffNumstat } from './git-info.mjs';
 import { humanEstimateOverrides } from './settings.mjs';
@@ -2662,9 +2662,11 @@ export class GraphOrchestrator extends RunHarness {
 
   /** Intent-to-add every member worktree, then measure. A NEW file is invisible to
    *  `git diff <checkpoint>` until `git add -N` has seen it (the harness stages the same
-   *  way before a review); ignoreAbort so the stopped path still measures. Never throws. */
+   *  way before a review); ignoreAbort so the stopped path still measures. A diff base may move to git's own merge or
+   *  rebase first (_refreshMergeBases), so the cursor, results.json and the live diff share one base. Never throws. */
   async _humanMeasure() {
     try {
+      await this._refreshMergeBases();
       return await measureCodeCursor({
         workDirs: this.workDirs, checkpointRefs: this.checkpointRefs,
         excludeFor: (k) => this._excludePathspecs(k), numstat: diffNumstat,
@@ -2681,7 +2683,10 @@ export class GraphOrchestrator extends RunHarness {
     const kind = ctx?.node?.kind;
     if (this._humanCursorReady || (kind !== 'agent' && kind !== 'script')) return Promise.resolve();
     this._humanCursorReady = true;
-    return this._humanRun(async () => { this._humanCursor = await this._humanMeasure(); }).catch(() => {});
+    return this._humanRun(async () => {
+      this._humanCursor = await this._humanMeasure();
+      this._baseMovedSinceCursor = null;                 // the baseline is measured against the current base
+    }).catch(() => {});
   }
 
   /** Evidence → hours for ONE terminal execution, serialized with every other measurement of
@@ -2696,8 +2701,13 @@ export class GraphOrchestrator extends RunHarness {
       const cursorPrev = this._humanCursor;
       const measured = await this._humanMeasure();
       if (measured) this._humanCursor = measured;
+      // D9: a member whose diff base moved since the previous cursor (a base-branch merge or rebase) has a previous
+      // count against another base: credit that member from zero, every other member from its previous count.
+      const moved = this._baseMovedSinceCursor;
+      this._baseMovedSinceCursor = null;
       if (kind !== 'agent') return;
-      const evidence = await collectStepEvidence({ ctx, cursorPrev, cursorNow: measured || cursorPrev });
+      const evidence = await collectStepEvidence({ ctx, cursorPrev: withoutMembers(cursorPrev, moved),
+        cursorNow: measured || cursorPrev });
       const est = estimateStepHours(evidence, resolveConstants(humanEstimateOverrides()));
       ctx.human = { hours: est.hours, signals: { ...est.signals, method: est.method } };
     }).catch(() => { ctx.human = null; });

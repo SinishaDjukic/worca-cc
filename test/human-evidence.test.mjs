@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gitDir } from './helpers/git-dir.mjs';
 import { diffNumstat } from '../src/core/git-info.mjs';
-import { serialQueue, measureCodeCursor, codeDelta, collectStepEvidence } from '../src/core/graph/human-evidence.mjs';
+import { serialQueue, measureCodeCursor, codeDelta, collectStepEvidence, withoutMembers } from '../src/core/graph/human-evidence.mjs';
 
 const scratch = [];
 after(() => { for (const d of scratch) rmSync(d, { recursive: true, force: true }); });
@@ -40,9 +40,9 @@ test('measureCodeCursor: NEW files count only after staging; sums over every mem
   writeFileSync(join(b, 'z.js'), lines(2));
   const workDirs = new Map([['pa', a], ['pb', b]]);
   const bare = await measureCodeCursor({ workDirs, checkpointRefs: refs, excludeFor: () => [], numstat: diffNumstat });
-  assert.deepEqual(bare, { files: 0, insertions: 0, deletions: 0 }, 'untracked files are invisible to git diff');
+  assert.deepEqual(bare, { files: 0, insertions: 0, deletions: 0, byKey: { pa: { files: 0, insertions: 0, deletions: 0 }, pb: { files: 0, insertions: 0, deletions: 0 } } }, 'untracked files are invisible to git diff');
   const cur = await measureCodeCursor({ workDirs, checkpointRefs: refs, excludeFor: () => [], numstat: diffNumstat, stage: stageAll([a, b]) });
-  assert.deepEqual(cur, { files: 3, insertions: 17, deletions: 0 });
+  assert.deepEqual(cur, { files: 3, insertions: 17, deletions: 0, byKey: { pa: { files: 1, insertions: 10, deletions: 0 }, pb: { files: 2, insertions: 7, deletions: 0 } } });
   assert.equal(await measureCodeCursor({ workDirs: new Map([['pa', a]]), checkpointRefs: {}, excludeFor: () => [], numstat: diffNumstat }), null);
 });
 
@@ -53,9 +53,22 @@ test('measureCodeCursor honours the exclude pathspecs and survives a failing sta
   mkdirSync(join(a, '.worca-cc'), { recursive: true });
   writeFileSync(join(a, '.worca-cc', 'noise.md'), lines(100));
   const cur = await measureCodeCursor({ workDirs: new Map([['pa', a]]), checkpointRefs: refs, excludeFor: () => [':(exclude).worca-cc'], numstat: diffNumstat, stage: stageAll([a]) });
-  assert.deepEqual(cur, { files: 1, insertions: 4, deletions: 0 });
+  assert.deepEqual(cur, { files: 1, insertions: 4, deletions: 0, byKey: { pa: { files: 1, insertions: 4, deletions: 0 } } });
   const again = await measureCodeCursor({ workDirs: new Map([['pa', a]]), checkpointRefs: refs, excludeFor: () => [':(exclude).worca-cc'], numstat: diffNumstat, stage: () => { throw new Error('git gone'); } });
-  assert.deepEqual(again, { files: 1, insertions: 4, deletions: 0 }, 'a failing stage still measures what is already visible');
+  assert.deepEqual(again, { files: 1, insertions: 4, deletions: 0, byKey: { pa: { files: 1, insertions: 4, deletions: 0 } } }, 'a failing stage still measures what is already visible');
+});
+
+test('withoutMembers: a member whose diff base moved counts from zero, the others keep their previous count', () => {
+  const cur = { files: 3, insertions: 17, deletions: 2, byKey: { pa: { files: 1, insertions: 10, deletions: 0 }, pb: { files: 2, insertions: 7, deletions: 2 } } };
+  assert.equal(withoutMembers(cur, null), cur);
+  assert.equal(withoutMembers(cur, new Set()), cur);
+  assert.equal(withoutMembers(null, new Set(['pa'])), null);
+  assert.deepEqual(withoutMembers(cur, new Set(['pa'])), { files: 2, insertions: 7, deletions: 2, byKey: { pb: { files: 2, insertions: 7, deletions: 2 } } });
+  assert.deepEqual(withoutMembers(cur, new Set(['pa', 'pb'])), { files: 0, insertions: 0, deletions: 0, byKey: {} });
+  assert.equal(withoutMembers({ files: 3, insertions: 17, deletions: 0 }, new Set(['pa'])), null, 'a cursor saved before byKey: from zero');
+  // A workspace step: pb moved to a smaller base, pa kept working.
+  const now = { files: 3, insertions: 15, deletions: 0, byKey: { pa: { files: 1, insertions: 14, deletions: 0 }, pb: { files: 2, insertions: 1, deletions: 0 } } };
+  assert.deepEqual(codeDelta(now, withoutMembers(cur, new Set(['pb']))), { files: 2, insertions: 5, deletions: 0 });
 });
 
 test('codeDelta subtracts the previous cursor and clamps at zero', () => {
