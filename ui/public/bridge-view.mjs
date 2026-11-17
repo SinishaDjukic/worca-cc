@@ -5,7 +5,7 @@
 // badges. Same contract as models-view.mjs: every function takes `doc` via
 // opts and returns DETACHED elements; app.js owns endpoint calls, mounting
 // and the delegated listeners. Interactive elements carry a routing class
-// (mv-cp-*, mv-pv-*, mvi-*, mv-conn-*) plus data-provider / data-id.
+// (mv-cp-*, mv-pv-*, mv-or-*, mvi-*, mv-conn-*) plus data-provider / data-id.
 
 import { icon } from './icons.mjs';
 import { copyButton, copyFromButton } from './copy-button.mjs';
@@ -427,6 +427,68 @@ function renderSoundRow(doc, so) {
   return row;
 }
 
+/** GET /api/providers' `openrouter` block when the payload has none: no key, the server's defaults. */
+const OPENROUTER_ROW_DEFAULTS = Object.freeze({ keySet: false, keySource: null, keyRef: null, keyMasked: null, legacyKey: false, maxConcurrent: 8, order: [], sort: '', allowFallbacks: true });
+
+/**
+ * The OpenRouter row (providers.openrouter): its own key, concurrency cap and routing defaults, which every model on
+ * openrouter.ai uses. While the OpenAI-compatible row points at openrouter.ai and this row has no key, that row's key
+ * is lent (`legacyKey`). The key's original value is kept even when empty, so an untouched field never collects.
+ */
+function renderOpenRouterRow(doc, or, broker) {
+  const o = { ...OPENROUTER_ROW_DEFAULTS, ...(or || {}) };
+  const row = h(doc, 'div', 'mv-pv-row mv-or-row');
+  row.dataset.provider = 'openrouter';
+  const main = h(doc, 'div', 'mv-pv-main');
+  const head = h(doc, 'div', 'mv-head');
+  head.appendChild(h(doc, 'b', 'mv-name', 'OpenRouter'));
+  head.appendChild(broker && broker.enabled ? brokerPill(doc, broker, 'openrouter')
+    : o.legacyKey && o.keySet ? h(doc, 'span', 'badge green', 'key from OpenAI-compatible')
+      : o.keySet ? h(doc, 'span', 'badge green', 'key set')
+        : o.keySource === 'env' ? h(doc, 'span', 'badge red', `key ${o.keyRef} not set`) : h(doc, 'span', 'badge grey', 'no key'));
+  main.appendChild(head);
+  main.appendChild(h(doc, 'small', 'hint', 'Hosted models from many vendors behind one key. Every model on openrouter.ai uses this key, this limit and these routing defaults; a model\'s own routing wins.'));
+  main.appendChild(h(doc, 'small', 'hint mv-pv-msg'));
+  row.appendChild(main);
+
+  const ctl = h(doc, 'div', 'mv-pv-ctl');
+  const field = (labelText, input, cls = '') => {
+    const f = h(doc, 'label', `mv-field${cls ? ` ${cls}` : ''}`);
+    f.appendChild(h(doc, 'span', 'mv-field-label', labelText));
+    f.appendChild(input);
+    return f;
+  };
+  const key = h(doc, 'input', 'input mv-pv-key');
+  key.type = 'text'; key.dataset.provider = 'openrouter';
+  key.value = o.keyRef || o.keyMasked || '';
+  key.dataset.original = key.value;
+  key.placeholder = 'sk-…, or ${VAR} to read your shell env';
+  ctl.appendChild(field('API key', key, 'mv-or-key'));
+  ctl.appendChild(numberField(doc, 'mv-pv-conc', 'Max concurrent requests', o.maxConcurrent, { provider: 'openrouter' }));
+  const order = h(doc, 'input', 'input mv-or-order');
+  order.type = 'text'; order.placeholder = 'Names, comma-separated';
+  order.value = Array.isArray(o.order) ? o.order.join(', ') : '';
+  ctl.appendChild(field('Provider order', order));
+  const sort = h(doc, 'select', 'select mv-or-sort');
+  for (const [value, text] of [['', 'OpenRouter default'], ['price', 'Price'], ['throughput', 'Throughput'], ['latency', 'Latency']]) {
+    const opt = h(doc, 'option', null, text); opt.value = value; sort.appendChild(opt);
+  }
+  sort.value = o.sort || '';
+  ctl.appendChild(field('Sort providers by', sort));
+  ctl.appendChild(makeSwitch(doc, { label: 'Allow other providers when these are unavailable', inputClass: 'mv-or-fallbacks', checked: o.allowFallbacks !== false }).row);
+  row.appendChild(ctl);
+
+  const btns = h(doc, 'div', 'mv-pv-btns');
+  btns.dataset.cardActions = '';
+  for (const [cls, text] of [['btn mv-or-browse', 'Import models…'], ['btn mv-pv-test', 'Test connection'], ['btn btn-primary mv-pv-save', 'Save']]) {
+    const b = h(doc, 'button', cls, text);
+    b.type = 'button'; b.dataset.provider = 'openrouter';
+    btns.appendChild(b);
+  }
+  row.appendChild(btns);
+  return row;
+}
+
 /**
  * The Providers card. `providers` is GET /api/providers' payload (never a
  * token). `signIn` is an in-flight device-flow {userCode, verificationUri,
@@ -525,6 +587,7 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
   }
   cp.appendChild(cpBtns);
   place(cp);
+  place(renderOpenRouterRow(doc, p.openrouter, p.broker));
 
   // ── key-based providers ──
   for (const name of ['openai', 'anthropic']) {
@@ -552,16 +615,6 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
     buIn.type = 'text'; buIn.value = k.baseUrl || ''; buIn.dataset.provider = name;
     buIn.placeholder = name === 'openai' ? 'https://api.openai.com/v1' : 'https://api.anthropic.com';
     bu.appendChild(buIn);
-    if (name === 'openai') {
-      // One click to a hosted catalog: fills the URL (and a ${VAR} key when none is set), then the
-      // user Tests and Saves as for any endpoint. Nothing is stored until Save.
-      const pre = h(doc, 'small', 'hint mv-pv-presets', 'Preset: ');
-      const or = h(doc, 'button', 'btn btn-sm btn-quiet mv-pv-preset', 'OpenRouter');
-      or.type = 'button'; or.dataset.provider = name; or.dataset.preset = 'openrouter';
-      or.title = `Point this provider at OpenRouter (${OPENROUTER_PRESET.baseUrl})`;
-      pre.appendChild(or);
-      bu.appendChild(pre);
-    }
     ctl.appendChild(bu);
     const key = h(doc, 'label', 'mv-field');
     key.appendChild(h(doc, 'span', 'mv-field-label', 'API key'));
@@ -601,7 +654,8 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
   return root;
 }
 
-/** The OpenRouter preset (docs/models.md "OpenRouter"); mirrors provider-ops OPENROUTER_BASE_URL. */
+/** OpenRouter's address, where its row's "Import models…" lists (docs/models.md "OpenRouter"); mirrors provider-ops
+ *  OPENROUTER_BASE_URL. */
 export const OPENROUTER_PRESET = Object.freeze({ baseUrl: 'https://openrouter.ai/api/v1', keyRef: '${OPENROUTER_KEY}' });
 /** The Import dialog's hosted-API presets: an endpoint with a key of its own, stored on each imported entry
  *  (src/core/model-env.mjs GEMINI_OPENAI_BASE_URL / QWEN_OPENAI_BASE_URL; docs/models.md › Gemini and Qwen models). */
@@ -611,19 +665,34 @@ export const ENDPOINT_PRESETS = Object.freeze({
 });
 
 /**
- * Apply a preset to a provider row's fields — the base URL always, the key only when the row has
- * none (a stored or typed key is never replaced). Returns whether anything changed.
+ * Collect the OpenRouter row (`rootEl` is the row or an ancestor) into PATCH /api/providers/openrouter's body:
+ * `apiKey` only when the field differs from its original ('' when cleared); `maxConcurrent` a number ('' when empty:
+ * the server's default); `order` the comma-separated names, trimmed, blanks dropped. Null without the row.
  */
-export function applyProviderPreset(rootEl, name, preset) {
-  const p = preset === 'openrouter' ? OPENROUTER_PRESET : null;
-  const row = p && rootEl.querySelector(`.mv-pv-row[data-provider="${name}"]`);
-  if (!row) return false;
-  const bu = row.querySelector('.mv-pv-baseurl');
+export function collectOpenRouterRow(rootEl) {
+  const row = rootEl && (rootEl.matches && rootEl.matches('.mv-or-row') ? rootEl : rootEl.querySelector('.mv-or-row'));
+  if (!row) return null;
+  const body = {};
   const key = row.querySelector('.mv-pv-key');
-  let changed = false;
-  if (bu && bu.value.trim() !== p.baseUrl) { bu.value = p.baseUrl; changed = true; }
-  if (key && !key.value.trim()) { key.value = p.keyRef; changed = true; }
-  return changed;
+  const v = key.value.trim();
+  if (v !== key.dataset.original) body.apiKey = v;
+  const conc = row.querySelector('.mv-pv-conc').value.trim();
+  body.maxConcurrent = conc === '' ? '' : Number(conc);
+  body.order = row.querySelector('.mv-or-order').value.split(',').map((s) => s.trim()).filter(Boolean);
+  body.sort = row.querySelector('.mv-or-sort').value;
+  body.allowFallbacks = row.querySelector('.mv-or-fallbacks').checked;
+  return body;
+}
+
+/**
+ * The Providers row that holds a catalogue model's key: 'openrouter' for an OpenAI-compatible entry whose base URL
+ * (its own, else the OpenAI-compatible row's) is on openrouter.ai, else its upstream provider; null without one.
+ */
+export function providerRowOf(model, providers) {
+  const up = model && model.upstream;
+  if (!up) return null;
+  if (up.provider === 'openai' && isOpenRouterUrl(up.baseUrl || providers?.openai?.baseUrl)) return 'openrouter';
+  return up.provider;
 }
 
 /** Collect a key-based provider row into a PATCH body (masked echo dropped). */

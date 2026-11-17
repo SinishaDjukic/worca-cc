@@ -211,7 +211,7 @@ import {
 } from './models-view.mjs';
 import {
   renderProvidersCard, collectProviderRow, collectSpeechRow, formatSpeechBytes, renderImportSheet, renderEndpointSheet, collectImportSheet, applyImportSelectAll,
-  applyProviderPreset, endpointRowMatches, ENDPOINT_PRESETS,
+  OPENROUTER_PRESET, collectOpenRouterRow, providerRowOf, endpointRowMatches, ENDPOINT_PRESETS,
   setModelUpstream, applyImagesPreset, collectImagesRow, showImagesTest, showImagesSaveError, collectSoundRow,
 } from './bridge-view.mjs';
 import {
@@ -1552,11 +1552,11 @@ function recentRunsForFree() {
   return [...runs.values()].sort((a, b) => String(b.startedAt || '').localeCompare(String(a.startedAt || '')));
 }
 
-/** The Providers card: the allowance under the OpenAI-compatible row, without pressing Test. */
+/** The Providers card: the allowance under the OpenRouter row, without pressing Test. */
 function paintProviderFreeDaily() {
   const line = providerFreeLine(freeDailyState.status);
   const root = providerRoot();
-  const row = root && root.querySelector('.mv-pv-row[data-provider="openai"] .mv-pv-msg');
+  const row = root && root.querySelector('.mv-pv-row[data-provider="openrouter"] .mv-pv-msg');
   if (!row || !line || (row.textContent && !row.dataset.freeDaily)) return;
   row.textContent = line;
   row.dataset.freeDaily = '1';
@@ -20252,7 +20252,8 @@ async function testProviderFlow(btn) {
   // What the user is LOOKING at, not what is stored: an unsaved base URL or key is tested as typed,
   // and a local endpoint therefore answers for itself instead of for api.openai.com.
   const typed = (name === 'copilot' ? null : collectProviderRow(providerRoot(), name)) || {};
-  const label = PROVIDER_LABELS[name] || name;
+  // The OpenRouter row is not an upstream provider, so the shared labels do not name it.
+  const label = name === 'openrouter' ? 'OpenRouter' : PROVIDER_LABELS[name] || name;
   setProviderMsg(name, '');
   // #555: the button shows Testing… → Connected, the toast says what answered; a failure is the card's alert.
   const r = await withButton(btn, async () => {
@@ -20271,7 +20272,7 @@ async function testProviderFlow(btn) {
         return { ok: true, detail };
       }
       const why = data.message || data.error || `The server answered ${res.status}.`;
-      return { ok: false, error: `${where ? `${where}: ` : ''}${why}${providerFixHint(why)}` };
+      return { ok: false, error: `${where ? `${where}: ` : ''}${why}${providerFixHint(why, name)}` };
     } catch (e) { return { ok: false, error: `Worca did not answer (${e.message}).` }; }
   }, { busy: 'Testing…', done: 'Connected' });
   if (r.skipped) return;
@@ -20286,11 +20287,12 @@ function hasUnsavedProviderEdits(name, typed) {
   return !!(typed.baseUrl && typed.baseUrl.replace(/\/+$/, '') !== String(cur.baseUrl || '').replace(/\/+$/, ''));
 }
 
-/** One line of "what to do about it" for the failures that have an obvious answer. */
-function providerFixHint(why) {
+/** One line of "what to do about it" for the failures that have an obvious answer. `name` is the row's: the
+ *  OpenRouter row has no base URL to point at a local server. */
+function providerFixHint(why, name) {
   const w = String(why).toLowerCase();
   if (w.includes('authentication failed')) return '. Check the API key, then Save.';
-  if (w.includes('no api key configured')) return '. Set a key above, or point the base URL at a local server (no key needed).';
+  if (w.includes('no api key configured')) return name === 'openrouter' ? '. Set a key above, then Save.' : '. Set a key above, or point the base URL at a local server (no key needed).';
   if (w.includes('${var} is not set')) return '. Set that variable in the shell that starts Worca, then restart it.';
   if (w.includes('unreachable')) return '. Is the server running, and is the base URL right?';
   if (w.includes('endpoint answered 404')) return '. The base URL usually ends in /v1.';
@@ -20680,7 +20682,11 @@ if (el.providersList) {
     else if (t.classList.contains('mv-cp-signout')) copilotSignOutFlow();
     else if (t.classList.contains('mv-cp-fetch-models')) openImportDialog({ source: 'copilot' });
     else if (t.classList.contains('mv-cp-quota-refresh')) refreshCopilotQuotaFlow(t);
-    else if (t.classList.contains('mv-pv-save')) {
+    // The OpenRouter row's Save before the generic one, which would send only its key and cap.
+    else if (t.classList.contains('mv-pv-save') && t.dataset.provider === 'openrouter') {
+      const body = collectOpenRouterRow(t.closest('.mv-or-row'));
+      if (body) patchProviderFlow('openrouter', body, { btn: t });
+    } else if (t.classList.contains('mv-pv-save')) {
       const body = collectProviderRow(providerRoot(), t.dataset.provider);
       if (body) patchProviderFlow(t.dataset.provider, body, { btn: t });
     } else if (t.classList.contains('mv-pv-test')) testProviderFlow(t);
@@ -20693,11 +20699,9 @@ if (el.providersList) {
     else if (t.classList.contains('mv-so-save')) patchProviderFlow('sound', collectSoundRow(providerRoot()), { btn: t });
     else if (t.classList.contains('mv-so-test')) testSoundFlow(t);
     else if (t.classList.contains('mv-sp-clear')) clearSpeechCacheFlow(t);
-    else if (t.classList.contains('mv-pv-preset')) {
-      // Fills the fields only; the row's Test / Save do the rest, exactly as for a typed URL.
-      applyProviderPreset(providerRoot(), t.dataset.provider, t.dataset.preset);
-      setProviderMsg(t.dataset.provider, 'OpenRouter filled in. Set the key (or keep ${OPENROUTER_KEY} and export it where Worca starts), Test connection, then Save.');
-    } else if (t.classList.contains('mv-pv-browse')) {
+    // OpenRouter's catalog, listed with the key its calls carry; the import lands in the CATALOG, like the row below.
+    else if (t.classList.contains('mv-or-browse')) openImportDialog({ source: 'openai', baseUrl: OPENROUTER_PRESET.baseUrl, goToModels: true });
+    else if (t.classList.contains('mv-pv-browse')) {
       // The import lands in the CATALOG, so it opens there — with this row's endpoint filled in.
       const row = t.closest('.mv-pv-row');
       const input = row && row.querySelector('.mv-pv-baseurl');
@@ -20768,7 +20772,13 @@ function onModelsClick(ev) {
       testModelFlow(t);
     } else if (t.classList.contains('mv-signin')) {
       const step = setupStepForSignIn(t);   // a Copilot pill signs in inside the setup assistant (AC-4.5)
-      if (step) openSetup({ entry: 'fix', step }); else goToProviders(t.dataset.provider);
+      if (step) { openSetup({ entry: 'fix', step }); return; }
+      // The row that holds this model's key: an entry on openrouter.ai is the OpenRouter row's. A plugin card is
+      // looked up among the plugin models (an id can be in both lists).
+      const card = t.closest('[data-id]');
+      const list = card && card.dataset.plugin ? (mvState.data?.plugin || []).filter((x) => x.plugin === card.dataset.plugin) : (mvState.data?.models || []);
+      const m = card ? list.find((x) => x.id === card.dataset.id) : null;
+      goToProviders(providerRowOf(m, mvState.providers) || t.dataset.provider);
     } else if (t.classList.contains('mvx-export')) {
       exportPluginFlow();
     } else if (t.classList.contains('mvx-cancel')) {
@@ -40274,7 +40284,7 @@ function revealModelCard(id, param) {
   const card = [...el.modelsList.querySelectorAll('.mv-card[data-id]')].find((n) => n.dataset.id === id);
   if (card) markFound(card, card.querySelector('button'));
 }
-// '#models/providers/<copilot|openai|anthropic|speech|images|sound>': the provider's row, highlighted, with its sign-in or
+// '#models/providers/<copilot|openrouter|openai|anthropic|speech|images|sound>': the provider's row, highlighted, with its sign-in or
 // key field focused (focusProviderRow's choice), else its first control. Only while the address still names that row.
 function revealProviderRow(param) {
   if (!param || currentModelsTab() !== 'providers' || parseModelsParam(parseHash()[1]).rest !== param || !el.providersList) return;

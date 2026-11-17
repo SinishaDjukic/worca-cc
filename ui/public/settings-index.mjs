@@ -98,7 +98,7 @@ export const ADDON_ENTRIES = Object.freeze([
     alts: ['helper model', 'helper jobs', 'utility model', 'titles', 'title model', 'classifier', 'auto workflow model', 'pr description', 'memory defragment', 'workspace scan'] }),
   provider('copilot', 'GitHub Copilot', 'copilot', ['copilot', 'sign in', 'github', 'account', 'quota', 'premium requests', 'providers']),
   provider('openai', 'OpenAI-compatible', 'openai', ['openai', 'api key', 'key', 'base url', 'endpoint', 'gpt', 'local models', 'ollama', 'lm studio', 'providers']),
-  provider('openrouter', 'OpenRouter', 'openai', ['openrouter', 'api key', 'key', 'free models', 'openai-compatible', 'providers']),
+  provider('openrouter', 'OpenRouter', 'openrouter', ['openrouter', 'api key', 'key', 'free models', 'openai-compatible', 'providers']),
   provider('anthropic', 'Anthropic-compatible', 'anthropic', ['anthropic', 'claude api', 'api key', 'key', 'base url', 'endpoint', 'gateway', 'providers']),
   provider('speech', 'Speech (Chat voice)', 'speech', ['speech', 'voice', 'speech to text', 'text to speech', 'stt', 'tts', 'whisper', 'microphone', 'providers']),
   provider('images', 'Image generation (Design)', 'images', ['image', 'images', 'picture', 'pictures', 'image generation', 'gpt-image', 'grok', 'providers']),

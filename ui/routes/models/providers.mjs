@@ -34,6 +34,13 @@ app.get('/api/providers', async (req, res) => {
   }
 });
 
+// The OpenRouter row's Test: a typed key (sent only when changed) goes to OpenRouter's own address.
+// Declared before `:name/test`, which would pass a `baseUrl` this row does not have.
+app.post('/api/providers/openrouter/test', async (req, res) => {
+  const b = req.body || {};
+  res.json(await testProviderConnection('openrouter', typeof b.apiKey === 'string' ? { apiKey: b.apiKey } : {}));
+});
+
 app.post('/api/providers/:name/test', async (req, res) => {
   // The card tests what is ON SCREEN (§8.1): an unsaved base URL or key is sent with the request,
   // so "Test connection" answers for the endpoint the user is looking at, not the stored one.

@@ -9,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { JSDOM } from 'jsdom';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { lastToast, cardAlertOf } from './helpers/feedback.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
 import { SERVER_MJS, readServerSource } from '../src/core/read-server-source.mjs';
 
@@ -144,11 +145,12 @@ test('Providers is a tab of the Models page: its loader, the page title, the pag
       assert.equal(doc.querySelector('#settings-tabs button[data-tab="providers"]'), null);
       assert.equal(doc.querySelector('[data-view="settings"] #providers-list'), null);
     } },
-    { name: 'the OpenRouter allowance paints under the OpenAI-compatible row while the Providers tab shows', run: async () => {
+    { name: 'the OpenRouter allowance paints under the OpenRouter row while the Providers tab shows', run: async () => {
       const { window, doc } = await boot({ routes: { '/api/openrouter/free-daily': { enabled: true, known: true, remaining: 37, limit: 50 } } });
       await go(window, 'models/providers');
       await settle();
-      assert.equal(doc.querySelector('#providers-list .mv-pv-row[data-provider="openai"] .mv-pv-msg').textContent, 'Free-model requests today: 37 of 50 left.');
+      assert.equal(doc.querySelector('#providers-list .mv-pv-row[data-provider="openrouter"] .mv-pv-msg').textContent, 'Free-model requests today: 37 of 50 left.');
+      assert.equal(doc.querySelector('#providers-list .mv-pv-row[data-provider="openai"] .mv-pv-msg').textContent, '', 'not under the OpenAI-compatible row');
     } },
     { name: 'at Simple, #models/providers still opens under the Models banner naming Expert', run: async () => {
       const { window, doc } = await boot({ level: 'simple' });
@@ -247,6 +249,23 @@ test('Models is a page of its own: the catalog, the Engines card from GET /api/s
       assert.deepEqual(shownView(doc), ['models']);
       assert.equal(doc.getElementById('models-tab-catalogue').hidden, false, 'the Catalogue panel shows');
       assert.equal(doc.getElementById('model-import-modal').classList.contains('hidden'), false, 'the import dialog opens over the catalog');
+    } },
+    { name: 'an OpenRouter model\'s Set key opens the Providers tab at the OpenRouter row; a plugin card is looked up among the plugin models', run: async () => {
+      const OR_BASE = 'https://openrouter.ai/api/v1';
+      const entry = (baseUrl, extra = {}) => ({ id: 'glm', label: 'GLM', efforts: ['medium'], upstream: { provider: 'openai', api: 'openai-chat', model: 'z-ai/glm-4.6', baseUrl },
+        bridged: 'openai', needsSignIn: true, signInReason: 'no_key', signInMessage: 'no API key', ...extra });
+      // The same id twice: the global entry points at a local server, the plugin's at OpenRouter.
+      const models = { models: [entry('http://127.0.0.1:11434/v1')], plugin: [entry(OR_BASE, { plugin: 'or-pack' })], predefined: [], efforts: [] };
+      const { window, doc } = await boot({ routes: { '/api/models': models } });
+      await go(window, 'models');
+      doc.querySelector('#models-list .mv-card.mv-plugin .mv-signin').click();
+      await settle();
+      assert.equal(window.location.hash, '#models/providers/openrouter');
+      assert.equal(doc.getElementById('models-tab-providers').hidden, false);
+      await go(window, 'models');
+      doc.querySelector('#models-list .mv-card:not(.mv-plugin) .mv-signin').click();
+      await settle();
+      assert.equal(window.location.hash, '#models/providers/openai', 'the global entry is on the OpenAI-compatible row');
     } },
     { name: 'a Copilot row\'s Sign in opens the setup assistant on Model access, and the page stays (AC-4.5, R-qa-4)', run: async () => {
       const { window, doc } = await boot({ routes: { '/api/models': { models: [COPILOT], predefined: [], efforts: [] } } });
@@ -788,7 +807,7 @@ test('Models tabs: one view, three panels; the old Providers page is its Provide
       assert.equal(status?.textContent, 'The code expired. Start the sign-in again.');
       assert.ok(status.classList.contains('err'));
     } },
-    { name: 'a free-requests answer that lands while Jobs shows is on the OpenAI row when Providers opens again', run: async () => {
+    { name: 'a free-requests answer that lands while Jobs shows is on the OpenRouter row when Providers opens again', run: async () => {
       const free = heldRoute({ enabled: true, known: true, remaining: 37, limit: 50 });
       const { window, doc } = await boot({ hash: 'models/providers', routes: { '/api/openrouter/free-daily': free.route } });
       const card = doc.querySelector('#providers-list .mv-providers');
@@ -797,7 +816,66 @@ test('Models tabs: one view, three panels; the old Providers page is its Provide
       await settle();
       await go(window, 'models/providers');
       assert.equal(doc.querySelector('#providers-list .mv-providers'), card, 'the card was not drawn again');
-      assert.equal(pvRow(doc, 'openai').querySelector('.mv-pv-msg').textContent, 'Free-model requests today: 37 of 50 left.');
+      assert.equal(pvRow(doc, 'openrouter').querySelector('.mv-pv-msg').textContent, 'Free-model requests today: 37 of 50 left.');
+      assert.equal(pvRow(doc, 'openai').querySelector('.mv-pv-msg').textContent, '');
+    } },
+    { name: 'the OpenRouter row\'s Save PATCHes its own block with the routing defaults (Saved on the button); the OpenAI row\'s Save still PATCHes its row', run: async () => {
+      const routes = { '/api/providers/openrouter': {}, '/api/providers/openai': {} };
+      const { window, doc } = await boot({ hash: 'models/providers', routes });
+      const errors = errorsOf(window);
+      const bodies = [];
+      const inner = window.fetch;
+      globalThis.fetch = window.fetch = (u, opts = {}) => { if (opts.method === 'PATCH') bodies.push(`${u} ${opts.body}`); return inner(u, opts); };
+      const row = () => pvRow(doc, 'openrouter');
+      row().querySelector('.mv-or-order').value = 'anthropic, google';
+      row().querySelector('.mv-or-sort').value = 'price';
+      row().querySelector('.mv-or-fallbacks').checked = false;
+      row().querySelector('.mv-pv-save').click();
+      await settle();
+      assert.deepEqual(bodies, ['/api/providers/openrouter {"maxConcurrent":8,"order":["anthropic","google"],"sort":"price","allowFallbacks":false}']);
+      assert.equal(row().querySelector('.mv-pv-save').dataset.fbState, 'done', 'the button reads Saved');
+      pvRow(doc, 'openai').querySelector('.mv-pv-save').click();
+      await settle();
+      assert.deepEqual(bodies.slice(1), ['/api/providers/openai {"baseUrl":"","maxConcurrent":8}']);
+      assert.deepEqual(errors, []);
+    } },
+    { name: 'the OpenRouter row\'s Import models… opens the Catalogue with the import dialog on OpenRouter', run: async () => {
+      const { window, doc } = await boot({ hash: 'models/providers' });
+      const errors = errorsOf(window);
+      pvRow(doc, 'openrouter').querySelector('.mv-or-browse').click();
+      await settle();
+      assert.equal(window.location.hash, '#models');
+      assert.equal(panel(doc, 'catalogue').hidden, false, 'the Catalogue panel shows');
+      assert.equal(doc.getElementById('model-import-modal').classList.contains('hidden'), false, 'the import dialog opens over the catalog');
+      assert.deepEqual([doc.getElementById('mimp-source').value, doc.getElementById('mimp-base').value], ['openai', 'https://openrouter.ai/api/v1']);
+      assert.deepEqual(errors, []);
+    } },
+    { name: 'the OpenRouter row\'s Test asks its own route and toasts "OpenRouter connected"; a missing key gets no base-URL hint', run: async () => {
+      // Prefix match, first key wins: the Test route before the PATCH route.
+      const routes = {
+        '/api/providers/openrouter/test': { ok: true, models: 3, detail: 'credit $1' },
+        '/api/providers/openrouter': {},
+      };
+      const { window, doc, calls } = await boot({ hash: 'models/providers', routes });
+      const errors = errorsOf(window);
+      const bodies = [];
+      const inner = window.fetch;
+      globalThis.fetch = window.fetch = (u, opts = {}) => { if (String(u).startsWith('/api/providers/openrouter/test')) bodies.push(String(opts.body)); return inner(u, opts); };
+      doc.getElementById('toasts').replaceChildren();
+      pvRow(doc, 'openrouter').querySelector('.mv-pv-test').click();
+      await settle();
+      assert.ok(calls.includes('POST /api/providers/openrouter/test'));
+      assert.deepEqual(lastToast(doc), { tone: 'ok', title: 'OpenRouter connected', detail: 'OpenRouter answered with 3 models. Key: credit $1.', action: '' });
+      routes['/api/providers/openrouter/test'] = { ok: false, message: 'no API key configured — OpenRouter lists models without one, but every call needs it' };
+      pvRow(doc, 'openrouter').querySelector('.mv-pv-key').value = 'sk-or-typed';
+      pvRow(doc, 'openrouter').querySelector('.mv-pv-test').click();
+      await settle();
+      assert.deepEqual(bodies, ['{}', '{"apiKey":"sk-or-typed"}'], 'the key only when typed, and never a base URL');
+      const alert = cardAlertOf(pvCard(doc, 'openrouter'));
+      assert.equal(alert.title, 'OpenRouter: connection failed');
+      assert.match(alert.detail, /^no API key configured — OpenRouter lists models without one, but every call needs it/);
+      assert.doesNotMatch(alert.detail, /base URL/);
+      assert.deepEqual(errors, []);
     } },
     { name: 'a Copilot import started on the Providers tab lands on the Catalogue', run: async () => {
       const routes = {

@@ -140,7 +140,7 @@ test('the spend card\'s free-request row: amber when low, opens the Providers ta
   ctx.click(ctx.$('side-acct'));
   ctx.click(row);
   await settle();
-  assert.equal(ctx.window.location.hash, '#models/providers/openai');
+  assert.equal(ctx.window.location.hash, '#models/providers/openrouter');
   assert.equal(ctx.$('acct-menu').hidden, true);
   ctx = await boot({ free: null });
   assert.equal(ctx.doc.querySelector('#acct-spend .mc-free'), null);

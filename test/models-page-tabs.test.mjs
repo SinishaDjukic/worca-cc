@@ -16,7 +16,7 @@ const docOf = () => { const d = new JSDOM(''); doms.push(d); return d.window.doc
 test('the tab list and the provider rows are frozen, in order', () => {
   assert.deepEqual(MODELS_PAGE_TABS, ['catalogue', 'jobs', 'providers']);
   assert.ok(Object.isFrozen(MODELS_PAGE_TABS));
-  assert.deepEqual(PROVIDER_ROWS, ['copilot', 'openai', 'anthropic', 'speech', 'images', 'sound']);
+  assert.deepEqual(PROVIDER_ROWS, ['copilot', 'openrouter', 'openai', 'anthropic', 'speech', 'images', 'sound']);
   assert.ok(Object.isFrozen(PROVIDER_ROWS));
 });
 

@@ -240,7 +240,7 @@ test('Add-ons rows are the settings inside the three pages, never Settings rows;
   for (const [q, title, href] of [
     ['openai key', 'OpenAI-compatible', '#models/providers/openai'],
     ['copilot', 'GitHub Copilot', '#models/providers/copilot'],
-    ['openrouter', 'OpenRouter', '#models/providers/openai'],
+    ['openrouter', 'OpenRouter', '#models/providers/openrouter'],
     ['helper model', 'Helper job models', '#models/engine-settings-card'],
     ['roles', 'Roles', '#models/model-roles-card'],
     ['installed', 'Installed plugins', '#marketplace/installed'],

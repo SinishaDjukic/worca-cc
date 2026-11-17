@@ -204,13 +204,16 @@ export async function handleMessages({ entry, body, requestHeaders = {}, tag = '
     return reply.json(e.status, e.body);
   }
 
-  // Concurrency cap (§7.4).
-  if (semaphore.active(us.provider) >= us.maxConcurrent) {
-    warnOnce(`queue:${us.provider}:${tag}`, `[worca] bridge: requests queued for ${us.provider} (cap ${us.maxConcurrent}) — raise it under Models › Providers if this is slow`, log);
+  // Concurrency cap (§7.4), per queue: OpenRouter's entries wait apart from other OpenAI-compatible calls.
+  if (semaphore.active(us.queue) >= us.maxConcurrent) {
+    const line = us.queue === 'openrouter'
+      ? `[worca] bridge: requests queued for OpenRouter (cap ${us.maxConcurrent}) — raise it on the OpenRouter row under Models › Providers if this is slow`
+      : `[worca] bridge: requests queued for ${us.provider} (cap ${us.maxConcurrent}) — raise it under Models › Providers if this is slow`;
+    warnOnce(`queue:${us.queue}:${tag}`, line, log);
   }
   let release;
   try {
-    release = await semaphore.acquire(us.provider, us.maxConcurrent, { signal });
+    release = await semaphore.acquire(us.queue, us.maxConcurrent, { signal });
   } catch {
     return reply.end();  // the CLI went away while waiting
   }

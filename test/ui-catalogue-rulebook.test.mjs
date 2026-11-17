@@ -65,13 +65,13 @@ test('Marketplace: Installed is one card of divided rows, a marketplace is one c
   assert.equal(page.querySelector('[data-view="marketplace"] .page-intro'), null, 'the tabs are the header (docs/design-system.md › Marketplace exceptions)');
 });
 
-test('Providers: a tab of the Models page, six divided rows, shared buttons', () => {
+test('Providers: a tab of the Models page, seven divided rows, shared buttons', () => {
   assert.equal(page.querySelector('[data-view="providers"]'), null, 'no Providers page: it is the Models page\'s third tab');
   const card = renderProvidersCard({}, { doc, split: true });
   assert.equal(card.querySelector('.mv-providers-hint'), null, 'the tab\'s card carries no intro of its own');
   assert.ok(card.classList.contains('drows'));
   const rows = [...card.querySelectorAll('.mv-pv-card')];
-  assert.equal(rows.length, 6);
+  assert.equal(rows.length, 7);
   for (const r of rows) assert.ok(r.classList.contains('drow') && r.classList.contains('drow-stack') && !r.classList.contains('card'));
   assert.deepEqual(rules('.mv-pv-card'), [], '.drow.drow-stack sets the gap');
   // The three-column field grid stacks under 560px like every other .drows row.
@@ -79,7 +79,7 @@ test('Providers: a tab of the Models page, six divided rows, shared buttons', ()
   const pill = card.querySelector('.mv-pv-row[data-provider="copilot"] .mv-head .badge');
   assert.ok(pill && pill.tagName === 'SPAN', 'the Copilot state is a plain badge (no notice pill)');
   assert.equal(card.querySelector('.mv-cp-terms'), null);
-  assert.ok(card.querySelector('.mv-pv-preset').classList.contains('btn'));
+  assert.ok(card.querySelector('.mv-or-browse').classList.contains('btn'), 'OpenRouter\'s Import models… is a shared button');
   assert.ok(renderProvidersCard({}, { doc }).querySelector('.mv-providers-hint'), 'the old in-Models card keeps its hint');
 });
 

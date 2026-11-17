@@ -64,7 +64,7 @@ import {
   EFFORTS, CODEX_EFFORTS, effortsForEngine, MODEL_ENGINES, RUN_ENGINES, ASK_ENGINES, HELPER_ENGINES, OWN_SIGNIN_ENGINES, aModelOf, ownSignInNote, modelIdProblem, SUBAGENT_MODELS, isReservedModelEnvKey, assertModelCost, envFlag,
   assertModelUpstream, upstreamEnvConflict, modelEnvRef, codexUpstreamProblem,
   UPSTREAM_PROVIDERS, COPILOT_ACCOUNT_TYPES, DEFAULT_PROVIDER_CONCURRENCY, MAX_PROVIDER_CONCURRENCY,
-  isUpstreamBaseUrl, REASONING_EFFORT_LEVELS,
+  isUpstreamBaseUrl, REASONING_EFFORT_LEVELS, OPENROUTER_SORTS,
 } from './model-env.mjs';
 import { MODEL_ROLES } from '../shared/model-roles.mjs';
 import { CODEX_PRICES, listPriceFor } from './list-prices.mjs';
@@ -2494,6 +2494,7 @@ export async function removeGlobalModel(id) {
 //     speech:    { stt: {...}, tts: {...} },   // voice mode, NOT an upstream — see the Speech block below
 //     images:    { service?, baseUrl?, model?, apiKey?, price? },   // Design pictures, NOT an upstream — see the Images block below
 //     sound:     { apiKey? },   // Design sound (ElevenLabs)
+//     openrouter: { apiKey?, maxConcurrent?, order?, sort?, allowFallbacks? },   // OpenRouter's row, NOT an upstream — see the OpenRouter block below
 //   }
 //   (An older Worca also stored copilot.acknowledgedTerms / termsVersion; readers ignore them.)
 // ---------------------------------------------------------------------------
@@ -2890,6 +2891,99 @@ export async function updateSound(patch = {}) {
   if (Object.keys(all).length) settings.providers = all; else delete settings.providers;
   await persistSettings(settings);
   return soundConfig();
+}
+
+// ── OpenRouter (Models menu P2) ──
+//   providers: { …, openrouter: { apiKey?, maxConcurrent?, order?, sort?, allowFallbacks? } }
+// OpenRouter's own row: its key (literal or whole-value ${VAR}), its concurrency cap and its routing defaults
+// (provider order, sort, allow fallbacks). NOT an upstream: it never joins UPSTREAM_PROVIDERS or allProviders().
+// Stored minimally: a field holding its default is not written (allowFallbacks only as false), and an empty
+// block is removed, and so is an empty providers.
+
+const OPENROUTER_FIELDS = Object.freeze(['apiKey', 'maxConcurrent', 'order', 'sort', 'allowFallbacks']);
+const OPENROUTER_DEFAULT_CONCURRENCY = 8;
+const OPENROUTER_QUIET = Object.freeze({ quiet: true });
+const openRouterDefaults = () => ({ apiKey: '', maxConcurrent: OPENROUTER_DEFAULT_CONCURRENCY, order: [], sort: '', allowFallbacks: true });
+
+/** A provider order from a string[] or a comma string, trimmed with blanks dropped; null when it is neither. */
+function openRouterOrder(v) {
+  const list = typeof v === 'string' ? v.split(',') : v;
+  if (!Array.isArray(list) || list.some((s) => typeof s !== 'string')) return null;
+  return list.map((s) => s.trim()).filter(Boolean);
+}
+
+/** Why `v` is not a valid value for openrouter field `k` (one of OPENROUTER_FIELDS), or null when it is. */
+function openRouterFieldError(k, v) {
+  if (k === 'apiKey') return typeof v === 'string' && v.trim() ? null : 'apiKey must be a non-empty string';
+  if (k === 'maxConcurrent') {
+    const n = Number(v);
+    return Number.isInteger(n) && n >= 1 && n <= MAX_PROVIDER_CONCURRENCY ? null : `maxConcurrent must be an integer from 1 to ${MAX_PROVIDER_CONCURRENCY}`;
+  }
+  if (k === 'order') return openRouterOrder(v) ? null : 'order must be a list of provider names';
+  if (k === 'sort') return v === '' || OPENROUTER_SORTS.includes(v) ? null : `sort must be one of ${OPENROUTER_SORTS.join(' | ')}, or empty`;
+  return typeof v === 'boolean' ? null : 'allowFallbacks must be true or false';
+}
+
+/** A valid value of field `k` in its stored form; undefined when it is the default (nothing to store). */
+function openRouterStoredValue(k, v) {
+  if (k === 'apiKey') return v.trim();
+  if (k === 'maxConcurrent') { const n = Number(v); return n === OPENROUTER_DEFAULT_CONCURRENCY ? undefined : n; }
+  if (k === 'order') { const list = openRouterOrder(v); return list.length ? list : undefined; }
+  if (k === 'sort') return v || undefined;
+  return v === false ? false : undefined;
+}
+
+/** The stored block's valid, non-default fields. Never throws. */
+function sanitizeOpenRouter(raw, { quiet = false } = {}) {
+  const r = isObj(raw) ? raw : {};
+  const out = {};
+  for (const k of OPENROUTER_FIELDS) {
+    if (r[k] === undefined) continue;
+    const why = openRouterFieldError(k, r[k]);
+    if (why) { if (!quiet) console.warn(`[worca] providers.openrouter.${k}: ${why} — ignored`); continue; }
+    const v = openRouterStoredValue(k, r[k]);
+    if (v !== undefined) out[k] = v;
+  }
+  return out;
+}
+
+/**
+ * The OpenRouter row's effective config: the defaults under the stored block. The key stays raw (literal or
+ * whole-value ${VAR}), '' when none. Never throws: a bad stored value reads as its default.
+ * @returns {{ apiKey: string, maxConcurrent: number, order: string[], sort: ''|'price'|'throughput'|'latency', allowFallbacks: boolean }}
+ */
+export function openRouterConfig() {
+  if (process.env.NODE_TEST_CONTEXT && !process.env.WORCA_TEST_ALLOW_HOME_FALLBACK) return openRouterDefaults();
+  const all = readSettings().providers;
+  return { ...openRouterDefaults(), ...sanitizeOpenRouter(isObj(all) ? all.openrouter : undefined) };
+}
+
+/**
+ * Patch { apiKey?, maxConcurrent?, order?, sort?, allowFallbacks? }. A key left out keeps its value; '' or null
+ * resets it to its default. Validates the whole patch before writing.
+ * @returns {Promise<ReturnType<typeof openRouterConfig>>} the effective config
+ * @throws {Error}
+ */
+export async function updateOpenRouter(patch = {}) {
+  assertTestSettingsAccess();
+  if (!isObj(patch)) throw new Error('openrouter patch must be an object');
+  for (const [k, v] of Object.entries(patch)) {
+    if (!OPENROUTER_FIELDS.includes(k)) throw new Error(`unknown provider field ${JSON.stringify(k)} for openrouter`);
+    if (isClearInput(v)) continue;
+    const why = openRouterFieldError(k, v);
+    if (why) throw new Error(why);
+  }
+  const settings = readSettings();
+  const all = isObj(settings.providers) ? settings.providers : {};
+  const next = isObj(all.openrouter) ? { ...all.openrouter } : {};
+  for (const [k, v] of Object.entries(patch)) {
+    const stored = isClearInput(v) ? undefined : openRouterStoredValue(k, v);
+    if (stored === undefined) delete next[k]; else next[k] = stored;
+  }
+  if (Object.keys(sanitizeOpenRouter(next, OPENROUTER_QUIET)).length) all.openrouter = next; else delete all.openrouter;
+  if (Object.keys(all).length) settings.providers = all; else delete settings.providers;
+  await persistSettings(settings);
+  return openRouterConfig();
 }
 
 /** Forget the Copilot sign-in (token + login). */

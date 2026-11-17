@@ -15,7 +15,7 @@ const key = (card) => row(card).querySelector('.mv-pv-key');
 
 test('the row comes right after Image generation', () => {
   const card = renderProvidersCard({ sound: SO }, { doc, split: true });
-  assert.deepEqual([...card.querySelectorAll('.mv-pv-row')].map((r) => r.dataset.provider), ['copilot', 'openai', 'anthropic', 'speech', 'images', 'sound']);
+  assert.deepEqual([...card.querySelectorAll('.mv-pv-row')].map((r) => r.dataset.provider), ['copilot', 'openrouter', 'openai', 'anthropic', 'speech', 'images', 'sound']);
   assert.ok(row(card).classList.contains('mv-so-row') && row(card).closest('.mv-pv-card'), 'a divided row of its own');
 });
 

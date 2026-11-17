@@ -5,7 +5,7 @@
 import { icon } from '../icons.mjs';
 
 export const MODELS_PAGE_TABS = Object.freeze(['catalogue', 'jobs', 'providers']);
-export const PROVIDER_ROWS = Object.freeze(['copilot', 'openai', 'anthropic', 'speech', 'images', 'sound']);
+export const PROVIDER_ROWS = Object.freeze(['copilot', 'openrouter', 'openai', 'anthropic', 'speech', 'images', 'sound']);
 
 const LABELS = Object.freeze({ catalogue: 'Catalogue', jobs: 'Jobs', providers: 'Providers' });
 const ICON_OF = Object.freeze({ catalogue: 'layers', jobs: 'briefcase', providers: 'cloud' });

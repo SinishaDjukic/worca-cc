@@ -84,7 +84,7 @@ test('the provider rows sit on the Models page\'s Providers tab: ids keep addon:
   assert.deepEqual(rows.map((e) => e.id), ['copilot', 'openai', 'openrouter', 'anthropic', 'speech', 'images', 'sound'].map((k) => `addon:providers/${k}`));
   for (const e of rows) {
     assert.equal(e.page, 'models', `${e.id} is on the Models page`);
-    assert.match(e.href, /^#models\/providers\/(copilot|openai|anthropic|speech|images|sound)$/, `${e.id}: one Providers row`);
+    assert.match(e.href, /^#models\/providers\/(copilot|openrouter|openai|anthropic|speech|images|sound)$/, `${e.id}: one Providers row`);
     assert.equal(e.meta, 'Models · Providers', `${e.id}: the row names the tab, not only the page`);
     assert.equal(e.alts.at(-1), 'providers', `${e.id}: the query "providers" finds it`);
   }
@@ -106,7 +106,7 @@ test('Add-ons hrefs reach their place: a Marketplace tab, a Connectors view, a M
     }
   }
   const href = (id) => ADDON_ENTRIES.find((e) => e.id === id).href;
-  assert.equal(href('addon:providers/openrouter'), '#models/providers/openai', 'OpenRouter is a preset on the OpenAI-compatible row');
+  assert.equal(href('addon:providers/openrouter'), '#models/providers/openrouter', 'OpenRouter has a row of its own');
   assert.equal(href('addon:models/helper-jobs'), '#models/engine-settings-card', 'helper-job models live in the Engines card');
 });
 

@@ -259,7 +259,9 @@ LM Studio, a LAN vLLM — needs no key: leave it empty and the bridge sends no
 same shortcut, and carries its base URL into the dialog.
 
 **Max concurrent requests** is per provider. Requests over the cap wait; they
-never fail. For Copilot it ships at 4; keep it low.
+never fail. For Copilot it ships at 4; keep it low. OpenRouter calls now queue
+under the OpenRouter row's cap (default 8), no longer under the
+OpenAI-compatible row's.
 
 **Speech.** The same tab has a **Speech** card for Chat's voice mode:
 speech-to-text and text-to-speech each run in the browser (Whisper, Kokoro — the
@@ -387,23 +389,47 @@ worca models import openai [--base-url http://127.0.0.1:11434/v1] [--all | --pic
 
 ### OpenRouter
 
-OpenRouter is the **OpenAI-compatible** provider pointed at
-`https://openrouter.ai/api/v1` — not a provider of its own, so it shares that
-card's key and *Max concurrent requests*. On the Providers card, *Preset:
-OpenRouter* fills the base URL (and `${OPENROUTER_KEY}` when no key is set);
-*Test connection*, then *Save*. From a terminal:
+OpenRouter has its own row on **Models › Providers**, second, after GitHub
+Copilot. It holds an *API key* (stored, or a `${VAR}` reference), *Max
+concurrent requests* (default 8) and three routing defaults — *Provider order*,
+*Sort providers by* (OpenRouter default, Price, Throughput or Latency) and
+*Allow other providers when these are unavailable* — with *Import models…*,
+*Test connection* and *Save*. Its badge reads *key set*, *key from
+OpenAI-compatible*, *key `${VAR}` not set* or *no key*. The OpenAI-compatible
+row no longer has an OpenRouter preset button; the OpenRouter row's *Import
+models…* replaces it.
+
+Models still go through the OpenAI-compatible API. A model is OpenRouter's when
+its own base URL — or, when the model stores none, the OpenAI-compatible row's —
+is on openrouter.ai; it then takes the OpenRouter row's key, cap and routing
+defaults. New OpenRouter imports always store their address, so a later edit of
+the OpenAI-compatible row cannot move them. The OpenRouter row's key goes only
+to an `https:` address on openrouter.ai.
+
+**Set up before the row existed?** Nothing is moved automatically. While the
+OpenAI-compatible row points at openrouter.ai and the OpenRouter row has no key,
+the OpenAI-compatible key is used, and the OpenRouter row says *key from
+OpenAI-compatible*.
+
+From a terminal: `worca models set openrouter` writes the OpenRouter row and
+never touches the OpenAI-compatible one, `worca models test openrouter` tests
+the OpenRouter key, `worca models import openrouter` imports from
+`https://openrouter.ai/api/v1`, and `worca models providers` prints an
+`openrouter` line.
 
 ```
 worca models set openrouter apiKey='${OPENROUTER_KEY}'
+worca models set openrouter maxConcurrent=4 order=anthropic,google sort=price allowFallbacks=false
 worca models test openrouter
 worca models import openrouter --search qwen --tools --min-context 128k
 ```
 
 Keep the key as a `${VAR}` reference and export it where Worca starts. OpenRouter
 lists its models without a key, so a reachable list proves nothing about the key;
-*Test connection* also asks OpenRouter about the key itself and shows what it
-may still spend — credit left, the free-model requests left today and its rate
-limit (never the key). A key OpenRouter rejects fails the test.
+the OpenRouter row's *Test connection* also asks OpenRouter about the key itself
+and shows what it may still spend — credit left, the free-model requests left
+today and its rate limit (never the key). A key OpenRouter rejects fails the
+test.
 
 **Import reads what OpenRouter publishes.** The import is recognised by host, makes
 one call and reads, per model: the window OpenRouter serves (pinned as the Prompt
@@ -421,9 +447,10 @@ and `--min-context`, which narrow both the listing and `--all`.
 **`:free` models and 429s.** A `:free` model runs on capacity OpenRouter shares
 with every user. While that pool is busy **every** request gets a 429 —
 `"limit_source": "upstream_provider_shared_pool"` — however few you send, so
-*Max concurrent requests* cannot help: it caps what Worca has in flight, not
-what OpenRouter will accept. For pipelines use the paid variant (a few cents a
-run for a 27B model), add your own provider key on OpenRouter (BYOK — OpenRouter
+the OpenRouter row's *Max concurrent requests* cannot help: it caps what Worca
+has in flight, not what OpenRouter will accept. For pipelines use the paid
+variant (a few cents a run for a 27B model), add your own provider key on
+OpenRouter (BYOK — OpenRouter
 then bills that provider's rate limits, not the shared pool), or give the model
 fallbacks. The run log shows OpenRouter's own explanation rather than "Provider
 returned error", a rate-limited step backs off and retries before it pauses, and
@@ -461,10 +488,10 @@ tool round trip, each helper call and each retry — so a small pipeline run tak
 
 | Where | Shows |
 | --- | --- |
-| The account menu, last row of the spend card | *Free requests today 941 / 1000*; amber below 10%, red at 0, the reset on hover; it opens the Providers page. Only with a `:free` model in the catalog |
+| The account menu, last row of the spend card | *Free requests today 941 / 1000*; amber below 10%, red at 0, the reset on hover; it opens the OpenRouter row on Models › Providers. Only with a `:free` model in the catalog |
 | A run's cost pill | *$0 · 87 free requests* for a run that used `:free` models |
 | New pipeline form | a warning when a node's model is `:free` and fewer requests are left than this install's typical run (the median of its recent runs; 90 before it has any) |
-| The Providers page | the allowance under the OpenAI-compatible card, read when the page opens |
+| The Models › Providers tab | the allowance in the OpenRouter row, read when the tab opens |
 
 The count is OpenRouter's own (`GET /api/v1/key`, `free_model_daily_requests`), read
 every 5 minutes; between readings every `:free` call through the bridge lowers it. With
@@ -483,8 +510,14 @@ fallback models — tried in order when the first is rate-limited or down (e.g.
 provider routing: a provider order, a sort (price, throughput or latency) and
 *allow other providers*. They are stored on the entry as
 `upstream.openrouter = {models?: [...], provider?: {order?, allow_fallbacks?, sort?}}`,
-validated on save, and sent only to OpenRouter. There is no CLI for them; edit
-the model.
+validated on save, and sent only to OpenRouter.
+
+- The OpenRouter row's *Provider order*, *Sort providers by* and *Allow other
+  providers when these are unavailable* are defaults for OpenRouter models; a
+  model's own routing still wins, field by field.
+- `worca models set openrouter order=… sort=… allowFallbacks=…` sets those
+  defaults.
+- *Fallback models* stay per model.
 
 **What the bridge adds for OpenRouter** (recognised by base URL — openrouter.ai
 or a subdomain). Each request asks for usage accounting (`usage: {include: true}`)
@@ -528,8 +561,9 @@ an OpenAI-compatible endpoint:
 
 On the Models page, *Import models…* → *OpenAI-compatible server* → **Gemini** or
 **Qwen** fills the base URL and the key's `${VAR}` and lists what the endpoint serves.
-The key is stored on each imported model (its Connection), not on the Providers
-card, so the OpenAI-compatible card can stay pointed at OpenRouter or anything else.
+The key is stored on each imported model (its Connection), not on Models ›
+Providers, so the OpenAI-compatible row can point at any server; OpenRouter has
+a row of its own.
 Export the variable where Worca starts. From a terminal:
 
 ```
@@ -555,8 +589,10 @@ worca models import qwen   [--api-key '${DASHSCOPE_API_KEY}'] [--base-url https:
 
 **A provider's key only goes to the provider's own host.** A model whose base URL
 is on another host than the OpenAI-compatible (or Anthropic-compatible) provider's
-uses its own key or none; it never borrows the provider's. So an OpenRouter key on
-the Providers card is never sent to Google, Alibaba or a gateway a model points at.
+uses its own key or none; it never borrows the provider's. The OpenRouter row's
+key goes only to openrouter.ai, over `https:`, and neither it nor the
+OpenAI-compatible row's key is ever sent to Google, Alibaba or a gateway a model
+points at.
 A model that relied on that before shows **needs sign-in** with the reason; give it
 its own key on its Connection (*Advanced*). The import dialog follows the same rule
 when it lists an endpoint.
@@ -595,7 +631,8 @@ worca models import openai [--base-url <url>] [--all | --pick id,id] [--yes]
 worca models import openrouter …        # the same, at https://openrouter.ai/api/v1
 worca models test <copilot|openai|anthropic|openrouter>
 worca models set openai apiKey='${OPENAI_KEY}' baseUrl=https://…/v1
-worca models set openrouter apiKey='${OPENROUTER_KEY}'   # openai provider → OpenRouter
+worca models set openrouter apiKey='${OPENROUTER_KEY}' [maxConcurrent=<n>]
+                  [order=<a,b>] [sort=<price|throughput|latency>] [allowFallbacks=<true|false>]
 ```
 
 A `worca --model copilot-gpt-5 --prompt …` run starts its own bridge.

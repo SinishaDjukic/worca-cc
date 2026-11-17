@@ -137,12 +137,12 @@ test('free-request row: "Free requests today  37 / 50", amber when low, red when
       assert.equal(freeDailyRow(FREE({ remaining: 0 }), { now }).tone, 'over', 'used up');
       assert.match(freeDailyRow(FREE({ remaining: 0 }), { now }).title, /one request\. Used up: free models pause until the reset\.$/);
     } },
-    { name: 'the card carries the row last; it routes to the Models page\'s Providers tab, at the OpenAI-compatible row', run: () => {
+    { name: 'the card carries the row last; it routes to the Models page\'s Providers tab, at the OpenRouter row', run: () => {
       const card = renderSpendCard(LIMIT, { doc, free: FREE({ remaining: 4 }), now });
       const row = card.lastElementChild;
       assert.ok(row.classList.contains('mc-free'));
       assert.deepEqual([row.tagName, row.type, row.getAttribute('role'), row.dataset.nav, row.dataset.hash, row.dataset.tone],
-        ['BUTTON', 'button', 'menuitem', 'models', 'models/providers/openai', 'warn']);
+        ['BUTTON', 'button', 'menuitem', 'models', 'models/providers/openrouter', 'warn']);
       assert.equal(row.querySelector('.mi-lbl').textContent, 'Free requests today');
       assert.equal(row.querySelector('.mi-val').textContent, '4 / 50');
     } },
