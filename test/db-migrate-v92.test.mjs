@@ -69,7 +69,6 @@ test('a DB stamped 89 to 92 by Design\'s previous numbering (the Design tables, 
   for (const stamp of [89, 90, 91, 92]) {
     const db = fresh();
     db.exec(`ALTER TABLE req_features DROP COLUMN model_json; ALTER TABLE req_briefs DROP COLUMN made_cost_kind;
-      ALTER TABLE ask_threads DROP COLUMN labels; ALTER TABLE pipelines DROP COLUMN cost_cap_usd;
       ${stamp < 90 ? 'ALTER TABLE designs DROP COLUMN models_json;' : ''}
       ${stamp < 91 ? 'DROP TABLE design_pictures; ALTER TABLE designs DROP COLUMN pictures;' : ''}
       ${stamp < 92 ? 'ALTER TABLE designs DROP COLUMN sound_json;' : ''} PRAGMA user_version = ${stamp}`);
@@ -78,8 +77,6 @@ test('a DB stamped 89 to 92 by Design\'s previous numbering (the Design tables, 
     assert.equal(version(db), SCHEMA_VERSION);
     assert.ok(cols(db, 'req_features').includes('model_json'), "9c's v89 column");
     assert.ok(cols(db, 'req_briefs').includes('made_cost_kind'), "9c's v89 column");
-    assert.ok(cols(db, 'ask_threads').includes('labels'), "Stillhet's v90 column");
-    assert.ok(cols(db, 'pipelines').includes('cost_cap_usd'), "Stillhet's v91 column");
     for (const c of ['models_json', 'pictures', 'sound_json']) assert.ok(cols(db, 'designs').includes(c), c);
     assert.ok(cols(db, 'design_pictures').length);
     assert.equal(db.prepare('SELECT title FROM designs').get().title, 't');

@@ -854,7 +854,6 @@ const INCREMENTAL_COLUMNS = {
   pipelines:              { resume_point: 'TEXT', owner_pid: 'INTEGER', owner_host: 'TEXT', heartbeat_at: 'TEXT',
                             source_type: "TEXT DEFAULT 'prompt'", source_ref: 'TEXT', guardrails_id: 'TEXT',
                             archived_at: 'TEXT', cost_cap_override: 'INTEGER NOT NULL DEFAULT 0',
-                            cost_cap_usd: 'REAL',   // v91: a cap raised for this run (Stillhet's Raise the cap); NULL = the settings cap
                             pr_url: 'TEXT', pr_number: 'INTEGER', pr_state: 'TEXT', pr_checked_at: 'TEXT',
                             outcome: 'TEXT',
                             scheduled_for: 'TEXT', schedule_id: 'TEXT',   // v31: scheduled-run provenance (NULL = started by hand)
@@ -905,8 +904,7 @@ const INCREMENTAL_COLUMNS = {
                             composer: 'TEXT',        // v54: JSON {sessionId, docToken, graph, selection, dirty, drafts} — the canvas the last message carried
                             archived_at: 'TEXT',     // v75 (#948 s2): when the chat was archived; NULL = not archived
                             pinned_at: 'TEXT',       // v75 (#948 s2): when the chat was pinned; NULL = not pinned
-                            group_id: 'TEXT',        // v76 (#948 s3): the chat's topic group (ask_chat_groups.id); NULL = ungrouped
-                            labels: 'TEXT' },        // v90 (Stillhet chat): JSON [label] (run labels' rules), in the order added; NULL = none
+                            group_id: 'TEXT' },      // v76 (#948 s3): the chat's topic group (ask_chat_groups.id); NULL = ungrouped
   shape_features:         { ship_mode: 'TEXT',        // v58 (D24): 'stacked' | 'one'; NULL = not shipped
                             ship_pr_url: 'TEXT',      // v58: the one PR (mode 'one'); NULL otherwise
                             shipped_at: 'TEXT',       // v58: when Ship as ran
@@ -2866,8 +2864,7 @@ export function migrate(db) {
     // cost_kind, input_tokens, output_tokens}, req_turns/req_helper_messages.{engine, notices_json}, req_attachments.read_engine
     // (all nullable, INCREMENTAL_COLUMNS, so the whole step is the reconcile).
     if (current < 89) repairSchemaGaps(db, schemaGaps(db));
-    // v90: ask_threads.labels (Stillhet chat labels) — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
-    // v91: pipelines.cost_cap_usd (Raise the cap) — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps
+    // v90, v91: reserved. Stillhet's ask_threads.labels and pipelines.cost_cap_usd were reverted from dev on 2026-11-14 (branch backup/dev-before-revert); the numbers stay taken, so a DB stamped up to 95 stays valid.
     // v92 Design: library, builds, agents, spend (first written as v87, then v89; PR-when-done #1156 took 87, Requirements A6.1 took 88,
     // Requirements 9c took 89 and Stillhet's chat labels and run cost cap took 90 and 91). IF NOT EXISTS, so a DB an earlier Design
     // numbering stamped 87 to 92 keeps its Design tables and gains dev's columns above.

@@ -1,0 +1,66 @@
+<header class="topnav" id="topnav">
+          <div class="topnav-l">
+            <!-- Phones only (style.css "Responsive nav tiers"): the hamburger opens the SAME
+                 <aside id="side-rail"> as a slide-in drawer, so every count, the live-run list,
+                 Running actions and the account corner come along. app.js#setMobileNavOpen owns
+                 aria-expanded, the scrim and the inert page behind (this bar included). -->
+            <button type="button" class="btn btn-quiet btn-icon mbar-menu" id="mbar-menu" aria-controls="side-rail" aria-expanded="false" aria-label="Menu" title="Menu">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>
+              <span class="nav-rollup" id="mbar-rollup" hidden="" title="A pipeline needs your input"></span>
+            </button>
+            <!-- Collapse/expand the sidebar (desktop only: style.css hides it from 1080px down,
+                 where the tablet rail is forced and phones use the hamburger). A static
+                 panel icon: a rounded frame with an inset bar, a thin line while the menu is open
+                 and a filled block while it is a rail — style.css swaps them off aria-expanded,
+                 which app.js#applySidebarCollapsed keeps (with the label). -->
+            <button type="button" class="btn btn-quiet btn-icon side-toggle" id="side-toggle" aria-expanded="true" aria-controls="side-rail" title="Collapse menu" aria-label="Collapse menu">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="4.5" width="19" height="15" rx="4.5"></rect><path class="side-toggle-line" d="M7.25 9v6"></path><rect class="side-toggle-fill" x="6" y="8.25" width="4" height="7.5" rx="1.5" fill="currentColor" stroke="none"></rect></svg>
+            </button>
+            <h1 class="topnav-title" id="topnav-title">Runs</h1>
+          </div>
+          <div class="topnav-c">
+            <!-- Search or ask (topnav-search.mjs over global-search.mjs): ⌘K / Ctrl K focuses the
+                 input and opens the listbox under it; its last row hands what was typed to Chat.
+                 Phones fold the pill into #tsearch-open, which shows the input as a full-width row
+                 with #tsearch-close. The script writes the chip (⌘K on a Mac, Ctrl K elsewhere). -->
+            <div class="tsearch">
+              <button type="button" class="btn btn-quiet btn-icon tsearch-open" id="tsearch-open" data-min-level="simple" aria-label="Search" title="Search">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+              </button>
+              <div class="tsearch-field">
+                <svg class="tsearch-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"></circle><path d="m21 21-4.3-4.3"></path></svg>
+                <input type="search" class="tsearch-input" id="tsearch-input" role="combobox" placeholder="Search or ask" aria-label="Search or ask" aria-autocomplete="list" aria-expanded="false" aria-controls="tsearch-pop" aria-keyshortcuts="Meta+K Control+K" autocomplete="off" spellcheck="false">
+                <kbd class="tsearch-kbd" aria-hidden="true">⌘K</kbd>
+                <button type="button" class="btn btn-quiet btn-icon tsearch-close" id="tsearch-close" data-min-level="simple" aria-label="Close search" title="Close search">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"></path></svg>
+                </button>
+              </div>
+              <div class="tsearch-pop" id="tsearch-pop" role="listbox" aria-label="Search or ask" tabindex="-1" hidden=""></div>
+            </div>
+          </div>
+          <div class="topnav-r">
+            <!-- Ask worca beside the page (ask-side.mjs, app.js syncAskSide): docks the Chat beside the page, on every
+                 page with this bar but Chat; hidden until a route shows it. The dot mirrors the Chat row's new-reply dot. -->
+            <button type="button" class="btn btn-quiet topnav-ask" id="topnav-ask" data-min-level="simple" aria-expanded="false" aria-controls="ask-side" aria-label="Ask worca" title="Ask worca">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4H6.5A2.5 2.5 0 0 0 4 6.5V20l3.6-2.7h9.9a2.5 2.5 0 0 0 2.5-2.5V12"></path><path d="M18 3v6M15 6h6"></path></svg>
+              <span class="topnav-ask-label">Ask worca</span>
+              <span class="topnav-ask-dot" id="topnav-ask-dot" hidden=""></span>
+            </button>
+            <!-- Activity (activity-menu.mjs): what needs you, what is running and what is scheduled,
+                 a list with no actions. One badge: the amber Needs-you count (the Runs badge's own
+                 number), else the running count. The dialog hangs under the button (side-flyout.mjs). -->
+            <button type="button" class="btn btn-quiet topnav-act" id="topnav-activity" data-min-level="simple" aria-haspopup="dialog" aria-expanded="false" aria-controls="activity-pop" aria-label="Activity">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
+              <span class="topnav-act-label">Activity</span>
+              <span class="topnav-badge" id="topnav-activity-n" hidden="">0</span>
+            </button>
+            <div class="activity-pop" id="activity-pop" role="dialog" aria-label="Activity" hidden=""><div class="activity-tabs tabs" role="tablist" aria-label="Activity"><button class="activity-tab tab" type="button" id="activity-tab-needs" data-tab="needs" data-min-level="simple" role="tab" aria-controls="activity-panel"></button><button class="activity-tab tab" type="button" id="activity-tab-running" data-tab="running" data-min-level="simple" role="tab" aria-controls="activity-panel"></button><button class="activity-tab tab" type="button" id="activity-tab-scheduled" data-tab="scheduled" data-min-level="simple" role="tab" aria-controls="activity-panel"></button></div><div class="activity-panel" id="activity-panel" role="tabpanel"></div><div class="activity-foot"><a class="activity-foot-link" href="#schedules">Open Schedules</a><button class="btn btn-sm activity-foot-new" type="button" data-href="#new/schedule">Schedule…</button></div></div>
+            <!-- New run: the way to the #new page, at every interface mode and every width (the
+                 sidebar has no row for it). app.js routes it like a nav row; it is never lit as
+                 the open page (no data-nav). -->
+            <button type="button" class="btn btn-primary topnav-new" id="topnav-new" data-min-level="simple" aria-label="New run">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4.5v15a1 1 0 0 0 1.5.9l12-7.5a1 1 0 0 0 0-1.8l-12-7.5A1 1 0 0 0 6 4.5Z"></path></svg>
+              <span class="topnav-new-label">New run</span>
+            </button>
+          </div>
+        </header>

@@ -123,6 +123,13 @@ test('derived ticks: project, run, realRun, ask, workflows, teamPolicy (one stor
   ]);
 });
 
+test('the claude block carries where the CLI checked (configDirectory) to /api/onboarding', async () => {
+  const detect = async () => ({ ready: true, bin: '/usr/local/bin/claude', hint: null, auth: 'signed-out', connected: false, configDirectory: '/tmp/scratch/.claude' });
+  const s = await onboardingStatus({ detect });
+  assert.deepEqual(s.claude, { bin: '/usr/local/bin/claude', hint: null, auth: 'signed-out', configDirectory: '/tmp/scratch/.claude' });
+  assert.equal(s.steps.claude, false);
+});
+
 // ---- stored flags ----
 
 test('onboarding prefs: booleans only, unknown keys refused, all-false drops the key', async () => {
@@ -130,14 +137,14 @@ test('onboarding prefs: booleans only, unknown keys refused, all-false drops the
   assert.throws(() => assertOnboardingPrefsInput({ workspaceGuideSeen: 1 }), /onboarding\.workspaceGuideSeen must be true or false/);
   assert.throws(() => assertOnboardingPrefsInput({ nope: true }), /unknown onboarding key/);
   assert.throws(() => assertOnboardingPrefsInput(null), /object/);
-  assert.deepEqual(await setOnboardingPrefs({ hidden: true }), { hidden: true, welcomeSeen: false, workspaceGuideSeen: false, stillhetAsked: false });
-  assert.deepEqual(await setOnboardingPrefs({ welcomeSeen: true }), { hidden: true, welcomeSeen: true, workspaceGuideSeen: false, stillhetAsked: false });
-  assert.deepEqual(await setOnboardingPrefs({ hidden: false }), { hidden: false, welcomeSeen: true, workspaceGuideSeen: false, stillhetAsked: false }, 'Show again keeps the welcome seen');
-  assert.deepEqual(await setOnboardingPrefs({ welcomeSeen: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false, stillhetAsked: false });
-  assert.deepEqual(await setOnboardingPrefs({ workspaceGuideSeen: true, stillhetAsked: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: true, stillhetAsked: false }, 'the walkthrough flag alone keeps the key');
+  assert.deepEqual(await setOnboardingPrefs({ hidden: true }), { hidden: true, welcomeSeen: false, workspaceGuideSeen: false });
+  assert.deepEqual(await setOnboardingPrefs({ welcomeSeen: true }), { hidden: true, welcomeSeen: true, workspaceGuideSeen: false });
+  assert.deepEqual(await setOnboardingPrefs({ hidden: false }), { hidden: false, welcomeSeen: true, workspaceGuideSeen: false }, 'Show again keeps the welcome seen');
+  assert.deepEqual(await setOnboardingPrefs({ welcomeSeen: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false });
+  assert.deepEqual(await setOnboardingPrefs({ workspaceGuideSeen: true }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: true }, 'the walkthrough flag alone keeps the key');
   assert.equal((await onboardingStatus()).workspaceGuideSeen, true, 'GET /api/onboarding carries it');
-  assert.deepEqual(await setOnboardingPrefs({ workspaceGuideSeen: false, stillhetAsked: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false, stillhetAsked: false });
-  assert.deepEqual(onboardingPrefs(), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false, stillhetAsked: false });
+  assert.deepEqual(await setOnboardingPrefs({ workspaceGuideSeen: false }), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false });
+  assert.deepEqual(onboardingPrefs(), { hidden: false, welcomeSeen: false, workspaceGuideSeen: false });
   const s = await onboardingStatus();
   assert.equal(s.hidden, false);
 });
