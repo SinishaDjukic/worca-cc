@@ -349,7 +349,7 @@ export async function runCursorProcess({
   // The checkout's .cursor files: deny rules and MCP servers (D3). Written before the spawn; a tracked file throws.
   const plan = cursorRulePlan(permissionRules);
   const files = {};
-  if (plan.deny.length) files['.cursor/cli.json'] = `${JSON.stringify({ permissions: { deny: plan.deny } }, null, 2)}\n`;
+  if (plan.deny.length) files['.cursor/cli.json'] = `${JSON.stringify({ permissions: { allow: [], deny: plan.deny } }, null, 2)}\n`;
   let servers = null;
   if (mcpConfigPath) {
     let doc;
