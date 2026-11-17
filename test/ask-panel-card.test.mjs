@@ -2827,7 +2827,7 @@ test('ask-panel-card: large nudge, first time', async () => {
       const rec = {};
       const ctx = await openRequirements(REQ_NUDGE, rec, { lead: null });
       const cardEl = ctx.doc.querySelector('.ask-card');
-      cardEl.querySelector('.spick-b').click();
+      cardEl.querySelector('.shape-lead-pick').click();
       const items = [...ctx.doc.querySelectorAll('.wfv-menu [role="menuitemradio"]')];
       items[1].click();
       const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
@@ -2859,7 +2859,7 @@ test('ask-panel-card: large nudge, first time', async () => {
       const rec = {};
       const ctx = await openRequirements(REQ_NUDGE, rec, { lead: null, putFails: true });
       const cardEl = ctx.doc.querySelector('.ask-card');
-      cardEl.querySelector('.spick-b').click();
+      cardEl.querySelector('.shape-lead-pick').click();
       [...ctx.doc.querySelectorAll('.wfv-menu [role="menuitemradio"]')][3].click();
       cardEl.querySelector('[data-ask-card-shape]').click();
       await settle(ctx);
@@ -2896,7 +2896,7 @@ const openDirect = async (shape, rec, answerer) => {
   return { ctx, cardEl: ctx.doc.querySelector('.ask-card') };
 };
 const pickLead = (ctx, cardEl, i = 1) => {
-  cardEl.querySelector('.spick-b').click();
+  cardEl.querySelector('.shape-lead-pick').click();
   [...ctx.doc.querySelectorAll('.wfv-menu [role="menuitemradio"]')][i].click();
 };
 const fieldLabels = (cardEl) => [...cardEl.querySelectorAll('.ask-rp-shape-main .ask-rp-label')].map((l) => l.textContent);
@@ -2934,7 +2934,7 @@ test('ask-panel-card: direct card, flag on, medium or large', async () => {
       const rec = {};
       const { ctx, cardEl } = await openDirect(DIRECT_SHAPE, rec, { lead: null });
       const shapeBtn = cardEl.querySelector('[data-ask-card-shape]');
-      assert.equal(cardEl.querySelector('.spick-b').textContent, 'pick a role');
+      assert.equal(cardEl.querySelector('.shape-lead-pick').textContent, 'pick a role');
       assert.equal(shapeBtn.getAttribute('aria-disabled'), 'true');
       assert.equal(ctx.doc.getElementById(shapeBtn.getAttribute('aria-describedby')).textContent, 'You lead as');
       shapeBtn.click();
