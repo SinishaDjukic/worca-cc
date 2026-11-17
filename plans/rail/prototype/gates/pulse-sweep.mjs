@@ -1,56 +1,42 @@
-// Run: node plans/rail/prototype/gates/pulse-sweep.mjs file://$PWD/plans/rail/prototype/pulse.html [--workers N]
+// Run: node plans/rail/prototype/gates/pulse-sweep.mjs file://$PWD/plans/rail/prototype/pulse.html
 // The glitch gate for Pulse (as sweep.mjs for the run page): every case × view × width × system theme. Reports page
 // overflow, clipped text with no tooltip, overlaps, low contrast, menus or popovers outside the window, a click that
 // moves the page, and a control that does nothing.
 import { chromium } from 'playwright';
-import { runUnits, workerCount } from './pool.mjs';
 import { writeAppCss } from './app-css.mjs';
 writeAppCss();   // the app's CSS, assembled from its parts
 const URL = process.argv[2];
 const b = await chromium.launch({ channel: 'chrome' });
 const issues = new Map(); const add = (k, where) => { if (!issues.has(k)) issues.set(k, []); if (issues.get(k).length < 4) issues.get(k).push(where); };
-// In the page, in one call: pick the case (as playwright's selectOption: the option, then input and change), then the view's
-// clicks, a task apart, as separate calls would leave them. A click's whole round (reset, tag, scroll, click, read) is one call.
-const OPEN = async ({ c, sels }) => {
-  const tick = () => new Promise((r) => setTimeout(r, 0));
-  const s = document.querySelector('#case');
-  for (const o of s.options) o.selected = o.value === c;
-  s.dispatchEvent(new Event('input', { bubbles: true })); s.dispatchEvent(new Event('change', { bubbles: true }));
-  for (const sel of sels) { await tick(); document.querySelector(sel)?.click(); }
-  await tick();
-};
+const click = (p, sel) => p.evaluate((s) => document.querySelector(s)?.click(), sel);
 // every Settings section the model holds (but Notifications, swept above): read from settings-model.js, never listed by hand
-global.window = { RailWould: (p) => 'Would ' + p };   // the prototype host's demo sentence (as worca-sweep): the model calls it at load
-await import('../../../../ui/public/stillhet/settings/settings-model.js');
+global.window = {}; await import('../settings/settings-model.js');
 const SECTION_IDS = window.SettingsModel.GROUPS.flatMap((g) => g.items).filter((id) => id !== 'notifications');
-// each view: the clicks that open it, in order
 const VIEWS = {
-  now: [],
-  popVitals: ['[data-pop]'],
-  popUpdates: ['[data-pop]', '[data-ptab="updates"]'],
-  account: ['[data-acct]'],
-  usage: ['[data-acct]', '[data-sub="usage"]'],
-  popSelect: ['[data-pop]', '[data-ptab="updates"]', '[data-menu="more"]', '[data-pick="more|select"]', '[data-sel]'],
-  popVitalsFiltered: ['[data-pop]', '[data-menu="vitalsShow"]', '[data-pick="vitalsShow|running"]'],
-  popActions: ['[data-pop]', '[data-menu="vitalsShow"]', '[data-pick="vitalsShow|actions"]'],
-  levelFly: ['[data-acct]', '[data-sub="lvl"]'],
-  popMore: ['[data-pop]', '[data-ptab="updates"]', '[data-menu="more"]'],
-  newrun: ['[data-newrun]'],
-  settings: ['[data-acct]', '[data-go="settings"]', '[data-sset="notifications"]', '[data-custom="usage"]'],
+  now: async () => {},
+  popNow: async (p) => click(p, '[data-pop]'),
+  popUpdates: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-ptab="updates"]'); },
+  account: async (p) => click(p, '[data-acct]'),
+  usage: async (p) => { await click(p, '[data-acct]'); await click(p, '[data-sub="usage"]'); },
+  popSelect: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-ptab="updates"]'); await click(p, '[data-menu="more"]'); await click(p, '[data-pick="more|select"]'); await click(p, '[data-sel]'); },
+  popNowFiltered: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-menu="nowShow"]'); await click(p, '[data-pick="nowShow|running"]'); },
+  popMore: async (p) => { await click(p, '[data-pop]'); await click(p, '[data-ptab="updates"]'); await click(p, '[data-menu="more"]'); },
+  newrun: async (p) => click(p, '[data-newrun]'),
+  newrunSmall: async (p) => { await click(p, '[data-newrun]'); await click(p, '[data-menu="nr-size"]'); await click(p, '[data-pick="nr-size|small"]'); },
+  settings: async (p) => { await click(p, '[data-acct]'); await click(p, '[data-go="settings"]'); await click(p, '[data-sset="notifications"]'); await click(p, '[data-custom="usage"]'); },
   // every other Settings section: their rows are the same components, each with its own pickers, switches and buttons
   ...Object.fromEntries(SECTION_IDS
-    .map((id) => ['settings-' + id, ['[data-acct]', '[data-go="settings"]', `[data-sset="${id}"]`]])),
-  settingsWait: ['[data-acct]', '[data-go="settings"]', '[data-sset="runs"]', '[data-menu="auto"]', '[data-pick="auto|wait"]', '[data-menu="mine"]', '[data-pick="mine|wait"]', '[data-newrun]'],
+    .map((id) => ['settings-' + id, async (p) => { await click(p, '[data-acct]'); await click(p, '[data-go="settings"]'); await click(p, `[data-sset="${id}"]`); }])),
+  settingsWait: async (p) => { await click(p, '[data-acct]'); await click(p, '[data-go="settings"]'); await click(p, '[data-sset="notifications"]'); await click(p, '[data-menu="auto"]'); await click(p, '[data-pick="auto|wait"]'); await click(p, '[data-menu="mine"]'); await click(p, '[data-pick="mine|wait"]'); await click(p, '[data-newrun]'); },
 };
-const units = [];   // each theme and width: independent, so they run side by side (pool.mjs)
-for (const scheme of ['dark', 'light']) for (const w of [375, 900]) units.push(async (add) => { let clicks = 0;
+let clicks = 0;
+for (const scheme of ['dark', 'light']) for (const w of [375, 900]) {
   const p = await b.newPage({ viewport: { width: w, height: 900 }, colorScheme: scheme, reducedMotion: 'reduce' });
-  await p.addInitScript(`window.__open = ${OPEN}`);   // OPEN, in every document the page loads
   p.on('pageerror', (e) => add('script error', String(e)));
   await p.goto(URL);
   await p.evaluate((s) => { document.documentElement.dataset.theme = s; }, scheme);
   const cases = await p.evaluate(() => [...document.querySelectorAll('#case option')].map((o) => o.value));
-  const reset = (c, v) => p.evaluate((at) => window.__open(at), { c, sels: VIEWS[v] });
+  const reset = async (c, v) => { await p.selectOption('#case', c); await VIEWS[v](p); };
   for (const c of cases) for (const v of Object.keys(VIEWS)) {
     await reset(c, v);
     const found = await p.evaluate(() => {
@@ -71,9 +57,7 @@ for (const scheme of ['dark', 'light']) for (const w of [375, 900]) units.push(a
         const big = parseFloat(cs.fontSize) >= 18.6 || (parseFloat(cs.fontSize) >= 14 && +cs.fontWeight >= 700);
         if (ratio < (big ? 3 : 4.5) && !/pz-sep|pz-dotsep/.test(e.className)) out.push(['contrast ' + ratio.toFixed(2), e.className + ': ' + s]);
       }
-      // a state word is never cut, and a row's reason wraps (narrow.state-word)
-      for (const e of app.querySelectorAll('.pz-resolved,.pz-row-m')) if (e.offsetParent && e.scrollWidth > e.clientWidth + 1) out.push(['a state word or a reason is cut', e.textContent.slice(0, 30)]);
-      for (const row of app.querySelectorAll('.pz-row,.pz-bar,.runs-bulk,.pz-srow,.pz-sv,.pz-urow,.pz-uhead,.pz-head,.pz-top,.pz-erow,.mc-head,.pz-advice,.pz-advice-acts,.mi,.panel-head')) {
+      for (const row of app.querySelectorAll('.pz-row,.pz-bar,.runs-bulk,.pz-srow,.pz-sv,.pz-urow,.pz-uhead,.pz-head,.pz-top,.pz-erow,.mc-head,.pz-advice,.pz-advice-acts,.mi,.pz-phead')) {
         const kids = [...row.children].filter((k) => k.offsetParent && getComputedStyle(k).position !== 'absolute');
         for (let i = 0; i < kids.length; i++) for (let j = i + 1; j < kids.length; j++) {
           const a = kids[i].getBoundingClientRect(), d = kids[j].getBoundingClientRect();
@@ -96,34 +80,25 @@ for (const scheme of ['dark', 'light']) for (const w of [375, 900]) units.push(a
     // every control does something, and no click moves the page
     const keys = await p.evaluate(() => [...document.querySelectorAll('#app button, #app input[type=checkbox]')].filter((x) => x.offsetParent).map((x, i) => { x.dataset.k = 'k' + i; return x.matches('[aria-selected="true"], [aria-current="page"], [role="menuitemradio"][aria-checked="true"], :disabled') ? null : 'k' + i; }).filter(Boolean));   // a tab already open, or a choice already made, has nothing to do
     for (const k of keys) {
-      const r = await p.evaluate(async ({ key, at }) => {
-        await window.__open(at);   // the case and view afresh (OPEN)
-        [...document.querySelectorAll('#app button, #app input[type=checkbox]')].filter((x) => x.offsetParent).forEach((x, i) => { x.dataset.k = 'k' + i; });
-        window.scrollTo(0, 200); await new Promise((res) => setTimeout(res, 0));
+      await reset(c, v);
+      await p.evaluate(() => [...document.querySelectorAll('#app button, #app input[type=checkbox]')].filter((x) => x.offsetParent).forEach((x, i) => { x.dataset.k = 'k' + i; }));
+      await p.evaluate(() => window.scrollTo(0, 200));
+      const r = await p.evaluate((key) => {
         const el = document.querySelector(`[data-k="${key}"]`); if (!el) return null;
-        const titleOf = () => [...document.querySelectorAll('.pz-title')].filter((t) => t.offsetParent).map((t) => t.textContent).join();
-        const pageWas = titleOf();
         const before = document.getElementById('app').innerHTML + document.querySelector('.rc-toast').textContent, y = window.scrollY, label = el.getAttribute('aria-label') || el.textContent.trim().slice(0, 30) || el.className;
         el.click();
-        const now = () => document.getElementById('app').innerHTML.replace(/ data-k="k\d+"/g, '') + document.querySelector('.rc-toast').textContent;
-        let after = now();
-        if (after === before.replace(/ data-k="k\d+"/g, '')) { await new Promise((res) => setTimeout(res, 20)); after = now(); }   // a Settings row's link goes next tick
+        const after = document.getElementById('app').innerHTML.replace(/ data-k="k\d+"/g, '') + document.querySelector('.rc-toast').textContent;
         const maxY = document.documentElement.scrollHeight - window.innerHeight;   // a page that got shorter may have to give some back
-        const goes = el.matches('[data-sset], [data-go], [data-land], [data-team]') || titleOf() !== pageWas;   // to another page: it opens at its top
+        const goes = el.matches('[data-sset], [data-go]');   // to another page: it opens at its top
         return { label, moved: !goes && Math.abs(window.scrollY - Math.min(y, maxY)) > 1, dead: after === before.replace(/ data-k="k\d+"/g, ''), side: document.documentElement.scrollWidth > document.documentElement.clientWidth + 1 };
-      }, { key: k, at: { c, sels: VIEWS[v] } });
+      }, k);
       if (!r) continue; clicks++;
       if (r.moved) add('page moved on click', `${scheme}/${w}/${c}/${v}: ${r.label}`);
       if (r.dead) add('control did nothing', `${scheme}/${w}/${c}/${v}: ${r.label}`);
       if (r.side) add('page scrolls sideways after a click', `${scheme}/${w}/${c}/${v}: ${r.label}`);
     }
   }
-  await p.close(); return clicks;
-});
-const clicks = (await runUnits(units, add, workerCount())).reduce((a, n) => a + n, 0);
-// the catalogue reaches the page: every event of every group has a row in the case that holds them all
-const pc = await b.newPage(); await pc.goto(URL);
-for (const miss of await pc.evaluate(() => { const M = window.PulseModel, every = M.CASES.find((c) => c.id === 'every'); return Object.keys(M.EVENT).filter((e) => !every.updates.some((u) => u.e === e)); })) add('an event no case shows', miss);
-await pc.close();
+  await p.close();
+}
 console.log(`${clicks} clicks · ` + (issues.size ? '\n' + [...issues].map(([k, v]) => `${k}\n   ${v.join('\n   ')}`).join('\n') : 'no glitches found'));
 await b.close();

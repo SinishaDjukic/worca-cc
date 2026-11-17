@@ -46,21 +46,7 @@ export const PERSPECTIVES = Object.freeze([
 
 export const PERSPECTIVE_KEYS = Object.freeze(PERSPECTIVES.map((p) => p.key));
 const BY_KEY = new Map(PERSPECTIVES.map((p) => [p.key, p]));
-
-/** Compliance (flag proposedPerspectives): a reviewer with a rule but no plan section and no checklist, like Devil's
- *  advocate. Kept out of PERSPECTIVES so the Shaper graphs and every flag-off list stay as they are; only the gate
- *  (normalizePerspectives' `compliance` option) admits it into a run. */
-export const COMPLIANCE_KEY = 'compliance';
-export const COMPLIANCE = perspective({ key: COMPLIANCE_KEY, label: 'Compliance', icon: 'C', help: 'Personal data, emails, consent, retention and licences.',
-  roleRule: 'Your role has no checklist: check the plan for personal data, emails, consent, retention and licences, and file each gap as a finding.',
-  sections: [], effect: {} });
-const WITH_COMPLIANCE = Object.freeze([...PERSPECTIVES, COMPLIANCE]);
-const WITH_COMPLIANCE_KEYS = Object.freeze(WITH_COMPLIANCE.map((p) => p.key));
-
-/** The perspectives a surface offers: PERSPECTIVES, plus Compliance last with the option. */
-export const perspectivesWith = ({ compliance = false } = {}) => (compliance ? WITH_COMPLIANCE : PERSPECTIVES);
-
-export const perspectiveByKey = (key) => BY_KEY.get(key) || (key === COMPLIANCE_KEY ? COMPLIANCE : null);
+export const perspectiveByKey = (key) => BY_KEY.get(key) || null;
 
 /** The sections a plan with these perspectives carries, in §3.1 order, numbered from 1. Product is always on. */
 export function sectionsFor(perspectives) {
@@ -135,20 +121,18 @@ export const chipsHiddenFor = (picked) => ((Array.isArray(picked) && picked.incl
 const SECTION_TITLE = new Map(SECTIONS.map((s) => [s.key, s.title]));
 
 /**
- * Validate a request's perspective keys (POST /api/run `shape.perspectives`). `compliance` admits Compliance (ordered
- * last); without it the behaviour and the error text are today's.
+ * Validate a request's perspective keys (POST /api/run `shape.perspectives`).
  * @returns {{ok:true, perspectives:string[]}|{ok:false, error:string}} keys in PERSPECTIVES order, Product first,
  *   duplicates collapsed
  */
-export function normalizePerspectives(raw, { compliance = false } = {}) {
+export function normalizePerspectives(raw) {
   if (!Array.isArray(raw)) return { ok: false, error: 'shape.perspectives must be an array of perspective keys' };
-  const keys = compliance ? WITH_COMPLIANCE_KEYS : PERSPECTIVE_KEYS;
-  const unknown = raw.filter((k) => typeof k !== 'string' || !keys.includes(k));
+  const unknown = raw.filter((k) => typeof k !== 'string' || !BY_KEY.has(k));
   if (unknown.length) {
-    return { ok: false, error: `unknown perspective(s): ${unknown.map(String).join(', ')} — known: ${keys.join(', ')}` };
+    return { ok: false, error: `unknown perspective(s): ${unknown.map(String).join(', ')} — known: ${PERSPECTIVE_KEYS.join(', ')}` };
   }
   const picked = new Set(['product', ...raw]);
-  return { ok: true, perspectives: keys.filter((k) => picked.has(k)) };
+  return { ok: true, perspectives: PERSPECTIVE_KEYS.filter((k) => picked.has(k)) };
 }
 
 /**
@@ -161,7 +145,7 @@ export function normalizePerspectives(raw, { compliance = false } = {}) {
  * @param {{refiner?:boolean, agreedIds?:string[]}} [opts]
  */
 export function perspectivesBlock(perspectives, { refiner = false, agreedIds = [] } = {}) {
-  const n = normalizePerspectives(perspectives, { compliance: true });   // only a flag-on start can put it in a run
+  const n = normalizePerspectives(perspectives);
   if (!n.ok) return '';
   const picked = n.perspectives;
   const label = (k) => perspectiveByKey(k).label;

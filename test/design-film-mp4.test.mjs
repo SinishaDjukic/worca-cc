@@ -177,11 +177,6 @@ function fakeChild() {
   Object.assign(child, { pid: 4242, stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), exitCode: null, signalCode: null });
   child.stdinEnded = false;
   child.stdin.on('finish', () => { child.stdinEnded = true; });
-  // A real child's pipes keep the event loop alive; the render's own timers are unref'd. Hold the loop the same way
-  // until the child closes or fails, or Node 22 cancels a test whose only pending work is an unref'd timer.
-  const hold = setInterval(() => {}, 60_000);
-  child.once('close', () => clearInterval(hold));
-  child.once('error', () => clearInterval(hold));
   child.out = (text) => child.stdout.write(text);
   child.exit = (code) => { child.exitCode = code; child.stdout.end(); child.stderr.end(); setImmediate(() => child.emit('close', code, null)); };
   return child;

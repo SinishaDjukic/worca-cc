@@ -20,7 +20,6 @@ import { EFFORTS, CODEX_EFFORTS, ALL_EFFORTS, MODEL_ENGINES, COPILOT_MODEL_PREFI
 import { findBridgedEntry, providerReadiness } from './bridge/registry.mjs';
 import { engineLabel } from '../shared/engine-switch.mjs';
 import { normaliseTags } from '../shared/run-tags.mjs';
-import { normaliseLabels } from '../shared/run-labels.mjs';
 import { cleanPick } from '../shared/graph/role-slots.mjs';
 import { ROLE_KEY_RE } from '../shared/graph/role-review-step.mjs';
 import { connectionOf, harnessesOf, runsOn, harnessesLabel, effortsOn } from '../shared/connections.mjs';
@@ -1749,33 +1748,6 @@ export function writeProjectDefaultTags(key, tags) {
     `).run(key, JSON.stringify(extra));
   });
   return tags;
-}
-
-// ── Default Labels (Stillhet slice 9 D19): beside the default tags in project_config.extra, a New run prefill ──
-export const RUN_LABELS_KEY = 'runLabels';
-
-/** The project's default run Labels: an already-normalised list, [] when none. */
-export function readProjectDefaultLabels(key) {
-  assertProjectKey(key);
-  const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
-  const list = (row ? parseJson(row.extra, {}) : {})[RUN_LABELS_KEY]?.defaults;
-  return Array.isArray(list) ? normaliseLabels(list).labels : [];
-}
-
-/** Replace the default Labels with an already-normalised list; [] removes the key. */
-export function writeProjectDefaultLabels(key, labels) {
-  assertProjectKey(key);
-  tx(() => {
-    const row = prepare('SELECT extra FROM project_config WHERE project_key = ?').get(key);
-    const extra = row ? parseJson(row.extra, {}) : {};
-    if (labels.length) extra[RUN_LABELS_KEY] = { defaults: labels }; else delete extra[RUN_LABELS_KEY];
-    prepare(`
-      INSERT INTO project_config (project_key, steps, custom_models, active_workflow_id, extra)
-      VALUES (?, '{}', '[]', NULL, ?)
-      ON CONFLICT(project_key) DO UPDATE SET extra = excluded.extra
-    `).run(key, JSON.stringify(extra));
-  });
-  return labels;
 }
 
 /**

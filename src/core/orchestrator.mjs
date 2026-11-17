@@ -16,7 +16,6 @@ import { runScratchDir } from './run-manifest.mjs';
 import { rm, readFile, readdir, access, stat, writeFile, mkdir, realpath } from 'node:fs/promises';
 import { readDirections, pendingDirections } from './directions.mjs';
 import { runsOn } from '../shared/connections.mjs';
-import { codeReviewRoleKeys } from '../shared/shape/perspective-set.mjs';
 
 import {
   RunHarness, isAbort, isPause, pauseErr, firstLine, jsonClone,
@@ -28,7 +27,7 @@ import { loadAgentRegistry } from './agent-registry.mjs';
 import { AUTO_WORKFLOW_ID, AUTO_WORKFLOW_NAME, SHAPE_WORKFLOW_ID, SHAPE_UX_WORKFLOW_ID } from './graph/builtin-workflows.mjs';
 import { classifyLoops } from '../shared/graph/loops.mjs';
 import { buildGraphManifest, manifestTemplate, manifestPortsFn } from '../shared/graph/manifest.mjs';
-import { DEFAULT_MAX_CYCLES, FLOW_KINDS, KEYED_KINDS } from '../shared/graph/constants.mjs';
+import { DEFAULT_MAX_CYCLES, KEYED_KINDS } from '../shared/graph/constants.mjs';
 import { pickDropWarnings } from '../shared/graph/role-slots.mjs';
 import { factoryFallbackLines } from './factory-models.mjs';
 import { scriptNodeCtx, pythonMissingSentence } from '../shared/graph/script-meta.mjs';
@@ -45,7 +44,7 @@ import { fileSha, planOutputOf } from './shape/outline-file.mjs';
 import { readRunPrAuto } from './pr-auto.mjs';
 import { checkSlices, applyOutlineEdits, normalizeOutline, settleLeftOut, sliceRequirementIds, OUTLINE_FILE, OUTLINE_CHANGE_FILE, OUTLINE_ROUNDS_MAX } from '../shared/shape/slices.mjs';
 import { onlyCriteria } from '../shared/review/requirements-coverage.mjs';
-import { DEFAULT_PERSPECTIVES, normalizePerspectives } from '../shared/shape/perspectives.mjs';
+import { DEFAULT_PERSPECTIVES } from '../shared/shape/perspectives.mjs';
 import { normalizePlanConcern, planConcernFileName, concernFeedbackSection, requirementConcernOf, requirementConcernFeedbackSection } from '../shared/review/plan-concern.mjs';
 import { ensureHouseBrief } from './house-brief.mjs';
 import { extractChecklist } from '../shared/shape/checklist.mjs';
@@ -123,9 +122,6 @@ export class GraphOrchestrator extends RunHarness {
     super(opts);
     // The graph default. createOrchestratorFor always passes an explicit id.
     if (!this.opts.workflowId) this.workflowId = GRAPH_DEFAULT_WORKFLOW.id;
-    // The run's chosen perspective set (flag proposedPerspectives), read once at start by the route: `{ chosen }` or
-    // null. resolveGraph bakes its role specs into the manifest; Clarify reads it through ctx.chosenPerspectives.
-    this.perspectiveSet = this.opts.perspectiveSet && Array.isArray(this.opts.perspectiveSet.chosen) ? { chosen: [...this.opts.perspectiveSet.chosen] } : null;
     // (this._runners is assigned by the _initRunners hook the base constructor calls.)
     this.resolved = null;        // resolveGraph's { template, ports, loops, nodes→nodeCtx, wires, agentsByKey, agentKeys }
     this.scriptRegistry = null;   // loadScriptRegistry() for this run (D16-filtered); tests override the built-in dir with opts.scriptsDir
@@ -224,10 +220,8 @@ export class GraphOrchestrator extends RunHarness {
     const resolved = await resolveGraph(this.projectDir, this.workflowId, registry, this.agentsDir, {
       engine: this.claude.engine || 'claude', runModel: this.claude.model || null, isWorkspace: this.isWorkspace, scripts: this.scriptRegistry, ...(overlay ? { overlay } : {}), ...(defrag && defrag.pair ? { agentPair: defrag.pair } : {}),
       ...(scan ? { agentPair: scan.agentPair, subagentPin: scan.subagentPin } : {}), claudeAuth: this._resolveClaudeAuth(),
-      ...(this.perspectiveSet ? { perspectiveSet: this.perspectiveSet } : {}),
     });
     this._adoptResolvedGraph(resolved);
-    this._notePerspectiveSet();
     // A model a person set that needs the Claude Code sign-in while it is signed out: the engine gate refuses the start
     // (RunHarness#_engineGate). Fresh starts only: resume never resolves, so this stays null there.
     this._signInBlocked = resolved.signInBlocked
@@ -656,7 +650,6 @@ export class GraphOrchestrator extends RunHarness {
     const resolved = await resolveGraph(this.projectDir, workflowId, registry, this.agentsDir, {
       engine: this.claude.engine || 'claude', runModel: this.claude.model || null, isWorkspace: this.isWorkspace, overlay: { nodes: overlayNodes }, ignoreProjectOverrides: true, scripts: this.scriptRegistry,
       claudeAuth: this._resolveClaudeAuth(),
-      ...(this.perspectiveSet ? { perspectiveSet: this.perspectiveSet } : {}),
     });
     if (!this.humanInLoop) {
       // spec D3: no agent may stop the run to ask (generic — every agent node).
@@ -664,7 +657,6 @@ export class GraphOrchestrator extends RunHarness {
     }
     this.workflowId = workflowId;
     this._adoptResolvedGraph(resolved);
-    this._notePerspectiveSet();
     // Auto picks runnable models itself and skips the user slots, so it has no user-set model to refuse
     // (signInBlocked is ignored); a dropped factory default is still said once.
     await this._noteFactoryFallbacks(resolved.factoryNotes);
@@ -811,15 +803,6 @@ export class GraphOrchestrator extends RunHarness {
    */
   _adoptResolvedGraph(resolved) {
     this.resolved = { ...resolved, nodeCtx: resolved.nodes };
-  }
-
-  /** A run with a perspective set: one audit line naming its code review roles, by keys only (fresh starts only). */
-  _notePerspectiveSet() {
-    if (!this.perspectiveSet) return;
-    const keys = codeReviewRoleKeys(Object.values(this.resolved?.nodeCtx || {}).map((nc) => nc?.config));
-    const line = `Perspective set: ${this.perspectiveSet.chosen.join(', ')}; code review roles: ${keys.join(', ') || 'none'}.`;
-    if (this.pipeline?.dir) appendAudit(this.pipeline.dir, line).catch(() => {});   // Auto's decision: the run is under way
-    else this._pendingAudits.push(line);
   }
 
   /** The sign-in seam resolveGraph probes with: an injected `claudeAuth` always; the real probe only off mock, so a mock
@@ -1017,7 +1000,6 @@ export class GraphOrchestrator extends RunHarness {
         // starts next while a gate is held.
         this.state.resumePoint = this._buildResumePoint(snap);
         void this._persist();
-        this._stepRecorded();   // Pause after this step lands only after the finished step is in the point
       },
       // P3 contract: onGate is the state.gate NOTIFIER ({wireId, fromNode, toNode,
       // askId} | null); onAsk is the ONE ask channel (gates today).
@@ -1201,7 +1183,6 @@ export class GraphOrchestrator extends RunHarness {
       memoryScope: this.memoryScope || null,   // agent memory §7.3: a paused defrag resumes with ONE scope (B10)
       ...(this.memoryOff ? { noMemory: true } : {}),   // #943: a run started without memory resumes without it
       ...(this.runShape ? { shape: this.runShape } : {}),
-      ...(this.perspectiveSet ? { perspectiveSet: this.perspectiveSet } : {}),
       ...(this.state.shaping ? { shaping: jsonClone(this.state.shaping) } : {}),
       checkpointRef: this.checkpointRef || null,
       checkpointRefs: { ...this.checkpointRefs },
@@ -2170,16 +2151,7 @@ export class GraphOrchestrator extends RunHarness {
         return this._settleUnstarted(nc, node, args, err);
       }
     }
-    // Pause after this step: a node does not start while one is pending and another runs; the last one out pauses.
-    // A flow card runs inline on the scheduler's loop, so it cannot wait there (the running steps' completions would
-    // never be recorded): it settles as paused (non-terminal, re-run on resume) and the last step out converts the pause.
-    if (FLOW_KINDS.includes(node.kind) && this.state.pauseAfterStep && this._inFlight > 0) return { paused: true };
-    await this._awaitStepBoundary();
-    try { return await this._executeNode(args, node, nc); } finally { this._leaveStep(); }
-  }
 
-  /** One ordinary (non-composite) execution of `node`: _execute's body, counted in flight by its caller. */
-  async _executeNode(args, node, nc) {
     let ctx;
     try {
       ctx = this._execCtx(node, nc, args);
@@ -2426,7 +2398,6 @@ export class GraphOrchestrator extends RunHarness {
       taskPrompt: this.pipeline.promptText,
       toolInstruction: this.toolInstruction,
       shape: this.runShape,
-      ...(this.perspectiveSet ? { chosenPerspectives: [...this.perspectiveSet.chosen] } : {}),
       claudeSettingSources: this._claudeSettingSources(),   // #943 C3: ['project'], or null = every source (opt-in / sign-in)
       // #943: the memory this step loads, for the per-execution manifest: 'frozen' | 'off' | null (a defragment run, a
       // failed mount), and the frozen set ({ set, files }: memory-sync.mjs frozenManifest; role notes carry `roles`).
@@ -3622,11 +3593,6 @@ export class GraphOrchestrator extends RunHarness {
   async _restoreFromResumePoint(rp) {
     this._resumeSnapshot = rp.snapshot || null;
     this._graphSnapshot = rp.snapshot || null;
-    // The start-time perspective set: the code roles are in the manifest already; Clarify still reads it.
-    if (rp.perspectiveSet && Array.isArray(rp.perspectiveSet.chosen)) {
-      const n = normalizePerspectives(rp.perspectiveSet.chosen, { compliance: true });
-      if (n.ok) this.perspectiveSet = { chosen: n.perspectives };
-    }
     // Session groups (Task 46): the hosts' snapshots for createSessionHosts' restore (Task 47) and the re-attach rule (C42).
     // Before any preflight: a re-preflight that pauses again builds its point from these fields (_engineLastPoint).
     this._sessionRestore = rp.sessionHosts && typeof rp.sessionHosts === 'object' ? rp.sessionHosts : null;

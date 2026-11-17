@@ -8,8 +8,7 @@
 // execution ledger (state.steps[], one row per execution, key === executionId),
 // colours read the manifest node. History renders with the registry absent.
 import { levelAtLeast } from '../ui-level.mjs';
-import { manifestPortsFn, manifestTemplate, isGraphManifest } from '../../../src/shared/graph/manifest.mjs';
-export { isGraphManifest };
+import { manifestPortsFn, manifestTemplate } from '../../../src/shared/graph/manifest.mjs';
 import { BOOKEND_EXECUTION_IDS, DEFAULT_MAX_CYCLES, KEYED_KINDS } from '../../../src/shared/graph/constants.mjs';
 import { fanLines } from '../../../src/shared/graph/geometry.mjs';
 import { stepAux, fmtAuxCalls, floorText } from '../../../src/shared/cost/breakdown.mjs';
@@ -60,6 +59,9 @@ export function fmtUsd(n) {
 
 // ── manifest readers ────────────────────────────────────────────────────────
 
+export function isGraphManifest(stepper) {
+  return !!(stepper && stepper.version === 2 && stepper.graph && Array.isArray(stepper.graph.nodes));
+}
 export function manifestNodes(stepper) {
   return isGraphManifest(stepper) ? stepper.graph.nodes.filter(Boolean) : [];
 }

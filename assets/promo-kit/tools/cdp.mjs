@@ -113,8 +113,6 @@ export async function launch({ width = 1920, height = 1080, scale = 1, chrome, f
   gone.catch(() => { /* nobody waiting */ });
   ws.onclose = () => { for (const { rej } of pending.values()) rej(new Error('CDP socket closed')); pending.clear(); lost(new Error('CDP socket closed')); };
   const send = (method, params = {}, sessionId) => new Promise((res, rej) => {
-    // A closed socket drops a message silently and onclose has already settled the pending calls: answer at once.
-    if (ws.readyState !== WebSocket.OPEN) { rej(new Error('CDP socket closed')); return; }
     const i = ++id; pending.set(i, { res, rej });
     ws.send(JSON.stringify({ id: i, method, params, ...(sessionId ? { sessionId } : {}) }));
   });

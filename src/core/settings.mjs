@@ -1103,9 +1103,8 @@ const CHAT_NOTIFY_EVENTS = ['done', 'error', 'question', 'paused', 'away', 'prWa
  * chat's "Create and run scripts" switch and defaults ON, so only a stored false ever
  * takes save_script / test_script away. `suggestions` is Ask Worca's next-prompt ghost text after
  * each reply (one cheap model call per reply), default ON as well. `summariseCommands` (#911, flag
- * commandSummaries) shows chat commands as one-line rows, default ON too. `promptCheck` grades how clear a task
- * prompt is (docs/prompt-check.md), default OFF: only a stored true turns it on.
- * @returns {{notify: Record<string, boolean>, channels: Record<string, {enabled: boolean}>, scriptTools: boolean, suggestions: boolean, summariseCommands: boolean, promptCheck: boolean}}
+ * commandSummaries) shows chat commands as one-line rows, default ON too.
+ * @returns {{notify: Record<string, boolean>, channels: Record<string, {enabled: boolean}>, scriptTools: boolean, suggestions: boolean, summariseCommands: boolean}}
  */
 export function chatPrefs() {
   const raw = readSettings().chat;
@@ -1119,14 +1118,14 @@ export function chatPrefs() {
   // `suggestions`: Ask Worca's next-prompt ghost text after each reply — default ON, only a stored false stops it.
   // `summariseCommands` (#911, flag commandSummaries): chat commands as one-line rows — default ON.
   return { notify, channels, scriptTools: chat.scriptTools !== false, suggestions: chat.suggestions !== false,
-    summariseCommands: chat.summariseCommands !== false, promptCheck: chat.promptCheck === true };
+    summariseCommands: chat.summariseCommands !== false };
 }
 
 /**
  * Merge-patch the chat prefs: {notify?: {done?, error?, question?, paused?, away?},
  * channels?: {"<plugin>/<id>"?: {enabled: boolean}}, scriptTools?: boolean, suggestions?: boolean,
- * summariseCommands?: boolean, promptCheck?: boolean}.
- * Unknown notify keys and a non-boolean scriptTools / suggestions / summariseCommands / promptCheck are rejected (400 at the API layer);
+ * summariseCommands?: boolean}.
+ * Unknown notify keys and a non-boolean scriptTools / suggestions / summariseCommands are rejected (400 at the API layer);
  * channels merge per key.
  */
 export async function setChatPrefs(patch = {}) {
@@ -1140,8 +1139,6 @@ export async function setChatPrefs(patch = {}) {
   if (hasSuggestions && typeof patch.suggestions !== 'boolean') throw new Error('chat suggestions must be true or false');
   const hasSummaries = Object.prototype.hasOwnProperty.call(patch, 'summariseCommands');
   if (hasSummaries && typeof patch.summariseCommands !== 'boolean') throw new Error('chat summariseCommands must be true or false');
-  const hasPromptCheck = Object.prototype.hasOwnProperty.call(patch, 'promptCheck');
-  if (hasPromptCheck && typeof patch.promptCheck !== 'boolean') throw new Error('chat promptCheck must be true or false');
   const settings = readSettings();
   const cur = settings.chat && typeof settings.chat === 'object' ? settings.chat : {};
   settings.chat = {
@@ -1156,7 +1153,6 @@ export async function setChatPrefs(patch = {}) {
     ...(hasScriptTools ? { scriptTools: patch.scriptTools } : {}),
     ...(hasSuggestions ? { suggestions: patch.suggestions } : {}),
     ...(hasSummaries ? { summariseCommands: patch.summariseCommands } : {}),
-    ...(hasPromptCheck ? { promptCheck: patch.promptCheck } : {}),
   };
   await persistSettings(settings);
   return chatPrefs();
@@ -1282,8 +1278,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'updateCheck',                             // Settings › About: check npm for a newer stable Worca (#841)
   'titleModel', 'hideBuiltinModels',
   'theme',
-  'pulseFor',                                // Stillhet Settings › Notifications › Pulse icon
-  'uiLevel',                                // interface mode (docs/ui-levels.md)
+  'uiLevel',                                 // interface mode (docs/ui-levels.md)
   'flags',                                   // feature flags { key: bool } (docs/feature-flags.md)
   'autoWorkflowModel',                       // auto-workflow spec D14
   'prDescriptionModel',                      // the "Ship it?" modal's Generate with AI
@@ -1691,37 +1686,6 @@ export async function setTheme(input) {
   else settings.theme = input;
   await persistSettings(settings);
   return { theme: theme() };
-}
-
-// ── Pulse icon (Stillhet Settings › Notifications) ───────────────────────────
-// How long Stillhet's Pulse icon animates after a new event: until it is read or
-// acted on (the default, stored as the absent key), 10 seconds, 1 minute, or never.
-export const PULSE_FOR_MODES = Object.freeze(['until-read', '10s', '1m', 'never']);
-export const DEFAULT_PULSE_FOR = 'until-read';
-const isPulseForMode = (v) => PULSE_FOR_MODES.includes(v);
-
-/** STORED Pulse icon mode; an absent key is the default, an invalid value is the default (loudly). */
-export function pulseFor() {
-  const v = readSettings().pulseFor;
-  if (v === undefined) return DEFAULT_PULSE_FOR;
-  if (isPulseForMode(v)) return v;
-  console.warn(`[worca] invalid pulseFor ${JSON.stringify(v)} — using the default (${DEFAULT_PULSE_FOR})`);
-  return DEFAULT_PULSE_FOR;
-}
-
-/** @throws {Error} unless `input` is until-read|10s|1m|never, or empty/null (a clear). */
-export function assertPulseForInput(input) {
-  if (isClearInput(input)) return;
-  if (!isPulseForMode(input)) throw new Error('pulseFor must be until-read, 10s, 1m or never');
-}
-
-export async function setPulseFor(input) {
-  assertPulseForInput(input);
-  const settings = readSettings();
-  if (isClearInput(input) || input === DEFAULT_PULSE_FOR) delete settings.pulseFor;
-  else settings.pulseFor = input;
-  await persistSettings(settings);
-  return { pulseFor: pulseFor() };
 }
 
 // ── Auto workflow classifier model (auto-workflow spec D14) ─────────────────
@@ -3028,7 +2992,7 @@ export async function writeStoredFlags(map) {
 // `welcomeSeen` is the one-time welcome dialog; `workspaceGuideSeen` is the
 // "How workspaces work" walkthrough (FEAT-7) — set on every open, cleared when
 // the last workspace is deleted. All absent = all false.
-const ONBOARDING_FLAGS = Object.freeze(['hidden', 'welcomeSeen', 'workspaceGuideSeen', 'stillhetAsked']);
+const ONBOARDING_FLAGS = Object.freeze(['hidden', 'welcomeSeen', 'workspaceGuideSeen']);
 
 export function onboardingPrefs() {
   const o = readSettings().onboarding;

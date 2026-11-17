@@ -20,7 +20,6 @@ Settings › **Chat** (Advanced) sets:
 - the turn limit and a cost cap per turn
 - whether Chat may change and test-run your scripts
 - opt-in web access, with a list of allowed domains
-- opt-in prompt check: the kind of a task prompt and whether it says enough (see [Prompt check](prompt-check.md))
 
 Chat spend counts toward the total budget. A team policy can preset these limits or narrow web access, but never
 widen it.
@@ -56,9 +55,6 @@ changes, creating, adding or cloning a project, and reading a new website.
 A started run becomes a live card. It shows the status, elapsed time, cost, the agents and the workflow graph, with
 **Open run**. From the card you **Pause**, **Resume** or **Stop** the run and answer its questions. Once it ends, the
 card shows the result, the top changed files, the artifacts and **Create PR**.
-
-With **Check how clear a task prompt is** on, a task typed in the composer shows its kind and grade in a chip in the
-lead row; pick another kind to check it again ([prompt-check.md](prompt-check.md#the-chip)).
 
 While the chat follows a live run, the composer's **→** chip, named after the run, sends a direction to the run
 instead of a message to the chat. The chat still posts when the run waits for an answer, pauses, fails or finishes.

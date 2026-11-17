@@ -178,9 +178,8 @@ app.post('/api/run-groups/undo', (req, res) => {
 app.delete('/api/run-groups/members/:pipelineId', (req, res) => {
   try {
     const r = removeFromGroup({ pipelineId: req.params.pipelineId });
-    const undo = rememberUndo(() => restoreRunGroups(r.snap), { scope: 'run-groups', by: actorOf(req) });
     emitChanged('run-groups-changed', 'removed');
-    res.json({ ok: true, groupId: r.groupId, undo });
+    res.json({ ok: true, ...r });
   } catch (err) { groupError(res, err); }
 });
 }

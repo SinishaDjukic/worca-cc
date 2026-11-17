@@ -249,16 +249,3 @@ test('attachRoleReviews: a plan ask gets the plan pass, a gate its node\'s pass;
   assert.equal(attachRoleReviews(ev, undefined), ev, 'in place; no state, no change');
   assert.equal('roleReviews' in ev, false);
 });
-
-test('Compliance through the plan role review: picked, every round, requirements drops it, opted in', async () => {
-  const { PERSPECTIVE_ROLE_CHECKLIST } = await import('../src/shared/shape/role-review.mjs');
-  const { REQUIREMENTS_ROLE_CHECKLIST } = await import('../src/shared/shape/requirements.mjs');
-  assert.deepEqual(PERSPECTIVE_ROLE_CHECKLIST.normalizePicked(['qa', 'compliance']), ['product', 'qa', 'compliance']);
-  assert.deepEqual(rolesForRound(['product', 'qa', 'compliance'], 1).map((r) => r.key), ['product', 'qa', 'compliance']);
-  assert.deepEqual(REQUIREMENTS_ROLE_CHECKLIST.normalizePicked(['qa', 'security', 'compliance']),
-    REQUIREMENTS_ROLE_CHECKLIST.normalizePicked(['qa', 'security']));
-  assert.notDeepEqual(REQUIREMENTS_ROLE_CHECKLIST.normalizePicked(['qa', 'compliance']), ['product']);
-  assert.ok(roleBriefBlock('compliance', PLAN).includes('personal data, emails, consent, retention and licences'));
-  assert.deepEqual(PERSPECTIVE_ROLE_CHECKLIST.optInRoles(), [{ key: 'compliance', label: 'Compliance' }]);
-  assert.equal(PERSPECTIVE_ROLE_CHECKLIST.roles().some((r) => r.key === 'compliance'), false);
-});

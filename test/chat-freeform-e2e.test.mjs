@@ -14,7 +14,7 @@ import { setMockChannelBehavior, mockInteractionReplies, clearMockInteractionRep
 import { findConversation, conversationForThread } from '../src/core/chat/conversations.mjs';
 import { getDb, _resetForTests as closeDbForTests } from '../src/core/db.mjs';
 import { MARK } from '../src/core/chat/receipts.mjs';
-import { SAY, _testing as bridgeTesting } from '../src/core/chat/conversation-bridge.mjs';
+import { SAY } from '../src/core/chat/conversation-bridge.mjs';
 import { readServerSource } from '../src/core/read-server-source.mjs';
 
 process.env.WORCA_MOCK = '1';
@@ -1667,29 +1667,14 @@ test('35. live status: a slow turn shows a working message that becomes the answ
   const { listStatuses } = await import('../src/core/chat/conversations.mjs');
   const askStore = await ask();
   H.setThreadId(() => 'LTH1');
-  // The status message's clock is a fake: one status tick (5 s) is a counter step, not a real wait, so the edit reads
-  // "· 5 s" exactly (a real 5 s interval can fire at 4999 ms of wall clock and read "0 s").
-  let now = Date.now();
-  const ticks = new Map();
-  let nextTick = 0;
-  bridgeTesting.statusClock = {
-    now: () => now,
-    setInterval: (fn) => { const id = ++nextTick; ticks.set(id, fn); return id; },
-    clearInterval: (id) => { ticks.delete(id); },
-  };
-  // Hold the turn after its first text delta until the test releases it: the server forwards the turn's ask-delta to
-  // the bridge, so the tick's edit names the activity. The test's listener is added after the server's own (an
-  // emitter calls its listeners in the order they were added), so once it saw the delta, the bridge has it.
+  // Hold the turn after its first text delta past one status tick (5 s): the server forwards the turn's ask-delta to
+  // the bridge, so that tick's edit names the activity.
   const mock = await import('../src/core/engines/mock.mjs');
-  let held = false, release, deltaSeen = false, offDelta = () => {};
+  let held = false;
   mock._testing.holdFrame = (f) => {
     if (held || f?.event?.delta?.type !== 'text_delta') return null;
     held = true;
-    const threadId = findConversation({ plugin: NAME3, channelId: 'main', chatId: 'LTH1' }).askThreadId;
-    const l = (fr) => { if (fr.type === 'ask-delta') deltaSeen = true; };
-    _testing.askBus.on(threadId, l);
-    offDelta = () => _testing.askBus.off(threadId, l);
-    return new Promise((r) => { release = r; });
+    return new Promise((r) => setTimeout(r, 6500));
   };
   const before = posts.length;
   try {
@@ -1697,19 +1682,14 @@ test('35. live status: a slow turn shows a working message that becomes the answ
     channelHost.injectInboundMessage(NAME3, 'main', { chatId: 'L1', userId: 'U1', text: '<@BOT1> MOCK_SLOW explain the plan',
       meta: { platform: 'discord', messageId: mid, guildId: 'G1', isGroup: true, mentionsBot: true, botId: 'BOT1' } });
     const b = await waitFor(() => findConversation({ plugin: NAME3, channelId: 'main', chatId: 'LTH1' }));
-    const st = await waitFor(() => listStatuses(b.id)[0]?.askMessageId && listStatuses(b.id)[0]);
+    const st = await waitFor(() => listStatuses(b.id)[0]);
     const statusPost = posts.slice(before).find((p) => p.chatId === 'LTH1' && !p.options && textOf(p) === '⏳ Working on it… this message will update.');
     assert.ok(statusPost, 'the status message is posted in the thread');
     await waitFor(() => typingLog.some((t) => t.chatId === 'LTH1' && t.on === true));
     const job = await waitFor(() => _testing.askJobs.get(b.askThreadId)?.turn && _testing.askJobs.get(b.askThreadId));
     assert.equal(job.status, 'running', 'the status is up while the turn still runs');
-    await waitFor(() => deltaSeen);
-    assert.equal(ticks.size, 1, 'the status ticker runs on the status clock');
-    now += 5000;
-    for (const fn of [...ticks.values()]) fn();
-    const progress = await waitFor(() => posts.slice(before).find((p) => p.options?.edit?.messageId === st.platformMessageId));
-    assert.equal(textOf(progress), '⏳ Working on it… · 5 s\nWriting the answer…', 'elapsed time and the activity, nothing of the text');
-    release();
+    const progress = await waitFor(() => posts.slice(before).find((p) => p.options?.edit?.messageId === st.platformMessageId), 9000);
+    assert.match(textOf(progress), /^⏳ Working on it… · 5 s\nWriting the answer…$/, 'elapsed time and the activity, nothing of the text');
     await idle(b.askThreadId);
     const reply = askStore.listMessages(b.askThreadId).filter((m) => m.role === 'assistant').at(-1);
     assert.equal(reply.status, 'done');
@@ -1721,10 +1701,7 @@ test('35. live status: a slow turn shows a working message that becomes the answ
     assert.deepEqual(listStatuses(b.id), []);
     assert.equal(getDb().prepare("SELECT platform_message_id FROM chat_deliveries WHERE conversation_id = ? AND ask_message_id = ? AND part = 'text:0'").get(b.id, reply.id).platform_message_id, st.platformMessageId);
   } finally {
-    release?.();
-    offDelta();
     mock._testing.holdFrame = null;
-    bridgeTesting.statusClock = null;
     H.setThreadId(() => 'TH1');
   }
 });
