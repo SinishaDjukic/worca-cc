@@ -29,7 +29,8 @@ export const STATIC_ROUTES = ['#chat/new', '#chat/{threadId}', '#chat/{threadId}
   '#workflows/scripts/{scriptKey}', '#requirements', '#requirements/new', '#requirements/feature/{requirementN}', '#workspaces', '#workspace-create',
   '#projects', '#projects/{projectKey}/memory/{memoryName}', '#marketplace/installed/{pluginName}', '#marketplace/browse/{marketplaceId}/{pluginName}',
   '#connectors', '#connectors/servers', '#connectors/servers/{mcpServerId}', '#connectors/skills', '#connectors/sets/{skillSetId}', '#models',
-  '#models/model/{modelId}', '#providers', '#providers/copilot', '#providers/openai', '#providers/anthropic', '#providers/speech', '#providers/images', '#providers/sound'];
+  '#models/model/{modelId}', '#models/jobs', '#models/providers', '#models/providers/copilot', '#models/providers/openai', '#models/providers/anthropic',
+  '#models/providers/speech', '#models/providers/images', '#models/providers/sound'];
 
 /**
  * Plain string lists (`['general', 'tags']`) give their strings. Object lists (`[{ key: 'overview', label: …, level: … }]`)

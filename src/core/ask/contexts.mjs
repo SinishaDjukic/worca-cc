@@ -18,7 +18,6 @@ export const PAGE_LABELS = Object.freeze({
   marketplace: 'Marketplace',
   connectors: 'Connectors',
   models: 'Models',
-  providers: 'Providers',
   'team-metrics': 'Team metrics',
   'team-policy': 'Team policy',
 });

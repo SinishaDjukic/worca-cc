@@ -77,6 +77,9 @@ export const ICONS = Object.freeze({
   // A video's sound in the film's transport: Mute, and Unmute once muted.
   volume: '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"></path><path d="M15.5 9a4 4 0 0 1 0 6"></path><path d="M18.5 6.5a7.5 7.5 0 0 1 0 11"></path>',
   'volume-off': '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"></path><path d="M16 9.5l5 5M21 9.5l-5 5"></path>',
+  // The Models page's Jobs and Providers tabs (models/page-tabs.mjs); a plain cloud, unlike `remote`'s arrow.
+  briefcase: '<rect x="4" y="8" width="16" height="11" rx="2"></rect><path d="M9 8V6.5A1.5 1.5 0 0 1 10.5 5h3A1.5 1.5 0 0 1 15 6.5V8M4 13h16"></path>',
+  cloud: '<path d="M7.5 18a4 4 0 0 1-.6-7.96 5.5 5.5 0 0 1 10.6 1.02A3.5 3.5 0 0 1 17 18z"></path>',
 });
 
 const px = (size) => (Number(size) > 0 ? Number(size) : 16);

@@ -687,6 +687,19 @@ function resolveHljsAssets(resolve = require.resolve, warn = (msg) => console.wa
 
 const HLJS_ASSETS = resolveHljsAssets();
 
+// The Models page's brand marks (@lobehub/icons-static-svg): the package has no main and no exports, so its
+// package.json is resolved and the svgs are its icons/ folder. Unresolved, the route stays unregistered (/vendor 404).
+const BRAND_ICON_FILE_RE = /^[a-z0-9][a-z0-9-]*\.svg$/;
+function resolveBrandIconsDir(resolve = require.resolve, warn = (msg) => console.warn(msg)) {
+  try {
+    return path.join(path.dirname(resolve('@lobehub/icons-static-svg/package.json')), 'icons');
+  } catch (err) {
+    warn(`[worca-ui] brand icons unavailable: ${err?.message || err}`);
+    return null;
+  }
+}
+const BRAND_ICONS_DIR = resolveBrandIconsDir();
+
 // Ask Worca §10.7: the chat's markdown pipeline is served from node_modules the
 // same way the hljs assets are, but resolved with import.meta.resolve — the CJS
 // require.resolve lands on marked's CJS build, and dompurify/package.json is not
@@ -2174,6 +2187,22 @@ app.get(/^\/vendor\/speech\/hf\/([^/]+\/[^/]+)\/resolve\/[^/]+\/(.+)$/, (req, re
   speechAssetStore().model(req.params[0], req.params[1])
     .then((r) => (r.body ? streamSpeechAsset(res)(r) : sendSpeechAsset(res, next)(r)), speechAssetFail(res, next));
 });
+// The brand marks, one svg at a time: a lowercase slug that is a file of icons/, else the /vendor 404 below.
+if (BRAND_ICONS_DIR) {
+  app.get('/vendor/brand-icons/:file', (req, res, next) => {
+    const file = String(req.params.file || '');
+    if (!BRAND_ICON_FILE_RE.test(file)) return next();
+    try {
+      if (!fs.statSync(path.join(BRAND_ICONS_DIR, file)).isFile()) return next();
+    } catch {
+      return next();
+    }
+    res.type('image/svg+xml');
+    res.set('X-Content-Type-Options', 'nosniff'); res.set('Content-Security-Policy', 'sandbox');
+    res.set('Cache-Control', 'public, max-age=86400');
+    res.sendFile(file, { root: BRAND_ICONS_DIR }, (err) => { if (!err) return; if (res.headersSent) return next(err); next(); });
+  });
+}
 
 app.use('/vendor', (err, _req, res, next) => {
   if (res.headersSent) return next(err);
@@ -10525,7 +10554,7 @@ export const _testing = {
   pkgVersion: RUNNING_VERSION,
   wireRun, summarizeRuns, scanRequest, fireTicket, afterMembersChanged, markResumedRescan, wireAgentGen, startAgentGen, wireScriptBench, startScriptBench,
   chatActions, chatRouter, channelHost, handleChatInbound, enqueueChatWork, answerRun,
-  chatNotifier, resumeRun, resolveHljsAssets, resolveEsmAsset, askJobs, startAskTurn, askAgentRelay, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor, switchThreadScope,
+  chatNotifier, resumeRun, resolveHljsAssets, resolveBrandIconsDir, resolveEsmAsset, askJobs, startAskTurn, askAgentRelay, askFollowers, askDeleting, resolveAskContext, flipCard, askWebAccessFor, switchThreadScope,
   startCloneJob, followCloneCard, CLONE_JOBS, GIT_ONLY_ROUTES, MARKET_JOBS, pruneMarketJobs, marketJobFailure,
   emitDiffCommentsChanged, emitAskWorktrees, askWorktreesEnvelope, deleteAskThreadFully,
   askTrackRun, liveRunEntry, liveDefragRun, askRefResolver, requirementsRunSummary, invokeStartRun, memoryScopeKey, startRunHandler, emitMemoryChanged, askSystemPromptFor, askMemoryMutation,

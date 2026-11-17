@@ -15,9 +15,10 @@
 .mv-summary{display:block;margin:6px 0 0;word-break:break-all;}
 .mv-card .btn{flex:0 0 auto;}
 .mv-head-actions{display:flex;gap:8px;flex:0 0 auto;}
+/* The actions show on the Catalogue tab only (app.js hides them elsewhere); the flex above would beat a bare [hidden]. */
+.mv-head-actions[hidden]{display:none;}
 /* Phones: the header buttons and a card's buttons wrap under the text instead of running off the screen. */
 @media (max-width:760px){
-  [data-view="models"] .topbar{flex-wrap:wrap;}
   .mv-head-actions{flex:1 1 100%;flex-wrap:wrap;}
   .mv-card{flex-wrap:wrap;}
   .mv-body{flex-basis:100%;}

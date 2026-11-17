@@ -76,8 +76,8 @@ test('with the broker the key field hides as Speech\'s does; the Test stays', ()
 });
 test('the Settings search finds the row, and the page wires its buttons', () => {
   const e = ADDON_ENTRIES.find((x) => x.id === 'addon:providers/images');
-  assert.deepEqual([e.title, e.href], ['Image generation (Design)', '#providers/images']);
-  assert.deepEqual(e.alts, ['image', 'images', 'picture', 'pictures', 'image generation', 'gpt-image', 'grok']);
+  assert.deepEqual([e.title, e.href], ['Image generation (Design)', '#models/providers/images']);
+  assert.deepEqual(e.alts, ['image', 'images', 'picture', 'pictures', 'image generation', 'gpt-image', 'grok', 'providers']);
   const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
   for (const re of [/mv-im-save[\s\S]{0,300}patchProviderFlow\('images'[\s\S]{0,200}onError:[\s\S]{0,80}showImagesSaveError/, /mv-im-test'\)\) testImagesFlow/, /mv-im-service'\)\) applyImagesPreset/]) assert.match(app, re);
 });

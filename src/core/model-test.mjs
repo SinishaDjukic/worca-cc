@@ -53,8 +53,8 @@ export const CODEX_ENDPOINT_NETWORK_HINT = "endpoint unreachable — check this 
 /** Actionable hint for a bridge readiness failure (config.mjs resolveModelEnv). Pure. */
 export function bridgeHintFor(reason, provider = 'the provider') {
   switch (reason) {
-    case 'not_signed_in': return `sign in to ${provider} on the Providers page (or \`worca models login ${provider}\`)`;
-    case 'no_key': return `set an API key for ${provider} on the Providers page, or on this model's Connection`;
+    case 'not_signed_in': return `sign in to ${provider} under Models › Providers (or \`worca models login ${provider}\`)`;
+    case 'no_key': return `set an API key for ${provider} under Models › Providers, or on this model's Connection`;
     default: return '';
   }
 }

@@ -1,0 +1,54 @@
+/* The Models page (Catalogue, Jobs, Providers): its head and tab strip, the panels, brand marks and state words.
+   The tabs wear the shared .tab skin (settings/info-tooltips.css); the mdl- tab hooks set layout only. */
+.mdl-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:22px;}
+/* The strip is built into the host at runtime, so the host is the flex item (as .mk-tabs on Marketplace). */
+#models-tabs-host{flex:1 1 auto;min-width:0;}
+/* 4px over the 32px tabs = the actions' 4px under them: the row keeps one height with the actions or without. */
+.mdl-tabs{padding-top:4px;}
+.mdl-head > .mv-head-actions{padding-bottom:4px;}
+@media (max-width:760px){.mdl-head{flex-wrap:wrap}}
+.mdl-tab{flex:none;}
+a.tab.mdl-tab{text-decoration:none;}
+.mdl-tab-name{min-width:0;}
+/* The Catalogue count: span.badge.mdl-tab-count; the chip look is the .badge. */
+.mdl-tab-count{flex:none;}
+.mdl-panel{display:flex;flex-direction:column;gap:16px;width:100%;min-width:0;}
+.mdl-panel[hidden]{display:none;}
+
+/* Brand marks: the one place brand colour appears, always in a tile that is light in both themes.
+   own = worca's mark (a model you added) or the Marketplace bag (a plugin's model), white on a gradient:
+   your own models wear the blue default; a g-<name> class picks a plugin's colour from its name. */
+.mdl-mark{--ga:var(--mark-g-blue-a);--gb:var(--mark-g-blue-b);width:28px;height:28px;border-radius:var(--r-sm);background:var(--mark-tile);border:1px solid var(--line);display:inline-flex;align-items:center;justify-content:center;flex:none;}
+.mdl-mark img{width:18px;height:18px;display:block;}
+.mdl-mark.sm{width:18px;height:18px;border:0;border-radius:0;background:transparent;}
+.mdl-mark.sm img{width:16px;height:16px;}
+.mdl-mark.lg{width:36px;height:36px;border-radius:var(--r-md);}
+.mdl-mark.lg img{width:22px;height:22px;}
+/* A service with no single vendor (speech, pictures, sound): a neutral glyph. */
+.mdl-mark.blank{background:var(--field);color:var(--ink-2);}
+.mdl-mark.xl{width:48px;height:48px;border-radius:var(--r-md);}
+.mdl-mark.xl img{width:30px;height:30px;}
+.mdl-mark.g-indigo{--ga:var(--mark-g-indigo-a);--gb:var(--mark-g-indigo-b);}
+.mdl-mark.g-teal{--ga:var(--mark-g-teal-a);--gb:var(--mark-g-teal-b);}
+.mdl-mark.g-pink{--ga:var(--mark-g-pink-a);--gb:var(--mark-g-pink-b);}
+.mdl-mark.g-blue{--ga:var(--mark-g-blue-a);--gb:var(--mark-g-blue-b);}
+.mdl-mark.g-lime{--ga:var(--mark-g-lime-a);--gb:var(--mark-g-lime-b);}
+.mdl-mark.g-slate{--ga:var(--mark-g-slate-a);--gb:var(--mark-g-slate-b);}
+.mdl-mark.own{border:0;background:linear-gradient(135deg,var(--ga),var(--gb));color:var(--on-mark);}
+.mdl-mark.own img{width:20px;height:20px;filter:brightness(0) invert(1);}
+.mdl-mark.lg.own img{width:26px;height:26px;}
+.mdl-mark.sm.own{width:18px;height:18px;border-radius:var(--r-xs);}
+.mdl-mark.sm.own img{width:13px;height:13px;}
+
+/* State: one dot and one word, the only place state colour lives. ok green, need amber, fail red, off a hollow ring. */
+.mdl-st{display:inline-flex;align-items:center;gap:7px;font-size:var(--fs-meta);font-weight:500;color:var(--ink-2);white-space:nowrap;}
+.mdl-st::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--slate);flex:none;}
+.mdl-st.ok::before{background:var(--green);}
+.mdl-st.need{color:var(--ink);}
+.mdl-st.need::before{background:var(--amber);}
+.mdl-st.fail{color:var(--red-ink-strong);}
+.mdl-st.fail::before{background:var(--red);}
+.mdl-st.off::before{color:var(--slate);background:none;box-shadow:inset 0 0 0 2px currentColor;}
+
+/* "Best performance" on a .badge: worca's blue gradient, white text. */
+.mdl-best{background:linear-gradient(135deg,var(--best-a),var(--best-b));color:var(--on-mark);}

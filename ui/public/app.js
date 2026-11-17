@@ -186,6 +186,7 @@ import {
   channelBadge, renderNeedsGit,
 } from './plugins-view.mjs';
 import { mountMarketplace, tabFromParam, targetFromParam } from './marketplace/index.mjs';
+import { parseModelsParam, modelsHash, renderModelsTabs, paintModelsTabs } from './models/page-tabs.mjs';
 import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
@@ -1002,9 +1003,10 @@ const el = {
   flagsMsg: $('#flags-msg'),
   flagsReset: $('#flags-reset'),
 
-  // Models view
+  // Models view: the Catalogue tab's list and line, the Jobs tab's line, the Providers tab's card and line
   modelsList: $('#models-list'),
   modelsMsg: $('#models-msg'),
+  modelsJobsMsg: $('#models-jobs-msg'),
   providersList: $('#providers-list'),
   providersMsg: $('#providers-msg'),
   modelImportBtn: $('#model-import-btn'),
@@ -1042,6 +1044,21 @@ const el = {
   reportCreate: $('#report-create-issue'),
   reportFiled: $('#report-filed'),
 };
+// The Models page's tab strip (Catalogue, Jobs, Providers; models/page-tabs.mjs). Mounted here, long before the boot
+// route, so a reload on a #models… address paints a strip that is there. Every paint uses this node: the strip is
+// built at runtime, so nothing looks it up by its id.
+const modelsTabsNav = renderModelsTabs(document, {});
+document.getElementById('models-tabs-host')?.replaceChildren(modelsTabsNav);
+// The tab the Models page showed last: when showView runs the hash already names the new one, so only this tells a
+// tab change from a repaint. Declared up here because the boot route (bottom of the file) runs during evaluation.
+let modelsTabShown = '';
+// The content the Providers card was last drawn from (paintProvidersTab compares it): '' = draw on the next show.
+let providersDrawnKey = '';
+// The number of the newest loadModelsView call and its promise: an older call writes nothing and resolves after it.
+let modelsLoadSeq = 0;
+let modelsLoadNewest = null;
+// The number of the newest Models page entry: only its post-load paint and reveals run.
+let modelsEntrySeq = 0;
 // The shared dialog anatomy (dialog-layout.mjs): keep the head/foot edge dividers of every static .dlg current.
 watchDialogEdges(document);
 
@@ -1513,7 +1530,9 @@ async function refreshFreeDaily({ force = false } = {}) {
 function paintFreeDaily() {
   paintSpendCard();
   applyFreeDailyToNewView();
-  if (currentView() === 'providers') paintProviderFreeDaily();
+  // On any Models tab: the row is in the Providers panel, drawn or not (paintProviderFreeDaily no-ops without it), so
+  // an answer that lands while another tab shows is still on the row when Providers opens.
+  if (currentView() === 'models') paintProviderFreeDaily();
 }
 
 /** The new-run form: warn when a node's model is :free and fewer requests are left than a run takes. */
@@ -4206,7 +4225,7 @@ function renderModelEffortPair(modelSel, effortSel, caption, sel = {}) {
   if (caption) {
     const mLabel = model ? model.label : 'default model';
     caption.textContent = `${mLabel} · ${effortSel.value || 'default effort'}`
-      + (model && model.needsSignIn ? ' (needs sign-in on the Providers page)' : '');
+      + (model && model.needsSignIn ? ' (needs sign-in under Models › Providers)' : '');
     caption.classList.toggle('err', !!(model && model.needsSignIn));
   }
 }
@@ -16371,12 +16390,12 @@ function setSettingsLoadMsg(text) {
   if (!n) return;
   n.textContent = text ? `Could not load settings: ${text}` : '';
   n.hidden = !text;
-  // The Models page loads the same payload (its Engines card and helper pickers) but sits outside
-  // Settings, so the line above is not on screen there: say it on the page's own line, and take it
-  // back once a load works (only that message: the line also reports imports and deletes).
+  // The Models page loads the same payload (its Jobs tab's Roles and Engines cards) but sits outside
+  // Settings, so the line above is not on screen there: say it on the Jobs tab's own line, and take it
+  // back once a load works (only that message: anything else on the line stays).
   if (currentView() !== 'models') return;
-  if (text) setModelsMsg(`Could not load settings: ${text}`, 'err-inline');
-  else if (el.modelsMsg && el.modelsMsg.textContent.startsWith('Could not load settings: ')) setModelsMsg('');
+  if (text) reportStatus(el.modelsJobsMsg, 'form-msg', `Could not load settings: ${text}`, 'err-inline');
+  else if (el.modelsJobsMsg && el.modelsJobsMsg.textContent.startsWith('Could not load settings: ')) reportStatus(el.modelsJobsMsg, 'form-msg', '');
 }
 
 async function loadSettings() {
@@ -19866,10 +19885,10 @@ async function paintEngineSettings(data, { force = false } = {}) {
   lastModelCatalog = catalog; lastModelCatalogOk = cfgOk && catalog.length > 0;
   const keep = !force && root.querySelector('.inherit-field[data-dirty="1"]');
   if (!keep) {
-    renderEngineSection(root, { level: 'user', roles, catalog, fields, status: document.getElementById('engineSettingsMsg'), onTest: testModelRow,
+    keepFocusIn(root, () => renderEngineSection(root, { level: 'user', roles, catalog, fields, status: document.getElementById('engineSettingsMsg'), onTest: testModelRow,
       noEffort: ['title', 'classifier', 'prDescription'].map((job) => utilityId('claude', job)),
       defaultLabels: { claude: 'the default model' }, stepHints: { claude: claudeStepHints },
-      jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [], goose: [], opencode: [] }, modelRoles: data.modelRoles || {}, designEngines });
+      jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [], goose: [], opencode: [] }, modelRoles: data.modelRoles || {}, designEngines }));
   }
   lastEngineSettingsData = data;
   paintModelRoles(data);
@@ -19877,14 +19896,23 @@ async function paintEngineSettings(data, { force = false } = {}) {
   // settings-changed broadcast repaints this from any view, and that must not spawn a preflight.
   if (currentView() === 'models') void paintEngineCardStatus(root);
 }
+/** Rebuild `root` with `paint`; a control inside it that had the focus hands it to the control at the same place. The
+ *  Jobs tab's cards are repainted by every settings and catalogue load (the page's entry runs both, a window focus
+ *  re-reads): without this the field a card link's reveal focused, or the one the user is in, drops it. */
+function keepFocusIn(root, paint) {
+  const controls = () => [...root.querySelectorAll('input, select, textarea, button')];
+  const at = root.contains(document.activeElement) ? controls().indexOf(document.activeElement) : -1;
+  paint();
+  if (at >= 0) controls()[at]?.focus({ preventScroll: true });
+}
 /** Models › Roles: the role rows, then every unset Engines row's "From Everyday coding · …" text from them (AC-1.5). */
 function paintModelRoles(data, { force = false } = {}) {
   const rolesRoot = document.getElementById('model-roles-root'); const engineRoot = document.getElementById('engine-settings-root');
   if (!rolesRoot) return;
   const keep = !force && rolesRoot.querySelector('.inherit-field[data-dirty="1"]');
   if (!keep) {
-    renderRolesSection(rolesRoot, { roles: data.modelRoles || {}, catalog: lastModelCatalog, engine: data.runEngine || 'claude',
-      status: document.getElementById('modelRolesMsg'), onChange: (roles) => { if (engineRoot) paintRoleFallbacks(engineRoot, roles, lastModelCatalog); } });
+    keepFocusIn(rolesRoot, () => renderRolesSection(rolesRoot, { roles: data.modelRoles || {}, catalog: lastModelCatalog, engine: data.runEngine || 'claude',
+      status: document.getElementById('modelRolesMsg'), onChange: (roles) => { if (engineRoot) paintRoleFallbacks(engineRoot, roles, lastModelCatalog); } }));
   }
   if (engineRoot) paintRoleFallbacks(engineRoot, readRolesValues(rolesRoot), lastModelCatalog);
   // The catalog failure has its own line, so the dirty counter and "Saved." on #modelRolesMsg never hide it.
@@ -19932,18 +19960,29 @@ document.getElementById('engineSettingsSave')?.addEventListener('click', async (
   } catch (error) { setHintMsg('engineSettingsMsg', error?.message || 'network error', 'err'); }
 });
 
-async function loadModelsView() {
-  if (!el.modelsList) return;
+/** Reads the catalogue and the providers into mvState and draws the Catalogue. Each call takes a number and the
+ *  newest one wins (an entry, a window focus, refreshModelsEverywhere): an older call writes no payload and no line,
+ *  and resolves false once the newest call has written, so its caller acts on the newest state or not at all.
+ *  Resolves true when this call wrote. An older call therefore settles only when the newest one does. */
+function loadModelsView() {
+  const seq = ++modelsLoadSeq;
+  return (modelsLoadNewest = readModelsView(seq));
+}
+
+async function readModelsView(seq) {
+  if (!el.modelsList) return false;
   setModelsMsg('');
   try {
     const [res, pres] = await Promise.all([fetch('/api/models'), fetch('/api/providers'), loadCredentials()]);
-    const data = await safeJson(res);
-    if (!res.ok) return setModelsMsg(data.error || `HTTP ${res.status}`, 'err-inline');
-    mvState.data = data;
-    // Providers are best-effort: a failed read paints the card in its
-    // "not connected" state rather than hiding the catalog.
-    const pdata = await safeJson(pres);
+    const [data, pdata] = await Promise.all([safeJson(res), safeJson(pres)]);
+    if (seq !== modelsLoadSeq) return modelsLoadNewest.then(() => false);
+    // The Providers tab's payload first, so a failed catalogue read still lets that tab draw. A failed read
+    // says so on the tab's own line and leaves the payload null (the tab then draws no card).
     mvState.providers = pres.ok ? pdata : null;
+    if (!pres.ok) setProvidersMsg(pdata.error || `HTTP ${pres.status}`, 'err-inline');
+    else setProvidersMsg('');
+    if (!res.ok) { setModelsMsg(data.error || `HTTP ${res.status}`, 'err-inline'); return true; }
+    mvState.data = data;
     renderModelsViewBody();
     void paintHelperModelCards();
     // "+ Add model…" from a picker on another page: the dialog opens once the catalog is here.
@@ -19955,8 +19994,12 @@ async function loadModelsView() {
         if (j && Array.isArray(j.models)) mvState.copilotModels = j.models;
       }).catch(() => {});
     }
+    return true;
   } catch (e) {
+    if (seq !== modelsLoadSeq) return modelsLoadNewest.then(() => false);
     setModelsMsg(e.message, 'err-inline');
+    setProvidersMsg(e.message, 'err-inline');
+    return true;
   }
 }
 
@@ -19970,41 +20013,39 @@ async function paintHelperModelCards({ force = false } = {}) {
   } catch { /* the card keeps its last paint */ }
 }
 
-/** The Providers page: the same card, on a page of its own (§8.1). */
-async function loadProvidersView() {
-  if (!el.providersList) return;
-  setProvidersMsg('');
-  try {
-    const res = await fetch('/api/providers');
-    const data = await safeJson(res);
-    if (!res.ok) return setProvidersMsg(data.error || `HTTP ${res.status}`, 'err-inline');
-    mvState.providers = data;
-    renderProvidersViewBody();
-  } catch (e) {
-    setProvidersMsg(e.message, 'err-inline');
-  }
-}
-
 function setProvidersMsg(text, kind) {
   reportStatus(el.providersMsg, 'form-msg', text, kind);
 }
 
+/** The Providers tab's card, drawn from mvState (loadModelsView reads it). Records what it drew (paintProvidersTab).
+ *  No payload (before the first read, or after a failed one, whose line says why): no card, and a card an earlier
+ *  read drew is taken away, so no flow acts on a payload that is gone (a Save would send a form of defaults). */
 function renderProvidersViewBody() {
   if (!el.providersList) return;
+  if (!mvState.providers) { providersDrawnKey = ''; el.providersList.replaceChildren(); return; }
   el.providersList.replaceChildren(renderProvidersCard(mvState.providers, { signIn: mvState.signIn, split: true }));
-  // OpenRouter's free-model allowance, read afresh each time the card opens.
+  providersDrawnKey = JSON.stringify([mvState.providers, mvState.signIn]);
+  // OpenRouter's free-model allowance, read afresh each time the card is drawn.
   refreshFreeDaily({ force: true });
 }
 
-/** A page-level message, on whichever of the two pages is showing. */
+/** The Providers tab's card, drawn only while that tab shows and only when its content changed since the last draw:
+ *  a tab switch keeps a typed key, and a window focus that re-reads the same payload (a broker's) redraws nothing. */
+function paintProvidersTab() {
+  if (currentModelsTab() !== 'providers') return;
+  if (JSON.stringify([mvState.providers, mvState.signIn]) === providersDrawnKey) return;
+  renderProvidersViewBody();
+}
+
+/** A page-level message, on the line of the Models tab that is showing (Providers, else the Catalogue's). */
 function setTabMsg(text, kind) {
-  if (currentView() === 'providers') setProvidersMsg(text, kind);
+  if (currentModelsTab() === 'providers') setProvidersMsg(text, kind);
   else setModelsMsg(text, kind);
 }
 
-/** The providers card lives on its own page now, but its flows still repaint by name. */
+/** The providers card lives on its own tab, but its flows still repaint by name. */
 function repaintProviders() {
-  if (currentView() === 'providers') renderProvidersViewBody();
+  if (currentModelsTab() === 'providers') renderProvidersViewBody();
   else if (currentView() === 'models') renderModelsViewBody();
 }
 
@@ -20313,10 +20354,10 @@ function paintImportSource() {
 
 /**
  * @param {{source?:string, baseUrl?:string, goToModels?:boolean}} [o] goToModels comes from the
- *   Providers page's shortcut: the dialog opens over the catalog the import will fill.
+ *   Providers tab's shortcut: the dialog opens over the Catalogue the import will fill (showView syncs #models).
  */
 function openImportDialog({ source, baseUrl, goToModels } = {}) {
-  if (goToModels && currentView() !== 'models') showView('models');
+  if (goToModels && currentModelsTab() !== 'catalogue') showView('models');
   mimp.lastFocus = document.activeElement;
   const connected = !!(mvState.providers && mvState.providers.copilot && mvState.providers.copilot.connected);
   mimp.source = source || (connected ? 'copilot' : 'openai');
@@ -20430,7 +20471,7 @@ async function importModelsFlow() {
     // A local server's rows can be skipped for a reason worth reading (an embedding model, no tools).
     const why = endpoint && Array.isArray(data.skipped) ? data.skipped.filter((s) => s && s.why).map((s) => `${s.id}: ${s.why}`) : [];
     closeImportDialog();
-    if (currentView() !== 'models') showView('models');
+    if (currentModelsTab() !== 'catalogue') showView('models');
     setModelsMsg(`Imported from ${endpoint ? (data.serverLabel || 'the endpoint') : 'Copilot'}: ${parts.join(', ') || 'nothing changed'}.${why.length ? ` ${why.join('; ')}` : ''}`, 'ok');
     // Land ON what was imported: the list filters to the new ids until the filter is cleared.
     const fresh = [...(data.created || []), ...(data.updated || [])];
@@ -20445,9 +20486,9 @@ async function importModelsFlow() {
   }
 }
 
-/** A catalog row's "needs sign-in" now LEAVES for the Providers page and lands on the row. */
+/** A catalog row's "needs sign-in" goes to the Providers tab and lands on the row (the route reveals it). */
 function goToProviders(provider) {
-  if (currentView() !== 'providers') showView('providers');
+  location.hash = modelsHash('providers', provider);
   setTimeout(() => focusProviderRow(provider), 0);
 }
 
@@ -20463,10 +20504,12 @@ function focusProviderRow(provider) {
 // Any catalog mutation must repaint BOTH surfaces: this view and the composer's
 // model dropdowns (state.models comes from /api/config).
 async function refreshModelsEverywhere() {
-  await loadModelsView();
-  // The Providers page shares mvState.providers with the catalog: a sign-in, a key or a cap that
-  // just changed must show on whichever of the two the user is looking at.
-  if (currentView() === 'providers') renderProvidersViewBody();
+  const newest = await loadModelsView();
+  // The Providers tab shares mvState.providers with the catalog: a sign-in, a key or a cap that
+  // just changed must show on whichever of the two the user is looking at. A newer load (a window
+  // focus) that overtook this one wrote the newest state but never draws over a card on screen, so
+  // the card follows it here when what it shows differs (an entry that drew it already keeps it).
+  if (currentModelsTab() === 'providers') { if (newest) renderProvidersViewBody(); else paintProvidersTab(); }
   try { await loadConfig(selectedProjectPath() || ''); } catch { /* dropdowns refresh best-effort */ }
 }
 
@@ -20627,7 +20670,7 @@ async function testModelFlow(btn) {
   }
 }
 
-// The Providers page's own delegation (§8.1): the same buttons, on the page that now owns them.
+// The Providers tab's own delegation (§8.1): the same buttons, on the tab that now owns them.
 if (el.providersList) {
   el.providersList.addEventListener('click', (ev) => {
     const t = ev.target.closest('button');
@@ -39650,15 +39693,15 @@ const navLinks = $$('.nav button[data-nav], #acct-settings');
 // workflows took over composer, agents, scripts and agent-create (see MOVED_ROUTES); workspaces + workspace-create are appended.
 // workspace-create is in the array (so deep-links resolve) but has no nav link.
 // guardrails LEFT this array: it is a Settings tab now, reached as #settings/guardrails
-// (old addresses redirect — see MOVED_ROUTES). The four Add-ons pages went the other way:
-// Settings tabs once, pages of their own now.
-const VIEW_NAMES = ['chat', 'design', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'requirements', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers', 'profile', 'feature', 'group'];
+// (old addresses redirect — see MOVED_ROUTES). The Add-ons pages went the other way:
+// Settings tabs once, pages of their own now (Providers then became a tab of Models).
+const VIEW_NAMES = ['chat', 'design', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'requirements', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'profile', 'feature', 'group'];
 // One Runs page, five route names: the bare list (#runs), the two run routes every deep link already uses
 // (#running/<id>…, #history/<projectKey>/<id>…) and the group page's two (#feature/<id>…, #group/<id>…, run 3 D1).
 // All five render the `data-view="runs"` section and light the one Runs nav button.
 const RUNS_VIEWS = new Set(['runs', 'running', 'history', 'feature', 'group']);
 // The Add-ons pages (sidebar group "Add-ons"): Settings tabs once, pages of their own now.
-const ADDON_VIEWS = ['marketplace', 'connectors', 'models', 'providers'];
+const ADDON_VIEWS = ['marketplace', 'connectors', 'models'];
 const viewSection = (name) => (RUNS_VIEWS.has(name) ? 'runs' : name);
 function inRunsView(v = currentView()) { return RUNS_VIEWS.has(v); }
 
@@ -39683,14 +39726,14 @@ const levelCtl = createLevelController({
 const VIEW_MIN_LEVEL = Object.freeze({
   stats: 'advanced', workspaces: 'advanced', 'workspace-create': 'advanced',
   'team-metrics': 'expert', 'team-policy': 'expert',
-  schedules: 'advanced', marketplace: 'advanced', connectors: 'advanced', models: 'expert', providers: 'expert',
+  schedules: 'advanced', marketplace: 'advanced', connectors: 'advanced', models: 'expert',
 });
 const SETTINGS_TAB_MIN_LEVEL = Object.freeze({ ask: 'advanced', guardrails: 'advanced', memory: 'advanced', presets: 'advanced' });
 const VIEW_TITLES = Object.freeze({
   chat: 'Chat', stats: 'Statistics', workflows: 'Workflows', workspaces: 'Workspaces', 'workspace-create': 'Workspaces',
   'team-metrics': 'Team metrics', 'team-policy': 'Team policy',
   guardrails: 'Guardrails', memory: 'Memory', ask: 'Chat', tags: 'Labels & cost tags',
-  marketplace: 'Marketplace', connectors: 'Connectors', models: 'Models', providers: 'Providers',
+  marketplace: 'Marketplace', connectors: 'Connectors', models: 'Models',
   schedules: 'Schedules', presets: 'Presets',
   requirements: 'Requirements', design: 'Design',
 });
@@ -39762,7 +39805,8 @@ const MOVED_ROUTES = Object.freeze({
   'settings/plugins': 'marketplace',      // Settings tabs that became pages of their own
   'settings/mcp': 'connectors',
   'settings/models': 'models',
-  'settings/providers': 'providers',
+  'settings/providers': 'models/providers',
+  providers: 'models/providers',          // the Providers page became the Models page's third tab
   // The Workflows view took over the Workflow Composer, the Agents page, the Scripts page and the
   // agent wizard (2026-10 redesign); their addresses (and Ask's #scripts/<key> links) land inside it.
   composer: 'workflows',
@@ -40060,15 +40104,31 @@ function showView(name, param = '') {
   if (name === 'marketplace') enterMarketplace(param, prevView);
   if (name === 'connectors') void showConnectors(param);
   if (name === 'models') {
-    // The Engines card (its Helper jobs rows included) is painted from GET /api/settings, so a link or a reload
-    // straight to the page loads it too; '#models/<card>' scrolls to a card ('#models/engine'), and
-    // '#models/model/<id>' (a top bar search pick) to a catalogue row.
-    const modelId = modelParamId(param);
-    if (modelId) showAllModels();
-    void loadSettings().then(() => focusSettingsCard(views.find((v) => v.dataset.view === 'models'), param));
-    void loadModelsView().then(() => { if (modelId) revealModelCard(modelId, param); });
+    // Three tabs, the first part of the param (parseModelsParam): Catalogue, Jobs, Providers. Entering the page (or
+    // a hop before the catalogue ever loaded) reads the catalogue, the providers and GET /api/settings (the Jobs
+    // tab's Roles and Engines cards); a switch between tabs only shows another panel, so what was typed stays.
+    const { tab, rest } = parseModelsParam(param);
+    const entry = prevView !== 'models' || !mvState.data;
+    if (prevView !== 'models') providersDrawnKey = '';   // each entry draws the Providers card once
+    showModelsTab(tab, rest);
+    if (entry) {
+      // The reveals below use the tab and rest of THIS route; revealModelCard and revealProviderRow check the live
+      // address themselves, so a load that lands after the user moved on flashes nothing.
+      const section = views.find((v) => v.dataset.view === 'models');
+      // focusSettingsCard has no address guard of its own: only while the address still names that card.
+      void loadSettings().then(() => { if (tab === 'jobs' && rest && currentModelsTab() === 'jobs' && parseModelsParam(parseHash()[1]).rest === rest) focusSettingsCard(section, rest); });
+      // Runs on the newest read: this entry's, or a window focus' or a refresh's that overtook it. A later entry
+      // paints and reveals instead.
+      const entrySeq = ++modelsEntrySeq;
+      void loadModelsView().then(() => {
+        if (entrySeq !== modelsEntrySeq) return;
+        paintProvidersTab();
+        const modelId = tab === 'catalogue' ? modelParamId(rest) : '';
+        if (modelId) revealModelCard(modelId, rest);
+        if (tab === 'providers') revealProviderRow(rest);
+      });
+    }
   }
-  if (name === 'providers') void loadProvidersView().then(() => revealProviderRow(param));
   if (prevView !== name) worca.onViewShown(name);   // once per navigation, not per repaint: Statistics, Team metrics and Team policy feed the level
   if (name === 'profile') worca.showProfile(document.getElementById('profile-level-host'), () => currentShownView === 'profile');   // #profile/level
   if (name === 'new') {
@@ -40148,7 +40208,7 @@ function showSettingsTab(param = '') {
 // A link to one card ('#settings/runs/actions', '#models/engine', a top bar search pick '#settings/general/appearance-card'):
 // scroll to `<sub>-settings-card` (else the card whose id IS `sub`) inside `scope`, focus its first field and
 // highlight it for 3 s (A-7). Any other sub is ignored. The Add-ons pages' own links land the same way:
-// '#models/model/<id>' (a catalogue row), '#providers/<row>' (a provider row), '#connectors/servers/<id>' (a server row).
+// '#models/model/<id>' (a catalogue row), '#models/providers/<row>' (a provider row), '#connectors/servers/<id>' (a server row).
 const foundTimers = new WeakMap();
 /** Scroll `el` into view, focus `focusEl` (when given) and highlight `el` for 3 s (A-7); a repeat pick restarts it. */
 function markFound(el, focusEl = null) {
@@ -40165,6 +40225,35 @@ function focusSettingsCard(scope, sub) {
   const card = sub ? (document.getElementById(`${sub}-settings-card`) || document.getElementById(sub)) : null;
   if (!card || !scope || !scope.contains(card)) return;
   markFound(card, card.querySelector('input, select, textarea'));
+}
+// The Models tab the address names ('catalogue' | 'jobs' | 'providers'), or '' off the Models page.
+function currentModelsTab() {
+  return currentView() === 'models' ? parseModelsParam(parseHash()[1]).tab : '';
+}
+// Show one Models tab: its panel, its lit tab, the head actions that belong to it; then the place `rest` names on it
+// (a catalogue row, a Jobs card, a provider row). Data already loaded is used as is: nothing is fetched here.
+function showModelsTab(tab, rest) {
+  const section = views.find((v) => v.dataset.view === 'models');
+  if (!section) return;
+  for (const panel of section.querySelectorAll('.mdl-panel[data-tab]')) panel.hidden = panel.dataset.tab !== tab;
+  paintModelsTabs(modelsTabsNav, { active: tab, count: null });
+  for (const n of section.querySelectorAll('[data-tab-only]')) n.hidden = n.dataset.tabOnly !== tab;
+  // The info-tip bubble lives on <body>: a tip opened on one tab must not float over the next.
+  if (tab !== modelsTabShown) hideInfoTip();
+  modelsTabShown = tab;
+  if (tab === 'catalogue') {
+    const id = modelParamId(rest);
+    if (!id) return;
+    // A hop to a row inside the open page draws from the loaded catalogue (the narrowing that could hide it cleared).
+    showAllModels();
+    if (mvState.data) renderModelsViewBody();
+    revealModelCard(id, rest);
+  } else if (tab === 'jobs') {
+    if (rest) focusSettingsCard(section, rest);
+  } else if (tab === 'providers') {
+    paintProvidersTab();
+    revealProviderRow(rest);
+  }
 }
 // '#models/model/<id>': the catalogue row a top bar search pick names (settings-index.mjs addonEntriesFrom).
 function modelParamId(param) {
@@ -40185,10 +40274,10 @@ function revealModelCard(id, param) {
   const card = [...el.modelsList.querySelectorAll('.mv-card[data-id]')].find((n) => n.dataset.id === id);
   if (card) markFound(card, card.querySelector('button'));
 }
-// '#providers/<copilot|openai|anthropic|speech|images|sound>': the provider's row, highlighted, with its sign-in or key field
-// focused (focusProviderRow's choice), else its first control.
+// '#models/providers/<copilot|openai|anthropic|speech|images|sound>': the provider's row, highlighted, with its sign-in or
+// key field focused (focusProviderRow's choice), else its first control. Only while the address still names that row.
 function revealProviderRow(param) {
-  if (!param || currentView() !== 'providers' || parseHash()[1] !== param || !el.providersList) return;
+  if (!param || currentModelsTab() !== 'providers' || parseModelsParam(parseHash()[1]).rest !== param || !el.providersList) return;
   const row = [...el.providersList.querySelectorAll('.mv-pv-row[data-provider]')].find((n) => n.dataset.provider === param);
   if (!row) return;
   markFound(row.closest('.mv-pv-card') || row,
@@ -41997,7 +42086,9 @@ window.addEventListener('focus', () => { void refreshVersionStatus(); });
 {
   const repaintPickers = () => {
     if (currentView() === 'new') refreshNewPipelinePickers();
-    if (currentView() === 'models') loadModelsView();
+    // A re-read never redraws a card on screen (what was typed stays); it draws one only into a Providers tab that
+    // a failed read left empty, where nothing is lost.
+    if (currentView() === 'models') void loadModelsView().then(() => { if (!el.providersList?.firstElementChild) paintProvidersTab(); });
   };
   loadCredentials().then((d) => { if (d) repaintPickers(); });
   window.addEventListener('focus', () => { loadCredentials().then((d) => { if (d) repaintPickers(); }); });

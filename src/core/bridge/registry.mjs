@@ -74,7 +74,7 @@ export function providerReadiness(upstream) {
   if (p === 'copilot') {
     const cfg = providerConfig('copilot');
     if (!resolveProviderSecret(cfg.githubToken)) {
-      return { ok: false, reason: 'not_signed_in', message: 'provider copilot: not signed in — run `worca models login copilot` or open the Providers page' };
+      return { ok: false, reason: 'not_signed_in', message: 'provider copilot: not signed in — run `worca models login copilot` or open Models › Providers' };
     }
     return { ok: true };
   }
@@ -91,7 +91,7 @@ export function providerReadiness(upstream) {
       message: has
         ? `provider ${p}: the API key's \${VAR} is not set in worca's environment`
         : providerKeyHere
-          ? `provider ${p}: no API key — open the Providers page`
+          ? `provider ${p}: no API key — open Models › Providers`
           : `provider ${p}: no API key for ${originOf(upstream.baseUrl)} — the provider's key is for ${originOf(cfg.baseUrl)}, so give the model its own key (its Connection › Advanced)`,
     };
   }

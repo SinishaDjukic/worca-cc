@@ -506,11 +506,11 @@ test('the plugin lists are read once and kept until plugins-changed; never the m
 test('Add-ons inner rows land on their row or card and flash it', async () => {
   const isFound = (n) => !!n && n.classList.contains('is-found');
   await checkRows([
-    { name: '"openai key" → #providers/openai, the OpenAI-compatible row flashed, its key field focused', run: async () => {
+    { name: '"openai key" → #models/providers/openai, the OpenAI-compatible row flashed, its key field focused', run: async () => {
       const ctx = await boot({ arms: [['/api/providers', () => ({})]] });
       await searchPick(ctx, 'openai key', 'OpenAI-compatible');
       await settle(ctx.window, 8);
-      assert.equal(ctx.window.location.hash, '#providers/openai');
+      assert.equal(ctx.window.location.hash, '#models/providers/openai');
       const row = ctx.doc.querySelector('#providers-list .mv-pv-row[data-provider="openai"]');
       assert.ok(isFound(row.closest('.mv-pv-card') || row));
       assert.equal(ctx.doc.activeElement, row.querySelector('.mv-pv-key'));
@@ -676,7 +676,7 @@ test('a landing that finishes after the user moved on flashes nothing and opens 
     const hold = deferred();
     const ctx = await boot({ arms: [['/api/providers', () => ({})]], holds: { '/api/providers': hold.promise } });
     await searchPick(ctx, 'openai key', 'OpenAI-compatible');
-    assert.equal(ctx.window.location.hash, '#providers/openai');
+    assert.equal(ctx.window.location.hash, '#models/providers/openai');
     await moveOn(ctx, hold, to);
   } });
   const serverRow = (to) => ({ name: `an MCP server pick, then ${to}`, run: async () => {
@@ -698,8 +698,8 @@ test('a landing that finishes after the user moved on flashes nothing and opens 
   } });
   await checkRows([
     modelRow('#models'),
-    modelRow('#providers/model/my-gpt'),
-    providerRow('#providers'),
+    modelRow('#marketplace/model/my-gpt'),
+    providerRow('#models/providers'),
     providerRow('#models/openai'),
     serverRow('#connectors/servers'),
     serverRow('#models/servers/manual%3Alinear'),

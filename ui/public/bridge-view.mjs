@@ -1297,8 +1297,8 @@ export function applyConnectionMode(connEl) {
   const p = conn._providers;
   if (hint) {
     if (!p) hint.textContent = '';
-    else if (provider === 'copilot') hint.textContent = p.copilot?.connected ? `Connected${p.copilot.login ? ` as @${p.copilot.login}` : ''}.` : 'Not connected. Sign in on the Providers page, or Save is refused.';
-    else hint.textContent = p[provider]?.configured ? 'Provider key set.' : (p[provider]?.keySet ? 'The provider key’s ${VAR} is not set in Worca’s environment.' : p[provider]?.keyOptional ? 'Local endpoint, no key needed.' : 'No provider key. Set one on the Providers page, or override it under Advanced.');
+    else if (provider === 'copilot') hint.textContent = p.copilot?.connected ? `Connected${p.copilot.login ? ` as @${p.copilot.login}` : ''}.` : 'Not connected. Sign in under Models › Providers, or Save is refused.';
+    else hint.textContent = p[provider]?.configured ? 'Provider key set.' : (p[provider]?.keySet ? 'The provider key’s ${VAR} is not set in Worca’s environment.' : p[provider]?.keyOptional ? 'Local endpoint, no key needed.' : 'No provider key. Set one under Models › Providers, or override it under Advanced.');
     hint.className = `hint mv-conn-provider-hint${(provider === 'copilot' ? !p?.copilot?.connected : !(p?.[provider]?.configured || p?.[provider]?.keyOptional)) && p ? ' warn' : ''}`;
   }
   const note = conn.querySelector('.mv-conn-note');

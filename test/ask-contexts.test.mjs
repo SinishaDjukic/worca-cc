@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { contextEntries, mergeContexts, mentionedRefs, MAX_CONTEXTS } from '../src/core/ask/contexts.mjs';
+import { contextEntries, mergeContexts, mentionedRefs, MAX_CONTEXTS, PAGE_LABELS } from '../src/core/ask/contexts.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 test('contextEntries: resolved chips (pin marked, page named, untitled run by id, long names clipped); unresolved/list views/homeless runs give none', async () => {
@@ -20,10 +20,14 @@ test('contextEntries: resolved chips (pin marked, page named, untitled run by id
         { kind: 'page', id: 'settings', label: 'Settings' },
       ]);
     } },
-    { name: 'contextEntries: the four Add-ons pages earn a page chip named like their sidebar row', run: () => {
-      for (const [view, label] of [['marketplace', 'Marketplace'], ['connectors', 'Connectors'], ['models', 'Models'], ['providers', 'Providers']]) {
+    { name: 'contextEntries: the three Add-ons pages earn a page chip named like their sidebar row; Providers is a Models tab', run: () => {
+      for (const [view, label] of [['marketplace', 'Marketplace'], ['connectors', 'Connectors'], ['models', 'Models']]) {
         assert.deepEqual(contextEntries({ view }, { view }), [{ kind: 'page', id: view, label }]);
       }
+      // L23: every Models tab reports the view `models`, so the chip reads "Models"; the old page has no label.
+      assert.equal('providers' in PAGE_LABELS, false);
+      assert.equal(PAGE_LABELS.models, 'Models');
+      assert.deepEqual(contextEntries({ view: 'providers' }, { view: 'providers' }), []);
     } },
     { name: 'contextEntries: unresolved ids, list views and a run with no home produce no chip', run: async () => {
       await checkRows([

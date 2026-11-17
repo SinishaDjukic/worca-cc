@@ -2607,7 +2607,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
           `${m.secretsMissing.join(', ')} is not set. Configure it in the ${m.plugin ? `“${m.plugin}” ` : ''}plugin's Model secrets, or this model will fail.`));
       }
       if (m.needsSignIn) {
-        item.appendChild(tag('needs sign-in', 'is-err', m.signInMessage || 'The provider behind this model is not usable yet. See the Providers page.'));
+        item.appendChild(tag('needs sign-in', 'is-err', m.signInMessage || 'The provider behind this model is not usable yet. See Models › Providers.'));
       }
       if (moves && (readEnginePicks(storage)[engine] || {}).model === m.id) item.appendChild(tag('last used', null, 'The model you last used on this engine.'));
       // Credential broker: whether the signed-in person has the key this model spends from.

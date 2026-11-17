@@ -65,12 +65,10 @@ test('Marketplace: Installed is one card of divided rows, a marketplace is one c
   assert.equal(page.querySelector('[data-view="marketplace"] .page-intro'), null, 'the tabs are the header (docs/design-system.md › Marketplace exceptions)');
 });
 
-test('Providers: one intro line, six divided rows, shared buttons', () => {
-  const pv = page.querySelector('[data-view="providers"] .page-intro');
-  assert.ok(pv && ONE_SENTENCE(pv.textContent), 'one sentence');
-  assert.equal(page.querySelectorAll('[data-view="providers"] .page-intro').length, 1, 'the two intros are one');
+test('Providers: a tab of the Models page, six divided rows, shared buttons', () => {
+  assert.equal(page.querySelector('[data-view="providers"]'), null, 'no Providers page: it is the Models page\'s third tab');
   const card = renderProvidersCard({}, { doc, split: true });
-  assert.equal(card.querySelector('.mv-providers-hint'), null, 'the in-card intro merged into the page intro');
+  assert.equal(card.querySelector('.mv-providers-hint'), null, 'the tab\'s card carries no intro of its own');
   assert.ok(card.classList.contains('drows'));
   const rows = [...card.querySelectorAll('.mv-pv-card')];
   assert.equal(rows.length, 6);
@@ -107,8 +105,8 @@ test('Models: shared filter chip, the group header is a 28px .btn, no centred co
   assert.doesNotMatch(CSS, /\[data-view="models"\][^{]*\{[^}]*max-width/);
   assert.doesNotMatch(CSS, /\.mv-[\w-]+[^{]*\{[^}]*text-transform:uppercase/);
   assert.match(CSS, /\.info-tip\{[^}]*width:28px;height:28px;flex:0 0 28px;/);
-  const intro = page.querySelector('[data-view="models"] .page-intro').textContent;
-  assert.ok(ONE_SENTENCE(intro), intro);
+  assert.ok(page.querySelector('[data-view="models"] > .mdl-head #models-tabs-host'), 'the tab strip is the page\'s header');
+  assert.equal(page.querySelector('[data-view="models"] .page-intro'), null, 'no page intro, as on Marketplace');
   assert.deepEqual(rules('.mv-filter'), []);
   assert.deepEqual(rules('.mv-section-title'), [], '.section-title styles the group title');
 });
@@ -193,11 +191,16 @@ test('Getting started: one intro line, Hide is a quiet .btn, the card heading is
   assert.deepEqual(rules('.gs-hide'), [], 'the underline skin is gone');
 });
 
-test('the theme proof measures the slice-3 pages, intros and dialogs, and runs the stray audit on all six pages', () => {
+test('the theme proof measures the slice-3 pages (the Models tabs too), intros and dialogs, and runs the stray audit on every page and tab', () => {
   const proof = read('tools/verify-theme-cdp.mjs');
-  assert.match(proof, /\['workflows', 'marketplace', 'connectors', 'models', 'providers', 'team-policy', 'getting-started'\]/);
-  for (const s of ['workflows', 'settings-plugins', 'connectors', 'settings-models', 'settings-providers', 'team-policy'])
+  assert.match(proof, /\['workflows', 'marketplace', 'connectors', 'models', 'models\/jobs', 'models\/providers', 'team-policy', 'getting-started'\]/);
+  for (const s of ['workflows', 'settings-plugins', 'connectors', 'settings-models', 'settings-models-jobs', 'settings-providers', 'team-policy'])
     assert.match(proof, new RegExp(`STRAY_ROOTS = \\{[^}]*'?${s}'?:`), `${s} is stray-audited`);
+  // The Jobs and Providers tabs are panels of the Models view: a root that matches nothing audits nothing, silently.
+  assert.match(proof, /'settings-models-jobs': '#models-tab-jobs', 'settings-providers': '#models-tab-providers'/);
+  assert.match(proof, /SIZE_STATES = new Set\([^)]*'settings-models-jobs'/, 'the Jobs cards are size-audited too');
+  assert.match(proof, /\['settings-models-jobs', async \(\) => \{ await go\('models\/jobs'\); \}\]/);
+  assert.match(proof, /\['settings-providers', async \(\) => \{ await go\('models\/providers'\);/);
   assert.match(proof, /'divided rows', 'quiet chip', 'grey badge', 'team policy type', 'page intro', 'dialog'/);
   assert.match(proof, /\['dialog-sizes', async \(\) => \{/);
   // Both Phase B skip lists (the running and the history variants) exclude dialog-sizes, so it adds no audit rows.

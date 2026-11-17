@@ -24,7 +24,6 @@ export const PAGE_TITLES = Object.freeze({
   marketplace: 'Marketplace',
   connectors: 'Connectors',
   models: 'Models',
-  providers: 'Providers',
   projects: 'Projects',
   workspaces: 'Workspaces',
   'team-policy': 'Team policy',

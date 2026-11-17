@@ -140,6 +140,17 @@
   --drop-ring:light-dark(#D8EFD6,#2A4A2C);
   --trunc-ink:light-dark(#994466,#E39BBE);
   --chip-ink:light-dark(#555555,#B4B4AE);
+  /* The Models page's brand marks (models/models-page.css): a mark's tile is light in both themes, and the own/plugin
+     tiles, the Best chip and their white text keep one look in both. Six gradients, a then b, picked by name. */
+  --mark-tile:light-dark(#FFFFFF,#FFFFFF);
+  --mark-g-indigo-a:light-dark(#4457B5,#4457B5); --mark-g-indigo-b:light-dark(#8C7FD6,#8C7FD6);
+  --mark-g-teal-a:light-dark(#2A8A80,#2A8A80);   --mark-g-teal-b:light-dark(#5BA6CC,#5BA6CC);
+  --mark-g-pink-a:light-dark(#B84A7C,#B84A7C);   --mark-g-pink-b:light-dark(#8C7FD6,#8C7FD6);
+  --mark-g-blue-a:light-dark(#3782A8,#3782A8);   --mark-g-blue-b:light-dark(#6A7FD8,#6A7FD8);
+  --mark-g-lime-a:light-dark(#6E8A14,#6E8A14);   --mark-g-lime-b:light-dark(#4FB3A9,#4FB3A9);
+  --mark-g-slate-a:light-dark(#4A5661,#4A5661);  --mark-g-slate-b:light-dark(#8A96A3,#8A96A3);
+  --best-a:light-dark(#2B6A8C,#2B6A8C); --best-b:light-dark(#4457B5,#4457B5);
+  --on-mark:light-dark(#FFFFFF,#FFFFFF);   /* white on the gradients: --on-ink turns dark in dark mode */
 
   --r-xs:4px;               /* chips, badges, tags, inner segments, bar ends */
   --r-sm:6px;               /* controls: buttons, inputs, selects, segment containers, menu items, tooltips */

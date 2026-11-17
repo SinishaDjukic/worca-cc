@@ -6,7 +6,7 @@ import { JSDOM } from 'jsdom';
 import { TABS, CARDS, UNLISTED_CARDS, SETTING_ENTRIES, ADDON_ENTRIES, ADDON_PAGES, addonEntriesFrom, locksFor, lockNote } from '../ui/public/settings-index.mjs';
 import { tabFromParam } from '../ui/public/marketplace/page.mjs';
 import { parseMcpParam } from '../ui/public/mcp-view.mjs';
-import { PROVIDER_LABELS } from '../ui/public/bridge-view.mjs';
+import { parseModelsParam, PROVIDER_ROWS } from '../ui/public/models/page-tabs.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
 
 const doc = new JSDOM(readIndexHtml()).window.document;
@@ -78,18 +78,35 @@ test('Add-ons rows: an entry on a static card has that card on its page with the
   assert.equal(new Set(ADDON_ENTRIES.map((e) => e.id)).size, ADDON_ENTRIES.length, 'ids are unique');
 });
 
-test('Add-ons hrefs reach their place: a Marketplace tab, a Connectors view, a Models card, a Providers row', () => {
+test('the provider rows sit on the Models page\'s Providers tab: ids keep addon:providers/<key>, the meta names the tab', () => {
+  assert.equal(Object.hasOwn(ADDON_PAGES, 'providers'), false, 'Providers is a tab of the Models page, not an Add-ons page');
+  const rows = ADDON_ENTRIES.filter((e) => e.id.startsWith('addon:providers/'));
+  assert.deepEqual(rows.map((e) => e.id), ['copilot', 'openai', 'openrouter', 'anthropic', 'speech', 'images', 'sound'].map((k) => `addon:providers/${k}`));
+  for (const e of rows) {
+    assert.equal(e.page, 'models', `${e.id} is on the Models page`);
+    assert.match(e.href, /^#models\/providers\/(copilot|openai|anthropic|speech|images|sound)$/, `${e.id}: one Providers row`);
+    assert.equal(e.meta, 'Models · Providers', `${e.id}: the row names the tab, not only the page`);
+    assert.equal(e.alts.at(-1), 'providers', `${e.id}: the query "providers" finds it`);
+  }
+  assert.ok(!ADDON_ENTRIES.some((e) => e.href.startsWith('#providers')), 'no row routes through the old page');
+});
+
+test('Add-ons hrefs reach their place: a Marketplace tab, a Connectors view, a Models tab (a Jobs card, a Providers row)', () => {
   for (const e of ADDON_ENTRIES) {
     const [view, ...rest] = e.href.replace(/^#/, '').split('/');
     const param = rest.join('/');
     assert.equal(view, e.page, `${e.id} routes to its page`);
     if (view === 'marketplace') assert.equal(tabFromParam(param), e.id.split('/')[1], `${e.id}: the tab it names`);
     if (view === 'connectors') assert.equal(parseMcpParam(param).view, { sets: 'sets', servers: 'servers', skills: 'skills' }[e.id.split('/')[1]], e.id);
-    if (view === 'models' && param) assert.ok(doc.getElementById(param), `${e.id}: #models/<card id>`);
-    if (view === 'providers') assert.ok([...Object.keys(PROVIDER_LABELS), 'speech', 'images', 'sound'].includes(param), `${e.id}: a provider row`);
+    if (view === 'models') {
+      const { tab, rest: where } = parseModelsParam(param);
+      if (tab === 'providers') assert.ok(PROVIDER_ROWS.includes(where), `${e.id}: #models/providers/<a provider row>`);
+      if (tab === 'jobs') assert.ok(where === '' || doc.getElementById(where)?.closest('#models-tab-jobs'), `${e.id}: #models/<a card on the Jobs tab>`);
+      if (tab === 'catalogue') assert.ok(where === '' || /^model\/[^/]+$/.test(where), `${e.id}: #models or #models/model/<id>`);
+    }
   }
   const href = (id) => ADDON_ENTRIES.find((e) => e.id === id).href;
-  assert.equal(href('addon:providers/openrouter'), '#providers/openai', 'OpenRouter is a preset on the OpenAI-compatible row');
+  assert.equal(href('addon:providers/openrouter'), '#models/providers/openai', 'OpenRouter is a preset on the OpenAI-compatible row');
   assert.equal(href('addon:models/helper-jobs'), '#models/engine-settings-card', 'helper-job models live in the Engines card');
 });
 

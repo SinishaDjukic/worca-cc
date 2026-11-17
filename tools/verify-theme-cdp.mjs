@@ -67,7 +67,7 @@ const designChecks = [];   // { what, ok, got } from the projects-detail, kitche
 // D13: per state, the view (or the open dialog) whose buttons must all be .btn or a shared control.
 const STRAY_ROOTS = { workflows: '[data-view="workflows"]', 'workflows-library-scripts': '[data-view="workflows"]',
   'workflows-chat-open': '[data-view="workflows"]', 'settings-plugins': '[data-view="marketplace"]', connectors: '[data-view="connectors"]',
-  'settings-models': '[data-view="models"]', 'settings-providers': '[data-view="providers"]', 'team-policy': '[data-view="team-policy"]',
+  'settings-models': '[data-view="models"]', 'settings-models-jobs': '#models-tab-jobs', 'settings-providers': '#models-tab-providers', 'team-policy': '[data-view="team-policy"]',
   'getting-started': '[data-view="getting-started"]', 'modal-confirm': '#confirm-modal', 'modal-export': '#export-modal',
   'modal-stop': '#stop-modal', 'modal-shipit': '#shipit-modal', 'modal-viewer': '#viewer-card',
   'settings-general': '.settings-pane[data-tab="general"]', 'settings-runs': '.settings-pane[data-tab="runs"]', 'settings-tags': '.settings-pane[data-tab="tags"]',
@@ -81,7 +81,7 @@ const FOOT = ['.confirm-actions', '.stop-actions', '.add-project-actions', '.mod
 const DEBT = JSON.parse(readFileSync(new URL('../test/fixtures/design-debt.json', import.meta.url), 'utf8'));
 const SIZE_AUDIT = `(${auditSizes})(document.body, ${JSON.stringify({ ...SIZE_SPEC, debt: DEBT.fieldSizeOverrides })}, null)`;
 const SIZE_STATES = new Set(['settings-general', 'settings-runs', 'settings-tags', 'settings-ask', 'settings-guardrails', 'settings-memory', 'settings-presets',
-  'settings-models', 'projects', 'projects-detail', 'workspaces', 'schedules', 'stats', 'team-metrics']);
+  'settings-models', 'settings-models-jobs', 'projects', 'projects-detail', 'workspaces', 'schedules', 'stats', 'team-metrics']);
 const typeReport = [];   // { state, theme, sig, rule, got, text }
 const TYPE_AUDIT = `(${auditType})(document.body, ${JSON.stringify(TYPE_SPEC)}, null)`;
 // D20: the slice-1 states (Chat home is 'ask-sheet', the baseline's key). The shell is on every one of them.
@@ -577,21 +577,23 @@ const states = [
   // The five slice-2 pages and the seven slice-3 pages at 290 / 375 / 1440 (R-qa-2), and the fresh loads (R-qa-3).
   ['layout-widths', async () => {
     const PAGES = [...['settings', 'projects', 'schedules', 'stats', 'team-metrics'],
-      ...['workflows', 'marketplace', 'connectors', 'models', 'providers', 'team-policy', 'getting-started']];
+      ...['workflows', 'marketplace', 'connectors', 'models', 'models/jobs', 'models/providers', 'team-policy', 'getting-started']];
     for (const width of [290, 375, 1440]) {
       await cdp('Emulation.setDeviceMetricsOverride', { width, height: 900, deviceScaleFactor: 1, mobile: width < 600 });
       for (const page of PAGES) {
+        const view = page.split('/')[0];                                     // #models/jobs, #models/providers: the Models view
         await cdp('Page.navigate', { url: `${base}/?w=${width}&p=${page}#${page}` });   // a distinct URL: a real load
         await waitEvent('Page.loadEventFired');
         await until('window.__np && window.__np.getRun', 'app boot');
-        await until(`document.querySelector('[data-view=${JSON.stringify(page)}]:not(.hidden)')`, `view ${page}`);
+        await until(`document.querySelector('[data-view=${JSON.stringify(view)}]:not(.hidden)')`, `view ${page}`);
         await sleep(400); await ev(READY); await freeze(page);
         const m = await ev(`(() => { const d = document.scrollingElement; const main = document.querySelector('.main');
           return { doc: [d.scrollWidth, d.clientWidth], main: [main.scrollWidth, main.clientWidth] }; })()`);
         designChecks.push({ what: `no sideways scroll: #${page} at ${width}px`,
           ok: m.doc[0] === m.doc[1] && m.main[0] <= m.main[1], got: m });
-        if (width === 1440 && page !== 'workflows' && !['settings', 'projects', 'schedules', 'stats', 'team-metrics', 'marketplace'].includes(page)) {
-          const pi = await ev(`(() => { const v = document.querySelector('[data-view=${JSON.stringify(page)}]');
+        // The Models page has no intro on any tab (models.html): its tab strip leads the page.
+        if (width === 1440 && page !== 'workflows' && view !== 'models' && !['settings', 'projects', 'schedules', 'stats', 'team-metrics', 'marketplace'].includes(page)) {
+          const pi = await ev(`(() => { const v = document.querySelector('[data-view=${JSON.stringify(view)}]');
             const ps = [...v.querySelectorAll('.page-intro')].filter((e) => e.offsetParent); const t = ps[0] ? ps[0].textContent.trim() : '';
             return { n: ps.length, len: t.length, one: !/[.!?]\\s+\\S/.test(t.replace(/[.!?]$/, '')), t }; })()`);
           designChecks.push({ what: `page intro: #${page} shows one sentence of at most 140 characters`, ok: pi.n === 1 && pi.len <= 140 && pi.one, got: pi });
@@ -663,12 +665,13 @@ const states = [
   ['settings-ask', async () => { await go('settings/ask'); await until(`document.querySelector('.settings-pane[data-tab="ask"]:not(.hidden) #ask-web-host .ask-web')`, 'ask pane'); }],
   ['settings-guardrails', async () => { await go('settings/guardrails'); }],
   ['settings-models', async () => { await go('models'); }],
+  ['settings-models-jobs', async () => { await go('models/jobs'); }],
   // The catalog's two dialogs (§4.10, §8.4). They render their own content, so the audit would
   // never see the editor's fields or the import table from 'settings-models' alone — the same gap
   // that let a chip's contrast regress unnoticed.
   ['settings-model-editor', async () => { await go('models'); await clickSel('#model-create-btn'); await until(`document.querySelector('#model-editor-modal:not(.hidden) .mv-editor')`, 'the editor dialog'); }, async () => { await ev(`(()=>{const c=document.querySelector('#model-editor-modal .mv-cancel');if(c)c.click();return 1;})()`); await rehide('#model-editor-modal'); }],
   ['settings-model-import', async () => { await go('models'); await clickSel('#model-import-btn'); await until(`document.querySelector('#model-import-modal:not(.hidden) #mimp-source')`, 'the import dialog'); }, async () => { await rehide('#model-import-modal'); }],
-  ['settings-providers', async () => { await go('providers'); await until(`document.querySelector('#providers-list .mv-providers')`, 'the providers card'); }],
+  ['settings-providers', async () => { await go('models/providers'); await until(`document.querySelector('#providers-list .mv-providers')`, 'the providers card'); }],
   ['settings-plugins', async () => { await go('marketplace'); }],
   // Agent memory (§10): seed ONE file through the API and open it, so the audit samples a selected
   // row, the editor, its status line and a History row — an empty scope would paint the fresh badge

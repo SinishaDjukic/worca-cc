@@ -26,8 +26,9 @@ test('list and detail pages', () => {
   assert.deepEqual(whereOf({ view: 'requirements' }), { label: 'Requirements', icon: 'shape' }, 'a page of its own (app.js VIEW_NAMES)');
 });
 
-test('no page for Chat, Workflows, an unknown view, no view or no context', () => {
-  for (const c of [{ view: 'chat', runId: U }, { view: 'workflows' }, { view: 'nope' }, { view: 'constructor' }, {}, null, 'x']) assert.equal(whereOf(c), null);
+test('no page for Chat, Workflows, the old Providers page (a Models tab now), an unknown view, no view or no context', () => {
+  for (const c of [{ view: 'chat', runId: U }, { view: 'workflows' }, { view: 'providers' }, { view: 'nope' }, { view: 'constructor' }, {}, null, 'x']) assert.equal(whereOf(c), null);
+  assert.equal(Object.hasOwn(WHERE_PAGES, 'providers'), false);
   assert.equal(Object.isFrozen(WHERE_PAGES), true);
   assert.equal(Object.isFrozen(WHERE_PAGES.runs), true);
   assert.equal(Object.isFrozen(RUN_PART_LABELS), true);

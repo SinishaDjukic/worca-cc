@@ -236,11 +236,11 @@ test('R-po-8/17: a setting row names its tab; "dark mode" finds Appearance on Ge
   assert.equal(r[0].note, '', 'nothing to unlock');
 });
 
-test('Add-ons rows are the settings inside the four pages, never Settings rows; each names its page', () => {
+test('Add-ons rows are the settings inside the three pages, never Settings rows; each names its page (a provider row its tab)', () => {
   for (const [q, title, href] of [
-    ['openai key', 'OpenAI-compatible', '#providers/openai'],
-    ['copilot', 'GitHub Copilot', '#providers/copilot'],
-    ['openrouter', 'OpenRouter', '#providers/openai'],
+    ['openai key', 'OpenAI-compatible', '#models/providers/openai'],
+    ['copilot', 'GitHub Copilot', '#models/providers/copilot'],
+    ['openrouter', 'OpenRouter', '#models/providers/openai'],
     ['helper model', 'Helper job models', '#models/engine-settings-card'],
     ['roles', 'Roles', '#models/model-roles-card'],
     ['installed', 'Installed plugins', '#marketplace/installed'],
@@ -250,10 +250,17 @@ test('Add-ons rows are the settings inside the four pages, never Settings rows; 
     const row = r.addons.find((x) => x.title === title);
     assert.ok(row, `${q} → ${title}`);
     assert.equal(row.href, href, q);
-    assert.equal(row.meta, { providers: 'Providers', models: 'Models', marketplace: 'Marketplace', connectors: 'Connectors' }[href.slice(1).split('/')[0]], q);
+    const meta = href.startsWith('#models/providers/') ? 'Models · Providers'
+      : { models: 'Models', marketplace: 'Marketplace', connectors: 'Connectors' }[href.slice(1).split('/')[0]];
+    assert.equal(row.meta, meta, q);
     assert.ok(!r.settings.some((x) => x.href === href), `${q} is not a Settings row`);
   }
   assert.ok(!setRows('connectors').addons.some((x) => x.href === '#connectors' && x.title === 'Connectors'), 'no bare page row any more');
+  // "providers" is no page title any more: the provider rows' own alt word finds them, the first ADDON_LIMIT in catalogue order.
+  const pv = setRows('providers').addons;
+  assert.deepEqual(pv.map((x) => [x.id, x.meta]), ['copilot', 'openai', 'openrouter', 'anthropic', 'speech']
+    .map((k) => [`addon:providers/${k}`, 'Models · Providers']));
+  assert.equal(pv.length, ADDON_LIMIT);
 });
 
 test('dynamic Add-ons rows: a plugin with settings, an MCP server, your own model; a built-in model has none', () => {

@@ -587,12 +587,13 @@ test('list: a Cursor custom model carries a Cursor badge, and there is no Cursor
 test('phones: the Models header and the model cards wrap at 760px instead of running off a 375px screen', async () => {
   const { readFileSync } = await import('node:fs');
   const html = readIndexHtml();
-  assert.match(html, /<div class="mv-head-actions">\s*<button type="button" id="model-share-btn"/, 'the header buttons sit in a styled group, not an inline-styled div');
+  assert.match(html, /<div class="mv-head-actions"(?: data-tab-only="catalogue")?>\s*<button type="button" id="model-share-btn"/, 'the header buttons sit in a styled group, not an inline-styled div');
   const css = readStyleCss();
   assert.match(css, /\n\.mv-head-actions\{display:flex;gap:8px;flex:0 0 auto;\}/);
-  const phone = css.match(/@media \(max-width:760px\)\{\s*\[data-view="models"\] \.topbar\{[^}]*\}[^@]*/);
+  // The page head (the tab strip and these actions) wraps in models-page.css; the cards' block stays here.
+  assert.match(readFileSync(new URL('../ui/public/models/models-page.css', import.meta.url), 'utf8'), /@media \(max-width:760px\)\{\.mdl-head\{flex-wrap:wrap\}\}/);
+  const phone = css.match(/@media \(max-width:760px\)\{\s*\.mv-head-actions\{[^}]*\}[^@]*/);
   assert.ok(phone, 'a phone block for the Models page');
-  assert.match(phone[0], /\[data-view="models"\] \.topbar\{flex-wrap:wrap;\}/);
   assert.match(phone[0], /\.mv-head-actions\{flex:1 1 100%;flex-wrap:wrap;\}/);
   assert.match(phone[0], /\.mv-card\{flex-wrap:wrap;\}/);
   assert.match(phone[0], /\.mv-body\{flex-basis:100%;\}/);

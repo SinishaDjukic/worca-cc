@@ -357,7 +357,7 @@ export function fillModelPopover(doc, panel, { catalog, pick, lock, pane = 'main
         if (Array.isArray(m.secretsMissing) && m.secretsMissing.length) {
           it.appendChild(tag(doc, 'secret not set', 'is-err', `${m.secretsMissing.join(', ')} is not set — configure it in the ${m.plugin ? `“${m.plugin}” ` : ''}plugin's Model secrets, or this model will fail.`));
         }
-        if (m.needsSignIn) it.appendChild(tag(doc, 'needs sign-in', 'is-err', m.signInMessage || 'The provider behind this model is not usable yet — the Providers page.'));
+        if (m.needsSignIn) it.appendChild(tag(doc, 'needs sign-in', 'is-err', m.signInMessage || 'The provider behind this model is not usable yet — Models › Providers.'));
         if (pick && m.id === pick.model) it.appendChild(checkMark(doc));
         panel.appendChild(it);
       }

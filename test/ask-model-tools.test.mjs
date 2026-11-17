@@ -89,10 +89,10 @@ test('credentials only as ${VAR}: literal env tokens, upstream keys and auth hea
 test('warnings: no prompt limit on a translated model (chat and openai-responses), a too-small local window, a provider that is not ready', async () => {
   await checkRows([
     { name: 'warnings: no prompt limit on a translated model, a too-small local window, a provider that is not ready', run: async () => {
-      const { validate } = fixture({ ready: () => ({ ok: false, message: 'provider openai: no API key — open the Providers page' }) });
+      const { validate } = fixture({ ready: () => ({ ok: false, message: 'provider openai: no API key — open Models › Providers' }) });
       let r = await validate({ kind: 'add_model', model: { id: 'a', upstream: { provider: 'openai', api: 'openai-chat', model: 'gpt-5' } } });
       const w = r.card.warnings.join('\n');
-      assert.match(w, /no API key — open the Providers page — the model shows "needs sign-in"/);
+      assert.match(w, /no API key — open Models › Providers — the model shows "needs sign-in"/);
       assert.match(w, /no prompt limit \(capabilities\.maxPromptTokens\)/);
       r = await validate({ kind: 'add_model', model: { id: 'b', upstream: { ...LLAMA, capabilities: { maxPromptTokens: 32768 } } } });
       assert.match(r.card.warnings.join('\n'), new RegExp(`a 32768-token window is too small for pipelines — serve at least ${LOCAL_MIN_WINDOW}`));
@@ -189,7 +189,7 @@ test('provider: base URL / key reference / concurrency validate; sign-in fields 
   r = await validate({ kind: 'provider', provider: 'openai', set: { apiKey: 'sk-live' } });
   assert.match(r.errors[0], /openai apiKey must be a \$\{VAR\} reference/);
   r = await validate({ kind: 'provider', provider: 'copilot', set: { githubToken: 'gho_x' } });
-  assert.match(r.errors[0], /githubToken is not settable here — the Copilot sign-in happens on the Providers page/);
+  assert.match(r.errors[0], /githubToken is not settable here — the Copilot sign-in happens under Models › Providers/);
   // No longer special-cased: the real updateProvider refuses it as an unknown provider field; this file's stub
   // updateProvider (line ~39) accepts any key, so the card shows no visible row and the answer is "nothing changes".
   r = await validate({ kind: 'provider', provider: 'copilot', set: { acknowledgedTerms: new Date().toISOString() } });

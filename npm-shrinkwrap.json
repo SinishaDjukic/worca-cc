@@ -10,6 +10,7 @@
       "license": "MIT",
       "dependencies": {
         "@highlightjs/cdn-assets": "11.12.0",
+        "@lobehub/icons-static-svg": "1.103.0",
         "@modelcontextprotocol/sdk": "1.32.2",
         "@ricky0123/vad-web": "0.0.31",
         "@xterm/addon-fit": "0.11.0",
@@ -1157,6 +1158,12 @@
       "engines": {
         "node": ">=18.0.0"
       }
+    },
+    "node_modules/@lobehub/icons-static-svg": {
+      "version": "1.103.0",
+      "resolved": "https://registry.npmjs.org/@lobehub/icons-static-svg/-/icons-static-svg-1.103.0.tgz",
+      "integrity": "sha512-GOGvK2/jzElmE/Bl1NlbD6Rnu8FhPR+gznjQmQMfUuGe0Qndt6MK1vVnIwd3i3TirgQqYtTn/iCHTkBtQkaGxA==",
+      "license": "MIT"
     },
     "node_modules/@mdn/browser-compat-data": {
       "version": "8.1.4",
