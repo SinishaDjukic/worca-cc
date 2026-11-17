@@ -3091,7 +3091,7 @@ const startRunHandler = async (req, res) => {
       feature: !sameAsSource && typeof body.featureBranch === 'string' && body.featureBranch.trim()
         ? body.featureBranch.trim() : null,
       ...(resolveOf ? { resolves: { runId: resolveOf.runId, member: resolveOf.member || null } } : {}),
-      ...(roundOf ? { roundOf } : {}),
+      ...(roundOf ? { roundOf } : {}), ...(typeof req._mergeIn?.ref === 'string' ? { mergeIn: { ref: req._mergeIn.ref } } : {}),   // in-process only (Watch PR, resolve), never body.mergeIn
       ...(sameAsSource ? { sameAsSource: true } : {}),
       ...(smartNamingOn && !sameAsSource && body.featureBranchSuggested === true ? { suggested: true } : {}),
       ...(smartNamingOn && !sameAsSource && body.featureBranchFallback === true ? { legacy: true } : {}),
@@ -3926,7 +3926,7 @@ async function invokeAskCard({ threadId, cardId, body, actor }) {
   return out;
 }
 
-async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null, extrasFiles = null, reportTo = null, automation = false } = {}) {
+async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null, extrasFiles = null, reportTo = null, automation = false, mergeIn = null } = {}) {
   const files = Array.isArray(extrasFiles) && extrasFiles.length ? extrasFiles : null;
   const id = files ? (runId || randomUUID()) : runId;   // the extras folder is named by the run id
   const run = async (extrasPaths, staged = null) => {
@@ -3938,7 +3938,7 @@ async function invokeStartRun(body, internal, { startedBy = null, runId = null, 
     };
     await startRunHandler({ body, headers: {}, _internal: internal, _startedBy: startedBy, _runId: id,
       _prWatchRunId: prWatchRunId, ...(roundOf ? { _roundOf: roundOf } : {}), ...(extrasPaths ? { _extrasPaths: extrasPaths } : {}),
-      ...(reportTo ? { _reportTo: reportTo } : {}), ...(automation ? { _automation: true } : {}) }, res);
+      ...(reportTo ? { _reportTo: reportTo } : {}), ...(automation ? { _automation: true } : {}), ...(mergeIn ? { _mergeIn: mergeIn } : {}) }, res);
     if (staged && out.status >= 200 && out.status <= 299) dropStagedOnceCopied(id, staged.drop);
     return out;
   };

@@ -419,6 +419,35 @@ plugins are credited the same way, and a plugin can tune its agents with `humanE
 agent's `meta.json` (`{ "factor": 1.5 }` scales the estimate, `{ "hours": 0.25 }` fixes it,
 `{ "factor": 0 }` opts out).
 
+**Which code counts.** The code lines and files are the run's diff: what its checkout changed since
+the run started (a reused branch: since it forks from the source branch). The same diff feeds the
+live diff, `results.json`, the run size and the credit. Commits the branch picks up from a base
+branch during the run are not the run's work, so the diff base moves with them. The base branches
+are the run's source branch, the repository's default branch, and the remote-tracking copy of each
+(for a conflict run, also the ref it was told to merge), at the run's start and now.
+
+The rule is GitHub's, kept to the run's own start. GitHub measures a pull request from the newest
+base commit its branch contains. Worca finds the newest base commit in the branch's history (and in
+a merge still in progress) that the run's start did not have, however it got there: a merge, a
+`git pull`, a fast-forward, a merge of another branch that contains it, a merge with the parents
+swapped, a rebase or a reset.
+
+- If the run's start is an ancestor of that commit (a fast-forward, or a branch cut from the base
+  that merged it), the base is that commit, exactly as on GitHub.
+- Otherwise the base is git's own merge of the run's start and that commit (`git merge-tree`,
+  conflict markers included). The conflict resolution, the run's work before and after the merge,
+  and uncommitted work count. Unlike GitHub, commits the source branch had before the run (a run
+  started from a feature branch, or a reused branch) do not count either.
+- After a rebase or reset (the run's start is no longer in the branch's history), the base is that
+  merge or the base commit itself, whichever is closer to the result. A conflicted rebase counts
+  only its resolution and later work.
+
+Limits: commits cherry-picked from a base branch count as the run's work, as they do on GitHub.
+After a rebase or reset, what the start carried and the result dropped is not counted as removed.
+Once a reused branch picks up a base commit, its commits from before the run stop counting. Each
+change of base is one line in the run's audit log, and a restarted server recomputes the same base
+from the run's record.
+
 Runs are credited whatever their outcome: a run stopped after three plan refinements keeps
 those hours, and a paused run credits what it had done when it finishes after the resume.
 Records carry hours only (`human.hours`, `human.byPhase`); the dollar figure is computed when
