@@ -214,14 +214,19 @@ export function claimExtrasDir(dir, id, { uid = process.getuid?.() ?? null, fdOp
  *  Under agent isolation (`id` set) the folder must be a real folder worca owns, never a link or a folder an agent made
  *  first under the name (1.1): the change goes through an fd opened with O_DIRECTORY|O_NOFOLLOW, and a refusal THROWS,
  *  so the run stops rather than living in someone else's folder. Without a run group (no pool, the shared agent user)
- *  only that check runs; without isolation (a local install) nothing does. */
-export function claimForAgent(dir, id, { uid = process.getuid?.() ?? null } = {}) {
+ *  only that check runs; without isolation (a local install) nothing does.
+ *  `mode` replaces the run folder's 2770 (a design folder is 2750: its agent may read and traverse, never rename what is
+ *  inside). `sharedFallback` gives a folder without a run group the shared agent group (`id.gid`) instead of leaving it
+ *  as it is; every pool user is in that group, so only a caller that knows there is no pool may pass it (claimRunDir).
+ *  Runs pass neither. */
+export function claimForAgent(dir, id, { uid = process.getuid?.() ?? null, mode = 0o2770, sharedFallback = false } = {}) {
   if (!id) return;
+  const gid = Number.isInteger(id.runGid) ? id.runGid : sharedFallback && Number.isInteger(id.gid) ? id.gid : null;
   const fd = openOwn(dir, constants.O_RDONLY | constants.O_DIRECTORY, uid);
   try {
-    if (!Number.isInteger(id.runGid)) return;
-    fchownSync(fd, -1, id.runGid);
-    fchmodSync(fd, 0o2770);
+    if (gid == null) return;
+    fchownSync(fd, -1, gid);
+    fchmodSync(fd, mode);
   } finally { closeSync(fd); }
   const pfd = openOwn(dirname(resolve(dir)), constants.O_RDONLY | constants.O_DIRECTORY, uid);
   try { fchmodSync(pfd, (fstatSync(pfd).mode & 0o7777) | 0o1000); } finally { closeSync(pfd); }

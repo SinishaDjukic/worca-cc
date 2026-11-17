@@ -97,13 +97,18 @@ export function askWindowedSpendUsd(fromMs, toMs = null) {
 /** Append one requirements cost event (plans/requirements-design.md D9): an orientation pass or an
  *  interview round (`featureSeq`, with its `turnId`), or a product brief look (A7: `featureSeq` 0 and the
  *  brief's `briefId`); A8 adds `attachmentId` for a file's read or ask, under its feature or its brief; A3 adds
- *  `helperMessageId` for a Feature chat call (no turn). Same no-op gate as the other ledgers ($0 mock calls leave no row). */
+ *  `helperMessageId` for a Feature chat call (no turn). 9c adds the harness (`engine`), the `step`, the `costKind`
+ *  ('billed' | 'estimated' | 'unknown') and the token counts; an 'unknown' call books a $0 row, nothing else books below it. Same no-op gate as the other ledgers ($0 mock calls leave no row). */
 export function recordRequirementsCostDelta({ featureSeq = 0, briefId = null, turnId = null, attachmentId = null, helperMessageId = null, amountUsd,
-  model = null, tsMs = Date.now() }) {
-  if ((!featureSeq && !briefId) || !Number.isFinite(amountUsd) || amountUsd <= 0) return;
-  prepare(`INSERT INTO req_cost_ledger (feature_seq, brief_id, turn_id, attachment_id, helper_message_id, amount_usd, model, ts)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(featureSeq || 0, briefId || null, turnId, attachmentId || null, helperMessageId == null ? null : Number(helperMessageId), amountUsd, model, tsMs);
+  model = null, tsMs = Date.now(), engine = null, step = null, costKind = 'billed', inputTokens = null, outputTokens = null }) {
+  if (!featureSeq && !briefId) return;
+  const unknown = costKind === 'unknown';
+  if (unknown) amountUsd = 0;   // 9c: a harness that reports no cost is booked as $0 'unknown', counted apart, never as spend
+  else if (!Number.isFinite(amountUsd) || amountUsd <= 0) return;
+  prepare(`INSERT INTO req_cost_ledger (feature_seq, brief_id, turn_id, attachment_id, helper_message_id, amount_usd, model, ts,
+      engine, step, cost_kind, input_tokens, output_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(featureSeq || 0, briefId || null, turnId, attachmentId || null, helperMessageId == null ? null : Number(helperMessageId), amountUsd, model, tsMs,
+      engine || null, step || null, costKind || 'billed', Number.isFinite(inputTokens) ? inputTokens : null, Number.isFinite(outputTokens) ? outputTokens : null);
 }
 
 /** Windowed requirements spend; toMs null = open-ended (budget windows), else ts < toMs. */
@@ -114,12 +119,29 @@ export function requirementsWindowedSpendUsd(fromMs, toMs = null) {
   return roundUsd(row?.s || 0);
 }
 
-/** Pipeline + Ask Worca + requirements spend since windowStartMs — THE enforcement figure
- *  (count-everywhere, ask-cost-statistics-design.md D3; requirements-design.md D9). windowedSpendUsd /
+/** Append one Design cost event (design SPEC C-9): one agent's spend in one build of one design. Design has no
+ *  limit of its own (M13); this row counts toward worca's own limits. Same no-op gate as the other ledgers
+ *  ($0 mock calls and a missing design id leave no row). */
+export function recordDesignCostDelta({ designId, buildId = null, agentId = null, amountUsd, model = null, tsMs = Date.now() }) {
+  if (!designId || !Number.isFinite(amountUsd) || amountUsd <= 0) return;
+  prepare(`INSERT INTO design_cost_ledger (design_id, build_id, agent_id, amount_usd, model, ts)
+    VALUES (?, ?, ?, ?, ?, ?)`).run(designId, buildId, agentId, amountUsd, model, tsMs);
+}
+
+/** Windowed Design spend; toMs null = open-ended (budget windows), else ts < toMs. */
+export function designWindowedSpendUsd(fromMs, toMs = null) {
+  const row = toMs == null
+    ? prepare('SELECT SUM(amount_usd) AS s FROM design_cost_ledger WHERE ts >= ?').get(fromMs)
+    : prepare('SELECT SUM(amount_usd) AS s FROM design_cost_ledger WHERE ts >= ? AND ts < ?').get(fromMs, toMs);
+  return roundUsd(row?.s || 0);
+}
+
+/** Pipeline + Ask Worca + requirements + Design spend since windowStartMs — THE enforcement figure
+ *  (count-everywhere, ask-cost-statistics-design.md D3; requirements-design.md D9; Design M13). windowedSpendUsd /
  *  allTimeTotals stay pipeline-only for the Statistics split. */
 export function totalWindowSpendUsd(windowStartMs) {
   return roundUsd(windowedSpendUsd(windowStartMs) + askWindowedSpendUsd(windowStartMs)
-    + requirementsWindowedSpendUsd(windowStartMs));
+    + requirementsWindowedSpendUsd(windowStartMs) + designWindowedSpendUsd(windowStartMs));
 }
 
 /** All-time spend + active time over ALL pipelines (archived included),
@@ -165,7 +187,8 @@ export function budgetStatus(now = new Date(), { scope = null } = {}) {
     windowEndMs,
     msUntilReset: windowEndMs - now.getTime(),
     windowSpendUsd,
-    allTimeSpendUsd: roundUsd(allTimeTotals().spendUsd + askWindowedSpendUsd(0) + requirementsWindowedSpendUsd(0)),
+    allTimeSpendUsd: roundUsd(allTimeTotals().spendUsd + askWindowedSpendUsd(0) + requirementsWindowedSpendUsd(0)
+      + designWindowedSpendUsd(0)),
     remainingUsd: totalLimitUsd == null ? null : Math.max(0, roundUsd(totalLimitUsd - windowSpendUsd)),
     blocked,
   };

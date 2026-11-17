@@ -72,7 +72,8 @@ try {
   // ---- seed: settings, a git project, a live mock run, two chats
   await api('/api/settings', { uiLevel: 'expert' });
   await api('/api/onboarding', { welcomeSeen: true });
-  proj = realpathSync(await mkdtemp(path.join(tmpdir(), 'worca-chatlayout-proj-')));
+  await api('/api/worca-level/ack', { what: 'welcome' });   // the level welcome is a second boot-time modal
+  proj =realpathSync(await mkdtemp(path.join(tmpdir(), 'worca-chatlayout-proj-')));
   execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: proj });
   execFileSync('git', ['-c', 'user.email=proof@worca.local', '-c', 'user.name=proof', 'commit', '-q', '--allow-empty', '-m', 'init'], { cwd: proj });
   await api('/api/projects', { name: 'proj', path: proj });

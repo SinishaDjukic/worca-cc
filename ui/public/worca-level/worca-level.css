@@ -1,0 +1,146 @@
+/* ---------- Worca level ---------- */
+/* The hover card beside the account corner, the account-menu level card, the welcome / celebration dialogs,
+   the Profile level page and the Getting started line. Display only. Colour comes from the theme tokens, so
+   dark mode needs nothing of its own: the --wl-* names below are local aliases on these rules, never global tokens.
+   The section marker above is mapped to the worca-levels feature in tools/split-by-feature/feature-map.json. */
+
+/* A level's tint: the account-corner initials, the celebration art and the dialog art read --wl-hue. */
+[data-worca-level=curious]{--wl-hue:235;}
+[data-worca-level=runner]{--wl-hue:195;}
+[data-worca-level=hooked]{--wl-hue:295;}
+[data-worca-level=worcaholic]{--wl-hue:65;}
+[data-worca-level=council]{--wl-hue:150;}
+
+/* Aliases, one place: done is ink, to-do is the quiet line, a link is the strong blue ink. */
+.wl-seg,.wl-dot,.wl-chip,.wl-card,.worca-hover-card,.wl-hero,.wl-reach,.wl-levels,.worca-dlg,.gs-level-line{
+  --wl-seg-done:var(--ink);--wl-dot-done:var(--ink);
+  --wl-seg-todo:var(--line-2);--wl-dot-todo:var(--ink-3);
+  --wl-link:var(--blue-ink-strong);--wl-chip-next-ink:var(--blue-ink-strong);--wl-chip-next-bg:var(--blue-bg);
+  --wl-chip-reached-bg:var(--green-bg);--wl-chip-reached-ink:var(--green-ink-strong);}
+/* The celebration tint reads --wl-hue, so it is declared on the art element that carries the hue (inline), not on
+   .worca-dlg: a var() inside a custom property is substituted where the property is declared. */
+.worca-dlg-art{--wl-celebrate-bg:light-dark(oklch(0.96 0.025 var(--wl-hue)), oklch(0.3 0.05 var(--wl-hue)));}
+
+/* The segment bar: one span per step. `sm` is 4px, `lg` is 6px; a dense small bar tightens its gap to 2px. */
+.wl-seg{display:flex;gap:3px;}
+.wl-seg[data-size="lg"]{gap:4px;}
+.wl-seg[data-gap="2"]{gap:2px;}
+.wl-seg-i{flex:1 1 0;min-width:0;height:4px;border-radius:var(--r-xs);background:var(--wl-seg-todo);}
+.wl-seg[data-size="lg"] .wl-seg-i{height:6px;}
+.wl-seg-i[data-done]{background:var(--wl-seg-done);}
+
+/* The hover card: a non-modal popover that hover-card.mjs places next to the corner (position:fixed, z-index set inline). */
+.worca-hover-card{position:fixed;z-index:44;box-sizing:border-box;width:280px;max-width:calc(100vw - 24px);padding:14px;
+  display:flex;flex-direction:column;gap:12px;
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--r-md);box-shadow:var(--shadow-menu);
+  color:var(--ink);font-size:var(--fs-meta);line-height:1.4;}
+.wl-hc-head{display:flex;align-items:center;gap:10px;}
+.wl-hc-ava{flex:none;width:40px;height:40px;border-radius:50%;object-fit:cover;background:var(--line-2);}
+.wl-hc-who{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.wl-hc-name{font-size:var(--fs-body);font-weight:600;color:var(--ink);}
+.wl-hc-level{font-size:var(--fs-caption);color:var(--ink-2);}
+.wl-hc-next{color:var(--ink-2);}
+.wl-hc-next strong{font-weight:600;color:var(--ink);}
+.wl-hc-prog{font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;}
+.wl-top{margin:0;color:var(--ink-2);}
+.wl-hc-tries{display:flex;flex-direction:column;gap:2px;padding-top:10px;border-top:1px solid var(--line-2);}
+.wl-hc-k{margin-bottom:4px;font-size:var(--fs-caption);font-weight:500;color:var(--ink-2);}
+.wl-try{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 8px;margin:0 -8px;padding:7px 8px;border-radius:var(--r-sm);
+  color:var(--ink);text-decoration:none;}
+.wl-try:hover{background:var(--hover);}
+.wl-try:focus-visible,.wl-profile-link:focus-visible,.wl-card:focus-visible,.worca-dlg-link:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.wl-try-t{font-size:var(--fs-meta);font-weight:500;}
+.wl-try-go{color:var(--wl-link);}
+.wl-try-h{grid-column:1 / -1;font-size:var(--fs-caption);line-height:1.4;color:var(--ink-2);}
+.wl-profile-link{font-size:var(--fs-meta);font-weight:500;color:var(--wl-link);text-decoration:none;}
+.wl-profile-link:hover{text-decoration:underline;}
+
+/* The account-menu level card: avatar, name and "View level", then the way to the next level. */
+.wl-card{display:flex;flex-direction:column;gap:8px;width:100%;box-sizing:border-box;margin:0;padding:10px;text-align:left;font:inherit;
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--r-md);color:var(--ink);cursor:pointer;}
+.wl-card:hover{background:var(--hover);}
+.wl-card-head{display:flex;align-items:center;gap:8px;}
+.wl-card-ava{flex:none;width:22px;height:22px;border-radius:50%;object-fit:cover;background:var(--line-2);}
+.wl-card-name{flex:1;min-width:0;font-size:var(--fs-body);font-weight:600;}
+.wl-card-go{font-size:var(--fs-meta);color:var(--wl-link);}
+.wl-card-next{min-width:0;}
+.wl-card-top{font-size:var(--fs-meta);color:var(--ink-2);}
+.wl-card-row{display:flex;align-items:baseline;justify-content:space-between;gap:8px;font-size:var(--fs-meta);color:var(--ink-2);}
+.wl-card-prog{font-weight:600;color:var(--ink);font-variant-numeric:tabular-nums;}
+
+/* The dialogs sit in the shared .viewer-modal and .card; these rules centre the content and size the art. */
+.worca-dlg .worca-dlg-card{width:min(440px,100%);text-align:center;}
+.worca-dlg-avatar{display:block;width:96px;height:96px;margin:0 auto 6px;border-radius:50%;object-fit:cover;background:var(--line-2);}
+.worca-dlg-art{display:grid;place-items:center;width:160px;height:160px;margin:0 auto;clip-path:circle(50%);background:var(--wl-celebrate-bg);}
+.worca-dlg-art .worca-dlg-avatar{margin:0;width:108px;height:108px;}
+.worca-dlg-level{margin:0;color:var(--ink-2);font-size:var(--fs-meta);font-weight:600;}
+.worca-dlg-title{margin:4px 0 8px;font-size:var(--fs-page);}
+.worca-dlg-em{font-style:normal;}
+.worca-dlg-lead,.worca-dlg-next{margin:0 0 8px;color:var(--ink);}
+.worca-dlg-next,.worca-dlg-note{color:var(--ink-2);}
+.worca-dlg-note{margin:8px 0 0;font-size:var(--fs-meta);}
+.worca-dlg-links{display:flex;flex-direction:column;align-items:center;gap:4px;margin:0 0 8px;}
+.worca-dlg-link{font-size:var(--fs-body);font-weight:500;color:var(--wl-link);}
+.worca-dlg .wl-seg{margin:0 0 12px;}
+.worca-dlg-actions{justify-content:center;}
+
+/* The Profile level page: intro, hero with the next-level panel, the to-reach list and the grid of all levels. */
+#profile-level-host,.wl-host{display:flex;flex-direction:column;gap:16px;max-width:900px;margin:0 auto;}
+.wl-intro{margin:0;color:var(--ink-2);}
+.wl-hero{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);overflow:hidden;
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
+.wl-hero-who{display:flex;align-items:center;gap:20px;padding:24px;}
+.wl-avatar{flex:none;border-radius:50%;object-fit:cover;background:var(--line-2);}
+.wl-hero-text{display:flex;flex-direction:column;gap:6px;min-width:0;}
+.wl-hero-kicker{font-size:var(--fs-meta);font-weight:500;color:var(--ink-2);}
+.wl-hero-name{margin:0;font-size:var(--fs-page);font-weight:700;line-height:1.15;color:var(--ink);}
+.wl-hero-desc{font-size:var(--fs-body);color:var(--ink-2);text-wrap:pretty;}
+.wl-next{display:flex;flex-direction:column;justify-content:center;gap:10px;padding:24px;border-left:1px solid var(--line);background:var(--surface);}
+.wl-next-kicker{font-size:var(--fs-meta);font-weight:500;color:var(--ink-2);}
+.wl-next-row{display:flex;align-items:baseline;justify-content:space-between;gap:12px;}
+.wl-next-name{font-size:var(--fs-subpage);font-weight:600;color:var(--ink);}
+.wl-next-count{font-size:var(--fs-stat);font-weight:600;line-height:1;color:var(--ink);font-variant-numeric:tabular-nums;}
+.wl-next-of{font-size:var(--fs-section);color:var(--ink-3);}
+@media (max-width:760px){
+  .wl-hero{grid-template-columns:minmax(0,1fr);}
+  .wl-next{border-left:0;border-top:1px solid var(--line);}
+}
+
+.wl-reach{padding:18px 24px 6px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
+.wl-reach-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:4px;}
+.wl-reach-head h2{margin:0;font-size:var(--fs-section);font-weight:600;}
+.wl-reach-note{font-size:var(--fs-meta);color:var(--ink-2);}
+.wl-list{list-style:none;margin:0;padding:0;}
+.wl-item{display:grid;grid-template-columns:24px minmax(0,1fr) auto;align-items:center;gap:14px;padding:12px 0;border-bottom:1px solid var(--line);}
+.wl-item:last-child{border-bottom:0;}
+.wl-dot{display:grid;place-items:center;width:20px;height:20px;box-sizing:border-box;border-radius:50%;}
+.wl-dot.is-done{background:var(--wl-dot-done);}
+.wl-dot.is-todo{border:1.5px dashed var(--wl-dot-todo);}
+.wl-item-body{display:flex;flex-direction:column;gap:2px;min-width:0;}
+.wl-item-label{font-size:var(--fs-body);font-weight:500;color:var(--ink);}
+.wl-item[data-done="true"] .wl-item-label{color:var(--ink-2);}
+.wl-item-hint,.wl-item-count{font-size:var(--fs-meta);color:var(--ink-2);}
+.wl-item-count{font-variant-numeric:tabular-nums;}
+.wl-done{font-size:var(--fs-meta);color:var(--ink-2);}
+.wl-open{white-space:nowrap;}
+
+.wl-levels h2{margin:0 0 10px;font-size:var(--fs-section);font-weight:600;}
+.wl-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;}
+@media (max-width:900px){.wl-grid{grid-template-columns:repeat(2,minmax(0,1fr));}}
+.wl-level{display:flex;flex-direction:column;gap:6px;padding:14px;box-sizing:border-box;
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);}
+.wl-level[data-state="current"]{border-color:var(--ink);}
+.wl-level[data-state="later"] .wl-avatar{opacity:.5;}
+.wl-level-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;}
+.wl-level-name{font-size:var(--fs-body);font-weight:600;color:var(--ink);}
+.wl-level-desc{font-size:var(--fs-meta);color:var(--ink-2);}
+.wl-chip{display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:var(--r-xs);
+  background:var(--line-2);color:var(--ink-2);font:500 11px/1 var(--sans);white-space:nowrap;}
+.wl-level[data-state="current"] .wl-chip{background:var(--wl-dot-done);color:var(--panel);}
+.wl-level[data-state="reached"] .wl-chip{background:var(--wl-chip-reached-bg);color:var(--wl-chip-reached-ink);}
+.wl-level[data-state="next"] .wl-chip{background:var(--wl-chip-next-bg);color:var(--wl-chip-next-ink);}
+
+/* The Getting started line that points at the next level. */
+.gs-level-line{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:0 0 12px;color:var(--ink-2);font-size:var(--fs-meta);}
+.gs-level-avatar{width:16px;height:16px;border-radius:50%;object-fit:cover;}
+.gs-level-link{color:var(--wl-link);font-weight:600;}

@@ -62,7 +62,7 @@ test('New feature draws its form without waiting for the feature list, then fill
   void m.view.show('new');
   await settle();
   assert.ok(m.host.querySelector('#req-new-title'), 'the form is there while the list is held');
-  assert.equal(m.host.querySelector('.req-new-model'), null, 'no interview line yet');
+  assert.equal(m.host.querySelector('.req-new-cost'), null, 'no cost line yet');
   assert.equal(started(calls, 'GET', '/api/requirements'), 1);
   const typed = m.host.querySelector('#req-new-title');
   typed.value = 'My title';
@@ -70,7 +70,7 @@ test('New feature draws its form without waiting for the feature list, then fill
   await settle();
   assert.equal(m.host.querySelector('#req-new-title'), typed, 'the same form, not a rebuilt one');
   assert.equal(typed.value, 'My title');
-  assert.match(m.host.querySelector('.req-new-model').textContent, /Worca interviews with Opus at high effort/);
+  assert.equal(m.host.querySelector('.req-new-model'), null, 'the old interview sentence is gone');
   assert.match(m.host.querySelector('.req-new-cost').textContent, /\$0\.30 for the code look/);
   assert.match(m.host.querySelector('#req-new-files-privacy').textContent, /sends each file to Opus/);
   m.view.destroy();

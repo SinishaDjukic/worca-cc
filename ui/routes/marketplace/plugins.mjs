@@ -19,6 +19,25 @@ import { registerTicketUpdatesRoutes } from '../../../src/core/ticket-updates-ro
 import { githubWebUrl } from '../../../src/shared/plugin-access.mjs';
 import { randomBytes } from 'node:crypto';
 import { MARKETPLACE_ID_RE, MARKET_JOBS, PLUGIN_NAME_RE, badRequest, broadcast, channelHost, emitPluginsChanged, isTruthy, marketJobFailure, pruneMarketJobs, readInstalledManifest, resolveProjectDir } from '../../server.mjs';
+import { personOf } from '../../../src/core/worca-levels/service.mjs';
+import { readPerson } from '../../../src/core/worca-levels/store.mjs';
+import { worcaLevelService } from '../worca-levels/worca-level.mjs';
+
+/** Worca levels: the most add-ons the person has had at once, read from the lock AFTER the install. A shared
+ *  install counts the person's own add-ons that are in the lock; a single install counts the whole lock. */
+function addonPeakOf(req, addon) {
+  const lock = readPluginsLock();
+  const { person, shared } = personOf(req);
+  if (!shared) return Object.keys(lock).length;
+  const mine = new Set([...(readPerson(person)?.live?.addons ?? []), addon]);
+  return [...mine].filter((name) => !!lock[name]).length;
+}
+
+/** Worca levels: record a live event for the person behind `req`. Never fails the request it rides on. */
+async function noteWorcaAddon(req, addon) {
+  try { await worcaLevelService().noteLiveEvent(personOf(req).person, { addon, addonPeak: addonPeakOf(req, addon) }); }
+  catch (err) { console.error(`[worca-levels] live event not recorded: ${err?.message || err}`); }
+}
 
 export function register(app) {
 
@@ -298,6 +317,7 @@ app.post('/api/plugins/install', async (req, res) => {
     });
     reloadChatWorkers(body.name.trim());
     emitPluginsChanged('install');
+    await noteWorcaAddon(req, body.name.trim());
     res.json(out); // { ok: true, inventory, warnings, ignored }
   } catch (err) {
     sendPluginError(res, err);

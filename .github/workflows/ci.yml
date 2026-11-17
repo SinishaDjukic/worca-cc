@@ -228,7 +228,8 @@ jobs:
     # Two runners: the theme proof alone (~5.5 min, the long pole), and every other proof
     # together (~2.5 min in all on 2026-10-27). Three groups left two runners idle for most of
     # the theme proof's run. Each script mints its own WORCA_HOME, its own git project, an
-    # ephemeral server port and its own CDP port (9333-9344 and 9351; chat-layout takes a free one),
+    # ephemeral server port and its own CDP port (9333-9344 and 9351; chat-layout takes a free one;
+    # design-preview and design-stage take none: Playwright drives Chrome over a pipe),
     # distinct within each group. Across groups only theme and feature-page share one (9336), which
     # is safe while the groups run on separate runners (set CDP_PORT if they ever share a machine).
     name: headless-Chrome UI proofs (${{ matrix.group }})
@@ -241,7 +242,7 @@ jobs:
           - group: theme
             proofs: "verify:theme"
           - group: composer + run-monitor + the rest
-            proofs: "verify:composer verify:run-monitor verify:feature-page verify:memory verify:scripts verify:ask-forms verify:workspace-map verify:flags verify:requirements verify:ticket-updates verify:chat-layout"
+            proofs: "verify:composer verify:run-monitor verify:feature-page verify:memory verify:scripts verify:ask-forms verify:workspace-map verify:flags verify:requirements verify:ticket-updates verify:chat-layout verify:design-preview verify:design-stage"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -270,7 +271,7 @@ jobs:
       # server on an ephemeral port, and runs the pipeline under WORCA_MOCK=1 —
       # nothing else has to be provisioned. --no-sandbox is required whenever
       # headless Chrome runs as root. Every proof in the group runs even after one fails
-      # (one group holds eleven), and the step fails at the end naming each failed proof.
+      # (one group holds twelve), and the step fails at the end naming each failed proof.
       - name: Headless-Chrome UI proofs
         env:
           CHROME_NO_SANDBOX: "1"

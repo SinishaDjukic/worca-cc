@@ -178,7 +178,7 @@ test('refusals write nothing: the switch off, no repository, already being made'
   try {
     const off = await call('POST', B(shop));
     assert.equal(off.status, 409);
-    assert.match(off.json.error, /Looking at the code is off for this project/);
+    assert.match(off.json.error, /Code looks are off for this project/);
     assert.equal(store.getBrief('project', shop.key), null);
   } finally { await call('PUT', `/api/requirements/context/project/${shop.key}`, { lookAtCode: true }); }
 
@@ -253,7 +253,7 @@ test('a feature with a brief: its view, Add this to the brief, the look refused 
 
     const early = await call('POST', `/api/requirements/${seq}/brief-addition`, {});
     assert.equal(early.status, 409);
-    assert.equal(early.json.error, 'There is no closer look to add.');
+    assert.equal(early.json.error, 'There is no code look to add.');
 
     assert.equal((await call('POST', `/api/requirements/${seq}/look`, {})).status, 202);
     await waitFor(async () => { const x = (await call('GET', `/api/requirements/${seq}`)).json.feature; return !x.busy && x.orientation && x.orientation.summary; });
@@ -282,7 +282,7 @@ test('a feature with a brief: its view, Add this to the brief, the look refused 
       const orientation = (await call('GET', `/api/requirements/${seq}`)).json.feature.orientation;
       const look = await call('POST', `/api/requirements/${seq}/look`, {});
       assert.equal(look.status, 409);
-      assert.equal(look.json.error, 'Looking at the code is off for this project.');
+      assert.equal(look.json.error, 'Code looks are off for this project.');
       f = (await call('GET', `/api/requirements/${seq}`)).json.feature;
       assert.deepEqual(f.orientation, orientation, 'the orientation is unchanged');
       assert.equal(f.brief.lookAtCode, false);

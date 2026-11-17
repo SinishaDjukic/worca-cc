@@ -13,8 +13,9 @@ import { listProjects } from '../projects.mjs';
 import { workspaceTarget } from '../ask/workflow-deps.mjs';
 import { RequirementsError, parseFeatureSeq, SCOPE_TYPES } from './spec.mjs';
 import {
-  createFeature, requireFeature, listFeatures, listTurns, getContext, setContext, updateFeature, setEarlyStartReason, listStarts, latestStart, recentLookCosts,
+  createFeature, requireFeature, listFeatures, listTurns, getContext, setContext, updateFeature, setEarlyStartReason, listStarts, latestStart,
   getBrief, usableBrief, listBriefs, setBriefSections, deleteBrief, briefUsers, listAttachments, countHelperMessages,
+  unknownCostCount, featureCostRows, featureCostKindCounts,
 } from './store.mjs';
 import {
   sendMessage, retryMessage, stopHelper, acceptProposal, rejectProposal, askAgain, clearChat, isAnswering, helperView,
@@ -22,11 +23,16 @@ import {
 import { REQ_ATTACH_LIMITS, REQ_ATT_ID_RE, reqUploadOptions, checkNewFiles, fileOrigins } from './attachments.mjs';
 import {
   addAttachments, removeAttachment, editSummary, setSend, readAgain, askAttachment, replaceAttachment, ownAttachment, fileView, readEstimates,
-  attachmentFile, removeOwnerBodies, stopJobs, runFiles,
+  attachmentFile, removeOwnerBodies, stopJobs, runFiles, queueSkippedReads,
 } from './attachment-job.mjs';
 import { isStarting, STARTING_MESSAGE } from './starting.mjs';
 import { startOrientation, submitAnswers, finishInterview, followUp, retry, isBusy, assertCapacity, interviewModel } from './interview.mjs';
 import { listModels } from '../config.mjs';
+import { stepEstimate } from '../helper-call/cost.mjs';
+import { capabilities, notReadyWords, companyOf } from '../helper-call/profiles.mjs';
+import { engineLabel, engineChoiceLabel } from '../../shared/engine-switch.mjs';
+import { dd, featureModel, scopeOf, defaultChoice, briefDefault, recommendedModel, checkChoice, engineDefault, claudeReach } from './feature-model.mjs';
+import { setFeatureModel } from './model-choice.mjs';
 import { pendingRound } from './round.mjs';
 import {
   updateHeader, setSection, releaseSection, addCriterion, editCriterion, removeCriterion, setAssumption, confirmOpenAssumptions, setArchived,
@@ -43,7 +49,7 @@ import { saveSpecToCheckout, specFileName } from './save.mjs';
 import { assertBriefSection, parseSectionValue, renderBriefMarkdown, briefFileName, briefMatches } from './brief.mjs';
 import { makeBrief, isBriefBusy, briefTarget, briefEstimate, briefStaleness } from './brief-job.mjs';
 
-const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_FOUND: 404, BUSY: 409, CONFLICT: 409, BUDGET: 409, NOT_READY: 409, TOO_LARGE: 413, TRACKER: 502 });
+const STATUS = Object.freeze({ BAD_REQUEST: 400, NOT_FOUND: 404, BUSY: 409, CONFLICT: 409, BUDGET: 409, NOT_READY: 409, TOO_LARGE: 413, TRACKER: 502, UNAVAILABLE: 503 });
 const P = '/api/requirements';
 
 /** Every requirements route, in registration order: the one list registerRequirementsRoutes registers from
@@ -66,6 +72,8 @@ export const REQUIREMENTS_ROUTES = Object.freeze([
   ['GET', `${P}/import/:scopeType/:scopeKey`], ['POST', `${P}/import/:scopeType/:scopeKey/options`],
   ['POST', `${P}/import/:scopeType/:scopeKey/search`], ['POST', `${P}/import/:scopeType/:scopeKey/preview`],
   ['GET', P], ['POST', P],
+  // 9c §5: the harness list and the step estimates, before the /:seq routes
+  ['GET', `${P}/models`], ['GET', `${P}/estimates`],
   ['GET', `${P}/:seq`], ['PATCH', `${P}/:seq`],
   ['POST', `${P}/:seq/answers`], ['POST', `${P}/:seq/finish`], ['POST', `${P}/:seq/retry`], ['POST', `${P}/:seq/look`],
   ['PUT', `${P}/:seq/spec/:section`], ['DELETE', `${P}/:seq/spec/:section/edited`],
@@ -74,6 +82,7 @@ export const REQUIREMENTS_ROUTES = Object.freeze([
   ['POST', `${P}/:seq/attachments`], ['GET', `${P}/:seq/attachments/:attId`], ['PATCH', `${P}/:seq/attachments/:attId`], ['DELETE', `${P}/:seq/attachments/:attId`],
   ['POST', `${P}/:seq/attachments/:attId/replace`], ['POST', `${P}/:seq/attachments/:attId/ask`], ['POST', `${P}/:seq/attachments/:attId/read-again`],
   ['POST', `${P}/:seq/archive`],
+  ['PUT', `${P}/:seq/model`], ['GET', `${P}/:seq/costs`],
   ['GET', `${P}/:seq/markdown`], ['POST', `${P}/:seq/save`],
   ['POST', `${P}/:seq/start`], ['PUT', `${P}/:seq/early-start-reason`], ['POST', `${P}/:seq/revert`],
   ['POST', `${P}/:seq/export/preview`], ['POST', `${P}/:seq/export`], ['DELETE', `${P}/:seq/export/link`],
@@ -150,6 +159,7 @@ const bool = (v, field) => {
 // A file route's failure that is not one of Worca's own refusals (a disk or database error) answers product copy; the
 // raw error, which can name a path, goes to the log only (D15).
 const FILE_ROUTE_FAILED = 'Worca could not finish that. Try again.';
+const MODELS_NOT_LOADED = 'The models could not be loaded. Try again.';
 const STORED_FILE = 'Worca could not open the stored file. Remove it and attach it again.';
 const fileRoute = (fn, copy = FILE_ROUTE_FAILED) => async (req, res) => {
   try { await fn(req, res); } catch (err) {
@@ -194,7 +204,7 @@ export function requirementsBriefNotifier(broadcast) {
 
 const noSummary = () => null;
 
-/** What the feature page shows of its scope's brief (A7 §5, board 14): its id (a closer look made against another
+/** What the feature page shows of its scope's brief (A7 §5, board 14): its id (a code look made against another
  *  brief offers no Add), status and age, the sources, the area names and terms the feature mentions, and the
  *  switch; null without a usable brief. */
 function featureBrief(f) {
@@ -229,26 +239,61 @@ export async function featureView(seq, d = {}) {
   const rows = listStarts(seq);
   const runSummary = d.runSummary || noSummary;
   const starts = await Promise.all(rows.map(async (s, i) => ({ ...(await startView(s, runSummary)), ...(i === 0 ? { spec: s.spec } : {}) })));
-  // One model resolution per view: "Look closer · about $X" (the same model-scoped estimate as the New feature line, all
-  // looks when unresolved) and the privacy note's model (A8 D15)
+  // One model resolution per view (9c D2): the feature's own harness and model ("Look closer · about $X" is the same
+  // model-scoped estimate as the New feature line, all looks when unresolved) and the privacy note's model (A8 D15)
   let im = null;
-  try { im = (await (d.interviewModel || interviewModel)(d)) || null; } catch { im = null; }
+  try { im = (await featureModel(f, d)) || null; } catch { im = null; }
   const model = (im && im.model) || null;
+  const listFn = d.listModels || listModels;
   const estimates = readEstimates();   // once per view, not once per file
+  const ledger = featureCostRows(seq);
+  await rememberLabels(listFn, [...turns.map(turnModel), ...ledger.map((r) => r.model)]);
   return {
     feature: { ...f, busy, pending, lastError: last && last.kind === 'error' ? last.payload.message : null,
       readiness: ready, state: displayState({ ...f, busy }, { ready, starts: rows }), unaskedRejections: unaskedRejections(f.spec, turns),
       starts, changedSinceStart: rows.length ? changedSince(rows[0].spec, f.spec, sentFiles(rows[0], f)) : [],
-      brief: featureBrief(f), lookCostUsd: lookCostUsd(model),
+      brief: featureBrief(f), lookCostUsd: lookCostUsd(model, im && im.engine),
+      // 9c D2: the stored choice, or a pre-9c feature's resolved Claude pair (legacy); "GPT-5.6 Sol on Codex"; the chip's "≈"
+      model: f.model || (im ? { engine: im.engine, model: im.model, effort: im.effort ?? null, legacy: true } : null),
+      modelLabel: im && im.model ? await labelOn(listFn, im.model, im.engine) : null,
+      anyEstimated: ledger.some((r) => r.costKind === 'estimated'),
+      unknownSteps: ledger.filter((r) => r.costKind === 'unknown').length,
       attachments: files.map((r) => fileView(r, { spec: f.spec, href: `${P}/${seq}/attachments/${r.id}`, estimates, from: origins.get(r.id) || null })),
       briefDocuments: docs.map((r) => fileView(r, { spec: f.spec, href: `${briefPathOf(f.scopeType, f.scopeKey)}/documents/${r.id}`, doc: true, estimates })),
       unaskedFiles: unaskedFiles(files, turns),
-      interview: await interviewInfo(async () => im, d.listModels || listModels),
+      interview: await interviewInfo(async () => im, listFn),
       resetPeriod: resetPeriod(),
       export: await exportView(f, turns, d),   // A6 §6: the menu, the chip, the History card, Report back (never throws)
       helper: { answering: isAnswering(seq), messages: countHelperMessages(seq) } },
-    turns,
+    // 9c D14: each turn says which model label and cost kind its step ran with ('billed' | 'estimated' | 'unknown'; null: nothing booked)
+    turns: turns.map((t) => ({ ...t, modelLabel: turnModel(t) ? labelOf(turnModel(t)) : null, costKind: costKindOf(ledger, (r) => r.turnId === t.id) })),
   };
+}
+
+/** The labels of the models seen in views, so the sync helper view can name a model the way the page does (9c D14). */
+const LABELS = new Map();
+/** The model a turn names: its own, or for a switch (`model` turn) the one it switched to. */
+const turnModel = (t) => t.model || (t.kind === 'model' && t.payload && t.payload.model) || null;
+/** Remember the labels of `ids`; a raw-id fallback (the catalog could not be read) is not cached. */
+async function rememberLabels(list, ids) {
+  for (const id of new Set(ids.filter(Boolean))) {
+    if (LABELS.has(id)) continue;
+    const label = await modelLabelOf(list, id);
+    if (label && label !== id) LABELS.set(id, label);
+  }
+}
+const labelOf = (id) => LABELS.get(id) || id;
+/** The cost kind of the ledger rows `match` picks: unknown when any is, else estimated when any is, else billed; null with none. */
+function costKindOf(rows, match) {
+  const mine = rows.filter(match);
+  if (!mine.length) return null;
+  return mine.some((r) => r.costKind === 'unknown') ? 'unknown' : mine.some((r) => r.costKind === 'estimated') ? 'estimated' : 'billed';
+}
+/** The helper's view with each reply's model label and cost kind (9c D14). */
+function helperWithKinds(view, seq) {
+  const ledger = featureCostRows(seq);
+  return { ...view, messages: view.messages.map((m) => ({ ...m, modelLabel: m.model ? labelOf(m.model) : null,
+    costKind: costKindOf(ledger, (r) => r.helperMessageId === m.id) })) };
 }
 
 /** One list row: no spec, orientation or description; the derived state, the Ready count, the pending
@@ -261,40 +306,162 @@ async function summary(f, targetOf, runSummary) {
   const pending = f.status === 'your_turn' ? pendingRound(turns) : null;
   const ready = readiness({ ...f, pending }, { turns, target: await targetOf(f), files: listAttachments('feature', f.seq) });
   const latest = latestStart(f.seq);
+  const kinds = featureCostKindCounts(f.seq);   // 9c: the row's cost words, as the feature view's chip says them
   return { ...rest, busy, state: displayState({ ...f, busy }, { ready, starts: latest ? [latest] : [] }), ready: ready.passed,
+    unknownSteps: kinds.unknown, anyEstimated: kinds.estimated > 0,
     pendingCount: pending && Array.isArray(pending.questions) ? pending.questions.length : 0,
     openAssumptions: ((spec && spec.assumptions) || []).filter((a) => a.status === 'open').length,
     latestRun: latest ? (await startView(latest, runSummary)).run : null };
 }
 
-/** Median of the recent code-look costs, for the New feature page's hint: the looks made on `model` when there
- *  are any, else all recent looks (null when there are none at all). */
-function lookCostUsd(model = null) {
-  let costs = model ? recentLookCosts(10, { model }) : [];
-  if (!costs.length) costs = recentLookCosts(10);
-  costs = costs.sort((a, b) => a - b);
-  if (!costs.length) return null;
-  const m = costs.length >> 1;
-  const mid = costs.length % 2 ? costs[m] : (costs[m - 1] + costs[m]) / 2;
-  return Math.round(mid * 1e4) / 1e4;
+/** What a code look will cost on `model`, for the New feature page's hint (9c D9): the median of the looks made on that
+ *  model, else typical token counts at its price; null when neither is known. Never another model's looks. */
+function lookCostUsd(model = null, engine = 'claude') {
+  return stepEstimate({ engine: engine || 'claude', model, step: 'look' }).usd;
 }
 
-/** The interview's model for the New feature line: { model, label, effort, source }, or null when it cannot be told. */
+/** A model's label in the catalog (its id when it has none or the catalog cannot be read). */
+async function modelLabelOf(list, id) {
+  if (!id) return null;
+  try {
+    const want = String(id).toLowerCase();
+    const entry = (await list('')).find((m) => m && typeof m.id === 'string' && m.id.toLowerCase() === want);
+    return (entry && entry.label) || id;
+  } catch { return id; }
+}
+/** "GPT-5.6 Sol on Codex" (9c D2). */
+async function labelOn(list, model, engine) {
+  return `${await modelLabelOf(list, model)} on ${engineLabel(engine)}`;
+}
+
+/** A feature's model as the privacy note reads it: { model, label, effort, engine?, source? }, or null when it cannot be told. */
 async function interviewInfo(resolve, list) {
   try {
     const im = await resolve();
     if (!im || !im.model) return null;
-    const entry = (await list('')).find((m) => m && m.id === im.model);
-    return { model: im.model, label: (entry && entry.label) || im.model, effort: im.effort ?? null, source: im.source };
+    return { model: im.model, label: await modelLabelOf(list, im.model), effort: im.effort ?? null, source: im.source,
+      ...(im.engine ? { engine: im.engine } : {}) };
   } catch { return null; }
+}
+
+/** The New feature line (9c D4): { default: { engine, model, label, effort }, fallbackReason }, or null when it cannot be told. */
+async function interviewDefault(scope, d, list) {
+  try {
+    const { choice, fallbackReason } = await defaultChoice(scope, d);
+    if (!choice || !choice.model) return null;
+    return { default: { engine: choice.engine, model: choice.model, label: await modelLabelOf(list, choice.model), effort: choice.effort ?? null },
+      fallbackReason: fallbackReason || null };
+  } catch { return null; }
+}
+
+const round4 = (n) => Math.round(n * 1e4) / 1e4;
+const STEP_OF_TURN = Object.freeze({ orientation: 'look', round: 'round' });
+const COST_STEPS = ['look', 'round', 'read', 'chat'];
+
+/** GET /:seq/costs (9c D14): the feature's ledger rows with their words, then billed, estimated and unknown apart. */
+async function costsView(seq, d) {
+  requireFeature(seq);
+  const list = d.listModels || listModels;
+  const rows = featureCostRows(seq);
+  const roundIds = listTurns(seq).filter((t) => t.kind === 'round').map((t) => t.id);
+  await rememberLabels(list, rows.map((r) => r.model));
+  const stepOf = (r) => {
+    if (COST_STEPS.includes(r.step)) return r.step;
+    if (r.attachmentId) return 'read';
+    if (r.helperMessageId != null) return 'chat';
+    if (r.turnKind === 'error') return r.turnPayload && r.turnPayload.job === 'look' ? 'look' : 'round';
+    return STEP_OF_TURN[r.turnKind] || 'round';
+  };
+  const wordsOf = (r, step) => {
+    if (step === 'look') return 'Code look';
+    if (step === 'read') return r.attachmentName ? `File read · ${r.attachmentName}` : 'File read';
+    if (step === 'chat') return 'Feature chat';
+    return `Round ${roundIds.filter((id) => r.turnId == null || id < r.turnId).length + 1}`;
+  };
+  const out = rows.map((r) => {
+    const step = stepOf(r);
+    const engine = r.engine || 'claude';
+    return { step, label: wordsOf(r, step), ranOn: r.model ? `${labelOf(r.model)} on ${engineLabel(engine)}` : engineLabel(engine),
+      usd: r.costKind === 'unknown' ? null : round4(r.amountUsd), kind: r.costKind };
+  });
+  const sum = (kind) => round4(out.filter((r) => r.kind === kind).reduce((n, r) => n + (r.usd || 0), 0));
+  const billedUsd = sum('billed');
+  const estimatedUsd = sum('estimated');
+  return { rows: out, billedUsd, estimatedUsd, unknownSteps: out.filter((r) => r.kind === 'unknown').length,
+    totalUsd: round4(billedUsd + estimatedUsd), anyEstimated: out.some((r) => r.kind === 'estimated'), ...budgetOf() };
+}
+
+/** The Requirements budget the cost dialog names: its total limit (null: none) and period. */
+function budgetOf() {
+  try { const b = requirementsSpend(); return { limitUsd: b.totalLimitUsd, resetPeriod: b.resetPeriod }; } catch { return { limitUsd: null, resetPeriod: 'monthly' }; }
+}
+
+/** GET /models (9c D6): the offered harnesses with their capabilities and readiness, the catalog, each harness's default and
+ *  recommended model. Cursor is never listed. */
+async function modelsView(d) {
+  const x = dd(d);
+  const engines = x.engines().filter((e) => e !== 'cursor');
+  let ready = [];
+  try { ready = (await x.readiness()) || []; } catch { ready = []; }
+  const cat = await x.catalog();
+  // B4: Claude not signed in still runs the models that sign in by themselves (a company model profile), or every model when the
+  // user's Claude settings sign it in; only those models are offered
+  const claude = engines.includes('claude') ? await claudeReach(ready, x, cat) : null;
+  const harnesses = engines.map((engine) => {
+    const r = ready.find((e) => e.name === engine);
+    const broker = !!(r && r.broker);
+    const isReady = engine === 'claude' ? claude.ready : !r || (r.ready && !broker);
+    const named = companyOf(engine, { id: '' });
+    const { repo, files, keepsCopy, reportsCost } = capabilities(engine);
+    return { engine, label: engineLabel(engine), choiceLabel: engineChoiceLabel(engine), ready: isReady,
+      short: isReady ? null : notReadyWords(engine, r.reason, { broker }).short, reason: isReady ? null : (r.reason || null), broker,
+      repo, files, keepsCopy, reportsCost, company: named.startsWith('the provider of') ? null : named,
+      ...(engine === 'claude' && claude.only ? { onlyModels: claude.only } : {}) };
+  });
+  const defaults = {};
+  const recommended = {};
+  for (const engine of engines) {
+    let pick = { model: null, effort: null };
+    try { pick = await engineDefault(engine, x); } catch { /* none */ }
+    if (engine === 'claude' && claude.only && !claude.only.some((id) => id.toLowerCase() === String(pick.model || '').toLowerCase())) {
+      pick = { model: claude.only[0], effort: null };   // B4: the default is one that can run
+    }
+    defaults[engine] = { model: pick.model ?? null, effort: pick.effort ?? null };
+    recommended[engine] = recommendedModel(engine, d);
+  }
+  return { harnesses, models: cat.models, defaults, recommended };
+}
+
+/** GET /estimates (9c D9): what a step costs on a pick, and on the harness's recommended model. */
+function estimatesView(q, d) {
+  const engine = typeof q.engine === 'string' ? q.engine : '';
+  if (!engine) throw new RequirementsError('BAD_REQUEST', 'engine is required');
+  if (engine === 'cursor') throw new RequirementsError('BAD_REQUEST', "Cursor can't run Requirements.");
+  if (!dd(d).engines().includes(engine)) throw new RequirementsError('BAD_REQUEST', `${engineLabel(engine)} can't run Requirements.`);
+  const model = typeof q.model === 'string' && q.model ? q.model : null;
+  const steps = q.step === 'brief' ? ['brief'] : ['look', 'round'];
+  const est = (m) => Object.fromEntries(steps.map((step) => {
+    const e = stepEstimate({ engine, model: m, step });
+    return [step, e.usd == null ? { usd: null, reason: e.reason } : { usd: e.usd }];
+  }));
+  const rec = recommendedModel(engine, d);
+  return { ...est(model), recommended: rec ? { model: rec, ...est(rec) } : null };
+}
+
+/** A pick from a body (9c D3): checked, else BAD_REQUEST with the sentence the page shows. */
+async function pickOf(raw, d) {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) throw new RequirementsError('BAD_REQUEST', 'choose a harness and a model');
+  const ok = await checkChoice(raw, d);
+  if (!ok.ok) throw new RequirementsError('BAD_REQUEST', ok.error);
+  return ok.choice;
 }
 
 /** Requirements spend in the budget window budgetStatus() uses, the total limit (null: none) and the
  *  window's period ('weekly' | 'monthly'), so the page names the right one. */
-function requirementsSpend() {
+export function requirementsSpend() {
   const b = budgetStatus();
   return { windowUsd: requirementsWindowedSpendUsd(b.windowStartMs), totalLimitUsd: b.totalLimitUsd ?? null,
-    resetPeriod: b.resetPeriod === 'weekly' ? 'weekly' : 'monthly' };
+    resetPeriod: b.resetPeriod === 'weekly' ? 'weekly' : 'monthly', unknownSteps: unknownCostCount(b.windowStartMs) };
 }
 
 /** The budget window's period alone (A8: "for this <month | week>"), the list's `spend.resetPeriod` values. It reads only
@@ -303,8 +470,8 @@ function resetPeriod() {
   try { return costLimitResetPeriod() === 'weekly' ? 'weekly' : 'monthly'; } catch { return 'monthly'; }
 }
 
-const BRIEF_FIELDS = ['id', 'scopeType', 'scopeKey', 'status', 'sections', 'edited', 'sources', 'files', 'seed', 'model',
-  'costUsd', 'error', 'madeBy', 'madeAt', 'updatedAt'];
+const BRIEF_FIELDS = ['id', 'scopeType', 'scopeKey', 'status', 'sections', 'edited', 'sources', 'files', 'seed', 'model', 'engine',
+  'costUsd', 'madeCostUsd', 'madeCostKind', 'error', 'madeBy', 'madeAt', 'updatedAt'];
 const briefFields = (b) => (b ? Object.fromEntries(BRIEF_FIELDS.map((k) => [k, b[k]])) : null);
 
 /**
@@ -318,9 +485,9 @@ const briefFields = (b) => (b ? Object.fromEntries(BRIEF_FIELDS.map((k) => [k, b
  */
 async function briefPage(scopeType, scopeKey, t, d, known = null) {
   const b = getBrief(scopeType, scopeKey);
-  const [target, estimate, staleness] = await Promise.all([
+  const [target, choiceInfo, staleness] = await Promise.all([
     // without git nothing is known about the code: no probe, and never a reason ('branch-gone') that is not true
-    known || briefTarget(scopeType, scopeKey, d), briefEstimate(d), b ? (gitAvailable() ? briefStaleness(b, d) : { known: false, reason: 'no-git' }) : null,
+    known || briefTarget(scopeType, scopeKey, d), briefChoiceInfo(scopeType, scopeKey, d), b ? (gitAvailable() ? briefStaleness(b, d) : { known: false, reason: 'no-git' }) : null,
   ]);
   const first = scopeType === 'project' ? target.dirs[0] : null;
   const estimates = b && b.madeAt ? readEstimates() : null;
@@ -328,13 +495,28 @@ async function briefPage(scopeType, scopeKey, t, d, known = null) {
     brief: briefFields(b),
     target: { name: t.name, branch: (first && first.base && first.base.branch) || null, repositories: target.dirs.length,
       leftOut: target.leftOut || [], slow: target.slow || [] },
-    notes: getContext(scopeType, scopeKey), estimate, usedBy: briefUsers(scopeType, scopeKey), staleness,
+    notes: getContext(scopeType, scopeKey), estimate: choiceInfo.estimate, usedBy: briefUsers(scopeType, scopeKey), staleness,
     // A8 §5: a made brief's documents, the interview model (the privacy note) and the budget's period
     documents: b && b.madeAt ? listAttachments('brief', b.id).map((r) => fileView(r, { href: `${briefPathOf(scopeType, scopeKey)}/documents/${r.id}`,
       doc: true, estimates })) : [],
     interview: await interviewInfo(() => (d.interviewModel || interviewModel)(d), d.listModels || listModels),
     resetPeriod: resetPeriod(),
+    // 9c D18: the harness the brief was made on, and what a new one would start on (with why, when it is Claude by fallback)
+    madeWith: b && b.madeAt ? { engine: b.engine || 'claude', model: b.model || null, label: await modelLabelOf(d.listModels || listModels, b.model) } : null,
+    briefDefault: choiceInfo.briefDefault,
   };
+}
+
+/** The brief's default pick (9c D18) and the estimate for it: { briefDefault, estimate: { costUsd, model, engine } }. If the pick
+ *  cannot be told, A7's estimate (the interview's Claude model). */
+async function briefChoiceInfo(scopeType, scopeKey, d) {
+  try {
+    const bd = await briefDefault(scopeOf({ scopeType, scopeKey }), d);
+    const c = bd.choice;
+    const usd = c.model ? stepEstimate({ engine: c.engine, model: c.model, step: 'brief' }).usd : null;
+    return { briefDefault: bd, estimate: { costUsd: usd ?? null, engine: c.engine,
+      model: c.model ? { id: c.model, label: await modelLabelOf(d.listModels || listModels, c.model) } : null } };
+  } catch { return { briefDefault: null, estimate: await briefEstimate(d) }; }
 }
 
 /** The scope's brief once made (the owner edits only a made brief), else CONFLICT. */
@@ -429,7 +611,7 @@ export function registerRequirementsRoutes(app, { broadcast, server, deps = {} }
     return Number(v);
   };
   // The helper's body; the call's start and end send their own frames (helper.mjs notify), a decision sends one here.
-  const helperBody = (res, seq, code = 200) => res.status(code).json(helperView(seq));
+  const helperBody = (res, seq, code = 200) => res.status(code).json(helperWithKinds(helperView(seq), seq));
 
   const handlers = {
     [`GET ${P}/context/:scopeType/:scopeKey`]: async (req, res) => {
@@ -452,7 +634,9 @@ export function registerRequirementsRoutes(app, { broadcast, server, deps = {} }
       const t = await checkTarget(...scope(req));
       // The refusals reject before anything is written; the job is not awaited (it never rejects, and it sends
       // the scope's frames itself as it starts and as it settles).
-      const { target } = await makeBrief(...scope(req), { by: by(req) }, briefDeps);
+      const picked = (req.body || {}).choice;
+      if (picked != null && (typeof picked !== 'object' || Array.isArray(picked))) throw new RequirementsError('BAD_REQUEST', 'choose a harness and a model');
+      const { target } = await makeBrief(...scope(req), { by: by(req), choice: picked ?? null }, briefDeps);
       res.status(202).json(await briefPage(...scope(req), t, briefDeps, target));
     },
     [`DELETE ${P}/brief/:scopeType/:scopeKey`]: async (req, res) => {
@@ -578,19 +762,35 @@ export function registerRequirementsRoutes(app, { broadcast, server, deps = {} }
       };
       const list = listFeatures({ scopeType: q.scopeType || null, scopeKey: q.scopeKey || null, archived: q.archived === '1' });
       const features = await Promise.all(list.map((f) => summary(f, targetOf, d.runSummary || noSummary)));
-      const interview = await interviewInfo(() => (d.interviewModel || interviewModel)(d), d.listModels || listModels);
+      const interview = await interviewDefault(q.scopeType === 'project' || q.scopeType === 'workspace' ? scopeOf({ scopeType: q.scopeType, scopeKey: q.scopeKey }) : {},
+        d, d.listModels || listModels);
       const briefs = listBriefs().map((b) => ({ ...b, lookAtCode: getContext(b.scopeType, b.scopeKey).lookAtCode }));
       // A budget that cannot be read leaves the spend out (null), never the list: the page names no limit then.
       let spend = null;
       try { spend = (d.requirementsSpend || requirementsSpend)(); } catch (err) {
         console.error('requirements: the spend for the list could not be read:', err && err.message ? err.message : err);
       }
-      res.json({ features, interview, lookCostUsd: lookCostUsd(interview && interview.model), spend, briefs,
+      res.json({ features, interview, lookCostUsd: lookCostUsd(interview && interview.default.model, interview && interview.default.engine), spend, briefs,
         readEstimates: readEstimates() });   // the New feature line's "about $X a file" (board 15)
     },
     [`POST ${P}`]: fileRoute(async (req, res) => {
       const b = req.body || {};
       await checkTarget(b.scopeType, b.scopeKey);
+      // 9c D3, D4: the pick is checked before anything is created; absent (an API client, or a form whose models did not
+      // load), the default for the scope is stored. D2: a default that cannot be told is refused, never stored as NULL
+      // (= Claude): that would start a feature on Claude when the Default engine is another harness, and nobody told.
+      // A Claude default without a model keeps NULL, which is that same Claude pair (interviewModel) as before 9c.
+      let model = null;
+      if (b.model !== undefined && b.model !== null) model = await pickOf(b.model, d);
+      else {
+        let choice = null;
+        try { ({ choice } = await defaultChoice(scopeOf({ scopeType: b.scopeType, scopeKey: b.scopeKey }), d)); } catch (err) {
+          console.error('requirements: the default model for a new feature could not be told:', err && err.message ? err.message : err);
+          throw new RequirementsError('UNAVAILABLE', MODELS_NOT_LOADED);
+        }
+        if (choice && choice.model) model = choice;
+        else if (choice && choice.engine && choice.engine !== 'claude') throw new RequirementsError('UNAVAILABLE', MODELS_NOT_LOADED);
+      }
       const uploads = b.attachments === undefined ? [] : uploadsOf(b.attachments, { owner: 'feature', create: true });
       if (b.fromTicket !== undefined) {
         // A6.1 D10: capacity first; the ticket read again; then the feature at once, without waiting for any download
@@ -598,7 +798,7 @@ export function registerRequirementsRoutes(app, { broadcast, server, deps = {} }
         const s = { scopeType: b.scopeType, scopeKey: b.scopeKey };
         const plan = await prepareImport(s, b.fromTicket, { diskFiles: uploads }, d);
         assertCapacity();   // again: the read awaited the tracker; from here to the orientation nothing awaits
-        const made = createImported(s, { title: b.title, description: b.description }, plan, { by: by(req) }, d);
+        const made = createImported(s, { title: b.title, description: b.description, model }, plan, { by: by(req) }, d);
         startOrientation(made.seq, { by: by(req) }, d);
         onChange(made.seq);
         return res.status(201).json({ ...(await featureView(made.seq, d)), filesNotStored: made.filesNotStored, notOnTicket: made.notOnTicket });
@@ -606,7 +806,7 @@ export function registerRequirementsRoutes(app, { broadcast, server, deps = {} }
       // A8 D2: the files are checked before anything is created, then stored and queued before the orientation
       const files = checkNewFiles('feature', [], uploads);
       assertCapacity();   // before creating: a refused start must not leave a feature stuck at "looking"
-      const f = createFeature({ scopeType: b.scopeType, scopeKey: b.scopeKey, title: b.title, description: b.description }, { by: by(req) });
+      const f = createFeature({ scopeType: b.scopeType, scopeKey: b.scopeKey, title: b.title, description: b.description, model }, { by: by(req) });
       // The feature exists now: a file that cannot be stored (a disk or database error; the refusals all came before the
       // create) never undoes it. The files stored so far stay and are read; the page names the others ("<name> was not
       // added: Worca could not store it. Add it on the feature page.") and the interview starts as usual.
@@ -622,6 +822,8 @@ export function registerRequirementsRoutes(app, { broadcast, server, deps = {} }
       onChange(f.seq);
       res.status(201).json({ ...(await featureView(f.seq, d)), filesNotStored });
     }),
+    [`GET ${P}/models`]: async (_req, res) => res.json(await modelsView(d)),
+    [`GET ${P}/estimates`]: async (req, res) => res.json(estimatesView(req.query || {}, d)),
     [`GET ${P}/:seq`]: async (req, res) => res.json(await featureView(seqOf(req), d)),
     [`PATCH ${P}/:seq`]: async (req, res) => {
       const seq = seqOf(req);
@@ -745,6 +947,15 @@ export function registerRequirementsRoutes(app, { broadcast, server, deps = {} }
       setArchived(seq, (req.body || {}).restore !== true, { by: by(req) });
       await changed(res, seq);
     },
+    [`PUT ${P}/:seq/model`]: async (req, res) => {
+      const seq = seqOf(req);
+      requireFeature(seq);
+      const choice = await pickOf(req.body, d);
+      // D3, D7: the skipped files of the old harness are read again when the new one takes them
+      await setFeatureModel(seq, choice, { by: by(req) }, { ...d, afterSwitch: (s, e) => queueSkippedReads(s, e, d) });
+      await changed(res, seq);
+    },
+    [`GET ${P}/:seq/costs`]: async (req, res) => res.json(await costsView(seqOf(req), d)),
     [`GET ${P}/:seq/markdown`]: async (req, res) => {
       const f = requireFeature(seqOf(req));
       const t = await checkTarget(f.scopeType, f.scopeKey).catch(() => ({ name: null }));

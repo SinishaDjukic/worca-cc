@@ -80,10 +80,11 @@ test('the whole flow in mock mode, with frames', async () => {
     assert.equal(typeof row.ready, 'number');
     assert.equal(row.latestRun, null);
     assert.ok(listed.lookCostUsd === null || typeof listed.lookCostUsd === 'number');
-    assert.match(listed.interview.model, /^claude-opus-/);
-    assert.ok(listed.interview.label && listed.interview.label.length > 0);
-    assert.equal(listed.interview.effort, 'medium');
-    assert.equal(listed.interview.source, 'default');
+    assert.equal(listed.interview.default.engine, 'claude');
+    assert.match(listed.interview.default.model, /^claude-opus-/);
+    assert.ok(listed.interview.default.label && listed.interview.default.label.length > 0);
+    assert.equal(listed.interview.default.effort, 'medium');
+    assert.equal(listed.interview.fallbackReason, null);
     assert.equal(typeof listed.spend.windowUsd, 'number');
     assert.ok('totalLimitUsd' in listed.spend);
     assert.deepEqual(listed.briefs, [], 'A7 §5: no scope has a brief row yet');
@@ -299,10 +300,10 @@ test('the list: interview is null (and the list still answers) when the intervie
 
 test('the list: a stubbed interview model shows its label (the id when the catalog has none) and effort', async () => {
   const r = await listWith({ interviewModel: async () => ({ model: 'my-unlisted-model', effort: 'high', source: 'settings' }) });
-  assert.deepEqual(r.json.interview, { model: 'my-unlisted-model', label: 'my-unlisted-model', effort: 'high', source: 'settings' });
+  assert.deepEqual(r.json.interview, { default: { engine: 'claude', model: 'my-unlisted-model', label: 'my-unlisted-model', effort: 'high' }, fallbackReason: null });
 });
 
-test('the list: lookCostUsd uses the looks of the current model when there are some, else all looks', async () => {
+test('the list: lookCostUsd is the median of the current model own looks, never another model', async () => {
   const { createFeature, appendTurn } = await import('../src/core/requirements/store.mjs');
   const f = createFeature({ scopeType: 'project', scopeKey: projKey, title: 'Cost', description: 'd' });
   appendTurn(f.seq, { kind: 'orientation', model: 'cost-model-a', costUsd: 0.2 });
@@ -311,16 +312,13 @@ test('the list: lookCostUsd uses the looks of the current model when there are s
   const stub = (model) => ({ interviewModel: async () => ({ model, effort: null, source: 'settings' }) });
   assert.equal((await listWith(stub('cost-model-a'))).json.lookCostUsd, 0.3);
   assert.equal((await listWith(stub('cost-model-b'))).json.lookCostUsd, 5);
-  const all = (await import('../src/core/requirements/store.mjs')).recentLookCosts(10).sort((a, b) => a - b);
-  const m = all.length >> 1;
-  const median = all.length % 2 ? all[m] : (all[m - 1] + all[m]) / 2;
-  assert.equal((await listWith(stub('cost-model-none'))).json.lookCostUsd, Math.round(median * 1e4) / 1e4, 'median of all recent looks');
+  assert.equal((await listWith(stub('cost-model-none'))).json.lookCostUsd, null, 'a model without looks gets no borrowed price');
   // the feature page's "Look closer · about $X" is the same model-scoped estimate as the New feature line
   const view = async (model) => (await listWith(stub(model), `/api/requirements/${f.seq}`)).json.feature.lookCostUsd;
   assert.equal(await view('cost-model-a'), 0.3);
   assert.equal(await view('cost-model-b'), 5);
-  assert.equal(await view('cost-model-none'), Math.round(median * 1e4) / 1e4);
+  assert.equal(await view('cost-model-none'), null);
   const broken = await listWith({ interviewModel: async () => { throw new Error('boom'); } }, `/api/requirements/${f.seq}`);
   assert.equal(broken.status, 200, 'an unresolvable model still shows the page');
-  assert.equal(broken.json.feature.lookCostUsd, Math.round(median * 1e4) / 1e4);
+  assert.equal(broken.json.feature.lookCostUsd, null);
 });

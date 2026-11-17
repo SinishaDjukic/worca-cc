@@ -43,26 +43,31 @@ export function chromeProxyArgs(env = process.env) {
   return p ? [`--proxy-server=${p.server}`, ...(p.bypass ? [`--proxy-bypass-list=${p.bypass.split(',').join(';')}`] : [])] : [];
 }
 
-/** The argv launch() starts Chrome with (minus the about:blank URL and the Linux no-sandbox retry). */
-export function chromeArgs({ dir, width = 1920, height = 1080, platform = process.platform, env = process.env } = {}) {
+/** The argv launch() starts Chrome with (minus the about:blank URL and the Linux no-sandbox retry). `fileAccess:
+ *  false` leaves out the flag that lets a file:// page read other files (a page whose scripts are not the kit's own),
+ *  and `extra` flags go last. */
+export function chromeArgs({ dir, width = 1920, height = 1080, platform = process.platform, env = process.env, fileAccess = true, extra = [] } = {}) {
   const args = [
     '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${dir}`,
     '--no-first-run', '--no-default-browser-check', '--hide-scrollbars', '--mute-audio',
     '--force-color-profile=srgb', '--disable-background-timer-throttling',
     '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows', '--disable-extensions',
-    '--allow-file-access-from-files', '--autoplay-policy=no-user-gesture-required', `--window-size=${width},${height}`,
+    ...(fileAccess ? ['--allow-file-access-from-files'] : []), '--autoplay-policy=no-user-gesture-required', `--window-size=${width},${height}`,
     ...chromeProxyArgs(env), ...CHROME_SAFE_ARGS,
   ];
   if (platform === 'linux') args.push('--disable-dev-shm-usage');
+  args.push(...extra);
   return args;
 }
 
-/** Launch headless Chrome with a width×height viewport at deviceScaleFactor `scale`. */
-export async function launch({ width = 1920, height = 1080, scale = 1, chrome } = {}) {
+/** Launch headless Chrome with a width×height viewport at deviceScaleFactor `scale`. `fileAccess` and `args` are
+ *  chromeArgs()'s `fileAccess` and `extra`. The browser's `on(fn)` hands `fn` every CDP event (its page's carry
+ *  `sessionId`) and returns the function that stops it. */
+export async function launch({ width = 1920, height = 1080, scale = 1, chrome, fileAccess = true, args: extra = [] } = {}) {
   const exe = chrome || findChrome();
   if (!exe) throw new Error('no Chrome-family browser found: ' + toolHints().chrome);
   const dir = mkdtempSync(join(tmpdir(), 'promo-chrome-'));
-  const args = chromeArgs({ dir, width, height });
+  const args = chromeArgs({ dir, width, height, fileAccess, extra });
   // root in a container, or a host whose user namespaces are locked down (CHROME_NO_SANDBOX=1, as CI sets it)
   const noSandbox = (typeof process.getuid === 'function' && process.getuid() === 0) || process.env.CHROME_NO_SANDBOX === '1';
   const portFile = join(dir, 'DevToolsActivePort');
@@ -102,7 +107,11 @@ export async function launch({ width = 1920, height = 1080, scale = 1, chrome } 
       if (m.error) rej(new Error(m.error.message)); else res(m.result);
     } else if (m.method) for (const l of listeners) l(m);
   };
-  ws.onclose = () => { for (const { rej } of pending.values()) rej(new Error('CDP socket closed')); pending.clear(); };
+  // Settles a wait that no CDP answer ends (goto's load event) when the browser goes first.
+  let lost;
+  const gone = new Promise((_, rej) => { lost = rej; });
+  gone.catch(() => { /* nobody waiting */ });
+  ws.onclose = () => { for (const { rej } of pending.values()) rej(new Error('CDP socket closed')); pending.clear(); lost(new Error('CDP socket closed')); };
   const send = (method, params = {}, sessionId) => new Promise((res, rej) => {
     const i = ++id; pending.set(i, { res, rej });
     ws.send(JSON.stringify({ id: i, method, params, ...(sessionId ? { sessionId } : {}) }));
@@ -139,7 +148,7 @@ export async function launch({ width = 1920, height = 1080, scale = 1, chrome } 
       listeners.add(l);
     });
     await page('Page.navigate', { url });
-    await loaded;
+    await Promise.race([loaded, gone]);
   }
   async function capture({ format = 'jpeg', quality = 88, clip } = {}) {
     const p = format === 'jpeg' ? { format, quality } : { format };
@@ -154,7 +163,8 @@ export async function launch({ width = 1920, height = 1080, scale = 1, chrome } 
     if (!exited) kill();
     try { rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch {}
   }
-  return { send, page, evaluate, goto, capture, close, setViewport, logs, pid: proc.pid };
+  const on = (fn) => { listeners.add(fn); return () => listeners.delete(fn); };
+  return { send, page, evaluate, goto, capture, close, setViewport, logs, on, sessionId, pid: proc.pid };
 }
 
 /** Open a built film (…/film/index.html) in export mode and wait until it is ready. Returns { seek(t), violations }. */

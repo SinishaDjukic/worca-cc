@@ -109,6 +109,58 @@ test('claimRunDir: the owner of the current run decides the group (real fs, own 
   assert.equal(statSync(other).mode & 0o7777, 0o755);
 });
 
+// Design P8 (L8.28): a design folder is 2750 (its owner's agent can traverse and read, never rename work/), and with
+// no pool the one shared agent user gets it through the shared group, or a design the entrypoint's .design-share
+// marker closed (0700) would stay closed. Under a pool every agent user is in that shared group: an identity without a
+// run group (no owner, 'local', a pool without run groups) changes nothing, so no other person's agent is let in.
+test('the design folder is not group-writable; the shared agent group only when there is no pool (real fs, own gid)', POSIX, () => {
+  const own = process.getgid();
+  const fresh = (mode) => {
+    const parent = mkdtempSync(join(dir, 'design-'));
+    chmodSync(parent, 0o770);
+    const d = join(parent, 'd1');
+    mkdirSync(d);
+    chmodSync(d, mode);
+    return d;
+  };
+  const top = fresh(0o755);
+  claimForAgent(top, { gid: own, runGid: own }, { mode: 0o2750 });
+  assert.equal(statSync(top).mode & 0o7777, 0o2750, 'group read and traverse, no write');
+  assert.equal(statSync(top).gid, own);
+  assert.equal(statSync(dirname(top)).mode & 0o7777, 0o1770, 'the parent is sticky');
+
+  const shared = fresh(0o700);
+  claimForAgent(shared, { gid: own }, { sharedFallback: true });
+  assert.equal(statSync(shared).mode & 0o7777, 0o2770, 'no run group: the shared agent group');
+  assert.equal(statSync(shared).gid, own);
+  assert.equal(statSync(dirname(shared)).mode & 0o7777, 0o1770, 'the parent is sticky');
+  const noGid = fresh(0o700);
+  claimForAgent(noGid, { gid: null }, { sharedFallback: true });
+  claimForAgent(noGid, { gid: String(own) }, { sharedFallback: true });
+  assert.equal(statSync(noGid).mode & 0o7777, 0o700, 'no shared group known, or not a number: untouched');
+
+  // claimRunDir passes both through; the shared group only when no pool is configured.
+  const noPool = { WORCA_AGENT_USER: 'worca-agent', WORCA_AGENT_HOME: '/data/agent-home', WORCA_AGENT_GID: String(own) };
+  const solo = fresh(0o700);
+  withBillTo('ada@acme.dev', () => claimRunDir(solo, { env: noPool, file: join(dir, 'pool-design.json'), mode: 0o2750, sharedFallback: true }));
+  assert.equal(statSync(solo).mode & 0o7777, 0o2750, 'no pool: the shared agent user reaches the design');
+  assert.equal(statSync(solo).gid, own);
+  const pool = { ...ENV, WORCA_AGENT_GID: String(own), WORCA_AGENT_RUN_GIDS: `worca-agent-01:${own},worca-agent-02:${own}` };
+  const owned = fresh(0o700);
+  withBillTo('ada@acme.dev', () => claimRunDir(owned, { env: pool, file: join(dir, 'pool-design.json'), mode: 0o2750, sharedFallback: true }));
+  assert.equal(statSync(owned).mode & 0o7777, 0o2750, 'pool: the owner\'s run group, the given mode');
+  for (const [why, env, owner] of [
+    ['a pool, no owner', pool, null],
+    ['a pool, owner local', pool, 'local'],
+    ['a pool without run groups', { ...pool, WORCA_AGENT_RUN_GIDS: '' }, 'ada@acme.dev'],
+  ]) {
+    const closed = fresh(0o700);
+    claimRunDir(closed, { owner, env, file: join(dir, 'pool-design.json'), mode: 0o2750, sharedFallback: true });
+    assert.equal(statSync(closed).mode & 0o7777, 0o700, `${why}: untouched, never the group every pool agent is in`);
+    assert.equal(statSync(dirname(closed)).mode & 0o7777, 0o770, `${why}: the parent is untouched too`);
+  }
+});
+
 // The call sites (PR #854 review: reverting each left the suite green): the store's pipeline folder and every
 // runs/<id> root a run makes go to the run owner's group, on the real fs with this process's own gid as that group.
 async function withPool(fn) {

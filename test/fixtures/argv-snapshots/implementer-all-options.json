@@ -29,13 +29,17 @@
     "--append-subagent-system-prompt",
     "## Worca memory\n\nRules live in .claude/rules/worca.",
     "--add-dir",
-    "<MEMORY_MOUNT>"
+    "<MEMORY_MOUNT>",
+    "--add-dir",
+    "/abs/run/.scratch"
   ],
   "stdin": "",
   "files": {},
   "envAdded": {
     "CLAUDE_CODE_FORK_SUBAGENT": "0",
     "CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY": "8",
+    "CLAUDE_CODE_TMPDIR": "/abs/run/.scratch",
+    "TMPDIR": "/abs/run/.scratch",
     "WORCA_HOST_PID": "<PID>",
     "WORCA_TEST_CONCURRENCY": "<N>"
   }

@@ -313,6 +313,8 @@ export function defaultComposerDeps({ threadId, io = DEFAULT_IO } = {}) {
   // with no composer bundle, no canvas tools) — never the full Ask toolset with propose_run.
   try { thread = threadId ? io.getThread(threadId) : null; } catch { return { askMode: 'composer' }; }
   if (!thread) return {};
+  // A Design chat (P5) gets its own allowlist and no composer bundle: its kit comes from design-deps.mjs.
+  if (thread.mode === 'design') return { askMode: 'design' };
   if (thread.mode === 'composer') {
     return { askMode: 'composer', composer: composerKit({ io, seed: () => thread.composer, session: thread.composer, canvas: true }) };
   }

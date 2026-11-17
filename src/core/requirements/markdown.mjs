@@ -1,6 +1,6 @@
 // src/core/requirements/markdown.mjs
 // The spec as Markdown (plans/requirements-design.md D11): Copy, Download and Save to specs/ all use it.
-const STATUS_LABEL = { looking: 'Looking at the code', thinking: 'Interview running', your_turn: 'Interview running', done: 'Interview done', archived: 'Archived' };
+const STATUS_LABEL = { looking: 'Doing the code look', thinking: 'Interview running', your_turn: 'Interview running', done: 'Interview done', archived: 'Archived' };
 const none = '_None yet._';
 const bullets = (list) => (list.length ? list.map((s) => `- ${s}`).join('\n') : none);
 const from = (x) => (x.source ? ` (from ${x.source})` : '');   // A8 D13: an item a file gave

@@ -311,6 +311,7 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
       runLimits: null,
       actions: {},
       runEngine: null, stepModels: {}, utilityModels: {},   // cascading settings (Plan 2a): null / {} change nothing
+      designModels: {},                                      // Models › Engines › Design: {} changes nothing
       modelRoles: {},                                        // Models › Roles: {} changes nothing
       askEngine: null, askModels: {},                        // Chat's engine (Plan 2b, D17): null / {} change nothing
       flags: {},                                             // feature flags (docs/feature-flags.md): {} is a no-op
