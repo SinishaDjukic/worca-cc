@@ -83,7 +83,7 @@
     ];
     const chevron = R.icon('chevron', 12);
     // one compact line; the open picker's own menu class (two columns for the long lists); the page's small tools end the line
-    const tools = R.button({ label: 'Save this view', kind: 'quiet', attrs: { 'data-in-save': '', title: 'Keeps this page as you set it, under Your views' } }) + R.button({ label: 'Copy a link', kind: 'quiet', attrs: { 'data-in-link': '', title: 'To this page, as you narrowed it' } }) + R.button({ label: 'Download CSV', kind: 'quiet', attrs: { 'data-in-csv': '', title: 'The rows below, as a file' } });
+    const tools = R.button({ label: 'Save this view', kind: 'quiet', iconOnly: true, icon: R.icon('pin', 15), attrs: { 'data-in-save': '', title: 'Save this view: keeps this page as you set it, under Your views' } }) + R.button({ label: 'Copy a link', kind: 'quiet', iconOnly: true, icon: R.icon('copy', 15), attrs: { 'data-in-link': '', title: 'Copy a link to this page, as you narrowed it' } }) + R.button({ label: 'Download CSV', kind: 'quiet', iconOnly: true, icon: R.icon('download', 15), attrs: { 'data-in-csv': '', title: 'Download CSV: the rows below, as a file' } });   // three small tools at the line's end, so the filter line stays one line
     const row = R.centerFilters({ parts: fields.map((f) => f.part), pick: menu, chevron, menuCls: fields.find((f) => f.part.id === menu)?.cls || '', end: tools });
     // a filter a link set (a project's spend, a copied link) holds for this visit, and the page says so (list.narrowed)
     const by = narrowedBy(st), lines = [

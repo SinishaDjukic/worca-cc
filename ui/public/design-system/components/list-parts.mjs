@@ -77,7 +77,8 @@ export function filterRow({ parts, open = '', chevron = '', menuCls = '', fold =
 
   const tab = (p, it) => `<button type="button" class="fr-tab"${attrs({ 'data-pick': `${p.id}|${it.id}`, 'data-key': `pick:${p.id}:${it.id}`, 'aria-pressed': String(!!it.checked), title: it.help || null })}><span class="fr-tab-t">${esc(it.text)}</span>${it.hint !== undefined && it.hint !== '' ? ` <span class="n">${esc(it.hint)}</span>` : ''}</button>`;
   const tabsOf = (p) => { const all = real(p); return `<span class="fr-tabs" role="group"${attrs({ 'aria-label': labelOf(p) })}>${p.tabs.map((id) => all.find((it) => it.id === id)).filter(Boolean).map((it) => tab(p, it)).join('')}</span>`; };
-  const nPick = parts.filter((p) => !p.tabs).length, CAP = nPick > MAX_PICKERS ? 15 : nPick === MAX_PICKERS ? 18 : 24;   // letters, label and value: four pickers and More filters fit a 720px page; fewer pickers have more room
+  const maxPick = end ? MAX_PICKERS - 1 : MAX_PICKERS;   // tools at the line's end take a picker's room, so the line stays one line
+  const nPick = parts.filter((p) => !p.tabs).length, CAP = nPick > maxPick ? 15 : nPick === maxPick ? 18 : 24;   // letters, label and value: four pickers and More filters fit a 720px page; fewer pickers have more room
   // a picker on the line, its label inside it. Its width is its filter's (the widest of its choices, capped), never its
   // value's: a pick moves nothing beside it; a value that does not fit is cut, whole in the tooltip (list.filters)
   const widthOf = (label, items) => Math.min(CAP, (label ? label.length + 2 : 0) + Math.max(4, ...items.filter((it) => !it.sep && !it.header).map((it) => String(it.text).length)));
@@ -102,7 +103,7 @@ export function filterRow({ parts, open = '', chevron = '', menuCls = '', fold =
     // a page: four pickers at most on the line, the rest behind More filters; on a phone the tabs and one Filter control
     const pre = rest.length && rest.every((p) => /^[a-z]+-/.test(p.id) && p.id.split('-')[0] === rest[0].id.split('-')[0]) ? `${rest[0].id.split('-')[0]}-` : '';   // a page that names its menus "c-…" opens this one too
     const kept = rest.filter((p) => p.keep), folds = rest.filter((p) => !p.keep);   // a kept picker stays on the line and is in no folded menu
-    const shown = folds.length > MAX_PICKERS ? [...kept, ...folds.slice(0, MAX_PICKERS)] : rest, more = folds.length > MAX_PICKERS ? folds.slice(MAX_PICKERS) : [];
+    const shown = folds.length > maxPick ? [...kept, ...folds.slice(0, maxPick)] : rest, more = folds.length > maxPick ? folds.slice(maxPick) : [];
     return `<span class="fr">${tabbed.map((p) => tabsOf(p) + moreOf(p)).join('')}${shown.map((p) => picker(p)).join('')}${control(`${pre}more`, more, 'More filters', ' fr-more')}${control(`${pre}filters`, [...tabbed.map((p) => ({ ...p, items: p.items.filter((it) => !it.sep && !it.header && !p.tabs.includes(it.id)) })).filter((p) => p.items.length), ...folds], 'Filter', ' fr-phone')}${tail}</span>`;
   }
   // a bar: chips show whole or not at all (the look drops the ones with no room; the Filter control keeps the count)
