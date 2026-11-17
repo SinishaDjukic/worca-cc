@@ -169,6 +169,11 @@
                   <small class="hint">Global: the rules every project shares. Project: this project's memory. The run restructures that scope and nothing else. The task text is optional, and it runs with the Normal guardrails unless you pick another set.</small>
                 </div>
 
+                <!-- Pull a feature from Requirements: outside the advanced-only Task source field, so basic level sees it. -->
+                <div class="field field-compact" id="pull-field" data-flag="requirements">
+                  <button type="button" class="btn fp-pull-btn" id="pull-from-requirements" data-flag="requirements" hidden>Pull from Requirements</button>
+                </div>
+
                 <!-- Task source switch; the panes below span the full width. -->
                 <div class="field field-compact" id="source-field" data-min-level="advanced">
                   <label>Task source</label>

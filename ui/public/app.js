@@ -331,6 +331,7 @@ import { registerAskRenderer, askRendererFor, askKindOf } from './ask/registry.m
 import { activeAgents } from './ask-run-card.mjs';
 import { registerChatRunCard } from './chat/run-card.mjs';
 import { registerDirectionAddon } from './chat/direction.mjs';
+import { mountFeaturePull } from './feature-pull/entries.mjs';
 import { renderPlanBody } from './shape/plan-body.mjs';
 import { renderOutlineBody } from './shape/outline-body.mjs';
 import { renderFeature, featureModelOf } from './shape/feature-view.mjs';
@@ -32480,6 +32481,12 @@ if (typeof window !== 'undefined' && window.__np) window.__np.chatRunControls = 
 // CONTRACT §3: registered before createAskPanel runs (this line evaluates long before the mount at the end of the file).
 chatRunCards = registerChatRunCard({ controls: chatRunControls, runStore: askRunStore });
 registerDirectionAddon();                      // R10: the composer's "→ <run title>" chip
+// Pull a feature from Requirements: the Chat composer add-on (registered before the panel mounts) and New Run's button.
+mountFeaturePull({ button: document.getElementById('pull-from-requirements'), getTarget: () => {
+  const workspaceId = (el.workspaceSelect && el.workspaceSelect.value) || '';
+  return { runTarget: state.runTarget, projectKey: selectedProjectKey(), projectPath: selectedProjectPath(), workspaceId,
+    workspacePaths: ((state.workspaces || []).find((w) => w && w.id === workspaceId) || {}).projectPaths || [] };
+} });
 
 /** History Overview DURATION sub-line: `9 executions · 2 loop deliveries`. */
 function histCountsLine(st) {

@@ -1,0 +1,17 @@
+/* Pull from Requirements: the New Run button, the Chat composer add-on and the feature picker. Tokens only; the picker sits on
+   the upstream .viewer-modal.req-dlg-wrap overlay (requirements.css), so only its card and rows are styled here. */
+.fp-pull-btn{max-width:100%}
+.fp-pull-btn[hidden]{display:none}
+.fp-chat-btn{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:1px solid var(--line-2);border-radius:var(--r-xs);background:var(--panel);color:var(--ink-2);cursor:pointer}
+.fp-chat-btn:hover{color:var(--ink);background:var(--hover)}
+.fp-chat-btn:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.fp-chat-notice{font-size:12px;color:var(--ink-2)}
+.fp-chat-notice a{color:var(--ink);text-decoration:underline}
+.viewer-modal.req-dlg-wrap .req-dlg.feature-pick{width:min(560px,100%);box-sizing:border-box;max-height:min(70vh,640px);display:flex;flex-direction:column;gap:12px;padding:22px 24px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel);box-shadow:var(--shadow-sheet)}
+.feature-pick h3{margin:0;font-size:15px;font-weight:700;letter-spacing:-.01em}
+.feature-pick-list{display:flex;flex-direction:column;gap:6px;min-height:0;overflow-y:auto}
+.feature-pick-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;width:100%;box-sizing:border-box;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel);color:var(--ink);font:inherit;font-size:13px;text-align:left;cursor:pointer}
+.feature-pick-row:hover{background:var(--hover)}
+.feature-pick-row:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.feature-pick-title{flex:1 1 auto;min-width:0;font-weight:600;overflow:hidden;text-overflow:ellipsis}
+@media (max-width:600px){.viewer-modal.req-dlg-wrap .req-dlg.feature-pick{padding:18px 16px}}

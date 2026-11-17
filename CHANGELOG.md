@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Pull a feature from Requirements into a run
+
+- **Pull from Requirements** on New run and **Pull feature** in Chat start a run from a feature you have specified, through the same path as Start in Worca. The run setup takes an optional note for that run (it goes to the end of the task, and wins over the spec for that run), checked against the spec by an advisory contradiction check you can start anyway; a feature that already has a run in progress asks first. See [Requirements](docs/requirements.md#pull-from-requirements).
+
 ### Instance contract for hosting platforms
 
 - New [Instance contract](docs/instance-contract.md) page: what a hosted Worca instance is made of (the `worca`, `broker` and `cloudflared` containers, their start commands, ports and volumes) and everything a management interface sets or expects: every variable per container, the identity token, the heartbeat and what a receiver should do with it, stopping and draining, rotation and versions. For running Worca for others without a hosting platform, or for building a management interface of your own.

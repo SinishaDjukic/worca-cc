@@ -6429,7 +6429,8 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     const card = block.card || {};
     if (card.type === PROGRESS_CARD_TYPE) {
       return { cardId: block.id, pipelineId: card.pipelineId || null, runId: card.runId || null, projectKey: card.projectKey || null,
-        workspaceId: card.workspaceId || null, title: card.title || '', label: card.label || '' };
+        workspaceId: card.workspaceId || null, title: card.title || '', label: card.label || '',
+        ...(card.feature && typeof card.feature === 'object' ? { feature: card.feature } : {}) };
     }
     const none = card.target === 'none';   // P3: a No project proposal — the reserved key and its name until the first frame
     return { cardId: block.id, pipelineId: null, runId: block.runId || null, projectKey: none ? NO_PROJECT_KEY : (card.projectKey || null), workspaceId: card.workspaceId || null,
@@ -7636,6 +7637,7 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
     doc, fetch,
     threadId: () => st.threadId,
     thread: () => threadSnapshot(),
+    scope: () => ({ pinned: st.scope.pinned, projectKey: st.scope.projectKey, workspaceId: st.scope.workspaceId }),   // the live scope pill
     runStore,
     setPlaceholder: (text) => { st.basePlaceholder = typeof text === 'string' && text ? text : INPUT_PLACEHOLDER; updateSuggestion(); },
     focus: () => focusComposer(),

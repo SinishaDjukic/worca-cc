@@ -40,6 +40,7 @@ import {
 } from './edits.mjs';
 import { readiness, displayState, changedSince, unaskedRejections, unaskedFiles } from './ready.mjs';
 import { startFeature, startView, REASON_MAX } from './start.mjs';
+import { checkNote, NOTE_MAX } from './note-check.mjs';
 import { exportSetupView, exportOptions, saveSetup, previewExport, runExport, forgetLink, exportView } from './export.mjs';
 import { importView, importOptions, searchTickets, previewImport, prepareImport, createImported } from './import.mjs';
 import { warmTrackerProbe } from './trackers.mjs';
@@ -84,7 +85,7 @@ export const REQUIREMENTS_ROUTES = Object.freeze([
   ['POST', `${P}/:seq/archive`],
   ['PUT', `${P}/:seq/model`], ['GET', `${P}/:seq/costs`],
   ['GET', `${P}/:seq/markdown`], ['POST', `${P}/:seq/save`],
-  ['POST', `${P}/:seq/start`], ['PUT', `${P}/:seq/early-start-reason`], ['POST', `${P}/:seq/revert`],
+  ['POST', `${P}/:seq/start`], ['POST', `${P}/:seq/note-check`], ['PUT', `${P}/:seq/early-start-reason`], ['POST', `${P}/:seq/revert`],
   ['POST', `${P}/:seq/export/preview`], ['POST', `${P}/:seq/export`], ['DELETE', `${P}/:seq/export/link`],
   // A3 §5: Feature chat, one chat per feature
   ['GET', `${P}/:seq/helper`], ['DELETE', `${P}/:seq/helper`], ['POST', `${P}/:seq/helper/messages`], ['POST', `${P}/:seq/helper/stop`],
@@ -980,10 +981,20 @@ export function registerRequirementsRoutes(app, { broadcast, server, deps = {} }
       const f = requireFeature(seq);
       if (typeof d.startRun !== 'function') throw new Error('starting runs is not available');
       const b = req.body || {};
-      const r = await startFeature(seq, { reason: b.reason, workflowId: b.workflowId, sourceBranch: b.sourceBranch, reportBack: b.reportBack, overlay: b.overlay },
-        { by: by(req) }, { startRun: d.startRun, target: await targetFor(f) });
+      const r = await startFeature(seq, { reason: b.reason, workflowId: b.workflowId, sourceBranch: b.sourceBranch, reportBack: b.reportBack, overlay: b.overlay,
+        note: b.note, noteOverrides: b.noteOverrides, confirmRunning: b.confirmRunning },
+      { by: by(req) }, { startRun: d.startRun, target: await targetFor(f), runSummary: d.runSummary });
       onChange(seq);
       res.status(201).json({ runId: r.runId, version: r.version, ...await featureView(seq, d) });
+    },
+    // Advisory: a model, budget or parse failure, a busy or an archived feature all answer 200 with `skipped: true`, never a 5xx
+    [`POST ${P}/:seq/note-check`]: async (req, res) => {
+      const seq = seqOf(req);
+      const f = requireFeature(seq);
+      const { note } = req.body || {};
+      if (typeof note !== 'string' || note.trim().length > NOTE_MAX) throw new RequirementsError('BAD_REQUEST', `the note must be text of at most ${NOTE_MAX} characters`);
+      if (f.status === 'archived' && note.trim()) return res.json({ conflict: false, conflicts: [], skipped: true });
+      res.json(await checkNote(seq, note, d));
     },
     [`PUT ${P}/:seq/early-start-reason`]: async (req, res) => {
       const seq = seqOf(req);

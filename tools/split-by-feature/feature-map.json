@@ -309,6 +309,10 @@
       "req": {
         "name": "requirements",
         "feature": "requirements"
+      },
+      "fp": {
+        "name": "feature-pull",
+        "feature": "requirements"
       }
     },
     "cssBlocks": [
@@ -748,7 +752,9 @@
           ".viewer-modal.req-dlg-wrap",
           ":root:not([data-git=\"off\"]) .req-",
           ".form-msg.req-msg-warn",
-          "a.chip.req-export-chip"
+          "a.chip.req-export-chip",
+          ".fp-",
+          ".feature-pick"
         ],
         "feature": "requirements",
         "name": "requirements"

@@ -192,6 +192,10 @@ a call's cost is known only once the model reports it.
 answers you can submit answers, edit the spec, add files or start a round. Only what you accept or submit reaches the
 interview. **Send**, **Accept** and **Clear chat** wait while Worca answers.
 
+**Starting from the chat.** The Ask panel's **Pull feature** (see [Pull from Requirements](#pull-from-requirements)) starts a run
+from a feature without leaving the chat: its card shows in the thread, titled with the feature, and tracks the run like any other.
+It is not the same as **Feature chat**, which talks about a feature; this one builds it.
+
 **Clear chat** (⋯) deletes the feature's chat; changes you accepted stay in the spec. An archived feature's chat can be read,
 not used. Everything here is behind the `requirements` flag.
 
@@ -334,6 +338,37 @@ and the next time you start the feature the box opens with it. A run that starts
 The page's **Runs from this feature** card lists every run started from the feature, with its status and
 cost, and links to the run (its live page, also after a resume, else its page in History). A run that
 waits for you, on a question, a gate or the Auto confirmation, says **Waiting for you**.
+
+## Pull from Requirements
+
+You do not have to leave **New run** or **Chat** to build a feature you have specified.
+
+- **New run**: **Pull from Requirements** (under the project or workspace pickers) lists the active features of the project or
+  workspace you picked, searchable by name, each with its state and "Ready N of 6". Pick one and it opens the same **Start this run**
+  step as **Start in Worca**, with the note field below. A start opens the run page.
+- **Chat**: **Pull feature** in the composer's add-ons does the same for the chat's project or workspace, and the run's card is
+  posted into the thread. A chat with no project or workspace says to pick one first.
+
+Both start the run **exactly as Start in Worca does** (the same server path): the spec is the task, a feature that is not Ready asks
+for a reason first, an archived feature cannot start, and the start shows under **Runs from this feature**. Neither entry starts a
+run without the feature's own checks. Both are behind the `requirements` flag, like the page.
+
+**The note.** The **Note for this run (optional)** field (up to 2,000 characters) holds instructions for this run only. It is added to
+the end of the run's task as *Extra instructions for this run*, followed by the line "Where these instructions conflict with the spec
+above, follow these instructions for this run." The spec itself never changes. The feature page shows the note under the run, in
+**Runs from this feature**.
+
+**The contradiction check.** Before the run starts, a note that is not empty is checked against the spec by one short call to the
+feature's helper model. It reports only obvious contradictions (a note that adds detail or narrows the work is not one). It is
+**advisory**: when it finds one, the overlay says **Your note may conflict with the spec**, quotes the part and says which part of the
+spec it contradicts, and offers **Edit note** or **Start anyway**. When the check cannot run (no reply, an unreadable reply, the
+spending limit, a timeout), there is no warning and the run starts normally. A start that went on after a warning is marked **Overrode
+the spec** on the feature page. Each check is one model call, counted as Requirements spend; in mock mode a note holding the text
+`[conflict]` raises a warning and costs nothing.
+
+**A run is already going.** When the feature already has a run that has not ended, Worca says so before the setup opens (*This
+feature already has a run in progress.*). **Start another** goes on, **Cancel** stops. The server checks the same thing, so two people
+or two tabs cannot start a second run by accident.
 
 ## Follow-up rounds
 
