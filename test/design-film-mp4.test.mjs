@@ -171,9 +171,15 @@ test('the render uses as many Chromes as the machine can hold: by its cores, by 
 
 /* ---------- the render: a child process that reports its frames ---------- */
 
-/** A child as `spawn` hands it back: `out(line)` writes to its stdout, `exit(code)` closes it. */
+/**
+ * A child as `spawn` hands it back: `out(line)` writes to its stdout, `exit(code)` closes it. Like a real child's
+ * handle, it keeps the event loop alive until it closes or fails to start: the render's grace and stall timers are
+ * unref'd, so without it a test awaiting a stop or a stall ends when the loop empties (stdout is no handle on Linux).
+ */
 function fakeChild() {
   const child = new EventEmitter();
+  const alive = setInterval(() => {}, 60_000);
+  for (const ev of ['close', 'error']) child.on(ev, () => clearInterval(alive));
   Object.assign(child, { pid: 4242, stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), exitCode: null, signalCode: null });
   child.stdinEnded = false;
   child.stdin.on('finish', () => { child.stdinEnded = true; });
