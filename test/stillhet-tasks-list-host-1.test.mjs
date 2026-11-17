@@ -131,21 +131,24 @@ test('F-3-09: the Tasks center by workflow groups tasks under their own workflow
   const { w, d } = await liveHost({ sources: s });
   await go(w, '#runs', 150);
   const center = () => d.querySelector('#route-runs');
-  center().querySelector('[data-menu="c-by"]').click(); await settle(20);
-  center().querySelector('[data-menu-pick="c-by|workflow"]').click(); await settle(40);
+  // the grouping is the bar's (its one Filter holds Group by); the page follows it
+  const tasksBar = d.querySelector('#runs-root');   // the bar's Tasks list
+  tasksBar.querySelector('[data-menu="filters"]').click(); await settle(20);
+  tasksBar.querySelector('[data-pick="by|workflow"]').click(); await settle(40);
   // every task here is finished, so the groups start folded under the quiet line: open it
   assert.equal(center().querySelectorAll('.pg-card').length, 0, 'the finished groups start folded');
   center().querySelector('[data-c-quiet]').click(); await settle(40);
   const cards = () => [...center().querySelectorAll('.pg-card')];
   assert.deepEqual(cards().map((c) => c.querySelector('.pg-t').textContent).sort(), ['Default', 'Lean']);
   // the list as the card's Open leaves it: its "using" word and how many tasks its sections hold
-  const shown = () => { const r = d.getElementById('runs-root'); return { using: r.querySelector('[data-menu="workflow"]')?.textContent || '', n: [...r.querySelectorAll('.list-group .list-h .n')].reduce((a, e) => a + Number(e.textContent), 0) }; };
+  const shown = () => { const r = d.getElementById('runs-root'); return { using: ([...r.querySelectorAll('.fr-chip-t')].find((e) => /^Workflow/.test(e.getAttribute('title') || ''))?.textContent || '').replace(/^Workflow:?\s*/, ''), n: [...r.querySelectorAll('.list-group .list-h .n')].reduce((a, e) => a + Number(e.textContent), 0) }; };
   const open = async (name) => { const card = cards().find((c) => c.querySelector('.pg-t').textContent === name); card.querySelector('[data-c-filter]').click(); await settle(60); };
   await open('Lean');
   assert.deepEqual(shown(), { using: 'Lean', n: 2 }, 'the Lean card opens its 2 tasks');
   await go(w, '#runs', 60);
-  const facts = (name) => cards().find((c) => c.querySelector('.pg-t').textContent === name).getAttribute('title');
+  const facts = (name) => { const c = cards().find((x) => x.querySelector('.pg-t').textContent === name); return (`${c.getAttribute('title') || ''} ${c.textContent}`.match(/\d+ finished/) || [''])[0]; };   // the card's facts line (its tooltip before list.one-line)
   assert.equal(facts('Lean'), '2 finished');
+  d.getElementById('runs-root').querySelector('.fr-chip button')?.click(); await settle(60);   // the bar stays narrowed to Lean until its chip is removed
   assert.equal(facts('Default'), '1 finished', 'a task with no workflow is under Default');
 });
 

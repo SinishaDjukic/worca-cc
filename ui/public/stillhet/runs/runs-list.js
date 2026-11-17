@@ -150,7 +150,7 @@
     if (view.range) out.push({ word: 'on', id: 'range', text: view.range.label, tip: 'Only these days', items: [{ id: '', text: 'any time', hint: count({ range: null }) }, { sep: true }, { id: 'keep', text: view.range.label, checked: true, hint: count({}) }] });
     if (view.day) out.push({ word: 'in', id: 'day', text: M.DAYS.find(([d]) => d === view.day)?.[1] || view.day, tip: 'Only this period', items: [{ id: '', text: 'any time', hint: count({ day: '' }) }, { sep: true }, ...M.DAYS.map(([d, t]) => ({ id: d, text: t, checked: view.day === d, hint: count({ day: d }) }))] });
     // grouping only arranges the same tasks: no count there
-    out.push(R.byPart({ by: view.by, choices: [{ id: 'day', help: `${M.DAYS.map(([, t]) => t).join(', ')}` }, { id: 'state', help: `${NEEDS()}, Running, Waiting, Recent` }, { id: 'project' }] }));
+    out.push(R.byPart({ by: view.by, choices: [{ id: 'day', help: `${M.DAYS.map(([, t]) => t).join(', ')}` }, { id: 'state', help: `${NEEDS()}, Running, Waiting, Recent` }, { id: 'project' }, { id: 'workflow' }] }));
     if (labelsOn() && view.labels.length) {
       const all = [...new Set(data.runs.flatMap((r) => r.labels))].sort();
       out.push({ label: 'Label', id: 'labels', raw: true, text: view.labels.join(', '), tip: 'Tasks with any of these labels', items: [{ id: '', text: 'Any label', help: 'Every label', hint: count({ labels: [] }) }, { sep: true }, ...all.map((l) => ({ id: l, text: l, checked: view.labels.includes(l), hint: count({ labels: [l] }) }))] });
@@ -174,6 +174,10 @@
     if (view.by === 'project') {
       const names = [...new Set(rest.map((t) => t.project || 'No project'))];
       return [...head, ...names.map((p) => { const ts = rest.filter((t) => (t.project || 'No project') === p), kinds = ts.map((t) => t.run?.kind).filter(Boolean); return { id: `project:${p}`, title: p, chip: kinds.length ? R.chip({ text: kinds[0] }) : '', rows: rows(ts, '') }; })];
+    }
+    if (view.by === 'workflow') {   // one section per workflow; a task with none is under Default (the Tasks page groups its cards the same way)
+      const names = [...new Set(rest.map((t) => t.workflow || 'Default'))];
+      return [...head, ...names.map((n) => ({ id: `workflow:${n}`, title: n, rows: rows(rest.filter((t) => (t.workflow || 'Default') === n), '') }))];
     }
     if (view.by === 'day') return R.dateSections({ rows: rest, dayOf: (t) => t.day, row: (t) => rowOf(t, ''), head, days: M.DAYS });
     return [...head, { id: 'running', title: 'Running', rows: rows(rest.filter((t) => t.section === 'running'), 'running') }, { id: 'waiting', title: R.runState('scheduled').word, rows: rows(rest.filter((t) => t.section === 'scheduled'), '') }, { id: 'recent', title: 'Recent', rows: rows(rest.filter((t) => t.section === 'recent'), '') }];

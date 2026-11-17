@@ -133,6 +133,7 @@ export const BY_CHOICES = Object.freeze([
   ['day', 'date', 'Today, Yesterday, Previous 7 days, Previous 30 days, Older'],
   ['state', 'state', 'What waits on you, then what runs, then the rest'],
   ['project', 'project', 'One section per project'],
+  ['workflow', 'workflow', 'One section per workflow'],
   ['person', 'person', 'One section per person'],
   ['topic', 'topic', 'Your own groups, one section each'],
   ['ai', 'AI topics', 'A helper job names the topics; your groups are kept'],

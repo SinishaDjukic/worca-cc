@@ -58,7 +58,16 @@ export { SHORTCUTS, RESERVED, FIELD, chordId, isMac, keyGlyph, keyHint, keyFacts
 export { PRESS_MS, selectClear, selectStart, selectToggle, selectRange, selectAll, selectPrune, selectCount, selectAllState, selectExtend, selectStep, selectionAction, selectApply, keepFocus } from './selection.mjs';
 export { scheduleDates, scheduleButton, DAY_SECTIONS, BY_CHOICES, BY_DEFAULT, byPart, dateSections, NEXT_RUN_SECTIONS, REPEATS, scheduleWords, TIMES_OF_DAY, listWord, namesWord, listSentence, filterRow, narrowedLine, groupRow, rowEndWord, childLine, roundRows, listState, resetViewTool, originMark, chatKindIcon } from './list-parts.mjs';
 export { listController, LIST_SHOWN, BREATHE, calmMarks, fitMenu } from './list-page.mjs';
-export { planBulk, skipText, bulkConfirm } from '../../../../src/shared/run-bulk.mjs';
+export { planBulk, skipText } from '../../../../src/shared/run-bulk.mjs';
+import { bulkConfirm as sharedBulkConfirm } from '../../../../src/shared/run-bulk.mjs';
+// The shared confirm is classic's and says "run"; Stillhet says "task" (small.words-at-source). Only the module's own fixed
+// phrases are written again here, at their source, never a task's name. The build's step B3 gives the module the noun.
+const TASK_WORDS = [['Deletes the run records', 'Deletes the task records'], ['(as "deleted run")', '(as "deleted task")'], [/(\d+) interrupted run(s?) can't/, "$1 interrupted task$2 can't"], [/^(\d+) waiting run(s?) (is|are) cancelled/, '$1 waiting task$2 $3 cancelled']];
+export function bulkConfirm(action, plan) {
+  const c = sharedBulkConfirm(action, plan);
+  if (!c) return c;
+  return { ...c, title: c.title.replace(/^(Stop|Delete|Archive) (\d+) run(s?)\b/, '$1 $2 task$3'), message: TASK_WORDS.reduce((m, [a, b]) => m.replace(a, b), c.message) };
+}
 export { watchKeepOpen, keptRoute, controlAddress, atAddress, triggerOf, watchFocusBack } from './keep-open.mjs';
 export { dismissOnOutside, neverOutside, watchStrips, REAL_CONTROL } from './dismiss.mjs';
 export { selectionBar, selectAllBox, bindLongPress } from './selection-bar.mjs';

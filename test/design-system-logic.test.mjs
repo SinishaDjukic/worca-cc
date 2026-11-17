@@ -422,7 +422,7 @@ test('chatState, bulkStateOf: a chat sorts Needs you, Running, Recent; an unknow
 test('skipText and bulkConfirm: what a bulk action skips, and the one confirm it asks', () => {
   const plan = R.planBulk('stop', [{ id: 'a', title: 'Fix login', state: 'waiting' }, { id: 'b', title: 'B', state: 'working' }]);
   assert.equal(R.skipText(plan), 'Skipped 1 not started yet: Fix login.');
-  const c = R.bulkConfirm('stop', plan); assert.equal(c.title, 'Stop 1 run?'); assert.equal(c.danger, true); assert.match(c.message, /^Skipped 1 not started yet/);
+  const c = R.bulkConfirm('stop', plan); assert.equal(c.title, 'Stop 1 task?'); assert.equal(c.danger, true); assert.match(c.message, /^Skipped 1 not started yet/);
   assert.equal(R.bulkConfirm('restore', plan), null);
 });
 
