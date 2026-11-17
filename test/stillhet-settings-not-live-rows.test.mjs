@@ -52,7 +52,7 @@ test('F-7b-03/F-7b-13: live Tasks: Spending, Starting, Limits, Away mode and Mac
   const { w, d } = await live();
   const text = await go(w, '#settings/runs');
   for (const t of ['Spending', 'Starting', 'Limits', 'Away mode', 'Machine']) assertLine(d, t);
-  for (const v of ['$35', '{type}/{slug}', 'type/slug', '22:00', 'proxy.corp.example', 'Warning line', '80%']) assert.ok(!text.includes(v), `no ${v}`);
+  for (const v of ['$26.25', '{type}/{slug}', 'type/slug', '22:00', 'proxy.corp.example', 'Warning line', '80%']) assert.ok(!text.includes(v), `no ${v}`);
 });
 
 test('F-7b-03: a live not-live section holds nothing to click', async () => {
@@ -166,7 +166,7 @@ test('F-7b-03: live search finds a not-live row by name, never its sample value'
   await go(w, '#settings/runs');
   // a row of a section all sample is not found (its section's head is); a not-live row in a mixed section is, by name only
   const rate = await find(w, 'Hourly rate');
-  assert.doesNotMatch(rate, /\$35|Time saved/);
+  assert.doesNotMatch(rate, /\$26\.25|Time saved/);
   assert.match(await find(w, 'Spending'), /Spending/);
   const history = await find(w, 'Chat history');
   assert.match(history, /Chat history/);
@@ -174,7 +174,7 @@ test('F-7b-03: live search finds a not-live row by name, never its sample value'
   assert.doesNotMatch(await find(w, 'On 14 runs'), /frontend/, 'a sample label record is not found by its words');
   assert.doesNotMatch(await find(w, 'frontend'), /On 14 runs/);
   assert.doesNotMatch(await find(w, 'Bug fix'), /Fix workflow/);
-  assert.doesNotMatch(await find(w, '35'), /Time saved is counted/);
+  assert.doesNotMatch(await find(w, '26.25'), /Time saved is counted/);
   assert.match(await find(w, 'Prompt check'), /Prompt check/);
 });
 
@@ -183,7 +183,7 @@ test('demo keeps every sample value and never says Not in Stillhet yet', async (
   await settle(200);
   assert.equal(w.StillhetWorld.live, false);
   w.StillhetUI.prefs.setMode('expert');
-  assert.match(await go(w, '#settings/runs'), /\$35/);
+  assert.match(await go(w, '#settings/runs'), /\$26\.25/);
   assert.match(await go(w, '#settings/models'), /GitHub Copilot/);
   const chat = await go(w, '#settings/ask');
   assert.match(chat, /Sonnet 5\.5/);

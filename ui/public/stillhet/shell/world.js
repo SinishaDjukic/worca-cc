@@ -101,7 +101,7 @@
       actions: [['a1', 'r10', 'Dev server :4417'], ['a2', 'r11', 'Storybook :6006']],
       usage: [{ p: 'claude', plan: 'Ultra', asOf: '14:28', win: [{ k: 'week', pct: 31, resets: 'Mon 09:00' }], note: { text: 'No session limit on Ultra', tip: 'Anthropic removed the 5-hour session from verified Ultra accounts on 30 Oct 2026; the weekly limit stays' } },
         CODEX('13:52', 12, 40), COPILOT, { p: 'openrouter', plan: 'Free', asOf: '13:30', win: [{ k: 'day', pct: 64, used: 32, of: 50, resets: '02:00' }] }],
-      budget: month(412, 1000, 2310.5), chats: { needs: ['c1'], unread: ['c1'] } },
+      budget: month(412, 1000, 1233),   /* saved is the month's 47 hours at $26.25 an hour: Insights' series and Settings' rate give the same figure */ chats: { needs: ['c1'], unread: ['c1'] } },
     near: { runs: { r10: 0, s2: 0, s3: 0, s4: 0, r7: { case: 'pr-fixing', detail: 'Fixing 2 failing checks', time: '3 min', rounds: undefined } }, actions: [],
       usage: [CLAUDE_MAX(86, 52), CODEX('14:24', 20, 44)], budget: month(312.4, 1000, 1120.55), chats: {} },
     reached: { runs: { r11: 0, r5: 0, r33: { case: 'paused-limit', detail: 'Usage limit · resumes by itself', time: 'Mon 09:05', day: 'upcoming', when: 'reset', resumes: true, on: 'codex' }, r17: NIGHTLY },

@@ -200,7 +200,7 @@
     me.saved = target; src.series.saved = allocate(src.series.saved, total);
     for (const [dim, rows] of Object.entries(src.rows)) if (dim !== 'person') { const vals = allocate(rows.map((r) => r.saved), total); rows.forEach((r, i) => { r.saved = vals[i]; }); }
   })(team, 'Sam', Math.round((typeof window !== 'undefined' && window.StillhetWorld?.saved?.()?.usd) || 0));
-  // the whole month's saved figure is written as the profile menu writes it, cents and all ($2,310.50); a part of it is rounded
+  // the whole month's saved figure is written as the profile menu writes it, cents and all ($1,233.00: the month's 47 hours at Settings' hourly rate); a part of it is rounded
   const worldSaved = () => (typeof window !== 'undefined' && window.StillhetWorld?.saved?.()?.usd) || 0;
   const usdSame = (n) => { const w = worldSaved(); return w && Math.round(w) === Math.round(n) && Math.abs(w - Math.round(w)) >= 0.005 ? `$${w.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : usd(n); };
   const paceWord = (b) => (b.over ? `On pace for ${usd(b.pace)}, ${usd(b.over)} over` : '');
