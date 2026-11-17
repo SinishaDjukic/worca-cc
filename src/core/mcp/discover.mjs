@@ -49,6 +49,14 @@ const SPACE_FLAG_RE = /^--?([A-Za-z][A-Za-z0-9_-]{0,63})\s+(\S.*)$/s;
 const CRED_RE = /[A-Za-z][A-Za-z0-9+.-]{0,30}:\/\/[^/\s:@]{0,256}:[^/\s@]{1,256}@/;
 const WHOLE_URL_RE = /^[A-Za-z][A-Za-z0-9+.-]{0,30}:\/\/\S+$/;
 const HEADER_LINE_RE = /^\s*([A-Za-z0-9_-]{1,64})\s*:\s*(.*)$/;
+// -p / -P takes a password in database clients (mysql -p hunter2, -p=hunter2). A number or a dotted version is a port
+// or a version (psql -p 5432, uvx -p 3.12). Package runners use -p for the package (npx -p @scope/pkg), never a secret.
+const SHORT_SECRET_FLAG_RE = /^[pP]$/;
+// What follows a -p without being its password: a port or version, or the next flag (a bare -p switch).
+const shortValueOk = (v) => /^[\d.:]+$/.test(v) || v.startsWith('-');
+const PACKAGE_RUNNERS = new Set(['npx', 'npm', 'pnpm', 'pnpx', 'yarn', 'bun', 'bunx']);
+/** True when the command's program is a package runner, whose -p names a package. */
+const isPackageRunner = (command) => PACKAGE_RUNNERS.has(String(command ?? '').trim().split(/\s+/)[0].split(/[\\/]/).pop().replace(/\.(cmd|exe)$/i, ''));
 // NAME=value inside an argument (docker -e API_KEY=…, --env=DB_PASSWORD=…, env FOO=… cmd).
 const PAIR_RE = /^([A-Za-z_][A-Za-z0-9_.-]{0,99})=(.*)$/s;
 /** The transports a file may name, mapped onto worca's three; anything else is "unsupported". */
@@ -97,10 +105,13 @@ function pairSecret(s) {
 
 /** Arguments, in order: text, or { secret: true } for a token, a credential inside the argument (embedsSecret, also
  *  the value of any --flag=value or "--flag value"), a secret NAME=value pair (pairSecret, also as a flag's value), a
- *  secret-named --flag=value or "--flag value" in one argument, or the word after a secret-named --flag. */
-function argsOf(list, problems) {
+ *  secret-named --flag=value or "--flag value" in one argument, or the word after a secret-named --flag. A -p / -P
+ *  value counts as a secret-named flag's too (mysql -p hunter2), except a port, a version or the next flag, and never
+ *  when `command` is a package runner (npx -p <package>). */
+function argsOf(list, problems, command = '') {
   if (list !== undefined && !Array.isArray(list)) { problems.push('its args is not a list'); return []; }
   const out = [];
+  const shortSecret = isPackageRunner(command) ? () => false : (name) => SHORT_SECRET_FLAG_RE.test(name);
   let afterSecretFlag = false;
   for (const [i, a] of (list || []).entries()) {
     if (typeof a !== 'string' && typeof a !== 'number') { problems.push(`argument ${i + 1} is not text`); out.push({ invalid: true }); afterSecretFlag = false; continue; }
@@ -108,14 +119,17 @@ function argsOf(list, problems) {
     // Never scan or keep an over-long argument: it is masked, and its server cannot be imported.
     if (s.length > DISCOVER_LIMITS.argChars) { problems.push(`argument ${i + 1} is longer than ${DISCOVER_LIMITS.argChars} characters`); out.push({ invalid: true }); afterSecretFlag = false; continue; }
     const flag = FLAG_RE.exec(s);
-    const secretFlag = !!flag && SECRET_NAME_RE.test(flag[1]);
+    const secretFlag = !!flag && (SECRET_NAME_RE.test(flag[1]) || shortSecret(flag[1]));
     const spaced = flag ? null : SPACE_FLAG_RE.exec(s);
     const flagValue = flag && flag[2] !== undefined ? flag[2] : spaced ? spaced[2] : '';
+    const shortName = flag ? flag[1] : spaced ? spaced[1] : '';
+    const isShort = !!shortName && shortSecret(shortName);   // a -p value is masked unless shortValueOk
     if (looksSecret(s) || embedsSecret(s) || pairSecret(s)
       || (flagValue && (looksSecret(flagValue) || embedsSecret(flagValue) || pairSecret(flagValue)))
-      || afterSecretFlag || ((secretFlag || (!!spaced && SECRET_NAME_RE.test(spaced[1]))) && flagValue !== '')) out.push({ secret: true });
+      || (afterSecretFlag && !(afterSecretFlag === 'short' && shortValueOk(s)))
+      || ((secretFlag || (!!spaced && (SECRET_NAME_RE.test(spaced[1]) || isShort))) && flagValue !== '' && !(isShort && shortValueOk(flagValue)))) out.push({ secret: true });
     else out.push(s);
-    afterSecretFlag = secretFlag && flag[2] === undefined;
+    afterSecretFlag = secretFlag && flag[2] === undefined ? (isShort ? 'short' : true) : false;
   }
   return out;
 }
@@ -165,10 +179,10 @@ function serverOf(tool, name, e) {
     // A command holding a credential (a URL login, an inline API_KEY=… prefix, "--token x" inside it) is dropped,
     // never shown: each of its words is classified as an argument would be.
     if (out.command.length > DISCOVER_LIMITS.argChars || looksSecret(out.command) || embedsSecret(out.command)
-      || argsOf(out.command.split(/\s+/), []).some((a) => typeof a !== 'string')) {
+      || argsOf(out.command.split(/\s+/), [], out.command).some((a) => typeof a !== 'string')) {
       out.command = ''; out.commandSecret = true; problems.push('its command looks like it holds a secret');
     } else if (!out.command) problems.push('it names no command');
-    out.args = argsOf(e.args, problems);
+    out.args = argsOf(e.args, problems, out.command);
     if (out.args.length > DISCOVER_LIMITS.args) problems.push(`it has more than ${DISCOVER_LIMITS.args} arguments`);
     out.env = valuesOf(e.env, 'env', problems);
     if (typeof e.cwd === 'string' && e.cwd.trim()) notes.push('it sets a working folder (cwd), which worca does not keep');

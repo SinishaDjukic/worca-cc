@@ -144,6 +144,23 @@ test('secret arguments and URLs: masked at read, never kept', async () => {
   assert.equal(/abc123|zzz|qq/.test(JSON.stringify(out)), false);
 });
 
+test('a -p password is masked in args and in the command; a port, a version, a bare -p and npx -p <package> are kept', async () => {
+  const out = await discoverMcpConfigs({ home: '/h', platform: 'linux', env: {}, fs: fakeFs({ '/h/.cursor/mcp.json': JSON.stringify({ mcpServers: {
+    spaced: { command: 'mysql-mcp', args: ['-u', 'app', '-p', 'hunter2', '-P', '3306'] },
+    inline: { command: 'mysql-mcp', args: ['-p=pw7', '-p hunter3', '-p 5432'] },
+    keep: { command: 'pg-mcp', args: ['-p', '5432', '-p', '--verbose', '-p', '3.12'] },
+    runner: { command: 'npx', args: ['-y', '-p', '@scope/server-db', 'server-db'] },
+    cmd: { command: 'mysql-mcp -p hunter4' },
+  } }) }) });
+  const by = Object.fromEntries(out.servers.map((s) => [s.name, s]));
+  assert.deepEqual(by.spaced.args, ['-u', 'app', '-p', { secret: true }, '-P', '3306']);
+  assert.deepEqual(by.inline.args, [{ secret: true }, { secret: true }, '-p 5432']);
+  assert.deepEqual(by.keep.args, ['-p', '5432', '-p', '--verbose', '-p', '3.12']);
+  assert.deepEqual(by.runner.args, ['-y', '-p', '@scope/server-db', 'server-db']);
+  assert.deepEqual([by.cmd.command, by.cmd.commandSecret], ['', true]);
+  assert.equal(/hunter[234]|pw7/.test(JSON.stringify(out)), false);
+});
+
 test('paths per platform, CODEX_HOME, homeScope false, and the local-only gate', () => {
   const lin = discoverySources({ home: '/h', platform: 'linux', env: {} }).map((s) => s.path);
   assert.ok(lin.includes('/h/.config/Claude/claude_desktop_config.json'));
