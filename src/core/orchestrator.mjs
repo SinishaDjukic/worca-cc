@@ -166,6 +166,7 @@ export class GraphOrchestrator extends RunHarness {
       openIssues: [],
       result: null,              // {type, path?, value?} | null
       warnings: [],
+      scopeNotices: [],          // E9: [{nodeId, executionId, count, expectedCount, cross, notable:[{path, tool, cross?}]}]
       wireDeliveries: {},        // {[wireId]: n}
       tokens: {},                // {'<node>.<port>': {seq,type,path,firedAt}}
       gate: null,                // {wireId, fromNode, toNode, askId} | null
@@ -1253,6 +1254,7 @@ export class GraphOrchestrator extends RunHarness {
     if (s.wireDeliveries && typeof s.wireDeliveries === 'object') this.state.wireDeliveries = { ...s.wireDeliveries };
     if (Array.isArray(s.warnings)) this.state.warnings = [...new Set([...(this._pickWarnings || []), ...s.warnings])];
     if (Array.isArray(s.openIssues)) this.state.openIssues = s.openIssues.map((o) => ({ ...o }));
+    if (Array.isArray(s.scopeNotices)) this.state.scopeNotices = s.scopeNotices.map((n) => ({ ...n, notable: Array.isArray(n.notable) ? n.notable.map((p) => ({ ...p })) : [] }));
     if (s.endReached === true) { this.state.endReached = true; if (s.result) this.state.result = { ...s.result }; }
     if (s.tokens) {
       const t = {};

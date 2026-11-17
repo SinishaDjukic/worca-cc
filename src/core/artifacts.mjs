@@ -2056,6 +2056,8 @@ function toPipelineRow(o) {
           warnings: Array.isArray(o.warnings) ? o.warnings : [],
           // E2: loops forced past their budget with blocking issues still open.
           ...(Array.isArray(o.openIssues) && o.openIssues.length ? { openIssues: o.openIssues } : {}),
+          // E9: the notable paths each execution touched outside its checkout (the run page's quiet scope line).
+          ...(Array.isArray(o.scopeNotices) && o.scopeNotices.length ? { scopeNotices: o.scopeNotices } : {}),
           wireDeliveries: o.wireDeliveries ?? {},
           tokens: o.tokens ?? {},
           ...(typeof o.runEngine === 'string' && o.runEngine && o.runEngine !== 'claude' ? { runEngine: o.runEngine } : {}),
@@ -2942,6 +2944,7 @@ function rowToState(row) {
     state.result = outcome.result ?? null;
     state.warnings = Array.isArray(outcome.warnings) ? outcome.warnings : [];
     state.openIssues = Array.isArray(outcome.openIssues) ? outcome.openIssues : [];
+    state.scopeNotices = Array.isArray(outcome.scopeNotices) ? outcome.scopeNotices : [];
     state.wireDeliveries = outcome.wireDeliveries ?? {};
     state.tokens = outcome.tokens ?? {};
     if (outcome.sessionHosts && typeof outcome.sessionHosts === 'object') state.sessionHosts = outcome.sessionHosts;
