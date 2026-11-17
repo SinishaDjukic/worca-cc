@@ -261,7 +261,7 @@ test('F-cov1-06 demo: an address shows Branch and Folder name under it, a path d
   assert.equal(page(d).querySelector('#pj-clone-name').placeholder, 'shop-api', 'the placeholder follows the address');
   assert.equal(page(d).querySelector('#pj-hand-v').value, 'git@github.com:o/shop-api.git', 'the redraw keeps what was typed');
   type(w, '#pj-clone-name', 'my-shop'); await settle(60);
-  yes(d).click(); await settle(120);
+  yes(d).click(); await settle(700);   // the demo's busy button (Cloning…) takes 450ms
   assert.ok(w.StillhetProjects.all().some((p) => p.id === 'my-shop'), 'the demo adds it by its Folder name');
   assert.match(saidText(d), /Added my-shop/);
   assert.deepEqual(calls.filter(([m]) => m !== 'GET'), []);

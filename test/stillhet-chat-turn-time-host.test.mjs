@@ -45,7 +45,7 @@ test('both turn kinds take the focus, and a focused turn matches :focus-within',
   const { q } = await open(t);
   for (const sel of ['.convo-you', '.convo-words']) {
     const el = q(sel);
-    assert.equal(el.getAttribute('tabindex'), '0', sel);
+    assert.ok(el.hasAttribute('tabindex'), sel);   // focusable, by a tap or from the timeline; a turn is not a Tab stop of its own
     el.focus();
     assert.ok(el.matches(':focus-within'), sel);
   }

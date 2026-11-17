@@ -1345,7 +1345,7 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
    (680px unless a page says otherwise). It never moves. */
 .page-bg{position:absolute;inset:0;pointer-events:none;overflow:hidden;--bg-clear-w:calc(var(--col-w,680px) + 96px);}
 .page-bg .chat-home-bg{-webkit-mask-image:none !important;mask-image:none !important;opacity:.85;}   /* ds-ok: the pattern is even on every side; the clear area does the fading */
-.page-bg::after{content:'';position:absolute;top:28px;bottom:28px;left:50%;width:var(--bg-clear-w);max-width:calc(100% - 96px);transform:translateX(-50%);border-radius:32px;background:var(--bg);
+.page-bg::after{content:'';position:absolute;top:0;bottom:0;left:50%;width:var(--bg-clear-w);max-width:calc(100% - 96px);transform:translateX(-50%);border-radius:32px;background:var(--bg);
   box-shadow:0 0 0 18px color-mix(in srgb,var(--bg) 80%,transparent),0 0 0 40px color-mix(in srgb,var(--bg) 55%,transparent),0 0 0 66px color-mix(in srgb,var(--bg) 28%,transparent);}   /* ds-ok: the page's own colour at three strengths, the levels of the fade */
 .page-bg .chat-home-bg{position:absolute;inset:0;}
 body:has(#route-chat:not([hidden]) .has-detail) .page-bg{display:none;}   /* with the detail panel open the chat is off centre: no background, so no word sits on it */
@@ -2381,7 +2381,6 @@ button.fr-row:hover .fr-name,.fr-row.is-open .fr-name{background:var(--hover);}
 .skip-link{position:fixed;left:8px;top:8px;z-index:100;padding:8px 12px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);color:var(--ink);font:500 var(--fs-body)/1 var(--sans);text-decoration:none;box-shadow:var(--shadow-pop);transform:translateY(-200%);}
 .skip-link:focus{transform:none;outline:2px solid var(--ink);outline-offset:2px;}
 #main-content:focus{outline:0;}
-#main-content :is(h1,h2,.place-title,[data-title],.rc-title)[tabindex="-1"]:focus-visible{outline:2px solid var(--ink);outline-offset:4px;border-radius:var(--r-xs);}
 
 /* nav.place-button: the place's name and its chevron are one bordered button, 32px high; the W beside it goes home. */
 .place-btn{display:inline-flex;align-items:center;gap:6px;max-width:100%;height:32px;padding:0 8px 0 10px;border:1px solid var(--line);border-radius:var(--r-sm);background:none;color:inherit;font:inherit;letter-spacing:inherit;cursor:pointer;}

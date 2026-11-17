@@ -272,10 +272,10 @@
   const chipsHtml = () => (comp.files.length || aboutNow() ? `<span class="composer-chips">${aboutNow() ? R.handedChip({ kind: comp.about.kind, name: comp.about.name, attrs: { 'data-cp-unabout': '' } }) : ''}${comp.files.map((f) => R.button({ label: f, kind: 'quiet', icon: R.icon('x', 11), attrs: { 'data-cp-unfile': f, title: `Removes ${f}` } })).join('')}</span>` : '');
   // ---- starting: a starter only arms the composer (its chip and its placeholder); nothing is sent until you send ----
   const STARTERS = [
-    { id: 'task', label: 'New task', icon: 'kind-task', ph: 'Describe the task…', says: 'One job, from a plan to a pull request', hint: 'One job on a project, from a plan to a pull request' },
-    { id: 'workflow', label: 'Build workflow', icon: 'kind-workflow', ph: 'Describe the workflow…', says: 'Describe the stages; Worca drafts it', hint: 'Describe the stages you want; Worca drafts the workflow for you to check' },
-    { id: 'schedule', label: 'Schedule a task', icon: 'clock', ph: 'What should run, and when?', says: 'Starts by itself, once or on a repeat', hint: 'A task that starts by itself, once or on a repeat' },
-    { id: 'track', label: 'Follow a task', icon: 'track', ph: 'Which task to follow?', says: 'Brings a running task into this chat', hint: 'Brings a running task into this chat, so you can ask about it' },
+    { id: 'task', label: 'New task', icon: 'kind-task', ph: 'Describe the task…', says: 'One job, plan to PR', hint: 'One job on a project, from a plan to a pull request' },
+    { id: 'workflow', label: 'Build workflow', icon: 'kind-workflow', ph: 'Describe the workflow…', says: 'Worca drafts the stages', hint: 'Describe the stages you want; Worca drafts the workflow for you to check' },
+    { id: 'schedule', label: 'Schedule a task', icon: 'clock', ph: 'What should run, and when?', says: 'Starts by itself', hint: 'A task that starts by itself, once or on a repeat' },
+    { id: 'track', label: 'Follow a task', icon: 'track', ph: 'Which task to follow?', says: 'Watch one in this chat', hint: 'Brings a running task into this chat, so you can ask about it' },
   ];
   const MORE = [
     { id: 'explain', label: 'Explain a diff', icon: 'pr', ph: 'Which task’s changes?' },
@@ -361,7 +361,7 @@
     // Chat home's starters are cards: an icon, a name and one plain line of what it does, the whole card one button; the
     // rarely used ones are behind the last card, More
     const card = R.starterCard, grid = R.starterGrid;
-    const PIN_SAYS = { Shaper: 'Asks you a few questions first, then writes a plan you approve' };
+    const PIN_SAYS = { Shaper: 'Questions, then a plan' }, PIN_HINT = { Shaper: 'Asks you a few questions first, then writes a plan you approve' };
     const tile = (x, pin) => card({ icon: R.icon(x.icon, 18), label: x.label, says: x.says, hint: x.hint, attrs: { 'data-starter': x.id, ...(pin ? { 'data-pin': x.label, title: 'A workflow you pinned. Unpin it with a right-click' } : {}), ...(x.id === 'track' ? { 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'starter-track') } : {}) } });
     const live = liveTasks();
     const pick = (id, items, head) => (menu === id ? R.compactMenu({ label: head, items: [{ header: head }, ...items] }) : '');
@@ -369,8 +369,8 @@
     // Chat is the one place a task or a schedule is started: the labelled forms open from here (the forms are Centers')
     const C = window.StillhetCenters, forms = [...(C?.newTask ? [{ id: 'starter-form|task', text: 'New task form…', mark: R.icon('kind-task', 14), help: 'The same task, as labelled fields' }] : []), ...(C?.newSchedule ? [{ id: 'starter-form|schedule', text: 'New schedule form…', mark: R.icon('clock', 14), help: 'The same schedule, as labelled fields' }] : [])];
     const moreItems = [...(forms.length ? [{ header: 'Fill in a form' }, ...forms, { sep: true }] : []), ...MORE.filter((x) => R.shows('advanced') || !['workspace', 'model', 'metrics'].includes(x.id)).map((x) => ({ id: `starter|${x.id}`, text: x.label, mark: R.icon(x.icon, 14) })), ...(LIVE() ? [] : [{ sep: true }, { header: 'Start from a preset' }, ...PRESETS.map((p) => ({ id: `starter-preset|${p}`, text: p, mark: R.icon('set-presets', 14) }))]), { sep: true }, { header: 'Pinned workflows' }, ...pinChoices().map((w) => (shownPins().includes(w) ? { id: `starter-unpin|${w}`, text: `Unpin ${w}`, mark: R.icon('pin', 14) } : { id: `starter-pin|${w}`, text: `Pin ${w}`, mark: R.icon('pin', 14) }))];
-    const more = card({ icon: R.icon('more', 18), label: 'More', says: 'Forms, explain a diff, scripts, projects', hint: 'The task and schedule forms, explain a diff, write a script, add a project', more: true, attrs: { 'data-menu': 'starter-more', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'starter-more') } }) + (menu === 'starter-more' ? R.compactMenu({ items: moreItems.map((x) => (x.sep || x.header ? x : { ...x, id: `starter-more|${x.id}` })) }) : '');
-    const cards = shownPins().map((w) => tile({ id: `pin:${w}`, label: w, icon: w === 'Shaper' ? 'kind-feature' : 'kind-workflow', says: PIN_SAYS[w] || WORKFLOWS[w] || 'A workflow you pinned' }, true)).join('') + STARTERS.map((x) => (x.id === 'track' ? `<span class="rc-pop">${tile(x)}${trackMenu}</span>` : tile(x))).join('') + `<span class="rc-pop">${more}</span>`;
+    const more = card({ icon: R.icon('more', 18), label: 'More', says: 'Forms, scripts, projects', hint: 'The task and schedule forms, explain a diff, write a script, add a project', more: true, attrs: { 'data-menu': 'starter-more', 'aria-haspopup': 'menu', 'aria-expanded': String(menu === 'starter-more') } }) + (menu === 'starter-more' ? R.compactMenu({ items: moreItems.map((x) => (x.sep || x.header ? x : { ...x, id: `starter-more|${x.id}` })) }) : '');
+    const cards = shownPins().map((w) => tile({ id: `pin:${w}`, label: w, icon: w === 'Shaper' ? 'kind-feature' : 'kind-workflow', says: PIN_SAYS[w] || 'A pinned workflow', hint: PIN_HINT[w] || WORKFLOWS[w] || '' }, true)).join('') + STARTERS.map((x) => (x.id === 'track' ? `<span class="rc-pop">${tile(x)}${trackMenu}</span>` : tile(x))).join('') + `<span class="rc-pop">${more}</span>`;
     return grid({ cards });
   }
   // New task and Schedule a task both set the composer; the same thing as a labelled form is one click away, beside the chip

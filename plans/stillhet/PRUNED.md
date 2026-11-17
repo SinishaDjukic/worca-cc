@@ -61,6 +61,7 @@ Host tests of the first wiring that only held something the redesign removed on 
 | Ten cases of `stillhet-schedules-drafts-host`, one of `stillhet-schedules-page-host`, the "Run after this" half of the drafts' delete case, the Save row of the schedules refusal table | A schedule's page is an inspect view: its draft fields, DraftBar and "Run after this" are gone; a schedule is changed from Chat |
 
 | Three cases of `stillhet-no-demo-on-live` (every demo-answer site classified, no stale baseline entry, each demo string still in its source) and one of `stillhet-wiring` (the real wiring file has a row for every action) | They compared the first wiring's frozen ledgers with page code the redesign has since changed. The check itself (`gate.no-demo`, a row for every action) is rebuilt in step B2 on one file per place, with its baseline at zero |
+| One case of `stillhet-tasks-list-host-1` ("+ › Legacy approach › New task…") | It created a task from the Tasks place. Tasks is a view to inspect; a task starts in Chat (`stillhet.chat-first`) |
 
 ## Tests not settled yet
 

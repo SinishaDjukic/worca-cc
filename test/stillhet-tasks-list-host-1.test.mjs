@@ -123,35 +123,6 @@ test('the center\'s failed look has Try again', async () => {
   assert.ok(c.querySelector('[data-c-retry]'));
 });
 
-test('+ › Legacy approach › New task… posts /api/run with the project folder, the prompt, the title and its files, then opens the task', async () => {
-  const s = sources();
-  const { w, d, calls } = await liveHost({ sources: s, write: (u) => (u === '/api/run' ? [200, { runId: 'r-new' }] : [200, {}]) });
-  await go(w, '#runs', 120);
-  w.StillhetCenters.maker('tasks')?.newPick?.('form'); await settle(40);
-  const t = d.querySelector('#cc-text'); t.value = 'Add a pager'; t.dispatchEvent(new w.Event('input', { bubbles: true }));
-  d.querySelector('#center-dlg [data-c-more]').click(); await settle(20);
-  const ti = d.querySelector('#cc-title'); ti.value = 'Pager'; ti.dispatchEvent(new w.Event('input', { bubbles: true }));
-  // Add files… opens the system file picker (here: one file handed straight back) and never a stand-in toast.
-  w.HTMLInputElement.prototype.click = function () {
-    if (this.type !== 'file') return;
-    Object.defineProperty(this, 'files', { value: [new w.File(['hello'], 'notes.md')] });
-    this.dispatchEvent(new w.Event('change'));
-  };
-  d.querySelector('#center-dlg [data-c-files]').click(); await settle(60);
-  assert.match(d.querySelector('#center-dlg .cc-more').textContent, /notes\.md/, 'the picked file shows in the form');
-  assert.doesNotMatch(d.body.textContent, /Not connected to Worca yet|Would /);
-  const form = [...d.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Start task');
-  assert.ok(form, 'the form\'s start button');
-  form.click(); await settle(100);
-  const run = sent(calls).find(([, u]) => u === '/api/run');
-  assert.ok(run, JSON.stringify(sent(calls)));
-  assert.equal(run[2].prompt, 'Add a pager');
-  assert.equal(run[2].title, 'Pager');
-  assert.deepEqual(run[2].extras, [{ name: 'notes.md', dataBase64: Buffer.from('hello').toString('base64') }], 'the file goes as dev\'s New run sends it');
-  assert.ok(s.projects.projects.some((p) => p.path === run[2].projectDir), `the picked project's folder: ${run[2].projectDir}`);
-  assert.equal(w.location.hash, '#run/r-new');
-});
-
 test('F-3-09: the Tasks center by workflow groups tasks under their own workflow, the rest under Default', async () => {
   const s = sources(), h3 = s.history.pipelines.find((p) => p.id === 'h3');
   const at = { status: 'error', projectName: 'api', projectKey: 'web-1', startedAt: h3.startedAt, mtime: Date.parse(h3.startedAt) };

@@ -2,6 +2,8 @@
 // boot.js's order, data-adapter="live"); the host and its helpers are test/helpers/stillhet-chat-live-host.mjs.
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { hostStorage } from './helpers/stillhet-host.mjs';
+hostStorage['worca-stillhet.card-layout'] = 'card';   // the Figures fold lives in the card: Task details set to Inside the card
 import { LISTS, SOURCES, THREAD, clone, go, liveHost, posts, saidText, settle, toastText, until, withRun, closeHosts } from './helpers/stillhet-chat-live-host.mjs';
 
 afterEach(closeHosts);   // each test's window closes when the test ends

@@ -58,7 +58,8 @@ test('F-6-14: a project in two workspaces and an unknown member read names; no k
   assert.match(text(also), /seed-behind/, 'centerAlso shows its name');
   assert.doesNotMatch(text(page(h.d)), KEY_TEXT);
   assert.doesNotMatch(text(bar(h.d)), KEY_TEXT, 'no key in the bar');
-  bar(h.d).querySelector('[data-open="more:wks-b-2222"]').click(); await settle(60);   // a workspace that needs you lists what needs you; the rest is behind "N more"
+  bar(h.d).querySelector('[aria-label="Show what is under Shop B"]').click(); await settle(60);   // a workspace's members are behind its fold
+  bar(h.d).querySelector('[data-open="more:wks-b-2222"]').click(); await settle(60);   // what does not need you is behind "N more"
   assert.match(text(bar(h.d)), /ghost-folder/, 'the unknown member reads its folder');
   assert.doesNotMatch(text(bar(h.d)), KEY_TEXT, 'nor with its members shown');
   await go(h.w, `#projects/${KEYS.behind}`, 200);
