@@ -9102,7 +9102,7 @@ function askSignedIn(req) {
   return who.source === 'local' ? null : who.name;
 }
 
-async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null, reader = null, mcpOff = undefined, agentMode = undefined, client = null, onUserRow = null, chatContext = null }) {
+async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null, reader = null, mcpOff = undefined, agentMode = undefined, client = null, onUserRow = null, chatContext = null, scopeNote = null }) {
   // §6.2.2 ATOMIC re-check + slot reservation. Today every await between the
   // top 409/429 pair and here resolves in microtasks (validateModelEffort ->
   // composeCatalog; askBuildCatalog -> three synchronous better-sqlite3
@@ -9218,9 +9218,9 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const inline = ownSel.inline;
     const listed = [...ownSel.listed, ...withText.filter((a) => quotedIds.has(a.id))];
     const headerCtx = await resolveAskContext(id, ctx, listed, userMsg.id, { signedIn });
-    // Browser extension (docs/browser-extension.md): server-stamped from the request's token, never client-supplied —
-    // the header tells the model the page attachments (context, text, quote) are untrusted web content.
-    if (client) headerCtx.client = client;
+    // Server-stamped, never client-supplied: the browser extension's client (docs/browser-extension.md: its page attachments
+    // are untrusted web content) and a pasted link's scopeNote (thread-turns.mjs; this turn only, never stored on the thread).
+    Object.assign(headerCtx, client ? { client } : null, scopeNote ? { scopeNote } : null);
     // Context chips: accumulate the project/run/workspace/named page this turn ran in
     // (origin first, deduped; contexts.mjs). Cosmetic — a failure must never fail the turn.
     try { askAddThreadContexts(id, askContextEntries(ctx, headerCtx)); } catch (e) {
