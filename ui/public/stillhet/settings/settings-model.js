@@ -526,7 +526,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
       ] },
       { title: 'About', only: 'live', rows: [LIVE_VERSION] },
       { title: 'About', sample: true, only: 'demo', rows: [
-        { name: 'Version', help: 'From a source checkout this says Source build and offers no Update', value: '{verNow}', note: '{updNow}', say: '**{verNow}** · {updNow}', vals: { verNow: (sv) => short(sv.ver), updNow: updWords },
+        { name: 'Version', help: 'From a source checkout this says Source build and offers no Update', value: '{verNow} · {updNow}', say: '**{verNow}** · {updNow}', vals: { verNow: (sv) => short(sv.ver), updNow: updWords },
           acts: [
             { label: (sv) => (sv.upd === 'failed' ? 'Try again' : 'Update'), id: 'update', when: (sv) => canUpdate(sv) || sv.upd === 'failed', do: (sv) => { if (!sv.updTried) { sv.updTried = true; sv.upd = 'failed'; sv.__open = 'more:general/About/Version'; return ''; } sv.ver = sv.latest; sv.upd = 'latest'; return `Worca ${short(sv.ver)} is running`; } },
             { label: 'Check now', when: (sv) => sv.upd === 'latest', do: (sv) => { if (sv.ver === '1.20.0') return 'You have the latest version'; sv.latest = '1.20.0'; sv.upd = 'available'; return `New version: ${short(sv.latest)}`; } },
@@ -827,7 +827,7 @@ const GIT_TIP = 'Needs git: this row is hidden when the machine has no git';
       { title: 'History', meta: 'Delete removes transcripts, attachments and the worktrees checked out for them. Tasks started from a chat stay.', actions: [
         { label: 'Delete all chats', help: 'Asks first', off: (sv) => (window.StillhetWorld?.live || sv.chats ? '' : 'No chats to delete'),   /* live: dev's counts are read when it is pressed */ confirm: (sv) => ({ text: `Delete all ${sv.chats} chats, with ${sv.worktrees} worktrees and ${sv.attach} of attachments? They cannot be brought back.`, yes: 'Delete all', danger: true, then: (s) => { s.chats = 0; s.worktrees = 0; s.attach = '0 MB'; return 'All chats deleted'; } }), live: liveDeleteAll },
       ], rows: [
-        { name: 'Chat history', sample: true, value: '{chatsNow} chats · {treesNow} worktrees', note: '{attachNow} of attachments on this machine', say: '**{chatsNow}** chats, **{treesNow}** worktrees and **{attachNow}** of attachments on this machine', vals: { chatsNow: (sv) => sv.chats, treesNow: (sv) => sv.worktrees, attachNow: (sv) => sv.attach } },
+        { name: 'Chat history', sample: true, value: '{chatsNow} chats · {treesNow} worktrees · {attachNow} of attachments', say: '**{chatsNow}** chats, **{treesNow}** worktrees and **{attachNow}** of attachments on this machine', vals: { chatsNow: (sv) => sv.chats, treesNow: (sv) => sv.worktrees, attachNow: (sv) => sv.attach } },
       ] },
     ] },
 

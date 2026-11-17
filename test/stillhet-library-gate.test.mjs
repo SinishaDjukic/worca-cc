@@ -46,6 +46,28 @@ test('the prototype\'s pages write nothing the library owns: no frozen count for
   assert.deepEqual(hits, {});
 });
 
+// list.one-line: a row is one line; a second line is drawn only where page code names the fact it holds (`keepLine: '…'`).
+// The kept lines are frozen by file: a new one fails here until it is decided and written into the fixture, and a removed
+// one lowers the fixture in the same change. To fix a failure: put the fact on the row's one line as its value, or in its hint.
+const KEPT = join(ROOT, 'test/fixtures/stillhet-kept-lines.json');
+const keptLines = (text) => (text.match(/\bkeepLine\s*:\s*(?!['"`]{2})\S/g) || []).length;
+function keptTree() {
+  const dir = join(ROOT, 'ui/public/stillhet'), out = {};
+  for (const f of readdirSync(dir, { recursive: true })) { if (!/\.m?js$/.test(f) || /(^|\/)(components|today|graph)\.js$/.test(f)) continue; const n = keptLines(readFileSync(join(dir, f), 'utf8')); if (n) out[f.split('\\').join('/')] = n; }
+  return out;
+}
+
+test('list.one-line: no page keeps a second line beyond the ones decided, file by file', () => {
+  assert.deepEqual(keptTree(), JSON.parse(readFileSync(KEPT, 'utf8')).files, 'A second line is a decision: name its fact in keepLine and add it to test/fixtures/stillhet-kept-lines.json, or take the line away and lower the count');
+});
+
+test('list.one-line: the count sees a kept line and not an empty or passed-through one', () => {
+  assert.equal(keptLines("R.listRow({ title: 'a', meta: 'b', keepLine: 'why it needs you' })"), 1);
+  assert.equal(keptLines("R.pulseRow({ meta, keepLine: fix ? 'why it needs you' : '' })"), 1);
+  assert.equal(keptLines("R.listRow({ title: 'a', meta: 'b', keepLine: '' })"), 0);
+  assert.equal(keptLines("R.listRow({ title: 'a', meta: 'b' })"), 0);
+});
+
 test('compare: a new file with a hit grows; an old file may not grow; a lower count is reported', () => {
   assert.deepEqual(compare({ 'new.mjs': 1 }, {}).grew, [{ file: 'new.mjs', was: 0, now: 1 }]);
   assert.deepEqual(compare({ 'a.mjs': 3 }, { 'a.mjs': 2 }).grew, [{ file: 'a.mjs', was: 2, now: 3 }]);

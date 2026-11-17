@@ -3,7 +3,7 @@
 | Rule | What | Why | Held by |
 |---|---|---|---|
 | `set.one-place` | Settings opens from the profile menu only and turns the bar into its side menu; the sidebar holds places. A setting is a choice about how Worca behaves, set rarely; a place is where you do work and come back to | A setting and a place are different things | worca-sweep |
-| `set.one-row` | One row per decision, in the section that owns it: its name, then its value first and short (body size, full ink), at most one supporting line under it, and its control at the row's end (`stillhet.scan-first`; from classic's Settings cards: a label, its value, its control at the right) | The value is found without reading a sentence | design-system-settings-redesign |
+| `set.one-row` | One row per decision, in the section that owns it: its name, then its value first and short (body size, full ink), and its control at the row's end. A row with no value may say in one short line what its control does, when its name alone does not; beside a value that line is the row's hint (the name's tooltip, and read to a screen reader), never a second line, unless `keepLine` names the fact it holds (`list.one-line`). A line that restates the name or the value goes, and a row never has two quiet lines (`stillhet.scan-first`; from classic's Settings cards: a label, its value, its control at the right) | The value is found without reading a sentence | design-system-settings-redesign |
 | `set.one-edge` | A tab's title, its section heads, the rows' names and the dividers share one left edge, and every control one right edge; a section head is section size, 600, with 40px above it and 4px below | A tab is read straight down, and a head is never weaker than its rows | align-check |
 | `set.at-once` | A row takes effect at once; only a reset of many, and a step others see, confirm | No Save button | by hand |
 | `set.sentence` | A row's value, its supporting line and its pickers' words are built from its values and read right for every option; a value stays under 64 characters, a line under 150, a picker's word under 24 | A hard-coded summary goes stale, and a line written for the default breaks on the rest | settings-sentences |
@@ -14,7 +14,7 @@
 | `set.fold-fine-tunes` | A fold only fine-tunes its row; a list or a set of links gets rows of its own (Budget's Team caps and Usage are two rows, each with its button). A row with nothing more has no click | A fold is not a junk drawer, and nothing pressable does nothing | by hand |
 | `set.long-value` | A value that is a path, a list or a text shows as words with `Change…`, which opens a Dialog with its Fields | A long value is read on the row and edited where there is room | by hand |
 | `set.row-actions` | A row's actions are quiet bordered buttons; a ⋯ with one item is a button. A red button lives only in a Dialog or the ConfirmStrip, and a reset of many rows is its section head's action and asks first | The page stays calm, and what cannot be taken back asks | by hand |
-| `set.records` | A record (a preset, a label, a model, a plugin, a rule) is a ListRow in a List after the rows, under its own head, never a SettingsRow; the row opens the thing and its own actions are in its ⋯ | Different things look different | by hand |
+| `set.records` | A record (a preset, a label, a model, a plugin, a rule) is a ListRow in a List after the rows, under its own head, never a SettingsRow: one line, its name, then its facts as its `value` on the rows' value edge (`list.one-line`); the row opens the thing and its own actions are in its ⋯ | Different things look different | by hand |
 | `set.search` | The top bar's search finds every section, row, folded row and record by its name or its words and lands on it with the flash, opening its fold or its Dialog; a folded row its state hides lands on the row it folds under | Nothing is hard to find, and you always know where it lives | pulse-sweep |
 | `set.changed` | A row with a value off Worca's default has one tiny neutral dot after its name; its tooltip says `Changed`, then each value with its default. A fold's row shows it if anything inside differs, and the row inside does too; no reset on a row | You see what you moved, and from what, without a button to mis-press | design-system-components |
 | `set.levels` | A section's level is its most open content's, and what is above it inside says so by its own `min`; a link to a section above your level is not offered | A mode hides what it must and never leads to a dead end | by hand |
@@ -32,7 +32,7 @@
 ## A row, built
 
 ```js
-R.settingsRow({ name: 'Budget', value: '$1,000 a month', note: 'All tasks pause when it is spent',
+R.settingsRow({ name: 'Budget', value: '$1,000 a month', note: 'All tasks pause when it is spent',   // the note is the row's hint
   end: R.button({ label: 'Change…', kind: 'quiet' }) })
 R.settingsRow({ name: 'Archive', value: 'Never', end: R.rowPicker({ id: 'arch', label: 'Archive', text: 'Never', items }) })
 ```

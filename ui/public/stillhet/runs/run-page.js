@@ -134,7 +134,10 @@ function focusHtml(v, below) {
 function summaryPanel(v) {
   const o = v.over;
   const extra = usedHtml(v) + checklistHtml(o.checklist) + (v.docsHere ? docsSection(v) : '');
-  const after = ui.after.length ? `<section class="rtab"><h2 class="rtab-h">Runs after this <span class="n">${ui.after.length}</span></h2><ul class="ov-arts">${ui.after.map((x, i) => `<li><span class="ov-after-t" title="${esc(x.task)}">${esc(x.task)}</span><span class="rtab-dim">${esc(x.when)}</span>${R.button({ label: 'Cancel', kind: 'quiet', attrs: { 'data-unafter': i, 'data-key': 'unafter:' + i } })}</li>`).join('')}</ul></section>` : '';
+  // stillhet.one-place: the follow-ups asked on its card in its chat are in its one record; the page lists them, their chat starts them
+  const fu = SHELL && !LIVE_PAGE() && ui.taskId ? window.StillhetWorld?.task?.(ui.taskId)?.followUps || [] : [];
+  const followed = fu.length ? `<section class="rtab" id="ov-followups"><h2 class="rtab-h">Follow-ups <span class="n">${fu.length}</span></h2><ul class="ov-arts">${fu.map((x) => `<li><span class="ov-after-t" title="${esc(x.text)}">${esc(x.text)}</span><span class="rtab-dim">${esc(x.when)}</span></li>`).join('')}</ul></section>` : '';
+  const after = followed + (ui.after.length ? `<section class="rtab"><h2 class="rtab-h">Runs after this <span class="n">${ui.after.length}</span></h2><ul class="ov-arts">${ui.after.map((x, i) => `<li><span class="ov-after-t" title="${esc(x.task)}">${esc(x.task)}</span><span class="rtab-dim">${esc(x.when)}</span>${R.button({ label: 'Cancel', kind: 'quiet', attrs: { 'data-unafter': i, 'data-key': 'unafter:' + i } })}</li>`).join('')}</ul></section>` : '');
   // Before it is built, the ask is all there is to say about the outcome.
   const evidence = () => (o.evidence ? `<section class="rtab"><ol class="rd-route-list ov-lines">${R.lineRow({ mark: R.stepDot({ dotCls: 'is-done', word: 'Done', icon: 'check' }), text: o.evidence, link: true, attrs: { 'data-tab': 'activity', 'data-key': 'ov-evidence', title: 'Opens Activity: the tests, the review\'s cycles and the manual test' } })}</ol></section>` : '');
   // live: the task's own prompt, else no section (a case's demo ask is never a real task's)
@@ -488,7 +491,7 @@ function render() {
   const o = v.open;
   // A task is the work; a chat is where you talk about it. The page has no chat box: it says where the task began and
   // leads there (a task from a chat), or offers to ask about it in a chat (a task from the form).
-  const fromChat = SHELL ? (LIVE_PAGE() ? window.StillhetConversation?.chatOfTask?.({ run: ui.taskId }) : window.StillhetConversation?.chatOfTask?.({ title: v.title }) || (v.own ? '' : window.StillhetConversation?.chatOfCase?.(ui.caseId))) || '' : '';
+  const fromChat = SHELL ? (LIVE_PAGE() ? window.StillhetConversation?.chatOfTask?.({ run: ui.taskId }) : window.StillhetConversation?.chatOfTask?.(ui.taskId ? { run: ui.taskId } : { title: v.title }) || (v.own || ui.taskId ? '' : window.StillhetConversation?.chatOfCase?.(ui.caseId))) || '' : '';
   const fromName = fromChat ? window.StillhetConversation?.chatTitle?.(fromChat) || '' : '';
   const fromLine = !SHELL || v.kind ? '' : fromChat
     ? `<p class="rc-from"><span>Started from the chat <b>${esc(fromName || 'of this task')}</b></span>${R.button({ label: 'Open the chat', kind: 'quiet', attrs: { 'data-from-chat': fromChat, 'data-key': 'from-chat', title: 'Its questions and what you said are there' } })}${v.runAfter || startsNew ? R.textLink({ label: 'Start a follow-up in its chat', attrs: { 'data-from-chat': fromChat, 'data-key': 'from-follow', title: 'New work from this task starts on its card, in its chat' } }) : ''}</p>`
@@ -739,7 +742,9 @@ function landNext() {
   if (nextDiff !== null) { const path = nextDiff; nextDiff = null; if (v.tabs.some((t) => t.id === 'changes')) { ui.tab = 'changes'; const d = v.tabData, known = path && d.files.find(([p]) => p === path || p.endsWith('/' + path)); ui.diff = { files: (known ? [known[0]] : d.files.map(([p]) => p)).map((p) => ({ path: p, hunks: hunksOf(d, p) })) }; ui.dialog = 'diff'; pendingFocus = 'vd-close'; } }
 }
 // atStage: the page opens at that stage (a card's knot); openDiff: with its whole diff open (a chat's View changes)
-window.StillhetRunPage = { pick, openLive: (id, keep) => livePage(id, !!keep), atStage: (key) => { nextStage = key || ''; }, openDiff: (path) => { nextDiff = path || ''; } };   // the shell moves the page to the case its address names through this picker, in both hosts
+// ofTask: the task the next open shows, by its id in the one store (a card, a row); with none given the address's state names it
+let nextOwn = '';
+window.StillhetRunPage = { pick, openLive: (id, keep) => livePage(id, !!keep), atStage: (key) => { nextStage = key || ''; }, openDiff: (path) => { nextDiff = path || ''; }, ofTask: (id) => { nextOwn = LIVE_PAGE() ? '' : id || ''; }, task: () => ui.taskId || '' };   // the shell moves the page to the case its address names through this picker, in both hosts
 
 const groups = M.caseGroups;   // by what you check
 pick.innerHTML = groups.map((g) => `<optgroup label="${g}">${M.cases.filter((c) => c.group === g).map((c) => `<option value="${c.id}"${c.id === ui.caseId ? ' selected' : ''}>${esc(c.label)}</option>`).join('')}</optgroup>`).join('');
@@ -747,20 +752,23 @@ pick.addEventListener('change', () => {
   // #run/<case>/<part> opens that part under its stage; with none named, the part that matters now
   const named = SHELL ? (location.hash.match(/^#run\/[^/]+\/(\w+)/) || [])[1] : '';
   if (SHELL) history.replaceState(null, '', '#run/' + pick.value); jump = true; ui = Object.assign(fresh(pick.value), { chips: (M.cases.find((c) => c.id === pick.value) || {}).chips || [] });
-  if (SHELL) { const v0 = M.view(ui.caseId, ui); ui.tab = v0.tabs.some((t) => t.id === named) ? named : partNow(v0, ui.caseId); if (!nextStage && v0.stages.some((st) => st.key === named)) nextStage = named; landNext(); ownTitle = v0.own ? v0.title : ''; ownSig = sigOf(); }
+  if (SHELL) { const v0 = M.view(ui.caseId, ui); ui.tab = v0.tabs.some((t) => t.id === named) ? named : partNow(v0, ui.caseId); if (!nextStage && v0.stages.some((st) => st.key === named)) nextStage = named; landNext(); ownTitle = v0.own ? v0.title : ''; const W = window.StillhetWorld, given = nextOwn && W.task?.(nextOwn); nextOwn = '';
+    ui.taskId = (given && given.case === ui.caseId ? given.id : W.pageTask?.(ui.caseId, v0.own ? v0.title : M.titles?.[ui.caseId] || '')?.id) || ''; ownSig = sigOf();
+    if (ui.taskId && W.task(ui.taskId).case !== ui.caseId) setTimeout(follows, 0); }   // an address that names its old state (a mark kept in view): the page goes where its record is
   render();
 });
 // thing.one-source: the demo's page stays the task you opened. Its state is the store's: when the task moves on elsewhere
 // (its card in its chat, a schedule, the demo's clock), the page moves with it; another task in the same state never takes it.
 let ownTitle = '', ownSig = '';
-const ownRow = () => (ownTitle ? (window.StillhetWorld?.rows?.() || []).find((r) => r.title === ownTitle) : null);
-const sigOf = () => { const r = ownRow(); return r ? [r.case, r.detail, r.stage].join('|') : ''; };
+const ownRow = () => (!LIVE_PAGE() && ui.taskId ? window.StillhetWorld?.task?.(ui.taskId) || null : null);   // stillhet.one-place: its one record, by its id
+const sigOf = () => { const r = ownRow(); return r ? [r.case, r.detail, r.stage, r.answered || '', (r.followUps || []).length].join('|') : ''; };
 const follows = () => {
-  if (LIVE_PAGE() || !ownTitle || !onPage()) return;
+  if (LIVE_PAGE() || !ui.taskId || !onPage()) return;
   const r = ownRow(); if (!r) return;
+  ownTitle = r.title;
   if (M.titles[ui.caseId] !== ownTitle && r.case === ui.caseId) M.titles[ui.caseId] = ownTitle;   // the store renamed the state after another task: this page keeps its own
   if (ui.busy || ui.dialog || ui.confirm) return;
-  if (r.case !== ui.caseId && M.cases.some((c) => c.id === r.case)) { const keep = ownTitle; M.titles[r.case] = keep; pick.value = r.case; pick.dispatchEvent(new Event('change')); return; }
+  if (r.case !== ui.caseId && M.cases.some((c) => c.id === r.case)) { const keep = ownTitle; M.titles[r.case] = keep; nextOwn = r.id; pick.value = r.case; pick.dispatchEvent(new Event('change')); return; }
   const sig = sigOf(); if (sig !== ownSig) { ownSig = sig; render(); }
 };
 if (SHELL) { window.StillhetWorld?.onMove?.(() => setTimeout(follows, 0)); window.StillhetWorld?.onChange?.(follows); }   // after the mover has finished its own writes
@@ -920,7 +928,25 @@ function placeOf(go) {
   const key = name ? ps.find((p) => p && (p.name === name || p.id === name))?.id || '' : '';
   return key ? { go: go.replace('{project}', key), say: `Opened ${name}` } : { go: 'projects', say: 'Opened Projects: its project is not in the list' };
 }
-const moved = (from, to, title, ask) => { document.dispatchEvent(new CustomEvent('stillhet:task-moved', { detail: { from, to, ask: ask || '', title } })); window.StillhetConversation?.taskMoved?.({ title, from, to }); };
+// stillhet.one-place: a step taken here moves the task's one record, by its id; its card in its chat, the bars, Pulse and
+// what needs you read it again through the store's onMove. An answer goes with it, so its question closes in its chat too.
+// The event stays for a page whose task is not in the store (a group); nothing reads a stored task's state from it.
+const STAGE_NAMES = ['Plan', 'Build', 'Review', 'PR', 'Merged'];
+const moved = (from, to, title, ask, answer, label) => {
+  const W = window.StillhetWorld, id = ui.taskId, r = id && W.task?.(id), st = M.stageOf?.(to) || {}, word = R.runState(M.stateOf(to)).word;
+  if (r) {
+    // where it is: a step that names a stage goes back there (Restart Build); a PR state is at its PR; else it stays at its own stage
+    const again = /^Restart (\w+)/.exec(label || ''), named = again ? STAGE_NAMES.findIndex((w) => w.toLowerCase() === again[1].toLowerCase()) : -1;
+    const stage = named >= 0 ? named : st.stage >= 3 || !Number.isInteger(r.stage) ? st.stage : r.stage, at = STAGE_NAMES[stage] || '';
+    const detail = named >= 0 ? `${at} runs again` : to === 'working' && at ? `${at} · carries on${answer ? ' with your answer' : ''}` : word;
+    if (answer) W.answer(id, answer, { to, detail, stage }); else W.move(id, to, detail, Object.assign(stage >= 0 ? { stage } : {}, to === 'paused-you' ? { was: from, wasDetail: r.detail } : {}));
+    ownSig = sigOf();
+  }
+  // with its record moved by id the event names no task: a listener that looks one up by state and name would move a namesake
+  document.dispatchEvent(new CustomEvent('stillhet:task-moved', { detail: { from, to, ask: ask || '', title: r ? '' : title, id: r ? id : '' } }));
+};
+// the answer picked or written on this page, in words, when the step that sends it is taken
+const answerNow = (label) => { if (!/^(Send answer|Answer)$/.test(label || '')) return ''; const a = M.view(ui.caseId, ui).ask; if (!a) return ''; return (ui.answerOwn || '').trim() || (a.options || [])[ui.answer ?? a.pick ?? 0] || ''; };
 function done(f, label) {
   ui.dialog = ''; ui.confirm = null; ui.menu = ''; ui.form = null;
   if (LIVE_PAGE()) {   // dev's state moves it: read the task again, and say what happened
@@ -936,10 +962,10 @@ function done(f, label) {
   if (f.leave) { if (SHELL) { window.StillhetShell.taskGone?.(ui.caseId, M.titles?.[ui.caseId]); ui = fresh('starting'); SHELL.go('runs'); window.StillhetPulse?.say(f.say); } else { goCase('deleted', {}); toast(f.say); } return; }
   if (f.fix) { ui.fixed = Object.assign({}, ui.fixed, { [f.fix]: true }); toast(f.say); pendingFocus = 'act-main'; return; }
   if (f.run) { f.run(); toast(f.say); pendingFocus = 'act-main'; }
-  else if (f.to) { const was = ui.caseId;
+  else if (f.to) { const was = ui.caseId, answer = answerNow(label);
     // a deep link to a state nobody is in: the task on this page joins the store first, so the step moves a row every count reads
-    if (SHELL && !M.titles?.[was]) { const v = M.view(was, ui); window.StillhetWorld.add({ id: `page-${Date.now().toString(36)}`, case: was, title: v.title, project: v.crumbs[1]?.t || '', detail: v.detail, peek: true }); }
-    if (SHELL && M.titles?.[was]) { M.titles[f.to] = M.titles[was]; if (M.branches?.[was]) M.branches[f.to] = M.branches[was]; if (M.asks?.[was]) M.asks[f.to] = M.asks[was]; if (M.whys) M.whys[f.to] = null; } goCase(f.to, f); toast(f.say); if (SHELL) moved(was, f.to, M.titles?.[f.to] || '', M.asks?.[was]); }   // on its page or lent to a card in a chat: the card, the bar, Pulse and In view follow
+    if (SHELL && !M.titles?.[was]) { const v = M.view(was, ui); ui.taskId = window.StillhetWorld.add({ id: `page-${Date.now().toString(36)}`, case: was, title: v.title, project: v.crumbs[1]?.t || '', detail: v.detail, peek: true }).id; }
+    if (SHELL && M.titles?.[was]) { M.titles[f.to] = M.titles[was]; if (M.branches?.[was]) M.branches[f.to] = M.branches[was]; if (M.asks?.[was]) M.asks[f.to] = M.asks[was]; if (M.whys) M.whys[f.to] = null; } goCase(f.to, f); toast(f.say); if (SHELL) moved(was, f.to, M.titles?.[f.to] || '', M.asks?.[was], answer, label); }   // on its page or lent to a card in a chat: the card, the bar, Pulse and In view follow
   else { toast(f.say); pendingFocus = pendingFocus || 'act-main'; }
 }
 // Why a step fails here (a mock's reasons); a failure keeps the state as it was.
@@ -1292,7 +1318,7 @@ document.addEventListener('click', (e) => {
   if (DP && !BOARD.hidden && DP.click(e)) return;
   const sl = SHELL && e.target.closest?.('#card [data-stage-line]');
   const fc = SHELL && e.target.closest?.('#card [data-from-chat], #card [data-from-ask]');
-  if (fc) { if (fc.dataset.fromChat && fc.dataset.key === 'from-follow' && window.StillhetConversation?.followUp?.({ title: M.view(ui.caseId, ui).title, cs: ui.caseId })) return;   /* its card's follow-up box, open and focused */
+  if (fc) { if (fc.dataset.fromChat && fc.dataset.key === 'from-follow' && window.StillhetConversation?.followUp?.({ run: ui.taskId || '', chat: fc.dataset.fromChat, title: M.view(ui.caseId, ui).title })) return;   /* its chat, the box focused and the task named */
     if (fc.dataset.fromChat) SHELL.go('chat/' + fc.dataset.fromChat); else window.StillhetConversation?.handOver({ about: { kind: 'Task', name: M.view(ui.caseId, ui).title }, ph: fc.dataset.fromAsk === 'follow' ? 'What should the follow-up do?' : 'Ask about this task' }); return; }
   if (sl) { const k = sl.dataset.stageLine, isOpen = M.view(ui.caseId, ui).stages.find((st) => st.selected)?.key === k && !ui.stageShut; ui.open = k; ui.stageShut = isOpen; ui.menu = ''; render(); return; }   // a stage's line opens its detail; on the open one, closes it
   if (SHELL && !SHELL.owns('run', e.target)) return;

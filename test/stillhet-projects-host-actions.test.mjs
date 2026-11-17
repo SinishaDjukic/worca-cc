@@ -31,7 +31,10 @@ test('the bar lists dev\'s projects, seed-moved reads Folder missing; while the 
   const names = h.w.StillhetProjects.list().map((p) => p.name);
   for (const n of ['seed-ok', 'seed-behind', 'seed-moved', 'seed-owned']) assert.ok(names.includes(n), n);
   assert.match(h.d.getElementById('bar-place').textContent, /seed-moved/);
-  assert.match(h.d.getElementById('bar-place').textContent, /Folder missing/);
+  // list.one-line: the row ends in the one word of what stops it; the words are its tooltip
+  const moved = [...h.d.querySelectorAll('#bar-place [data-row]')].find((r) => r.querySelector('.lr-t').textContent === 'seed-moved');
+  assert.equal(moved.querySelector(':scope > .lr-end > .lr-fig')?.textContent, 'Missing');
+  assert.match(moved.querySelector('[data-open]').title, /Folder missing/);
   assert.equal(h.w.StillhetPlaces.projects.has('anything'), false);
 });
 

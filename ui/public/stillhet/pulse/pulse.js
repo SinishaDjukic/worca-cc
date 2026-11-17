@@ -214,7 +214,7 @@ function topbar() {
 // In Updates the rail holds the mark (amber: still waits for you, blue: unread, nothing once read) and, while selecting,
 // the tick box in its place: one text edge for every list.
 function row({ dot, mark: own, title, meta, time, tip, key, check, unreadDot, resolved, flash, fix, fixTip, fixLand, fixBusy }) {
-  return R.pulseRow({ mark: own || (dot ? R.statusDot({ tone: dot }) : ''), title, meta, time, tip, id: key, check, unread: unreadDot, resolved, flash,
+  return R.pulseRow({ mark: own || (dot ? R.statusDot({ tone: dot }) : ''), title, meta, time, tip, id: key, check, unread: unreadDot, resolved, flash, keepLine: fix ? 'why it needs you' : '',   // list.one-line: only a row you act on from here keeps its reason
     action: fix ? R.button({ label: fix, kind: 'quiet', attrs: { ...(fixLand ? { 'data-land': fixLand } : { 'data-fix': key }), title: fixTip, disabled: !!fixBusy } }) : '' });
 }
 const dotOf = (u) => (u.sev === 'needs' && u.open ? 'is-amber' : '');
@@ -368,7 +368,7 @@ function acctMenu() {
       ${R.accountItem({ label: 'Keep awake', cls: 'sw-item', mark: svg('cup', 16, 'mi-ic'), sw: true, attrs: { role: 'menuitemcheckbox', 'aria-checked': String(!!ui.keep), 'data-sw': 'keep', title: 'Keeps the computer awake while tasks are working. The display may still turn off.' } })}
     </div>
     <div class="msect" role="group" aria-label="Usage">${raise}
-      ${R.accountItem({ label: 'Usage and costs', cls: 'pz-usage-item', hint: gone ? 'The budget' : top ? `${top.who}, ${top.what.toLowerCase()} limit` : c.budget ? 'Spent this month' : 'No limit reported', mark: gone ? gring(100, 'pz-mi-ring', 'over') : top ? gring(top.pct, 'pz-mi-ring', top.tone) : gring(0, 'pz-mi-ring', 'idle'), value: val, valueAlways: true, chev: svg('chevR', 14, 'mi-chev'), attrs: { ...sub('usage'), title: gone ? `Budget of ${M.usd(c.budget.limit)} used up: runs stay paused until it resets or you raise it` : top ? `Closest to its limit: ${top.line}` : 'Limits per harness and the spend' } })}
+      ${R.accountItem({ label: 'Usage and costs', cls: 'pz-usage-item', mark: gone ? gring(100, 'pz-mi-ring', 'over') : top ? gring(top.pct, 'pz-mi-ring', top.tone) : gring(0, 'pz-mi-ring', 'idle'), value: !gone && top && val ? `${top.who} ${val}` : val, valueAlways: true, chev: svg('chevR', 14, 'mi-chev'), attrs: { ...sub('usage'), title: gone ? `Budget of ${M.usd(c.budget.limit)} used up: runs stay paused until it resets or you raise it` : top ? `Closest to its limit: ${top.line}` : 'Limits per harness and the spend' } })}
     </div>
   ` }) + usageFly() + lvlFly() + lookFly();
 }
@@ -421,7 +421,7 @@ function lookFly() {
 }
 function lvlFly() {
   if (ui.sub !== 'lvl') return '';
-  return R.navFlyout({ label: 'Interface mode', cls: `lvl-menu pz-fly${inCls('sub')}`, body: `${back('Interface mode')}${LEVELS_UI.map(([id, t, h]) => R.menuItem({ text: t, checked: R.prefs.mode() === id, line: h }, { pickAttr: null, attrs: { 'data-level': id } })).join('')}` });
+  return R.navFlyout({ label: 'Interface mode', cls: `lvl-menu pz-fly${inCls('sub')}`, body: `${back('Interface mode')}${LEVELS_UI.map(([id, t, h]) => R.menuItem({ text: t, checked: R.prefs.mode() === id, line: h, keepLine: 'what the mode adds' }, { pickAttr: null, attrs: { 'data-level': id } })).join('')}` });
 }
 
 // ---- New run: where a limit is about to be spent, the one place it warns before starting ----

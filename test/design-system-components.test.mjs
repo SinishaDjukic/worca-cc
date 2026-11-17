@@ -251,9 +251,63 @@ test('listController: a row under another row is one line (list.child-row)', () 
   assert.equal(main('t').title, 'Add CSV export to billing\nNeeds you · Review asks which date format', 'the detail is its tooltip, with the full title');
   assert.equal(main('t').getAttribute('aria-label'), 'Add CSV export to billing, Needs you · Review asks which date format', 'and its name');
   assert.ok(!main('t').hasAttribute('data-cut-tip'), 'the tooltip stays when the title fits');
-  assert.equal(main('c').querySelector('.lr-m').textContent, 'Chat', 'a top-level row keeps its lines');
-  assert.equal(main('c').getAttribute('aria-label'), null);
-  assert.equal(main('p').querySelector('.lr-m').textContent, '1 task needs you', 'a child with no end word keeps its two lines');
+  // list.one-line: a top-level row and a row with no end word are one line too
+  assert.equal(main('c').querySelector('.lr-m'), null, 'a top-level row is one line');
+  assert.equal(main('c').title, 'Billing CSV export\nChat', 'its detail is its tooltip');
+  assert.equal(main('c').getAttribute('aria-label'), 'Billing CSV export, Chat', 'and its name');
+  assert.equal(end('c'), '14:32');
+  assert.equal(main('p').querySelector('.lr-m'), null, 'a child with no end word is one line');
+  assert.equal(main('p').title, 'web-app\n1 task needs you');
+  assert.equal(end('p'), undefined, 'with nothing at its end');
+});
+
+test('listController (list.one-line): keepLine keeps a named second line; facts are the tooltip, one a line; two rows on screen with one title end in what tells them apart', () => {
+  const d = new JSDOM('<body><div id="r"></div></body>', { pretendToBeVisual: true }).window.document, root = d.getElementById('r');
+  const rows = [{ key: 'a', title: 'Retry on 502', facts: ['Failed', 'web-app', 'PR #962', '11:20'], state: 'failed', apart: 'web-app' },
+    { key: 'b', title: 'Retry on 502', facts: ['Merged', 'billing-api'], end: 'Mon', apart: 'billing-api' },
+    { key: 'c', title: 'Docs sync', meta: 'Missed its time · docs-site', endWord: 'Missed', apart: 'docs-site' },
+    { key: 'k', title: 'Kept', meta: 'Why it waits', keepLine: 'why it waits', end: 'now' },
+    { key: 'p', title: 'Plain', end: 'now' }];
+  C.listController({ root, spec: { noun: `one-${Math.random()}`, label: 'x', can: () => [], bulk: () => [], act: () => {}, word: () => false, say: () => {}, active: () => true, open: () => {}, view: () => ({ state: 'ready', parts: [], sections: [{ id: 's', title: 'S', rows }] }) } }).paint();
+  const row = (k) => root.querySelector(`[data-row="${k}"]`), main = (k) => row(k).querySelector(':scope > .lr-main'), end = (k) => row(k).querySelector(':scope > .lr-end > .lr-fig')?.textContent;
+  assert.equal(main('a').title, 'Retry on 502\nFailed\nweb-app\nPR #962\n11:20', 'one fact a line');
+  assert.deepEqual([end('a'), end('b')], ['web-app', 'billing-api'], 'the same title on screen twice: the project is the end word');
+  assert.equal(end('c'), 'Missed', 'a title on screen once keeps its own end word');
+  assert.equal(root.querySelectorAll('.lr-m').length, 1, 'one second line in the list');
+  assert.equal(main('k').querySelector('.lr-m').textContent, 'Why it waits');
+  assert.equal(row('k').dataset.keepLine, 'why it waits', 'the kept line says which fact it holds');
+  assert.equal(main('p').getAttribute('aria-label'), null, 'a row with no detail is as before');
+});
+
+test('list.one-line: a row, a menu item, a settings row and a Pulse row given a detail draw no second line unless keepLine names its fact', () => {
+  const none = (html, sel) => assert.equal(dom(html).querySelector(sel), null, `${sel} is not drawn`);
+  none(C.listRow({ title: 'Bug fix', meta: 'Any project · Fix workflow', open: { 'data-open': 'p' } }), '.lr-m');
+  none(C.listRow({ title: 'Bug fix', hint: 'Any project · Fix workflow' }), '.lr-m');
+  none(C.listRow({ title: 'Bug fix', meta: 'Any project', keepLine: '' }), '.lr-m');
+  none(C.listRow({ title: 'Bug fix', meta: 'Any project', keepLine: true }), '.lr-m');   // a fact has a name
+  none(C.menuItem({ text: 'Archive', line: 'Takes it out of Tasks' }), '.mi-line');
+  none(C.settingsRow({ name: 'Budget', value: '$1,000 a month', note: 'All tasks pause when it is spent' }), '.set-note');
+  none(C.pulseRow({ title: 'Tidy', meta: 'worca-cc · Build', time: '12:00', tip: 'Opens it', id: 'x' }), '.pz-row-m');
+  const kept = [[C.listRow({ title: 'Bug fix', meta: 'Any project', keepLine: 'its scope' }), '.lr-m'], [C.menuItem({ text: 'Advanced', line: 'Adds schedules', keepLine: 'what the mode adds' }), '.mi-line'],
+    [C.settingsRow({ name: 'Budget', value: '$1,000 a month', note: 'All tasks pause when it is spent', keepLine: 'what a spent budget does' }), '.set-note'], [C.pulseRow({ title: 'Tidy', meta: 'Review asks', keepLine: 'why it needs you', time: '', tip: '', id: 'x' }), '.pz-row-m']];
+  for (const [html, sel] of kept) { const el = dom(html); assert.ok(el.querySelector(sel), `${sel} is drawn with keepLine`); assert.ok(el.matches('[data-keep-line]') || el.querySelector('[data-keep-line]'), `${sel}: the kept fact is named in the markup`); }
+});
+
+test('list.one-line: the detail that is not drawn is the tooltip and the description a screen reader hears', () => {
+  const r = dom(C.listRow({ title: 'Bug fix', meta: 'Any project · Fix workflow', open: { 'data-open': 'p', title: 'Opens Bug fix' } })).querySelector('.lr-main');
+  assert.equal(r.title, 'Opens Bug fix\nAny project · Fix workflow'); assert.equal(r.getAttribute('aria-description'), 'Any project · Fix workflow');
+  const v = dom(C.listRow({ title: 'Bug fix', value: 'Any project · Fix workflow', hint: 'Updated 3 Oct' }));
+  assert.equal(v.querySelector('.lr-main > .lr-t + .lr-v').textContent, 'Any project · Fix workflow', 'a value sits on the row\'s one line, after the title');
+  assert.equal(v.querySelector('.lr-main').title, 'Any project · Fix workflow\nUpdated 3 Oct'); assert.equal(v.getAttribute('aria-description'), 'Any project · Fix workflow, Updated 3 Oct');
+  const m = dom(C.menuItem({ text: 'Archive', line: 'Takes it out of Tasks', help: 'Undo brings it back' }));
+  assert.equal(m.title, 'Takes it out of Tasks\nUndo brings it back'); assert.equal(m.getAttribute('aria-description'), 'Takes it out of Tasks');
+  const s = dom(C.settingsRow({ name: 'Budget', help: 'For every project', value: '$1,000 a month', note: 'All tasks <b>pause</b> when it is spent' }));
+  assert.equal(s.querySelector('.set-name').title, 'For every project\nAll tasks pause when it is spent', 'the note joins the name\'s tooltip, as text');
+  assert.equal(s.querySelector('.set-text > .set-said').textContent, 'All tasks pause when it is spent', 'and stays in the row for a screen reader');
+  const f = dom(C.settingsRow({ name: 'Away mode', value: '22:00 to 07:00', note: 'Worca answers in these hours', fold: { open: false } })).querySelector('.set-open');
+  assert.equal(f.getAttribute('aria-description'), 'Worca answers in these hours'); assert.equal(f.title, 'Worca answers in these hours');
+  const p = dom(C.pulseRow({ title: 'Tidy', meta: 'worca-cc · Build', time: '12:00', tip: 'Opens it', id: 'x' })).querySelector('.pz-row-main');
+  assert.equal(p.title, 'Tidy\nworca-cc · Build\nOpens it'); assert.equal(p.getAttribute('aria-description'), 'worca-cc · Build');
 });
 
 test('listController: the arrows on a reply\'s code block or table scroll it, not the list', () => {
@@ -654,14 +708,15 @@ test('switchButton, settingsRow and settingsSection: the row owns its parts, the
   assert.equal(sec.querySelectorAll('.set-rows > .set-row').length, 1);
 });
 
-test('listRow: the mark on the rail, title and meta, a figure and the ⋯ at the right; the whole row opens its target', () => {
+test('listRow: the mark on the rail, the title, a figure and the ⋯ at the right, the detail as its hint; the whole row opens its target', () => {
   const r = dom(C.listRow({ title: 'Bug fix <x>', meta: 'Any project · Fix workflow', mark: C.statusDot({ tone: 'is-green' }), endText: '14:32', end: '<button class="btn">⋯</button>', open: { 'data-open': 'p1', title: 'Open Bug fix' } }));
   assert.equal(r.className, 'list-row');
   assert.ok(r.querySelector('.lr-rail > .status-dot.is-green'));
   const main = r.querySelector('button.lr-main');
   assert.equal(main.dataset.open, 'p1');
   assert.equal(r.querySelector('.lr-t').textContent, 'Bug fix <x>');
-  assert.equal(r.querySelector('.lr-m').textContent, 'Any project · Fix workflow');
+  assert.equal(r.querySelector('.lr-m'), null, 'one line (list.one-line)');
+  assert.equal(main.title, 'Open Bug fix\nAny project · Fix workflow');
   assert.equal(r.querySelector('.lr-fig').textContent, '14:32');
   assert.equal(dom(C.listRow({ title: 'Only shows' })).querySelector('button'), null, 'no target, no button');
 });

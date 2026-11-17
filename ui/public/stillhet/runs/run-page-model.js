@@ -570,11 +570,14 @@
   // TITLES) keeps what is its own: its branch, chat, time, cost, line, findings, question and what broke, read from its
   // row in the store and its card in its chat. What the task has none of is left out, never lent from the case's sample.
   const titleOf = (c) => (c.movedFrom && c.title) || TITLES[c.id] || c.title || '';
-  function ownOf(title) {
-    const W = window.StillhetWorld; if (!title || !W || W.live) return null;
-    const row = (W.rows?.() || []).find((r) => r.title === title) || null;
+  // stillhet.one-place: with the task's id (the page knows it once it is open) its row and its card are found by the id,
+  // never by a name; the name is only the way in for a view that has no id (a case explorer, a test).
+  function ownOf(title, id) {
+    const W = window.StillhetWorld; if ((!title && !id) || !W || W.live) return null;
+    const row = (id && (W.task?.(id) || (W.rows?.() || []).find((r) => r.id === id))) || (id ? null : (W.rows?.() || []).find((r) => r.title === title)) || null;
+    const is = (t) => t.kind !== 'schedule' && (id ? t.run === id : t.title === title);
     let task = null, chat = null;
-    for (const ch of window.StillhetChats?.data?.().chats || []) { const walk = (l) => { for (const t of l || []) { if (t.kind !== 'schedule' && t.title === title) return t; const f = walk(t.after); if (f) return f; } return null; }; const t = walk(ch.tasks); if (t) { task = t; chat = ch; break; } }
+    for (const ch of window.StillhetChats?.data?.().chats || []) { const walk = (l) => { for (const t of l || []) { if (is(t)) return t; const f = walk(t.after); if (f) return f; } return null; }; const t = walk((ch.tasks || []).filter((y) => !y.followed)); if (t) { task = t; chat = ch; break; } }
     if (!row && !task) return null;
     let question = null;
     if (task && chat) { try { const q = (window.ChatsListModel?.thread?.(chat) || []).find((x) => x.t === 'question' && x.task === task.id && x.options); if (q) question = { q: q.text, why: '', options: q.options, pick: q.pick || 0 }; } catch { /* a chat with no thread to read */ } }
@@ -823,7 +826,7 @@
     let c = resolve(g ? asMember(c0, g, par.index) : c0, ui);
     const seed = seedOf(c);
     if (seed) c = Object.assign({}, c, { stages: c.stages.map((st) => Object.assign({}, st, { subs: st.subs.map((x) => (x.live && /breadcrumb/i.test(x.live) ? Object.assign({}, x, { live: x.state === 'ask' && seed.question ? seed.question.q : seed.plan[Math.min(2, seed.plan.length - 1)] }) : x)) })) });
-    const own = !c.liveId && !g && !c.runCases && !c.stages.some((x) => x.run) ? ownOf(titleOf(c)) : null;
+    const own = !c.liveId && !g && !c.runCases && !c.stages.some((x) => x.run) ? ownOf(titleOf(c), ui.taskId || '') : null;
     if (own) c = lend(c, own, titleOf(c));
     // A group held up by one of its runs reads from that run, and says which.
     const hold = groupHold(c);

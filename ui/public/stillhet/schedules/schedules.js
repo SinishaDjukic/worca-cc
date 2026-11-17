@@ -184,17 +184,25 @@
       once ? '' : paused ? btn('Resume', { 'data-sched-resume': s.id }, 'Runs at its times again', true) : btn('Pause', { 'data-sched-pause': s.id }, 'Skips its times until you resume it'),
       once || paused ? '' : btn(skip.text, { 'data-sched-skip': s.id }, skip.help),
     ].join('');
-    const change = s.ended ? '' : btn('Change it in chat', { 'data-sched-chat': s.id }, s.chat ? 'Opens its chat, to say what should change' : 'Opens a chat about it, to say what should change');
+    const change = s.ended ? '' : btn('Change in its chat', { 'data-sched-chat': s.id }, 'Opens its chat with its form; the change is proposed there before it applies');
     // the state head follows the alert ladder as a task's does: a missed time, or a task of its that waits on you, is a Caution
     const level = missedNow || waitsOnYou(s) ? 'act' : '';
     const items = [{ id: 'in-view', text: window.StillhetShell?.inView.has('schedule', s.id) ? 'Out of view' : 'Keep in view', help: 'Its mark in the top bar, on every page' }, { sep: true }, { id: 'delete', text: 'Delete', danger: true, help: 'Removes the schedule; the tasks it ran stay. Undo in the notice' }];
     return `<div class="convo"><div class="convo-scroll"><div class="convo-col">${R.placeHead({ center: { label: 'Schedules', to: 'schedules' }, title: s.title, actions: change, facts: `${esc(s.project || 'No project')} · ${esc(flowWord(s))}${(s.labels || []).map((l) => R.chip({ text: l })).join('')}`, mark: R.kindMark({ kind: 'schedule', tone: level || toneOf(s), title: word(s) }), tone: level, word: word(s), why: `${why(s)}${s.chat ? ' · from a chat' : ''}`,   /* the word already says it */ action, menu: R.moreMenu({ id: 'sc-more', label: `More for ${s.title}`, icon: R.icon('more', 16), open: menu === 'sc-more', items }) })}
       <div class="sched-form">${facts}${F.readback(readback(s))}</div>
       ${cards || (missedNow ? '' : R.emptyState({ title: 'It has not run yet.' }))}
-    </div></div></div>`;   // no chat box here (a schedule's page is for inspecting): "Change it in chat" in its head leads there
+    </div></div></div>`;   // no chat box here (a schedule's page is for inspecting): "Change in its chat" in its head leads there
   }
-  // Change it in chat: its own chat with the schedule in focus, or, with no chat yet, Chat's composer with the schedule as its chip
+  // Change in its chat: its chat, with its form open (the live kind: its chat with the schedule in focus, or Chat's composer with the schedule as its chip)
   function toChat(s) {
+    // stillhet.chat-first: the page has no edit form of its own. Its chat opens with the schedule's form; what you save
+    // there is proposed in the chat and applies on Apply (panel.schedule-change). A schedule with no chat gets one.
+    const C = window.StillhetConversation, cid = !LIVE() && C?.scheduleChat ? C.scheduleChat(s.id, { make: true }) : '';
+    if (cid) {
+      const form = () => { window.StillhetCenters?.editSchedule?.(s.id, { chat: cid }); };
+      if (location.hash === `#chat/${cid}`) form(); else { addEventListener('hashchange', () => setTimeout(form, 0), { once: true }); window.StillhetShell.go(`chat/${cid}`); }
+      return;
+    }
     if (s.chat) { window.StillhetShell.go(`chat/${s.chat}`); requestAnimationFrame(() => requestAnimationFrame(() => window.StillhetConversation?.focus?.({ id: s.id }))); return; }
     window.StillhetConversation?.handOver?.({ mode: 'ask', about: { kind: 'Schedule', name: s.title }, ph: `What should change in ${s.title}?`, project: s.project || undefined });
   }

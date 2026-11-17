@@ -102,5 +102,7 @@ test('F-W3a2-06: the head and the bar row count the same waits; a stopped run is
   assert.equal([...page(h.d).querySelectorAll('.lr-t')].map((r) => r.textContent.trim())[0], 'Missed one');
   const row = bar(h.d).querySelector('[data-row="proj:web-1"]');
   assert.ok(row, text(bar(h.d)).slice(0, 300));
-  assert.match(text(row), /1 task needs you/, 'the bar row says the head\'s count');
+  // list.one-line: the row ends in the count, and its tooltip says it in words
+  assert.equal(row.querySelector(':scope > .lr-end > .lr-fig')?.textContent, '1', 'the bar row ends in the head\'s count');
+  assert.match(row.querySelector('[data-open]').title, /1 task needs you/, 'and says it in its tooltip');
 });

@@ -6,7 +6,7 @@ import { attrs, esc } from './html.mjs';
 import { compactMenu } from './compact-menu.mjs';
 import { button } from './button.mjs';
 import { tooltip } from './field.mjs';
-import { row } from './row.mjs';
+import { row, keepsLine } from './row.mjs';
 import { icon } from './icons.mjs';
 
 /**
@@ -108,7 +108,9 @@ export function rowPicker({ id, label, text, items = [], open = false, showLabel
  * @param {object} o
  * @param {string} o.name
  * @param {string} [o.value]    markup: the row's value, short ("$1,000 a month")
- * @param {string} [o.note]     markup: one supporting line ("All tasks pause when it is spent")
+ * @param {string} [o.note]     markup: what the control does, when the name alone does not say it. Beside a `value` it is the
+ *   row's hint (the name's tooltip, and a description a screen reader hears), never a second line, unless `keepLine` (list.one-line)
+ * @param {string} [o.keepLine] the fact the line under the value holds that the name and the value cannot say ("when a task pauses")
  * @param {string} [o.sentence] the old name of `note`: a row that only explains itself
  * @param {string} [o.picks]    markup: RowPickers with their labels, in a line under the supporting line (two or more choices)
  * @param {string} [o.end]      markup at the right: a Switch, one RowPicker, buttons
@@ -120,14 +122,19 @@ export function rowPicker({ id, label, text, items = [], open = false, showLabel
  * @param {{open:boolean, label?:string, attrs?:object, help?:string}} [o.fold]  the row opens in place: the whole line is its trigger; `label` names what it holds ("Paired browsers") when that is not fine-tuning
  * @param {object} [o.attrs]
  */
-export function settingsRow({ name, value = '', note = '', sentence = '', picks = '', end = '', changed = false, help = '', detailRows = '', detail = '', detailAction = '', fold = null, attrs: a = {} }) {
-  const say = note || sentence;
+export function settingsRow({ name, value = '', note = '', sentence = '', picks = '', end = '', changed = false, help = '', detailRows = '', detail = '', detailAction = '', fold = null, keepLine = '', attrs: a = {} }) {
+  // list.one-line: with a value on the row, the line under it is the row's hint unless its fact is named
+  const hidden = !!value && !!(note || sentence) && !keepsLine(keepLine);
+  const said = hidden ? String(note || sentence).replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'") : '';
+  const say = hidden ? '' : note || sentence;
+  if (said) help = [help, said].filter(Boolean).join('\n');
+  if (value && say) a = { 'data-keep-line': keepLine, ...a };
   const all = (detailRows ? `<div class="set-rows">${detailRows}</div>` : '') + detail + (detailAction ? `<div class="set-foot">${detailAction}</div>` : '');
   const shown = fold ? (fold.open ? all : '') : all;
   // the whole line is the trigger: one button under the row's words, so the controls at its end stay their own
-  const opener = fold ? `<button type="button" class="set-open"${attrs({ 'aria-expanded': String(!!fold.open), 'aria-label': `${name}: ${fold.label || 'more settings'}`, title: fold.help || help || null, ...(fold.attrs || {}) })}></button>` : '';
+  const opener = fold ? `<button type="button" class="set-open"${attrs({ 'aria-expanded': String(!!fold.open), 'aria-label': `${name}: ${fold.label || 'more settings'}`, 'aria-description': said || null, title: [fold.help, said].filter(Boolean).join('\n') || help || null, ...(fold.attrs || {}) })}></button>` : '';
   const chev = fold ? `<span class="set-chev" aria-hidden="true">${icon('chevR', 14)}</span>` : '';
-  const text = `${opener}<span class="set-name"${attrs({ title: fold ? null : help || null })}>${esc(name)}${changedDot(changed)}</span><span class="set-text">${value ? `<span class="set-value">${value}</span>` : ''}${say ? `<span class="set-note">${say}</span>` : ''}${picks ? `<span class="set-picks" role="group"${attrs({ 'aria-label': name })}>${picks}</span>` : ''}</span>`;
+  const text = `${opener}<span class="set-name"${attrs({ title: fold ? null : help || null })}>${esc(name)}${changedDot(changed)}</span><span class="set-text"${attrs({ title: said && !fold ? said : null })}>${value ? `<span class="set-value">${value}</span>` : ''}${said ? `<span class="set-said">${esc(said)}</span>` : ''}${say ? `<span class="set-note">${say}</span>` : ''}${picks ? `<span class="set-picks" role="group"${attrs({ 'aria-label': name })}>${picks}</span>` : ''}</span>`;
   return row({ kind: 'setting', cls: fold ? `is-opens${fold.open ? ' is-open' : ''}` : '', text, end: `${end}${chev}`, after: shown ? `<div class="set-detail" data-motion="open">${shown}</div>` : '', attrs: a });
 }
 

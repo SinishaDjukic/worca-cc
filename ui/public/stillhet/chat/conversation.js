@@ -49,7 +49,7 @@
   let liveLabels = [];
   const offeredLabels = (c) => (LIVE() ? [...new Set([...liveLabels, ...(c.labels || [])])] : LABELS);
   const toggledLabel = (c, v) => ((c.labels || []).includes(v) ? [(c.labels || []).filter((l) => l !== v), `Removed the label ${v}`] : [[...(c.labels || []), v], `Labelled ${v}`]);
-  const put = (c, t) => { if (!t || t.kind === 'schedule') return; M.link(c || { project: '' }, t); window.StillhetWorld.move(t.run, t.case, t.detail, { stage: t.stage, title: t.title }); };
+  const put = (c, t) => { if (!t || t.kind === 'schedule') return; M.link(c || { project: '' }, t); window.StillhetWorld.move(t.run, t.case, t.detail, { stage: t.stage, title: t.title, was: t.was || '', wasDetail: t.wasDetail || '' }); };
   // a task that starts sets up its worktree, then plans: Starting gives way to Plan by itself
   const settleStart = (c, t) => {
     const step = (ms, from, to) => setTimeout(() => { if (t.case !== from || t.stage !== (from === 'starting' ? 0 : to.after)) return; Object.assign(t, to.set); put(c, t); refreshAll(); }, ms);
@@ -96,7 +96,10 @@
   }
   // the first screen points a newcomer to Getting started until its sign-in is done; then it says nothing
   const newHere = () => { const gs = data().chats.find((c) => c.id === 'c0' && !c.archived); if (!gs || threads.get('c0')?.find((y) => y.id === 'g1')?.done) return ''; return `<p class="chat-home-new">New here? ${R.textLink({ label: 'Getting started', attrs: { 'data-back-to': 'chat/c0', title: 'Opens Getting started: sign in, add a project, then your first task' } })} signs you in and adds your first project.</p>`; };
-  const turns = () => { const c = chat(); if (!c) return []; if (LIVE()) return liveTurns(c.id); if (!threads.has(c.id)) threads.set(c.id, M.thread(c)); return threads.get(c.id); };
+  // stillhet.one-place: a task's answer is in its one record (StillhetWorld.answer), written here or on its page; the question
+  // under its card reads it, so a question answered on the page is answered here too. A task that asks again is left open.
+  const hearAnswers = (c, l) => { for (const t of allTasks(c)) { const r = t.run && window.StillhetWorld.find(t.run); if (!r?.answered || r.case === 'question') continue; const q = l.find((y) => y.t === 'question' && y.task === t.id && !y.answered); if (q) q.answered = r.answered; } return l; };
+  const turns = () => { const c = chat(); if (!c) return []; if (LIVE()) return liveTurns(c.id); if (!threads.has(c.id)) threads.set(c.id, hearAnswers(c, M.thread(c))); return threads.get(c.id); };
   const allTasks = (c) => { const out = []; const walk = (x) => { out.push(x); (x.after || []).forEach(walk); }; (c?.tasks || []).forEach(walk); return out; };
   // The live TaskCard (Tasks D3): the card's branch, base, case, failure and PR facts are task-live's taskCardOf, the same
   // input the task page reads, so the card and the page show one state. Its detail is read once per task.
@@ -601,7 +604,9 @@
     const action = t.case === 'scheduled' ? R.button({ label: 'Start now', attrs: { 'data-start-now': t.id } }) + R.button({ label: 'Cancel', kind: 'quiet', attrs: { 'data-cancel-task': t.id } })
       : sched && t.gone ? ''   // deleted: the card says so, nothing left to run or open
       : sched ? (t.time === 'Paused' ? R.button({ label: 'Resume', attrs: { 'data-sched-card': `${t.id}|pause`, title: 'Runs again on its repeat' } }) : '') + (t.time === 'Paused' ? '' : R.button({ label: 'Run now', attrs: { 'data-sched-card': `${t.id}|run`, disabled: window.StillhetSchedules?.running(t.id), title: window.StillhetSchedules?.running(t.id) ? 'Its task is running; it can start again when that ends' : null } })) + (expert ? R.button({ label: 'Open', kind: 'quiet', attrs: { 'data-open-sched': t.id } }) : sidePanel() ? R.button({ label: 'Open', kind: 'quiet', attrs: { 'data-open-sched': t.id, title: 'Its page: when it runs and how its tasks went' } }) : R.button({ label: x.open ? 'Hide its tasks' : 'Show its tasks', kind: 'quiet', attrs: { 'data-open-task': t.id, 'aria-expanded': String(!!x.open) } }))
-        + cardMore(t, [{ id: paused ? 'Resume' : 'Pause', text: paused ? 'Resume' : 'Pause', help: paused ? 'Runs at its times again' : 'Skips its times until you resume it' }, { id: 'Skip', ...window.StillhetSchedules?.skipItem(t.id) }, { id: 'Edit…', text: 'Edit…', help: 'Changes when it runs and what it does' }, { sep: true }, { id: 'Delete', text: 'Delete', danger: true, help: 'Removes the schedule; the tasks it ran stay. Undo in the notice' }])
+        // stillhet.chat-first: a schedule is changed here. The last thing in the thread offers it as a quiet button too; its ⋯ always does
+        + (turns()[turns().length - 1] === x && !window.StillhetSchedules?.find(t.id)?.ended ? R.button({ label: 'Edit schedule…', kind: 'quiet', attrs: { 'data-sched-card': `${t.id}|edit`, title: 'Opens its form; the change is proposed here before it applies' } }) : '')
+        + cardMore(t, [{ id: paused ? 'Resume' : 'Pause', text: paused ? 'Resume' : 'Pause', help: paused ? 'Runs at its times again' : 'Skips its times until you resume it' }, { id: 'Skip', ...window.StillhetSchedules?.skipItem(t.id) }, { id: 'Edit schedule…', text: 'Edit schedule…', help: 'Opens its form; the change is proposed here before it applies' }, { sep: true }, { id: 'Delete', text: 'Delete', danger: true, help: 'Removes the schedule; the tasks it ran stay. Undo in the notice' }])
         : R.button({ label: 'Open', kind: 'quiet', attrs: { 'data-open-task': t.id } });
     const runs = sched && x.open && !expert && !sidePanel() ? window.StillhetSchedules?.find(t.id)?.runs || [] : [];   // stillhet.stay-in-chat: its runs under its card
     const S = sched && window.StillhetSchedules?.find(t.id) ? window.StillhetSchedules : null;   // a schedule's card reads its own word and why (wordOf / nextOf), as its page does
@@ -613,6 +618,8 @@
   const CTX_DEMO = { base: 'dev', pr: '#1180', reset: '17:00', branch: 'feat/billing-csv-export', at: '14:00', value: '$40' };
   const cardCtx = (t) => (LIVE() ? ctxOf(t) : CTX_DEMO);
   const taskId = (t) => t.pid || t.run || '';   // a task's page is its own id (its pipeline id first), never its case
+  // stillhet.one-place: its page opens on this very task, by its id in the one store, so the page and this card read one record
+  const openPage = (t) => { window.StillhetRunPage?.ofTask?.(t.run || ''); window.StillhetShell.openTaskPage(t.case, chatId, t.title, taskId(t)); };
   const labelsOf = (t) => RM.stageOf?.(t.case)?.labels || STAGES;   // panel.task-card: its page's stage list (a task with no PR ends at Done)
   // every stage done: merged, or a task with no PR stage that finished (tone done) where its page's last stage is done.
   // A no-PR case with tone ok (push, folder, a feature) still has its last stage to come, as on its page.
@@ -648,8 +655,8 @@
     const ANY = { 'Send a direction': {}, 'View changes': {}, Restore: { say: 'The record is back in Tasks' }, Pause: live.pauseNow, Stop: live.stop, 'Report this task': live.report, Archive: live.archive, 'Save as preset': { dialog: 'preset', say: 'Saved as a preset: {value}' }, 'Run after…': { dialog: 'after', say: `{value} starts after ${t.title}` }, 'Start a follow-up': { followUp: true }, 'Tell Worca how to fix it': { followUp: true, fix: true }, 'Ask Worca to fix it': { autofix: true }, 'Show the log': { page: true }, 'Label…': { dialog: 'label', say: 'Labelled {value}' }, 'Move to group…': { dialog: 'group', say: 'Moved to {value}' } };
     const f = R.actionFlow(RM.stateOf(t.case), { ...ctx, would: LIVE() ? (p) => p : window.StillhetWould })[label] || ANY[label];   // D12: live, StillhetChatLive.flow carries it out (doAct)
     if (!f || !offers(t, label)) { if (!LIVE()) say(label); return; }   // live: a card offers only what it can do (FLOW)
-    if (label === 'View changes' && !LIVE()) { window.StillhetRunPage?.openDiff(''); window.StillhetShell.openTaskPage(t.case, chatId, t.title, taskId(t)); return; }   // its whole diff, on its page
-    if (f.page) { if (R.shows('expert')) window.StillhetShell.openTaskPage(t.case, chatId, t.title, taskId(t)); else openHere(t, 'log'); return; }
+    if (label === 'View changes' && !LIVE()) { window.StillhetRunPage?.openDiff(''); openPage(t); return; }   // its whole diff, on its page
+    if (f.page) { if (R.shows('expert')) openPage(t); else openHere(t, 'log'); return; }
     if (f.autofix && LIVE()) { busyFor(`[data-card-act="${t.id}|${label}"]`, CL().act('changes', { threadId: chatId, pipelineId: t.pid || t.run, text: `Fix what failed: ${(t.why || []).map((w) => w.replace(/^✗\s*/, '')).join('; ') || t.detail}` }).then((r) => { if (r.ok) say('Sent to Worca: it fixes what failed'); return r; })); return; }   // dev's Ask for changes, with what failed
     if (f.autofix && !LIVE()) { fixTry(t, 1); return; }   /* the log lives on its page, under What broke */
     if (label === 'Send a direction') { const x = turns().find((y) => y.task === t.id && y.t === 'task'); if (x) { x.directing = true; paint(); root.querySelector(`[data-direction="${CSS.escape(x.id)}"]`)?.focus(); } return; }
@@ -691,6 +698,8 @@
       return;
     }
     if (f.to === 'paused-you' && !t.was) { t.was = t.case; t.wasDetail = t.detail; }   // Resume goes back to where it was
+    const held = runOfT(t)?.was || '';   // paused on its page: the record says where it was
+    if (/^Resume/.test(label) && !t.was && held && RM.cases?.some?.((c) => c.id === held)) { t.was = held; t.wasDetail = runOfT(t).wasDetail || `${STAGES[Math.max(0, t.stage)] || 'Plan'} · carries on`; }
     if (/^Resume/.test(label) && t.was) { t.case = t.was; t.detail = t.wasDetail; t.was = ''; }
     else if (f.to && RM.cases?.some?.((c) => c.id === f.to)) {
       t.case = f.to; t.detail = `${STAGES[Math.max(0, t.stage)] || 'Plan'} · carries on`;   /* the kicker says the state; the line says where it is */
@@ -1052,7 +1061,7 @@
       const diff = x.diff && x.diffOpen ? R.list({ groups: [{ title: `The diff · ${x.diff.length} files`, rows: x.diff.map(([f, n]) => R.listRow({ title: f, meta: n, mark: R.kindMark({ kind: 'plugin', icon: 'file' }), open: doOr(`open ${f}: its lines, added and removed`, 'diff', { pipelineId: x.run || '' }) })) }] }) : '';
       if (x.done) return R.turnRow({ mark: R.icon('check', 14), text: `<b>${esc(x.title)}</b> ${esc(x.done)}` });
       const cfm = x.confirmDelete ? R.turnRow({ mark: R.kindMark({ kind: 'task', tone: 'ask', size: 16 }), text: `<b>${esc(x.confirmDelete)}?</b> Its times end; the tasks it ran stay`, end: R.button({ label: 'Delete', kind: 'quiet', cls: 'is-danger', attrs: { 'data-chg-yes': x.id } }) + R.button({ label: 'Cancel', kind: 'quiet', attrs: { 'data-chg-no': x.id } }) }) : '';   // act.confirm
-      const cpMenu = R.moreMenu({ id: `chg:${x.id}`, label: `More for ${x.title}`, icon: R.icon('more', 16), open: menu === `chg:${x.id}`, items: [...(x.menuItems || []), 'Ask about it', ...(x.actions?.some(([l]) => l === 'Not now') ? [] : ['Not now'])] });   // the card's own Not now is enough
+      const cpMenu = R.moreMenu({ id: `chg:${x.id}`, label: `More for ${x.title}`, icon: R.icon('more', 16), open: menu === `chg:${x.id}`, items: [...(x.menuItems || []), 'Ask about it', ...(x.actions?.some(([l]) => l === 'Not now' || l === 'Discard') ? [] : ['Not now'])] });   // the card's own Not now (a form's change: Discard) is enough
       return askChanges(x) ? R.changeProposal({ menu: cpMenu, actions: acts, facts: flowFacts, second: once, kind: x.kind, title: x.title, why: x.why || '', rows: x.rows || [], body: story + graph + choice + diff, state: x.state, apply: x.apply || 'Apply', hooks: { apply: { 'data-cp-apply': x.id }, decline: { 'data-cp-decline': x.id }, revert: LIVE() && !x.revert ? null : { 'data-cp-revert': x.id } }, attrs: { 'data-anchor': x.id } }) + askChanges(x) + cfm : cfm + R.changeProposal({ menu: cpMenu, actions: acts, facts: flowFacts, second: once, kind: x.kind, title: x.title, why: x.why || '', rows: x.rows || (x.graph && !isFlow ? STEPS.map(([k, v]) => ({ name: k, before: '', after: v })) : []), body: story + graph + choice + project + diff, state: x.state, apply: x.apply || 'Apply', hooks: { apply: { 'data-cp-apply': x.id }, decline: { 'data-cp-decline': x.id }, revert: LIVE() && !x.revert ? null : { 'data-cp-revert': x.id } }, attrs: { 'data-anchor': x.id } });
     }
     if (x.t === 'think') return R.thinkingRow({ done: true, secs: (x.text.match(/\d+s/) || ['a moment'])[0], steps: x.steps || THOUGHT, open: opened.has(i), attrs: fold() });
@@ -1363,7 +1372,9 @@
     const list = threads.get(c.id), n = Date.now().toString(36);
     const intent = comp.intent || '';
     const handed = aboutNow(); list.push({ t: 'you', id: `y${n}`, text, when: 'now', refs: comp.refs || [], files: [...(handed ? [`${handed.kind} · ${handed.name}`] : []), ...(comp.mode === 'task' ? [] : comp.files)] }); comp.about = null;   // a task's files go on its proposal
-    if (comp.mode === 'task') {   // one way to start a task: the proposal, checked, then Start
+    const fuTask = handed?.kind === 'Task' && handed.run ? allTasks(c).find((y) => y.run === handed.run) : null;
+    if (fuTask) { list.pop(); followUpOn(fuTask, text, list, list.length); say('Follow-up proposed'); }   // its page's follow-up: the same proposal as under its card
+    else if (comp.mode === 'task') {   // one way to start a task: the proposal, checked, then Start
       list.push({ t: 'words', html: 'Here it is. Check it, then start it:' }, { t: 'proposal', id: `p${n}`, title: comp.title || clip(text.charAt(0).toUpperCase() + text.slice(1)), feature: comp.branch || undefined, labels: comp.labels, asks: comp.asks, memory: comp.memory, guard: comp.guard, why: whyOf(text), brief: text, project: comp.project, workflow: comp.workflow, engine: comp.engine, effort: comp.effort, then: comp.then, when: comp.startAt ? `at ${comp.startAt}` : 'now', preset: comp.preset, files: comp.files, open: false, nudge: false });
     } else if (false) {
       const t = { id: `t${n}`, title: clip(text), ask: text, case: 'starting', stage: 0, git: 'branch', branch: `feat/${slug(text)}`, detail: `Plan · ${comp.workflow} on ${comp.engine}` };
@@ -1382,7 +1393,7 @@
       const w = { t: 'working', at: Date.now(), steps: THINKING }; list.push(w); comp.busy = true; c.state = 'replying';
       root.dispatchEvent(new CustomEvent('stillhet:replying', { bubbles: true, detail: { busy: true } }));   // Ask worca's icon writes while it does
       clearTimeout(timer);
-      timer = setTimeout(() => { const i = list.indexOf(w); /* this message's own reply, under it: never another working row above */ if (i >= 0) list.splice(i, 1, { t: 'think', text: `Thought for ${thinkNow(list[i]).secs}`, steps: THOUGHT.slice(0, thinkNow(list[i]).n) }, ...replyFor(text, n, intent)); comp.busy = false; c.state = 'idle'; root.dispatchEvent(new CustomEvent('stillhet:replying', { bubbles: true, detail: { busy: false } })); if ((comp.queue || []).length && !comp.queuePaused) { const next = comp.queue.shift(); setTimeout(() => { comp.text = next; send(); }, 300); } window.StillhetChats.refresh(); paint(); if (c.id === chatId) { const bx = root.querySelector('.convo-scroll'); if (bx) bx.scrollTop = bx.scrollHeight; } /* the reply to what you sent is in view, its Start too */ }, 1400);
+      timer = setTimeout(() => { const i = list.indexOf(w); /* this message's own reply, under it: never another working row above */ if (i >= 0) list.splice(i, 1, { t: 'think', text: `Thought for ${thinkNow(list[i]).secs}`, steps: THOUGHT.slice(0, thinkNow(list[i]).n) }, ...(scheduleReply(c, text) || replyFor(text, n, intent))); comp.busy = false; c.state = 'idle'; root.dispatchEvent(new CustomEvent('stillhet:replying', { bubbles: true, detail: { busy: false } })); if ((comp.queue || []).length && !comp.queuePaused) { const next = comp.queue.shift(); setTimeout(() => { comp.text = next; send(); }, 300); } window.StillhetChats.refresh(); paint(); if (c.id === chatId) { const bx = root.querySelector('.convo-scroll'); if (bx) bx.scrollTop = bx.scrollHeight; } /* the reply to what you sent is in view, its Start too */ }, 1400);
     }
     comp = { ...comp, text: '', startAt: '', more: false, files: [], intent: '', refs: [], mode: opts.mode || 'ask' };
     root.querySelectorAll('[data-composer-t]').forEach((t) => { t.value = ''; });   // a schedule's add redraws: the box is not the one read above
@@ -1700,7 +1711,7 @@
     if ((hit = on('.menu-item[aria-disabled="true"]'))) { if (hit.title) say(hit.title); return; }   // small.disabled-why: an item that cannot act never acts, and says why
     if ((hit = on('[data-tick]'))) { goTo(hit.dataset.tick); return; }
     if ((hit = on('[data-menu-pick^="wfs-"], [data-menu-pick^="wfl-"]'))) { const [id, v] = hit.dataset.menuPick.split('|'), parts = id.split('-'), x = turns().find((y) => y.id === parts[1]), was = x && (parts[0] === 'wfl' ? x.loop[2] : x.steps[+parts[2]][parts[3] === 'm' ? 2 : 3]); if (x) { if (parts[0] === 'wfl') x.loop[2] = v; else x.steps[+parts[2]][parts[3] === 'm' ? 2 : 3] = v; } menu = ''; paint(); if (was !== v) say('Changed: Save keeps it'); return; }
-    if ((hit = on('[data-menu-pick]'))) { const [id, ...r] = hit.dataset.menuPick.split('|'); if (id === 'tick') goTo(r.join('|')); else if (id.startsWith('cf-')) { const t = taskOf(id.slice(3)); if (t?.form) t.form.value = r.join('|'); menu = ''; paint(); } else if (id.startsWith('card:')) { menu = ''; const t = taskOf(id.slice(5)), label = r.join('|'); if (t?.kind === 'schedule') { window.StillhetSchedules?.act(t.id, { Pause: 'pause', Resume: 'pause', Skip: 'skip', Delete: 'delete', 'Edit…': 'edit' }[label]); paint(); return; } if (t) { if (label === 'open' || !label) window.StillhetShell.openTaskPage(t.case, chatId, t.title, taskId(t)); else cardAct(t, label); } } else pickMenu(id, r.join('|')); return; }
+    if ((hit = on('[data-menu-pick]'))) { const [id, ...r] = hit.dataset.menuPick.split('|'); if (id === 'tick') goTo(r.join('|')); else if (id.startsWith('cf-')) { const t = taskOf(id.slice(3)); if (t?.form) t.form.value = r.join('|'); menu = ''; paint(); } else if (id.startsWith('card:')) { menu = ''; const t = taskOf(id.slice(5)), label = r.join('|'); if (t?.kind === 'schedule') { if (label === 'Edit schedule…') editSched(t.id); else window.StillhetSchedules?.act(t.id, { Pause: 'pause', Resume: 'pause', Skip: 'skip', Delete: 'delete' }[label]); paint(); return; } if (t) { if (label === 'open' || !label) openPage(t); else cardAct(t, label); } } else pickMenu(id, r.join('|')); return; }
     if ((hit = on('[data-listtoggle^="label|"]'))) { const v = hit.dataset.listtoggle.slice(6), c = chat(); if (c && LIVE()) { liveLabel(c, ...toggledLabel(c, v)); return; } if (c) { c.labels = (c.labels || []).includes(v) ? c.labels.filter((l) => l !== v) : [...(c.labels || []), v]; window.StillhetChats.refresh(); refreshAll(); keepLabelQ(); } return; }
     if ((hit = on('[data-card-form] [data-confirm]'))) { e.preventDefault(); const t = taskOf(hit.closest('[data-card-form]').dataset.cardForm); if (!t?.form) return; const fm = t.form; setCardAsk(t, { form: null });
       if (hit.dataset.confirm !== 'yes') { paint(); return; }
@@ -1734,16 +1745,16 @@
       l.splice(i + 1, 0, { t: 'words', html: `One task with <b>${esc(x.title)}</b>; the workflow is not saved. Check it, then start it:` }, { t: 'proposal', id: `p${k}`, title: clip(`Try ${x.title}`), why: 'Runs the proposed workflow once', project: chat()?.project || comp.project, workflow: x.title, engine: comp.engine, then: 'open a PR', open: false, nudge: false });
       paint(); say(`Runs once with ${x.title}; nothing is saved`); } return; }
     if ((hit = on('[data-cp-act]')) && hit.dataset.cpAct.endsWith('|1')) { const x = turns().find((y) => y.id === hit.dataset.cpAct.split('|')[0]); if (x?.diff) { x.diffOpen = !x.diffOpen; paint(); return; } }   // Show the diff opens under the card
-    if ((hit = on('[data-fact]'))) { const [k, id] = hit.dataset.fact.split('|'), t = taskOf(id); if (k === 'cost') window.StillhetShell.go('insights/spend'); else if (t) window.StillhetShell.openTaskPage(t.case, chatId, t.title, taskId(t)); return; }
+    if ((hit = on('[data-fact]'))) { const [k, id] = hit.dataset.fact.split('|'), t = taskOf(id); if (k === 'cost') window.StillhetShell.go('insights/spend'); else if (t) openPage(t); return; }
     if ((hit = on('[data-figs]'))) { const x = turns().find((y) => y.id === hit.dataset.figs); if (x) { x.figures = !x.figures; if (x.figures && LIVE()) { const t = taskOf(x.task); if (t?.run) CL().feature(t.run, chatId, { fresh: true }); } paint(); } return; }
     if ((hit = on('[data-fact-files]'))) { const x = turns().find((y) => y.id === hit.dataset.factFiles); if (x) { x.filesOpen = !x.filesOpen; paint(); } return; }
     if ((hit = on('[data-fact-arts]'))) { const t = taskOf(hit.dataset.factArts); if (t) openHere(t, 'arts'); return; }
     if ((hit = on('[data-open-slice]'))) { const [cs, ...w] = hit.dataset.openSlice.split('|'); window.StillhetShell.openTaskPage(cs, chatId, w.join('|'), hit.dataset.openSliceRun); return; }
     if ((hit = on('[data-chg-yes], [data-chg-no]'))) { const x = turns().find((y) => y.id === (hit.dataset.chgYes || hit.dataset.chgNo)); if (x) { const yes = !!hit.dataset.chgYes, what = x.confirmDelete; x.confirmDelete = ''; if (yes) { x.done = 'Deleted'; if (window.StillhetSchedules?.find(x.schedule)) window.StillhetSchedules.act(x.schedule, 'delete'); else say(`Deleted: ${what}`); } paint(); } return; }
-    if ((hit = on('[data-card-stage]'))) { const [id, ...k] = hit.dataset.cardStage.split('|'), t = taskOf(id); if (t) { window.StillhetRunPage?.atStage(k.join('|')); window.StillhetShell.openTaskPage(t.case, chatId, t.title, taskId(t)); } return; }
-    if ((hit = on('[data-view-diff]'))) { const [id, ...f] = hit.dataset.viewDiff.split('|'), t = taskOf(id) || (chat()?.tasks || [])[0]; window.StillhetRunPage?.openDiff(f.join('|')); window.StillhetShell.openTaskPage(t?.case || 'ready', chatId, t?.title || '', t ? taskId(t) : ''); return; }
-    if ((hit = on('[data-open-task-page]'))) { const t = taskOf(hit.dataset.openTaskPage); if (t) window.StillhetShell.openTaskPage(t.case, chatId, t.title, taskId(t)); return; }
-    if ((hit = on('[data-sched-card]'))) { const [id, how] = hit.dataset.schedCard.split('|'); window.StillhetSchedules?.act(id, how || 'run'); paint(); return; }
+    if ((hit = on('[data-card-stage]'))) { const [id, ...k] = hit.dataset.cardStage.split('|'), t = taskOf(id); if (t) { window.StillhetRunPage?.atStage(k.join('|')); openPage(t); } return; }
+    if ((hit = on('[data-view-diff]'))) { const [id, ...f] = hit.dataset.viewDiff.split('|'), t = taskOf(id) || (chat()?.tasks || [])[0]; window.StillhetRunPage?.openDiff(f.join('|')); if (t) openPage(t); else window.StillhetShell.openTaskPage('ready', chatId, '', ''); return; }
+    if ((hit = on('[data-open-task-page]'))) { const t = taskOf(hit.dataset.openTaskPage); if (t) openPage(t); return; }
+    if ((hit = on('[data-sched-card]'))) { const [id, how] = hit.dataset.schedCard.split('|'); if (how === 'edit') { editSched(id); return; } window.StillhetSchedules?.act(id, how || 'run'); paint(); return; }
     if ((hit = on('[data-card-act]'))) { const [id, ...l] = hit.dataset.cardAct.split('|'), t = taskOf(id); if (t) cardAct(t, l.join('|')); return; }   // the button's own label, never its tone: View PR opens the PR
     if ((hit = on('[data-card-yes], [data-card-no]'))) { const t = taskOf(hit.dataset.cardYes || hit.dataset.cardNo); if (t) { const c = t.confirm; setCardAsk(t, { confirm: null }); if (hit.dataset.cardYes && c?.flow.schedule) { window.StillhetSchedules?.act(t.id, 'delete'); paint(); } else if (hit.dataset.cardYes && c) doAct(t, c.label, c.flow); else paint(); } return; }
     if (on('[data-cp-unabout]')) { e.preventDefault(); const a = comp.about; if (a?.binds) comp[a.binds] = a.was; comp.about = null; paint(); return; }
@@ -1773,7 +1784,9 @@
       const x = turns()[+hit.dataset.answerGo], t = taskOf(x.task), c = chat();
       const own = root.querySelector(`[data-own="${hit.dataset.answerGo}"]`)?.value.trim(); if (own) { x.options = [...x.options, own]; x.pick = x.options.length - 1; }
       if (!t) { x.answered = x.options[x.pick]; afterClarify(); paint(); say('Answered'); return; }   // a question of the chat itself, not of a task
-      x.answered = x.options[x.pick]; t.case = 'working'; t.detail = 'Review · carries on with your answer'; c.state = 'following'; put(c, t); window.StillhetChats.refresh(); paint(); say('Answered: the task carries on'); return;
+      x.answered = x.options[x.pick]; t.case = 'working'; t.detail = `${STAGES[Math.max(0, t.stage)] || 'Review'} · carries on with your answer`; c.state = 'following';
+      M.link(c, t); window.StillhetWorld.answer(t.run, x.answered, { detail: t.detail, stage: t.stage });   // its one record: its page reads the answer and the move
+      window.StillhetChats.refresh(); paint(); say('Answered: the task carries on'); return;
     }
     if ((hit = on('[data-q-drop]'))) { comp.queue.splice(+hit.dataset.qDrop, 1); if (!comp.queue.length) comp.queuePaused = ''; paint(); say('Removed from the queue'); return; }
     if (on('[data-q-send]')) { comp.queuePaused = ''; if (!comp.busy && (comp.queue || []).length) { comp.text = comp.queue.shift(); send(); } else paint(); return; }   // Send now
@@ -1801,17 +1814,13 @@
         l.splice(l.indexOf(px) + 1, 0, { t: 'you', id: `y${Date.now().toString(36)}`, text: v, when: 'now' });
         paint(); say('Requirements rewritten with your change'); return;
       }
-      if (px.t === 'task') {   // a follow-up on a task: on its branch, updating its PR, not a stranger
-        const t = taskOf(px.task), k = Date.now().toString(36), at = l.indexOf(px) + 1;
-        l.splice(at, 0, { t: 'you', id: `y${k}`, text: v, when: 'now', quote: t.title }, { t: 'words', html: `A follow-up on <b>${esc(t.title)}</b>, on its branch. Check it, then start it:` },
-          { t: 'proposal', id: `p${k}`, title: clip(`${t.title}: ${v}`), why: `On top of ${t.title}${t.branch ? `, on ${t.branch}` : ''}`, asked: { project: comp.project, workflow: comp.workflow, engine: comp.engine }, project: chat()?.project || comp.project, workflow: quickFlow(), engine: comp.engine, effort: comp.effort, then: ['open', 'pass', 'fail', 'conflict'].includes(t.git) ? 'update its PR' : 'open a PR', feature: t.branch || '', open: false, nudge: false });
-        paint(); say('Follow-up proposed'); return;
-      } l.splice(l.indexOf(px) + 1, 0, { t: 'change', id: `cg${Date.now().toString(36)}`, kind: 'Changes', title: px.title, why: `“${v}”`, rows: [{ name: 'Where it lands', before: '', after: 'a new round of the plan' }], actions: [['Start round 2', 'primary', 'Round 2 started'], ['Not now', 'quiet', 'Not now']], state: 'proposed' }); paint(); say('Asked for changes'); return; }
+      if (px.t === 'task') { followUpOn(taskOf(px.task), v, l, l.indexOf(px) + 1); paint(); say('Follow-up proposed'); return; } l.splice(l.indexOf(px) + 1, 0, { t: 'change', id: `cg${Date.now().toString(36)}`, kind: 'Changes', title: px.title, why: `“${v}”`, rows: [{ name: 'Where it lands', before: '', after: 'a new round of the plan' }], actions: [['Start round 2', 'primary', 'Round 2 started'], ['Not now', 'quiet', 'Not now']], state: 'proposed' }); paint(); say('Asked for changes'); return; }
     if ((hit = on('[data-cmd-stop]'))) { const x = turns()[+hit.dataset.cmdStop]; if (x) { x.stopped = true; paint(); say('Stopped the command'); } return; }
     if ((hit = on('[data-cp-act]'))) { const [id, k] = hit.dataset.cpAct.split('|'), x = turns().find((y) => y.id === id);
       if (x?.kind === 'Workspace' && x.name && +k === 0) window.StillhetSpaces?.add({ title: x.name, projects: x.holds });   // Worca's suggestion kept: it is a workspace now
       if (x?.kind === 'Requirements' && x.actions[+k][0] === 'Ask for changes') { x.asking = true; paint(); root.querySelector(`[data-ask-changes="${x.id}"]`)?.focus(); return; }
       if (x?.kind === 'Requirements' && +k === 0) { x.done = 'Requirements agreed'; const l = turns(); const qs = l.filter((y) => y.t === 'question' && y.shaper === x.from); l.splice(l.indexOf(x) + 1, 0, { t: 'words', html: 'Writing the plan from them.' }); afterClarify(); paint(); say('Requirements agreed: writing the plan'); return; }
+      if (x?.kind === 'Schedule' && x.patch) { applySchedule(x, +k === 0, hit); return; }   // panel.schedule-change: Apply changes it everywhere, Discard leaves it
       if (x?.kind === 'Schedule' && x.actions[+k][0] === 'Run now' && window.StillhetSchedules?.find(x.schedule)) { window.StillhetSchedules.act(x.schedule, 'run'); paint(); return; }   // the real thing, once; its button then says why not
       if (x) { x.done = x.actions[+k][2] + (x.choice && x.actions[+k][1] !== 'quiet' ? ` · ${x.picked || x.choice.rec}` : ''); paint(); say(x.done); } return; }
     if ((hit = on('[data-cp-choice]'))) { const [id, v] = hit.dataset.cpChoice.split('|'), x = turns().find((y) => y.id === id); if (x) { x.picked = v; paint(); } return; }
@@ -1826,6 +1835,7 @@
     if (x?.kind === 'Workspace' && x.holds && hit.dataset.cpApply && window.StillhetSpaces?.list().some((w) => w.title.toLowerCase() === x.name.toLowerCase())) { say(`There is already a workspace called ${x.name}`); return; }
     if (x?.kind === 'Workspace' && x.holds && hit.dataset.cpApply) x.space = window.StillhetSpaces?.add({ title: x.name, projects: x.holds });
     if (x?.space && hit.dataset.cpRevert) { window.StillhetSpaces?.remove(x.space); x.space = ''; }
+    if (x?.kind === 'Schedule' && x.patch && hit.dataset.cpRevert) { Promise.resolve(window.StillhetSchedules?.edit(x.schedule, x.undo)).then((r) => { if (r?.ok === false) { say(`Could not revert ${x.title}: ${r.error}`); return; } x.state = 'proposed'; x.title = window.StillhetSchedules?.find(x.schedule)?.title || x.title; paint(); say(`Reverted ${x.title}`); }); return; }
     if (x) { x.state = hit.dataset.cpApply ? 'applied' : hit.dataset.cpRevert ? 'proposed' : 'declined'; if (x.state === 'applied' && x.graph) x.rows = [{ name: 'Saved as', before: '', after: 'API rewrite' }]; paint(); say(x.state === 'applied' ? (x.space ? `Created ${x.name}: ${x.holds.join(', ')}` : x.kind === 'Changes' ? window.StillhetWould('start building') : window.StillhetWould(`${(x.apply || 'apply').toLowerCase()} ${x.title}`)) : x.state === 'declined' ? 'Nothing changed' : 'Reverted'); } return; }
     if ((px = pp('data-pp-more'))) { px.open = !px.open; paint(); return; }
     if ((px = pp('data-pp-later'))) { px.later = true; paint(); say('Set aside: bring it back from the chat'); return; }
@@ -1911,7 +1921,7 @@
   root.addEventListener('focusin', quietSoon);
   root.addEventListener('pointerdown', (e) => { if (e.target.closest?.('button, input, textarea, [role="radio"], [role="menuitem"]')) seeNow(e.target.closest('.is-attn[data-anchor]')); else quietSoon(e); });
   // the store changed (here, in Tasks, in Pulse, from Away): read every chat's tasks again and draw; what now waits glows
-  window.StillhetWorld.onMove(() => { for (const c of data().chats) M.sync(c); window.StillhetChats?.refresh(); paintSoon(); });
+  window.StillhetWorld.onMove(() => { for (const c of data().chats) { M.sync(c); const l = !LIVE() && threads.get(c.id); if (l) hearAnswers(c, l); } window.StillhetChats?.refresh(); paintSoon(); });
   // live: a store load (the threads, the run links, the runs) redraws the open chat, so a chat opened by its address
   // draws its project and its cards once they are known, without a hash change
   window.StillhetWorld.onChange(() => { if (window.StillhetWorld.live && chatId) paintSoon(); });
@@ -1920,6 +1930,7 @@
   window.StillhetWorld.onChange(() => pcSync());
   // a step taken inside a card's open stages moves the task itself: its card's head and bar, the bar's row, Pulse
   document.addEventListener('stillhet:task-moved', (e) => {
+    if (e.detail?.id) return;   // stillhet.one-place: the page moved its one record by its id; onMove above has drawn it
     const { from, to, ask } = e.detail || {}, t = (chat()?.tasks || []).find((y) => y.case === from && (!ask || y.title === ask)); if (!t) return;
     t.case = to; t.detail = R.runState(RM.stateOf(to), cardCtx(t)).word; const st = RM.stageOf?.(to); if (st?.stage >= 0) t.stage = st.stage;
     put(chat(), t);
@@ -1954,6 +1965,54 @@
   });
   R.dismissOnOutside(document, { open: () => !!menu, inside: `${where} .spick, ${where} .rc-pop, ${where} [data-anchor-menu], ${where} .composer-at`, back: () => null, close: () => { menu = ''; menuSub = ''; }, paint: () => paint(), esc: () => { if (!menuSub) return false; const was = menuSub; menuSub = ''; return `${where} [data-menu-sub="${was}"]`; } });
 
+  // A follow-up on a task: on its branch, updating its PR, not a stranger. Asked under its card, or in the box with the task
+  // named (its page's "Start a follow-up in its chat"); it joins the task's one record, so its page lists it (stillhet.one-place).
+  function followUpOn(t, v, l, at) {
+    const k = Date.now().toString(36);
+    l.splice(at, 0, { t: 'you', id: `y${k}`, text: v, when: 'now', quote: t.title }, { t: 'words', html: `A follow-up on <b>${esc(t.title)}</b>, on its branch. Check it, then start it:` },
+      { t: 'proposal', id: `p${k}`, title: clip(`${t.title}: ${v}`), why: `On top of ${t.title}${t.branch ? `, on ${t.branch}` : ''}`, asked: { project: comp.project, workflow: comp.workflow, engine: comp.engine }, project: chat()?.project || comp.project, workflow: quickFlow(), engine: comp.engine, effort: comp.effort, then: ['open', 'pass', 'fail', 'conflict'].includes(t.git) ? 'update its PR' : 'open a PR', feature: t.branch || '', open: false, nudge: false });
+    if (t.run) window.StillhetWorld.followUp(t.run, { text: v });
+  }
+  // the chat opened with the box focused and a task named in it: what you write is that task's follow-up
+  let pendingAbout = null;
+  function landAbout() {
+    const p = pendingAbout; if (!p || p.chat !== chatId) return; pendingAbout = null;
+    comp.about = { kind: 'Task', name: p.name, ph: 'What should the follow-up do?', binds: '', was: '', run: p.run }; menu = ''; paint(false);
+    const f = () => root.querySelector('[data-composer-t]')?.focus(); f(); setTimeout(f, 60);   // the route draws after the hash changes: the box keeps the focus
+  }
+  // ---- stillhet.chat-first: a schedule is changed in its chat (panel.schedule-change) ----
+  const editSched = (id) => window.StillhetCenters?.editSchedule?.(id, { chat: chatId });
+  const clockNow = () => { const d = new Date(); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+  // the change as a ChangeProposal: a row per field that changes, from → to, and when it would next start; null when nothing changes
+  function scheduleTurn(s, patch) {
+    const S = window.StillhetSchedules, once = s.every === 'Once', rows = [], undo = {};
+    if (patch.title && patch.title !== s.title) { rows.push({ name: 'Name', before: s.title, after: patch.title }); undo.title = s.title; }
+    if (patch.what && patch.what !== (s.what || s.title)) { rows.push({ name: 'What it does', before: clip(s.what || s.title, 48), after: clip(patch.what, 48) }); undo.what = s.what || s.title; }
+    const every = patch.every && !once && patch.every !== 'once' && patch.every !== s.every ? patch.every : '', at = patch.at && patch.at !== s.at ? patch.at : '';
+    if (every) { rows.push({ name: 'Repeats', before: s.every, after: every }); undo.every = s.every; }
+    if (at) { rows.push({ name: 'Time', before: s.at, after: at }); undo.at = s.at; if (!once) undo.every = s.every; }
+    const day = once && Number.isFinite(s.nextAt) ? new Date(s.nextAt) : null, iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    if (once && patch.date && (!day || patch.date !== iso(day))) { rows.push({ name: 'Date', before: day ? S.dateWord(day) : '', after: S.dateWord(new Date(`${patch.date}T00:00:00`)) }); if (day) undo.date = iso(day); undo.at = s.at; }
+    if (!rows.length) return null;
+    if (!once && (every || at) && s.state !== 'paused') { const e2 = every || s.every, a2 = at || s.at, [d] = e2 === 'every hour' ? [] : R.scheduleDates({ every: e2, at: a2, from: S.TODAY, n: 1, nowAt: clockNow() }); rows.push({ name: 'Next start', before: s.section === 'next' ? S.nextLine(s) : '', after: d ? `${S.dateWord(d)}, ${a2}` : 'within the hour' }); }   // in the card's own words (its nextLine)
+    const send = { ...(undo.title ? { title: patch.title } : {}), ...(undo.what ? { what: patch.what } : {}), ...(every || at || undo.date ? { every: every || (once ? 'once' : s.every), at: at || s.at, ...(once && patch.date ? { date: patch.date } : {}) } : {}) };
+    return { t: 'change', id: `sc${Date.now().toString(36)}`, kind: 'Schedule', schedule: s.id, patch: send, undo, title: s.title, why: 'Nothing changes until you apply it', rows, actions: [['Apply', 'primary', ''], ['Discard', 'quiet', '']], state: 'proposed' };
+  }
+  function applySchedule(x, yes, btn) {
+    if (!yes) { x.state = 'declined'; paint(); say('Discarded: the schedule is as it was'); return; }
+    const S = window.StillhetSchedules, done = new Promise((ok) => setTimeout(ok, LIVE() ? 0 : 450)).then(() => S.edit(x.schedule, x.patch)).then((r) => {
+      if (r?.ok === false) { x.state = 'failed'; paint(); say(`Could not change ${x.title}: ${r.error || 'no answer'}`); return; }
+      x.state = 'applied'; x.rows = x.rows.filter((r0) => r0.name !== 'Next start'); x.title = S.find(x.schedule)?.title || x.title; window.StillhetChats?.refresh(); refreshAll(); say(`Changed ${x.title}: ${S.nextOf(x.schedule) || 'saved'}`);
+    });
+    if (btn && R.busy) R.busy(btn, { label: 'Applying…', until: done });   // comp.button-busy: it waits on the server
+  }
+  // a change typed in a chat that holds a schedule ("run it at 03:00 instead"): the demo adapter reads it (demo/demo-actions.js)
+  function scheduleReply(c, text) {
+    const S = window.StillhetSchedules, list = allTasks(c).filter((y) => y.kind === 'schedule' && !y.gone).map((y) => S?.find(y.id)).filter((s) => s && !s.ended);
+    const hit = list.length ? window.StillhetDemoActions?.scheduleChange?.(text, list.map((s) => ({ id: s.id, title: s.title, every: s.every, at: s.at }))) : null;
+    const s = hit && S.find(hit.id), turn = s && scheduleTurn(s, hit.patch);
+    return turn ? [{ t: 'words', html: `Here is the change to <b>${esc(s.title)}</b>. Check it, then apply it:` }, turn] : null;
+  }
   const api = {
     isSide: side,
     paint,
@@ -1969,7 +2028,7 @@
       el.classList.remove('is-flash'); void el.offsetWidth; el.classList.add('is-flash');
       return true;
     },
-    show: (id) => { if (LIVE()) { listen(); CL().look(root, id || '', () => !hiddenNow()); if (id) CL().open(id); else if (!side && !opts.mode) loadPins({ fresh: true }); }   /* a home with no starters (Requirements' Shape a feature, the side panel) reads no pins */ setTimeout(() => settle(id), 0); const other = id !== chatId; if (other) { drafts.set(chatId, { ...comp, text: root.querySelector('[data-composer-t]')?.value ?? comp.text, busy: false, queue: [], listening: false, sending: false }); opened = new Set(); hover = null; menu = ''; const was = drafts.get(id || ''); comp = was && (id || was.text || was.intent || was.mode !== 'ask') ? { ...was } : { ...fresh(), project: id ? data().chats.find((c) => c.id === id)?.project || 'No project' : lastProject };   /* a new chat starts on the project you added last */ comp.sending = sendingIn.has(id || ''); } chatId = id || ''; paint(!other); if (id) { const box = root.querySelector('.convo-scroll'); if (box) { box.scrollTop = box.scrollHeight; paintTimeline(); } } },
+    show: (id) => { if (LIVE()) { listen(); CL().look(root, id || '', () => !hiddenNow()); if (id) CL().open(id); else if (!side && !opts.mode) loadPins({ fresh: true }); }   /* a home with no starters (Requirements' Shape a feature, the side panel) reads no pins */ setTimeout(() => settle(id), 0); const other = id !== chatId; if (other) { drafts.set(chatId, { ...comp, text: root.querySelector('[data-composer-t]')?.value ?? comp.text, busy: false, queue: [], listening: false, sending: false }); opened = new Set(); hover = null; menu = ''; const was = drafts.get(id || ''); comp = was && (id || was.text || was.intent || was.mode !== 'ask') ? { ...was } : { ...fresh(), project: id ? data().chats.find((c) => c.id === id)?.project || 'No project' : lastProject };   /* a new chat starts on the project you added last */ comp.sending = sendingIn.has(id || ''); } chatId = id || ''; paint(!other); if (id) { const box = root.querySelector('.convo-scroll'); if (box) { box.scrollTop = box.scrollHeight; paintTimeline(); } } landAbout(); },
     start: (mode, text, project) => { chatId = ''; comp = { ...fresh(mode), text: text || '', ...(project ? { project } : {}) }; if (!side) window.StillhetShell.go('chat'); paint(false); root.querySelector('[data-composer-t]')?.focus(); },   /* what another place hands over stays in the box, on its project */
     pin: (w, on) => { const next = on ? [...new Set([...shownPins(), w])] : shownPins().filter((x) => x !== w); if (LIVE()) setPins(next, on ? `Pinned ${w}` : `Unpinned ${w}`); else { pins = next; refreshAll(); } },
     handOver: ({ mode = 'ask', about, text = '', ph = '', project, workflow, ref = null }) => {   // ref: the page's own ids, posted as context (D16)   // stillhet.hand-to-chat: the one way a place sends something to Chat
@@ -1979,6 +2038,17 @@
       if (!side) setTimeout(() => root.querySelector('[data-composer-t]')?.focus(), 60);   /* the route draws after the hash changes: the box keeps the focus */
     },
     arm,   /* a starter armed from another place (Projects' New: Add project) */
+    followUp: (cid, name, run) => { pendingAbout = { chat: cid, name, run }; if (!side && location.hash !== `#chat/${cid}`) window.StillhetShell.go(`chat/${cid}`); else landAbout(); },
+    // a schedule's change, posted in this chat as one ChangeProposal (from its form's Save); false when nothing changes
+    proposeSchedule: (cid, id, patch) => {
+      const s = window.StillhetSchedules?.find(id), c = data().chats.find((y) => y.id === cid), turn = s && c && scheduleTurn(s, patch); if (!turn) return false;
+      if (!threads.has(c.id)) threads.set(c.id, hearAnswers(c, M.thread(c)));
+      const l = threads.get(c.id); l.filter((y) => y.t === 'change' && y.schedule === id && y.patch && y.state === 'proposed').forEach((y) => { y.state = 'declined'; });   // one change waits at a time: a newer one replaces it
+      l.push(turn); window.StillhetChats?.refresh();
+      const land = () => { paint(); const box = root.querySelector('.convo-scroll'); if (box) box.scrollTop = box.scrollHeight; paintTimeline(); root.querySelector(`[data-cp-act="${turn.id}|0"]`)?.focus({ preventScroll: true }); };
+      if (!side && location.hash !== `#chat/${cid}`) { window.StillhetShell.go(`chat/${cid}`); setTimeout(land, 80); } else land();
+      return true;
+    },
     // a task in the bar opens the chat it is listed under, its card in view with its head focused; a click while the
     // thread is still read waits for it, and a thread that failed or is gone drops it and shows that state
     openTask: (id, task) => { pendingTask = { chat: id, task }; window.StillhetShell.go(`chat/${id}`); landTask(); },
@@ -2070,7 +2140,7 @@
       const qs = l.filter((y) => y.t === 'question' && !y.answered && !y.shaper); if (!qs.length) continue;
       qs.forEach((q) => { q.answered = `${q.options[q.pick ?? 0]} (Worca, while you were away)`; });
       const t = (c.tasks || []).find((y) => y.case && R.markTone(R.runState(RM.stateOf(y.case))) === 'ask');
-      if (t) { t.case = 'working'; t.detail = 'Carries on with Worca’s answer'; put(c, t); out.push(`${t.title}: ${qs[0].options[qs[0].pick ?? 0]}`); }
+      if (t) { t.case = 'working'; t.detail = 'Carries on with Worca’s answer'; M.link(c, t); window.StillhetWorld.answer(t.run, qs[0].answered, { detail: t.detail, stage: t.stage }); out.push(`${t.title}: ${qs[0].options[qs[0].pick ?? 0]}`); }
     }
     window.StillhetChats.refresh(); refreshAll(); return out;
   }
@@ -2085,6 +2155,19 @@
     start: main.start,
     handOver: main.handOver,
     openTask: main.openTask,
+    // stillhet.one-place: "Start a follow-up in its chat" on a task's page: its chat, the box focused, the task named
+    followUp: ({ run = '', chat: cid = '', title = '' }) => { const id = cid || window.StillhetConversation.chatOfTask({ run, title }); if (!id || LIVE()) return false; main.followUp(id, title || window.StillhetWorld.find(run)?.title || 'This task', run); return true; },
+    // stillhet.chat-first: the chat a schedule is changed in: the one that holds its card; with `make`, the demo gives a schedule that has none a chat of its own
+    scheduleChat: (id, o = {}) => {
+      const S = window.StillhetSchedules, s = S?.find(id), walk = (l) => (l || []).some((t) => (t.kind === 'schedule' && t.id === id) || walk(t.after));
+      const c = data().chats.find((x) => !x.archived && walk(x.tasks)) || (s?.chat && data().chats.find((x) => x.id === s.chat));
+      if (c) return c.id; if (!o.make || !s || LIVE() || !window.StillhetChats?.newChat) return '';
+      const cid = window.StillhetChats.newChat(s.title, s.project || '', { fromTask: true }), made = data().chats.find((x) => x.id === cid); if (!made) return '';
+      s.chat = cid; threads.set(cid, [{ t: 'schedule', id: `k-${s.id}`, task: s.id }]);
+      made.tasks = [{ id: s.id, kind: 'schedule', title: s.title, detail: `Runs ${R.scheduleWords(s).runs}`, time: s.state === 'paused' ? 'Paused' : s.at }]; window.StillhetChats.refresh();
+      say(`Opened in a new chat: ${s.title}`); return cid;
+    },
+    proposeScheduleChange: ({ chat: cid = '', schedule = '', patch = {} }) => (cid && !LIVE() ? main.proposeSchedule(cid, schedule, patch) : false),
     pin: main.pin,
     starter: (id) => { main.start('ask'); setTimeout(() => main.arm(id), 0); },   // Chat with a starter armed: a place's New that is a conversation (Add project)
     mount: (el, opts) => (opts ? mount(el, false, opts) : mount(el, true)),

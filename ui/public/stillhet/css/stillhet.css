@@ -820,6 +820,8 @@ html,body{height:auto;overflow:visible;margin:0;}
   .set-sec .list-rows{grid-template-columns:var(--lr-rail) minmax(0,1fr);}
   .set-sec .list-rows > .list-row > .lr-end{grid-column:2;display:flex;justify-content:flex-start;}
   .set-sec .lr-t{overflow:visible;white-space:normal;}
+  .set-sec .lr-main:has(> .lr-v){flex-direction:column;align-items:stretch;gap:1px;}   /* list.one-line, stacked as a settings row is: the name over its value, whole, as no tooltip shows on touch */
+  .set-sec .lr-main:has(> .lr-v) > :is(.lr-t,.lr-v){flex:none;overflow:visible;white-space:normal;}
   .spick-menu.is-right{left:-4px;right:auto;}   /* a stacked row: every menu opens under its words */   /* a long choice wraps on a narrow screen, its ▾ with its last word */
 }
 
@@ -849,6 +851,11 @@ button.lr-main:hover{background:var(--hover);}
 button.lr-main:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
 .lr-t{min-width:0;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .lr-m{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-meta);color:var(--ink-2);}
+/* list.one-line: a row's value sits on its one line, after the title, in a fixed place; it folds to … and its tooltip has it whole */
+.lr-main:has(> .lr-v){flex-direction:row;align-items:baseline;gap:16px;}
+.lr-main:has(> .lr-v) > .lr-t{flex:0 0 var(--lr-name,168px);}
+.lr-v{flex:1 1 0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-meta);color:var(--ink-2);}
+.set-said{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;}   /* a settings row's hint, kept for a screen reader */
 .lr-end{display:flex;align-items:center;gap:8px;padding-top:4px;}
 .lr-fig{font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;font-variant-numeric:tabular-nums;}
 .list-more{margin-top:4px;}
@@ -1327,6 +1334,8 @@ th.rt-c{color:var(--ink-2);font-weight:500;}
 .task-card .rc-card{--pad-card:12px 14px;}
 .task-card .rc-word{font-size:var(--fs-section);}
 .task-card.is-compact .rc-word{font-size:var(--fs-body);}
+/* a compact card with four controls (a schedule's Run now, Open, Edit schedule…, ⋯) on a narrow screen: they sit under its words, so its name keeps its line */
+@media (max-width: 600px){.task-card.is-compact .tr-line:has(> .tr-end > :nth-child(4)){grid-template-columns:20px minmax(0,1fr);row-gap:8px;}.task-card.is-compact .tr-line:has(> .tr-end > :nth-child(4)) > .tr-end{grid-column:2;flex-wrap:wrap;}}
 .tc-foot{margin-top:-2px;}
 .composer-chips{display:flex;flex-wrap:wrap;gap:4px;}
 
@@ -1370,12 +1379,12 @@ body:has(#route-chat:not([hidden]) .has-detail) .page-bg{display:none;}   /* wit
 .stage-part-b.is-open b{color:var(--ink);}
 .stage-part-b.is-open svg{transform:rotate(180deg);}
 .rl-search-res .menu-item > .kind-mark,.rl-search-res .menu-item > svg{flex:none;margin-right:8px;color:var(--ink-2);}
-/* A result is two rows: its name, then where it lives under it. A long where (a home not in Stillhet yet) wraps inside
-   the popover; it never takes the name's room (F-W3a1-10). */
-.rl-search-res .menu-item{display:grid;grid-template-columns:auto minmax(0,1fr);row-gap:1px;height:auto;align-items:center;}
-.rl-search-res .menu-item > .kind-mark,.rl-search-res .menu-item > svg{grid-column:1;grid-row:1;}
+/* list.one-line: a result is one line: its name, then where it lives at its end. The name keeps at least 40% of the row,
+   so a long where (a home not in Stillhet yet) folds to … inside the popover and its tooltip has it whole (F-W3a1-10). */
+.rl-search-res .menu-item{display:grid;grid-template-columns:auto minmax(40%,1fr) minmax(0,auto);column-gap:12px;align-items:center;}
+.rl-search-res .menu-item > .kind-mark,.rl-search-res .menu-item > svg{grid-column:1;grid-row:1;margin-right:0;}
 .rl-search-res .menu-item > .mi-l{grid-column:2;grid-row:1;}
-.rl-search-res .menu-item > .mi-hint{grid-column:2;grid-row:2;margin-left:0;white-space:normal;overflow-wrap:anywhere;font:400 var(--fs-meta)/1.35 var(--sans);color:var(--ink-2);}
+.rl-search-res .menu-item > .mi-hint{grid-column:3;grid-row:1;margin-left:0;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 var(--fs-meta)/1.35 var(--sans);color:var(--ink-2);}
 
 /* InView: what you keep in view, in the top bar. Its marks hold still: they say where a thing stands, never pulse. */
 .in-view{display:inline-flex;align-items:center;gap:2px;margin-right:6px;padding-right:8px;border-right:1px solid var(--line);}
@@ -2141,14 +2150,10 @@ body.bar-hidden .rc-toast{left:80px;max-width:min(360px,calc(100vw - 104px));}
 :is(.rc,.pz-app) .menu-item.has-line > .mi-l{overflow:visible;white-space:normal;text-align:left;}
 .mi-line{display:block;margin-top:1px;font:400 var(--fs-caption)/1.35 var(--sans);color:var(--ink-2);white-space:normal;}
 .menu-item.has-line[role="menuitemradio"]::before{margin-top:3px;}
-.acct-menu .pz-usage-item .mi-hint{color:var(--ink-2);font:400 var(--fs-caption)/1.3 var(--sans);white-space:nowrap;}
-/* Usage and costs names the limit its figure is of, on a line of its own under the words. */
-.acct-menu .mi.pz-usage-item{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;column-gap:10px;align-items:center;height:auto;padding-top:5px;padding-bottom:5px;}
-.acct-menu .mi.pz-usage-item > :first-child{grid-row:1 / span 2;}
-.acct-menu .mi.pz-usage-item > .mi-lbl{grid-column:2;grid-row:1;}
-.acct-menu .mi.pz-usage-item > .mi-hint{grid-column:2;grid-row:2;margin-left:0;text-align:left;overflow:hidden;text-overflow:ellipsis;}
-.acct-menu .mi.pz-usage-item > .mi-val{grid-column:3;grid-row:1 / span 2;}
-.acct-menu .mi.pz-usage-item > .mi-chev{grid-column:4;grid-row:1 / span 2;}
+/* list.one-line: Usage and costs is one line as every row of the menu: its value names the limit it is of (Copilot 74%). */
+.nav-fly.acct-menu{width:284px;}   /* its longest row fits whole: the name, then the value */
+.acct-menu .pz-usage-item > .mi-lbl{flex:0 0 auto;}
+.acct-menu .pz-usage-item > .mi-val{flex:0 1 auto;min-width:0;margin-left:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 /* In a conversation the composer is docked at the bottom: the toast's corner is just above it, never over its controls. */
 body:has(#route-chat:not([hidden]) .convo-dock) .rc-toast{bottom:calc(24px + 124px);}
 @supports (bottom:anchor(--a top)){

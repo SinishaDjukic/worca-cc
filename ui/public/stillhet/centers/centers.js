@@ -59,7 +59,7 @@
   const actionsOf = (rs, o) => R.taskActions(rs.map((t) => ({ id: t.id, title: t.title, short: t.short || shortOf(t.title), state: stateOf(t) })), o);
   const schedLink = (s) => (advanced() ? link(s.title, { 'data-c-sched': s.id }, `Opens ${s.title}`) : esc(s.title));   // Simple: Schedules is locked, so no links lead there
   // a task's own page (thing-page: a card's title opens its thing, in every mode)
-  const openPage = (r) => { if (!W.live) r.unread = false; const S = window.StillhetShell; if (S.openTaskPage) S.openTaskPage(r.case, '', r.title, r.opens || r.id); else S.go(`run/${r.opens || r.id}`); };
+  const openPage = (r) => { if (!W.live) r.unread = false; const S = window.StillhetShell; window.StillhetRunPage?.ofTask?.(r.opens ? '' : r.id);   /* stillhet.one-place: its page is this task, by its id */ if (S.openTaskPage) S.openTaskPage(r.case, '', r.title, r.opens || r.id); else S.go(`run/${r.opens || r.id}`); };
 
   // ---- the Tasks center ----
   const inFrom = (project) => { const f = barView().from || 'all'; return f === 'all' || (project || 'No project') === f; };   // the list's "from": the page shows the same project
@@ -784,7 +784,7 @@
       const more = edit ? '' : F.fold({ label: 'More options', open: form.more, says: R.shows('expert') ? 'Branch, time zone, while one still runs, stop after, notify' : 'Branch, time zone', attrs: { 'data-c-more': '' },
         body: F.grid({ fields: [fPick('base', 'Source branch'), fPick('then', 'When a task is done'), fPick('tz', 'Time zone'), ...expert] }) });
       const body = `${F.grid({ fields: [{ html: name, wide: true }, { html: what, wide: true }, ...(edit ? [] : [fPick('project', 'Project'), fPick('workflow', 'Workflow'), engine, '<span></span>']), fPick('every', 'Repeats'), when] })}${F.readback(schedProof())}${more}`;
-      return R.dialog({ title: edit ? 'Edit schedule' : 'New schedule', body, yes: edit ? 'Save changes' : 'Create schedule', busy: !!form.busy, busyLabel: edit ? 'Saving…' : 'Creating schedule…', close: R.icon('x', 15), id: 'cc-t', cls: 'cc-dlg', hooks: hooksOf() });
+      return R.dialog({ title: edit ? 'Edit schedule' : 'New schedule', body, yes: edit ? (proposes() ? 'Propose changes' : 'Save changes') : 'Create schedule', busy: !!form.busy, busyLabel: edit ? 'Saving…' : 'Creating schedule…', close: R.icon('x', 15), id: 'cc-t', cls: 'cc-dlg', hooks: hooksOf() });
     }
     // Agents' quiet pair (D6): the one model saved as the workflow's defaults, or the project's picks reset to them
     const id = flowId(), flowOwn = !!OPT() && !!id && !RO().RESERVED_WORKFLOWS.includes(id) && form.project !== 'No project' && form.target !== 'workspace' && agentIds().length;
@@ -867,11 +867,12 @@
   let openerSel = '';
   function openForm(kind, keep) { menu = ''; opener = document.activeElement; openerSel = selOf(opener); form = blank(kind, keep); document.addEventListener('keydown', escAnywhere, true); loadFlows(); loadBranches(); loadOptions(); paintForm(kind === 'schedule' && !form.editing ? '#cc-name' : '#cc-text'); }
   // Edit… on a schedule (its card, its row's ⋯, its chat card): the same Dialog, holding what it has now; Save changes it
-  function editSchedule(id) {
+  // stillhet.chat-first: `chat` is the chat it was opened from; Save posts the change there as a proposal (saveEdit)
+  function editSchedule(id, o = {}) {
     const s0 = Sch().find(id); if (!s0) return;
     wire();
     const once = s0.every === 'Once', at = timeOk(s0.at) ? s0.at : '09:00', d = Number.isFinite(s0.nextAt) ? new Date(s0.nextAt) : Sch().nextDates(s0)[0];
-    openForm('schedule', { editing: id, name: s0.title, text: s0.what || s0.title, project: s0.project || 'No project', every: once ? 'once' : s0.every, at, date: once && d ? isoDay(d) : '', tz: s0.tz || homeTz(), was: { name: s0.title, text: s0.what || s0.title, every: once ? 'once' : s0.every, at, date: once && d ? isoDay(d) : '' } });
+    openForm('schedule', { editing: id, chat: o.chat || '', name: s0.title, text: s0.what || s0.title, project: s0.project || 'No project', every: once ? 'once' : s0.every, at, date: once && d ? isoDay(d) : '', tz: s0.tz || homeTz(), was: { name: s0.title, text: s0.what || s0.title, every: once ? 'once' : s0.every, at, date: once && d ? isoDay(d) : '' } });
   }
   // a route change closes the form, as the account menu does (pulse.js): only a redraw of the same page keeps it; the next page owns the focus
   addEventListener('hashchange', () => { if (!form) return; formOff(); opener = null; paintForm(); });
@@ -928,13 +929,18 @@
     c.tasks = [...(c.tasks || []), { id: s.id, kind: 'schedule', title: s.title, detail: `Runs ${R.scheduleWords(s).runs}`, time: s.at }]; C.refresh();
     window.StillhetShell.go(`chat/${cid}`);
   }
-  // Edit…'s Save: only what changed is sent, through the schedule's own edit (schedules.js: the demo applies it, the live kind PATCHes it)
+  // Edit schedule…'s Save: only what changed goes on. Where the chat can hold a proposal it is proposed there first; else
+  // it is sent through the schedule's own edit (schedules.js; the live kind PATCHes it)
+  const proposes = () => !W.live && !!window.StillhetConversation?.proposeScheduleChange;
   async function saveEdit() {
     const f = form, was = f.was, patch = {};
     if (f.name.trim() !== was.name) patch.title = f.name.trim();
     if (f.text.trim() !== was.text) patch.what = f.text.trim();
     if (f.every !== was.every || f.at !== was.at || f.date !== was.date) Object.assign(patch, { every: f.every, at: f.at, ...(f.every === 'once' ? { date: f.date } : {}) });
     if (!Object.keys(patch).length) { closeForm(); return; }   // a Save that changed nothing closes without a toast (form.check-at-save)
+    // panel.schedule-change: the change does not apply here. It is posted in the schedule's chat as one ChangeProposal
+    // (a row per field, from → to), and Apply there changes the schedule everywhere.
+    if (proposes()) { const C = window.StillhetConversation, cid = f.chat || C.scheduleChat(f.editing, { make: true }); if (cid) { closeForm(); if (!C.proposeScheduleChange({ chat: cid, schedule: f.editing, patch })) say('Nothing to change'); return; } }
     f.busy = true; paintForm();
     await answered();
     const r = await Sch().edit(f.editing, patch);
@@ -1134,7 +1140,7 @@
     tasks: (el) => { wire(); settle('tasks'); tasksHost = el; menu = ''; asking = null; if (W.live) window.StillhetInsightsLive?.retryWeek?.(); paint(); },   // a visit reads a failed week again
     schedules: (el) => { wire(); schedHost = el; menu = ''; if (/^#schedules/.test(location.hash)) el.innerHTML = schedulesHtml(); },
     visit: (which) => settle(which),   // a new visit: the cards take their settled order
-    editSchedule,   // Edit… from a schedule's row, card or chat card, in every mode
+    editSchedule,   // Edit schedule… from a schedule's chat card (and its page's Change in its chat), in every mode
     // the forms, opened from Chat only (its starters and cards): New task, New schedule, and a schedule's Edit…
     newSchedule: (keep = {}) => { wire(); openForm('schedule', keepOf(keep)); },
     newTask: (keep = {}) => { wire(); openForm('task', keepOf(keep)); },   // Run after this: the New task form, waiting for that one

@@ -105,17 +105,19 @@
     if (has('advanced')) items.push({ id: 'delete', text: 'Delete', hint: hint('Backspace'), danger: true, off: !n(del), help: n(del) ? 'Removes it for good; asks first' : R.skipText(del) });
     return items;
   }
-  // list.row-facts: a row says what it is at the bar's width: its title, and on a second quiet line its project and its
-  // state (a row that needs you: why). Three tasks with one title are told apart without a tooltip; the time is its end.
+  // list.one-line: a row is one line: its title and one end word. What needs you or works ends in the word its mark
+  // cannot say (rowEndWord); everything else in its time. Its facts are its tooltip, one a line; cost never shows in the bar.
   const whyOf = (r, section) => (section === 'needs' ? R.needsReason(stateOf(r)) : wordOf(r));
-  // a row that needs you leads with the reason, the project after it; the project drops when the list is narrowed to one
-  const factsOf = (project, word, needs) => { const p = view.by !== 'project' && view.from === 'all' ? project || 'No project' : ''; return (needs ? [word, p] : [p, word]).filter(Boolean).join(' · '); };
-  const row = (r, section, member, meta) => {
-    const x = { r };
-    const base = { key: `run:${r.id}`, _x: x, title: member && r.pos ? `${r.pos} · ${r.title}` : r.title, meta: meta || (member ? whyOf(r, raises(r) ? 'needs' : '') : factsOf(r.project, whyOf(r, section), section === 'needs')), mark: markOf(stateOf(r), 'task', r.archived ? null : r.case, r.id, section === 'needs'), end: r.time, wrap: !!meta || section === 'needs' || (member && raises(r)),
-      unread: r.unread, current: isOpen(r), menu: null };
+  const prWord = (r) => (r.pr ? (prNumOf(r.pr) ? `PR #${prNumOf(r.pr)}` : 'PR') : '');
+  const labelsLine = (labels) => (labelsOn() && labels?.length ? `Labels: ${labels.join(', ')}` : '');
+  const factsOfRun = (r, member) => { const word = wordOf(r); return [word === NEEDS() ? '' : word, r.detail === word ? '' : r.detail, member ? '' : r.project, prWord(r), labelsLine(r.labels), shared() && r.by ? `Started by ${r.by}` : '', r.time].filter(Boolean); };
+  const row = (r, section, member, pr) => {
+    const x = { r }, so = r.archived ? {} : RM.stageOf(r.case), live = !r.archived && ['needs', 'running'].includes(sectionOfRun(r));
+    const base = { key: `run:${r.id}`, _x: x, apart: r.project || 'No project', title: member && r.pos ? `${r.pos} · ${r.title}` : r.title, facts: pr ? [pr.state, pr.who, ...factsOfRun(r, member).filter((f) => f !== prWord(r))] : factsOfRun(r, member),
+      mark: markOf(stateOf(r), 'task', r.archived ? null : r.case, r.id, section === 'needs'), end: r.time, unread: r.unread, current: isOpen(r), menu: null };
     x.key = base.key;
-    if (member) { const so = r.archived ? {} : RM.stageOf(r.case); Object.assign(base, { state: stateOf(r), stage: so.stage, stages: so.labels, after: r.pos > 1, meta: [base.meta, r.time].filter(Boolean).join(' · ') }); }   // list.child-row: the list picks its end word; this line is its tooltip
+    if (pr) base.endWord = pr.num ? `#${pr.num}` : 'PR';
+    else if (member || live) Object.assign(base, { state: stateOf(r), stage: so.stage, stages: so.labels, after: !!member && r.pos > 1 });   // the list picks its end word
     base.menu = menuOf(x);
     if (r.rounds) base.rounds = r.rounds;
     return base;
@@ -126,9 +128,10 @@
     const state = section === 'needs' && needy && R.sectionOf(R.runState(groupState(g)).word, groupState(g)) !== 'needs' ? stateOf(needy) : groupState(g);
     const why = section === 'needs' && needy ? `Task ${needy.pos || ms.indexOf(needy) + 1} ${wordOf(needy).toLowerCase()}` : R.runState(state).word;
     const x = { g, key: `group:${g.id}` };
-    return { key: x.key, _x: x, title: g.title, meta: factsOf(g.project, why, section === 'needs'), wrap: section === 'needs', mark: markOf(state, 'feature'), count: `${done}/${ms.length}`, noun: 'tasks', holds: ms.some(isOpen),
+    return { key: x.key, _x: x, title: g.title, facts: [cap(g.kind || 'group'), g.project, labelsLine([...new Set(ms.flatMap((m) => m.labels || []))]), why].filter(Boolean), mark: markOf(state, 'feature'), count: `${done}/${ms.length}`, noun: 'tasks', holds: ms.some(isOpen),
       open: !(['Ready', 'Stopped', 'Merged', 'Failed'].includes(R.runState(groupState(g)).word)), menu: menuOf(x), members: ms.map((m) => row(m, '', true)) };
   }
+  const sameTitles = (secs) => { const n = new Map(); for (const x of secs) for (const r of x.rows) n.set(r.title, (n.get(r.title) || 0) + 1); for (const x of secs) for (const r of x.rows) if (n.get(r.title) > 1 && r._project && !r.members) { r.endWord = r._project; delete r.state; } return secs; };
   const rowOf = (t, section) => (t.group ? groupRowOf(t.group, section) : row(t.run, section, false));
 
   // One count for what needs you (A1): with no filter on, the Needs you tab and section say the store's own number for
@@ -157,12 +160,12 @@
   const EMPTY = { prs: 'No open pull requests.', needs: 'Nothing needs you.', running: 'No running tasks.', waiting: 'Nothing is waiting.', finished: 'No finished tasks yet.', ready: 'Nothing is ready to ship.', archived: 'No archived tasks.' };
   // A missed schedule time is not a task (panel.task-truth), but it needs you: its own clock row in Needs you, in the count; never in a day or project's tasks
   const missedNow = () => (view.day || view.range || view.person || view.labels.length || view.workflow || view.schedule ? [] : W.tops().filter((r) => r.missed && (view.from === 'all' || (r.project || 'No project') === view.from)));
-  const missedRow = (r) => { const x = { m: r, key: `missed:${r.id}` }; return { key: x.key, _x: x, pick: false, title: r.title, meta: factsOf(r.project, 'Missed its time', true), wrap: true, mark: R.kindMark({ kind: 'schedule', tone: 'act', title: r.detail }), end: '', menu: null }; };
+  const missedRow = (r) => { const x = { m: r, key: `missed:${r.id}` }; return { key: x.key, _x: x, pick: false, title: r.title, facts: ['Missed its time', r.project, r.detail].filter(Boolean), endWord: 'Missed', mark: R.kindMark({ kind: 'schedule', tone: 'act', title: r.detail }), end: '', menu: null }; };
   function sections() {
     const list = tops().filter((t) => passes(t, view));
     const rows = (ts, s) => ts.map((t) => rowOf(t, s));
     // Pull requests: one row per open PR (a group's members each), what waits on you first
-    if (view.show === 'prs') { const prs = list.flatMap(prRuns).map((r) => ({ r, f: prFacts(r) })).sort((a, b) => (a.f.who === 'waits on you' ? 0 : 1) - (b.f.who === 'waits on you' ? 0 : 1)); return [{ id: 'prs', title: 'Pull requests', rows: prs.map(({ r, f }) => row(r, '', false, f.line)) }]; }
+    if (view.show === 'prs') { const prs = list.flatMap(prRuns).map((r) => ({ r, f: prFacts(r) })).sort((a, b) => (a.f.who === 'waits on you' ? 0 : 1) - (b.f.who === 'waits on you' ? 0 : 1)); return [{ id: 'prs', title: 'Pull requests', rows: prs.map(({ r, f }) => row(r, '', false, f)) }]; }
     if (view.show !== 'all') return [{ id: view.show, ...(view.show === 'needs' ? needsCount() : {}), title: showOf(view.show).title || cap(showOf(view.show).text), rows: [...rows(list, view.show === 'needs' || view.show === 'running' ? view.show : ''), ...(view.show === 'needs' ? missedNow().map(missedRow) : [])] }];
     const needs = list.filter((t) => t.section === 'needs'), rest = list.filter((t) => t.section !== 'needs');
     const urgent = (t) => { const s = t.run ? stateOf(t.run) : ''; return (3 - R.alertLevel(R.markTone(R.runState(s || 'working')))) * 10 + (s === 'question' ? 0 : 1); };   // highest level first (look.alert-ladder)

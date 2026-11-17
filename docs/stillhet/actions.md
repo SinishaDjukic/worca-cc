@@ -32,7 +32,7 @@
 | A step that needs fields | Dialog (`form.dialog`) |
 | Commands you run by hand (`How to merge`) | A Dialog without a form, with a CopyButton; never a Toast, which fades |
 | Sending something with your words (`Report this task`) | Dialog, with the note |
-| Starting new work, or changing a task or a schedule | Chat (`stillhet.chat-first`): the page offers **Ask about it in chat** or **Change it in chat** |
+| Starting new work, or changing a task or a schedule | Chat (`stillhet.chat-first`): the page offers **Ask about it in chat** or, on a schedule, **Change in its chat** |
 | A setting of Worca, or of a project | Settings, or the project's Settings tab, as a labelled picker in its row (`set.one-choice`) |
 
 ## Which steps confirm

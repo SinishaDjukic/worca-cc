@@ -42,7 +42,7 @@ export function search({ value = '', placeholder = 'Search or ask', label = 'Sea
  * @param {string} [empty]
  */
 export function searchResults(items, empty = 'Nothing matches', { areas = [], tail = [] } = {}) {
-  const line = (x) => ({ id: x.id, text: x.text, hint: x.where, mark: x.mark });
+  const line = (x) => ({ id: x.id, text: x.text, hint: x.where, mark: x.mark, help: x.where ? `${x.text}\n${x.where}` : '' });   // list.one-line: where it lives is at the row's end, whole in its tooltip
   // key.search: a listbox the field owns (aria-controls); each result is an option with an id, so the field can name the
   // active one (aria-activedescendant) while the focus stays in the field
   let n = 0;

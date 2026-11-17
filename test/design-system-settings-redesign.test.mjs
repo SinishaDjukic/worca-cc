@@ -22,12 +22,15 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 const key = (win, el, k, o = {}) => { const e = new win.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...o }); el.dispatchEvent(e); return e; };
 
 // ---- SettingsRow: the value leads ----
-test('settingsRow: the value first, in its own element, then one supporting line; a sentence alone is the supporting line', () => {
+test('settingsRow: the value alone on its line, the note as the row\'s hint; keepLine draws it; a sentence alone is the row\'s one line', () => {
   const r = dom(C.settingsRow({ name: 'Budget', value: '$1,000 a month', note: 'All tasks pause when it is spent', end: '<button class="btn">Change…</button>' }));
   const text = r.querySelector('.set-text');
-  assert.deepEqual([...text.children].map((x) => x.className), ['set-value', 'set-note'], 'the value leads, the line supports');
+  assert.deepEqual([...text.children].map((x) => x.className), ['set-value', 'set-said'], 'the value is the line; the note is kept for a screen reader, out of sight (list.one-line)');
   assert.equal(text.querySelector('.set-value').textContent, '$1,000 a month');
-  assert.equal(text.querySelector('.set-note').textContent, 'All tasks pause when it is spent');
+  assert.equal(r.querySelector('.set-name').title, 'All tasks pause when it is spent', 'the note is the name\'s tooltip');
+  const kept = dom(C.settingsRow({ name: 'Budget', value: '$1,000 a month', note: 'All tasks pause when it is spent', keepLine: 'what a spent budget does' }));
+  assert.deepEqual([...kept.querySelector('.set-text').children].map((x) => x.className), ['set-value', 'set-note'], 'a named fact keeps its line');
+  assert.equal(kept.dataset.keepLine, 'what a spent budget does');
   assert.ok(r.querySelector('.set-end > .btn'), 'the control is at the row\'s end');
   const old = dom(C.settingsRow({ name: 'Setup', sentence: 'Checks this machine' }));
   assert.equal(old.querySelector('.set-value'), null);
@@ -99,8 +102,10 @@ test('rowPicker: a long value folds inside the field and is whole in its tooltip
 });
 
 // ---- a menu item's supporting line ----
-test('menuItem: `line` is one shown line under its words; without it the markup is as before', () => {
-  const it = dom(C.menuItem({ text: 'Advanced', checked: true, line: 'Adds schedules and statistics' }));
+test('menuItem: `line` is the item\'s hint; with keepLine it is one shown line under its words; without a line the markup is as before', () => {
+  const hint = dom(C.menuItem({ text: 'Advanced', checked: true, line: 'Adds schedules and statistics' }));
+  assert.doesNotMatch(hint.className, /\bhas-line\b/); assert.equal(hint.querySelector('.mi-line'), null); assert.equal(hint.title, 'Adds schedules and statistics');
+  const it = dom(C.menuItem({ text: 'Advanced', checked: true, line: 'Adds schedules and statistics', keepLine: 'what the mode adds' }));
   assert.match(it.className, /\bhas-line\b/);
   assert.equal(it.querySelector('.mi-l > .mi-line').textContent, 'Adds schedules and statistics');
   assert.equal(C.menuItem({ text: 'Advanced', checked: true }).includes('mi-line'), false);

@@ -58,7 +58,11 @@
   const SHELVES = [['Bring tasks in', 'Tickets become tasks; the result goes back to the ticket.', ['Task sources']], ['Talk to Worca from', 'Answer what needs you without opening Worca.', ['Chat channels']], ['Give tasks tools', 'MCP servers and models a task can call.', ['MCP servers', 'Models']], ['New agents and workflows', 'Steps and whole flows for your workflows.', ['Agents', 'Workflows', 'Scripts', 'Skills']]];
   const nameOf = (p) => p.name || p.id;
   const markOf = (p, size = 20) => R.kindMark({ kind: 'plugin', icon: p.brand || '', tone: stOf(p).tone, size, title: stOf(p).word });   // its brand in Stillhet's line; a plug without one
-  const factsOf = (p) => `Adds ${p.adds.map((a) => { const w = a.split(':')[0]; return w.charAt(0).toLowerCase() + w.slice(1); }).join(', ')} · ${p.asks.length ? `asks for ${p.asks.length === 1 ? p.asks[0].replace(/^A /, 'a ').replace(/^An /, 'an ').replace(/^Your /, 'your ') : `${p.asks.length} things`}` : 'asks for nothing'}`;
+  // list.one-line: the card's quiet line holds only what its kind and its words do not say: what else it adds, and what it asks for
+  const factsOf = (p) => { const kind = p.kind.replace(/s$/, '').toLowerCase(), low = (w) => w.charAt(0).toLowerCase() + w.slice(1);
+    const adds = p.adds.map((a) => a.split(':')[0]).filter((w) => w.replace(/^An? /, '').toLowerCase() !== kind).map((w) => (/^(\d|An? )/.test(w) ? `adds ${low(w)}` : low(w)));
+    const t = [...adds, p.asks.length ? `asks for ${p.asks.length === 1 ? p.asks[0].replace(/^A /, 'a ').replace(/^An /, 'an ').replace(/^Your /, 'your ') : `${p.asks.length} things`}` : 'asks for nothing'].join(' · ');
+    return t.charAt(0).toUpperCase() + t.slice(1); };
   // what it adds, each by name: [kind of thing, its name]
   const partsOf = (p) => p.parts || (p.gives ? Object.entries(p.gives).flatMap(([k, l]) => l.map((x) => [k === 'agent' ? 'Agent' : 'Workflow', `${x.title}: ${x.says || x.what}`])) : p.adds.map((a) => { const i = a.indexOf(': '); return i > 0 ? [a.slice(0, i).replace(/^An? /, '').replace(/^./, (c) => c.toUpperCase()), a.slice(i + 2)] : ['Also', a]; }));
   // Worca's suggestions: one you install stays where it was until you leave them

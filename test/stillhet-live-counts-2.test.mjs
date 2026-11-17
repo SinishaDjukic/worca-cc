@@ -10,7 +10,10 @@ test('Projects: a project whose key is not its name joins its tasks by name (api
   const { w, d, hello } = await liveHost({ hash: '#projects' });
   await hello(); await settle();
   // api's tasks by dev's rule: run-c (paused at a limit) and h1 (paused); its sync state alone would say "Out of sync"
-  assert.match(d.getElementById('bar-place').textContent, /api2 tasks need you/, 'its waiting tasks are counted');
+  // list.one-line: the row ends in the count; the words are its tooltip
+  const apiRow = [...d.querySelectorAll('#bar-place [data-row^="proj:"]')].find((r) => r.querySelector('.lr-t').textContent === 'api');
+  assert.equal(apiRow.querySelector(':scope > .lr-end > .lr-fig')?.textContent, '2', 'its waiting tasks are counted');
+  assert.match(apiRow.querySelector('[data-open]').title, /2 tasks need you/);
   w.location.hash = '#projects/api-2'; await settle();
   d.querySelector('#route-place [data-menu="pj-more"]').click();
   d.querySelector('#route-place [data-menu-pick="pj-more|tasks"]').click(); await settle();

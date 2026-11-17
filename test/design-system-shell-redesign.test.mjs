@@ -113,7 +113,7 @@ test('filterRow folded (a bar): tabs, a chip with ✕ for each filter off its de
 test('listRow, list, groupRow: rows are list items in a named list', () => {
   const r = dom(listRow({ title: 'a', meta: 'web-app · Working', open: { 'data-open': 'a' }, current: true }));
   assert.equal(r.getAttribute('role'), 'listitem'); assert.equal(r.getAttribute('aria-current'), 'true');
-  assert.equal(r.querySelector('.lr-m').textContent, 'web-app · Working', 'its project and state on its second line');
+  assert.equal(r.querySelector('.lr-m'), null, 'one line (list.one-line)'); assert.equal(r.querySelector('.lr-main').title, 'a\nweb-app · Working', 'its project and state are its tooltip');
   const l = dom(list({ groups: [{ title: 'Today', rows: [listRow({ title: 'a' })] }] }));
   assert.equal(l.querySelector('.list-rows').getAttribute('role'), 'list'); assert.equal(l.querySelector('.list-rows').getAttribute('aria-label'), 'Today');
   const g = dom(groupRow({ title: 'g', count: '1', noun: 'tasks', shown: true, toggle: {}, rows: listRow({ title: 'm' }) }));

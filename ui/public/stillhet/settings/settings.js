@@ -194,9 +194,9 @@
       const foldKey = 'more:' + where + '/' + it.title, foldOpen = sv.__open === foldKey;
       const canFold = it.more && (!it.foldFlag || R.prefs.flag(it.foldFlag));
       const under = canFold && foldOpen ? `<div class="set-detail" data-motion="open"><div class="set-rows">${it.more.filter((m) => vis(m, c)).map((m) => row(m, sv, c, where + '/' + it.title)).join('')}</div>${it.moreList ? records(it.moreList, sv, c, where + '/' + it.title, it.empty) : ''}</div>` : '';
-      return c.R.listRow({ title: it.title, meta, mark: '',   /* a record's state is in its words (signed in, 1 update), never a loose dot */ endText: it.fig || '', end: chipOf(it, sv, c) + btns + swOf(it, it.title, sv, c), after: under,
+      return c.R.listRow({ title: it.title, value: meta, mark: '',   /* a record's state is in its words (signed in, 1 update), never a loose dot */ endText: it.fig || '', end: chipOf(it, sv, c) + btns + swOf(it, it.title, sv, c), after: under,
         fold: canFold ? { open: foldOpen, help: it.foldHelp || '', attrs: { 'data-svdo': foldKey, 'data-key': 'sv:' + foldKey } } : null,
-        open: opener ? { 'data-svdo': k + '/open', 'data-key': 'sv:' + k + '/open', title: meta || 'Open ' + it.title } : null,
+        open: opener ? { 'data-svdo': k + '/open', 'data-key': 'sv:' + k + '/open', title: it.title } : null,
         menu: menu.length ? { id: mid, label: 'More for ' + it.title, icon: c.svg('more', 14), items: menu, open: c.open === mid } : null });
     });
   }
@@ -239,7 +239,7 @@
     const strip = sv.__confirm ? c.R.confirmStrip({ text: sv.__confirm.text, yes: sv.__confirm.yes, danger: !!sv.__confirm.danger }) : '';
     const body = strip + (note ? `<p class="dlg-note">${words(note, c)}</p>` : '')
       + (s.list ? records(s.list, sv, c, s.where) : '')
-      + (facts ? c.R.list({ groups: [{ rows: facts.map((x) => c.R.listRow({ title: x.title, meta: x.meta || '', mark: '' })) }] }) : '')
+      + (facts ? c.R.list({ groups: [{ rows: facts.map((x) => c.R.listRow({ title: x.title, value: x.meta || '', mark: '' })) }] }) : '')
       + ((s.rows || []).length ? `<div class="set-rows dlg-rows">${s.rows.map((r) => row(r, sv, c, 'dlg')).join('')}</div>` : '')
       + (s.fields || []).map((f) => fieldHtml(f, d, sv, c)).join('');
     const steps = d.steps ? c.R.stepper({ label: 'Steps', stages: d.steps.map((x, i) => ({ key: 'sa-' + i, label: x.label, selected: i === d.at, cells: [i < d.at ? 'is-done' : i === d.at ? 'is-now' : 'is-next'], attrs: { 'data-svdo': 'step:' + i } })) }) : '';

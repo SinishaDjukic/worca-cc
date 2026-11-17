@@ -227,17 +227,18 @@ export function rowEndWord({ state, stage = '', stages = STAGE_NAMES, after = fa
 }
 
 /**
- * A child row's one line (list.child-row), from the row a page gives a list: its end word (from `state`; with none,
- * the row's own short `end`, a schedule's time), the tooltip that holds the full title and the detail, and the name a
- * screen reader hears, which keeps the state and the detail.
- * @param {{title:string, meta?:string, end?:string, tip?:string, state?:string, stage?:number|string, stages?:string[], after?:boolean}} r
- * @returns {{end:string, tip:string, name:string}|null}
+ * A row's one line (list.one-line, list.child-row), from the row a page gives a list: its end word (the page's own
+ * `endWord`; else from `state`; with none, the row's own short `end`, a time or a count), the tooltip that holds the
+ * full title and the detail (one fact a line when the page gives `facts`), and the name a screen reader hears, which
+ * keeps the state and the detail.
+ * @param {{title:string, meta?:string, facts?:string[], end?:string, endWord?:string, tip?:string, state?:string, stage?:number|string, stages?:string[], after?:boolean}} r
+ * @returns {{end:string, tip:string, name:string}}
  */
 export function childLine(r) {
-  const end = r.state ? rowEndWord(r) : r.end || '';
-  if (!end) return null;   // nothing to say at its end (a workspace's project): the row stays as its page gave it
-  const detail = r.meta || end;
-  return { end, tip: [r.tip || r.title, detail].filter(Boolean).join('\n'), name: [r.title, detail].filter(Boolean).join(', ') };
+  const end = r.endWord || (r.state ? rowEndWord(r) : r.end || '');
+  const head = String(r.tip || r.title || '').split('\n');   // a page's own tooltip keeps its lines; a fact it already says is not said twice
+  const facts = (r.facts || [r.meta || end]).filter((f) => f && !head.includes(f));
+  return { end, tip: [...head, ...facts].filter(Boolean).join('\n'), name: [r.title, ...head.slice(1), ...facts].filter(Boolean).join(', ') };
 }
 
 /**
@@ -268,7 +269,7 @@ export function groupRow({ count, shown, noun, toggle, rows = '', end = '', ...r
  */
 export function roundRows({ line, n, open, toggle, rounds = [], more = null }) {
   const word = `${n} ${n === 1 ? 'round' : 'rounds'}`;
-  const head = `<button type="button" class="lr-round-line"${attrs({ 'aria-expanded': String(open), 'aria-label': `${open ? 'Hide' : 'Show'} the ${word}`, title: line, ...toggle })}><span class="lr-m">${esc(line)}</span><span class="lr-round-end">${esc(word)}${icon(open ? 'chevron' : 'chevR', 12)}</span></button>`;
+  const head = `<button type="button" class="lr-round-line"${attrs({ 'aria-expanded': String(open), 'aria-label': `${open ? 'Hide' : 'Show'} the ${word}`, title: line, 'data-keep-line': 'the newest fix round, and the way to the others', ...toggle })}><span class="lr-m">${esc(line)}</span><span class="lr-round-end">${esc(word)}${icon(open ? 'chevron' : 'chevR', 12)}</span></button>`;
   if (!open) return `<div class="lr-rounds">${head}</div>`;
   return `<div class="lr-rounds">${head}<div class="list-rows">${rounds.map((r) => listRow({ title: `Round ${r.n} · ${r.words}`, endText: r.time || '', open: r.attrs || null })).join('')}</div>${more ? button({ label: `+${more.n} earlier`, kind: 'quiet', attrs: more.attrs }) : ''}</div>`;
 }

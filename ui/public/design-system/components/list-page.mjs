@@ -80,13 +80,14 @@ export function fitMenu(m, vw) {
  * @param {() => boolean} o.spec.active  this list takes keys now
  * @param {() => void} [o.spec.retry]
  * @param {() => void} [o.spec.emptyAct]
- * A row under another row (in `tree` or `members`) is one line (childLine): give it `state` (a runState id), and `stage`, `stages`, `after` as rowEndWord takes them.
+ * Every row is one line (list.one-line, childLine): give it `state` (a runState id) with `stage`, `stages`, `after` as rowEndWord takes them, or its own `endWord`;
+ * its `meta`, or `facts` (one a line), is its tooltip and its name; `apart` (its project) is its end word while another row on screen has its title. `keepLine` names the fact a second line holds, and draws `meta` under the title.
  * A row: { key, title, meta, mark, lead, end, endMark, tree (what hangs under it, always open), tip, unread, current, holds, menu, members, open (a group's first state), noun, count, rounds }.
  */
 const OWNER = new WeakMap();   // root → the controller whose rows it shows
 export function listController({ root, spec }) {
   const doc = root.ownerDocument, win = doc.defaultView;
-  const s = { pick: selectClear(), menu: '', more: new Set(), shut: new Set(), treeShut: new Set(), treeSeen: new Set(), opening: '', seen: new Set(), arrived: new Map(), groups: new Map(), rounds: new Set(), roundsAll: new Set(), confirm: null, pop: null, dialog: null, focus: '', flash: '', order: [], rows: new Map() };
+  const s = { pick: selectClear(), menu: '', more: new Set(), shut: new Set(), treeShut: new Set(), treeSeen: new Set(), opening: '', seen: new Set(), arrived: new Map(), groups: new Map(), rounds: new Set(), roundsAll: new Set(), same: new Set(), confirm: null, pop: null, dialog: null, focus: '', flash: '', order: [], rows: new Map() };
   const dots = () => icon('more', 16);
   // folded date sections are kept per list, so Older stays folded when you come back
   const FOLD_KEY = `worca-stillhet.fold.${spec.noun}`;
@@ -98,12 +99,13 @@ export function listController({ root, spec }) {
   const isShut = (x) => x.fold && (s.shut.has(x.id) || (!s.opened.has(x.id) && !openByDefault(x.id) && !x.rows.some((r) => r.current || r.holds)));
   const groupOpen = (r) => (s.groups.has(r.key) ? s.groups.get(r.key) : !!r.open || !!r.holds);   // a group that holds the row you are on starts open (list.fold-keeps-current)
 
-  // list.child-row: a row under another row is one line; its detail is its tooltip and its name
+  // list.one-line: every row is one line; its detail is its tooltip and its name. A second line needs the row's `keepLine`
   const childHtml = (r) => rowHtml(r, true);
   function rowHtml(r, child) {
     const selecting = s.pick.on;
-    const one = child === true ? childLine(r) : null;
-    const base = { title: r.title, meta: one ? '' : r.meta, wrap: !one && !!r.wrap, news: r.news || false, mark: r.mark, lead: r.lead, unread: r.unread, current: r.current, holds: r.holds, flash: s.flash === r.key,
+    if (child !== true && r.apart && s.same.has(r.title)) r = { ...r, endWord: r.apart };   // two rows on screen with one title: what tells them apart is the end word
+    const one = r.keepLine ? null : child === true || r.meta || r.facts || r.state || r.endWord ? childLine(r) : null;
+    const base = { title: r.title, meta: one ? '' : r.meta, keepLine: one ? '' : r.keepLine, wrap: !one && !!r.wrap, news: r.news || false, mark: r.mark, lead: r.lead, unread: r.unread, current: r.current, holds: r.holds, flash: s.flash === r.key,
       open: one ? { 'data-open': r.key, title: one.tip, 'aria-label': one.name, 'data-cut-tip': one.tip === r.title ? '' : null } : { 'data-open': r.key, title: r.tip || r.title, 'data-cut-tip': r.tip ? null : '' }, attrs: { 'data-row': r.key },
       menu: r.menu ? { id: `row:${r.key}`, label: `More for ${r.title}`, icon: dots(), items: r.menu, open: s.menu === `row:${r.key}` } : null,
       check: selecting && r.pick !== false ? s.pick.ids.includes(r.key) : undefined, boxAttrs: { 'data-sel': r.key } };
@@ -127,11 +129,14 @@ export function listController({ root, spec }) {
     const note = (r) => { s.rows.set(r.key, r); (r.members || []).forEach(note); (r.tree || []).forEach(note); };
     v.sections.forEach((x) => x.rows.forEach(note));
     const ready = !v.state || v.state === 'ready';
+    // the row you are on never folds behind Show N more: it stays under the first ones (docs/stillhet/lists.md › list.fold-keeps-current)
+    const shownOf = (x) => { const limit = x.limit || LIST_SHOWN; return isShut(x) ? [] : s.more.has(x.id) || x.rows.length <= limit ? x.rows : [...x.rows.slice(0, limit), ...x.rows.slice(limit).filter((r) => r.current || r.holds)]; };
+    const titles = new Map(); if (ready) for (const x of v.sections) for (const r of shownOf(x)) titles.set(r.title, (titles.get(r.title) || 0) + 1);
+    s.same = new Set([...titles].filter(([, n]) => n > 1).map(([t]) => t));   // list.one-line: titles two rows on screen share
     const groups = ready ? v.sections.filter((x) => x.rows.length).map((x) => {   // list.sections: an empty one is not drawn
       const shut = isShut(x);
-      const limit = x.limit || LIST_SHOWN, all = s.more.has(x.id) || x.rows.length <= limit;
-      // the row you are on never folds behind Show N more: it stays under the first ones (docs/stillhet/lists.md › list.fold-keeps-current)
-      const rows = shut ? [] : all ? x.rows : [...x.rows.slice(0, limit), ...x.rows.slice(limit).filter((r) => r.current || r.holds)];
+      const limit = x.limit || LIST_SHOWN;
+      const rows = shownOf(x);
       const walk = (r) => { s.order.push(r.key); (r.tree || []).forEach(walk); if (r.members && groupOpen(r)) r.members.forEach(walk); }; rows.forEach(walk);
       s.top.push(...rows.filter((r) => r.pick !== false).map((r) => r.key));   // Select all: a group's row stands for its members, so a count never counts one twice
       return { title: x.title, count: x.noCount ? '' : x.count ?? x.rows.length, of: x.of, chip: x.chip, rows: shut ? [''] : rows.map((r) => rowHtml(r)), fold: x.fold ? { open: !shut, attrs: { 'data-fold-section': x.id } } : null, more: shut || x.rows.length <= limit ? null : s.more.has(x.id) ? { less: true, attrs: { 'data-less': x.id } } : rows.length >= x.rows.length ? null : { n: x.rows.length - rows.length, attrs: { 'data-more': x.id } } };

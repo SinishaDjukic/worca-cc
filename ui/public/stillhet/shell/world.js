@@ -249,6 +249,14 @@
     facts: (caseId = current) => (LIVE ? { usage: parts.costs.usage, budget: parts.costs.budget, actions: parts.actions, chats: {} } : { ...CASES[caseId], actions: CASES[caseId].actions.map(([aid, r, label, gone]) => ({ id: aid, runId: r, run: gone || table()[r].title, label })) }),
     // A step taken on a run from elsewhere (Pulse's Try again, Resume): the run moves, and every list reads it.
     move: (id, kase, detail, o = {}) => { const r = data.runs.find((x) => x.id === id); if (!r) return; Object.assign(r, { case: kase, detail, time: 'now', day: kase === 'scheduled' ? r.day : 'today', when: kase === 'scheduled' ? r.when : undefined, resumes: false, unread: false }, o); titles(); tell(id); },
+    // stillhet.one-place: what a task's page and its card in its chat both read and write, by the task's id. Its state is
+    // move() above; these are the rest of the record: the answer to its open question, and the follow-ups asked on it.
+    // Every write tells onMove, so the other surface, the bars and needs() read it again.
+    task: (id) => data.runs.find((r) => r.id === id) || null,
+    // the demo's address names a state (#run/<case>), not a task: the task it opens is looked up once, here, and is known by its id from then on
+    pageTask: (caseId, name) => data.runs.find((r) => r.case === caseId && r.title === name) || (name ? data.runs.find((r) => r.title === name && !r.schedule) : null) || null,
+    answer: (id, text, o = {}) => { const r = data.runs.find((x) => x.id === id); if (!r) return null; r.answered = String(text || ''); window.StillhetWorld.move(id, o.to || 'working', o.detail || 'Carries on with your answer', o.stage >= 0 ? { stage: o.stage } : {}); return r; },
+    followUp: (id, f) => { const r = data.runs.find((x) => x.id === id); if (!r || !f?.text) return null; r.followUps = [...(r.followUps || []), { text: f.text, when: f.when || 'Proposed in its chat' }]; tell(id); return r; },
     section, raises, groupSection, tops, membersOf,
   };
 })();

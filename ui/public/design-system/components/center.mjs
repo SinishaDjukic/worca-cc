@@ -84,7 +84,7 @@ export function figuresButton({ open = false, attrs: a = {} } = {}) {
  * @param {object} [o.hook]  the attribute that opens it
  */
 export function quietLine({ n, noun, names, open = false, hook = {} }) {
-  return `<div class="center-quiet">${list({ groups: [{ title: '', rows: [listRow({ title: `${n} quiet ${noun}${n === 1 ? '' : 's'}`, meta: open ? '' : names, mark: kindMark({ kind: noun }), open: { ...hook, 'aria-expanded': String(open), title: open ? 'Folds them' : `Shows the quiet ${noun}s` } })] }] })}</div>`;
+  return `<div class="center-quiet">${list({ groups: [{ title: '', rows: [listRow({ title: `${n} quiet ${noun}${n === 1 ? '' : 's'}`, value: open ? '' : names, mark: kindMark({ kind: noun }), open: { ...hook, 'aria-expanded': String(open), title: open ? 'Folds them' : `Shows the quiet ${noun}s` } })] }] })}</div>`;
 }
 
 /**

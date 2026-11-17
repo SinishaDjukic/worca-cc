@@ -20,7 +20,7 @@
 | `comp.menu-edge` | A menu with any toggle keeps the toggle's room on every item, so its words start on one edge. While a menu is open over the page, nothing outside it shows a tooltip | One text edge inside a menu, and no tip over it | design-system-components |
 | `comp.menu-tick` | A choice whose item carries a mark shows its tick at the row's end | Where you are must be visible, not only announced | design-system-components |
 | `comp.menu-off` | A disabled menu item never acts: the menu stays open, the item shows no pointer or hover, and it says why | A control acts, or is disabled and says why | design-system-components |
-| `comp.menu-line` | A menu item may carry one shown supporting line under its words (`menuItem({ line })`), as each mode does in the profile menu | A choice that needs a sentence gets one, in place | design-system-settings-redesign |
+| `comp.menu-line` | A menu item is one line (`list.one-line`): its `line` is its hint, the tooltip and the description. It is drawn under the words only with `keepLine` naming the fact it holds, as each mode does in the profile menu (`keepLine: 'what the mode adds'`) | A choice that cannot be made without a sentence gets one, in place, and no other item does | design-system-settings-redesign |
 | `comp.menu-sub` | A menu that holds groups of choices (the model picker's makers) opens a group in place: its items replace the list under a ‹ back row named for the group, and the opener of the group holding the choice carries the tick. → Enter Space open it; ← Esc and the back row return (`openSub`, `menuKeys`) | One layout fits every width and never leaves the window | design-system-components |
 | `comp.keyed-patch` | A page that redraws a list on live data patches it by key (`patchKeyed`): an item whose drawing did not change keeps its node, and an orb in a redrawn item keeps its canvas (`carry`). Live redraws wait for the next frame (`frameBatch`) | A live frame must not cost the whole page, reset focus, caret or scroll, or restart the orb | design-system-keyed-list |
 | `comp.patch-parts` | A region drawn from named parts (the shell's `#app`, a slot, a page's column) patches by part (`patchParts`): a part whose string did not change keeps its nodes, and a redraw that changes nothing writes nothing (a list's `paint({ ifChanged })` too). Part names are never integer-like | A redraw must not cost an unchanged part its focus, caret, scroll or open menu | design-system-keyed-list |
@@ -186,7 +186,7 @@ A part of a component that a page calls on its own is found here by its need, un
 | One figure: its name, its value, of what | `figure` | Figures |
 | What a figure is made of, opened from it | `figureBreakdown` | Figures |
 | Labels that fit their line, the rest folded into +N | `fitTags` | TagGroup |
-| Search results under their area's head: each its name, then where it lives on the line under it; a long where wraps inside the popover | `searchResults` | Search |
+| Search results under their area's head: each one line, its name, then where it lives at its end; a long where folds to … and its tooltip has it whole (`list.one-line`) | `searchResults` | Search |
 | A failure that can be read whole, until it is closed | `errorToast` | Toast |
 | Undo right after a step | `toastUndo` | Toast |
 | What a toast says, two lines at most, the whole text in its tooltip | `toastText` | Toast |

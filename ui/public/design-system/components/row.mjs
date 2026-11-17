@@ -33,6 +33,21 @@ export function row({ kind = 'list', rail = '', text = '', end = '', more = '', 
 }
 
 /**
+ * list.one-line: a row, a menu item or a settings row is one line. Its detail is its hint: the tooltip (after the row's
+ * own words) and the description a screen reader hears. A second line is drawn only where the caller names the fact it
+ * holds in `keepLine`, so every kept line is a decision that shows in code.
+ * @param {string} hint   the detail, as text
+ * @param {string} [tip]  what the tooltip starts with: the row's full title, or what opening it does
+ * @returns {{title: string|null, 'aria-description': string|null}} attrs for the row's own control
+ */
+export function hintAttrs(hint = '', tip = '') {
+  const lines = [tip, hint].filter(Boolean);
+  return { title: lines.length ? lines.join('\n') : null, 'aria-description': hint || null };
+}
+/** True when a caller named the fact its second line holds (`keepLine: 'why it needs you'`). */
+export const keepsLine = (keepLine) => typeof keepLine === 'string' && keepLine.trim().length > 0;
+
+/**
  * PulseRow: an update or a thing in Pulse: its mark on the rail (while selecting, the tick box in its place), the text
  * that opens it, its time, and its own way to deal with it.
  * @param {object} o
@@ -47,10 +62,12 @@ export function row({ kind = 'list', rail = '', text = '', end = '', more = '', 
  * @param {boolean} [o.resolved] says Resolved beside the title
  * @param {boolean} [o.flash]
  * @param {string} [o.action]    a Button at its end
+ * @param {string} [o.keepLine]  the fact its second line holds; without it `meta` is the row's hint only (list.one-line)
  */
-export function pulseRow({ mark = '', title, meta, time, tip, id, check, unread = false, resolved = false, flash = false, action = '' }) {
+export function pulseRow({ mark = '', title, meta, time, tip, id, check, unread = false, resolved = false, flash = false, action = '', keepLine = '' }) {
+  const kept = keepsLine(keepLine) && !!meta;
   const unreadMark = '';   // unread is the title's weight, never a dot beside the mark (docs/stillhet/lists.md › list.kind-mark)
   return row({ kind: 'pulse', cls: `${check ? 'is-sel' : ''}${unread ? ' is-unread' : ''}${flash ? ' is-flash' : ''}`, attrs: { 'data-row': id },
     rail: `${mark}${unreadMark}${check !== undefined ? checkbox({ cls: 'pz-check', why: 'Select', checked: !!check, attrs: { 'data-sel': id, 'aria-label': `Select ${title}` } }) : ''}`,
-    text: `<button type="button" class="pz-row-main row-btn"${attrs({ 'data-open': id, title: `${title}\n${meta}\n${tip}` })}><span class="pz-row-t${unread ? ' is-unread' : ''}"><span class="pz-row-tt">${esc(title)}</span>${resolved ? '<span class="pz-resolved">Resolved</span>' : ''}</span><span class="pz-row-m">${esc(meta)}</span></button><span class="pz-row-end"><span class="pz-row-time">${esc(time)}</span>${action}</span>` });
+    text: `<button type="button" class="pz-row-main row-btn"${attrs({ 'data-open': id, title: [title, meta, tip].filter(Boolean).join('\n'), 'aria-description': kept ? null : meta || null, 'data-keep-line': kept ? keepLine : null })}><span class="pz-row-t${unread ? ' is-unread' : ''}"><span class="pz-row-tt">${esc(title)}</span>${resolved ? '<span class="pz-resolved">Resolved</span>' : ''}</span>${kept ? `<span class="pz-row-m">${esc(meta)}</span>` : ''}</button><span class="pz-row-end"><span class="pz-row-time">${esc(time)}</span>${action}</span>` });
 }

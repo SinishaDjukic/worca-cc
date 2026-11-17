@@ -497,6 +497,7 @@
         "a head and its options are one block; in columns they stay together, two columns at most, and a scrolling menu never ends on a head alone (comp.menu-groups)",
         "a disabled item never acts, shows no pointer, and says why (comp.menu-off)",
         "a choice with a mark shows its tick at the row's end (comp.menu-tick)",
+        "an item is one line: its `line` is its hint (tooltip and description); `keepLine` names the fact a drawn second line holds (list.one-line, comp.menu-line)",
         "a group of choices opens in place under a ‹ back row; → Enter Space open it, ← Esc and the back row return; its opener carries the tick (comp.menu-sub)",
         "a menu that opens takes the focus: its field, else the chosen item, else the first (keys.menu-focus, `focusMenu`)",
         "an item may carry one shown supporting line under its words (`line`): a mode says what it adds"
@@ -1314,7 +1315,8 @@
       ],
       "rules": [
         "the whole row is its target and tint",
-        "the state word never shortens; the meta wraps",
+        "one line: its `meta` is its hint (tooltip and description); `keepLine` names the fact a drawn second line holds, as the reason on a row you act on from Pulse (list.one-line)",
+        "the state word never shortens; a kept meta wraps",
         "built on row()",
         "while selecting, its tick box sits on the rail"
       ],
@@ -1401,10 +1403,12 @@
         "a list of things"
       ],
       "parts": [
-        "state mark on the rail (dot, or tick box while selecting), centred against a two-line row (list.row-mark)",
-        "title line",
-        "a quiet second line saying what it is: project · state, or why it needs you (list.row-facts)",
-        "time or figure at the right, its ⋯ under it",
+        "state mark on the rail (dot, or tick box while selecting)",
+        "title, cut with an ellipsis",
+        "its value on the same line, in a fixed place after the title (`value`), on a page's list",
+        "time, figure or end word at the right, its ⋯ beside it (list.row-facts)",
+        "its detail as its hint: tooltip and description (`hint`, `meta`), never drawn (list.one-line)",
+        "a second line only with `keepLine` naming the fact it holds; the mark is then centred against the two lines (list.row-mark)",
         "under another row: one line, its end one word from rowEndWord, its detail in its tooltip (list.child-row)"
       ],
       "rules": [
@@ -1415,7 +1419,8 @@
         "its own actions in its ⋯ (the `menu` option: moreMenu), a target of at least 28px: Remove, Revoke, Delete, Uninstall and Reject last, after one rule (list.row-more)",
         "a record with fine-tuning of its own folds it under the row (the `fold` option)",
         "rows split by space; grouped by something (status, day, section), a line where each group after the first starts, from the text edge, none between rows",
-        "a tooltip only when its title is cut"
+        "list.one-line: one line by default; every kept second line is named in code and counted by the gate",
+        "a row with no detail has a tooltip only when its title is cut"
       ],
       "example": "tasks, updates, files, decisions"
     },
@@ -1429,7 +1434,7 @@
       "parts": [
         "name, and its ChangedDot (`changed`)",
         "its value, short, in the body style and full ink (`value`)",
-        "at most one supporting line under it, in the secondary style (`note`; `sentence` is its old name)",
+        "with no value, one short line saying what its control does (`note`; `sentence` is its old name); beside a value the note is the row's hint, drawn only with `keepLine` (list.one-line)",
         "end: a Switch, one RowPicker or a bordered button",
         "two or more choices: RowPickers in a line under the supporting line, each under its own label (`picks`)",
         "a row with more to show (`fold`): the whole line is the trigger and a chevron at its end turns",
@@ -2160,12 +2165,14 @@
       ],
       "rules": [
         "panel.conversation-cards",
+        "panel.schedule-change",
         "stillhet.scan-first"
       ],
       "parts": [
         "labelled values in fixed places above the change (`facts`): Project: billing-api",
         "the change: a row per value, before and after, or a drawing (`body`)",
-        "Apply, and a second way beside it (`second`); applied, a one-line receipt with Revert"
+        "Apply, and a second way beside it (`second`); applied, a one-line receipt with Revert",
+        "a kind's own choices instead (`actions`): a schedule's change, from its form or typed in its chat, is Apply beside Discard"
       ]
     },
     {
@@ -3877,7 +3884,7 @@
       "slots": [
         "its title, one meta line saying what it decides",
         "SettingsSections, each a Heading and its one head action",
-        "SettingsRows: one per decision: its name, its value first and short, at most one supporting line, then a Switch, a RowPicker or one bordered button; a row with more opens as a whole, its chevron turning",
+        "SettingsRows: one per decision, on one line: its name, its value first and short (or, with no value, one short line saying what the control does), then a Switch, a RowPicker or one bordered button; a row with more opens as a whole, its chevron turning",
         "a record is a ListRow in a List after the rows, its actions in its ⋯; Change… opens a Dialog with Fields",
         "a reset or a step that cannot be taken back is the head’s action and asks first in the ConfirmStrip"
       ]

@@ -3,6 +3,7 @@
 // come last, after one rule.
 import { attrs, esc } from './html.mjs';
 import { icon } from './icons.mjs';
+import { keepsLine } from './row.mjs';
 
 /**
  * @typedef {object} MenuItem
@@ -18,7 +19,8 @@ import { icon } from './icons.mjs';
  * @property {string} [mark]     a small mark before its words: an area's icon, a KindMark
  * @property {MenuItem[]} [sub]  its items: it opens them in place (comp.menu-sub), and picks nothing itself
  * @property {boolean} [back]    the open sub-menu's way back (drawn by compactMenu only)
- * @property {string} [line]     one supporting line under its words, shown (a mode says what it adds); `help` stays the tooltip
+ * @property {string} [line]     its detail: the item's hint (its tooltip, before `help`, and its description), never drawn (list.one-line)
+ * @property {string} [keepLine] the fact a second line holds that the item's words and hint cannot say ("what the mode adds"): draws `line` under its words
  */
 
 /**
@@ -42,10 +44,11 @@ export function menuItem(it, { pickAttr = 'data-menu-pick', attrs: a = {} } = {}
     return `<button type="button" class="menu-item"${attrs({ role: 'menuitem', 'aria-haspopup': 'menu', 'aria-expanded': 'false', 'aria-disabled': it.off ? 'true' : null, 'data-menu-sub': it.id || it.text, title: it.help || null, ...a })}>${it.mark || ''}<span class="mi-l">${esc(it.text)}</span>${ticked ? `<span class="menu-check">${icon('check', 12)}</span>` : ''}<span class="menu-sub-chev">${icon('chevR', 12)}</span></button>`;
   }
   const choice = it.checked !== undefined, keys = it.hint && isKeyHint(it.hint);
-  return `<button type="button" class="menu-item${it.danger ? ' is-danger' : ''}${it.line ? ' has-line' : ''}"${attrs({
+  const kept = keepsLine(it.keepLine) && !!it.line, said = !kept && it.line ? it.line : '';   // list.one-line: a line is the item's hint unless its fact is named
+  return `<button type="button" class="menu-item${it.danger ? ' is-danger' : ''}${kept ? ' has-line' : ''}"${attrs({
     role: choice ? 'menuitemradio' : 'menuitem', 'aria-disabled': it.off ? 'true' : null,
-    'aria-checked': choice ? String(!!it.checked) : null, 'aria-keyshortcuts': keys ? keyShortcuts(it.hint) : null, ...(pickAttr ? { [pickAttr]: it.id || it.text } : {}), title: it.help || null, ...a,
-  })}>${it.mark || ''}<span class="mi-l">${esc(it.text)}${it.line ? `<span class="mi-line">${esc(it.line)}</span>` : ''}</span>${it.hint ? (keys ? `<span class="mi-hint" aria-hidden="true">${esc(it.hint)}</span>` : ` <span class="mi-hint">${esc(it.hint)}</span>`) : ''}${it.mark && it.checked ? `<span class="menu-check">${icon('check', 12)}</span>` : ''}</button>`;   // comp.menu-tick: a mark takes the choice's place, so the choice is a tick at the end
+    'aria-checked': choice ? String(!!it.checked) : null, 'aria-keyshortcuts': keys ? keyShortcuts(it.hint) : null, ...(pickAttr ? { [pickAttr]: it.id || it.text } : {}), title: [said, it.help].filter(Boolean).join('\n') || null, 'aria-description': said || null, 'data-keep-line': kept ? it.keepLine : null, ...a,
+  })}>${it.mark || ''}<span class="mi-l">${esc(it.text)}${kept ? `<span class="mi-line">${esc(it.line)}</span>` : ''}</span>${it.hint ? (keys ? `<span class="mi-hint" aria-hidden="true">${esc(it.hint)}</span>` : ` <span class="mi-hint">${esc(it.hint)}</span>`) : ''}${it.mark && it.checked ? `<span class="menu-check">${icon('check', 12)}</span>` : ''}</button>`;   // comp.menu-tick: a mark takes the choice's place, so the choice is a tick at the end
 }
 
 /**

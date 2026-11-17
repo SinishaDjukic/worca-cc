@@ -570,5 +570,7 @@ test('childLine (list.child-row): the end word, the tooltip with the detail, and
   assert.deepEqual(R.childLine({ title: 'Nightly export check', meta: 'Every day at 02:00', end: '02:00' }),
     { end: '02:00', tip: 'Nightly export check\nEvery day at 02:00', name: 'Nightly export check, Every day at 02:00' }, 'a schedule ends in its time');
   assert.equal(R.childLine({ title: 'Deep links', state: 'scheduled', after: true }).name, 'Deep links, after it', 'with no detail the name still says the state');
-  assert.equal(R.childLine({ title: 'web-app', meta: '1 task needs you', end: '' }), null, 'nothing for its end: the row stays as it is');
+  assert.deepEqual(R.childLine({ title: 'web-app', meta: '1 task needs you', end: '' }), { end: '', tip: 'web-app\n1 task needs you', name: 'web-app, 1 task needs you' }, 'nothing for its end: still one line, the detail in its tooltip (list.one-line)');
+  assert.deepEqual(R.childLine({ title: 'Retry on 502', facts: ['Failed', 'web-app', 'PR #962'], state: 'failed', endWord: 'web-app' }), { end: 'web-app', tip: 'Retry on 502\nFailed\nweb-app\nPR #962', name: 'Retry on 502, Failed, web-app, PR #962' }, 'facts are one a line; the page\'s own end word wins');
+  assert.equal(R.childLine({ title: 'web-app', tip: 'web-app\nGit · ~/src/web-app\nFailed', meta: 'Failed', end: 'Failed' }).tip, 'web-app\nGit · ~/src/web-app\nFailed', 'a fact the page\'s tooltip already says is not said twice');
 });

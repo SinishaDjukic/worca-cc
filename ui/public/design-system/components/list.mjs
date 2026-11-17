@@ -1,12 +1,13 @@
 // ListRow and List (docs/stillhet/components.md: "A list of things"; Patterns › A list).
-// A row is one thing: its state mark on the rail (hanging left of the text edge, so every title starts on the page's
-// text edge), a title line, a meta line, and at its right a figure or time and the row's ⋯. The whole row opens its
+// A row is one thing on one line (list.one-line): its state mark on the rail (hanging left of the text edge, so every
+// title starts on the page's text edge), its title, its value in a fixed place, and at its right a figure or time and the
+// row's ⋯. Its detail is its hint (tooltip and description); a second line needs `keepLine`. The whole row opens its
 // one target. Rows are split by space; a list grouped by something draws one line where each group after the first
 // starts, from the text edge. Never a box per item.
 import { attrs, esc } from './html.mjs';
 import { button } from './button.mjs';
 import { compactMenu } from './compact-menu.mjs';
-import { row } from './row.mjs';
+import { row, hintAttrs, keepsLine } from './row.mjs';
 import { checkbox } from './checkbox.mjs';
 import { icon } from './icons.mjs';
 
@@ -37,7 +38,10 @@ export function moreMenu({ id, label, icon, items, open = false }) {
  * ListRow.
  * @param {object} o
  * @param {string} o.title          the thing's name
- * @param {string} [o.meta]         one line of facts, as text ("Any project · Fix workflow · updated 3 Oct")
+ * @param {string} [o.value]        its value or state, as text, on the row's one line after the title, in a fixed place ("Any project · Fix workflow")
+ * @param {string} [o.hint]         its detail, as text: the tooltip and the description a screen reader hears, never drawn
+ * @param {string} [o.meta]         a detail as text: the row's hint too, unless `keepLine` draws it as a second line
+ * @param {string} [o.keepLine]     the fact the second line holds that nothing else on the row shows ("why it needs you"): draws `meta` under the title (list.one-line)
  * @param {string} [o.mark]         the rail mark's markup (a statusDot, a kind icon); empty for a thing with no state
  * @param {string} [o.end]          at the right: a figure or time (text), then the row's ⋯ (markup)
  * @param {string} [o.endText]      a figure or time, as text
@@ -58,10 +62,20 @@ export function moreMenu({ id, label, icon, items, open = false }) {
  *   trigger and a chevron at its end turns, as on a SettingsRow (no word swap). A row that also opens a page keeps its name as the
  *   way there, and the chevron alone is the trigger
  */
-export function listRow({ title, meta = '', mark = '', end = '', endText = '', open = null, menu = null, attrs: a = {}, check, boxAttrs = {}, lead = '', unread = false, current = false, holds = false, flash = false, after = '', fold = null, markFold = null, wrap = false, news = false }) {
-  const body = `<span class="lr-t">${lead}${esc(title)}</span>${meta ? `<span class="lr-m">${esc(meta)}</span>` : ''}`;
+export function listRow({ title, meta = '', value = '', hint = '', keepLine = '', mark = '', end = '', endText = '', open = null, menu = null, attrs: a = {}, check, boxAttrs = {}, lead = '', unread = false, current = false, holds = false, flash = false, after = '', fold = null, markFold = null, wrap = false, news = false }) {
+  // list.one-line: the detail is the row's hint; only a named fact is drawn as a second line
+  const kept = keepsLine(keepLine) && !!meta;
+  const detail = [value, kept ? '' : meta, hint].filter(Boolean).join('\n');
+  const body = `<span class="lr-t">${lead}${esc(title)}</span>${value ? `<span class="lr-v">${esc(value)}</span>` : ''}${kept ? `<span class="lr-m">${esc(meta)}</span>` : ''}`;
   const foldAttrs = fold ? { 'aria-expanded': String(!!fold.open), 'aria-label': `${title}: ${fold.label || 'more settings'}`, title: fold.help || null, ...(fold.attrs || {}) } : null;
-  const main = open ? `<button type="button" class="lr-main"${attrs(open)}>${body}</button>` : fold ? `<button type="button" class="lr-main lr-opens"${attrs(foldAttrs)}>${body}</button>` : `<span class="lr-main">${body}</span>`;
+  // a row that gives its own tooltip or name (a bar's row) has the detail in it already
+  const tipOf = (own) => (detail && !(own && String(own).includes('\n')) ? { title: hintAttrs(detail, own || title).title } : { title: own || null });
+  const said = (at) => (detail && !at['aria-label'] ? { 'aria-description': detail.replace(/\n/g, ', ') } : {});
+  const main = open ? `<button type="button" class="lr-main"${attrs({ ...open, ...tipOf(open.title), ...said(open) })}>${body}</button>`
+    : fold ? `<button type="button" class="lr-main lr-opens"${attrs({ ...foldAttrs, ...(detail ? { title: [fold.help, detail].filter(Boolean).join('\n') } : {}), ...said(foldAttrs) })}>${body}</button>`
+      : `<span class="lr-main"${attrs(detail ? { title: detail } : {})}>${body}</span>`;
+  if (!open && !fold && detail) a = { 'aria-description': detail.replace(/\n/g, ', '), ...a };
+  if (kept) a = { 'data-keep-line': keepLine, ...a };
   const more = menu ? moreMenu(menu) : '';
   // a row with rows under it folds from its mark (list.fold-by-mark): the root icon is the trigger, its name still opens it
   // list.news: something happened here that you have not seen: a small light dot on the mark's corner, and never the
