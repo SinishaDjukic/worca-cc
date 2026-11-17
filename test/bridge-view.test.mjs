@@ -51,6 +51,44 @@ test('providers card: not connected / connected states; sign-in block replaces t
   assert.equal(renderProvidersCard(null, { doc }).querySelectorAll('.mv-pv-row').length, 6);   // copilot, openai, anthropic + Speech + Image generation + Sound
 });
 
+test('providers card: GHE.com option listed; host field only for ghe-com (stored or draft); connected line names the tenant', () => {
+  const field = (card) => card.querySelector('.mv-pv-row[data-provider="copilot"] .mv-cp-host');
+  const plain = renderProvidersCard(PROVIDERS, { doc });
+  assert.deepEqual([...plain.querySelectorAll('.mv-cp-account option')].map((o) => [o.value, o.textContent]),
+    [['individual', 'Individual'], ['business', 'Business'], ['enterprise', 'Enterprise'], ['ghe-com', 'GHE.com tenant']]);
+  assert.equal(plain.querySelector('.mv-cp-account').value, 'business');
+  assert.equal(field(plain), null);
+  assert.equal(plain.querySelector('.mv-cp-host-save'), null);
+  // A draft (the select just moved to GHE.com, nothing stored): the field is there, empty, and keeps what was typed.
+  const draft = renderProvidersCard(PROVIDERS, { doc, copilotDraft: { accountType: 'ghe-com', enterpriseHost: '' } });
+  assert.equal(draft.querySelector('.mv-cp-account').value, 'ghe-com');
+  assert.equal(field(draft).value, '');
+  assert.equal(field(draft).placeholder, 'acme.ghe.com');
+  assert.equal(draft.querySelector('.mv-cp-host-save').textContent, 'Save host');
+  assert.match(draft.querySelector('.mv-pv-row[data-provider="copilot"]').textContent, /GHE\.com host.*Your tenant, like acme\.ghe\.com/);
+  assert.equal(field(renderProvidersCard(PROVIDERS, { doc, copilotDraft: { accountType: 'ghe-com', enterpriseHost: 'typed.ghe.com' } })).value, 'typed.ghe.com');
+  // Stored ghe-com: the stored host shows; the connected line names the tenant (github.com stays unadorned).
+  const stored = { copilot: { connected: true, login: 'octo', accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com', githubHost: 'acme.ghe.com', maxConcurrent: 4 } };
+  const card = renderProvidersCard(stored, { doc });
+  assert.equal(field(card).value, 'acme.ghe.com');
+  assert.equal(card.querySelector('.mv-pv-row[data-provider="copilot"] .mv-head .badge').textContent, 'connected as @octo on acme.ghe.com');
+  assert.equal(renderProvidersCard({ copilot: { connected: true, login: 'octo', githubHost: 'github.com' } }, { doc }).querySelector('.mv-pv-row[data-provider="copilot"] .mv-head .badge').textContent, 'connected as @octo');
+  assert.match(plain.querySelector('.mv-cp-account').closest('label').textContent, /GHE\.com tenant: everything goes to your tenant/);
+});
+
+test('sign-in block: link text and href follow verificationUri (tenant); fallback href uses flow.host; github.com unchanged', () => {
+  const open = (flow) => renderCopilotSignIn(flow, { doc }).querySelector('.mv-cp-open');
+  const tenant = open({ userCode: 'X', verificationUri: 'https://acme.ghe.com/login/device', host: 'acme.ghe.com' });
+  assert.equal(tenant.textContent, 'Open acme.ghe.com/login/device');
+  assert.equal(tenant.href, 'https://acme.ghe.com/login/device');
+  const fallback = open({ userCode: 'X', host: 'acme.ghe.com' });
+  assert.equal(fallback.href, 'https://acme.ghe.com/login/device');
+  assert.equal(fallback.textContent, 'Open acme.ghe.com/login/device');
+  const gh = open({ userCode: 'X' });
+  assert.equal(gh.href, 'https://github.com/login/device');
+  assert.equal(gh.textContent, 'Open github.com/login/device');
+});
+
 test('collectProviderRow: unchanged masked key is omitted (keep); a new key, base URL and cap are sent', () => {
   const card = renderProvidersCard(PROVIDERS, { doc });
   assert.deepEqual(collectProviderRow(card, 'openai'), { baseUrl: 'https://gw.example/v1', maxConcurrent: 8 });

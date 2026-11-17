@@ -10,7 +10,7 @@ import { toMessagesResponse } from './translate/response.mjs';
 import { toResponsesRequest } from './translate/responses-request.mjs';
 import { ResponsesStreamTranslator, toMessagesResponseFromResponses } from './translate/responses-stream.mjs';
 import { mapUpstreamError, mapNetworkError, bridgeErrors, anthropicError, isFailedResponseOverflow, PAYLOAD_CEILING_BYTES } from './errors.mjs';
-import { copilotToken, invalidateCopilotToken, copilotApiHost, copilotHeaders, bodyHasImage, requestInitiator } from './providers/copilot.mjs';
+import { copilotToken, invalidateCopilotToken, copilotAccountHost, copilotGateway, copilotHeaders, bodyHasImage, requestInitiator } from './providers/copilot.mjs';
 import { upstreamSettings, providerReadiness } from './registry.mjs';
 import { brokerEnabled, slotBaseUrl } from '../broker-client.mjs';
 import { routeBridgedUpstream } from '../broker-routing.mjs';
@@ -83,9 +83,12 @@ async function prepareUpstream(us, body, { fetch: f, requestHeaders }) {
   if (us.provider === 'copilot') {
     const initiator = requestInitiator(body);
     const vision = bodyHasImage(body);
+    // A ghe-com config without a valid host throws NO_HOST here: the bridge's normal upstream error,
+    // never a fall back to github.com.
+    const eh = copilotAccountHost(us);
     const build = async (force) => {
-      const { token, apiHost } = await copilotToken(us.githubToken, { fetch: f, force });
-      const host = apiHost || copilotApiHost(us.accountType);
+      const { token, apiHost } = await copilotToken(us.githubToken, { fetch: f, force, enterpriseHost: eh });
+      const host = copilotGateway({ apiHost, accountType: us.accountType, enterpriseHost: eh });
       const path = us.api === 'anthropic' ? '/v1/messages' : us.api === 'openai-responses' ? '/responses' : '/chat/completions';
       const headers = { ...copilotHeaders(token, { vision, initiator }), ...us.headers };
       if (us.api === 'anthropic') {
@@ -95,7 +98,7 @@ async function prepareUpstream(us, body, { fetch: f, requestHeaders }) {
       return { url: `${host}${path}`, headers, initiator };
     };
     const first = await build(false);
-    return { ...first, provider: 'copilot', retryAuth: () => { invalidateCopilotToken(us.githubToken); return build(true); } };
+    return { ...first, provider: 'copilot', retryAuth: () => { invalidateCopilotToken(us.githubToken, { enterpriseHost: eh }); return build(true); } };
   }
   const initiator = requestInitiator(body);
   if (us.api === 'anthropic') {

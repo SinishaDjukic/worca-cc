@@ -109,7 +109,8 @@ export function needsSignInPill(m, { doc = globalThis.document } = {}) {
 
 function providerStatePill(doc, c) {
   if (!c.connected) return h(doc, 'span', 'badge grey', 'not connected');
-  return h(doc, 'span', 'badge green', `connected${c.login ? ` as @${c.login}` : ''}`);
+  const onHost = c.githubHost && c.githubHost !== 'github.com' ? ` on ${c.githubHost}` : '';
+  return h(doc, 'span', 'badge green', `connected${c.login ? ` as @${c.login}` : ''}${onHost}`);
 }
 
 /**
@@ -430,9 +431,11 @@ function renderSoundRow(doc, so) {
 /**
  * The Providers card. `providers` is GET /api/providers' payload (never a
  * token). `signIn` is an in-flight device-flow {userCode, verificationUri,
- * status, error} or null; app.js keeps it across repaints.
+ * status, error} or null; app.js keeps it across repaints. `copilotDraft`
+ * ({accountType, enterpriseHost}) is an unsaved account choice: picking GHE.com
+ * reveals the host field before anything is stored.
  */
-export function renderProvidersCard(providers, { doc = globalThis.document, signIn = null, split = false } = {}) {
+export function renderProvidersCard(providers, { doc = globalThis.document, signIn = null, split = false, copilotDraft = null } = {}) {
   const p = providers || {};
   const c = p.copilot || { connected: false, accountType: 'individual', maxConcurrent: 4 };
   // On the Providers page the card holds one divided row per provider (docs/design-system.md ›
@@ -492,12 +495,27 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
   const acct = h(doc, 'label', 'mv-field');
   acct.appendChild(h(doc, 'span', 'mv-field-label', 'Account'));
   const sel = h(doc, 'select', 'select mv-cp-account');
-  for (const [v, t] of [['individual', 'Individual'], ['business', 'Business'], ['enterprise', 'Enterprise']]) {
-    const o = h(doc, 'option', null, t); o.value = v; if (v === c.accountType) o.selected = true; sel.appendChild(o);
+  const shownType = (copilotDraft && copilotDraft.accountType) || c.accountType;
+  for (const [v, t] of [['individual', 'Individual'], ['business', 'Business'], ['enterprise', 'Enterprise'], ['ghe-com', 'GHE.com tenant']]) {
+    const o = h(doc, 'option', null, t); o.value = v; if (v === shownType) o.selected = true; sel.appendChild(o);
   }
   acct.appendChild(sel);
-  acct.appendChild(h(doc, 'small', 'hint', 'Picks the Copilot API host. The sign-in itself reports the host it was issued for and wins when it does.'));
+  acct.appendChild(h(doc, 'small', 'hint', 'Picks the Copilot API host. The sign-in itself reports the host it was issued for and wins when it does. GHE.com tenant: everything goes to your tenant.'));
   cpCtl.appendChild(acct);
+  if (shownType === 'ghe-com') {
+    const hostField = h(doc, 'label', 'mv-field');
+    hostField.appendChild(h(doc, 'span', 'mv-field-label', 'GHE.com host'));
+    const row = h(doc, 'div', 'mv-cp-host-row');
+    const hostIn = h(doc, 'input', 'input mv-cp-host');
+    hostIn.type = 'text'; hostIn.placeholder = 'acme.ghe.com';
+    hostIn.value = (copilotDraft && copilotDraft.enterpriseHost != null ? copilotDraft.enterpriseHost : c.enterpriseHost) || '';
+    const hostSave = h(doc, 'button', 'btn mv-cp-host-save', 'Save host');
+    hostSave.type = 'button';
+    row.append(hostIn, hostSave);
+    hostField.appendChild(row);
+    hostField.appendChild(h(doc, 'small', 'hint', 'Your tenant, like acme.ghe.com. Sign-in, models and quota then use it.'));
+    cpCtl.appendChild(hostField);
+  }
   cpCtl.appendChild(numberField(doc, 'mv-pv-conc', 'Max concurrent requests', c.maxConcurrent, {
     provider: 'copilot',
     hint: "Fan-out children beyond this wait their turn. The one knob that lowers GitHub's abuse-detection risk. Keep it low.",
@@ -771,8 +789,9 @@ export function renderCopilotSignIn(flow, { doc = globalThis.document } = {}) {
   status.setAttribute('role', 'status');
   const codeRow = h(doc, 'div', 'mv-cp-code-row');
   codeRow.appendChild(copyCodeButton(doc, flow.userCode || '', status));
-  const link = h(doc, 'a', 'btn btn-primary mv-cp-open', 'Open github.com/login/device');
-  link.href = flow.verificationUri || 'https://github.com/login/device';
+  const href = flow.verificationUri || `https://${flow.host || 'github.com'}/login/device`;
+  const link = h(doc, 'a', 'btn btn-primary mv-cp-open', `Open ${href.replace(/^https:\/\//, '')}`);
+  link.href = href;
   link.target = '_blank'; link.rel = 'noopener';
   codeRow.appendChild(link);
   box.appendChild(codeRow);

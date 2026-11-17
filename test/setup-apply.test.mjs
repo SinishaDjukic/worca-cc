@@ -179,6 +179,14 @@ test('AC-3.2 labels: the 400 text names the visible label', async () => {
   assert.match(await msg({ network: { login: { domain: 'ACME', user: '', password: 'pw' } } }), /^“User name”/);
 });
 
+test('access.copilot.accountType ghe-com without a host is a field error naming access.copilot', async () => {
+  seed({});
+  const { deps, writes } = fakeDeps();
+  await assert.rejects(planSetupApply({ access: { copilot: { accountType: 'ghe-com' } } }, deps),
+    (e) => e instanceof SetupFieldError && e.field === 'access.copilot.accountType' && !/enterpriseHost/.test(e.message));   // the internal key never reaches the person
+  assert.deepEqual(writes, []);
+});
+
 test('AC-3.3: one write, one ordered result per side effect', async () => {
   seed({});
   const { deps, writes, calls } = fakeDeps();

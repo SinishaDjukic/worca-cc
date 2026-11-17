@@ -19532,6 +19532,9 @@ const mvState = {
   // Importing is a DIALOG now (§8.4): its state lives in `mimp`, not here. copilotModels stays —
   // it feeds the editor's upstream-id datalist. justImported filters the list to what just landed.
   providers: null, signIn: null, copilotModels: [], justImported: null, openEditorOnLoad: false,
+  // An unsaved Copilot account choice ({accountType:'ghe-com', enterpriseHost}): picking GHE.com reveals the host field
+  // before anything is stored (the server refuses ghe-com without a host).
+  copilotDraft: null,
   // The catalog's own narrowing (the list runs to several screens with built-ins, plugin and team
   // models in it): a search box, one chip, and which groups are folded. Built-ins start folded —
   // 12 rows nobody edits — and a search opens every group that still has a hit.
@@ -19991,7 +19994,7 @@ function setProvidersMsg(text, kind) {
 
 function renderProvidersViewBody() {
   if (!el.providersList) return;
-  el.providersList.replaceChildren(renderProvidersCard(mvState.providers, { signIn: mvState.signIn, split: true }));
+  el.providersList.replaceChildren(renderProvidersCard(mvState.providers, { signIn: mvState.signIn, split: true, copilotDraft: mvState.copilotDraft }));
   // OpenRouter's free-model allowance, read afresh each time the card opens.
   refreshFreeDaily({ force: true });
 }
@@ -20046,7 +20049,7 @@ async function copilotSignInFlow() {
     const res = await fetch('/api/providers/copilot/login', { method: 'POST' });
     const flow = await safeJson(res);
     if (!res.ok) return setProviderMsg('copilot', flow.error || `HTTP ${res.status}`, true, 'Sign-in did not start');
-    mvState.signIn = { ...flow, status: 'Waiting for approval on github.com…' };
+    mvState.signIn = { ...flow, status: `Waiting for approval on ${flow.host || 'github.com'}…` };
     repaintProviders();
     const poll = async () => {
       if (!mvState.signIn || mvState.signIn.deviceCode !== flow.deviceCode) return;
@@ -20068,7 +20071,7 @@ async function copilotSignInFlow() {
           return;
         }
         const status = providerRoot()?.querySelector('.mv-cp-status');
-        if (status) status.textContent = 'Waiting for approval on github.com…';
+        if (status) status.textContent = `Waiting for approval on ${flow.host || 'github.com'}…`;
         copilotPollTimer = setTimeout(poll, Math.max(3, Number(j.interval) || flow.interval || 5) * 1000);
       } catch (e) {
         copilotPollTimer = setTimeout(poll, 8000);
@@ -20101,6 +20104,7 @@ async function copilotSignOutFlow() {
 // `onError(message)`, when given, shows a refused Save in the row's own place instead of the card's alert.
 async function patchProviderFlow(name, body, { btn = null, onError = null } = {}) {
   setProviderMsg(name, '');
+  const wasConnected = name === 'copilot' && !!(mvState.providers && mvState.providers.copilot && mvState.providers.copilot.connected);
   const r = await withButton(btn, async () => {
     const res = await fetch(`/api/providers/${encodeURIComponent(name)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const data = await safeJson(res);
@@ -20111,17 +20115,67 @@ async function patchProviderFlow(name, body, { btn = null, onError = null } = {}
     await refreshModelsEverywhere();
     return { ok: true };
   }, { done: 'Saved' });
-  if (r.skipped) return;
+  if (r.skipped) return false;
   if (!r.ok) {
     if (onError) onError(r.error);
     else setProviderMsg(name, r.error, true, 'Not saved');
-    return;
+    return false;
+  }
+  // A change of the GitHub host signs the Copilot account out (a token belongs to one host): say so.
+  if (wasConnected && !(mvState.providers.copilot && mvState.providers.copilot.connected)) {
+    setProviderMsg('copilot', `Signed out: sign in again on ${(mvState.providers.copilot && mvState.providers.copilot.githubHost) || 'github.com'}.`);
   }
   // The repaint replaced the clicked button: give its successor the "Saved" state.
   if (btn && !btn.isConnected) {
-    const cls = ['mv-sp-save', 'mv-im-save', 'mv-so-save'].find((c) => btn.classList.contains(c)) || 'mv-pv-save';
+    const cls = ['mv-sp-save', 'mv-im-save', 'mv-so-save', 'mv-cp-host-save'].find((c) => btn.classList.contains(c)) || 'mv-pv-save';
     const next = providerRoot()?.querySelector(`.mv-pv-row[data-provider="${name}"] .${cls}`);
     if (next) await withButton(next, () => undefined, { done: 'Saved' });
+  }
+  return true;
+}
+
+const COPILOT_ACCOUNT_LABELS = { individual: 'Individual', business: 'Business', enterprise: 'Enterprise', 'ghe-com': 'GHE.com tenant' };
+
+/** Ask before a Copilot change that moves the GitHub host while signed in (the sign-in belongs to the old host). */
+function confirmCopilotHostSwitch(c, toLabel) {
+  return confirmModal({
+    title: `Switch to ${toLabel}?`,
+    message: `Switch to ${toLabel}? This signs you out of GitHub Copilot${c.login ? ` (@${c.login})` : ''}, because the sign-in belongs to ${c.githubHost || 'github.com'}.`,
+    confirmLabel: 'Switch and sign out', danger: true,
+  });
+}
+
+/** The account select changed: GHE.com only reveals the host field (a draft, no PATCH); the others PATCH the type. */
+async function copilotAccountChange(value) {
+  const c = (mvState.providers && mvState.providers.copilot) || {};
+  if (value === 'ghe-com' && c.accountType !== 'ghe-com') {
+    mvState.copilotDraft = { accountType: 'ghe-com', enterpriseHost: '' };
+    repaintProviders();
+    const hostIn = providerRoot()?.querySelector('.mv-cp-host');
+    if (hostIn) hostIn.focus();
+    return;
+  }
+  mvState.copilotDraft = null;
+  if (value === c.accountType) { repaintProviders(); return; }
+  if (c.connected && c.accountType === 'ghe-com' && !(await confirmCopilotHostSwitch(c, COPILOT_ACCOUNT_LABELS[value] || value))) {
+    repaintProviders();   // restores the select to the stored type
+    return;
+  }
+  await patchProviderFlow('copilot', { accountType: value });
+}
+
+/** Save host: the account type and the typed tenant go together (the server refuses one without the other). */
+async function copilotHostSaveFlow(btn) {
+  const input = providerRoot()?.querySelector('.mv-cp-host');
+  const value = input ? input.value.trim() : '';
+  const c = (mvState.providers && mvState.providers.copilot) || {};
+  mvState.copilotDraft = { accountType: 'ghe-com', enterpriseHost: value };   // a refused save keeps what was typed
+  const typed = value.toLowerCase().replace(/^https:\/\//, '').replace(/\/$/, '');
+  if (c.connected && typed !== (c.githubHost || 'github.com') && !(await confirmCopilotHostSwitch(c, typed || 'the new host'))) return;
+  if (await patchProviderFlow('copilot', { accountType: 'ghe-com', enterpriseHost: value }, { btn })) {
+    mvState.copilotDraft = null;   // stored now; no repaint (it would wipe the "Signed out" line): show the normalized host in place
+    const shown = providerRoot()?.querySelector('.mv-cp-host');
+    if (shown && mvState.providers && mvState.providers.copilot) shown.value = mvState.providers.copilot.enterpriseHost || '';
   }
 }
 
@@ -20635,6 +20689,7 @@ if (el.providersList) {
     if (t.classList.contains('mv-cp-signin')) copilotSignInFlow();
     else if (t.classList.contains('mv-cp-cancel')) { stopCopilotPoll(); mvState.signIn = null; renderProvidersViewBody(); }
     else if (t.classList.contains('mv-cp-signout')) copilotSignOutFlow();
+    else if (t.classList.contains('mv-cp-host-save')) copilotHostSaveFlow(t);
     else if (t.classList.contains('mv-cp-fetch-models')) openImportDialog({ source: 'copilot' });
     else if (t.classList.contains('mv-cp-quota-refresh')) refreshCopilotQuotaFlow(t);
     else if (t.classList.contains('mv-pv-save')) {
@@ -20664,7 +20719,7 @@ if (el.providersList) {
   el.providersList.addEventListener('change', (ev) => {
     const t = ev.target;
     if (!t || !t.classList) return;
-    if (t.classList.contains('mv-cp-account')) patchProviderFlow('copilot', { accountType: t.value });
+    if (t.classList.contains('mv-cp-account')) copilotAccountChange(t.value);
     else if (t.classList.contains('mv-im-service')) applyImagesPreset(providerRoot(), t.value);
     else if (t.classList.contains('mv-pv-conc') && t.dataset.provider === 'copilot') patchProviderFlow('copilot', { maxConcurrent: Number(t.value) });
   });

@@ -12,7 +12,7 @@ import { builtinSlots, mergeSlots } from '../src/broker/slots.mjs';
 import { openStore } from '../src/broker/store.mjs';
 import { createBrokerService } from '../src/broker/service.mjs';
 import { createUiHandler } from '../src/broker/ui-server.mjs';
-import { isCopilotHost } from '../src/broker/copilot.mjs';
+import { isCopilotHost, copilotHostCheck, createCopilotExchange, startDeviceFlow } from '../src/broker/copilot.mjs';
 
 const PUBLIC = 'http://localhost:7071';
 const GH = 'gho_approvedsignin000000000000000000000001';
@@ -89,4 +89,52 @@ test('only GitHub\'s own hosts are trusted as the Copilot API', () => {
   assert.equal(isCopilotHost('https://api.business.githubcopilot.com'), true);
   assert.equal(isCopilotHost('https://githubcopilot.com.evil.example'), false);
   assert.equal(isCopilotHost('http://api.githubcopilot.com'), false);
+});
+
+test('a GHE.com slot trusts only its own tenant\'s gateway; without a tenant the check is today\'s isCopilotHost', () => {
+  const t = copilotHostCheck('acme.ghe.com');
+  assert.equal(t('https://copilot-api.acme.ghe.com'), true);
+  assert.equal(t('https://api.githubcopilot.com'), true);
+  for (const bad of ['https://copilot-api.other.ghe.com', 'https://acme.ghe.com.evil.example', 'http://copilot-api.acme.ghe.com', 'https://copilot-api.acme.ghe.com:8443', 'https://u@copilot-api.acme.ghe.com', 'https://evilacme.ghe.com']) {
+    assert.equal(t(bad), false, bad);
+  }
+  for (const none of [null, undefined, '']) {
+    const c = copilotHostCheck(none);
+    assert.equal(c('https://copilot-api.acme.ghe.com'), false);
+    assert.equal(c('https://api.githubcopilot.com'), true);
+    assert.equal(c('https://githubcopilot.com.evil.example'), false);
+  }
+});
+
+test('exchange on a tenant slot: endpoints.api on the tenant is used; an untrusted one falls back to slot.upstream', async () => {
+  const run = async (api) => {
+    const urls = [];
+    const ex = createCopilotExchange({
+      exchangeUrl: 'https://api.acme.ghe.com/copilot_internal/v2/token', defaultHost: 'https://copilot-api.acme.ghe.com',
+      allowHost: copilotHostCheck('acme.ghe.com'),
+      fetchImpl: async (u) => { urls.push(u); return { ok: true, status: 200, json: async () => ({ token: 't', expires_at: Math.floor(Date.now() / 1000) + 1800, endpoints: { api } }) }; },
+    });
+    return { urls, t: await ex.token('gho_x') };
+  };
+  const own = await run('https://proxy.acme.ghe.com/');
+  assert.equal(own.t.host, 'https://proxy.acme.ghe.com');
+  assert.deepEqual(own.urls, ['https://api.acme.ghe.com/copilot_internal/v2/token']);
+  assert.equal((await run('https://evil.example')).t.host, 'https://copilot-api.acme.ghe.com');
+  assert.equal((await run('https://copilot-api.other.ghe.com')).t.host, 'https://copilot-api.acme.ghe.com');
+});
+
+test('device flow fallback verificationUri follows baseUrl', async () => {
+  const f = async () => ({ ok: true, status: 200, json: async () => ({ device_code: 'd', user_code: 'U' }) });
+  assert.equal((await startDeviceFlow({ fetchImpl: f })).verificationUri, 'https://github.com/login/device');
+  assert.equal((await startDeviceFlow({ fetchImpl: f, baseUrl: 'https://acme.ghe.com' })).verificationUri, 'https://acme.ghe.com/login/device');
+});
+
+test('mismatched tenants in exchangeUrl and deviceBaseUrl are refused; one tenant, or one URL alone, is fine', () => {
+  const slot = (o) => [{ id: 'copilot', upstream: 'https://copilot-api.acme.ghe.com', ...o }];
+  assert.throws(() => mergeSlots(builtinSlots(), slot({ exchangeUrl: 'https://api.acme.ghe.com/copilot_internal/v2/token', deviceBaseUrl: 'https://other.ghe.com' })),
+    /exchangeUrl and deviceBaseUrl name different GHE\.com tenants/);
+  const ok = mergeSlots(builtinSlots(), slot({ exchangeUrl: 'https://api.acme.ghe.com/copilot_internal/v2/token', deviceBaseUrl: 'https://acme.ghe.com' }));
+  assert.equal(ok.find((x) => x.id === 'copilot').deviceBaseUrl, 'https://acme.ghe.com');
+  mergeSlots(builtinSlots(), slot({ exchangeUrl: 'https://api.acme.ghe.com/copilot_internal/v2/token' }));
+  mergeSlots(builtinSlots(), slot({ exchangeUrl: 'https://api.github.com/copilot_internal/v2/token', deviceBaseUrl: 'https://acme.ghe.com' }));
 });

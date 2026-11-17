@@ -9,7 +9,8 @@ import { resolveToken, tokenFromHeaders, parseMintRequest, mintToken, safeEqual,
 import { createUsageTap, priceUsage, listRatesFor, requestWithUsage, UNPRICED_RATES } from './usage.mjs';
 import { scrubText } from './scrub.mjs';
 import { createLimits } from './limits.mjs';
-import { createCopilotExchange, parseGithubSecret, refreshGithubToken } from './copilot.mjs';
+import { createCopilotExchange, copilotHostCheck, parseGithubSecret, refreshGithubToken } from './copilot.mjs';
+import { gheTenantOfUrl } from '../core/ghe-host.mjs';
 import { fetchUpstream } from './upstream-request.mjs';
 
 export const MAX_REQUEST_BYTES = 32 << 20;
@@ -176,6 +177,7 @@ export function createBrokerService({ config, slots: baseSlots, store, log = () 
       exchanges.set(slot.id, createCopilotExchange({
         fetchImpl, now, defaultHost: new URL(slot.upstream).origin,
         ...(slot.exchangeUrl ? { exchangeUrl: slot.exchangeUrl } : {}),
+        allowHost: copilotHostCheck(gheTenantOfUrl(slot.exchangeUrl) || gheTenantOfUrl(slot.deviceBaseUrl)),
       }));
     }
     return exchanges.get(slot.id);

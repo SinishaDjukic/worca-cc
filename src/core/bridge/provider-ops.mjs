@@ -19,7 +19,7 @@ import { modelEnvRef, maskModelEnvValue, UPSTREAM_PROVIDERS, isUpstreamBaseUrl, 
 import {
   startDeviceFlow, pollDeviceFlow, githubLogin, copilotToken, invalidateCopilotToken,
   listCopilotModels, copilotUsage, catalogEntryForCopilotModel, copilotApiFor,
-  copilotHeaders, normalizeCopilotModel, copilotCatalogId,
+  copilotHeaders, normalizeCopilotModel, copilotCatalogId, copilotAccountHost,
 } from './providers/copilot.mjs';
 import { keyOptional, providerKeyFor } from './registry.mjs';
 import { listEndpointModels, catalogEntryForEndpointModel, importableModel } from './providers/endpoint.mjs';
@@ -78,13 +78,16 @@ function sweepSessions(now = Date.now()) {
 
 /**
  * Begin a Copilot sign-in (the device flow).
- * @returns {Promise<{deviceCode, userCode, verificationUri, interval, expiresIn}>}
+ * The GitHub host (github.com or the GHE.com tenant) is resolved once and bound to the session;
+ * a ghe-com config without a valid host refuses with NO_HOST before any request.
+ * @returns {Promise<{deviceCode, userCode, verificationUri, interval, expiresIn, host}>}
  */
 export async function beginCopilotLogin({ fetch: f } = {}) {
   refuseWithBroker('sign in to GitHub Copilot');
+  const enterpriseHost = copilotAccountHost(providerConfig('copilot'));
   sweepSessions();
-  const flow = await startDeviceFlow({ fetch: f });
-  sessions.set(flow.deviceCode, { startedAt: Date.now(), expiresAt: Date.now() + Math.min(flow.expiresIn * 1000, SESSION_TTL_MS), interval: flow.interval });
+  const flow = await startDeviceFlow({ fetch: f, enterpriseHost });
+  sessions.set(flow.deviceCode, { startedAt: Date.now(), expiresAt: Date.now() + Math.min(flow.expiresIn * 1000, SESSION_TTL_MS), interval: flow.interval, enterpriseHost });
   return flow;
 }
 
@@ -97,20 +100,26 @@ export async function pollCopilotLogin(deviceCode, { fetch: f } = {}) {
   sweepSessions();
   const s = sessions.get(deviceCode);
   if (!s) return { error: 'unknown or expired sign-in session — start again' };
-  const r = await pollDeviceFlow(deviceCode, { fetch: f });
+  const eh = s.enterpriseHost;
+  const r = await pollDeviceFlow(deviceCode, { fetch: f, enterpriseHost: eh });
   if (r.pending) { if (r.interval) s.interval = r.interval; return { pending: true, interval: s.interval }; }
   sessions.delete(deviceCode);
   if (r.error) return { error: r.error };
   let login = '';
-  try { login = await githubLogin(r.token, { fetch: f }); } catch { login = ''; }
+  try { login = await githubLogin(r.token, { fetch: f, enterpriseHost: eh }); } catch { login = ''; }
   // Prove the account has Copilot before storing: a token without Copilot
   // access would only fail later, mid-run.
   try {
-    await copilotToken(r.token, { fetch: f, force: true });
+    await copilotToken(r.token, { fetch: f, force: true, enterpriseHost: eh });
   } catch (err) {
     return { error: err && err.code === 'EXCHANGE' ? `signed in as ${login || 'GitHub user'}, but the account has no Copilot access — ${err.message}` : (err.message || String(err)) };
   }
-  await updateProvider('copilot', { githubToken: r.token, ...(login ? { login } : {}) });
+  try {
+    // Re-checks the host where the token is committed: the person may have changed it since the sign-in began.
+    await updateProvider('copilot', { githubToken: r.token, ...(login ? { login } : {}) }, { expectCopilotHost: eh });
+  } catch (err) {
+    return { error: err && err.message ? err.message : String(err) };
+  }
   return { ok: true, login };
 }
 
@@ -118,13 +127,23 @@ export async function pollCopilotLogin(deviceCode, { fetch: f } = {}) {
 export async function copilotLogout() {
   const cfg = providerConfig('copilot');
   const tok = resolveProviderSecret(cfg.githubToken);
-  if (tok) invalidateCopilotToken(tok);
+  if (tok) invalidateCopilotToken(tok, { enterpriseHost: safeAccountHost(cfg) });
   await clearCopilotSignIn();
+}
+
+/** The config's GitHub host, or null both for github.com and for a ghe-com block without a usable host (never throws). */
+function safeAccountHost(cfg) {
+  try { return copilotAccountHost(cfg); } catch { return null; }
 }
 
 // ── state payloads (never a secret) ──────────────────────────────────────────
 
 const secretSource = (v) => (!v ? null : modelEnvRef(v) ? 'env' : 'stored');
+
+/** The host a copilot config signs in to, for display: 'github.com', the tenant, or null (ghe-com without a usable host). */
+function copilotGithubHost(c) {
+  try { return copilotAccountHost(c) || 'github.com'; } catch { return null; }
+}
 
 /**
  * The Providers card payload (§9). `quota` is fetched only when asked — it is
@@ -139,13 +158,15 @@ export async function providersState({ quota = false, fetch: f, person = resolve
     connected: !!token,
     login: c.login || null,
     accountType: c.accountType,
+    enterpriseHost: c.enterpriseHost || null,
+    githubHost: copilotGithubHost(c),
     maxConcurrent: c.maxConcurrent,
     tokenSource: secretSource(c.githubToken),
     tokenRef: modelEnvRef(c.githubToken) ? c.githubToken : null,
     quota: null,
   };
   if (quota && token) {
-    try { copilot.quota = await copilotUsage(token, { fetch: f }); } catch { copilot.quota = null; }
+    try { copilot.quota = await copilotUsage(token, { fetch: f, enterpriseHost: copilotAccountHost(c) }); } catch { copilot.quota = null; }
   }
   const keyed = (name) => {
     const p = all[name];
@@ -208,7 +229,14 @@ export async function patchProvider(name, patch = {}) {
   for (const k of ['apiKey', 'githubToken']) if (typeof p[k] === 'string' && p[k].startsWith('••')) delete p[k];
   // Credential broker: keys are per person, on the key page; worca stores none.
   if (brokerEnabled() && ['apiKey', 'githubToken'].some((k) => typeof p[k] === 'string' && p[k].trim())) refuseWithBroker('store a provider key');
-  return updateProvider(name, p);
+  if (name !== 'copilot') return updateProvider(name, p);
+  const was = providerConfig('copilot');
+  const out = await updateProvider(name, p);
+  // A host change signs out (settings drops the token): evict the exchanged token it held. Memory only —
+  // the cache is keyed by host, so it could never be reused on the new one.
+  const oldTok = resolveProviderSecret(was.githubToken);
+  if (oldTok && !out.githubToken) invalidateCopilotToken(oldTok, { enterpriseHost: safeAccountHost(was) });
+  return out;
 }
 
 /** Downloaded in-browser speech models on disk; null where there is no worca home (tests). */
@@ -269,7 +297,7 @@ export async function copilotModelsForImport({ fetch: f } = {}) {
     const c = providerConfig('copilot');
     const token = resolveProviderSecret(c.githubToken);
     if (!token) throw Object.assign(new Error('not signed in to GitHub Copilot'), { code: 'NOT_SIGNED_IN' });
-    list = await listCopilotModels(token, { accountType: c.accountType, fetch: f });
+    list = await listCopilotModels(token, { accountType: c.accountType, enterpriseHost: copilotAccountHost(c), fetch: f });
   }
   const have = new Set(listGlobalModels().map((m) => m.id.toLowerCase()));
   return list.map((m) => { const catalogId = copilotCatalogId(m.id); return { ...m, api: copilotApiFor(m), catalogId, inCatalog: have.has(catalogId.toLowerCase()) }; })
@@ -541,7 +569,7 @@ export async function testProviderConnection(name, { fetch: f = globalThis.fetch
     const c = providerConfig('copilot');
     const token = resolveProviderSecret(c.githubToken);
     if (!token) return { ok: false, message: 'not signed in' };
-    try { await copilotToken(token, { fetch: f, force: true }); return { ok: true }; } catch (err) { return { ok: false, message: err.message || String(err) }; }
+    try { await copilotToken(token, { fetch: f, force: true, enterpriseHost: copilotAccountHost(c) }); return { ok: true }; } catch (err) { return { ok: false, message: err.message || String(err) }; }
   }
   if (!UPSTREAM_PROVIDERS.includes(name)) return { ok: false, message: `unknown provider ${name}` };
   const stored = providerConfig(name);

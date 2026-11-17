@@ -239,14 +239,33 @@ The **Providers** card has a page of its own, **Providers** (Expert level). A
 provider is account-level state that every model bridged through it shares.
 
 **GitHub Copilot.** *Sign in…* shows an
-8-character device code: enter it at github.com/login/device and the card
-flips to *connected as @you*. Worca stores the GitHub token in
+8-character device code: enter it at the address shown (github.com/login/device,
+or your tenant's, see below) and the card flips to *connected as @you*. Worca stores the GitHub token in
 `~/.worca-cc/settings.json` (or reads it from your shell as `${VAR}`) and
 exchanges it for Copilot's short-lived token in memory, refreshed before it
 expires. *Refresh usage* shows the premium-request quota. *Import models…* is a
 shortcut: it jumps to the Models page and opens the import dialog there on
 the Copilot source. The account type (Individual / Business / Enterprise) picks
 the API host when the sign-in does not name one.
+
+*GHE.com tenant (data residency).* The fourth account type is for a GitHub
+Enterprise Cloud tenant at `<tenant>.ghe.com`. Choosing it reveals a **GHE.com host**
+field (`acme.ghe.com`; an `https://` prefix and a trailing `/` are accepted, any
+path, port or credentials are refused) and *Save host* stores the type and the host
+together. Then everything goes to the tenant, and nothing to github.com: sign-in on
+`<tenant>.ghe.com` (the device code and the address to enter it at come from there),
+`/user`, the token exchange, the quota and the model list on `api.<tenant>.ghe.com`,
+and requests on the gateway the exchange names (`endpoints.api`) when it is GitHub's
+(`*.<tenant>.ghe.com` or `*.githubcopilot.com`), else `copilot-api.<tenant>.ghe.com`.
+A sign-in belongs to one GitHub host, so changing the host or the account type to or
+from GHE.com signs you out in the same save (the card asks first and says so);
+Individual, Business and Enterprise keep the sign-in. The same fields exist on the
+CLI, `worca models set copilot accountType=ghe-com enterpriseHost=acme.ghe.com`, and
+Ask Worca can propose them. A `ghe-com` block with no valid host refuses to sign in,
+list models or run: it never falls back to github.com. Self-hosted GitHub Enterprise
+Server (`/api/v3`) is not supported, and the Copilot CLI engine keeps its own
+`copilot login --host`. Verify the Copilot app is allowed on your tenant: if
+GitHub refuses the sign-in, the message names the host and asks you to check that.
 
 **OpenAI-compatible** and **Anthropic-compatible.** A base URL, an API key
 (stored masked, or `${VAR}`), and *Test connection*. A model can override

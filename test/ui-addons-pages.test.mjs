@@ -315,6 +315,89 @@ test('Models is a page of its own: the catalog, the Engines card from GET /api/s
       await settle();
       assert.equal(doc.querySelector('#providers-list .mv-cp-signout'), null, 'the card shows the signed-out state');
     } },
+    { name: 'choosing GHE.com reveals the host field without a PATCH; Save host sends {accountType, enterpriseHost}; a 400 shows the message and keeps the typed host', run: async () => {
+      let stored = { connected: false, accountType: 'individual', enterpriseHost: null, githubHost: 'github.com', maxConcurrent: 4 };
+      let refuse = true;
+      const res = (body, ok = true, status = 200) => ({ ok, status, json: async () => body });
+      const { window, doc, calls } = await boot({ routes: {
+        '/api/providers/copilot': () => {
+          if (refuse) return res({ error: 'enterpriseHost must be a GHE.com host like acme.ghe.com, with no path, port or credentials' }, false, 400);
+          stored = { ...stored, accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com', githubHost: 'acme.ghe.com' };
+          return res({ copilot: stored });
+        },
+        '/api/providers': () => res({ copilot: stored }),
+      } });
+      await go(window, 'providers');
+      const bodies = [];
+      const inner = window.fetch;
+      globalThis.fetch = window.fetch = (u, opts = {}) => { if (String(u).startsWith('/api/providers/copilot') && opts.method === 'PATCH') bodies.push(opts.body); return inner(u, opts); };
+      const list = () => doc.querySelector('#providers-list');
+      assert.equal(list().querySelector('.mv-cp-host'), null);
+      const sel = list().querySelector('.mv-cp-account');
+      sel.value = 'ghe-com';
+      sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+      await settle();
+      assert.deepEqual(bodies, [], 'choosing GHE.com alone sends nothing');
+      assert.ok(list().querySelector('.mv-cp-host'), 'the host field is revealed');
+      assert.equal(list().querySelector('.mv-cp-account').value, 'ghe-com');
+      list().querySelector('.mv-cp-host').value = 'bad host';
+      list().querySelector('.mv-cp-host-save').click();
+      await settle();
+      assert.deepEqual(bodies, ['{"accountType":"ghe-com","enterpriseHost":"bad host"}']);
+      assert.match(list().querySelector('.card-alert').textContent, /Not saved.*enterpriseHost must be a GHE\.com host like acme\.ghe\.com/);
+      assert.equal(list().querySelector('.mv-cp-host').value, 'bad host', 'the typed host stays');
+      refuse = false;
+      list().querySelector('.mv-cp-host').value = 'acme.ghe.com';
+      list().querySelector('.mv-cp-host-save').click();
+      await settle();
+      assert.equal(bodies.length, 2);
+      assert.equal(list().querySelector('.mv-cp-host').value, 'acme.ghe.com');
+      assert.equal(list().querySelector('.mv-cp-account').value, 'ghe-com');
+      assert.ok(calls.includes('PATCH /api/providers/copilot'));
+    } },
+    { name: 'signed in: changing the host asks first; cancel sends nothing; OK sends the PATCH and says it signed out', run: async () => {
+      let stored = { connected: true, login: 'ada', accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com', githubHost: 'acme.ghe.com', maxConcurrent: 4 };
+      const res = (body) => ({ ok: true, status: 200, json: async () => body });
+      const bodies = [];
+      const { window, doc } = await boot({ routes: {
+        '/api/providers/copilot': () => { stored = { ...stored, connected: false, login: null, enterpriseHost: 'other.ghe.com', githubHost: 'other.ghe.com' }; return res({ copilot: stored }); },
+        '/api/providers': () => res({ copilot: stored }),
+      } });
+      await go(window, 'providers');
+      const inner = window.fetch;
+      globalThis.fetch = window.fetch = (u, opts = {}) => { if (String(u).startsWith('/api/providers/copilot') && opts.method === 'PATCH') bodies.push(opts.body); return inner(u, opts); };
+      const list = () => doc.querySelector('#providers-list');
+      const save = async (host) => { list().querySelector('.mv-cp-host').value = host; list().querySelector('.mv-cp-host-save').click(); await settle(); };
+      await save('other.ghe.com');
+      assert.match(doc.getElementById('confirm-modal').textContent, /signs you out of GitHub Copilot \(@ada\).*belongs to acme\.ghe\.com/);
+      doc.getElementById('confirm-cancel').click();
+      await settle();
+      assert.deepEqual(bodies, [], 'cancel sends nothing');
+      await save('other.ghe.com');
+      doc.getElementById('confirm-ok').click();
+      await settle();
+      assert.deepEqual(bodies, ['{"accountType":"ghe-com","enterpriseHost":"other.ghe.com"}']);
+      assert.match(list().querySelector('.mv-pv-row[data-provider="copilot"] .mv-pv-msg').textContent, /Signed out: sign in again on other\.ghe\.com\./);
+      // Same host while signed out: no confirm.
+      await save('other.ghe.com');
+      assert.equal(bodies.length, 2);
+    } },
+    { name: 'sign-in on a tenant shows "Waiting for approval on acme.ghe.com…" and links the tenant verificationUri', run: async () => {
+      const res = (body) => ({ ok: true, status: 200, json: async () => body });
+      const stored = { connected: false, accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com', githubHost: 'acme.ghe.com', maxConcurrent: 4 };
+      const { window, doc } = await boot({ routes: {
+        '/api/providers/copilot/login': () => res({ deviceCode: 'dc', userCode: 'ACME-1', verificationUri: 'https://acme.ghe.com/login/device', interval: 5, expiresIn: 900, host: 'acme.ghe.com' }),
+        '/api/providers': () => res({ copilot: stored }),
+      } });
+      await go(window, 'providers');
+      doc.querySelector('#providers-list .mv-cp-signin').click();
+      await settle();
+      assert.equal(doc.querySelector('#providers-list .mv-cp-status').textContent, 'Waiting for approval on acme.ghe.com…');
+      const open = doc.querySelector('#providers-list .mv-cp-open');
+      assert.equal(open.href, 'https://acme.ghe.com/login/device');
+      assert.equal(open.textContent, 'Open acme.ghe.com/login/device');
+      doc.querySelector('#providers-list .mv-cp-cancel').click();
+    } },
     { name: 'at Simple, #models still opens under a banner naming Expert', run: async () => {
       const { window, doc } = await boot({ level: 'simple' });
       await go(window, 'models');

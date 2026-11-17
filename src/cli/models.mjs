@@ -39,7 +39,7 @@ Usage:
   worca models test <provider>            Reachability + auth check (copilot|openai|anthropic|openrouter);
                                           for OpenRouter also the key's credit and free-model allowance
   worca models set <provider> <key>=<value> …
-                                          Patch a provider: accountType, maxConcurrent, baseUrl, apiKey
+                                          Patch a provider: accountType (individual|business|enterprise|ghe-com), enterpriseHost, maxConcurrent, baseUrl, apiKey
   worca models set openrouter apiKey='\${OPENROUTER_KEY}'
                                           The openai provider, pointed at OpenRouter
 
@@ -95,7 +95,7 @@ export function formatModelLine(m) {
 export function formatProviders(p) {
   const c = p.copilot || {};
   const lines = [
-    `copilot     ${c.connected ? `connected${c.login ? ` as @${c.login}` : ''}` : 'not connected'}  account=${c.accountType || 'individual'}  maxConcurrent=${c.maxConcurrent}${c.tokenSource === 'env' ? `  token=${c.tokenRef}` : ''}`,
+    `copilot     ${c.connected ? `connected${c.login ? ` as @${c.login}` : ''}` : 'not connected'}  account=${c.accountType || 'individual'}${c.enterpriseHost ? `  host=${c.enterpriseHost}` : ''}  maxConcurrent=${c.maxConcurrent}${c.tokenSource === 'env' ? `  token=${c.tokenRef}` : ''}`,
   ];
   if (c.quota) {
     lines.push(`            premium requests: ${c.quota.unlimited ? 'unlimited' : `${c.quota.used ?? '?'} / ${c.quota.entitlement ?? '?'}`}${c.quota.resetDate ? ` (resets ${c.quota.resetDate})` : ''}`);
@@ -158,7 +158,7 @@ export async function cmdModels(argv, { out, c, fail, sleep: wait = sleep }) {
   if (verb === 'login') {
     if (provider !== 'copilot') return fail('only `worca models login copilot` is supported');
     const flow = await beginCopilotLogin();
-    out(`Open ${c('bold', flow.verificationUri)} and enter the code ${c('bold', flow.userCode)}`);
+    out(`Open ${c('bold', flow.verificationUri)}${flow.host && flow.host !== 'github.com' ? ` (${flow.host})` : ''} and enter the code ${c('bold', flow.userCode)}`);
     out(c('dim', `Waiting for approval (code valid ${Math.round(flow.expiresIn / 60)} min)…`));
     let interval = flow.interval;
     const deadline = Date.now() + flow.expiresIn * 1000;

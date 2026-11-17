@@ -11,8 +11,13 @@
 //
 // Every network call takes an injectable `fetch` so the whole module is
 // testable against a stub without touching github.com.
+//
+// Every helper takes an optional `enterpriseHost` (a GHE.com tenant, like
+// acme.ghe.com; null = github.com, the unchanged default). All URLs derive from
+// it through ghe-host.mjs's gheUrls().
 
 import { EFFORTS, REASONING_EFFORT_LEVELS } from '../../model-env.mjs';
+import { GHE_COM_ACCOUNT_TYPE, normalizeGheHost, gheUrls, gheGatewayFallback, isTenantOrigin } from '../../ghe-host.mjs';
 
 export const GITHUB_CLIENT_ID = 'Iv1.b507a08c87ecfe98';
 export const GITHUB_SCOPES = 'read:user';
@@ -23,11 +28,53 @@ const EDITOR_VERSION = 'vscode/1.104.0';
 const PLUGIN_VERSION = 'copilot-chat/0.31.0';
 const USER_AGENT = 'GitHubCopilotChat/0.31.0';
 
+function noHostError() {
+  return Object.assign(new Error('GitHub Copilot is set to a GHE.com tenant but has no valid host — set it on the Providers page (worca models set copilot enterpriseHost=<tenant>.ghe.com)'), { code: 'NO_HOST' });
+}
+
+/**
+ * The GitHub host of a stored copilot config: null for github.com, the tenant for
+ * accountType ghe-com. A ghe-com config without a valid host throws NO_HOST — a
+ * tenant token must never be sent to github.com by accident.
+ */
+export function copilotAccountHost({ accountType, enterpriseHost } = {}) {
+  if (accountType !== GHE_COM_ACCOUNT_TYPE) return null;
+  const h = normalizeGheHost(enterpriseHost);
+  if (!h) throw noHostError();
+  return h;
+}
+
+/** A Copilot gateway origin GitHub operates (*.githubcopilot.com), over https. */
+export function isGithubCopilotOrigin(origin) {
+  try {
+    const u = new URL(origin);
+    return u.protocol === 'https:' && (u.hostname === 'githubcopilot.com' || u.hostname.endsWith('.githubcopilot.com'));
+  } catch { return false; }
+}
+
 /** The API host for an account type when the token exchange names none. */
-export function copilotApiHost(accountType) {
+export function copilotApiHost(accountType, enterpriseHost = null) {
+  if (accountType === GHE_COM_ACCOUNT_TYPE) {
+    const h = normalizeGheHost(enterpriseHost);
+    if (!h) throw noHostError();
+    return gheGatewayFallback(h);
+  }
   if (accountType === 'business') return 'https://api.business.githubcopilot.com';
   if (accountType === 'enterprise') return 'https://api.enterprise.githubcopilot.com';
   return 'https://api.githubcopilot.com';
+}
+
+/**
+ * The gateway a request goes to. Without a tenant: the exchange's `endpoints.api`, else the
+ * account type's host (today's rule). On a tenant `endpoints.api` is used only when GitHub
+ * operates it for that tenant (https, no port or credentials, *.<tenant> or *.githubcopilot.com);
+ * anything else falls back to copilot-api.<tenant>.
+ */
+export function copilotGateway({ apiHost, accountType, enterpriseHost } = {}) {
+  if (!enterpriseHost) return apiHost || copilotApiHost(accountType);
+  const h = normalizeGheHost(enterpriseHost);
+  if (!h) throw noHostError();
+  return apiHost && (isTenantOrigin(apiHost, h) || isGithubCopilotOrigin(apiHost)) ? apiHost : gheGatewayFallback(h);
 }
 
 /** Headers for github.com / api.github.com calls (device flow, exchange, user). */
@@ -101,23 +148,29 @@ export function requestInitiator(body) {
 
 /**
  * Start the GitHub device flow. Returns the code the user types at
- * github.com/login/device plus the poll interval.
- * @param {{fetch?:typeof fetch}} [deps]
+ * <host>/login/device plus the poll interval and the `host` it was issued on.
+ * @param {{fetch?:typeof fetch, enterpriseHost?:string|null}} [deps]
  */
-export async function startDeviceFlow({ fetch: f = globalThis.fetch } = {}) {
-  const r = await f(`${GITHUB_BASE}/login/device/code`, {
+export async function startDeviceFlow({ fetch: f = globalThis.fetch, enterpriseHost = null } = {}) {
+  const { host, web } = gheUrls(enterpriseHost);
+  const r = await f(`${web}/login/device/code`, {
     method: 'POST', headers: githubHeaders(),
     body: JSON.stringify({ client_id: GITHUB_CLIENT_ID, scope: GITHUB_SCOPES }),
   });
-  if (!r.ok) throw new Error(`GitHub device flow could not start (${r.status})`);
+  if (!r.ok) {
+    throw new Error(enterpriseHost
+      ? `GitHub device flow could not start on ${host} (${r.status}) — check the host, and that your enterprise allows the GitHub Copilot app`
+      : `GitHub device flow could not start (${r.status})`);
+  }
   const j = await r.json();
   if (!j.device_code || !j.user_code) throw new Error('GitHub device flow: malformed response');
   return {
     deviceCode: j.device_code,
     userCode: j.user_code,
-    verificationUri: j.verification_uri || `${GITHUB_BASE}/login/device`,
+    verificationUri: j.verification_uri || `${web}/login/device`,
     interval: Number(j.interval) || 5,
     expiresIn: Number(j.expires_in) || 900,
+    host,
   };
 }
 
@@ -126,10 +179,11 @@ export async function startDeviceFlow({ fetch: f = globalThis.fetch } = {}) {
  * approved yet (also for slow_down, with `interval` raised), `{ok:true, token}`
  * once approved, `{error}` when the code expired or was denied.
  * @param {string} deviceCode
- * @param {{fetch?:typeof fetch}} [deps]
+ * @param {{fetch?:typeof fetch, enterpriseHost?:string|null}} [deps]
  */
-export async function pollDeviceFlow(deviceCode, { fetch: f = globalThis.fetch } = {}) {
-  const r = await f(`${GITHUB_BASE}/login/oauth/access_token`, {
+export async function pollDeviceFlow(deviceCode, { fetch: f = globalThis.fetch, enterpriseHost = null } = {}) {
+  const { host, web } = gheUrls(enterpriseHost);
+  const r = await f(`${web}/login/oauth/access_token`, {
     method: 'POST', headers: githubHeaders(),
     body: JSON.stringify({ client_id: GITHUB_CLIENT_ID, device_code: deviceCode, grant_type: 'urn:ietf:params:oauth:grant-type:device_code' }),
   });
@@ -138,13 +192,13 @@ export async function pollDeviceFlow(deviceCode, { fetch: f = globalThis.fetch }
   if (j.error === 'authorization_pending') return { pending: true };
   if (j.error === 'slow_down') return { pending: true, interval: Number(j.interval) || 10 };
   if (j.error === 'expired_token') return { error: 'the device code expired — start the sign-in again' };
-  if (j.error === 'access_denied') return { error: 'the sign-in was denied on github.com' };
+  if (j.error === 'access_denied') return { error: `the sign-in was denied on ${host}` };
   return { error: j.error_description || j.error || `GitHub answered ${r.status}` };
 }
 
 /** The GitHub login of the token's user (display only). */
-export async function githubLogin(githubToken, { fetch: f = globalThis.fetch } = {}) {
-  const r = await f(`${GITHUB_API}/user`, { headers: githubHeaders(githubToken) });
+export async function githubLogin(githubToken, { fetch: f = globalThis.fetch, enterpriseHost = null } = {}) {
+  const r = await f(`${gheUrls(enterpriseHost).api}/user`, { headers: githubHeaders(githubToken) });
   if (!r.ok) throw new Error(`GitHub /user answered ${r.status}`);
   const j = await r.json();
   return typeof j.login === 'string' ? j.login : '';
@@ -153,22 +207,24 @@ export async function githubLogin(githubToken, { fetch: f = globalThis.fetch } =
 // ── token exchange (memory cache) ────────────────────────────────────────────
 
 const REFRESH_MARGIN_S = 60;
-const cache = new Map();   // githubToken -> { token, expiresAt (ms), apiHost }
+const cache = new Map();   // `${host}\n${githubToken}` -> { token, expiresAt (ms), apiHost }
+const cacheKey = (githubToken, enterpriseHost) => `${enterpriseHost || 'github.com'}\n${githubToken}`;
 
 /**
  * A live Copilot token for `githubToken`, exchanged on first use and refreshed
  * before expiry. Returns `{token, apiHost}`; `apiHost` is the gateway the
  * exchange named (`endpoints.api`) or null.
  * @param {string} githubToken
- * @param {{fetch?:typeof fetch, now?:() => number, force?:boolean}} [deps]
+ * @param {{fetch?:typeof fetch, now?:() => number, force?:boolean, enterpriseHost?:string|null}} [deps]
  */
-export async function copilotToken(githubToken, { fetch: f = globalThis.fetch, now = Date.now, force = false } = {}) {
+export async function copilotToken(githubToken, { fetch: f = globalThis.fetch, now = Date.now, force = false, enterpriseHost = null } = {}) {
   if (!githubToken) throw Object.assign(new Error('not signed in to GitHub Copilot'), { code: 'NOT_SIGNED_IN' });
-  const hit = cache.get(githubToken);
+  const key = cacheKey(githubToken, enterpriseHost);
+  const hit = cache.get(key);
   if (!force && hit && hit.expiresAt - now() > REFRESH_MARGIN_S * 1000) return { token: hit.token, apiHost: hit.apiHost };
-  const r = await f(`${GITHUB_API}/copilot_internal/v2/token`, { headers: githubHeaders(githubToken) });
+  const r = await f(`${gheUrls(enterpriseHost).api}/copilot_internal/v2/token`, { headers: githubHeaders(githubToken) });
   if (r.status === 401 || r.status === 403) {
-    cache.delete(githubToken);
+    cache.delete(key);
     throw Object.assign(new Error(`GitHub rejected the stored token (${r.status}) — sign in again`), { code: 'AUTH', status: r.status });
   }
   if (!r.ok) throw Object.assign(new Error(`Copilot token exchange answered ${r.status}`), { code: 'EXCHANGE', status: r.status });
@@ -176,12 +232,12 @@ export async function copilotToken(githubToken, { fetch: f = globalThis.fetch, n
   if (!j.token) throw Object.assign(new Error('Copilot token exchange: no token in the response (is Copilot enabled for this account?)'), { code: 'EXCHANGE' });
   const expiresAt = Number(j.expires_at) > 0 ? Number(j.expires_at) * 1000 : now() + 25 * 60 * 1000;
   const apiHost = j.endpoints && typeof j.endpoints.api === 'string' ? j.endpoints.api.replace(/\/+$/, '') : null;
-  cache.set(githubToken, { token: j.token, expiresAt, apiHost });
+  cache.set(key, { token: j.token, expiresAt, apiHost });
   return { token: j.token, apiHost };
 }
 
 /** Drop a cached Copilot token (after a 401 from the gateway). */
-export function invalidateCopilotToken(githubToken) { cache.delete(githubToken); }
+export function invalidateCopilotToken(githubToken, { enterpriseHost = null } = {}) { cache.delete(cacheKey(githubToken, enterpriseHost)); }
 /** Test hook. */
 export function _resetCopilotCache() { cache.clear(); }
 
@@ -284,11 +340,11 @@ export function catalogEntryForCopilotModel(m) {
 /**
  * The Copilot models list, normalized. Chat models only.
  * @param {string} githubToken
- * @param {{accountType?:string, fetch?:typeof fetch}} [deps]
+ * @param {{accountType?:string, enterpriseHost?:string|null, fetch?:typeof fetch}} [deps]
  */
-export async function listCopilotModels(githubToken, { accountType = 'individual', fetch: f = globalThis.fetch } = {}) {
-  const { token, apiHost } = await copilotToken(githubToken, { fetch: f });
-  const host = apiHost || copilotApiHost(accountType);
+export async function listCopilotModels(githubToken, { accountType = 'individual', enterpriseHost = null, fetch: f = globalThis.fetch } = {}) {
+  const { token, apiHost } = await copilotToken(githubToken, { fetch: f, enterpriseHost });
+  const host = copilotGateway({ apiHost, accountType, enterpriseHost });
   const r = await f(`${host}/models`, { headers: copilotHeaders(token) });
   if (!r.ok) throw Object.assign(new Error(`Copilot /models answered ${r.status}`), { status: r.status });
   const j = await r.json();
@@ -300,8 +356,8 @@ export async function listCopilotModels(githubToken, { accountType = 'individual
  * The premium-request quota snapshot, or null when the account exposes none.
  * @returns {Promise<{used:number|null, entitlement:number|null, remaining:number|null, percentRemaining:number|null, unlimited:boolean, resetDate:string|null}|null>}
  */
-export async function copilotUsage(githubToken, { fetch: f = globalThis.fetch } = {}) {
-  const r = await f(`${GITHUB_API}/copilot_internal/user`, { headers: githubHeaders(githubToken) });
+export async function copilotUsage(githubToken, { fetch: f = globalThis.fetch, enterpriseHost = null } = {}) {
+  const r = await f(`${gheUrls(enterpriseHost).api}/copilot_internal/user`, { headers: githubHeaders(githubToken) });
   if (!r.ok) return null;
   const j = await r.json().catch(() => null);
   const q = j && j.quota_snapshots && j.quota_snapshots.premium_interactions;

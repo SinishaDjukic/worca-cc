@@ -119,6 +119,9 @@
 .mv-cp-wait .mv-cp-status{min-width:0;overflow-wrap:anywhere;}
 .mv-cp-status.err{color:var(--red);}
 .mv-cp-signin-box .mv-cp-cancel{flex:none;}
+.mv-cp-host-row{display:flex;align-items:center;gap:8px;min-width:0;}
+.mv-cp-host-row .mv-cp-host{flex:1;min-width:0;}
+.mv-cp-host-row .mv-cp-host-save{flex:none;}
 .mv-needs-signin{display:inline-flex;align-items:center;gap:6px;}
 .mv-degradation{display:block;margin:4px 0 0;}
 .mv-conn{display:grid;gap:12px;}

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### GitHub Copilot on a GHE.com tenant (data residency)
+
+- **A fourth Copilot account type, GHE.com tenant** (`accountType: ghe-com`), with a required **GHE.com host** (`acme.ghe.com`) on the Providers page, in `worca models set copilot accountType=ghe-com enterpriseHost=acme.ghe.com` and in Ask Worca's provider card. The host is validated (a bare `<tenant>.ghe.com`, no path, port or credentials) and stored normalized.
+- **Every GitHub-side call goes to the tenant:** the device-flow sign-in (and the address the sign-in link shows), `/user`, the token exchange, the model list, the quota, the bridge's requests and the reachability probe. A trusted `endpoints.api` (`*.<tenant>.ghe.com` or `*.githubcopilot.com`) is used; anything else falls back to `copilot-api.<tenant>.ghe.com`. The cached Copilot token is keyed by host. Nothing changes without a tenant, and a `ghe-com` config without a valid host refuses instead of falling back to github.com.
+- **A host change signs you out in the same write** (a sign-in belongs to one GitHub host), the card asks first, and a sign-in that finishes after the host changed stores nothing. Individual, Business and Enterprise keep the sign-in.
+- **Credential broker:** a Copilot slot whose `exchangeUrl` / `deviceBaseUrl` name a tenant trusts that tenant's gateway (`https://*.<tenant>.ghe.com`) as well as `*.githubcopilot.com`; slots naming two different tenants are refused. See [Credential broker](docs/credential-broker.md).
+- **Platform egress policy:** in `allow` mode, worca's own proxy adds the configured tenant (`<t>.ghe.com`, `.<t>.ghe.com`), live and logged; `WORCA_EGRESS_DENY` still wins. The Docker egress overlay needs `.<t>.ghe.com` added by hand.
+
 ### Instance contract for hosting platforms
 
 - New [Instance contract](docs/instance-contract.md) page: what a hosted Worca instance is made of (the `worca`, `broker` and `cloudflared` containers, their start commands, ports and volumes) and everything a management interface sets or expects: every variable per container, the identity token, the heartbeat and what a receiver should do with it, stopping and draining, rotation and versions. For running Worca for others without a hosting platform, or for building a management interface of your own.

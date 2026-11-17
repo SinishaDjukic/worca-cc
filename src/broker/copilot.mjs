@@ -5,17 +5,22 @@
 // short-lived API token (cached until shortly before it expires). worca never sees
 // either token. The editor headers and endpoints are the ones worca's own Copilot
 // provider uses (src/core/bridge/providers/copilot.mjs), imported from there.
-import { githubHeaders, GITHUB_API, GITHUB_BASE, GITHUB_CLIENT_ID, GITHUB_SCOPES } from '../core/bridge/providers/copilot.mjs';
+import { isTenantOrigin } from '../core/ghe-host.mjs';
+import { githubHeaders, isGithubCopilotOrigin, GITHUB_API, GITHUB_BASE, GITHUB_CLIENT_ID, GITHUB_SCOPES } from '../core/bridge/providers/copilot.mjs';
 
 export const DEFAULT_EXCHANGE_URL = `${GITHUB_API}/copilot_internal/v2/token`;
 const REFRESH_MARGIN_MS = 60_000;
 
 /** A Copilot API host must be GitHub's (the exchange response names it; never trust anything else). */
-export function isCopilotHost(origin) {
-  try {
-    const u = new URL(origin);
-    return u.protocol === 'https:' && (u.hostname === 'githubcopilot.com' || u.hostname.endsWith('.githubcopilot.com'));
-  } catch { return false; }
+export const isCopilotHost = isGithubCopilotOrigin;
+
+/**
+ * The gateway check for a slot: GitHub's own Copilot hosts, plus — for a slot that names a GHE.com
+ * tenant (derived from its exchangeUrl / deviceBaseUrl) — the https subdomains of that tenant.
+ * Never an arbitrary host from the exchange response.
+ */
+export function copilotHostCheck(tenant) {
+  return (origin) => isCopilotHost(origin) || (!!tenant && isTenantOrigin(origin, tenant));
 }
 
 /**
@@ -66,7 +71,7 @@ export async function startDeviceFlow({ fetchImpl = globalThis.fetch, baseUrl = 
   if (!res.ok) throw new Error(`GitHub device sign-in failed (HTTP ${res.status})`);
   const j = await res.json();
   if (!j.device_code || !j.user_code) throw new Error('GitHub returned no device code');
-  return { deviceCode: j.device_code, userCode: j.user_code, verificationUri: j.verification_uri || 'https://github.com/login/device', interval: Number(j.interval) || 5, expiresIn: Number(j.expires_in) || 900 };
+  return { deviceCode: j.device_code, userCode: j.user_code, verificationUri: j.verification_uri || `${baseUrl}/login/device`, interval: Number(j.interval) || 5, expiresIn: Number(j.expires_in) || 900 };
 }
 
 /**

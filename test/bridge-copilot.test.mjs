@@ -9,8 +9,15 @@ import {
   startDeviceFlow, pollDeviceFlow, githubLogin, copilotToken, invalidateCopilotToken, _resetCopilotCache,
   copilotHeaders, githubHeaders, copilotApiHost, bodyHasImage, requestInitiator,
   normalizeCopilotModel, catalogEntryForCopilotModel, copilotApiFor, listCopilotModels, copilotUsage, GITHUB_CLIENT_ID,
+  copilotAccountHost, copilotGateway,
 } from '../src/core/bridge/providers/copilot.mjs';
 import { checkRows } from './helpers/rows.mjs';
+import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, dirname } from 'node:path';
+import { handleMessages, _resetBridgeWarnings } from '../src/core/bridge/upstream.mjs';
+import { _resetBridgeTelemetry } from '../src/core/bridge/telemetry.mjs';
+import { updateProvider, settingsFile } from '../src/core/settings.mjs';
 
 const jsonRes = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body, text: async () => JSON.stringify(body), headers: new Map() });
 function stub(routes) {
@@ -45,7 +52,7 @@ test('device flow: start returns the code; poll walks pending → slow_down → 
     }],
   ]);
   const s = await startDeviceFlow({ fetch: f });
-  assert.deepEqual(s, { deviceCode: 'dc', userCode: 'ABCD-1234', verificationUri: 'https://github.com/login/device', interval: 5, expiresIn: 900 });
+  assert.deepEqual(s, { deviceCode: 'dc', userCode: 'ABCD-1234', verificationUri: 'https://github.com/login/device', interval: 5, expiresIn: 900, host: 'github.com' });
   assert.deepEqual(await pollDeviceFlow('dc', { fetch: f }), { pending: true });
   assert.deepEqual(await pollDeviceFlow('dc', { fetch: f }), { pending: true, interval: 10 });
   assert.deepEqual(await pollDeviceFlow('dc', { fetch: f }), { ok: true, token: 'gho_x' });
@@ -206,4 +213,156 @@ test('models: supported_endpoints and effort lists drive the api, the reasoning 
   assert.equal('reasoningEfforts' in catalogEntryForCopilotModel(legacy).upstream.capabilities, false);
   const claude = normalizeCopilotModel({ id: 'claude-sonnet-5', name: 'Claude Sonnet 5', vendor: 'Anthropic', capabilities: { type: 'chat', supports: { reasoning_effort: ['low', 'high'] } } });
   assert.equal('reasoningEfforts' in catalogEntryForCopilotModel(claude).upstream.capabilities, false);   // passthrough: the CLI speaks effort itself
+});
+
+// ── GHE.com tenant (data residency) ──────────────────────────────────────────
+
+const TENANT = 'acme.ghe.com';
+
+test('device flow on a GHE.com tenant: code and token URLs on acme.ghe.com; fallback verificationUri and host; denied names the tenant', async () => {
+  const f = stub([
+    [/login\/device\/code$/, () => jsonRes(200, { device_code: 'dc', user_code: 'ABCD-1234' })],
+    [/oauth\/access_token$/, () => jsonRes(200, { error: 'access_denied' })],
+  ]);
+  const s = await startDeviceFlow({ fetch: f, enterpriseHost: TENANT });
+  assert.equal(f.calls[0].url, 'https://acme.ghe.com/login/device/code');
+  assert.equal(s.verificationUri, 'https://acme.ghe.com/login/device');
+  assert.equal(s.host, TENANT);
+  assert.match((await pollDeviceFlow('dc', { fetch: f, enterpriseHost: TENANT })).error, /denied on acme\.ghe\.com/);
+  assert.equal(f.calls[1].url, 'https://acme.ghe.com/login/oauth/access_token');
+  const bad = stub([[/device\/code$/, () => jsonRes(404, {})]]);
+  await assert.rejects(startDeviceFlow({ fetch: bad, enterpriseHost: TENANT }), /could not start on acme\.ghe\.com \(404\).*Copilot app/);
+});
+
+test('device flow without a host: URLs, verificationUri fallback, host and messages unchanged (github.com)', async () => {
+  const f = stub([
+    [/login\/device\/code$/, () => jsonRes(200, { device_code: 'dc', user_code: 'U' })],
+    [/oauth\/access_token$/, () => jsonRes(200, { error: 'access_denied' })],
+  ]);
+  const s = await startDeviceFlow({ fetch: f });
+  assert.equal(f.calls[0].url, 'https://github.com/login/device/code');
+  assert.equal(s.verificationUri, 'https://github.com/login/device');
+  assert.equal(s.host, 'github.com');
+  assert.equal((await pollDeviceFlow('dc', { fetch: f })).error, 'the sign-in was denied on github.com');
+  const bad = stub([[/device\/code$/, () => jsonRes(500, {})]]);
+  await assert.rejects(startDeviceFlow({ fetch: bad }), (e) => e.message === 'GitHub device flow could not start (500)');
+});
+
+test('login, exchange and quota on a tenant hit api.acme.ghe.com; github.com path still hits api.github.com', async () => {
+  const f = stub([
+    [/\.com\/user$/, () => jsonRes(200, { login: 'octocat' })],
+    [/copilot_internal\/v2\/token$/, () => jsonRes(200, { token: 'cp', expires_at: Math.floor(Date.now() / 1000) + 1800 })],
+    [/copilot_internal\/user$/, () => jsonRes(200, { quota_snapshots: { premium_interactions: { entitlement: 10, remaining: 4 } } })],
+  ]);
+  await githubLogin('gho_t', { fetch: f, enterpriseHost: TENANT });
+  await copilotToken('gho_t', { fetch: f, enterpriseHost: TENANT });
+  assert.equal((await copilotUsage('gho_t', { fetch: f, enterpriseHost: TENANT })).used, 6);
+  assert.deepEqual(f.calls.map((c) => c.url), [
+    'https://api.acme.ghe.com/user', 'https://api.acme.ghe.com/copilot_internal/v2/token', 'https://api.acme.ghe.com/copilot_internal/user',
+  ]);
+  const g = stub([[/.*/, () => jsonRes(200, { login: 'x', token: 'cp' })]]);
+  await githubLogin('gho_g', { fetch: g });
+  await copilotToken('gho_g', { fetch: g });
+  await copilotUsage('gho_g', { fetch: g });
+  assert.deepEqual(g.calls.map((c) => c.url), [
+    'https://api.github.com/user', 'https://api.github.com/copilot_internal/v2/token', 'https://api.github.com/copilot_internal/user',
+  ]);
+});
+
+test('token cache is keyed by host: the same token on github.com and a tenant exchanges twice; invalidate drops only that host', async () => {
+  let n = 0;
+  const f = stub([[/v2\/token$/, () => { n += 1; return jsonRes(200, { token: `cp_${n}`, expires_at: Math.floor(Date.now() / 1000) + 1800 }); }]]);
+  assert.equal((await copilotToken('same', { fetch: f })).token, 'cp_1');
+  assert.equal((await copilotToken('same', { fetch: f, enterpriseHost: TENANT })).token, 'cp_2');
+  assert.equal((await copilotToken('same', { fetch: f })).token, 'cp_1');                                  // both cached
+  assert.equal((await copilotToken('same', { fetch: f, enterpriseHost: TENANT })).token, 'cp_2');
+  invalidateCopilotToken('same', { enterpriseHost: TENANT });
+  assert.equal((await copilotToken('same', { fetch: f })).token, 'cp_1');                                  // github.com kept
+  assert.equal((await copilotToken('same', { fetch: f, enterpriseHost: TENANT })).token, 'cp_3');          // tenant re-exchanged
+  invalidateCopilotToken('same');
+  assert.equal((await copilotToken('same', { fetch: f })).token, 'cp_4');
+});
+
+test('copilotGateway on a tenant: trusted endpoints.api wins; an untrusted one falls back to copilot-api.<t>.ghe.com; no host keeps today\'s rule', () => {
+  const fb = 'https://copilot-api.acme.ghe.com';
+  for (const ok of ['https://copilot-api.acme.ghe.com', 'https://api.individual.githubcopilot.com', 'https://proxy.acme.ghe.com']) {
+    assert.equal(copilotGateway({ apiHost: ok, enterpriseHost: TENANT }), ok);
+  }
+  for (const bad of ['https://evil.example', 'https://copilot-api.other.ghe.com', 'http://copilot-api.acme.ghe.com', 'https://copilot-api.acme.ghe.com:8443', 'https://acme.ghe.com.evil.example', 'https://u@copilot-api.acme.ghe.com', null, undefined]) {
+    assert.equal(copilotGateway({ apiHost: bad, enterpriseHost: TENANT }), fb, String(bad));
+  }
+  assert.equal(copilotGateway({ apiHost: 'https://anything.example', accountType: 'business' }), 'https://anything.example');
+  assert.equal(copilotGateway({ apiHost: null, accountType: 'business' }), 'https://api.business.githubcopilot.com');
+  assert.equal(copilotGateway({}), 'https://api.githubcopilot.com');
+});
+
+test('copilotAccountHost / copilotApiHost: ghe-com without a valid host throws NO_HOST; other types return null and keep their gateways', () => {
+  assert.equal(copilotAccountHost({ accountType: 'individual' }), null);
+  assert.equal(copilotAccountHost({ accountType: 'enterprise', enterpriseHost: TENANT }), null);
+  assert.equal(copilotAccountHost({}), null);
+  assert.equal(copilotAccountHost({ accountType: 'ghe-com', enterpriseHost: TENANT }), TENANT);
+  for (const cfg of [{ accountType: 'ghe-com' }, { accountType: 'ghe-com', enterpriseHost: 'github.com' }, { accountType: 'ghe-com', enterpriseHost: 'api.acme.ghe.com' }]) {
+    assert.throws(() => copilotAccountHost(cfg), (e) => e.code === 'NO_HOST' && /GHE\.com tenant but has no valid host/.test(e.message));
+  }
+  assert.equal(copilotApiHost('ghe-com', TENANT), 'https://copilot-api.acme.ghe.com');
+  assert.throws(() => copilotApiHost('ghe-com'), (e) => e.code === 'NO_HOST');
+  assert.equal(copilotApiHost('business', TENANT), 'https://api.business.githubcopilot.com');
+  assert.equal(copilotApiHost('individual'), 'https://api.githubcopilot.com');
+});
+
+test('listCopilotModels on a tenant calls the tenant gateway\'s /models', async () => {
+  const f = stub([
+    [/v2\/token$/, () => jsonRes(200, { token: 'cp', expires_at: Math.floor(Date.now() / 1000) + 1800, endpoints: { api: 'https://evil.example' } })],
+    [/\/models$/, () => jsonRes(200, { data: [{ id: 'gpt-4.1', capabilities: { type: 'chat' } }] })],
+  ]);
+  const ms = await listCopilotModels('gho_t', { accountType: 'ghe-com', enterpriseHost: TENANT, fetch: f });
+  assert.equal(ms.length, 1);
+  assert.deepEqual(f.calls.map((c) => c.url), ['https://api.acme.ghe.com/copilot_internal/v2/token', 'https://copilot-api.acme.ghe.com/models']);
+});
+
+test('copilot entry on a tenant: exchange on api.acme.ghe.com, request to the trusted endpoints.api; an untrusted endpoints.api goes to copilot-api.acme.ghe.com; no host never reaches github.com', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'worca-cc-copilot-tenant-'));
+  const prev = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, WORCA_TEST_ALLOW_HOME_FALLBACK: process.env.WORCA_TEST_ALLOW_HOME_FALLBACK };
+  process.env.HOME = home; process.env.USERPROFILE = home; process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
+  try {
+    _resetBridgeTelemetry(); _resetBridgeWarnings();
+    const entry = { id: 'copilot-claude-x', upstream: { provider: 'copilot', api: 'anthropic', model: 'claude-x' } };
+    const reply = () => {
+      const r = { statusCode: 0, body: null };
+      return Object.assign(r, { status(c) { r.statusCode = c; }, write() {}, end() {}, json(c, o) { r.statusCode = c; r.body = o; } });
+    };
+    const run = async (endpointsApi) => {
+      _resetCopilotCache();
+      const urls = [];
+      const fetch = async (url) => {
+        urls.push(String(url));
+        if (/copilot_internal\/v2\/token$/.test(url)) return new Response(JSON.stringify({ token: 'cp', expires_at: Math.floor(Date.now() / 1000) + 1800, endpoints: { api: endpointsApi } }), { status: 200 });
+        return new Response(JSON.stringify({ id: 'm1', type: 'message', role: 'assistant', content: [{ type: 'text', text: 'OK' }], stop_reason: 'end_turn' }), { status: 200, headers: { 'content-type': 'application/json' } });
+      };
+      const r = reply();
+      await handleMessages({ entry, body: { model: entry.id, max_tokens: 5, messages: [{ role: 'user', content: 'hi' }] }, tag: 't', fetch, log: () => {} }, r);
+      return { urls, r };
+    };
+    await updateProvider('copilot', { accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com' });
+    await updateProvider('copilot', { githubToken: 'gho_t' });
+    const trusted = await run('https://copilot-api.acme.ghe.com');
+    assert.equal(trusted.r.statusCode, 200, JSON.stringify(trusted.r.body));
+    assert.deepEqual(trusted.urls, ['https://api.acme.ghe.com/copilot_internal/v2/token', 'https://copilot-api.acme.ghe.com/v1/messages']);
+    const untrusted = await run('https://evil.example');
+    assert.deepEqual(untrusted.urls, ['https://api.acme.ghe.com/copilot_internal/v2/token', 'https://copilot-api.acme.ghe.com/v1/messages']);
+    // Hand-edited ghe-com without a host: the bridge's upstream error, and nothing is fetched.
+    const file = settingsFile();
+    await mkdir(dirname(file), { recursive: true });
+    await writeFile(file, JSON.stringify({ providers: { copilot: { accountType: 'ghe-com', githubToken: 'gho_t' } } }));
+    const warn = console.warn; console.warn = () => {};
+    try {
+      const bad = await run('https://api.githubcopilot.com');
+      assert.deepEqual(bad.urls, []);
+      assert.equal(bad.r.statusCode, 502);
+      assert.match(JSON.stringify(bad.r.body), /GHE\.com tenant but has no valid host/);
+    } finally { console.warn = warn; }
+  } finally {
+    for (const k of Object.keys(prev)) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; }
+    await rm(home, { recursive: true, force: true });
+  }
 });

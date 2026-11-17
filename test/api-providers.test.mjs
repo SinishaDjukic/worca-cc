@@ -7,11 +7,13 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { _resetForTests } from '../src/core/db.mjs';
 import { _resetCopilotCache } from '../src/core/bridge/providers/copilot.mjs';
+import { settingsFile } from '../src/core/settings.mjs';
+import { testProviderConnection } from '../src/core/bridge/provider-ops.mjs';
 import { formatModelLine, formatProviders, modelsArgs, cmdModels } from '../src/cli/models.mjs';
 
 let srv, base, homeDir, worcaHomeDir;
@@ -23,9 +25,16 @@ const realFetch = globalThis.fetch;
 const jsonRes = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 let pollState = 'pending';
 let modelsExtra = [];
+const seen = [];   // every non-server URL fetched, in order
 const github = async (url, init = {}) => {
   const u = String(url);
   if (u.startsWith(base)) return realFetch(url, init);
+  seen.push(u);
+  // A GHE.com tenant (acme.ghe.com): its own device flow, REST host and Copilot gateway.
+  if (/^https:\/\/acme\.ghe\.com\/login\/device\/code$/.test(u)) return jsonRes(200, { device_code: 'dc-acme', user_code: 'ACME-0001', verification_uri: 'https://acme.ghe.com/login/device', interval: 1, expires_in: 900 });
+  if (/^https:\/\/api\.acme\.ghe\.com\/user$/.test(u)) return jsonRes(200, { login: 'tenant-octo' });
+  if (/^https:\/\/api\.acme\.ghe\.com\/copilot_internal\/v2\/token$/.test(u)) return init.headers.authorization === 'token gho_test' ? jsonRes(200, { token: 'cp_acme', expires_at: Math.floor(Date.now() / 1000) + 1800, endpoints: { api: 'https://copilot-api.acme.ghe.com' } }) : jsonRes(401, {});
+  if (/^https:\/\/copilot-api\.acme\.ghe\.com\/models$/.test(u)) return jsonRes(200, { data: [{ id: 'tenant-model', name: 'Tenant Model', vendor: 'OpenAI', capabilities: { type: 'chat' } }] });
   if (/login\/device\/code$/.test(u)) return jsonRes(200, { device_code: 'dc1', user_code: 'WXYZ-9876', verification_uri: 'https://github.com/login/device', interval: 1, expires_in: 900 });
   if (/oauth\/access_token$/.test(u)) return pollState === 'ok' ? jsonRes(200, { access_token: 'gho_test' }) : jsonRes(200, { error: 'authorization_pending' });
   if (/api\.github\.com\/user$/.test(u)) return jsonRes(200, { login: 'octo' });
@@ -210,6 +219,124 @@ test('PATCH /api/providers: validation, masked echo = keep, logout flips the cat
   assert.equal(lst.body.code, 'NOT_SIGNED_IN');
 });
 
+const copilotPatch = (b) => patch('/api/providers/copilot', b);
+const seenSince = (n) => seen.slice(n);
+
+test('GHE.com tenant end to end: PATCH → login begins on acme.ghe.com and returns host; poll stores the token; state shows host; quota and models hit the tenant', async () => {
+  pollState = 'ok';
+  const set = await copilotPatch({ accountType: 'ghe-com', enterpriseHost: ' https://Acme.ghe.com/ ' });
+  assert.equal(set.status, 200, JSON.stringify(set.body));
+  assert.equal(set.body.copilot.enterpriseHost, 'acme.ghe.com');
+  assert.equal(set.body.copilot.githubHost, 'acme.ghe.com');
+  assert.equal(set.body.copilot.accountType, 'ghe-com');
+  const n0 = seen.length;
+  const start = await post('/api/providers/copilot/login');
+  assert.equal(start.status, 200, JSON.stringify(start.body));
+  assert.equal(start.body.host, 'acme.ghe.com');
+  assert.equal(start.body.verificationUri, 'https://acme.ghe.com/login/device');
+  const done = await jfetch(`/api/providers/copilot/login/${start.body.deviceCode}`, { method: 'POST' });
+  assert.deepEqual(done.body, { ok: true, login: 'tenant-octo' });
+  assert.deepEqual(seenSince(n0), [
+    'https://acme.ghe.com/login/device/code', 'https://acme.ghe.com/login/oauth/access_token',
+    'https://api.acme.ghe.com/user', 'https://api.acme.ghe.com/copilot_internal/v2/token',
+  ]);
+  const n1 = seen.length;
+  const st = await jfetch('/api/providers?quota=1');
+  assert.equal(st.body.copilot.connected, true);
+  assert.equal(st.body.copilot.githubHost, 'acme.ghe.com');
+  assert.equal(st.body.copilot.quota.used, 50);
+  assert.equal(JSON.stringify(st.body).includes('gho_test'), false);
+  assert.deepEqual(seenSince(n1), ['https://api.acme.ghe.com/copilot_internal/user']);
+  const n2 = seen.length;
+  const list = await jfetch('/api/providers/copilot/models');
+  assert.deepEqual(list.body.models.map((m) => m.id), ['tenant-model']);
+  assert.ok(seenSince(n2).includes('https://copilot-api.acme.ghe.com/models'));
+  assert.ok(seenSince(n2).every((u) => /\.acme\.ghe\.com\//.test(u)), 'every call goes to the tenant');
+  const conn = await testProviderConnection('copilot', { fetch: github });
+  assert.deepEqual(conn, { ok: true });
+});
+
+test('changing the host while signed in signs out (state connected:false) in one PATCH', async () => {
+  const before = (await jfetch('/api/providers')).body.copilot;
+  assert.equal(before.connected, true);
+  const r = await copilotPatch({ enterpriseHost: 'other.ghe.com' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.copilot.connected, false);
+  assert.equal(r.body.copilot.login, null);
+  assert.equal(r.body.copilot.enterpriseHost, 'other.ghe.com');
+  assert.equal(r.body.copilot.githubHost, 'other.ghe.com');
+});
+
+test('PATCH validation: ghe-com without a host, a host with a path or port, a host without ghe-com are 400 with the message; nothing stored', async () => {
+  assert.equal((await copilotPatch({ accountType: 'individual' })).status, 200);
+  const raw = await readFile(settingsFile(), 'utf8');
+  const cases = [
+    [{ accountType: 'ghe-com' }, /needs enterpriseHost/],
+    [{ accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com/x' }, /enterpriseHost must be a GHE\.com host like acme\.ghe\.com/],
+    [{ accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com:443' }, /with no path, port or credentials/],
+    [{ enterpriseHost: 'acme.ghe.com' }, /applies only to accountType ghe-com/],
+    [{ accountType: 'business', enterpriseHost: 'acme.ghe.com' }, /applies only to accountType ghe-com/],
+  ];
+  for (const [body, re] of cases) {
+    const r = await copilotPatch(body);
+    assert.equal(r.status, 400, JSON.stringify(body));
+    assert.match(r.body.error, re);
+  }
+  assert.equal(await readFile(settingsFile(), 'utf8'), raw);
+});
+
+test('host changed between login begin and approval: poll returns the HOST_CHANGED error and stores no token', async () => {
+  pollState = 'ok';
+  assert.equal((await copilotPatch({ accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com' })).status, 200);
+  const start = await post('/api/providers/copilot/login');
+  assert.equal(start.status, 200, JSON.stringify(start.body));
+  assert.equal((await copilotPatch({ enterpriseHost: 'other.ghe.com' })).status, 200);       // the person edits the host meanwhile
+  const done = await jfetch(`/api/providers/copilot/login/${start.body.deviceCode}`, { method: 'POST' });
+  assert.match(done.body.error, /host changed during the sign-in/);
+  assert.equal((await jfetch('/api/providers')).body.copilot.connected, false);
+  assert.equal((await copilotPatch({ accountType: 'individual' })).status, 200);
+});
+
+test('ghe-com with a hand-edited missing host: login is 400 NO_HOST message; GET /api/providers still 200 with quota null; logout works', async () => {
+  const file = settingsFile();
+  const j = JSON.parse(await readFile(file, 'utf8'));
+  j.providers = { ...(j.providers || {}), copilot: { accountType: 'ghe-com', githubToken: 'gho_test' } };
+  await writeFile(file, JSON.stringify(j));
+  const warn = console.warn; console.warn = () => {};
+  try {
+    const n0 = seen.length;
+    const login = await post('/api/providers/copilot/login');
+    assert.equal(login.status, 400);
+    assert.match(login.body.error, /GHE\.com tenant but has no valid host/);
+    const st = await jfetch('/api/providers?quota=1');
+    assert.equal(st.status, 200);
+    assert.equal(st.body.copilot.quota, null);
+    assert.equal(st.body.copilot.githubHost, null);
+    assert.equal(st.body.copilot.enterpriseHost, null);
+    assert.equal((await jfetch('/api/providers/copilot/models')).status, 400);
+    assert.deepEqual(await testProviderConnection('copilot', { fetch: github }), { ok: false, message: login.body.error });
+    assert.deepEqual(seenSince(n0), [], 'a tenant token never goes to github.com');
+    const out = await post('/api/providers/copilot/logout');
+    assert.equal(out.status, 200);
+    assert.equal(out.body.copilot.connected, false);
+  } finally { console.warn = warn; }
+  assert.equal((await copilotPatch({ accountType: 'individual' })).status, 200);
+});
+
+test('github.com path unchanged: login/poll/user/exchange/quota URLs on github.com and api.github.com', async () => {
+  pollState = 'ok';
+  const n0 = seen.length;
+  const start = await post('/api/providers/copilot/login');
+  assert.equal(start.body.host, 'github.com');
+  await jfetch(`/api/providers/copilot/login/${start.body.deviceCode}`, { method: 'POST' });
+  await jfetch('/api/providers?quota=1');
+  assert.deepEqual(seenSince(n0), [
+    'https://github.com/login/device/code', 'https://github.com/login/oauth/access_token',
+    'https://api.github.com/user', 'https://api.github.com/copilot_internal/v2/token', 'https://api.github.com/copilot_internal/user',
+  ]);
+  assert.equal((await post('/api/providers/copilot/logout')).body.copilot.connected, false);
+});
+
 test('POST/PATCH /api/models with upstream: validation messages surface; masked apiKey echo keeps the stored key', async () => {
   const bad = await post('/api/models', { id: 'x', upstream: { provider: 'openai', api: 'anthropic', model: 'm' } });
   assert.equal(bad.status, 400);
@@ -301,4 +428,28 @@ test('/api/models: readiness is per entry, not per provider — a keyless local 
   assert.equal(row('cx-api-remote').needsSignIn, true);
   assert.equal(row('cx-api-remote').signInReason, 'no_key');
   assert.equal(formatModelLine({ ...row('cx-api-remote'), custom: 'global', upstreamModel: 'gpt-oss-120b' }), 'cx-api-remote  yours  endpoint: openai → gpt-oss-120b  NEEDS API KEY');
+});
+
+test('formatProviders prints host= for a tenant; cmdModels set copilot accountType=ghe-com enterpriseHost=acme.ghe.com stores both; a bad host fails with the message', async () => {
+  const lines = formatProviders({ copilot: { connected: false, accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com', maxConcurrent: 4 }, openai: {}, anthropic: {} });
+  assert.match(lines[0], /account=ghe-com  host=acme\.ghe\.com  maxConcurrent=4/);
+  assert.doesNotMatch(formatProviders({ copilot: { connected: false, accountType: 'individual', maxConcurrent: 4 }, openai: {}, anthropic: {} })[0], /host=/);
+
+  const out = [];
+  const io = { out: (s) => out.push(s), c: (n, s) => s, fail: (m) => { throw new Error(m); } };
+  await assert.rejects(cmdModels(['set', 'copilot', 'accountType=ghe-com', 'enterpriseHost=acme.ghe.com/x'], io), /enterpriseHost must be a GHE\.com host like acme\.ghe\.com/);
+  await assert.rejects(cmdModels(['set', 'copilot', 'accountType=ghe-com'], io), /needs enterpriseHost/);
+  assert.equal(await cmdModels(['set', 'copilot', 'accountType=ghe-com', 'enterpriseHost=Acme.ghe.com'], io), 0);
+  assert.match(out.join('\n'), /copilot .*account=ghe-com  host=acme\.ghe\.com/);
+  // The CLI sign-in names the tenant it is signing in to.
+  pollState = 'ok'; out.length = 0;
+  const begin = await post('/api/providers/copilot/login');
+  assert.equal(begin.body.host, 'acme.ghe.com');
+  assert.equal(await cmdModels(['login', 'copilot'], { ...io, sleep: async () => {} }), 0);
+  assert.ok(out.some((l) => /Open https:\/\/acme\.ghe\.com\/login\/device \(acme\.ghe\.com\) and enter the code ACME-0001/.test(l)), out.join('\n'));
+  // Back to a different type drops the host (and the sign-in) in the same write.
+  out.length = 0;
+  assert.equal(await cmdModels(['set', 'copilot', 'accountType=enterprise'], io), 0);
+  assert.doesNotMatch(out.join('\n'), /host=/);
+  assert.match(out.join('\n'), /copilot\s+not connected/);
 });
