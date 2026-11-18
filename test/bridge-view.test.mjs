@@ -1,19 +1,24 @@
 // test/bridge-view.test.mjs
 // The model bridge's pure renderers (model-bridge-design.md §8): Providers
-// card states, the sign-in block, the import sheet + select-all + collect,
+// row states, the sign-in block, the import sheet + select-all + collect,
 // the editor Connection section (mode reveal, provider→api coupling, Advanced
 // only for key-based providers, efforts collapse for a translated model
 // without reasoning), collect/set round-trips, and the card badges inside
 // renderModelsList / renderModelEditor.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import {
-  renderProvidersCard, collectProviderRow, renderCopilotSignIn, renderImportSheet, collectImportSheet, applyImportSelectAll,
+  collectProviderRow, renderCopilotSignIn, renderImportSheet, collectImportSheet, applyImportSelectAll,
   renderConnectionSection, applyConnectionMode, setModelUpstream, collectConnection,
   bridgedBadge, needsSignInPill, degradationLine,
+  renderCopilotRow, renderOpenRouterRow, renderEndpointRow, renderSpeechRow, renderImagesRow, renderSoundRow,
+  collectImagesRow, applyImagesPreset,
 } from '../ui/public/bridge-view.mjs';
 import { renderModelsList, renderModelEditor, collectModelEditor, applyConnectionModeIn } from '../ui/public/models-view.mjs';
+import { PROVIDER_ROWS } from '../ui/public/models/page-tabs.mjs';
+import { renderProvidersTab } from '../ui/public/models/providers-tab.mjs';
 
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 const EFFORTS = ['medium', 'high', 'xhigh', 'max'];
@@ -22,43 +27,213 @@ const PROVIDERS = {
   openai: { configured: true, keySet: true, keySource: 'stored', keyMasked: '••••••abcd', baseUrl: 'https://gw.example/v1', maxConcurrent: 8 },
   anthropic: { configured: false, keySet: true, keySource: 'env', keyRef: '${ANT}', baseUrl: 'https://api.anthropic.com', maxConcurrent: 8 },
 };
+/** GET /api/providers with all eight blocks: Copilot signed in (business), images on OpenAI, the broker off. */
+const P = Object.freeze({
+  copilot: { connected: true, login: 'octo', accountType: 'business', maxConcurrent: 4, tokenSource: 'stored', tokenRef: null, quota: { used: 12, entitlement: 300, unlimited: false, resetDate: '2026-10-01' } },
+  openrouter: { keySet: true, keySource: 'stored', keyRef: null, keyMasked: '••••••1234', legacyKey: false, maxConcurrent: 8, order: ['anthropic'], sort: 'price', allowFallbacks: true },
+  openai: { configured: true, keyOptional: false, keySet: true, keySource: 'stored', keyRef: null, keyMasked: '••••••abcd', baseUrl: 'https://gw.example/v1', maxConcurrent: 8 },
+  anthropic: { configured: false, keyOptional: false, keySet: true, keySource: 'env', keyRef: '${ANT}', keyMasked: null, baseUrl: 'https://api.anthropic.com', maxConcurrent: 8 },
+  speech: {
+    stt: { engine: 'server', baseUrl: 'http://127.0.0.1:8080/v1', model: 'whisper-1', language: 'bg', configured: true, keySet: true, keySource: 'stored', keyMasked: '••••••abcd', keyRef: null, keyMissing: false },
+    tts: { engine: 'browser', baseUrl: '', model: 'tts-1', voice: 'af_heart', speed: 1, configured: false, keySet: false, keySource: null, keyMasked: null, keyRef: null, keyMissing: false },
+    cacheBytes: 480e6,
+  },
+  images: { service: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'gpt-image-2.6-flare', price: 0.04, configured: true, keySet: true, keySource: 'stored', keyRef: null, keyMasked: '••••••efgh', keyMissing: false },
+  sound: { keySet: true, keySource: 'stored', keyRef: null, keyMasked: '••••••cdef', keyMissing: false, configured: true },
+  broker: { enabled: false },
+});
+const KEY_PAGE = 'https://keys.example/';
+const BROKER = Object.freeze({ ...P, broker: { enabled: true, keyPage: KEY_PAGE, providers: {} } });
+/** One builder per PROVIDER_ROWS member, each called as (providers, { doc }). */
+const BUILDERS = {
+  copilot: renderCopilotRow,
+  openrouter: renderOpenRouterRow,
+  openai: (p, o) => renderEndpointRow(p, 'openai', o),
+  anthropic: (p, o) => renderEndpointRow(p, 'anthropic', o),
+  speech: renderSpeechRow,
+  images: renderImagesRow,
+  sound: renderSoundRow,
+};
+/** The muted lines a row's main column shows, the status line left out (an empty line shows nothing). */
+const lines = (row) => [...row.querySelectorAll('.mv-pv-main > small.hint:not(.mv-pv-msg)')].map((s) => s.textContent).filter(Boolean);
 
-test('providers card: not connected / connected states; sign-in block replaces the button; no notice anywhere', () => {
-  const card = renderProvidersCard({ copilot: { connected: false, accountType: 'individual', maxConcurrent: 4 } }, { doc });
-  assert.match(card.querySelector('.mv-providers-hint').textContent, /then import or add models on the Models page and pick them/);
-  const cp = card.querySelector('.mv-pv-row[data-provider="copilot"]');
-  const pill = cp.querySelector('.mv-head .badge');
-  assert.equal(pill.tagName, 'SPAN');
-  assert.equal(pill.textContent, 'not connected');
+test('the Providers tab\'s Copilot row: not connected / connected states; sign-in block replaces the button; no notice anywhere', () => {
+  const tab = renderProvidersTab({ copilot: { connected: false, accountType: 'individual', maxConcurrent: 4 } }, { doc });
+  assert.equal(tab.querySelector('.mv-providers-hint'), null, 'no intro of its own: the tab is divided rows');
+  const cp = tab.querySelector('.mv-pv-row[data-provider="copilot"]');
+  assert.equal(cp.querySelector('.mv-head, .badge'), null, 'no head and no state badge in the row');
+  assert.equal(lines(cp).some((l) => /^Connected/.test(l)), false, 'signed out: no account line');
   assert.ok(cp.querySelector('.mv-cp-signin'));
   assert.equal(cp.querySelector('.mv-cp-fetch-models').disabled, true);
   assert.equal(cp.querySelector('.mv-cp-terms'), null, 'no notice button or pill');
   assert.doesNotMatch(cp.textContent, /notice/i);
-  assert.match(cp.textContent, /Claude models run through Copilot's native Anthropic endpoint/);
-  const on = renderProvidersCard({ copilot: { connected: true, login: 'octo' } }, { doc });
-  assert.equal(on.querySelector('.mv-pv-row[data-provider="copilot"] .mv-head .badge').textContent, 'connected as @octo');
+  assert.doesNotMatch(cp.textContent, /Claude models run through Copilot's native Anthropic endpoint/, 'no row intro');
+  const on = renderCopilotRow({ copilot: { connected: true, login: 'octo' } }, { doc });
+  assert.ok(lines(on).includes('Connected as @octo'));
+  assert.ok(lines(renderCopilotRow({ copilot: { connected: true } }, { doc })).includes('Connected'), 'no login: the plain word');
   // A stale state object from an older server still renders plainly.
-  const stale = renderProvidersCard({ copilot: { connected: false, termsCurrent: false, acknowledgedTerms: '2026-01-01T00:00:00.000Z' } }, { doc });
-  assert.equal(stale.querySelector('.mv-pv-row[data-provider="copilot"] .mv-head .badge').textContent, 'not connected');
-  const flowCard = renderProvidersCard({ copilot: { connected: false } }, { doc, signIn: { userCode: 'ABCD-1234', verificationUri: 'https://github.com/login/device' } });
-  assert.equal(flowCard.querySelector('.mv-cp-signin'), null);
-  assert.equal(flowCard.querySelector('.mv-cp-code').textContent, 'ABCD-1234');
-  assert.equal(flowCard.querySelector('.mv-cp-copy').dataset.code, 'ABCD-1234');
-  assert.equal(flowCard.querySelector('.mv-cp-open').href, 'https://github.com/login/device');
+  const staleRow = renderCopilotRow({ copilot: { connected: false, termsCurrent: false, acknowledgedTerms: '2026-01-01T00:00:00.000Z' } }, { doc });
+  assert.ok(staleRow.querySelector('.mv-cp-signin'));
+  assert.equal(lines(staleRow).some((l) => /^Connected/.test(l)), false);
+  // The tab hands the sign-in in flight to the Copilot row.
+  const flowTab = renderProvidersTab({ copilot: { connected: false } }, { doc, signIn: { userCode: 'ABCD-1234', verificationUri: 'https://github.com/login/device' } });
+  assert.equal(flowTab.querySelector('.mv-cp-signin'), null);
+  assert.equal(flowTab.querySelector('.mv-cp-code').textContent, 'ABCD-1234');
+  assert.equal(flowTab.querySelector('.mv-cp-copy').dataset.code, 'ABCD-1234');
+  assert.equal(flowTab.querySelector('.mv-cp-open').href, 'https://github.com/login/device');
   const errBox = renderCopilotSignIn({ userCode: 'X', error: 'denied' }, { doc });
   assert.ok(errBox.querySelector('.mv-cp-status').classList.contains('err'));
   assert.equal(errBox.querySelector('.mv-cp-cancel').textContent, 'Dismiss');
-  assert.equal(renderProvidersCard(null, { doc }).querySelectorAll('.mv-pv-row').length, 7);   // copilot, OpenRouter, openai, anthropic + Speech + Image generation + Sound
+  assert.equal(renderProvidersTab(null, { doc }).querySelectorAll('.mv-pv-row[data-provider]').length, 7);   // copilot, OpenRouter, openai, anthropic + Speech + Image generation + Sound
 });
 
 test('collectProviderRow: unchanged masked key is omitted (keep); a new key, base URL and cap are sent', () => {
-  const card = renderProvidersCard(PROVIDERS, { doc });
-  assert.deepEqual(collectProviderRow(card, 'openai'), { baseUrl: 'https://gw.example/v1', maxConcurrent: 8 });
-  const key = card.querySelector('.mv-pv-row[data-provider="openai"] .mv-pv-key');
+  const tab = renderProvidersTab(PROVIDERS, { doc });
+  assert.deepEqual(collectProviderRow(tab, 'openai'), { baseUrl: 'https://gw.example/v1', maxConcurrent: 8 });
+  const key = tab.querySelector('.mv-pv-row[data-provider="openai"] .mv-pv-key');
   key.value = 'sk-new';
-  card.querySelector('.mv-pv-row[data-provider="openai"] .mv-pv-conc').value = '2';
-  assert.deepEqual(collectProviderRow(card, 'openai'), { baseUrl: 'https://gw.example/v1', apiKey: 'sk-new', maxConcurrent: 2 });
-  assert.equal(collectProviderRow(card, 'nope'), null);
+  tab.querySelector('.mv-pv-row[data-provider="openai"] .mv-pv-conc').value = '2';
+  assert.deepEqual(collectProviderRow(tab, 'openai'), { baseUrl: 'https://gw.example/v1', apiKey: 'sk-new', maxConcurrent: 2 });
+  assert.equal(collectProviderRow(tab, 'nope'), null);
+});
+
+test('the Copilot body: Account and the cap go with Save; Refresh usage, Import models, Sign out | Sign in, Save', () => {
+  const row = renderCopilotRow(P, { doc });
+  assert.ok(row.matches('.mv-pv-row[data-provider="copilot"]'));
+  const acct = row.querySelector('select.select.mv-cp-account');
+  assert.equal(acct.value, 'business');
+  const btns = [...row.querySelectorAll('.mv-pv-btns button')];
+  assert.deepEqual(btns.map((b) => b.textContent), ['Refresh usage', 'Import models', 'Sign out', 'Save']);
+  assert.deepEqual(btns.map((b) => b.className), ['btn btn-quiet mv-cp-quota-refresh', 'btn mv-cp-fetch-models', 'btn mv-cp-signout', 'btn btn-primary mv-pv-save']);
+  const save = row.querySelector('.mv-pv-btns[data-card-actions] .mv-pv-save');
+  assert.deepEqual([save.dataset.provider, save.classList.contains('btn-primary'), save.type], ['copilot', true, 'button']);
+  assert.deepEqual(collectProviderRow(row, 'copilot'), { accountType: 'business', maxConcurrent: 4 });
+  acct.value = 'enterprise';
+  row.querySelector('.mv-pv-conc').value = '2';
+  assert.deepEqual(collectProviderRow(row, 'copilot'), { accountType: 'enterprise', maxConcurrent: 2 });
+  assert.ok(row.querySelector('.mv-pv-main > small.hint.mv-pv-msg'), 'the status line the quota message writes to');
+  assert.deepEqual(lines(row), ['Connected as @octo', 'Premium requests used this month: 12 / 300 (resets 2026-10-01)']);
+  assert.equal(row.querySelector('.mv-pv-main > small.hint.mv-cp-quota').textContent, 'Premium requests used this month: 12 / 300 (resets 2026-10-01)');
+  assert.equal(row.querySelector('.mv-cp-quota-refresh').disabled, false);
+  assert.equal(row.querySelector('.mv-cp-fetch-models').disabled, false);
+
+  const out = renderCopilotRow({ copilot: { connected: false, accountType: 'individual', maxConcurrent: 4, tokenSource: 'env', tokenRef: '${GH_TOKEN}' } }, { doc });
+  assert.equal(out.querySelector('.mv-cp-signin').className, 'btn mv-cp-signin', 'Save is the only primary');
+  assert.equal(out.querySelector('.mv-cp-signin').textContent, 'Sign in');
+  assert.equal(out.querySelector('.mv-cp-signout'), null);
+  const imp = out.querySelector('.mv-cp-fetch-models');
+  assert.deepEqual([imp.disabled, imp.title], [true, 'Sign in first']);
+  assert.equal(out.querySelector('.mv-cp-quota-refresh').disabled, true);
+  assert.deepEqual(lines(out), ['Token read from your shell env (${GH_TOKEN}).']);
+  assert.deepEqual([...out.querySelectorAll('.mv-pv-btns button')].map((b) => b.textContent), ['Refresh usage', 'Import models', 'Sign in', 'Save']);
+
+  const mid = renderCopilotRow({ copilot: { connected: false } }, { doc, signIn: { userCode: 'ABCD-1234', verificationUri: 'https://github.com/login/device' } });
+  assert.equal(mid.querySelector('.mv-cp-signin'), null, 'a sign-in in flight has no second Sign in');
+  assert.equal(mid.querySelector('.mv-pv-main > .mv-cp-flow .mv-cp-code').textContent, 'ABCD-1234');
+  assert.ok(mid.querySelector('.mv-cp-flow a.btn-primary.mv-cp-open'), 'the sign-in box keeps its own primary step');
+  assert.deepEqual([...mid.querySelectorAll('.mv-pv-btns button')].map((b) => b.textContent), ['Refresh usage', 'Import models', 'Save']);
+  // With the broker, the import runs with the viewer's own sign-in on the key page, and the pill, not worca's own
+  // sign-in, says whose account it is.
+  assert.equal(renderCopilotRow({ ...BROKER, copilot: { connected: false } }, { doc }).querySelector('.mv-cp-fetch-models').disabled, false);
+  assert.equal(lines(renderCopilotRow(BROKER, { doc })).some((l) => /^Connected/.test(l)), false);
+  // Changing Account or the cap sends nothing: app.js's generic .mv-pv-save arm saves both.
+  const app = readFileSync(new URL('../ui/public/app.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(app, /patchProviderFlow\('copilot', \{ (accountType|maxConcurrent)/);
+  assert.match(app, /t\.classList\.contains\('mv-pv-save'\)\) \{\s*const body = collectProviderRow\(providerRoot\(\), t\.dataset\.provider\);/);
+});
+
+test('info tips: the Copilot Account and cap and the endpoint API keys carry today\'s hint as a tip; the label still names its control', () => {
+  const TIPS = {
+    account: 'Picks the Copilot API host. The sign-in itself reports the host it was issued for and wins when it does.',
+    cap: "Fan-out children beyond this wait their turn. The one knob that lowers GitHub's abuse-detection risk. Keep it low.",
+    key: 'Stored masked; leave masked to keep. A model can override this key on its Connection.',
+  };
+  const cases = [
+    [renderCopilotRow(P, { doc }), '.mv-cp-account', 'Account', 'About account', TIPS.account],
+    [renderCopilotRow(P, { doc }), '.mv-pv-conc', 'Max concurrent requests', 'About max concurrent requests', TIPS.cap],
+    [renderEndpointRow(P, 'openai', { doc }), '.mv-pv-key', 'API key', 'About API key', TIPS.key],
+    [renderEndpointRow(P, 'anthropic', { doc }), '.mv-pv-key', 'API key', 'About API key', TIPS.key],
+  ];
+  try {
+    for (const [row, sel, label, about, text] of cases) {
+      doc.body.replaceChildren(row);
+      const ctl = row.querySelector(sel);
+      const field = ctl.closest('.mv-field');
+      assert.equal(field.tagName, 'DIV', `${label}: a tipped field is a div, so the tip is no part of a label`);
+      const tips = field.querySelectorAll('.info-tip');
+      assert.equal(tips.length, 1, `${label}: one tip`);
+      const tip = tips[0];
+      assert.deepEqual([tip.tagName, tip.type, tip.getAttribute('aria-label')], ['BUTTON', 'button', about]);
+      assert.deepEqual([tip.firstChild.nodeValue, tip.querySelector('.tip-content.hidden').textContent], ['i', text]);
+      assert.ok(field.querySelector(':scope > .label-row > label.mv-field-label + .info-tip'), `${label}: label, then the tip, in one row`);
+      assert.equal(ctl.parentElement, field, `${label}: the control sits in the field, after the label row`);
+      assert.equal(ctl.labels.length, 1, `${label}: one label`);
+      assert.equal(ctl.labels[0].textContent, label, `${label}: the label names the control`);
+      assert.equal(field.querySelector('small.hint'), null, `${label}: no hint line`);
+    }
+    const [a, b] = [renderCopilotRow(P, { doc }), renderCopilotRow(P, { doc })].map((r) => r.querySelector('.mv-cp-account').id);
+    assert.ok(a && b && a !== b, 'each control gets an id of its own');
+  } finally {
+    doc.body.replaceChildren();
+  }
+  // A tipped label reads like an untipped one, and the 28px tip leaves the label's line as tall as it was.
+  const css = readFileSync(new URL('../ui/public/models/model-bridge.css', import.meta.url), 'utf8');
+  assert.match(css, /\.mv-pv-row \.label-row\{margin:0;\}/);
+  assert.match(css, /\.mv-pv-row \.label-row > \.mv-field-label\{font-size:12px;font-weight:600;\}/);
+  assert.match(css, /\.mv-pv-row \.label-row > \.info-tip\{margin-block:-6px;\}/);
+});
+
+test('row bodies: no head, intro or row badge, no paragraph over 80 characters, the status line and the actions with Save the only primary', () => {
+  for (const name of PROVIDER_ROWS) {
+    const row = BUILDERS[name](P, { doc });
+    assert.ok(row.matches(`.mv-pv-row[data-provider="${name}"]`), name);
+    assert.ok(row.querySelector('small.hint.mv-pv-msg'), `${name}: the status line`);
+    assert.ok(row.querySelector(':scope > div.mv-pv-btns[data-card-actions]'), `${name}: the actions`);
+    assert.deepEqual([...row.querySelectorAll('.mv-pv-btns .btn-primary')].map((b) => b.textContent), ['Save'], `${name}: Save is the only primary`);
+    for (const n of row.querySelectorAll('small.hint, p, .mv-providers-hint')) {
+      if (n.closest('.mv-im-endpoint')) continue;
+      assert.ok(n.textContent.length <= 80, `${name}: "${n.textContent}"`);
+    }
+    for (const n of row.querySelectorAll('.mv-name, .mv-head')) assert.ok(n.closest('.mv-sp-kind'), `${name}: ${n.className} outside a speech box`);
+    assert.equal([...row.querySelectorAll('.badge')].filter((n) => !n.closest('.mv-sp-kind')).length, 0, `${name}: no row badge`);
+  }
+  // The speech boxes keep their titles and per-side badges.
+  const sp = renderSpeechRow(P, { doc });
+  assert.deepEqual([...sp.querySelectorAll('.mv-sp-kind > .mv-head')].map((n) => [n.querySelector('.mv-name').textContent, n.querySelector('.badge').textContent]),
+    [['Speech-to-text', 'configured'], ['Text-to-speech', 'in the browser']]);
+  assert.ok(sp.querySelector('.mv-sp-cache .mv-sp-clear'), 'Remove speech models stays');
+  // The endpoint bodies keep their fields, the env-key line and their buttons.
+  const an = renderEndpointRow(P, 'anthropic', { doc });
+  assert.deepEqual(lines(an), ['Key read from your shell env (${ANT}).']);
+  assert.equal(an.querySelector('.mv-pv-baseurl').placeholder, 'https://api.anthropic.com');
+  assert.deepEqual([...an.querySelectorAll('.mv-pv-btns button')].map((b) => [b.className, b.textContent, b.dataset.provider]),
+    [['btn mv-pv-test', 'Test connection', 'anthropic'], ['btn btn-primary mv-pv-save', 'Save', 'anthropic']]);
+  const oa = renderEndpointRow(P, 'openai', { doc });
+  assert.equal(oa.querySelector('.mv-pv-baseurl').placeholder, 'https://api.openai.com/v1');
+  assert.deepEqual([...oa.querySelectorAll('.mv-pv-btns button')].map((b) => b.textContent), ['Import models', 'Test connection', 'Save']);
+  assert.ok(renderEndpointRow(null, 'openai', { doc }).querySelector('.mv-pv-key'), 'a missing payload draws the empty form');
+});
+
+test('broker on: the four provider bodies start with the broker pill; speech, images and sound have none', () => {
+  for (const name of ['copilot', 'openrouter', 'openai', 'anthropic']) {
+    const row = BUILDERS[name](BROKER, { doc });
+    const box = row.firstElementChild;
+    assert.ok(box.matches('div.mv-pv-broker'), `${name}: the body starts with the broker pill`);
+    const a = box.querySelector('a.mv-broker-pill');
+    assert.equal(a.getAttribute('href'), KEY_PAGE, name);
+    assert.equal(a.textContent, name === 'copilot' ? 'add your sign-in on the key page' : 'add your key on the key page');
+    assert.equal(BUILDERS[name](P, { doc }).querySelector('.mv-pv-broker'), null, `${name}: no pill without the broker`);
+  }
+  for (const name of ['speech', 'images', 'sound']) assert.equal(BUILDERS[name](BROKER, { doc }).querySelector('.mv-pv-broker, .mv-broker-pill'), null, name);
+});
+
+test('row-level collectors: a body collects by itself', () => {
+  assert.deepEqual(collectProviderRow(renderEndpointRow(P, 'openai', { doc }), 'openai'), { baseUrl: 'https://gw.example/v1', maxConcurrent: 8 });
+  assert.equal(collectProviderRow(renderEndpointRow(P, 'openai', { doc }), 'anthropic'), null, 'another row\'s body is not this row');
+  const im = renderImagesRow(P, { doc });
+  assert.equal(collectImagesRow(im).service, 'openai');
+  assert.equal(applyImagesPreset(im, 'xai'), true);
+  assert.equal(collectImagesRow(im).service, 'xai');
 });
 
 test('import sheet: rows, disabled policy rows, status column, select-all and collect', () => {

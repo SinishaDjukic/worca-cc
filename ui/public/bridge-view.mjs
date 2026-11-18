@@ -1,6 +1,6 @@
 // ui/public/bridge-view.mjs
 // Pure DOM renderers for the model bridge (model-bridge-design.md §8): the
-// Providers card, the Copilot sign-in block, the Import-from-Copilot sheet,
+// Providers tab's row bodies (models/providers-tab.mjs folds them), the Copilot sign-in block, the Import-from-Copilot sheet,
 // the editor's Connection section, and the card
 // badges. Same contract as models-view.mjs: every function takes `doc` via
 // opts and returns DETACHED elements; app.js owns endpoint calls, mounting
@@ -107,39 +107,70 @@ export function needsSignInPill(m, { doc = globalThis.document } = {}) {
 
 // ── Providers card (§8.1) ────────────────────────────────────────────────────
 
-function providerStatePill(doc, c) {
-  if (!c.connected) return h(doc, 'span', 'badge grey', 'not connected');
-  return h(doc, 'span', 'badge green', `connected${c.login ? ` as @${c.login}` : ''}`);
+/**
+ * With the credential broker: the viewer's own state in the slot `name` (copilot|openrouter|openai|anthropic) spends
+ * from (key page), not worca's settings, which hold no key: { text, cls: 'green'|'red'|'grey', link, title }. `link`
+ * is true only where a missing or rejected key links to the key page (`broker.keyPage` set); `title` is '' for none.
+ */
+export function brokerState(broker, name) {
+  const b = broker || {};
+  const p = (b.providers || {})[name] || {};
+  const what = name === 'copilot' ? 'sign-in' : 'key';
+  const pill = (text, cls, title = '') => ({ text, cls, link: false, title });
+  if (b.signInNeeded) return pill(`sign in to see your ${what}`, 'grey');
+  if (p.state === 'none') return pill('no broker slot for this URL', 'red', p.error || 'The credential broker has no slot for this base URL.');
+  if (p.state === 'keyless') return pill('local, no key needed', 'green');
+  if (b.error) return pill('key page unreachable', 'grey', b.error);
+  if (p.state === 'set') return pill(`your ${what}${p.suffix ? ` ••••${p.suffix}` : ''}`, 'green');
+  if (p.state === 'operator') return pill('team key', 'green');
+  const label = p.state === 'invalid' ? `your ${what} was rejected` : `add your ${what} on the key page`;
+  const cls = p.state === 'invalid' ? 'red' : 'grey';
+  if (!b.keyPage) return pill(label, cls);
+  return { text: label, cls, link: true, title: 'Opens the key page in a new tab. Reopen this tab afterwards to see the change.' };
+}
+
+/** The broker pill (brokerState) as a badge; a link to the key page opens it in a new tab. */
+function brokerPill(doc, b, name) {
+  const s = brokerState(b, name);
+  const x = h(doc, s.link ? 'a' : 'span', `badge ${s.cls}${s.link ? ' mv-broker-pill' : ''}`, s.text);
+  if (s.link) { x.href = b.keyPage; x.target = '_blank'; x.rel = 'noopener'; }
+  if (s.title) x.title = s.title;
+  return x;
+}
+
+/** With the broker on, a provider body starts with its pill; a key-page link in it stays a link of its own. */
+function brokerLine(doc, broker, name) {
+  const box = h(doc, 'div', 'mv-pv-broker');
+  box.appendChild(brokerPill(doc, broker, name));
+  return box;
+}
+
+let fieldSeq = 0;
+
+/** An ⓘ tip in Settings' markup (settings.html); app.js's document-level .info-tip listeners show it wherever it sits. */
+function infoTip(doc, label, text) {
+  const tip = h(doc, 'button', 'info-tip', 'i');
+  tip.type = 'button';
+  // "About account", but "About API key": a label that opens with an acronym keeps its case.
+  tip.setAttribute('aria-label', `About ${/^[A-Z]{2}/.test(label) ? label : label.charAt(0).toLowerCase() + label.slice(1)}`);
+  tip.appendChild(h(doc, 'span', 'tip-content hidden', text));
+  return tip;
 }
 
 /**
- * With the credential broker: the viewer's own state in the slot `name` spends from (key page),
- * not worca's settings, which hold no key. A missing key links to the key page.
+ * A field whose hint is an ⓘ tip: div.mv-field > div.label-row(label.mv-field-label[for] + tip) + the control. A label
+ * names its first labelable descendant and a tip is a button, so the tip sits beside the label, never inside it, and
+ * the label points at the control by an id of its own.
  */
-function brokerPill(doc, b, name) {
-  const p = (b.providers || {})[name] || {};
-  const what = name === 'copilot' ? 'sign-in' : 'key';
-  if (b.signInNeeded) return h(doc, 'span', 'badge grey', `sign in to see your ${what}`);
-  if (p.state === 'none') {
-    const x = h(doc, 'span', 'badge red', 'no broker slot for this URL');
-    x.title = p.error || 'The credential broker has no slot for this base URL.';
-    return x;
-  }
-  if (p.state === 'keyless') return h(doc, 'span', 'badge green', 'local, no key needed');
-  if (b.error) {
-    const x = h(doc, 'span', 'badge grey', 'key page unreachable');
-    x.title = b.error;
-    return x;
-  }
-  if (p.state === 'set') return h(doc, 'span', 'badge green', `your ${what}${p.suffix ? ` ••••${p.suffix}` : ''}`);
-  if (p.state === 'operator') return h(doc, 'span', 'badge green', 'team key');
-  const label = p.state === 'invalid' ? `your ${what} was rejected` : `add your ${what} on the key page`;
-  const cls = p.state === 'invalid' ? 'badge red' : 'badge grey';
-  if (!b.keyPage) return h(doc, 'span', cls, label);
-  const a = h(doc, 'a', `${cls} mv-broker-pill`, label);
-  a.href = b.keyPage; a.target = '_blank'; a.rel = 'noopener';
-  a.title = 'Opens the key page in a new tab. Reopen this tab afterwards to see the change.';
-  return a;
+function tippedField(doc, labelText, ctl, tip) {
+  const wrap = h(doc, 'div', 'mv-field');
+  const row = h(doc, 'div', 'label-row');
+  const label = h(doc, 'label', 'mv-field-label', labelText);
+  ctl.id = `mdl-field-${++fieldSeq}`;
+  label.htmlFor = ctl.id;
+  row.append(label, infoTip(doc, labelText, tip));
+  wrap.append(row, ctl);
+  return wrap;
 }
 
 function quotaLine(q) {
@@ -150,15 +181,16 @@ function quotaLine(q) {
   return '';
 }
 
-function numberField(doc, cls, labelText, value, { min = 1, max = 64, hint = '', provider } = {}) {
-  const wrap = h(doc, 'label', 'mv-field');
-  wrap.appendChild(h(doc, 'span', 'mv-field-label', labelText));
+/** A number field; with a `tip`, the tipped field (tippedField) in place of the plain label. */
+function numberField(doc, cls, labelText, value, { min = 1, max = 64, tip = '', provider } = {}) {
   const inp = h(doc, 'input', `input ${cls}`);
   inp.type = 'number'; inp.min = String(min); inp.max = String(max); inp.step = '1';
   inp.value = value == null ? '' : String(value);
   if (provider) inp.dataset.provider = provider;
+  if (tip) return tippedField(doc, labelText, inp, tip);
+  const wrap = h(doc, 'label', 'mv-field');
+  wrap.appendChild(h(doc, 'span', 'mv-field-label', labelText));
   wrap.appendChild(inp);
-  if (hint) wrap.appendChild(h(doc, 'small', 'hint', hint));
   return wrap;
 }
 
@@ -208,16 +240,12 @@ function speechInput(doc, kind, field, label, placeholder, s) {
   return wrap;
 }
 
-/** The Speech row (docs/speech.md): Ask Worca's voice mode, never a model upstream. */
-function renderSpeechRow(doc, sp) {
+/** The Speech body (providers.speech, docs/speech.md): Ask Worca's voice mode, never a model upstream. */
+export function renderSpeechRow(providers, { doc = globalThis.document } = {}) {
+  const sp = (providers || {}).speech || {};
   const row = h(doc, 'div', 'mv-pv-row mv-sp-row');
   row.dataset.provider = 'speech';
   const main = h(doc, 'div', 'mv-pv-main');
-  const spHead = h(doc, 'div', 'mv-head');
-  spHead.appendChild(h(doc, 'b', 'mv-name', 'Speech (Chat voice)'));
-  main.appendChild(spHead);
-  main.appendChild(h(doc, 'small', 'hint',
-    'Voice mode for Chat. Built in: Whisper and Kokoro run inside your browser. The first use downloads the speech models once (up to about 500 MB), and audio never leaves this computer. Or point Worca at speech servers you run (whisper.cpp, Kokoro-FastAPI, …) through their OpenAI-compatible audio API.'));
   if (sp.cacheBytes) {
     // The built-in engines' downloads (~/.worca-cc/speech-cache); the next mic use fetches them again.
     const cache = h(doc, 'div', 'mv-pv-btns mv-sp-cache');
@@ -286,12 +314,6 @@ function renderSpeechRow(doc, sp) {
   return row;
 }
 
-function imagesBadge(doc, im) {
-  if (im.keyMissing) return h(doc, 'span', 'badge red', 'key missing');
-  if (im.configured) return h(doc, 'span', 'badge green', 'ready');
-  return h(doc, 'span', 'badge grey', 'not set up');
-}
-
 function imagesField(doc, field, label, ctl, cls = '') {
   const wrap = h(doc, 'label', `mv-field${cls ? ` ${cls}` : ''}`);
   wrap.appendChild(h(doc, 'span', 'mv-field-label', label));
@@ -307,16 +329,135 @@ function imagesInput(doc, field, value) {
   return inp;
 }
 
+/** The image row's key wording: a hosted service's, or Other's, which is often a server on this machine with no key. */
+const IMAGES_KEY_PLACEHOLDER = 'sk-…, or ${VAR} to read your shell env';
+const IMAGES_LOCAL_KEY_PLACEHOLDER = 'Leave empty for a server on this machine';
+/** The model select's last option, "Other model…": it turns the field into a typed id, and is never sent itself. */
+const OTHER_IMAGE_MODEL = '__other__';
+
+/** The endpoint line under Other's address: the typed address without a trailing slash, else a stand-in. */
+function imagesEndpointText(baseUrl) {
+  const base = String(baseUrl || '').trim().replace(/\/+$/, '');
+  return `worca asks for a picture at POST ${base || '<Base URL>'}/images/generations, the way OpenAI's API takes it.`;
+}
+
 /**
- * The Image generation row (Design pictures): the service a Design lead's pictures are made by. Never a model
- * upstream. What it renders with is kept on the row (data-stored-*), so a re-pick of the saved service brings
- * the saved values back and a switch to another address never carries the stored key along.
+ * Draw the row's one model control for `service`, holding `value`: the select over the service's list (a first
+ * "Pick a model" when the service has no default, the default marked, "Other model…" last), else the typed input,
+ * when the list is empty, the id is not in it or `typed` asks for it, with "Pick from list" while there is a list.
+ * The control is rebuilt, never hidden, so one element carries data-field="model"; `focus` moves into the new one.
  */
-function renderImagesRow(doc, im) {
+function drawImagesModel(row, service, value, { typed = false, focus = false } = {}) {
+  const doc = row.ownerDocument;
+  const preset = IMAGE_SERVICES[service] || {};
+  const list = preset.models || [];
+  const label = h(doc, 'label', 'mv-field-label', 'Model');
+  const box = row.querySelector('.mdl-model');
+  let ctl;
+  if (!typed && list.length && (value === '' || list.includes(value))) {
+    ctl = h(doc, 'select', 'select mv-im-field mv-im-model-pick');
+    const option = (v, text) => { const o = h(doc, 'option', '', text); o.value = v; ctl.appendChild(o); };
+    if (!preset.model) option('', 'Pick a model');
+    for (const id of list) option(id, id === preset.model ? `${id} (default)` : id);
+    option(OTHER_IMAGE_MODEL, 'Other model…');
+    ctl.value = value;
+    ctl.addEventListener('change', () => {
+      if (ctl.value === OTHER_IMAGE_MODEL) drawImagesModel(row, service, '', { typed: true, focus: true });
+    });
+    box.replaceChildren(label, ctl);
+  } else {
+    ctl = h(doc, 'input', 'input mv-im-field mv-im-model');
+    ctl.type = 'text';
+    ctl.placeholder = 'Model id, as the service names it';
+    ctl.value = value;
+    if (list.length) {
+      // The way back to the list: on the default, or on "Pick a model" when the service has none.
+      const typedBox = h(doc, 'div', 'mdl-model-typed');
+      const back = h(doc, 'button', 'btn btn-quiet btn-sm mv-im-model-list', 'Pick from list');
+      back.type = 'button';
+      back.addEventListener('click', () => drawImagesModel(row, service, preset.model || '', { focus: true }));
+      typedBox.append(ctl, back);
+      box.replaceChildren(label, typedBox);
+    } else box.replaceChildren(label, ctl);
+  }
+  ctl.dataset.field = 'model';
+  ctl.id = `mdl-field-${++fieldSeq}`;
+  label.htmlFor = ctl.id;
+  if (focus) ctl.focus();
+}
+
+/** Open or fold the row's Advanced region; a no-op on Other, which has none. */
+function setImagesAdvanced(row, open) {
+  const disc = row.querySelector('.mdl-disc');
+  const adv = row.querySelector('.mdl-adv');
+  if (!disc || !adv) return;
+  disc.setAttribute('aria-expanded', String(open));
+  adv.hidden = !open;
+}
+
+/**
+ * True when the row's Base URL or Price is not `service`'s own: Advanced then shows it open. The row fills an empty
+ * stored value with the preset's, so only a stored, non-empty value that differs opens it.
+ */
+function imagesDiffersFromPreset(row, service) {
+  const p = IMAGE_SERVICES[service] || {};
+  const url = row.querySelector('.mv-im-field[data-field="baseUrl"]').value.trim();
+  const price = row.querySelector('.mv-im-field[data-field="price"]').value.trim();
+  return url !== (p.baseUrl || '') || Number(price) !== p.price;
+}
+
+/**
+ * Lay out Base URL and Price for `service`. Other shows them openly, with the endpoint line under them. A preset
+ * service folds them under "Advanced", open only while one differs from the preset's. The same two fields move, so
+ * what they hold stays. The key's placeholder follows the service.
+ */
+function placeImagesEndpoint(row, service) {
+  const doc = row.ownerDocument;
+  const ctl = row.querySelector('.mv-pv-ctl');
+  const url = row.querySelector('.mv-im-baseurl');
+  const price = row.querySelector('.mv-im-price');
+  const other = service === 'other';
+  row.querySelector('.mv-im-field[data-field="apiKey"]').placeholder = other ? IMAGES_LOCAL_KEY_PLACEHOLDER : IMAGES_KEY_PLACEHOLDER;
+  if (other) {
+    const line = row.querySelector('.mv-im-endpoint') || h(doc, 'small', 'hint mv-im-endpoint');
+    ctl.append(url, price, line);
+    row.querySelector('.mdl-disc')?.remove();
+    row.querySelector('.mdl-adv')?.remove();
+    line.textContent = imagesEndpointText(row.querySelector('.mv-im-field[data-field="baseUrl"]').value);
+    return;
+  }
+  row.querySelector('.mv-im-endpoint')?.remove();
+  let adv = row.querySelector('.mdl-adv');
+  let disc = row.querySelector('.mdl-disc');
+  if (!adv) {
+    adv = h(doc, 'div', 'mdl-adv');
+    adv.id = `mdl-adv-${++fieldSeq}`;
+    const button = h(doc, 'button', 'btn btn-quiet btn-sm mdl-disc');
+    button.type = 'button';
+    button.setAttribute('aria-controls', adv.id);
+    button.append(icon(doc, 'chevron', 14), doc.createTextNode('Advanced'));
+    button.addEventListener('click', () => setImagesAdvanced(row, button.getAttribute('aria-expanded') !== 'true'));
+    disc = button;
+  }
+  adv.append(url, price);
+  ctl.append(disc, adv);
+  setImagesAdvanced(row, imagesDiffersFromPreset(row, service));
+}
+
+/**
+ * The Image generation body (providers.images, Design pictures): the service a Design lead's pictures are made by.
+ * Never a model upstream. Service · Model · API key; a preset service's Base URL and Price under "Advanced" (Other's
+ * openly, with the endpoint line); then the message, the Test answer and the buttons. What it renders with is kept on
+ * the row (data-stored-*), so a re-pick of the saved service brings the saved values back and a switch to another
+ * address never carries the stored key along.
+ */
+export function renderImagesRow(providers, { doc = globalThis.document } = {}) {
+  const im = (providers || {}).images || {};
   const service = im.service || 'openai';
   const preset = IMAGE_SERVICES[service] || {};
-  const baseUrl = String(im.baseUrl ?? preset.baseUrl ?? '');
-  const model = String(im.model ?? preset.model ?? '');
+  // An empty stored address, model or price shows the preset's, so a Save sends it.
+  const baseUrl = String(im.baseUrl || preset.baseUrl || '');
+  const model = String(im.model || preset.model || '');
   const price = String(im.price ?? preset.price ?? '');
   const row = h(doc, 'div', 'mv-pv-row mv-im-row');
   row.dataset.provider = 'images';
@@ -325,12 +466,35 @@ function renderImagesRow(doc, im) {
   row.dataset.storedBaseUrl = baseUrl;
   row.dataset.storedModel = model;
   row.dataset.storedPrice = price;
+
+  const ctl = h(doc, 'div', 'mv-pv-ctl');
+  const sel = h(doc, 'select', 'input mv-im-field mv-im-service');
+  for (const s of Object.values(IMAGE_SERVICES)) {
+    const o = h(doc, 'option', '', s.label);
+    o.value = s.id;
+    sel.appendChild(o);
+  }
+  sel.value = service;
+  ctl.appendChild(imagesField(doc, 'service', 'Service', sel));
+  ctl.appendChild(h(doc, 'div', 'mv-field mdl-model'));
+  const key = imagesInput(doc, 'apiKey', im.keyRef || im.keyMasked || '');
+  if (key.value) key.dataset.original = key.value;
+  ctl.appendChild(imagesField(doc, 'apiKey', 'API key', key, 'mv-im-key'));
+  const urlIn = imagesInput(doc, 'baseUrl', baseUrl);
+  urlIn.addEventListener('input', () => {
+    const line = row.querySelector('.mv-im-endpoint');
+    if (line) line.textContent = imagesEndpointText(urlIn.value);
+  });
+  ctl.appendChild(imagesField(doc, 'baseUrl', 'Base URL', urlIn, 'mv-im-baseurl'));
+  const priceIn = imagesInput(doc, 'price', price);
+  priceIn.setAttribute('inputmode', 'decimal');
+  priceIn.placeholder = '0 for a free server';
+  ctl.appendChild(imagesField(doc, 'price', 'Price per picture ($)', priceIn, 'mv-im-price'));
+  row.appendChild(ctl);
+  drawImagesModel(row, service, model);
+  placeImagesEndpoint(row, service);
+
   const main = h(doc, 'div', 'mv-pv-main');
-  const head = h(doc, 'div', 'mv-head');
-  head.appendChild(h(doc, 'b', 'mv-name', 'Image generation (Design)'));
-  head.appendChild(imagesBadge(doc, im));
-  main.appendChild(head);
-  main.appendChild(h(doc, 'small', 'hint', 'Lets a Design lead have a picture made when no real one fits. The key stays on this machine.'));
   main.appendChild(h(doc, 'small', 'hint mv-pv-msg'));
   // The Test picture's answer: the picture whole, and how long it took, or the reason it failed.
   const result = h(doc, 'div', 'mv-im-result');
@@ -342,26 +506,6 @@ function renderImagesRow(doc, im) {
   result.appendChild(h(doc, 'small', 'hint mv-im-made'));
   main.appendChild(result);
   row.appendChild(main);
-
-  const ctl = h(doc, 'div', 'mv-pv-ctl');
-  const sel = h(doc, 'select', 'input mv-im-field mv-im-service');
-  for (const s of Object.values(IMAGE_SERVICES)) {
-    const o = h(doc, 'option', '', s.label);
-    o.value = s.id;
-    sel.appendChild(o);
-  }
-  sel.value = service;
-  ctl.appendChild(imagesField(doc, 'service', 'Service', sel));
-  ctl.appendChild(imagesField(doc, 'baseUrl', 'Base URL', imagesInput(doc, 'baseUrl', baseUrl)));
-  ctl.appendChild(imagesField(doc, 'model', 'Model', imagesInput(doc, 'model', model)));
-  const key = imagesInput(doc, 'apiKey', im.keyRef || im.keyMasked || '');
-  if (key.value) key.dataset.original = key.value;
-  key.placeholder = 'sk-…, or ${VAR} to read your shell env';
-  ctl.appendChild(imagesField(doc, 'apiKey', 'API key', key, 'mv-im-key'));
-  const priceIn = imagesInput(doc, 'price', price);
-  priceIn.setAttribute('inputmode', 'decimal');
-  ctl.appendChild(imagesField(doc, 'price', 'Price per picture ($)', priceIn, 'mv-im-price'));
-  row.appendChild(ctl);
 
   const btns = h(doc, 'div', 'mv-pv-btns');
   btns.dataset.cardActions = '';
@@ -375,25 +519,15 @@ function renderImagesRow(doc, im) {
   return row;
 }
 
-function soundBadge(doc, so) {
-  if (!so.keySet) return h(doc, 'span', 'badge grey', 'not set up');
-  if (so.keyMissing) return h(doc, 'span', 'badge red', 'key missing');
-  return h(doc, 'span', 'badge green', 'ready');
-}
-
 /**
- * The Sound row (Design sound): the ElevenLabs key a Design video's voice and music are made with. One field;
- * its original value is kept even when empty, so an untouched field never collects as a cleared key.
+ * The Sound body (providers.sound, Design sound): the ElevenLabs key a Design video's voice and music are made with.
+ * One field; its original value is kept even when empty, so an untouched field never collects as a cleared key.
  */
-function renderSoundRow(doc, so) {
+export function renderSoundRow(providers, { doc = globalThis.document } = {}) {
+  const so = (providers || {}).sound || {};
   const row = h(doc, 'div', 'mv-pv-row mv-so-row');
   row.dataset.provider = 'sound';
   const main = h(doc, 'div', 'mv-pv-main');
-  const head = h(doc, 'div', 'mv-head');
-  head.appendChild(h(doc, 'b', 'mv-name', 'Sound (Design)'));
-  head.appendChild(soundBadge(doc, so));
-  main.appendChild(head);
-  main.appendChild(h(doc, 'small', 'hint', 'Gives a Design video a voice and music through ElevenLabs. The key stays on this machine.'));
   main.appendChild(h(doc, 'small', 'hint mv-pv-msg'));
   // The Test's answer: how many voices the key reaches, or the reason it failed.
   const result = h(doc, 'small', 'hint mv-so-result');
@@ -431,23 +565,17 @@ function renderSoundRow(doc, so) {
 const OPENROUTER_ROW_DEFAULTS = Object.freeze({ keySet: false, keySource: null, keyRef: null, keyMasked: null, legacyKey: false, maxConcurrent: 8, order: [], sort: '', allowFallbacks: true });
 
 /**
- * The OpenRouter row (providers.openrouter): its own key, concurrency cap and routing defaults, which every model on
+ * The OpenRouter body (providers.openrouter): its own key, concurrency cap and routing defaults, which every model on
  * openrouter.ai uses. While the OpenAI-compatible row points at openrouter.ai and this row has no key, that row's key
  * is lent (`legacyKey`). The key's original value is kept even when empty, so an untouched field never collects.
  */
-function renderOpenRouterRow(doc, or, broker) {
-  const o = { ...OPENROUTER_ROW_DEFAULTS, ...(or || {}) };
+export function renderOpenRouterRow(providers, { doc = globalThis.document } = {}) {
+  const p = providers || {};
+  const o = { ...OPENROUTER_ROW_DEFAULTS, ...(p.openrouter || {}) };
   const row = h(doc, 'div', 'mv-pv-row mv-or-row');
   row.dataset.provider = 'openrouter';
+  if (p.broker && p.broker.enabled) row.appendChild(brokerLine(doc, p.broker, 'openrouter'));
   const main = h(doc, 'div', 'mv-pv-main');
-  const head = h(doc, 'div', 'mv-head');
-  head.appendChild(h(doc, 'b', 'mv-name', 'OpenRouter'));
-  head.appendChild(broker && broker.enabled ? brokerPill(doc, broker, 'openrouter')
-    : o.legacyKey && o.keySet ? h(doc, 'span', 'badge green', 'key from OpenAI-compatible')
-      : o.keySet ? h(doc, 'span', 'badge green', 'key set')
-        : o.keySource === 'env' ? h(doc, 'span', 'badge red', `key ${o.keyRef} not set`) : h(doc, 'span', 'badge grey', 'no key'));
-  main.appendChild(head);
-  main.appendChild(h(doc, 'small', 'hint', 'Hosted models from many vendors behind one key. Every model on openrouter.ai uses this key, this limit and these routing defaults; a model\'s own routing wins.'));
   main.appendChild(h(doc, 'small', 'hint mv-pv-msg'));
   row.appendChild(main);
 
@@ -480,7 +608,7 @@ function renderOpenRouterRow(doc, or, broker) {
 
   const btns = h(doc, 'div', 'mv-pv-btns');
   btns.dataset.cardActions = '';
-  for (const [cls, text] of [['btn mv-or-browse', 'Import models…'], ['btn mv-pv-test', 'Test connection'], ['btn btn-primary mv-pv-save', 'Save']]) {
+  for (const [cls, text] of [['btn mv-or-browse', 'Import models'], ['btn mv-pv-test', 'Test connection'], ['btn btn-primary mv-pv-save', 'Save']]) {
     const b = h(doc, 'button', cls, text);
     b.type = 'button'; b.dataset.provider = 'openrouter';
     btns.appendChild(b);
@@ -490,171 +618,110 @@ function renderOpenRouterRow(doc, or, broker) {
 }
 
 /**
- * The Providers card. `providers` is GET /api/providers' payload (never a
- * token). `signIn` is an in-flight device-flow {userCode, verificationUri,
- * status, error} or null; app.js keeps it across repaints.
+ * The GitHub Copilot body (providers.copilot): Account and the cap, which Save sends together (app.js's generic
+ * .mv-pv-save arm, through collectProviderRow); the account it is signed in as, the device-flow box while `signIn`
+ * ({userCode, verificationUri, status, error}; app.js keeps it across repaints) is in flight, and the usage line.
  */
-export function renderProvidersCard(providers, { doc = globalThis.document, signIn = null, split = false } = {}) {
+export function renderCopilotRow(providers, { doc = globalThis.document, signIn = null } = {}) {
   const p = providers || {};
   const c = p.copilot || { connected: false, accountType: 'individual', maxConcurrent: 4 };
-  // On the Providers page the card holds one divided row per provider (docs/design-system.md ›
-  // Cards versus divided rows); inside the Models view (the old home) it is the headed card. Either
-  // way the rows keep their shape, so every flow that finds .mv-pv-row[data-provider] is unaffected.
-  const root = h(doc, split ? 'div' : 'section', split ? 'card mv-providers mv-providers-split drows' : 'card mv-providers');
-  if (!split) {
-    const head = h(doc, 'div', 'mv-head');
-    head.appendChild(h(doc, 'h3', 'section-title mv-section-title', 'Providers'));
-    root.appendChild(head);
-    root.appendChild(h(doc, 'small', 'hint mv-providers-hint',
-      "Providers let Worca run models that don't speak the Anthropic API. Worca runs them through its own in-process bridge. Sign in or set a key once; then import or add models on the Models page and pick them anywhere a model is picked."));
-  }
-  // Credential broker: keys and the Copilot sign-in are per person, on the broker's key page.
-  // This card keeps the shared settings (base URLs, concurrency, imports);
-  // its key fields, sign-in and key test are hidden (style.css .mv-providers--broker).
-  if (p.broker && p.broker.enabled) {
-    root.classList.add('mv-providers--broker');
-    const note = h(doc, 'p', 'hint mv-broker-note', 'Keys and the GitHub Copilot sign-in are held by the credential broker: each person adds their own on the key page. Imports list models with your own key.');
-    if (p.broker.keyPage) {
-      const a = h(doc, 'a', 'mv-broker-link', 'Open the key page');
-      a.href = p.broker.keyPage; a.target = '_blank'; a.rel = 'noopener';
-      note.append(' ', a);
-    }
-    root.appendChild(note);
-  }
-  /** One provider's row, a divided row when the tab hosts it. The row's name and state badge title it. */
-  const place = (row) => {
-    if (!split) { root.appendChild(row); return; }
-    const item = h(doc, 'section', 'drow drow-stack mv-pv-card');
-    item.appendChild(row);
-    root.appendChild(item);
-  };
-
-  // ── GitHub Copilot ──
-  const cp = h(doc, 'div', 'mv-pv-row');
-  cp.dataset.provider = 'copilot';
-  const cpMain = h(doc, 'div', 'mv-pv-main');
-  const cpHead = h(doc, 'div', 'mv-head');
-  cpHead.appendChild(h(doc, 'b', 'mv-name', 'GitHub Copilot'));
   const brokered = !!(p.broker && p.broker.enabled);
+  const row = h(doc, 'div', 'mv-pv-row');
+  row.dataset.provider = 'copilot';
   // With the broker, the broker's view of your sign-in.
-  cpHead.appendChild(brokered ? brokerPill(doc, p.broker, 'copilot') : providerStatePill(doc, c));
-  cpMain.appendChild(cpHead);
-  cpMain.appendChild(h(doc, 'small', 'hint',
-    "Uses your Copilot subscription for GPT, Gemini, Grok and Claude models. Claude models run through Copilot's native Anthropic endpoint (thinking intact); other vendors run through a translation layer."));
-  if (c.tokenSource === 'env') cpMain.appendChild(h(doc, 'small', 'hint', `Token read from your shell env (${c.tokenRef}).`));
+  if (brokered) row.appendChild(brokerLine(doc, p.broker, 'copilot'));
+  const main = h(doc, 'div', 'mv-pv-main');
+  if (c.connected && !brokered) main.appendChild(h(doc, 'small', 'hint', `Connected${c.login ? ` as @${c.login}` : ''}`));
+  if (c.tokenSource === 'env') main.appendChild(h(doc, 'small', 'hint', `Token read from your shell env (${c.tokenRef}).`));
   const flow = h(doc, 'div', 'mv-cp-flow');
   if (signIn) flow.appendChild(renderCopilotSignIn(signIn, { doc }));
-  cpMain.appendChild(flow);
-  const quota = h(doc, 'small', 'hint mv-cp-quota', quotaLine(c.quota));
-  cpMain.appendChild(quota);
-  cpMain.appendChild(h(doc, 'small', 'hint mv-pv-msg'));
-  cp.appendChild(cpMain);
+  main.appendChild(flow);
+  main.appendChild(h(doc, 'small', 'hint mv-cp-quota', quotaLine(c.quota)));
+  main.appendChild(h(doc, 'small', 'hint mv-pv-msg'));
+  row.appendChild(main);
 
-  const cpCtl = h(doc, 'div', 'mv-pv-ctl');
-  const acct = h(doc, 'label', 'mv-field');
-  acct.appendChild(h(doc, 'span', 'mv-field-label', 'Account'));
+  const ctl = h(doc, 'div', 'mv-pv-ctl');
   const sel = h(doc, 'select', 'select mv-cp-account');
   for (const [v, t] of [['individual', 'Individual'], ['business', 'Business'], ['enterprise', 'Enterprise']]) {
     const o = h(doc, 'option', null, t); o.value = v; if (v === c.accountType) o.selected = true; sel.appendChild(o);
   }
-  acct.appendChild(sel);
-  acct.appendChild(h(doc, 'small', 'hint', 'Picks the Copilot API host. The sign-in itself reports the host it was issued for and wins when it does.'));
-  cpCtl.appendChild(acct);
-  cpCtl.appendChild(numberField(doc, 'mv-pv-conc', 'Max concurrent requests', c.maxConcurrent, {
+  ctl.appendChild(tippedField(doc, 'Account', sel, 'Picks the Copilot API host. The sign-in itself reports the host it was issued for and wins when it does.'));
+  ctl.appendChild(numberField(doc, 'mv-pv-conc', 'Max concurrent requests', c.maxConcurrent, {
     provider: 'copilot',
-    hint: "Fan-out children beyond this wait their turn. The one knob that lowers GitHub's abuse-detection risk. Keep it low.",
+    tip: "Fan-out children beyond this wait their turn. The one knob that lowers GitHub's abuse-detection risk. Keep it low.",
   }));
-  cp.appendChild(cpCtl);
+  row.appendChild(ctl);
 
-  const cpBtns = h(doc, 'div', 'mv-pv-btns');
-  cpBtns.dataset.cardActions = '';
-  const imp = h(doc, 'button', 'btn mv-cp-fetch-models', 'Import models…');
+  const btns = h(doc, 'div', 'mv-pv-btns');
+  btns.dataset.cardActions = '';
+  const button = (cls, text) => {
+    const b = h(doc, 'button', cls, text);
+    b.type = 'button';
+    btns.appendChild(b);
+    return b;
+  };
+  button('btn btn-quiet mv-cp-quota-refresh', 'Refresh usage').disabled = !c.connected;
   // With the broker, the import runs with the viewer's own Copilot sign-in (on the key page).
-  imp.type = 'button'; imp.disabled = !c.connected && !brokered;
+  const imp = button('btn mv-cp-fetch-models', 'Import models');
+  imp.disabled = !c.connected && !brokered;
   if (imp.disabled) imp.title = 'Sign in first';
-  cpBtns.appendChild(imp);
-  const quotaBtn = h(doc, 'button', 'btn mv-cp-quota-refresh', 'Refresh usage');
-  quotaBtn.type = 'button'; quotaBtn.disabled = !c.connected;
-  cpBtns.appendChild(quotaBtn);
-  if (c.connected) {
-    const outBtn = h(doc, 'button', 'btn mv-cp-signout', 'Sign out');
-    outBtn.type = 'button';
-    cpBtns.appendChild(outBtn);
-  } else if (!signIn) {
-    const inBtn = h(doc, 'button', 'btn btn-primary mv-cp-signin', 'Sign in…');
-    inBtn.type = 'button';
-    cpBtns.appendChild(inBtn);
-  }
-  cp.appendChild(cpBtns);
-  place(cp);
-  place(renderOpenRouterRow(doc, p.openrouter, p.broker));
-
-  // ── key-based providers ──
-  for (const name of ['openai', 'anthropic']) {
-    const k = p[name] || { configured: false, keySet: false, baseUrl: '', maxConcurrent: 8 };
-    const row = h(doc, 'div', 'mv-pv-row');
-    row.dataset.provider = name;
-    const main = h(doc, 'div', 'mv-pv-main');
-    const rh = h(doc, 'div', 'mv-head');
-    rh.appendChild(h(doc, 'b', 'mv-name', PROVIDER_LABELS[name]));
-    rh.appendChild(p.broker && p.broker.enabled ? brokerPill(doc, p.broker, name) : k.configured ? h(doc, 'span', 'badge green', 'key set')
-      : k.keySet ? h(doc, 'span', 'badge red', 'key ${VAR} not set')
-        : k.keyOptional ? h(doc, 'span', 'badge green', 'local, no key needed') : h(doc, 'span', 'badge grey', 'no key'));
-    main.appendChild(rh);
-    main.appendChild(h(doc, 'small', 'hint', name === 'openai'
-      ? 'Anything with a /chat/completions or /responses endpoint: OpenAI, Azure, Ollama, vLLM, Groq, an in-house gateway. Models run through the translation layer (no web tools).'
-      : 'A gateway that already speaks the Anthropic Messages API but needs a key Worca holds for it. Calls pass through untouched.'));
-    if (k.keySource === 'env') main.appendChild(h(doc, 'small', 'hint', `Key read from your shell env (${k.keyRef}).`));
-    main.appendChild(h(doc, 'small', 'hint mv-pv-msg'));
-    row.appendChild(main);
-
-    const ctl = h(doc, 'div', 'mv-pv-ctl');
-    const bu = h(doc, 'label', 'mv-field');
-    bu.appendChild(h(doc, 'span', 'mv-field-label', 'Base URL'));
-    const buIn = h(doc, 'input', 'input mv-pv-baseurl');
-    buIn.type = 'text'; buIn.value = k.baseUrl || ''; buIn.dataset.provider = name;
-    buIn.placeholder = name === 'openai' ? 'https://api.openai.com/v1' : 'https://api.anthropic.com';
-    bu.appendChild(buIn);
-    ctl.appendChild(bu);
-    const key = h(doc, 'label', 'mv-field');
-    key.appendChild(h(doc, 'span', 'mv-field-label', 'API key'));
-    const keyIn = h(doc, 'input', 'input mv-pv-key');
-    keyIn.type = 'text'; keyIn.dataset.provider = name;
-    keyIn.value = k.keyRef || k.keyMasked || '';
-    if (keyIn.value) keyIn.dataset.original = keyIn.value;
-    keyIn.placeholder = 'sk-…, or ${VAR} to read your shell env';
-    key.appendChild(keyIn);
-    key.appendChild(h(doc, 'small', 'hint', 'Stored masked; leave masked to keep. A model can override this key on its Connection.'));
-    ctl.appendChild(key);
-    ctl.appendChild(numberField(doc, 'mv-pv-conc', 'Max concurrent requests', k.maxConcurrent, { provider: name }));
-    row.appendChild(ctl);
-
-    // A failure shows as a card alert just above this row; a success on the button itself (#555).
-    const btns = h(doc, 'div', 'mv-pv-btns');
-    btns.dataset.cardActions = '';
-    if (name === 'openai') {
-      // §8.4 for a server you run: ask the endpoint what it serves instead of typing model ids.
-      const browse = h(doc, 'button', 'btn mv-pv-browse', 'Import models…');
-      browse.type = 'button'; browse.dataset.provider = name;
-      browse.title = 'List what this endpoint serves (llama.cpp, Ollama, LM Studio, vLLM…) and import the ones you want';
-      btns.appendChild(browse);
-    }
-    const test = h(doc, 'button', 'btn mv-pv-test', 'Test connection');
-    test.type = 'button'; test.dataset.provider = name;
-    btns.appendChild(test);
-    const save = h(doc, 'button', 'btn btn-primary mv-pv-save', 'Save');
-    save.type = 'button'; save.dataset.provider = name;
-    btns.appendChild(save);
-    row.appendChild(btns);
-    place(row);
-  }
-  place(renderSpeechRow(doc, p.speech || {}));
-  place(renderImagesRow(doc, p.images || {}));
-  place(renderSoundRow(doc, p.sound || {}));
-  return root;
+  if (c.connected) button('btn mv-cp-signout', 'Sign out');
+  else if (!signIn) button('btn mv-cp-signin', 'Sign in');
+  button('btn btn-primary mv-pv-save', 'Save').dataset.provider = 'copilot';
+  row.appendChild(btns);
+  return row;
 }
 
-/** OpenRouter's address, where its row's "Import models…" lists (docs/models.md "OpenRouter"); mirrors provider-ops
+/** An endpoint body (providers.openai | providers.anthropic): its base URL, key and cap, saved by Save. */
+export function renderEndpointRow(providers, name, { doc = globalThis.document } = {}) {
+  const p = providers || {};
+  const k = p[name] || { configured: false, keySet: false, baseUrl: '', maxConcurrent: 8 };
+  const row = h(doc, 'div', 'mv-pv-row');
+  row.dataset.provider = name;
+  if (p.broker && p.broker.enabled) row.appendChild(brokerLine(doc, p.broker, name));
+  const main = h(doc, 'div', 'mv-pv-main');
+  if (k.keySource === 'env') main.appendChild(h(doc, 'small', 'hint', `Key read from your shell env (${k.keyRef}).`));
+  main.appendChild(h(doc, 'small', 'hint mv-pv-msg'));
+  row.appendChild(main);
+
+  const ctl = h(doc, 'div', 'mv-pv-ctl');
+  const bu = h(doc, 'label', 'mv-field');
+  bu.appendChild(h(doc, 'span', 'mv-field-label', 'Base URL'));
+  const buIn = h(doc, 'input', 'input mv-pv-baseurl');
+  buIn.type = 'text'; buIn.value = k.baseUrl || ''; buIn.dataset.provider = name;
+  buIn.placeholder = name === 'openai' ? 'https://api.openai.com/v1' : 'https://api.anthropic.com';
+  bu.appendChild(buIn);
+  ctl.appendChild(bu);
+  const keyIn = h(doc, 'input', 'input mv-pv-key');
+  keyIn.type = 'text'; keyIn.dataset.provider = name;
+  keyIn.value = k.keyRef || k.keyMasked || '';
+  if (keyIn.value) keyIn.dataset.original = keyIn.value;
+  keyIn.placeholder = 'sk-…, or ${VAR} to read your shell env';
+  ctl.appendChild(tippedField(doc, 'API key', keyIn, 'Stored masked; leave masked to keep. A model can override this key on its Connection.'));
+  ctl.appendChild(numberField(doc, 'mv-pv-conc', 'Max concurrent requests', k.maxConcurrent, { provider: name }));
+  row.appendChild(ctl);
+
+  // A failure shows as a card alert just above this row; a success on the button itself (#555).
+  const btns = h(doc, 'div', 'mv-pv-btns');
+  btns.dataset.cardActions = '';
+  if (name === 'openai') {
+    // §8.4 for a server you run: ask the endpoint what it serves instead of typing model ids.
+    const browse = h(doc, 'button', 'btn mv-pv-browse', 'Import models');
+    browse.type = 'button'; browse.dataset.provider = name;
+    browse.title = 'List what this endpoint serves (llama.cpp, Ollama, LM Studio, vLLM…) and import the ones you want';
+    btns.appendChild(browse);
+  }
+  const test = h(doc, 'button', 'btn mv-pv-test', 'Test connection');
+  test.type = 'button'; test.dataset.provider = name;
+  btns.appendChild(test);
+  const save = h(doc, 'button', 'btn btn-primary mv-pv-save', 'Save');
+  save.type = 'button'; save.dataset.provider = name;
+  btns.appendChild(save);
+  row.appendChild(btns);
+  return row;
+}
+
+/** OpenRouter's address, where its row's "Import models" lists (docs/models.md "OpenRouter"); mirrors provider-ops
  *  OPENROUTER_BASE_URL. */
 export const OPENROUTER_PRESET = Object.freeze({ baseUrl: 'https://openrouter.ai/api/v1', keyRef: '${OPENROUTER_KEY}' });
 /** The Import dialog's hosted-API presets: an endpoint with a key of its own, stored on each imported entry
@@ -695,11 +762,19 @@ export function providerRowOf(model, providers) {
   return up.provider;
 }
 
-/** Collect a key-based provider row into a PATCH body (masked echo dropped). */
+/** The row `sel` names: `rootEl` itself (a body on its own), else the first one below it (the card, the tab). */
+const rowIn = (rootEl, sel) => (rootEl.matches?.(sel) ? rootEl : rootEl.querySelector(sel));
+
+/**
+ * Collect a provider row (`rootEl` is the row or an ancestor) into its PATCH body, masked echo dropped: Copilot's
+ * { accountType, maxConcurrent }, an endpoint's { baseUrl, apiKey (only when changed), maxConcurrent }. Null without it.
+ */
 export function collectProviderRow(rootEl, name) {
-  const row = rootEl.querySelector(`.mv-pv-row[data-provider="${name}"]`);
+  const row = rowIn(rootEl, `.mv-pv-row[data-provider="${name}"]`);
   if (!row) return null;
   const body = {};
+  const acct = row.querySelector('.mv-cp-account');
+  if (acct) body.accountType = acct.value;
   const bu = row.querySelector('.mv-pv-baseurl');
   if (bu) body.baseUrl = bu.value.trim();
   const key = row.querySelector('.mv-pv-key');
@@ -712,9 +787,10 @@ export function collectProviderRow(rootEl, name) {
   return body;
 }
 
-/** Collect the Speech row into PATCH /api/providers/speech's body (masked/unchanged key omitted). */
+/** Collect the Speech row (`rootEl` is the row or an ancestor) into PATCH /api/providers/speech's body
+ *  (masked/unchanged key omitted). */
 export function collectSpeechRow(rootEl) {
-  const row = rootEl.querySelector('.mv-pv-row[data-provider="speech"]');
+  const row = rowIn(rootEl, '.mv-pv-row[data-provider="speech"]');
   if (!row) return null;
   const body = { stt: {}, tts: {} };
   for (const inp of row.querySelectorAll('.mv-sp-field')) {
@@ -726,12 +802,14 @@ export function collectSpeechRow(rootEl) {
   return body;
 }
 
-const imagesRowOf = (rootEl) => rootEl.querySelector('.mv-pv-row[data-provider="images"]');
+const imagesRowOf = (rootEl) => rowIn(rootEl, '.mv-pv-row[data-provider="images"]');
 
 /**
  * Pick a service on the Image generation row: its Base URL, Model and Price fill in (a preset with no price
- * leaves Price empty). The key stays only when the preset's address has the stored key's origin; the saved
- * service brings back what was saved, key included. Nothing is saved. False for an unknown service.
+ * leaves Price empty), the model control redrawn on the service's default ("Pick a model" when it has none). The key
+ * stays only when the preset's address has the stored key's origin; the saved service brings back what was saved,
+ * key and model (picked or typed) included. Base URL and Price move between Other's open fields and Advanced.
+ * Nothing is saved. False for an unknown service.
  */
 export function applyImagesPreset(rootEl, id) {
   const row = imagesRowOf(rootEl);
@@ -739,24 +817,20 @@ export function applyImagesPreset(rootEl, id) {
   const f = (k) => row.querySelector(`.mv-im-field[data-field="${k}"]`);
   const ds = row.dataset;
   const original = f('apiKey').dataset.original || '';
-  f('service').value = id;
-  if (id === ds.storedService) {
-    f('baseUrl').value = ds.storedBaseUrl || '';
-    f('model').value = ds.storedModel || '';
-    f('price').value = ds.storedPrice || '';
-    f('apiKey').value = original;
-    return true;
-  }
   const preset = IMAGE_SERVICES[id];
+  const saved = id === ds.storedService;
   const origin = originOf(preset.baseUrl);
-  f('baseUrl').value = preset.baseUrl;
-  f('model').value = preset.model;
-  f('price').value = preset.price == null ? '' : String(preset.price);
-  f('apiKey').value = origin && origin === ds.storedOrigin ? original : '';
+  f('service').value = id;
+  f('baseUrl').value = saved ? ds.storedBaseUrl || '' : preset.baseUrl;
+  f('price').value = saved ? ds.storedPrice || '' : preset.price == null ? '' : String(preset.price);
+  f('apiKey').value = saved || (origin && origin === ds.storedOrigin) ? original : '';
+  drawImagesModel(row, id, saved ? ds.storedModel || '' : preset.model);
+  placeImagesEndpoint(row, id);
   return true;
 }
 
-/** Collect the Image generation row into PATCH /api/providers/images' body (masked/unchanged key omitted). */
+/** Collect the Image generation row into PATCH /api/providers/images' body (masked/unchanged key omitted). The model
+ *  comes from whichever control is drawn; "Other model…" collects as no model. */
 export function collectImagesRow(rootEl) {
   const row = imagesRowOf(rootEl);
   if (!row) return null;
@@ -765,6 +839,7 @@ export function collectImagesRow(rootEl) {
     const { field } = inp.dataset;
     const v = inp.value.trim();
     if (field === 'apiKey') { if (v !== (inp.dataset.original || '')) body.apiKey = v; continue; }
+    if (field === 'model' && v === OTHER_IMAGE_MODEL) { body.model = ''; continue; }
     if (field === 'price') {
       // A number goes as one; anything else as typed, which the server refuses in its own words.
       const n = Number(v);
@@ -776,10 +851,10 @@ export function collectImagesRow(rootEl) {
   return body;
 }
 
-/** Collect the Sound row into PATCH /api/providers/sound's body: {} while the key is untouched, else { apiKey }
- *  ('' for a cleared field). */
+/** Collect the Sound row (`rootEl` is the row or an ancestor) into PATCH /api/providers/sound's body: {} while the
+ *  key is untouched, else { apiKey } ('' for a cleared field). */
 export function collectSoundRow(rootEl) {
-  const row = rootEl.querySelector('.mv-pv-row[data-provider="sound"]');
+  const row = rowIn(rootEl, '.mv-pv-row[data-provider="sound"]');
   if (!row) return null;
   const key = row.querySelector('.mv-pv-key');
   const v = key.value.trim();
@@ -806,7 +881,22 @@ export function showImagesTest(rootEl, r) {
   line.textContent = (r && r.message) || '';
 }
 
-/** A refused Save of the Image generation row, in the row's own line and announced (not the card's alert). */
+/**
+ * Why the Image generation row cannot be saved as it is, in the row's words, or '': Other's address, then the model,
+ * then Other's price (a preset service fills its own). app.js refuses Save with it before any request is sent.
+ */
+export function imagesRowProblem(rootEl) {
+  const row = imagesRowOf(rootEl);
+  if (!row) return '';
+  const b = collectImagesRow(row);
+  if (b.service === 'other' && !/^https?:\/\/\S+$/.test(b.baseUrl)) return 'Enter the address, starting with http:// or https://';
+  if (!b.model) return row.querySelector('.mv-im-model-pick') ? 'Pick a model' : 'Enter a model';
+  if (b.service === 'other' && b.price === '') return 'Enter a price; 0 for a free server';
+  return '';
+}
+
+/** A refused Save of the Image generation row, in the row's own line and announced (not the card's alert). Advanced
+ *  opens, since a server refusal can name a field inside it. */
 export function showImagesSaveError(rootEl, message) {
   const row = imagesRowOf(rootEl);
   const line = row && row.querySelector('.mv-pv-msg');
@@ -814,6 +904,7 @@ export function showImagesSaveError(rootEl, message) {
   line.textContent = message;
   line.className = 'hint err mv-pv-msg';
   line.setAttribute('role', 'alert');
+  setImagesAdvanced(row, true);
 }
 
 /** The code is its own copy button (copy-button.mjs: the code as the label, then a green tick and "Copied"), the one

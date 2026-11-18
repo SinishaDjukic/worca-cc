@@ -187,6 +187,8 @@ import {
 } from './plugins-view.mjs';
 import { mountMarketplace, tabFromParam, targetFromParam } from './marketplace/index.mjs';
 import { parseModelsParam, modelsHash, renderModelsTabs, paintModelsTabs } from './models/page-tabs.mjs';
+import { renderProvidersTab, toggleProviderRow } from './models/providers-tab.mjs';
+import { providerModelCounts } from './models/provider-state.mjs';
 import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
@@ -210,9 +212,9 @@ import {
   renderExportWizard, collectExportWizard, applyConnectionModeIn, setModelEngine,
 } from './models-view.mjs';
 import {
-  renderProvidersCard, collectProviderRow, collectSpeechRow, formatSpeechBytes, renderImportSheet, renderEndpointSheet, collectImportSheet, applyImportSelectAll,
+  collectProviderRow, collectSpeechRow, formatSpeechBytes, renderImportSheet, renderEndpointSheet, collectImportSheet, applyImportSelectAll,
   OPENROUTER_PRESET, collectOpenRouterRow, providerRowOf, endpointRowMatches, ENDPOINT_PRESETS,
-  setModelUpstream, applyImagesPreset, collectImagesRow, showImagesTest, showImagesSaveError, collectSoundRow,
+  setModelUpstream, applyImagesPreset, collectImagesRow, imagesRowProblem, showImagesTest, showImagesSaveError, collectSoundRow,
 } from './bridge-view.mjs';
 import {
   renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
@@ -19551,6 +19553,8 @@ const mvState = {
   // Importing is a DIALOG now (§8.4): its state lives in `mimp`, not here. copilotModels stays —
   // it feeds the editor's upstream-id datalist. justImported filters the list to what just landed.
   providers: null, signIn: null, copilotModels: [], justImported: null, openEditorOnLoad: false,
+  // The Providers tab's unfolded rows, by row name: kept through every redraw (a head click, a link, a failure).
+  pvOpen: {},
   // The catalog's own narrowing (the list runs to several screens with built-ins, plugin and team
   // models in it): a search box, one chip, and which groups are folded. Built-ins start folded —
   // 12 rows nobody edits — and a search opens every group that still has a hit.
@@ -20017,23 +20021,98 @@ function setProvidersMsg(text, kind) {
   reportStatus(el.providersMsg, 'form-msg', text, kind);
 }
 
-/** The Providers tab's card, drawn from mvState (loadModelsView reads it). Records what it drew (paintProvidersTab).
+/** The catalogue's models (your own, plugin and team policy) counted per provider row: the rows' summaries and states. */
+function providerCounts() {
+  const d = mvState.data;
+  return providerModelCounts([...(d?.models || []), ...(d?.plugin || []), ...(d?.policy || [])], mvState.providers);
+}
+
+/** What a draw of the Providers tab shows. Draw and paint compare this one key, so a catalogue change redraws. */
+function providersKey(counts) {
+  return JSON.stringify([mvState.providers, mvState.signIn, counts]);
+}
+
+// Typing survives a redraw (a fold, another row's Save, Refresh usage, a sign-in, a catalogue change). Every drawn field
+// is stamped with what it was drawn with (data-drawn); before the next draw each field whose value differs is read,
+// keyed by its row, its classes and data-provider/-kind/-field, and put back into its twin once drawn. A Save re-stamps
+// its own row (patchProviderFlow), so the row just saved shows the server's values.
+const PV_FIELDS = 'input, select';
+const pvValue = (c) => (c.type === 'checkbox' ? String(c.checked) : c.value);
+const pvFieldKey = (c) => [c.className, c.dataset.provider || '', c.dataset.kind || '', c.dataset.field || ''].join('|');
+/** The image model is one field drawn two ways (the service's list, or a typed id): carried by its field alone. */
+const isImagesModel = (c) => c.matches('.mv-im-model-pick, .mv-im-model');
+
+function stampProviderFields(scope) {
+  for (const c of scope.querySelectorAll(PV_FIELDS)) c.dataset.drawn = pvValue(c);
+}
+
+/** The edited fields on screen, row by row; the image service and the speech engines marked as leads. */
+function providerEdits(root) {
+  const edits = [];
+  for (const item of root.querySelectorAll('.mv-pv-card[data-row]')) {
+    for (const c of item.querySelectorAll(PV_FIELDS)) {
+      if (c.dataset.drawn === pvValue(c)) continue;
+      edits.push({ row: item.dataset.row, key: isImagesModel(c) ? 'model' : pvFieldKey(c), value: pvValue(c), lead: c.matches('.mv-im-service, .mv-sp-engine') });
+    }
+  }
+  return edits;
+}
+
+/** The image model put back the way a pick goes: an id on the service's list is selected, anything else is typed. */
+function restoreImagesModel(item, value) {
+  if (!item.querySelector('.mv-im-model-pick')) item.querySelector('.mv-im-model-list')?.click();   // the list, when the service has one
+  const pick = item.querySelector('.mv-im-model-pick');
+  if (pick && value !== '__other__' && [...pick.options].some((o) => o.value === value)) { pick.value = value; return; }
+  if (pick) { pick.value = '__other__'; pick.dispatchEvent(new window.Event('change', { bubbles: true })); }   // "Other model…"
+  const typed = item.querySelector('.mv-im-model');
+  if (typed) typed.value = value === '__other__' ? '' : value;
+}
+
+/** Put the edits back into the tab just drawn. The image service and the speech engines go first, each announced
+ *  (applyImagesPreset and the engine's own listener set the fields they decide); the rest follow. */
+function restoreProviderEdits(root, edits) {
+  if (!edits.length) return;
+  const focused = document.activeElement;
+  for (const e of [...edits.filter((x) => x.lead), ...edits.filter((x) => !x.lead)]) {
+    const item = [...root.querySelectorAll('.mv-pv-card[data-row]')].find((r) => r.dataset.row === e.row);
+    if (!item) continue;
+    if (e.key === 'model') { restoreImagesModel(item, e.value); continue; }
+    const c = [...item.querySelectorAll(PV_FIELDS)].find((n) => pvFieldKey(n) === e.key);
+    if (!c) continue;
+    if (c.type === 'checkbox') c.checked = e.value === 'true';
+    else c.value = e.value;
+    if (e.lead) c.dispatchEvent(new window.Event('change', { bubbles: true }));
+  }
+  // "Other model…" and "Pick from list" focus the field they draw: a redraw moves no cursor.
+  const now = document.activeElement;
+  if (now !== focused && root.contains(now)) {
+    if (focused && focused !== document.body && focused.isConnected) focused.focus();
+    else now.blur();
+  }
+}
+
+/** The Providers tab, drawn from mvState (loadModelsView reads it), with the open rows and the catalogue's model
+ *  counts; what was typed is carried over. Records what it drew (paintProvidersTab).
  *  No payload (before the first read, or after a failed one, whose line says why): no card, and a card an earlier
  *  read drew is taken away, so no flow acts on a payload that is gone (a Save would send a form of defaults). */
 function renderProvidersViewBody() {
   if (!el.providersList) return;
   if (!mvState.providers) { providersDrawnKey = ''; el.providersList.replaceChildren(); return; }
-  el.providersList.replaceChildren(renderProvidersCard(mvState.providers, { signIn: mvState.signIn, split: true }));
-  providersDrawnKey = JSON.stringify([mvState.providers, mvState.signIn]);
+  const counts = providerCounts();
+  const edits = providerEdits(el.providersList);
+  el.providersList.replaceChildren(renderProvidersTab(mvState.providers, { signIn: mvState.signIn, open: mvState.pvOpen, counts }));
+  stampProviderFields(el.providersList);
+  restoreProviderEdits(el.providersList, edits);
+  providersDrawnKey = providersKey(counts);
   // OpenRouter's free-model allowance, read afresh each time the card is drawn.
   refreshFreeDaily({ force: true });
 }
 
-/** The Providers tab's card, drawn only while that tab shows and only when its content changed since the last draw:
+/** The Providers tab, drawn only while that tab shows and only when its content changed since the last draw:
  *  a tab switch keeps a typed key, and a window focus that re-reads the same payload (a broker's) redraws nothing. */
 function paintProvidersTab() {
   if (currentModelsTab() !== 'providers') return;
-  if (JSON.stringify([mvState.providers, mvState.signIn]) === providersDrawnKey) return;
+  if (providersKey(providerCounts()) === providersDrawnKey) return;
   renderProvidersViewBody();
 }
 
@@ -20053,10 +20132,18 @@ function repaintProviders() {
 /** The providers card's home: its own tab's list. */
 function providerRoot() { return el.providersList; }
 
-/** A provider card's failure, the house way (#555): a card alert above the card's buttons. null clears it. */
+/** A provider card's failure, the house way (#555): a card alert above the card's buttons. null clears it.
+ *  A failure unfolds its row, so it can be seen; a clear unfolds nothing. */
 function providerAlert(name, title, detail) {
   const row = providerRoot()?.querySelector(`.mv-pv-row[data-provider="${name}"]`);
-  if (row) cardAlert(row.closest('.mv-pv-card') || row, title ? { title, detail } : null);
+  if (!row) return;
+  if (title) { mvState.pvOpen[name] = true; toggleProviderRow(providerRoot(), name, true); }
+  cardAlert(row.closest('.mv-pv-card') || row, title ? { title, detail } : null);
+}
+
+/** Row `name`'s fold item on the Providers tab (section.mv-pv-card[data-row]), or null. */
+function providerItem(name) {
+  return [...(providerRoot()?.querySelectorAll('.mv-pv-card[data-row]') || [])].find((r) => r.dataset.row === name) || null;
 }
 
 /** The card's grey guidance line; an error goes to providerAlert under `title` instead. '' clears both. */
@@ -20137,8 +20224,7 @@ async function copilotSignOutFlow() {
   }
 }
 
-// #555: the row's Save button shows busy → "Saved"; the row's line carries only errors. A change
-// on a select (account type, concurrency) has no button, so its success is the new value itself.
+// #555: the row's Save button shows busy → "Saved"; the row's line carries only errors.
 // `onError(message)`, when given, shows a refused Save in the row's own place instead of the card's alert.
 async function patchProviderFlow(name, body, { btn = null, onError = null } = {}) {
   setProviderMsg(name, '');
@@ -20147,6 +20233,10 @@ async function patchProviderFlow(name, body, { btn = null, onError = null } = {}
     const data = await safeJson(res);
     if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
     mvState.providers = data;
+    // The row just saved shows what the server keeps (a typed key gives way to its masked echo): its fields count as
+    // drawn, so neither redraw below carries them over. Other rows keep what was typed in them.
+    const saved = providerItem(name);
+    if (saved) stampProviderFields(saved);
     repaintProviders();
     // Readiness may have changed: the catalog's needs-sign-in state and every picker follow.
     await refreshModelsEverywhere();
@@ -20488,19 +20578,10 @@ async function importModelsFlow() {
   }
 }
 
-/** A catalog row's "needs sign-in" goes to the Providers tab and lands on the row (the route reveals it). */
+/** A catalog row's "needs sign-in" goes to the Providers tab and lands on the row: the route's reveal unfolds it,
+ *  flashes it and focuses its sign-in or key (revealProviderRow). */
 function goToProviders(provider) {
   location.hash = modelsHash('providers', provider);
-  setTimeout(() => focusProviderRow(provider), 0);
-}
-
-function focusProviderRow(provider) {
-  const card = providerRoot() && providerRoot().querySelector('.mv-providers');
-  if (!card) return;
-  try { card.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch { /* jsdom */ }
-  const row = provider ? card.querySelector(`.mv-pv-row[data-provider="${provider}"]`) : null;
-  const focus = row && (row.querySelector('.mv-cp-signin') || row.querySelector('.mv-pv-key'));
-  if (focus) { try { focus.focus(); } catch { /* ignore */ } }
 }
 
 // Any catalog mutation must repaint BOTH surfaces: this view and the composer's
@@ -20677,10 +20758,15 @@ if (el.providersList) {
   el.providersList.addEventListener('click', (ev) => {
     const t = ev.target.closest('button');
     if (!t) return;
-    if (t.classList.contains('mv-cp-signin')) copilotSignInFlow();
+    // A row's head folds or unfolds it; the open rows are kept through every redraw.
+    if (t.classList.contains('mdl-fold')) {
+      const row = t.closest('.mv-pv-card[data-row]')?.dataset.row;
+      if (row) mvState.pvOpen[row] = toggleProviderRow(providerRoot(), row);
+    } else if (t.classList.contains('mv-cp-signin')) copilotSignInFlow();
     else if (t.classList.contains('mv-cp-cancel')) { stopCopilotPoll(); mvState.signIn = null; renderProvidersViewBody(); }
     else if (t.classList.contains('mv-cp-signout')) copilotSignOutFlow();
-    else if (t.classList.contains('mv-cp-fetch-models')) openImportDialog({ source: 'copilot' });
+    // Like OpenRouter's and the OpenAI-compatible row's: the import lands in the CATALOG, so it opens there.
+    else if (t.classList.contains('mv-cp-fetch-models')) openImportDialog({ source: 'copilot', goToModels: true });
     else if (t.classList.contains('mv-cp-quota-refresh')) refreshCopilotQuotaFlow(t);
     // The OpenRouter row's Save before the generic one, which would send only its key and cap.
     else if (t.classList.contains('mv-pv-save') && t.dataset.provider === 'openrouter') {
@@ -20694,7 +20780,12 @@ if (el.providersList) {
       const body = collectSpeechRow(providerRoot());
       if (body) patchProviderFlow('speech', body, { btn: t });
     } else if (t.classList.contains('mv-sp-test')) testSpeechFlow(t);
-    else if (t.classList.contains('mv-im-save')) patchProviderFlow('images', collectImagesRow(providerRoot()), { btn: t, onError: (msg) => showImagesSaveError(providerRoot(), msg) });
+    else if (t.classList.contains('mv-im-save')) {
+      // A row that cannot be saved is refused here, in the row's words, and sends nothing.
+      const problem = imagesRowProblem(providerRoot());
+      if (problem) showImagesSaveError(providerRoot(), problem);
+      else patchProviderFlow('images', collectImagesRow(providerRoot()), { btn: t, onError: (msg) => showImagesSaveError(providerRoot(), msg) });
+    }
     else if (t.classList.contains('mv-im-test')) testImagesFlow(t);
     else if (t.classList.contains('mv-so-save')) patchProviderFlow('sound', collectSoundRow(providerRoot()), { btn: t });
     else if (t.classList.contains('mv-so-test')) testSoundFlow(t);
@@ -20711,9 +20802,7 @@ if (el.providersList) {
   el.providersList.addEventListener('change', (ev) => {
     const t = ev.target;
     if (!t || !t.classList) return;
-    if (t.classList.contains('mv-cp-account')) patchProviderFlow('copilot', { accountType: t.value });
-    else if (t.classList.contains('mv-im-service')) applyImagesPreset(providerRoot(), t.value);
-    else if (t.classList.contains('mv-pv-conc') && t.dataset.provider === 'copilot') patchProviderFlow('copilot', { maxConcurrent: Number(t.value) });
+    if (t.classList.contains('mv-im-service')) applyImagesPreset(providerRoot(), t.value);
   });
 }
 
@@ -39865,6 +39954,8 @@ function fallbackToChat(raw) {
 }
 // Test hook: lets a test call the router the way an in-app caller does.
 if (typeof window !== 'undefined') window.__np = Object.assign(window.__np || {}, { showView });
+// Test hook: redraws the Providers tab the way its flows do (a Save, a sign-in, Refresh usage).
+if (typeof window !== 'undefined') window.__np.repaintProviders = repaintProviders;
 // CDP proofs (D12): flip a flag through the real API; every tab follows through the `flags` frame.
 if (typeof window !== 'undefined') {
   window.__np = Object.assign(window.__np || {}, {
@@ -40284,14 +40375,30 @@ function revealModelCard(id, param) {
   const card = [...el.modelsList.querySelectorAll('.mv-card[data-id]')].find((n) => n.dataset.id === id);
   if (card) markFound(card, card.querySelector('button'));
 }
-// '#models/providers/<copilot|openrouter|openai|anthropic|speech|images|sound>': the provider's row, highlighted, with its sign-in or
-// key field focused (focusProviderRow's choice), else its first control. Only while the address still names that row.
+// '#models/providers/<copilot|openrouter|openai|anthropic|speech|images|sound>': the provider's row unfolded (never
+// folded) and highlighted, with its sign-in or key field focused, else its first field, else its first button. Only
+// while the address still names that row: a stale reveal unfolds and marks nothing.
 function revealProviderRow(param) {
   if (!param || currentModelsTab() !== 'providers' || parseModelsParam(parseHash()[1]).rest !== param || !el.providersList) return;
   const row = [...el.providersList.querySelectorAll('.mv-pv-row[data-provider]')].find((n) => n.dataset.provider === param);
   if (!row) return;
-  markFound(row.closest('.mv-pv-card') || row,
-    row.querySelector('.mv-cp-signin') || row.querySelector('.mv-pv-key') || row.querySelector('input, select, textarea, button'));
+  mvState.pvOpen[param] = true;
+  toggleProviderRow(el.providersList, param, true);
+  markFound(row.closest('.mv-pv-card') || row, providerRevealTarget(row));
+}
+// Where a link to a provider row puts the cursor: the Copilot sign-in, else the key, else the first field (an info tip
+// is no field), else the first button. Never a control the row body hides (Advanced, a speech server's fields), nor,
+// under the credential broker, one it hides (keys, the Copilot sign-in, sign-out and usage, Test connection).
+function providerRevealTarget(row) {
+  const broker = !!row.closest('.mv-providers--broker');
+  const usable = (c) => {
+    if (c.classList.contains('info-tip')) return false;
+    const hidden = c.closest('[hidden]');
+    if (hidden && row.contains(hidden)) return false;
+    return !broker || !(c.matches('.mv-cp-signin, .mv-cp-signout, .mv-cp-quota-refresh, .mv-pv-test') || c.closest('.mv-field')?.querySelector('.mv-pv-key'));
+  };
+  const first = (sel) => [...row.querySelectorAll(sel)].find(usable) || null;
+  return first('.mv-cp-signin') || first('.mv-pv-key') || first('input, select, textarea') || first('button');
 }
 // '#connectors/servers/<id>': the Servers view, then that server's row highlighted.
 async function showConnectors(param) {

@@ -506,14 +506,15 @@ test('the plugin lists are read once and kept until plugins-changed; never the m
 test('Add-ons inner rows land on their row or card and flash it', async () => {
   const isFound = (n) => !!n && n.classList.contains('is-found');
   await checkRows([
-    { name: '"openai key" → #models/providers/openai, the OpenAI-compatible row flashed, its key field focused', run: async () => {
+    { name: '"openai key" → #models/providers/openai, the OpenAI-compatible row unfolded and flashed, its key field focused', run: async () => {
       const ctx = await boot({ arms: [['/api/providers', () => ({})]] });
       await searchPick(ctx, 'openai key', 'OpenAI-compatible');
       await settle(ctx.window, 8);
       assert.equal(ctx.window.location.hash, '#models/providers/openai');
-      const row = ctx.doc.querySelector('#providers-list .mv-pv-row[data-provider="openai"]');
-      assert.ok(isFound(row.closest('.mv-pv-card') || row));
-      assert.equal(ctx.doc.activeElement, row.querySelector('.mv-pv-key'));
+      const card = ctx.doc.querySelector('#providers-list .mv-pv-card[data-row="openai"]');
+      assert.equal(card.querySelector(':scope > .mdl-fold-body').hidden, false, 'the folded row opened');
+      assert.ok(isFound(card));
+      assert.equal(ctx.doc.activeElement, card.querySelector('.mv-pv-row[data-provider="openai"] .mv-pv-key'));
     } },
     { name: '"helper model" at Expert → #models/engine-settings-card, the Engines card flashed', run: async () => {
       const ctx = await boot();

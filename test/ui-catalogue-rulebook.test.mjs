@@ -8,7 +8,7 @@ import { JSDOM } from 'jsdom';
 import { renderMarketplaceCard } from '../ui/public/marketplace/marketplaces-view.mjs';
 import { renderAllInstalled } from '../ui/public/marketplace/installed-view.mjs';
 import { renderRemoveDialog } from '../ui/public/marketplace/remove-view.mjs';
-import { renderProvidersCard } from '../ui/public/bridge-view.mjs';
+import { renderProvidersTab } from '../ui/public/models/providers-tab.mjs';
 import { renderModelsList } from '../ui/public/models-view.mjs';
 import { renderPolicySyncChip } from '../ui/public/team-policy-view.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
@@ -67,20 +67,21 @@ test('Marketplace: Installed is one card of divided rows, a marketplace is one c
 
 test('Providers: a tab of the Models page, seven divided rows, shared buttons', () => {
   assert.equal(page.querySelector('[data-view="providers"]'), null, 'no Providers page: it is the Models page\'s third tab');
-  const card = renderProvidersCard({}, { doc, split: true });
-  assert.equal(card.querySelector('.mv-providers-hint'), null, 'the tab\'s card carries no intro of its own');
-  assert.ok(card.classList.contains('drows'));
-  const rows = [...card.querySelectorAll('.mv-pv-card')];
+  const tab = renderProvidersTab({}, { doc });
+  assert.equal(tab.querySelector('.mv-providers-hint'), null, 'the tab\'s cards carry no intro of their own');
+  const cards = [...tab.querySelectorAll('.mv-providers-split')];
+  assert.equal(cards.length, 2);
+  for (const c of cards) assert.ok(c.classList.contains('card') && c.classList.contains('drows'));
+  const rows = [...tab.querySelectorAll('.mv-pv-card')];
   assert.equal(rows.length, 7);
   for (const r of rows) assert.ok(r.classList.contains('drow') && r.classList.contains('drow-stack') && !r.classList.contains('card'));
   assert.deepEqual(rules('.mv-pv-card'), [], '.drow.drow-stack sets the gap');
   // The three-column field grid stacks under 560px like every other .drows row.
   assert.match(CSS, /@container drows \(max-width:560px\)\{\s*\.mv-pv-card \.mv-pv-row:not\(\.mv-sp-row\) \.mv-pv-ctl\{grid-template-columns:minmax\(0,1fr\);\}/);
-  const pill = card.querySelector('.mv-pv-row[data-provider="copilot"] .mv-head .badge');
-  assert.ok(pill && pill.tagName === 'SPAN', 'the Copilot state is a plain badge (no notice pill)');
-  assert.equal(card.querySelector('.mv-cp-terms'), null);
-  assert.ok(card.querySelector('.mv-or-browse').classList.contains('btn'), 'OpenRouter\'s Import models… is a shared button');
-  assert.ok(renderProvidersCard({}, { doc }).querySelector('.mv-providers-hint'), 'the old in-Models card keeps its hint');
+  // The state word lives in the fold head, one dot and one word (VIS-2).
+  assert.ok(tab.querySelector('.mv-pv-card[data-row=copilot] .mdl-fold > .mdl-st'));
+  assert.equal(tab.querySelector('.mv-cp-terms'), null);
+  assert.ok(tab.querySelector('.mv-or-browse').classList.contains('btn'), 'OpenRouter\'s Import models… is a shared button');
 });
 
 test('Connectors: one page intro, no mcp-chip, no typed plus, the plus icon on every Add', () => {

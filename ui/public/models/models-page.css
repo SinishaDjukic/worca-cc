@@ -52,3 +52,32 @@ a.tab.mdl-tab{text-decoration:none;}
 
 /* "Best performance" on a .badge: worca's blue gradient, white text. */
 .mdl-best{background:linear-gradient(135deg,var(--best-a),var(--best-b));color:var(--on-mark);}
+
+/* The Providers tab (models/providers-tab.mjs): two headed cards of fold rows. The rows stay .drow dividers, never
+   boxes: inside .mdl-prov a row's vertical padding moves into its head, so the dividers stay even and the head's hover
+   spans the row. The head is a .row-btn (no border, transparent, the --hover fill, an inset ring on keyboard focus). */
+.mdl-prov{display:flex;flex-direction:column;gap:8px;}
+.mdl-sect{margin:8px 0 0;font-size:var(--fs-meta);font-weight:600;line-height:var(--lh-title);color:var(--ink-2);}
+/* One column that may shrink below its content: the implicit auto track took a head's min-content (a long state word)
+   and pushed every row of a narrow card past its edge. */
+.mdl-prov .mv-providers-split{gap:0;grid-template-columns:minmax(0,1fr);}
+.mdl-prov .drow.mv-pv-card{padding-top:0;padding-bottom:0;}
+.mdl-fold{display:flex;align-items:center;gap:12px;min-height:48px;padding:8px 0;}
+.mdl-fold-caret{width:28px;height:28px;flex:none;display:inline-flex;align-items:center;justify-content:center;color:var(--ink-2);}
+/* The chevron turns down on an open row, and on the image row's Advanced disclosure (.mdl-disc). */
+.mdl-fold-caret > .ic,.mdl-disc .ic{transition:transform .12s ease;}
+.mdl-fold[aria-expanded="true"] > .mdl-fold-caret > .ic,.mdl-disc[aria-expanded="true"] .ic{transform:rotate(90deg);}
+@media (prefers-reduced-motion:reduce){.mdl-fold-caret > .ic,.mdl-disc .ic{transition:none;}}
+.mdl-fold-txt{flex:1;min-width:0;}
+.mdl-fold-name{display:block;font-weight:500;color:var(--ink);}
+.mdl-fold-sum{display:block;font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mdl-fold > .mdl-st{flex:none;}
+/* The body sits under the name: caret 28 + gap 12 + mark 36 + gap 12 = 88px. */
+.mdl-fold-body{padding:8px 0 20px 88px;}
+/* Narrow (VIS-4): the state takes a line of its own under the text, wrapping there (a `${VAR}` in it can be wider than
+   the line), and the body (its grids stacked) loses its indent. */
+@container drows (max-width:560px){
+  .mdl-fold{flex-wrap:wrap;row-gap:4px;}
+  .mdl-fold > .mdl-st{flex-basis:100%;padding-left:88px;white-space:normal;overflow-wrap:anywhere;}
+  .mdl-fold-body{padding-left:0;}
+}

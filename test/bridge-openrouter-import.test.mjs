@@ -178,15 +178,16 @@ test('the OpenRouter sheet: price in the detail, per-row filter data, and the Fr
   assert.equal(endpointRowMatches(local.querySelector('tbody tr'), local, 'zzz'), false);
 });
 
-test('the Providers card: OpenRouter is a row of its own, so the OpenAI-compatible row offers no preset; the UI and the CLI alias name one URL', async () => {
-  const { renderProvidersCard, collectProviderRow, OPENROUTER_PRESET } = await import('../ui/public/bridge-view.mjs');
+test('the Providers tab: OpenRouter is a row of its own, so the OpenAI-compatible row offers no preset; the UI and the CLI alias name one URL', async () => {
+  const { collectProviderRow, OPENROUTER_PRESET } = await import('../ui/public/bridge-view.mjs');
+  const { renderProvidersTab } = await import('../ui/public/models/providers-tab.mjs');
   const { OPENROUTER_BASE_URL } = await import('../src/core/bridge/provider-ops.mjs');
   assert.equal(OPENROUTER_PRESET.baseUrl, OPENROUTER_BASE_URL, 'the UI preset and the CLI alias point at the same URL');
   const doc = new JSDOM('<!doctype html><body></body>').window.document;
-  const card = renderProvidersCard({ openai: { configured: false, keySet: false, baseUrl: 'https://api.openai.com/v1', maxConcurrent: 8 }, anthropic: {} }, { doc, split: true });
-  doc.body.appendChild(card);
-  assert.equal(card.querySelector('.mv-pv-preset'), null);
-  assert.deepEqual(collectProviderRow(card, 'openai'), { baseUrl: 'https://api.openai.com/v1', maxConcurrent: 8 });
+  const tab = renderProvidersTab({ openai: { configured: false, keySet: false, baseUrl: 'https://api.openai.com/v1', maxConcurrent: 8 }, anthropic: {} }, { doc });
+  doc.body.appendChild(tab);
+  assert.equal(tab.querySelector('.mv-pv-preset'), null);
+  assert.deepEqual(collectProviderRow(tab, 'openai'), { baseUrl: 'https://api.openai.com/v1', maxConcurrent: 8 });
 });
 
 // ── Imports store their address; the listing key is the OpenRouter row's (providers.openrouter) ──

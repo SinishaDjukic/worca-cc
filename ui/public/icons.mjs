@@ -77,6 +77,10 @@ export const ICONS = Object.freeze({
   // A video's sound in the film's transport: Mute, and Unmute once muted.
   volume: '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"></path><path d="M15.5 9a4 4 0 0 1 0 6"></path><path d="M18.5 6.5a7.5 7.5 0 0 1 0 11"></path>',
   'volume-off': '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"></path><path d="M16 9.5l5 5M21 9.5l-5 5"></path>',
+  // The Providers tab's service marks (models/providers-tab.mjs): Speech, Image generation and Sound.
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"></rect><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"></path>',
+  image: '<rect x="4" y="5" width="16" height="14" rx="2"></rect><circle cx="9" cy="10" r="1.5"></circle><path d="M5 17l5-4.5 3.5 3 2.5-2 3 3.5"></path>',
+  wave: '<path d="M4 10v4M8 6.5v11M12 3.5v17M16 7.5v9M20 10v4"></path>',
   // The Models page's Jobs and Providers tabs (models/page-tabs.mjs); a plain cloud, unlike `remote`'s arrow.
   briefcase: '<rect x="4" y="8" width="16" height="11" rx="2"></rect><path d="M9 8V6.5A1.5 1.5 0 0 1 10.5 5h3A1.5 1.5 0 0 1 15 6.5V8M4 13h16"></path>',
   cloud: '<path d="M7.5 18a4 4 0 0 1-.6-7.96 5.5 5.5 0 0 1 10.6 1.02A3.5 3.5 0 0 1 17 18z"></path>',

@@ -21,18 +21,27 @@
 @container drows (max-width:560px){
   .mv-pv-card .mv-pv-row:not(.mv-sp-row) .mv-pv-ctl{grid-template-columns:minmax(0,1fr);}
 }
-/* Image generation (Design pictures): Service · Base URL · Model, then API key over two columns · Price. After the
-   block above, so its own grid wins over the field grid at the same weight. The Test picture is shown whole. */
+/* Image generation (Design pictures): Service · Model (the widest: model ids are long) · API key. Under them a preset
+   service's "Advanced" button, then its region on the same three columns: Base URL over two · Price. Other has no
+   fold: the same two fields sit openly in the grid, the endpoint line under them. After the block above, so its own
+   grid wins over the field grid at the same weight. The Test picture is shown whole. */
 .mv-im-result{display:flex;gap:12px;align-items:center;}
 .mv-im-result[hidden],.mv-im-shot[hidden]{display:none;}
 .mv-im-shot{flex:none;width:96px;height:96px;object-fit:contain;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--field);}
-.mv-pv-card .mv-pv-row.mv-im-row .mv-pv-ctl{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px 14px;align-items:start;}
-.mv-im-row .mv-im-key{grid-column:span 2;}
+.mv-pv-card .mv-pv-row.mv-im-row .mv-pv-ctl,.mv-im-row .mdl-adv{grid-template-columns:minmax(0,1fr) minmax(0,1.5fr) minmax(0,1fr);gap:10px 14px;align-items:start;}
+.mv-im-row .mdl-adv{display:grid;grid-column:1/-1;}
+.mv-im-row .mdl-disc{grid-column:1/-1;justify-self:start;}
+.mv-im-row .mv-im-baseurl{grid-column:span 2;}
 .mv-im-row .mv-im-price{max-width:190px;}
 .mv-im-row .mv-im-price .input{max-width:120px;}
+.mv-im-row .mv-im-endpoint{grid-column:1/-1;margin:0;}
+/* A typed model id, with "Pick from list" beside it while the service has a list. */
+.mdl-model-typed{display:flex;gap:6px;align-items:center;min-width:0;}
+.mdl-model-typed .input{flex:1 1 auto;min-width:0;}
+.mv-im-model-list{flex:none;}
 @container drows (max-width:560px){
-  .mv-pv-card .mv-pv-row.mv-im-row .mv-pv-ctl{grid-template-columns:minmax(0,1fr);}
-  .mv-im-row .mv-im-key{grid-column:auto;}
+  .mv-pv-card .mv-pv-row.mv-im-row .mv-pv-ctl,.mv-im-row .mdl-adv{grid-template-columns:minmax(0,1fr);}
+  .mv-im-row .mv-im-baseurl{grid-column:auto;}
 }
 /* Sound (Design): one key field, as wide as the Image generation key above it, then the buttons. The Test's line
    is a .hint (display:block), which beats the UA hidden rule, so it hides by its own. */
@@ -50,6 +59,12 @@
   .mv-pv-card .mv-pv-row.mv-or-row .mv-pv-ctl{grid-template-columns:minmax(0,1fr);}
   .mv-or-row .mv-or-key{grid-column:auto;}
 }
+/* A field whose hint is an ⓘ tip (bridge-view.mjs tippedField): Settings' .label-row adds a bottom margin and a 13px
+   label, so the row restates .mv-field-label's size and weight, and the 28px tip hangs over its 18px line instead of
+   heightening it. A tipped label then sits as an untipped one does, and the inputs of one grid line stay level. */
+.mv-pv-row .label-row{margin:0;}
+.mv-pv-row .label-row > .mv-field-label{font-size:12px;font-weight:600;}
+.mv-pv-row .label-row > .info-tip{margin-block:-6px;}
 /* New surface, new contrast: the house `.hint` / placeholder grey (--ink-3) sits at
    2.8:1 on a white card and is only tolerated where the light baseline predates the
    dark theme (test/fixtures/contrast-baseline-light.json — shrink, never grow). The
@@ -62,7 +77,6 @@
 /* Settings → Ask Worca → Web access: its fields are new, so their placeholders use --ink-2 like the rule
    above instead of joining the legacy light contrast baseline (the allowlist textarea failed at 2.58:1). */
 .ask-web .input::placeholder{color:var(--ink-2);}
-.mv-providers .mv-providers-hint{margin:-6px 0 0;}
 .mv-pv-row{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:12px 18px;padding:14px 0 0;border-top:1px solid var(--line-2);}
 .mv-pv-main{display:grid;gap:6px;align-content:start;min-width:0;}
 .mv-pv-main .hint{margin:0;}

@@ -11,6 +11,7 @@ import { useDomRelease } from './helpers/jsdom-release.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { lastToast, cardAlertOf } from './helpers/feedback.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
+import { readStyleCss } from '../src/core/read-style-css.mjs';
 import { SERVER_MJS, readServerSource } from '../src/core/read-server-source.mjs';
 
 // Release each booted window after its test (see test/helpers/jsdom-release.mjs).
@@ -1090,4 +1091,319 @@ test('one entry, one load: a row click and an old address each fetch the page on
       assert.equal(calls.filter((c) => c === req).length - n, 1, `${req} once`);
     } },
   ]));
+});
+
+// The Providers tab (models-menu P3): fold rows over today's row bodies, glued on in app.js. Rows start folded and
+// stay as the person left them through a redraw; a link to a row unfolds it; what was typed survives a redraw while a
+// Save shows the server's values; Copilot saves with its button; the broker hides keys; the summaries count models.
+test('Providers tab: fold state, reveal, and repaint that keeps typing', async () => {
+  /** GET /api/providers with every block: Copilot signed in (Individual, 2 at a time), images on OpenAI, no broker. */
+  const P = {
+    copilot: { connected: true, login: 'octo', accountType: 'individual', maxConcurrent: 2, tokenSource: 'stored', tokenRef: null, quota: { used: 12, entitlement: 300, unlimited: false, resetDate: '2026-10-01' } },
+    openrouter: { keySet: true, keySource: 'stored', keyRef: null, keyMasked: '••••••1234', legacyKey: false, maxConcurrent: 8, order: ['anthropic'], sort: 'price', allowFallbacks: true },
+    openai: { configured: true, keyOptional: false, keySet: true, keySource: 'stored', keyRef: null, keyMasked: '••••••abcd', baseUrl: 'https://gw.example/v1', maxConcurrent: 8 },
+    anthropic: { configured: true, keyOptional: false, keySet: true, keySource: 'stored', keyRef: null, keyMasked: '••••••wxyz', baseUrl: 'https://api.anthropic.com', maxConcurrent: 8 },
+    speech: {
+      stt: { engine: 'browser', baseUrl: '', model: 'whisper-1', language: 'auto', configured: false, keySet: false, keySource: null, keyMasked: null, keyRef: null, keyMissing: false },
+      tts: { engine: 'browser', baseUrl: '', model: 'tts-1', voice: 'af_heart', speed: 1, configured: false, keySet: false, keySource: null, keyMasked: null, keyRef: null, keyMissing: false },
+    },
+    images: { service: 'openai', baseUrl: 'https://api.openai.com/v1', model: 'gpt-image-2.6-flare', price: 0.04, configured: true, keySet: true, keySource: 'stored', keyRef: null, keyMasked: '••••••efgh', keyMissing: false },
+    sound: { keySet: true, keySource: 'stored', keyRef: null, keyMasked: '••••••cdef', keyMissing: false, configured: true },
+    broker: { enabled: false },
+  };
+  /** The same with the credential broker on: Copilot signed out (so its Sign in is drawn), a key page known. */
+  const BROKER = { ...P, copilot: { connected: false, accountType: 'individual', maxConcurrent: 4 }, broker: { enabled: true, keyPage: 'https://keys.example/', providers: {} } };
+  const item = (doc, name) => doc.querySelector(`#providers-list .mv-pv-card[data-row="${name}"]`);
+  const head = (doc, name) => item(doc, name).querySelector(':scope > .mdl-fold');
+  const body = (doc, name) => item(doc, name).querySelector(':scope > .mdl-fold-body');
+  const type = (window, input, value) => { input.value = value; input.dispatchEvent(new window.Event('input', { bubbles: true })); };
+  const errorsOf = (window) => { const list = []; window.addEventListener('error', (e) => list.push(e.message)); return list; };
+  /** Records every PATCH as "<url> <body>" (installed after boot, before the clicks). */
+  const patches = (window) => {
+    const bodies = [];
+    const inner = window.fetch;
+    globalThis.fetch = window.fetch = (u, opts = {}) => { if (opts.method === 'PATCH') bodies.push(`${u} ${opts.body}`); return inner(u, opts); };
+    return bodies;
+  };
+  const heldRoute = (answer) => {
+    let release;
+    const held = new Promise((r) => { release = r; });
+    return { route: () => held.then(() => ({ ok: true, status: 200, json: async () => answer })), release: () => release() };
+  };
+  await checkRows([
+    { name: 'every row starts folded; a head click unfolds one, and a redraw keeps it open (and folded again once folded)', run: async () => {
+      const { window, doc } = await boot({ hash: 'models/providers', routes: { '/api/providers': P } });
+      const errors = errorsOf(window);
+      assert.deepEqual([...doc.querySelectorAll('#providers-list .mdl-fold-body')].map((b) => b.hidden), [true, true, true, true, true, true, true]);
+      head(doc, 'openai').click();
+      assert.deepEqual([body(doc, 'openai').hidden, head(doc, 'openai').getAttribute('aria-expanded')], [false, 'true']);
+      const drawn = item(doc, 'openai');
+      window.__np.repaintProviders();
+      assert.notEqual(item(doc, 'openai'), drawn, 'the tab was drawn again');
+      assert.equal(body(doc, 'openai').hidden, false, 'the open row stays open');
+      assert.equal(body(doc, 'anthropic').hidden, true);
+      head(doc, 'openai').click();
+      window.__np.repaintProviders();
+      assert.equal(body(doc, 'openai').hidden, true, 'folded again, it stays folded');
+      assert.deepEqual(errors, []);
+    } },
+    { name: 'a key typed in a row and a switch turned off survive folding the row and a redraw', run: async () => {
+      const { window, doc } = await boot({ hash: 'models/providers', routes: { '/api/providers': P } });
+      head(doc, 'openai').click();
+      const key = item(doc, 'openai').querySelector('.mv-pv-key');
+      type(window, key, 'sk-typed');
+      head(doc, 'openai').click();
+      const fallbacks = item(doc, 'openrouter').querySelector('.mv-or-fallbacks');
+      fallbacks.checked = false;
+      fallbacks.dispatchEvent(new window.Event('change', { bubbles: true }));
+      window.__np.repaintProviders();
+      const now = item(doc, 'openai').querySelector('.mv-pv-key');
+      assert.notEqual(now, key, 'a new field');
+      assert.equal(now.value, 'sk-typed');
+      assert.equal(body(doc, 'openai').hidden, true, 'still folded');
+      assert.equal(item(doc, 'openrouter').querySelector('.mv-or-fallbacks').checked, false, 'the switch stays off');
+    } },
+    { name: 'a listed image model picked over a stored typed one comes back picked from the list after a redraw', run: async () => {
+      const typed = { ...P, images: { ...P.images, model: 'gpt-image-custom' } };
+      const { window, doc } = await boot({ hash: 'models/providers', routes: { '/api/providers': typed } });
+      const images = () => item(doc, 'images');
+      head(doc, 'images').click();
+      assert.equal(images().querySelector('.mv-im-model').value, 'gpt-image-custom', 'drawn typed: the id is not on the list');
+      images().querySelector('.mv-im-model-list').click();   // "Pick from list"
+      const pick = images().querySelector('.mv-im-model-pick');
+      pick.value = 'gpt-image-2.5-flare';
+      pick.dispatchEvent(new window.Event('change', { bubbles: true }));
+      doc.activeElement.blur();
+      window.__np.repaintProviders();
+      assert.equal(images().querySelector('.mv-im-model'), null);
+      assert.equal(images().querySelector('.mv-im-model-pick')?.value, 'gpt-image-2.5-flare');
+      assert.equal(doc.activeElement, doc.body, 'the redraw moved no cursor');
+    } },
+    { name: 'a redraw keeps a changed image service, a picked or typed image model and a speech engine, with the fields they decide, and moves no cursor', run: async () => {
+      const { window, doc } = await boot({ hash: 'models/providers', routes: { '/api/providers': P } });
+      const errors = errorsOf(window);
+      const change = (node, value) => { node.value = value; node.dispatchEvent(new window.Event('change', { bubbles: true })); };
+      const images = () => item(doc, 'images');
+      head(doc, 'images').click();
+      head(doc, 'speech').click();
+      change(images().querySelector('.mv-im-service'), 'xai');
+      change(images().querySelector('.mv-im-model-pick'), 'grok-imagine-image');
+      change(item(doc, 'speech').querySelector('.mv-sp-engine[data-kind="stt"]'), 'server');
+      window.__np.repaintProviders();
+      assert.equal(images().querySelector('.mv-im-service').value, 'xai');
+      assert.equal(images().querySelector('.mv-im-field[data-field="baseUrl"]').value, 'https://api.x.ai/v1', 'the service set its address');
+      assert.equal(images().querySelector('.mv-im-model-pick')?.value, 'grok-imagine-image', 'a listed id is picked from xAI\'s list');
+      assert.equal(item(doc, 'speech').querySelector('.mv-sp-engine[data-kind="stt"]').value, 'server');
+      assert.equal(item(doc, 'speech').querySelector('.mv-sp-server[data-kind="stt"]').hidden, false, 'the engine showed its server fields');
+      // An id that is not on the list comes back typed, the way "Other model…" draws it.
+      change(images().querySelector('.mv-im-model-pick'), '__other__');
+      type(window, images().querySelector('.mv-im-model'), 'grok-custom');
+      doc.activeElement.blur();
+      window.__np.repaintProviders();
+      assert.equal(images().querySelector('.mv-im-model-pick'), null);
+      assert.equal(images().querySelector('.mv-im-model').value, 'grok-custom');
+      assert.equal(doc.activeElement, doc.body, 'the redraw moved no cursor');
+      assert.deepEqual(errors, []);
+    } },
+    { name: 'a redraw puts each typed value back in its own field: the TTS engine (not STT\'s), the image price (not its Base URL)', run: async () => {
+      const { window, doc } = await boot({ hash: 'models/providers', routes: { '/api/providers': P } });
+      const errors = errorsOf(window);
+      const speech = () => item(doc, 'speech');
+      const images = () => item(doc, 'images');
+      head(doc, 'speech').click();
+      const tts = speech().querySelector('.mv-sp-engine[data-kind="tts"]');
+      tts.value = 'server';
+      tts.dispatchEvent(new window.Event('change', { bubbles: true }));
+      head(doc, 'images').click();
+      images().querySelector('.mdl-disc').click();   // Advanced
+      type(window, images().querySelector('.mv-im-field[data-field="price"]'), '0.07');
+      window.__np.repaintProviders();
+      // The two engines share their classes and differ by data-kind; Base URL and Price differ by data-field.
+      assert.equal(speech().querySelector('.mv-sp-engine[data-kind="stt"]').value, 'browser', 'STT keeps its own engine');
+      assert.equal(speech().querySelector('.mv-sp-engine[data-kind="tts"]').value, 'server');
+      assert.equal(speech().querySelector('.mv-sp-server[data-kind="tts"]').hidden, false, 'the TTS engine showed its server fields');
+      assert.equal(speech().querySelector('.mv-sp-server[data-kind="stt"]').hidden, true);
+      assert.equal(images().querySelector('.mv-im-field[data-field="baseUrl"]').value, 'https://api.openai.com/v1', 'the address is untouched');
+      assert.equal(images().querySelector('.mv-im-field[data-field="price"]').value, '0.07');
+      assert.deepEqual(errors, []);
+    } },
+    { name: 'only edited fields carry over: another row\'s Save shows the server\'s new address in an untouched field and keeps a typed key', run: async () => {
+      const moved = { ...P, openai: { ...P.openai, baseUrl: 'https://moved.example/v1' } };
+      // Prefix match, first key wins: the PATCH route before the read.
+      const routes = { '/api/providers/anthropic': moved, '/api/providers': P };
+      const { window, doc } = await boot({ hash: 'models/providers', routes });
+      const errors = errorsOf(window);
+      const bodies = patches(window);
+      routes['/api/providers'] = moved;   // the Save's follow-up read
+      type(window, item(doc, 'openai').querySelector('.mv-pv-key'), 'sk-new');
+      item(doc, 'anthropic').querySelector('.mv-pv-save').click();
+      await settle(12);
+      assert.deepEqual(bodies, ['/api/providers/anthropic {"baseUrl":"https://api.anthropic.com","maxConcurrent":8}']);
+      assert.equal(item(doc, 'openai').querySelector('.mv-pv-baseurl').value, 'https://moved.example/v1', 'the untouched field shows the server\'s value');
+      assert.equal(item(doc, 'openai').querySelector('.mv-pv-key').value, 'sk-new', 'the typed key stays');
+      assert.deepEqual(errors, []);
+    } },
+    { name: 'a Save shows the server\'s values in its own row: the typed key gives way to its masked echo', run: async () => {
+      const saved = { ...P, openrouter: { ...P.openrouter, keyMasked: '••••••5678' } };
+      const routes = { '/api/providers/openrouter': saved, '/api/providers': P };
+      const { window, doc } = await boot({ hash: 'models/providers', routes });
+      const bodies = patches(window);
+      routes['/api/providers'] = saved;
+      type(window, item(doc, 'openrouter').querySelector('.mv-pv-key'), 'sk-or-new');
+      item(doc, 'openrouter').querySelector('.mv-pv-save').click();
+      await settle(12);
+      assert.equal(bodies.length, 1);
+      assert.match(bodies[0], /^\/api\/providers\/openrouter \{"apiKey":"sk-or-new",/);
+      assert.equal(item(doc, 'openrouter').querySelector('.mv-pv-key').value, '••••••5678');
+      assert.equal(item(doc, 'openrouter').querySelector('.mv-pv-save').dataset.fbState, 'done', 'the new Save reads Saved');
+    } },
+    { name: 'a fresh load on #models/providers/images (the tab not yet painted) unfolds the row, flashes it and focuses its key', run: async () => {
+      const { window, doc } = await boot({ hash: 'models/providers/images', routes: { '/api/providers': P } });
+      const errors = errorsOf(window);
+      await settle();
+      assert.equal(body(doc, 'images').hidden, false);
+      assert.ok(item(doc, 'images').classList.contains('is-found'));
+      assert.equal(doc.activeElement, item(doc, 'images').querySelector('.mv-pv-key'), 'the focus is inside the card, on its key');
+      assert.equal(body(doc, 'openai').hidden, true, 'the other rows stay folded');
+      window.__np.repaintProviders();
+      assert.equal(body(doc, 'images').hidden, false, 'the row is open in the state, not only on screen');
+      assert.deepEqual(errors, []);
+    } },
+    { name: 'a link to a row that is already open leaves it open', run: async () => {
+      const { window, doc } = await boot({ hash: 'models/providers', routes: { '/api/providers': P } });
+      head(doc, 'images').click();
+      window.location.hash = 'models/providers/images';   // one hash write: one route, one reveal
+      await settle(12);
+      assert.equal(body(doc, 'images').hidden, false);
+      assert.ok(item(doc, 'images').classList.contains('is-found'));
+    } },
+    { name: 'a link whose address moved on before the providers answered leaves its row folded and unmarked', run: async () => {
+      const routes = { '/api/providers': () => ({ ok: false, status: 500, json: async () => ({ error: 'boom' }) }) };
+      const { window, doc } = await boot({ hash: 'models/jobs', routes });
+      await go(window, 'chat');
+      const providers = heldRoute(P);
+      routes['/api/providers'] = providers.route;
+      window.location.hash = 'models/providers/images';   // an entry: its read is held, no row to reveal yet
+      await settle(12);
+      window.location.hash = 'models/providers';           // moved on inside the page: no new read
+      await settle(12);
+      providers.release();
+      await settle(12);
+      assert.ok(item(doc, 'images'), 'the tab drew once the read answered');
+      assert.equal(body(doc, 'images').hidden, true);
+      assert.equal(item(doc, 'images').classList.contains('is-found'), false);
+      window.__np.repaintProviders();
+      assert.equal(body(doc, 'images').hidden, true, 'the stale link opened nothing in the state either');
+    } },
+    { name: 'a link focuses the first field a person can use: a signed-in Copilot\'s Account (not the info tip before it), Speech\'s engine (not the key in its hidden server fields)', run: async () => {
+      const { window, doc } = await boot({ hash: 'models/providers/copilot', routes: { '/api/providers': P } });
+      await settle();
+      assert.equal(body(doc, 'copilot').hidden, false);
+      assert.equal(doc.activeElement, item(doc, 'copilot').querySelector('.mv-cp-account'));
+      window.location.hash = 'models/providers/speech';
+      await settle(12);
+      assert.equal(doc.activeElement, item(doc, 'speech').querySelector('.mv-sp-engine[data-kind="stt"]'));
+    } },
+    { name: 'Copilot saves with its button: changing Account and the cap sends nothing, Save sends both', run: async () => {
+      const routes = { '/api/providers/copilot/models': { models: [] }, '/api/providers/copilot': P, '/api/providers': P };
+      const { window, doc } = await boot({ hash: 'models/providers', routes });
+      const errors = errorsOf(window);
+      const bodies = patches(window);
+      const row = item(doc, 'copilot');
+      for (const [sel, value] of [['.mv-cp-account', 'enterprise'], ['.mv-pv-conc', '4']]) {
+        const field = row.querySelector(sel);
+        field.value = value;
+        field.dispatchEvent(new window.Event('input', { bubbles: true }));
+        field.dispatchEvent(new window.Event('change', { bubbles: true }));
+      }
+      await settle();
+      assert.deepEqual(bodies, [], 'a change saves nothing');
+      row.querySelector('.mv-pv-save').click();
+      await settle(12);
+      assert.deepEqual(bodies, ['/api/providers/copilot {"accountType":"enterprise","maxConcurrent":4}']);
+      assert.deepEqual(errors, []);
+    } },
+    { name: 'the Copilot row\'s Import models… opens the import dialog over the Catalogue', run: async () => {
+      const routes = { '/api/providers/copilot/models': { models: [{ id: 'gpt-5', name: 'GPT-5', vendor: 'OpenAI' }] }, '/api/providers': P };
+      const { window, doc } = await boot({ hash: 'models/providers', routes });
+      item(doc, 'copilot').querySelector('.mv-cp-fetch-models').click();
+      await settle();
+      assert.equal(window.location.hash, '#models');
+      assert.equal(doc.getElementById('models-tab-catalogue').hidden, false, 'the Catalogue panel shows');
+      assert.equal(doc.getElementById('model-import-modal').classList.contains('hidden'), false, 'the dialog is open');
+      assert.equal(doc.getElementById('mimp-source').value, 'copilot');
+    } },
+    { name: 'with the broker on, keys, the Copilot sign-in and the provider Tests are hidden; the media Tests and the note show', run: async () => {
+      const { window, doc } = await boot({ hash: 'models/providers', routes: { '/api/providers': BROKER } });
+      doc.head.insertAdjacentHTML('beforeend', `<style>${readStyleCss()}</style>`);
+      const display = (n) => window.getComputedStyle(n).display;
+      const keyFields = [...doc.querySelectorAll('#providers-list [data-row] .mv-field')].filter((f) => f.querySelector('.mv-pv-key'));
+      assert.ok(keyFields.length >= 5, 'every row\'s key field is drawn');
+      assert.deepEqual(keyFields.map(display).filter((d) => d !== 'none'), [], 'every key field is hidden');
+      assert.equal(display(doc.querySelector('#providers-list .mv-cp-signin')), 'none');
+      assert.equal(display(item(doc, 'openai').querySelector('.mv-pv-test')), 'none');
+      assert.notEqual(display(doc.querySelector('#providers-list .mv-im-test')), 'none');
+      const note = doc.querySelector('#providers-list .mv-broker-note');
+      assert.ok(note && display(note) !== 'none', 'the note shows');
+      assert.match(note.textContent, /held by the credential broker/);
+      assert.equal(note.querySelector('a.mv-broker-link').getAttribute('href'), 'https://keys.example/');
+    } },
+    { name: 'with the broker on, a link to a row passes over what the broker hides: the OpenAI-compatible address, Copilot\'s Account', run: async () => {
+      const { window, doc } = await boot({ hash: 'models/providers/openai', routes: { '/api/providers': BROKER } });
+      await settle();
+      assert.ok(item(doc, 'openai').classList.contains('is-found'));
+      assert.equal(doc.activeElement, item(doc, 'openai').querySelector('.mv-pv-baseurl'), 'not the hidden key field');
+      window.location.hash = 'models/providers/copilot';
+      await settle(12);
+      assert.equal(doc.activeElement, item(doc, 'copilot').querySelector('.mv-cp-account'), 'not the hidden Sign in');
+    } },
+    { name: 'a catalogue change redraws the summaries: one OpenRouter model reads " · 1 model" when the tab shows again', run: async () => {
+      const routes = { '/api/providers': P };
+      const { window, doc } = await boot({ hash: 'models/providers', routes });
+      const summary = () => item(doc, 'openrouter').querySelector('.mdl-fold-sum').textContent;
+      assert.equal(summary(), 'openrouter.ai · 8 requests at a time');
+      routes['/api/models'] = { models: [{ id: 'or-gpt', label: 'OR GPT', efforts: [], engine: 'claude', env: {}, upstream: { provider: 'openai', baseUrl: 'https://openrouter.ai/api/v1', model: 'openai/gpt-5', api: 'openai-chat' } }], predefined: [], efforts: [] };
+      await go(window, 'models');
+      const cb = doc.querySelector('.mv-hide-builtin');
+      cb.checked = !cb.checked;
+      cb.dispatchEvent(new window.Event('change', { bubbles: true }));   // saves, then reads the catalogue again
+      await settle(12);
+      await go(window, 'models/providers');
+      assert.equal(summary(), 'openrouter.ai · 8 requests at a time · 1 model');
+    } },
+    { name: 'the old card builder is gone from bridge-view.mjs', run: async () => {
+      const name = ['renderProviders', 'Card'].join('');
+      assert.equal(name in await import('../ui/public/bridge-view.mjs'), false);
+    } },
+    { name: 'Image generation on Other with no price: Save says so in the row and sends nothing', run: async () => {
+      const other = { ...P, images: { service: 'other', baseUrl: 'http://127.0.0.1:7860/v1', model: 'sdxl', price: null, configured: false, keySet: false, keySource: null, keyRef: null, keyMasked: null, keyMissing: false } };
+      const routes = { '/api/providers/images': {}, '/api/providers': other };
+      const { window, doc } = await boot({ hash: 'models/providers', routes });
+      const bodies = patches(window);
+      item(doc, 'images').querySelector('.mv-im-save').click();
+      await settle();
+      const line = item(doc, 'images').querySelector('.mv-pv-msg');
+      assert.deepEqual([line.textContent, line.classList.contains('err')], ['Enter a price; 0 for a free server', true]);
+      assert.deepEqual(bodies, []);
+    } },
+    { name: 'a refused Save on a folded row unfolds it and shows the card\'s alert', run: async () => {
+      const routes = { '/api/providers/openai': () => ({ ok: false, status: 400, json: async () => ({ error: 'bad key' }) }), '/api/providers': P };
+      const { window, doc } = await boot({ hash: 'models/providers', routes });
+      assert.equal(body(doc, 'openai').hidden, true);
+      item(doc, 'openai').querySelector('.mv-pv-save').click();
+      await settle();
+      assert.equal(body(doc, 'openai').hidden, false);
+      assert.deepEqual(cardAlertOf(item(doc, 'openai')), { title: 'Not saved', detail: 'bad key' });
+      window.__np.repaintProviders();
+      assert.equal(body(doc, 'openai').hidden, false, 'open in the state too');
+    } },
+    { name: 'a Save that goes through leaves a folded row folded: its opening clear unfolds nothing', run: async () => {
+      const routes = { '/api/providers/openai': P, '/api/providers': P };
+      const { doc } = await boot({ hash: 'models/providers', routes });
+      item(doc, 'openai').querySelector('.mv-pv-save').click();
+      await settle(12);
+      assert.equal(body(doc, 'openai').hidden, true);
+      assert.equal(cardAlertOf(item(doc, 'openai')), null);
+    } },
+  ]);
 });

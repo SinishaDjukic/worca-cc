@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { renderAllInstalled, renderLeftover } from '../ui/public/marketplace/installed-view.mjs';
-import { renderProvidersCard } from '../ui/public/bridge-view.mjs';
+import { renderProvidersTab } from '../ui/public/models/providers-tab.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
 
@@ -28,13 +28,14 @@ test('Marketplace lists are one .card each, holding divided rows that are not bo
   }
 });
 
-test('Providers page: the split list is one .card of divided rows; the Models-view card keeps its head', () => {
-  const split = renderProvidersCard({}, { doc, split: true });
-  assert.ok(split.classList.contains('card') && split.classList.contains('drows') && split.classList.contains('mv-providers-split'));
-  const rows = split.querySelectorAll(':scope > .mv-pv-card');
-  assert.ok(rows.length > 0);
-  for (const r of rows) assert.ok(r.classList.contains('drow') && !r.classList.contains('card'), r.className);
-  assert.ok(renderProvidersCard({}, { doc }).classList.contains('card'));
+test('Providers tab: two .card lists of divided rows, seven rows in all', () => {
+  const tab = renderProvidersTab({}, { doc });
+  const cards = [...tab.querySelectorAll('.mv-providers-split')];
+  assert.equal(cards.length, 2);
+  for (const c of cards) assert.ok(c.classList.contains('card') && c.classList.contains('drows'), c.className);
+  const rows = cards.flatMap((c) => [...c.querySelectorAll(':scope > .mv-pv-card')]);
+  assert.equal(rows.length, 7);
+  for (const r of rows) assert.ok(r.classList.contains('drow') && r.classList.contains('drow-stack') && !r.classList.contains('card'), r.className);
 });
 
 test('no rule boxes a list row or restyles a list card: the .card and .drow primitives carry the look', () => {
