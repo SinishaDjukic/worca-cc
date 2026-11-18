@@ -920,17 +920,18 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
       status.className = `hint sa-status${S.error ? ' err' : ''}`; status.textContent = S.error || 'Type the proxy password again to retry';
       return;
     }
-    // Every step before Apply can leave the dialog, not only the first. Order: Cancel, then Skip / Discard changes,
-    // then Back and Next side by side (the workspace guide's foot).
+    // Every step before Apply can leave the dialog, not only the first. Order: Cancel, then Skip / Use saved values,
+    // then Back and Next side by side (the workspace guide's foot), in one group a narrow foot never splits.
     actions.append(btn(entry === 'first' ? 'Set up later' : 'Cancel', 'btn btn-quiet sa-later', () => { void cancel(); }));
     const gate = S.answers ? nextGate(S.step, S.answers, { saved: S.saved, tested: S.tested, now: now(), detect: S.detect, entry, netSaved: S.netSaved }) : { ok: false, reason: '' };
     const skipLabel = S.answers && idx() >= 1 && idx() <= 4 ? skipLabelFor(gate) : null;
     if (skipLabel) actions.append(btn(skipLabel, 'btn btn-quiet sa-skip', () => { void skip(); }));
-    if (!first) actions.append(btn('Back', 'btn sa-back', () => goTo(stepBefore())));
+    const nav = el('span', 'sa-nav');
+    if (!first) nav.append(btn('Back', 'btn sa-back', () => goTo(stepBefore())));
     const label = S.step === 'check' ? 'Start' : S.step === 'review' ? (gate.finish ? 'Finish' : 'Apply') : 'Next';
     const onNext = () => (S.step === 'network' ? nextFromNetwork() : S.step !== 'review' ? goTo(stepAfter()) : gate.finish ? teardown('done', { applied: !!S.netSaved }) : startApply(null));
     const next = btn(label, 'btn btn-primary sa-next', onNext);
-    next.disabled = !gate.ok || S.testing; actions.append(next);
+    next.disabled = !gate.ok || S.testing; nav.append(next); actions.append(nav);
     status.className = `hint sa-status${S.error ? ' err' : ''}`; status.textContent = S.error || gate.reason;
   }
 
@@ -961,10 +962,11 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
   // network apply those are re-read first: its earlier steps may have saved some of them.
   // The second button on steps 2–5 shows only when it does something Next does not. Both labels run skip(), which
   // puts the step back to its saved values and moves on. Next blocked (an untested proxy, a missing sign-in):
-  // "Skip for now". The step differs from what is saved (the Review step's Changed): "Discard changes". Else none.
+  // "Skip for now". The step differs from what is saved (the Review step's Changed): "Use saved values"
+  // (not "Discard changes", which is Cancel's question and closes the dialog). Else none.
   function skipLabelFor(gate) {
     if (!gate.ok) return 'Skip for now';
-    return diffRows(S.saved, S.answers).some((r) => r.step === S.step && r.changed) ? 'Discard changes' : null;
+    return diffRows(S.saved, S.answers).some((r) => r.step === S.step && r.changed) ? 'Use saved values' : null;
   }
   async function skip() {
     if (S.netRetry && S.step === 'network') {

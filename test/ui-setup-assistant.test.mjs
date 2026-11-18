@@ -403,13 +403,13 @@ test('keyboard: a step change moves focus into the dialog, and Tab / Shift+Tab w
   } finally { h.close(); }
 });
 
-test('the second button: none when the step is as saved, Discard changes once it differs, which puts it back', async () => {
+test('the second button: none when the step is as saved, Use saved values once it differs, which puts it back', async () => {
   const h = await open({ entry: 'rerun' });
   try {
     await h.goTo('work');
     assert.equal(h.$('.sa-skip'), null, 'nothing to discard and Next is open: Back and Next only');
     await h.type('work.pipelineCostLimitUsd', '9');
-    assert.equal(h.$('.sa-skip').textContent, 'Discard changes');
+    assert.equal(h.$('.sa-skip').textContent, 'Use saved values');
     await h.click('.sa-skip');
     assert.equal(h.title(), 'Check and apply');
     await h.goTo('work');
@@ -1096,13 +1096,16 @@ test('server text renders as text: a Copilot login, a result line and a detect l
   } finally { h.close(); }
 });
 
-test('foot order: Cancel, then Discard changes, then Back and Next side by side', async () => {
+test('foot order: Cancel, then Use saved values, then Back and Next side by side in one group', async () => {
   const h = await open({ entry: 'rerun' });
   try {
     await h.goTo('work');
     await h.type('work.pipelineCostLimitUsd', '9');
     assert.deepEqual([...h.doc.querySelectorAll('#setup-modal .confirm-actions button')].map((b) => b.textContent),
-      ['Cancel', 'Discard changes', 'Back', 'Next']);
+      ['Cancel', 'Use saved values', 'Back', 'Next']);
+    // Back and Next are one group, so a narrow foot wraps before them, never between them.
+    assert.equal(h.$('.sa-back').parentElement, h.$('.sa-next').parentElement);
+    assert.ok(h.$('.sa-next').parentElement.classList.contains('sa-nav'));
   } finally { h.close(); }
 });
 

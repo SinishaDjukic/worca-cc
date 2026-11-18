@@ -96,6 +96,8 @@
    left; Skip / Discard changes, Back and the primary action stay on the right, Back and the primary side by side,
    the primary last. paintFoot always appends the left one first. */
 .setup-card .dlg-foot .confirm-actions > :first-child:not(:last-child){margin-right:auto;}
+/* Back and the primary wrap as one, kept right: at 375px the line breaks before them, never between them. */
+.setup-card .dlg-foot .sa-nav{display:flex;gap:inherit;flex-wrap:nowrap;margin-left:auto;}
 .setup-card .sa-status{min-width:0;overflow-wrap:anywhere;}
 .setup-card .hint{color:var(--ink-2);}
 .setup-card .hint.err{color:var(--red-ink);}
