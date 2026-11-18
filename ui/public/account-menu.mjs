@@ -250,7 +250,7 @@ export function paintIdentityCard(card, acct) {
 const CARD_AVATAR_PX = 22;
 const TOP_NOTE = "You've reached the top level.";
 
-/** The level card, placed directly above the Interface mode row: a 22px avatar, the level name and
+/** The level card, the account menu's first item: a 22px avatar, the level name and
  *  "View level"; then "To <Next>" with the progress ("1 of 4", or "12 of 30 days"); then small segments.
  *  At the top level it says so instead, with no second row and no segments. The progress is in the
  *  button's accessible name, so the segments are aria-hidden. Opens #profile/level. No data-min-level:
@@ -300,6 +300,15 @@ export function renderLevelCard(view, { doc = globalThis.document } = {}) {
  *  mode, the appearance switcher's own icon), the same person as the corner's away badge. One icon in
  *  both states: the switch at the row's right edge shows whether you are away. */
 const AWAY_ICON_PATHS = Object.freeze([...ICONS['stepped-out'].matchAll(/\bd="([^"]+)"/g)].map((m) => m[1]));
+
+/** Fill the Appearance row's empty `svg.mi-ic` placeholder with ICONS.appearance, as SVG-namespace nodes
+ *  (the markup is parsed with an xmlns, so the circle and path render). No-op on null or a filled one. */
+export function paintAppearanceIcon(svg) {
+  if (!svg || svg.firstChild) return;
+  const doc = svg.ownerDocument;
+  const parsed = new doc.defaultView.DOMParser().parseFromString(`<svg xmlns="${SVG_NS}">${ICONS.appearance}</svg>`, 'image/svg+xml');
+  svg.replaceChildren(...[...parsed.documentElement.childNodes].map((node) => doc.importNode(node, true)));
+}
 
 /** Paint the away row (#acct-away, a menuitemcheckbox: checked = away) from describeAwayRow's answer.
  *  The label stays "Away"; aria-checked carries the state. `busy`: a click is in flight; `err`: the last

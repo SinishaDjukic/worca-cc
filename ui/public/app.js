@@ -219,7 +219,7 @@ import {
 } from './source-pane.mjs';
 import { renderStatsBody, renderStatsView, renderBudgetReadout, renderCostPauseBanner, statsQuery, groupsToCsv, statsRangeLabel, DEFAULT_FMT } from './stats-view.mjs';
 import { createCostReport } from './cost-report.mjs';
-import { personInitials, describeAccount, paintAccountCorner, paintIdentityCard, renderSpendCard, paintAwayRow } from './account-menu.mjs';
+import { personInitials, describeAccount, paintAccountCorner, paintIdentityCard, renderSpendCard, paintAwayRow, paintAppearanceIcon } from './account-menu.mjs';
 import { usageModel, ringParts, paintUsageRings, paintUsageRow, renderUsageMenu } from './usage-view.mjs';
 import { createComposer, isReservedWorkflowId, isBuiltinWorkflow } from './graph/composer.mjs';
 import { createWorkflowsShell, toSpawnEntry } from './workflows/shell.mjs';
@@ -1709,20 +1709,23 @@ function repaintPeople() {
 
 // ── The account corner and its menu (account-menu.mjs) ─────────────────────────
 // The corner sits at the foot of the sidebar: the avatar (who is looking), the usage rings (usage-view.mjs),
-// a violet dot while away. Its menu opens upward: the spend card,
-// "Signed in as" (a shared identity only), Interface mode (a side menu), Settings, the Away and Keep awake switches,
-// the appearance icons, and Usage last (a side menu). A level, a switch or a theme change leaves it open; a route closes it.
+// a violet dot while away. Its menu opens upward: the level card, "Signed in as" (a shared identity only), the spend
+// card with Usage under it (a side menu), the Away and Keep awake switches, then the preferences: the team setup notice,
+// the appearance icons, Interface mode (a side menu) and Settings last. A level, a switch or a theme change leaves it
+// open; a route closes it.
 const acctState = { account: describeAccount(null), away: null };   // away: describeAwayRow's last answer
 const acctBtn = document.getElementById('side-acct');
 const acctMenu = document.getElementById('acct-menu');
-// focusChecked: false — a keyboard open lands on the spend card, not on the checked theme icon.
+// focusChecked: false — a keyboard open lands on the first item (the level card, else the spend card), not on the
+// checked theme icon.
 // The team setup notice repaints each time the menu opens (paintTeamNotice is a hoisted function declaration below).
 const acctFly = createFlyout({ trigger: acctBtn, menu: acctMenu, mode: 'up', focusChecked: false, onOpen: () => { void paintTeamNotice(); } });
+paintAppearanceIcon(document.querySelector('#acct-menu .theme-sect > .mi-ic'));
 // Interface mode's side menu hangs off the menu (side-flyout closes it with the menu, and Escape
 // closes it first); ui-level.mjs fills it, and a pick there is a choose like a dialog card.
 createFlyout({ trigger: document.getElementById('acct-lvl'), menu: document.getElementById('lvl-menu'), mode: 'beside', parent: acctMenu });
 // Usage (usage-view.mjs): the providers' plan-limit readings (GET /api/usage-limits) as the avatar's rings, the
-// menu's last row and its submenu, which hangs off the menu exactly as Interface mode's does. Refetched on its push
+// menu's row under the spend card and its submenu, which hangs off the menu exactly as Interface mode's does. Refetched on its push
 // (usage-limits-changed), on hello and on pipelines-changed (a usage-limit pause, resume or stop), and on the budget
 // tick only when a window's reset has passed. One fetch in flight plus one trailing; a failure keeps the last answer.
 const usageState = { answer: null, fetching: false, pending: false };
