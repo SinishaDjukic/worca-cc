@@ -64,7 +64,7 @@ const OPEN_BACKOFF_MS = 15;
 /** Latest schema version. Bump + append a new migration step when the DDL grows.
  *  Exported so migration tests assert "reached the module's current version"
  *  instead of hardcoding the number — a schema bump then touches no test file. */
-export const SCHEMA_VERSION = 92;
+export const SCHEMA_VERSION = 98;
 
 /** store_meta row holding the install's default guardrail set id (JSON string). */
 export const GUARDRAILS_DEFAULT_META_KEY = 'guardrails:default';
@@ -840,6 +840,7 @@ ${STEP_QUESTIONS_DDL}
  * against the live schema so the gap can be healed regardless of the stamp.
  */
 const INCREMENTAL_COLUMNS = {
+  designs:                { models_json: 'TEXT', pictures: 'INTEGER NOT NULL DEFAULT 1', sound_json: 'TEXT' },   // v93: the design's own lead and builder picks ({lead?, builder?}); NULL = the Models page's; v94: the design's Pictures switch, 1 = on; v95: the design's sound choice
   req_cost_ledger:        { brief_id: 'INTEGER', attachment_id: 'TEXT', helper_message_id: 'INTEGER',
                             engine: 'TEXT', step: 'TEXT', cost_kind: 'TEXT', input_tokens: 'INTEGER', output_tokens: 'INTEGER' },   // v74: a brief look's spend (feature_seq is 0 then); v77: a file's read or ask; v78: a helper call (A3 D13); v89: 9c (engine, step, billed|estimated|unknown, tokens)
   req_features:           { early_start_reason: 'TEXT', model_json: 'TEXT' },   // v85: the reason given for starting a feature before Ready, kept until a run starts; NULL = none; v89: the feature's { engine, model, effort } (9c D2); NULL = before 9c
@@ -872,7 +873,7 @@ const INCREMENTAL_COLUMNS = {
                             release_url: 'TEXT',      // v66: the draft release's URL
                             release_error: 'TEXT',    // v66: why creating it failed (not retried)
                             pr_auto: 'TEXT',          // v87: the run's PR-when-done decision and its outcome (JSON, src/core/pr-auto.mjs); NULL = before v87 or a CLI start
-                            is_test: 'INTEGER' },     // v91 (workflow tests D21/D22): 1 = a test try, hidden from lists, Statistics, metrics; NULL = a normal run
+                            is_test: 'INTEGER' },     // v97 (workflow tests D21/D22): 1 = a test try, hidden from lists, Statistics, metrics; NULL = a normal run
   pipeline_steps:         { session_id: 'TEXT', skills: 'TEXT', graphify_count: 'INTEGER',
                             execution_id: 'TEXT', exec_kind: 'TEXT', agent_key: 'TEXT', ended_at: 'TEXT',
                             exec_trigger: 'TEXT', exec_result: 'TEXT', exec_meta: 'TEXT',
@@ -880,9 +881,9 @@ const INCREMENTAL_COLUMNS = {
   sub_agents:             { ui_phase: 'TEXT', skills: 'TEXT', subagent_type: 'TEXT', graphify_count: 'INTEGER',
                             run_model: 'TEXT' },   // v25: the model the child actually ran on
   workflows:              { domain: 'TEXT', origin: 'TEXT', graph: 'TEXT', archived_at: 'TEXT',
-                            live_version_no: 'INTEGER' },   // v90: the named version new runs use (NULL = the row itself)
-  wf_test_tries:          { start_commit: 'TEXT', disk_bytes: 'INTEGER',   // v92 (workflow tests 3a): a project try's start and checkout size
-                            setup: 'TEXT', changes: 'TEXT' },              // v92: its setup run (JSON) and its change list (JSON)
+                            live_version_no: 'INTEGER' },   // v96: the named version new runs use (NULL = the row itself)
+  wf_test_tries:          { start_commit: 'TEXT', disk_bytes: 'INTEGER',   // v98 (workflow tests 3a): a project try's start and checkout size
+                            setup: 'TEXT', changes: 'TEXT' },              // v98: its setup run (JSON) and its change list (JSON)
   config_workflow_nodes:  { ask_questions: 'INTEGER', subagent_model: 'TEXT',   // v25: sub-agent model policy
                             roles: 'TEXT' },   // v84: JSON { roleKey: { model?, effort? } }, a role-review node's per-role picks; NULL = none
   ask_run_links:          { comment_ids: 'TEXT' },        // v22: JSON array of dc_ ids pending at launch
@@ -941,7 +942,7 @@ const INCREMENTAL_COLUMNS = {
                             resume_pipeline_id: 'TEXT',   // v44: a one-off "resume this paused run" ticket (NULL = starts a new run)
                             preset_id: 'TEXT' },   // v63: the run preset this run follows (read at fire time); NULL = none
   projects:               { vcs: 'TEXT' },   // v69: 'git' | 'none' (CONTRACT §1); NULL reads as 'git'
-  wf_test_example_projects: { project_name: 'TEXT' },   // v92 (3a): the pinned project's name, for a project no longer registered
+  wf_test_example_projects: { project_name: 'TEXT' },   // v98 (3a): the pinned project's name, for a project no longer registered
 };
 
 /** v23: per-loop-wire cycle budgets, the graph-engine twin of
@@ -1520,7 +1521,7 @@ CREATE INDEX IF NOT EXISTS req_attachments_owner ON req_attachments(owner_type, 
 CREATE UNIQUE INDEX IF NOT EXISTS req_attachments_sha ON req_attachments(owner_type, owner_id, sha256);
 `;
 
-// v90 (plans/workflow-tests-plan.md, #721 workflow part): every save keeps the state it replaced (version_no NULL,
+// v96 (plans/workflow-tests-plan.md, #721 workflow part): every save keeps the state it replaced (version_no NULL,
 // the last 50 per workflow) and Save version keeps a numbered state (never pruned). Append-only and FK-free like
 // ask_cost_ledger, so history outlives a deleted workflows row. `graph` = {nodes, wires, canvas?, codeGraph?}.
 const WORKFLOW_REVISIONS_DDL = `
@@ -1594,7 +1595,47 @@ CREATE TABLE IF NOT EXISTS req_export_links (
 );
 `;
 
-// v91 (plans/workflow-tests-part2-plan.md D31): workflow tests. Examples (+ their files as BLOBs), test runs, tries and
+// v92 Design (SPEC C-9): the library row per design, one row per build round, one per agent process, and the spend
+// ledger (its rows outlive a deleted design). <home>/design/<designId>/ is the disk half. No spending limit of its own
+// (M13): spend counts toward worca's limits. Reconcile-safe: IF NOT EXISTS + INCREMENTAL_TABLES; no foreign keys.
+const DESIGN_DDL = `
+CREATE TABLE IF NOT EXISTS designs (
+  id TEXT PRIMARY KEY, title TEXT NOT NULL, kind TEXT NOT NULL, fast INTEGER NOT NULL DEFAULT 0,
+  project_key TEXT, thread_id TEXT, engine TEXT, status TEXT NOT NULL DEFAULT 'empty',
+  current_build TEXT, version INTEGER NOT NULL DEFAULT 0,
+  created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, models_json TEXT,
+  pictures INTEGER NOT NULL DEFAULT 1, sound_json TEXT);
+CREATE INDEX IF NOT EXISTS designs_updated ON designs(updated_at);
+CREATE TABLE IF NOT EXISTS design_builds (
+  id TEXT PRIMARY KEY, design_id TEXT NOT NULL, round INTEGER NOT NULL, kind TEXT NOT NULL, status TEXT NOT NULL,
+  brief TEXT NOT NULL, fast INTEGER NOT NULL, reason TEXT, sections_json TEXT NOT NULL DEFAULT '[]',
+  agents_total INTEGER NOT NULL DEFAULT 0, layers INTEGER NOT NULL DEFAULT 0, cost_usd REAL NOT NULL DEFAULT 0,
+  started_at TEXT NOT NULL, ended_at TEXT, created_by TEXT);
+CREATE INDEX IF NOT EXISTS design_builds_design ON design_builds(design_id, round);
+CREATE TABLE IF NOT EXISTS design_agents (
+  id TEXT PRIMARY KEY, build_id TEXT NOT NULL, role TEXT NOT NULL, section_id TEXT, job TEXT NOT NULL,
+  engine TEXT NOT NULL, model TEXT, effort TEXT, session_id TEXT, status TEXT NOT NULL,
+  cost_usd REAL, cost_known INTEGER NOT NULL DEFAULT 1, tokens TEXT, asks INTEGER NOT NULL DEFAULT 0,
+  started_at TEXT NOT NULL, ended_at TEXT, error TEXT);
+CREATE INDEX IF NOT EXISTS design_agents_build ON design_agents(build_id);
+CREATE TABLE IF NOT EXISTS design_cost_ledger (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, design_id TEXT NOT NULL, build_id TEXT, agent_id TEXT,
+  amount_usd REAL NOT NULL, model TEXT, ts INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS design_cost_ledger_ts ON design_cost_ledger(ts);
+`;
+
+// v94 Design pictures (D10): one row per picture ask, written once when the ask ends (`made` or `failed`; "making" is a
+// frame only). A remake under the same name adds a row. Reconcile-safe: IF NOT EXISTS + INCREMENTAL_TABLES; no foreign
+// keys. designs.pictures (the design's Pictures switch) comes from INCREMENTAL_COLUMNS.
+const DESIGN_PICTURES_DDL = `
+CREATE TABLE IF NOT EXISTS design_pictures (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, design_id TEXT NOT NULL, build_id TEXT NOT NULL, round INTEGER NOT NULL,
+  name TEXT NOT NULL, shape TEXT NOT NULL, prompt TEXT NOT NULL, model TEXT, state TEXT NOT NULL,
+  file TEXT, w INTEGER, h INTEGER, cost_usd REAL, ms INTEGER, reason TEXT, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS design_pictures_design ON design_pictures(design_id, round, id);
+`;
+
+// v97 (plans/workflow-tests-part2-plan.md D31): workflow tests. Examples (+ their files as BLOBs), test runs, tries and
 // the tries a run shows (its own and the ones it reused). FK-free like workflow_revisions: a deleted workflow keeps its
 // examples, and they come back with a workflow saved again under the same id.
 const WORKFLOW_TESTS_DDL = `
@@ -1674,7 +1715,7 @@ CREATE TABLE IF NOT EXISTS wf_test_run_tries (
   PRIMARY KEY (run_id, try_id)
 );`;
 
-// v92 (plans/workflow-tests-part3a-plan.md D41, D53): an example's project and pinned start point. FK-free like the v78
+// v98 (plans/workflow-tests-part3a-plan.md D41, D53): an example's project and pinned start point. FK-free like the v78
 // tables. `changes` = the person's uncommitted changes at save time, as a binary patch (NULL = none); `start_commit` = the
 // commit tries start from (start_sha itself, or Worca's commit of start_sha + changes in its copy of the project).
 // `project_name` = the project's name when the start was pinned: shown when the project is no longer registered, never the
@@ -1733,13 +1774,13 @@ const INCREMENTAL_TABLES = {
   run_groups:        RUN_GROUPS_DDL,
   run_group_members: RUN_GROUPS_DDL,
   ask_chat_groups:   ASK_CHAT_GROUPS_DDL,      // v76 (#948 s3)
-  workflow_revisions: WORKFLOW_REVISIONS_DDL,  // v90 (workflow tests Part 1, #721)
-  wf_test_examples:      WORKFLOW_TESTS_DDL,   // v91 (workflow tests Part 2)
+  workflow_revisions: WORKFLOW_REVISIONS_DDL,  // v96 (workflow tests Part 1, #721)
+  wf_test_examples:      WORKFLOW_TESTS_DDL,   // v97 (workflow tests Part 2)
   wf_test_example_files: WORKFLOW_TESTS_DDL,
   wf_test_runs:          WORKFLOW_TESTS_DDL,
   wf_test_tries:         WORKFLOW_TESTS_DDL,
   wf_test_run_tries:     WORKFLOW_TESTS_DDL,
-  wf_test_example_projects: WORKFLOW_TEST_PROJECTS_DDL,   // v92 (workflow tests 3a)
+  wf_test_example_projects: WORKFLOW_TEST_PROJECTS_DDL,   // v98 (workflow tests 3a)
   night_decisions:   NIGHT_DECISIONS_DDL,
   chat_conversations: CHAT_CONVERSATIONS_DDL,
   chat_controls: CHAT_CONVERSATIONS_DDL,
@@ -1759,6 +1800,11 @@ const INCREMENTAL_TABLES = {
   req_helper_messages: REQUIREMENTS_HELPER_DDL,
   req_export_setups: REQUIREMENTS_EXPORT_DDL,  // v80 (A6)
   req_export_links:  REQUIREMENTS_EXPORT_DDL,  // v80 (A6)
+  designs:            DESIGN_DDL,  // v92 Design (C-9)
+  design_builds:      DESIGN_DDL,  // v92
+  design_agents:      DESIGN_DDL,  // v92
+  design_cost_ledger: DESIGN_DDL,  // v92
+  design_pictures:    DESIGN_PICTURES_DDL,  // v94
 };
 
 /**
@@ -2950,9 +2996,25 @@ export function migrate(db) {
     // cost_kind, input_tokens, output_tokens}, req_turns/req_helper_messages.{engine, notices_json}, req_attachments.read_engine
     // (all nullable, INCREMENTAL_COLUMNS, so the whole step is the reconcile).
     if (current < 89) repairSchemaGaps(db, schemaGaps(db));
-    // v90 workflow history + versions (this rung was v78, then v79, then v83, then v84, then v85, then v87, then v89, on
-    // feat/workflow-tests before dev took 78, 79, 83, 84, 85, 86, 87, 88 and 89). Every DB that branch stamped lacks dev's v89
-    // 9c columns (a DB it stamped 89 also skips dev's v89 rung): the hoisted repairSchemaGaps adds them. A DB that branch stamped 87 has
+    // v90, v91: reserved. Stillhet's ask_threads.labels and pipelines.cost_cap_usd were reverted from dev on 2026-11-14 (branch backup/dev-before-revert); the numbers stay taken, so a DB stamped up to 95 stays valid.
+    // v92 Design: library, builds, agents, spend (first written as v87, then v89; PR-when-done #1156 took 87, Requirements A6.1 took 88,
+    // Requirements 9c took 89 and Stillhet's chat labels and run cost cap took 90 and 91). IF NOT EXISTS, so a DB an earlier Design
+    // numbering stamped 87 to 92 keeps its Design tables and gains dev's columns above.
+    if (current < 92) db.exec(DESIGN_DDL);
+    // v93: designs.models_json — INCREMENTAL_COLUMNS, added by the hoisted repairSchemaGaps (a v92 DB) or by the v92 DDL
+    // above (an older DB). First written as v88, then v90.
+    // v94 Design pictures: one row per ask (D10); designs.pictures comes from INCREMENTAL_COLUMNS. First written as v91.
+    if (current < 94) db.exec(DESIGN_PICTURES_DDL);
+    // v95 Design sound: designs.sound_json (the design's sound choice, D2) — INCREMENTAL_COLUMNS, added by the hoisted
+    // repairSchemaGaps (a v92+ DB) or by the v92 DDL above (an older DB). First written as v92.
+    // v96 workflow history + versions (this rung was v78, then v79, then v83, then v84, then v85, then v87, then v89, then v90,
+    // on feat/workflow-tests before dev took 78, 79, 83, 84, 85, 86, 87, 88, 89 and 90–95). No DB that branch stamped has
+    // dev's Design tables, and one it stamped 92 also skips dev's v92 Design rung (`current < 92` is false): the hoisted
+    // repairSchemaGaps (current < SCHEMA_VERSION) creates designs (with models_json, pictures and sound_json, so dev's v93
+    // and v95 too), design_builds, design_agents, design_cost_ledger and design_pictures from INCREMENTAL_TABLES, whatever
+    // the stamp; dev's v92 / v94 rungs are IF NOT EXISTS. Dev's v90 and v91 are reserved numbers with no step. A DB that
+    // branch stamped 89 to 91 before it took dev's 9c (its earlier numbering) lacks dev's v89 9c columns (one it stamped 89
+    // also skips dev's v89 rung): the hoisted repairSchemaGaps adds them. A DB that branch stamped 87 has
     // workflow_revisions but skips dev's v87, which has no step of its own, and runs dev's v88 repair above, which adds
     // pipelines.pr_auto, workspaces.settings_json and shape_features.pr_* with the A6.1 columns. A DB it stamped 85 also skips
     // dev's v85 chat rung and dev's v86: the hoisted repairSchemaGaps (current < SCHEMA_VERSION) creates chat_conversations /
@@ -2961,29 +3023,34 @@ export function migrate(db) {
     // one it stamped 83 also lacks ask_messages.engine, and one it stamped 79 also lacks run_groups.name_source: the same
     // repair adds them, and the v80–v82 rungs above run. A DB it stamped 78 also gets req_helper_messages and
     // ledger.helper_message_id from INCREMENTAL_TABLES / INCREMENTAL_COLUMNS.
-    if (current < 90) db.exec(WORKFLOW_REVISIONS_DDL);   // v90 workflow history + versions; workflows.live_version_no comes from INCREMENTAL_COLUMNS
-    // v91 workflow tests (this rung was v78, then v80, then v85, then v86, then v88, then v90, on feat/workflow-tests-part2
-    // before dev took 77/78, 80–83, 84, 85, 86, 87, 88 and 89 and Part 1's revisions moved to 79, then 83, then 84, then 85,
-    // then 87, then 89, then 90). A DB that branch stamped 88 skips dev's v87 and v88 rungs: the hoisted repairSchemaGaps (current < SCHEMA_VERSION)
+    if (current < 96) db.exec(WORKFLOW_REVISIONS_DDL);   // v96 workflow history + versions; workflows.live_version_no comes from INCREMENTAL_COLUMNS
+    // v97 workflow tests (this rung was v78, then v80, then v85, then v86, then v88, then v90, then v91, on
+    // feat/workflow-tests-part2 before dev took 77/78, 80–83, 84, 85, 86, 87, 88, 89 and 90–95 and Part 1's revisions moved to
+    // 79, then 83, then 84, then 85, then 87, then 89, then 90, then 96). A DB that branch stamped 91 has the wf_test_* tables
+    // but none of dev's Design tables: the hoisted repairSchemaGaps creates them, as for v96. A DB that branch stamped 88 skips
+    // dev's v87 and v88 rungs: the hoisted repairSchemaGaps (current < SCHEMA_VERSION)
     // adds the PR-when-done and A6.1 columns (their tables exist on it). A DB it stamped 86 runs dev's v88 repair and also
     // skips dev's v85 and v86 rungs: the hoisted repair creates the chat tables and adds req_features.early_start_reason. A DB
     // it stamped 85 also lacks config_workflow_nodes.roles: the same repair adds it. A DB it stamped 80 has
     // workflow_revisions and the wf_test_* tables but skips dev's v80 rung above: the hoisted repairSchemaGaps creates
     // req_export_setups / req_export_links from INCREMENTAL_TABLES and adds run_groups.name_source and ask_messages.engine;
     // the v81 / v82 / v85 / v88 rungs run. A DB it stamped 78 also gets req_attachments, req_helper_messages,
-    // ledger.attachment_id / helper_message_id and starts.files_json the same way. The v90 and v91 DDL are IF NOT EXISTS.
-    if (current < 91) db.exec(WORKFLOW_TESTS_DDL);   // v91 workflow tests; pipelines.is_test comes from INCREMENTAL_COLUMNS
-    // v92 workflow tests 3a (this rung was v81, then v86, then v87, then v89, then v91, on feat/workflow-tests-part3 before
-    // dev took 79–89 and Parts 1 and 2 moved to 90 and 91). The repair runs again: a DB without the tests tables gets wf_test_tries
-    // from the hoisted repair's table pass or the v91 rung, without its v92 columns, so it gets them only from this call
-    // (v74's pattern). A DB that branch stamped 89 skips dev's v87 and v88 rungs; the hoisted repair (and this one) adds the
+    // ledger.attachment_id / helper_message_id and starts.files_json the same way. The v96 and v97 DDL are IF NOT EXISTS.
+    if (current < 97) db.exec(WORKFLOW_TESTS_DDL);   // v97 workflow tests; pipelines.is_test comes from INCREMENTAL_COLUMNS
+    // v98 workflow tests 3a (this rung was v81, then v86, then v87, then v89, then v91, then v92, on feat/workflow-tests-part3
+    // before dev took 79–95 and Parts 1 and 2 moved to 96 and 97). The repair runs again: a DB without the tests tables gets
+    // wf_test_tries from the hoisted repair's table pass or the v97 rung, without its v98 columns, so it gets them only from
+    // this call (v74's pattern). A DB that branch stamped 92 (the old number of this rung) has every workflow-tests table and
+    // column but skips dev's v92 Design rung (`current < 92` is false): the hoisted repair creates the Design tables, and
+    // dev's v94 rung runs. A DB dev stamped 92 to 95 has the Design tables and gets the v96–v98 tables here. A DB that branch
+    // stamped 89 skips dev's v87 and v88 rungs; the hoisted repair (and this one) adds the
     // PR-when-done and A6.1 columns. A DB it stamped 87 runs dev's v88 repair and skips dev's v85 and v86 rungs; the hoisted
     // repair creates the chat tables and adds req_features.early_start_reason. A DB it stamped 86 also lacks
     // config_workflow_nodes.roles: the same repair adds it. A DB it stamped 81 skips dev's v81 rung above (the guardrail
     // default row is not written, so it reads as a new install's Normal, the stricter default); the hoisted repair creates
     // req_export_setups / req_export_links and adds run_groups.name_source and ask_messages.engine, the v82, v85 and v88
-    // rungs run, and the v90 / v91 / v92 DDL are IF NOT EXISTS.
-    if (current < 92) { db.exec(WORKFLOW_TEST_PROJECTS_DDL); repairSchemaGaps(db, schemaGaps(db)); }
+    // rungs run, and the v96 / v97 / v98 DDL are IF NOT EXISTS.
+    if (current < 98) { db.exec(WORKFLOW_TEST_PROJECTS_DDL); repairSchemaGaps(db, schemaGaps(db)); }
     db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     db.exec('COMMIT');
   } catch (err) {

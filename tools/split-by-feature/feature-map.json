@@ -575,6 +575,7 @@
           ".rd-graph",
           ".hd-graph",
           ".run-warn",
+          ".run-scope",
           ".rg-hint",
           ".gv-wrap-monitor",
           ".run-strip"
@@ -634,7 +635,9 @@
           ".mcp-def-row",
           ".mcp-def-fill",
           ".mcp-res-",
-          ".mcp-resolution"
+          ".mcp-resolution",
+          "#plugin-modal .card:has(.mcp-imp)",
+          ".mcp-imp"
         ],
         "feature": "mcp-servers",
         "name": "server-fields"
@@ -904,7 +907,7 @@
         "name": "away-screensaver"
       },
       {
-        "section": "^marketplace P7$",
+        "section": "^Design$",
         "selectors": [
           ":is(.ask-card,.chat-rc,.shape-feature)"
         ],
@@ -1467,6 +1470,17 @@
       ],
       "css": [],
       "html": []
+    },
+    {
+      "name": "design",
+      "doc": "docs/design.md",
+      "routes": [],
+      "css": [
+        "^Design$"
+      ],
+      "html": [
+        "<!-- ===== VIEW: DESIGN"
+      ]
     }
   ]
 }

@@ -11,6 +11,8 @@
 // state.steps[] IS the execution ledger: one row per execution, key ===
 // executionId. There is no separate executions[] array.
 import { join, isAbsolute, extname, dirname, basename, sep } from 'node:path';
+import { mkdirSync } from 'node:fs';
+import { runScratchDir } from './run-manifest.mjs';
 import { rm, readFile, readdir, access, stat, writeFile, mkdir, realpath } from 'node:fs/promises';
 import { readDirections, pendingDirections } from './directions.mjs';
 import { runsOn } from '../shared/connections.mjs';
@@ -55,7 +57,7 @@ import { normalizeDecisions, conflictDecisions, validateDecisionPicks, decisionC
 import { createScheduler, sliceExecutionId, QUIESCENCE_WARNING } from './graph/scheduler.mjs';
 import { sigkillGraceMs } from './engines/spawn.mjs';
 import { runExecution, allocateOutputs, allocateVerdict, readDecomposition, decompositionProblems, CHECKLIST_REVIEWER_KEY, SLICE_PLANNER_KEY, SLICE_SCOPE_AGENT_KEYS, _testing as executorTesting } from './graph/executor.mjs';
-import { serialQueue, measureCodeCursor, collectStepEvidence } from './graph/human-evidence.mjs';
+import { serialQueue, measureCodeCursor, collectStepEvidence, withoutMembers } from './graph/human-evidence.mjs';
 import { estimateStepHours, resolveConstants, sumStepHours } from '../shared/human-estimate.mjs';
 import { diffNumstat } from './git-info.mjs';
 import { humanEstimateOverrides } from './settings.mjs';
@@ -164,6 +166,7 @@ export class GraphOrchestrator extends RunHarness {
       openIssues: [],
       result: null,              // {type, path?, value?} | null
       warnings: [],
+      scopeNotices: [],          // E9: [{nodeId, executionId, count, expectedCount, cross, notable:[{path, tool, cross?}]}]
       wireDeliveries: {},        // {[wireId]: n}
       tokens: {},                // {'<node>.<port>': {seq,type,path,firedAt}}
       gate: null,                // {wireId, fromNode, toNode, askId} | null
@@ -1259,6 +1262,7 @@ export class GraphOrchestrator extends RunHarness {
     if (s.wireDeliveries && typeof s.wireDeliveries === 'object') this.state.wireDeliveries = { ...s.wireDeliveries };
     if (Array.isArray(s.warnings)) this.state.warnings = [...new Set([...(this._pickWarnings || []), ...s.warnings])];
     if (Array.isArray(s.openIssues)) this.state.openIssues = s.openIssues.map((o) => ({ ...o }));
+    if (Array.isArray(s.scopeNotices)) this.state.scopeNotices = s.scopeNotices.map((n) => ({ ...n, notable: Array.isArray(n.notable) ? n.notable.map((p) => ({ ...p })) : [] }));
     if (s.endReached === true) { this.state.endReached = true; if (s.result) this.state.result = { ...s.result }; }
     if (s.tokens) {
       const t = {};
@@ -2369,6 +2373,9 @@ export class GraphOrchestrator extends RunHarness {
     // P1 (v3, defence in depth): a Folder run's nodes never start on the REAL folder, whatever reattach path left runCwd unset.
     if (this.workMode === 'folder' && !this.runCwd) throw new Error('a Folder run has no copy to work on');
     const { resumeSessionId, coldRedispatch } = this._reattachFor(executionId, node.id);
+    // The agent's TMPDIR points here, and a TMPDIR that does not exist fails every tool that reads it.
+    const scratch = runScratchDir(this.runRoot);
+    if (scratch) mkdirSync(scratch, { recursive: true });
     return {
       // When this execution began. _indexExtraFiles compares it against each
       // candidate's mtime to tell the files this execution WROTE from the ones it
@@ -2671,9 +2678,11 @@ export class GraphOrchestrator extends RunHarness {
 
   /** Intent-to-add every member worktree, then measure. A NEW file is invisible to
    *  `git diff <checkpoint>` until `git add -N` has seen it (the harness stages the same
-   *  way before a review); ignoreAbort so the stopped path still measures. Never throws. */
+   *  way before a review); ignoreAbort so the stopped path still measures. A diff base may move to git's own merge or
+   *  rebase first (_refreshMergeBases), so the cursor, results.json and the live diff share one base. Never throws. */
   async _humanMeasure() {
     try {
+      await this._refreshMergeBases();
       return await measureCodeCursor({
         workDirs: this.workDirs, checkpointRefs: this.checkpointRefs,
         excludeFor: (k) => this._excludePathspecs(k),
@@ -2692,7 +2701,10 @@ export class GraphOrchestrator extends RunHarness {
     const kind = ctx?.node?.kind;
     if (this._humanCursorReady || (kind !== 'agent' && kind !== 'script')) return Promise.resolve();
     this._humanCursorReady = true;
-    return this._humanRun(async () => { this._humanCursor = await this._humanMeasure(); }).catch(() => {});
+    return this._humanRun(async () => {
+      this._humanCursor = await this._humanMeasure();
+      this._baseMovedSinceCursor = null;                 // the baseline is measured against the current base
+    }).catch(() => {});
   }
 
   /** Evidence → hours for ONE terminal execution, serialized with every other measurement of
@@ -2707,8 +2719,13 @@ export class GraphOrchestrator extends RunHarness {
       const cursorPrev = this._humanCursor;
       const measured = await this._humanMeasure();
       if (measured) this._humanCursor = measured;
+      // D9: a member whose diff base moved since the previous cursor (a base-branch merge or rebase) has a previous
+      // count against another base: credit that member from zero, every other member from its previous count.
+      const moved = this._baseMovedSinceCursor;
+      this._baseMovedSinceCursor = null;
       if (kind !== 'agent') return;
-      const evidence = await collectStepEvidence({ ctx, cursorPrev, cursorNow: measured || cursorPrev });
+      const evidence = await collectStepEvidence({ ctx, cursorPrev: withoutMembers(cursorPrev, moved),
+        cursorNow: measured || cursorPrev });
       const est = estimateStepHours(evidence, resolveConstants(humanEstimateOverrides()));
       ctx.human = { hours: est.hours, signals: { ...est.signals, method: est.method } };
     }).catch(() => { ctx.human = null; });

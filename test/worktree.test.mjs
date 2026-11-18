@@ -693,3 +693,138 @@ test('commitOf / isAncestor / defaultBranchRef give up when git is slower than t
     process.env.PATH = PATH;
   }
 });
+
+// ── Conflict runs: git's own auto-merge as the diff base ─────────────────────────────────────
+import { autoMergeBase, newestBaseIn, diffLineCount, pinDiffBase, dropDiffBaseRefs, DIFF_BASE_REF_PREFIX } from '../src/core/worktree.mjs';
+
+/** main with base.txt + shared.txt, a `dev` side that moves on and edits shared.txt, a `feat` side that
+ *  edits shared.txt the other way: merging dev into feat conflicts on shared.txt only. */
+function _mergeRepo() {
+  const dir = templateRepo('wt-am', { branch: 'main', user: true, files: { 'shared.txt': 'a\nb\nc\n', 'base.txt': 'x\n' } });
+  created.push(dir);
+  const g = (...a) => {
+    const r = spawnSync('git', ['-c', 'commit.gpgsign=false', ...a], { cwd: dir, encoding: 'utf8' });
+    return { out: r.stdout.trim(), status: r.status, err: r.stderr };
+  };
+  g('checkout', '-q', '-b', 'dev');
+  writeFileSync(join(dir, 'teammate.txt'), Array.from({ length: 50 }, (_, i) => `t${i}`).join('\n') + '\n');
+  writeFileSync(join(dir, 'shared.txt'), 'a\nDEV\nc\n');
+  g('add', '-A'); g('commit', '-q', '-m', 'dev moves on');
+  g('checkout', '-q', '-b', 'feat', 'main');
+  writeFileSync(join(dir, 'shared.txt'), 'a\nFEAT\nc\n');
+  g('add', '-A'); g('commit', '-q', '-m', 'feat edit');
+  return { dir, g, dev: g('rev-parse', 'dev').out, feat: g('rev-parse', 'feat').out };
+}
+
+test('autoMergeBase: the tree is merge-tree\'s, parents are ours/theirs, the ref pins it, a second call gives the same sha', async () => {
+  const { dir, g, dev, feat } = _mergeRepo();
+  const w = await autoMergeBase(dir, { ours: feat, theirs: dev, pipelineId: 'p1', key: 'k' });
+  assert.ok(w && /^[0-9a-f]{40,64}$/.test(w.sha));
+  assert.equal(w.conflicted, true);
+  assert.equal(w.ours, feat); assert.equal(w.theirs, dev);
+  const mt = g('merge-tree', '--write-tree', '--no-messages', feat, dev).out.split('\n')[0];
+  assert.equal(w.tree, mt);
+  assert.equal(g('rev-parse', `${w.sha}^{tree}`).out, mt);
+  assert.equal(g('rev-list', '--parents', '-n', '1', w.sha).out, `${w.sha} ${feat} ${dev}`);
+  assert.equal(g('rev-parse', `${DIFF_BASE_REF_PREFIX}p1/k`).out, w.sha);
+  const again = await autoMergeBase(dir, { ours: feat, theirs: dev, pipelineId: 'p1', key: 'k' });
+  assert.equal(again.sha, w.sha);
+  // A clean merge (main into dev) reports conflicted:false.
+  const clean = await autoMergeBase(dir, { ours: dev, theirs: g('rev-parse', 'main').out, pipelineId: 'p1', key: 'k2' });
+  assert.equal(clean.conflicted, false);
+});
+
+test('autoMergeBase: git diff W M numstat equals git show --remerge-diff M numstat on a conflicting fixture', async () => {
+  const { dir, g, dev, feat } = _mergeRepo();
+  g('merge', '-q', '--no-ff', '-m', 'merge dev', 'dev');
+  writeFileSync(join(dir, 'shared.txt'), 'a\nFEAT+DEV\nc\n');
+  g('add', '-A'); g('commit', '-q', '--no-edit');
+  const m = g('rev-parse', 'HEAD').out;
+  assert.equal(g('rev-list', '--parents', '-n', '1', m).out, `${m} ${feat} ${dev}`);
+  const w = await autoMergeBase(dir, { ours: feat, theirs: dev, pipelineId: 'p2', key: 'k' });
+  const ours = g('diff', '--numstat', w.sha, m).out;
+  const remerge = g('show', '--remerge-diff', '--numstat', '--format=', m).out;
+  assert.ok(ours, 'the resolution shows in the diff');
+  assert.equal(ours, remerge);
+  assert.doesNotMatch(ours, /teammate\.txt/);
+});
+
+test('autoMergeBase refuses a leading \'-\', a bad pipelineId/key and a non-commit side (null, no ref written)', async () => {
+  const { dir, g, dev, feat } = _mergeRepo();
+  const tree = g('rev-parse', `${feat}^{tree}`).out;
+  for (const args of [
+    { ours: '-x', theirs: dev, pipelineId: 'p', key: 'k' },
+    { ours: feat, theirs: '--all', pipelineId: 'p', key: 'k' },
+    { ours: feat, theirs: dev, pipelineId: '../p', key: 'k' },
+    { ours: feat, theirs: dev, pipelineId: 'p', key: 'a/b' },
+    { ours: feat, theirs: dev, pipelineId: 'p' },
+    { ours: tree, theirs: dev, pipelineId: 'p', key: 'k' },
+    { ours: 'nope', theirs: dev, pipelineId: 'p', key: 'k' },
+  ]) {
+    assert.equal(await autoMergeBase(dir, args), null, JSON.stringify(args));
+  }
+  assert.equal(await autoMergeBase(dir), null);
+  assert.equal(g('for-each-ref', '--format=%(refname)', 'refs/worca/').out, '');
+});
+
+test('newestBaseIn: the newest base commit in the heads\' history that the start lacks, however it got there', async () => {
+  const { dir, g, dev, feat } = _mergeRepo();
+  const tip = (ref, sha) => ({ ref, sha });
+  // Nothing merged yet: dev's merge base with feat is an ancestor of the start.
+  assert.equal(await newestBaseIn(dir, { heads: [feat], start: feat, tips: [tip('dev', dev)] }), null);
+  // A merge of an unrelated branch brings no base commit.
+  g('checkout', '-q', '-b', 'side', 'main');
+  writeFileSync(join(dir, 'side.txt'), 's\n'); g('add', '-A'); g('commit', '-q', '-m', 'side');
+  g('checkout', '-q', 'feat');
+  g('merge', '-q', '--no-ff', '-m', 'merge side', 'side');
+  assert.equal(await newestBaseIn(dir, { heads: ['HEAD'], start: feat, tips: [tip('dev', dev)] }), null, 'a merge of an unrelated branch');
+  // dev merged, then dev moves on and arrives through another branch: the newest one wins.
+  g('merge', '-q', '--no-ff', '-X', 'ours', '-m', 'merge dev', 'dev');
+  assert.deepEqual(await newestBaseIn(dir, { heads: ['HEAD'], start: feat, tips: [tip('origin/dev', dev)] }), { onto: dev, ref: 'origin/dev' });
+  g('checkout', '-q', 'dev');
+  writeFileSync(join(dir, 'later.txt'), 'l\n'); g('add', '-A'); g('commit', '-q', '-m', 'dev later');
+  const dev2 = g('rev-parse', 'dev').out;
+  g('checkout', '-q', '-b', 'carrier', 'dev');
+  writeFileSync(join(dir, 'carrier.txt'), 'c\n'); g('add', '-A'); g('commit', '-q', '-m', 'carrier');
+  g('checkout', '-q', 'feat');
+  const tips = [tip('dev@start', dev), tip('dev', dev2)];
+  assert.deepEqual(await newestBaseIn(dir, { heads: ['HEAD', 'carrier'], start: feat, tips }), { onto: dev2, ref: 'dev' }, 'MERGE_HEAD side');
+  g('merge', '-q', '--no-ff', '-X', 'ours', '-m', 'merge carrier', 'carrier');
+  assert.deepEqual(await newestBaseIn(dir, { heads: ['HEAD'], start: feat, tips }), { onto: dev2, ref: 'dev' }, 'via another branch');
+  // Swapped parents: dev checked out, feat merged into it.
+  g('checkout', '-q', '-b', 'swapped', 'dev');
+  g('merge', '-q', '--no-ff', '-X', 'ours', '-m', 'swap', feat);
+  assert.deepEqual(await newestBaseIn(dir, { heads: ['HEAD'], start: feat, tips }), { onto: dev2, ref: 'dev' }, 'swapped parents');
+  for (const bad of [{ heads: ['HEAD'], start: feat, tips: [] }, { heads: ['HEAD'], start: 'nope', tips }, { heads: [], start: feat, tips },
+    { heads: ['HEAD'], start: feat, tips: [tip('dev', 'HEAD')] }, {}]) {
+    assert.equal(await newestBaseIn(dir, bad), null, JSON.stringify(bad));
+  }
+});
+
+test('diffLineCount / pinDiffBase', async () => {
+  const { dir, g, dev } = _mergeRepo();
+  g('checkout', '-q', '-b', 'rb', 'dev');
+  writeFileSync(join(dir, 'own.txt'), '1\n2\n'); g('add', '-A'); g('commit', '-q', '-m', 'own');
+  const head = g('rev-parse', 'HEAD').out;
+  assert.equal(await diffLineCount(dir, dev, head), 2);
+  assert.equal(await diffLineCount(dir, 'nope', head), null);
+  assert.equal(await pinDiffBase(dir, 'p9', 'k', head), true);
+  assert.equal(g('rev-parse', `${DIFF_BASE_REF_PREFIX}p9/k`).out, head);
+  assert.equal(await pinDiffBase(dir, '../p', 'k', head), false);
+  assert.equal(await pinDiffBase(dir, 'p9', 'k', 'HEAD'), false);
+});
+
+test('dropDiffBaseRefs removes only this pipeline\'s refs', async () => {
+  const { dir, g, dev, feat } = _mergeRepo();
+  for (const [id, key] of [['abc', 'k1'], ['abc', 'k2'], ['abcd', 'k1']]) {
+    assert.ok(await autoMergeBase(dir, { ours: feat, theirs: dev, pipelineId: id, key }));
+  }
+  const refs = () => g('for-each-ref', '--format=%(refname)', 'refs/worca/').out.split('\n').filter(Boolean).sort();
+  assert.equal(await dropDiffBaseRefs(dir, 'abc', 'k2'), 1);
+  assert.deepEqual(refs(), [`${DIFF_BASE_REF_PREFIX}abc/k1`, `${DIFF_BASE_REF_PREFIX}abcd/k1`]);
+  assert.equal(await dropDiffBaseRefs(dir, 'abc'), 1);
+  assert.deepEqual(refs(), [`${DIFF_BASE_REF_PREFIX}abcd/k1`]);
+  assert.equal(await dropDiffBaseRefs(dir, '../x'), 0);
+  assert.equal(await dropDiffBaseRefs(dir, 'abcd'), 1);
+  assert.deepEqual(refs(), []);
+});

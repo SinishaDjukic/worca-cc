@@ -163,6 +163,8 @@ const JS_CHECKBOX_OK = [
   ['workflows/test-dialogs.mjs', 'wft-keep-box', 'picks what to keep from the past run: its request and files, its answers'],
   ['workflows/test-dialogs.mjs', 'wft-tv-optin', 'opt-ins next to the estimate: reuse earlier results, the free quick check'],
   ['workflows/example-editor.mjs', 'wft-changes-box', 'opts in to keeping the uncommitted changes with the example, next to its start point (board 32)'],
+  ['design/export-dialog.mjs', 'dsx-replace', 'consent: replace the listed files'],
+  ['mcp-server-import.mjs', 'mcp-imp-pick', 'picks servers to import'],
 ].map(([file, token, reason]) => ({ file: `ui/public/${file}`, token, reason }));
 function checkboxEmitters(files) {
   const out = [];
@@ -237,11 +239,11 @@ test('one menu: the five families keep position and size only, no skin of their 
   assert.deepEqual(bad, []);
 });
 
-test('one menu: the 6 role="menu" boxes in index.html are .menu and their menu items are .menu-item', () => {
+test('one menu: the 7 role="menu" boxes in index.html are .menu and their menu items are .menu-item', () => {
   // The run, history and project pages live in <template>s, whose content querySelectorAll does not enter.
   const inTemplates = (root) => [root, ...[...root.querySelectorAll('template')].flatMap((t) => inTemplates(t.content))];
   const menus = inTemplates(index).flatMap((r) => [...r.querySelectorAll('[role="menu"]')]);
-  assert.equal(menus.length, 6);   // 3 .nav-fly, 3 .btn-split-menu
+  assert.equal(menus.length, 7);   // 4 .nav-fly (with the Usage submenu), 3 .btn-split-menu
   assert.deepEqual(menus.filter((m) => !m.classList.contains('menu')).map((m) => m.id || m.className), []);
   // Segmented rows inside the account menu (the theme icons) are not menu rows.
   assert.deepEqual(menus.flatMap((m) => [...m.querySelectorAll('button[role^="menuitem"], [role="menu"] > button')])

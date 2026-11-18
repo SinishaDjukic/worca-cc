@@ -8,6 +8,7 @@
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { minLevelFor } from '../ui/public/ui-level.mjs';
 import { useDomRelease } from './helpers/jsdom-release.mjs';
@@ -18,6 +19,9 @@ import { readStyleCss } from '../src/core/read-style-css.mjs';
 const appPath = fileURLToPath(new URL('../ui/public/app.js', import.meta.url));
 const css = readStyleCss();
 const trackDom = useDomRelease(afterEach);
+// account-corner.css alone, comments stripped; cssRule: the body of the first rule whose selector is exactly `sel`.
+const CORNER_CSS = readFileSync(fileURLToPath(new URL('../ui/public/shell/account-corner.css', import.meta.url)), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+const cssRule = (sel, text = css) => { const m = text.match(new RegExp(`(?:^|[\\s,}])${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]*)\\}`)); return m ? m[1] : null; };
 const DAY = 86400000;
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const settle = async (n = 6) => { for (let i = 0; i < n; i++) await tick(); };
@@ -29,7 +33,7 @@ const FREE = { enabled: true, known: true, limit: 50, remaining: 4, resetAt: new
 // width: a viewport (the nav tiers read `(max-width: …)` queries); hover: a mouse (`(hover: hover)` matches);
 // budget: false makes GET /api/budget fail (no snapshot ever arrives). keepAwake: the setting GET /api/settings reports;
 // keepAwakeSave: 'ok', or the { status, error } the server answers a {keepAwake} save with.
-async function boot({ whoami = { name: 'ada.lovelace@acme.dev', source: 'access', shared: true }, free = FREE, width = null, hover = false, budget = true, levelSave = 'ok', keepAwake = true, keepAwakeSave = 'ok' } = {}) {
+async function boot({ whoami = { name: 'ada.lovelace@acme.dev', source: 'access', shared: true }, free = FREE, width = null, hover = false, budget = true, levelSave = 'ok', keepAwake = true, keepAwakeSave = 'ok', usage = { harnesses: [] } } = {}) {
   const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/', pretendToBeVisual: true }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -41,7 +45,14 @@ async function boot({ whoami = { name: 'ada.lovelace@acme.dev', source: 'access'
     window.matchMedia = (q) => ({ media: q, matches: matches(q), addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} });
   }
   window.__budgetTickMs = DAY;
-  window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
+  const wsBox = { ws: null };
+  window.WebSocket = class {
+    constructor() { this.readyState = 1; this._listeners = {}; wsBox.ws = this; }
+    send() {} close() {}
+    addEventListener(type, fn) { (this._listeners[type] ||= []).push(fn); }
+    dispatch(type, evt) { (this._listeners[type] || []).forEach((fn) => fn(evt)); }
+  };
+  const usageBox = { answer: usage };
   const posts = [];
   window.fetch = (u, opts = {}) => {
     const url = String(u);
@@ -58,6 +69,7 @@ async function boot({ whoami = { name: 'ada.lovelace@acme.dev', source: 'access'
     }
     if (url.endsWith('/api/settings')) return ok({ keepAwake, chat: {} });
     if (url.endsWith('/api/whoami')) return ok(whoami);
+    if (url.endsWith('/api/usage-limits')) return ok(usageBox.answer);
     if (url.includes('/api/budget')) return budget ? ok(BUDGET()) : Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'boom' }) });
     if (url.includes('/api/openrouter/free-daily')) return ok(free || { enabled: false });
     if (url.includes('/api/projects')) return ok({ projects: [] });
@@ -75,8 +87,17 @@ async function boot({ whoami = { name: 'ada.lovelace@acme.dev', source: 'access'
   const click = (el, detail = 1) => el.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true, detail }));
   // Keys go where focus is, as in a browser (the menu reads its arrows on itself; Escape is the document's).
   const key = (k) => (doc.activeElement || doc.body).dispatchEvent(new window.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
-  return { window, doc, $, click, key, posts };
+  // A server push: the frame through the page's socket, then the refetch it starts.
+  const push = async (frame) => { wsBox.ws?.dispatch('message', { data: JSON.stringify(frame) }); await settle(); };
+  return { window, doc, $, click, key, posts, usageBox, push };
 }
+
+// Two providers with readings (the mocks' figures): the avatar's rings, the Usage row and its submenu.
+const HOUR = 3600000;
+const USAGE = () => ({ harnesses: [
+  { engine: 'claude', observedAt: Date.now(), windows: [{ kind: 'session', pct: 41, resetsAt: Date.now() + HOUR }, { kind: 'week', pct: 73, resetsAt: Date.now() + 100 * HOUR }] },
+  { engine: 'codex', observedAt: Date.now(), windows: [{ kind: 'session', pct: 86, resetsAt: Date.now() + 2 * HOUR }, { kind: 'week', pct: 44, resetsAt: Date.now() + 50 * HOUR }] },
+] });
 
 test('the account menu: the corner opens it upward; a click outside, Escape and a route close it', async () => {
   const { window, doc, $, click, key } = await boot();
@@ -116,7 +137,9 @@ test('stylesheet: the rail keeps the avatar, ring and dot; the popups are fixed;
   const rule = (sel) => { const m = css.match(new RegExp(`(?:^|[\\s,}])${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]*)\\}`)); return m ? m[1] : null; };
   assert.match(rule('.sidebar.collapsed .acct-name,.sidebar.collapsed .acct-updown') || '', /display:none/, 'the rail drops the name and the glyph');
   assert.doesNotMatch(css, /\.sidebar\.collapsed [^{]*\.acct-(?:ring|ava|dot)[^{]*\{[^}]*display:none/, 'never the avatar, the ring or the dot');
-  assert.match(rule('.acct[data-spend="ok"] .acct-ring,.acct[data-spend="warn"] .acct-ring,.acct[data-spend="over"] .acct-ring') || '', /display:block/);
+  assert.match(rule('.acct:not([data-usage-s="none"]) .acct-ring .ring-s,.acct:not([data-usage-l="none"]) .acct-ring .ring-l') || '', /display:inline/, 'a ring per reported slot');
+  assert.match(rule('.acct-ring .ring-s,.acct-ring .ring-l') || '', /display:none/, 'no reading, no ring');
+  assert.match(rule('.nav-fly.usage-menu') || '', /width:300px;/);
   assert.match(rule('.nav-fly') || '', /position:fixed/, 'the menus are .nav-fly popups');
   assert.match(rule('.nav-fly.acct-menu') || '', /width:258px;/);
   assert.match(rule('.nav-fly.lvl-menu') || '', /width:236px;/);
@@ -154,17 +177,18 @@ test('the free-request row paints on its own answer: /api/budget fails, the card
   assert.equal(doc.querySelector('#acct-spend .mc-free .mi-val').textContent, '4 / 50');
 });
 
-test('the account menu: its order and roles (spend card · Signed in as · Interface mode · Settings · away row · appearance icons last), and the keyboard', async () => {
+test('the account menu: its order and roles (Signed in as · spend card + Usage · switches · team setup · appearance icons · Interface mode · Settings last), and the keyboard', async () => {
   const { doc, $, click, key } = await boot();
   await checkRows([
     { name: 'order and roles', run: () => {
       const menu = $('acct-menu');
       assert.deepEqual([...menu.children].map((el) => el.id || el.className),
-        ['acct-spend', 'acct-id', 'msect', 'msect sw-sect', 'msect theme-sect']);
+        ['acct-id', 'acct-spend', 'msect usage-sect', 'msect sw-sect', 'msect']);
+      assert.equal(menu.querySelector('.usage-sect').hidden, true, 'no reading: the Usage section is hidden');
       assert.deepEqual([...menu.querySelectorAll('.msect')].map((s) => [s.getAttribute('role'), [...s.children].map((b) => b.id)]),
-        [['group', ['acct-team-setup', 'acct-lvl', 'acct-settings']], ['group', ['acct-away', 'acct-keepawake']], ['group', ['acct-theme-k', 'acct-theme']]], 'each run of rows is its own section; the two switches share one');
+        [['group', ['acct-usage']], ['group', ['acct-away', 'acct-keepawake']], ['group', ['acct-team-setup', '', 'acct-lvl', 'acct-settings']]], 'Usage under the spend card; the two switches share one; the preferences: team setup, Appearance, Interface mode, Settings');
       assert.deepEqual([...menu.querySelectorAll('[role^="menuitem"]')].map((b) => b.id || b.dataset.themeMode || b.className),
-        ['btn btn-sm mc-btn', 'mi menu-item mc-free', 'acct-team-setup', 'acct-lvl', 'acct-settings', 'acct-away', 'acct-keepawake', 'system', 'light', 'dark'], 'Details, the free row, the team-setup row (hidden until the team updates its setup), the four rows, then the three icons');
+        ['btn btn-sm mc-btn', 'mi menu-item mc-free', 'acct-usage', 'acct-away', 'acct-keepawake', 'acct-team-setup', 'system', 'light', 'dark', 'acct-lvl', 'acct-settings'], 'Details, the free row, Usage (hidden until a reading), the two switches, the team-setup row (hidden until the team updates its setup), the three icons, Interface mode, then Settings');
       assert.equal($('acct-away').closest('.msect').getAttribute('aria-label'), 'Switches');
       assert.deepEqual([...$('acct-theme').querySelectorAll('button')].map((b) => [b.getAttribute('role'), b.getAttribute('aria-label'), b.textContent.trim()]),
         [['menuitemradio', 'System', ''], ['menuitemradio', 'Light', ''], ['menuitemradio', 'Dark', '']], 'icons only: the name is the aria-label');
@@ -177,11 +201,15 @@ test('the account menu: its order and roles (spend card · Signed in as · Inter
       key('ArrowDown');
       assert.ok(doc.activeElement.classList.contains('mc-free'));
       key('ArrowDown');
-      assert.equal(doc.activeElement, $('acct-lvl'));
+      assert.equal(doc.activeElement, $('acct-away'), 'the hidden Usage row is skipped');
       key('End');
-      assert.equal(doc.activeElement.dataset.themeMode, 'dark', 'the last icon ends the menu');
+      assert.equal(doc.activeElement, $('acct-settings'), 'Settings ends the menu');
+      key('ArrowUp');
+      assert.equal(doc.activeElement, $('acct-lvl'));
+      key('ArrowUp');
+      assert.equal(doc.activeElement.dataset.themeMode, 'dark');
       key('ArrowUp'); key('ArrowUp'); key('ArrowUp');
-      assert.equal(doc.activeElement, $('acct-keepawake'), 'the arrows walk the switch rows');
+      assert.equal(doc.activeElement, $('acct-keepawake'), 'the arrows walk the icons and the switch rows; the hidden team-setup row is skipped');
       key('ArrowUp');
       assert.equal(doc.activeElement, $('acct-away'));
       key('Escape');
@@ -339,13 +367,14 @@ test('the mockup rows: Interface mode and Settings lead with their own icon; App
   assert.equal(label.hasAttribute('role'), false, 'the arrows never stop on it');
 });
 
-test('stylesheet: the account menu is the mockup\'s padded sheet: inset hairlines, a grey spend panel, the one button and a one-row Appearance', () => {
+test('stylesheet: the account menu is the mockup\'s padded sheet: inset hairlines, flat cards, the one button and a one-row Appearance', () => {
   const rule = (sel) => { const m = css.match(new RegExp(`(?:^|[\\s,}])${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]*)\\}`)); return m ? m[1] : null; };
   assert.match(rule('.nav-fly.acct-menu') || '', /padding:6px;/, 'padding round the content');
   assert.doesNotMatch(css, /\.acct-menu > :not\(\[hidden\]\) ~ :not\(\[hidden\]\)\{[^}]*border-top/, 'no full-width border between sections');
   assert.match(rule('.acct-menu > :not([hidden]) ~ :not([hidden])') || '', /margin-top:9px;/, '4px, the 1px hairline, 4px');
   assert.match(rule('.acct-menu > :not([hidden]) ~ :not([hidden])::before') || '', /top:-5px;left:6px;right:6px;height:1px;background:var\(--line\);/, 'the hairline stops short of the edges');
-  assert.match(rule('.mcard') || '', /border-radius:var\(--r-sm\);background:var\(--field\);/, 'the cards are inset grey panels');
+  assert.match(rule('.mcard') || '', /padding:6px 9px;/, 'flat cards, their text in the rows\' 9px icon column');
+  assert.doesNotMatch(rule('.mcard') || '', /background/, 'no fill: the cards sit on the --panel sheet');
   assert.match(rule('.mc-title') || '', /font:600 /, 'a semibold title');
   assert.equal(rule('.mc-btn'), 'flex:none;', 'Details keeps layout only: its skin is .btn .btn-sm in markup');
   assert.match(rule('.mc-rows dd') || '', /font:600 [^;]*var\(--sans\);/, 'semibold sans figures');
@@ -354,12 +383,93 @@ test('stylesheet: the account menu is the mockup\'s padded sheet: inset hairline
   assert.match(rule('.mc-free:first-child') || '', /margin-top:0;padding-top:0;border-top:0;/, 'the free row alone in the card opens on no rule');
   for (const [sel, ink] of [['.mc-rows dd.warn', 'amber'], ['.mc-free[data-tone="warn"] .mi-val', 'amber'], ['.mc-rows dd.over', 'red'],
     ['.mc-free[data-tone="over"] .mi-val', 'red'], ['.mc-note', 'red']]) {
-    assert.match(rule(sel) || '', new RegExp(`color:var\\(--${ink}-ink-strong\\);`), `${sel}: the -strong ink keeps 4.5:1 on the grey panel`);
+    assert.match(rule(sel) || '', new RegExp(`color:var\\(--${ink}-ink-strong\\);`), `${sel}: the -strong ink keeps 4.5:1 on the --panel sheet`);
   }
   assert.match(rule('.menu-item') || '', /min-height:30px;/, 'a menu row is the shared 30px one');
-  assert.match(rule('.msect.theme-sect') || '', /flex-direction:row;align-items:center;justify-content:space-between;/, 'Appearance is one row');
+  assert.match(rule('.theme-sect') || '', /display:flex;[^}]*align-items:center;[^}]*gap:10px;/, 'Appearance is one row, with the menu rows\' 10px gap');
+  assert.match(rule('.theme-sect') || '', /padding:0 4px 0 9px;/, 'its icon in the rows\' 9px column');
+  assert.match(rule('.theme-k') || '', /flex:1;/, 'the label pushes the segments right');
+  assert.match(rule('.theme-sect > .mi-ic') || '', /color:var\(--ink-2\);/, 'the icon is --ink-2, like a row\'s');
   assert.match(rule('.theme-ic') || '', /width:30px;/, 'a compact segmented control, not a full-width track');
   assert.doesNotMatch(rule('.theme-ic') || '', /flex:1;/);
+});
+
+test('account menu: a hairline only between shown groups, never doubled or orphaned', async () => {
+  const { doc, $ } = await boot();
+  const GENERIC = '.acct-menu > :not([hidden]) ~ :not([hidden])';
+  assert.match(cssRule(`${GENERIC}::before`) || '', /background:var\(--line\);/, 'the generic hairline rule');
+  const overrides = [...CORNER_CSS.matchAll(/(?:^|\})\s*([^{}]+?)::before\s*\{content:none;\}/g)].map((m) => m[1].trim());
+  assert.deepEqual(overrides.sort(), ['.acct-menu > .acct-spend:not([hidden]) + .usage-sect:not([hidden])', '.acct-menu > .wl-card + .id-card:not([hidden])'],
+    'card then identity, spend then Usage: the only pairs with no hairline');
+  for (const sel of overrides) assert.match(cssRule(sel, CORNER_CSS) || '', /margin-top:(0|6px);/, `${sel}: its own gap`);
+  const menu = $('acct-menu');
+  const card = doc.createElement('button');
+  card.className = 'wl-card';
+  card.id = 'acct-level-card';
+  const setUp = ({ level, id, spend, usage }) => {
+    if (level) menu.prepend(card); else card.remove();
+    $('acct-id').hidden = !id;
+    $('acct-spend').hidden = !spend;
+    menu.querySelector('.usage-sect').hidden = !usage;
+  };
+  const lined = () => [...menu.children].filter((el) => el.matches(GENERIC) && !overrides.some((sel) => el.matches(sel)))
+    .map((el) => el.id || el.className);
+  await checkRows([
+    { name: '(a) everything shown', run: () => {
+      setUp({ level: true, id: true, spend: true, usage: true });
+      assert.deepEqual(lined(), ['acct-spend', 'msect sw-sect', 'msect']);
+    } },
+    { name: '(b) no level card, no spend, Usage hidden, identity and team setup shown', run: () => {
+      setUp({ level: false, id: true, spend: false, usage: false });
+      $('acct-team-setup').hidden = false;
+      assert.deepEqual(lined(), ['msect sw-sect', 'msect']);
+      assert.equal([...menu.children].find((el) => !el.hidden).id, 'acct-id', 'the first shown group opens on no hairline');
+      $('acct-team-setup').hidden = true;
+    } },
+    { name: '(c) level card only, spend hidden, Usage shown', run: () => {
+      setUp({ level: true, id: false, spend: false, usage: true });
+      assert.deepEqual(lined(), ['msect usage-sect', 'msect sw-sect', 'msect']);
+    } },
+    { name: '(d) spend shown, Usage hidden, no level card, identity hidden', run: () => {
+      setUp({ level: false, id: false, spend: true, usage: false });
+      assert.deepEqual(lined(), ['msect sw-sect', 'msect']);
+    } },
+    { name: 'no headings: the hairlines do the grouping', run: () => {
+      assert.equal(menu.querySelector('h1, h2, h3, h4, h5, h6, [role="heading"], .nav-fly-k'), null);
+    } },
+  ]);
+});
+
+test('account menu: the spend, identity and level cards have no --field / --surface fill', () => {
+  const cards = [...CORNER_CSS.matchAll(/([^{}]+)\{([^}]*)\}/g)].filter((m) => /\.(mcard|spend-card|id-card)\b/.test(m[1]));
+  assert.ok(cards.length > 0);
+  for (const [, sel, body] of cards) {
+    for (const [, val] of body.matchAll(/background:([^;]*)/g)) assert.match(val, /^(none|transparent)$/, `${sel.trim()}: no fill`);
+  }
+  assert.match(cssRule('.acct-menu > .wl-card') || '', /background:transparent;/, 'the level card is flat in the menu');
+  assert.match(cssRule('.acct-menu > .wl-card') || '', /border:0;/);
+  assert.match(cssRule('.acct-menu > .wl-card') || '', /padding:6px 9px;/);
+  assert.match(cssRule('.acct-menu > .wl-card:hover') || '', /background:var\(--hover\);/, 'it keeps its hover fill');
+});
+
+test('the free row\'s rule is the --line divider on the flat card', () => {
+  assert.match(cssRule('.mc-free') || '', /border-top:1px solid var\(--line\);/);
+});
+
+test('Appearance row: a leading aria-hidden contrast icon, the label, then the segments', async () => {
+  const { doc, $ } = await boot();
+  const sect = doc.querySelector('#acct-menu .theme-sect');
+  const [ic, label, seg] = sect.children;
+  assert.equal(sect.children.length, 3);
+  assert.equal(ic.tagName.toLowerCase(), 'svg');
+  assert.ok(ic.classList.contains('mi-ic'));
+  assert.equal(ic.getAttribute('aria-hidden'), 'true');
+  assert.ok(ic.querySelector('circle'), 'the contrast circle is drawn');
+  assert.equal(label, $('acct-theme-k'));
+  assert.equal(label.textContent, 'Appearance');
+  assert.equal(seg, $('acct-theme'));
+  assert.equal(sect.getAttribute('aria-labelledby'), 'acct-theme-k');
+  assert.equal(sect.classList.contains('msect'), false, 'a row of the preferences section, not a section of its own');
 });
 
 test('Keep awake in the account menu: a switch row for the keepAwake setting; a click saves it and the menu stays open', async () => {
@@ -429,16 +539,16 @@ test('the corner avatar: an image in .acct-ava keeps the ring, the dot and the d
       assert.deepEqual([img.getAttribute('src'), img.getAttribute('alt')], [avatar.src, avatar.alt]);
       assert.equal(btn.querySelector('.acct-ava').textContent, '', 'no initials beside the image');
       assert.ok(btn.querySelector('.acct-ring-wrap .acct-ring') && btn.querySelector('.acct-ring-wrap .acct-dot'), 'ring and dot markup unchanged');
-      assert.deepEqual([btn.dataset.spend, btn.dataset.presence], ['ok', 'here']);
+      assert.deepEqual([btn.dataset.spend, btn.dataset.presence], [undefined, 'here'], 'no spend ring on the avatar');
       paintAccountCorner(btn, acct, { budget, avatar, away: true });
       assert.equal(btn.dataset.presence, 'away');
     } },
-    { name: 'avatar: no native title; aria-label keeps the spend text and adds the level name', run: () => {
+    { name: 'avatar: no native title without a block or a usage ring; aria-label names no spend and adds the level name', run: () => {
       paintAccountCorner(btn, acct, { budget, avatar });
       assert.equal(btn.hasAttribute('title'), false);
       const label = btn.getAttribute('aria-label');
       assert.match(label, /ada\.lovelace@acme\.dev/);
-      assert.match(label, /\$20(\.00)? of \$50(\.00)? spent/);
+      assert.doesNotMatch(label, /\$/);
       assert.match(label, /Pod worca/);
     } },
     { name: 'repainting the same avatar keeps the same <img> node', run: () => {
@@ -488,4 +598,74 @@ test('stylesheet: the collapsed rail keeps the level image in the avatar circle'
   assert.match(css, /\.acct-ava img\{[^}]*width:100%;[^}]*height:100%;/, 'the image fills the circle');
   assert.doesNotMatch(css, /\.sidebar\.collapsed [^{]*\.acct-ava img[^{]*\{[^}]*display:none/, 'the rail never hides it');
   assert.doesNotMatch(css, /\.sidebar\.collapsed [^{]*\.acct-ava[^{]*\{[^}]*display:none/);
+});
+
+test('usage: rings on the avatar, the Usage row directly under the spend card, its submenu beside it; Escape closes only the submenu', async () => {
+  const { window, doc, $, click, key, usageBox, push } = await boot({ usage: USAGE() });
+  await push({ type: 'usage-limits-changed', action: null });   // the page reads usage on hello and on each push
+  await checkRows([
+    { name: 'two rings: Codex on the Session slot (amber), Claude Code on the Week slot; the avatar names them', run: () => {
+      const btn = $('side-acct');
+      assert.deepEqual([btn.dataset.usageS, btn.dataset.usageL], ['warn', 'ok']);
+      assert.ok(btn.querySelector('.ring-s .arc').getAttribute('stroke-dasharray'));
+      assert.match(btn.getAttribute('aria-label'), /· Session · Codex: 86%, resets [^;]+; Week · Claude Code: 73%, resets .+: spend, usage, away mode, interface mode and settings$/);
+    } },
+    { name: 'the Usage row sits directly under the spend card: "Codex 86%", a submenu trigger', run: () => {
+      const menu = $('acct-menu');
+      assert.equal(menu.querySelector('.usage-sect').previousElementSibling, $('acct-spend'));
+      assert.equal(menu.querySelector('.usage-sect').hidden, false);
+      assert.equal($('acct-usage').hidden, false);
+      assert.equal($('acct-usage').querySelector('.mi-val').textContent, 'Codex 86%');
+      assert.deepEqual([$('acct-usage').getAttribute('aria-haspopup'), $('acct-usage').getAttribute('aria-controls')], ['menu', 'usage-menu']);
+      assert.equal(minLevelFor($('acct-usage')), 'simple');
+    } },
+    { name: 'the submenu opens beside the menu at its right edge + 4; Escape closes only it and focuses the Usage row', run: () => {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1280 });
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 });
+      stubLayout(window, $('side-acct'), { left: 11, top: 744, width: 42, height: 46 });
+      stubLayout(window, $('acct-menu'), { left: 11, top: 200, width: 258, height: 540 });
+      click($('side-acct'), 0);
+      stubLayout(window, $('acct-usage'), { left: 17, top: 690, width: 246, height: 31 });
+      stubLayout(window, $('usage-menu'), { left: 0, top: 0, width: 300, height: 220 });
+      $('acct-usage').focus();
+      click($('acct-usage'), 0);
+      assert.equal($('usage-menu').hidden, false);
+      assert.equal(px($('usage-menu').style.left), 273, 'beside the menu: its right edge + 4');
+      assert.equal($('usage-menu').querySelector('.nav-fly-k').textContent, 'Limits');
+      assert.equal(doc.activeElement.dataset.engine, 'claude', 'a keyboard open lands on the first window row');
+      key('Escape');
+      assert.equal($('usage-menu').hidden, true);
+      assert.equal($('acct-menu').hidden, false, 'the menu stays');
+      assert.equal(doc.activeElement, $('acct-usage'));
+    } },
+    { name: 'a push that removes every reading closes the submenu and hides the row; focus goes to the menu', async run() {
+      click($('acct-usage'), 0);
+      assert.equal($('usage-menu').hidden, false);
+      usageBox.answer = { harnesses: [] };
+      await push({ type: 'usage-limits-changed', action: null });
+      assert.equal($('usage-menu').hidden, true);
+      assert.equal($('acct-usage').hidden, true);
+      assert.equal($('acct-usage').closest('.usage-sect').hidden, true);
+      assert.ok($('acct-menu').contains(doc.activeElement) && doc.activeElement.getAttribute('role')?.startsWith('menuitem'), 'focus on a menu item');
+      assert.deepEqual([$('side-acct').dataset.usageS, $('side-acct').dataset.usageL], ['none', 'none']);
+      key('Escape');
+    } },
+  ]);
+});
+
+test('usage: at 360px the submenu clamps 8px from the left over the menu', async () => {
+  const { window, doc, $, click, push } = await boot({ width: 360, usage: USAGE() });
+  await push({ type: 'usage-limits-changed', action: null });
+  click($('mbar-menu'));
+  assert.ok(doc.body.classList.contains('nav-open'));
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 360 });
+  Object.defineProperty(window, 'innerHeight', { configurable: true, value: 640 });
+  stubLayout(window, $('side-acct'), { left: 120, top: 584, width: 200, height: 46 });
+  stubLayout(window, $('acct-menu'), { left: 94, top: 100, width: 258, height: 470 });
+  click($('side-acct'));
+  stubLayout(window, $('acct-usage'), { left: 100, top: 530, width: 246, height: 31 });
+  stubLayout(window, $('usage-menu'), { left: 0, top: 0, width: 300, height: 220 });
+  click($('acct-usage'));
+  assert.equal(px($('usage-menu').style.left), 8, 'no room on either side: clamped to the left margin');
+  assert.equal($('acct-menu').hidden, false);
 });

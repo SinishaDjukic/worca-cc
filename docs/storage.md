@@ -96,6 +96,13 @@ project's working tree, so nothing is ever committed to your repo.
                                         Removed with the file, or with the brief for its documents; an archived
                                         feature keeps its files. A replace writes <id>.<ext>.tmp-<8 hex> and renames
                                         it over the body; one a crash left, older than an hour, is swept at boot
+  design/<designId>/                    a Design: work/ (the only place agents write; a video's voice and music,
+                                        which worca's server makes, land in work/assets/sound/), dist/ (assembled,
+                                        no bridge), versions/<n>/ (copy of work/ after each finished round, last 20),
+                                        made/ (a kept copy of each made picture, by its row). Rows: designs (the
+                                        sound choice in designs.sound_json, v95), design_builds, design_agents (v92),
+                                        design_pictures (v94). Spend: design_cost_ledger (ElevenLabs' too), which
+                                        keeps its rows after a design is deleted.
   tmp/requirements/att-read-<8 hex>/    one file read's folder: a copy of that one file (a text file's copy is its
                                         redacted text), mode 0700 / 0600, removed when the read ends (a restart's
                                         leftovers older than an hour are swept at boot)
@@ -188,7 +195,7 @@ Everything that used to be a per-run `.json`/`.md` control file —
 plan/review **markdown**, `prompt.md`, and `extras/` remain on disk (their
 existence is indexed in the database).
 
-### Workflow history and versions (v90)
+### Workflow history and versions (v96)
 
 Behind the experimental flag `workflowTests`; the data is kept either way.
 
@@ -215,7 +222,7 @@ Behind the experimental flag `workflowTests`; the data is kept either way.
   Never a path, a display name, a colour, an icon or the order.
 - A loop's limit is part of the graph: the stored wire keeps it in `config.maxCycles` (with `config.onExhausted`).
 
-### Workflow tests (v91)
+### Workflow tests (v97)
 
 Behind the experimental flag `workflowTests`; the data is kept either way. No foreign keys, like `workflow_revisions`:
 a deleted workflow keeps its examples, and they come back with a workflow saved again under the same id.
@@ -257,9 +264,9 @@ a deleted workflow keeps its examples, and they come back with a workflow saved 
 - `workflow-tests/seen-connectors.json` (worcaHome): the claude.ai connector names Worca saw when a run started, so
   Test a version can name the ones a pretend try switches off.
 
-### Workflow tests on a project (v92)
+### Workflow tests on a project (v98)
 
-Behind the flag `workflowTests`, like v91. FK-free like the v91 tables.
+Behind the flag `workflowTests`, like v97. FK-free like the v97 tables.
 
 - `wf_test_example_projects`: one row per example that works on a project:
   - the project's key and its name when the start was pinned (`project_name`: shown when the project is no longer
@@ -315,7 +322,7 @@ Behind the flag `workflowTests`, like v91. FK-free like the v91 tables.
   `<worcaHome>/workflow-tests/no-auth/{gh,glab,az}`: empty config folders, so those CLIs have no sign-in in a try.
   `<worcaHome>/workflow-tests/no-hooks`: the empty `core.hooksPath` of Worca's own git in a try's copy.
 
-**Part 3b (no schema change: the schema stays at v92).**
+**Part 3b (no schema change: the schema stays at v98).**
 
 - `<worcaHome>/workflow-tests/before/`: "The command passes" run once on an example's start point, before the workflow
   changed anything.

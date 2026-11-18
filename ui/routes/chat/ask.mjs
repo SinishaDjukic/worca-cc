@@ -6,6 +6,7 @@ import { askCatalog } from '../../../src/core/ask/models.mjs';
 import { validateClientContext } from '../../../src/core/ask/prompt.mjs';
 import { RUN_CARD_ARTIFACTS, RUN_CARD_FINISHED, lastArtifactsWindow, runCardResults } from '../../../src/core/ask/run-card-extras.mjs';
 import { countAttachments as askCountAttachments, countThreads as askCountThreads, countWorktrees as askCountWorktrees, getThread as askGetThread } from '../../../src/core/ask/store.mjs';
+import { isSurfaceMode } from '../../../src/core/ask/thread-modes.mjs';
 import { withBillTo } from '../../../src/core/billing.mjs';
 import { WORK_ARTIFACT_KIND } from '../../../src/core/no-project-work.mjs';
 import { getWatch, stoppedWatchFact } from '../../../src/core/pr-watch.mjs';
@@ -213,7 +214,7 @@ app.post('/api/ask/refs/resolve', async (req, res) => {
       run: askRefRun,
       chat: (id) => {
         const thread = askGetThread(id);
-        return thread && thread.mode !== 'composer' && askThreadVisible(thread, req) ? { title: thread.title || '' } : null;
+        return thread && !isSurfaceMode(thread.mode) && askThreadVisible(thread, req) ? { title: thread.title || '' } : null;
       },
       external: !agentMayBeCaller(req),
     }) });

@@ -22,7 +22,7 @@ export const TABS = Object.freeze([
 
 export const CARDS = Object.freeze([
   card('general', 'setup-assistant-card', 'Setup assistant', { alts: ['setup', 'install', 'onboarding', 'wizard', 'configure'] }),
-  card('general', 'appearance-card', 'Appearance', { alts: ['theme', 'dark mode', 'light mode', 'dark theme', 'colour', 'color', 'look', 'night mode', 'display'] }),
+  card('general', 'appearance-card', 'Appearance', { alts: ['theme', 'dark mode', 'light mode', 'dark theme', 'colour', 'color', 'look', 'night mode', 'display', 'screensaver', 'screen saver', 'idle'] }),
   card('general', 'alerts-card', 'Alerts', { alts: ['notifications', 'sound', 'desktop notifications', 'notify'] }),
   card('general', 'extension-settings-card', 'Browser extension', { alts: ['chrome', 'browser', 'pinpoint'] }),
   card('general', 'mode-settings-card', 'Interface mode', { alts: ['mode', 'simple', 'advanced', 'expert', 'level', 'complexity'] }),
@@ -97,6 +97,8 @@ export const ADDON_ENTRIES = Object.freeze([
   addon('providers', 'openrouter', 'OpenRouter', '#providers/openai', { alts: ['openrouter', 'api key', 'key', 'free models', 'openai-compatible'] }),
   addon('providers', 'anthropic', 'Anthropic-compatible', '#providers/anthropic', { alts: ['anthropic', 'claude api', 'api key', 'key', 'base url', 'endpoint', 'gateway'] }),
   addon('providers', 'speech', 'Speech (Chat voice)', '#providers/speech', { alts: ['speech', 'voice', 'speech to text', 'text to speech', 'stt', 'tts', 'whisper', 'microphone'] }),
+  addon('providers', 'images', 'Image generation (Design)', '#providers/images', { alts: ['image', 'images', 'picture', 'pictures', 'image generation', 'gpt-image', 'grok'] }),
+  addon('providers', 'sound', 'Sound (Design)', '#providers/sound', { alts: ['sound', 'voice', 'music', 'narration', 'audio', 'elevenlabs'] }),
 ]);
 
 const MODEL_SOURCE = Object.freeze({ global: 'Your model', plugin: 'From a plugin', policy: 'Team policy' });

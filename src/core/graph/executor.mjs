@@ -444,7 +444,7 @@ export function resolveMockRole({ meta, expandsPort = null }) {
 // ── verdicts ──────────────────────────────────────────────────────────────────
 
 import { readVerdict, checkVerdict, clearAllocated, assertOutputsWritten, publishable } from './exec-io.mjs';
-import { createScopeWatch, outsideWarning, writeExecManifest } from './exec-manifest.mjs';
+import { createScopeWatch, outsideWarning, scopeRecord, writeExecManifest } from './exec-manifest.mjs';
 export { readVerdict, publishable };
 
 // ── prompt assembly ───────────────────────────────────────────────────────────
@@ -787,7 +787,7 @@ async function spawnAgent(full, { role, prompt, systemPrompt, allowedTools }) {
   const run = full.sessionHost ? (o) => full.sessionHost.run(o, memberInfo(full)) : (_testing.runClaude || runClaude);
   try {
     const { text } = await run(opts);
-    return { text, sessionId, outside: scope.paths() };
+    return { text, sessionId, scope: scope.result({ sessionId }) };
   } catch (err) {
     outcome = 'error'; failure = limit.error || err;
     if (limit.error) throw limit.error;
@@ -796,14 +796,15 @@ async function spawnAgent(full, { role, prompt, systemPrompt, allowedTools }) {
     try {
       const { text } = await run({ ...opts, pluginDirs: undefined });
       outcome = 'ok'; failure = null;
-      return { text, sessionId, outside: scope.paths() };
+      return { text, sessionId, scope: scope.result({ sessionId }) };
     } catch (again) { failure = limit.error || again; throw failure; }
   } finally {
     limit.stop();
-    const outside = scope.paths();
-    // Telemetry sees the outside paths as one event per spawn (the recorder's `outside` record).
+    // Split at the end: the own-session classes need the session id the spawn reported.
+    const { notable: outside, expected: outsideExpected } = scope.result({ sessionId });
+    // Telemetry sees the notable outside paths as one event per spawn (the recorder's `outside` record).
     if (outside.length && typeof inner === 'function') { try { inner({ type: 'scope', paths: outside }); } catch { /* listener */ } }
-    await writeExecManifest(full, { opts, prompt, systemPrompt, sessionId, initModel, startedAt, outcome, error: failure, outside });
+    await writeExecManifest(full, { opts, prompt, systemPrompt, sessionId, initModel, startedAt, outcome, error: failure, outside, outsideExpected });
   }
 }
 
@@ -870,12 +871,13 @@ export async function runAgentExecution(ctx) {
   // E6: a fresh attempt starts from no outputs, so a retry or a resume never publishes the failed
   // attempt's files. A resumed SESSION continues the same attempt: its own earlier writes stand.
   if (!ctx.resumeSessionId) await clearAllocated({ outputs, verdict, bindings: ctx.bindings });
-  const { text, sessionId, outside = [] } = await spawnAgent(full, { role, prompt, systemPrompt, allowedTools });
+  const { text, sessionId, scope = { notable: [], expected: [] } } = await spawnAgent(full, { role, prompt, systemPrompt, allowedTools });
   const review = verdict?.path ? withRecheck(await readVerdict(verdict.path), ctx.ordinal ?? 1) : null;
   // Non-fatal problems the scheduler folds into state.warnings + the run log.
   const warnings = [];
-  const away = outsideWarning(ctx, outside);                       // E9: on the run log, not only in the manifest
-  if (away) warnings.push(away);
+  // E9: notable outside paths ride a structured record (state.scopeNotices, one quiet line on the run page) and a
+  // short run log line, never a warning banner; expected ones stay in the manifest only.
+  const scopeNotice = scopeRecord(ctx, scope);
   // An agent that stopped to ask (the questions loop resumes it with the answers), or a slicing Planner
   // that stopped at its slice outline (the outline loop resumes it), has not finished: its outputs and
   // verdict come on the resumed spawn, which is checked like any other.
@@ -895,6 +897,7 @@ export async function runAgentExecution(ctx) {
     outputs: publishable(ports, outputs),
     verdict: review,
     warnings,
+    ...(scopeNotice ? { scope: scopeNotice, scopeLine: outsideWarning(ctx, scope.notable) } : {}),
     sessionId,
     prompt,
     systemPrompt,

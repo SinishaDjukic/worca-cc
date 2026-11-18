@@ -462,6 +462,54 @@ test('card proposals (metrics, workspace, away, web): the parent re-validates th
       assert.deepEqual(mid.filter((b) => b.kind === 'card').map((b) => [b.state, b.card.type, b.card.kind]), [['proposed', 'proxy', 'settings'], ['proposed', 'proxy', 'flag']]);
       assert.ok(mid.some((b) => b.kind === 'notice' && b.text === 'Proxy change rejected: nothing to change'));
     } },
+    { name: 'MCP cards: the re-validation gets the chat pin (an import reads the pinned project\'s files)', run: async () => {
+      const s = seed();
+      const opts = [];
+      const { turn } = makeTurn(s, { pinnedScope: { projectKey: 'demo-00000001' } }, {
+        validateMcpChange: async (inp, o) => { opts.push(o); return { ok: true, card: { type: 'mcp', kind: 'import', summary: 'p' } }; },
+        runClaudeImpl: async (o) => {
+          awayCall(o.onEvent, 1, 'mcp__worca__propose_mcp_change', { kind: 'import', servers: ['cursor:user:x'] }, '{"ok":true,"card":{"type":"mcp"}}');
+          for (let i = 0; i < 2; i++) await new Promise((r) => setImmediate(r));
+          push(o.onEvent, RESULT());
+          return { text: '', exitCode: 0 };
+        },
+      });
+      await turn.run();
+      assert.deepEqual(opts, [{ pin: { projectKey: 'demo-00000001' } }]);
+    } },
+    { name: 'MCP cards: the parent mints from its own re-validation; a refusal or a thrown reader error is a scrubbed notice', run: async () => {
+      const s = seed();
+      const TOKEN = 'ghp_' + 'a'.repeat(36);
+      const seen = [];
+      let mid = null;
+      const { turn } = makeTurn(s, {}, {
+        validateMcpChange: async (inp) => {
+          seen.push(inp);
+          if (inp.name === 'boom') throw new Error('read failed ' + TOKEN);
+          return inp.name === 'github' ? { ok: true, card: { type: 'mcp', summary: 'parent' } } : { ok: false, errors: ['the name "x" is taken'] };
+        },
+        runClaudeImpl: async (opts) => {
+          const child = '{"ok":true,"card":{"type":"mcp","summary":"child"}}';
+          awayCall(opts.onEvent, 1, 'mcp__worca__propose_mcp_change', { kind: 'add', name: 'github' }, child);
+          awayCall(opts.onEvent, 2, 'mcp__worca__propose_mcp_change', { kind: 'add', name: 'x' }, child);
+          awayCall(opts.onEvent, 3, 'mcp__worca__propose_mcp_change', { kind: 'add', name: 'boom' }, child);
+          awayCall(opts.onEvent, 4, 'mcp__worca__propose_mcp_change', { kind: 'add', name: 'github' }, '{"ok":false,"errors":["x"]}');
+          for (let i = 0; i < 4; i++) await new Promise((r) => setImmediate(r));
+          mid = getMessage(s.asst.id).blocks;
+          push(opts.onEvent, RESULT());
+          return { text: '', exitCode: 0 };
+        },
+      });
+      await turn.run();
+      assert.equal(seen.length, 3, 'a child {ok:false} is never re-validated');
+      const cards = mid.filter((b) => b.kind === 'card');
+      assert.deepEqual(cards.map((b) => [b.state, b.card.type, b.card.summary]), [['proposed', 'mcp', 'parent']]);
+      assert.ok(mid.some((b) => b.kind === 'notice' && b.text === 'MCP server change rejected: the name "x" is taken'));
+      const thrown = mid.find((b) => b.kind === 'notice' && b.text.startsWith('MCP server change rejected: read failed'));
+      assert.ok(thrown, JSON.stringify(mid));
+      assert.ok(thrown.text.includes('••••'));
+      assert.equal(JSON.stringify(mid).includes(TOKEN), false);
+    } },
   ]);
 });
 

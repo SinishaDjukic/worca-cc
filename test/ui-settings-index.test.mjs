@@ -86,7 +86,7 @@ test('Add-ons hrefs reach their place: a Marketplace tab, a Connectors view, a M
     if (view === 'marketplace') assert.equal(tabFromParam(param), e.id.split('/')[1], `${e.id}: the tab it names`);
     if (view === 'connectors') assert.equal(parseMcpParam(param).view, { sets: 'sets', servers: 'servers', skills: 'skills' }[e.id.split('/')[1]], e.id);
     if (view === 'models' && param) assert.ok(doc.getElementById(param), `${e.id}: #models/<card id>`);
-    if (view === 'providers') assert.ok([...Object.keys(PROVIDER_LABELS), 'speech'].includes(param), `${e.id}: a provider row`);
+    if (view === 'providers') assert.ok([...Object.keys(PROVIDER_LABELS), 'speech', 'images', 'sound'].includes(param), `${e.id}: a provider row`);
   }
   const href = (id) => ADDON_ENTRIES.find((e) => e.id === id).href;
   assert.equal(href('addon:providers/openrouter'), '#providers/openai', 'OpenRouter is a preset on the OpenAI-compatible row');
@@ -128,4 +128,12 @@ test('hrefs: General is plain #settings, other tabs #settings/<tab>, cards #sett
   assert.equal(h('tab:guardrails'), '#settings/guardrails');
   assert.equal(h('card:appearance-card'), '#settings/general/appearance-card');
   assert.equal(h('card:budget-settings-card'), '#settings/runs/budget-settings-card');
+});
+
+test('Appearance is found by screensaver, screen saver, idle', async () => {
+  const { searchRows } = await import('../ui/public/global-search.mjs');
+  for (const q of ['screensaver', 'screen saver', 'idle']) {
+    const ids = searchRows({ level: 'simple', flags: {} }, q).settings.map((r) => r.id);
+    assert.ok(ids.includes('card:appearance-card'), `${q}: ${ids.join(', ')}`);
+  }
 });

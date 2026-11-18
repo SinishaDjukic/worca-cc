@@ -76,6 +76,7 @@ input.wfv-name:focus-visible{box-shadow:0 0 0 2px var(--ink);}
 .wfv-sheet-head{display:flex;align-items:center;gap:8px;height:46px;flex:0 0 auto;padding:0 10px 0 16px;border-bottom:1px solid var(--line);}
 .wfv-sheet-title{margin:0;font-size:13px;font-weight:600;}
 .wfv-sheet-head .btn-icon{margin-left:auto;}
+.wfv-sheet-head .btn-icon svg{width:16px;height:16px;}
 .wfv-sheet-body{overflow:auto;padding:16px;}
 @media (max-width:760px){.wfv-tr{top:58px;}#wfv-autolayout span{display:none;}#wfv-autolayout{width:30px;padding:0;justify-content:center;}.wfv-sheet{padding:8px;}}
 @media (prefers-reduced-motion:reduce){}

@@ -99,16 +99,18 @@ import { createLogDrawer } from './log-drawer.mjs';
 import { mountRunsResize } from './runs-resize.mjs';
 import { decorFromState, applyDecor, isGraphManifest, ledgerRows } from './graph/run-decor.mjs';
 import { mountRunGraph } from './graph/run-hosts.mjs';
+import { paintRunScope } from './run-scope-line.mjs';
 import { trailColumns, nowRows, glanceCopy, nodeLabel, preflightOpen, dotState } from './run-glance.mjs';
 import { workModeOf, isGitRun, isFolderRun, isNoProjectRun, NO_PROJECT_KEY, projectKind, kindChip, RUN_KIND_CHIP, folderMembersOf } from './run-kind.mjs';
 import { changesCounts, filesWord, renderCountsNode, applyBarModel, paintApplyBar, runChangesUrl, openApplyDialog, discardChanges, CHANGE_SIGN, CHANGE_WORD } from './folder-changes.mjs';
 import { runProgress, progressWidth } from '../../src/shared/run-progress.mjs';
+import { claudeCheckedWhere } from '../../src/shared/claude-sign-in.mjs';
 import { DEFAULT_HOME_PINS, isPinned, pinWorkflow, unpinWorkflow } from '../../src/shared/home-pins.mjs';
 import { outcomeNote } from './run-outcome.mjs';
-import { CREATE_PR_LABEL, CREATE_PR_FAILED, CREATING_PR, PR_CREATED, VIEW_PR_LABEL, VIEW_PRS_LABEL, createPrLabel, doneStatusWord } from './ship-words.mjs';
+import { CREATE_PR_LABEL, CREATE_PR_FAILED, CREATING_PR, PR_CREATED, VIEW_PR_LABEL, VIEW_PRS_LABEL, viewPrLabel, createPrLabel, doneStatusWord } from './ship-words.mjs';
 import { worktreeNoticeModel, worktreeRowState, retainedCommands, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome, checkoutRowValue, memberLabel } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
-import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, paintStageBlocks, RECENT_PAGE, groupRow, memberPrsOf, prChip, memberCostUsd, whenLabel, isFolded, setFolded } from './runs-list.mjs';
+import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, paintStageBlocks, RECENT_PAGE, groupRow, memberPrsOf, rowMenuPrs, prChip, memberCostUsd, whenLabel, isFolded, setFolded } from './runs-list.mjs';
 import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.mjs';
 import { buildGroupPage, paintGroupPage, runReceipts, groupPrList } from './group-page.mjs';
 import { paintGroupShip, resetGroupShip } from './ship-group-dialog.mjs';
@@ -210,14 +212,15 @@ import {
 import {
   renderProvidersCard, collectProviderRow, collectSpeechRow, formatSpeechBytes, renderImportSheet, renderEndpointSheet, collectImportSheet, applyImportSelectAll,
   applyProviderPreset, endpointRowMatches, ENDPOINT_PRESETS,
-  setModelUpstream,
+  setModelUpstream, applyImagesPreset, collectImagesRow, showImagesTest, showImagesSaveError, collectSoundRow,
 } from './bridge-view.mjs';
 import {
   renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
 } from './source-pane.mjs';
 import { renderStatsBody, renderStatsView, renderBudgetReadout, renderCostPauseBanner, statsQuery, groupsToCsv, statsRangeLabel, DEFAULT_FMT } from './stats-view.mjs';
 import { createCostReport } from './cost-report.mjs';
-import { personInitials, describeAccount, paintAccountCorner, paintIdentityCard, renderSpendCard, paintAwayRow } from './account-menu.mjs';
+import { personInitials, describeAccount, paintAccountCorner, paintIdentityCard, renderSpendCard, paintAwayRow, paintAppearanceIcon } from './account-menu.mjs';
+import { usageModel, ringParts, paintUsageRings, paintUsageRow, renderUsageMenu } from './usage-view.mjs';
 import { createComposer, isReservedWorkflowId, isBuiltinWorkflow } from './graph/composer.mjs';
 import { createWorkflowsShell, toSpawnEntry } from './workflows/shell.mjs';
 import { createLibrary, folderLabel, folderKeys } from './workflows/library.mjs';
@@ -254,7 +257,8 @@ import { createArtifactBrowser } from './artifacts/browser.mjs';
 import { baseName as artifactBaseName } from './artifacts/common.mjs';
 import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, buildGraphNodeRows as ntBuildGraphNodeRows, buildNodeConfigRows as ntBuildNodeConfigRows } from './node-tunables.mjs';
 import { buildFeedbackRows as ntBuildFeedbackRows } from './loop-rows.mjs';
-import { renderEngineSection, readEngineSection, enginePatchToSettingsBody, utilityId, renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody, renderRolesSection, readRolesValues, rolesPatchToSettingsBody, paintRoleFallbacks } from './engine-settings-view.mjs';
+import { renderEngineSection, readEngineSection, enginePatchToSettingsBody, utilityId, designRowId, renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody, renderRolesSection, readRolesValues, rolesPatchToSettingsBody, paintRoleFallbacks } from './engine-settings-view.mjs';
+import { DESIGN_ENGINE_NAMES } from '../../src/shared/design-names.mjs';
 import { mountProjectSettings } from './project-settings-view.mjs';
 import { mountHouseBrief } from './house-brief-view.mjs';
 import { appendModelGroups, modelOptionText } from './model-options.mjs';
@@ -296,6 +300,9 @@ import { describeRun, describeNewRun, describeAwayRow } from '../../src/shared/a
 import { createSchedulesView } from './schedules-view.mjs';
 import { createRunPrFields, mountWorkspacePrSetting, paintRunPrAuto } from './pr-auto-view.mjs';
 import { createRequirementsView } from './requirements-view.mjs';
+import { mountDesignView, pushDesignFrame, pushDesignAskFrame, repaintDesignChat, designHello, designNavCount, paintDesignNav } from './design/view.mjs';
+import { createDesignChat } from './design/chat.mjs';
+import { createDesignActivity } from './design/activity.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { applyFlags, currentFlags, decorateFlagChips, flagOn, onFlagChange } from './flags.mjs';
 import { gitOn, applyGit, onGitChange as onGitFlip, refreshGit, GIT_MISSING_TEXT } from './git-gate.mjs';
@@ -654,7 +661,14 @@ async function featureThreadFor(ref) {
 if (typeof window !== 'undefined') window.__shapeFeature = { mount: mountShapeFeature, refresh: refreshShapeFeatures, paintAsk: (ref, host) => chatPaintQuestion(ref, host),
   shaperCard: shaperCardFor, threadForRun: featureThreadFor };   // test seam
 let activityMenu = null;       // the top bar's Activity (activity-menu.mjs) — assigned beside New run; updateNavCounts uses activityMenu?.
+// The open Design builds Activity lists (design/activity.mjs), from hello's list and the design-build frames. A build
+// first met in a frame reads "Design" until its title loads (asked once; a 404 or a bad body keeps "Design").
+const designActivity = createDesignActivity({
+  loadTitle: async (id) => (await safeJson(await fetch(`/api/design/${encodeURIComponent(id)}`))).design?.title,
+  onChange: () => updateNavCounts(),
+});
 let awayScreensaver = null;    // the away screensaver easter egg (away-screensaver.mjs) — assigned beside Activity; timerTick uses awayScreensaver?.
+let screensaverPref = { enabled: false, idleMinutes: 5 };   // Settings › Appearance › Screensaver, as the server last said (getState reads it)
 let terminalPane = null;       // terminal pane (#573) — assigned by the boot mount; every seam uses terminalPane?.
 let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2 seam 7, consumed by Task 11)
 // Engine readiness (GET /api/engines): which engines a usage-limit pause offers. Fetched on demand, refreshed after
@@ -845,6 +859,9 @@ const el = {
   viewerClose: $('#viewer-close'),
 
   settingsRoot: $('#settingsRoot'),
+  screensaverOn: $('#screensaverOn'),
+  screensaverAfter: $('#screensaverAfter'),
+  screensaverAfterRow: $('#screensaverAfterRow'),
   settingsProjectsRoot: $('#settingsProjectsRoot'),
   settingsProjectsRootBrowse: $('#settingsProjectsRootBrowse'),
   settingsSave: $('#settingsSave'),
@@ -1233,12 +1250,13 @@ function applySidebarCollapsed() {
   // `data-rail-title` marks the ones WE wrote, so expanding removes only those.
   // Runs is excluded — updateNavCounts owns its title (the needs-you/live
   // counts). It has not run yet at the boot call below; showView does.
+  // Design is excluded too: paintDesignNav (below) owns its title and live count.
   // `:scope >` mirrors the CSS rule exactly: only the label span is a direct child.
   // The dataset.nav fallback can only fire if a button ever loses its label
   // span; an empty title would otherwise leave the button both tooltip-less and
   // silently "handled".
   // The rail's own squares only (children of .nav).
-  for (const b of $$('.nav > button[data-nav]:not([data-nav="runs"])')) {
+  for (const b of $$('.nav > button[data-nav]:not([data-nav="runs"]):not([data-nav="design"])')) {
     if (collapsed) {
       if (!b.dataset.railTitle) {
         const t = b.querySelector(':scope > span:not(.nav-count):not(.nav-rollup)');
@@ -1250,6 +1268,8 @@ function applySidebarCollapsed() {
       delete b.dataset.railTitle;
     }
   }
+  // One call covers boot, repaintNavMode and the Ask side's onLayout: the rail state just moved.
+  paintDesignNav(document, designNavCount());
 }
 
 /** Everything that renders differently on the rail: one call after the rail state moves
@@ -1554,7 +1574,7 @@ async function refreshBudget() {
 function paintBudget() {
   const b = budgetState.budget;
   if (!b) return;
-  // A block is never hidden at any interface mode: the ring turns red and full, the card says until when.
+  // A block is never hidden at any interface mode: the corner's name says so, the card says until when.
   paintAccount();
   paintSpendCard();
   applyBudgetToNewView();
@@ -1598,6 +1618,8 @@ function startBudgetTick() {
   const idleRefetchMs = typeof window.__budgetIdleRefetchMs === 'number'
     ? window.__budgetIdleRefetchMs : BUDGET_IDLE_REFETCH_MS;
   budgetState.timer = setInterval(() => {
+    // The usage rings: a window whose reset has passed is refetched (the server drops it), never polled otherwise.
+    if (usageResetPassed()) void refreshUsage();
     const b = budgetState.budget;
     if (!b) return;
     // Refetch when spend can actually move (live runs) or the window has rolled
@@ -1693,26 +1715,78 @@ function repaintPeople() {
 }
 
 // ── The account corner and its menu (account-menu.mjs) ─────────────────────────
-// The corner sits at the foot of the sidebar: the avatar (who is looking), a ring that fills
-// toward the total spend limit, a violet dot while away. Its menu opens upward: the spend card,
-// "Signed in as" (a shared identity only), Interface mode (a side menu), Settings, the Away and Keep awake switches,
-// and the appearance icons last. A level, a switch or a theme change leaves it open; a route closes it.
+// The corner sits at the foot of the sidebar: the avatar (who is looking), the usage rings (usage-view.mjs),
+// a violet dot while away. Its menu opens upward: the level card, "Signed in as" (a shared identity only), the spend
+// card with Usage under it (a side menu), the Away and Keep awake switches, then the preferences: the team setup notice,
+// the appearance icons, Interface mode (a side menu) and Settings last. A level, a switch or a theme change leaves it
+// open; a route closes it.
 const acctState = { account: describeAccount(null), away: null };   // away: describeAwayRow's last answer
 const acctBtn = document.getElementById('side-acct');
 const acctMenu = document.getElementById('acct-menu');
-// focusChecked: false — a keyboard open lands on the spend card, not on the checked theme icon.
+// focusChecked: false — a keyboard open lands on the first item (the level card, else the spend card), not on the
+// checked theme icon.
 // The team setup notice repaints each time the menu opens (paintTeamNotice is a hoisted function declaration below).
 const acctFly = createFlyout({ trigger: acctBtn, menu: acctMenu, mode: 'up', focusChecked: false, onOpen: () => { void paintTeamNotice(); } });
+paintAppearanceIcon(document.querySelector('#acct-menu .theme-sect > .mi-ic'));
 // Interface mode's side menu hangs off the menu (side-flyout closes it with the menu, and Escape
 // closes it first); ui-level.mjs fills it, and a pick there is a choose like a dialog card.
 createFlyout({ trigger: document.getElementById('acct-lvl'), menu: document.getElementById('lvl-menu'), mode: 'beside', parent: acctMenu });
+// Usage (usage-view.mjs): the providers' plan-limit readings (GET /api/usage-limits) as the avatar's rings, the
+// menu's row under the spend card and its submenu, which hangs off the menu exactly as Interface mode's does. Refetched on its push
+// (usage-limits-changed), on hello and on pipelines-changed (a usage-limit pause, resume or stop), and on the budget
+// tick only when a window's reset has passed. One fetch in flight plus one trailing; a failure keeps the last answer.
+const usageState = { answer: null, fetching: false, pending: false };
+const usageRow = document.getElementById('acct-usage');
+const usageMenu = document.getElementById('usage-menu');
+const usageFly = createFlyout({ trigger: usageRow, menu: usageMenu, mode: 'beside', parent: acctMenu,
+  onOpen: () => { renderUsageMenu(usageMenu, currentUsageModel()); usageFly.reposition(); } });
+const currentUsageModel = () => usageModel(usageState.answer, { now: Date.now() });
+function usageResetPassed() {
+  const hs = usageState.answer && Array.isArray(usageState.answer.harnesses) ? usageState.answer.harnesses : [];
+  const now = Date.now();
+  return hs.some((h) => h && Array.isArray(h.windows) && h.windows.some((w) => w && typeof w.resetsAt === 'number' && w.resetsAt <= now));
+}
+async function refreshUsage() {
+  if (usageState.fetching) { usageState.pending = true; return; }
+  usageState.fetching = true;
+  try {
+    do {
+      usageState.pending = false;
+      try {
+        const res = await fetch('/api/usage-limits', { signal: AbortSignal.timeout(15000) });
+        const data = await safeJson(res);
+        if (res.ok && data && Array.isArray(data.harnesses)) usageState.answer = data;
+      } catch { /* transient: keep the last answer */ }
+      paintUsage();
+    } while (usageState.pending);
+  } finally { usageState.fetching = false; usageState.pending = false; }
+}
+/** The avatar's rings and name, the Usage row and an open submenu. A row that hides takes its open submenu with
+ *  it, and focus goes to the menu's first item. */
+function paintUsage() {
+  const model = currentUsageModel();
+  const active = document.activeElement;
+  const hadFocus = !!active && (usageMenu.contains(active) || usageRow.contains(active));
+  if (!model.row && usageFly.isOpen()) usageFly.close();
+  paintUsageRings(acctBtn, model);
+  paintAccount();
+  paintUsageRow(usageRow, model);
+  renderUsageMenu(usageMenu, model);
+  if (!model.row && hadFocus && acctFly.isOpen()) {
+    const first = [...acctMenu.querySelectorAll('[role^="menuitem"]')].find((el) => !el.closest('[hidden]') && !el.hidden);
+    first?.focus();
+  }
+  if (acctFly.isOpen()) acctFly.reposition();
+  usageFly.reposition();
+}
 // The worca level (worca-level/app-wiring.mjs): the last served view feeds the corner avatar, the shelf and the menu row.
 const worca = createWorcaLevelWiring({ trigger: acctBtn, menu: acctMenu, repaint: () => { paintAccount(); paintShelf(); }, isSettled: () => gs.settled, setupOpen: () => !!setupDialog });
 function paintAccount() {
   const level = worca.state.view && worca.state.view.level;
   paintAccountCorner(acctBtn, acctState.account, {
-    budget: budgetState.budget, away: acctState.away?.state === 'away', fmt: { usd: fmtUsd, usd4: fmtUsd4 },
+    budget: budgetState.budget, away: acctState.away?.state === 'away',
     avatar: level ? { src: level.avatar, alt: level.name } : null,
+    usageParts: ringParts(currentUsageModel()),
   });
 }
 paintAccount();                // the first paint: "Profile" until /api/whoami answers
@@ -1757,6 +1831,7 @@ function handleServerMessage(msg) {
     conn.back();
     onHello(msg);
     refreshRunningActions();
+    void refreshUsage();
     if (terminalPane) terminalPane.onHello(msg);
     if (Array.isArray(msg.extensionPairs)) msg.extensionPairs.forEach((r) => void promptExtensionPair(r));
     return;
@@ -1782,6 +1857,10 @@ function handleServerMessage(msg) {
     return;
   }
 
+  // Design frames are tagged by designId + buildId (no runId) and reach every socket: the Design view keeps the
+  // nav count and the open stage. Handle them BEFORE the !msg.runId early-return below.
+  if (typeof msg.type === 'string' && msg.type.startsWith('design-')) { pushDesignFrame(msg); if (msg.type === 'design-build' && designActivity.frame(msg)) updateNavCounts(); return; }
+
   // Ask Worca frames are tagged by threadId (job frames also carry messageId +
   // seq) and ride the same broadcast socket. Handle them BEFORE the
   // !msg.runId early-return below.
@@ -1790,6 +1869,7 @@ function handleServerMessage(msg) {
     awayScreensaver?.onAskFrame(msg);   // chat turns and proposals it counts
     askPanel?.pushServerFrame(msg);
     wfvChat?.pushFrame(msg);          // the Workflows chat keeps only its own composer thread's frames
+    pushDesignAskFrame(msg);          // the open design's chat keeps only its own thread's frames
     // D12: a settled chat turn moves the combined spend — repaint the sidebar
     // indicator and, when open, the Statistics view. ask-error included: an
     // error turn that saw a result frame carries recorded spend. refreshBudget
@@ -1847,6 +1927,7 @@ function handleServerMessage(msg) {
     scheduleOnboardingRefresh();
     refreshAllCounts();
     refreshBudget();
+    void refreshUsage();
     // An archive / delete names the parked live runs the server evicted; every tab drops its copies of them.
     if (Array.isArray(msg.removedRunIds) && msg.removedRunIds.length) {
       const gone = new Set(msg.removedRunIds);
@@ -1865,6 +1946,11 @@ function handleServerMessage(msg) {
   // is global, so repaint it regardless of the open view.
   if (msg.type === 'budget-changed') {
     refreshBudget();
+    return;
+  }
+  // A provider's plan-limit reading changed (usage-view.mjs): the avatar's rings, the Usage row and its submenu.
+  if (msg.type === 'usage-limits-changed') {
+    void refreshUsage();
     return;
   }
   // Requirements: a feature changed (a round finished, an edit, another tab), or a Product brief (`brief`:
@@ -2324,6 +2410,8 @@ function onHello(msg) {
   pokeAskRuns(null, 'hello');
   askPanel?.onHello(msg.ask);
   wfvChat?.onHello();
+  designHello(msg.design ?? [], { rebooted });   // the live builds (an older server's hello has none)
+  designActivity.hello(msg.design);              // Activity's builds, paused ones too (refreshAllCounts below repaints)
 
   // diff-comments-changed is a plain global broadcast with no per-socket buffer
   // (ui/server.mjs:389-398), so any comment written while the socket was down is
@@ -2481,7 +2569,7 @@ function makeRun({
     stepSkills: {},   // {`${nodeId}|${cycle}`: string[]} — MAIN-agent skills per dropdown group
     stepGraphify: {}, // {`${nodeId}|${cycle}`: number} — MAIN-agent graphify-use count per group
     // v2 (graph-engine) run-level outcome fields; a v1 run never sends them.
-    active: [], endReached: undefined, result: null, warnings: [], wireDeliveries: {}, tokens: {}, gate: null,
+    active: [], endReached: undefined, result: null, warnings: [], scopeNotices: [], wireDeliveries: {}, tokens: {}, gate: null,
     el: null,
     _finished: false,
     staleBoot: false,  // a restarted server never re-listed it (onHello): the run died with the old process
@@ -3069,7 +3157,8 @@ function onState(r, msg) {
   // v2 run-level outcome fields (ignored by v1 runs, which never send them).
   // roleReviews: the role-review rounds runModel's live role rows read (review A12).
   // sessionHosts: each session's summary (session groups), read by the tray decor and the Sessions tab.
-  for (const k of ['active', 'endReached', 'result', 'warnings', 'wireDeliveries', 'tokens', 'gate', 'progressFacts', 'roleReviews', 'sessionHosts']) {
+  // scopeNotices (E9): the paths each execution touched outside its checkout, the run page's one quiet scope line.
+  for (const k of ['active', 'endReached', 'result', 'warnings', 'scopeNotices', 'wireDeliveries', 'tokens', 'gate', 'progressFacts', 'roleReviews', 'sessionHosts']) {
     if (msg[k] !== undefined) r[k] = msg[k];
   }
   // Skills registry §6 board 9: the run's set skills (run-harness state.skillMount) for its Overview.
@@ -16393,6 +16482,7 @@ async function loadSettings() {
     if (!res.ok) { setSettingsLoadMsg(data.error || `HTTP ${res.status}`); return; }
     paintSettings(data);
     paintTheme(data.theme);
+    paintScreensaver(data.screensaver);
     levelCtl.confirm(data.uiLevel);
     paintAbout(data.app);
     if (el.aboutUpdateCheck) el.aboutUpdateCheck.checked = data.updateCheck !== false;
@@ -16980,6 +17070,40 @@ async function chooseTheme(mode) {
   }
   paintTheme(data.theme);
 }
+// Settings › Appearance › Screensaver: the switch and its Start after minutes. Each control saves only its own field
+// (the server merges a partial { screensaver }), with the same optimistic paint and revert as chooseTheme.
+const SCREENSAVER_MINUTES = [5, 10, 15, 20, 25, 30];
+let screensaverSeq = 0;              // out-of-order POST resolutions never repaint a stale answer
+const screensaverNotSaved = (detail) => notify({ tone: 'err', title: 'Screensaver not saved', detail, key: 'screensaver' });
+function paintScreensaver(s) {
+  const enabled = s?.enabled === true;
+  const idleMinutes = SCREENSAVER_MINUTES.includes(s?.idleMinutes) ? s.idleMinutes : 5;
+  screensaverPref = { enabled, idleMinutes };
+  if (el.screensaverOn) el.screensaverOn.checked = enabled;
+  if (el.screensaverAfterRow) el.screensaverAfterRow.hidden = !enabled;
+  if (el.screensaverAfter) el.screensaverAfter.value = String(idleMinutes);
+}
+async function chooseScreensaver(patch) {
+  const mine = ++screensaverSeq;
+  const previous = { ...screensaverPref };
+  paintScreensaver({ ...previous, ...patch });                             // optimistic
+  let res; let data;
+  try {
+    res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ screensaver: patch }) });
+    data = await safeJson(res);
+  } catch (e) { if (mine === screensaverSeq) { paintScreensaver(previous); screensaverNotSaved(e.message || 'network error'); } return; }
+  if (mine !== screensaverSeq) return;                                     // a later change owns the paint now
+  if (!res.ok) {
+    screensaverNotSaved(data.error || `The server answered ${res.status}.`);
+    // Paint what the SERVER holds; a failed re-fetch falls back to the last confirmed value.
+    try { const d2 = await safeJson(await fetch('/api/settings')); if (mine === screensaverSeq) paintScreensaver(d2.screensaver || previous); }
+    catch { if (mine === screensaverSeq) paintScreensaver(previous); }
+    return;
+  }
+  paintScreensaver(data.screensaver);
+}
+el.screensaverOn?.addEventListener('change', () => chooseScreensaver({ enabled: el.screensaverOn.checked }));
+el.screensaverAfter?.addEventListener('change', () => chooseScreensaver({ idleMinutes: Number(el.screensaverAfter.value) }));
 for (const id of ['theme-seg', 'acct-theme']) {
   document.getElementById(id)?.addEventListener('click', (e) => {
     const btn = e.target.closest && e.target.closest('button[data-theme-mode]');
@@ -19838,6 +19962,9 @@ async function paintEngineSettings(data, { force = false } = {}) {
   for (const engine of HELPER_ENGINES.filter((e) => e !== 'claude')) {
     for (const job of CODEX_HELPER_JOBS) fields[utilityId(engine, job)] = { own: data.utilityModels?.[engine]?.[job], inherited: { value: undefined, source: 'default' } };
   }
+  // Design's lead and builders per engine (Engines card › Design), while the design flag is on.
+  const designEngines = flagOn('design') ? DESIGN_ENGINE_NAMES.filter((e) => ENGINE_NAMES.includes(e)) : [];
+  for (const engine of designEngines) for (const role of ['lead', 'builder']) fields[designRowId(engine, role)] = { own: data.designModels?.[engine]?.[role], inherited: { value: undefined, source: 'default' } };
   const claudeOwn = CLAUDE_USER_HELPER_OWN(data || {});
   const claudeJobs = claudeUserHelperJobs();
   for (const job of claudeJobs) fields[utilityId('claude', job)] = { own: claudeOwn[job], inherited: { value: undefined, source: 'default' } };
@@ -19872,7 +19999,7 @@ async function paintEngineSettings(data, { force = false } = {}) {
     renderEngineSection(root, { level: 'user', roles, catalog, fields, status: document.getElementById('engineSettingsMsg'), onTest: testModelRow,
       noEffort: ['title', 'classifier', 'prDescription'].map((job) => utilityId('claude', job)),
       defaultLabels: { claude: 'the default model' }, stepHints: { claude: claudeStepHints },
-      jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [], goose: [], opencode: [] }, modelRoles: data.modelRoles || {} });
+      jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [], goose: [], opencode: [] }, modelRoles: data.modelRoles || {}, designEngines });
   }
   lastEngineSettingsData = data;
   paintModelRoles(data);
@@ -19921,6 +20048,8 @@ async function paintEngineCardStatus(root) {
 // The flag flips while the Models page is open: the Engines card gains / loses the interview row. Refetched, since
 // GET /api/settings carries the row's stored pair and its default only while the flag is on.
 onFlagChange('requirements', () => { if (currentView() === 'models' && lastEngineSettingsData) void paintHelperModelCards({ force: true }); });
+// The design flag flips while the Models page is open: the Engines card gains / loses its Design rows.
+onFlagChange('design', () => { if (currentView() === 'models' && lastEngineSettingsData) void paintEngineSettings(lastEngineSettingsData, { force: true }); });
 document.getElementById('engineSettingsSave')?.addEventListener('click', async () => {
   const root = document.getElementById('engine-settings-root');
   const body = enginePatchToSettingsBody(readEngineSection(root));
@@ -20028,6 +20157,7 @@ function setProviderMsg(name, text, err, title = 'Something went wrong') {
   if (!row) return;
   row.textContent = text || '';
   row.className = 'hint mv-pv-msg';
+  row.removeAttribute('role');
 }
 
 async function reloadProviders() {
@@ -20098,7 +20228,8 @@ async function copilotSignOutFlow() {
 
 // #555: the row's Save button shows busy → "Saved"; the row's line carries only errors. A change
 // on a select (account type, concurrency) has no button, so its success is the new value itself.
-async function patchProviderFlow(name, body, { btn = null } = {}) {
+// `onError(message)`, when given, shows a refused Save in the row's own place instead of the card's alert.
+async function patchProviderFlow(name, body, { btn = null, onError = null } = {}) {
   setProviderMsg(name, '');
   const r = await withButton(btn, async () => {
     const res = await fetch(`/api/providers/${encodeURIComponent(name)}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -20111,10 +20242,14 @@ async function patchProviderFlow(name, body, { btn = null } = {}) {
     return { ok: true };
   }, { done: 'Saved' });
   if (r.skipped) return;
-  if (!r.ok) { setProviderMsg(name, r.error, true, 'Not saved'); return; }
+  if (!r.ok) {
+    if (onError) onError(r.error);
+    else setProviderMsg(name, r.error, true, 'Not saved');
+    return;
+  }
   // The repaint replaced the clicked button: give its successor the "Saved" state.
   if (btn && !btn.isConnected) {
-    const cls = btn.classList.contains('mv-sp-save') ? 'mv-sp-save' : 'mv-pv-save';
+    const cls = ['mv-sp-save', 'mv-im-save', 'mv-so-save'].find((c) => btn.classList.contains(c)) || 'mv-pv-save';
     const next = providerRoot()?.querySelector(`.mv-pv-row[data-provider="${name}"] .${cls}`);
     if (next) await withButton(next, () => undefined, { done: 'Saved' });
   }
@@ -20161,6 +20296,44 @@ async function testSpeechFlow(btn) {
   if (r.skipped) return;
   if (r.ok) notify({ tone: 'ok', key: `speech-test-${kind}`, title: `${what} works`, detail: r.detail ? `${r.detail}.` : '' });
   else setProviderMsg('speech', r.error, true, `${what} test failed`);
+}
+
+/** The Image generation row's Test picture: makes one picture from what is on screen, like testSpeechFlow.
+ *  Testing… → Works on the button; the picture and its time, or the reason it failed, in the row itself. */
+async function testImagesFlow(btn) {
+  const typed = collectImagesRow(providerRoot()) || {};
+  setProviderMsg('images', '');
+  const r = await withButton(btn, async () => {
+    try {
+      const res = await fetch('/api/images/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(typed) });
+      const data = (await safeJson(res)) || {};
+      if (data.ok) return data;
+      return { ok: false, message: data.message || data.error || `The server answered ${res.status}.` };
+    } catch (e) { return { ok: false, message: `worca did not answer (${e.message}).` }; }
+  }, { busy: 'Testing…', done: 'Works' });
+  if (r.skipped) return;
+  showImagesTest(providerRoot(), r);
+}
+
+/** The Sound row's Test: lists the voices the key reaches. An unchanged key is not sent, so the saved one is tested.
+ *  Testing… → Works on the button; "Key works · n voices", or the reason it failed, in the row itself. */
+async function testSoundFlow(btn) {
+  const typed = collectSoundRow(providerRoot()) || {};
+  setProviderMsg('sound', '');
+  const r = await withButton(btn, async () => {
+    try {
+      const res = await fetch('/api/providers/sound/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(typed) });
+      const data = (await safeJson(res)) || {};
+      if (data.ok) return data;
+      return { ok: false, message: data.message || data.error || `The server answered ${res.status}.` };
+    } catch (e) { return { ok: false, message: `worca did not answer (${e.message}).` }; }
+  }, { busy: 'Testing…', done: 'Works' });
+  if (r.skipped) return;
+  const line = providerRoot()?.querySelector('.mv-pv-row[data-provider="sound"] .mv-so-result');
+  if (!line) return;
+  line.hidden = false;
+  line.className = r.ok ? 'hint mv-so-result' : 'hint err mv-so-result';
+  line.textContent = r.ok ? `Key works · ${r.voices} voices` : (r.message || '');
 }
 
 async function testProviderFlow(btn) {
@@ -20602,6 +20775,10 @@ if (el.providersList) {
       const body = collectSpeechRow(providerRoot());
       if (body) patchProviderFlow('speech', body, { btn: t });
     } else if (t.classList.contains('mv-sp-test')) testSpeechFlow(t);
+    else if (t.classList.contains('mv-im-save')) patchProviderFlow('images', collectImagesRow(providerRoot()), { btn: t, onError: (msg) => showImagesSaveError(providerRoot(), msg) });
+    else if (t.classList.contains('mv-im-test')) testImagesFlow(t);
+    else if (t.classList.contains('mv-so-save')) patchProviderFlow('sound', collectSoundRow(providerRoot()), { btn: t });
+    else if (t.classList.contains('mv-so-test')) testSoundFlow(t);
     else if (t.classList.contains('mv-sp-clear')) clearSpeechCacheFlow(t);
     else if (t.classList.contains('mv-pv-preset')) {
       // Fills the fields only; the row's Test / Save do the rest, exactly as for a typed URL.
@@ -20618,6 +20795,7 @@ if (el.providersList) {
     const t = ev.target;
     if (!t || !t.classList) return;
     if (t.classList.contains('mv-cp-account')) patchProviderFlow('copilot', { accountType: t.value });
+    else if (t.classList.contains('mv-im-service')) applyImagesPreset(providerRoot(), t.value);
     else if (t.classList.contains('mv-pv-conc') && t.dataset.provider === 'copilot') patchProviderFlow('copilot', { maxConcurrent: Number(t.value) });
   });
 }
@@ -32122,7 +32300,7 @@ function runDecorFor(r, mode = 'monitor') {
 
 /** The run's warnings (decor.warnings: a dropped model pick, the scheduler's lines, the quiescence line of spec §8) as
  *  amber banners in .rd-banners / .hd-banners: one `.run-warn` per distinct text, in order. Idempotent; an empty list
- *  leaves none. */
+ *  leaves none. Under them, E9's ONE quiet scope line (decor.scope: run-scope-line.mjs), never a banner per spawn. */
 function paintRunWarnings(host, decor) {
   if (!host) return;
   const texts = [...new Set((decor && Array.isArray(decor.warnings) ? decor.warnings : []).filter(Boolean))];
@@ -32133,12 +32311,13 @@ function paintRunWarnings(host, decor) {
       el = document.createElement('div');
       el.className = 'run-warn';
       el.setAttribute('role', 'status');
-      host.appendChild(el);
+      host.insertBefore(el, host.querySelector(':scope > .run-scope'));
     }
     el.textContent = text;
     el.hidden = false;
   });
   for (const el of els.slice(texts.length)) el.remove();
+  paintRunScope(host, decor ? decor.scope : null, { doc: document });
 }
 
 /** The P5 line ("Build · task 2 of 4"); supersedes the D15 "3/6 done" counter (spec 2026-10-14 P12). '' on a v1 run. */
@@ -33991,6 +34170,20 @@ const requirementsView = createRequirementsView({
 // Turning the flag off while the page is open leaves it for Chat (a hidden page must not stay up).
 onFlagChange('requirements', (on) => { if (!on && currentView() === 'requirements') showView('chat', ''); });
 
+// Design (behind the design flag): the page module owns #design-host and the nav row's live count; app.js routes and
+// relays the design-* frames and hello's design list.
+const designView = mountDesignView({ doc: document, win: window, host: $('#design-host'), fetch: (...a) => fetch(...a), sendWs: (obj) => { const s = state.ws; if (s && state.wsReady) { try { s.send(JSON.stringify(obj)); } catch { /* ignore */ } } }, route: (p) => { location.hash = p ? `#design/${p}` : '#design'; }, prompt: (o) => promptModal(o),
+  createChat: createDesignChat, confirm: (o) => confirmModal(o),
+  // As the Workflows chat's: once marked loads, the open design chat paints its replies again.
+  renderMarkdown: (text, mount) => {
+    const out = hdMarkdown.render(text);
+    if (out && out.kind === 'md') { mount.classList.add('ask-md'); mount.replaceChildren(out.frag); return; }
+    mount.textContent = text;
+    if (!hdMarkdown.isReady() && !hdMarkdown.isFailed()) void hdMarkdown.ensure().then((ok) => { if (ok) repaintDesignChat(); });
+  },
+});
+onFlagChange('design', (on) => { if (!on && currentView() === 'design') showView('chat', ''); updateNavCounts(); });
+
 /** The workspace read-model, loaded once: a scheduled run card names "Workspace · <name>", not an id. */
 function withWorkspaces() {
   return (state.workspaces || []).length ? Promise.resolve() : loadWorkspaces();
@@ -34127,7 +34320,7 @@ function memberRun(m) {
   // Runs redesign slice 4 (D24): a member's round / Watch PR facts pass through untouched; the run model words them.
   const facts = { round: m.round || (h && h.round) || null, watch: m.watch || (h && h.watch) || null };
   // A chain member carries its PR as `prUrl` (a shared One PR before History has it), a run-groups member as `pr`.
-  if (h) return { status: h.status, pauseReason: h.pauseReason, pr: runPrFor(h, m.pr || (m.prUrl ? { url: m.prUrl } : null)), ...(h.inBase ? { inBase: h.inBase } : {}), ...facts };
+  if (h) return { status: h.status, pauseReason: h.pauseReason, pr: runPrFor(h, m.pr || (m.prUrl ? { url: m.prUrl } : null)), ...(h.inBase ? { inBase: h.inBase } : {}), ...(memberPrsOf(h).length ? { memberPrs: memberPrsOf(h) } : {}), ...facts };
   if (m.status) return { status: m.status, pr: runPrFor(null, m.pr), ...facts };
   return { status: CHAIN_MEMBER_STATUS[m.state] || 'stopped', pr: runPrFor(null, m.prUrl ? { url: m.prUrl } : null), ...facts };
 }
@@ -35079,6 +35272,7 @@ function runsRowMenuItems(r, more) {
   const prUrl = (r.model.pr && r.model.pr.url) || (r.kind === 'chain' && r.model.current && r.model.current.pr && r.model.current.pr.url) || '';
   // An archived row's E brings it back (D7): the run page's word, the bulk restore action.
   const back = r.archived ? planBulk('restore', [t]) : null;
+  const prs = rowMenuPrs(r);
   return [
     { label: 'Select', key: 'toggle', hint: k('Space'), onSelect: () => { runsUi.selecting = true; runsUi.anchorKey = r.key; toggleRunsKey(r.key); } },
     { label: 'Stop', key: 'stop', hint: k('S'), disabled: !m.stop.count, title: m.stop.title, onSelect: () => runBulkAction('stop', [t]) },
@@ -35091,7 +35285,10 @@ function runsRowMenuItems(r, more) {
     ...(adv && r.kind !== 'chain' && r.pipelineId && !(g && !adhoc) ? [{ sep: true }, { label: 'Add to group…', key: 'add-to-group', hint: k('G'),
       onSelect: () => openAddToGroup(more, runsUi.sel.has(r.key) ? pipelineTargets(selectedTargets()) : [{ pipelineId: r.pipelineId, title: r.title }], r.key) }] : []),
     ...(adv && adhoc ? [{ sep: true }, { label: 'Remove from group', key: 'leave-group', hint: k('shift', 'G'), onSelect: () => removeRunFromGroup(r) }] : []),
-    ...(prUrl ? [{ label: VIEW_PR_LABEL, onSelect: () => window.open(prUrl, '_blank', 'noopener') }] : []),
+    // A workspace run with PRs in several repositories opens each one, as the run page's View PRs ▾ does.
+    ...(prs.length ? [{ sep: true },
+      ...prs.map((p) => ({ label: p.repo ? `${viewPrLabel(p.number)} · ${p.repo}` : viewPrLabel(p.number), onSelect: () => window.open(p.url, '_blank', 'noopener') })),
+    ] : prUrl ? [{ label: VIEW_PR_LABEL, onSelect: () => window.open(prUrl, '_blank', 'noopener') }] : []),
     ...(r.groupKind === 'feature' ? [{ label: 'Open feature', onSelect: () => { location.hash = r.href; } }] : []),
   ];
 }
@@ -38674,14 +38871,18 @@ function renderPipelineTabs() {
 
 // Needs you, counted without building the list (this runs on every WS frame): the same rule
 // as the Runs list's Needs-you group, over the same rows (runs-list.mjs countNeedsYou). The top
-// bar's Activity badge reads the SAME items (activity-model.mjs activityCounts), so its amber
-// number is this one; `active` is every live run: the grey Runs number, Activity's running count.
+// bar's Activity badge reads the SAME items plus the Design builds (activity-model.mjs
+// activityCounts), so its amber number is this one plus the builds that need you, while the Runs
+// badge (countNeedsYou) stays runs only; `active` is every live run: the grey Runs number,
+// Activity's running count. `designs` only while the design flag is on: hello lists the builds
+// either way, and a #design/<id> row would then lead nowhere.
 function runsNeedsInput() {
   return {
     live: overviewRuns().map((r) => ({ runId: r.runId, pipelineId: r.pipelineId || '', status: r.status, ask: r.pendingQuestion != null, unread: isLingering(r),
       roundOf: runsRoundOf(r) })),   // a live fix round: its run is Working, not Needs you (runs-list needsYouItems, D5)
     history: Array.isArray(state.historyAll) ? state.historyAll : [],
     active: liveRuns().map((r) => ({ runId: r.runId })),
+    designs: flagOn('design') ? designActivity.items() : [],
   };
 }
 function runsNeedsCount() {
@@ -38783,7 +38984,9 @@ function paintScheduleCounts(c) {
 // and PATH — never written here); this block only paints it and runs guides.
 // A guide is transient state: a reload clears it, the shelf re-summons it.
 // ---------------------------------------------------------------------------
-const gs = { status: null, settled: false, guide: null, spot: null, seq: 0, navigating: false, welcomeShown: false, setupShown: false, refreshTimer: 0, poll: 0, startedRunId: "" };
+const gs = { status: null, settled: false, guide: null, spot: null, seq: 0, navigating: false, welcomeShown: false, setupShown: false, refreshTimer: 0, poll: 0, startedRunId: "",
+  // Connect Claude Code › Check again: claudeChecking while it asks, claudeChecked the line every press leaves.
+  claudeChecking: false, claudeChecked: '' };
 let gsPillHost = null;
 let gsWelcomeUnbind = null;
 let setupDialog = null;
@@ -38839,19 +39042,21 @@ function gsEnsurePillHost() {
   return gsPillHost;
 }
 
+/** Resolves `{ ok: true }`, or `{ ok: false, error }` when the request failed (Check again says why). */
 async function loadOnboarding({ recheck = false } = {}) {
   let data;
   try {
     const res = await fetch(recheck ? '/api/onboarding?recheck=1' : '/api/onboarding');
     data = await safeJson(res);
-    if (!res.ok) return;
-  } catch { return; }
+    if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}` };
+  } catch (e) { return { ok: false, error: e?.message || 'network error' }; }
   // The boot tests stub fetch with one generic payload: anything without a
   // `steps` object is not ours and paints nothing.
-  if (!data || !data.steps || typeof data.steps !== 'object') return;
+  if (!data || !data.steps || typeof data.steps !== 'object') return { ok: true };
   gs.status = data;
   paintOnboarding();
   maybeWelcome();
+  return { ok: true };
 }
 /** Coalesce the change broadcasts (a finished run fires several) into one refetch. */
 function scheduleOnboardingRefresh() {
@@ -38969,6 +39174,9 @@ function paintClaudeSetupStatus() {
   if (ok) box.textContent = c.auth === 'signed-in' ? `Found ${bin}, installed and signed in. You're set.` : `Found ${bin}. You're set.`;
   else if (c.auth === 'signed-out') box.textContent = `Found ${bin}, installed but not signed in yet. Run claude in a terminal, type /login, then check again.`;
   else box.textContent = c.hint || `"${bin}" is not on the PATH of the Worca server. Install it, then check again (restart the UI if PATH changed).`;
+  // Signed out: the folder the CLI read. A server with another HOME reads another sign-in than the terminal.
+  if (!ok && c.auth === 'signed-out' && c.configDirectory) box.append(lineEl('ob-claude-where', claudeCheckedWhere(c.configDirectory)));
+  if (gs.claudeChecked) box.append(lineEl('ob-claude-checked', gs.claudeChecked));
   // The wizards' signed-out lines are stale once the CLI checks out.
   if (ok) for (const restore of [...claudeSignedOutHints.values()]) restore();
 }
@@ -38980,13 +39188,25 @@ function openClaudeSetup() {
   claudeSetupGuard?.opened();
   document.getElementById('claude-setup-check')?.focus?.();
   // The page's status may predate a sign-in (or a transient signed-out probe):
-  // ask again on open instead of repeating it.
-  recheckClaudeSetup();
+  // ask again on open instead of repeating it. A fresh open starts with no "Checked just now" line.
+  gs.claudeChecked = '';
+  recheckClaudeSetup({ manual: false });
 }
-async function recheckClaudeSetup() {
+function lineEl(cls, text) { const n = document.createElement('span'); n.className = cls; n.textContent = text; return n; }
+/** Check again: "Checking…" and disabled while it asks; then a line every time (`manual`: the button, not the open). */
+async function recheckClaudeSetup({ manual = true } = {}) {
+  if (gs.claudeChecking) return;
   const btn = document.getElementById('claude-setup-check');
-  if (btn) btn.disabled = true;
-  try { await loadOnboarding({ recheck: true }); } finally { if (btn) btn.disabled = false; }
+  gs.claudeChecking = true;
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+  let r = { ok: false, error: 'network error' };
+  try { r = await loadOnboarding({ recheck: true }); } finally {
+    gs.claudeChecking = false;
+    if (btn) { btn.disabled = false; btn.textContent = 'Check again'; }
+  }
+  const c = gs.status?.claude || {};
+  if (!r.ok) gs.claudeChecked = `Couldn't check just now: ${r.error}`;
+  else if (manual) gs.claudeChecked = gs.status?.steps?.claude ? 'Checked just now: signed in.' : c.auth ? 'Checked just now: still not signed in.' : 'Checked just now: still not found.';
   paintClaudeSetupStatus();
 }
 function closeClaudeSetup() { document.getElementById('claude-setup-modal')?.classList.add('hidden'); }
@@ -38994,7 +39214,7 @@ function closeClaudeSetup() { document.getElementById('claude-setup-modal')?.cla
 const claudeSetupEl = document.getElementById('claude-setup-modal');
 const claudeSetupGuard = claudeSetupEl ? guardModal(claudeSetupEl, { kind: 'viewer', close: () => closeClaudeSetup() }) : null;
 document.getElementById('claude-setup-close')?.addEventListener('click', closeClaudeSetup);
-document.getElementById('claude-setup-check')?.addEventListener('click', recheckClaudeSetup);
+document.getElementById('claude-setup-check')?.addEventListener('click', () => { void recheckClaudeSetup(); });
 
 // ── Guides ──────────────────────────────────────────────────────────────────
 // Each hop is derived from REAL UI state at the moment it is needed (which view
@@ -39568,7 +39788,7 @@ const navLinks = $$('.nav button[data-nav], #acct-settings');
 // guardrails LEFT this array: it is a Settings tab now, reached as #settings/guardrails
 // (old addresses redirect — see MOVED_ROUTES). The four Add-ons pages went the other way:
 // Settings tabs once, pages of their own now.
-const VIEW_NAMES = ['chat', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'requirements', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers', 'profile', 'feature', 'group'];
+const VIEW_NAMES = ['chat', 'design', 'new', 'getting-started', 'runs', 'running', 'schedules', 'history', 'stats', 'team-metrics', 'team-policy', 'workflows', 'requirements', 'workspaces', 'workspace-create', 'projects', 'settings', 'marketplace', 'connectors', 'models', 'providers', 'profile', 'feature', 'group'];
 // One Runs page, five route names: the bare list (#runs), the two run routes every deep link already uses
 // (#running/<id>…, #history/<projectKey>/<id>…) and the group page's two (#feature/<id>…, #group/<id>…, run 3 D1).
 // All five render the `data-view="runs"` section and light the one Runs nav button.
@@ -39608,7 +39828,7 @@ const VIEW_TITLES = Object.freeze({
   guardrails: 'Guardrails', memory: 'Memory', ask: 'Chat', tags: 'Labels & cost tags',
   marketplace: 'Marketplace', connectors: 'Connectors', models: 'Models', providers: 'Providers',
   schedules: 'Schedules', presets: 'Presets',
-  requirements: 'Requirements',
+  requirements: 'Requirements', design: 'Design',
 });
 function pageMinLevel() {
   if (currentShownView === 'settings') return { key: currentSettingsTab, min: SETTINGS_TAB_MIN_LEVEL[currentSettingsTab] || 'simple' };
@@ -39750,6 +39970,8 @@ function showView(name, param = '') {
   }
   // Requirements is behind its flag (docs/feature-flags.md): a deep link while it is off lands on Chat.
   if (name === 'requirements' && !flagOn('requirements')) return showView('chat', '');
+  // Design too: a deep link while the design flag is off lands on Chat.
+  if (name === 'design' && !flagOn('design')) return showView('chat', '');
   // A bare #running / #history is the Runs list now (both lists merged into it). Replace the
   // entry rather than letting the hash sync below PUSH #runs: Back would land on #history
   // again, normalize again, and never get past it.
@@ -39896,6 +40118,7 @@ function showView(name, param = '') {
   document.body.classList.toggle('view-workspaces', name === 'workspaces');
   document.body.classList.toggle('view-workflows', name === 'workflows');
   document.body.classList.toggle('view-chat', name === 'chat');   // worca Chat: the page fills the column (style.css)
+  document.body.classList.toggle('view-design', name === 'design');   // Design: full-bleed, the stage fills the column
   if (RUNS_VIEWS.has(name)) {
     const entering = !RUNS_VIEWS.has(prevView);
     // The section is visible now (the toggle above): measure before anything opens, so the
@@ -39938,6 +40161,8 @@ function showView(name, param = '') {
   if (name === 'stats') loadStatsView();
   if (name === 'requirements') void requirementsView.show(param);
   else requirementsView.leave();   // the Feature chat phone sheet and an export dialog make the page inert; leaving the view puts it back
+  if (name === 'design') void designView.show(param);
+  else designView.leave();
   if (name === 'schedules') { schedulesView.showTab(param); void withWorkspaces().then(() => schedulesView.load()); }
   if (name === 'team-metrics') {
     // #team-metrics/timeline opens the Timeline tab. Switching tabs inside the page only repaints:
@@ -40097,7 +40322,7 @@ function revealModelCard(id, param) {
   const card = [...el.modelsList.querySelectorAll('.mv-card[data-id]')].find((n) => n.dataset.id === id);
   if (card) markFound(card, card.querySelector('button'));
 }
-// '#providers/<copilot|openai|anthropic|speech>': the provider's row, highlighted, with its sign-in or key field
+// '#providers/<copilot|openai|anthropic|speech|images|sound>': the provider's row, highlighted, with its sign-in or key field
 // focused (focusProviderRow's choice), else its first control.
 function revealProviderRow(param) {
   if (!param || currentView() !== 'providers' || parseHash()[1] !== param || !el.providersList) return;
@@ -40196,9 +40421,11 @@ $('#topnav-new')?.addEventListener('click', () => {
 
 // Activity (#topnav-activity, activity-menu.mjs): what needs you, what is running and what is
 // scheduled, a list with no actions. Its badge repaints with the Runs badge (updateNavCounts),
-// from the same items; the open popover reads the Runs list's full rows (live: the Runs list's
-// live runs, active: every live run, agent-generation jobs too) and fetches the schedules when it
-// opens. A row routes like any page link: the route hides the Chat page when it is the one showing.
+// from the same items plus the Design builds (designActivity, while the design flag is on), so its
+// amber number includes the builds that need you while the Runs badge stays runs only; the open
+// popover reads the Runs list's full rows (live: the Runs list's live runs, active: every live run,
+// agent-generation jobs too) and the builds, and fetches the schedules when it opens. A row routes
+// like any page link: the route hides the Chat page when it is the one showing.
 activityMenu = $('#topnav-activity') ? createActivityMenu({
   button: $('#topnav-activity'), badge: $('#topnav-activity-n'), pop: $('#activity-pop'),
   getCounts: () => activityCounts(runsNeedsInput()),
@@ -40206,6 +40433,7 @@ activityMenu = $('#topnav-activity') ? createActivityMenu({
     live: overviewRuns().map(runsLiveItem),
     history: (Array.isArray(state.historyAll) ? state.historyAll : []).filter(Boolean).map(runsHistItem),
     active: liveRuns().sort(cmpTabRuns).map(runsLiveItem),
+    designs: flagOn('design') ? designActivity.items() : [],
   }),
   loadSchedules: async () => {
     await withWorkspaces();                              // a workspace's ticket names its workspace
@@ -40217,7 +40445,7 @@ activityMenu = $('#topnav-activity') ? createActivityMenu({
   navigate: (hash) => { location.hash = hash; },
 }) : null;
 
-// The away screensaver easter egg: Away mode now (the account corner's state), the Keep awake row, and the runs
+// The screensaver: the Settings › Appearance switch and its Start after time (screensaverPref), and the runs
 // counted as the Runs list counts them. Chats arrive through onAskFrame; the open chat's unread dot through askPanel.
 awayScreensaver = createAwayScreensaver({
   doc: document, win: window,
@@ -40226,8 +40454,8 @@ awayScreensaver = createAwayScreensaver({
     const asking = live.filter((r) => r.pendingQuestion != null);
     const lingered = [...runs.values()].filter(isLingering);
     return {
-      away: acctState.away?.state === 'away',
-      keepAwake: el.acctKeepAwake?.getAttribute('aria-checked') === 'true',
+      enabled: screensaverPref.enabled,
+      idleMinutes: screensaverPref.idleMinutes,
       runs: {
         running: live.length - asking.length,
         questions: asking.length,
@@ -40384,8 +40612,9 @@ function chatRoute(threadId, { replace = false } = {}) {
   location.hash = target;
 }
 /** Ask worca beside the page: which host the ONE chat page has on this route (showView, after the leave-Chat block and
- *  before enterChatView). Chat: the page — the column and its button hide, the person's choice kept. Workflows: no
- *  column (no top bar). Every other page: the button, and the column when the person left it open. */
+ *  before enterChatView). Chat: the page — the column and its button hide, the person's choice kept. Workflows and
+ *  Design: no column (Workflows has no top bar, Design its own chat). Every other page: the button, and the column
+ *  when the person left it open. */
 function syncAskSide(name) {
   if (!askSide || !askPanel) return;
   const btn = $('#topnav-ask');
@@ -40399,8 +40628,9 @@ function syncAskSide(name) {
     return;
   }
   askHistoryOnChat = false;
-  if (btn) btn.hidden = name === 'workflows';
-  askSide.setAvailable(name !== 'workflows');
+  const noColumn = name === 'workflows' || name === 'design';
+  if (btn) btn.hidden = noColumn;
+  askSide.setAvailable(!noColumn);
 }
 /** Below 1081px the side column covers the main column: the page behind it is inert while it shows (with the phone drawer's). */
 function paintAskSideCover() {
@@ -41795,8 +42025,8 @@ askPanel = createAskPanel({
   },
 });
 ($('section.view[data-view="chat"]') || document.body).appendChild(askPanel.root);
-// Ask worca beside the page: the header toggle docks this same panel in aside#ask-side on every page but Chat and
-// Workflows (syncAskSide decides per route). Made here, after the panel and before the boot route below.
+// Ask worca beside the page: the header toggle docks this same panel in aside#ask-side on every page but Chat,
+// Workflows and Design (syncAskSide decides per route). Made here, after the panel and before the boot route below.
 if ($('#ask-side') && $('#topnav-ask')) {
   askSide = createAskSide({
     doc: document,
@@ -41844,10 +42074,11 @@ if ($('#ask-side') && $('#topnav-ask')) {
     if (e.target?.closest?.('a[href^="#"]')) askSide.uncover();
   });
 }
-// Command summaries (#911) and the account menu's Keep awake row: read the person's switches once.
+// Command summaries (#911), the account menu's Keep awake row and the screensaver: read the person's switches once.
 Promise.resolve().then(() => fetch('/api/settings')).then((r) => safeJson(r)).then((d) => {
   setChatSummariesPref(d && d.chat);
   paintKeepAwakeRow(!(d && d.keepAwake === false));
+  paintScreensaver(d && d.screensaver);
 }).catch(() => { /* keep: on */ });
 onFlagChange('commandSummaries', () => { askPanel?.refreshCommandCards(); void paintHelperModelCards(); });
 // One delegated handler for every Summaries / Raw switch (Logs tab, History Logs, both drawers, Chat's run

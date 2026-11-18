@@ -1,7 +1,7 @@
 // test/azure-remote.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { isAzureHost, parseAzurePath, parseAzurePrUrl, azurePrUrl } from '../src/shared/azure-remote.mjs';
+import { isAzureHost, parseAzurePath, parseAzurePrUrl, parseAzureWorkItemUrl, azurePrUrl } from '../src/shared/azure-remote.mjs';
 import { checkRows } from './helpers/rows.mjs';
 
 const X = { host: 'dev.azure.com', org: 'acme', project: 'Shop', owner: 'acme/Shop', repo: 'api' };
@@ -36,4 +36,25 @@ test('azure-remote: hosts, path shapes, PR URLs', async () => {
       assert.equal(parseAzurePrUrl('https://github.com/o/r/pull/1'), null);
     } },
   ]);
+});
+
+test('parseAzureWorkItemUrl: dev.azure.com and visualstudio.com (DefaultCollection) forms, decoded names, query tail; a _git or pullrequest URL, http:, a zero id → null', () => {
+  const W = { host: 'dev.azure.com', org: 'acme', project: 'Shop', number: 42 };
+  assert.deepEqual(parseAzureWorkItemUrl('https://dev.azure.com/acme/Shop/_workitems/edit/42'), W);
+  assert.deepEqual(parseAzureWorkItemUrl('https://dev.azure.com/acme/Shop/_workitems/edit/42/'), W);
+  assert.deepEqual(parseAzureWorkItemUrl('https://DEV.AZURE.COM/acme/Shop/_workitems/edit/42?view=x#c'), W);
+  assert.deepEqual(parseAzureWorkItemUrl('https://acme.visualstudio.com/Shop/_workitems/edit/42'), W);
+  assert.deepEqual(parseAzureWorkItemUrl('https://acme.visualstudio.com/DefaultCollection/Shop/_workitems/edit/42'), W);
+  assert.deepEqual(parseAzureWorkItemUrl('https://dev.azure.com/acme/My%20Project/_workitems/edit/7'),
+    { host: 'dev.azure.com', org: 'acme', project: 'My Project', number: 7 });
+  for (const bad of [
+    'https://dev.azure.com/acme/Shop/_git/api/pullrequest/42',
+    'https://dev.azure.com/acme/Shop/_git/api',
+    'http://dev.azure.com/acme/Shop/_workitems/edit/42',
+    'https://dev.azure.com/acme/Shop/_workitems/edit/0',
+    'https://dev.azure.com/acme/Shop/_workitems/edit/x',
+    'https://dev.azure.com/acme/_workitems/edit/42',
+    'https://github.com/acme/Shop/_workitems/edit/42',
+    null, 12,
+  ]) assert.equal(parseAzureWorkItemUrl(bad), null, String(bad));
 });

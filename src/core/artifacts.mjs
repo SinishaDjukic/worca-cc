@@ -2001,6 +2001,21 @@ export function listNetworkWaitRuns() {
   return out;
 }
 
+/** Runs paused on a provider's usage limit (the usage rings' pause override): `[{ engine, resetsAt, pausedAt }]` in ms.
+ *  Only live, paused rows whose resume point says `usage_limit` with a known `limitEngine`; `resetsAt` is null when the
+ *  point carries no reset time. */
+export function listUsageLimitPauses() {
+  const rows = getDb().prepare(`SELECT updated_at,
+      json_extract(resume_point, '$.limitEngine') AS limit_engine,
+      json_extract(resume_point, '$.limitResetAt') AS limit_reset_at
+    FROM pipelines
+    WHERE status = 'paused' AND archived_at IS NULL AND deleted_at IS NULL AND json_valid(resume_point)
+      AND json_extract(resume_point, '$.pauseReason') = 'usage_limit'
+      AND json_extract(resume_point, '$.limitEngine') IN ('claude', 'codex', 'gemini')`).all();
+  const ms = (v) => { const t = typeof v === 'string' ? Date.parse(v) : NaN; return Number.isFinite(t) ? t : null; };
+  return rows.map((r) => ({ engine: r.limit_engine, resetsAt: ms(r.limit_reset_at), pausedAt: ms(r.updated_at) }));
+}
+
 /**
  * Map a live state object to the named params of the pipelines UPSERT. JSON columns
  * are stringified here; the workspace superset collapses into workspace_meta.
@@ -2072,6 +2087,8 @@ function toPipelineRow(o) {
           warnings: Array.isArray(o.warnings) ? o.warnings : [],
           // E2: loops forced past their budget with blocking issues still open.
           ...(Array.isArray(o.openIssues) && o.openIssues.length ? { openIssues: o.openIssues } : {}),
+          // E9: the notable paths each execution touched outside its checkout (the run page's quiet scope line).
+          ...(Array.isArray(o.scopeNotices) && o.scopeNotices.length ? { scopeNotices: o.scopeNotices } : {}),
           wireDeliveries: o.wireDeliveries ?? {},
           tokens: o.tokens ?? {},
           ...(typeof o.runEngine === 'string' && o.runEngine && o.runEngine !== 'claude' ? { runEngine: o.runEngine } : {}),
@@ -2958,6 +2975,7 @@ function rowToState(row) {
     state.result = outcome.result ?? null;
     state.warnings = Array.isArray(outcome.warnings) ? outcome.warnings : [];
     state.openIssues = Array.isArray(outcome.openIssues) ? outcome.openIssues : [];
+    state.scopeNotices = Array.isArray(outcome.scopeNotices) ? outcome.scopeNotices : [];
     state.wireDeliveries = outcome.wireDeliveries ?? {};
     state.tokens = outcome.tokens ?? {};
     if (outcome.sessionHosts && typeof outcome.sessionHosts === 'object') state.sessionHosts = outcome.sessionHosts;

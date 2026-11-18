@@ -4,10 +4,10 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { freshHomes, plain, put, disk, recordWrites } from './helpers/mcp-store-fixtures.mjs';
 import {
-  readMcpStore, addManualServer, editManualServer, removeServerEverywhere, migrateServerFields, assignBases,
+  readMcpStore, addManualServer, addManualServers, editManualServer, removeServerEverywhere, migrateServerFields, assignBases,
   setTeamState, putPolicyServer, forgetTeamState, putMember, deleteSet, duplicateSet,
 } from '../src/core/mcp/store.mjs';
-import { validateMcpDefinition } from '../src/core/mcp/definitions.mjs';
+import { validateMcpDefinition, defDigest } from '../src/core/mcp/definitions.mjs';
 
 freshHomes(after);
 const TEAM = 'team-acme-platform-9333';
@@ -41,6 +41,25 @@ test('addManualServer: validated, stored normalized, base assigned; refuses a ba
   await assert.rejects(addManualServer('jira', PG_RAW), { status: 409 });
   await assert.rejects(addManualServer('sentry', PG_RAW, { catalogNames: ['sentry'] }), { status: 409 });
   await assert.rejects(addManualServer('postgres-ro', PG_RAW), { status: 409 });
+});
+
+test('addManualServers: every name is checked first, then the whole list is written in one servers write; any refusal writes none', async () => {
+  await addManualServer('postgres-ro', PG_RAW);
+  put('servers', { ...disk('servers'), bases: { ...disk('servers').bases, 'plugin:gone/jira': 'jira' } });
+  const before = JSON.stringify(disk('servers'));
+  // The second name is taken: by a stored server, a catalog name, another id's base, or the list itself.
+  await assert.rejects(addManualServers([{ name: 'fresh-a', def: PG_RAW }, { name: 'postgres-ro', def: PG_RAW }]), { status: 409 });
+  await assert.rejects(addManualServers([{ name: 'fresh-a', def: PG_RAW }, { name: 'sentry', def: PG_RAW }], { catalogNames: ['sentry'] }), { status: 409 });
+  await assert.rejects(addManualServers([{ name: 'fresh-a', def: PG_RAW }, { name: 'jira', def: PG_RAW }]), { status: 409 });
+  await assert.rejects(addManualServers([{ name: 'fresh-a', def: PG_RAW }, { name: 'fresh-a', def: PG_RAW }]), { status: 409 });
+  await assert.rejects(addManualServers([{ name: 'fresh-a', def: PG_RAW }, { name: 'bad', def: { ...PG_RAW, command: './x' } }]), { status: 400 });
+  await assert.rejects(addManualServers([]), { status: 400 });
+  assert.equal(JSON.stringify(disk('servers')), before);
+  const writes = await recordWrites(() => addManualServers([{ name: 'fresh-a', def: PG_RAW }, { name: 'fresh-b', def: PG_RAW }]));
+  assert.deepEqual(writes.map((w) => w.file), ['servers']);
+  const s = disk('servers');
+  assert.deepEqual(Object.keys(s.manual).filter((k) => k.startsWith('fresh-')), ['fresh-a', 'fresh-b']);
+  assert.deepEqual([s.bases['manual:fresh-a'], s.bases['manual:fresh-b']], ['fresh-a', 'fresh-b']);
 });
 
 test('editManualServer: the name stays; a type switch migrates every membership — sets, then secrets, then the definition', async () => {
@@ -95,6 +114,31 @@ test('removeServerEverywhere: memberships, Team state, secrets, tests, then the 
   await putPolicyServer('acme/platform/github', { def: validateMcpDefinition(PG_RAW, { name: 'github', source: 'policy' }).def, hash: 'h' });
   await removeServerEverywhere('policy:acme/platform/github');
   assert.deepEqual(plain((await readMcpStore()).policy), {});
+});
+
+test('editManualServer with a stale expect is refused under the lock', async () => {
+  await addManualServer('postgres-ro', PG_RAW);
+  const before = defDigest((await readMcpStore()).manual['postgres-ro']);
+  const first = { ...PG_RAW, description: 'first edit' };
+  await editManualServer('postgres-ro', first);
+  const next = { ...PG_RAW, description: 'second edit' };
+  await assert.rejects(editManualServer('postgres-ro', next, { expect: before }), { status: 409, message: /postgres-ro changed since this card was made/ });
+  assert.equal((await readMcpStore()).manual['postgres-ro'].description, 'first edit');
+  const current = defDigest((await readMcpStore()).manual['postgres-ro']);
+  await editManualServer('postgres-ro', next, { expect: current });
+  assert.equal((await readMcpStore()).manual['postgres-ro'].description, 'second edit');
+});
+
+test('removeServerEverywhere with a stale expect is refused', async () => {
+  await addManualServer('postgres-ro', PG_RAW);
+  const before = defDigest((await readMcpStore()).manual['postgres-ro']);
+  await editManualServer('postgres-ro', { ...PG_RAW, description: 'changed' });
+  await assert.rejects(removeServerEverywhere('manual:postgres-ro', { expect: before }), { status: 409, message: /postgres-ro changed since this card was made/ });
+  assert.ok((await readMcpStore()).manual['postgres-ro']);
+  await assert.rejects(removeServerEverywhere('plugin:p/x', { expect: 'x' }), { status: 404 });
+  const current = defDigest((await readMcpStore()).manual['postgres-ro']);
+  await removeServerEverywhere('manual:postgres-ro', { expect: current });
+  assert.equal((await readMcpStore()).manual['postgres-ro'], undefined);
 });
 
 test('assignBases persists only new names, in arrival order, and the Team records of the homes given', async () => {

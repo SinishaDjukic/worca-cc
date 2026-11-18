@@ -23,6 +23,7 @@
 .drow-help{grid-column:1;font-size:var(--fs-meta);line-height:var(--lh-body);color:var(--ink-2);}
 .drow-control{grid-column:2;grid-row:1 / span 2;display:flex;align-items:center;gap:8px;justify-self:end;}
 .drow-control :is(.input,.select,input[type="text"],input[type="number"],select){width:240px;max-width:100%;}
+.drow-control .select.select-fit{width:auto;}
 @container drows (max-width:560px){
   .drow{grid-template-columns:minmax(0,1fr);}
   .drow-control{grid-column:1;grid-row:auto;justify-self:stretch;}

@@ -12,6 +12,7 @@ import { CLAUDE_CLI } from './cli-specs.mjs';
 import { hostGuardEnabled, hostGuardHookEntry, hostGuardSystemPrompt } from '../host-guard.mjs';
 import { memoryUsageHookEntry } from '../memory-usage.mjs';
 import { readGuardHookEntry, readGuardDecisions } from '../file-read-guard.mjs';
+import { writeGuardHookEntry } from '../design/write-guard.mjs';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -46,6 +47,12 @@ export const _testing = { set({ superviseSpawn: sup = _ov.superviseSpawn } = {})
 // a reserved model-env key, so no catalog entry sets it.
 export const CLAUDE_SPAWN_ENV = Object.freeze({ CLAUDE_CODE_FORK_SUBAGENT: '0' });
 
+// Env switches under which Claude Code fires no settings-file hook: CLAUDE_CODE_SIMPLE (what `--bare` sets) and
+// CLAUDE_CODE_SAFE_MODE (`--safe-mode`). A spawn with a fail-closed guard hook (readGuard, writeGuard) never carries
+// them, so a server started from a `claude --bare` session cannot ship a guard that never runs. Both are reserved
+// model-env keys too.
+const HOOKS_OFF_ENV_KEYS = Object.freeze(['CLAUDE_CODE_SIMPLE', 'CLAUDE_CODE_SAFE_MODE']);
+
 // Settings keys a caller's extraSettings never sets (skills registry §4.1): the runner's own guardrail `permissions`
 // and `hooks` (telemetry + the host guard), and the two that would switch those hooks off or rewrite the env the
 // host guard reads (`disableAllHooks`, `env`).
@@ -73,8 +80,10 @@ function extraSettingsOf(extraSettings) {
  *  `readGuardLog` (stageClaudeInvocation names it); absent (null/undefined), nothing changes. Workflow tests: `tryGuard` (D56),
  *  `signInSettings` (D71), `safetySettings` (D81): workflow-tests/try-spawn.mjs tryPayloadParts; with either of the last two
  *  the payload says `signIn: true` (a file only, buildSettingsArgs).
- *  `mainThreadGuard` (session groups C40): a session host's main-thread guard; its PreToolUse entries join the runner's own. */
-export function buildSettingsPayload(permissionRules, { hostGuard = false, extraSettings = null, memoryLoadLog = null, readGuard = null, readGuardLog = null, tryGuard = null, signInSettings = null, safetySettings = null, mainThreadGuard = null } = {}) {
+ *  `mainThreadGuard` (session groups C40): a session host's main-thread guard; its PreToolUse entries join the runner's own.
+ *  `writeGuard` (Design: a `{ allowedDirs }` agent's write folders) adds the design write guard (design/write-guard.mjs) on
+ *  the write tools the same way, after the read guard and with `disableAllHooks: false`; absent (null/undefined), nothing changes. */
+export function buildSettingsPayload(permissionRules, { hostGuard = false, extraSettings = null, memoryLoadLog = null, readGuard = null, readGuardLog = null, tryGuard = null, signInSettings = null, safetySettings = null, mainThreadGuard = null, writeGuard = null } = {}) {
   const hook = buildHookSettings();
   const extra = extraSettingsOf(extraSettings);
   const guard = hostGuard && hostGuardEnabled() ? hostGuardHookEntry() : null;
@@ -93,11 +102,14 @@ export function buildSettingsPayload(permissionRules, { hostGuard = false, extra
   // A8: a Requirements file read's guard (file-read-guard.mjs): every tool, fail-closed; the user settings cannot turn it off.
   // Any value but null/undefined goes to readGuardHookEntry, which throws unless it is an absolute path: never a silent no-guard.
   const read = readGuard != null ? readGuardHookEntry(readGuard, { log: readGuardLog }) : null;
+  // Design: a Design agent's write folders (design/write-guard.mjs), fail-closed on the write tools. Any value but
+  // null/undefined goes to writeGuardHookEntry, which throws unless `allowedDirs` is a non-empty list of absolute paths.
+  const write = writeGuard != null ? writeGuardHookEntry(writeGuard) : null;
   // Session groups C40: a session host's main-thread guard (session-host-guard.mjs, Task 41). Its PreToolUse entries are
   // the runner's own, like the host guard's; extraSettings never carries hooks (RUNNER_SETTINGS_KEYS), so it has its own key.
   const hostOnly = Array.isArray(mainThreadGuard?.hooks?.PreToolUse) && mainThreadGuard.hooks.PreToolUse.length
     ? mainThreadGuard.hooks.PreToolUse : null;
-  if (!hook && !hasRules && !guard && !extra && !usage && !read && !t.tg && !t.signIn && !t.safety && !hostOnly) return null;
+  if (!hook && !hasRules && !guard && !extra && !usage && !read && !t.tg && !t.signIn && !t.safety && !hostOnly && !write) return null;
   const settings = { ...(extra ?? {}), ...t.top };
   if (hook) settings.hooks = { ...hook.hooks };
   if (guard) {
@@ -118,6 +130,11 @@ export function buildSettingsPayload(permissionRules, { hostGuard = false, extra
     settings.hooks = settings.hooks ?? {};
     settings.hooks.PreToolUse = [...(settings.hooks.PreToolUse ?? []), read];
     settings.disableAllHooks = false;
+  }
+  if (write) {
+    settings.hooks = settings.hooks ?? {};
+    settings.hooks.PreToolUse = [...(settings.hooks.PreToolUse ?? []), write];
+    settings.disableAllHooks = false;              // like the read guard: a user's settings cannot switch it off
   }
   if (hasRules) settings.permissions = t.rules;
   return t.signIn || t.safety ? { hook: !!hook, settings, signIn: true } : { hook: !!hook, settings };
@@ -308,13 +325,13 @@ export function isHookEvent(evt) {
  * [] when there is nothing to say, so the baseline argv is byte-identical.
  * @param {{deny?:string[],allow?:string[],ask?:string[]}|null|undefined} permissionRules
  * @param {string|null} [settingsFile] staged path (GH #380): `--settings <path>` carries the same JSON
- * @param {{hostGuard?:boolean, extraSettings?:object|null, readGuard?:string|null, readGuardLog?:string|null}} [opts]
+ * @param {{hostGuard?:boolean, extraSettings?:object|null, readGuard?:string|null, readGuardLog?:string|null, writeGuard?:{allowedDirs:string[]}|null}} [opts]
  *   host-process guard (runClaudeProcess sets it; see buildSettingsPayload), extra settings merged into the same payload
- *   (skills registry §4.1), the A8 file-read guard's one allowed file and its decision log, a workflow-test try's guard
+ *   (skills registry §4.1), the A8 file-read guard's one allowed file and its decision log, a workflow-test try's guard, the Design write guard's folders
  * @returns {string[]}
  */
-export function buildSettingsArgs(permissionRules, settingsFile = null, { hostGuard = false, extraSettings = null, memoryLoadLog = null, readGuard = null, readGuardLog = null, tryGuard = null, signInSettings = null, safetySettings = null, mainThreadGuard = null } = {}) {
-  const payload = buildSettingsPayload(permissionRules, { hostGuard, extraSettings, memoryLoadLog, readGuard, readGuardLog, tryGuard, signInSettings, safetySettings, mainThreadGuard });
+export function buildSettingsArgs(permissionRules, settingsFile = null, { hostGuard = false, extraSettings = null, memoryLoadLog = null, readGuard = null, readGuardLog = null, tryGuard = null, signInSettings = null, safetySettings = null, mainThreadGuard = null, writeGuard = null } = {}) {
+  const payload = buildSettingsPayload(permissionRules, { hostGuard, extraSettings, memoryLoadLog, readGuard, readGuardLog, tryGuard, signInSettings, safetySettings, mainThreadGuard, writeGuard });
   if (!payload) return [];
   if (payload.signIn && !settingsFile) throw new Error('a carried Claude Code sign-in travels in a settings file, never on the command line');   // D71
   const args = [];
@@ -362,6 +379,8 @@ export function buildClaudeArgs({
   maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, hostGuard, addDirs, disallowedTools, agents,
   pluginDirs, extraSettings, memoryLoadLog, readGuard, readGuardLog,
   tryGuard, signInSettings, safetySettings,   // workflow tests (D56, D71, D81): a test try's pieces in --settings. Absent ⇒ nothing.
+  // Design: a Design agent's write folders ({ allowedDirs }), the write guard in the --settings payload. Absent ⇒ unchanged.
+  writeGuard,
   // Session groups (Task 29): a session host spawn only. Absent ⇒ argv byte-identical.
   forwardSubagentText, agentsFile, mainThreadGuard,
   // Requirements A1.1: 'replace' swaps Claude Code's own system prompt for ours
@@ -394,7 +413,7 @@ export function buildClaudeArgs({
   // SINGLE inline JSON (two --settings flags would be last-wins at the CLI). [] when
   // there is neither, so the baseline argv is unchanged; a CLI that rejects these
   // flags would only ever fail when the operator opted in.
-  for (const a of buildSettingsArgs(permissionRules, settingsFile, { hostGuard, extraSettings, memoryLoadLog, readGuard, readGuardLog, tryGuard, signInSettings, safetySettings, mainThreadGuard })) args.push(a);
+  for (const a of buildSettingsArgs(permissionRules, settingsFile, { hostGuard, extraSettings, memoryLoadLog, readGuard, readGuardLog, tryGuard, signInSettings, safetySettings, mainThreadGuard, writeGuard })) args.push(a);
   if (mcpConfigPath) args.push('--mcp-config', mcpConfigPath);
   const tools = Array.isArray(allowedTools) ? allowedTools.slice() : [];
   for (const s of (Array.isArray(mcpServerGrants) ? mcpServerGrants : [])) {
@@ -497,7 +516,7 @@ export function planClaudeInvocation(opts, { bin = DEFAULT_BIN, dir = null, limi
   if (inlineLength <= limit && !fileSettings) return { args: inline, stdin: null, files: agentsEntry ? [agentsEntry] : [], staged: false, inlineLength };
   if (!dir) throw new Error('planClaudeInvocation: a staging dir is required when the argv is over the limit or carries a sign-in');
   if (typeof dir === 'function') dir = dir();
-  const payload = buildSettingsPayload(opts.permissionRules, { hostGuard: opts.hostGuard, extraSettings: opts.extraSettings, memoryLoadLog: opts.memoryLoadLog, readGuard: opts.readGuard, readGuardLog: opts.readGuardLog, tryGuard: opts.tryGuard, signInSettings: opts.signInSettings, safetySettings: opts.safetySettings, mainThreadGuard: opts.mainThreadGuard });
+  const payload = buildSettingsPayload(opts.permissionRules, { hostGuard: opts.hostGuard, extraSettings: opts.extraSettings, memoryLoadLog: opts.memoryLoadLog, readGuard: opts.readGuard, readGuardLog: opts.readGuardLog, tryGuard: opts.tryGuard, signInSettings: opts.signInSettings, safetySettings: opts.safetySettings, mainThreadGuard: opts.mainThreadGuard, writeGuard: opts.writeGuard });
   const files = agentsEntry ? [agentsEntry] : [];
   if (inlineLength <= limit) return settingsFilePlan({ opts, dir, files, payload, inlineLength, buildArgs: buildClaudeArgs });   // D71/D81
   const prompt = typeof opts.prompt === 'string' ? opts.prompt : '';
@@ -542,7 +561,7 @@ export function stageClaudeInvocation(opts, { bin = DEFAULT_BIN, limit = ARGV_IN
  *  does), except over Worca's in-process bridge, which forwards no credential upstream and whose routing must hold. */
 export const carryOverModelEnv = (modelEnv) => !bridgeSpawnKey(modelEnv);
 
-export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, spawnEnv: runSpawnEnv, redactValues, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, agents, pluginDirs, extraSettings, memoryLoadLog, argvInlineLimit, asAgent, systemPromptMode, readGuard, noSessionPersistence, tryGuard, pluginsOff, runLoadsUserSettings, forwardSubagentText, agentsViaFile, mainThreadGuard }) { // billTo/spawnKind/runId/threadId are consumed by runViaBroker
+export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, permissionMode, model, effort, onEvent, signal, bin, resumeSessionId, mcpConfigPath, mcpServerGrants, permissionRules, envScrub, envAllowlist, modelEnv, spawnEnv: runSpawnEnv, redactValues, disallowedTools, tools, strictMcpConfig, settingSources, disableSlashCommands, includePartialMessages, maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, agents, pluginDirs, extraSettings, memoryLoadLog, argvInlineLimit, asAgent, systemPromptMode, readGuard, noSessionPersistence, tryGuard, pluginsOff, runLoadsUserSettings, forwardSubagentText, agentsViaFile, mainThreadGuard, writeGuard }) { // billTo/spawnKind/runId/threadId are consumed by runViaBroker
   // MCP registry §5.5.3: with registry secrets in this spawn's env, every emit, the result text and the error
   // message leave redacted — wrapped once here, so the broker path (which calls runClaudeProcess) is covered too.
   const carry = pretendTryCarry({ pluginsOff, modelEnv, asAgent, cwd, settingSources, runLoadsUserSettings, permissionRules });   // D71/D81: redacted too
@@ -637,7 +656,7 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
         maxTurns, maxBudgetUsd, appendSubagentSystemPrompt, addDirs, disallowedTools, agents,
         pluginDirs, extraSettings, memoryLoadLog, tryGuard: canary.tryGuard, ...carryStageOpts(carry),
         systemPromptMode, readGuard, noSessionPersistence,
-        forwardSubagentText, agentsViaFile, mainThreadGuard,
+        forwardSubagentText, agentsViaFile, mainThreadGuard, writeGuard,
       }, { bin: resolved.bin, limit });
     } catch (err) {
       rejectP(new Error(`Failed to stage the claude prompt files: ${err.message}`));
@@ -685,6 +704,8 @@ export function runClaudeProcess({ cwd, systemPrompt, prompt, allowedTools, perm
       // all count for both the route and an explicit value.
       // CLAUDE_SPAWN_ENV last: no fork sub-agents, whatever any tier says.
       spawnEnv = { ...withStreamTimeouts(spawnEnv), ...CLAUDE_SPAWN_ENV };
+      // Design: no hooks-off switch on a spawn with a fail-closed guard hook; a workflow-test try's guard (D56) is one too.
+      if (readGuard != null || writeGuard != null || tryGuard) for (const k of HOOKS_OFF_ENV_KEYS) delete spawnEnv[k];
 
       // Opt-in spawn diagnostics (WORCA_DEBUG_SPAWN, default off — byte-identical spawn
       // path when unset). Everything here is derived from values already computed above

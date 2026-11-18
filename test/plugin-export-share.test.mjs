@@ -28,12 +28,14 @@ const repo = writeMcpPlugin(join(scratch, 'repo'), {
   },
 });
 
+/** npm as runNpm starts it: `npm` (POSIX), node with npm-cli.js, or one `npm …` command line (Windows). */
+const isNpm = (cmd, args) => cmd === 'npm' || /^npm /.test(cmd) || /npm-cli\.js$/i.test(args?.[0] ?? '');
 /** git/tar/chmod pass through; npm ci is faked (writes node_modules under the current umask). */
 function makeExec() {
   const calls = [];
   const exec = async (cmd, args, opts = {}) => {
-    calls.push([cmd, ...args]);
-    if (cmd === 'npm') {
+    calls.push([cmd, ...(args ?? [])]);
+    if (isNpm(cmd, args)) {
       mkdirSync(join(opts.cwd, 'node_modules', 'dep'), { recursive: true });
       writeFileSync(join(opts.cwd, 'node_modules', 'dep', 'index.js'), '');
       return { stdout: '', stderr: '' };
@@ -70,7 +72,7 @@ test('agent isolation: install and update share versions/<sha7> read-only in the
       ['chmod', '0710', pdir], ['chmod', 'g-w,g+rX', versions], ['chmod', '-R', 'g-w,g+rX', vdir],
       ['chgrp', G, pdir, versions], ['chgrp', '-R', G, vdir],
     ], 'modes first (never a group-writable moment), then the agents\' group: the entrypoint shares only what exists at boot');
-    assert.ok(shared.calls.findIndex((c) => c[0] === 'npm') < shared.calls.indexOf(share[0]), 'after setup, so dependencies are covered');
+    assert.ok(shared.calls.findIndex((c) => isNpm(c[0], c.slice(1))) < shared.calls.indexOf(share[0]), 'after setup, so dependencies are covered');
     assert.equal(groupBits(pdir), '10', 'plugins/<p>/: traverse only, never group-writable');
 
     await uninstallPlugin(NAME, { purge: true });

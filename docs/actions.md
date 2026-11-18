@@ -268,7 +268,9 @@ shows no line.
 - **Conflicts in N files**, with the file list: resolve them in one of two ways.
   - **Resolve in a pipeline** starts a new run on the same branch. It runs the same unattended
     Implementation and Review workflow as a Watch PR fix run, with the same conflict brief, plus the
-    listed files and the original task for context.
+    listed files and the original task for context. A conflict run's diff and saved-hours count only
+    the conflict resolution and later work: worca measures from git's own merge of the same two parents
+    (see [which code counts](team-metrics.md#human-hours-and-saved)).
   - **Resolve in a terminal** checks the run out (as **Check out** does), starts the merge there with
     the conflicts left in the files, and opens the run's terminal with `git status`. Fix the files,
     commit the merge, then click **Re-check**.

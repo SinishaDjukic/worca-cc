@@ -72,6 +72,20 @@
 /* quiescence banner (.rd-banners / .hd-banners / History Overview note) */
 .run-warn{margin:0;padding:11px 15px;border-radius:var(--r-card);background:var(--amber-bg);color:var(--amber-ink);font-size:var(--fs-body);font-weight:600;border:1px solid color-mix(in srgb, var(--amber) 45%, transparent);align-self:stretch;}
 .run-warn[hidden]{display:none;}
+/* E9 scope line (run-scope-line.mjs): every path the run's agents touched outside their checkout, ONE quiet line
+   under the banners; amber only when one is in another run's folder or another session's scratch */
+.run-scope{margin:0;padding:6px 2px;color:var(--ink-2);font-size:var(--fs-caption);align-self:stretch;}
+.run-scope-cross{padding:8px 12px;border-radius:var(--r-card);background:var(--amber-bg);color:var(--amber-ink);border:1px solid var(--amber-line);}
+.run-scope-toggle{padding:0;border:0;background:none;color:inherit;font:inherit;text-decoration:underline;cursor:pointer;}
+.run-scope-toggle:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.run-scope-details{margin-top:6px;}
+.run-scope-details[hidden]{display:none;}
+.run-scope-step-name{font-weight:600;}
+.run-scope-paths{margin:2px 0 6px;padding-left:18px;}
+.run-scope-path{font-family:var(--mono);overflow-wrap:anywhere;}
+.run-scope-tool{color:var(--ink-2);}
+.run-scope-x{font-weight:600;color:var(--amber-ink);}
+.run-scope-note{margin:4px 0 0;}
 /* gesture hint chip (D10) */
 .rg-hint{position:absolute;left:12px;bottom:10px;padding:4px 9px;border-radius:var(--r-xs);background:color-mix(in srgb, var(--ink) 72%, transparent);color:var(--on-ink);font-size:var(--fs-caption);font-weight:600;pointer-events:none;opacity:0;transition:opacity .15s;z-index:5;}
 .run-flow-wrap.gv-wrap-monitor:hover > .rg-hint{opacity:1;}

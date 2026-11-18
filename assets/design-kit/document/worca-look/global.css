@@ -1,0 +1,85 @@
+/* A document's reading styles and every pattern of the kit's CONTRACT.md. Look-neutral: every value is a token of
+   tokens.css, so a brief's or a project's look rewrites tokens.css only and keeps this file. */
+
+*,*::before,*::after{box-sizing:border-box}
+html{background:var(--doc-bg)}
+body{margin:0;background:var(--doc-bg);color:var(--doc-ink);font-family:var(--font-sans);font-size:var(--fs-3);line-height:var(--lh-body);
+  -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+
+/* The page column: the shell's main element. */
+.doc{max-width:46rem;margin:0 auto;padding:var(--space-7) var(--space-5);background:var(--doc-surface)}
+.doc-head{margin:0 0 var(--space-6);padding-bottom:var(--space-5);border-bottom:1px solid var(--doc-line)}
+.doc-title{margin:0 0 var(--space-3);font-size:var(--fs-7);line-height:var(--lh-title);font-weight:700;text-wrap:balance}
+.doc-subtitle{margin:0 0 var(--space-4);font-size:var(--fs-5);line-height:var(--lh-title);font-weight:500;color:var(--doc-ink-2)}
+.doc-meta{margin:0;font-size:var(--fs-2);color:var(--doc-ink-2);font-variant-numeric:tabular-nums}
+
+/* Headings and text. */
+h1,h2,h3,h4{line-height:var(--lh-title);text-wrap:balance;margin:0}
+h2{font-size:var(--fs-6);font-weight:700;margin:var(--space-6) 0 var(--space-4)}
+h3{font-size:var(--fs-4);font-weight:600;margin:var(--space-5) 0 var(--space-3)}
+h4{font-size:var(--fs-3);font-weight:600;margin:var(--space-4) 0 var(--space-2)}
+p,ul,ol,dl{margin:0 0 var(--space-4)}
+li+li{margin-top:var(--space-1)}
+strong{font-weight:600}
+a{color:var(--doc-accent);text-underline-offset:.15em}
+.lede{font-size:var(--fs-4);color:var(--doc-ink-2);margin-bottom:var(--space-5)}
+blockquote{margin:0 0 var(--space-4);padding:var(--space-2) var(--space-4);border-left:3px solid var(--doc-accent);color:var(--doc-ink-2)}
+hr{border:0;border-top:1px solid var(--doc-line);margin:var(--space-6) 0}
+code,pre,kbd{font-family:var(--font-mono);font-size:.9em}
+code{padding:0 var(--space-1);border-radius:var(--r-1);background:var(--doc-bg)}
+pre{margin:0 0 var(--space-4);padding:var(--space-4);border:1px solid var(--doc-line);border-radius:var(--r-2);background:var(--doc-bg);overflow-x:auto;line-height:1.5}
+pre code{padding:0;background:none}
+
+/* Key figures: a row of numbers with their labels. */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(9rem,1fr));gap:var(--space-4);margin:0 0 var(--space-5);padding:0;list-style:none}
+.kpi{padding:var(--space-4);border:1px solid var(--doc-line);border-radius:var(--r-2);background:var(--doc-surface);min-width:0}
+.kpi-value{display:block;font-size:var(--fs-6);font-weight:700;line-height:var(--lh-title);font-variant-numeric:tabular-nums}
+.kpi-label{display:block;font-size:var(--fs-2);color:var(--doc-ink-2)}
+
+/* Tables. */
+table{width:100%;border-collapse:collapse;margin:0 0 var(--space-5);font-size:var(--fs-2)}
+caption{caption-side:top;text-align:left;font-weight:600;padding-bottom:var(--space-2)}
+th,td{padding:var(--space-2) var(--space-3);border-bottom:1px solid var(--doc-line);text-align:left;vertical-align:top}
+thead th{font-weight:600;color:var(--doc-ink-2);border-bottom-width:2px}
+.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+
+/* Callouts: one tone per job. */
+.callout{margin:0 0 var(--space-5);padding:var(--space-4);border-radius:var(--r-2);background:var(--tone-info-bg);color:var(--doc-ink)}
+.callout>:last-child{margin-bottom:0}
+.callout-title{display:block;font-weight:600;margin-bottom:var(--space-1);color:var(--tone-info-ink)}
+.callout[data-tone="note"]{background:var(--tone-note-bg)}
+.callout[data-tone="note"] .callout-title{color:var(--tone-note-ink)}
+.callout[data-tone="warn"]{background:var(--tone-warn-bg)}
+.callout[data-tone="warn"] .callout-title{color:var(--tone-warn-ink)}
+.callout[data-tone="risk"]{background:var(--tone-risk-bg)}
+.callout[data-tone="risk"] .callout-title{color:var(--tone-risk-ink)}
+
+/* Figures: charts and diagrams are static inline SVG. */
+figure{margin:0 0 var(--space-5)}
+figcaption{margin-top:var(--space-2);font-size:var(--fs-1);color:var(--doc-ink-2)}
+.chart svg,.diagram svg{display:block;width:100%;height:auto;font-family:var(--font-sans);font-size:var(--fs-1)}
+.chart text{fill:var(--chart-ink);font-variant-numeric:tabular-nums}
+.chart .axis{stroke:var(--doc-line);stroke-width:1}
+.chart .series-1{fill:var(--chart-1);stroke:var(--chart-1)}
+.chart .series-2{fill:var(--chart-2);stroke:var(--chart-2)}
+.chart .series-3{fill:var(--chart-3);stroke:var(--chart-3)}
+.chart .series-4{fill:var(--chart-4);stroke:var(--chart-4)}
+.chart .series-5{fill:var(--chart-5);stroke:var(--chart-5)}
+.chart .series-6{fill:var(--chart-6);stroke:var(--chart-6)}
+.chart .line{fill:none;stroke-width:2}
+.diagram .node rect{fill:var(--doc-surface);stroke:var(--doc-ink-2);stroke-width:1.5}
+.diagram .node text{fill:var(--doc-ink);text-anchor:middle;dominant-baseline:middle}
+.diagram .edge{fill:none;stroke:var(--doc-ink-2);stroke-width:1.5}
+.diagram .arrowhead{fill:var(--doc-ink-2)}
+
+/* The contents list worca makes: worca sets its structure, the look sets its type. */
+.doc-toc{margin:0 0 var(--space-6)}
+.doc-toc-title{font-size:var(--fs-5);margin:0 0 var(--space-3)}
+.doc-toc a{color:inherit;text-decoration:none}
+.doc-toc-num{color:var(--doc-ink-2)}
+
+@media print{
+  html,body{background:var(--doc-bg)}
+  .doc{max-width:none;padding:0;background:none}
+  a{color:inherit;text-decoration:none}
+}
