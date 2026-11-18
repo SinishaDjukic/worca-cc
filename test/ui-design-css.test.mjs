@@ -102,3 +102,19 @@ test('the sound cards are the white ask card: no .dsc-sound- rule names an amber
     assert.doesNotMatch(r.body, /border-left/, r.sel);
   }
 });
+
+test('select-fit sizes a drow select to its content', () => {
+  const ds = readFileSync(new URL('../ui/public/design-system/design-system.css', import.meta.url), 'utf8');
+  assert.match(ds, /\.drow-control \.select\.select-fit\{width:auto;?\}/);
+  const g = readFileSync(new URL('../docs/design-system.md', import.meta.url), 'utf8');
+  const field = g.slice(g.indexOf('### Field'), g.indexOf('### Switch (checked)'));
+  assert.match(field, /`\.select-fit`/);
+});
+
+test('docs: the screensaver is a Settings › Appearance setting', () => {
+  const g = readFileSync(new URL('../docs/design-system.md', import.meta.url), 'utf8');
+  assert.match(g, /chosen in Settings › Appearance \(off by default\)/);
+  const away = readFileSync(new URL('../docs/away-mode.md', import.meta.url), 'utf8');
+  assert.doesNotMatch(away, /AWAY_SCREENSAVER/);
+  assert.match(away, /Settings › General › Appearance/);
+});
