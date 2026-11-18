@@ -15,6 +15,36 @@ const defined = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v 
 const textOf = (content) => (typeof content === 'string' ? content
   : Array.isArray(content) ? content.filter((c) => c && c.type === 'text' && typeof c.text === 'string').map((c) => c.text).join('') : '');
 
+/** The stop reason a model gives when it declines the request. */
+export const REFUSAL_STOP = 'refusal';
+/** The one refusal wording, on every surface (step error, chat notice). Level- and surface-neutral. */
+export const REFUSAL_TEXT = 'The model declined this request. Change the prompt or pick another model.';
+
+/**
+ * The stop reason a MAIN-stream frame carries, or null. A sub-agent's frame (it has a
+ * `parent_tool_use_id`) never counts: its refusal goes back to the main agent as a tool
+ * result. Nor does a `<synthetic>` assistant frame (the CLI speaking, not the model).
+ * Pure; never throws.
+ * @param {any} raw a stream-json frame
+ * @returns {string|null}
+ */
+export function claudeStopReason(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  if (raw.type === 'result') return str(raw.stop_reason) ?? null;
+  const msg = raw.message && typeof raw.message === 'object' ? raw.message : null;
+  if ((raw.parent_tool_use_id ?? msg?.parent_tool_use_id ?? null) !== null) return null;
+  if (raw.type === 'assistant') {
+    if (!msg || msg.model === '<synthetic>') return null;
+    return str(msg.stop_reason) ?? null;
+  }
+  if (raw.type === 'stream_event') {
+    const ev = raw.event;
+    if (!ev || typeof ev !== 'object' || ev.type !== 'message_delta') return null;
+    return str(ev.delta?.stop_reason) ?? null;
+  }
+  return null;
+}
+
 export function createClaudeNormalizer({ rootParentId = null } = {}) {
   const agents = new Set();
   const messageIds = new Map();

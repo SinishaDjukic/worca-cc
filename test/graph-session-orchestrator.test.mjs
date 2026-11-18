@@ -62,28 +62,28 @@ test('C42 / critique M-13 — a paused member whose session now runs separate st
   o.resumeOpts = { steps: [{ key: 'x:n_impl:1', status: 'paused', sessionId: 'mock-host-1', session: { sid: SID, hostSessionId: 'mock-host-1' } }] };
   o._sessions = { hostFor: () => null, sidOf: () => SID, modeOf: () => 'separate' };
   const r = o._reattachFor('x:n_impl:1', 'n_impl');
-  assert.deepEqual(r, { resumeSessionId: undefined, coldRedispatch: true });
+  assert.deepEqual(r, { resumeSessionId: undefined, coldRedispatch: true, pinnedAddon: null });
   assert.equal(o._resumeSessions.has('x:n_impl:1'), false, 'one-shot: consumed');
   o._resumeSessions = new Map([['x:n_impl:1', 'mock-host-1']]);
   o._sessions = { hostFor: () => ({ mode: 'subagents' }), sidOf: () => SID, modeOf: () => 'subagents' };
-  assert.deepEqual(o._reattachFor('x:n_impl:1', 'n_impl'), { resumeSessionId: 'mock-host-1', coldRedispatch: false });
+  assert.deepEqual(o._reattachFor('x:n_impl:1', 'n_impl'), { resumeSessionId: 'mock-host-1', coldRedispatch: false, pinnedAddon: null });
   o._resumeSessions = new Map([['x:n_impl:1', 'mock-host-1']]);
   o._sessions = { hostFor: () => ({ mode: 'shared' }), sidOf: () => SID, modeOf: () => 'shared' };
-  assert.deepEqual(o._reattachFor('x:n_impl:1', 'n_impl'), { resumeSessionId: 'mock-host-1', coldRedispatch: false }, 'shared resumes its conversation');
+  assert.deepEqual(o._reattachFor('x:n_impl:1', 'n_impl'), { resumeSessionId: 'mock-host-1', coldRedispatch: false, pinnedAddon: null }, 'shared resumes its conversation');
   o._resumeSessions = new Map([['x:n_impl:1', 'mock-host-1']]);
   o._sessions = { hostFor: () => ({ mode: 'separate', keepPlainSession: () => assert.fail('a host id is never a plain session') }), sidOf: () => SID, modeOf: () => 'separate' };
-  assert.deepEqual(o._reattachFor('x:n_impl:1', 'n_impl'), { resumeSessionId: undefined, coldRedispatch: true }, 'a runtime degrade');
+  assert.deepEqual(o._reattachFor('x:n_impl:1', 'n_impl'), { resumeSessionId: undefined, coldRedispatch: true, pinnedAddon: null }, 'a runtime degrade');
   o._resumeSessions = new Map([['x:n_impl:1', 'mock-host-1']]);
   o.resumeOpts = { steps: [{ key: 'x:n_impl:1', status: 'paused', sessionId: 'mock-host-1' }] };   // no step.session (an old row): the restore names the host id
   o._sessionRestore = { [SID]: { sid: SID, hostSessionId: 'mock-host-1' } };
   o._sessions = null;                                                   // the kill switch
-  assert.deepEqual(o._reattachFor('x:n_impl:1', 'n_impl'), { resumeSessionId: undefined, coldRedispatch: true });
+  assert.deepEqual(o._reattachFor('x:n_impl:1', 'n_impl'), { resumeSessionId: undefined, coldRedispatch: true, pinnedAddon: null });
   o._sessionRestore = null;
   o._resumeSessions = new Map([['x:n_plan:1', 'S-plain']]);
   o.resumeOpts = { steps: [{ key: 'x:n_plan:1', status: 'paused', sessionId: 'S-plain' }] };
   o._sessions = null;
-  assert.deepEqual(o._reattachFor('x:n_plan:1', 'n_plan'), { resumeSessionId: 'S-plain', coldRedispatch: false }, 'an ungrouped row re-attaches as today');
-  assert.deepEqual(o._reattachFor('x:n_plan:1', 'n_plan'), { resumeSessionId: undefined, coldRedispatch: false }, 'nothing to re-attach a second time');
+  assert.deepEqual(o._reattachFor('x:n_plan:1', 'n_plan'), { resumeSessionId: 'S-plain', coldRedispatch: false, pinnedAddon: null }, 'an ungrouped row re-attaches as today');
+  assert.deepEqual(o._reattachFor('x:n_plan:1', 'n_plan'), { resumeSessionId: undefined, coldRedispatch: false, pinnedAddon: null }, 'nothing to re-attach a second time');
 });
 
 test('C42 / C30 — a degraded member\'s own plain session is its own: re-attached, and its host may resume it', () => {
@@ -93,11 +93,11 @@ test('C42 / C30 — a degraded member\'s own plain session is its own: re-attach
   o.resumeOpts = { steps: [{ key: 'x:n_impl:1', status: 'paused', sessionId: 'P-own', session: { sid: SID, hostSessionId: 'mock-host-1' } }] };
   o._sessionRestore = { [SID]: { sid: SID, hostSessionId: 'mock-host-1', mode: 'separate' } };
   o._sessions = { hostFor: () => ({ mode: 'separate', keepPlainSession: (id) => kept.push(id) }) };
-  assert.deepEqual(o._reattachFor('x:n_impl:1', 'n_impl'), { resumeSessionId: 'P-own', coldRedispatch: false });
+  assert.deepEqual(o._reattachFor('x:n_impl:1', 'n_impl'), { resumeSessionId: 'P-own', coldRedispatch: false, pinnedAddon: null });
   assert.deepEqual(kept, ['P-own']);
   o._resumeSessions = new Map([['x:n_impl:1', 'P-own']]);
   o._sessions = { hostFor: () => ({ mode: 'subagents', keepPlainSession: (id) => kept.push(`live:${id}`) }) };
-  assert.deepEqual(o._reattachFor('x:n_impl:1', 'n_impl'), { resumeSessionId: 'P-own', coldRedispatch: false });
+  assert.deepEqual(o._reattachFor('x:n_impl:1', 'n_impl'), { resumeSessionId: 'P-own', coldRedispatch: false, pinnedAddon: null });
   assert.deepEqual(kept, ['P-own'], 'a live host is told nothing');
 });
 
@@ -196,11 +196,11 @@ test('v3 — C42 / C30: a member that only ever ran plain in a degraded session 
   o.resumeOpts = { steps: [{ key: 'x:n_review:1', status: 'paused', sessionId: 'P-review' }] };
   o._sessionRestore = { [SID]: { sid: SID, hostSessionId: 'mock-host-1', mode: 'separate' } };
   o._sessions = { hostFor: () => ({ mode: 'separate', keepPlainSession: (id) => kept.push(id) }) };
-  assert.deepEqual(o._reattachFor('x:n_review:1', 'n_review'), { resumeSessionId: 'P-review', coldRedispatch: false });
+  assert.deepEqual(o._reattachFor('x:n_review:1', 'n_review'), { resumeSessionId: 'P-review', coldRedispatch: false, pinnedAddon: null });
   assert.deepEqual(kept, ['P-review'], 'its plain run may resume it, as ungrouped');
   o._resumeSessions = new Map([['x:n_plan:1', 'P-plan']]);
   o._sessions = { hostFor: () => null };
-  assert.deepEqual(o._reattachFor('x:n_plan:1', 'n_plan'), { resumeSessionId: 'P-plan', coldRedispatch: false }, 'a non-member: as today');
+  assert.deepEqual(o._reattachFor('x:n_plan:1', 'n_plan'), { resumeSessionId: 'P-plan', coldRedispatch: false, pinnedAddon: null }, 'a non-member: as today');
 });
 
 test('v3 — C5: a verdict noted after close writes nothing (close waited for the turn; close stays the last record)', async () => {

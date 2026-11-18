@@ -48,6 +48,7 @@ import {
 export { GRAPH_DEFAULT_WORKFLOW, GRAPH_LEAN_WORKFLOW, LEAN_WORKFLOW_ID, AUTO_WORKFLOW_ID, GRAPH_MEMORY_DEFRAG_WORKFLOW, GRAPH_SHAPE_WORKFLOW, MEMORY_DEFRAG_WORKFLOW_ID, WORKSPACE_SCAN_WORKFLOW_ID, GRAPH_WORKSPACE_RESYNTH_WORKFLOW, WORKSPACE_RESYNTH_WORKFLOW_ID, isReservedWorkflowId };
 import { registryPortsFn } from './graph/registry-ports.mjs';
 import { resolveRoleModel, roleOf } from './model-roles.mjs';
+import { intentEffortFor } from './effort-intents.mjs';
 import { parseFrontmatter } from './frontmatter.mjs';
 
 /**
@@ -593,7 +594,8 @@ export async function deleteWorkflow(id) {
  * @param {string} workflowId
  * @param {Record<string,object>} registry  loadAgentRegistry() output
  * @param {string} [agentsDir]  override for tests; defaults to ../../agents
- * @param {{ isWorkspace?: boolean, overlay?: {nodes?: object, wires?: object}, ignoreProjectOverrides?: boolean }} [opts]  workspace-mode resolve options
+ * @param {{ isWorkspace?: boolean, overlay?: {nodes?: object, wires?: object}, ignoreProjectOverrides?: boolean, fillIntents?: boolean }} [opts]  workspace-mode resolve options;
+ *   `fillIntents: true` (run starts only) fills each unset effort from the step's effort intent (effort-intents.mjs)
  * @returns {Promise<object>} ExecutablePlan
  * @throws {Error} when the workflow id is unknown, or a node resolves the off-pipeline scanner
  */
@@ -862,7 +864,13 @@ export async function resolveGraph(projectDir, workflowId, registry, agentsDir =
     // A dropped factory default is recorded as wanted when nothing else was.
     const wanted = layerWanted || (!pair && nodeDefaultWanted ? { ...nodeDefaultWanted, source: 'default' } : null);
     const nodeModel = pair ? pair.model : (roleP.model ?? baseModel);
-    const nodeEffort = pair ? pair.effort : (roleP.model ? roleP.effort : baseEffort);
+    const explicitEffort = pair ? pair.effort : (roleP.model ? roleP.effort : baseEffort);
+    // Effort intents (effort-intents.mjs): a run start (fillIntents) fills an unset effort from the step's intent for its
+    // model's family, clamped to that model's efforts. A named effort always wins; a pinned pair carries its own effort.
+    // The catalog is read only for a mapped family.
+    const nodeEffort = explicitEffort !== undefined || pair || opts.fillIntents !== true ? explicitEffort
+      : ((await intentEffortFor({ agentKey: authored, name: meta?.displayName || '', model: nodeModel ?? runModel, engine,
+        efforts: () => effortsOf(nodeModel ?? runModel) })) ?? undefined);
     if (nodeDefaultWanted) factoryNotes.at(-1).used = { model: nodeModel ?? runModel, effort: nodeEffort ?? null };
     // A role-review node's per-role picks (run overlay > project > helper job > template); a pinned agentPair runs every
     // role on it. The second-opinion role takes its factory default as its template layer.

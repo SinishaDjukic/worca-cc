@@ -238,6 +238,114 @@ test('Claude model text mentioning a session limit is not terminal', POSIX, asyn
   assert.equal(out.text, 'done');
 });
 
+// ── a model refusal (stop_reason "refusal") fails the step with MODEL_REFUSAL ──
+const REFUSAL_FIXTURE = new URL('./fixtures/claude-stream/refusal.jsonl', import.meta.url).pathname;
+const PLAIN_FIXTURE = new URL('./fixtures/ask/plain-text.jsonl', import.meta.url).pathname;
+const shq = (s) => `'${s.replace(/'/g, `'\\''`)}'`;
+function framesFile(frames) {
+  const f = join(tmp(), 'frames.jsonl');
+  writeFileSync(f, frames.map((o) => JSON.stringify(o)).join('\n') + '\n');
+  return f;
+}
+const catThen = (file, ...tail) => script([`cat ${shq(file)}`, ...tail].join('\n'));
+const runRefusal = (bin, over = {}) => runClaudeProcess({
+  cwd: tmpdir(), prompt: 'hi', systemPrompt: '', permissionMode: 'acceptEdits', onEvent: () => {}, bin, ...over,
+});
+const mainRefusalAssistant = { type: 'assistant', parent_tool_use_id: null, message: { model: 'claude-x', content: [{ type: 'text', text: 'No.' }], stop_reason: 'refusal' } };
+const endTurnResult = { type: 'result', subtype: 'success', is_error: false, stop_reason: 'end_turn', result: 'fine', total_cost_usd: 0.01 };
+
+test('Claude refusal fixture at exit 0 rejects MODEL_REFUSAL after the result (cost) event', POSIX, async () => {
+  const events = [];
+  const err = await runRefusal(catThen(REFUSAL_FIXTURE, 'exit 0'), { onEvent: (e) => events.push({ e, at: 'event' }) })
+    .then(() => null, (e) => e);
+  assert.ok(err, 'rejects');
+  assert.equal(err.code, 'MODEL_REFUSAL');
+  assert.equal(err.errorClass, 'refusal');
+  assert.equal(err.stopReason, 'refusal');
+  assert.match(err.message, /Model refusal \(MODEL_REFUSAL\)/);
+  assert.match(err.message, /The model declined this request\. Change the prompt or pick another model\. — I can't help/);
+  const res = events.find(({ e }) => e.type === 'result');
+  assert.ok(res, 'the result event is emitted before the rejection');
+  assert.equal(res.e.costUsd, 0.023766);
+});
+
+test('Claude refusal with a lingering CLI rejects without waiting for it', POSIX, async () => {
+  const started = Date.now();
+  const err = await runRefusal(catThen(REFUSAL_FIXTURE, 'exec sleep 30')).then(() => null, (e) => e);
+  assert.equal(err?.code, 'MODEL_REFUSAL');
+  assert.ok(Date.now() - started < 2000, 'does not wait for the lingering CLI');
+});
+
+test('Claude refusal fixture at exit 1 rejects MODEL_REFUSAL', POSIX, async () => {
+  const err = await runRefusal(catThen(REFUSAL_FIXTURE, 'exit 1')).then(() => null, (e) => e);
+  assert.equal(err?.code, 'MODEL_REFUSAL');
+  assert.equal(err.errorClass, 'refusal');
+});
+
+test('Claude main refusal frame, no result, exit 1: MODEL_REFUSAL with the exit error as its cause', POSIX, async () => {
+  const err = await runRefusal(catThen(framesFile([mainRefusalAssistant]), 'exit 1')).then(() => null, (e) => e);
+  assert.equal(err?.code, 'MODEL_REFUSAL');
+  assert.ok(err.cause instanceof Error, 'the original exit error is kept as cause');
+  assert.match(err.cause.message, /exited with code 1/);
+});
+
+test('Claude main assistant refusal with no result frame rejects MODEL_REFUSAL at exit 0', POSIX, async () => {
+  const err = await runRefusal(catThen(framesFile([mainRefusalAssistant]), 'exit 0')).then(() => null, (e) => e);
+  assert.equal(err?.code, 'MODEL_REFUSAL');
+  assert.match(err.message, / — No\.$/);
+});
+
+test('Claude main message_delta refusal with no result frame rejects MODEL_REFUSAL at exit 0', POSIX, async () => {
+  const delta = { type: 'stream_event', parent_tool_use_id: null, event: { type: 'message_delta', delta: { stop_reason: 'refusal' } } };
+  const err = await runRefusal(catThen(framesFile([delta]), 'exit 0')).then(() => null, (e) => e);
+  assert.equal(err?.code, 'MODEL_REFUSAL');
+});
+
+test('Claude main refusal frame then an end_turn result resolves (the result decides)', POSIX, async () => {
+  const out = await runRefusal(catThen(framesFile([mainRefusalAssistant, endTurnResult]), 'exit 0'));
+  assert.equal(out.exitCode, 0);
+  assert.equal(out.text, 'fine');
+});
+
+test('Claude refusal frame then an abort stays an AbortError', POSIX, async () => {
+  const ac = new AbortController();
+  const err = await runRefusal(catThen(framesFile([mainRefusalAssistant]), 'exec sleep 30'), {
+    signal: ac.signal,
+    onEvent: (e) => { if (e.type === 'assistant') ac.abort(); },
+  }).then(() => null, (e) => e);
+  assert.equal(err?.name, 'AbortError');
+  assert.notEqual(err.code, 'MODEL_REFUSAL');
+});
+
+test('Claude refusal frame then the synthetic usage-limit frame keeps usage_limit', POSIX, async () => {
+  const limit = { type: 'assistant', isApiErrorMessage: true, error: 'rate_limit',
+    message: { model: '<synthetic>', content: [{ type: 'text', text: "You've hit your session limit · resets 6pm (Europe/Sofia)" }] } };
+  const err = await runRefusal(catThen(framesFile([mainRefusalAssistant, limit]), 'exec sleep 30')).then(() => null, (e) => e);
+  assert.equal(err?.errorClass, 'usage_limit');
+});
+
+test('Claude refusal text is redacted before the 200-char clip', POSIX, async () => {
+  const refusal = { type: 'result', subtype: 'success', is_error: false, stop_reason: 'refusal', result: `${'x'.repeat(197)}s3cr3t-value`, total_cost_usd: 0 };
+  // createRedactor ignores values shorter than 8 chars, so the secret is 's3cr3t-value'; the clip at 200 would cut it to 's3c'.
+  const err = await runRefusal(catThen(framesFile([refusal]), 'exit 0'), { redactValues: ['s3cr3t-value'] }).then(() => null, (e) => e);
+  assert.equal(err?.code, 'MODEL_REFUSAL');
+  assert.ok(!err.message.includes('s3cr3t'));
+  assert.ok(!err.message.includes('s3c'), err.message);
+});
+
+test('Claude sub-agent refusal then a main end_turn result resolves', POSIX, async () => {
+  const sub = { type: 'assistant', parent_tool_use_id: 'toolu_A', message: { model: 'claude-x', content: [{ type: 'text', text: 'No.' }], stop_reason: 'refusal' } };
+  const out = await runRefusal(catThen(framesFile([sub, endTurnResult]), 'exit 0'));
+  assert.equal(out.exitCode, 0);
+});
+
+test('Claude end_turn capture (plain-text.jsonl) still resolves with its result text', POSIX, async () => {
+  const frames = readFileSync(PLAIN_FIXTURE, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const expected = frames.find((f) => f.type === 'result').result;
+  const out = await runRefusal(catThen(PLAIN_FIXTURE, 'exit 0'));
+  assert.deepEqual({ exitCode: out.exitCode, text: out.text }, { exitCode: 0, text: expected });
+});
+
 // ── a Windows npm .cmd shim is resolved by superviseSpawn itself ─────────────
 // process.platform is faked to win32 (as preflight-npm-claude-resolve does): the resolver then walks
 // PATH for the shim in a temp dir, and the "node.exe" it picks is process.execPath.

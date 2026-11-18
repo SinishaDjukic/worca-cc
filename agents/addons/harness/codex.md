@@ -1,0 +1,4 @@
+## Harness notes
+
+- This prompt names Claude Code's tools. In Codex, run commands and read or search files with your shell tool (for Bash, Read, Grep and Glob), and create or change files with `apply_patch` (for Write and Edit).
+- The working tree can already hold uncommitted changes from earlier steps of this pipeline. They are expected: leave them in place and never revert them.
