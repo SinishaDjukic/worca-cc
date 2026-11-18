@@ -20127,7 +20127,7 @@ async function patchProviderFlow(name, body, { btn = null, onError = null } = {}
   }
   // The repaint replaced the clicked button: give its successor the "Saved" state.
   if (btn && !btn.isConnected) {
-    const cls = ['mv-sp-save', 'mv-im-save', 'mv-so-save', 'mv-cp-host-save'].find((c) => btn.classList.contains(c)) || 'mv-pv-save';
+    const cls = ['mv-sp-save', 'mv-im-save', 'mv-so-save', 'mv-cp-host-save', 'mv-cp-clientid-save'].find((c) => btn.classList.contains(c)) || 'mv-pv-save';
     const next = providerRoot()?.querySelector(`.mv-pv-row[data-provider="${name}"] .${cls}`);
     if (next) await withButton(next, () => undefined, { done: 'Saved' });
   }
@@ -20177,6 +20177,13 @@ async function copilotHostSaveFlow(btn) {
     const shown = providerRoot()?.querySelector('.mv-cp-host');
     if (shown && mvState.providers && mvState.providers.copilot) shown.value = mvState.providers.copilot.enterpriseHost || '';
   }
+}
+
+/** Save client id: only steers the NEXT sign-in, so no confirmation. '' clears it. A refused save leaves the typed value in the field. */
+async function copilotClientIdSaveFlow(btn) {
+  const input = providerRoot()?.querySelector('.mv-cp-clientid');
+  const value = input ? input.value.trim() : '';
+  await patchProviderFlow('copilot', { clientId: value }, { btn });
 }
 
 /** "Remove speech models": frees the built-in engines' downloads; the next mic use fetches them again. */
@@ -20690,6 +20697,7 @@ if (el.providersList) {
     else if (t.classList.contains('mv-cp-cancel')) { stopCopilotPoll(); mvState.signIn = null; renderProvidersViewBody(); }
     else if (t.classList.contains('mv-cp-signout')) copilotSignOutFlow();
     else if (t.classList.contains('mv-cp-host-save')) copilotHostSaveFlow(t);
+    else if (t.classList.contains('mv-cp-clientid-save')) copilotClientIdSaveFlow(t);
     else if (t.classList.contains('mv-cp-fetch-models')) openImportDialog({ source: 'copilot' });
     else if (t.classList.contains('mv-cp-quota-refresh')) refreshCopilotQuotaFlow(t);
     else if (t.classList.contains('mv-pv-save')) {

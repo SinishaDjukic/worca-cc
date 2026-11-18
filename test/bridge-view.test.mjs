@@ -76,6 +76,23 @@ test('providers card: GHE.com option listed; host field only for ghe-com (stored
   assert.match(plain.querySelector('.mv-cp-account').closest('label').textContent, /GHE\.com tenant: everything goes to your tenant/);
 });
 
+test('providers card: client id field only for a stored ghe-com (not a draft, not other types); shows the stored id; Save client id button', () => {
+  const row = (card) => card.querySelector('.mv-pv-row[data-provider="copilot"]');
+  const base = { connected: false, accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com', githubHost: 'acme.ghe.com', maxConcurrent: 4 };
+  const none = renderProvidersCard({ copilot: base }, { doc });
+  assert.equal(row(none).querySelector('.mv-cp-clientid').value, '');
+  assert.equal(row(none).querySelector('.mv-cp-clientid').placeholder, "Copilot's own app (Iv1.b507a08c87ecfe98)");
+  assert.equal(row(none).querySelector('.mv-cp-clientid-save').textContent, 'Save client id');
+  assert.ok(row(none).querySelector('.mv-cp-clientid-row.mv-cp-host-row'));
+  assert.match(row(none).textContent, /Client id.*Leave empty for Copilot's own app.*Takes effect at the next sign-in/);
+  assert.equal(row(renderProvidersCard({ copilot: { ...base, clientId: 'Ov23liCUSTOM123' } }, { doc })).querySelector('.mv-cp-clientid').value, 'Ov23liCUSTOM123');
+  const draft = renderProvidersCard(PROVIDERS, { doc, copilotDraft: { accountType: 'ghe-com', enterpriseHost: '' } });
+  assert.equal(row(draft).querySelector('.mv-cp-clientid'), null, 'the server refuses clientId before the type is stored');
+  assert.equal(row(draft).querySelector('.mv-cp-clientid-save'), null);
+  assert.equal(row(renderProvidersCard(PROVIDERS, { doc })).querySelector('.mv-cp-clientid'), null);
+  assert.equal(row(renderProvidersCard({ copilot: { ...base, accountType: 'enterprise' } }, { doc })).querySelector('.mv-cp-clientid'), null);
+});
+
 test('sign-in block: link text and href follow verificationUri (tenant); fallback href uses flow.host; github.com unchanged', () => {
   const open = (flow) => renderCopilotSignIn(flow, { doc }).querySelector('.mv-cp-open');
   const tenant = open({ userCode: 'X', verificationUri: 'https://acme.ghe.com/login/device', host: 'acme.ghe.com' });

@@ -10,6 +10,7 @@ import {
   copilotHeaders, githubHeaders, copilotApiHost, bodyHasImage, requestInitiator,
   normalizeCopilotModel, catalogEntryForCopilotModel, copilotApiFor, listCopilotModels, copilotUsage, GITHUB_CLIENT_ID,
   copilotAccountHost, copilotGateway,
+  readGithubRefusal, githubReasonText, copilotRefusalText, copilotClientId,
 } from '../src/core/bridge/providers/copilot.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
@@ -80,7 +81,7 @@ test('login + token exchange: cached until near expiry, refreshed after, invalid
 
 test('token exchange failures: 401 → AUTH code (cache dropped); no token → EXCHANGE; not signed in throws', async () => {
   const f = stub([[/v2\/token$/, () => jsonRes(401, { message: 'bad' })]]);
-  await assert.rejects(copilotToken('gho_bad', { fetch: f }), (e) => e.code === 'AUTH');
+  await assert.rejects(copilotToken('gho_bad', { fetch: f, log: () => {} }), (e) => e.code === 'AUTH');
   const g = stub([[/v2\/token$/, () => jsonRes(200, { nope: true })]]);
   await assert.rejects(copilotToken('gho_x', { fetch: g }), (e) => e.code === 'EXCHANGE');
   await assert.rejects(copilotToken('', {}), (e) => e.code === 'NOT_SIGNED_IN');
@@ -365,4 +366,150 @@ test('copilot entry on a tenant: exchange on api.acme.ghe.com, request to the tr
     for (const k of Object.keys(prev)) { if (prev[k] === undefined) delete process.env[k]; else process.env[k] = prev[k]; }
     await rm(home, { recursive: true, force: true });
   }
+});
+
+// ── GitHub's refusal on the token exchange ───────────────────────────────────
+
+const refusalRes = (status, body, headers = {}) => ({
+  ok: false, status, json: async () => body, text: async () => (typeof body === 'string' ? body : JSON.stringify(body)),
+  headers: new Map(Object.entries(headers)),
+});
+
+test('readGithubRefusal: message, url, notification id, SSO header; never throws', async () => {
+  const empty = { message: null, url: null, sso: null, notificationId: null };
+  await checkRows([
+    { name: 'error_details → all fields', run: async () => {
+      const g = await readGithubRefusal(refusalRes(403, { error_details: { message: ' No seat ', url: 'https://acme.ghe.com/settings/copilot', notification_id: 'n1' }, message: 'ignored' }));
+      assert.deepEqual(g, { message: 'No seat', url: 'https://acme.ghe.com/settings/copilot', sso: null, notificationId: 'n1' });
+    } },
+    { name: 'top-level message only', run: async () => assert.deepEqual(await readGithubRefusal(refusalRes(403, { message: 'Forbidden' })), { ...empty, message: 'Forbidden' }) },
+    { name: 'documentation_url is not a reason', run: async () => assert.deepEqual(await readGithubRefusal(refusalRes(403, { documentation_url: 'https://docs.github.com/x' })), empty) },
+    { name: 'empty body', run: async () => assert.deepEqual(await readGithubRefusal(refusalRes(403, '')), empty) },
+    { name: 'non-JSON body', run: async () => assert.deepEqual(await readGithubRefusal(refusalRes(403, '<html>nope</html>')), empty) },
+    { name: 'no text / no headers', run: async () => assert.deepEqual(await readGithubRefusal({ status: 403 }), empty) },
+    { name: 'text() rejects', run: async () => assert.deepEqual(await readGithubRefusal({ status: 403, text: async () => { throw new Error('boom'); } }), empty) },
+    { name: 'SSO header', run: async () => {
+      const g = await readGithubRefusal(refusalRes(403, {}, { 'x-github-sso': 'required; url=https://bosch.ghe.com/orgs/x/sso?authorization_request=1' }));
+      assert.deepEqual(g.sso, { required: true, url: 'https://bosch.ghe.com/orgs/x/sso?authorization_request=1' });
+    } },
+    { name: 'SSO header with a non-https url', run: async () => {
+      const g = await readGithubRefusal(refusalRes(403, {}, { 'x-github-sso': 'required; url=javascript:alert(1)' }));
+      assert.deepEqual(g.sso, { required: true, url: null });
+    } },
+    { name: 'http and javascript urls dropped', run: async () => {
+      assert.equal((await readGithubRefusal(refusalRes(403, { error_details: { message: 'm', url: 'http://x.example/a' } }))).url, null);
+      assert.equal((await readGithubRefusal(refusalRes(403, { error_details: { message: 'm', url: 'javascript:alert(1)' } }))).url, null);
+    } },
+    { name: '1,000-char message is capped', run: async () => {
+      const g = await readGithubRefusal(refusalRes(403, { message: 'x'.repeat(1000) }));
+      assert.ok(g.message.length <= 301 && g.message.endsWith('…'), g.message.length);
+    } },
+    { name: 'control characters stripped', run: async () => assert.equal((await readGithubRefusal(refusalRes(403, { message: 'a\u0000b\nc\u007fd' }))).message, 'a b c d') },
+    { name: 'oversized notification id dropped', run: async () => assert.equal((await readGithubRefusal(refusalRes(403, { error_details: { message: 'm', notification_id: 'n'.repeat(101) } }))).notificationId, null) },
+  ]);
+});
+
+test('githubReasonText: message+url, message, url, SSO and empty', () => {
+  const g = (o) => ({ message: null, url: null, sso: null, notificationId: null, ...o });
+  assert.equal(githubReasonText(null), '');
+  assert.equal(githubReasonText(g({})), '');
+  assert.equal(githubReasonText(g({ message: 'No seat', url: 'https://a.example/x' })), 'GitHub says: "No seat" (https://a.example/x)');
+  assert.equal(githubReasonText(g({ message: 'No seat' })), 'GitHub says: "No seat"');
+  assert.equal(githubReasonText(g({ url: 'https://a.example/x' })), 'GitHub gave a link: https://a.example/x');
+  assert.equal(githubReasonText(g({ sso: { required: true, url: 'https://a.example/sso' } })), 'single sign-on authorization is required — https://a.example/sso');
+  assert.equal(githubReasonText(g({ message: 'No seat', sso: { required: true, url: null } })), 'GitHub says: "No seat"; single sign-on authorization is required');
+});
+
+test('copilotRefusalText: tenant sign-in, bare, github.com, token; never "stored token" / "sign in again"', async () => {
+  const reason = { message: 'No seat', url: null, sso: null, notificationId: null };
+  const rows = [
+    ['tenant sign-in with a reason', { host: 'acme.ghe.com', status: 403, login: 'octo', github: reason, via: 'sign-in', clientIdHint: true }, [/the sign-in on acme\.ghe\.com worked \(as octo\), but GitHub refused Copilot access \(403\)/, /GitHub says: "No seat"/, /Client id/, /enterprise admin/]],
+    ['bare tenant sign-in', { host: 'acme.ghe.com', status: 403, via: 'sign-in', clientIdHint: true }, [/gave no reason/, /admin/]],
+    ['github.com', { host: 'github.com', status: 401, github: reason }, [/Copilot subscription or seat/]],
+    ['token', { host: 'acme.ghe.com', status: 403, via: 'token' }, [/for this token on acme\.ghe\.com/]],
+  ];
+  for (const [name, args, res] of rows) {
+    const text = copilotRefusalText(args);
+    for (const re of res) assert.match(text, re, name);
+    assert.doesNotMatch(text, /stored token|sign in again/i, name);
+  }
+  assert.doesNotMatch(copilotRefusalText({ host: 'github.com', status: 403 }), /Client id/);
+  assert.doesNotMatch(copilotRefusalText({ host: 'acme.ghe.com', status: 403 }), /Client id/);
+});
+
+test('copilotToken 401/403: stored-token text (reason appended), structured fields, cache dropped', async () => {
+  await checkRows([
+    { name: 'bare 401 is byte-identical', run: async () => {
+      const f = stub([[/v2\/token$/, () => refusalRes(401, '')]]);
+      await assert.rejects(copilotToken('gho_a', { fetch: f, log: () => {} }), (e) => {
+        assert.equal(e.message, 'GitHub rejected the stored token (401) — sign in again');
+        assert.equal(e.code, 'AUTH'); assert.equal(e.status, 401); assert.equal(e.host, 'github.com');
+        return true;
+      });
+    } },
+    { name: '403 with error_details on a tenant', run: async () => {
+      const f = stub([[/v2\/token$/, () => refusalRes(403, { error_details: { message: 'No seat', url: 'https://acme.ghe.com/s' } })]]);
+      await assert.rejects(copilotToken('gho_b', { fetch: f, enterpriseHost: 'acme.ghe.com', log: () => {} }), (e) => {
+        assert.ok(e.message.startsWith('GitHub rejected the stored token (403) — sign in again'));
+        assert.match(e.message, /GitHub says: "No seat"/);
+        assert.equal(e.github.message, 'No seat'); assert.equal(e.host, 'acme.ghe.com');
+        return true;
+      });
+    } },
+    { name: 'cache dropped: next call refetches', run: async () => {
+      let n = 0; const now = 1_000_000;
+      const f = stub([[/v2\/token$/, () => { n += 1; return n === 2 ? refusalRes(403, '') : jsonRes(200, { token: `cp_${n}`, expires_at: Math.floor(now / 1000) + 1800 }); }]]);
+      await copilotToken('gho_c', { fetch: f, now: () => now });
+      await assert.rejects(copilotToken('gho_c', { fetch: f, now: () => now, force: true, log: () => {} }));
+      assert.equal((await copilotToken('gho_c', { fetch: f, now: () => now })).token, 'cp_3');
+    } },
+  ]);
+});
+
+test('copilotToken refusal log: one line, no token, deduped for 10 minutes, reset clears it', async () => {
+  const lines = [];
+  const log = (l) => lines.push(l);
+  let t = 5_000_000;
+  const f = stub([[/v2\/token$/, () => refusalRes(403, { error_details: { message: 'No seat for gho_leaky here', notification_id: 'n9' } }, { 'x-github-sso': 'required; url=https://acme.ghe.com/sso' })]]);
+  const call = () => copilotToken('gho_leaky', { fetch: f, enterpriseHost: 'acme.ghe.com', log, now: () => t }).catch(() => {});
+  await call();
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /403/);
+  assert.match(lines[0], /https:\/\/api\.acme\.ghe\.com\/copilot_internal\/v2\/token/);
+  assert.match(lines[0], /No seat for \[redacted\] here/);
+  assert.match(lines[0], /\[notification n9\]/);
+  assert.match(lines[0], /\[sso required\]/);
+  assert.doesNotMatch(lines[0], /gho_leaky/);
+  assert.doesNotMatch(lines[0], /acme\.ghe\.com\/sso/);
+  await call();
+  assert.equal(lines.length, 1);
+  t += 11 * 60 * 1000;
+  await call();
+  assert.equal(lines.length, 2);
+  _resetCopilotCache();
+  await call();
+  assert.equal(lines.length, 3);
+  const bare = stub([[/v2\/token$/, () => refusalRes(401, '')]]);
+  await copilotToken('gho_z', { fetch: bare, log, now: () => t }).catch(() => {});
+  assert.match(lines.at(-1), /answered 401 with no reason/);
+});
+
+test('device flow client id: custom id on start and poll; default unchanged; copilotClientId', async () => {
+  const bodies = [];
+  const f = stub([
+    [/device\/code$/, (u, init) => { bodies.push(JSON.parse(init.body)); return jsonRes(200, { device_code: 'dc', user_code: 'AB-12', interval: 5, expires_in: 900 }); }],
+    [/access_token$/, (u, init) => { bodies.push(JSON.parse(init.body)); return jsonRes(200, { error: 'authorization_pending' }); }],
+  ]);
+  await startDeviceFlow({ fetch: f, enterpriseHost: 'acme.ghe.com', clientId: 'Ov23liCUSTOM123' });
+  await pollDeviceFlow('dc', { fetch: f, enterpriseHost: 'acme.ghe.com', clientId: 'Ov23liCUSTOM123' });
+  assert.deepEqual(bodies.map((b) => b.client_id), ['Ov23liCUSTOM123', 'Ov23liCUSTOM123']);
+  await startDeviceFlow({ fetch: f });
+  assert.equal(bodies.at(-1).client_id, GITHUB_CLIENT_ID);
+  const bad = stub([[/device\/code$/, () => jsonRes(404, {})]]);
+  await assert.rejects(startDeviceFlow({ fetch: bad, enterpriseHost: 'acme.ghe.com', clientId: 'Ov23liCUSTOM123' }), /client id Ov23liCUSTOM123/);
+  await assert.rejects(startDeviceFlow({ fetch: bad, enterpriseHost: 'acme.ghe.com' }), /the GitHub Copilot app/);
+  assert.equal(copilotClientId({ accountType: 'ghe-com', clientId: 'Ov23liCUSTOM123' }), 'Ov23liCUSTOM123');
+  assert.equal(copilotClientId({ accountType: 'individual', clientId: 'Ov23liCUSTOM123' }), GITHUB_CLIENT_ID);
+  assert.equal(copilotClientId({ accountType: 'ghe-com', clientId: 'bad id!' }), GITHUB_CLIENT_ID);
+  assert.equal(copilotClientId(null), GITHUB_CLIENT_ID);
 });

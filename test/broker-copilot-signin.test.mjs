@@ -18,6 +18,8 @@ const PUBLIC = 'http://localhost:7071';
 const GH = 'gho_approvedsignin000000000000000000000001';
 let gh; let ghUrl; let server; let base; let store;
 let approved = false;
+const REFUSED = 'gho_refusedsignin00000000000000000000009';
+let approvedToken = GH;
 let polls = 0;
 
 before(async () => {
@@ -26,8 +28,9 @@ before(async () => {
     req.on('end', () => {
       const json = (s, o) => { res.writeHead(s, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)); };
       if (req.url === '/login/device/code') return json(200, { device_code: 'dev-1', user_code: 'ABCD-1234', verification_uri: 'https://github.com/login/device', interval: 1, expires_in: 900 });
-      if (req.url === '/login/oauth/access_token') { polls++; return json(200, approved ? { access_token: GH } : { error: 'authorization_pending' }); }
+      if (req.url === '/login/oauth/access_token') { polls++; return json(200, approved ? { access_token: approvedToken } : { error: 'authorization_pending' }); }
       if (req.url === '/copilot_internal/v2/token') {
+        if (req.headers.authorization === `token ${REFUSED}`) return json(403, { message: 'Forbidden', error_details: { message: 'Copilot is not enabled for your account', url: 'https://github.com/settings/copilot' } });
         return req.headers.authorization === `token ${GH}` ? json(200, { token: 'cp-1', expires_at: Math.floor(Date.now() / 1000) + 1800 }) : json(401, { message: 'Bad credentials' });
       }
       json(404, {});
@@ -49,11 +52,11 @@ before(async () => {
 });
 after(async () => { server?.close(); gh?.close(); store?.close(); });
 
-async function session() {
-  const me = await fetch(`${base}/api/me`, { headers: { 'x-email': 'ada@acme.dev' } });
+async function session(email = 'ada@acme.dev') {
+  const me = await fetch(`${base}/api/me`, { headers: { 'x-email': email } });
   const body = await me.json();
   const cookie = me.headers.get('set-cookie').split(';')[0];
-  return { body, post: (p) => fetch(`${base}${p}`, { method: 'POST', headers: { 'x-email': 'ada@acme.dev', origin: PUBLIC, cookie, 'x-worca-csrf': body.csrf, 'content-type': 'application/json' } }) };
+  return { body, post: (p) => fetch(`${base}${p}`, { method: 'POST', headers: { 'x-email': email, origin: PUBLIC, cookie, 'x-worca-csrf': body.csrf, 'content-type': 'application/json' } }) };
 }
 
 test('the Copilot row offers a GitHub sign-in, not a key field', async () => {
@@ -137,4 +140,64 @@ test('mismatched tenants in exchangeUrl and deviceBaseUrl are refused; one tenan
   assert.equal(ok.find((x) => x.id === 'copilot').deviceBaseUrl, 'https://acme.ghe.com');
   mergeSlots(builtinSlots(), slot({ exchangeUrl: 'https://api.acme.ghe.com/copilot_internal/v2/token' }));
   mergeSlots(builtinSlots(), slot({ exchangeUrl: 'https://api.github.com/copilot_internal/v2/token', deviceBaseUrl: 'https://acme.ghe.com' }));
+});
+
+// ── GitHub's refusal of the exchange ─────────────────────────────────────────
+
+const refusal = (status, body, headers = {}) => async () => ({
+  ok: false, status, json: async () => body, text: async () => (typeof body === 'string' ? body : JSON.stringify(body)),
+  headers: new Map(Object.entries(headers)),
+});
+const TENANT_EXCHANGE = 'https://api.acme.ghe.com/copilot_internal/v2/token';
+const WITH_REASON = { message: 'Forbidden', error_details: { message: 'No Copilot seat', url: 'https://acme.ghe.com/settings/copilot' } };
+
+test('exchange refusal: sign-in and token phases name the host and GitHub\'s reason; the stored phase keeps today\'s text (reason appended)', async () => {
+  const mk = (res) => createCopilotExchange({ exchangeUrl: TENANT_EXCHANGE, fetchImpl: res, log: () => {} });
+  for (const phase of ['sign-in', 'token']) {
+    await assert.rejects(mk(refusal(403, WITH_REASON)).token('gho_x', { phase }), (e) => {
+      assert.equal(e.status, 403); assert.equal(e.code, 'AUTH'); assert.equal(e.host, 'acme.ghe.com');
+      assert.match(e.message, /acme\.ghe\.com/);
+      assert.match(e.message, /GitHub says: "No Copilot seat" \(https:\/\/acme\.ghe\.com\/settings\/copilot\)/);
+      assert.doesNotMatch(e.message, /stored token|sign in again/i);
+      if (phase === 'token') assert.match(e.message, /for this token on/);
+      return true;
+    }, phase);
+  }
+  await assert.rejects(mk(refusal(401, '')).token('gho_x'), (e) => e.message === 'GitHub refused the sign-in (401): sign in to Copilot again' && e.status === 401);
+  await assert.rejects(mk(refusal(403, WITH_REASON)).token('gho_x'), (e) => e.message.startsWith('GitHub refused the sign-in (403): sign in to Copilot again') && /GitHub says: "No Copilot seat"/.test(e.message));
+  await assert.rejects(mk(refusal(500, '')).token('gho_x', { phase: 'sign-in' }), /HTTP 500/);
+  await assert.rejects(createCopilotExchange({ fetchImpl: refusal(401, '') }).token('gho_x', { phase: 'sign-in' }), (e) => e.host === 'github.com' && /github\.com/.test(e.message));
+});
+
+test('exchange refusal log: status, URL and GitHub\'s message; never the GitHub token', async () => {
+  const lines = [];
+  const ex = createCopilotExchange({ exchangeUrl: TENANT_EXCHANGE, log: (l) => lines.push(l), fetchImpl: refusal(403, { message: 'Seat missing for gho_secretvalue0000000000000000' }) });
+  await ex.token('gho_secretvalue0000000000000000', { phase: 'sign-in' }).catch(() => {});
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /403/);
+  assert.ok(lines[0].includes(TENANT_EXCHANGE));
+  assert.match(lines[0], /Seat missing/);
+  assert.ok(!lines[0].includes('gho_secretvalue'), lines[0]);
+  const bare = [];
+  await createCopilotExchange({ exchangeUrl: TENANT_EXCHANGE, log: (l) => bare.push(l), fetchImpl: refusal(401, '') }).token('gho_y').catch(() => {});
+  assert.match(bare[0], /answered 401: no reason/);
+});
+
+test('device sign-in refused by Copilot: the key page shows GitHub\'s reason, never "sign in again", and nothing is sealed', async () => {
+  const email = 'bob@acme.dev';
+  const { post } = await session(email);
+  approved = true; approvedToken = REFUSED;
+  try {
+    assert.equal((await post('/api/slots/copilot/device')).status, 200);
+    const res = await post('/api/slots/copilot/device/poll');
+    assert.equal(res.status, 422);
+    const { error } = await res.json();
+    assert.match(error, /GitHub Copilot was not accepted|Copilot.*was not accepted/i);
+    assert.match(error, /the sign-in on github\.com worked/);
+    assert.match(error, /GitHub says: "Copilot is not enabled for your account" \(https:\/\/github\.com\/settings\/copilot\)/);
+    assert.doesNotMatch(error, /stored token|sign in again|sign in to Copilot again/i);
+  } finally { approvedToken = GH; }
+  assert.equal(store.getCredential(email, 'copilot') ?? null, null);
+  const me = await (await fetch(`${base}/api/me`, { headers: { 'x-email': email } })).json();
+  assert.equal(me.slots.find((x) => x.id === 'copilot').state, 'missing');
 });

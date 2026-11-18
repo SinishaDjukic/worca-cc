@@ -515,6 +515,21 @@ export function renderProvidersCard(providers, { doc = globalThis.document, sign
     hostField.appendChild(row);
     hostField.appendChild(h(doc, 'small', 'hint', 'Your tenant, like acme.ghe.com. Sign-in, models and quota then use it.'));
     cpCtl.appendChild(hostField);
+    // Only for a STORED ghe-com: the server refuses a clientId until the type is stored.
+    if (c.accountType === 'ghe-com') {
+      const idField = h(doc, 'label', 'mv-field');
+      idField.appendChild(h(doc, 'span', 'mv-field-label', 'Client id'));
+      const idRow = h(doc, 'div', 'mv-cp-host-row mv-cp-clientid-row');
+      const idIn = h(doc, 'input', 'input mv-cp-clientid');
+      idIn.type = 'text'; idIn.placeholder = "Copilot's own app (Iv1.b507a08c87ecfe98)";
+      idIn.value = c.clientId || '';
+      const idSave = h(doc, 'button', 'btn mv-cp-clientid-save', 'Save client id');
+      idSave.type = 'button';
+      idRow.append(idIn, idSave);
+      idField.appendChild(idRow);
+      idField.appendChild(h(doc, 'small', 'hint', "Optional. The GitHub App or OAuth app the sign-in uses on your tenant. Leave empty for Copilot's own app; set one your enterprise allows if GitHub refuses Copilot access after sign-in. Takes effect at the next sign-in."));
+      cpCtl.appendChild(idField);
+    }
   }
   cpCtl.appendChild(numberField(doc, 'mv-pv-conc', 'Max concurrent requests', c.maxConcurrent, {
     provider: 'copilot',

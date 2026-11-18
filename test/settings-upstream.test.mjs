@@ -189,6 +189,47 @@ test('copilot enterpriseHost: normalized on save; invalid forms refused with the
   });
 });
 
+test('copilot clientId: only with ghe-com; validated; cleared by empty; leaving ghe-com drops it; a change keeps the sign-in', async () => {
+  await withSandbox(async () => {
+    await assert.rejects(updateProvider('copilot', { clientId: 'Ov23liCUSTOM123' }), /clientId applies only to accountType ghe-com/);
+    await updateProvider('copilot', { accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com' });
+    for (const bad of ['bad id!', 'short', 'x'.repeat(65), 7]) {
+      await assert.rejects(updateProvider('copilot', { clientId: bad }), /clientId must be a GitHub App or OAuth app client id/, String(bad));
+    }
+    let c = await updateProvider('copilot', { clientId: ' Ov23liCUSTOM123 ' });
+    assert.equal(c.clientId, 'Ov23liCUSTOM123');
+    assert.equal((await readRaw()).providers.copilot.clientId, 'Ov23liCUSTOM123');
+    c = await updateProvider('copilot', { githubToken: 'gho_a', login: 'octo' });
+    c = await updateProvider('copilot', { clientId: 'Ov23liOTHER4567' });                 // a change never signs out
+    assert.equal(c.githubToken, 'gho_a'); assert.equal(c.clientId, 'Ov23liOTHER4567');
+    c = await updateProvider('copilot', { enterpriseHost: 'acme.ghe.com' });               // same host keeps it
+    assert.equal(c.clientId, 'Ov23liOTHER4567');
+    c = await updateProvider('copilot', { clientId: '' });
+    assert.equal(c.clientId, undefined);
+    await updateProvider('copilot', { clientId: 'Ov23liCUSTOM123' });
+    c = await updateProvider('copilot', { accountType: 'individual' });
+    assert.equal(c.clientId, undefined); assert.equal(c.enterpriseHost, undefined);
+    await assert.rejects(updateProvider('openai', { clientId: 'Ov23liCUSTOM123' }), /unknown provider field "clientId" for openai/);
+  });
+});
+
+test('copilot clientId in a hand-edited block: kept for ghe-com, warned and dropped otherwise', async () => {
+  await withSandbox(async () => {
+    await mkdir(dirname(settingsFile()), { recursive: true });
+    await writeFile(settingsFile(), JSON.stringify({ providers: { copilot: { accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com', clientId: ' Ov23liCUSTOM123 ' } } }));
+    assert.equal(providerConfig('copilot').clientId, 'Ov23liCUSTOM123');
+    const warns = []; const orig = console.warn; console.warn = (m) => warns.push(String(m));
+    try {
+      await writeFile(settingsFile(), JSON.stringify({ providers: { copilot: { accountType: 'individual', clientId: 'Ov23liCUSTOM123' } } }));
+      assert.equal(providerConfig('copilot').clientId, undefined);
+      await writeFile(settingsFile(), JSON.stringify({ providers: { copilot: { accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com', clientId: 'bad id' } } }));
+      assert.equal(providerConfig('copilot').clientId, undefined);
+    } finally { console.warn = orig; }
+    assert.ok(warns.some((w) => /clientId: ignored unless accountType is ghe-com/.test(w)), warns.join('\n'));
+    assert.ok(warns.some((w) => /clientId: must look like a GitHub client id/.test(w)), warns.join('\n'));
+  });
+});
+
 test('ghe-com needs a host; a host needs ghe-com; switching to another type drops the host', async () => {
   await withSandbox(async () => {
     await assert.rejects(updateProvider('copilot', { accountType: 'ghe-com' }), /accountType ghe-com needs enterpriseHost/);

@@ -67,7 +67,7 @@ import {
   isUpstreamBaseUrl, REASONING_EFFORT_LEVELS,
 } from './model-env.mjs';
 import { MODEL_ROLES } from '../shared/model-roles.mjs';
-import { GHE_COM_ACCOUNT_TYPE, normalizeGheHost } from './ghe-host.mjs';
+import { GHE_COM_ACCOUNT_TYPE, normalizeGheHost, isGithubClientId } from './ghe-host.mjs';
 import { CODEX_PRICES, listPriceFor } from './list-prices.mjs';
 import { engineLabel } from '../shared/engine-switch.mjs';
 import { validateNightPatch, NIGHT_TOGGLES } from './night/config.mjs';
@@ -2489,7 +2489,7 @@ export async function removeGlobalModel(id) {
 // it in memory. Readers are loud-and-lenient; setters throw.
 //
 //   providers: {
-//     copilot:   { githubToken?, accountType?, enterpriseHost?, maxConcurrent?, login? },   // enterpriseHost: only with accountType 'ghe-com' (a GHE.com tenant, like acme.ghe.com)
+//     copilot:   { githubToken?, accountType?, enterpriseHost?, clientId?, maxConcurrent?, login? },   // enterpriseHost, clientId: only with accountType 'ghe-com' (a GHE.com tenant, like acme.ghe.com; clientId = the app its device flow signs in with)
 //     openai:    { baseUrl?, apiKey?, maxConcurrent? },
 //     anthropic: { baseUrl?, apiKey?, maxConcurrent? },
 //     speech:    { stt: {...}, tts: {...} },   // voice mode, NOT an upstream — see the Speech block below
@@ -2522,6 +2522,11 @@ function sanitizeProvider(name, raw) {
       if (out.accountType !== GHE_COM_ACCOUNT_TYPE) warn('enterpriseHost', `ignored unless accountType is ${GHE_COM_ACCOUNT_TYPE}`);
       else if (h) out.enterpriseHost = h;
       else warn('enterpriseHost', 'must be a GHE.com host like acme.ghe.com');   // the ghe-com block stays; every network path then refuses (NO_HOST)
+    }
+    if (r.clientId !== undefined) {
+      if (out.accountType !== GHE_COM_ACCOUNT_TYPE) warn('clientId', `ignored unless accountType is ${GHE_COM_ACCOUNT_TYPE}`);
+      else if (typeof r.clientId === 'string' && isGithubClientId(r.clientId.trim())) out.clientId = r.clientId.trim();
+      else warn('clientId', 'must look like a GitHub client id');
     }
     if (r.login !== undefined) {
       if (typeof r.login === 'string' && r.login.trim()) out.login = r.login.trim();
@@ -2589,7 +2594,7 @@ export function assertProviderPatch(name, patch) {
   if (!UPSTREAM_PROVIDERS.includes(name)) throw new Error(`unknown provider ${JSON.stringify(name)}`);
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('provider patch must be an object');
   const allowed = new Set([...PROVIDER_SECRET_KEYS[name], 'maxConcurrent',
-    ...(name === 'copilot' ? ['accountType', 'enterpriseHost', 'login'] : ['baseUrl'])]);
+    ...(name === 'copilot' ? ['accountType', 'enterpriseHost', 'clientId', 'login'] : ['baseUrl'])]);
   for (const [k, v] of Object.entries(patch)) {
     if (!allowed.has(k)) throw new Error(`unknown provider field ${JSON.stringify(k)} for ${name}`);
     if (isClearInput(v)) continue;
@@ -2599,6 +2604,8 @@ export function assertProviderPatch(name, patch) {
       if (!COPILOT_ACCOUNT_TYPES.includes(v)) throw new Error(`accountType must be one of ${COPILOT_ACCOUNT_TYPES.join(' | ')}`);
     } else if (k === 'enterpriseHost') {
       if (!normalizeGheHost(v)) throw new Error('enterpriseHost must be a GHE.com host like acme.ghe.com, with no path, port or credentials');
+    } else if (k === 'clientId') {
+      if (typeof v !== 'string' || !isGithubClientId(v.trim())) throw new Error("clientId must be a GitHub App or OAuth app client id (8–64 letters, digits, '.', '_' or '-')");
     } else if (k === 'baseUrl') {
       if (!isUpstreamBaseUrl(v)) throw new Error('baseUrl must be an http(s) URL with no query or fragment');
     } else if (k === 'maxConcurrent') {
@@ -2631,13 +2638,16 @@ const githubHostOf = (b) => (b.accountType === GHE_COM_ACCOUNT_TYPE ? normalizeG
  * before anything is written): a host belongs to accountType ghe-com and ghe-com needs one; a
  * block that changes GitHub host loses its sign-in in the same write (a token belongs to one
  * host). A patch touching neither accountType nor enterpriseHost never trips the "needs a host"
- * rule, so a hand-edited block without one can still be signed out.
+ * rule, so a hand-edited block without one can still be signed out. A clientId (ghe-com only)
+ * only steers the NEXT device flow, so changing it never signs out.
  */
 function reconcileCopilotBlock(before, after, patch) {
   const type = after.accountType ?? 'individual';
   const setsHost = Object.hasOwn(patch, 'enterpriseHost') && !isClearInput(patch.enterpriseHost);
   if (setsHost && type !== GHE_COM_ACCOUNT_TYPE) throw new Error(`enterpriseHost applies only to accountType ${GHE_COM_ACCOUNT_TYPE}`);
-  if (type !== GHE_COM_ACCOUNT_TYPE) delete after.enterpriseHost;
+  const setsClientId = Object.hasOwn(patch, 'clientId') && !isClearInput(patch.clientId);
+  if (setsClientId && type !== GHE_COM_ACCOUNT_TYPE) throw new Error(`clientId applies only to accountType ${GHE_COM_ACCOUNT_TYPE}`);
+  if (type !== GHE_COM_ACCOUNT_TYPE) { delete after.enterpriseHost; delete after.clientId; }
   else if (!normalizeGheHost(after.enterpriseHost) && (Object.hasOwn(patch, 'accountType') || Object.hasOwn(patch, 'enterpriseHost'))) {
     throw new Error(`accountType ${GHE_COM_ACCOUNT_TYPE} needs enterpriseHost (your GHE.com tenant, like acme.ghe.com)`);
   }

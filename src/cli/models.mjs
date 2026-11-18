@@ -39,7 +39,7 @@ Usage:
   worca models test <provider>            Reachability + auth check (copilot|openai|anthropic|openrouter);
                                           for OpenRouter also the key's credit and free-model allowance
   worca models set <provider> <key>=<value> …
-                                          Patch a provider: accountType (individual|business|enterprise|ghe-com), enterpriseHost, maxConcurrent, baseUrl, apiKey
+                                          Patch a provider: accountType (individual|business|enterprise|ghe-com), enterpriseHost, clientId (ghe-com), maxConcurrent, baseUrl, apiKey
   worca models set openrouter apiKey='\${OPENROUTER_KEY}'
                                           The openai provider, pointed at OpenRouter
 
@@ -95,7 +95,7 @@ export function formatModelLine(m) {
 export function formatProviders(p) {
   const c = p.copilot || {};
   const lines = [
-    `copilot     ${c.connected ? `connected${c.login ? ` as @${c.login}` : ''}` : 'not connected'}  account=${c.accountType || 'individual'}${c.enterpriseHost ? `  host=${c.enterpriseHost}` : ''}  maxConcurrent=${c.maxConcurrent}${c.tokenSource === 'env' ? `  token=${c.tokenRef}` : ''}`,
+    `copilot     ${c.connected ? `connected${c.login ? ` as @${c.login}` : ''}` : 'not connected'}  account=${c.accountType || 'individual'}${c.enterpriseHost ? `  host=${c.enterpriseHost}` : ''}${c.clientId ? `  clientId=${c.clientId}` : ''}  maxConcurrent=${c.maxConcurrent}${c.tokenSource === 'env' ? `  token=${c.tokenRef}` : ''}`,
   ];
   if (c.quota) {
     lines.push(`            premium requests: ${c.quota.unlimited ? 'unlimited' : `${c.quota.used ?? '?'} / ${c.quota.entitlement ?? '?'}`}${c.quota.resetDate ? ` (resets ${c.quota.resetDate})` : ''}`);
