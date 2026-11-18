@@ -162,3 +162,99 @@ a.tab.mdl-tab{text-decoration:none;}
 /* At this width Ask's column is a later flex sibling in .main-row and would paint over the panel (as .toasts,
    chat/ask-worca-beside.css). */
 @media (min-width:1081px){body.ask-side-open .mdl-side{right:var(--ask-side-w,440px)}}
+
+/* Harness tiles (models/harness-tiles.mjs, DESIGN JOB-1): one tile per harness, picked by sight. The chip sits in the
+   top corner, the picked tile's tick disc in the bottom one; the pick is a 1px ink edge, never an ink fill. */
+.mdl-hx{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;}
+.mdl-hx-t{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:4px;min-width:0;padding:10px;border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
+.mdl-hx-t:hover:not(.on):not(:disabled){border-color:var(--hover-outline);}
+.mdl-hx-t:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.mdl-hx-t:disabled{cursor:default;}
+.mdl-hx-t.on{border-color:var(--ink);}
+.mdl-hx-t > .badge{position:absolute;top:10px;right:10px;}
+.mdl-hx-t .mdl-mark{margin-bottom:6px;}
+/* The disc and the tick are one svg, so the tick cannot drift off centre; --on-ink flips with the theme. */
+.mdl-hx-check{position:absolute;right:10px;bottom:10px;width:20px;height:20px;}
+.mdl-hx-check circle{fill:var(--ink);}
+.mdl-hx-check path{fill:none;stroke:var(--on-ink);stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;}
+.mdl-hx-name{max-width:100%;font-size:var(--fs-meta);font-weight:600;line-height:var(--lh-title);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+/* The state is a .mdl-st word (its dot, green or a hollow ring), at the tile's smaller size. */
+.mdl-hx-state{font-size:var(--fs-caption);}
+.mdl-hx-state.mdl-st{gap:5px;}
+.mdl-hx-state.mdl-st::before{width:6px;height:6px;}
+.mdl-hx-state.mdl-st.off::before{box-shadow:inset 0 0 0 1.5px currentColor;}
+/* Not ready or locked: dimmed, never recoloured, so the mark stays recognisable. */
+.mdl-hx-t.off .mdl-hx-name,.mdl-hx-t:disabled .mdl-hx-name{color:var(--ink-2);font-weight:500;}
+.mdl-hx-t.off .mdl-mark img,.mdl-hx-t:disabled .mdl-mark img{opacity:.5;}
+/* The harness worca runs best on: twice as wide and twice as tall, its mark 72px (markTile's xl is 48). */
+.mdl-hx-t.best{grid-column:span 2;grid-row:span 2;padding:16px;}
+.mdl-hx-t.best > .badge{top:16px;right:16px;}
+.mdl-hx-t.best .mdl-hx-check{right:16px;bottom:16px;width:24px;height:24px;}
+.mdl-hx-t.best .mdl-mark{width:72px;height:72px;}
+.mdl-hx-t.best .mdl-mark img{width:44px;height:44px;}
+.mdl-hx-t.best .mdl-hx-name{margin-top:auto;font-size:var(--fs-section);}
+.mdl-hx-t.best .mdl-hx-state{font-size:var(--fs-meta);}
+/* Narrow (VIS-4): two per row; the big tile keeps the full row but one row's height. */
+@media (max-width:860px){
+  .mdl-hx{grid-template-columns:repeat(2,minmax(0,1fr));}
+  .mdl-hx-t.best{grid-row:auto;}
+}
+
+/* Add model (models/add-model-dialog.mjs, DESIGN ADD-1…ADD-4; kit 250–258): each step is a section.card.mdl-add that
+   app.js lays out (layoutDialog). Its head: the title, the step names and Close on one line; its foot carries
+   .mv-editor-btns (the shared 32px foot buttons). */
+.mdl-add-head{display:flex;align-items:center;gap:12px;min-width:0;}
+.mdl-add-head > .mv-editor-title{flex:1 1 auto;min-width:0;margin:0;overflow-wrap:anywhere;}
+.mdl-add-head > .mdl-steps,.mdl-add-head > .mdl-close{flex:none;}
+.mdl-add-main{display:flex;flex-direction:column;gap:16px;min-width:0;}
+.mdl-add .label-row{margin:0;}
+.mdl-add .label-row > .mv-field-label{font-size:var(--fs-meta);font-weight:600;}
+.mdl-add .label-row > .info-tip{margin-block:-6px;}
+.mdl-add-foot{align-items:center;}
+/* Step 2's foot: "N selected" on the left, Back beside "Add N models" on the right. */
+.mdl-add-foot > .mdl-add-note{margin-right:auto;font-size:var(--fs-meta);color:var(--ink-2);}
+.mdl-add-foot > .mv-back{margin-right:0;}
+/* The step names (the model form's too): the current one in ink, a short rule between them. */
+.mdl-steps{display:flex;align-items:center;gap:8px;margin:0;padding:0;list-style:none;font-size:var(--fs-meta);font-weight:500;color:var(--ink-2);white-space:nowrap;}
+.mdl-steps li{display:flex;align-items:center;gap:8px;}
+.mdl-steps li + li::before{content:'';width:12px;height:1px;background:var(--ink-3);}
+.mdl-steps li[aria-current="step"]{color:var(--ink);font-weight:600;}
+/* Where it runs: one radio card per kind; the checked card is an ink edge on the field tone, never an ink fill. */
+.mdl-opts{display:flex;flex-direction:column;gap:8px;}
+.mdl-opt{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:14px;row-gap:2px;width:100%;padding:14px 16px;border:1px solid var(--line-2);border-radius:var(--r-md);background:var(--panel);color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
+.mdl-opt:hover:not([aria-checked="true"]):not(:disabled){border-color:var(--hover-outline);}
+.mdl-opt:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.mdl-opt[aria-checked="true"]{border-color:var(--ink);background:var(--field);}
+.mdl-opt:disabled{cursor:default;color:var(--ink-3);}
+.mdl-opt-kind{grid-row:span 2;align-self:center;width:32px;height:32px;border-radius:var(--r-sm);background:var(--field);color:var(--ink-2);display:inline-flex;align-items:center;justify-content:center;}
+.mdl-opt[aria-checked="true"] .mdl-opt-kind{background:var(--panel);color:var(--ink);}
+.mdl-opt-t{align-self:end;font-weight:600;line-height:var(--lh-title);}
+.mdl-opt-d{align-self:start;font-size:var(--fs-meta);color:var(--ink-2);}
+.mdl-opt:disabled .mdl-opt-d{color:var(--ink-3);}
+/* A provider: its select with the provider's state word beside it. */
+.mdl-add-prow{display:flex;align-items:center;gap:12px;flex-wrap:wrap;min-width:0;}
+.mdl-add-prow > .mdl-add-provider{flex:0 1 280px;min-width:0;}
+.mdl-add-prow > .mdl-st{flex:none;}
+/* Step 2: the toolbar (provider, filter, "Enter an id instead"), then an OpenAI-compatible endpoint's address and key. */
+.mdl-add-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0;}
+.mdl-add-bar > .mdl-add-provider{flex:0 1 240px;min-width:0;}
+.mdl-add-bar > .mimp-filter{flex:1 1 240px;min-width:0;}
+.mdl-add-bar > .mdl-manual{flex:none;margin-left:auto;}
+.mdl-add-src{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);align-items:start;gap:12px 16px;}
+.mdl-add-src .mv-field{min-width:0;}
+.mdl-add-base{display:grid;gap:6px;min-width:0;}
+.mdl-add .mimp-msg:empty{display:none;}
+/* A provider that cannot list: its need and the button that fixes it (ADD-4). No border: it sits in the dialog's card,
+   which is the one border (B2). */
+.mdl-add-blocked{display:flex;align-items:center;gap:12px;padding:16px 20px;}
+.mdl-add-blocked > .mdl-add-fix{margin-left:auto;}
+.mdl-add-blocked[hidden]{display:none;}
+/* Narrow (VIS-4): the step names hide, the endpoint's fields stack, and the list scrolls sideways in its box. The
+   harness tiles' two per row and the form's one column are their own rules (.mdl-hx above, models-view.css). The
+   box takes its width from the dialog, never from the list (contain), or the list's floor widens the dialog. */
+@media (max-width:860px){
+  .mdl-steps{display:none;}
+  .mdl-add-src{grid-template-columns:minmax(0,1fr);}
+  .mdl-add #mimp-body{overflow-x:auto;contain:inline-size;}
+  .mdl-add #mimp-body .mvi-tbl{min-width:720px;}
+}

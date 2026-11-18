@@ -61,6 +61,35 @@ const upstreamInput = (u, current) => {
   }
   return u;
 };
+/** A POST body's `env` and `upstream`. With `copyFrom` (an existing global model, found as PATCH finds its model)
+ *  every masked env echo becomes the source's stored value for the same key, and a masked `upstream.apiKey` the
+ *  source's stored key, so a copy works without the page ever holding the secret. A masked echo with nothing behind
+ *  it is refused. Without `copyFrom` (absent, null or '') nothing changes: a masked env value is stored as written
+ *  and a masked apiKey is dropped. @throws {Error} on a bad `copyFrom` or an echo with no value to copy. */
+const copyInput = (b) => {
+  const from = b.copyFrom;
+  if (from === undefined || from === null || from === '') return { env: b.env, upstream: upstreamInput(b.upstream) };
+  if (typeof from !== 'string') throw new Error('copyFrom must be a model id');
+  const source = listGlobalModels().find((m) => m.id.toLowerCase() === from.toLowerCase());
+  if (!source) throw new Error(`unknown model to copy from ${JSON.stringify(from)}`);
+  const stored = (map, k) => (map && Object.hasOwn(map, k) && typeof map[k] === 'string' && map[k] ? map[k] : '');
+  let env = b.env;
+  if (env && typeof env === 'object' && !Array.isArray(env)) {
+    env = Object.fromEntries(Object.entries(env).map(([k, v]) => {
+      if (!isMaskedEcho(v)) return [k, v];
+      const value = stored(source.env, k);
+      if (!value) throw new Error(`${JSON.stringify(k)} has no value to copy`);
+      return [k, value];
+    }));
+  }
+  let upstream = b.upstream;
+  if (upstream && typeof upstream === 'object' && !Array.isArray(upstream) && isMaskedEcho(upstream.apiKey)) {
+    const key = stored(source.upstream, 'apiKey');
+    if (!key) throw new Error('"apiKey" has no value to copy');
+    upstream = { ...upstream, apiKey: key };
+  }
+  return { env, upstream };
+};
 
 /** Read-only plugin model entries (design §9.7): literals masked with the
  *  standard masker, ${VAR} refs readable, {secret} placeholders surfaced as
@@ -114,11 +143,13 @@ app.get('/api/models', (req, res) => {
 app.post('/api/models', async (req, res) => {
   const b = req.body || {};
   try {
-    const model = await addGlobalModel({ id: b.id, label: b.label, efforts: b.efforts, env: b.env, cost: b.cost, upstream: upstreamInput(b.upstream), engine: b.engine });
+    const { env, upstream } = copyInput(b);
+    const model = await addGlobalModel({ id: b.id, label: b.label, efforts: b.efforts, env, cost: b.cost, upstream, engine: b.engine });
     res.json({ model: maskedGlobalModel(model), models: maskedGlobalModels() });
   } catch (err) {
-    // addGlobalModel throws only on validation (empty/dup id, unknown effort,
-    // reserved env key, non-string env value, malformed upstream) -> client error.
+    // copyInput and addGlobalModel throw only on validation (a bad copyFrom or a masked echo with
+    // nothing to copy; empty/dup id, unknown effort, reserved env key, non-string env value,
+    // malformed upstream) -> client error.
     return badRequest(res, err && err.message ? err.message : String(err));
   }
 });

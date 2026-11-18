@@ -610,7 +610,11 @@ test('a model pick lands on its row whatever the catalogue was narrowed by: a ch
         ['/api/providers/copilot/models', () => ({ models: [{ id: 'gpt-5', name: 'GPT-5', vendor: 'OpenAI' }] })],
         ['/api/providers/copilot/import-models', () => ({ created: ['copilot-gpt-5'], updated: [], skipped: [] })],
       ]);
-      press(ctx, ctx.doc.getElementById('model-import-btn'));
+      // Add model › A provider (Copilot) › Next: step 2 lists Copilot's models.
+      press(ctx, ctx.doc.getElementById('model-create-btn'));
+      await settle(ctx.window, 2);
+      press(ctx, ctx.doc.querySelector('#mv-editor-host .mdl-add[data-step="1"] .mdl-opt[data-where="provider"]'));
+      press(ctx, ctx.doc.querySelector('#mv-editor-host .mdl-add[data-step="1"] .mdl-next'));
       await settle(ctx.window, 8);
       const cb = ctx.doc.querySelector('#mimp-body .mvi-cb');
       cb.checked = true;

@@ -236,7 +236,7 @@ test('Models is a page of its own: the catalog, the Engines card from GET /api/s
   const COPILOT = { id: 'cp-gpt', label: 'GPT (Copilot)', efforts: ['medium'], upstream: { provider: 'copilot', api: 'openai-chat', model: 'gpt-5' },
     bridged: 'copilot', needsSignIn: true, signInReason: 'not_signed_in', signInMessage: 'not signed in' };
   await checkRows([
-    { name: 'a provider sub-group\'s Set key opens the Providers tab at its row; the OpenAI row\'s Import models… opens the Catalogue with the import dialog', run: async () => {
+    { name: 'a provider sub-group\'s Set key opens the Providers tab at its row; the OpenAI row\'s Import models… opens Add model at step 2 over the Catalogue, with the row\'s address', run: async () => {
       const { window, doc } = await boot({ routes: { '/api/models': { models: [CP], predefined: [], efforts: [] } } });
       await go(window, 'models');
       doc.querySelector('#models-list .mdl-fix[data-row="openai"]').click();
@@ -244,12 +244,17 @@ test('Models is a page of its own: the catalog, the Engines card from GET /api/s
       assert.equal(window.location.hash, '#models/providers/openai');
       assert.deepEqual(shownView(doc), ['models']);
       assert.equal(doc.getElementById('models-tab-providers').hidden, false);
-      doc.querySelector('#providers-list .mv-pv-row[data-provider="openai"] .mv-pv-browse').click();
+      const row = doc.querySelector('#providers-list .mv-pv-row[data-provider="openai"]');
+      row.querySelector('.mv-pv-baseurl').value = 'http://box:8080/v1';
+      row.querySelector('.mv-pv-browse').click();
+      assert.equal(window.location.hash, '#models', 'the Catalogue at the click');
       await settle();
-      assert.equal(window.location.hash, '#models');
       assert.deepEqual(shownView(doc), ['models']);
       assert.equal(doc.getElementById('models-tab-catalogue').hidden, false, 'the Catalogue panel shows');
-      assert.equal(doc.getElementById('model-import-modal').classList.contains('hidden'), false, 'the import dialog opens over the catalog');
+      assert.equal(doc.getElementById('model-editor-modal').classList.contains('hidden'), false, 'Add model opens over the catalog');
+      const step2 = doc.querySelector('#mv-editor-host .mdl-add[data-step="2"]');
+      assert.equal(step2.querySelector('.mdl-add-provider').value, 'openai', 'at step 2, on OpenAI-compatible');
+      assert.equal(step2.querySelector('.mimp-base').value, 'http://box:8080/v1', 'the row\'s address');
     } },
     { name: 'an OpenRouter model\'s Set key opens the Providers tab at the OpenRouter row; a local endpoint\'s at the OpenAI-compatible row', run: async () => {
       const OR_BASE = 'https://openrouter.ai/api/v1';
@@ -842,15 +847,21 @@ test('Models tabs: one view, three panels; the old Providers page is its Provide
       assert.deepEqual(bodies.slice(1), ['/api/providers/openai {"baseUrl":"","maxConcurrent":8}']);
       assert.deepEqual(errors, []);
     } },
-    { name: 'the OpenRouter row\'s Import models… opens the Catalogue with the import dialog on OpenRouter', run: async () => {
-      const { window, doc } = await boot({ hash: 'models/providers' });
+    { name: 'the OpenRouter row\'s Import models… opens Add model at step 2 on OpenRouter over the Catalogue, and lists it', run: async () => {
+      // The list arm first: the /api/providers body would answer every /api/providers/… request too (a prefix).
+      const routes = {
+        '/api/providers/openai/models': { server: 'openrouter', serverLabel: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', warnings: [], models: [] },
+        '/api/providers': { openrouter: { keySet: true } },
+      };
+      const { window, doc, calls } = await boot({ hash: 'models/providers', routes });
       const errors = errorsOf(window);
       pvRow(doc, 'openrouter').querySelector('.mv-or-browse').click();
+      assert.equal(window.location.hash, '#models', 'the Catalogue at the click');
       await settle();
-      assert.equal(window.location.hash, '#models');
       assert.equal(panel(doc, 'catalogue').hidden, false, 'the Catalogue panel shows');
-      assert.equal(doc.getElementById('model-import-modal').classList.contains('hidden'), false, 'the import dialog opens over the catalog');
-      assert.deepEqual([doc.getElementById('mimp-source').value, doc.getElementById('mimp-base').value], ['openai', 'https://openrouter.ai/api/v1']);
+      assert.equal(doc.getElementById('model-editor-modal').classList.contains('hidden'), false, 'Add model opens over the catalog');
+      assert.equal(doc.querySelector('#mv-editor-host .mdl-add[data-step="2"] .mdl-add-provider').value, 'openrouter');
+      assert.ok(calls.includes('GET /api/providers/openai/models?baseUrl=https%3A%2F%2Fopenrouter.ai%2Fapi%2Fv1'), 'OpenRouter\'s list asked for');
       assert.deepEqual(errors, []);
     } },
     { name: 'the OpenRouter row\'s Test asks its own route and toasts "OpenRouter connected"; a missing key gets no base-URL hint', run: async () => {
@@ -889,6 +900,7 @@ test('Models tabs: one view, three panels; the old Providers page is its Provide
       const { window, doc } = await boot({ hash: 'models/providers', routes });
       doc.querySelector('#providers-list .mv-cp-fetch-models').click();
       await settle();
+      assert.equal(doc.querySelector('#mv-editor-host .mdl-add[data-step="2"] .mdl-add-provider').value, 'copilot', 'Add model, step 2, on Copilot');
       const cb = doc.querySelector('#mimp-body .mvi-cb');
       cb.checked = true;
       cb.dispatchEvent(new window.Event('change', { bubbles: true }));
@@ -1325,15 +1337,16 @@ test('Providers tab: fold state, reveal, and repaint that keeps typing', async (
       assert.deepEqual(bodies, ['/api/providers/copilot {"accountType":"enterprise","maxConcurrent":4}']);
       assert.deepEqual(errors, []);
     } },
-    { name: 'the Copilot row\'s Import models… opens the import dialog over the Catalogue', run: async () => {
+    { name: 'the Copilot row\'s Import models… opens Add model at step 2 on Copilot over the Catalogue', run: async () => {
       const routes = { '/api/providers/copilot/models': { models: [{ id: 'gpt-5', name: 'GPT-5', vendor: 'OpenAI' }] }, '/api/providers': P };
       const { window, doc } = await boot({ hash: 'models/providers', routes });
       item(doc, 'copilot').querySelector('.mv-cp-fetch-models').click();
+      assert.equal(window.location.hash, '#models', 'the Catalogue at the click');
       await settle();
-      assert.equal(window.location.hash, '#models');
       assert.equal(doc.getElementById('models-tab-catalogue').hidden, false, 'the Catalogue panel shows');
-      assert.equal(doc.getElementById('model-import-modal').classList.contains('hidden'), false, 'the dialog is open');
-      assert.equal(doc.getElementById('mimp-source').value, 'copilot');
+      assert.equal(doc.getElementById('model-editor-modal').classList.contains('hidden'), false, 'the dialog is open');
+      assert.equal(doc.querySelector('#mv-editor-host .mdl-add[data-step="2"] .mdl-add-provider').value, 'copilot');
+      assert.ok(doc.querySelector('#mimp-body .mvi-cb[value="gpt-5"]'), 'its list');
     } },
     { name: 'with the broker on, keys, the Copilot sign-in and the provider Tests are hidden; the media Tests and the note show', run: async () => {
       const { window, doc } = await boot({ hash: 'models/providers', routes: { '/api/providers': BROKER } });

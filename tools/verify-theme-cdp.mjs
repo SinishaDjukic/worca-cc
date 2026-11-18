@@ -666,11 +666,11 @@ const states = [
   ['settings-guardrails', async () => { await go('settings/guardrails'); }],
   ['settings-models', async () => { await go('models'); }],
   ['settings-models-jobs', async () => { await go('models/jobs'); }],
-  // The catalog's two dialogs (§4.10, §8.4). They render their own content, so the audit would
-  // never see the editor's fields or the import table from 'settings-models' alone — the same gap
-  // that let a chip's contrast regress unnoticed.
-  ['settings-model-editor', async () => { await go('models'); await clickSel('#model-create-btn'); await until(`document.querySelector('#model-editor-modal:not(.hidden) .mv-editor')`, 'the editor dialog'); }, async () => { await ev(`(()=>{const c=document.querySelector('#model-editor-modal .mv-cancel');if(c)c.click();return 1;})()`); await rehide('#model-editor-modal'); }],
-  ['settings-model-import', async () => { await go('models'); await clickSel('#model-import-btn'); await until(`document.querySelector('#model-import-modal:not(.hidden) #mimp-source')`, 'the import dialog'); }, async () => { await rehide('#model-import-modal'); }],
+  // The catalog's model dialog (§4.10; models-menu P5): Add model › Next is the form, Add model › A provider › Next is
+  // step 2's list (the import). They render their own content, so the audit would never see the editor's fields or
+  // the import screen from 'settings-models' alone — the same gap that let a chip's contrast regress unnoticed.
+  ['settings-model-editor', async () => { await go('models'); await clickSel('#model-create-btn'); await until(`document.querySelector('#model-editor-modal:not(.hidden) .mdl-add[data-step="1"]')`, 'Add model'); await clickSel('#model-editor-modal .mdl-next'); await until(`document.querySelector('#model-editor-modal:not(.hidden) .mv-editor')`, 'the editor dialog'); }, async () => { await ev(`(()=>{const c=document.querySelector('#model-editor-modal .mv-cancel');if(c)c.click();return 1;})()`); await rehide('#model-editor-modal'); }],
+  ['settings-model-import', async () => { await go('models'); await clickSel('#model-create-btn'); await until(`document.querySelector('#model-editor-modal:not(.hidden) .mdl-add[data-step="1"]')`, 'Add model'); await clickSel('#model-editor-modal .mdl-opt[data-where="provider"]'); await clickSel('#model-editor-modal .mdl-next'); await until(`document.querySelector('#model-editor-modal:not(.hidden) .mdl-add[data-step="2"]')`, 'Add model, step 2'); }, async () => { await ev(`(()=>{const c=document.querySelector('#model-editor-modal .mdl-close');if(c)c.click();return 1;})()`); await rehide('#model-editor-modal'); }],
   ['settings-providers', async () => { await go('models/providers'); await until(`document.querySelector('#providers-list .mv-providers')`, 'the providers card'); }],
   ['settings-plugins', async () => { await go('marketplace'); }],
   // Agent memory (§10): seed ONE file through the API and open it, so the audit samples a selected
@@ -698,7 +698,7 @@ const states = [
     // .mk-layer: the Marketplace's sheet and dialog hosts are built by marketplace/layers.mjs, not index.html, and carry no .card.
     const ids = await ev(`[...document.querySelectorAll('.viewer-modal[id]:not(.mk-layer)')].map((m) => m.id)`);
     for (const id of ids) {
-      if (id === 'model-editor-modal') { await go('models'); await clickSel('#model-create-btn'); await until(`document.querySelector('#model-editor-modal:not(.hidden) .mv-editor')`, 'the editor dialog'); }
+      if (id === 'model-editor-modal') { await go('models'); await clickSel('#model-create-btn'); await until(`document.querySelector('#model-editor-modal:not(.hidden) .mdl-add')`, 'Add model'); }
       else await unhide(`#${id}`);
       const d = await ev(`(() => { const m = document.getElementById(${JSON.stringify(id)}); const card = m.querySelector('.card');
         const cs = card && getComputedStyle(card); const pad = cs ? [cs.paddingTop, cs.paddingRight, cs.paddingBottom, cs.paddingLeft] : null;

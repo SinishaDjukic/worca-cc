@@ -11,12 +11,12 @@ import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import {
   collectProviderRow, renderCopilotSignIn, renderImportSheet, collectImportSheet, applyImportSelectAll,
-  renderConnectionSection, applyConnectionMode, setModelUpstream, collectConnection,
+  renderConnectionSection, applyConnectionMode, setModelUpstream, collectConnection, connectionWhere, setConnectionWhere,
   bridgedBadge, needsSignInPill, degradationLine,
   renderCopilotRow, renderOpenRouterRow, renderEndpointRow, renderSpeechRow, renderImagesRow, renderSoundRow,
   collectImagesRow, applyImagesPreset,
 } from '../ui/public/bridge-view.mjs';
-import { renderModelEditor, collectModelEditor, applyConnectionModeIn } from '../ui/public/models-view.mjs';
+import { renderModelEditor, collectModelEditor, applyConnectionModeIn, setModelEngine } from '../ui/public/models-view.mjs';
 import { buildCatalogue, buildModelPanel } from '../ui/public/models/catalogue-model.mjs';
 import { PROVIDER_ROWS } from '../ui/public/models/page-tabs.mjs';
 import { renderProvidersTab } from '../ui/public/models/providers-tab.mjs';
@@ -247,7 +247,7 @@ test('import sheet: rows, disabled policy rows, status column, select-all and co
   const rows = [...sheet.querySelectorAll('tbody tr')];
   assert.equal(rows.length, 3);
   assert.equal(rows[0].querySelector('.mvi-status').textContent, 'preview');
-  assert.equal(rows[1].querySelector('.mvi-status').textContent, 'in catalog');
+  assert.equal(rows[1].querySelector('.mvi-status').textContent, 'In catalogue');
   assert.match(rows[2].querySelector('.mvi-status').textContent, /disabled: enable it/);
   assert.ok(rows[2].classList.contains('mvi-disabled'));
   assert.equal(rows[2].querySelector('.mvi-cb').disabled, true);
@@ -260,41 +260,43 @@ test('import sheet: rows, disabled policy rows, status column, select-all and co
   assert.equal(empty.querySelector('.mvi-go').disabled, true);
 });
 
-test('connection: create defaults to direct with the provider block hidden; provider mode reveals it and couples api to provider', () => {
+test('connection: create defaults to a sign-in with the provider block hidden; a provider reveals it and couples api to provider', () => {
   const conn = renderConnectionSection(null, { doc, providers: PROVIDERS });
-  assert.equal(conn.querySelector('.mv-conn-mode-rb:checked').value, 'direct');
+  assert.equal(connectionWhere(conn), 'signin');
   assert.equal(conn.querySelector('.mv-conn-body').hidden, true);
-  conn.querySelector('.mv-conn-mode-rb[value="provider"]').checked = true;
-  applyConnectionMode(conn);
+  assert.equal(conn.querySelector('.mv-conn-more').hidden, true, 'a standalone section keeps its folds, hidden with it');
+  assert.equal(conn.querySelector('.mv-conn-mode-rb, details.mv-conn-adv'), null, 'no radios, no Advanced disclosure');
+  setConnectionWhere(conn, 'provider');
+  assert.equal(conn.dataset.where, 'provider');
   assert.equal(conn.querySelector('.mv-conn-body').hidden, false);
   assert.equal(conn.dataset.provider, 'copilot');
   const api = conn.querySelector('.mv-conn-api');
+  const seg = () => [...conn.querySelectorAll('.mv-conn-api-seg button')].map((b) => b.textContent);
   assert.deepEqual([...api.options].map((o) => o.value), ['anthropic', 'openai-chat', 'openai-responses']);
-  assert.equal(conn.querySelector('.mv-conn-adv').hidden, true);          // copilot: no key/base URL
-  assert.match(conn.querySelector('.mv-conn-provider-hint').textContent, /Connected as @octo/);
-  assert.match(conn.querySelector('.mv-conn-note').textContent, /native Anthropic endpoint/);
+  assert.deepEqual(seg(), ['Anthropic Messages', 'OpenAI chat completions', 'OpenAI Responses']);
+  const own = () => conn.querySelector('.mv-conn-baseurl').closest('.mv-conn-own');
+  assert.equal(own().hidden, true);          // copilot: no key/base URL
   conn.querySelector('.mv-conn-provider').value = 'openai';
   applyConnectionMode(conn);
   assert.deepEqual([...api.options].map((o) => o.value), ['openai-chat', 'openai-responses']);
+  assert.deepEqual(seg(), ['OpenAI chat completions', 'OpenAI Responses'], 'the segment follows a new option list');
   assert.equal(api.disabled, false);
-  assert.equal(conn.querySelector('.mv-conn-adv').hidden, false);
-  // Expandable like every other disclosure (New pipeline's Advanced): the chevron says so without a hover.
-  const sum = conn.querySelector('.mv-conn-adv > summary');
-  assert.ok(sum.querySelector('.adv-chev[aria-hidden="true"]'), 'the Advanced summary carries the disclosure chevron');
-  assert.equal(sum.textContent.trim(), 'Advanced: base URL, API key, extra headers');
-  assert.match(conn.querySelector('.mv-conn-note').textContent, /Translated/);
-  conn.querySelector('.mv-conn-provider').value = 'anthropic';
-  applyConnectionMode(conn);
-  assert.match(conn.querySelector('.mv-conn-provider-hint').textContent, /\$\{VAR\} is not set/);
-  assert.ok(conn.querySelector('.mv-conn-provider-hint').classList.contains('warn'));
-  assert.match(conn.querySelector('.mv-conn-note').textContent, /Passthrough/);
+  assert.equal(own().hidden, false);
+  // The provider's state word beside the select: the Catalogue's words (provider-state.mjs) for the row selected.
+  const ed = renderModelEditor(null, EFFORTS, { doc, providers: PROVIDERS, where: 'provider' });
+  const word = () => { const s = ed.querySelector('.mv-conn-provider-hint'); return [s.className, s.textContent, s.hidden]; };
+  assert.deepEqual(word(), ['mdl-st mv-conn-provider-hint ok', 'Connected', false]);
+  ed.querySelector('.mv-conn-provider').value = 'anthropic';
+  applyConnectionModeIn(ed);
+  assert.deepEqual(word(), ['mdl-st mv-conn-provider-hint fail', 'Key ${ANT} not set', false]);
+  assert.equal(renderModelEditor(null, EFFORTS, { doc, where: 'provider' }).querySelector('.mv-conn-provider-hint').hidden, true, 'no Providers payload: no claim');
 });
 
 test('connection: collect round-trips provider/api/model/advanced/capabilities; direct collects null', () => {
   const conn = renderConnectionSection(null, { doc });
   assert.deepEqual(collectConnection(conn), { upstream: null });
   setModelUpstream(conn, { provider: 'openai', api: 'openai-chat', model: 'gpt-4.1', baseUrl: 'https://gw/v1', apiKey: '${K}', headers: { 'X-Team': 'w' }, capabilities: { toolCalls: true, vision: false, reasoning: true, maxPromptTokens: 100000 } });
-  assert.equal(conn.querySelector('.mv-conn-mode-rb:checked').value, 'provider');
+  assert.equal(connectionWhere(conn), 'provider');
   assert.equal(conn.querySelector('.mv-conn-headers').value, 'X-Team: w');
   assert.deepEqual(collectConnection(conn), { upstream: {
     provider: 'openai', api: 'openai-chat', model: 'gpt-4.1', baseUrl: 'https://gw/v1', apiKey: '${K}', headers: { 'X-Team': 'w' },
@@ -316,14 +318,14 @@ test('editor: a translated model without reasoning collapses efforts to medium; 
   doc.body.appendChild(editor);
   try {
     const conn = editor.querySelector('.mv-conn');
-    conn.querySelector('.mv-conn-mode-rb[value="provider"]').checked = true;
+    setConnectionWhere(editor, 'provider');
     conn.querySelector('.mv-conn-provider').value = 'openai';
-    conn.querySelector('.mv-conn-cap-cb[data-cap="reasoning"]').checked = false;
+    editor.querySelector('.mv-conn-cap-cb[data-cap="reasoning"]').checked = false;
     applyConnectionModeIn(editor);
     const cbs = [...editor.querySelectorAll('.mv-effort-cb')];
     assert.deepEqual(cbs.map((c) => [c.value, c.checked, c.disabled]), [['medium', true, false], ['high', false, true], ['xhigh', false, true], ['max', false, true]]);
     assert.match(editor.querySelector('.mv-efforts-hint').textContent, /only medium is offered/);
-    conn.querySelector('.mv-conn-cap-cb[data-cap="reasoning"]').checked = true;
+    editor.querySelector('.mv-conn-cap-cb[data-cap="reasoning"]').checked = true;
     applyConnectionModeIn(editor);
     assert.ok(cbs.every((c) => !c.disabled));
     assert.match(editor.querySelector('.mv-efforts-hint').textContent, /reasoning_effort/);
@@ -335,7 +337,7 @@ test('editor: a translated model without reasoning collapses efforts to medium; 
   }
   const stored = { id: 'copilot-gpt-5', label: 'GPT-5 (Copilot)', efforts: ['medium', 'high'], upstream: { provider: 'copilot', api: 'openai-chat', model: 'gpt-5', capabilities: { reasoning: true } }, cost: { free: true } };
   const ed2 = renderModelEditor(stored, EFFORTS, { doc, providers: PROVIDERS, copilotModels: [{ id: 'gpt-5', name: 'GPT-5', vendor: 'OpenAI' }] });
-  assert.equal(ed2.querySelector('.mv-conn-mode-rb:checked').value, 'provider');
+  assert.equal(connectionWhere(ed2), 'provider');
   assert.equal(ed2.querySelector('.mv-conn-model').value, 'gpt-5');
   assert.equal(ed2.querySelector('.mv-conn-api').value, 'openai-chat');
   assert.ok(ed2.querySelector('datalist option[value="gpt-5"]'));
@@ -344,7 +346,7 @@ test('editor: a translated model without reasoning collapses efforts to medium; 
   assert.equal(edited.id, 'copilot-gpt-5');
   assert.equal(edited.body.upstream.model, 'gpt-5');
   // Switching an edited entry back to direct sends an explicit clear.
-  ed2.querySelector('.mv-conn-mode-rb[value="direct"]').checked = true;
+  setConnectionWhere(ed2, 'signin');
   assert.equal(collectModelEditor(ed2).body.upstream, null);
   // Create mode never sends a null upstream.
   const ed3 = renderModelEditor(null, EFFORTS, { doc });
@@ -382,12 +384,15 @@ test('catalogue: a bridged model sits under its provider, which says Needs sign-
 
 test('connection + cards: the Responses API is offered for copilot and openai, labelled, and described', () => {
   const conn = renderConnectionSection(null, { doc, providers: PROVIDERS });
+  const pressed = () => [...conn.querySelectorAll('.mv-conn-api-seg button[aria-pressed="true"]')].map((b) => b.textContent);
   setModelUpstream(conn, { provider: 'openai', api: 'openai-responses', model: 'gpt-5-codex', capabilities: { reasoning: true } });
   assert.equal(conn.querySelector('.mv-conn-api').value, 'openai-responses');
-  assert.match(conn.querySelector('.mv-conn-note').textContent, /^Translated to the Responses API: reasoning summaries arrive as thinking, WebSearch\/WebFetch withheld/);
+  assert.deepEqual(pressed(), ['OpenAI Responses']);
+  assert.equal(conn.querySelector('.mv-conn-disc .mdl-disc-sum').textContent, 'OpenAI Responses');
   assert.equal(collectConnection(conn).upstream.api, 'openai-responses');
   setModelUpstream(conn, { provider: 'copilot', api: 'openai-responses', model: 'gpt-6-astra' });
-  assert.match(conn.querySelector('.mv-conn-note').textContent, /Copilot bills premium requests, so Pricing defaults to Free\.$/);
+  assert.deepEqual(pressed(), ['OpenAI Responses']);
+  assert.equal(conn.querySelectorAll('.mv-conn-api-seg button').length, 3, 'Copilot also speaks Messages and chat completions');
   assert.equal(degradationLine({ upstream: { api: 'openai-responses', capabilities: { maxPromptTokens: 272000 } } }), 'translated: reasoning summaries only, no WebSearch/WebFetch, prompt limit ~272k tokens');
   assert.equal(degradationLine({ upstream: { api: 'openai-chat', capabilities: {} } }), 'translated: no thinking blocks, no WebSearch/WebFetch');
   assert.match(bridgedBadge({ bridged: 'copilot', upstream: { model: 'gpt-6-astra', api: 'openai-responses' } }, { doc }).title, /as gpt-6-astra \(OpenAI Responses\)/);
@@ -419,7 +424,7 @@ test('editor: an imported Responses entry keeps its effort list on save, offers 
     const cbs = [...editor.querySelectorAll('.mv-effort-cb')];
     assert.deepEqual(cbs.map((c) => [c.value, c.disabled]), [['medium', false], ['high', false], ['xhigh', false], ['max', true]]);
     assert.equal(cbs[3].checked, false);
-    assert.equal(editor.querySelector('.mv-efforts-hint').textContent, "Maps to this model's effort levels: none, low, medium, high, xhigh.");
+    assert.equal(editor.querySelector('.mv-efforts-hint').textContent, "Maps to this model's levels: none, low, medium, high, xhigh.");
     const saved = collectModelEditor(editor).body;
     assert.deepEqual(saved.upstream.capabilities.reasoningEfforts, ['none', 'low', 'medium', 'high', 'xhigh']);
     assert.deepEqual(saved.efforts, ['medium', 'high', 'xhigh']);
@@ -455,6 +460,53 @@ test('editor: an imported Responses entry keeps its effort list on save, offers 
   const conn = renderConnectionSection(stored, { doc });
   setModelUpstream(conn, { provider: 'copilot', api: 'openai-responses', model: 'gpt-5.4', capabilities: { reasoning: true } });
   assert.equal('reasoningEfforts' in collectConnection(conn).upstream.capabilities, false);
+  // All seven levels still fit a hint (L18: 80 characters or fewer).
+  const seven = { ...stored, upstream: { ...stored.upstream, capabilities: { ...stored.upstream.capabilities, reasoningEfforts: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] } } };
+  const hint = renderModelEditor(seven, EFFORTS, { doc, providers: PROVIDERS }).querySelector('.mv-efforts-hint').textContent;
+  assert.equal(hint, "Maps to this model's levels: none, minimal, low, medium, high, xhigh, max.");
+  assert.ok(hint.length <= 80, `${hint.length} characters`);
+});
+
+test('setModelUpstream on a new form (Edit a copy): a load moves no address, and what the form does not draw rides along', () => {
+  const PO = { ...PROVIDERS, openrouter: { keySet: true }, openai: { ...PROVIDERS.openai, baseUrl: 'https://openrouter.ai/api/v1' } };
+  const ed = renderModelEditor(null, EFFORTS, { doc, providers: PO });
+  ed.querySelector('.mv-id').value = 'or-copy';
+  setModelUpstream(ed, { provider: 'openai', api: 'openai-chat', model: 'openai/gpt-x', capabilities: { toolCalls: true } });
+  assert.equal(ed.querySelector('.mv-conn-provider').value, 'openrouter', 'shown as OpenRouter, whose row holds its key');
+  assert.equal(ed.querySelector('.mv-conn-baseurl').value, '', 'a load is no change of the select: no address is filled');
+  assert.equal('baseUrl' in collectModelEditor(ed).body.upstream, false);
+  const cp = renderModelEditor(null, EFFORTS, { doc, providers: PROVIDERS });
+  cp.querySelector('.mv-id').value = 'cp-copy';
+  setModelUpstream(cp, { provider: 'copilot', api: 'openai-chat', model: 'gpt-x', headers: { 'X-Team': 'a' }, capabilities: { toolCalls: true } });
+  assert.deepEqual(collectModelEditor(cp).body.upstream.headers, { 'X-Team': 'a' }, 'Copilot draws no headers: the loaded ones are kept');
+});
+
+test('connection: OpenRouter\'s address follows a change of the Provider select only — an OpenRouter address is kept, another host\'s never cleared', () => {
+  const ed = renderModelEditor(null, EFFORTS, { doc, providers: PROVIDERS, where: 'provider' });
+  const sel = ed.querySelector('.mv-conn-provider');
+  const bu = ed.querySelector('.mv-conn-baseurl');
+  sel.value = 'openai'; applyConnectionModeIn(ed);
+  bu.value = 'https://eu.openrouter.ai/api/v1';
+  sel.value = 'openrouter'; applyConnectionModeIn(ed);
+  assert.equal(bu.value, 'https://eu.openrouter.ai/api/v1', 'already on openrouter.ai: not replaced by the preset');
+  bu.value = 'https://gw.example/v1';
+  sel.value = 'openai'; applyConnectionModeIn(ed);
+  assert.equal(bu.value, 'https://gw.example/v1', 'leaving OpenRouter clears only an OpenRouter address');
+});
+
+test('connection: the API segment keeps its buttons while the option list stands (a rebuild drops the focus), and follows a new list of the same length', () => {
+  const ed = renderModelEditor(null, EFFORTS, { doc, providers: PROVIDERS, where: 'provider', codexEfforts: ['minimal', 'low', 'medium', 'high'] });
+  const segs = () => [...ed.querySelectorAll('.mv-conn-api-seg button')].map((b) => [b.textContent, b.getAttribute('aria-pressed')]);
+  const sel = ed.querySelector('.mv-conn-provider');
+  sel.value = 'openai'; applyConnectionModeIn(ed);
+  const first = ed.querySelector('.mv-conn-api-seg button');
+  ed.querySelector('.mv-conn-cap-cb[data-cap="vision"]').checked = true;
+  applyConnectionModeIn(ed);
+  assert.equal(ed.querySelector('.mv-conn-api-seg button'), first, 'the same node: repainted, not rebuilt');
+  sel.value = 'anthropic'; applyConnectionModeIn(ed);
+  assert.deepEqual(segs(), [['Anthropic Messages', 'true']]);
+  setModelEngine(ed, 'codex');   // one API for another: Codex speaks Responses only
+  assert.deepEqual(segs(), [['OpenAI Responses', 'true']]);
 });
 
 test('Copy code copies by itself (any page that mounts the box): the code is the button, then a green tick and "Copied"; a refusal says so in the status line', async () => {

@@ -143,9 +143,9 @@ test('Team policy: sentence-case labels, a sans sync chip, grey "not installed",
   assert.match(rules('.tp-chip').join(), /padding-block:0;/, 'the 28px × sets the chip height');
 });
 
-// The 20 dialogs in index.html. The model editor's card and the plugin modal's actions are JS-built, so their static
+// The 19 dialogs in index.html. The model editor's card and the plugin modal's actions are JS-built, so their static
 // markup has no footer button; the proof's dialog-sizes state and the source pins below cover them.
-const DIALOGS = ['#model-editor-modal', '#model-import-modal', '#viewer-card', '#folder-browser', '#mode-modal', '#confirm-modal',
+const DIALOGS = ['#model-editor-modal', '#viewer-card', '#folder-browser', '#mode-modal', '#confirm-modal',
   '#report-modal', '#export-modal', '#shipit-modal', '#publish-modal', '#welcome-modal', '#claude-setup-modal', '#stop-modal',
   '#project-add-modal', '#project-git-modal', '#project-bulk-modal', '#plugin-modal', '#scan-model-modal',
   '#update-modal', '#update-overlay'];

@@ -157,7 +157,7 @@ import { createTerminalPane } from './terminal-pane.mjs';
 import { notify, announce, withButton, fieldError, clearFieldErrors, cardAlert, trackDirty, splitMessage, BUTTON_DONE_MS } from './feedback.mjs';
 import { layoutDialog, watchDialogEdges } from './dialog-layout.mjs';
 import { setEngineLocks, engineLock, applyEngineLocks } from './engine-locks.mjs';
-import { guardModal, dialogOpen } from './modal-guard.mjs';
+import { guardModal, dialogOpen, DISCARD_MESSAGE } from './modal-guard.mjs';
 import { createVoiceController } from './ask-voice.mjs';
 import { renderGettingStarted, renderGettingStartedPill, bindWelcome, doneCount, allStepsDone, GETTING_STARTED_STEPS } from './getting-started.mjs';
 import { createGuideSpot } from './guide-spot.mjs';
@@ -188,7 +188,8 @@ import {
 import { mountMarketplace, tabFromParam, targetFromParam } from './marketplace/index.mjs';
 import { parseModelsParam, modelsHash, renderModelsTabs, paintModelsTabs } from './models/page-tabs.mjs';
 import { renderProvidersTab, toggleProviderRow } from './models/providers-tab.mjs';
-import { providerModelCounts } from './models/provider-state.mjs';
+import { providerModelCounts, providerState } from './models/provider-state.mjs';
+import { renderAddStep1, collectAddStep1, renderAddStep2, addStep2Plan, paintAddSelection } from './models/add-model-dialog.mjs';
 import { buildCatalogue, buildModelPanel, CATALOGUE_VIEW_DEFAULT } from './models/catalogue-model.mjs';
 import { renderCatalogue, renderModelPanel } from './models/catalogue-view.mjs';
 import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
@@ -203,7 +204,7 @@ import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
 import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
 import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, MODEL_ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES, SESSION_SUBAGENTS_VERIFIED } from '../../src/shared/engine-switch.mjs';
-import { runsOn, effortsOn, harnessesLabel, connectionKey, modelGroups, PROVIDER_LABELS } from '../../src/shared/connections.mjs';
+import { runsOn, effortsOn, harnessesLabel, connectionKey, modelGroups, PROVIDER_LABELS, connectionOf } from '../../src/shared/connections.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
   renderStartStep, collectStartStep, renderGuardrailReferences409, isReadOnlyGuardrailSet,
@@ -211,12 +212,13 @@ import {
 import {
   renderModelEditor, collectModelEditor, makeEnvRow, applyCostMode, setModelCost,
   suggestDuplicateId, deleteRefsSummary,
-  renderExportWizard, collectExportWizard, applyConnectionModeIn, setModelEngine,
+  renderExportWizard, collectExportWizard, applyConnectionModeIn, setModelEngine, paintEditorSave, setFormWhere,
 } from './models-view.mjs';
 import {
   collectProviderRow, collectSpeechRow, formatSpeechBytes, renderImportSheet, renderEndpointSheet, collectImportSheet, applyImportSelectAll,
-  OPENROUTER_PRESET, collectOpenRouterRow, endpointRowMatches, ENDPOINT_PRESETS,
+  collectOpenRouterRow, endpointRowMatches, ENDPOINT_PRESETS,
   setModelUpstream, applyImagesPreset, collectImagesRow, imagesRowProblem, showImagesTest, showImagesSaveError, collectSoundRow,
+  connectionWhere,
 } from './bridge-view.mjs';
 import {
   renderSourcePane, collectSourcePane, renderProfileGate, renderProfileBar,
@@ -1014,23 +1016,10 @@ const el = {
   modelsJobsMsg: $('#models-jobs-msg'),
   providersList: $('#providers-list'),
   providersMsg: $('#providers-msg'),
-  modelImportBtn: $('#model-import-btn'),
-  modelImportModal: $('#model-import-modal'),
   modelEditorModal: $('#model-editor-modal'),
   modelEditorHost: $('#mv-editor-host'),
-  mimpSource: $('#mimp-source'),
-  mimpBase: $('#mimp-base'),
-  mimpBaseField: null,          // set below: the label wrapping #mimp-base
-  mimpKey: $('#mimp-key'),
-  mimpKeyField: null,           // set below: the label wrapping #mimp-key
-  mimpList: $('#mimp-list'),
-  mimpMsg: $('#mimp-msg'),
-  mimpFilter: $('#mimp-filter'),
-  mimpBody: $('#mimp-body'),
-  mimpGo: $('#mimp-go'),
-  mimpCancel: $('#mimp-cancel'),
   modelCreateBtn: $('#model-create-btn'),
-  modelShareBtn: $('#model-share-btn'),
+  modelsMoreBtn: $('#models-more-btn'),
 
   // Statistics view
   statsBody: $('#stats-body'),
@@ -5358,17 +5347,15 @@ async function saveHumanInLoop(on) {
 if (el.humanInLoop) el.humanInLoop.addEventListener('change', () => saveHumanInLoop(el.humanInLoop.checked));
 
 // "+ Add model…" in any model dropdown: restore the selection and jump to the
-// global Models view with the create editor open (models are added GLOBALLY —
+// global Models view with Add model open (models are added GLOBALLY —
 // configurable-models-design.md §4.9; the old per-project window.prompt flow
 // is gone).
 function goAddModel(restore) {
   if (typeof restore === 'function') restore();
   mvState.editing = null;
-  mvState.openCreate = true;
-  mvState.openShare = false;
-  // "+ Add model…" on a non-Claude run starts a model of that engine (D10); the editor applies `engine`.
-  mvState.prefill = state.engine !== 'claude' ? { id: '', engine: state.engine } : null;
-  mvState.openEditorOnLoad = true;         // survives the view switch: loadModelsView opens it
+  mvState.prefill = null;
+  // Step 1 opens on a sign-in with the run's harness picked (D10): a Codex run adds a Codex model.
+  mvState.openEditorOnLoad = { where: 'signin', engine: state.engine };   // survives the view switch: readModelsView opens it
   showView('models');
 }
 
@@ -19550,14 +19537,23 @@ async function loadGuardrailsView(param = '') {
 // arrive MASKED and are write-only (unchanged masked echoes mean "keep").
 // ---------------------------------------------------------------------------
 const mvState = {
-  data: null, editing: null, openCreate: false, openShare: false, prefill: null,
+  data: null, editing: null, prefill: null,
   // Model bridge (model-bridge-design.md §8): the Providers card payload, an
   // in-flight Copilot sign-in, the import sheet and its list, and Copilot's
   // models list for the editor's datalist (fetched once per view load when
   // connected; empty otherwise).
-  // Importing is a DIALOG now (§8.4): its state lives in `mimp`, not here. copilotModels stays —
+  // Importing is step 2 of Add model (models-menu P5): its state lives in `dlg`, not here. copilotModels stays —
   // it feeds the editor's upstream-id datalist. justImported filters the list to what just landed.
-  providers: null, signIn: null, copilotModels: [], justImported: null, openEditorOnLoad: false,
+  // openEditorOnLoad: Add model's options ({ where, engine }) from a picker on another page, opened once the catalog is here.
+  providers: null, signIn: null, copilotModels: [], justImported: null, openEditorOnLoad: null,
+  // The model dialog while it is open (one modal, one screen at a time), else null:
+  // { screen: 'step1'|'list'|'form'|'share', add: { where, provider, engine }, list: { provider, baseUrl, apiKey, ticked: Set,
+  //   filter, payload: { endpoint, data, baseUrl, apiKey } | null } (provider: whose list it is; baseUrl/apiKey: what the
+  //   screen holds, redrawn; payload: the last list that answered, with the address and key it was asked with),
+  //   form: { mode, copyFrom, formEl } | null, from: 'step1'|'list'|null (where the form's Back goes), busy (an import is
+  //   out), formDirty (a form left with changes), seq (late answers of another open, provider or screen are dropped),
+  //   engines (GET /api/engines' rows for the harness tiles; null until it answers) }.
+  dlg: null,
   // The Providers tab's unfolded rows, by row name: kept through every redraw (a head click, a link, a failure).
   pvOpen: {},
   // The Catalogue's view state, kept for the session (catalogue-model.mjs): the search, one chip, the Source select,
@@ -19568,10 +19564,6 @@ const mvState = {
   // The side panel's Test (PAN-3) by lower-cased id: { busy, text, err }. A repaint while it runs draws the panel anew
   // and the new one still reads "Testing…" with Test off; a finished answer stays while that model's panel shows.
   tests: new Map(),
-  // A panel that JUST opened is scrolled to after the repaint: the editor and the import sheets
-  // render under the Providers card, which is taller than the viewport on a laptop, so opening one
-  // otherwise looks like nothing happened. Set by the flows that open a panel; cleared on use.
-  revealPanel: false,
 };
 
 function setModelsMsg(text, kind) {
@@ -19642,22 +19634,13 @@ function renderModelsViewBody() {
   const vm = buildCatalogue(data, mvState.cat);
   // The tab's pill counts the listed models once the catalogue loaded (SH-3); nothing before.
   mvState.count = mvState.data ? vm.count : null;
-  const frag = document.createDocumentFragment();
-  // The Providers card is its own tab now (§8.1): at 1000+px it buried the catalog it unlocks,
-  // and importing — the one flow that spanned both — moved here, where its rows land.
-  if (mvState.openShare) {
-    frag.appendChild(renderExportWizard(data.models));
-  }
+  // The Providers card is its own tab now (§8.1): at 1000+px it buried the catalog it unlocks. Importing, the model
+  // form and Share as plugin are screens of the model dialog (models-menu P5): the list holds the Catalogue alone.
   const { query, filter, source } = mvState.cat;
-  frag.appendChild(renderCatalogue(vm, { doc: document, query, filter, source }));
-  el.modelsList.replaceChildren(frag);
+  el.modelsList.replaceChildren(renderCatalogue(vm, { doc: document, query, filter, source }));
   paintModelPanel(data);
   restoreCatalogueFocus(focus);
   paintModelsTabs(modelsTabsNav, { active: modelsTabShown || 'catalogue', count: mvState.count });
-  if (mvState.revealPanel) {
-    mvState.revealPanel = false;
-    revealModelsPanel();
-  }
 }
 
 /** The side panel of the open row into #model-panel-host; an id the loaded catalogue no longer holds closes it. */
@@ -19700,54 +19683,122 @@ function modelRowEl(id, engine = '') {
   return rows.find((n) => !engine || n.closest('.mdl-grp')?.dataset.engine === engine) || rows[0] || null;
 }
 
-/** Bring an open in-page panel (the share wizard) into view. */
-function revealModelsPanel() {
-  const panel = el.modelsList && el.modelsList.querySelector('.mv-editor');
-  if (!panel) return;
-  try { panel.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch { /* jsdom */ }
-}
-
-// ── Model editor dialog (configurable-models-design.md §4.10) ───────────────
-// The editor is a task: it opens over the catalog, owns Escape and the backdrop, and guards unsaved
-// work on the way out. `mvState.editing` / `openCreate` / `prefill` still say WHAT it edits.
+// ── Model dialog (configurable-models-design.md §4.10; models-menu P5) ──────
+// One modal (#model-editor-modal > #mv-editor-host) shows the screen the flow is on: Add model's step 1 ("Where it
+// runs"), step 2's list (the import) or the model form (add, edit, Duplicate, Edit a copy). Each screen is a
+// section.card a pure module builds; showModelScreen lays it out and mounts it. `mvState.editing` / `prefill` still say
+// WHAT the form edits, `mvState.dlg` where the flow is.
 const mvEditor = { lastFocus: null };
-// A form: a backdrop click never closes it; Escape asks once something changed (an env row added or removed
-// counts). Cancel closes at once — never asks; a successful Save closes it too.
+// Bumped on every open, close and provider change: a list or import answer carrying an older one draws nothing.
+let modelDlgSeq = 0;
+// A Save (withButton) or an import is out: Escape, Cancel, Close and the screens' own steps wait for its answer.
+const modelDialogBusy = () => !!mvState.dlg?.busy || !!el.modelEditorModal?.querySelector('[data-fb-state="busy"]');
+// A form: a backdrop click never closes it; Escape asks once something changed (an env row added or removed counts,
+// and so does a form left by Back with changes). Cancel and Close close at once — never ask; a successful Save (or an
+// export) closes it too. One guard, installed once; each open hands it that open's rules (modelGuardOptions).
 const modelEditorGuard = el.modelEditorModal ? guardModal(el.modelEditorModal, {
   kind: 'form', close: () => closeModelEditorDialog(), discardMessage: 'This model has unsaved changes.',
 }) : null;
 
-/** The open editor, wherever it lives (the dialog today; the page while it is closing). */
-function modelEditorEl() {
-  return (el.modelEditorHost && el.modelEditorHost.querySelector('.mv-editor'))
-    || (el.modelsList && el.modelsList.querySelector('.mv-editor'));
+/** This open's guard rules: `busy` keeps the default check (a withButton Save) beside an import in flight, and the dirty rule
+ *  spans the screens (Next alone never asks, filter typing never does, form text typed before a Back still does). Escape's
+ *  question names a model; Share as plugin's is the dialogs' own (`discardMessage`). */
+function modelGuardOptions(discardMessage = 'This model has unsaved changes.') {
+  return {
+    discardMessage,
+    busy: modelDialogBusy,
+    isDirty: () => modelEditorGuard.changed() || !!mvState.dlg?.formDirty,
+  };
 }
 
+/** Step 2's list state for `provider`: the address and key typed, the ticked ids, the filter and the last listed payload. */
+const freshAddList = (provider, baseUrl = '') => ({ provider, baseUrl: baseUrl || '', apiKey: '', ticked: new Set(), filter: '', payload: null });
+
+/** A fresh flow state for one open of the dialog. */
+function beginModelDialog(add = {}, { baseUrl = '' } = {}) {
+  const first = { where: 'signin', provider: 'copilot', engine: 'claude', ...add };
+  mvState.dlg = {
+    screen: null, add: first, list: freshAddList(first.provider, baseUrl),
+    form: null, from: null, busy: false, formDirty: false, seq: ++modelDlgSeq, engines: null,
+    // "Change where it runs": the edit form's harness while step 1 shows for it (no tiles; Continue returns to the form).
+    fixedEngine: '',
+  };
+  return mvState.dlg;
+}
+
+/** The form, when the dialog shows it (step 2's sheets are .mv-editor too, but carry no data-mode). */
+function modelEditorEl() {
+  return el.modelEditorHost ? el.modelEditorHost.querySelector('.mv-editor[data-mode]') : null;
+}
+
+/** Mount `card` as the dialog's screen: layoutDialog (a no-op on a card laid out before), the screen's title names the
+ *  modal (aria-labelledby), then the modal shows and its guard takes this open's rules; when it already shows, the new
+ *  screen is the guard's clean state (`keep`: a redraw of the same screen keeps it). `focus`: a selector, after a tick;
+ *  `discardMessage`: Escape's question for this open (the model form's when not given). */
+function showModelScreen(card, { head = [], foot = [], focus = '', keep = false, discardMessage } = {}) {
+  if (!el.modelEditorModal || !el.modelEditorHost) return;
+  layoutDialog(card, { head, foot });
+  const title = card.querySelector('.mv-editor-title');
+  if (title) title.id = 'mv-editor-heading';
+  el.modelEditorHost.replaceChildren(card);
+  if (el.modelEditorModal.classList.contains('hidden')) {
+    mvEditor.lastFocus = document.activeElement;
+    el.modelEditorModal.classList.remove('hidden');
+    modelEditorGuard?.opened(modelGuardOptions(discardMessage));
+  } else if (!keep) modelEditorGuard?.markClean();
+  if (!focus) return;
+  setTimeout(() => {
+    if (!card.isConnected) return;
+    try { card.querySelector(focus)?.focus({ preventScroll: true }); } catch { /* jsdom */ }
+  }, 0);
+}
+
+/** renderModelEditor's options from the loaded catalogue: the providers, Copilot's models and every engine's efforts. */
+function modelFormOptions(d = mvState.data || {}) {
+  return { providers: mvState.providers, copilotModels: mvState.copilotModels, ...(d.codexEfforts ? { codexEfforts: d.codexEfforts } : {}), cursorEfforts: d.cursorEfforts || [], copilotEfforts: d.copilotEfforts || [], gooseEfforts: d.gooseEfforts || [], opencodeEfforts: d.opencodeEfforts || [] };
+}
+
+/** Mount a model form as the dialog's screen; its Back (reached through step 1) returns to `from`. */
+function showModelForm(editor, { mode, copyFrom = '', from = null } = {}) {
+  const dlg = mvState.dlg || beginModelDialog();
+  dlg.screen = 'form';
+  dlg.from = from;
+  dlg.form = { mode, copyFrom, formEl: editor };
+  // The shared dialog anatomy: the head (mark, title, Close) stays pinned, the Save/Cancel row too (dialog-layout.mjs).
+  // A fresh form starts empty enough to type into; an edit keeps the caret out of the way.
+  showModelScreen(editor, {
+    head: [editor.querySelector(':scope > .mv-editor-head')],
+    foot: [editor.querySelector(':scope > .mv-editor-msg'), editor.querySelector(':scope > .mv-editor-btns')],
+    focus: mode === 'edit' ? '.mv-editor-btns .btn-primary' : 'input:not([type="checkbox"]):not([disabled]), select, textarea',
+  });
+}
+
+/** The form on its own (Edit, Edit a copy): a new open of the dialog with what mvState.editing / prefill say. Edit a
+ *  copy's form is drawn for where the plugin model runs (its harness, connection and env), and may take that model's
+ *  own id: the global entry it saves shadows the plugin's. */
 function openModelEditorDialog() {
   if (!el.modelEditorModal || !el.modelEditorHost) return;
   const d = mvState.data || { efforts: [] };
-  const editor = renderModelEditor(mvState.editing, d.efforts || [], { providers: mvState.providers, copilotModels: mvState.copilotModels, ...(d.codexEfforts ? { codexEfforts: d.codexEfforts } : {}), cursorEfforts: d.cursorEfforts || [], copilotEfforts: d.copilotEfforts || [], gooseEfforts: d.gooseEfforts || [], opencodeEfforts: d.opencodeEfforts || [] });
-  if (!mvState.editing && mvState.prefill) prefillModelEditor(editor, mvState.prefill);
-  const title = editor.querySelector('.mv-editor-title');
-  if (title) title.id = 'mv-editor-heading';
-  // The shared dialog anatomy: the title stays pinned, the Save/Cancel row too (dialog-layout.mjs).
-  layoutDialog(editor, { head: [title], foot: [editor.querySelector(':scope > .mv-editor-msg'), editor.querySelector(':scope > .mv-editor-btns')] });
-  el.modelEditorHost.replaceChildren(editor);
-  mvEditor.lastFocus = document.activeElement;
-  el.modelEditorModal.classList.remove('hidden');
-  modelEditorGuard?.opened();
-  // A fresh create starts empty enough to type into; an edit keeps the caret out of the way.
-  setTimeout(() => {
-    const first = editor.querySelector(mvState.editing ? '.mv-editor-btns .btn-primary' : 'input:not([type="checkbox"]):not([disabled]), select, textarea');
-    try { first?.focus({ preventScroll: true }); } catch { /* jsdom */ }
-  }, 0);
+  const pre = mvState.editing ? null : mvState.prefill;
+  const copyOpts = pre ? { where: connectionOf({ engine: pre.engine, upstream: pre.upstream, env: pre.env }).kind, takenIds: takenModelIds({ shadowing: pre.id }) } : {};
+  const editor = renderModelEditor(mvState.editing, d.efforts || [], { ...modelFormOptions(d), ...copyOpts });
+  if (pre) {
+    prefillModelEditor(editor, pre);
+    // The prefill writes the id and adds env rows without an input event: Save follows them here.
+    paintEditorSave(editor);
+  }
+  beginModelDialog();
+  showModelForm(editor, { mode: mvState.editing ? 'edit' : pre ? 'copy' : 'add' });
 }
 
 function closeModelEditorDialog() {
   if (!el.modelEditorModal || el.modelEditorModal.classList.contains('hidden')) return;
   el.modelEditorModal.classList.add('hidden');
   el.modelEditorHost?.replaceChildren();
-  mvState.editing = null; mvState.openCreate = false; mvState.prefill = null;
+  mvState.editing = null; mvState.prefill = null;
+  // What is still out for this open (the engines, a list) finds no dialog and draws nothing.
+  mvState.dlg = null;
+  modelDlgSeq += 1;
   try { mvEditor.lastFocus?.focus(); } catch { /* the opener may be gone */ }
 }
 
@@ -19812,7 +19863,7 @@ function prefillModelEditor(editor, pre) {
     for (const cb of editor.querySelectorAll('.mv-effort-cb')) cb.checked = efforts.has(cb.value);
   }
   setModelCost(editor, pre.cost || null);
-  // A bridged source (Edit a copy of a plugin model, Duplicate): the upstream
+  // A bridged source (Edit a copy of a plugin model): the upstream
   // travels, but a MASKED key echo must not — create mode stores literally.
   if (pre.upstream) {
     const { apiKey, ...rest } = pre.upstream;
@@ -19820,80 +19871,70 @@ function prefillModelEditor(editor, pre) {
   }
   const wrap = editor.querySelector('.mv-env');
   if (!wrap) return;
-  for (const [k, v] of Object.entries(pre.env || {})) {
+  // A form for its own endpoint starts with the two rows it needs (ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN): the
+  // plugin's value, or its secret's empty row, takes the empty new row of that name, so no two rows share one.
+  const rowFor = (k) => {
+    const free = [...wrap.querySelectorAll('.mv-env-row:not([data-key])')]
+      .find((r) => r.querySelector('.mv-env-key').value === k && !r.querySelector('.mv-env-val').value);
+    if (free) return free;
     const row = makeEnvRow();
     row.querySelector('.mv-env-key').value = k;
-    row.querySelector('.mv-env-val').value = v;
     wrap.appendChild(row);
-  }
+    return row;
+  };
+  for (const [k, v] of Object.entries(pre.env || {})) rowFor(k).querySelector('.mv-env-val').value = v;
   for (const k of pre.secretKeys || []) {
-    const row = makeEnvRow();
-    row.querySelector('.mv-env-key').value = k;
-    row.querySelector('.mv-env-val').placeholder = 'value required: the plugin secret is not copied';
-    wrap.appendChild(row);
+    rowFor(k).querySelector('.mv-env-val').placeholder = 'value required: the plugin secret is not copied';
   }
   const msg = editor.querySelector('.mv-editor-msg');
   if (msg && (pre.secretKeys || []).length) {
     msg.textContent = `Fill in ${pre.secretKeys.join(', ')}. Secret values never leave the plugin.`;
-  } else if (msg && pre.duplicatedFrom) {
-    msg.textContent = `Copy of ${pre.duplicatedFrom}. Change what should differ, then Add model.`;
   }
 }
 
 /**
- * Duplicate a global entry: a CREATE editor seeded from it, with a free id
- * suggested. Deriving a sibling that differs in one parameter is the common way
- * a catalog grows — same endpoint, a different wire id or effort set or price.
+ * Duplicate a global entry: a copy form drawn from it (renderModelEditor's
+ * `copyFrom`), with a free id suggested. Deriving a sibling that differs in one
+ * parameter is the common way a catalog grows — same endpoint, a different wire
+ * id or effort set or price. The copy keeps the source's harness and connection.
  *
- * The raw env values are fetched first (GET :id/env-value, the same deliberate
- * reveal the editor's "Show values" uses). The card only ever holds MASKED ones,
- * and create-mode values are stored literally — seeding from the masks would
- * write a row of bullets into settings.json as if it were a token.
+ * The page holds only the MASKS GET /api/models lists, never a raw value: the
+ * POST names its source (`copyFrom`) and the server fills each masked echo
+ * (an env value, the provider key) with the source's stored one. "Show values"
+ * and a row's copy read the source's on request (data-copy-from).
  */
-async function duplicateModelFlow(id) {
+function duplicateModelFlow(id) {
   const d = mvState.data || {};
   const src = (d.models || []).find((m) => m.id === id);
-  if (!src) return;
-  let env = {};
-  if (src.env && Object.keys(src.env).length) {
-    try {
-      const res = await fetch(`/api/models/${encodeURIComponent(id)}/env-value`);
-      const data = await safeJson(res);
-      if (!res.ok || !data.env) return setModelsMsg(data.error || `HTTP ${res.status}`, 'err');
-      env = data.env;
-    } catch (e) {
-      return setModelsMsg(e.message, 'err');
-    }
-  }
+  if (!src || !el.modelEditorModal || !el.modelEditorHost) return;
   // Every id the catalog knows — the add is rejected for colliding with ANY of
   // them, so a suggestion has to clear all four layers, not just the global one.
   const taken = [d.models, d.plugin, d.predefined].flatMap((xs) => (xs || []).map((m) => m.id));
-  const newId = suggestDuplicateId(src.id, taken);
   mvState.editing = null;
-  mvState.openCreate = true;
-  mvState.openShare = false;
-  mvState.prefill = {
-    id: newId,
+  mvState.prefill = null;
+  const editor = renderModelEditor(src, d.efforts || [], {
+    ...modelFormOptions(d),
+    copyFrom: src.id,
+    id: suggestDuplicateId(src.id, taken),
     // Only suffix a label the user actually chose; an entry that never had one
     // keeps none, so the copy's label defaults to its own new id.
     label: src.label && src.label !== src.id ? `${src.label} copy` : '',
-    efforts: src.efforts,
-    env,
-    secretKeys: [],
-    ...(src.cost ? { cost: src.cost } : {}),
-    duplicatedFrom: src.id,
-  };
-  openModelEditorDialog();
+    where: connectionOf(src).kind,
+    takenIds: takenModelIds(),
+  });
+  beginModelDialog();
+  showModelForm(editor, { mode: 'copy', copyFrom: src.id });
 }
 
 async function editPluginCopyFlow(plugin, id) {
+  // The dialog as it was when asked: a screen opened while the plugin answered stays (the form never replaces it).
+  const dlg = mvState.dlg;
   try {
     const res = await fetch(`/api/plugins/${encodeURIComponent(plugin)}/model-env?id=${encodeURIComponent(id)}`);
     const data = await safeJson(res);
     if (!res.ok) return setModelsMsg(data.error || `HTTP ${res.status}`, 'err');
+    if (mvState.dlg !== dlg) return;
     mvState.editing = null;
-    mvState.openCreate = true;
-    mvState.openShare = false;
     mvState.prefill = data;
     openModelEditorDialog();
   } catch (e) {
@@ -19901,8 +19942,28 @@ async function editPluginCopyFlow(plugin, id) {
   }
 }
 
+/** Share as plugin (DESIGN SHR-1): the export wizard over the user's own models, a screen of the model dialog (the
+ *  page head's More menu opens it). Escape asks with the dialogs' own sentence once a box or a field changed. */
+function openShareDialog() {
+  if (!el.modelEditorModal || !el.modelEditorHost) return;
+  mvState.editing = null;
+  mvState.prefill = null;
+  const models = Array.isArray(mvState.data?.models) ? mvState.data.models : [];
+  const card = renderExportWizard(models, { doc: document });
+  beginModelDialog().screen = 'share';
+  showModelScreen(card, {
+    head: [card.querySelector(':scope > .mvx-head')],
+    foot: [card.querySelector(':scope > .mvx-msg'), card.querySelector(':scope > .mv-editor-btns')],
+    focus: '.mvx-model-cb, .mvx-name',
+    discardMessage: DISCARD_MESSAGE,
+  });
+}
+
+/** "Export scaffold" (SHR-2): POST the dialog's wizard; on success the dialog closes and a toast says where the scaffold
+ *  went and what it left out (`omitted`: a literal provider key, a secret-named header). A refusal stays in .mvx-msg. */
 async function exportPluginFlow() {
-  const wiz = el.modelsList && el.modelsList.querySelector('.mvx');
+  const dlg = mvState.dlg;
+  const wiz = dlg?.screen === 'share' ? el.modelEditorHost?.querySelector('.mvx') : null;
   if (!wiz) return;
   const msg = wiz.querySelector('.mvx-msg');
   const say = (text) => { if (msg) { msg.textContent = text; msg.className = 'form-msg mvx-msg err'; } };
@@ -19910,18 +19971,28 @@ async function exportPluginFlow() {
   if (!body.models.length) return say('pick at least one model');
   if (!body.name) return say('plugin name is required');
   if (!body.dest) return say('destination folder is required');
-  try {
+  if (msg) { msg.textContent = ''; msg.className = 'form-msg mvx-msg'; }
+  // withButton holds the guard's busy rule while the request is out: Escape, Cancel and Close wait for the answer.
+  const r = await withButton(wiz.querySelector('.mvx-export'), async () => {
     const res = await fetch('/api/models/export-plugin', {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
     });
     const data = await safeJson(res);
-    if (!res.ok) return say(data.error || `HTTP ${res.status}`);
-    mvState.openShare = false;
-    setModelsMsg(`Plugin scaffold written to ${data.dir}. Run git init + push it, then teammates install it from the Marketplace page.`, 'ok');
-    renderModelsViewBody();
-  } catch (e) {
-    say(e.message);
-  }
+    return res.ok ? { ok: true, data } : { ok: false, error: data.error || `HTTP ${res.status}` };
+  }, { busy: 'Exporting…', done: 'Exported' });
+  if (r.skipped) return;
+  // The answer belongs to the open that asked: a screen opened meanwhile (the page's Add model, by keyboard) stays, and a
+  // refusal it can no longer show in .mvx-msg is a toast.
+  const live = mvState.dlg === dlg;
+  if (!r.ok) return live ? say(r.error) : notify({ tone: 'err', title: 'Not exported', detail: r.error });
+  if (live) closeModelEditorDialog();
+  // Its own title and detail, never splitMessage: a short folder would split the title at "Not included: …".
+  const omitted = Array.isArray(r.data?.omitted) ? r.data.omitted : [];
+  notify({
+    tone: 'ok',
+    title: `Plugin scaffold written to ${r.data?.dir}.`,
+    detail: omitted.length ? `Not included: ${omitted.map((o) => `${o.what} (${o.id})`).join(', ')}.` : '',
+  });
 }
 
 const CODEX_HELPER_JOBS = ['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag', 'workspaceScan', 'secondOpinion'];
@@ -20111,8 +20182,8 @@ async function readModelsView(seq) {
     mvState.data = data;
     renderModelsViewBody();
     void paintHelperModelCards();
-    // "+ Add model…" from a picker on another page: the dialog opens once the catalog is here.
-    if (mvState.openEditorOnLoad) { mvState.openEditorOnLoad = false; openModelEditorDialog(); }
+    // "+ Add model…" from a picker on another page: Add model opens once the catalog is here.
+    if (mvState.openEditorOnLoad) { const add = mvState.openEditorOnLoad; mvState.openEditorOnLoad = null; openAddModelDialog(add); }
     // Copilot's models feed the editor's upstream-id datalist; fetched in the
     // background when connected so the view never waits on GitHub.
     if (mvState.providers?.copilot?.connected && !mvState.copilotModels.length) {
@@ -20527,79 +20598,195 @@ async function refreshCopilotQuotaFlow(btn) {
 }
 
 
-// ── Import models (model-bridge-design.md §8.4) ─────────────────────────────
-// ONE dialog, two sources: GitHub Copilot's catalog, and any OpenAI-compatible server you run.
-// It belongs to the CATALOG, not to a provider — what it produces is catalog rows, and a flow
-// whose result lands on another tab reads as "nothing happened". The Providers tab links into it.
-const mimp = { source: 'copilot', baseUrl: '', payload: null, lastFocus: null, importing: false };
-// A form: a backdrop click never closes it; Escape asks once a model is ticked or a URL typed since the last
-// list. While "Import selected" is out, Cancel and Escape wait for its answer.
-const importGuard = el.modelImportModal ? guardModal(el.modelImportModal, { kind: 'form', close: () => closeImportDialog(), busy: () => mimp.importing }) : null;
+// ── Add model (models-menu P5, DESIGN ADD-1…ADD-6) ──────────────────────────
+// Step 1 "Where it runs" (models/add-model-dialog.mjs), then the model: picked from the provider's own list (step 2: the
+// import, which was a dialog of its own) or entered in the model form. All of it in the model dialog, over the catalog
+// the import fills; the Providers tab's Import opens step 2 there.
 
-function setImportMsg(text, kind) {
-  if (!el.mimpMsg) return;
-  el.mimpMsg.textContent = text || '';
-  el.mimpMsg.className = `form-msg mimp-msg${kind ? ` ${kind}` : ''}`;
+/** Step 2's screen, while it shows. */
+const addListCard = () => (mvState.dlg?.screen === 'list' && el.modelEditorHost?.querySelector('.mdl-add[data-step="2"]')) || null;
+/** True while the dialog still shows `seq`'s screen `screen` — and, given `card`, that very card: an answer for another
+ *  open, provider or screen is dropped, and so is one for a list left and drawn again meanwhile (Back, then Next). */
+const addLive = (seq, screen, card = null) => !!mvState.dlg && mvState.dlg.seq === seq && mvState.dlg.screen === screen
+  && (!card || addListCard() === card);
+// Step 2 screens with a list request out: Enter, a preset or List models waits for its answer (one request per card).
+const addListing = new WeakSet();
+/** A step screen's pinned regions for layoutDialog. */
+const addScreenParts = (card) => ({ head: [card.querySelector(':scope > .mdl-add-head')], foot: [card.querySelector(':scope > .mdl-add-foot')] });
+
+/** Every id the catalogue lists, lower-cased: a new model may take none of them (FRM-5; the add is refused for colliding
+ *  with ANY layer, as Duplicate's suggestion knows, duplicateModelFlow). `shadowing`: Edit a copy's plugin model, whose
+ *  own plugin row does not count (the global entry the copy saves under its id shadows it). */
+function takenModelIds({ shadowing = '' } = {}) {
+  const d = mvState.data || {};
+  const own = String(shadowing).toLowerCase();
+  const plugin = (d.plugin || []).filter((m) => !own || String(m.id).toLowerCase() !== own);
+  return [d.models, plugin, d.predefined].flatMap((xs) => (xs || []).map((m) => String(m.id).toLowerCase()));
 }
 
-/** Copilot is offered only when signed in; a local endpoint needs nothing but a URL. */
-function importSources() {
-  const connected = !!(mvState.providers && mvState.providers.copilot && mvState.providers.copilot.connected);
-  return [
-    { id: 'copilot', label: connected ? 'GitHub Copilot' : 'GitHub Copilot (sign in first)', disabled: !connected },
-    // The servers are named in the Base URL hint; a 60-character option truncates in the control.
-    { id: 'openai', label: 'OpenAI-compatible', disabled: false },
-  ];
-}
-
-function paintImportSource() {
-  if (!el.mimpSource) return;
-  const opts = importSources();
-  el.mimpSource.replaceChildren(...opts.map((o) => {
-    const node = document.createElement('option');
-    node.value = o.id; node.textContent = o.label; node.disabled = o.disabled;
-    if (o.id === mimp.source) node.selected = true;
-    return node;
-  }));
-  // Copilot has no base URL, and loads by itself; the whole field (with its button) goes away.
-  if (el.mimpBaseField) el.mimpBaseField.classList.toggle('hidden', mimp.source !== 'openai');
-  if (el.mimpKeyField) el.mimpKeyField.classList.toggle('hidden', mimp.source !== 'openai');
-}
+/** The tiles' locks, as the Catalogue builds them (catalogueData): the harnesses the credential broker turns off. */
+const addEngineLocks = () => MODEL_ENGINE_NAMES.filter((name) => engineLock(name) !== null).map((name) => ({ name, reason: 'Off while the credential broker is on' }));
 
 /**
- * @param {{source?:string, baseUrl?:string, goToModels?:boolean}} [o] goToModels comes from the
- *   Providers tab's shortcut: the dialog opens over the Catalogue the import will fill (showView syncs #models).
+ * Open Add model: step 1, or step 2's list for a provider. The harness tiles draw at once with no engine list
+ * (`engines: null`), then again when this open's one GET /api/engines answers (the app's readyEngines cache keeps only
+ * the ready names; the tiles want each harness's reason too).
  */
-function openImportDialog({ source, baseUrl, goToModels } = {}) {
-  if (goToModels && currentModelsTab() !== 'catalogue') showView('models');
-  mimp.lastFocus = document.activeElement;
-  const connected = !!(mvState.providers && mvState.providers.copilot && mvState.providers.copilot.connected);
-  mimp.source = source || (connected ? 'copilot' : 'openai');
-  mimp.baseUrl = baseUrl || (mvState.providers && mvState.providers.openai && mvState.providers.openai.baseUrl) || '';
-  mimp.payload = null;
-  if (el.mimpBase) el.mimpBase.value = mimp.baseUrl;
-  if (el.mimpKey) el.mimpKey.value = '';
-  paintImportSource();
-  if (el.mimpBody) el.mimpBody.replaceChildren();
-  if (el.mimpGo) el.mimpGo.disabled = true;
-  setImportMsg('');
-  el.modelImportModal?.classList.remove('hidden');
-  importGuard?.opened();
-  setTimeout(() => (mimp.source === 'openai' ? el.mimpBase : el.mimpList)?.focus(), 0);
-  // Copilot has one catalog, so it loads at once; an endpoint is listed only when the caller NAMED
-  // one (the Providers shortcut). The provider's stored URL is offered as a default, not queried —
-  // listing api.openai.com without a key would greet the dialog with an error nobody asked for.
-  if (mimp.source === 'copilot' || baseUrl) listImportModels();
+function openAddModelDialog({ step = 1, where = 'signin', provider = 'copilot', engine = 'claude', baseUrl = '' } = {}) {
+  if (!el.modelEditorModal || !el.modelEditorHost) return;
+  mvState.editing = null;
+  mvState.prefill = null;
+  const dlg = beginModelDialog({ where: step === 2 ? 'provider' : where, provider, engine: engine || 'claude' }, { baseUrl });
+  void loadAddEngines(dlg);
+  if (step === 2) showAddList();
+  else showAddStep1();
 }
 
-/** Narrow the LISTED rows (model, id, vendor, detail) — a view filter, never a change to the pick. */
-function applyImportFilter() {
-  const sheet = el.mimpBody && el.mimpBody.querySelector('.mvi');
+/** This open's /api/engines rows for the tiles; step 1 is drawn again while it shows. */
+async function loadAddEngines(dlg) {
+  let rows = null;
+  try {
+    const res = await fetch('/api/engines');
+    const data = res.ok ? await safeJson(res) : null;
+    rows = Array.isArray(data?.engines) ? data.engines : null;
+  } catch { /* the tiles keep saying nothing about readiness */ }
+  if (mvState.dlg !== dlg || !rows) return;   // closed, or another open meanwhile
+  dlg.engines = rows;
+  if (dlg.screen === 'step1') showAddStep1({ redraw: true });
+}
+
+/** Which control of step 1 has the focus, so a redraw hands it back: its class and its data-where / data-engine. */
+function addFocusSig(n) {
+  const cls = ['mdl-opt', 'mdl-hx-t', 'mdl-add-provider', 'mdl-next', 'mv-cancel', 'mdl-close'].find((c) => n?.classList?.contains(c));
+  return cls ? { cls, where: n.dataset.where || '', engine: n.dataset.engine || '' } : null;
+}
+
+/** Step 1 from the flow's state. `redraw` (the engines answered): from what the step on screen holds, focus kept. */
+function showAddStep1({ redraw = false } = {}) {
+  const dlg = mvState.dlg;
+  if (!dlg) return;
+  const old = redraw ? el.modelEditorHost.querySelector('.mdl-add[data-step="1"]') : null;
+  if (redraw && !old) return;
+  if (old) dlg.add = { ...dlg.add, ...collectAddStep1(old) };
+  const sig = old && old.contains(document.activeElement) ? addFocusSig(document.activeElement) : null;
+  dlg.screen = 'step1';
+  const card = renderAddStep1(dlg.add, { doc: document, providers: mvState.providers, engines: dlg.engines, locks: addEngineLocks(), fixedEngine: dlg.fixedEngine || '' });
+  showModelScreen(card, { ...addScreenParts(card), focus: redraw ? '' : '.mdl-opt[aria-checked="true"]', keep: redraw });
+  if (!sig) return;
+  const twin = [...card.querySelectorAll(`.${sig.cls}`)].find((n) => (n.dataset.where || '') === sig.where && (n.dataset.engine || '') === sig.engine);
+  try { twin?.focus({ preventScroll: true }); } catch { /* jsdom */ }
+}
+
+/** "Change where it runs" (L26), on an edit form: step 1 on the form's own harness (no tiles; the cards wheresFor refuses
+ *  are off), preset to where it runs now. The form waits, detached, with everything typed into it. */
+function showRewhereStep() {
+  const dlg = mvState.dlg;
+  const form = modelEditorEl();
+  if (!dlg || !form || dlg.form?.formEl !== form) return;
+  dlg.formDirty = dlg.formDirty || !!modelEditorGuard?.changed();
+  dlg.fixedEngine = form.dataset.engine || 'claude';
+  dlg.add = { where: connectionWhere(form), provider: form.querySelector('.mv-conn-provider')?.value || 'copilot', engine: dlg.fixedEngine };
+  showAddStep1();
+}
+
+/** "Change where it runs" › Continue: the same form back, now running where step 1 says; a provider's select follows
+ *  step 1's choice with a bubbling change, so onModelsConnChange applies it (OpenRouter's address, Copilot's pricing). */
+function rewhereContinue(card) {
+  const dlg = mvState.dlg;
+  const form = dlg?.form?.formEl;
+  if (!form) return;
+  const pick = collectAddStep1(card);
+  const was = { where: connectionWhere(form), provider: form.querySelector('.mv-conn-provider')?.value || '' };
+  dlg.fixedEngine = '';
+  showModelForm(form, { mode: dlg.form.mode, copyFrom: dlg.form.copyFrom, from: dlg.from });
+  // setFormWhere, not setConnectionWhere alone: a custom endpoint gains its routing rows (and Save waits for its address),
+  // and a model leaving one loses them, so Save sends the kind picked.
+  setFormWhere(form, pick.where);
+  const sel = pick.where === 'provider' ? form.querySelector('.mv-conn-provider') : null;
+  if (sel) {
+    sel.value = pick.provider;
+    sel.dispatchEvent(new window.Event('change', { bubbles: true }));
+  }
+  // Where it runs is part of what Save sends: a new place is a change, so Escape asks.
+  if (pick.where !== was.where || (sel && pick.provider !== was.provider)) dlg.formDirty = true;
+}
+
+/** Step 1's Next: a provider goes to its list; a sign-in or a custom endpoint to the form (a sign-in with its harness).
+ *  On "Change where it runs" it is Continue: back to the edit form. */
+function addStep1Next(card) {
+  const dlg = mvState.dlg;
+  if (!dlg || !card) return;
+  if (dlg.fixedEngine) { rewhereContinue(card); return; }
+  const pick = collectAddStep1(card);
+  // Another provider than the kept list is for (the list says whose it is; dlg.add may hold a pick a redraw kept): its
+  // ticks, filter and answers go.
+  if (pick.provider !== dlg.list.provider) { dlg.list = freshAddList(pick.provider); dlg.seq = ++modelDlgSeq; }
+  dlg.add = pick;
+  if (pick.where === 'provider') showAddList();
+  else showAddForm({ where: pick.where, engine: pick.engine, from: 'step1' });
+}
+
+/** Step 2 by hand (ADD-6): the model form reached through step 1 or the list, its Back going to `from`. A form this open
+ *  already holds (left by Back) comes back with everything typed into it, moved to the place and provider picked now. */
+function showAddForm({ where, engine = '', provider = '', from }) {
+  const dlg = mvState.dlg;
+  if (!dlg) return;
+  mvState.editing = null;
+  mvState.prefill = null;
+  const kept = dlg.form?.mode === 'add' ? dlg.form.formEl : null;
+  if (kept) {
+    showModelForm(kept, { mode: 'add', from });
+    // Step 1 shows harness tiles for a sign-in only: a provider or a custom endpoint runs on Claude Code, as a new form does.
+    const harness = where === 'signin' ? engine || 'claude' : 'claude';
+    if ((kept.dataset.engine || 'claude') !== harness) setModelEngine(kept, harness);
+    setFormWhere(kept, where);
+    const sel = where === 'provider' && provider ? kept.querySelector('.mv-conn-provider') : null;
+    if (sel && sel.value !== provider) {
+      sel.value = provider;
+      sel.dispatchEvent(new window.Event('change', { bubbles: true }));   // onModelsConnChange: OpenRouter's address, Copilot's pricing
+    }
+    paintEditorSave(kept);
+    // Moving the form is not typing into it: what was typed before Back is dlg.formDirty, the guard starts clean here.
+    modelEditorGuard?.markClean();
+    return;
+  }
+  const d = mvState.data || { efforts: [] };
+  const editor = renderModelEditor(null, d.efforts || [], { ...modelFormOptions(d), where, steps: true, provider, takenIds: takenModelIds() });
+  if (where === 'signin' && engine) setModelEngine(editor, engine);
+  paintEditorSave(editor);
+  showModelForm(editor, { mode: 'add', from });
+}
+
+/** "N selected" and "Add N models" from the ticked rows, which the flow keeps (a list drawn again ticks them again). */
+function paintAddTicks(card) {
+  const dlg = mvState.dlg;
+  const sheet = card.querySelector('.mimp-body .mvi');
+  const ids = sheet ? collectImportSheet(sheet) : [];
+  if (dlg) dlg.list.ticked = new Set(ids);
+  paintAddSelection(card, ids.length);
+  const go = card.querySelector('.mimp-go');
+  if (go && dlg?.busy) go.disabled = true;
+}
+
+function setAddListMsg(card, text, kind) {
+  const msg = card && card.querySelector('.mimp-msg');
+  if (!msg) return;
+  msg.textContent = text || '';
+  msg.className = `form-msg mimp-msg${kind ? ` ${kind}` : ''}`;
+}
+
+/** Narrow the LISTED rows (model, id, vendor, detail; a hosted list's Free / Tools / Window too): a view, never a change
+ *  to the pick. The filter's text is kept with the list. */
+function applyAddFilter(card) {
+  const field = card.querySelector('.mimp-filter');
+  const raw = field ? field.value : '';
+  if (mvState.dlg) mvState.dlg.list.filter = raw;
+  const sheet = card.querySelector('.mimp-body .mvi');
   if (!sheet) return;
-  const q = (el.mimpFilter?.value || '').trim().toLowerCase();
+  const q = raw.trim().toLowerCase();
   let shown = 0; let total = 0;
   for (const tr of sheet.querySelectorAll('tbody tr')) {
-    const hit = endpointRowMatches(tr, sheet, q);   // text, plus a hosted sheet's Free / Tools / window
+    const hit = endpointRowMatches(tr, sheet, q);
     tr.classList.toggle('is-filtered', !hit);
     total += 1;
     if (hit) shown += 1;
@@ -20611,93 +20798,247 @@ function applyImportFilter() {
       none.className = 'hist-empty mimp-nohits';
       sheet.appendChild(none);
     }
-    none.textContent = q ? `Nothing here matches “${el.mimpFilter.value.trim()}”.` : 'Nothing here matches these filters.';
+    none.textContent = q ? `Nothing here matches “${raw.trim()}”.` : 'Nothing here matches these filters.';
   } else if (none) none.remove();
 }
 
-function closeImportDialog() {
-  el.modelImportModal?.classList.add('hidden');
-  mimp.payload = null;
-  if (el.mimpBody) el.mimpBody.replaceChildren();
-  try { mimp.lastFocus?.focus(); } catch { /* the opener may be gone */ }
+/** A provider that cannot list (addStep2Plan `blocked`: its state word and the button that fixes it) or that has no list
+ *  (`nolist`: "No list to pick from", the button enters an id instead). */
+function paintAddBlocked(card, plan) {
+  const box = card.querySelector('.mdl-add-blocked');
+  if (!box) return;
+  const word = box.querySelector('.mdl-st');
+  const fix = box.querySelector('.mdl-add-fix');
+  const blocked = plan.kind === 'blocked';
+  word.className = `mdl-st ${blocked ? providerState(mvState.providers, plan.row, { hasModels: true }).tone : 'need'}`;
+  word.textContent = plan.text;
+  fix.textContent = blocked ? plan.fix : 'Enter an id instead';
+  if (blocked) fix.dataset.row = plan.row;
+  else fix.dataset.manual = '';
+  box.hidden = false;
 }
 
-/** Ask the chosen source what it has, and paint its sheet into the dialog. */
-async function listImportModels() {
-  const endpoint = mimp.source === 'openai';
-  mimp.baseUrl = el.mimpBase ? el.mimpBase.value.trim() : '';
-  mimp.apiKey = el.mimpKey ? el.mimpKey.value.trim() : '';
-  if (endpoint && !mimp.baseUrl) { setImportMsg('Give the endpoint a base URL, e.g. http://127.0.0.1:11434/v1', 'err'); el.mimpBase?.focus(); return; }
-  if (el.mimpList) el.mimpList.disabled = true;
-  if (el.mimpGo) el.mimpGo.disabled = true;
-  setImportMsg(endpoint ? 'Asking the endpoint what it serves…' : 'Loading Copilot models…');
+/** Step 2 for the flow's provider (addStep2Plan): the list kept from before, else asked for when it can be (Copilot, a
+ *  provider with its address); a provider that cannot list says why. */
+function showAddList() {
+  const dlg = mvState.dlg;
+  if (!dlg) return;
+  dlg.screen = 'list';
+  const provider = dlg.add.provider;
+  const card = renderAddStep2({ provider, baseUrl: dlg.list.baseUrl }, { doc: document, providers: mvState.providers });
+  const filter = card.querySelector('.mimp-filter');
+  if (filter) filter.value = dlg.list.filter;
+  const key = card.querySelector('.mimp-key');
+  if (key) key.value = dlg.list.apiKey;
+  const plan = addStep2Plan(provider, mvState.providers, { baseUrl: dlg.list.baseUrl });
+  if (plan.kind !== 'list') paintAddBlocked(card, plan);
+  showModelScreen(card, { ...addScreenParts(card), focus: provider === 'openai' ? '.mimp-base' : '.mimp-filter' });
+  if (plan.kind !== 'list') return;
+  if (dlg.list.payload) mountAddSheet(card, dlg.list.payload);
+  else if (plan.source === 'copilot' || plan.auto) void listAddModels();
+}
+
+/** Draw a listed payload into step 2: the sheet without its own title, note, buttons and message (the screen has them),
+ *  the kept ticks back on, the filter applied, the foot counted. */
+function mountAddSheet(card, { endpoint, data }) {
+  const dlg = mvState.dlg;
+  const sheet = endpoint ? renderEndpointSheet(data, { doc: document }) : renderImportSheet(data.models || [], { doc: document });
+  sheet.querySelector(':scope > h3.mv-editor-title')?.remove();
+  sheet.querySelector(':scope > small.hint:not(.mvi-warn)')?.remove();
+  sheet.querySelector(':scope > .mv-editor-btns')?.remove();
+  sheet.querySelector(':scope > .mvi-msg')?.remove();
+  for (const cb of sheet.querySelectorAll('.mvi-cb')) if (!cb.disabled && dlg?.list.ticked.has(cb.value)) cb.checked = true;
+  card.querySelector('.mimp-body')?.replaceChildren(sheet);
+  applyAddFilter(card);
+  paintAddTicks(card);
+  const rows = sheet.querySelectorAll('.mvi-cb:not([disabled])').length;
+  if (endpoint && Array.isArray(data.models) && !data.models.length) setAddListMsg(card, 'This endpoint lists no models.', 'err');
+  else setAddListMsg(card, rows ? '' : 'Nothing here can be imported.', rows ? '' : 'err');
+}
+
+/** Ask the provider what it has (Copilot's catalog, or an OpenAI-compatible endpoint with the key the screen holds) and
+ *  draw its sheet into step 2. */
+async function listAddModels() {
+  const dlg = mvState.dlg;
+  const card = addListCard();
+  if (!dlg || !card || dlg.busy || addListing.has(card)) return;
+  const typed = dlg.add.provider === 'openai';
+  // The screen's address and key are kept for a redraw; the pair this request asks with travels with its answer
+  // (payload) and only that pair is ever imported with, so a key typed for another address never reaches this one.
+  if (typed) keepAddList(card);
+  const plan = addStep2Plan(dlg.add.provider, mvState.providers, { baseUrl: dlg.list.baseUrl });
+  if (plan.kind !== 'list') return;
+  const endpoint = plan.source === 'endpoint';
+  if (endpoint && !plan.baseUrl) {
+    setAddListMsg(card, 'Give the endpoint a base URL, e.g. http://127.0.0.1:11434/v1', 'err');
+    card.querySelector('.mimp-base')?.focus();
+    return;
+  }
+  const apiKey = typed ? dlg.list.apiKey : '';
+  const seq = dlg.seq;
+  addListing.add(card);
+  const listBtn = card.querySelector('.mimp-list');
+  if (listBtn) listBtn.disabled = true;
+  const go = card.querySelector('.mimp-go');
+  if (go) go.disabled = true;
+  setAddListMsg(card, endpoint ? 'Asking the endpoint what it serves…' : 'Loading Copilot models…');
   try {
-    const url = endpoint ? `/api/providers/openai/models?baseUrl=${encodeURIComponent(mimp.baseUrl)}` : '/api/providers/copilot/models';
+    const url = endpoint ? `/api/providers/openai/models?baseUrl=${encodeURIComponent(plan.baseUrl)}` : '/api/providers/copilot/models';
     // The endpoint's own key rides a header, never the URL (server logs, history).
-    const res = await fetch(url, endpoint && mimp.apiKey ? { headers: { 'X-Worca-Endpoint-Key': mimp.apiKey } } : {});
+    const res = await fetch(url, endpoint && apiKey ? { headers: { 'X-Worca-Endpoint-Key': apiKey } } : {});
     const data = await safeJson(res);
-    if (!res.ok) { setImportMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
-    mimp.payload = data;
-    const sheet = endpoint ? renderEndpointSheet(data) : renderImportSheet(data.models || []);
-    // The sheet's own footer is the dialog's footer here.
-    sheet.querySelector('.mv-editor-btns')?.remove();
-    sheet.querySelector('.mvi-msg')?.remove();
-    el.mimpBody?.replaceChildren(sheet);
-    const rows = sheet.querySelectorAll('.mvi-cb:not([disabled])').length;
-    // Worth a filter only once the list is long enough to hunt through (Copilot lists dozens).
-    if (el.mimpFilter) {
-      el.mimpFilter.classList.toggle('hidden', sheet.querySelectorAll('tbody tr').length < 8);
-      el.mimpFilter.value = '';
-    }
-    applyImportFilter();
-    importGuard?.markClean();   // a fresh list is the new starting point
-    if (el.mimpGo) el.mimpGo.disabled = !rows;
-    setImportMsg(rows ? '' : 'Nothing here can be imported.', rows ? '' : 'err');
-    if (endpoint && Array.isArray(data.models) && !data.models.length) setImportMsg('This endpoint lists no models.', 'err');
+    if (!addLive(seq, 'list', card)) return;
+    if (!res.ok) { setAddListMsg(card, data.error || `HTTP ${res.status}`, 'err'); return; }
+    dlg.list.payload = { endpoint, data, baseUrl: endpoint ? plan.baseUrl : '', apiKey };
+    dlg.list.ticked = new Set();
+    dlg.list.filter = '';
+    const filter = card.querySelector('.mimp-filter');
+    if (filter) filter.value = '';
+    mountAddSheet(card, dlg.list.payload);
+    modelEditorGuard?.markClean();   // a fresh list is the new starting point
   } catch (e) {
-    setImportMsg(e.message, 'err');
+    if (addLive(seq, 'list', card)) setAddListMsg(card, e.message, 'err');
   } finally {
-    if (el.mimpList) el.mimpList.disabled = false;
+    addListing.delete(card);
+    if (listBtn) listBtn.disabled = false;
+    // A refused or failed list keeps the one already shown, with the address and key IT was listed with: its ticks arm
+    // "Add N models" again.
+    if (addLive(seq, 'list', card)) paintAddTicks(card);
   }
 }
 
-/** Import what is ticked; the rows land in the catalog behind the dialog. */
-async function importModelsFlow() {
-  const sheet = el.mimpBody && el.mimpBody.querySelector('.mvi');
-  if (!sheet) return;
+/** Keep what step 2 holds before it is left: the typed address and key, for drawing the screen again (an import sends
+ *  the listed pair, dlg.list.payload, never these). The ticks and the filter are kept as they change. */
+function keepAddList(card) {
+  const dlg = mvState.dlg;
+  if (!dlg || !card || dlg.add.provider !== 'openai') return;
+  dlg.list.baseUrl = (card.querySelector('.mimp-base')?.value || '').trim();
+  dlg.list.apiKey = (card.querySelector('.mimp-key')?.value || '').trim();
+}
+
+/** Step 2's provider changed: a new list, its ticks and filter cleared, an answer still out for the old one dropped. */
+function changeAddProvider(sel) {
+  const dlg = mvState.dlg;
+  if (!dlg) return;
+  if (dlg.busy) { sel.value = dlg.add.provider; return; }
+  dlg.add = { ...dlg.add, where: 'provider', provider: sel.value };
+  dlg.list = freshAddList(sel.value);
+  dlg.seq = ++modelDlgSeq;
+  showAddList();
+}
+
+/** "Enter an id instead": the provider form with the list's provider; its Back returns to the list with its ticks. */
+function addManualForm() {
+  const dlg = mvState.dlg;
+  const card = addListCard();
+  if (!dlg || !card) return;
+  keepAddList(card);
+  showAddForm({ where: 'provider', provider: dlg.add.provider, from: 'list' });
+}
+
+/** Back: from the form to where it was reached from (its typed work counts on the way out), from the list to step 1. */
+function modelDialogBack() {
+  const dlg = mvState.dlg;
+  if (!dlg) return;
+  if (dlg.screen === 'form') {
+    dlg.formDirty = dlg.formDirty || !!modelEditorGuard?.changed();
+    if (dlg.from === 'list') showAddList();
+    else if (dlg.from === 'step1') showAddStep1();
+  } else if (dlg.screen === 'list') {
+    keepAddList(addListCard());
+    showAddStep1();
+  }
+}
+
+/** The blocked box's button: a provider that cannot list is fixed where it is fixed, with the dialog closed — Copilot
+ *  signs in inside the setup assistant (AC-4.5, as the Catalogue's own fix), a key is set on its Providers row; with no
+ *  list at all it enters an id instead. */
+function addFixFlow(btn) {
+  if ('manual' in btn.dataset) { addManualForm(); return; }
+  const row = btn.dataset.row;
+  if (!row) return;
+  closeModelEditorDialog();
+  if (row === 'copilot') openSetup({ entry: 'fix', step: 'access' });
+  else goToProviders(row);
+}
+
+/** A hosted API's preset fills its base URL and the usual ${VAR} for its key (bridge-view.mjs ENDPOINT_PRESETS), then lists. */
+function applyAddPreset(btn) {
+  const card = addListCard();
+  const p = ENDPOINT_PRESETS[btn.dataset.preset];
+  if (!card || !p || addListing.has(card)) return;   // a list is out: the fields stay what it asks
+  const base = card.querySelector('.mimp-base');
+  const key = card.querySelector('.mimp-key');
+  if (base) base.value = p.baseUrl;
+  if (key) key.value = p.keyRef;
+  void listAddModels();
+}
+
+/** While an import is out: no Back, no Close, no second "Add N models" (Escape waits too: modelDialogBusy). */
+function paintAddBusy(card, on) {
+  if (mvState.dlg) mvState.dlg.busy = on;
+  for (const b of card.querySelectorAll('.mv-back, .mdl-close, .mimp-go')) b.disabled = on;
+  if (!on) paintAddTicks(card);
+}
+
+/** "Add N models": today's import request. On success the dialog closes and the Catalogue shows what landed: every
+ *  narrowing cleared, then "Just imported" when something was added or refreshed, Claude Code's group unfolded. */
+async function importAddModelsFlow() {
+  const dlg = mvState.dlg;
+  const card = addListCard();
+  const sheet = card && card.querySelector('.mimp-body .mvi');
+  if (!dlg || !sheet) return;
   const ids = collectImportSheet(sheet);
-  if (!ids.length) return setImportMsg('Pick at least one model.', 'err');
+  if (!ids.length) { setAddListMsg(card, 'Pick at least one model.', 'err'); return; }
   const endpoint = sheet.dataset.source === 'endpoint';
-  if (el.mimpGo) el.mimpGo.disabled = true;
-  mimp.importing = true;
-  if (el.mimpCancel) el.mimpCancel.disabled = true;
-  setImportMsg('Importing…');
+  // The key the shown list was asked with (its payload), never what the key field holds now: a re-list that was
+  // refused, or a key typed before Back, belongs to another address.
+  const apiKey = endpoint ? dlg.list.payload?.apiKey || '' : '';
+  paintAddBusy(card, true);
+  setAddListMsg(card, 'Importing…');
   try {
     const res = endpoint
-      ? await fetch('/api/providers/openai/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, baseUrl: sheet.dataset.baseurl || '', ...(mimp.apiKey ? { apiKey: mimp.apiKey } : {}) }) })
+      ? await fetch('/api/providers/openai/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids, baseUrl: sheet.dataset.baseurl || '', ...(apiKey ? { apiKey } : {}) }) })
       : await fetch('/api/providers/copilot/import-models', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
     const data = await safeJson(res);
-    if (!res.ok) { setImportMsg(data.error || `HTTP ${res.status}`, 'err'); return; }
+    // The answer belongs to the open that asked: a screen opened meanwhile (the page's Add model, by keyboard) is left as
+    // it is, and a refusal that screen cannot show is a toast.
+    const live = mvState.dlg === dlg;
+    if (!res.ok) {
+      const why = data.error || `HTTP ${res.status}`;
+      if (live) setAddListMsg(card, why, 'err');
+      else notify({ tone: 'err', title: 'Not imported', detail: why });
+      return;
+    }
     const parts = [];
     if (data.created?.length) parts.push(`${data.created.length} added`);
     if (data.updated?.length) parts.push(`${data.updated.length} refreshed`);
     if (data.skipped?.length) parts.push(`${data.skipped.length} skipped`);
     // A local server's rows can be skipped for a reason worth reading (an embedding model, no tools).
     const why = endpoint && Array.isArray(data.skipped) ? data.skipped.filter((s) => s && s.why).map((s) => `${s.id}: ${s.why}`) : [];
-    closeImportDialog();
-    if (currentModelsTab() !== 'catalogue') showView('models');
-    setModelsMsg(`Imported from ${endpoint ? (data.serverLabel || 'the endpoint') : 'Copilot'}: ${parts.join(', ') || 'nothing changed'}.${why.length ? ` ${why.join('; ')}` : ''}`, 'ok');
+    dlg.busy = false;
+    if (live) closeModelEditorDialog();
+    showAllModels();
     // Land ON what was imported: the list filters to the new ids until the filter is cleared.
     const fresh = [...(data.created || []), ...(data.updated || [])];
     if (fresh.length) mvState.justImported = fresh;
+    mvState.cat.fold = { ...mvState.cat.fold, claude: false };
+    if (currentModelsTab() !== 'catalogue') showView('models');
     await refreshModelsEverywhere();
+    setModelsMsg(`Imported from ${endpoint ? (data.serverLabel || 'the endpoint') : 'Copilot'}: ${parts.join(', ') || 'nothing changed'}.${why.length ? ` ${why.join('; ')}` : ''}`, 'ok');
   } catch (e) {
-    setImportMsg(e.message, 'err');
+    if (mvState.dlg === dlg) setAddListMsg(card, e.message, 'err');
+    else notify({ tone: 'err', title: 'Not imported', detail: e.message });
   } finally {
-    if (el.mimpGo) el.mimpGo.disabled = false;
-    mimp.importing = false;
-    if (el.mimpCancel) el.mimpCancel.disabled = false;
+    if (mvState.dlg === dlg) paintAddBusy(card, false);
+    else dlg.busy = false;
   }
+}
+
+/** A provider row's Import: what it imports lands in the CATALOG, so that shows first (showView syncs #models). */
+function openAddFromProviders(opts) {
+  if (currentModelsTab() !== 'catalogue') showView('models');
+  openAddModelDialog(opts);
 }
 
 /** A catalog row's "needs sign-in" goes to the Providers tab and lands on the row: the route's reveal unfolds it,
@@ -20725,7 +21066,8 @@ async function refreshModelsEverywhere() {
 async function copyModelEnvValue(btn) {
   const row = btn.closest('.mv-env-row');
   const editor = btn.closest('.mv-editor');
-  const id = editor && editor.dataset.id;
+  // A copy (Duplicate) has no id of its own yet: its stored rows are its source's (data-copy-from).
+  const id = editor && (editor.dataset.id || editor.dataset.copyFrom);
   const key = row && row.dataset.key;
   if (!id || !key) return;
   try {
@@ -20745,7 +21087,8 @@ async function copyModelEnvValue(btn) {
 // save just rewrites the same value.
 async function toggleModelEnvReveal(btn) {
   const editor = btn.closest('.mv-editor');
-  const id = editor && editor.dataset.id;
+  // A copy reveals its source's values (data-copy-from): the rows it shows are the source's masks.
+  const id = editor && (editor.dataset.id || editor.dataset.copyFrom);
   if (!id) return;
   const rows = editor.querySelectorAll('.mv-env-row[data-key]');
   if (btn.dataset.on) {
@@ -20786,6 +21129,7 @@ async function toggleModelEnvReveal(btn) {
 async function saveModelEditorFlow() {
   const rootEl = modelEditorEl();
   if (!rootEl) return;
+  const dlg = mvState.dlg;
   rootEl.querySelector('.mv-editor-btns')?.setAttribute('data-card-actions', '');
   clearFieldErrors(rootEl);
   cardAlert(rootEl, null);
@@ -20802,11 +21146,26 @@ async function saveModelEditorFlow() {
     return res.ok ? { ok: true } : { ok: false, error: data.error || `HTTP ${res.status}` };
   }, editing ? {} : { done: 'Added' });
   if (r.skipped) return;
-  if (!r.ok) { cardAlert(rootEl, { title: editing ? 'Not saved' : 'Not added', detail: r.error }); return; }
+  // The answer belongs to the open that asked: a screen opened meanwhile (the page's Add model, by keyboard) stays.
+  const live = mvState.dlg === dlg;
+  if (!r.ok) {
+    // A copy whose source was deleted meanwhile is refused for as long as it echoes a mask (collectModelEditor sends
+    // copyFrom only then): say what gets it saved.
+    const detail = /^unknown model to copy from /.test(r.error) ? 'The model this copies was removed. Type the values it masked, then Add.' : r.error;
+    const title = editing ? 'Not saved' : 'Not added';
+    if (!live) { notify({ tone: 'err', title, detail }); return; }
+    cardAlert(rootEl, { title, detail });
+    // withButton turned Save back on: what the form holds now (an id cleared, a refused row typed meanwhile) decides.
+    paintEditorSave(rootEl);
+    return;
+  }
   // Saved work is no longer unsaved work: the dialog closes without asking.
-  closeModelEditorDialog();
-  setModelsMsg(editing ? 'Model saved.' : 'Model added.', 'ok');
+  if (live) closeModelEditorDialog();
   await refreshModelsEverywhere();
+  // A new model shows where it landed (FRM-7): every narrowing cleared, its group unfolded, its side panel open. After
+  // the reload: the panel is built from the loaded catalogue, which did not hold the id before.
+  if (!editing) openModelFromAddress(body.id);
+  setModelsMsg(editing ? 'Model saved.' : 'Model added.', 'ok');
 }
 
 /** Resolves true once the DELETE went through, else false. The side panel on `id` closes before the reload, so it
@@ -20894,8 +21253,8 @@ if (el.providersList) {
     } else if (t.classList.contains('mv-cp-signin')) copilotSignInFlow();
     else if (t.classList.contains('mv-cp-cancel')) { stopCopilotPoll(); mvState.signIn = null; renderProvidersViewBody(); }
     else if (t.classList.contains('mv-cp-signout')) copilotSignOutFlow();
-    // Like OpenRouter's and the OpenAI-compatible row's: the import lands in the CATALOG, so it opens there.
-    else if (t.classList.contains('mv-cp-fetch-models')) openImportDialog({ source: 'copilot', goToModels: true });
+    // Like OpenRouter's and the OpenAI-compatible row's: the import lands in the CATALOG, so it opens there (step 2).
+    else if (t.classList.contains('mv-cp-fetch-models')) openAddFromProviders({ step: 2, provider: 'copilot' });
     else if (t.classList.contains('mv-cp-quota-refresh')) refreshCopilotQuotaFlow(t);
     // The OpenRouter row's Save before the generic one, which would send only its key and cap.
     else if (t.classList.contains('mv-pv-save') && t.dataset.provider === 'openrouter') {
@@ -20920,12 +21279,12 @@ if (el.providersList) {
     else if (t.classList.contains('mv-so-test')) testSoundFlow(t);
     else if (t.classList.contains('mv-sp-clear')) clearSpeechCacheFlow(t);
     // OpenRouter's catalog, listed with the key its calls carry; the import lands in the CATALOG, like the row below.
-    else if (t.classList.contains('mv-or-browse')) openImportDialog({ source: 'openai', baseUrl: OPENROUTER_PRESET.baseUrl, goToModels: true });
+    else if (t.classList.contains('mv-or-browse')) openAddFromProviders({ step: 2, provider: 'openrouter' });
     else if (t.classList.contains('mv-pv-browse')) {
       // The import lands in the CATALOG, so it opens there — with this row's endpoint filled in.
       const row = t.closest('.mv-pv-row');
       const input = row && row.querySelector('.mv-pv-baseurl');
-      openImportDialog({ source: 'openai', baseUrl: input ? input.value.trim() : '', goToModels: true });
+      openAddFromProviders({ step: 2, provider: 'openai', baseUrl: input ? input.value.trim() : '' });
     }
   });
   el.providersList.addEventListener('change', (ev) => {
@@ -20935,8 +21294,7 @@ if (el.providersList) {
   });
 }
 
-// The catalog list and the editor dialog share these handlers: the editor moved into an overlay
-// (§4.10), and every branch below already finds its own root from the event target.
+// The catalog list's own changes (the hide switches, the Source); the model dialog has its own below.
 function onModelsListChange(ev) {
   const t = ev.target;
   if (!t || !t.classList) return;
@@ -21062,8 +21420,6 @@ function onModelPanelClick(ev) {
     if (act === 'test') void testModelFlow(id);
     else if (act === 'edit') {
       mvState.editing = (mvState.data?.models || []).find((m) => m.id === id) || null;
-      mvState.openCreate = false;
-      mvState.openShare = false;
       mvState.prefill = null;
       openModelEditorDialog();
     } else if (act === 'duplicate') void duplicateModelFlow(id);
@@ -21072,30 +21428,54 @@ function onModelPanelClick(ev) {
   }
 }
 
+/** The Catalogue's own clicks: its toolbar, rows and fixes (Share as plugin is a screen of the model dialog). */
 function onModelsClick(ev) {
-    const t = ev.target.closest('button');
-    if (!t) return;
-    if (onModelsToolbarClick(t)) return;
-    if (t.classList.contains('mvx-export')) {
-      exportPluginFlow();
-    } else if (t.classList.contains('mvx-cancel')) {
-      mvState.openShare = false;
-      renderModelsViewBody();
-    } else if (t.classList.contains('mv-cancel')) {
-      modelEditorGuard?.cancel();
-    } else if (t.classList.contains('mv-env-add')) {
-      const wrap = modelEditorEl()?.querySelector('.mv-env');
-      if (wrap) wrap.appendChild(makeEnvRow());
-    } else if (t.classList.contains('mv-env-rm')) {
-      const row = t.closest('.mv-env-row');
-      if (row) row.remove();
-    } else if (t.classList.contains('mv-env-copy')) {
-      copyModelEnvValue(t);
-    } else if (t.classList.contains('mv-env-reveal')) {
-      toggleModelEnvReveal(t);
-    } else if (t.classList.contains('mv-save')) {
-      saveModelEditorFlow();
-    }
+  const t = ev.target.closest('button');
+  if (t) onModelsToolbarClick(t);
+}
+
+/** The model dialog's buttons, whichever screen shows them (one delegation on the modal). */
+function onModelDialogClick(ev) {
+  const t = ev.target.closest('button');
+  if (!t || !el.modelEditorModal.contains(t)) return;
+  const c = t.classList;
+  if (c.contains('mv-cancel') || c.contains('mvx-cancel') || c.contains('mdl-close')) { modelEditorGuard?.cancel(); return; }
+  // A Save or an import is out: every screen stays as it is (a synthetic click reaches a disabled button too).
+  if (modelDialogBusy()) return;
+  if (c.contains('mdl-next')) addStep1Next(t.closest('.mdl-add'));
+  else if (c.contains('mv-back')) modelDialogBack();
+  else if (c.contains('mv-rewhere')) showRewhereStep();
+  else if (c.contains('mdl-manual')) addManualForm();
+  else if (c.contains('mdl-add-fix')) addFixFlow(t);
+  else if (c.contains('mimp-go')) void importAddModelsFlow();
+  else if (c.contains('mimp-list')) void listAddModels();
+  else if (c.contains('mimp-preset')) applyAddPreset(t);
+  else if (c.contains('mv-env-add')) {
+    const wrap = modelEditorEl()?.querySelector('.mv-env');
+    if (wrap) { wrap.appendChild(makeEnvRow()); paintEditorSave(modelEditorEl()); }
+  } else if (c.contains('mv-env-rm')) {
+    const row = t.closest('.mv-env-row');
+    const editorEl = t.closest('.mv-editor');
+    if (row) { row.remove(); paintEditorSave(editorEl); }
+  } else if (c.contains('mv-env-copy')) copyModelEnvValue(t);
+  else if (c.contains('mv-env-reveal')) toggleModelEnvReveal(t);
+  else if (c.contains('mv-save')) saveModelEditorFlow();
+  else if (c.contains('mvx-export')) void exportPluginFlow();
+}
+
+/** Step 2's own changes: the provider (a new list), a tick or select-all (the foot's count), OpenRouter's filters. */
+function onModelDialogChange(ev) {
+  const t = ev.target;
+  const card = t && t.closest ? t.closest('.mdl-add[data-step="2"]') : null;
+  if (!card) return;
+  if (t.classList.contains('mdl-add-provider')) changeAddProvider(t);
+  else if (t.classList.contains('mvi-all')) {
+    const sheet = t.closest('.mvi');
+    // Select-all means what is ON SCREEN: ticking a row the filter hides would import a surprise.
+    if (sheet) for (const c of sheet.querySelectorAll('tbody tr:not(.is-filtered) .mvi-cb')) { if (!c.disabled) c.checked = t.checked; }
+    paintAddTicks(card);
+  } else if (t.classList.contains('mvi-cb')) paintAddTicks(card);
+  else if (t.closest('.mvi-or-filters')) { applyAddFilter(card); paintAddTicks(card); }
 }
 // Pricing mode. A `change` listener, not the click one above: arrow-key
 // navigation within a radio group changes the selection without a click.
@@ -21116,14 +21496,15 @@ function onModelsEngineChange(ev) {
 }
 function onModelsConnChange(ev) {
     const t = ev.target;
-    if (!t.classList || !t.closest('.mv-conn')) return;
+    // The connection and its folds (the form puts them after Pricing); Pricing is in neither, so a pick there stays.
+    if (!t.classList || !t.closest('.mv-conn, .mv-conn-more')) return;
     const editorEl = t.closest('.mv-editor');
     if (!editorEl) return;
     applyConnectionModeIn(editorEl);
     const conn = editorEl.querySelector('.mv-conn');
-    const mode = conn && conn.querySelector('.mv-conn-mode-rb:checked')?.value;
-    const provider = conn && conn.querySelector('.mv-conn-provider')?.value;
-    if (mode === 'provider' && provider === 'copilot' && (editorEl.querySelector('.mv-cost-mode-rb:checked')?.value || 'cli') === 'cli') {
+    // conn.dataset.provider: the provider it stores (OpenRouter's is openai), '' off a provider.
+    const provider = conn && connectionWhere(conn) === 'provider' ? conn.dataset.provider : '';
+    if (provider === 'copilot' && (editorEl.querySelector('.mv-cost-mode-rb:checked')?.value || 'cli') === 'cli') {
       setModelCost(editorEl, { free: true });
     }
 }
@@ -21146,73 +21527,31 @@ document.addEventListener('keydown', (e) => {
   e.preventDefault();
   closeModelPanel({ focusRow: true });
 });
-for (const host of [el.modelsList, el.modelEditorModal]) {
-  if (!host) continue;
-  host.addEventListener('change', onModelsListChange);
-  host.addEventListener('click', onModelsClick);
-  host.addEventListener('change', onModelsCostChange);
-  host.addEventListener('change', onModelsConnChange);
-  host.addEventListener('change', onModelsEngineChange);
-}
-
-// ── Import dialog wiring ────────────────────────────────────────────────────
-if (el.modelImportModal) {
-  el.mimpBaseField = el.mimpBase ? el.mimpBase.closest('.mimp-base-field') : null;
-  el.mimpKeyField = el.mimpKey ? el.mimpKey.closest('.mimp-key-field') : null;
-  // A hosted API's preset fills its base URL and the usual ${VAR} for its key (bridge-view.mjs ENDPOINT_PRESETS).
-  for (const b of el.modelImportModal.querySelectorAll('.mimp-preset')) {
-    b.addEventListener('click', () => {
-      const p = ENDPOINT_PRESETS[b.dataset.preset];
-      if (!p) return;
-      if (el.mimpBase) el.mimpBase.value = p.baseUrl;
-      if (el.mimpKey) el.mimpKey.value = p.keyRef;
-      listImportModels();
-    });
-  }
-  el.modelImportBtn?.addEventListener('click', () => openImportDialog({}));
-  el.mimpSource?.addEventListener('change', () => {
-    mimp.source = el.mimpSource.value;
-    mimp.payload = null;
-    el.mimpBody?.replaceChildren();
-    if (el.mimpGo) el.mimpGo.disabled = true;
-    setImportMsg('');
-    paintImportSource();
-    if (mimp.source === 'copilot') listImportModels();
+el.modelsList?.addEventListener('change', onModelsListChange);
+el.modelsList?.addEventListener('click', onModelsClick);
+// The model dialog: every screen's buttons, the form's own changes, step 2's filter and its address's Enter.
+if (el.modelEditorModal) {
+  el.modelEditorModal.addEventListener('click', onModelDialogClick);
+  for (const fn of [onModelDialogChange, onModelsCostChange, onModelsConnChange, onModelsEngineChange]) el.modelEditorModal.addEventListener('change', fn);
+  el.modelEditorModal.addEventListener('input', (ev) => {
+    const card = ev.target?.classList?.contains('mimp-filter') ? ev.target.closest('.mdl-add[data-step="2"]') : null;
+    if (card) applyAddFilter(card);
   });
-  el.mimpList?.addEventListener('click', () => listImportModels());
-  el.mimpBase?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); listImportModels(); } });
-  el.mimpKey?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); listImportModels(); } });
-  el.mimpFilter?.addEventListener('input', () => applyImportFilter());
-  el.mimpGo?.addEventListener('click', () => importModelsFlow());
-  el.mimpCancel?.addEventListener('click', () => importGuard?.cancel());
-  // The select-all box lives inside the sheet the dialog hosts.
-  el.modelImportModal.addEventListener('change', (ev) => {
-    const t = ev.target;
-    if (t && t.classList && t.classList.contains('mvi-all')) {
-      const sheet = t.closest('.mvi');
-      // Select-all means what is ON SCREEN: ticking a row the filter hides would import a surprise.
-      if (sheet) for (const c of sheet.querySelectorAll('tbody tr:not(.is-filtered) .mvi-cb')) { if (!c.disabled) c.checked = t.checked; }
-    } else if (t && t.closest && t.closest('.mvi-or-filters')) applyImportFilter();   // Free / Tools / window
+  el.modelEditorModal.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter' || !ev.target?.classList) return;
+    if (!ev.target.classList.contains('mimp-base') && !ev.target.classList.contains('mimp-key')) return;
+    ev.preventDefault();
+    void listAddModels();
   });
 }
 
-if (el.modelCreateBtn) {
-  el.modelCreateBtn.addEventListener('click', () => {
-    mvState.editing = null;
-    mvState.openCreate = true;
-    mvState.openShare = false;
-    mvState.prefill = null;
-    openModelEditorDialog();
-  });
-}
-if (el.modelShareBtn) {
-  el.modelShareBtn.addEventListener('click', () => {
-    mvState.editing = null;
-    mvState.openCreate = false;
-    mvState.prefill = null;
-    mvState.openShare = true;
-    mvState.revealPanel = true;
-    renderModelsViewBody();
+if (el.modelCreateBtn) el.modelCreateBtn.addEventListener('click', () => openAddModelDialog());
+// More: the page's rarer actions in a menu (today Share as plugin, which opens in the model dialog).
+if (el.modelsMoreBtn) {
+  el.modelsMoreBtn.addEventListener('click', () => {
+    openMenu({ doc: document, anchor: el.modelsMoreBtn, align: 'end', label: 'More', items: [
+      { label: 'Share as plugin', onSelect: () => openShareDialog() },
+    ] });
   });
 }
 

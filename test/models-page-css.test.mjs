@@ -86,3 +86,21 @@ test('the first :root of self-hosted.css declares the mark, Best and on-mark tok
     assert.deepEqual(got, [`light-dark(${hex},${hex})`], name);
   }
 });
+
+test('narrow (VIS-4, ≤860px): two tiles per row, the step names hide, the list scrolls sideways in its box', () => {
+  const narrow = cssRules(part()).filter((r) => r.media === '@media (max-width:860px)');
+  const at = (sel) => narrow.filter((r) => r.sel === sel).map((r) => r.body.replace(/\s+/g, '')).join(';');
+  assert.match(at('.mdl-hx'), /(?:^|;)grid-template-columns:repeat\(2,minmax\(0,1fr\)\)(?:;|$)/);
+  assert.match(at('.mdl-hx-t.best'), /(?:^|;)grid-row:auto(?:;|$)/);
+  assert.match(at('.mdl-steps'), /(?:^|;)display:none(?:;|$)/);
+  assert.match(at('.mdl-add-src'), /(?:^|;)grid-template-columns:minmax\(0,1fr\)(?:;|$)/);
+  assert.match(at('.mdl-add #mimp-body'), /(?:^|;)overflow-x:auto(?:;|$)/);
+  assert.match(at('.mdl-add #mimp-body'), /(?:^|;)contain:inline-size(?:;|$)/);
+  assert.match(at('.mdl-add #mimp-body .mvi-tbl'), /(?:^|;)min-width:720px(?:;|$)/);
+});
+
+test("Add model's blocked box draws no border of its own inside the dialog's card (B2)", () => {
+  const body = cssRules(part()).filter((r) => splitTop(r.sel).some((s) => /\.mdl-add-blocked(?![\w-])/.test(s))).map((r) => r.body).join(';');
+  assert.match(body, /display:flex/);
+  assert.deepEqual(decls(body, 'border(?:-[a-z]+)*').filter(([, v]) => !/^(?:0|none)\b/.test(v)), []);
+});

@@ -18,6 +18,7 @@ import { setNodeModel, writeTeamPolicyPrefs } from '../src/core/config.mjs';
 import { projectKey } from '../src/core/store.mjs';
 import { EFFORTS } from '../src/core/model-env.mjs';
 import { ROLE_LABELS } from '../src/shared/model-roles.mjs';
+import { isSecretHeaderName } from '../src/shared/secret-names.mjs';
 import { WebSocket } from 'ws';
 import { checkRows } from './helpers/rows.mjs';
 
@@ -379,6 +380,222 @@ test('GET /api/plugins/:name/model-env: raw literals/refs for Edit-a-copy; secre
 
   assert.equal((await jfetch(`/api/plugins/ds-models/model-env?${q({ id: 'nope' })}`)).status, 400);
   assert.equal((await jfetch(`/api/plugins/ghost/model-env?${q({ id: 'x' })}`)).status, 404);
+});
+
+// ── copies keep their connection; Share keeps harness and connection (P5) ────
+
+test('POST /api/models { copyFrom }: a copy carries its source\'s masked env values', async () => {
+  const env = { ANTHROPIC_BASE_URL: 'https://gw.example', ANTHROPIC_AUTH_TOKEN: 'tok-secret-9999' };
+  assert.equal((await post('/api/models', { id: 'src', label: 'Source', env })).status, 200);
+  const row = (await jfetch('/api/models')).body.models.find((m) => m.id === 'src');
+  for (const key of Object.keys(env)) assert.match(row.env[key], /^••/, `${key} is masked in the row`);
+
+  // The page sends the row's masks back; the server fills them from the source.
+  const r = await post('/api/models', { id: 'src-copy', label: 'Source copy', env: row.env, copyFrom: 'src' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.doesNotMatch(JSON.stringify(r.body), /tok-secret-9999/, 'the answer still masks');
+  for (const [key, value] of Object.entries(env)) {
+    const got = await jfetch(`/api/models/src-copy/env-value?${q({ key })}`);
+    assert.equal(got.status, 200);
+    assert.equal(got.body.value, value, `${key}: the source's stored value, not the mask`);
+  }
+
+  // Only the masks are filled: a value the copy typed is its own, even beside a filled mask.
+  const own = await post('/api/models', {
+    id: 'src-copy2', env: { ...row.env, ANTHROPIC_BASE_URL: 'https://other.example' }, copyFrom: 'src',
+  });
+  assert.equal(own.status, 200, JSON.stringify(own.body));
+  assert.deepEqual(listGlobalModels().find((m) => m.id === 'src-copy2').env, {
+    ANTHROPIC_BASE_URL: 'https://other.example', ANTHROPIC_AUTH_TOKEN: 'tok-secret-9999',
+  });
+});
+
+test('POST /api/models { copyFrom }: a copy keeps a provider connection and its own key', async () => {
+  const upstream = {
+    provider: 'openai', api: 'openai-chat', model: 'm', baseUrl: 'https://gw.example/v1', apiKey: 'sk-own-1234',
+    headers: { 'X-Team': 'a' },
+  };
+  assert.equal((await post('/api/models', { id: 'gw', upstream })).status, 200);
+  const row = (await jfetch('/api/models')).body.models.find((m) => m.id === 'gw');
+  assert.match(row.upstream.apiKey, /^••/, 'the row masks the provider key');
+
+  const r = await post('/api/models', { id: 'gw-copy', upstream: row.upstream, copyFrom: 'gw' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const stored = (id) => listGlobalModels().find((m) => m.id === id).upstream;
+  assert.deepEqual(stored('gw-copy'), stored('gw'));
+
+  // The copy's own model and base URL are kept; only the masked key is filled, even at another address.
+  const moved = await post('/api/models', {
+    id: 'gw-copy2', upstream: { ...row.upstream, model: 'm2', baseUrl: 'https://other.example/v1' }, copyFrom: 'gw',
+  });
+  assert.equal(moved.status, 200, JSON.stringify(moved.body));
+  assert.deepEqual(stored('gw-copy2'), { ...stored('gw'), model: 'm2', baseUrl: 'https://other.example/v1' });
+  assert.equal(stored('gw-copy2').apiKey, 'sk-own-1234');
+});
+
+test('POST /api/models { copyFrom }: refusals', async () => {
+  const cases = [
+    [{ id: 'x-copy1', copyFrom: 'nope' }, /unknown model to copy from "nope"/],
+    [{ id: 'x-copy2', env: { NEW_KEY: '••••••abcd' }, copyFrom: 'src' }, /"NEW_KEY" has no value to copy/],
+    [{ id: 'x-copy3', upstream: { provider: 'openai', api: 'openai-chat', model: 'm', apiKey: '••••••abcd' }, copyFrom: 'src' },
+      /"apiKey" has no value to copy/],
+    [{ id: 'x-copy4', copyFrom: 42 }, /copyFrom must be a model id/],
+    // Only a plain-object env is filled: a string is not spread into numbered keys.
+    [{ id: 'x-copy5', env: 'str', copyFrom: 'src' }, /env must be an object/],
+  ];
+  for (const [body, re] of cases) {
+    const r = await post('/api/models', body);
+    assert.equal(r.status, 400, JSON.stringify(body));
+    assert.match(r.body.error, re);
+  }
+  assert.equal(listGlobalModels().some((m) => m.id.startsWith('x-copy')), false, 'a refused copy stores nothing');
+});
+
+test('POST /api/models { copyFrom }: null and "" copy nothing; the source is found in any case', async () => {
+  const rows = (await jfetch('/api/models')).body.models;
+  const gw = rows.find((m) => m.id === 'gw');
+  const src = rows.find((m) => m.id === 'src');
+  assert.match(gw.upstream.apiKey, /^••/);
+  assert.match(src.env.ANTHROPIC_AUTH_TOKEN, /^••/);
+  const stored = (id) => listGlobalModels().find((m) => m.id === id);
+
+  // No copy: a masked key means "keep" with nothing to keep, so it is dropped, never stored as the mask.
+  let r = await post('/api/models', { id: 'gw-null', upstream: gw.upstream, copyFrom: null });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal('apiKey' in stored('gw-null').upstream, false);
+  assert.equal(stored('gw-null').upstream.baseUrl, 'https://gw.example/v1', 'the rest of the connection is kept');
+
+  // No copy: a masked env value is stored as written.
+  r = await post('/api/models', { id: 'src-empty', env: { ANTHROPIC_AUTH_TOKEN: src.env.ANTHROPIC_AUTH_TOKEN }, copyFrom: '' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(stored('src-empty').env.ANTHROPIC_AUTH_TOKEN, src.env.ANTHROPIC_AUTH_TOKEN);
+
+  // The source is found as PATCH finds its model: in any case.
+  r = await post('/api/models', { id: 'gw-upper', upstream: gw.upstream, copyFrom: 'GW' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(stored('gw-upper').upstream.apiKey, 'sk-own-1234');
+});
+
+test('GET /api/plugins/:name/model-env: a plugin copy learns its harness and connection, never a secret', async () => {
+  const { pluginCurrentDir, writePluginsLock, readPluginsLock } = await import('../src/core/plugins-lock.mjs');
+  const { mkdirSync } = await import('node:fs');
+  const cur = pluginCurrentDir('copy-plug');
+  mkdirSync(cur, { recursive: true });
+  // Split in two: the manifest refuses env on a Codex model, and that drops the whole plugin.
+  writeFileSync(join(cur, 'worca-cc-plugin.json'), JSON.stringify({
+    name: 'copy-plug',
+    modelSecrets: [{ key: 'acme' }],
+    models: [
+      { id: 'p-codex', engine: 'codex', upstream: { provider: 'openai', api: 'openai-responses', model: 'gpt-x' } },
+      { id: 'p-claude', env: { K: { secret: 'acme' }, L: 'lit' } },
+    ],
+  }));
+  writePluginsLock({
+    ...readPluginsLock(),
+    'copy-plug': { repo: 'https://example.com/r', subdir: '', pinnedSha: 'x'.repeat(40), version: '1', enabled: true },
+  });
+  try {
+    const codex = await jfetch(`/api/plugins/copy-plug/model-env?${q({ id: 'p-codex' })}`);
+    assert.equal(codex.status, 200, JSON.stringify(codex.body));
+    assert.equal(codex.body.engine, 'codex');
+    assert.equal(codex.body.upstream.model, 'gpt-x');
+
+    const claude = await jfetch(`/api/plugins/copy-plug/model-env?${q({ id: 'p-claude' })}`);
+    assert.equal(claude.status, 200, JSON.stringify(claude.body));
+    assert.deepEqual(claude.body.secretKeys, ['K']);
+    assert.deepEqual(claude.body.env, { L: 'lit' }, 'the secret is asked for, never sent');
+    assert.equal('engine' in claude.body, false, 'a Claude plugin model names no harness');
+  } finally {
+    const { 'copy-plug': _gone, ...rest } = readPluginsLock();
+    writePluginsLock(rest);
+  }
+});
+
+test('isSecretHeaderName: credential-named headers, not names that merely hold "key"', () => {
+  for (const h of [
+    'X-Api-Key', 'X-Auth-Key', 'X-Access-Key', 'X-Credential', 'Ocp-Apim-Subscription-Key', 'Cookie', 'X-Auth-Token',
+    'Proxy-Authorization',
+  ]) assert.equal(isSecretHeaderName(h), true, h);
+  for (const h of [
+    'X-Team', 'X-Ref', 'Accept', 'X-Keyboard-Layout', 'HTTP-Referer', 'X-Title', 'anthropic-version', 'Editor-Version',
+    'Copilot-Integration-Id', 'OpenAI-Organization',
+  ]) assert.equal(isSecretHeaderName(h), false, h);
+});
+
+test('POST /api/models/export-plugin keeps harness and connection and leaves secrets out', async () => {
+  const { normalizeManifest } = await import('../src/core/plugin-manifest.mjs');
+  for (const body of [
+    { id: 'cx', engine: 'codex', upstream: { provider: 'openai', api: 'openai-responses', model: 'gpt-x' } },
+    { id: 'cp1', engine: 'copilot' },
+    { id: 'gw2', upstream: {
+      provider: 'openai', api: 'openai-chat', model: 'm', apiKey: 'sk-lit-1234',
+      baseUrl: 'https://user:pw-secret-31@gw.example/v1',
+      headers: {
+        'X-Api-Key': 'hdr-secret-77', 'X-Auth-Key': 'auth-secret-66', 'X-Team': 'a',
+        'Ocp-Apim-Subscription-Key': 'sub-secret-55', 'X-Ref': '${TEAM_REF}',
+      },
+    } },
+    // Its only header is a secret, and a token rides as the URL's user.
+    { id: 'gw4', upstream: {
+      provider: 'openai', api: 'openai-chat', model: 'm', baseUrl: 'https://tok-secret-21@gw4.example/v1',
+      headers: { 'X-Api-Key': 'hdr-secret-78' },
+    } },
+    { id: 'gw5', upstream: {
+      provider: 'openai', api: 'openai-chat', model: 'm', baseUrl: 'https://:pw-only-13@gw5.example/v1',
+      headers: { 'X-Access-Key': 'acc-secret-44', 'X-Keyboard-Layout': 'us', 'X-Credential': 'cred-secret-33', Cookie: 'sid=ck-secret-22' },
+    } },
+    // A whole-value ${VAR} is config: it travels, as a key and under a secret-looking header name.
+    { id: 'gw3', upstream: {
+      provider: 'openai', api: 'openai-chat', model: 'm', apiKey: '${GW_KEY}', headers: { 'X-Auth-Token': '${GW_TOKEN}' },
+    } },
+  ]) {
+    const r = await post('/api/models', body);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+  }
+
+  const dest = join(proj, 'export', 'harness-models');
+  const r = await post('/api/models/export-plugin', {
+    name: 'harness-models', dest, models: [{ id: 'cx' }, { id: 'cp1' }, { id: 'gw2' }, { id: 'gw3' }, { id: 'gw4' }, { id: 'gw5' }],
+  });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const manifestText = readFileSync(join(dest, 'worca-cc-plugin.json'), 'utf8');
+  const readme = readFileSync(join(dest, 'README.md'), 'utf8');
+  const manifest = JSON.parse(manifestText);
+  const byId = Object.fromEntries(manifest.models.map((m) => [m.id, m]));
+
+  assert.equal(byId.cx.engine, 'codex');
+  assert.deepEqual(byId.cx.upstream, { provider: 'openai', api: 'openai-responses', model: 'gpt-x' });
+  assert.equal(byId.cp1.engine, 'copilot');
+  assert.equal('efforts' in byId.cp1, false, 'its own harness\'s full list is left out');
+  assert.equal('engine' in byId.gw2, false, 'Claude Code is the default harness');
+  assert.equal('apiKey' in byId.gw2.upstream, false, 'a literal provider key never travels');
+  assert.equal(byId.gw2.upstream.baseUrl, 'https://gw.example/v1', 'the URL travels without its user and password');
+  assert.deepEqual(byId.gw2.upstream.headers, { 'X-Team': 'a', 'X-Ref': '${TEAM_REF}' });
+  assert.equal(byId.gw3.upstream.apiKey, '${GW_KEY}');
+  assert.deepEqual(byId.gw3.upstream.headers, { 'X-Auth-Token': '${GW_TOKEN}' });
+  assert.equal(byId.gw4.upstream.baseUrl, 'https://gw4.example/v1');
+  assert.equal('headers' in byId.gw4.upstream, false, 'no empty headers object when every header was a secret');
+  assert.equal(byId.gw5.upstream.baseUrl, 'https://gw5.example/v1');
+  assert.deepEqual(byId.gw5.upstream.headers, { 'X-Keyboard-Layout': 'us' });
+  // Model order; per model the key, the URL's user and password, then the headers in stored order.
+  assert.deepEqual(r.body.omitted, [
+    { id: 'gw2', what: 'provider key' }, { id: 'gw2', what: 'base URL credentials' },
+    { id: 'gw2', what: 'header X-Api-Key' }, { id: 'gw2', what: 'header X-Auth-Key' },
+    { id: 'gw2', what: 'header Ocp-Apim-Subscription-Key' },
+    { id: 'gw4', what: 'base URL credentials' }, { id: 'gw4', what: 'header X-Api-Key' },
+    { id: 'gw5', what: 'base URL credentials' }, { id: 'gw5', what: 'header X-Access-Key' },
+    { id: 'gw5', what: 'header X-Credential' }, { id: 'gw5', what: 'header Cookie' },
+  ]);
+  assert.match(readme, /^## Not included$/m);
+  for (const o of r.body.omitted) assert.ok(readme.includes(`- \`${o.id}\`: ${o.what}\n`), `the README names ${o.id}: ${o.what}`);
+  for (const secret of [
+    /sk-lit-1234/, /hdr-secret-7[78]/, /auth-secret-66/, /sub-secret-55/, /pw-secret-31/, /tok-secret-21/, /pw-only-13/,
+    /acc-secret-44/, /cred-secret-33/, /ck-secret-22/,
+  ]) {
+    assert.doesNotMatch(manifestText, secret);
+    assert.doesNotMatch(readme, secret);
+  }
+  assert.equal(normalizeManifest(manifest).ok, true);
 });
 
 // ── model connectivity test (Models-view Test button) ────────────────────────

@@ -148,7 +148,7 @@ function brokerLine(doc, broker, name) {
 let fieldSeq = 0;
 
 /** An ⓘ tip in Settings' markup (settings.html); app.js's document-level .info-tip listeners show it wherever it sits. */
-function infoTip(doc, label, text) {
+export function infoTip(doc, label, text) {
   const tip = h(doc, 'button', 'info-tip', 'i');
   tip.type = 'button';
   // "About account", but "About API key": a label that opens with an acronym keeps its case.
@@ -162,7 +162,7 @@ function infoTip(doc, label, text) {
  * names its first labelable descendant and a tip is a button, so the tip sits beside the label, never inside it, and
  * the label points at the control by an id of its own.
  */
-function tippedField(doc, labelText, ctl, tip) {
+export function tippedField(doc, labelText, ctl, tip) {
   const wrap = h(doc, 'div', 'mv-field');
   const row = h(doc, 'div', 'label-row');
   const label = h(doc, 'label', 'mv-field-label', labelText);
@@ -998,7 +998,7 @@ export function renderImportSheet(models, { doc = globalThis.document } = {}) {
       tr.appendChild(yesNoCell(doc, m.reasoning));
       tr.appendChild(h(doc, 'td', 'mvi-api', API_SHORT[m.api] || '—'));
       const status = [];
-      if (m.inCatalog) status.push('in catalog');
+      if (m.inCatalog) status.push('In catalogue');
       if (m.preview) status.push('preview');
       if (disabled) status.push('disabled: enable it in your GitHub Copilot settings');
       tr.appendChild(h(doc, 'td', 'mvi-status', status.join(' · ') || '—'));
@@ -1106,7 +1106,7 @@ export function renderEndpointSheet(payload, { doc = globalThis.document } = {})
       tr.appendChild(m.toolCalls === null || m.toolCalls === undefined ? h(doc, 'td', null, '?') : yesNoCell(doc, m.toolCalls));
       tr.appendChild(m.vision === null || m.vision === undefined ? h(doc, 'td', null, '?') : yesNoCell(doc, m.vision));
       const status = [];
-      if (m.inCatalog) status.push('in catalog');
+      if (m.inCatalog) status.push('In catalogue');
       if (m.loaded === true) status.push('loaded');
       else if (m.loaded === false) status.push('not loaded');
       if (blocked) status.push(m.blocked || 'not importable');
@@ -1164,11 +1164,69 @@ export function isOpenRouterUrl(v) {
   return host === 'openrouter.ai' || host.endsWith('.openrouter.ai');
 }
 
+/** Where a model runs (src/shared/connections.mjs connectionOf kinds): its harness's sign-in, routing env, or a provider. */
+const WHERES = Object.freeze(['signin', 'env', 'provider']);
+/** Each `where` as the connection mode the rules below compare against. */
+const MODE_OF = Object.freeze({ signin: 'direct', env: 'env', provider: 'provider' });
+/** The Provider select's choices. OpenRouter is not a provider of its own: it is the OpenAI-compatible provider at
+ *  OpenRouter's address, whose key the OpenRouter row holds (providerRowOf). */
+const PROVIDER_CHOICES = Object.freeze([
+  ['copilot', PROVIDER_LABELS.copilot], ['openrouter', 'OpenRouter'], ['openai', PROVIDER_LABELS.openai], ['anthropic', PROVIDER_LABELS.anthropic],
+]);
+/** The provider a Provider choice stores: OpenRouter collects as `openai`. Only the select's own display keeps the choice. */
+const apiProvider = (v) => (v === 'openrouter' ? 'openai' : v);
+
+/** el: inside a model form or a connection section → 'provider' | 'signin' | 'env' (its data-where). */
+export function connectionWhere(el) {
+  const host = el && el.dataset && el.dataset.where ? el : el && el.closest ? el.closest('[data-where]') : null;
+  const where = host ? host.dataset.where : '';
+  return WHERES.includes(where) ? where : 'signin';
+}
+
+/** A connection's mode, in the words the rules below use: direct (a sign-in), env or provider. */
+const modeOf = (conn) => MODE_OF[connectionWhere(conn)];
+
+/** Where a connection's controls sit: the model form moves the folds after Pricing (models-view.mjs) and a standalone
+ *  section keeps them, so every read looks from the form when there is one. */
+const scopeOf = (conn) => (conn.closest && conn.closest('.mv-editor')) || conn;
+
+/**
+ * The one writer of data-where (the editor and its .mv-conn); then applyConnectionMode. Inside a model form the form's
+ * own rules follow (conn._applyEditor, set by models-view renderModelEditor: the harness field, a new form's harness,
+ * the suggested id, Save), and they start with applyConnectionMode.
+ */
+export function setConnectionWhere(root, where) {
+  if (!root) return;
+  const next = WHERES.includes(where) ? where : 'signin';
+  const conn = root.classList && root.classList.contains('mv-conn') ? root : root.querySelector && root.querySelector('.mv-conn');
+  const editor = (conn || root).closest ? (conn || root).closest('.mv-editor') : null;
+  if (editor) editor.dataset.where = next;
+  if (!conn) return;
+  conn.dataset.where = next;
+  if (typeof conn._applyEditor === 'function') conn._applyEditor();
+  else applyConnectionMode(conn);
+}
+
+/** Which `where` an engine's model may use: Claude Code all three; Codex its own sign-in or an OpenAI-compatible
+ *  Responses endpoint (codex ignores routing env); every other harness (Cursor, Copilot, Gemini CLI, Goose, OpenCode,
+ *  Qwen Code) its own sign-in only. */
+const MODE_TEXT = Object.freeze({
+  claude: Object.freeze(['signin', 'env', 'provider']),
+  codex: Object.freeze(['signin', 'provider']),
+});
+
+/** MODE_TEXT's rule, public: claude → ['signin','env','provider']; codex → ['signin','provider']; else ['signin']. A
+ *  missing engine is Claude Code. */
+export function wheresFor(engine) {
+  return [...(MODE_TEXT[engine || 'claude'] || ['signin'])];
+}
+
 /** Whether the Connection form resolves to OpenRouter chat completions: its own base URL, else the provider's. */
 function openRouterApplies(conn) {
-  if ((conn.querySelector('.mv-conn-mode-rb:checked')?.value || 'direct') !== 'provider') return false;
-  if (conn.querySelector('.mv-conn-provider')?.value !== 'openai' || conn.querySelector('.mv-conn-api')?.value !== 'openai-chat') return false;
-  const own = (conn.querySelector('.mv-conn-baseurl')?.value || '').trim();
+  if (modeOf(conn) !== 'provider') return false;
+  const scope = scopeOf(conn);
+  if (apiProvider(scope.querySelector('.mv-conn-provider')?.value) !== 'openai' || scope.querySelector('.mv-conn-api')?.value !== 'openai-chat') return false;
+  const own = (scope.querySelector('.mv-conn-baseurl')?.value || '').trim();
   return isOpenRouterUrl(own || conn._providers?.openai?.baseUrl || '');
 }
 
@@ -1186,106 +1244,93 @@ function fillOpenRouter(root, or) {
 
 /** The routing fields as an `upstream.openrouter` block, or undefined when all are at their defaults. */
 function collectOpenRouter(conn) {
-  const list = (sel) => (conn.querySelector(sel)?.value || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const scope = scopeOf(conn);
+  const list = (sel) => (scope.querySelector(sel)?.value || '').split(',').map((s) => s.trim()).filter(Boolean);
   const out = {};
   const models = list('.mv-conn-or-models');
   if (models.length) out.models = models;
   const provider = {};
   const order = list('.mv-conn-or-order');
   if (order.length) provider.order = order;
-  if (conn.querySelector('.mv-conn-or-fallbacks')?.checked === false) provider.allow_fallbacks = false;
-  const sort = conn.querySelector('.mv-conn-or-sort')?.value || '';
+  if (scope.querySelector('.mv-conn-or-fallbacks')?.checked === false) provider.allow_fallbacks = false;
+  const sort = scope.querySelector('.mv-conn-or-sort')?.value || '';
   if (sort) provider.sort = sort;
   if (Object.keys(provider).length) out.provider = provider;
   return Object.keys(out).length ? out : undefined;
 }
 
-/** Each connection mode's title and hint. A new entry offers all three (the sign-in picks its harness below); an entry
- *  being edited keeps its engine, so a Codex one has no env mode (codex ignores routing env) and an own-sign-in engine's one (Cursor, Gemini CLI, Goose, OpenCode, Qwen Code) only its
- *  own sign-in (no env, no endpoint). A mode with no text is hidden. */
-const MODE_TEXT = {
-  claude: {
-    direct: ["A harness's own sign-in", "The subscription you are signed in with: Claude Code's login, Codex's ChatGPT sign-in, Cursor's, the Copilot CLI's, Gemini CLI's, Qwen Code's, or Goose's or OpenCode's providers. It runs only in that harness."],
-    env: ['Custom endpoint via env (Claude Code)', 'For endpoints that already speak the Anthropic API (LiteLLM, Bedrock, Vertex, a gateway). Set the routing env below.'],
-    provider: ['Through a provider', "GitHub Copilot, an OpenAI-compatible or an Anthropic-compatible endpoint. Claude Code reaches each through worca's bridge; Codex reaches an OpenAI Responses endpoint itself."],
-  },
-  codex: {
-    direct: ['Codex default', "codex's own sign-in (`codex login`) reaches OpenAI."],
-    provider: ['OpenAI-compatible endpoint', 'An endpoint that serves the Responses API (vLLM, LM Studio, Ollama, a gateway). Codex connects to it itself; no codex sign-in needed.'],
-  },
-  cursor: {
-    direct: ['Cursor default', "cursor-agent's own sign-in (`cursor-agent login`, or CURSOR_API_KEY) reaches Cursor."],
-  },
-  copilot: {
-    direct: ['Copilot default', "the Copilot CLI's own sign-in (`copilot login`, or COPILOT_GITHUB_TOKEN) reaches GitHub Copilot."],
-  },
-  gemini: {
-    direct: ['Gemini CLI default', "gemini's own sign-in (GEMINI_API_KEY, Vertex AI, or the sign-in you chose in `gemini`) reaches Google."],
-  },
-  qwen: {
-    direct: ['Qwen Code default', "qwen's own sign-in (the auth type you chose in `qwen`, or a provider's env such as OPENAI_API_KEY, OPENAI_BASE_URL and OPENAI_MODEL)."],
-  },
-  goose: {
-    direct: ['Goose providers', "Goose's own providers (`goose configure`, or a provider key in worca's environment) reach the model the id names."],
-  },
-  opencode: {
-    direct: ['OpenCode providers', "OpenCode's own providers (`opencode auth login`, or a provider key in worca's environment) reach the model the id names."],
-  },
-};
+/** div.mv-field > label.mv-field-label[for] (in a .label-row with its ⓘ when there is a tip) + `box`, which holds `ctl`. */
+function connField(doc, labelText, ctl, { box = ctl, tip = '' } = {}) {
+  if (tip && box === ctl) return tippedField(doc, labelText, ctl, tip);
+  const wrap = h(doc, 'div', 'mv-field');
+  const label = h(doc, 'label', 'mv-field-label', labelText);
+  ctl.id = `mdl-field-${++fieldSeq}`;
+  label.htmlFor = ctl.id;
+  if (tip) {
+    const row = h(doc, 'div', 'label-row');
+    row.append(label, infoTip(doc, labelText, tip));
+    wrap.appendChild(row);
+  } else wrap.appendChild(label);
+  wrap.appendChild(box);
+  return wrap;
+}
+
+/** A fold: P3's disclosure button (button.btn.btn-quiet.btn-sm.mdl-disc: chevron, span.mdl-disc-name, span.mdl-disc-sum)
+ *  over `body`, which stays hidden until opened. The button wires its own click. */
+function foldOf(doc, name, body, cls) {
+  body.id = `mdl-fold-${++fieldSeq}`;
+  body.hidden = true;
+  const button = h(doc, 'button', `btn btn-quiet btn-sm mdl-disc ${cls}`);
+  button.type = 'button';
+  button.setAttribute('aria-expanded', 'false');
+  button.setAttribute('aria-controls', body.id);
+  button.append(icon(doc, 'chevron', 14), h(doc, 'span', 'mdl-disc-name', name), h(doc, 'span', 'mdl-disc-sum'));
+  button.addEventListener('click', () => {
+    const open = button.getAttribute('aria-expanded') !== 'true';
+    button.setAttribute('aria-expanded', String(open));
+    body.hidden = !open;
+  });
+  return button;
+}
 
 /**
- * The Connection block for the model editor. `model` is the MASKED entry or
- * null; `providers` the GET /api/providers payload (for the readiness hints);
- * `copilotModels` an optional list for the upstream-id datalist.
+ * The Connection block of the model form. `model` is the MASKED entry or null; `providers` the GET /api/providers
+ * payload; `copilotModels` an optional list for the upstream-id datalist; `where` where the model runs (else its stored
+ * connection: an upstream is a provider, env is routing env, anything else a sign-in); `provider` a new provider form's
+ * Provider choice (copilot | openrouter | openai | anthropic; openrouter fills OpenRouter's address).
+ * → div.mv-conn[data-where]: div.mv-conn-body (Provider with its state word, Upstream model id) and div.mv-conn-more,
+ * two folds: "Connection" (the API segment over the hidden select, the model's own Base URL, API key and headers, the
+ * OpenRouter routing) and "Capabilities and limits". The model form moves .mv-conn-more after Pricing.
  */
-export function renderConnectionSection(model, { doc = globalThis.document, providers = null, copilotModels = [] } = {}) {
+export function renderConnectionSection(model, { doc = globalThis.document, providers = null, copilotModels = [], where = '', provider = '' } = {}) {
   const editing = !!model;
   const upstream = editing && model.upstream ? model.upstream : null;
-  const groupName = `mv-conn-mode-${editing ? model.id : 'new'}`;
   const wrap = h(doc, 'div', 'mv-conn');
+  wrap.dataset.where = WHERES.includes(where) ? where
+    : upstream ? 'provider' : editing && model.env && Object.keys(model.env).length ? 'env' : 'signin';
   wrap.dataset.provider = upstream ? upstream.provider : '';
+  // The stored upstream: collectConnection hands back what the form has no control for.
+  if (upstream) wrap.dataset.upstream = JSON.stringify(upstream);
   stashReasoningEfforts(wrap, upstream);
-
-  const modes = h(doc, 'div', 'mv-conn-modes');
-  const startMode = upstream ? 'provider' : (editing && model.env && Object.keys(model.env).length ? 'env' : 'direct');
-  for (const value of ['direct', 'env', 'provider']) {
-    const [text, hint] = MODE_TEXT.claude[value];
-    const lab = h(doc, 'label', 'mv-conn-mode');
-    const rb = h(doc, 'input', 'mv-conn-mode-rb');
-    rb.type = 'radio'; rb.name = groupName; rb.value = value; rb.checked = value === startMode;
-    lab.appendChild(rb);
-    const txt = h(doc, 'span', 'mv-conn-mode-text');
-    txt.appendChild(h(doc, 'b', 'mv-conn-mode-title', text));
-    txt.appendChild(h(doc, 'small', 'hint mv-conn-mode-hint', hint));
-    lab.appendChild(txt);
-    modes.appendChild(lab);
-  }
-  wrap.appendChild(modes);
-  // Which harnesses this connection reaches, kept current by applyConnectionMode.
-  wrap.appendChild(h(doc, 'small', 'hint mv-conn-runs'));
+  if (providers) wrap._providers = providers;   // OpenRouter's address and the state word (jsdom-safe expando)
 
   const body = h(doc, 'div', 'mv-conn-body');
   const grid = h(doc, 'div', 'mv-conn-grid');
-  const field = (labelText, input, cls = '') => {
-    const f = h(doc, 'label', `mv-field${cls ? ` ${cls}` : ''}`);
-    f.appendChild(h(doc, 'span', 'mv-field-label', labelText));
-    f.appendChild(input);
-    return f;
-  };
-
+  // An existing model shows OpenRouter when OpenRouter's row holds its key, and changes no field for it.
+  const choice = upstream ? (providerRowOf(model, providers) === 'openrouter' ? 'openrouter' : upstream.provider)
+    : PROVIDER_CHOICES.some(([v]) => v === provider) ? provider : 'copilot';
   const provSel = h(doc, 'select', 'select mv-conn-provider');
-  for (const name of ['copilot', 'openai', 'anthropic']) {
-    const o = h(doc, 'option', null, PROVIDER_LABELS[name]); o.value = name;
-    if (upstream ? upstream.provider === name : name === 'copilot') o.selected = true;
+  for (const [value, text] of PROVIDER_CHOICES) {
+    const o = h(doc, 'option', null, text); o.value = value;
+    if (value === choice) o.selected = true;
     provSel.appendChild(o);
   }
-  const provField = field('Provider', provSel);
-  provField.appendChild(h(doc, 'small', 'hint mv-conn-provider-hint'));
-  grid.appendChild(provField);
-
-  const apiSel = h(doc, 'select', 'select mv-conn-api');
-  if (upstream) apiSel.dataset.keep = upstream.api;   // refilled by applyConnectionMode below
-  grid.appendChild(field('API', apiSel));
+  wrap.dataset.providerChoice = choice;   // the select's last value: only a change of it moves OpenRouter's address
+  const provRow = h(doc, 'div', 'mv-conn-prov-row');
+  const state = h(doc, 'span', 'mdl-st mv-conn-provider-hint');   // the provider's state word (models-view.mjs paints it)
+  state.hidden = true;
+  provRow.append(provSel, state);
+  grid.appendChild(connField(doc, 'Provider', provSel, { box: provRow }));
 
   const modelIn = h(doc, 'input', 'input mv-conn-model');
   modelIn.type = 'text'; modelIn.placeholder = 'gpt-5, claude-sonnet-4.5, …';
@@ -1300,56 +1345,57 @@ export function renderConnectionSection(model, { doc = globalThis.document, prov
     modelIn.setAttribute('list', dl.id);
     grid.appendChild(dl);
   }
-  const modelField = field('Upstream model id', modelIn);
-  modelField.appendChild(h(doc, 'small', 'hint', 'The id the endpoint expects. The model id above stays Worca’s handle.'));
-  grid.appendChild(modelField);
+  grid.appendChild(connField(doc, 'Upstream model id', modelIn, { tip: 'The id the endpoint expects. The model’s ID above stays Worca’s handle.' }));
   body.appendChild(grid);
+  wrap.appendChild(body);
 
-  // Advanced: per-entry overrides for the key-based providers.
-  const adv = h(doc, 'details', 'advanced mv-conn-adv');
-  // Same summary as New pipeline's Advanced (index.html #advanced-config): the chevron is
-  // what says "expandable" — without it the label reads as a plain heading.
-  const sum = h(doc, 'summary');
-  const chev = h(doc, 'span', 'adv-chev');
-  chev.setAttribute('aria-hidden', 'true');
-  sum.appendChild(chev);
-  sum.appendChild(h(doc, 'span', null, 'Advanced: base URL, API key, extra headers'));
-  adv.appendChild(sum);
-  const advBody = h(doc, 'div', 'advanced-body mv-conn-adv-body');
+  // Connection: the API, the model's own address, key and headers, and OpenRouter's routing.
+  const wire = h(doc, 'div', 'mv-conn-fold mv-conn-wire');
+  const apiName = h(doc, 'span', 'mv-field-label', 'API');
+  apiName.id = `mdl-field-${++fieldSeq}`;
+  const apiSeg = h(doc, 'div', 'seg mv-conn-api-seg');
+  apiSeg.setAttribute('role', 'group');
+  apiSeg.setAttribute('aria-labelledby', apiName.id);
+  const apiSel = h(doc, 'select', 'select mv-conn-api');
+  apiSel.hidden = true;   // the segment drives it; the collector, app.js and the modal guard read it
+  if (upstream) apiSel.dataset.keep = upstream.api;   // refilled by applyConnectionMode below
+  const apiField = h(doc, 'div', 'mv-field');
+  apiField.append(apiName, apiSeg, apiSel);
+  wire.appendChild(apiField);
+  const own = h(doc, 'div', 'mv-conn-own');   // never for Copilot: collectConnection sends none of it
   const bu = h(doc, 'input', 'input mv-conn-baseurl');
-  bu.type = 'text'; bu.placeholder = 'leave empty to use the provider’s base URL'; bu.value = upstream && upstream.baseUrl ? upstream.baseUrl : '';
-  advBody.appendChild(field('Base URL override', bu));
+  bu.type = 'text'; bu.placeholder = 'leave empty to use the provider’s base URL';
+  bu.value = upstream && upstream.baseUrl ? upstream.baseUrl : !upstream && choice === 'openrouter' ? OPENROUTER_PRESET.baseUrl : '';
+  own.appendChild(connField(doc, 'Base URL', bu));
   const key = h(doc, 'input', 'input mv-conn-key');
   key.type = 'text'; key.placeholder = 'leave empty to use the provider’s key; or ${VAR}';
   key.value = upstream && upstream.apiKey ? upstream.apiKey : '';
   if (key.value) key.dataset.original = key.value;
-  advBody.appendChild(field('API key override', key));
+  own.appendChild(connField(doc, 'API key', key));
   const hdr = h(doc, 'textarea', 'textarea mv-conn-headers');
   hdr.rows = 2; hdr.placeholder = 'One per line: Header-Name: value';
   hdr.value = upstream && upstream.headers ? Object.entries(upstream.headers).map(([k, v]) => `${k}: ${v}`).join('\n') : '';
-  advBody.appendChild(field('Extra headers', hdr));
+  own.appendChild(connField(doc, 'Extra headers', hdr));
+  wire.appendChild(own);
   // OpenRouter routing: shown only while the entry resolves to OpenRouter (applyConnectionMode).
   const orBox = h(doc, 'div', 'mv-conn-or');
-  orBox.appendChild(h(doc, 'small', 'hint', 'OpenRouter routing: fallback models are tried in order when this one is rate-limited or down (a :free model’s shared pool often is); provider order and sort pick who serves it.'));
   const orModels = h(doc, 'input', 'input mv-conn-or-models');
   orModels.type = 'text'; orModels.placeholder = 'e.g. qwen/qwen3.8-27b (comma-separated)';
-  orBox.appendChild(field('Fallback models', orModels));
+  orBox.appendChild(connField(doc, 'Fallback models', orModels, { tip: 'Tried in order when this model is rate-limited or down (a :free model’s shared pool often is). Provider order and sort pick who serves it.' }));
   const orOrder = h(doc, 'input', 'input mv-conn-or-order');
   orOrder.type = 'text'; orOrder.placeholder = 'provider names, comma-separated (empty lets OpenRouter choose)';
-  orBox.appendChild(field('Provider order', orOrder));
+  orBox.appendChild(connField(doc, 'Provider order', orOrder));
   const orSort = h(doc, 'select', 'select mv-conn-or-sort');
   for (const [value, text] of [['', 'OpenRouter default'], ['price', 'Price'], ['throughput', 'Throughput'], ['latency', 'Latency']]) {
     const o = h(doc, 'option', null, text); o.value = value; orSort.appendChild(o);
   }
-  orBox.appendChild(field('Sort providers by', orSort));
+  orBox.appendChild(connField(doc, 'Sort providers by', orSort));
   orBox.appendChild(makeSwitch(doc, { label: 'Allow other providers when these are unavailable', inputClass: 'mv-conn-or-fallbacks', rowClass: 'mv-conn-cap' }).row);
-  advBody.appendChild(orBox);
+  wire.appendChild(orBox);
   fillOpenRouter(orBox, upstream && upstream.openrouter);
-  adv.appendChild(advBody);
-  body.appendChild(adv);
 
-  // Capabilities.
-  const caps = h(doc, 'div', 'mv-conn-caps');
+  // Capabilities and limits.
+  const caps = h(doc, 'div', 'mv-conn-fold mv-conn-caps');
   const capsRow = h(doc, 'div', 'mv-conn-caps-row');
   const stored = upstream && upstream.capabilities ? upstream.capabilities : {};
   for (const [k, text] of CAPABILITY_FLAGS) {
@@ -1371,109 +1417,151 @@ export function renderConnectionSection(model, { doc = globalThis.document, prov
     capsRow.appendChild(lab);
   }
   caps.appendChild(capsRow);
-  caps.appendChild(h(doc, 'small', 'hint', 'Prefilled by Import from Copilot; edit for an unknown endpoint. Reasoning maps Worca’s effort to reasoning_effort; without it, only medium effort is offered.'));
-  body.appendChild(caps);
-  body.appendChild(h(doc, 'small', 'hint mv-conn-note'));
-  wrap.appendChild(body);
 
-  if (providers) wrap._providers = providers;   // readiness hints (jsdom-safe expando)
+  const more = h(doc, 'div', 'mv-conn-more');
+  more.append(foldOf(doc, 'Connection', wire, 'mv-conn-disc'), wire, foldOf(doc, 'Capabilities and limits', caps, 'mv-caps-disc'), caps);
+  wrap.appendChild(more);
   applyConnectionMode(wrap);
   return wrap;
 }
 
-/** The api options `apis` (what the provider and engine allow); keeps the current pick when still legal. */
+/** The api options `apis` (what the provider and engine allow); keeps the current pick when still legal. → whether the
+ *  option list changed. */
 function refillApiSelect(sel, apis, keep) {
   const cur = keep || sel.value;
-  sel.innerHTML = '';
-  for (const a of apis) {
-    const o = sel.ownerDocument.createElement('option');
-    o.value = a; o.textContent = API_LABELS[a] || a;
-    sel.appendChild(o);
+  const changed = [...sel.options].map((o) => o.value).join('\n') !== apis.join('\n');
+  if (changed) {
+    sel.replaceChildren(...apis.map((a) => {
+      const o = sel.ownerDocument.createElement('option');
+      o.value = a; o.textContent = API_LABELS[a] || a;
+      return o;
+    }));
   }
   sel.value = apis.includes(cur) ? cur : apis[0] || '';
   sel.disabled = apis.length <= 1;
+  return changed;
+}
+
+/** The API segment over the hidden select: rebuilt when the option list changed (a rebuild on every apply would drop
+ *  the focus), else only its pressed state repainted. */
+function paintApiSeg(conn, sel, rebuild) {
+  const seg = scopeOf(conn).querySelector('.mv-conn-api-seg');
+  if (!seg) return;
+  if (rebuild || seg.children.length !== sel.options.length) {
+    seg.replaceChildren(...[...sel.options].map((o) => {
+      const b = h(seg.ownerDocument, 'button', null, o.textContent);
+      b.type = 'button';
+      b.dataset.api = o.value;
+      b.addEventListener('click', () => pickApi(conn, sel, o.value));
+      return b;
+    }));
+  }
+  for (const b of seg.children) {
+    b.setAttribute('aria-pressed', String(b.dataset.api === sel.value));
+    b.disabled = sel.disabled;
+  }
+}
+
+/** A segment click: the select takes the api and sends a bubbling change, which app.js and the modal guard see. */
+function pickApi(conn, sel, api) {
+  if (sel.value === api) return;
+  sel.value = api;
+  applyConnectionMode(conn);
+  const ev = sel.ownerDocument.createEvent('Event');
+  ev.initEvent('change', true, false);
+  sel.dispatchEvent(ev);
+}
+
+/** OpenRouter's address follows the Provider select: a change TO OpenRouter fills OPENROUTER_PRESET's address (the field
+ *  empty or elsewhere), a change away clears an OpenRouter address; typing a URL never moves the select. Only a change
+ *  counts: the select's last value rides conn.dataset.providerChoice. */
+function followProviderChoice(conn, choice, scope) {
+  const last = conn.dataset.providerChoice;
+  if (!last || last === choice) return;
+  const bu = scope.querySelector('.mv-conn-baseurl');
+  if (!bu) return;
+  if (choice === 'openrouter') {
+    if (!isOpenRouterUrl(bu.value)) bu.value = OPENROUTER_PRESET.baseUrl;
+  } else if (last === 'openrouter' && isOpenRouterUrl(bu.value)) bu.value = '';
+}
+
+/** The capabilities' words on the fold, in CAPABILITY_FLAGS' order. */
+const CAPABILITY_WORDS = Object.freeze([['toolCalls', 'tools'], ['vision', 'vision'], ['reasoning', 'reasoning']]);
+/** 272000 → "272k", 1048576 → "1M". */
+const tokenCount = (n) => (n >= 1e6 ? `${Math.round(n / 1e5) / 10}M` : `${Math.round(n / 1000)}k`);
+
+/** The folds' summaries: "OpenAI Responses · own address" and "Tools, vision · 272k prompt" (or "No capabilities"). */
+function paintFoldSums(scope, provider, api) {
+  const connSum = scope.querySelector('.mv-conn-disc .mdl-disc-sum');
+  if (connSum) {
+    const own = provider !== 'copilot' && (scope.querySelector('.mv-conn-baseurl')?.value || '').trim();
+    connSum.textContent = `${API_LABELS[api] || api}${own ? ' · own address' : ''}`;
+  }
+  const capsSum = scope.querySelector('.mv-caps-disc .mdl-disc-sum');
+  if (capsSum) {
+    const on = CAPABILITY_WORDS.filter(([k]) => scope.querySelector(`.mv-conn-cap-cb[data-cap="${k}"]`)?.checked).map(([, w]) => w).join(', ');
+    const prompt = Number((scope.querySelector('.mv-conn-limit-in[data-limit="maxPromptTokens"]')?.value || '').trim());
+    const words = [on ? on.charAt(0).toUpperCase() + on.slice(1) : 'No capabilities'];
+    if (prompt > 0) words.push(`${tokenCount(prompt)} prompt`);
+    capsSum.textContent = words.join(' · ');
+  }
 }
 
 /**
- * Apply the Connection rules to the form (§8.3): the provider block shows only
- * in provider mode, Advanced only for key-based providers, the API list follows
- * the provider, the readiness hint follows the provider's state, and the
- * effort checkboxes in the SAME editor collapse to medium for a translated
- * model without reasoning. The single place that knows these rules — the
- * initial render and app.js's delegated `change` handler both call it.
+ * Apply the Connection rules to the form (§8.3): the provider fields and the folds show only for a provider, the
+ * model's own address, key and headers only off Copilot, the API list follows the provider, the summaries follow the
+ * fields, and the effort checkboxes in the SAME editor collapse to medium for a translated model without reasoning.
+ * The single place that knows these rules — the initial render and app.js's delegated `change` handler both call it.
  * @param {Element} connEl  the .mv-conn root (or any ancestor containing one)
  */
 export function applyConnectionMode(connEl) {
   const conn = connEl && (connEl.classList && connEl.classList.contains('mv-conn') ? connEl : connEl.querySelector && connEl.querySelector('.mv-conn'));
   if (!conn) return;
-  // A Codex model (conn.dataset.engine, set by models-view setModelEngine): no env mode, the OpenAI-compatible
-  // provider only, the Responses API only, and none of the bridge's capability pins.
-  // An own-sign-in engine's model (Cursor, Gemini CLI, Goose, OpenCode, Qwen Code): its own sign-in only (MODE_TEXT), so the provider body never shows.
-  // A new entry is on no engine until its connection says so (src/shared/connections.mjs): the sign-in mode asks which
-  // harness, env and provider make it Claude Code's. Only an entry being edited is held to the engine it was added under.
+  const scope = scopeOf(conn);
+  // The model's engine (conn.dataset.engine, set by models-view setModelEngine) decides where it may run (wheresFor). A
+  // new form or a copy holds the form's engine, and a where that engine cannot reach makes it Claude Code's (models-view
+  // applyConnectionModeIn moves the harness). An entry being edited keeps its engine: such a where falls back to its
+  // own sign-in. A Codex model: the OpenAI-compatible provider only, the Responses API only, none of the bridge's pins.
   const eng = conn.dataset.engine || 'claude';
-  const held = conn.dataset.editing === '1' ? eng : 'claude';
+  const where = connectionWhere(conn);
+  const held = conn.dataset.editing !== '1' && !wheresFor(eng).includes(where) ? 'claude' : eng;
+  if (!wheresFor(held).includes(where)) { setConnectionWhere(conn, 'signin'); return; }
+  const mode = MODE_OF[where];
   const codex = held === 'codex';
   const ownSignIn = SIGN_IN_ENGINE_NAMES.includes(held) || held === 'copilot';   // a sign-in only: no endpoint fields
-  for (const lab of conn.querySelectorAll('.mv-conn-mode')) {
-    const rb = lab.querySelector('.mv-conn-mode-rb');
-    const text = (MODE_TEXT[held] || MODE_TEXT.claude)[rb.value];
-    lab.hidden = !text;
-    if (!text) { if (rb.checked) { rb.checked = false; conn.querySelector('.mv-conn-mode-rb[value="direct"]').checked = true; } continue; }
-    lab.querySelector('.mv-conn-mode-title').textContent = text[0];
-    lab.querySelector('.mv-conn-mode-hint').textContent = text[1];
-  }
-  const mode = conn.querySelector('.mv-conn-mode-rb:checked')?.value || 'direct';
-  const runs = conn.querySelector('.mv-conn-runs');
-  if (runs) {
-    const pv = conn.querySelector('.mv-conn-provider')?.value || 'copilot';
-    const av = conn.querySelector('.mv-conn-api')?.value || conn.querySelector('.mv-conn-api')?.dataset.keep || '';
-    const connection = mode === 'direct' ? { kind: 'signin', engine: eng }
-      : mode === 'env' ? { kind: 'env' }
-        : { kind: 'provider', provider: pv, api: av, codex: codexReaches({ provider: pv, api: av, openrouter: openRouterApplies(conn) }), prefer: eng };
-    runs.textContent = runsOnText(connection);
-  }
+  const reaches = !ownSignIn && mode === 'provider';
   const body = conn.querySelector('.mv-conn-body');
-  if (body) body.hidden = ownSignIn || mode !== 'provider';
-  const provSel = conn.querySelector('.mv-conn-provider');
+  if (body) body.hidden = !reaches;
+  const more = scope.querySelector('.mv-conn-more');
+  if (more) more.hidden = !reaches;
+  const provSel = scope.querySelector('.mv-conn-provider');
   if (provSel) {
+    followProviderChoice(conn, provSel.value, scope);
     for (const o of provSel.options) o.hidden = o.disabled = codex && o.value !== 'openai';
     if (codex) provSel.value = 'openai';
     provSel.disabled = codex;
+    conn.dataset.providerChoice = provSel.value;
   }
-  const provider = provSel?.value || 'copilot';
+  const provider = apiProvider(provSel?.value || 'copilot');
   conn.dataset.provider = mode === 'provider' ? provider : '';
-  const apiSel = conn.querySelector('.mv-conn-api');
-  if (apiSel) refillApiSelect(apiSel, codex ? CODEX_PROVIDER_APIS : PROVIDER_APIS[provider] || [], apiSel.dataset.keep || apiSel.value);
-  delete apiSel?.dataset.keep;
+  const apiSel = scope.querySelector('.mv-conn-api');
+  if (apiSel) {
+    const rebuilt = refillApiSelect(apiSel, codex ? CODEX_PROVIDER_APIS : PROVIDER_APIS[provider] || [], apiSel.dataset.keep || apiSel.value);
+    delete apiSel.dataset.keep;
+    paintApiSeg(conn, apiSel, rebuilt);
+  }
   const api = apiSel ? apiSel.value : '';
-  const adv = conn.querySelector('.mv-conn-adv');
-  if (adv) adv.hidden = provider === 'copilot';
-  const orBox = conn.querySelector('.mv-conn-or');
+  const own = scope.querySelector('.mv-conn-own');
+  if (own) own.hidden = provider === 'copilot';
+  const orBox = scope.querySelector('.mv-conn-or');
   if (orBox) orBox.hidden = codex || ownSignIn || !openRouterApplies(conn);
-  const capsBox = conn.querySelector('.mv-conn-caps');
-  if (capsBox) capsBox.hidden = codex || ownSignIn;
-  const hint = conn.querySelector('.mv-conn-provider-hint');
-  const p = conn._providers;
-  if (hint) {
-    if (!p) hint.textContent = '';
-    else if (provider === 'copilot') hint.textContent = p.copilot?.connected ? `Connected${p.copilot.login ? ` as @${p.copilot.login}` : ''}.` : 'Not connected. Sign in under Models › Providers, or Save is refused.';
-    else hint.textContent = p[provider]?.configured ? 'Provider key set.' : (p[provider]?.keySet ? 'The provider key’s ${VAR} is not set in Worca’s environment.' : p[provider]?.keyOptional ? 'Local endpoint, no key needed.' : 'No provider key. Set one under Models › Providers, or override it under Advanced.');
-    hint.className = `hint mv-conn-provider-hint${(provider === 'copilot' ? !p?.copilot?.connected : !(p?.[provider]?.configured || p?.[provider]?.keyOptional)) && p ? ' warn' : ''}`;
-  }
-  const note = conn.querySelector('.mv-conn-note');
-  if (note) {
-    const copilotPricing = provider === 'copilot' ? ' Copilot bills premium requests, so Pricing defaults to Free.' : '';
-    note.textContent = mode !== 'provider' ? '' : codex
-      ? 'Codex calls the endpoint’s Responses API itself: no translation, every Codex tool kept. The key reaches codex through its environment, never its command line. Cost stays unknown unless Pricing sets one.'
-      : api === 'openai-chat'
-      ? `Translated: reasoning the endpoint streams (OpenRouter, vLLM) is shown as thinking but not carried across turns, WebSearch/WebFetch withheld, prompt limit per the capabilities above.${copilotPricing}`
-      : api === 'openai-responses'
-        ? `Translated to the Responses API: reasoning summaries arrive as thinking, WebSearch/WebFetch withheld, prompt limit per the capabilities above.${copilotPricing}`
-        : provider === 'copilot' ? 'Copilot’s native Anthropic endpoint: thinking blocks and cache accounting arrive intact. Copilot bills premium requests, so Pricing defaults to Free.'
-          : 'Passthrough: the request reaches the endpoint untouched; only auth and headers are added.';
-  }
-  const reasoning = !!conn.querySelector('.mv-conn-cap-cb[data-cap="reasoning"]')?.checked;
+  const capsOff = codex || ownSignIn;
+  const capsDisc = scope.querySelector('.mv-caps-disc');
+  if (capsDisc) capsDisc.hidden = capsOff;
+  const capsBox = scope.querySelector('.mv-conn-caps');
+  if (capsBox) capsBox.hidden = capsOff || capsDisc?.getAttribute('aria-expanded') !== 'true';
+  paintFoldSums(scope, provider, api);
+  const reasoning = !!scope.querySelector('.mv-conn-cap-cb[data-cap="reasoning"]')?.checked;
   // Efforts live in the editor grid beside this block.
   const editor = conn.closest ? conn.closest('.mv-editor') : null;
   const effCbs = editor ? [...editor.querySelectorAll('.mv-effort-cb')] : [];
@@ -1498,33 +1586,58 @@ export function applyConnectionMode(connEl) {
   if (allowed && !effCbs.some((cb) => cb.checked)) for (const cb of effCbs) if (allowed.includes(cb.value)) cb.checked = true;
   if (effHint) {
     effHint.textContent = translatedNoReasoning
-      ? 'This model has no reasoning control; effort would be ignored, so only medium is offered.'
-      : levels ? `Maps to this model's effort levels: ${levels.join(', ')}.`
+      ? 'This model has no reasoning control, so only medium is offered.'
+      : levels ? `Maps to this model's levels: ${levels.join(', ')}.`   // ≤ 80 with all seven (L18)
         : translated ? 'Maps to reasoning_effort low / medium / high (xhigh and max are not distinct).'
           : 'All checked = every effort (the default).';
   }
 }
 
-/** Load a stored upstream into a rendered Connection block (Edit a copy, import prefill). */
+/** Load a stored upstream into a rendered Connection block (Edit a copy, import prefill); null leaves for the sign-in. */
 export function setModelUpstream(connEl, upstream) {
   const conn = connEl.classList && connEl.classList.contains('mv-conn') ? connEl : connEl.querySelector('.mv-conn');
   if (!conn) return;
+  const scope = scopeOf(conn);
   stashReasoningEfforts(conn, upstream);
-  const mode = upstream ? 'provider' : 'direct';
-  for (const rb of conn.querySelectorAll('.mv-conn-mode-rb')) rb.checked = rb.value === mode;
+  if (upstream) conn.dataset.upstream = JSON.stringify(upstream);
+  else delete conn.dataset.upstream;
   if (upstream) {
-    const prov = conn.querySelector('.mv-conn-provider'); if (prov) prov.value = upstream.provider;
-    const api = conn.querySelector('.mv-conn-api'); if (api) api.dataset.keep = upstream.api;
-    const model = conn.querySelector('.mv-conn-model'); if (model) model.value = upstream.model || '';
-    const bu = conn.querySelector('.mv-conn-baseurl'); if (bu) bu.value = upstream.baseUrl || '';
-    const key = conn.querySelector('.mv-conn-key'); if (key) { key.value = upstream.apiKey || ''; if (key.value) key.dataset.original = key.value; }
-    const hdr = conn.querySelector('.mv-conn-headers'); if (hdr) hdr.value = upstream.headers ? Object.entries(upstream.headers).map(([k, v]) => `${k}: ${v}`).join('\n') : '';
-    fillOpenRouter(conn, upstream.openrouter);
+    // The select shows OpenRouter as a render does; a load is no change of it, so no address moves.
+    const prov = scope.querySelector('.mv-conn-provider');
+    if (prov) {
+      prov.value = providerRowOf({ upstream }, conn._providers) === 'openrouter' ? 'openrouter' : upstream.provider;
+      conn.dataset.providerChoice = prov.value;
+    }
+    const api = scope.querySelector('.mv-conn-api'); if (api) api.dataset.keep = upstream.api;
+    const model = scope.querySelector('.mv-conn-model'); if (model) model.value = upstream.model || '';
+    const bu = scope.querySelector('.mv-conn-baseurl'); if (bu) bu.value = upstream.baseUrl || '';
+    const key = scope.querySelector('.mv-conn-key'); if (key) { key.value = upstream.apiKey || ''; if (key.value) key.dataset.original = key.value; }
+    const hdr = scope.querySelector('.mv-conn-headers'); if (hdr) hdr.value = upstream.headers ? Object.entries(upstream.headers).map(([k, v]) => `${k}: ${v}`).join('\n') : '';
+    fillOpenRouter(scope, upstream.openrouter);
     const caps = upstream.capabilities || {};
-    for (const cb of conn.querySelectorAll('.mv-conn-cap-cb')) cb.checked = caps[cb.dataset.cap] === undefined ? cb.dataset.cap === 'toolCalls' : !!caps[cb.dataset.cap];
-    for (const inp of conn.querySelectorAll('.mv-conn-limit-in')) inp.value = caps[inp.dataset.limit] ? String(caps[inp.dataset.limit]) : '';
+    for (const cb of scope.querySelectorAll('.mv-conn-cap-cb')) cb.checked = caps[cb.dataset.cap] === undefined ? cb.dataset.cap === 'toolCalls' : !!caps[cb.dataset.cap];
+    for (const inp of scope.querySelectorAll('.mv-conn-limit-in')) inp.value = caps[inp.dataset.limit] ? String(caps[inp.dataset.limit]) : '';
   }
-  applyConnectionMode(conn);
+  setConnectionWhere(conn, upstream ? 'provider' : 'signin');
+}
+
+/** The upstream keys the form always decides: collected, or dropped on purpose (a hidden OpenRouter block, a Codex
+ *  model's capability pins). */
+const DRAWN_KEYS = new Set(['provider', 'api', 'model', 'openrouter', 'capabilities']);
+/** The keys the form decides off Copilot only (a Copilot model has none of these fields). */
+const OWN_KEYS = new Set(['baseUrl', 'apiKey', 'headers']);
+
+/** The stored upstream's keys the form has no control for (today: a Copilot model's headers) come back unchanged while
+ *  the provider and the upstream model are the stored ones: PATCH replaces `upstream` whole. */
+function keepUndrawn(conn, upstream) {
+  let stored = null;
+  try { stored = JSON.parse(conn.dataset.upstream || 'null'); } catch { stored = null; }
+  if (!stored || typeof stored !== 'object') return;
+  if (stored.provider !== upstream.provider || String(stored.model || '').trim() !== upstream.model) return;
+  for (const [k, v] of Object.entries(stored)) {
+    if (DRAWN_KEYS.has(k) || k in upstream || (OWN_KEYS.has(k) && upstream.provider !== 'copilot')) continue;
+    upstream[k] = v;
+  }
 }
 
 /**
@@ -1535,19 +1648,19 @@ export function setModelUpstream(connEl, upstream) {
 export function collectConnection(connEl) {
   const conn = connEl.classList && connEl.classList.contains('mv-conn') ? connEl : connEl.querySelector('.mv-conn');
   if (!conn) return { upstream: undefined };
-  const mode = conn.querySelector('.mv-conn-mode-rb:checked')?.value || 'direct';
-  if (mode !== 'provider') return { upstream: null };
+  if (modeOf(conn) !== 'provider') return { upstream: null };
+  const scope = scopeOf(conn);
   const codex = conn.dataset.engine === 'codex';
-  const provider = codex ? 'openai' : conn.querySelector('.mv-conn-provider')?.value || 'copilot';
-  const api = conn.querySelector('.mv-conn-api')?.value || '';
-  const model = (conn.querySelector('.mv-conn-model')?.value || '').trim();
+  const provider = codex ? 'openai' : apiProvider(scope.querySelector('.mv-conn-provider')?.value || 'copilot');
+  const api = scope.querySelector('.mv-conn-api')?.value || '';
+  const model = (scope.querySelector('.mv-conn-model')?.value || '').trim();
   const upstream = { provider, api, model };
   if (provider !== 'copilot') {
-    const bu = (conn.querySelector('.mv-conn-baseurl')?.value || '').trim();
+    const bu = (scope.querySelector('.mv-conn-baseurl')?.value || '').trim();
     if (bu) upstream.baseUrl = bu;
-    const key = (conn.querySelector('.mv-conn-key')?.value || '').trim();
+    const key = (scope.querySelector('.mv-conn-key')?.value || '').trim();
     if (key) upstream.apiKey = key;
-    const lines = (conn.querySelector('.mv-conn-headers')?.value || '').split('\n').map((l) => l.trim()).filter(Boolean);
+    const lines = (scope.querySelector('.mv-conn-headers')?.value || '').split('\n').map((l) => l.trim()).filter(Boolean);
     const headers = {};
     for (const l of lines) {
       const i = l.indexOf(':');
@@ -1558,10 +1671,11 @@ export function collectConnection(connEl) {
     const or = !codex && openRouterApplies(conn) ? collectOpenRouter(conn) : undefined;
     if (or) upstream.openrouter = or;
   }
+  keepUndrawn(conn, upstream);
   if (codex) return { upstream };   // the capability pins steer the bridge only
   const capabilities = {};
-  for (const cb of conn.querySelectorAll('.mv-conn-cap-cb')) capabilities[cb.dataset.cap] = !!cb.checked;
-  for (const inp of conn.querySelectorAll('.mv-conn-limit-in')) {
+  for (const cb of scope.querySelectorAll('.mv-conn-cap-cb')) capabilities[cb.dataset.cap] = !!cb.checked;
+  for (const inp of scope.querySelectorAll('.mv-conn-limit-in')) {
     const v = (inp.value || '').trim();
     if (v !== '') capabilities[inp.dataset.limit] = Number(v);
   }
