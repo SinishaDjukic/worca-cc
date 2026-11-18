@@ -252,18 +252,19 @@ test('paintAccountCorner: initials, the short name, the ring and the away dot; n
         assert.equal(/\$/.test(btn.getAttribute('aria-label')), false, 'no spend amount');
       }
     } },
-    { name: 'with a level avatar image: blocked and usage parts in the title, no title when there are none', run: () => {
+    { name: 'with a level avatar image: no native title (the level hover card is the tooltip); blocked and usage parts in the aria-label', run: () => {
       const doc = shell();
       const btn = doc.getElementById('side-acct');
       const avatar = { src: '/levels/curious.svg', alt: 'Curious' };
       paintAccountCorner(btn, describeAccount(null), { budget: { ...NO_LIMIT, blocked: true }, avatar });
       assert.match(btn.getAttribute('aria-label'), /new runs blocked · Curious/);
-      assert.equal(btn.title, 'new runs blocked');
+      assert.equal(btn.hasAttribute('title'), false);
       paintAccountCorner(btn, describeAccount(null), { avatar, usageParts: ['Session · Codex: 86%, resets 14:50'] });
-      assert.equal(btn.title, 'Session · Codex: 86%, resets 14:50');
+      assert.equal(btn.hasAttribute('title'), false);
       assert.match(btn.getAttribute('aria-label'), /Session · Codex: 86%, resets 14:50 · Curious: spend, usage,/);
       paintAccountCorner(btn, describeAccount(null), { budget: { ...LIMIT, blocked: true }, avatar, usageParts: ['Session · Codex: 86%, resets 14:50'] });
-      assert.equal(btn.title, 'new runs blocked · Session · Codex: 86%, resets 14:50');
+      assert.equal(btn.hasAttribute('title'), false);
+      assert.match(btn.getAttribute('aria-label'), /new runs blocked · Session · Codex: 86%, resets 14:50 · Curious/);
       paintAccountCorner(btn, describeAccount(null), { avatar });
       assert.equal(btn.hasAttribute('title'), false);
     } },
