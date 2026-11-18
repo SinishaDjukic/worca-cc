@@ -341,7 +341,7 @@ test('GET /api/settings returns {root, projectsRoot, projectsRootDefault, defaul
     assert.deepEqual(j.commandSummaryModel, { model: null, effort: null }, 'no command summaries model stored -> the cheapest ready Claude model');
     assert.equal(j.workspaceScan, null, 'no scan models stored -> the defaults');
     assert.deepEqual(j.workspaceScanDefault, { scanModel: 'claude-sonnet-5', scanEffort: 'medium', agentModel: 'sonnet', agentEffort: 'medium' });
-    assert.equal(j.workspaceScanFromRole, false, 'no Everyday coding role: the scan default is the built-in one');
+    assert.equal(j.workspaceScanFromRole, false, 'no Everyday tasks role: the scan default is the built-in one');
     assert.equal(j.root, '', 'nothing set yet');
     assert.equal(j.projectsRoot, '', 'the RAW setting — "" when unset, exactly like root');
     assert.equal(j.projectsRootDefault, projectsHome(), 'what applies while it is blank');

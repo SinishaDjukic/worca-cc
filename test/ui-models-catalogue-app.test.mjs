@@ -265,7 +265,7 @@ test('9: Edit opens the editor', async () => {
   assert.equal(doc.querySelector('#mv-editor-host .mv-editor').dataset.id, 'gw-claude');
 });
 
-test('9b: Test writes into the panel; a use opens the Jobs tab', async () => {
+test('9b: Test writes into the panel; a use opens its block on the Jobs tab', async () => {
   const { window, doc } = await boot({ hash: 'models', arms: [['POST', '/api/models/gw-claude/test', ok({ ok: true, text: 'pong' })]] });
   press(window, row(doc, 'gw-claude'));
   const btn = doc.querySelector('#model-panel-host .mdl-act[data-act="test"]');
@@ -278,7 +278,8 @@ test('9b: Test writes into the panel; a use opens the Jobs tab', async () => {
   press(window, row(doc, 'my-copilot-gpt'));
   press(window, doc.querySelector('#model-panel-host .mdl-use'));
   await settle();
-  assert.equal(window.location.hash, '#models/jobs');
+  // my-copilot-gpt's first use is a role (Planner on Claude Code): the Roles block.
+  assert.equal(window.location.hash, '#models/jobs/roles');
 });
 
 test('10: #models/model/<id> opens it, also a built-in, with filters cleared', async () => {

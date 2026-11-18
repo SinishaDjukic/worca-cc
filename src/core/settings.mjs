@@ -1286,9 +1286,9 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'autoGeneratePrDescription',               // run that Generate with AI when the modal opens
   'memoryDefrag',                            // Settings › Memory: the defragment model + effort
   'agentGenModel',                           // the agent wizard's Generate: model + effort (Claude, user-level)
-  'namingModel',                             // Smart run naming's model + effort (Models › Helper jobs, Claude, user-level)
-  'commandSummaryModel',                     // Command summaries' model + effort (Models › Helper jobs, Claude, user-level)
-  'secondOpinionModel',                      // Second-opinion reviewer's model + effort (Models › Helper jobs, Claude, user-level)
+  'namingModel',                             // Smart run naming's model + effort (Models › Jobs › Helper jobs, Claude, user-level)
+  'commandSummaryModel',                     // Command summaries' model + effort (Models › Jobs › Helper jobs, Claude, user-level)
+  'secondOpinionModel',                      // Second-opinion reviewer's model + effort (Models › Jobs › Helper jobs, Claude, user-level)
   'workspaceScan',                           // Settings › Runs › Workspaces: the scan's models
   'schedule',                                // scheduled-run defaults { graceMin, ifMissed, maxFailures }
   'nightMode',                               // night mode user layer (night/config.mjs fields)
@@ -1299,9 +1299,9 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'actions',                                 // Settings › Runs › Actions { keep, portLow, portHigh, editor, terminal, maxCheckouts }
   'runEngine', 'stepModels', 'utilityModels',
   'modelRoles',                              // Models › Roles: { <engine>: { deep|everyday|quick: { model, effort } } }
-  'requirementsInterview',                  // Models › Engines › Claude: the requirements interview { model, effort }
+  'requirementsInterview',                  // Models › Jobs › Helper jobs: the requirements interview { model, effort }
   'askEngine', 'askModels',                  // Chat's engine for new chats and its model per engine (user-only, D17)
-  'designModels',                            // Models › Engines › Design: { <engine>: { lead|builder: { model, effort } } }
+  'designModels',                            // Models › Jobs › Design: { <engine>: { lead|builder: { model, effort } } }
   'tagDimensions',                           // Settings › Tags › Tag dimensions [{ key, label, values, required, default? }]
   'enforceTags',                             // Settings › Tags › Require mandatory tags to start a run
 ]);
@@ -1398,7 +1398,7 @@ export async function setAskModels(input) {
 /** Design's agents: the lead (the main agent) and the builders (one per section). */
 export const DESIGN_AGENT_ROLES = Object.freeze(['lead', 'builder']);
 /** The Models page's Design picks, { <engine>: { lead?: {model, effort?}, builder?: {model, effort?} } } (user-only). A
- *  design's own pick wins over these; an unset one falls back to the Deep thinking (lead) or Everyday coding (builder) role. */
+ *  design's own pick wins over these; an unset one falls back to the Deep thinking (lead) or Everyday tasks (builder) role. */
 export function designModelsSetting() {
   if (homeGuarded()) return {};
   const value = readSettings().designModels;
@@ -1853,7 +1853,7 @@ export async function setAgentGenModel(input, { models = null } = {}) {
   return { agentGenModel: agentGenModel() };
 }
 
-// ── Run naming model (Models › Engines › Claude › Helper jobs › Run naming) ───
+// ── Run naming model (Models › Jobs › Helper jobs › Run naming) ───
 // `namingModel`: the { model, effort } pair of Smart run naming's one cheap call (naming.mjs suggestNames).
 // User-level and Claude-only like agentGenModel: naming always runs on Claude (auxTextCall) and the New run
 // form's suggestion is not a run, so there is no project override and no other engine's slot. Unset = the
@@ -1895,7 +1895,7 @@ export async function setNamingModel(input, { models = null } = {}) {
   return { namingModel: namingModel() };
 }
 
-// ── Command summaries model (Models › Engines › Claude › Helper jobs › Command summaries) ───
+// ── Command summaries model (Models › Jobs › Helper jobs › Command summaries) ───
 // `commandSummaryModel`: the { model, effort } pair of the chat command summary call (ask/command-summary.mjs).
 // User-level and Claude-only like namingModel. Unset = the cheapest ready Claude model at its lowest effort
 // (naming.mjs#resolveNamingModel); none ready = no summary, the row keeps the raw command.
@@ -1935,7 +1935,7 @@ export async function setCommandSummaryModel(input, { models = null } = {}) {
   return { commandSummaryModel: commandSummaryModel() };
 }
 
-// ── Second-opinion reviewer (Models › Engines › Claude › Helper jobs › Second-opinion reviewer) ───
+// ── Second-opinion reviewer (Models › Jobs › Helper jobs › Second-opinion reviewer) ───
 // `secondOpinionModel`: the { model, effort } pair of the one role a role review names as `secondOpinion` (Shaper's
 // Product reviewer), so it judges on another model than its step. User-level only and no model role: mapped to a
 // role it would land on its step's model again. Codex's is `utilityModels.codex.secondOpinion`. Unset = Worca's factory

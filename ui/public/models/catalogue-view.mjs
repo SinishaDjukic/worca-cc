@@ -222,7 +222,7 @@ function factList(doc, facts) {
  *     [aria-label="More"] (icon more) when del (not also .mdl-act);
  *   dl.mdl-facts (dd.mono where `mono`; the ID's dd holds copyButton(doc, { name: 'Copy the ID', cls: 'mdl-copy-id' });
  *   markTile sm for a mark); secrets ("<KEY>: set" / "<KEY>: not set"); h3.mdl-sect "Limits" + dl only when
- *   limits.length (PAN-5); h3.mdl-sect "Used by" + "No job yet" or button.row-btn.mdl-use[data-engine] per use. */
+ *   limits.length (PAN-5); h3.mdl-sect "Used by" + "No job yet" or button.row-btn.mdl-use[data-engine][data-kind] per use. */
 export function renderModelPanel(panel, { doc = globalThis.document } = {}) {
   if (!panel) return null;
   const side = el(doc, 'aside', 'mdl-side');
@@ -268,6 +268,7 @@ export function renderModelPanel(panel, { doc = globalThis.document } = {}) {
     for (const u of panel.uses) {
       const b = button(doc, 'row-btn mdl-use');
       b.dataset.engine = u.engine;
+      b.dataset.kind = u.kind;
       b.append(el(doc, 'span', 'mdl-use-label', u.label), el(doc, 'span', 'mdl-use-kind', u.kindText));
       list.append(b);
     }

@@ -243,7 +243,7 @@ test('7: panel facts, secrets, uses, Test reasons, the state word', () => {
   assert.equal(fact(mine, 'Efforts').v, 'low, medium, high');
   assert.equal(fact(mine, 'Price').v, 'priced free');
   assert.equal(fact(mine, 'Source').v, 'Yours');
-  assert.deepEqual(mine.uses, [{ label: 'Implement', kindText: 'Step · OpenAI Codex', engine: 'codex' }]);
+  assert.deepEqual(mine.uses, [{ label: 'Implement', kindText: 'Step · OpenAI Codex', engine: 'codex', kind: 'step' }]);
   assert.equal(mine.actions.test.title, 'Needs setup first');
   assert.deepEqual(mine.state, { tone: 'need', text: 'Needs sign-in' });
   assert.deepEqual(mine.secrets, []);
@@ -309,6 +309,7 @@ test('7: panel facts, secrets, uses, Test reasons, the state word', () => {
   const sects = [...drawn.querySelectorAll('h3.mdl-sect')];
   assert.deepEqual(texts(sects), ['Used by']);
   const use = drawn.querySelector('button.row-btn.mdl-use[data-engine="codex"]');
+  assert.equal(use.dataset.kind, 'step');
   assert.ok(use.textContent.includes('Implement'));
   assert.ok(use.textContent.includes('Step · OpenAI Codex'));
 

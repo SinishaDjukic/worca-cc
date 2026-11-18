@@ -12,7 +12,7 @@ export const ENGINE_EFFORTS = Object.freeze({ claude: Object.freeze(['medium', '
   gemini: Object.freeze(['low', 'medium', 'high']), qwen: Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']) });
 // An inherited value's label; an unset one stays null, so the field shows its bare heading.
 const engineName = (v) => (v == null ? null : engineLabel(v));
-const helpersNote = (engine) => (engine === 'copilot' ? "Copilot runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on its own default model."
+export const helpersNote = (engine) => (engine === 'copilot' ? "Copilot runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on its own default model."
   : `${engineLabel(engine)} runs its helper jobs (titles, overview, PR description, Auto classifier, Away mode's decider) on Claude. See the Claude tab.`);
 export const JOB_LABELS = Object.freeze({ title: 'Titles', classifier: 'Auto workflow classifier', overview: 'Run overview', prDescription: 'PR description', memoryDefrag: 'Memory defragment', agentGen: 'Agent generation', naming: 'Run naming', commandSummary: 'Command summaries', workspaceScan: 'Workspace scan', requirementsInterview: 'Requirements interview', secondOpinion: 'Second-opinion reviewer' });
 // The setting id of an engine's helper slot, as settings-cascade.mjs names it: memory defragment
@@ -154,7 +154,7 @@ export function renderEngineSection(host, options) {
     if (engine !== 'claude') { const status = doc.createElement('small'); status.className = 'engine-card-status'; card.append(status); }
     if (options.notes?.[engine]) { const note = doc.createElement('small'); note.className = 'hint engine-card-note'; note.textContent = options.notes[engine]; card.append(note); }
     // options.modelRoles: the saved roles ({ claude: { everyday: {model, effort} } }). A row with no value of its own and
-    // nothing inherited from a team or project layer falls back to its role ("From Everyday coding · Sonnet 5.5").
+    // nothing inherited from a team or project layer falls back to its role ("From Everyday tasks · Sonnet 5.5").
     const row = (id, label, defaultLabel, hint = null) => {
       const value = field(id); const role = roleOfSettingId(id, { name: label });
       const rolePick = role && options.modelRoles?.[engine]?.[role];
@@ -178,7 +178,7 @@ export function renderEngineSection(host, options) {
       card.append(sec);
     }
     // options.designEngines: the engines Design builds on, while the design flag is on. Lead and builders, each
-    // falling back to its role (Deep thinking, Everyday coding) and then the engine's default model.
+    // falling back to its role (Deep thinking, Everyday tasks) and then the engine's default model.
     if ((options.designEngines || []).includes(engine)) {
       const dflt = SIGN_IN_ENGINE_NAMES.includes(engine) || engine === 'copilot' ? `${engineLabel(engine)}'s default model` : (options.defaultLabels?.[engine] || (engine === 'codex' ? "Codex's default model (GPT-5.6 Sol)" : 'the default model'));
       const rows = ['lead', 'builder'].map((role) => row(designRowId(engine, role), DESIGN_ROW_LABELS[role], dflt, DESIGN_ROW_HINTS[role]));

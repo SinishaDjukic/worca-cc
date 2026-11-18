@@ -92,6 +92,7 @@ test('narrow (VIS-4, ≤860px): two tiles per row, the step names hide, the list
   const at = (sel) => narrow.filter((r) => r.sel === sel).map((r) => r.body.replace(/\s+/g, '')).join(';');
   assert.match(at('.mdl-hx'), /(?:^|;)grid-template-columns:repeat\(2,minmax\(0,1fr\)\)(?:;|$)/);
   assert.match(at('.mdl-hx-t.best'), /(?:^|;)grid-row:auto(?:;|$)/);
+  assert.match(at('.mdl-tiles'), /(?:^|;)grid-template-columns:minmax\(0,1fr\)(?:;|$)/);
   assert.match(at('.mdl-steps'), /(?:^|;)display:none(?:;|$)/);
   assert.match(at('.mdl-add-src'), /(?:^|;)grid-template-columns:minmax\(0,1fr\)(?:;|$)/);
   assert.match(at('.mdl-add #mimp-body'), /(?:^|;)overflow-x:auto(?:;|$)/);
@@ -99,8 +100,37 @@ test('narrow (VIS-4, ≤860px): two tiles per row, the step names hide, the list
   assert.match(at('.mdl-add #mimp-body .mvi-tbl'), /(?:^|;)min-width:720px(?:;|$)/);
 });
 
+test('a job card head wraps: at 290px "Override a helper job" drops under the title instead of scrolling the page', () => {
+  const head = cssRules(part()).filter((r) => r.sel === '.card-head.mdl-card-h' && r.media === '').map((r) => r.body.replace(/\s+/g, '')).join(';');
+  assert.match(head, /(?:^|;)flex-wrap:wrap(?:;|$)/);
+  const over = cssRules(part()).filter((r) => r.sel === '.mdl-card-h > .mdl-override' && r.media === '').map((r) => r.body.replace(/\s+/g, '')).join(';');
+  assert.match(over, /(?:^|;)margin-left:auto(?:;|$)/, 'the button keeps to the right, on its own line too');
+});
+
+test('a Jobs block an address reveals (is-found on #jobs-roles and the job cards) flashes like a found card', () => {
+  const found = cssRules(part()).filter((r) => /#jobs-root\b/.test(r.sel) && /\.is-found\b/.test(r.sel));
+  const motion = found.filter((r) => r.media === '').map((r) => r.sel + '{' + r.body.replace(/\s+/g, '') + '}').join(' ');
+  const still = found.filter((r) => r.media === '@media (prefers-reduced-motion:reduce)').map((r) => r.sel + '{' + r.body.replace(/\s+/g, '') + '}').join(' ');
+  for (const [label, text] of [['motion', motion], ['reduced motion', still]]) {
+    assert.match(text, /\.mdl-job-card\b/, `${label}: the job cards`);
+    assert.match(text, /#jobs-roles\b/, `${label}: the role tiles' block`);
+  }
+  assert.match(motion, /animation:settingFound3sease-out/);
+  assert.match(still, /animation:none/);
+  assert.match(still, /box-shadow:0003pxvar\(--amber-ring\)/);
+});
+
 test("Add model's blocked box draws no border of its own inside the dialog's card (B2)", () => {
   const body = cssRules(part()).filter((r) => splitTop(r.sel).some((s) => /\.mdl-add-blocked(?![\w-])/.test(s))).map((r) => r.body).join(';');
   assert.match(body, /display:flex/);
   assert.deepEqual(decls(body, 'border(?:-[a-z]+)*').filter(([, v]) => !/^(?:0|none)\b/.test(v)), []);
+});
+
+test("the model picker's menu is fixed over the page, at two classes so the Chat composer's .ask-pop rules lose", () => {
+  const pop = cssRules(part()).filter((r) => r.media === '' && splitTop(r.sel).some((s) => /\.mdl-pick-pop(?![\w-])/.test(s)));
+  // chat/workflow-card.css loads later (parts.json) and sets .ask-pop{position:absolute;z-index:3} and .ask-pop-model's
+  // right and bottom at one class each: a one-class .mdl-pick-pop would lose on order; .ask-pop.mdl-pick-pop (0,2,0) wins.
+  assert.deepEqual(pop.map((r) => r.sel), ['.ask-pop.mdl-pick-pop']);
+  const body = pop[0].body.replace(/\s+/g, '');
+  for (const d of ['position:fixed', 'right:auto', 'bottom:auto', 'z-index:58']) assert.match(body, new RegExp(`(?:^|;)${d}(?:;|$)`), d);
 });

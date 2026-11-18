@@ -47,12 +47,14 @@ test('no rule boxes a list row or restyles a list card: the .card and .drow prim
   assert.ok(rules.some((r) => r.sel === '.card.drows:empty' && /display:none/.test(r.body)), 'an empty list draws no card');
 });
 
-test('the Models Engines card is a page card, full width, not a flat Settings card', () => {
+test('the Models Jobs tab draws page cards, full width, not flat Settings cards', () => {
   const page = new JSDOM(readIndexHtml()).window.document;
-  const card = page.getElementById('engine-settings-card');
-  assert.ok(card.closest('[data-view="models"]'));
-  assert.ok(card.classList.contains('card'));
-  assert.equal(card.classList.contains('settings-card'), false, '.settings-card is the 760px Settings-pane card');
+  assert.ok(page.getElementById('jobs-root').closest('[data-view="models"] #models-tab-jobs'), 'the tab draws into #jobs-root');
+  assert.equal(page.getElementById('engine-settings-card'), null, 'the old Engines card is gone');
+  // jobs-view.mjs builds each job card: a page .card, never .settings-card (the 760px Settings-pane card).
+  const view = read('ui/public/models/jobs-view.mjs');
+  assert.match(view, /make\(doc, 'section', 'card drows mdl-job-card'\)/);
+  assert.doesNotMatch(view, /settings-card/);
 });
 
 test('the built-in model strips use the card tokens, no colour literal', () => {

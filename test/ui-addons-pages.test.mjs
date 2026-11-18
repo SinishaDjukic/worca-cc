@@ -289,11 +289,14 @@ test('Models is a page of its own: the catalog, the Engines card from GET /api/s
       assert.ok(calls.includes('GET /api/models'));
       assert.ok(calls.includes('GET /api/settings'));
       assert.equal(doc.getElementById('topnav-title').textContent, 'Models');
-      assert.equal(doc.querySelector('#engine-settings-root [data-setting="run.engine"] .inherit-input').value, 'codex', 'the Engines card painted');
       assert.equal(doc.querySelector('#settings-tabs button[data-tab="models"]'), null);
       assert.equal(doc.querySelector('[data-view="settings"] #models-list'), null);
+      // The Jobs tab opens on the default harness the settings name, its "Default for new runs" pressed.
+      await go(window, 'models/jobs');
+      assert.equal(doc.querySelector('#jobs-root .mdl-hx [aria-pressed="true"]')?.dataset.engine, 'codex');
+      assert.equal(doc.querySelector('#jobs-root .mdl-default-btn').getAttribute('aria-pressed'), 'true');
     } },
-    { name: 'a failed GET /api/settings says so on the Jobs tab (its Roles and Engines cards come from it); a later load that works takes it back', run: async () => {
+    { name: 'a failed GET /api/settings says so on the Jobs tab (the tab reads it); a later load that works takes it back', run: async () => {
       let fail = true;
       const { window, doc } = await boot({ routes: { '/api/settings': () => (fail
         ? { ok: false, status: 500, json: async () => ({ error: 'disk full' }) }
@@ -397,10 +400,12 @@ test('Models tabs: one view, three panels; the old Providers page is its Provide
       assert.equal(doc.querySelector('#providers-list .mv-providers'), null, 'the Providers card waits for its tab');
       assert.ok(!calls.includes('GET /api/openrouter/free-daily?refresh=1'), 'so does its free-requests read');
     } },
-    { name: '#models/jobs: the Jobs panel shows the Roles and Engines cards; Jobs is lit; the head actions hide', run: async () => {
+    { name: '#models/jobs: the Jobs panel draws the tab into #jobs-root (the old Roles and Engines cards are gone); Jobs is lit; the head actions hide', run: async () => {
       const { doc } = await boot({ hash: 'models/jobs' });
       assert.deepEqual(shownPanels(doc), ['jobs']);
-      assert.ok(panel(doc, 'jobs').querySelector('#model-roles-card') && panel(doc, 'jobs').querySelector('#engine-settings-card'));
+      assert.ok(panel(doc, 'jobs').querySelector('#jobs-root > .mdl-jobs #jobs-roles'), 'drawn from the catch-all bodies');
+      assert.equal(doc.getElementById('model-roles-card'), null);
+      assert.equal(doc.getElementById('engine-settings-card'), null);
       assert.equal(lit(doc), 'jobs');
       assert.equal(headActions(doc).hidden, true);
     } },
@@ -439,19 +444,20 @@ test('Models tabs: one view, three panels; the old Providers page is its Provide
       assert.ok(pvCard(doc, 'openai').classList.contains('is-found'));
       assert.deepEqual(errors, []);
     } },
-    { name: '#models/engine-settings-card: the Jobs panel, the Engines card found, its first field focused once the settings load', run: async () => {
-      const { doc } = await boot({ hash: 'models/engine-settings-card' });
+    { name: '#models/engine-settings-card (the old Engines card address): the Jobs panel, its Steps block found and focused once the tab loads', run: async () => {
+      const { window, doc } = await boot({ hash: 'models/engine-settings-card' });
       assert.deepEqual(shownPanels(doc), ['jobs']);
-      assert.ok(doc.getElementById('engine-settings-card').classList.contains('is-found'));
       await settle();
-      assert.ok(doc.getElementById('engine-settings-card').contains(doc.activeElement), 'the post-load reveal focused a field in the card');
+      assert.ok(doc.getElementById('jobs-steps').classList.contains('is-found'), 'no steps in the catch-all body: the block still draws');
+      assert.ok(doc.getElementById('jobs-steps').contains(doc.activeElement), 'the post-load reveal focused a button in the block');
+      assert.equal(window.location.hash, '#models/engine-settings-card', 'the address stays as typed');
     } },
-    { name: 'a Jobs card link from inside the open page (nothing loads) finds the card and focuses its first field', run: async () => {
+    { name: 'a Jobs block link from inside the open page finds the block and focuses its first button', run: async () => {
       const { window, doc } = await boot({ hash: 'models' });
       await go(window, 'models/engine-settings-card');
       assert.deepEqual(shownPanels(doc), ['jobs']);
-      assert.ok(doc.getElementById('engine-settings-card').classList.contains('is-found'));
-      assert.ok(doc.getElementById('engine-settings-card').contains(doc.activeElement));
+      assert.ok(doc.getElementById('jobs-steps').classList.contains('is-found'));
+      assert.ok(doc.getElementById('jobs-steps').contains(doc.activeElement));
     } },
     { name: 'a Catalogue action that refreshes the page keeps a key typed on the Providers tab', run: async () => {
       // One built-in, so Claude Code's group draws its hide switch.
@@ -475,22 +481,28 @@ test('Models tabs: one view, three panels; the old Providers page is its Provide
       assert.equal(pvRow(doc, 'openai').querySelector('.mv-pv-key').value, 'sk-test');
       assert.deepEqual(errors, []);
     } },
-    { name: 'tab switches fetch nothing and keep a typed key and a dirty Roles row', run: async () => {
-      const { window, doc, calls } = await boot({ hash: 'models/providers' });
+    { name: 'Catalogue and Providers switches fetch nothing, a Jobs show reads its tab; a typed key and the Jobs draft stay', run: async () => {
+      const routes = { '/api/config': { models: [{ id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['high'] }], steps: [] } };
+      const { window, doc, calls } = await boot({ hash: 'models/providers', routes });
       const errors = errorsOf(window);
       const card = doc.querySelector('#providers-list .mv-providers');
       const key = pvRow(doc, 'openai').querySelector('.mv-pv-key');
       key.value = 'sk-test';
       key.dispatchEvent(new window.Event('input', { bubbles: true }));
       await go(window, 'models/jobs');
-      const field = doc.querySelector('#model-roles-root .inherit-field');
-      field.querySelector('select, input').dispatchEvent(new window.Event('change', { bubbles: true }));
+      doc.querySelector('#jobs-roles .mdl-tile[data-setting="models.claude.roles.deep"]').click();
+      [...doc.querySelectorAll('.mdl-pick-pop .ask-model-name')].find((n) => n.textContent === 'Opus 5.5').closest('button').click();
+      assert.equal(doc.querySelector('#jobs-root .mdl-savebar .note').textContent, '1 unsaved change');
       calls.length = 0;
       await go(window, 'models/providers');
+      await go(window, 'models');
+      assert.deepEqual(API(calls), [], 'a switch to Providers or the Catalogue fetches nothing');
       await go(window, 'models/jobs');
+      assert.deepEqual([...new Set(API(calls))].sort(), ['GET /api/config', 'GET /api/engines', 'GET /api/settings'], 'a Jobs show reads settings, config and the readiness');
+      calls.length = 0;
       await go(window, 'models/providers');
       assert.deepEqual(API(calls), []);
-      assert.equal(doc.getElementById('modelRolesMsg').textContent, '1 unsaved change');
+      assert.equal(doc.querySelector('#jobs-root .mdl-savebar .note').textContent, '1 unsaved change', 'the draft stays on the save bar');
       assert.equal(doc.querySelector('#providers-list .mv-providers'), card, 'the card was not drawn again');
       assert.equal(pvRow(doc, 'openai').querySelector('.mv-pv-key').value, 'sk-test');
       assert.deepEqual(errors, []);
@@ -548,32 +560,32 @@ test('Models tabs: one view, three panels; the old Providers page is its Provide
       await go(window, 'models/jobs');
       assert.equal(doc.getElementById('info-bubble').classList.contains('hidden'), true);
     } },
-    { name: 'a Jobs card link whose settings land after the user moved to another tab flashes and focuses nothing there', run: async () => {
+    { name: 'a Jobs block link whose settings land after the user moved to another tab flashes and focuses nothing there', run: async () => {
       let release;
       const held = new Promise((r) => { release = r; });
       const routes = { '/api/settings': () => held.then(() => ({ ok: true, status: 200, json: async () => ({ root: '/tmp/x', default: '/tmp/x' }) })) };
       const { window, doc } = await boot({ hash: 'models/engine-settings-card', routes });
-      const card = doc.getElementById('engine-settings-card');
+      assert.equal(doc.getElementById('jobs-steps'), null, 'nothing is drawn before the settings come');
       await go(window, 'models/providers');
-      card.classList.remove('is-found');   // the link's own flash, before the settings came
       release();
       await settle(40);
-      assert.ok(doc.getElementById('engine-settings-root').querySelector('select, input'), 'the Engines card painted');
+      // The blocks exist once the read lands (with zero steps the Steps block still draws).
+      const card = doc.getElementById('jobs-steps');
+      assert.ok(card, 'the tab painted');
       // A focus inside a hidden panel is a no-op (jsdom and the browser alike): the flash is what would wait for the user.
       assert.equal(card.classList.contains('is-found'), false, 'no late flash on the hidden Jobs tab');
       assert.equal(card.contains(doc.activeElement), false, 'no focus inside the hidden Jobs tab');
     } },
-    ...['models/jobs/model-roles-card', 'models/jobs'].map((to) => ({ name: `a Jobs card link whose settings land after the user moved on to #${to} flashes and focuses nothing in the old card`, run: async () => {
+    ...['models/jobs/model-roles-card', 'models/jobs'].map((to) => ({ name: `a Jobs block link whose settings land after the user moved on to #${to} flashes and focuses nothing in the old block`, run: async () => {
       const settings = heldRoute({ root: '/tmp/x', default: '/tmp/x' });
       const { window, doc } = await boot({ hash: 'models/jobs/engine-settings-card', routes: { '/api/settings': settings.route } });
-      const card = doc.getElementById('engine-settings-card');
       await go(window, to);
-      card.classList.remove('is-found');   // the link's own flash, before the settings came
       settings.release();
       await settle(40);
-      assert.ok(doc.getElementById('engine-settings-root').querySelector('select, input'), 'the Engines card painted');
+      const card = doc.getElementById('jobs-steps');
+      assert.ok(card, 'the tab painted');
       assert.deepEqual(shownPanels(doc), ['jobs']);
-      assert.equal(card.classList.contains('is-found'), false, 'no late flash on a card the address no longer names');
+      assert.equal(card.classList.contains('is-found'), false, 'no late flash on a block the address no longer names');
       assert.equal(card.contains(doc.activeElement), false, 'the focus stays where the user is');
     } })),
     { name: 'a reload on #models/model/my-gpt finds the row once the catalogue loads (one hash write, no second route)', run: async () => {
@@ -909,11 +921,13 @@ test('Models tabs: one view, three panels; the old Providers page is its Provide
       assert.equal(window.location.hash, '#models');
       assert.deepEqual(shownPanels(doc), ['catalogue']);
     } },
-    ...['models', 'models/jobs', 'models/providers'].map((hash) => ({ name: `at Simple, #${hash} opens under the Models banner; the Roles card stays Simple`, run: async () => {
-      const { doc } = await boot({ hash, level: 'simple' });
+    ...['models', 'models/jobs', 'models/providers'].map((hash) => ({ name: `at Simple, #${hash} opens under the Models banner; the Jobs tab's Roles block stays Simple`, run: async () => {
+      const { window, doc } = await boot({ hash, level: 'simple' });
       assert.equal(doc.getElementById('level-banner').hidden, false);
       assert.equal(doc.getElementById('level-banner-text').textContent, 'Models is part of Expert mode, so it is not in your menu.');
-      assert.equal(doc.getElementById('model-roles-card').dataset.minLevel, 'simple');
+      if (hash !== 'models/jobs') await go(window, 'models/jobs');
+      assert.equal(doc.getElementById('jobs-roles').dataset.minLevel, 'simple');
+      assert.equal(doc.getElementById('jobs-steps').dataset.minLevel, 'advanced');
     } })),
     { name: 'app.js no longer routes to, checks or loads a Providers view', run: async () => {
       const src = readFileSync(appPath, 'utf8');

@@ -192,6 +192,9 @@ import { providerModelCounts, providerState } from './models/provider-state.mjs'
 import { renderAddStep1, collectAddStep1, renderAddStep2, addStep2Plan, paintAddSelection } from './models/add-model-dialog.mjs';
 import { buildCatalogue, buildModelPanel, CATALOGUE_VIEW_DEFAULT } from './models/catalogue-model.mjs';
 import { renderCatalogue, renderModelPanel } from './models/catalogue-view.mjs';
+import { buildJobs, jobsSaved, jobsSaveBody, jobsDirty } from './models/jobs-model.mjs';
+import { renderJobs, openOverrideMenu } from './models/jobs-view.mjs';
+import { openModelPicker } from './models/model-picker.mjs';
 import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
@@ -259,8 +262,7 @@ import { createArtifactBrowser } from './artifacts/browser.mjs';
 import { baseName as artifactBaseName } from './artifacts/common.mjs';
 import { resolveNodeTunables, modifiedFieldsOf, pruneNodeSelection, buildGraphNodeRows as ntBuildGraphNodeRows, buildNodeConfigRows as ntBuildNodeConfigRows } from './node-tunables.mjs';
 import { buildFeedbackRows as ntBuildFeedbackRows } from './loop-rows.mjs';
-import { renderEngineSection, readEngineSection, enginePatchToSettingsBody, utilityId, designRowId, renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody, renderRolesSection, readRolesValues, rolesPatchToSettingsBody, paintRoleFallbacks } from './engine-settings-view.mjs';
-import { DESIGN_ENGINE_NAMES } from '../../src/shared/design-names.mjs';
+import { renderAskEngineSection, readAskEngineSection, askPatchToSettingsBody } from './engine-settings-view.mjs';
 import { mountProjectSettings } from './project-settings-view.mjs';
 import { mountHouseBrief } from './house-brief-view.mjs';
 import { appendModelGroups, modelOptionText } from './model-options.mjs';
@@ -1014,6 +1016,7 @@ const el = {
   modelPanelHost: $('#model-panel-host'),
   modelsMsg: $('#models-msg'),
   modelsJobsMsg: $('#models-jobs-msg'),
+  jobsRoot: $('#jobs-root'),
   providersList: $('#providers-list'),
   providersMsg: $('#providers-msg'),
   modelEditorModal: $('#model-editor-modal'),
@@ -1053,6 +1056,10 @@ let modelsLoadSeq = 0;
 let modelsLoadNewest = null;
 // The number of the newest Models page entry: only its post-load paint and reveals run.
 let modelsEntrySeq = 0;
+// The number of the newest Jobs tab read (loadJobs): an older read writes no settings and draws nothing.
+let jobsLoadSeq = 0;
+// The 3 s clears of the Jobs blocks an address flashed, by block id: a repaint draws a new block with the same id.
+const jobsFoundTimers = new Map();
 // The shared dialog anatomy (dialog-layout.mjs): keep the head/foot edge dividers of every static .dlg current.
 watchDialogEdges(document);
 
@@ -1949,6 +1956,8 @@ function handleServerMessage(msg) {
     if (currentView() === 'new') void loadRunDefaults(state.runTarget === 'workspace' ? '' : (state.projectDir || ''));
     // The Catalogue's Used by, Default and hidden built-ins follow what another tab saved.
     if (currentView() === 'models') void loadModelsView();
+    // The Jobs tab re-reads what is saved under its draft (kept); never the readiness preflight, from any view.
+    if (mvState.jobs.loaded) void loadJobs({ engines: false });
     loadSettings();
     return;
   }
@@ -4996,12 +5005,12 @@ function paintEngineHints() {
     el.engineHint.hidden = state.engine === 'claude';
     const project = Object.values(state.runDefaults?.steps?.[state.engine] || {}).some((s) => s?.source === 'project');
     el.engineHint.textContent = state.engine === 'copilot'
-      ? `GitHub Copilot CLI runs this pipeline, including titles and summaries (on its default model). Step models: ${project ? 'project Settings' : 'Models › Copilot'}. Sign in once with copilot login.`
+      ? `GitHub Copilot CLI runs this pipeline, including titles and summaries (on its default model). Step models: ${project ? 'project Settings' : 'Models › Jobs'}. Sign in once with copilot login.`
       : state.engine === 'cursor'
-      ? `Cursor runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : 'Models › Cursor'}.`
+      ? `Cursor runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : 'Models › Jobs'}.`
       : SIGN_IN_ENGINE_NAMES.includes(state.engine)
-      ? `${engineLabel(state.engine)} runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : `Models › ${engineLabel(state.engine)}`}.`
-      : `Codex runs this pipeline, including titles and summaries. Its models: ${project ? 'project Settings' : 'Models › Codex'}`;
+      ? `${engineLabel(state.engine)} runs this pipeline. Helper jobs (titles, summaries) run on Claude. Step models: ${project ? 'project Settings' : 'Models › Jobs'}.`
+      : `Codex runs this pipeline, including titles and summaries. Its models: ${project ? 'project Settings' : 'Models › Jobs'}`;
   }
   if (el.engineDefaultHint) {
     const source = state.runDefaults?.engine?.value === state.engine ? state.runDefaults.engine.source : null;
@@ -10630,7 +10639,7 @@ let wizModelCatalog = [];
 // sends the four still-empty selects (the scan route answers 400 to an empty pick).
 let wizModelsPainted = Promise.resolve();
 // The wizard stores a scan pick on the new workspace only when one is needed: the user changed a picker, or no
-// Everyday coding role covers the scan (a re-scan would then ask for a model). Otherwise its re-scans follow the role.
+// Everyday tasks role covers the scan (a re-scan would then ask for a model). Otherwise its re-scans follow the role.
 let wizScanTouched = false;
 let wizScanPickNeeded = true;
 let wsScanCatalog = [];
@@ -16384,7 +16393,7 @@ function setSettingsLoadMsg(text) {
   if (!n) return;
   n.textContent = text ? `Could not load settings: ${text}` : '';
   n.hidden = !text;
-  // The Models page loads the same payload (its Jobs tab's Roles and Engines cards) but sits outside
+  // The Models page loads the same payload but sits outside
   // Settings, so the line above is not on screen there: say it on the Jobs tab's own line, and take it
   // back once a load works (only that message: anything else on the line stays).
   if (currentView() !== 'models') return;
@@ -16417,7 +16426,7 @@ async function loadSettings() {
     paintDebugSpawnSettings(data);
     paintKeepAwakeRow(data.keepAwake !== false);
     paintPrSettings(data);
-    await paintEngineSettings(data);
+    syncRunEngine(data);
     await paintWorkspaceScanModelsSettings(data);
     paintBudgetReadout();
     paintTeamCapsReadout();                 // team policy (design board 7): each home's caps, read-only
@@ -17401,7 +17410,7 @@ function snPaintTypes() {
     return add;
   })());
 }
-// The model is a helper job (Models › Engines › Helper jobs › Run naming); the card only says which one runs and
+// The model is a helper job (Models › Jobs › Helper jobs › Run naming); the card only says which one runs and
 // what a suggestion costs. /api/naming/config answers 404 while the flag is off, so the cost line waits for it.
 async function snPaintCost(naming) {
   const out = document.getElementById('smartNamingCost');
@@ -17448,7 +17457,7 @@ document.getElementById('smartNamingSave')?.addEventListener('click', (e) => pos
 document.getElementById('smartNamingReset')?.addEventListener('click', (e) => postSmartNaming(
   { smartNaming: null }, { button: e.currentTarget, gate: false, busy: 'Resetting…', done: 'Reset' }));
 settingsCardDirty('smartNamingSave');
-onFlagChange('smartRunNaming', () => { snPaintMuted(); void snPaintCost(null); void paintHelperModelCards(); });
+onFlagChange('smartRunNaming', () => { snPaintMuted(); void snPaintCost(null); repaintJobs(); });
 // Settings › Network proxy (networkProxy.enabled; Simple level, no flag).
 mountNetworkProxyCard({ onOpenSetup: (step) => openSetup({ entry: 'fix', step }) });
 
@@ -17663,9 +17672,8 @@ document.getElementById('prSettingsSave')?.addEventListener('click', (e) => post
   { card: document.getElementById('pr-settings-card'), paint: paintPrSettings, dirty: settingsCardDirty('prSettingsSave'), button: e.currentTarget }));
 settingsCardDirty('prSettingsSave');
 
-// ---- Helper models: Claude's title, Auto and PR description slots are rows of the Engines card's Helper jobs
-// (engine-settings-view.mjs). What stays here: the project-less catalog every model picker reads, the Claude-only
-// list builder the workspace scan picker uses, and a row's Test.
+// ---- Model pickers outside the Models page: the project-less catalog every model picker reads, the Claude-only
+// list builder the workspace scan picker uses, and a row's Test (Settings › Chat, Project settings, Models › Jobs).
 async function fetchTitleModelCatalog() {
   try {
     const res = await fetch('/api/config');
@@ -19564,6 +19572,12 @@ const mvState = {
   // The side panel's Test (PAN-3) by lower-cased id: { busy, text, err }. A repaint while it runs draws the panel anew
   // and the new one still reads "Testing…" with Test off; a finished answer stays while that model's panel shows.
   tests: new Map(),
+  // The Jobs tab (models-menu P6), kept for the session: the harness it shows (null until the first load picks the
+  // default; a "Used by" press may set it first), the draft by setting id ({ model?, effort? }, null = cleared), each
+  // card's Show all, the rows an Override pick revealed, the last reads (GET /api/settings, /api/config's catalogue
+  // and steps as { catalog, steps }, GET /api/engines' rows or null), whether a read ever drew the tab and whether a
+  // Save is out (its POST not answered yet).
+  jobs: { engine: null, draft: {}, showAll: { steps: false, helpers: false }, revealed: new Set(), settings: null, config: null, engines: null, loaded: false, saving: false },
 };
 
 function setModelsMsg(text, kind) {
@@ -19995,165 +20009,258 @@ async function exportPluginFlow() {
   });
 }
 
-const CODEX_HELPER_JOBS = ['title', 'classifier', 'overview', 'prDescription', 'memoryDefrag', 'workspaceScan', 'secondOpinion'];
-// src/core/model-env.mjs HELPER_ENGINES (the browser cannot load /src/core): the engines with helper slots of their own.
-const HELPER_ENGINES = ['claude', 'codex'];
-// Claude's helper slots at user level are their own settings keys (settings-cascade.mjs CLAUDE_USER): a model id for
-// titles, Auto and PR descriptions (no effort), and the Memory defragment, Agent generation, Run naming and Command
-// summaries pairs. No user-level overview slot. Agent generation, Run naming and Command summaries are Claude's alone
-// (they always run on Claude), so no other tab has their rows; Run naming shows only while smartRunNaming is on, Command
-// summaries only while commandSummaries is on.
-const CLAUDE_USER_HELPER_JOBS = ['title', 'classifier', 'prDescription', 'memoryDefrag', 'agentGen', 'naming', 'commandSummary', 'secondOpinion'];
-const helperPair = (p) => (p && p.model ? { model: p.model, ...(p.effort ? { effort: p.effort } : {}) } : undefined);
-// Run naming shows only while smartRunNaming is on, Command summaries only while commandSummaries is on; the
-// Requirements interview is a user-only slot (settings key requirementsInterview), listed only while its flag is on.
-// All asked at paint time, never a module constant.
-const claudeUserHelperJobs = () => [...CLAUDE_USER_HELPER_JOBS.filter((job) => (job !== 'naming' || flagOn('smartRunNaming'))
-  && (job !== 'commandSummary' || flagOn('commandSummaries'))),
-  ...(flagOn('requirements') ? ['requirementsInterview'] : [])];
-const CLAUDE_USER_HELPER_OWN = (data) => ({
-  title: data.titleModel ? { model: data.titleModel } : undefined,
-  classifier: data.autoWorkflowModel ? { model: data.autoWorkflowModel } : undefined,
-  prDescription: data.prDescriptionModel ? { model: data.prDescriptionModel } : undefined,
-  memoryDefrag: helperPair(data.memoryDefrag),
-  agentGen: helperPair(data.agentGenModel),
-  requirementsInterview: data.requirementsInterview && (data.requirementsInterview.model || data.requirementsInterview.effort)
-    ? { ...(data.requirementsInterview.model ? { model: data.requirementsInterview.model } : {}), ...(data.requirementsInterview.effort ? { effort: data.requirementsInterview.effort } : {}) } : undefined,
-  naming: helperPair(data.namingModel),
-  commandSummary: helperPair(data.commandSummaryModel),
-  secondOpinion: helperPair(data.secondOpinionModel),
-});
-let lastEngineSettingsData = null;
-// The catalog the Models cards last painted with, and whether it loaded (the Roles card's catalog-failure line).
-let lastModelCatalog = []; let lastModelCatalogOk = true;
-/** The Engines card, then the Roles card (each paints on its own). A repaint that a Save of this card did not ask for
- *  (`force`) keeps a card with unsaved rows as it is: another card's Save or a settings-changed broadcast. */
-async function paintEngineSettings(data, { force = false } = {}) {
-  // Every settings read lands here first: the Catalogue's "Default" chip and its group menus follow the default harness.
+/** Every settings read lands here: the Catalogue's "Default" chip and its group menus follow the default harness. */
+function syncRunEngine(data) {
   const runEngine = (data && data.runEngine) || null;
   if (runEngine !== mvState.runEngine) {
     mvState.runEngine = runEngine;
     if (mvState.data) renderModelsViewBody();
   }
-  const root = document.getElementById('engine-settings-root');
+}
+
+// ---- Models › Jobs (models-menu P6): which model does which job. jobs-model.mjs builds the view model from the last
+// reads and the draft, jobs-view.mjs draws it into #jobs-root, model-picker.mjs is every pick's menu. One draft holds
+// the edits of every harness; Save sends what differs in one POST /api/settings.
+
+/** One GET of the tab: its JSON object ({} when the body is no object), or null when the read failed or threw. */
+async function jobsRead(url) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const body = await safeJson(res);
+    return body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+  } catch { return null; }
+}
+
+/** Reads the Jobs tab: GET /api/settings and /api/config (no project) and, with `engines`, GET /api/engines (the
+ *  readiness preflight: on a show only, never from a broadcast), together. The newest call wins: an older one writes
+ *  no settings and draws nothing. A failed settings or config read draws nothing new and leaves `loaded` as it was; a
+ *  body without steps, models or engines reads as empty. The draft is kept: what is saved changes underneath it.
+ *  Never rejects, and never writes #models-jobs-msg (loadSettings' load error lives there). */
+async function loadJobs({ engines = true } = {}) {
+  const seq = ++jobsLoadSeq;
+  const j = mvState.jobs;
+  const [settings, cfg, eng] = await Promise.all([jobsRead('/api/settings'), jobsRead('/api/config'), engines ? jobsRead('/api/engines') : null]);
+  // The readiness rows and the broker's locks are kept from whichever read brought them; a body without the list
+  // keeps both (the locks the boot learned from /api/engine-locks too).
+  const rows = Array.isArray(eng?.engines) ? eng.engines : null;
+  if (rows) {
+    j.engines = rows;
+    setEngineLocks(rows); applyEngineLocks();
+  }
+  if (seq !== jobsLoadSeq) { if (rows) repaintJobs(); return; }
+  if (!settings || !cfg) return;
+  j.settings = settings;
+  j.config = {
+    catalog: Array.isArray(cfg.models) ? cfg.models : [],
+    steps: Array.isArray(cfg.steps) ? cfg.steps.filter((s) => s && typeof s.key === 'string').map((s) => ({ key: s.key, label: s.label })) : [],
+  };
+  // The first read opens the tab on the default harness, unless a "Used by" press already named one.
+  if (j.engine === null) j.engine = (typeof settings.runEngine === 'string' && settings.runEngine) || 'claude';
+  syncRunEngine(settings);
+  j.loaded = true;
+  renderJobsTab();
+}
+
+/** What buildJobs reads: the last reads, the broker's locks, the flags and the ids GET /api/models marks testable. */
+function jobsData() {
+  const j = mvState.jobs;
+  const d = mvState.data || {};
+  const testable = new Set();
+  for (const key of ['predefined', 'codex', 'copilot', 'models', 'plugin', 'policy']) {
+    for (const m of Array.isArray(d[key]) ? d[key] : []) if (m && m.testable === true && typeof m.id === 'string') testable.add(m.id);
+  }
+  return {
+    settings: j.settings || {}, steps: j.config?.steps || [], catalog: j.config?.catalog || [], engines: j.engines, locks: addEngineLocks(),
+    flags: { requirements: flagOn('requirements'), design: flagOn('design'), smartRunNaming: flagOn('smartRunNaming'), commandSummaries: flagOn('commandSummaries') },
+    testable,
+  };
+}
+
+/** The view model and its data. Below Expert the tab shows the default harness; a locked one gives way to Claude Code
+ *  (the harness tiles press the first unlocked tile). */
+function jobsModel() {
+  const j = mvState.jobs;
+  const data = jobsData();
+  const def = (typeof data.settings.runEngine === 'string' && data.settings.runEngine) || 'claude';
+  const want = levelAtLeast('expert') ? (j.engine || def) : def;
+  const engine = data.locks.some((l) => l.name === want) ? 'claude' : want;
+  return { data, vm: buildJobs(data, j.draft, { engine, showAll: j.showAll, revealed: j.revealed }) };
+}
+
+/** A role tile's or a job row's view model by setting id, else null. */
+const jobsRow = (vm, id) => vm.roles.find((r) => r.id === id) || vm.sections.flatMap((s) => s.rows).find((r) => r.id === id) || null;
+
+// The tab's controls a draw makes anew: a repaint hands the keyboard back to the same one, told apart by its row's
+// setting id, its card and its harness.
+const JOBS_FOCUS_CLASSES = ['mdl-hx-t', 'mdl-default-btn', 'mdl-tile', 'mdl-pick', 'mdl-job-test', 'mdl-job-clear', 'mdl-override', 'mdl-show-all', 'mdl-discard', 'mdl-save'];
+const jobsFocusSig = (n) => JSON.stringify([n.closest('[data-setting]')?.dataset.setting || '', n.closest('[data-section]')?.dataset.section || '', n.dataset.engine || '']);
+/** The focused control of the tab as { cls, sig }, or null when the focus is elsewhere. */
+function jobsFocus(root) {
+  const a = document.activeElement;
+  if (!a || !a.classList || !root.contains(a)) return null;
+  const cls = JOBS_FOCUS_CLASSES.find((c) => a.classList.contains(c));
+  return cls ? { cls, sig: jobsFocusSig(a) } : null;
+}
+/** Focus the new twin of `f`; a row's clear or Test that is gone hands it to the row's picker. */
+function restoreJobsFocus(root, f) {
+  if (!f) return;
+  const twin = (cls) => [...root.querySelectorAll(`.${cls}`)].find((n) => jobsFocusSig(n) === f.sig);
+  const next = twin(f.cls) || twin('mdl-pick');
+  if (!next || document.activeElement === next) return;
+  try { next.focus({ preventScroll: true }); } catch { /* detached */ }
+}
+
+/** Draws the tab into #jobs-root from the last reads and the draft. Keeps the scroll, the focused control and the
+ *  flash of the block an address opened (the new block takes it over by id). While a Save is out the Save it draws is
+ *  busy ("Saving…", off), as withButton draws it. Fetches nothing. */
+function renderJobsTab() {
+  const root = el.jobsRoot;
   if (!root) return;
-  let cfg = {}; let cfgOk = true;
-  try { const res = await fetch('/api/config'); cfgOk = res.ok; cfg = await safeJson(res); } catch { cfgOk = false; }
-  const roles = Array.isArray(cfg?.steps) ? cfg.steps : Object.keys(cfg?.config?.steps || {}).map((key) => ({ key, label: key }));
-  const catalog = Array.isArray(cfg?.models) ? cfg.models : [];
-  const fields = { 'run.engine': { own: data.runEngine, inherited: { value: 'claude', source: 'default' } } };
-  for (const engine of ENGINE_NAMES) for (const role of roles) fields[`models.${engine}.steps.${role.key}`] = { own: data.stepModels?.[engine]?.[role.key], inherited: { value: undefined, source: 'default' } };
-  for (const engine of HELPER_ENGINES.filter((e) => e !== 'claude')) {
-    for (const job of CODEX_HELPER_JOBS) fields[utilityId(engine, job)] = { own: data.utilityModels?.[engine]?.[job], inherited: { value: undefined, source: 'default' } };
+  const { data, vm } = jobsModel();
+  const focus = jobsFocus(root);
+  const found = new Set([...root.querySelectorAll('.is-found[id]')].map((n) => n.id));
+  const scrolled = [];
+  for (let n = root.parentElement; n; n = n.parentElement) if (n.scrollTop) scrolled.push([n, n.scrollTop]);
+  root.replaceChildren(renderJobs(vm, { doc: document, engines: data.engines, locks: data.locks }));
+  const save = mvState.jobs.saving ? root.querySelector('.mdl-save') : null;
+  if (save) {
+    const spin = document.createElement('span');
+    spin.className = 'btn-spin';
+    spin.setAttribute('aria-hidden', 'true');
+    save.replaceChildren(spin, document.createTextNode('Saving…'));
+    save.classList.add('is-busy');
+    save.setAttribute('aria-busy', 'true');
+    save.disabled = true;
   }
-  // Design's lead and builders per engine (Engines card › Design), while the design flag is on.
-  const designEngines = flagOn('design') ? DESIGN_ENGINE_NAMES.filter((e) => ENGINE_NAMES.includes(e)) : [];
-  for (const engine of designEngines) for (const role of ['lead', 'builder']) fields[designRowId(engine, role)] = { own: data.designModels?.[engine]?.[role], inherited: { value: undefined, source: 'default' } };
-  const claudeOwn = CLAUDE_USER_HELPER_OWN(data || {});
-  const claudeJobs = claudeUserHelperJobs();
-  for (const job of claudeJobs) fields[utilityId('claude', job)] = { own: claudeOwn[job], inherited: { value: undefined, source: 'default' } };
-  // Worca's factory defaults (src/core/factory-models.mjs) read "(default)" on the Claude tab: the Second-opinion
-  // reviewer and Memory defragment (unless the Quick jobs role, which it takes first, names a model). A step's applies to
-  // role reviews only, and only when no role names a model, so its row keeps the role or default text and its hint
-  // names the factory default.
-  const factory = data?.factoryModels?.claude;
-  const factoryPair = (p) => (p && p.model ? { value: { model: p.model, ...(p.effort ? { effort: p.effort } : {}) }, source: 'default' } : null);
-  const quickRole = data?.modelRoles?.claude?.quick?.model;
-  for (const job of ['secondOpinion', ...(quickRole ? [] : ['memoryDefrag'])]) {
-    const inherited = factoryPair(factory?.helpers?.[job]);
-    if (inherited && fields[utilityId('claude', job)]) fields[utilityId('claude', job)].inherited = inherited;
-  }
-  const claudeStepHints = {};
-  for (const [key, pick] of Object.entries(factory?.steps || {})) {
-    if (!pick?.model) continue;
-    const label = catalog.find((m) => m.id === pick.model)?.label || pick.model;
-    claudeStepHints[key] = `Role reviews (Shaper) use your role; with none set, ${label}${pick.effort ? ` · ${pick.effort}` : ''}`;
-  }
-  // The interview's empty choices read "Opus 5.5 (default)" and "medium (default)" (the answer's requirementsInterviewDefault).
-  const interviewDefault = data?.requirementsInterviewDefault;
-  if (interviewDefault?.model && claudeJobs.includes('requirementsInterview')) fields[utilityId('claude', 'requirementsInterview')].inherited = { value: { model: interviewDefault.model, ...(interviewDefault.effort ? { effort: interviewDefault.effort } : {}) }, source: 'default' };
-  // Command summaries: unset runs on the cheapest ready Claude model, so the empty option names it ("Haiku 5.5 (default)").
-  const csAuto = data?.commandSummaryModelEffective;
-  if (fields[utilityId('claude', 'commandSummary')] && csAuto && csAuto.source === 'auto' && csAuto.model) {
-    fields[utilityId('claude', 'commandSummary')].inherited = { value: { model: csAuto.model }, source: 'default' };
-  }
-  lastModelCatalog = catalog; lastModelCatalogOk = cfgOk && catalog.length > 0;
-  const keep = !force && root.querySelector('.inherit-field[data-dirty="1"]');
-  if (!keep) {
-    keepFocusIn(root, () => renderEngineSection(root, { level: 'user', roles, catalog, fields, status: document.getElementById('engineSettingsMsg'), onTest: testModelRow,
-      noEffort: ['title', 'classifier', 'prDescription'].map((job) => utilityId('claude', job)),
-      defaultLabels: { claude: 'the default model' }, stepHints: { claude: claudeStepHints },
-      jobs: { claude: claudeJobs, codex: CODEX_HELPER_JOBS, cursor: [], goose: [], opencode: [] }, modelRoles: data.modelRoles || {}, designEngines }));
-  }
-  lastEngineSettingsData = data;
-  paintModelRoles(data);
-  // Each non-Claude card's readiness line (GET /api/engines). Only on the Models page, where the cards live: a
-  // settings-changed broadcast repaints this from any view, and that must not spawn a preflight.
-  if (currentView() === 'models') void paintEngineCardStatus(root);
+  for (const n of root.querySelectorAll('[id]')) if (found.has(n.id)) n.classList.add('is-found');
+  restoreJobsFocus(root, focus);
+  for (const [n, top] of scrolled) n.scrollTop = top;
 }
-/** Rebuild `root` with `paint`; a control inside it that had the focus hands it to the control at the same place. The
- *  Jobs tab's cards are repainted by every settings and catalogue load (the page's entry runs both, a window focus
- *  re-reads): without this the field a card link's reveal focused, or the one the user is in, drops it. */
-function keepFocusIn(root, paint) {
-  const controls = () => [...root.querySelectorAll('input, select, textarea, button')];
-  const at = root.contains(document.activeElement) ? controls().indexOf(document.activeElement) : -1;
-  paint();
-  if (at >= 0) controls()[at]?.focus({ preventScroll: true });
+
+/** Redraws the tab while it shows (a flag, the interface level). Fetches nothing; off the tab it does nothing. */
+function repaintJobs() {
+  if (mvState.jobs.loaded && currentModelsTab() === 'jobs') renderJobsTab();
 }
-/** Models › Roles: the role rows, then every unset Engines row's "From Everyday coding · …" text from them (AC-1.5). */
-function paintModelRoles(data, { force = false } = {}) {
-  const rolesRoot = document.getElementById('model-roles-root'); const engineRoot = document.getElementById('engine-settings-root');
-  if (!rolesRoot) return;
-  const keep = !force && rolesRoot.querySelector('.inherit-field[data-dirty="1"]');
-  if (!keep) {
-    keepFocusIn(rolesRoot, () => renderRolesSection(rolesRoot, { roles: data.modelRoles || {}, catalog: lastModelCatalog, engine: data.runEngine || 'claude',
-      status: document.getElementById('modelRolesMsg'), onChange: (roles) => { if (engineRoot) paintRoleFallbacks(engineRoot, roles, lastModelCatalog); } }));
-  }
-  if (engineRoot) paintRoleFallbacks(engineRoot, readRolesValues(rolesRoot), lastModelCatalog);
-  // The catalog failure has its own line, so the dirty counter and "Saved." on #modelRolesMsg never hide it.
-  const catalogMsg = document.getElementById('modelRolesCatalogMsg');
-  if (catalogMsg) catalogMsg.hidden = lastModelCatalogOk;
+document.addEventListener('worca:level', () => repaintJobs());
+// The requirements flag flips: GET /api/settings carries the interview's stored pair and its default only while it
+// is on, so the tab reads again.
+onFlagChange('requirements', () => { if (mvState.jobs.loaded) void loadJobs({ engines: false }); });
+// The design flag flips: the Design card comes or goes.
+onFlagChange('design', () => repaintJobs());
+
+/** The Jobs block each address word opens: the blocks' own words, and the old card addresses (also under jobs/). */
+const JOBS_PART_OF = Object.freeze({ roles: 'roles', steps: 'steps', helpers: 'helpers', design: 'design',
+  'model-roles-card': 'roles', engine: 'steps', 'engine-settings-card': 'steps', 'title-model': 'helpers' });
+/** Scrolls to and flashes (markFound) the block `rest` names, its first enabled button focused. An unknown word or a
+ *  block that is not drawn (Design with its flag off) reveals nothing; the address stays as typed. The flash ends
+ *  after 3 s on whichever block holds its id then, as a repaint draws a new one. */
+function revealJobsPart(rest) {
+  const part = Object.hasOwn(JOBS_PART_OF, rest) ? JOBS_PART_OF[rest] : '';
+  const block = part ? document.getElementById(`jobs-${part}`) : null;
+  if (!block || !el.jobsRoot?.contains(block)) return;
+  markFound(block, [...block.querySelectorAll('button')].find((b) => !b.disabled) || null);
+  const id = block.id;
+  clearTimeout(jobsFoundTimers.get(id));
+  jobsFoundTimers.set(id, setTimeout(() => {
+    jobsFoundTimers.delete(id);
+    for (const n of el.jobsRoot?.querySelectorAll('.is-found[id]') || []) if (n.id === id) n.classList.remove('is-found');
+  }, 3000));
 }
-document.getElementById('modelRolesSave')?.addEventListener('click', async () => {
-  const rolesRoot = document.getElementById('model-roles-root');
-  const body = rolesPatchToSettingsBody(readEngineSection(rolesRoot));
-  if (!body.modelRoles) { setHintMsg('modelRolesMsg', 'Nothing changed.', ''); return; }
+
+/** Opens the picker of a role tile or a job row with that row's value and rules; a pick goes into the draft. */
+function openJobPicker(anchor) {
+  const id = anchor.closest('[data-setting]')?.dataset.setting || '';
+  const { data, vm } = jobsModel();
+  const row = jobsRow(vm, id);
+  if (!row) return;
+  openModelPicker({ doc: document, win: window, anchor, catalog: data.catalog, engine: vm.engine, value: row.value, clearLabel: row.clearLabel,
+    modelOnly: !!row.modelOnly, allowEffortOnly: !!row.allowEffortOnly,
+    onPick: (value) => { mvState.jobs.draft[id] = value; renderJobsTab(); } });
+}
+
+/** "Override a step" / "Override a helper job": a pick shows that row (nothing is stored until its own pick, L27) and
+ *  opens its picker. */
+function openJobsOverride(anchor) {
+  const key = anchor.closest('[data-section]')?.dataset.section || '';
+  const section = jobsModel().vm.sections.find((s) => s.key === key);
+  if (!section) return;
+  openOverrideMenu({ doc: document, win: window, anchor, section, onPick: (id) => {
+    mvState.jobs.revealed.add(id);
+    renderJobsTab();
+    const pick = [...(el.jobsRoot?.querySelectorAll('.mdl-job-row') || [])].find((r) => r.dataset.setting === id)?.querySelector('.mdl-pick');
+    if (pick) openJobPicker(pick);
+  } });
+}
+
+/** Save: what differs from what is saved, in one POST /api/settings; its answer is what is saved now. A refusal keeps
+ *  the draft and says why on the Jobs line. The tab can repaint while the POST is out (a pick, the save's own
+ *  settings-changed): Save stays busy and a press on it sends nothing; a pick made meanwhile stays in the draft, as only
+ *  the ids still holding the value sent leave it, and only the rows revealed before the save fold again. */
+async function saveJobs(btn) {
+  const j = mvState.jobs;
+  if (j.saving) return;
+  const body = jobsSaveBody(j.draft, jobsSaved(j.settings || {}));
+  if (!Object.keys(body).length) return;   // an empty body would mean "nothing"; the bar shows only with changes
+  const sent = { ...j.draft };
+  const shown = new Set(j.revealed);
+  j.saving = true;
+  let r;
   try {
-    const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    const data = await safeJson(res);
-    if (!res.ok) return setHintMsg('modelRolesMsg', data?.error || `HTTP ${res.status}`, 'err');
-    // Only the Roles card repaints; the Engines rows take the new roles through paintRoleFallbacks.
-    lastEngineSettingsData = data; paintModelRoles(data, { force: true }); setHintMsg('modelRolesMsg', 'Saved.', 'ok');
-  } catch (error) { setHintMsg('modelRolesMsg', error?.message || 'network error', 'err'); }
-});
-/** Fill each engine card's `.engine-card-status` from GET /api/engines: text only (no buttons). An answer
- *  with no `engines` array leaves the lines empty. */
-async function paintEngineCardStatus(root) {
-  let list = null;
-  try { const res = await fetch('/api/engines'); const d = res.ok ? await safeJson(res) : null; list = Array.isArray(d?.engines) ? d.engines : null; } catch { list = null; }
-  for (const line of root.querySelectorAll('.engine-card .engine-card-status')) {
-    const e = list && list.find((x) => x && x.name === line.closest('.engine-card')?.dataset.engine);
-    // Say what was checked: the engine's run-start preflight (its CLI is installed and signed in).
-    line.textContent = !e ? '' : !e.ready ? `${e.label} can't start runs yet: ${String(e.reason || 'its check did not answer').replace(/\.$/, '')}.`
-      : `${e.label} can start runs: its CLI is installed and signed in.${e.reason ? ` Note: ${String(e.reason).replace(/\.$/, '')}.` : ''}`;
+    r = await withButton(btn, async () => {
+      try {
+        const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const data = await safeJson(res);
+        return res.ok ? { ok: true, data } : { ok: false, error: data?.error || `HTTP ${res.status}` };
+      } catch (e) { return { ok: false, error: `Worca did not answer (${e.message}).` }; }
+    }, { busy: 'Saving…', done: 'Saved' });
+  } finally { j.saving = false; }
+  if (r.skipped) return;
+  // A refusal redraws too: a Save drawn while the POST was out is busy until then.
+  if (!r.ok) { reportStatus(el.modelsJobsMsg, 'form-msg', r.error, 'err-inline'); renderJobsTab(); return; }
+  if (r.data && typeof r.data === 'object' && !Array.isArray(r.data)) {
+    ++jobsLoadSeq;   // a read sent before this answer is older than it: it draws nothing
+    j.settings = r.data;
   }
+  const changed = new Set(jobsDirty(j.draft, sent));
+  for (const id of Object.keys(sent)) if (Object.hasOwn(j.draft, id) && !changed.has(id)) delete j.draft[id];
+  for (const id of shown) if (!Object.hasOwn(j.draft, id)) j.revealed.delete(id);
+  syncRunEngine(j.settings);
+  reportStatus(el.modelsJobsMsg, 'form-msg', 'Saved.', 'ok');
+  renderJobsTab();
 }
-// The flag flips while the Models page is open: the Engines card gains / loses the interview row. Refetched, since
-// GET /api/settings carries the row's stored pair and its default only while the flag is on.
-onFlagChange('requirements', () => { if (currentView() === 'models' && lastEngineSettingsData) void paintHelperModelCards({ force: true }); });
-// The design flag flips while the Models page is open: the Engines card gains / loses its Design rows.
-onFlagChange('design', () => { if (currentView() === 'models' && lastEngineSettingsData) void paintEngineSettings(lastEngineSettingsData, { force: true }); });
-document.getElementById('engineSettingsSave')?.addEventListener('click', async () => {
-  const root = document.getElementById('engine-settings-root');
-  const body = enginePatchToSettingsBody(readEngineSection(root));
-  if (!Object.keys(body).length) { setHintMsg('engineSettingsMsg', 'Nothing changed.', ''); return; }
-  try {
-    const res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    const data = await safeJson(res);
-    if (!res.ok) return setHintMsg('engineSettingsMsg', data?.error || `HTTP ${res.status}`, 'err');
-    await paintEngineSettings(data, { force: true }); setHintMsg('engineSettingsMsg', 'Saved.', 'ok');
-  } catch (error) { setHintMsg('engineSettingsMsg', error?.message || 'network error', 'err'); }
-});
+
+/** The tab's clicks (one delegate on #jobs-root): the harness tiles, Default for new runs, the role tiles and row
+ *  pickers, a row's Test and clear, Override, Show all, and the save bar. */
+async function onJobsClick(ev) {
+  const t = ev.target.closest('button');
+  const root = el.jobsRoot;
+  if (!t || !root || !root.contains(t) || t.disabled) return;
+  const j = mvState.jobs;
+  const is = (c) => t.classList.contains(c);
+  const id = t.closest('[data-setting]')?.dataset.setting || '';
+  const section = t.closest('[data-section]')?.dataset.section || '';
+  if (is('mdl-hx-t')) {
+    // The tile's own listener already moved aria-pressed; the draft stays.
+    if (t.dataset.engine) { j.engine = t.dataset.engine; renderJobsTab(); }
+  } else if (is('mdl-default-btn')) {
+    const engine = jobsModel().vm.engine;
+    if (await setDefaultRunEngine(engine) === true) { j.settings = { ...(j.settings || {}), runEngine: engine }; renderJobsTab(); }
+  } else if (is('mdl-tile') || is('mdl-pick')) openJobPicker(t);
+  else if (is('mdl-job-clear')) { if (id) { j.draft[id] = null; renderJobsTab(); } }
+  else if (is('mdl-override')) openJobsOverride(t);
+  else if (is('mdl-show-all')) { if (section) { j.showAll[section] = !j.showAll[section]; renderJobsTab(); } }
+  else if (is('mdl-job-test')) { const model = jobsRow(jobsModel().vm, id)?.value?.model; if (model) void testModelRow(model, t); }
+  else if (is('mdl-discard')) {
+    j.draft = {};
+    j.revealed.clear();
+    // A refused Save's line goes with the draft it was about (loadSettings' load error stays).
+    if (!el.modelsJobsMsg?.textContent.startsWith('Could not load settings: ')) reportStatus(el.modelsJobsMsg, 'form-msg', '');
+    renderJobsTab();
+  }
+  else if (is('mdl-save')) await saveJobs(t);
+}
+el.jobsRoot?.addEventListener('click', (ev) => { void onJobsClick(ev); });
 
 /** Reads the catalogue and the providers into mvState and draws the Catalogue. Each call takes a number and the
  *  newest one wins (an entry, a window focus, refreshModelsEverywhere): an older call writes no payload and no line,
@@ -20181,7 +20288,9 @@ async function readModelsView(seq) {
     if (!res.ok) { setModelsMsg(data.error || `HTTP ${res.status}`, 'err-inline'); return true; }
     mvState.data = data;
     renderModelsViewBody();
-    void paintHelperModelCards();
+    // The Jobs tab's pickers list /api/config and its Test buttons read the catalogue's testable ids: it re-reads (a
+    // window focus re-reads the catalogue there), with no readiness preflight.
+    if (mvState.jobs.loaded && currentModelsTab() === 'jobs') void loadJobs({ engines: false });
     // "+ Add model…" from a picker on another page: Add model opens once the catalog is here.
     if (mvState.openEditorOnLoad) { const add = mvState.openEditorOnLoad; mvState.openEditorOnLoad = null; openAddModelDialog(add); }
     // Copilot's models feed the editor's upstream-id datalist; fetched in the
@@ -20198,16 +20307,6 @@ async function readModelsView(seq) {
     setProvidersMsg(e.message, 'err-inline');
     return true;
   }
-}
-
-// Models › Engines: its pickers list the catalog, so they repaint whenever it loads — a model added a moment ago is
-// selectable without leaving the page.
-async function paintHelperModelCards({ force = false } = {}) {
-  try {
-    const res = await fetch('/api/settings');
-    if (!res.ok) return;
-    await paintEngineSettings(await safeJson(res), { force });
-  } catch { /* the card keeps its last paint */ }
 }
 
 function setProvidersMsg(text, kind) {
@@ -21056,6 +21155,8 @@ async function refreshModelsEverywhere() {
   // focus) that overtook this one wrote the newest state but never draws over a card on screen, so
   // the card follows it here when what it shows differs (an entry that drew it already keeps it).
   if (currentModelsTab() === 'providers') { if (newest) renderProvidersViewBody(); else paintProvidersTab(); }
+  // The Jobs tab's pickers list /api/config's catalogue: a model added or removed shows there too.
+  if (mvState.jobs.loaded) void loadJobs({ engines: false });
   try { await loadConfig(selectedProjectPath() || ''); } catch { /* dropdowns refresh best-effort */ }
 }
 
@@ -21374,7 +21475,8 @@ function openGroupMenu(anchor, engine) {
   }] });
 }
 
-/** Make `engine` the default for new runs (the user's own `runEngine`), then say so and mark its group. */
+/** Make `engine` the default for new runs (the user's own `runEngine`), then say so and mark its group. Resolves true
+ *  once it is saved (the Jobs tab then marks its button), else undefined. */
 async function setDefaultRunEngine(engine) {
   try {
     const res = await fetch('/api/settings', {
@@ -21383,8 +21485,12 @@ async function setDefaultRunEngine(engine) {
     const data = await safeJson(res);
     if (!res.ok) return setModelsMsg(data.error || `HTTP ${res.status}`, 'err');
     mvState.runEngine = engine;
+    // New run re-reads its defaults only on a project change or a broadcast while it shows: re-read them now, so the
+    // form opened next starts on this engine (an engine the person already picked there stays, as loadRunDefaults keeps).
+    void loadRunDefaults(state.runTarget === 'workspace' ? '' : (state.projectDir || ''));
     setModelsMsg(`${engineLabel(engine)} is the default for new runs`, 'ok');
     renderModelsViewBody();
+    return true;
   } catch (e) {
     setModelsMsg(e.message, 'err');
   }
@@ -21401,6 +21507,9 @@ function closeModelPanel({ focusRow = false } = {}) {
   }
 }
 
+/** The Jobs block a "Used by" row opens, by the use's kind (catalogue-model.mjs panelUses). */
+const USE_JOBS_PART = Object.freeze({ role: 'roles', step: 'steps', helper: 'helpers', design: 'design' });
+
 /** The side panel's buttons (PAN-3, PAN-6). Every action acts on the open row's model, by its own id. */
 function onModelPanelClick(ev) {
   const t = ev.target.closest('button');
@@ -21410,7 +21519,11 @@ function onModelPanelClick(ev) {
   if (!panel) return;
   const id = panel.id;
   if (t.classList.contains('mdl-copy-id')) void copyFromButton(t, id);
-  else if (t.classList.contains('mdl-use')) location.hash = modelsHash('jobs');
+  else if (t.classList.contains('mdl-use')) {
+    // The use's harness, then its block; a project's step or node pick is no row of the tab: the tab itself.
+    if (t.dataset.engine) mvState.jobs.engine = t.dataset.engine;
+    location.hash = modelsHash('jobs', USE_JOBS_PART[t.dataset.kind] || '');
+  }
   else if (t.classList.contains('mdl-act-more')) {
     openMenu({ doc: document, anchor: t, align: 'end', label: 'More', items: [
       { label: panel.actions.delLabel, danger: true, onSelect: () => { void deleteModelFlow(id); } },
@@ -40454,7 +40567,7 @@ document.addEventListener('worca:level', () => {
 // so that is view 'settings', param 'guardrails/<id>' — no parseHash change.
 const SETTINGS_TABS = ['general', 'tags', 'presets', 'runs', 'automations', 'experimental', 'ask', 'guardrails', 'memory'];
 // Tabs whose cards are painted from GET /api/settings (loadSettings paints every card, wherever
-// it sits). The Models page loads it too: it holds the Engines card and the Claude helper pickers.
+// it sits). The Models page loads it too: the Catalogue's Default chip and the Jobs tab's load-error line.
 const SETTINGS_FORM_TABS = ['general', 'tags', 'runs', 'ask'];
 const settingsPanes = $$('[data-view="settings"] .settings-pane');
 // Old addresses keep working. The hashchange listener DROPS a view it does not know
@@ -40770,8 +40883,9 @@ function showView(name, param = '') {
   if (name === 'connectors') void showConnectors(param);
   if (name === 'models') {
     // Three tabs, the first part of the param (parseModelsParam): Catalogue, Jobs, Providers. Entering the page (or
-    // a hop before the catalogue ever loaded) reads the catalogue, the providers and GET /api/settings (the Jobs
-    // tab's Roles and Engines cards); a switch between tabs only shows another panel, so what was typed stays.
+    // a hop before the catalogue ever loaded) reads the catalogue, the providers and GET /api/settings (the
+    // Catalogue's Default chip, the load error on the Jobs line). A switch to Catalogue or Providers only shows
+    // another panel, so what was typed stays; each Jobs show reads that tab (showModelsTab).
     const { tab, rest } = parseModelsParam(param);
     const entry = prevView !== 'models' || !mvState.data;
     if (prevView !== 'models') {
@@ -40786,10 +40900,9 @@ function showView(name, param = '') {
     showModelsTab(tab, rest);
     if (entry) {
       // The reveals below use the tab and rest of THIS route; revealModelCard and revealProviderRow check the live
-      // address themselves, so a load that lands after the user moved on flashes nothing.
-      const section = views.find((v) => v.dataset.view === 'models');
-      // focusSettingsCard has no address guard of its own: only while the address still names that card.
-      void loadSettings().then(() => { if (tab === 'jobs' && rest && currentModelsTab() === 'jobs' && parseModelsParam(parseHash()[1]).rest === rest) focusSettingsCard(section, rest); });
+      // address themselves, so a load that lands after the user moved on flashes nothing. A Jobs block's reveal
+      // follows the tab's own read (showModelsTab).
+      void loadSettings();
       // Runs on the newest read: this entry's, or a window focus' or a refresh's that overtook it. A later entry
       // paints and reveals instead.
       const entrySeq = ++modelsEntrySeq;
@@ -40880,10 +40993,11 @@ function showSettingsTab(param = '') {
   if (tab === 'experimental') loadFlagsTab(sub);
 }
 
-// A link to one card ('#settings/runs/actions', '#models/engine', a top bar search pick '#settings/general/appearance-card'):
+// A link to one card ('#settings/runs/actions', a top bar search pick '#settings/general/appearance-card'):
 // scroll to `<sub>-settings-card` (else the card whose id IS `sub`) inside `scope`, focus its first field and
 // highlight it for 3 s (A-7). Any other sub is ignored. The Add-ons pages' own links land the same way:
-// '#models/model/<id>' (a catalogue row), '#models/providers/<row>' (a provider row), '#connectors/servers/<id>' (a server row).
+// '#models/model/<id>' (a catalogue row), '#models/jobs/<part>' (a Jobs block, revealJobsPart),
+// '#models/providers/<row>' (a provider row), '#connectors/servers/<id>' (a server row).
 const foundTimers = new WeakMap();
 /** Scroll `el` into view, focus `focusEl` (when given) and highlight `el` for 3 s (A-7); a repeat pick restarts it. */
 function markFound(el, focusEl = null) {
@@ -40906,7 +41020,8 @@ function currentModelsTab() {
   return currentView() === 'models' ? parseModelsParam(parseHash()[1]).tab : '';
 }
 // Show one Models tab: its panel, its lit tab, the head actions that belong to it; then the place `rest` names on it
-// (a catalogue row, a Jobs card, a provider row). Data already loaded is used as is: nothing is fetched here.
+// (a catalogue row, a Jobs block, a provider row). The Catalogue and Providers draw from what is loaded; a Jobs show
+// reads that tab (settings, /api/config and the readiness preflight), then reveals its block.
 function showModelsTab(tab, rest) {
   const section = views.find((v) => v.dataset.view === 'models');
   if (!section) return;
@@ -40924,7 +41039,8 @@ function showModelsTab(tab, rest) {
     // A hop to a row inside the open page draws from the loaded catalogue (the narrowing that could hide it cleared).
     openModelFromAddress(id, rest);
   } else if (tab === 'jobs') {
-    if (rest) focusSettingsCard(section, rest);
+    // The block only while the address still names it: the read can land after the user moved on.
+    void loadJobs().then(() => { if (rest && currentModelsTab() === 'jobs' && parseModelsParam(parseHash()[1]).rest === rest) revealJobsPart(rest); });
   } else if (tab === 'providers') {
     paintProvidersTab();
     revealProviderRow(rest);
@@ -42734,7 +42850,7 @@ Promise.resolve().then(() => fetch('/api/settings')).then((r) => safeJson(r)).th
   setChatSummariesPref(d && d.chat);
   paintKeepAwakeRow(!(d && d.keepAwake === false));
 }).catch(() => { /* keep: on */ });
-onFlagChange('commandSummaries', () => { askPanel?.refreshCommandCards(); void paintHelperModelCards(); });
+onFlagChange('commandSummaries', () => { askPanel?.refreshCommandCards(); repaintJobs(); });
 // One delegated handler for every Summaries / Raw switch (Logs tab, History Logs, both drawers, Chat's run
 // panel): they are cloned on every build, so per-node listeners would be lost on each rebuild.
 document.addEventListener('click', (e) => {

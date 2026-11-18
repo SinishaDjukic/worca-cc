@@ -82,8 +82,9 @@ const addon = (page, key, title, href, o = {}) => ({
 const provider = (key, title, row, alts) => addon('models', key, title, `#models/providers/${row}`,
   { id: `addon:providers/${key}`, meta: 'Models · Providers', alts });
 /** The settings INSIDE the Add-ons pages (the pages themselves are in the left menu). A row on a static card locks by
- *  that card's own mode (`card` names it; test/ui-settings-index.test.mjs pins both); every other row is page-level and
- *  never locks (A-9: the page's own banner says when it is above the mode). */
+ *  that card's own mode (`card` names it); a row naming a Models › Jobs block ('#models/jobs/<part>', built at runtime
+ *  by models/jobs-view.mjs) locks by that block's level; every other row is page-level and never locks (A-9: the
+ *  page's own banner says when it is above the mode). test/ui-settings-index.test.mjs pins all three. */
 export const ADDON_ENTRIES = Object.freeze([
   addon('marketplace', 'browse', 'Browse plugins', '#marketplace', { alts: ['plugins', 'extensions', 'store', 'install', 'catalog', 'add-ons'] }),
   addon('marketplace', 'installed', 'Installed plugins', '#marketplace/installed', { alts: ['plugins', 'update', 'uninstall', 'remove', 'enable', 'disable'] }),
@@ -92,9 +93,9 @@ export const ADDON_ENTRIES = Object.freeze([
   addon('connectors', 'servers', 'MCP servers', '#connectors/servers', { alts: ['mcp', 'integrations', 'tools', 'add server', 'servers'] }),
   addon('connectors', 'skills', 'Skills', '#connectors/skills', { alts: ['skill', 'skill.md', 'import skill', 'integrations'] }),
   addon('models', 'catalogue', 'Model catalogue', '#models', { alts: ['models', 'model', 'add model', 'import models', 'llm', 'pricing', 'cost', 'built-in models', 'your models'] }),
-  addon('models', 'roles', 'Roles', '#models/model-roles-card', { card: 'model-roles-card', alts: ['model roles', 'default model', 'fallback model', 'llm'] }),
-  addon('models', 'engines', 'Engines', '#models/engine-settings-card', { card: 'engine-settings-card', min: 'expert', alts: ['engine', 'default engine', 'step models', 'models per engine', 'claude', 'codex'] }),
-  addon('models', 'helper-jobs', 'Helper job models', '#models/engine-settings-card', { card: 'engine-settings-card', min: 'expert',
+  addon('models', 'roles', 'Roles', '#models/jobs/roles', { alts: ['model roles', 'default model', 'fallback model', 'llm'] }),
+  addon('models', 'engines', 'Step models', '#models/jobs/steps', { min: 'advanced', alts: ['engine', 'default engine', 'step models', 'models per engine', 'claude', 'codex'] }),
+  addon('models', 'helper-jobs', 'Helper job models', '#models/jobs/helpers', { min: 'advanced',
     alts: ['helper model', 'helper jobs', 'utility model', 'titles', 'title model', 'classifier', 'auto workflow model', 'pr description', 'memory defragment', 'workspace scan'] }),
   provider('copilot', 'GitHub Copilot', 'copilot', ['copilot', 'sign in', 'github', 'account', 'quota', 'premium requests', 'providers']),
   provider('openai', 'OpenAI-compatible', 'openai', ['openai', 'api key', 'key', 'base url', 'endpoint', 'gpt', 'local models', 'ollama', 'lm studio', 'providers']),

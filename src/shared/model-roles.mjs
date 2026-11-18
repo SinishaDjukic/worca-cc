@@ -3,12 +3,13 @@
 import { MODEL_ENGINE_NAMES } from './engine-switch.mjs';
 
 export const MODEL_ROLES = Object.freeze(['deep', 'everyday', 'quick']);
-export const ROLE_LABELS = Object.freeze({ deep: 'Deep thinking', everyday: 'Everyday coding', quick: 'Quick jobs' });
+export const ROLE_LABELS = Object.freeze({ deep: 'Deep thinking', everyday: 'Everyday tasks', quick: 'Quick jobs' });
 export const ROLE_HINTS = Object.freeze({
   deep: 'Plans and reviews. Worth the strongest model.',
   everyday: 'Writes the code and answers in Chat.',
   quick: 'Short, frequent helper calls. Cheap and fast.',
 });
+export const ROLE_SUBS = Object.freeze({ deep: 'Plans and reviews', everyday: 'Code and Chat answers', quick: 'Short helper calls' });
 // The harnesses that keep roles: every engine with catalog models. Steps (and Chat) run on all of them, so each one's
 // roles are its step fallback; helper jobs still run on Claude or Codex only (src/core/model-env.mjs HELPER_ENGINES).
 export const ROLE_HARNESSES = MODEL_ENGINE_NAMES;

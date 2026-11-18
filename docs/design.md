@@ -61,7 +61,7 @@ the models the design's engine runs (**More models** for the rest), and **Effort
 **Default** is, in this order:
 
 1. The **Design lead** or **Design builders** row of the design's engine on the Models page (Engines card, Design).
-2. The model role: **Deep thinking** for the lead, **Everyday coding** for the builders.
+2. The model role: **Deep thinking** for the lead, **Everyday tasks** for the builders.
 3. The engine's own default model.
 
 Its effort is `high` for the lead and `medium` for the builders unless the row or the role names one.

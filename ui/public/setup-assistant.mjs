@@ -160,8 +160,8 @@ function savedNetworkPatch(saved) {
 
 /** The engine Chat's new chats start on, as saved (askEngine, D17; unset or unknown = Claude): the Chat field's slot. */
 export function askEngineOf(settings = {}) { return CHAT_ENGINE_NAMES.includes(settings?.askEngine) ? settings.askEngine : 'claude'; }
-/** What an empty Chat field means: the Everyday coding role where roles exist (withRole), else the engine's own default. */
-const chatFallback = (engine) => (ROLE_HARNESSES.includes(engine) ? 'same as Everyday coding' : `${engineLabel(engine)}'s default model`);
+/** What an empty Chat field means: the Everyday tasks role where roles exist (withRole), else the engine's own default. */
+const chatFallback = (engine) => (ROLE_HARNESSES.includes(engine) ? 'same as Everyday tasks' : `${engineLabel(engine)}'s default model`);
 
 /**
  * The modelRoles patch (A10): every harness/role whose answer differs from the saved one, with the answer,
@@ -805,7 +805,7 @@ export function openSetupAssistant({ doc = globalThis.document, fetchJson = defa
       const everyday = ROLE_HARNESSES.includes(chatEngine) && m.modelRoles?.[chatEngine]?.everyday?.model ? m.modelRoles[chatEngine].everyday : undefined;
       const f = renderInheritField(doc, { id: `models.${chatEngine}.ask`, label: 'Default model for Chat', kind: 'model', level: 'user', engine: chatEngine,
         catalog, efforts: ENGINE_EFFORTS[chatEngine], own: m.askModel ?? undefined,
-        inherited: { value: everyday, source: 'role', label: everyday ? 'Same as Everyday coding' : null }, defaultLabel: chatFallback(chatEngine) });
+        inherited: { value: everyday, source: 'role', label: everyday ? 'Same as Everyday tasks' : null }, defaultLabel: chatFallback(chatEngine) });
       f.querySelector('.inherit-model').dataset.saField = `models.askModels.${chatEngine}`;   // an apply 400 marks it (markField)
       chatHost.replaceChildren(f);
     };

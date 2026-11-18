@@ -516,15 +516,15 @@ test('Add-ons inner rows land on their row or card and flash it', async () => {
       assert.ok(isFound(card));
       assert.equal(ctx.doc.activeElement, card.querySelector('.mv-pv-row[data-provider="openai"] .mv-pv-key'));
     } },
-    { name: '"helper model" at Expert → #models/engine-settings-card, the Engines card flashed', run: async () => {
+    { name: '"helper model" at Expert → #models/jobs/helpers, the Helper jobs card flashed', run: async () => {
       const ctx = await boot();
       await searchPick(ctx, 'helper model', 'Helper job models');
-      assert.equal(ctx.window.location.hash, '#models/engine-settings-card');
-      assert.ok(found(ctx.doc, 'engine-settings-card'));
+      assert.equal(ctx.window.location.hash, '#models/jobs/helpers');
+      assert.ok(found(ctx.doc, 'jobs-helpers'));
     } },
-    { name: '"helper model" at Advanced is locked: the mode dialog opens, nothing routes', run: async () => {
+    { name: '"helper model" at Simple is locked: the mode dialog opens, nothing routes', run: async () => {
       const ctx = await boot();
-      ctx.doc.documentElement.dataset.level = 'advanced';
+      ctx.doc.documentElement.dataset.level = 'simple';
       const before = ctx.window.location.hash;
       await searchPick(ctx, 'helper model', 'Helper job models');
       assert.ok(modeOpen(ctx.doc));

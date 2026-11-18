@@ -130,7 +130,7 @@ them: you only set a model elsewhere to override a role.
 | Role | Setting key | What it covers |
 |---|---|---|
 | Deep thinking | `deep` | Plans and reviews: the Plan, Plan review, Refine plan, Review implementation, Deck review and Bug Root Cause steps, Away mode's decider (`nightMode.deciderModel`) and the Design page's lead (`designLead`) |
-| Everyday coding | `everyday` | Every other step, Chat (`askModels`), Agent generation (`agentGenModel`), the Requirements interview (`requirementsInterview`), Claude's Auto classifier (`autoWorkflowModel`), the Workspace scan (`workspaceScan`, the scan agent; it surveys every member and writes the cross-project synthesis) and Design builders (`designBuilder`) |
+| Everyday tasks | `everyday` | Every other step, Chat (`askModels`), Agent generation (`agentGenModel`), the Requirements interview (`requirementsInterview`), Claude's Auto classifier (`autoWorkflowModel`), the Workspace scan (`workspaceScan`, the scan agent; it surveys every member and writes the cross-project synthesis) and Design builders (`designBuilder`) |
 | Quick jobs | `quick` | Titles (`titleModel`), Run naming (`namingModel`), Command summaries (`commandSummaryModel`), PR description (`prDescriptionModel`), Memory defragment (`memoryDefrag`, including its step) and every other `utilityModels.<engine>.*` job, Codex's Auto classifier included (not `secondOpinion`, which has no role) |
 
 Where a slot looks, in order:
@@ -189,13 +189,13 @@ their hint, because it applies to role reviews only:
 | Step models › Requirements Review | role reviews of the requirements (Shaper with requirements first) | Sonnet 5.5 · medium |
 | Helper jobs › Second-opinion reviewer | the one role a role review names as its second opinion (Shaper's Product reviewer) | Opus 5.5 · medium |
 | Helper jobs › Memory defragment | the Memory defragment run | Sonnet 5 |
-| Settings › Runs › Workspaces | the workspace scan | your Everyday coding role (else Sonnet 5 · medium), project agents `sonnet` · medium |
+| Settings › Runs › Workspaces | the workspace scan | your Everyday tasks role (else Sonnet 5 · medium), project agents `sonnet` · medium |
 
 The factory default comes after your role: a node pick, a project pick, your
 step model and your role all win over it, so it only fills a slot nothing else
 names. On the Plan Review step it applies to role reviews only: a plain plan
 review step (Default, Auto) keeps your Deep thinking role. Memory defragment
-takes the Quick jobs role first, and the workspace scan the Everyday coding role.
+takes the Quick jobs role first, and the workspace scan the Everyday tasks role.
 
 **Second-opinion reviewer** (`secondOpinionModel` on Claude, a `{ model, effort }`
 pair; `utilityModels.codex.secondOpinion` on Codex) is a helper job of its own.

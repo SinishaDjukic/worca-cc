@@ -7644,7 +7644,7 @@ function workspacePickUsable(pick, models) {
  *  else the defaults (only when a known catalog offers the default) — checked against the primary
  *  member's catalog. Throws on a bad explicit pick (400) or when no model is available (D19).
  *  A RE-SCAN with no usable stored pick (legacy, created pick-less, or its model left the catalog) runs
- *  silently only when the Everyday coding role covers it; else the marker { needsModel: true, models }
+ *  silently only when the Everyday tasks role covers it; else the marker { needsModel: true, models }
  *  asks the user (D20). An explicit body.models always wins (the prompted client sends one; API/CLI callers can
  *  still force a pick). */
 async function scanModelsFor(body, projectPaths, workspace = null) {
@@ -7654,7 +7654,7 @@ async function scanModelsFor(body, projectPaths, workspace = null) {
   }
   return resolveScanModels({
     explicit: body && body.models,
-    // Model roles (D3): with no stored pick, the Everyday coding role is the scan model.
+    // Model roles (D3): with no stored pick, the Everyday tasks role is the scan model.
     stored: withScanRole(workspaceScanModels(), WORKSPACE_SCAN_DEFAULT_MODELS), storedSource: workspaceScanModels() ? 'settings' : 'role',
     workspacePick: workspace && workspace.scanModels ? workspace.scanModels : null,
     models,
@@ -8091,7 +8091,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const csModels = hasCommandSummaryModelKey ? (autoModels || defragModels || agentGenModels || namingModels || await listModels('')) : null; const secondOpinionModels = has('secondOpinionModel') ? (autoModels || defragModels || agentGenModels || namingModels || csModels || await listModels('')) : null;
   const hasWorkspaceScanKey = has('workspaceScan');
   const hasRunEngineKey = has('runEngine');
-  const hasStepModelsKey = has('stepModels'); const hasDesignModelsKey = has('designModels');   // designModels: Models › Engines › Design
+  const hasStepModelsKey = has('stepModels'); const hasDesignModelsKey = has('designModels');   // designModels: Models › Jobs › Design
   const hasModelRolesKey = has('modelRoles');
   const hasUtilityModelsKey = has('utilityModels');
   const hasAskEngineKey = has('askEngine');

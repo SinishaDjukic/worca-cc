@@ -3,7 +3,7 @@ import { appendModelGroups } from './model-options.mjs';
 export const INHERIT_HEAD = Object.freeze({ user: 'Same as my settings', team: 'Team default', default: 'Worca default' });
 // The value comes first, where it comes from second — "Claude (default)", "Opus 5.5 · high (team default)" (night-mode-form's SOURCE_TAG).
 export const INHERIT_TAIL = Object.freeze({ user: 'your setting', team: 'team default', default: 'default' });
-// `label`: an inherited value that names its own origin (a model role: "From Everyday coding") replaces the "(your setting)" tail.
+// `label`: an inherited value that names its own origin (a model role: "From Everyday tasks") replaces the "(your setting)" tail.
 export function inheritText(source, shown, label = null) {
   if (label) return shown == null || shown === '' ? label : `${label} · ${shown}`;
   const head = INHERIT_HEAD[source] || INHERIT_HEAD.user; return shown == null || shown === '' ? head : `${shown} (${INHERIT_TAIL[source] || INHERIT_TAIL.user})`;

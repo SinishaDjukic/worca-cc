@@ -558,7 +558,7 @@ test('Settings › Memory: the defragment model lives in Engines › Helper jobs
   await settle();
   assert.equal(window.document.getElementById('mem-defrag-model-card'), null, 'no card of its own');
   const link = window.document.querySelector('.mem-model-link a');
-  assert.equal(link.getAttribute('href'), '#models/jobs');
+  assert.equal(link.getAttribute('href'), '#models/jobs/helpers');
   assert.equal(link.closest('.mem-model-link').dataset.minLevel, 'expert');
 });
 

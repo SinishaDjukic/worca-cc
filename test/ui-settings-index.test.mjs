@@ -61,15 +61,22 @@ test('locks: a mode lock below the effective mode, a flag lock per Labs feature 
   assert.equal(lockNote(locksFor(debug, { level: 'advanced', flags: {} })), 'Switch to Expert mode');
 });
 
-test('Add-ons rows: an entry on a static card has that card on its page with the same mode; every other entry is page-level and never locks', () => {
+test('Add-ons rows: an entry on a static card has that card on its page with the same mode; a Jobs block row locks by that block\'s level; every other entry is page-level and never locks', () => {
+  // The Jobs tab's blocks are built at runtime (jobs-view.mjs, pinned by test/models-jobs-view.test.mjs): the role
+  // tiles are Simple, the job cards Advanced.
+  const JOBS_BLOCK_LEVELS = { roles: 'simple', steps: 'advanced', helpers: 'advanced' };
   for (const e of ADDON_ENTRIES) {
     assert.ok(Object.hasOwn(ADDON_PAGES, e.page), `${e.id} page`);
     assert.equal(e.tabTitle, ADDON_PAGES[e.page], `${e.id} names its page`);
+    const block = /^#models\/jobs\/([^/]+)$/.exec(e.href)?.[1];
     if (e.card) {
       const card = doc.getElementById(e.card);
       assert.ok(card, `${e.id}: card ${e.card}`);
       assert.equal(card.closest('section.view').dataset.view, e.page, `${e.id}: the card sits on its page`);
       assert.equal(card.dataset.minLevel, e.min, `${e.id}: the row locks by its card's own mode`);
+    } else if (block) {
+      assert.ok(Object.hasOwn(JOBS_BLOCK_LEVELS, block), `${e.id}: a Jobs block`);
+      assert.equal(e.min, JOBS_BLOCK_LEVELS[block], `${e.id}: the row locks by its Jobs block's level`);
     } else {
       assert.equal(e.min, 'simple', `${e.id}: a page-level row never locks (A-9)`);
     }
@@ -91,7 +98,8 @@ test('the provider rows sit on the Models page\'s Providers tab: ids keep addon:
   assert.ok(!ADDON_ENTRIES.some((e) => e.href.startsWith('#providers')), 'no row routes through the old page');
 });
 
-test('Add-ons hrefs reach their place: a Marketplace tab, a Connectors view, a Models tab (a Jobs card, a Providers row)', () => {
+test('Add-ons hrefs reach their place: a Marketplace tab, a Connectors view, a Models tab (a Jobs block, a Providers row)', () => {
+  assert.ok(doc.getElementById('jobs-root')?.closest('#models-tab-jobs'), 'the Jobs tab draws its blocks into #jobs-root');
   for (const e of ADDON_ENTRIES) {
     const [view, ...rest] = e.href.replace(/^#/, '').split('/');
     const param = rest.join('/');
@@ -101,19 +109,24 @@ test('Add-ons hrefs reach their place: a Marketplace tab, a Connectors view, a M
     if (view === 'models') {
       const { tab, rest: where } = parseModelsParam(param);
       if (tab === 'providers') assert.ok(PROVIDER_ROWS.includes(where), `${e.id}: #models/providers/<a provider row>`);
-      if (tab === 'jobs') assert.ok(where === '' || doc.getElementById(where)?.closest('#models-tab-jobs'), `${e.id}: #models/<a card on the Jobs tab>`);
+      if (tab === 'jobs') assert.ok(where === '' || ['roles', 'steps', 'helpers', 'design'].includes(where), `${e.id}: #models/jobs/<a Jobs block>`);
       if (tab === 'catalogue') assert.ok(where === '' || /^model\/[^/]+$/.test(where), `${e.id}: #models or #models/model/<id>`);
     }
   }
   const href = (id) => ADDON_ENTRIES.find((e) => e.id === id).href;
   assert.equal(href('addon:providers/openrouter'), '#models/providers/openrouter', 'OpenRouter has a row of its own');
-  assert.equal(href('addon:models/helper-jobs'), '#models/engine-settings-card', 'helper-job models live in the Engines card');
+  assert.equal(href('addon:models/helper-jobs'), '#models/jobs/helpers', 'helper-job models live in the Jobs tab\'s Helper jobs card');
+  assert.equal(href('addon:models/engines'), '#models/jobs/steps', 'step models live in the Steps card');
+  assert.equal(href('addon:models/roles'), '#models/jobs/roles');
 });
 
-test('locks: Engines and its helper jobs need Expert; Roles, the providers and the tabs never lock', () => {
+test('locks: Step models and Helper job models need Advanced (the job cards\' level); Roles, the providers and the tabs never lock', () => {
   const e = (id) => ADDON_ENTRIES.find((x) => x.id === id);
-  assert.equal(lockNote(locksFor(e('addon:models/helper-jobs'), { level: 'advanced', flags: {} })), 'Switch to Expert mode');
-  assert.deepEqual(locksFor(e('addon:models/engines'), { level: 'expert', flags: {} }), []);
+  assert.equal(e('addon:models/engines').title, 'Step models', 'the old Engines row is named for what it finds');
+  for (const id of ['addon:models/engines', 'addon:models/helper-jobs']) {
+    assert.equal(lockNote(locksFor(e(id), { level: 'simple', flags: {} })), 'Switch to Advanced mode', id);
+    assert.deepEqual(locksFor(e(id), { level: 'advanced', flags: {} }), [], id);
+  }
   for (const id of ['addon:models/roles', 'addon:providers/openai', 'addon:marketplace/installed', 'addon:connectors/servers']) {
     assert.deepEqual(locksFor(e(id), { level: 'simple', flags: {} }), [], id);
   }

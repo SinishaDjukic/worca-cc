@@ -863,7 +863,7 @@ export async function assertSlotModels(items, { projectDir = '', pending = [] } 
   }
 }
 
-/** POST /api/settings `designModels` (Models › Engines › Design): the patch's shape, then every pick against the catalog
+/** POST /api/settings `designModels` (Models › Jobs › Design): the patch's shape, then every pick against the catalog
  *  (a model its engine runs, with an effort it takes), before anything is written. */
 export async function assertDesignModelsSlots(input) {
   const patch = assertDesignModelsInput(input);

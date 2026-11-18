@@ -133,19 +133,19 @@ const settingsState = () => ({
   git: (({ available, version }) => ({ available, version }))(currentGitState()),   // is git usable here (CONTRACT §0)
   memoryDefrag: memoryDefragModel(),                      // Settings › Memory: the STORED { model, effort } (null = the workflow default)
   memoryDefragDefault: defragDefaultModel(),              // what "(default)" means there: Worca's factory default
-  secondOpinionModel: secondOpinionModelSetting(),        // Models › Helper jobs › Second-opinion reviewer: the STORED pair (null = the factory default)
+  secondOpinionModel: secondOpinionModelSetting(),        // Models › Jobs › Helper jobs › Second-opinion reviewer: the STORED pair (null = the factory default)
   factoryModels: factoryModelsPayload(),                  // what "(default)" means on the Claude tab's helper and step rows
   workspaceScan: workspaceScanModels(),                   // Settings › Runs › Workspaces: the STORED pick (null = the defaults)
-  // What null means: the Everyday coding role as the scan model when set, else Sonnet 5 · medium; project agents sonnet · medium.
+  // What null means: the Everyday tasks role as the scan model when set, else Sonnet 5 · medium; project agents sonnet · medium.
   workspaceScanDefault: withScanRole(null, WORKSPACE_SCAN_DEFAULT_MODELS) || WORKSPACE_SCAN_DEFAULT_MODELS,
   workspaceScanFromRole: !!withScanRole(null, WORKSPACE_SCAN_DEFAULT_MODELS),   // the wizard stores no pick of its own then (re-scans follow the role)
   runEngine: runEngineSetting() ?? null,
   stepModels: stepModelsSetting(),
-  designModels: designModelsSetting(),                    // Models › Engines › Design: { <engine>: { lead|builder: { model, effort } } }
+  designModels: designModelsSetting(),                    // Models › Jobs › Design: { <engine>: { lead|builder: { model, effort } } }
   modelRoles: modelRolesSetting(),                         // Models › Roles (D1): { <engine>: { deep|everyday|quick: { model, effort } } }
   utilityModels: utilityModelsSetting(),
   askEngine: askEngineSetting() ?? null,                  // Chat: the engine new chats start on (D17)
-  // Models › Engines › Claude: the STORED { model?, effort? } (null = the default); only while the requirements flag is on
+  // Models › Jobs › Helper jobs: the STORED { model?, effort? } (null = the default); only while the requirements flag is on
   ...(flagEnabled('requirements') ? { requirementsInterview: requirementsInterviewSetting() ?? null } : {}),
   askModels: askModelsSetting(),                          // Chat: the model per engine (D17)
   nightMode: nightModeSettings(),                         // night mode: the user layer (only the fields set)
@@ -190,13 +190,13 @@ async function agentGenModelState() {
   return { agentGenModel: stored, agentGenModelEffective: resolveAgentGenModel(withRole(stored, 'claude', 'agentGenModel'), await listModels('')) };
 }
 
-/** Models › Helper jobs › Run naming: the stored pair + what a suggestion will actually run on. */
+/** Models › Jobs › Helper jobs › Run naming: the stored pair + what a suggestion will actually run on. */
 async function namingModelState() {
   const stored = storedNamingModel();
   return { namingModel: stored, namingModelEffective: resolveNamingModel(withRole(stored, 'claude', 'namingModel'), await listModels(''), modelCostConfig) };
 }
 
-/** Models › Helper jobs › Command summaries: the stored pair + what a summary will actually run on. */
+/** Models › Jobs › Helper jobs › Command summaries: the stored pair + what a summary will actually run on. */
 async function commandSummaryModelState() {
   const stored = storedCommandSummaryModel();
   return { commandSummaryModel: stored, commandSummaryModelEffective: resolveNamingModel(withRole(stored, 'claude', 'commandSummaryModel'), await listModels(''), modelCostConfig) };

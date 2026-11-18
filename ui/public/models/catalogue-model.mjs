@@ -275,7 +275,7 @@ function panelLimits(m) {
   return limits;
 }
 
-/** PAN-6: { label, kindText, engine } per use of the row (uses are keyed by the lower-cased id). */
+/** PAN-6: { label, kindText, engine, kind } per use of the row (uses are keyed by the lower-cased id). */
 function panelUses(d, lc) {
   const raw = d.uses && typeof d.uses === 'object' ? d.uses[lc] : null;
   return (Array.isArray(raw) ? raw : []).filter((u) => u && typeof u === 'object').map((u) => {
@@ -283,7 +283,7 @@ function panelUses(d, lc) {
     const parts = [USE_KINDS[u.kind] || String(u.kind ?? '')];
     if (engine !== 'claude') parts.push(engineLabel(engine));
     if (PROJECT_USES.includes(u.kind) && u.project) parts.push(String(u.project));
-    return { label: String(u.label ?? ''), kindText: parts.filter(Boolean).join(' · '), engine };
+    return { label: String(u.label ?? ''), kindText: parts.filter(Boolean).join(' · '), engine, kind: String(u.kind ?? '') };
   });
 }
 

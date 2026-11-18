@@ -241,8 +241,9 @@ test('Add-ons rows are the settings inside the three pages, never Settings rows;
     ['openai key', 'OpenAI-compatible', '#models/providers/openai'],
     ['copilot', 'GitHub Copilot', '#models/providers/copilot'],
     ['openrouter', 'OpenRouter', '#models/providers/openrouter'],
-    ['helper model', 'Helper job models', '#models/engine-settings-card'],
-    ['roles', 'Roles', '#models/model-roles-card'],
+    ['helper model', 'Helper job models', '#models/jobs/helpers'],
+    ['step models', 'Step models', '#models/jobs/steps'],
+    ['roles', 'Roles', '#models/jobs/roles'],
     ['installed', 'Installed plugins', '#marketplace/installed'],
     ['integrations', 'MCP sets', '#connectors'],
   ]) {
@@ -313,8 +314,9 @@ test('R-po-10/11: locked rows stay listed with a note naming the mode and the La
   assert.equal(labels.note, 'Turn on Labs: Run labels');
   assert.equal(setRows('cost tags', { flags: {} }).settings.find((x) => x.title === 'Cost tags').note, '', 'Cost tags left Labs');
   assert.deepEqual(setRows('marketplaces', { level: 'simple', flags: {} }).addons[0].locks, [], 'a page-level row never locks (A-9)');
-  const helper = setRows('helper model', { level: 'advanced', flags: {} }).addons[0];
-  assert.deepEqual([helper.title, helper.note], ['Helper job models', 'Switch to Expert mode'], 'a row on an Expert card locks by that card');
+  const helper = setRows('helper model', { level: 'simple', flags: {} }).addons[0];
+  assert.deepEqual([helper.title, helper.note], ['Helper job models', 'Switch to Advanced mode'], 'a row on an Advanced Jobs block locks by that block');
+  assert.equal(setRows('helper model', { level: 'advanced', flags: {} }).addons[0].note, '', 'at Advanced it opens');
 });
 
 test('group limits: Settings ≤ SETTINGS_LIMIT (5), Add-ons ≤ ADDON_LIMIT (5), Plugins ≤ PLUGIN_LIMIT (5)', () => {

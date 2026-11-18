@@ -200,6 +200,24 @@ a.tab.mdl-tab{text-decoration:none;}
   .mdl-hx-t.best{grid-row:auto;}
 }
 
+/* The model picker button (models/model-picker.mjs, DESIGN JOB-3, JOB-8; kit 120–126, 301): mark, span.mdl-pick-text,
+   span.mdl-pick-eff (" · <effort>") and the chevron, one control. A row that follows something (nothing stored) is
+   dashed and grey; the open one has an ink edge. */
+.mdl-pick{display:inline-flex;align-items:center;gap:7px;width:100%;min-width:0;height:32px;padding:0 10px;border:1px solid var(--line-2);border-radius:var(--r-sm);background:var(--panel);color:var(--ink);font:inherit;font-weight:500;text-align:left;white-space:nowrap;cursor:pointer;}
+.mdl-pick:hover:not([aria-expanded="true"]):not(:disabled){border-color:var(--hover-outline);}
+.mdl-pick:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.mdl-pick:disabled{cursor:default;color:var(--ink-3);}
+.mdl-pick[aria-expanded="true"]{border-color:var(--ink);}
+.mdl-pick.inherit{border-style:dashed;color:var(--ink-2);font-weight:400;}
+.mdl-pick .mdl-mark{margin-left:-2px;}
+.mdl-pick-text{min-width:0;overflow:hidden;text-overflow:ellipsis;}
+.mdl-pick-eff{flex:none;color:var(--ink-2);font-weight:500;}
+.mdl-pick > .ic{margin-left:auto;color:var(--ink-2);}
+/* Its menu is the Chat picker's (.ask-pop-model, 292px), appended to body and placed below the button by
+   side-flyout.mjs: fixed, over the page, under #confirm-modal (60). Two classes, because chat/workflow-card.css (later
+   in parts.json) sets .ask-pop{position:absolute} and .ask-pop-model's right and bottom; as design.css .ask-pop.dz-model-pop. */
+.ask-pop.mdl-pick-pop{position:fixed;right:auto;bottom:auto;z-index:58;max-height:min(420px,70vh);}
+
 /* Add model (models/add-model-dialog.mjs, DESIGN ADD-1…ADD-4; kit 250–258): each step is a section.card.mdl-add that
    app.js lays out (layoutDialog). Its head: the title, the step names and Close on one line; its foot carries
    .mv-editor-btns (the shared 32px foot buttons). */
@@ -258,3 +276,76 @@ a.tab.mdl-tab{text-decoration:none;}
   .mdl-add #mimp-body{overflow-x:auto;contain:inline-size;}
   .mdl-add #mimp-body .mvi-tbl{min-width:720px;}
 }
+
+/* The Jobs tab (models/jobs-view.mjs, DESIGN JOB-1…JOB-10; kit 79, 147, 203–212, 233–241, 268–270, 301, 330–343): the
+   harness tiles with their line, the three role tiles, then one card per kind of job and the one save bar. The cards
+   are the shared .card, .card-head and .drow (kit 214–221 mapped onto them, not copied); their rows wrap through the
+   shared @container drows rule, so Ask's column narrowing the page wraps them too. */
+.mdl-jobs{display:flex;flex-direction:column;gap:24px;min-width:0;}
+.mdl-jobs .mdl-sect{margin:0 0 8px;}
+/* Under the harness tiles: the harness's readiness sentence and "Default for new runs". The pressed button (this
+   harness is the default) is an ink edge on the field tone, never an ink fill, and does not fade while it is off. */
+.mdl-jobs > .mdl-jobs-line{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;min-width:0;margin-top:-12px;}
+.mdl-jobs-reason{flex:1 1 240px;min-width:0;font-size:var(--fs-meta);line-height:var(--lh-body);color:var(--ink-2);}
+.mdl-jobs-reason:empty{display:none;}
+.mdl-default-btn{margin-left:auto;}
+.mdl-default-btn[aria-pressed="true"]{border-color:var(--ink);background:var(--field);}
+.mdl-default-btn[aria-pressed="true"]:disabled{opacity:1;cursor:default;}
+/* Role tiles (DESIGN JOB-2): who does the work, in one glance; a tile is its own picker's button. */
+.mdl-tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;}
+.mdl-tile{display:flex;flex-direction:column;align-items:stretch;min-width:0;padding:var(--pad-tile);border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);color:var(--ink);font:inherit;text-align:left;cursor:pointer;}
+.mdl-tile:hover:not([aria-expanded="true"]){border-color:var(--hover-outline);}
+.mdl-tile:focus-visible{outline:2px solid var(--ink);outline-offset:2px;}
+.mdl-tile[aria-expanded="true"]{border-color:var(--ink);}
+.mdl-tile-role{font-weight:600;line-height:var(--lh-title);}
+.mdl-tile-sub{font-size:var(--fs-meta);color:var(--ink-2);}
+.mdl-tile-model{display:flex;align-items:center;gap:10px;min-width:0;margin-top:14px;font-size:var(--fs-section);font-weight:600;line-height:var(--lh-title);}
+.mdl-tile-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.mdl-tile-model > .ic{margin-left:auto;color:var(--ink-2);}
+.mdl-tile-eff{min-height:20px;margin-top:14px;font-size:var(--fs-meta);color:var(--ink-2);}
+.mdl-tile-eff b{font-size:var(--fs-body);font-weight:600;color:var(--ink);}
+/* Narrow (VIS-4): the role tiles stack. */
+@media (max-width:860px){
+  .mdl-tiles{grid-template-columns:minmax(0,1fr);}
+}
+/* A job card's head: the title and its count side by side, the Override button at the end (.card-head spreads its
+   children; .card h2's bottom margin would win over .card-head h2). */
+.mdl-job-card{min-width:0;}
+.card-head.mdl-card-h{justify-content:flex-start;flex-wrap:wrap;gap:8px 10px;min-height:28px;}
+.mdl-card-h h2{margin:0;}
+.mdl-card-h > .badge{padding:0 6px;background:var(--field);color:var(--ink-2);}
+.mdl-card-h > .mdl-override{margin-left:auto;}
+.mdl-job-note{margin:0;font-size:var(--fs-meta);line-height:var(--lh-body);color:var(--ink-2);}
+/* A job row (DESIGN JOB-8): the name and "Instead of …" left; the 260px picker, Test and the clear button right, in
+   fixed columns so every row's picker lines up whether or not it has the other two. */
+.mdl-job-txt{min-width:0;}
+.mdl-job-name{display:block;font-weight:500;}
+.mdl-job-sub{display:block;font-size:var(--fs-meta);color:var(--ink-2);}
+.mdl-job-sub:empty{display:none;}
+.mdl-job-row > .drow-control{display:grid;grid-template-columns:260px 48px 28px;gap:8px;}
+.mdl-job-row .mdl-pick{grid-column:1;}
+.mdl-job-row .mdl-job-test{grid-column:2;}
+.mdl-job-row .mdl-job-clear{grid-column:3;}
+@container drows (max-width:560px){
+  .mdl-job-row > .drow-control{grid-template-columns:minmax(0,1fr) 48px 28px;}
+}
+/* What the rest do, and Show all. No top border: the last row's divider is the hairline above it. */
+.mdl-more-line{display:flex;align-items:center;flex-wrap:wrap;gap:4px 12px;padding-top:12px;font-size:var(--fs-meta);color:var(--ink-2);}
+.mdl-card-h + .mdl-more-line{padding-top:0;}
+/* The override menu (DESIGN JOB-9): a .menu box holding the field and the list, appended to body and placed by
+   side-flyout.mjs: fixed, over the page, under #confirm-modal (60). */
+.mdl-over-pop{position:fixed;z-index:58;width:320px;max-width:calc(100vw - 16px);max-height:min(460px,70vh);overflow:auto;}
+.mdl-over-pop > input{margin:0 0 4px;}
+.mdl-over-pop [role="menu"]{display:flex;flex-direction:column;}
+.mdl-over-pop .menu-h{display:flex;align-items:center;gap:8px;}
+.mdl-over-pop .mdl-over-none{font-weight:400;}
+.mdl-over-n{margin-left:auto;font-size:var(--fs-caption);font-weight:500;}
+.mdl-over-hint{margin-left:auto;font-size:var(--fs-caption);color:var(--ink-2);}
+/* The save bar (DESIGN JOB-10): only with unsaved changes, held at the bottom of the tab; a hairline, no shadow. */
+.mdl-savebar{position:sticky;bottom:0;z-index:2;display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:10px 12px 10px 20px;border:1px solid var(--line);border-radius:var(--r-card);background:var(--panel);}
+.mdl-savebar[hidden]{display:none;}
+.mdl-savebar .note{margin-right:auto;font-size:var(--fs-meta);color:var(--ink-2);}
+/* A block an address reveals (app.js revealJobsPart marks #jobs-roles or #jobs-<card> .is-found): the flash of a found
+   Settings card (settings-cards.css, settingFound), which reaches only `.mdl-panel > .card` and so missed these. */
+#jobs-root :is(#jobs-roles, .mdl-job-card).is-found{animation:settingFound 3s ease-out;}
+@media (prefers-reduced-motion:reduce){#jobs-root :is(#jobs-roles, .mdl-job-card).is-found{animation:none;box-shadow:0 0 0 3px var(--amber-ring);}}
