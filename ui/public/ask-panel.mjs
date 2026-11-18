@@ -53,8 +53,6 @@ import { withoutChips } from './ask-page-chips.mjs';
 import { sideSuggestions } from './ask-side-suggest.mjs';
 import { makeSwitch } from './switch.mjs';
 import { shapeCardExtras, shapeWhatHappens, shapeAdvancedSummary } from './shape/proposal.mjs';
-import { button as railButton } from './design-system/components/button.mjs';
-import { toElement } from './design-system/components/html.mjs';
 import { createAskComposerCards, ASK_COMPOSER_CARD_TYPES } from './ask-composer-cards.mjs';
 import { cardKit, scriptApprovalCardView } from './workflows/card-views.mjs';
 import { applyPresetStart } from '../../src/shared/run-presets.mjs';
@@ -5605,7 +5603,9 @@ export function createAskPanel({ doc, win, fetch, sendWs, confirm, getPageContex
         if (shapeUi.requirements) {
           // Medium or large: Shape requirements is the one primary, Run as is steps back. Until a
           // lead is picked it stays in the tab order, aria-disabled, described by "You lead as".
-          shapeBtn = toElement(doc, railButton({ label: 'Shape requirements', kind: 'primary', attrs: { 'data-ask-card-shape': '' } }));
+          shapeBtn = make('button', 'btn btn-sm btn-primary', 'Shape requirements');
+          shapeBtn.type = 'button';
+          shapeBtn.setAttribute('data-ask-card-shape', '');
           if (!card.shape) startBtn.classList.replace('btn-primary', 'btn-quiet');
           const syncLead = () => {
             const blocked = shapeUi.blocked();
