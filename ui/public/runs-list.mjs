@@ -360,6 +360,14 @@ export function schedRow(t, now = Date.now()) {
   }, t.after ? { at: now, time: '' } : { at: t.runAt }, now);   // an after-ticket's runAt is a far-future sentinel
 }
 
+/** One run as a row with its model, as buildRunsModel builds it: a live item (app.js runsLiveItem) wins over its History
+ *  item (runsHistItem). The Chats column draws the runs a chat started with it, so they wear the Runs list's dots and lines. */
+export function runItemRow({ live = null, hist = null } = {}, now = Date.now()) {
+  if (live) return { ...liveRow(live, now), model: runModel(live.run || { status: live.status }, { memo: live.memo || null, now }) };
+  if (hist) return { ...histRow(hist, now), model: runModel(hist.run || { status: hist.status }, { now }) };
+  return null;
+}
+
 /** The day sections both lists share (Runs and Chats Group by Date), top to bottom: Today, Yesterday, 2–7 days ago,
  *  8–30 days ago, then the rest. The boundaries are local midnights, stepped with setDate so a DST day is still one day. */
 export const DAY_BUCKETS = Object.freeze([
@@ -890,7 +898,7 @@ function textEl(doc, tag, cls, text) {
 /** The PR chip (spec §2.1a): icon + word, the title in the tooltip. Shared with run-status-card.mjs (slice 4, D1).
  *  `link`: a member row's chip is its own link to the PR (QA 7), above the row's stretched title link.
  *  `number`: the run page's PR bar names its PR inside the chip, between the git-state icon and the word (run 3, D11). */
-export function prChip(doc, pr, { link = false, number = false } = {}) {
+export function prChip(doc, pr, { link = false, number = false, word = true } = {}) {
   const asLink = link && !!pr.url;
   const s = doc.createElement(asLink ? 'a' : 'span');
   s.className = `runs-pr is-${pr.id}`;
@@ -898,7 +906,8 @@ export function prChip(doc, pr, { link = false, number = false } = {}) {
   if (asLink) { s.setAttribute('href', pr.url); s.setAttribute('target', '_blank'); s.setAttribute('rel', 'noopener'); }
   s.append(icon(doc, pr.icon, 14));
   if (number && pr.number != null) s.append(textEl(doc, 'span', 'runs-pr-num', `PR #${pr.number}`));
-  s.append(textEl(doc, 'span', 'runs-pr-word', pr.word));
+  if (word) s.append(textEl(doc, 'span', 'runs-pr-word', pr.word));
+  else s.setAttribute('aria-label', pr.word);   // an icon-only chip still names its state
   return s;
 }
 
@@ -980,7 +989,8 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   box.className = 'runs-check';
   box.checked = checked.has(r.key);
   box.setAttribute('aria-label', `Select ${r.title}`);
-  pick.append(renderStatusDot(doc, r.model), box);
+  // A run under its chat (chats-list.mjs withRuns) is never selected there: no box, its dot stays in select mode.
+  pick.append(...(r.chatId ? [renderStatusDot(doc, r.model)] : [renderStatusDot(doc, r.model), box]));
   const a = doc.createElement('a');
   a.className = `runs-row runs-row-${r.kind}`;
   a.setAttribute('href', r.href);
@@ -992,11 +1002,15 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   if (r.memberKeys) a.dataset.memberKeys = [...r.memberKeys].join(' ');   // paintRunsSelection rebuilds the set from it
   if (r.roundKeys && r.roundKeys.size) a.dataset.roundKeys = [...r.roundKeys].join(' ');   // and this one (a stack's rounds)
   // #948 s3: a Chats column topic group draws as a Runs group row (count, ⌄, indented members), with no stage line.
-  const grouped = r.kind === 'chain' || r.kind === 'chat-group';
+  // A chat's started runs (chats-list.mjs, View › Runs › Under chats) fold under it the same way, with no count.
+  const parent = r.kind === 'chat' && Array.isArray(r.members) && r.members.length > 0;
+  const grouped = r.kind === 'chain' || r.kind === 'chat-group' || parent;
   const right = doc.createElement('span');
   right.className = 'runs-row-right';
-  if (grouped) right.append(textEl(doc, 'span', 'runs-count', r.count));
-  if (r.model.pr && !r.model.pr.pending) right.append(prChip(doc, r.model.pr));
+  if (grouped && !parent) right.append(textEl(doc, 'span', 'runs-count', r.count));
+  // A run under its chat (chats-list.mjs withRuns) is one quiet line: its dot and, at the end, the PR icon without words.
+  const bare = !!r.chatId;
+  if (r.model.pr && !r.model.pr.pending) right.append(prChip(doc, r.model.pr, { word: !bare }));
   // Rows carry no clock: the model's `now` keeps it deterministic. Group rows ('chain') carry their latest member's
   // activityMs, so "Ready to ship · Fri" and a group-PR row's "Fri" get their time too.
   const time = Number.isFinite(r.activityMs) ? rowTime(r.activityMs, now) : (r.time || '');
@@ -1019,7 +1033,7 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   const mark = r.kind === 'chat' ? originMark(doc, r.origin) : null;   // a chat a chat integration opened: its platform's logo
   if (mark) title.prepend(mark);
   const lab = level === 'top' ? rowLabels(doc, r.labels) : null;
-  a.append(...[title, lab, right, stack && !r.roundsOwnLine ? null : textEl(doc, 'span', 'runs-row-sub', line)].filter(Boolean));
+  a.append(...[title, lab, right, bare || (stack && !r.roundsOwnLine) ? null : textEl(doc, 'span', 'runs-row-sub', line)].filter(Boolean));
   if (r.kind === 'chain' && !ENDED_STATES.has(r.model.state) && r.model.progress) {
     a.append(renderRowLine(doc, { fraction: r.model.progress.fraction }, (lineFrom && lineFrom.get(r.key)) || ''));
   } else if (r.kind !== 'chain' && !unstarted && LIVE_MEMBER.has(r.model.state) && r.model.state !== 'failed' && !r.model.prNeeds && r.model.progress) {
@@ -1052,7 +1066,7 @@ function renderItem(doc, r, { section = '', level = 'top', checked, selecting, s
   if (stack) item.append(...renderRounds(doc, r, { roundsOpen, roundsAll, now }));
   if (grouped && r.open) {
     const list = doc.createElement('div');   // member rows are div.runs-item, so a list of them is a div with role=list
-    list.className = 'runs-members';
+    list.className = parent ? 'runs-members runs-members-chat' : 'runs-members';
     list.setAttribute('role', 'list');
     for (const mb of r.members) {
       list.append(renderItem(doc, { ...mb, href: mb.href || '#runs', title: mb.title || '(untitled)' },

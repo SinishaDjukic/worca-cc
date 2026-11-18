@@ -484,6 +484,19 @@ test('run links: insert, update, list', () => {
   assert.throws(() => linkRun(t.id, { runId: 'run-a' }), /UNIQUE|PRIMARY/);
 });
 
+test('a list row names the runs its chat started (run cards), oldest first; a tracked run is not one', () => {
+  const t = createThread({ title: 'started-refs one' });
+  linkRun(t.id, { runId: 'run-s1', cardId: 'card_00000001', pipelineId: 'aa11' });
+  linkRun(t.id, { runId: 'run-t1' });                       // track_run: no card
+  linkRun(t.id, { runId: 'run-s2', cardId: 'card_00000002' });
+  const row = listThreadsPage({ query: 'started-refs' }).threads.find((x) => x.id === t.id);
+  assert.deepEqual(row.startedRunRefs.map((r) => r.runId).sort(), ['run-s1', 'run-s2']);
+  assert.deepEqual(row.startedRunRefs.find((r) => r.runId === 'run-s1'), { runId: 'run-s1', pipelineId: 'aa11' });
+  assert.equal(row.startedRunRefs.find((r) => r.runId === 'run-s2').pipelineId, null, 'no pipeline id before the first state');
+  const bare = createThread({ title: 'started-refs none' });
+  assert.deepEqual(listThreadsPage({ query: 'started-refs none' }).threads.find((x) => x.id === bare.id).startedRunRefs, []);
+});
+
 test('deleteThread cascades rows and removes the attachment directory', () => {
   const t = createThread();
   const m = appendMessage(t.id, { role: 'user', text: 'x' });

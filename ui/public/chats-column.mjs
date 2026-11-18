@@ -25,7 +25,8 @@ const MAX_PAGE = 200;
 
 export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = () => Date.now(), level = () => 'simple',
   scopeName = () => '', currentId = () => null, onOpen, onRename, onDelete, onHelp = () => {},
-  flagOn = () => false, confirm = async () => false, onChatsGone = () => {}, requestRefresh = null, onThreads = () => {} }) {
+  flagOn = () => false, confirm = async () => false, onChatsGone = () => {}, requestRefresh = null, onThreads = () => {},
+  runRows = null, onOpenRun = () => {} }) {
   const doc = host.ownerDocument;
   const el = (tag, cls, text) => { const n = doc.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
   // focusKey uses list-dom.mjs's navKey form (`row:chat:ID`, `sec:older`), as runsUi does.
@@ -82,7 +83,7 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
   // selects like a row; selectedRows() expands it. The range is the one Shift+↑/↓ extends over.
   const unbindSelect = bindPointerSelect({ list, win, visibleKeys: () => rove.items().map((n) => n.dataset.rowKey).filter(Boolean),
     getAnchor: () => st.anchorKey, setAnchor: (k) => { st.anchorKey = k; },
-    toggle: (k) => { st.selecting = true; toggleSel(k); },
+    toggle: (k) => { if (isRun(st.byKey.get(k))) return; st.selecting = true; toggleSel(k); },
     selectRange: (keys) => { st.selecting = true; st.sel.selectAll(keys); paint(); } });
   const page = host.closest('[data-chat-page]') || host.parentElement;
   const resize = mountRunsResize(page, { storage, win, key: CHATS_LIST_W_KEY, cssVar: '--chats-list-w', paneSel: '.chat-history',
@@ -138,9 +139,11 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
     if (st.destroyed) return;
     const hadFocus = list.contains(doc.activeElement);
     st.model = buildChatsModel({ threads: st.threads, view: st.view, total: st.total, more: !!st.cursor, olderOpen: st.olderOpen,
-      collapsed: st.collapsed, groups: st.groups, toggled: st.toggled, scopeName, now: now() });
-    st.byKey = new Map(st.model.sections.flatMap((s) => s.rows)
-      .flatMap((r) => (r.kind === 'chat-group' ? [r, ...r.members] : [r])).map((r) => [r.key, r]));
+      collapsed: st.collapsed, groups: st.groups, toggled: st.toggled, scopeName, runRows, now: now() });
+    // Every row and member: a group's chats, and the runs under a chat (View › Runs › Under chats).
+    const flat = (r) => [r, ...(r.members || []).flatMap(flat)];
+    st.byKey = new Map(st.model.sections.flatMap((s) => s.rows).flatMap(flat).map((r) => [r.key, r]));
+    st.runsSig = runsSig();
     // D9: a group the model opened (a chat needs you or works) stays open for the session once the chat settles.
     for (const r of st.byKey.values()) if (r.kind === 'chat-group' && r.open && !st.toggled.has(r.key)) st.toggled.set(r.key, true);
     st.sel.prune(new Set(st.byKey.keys()));
@@ -186,7 +189,7 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
     const seen = new Set();
     return [...st.sel.keys()].map((k) => st.byKey.get(k)).filter(Boolean)
       .flatMap((r) => (r.kind === 'chat-group' ? r.members : [r]))
-      .filter((r) => (seen.has(r.key) ? false : seen.add(r.key)));
+      .filter((r) => r.kind === 'chat' && (seen.has(r.key) ? false : seen.add(r.key)));   // a run under a chat is not one
   };
   function paintBar() {
     const on = st.selecting || st.sel.size > 0;
@@ -360,10 +363,19 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
       rove.focus(rove.rove());
     },
   };
-  const menuItems = (r) => (r.kind === 'chat-group' ? chatGroupMenuItems(r, { mac: isMac(win), on }) : chatRowMenuItems(r, { mac: isMac(win), on }));
+  const isRun = (r) => !!r && !!r.chatId;   // a run under its chat (chats-list.mjs withRuns)
+  const foldable = (r) => !!r && (r.kind === 'chat-group' || (r.kind === 'chat' && !!(r.members && r.members.length)));
+  const menuItems = (r) => (isRun(r) ? [{ label: 'Open run', key: 'open', onSelect: () => openRun(r) },
+    { label: 'Show in Runs', onSelect: () => { win.location.hash = r.href; } }]
+    : r.kind === 'chat-group' ? chatGroupMenuItems(r, { mac: isMac(win), on }) : chatRowMenuItems(r, { mac: isMac(win), on }));
+  /** A run under a chat opens beside its chat: the chat first, then the run (ask-panel.mjs openRun). */
+  function openRun(r) {
+    st.focusKey = `row:${r.key}`;
+    onOpenRun({ runId: r.runId || '', pipelineId: r.pipelineId || '', projectKey: r.projectKey || '' }, r.chatId);
+  }
   function toggleGroup(key, open = null) {
     const r = st.byKey.get(key);
-    if (!r || r.kind !== 'chat-group') return;
+    if (!foldable(r)) return;
     st.toggled.set(key, open == null ? !r.open : open);
     paint();
     st.focusKey = `row:${key}`;          // after the paint (runs-list repaint-refocus trap)
@@ -397,11 +409,20 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
       e.preventDefault();
       const r = st.byKey.get(a.dataset.rowKey);
       if (!r) return;
-      if (st.selecting || st.sel.size) { toggleSel(r.key); return; }
+      if (st.selecting || st.sel.size) { if (!isRun(r)) toggleSel(r.key); return; }
       if (r.kind === 'chat-group') { toggleGroup(r.key); return; }   // a chat group has no page: the row expands
+      if (isRun(r)) { openRun(r); return; }
       st.focusKey = navKey(a);
       onOpen(r.id);
     }
+  });
+  // A double click on a chat with runs under it folds or unfolds them (its first click opened the chat).
+  list.addEventListener('dblclick', (e) => {
+    const a = e.target.closest('a.runs-row');
+    const r = a ? st.byKey.get(a.dataset.rowKey) : null;
+    if (!r || r.kind !== 'chat' || !foldable(r) || st.selecting || st.sel.size) return;
+    e.preventDefault();
+    toggleGroup(r.key);
   });
   list.addEventListener('keydown', (e) => {
     const t = e.target;
@@ -430,23 +451,24 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
       }
       case 'open':
         if (r && r.kind === 'chat-group') { toggleGroup(r.key); return; }
+        if (isRun(r)) { openRun(r); return; }
         if (r) { st.focusKey = navKey(rowEl); onOpen(r.id); }
         return;
       case 'unfold': case 'fold': {
-        if (r && r.kind === 'chat-group') { toggleGroup(r.key, act === 'unfold'); return; }
+        if (foldable(r)) { toggleGroup(r.key, act === 'unfold'); return; }
         const h = t.closest('button.runs-sec-head');
         if (h) toggleSection(h.dataset.sectionKey, act === 'unfold');
         return;
       }
       case 'menu': if (r) openRowMenu(r, rowEl.closest('.runs-item').querySelector('.runs-more')); return;
-      case 'toggle': if (r) { st.selecting = true; toggleSel(r.key); } return;
-      case 'all': st.selecting = true; st.sel.selectAll([...st.byKey.keys()]); paint(); return;
+      case 'toggle': if (r && !isRun(r)) { st.selecting = true; toggleSel(r.key); } return;
+      case 'all': st.selecting = true; st.sel.selectAll([...st.byKey.values()].filter((x) => !isRun(x)).map((x) => x.key)); paint(); return;
       case 'clear': st.sel.clear(); st.selecting = false; st.anchorKey = null; paint(); return;
       default: break;
     }
     if (act === 'archive' && st.sel.size) { void archive(selectedRows(), { unarchive: st.view.show === 'archived' }); return; }
     if (act === 'add-to-group' && st.sel.size) { addToGroup(selectedRows(), groupBtn); return; }
-    if (!r) return;
+    if (!r || isRun(r)) return;   // a run under a chat takes Enter and ⋯ only
     // A busy row's Archive is disabled in ⋯; from the keyboard the reason comes as a toast (no hover there).
     if (act === 'archive' && r.busy && !r.isArchived) {
       notify({ tone: 'info', title: r.kind === 'chat-group' ? chatGroupBusyText(r.busyTitle) : CHAT_BUSY[r.busy], key: 'chat-busy' }, { doc });
@@ -466,6 +488,7 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
   function setView(p) {
     st.view = { ...st.view, ...p };
     saveChatsView(storage, st.view);
+    if (Object.keys(p).every((k) => k === 'runs')) { paint(); return; }   // Runs only arranges the rows on hand
     st.threads = [];
     st.cursor = null;
     st.total = null;          // "Loading chats…" until the new view answers, never the old view's count
@@ -484,10 +507,28 @@ export function mountChatsColumn({ host, fetch: fetchImpl, storage, win, now = (
     void archive(selectedRows(), { unarchive: st.view.show === 'archived' });
   });
 
+  /** What the runs under the chats show: a run's frame repaints the column only when this changes. */
+  function runsSig() {
+    if (!runRows || st.view.runs !== 'nested') return '';
+    const out = [];
+    for (const t of st.threads) {
+      if (!Array.isArray(t.startedRunRefs) || !t.startedRunRefs.length) continue;
+      for (const m of runRows(t.startedRunRefs) || []) {
+        if (!m) continue;
+        const pr = m.model.progress;
+        out.push([m.runId || m.pipelineId, m.title, m.model.state, m.model.line, m.model.symbol || '', m.model.pulse ? 1 : 0,
+          pr ? [pr.stage || '', pr.label || '', Math.round((pr.fraction || 0) * 20)] : 0]);
+      }
+    }
+    return JSON.stringify(out);
+  }
+
   paint();   // "Loading chats…" until the first answer
   return {
     refresh,
     paintCurrent,
+    /** The runs changed (app.js): repaint when a run under a chat shows something new. */
+    runsChanged() { if (!st.destroyed && st.loaded && runsSig() !== st.runsSig) paint(); },
     /** A WS frame the panel saw: a command starting or ending changes a chat's busy state (ask-command tails do not). */
     onFrame(f) {
       // Clear chat history: the chats it names (every one when it names none) leave at once, then the list re-reads.

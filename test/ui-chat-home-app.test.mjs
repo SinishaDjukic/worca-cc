@@ -439,3 +439,30 @@ test('bundle QA 2: a History row in Needs you through its PR is a tile that says
   }
   assert.equal([...doc.querySelectorAll('.chat-run-tile-pt')].filter((n) => n.textContent === 'Done').length, 0);
 });
+
+// The Chats column's runs under a chat read History rows by id (app.js histOf, an index rebuilt per history list):
+// a run this tab knows only from History nests under its chat, and a reload's new list replaces the old row.
+test('a History-only run nests under the chat that started it, and a History reload repaints it from the new list', async () => {
+  let history = [HROW({ id: 'pp000001', title: 'Trail in the top bar' }), HROW({ id: 'pp000002', title: 'Not this chat' })];
+  const thread = { id: 'ask_000000c1', title: 'Plan the API rewrite', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    model: null, effort: null, sessionId: null, context: null, totals: {}, startedRuns: 1, startedRunRefs: [{ runId: 'run-h1', pipelineId: 'pp000001' }] };
+  const base = arms({ threads: [thread] });
+  _resetChatExtensions();
+  const ctx = await bootApp({ fetchHandler: (url, o) => (url === '/api/history' ? ok({ pipelines: history, ghAvailable: false, prHosts: {} })
+    : url.startsWith('/api/ask/threads?') ? ok({ threads: [thread], total: 1 }) : base(url, o)) });
+  ctx.go('runs');                               // the Runs page loads History
+  await ctx.settle(3);
+  ctx.go('chat/new');
+  await ctx.settle(6);
+  const doc = ctx.window.document;
+  const toggle = doc.querySelector('.chat-history-toggle');
+  if (toggle && toggle.getAttribute('aria-pressed') !== 'true') toggle.click();
+  await ctx.settle(4);
+  const titles = () => [...doc.querySelectorAll('.runs-item[data-row-key="chat:ask_000000c1"] > .runs-members-chat .runs-row-title')].map((n) => n.textContent);
+  assert.deepEqual(titles(), ['Trail in the top bar']);
+  history = [HROW({ id: 'pp000001', title: 'Trail in the top bar, renamed' })];
+  await revisit(ctx);
+  if (toggle && toggle.getAttribute('aria-pressed') !== 'true') toggle.click();
+  await ctx.settle(4);
+  assert.deepEqual(titles(), ['Trail in the top bar, renamed'], 'the new history list, not the first one');
+});
