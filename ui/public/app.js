@@ -40304,11 +40304,7 @@ function markSettingsStrip() {
 el.settingsTabs?.addEventListener('scroll', markSettingsStrip, { passive: true });
 window.addEventListener('resize', markSettingsStrip);
 document.addEventListener('worca:level', markSettingsStrip);    // a mode change shows or hides tabs
-let settingsSubFrame = 0;
-document.addEventListener('scroll', () => {
-  if (settingsSubFrame || currentShownView !== 'settings') return;
-  settingsSubFrame = requestAnimationFrame(() => { settingsSubFrame = 0; markSettingsSub(); });
-}, { passive: true, capture: true });
+document.addEventListener('scroll', () => { if (currentShownView === 'settings') markSettingsSub(); }, { passive: true, capture: true });
 
 // A link to one card ('#settings/runs/actions', '#models/engine', a top bar search pick '#settings/general/appearance-card'):
 // scroll to `<sub>-settings-card` (else the card whose id IS `sub`) inside `scope`, focus its first field and
