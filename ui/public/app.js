@@ -20123,7 +20123,7 @@ async function patchProviderFlow(name, body, { btn = null, onError = null } = {}
   }
   // A change of the GitHub host signs the Copilot account out (a token belongs to one host): say so.
   if (wasConnected && !(mvState.providers.copilot && mvState.providers.copilot.connected)) {
-    setProviderMsg('copilot', `Signed out: sign in again on ${(mvState.providers.copilot && mvState.providers.copilot.githubHost) || 'github.com'}.`);
+    setProviderMsg('copilot', `Signed out: sign in again on ${copilotHostLabel(mvState.providers.copilot)}.`);
   }
   // The repaint replaced the clicked button: give its successor the "Saved" state.
   if (btn && !btn.isConnected) {
@@ -20136,11 +20136,16 @@ async function patchProviderFlow(name, body, { btn = null, onError = null } = {}
 
 const COPILOT_ACCOUNT_LABELS = { individual: 'Individual', business: 'Business', enterprise: 'Enterprise', 'ghe-com': 'GHE.com tenant' };
 
+/** Where the Copilot sign-in lives, for messages: githubHost is null for a GHE.com tenant setting without a usable host. */
+function copilotHostLabel(c) {
+  return (c && c.githubHost) || (c && c.accountType === 'ghe-com' ? 'your GHE.com tenant' : 'github.com');
+}
+
 /** Ask before a Copilot change that moves the GitHub host while signed in (the sign-in belongs to the old host). */
 function confirmCopilotHostSwitch(c, toLabel) {
   return confirmModal({
     title: `Switch to ${toLabel}?`,
-    message: `Switch to ${toLabel}? This signs you out of GitHub Copilot${c.login ? ` (@${c.login})` : ''}, because the sign-in belongs to ${c.githubHost || 'github.com'}.`,
+    message: `Switch to ${toLabel}? This signs you out of GitHub Copilot${c.login ? ` (@${c.login})` : ''}, because the sign-in belongs to ${copilotHostLabel(c)}.`,
     confirmLabel: 'Switch and sign out', danger: true,
   });
 }
@@ -20169,14 +20174,12 @@ async function copilotHostSaveFlow(btn) {
   const input = providerRoot()?.querySelector('.mv-cp-host');
   const value = input ? input.value.trim() : '';
   const c = (mvState.providers && mvState.providers.copilot) || {};
-  mvState.copilotDraft = { accountType: 'ghe-com', enterpriseHost: value };   // a refused save keeps what was typed
+  // The server's normalization (normalizeGheHost): the draft a repaint shows mid-save is already what gets stored.
   const typed = value.toLowerCase().replace(/^https:\/\//, '').replace(/\/$/, '');
-  if (c.connected && typed !== (c.githubHost || 'github.com') && !(await confirmCopilotHostSwitch(c, typed || 'the new host'))) return;
-  if (await patchProviderFlow('copilot', { accountType: 'ghe-com', enterpriseHost: value }, { btn })) {
-    mvState.copilotDraft = null;   // stored now; no repaint (it would wipe the "Signed out" line): show the normalized host in place
-    const shown = providerRoot()?.querySelector('.mv-cp-host');
-    if (shown && mvState.providers && mvState.providers.copilot) shown.value = mvState.providers.copilot.enterpriseHost || '';
-  }
+  mvState.copilotDraft = { accountType: 'ghe-com', enterpriseHost: typed };   // a refused save keeps what was typed
+  // githubHost null (a GHE.com setting without a usable host) never equals a typed host: the save moves the sign-in.
+  if (c.connected && typed !== c.githubHost && !(await confirmCopilotHostSwitch(c, typed || 'the new host'))) return;
+  if (await patchProviderFlow('copilot', { accountType: 'ghe-com', enterpriseHost: value }, { btn })) mvState.copilotDraft = null;
 }
 
 /** "Remove speech models": frees the built-in engines' downloads; the next mic use fetches them again. */

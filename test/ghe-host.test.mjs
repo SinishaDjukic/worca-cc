@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  GHE_COM_ACCOUNT_TYPE, normalizeGheHost, gheUrls, gheGatewayFallback, isTenantOrigin, gheTenantOfUrl, gheEgressAllow,
+  GHE_COM_ACCOUNT_TYPE, normalizeGheHost, gheUrls, gheGatewayFallback, isTenantOrigin, gheTenantOfUrl, gheEgressAllow, copilotBlockHost,
 } from '../src/core/ghe-host.mjs';
 import { COPILOT_ACCOUNT_TYPES } from '../src/core/model-env.mjs';
 
@@ -53,4 +53,13 @@ test('gheEgressAllow: apex plus subdomains for a valid host, nothing otherwise',
 test('COPILOT_ACCOUNT_TYPES includes GHE_COM_ACCOUNT_TYPE', () => {
   assert.ok(COPILOT_ACCOUNT_TYPES.includes(GHE_COM_ACCOUNT_TYPE));
   assert.equal(GHE_COM_ACCOUNT_TYPE, 'ghe-com');
+});
+
+test('copilotBlockHost: github.com unless ghe-com; the tenant, or null when ghe-com has no usable host', () => {
+  for (const b of [undefined, null, {}, { accountType: 'individual' }, { accountType: 'business', enterpriseHost: 'acme.ghe.com' }]) {
+    assert.equal(copilotBlockHost(b), 'github.com');
+  }
+  assert.equal(copilotBlockHost({ accountType: GHE_COM_ACCOUNT_TYPE, enterpriseHost: 'https://ACME.ghe.com/' }), 'acme.ghe.com');
+  assert.equal(copilotBlockHost({ accountType: GHE_COM_ACCOUNT_TYPE }), null);
+  assert.equal(copilotBlockHost({ accountType: GHE_COM_ACCOUNT_TYPE, enterpriseHost: 'github.com' }), null);
 });

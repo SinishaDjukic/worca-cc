@@ -26,6 +26,16 @@ export function normalizeGheHost(input) {
   return HOST_RE.test(s) ? s : null;
 }
 
+/**
+ * The GitHub host a stored copilot provider block signs in to: 'github.com', its GHE.com
+ * tenant for accountType ghe-com, or null for a ghe-com block without a usable host.
+ * The one rule every caller (settings, provider ops, the bridge, egress) shares. Pure; never throws.
+ */
+export function copilotBlockHost(block) {
+  if (!block || typeof block !== 'object' || block.accountType !== GHE_COM_ACCOUNT_TYPE) return 'github.com';
+  return normalizeGheHost(block.enterpriseHost);
+}
+
 /** The web and REST origins of a GitHub host (null → github.com). */
 export function gheUrls(host) {
   if (!host) return { host: 'github.com', web: 'https://github.com', api: 'https://api.github.com' };

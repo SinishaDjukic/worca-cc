@@ -67,7 +67,7 @@ import {
   isUpstreamBaseUrl, REASONING_EFFORT_LEVELS,
 } from './model-env.mjs';
 import { MODEL_ROLES } from '../shared/model-roles.mjs';
-import { GHE_COM_ACCOUNT_TYPE, normalizeGheHost } from './ghe-host.mjs';
+import { GHE_COM_ACCOUNT_TYPE, normalizeGheHost, copilotBlockHost } from './ghe-host.mjs';
 import { CODEX_PRICES, listPriceFor } from './list-prices.mjs';
 import { engineLabel } from '../shared/engine-switch.mjs';
 import { validateNightPatch, NIGHT_TOGGLES } from './night/config.mjs';
@@ -2623,9 +2623,6 @@ function mergeProviderBlock(currentProviders, name, patch) {
   return cur;
 }
 
-/** The GitHub host a copilot block signs in to: its tenant for ghe-com, else github.com ('invalid' = ghe-com without a usable host). */
-const githubHostOf = (b) => (b.accountType === GHE_COM_ACCOUNT_TYPE ? normalizeGheHost(b.enterpriseHost) || 'invalid' : 'github.com');
-
 /**
  * The cross-field rules of the copilot block, applied to the merged `after` in place (it throws
  * before anything is written): a host belongs to accountType ghe-com and ghe-com needs one; a
@@ -2641,7 +2638,7 @@ function reconcileCopilotBlock(before, after, patch) {
   else if (!normalizeGheHost(after.enterpriseHost) && (Object.hasOwn(patch, 'accountType') || Object.hasOwn(patch, 'enterpriseHost'))) {
     throw new Error(`accountType ${GHE_COM_ACCOUNT_TYPE} needs enterpriseHost (your GHE.com tenant, like acme.ghe.com)`);
   }
-  if (githubHostOf(before) !== githubHostOf(after) && !Object.hasOwn(patch, 'githubToken')) {
+  if (copilotBlockHost(before) !== copilotBlockHost(after) && !Object.hasOwn(patch, 'githubToken')) {
     delete after.githubToken;
     delete after.login;
   }
@@ -2673,8 +2670,7 @@ export async function updateProvider(name, patch = {}, { dryRun = false, expectC
   if (expectCopilotHost !== undefined) {
     // A device-flow sign-in commits its token here: refuse when the GitHub host moved since it began.
     const stored = isObj(settings.providers) && isObj(settings.providers.copilot) ? settings.providers.copilot : {};
-    const current = stored.accountType === GHE_COM_ACCOUNT_TYPE ? normalizeGheHost(stored.enterpriseHost) || 'invalid' : null;
-    if (current !== expectCopilotHost) throw Object.assign(new Error('the Copilot GitHub host changed during the sign-in — start it again'), { code: 'HOST_CHANGED' });
+    if (copilotBlockHost(stored) !== (expectCopilotHost || 'github.com')) throw Object.assign(new Error('the Copilot GitHub host changed during the sign-in — start it again'), { code: 'HOST_CHANGED' });
   }
   if (dryRun) return { ...providerDefaults(name), ...sanitizeProvider(name, mergeProviderBlock(settings.providers, name, patch)) };
   const v = nextProviders(settings.providers, name, patch);
