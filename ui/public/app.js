@@ -302,6 +302,7 @@ import { createDesignChat } from './design/chat.mjs';
 import { createDesignActivity } from './design/activity.mjs';
 import { createLevelController, levelAtLeast, currentLevel, tagLevel, keepVisible, minLevelFor, LEVEL_INFO, UI_LEVELS } from './ui-level.mjs';
 import { applyFlags, currentFlags, decorateFlagChips, flagOn, onFlagChange } from './flags.mjs';
+import { CARDS as SETTINGS_CARDS } from './settings-index.mjs';
 import { gitOn, applyGit, onGitChange as onGitFlip, refreshGit, GIT_MISSING_TEXT } from './git-gate.mjs';
 import { PROBE_DEBOUNCE_MS, defaultAddMode, detectModel } from './project-add.mjs';
 import { presetMenuGroups, presetHiddenItems, presetNodePick, renderBrokenCard, resetItem, saveDialogError, configWithPreset } from './run-presets-picker.mjs';
@@ -40236,6 +40237,11 @@ function showSettingsTab(param = '') {
       b.setAttribute('aria-pressed', on ? 'true' : 'false');
     }
   }
+  paintSettingsSub(tab);
+  // A narrow screen scrolls the strip sideways: keep the open tab in sight (centred, the page itself does not move).
+  const strip = el.settingsTabs, onTab = strip?.querySelector('button.on');
+  if (onTab && strip.scrollWidth > strip.clientWidth) strip.scrollLeft = onTab.offsetLeft - (strip.clientWidth - onTab.offsetWidth) / 2;
+  markSettingsStrip();
   // Same contract the per-view loaders had: a tab that is never opened costs no
   // request, and re-entry refetches (which is what lets grvExitWizard's
   // '#settings/guardrails/<id>' -> '#settings/guardrails' hop reset the wizard).
@@ -40252,6 +40258,57 @@ function showSettingsTab(param = '') {
   if (tab === 'memory') loadMemoryTab(sub);
   if (tab === 'experimental') loadFlagsTab(sub);
 }
+
+// The open tab's cards as links under it, for the two long tabs only (the left column, wide screens). A link is
+// the card's own address and name from settings-index.mjs (what the top bar search shows) and carries the card's
+// mode, Labs and git gates, so the same CSS rules hide it with its card.
+const SETTINGS_LISTS_CARDS = ['general', 'runs'];
+const SETTINGS_CARD_TITLE = new Map(SETTINGS_CARDS.map((c) => [c.id, c.title]));
+function paintSettingsSub(tab) {
+  if (!el.settingsTabs) return;
+  el.settingsTabs.querySelector('.settings-sub')?.remove();
+  const pane = SETTINGS_LISTS_CARDS.includes(tab) && settingsPanes.find((p) => p.dataset.tab === tab);
+  if (!pane) return;
+  const sub = document.createElement('div');
+  sub.className = 'settings-sub';
+  for (const card of pane.querySelectorAll(':scope > .settings-card')) {
+    const title = SETTINGS_CARD_TITLE.get(card.id);
+    if (!title) continue;
+    const a = document.createElement('a');
+    a.href = `#settings/${tab}/${card.id}`;
+    a.textContent = a.title = title;
+    a.dataset.card = card.id;
+    for (const k of ['minLevel', 'flag', 'needsGit']) if (k in card.dataset) a.dataset[k] = card.dataset[k];
+    sub.append(a);
+  }
+  el.settingsTabs.querySelector(`button[data-tab="${tab}"]`).after(sub);
+  markSettingsSub();
+}
+// Which card is on screen: the last one whose top passed the upper part of the page. Colour only; nothing scrolls.
+function markSettingsSub() {
+  let cur = null;
+  const links = [...(el.settingsTabs?.querySelectorAll('.settings-sub a') || [])];
+  for (const a of links) {
+    const card = document.getElementById(a.dataset.card);
+    if (card && card.getClientRects().length && (!cur || card.getBoundingClientRect().top < 220)) cur = a;
+  }
+  for (const a of links) { if (a === cur) a.setAttribute('aria-current', 'true'); else a.removeAttribute('aria-current'); }
+}
+// Which sides of the narrow strip hide more tabs ('' | 'left' | 'right' | 'left right'): the CSS fades that edge.
+function markSettingsStrip() {
+  const strip = el.settingsTabs;
+  if (!strip) return;
+  const max = strip.scrollWidth - strip.clientWidth;
+  strip.dataset.more = [strip.scrollLeft > 1 ? 'left' : '', strip.scrollLeft < max - 1 ? 'right' : ''].filter(Boolean).join(' ');
+}
+el.settingsTabs?.addEventListener('scroll', markSettingsStrip, { passive: true });
+window.addEventListener('resize', markSettingsStrip);
+document.addEventListener('worca:level', markSettingsStrip);    // a mode change shows or hides tabs
+let settingsSubFrame = 0;
+document.addEventListener('scroll', () => {
+  if (settingsSubFrame || currentShownView !== 'settings') return;
+  settingsSubFrame = requestAnimationFrame(() => { settingsSubFrame = 0; markSettingsSub(); });
+}, { passive: true, capture: true });
 
 // A link to one card ('#settings/runs/actions', '#models/engine', a top bar search pick '#settings/general/appearance-card'):
 // scroll to `<sub>-settings-card` (else the card whose id IS `sub`) inside `scope`, focus its first field and
@@ -40443,6 +40500,9 @@ awayScreensaver = createAwayScreensaver({
 // Settings tabs are hash-first, exactly like the nav buttons: the single
 // hashchange listener drives showView, so a click renders once.
 el.settingsTabs?.addEventListener('click', (e) => {
+  // A card link is a plain hash link; picking the same one again fires no hashchange, so land on it by hand.
+  const link = e.target.closest && e.target.closest('.settings-sub a');
+  if (link && location.hash === link.getAttribute('href')) showView('settings', location.hash.slice('#settings/'.length));
   const btn = e.target.closest && e.target.closest('button[data-tab]');
   if (!btn) return;
   const param = settingsParamFor(btn.dataset.tab);

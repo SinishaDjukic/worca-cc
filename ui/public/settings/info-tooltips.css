@@ -65,6 +65,47 @@
 
 /* Settings tab strip: spaced from the first pane's .topbar, which brings its own 22px bottom margin. */
 .settings-tabs{max-width:760px;margin:0 auto 18px;}
+/* Tab icons: the left menu's drawing rules, coloured by the theme's ink (one set for light and dark). */
+.settings-tabs .tab > svg{width:16px;height:16px;flex:0 0 16px;color:var(--ink-3);}
+.settings-tabs .tab:is(:hover,.on) > svg{color:var(--ink);}
+.settings-sub{display:none;}
+/* Narrow screens keep the strip: it stays at the top while the page scrolls, and showSettingsTab brings the open
+   tab into view inside it. */
+@media (max-width:1080px){
+  [data-view="settings"] > .settings-tabs{position:sticky;top:-26px;z-index:2;max-width:none;margin:-26px -32px 18px;padding:14px 32px 0;background:var(--bg);}
+  /* More tabs to the side (data-more, set by markSettingsStrip): that edge fades out under a small arrow.
+     Each hint is a zero-footprint flex item (40px + the 16px gap, taken back by its margins) stuck to its edge
+     (a sticky inset counts from the strip's content box, so it is minus the strip's side padding). */
+  [data-view="settings"] > .settings-tabs::before,[data-view="settings"] > .settings-tabs::after{position:sticky;z-index:1;box-sizing:border-box;flex:0 0 40px;align-self:stretch;
+    display:flex;align-items:center;color:var(--ink-2);font:500 18px/1 var(--sans);pointer-events:none;opacity:0;transition:opacity .15s;}
+  [data-view="settings"] > .settings-tabs::before{content:"\2039";left:-32px;margin:0 -24px 0 -32px;padding-left:10px;background:linear-gradient(to right,var(--bg) 55%,transparent);}
+  [data-view="settings"] > .settings-tabs::after{content:"\203A";right:-32px;margin:0 -32px 0 -24px;padding-right:10px;justify-content:flex-end;background:linear-gradient(to left,var(--bg) 55%,transparent);}
+  [data-view="settings"] > .settings-tabs[data-more~="left"]::before,[data-view="settings"] > .settings-tabs[data-more~="right"]::after{opacity:1;}
+  /* A card link lands below the strip, not under it. */
+  [data-view="settings"] .settings-card{scroll-margin-top:60px;}
+}
+@media (max-width:640px){
+  [data-view="settings"] > .settings-tabs{top:-16px;margin:-16px -16px 18px;padding:8px 16px 0;}
+  [data-view="settings"] > .settings-tabs::before{left:-16px;margin:0 -40px 0 -16px;}
+  [data-view="settings"] > .settings-tabs::after{right:-16px;margin:0 -16px 0 -40px;}
+}
+/* Wide screens: the strip stands left of the pane as a column (same buttons, the 2px ink line moves to the left
+   edge) and the open tab lists its cards. Below 1081px Settings keeps the horizontal strip. */
+@media (min-width:1081px){
+  /* The column keeps one place on every tab: cards stay 760px beside it, the wide panes (Guardrails, Memory) take the rest. */
+  [data-view="settings"]:not(.hidden){display:grid;grid-template-columns:184px minmax(0,1fr);column-gap:40px;align-items:start;max-width:1224px;margin-inline:auto;}
+  [data-view="settings"] > *{grid-column:2;}
+  [data-view="settings"] > .settings-tabs{grid-column:1;grid-row:1 / span 20;position:sticky;top:0;flex-direction:column;align-items:stretch;gap:0;
+    margin:0;max-width:none;max-height:calc(100vh - 130px);overflow:hidden auto;box-shadow:inset 1px 0 0 var(--line);}
+  [data-view="settings"] > .settings-tabs .tab{flex:none;padding:0 12px;gap:10px;}
+  [data-view="settings"] > .settings-tabs .tab:is(.on,.active,[aria-selected="true"])::after{right:auto;top:0;width:2px;height:auto;}
+  [data-view="settings"] .settings-card{margin-left:0;margin-right:0;}
+  .settings-sub{display:flex;flex-direction:column;flex:none;margin:2px 0 6px;}
+  .settings-sub a{flex:none;height:28px;padding:0 12px 0 38px;color:var(--ink-2);font:400 12px/28px var(--sans);text-decoration:none;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .settings-sub a:is(:hover,[aria-current="true"]){color:var(--ink);}
+  .settings-sub a:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;border-radius:var(--r-sm);}
+}
 /* A pane is a plain block — it is deliberately NOT .view (see index.html). */
 .settings-pane{display:block;}
 
