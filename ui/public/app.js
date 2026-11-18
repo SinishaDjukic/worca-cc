@@ -219,6 +219,7 @@ import {
 import { renderStatsBody, renderStatsView, renderBudgetReadout, renderCostPauseBanner, statsQuery, groupsToCsv, statsRangeLabel, DEFAULT_FMT } from './stats-view.mjs';
 import { createCostReport } from './cost-report.mjs';
 import { personInitials, describeAccount, paintAccountCorner, paintIdentityCard, renderSpendCard, paintAwayRow } from './account-menu.mjs';
+import { usageModel, ringParts, paintUsageRings, paintUsageRow, renderUsageMenu } from './usage-view.mjs';
 import { createComposer, isReservedWorkflowId, isBuiltinWorkflow } from './graph/composer.mjs';
 import { createWorkflowsShell, toSpawnEntry } from './workflows/shell.mjs';
 import { createLibrary, folderLabel, folderKeys } from './workflows/library.mjs';
@@ -1565,7 +1566,7 @@ async function refreshBudget() {
 function paintBudget() {
   const b = budgetState.budget;
   if (!b) return;
-  // A block is never hidden at any interface mode: the ring turns red and full, the card says until when.
+  // A block is never hidden at any interface mode: the corner's name says so, the card says until when.
   paintAccount();
   paintSpendCard();
   applyBudgetToNewView();
@@ -1609,6 +1610,8 @@ function startBudgetTick() {
   const idleRefetchMs = typeof window.__budgetIdleRefetchMs === 'number'
     ? window.__budgetIdleRefetchMs : BUDGET_IDLE_REFETCH_MS;
   budgetState.timer = setInterval(() => {
+    // The usage rings: a window whose reset has passed is refetched (the server drops it), never polled otherwise.
+    if (usageResetPassed()) void refreshUsage();
     const b = budgetState.budget;
     if (!b) return;
     // Refetch when spend can actually move (live runs) or the window has rolled
@@ -1704,10 +1707,10 @@ function repaintPeople() {
 }
 
 // ── The account corner and its menu (account-menu.mjs) ─────────────────────────
-// The corner sits at the foot of the sidebar: the avatar (who is looking), a ring that fills
-// toward the total spend limit, a violet dot while away. Its menu opens upward: the spend card,
+// The corner sits at the foot of the sidebar: the avatar (who is looking), the usage rings (usage-view.mjs),
+// a violet dot while away. Its menu opens upward: the spend card,
 // "Signed in as" (a shared identity only), Interface mode (a side menu), Settings, the Away and Keep awake switches,
-// and the appearance icons last. A level, a switch or a theme change leaves it open; a route closes it.
+// the appearance icons, and Usage last (a side menu). A level, a switch or a theme change leaves it open; a route closes it.
 const acctState = { account: describeAccount(null), away: null };   // away: describeAwayRow's last answer
 const acctBtn = document.getElementById('side-acct');
 const acctMenu = document.getElementById('acct-menu');
@@ -1717,13 +1720,62 @@ const acctFly = createFlyout({ trigger: acctBtn, menu: acctMenu, mode: 'up', foc
 // Interface mode's side menu hangs off the menu (side-flyout closes it with the menu, and Escape
 // closes it first); ui-level.mjs fills it, and a pick there is a choose like a dialog card.
 createFlyout({ trigger: document.getElementById('acct-lvl'), menu: document.getElementById('lvl-menu'), mode: 'beside', parent: acctMenu });
+// Usage (usage-view.mjs): the providers' plan-limit readings (GET /api/usage-limits) as the avatar's rings, the
+// menu's last row and its submenu, which hangs off the menu exactly as Interface mode's does. Refetched on its push
+// (usage-limits-changed), on hello and on pipelines-changed (a usage-limit pause, resume or stop), and on the budget
+// tick only when a window's reset has passed. One fetch in flight plus one trailing; a failure keeps the last answer.
+const usageState = { answer: null, fetching: false, pending: false };
+const usageRow = document.getElementById('acct-usage');
+const usageMenu = document.getElementById('usage-menu');
+const usageFly = createFlyout({ trigger: usageRow, menu: usageMenu, mode: 'beside', parent: acctMenu,
+  onOpen: () => { renderUsageMenu(usageMenu, currentUsageModel()); usageFly.reposition(); } });
+const currentUsageModel = () => usageModel(usageState.answer, { now: Date.now() });
+function usageResetPassed() {
+  const hs = usageState.answer && Array.isArray(usageState.answer.harnesses) ? usageState.answer.harnesses : [];
+  const now = Date.now();
+  return hs.some((h) => h && Array.isArray(h.windows) && h.windows.some((w) => w && typeof w.resetsAt === 'number' && w.resetsAt <= now));
+}
+async function refreshUsage() {
+  if (usageState.fetching) { usageState.pending = true; return; }
+  usageState.fetching = true;
+  try {
+    do {
+      usageState.pending = false;
+      try {
+        const res = await fetch('/api/usage-limits', { signal: AbortSignal.timeout(15000) });
+        const data = await safeJson(res);
+        if (res.ok && data && Array.isArray(data.harnesses)) usageState.answer = data;
+      } catch { /* transient: keep the last answer */ }
+      paintUsage();
+    } while (usageState.pending);
+  } finally { usageState.fetching = false; usageState.pending = false; }
+}
+/** The avatar's rings and name, the Usage row and an open submenu. A row that hides takes its open submenu with
+ *  it, and focus goes to the menu's first item. */
+function paintUsage() {
+  const model = currentUsageModel();
+  const active = document.activeElement;
+  const hadFocus = !!active && (usageMenu.contains(active) || usageRow.contains(active));
+  if (!model.row && usageFly.isOpen()) usageFly.close();
+  paintUsageRings(acctBtn, model);
+  paintAccount();
+  paintUsageRow(usageRow, model);
+  renderUsageMenu(usageMenu, model);
+  if (!model.row && hadFocus && acctFly.isOpen()) {
+    const first = [...acctMenu.querySelectorAll('[role^="menuitem"]')].find((el) => !el.closest('[hidden]') && !el.hidden);
+    first?.focus();
+  }
+  if (acctFly.isOpen()) acctFly.reposition();
+  usageFly.reposition();
+}
 // The worca level (worca-level/app-wiring.mjs): the last served view feeds the corner avatar, the shelf and the menu row.
 const worca = createWorcaLevelWiring({ trigger: acctBtn, menu: acctMenu, repaint: () => { paintAccount(); paintShelf(); }, isSettled: () => gs.settled, setupOpen: () => !!setupDialog });
 function paintAccount() {
   const level = worca.state.view && worca.state.view.level;
   paintAccountCorner(acctBtn, acctState.account, {
-    budget: budgetState.budget, away: acctState.away?.state === 'away', fmt: { usd: fmtUsd, usd4: fmtUsd4 },
+    budget: budgetState.budget, away: acctState.away?.state === 'away',
     avatar: level ? { src: level.avatar, alt: level.name } : null,
+    usageParts: ringParts(currentUsageModel()),
   });
 }
 paintAccount();                // the first paint: "Profile" until /api/whoami answers
@@ -1768,6 +1820,7 @@ function handleServerMessage(msg) {
     conn.back();
     onHello(msg);
     refreshRunningActions();
+    void refreshUsage();
     if (terminalPane) terminalPane.onHello(msg);
     if (Array.isArray(msg.extensionPairs)) msg.extensionPairs.forEach((r) => void promptExtensionPair(r));
     return;
@@ -1863,6 +1916,7 @@ function handleServerMessage(msg) {
     scheduleOnboardingRefresh();
     refreshAllCounts();
     refreshBudget();
+    void refreshUsage();
     // An archive / delete names the parked live runs the server evicted; every tab drops its copies of them.
     if (Array.isArray(msg.removedRunIds) && msg.removedRunIds.length) {
       const gone = new Set(msg.removedRunIds);
@@ -1881,6 +1935,11 @@ function handleServerMessage(msg) {
   // is global, so repaint it regardless of the open view.
   if (msg.type === 'budget-changed') {
     refreshBudget();
+    return;
+  }
+  // A provider's plan-limit reading changed (usage-view.mjs): the avatar's rings, the Usage row and its submenu.
+  if (msg.type === 'usage-limits-changed') {
+    void refreshUsage();
     return;
   }
   // Requirements: a feature changed (a round finished, an edit, another tab), or a Product brief (`brief`:

@@ -1095,7 +1095,7 @@ wss.on('connection', (ws, req) => {
   // A paused run this server holds may have been stopped from a terminal since: settle its entry
   // before this tab's hello (and, through the frames, in every open tab), so a reload reads it stopped.
   settleStaleParkedEntries();
-  sockets.add(ws);
+  sockets.add(ws); app.emit('page-sockets-changed');
   trackHeartbeat(ws);
   closeAtTokenExpiry(ws, req.worcaUser);
   // Whose Ask threads this socket may see (a shared sign-in's name, else null = all).
@@ -1142,8 +1142,8 @@ wss.on('connection', (ws, req) => {
     replayAskJob(ws, askJobs.get(requestedThreadId));
   }
 
-  ws.on('close', () => sockets.delete(ws));
-  ws.on('error', () => sockets.delete(ws));
+  ws.on('close', () => { sockets.delete(ws); app.emit('page-sockets-changed'); });
+  ws.on('error', () => { sockets.delete(ws); app.emit('page-sockets-changed'); });
   ws.on('message', (data) => {
     // Clients may ask to (re)subscribe / replay an entry's history. An agent
     // generation's {type:'subscribe', genId} (or a bench's benchId) is accepted
@@ -7894,7 +7894,7 @@ function drainActiveEntries() {
  */
 function drainServer({ timeoutMs = drainTimeoutMs(), reason = 'stop' } = {}) {
   if (DRAIN.promise) return DRAIN.promise;
-  DRAIN.on = true;
+  DRAIN.on = true; app.emit('draining');
   DRAIN.startedAt = Date.now();
   DRAIN.promise = (async () => {
     const pausedIds = new Set();

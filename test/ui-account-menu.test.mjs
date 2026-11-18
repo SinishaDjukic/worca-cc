@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { BUDGET_WARN_AT } from '../ui/public/stats-view.mjs';
 import {
-  spendRing, ringDash, spendPeriod, renderSpendCard, RING_R, MINI_R,
+  spendRing, ringDash, spendPeriod, renderSpendCard, RING_R, MINI_R, INNER_R, ringSvg,
   personInitials, describeAccount, accountLabel, paintAccountCorner, paintIdentityCard, paintAwayRow, renderLevelCard,
 } from '../ui/public/account-menu.mjs';
 import { describeAwayRow } from '../src/shared/away-mode/describe.mjs';
@@ -201,15 +201,15 @@ test('describeAccount: shared = initials + the name up to "@" + the card; operat
   ]);
 });
 
-test('accountLabel: who, then away and the limit, then what the menu holds', () => {
+test('accountLabel: who, then away, a block and the usage rings, then what the menu holds', () => {
   const acct = describeAccount(SHARED);
   assert.deepEqual(accountLabel(acct), { label: `${ME}: spend, away mode, interface mode and settings`, title: ME });
   assert.deepEqual(accountLabel(acct, { away: true, budget: LIMIT }), {
-    label: `${ME} · away · $20.00 of $50.00 spent in October: spend, away mode, interface mode and settings`,
-    title: `${ME} · away · $20.00 of $50.00 spent in October`,
-  });
+    label: `${ME} · away: spend, away mode, interface mode and settings`,
+    title: `${ME} · away`,
+  }, 'a budget with a limit adds no spend amount to the label');
   assert.equal(accountLabel(acct, { budget: { ...LIMIT, windowSpendUsd: 52.13, blocked: true } }).title,
-    `${ME} · $52.13 of $50.00 spent in October, new runs blocked`);
+    `${ME} · new runs blocked`, 'a blocked budget keeps "new runs blocked"');
   assert.equal(accountLabel(acct, { budget: NO_LIMIT }).title, ME, 'no limit: nothing to say about spend');
   const local = describeAccount(null);
   assert.deepEqual(accountLabel(local, { away: true }), {
@@ -218,6 +218,10 @@ test('accountLabel: who, then away and the limit, then what the menu holds', () 
   });
   assert.equal(accountLabel(local, { budget: { ...NO_LIMIT, blocked: true } }).title,
     'Profile: spend, away mode, interface mode and settings · new runs blocked', 'a block is named even without a limit');
+  const usageParts = ['Session · Codex: 86%, resets 14:50', 'Week · Claude Code: 73%, resets Mon 09:00'];
+  assert.equal(accountLabel(local, { away: true, budget: { ...LIMIT, blocked: true }, usageParts, level: 'Curious' }).label,
+    'Profile · away · new runs blocked · Session · Codex: 86%, resets 14:50; Week · Claude Code: 73%, resets Mon 09:00 · Curious: spend, usage, away mode, interface mode and settings',
+    'order: away, blocked, usage, level; the menu names usage while it shows');
 });
 
 test('paintAccountCorner: initials, the short name, the ring and the away dot; names stay text', async () => {
@@ -230,20 +234,43 @@ test('paintAccountCorner: initials, the short name, the ring and the away dot; n
       assert.equal(btn.querySelector('.acct-name').textContent, 'ada.lovelace');
       assert.equal(btn.title, ME);
       assert.equal(btn.getAttribute('aria-label'), `${ME}: spend, away mode, interface mode and settings`);
-      assert.deepEqual([btn.dataset.account, btn.dataset.spend, btn.dataset.presence], ['shared', 'none', 'here']);
+      assert.deepEqual([btn.dataset.account, btn.dataset.spend, btn.dataset.presence], ['shared', undefined, 'here']);
     } },
-    { name: 'a limit fills the ring; amber from the warn band; red and full when blocked', run: () => {
+    { name: 'no spend ring for any sign-in: no data-spend, the arcs are usage-view.mjs\'s; a block still reads in the label and title', run: () => {
       const doc = shell();
       const btn = doc.getElementById('side-acct');
       const arc = btn.querySelector('.acct-ring .arc');
-      paintAccountCorner(btn, describeAccount(null), { budget: LIMIT });
-      assert.deepEqual([btn.dataset.spend, arc.getAttribute('stroke-dasharray')], ['ok', ringDash(0.4, RING_R)]);
-      paintAccountCorner(btn, describeAccount(null), { budget: { ...LIMIT, windowSpendUsd: 41.23 } });
-      assert.equal(btn.dataset.spend, 'warn');
-      paintAccountCorner(btn, describeAccount(null), { budget: { ...LIMIT, blocked: true } });
-      assert.deepEqual([btn.dataset.spend, arc.getAttribute('stroke-dasharray')], ['over', ringDash(1, RING_R)]);
-      paintAccountCorner(btn, describeAccount(null), { budget: null });
-      assert.deepEqual([btn.dataset.spend, arc.getAttribute('stroke-dasharray')], ['none', ringDash(0, RING_R)], 'no snapshot yet: no ring');
+      const before = arc.getAttribute('stroke-dasharray');
+      for (const budget of [LIMIT, { ...LIMIT, windowSpendUsd: 41.23 }, { ...LIMIT, blocked: true }, { ...NO_LIMIT, blocked: true }, null]) {
+        btn.dataset.spend = 'ok';
+        paintAccountCorner(btn, describeAccount(null), { budget });
+        assert.equal(btn.dataset.spend, undefined);
+        assert.equal(arc.getAttribute('stroke-dasharray'), before, 'the corner painter leaves the rings alone');
+        assert.equal(btn.dataset.usageS, undefined);
+        assert.equal(/new runs blocked/.test(btn.getAttribute('aria-label')), !!budget?.blocked);
+        assert.equal(/new runs blocked/.test(btn.title), !!budget?.blocked);
+        assert.equal(/\$/.test(btn.getAttribute('aria-label')), false, 'no spend amount');
+      }
+    } },
+    { name: 'with a level avatar image: blocked and usage parts in the title, no title when there are none', run: () => {
+      const doc = shell();
+      const btn = doc.getElementById('side-acct');
+      const avatar = { src: '/levels/curious.svg', alt: 'Curious' };
+      paintAccountCorner(btn, describeAccount(null), { budget: { ...NO_LIMIT, blocked: true }, avatar });
+      assert.match(btn.getAttribute('aria-label'), /new runs blocked · Curious/);
+      assert.equal(btn.title, 'new runs blocked');
+      paintAccountCorner(btn, describeAccount(null), { avatar, usageParts: ['Session · Codex: 86%, resets 14:50'] });
+      assert.equal(btn.title, 'Session · Codex: 86%, resets 14:50');
+      assert.match(btn.getAttribute('aria-label'), /Session · Codex: 86%, resets 14:50 · Curious: spend, usage,/);
+      paintAccountCorner(btn, describeAccount(null), { budget: { ...LIMIT, blocked: true }, avatar, usageParts: ['Session · Codex: 86%, resets 14:50'] });
+      assert.equal(btn.title, 'new runs blocked · Session · Codex: 86%, resets 14:50');
+      paintAccountCorner(btn, describeAccount(null), { avatar });
+      assert.equal(btn.hasAttribute('title'), false);
+    } },
+    { name: 'ringSvg and INNER_R are exported for usage-view.mjs', run: () => {
+      assert.equal(INNER_R, 14);
+      const svg = ringSvg(doc, 'mini-ring', 20, MINI_R, 0.5);
+      assert.equal(svg.querySelector('.arc').getAttribute('stroke-dasharray'), ringDash(0.5, MINI_R));
     } },
     { name: 'away: the dot shows and the label says so', run: () => {
       const doc = shell();
