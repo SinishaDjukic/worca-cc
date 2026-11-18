@@ -22,7 +22,7 @@ export const TABS = Object.freeze([
 
 export const CARDS = Object.freeze([
   card('general', 'setup-assistant-card', 'Setup assistant', { alts: ['setup', 'install', 'onboarding', 'wizard', 'configure'] }),
-  card('general', 'appearance-card', 'Appearance', { alts: ['theme', 'dark mode', 'light mode', 'dark theme', 'colour', 'color', 'look', 'night mode', 'display'] }),
+  card('general', 'appearance-card', 'Appearance', { alts: ['theme', 'dark mode', 'light mode', 'dark theme', 'colour', 'color', 'look', 'night mode', 'display', 'screensaver', 'screen saver', 'idle'] }),
   card('general', 'alerts-card', 'Alerts', { alts: ['notifications', 'sound', 'desktop notifications', 'notify'] }),
   card('general', 'extension-settings-card', 'Browser extension', { alts: ['chrome', 'browser', 'pinpoint'] }),
   card('general', 'mode-settings-card', 'Interface mode', { alts: ['mode', 'simple', 'advanced', 'expert', 'level', 'complexity'] }),

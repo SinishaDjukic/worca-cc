@@ -1278,7 +1278,8 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'updateCheck',                             // Settings › About: check npm for a newer stable Worca (#841)
   'titleModel', 'hideBuiltinModels',
   'theme',
-  'uiLevel',                                 // interface mode (docs/ui-levels.md)
+  'screensaver',                             // Settings › Appearance: the screensaver { enabled, idleMinutes }
+  'uiLevel',                                // interface mode (docs/ui-levels.md)
   'flags',                                   // feature flags { key: bool } (docs/feature-flags.md)
   'autoWorkflowModel',                       // auto-workflow spec D14
   'prDescriptionModel',                      // the "Ship it?" modal's Generate with AI
@@ -1686,6 +1687,60 @@ export async function setTheme(input) {
   else settings.theme = input;
   await persistSettings(settings);
   return { theme: theme() };
+}
+
+// ── Screensaver (Settings › General › Appearance) ────────────────────────────
+// One machine-wide preference: a switch (off by default) and the idle minutes
+// before it starts. Only non-default fields are stored; a POST carries a partial
+// object that is merged onto the stored values, so each control saves only its own field.
+export const SCREENSAVER_IDLE_MINUTES = Object.freeze([5, 10, 15, 20, 25, 30]);
+export const DEFAULT_SCREENSAVER = Object.freeze({ enabled: false, idleMinutes: 5 });
+
+/** The resolved screensaver setting; a missing field is its default, an invalid one is its default (loudly). */
+export function screensaverSettings(settings = readSettings()) {
+  const v = settings.screensaver;
+  const out = { ...DEFAULT_SCREENSAVER };
+  if (v === undefined) return out;
+  if (!isObj(v)) {
+    console.warn(`[worca] invalid screensaver ${JSON.stringify(v)} — using the defaults`);
+    return out;
+  }
+  if ('enabled' in v) {
+    if (isBool(v.enabled)) out.enabled = v.enabled;
+    else console.warn(`[worca] invalid screensaver.enabled ${JSON.stringify(v.enabled)} — using the default (${DEFAULT_SCREENSAVER.enabled})`);
+  }
+  if ('idleMinutes' in v) {
+    if (SCREENSAVER_IDLE_MINUTES.includes(v.idleMinutes)) out.idleMinutes = v.idleMinutes;
+    else console.warn(`[worca] invalid screensaver.idleMinutes ${JSON.stringify(v.idleMinutes)} — using the default (${DEFAULT_SCREENSAVER.idleMinutes})`);
+  }
+  return out;
+}
+
+/** @throws {Error} unless `input` is a clear or a partial { enabled?: boolean, idleMinutes?: 5|10|…|30 }. */
+export function assertScreensaverInput(input) {
+  if (isClearInput(input)) return;
+  if (!isObj(input)) throw new Error('screensaver must be an object with enabled and the minutes');
+  const unknown = Object.keys(input).find((k) => k !== 'enabled' && k !== 'idleMinutes');
+  if (unknown !== undefined) throw new Error(`screensaver has an unknown field "${unknown}"`);
+  if ('enabled' in input && !isBool(input.enabled)) throw new Error('screensaver.enabled must be true or false');
+  if ('idleMinutes' in input && !SCREENSAVER_IDLE_MINUTES.includes(input.idleMinutes)) {
+    throw new Error('screensaver.idleMinutes must be 5, 10, 15, 20, 25 or 30');
+  }
+}
+
+export async function setScreensaver(input) {
+  assertScreensaverInput(input);
+  const settings = readSettings();
+  if (isClearInput(input)) delete settings.screensaver;
+  else {
+    const next = { ...screensaverSettings(settings), ...input };
+    const stored = {};
+    for (const k of Object.keys(DEFAULT_SCREENSAVER)) if (next[k] !== DEFAULT_SCREENSAVER[k]) stored[k] = next[k];
+    if (Object.keys(stored).length) settings.screensaver = stored;
+    else delete settings.screensaver;
+  }
+  await persistSettings(settings);
+  return { screensaver: screensaverSettings(settings) };
 }
 
 // ── Auto workflow classifier model (auto-workflow spec D14) ─────────────────

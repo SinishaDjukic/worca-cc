@@ -129,3 +129,11 @@ test('hrefs: General is plain #settings, other tabs #settings/<tab>, cards #sett
   assert.equal(h('card:appearance-card'), '#settings/general/appearance-card');
   assert.equal(h('card:budget-settings-card'), '#settings/runs/budget-settings-card');
 });
+
+test('Appearance is found by screensaver, screen saver, idle', async () => {
+  const { searchRows } = await import('../ui/public/global-search.mjs');
+  for (const q of ['screensaver', 'screen saver', 'idle']) {
+    const ids = searchRows({ level: 'simple', flags: {} }, q).settings.map((r) => r.id);
+    assert.ok(ids.includes('card:appearance-card'), `${q}: ${ids.join(', ')}`);
+  }
+});

@@ -88,7 +88,7 @@ their ⌄, ⋯ and checkbox are `tabindex="-1"`.
 
 ### Motion
 Motion shows a change of state and never decorates: short fades, no slide, bounce, count-up, spinner or skeleton, and
-nothing that runs without a state change; under reduced motion it stops. The named exceptions are the away screensaver (it starts after 5 idle minutes and is off under reduced motion) and the Design stage (› Design stage exceptions).
+nothing that runs without a state change; under reduced motion it stops. The named exceptions are the away screensaver (it starts after the idle time chosen in Settings › Appearance (off by default) and is off under reduced motion) and the Design stage (› Design stage exceptions).
 
 ## Components
 ### Button (checked)
@@ -160,7 +160,9 @@ Nothing PR-related sits in the bar or in a PR bar; the PR's checks and Watch wor
 chips (`.runs-pr`) are chips, not PR controls.
 ### Field
 `.input` / `.select` / text, number and select elements: 32px, 13px, `--field` fill, 6px corner, ink border on focus.
-`.input-sm` / `.select-sm`: 28px, 12px. A textarea grows; it keeps the same fill, corner and padding sides. Search, url, email,
+`.input-sm` / `.select-sm`: 28px, 12px. `.select-fit` on a `.select` inside a `.drow-control` sizes it to its content
+instead of 240px, for short fixed choices such as "Start after"; it stays right-aligned with the switches and segmented
+controls above it. A textarea grows; it keeps the same fill, corner and padding sides. Search, url, email,
 password and date inputs follow the same field; each joins the base rule when its screen moves.
 A chat card's form (the run proposal) uses the same `.input` / `.select`; its fields sit on one auto-fit grid
 (`.ask-rp-grid`), a switch field takes a whole row, labels stay on one line, and a long value ellipsizes with its whole

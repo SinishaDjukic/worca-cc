@@ -665,6 +665,7 @@ const designActivity = createDesignActivity({
   onChange: () => updateNavCounts(),
 });
 let awayScreensaver = null;    // the away screensaver easter egg (away-screensaver.mjs) — assigned beside Activity; timerTick uses awayScreensaver?.
+let screensaverPref = { enabled: false, idleMinutes: 5 };   // Settings › Appearance › Screensaver, as the server last said (getState reads it)
 let terminalPane = null;       // terminal pane (#573) — assigned by the boot mount; every seam uses terminalPane?.
 let newPipelinePrefill = null; // one-shot card → New Pipeline handoff (§10.2 seam 7, consumed by Task 11)
 // Engine readiness (GET /api/engines): which engines a usage-limit pause offers. Fetched on demand, refreshed after
@@ -855,6 +856,9 @@ const el = {
   viewerClose: $('#viewer-close'),
 
   settingsRoot: $('#settingsRoot'),
+  screensaverOn: $('#screensaverOn'),
+  screensaverAfter: $('#screensaverAfter'),
+  screensaverAfterRow: $('#screensaverAfterRow'),
   settingsProjectsRoot: $('#settingsProjectsRoot'),
   settingsProjectsRootBrowse: $('#settingsProjectsRootBrowse'),
   settingsSave: $('#settingsSave'),
@@ -16451,6 +16455,7 @@ async function loadSettings() {
     if (!res.ok) { setSettingsLoadMsg(data.error || `HTTP ${res.status}`); return; }
     paintSettings(data);
     paintTheme(data.theme);
+    paintScreensaver(data.screensaver);
     levelCtl.confirm(data.uiLevel);
     paintAbout(data.app);
     if (el.aboutUpdateCheck) el.aboutUpdateCheck.checked = data.updateCheck !== false;
@@ -17038,6 +17043,40 @@ async function chooseTheme(mode) {
   }
   paintTheme(data.theme);
 }
+// Settings › Appearance › Screensaver: the switch and its Start after minutes. Each control saves only its own field
+// (the server merges a partial { screensaver }), with the same optimistic paint and revert as chooseTheme.
+const SCREENSAVER_MINUTES = [5, 10, 15, 20, 25, 30];
+let screensaverSeq = 0;              // out-of-order POST resolutions never repaint a stale answer
+const screensaverNotSaved = (detail) => notify({ tone: 'err', title: 'Screensaver not saved', detail, key: 'screensaver' });
+function paintScreensaver(s) {
+  const enabled = s?.enabled === true;
+  const idleMinutes = SCREENSAVER_MINUTES.includes(s?.idleMinutes) ? s.idleMinutes : 5;
+  screensaverPref = { enabled, idleMinutes };
+  if (el.screensaverOn) el.screensaverOn.checked = enabled;
+  if (el.screensaverAfterRow) el.screensaverAfterRow.hidden = !enabled;
+  if (el.screensaverAfter) el.screensaverAfter.value = String(idleMinutes);
+}
+async function chooseScreensaver(patch) {
+  const mine = ++screensaverSeq;
+  const previous = { ...screensaverPref };
+  paintScreensaver({ ...previous, ...patch });                             // optimistic
+  let res; let data;
+  try {
+    res = await fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ screensaver: patch }) });
+    data = await safeJson(res);
+  } catch (e) { if (mine === screensaverSeq) { paintScreensaver(previous); screensaverNotSaved(e.message || 'network error'); } return; }
+  if (mine !== screensaverSeq) return;                                     // a later change owns the paint now
+  if (!res.ok) {
+    screensaverNotSaved(data.error || `The server answered ${res.status}.`);
+    // Paint what the SERVER holds; a failed re-fetch falls back to the last confirmed value.
+    try { const d2 = await safeJson(await fetch('/api/settings')); if (mine === screensaverSeq) paintScreensaver(d2.screensaver || previous); }
+    catch { if (mine === screensaverSeq) paintScreensaver(previous); }
+    return;
+  }
+  paintScreensaver(data.screensaver);
+}
+el.screensaverOn?.addEventListener('change', () => chooseScreensaver({ enabled: el.screensaverOn.checked }));
+el.screensaverAfter?.addEventListener('change', () => chooseScreensaver({ idleMinutes: Number(el.screensaverAfter.value) }));
 for (const id of ['theme-seg', 'acct-theme']) {
   document.getElementById(id)?.addEventListener('click', (e) => {
     const btn = e.target.closest && e.target.closest('button[data-theme-mode]');
@@ -40373,7 +40412,7 @@ activityMenu = $('#topnav-activity') ? createActivityMenu({
   navigate: (hash) => { location.hash = hash; },
 }) : null;
 
-// The away screensaver easter egg: Away mode now (the account corner's state), the Keep awake row, and the runs
+// The screensaver: the Settings › Appearance switch and its Start after time (screensaverPref), and the runs
 // counted as the Runs list counts them. Chats arrive through onAskFrame; the open chat's unread dot through askPanel.
 awayScreensaver = createAwayScreensaver({
   doc: document, win: window,
@@ -40382,8 +40421,8 @@ awayScreensaver = createAwayScreensaver({
     const asking = live.filter((r) => r.pendingQuestion != null);
     const lingered = [...runs.values()].filter(isLingering);
     return {
-      away: acctState.away?.state === 'away',
-      keepAwake: el.acctKeepAwake?.getAttribute('aria-checked') === 'true',
+      enabled: screensaverPref.enabled,
+      idleMinutes: screensaverPref.idleMinutes,
       runs: {
         running: live.length - asking.length,
         questions: asking.length,
@@ -42001,10 +42040,11 @@ if ($('#ask-side') && $('#topnav-ask')) {
     if (e.target?.closest?.('a[href^="#"]')) askSide.uncover();
   });
 }
-// Command summaries (#911) and the account menu's Keep awake row: read the person's switches once.
+// Command summaries (#911), the account menu's Keep awake row and the screensaver: read the person's switches once.
 Promise.resolve().then(() => fetch('/api/settings')).then((r) => safeJson(r)).then((d) => {
   setChatSummariesPref(d && d.chat);
   paintKeepAwakeRow(!(d && d.keepAwake === false));
+  paintScreensaver(d && d.screensaver);
 }).catch(() => { /* keep: on */ });
 onFlagChange('commandSummaries', () => { askPanel?.refreshCommandCards(); void paintHelperModelCards(); });
 // One delegated handler for every Summaries / Raw switch (Logs tab, History Logs, both drawers, Chat's run

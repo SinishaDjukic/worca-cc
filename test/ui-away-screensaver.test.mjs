@@ -1,25 +1,26 @@
-// test/ui-away-screensaver.test.mjs — the away screensaver easter egg (ui/public/away-screensaver.mjs): it shows only
-// while Away mode, Keep awake, a focused window and 5 idle minutes all hold; the most pressing run or chat state
-// picks its line; and the input that wakes the window never reaches the page.
+// test/ui-away-screensaver.test.mjs — the screensaver (ui/public/away-screensaver.mjs): it shows only while the
+// Settings › Appearance Screensaver switch is on and there has been no input for the chosen Start after minutes; the
+// most pressing run or chat state picks its line; and the input that wakes the window never reaches the page.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import {
-  AWAY_SCREENSAVER, IDLE_MS, shouldShow, pickScene, createChatTracker, createAwayScreensaver,
+  shouldShow, pickScene, createChatTracker, createAwayScreensaver,
 } from '../ui/public/away-screensaver.mjs';
 
-const ON = { away: true, keepAwake: true, focused: true, idleMs: IDLE_MS };
+const MIN = 60_000;
+const FIVE_MIN = 5 * MIN;
+const ON = { enabled: true, idleMinutes: 5, idleMs: FIVE_MIN };
 
-test('the easter egg is on by design, after 5 idle minutes', () => {
-  assert.equal(AWAY_SCREENSAVER, true);
-  assert.equal(IDLE_MS, 5 * 60 * 1000);
-});
-
-test('shouldShow needs away, keep awake, a focused window and the idle time, all at once', () => {
+test('shouldShow: only the switch and the idle time', () => {
   assert.equal(shouldShow(ON), true);
-  for (const k of ['away', 'keepAwake', 'focused']) assert.equal(shouldShow({ ...ON, [k]: false }), false, k);
-  assert.equal(shouldShow({ ...ON, idleMs: IDLE_MS - 1 }), false);
-  assert.equal(shouldShow({ ...ON, enabled: false }), false);
+  for (const idleMs of [0, FIVE_MIN, 60 * MIN, 24 * 60 * MIN]) assert.equal(shouldShow({ ...ON, enabled: false, idleMs }), false, idleMs);
+  for (const idleMinutes of [5, 30]) {
+    assert.equal(shouldShow({ enabled: true, idleMinutes, idleMs: idleMinutes * MIN - 1 }), false, idleMinutes);
+    assert.equal(shouldShow({ enabled: true, idleMinutes, idleMs: idleMinutes * MIN }), true, idleMinutes);
+  }
+  assert.equal(shouldShow({ enabled: true, idleMs: 60 * MIN }), false, 'no minutes, never shown');
+  assert.equal(shouldShow({ ...ON, away: false, keepAwake: false, focused: false }), true, 'nothing else is read');
 });
 
 test('pickScene: a question wins over everything, and names the run, not its id', () => {
@@ -75,7 +76,7 @@ function setup(state = {}) {
   let focused = true;
   doc.hasFocus = () => focused;
   let clock = 1_000_000;
-  const st = { away: true, keepAwake: true, runs: { running: 1 }, ...state };
+  const st = { enabled: true, idleMinutes: 5, runs: { running: 1 }, ...state };
   const ss = createAwayScreensaver({ doc, win, getState: () => st, now: () => clock });
   return {
     win, doc, ss, st,
@@ -85,11 +86,11 @@ function setup(state = {}) {
   };
 }
 
-test('it shows after 5 idle minutes and says what is going on', () => {
-  const s = setup({ runs: { running: 2, done: 1 } });
-  s.wait(IDLE_MS - 1000);
+test('it shows at exactly the chosen minutes, not before', () => {
+  const s = setup({ enabled: true, idleMinutes: 10, runs: { running: 2, done: 1 } });
+  s.wait(10 * MIN - 1);
   assert.equal(s.ss.isShown(), false);
-  s.wait(1000);
+  s.wait(1);
   assert.equal(s.ss.isShown(), true);
   const root = s.doc.querySelector('.ss');
   assert.equal(root.dataset.scene, 'busy');
@@ -98,38 +99,38 @@ test('it shows after 5 idle minutes and says what is going on', () => {
   s.done();
 });
 
-test('it stays away when Away mode, Keep awake or the window focus is missing', () => {
-  for (const off of [{ away: false }, { keepAwake: false }]) {
-    const s = setup(off);
-    s.wait(IDLE_MS);
-    assert.equal(s.ss.isShown(), false, JSON.stringify(off));
-    s.done();
-  }
-  const s = setup();
+test('away, keep awake and focus do not matter', () => {
+  const s = setup({ away: false, keepAwake: false });
   s.blur();
-  s.wait(IDLE_MS);
+  Object.defineProperty(s.doc, 'visibilityState', { configurable: true, get: () => 'hidden' });
+  s.wait(FIVE_MIN);
+  assert.equal(s.ss.isShown(), true);
+  s.done();
+});
+
+test('off means never shown', () => {
+  const s = setup({ enabled: false });
+  for (let i = 0; i < 60; i++) s.wait(MIN);
   assert.equal(s.ss.isShown(), false);
   s.done();
 });
 
-test('it hides when a condition ends, and when the window loses focus', () => {
+test('it hides as soon as the switch goes off, and comes back while still idle', () => {
   const s = setup();
-  s.wait(IDLE_MS);
-  s.st.away = false;
+  s.wait(FIVE_MIN);
+  assert.equal(s.ss.isShown(), true);
+  s.st.enabled = false;
   s.wait(1000);
   assert.equal(s.ss.isShown(), false);
-  s.st.away = true;
+  s.st.enabled = true;
   s.wait(1000);
   assert.equal(s.ss.isShown(), true, 'still idle, so it comes back');
-  s.blur();
-  s.wait(1000);
-  assert.equal(s.ss.isShown(), false);
   s.done();
 });
 
 test('the click that wakes the window does not reach the page', () => {
   const s = setup();
-  s.wait(IDLE_MS);
+  s.wait(FIVE_MIN);
   let clicks = 0;
   s.doc.getElementById('under').addEventListener('click', () => { clicks++; });
   const down = new s.win.MouseEvent('pointerdown', { bubbles: true, cancelable: true });
@@ -143,15 +144,15 @@ test('the click that wakes the window does not reach the page', () => {
 
 test('a key hides it without typing, and input restarts the idle clock', () => {
   const s = setup();
-  s.wait(IDLE_MS);
+  s.wait(FIVE_MIN);
   const key = new s.win.KeyboardEvent('keydown', { key: 'a', bubbles: true, cancelable: true });
   s.doc.body.dispatchEvent(key);
   assert.equal(key.defaultPrevented, true);
   assert.equal(s.ss.isShown(), false);
-  s.wait(IDLE_MS - 1000);
+  s.wait(FIVE_MIN - 1000);
   assert.equal(s.ss.isShown(), false);
   s.doc.body.dispatchEvent(new s.win.MouseEvent('pointermove', { bubbles: true }));
-  s.wait(IDLE_MS - 1000);
+  s.wait(FIVE_MIN - 1000);
   assert.equal(s.ss.isShown(), false, 'a mouse move restarts the 5 minutes');
   s.done();
 });
@@ -160,12 +161,12 @@ test('a pointermove without movement (Safari, when the page under a still cursor
   const s = setup();
   const move = (x, y) => s.doc.body.dispatchEvent(new s.win.MouseEvent('pointermove', { bubbles: true, screenX: x, screenY: y }));
   move(100, 100);
-  s.wait(IDLE_MS);
+  s.wait(FIVE_MIN);
   assert.equal(s.ss.isShown(), true);
   move(100, 100);
   move(101, 101);
   assert.equal(s.ss.isShown(), true, 'a still or 1px pointer keeps it on');
-  s.wait(IDLE_MS);
+  s.wait(FIVE_MIN);
   assert.equal(s.ss.isShown(), true, 'nor does it restart the idle clock');
   move(140, 120);
   assert.equal(s.ss.isShown(), false, 'a real move wakes the window');
@@ -175,7 +176,7 @@ test('a pointermove without movement (Safari, when the page under a still cursor
 test('a question shows the bubble; chat frames count', () => {
   const s = setup({ runs: {} });
   s.ss.onAskFrame({ type: 'ask-card', threadId: 'ask_1', block: { kind: 'card', id: 'b1', state: 'proposed' } });
-  s.wait(IDLE_MS);
+  s.wait(FIVE_MIN);
   const root = s.doc.querySelector('.ss');
   assert.equal(root.dataset.scene, 'ask');
   assert.equal(root.querySelector('.ss-bubble').classList.contains('is-on'), true);
