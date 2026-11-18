@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DRY_RUN_ENV } from './ui-update.mjs';
+import { runNpm } from './npm-command.mjs';
 
 const execFileP = promisify(execFile);
 const truthy = (v) => /^(1|true|yes|on)$/i.test(String(v || '').trim());
@@ -40,11 +41,12 @@ export function updateEligibility({ deployment, env = process.env, sourceBuild, 
 }
 
 /** Where `npm install -g` puts @worca/app, whether this package is that copy, and whether npm may write there. */
-export async function probeNpmGlobal({ packageRoot, exec = execFileP, platform = process.platform, fsx = fs } = {}) {
-  const opts = { shell: platform === 'win32', windowsHide: true, timeout: 15_000 };
+export async function probeNpmGlobal({ packageRoot, exec = execFileP, platform = process.platform, fsx = fs, env = process.env, execPath = process.execPath } = {}) {
+  const opts = { windowsHide: true, timeout: 15_000 };
+  const npm = (args) => runNpm(exec, args, opts, { platform, env, execPath, exists: (f) => fsx.existsSync(f) });
   let root; let prefix;
   try {
-    const [r, p] = await Promise.all([exec('npm', ['root', '-g'], opts), exec('npm', ['prefix', '-g'], opts)]);
+    const [r, p] = await Promise.all([npm(['root', '-g']), npm(['prefix', '-g'])]);
     root = String(r.stdout || '').trim(); prefix = String(p.stdout || '').trim();
   } catch { return { root: null }; }
   if (!root) return { root: null };

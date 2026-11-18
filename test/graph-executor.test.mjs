@@ -775,7 +775,10 @@ test('E9/E10: each spawn appends a manifest line (prompt hashes, model, effort, 
   };
   try {
     const r = await runAgentExecution(c);
-    assert.ok(r.warnings.some((w) => w.includes('outside its checkout') && w.includes(scratch)), JSON.stringify(r.warnings));
+    assert.ok(!r.warnings.some((w) => w.includes('outside its checkout')), 'no banner text: ' + JSON.stringify(r.warnings));
+    assert.deepEqual(r.scope, { nodeId: 'n_c', executionId: 'x:n_c:2', count: 1, expectedCount: 0, cross: true,
+      notable: [{ path: scratch, tool: 'Bash', cross: true }] }, 'another session\'s scratch is a cross-run notice');
+    assert.equal(r.scopeLine, 'n_c read or wrote 1 path outside its checkout (see executions.ndjson)');
     const lines = readFileSync(join(pipelineDir, 'executions.ndjson'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
     const m = lines.at(-1);
     assert.equal(m.executionId, 'x:n_c:2');
@@ -790,7 +793,8 @@ test('E9/E10: each spawn appends a manifest line (prompt hashes, model, effort, 
     assert.deepEqual(m.memory.files.map((f) => f.path), ['worca/note.md']);
     const noteSha = createHash('sha256').update('a rule\n').digest('hex');
     assert.equal(m.memory.set, createHash('sha256').update(`worca/note.md ${noteSha}\n`).digest('hex'), 'the frozen-set hash rule');
-    assert.deepEqual(m.outside, [{ path: scratch, tool: 'Bash' }]);
+    assert.deepEqual(m.outside, [{ path: scratch, tool: 'Bash', cross: true }]);
+    assert.deepEqual(m.outsideExpected, []);
     assert.equal(m.outcome, 'ok');
     assert.ok(events.some((e) => e.type === 'scope' && e.paths.length === 1), 'telemetry gets the outside paths');
   } finally { _testing.runClaude = null; }
@@ -817,7 +821,8 @@ test('E9: the node\'s own port files and Bash words that are not paths are not "
     };
     try {
       const r = await runAgentExecution(c);
-      return r.warnings.filter((w) => w.includes('outside its checkout'));
+      assert.ok(!r.warnings.some((w) => w.includes('outside its checkout')), JSON.stringify(r.warnings));
+      return r.scope ? r.scope.notable.map((p) => p.path) : [];
     } finally { _testing.runClaude = null; }
   };
   // (a) its output, input, verdict, questions and slicing files are its own, wherever worca put them
@@ -835,15 +840,118 @@ test('E9: the node\'s own port files and Bash words that are not paths are not "
   ]), []);
   // (c) another session's scratch tree still warns
   const c3 = await run([{ name: 'Bash', input: { command: `cat ${scratchFile}` } }]);
-  assert.equal(c3.length, 1);
-  assert.ok(c3[0].includes(scratchFile), c3[0]);
+  assert.deepEqual(c3, [scratchFile]);
   // (d) a file tool's path outside the roots still warns, even when its first segment does not exist
   const c4 = await run([
     { name: 'Read', input: { file_path: elsewhere } },
     { name: 'Read', input: { file_path: '/files/x.md' } },
   ]);
-  assert.equal(c4.length, 1);
-  assert.ok(c4[0].includes(elsewhere) && c4[0].includes('/files/x.md'), c4[0]);
+  assert.deepEqual(c4, [elsewhere, '/files/x.md']);
+});
+
+test('E9: createScopeWatch splits the paths into expected (own run, own session, owned folders, fragments) and notable', async () => {
+  const { createScopeWatch, scopeRecord, outsideWarning } = await import('../src/core/graph/exec-manifest.mjs');
+  const { homedir } = await import('node:os');
+  const home = tmp('worca-scope-home-');                                  // stands in for ~/.worca-cc
+  const runRoot = join(home, 'runs', '8c0801a5');
+  const store = join(home, 'store', 'proj-1');
+  const pipe = join(store, 'pipelines', '06-11-26-quieter-8c0801a5');
+  const planPort = join(store, 'plans', '06-11-26-quieter-v2.md');
+  const cwd = join(runRoot, 'repos', 'proj-1');
+  const SID = '0b6f2c1e-1111-4222-8333-944455556666';
+  const OTHER = '9d9d9d9d-1111-4222-8333-944455556666';
+  const T = '/tmp';
+  const P = '/private/tmp';
+  // Bash words count only when their top folder exists (Linux has no /private): Claude scratch in a command uses the real one.
+  const S = (await import('node:fs')).existsSync(P) ? P : T;
+  const claudeProjects = join(homedir(), '.claude', 'projects', '-Users-x-worca-cc-runs-8c0801a5-repos-proj-1');
+  const ctx = { projectDir: cwd, runRoot, pipelineDir: pipe, pipelineId: '06-11-26-quieter-8c0801a5', nodeId: 'n_impl',
+    executionId: 'x:n_impl:1', bindings: { plan: { type: 'md', path: planPort } } };
+  const watch = (calls, sessionId = SID) => {
+    const w = createScopeWatch(ctx);
+    w.observe({ type: 'tool', calls });
+    return w.result({ sessionId });
+  };
+  const notablePaths = (r) => r.notable.map((x) => x.path);
+  const whyOf = (r, p) => r.expected.find((x) => x.path === p)?.why;
+  const bash = (command) => ({ name: 'Bash', input: { command } });
+  const read = (file_path) => ({ name: 'Read', input: { file_path } });
+
+  // Expected: each class, one at a time, so removing one exemption turns exactly its row red.
+  const rows = [
+    ['own-run tmp (/tmp)', bash(`python3 ${T}/worca-8c0801a5-step1.py`), `${T}/worca-8c0801a5-step1.py`, 'run-tmp'],
+    ['own-run tmp (id at the end)', bash(`python3 ${T}/fix-tests-8c0801a5.py`), `${T}/fix-tests-8c0801a5.py`, 'run-tmp'],
+    ['own-run tmp (/private/tmp)', read(`${P}/worca-8c0801a5-probe.mjs`), `${P}/worca-8c0801a5-probe.mjs`, 'run-tmp'],
+    ['own-run tmp (os.tmpdir())', read(join(tmpdir(), 'worca-8c0801a5-x.json')), join(tmpdir(), 'worca-8c0801a5-x.json'), 'run-tmp'],
+    ['own Claude scratch', read(`${P}/claude-501/-Users-x-runs-8c0801a5/${SID}/scratchpad/a.py`), `${P}/claude-501/-Users-x-runs-8c0801a5/${SID}/scratchpad/a.py`, 'own-scratch'],
+    ['own tool-results spill', read(join(claudeProjects, SID, 'tool-results', 'bvaa33io3.txt')), join(claudeProjects, SID, 'tool-results', 'bvaa33io3.txt'), 'own-session'],
+    ['ancestor of an owned file', bash(`ls ${join(store, 'plans')}`), join(store, 'plans'), 'ancestor'],
+    ['a search of the store folder holding the plan port', { name: 'Grep', input: { pattern: 'x', path: join(store, 'plans') } }, join(store, 'plans'), 'ancestor'],
+    ['a plain listing of the runs dir', bash(`ls -la ${join(home, 'runs')}`), join(home, 'runs'), 'ancestor'],
+    ['an LS of the project store dir', { name: 'LS', input: { path: store } }, store, 'ancestor'],
+    ['a truncated match', bash(`echo hi > ${T}/o.$$ && cat ${T}/o.$$`), `${T}/o.`, 'fragment'],
+    ['a one-letter match', bash(`grep -o '${T}/o' x.txt`), `${T}/o`, 'fragment'],
+  ];
+  for (const [name, call, path, why] of rows) {
+    const r = watch([call]);
+    assert.deepEqual(notablePaths(r), [], `${name}: not notable`);
+    assert.equal(whyOf(r, path), why, `${name}: expected as ${why} — ${JSON.stringify(r)}`);
+  }
+
+  // Notable: these keep their data-channel meaning.
+  const cross = [
+    ['another session\'s Claude scratch', read(`${P}/claude-501/-Users-x-runs-6c9cf587/${OTHER}/scratchpad/tree/a.mjs`)],
+    ['another run\'s folder', read(join(home, 'runs', '6c9cf587', 'repos', 'proj-1', 'src', 'a.mjs'))],
+    ['another session\'s Claude folder', read(join(claudeProjects, OTHER, 'tool-results', 'x.txt'))],
+    ['another pipeline of the project', read(join(store, 'pipelines', 'other-6c9cf587', 'plan.md'))],
+    // 6c9cf587's shape: a whole tree copied in. The trailing `/.` names a folder, not a fragment.
+    ['a copy of another session\'s scratch tree', bash(`cp -a ${S}/claude-501/-Users-x-runs-6c9cf587/${OTHER}/scratchpad/tree/. .`)],
+    ['a copy of another run\'s checkout', bash(`cp -a ${join(home, 'runs', '6c9cf587', 'repos', 'p')}/. .`)],
+    // A folder above an owned file that holds every run: a search reads them all (only a listing is expected).
+    ['a Grep over the runs dir', { name: 'Grep', input: { pattern: 'secret', path: join(home, 'runs') } }],
+    ['a grep -r over the store\'s pipelines', bash(`grep -rl secret ${join(store, 'pipelines')}`)],
+    // A cut-short word inside another session's scratch: the cross check runs before the fragment exemption.
+    ['a fragment in another session\'s scratch', bash(`cat ${S}/claude-501/-Users-x-runs-6c9cf587/${OTHER}/scratchpad/o.$$`)],
+    ['a listing piped into a read', bash(`ls ${join(home, 'runs')} && cat ${join(home, 'runs')}`)],
+    // A line break separates commands like `;` does: the second line is a recursive read, not a listing.
+    ['a listing then a grep -r on the next line', bash(`ls ${join(home, 'runs')}\ngrep -rl secret ${join(home, 'runs')}`)],
+    ['a listing then a grep -r after a CR LF', bash(`ls ${join(home, 'runs')}\r\ngrep -rl secret ${join(home, 'runs')}`)],
+  ];
+  for (const [name, call] of cross) {
+    const r = watch([call]);
+    assert.equal(r.notable.length, 1, `${name}: notable — ${JSON.stringify(r)}`);
+    assert.equal(r.notable[0].cross, true, `${name}: marked as another run's or session's`);
+  }
+  const plain = [
+    ['another run id in tmp', read(`${T}/worca-6c9cf587-step1.py`)],
+    ['the user\'s real checkout', read('/Users/someone/dev/repo/worca-cc/src/a.mjs')],
+    ['a home dotfile', read(join(homedir(), '.zshrc'))],
+    ['a copy of a whole folder (`<dir>/.` is no fragment)', bash(`cp -a ${join(homedir(), 'dev', 'other-repo')}/. .`)],
+    // Another run's artifacts in the project's store dir are that run's data, not this run's.
+    ['another run\'s plan in the store', read(join(store, 'plans', 'older-plan-v3.md'))],
+    ['another run\'s review in the store', read(join(store, 'reviews', 'other-run-review.md'))],
+    ['Claude Code\'s per-project memory', read(join(claudeProjects, 'memory', 'MEMORY.md'))],
+  ];
+  for (const [name, call] of plain) {
+    const r = watch([call]);
+    assert.equal(r.notable.length, 1, `${name}: notable — ${JSON.stringify(r)}`);
+    assert.equal(r.notable[0].cross, undefined, `${name}: not another run's`);
+  }
+  // The short id also comes from the pipeline id's tail when the run root is not named by it (a legacy run in the project).
+  const legacy = createScopeWatch({ ...ctx, runRoot: undefined, pipelineDir: undefined, projectDir: cwd });
+  legacy.observe({ type: 'tool', calls: [read(`${T}/fix-tests-8c0801a5.py`)] });
+  assert.deepEqual(legacy.result({ sessionId: SID }).expected.map((x) => x.why), ['run-tmp']);
+  // Without the session id (a spawn that never reached its init) its own scratch is not provably its own.
+  assert.equal(watch([read(`${P}/claude-501/-Users-x/${SID}/scratchpad/a.py`)], null).notable.length, 1);
+
+  // The structured record and the short log line: a count and the pointer, never the paths.
+  const mixed = watch([bash(`python3 ${T}/worca-8c0801a5-step1.py`), read(`${T}/worca-6c9cf587-step1.py`),
+    read(`${P}/claude-501/-Users-x/${OTHER}/a.mjs`)]);
+  assert.deepEqual(scopeRecord(ctx, mixed), { nodeId: 'n_impl', executionId: 'x:n_impl:1', count: 2, expectedCount: 1, cross: true,
+    notable: [{ path: `${T}/worca-6c9cf587-step1.py`, tool: 'Read' }, { path: `${P}/claude-501/-Users-x/${OTHER}/a.mjs`, tool: 'Read', cross: true }] });
+  assert.equal(scopeRecord(ctx, watch([bash(`python3 ${T}/worca-8c0801a5-step1.py`)])), null, 'only expected paths: no record');
+  assert.equal(outsideWarning(ctx, mixed.notable), 'n_impl read or wrote 2 paths outside its checkout (see executions.ndjson)');
+  assert.equal(outsideWarning(ctx, []), null);
 });
 
 test('E10: the run\'s frozen memory manifest wins over listing the rules copy', async () => {

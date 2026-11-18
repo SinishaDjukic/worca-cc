@@ -1095,7 +1095,7 @@ wss.on('connection', (ws, req) => {
   // A paused run this server holds may have been stopped from a terminal since: settle its entry
   // before this tab's hello (and, through the frames, in every open tab), so a reload reads it stopped.
   settleStaleParkedEntries();
-  sockets.add(ws);
+  sockets.add(ws); app.emit('page-sockets-changed');
   trackHeartbeat(ws);
   closeAtTokenExpiry(ws, req.worcaUser);
   // Whose Ask threads this socket may see (a shared sign-in's name, else null = all).
@@ -1142,8 +1142,8 @@ wss.on('connection', (ws, req) => {
     replayAskJob(ws, askJobs.get(requestedThreadId));
   }
 
-  ws.on('close', () => sockets.delete(ws));
-  ws.on('error', () => sockets.delete(ws));
+  ws.on('close', () => { sockets.delete(ws); app.emit('page-sockets-changed'); });
+  ws.on('error', () => { sockets.delete(ws); app.emit('page-sockets-changed'); });
   ws.on('message', (data) => {
     // Clients may ask to (re)subscribe / replay an entry's history. An agent
     // generation's {type:'subscribe', genId} (or a bench's benchId) is accepted
@@ -3091,7 +3091,7 @@ const startRunHandler = async (req, res) => {
       feature: !sameAsSource && typeof body.featureBranch === 'string' && body.featureBranch.trim()
         ? body.featureBranch.trim() : null,
       ...(resolveOf ? { resolves: { runId: resolveOf.runId, member: resolveOf.member || null } } : {}),
-      ...(roundOf ? { roundOf } : {}),
+      ...(roundOf ? { roundOf } : {}), ...(typeof req._mergeIn?.ref === 'string' ? { mergeIn: { ref: req._mergeIn.ref } } : {}),   // in-process only (Watch PR, resolve), never body.mergeIn
       ...(sameAsSource ? { sameAsSource: true } : {}),
       ...(smartNamingOn && !sameAsSource && body.featureBranchSuggested === true ? { suggested: true } : {}),
       ...(smartNamingOn && !sameAsSource && body.featureBranchFallback === true ? { legacy: true } : {}),
@@ -3926,7 +3926,7 @@ async function invokeAskCard({ threadId, cardId, body, actor }) {
   return out;
 }
 
-async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null, extrasFiles = null, reportTo = null, automation = false } = {}) {
+async function invokeStartRun(body, internal, { startedBy = null, runId = null, prWatchRunId = null, roundOf = null, extrasFiles = null, reportTo = null, automation = false, mergeIn = null } = {}) {
   const files = Array.isArray(extrasFiles) && extrasFiles.length ? extrasFiles : null;
   const id = files ? (runId || randomUUID()) : runId;   // the extras folder is named by the run id
   const run = async (extrasPaths, staged = null) => {
@@ -3938,7 +3938,7 @@ async function invokeStartRun(body, internal, { startedBy = null, runId = null, 
     };
     await startRunHandler({ body, headers: {}, _internal: internal, _startedBy: startedBy, _runId: id,
       _prWatchRunId: prWatchRunId, ...(roundOf ? { _roundOf: roundOf } : {}), ...(extrasPaths ? { _extrasPaths: extrasPaths } : {}),
-      ...(reportTo ? { _reportTo: reportTo } : {}), ...(automation ? { _automation: true } : {}) }, res);
+      ...(reportTo ? { _reportTo: reportTo } : {}), ...(automation ? { _automation: true } : {}), ...(mergeIn ? { _mergeIn: mergeIn } : {}) }, res);
     if (staged && out.status >= 200 && out.status <= 299) dropStagedOnceCopied(id, staged.drop);
     return out;
   };
@@ -7894,7 +7894,7 @@ function drainActiveEntries() {
  */
 function drainServer({ timeoutMs = drainTimeoutMs(), reason = 'stop' } = {}) {
   if (DRAIN.promise) return DRAIN.promise;
-  DRAIN.on = true;
+  DRAIN.on = true; app.emit('draining');
   DRAIN.startedAt = Date.now();
   DRAIN.promise = (async () => {
     const pausedIds = new Set();
@@ -9102,7 +9102,7 @@ function askSignedIn(req) {
   return who.source === 'local' ? null : who.name;
 }
 
-async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null, reader = null, mcpOff = undefined, agentMode = undefined, client = null, onUserRow = null, chatContext = null }) {
+async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, files = [], synthetic = null, signedIn = null, reader = null, mcpOff = undefined, agentMode = undefined, client = null, onUserRow = null, chatContext = null, scopeNote = null }) {
   // §6.2.2 ATOMIC re-check + slot reservation. Today every await between the
   // top 409/429 pair and here resolves in microtasks (validateModelEffort ->
   // composeCatalog; askBuildCatalog -> three synchronous better-sqlite3
@@ -9218,9 +9218,9 @@ async function startAskTurn({ threadId: id, thread, ctx, model, effort, text, fi
     const inline = ownSel.inline;
     const listed = [...ownSel.listed, ...withText.filter((a) => quotedIds.has(a.id))];
     const headerCtx = await resolveAskContext(id, ctx, listed, userMsg.id, { signedIn });
-    // Browser extension (docs/browser-extension.md): server-stamped from the request's token, never client-supplied —
-    // the header tells the model the page attachments (context, text, quote) are untrusted web content.
-    if (client) headerCtx.client = client;
+    // Server-stamped, never client-supplied: the browser extension's client (docs/browser-extension.md: its page attachments
+    // are untrusted web content) and a pasted link's scopeNote (thread-turns.mjs; this turn only, never stored on the thread).
+    Object.assign(headerCtx, client ? { client } : null, scopeNote ? { scopeNote } : null);
     // Context chips: accumulate the project/run/workspace/named page this turn ran in
     // (origin first, deduped; contexts.mjs). Cosmetic — a failure must never fail the turn.
     try { askAddThreadContexts(id, askContextEntries(ctx, headerCtx)); } catch (e) {

@@ -36,14 +36,24 @@ test('summarizeNpmFailure names EACCES with its path, offline, missing version, 
   assert.match(summarizeNpmFailure('', { code: 'ENOENT' }), /not found on the PATH/);
 });
 
-test('runNpmInstall: literal args, shell only on win32, output tail kept on failure', async () => {
+test('runNpmInstall: literal args, never an args array with a shell (DEP0190), output tail kept on failure', async () => {
   const calls = [];
   const ok = await runNpmInstall('1.14.0', { platform: 'darwin', exec: async (...a) => { calls.push(a); return { stdout: 'added 1', stderr: '' }; } });
   assert.equal(ok.ok, true);
   assert.deepEqual(calls[0].slice(0, 2), ['npm', ['install', '-g', '@worca/app@1.14.0']]);
   assert.equal(calls[0][2].shell, false);
-  await runNpmInstall('1.14.0', { platform: 'win32', exec: async (...a) => { calls.push(a); return { stdout: '' }; } });
-  assert.equal(calls[1][2].shell, true);
+  const NODE = 'C:\\nodejs\\node.exe'; const CLI = 'C:\\nodejs\\node_modules\\npm\\bin\\npm-cli.js';
+  const exec = async (...a) => { calls.push(a); return { stdout: '' }; };
+  await runNpmInstall('1.14.0', { platform: 'win32', exec, env: {}, execPath: NODE, exists: () => true });
+  assert.deepEqual(calls[1].slice(0, 2), [NODE, [CLI, 'install', '-g', '@worca/app@1.14.0']]);
+  assert.equal(calls[1][2].shell, false);
+  await runNpmInstall('1.14.0', { platform: 'win32', exec, env: {}, execPath: NODE, exists: () => false });
+  assert.deepEqual(calls[2].slice(0, 2), ['npm install -g @worca/app@1.14.0', undefined]);
+  assert.equal(calls[2][2].shell, true);
+  const ENV_CLI = 'D:\\tools\\npm\\bin\\npm-cli.js';
+  await runNpmInstall('1.14.0', { platform: 'win32', exec, env: { npm_execpath: ENV_CLI }, execPath: NODE, exists: () => true });
+  assert.equal(calls[3][1][0], ENV_CLI, 'the env is handed on: npm_execpath wins when it is npm-cli.js');
+  for (const c of calls) assert.deepEqual([c[2].windowsHide, c[2].maxBuffer, c[2].timeout], [true, 16 * 1024 * 1024, 10 * 60_000]);
   const bad = await runNpmInstall('1.14.0', { platform: 'linux', exec: async () => { const e = new Error('Command failed'); e.code = 243; e.stderr = 'npm error code EACCES\nnpm error path /usr/lib/node_modules'; throw e; } });
   assert.equal(bad.ok, false);
   assert.match(bad.reason, /EACCES/);

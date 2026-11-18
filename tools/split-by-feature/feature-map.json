@@ -571,6 +571,7 @@
           ".rd-graph",
           ".hd-graph",
           ".run-warn",
+          ".run-scope",
           ".rg-hint",
           ".gv-wrap-monitor",
           ".run-strip"

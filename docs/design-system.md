@@ -207,6 +207,10 @@ or a policy origin is `.badge.slate`; "not installed" and "built-in" are grey.
 A dot is the state: peach working (pulses), grey paused or waiting, green ready, violet merged. Needs you is an amber
 "?" only when Worca asks; a PR problem is a plain amber dot with the reason in the PR chip; failed is a red "!".
 An idle chat shows the chat bubble line icon in the dot's place.
+### Usage rings
+The avatar draws only the session and long-window rings (`ui/public/usage-view.mjs`), each in one tone (`--ink-2`,
+`--amber` at the warning line, `--red` full at the limit); spend is never a ring there, it lives in the account menu's
+spend card.
 ### Card head
 The first line of a card is its headline. When the page title sits above the card (the run page, the group page),
 the state is the headline: `.run-status-word`, 1–3 words at `--fs-section` / 600 / `--lh-title`, never truncated, the

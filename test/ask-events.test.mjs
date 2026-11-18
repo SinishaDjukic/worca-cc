@@ -440,6 +440,15 @@ test('noise and robustness: ignored frames emit nothing; malformed input never t
   assert.equal(bad.finish().blocks.length, 1);
 });
 
+test('a limit event calls onLimit once and adds no label', () => {
+  const seen = [];
+  const h = harness({ onLimit: (e) => seen.push(e) });
+  h.push(ev({ type: 'rate_limit_event', rate_limit_info: { rateLimitType: 'five_hour', utilization: 0.5, resetsAt: 1790439000 } }));
+  assert.equal(seen.length, 1);
+  assert.deepEqual(seen[0], { type: 'limit', status: null, windows: [{ window: 'five_hour', utilization: 0.5, resetsAt: 1790439000000 }] });
+  assert.deepEqual(h.types(), []);
+});
+
 test('normalizeUsage, matchModelKey, estimateAgentCosts', () => {
   assert.deepEqual(normalizeUsage(undefined), { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 });
   assert.deepEqual(normalizeUsage({ input_tokens: '3', output_tokens: null, cache_read_input_tokens: 2.5 }), { input: 3, output: 0, cacheRead: 2.5, cacheCreation: 0 });

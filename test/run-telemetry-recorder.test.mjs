@@ -131,6 +131,17 @@ test('a result whose input already holds the cache (Goose): ctx is the input alo
   assert.deepEqual([r.ctx, r.inc], [8598, true]);
 });
 
+test('a limit event adds no telemetry record', async () => {
+  const { rec, lines } = setup();
+  rec.bind('/d');
+  rec.stepStatus('x:n_impl:1', 'n_impl', 'start');
+  const before = lines.length;
+  rec.observe({ type: 'limit', status: 'allowed', windows: [{ window: 'five_hour', utilization: 0.3, resetsAt: 1 }] }, ATTR);
+  assert.equal(lines.length, before);
+  rec.stepStatus('x:n_impl:1', 'n_impl', 'done');
+  assert.equal(lines.filter((r) => r.t === 'call').length, 0);
+});
+
 test('events with no step are ignored; harness work is windowed', async () => {
   const { rec, lines } = setup();
   rec.bind('/d');

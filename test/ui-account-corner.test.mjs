@@ -29,7 +29,7 @@ const FREE = { enabled: true, known: true, limit: 50, remaining: 4, resetAt: new
 // width: a viewport (the nav tiers read `(max-width: …)` queries); hover: a mouse (`(hover: hover)` matches);
 // budget: false makes GET /api/budget fail (no snapshot ever arrives). keepAwake: the setting GET /api/settings reports;
 // keepAwakeSave: 'ok', or the { status, error } the server answers a {keepAwake} save with.
-async function boot({ whoami = { name: 'ada.lovelace@acme.dev', source: 'access', shared: true }, free = FREE, width = null, hover = false, budget = true, levelSave = 'ok', keepAwake = true, keepAwakeSave = 'ok' } = {}) {
+async function boot({ whoami = { name: 'ada.lovelace@acme.dev', source: 'access', shared: true }, free = FREE, width = null, hover = false, budget = true, levelSave = 'ok', keepAwake = true, keepAwakeSave = 'ok', usage = { harnesses: [] } } = {}) {
   const dom = trackDom(new JSDOM(readIndexHtml(), { url: 'http://localhost:4317/', pretendToBeVisual: true }));
   const { window } = dom;
   window.Element.prototype.scrollIntoView = function () {};
@@ -41,7 +41,14 @@ async function boot({ whoami = { name: 'ada.lovelace@acme.dev', source: 'access'
     window.matchMedia = (q) => ({ media: q, matches: matches(q), addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} });
   }
   window.__budgetTickMs = DAY;
-  window.WebSocket = class { constructor() { this.readyState = 1; } send() {} close() {} addEventListener() {} };
+  const wsBox = { ws: null };
+  window.WebSocket = class {
+    constructor() { this.readyState = 1; this._listeners = {}; wsBox.ws = this; }
+    send() {} close() {}
+    addEventListener(type, fn) { (this._listeners[type] ||= []).push(fn); }
+    dispatch(type, evt) { (this._listeners[type] || []).forEach((fn) => fn(evt)); }
+  };
+  const usageBox = { answer: usage };
   const posts = [];
   window.fetch = (u, opts = {}) => {
     const url = String(u);
@@ -58,6 +65,7 @@ async function boot({ whoami = { name: 'ada.lovelace@acme.dev', source: 'access'
     }
     if (url.endsWith('/api/settings')) return ok({ keepAwake, chat: {} });
     if (url.endsWith('/api/whoami')) return ok(whoami);
+    if (url.endsWith('/api/usage-limits')) return ok(usageBox.answer);
     if (url.includes('/api/budget')) return budget ? ok(BUDGET()) : Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'boom' }) });
     if (url.includes('/api/openrouter/free-daily')) return ok(free || { enabled: false });
     if (url.includes('/api/projects')) return ok({ projects: [] });
@@ -75,8 +83,17 @@ async function boot({ whoami = { name: 'ada.lovelace@acme.dev', source: 'access'
   const click = (el, detail = 1) => el.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true, detail }));
   // Keys go where focus is, as in a browser (the menu reads its arrows on itself; Escape is the document's).
   const key = (k) => (doc.activeElement || doc.body).dispatchEvent(new window.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }));
-  return { window, doc, $, click, key, posts };
+  // A server push: the frame through the page's socket, then the refetch it starts.
+  const push = async (frame) => { wsBox.ws?.dispatch('message', { data: JSON.stringify(frame) }); await settle(); };
+  return { window, doc, $, click, key, posts, usageBox, push };
 }
+
+// Two providers with readings (the mocks' figures): the avatar's rings, the Usage row and its submenu.
+const HOUR = 3600000;
+const USAGE = () => ({ harnesses: [
+  { engine: 'claude', observedAt: Date.now(), windows: [{ kind: 'session', pct: 41, resetsAt: Date.now() + HOUR }, { kind: 'week', pct: 73, resetsAt: Date.now() + 100 * HOUR }] },
+  { engine: 'codex', observedAt: Date.now(), windows: [{ kind: 'session', pct: 86, resetsAt: Date.now() + 2 * HOUR }, { kind: 'week', pct: 44, resetsAt: Date.now() + 50 * HOUR }] },
+] });
 
 test('the account menu: the corner opens it upward; a click outside, Escape and a route close it', async () => {
   const { window, doc, $, click, key } = await boot();
@@ -116,7 +133,9 @@ test('stylesheet: the rail keeps the avatar, ring and dot; the popups are fixed;
   const rule = (sel) => { const m = css.match(new RegExp(`(?:^|[\\s,}])${sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]*)\\}`)); return m ? m[1] : null; };
   assert.match(rule('.sidebar.collapsed .acct-name,.sidebar.collapsed .acct-updown') || '', /display:none/, 'the rail drops the name and the glyph');
   assert.doesNotMatch(css, /\.sidebar\.collapsed [^{]*\.acct-(?:ring|ava|dot)[^{]*\{[^}]*display:none/, 'never the avatar, the ring or the dot');
-  assert.match(rule('.acct[data-spend="ok"] .acct-ring,.acct[data-spend="warn"] .acct-ring,.acct[data-spend="over"] .acct-ring') || '', /display:block/);
+  assert.match(rule('.acct:not([data-usage-s="none"]) .acct-ring .ring-s,.acct:not([data-usage-l="none"]) .acct-ring .ring-l') || '', /display:inline/, 'a ring per reported slot');
+  assert.match(rule('.acct-ring .ring-s,.acct-ring .ring-l') || '', /display:none/, 'no reading, no ring');
+  assert.match(rule('.nav-fly.usage-menu') || '', /width:300px;/);
   assert.match(rule('.nav-fly') || '', /position:fixed/, 'the menus are .nav-fly popups');
   assert.match(rule('.nav-fly.acct-menu') || '', /width:258px;/);
   assert.match(rule('.nav-fly.lvl-menu') || '', /width:236px;/);
@@ -160,11 +179,12 @@ test('the account menu: its order and roles (spend card · Signed in as · Inter
     { name: 'order and roles', run: () => {
       const menu = $('acct-menu');
       assert.deepEqual([...menu.children].map((el) => el.id || el.className),
-        ['acct-spend', 'acct-id', 'msect', 'msect sw-sect', 'msect theme-sect']);
+        ['acct-spend', 'acct-id', 'msect', 'msect sw-sect', 'msect theme-sect', 'msect usage-sect']);
+      assert.equal(menu.querySelector('.usage-sect').hidden, true, 'no reading: the Usage section is hidden');
       assert.deepEqual([...menu.querySelectorAll('.msect')].map((s) => [s.getAttribute('role'), [...s.children].map((b) => b.id)]),
-        [['group', ['acct-team-setup', 'acct-lvl', 'acct-settings']], ['group', ['acct-away', 'acct-keepawake']], ['group', ['acct-theme-k', 'acct-theme']]], 'each run of rows is its own section; the two switches share one');
+        [['group', ['acct-team-setup', 'acct-lvl', 'acct-settings']], ['group', ['acct-away', 'acct-keepawake']], ['group', ['acct-theme-k', 'acct-theme']], ['group', ['acct-usage']]], 'each run of rows is its own section; the two switches share one');
       assert.deepEqual([...menu.querySelectorAll('[role^="menuitem"]')].map((b) => b.id || b.dataset.themeMode || b.className),
-        ['btn btn-sm mc-btn', 'mi menu-item mc-free', 'acct-team-setup', 'acct-lvl', 'acct-settings', 'acct-away', 'acct-keepawake', 'system', 'light', 'dark'], 'Details, the free row, the team-setup row (hidden until the team updates its setup), the four rows, then the three icons');
+        ['btn btn-sm mc-btn', 'mi menu-item mc-free', 'acct-team-setup', 'acct-lvl', 'acct-settings', 'acct-away', 'acct-keepawake', 'system', 'light', 'dark', 'acct-usage'], 'Details, the free row, the team-setup row (hidden until the team updates its setup), the four rows, the three icons, then Usage (hidden until a reading)');
       assert.equal($('acct-away').closest('.msect').getAttribute('aria-label'), 'Switches');
       assert.deepEqual([...$('acct-theme').querySelectorAll('button')].map((b) => [b.getAttribute('role'), b.getAttribute('aria-label'), b.textContent.trim()]),
         [['menuitemradio', 'System', ''], ['menuitemradio', 'Light', ''], ['menuitemradio', 'Dark', '']], 'icons only: the name is the aria-label');
@@ -429,16 +449,16 @@ test('the corner avatar: an image in .acct-ava keeps the ring, the dot and the d
       assert.deepEqual([img.getAttribute('src'), img.getAttribute('alt')], [avatar.src, avatar.alt]);
       assert.equal(btn.querySelector('.acct-ava').textContent, '', 'no initials beside the image');
       assert.ok(btn.querySelector('.acct-ring-wrap .acct-ring') && btn.querySelector('.acct-ring-wrap .acct-dot'), 'ring and dot markup unchanged');
-      assert.deepEqual([btn.dataset.spend, btn.dataset.presence], ['ok', 'here']);
+      assert.deepEqual([btn.dataset.spend, btn.dataset.presence], [undefined, 'here'], 'no spend ring on the avatar');
       paintAccountCorner(btn, acct, { budget, avatar, away: true });
       assert.equal(btn.dataset.presence, 'away');
     } },
-    { name: 'avatar: no native title; aria-label keeps the spend text and adds the level name', run: () => {
+    { name: 'avatar: no native title without a block or a usage ring; aria-label names no spend and adds the level name', run: () => {
       paintAccountCorner(btn, acct, { budget, avatar });
       assert.equal(btn.hasAttribute('title'), false);
       const label = btn.getAttribute('aria-label');
       assert.match(label, /ada\.lovelace@acme\.dev/);
-      assert.match(label, /\$20(\.00)? of \$50(\.00)? spent/);
+      assert.doesNotMatch(label, /\$/);
       assert.match(label, /Pod worca/);
     } },
     { name: 'repainting the same avatar keeps the same <img> node', run: () => {
@@ -488,4 +508,74 @@ test('stylesheet: the collapsed rail keeps the level image in the avatar circle'
   assert.match(css, /\.acct-ava img\{[^}]*width:100%;[^}]*height:100%;/, 'the image fills the circle');
   assert.doesNotMatch(css, /\.sidebar\.collapsed [^{]*\.acct-ava img[^{]*\{[^}]*display:none/, 'the rail never hides it');
   assert.doesNotMatch(css, /\.sidebar\.collapsed [^{]*\.acct-ava[^{]*\{[^}]*display:none/);
+});
+
+test('usage: rings on the avatar, the Usage row last in the menu, its submenu beside it; Escape closes only the submenu', async () => {
+  const { window, doc, $, click, key, usageBox, push } = await boot({ usage: USAGE() });
+  await push({ type: 'usage-limits-changed', action: null });   // the page reads usage on hello and on each push
+  await checkRows([
+    { name: 'two rings: Codex on the Session slot (amber), Claude Code on the Week slot; the avatar names them', run: () => {
+      const btn = $('side-acct');
+      assert.deepEqual([btn.dataset.usageS, btn.dataset.usageL], ['warn', 'ok']);
+      assert.ok(btn.querySelector('.ring-s .arc').getAttribute('stroke-dasharray'));
+      assert.match(btn.getAttribute('aria-label'), /· Session · Codex: 86%, resets [^;]+; Week · Claude Code: 73%, resets .+: spend, usage, away mode, interface mode and settings$/);
+    } },
+    { name: 'the Usage row is the last visible section: "Codex 86%", a submenu trigger', run: () => {
+      const menu = $('acct-menu');
+      const shown = [...menu.children].filter((el) => !el.hidden);
+      assert.equal(shown.at(-1).className, 'msect usage-sect');
+      assert.equal($('acct-usage').hidden, false);
+      assert.equal($('acct-usage').querySelector('.mi-val').textContent, 'Codex 86%');
+      assert.deepEqual([$('acct-usage').getAttribute('aria-haspopup'), $('acct-usage').getAttribute('aria-controls')], ['menu', 'usage-menu']);
+      assert.equal(minLevelFor($('acct-usage')), 'simple');
+    } },
+    { name: 'the submenu opens beside the menu at its right edge + 4; Escape closes only it and focuses the Usage row', run: () => {
+      Object.defineProperty(window, 'innerWidth', { configurable: true, value: 1280 });
+      Object.defineProperty(window, 'innerHeight', { configurable: true, value: 800 });
+      stubLayout(window, $('side-acct'), { left: 11, top: 744, width: 42, height: 46 });
+      stubLayout(window, $('acct-menu'), { left: 11, top: 200, width: 258, height: 540 });
+      click($('side-acct'), 0);
+      stubLayout(window, $('acct-usage'), { left: 17, top: 690, width: 246, height: 31 });
+      stubLayout(window, $('usage-menu'), { left: 0, top: 0, width: 300, height: 220 });
+      $('acct-usage').focus();
+      click($('acct-usage'), 0);
+      assert.equal($('usage-menu').hidden, false);
+      assert.equal(px($('usage-menu').style.left), 273, 'beside the menu: its right edge + 4');
+      assert.equal($('usage-menu').querySelector('.nav-fly-k').textContent, 'Limits');
+      assert.equal(doc.activeElement.dataset.engine, 'claude', 'a keyboard open lands on the first window row');
+      key('Escape');
+      assert.equal($('usage-menu').hidden, true);
+      assert.equal($('acct-menu').hidden, false, 'the menu stays');
+      assert.equal(doc.activeElement, $('acct-usage'));
+    } },
+    { name: 'a push that removes every reading closes the submenu and hides the row; focus goes to the menu', async run() {
+      click($('acct-usage'), 0);
+      assert.equal($('usage-menu').hidden, false);
+      usageBox.answer = { harnesses: [] };
+      await push({ type: 'usage-limits-changed', action: null });
+      assert.equal($('usage-menu').hidden, true);
+      assert.equal($('acct-usage').hidden, true);
+      assert.equal($('acct-usage').closest('.usage-sect').hidden, true);
+      assert.ok($('acct-menu').contains(doc.activeElement) && doc.activeElement.getAttribute('role')?.startsWith('menuitem'), 'focus on a menu item');
+      assert.deepEqual([$('side-acct').dataset.usageS, $('side-acct').dataset.usageL], ['none', 'none']);
+      key('Escape');
+    } },
+  ]);
+});
+
+test('usage: at 360px the submenu clamps 8px from the left over the menu', async () => {
+  const { window, doc, $, click, push } = await boot({ width: 360, usage: USAGE() });
+  await push({ type: 'usage-limits-changed', action: null });
+  click($('mbar-menu'));
+  assert.ok(doc.body.classList.contains('nav-open'));
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: 360 });
+  Object.defineProperty(window, 'innerHeight', { configurable: true, value: 640 });
+  stubLayout(window, $('side-acct'), { left: 120, top: 584, width: 200, height: 46 });
+  stubLayout(window, $('acct-menu'), { left: 94, top: 100, width: 258, height: 470 });
+  click($('side-acct'));
+  stubLayout(window, $('acct-usage'), { left: 100, top: 530, width: 246, height: 31 });
+  stubLayout(window, $('usage-menu'), { left: 0, top: 0, width: 300, height: 220 });
+  click($('acct-usage'));
+  assert.equal(px($('usage-menu').style.left), 8, 'no room on either side: clamped to the left margin');
+  assert.equal($('acct-menu').hidden, false);
 });
