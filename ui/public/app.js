@@ -115,7 +115,7 @@ import { outcomeNote } from './run-outcome.mjs';
 import { CREATE_PR_LABEL, CREATE_PR_FAILED, CREATING_PR, PR_CREATED, VIEW_PR_LABEL, VIEW_PRS_LABEL, viewPrLabel, createPrLabel, doneStatusWord } from './ship-words.mjs';
 import { worktreeNoticeModel, worktreeRowState, retainedCommands, recoveryPatchKind, uncommittedPatchName, applyConfirmMessage, applyOutcome, checkoutRowValue, memberLabel } from './worktree-notice.mjs';
 import { limitNotice, resumeTicketOf, countdownText } from './limit-notice.mjs';
-import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, paintStageBlocks, RECENT_PAGE, groupRow, memberPrsOf, rowMenuPrs, prChip, memberCostUsd, whenLabel, isFolded, setFolded } from './runs-list.mjs';
+import { buildRunsModel, countNeedsYou, isRowSelected, isMemberOpen, renderRunsList, paintStageBlocks, RECENT_PAGE, groupRow, memberPrsOf, rowMenuPrs, prChip, memberCostUsd, whenLabel, isFolded, setFolded, runItemRow } from './runs-list.mjs';
 import { paintRunStatus, syncActions, pauseResumeOwn } from './run-status-card.mjs';
 import { buildGroupPage, paintGroupPage, runReceipts, groupPrList } from './group-page.mjs';
 import { paintGroupShip, resetGroupShip } from './ship-group-dialog.mjs';
@@ -35557,7 +35557,27 @@ function runPrFor(h, stored) {
   const open = !['MERGED', 'CLOSED'].includes(String(stored.state || '').toUpperCase());
   return open && !prVerdictKnown(stored) ? { ...stored, pending: true } : stored;
 }
-const histOf = (pid) => (pid ? (state.historyAll || []).find((p) => p && p.id === pid) || null : null);
+// History rows by pipeline id, built once per history list: loads replace state.historyAll and never splice it, so a new
+// array is the only change the index misses. The first row per id wins, as find() did.
+let histIndex = { list: null, byId: new Map() };
+const histOf = (pid) => {
+  if (!pid) return null;
+  const list = state.historyAll || [];
+  if (histIndex.list !== list) {
+    const byId = new Map();
+    for (const p of list) if (p && p.id && !byId.has(p.id)) byId.set(p.id, p);
+    histIndex = { list, byId };
+  }
+  return histIndex.byId.get(pid) || null;
+};
+/** The Chats column's runs under a chat (chats-list.mjs withRuns): each { runId, pipelineId } this tab knows, as its
+ *  Runs list row — the live run (the pipeline's newest lineage), else its History row. A run it does not know is null. */
+chatDeps.chatRunRows = (refs) => (Array.isArray(refs) ? refs : []).map((ref) => {
+  const live = (ref.pipelineId && latestPipelineRun(ref.pipelineId)) || (ref.runId && runs.get(ref.runId)) || null;
+  if (live) return runItemRow({ live: runsLiveItem(live) });
+  const h = histOf(ref.pipelineId || '');
+  return h ? runItemRow({ hist: runsHistItem(h) }) : null;
+});
 function memberRun(m) {
   const h = histOf(m.pipelineId);
   // Runs redesign slice 4 (D24): a member's round / Watch PR facts pass through untouched; the run model words them.
@@ -36088,7 +36108,7 @@ let runsPaintQueued = false;
 function scheduleRunsPaint() {
   if (runsPaintQueued) return;
   runsPaintQueued = true;
-  queueMicrotask(() => { runsPaintQueued = false; if (inRunsView()) paintRunsList(); });
+  queueMicrotask(() => { runsPaintQueued = false; if (inRunsView()) paintRunsList(); askPanel?.runsChanged?.(); });
   scheduleGroupPagePaint();   // the group page's PR chips read the same rows
 }
 

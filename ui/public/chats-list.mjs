@@ -13,7 +13,10 @@ export const CHATS_SHOW = Object.freeze([['all', 'All'], ['needs', 'Needs you'],
 export const CHATS_SORT = Object.freeze([['activity', 'Recent', 'Last activity'], ['created', 'Created'], ['title', 'A–Z', 'Title A–Z'], ['cost', 'Cost']]);
 // Date's third entry is its segment title in the View menu. The Runs list's Group by uses the same order and title.
 export const CHATS_GROUP = Object.freeze([['date', 'Date', DATE_GROUP_TITLE], ['project', 'Project'], ['topic', 'Topic'], ['none', 'None']]);
-export const DEFAULT_CHATS_VIEW = Object.freeze({ show: 'all', sort: 'activity', groupBy: 'date' });
+// Runs: where the runs a chat started show. Under chats folds them under their chat (they stay in the Runs list too);
+// Separate keeps the Chats column to chats.
+export const CHATS_RUNS = Object.freeze([['nested', 'Under chats', 'Runs under the chat that started them'], ['separate', 'Separate', 'Chats only']]);
+export const DEFAULT_CHATS_VIEW = Object.freeze({ show: 'all', sort: 'activity', groupBy: 'date', runs: 'nested' });
 export const CHATS_PAGE = 50;
 export const CHATS_EMPTY = Object.freeze({ needs: 'No chat needs you.', archived: 'No archived chats.' });
 export const CHATS_LOADING = 'Loading chats…';
@@ -24,7 +27,8 @@ const labelOf = (list, id) => (list.find(([k]) => k === id) || [id, id])[1];
 /** A list entry's full name: its title when it has one ("Title A–Z"), else its label. */
 const fullName = (list, id) => { const e = list.find(([k]) => k === id); return e ? e[2] || e[1] : id; };
 export function cleanChatsView(v) {
-  return { show: pick(CHATS_SHOW, v?.show, 'all'), sort: pick(CHATS_SORT, v?.sort, 'activity'), groupBy: pick(CHATS_GROUP, v?.groupBy, 'date') };
+  return { show: pick(CHATS_SHOW, v?.show, 'all'), sort: pick(CHATS_SORT, v?.sort, 'activity'), groupBy: pick(CHATS_GROUP, v?.groupBy, 'date'),
+    runs: pick(CHATS_RUNS, v?.runs, 'nested') };
 }
 export function loadChatsView(storage) {
   try { const raw = storage.getItem(CHATS_VIEW_KEY); return raw ? cleanChatsView(JSON.parse(raw)) : { ...DEFAULT_CHATS_VIEW }; } catch { return { ...DEFAULT_CHATS_VIEW }; }
@@ -45,7 +49,8 @@ export function chatsViewChip(v, { shown = 0 } = {}) {
 }
 
 export function chatsViewMenuItems(v, counts, { onPick, mac = false }) {
-  return viewMenuItems(v, counts, { onPick, mac, showOpts: CHATS_SHOW, sortOpts: CHATS_SORT, groupOpts: CHATS_GROUP });
+  return viewMenuItems(v, counts, { onPick, mac, showOpts: CHATS_SHOW, sortOpts: CHATS_SORT, groupOpts: CHATS_GROUP,
+    extraSegments: [{ label: 'Runs', key: 'runs', opts: CHATS_RUNS }] });
 }
 
 /** The state column and the state word on the sub line. Busy states pulse; idle draws the bubble (status-dot icon), which
@@ -110,6 +115,19 @@ export function chatRow(t, { scopeName = () => '', now = Date.now() } = {}) {
     origin: t.origin || null,   // the chat integration that opened it (drawn as its platform's mark), null = an app chat
     ...(t.designId ? { designId: t.designId } : {}),   // a chat with a design (drawn with Design's mark)
   };
+}
+
+/** The runs a chat started, under its row (View › Runs › Under chats). `runRows(refs)` (app.js) answers each ref it
+ *  knows as a Runs list row with its model (runs-list.mjs runItemRow), so the dots and lines are the Runs list's; a run
+ *  it does not know (archived, deleted, not loaded) is left out. Open unless the person folded it (`toggled`). */
+function withRuns(r, refs, { runRows, toggled }) {
+  if (!runRows || !Array.isArray(refs) || !refs.length) return r;
+  const members = (runRows(refs) || []).filter(Boolean)
+    .map((m) => ({ ...m, key: `chatrun:${r.id}/${m.pipelineId || m.runId}`, chatId: r.id }));
+  if (!members.length) return r;
+  const key = r.key;
+  return { ...r, members, memberCount: members.length, memberNoun: members.length === 1 ? 'run' : 'runs',
+    open: toggled.has(key) ? !!toggled.get(key) : true };
 }
 
 /** #948 s3: one topic group as a list row, drawn by renderRunsList as a Runs group row. `members` are its loaded chat
@@ -184,9 +202,10 @@ export function sortChats(rows, sort = 'activity') {
  * until `olderOpen` and its count includes the chats not loaded yet. Sort by orders rows inside each section.
  */
 export function buildChatsModel({ threads = [], view = DEFAULT_CHATS_VIEW, total = null, more = false, olderOpen = false,
-  collapsed = new Set(), groups = [], toggled = new Map(), scopeName = () => '', now = Date.now() } = {}) {
+  collapsed = new Set(), groups = [], toggled = new Map(), scopeName = () => '', runRows = null, now = Date.now() } = {}) {
   const v = cleanChatsView(view);
-  const rows = threads.map((t) => chatRow(t, { scopeName, now }));
+  const nest = v.runs === 'nested' ? { runRows, toggled } : { runRows: null, toggled };
+  const rows = threads.map((t) => withRuns(chatRow(t, { scopeName, now }), t.startedRunRefs, nest));
   const byId = new Map(groups.map((g) => [g.id, g]));
   // D9: Needs you and Archived stay flat (a question never hides behind ⌄); Topic makes sections instead of rows.
   const top = v.show === 'all' && v.groupBy !== 'topic' ? foldGroups(rows, byId, toggled, now) : rows;
