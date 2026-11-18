@@ -90,7 +90,7 @@ import {
   autoGeneratePrDescription, assertAutoGeneratePrDescriptionInput, setAutoGeneratePrDescription,
   updateCheckEnabled, assertUpdateCheckInput, setUpdateCheck,
   titleModel as storedTitleModel, setTitleModel, assertTitleModelInput,
-  hideBuiltinModels, setHideBuiltinModels, assertHideBuiltinModelsInput,
+  hideBuiltinModels, setHideBuiltinModels, assertHideBuiltinModelsInput, setHideBuiltinEngines, assertHideBuiltinEnginesInput,
   theme as storedTheme, setTheme, assertThemeInput,
   uiLevel as storedUiLevel, setUiLevel, assertUiLevelInput, defaultUiLevel,
   autoWorkflowModel as storedAutoWorkflowModel, setAutoWorkflowModel, assertAutoWorkflowModelInput,
@@ -8069,7 +8069,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
   const hasAutoPrDescKey = has('autoGeneratePrDescription');
   const hasUpdateCheckKey = has('updateCheck');
   const hasTitleModelKey = has('titleModel');
-  const hasHideBuiltinKey = has('hideBuiltinModels');
+  const hasHideBuiltinKey = has('hideBuiltinModels'); const hasHideEnginesKey = has('hideBuiltinEngines');
   const hasThemeKey = has('theme');
   const hasUiLevelKey = has('uiLevel');
   const hasFlagsKey = has('flags');
@@ -8155,7 +8155,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
         throw new Error(`unknown model ${JSON.stringify(String(titleModelInput))} — pick one from the catalog`);
       }
     });
-    if (hasHideBuiltinKey) asSettingsField('hideBuiltinModels', () => assertHideBuiltinModelsInput(body.hideBuiltinModels));
+    if (hasHideBuiltinKey) asSettingsField('hideBuiltinModels', () => assertHideBuiltinModelsInput(body.hideBuiltinModels)); if (hasHideEnginesKey) asSettingsField('hideBuiltinEngines', () => assertHideBuiltinEnginesInput(body.hideBuiltinEngines));
     if (hasThemeKey) asSettingsField('theme', () => assertThemeInput(body.theme));
     if (hasUiLevelKey) asSettingsField('uiLevel', () => assertUiLevelInput(body.uiLevel));
     if (hasAutoKey) asSettingsField('autoWorkflowModel', () => assertAutoWorkflowModelInput(body.autoWorkflowModel ?? '', autoModels));
@@ -8239,7 +8239,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
       if (body.updateCheck === false) updateChecker.clear();   // back on = a fresh check, never the old answer
     }
     if (hasTitleModelKey) await setTitleModel(titleModelInput);
-    if (hasHideBuiltinKey) await setHideBuiltinModels(body.hideBuiltinModels);
+    if (hasHideBuiltinKey) await setHideBuiltinModels(body.hideBuiltinModels); if (hasHideEnginesKey) await setHideBuiltinEngines(body.hideBuiltinEngines);
     if (hasThemeKey) await setTheme(body.theme);
     if (hasUiLevelKey) await setUiLevel(body.uiLevel);
     if (hasFlagsKey) await asSettingsField('flags', () => setFlags(body.flags));   // same path as PATCH /api/flags (it broadcasts `flags`)
@@ -8273,7 +8273,7 @@ async function applySettingsPatch(body, { person = null } = {}) {
     // Other open tabs repaint their Settings cards (a stale tab could otherwise
     // "save" its old checkbox state over this one with no feedback to either).
     if (hasSmartNaming || hasNamingModelKey) cachedPick = undefined;
-    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || secondOpinionModels || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasRunLimitsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasDesignModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey || hasKeepAwakeKey) emitChanged('settings-changed');
+    if (hasAskKey || hasAskWeb || hasSmartNaming || hasDebugSpawnKey || hasTitleModelKey || hasHideBuiltinKey || hasHideEnginesKey || hasThemeKey || hasUiLevelKey || hasAutoKey || hasPrDescKey || hasAutoPrDescKey || hasHumanRateKey || hasMemoryDefragKey || hasAgentGenKey || hasNamingModelKey || hasCommandSummaryModelKey || secondOpinionModels || hasWorkspaceScanKey || has('schedule') || has('sync') || has('tagDimensions') || has('enforceTags') || has('chat') || hasAskEngineKey || hasAskModelsKey || hasRequirementsInterviewKey || hasNetworkWaitKey || hasRunLimitsKey || hasActionsKey || hasNightKey || hasRunEngineKey || hasStepModelsKey || hasDesignModelsKey || hasModelRolesKey || hasUtilityModelsKey || hasUpdateCheckKey || hasKeepAwakeKey) emitChanged('settings-changed');
     // Editor / Terminal: saved as typed; a program Worca cannot find comes back as a warning on its field.
     const actionsWarnings = hasActionsKey ? Object.fromEntries(['editor', 'terminal']
       .map((k) => [k, launcherWarning(actionsSettings()[k], { findOnPath: (n) => findOnPath(n) })]).filter(([, w]) => w)) : null;

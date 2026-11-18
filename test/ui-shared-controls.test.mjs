@@ -405,11 +405,15 @@ test('badges: Official and policy are slate, "not installed" is never amber', ()
   const src = (p) => code(read(p));
   assert.match(bodyOf('.badge.mk-chip-built'), /background:var\(--slate-bg\)/);   // the Marketplace's Built-in chip
   assert.match(src('ui/public/marketplace/marketplaces-view.mjs'), /chip\(doc, 'built', 'Built-in'\)/);
-  for (const p of ['ui/public/team-policy-view.mjs', 'ui/public/models-view.mjs', 'ui/public/guardrails-view.mjs']) {
+  for (const p of ['ui/public/team-policy-view.mjs', 'ui/public/guardrails-view.mjs']) {
     const lines = src(p).split('\n').filter((l) => /['"`](?:team )?policy['"`]/i.test(l) && /badge/.test(l));
     assert.ok(lines.length, `${p} has a policy badge`);
     for (const l of lines) assert.match(l, /badge slate/, `${p}: ${l.trim().slice(0, 80)}`);
   }
+  // The Catalogue's row chip ("Team" on a team-policy model; "Plugin", "Project", "Overrides built-in") is slate.
+  assert.match(src('ui/public/models/catalogue-model.mjs'), /team: 'Team'/);
+  const chipLines = src('ui/public/models/catalogue-view.mjs').split('\n').filter((l) => /r\.chip\)/.test(l));
+  assert.deepEqual(chipLines.map((l) => l.trim()), ["if (r.chip) model.append(el(doc, 'span', 'badge slate', r.chip));"]);
   const notInstalled = JS.flatMap((f) => code(readFileSync(f, 'utf8')).split('\n').filter((l) => /not installed/i.test(l) && /badge (?:amber|waiting)|'amber'/.test(l)).map((l) => `${rel(f)}: ${l.trim().slice(0, 80)}`));
   assert.deepEqual(notInstalled, []);
 });

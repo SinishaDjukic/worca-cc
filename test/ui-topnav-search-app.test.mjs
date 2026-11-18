@@ -553,27 +553,27 @@ test('Add-ons inner rows land on their row or card and flash it', async () => {
       const search = ctx.doc.querySelector('#models-list .mv-search');
       search.value = 'zzz';
       search.dispatchEvent(new ctx.window.Event('input', { bubbles: true }));
-      assert.equal(ctx.doc.querySelector('#models-list .mv-card[data-id="my-gpt"]'), null, 'the user narrowed the catalogue');
+      assert.equal(ctx.doc.querySelector('#models-list .mdl-row[data-id="my-gpt"]'), null, 'the user narrowed the catalogue');
       await searchPick(ctx, 'my gpt', 'My GPT');
       await settle(ctx.window, 8);
       assert.equal(ctx.window.location.hash, '#models/model/my-gpt');
-      assert.ok(isFound(ctx.doc.querySelector('#models-list .mv-card[data-id="my-gpt"]')));
+      assert.ok(isFound(ctx.doc.querySelector('#models-list .mdl-row[data-id="my-gpt"]')));
     } },
   ]);
 });
 
-// A model pick clears every narrowing the catalogue keeps (search box, chip, Just imported, a folded group).
+// A model pick clears every narrowing the catalogue keeps (search box, chip, Source, Just imported, a folded group).
 const MY_GPT = { id: 'my-gpt', label: 'My GPT', efforts: ['high'], engine: 'claude', env: {} };
 const MODEL_ARMS = [
   ['/api/config', () => ({ config: { steps: {}, customModels: [] }, models: [{ ...MY_GPT, custom: 'global', hasEnv: false, routed: false }], efforts: [] })],
   ['/api/models', () => ({ models: [MY_GPT], plugin: [], policy: [], predefined: [], efforts: ['high'], codex: [], copilot: [] })],
   ['/api/providers', () => ({})],
 ];
-const myGptCard = (doc) => doc.querySelector('#models-list .mv-card[data-id="my-gpt"]');
+const myGptRow = (doc) => doc.querySelector('#models-list .mdl-row[data-id="my-gpt"]');
 const isFound = (n) => !!n && n.classList.contains('is-found');
 const press = (ctx, node) => node.dispatchEvent(new ctx.window.MouseEvent('click', { bubbles: true }));
 
-test('a model pick lands on its row whatever the catalogue was narrowed by: a chip, Just imported, a folded group', async () => {
+test('a model pick lands on its row whatever the catalogue was narrowed by: a chip, the Source, Just imported, a folded group', async () => {
   const onModels = async (arms = []) => {
     const ctx = await boot({ arms: [...arms, ...MODEL_ARMS] });
     ctx.window.location.hash = '#models';
@@ -584,15 +584,25 @@ test('a model pick lands on its row whatever the catalogue was narrowed by: a ch
     await searchPick(ctx, 'my gpt', 'My GPT');
     await settle(ctx.window, 8);
     assert.equal(ctx.window.location.hash, '#models/model/my-gpt');
-    assert.ok(isFound(myGptCard(ctx.doc)), 'the row is shown and flashed');
+    assert.ok(isFound(myGptRow(ctx.doc)), 'the row is shown and flashed');
+    assert.equal(ctx.doc.querySelector('#model-panel-host .mdl-side')?.getAttribute('aria-label'), 'My GPT', 'its side panel is open');
   };
   await checkRows([
-    { name: 'the Built-in chip on: the pick goes back to All', run: async () => {
+    { name: 'the In use chip on: the pick goes back to All', run: async () => {
       const ctx = await onModels();
-      press(ctx, ctx.doc.querySelector('#models-list .mv-filters [data-filter="builtin"]'));
-      assert.equal(myGptCard(ctx.doc), null, 'the chip hides your own models');
+      press(ctx, ctx.doc.querySelector('#models-list .mv-filters .filter-chip[data-filter="used"]'));
+      assert.equal(myGptRow(ctx.doc), null, 'the chip hides a model no job uses');
       await pickMyGpt(ctx);
-      assert.equal(ctx.doc.querySelector('#models-list .mv-filters [data-filter="all"]').getAttribute('aria-pressed'), 'true');
+      assert.equal(ctx.doc.querySelector('#models-list .mv-filters .filter-chip[data-filter="all"]').getAttribute('aria-pressed'), 'true');
+    } },
+    { name: 'the Source on Plugin: the pick goes back to Any source', run: async () => {
+      const ctx = await onModels();
+      const source = ctx.doc.querySelector('#models-list .mdl-source');
+      source.value = 'plugin';
+      source.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
+      assert.equal(myGptRow(ctx.doc), null, 'the Source hides your own models');
+      await pickMyGpt(ctx);
+      assert.equal(ctx.doc.querySelector('#models-list .mdl-source').value, 'any');
     } },
     { name: 'Just imported on: the pick drops the import filter and its chip', run: async () => {
       const ctx = await onModels([
@@ -607,18 +617,19 @@ test('a model pick lands on its row whatever the catalogue was narrowed by: a ch
       cb.dispatchEvent(new ctx.window.Event('change', { bubbles: true }));
       press(ctx, ctx.doc.getElementById('mimp-go'));
       await settle(ctx.window, 16);
-      press(ctx, ctx.doc.querySelector('#models-list .mv-filters [data-filter="imported"]'));
-      assert.equal(myGptCard(ctx.doc), null, 'Just imported hides my-gpt');
+      press(ctx, ctx.doc.querySelector('#models-list .mv-filters .filter-chip[data-filter="imported"]'));
+      assert.equal(myGptRow(ctx.doc), null, 'Just imported hides my-gpt');
       await pickMyGpt(ctx);
-      assert.equal(ctx.doc.querySelector('#models-list .mv-filters [data-filter="imported"]'), null);
+      assert.equal(ctx.doc.querySelector('#models-list .mv-filters .filter-chip[data-filter="imported"]'), null);
     } },
-    { name: 'Your models folded: the pick unfolds the group', run: async () => {
+    { name: 'Claude Code folded: the pick unfolds its group', run: async () => {
       const ctx = await onModels();
-      press(ctx, ctx.doc.querySelector('#models-list .mv-sec-toggle[data-section="global"]'));
-      const group = () => ctx.doc.querySelector('#models-list .mv-section[data-section="global"]');
-      assert.ok(group().classList.contains('is-folded'), 'the user folded Your models');
+      const toggle = () => ctx.doc.querySelector('#models-list .mdl-grp[data-engine="claude"] .mdl-grp-toggle');
+      press(ctx, toggle());
+      assert.equal(toggle().getAttribute('aria-expanded'), 'false', 'the user folded Claude Code');
+      assert.equal(myGptRow(ctx.doc), null);
       await pickMyGpt(ctx);
-      assert.equal(group().classList.contains('is-folded'), false);
+      assert.equal(toggle().getAttribute('aria-expanded'), 'true');
     } },
   ]);
 });

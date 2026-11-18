@@ -7,13 +7,11 @@
 // mv-promote, mv-save, mv-cancel, mv-env-add, mv-env-rm) so app.js wires ONE
 // delegated listener on the list container.
 
-import { bridgedBadge, needsSignInPill, degradationLine, renderConnectionSection, collectConnection, applyConnectionMode } from './bridge-view.mjs';
-import { credentialBadge } from './credential-badges.mjs';
+import { renderConnectionSection, collectConnection, applyConnectionMode } from './bridge-view.mjs';
 import { icon } from './icons.mjs';
 import { copyButton } from './copy-button.mjs';
-import { makeSwitch } from './switch.mjs';
-import { engineLabel, engineChoiceLabel, isBetaEngine, MODEL_ENGINE_NAMES, SIGN_IN_ENGINE_NAMES, CHAT_ENGINE_NAMES, engineReportsCost } from '../../src/shared/engine-switch.mjs';
-import { harnessesOf, runsOn, suggestModelHandle, HARNESS_EFFORTS } from '../../src/shared/connections.mjs';
+import { engineChoiceLabel, isBetaEngine, MODEL_ENGINE_NAMES, SIGN_IN_ENGINE_NAMES, CHAT_ENGINE_NAMES, engineReportsCost } from '../../src/shared/engine-switch.mjs';
+import { suggestModelHandle, HARNESS_EFFORTS } from '../../src/shared/connections.mjs';
 
 /** Each model engine's effort list: Claude's, Codex's, Copilot's, Goose's and OpenCode's as given, Gemini CLI's and Qwen
  *  Code's their harness's (src/shared/connections.mjs); Cursor has no effort flag. */
@@ -35,15 +33,6 @@ function h(doc, tag, cls, text) {
 }
 
 /** "medium · high" or "all efforts" (the full set carries no signal). */
-/** Credential broker: "your key / no key" for the signed-in person, after a model's name. */
-function keyBadge(parent, m, doc) {
-  const b = credentialBadge(m.id);
-  if (!b) return;
-  const el = h(doc, 'span', `badge ${b.tone} mv-key-badge`, b.text);
-  el.title = b.title;
-  parent.appendChild(el);
-}
-
 export function effortsSummary(efforts, allEfforts) {
   const list = Array.isArray(efforts) ? efforts : [];
   if (!list.length || (allEfforts && list.length === allEfforts.length)) return 'all efforts';
@@ -98,336 +87,6 @@ export function suggestDuplicateId(id, takenIds = []) {
     if (!taken.has(c.toLowerCase())) return c;
   }
   return base; // 998 copies of one model: let the server reject the duplicate
-}
-
-/**
- * The Models view body: global entries (editable), the selected project's
- * legacy custom models (promotable), and the built-in catalog (read-only).
- * `globals` come MASKED from GET /api/models. `predefinedShadowedIds` marks
- * built-ins currently overridden by a global entry.
- */
-/**
- * The catalog. `query` / `filter` narrow it and `collapsed` folds a group away: with the built-ins,
- * a plugin's models and a team policy's all listed at once the page ran to several screens, and the
- * entry you came for was never the one on top.
- * @param {{query?:string, filter?:string, collapsed?:object, highlight?:string[]}} [o]
- */
-export function renderModelsList({ globals = [], legacy = [], plugins = [], policy = [], predefined = [], codex = [], codexEfforts = [], copilot = [], copilotEfforts = [], gooseEfforts = [], opencodeEfforts = [], efforts = [], hideBuiltin = false, projectName = '', query = '', filter = 'all', collapsed = {}, highlight = [] } = {}, { doc = globalThis.document } = {}) {
-  const root = h(doc, 'div', 'mv-list');
-  const predefLc = new Set(predefined.map((m) => m.id.toLowerCase()));
-  const pluginLc = new Set(plugins.map((m) => m.id.toLowerCase()));
-  const codexLc = new Set(codex.map((m) => m.id.toLowerCase()));
-
-  // A model names the harnesses that run it (src/shared/connections.mjs) when that is not Claude Code alone; its
-  // efforts are its own engine's.
-  const engineBadge = (m) => {
-    const hs = harnessesOf(m);
-    if (hs.length === 1 && hs[0] === 'claude') return null;
-    const b = h(doc, 'span', 'badge blue mv-engine', hs.map(engineLabel).join(' · '));
-    b.title = `Runs on ${hs.map(engineLabel).join(' and ')}`;
-    return b;
-  };
-  const lists = effortLists(efforts, codexEfforts, copilotEfforts, gooseEfforts, opencodeEfforts);
-  const effortsOf = (m) => effortsSummary(m.efforts, lists[m.engine || 'claude'] || efforts);
-  const q = String(query || '').trim().toLowerCase();
-  const hi = new Set((highlight || []).map((x) => String(x).toLowerCase()));
-  const searching = !!q || filter !== 'all';
-
-  /** Does this entry survive the search box and the chip? */
-  const keep = (m, source) => {
-    if (filter === 'imported' && !hi.has(String(m.id).toLowerCase())) return false;
-    if (filter === 'needs-setup' && !m.needsSignIn) return false;
-    // "Codex": every model Codex can run, whichever group it sits in (its built-ins, an endpoint model of yours).
-    if (filter === 'codex') { if (!runsOn(m, 'codex')) return false; } else if (!['all', 'imported', 'needs-setup'].includes(filter) && filter !== source) return false;
-    if (!q) return true;
-    return [m.id, m.label, m.plugin, m.home, m.upstream && m.upstream.model].filter(Boolean).some((v) => String(v).toLowerCase().includes(q));
-  };
-
-  // Each group can fold: the header is the control, and its count is the answer to "is my model
-  // in there?" without opening it.
-  const sections = [];
-  const section = (title, hint, key = '') => {
-    const s = h(doc, 'div', 'mv-section');
-    s.dataset.section = key;
-    const head = h(doc, 'div', 'mv-section-head');
-    const btn = h(doc, 'button', 'btn btn-quiet btn-sm mv-sec-toggle');
-    btn.type = 'button';
-    btn.dataset.section = key;
-    // The shared disclosure chevron (style.css .adv-chev), turned down while the group is open.
-    const caret = h(doc, 'span', 'mv-sec-caret adv-chev');
-    caret.setAttribute('aria-hidden', 'true');
-    btn.appendChild(caret);
-    btn.appendChild(h(doc, 'h3', 'section-title mv-section-title', title));
-    btn.appendChild(h(doc, 'span', 'mv-sec-count', ''));
-    head.appendChild(btn);
-    s.appendChild(head);
-    if (hint) s.appendChild(h(doc, 'small', 'hint mv-sec-hint', hint));
-    const body = h(doc, 'div', 'mv-sec-body');
-    s.appendChild(body);
-    // Searching opens every group that still has a hit — a match hidden inside a fold is a bug.
-    const folded = !searching && !!collapsed[key];
-    s.classList.toggle('is-folded', folded);
-    btn.setAttribute('aria-expanded', folded ? 'false' : 'true');
-    sections.push({ el: s, body, btn, key });
-    // The rows go into the body; every caller appends to the section, so proxy it.
-    s.appendChild = (node) => body.appendChild(node);
-    return s;
-  };
-
-  // The endpoint-routed badge (#422): honest disclosure that worca points the
-  // CLI's internal haiku/sonnet/opus/fable lookups at this model's own id
-  // (config.mjs#resolveModelEnv), so nothing falls back to the Anthropic API.
-  // The masked env still carries its KEYS, so presence is decidable here.
-  const routedBadge = (m) => {
-    if (!m.env || !Object.prototype.hasOwnProperty.call(m.env, 'ANTHROPIC_BASE_URL')) return null;
-    const b = h(doc, 'span', 'badge waiting mv-routed', 'endpoint-routed');
-    b.title = "worca points Claude Code's internal haiku/sonnet/opus/fable lookups at this model, so it never falls back to the Anthropic API.";
-    return b;
-  };
-
-  // ── Toolbar: search + the chip that says which layer you are looking at ──
-  const bar = h(doc, 'div', 'mv-toolbar');
-  const search = h(doc, 'input', 'input mv-search');
-  search.type = 'search';
-  search.placeholder = 'Search models by id, label or upstream…';
-  search.value = query || '';
-  search.setAttribute('aria-label', 'Search models');
-  bar.appendChild(search);
-  const chips = h(doc, 'div', 'mv-filters');
-  const CHIPS = [['all', 'All'], ['global', 'Yours'], ['builtin', 'Built-in'], ['codex', 'Codex'], ['plugin', 'Plugin'], ['policy', 'Team'], ['needs-setup', 'Needs setup']];
-  if (highlight.length) CHIPS.push(['imported', 'Just imported']);
-  for (const [id, label] of CHIPS) {
-    const c = h(doc, 'button', 'filter-chip', label);
-    c.type = 'button'; c.dataset.filter = id;
-    c.setAttribute('aria-pressed', filter === id ? 'true' : 'false');
-    chips.appendChild(c);
-  }
-  bar.appendChild(chips);
-  root.appendChild(bar);
-
-  // ── Hide built-in models (#422) — one checkbox, top of the pane ──
-  const hideRow = h(doc, 'div', 'mv-hide-builtin-row');
-  const hideSw = makeSwitch(doc, { label: "Hide built-in models (you don't use a first-party Anthropic account)", checked: !!hideBuiltin, inputClass: 'mv-hide-builtin' });
-  hideRow.appendChild(hideSw.row);
-  hideRow.appendChild(h(doc, 'small', 'hint',
-    'Drops the built-ins from every model picker: New run, the Workflows view, Chat, title generation. Cosmetic only: a run or reference that already names one keeps working.'));
-  root.appendChild(hideRow);
-
-  // ── Your models (global) ──
-  const yours = section('Your models', 'Defined once, available in every project. An entry with a built-in id overrides that built-in.', 'global');
-  if (!globals.length) {
-    yours.appendChild(h(doc, 'div', 'hist-empty', 'No global models yet. Add model to define one.'));
-  }
-  for (const m of globals.filter((x) => keep(x, 'global'))) {
-    const card = h(doc, 'section', 'card mv-card');
-    card.dataset.id = m.id;
-    const body = h(doc, 'div', 'mv-body');
-    const head = h(doc, 'div', 'mv-head');
-    head.appendChild(h(doc, 'b', 'mv-name', m.label || m.id));
-    keyBadge(head, m, doc);
-    const eb = engineBadge(m); if (eb) head.appendChild(eb);
-    if (predefLc.has(m.id.toLowerCase()) || (m.engine === 'codex' && codexLc.has(m.id.toLowerCase()))) head.appendChild(h(doc, 'span', 'badge slate mv-shadow', 'overrides built-in'));
-    else if (pluginLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge slate mv-shadow', 'overrides plugin'));
-    const rb = routedBadge(m);
-    if (rb) head.appendChild(rb);
-    // Model bridge (model-bridge-design.md §8.5): the provider badge, and the
-    // blocking "needs sign-in" pill when that provider is not usable yet.
-    const bb = bridgedBadge(m, { doc });
-    if (bb) head.appendChild(bb);
-    const ns = needsSignInPill(m, { doc });
-    if (ns) head.appendChild(ns);
-    // The §4.6 "unreliable" badge is meaningless once an override GOVERNS this
-    // model's spend — and the backend only lifts the stored flag on the model's
-    // next result event, so suppress it here the moment pricing is pinned.
-    if (m.costUnreliable && !m.cost) head.appendChild(h(doc, 'span', 'badge waiting mv-cost', 'cost not verified'));
-    if (m.cost) head.appendChild(h(doc, 'span', 'badge slate mv-cost-pinned', m.cost.free ? 'free' : 'priced'));
-    body.appendChild(head);
-    const bits = [m.id, effortsOf(m), m.upstream ? `→ ${m.upstream.model}` : '', envSummary(m.env), costSummary(m.cost)].filter(Boolean);
-    body.appendChild(h(doc, 'small', 'mv-summary hint', bits.join('; ')));
-    const deg = degradationLine(m);
-    if (deg) body.appendChild(h(doc, 'small', 'mv-degradation hint', deg));
-    body.appendChild(h(doc, 'small', 'mv-test-result hint')); // app.js paints the Test outcome here
-    card.appendChild(body);
-    const del = h(doc, 'button', 'btn mv-delete', 'Delete');
-    del.type = 'button'; del.dataset.id = m.id;
-    card.appendChild(del);
-    const edit = h(doc, 'button', 'btn mv-edit', 'Edit');
-    edit.type = 'button'; edit.dataset.id = m.id;
-    card.appendChild(edit);
-    // Duplicate opens a CREATE editor seeded from this entry (app.js fetches the
-    // raw env values first — the card only ever holds masked ones). The point is
-    // deriving a sibling: same routing, one parameter changed.
-    const dup = h(doc, 'button', 'btn mv-duplicate', 'Duplicate');
-    dup.type = 'button'; dup.dataset.id = m.id;
-    card.appendChild(dup);
-    const tst = h(doc, 'button', 'btn mv-test', 'Test');
-    tst.type = 'button'; tst.dataset.id = m.id;
-    card.appendChild(tst);
-    yours.appendChild(card);
-  }
-  root.appendChild(yours);
-
-  // ── Legacy per-project models (promotable) ──
-  if (legacy.length) {
-    const leg = section(
-      `Project models${projectName ? `: ${projectName}` : ''} (legacy)`,
-      'Defined only for this project. Promote to make them global; the id keeps working everywhere it is referenced.'
-    );
-    for (const m of legacy) {
-      const card = h(doc, 'section', 'card mv-card mv-legacy');
-      card.dataset.id = m.id;
-      const body = h(doc, 'div', 'mv-body');
-      const head = h(doc, 'div', 'mv-head');
-      head.appendChild(h(doc, 'b', 'mv-name', m.label || m.id));
-    keyBadge(head, m, doc);
-      head.appendChild(h(doc, 'span', 'badge waiting mv-origin', 'project (legacy)'));
-      body.appendChild(head);
-      body.appendChild(h(doc, 'small', 'mv-summary hint', m.id));
-      card.appendChild(body);
-      const promote = h(doc, 'button', 'btn mv-promote', 'Promote to global');
-      promote.type = 'button'; promote.dataset.id = m.id;
-      card.appendChild(promote);
-      leg.appendChild(card);
-    }
-    root.appendChild(leg);
-  }
-
-  // ── From plugins (read-only; design §9.6) ──
-  const globalLc = new Set(globals.map((m) => m.id.toLowerCase()));
-  if (plugins.length) {
-    const plug = section('From plugins',
-      'Installed by plugins. Read-only and updated with the plugin. "Edit a copy" clones one into Your models, which then overrides it.', 'plugin');
-    for (const m of plugins.filter((x) => keep(x, 'plugin'))) {
-      const card = h(doc, 'section', 'card mv-card mv-plugin');
-      card.dataset.id = m.id;
-      card.dataset.plugin = m.plugin;
-      const body = h(doc, 'div', 'mv-body');
-      const head = h(doc, 'div', 'mv-head');
-      head.appendChild(h(doc, 'b', 'mv-name', m.label || m.id));
-    keyBadge(head, m, doc);
-      const peb = engineBadge(m); if (peb) head.appendChild(peb);
-      head.appendChild(h(doc, 'span', 'badge waiting mv-origin', `plugin: ${m.plugin}`));
-      if (globalLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge slate mv-shadowed', 'overridden by your copy'));
-      const prb = routedBadge(m);
-      if (prb) head.appendChild(prb);
-      const pbb = bridgedBadge(m, { doc });
-      if (pbb) head.appendChild(pbb);
-      const pns = needsSignInPill(m, { doc });
-      if (pns) head.appendChild(pns);
-      // Same rule as a global card: a manifest-pinned price governs the spend,
-      // so the §4.6 "unreliable" flag says nothing about it.
-      if (m.costUnreliable && !m.cost) head.appendChild(h(doc, 'span', 'badge waiting mv-cost', 'cost not verified'));
-      if (m.cost) head.appendChild(h(doc, 'span', 'badge slate mv-cost-pinned', m.cost.free ? 'free' : 'priced'));
-      body.appendChild(head);
-      const bits = [m.id, effortsOf(m), m.upstream ? `→ ${m.upstream.model}` : '', envSummary(m.env), costSummary(m.cost)].filter(Boolean);
-      body.appendChild(h(doc, 'small', 'mv-summary hint', bits.join('; ')));
-      const pdeg = degradationLine(m);
-      if (pdeg) body.appendChild(h(doc, 'small', 'mv-degradation hint', pdeg));
-      for (const s of m.secrets || []) {
-        body.appendChild(h(doc, 'small', `mv-secret hint${s.set ? '' : ' err'}`,
-          s.set ? `secret ${s.key}: set` : `secret ${s.key}: NOT SET. Configure it in the plugin's settings`));
-      }
-      body.appendChild(h(doc, 'small', 'mv-test-result hint')); // app.js paints the Test outcome here
-      card.appendChild(body);
-      const copy = h(doc, 'button', 'btn mv-copy', 'Edit a copy');
-      copy.type = 'button'; copy.dataset.id = m.id; copy.dataset.plugin = m.plugin;
-      card.appendChild(copy);
-      const tst = h(doc, 'button', 'btn mv-test', 'Test');
-      tst.type = 'button'; tst.dataset.id = m.id; tst.dataset.plugin = m.plugin;
-      if ((m.secrets || []).some((s) => !s.set)) {
-        // A test would only prove what the NOT SET line already says.
-        tst.disabled = true;
-        tst.title = 'set the plugin secret first';
-      }
-      card.appendChild(tst);
-      plug.appendChild(card);
-    }
-    root.appendChild(plug);
-  }
-
-  // ── From team policy (read-only; team-policy design §8) ──
-  if (policy.length) {
-    const pol = section('From team policy',
-      'Shipped by a team policy. Read-only and updated when the policy changes. Add a model with the same id to Your models to override one on this machine.', 'policy');
-    for (const m of policy.filter((x) => keep(x, 'policy'))) {
-      const card = h(doc, 'section', 'card mv-card mv-policy');
-      card.dataset.id = m.id;
-      const body = h(doc, 'div', 'mv-body');
-      const head = h(doc, 'div', 'mv-head');
-      head.appendChild(h(doc, 'b', 'mv-name', m.label || m.id));
-    keyBadge(head, m, doc);
-    const teb = engineBadge(m); if (teb) head.appendChild(teb);
-      const badge = h(doc, 'span', 'badge slate mv-origin', 'policy');
-      badge.title = `Team policy on ${m.home}`;
-      head.appendChild(badge);
-      if (globalLc.has(m.id.toLowerCase())) head.appendChild(h(doc, 'span', 'badge slate mv-shadowed', 'overridden by your copy'));
-      const rb = routedBadge(m);
-      if (rb) head.appendChild(rb);
-      body.appendChild(head);
-      const bits = [m.id, effortsOf(m), envSummary(m.env), m.home ? `policy ${m.home}` : ''].filter(Boolean);
-      body.appendChild(h(doc, 'small', 'mv-summary hint', bits.join('; ')));
-      body.appendChild(h(doc, 'small', 'mv-test-result hint'));
-      card.appendChild(body);
-      const tst = h(doc, 'button', 'btn mv-test', 'Test');
-      tst.type = 'button'; tst.dataset.id = m.id;
-      card.appendChild(tst);
-      pol.appendChild(card);
-    }
-    root.appendChild(pol);
-  }
-
-  // ── Built-ins (read-only) ──
-  const builtins = section('Built-in models', hideBuiltin
-    ? `Hidden from every picker (${predefined.length} built-in${predefined.length === 1 ? '' : 's'}). Untick the box above to show them.`
-    : 'Shipped with worca. Add a model with the same id to override its label, efforts, or routing.', 'builtin');
-  builtins.classList.add(hideBuiltin ? 'mv-builtins-hidden' : 'mv-builtins-shown');
-  for (const m of (hideBuiltin ? [] : predefined).filter((x) => keep(x, 'builtin'))) {
-    const row = h(doc, 'div', 'mv-builtin');
-    row.dataset.id = m.id;
-    row.appendChild(h(doc, 'b', 'mv-name', m.label));
-    keyBadge(row, m, doc);
-    if (globalLc.has(m.id.toLowerCase()) || pluginLc.has(m.id.toLowerCase())) {
-      row.appendChild(h(doc, 'span', 'badge slate mv-shadowed', 'overridden'));
-    }
-    row.appendChild(h(doc, 'small', 'mv-summary hint', `${m.id}: ${effortsSummary(m.efforts, efforts)}`));
-    builtins.appendChild(row);
-  }
-  root.appendChild(builtins);
-
-  // ── Codex and Copilot built-ins (read-only; §3.1a) ──
-  // One catalog row per id (config.mjs composeCatalog): a global, plugin or team-policy model of
-  // any engine with a built-in's id owns that id, so the built-in row says it is overridden.
-  const ownedLc = new Set([...globals, ...plugins, ...policy].map((m) => m.id.toLowerCase()));
-  const engineBuiltins = (list, engine, title, hint, engineEfforts) => {
-    if (!list.length) return;
-    const sec = section(title, hint, engine);
-    for (const m of list.filter((x) => keep(x, engine))) {
-      const row = h(doc, 'div', `mv-builtin mv-${engine}`);
-      row.dataset.id = m.id;
-      row.appendChild(h(doc, 'b', 'mv-name', m.label));
-      if (ownedLc.has(m.id.toLowerCase())) row.appendChild(h(doc, 'span', 'badge slate mv-shadowed', 'overridden'));
-      row.appendChild(h(doc, 'small', 'mv-summary hint', `${m.id}: ${effortsSummary(m.efforts, engineEfforts)}`));
-      sec.appendChild(row);
-    }
-    root.appendChild(sec);
-  };
-  engineBuiltins(codex, 'codex', 'Codex built-in models',
-    'Shipped with worca for Codex runs. Add a Codex model with the same id to override its label or efforts.', codexEfforts);
-  engineBuiltins(copilot, 'copilot', 'Copilot built-in models',
-    'The models the Copilot CLI offers, on your GitHub Copilot sign-in. Add a Copilot model with the same id to override its label or efforts.', copilotEfforts);
-
-  // Counts on every header, and a group with nothing left drops out while a search is on.
-  let shown = 0;
-  for (const sec of sections) {
-    const n = sec.body.querySelectorAll('.mv-card, .mv-builtin').length;
-    shown += n;
-    sec.btn.querySelector('.mv-sec-count').textContent = String(n);
-    if (searching && !n) sec.el.classList.add('hidden');
-  }
-  if (searching && !shown) {
-    root.appendChild(h(doc, 'div', 'hist-empty mv-no-hits', q ? `No model matches “${query}”.` : 'No model in this group.'));
-  }
-  return root;
 }
 
 /** One env key/value editor row. Existing values arrive MASKED; leaving a
@@ -911,25 +570,20 @@ export function collectExportWizard(rootEl) {
   };
 }
 
-/** Human summary of what deleting `id` clears, for the confirmation prompt. */
+/** Human summary of what deleting `id` clears, for the confirmation prompt (PAN-7). `refs` is the refs
+ *  read: `{}` or `null` (a failed read) counts nothing. One count of every job the delete clears: the user-level
+ *  jobs, the project steps and nodes, and Settings › Memory's defragment pick when no job already counts it. */
 export function deleteRefsSummary(id, refs) {
   if (refs && refs.predefinedShadow) {
     return `Remove the override of built-in "${id}"? The built-in entry comes back; nothing else changes.`;
   }
-  const nodes = refs && Array.isArray(refs.nodes) ? refs.nodes.length : 0;
-  const steps = refs && Array.isArray(refs.steps) ? refs.steps.length : 0;
-  const projects = new Set([
-    ...((refs && refs.nodes) || []).map((n) => n.projectKey),
-    ...((refs && refs.steps) || []).map((s) => s.projectKey),
-  ]).size;
-  // Settings › Memory's defragment model is the one GLOBAL ref (globalModelRefs `memoryDefrag`).
-  const defrag = !!(refs && refs.memoryDefrag);
-  if (!nodes && !steps) {
-    return defrag
-      ? `Delete model "${id}"? Memory defragment runs use it (Settings › Memory). That setting is cleared and they fall back to the default.`
-      : `Delete model "${id}"? No pipeline configuration references it.`;
-  }
-  return `Delete model "${id}"? This also clears ${nodes} node selection${nodes === 1 ? '' : 's'} and ` +
-    `${steps} role selection${steps === 1 ? '' : 's'} across ${projects} project${projects === 1 ? '' : 's'}` +
-    (defrag ? ', and the Memory defragment model (Settings › Memory).' : '.');
+  const list = (key) => (refs && Array.isArray(refs[key]) ? refs[key] : []);
+  const jobs = list('jobs');
+  // Claude's defragment pick is also a job; Codex's memoryDefrag job is another pick.
+  const defrag = !!(refs && refs.memoryDefrag) && !jobs.some((j) => j && j.engine === 'claude' && j.key === 'memoryDefrag');
+  const n = jobs.length + list('steps').length + list('nodes').length + (defrag ? 1 : 0);
+  if (!n) return `Delete model "${id}"? No job uses it.`;
+  return n === 1
+    ? `Delete model "${id}"? This also clears 1 job that uses it.`
+    : `Delete model "${id}"? This also clears ${n} jobs that use it.`;
 }

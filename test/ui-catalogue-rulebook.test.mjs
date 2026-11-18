@@ -9,7 +9,8 @@ import { renderMarketplaceCard } from '../ui/public/marketplace/marketplaces-vie
 import { renderAllInstalled } from '../ui/public/marketplace/installed-view.mjs';
 import { renderRemoveDialog } from '../ui/public/marketplace/remove-view.mjs';
 import { renderProvidersTab } from '../ui/public/models/providers-tab.mjs';
-import { renderModelsList } from '../ui/public/models-view.mjs';
+import { buildCatalogue } from '../ui/public/models/catalogue-model.mjs';
+import { renderCatalogue } from '../ui/public/models/catalogue-view.mjs';
 import { renderPolicySyncChip } from '../ui/public/team-policy-view.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
@@ -95,14 +96,16 @@ test('Connectors: one page intro, no mcp-chip, no typed plus, the plus icon on e
   assert.deepEqual(rules('.mcp-x'), []);
 });
 
-test('Models: shared filter chip, the group header is a 28px .btn, no centred column, sentence case', () => {
-  const list = renderModelsList({ globals: [{ id: 'a', label: 'A' }] }, { doc });
+test('Models: shared filter chips, one group card per harness with a row-button head and a quiet icon More, no centred column, sentence case', () => {
+  const list = renderCatalogue(buildCatalogue({ models: [{ id: 'a', label: 'A' }] }, {}), { doc });
   const chips = [...list.querySelectorAll('.mv-filters > button')];
-  assert.ok(chips.length >= 7 && chips.every((c) => c.classList.contains('filter-chip') && c.dataset.filter));
+  assert.ok(chips.length >= 3 && chips.every((c) => c.classList.contains('filter-chip') && c.dataset.filter));
   assert.equal(chips.filter((c) => c.getAttribute('aria-pressed') === 'true').length, 1);
-  const t = list.querySelector('.mv-sec-toggle');
-  assert.deepEqual([...t.classList], ['btn', 'btn-quiet', 'btn-sm', 'mv-sec-toggle']);
-  assert.ok(t.querySelector('h3.section-title.mv-section-title'));
+  assert.deepEqual([...list.querySelectorAll('.mdl-grp[data-engine]')].map((g) => g.dataset.engine), ['claude']);
+  const t = list.querySelector('.mdl-grp[data-engine="claude"] .mdl-grp-toggle');
+  assert.deepEqual([...t.classList], ['row-btn', 'mdl-grp-toggle']);
+  assert.equal(t.querySelector('.mdl-grp-title').textContent, 'Claude Code');
+  assert.deepEqual([...list.querySelector('.mdl-grp-more').classList], ['btn', 'btn-quiet', 'btn-sm', 'btn-icon', 'mdl-grp-more']);
   assert.doesNotMatch(CSS, /\[data-view="models"\][^{]*\{[^}]*max-width/);
   assert.doesNotMatch(CSS, /\.mv-[\w-]+[^{]*\{[^}]*text-transform:uppercase/);
   assert.match(CSS, /\.info-tip\{[^}]*width:28px;height:28px;flex:0 0 28px;/);

@@ -35,7 +35,9 @@ a.tab.mdl-tab{text-decoration:none;}
 .mdl-mark.g-lime{--ga:var(--mark-g-lime-a);--gb:var(--mark-g-lime-b);}
 .mdl-mark.g-slate{--ga:var(--mark-g-slate-a);--gb:var(--mark-g-slate-b);}
 .mdl-mark.own{border:0;background:linear-gradient(135deg,var(--ga),var(--gb));color:var(--on-mark);}
-.mdl-mark.own img{width:20px;height:20px;filter:brightness(0) invert(1);}
+/* worca-mark-mask.png is a white disc holding a black W: inverted, the W turns white and the disc black, and screen
+   drops the black over the gradient, so only the W shows. */
+.mdl-mark.own img{width:20px;height:20px;filter:invert(1);mix-blend-mode:screen;}
 .mdl-mark.lg.own img{width:26px;height:26px;}
 .mdl-mark.sm.own{width:18px;height:18px;border-radius:var(--r-xs);}
 .mdl-mark.sm.own img{width:13px;height:13px;}
@@ -81,3 +83,82 @@ a.tab.mdl-tab{text-decoration:none;}
   .mdl-fold > .mdl-st{flex-basis:100%;padding-left:88px;white-space:normal;overflow-wrap:anywhere;}
   .mdl-fold-body{padding-left:0;}
 }
+
+/* The Catalogue tab (models/catalogue-view.mjs, DESIGN CAT-1…CAT-11): the toolbar, then one card per harness. Only the
+   list scrolls sideways, inside its own box (VIS-4): a viewport query would miss Ask's column narrowing the page. */
+.mdl-cat{display:flex;flex-direction:column;gap:16px;min-width:0;}
+.mdl-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.mdl-toolbar .mv-search{flex:1 1 280px;min-width:0;}
+.mdl-toolbar .mdl-source{flex:none;width:auto;}
+.mdl-scroll{overflow-x:auto;min-width:0;}
+.mdl-list{min-width:720px;display:flex;flex-direction:column;gap:12px;}
+/* Model, Used by, Status, the chevron: one grid for the head line and every row. */
+.mdl-cols{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr) 200px 28px;align-items:center;column-gap:16px;}
+/* The rows' padding plus the card's 1px border. */
+.mdl-cols-head{padding:0 13px 0 21px;font-size:var(--fs-meta);font-weight:600;color:var(--ink-2);}
+.mdl-cols-head > :nth-child(3){text-align:right;}
+/* The card clips its last row's hover and selected fill to its corners; menus open on <body>, so nothing is cut. */
+.mdl-grp{background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);overflow:hidden;}
+.mdl-grp-head{display:flex;align-items:center;gap:10px;padding:0 12px 0 10px;}
+.mdl-grp-toggle{flex:1 1 auto;min-width:0;min-height:60px;display:flex;align-items:center;gap:10px;padding:0 8px 0 0;}
+.mdl-grp-caret{width:28px;height:28px;flex:none;display:inline-flex;align-items:center;justify-content:center;color:var(--ink-2);}
+.mdl-grp-caret > .ic{transition:transform .12s ease;}
+.mdl-grp-toggle[aria-expanded="true"] .mdl-grp-caret > .ic{transform:rotate(90deg);}
+@media (prefers-reduced-motion:reduce){.mdl-grp-caret > .ic{transition:none;}}
+.mdl-grp-title{min-width:0;font-size:var(--fs-section);font-weight:600;line-height:var(--lh-title);color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mdl-grp-toggle > .mdl-mark,.mdl-grp-toggle > .badge{flex:none;}
+.mdl-grp-toggle .mdl-grp-custom{color:var(--ink);}
+.mdl-grp-toggle > .mdl-st{margin-left:auto;}
+.mdl-grp-more{flex:none;}
+.mdl-grp-body{border-top:1px solid var(--line);}
+/* A way of reaching models: its name and count on the left; state, fix and the hide switch end on the Status column. */
+.mdl-sub-h{display:flex;align-items:center;gap:8px;min-height:36px;padding:0 56px 0 20px;border-top:1px solid var(--line);font-size:var(--fs-meta);font-weight:600;color:var(--ink-2);}
+.mdl-grp-body > .mdl-sub-h:first-child{border-top:0;}
+.mdl-sub-name{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mdl-sub-h > .badge{flex:none;}
+.mdl-sub-h > .mdl-st{margin-left:auto;font-weight:500;}
+.mdl-sub-h > .mdl-fix{flex:none;margin-left:10px;color:var(--ink);font-weight:500;}
+.mdl-sub-h > .mdl-hide{flex:none;margin-left:auto;gap:10px;font-weight:500;}
+.mdl-sub-h > .mdl-st ~ .mdl-hide{margin-left:10px;}
+.mdl-note{display:flex;align-items:center;min-height:40px;padding:0 12px 0 20px;border-top:1px solid var(--line);font-size:var(--fs-meta);color:var(--ink-2);}
+.mdl-row{min-height:44px;}
+.mdl-grp-body > .mdl-row{padding:0 12px 0 20px;border-top:1px solid var(--line);border-radius:0;}
+.mdl-grp-body > .mdl-row.mdl-sel{background:var(--row-selected);}
+.mdl-row-model{display:flex;align-items:center;gap:10px;min-width:0;}
+.mdl-row-name{min-width:0;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mdl-row.mdl-used .mdl-row-name{font-weight:600;}
+.mdl-row-model > .badge{flex:none;}
+.mdl-row-used{min-width:0;font-size:var(--fs-meta);color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mdl-row-st{display:flex;align-items:center;justify-content:flex-end;gap:10px;min-width:0;}
+.mdl-row-go{justify-self:end;color:var(--ink-3);}
+.mdl-nomatch{display:flex;align-items:center;gap:12px;padding:16px 20px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-card);color:var(--ink-2);}
+
+/* The model side panel (PAN-1…PAN-6): over the page's right edge, under the 48px top bar, full height. Its containing
+   block is .main-row (shell/top-bar.css); z 30 keeps it under Ask's sheet (40) and the menus it opens (45). */
+.mdl-side{position:absolute;inset:0 0 0 auto;z-index:30;width:min(420px,100%);overflow-y:auto;display:flex;flex-direction:column;gap:20px;padding:20px 24px 24px;background:var(--panel);border-left:1px solid var(--line);box-shadow:var(--shadow-sheet);}
+.mdl-side-head{display:flex;align-items:center;gap:12px;}
+.mdl-side-titles{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:4px;}
+.mdl-side-title{margin:0;font-size:var(--fs-section);font-weight:600;line-height:var(--lh-title);color:var(--ink);overflow-wrap:anywhere;}
+.mdl-side-close{flex:none;}
+.mdl-acts{display:flex;flex-wrap:wrap;align-items:center;gap:8px;}
+.mdl-test-result{font-size:var(--fs-meta);color:var(--ink-2);}
+.mdl-test-result:empty{display:none;}
+.mdl-act-more{margin-left:auto;}
+.mdl-side-sec{display:flex;flex-direction:column;gap:12px;padding-top:20px;border-top:1px solid var(--line);}
+.mdl-side-sec > .mdl-sect{margin:0;}
+.mdl-facts{display:grid;grid-template-columns:112px minmax(0,1fr);row-gap:8px;column-gap:16px;align-items:center;margin:0;}
+.mdl-facts dt{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
+.mdl-facts dd{margin:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px;min-width:0;min-height:22px;color:var(--ink);}
+.mdl-facts dd.mono,.mdl-secret .mono{font-family:var(--mono);font-size:var(--fs-meta);}
+.mdl-fact-v{min-width:0;overflow-wrap:anywhere;}
+.mdl-secrets{display:flex;flex-direction:column;gap:4px;font-size:var(--fs-meta);color:var(--ink-2);}
+.mdl-secret .mono{color:var(--ink);}
+.mdl-uses{display:flex;flex-direction:column;gap:2px;margin:-4px -8px 0;}
+.mdl-use{display:flex;align-items:center;gap:8px;min-height:30px;padding:0 8px;}
+.mdl-use-label{flex:1 1 auto;min-width:0;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.mdl-use-kind{flex:none;font-size:var(--fs-caption);color:var(--ink-2);}
+.mdl-nouse{margin:0;font-size:var(--fs-meta);color:var(--ink-2);}
+@media (max-width:860px){.mdl-side{width:100%}}
+/* At this width Ask's column is a later flex sibling in .main-row and would paint over the panel (as .toasts,
+   chat/ask-worca-beside.css). */
+@media (min-width:1081px){body.ask-side-open .mdl-side{right:var(--ask-side-w,440px)}}

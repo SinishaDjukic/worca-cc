@@ -102,8 +102,11 @@ test('#555 D1: a delete success (marketplace / guardrail set / model) survives t
         'GET /api/models': { status: 200, body: { models: [{ id: 'acme-fast', label: 'ACME Fast' }], predefined: [], efforts: [] } },
       } });
       await go('models');
-      window.document.querySelector('.mv-delete[data-id="acme-fast"]')
-        .dispatchEvent(new window.Event('click', { bubbles: true }));
+      const doc = window.document;
+      // The row opens its side panel; Delete sits in the panel's More menu.
+      doc.querySelector('#models-list .mdl-row[data-id="acme-fast"]').dispatchEvent(new window.Event('click', { bubbles: true }));
+      doc.querySelector('#model-panel-host .mdl-act-more').dispatchEvent(new window.Event('click', { bubbles: true }));
+      [...doc.querySelectorAll('.wfv-menu [role^="menuitem"]')].find((b) => b.querySelector('.wfv-menu-l').textContent === 'Delete').click();
       await confirmDialog(window);
       for (let i = 0; i < 10; i++) await tick();
       assert.deepEqual(lastToast(window.document), { tone: 'ok', title: 'Deleted.', detail: '', action: '' });
@@ -167,8 +170,9 @@ test('#555: the model editor Save — a missing id is a field error, a refusal a
   assert.equal(add.querySelector('.mv-editor-msg').textContent, '');
   add.querySelector('.mv-cancel').click();
   for (let i = 0; i < 4; i++) await tick();
-  // Edit: the server refuses → a card alert in the editor, which stays open.
-  doc.querySelector('.mv-edit[data-id="acme-fast"]').dispatchEvent(new window.Event('click', { bubbles: true }));
+  // Edit (the row's side panel): the server refuses → a card alert in the editor, which stays open.
+  doc.querySelector('#models-list .mdl-row[data-id="acme-fast"]').dispatchEvent(new window.Event('click', { bubbles: true }));
+  doc.querySelector('#model-panel-host .mdl-act[data-act="edit"]').dispatchEvent(new window.Event('click', { bubbles: true }));
   for (let i = 0; i < 4; i++) await tick();
   const editor = doc.querySelector('#mv-editor-host .mv-editor');
   assert.ok(doc.querySelector('#mv-editor-host .mv-editor.dlg > .dlg-foot .mv-editor-btns'), 'the shared dialog anatomy');
@@ -233,7 +237,8 @@ test('model editor: an env row added or removed is a change, so Escape asks with
       assert.equal(modal.classList.contains('hidden'), true);
     } },
     { name: 'a model\'s env row removed: Escape asks; Discard closes', run: async () => {
-      doc.querySelector('.mv-edit[data-id="acme-env"]').click();
+      doc.querySelector('#models-list .mdl-row[data-id="acme-env"]').click();
+      doc.querySelector('#model-panel-host .mdl-act[data-act="edit"]').click();
       for (let i = 0; i < 4; i++) await tick();
       assert.equal(envRows(), 1);
       doc.querySelector('#mv-editor-host .mv-env-row .mv-env-rm').click();

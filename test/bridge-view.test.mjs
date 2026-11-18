@@ -3,8 +3,8 @@
 // row states, the sign-in block, the import sheet + select-all + collect,
 // the editor Connection section (mode reveal, provider→api coupling, Advanced
 // only for key-based providers, efforts collapse for a translated model
-// without reasoning), collect/set round-trips, and the card badges inside
-// renderModelsList / renderModelEditor.
+// without reasoning), collect/set round-trips, the bridge badges, a bridged model in the Catalogue (its row, its
+// provider's state and its side panel: catalogue-model.mjs) and renderModelEditor.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -16,7 +16,8 @@ import {
   renderCopilotRow, renderOpenRouterRow, renderEndpointRow, renderSpeechRow, renderImagesRow, renderSoundRow,
   collectImagesRow, applyImagesPreset,
 } from '../ui/public/bridge-view.mjs';
-import { renderModelsList, renderModelEditor, collectModelEditor, applyConnectionModeIn } from '../ui/public/models-view.mjs';
+import { renderModelEditor, collectModelEditor, applyConnectionModeIn } from '../ui/public/models-view.mjs';
+import { buildCatalogue, buildModelPanel } from '../ui/public/models/catalogue-model.mjs';
 import { PROVIDER_ROWS } from '../ui/public/models/page-tabs.mjs';
 import { renderProvidersTab } from '../ui/public/models/providers-tab.mjs';
 
@@ -350,22 +351,28 @@ test('editor: a translated model without reasoning collapses efforts to medium; 
   assert.equal('upstream' in collectModelEditor(ed3).body, false);
 });
 
-test('cards: bridged badge, needs-sign-in pill + Sign in button, degradation line, upstream in the summary', () => {
+test('catalogue: a bridged model sits under its provider, which says Needs sign-in once; the panel names the upstream id and the translation limits', () => {
   const gpt = { id: 'copilot-gpt-5', label: 'GPT-5 (Copilot)', efforts: ['medium'], upstream: { provider: 'copilot', api: 'openai-chat', model: 'gpt-5', capabilities: { maxPromptTokens: 128000 } }, bridged: 'copilot', needsSignIn: true, signInReason: 'not_signed_in', signInMessage: 'not signed in' };
   const claude = { id: 'copilot-claude', label: 'Claude (Copilot)', efforts: EFFORTS, upstream: { provider: 'copilot', api: 'anthropic', model: 'claude-sonnet-4.5' }, bridged: 'copilot', needsSignIn: false };
-  const list = renderModelsList({ globals: [gpt, claude], plugins: [{ ...gpt, id: 'p-gpt', plugin: 'p', secrets: [] }], efforts: EFFORTS }, { doc });
-  const card = list.querySelector('.mv-card[data-id="copilot-gpt-5"]');
-  assert.equal(card.querySelector('.mv-bridged').textContent, 'bridged: copilot');
-  assert.equal(card.querySelector('.mv-needs-signin-badge').textContent, 'needs sign-in');
-  assert.equal(card.querySelector('.mv-signin').dataset.provider, 'copilot');
-  assert.equal(card.querySelector('.mv-degradation').textContent, 'translated: no thinking blocks, no WebSearch/WebFetch, prompt limit ~128k tokens');
-  assert.match(card.querySelector('.mv-summary').textContent, /→ gpt-5/);
-  const c2 = list.querySelector('.mv-card[data-id="copilot-claude"]');
-  assert.equal(c2.querySelector('.mv-needs-signin'), null);
-  assert.equal(c2.querySelector('.mv-degradation'), null);
-  const pc = list.querySelector('.mv-plugin[data-id="p-gpt"]');
-  assert.equal(pc.querySelector('.mv-bridged').textContent, 'bridged: copilot');
-  assert.ok(pc.querySelector('.mv-needs-signin'));
+  const data = (providers) => ({ models: [gpt, claude], plugin: [{ ...gpt, id: 'p-gpt', plugin: 'p', secrets: [] }], predefined: [], providers });
+  const copilotSub = (providers) => buildCatalogue(data(providers)).groups.find((g) => g.engine === 'claude').subs.find((x) => x.key === 'copilot');
+  const sub = copilotSub({});
+  assert.deepEqual([sub.name, sub.state.text, sub.state.fix, sub.fixRow], ['GitHub Copilot', 'Needs sign-in', 'Sign in', 'copilot']);
+  assert.deepEqual(sub.rows.map((r) => [r.id, r.name, r.chip, r.state]), [
+    ['copilot-gpt-5', 'GPT-5', null, null], ['copilot-claude', 'Claude', null, null], ['p-gpt', 'GPT-5', 'Plugin', null],
+  ], 'the sub-group says the need once; the rows do not repeat it');
+  // No Providers payload: nothing is claimed about the provider, so the row that needs sign-in says so itself.
+  assert.deepEqual(copilotSub(null).rows.map((r) => [r.id, r.state?.text ?? null]), [['copilot-gpt-5', 'Needs setup'], ['copilot-claude', null], ['p-gpt', 'Needs setup']]);
+  const fact = (panel, k) => panel.facts.find((f) => f.k === k)?.v;
+  const panel = buildModelPanel(data({}), 'copilot-gpt-5');
+  assert.deepEqual(panel.state, { tone: 'need', text: 'Needs sign-in' });
+  assert.deepEqual([fact(panel, 'Sends as'), fact(panel, 'Provider'), fact(panel, 'Source')], ['gpt-5', 'GitHub Copilot', 'Yours']);
+  assert.deepEqual(panel.limits, [{ k: 'Prompt', v: '~128k tokens' }, { k: 'Reasoning', v: 'None' }, { k: 'Web search', v: 'Not available' }]);
+  assert.deepEqual(buildModelPanel(data({}), 'copilot-claude').limits, [], 'not translated: no limits');
+  const plugin = buildModelPanel(data({}), 'p-gpt');
+  assert.deepEqual([fact(plugin, 'Source'), plugin.limits.length], ['Plugin p', 3]);
+  assert.equal(bridgedBadge(gpt, { doc }).textContent, 'bridged: copilot');
+  assert.equal(degradationLine(gpt), 'translated: no thinking blocks, no WebSearch/WebFetch, prompt limit ~128k tokens');
   assert.equal(bridgedBadge({ bridged: false }, { doc }), null);
   assert.equal(needsSignInPill({ needsSignIn: false }, { doc }), null);
   assert.equal(needsSignInPill({ needsSignIn: true, signInReason: 'no_key', bridged: 'openai' }, { doc }).querySelector('.mv-signin').textContent, 'Set key');

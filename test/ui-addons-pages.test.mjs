@@ -229,17 +229,17 @@ test('Providers is a tab of the Models page: its loader, the page title, the pag
 });
 
 test('Models is a page of its own: the catalog, the Engines card from GET /api/settings, a card deep link, its banner and leave-guard', async () => {
-  // A bridged catalog row that is not signed in yet: an OpenAI-compatible "Sign in" goes to the Providers tab;
-  // a Copilot one opens the setup assistant on Model access instead (AC-4.5, the row after this one).
+  // A bridged catalog row that is not signed in yet: its provider's sub-group says so once, and its fix goes to the
+  // Providers tab (an OpenAI-compatible key); a Copilot one opens the setup assistant on Model access instead (AC-4.5).
   const CP = { id: 'oa-gpt', label: 'GPT (OpenAI-compatible)', efforts: ['medium'], upstream: { provider: 'openai', api: 'openai-chat', model: 'gpt-5' },
     bridged: 'openai', needsSignIn: true, signInReason: 'not_signed_in', signInMessage: 'not signed in' };
   const COPILOT = { id: 'cp-gpt', label: 'GPT (Copilot)', efforts: ['medium'], upstream: { provider: 'copilot', api: 'openai-chat', model: 'gpt-5' },
     bridged: 'copilot', needsSignIn: true, signInReason: 'not_signed_in', signInMessage: 'not signed in' };
   await checkRows([
-    { name: 'a catalog row\'s Sign in opens the Providers tab at its row; the OpenAI row\'s Import models… opens the Catalogue with the import dialog', run: async () => {
+    { name: 'a provider sub-group\'s Set key opens the Providers tab at its row; the OpenAI row\'s Import models… opens the Catalogue with the import dialog', run: async () => {
       const { window, doc } = await boot({ routes: { '/api/models': { models: [CP], predefined: [], efforts: [] } } });
       await go(window, 'models');
-      doc.querySelector('#models-list .mv-signin').click();
+      doc.querySelector('#models-list .mdl-fix[data-row="openai"]').click();
       await settle();
       assert.equal(window.location.hash, '#models/providers/openai');
       assert.deepEqual(shownView(doc), ['models']);
@@ -251,27 +251,27 @@ test('Models is a page of its own: the catalog, the Engines card from GET /api/s
       assert.equal(doc.getElementById('models-tab-catalogue').hidden, false, 'the Catalogue panel shows');
       assert.equal(doc.getElementById('model-import-modal').classList.contains('hidden'), false, 'the import dialog opens over the catalog');
     } },
-    { name: 'an OpenRouter model\'s Set key opens the Providers tab at the OpenRouter row; a plugin card is looked up among the plugin models', run: async () => {
+    { name: 'an OpenRouter model\'s Set key opens the Providers tab at the OpenRouter row; a local endpoint\'s at the OpenAI-compatible row', run: async () => {
       const OR_BASE = 'https://openrouter.ai/api/v1';
       const entry = (baseUrl, extra = {}) => ({ id: 'glm', label: 'GLM', efforts: ['medium'], upstream: { provider: 'openai', api: 'openai-chat', model: 'z-ai/glm-4.6', baseUrl },
         bridged: 'openai', needsSignIn: true, signInReason: 'no_key', signInMessage: 'no API key', ...extra });
-      // The same id twice: the global entry points at a local server, the plugin's at OpenRouter.
-      const models = { models: [entry('http://127.0.0.1:11434/v1')], plugin: [entry(OR_BASE, { plugin: 'or-pack' })], predefined: [], efforts: [] };
+      // The global entry points at a local server, the plugin's at OpenRouter: one sub-group each, each with its fix.
+      const models = { models: [entry('http://127.0.0.1:11434/v1')], plugin: [entry(OR_BASE, { id: 'glm-or', plugin: 'or-pack' })], predefined: [], efforts: [] };
       const { window, doc } = await boot({ routes: { '/api/models': models } });
       await go(window, 'models');
-      doc.querySelector('#models-list .mv-card.mv-plugin .mv-signin').click();
+      doc.querySelector('#models-list .mdl-fix[data-row="openrouter"]').click();
       await settle();
       assert.equal(window.location.hash, '#models/providers/openrouter');
       assert.equal(doc.getElementById('models-tab-providers').hidden, false);
       await go(window, 'models');
-      doc.querySelector('#models-list .mv-card:not(.mv-plugin) .mv-signin').click();
+      doc.querySelector('#models-list .mdl-fix[data-row="openai"]').click();
       await settle();
       assert.equal(window.location.hash, '#models/providers/openai', 'the global entry is on the OpenAI-compatible row');
     } },
     { name: 'a Copilot row\'s Sign in opens the setup assistant on Model access, and the page stays (AC-4.5, R-qa-4)', run: async () => {
       const { window, doc } = await boot({ routes: { '/api/models': { models: [COPILOT], predefined: [], efforts: [] } } });
       await go(window, 'models');
-      doc.querySelector('#models-list .mv-signin[data-provider="copilot"]').click();
+      doc.querySelector('#models-list .mdl-fix[data-row="copilot"]').click();
       await settle();
       assert.ok(doc.getElementById('setup-modal'), 'the assistant is up');
       assert.equal(doc.querySelector('#setup-modal h2#setup-title').textContent, 'Where should Worca get its models?');
@@ -449,7 +449,9 @@ test('Models tabs: one view, three panels; the old Providers page is its Provide
       assert.ok(doc.getElementById('engine-settings-card').contains(doc.activeElement));
     } },
     { name: 'a Catalogue action that refreshes the page keeps a key typed on the Providers tab', run: async () => {
-      const { window, doc, calls } = await boot({ hash: 'models/providers' });
+      // One built-in, so Claude Code's group draws its hide switch.
+      const routes = { '/api/models': { models: [], predefined: [{ id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['high'] }], efforts: ['high'] } };
+      const { window, doc, calls } = await boot({ hash: 'models/providers', routes });
       const errors = errorsOf(window);
       const card = doc.querySelector('#providers-list .mv-providers');
       const key = pvRow(doc, 'openai').querySelector('.mv-pv-key');
@@ -573,9 +575,9 @@ test('Models tabs: one view, three panels; the old Providers page is its Provide
       const routes = { '/api/models': { models: [{ id: 'my-gpt', label: 'My GPT', efforts: ['high'], engine: 'claude', env: {} }], predefined: [], efforts: ['high'] } };
       const { doc } = await boot({ hash: 'models/model/my-gpt', routes });
       await settle();
-      const card = doc.querySelector('#models-list .mv-card[data-id="my-gpt"]');
-      assert.ok(card, 'the row is drawn');
-      assert.ok(card.classList.contains('is-found'), 'the post-load reveal found it');
+      const row = doc.querySelector('#models-list .mdl-row[data-id="my-gpt"]');
+      assert.ok(row, 'the row is drawn');
+      assert.ok(row.classList.contains('is-found'), 'the post-load reveal found it');
     } },
     { name: 'a providers load that lands after the user moved to the Catalogue with the same rest flashes nothing on the hidden row', run: async () => {
       const routes = {};
@@ -632,7 +634,7 @@ test('Models tabs: one view, three panels; the old Providers page is its Provide
       assert.equal(pvCard(doc, 'openai').classList.contains('is-found'), false, 'the older entry revealed nothing');
       assert.deepEqual(errors, []);
     } })),
-    ...[['models/providers/openai', (doc) => pvCard(doc, 'openai')], ['models/model/my-gpt', (doc) => doc.querySelector('#models-list .mv-card[data-id="my-gpt"]')]].map(([hash, target]) => ({ name: `with a broker on, a reload on #${hash} still draws and finds its row (the boot's credentials re-read overtakes the entry's read)`, run: async () => {
+    ...[['models/providers/openai', (doc) => pvCard(doc, 'openai')], ['models/model/my-gpt', (doc) => doc.querySelector('#models-list .mdl-row[data-id="my-gpt"]')]].map(([hash, target]) => ({ name: `with a broker on, a reload on #${hash} still draws and finds its row (the boot's credentials re-read overtakes the entry's read)`, run: async () => {
       const routes = {
         '/api/credentials': { enabled: true },
         '/api/models': { models: [{ id: 'my-gpt', label: 'My GPT', efforts: ['high'], engine: 'claude', env: {} }], predefined: [], efforts: ['high'] },
@@ -1358,11 +1360,14 @@ test('Providers tab: fold state, reveal, and repaint that keeps typing', async (
       assert.equal(doc.activeElement, item(doc, 'copilot').querySelector('.mv-cp-account'), 'not the hidden Sign in');
     } },
     { name: 'a catalogue change redraws the summaries: one OpenRouter model reads " · 1 model" when the tab shows again', run: async () => {
-      const routes = { '/api/providers': P };
+      // One built-in from the start, so Claude Code's group draws its hide switch before the catalogue changes.
+      const OPUS = { id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: ['high'] };
+      const routes = { '/api/providers': P, '/api/models': { models: [], predefined: [OPUS], efforts: [] } };
       const { window, doc } = await boot({ hash: 'models/providers', routes });
       const summary = () => item(doc, 'openrouter').querySelector('.mdl-fold-sum').textContent;
       assert.equal(summary(), 'openrouter.ai · 8 requests at a time');
-      routes['/api/models'] = { models: [{ id: 'or-gpt', label: 'OR GPT', efforts: [], engine: 'claude', env: {}, upstream: { provider: 'openai', baseUrl: 'https://openrouter.ai/api/v1', model: 'openai/gpt-5', api: 'openai-chat' } }], predefined: [], efforts: [] };
+      routes['/api/models'] = { models: [{ id: 'or-gpt', label: 'OR GPT', efforts: [], engine: 'claude', env: {}, upstream: { provider: 'openai', baseUrl: 'https://openrouter.ai/api/v1', model: 'openai/gpt-5', api: 'openai-chat' } }],
+        predefined: [OPUS], efforts: [] };
       await go(window, 'models');
       const cb = doc.querySelector('.mv-hide-builtin');
       cb.checked = !cb.checked;

@@ -83,6 +83,7 @@ export const SETTINGS_FIELD_LABELS = Object.freeze({
   uiLevel: 'Interface mode',
   flags: 'Labs features',
   hideBuiltinModels: 'Hide built-in models',
+  hideBuiltinEngines: 'Hide built-in models',
   chat: 'Chat notifications',
   runEngine: 'Default engine',
   stepModels: 'Step models',

@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { checkRows } from './helpers/rows.mjs';
 import {
-  suggestDuplicateId, renderModelsList, renderModelEditor,
+  suggestDuplicateId, deleteRefsSummary, renderModelEditor,
   collectModelEditor, makeEnvRow, setModelCost, setModelEngine,
   renderExportWizard, collectExportWizard, applyConnectionModeIn,
 } from '../ui/public/models-view.mjs';
@@ -17,45 +17,10 @@ import { readStyleCss } from '../src/core/read-style-css.mjs';
 const doc = new JSDOM('<!doctype html><body></body>').window.document;
 
 const EFFORTS = ['medium', 'high', 'xhigh', 'max'];
-const PREDEFINED = [
-  { id: 'claude-opus-5-5', label: 'Opus 5.5', efforts: EFFORTS },
-  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', efforts: ['medium', 'high', 'max'] },
-];
 const GLOBAL = {
   id: 'glm-4.7', label: 'GLM (proxy)', efforts: ['medium', 'high'],
   env: { ANTHROPIC_BASE_URL: '••••••e/v1', ANTHROPIC_AUTH_TOKEN: '••••••1234', X_REF: '${MY_VAR}' },
 };
-const SHADOW = { id: 'claude-sonnet-4-6', label: 'Sonnet via proxy', efforts: ['medium'], env: { ANTHROPIC_BASE_URL: '••••••e/v1' } };
-
-test('list: global cards get Edit/Delete + shadow badge; legacy get Promote; built-ins read-only + overridden badge', () => {
-  const el = renderModelsList({
-    globals: [GLOBAL, SHADOW],
-    legacy: [{ id: 'old-local', label: 'Old Local' }],
-    predefined: PREDEFINED,
-    efforts: EFFORTS,
-    projectName: 'my-repo',
-  }, { doc });
-
-  const cards = el.querySelectorAll('.mv-card:not(.mv-legacy)');
-  assert.equal(cards.length, 2);
-  assert.equal(cards[0].dataset.id, 'glm-4.7');
-  assert.equal(cards[0].querySelector('.mv-shadow'), null, 'non-shadow entry has no override badge');
-  assert.ok(cards[0].querySelector('.mv-edit'));
-  assert.ok(cards[0].querySelector('.mv-delete'));
-  assert.match(cards[0].querySelector('.mv-summary').textContent, /3 env vars · routes via base URL/);
-  assert.equal(cards[1].querySelector('.mv-shadow').textContent, 'overrides built-in');
-
-  const legacy = el.querySelectorAll('.mv-legacy');
-  assert.equal(legacy.length, 1);
-  assert.equal(legacy[0].querySelector('.mv-origin').textContent, 'project (legacy)');
-  assert.equal(legacy[0].querySelector('.mv-promote').dataset.id, 'old-local');
-
-  const builtins = el.querySelectorAll('.mv-builtin');
-  assert.equal(builtins.length, 2);
-  assert.equal(builtins[0].querySelector('.mv-shadowed'), null);
-  assert.equal(builtins[1].querySelector('.mv-shadowed').textContent, 'overridden', 'sonnet is overridden by SHADOW');
-  assert.equal(builtins[0].querySelector('button'), null, 'built-ins carry no actions');
-});
 
 test('editor (edit): id locked, efforts reflect the entry, masked env rows carry data-original', () => {
   const el = renderModelEditor(GLOBAL, EFFORTS, { doc });
@@ -108,45 +73,6 @@ test('collect (edit): removed env rows become null-deletes; kept masked values a
 });
 
 // ── plugin section + export wizard (design §9.5–§9.6) ────────────────────────
-
-const PLUGINS = [
-  {
-    id: 'ds-stable', label: 'DS Stable', efforts: ['medium', 'high'], plugin: 'team-models',
-    env: { ANTHROPIC_BASE_URL: '••••••mple', ANTHROPIC_AUTH_TOKEN: '(secret: ds-token)' },
-    secrets: [{ key: 'ds-token', label: 'DS token', set: false }],
-  },
-  { id: 'claude-sonnet-4-6', label: 'Sonnet via plugin', efforts: ['medium'], plugin: 'team-models', env: {}, secrets: [] },
-];
-
-test('list: plugin cards are read-only with provenance + secret status + Edit-a-copy; shadows badge both ways', () => {
-  const el = renderModelsList({
-    globals: [{ ...GLOBAL, id: 'ds-stable' }],
-    plugins: PLUGINS,
-    predefined: PREDEFINED,
-    efforts: EFFORTS,
-  }, { doc });
-
-  const cards = [...el.querySelectorAll('.mv-plugin')];
-  assert.equal(cards.length, 2);
-  assert.equal(cards[0].dataset.plugin, 'team-models');
-  assert.equal(cards[0].querySelector('.mv-origin').textContent, 'plugin: team-models');
-  assert.equal(cards[0].querySelector('.mv-edit'), null, 'no Edit on plugin cards');
-  assert.equal(cards[0].querySelector('.mv-delete'), null, 'no Delete on plugin cards');
-  const copy = cards[0].querySelector('.mv-copy');
-  assert.equal(copy.dataset.id, 'ds-stable');
-  assert.equal(copy.dataset.plugin, 'team-models');
-  assert.match(cards[0].querySelector('.mv-secret').textContent, /NOT SET/);
-  assert.match(cards[0].querySelector('.mv-shadowed').textContent, /overridden by your copy/,
-    'the user global with the same id shadows this plugin entry');
-
-  // The user's global card says it overrides the plugin (not a built-in).
-  const globalCard = el.querySelector('.mv-card:not(.mv-plugin):not(.mv-legacy)');
-  assert.equal(globalCard.querySelector('.mv-shadow').textContent, 'overrides plugin');
-
-  // A plugin entry with a predefined id marks the built-in overridden.
-  const sonnetRow = [...el.querySelectorAll('.mv-builtin')].find((r) => r.dataset.id === 'claude-sonnet-4-6');
-  assert.equal(sonnetRow.querySelector('.mv-shadowed').textContent, 'overridden');
-});
 
 test('export wizard: renders picks + env policy (secret-ish defaults) and collects the POST body', () => {
   const globals = [
@@ -201,7 +127,6 @@ const PRICED = {
   env: { ANTHROPIC_BASE_URL: '••••••e/v1' },
   cost: { perMtok: { input: 0.5, output: 1.5 } },
 };
-const FREE = { id: 'onprem', label: 'On-prem', efforts: EFFORTS, cost: { free: true } };
 const mode = (el) => el.querySelector('.mv-cost-mode-rb:checked')?.value;
 const rate = (el, k) => el.querySelector(`.mv-cost-rate-in[data-rate="${k}"]`);
 
@@ -263,56 +188,24 @@ test('setModelCost: loads any override into an editor (the ONE cost -> form mapp
   setModelCost(doc.createElement('div'), { free: true }); // never throws without the block
 });
 
-test('list: priced/free/unpriced badges and summaries on global and plugin cards', async () => {
-  await checkRows([
-    { name: 'list: a priced model shows its rates and drops the now-meaningless "cost not verified" badge', run: () => {
-      const el = renderModelsList({
-        globals: [
-          { ...PRICED, costUnreliable: true },
-          { ...FREE, costUnreliable: true },
-          { ...GLOBAL, costUnreliable: true },
-        ],
-        predefined: [], efforts: EFFORTS,
-      }, { doc });
-      const cards = [...el.querySelectorAll('.mv-card')];
-      const badges = (c) => [...c.querySelectorAll('.badge')].map((b) => b.textContent);
-
-      assert.ok(badges(cards[0]).includes('priced'));
-      assert.ok(!badges(cards[0]).includes('cost not verified'),
-        'an override GOVERNS the spend — the unreliable flag says nothing about it');
-      assert.match(cards[0].querySelector('.mv-summary').textContent, /input \$0\.5 · output \$1\.5 \/Mtok/);
-
-      assert.ok(badges(cards[1]).includes('free'));
-      assert.match(cards[1].querySelector('.mv-summary').textContent, /priced free/);
-
-      // A model with NO override still shows the flag — unchanged.
-      assert.ok(badges(cards[2]).includes('cost not verified'));
-      assert.ok(!badges(cards[2]).includes('priced'));
-    } },
-    { name: 'list: a plugin card shows its MANIFEST price, same rules as a global card', run: () => {
-      const el = renderModelsList({
-        globals: [],
-        plugins: [
-          { id: 'pp-rated', label: 'PP Rated', efforts: EFFORTS, plugin: 'priced-plug', secrets: [],
-            env: { ANTHROPIC_BASE_URL: '••••••mple' }, cost: { perMtok: { input: 1, output: 3 } }, costUnreliable: true },
-          { id: 'pp-free', label: 'PP Free', efforts: EFFORTS, plugin: 'priced-plug', secrets: [], cost: { free: true } },
-          { id: 'pp-plain', label: 'PP Plain', efforts: EFFORTS, plugin: 'priced-plug', secrets: [], costUnreliable: true },
-        ],
-        predefined: [], efforts: EFFORTS,
-      }, { doc });
-      const cards = [...el.querySelectorAll('.mv-plugin')];
-      const badges = (c) => [...c.querySelectorAll('.badge')].map((b) => b.textContent);
-
-      assert.ok(badges(cards[0]).includes('priced'));
-      assert.ok(!badges(cards[0]).includes('cost not verified'), 'a pinned price governs the spend');
-      assert.match(cards[0].querySelector('.mv-summary').textContent, /input \$1 · output \$3 \/Mtok/);
-      assert.ok(badges(cards[1]).includes('free'));
-      assert.ok(badges(cards[2]).includes('cost not verified'), 'unpriced plugin model: flag unchanged');
-    } },
-  ]);
-});
-
 // ── Duplicate ────────────────────────────────────────────────────────────────
+
+test('deleteRefsSummary (PAN-7): one count of every job the delete clears; an override clears nothing', () => {
+  const ask = (refs) => deleteRefsSummary('my-gpt', refs);
+  assert.equal(ask({ predefinedShadow: false, steps: [], nodes: [], jobs: [] }), 'Delete model "my-gpt"? No job uses it.');
+  assert.equal(ask({ steps: [{}], jobs: [{}, {}] }), 'Delete model "my-gpt"? This also clears 3 jobs that use it.');
+  assert.equal(ask({ jobs: [{}] }), 'Delete model "my-gpt"? This also clears 1 job that uses it.');
+  assert.equal(ask({ nodes: [{}], steps: [{}] }), 'Delete model "my-gpt"? This also clears 2 jobs that use it.');
+  assert.equal(ask({}), 'Delete model "my-gpt"? No job uses it.', 'a refs read answered {}');
+  assert.equal(ask(null), 'Delete model "my-gpt"? No job uses it.', 'a failed refs read');
+  assert.equal(ask({ memoryDefrag: true, jobs: [] }), 'Delete model "my-gpt"? This also clears 1 job that uses it.');
+  assert.equal(ask({ memoryDefrag: true, jobs: [{ kind: 'helper', engine: 'claude', key: 'memoryDefrag' }] }),
+    'Delete model "my-gpt"? This also clears 1 job that uses it.', 'the defrag pick is counted once');
+  assert.equal(ask({ memoryDefrag: true, jobs: [{ kind: 'helper', engine: 'codex', key: 'memoryDefrag' }] }),
+    'Delete model "my-gpt"? This also clears 2 jobs that use it.', "Codex's own defragment job is another job");
+  assert.equal(ask({ predefinedShadow: true, steps: [], nodes: [], jobs: [] }),
+    'Remove the override of built-in "my-gpt"? The built-in entry comes back; nothing else changes.');
+});
 
 test('suggestDuplicateId: first free -copy, then numbered, case-insensitively', () => {
   assert.equal(suggestDuplicateId('glm-4.7', []), 'glm-4.7-copy');
@@ -324,37 +217,7 @@ test('suggestDuplicateId: first free -copy, then numbered, case-insensitively', 
   assert.equal(suggestDuplicateId('glm-4.7-copy', ['glm-4.7-copy']), 'glm-4.7-copy-copy');
 });
 
-// ── #422: endpoint-routed badge ──
-
-test('list (#422): endpoint-routed badge on global + plugin cards whose env carries ANTHROPIC_BASE_URL, and only those', () => {
-  const plain = { id: 'plain', label: 'Plain', efforts: [], env: { ANTHROPIC_AUTH_TOKEN: '••••' } };
-  const plug = { id: 'pm', label: 'PM', efforts: [], plugin: 'p', env: { ANTHROPIC_BASE_URL: '••••' }, secrets: [] };
-  const root = renderModelsList({ globals: [GLOBAL, plain], plugins: [plug], predefined: PREDEFINED, efforts: EFFORTS }, { doc });
-  const badgeOf = (id) => root.querySelector(`.mv-card[data-id="${id}"] .mv-routed`);
-  assert.ok(badgeOf('glm-4.7'), 'routed global');
-  assert.equal(badgeOf('plain'), null, 'no base url → no badge');
-  assert.ok(badgeOf('pm'), 'routed plugin');
-  assert.match(badgeOf('glm-4.7').title, /haiku\/sonnet\/opus\/fable/);
-});
-
 const CODEX_EFFORTS = ['minimal', 'low', 'medium', 'high'];
-
-test('list: Codex built-ins have their own group; a Codex custom model carries a Codex badge', () => {
-  const el = renderModelsList({
-    globals: [{ id: 'gpt-5.5-tuned', label: 'Tuned', efforts: ['low', 'high'], engine: 'codex' }],
-    predefined: PREDEFINED, efforts: EFFORTS,
-    codex: [{ id: 'gpt-5.5', label: 'GPT-5.5', efforts: CODEX_EFFORTS }], codexEfforts: CODEX_EFFORTS,
-  }, { doc });
-  const sec = el.querySelector('.mv-section[data-section="codex"]');
-  assert.ok(sec);
-  assert.equal(sec.querySelector('.mv-section-title').textContent, 'Codex built-in models');
-  assert.deepEqual([...sec.querySelectorAll('.mv-builtin.mv-codex')].map((r) => r.dataset.id), ['gpt-5.5']);
-  assert.match(sec.querySelector('.mv-summary').textContent, /gpt-5\.5: all efforts/);
-  const card = el.querySelector('.mv-card[data-id="gpt-5.5-tuned"]');
-  assert.equal(card.querySelector('.mv-engine').textContent, 'OpenAI Codex');
-  assert.match(card.querySelector('.mv-summary').textContent, /low · high/);
-  assert.equal(el.querySelectorAll('.mv-builtin:not(.mv-codex)').length, 2);
-});
 
 test('editor: the engine swaps the efforts and hides env for Codex; collect sends it', () => {
   const el = renderModelEditor(null, EFFORTS, { doc, codexEfforts: CODEX_EFFORTS });
@@ -452,18 +315,6 @@ test('cards: a Codex endpoint model says endpoint, not bridged, and carries no t
   assert.equal(b.textContent, 'endpoint: openai');
   assert.match(b.title, /Codex connects to this OpenAI-compatible endpoint itself as qwen3-coder/);
   assert.equal(degradationLine(m), '');
-});
-
-test('list: a Codex built-in shadowed by a same-id model of any engine says overridden', () => {
-  const el = renderModelsList({
-    globals: [{ id: 'gpt-5.5', label: 'GPT via proxy', efforts: ['medium'] }],
-    predefined: PREDEFINED, efforts: EFFORTS,
-    codex: [{ id: 'gpt-5.5', label: 'GPT-5.5', efforts: CODEX_EFFORTS }, { id: 'gpt-5.6-sol', label: 'Sol', efforts: CODEX_EFFORTS }], codexEfforts: CODEX_EFFORTS,
-    policy: [{ id: 'gpt-5.6-sol', label: 'Sol via Acme', efforts: ['medium'], home: 'acme/gateway' }],
-  }, { doc });
-  const badge = (id) => !!el.querySelector(`.mv-builtin.mv-codex[data-id="${id}"] .mv-shadowed`);
-  assert.equal(badge('gpt-5.5'), true, 'a Claude global of the same id owns it');
-  assert.equal(badge('gpt-5.6-sol'), true, 'a team-policy model of the same id owns it');
 });
 
 test('editor: Cursor takes no env, no endpoint, no effort and no pricing; the fields come back off Cursor', () => {
@@ -569,20 +420,7 @@ for (const [engine, label, efforts] of [['gemini', 'Gemini CLI', ['low', 'medium
     assert.deepEqual(shown.map((l) => l.querySelector('.mv-conn-mode-title').textContent), [`${label} default`]);
   });
 
-  test(`list: a ${label} model carries its badge and no effort summary of Claude's`, () => {
-    const el = renderModelsList({ globals: [{ id: 'm-1', label: 'm-1', efforts: [], engine }], predefined: PREDEFINED, efforts: EFFORTS, codexEfforts: CODEX_EFFORTS }, { doc });
-    assert.equal(el.querySelector('.mv-card[data-id="m-1"] .mv-engine').textContent, label);
-  });
 }
-
-test('list: a Cursor custom model carries a Cursor badge, and there is no Cursor filter chip', () => {
-  const el = renderModelsList({
-    globals: [{ id: 'sonnet-4.5', label: 'Sonnet via Cursor', efforts: [], engine: 'cursor' }],
-    predefined: PREDEFINED, efforts: EFFORTS, codexEfforts: CODEX_EFFORTS, cursorEfforts: [],
-  }, { doc });
-  assert.equal(el.querySelector('.mv-card[data-id="sonnet-4.5"] .mv-engine').textContent, 'Cursor');
-  assert.equal([...el.querySelectorAll('[data-filter]')].some((c) => c.dataset.filter === 'cursor'), false);
-});
 
 test('phones: the Models header and the model cards wrap at 760px instead of running off a 375px screen', async () => {
   const { readFileSync } = await import('node:fs');

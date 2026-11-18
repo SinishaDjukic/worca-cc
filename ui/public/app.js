@@ -189,31 +189,33 @@ import { mountMarketplace, tabFromParam, targetFromParam } from './marketplace/i
 import { parseModelsParam, modelsHash, renderModelsTabs, paintModelsTabs } from './models/page-tabs.mjs';
 import { renderProvidersTab, toggleProviderRow } from './models/providers-tab.mjs';
 import { providerModelCounts } from './models/provider-state.mjs';
+import { buildCatalogue, buildModelPanel, CATALOGUE_VIEW_DEFAULT } from './models/catalogue-model.mjs';
+import { renderCatalogue, renderModelPanel } from './models/catalogue-view.mjs';
 import { renderChatSettings, collectChatSettings, renderScriptToolsToggle, collectScriptToolsToggle, renderSuggestionsToggle, collectSuggestionsToggle, renderSummariesToggle, collectSummariesToggle, renderAskWebFields, collectAskWebFields } from './chat-settings-view.mjs';
 import { renderCredentials } from './credentials-view.mjs';
 import { renderExtensionPairings, browserLabel, formatPairCode, renderExtensionInstall, selectInstallBrowser, detectBrowser } from './extension-settings-view.mjs';
 import { mountNetworkProxyCard } from './settings-network-proxy.mjs';
-import { openSetupAssistant, setupStepForSignIn, teamNotice, TEAM_SEEN_KEY } from './setup-assistant.mjs';
+import { openSetupAssistant, teamNotice, TEAM_SEEN_KEY } from './setup-assistant.mjs';
 import { loadCredentials, credentialSuffix } from './credential-badges.mjs';
 import { freeRequestsSuffix, typicalFreeRun, newRunFreeWarning, providerFreeLine } from './openrouter-free-view.mjs';
 import { PORT_ID_RE, MAX_PORTS_PER_SIDE, PORT_TYPES, SYNC_EXECUTION_ID } from '../../src/shared/graph/constants.mjs';
 import { FORM_ID_RE, validateFormDef, normalizeAskBlock } from '../../src/shared/forms/form-def.mjs';
 import { ASK_LIMITS } from '../../src/shared/forms/catalog.mjs';
 import { WORKSPACE_MAX_PROJECTS, workspaceSizeLevel } from '../../src/shared/workspace-size.mjs';
-import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES, SESSION_SUBAGENTS_VERIFIED } from '../../src/shared/engine-switch.mjs';
+import { engineLabel, usageLimitSwitches, engineSwitchNote, engineReportsCost, ENGINE_NAMES, MODEL_ENGINE_NAMES, isBetaEngine, SIGN_IN_ENGINE_NAMES, SESSION_SUBAGENTS_VERIFIED } from '../../src/shared/engine-switch.mjs';
 import { runsOn, effortsOn, harnessesLabel, connectionKey, modelGroups, PROVIDER_LABELS } from '../../src/shared/connections.mjs';
 import {
   guardrailSummary, renderGuardrailList, renderGuardrailEditor, collectGuardrailEditor,
   renderStartStep, collectStartStep, renderGuardrailReferences409, isReadOnlyGuardrailSet,
 } from './guardrails-view.mjs';
 import {
-  renderModelsList, renderModelEditor, collectModelEditor, makeEnvRow, applyCostMode, setModelCost,
+  renderModelEditor, collectModelEditor, makeEnvRow, applyCostMode, setModelCost,
   suggestDuplicateId, deleteRefsSummary,
   renderExportWizard, collectExportWizard, applyConnectionModeIn, setModelEngine,
 } from './models-view.mjs';
 import {
   collectProviderRow, collectSpeechRow, formatSpeechBytes, renderImportSheet, renderEndpointSheet, collectImportSheet, applyImportSelectAll,
-  OPENROUTER_PRESET, collectOpenRouterRow, providerRowOf, endpointRowMatches, ENDPOINT_PRESETS,
+  OPENROUTER_PRESET, collectOpenRouterRow, endpointRowMatches, ENDPOINT_PRESETS,
   setModelUpstream, applyImagesPreset, collectImagesRow, imagesRowProblem, showImagesTest, showImagesSaveError, collectSoundRow,
 } from './bridge-view.mjs';
 import {
@@ -1007,6 +1009,7 @@ const el = {
 
   // Models view: the Catalogue tab's list and line, the Jobs tab's line, the Providers tab's card and line
   modelsList: $('#models-list'),
+  modelPanelHost: $('#model-panel-host'),
   modelsMsg: $('#models-msg'),
   modelsJobsMsg: $('#models-jobs-msg'),
   providersList: $('#providers-list'),
@@ -1955,6 +1958,8 @@ function handleServerMessage(msg) {
     void refreshAwayBodies().catch(() => {});
     // The default engine or a slot may have changed in another tab: New pipeline re-reads them.
     if (currentView() === 'new') void loadRunDefaults(state.runTarget === 'workspace' ? '' : (state.projectDir || ''));
+    // The Catalogue's Used by, Default and hidden built-ins follow what another tab saved.
+    if (currentView() === 'models') void loadModelsView();
     loadSettings();
     return;
   }
@@ -19555,10 +19560,14 @@ const mvState = {
   providers: null, signIn: null, copilotModels: [], justImported: null, openEditorOnLoad: false,
   // The Providers tab's unfolded rows, by row name: kept through every redraw (a head click, a link, a failure).
   pvOpen: {},
-  // The catalog's own narrowing (the list runs to several screens with built-ins, plugin and team
-  // models in it): a search box, one chip, and which groups are folded. Built-ins start folded —
-  // 12 rows nobody edits — and a search opens every group that still has a hit.
-  query: '', filter: 'all', collapsed: { builtin: true, plugin: false, policy: false, global: false },
+  // The Catalogue's view state, kept for the session (catalogue-model.mjs): the search, one chip, the Source select,
+  // which harness groups are folded (Claude Code starts open, the others folded) and the row the side panel shows.
+  // A copy: the default is frozen. `count` is the listed models (the tab's pill; null until the catalogue drew) and
+  // `runEngine` the default harness for new runs (GET /api/settings; null reads as Claude Code).
+  cat: { ...CATALOGUE_VIEW_DEFAULT, fold: { ...CATALOGUE_VIEW_DEFAULT.fold } }, count: null, runEngine: null,
+  // The side panel's Test (PAN-3) by lower-cased id: { busy, text, err }. A repaint while it runs draws the panel anew
+  // and the new one still reads "Testing…" with Test off; a finished answer stays while that model's panel shows.
+  tests: new Map(),
   // A panel that JUST opened is scrolled to after the repaint: the editor and the import sheets
   // render under the Providers card, which is taller than the viewport on a laptop, so opening one
   // otherwise looks like nothing happened. Set by the flows that open a panel; cleared on use.
@@ -19569,42 +19578,126 @@ function setModelsMsg(text, kind) {
   reportStatus(el.modelsMsg, 'form-msg', text, kind);
 }
 
+/** What the Catalogue's view model reads (catalogue-model.mjs): the GET /api/models body with every list defaulted (a
+ *  partial body still draws), its `providers` (the server's list of names) REPLACED by the GET /api/providers payload
+ *  (null while unknown, so no provider state is claimed), and the page's own facts: the selected project's models, the
+ *  engines (from readyEngines' 60 s cache; null until it answered, so no "Not ready" is claimed), the default harness
+ *  for new runs, the broker's locks and the ids just imported. */
+function catalogueData() {
+  const d = mvState.data || {};
+  const list = (x) => (Array.isArray(x) ? x : []);
+  const obj = (x) => (x && typeof x === 'object' && !Array.isArray(x) ? x : {});
+  const pp = selectedProjectPath();
+  const ready = readyEngines(repaintCatalogue);
+  return {
+    ...d,
+    models: list(d.models), plugin: list(d.plugin), policy: list(d.policy),
+    predefined: list(d.predefined), codex: list(d.codex), copilot: list(d.copilot),
+    uses: obj(d.uses), hiddenBuiltins: obj(d.hiddenBuiltins),
+    providers: mvState.providers ?? null,
+    legacy: pp ? list(state.config?.customModels) : [],
+    projectName: pp ? pp.split('/').pop() : '',
+    engines: ready === null ? null : MODEL_ENGINE_NAMES.map((name) => ({ name, ready: ready.includes(name) })),
+    runEngine: mvState.runEngine,
+    engineLocks: MODEL_ENGINE_NAMES.filter((name) => engineLock(name) !== null).map((name) => ({ name, reason: 'Off while the credential broker is on' })),
+    justImported: mvState.justImported ?? null,
+  };
+}
+
+/** readyEngines' waiter: one function, so the waiters' Set holds it once however often the list draws meanwhile. */
+function repaintCatalogue() { renderModelsViewBody(); }
+
+// The Catalogue's controls a draw makes anew. A repaint nobody asked for (the engines answer, another tab's
+// settings-changed, a window focus) hands the keyboard back to the same control, and the search its caret.
+const CAT_FOCUS_CLASSES = ['mv-search', 'mdl-source', 'filter-chip', 'mdl-show-all', 'mdl-grp-toggle', 'mdl-grp-more', 'mdl-row',
+  'mdl-fix', 'mv-hide-builtin', 'mdl-side-close', 'mdl-act', 'mdl-act-more', 'mdl-copy-id', 'mdl-use'];
+/** What tells a control from its look-alikes: its group's harness and its own data-* keys (dataset compares only). */
+const catFocusSig = (n) => JSON.stringify([n.closest('.mdl-grp[data-engine]')?.dataset.engine || '', n.dataset.id || '',
+  n.dataset.filter || '', n.dataset.engine || '', n.dataset.row || '', n.dataset.act || '']);
+function catFocusTwins(host, cls, sig) {
+  return [...host.querySelectorAll('button, input, select')].filter((n) => n.classList.contains(cls) && catFocusSig(n) === sig);
+}
+/** The focused Catalogue control as { host, cls, sig, nth, caret }, or null when the focus is elsewhere. */
+function catalogueFocus() {
+  const a = document.activeElement;
+  const host = !a || !a.classList ? null : el.modelsList?.contains(a) ? el.modelsList : el.modelPanelHost?.contains(a) ? el.modelPanelHost : null;
+  const cls = host && CAT_FOCUS_CLASSES.find((c) => a.classList.contains(c));
+  if (!cls) return null;
+  const sig = catFocusSig(a);
+  return { host, cls, sig, nth: catFocusTwins(host, cls, sig).indexOf(a), caret: cls === 'mv-search' ? [a.selectionStart, a.selectionEnd] : null };
+}
+function restoreCatalogueFocus(f) {
+  if (!f) return;
+  const twins = catFocusTwins(f.host, f.cls, f.sig);
+  const next = twins[Math.min(Math.max(f.nth, 0), twins.length - 1)];
+  if (!next || document.activeElement === next) return;
+  try { next.focus({ preventScroll: true }); } catch { /* jsdom */ }
+  if (f.caret) { try { next.setSelectionRange(f.caret[0], f.caret[1]); } catch { /* search inputs vary */ } }
+}
+
 function renderModelsViewBody() {
   if (!el.modelsList) return;
-  const d = mvState.data || { models: [], predefined: [], efforts: [] };
-  const pp = selectedProjectPath();
-  const legacy = pp && state.config && Array.isArray(state.config.customModels) ? state.config.customModels : [];
+  const focus = catalogueFocus();
+  const data = catalogueData();
+  const vm = buildCatalogue(data, mvState.cat);
+  // The tab's pill counts the listed models once the catalogue loaded (SH-3); nothing before.
+  mvState.count = mvState.data ? vm.count : null;
   const frag = document.createDocumentFragment();
   // The Providers card is its own tab now (§8.1): at 1000+px it buried the catalog it unlocks,
   // and importing — the one flow that spanned both — moved here, where its rows land.
   if (mvState.openShare) {
-    frag.appendChild(renderExportWizard(d.models || []));
+    frag.appendChild(renderExportWizard(data.models));
   }
-  frag.appendChild(renderModelsList({
-    query: mvState.query,
-    filter: mvState.filter,
-    collapsed: mvState.collapsed,
-    highlight: mvState.justImported || [],
-    globals: d.models || [],
-    legacy,
-    plugins: d.plugin || [],
-    policy: d.policy || [],
-    predefined: d.predefined || [],
-    codex: d.codex || [],
-    codexEfforts: d.codexEfforts || [],
-    copilot: d.copilot || [],
-    copilotEfforts: d.copilotEfforts || [],
-    gooseEfforts: d.gooseEfforts || [],
-    opencodeEfforts: d.opencodeEfforts || [],
-    efforts: d.efforts || [],
-    hideBuiltin: !!d.hideBuiltinModels,
-    projectName: pp ? pp.split('/').pop() : '',
-  }));
+  const { query, filter, source } = mvState.cat;
+  frag.appendChild(renderCatalogue(vm, { doc: document, query, filter, source }));
   el.modelsList.replaceChildren(frag);
+  paintModelPanel(data);
+  restoreCatalogueFocus(focus);
+  paintModelsTabs(modelsTabsNav, { active: modelsTabShown || 'catalogue', count: mvState.count });
   if (mvState.revealPanel) {
     mvState.revealPanel = false;
     revealModelsPanel();
   }
+}
+
+/** The side panel of the open row into #model-panel-host; an id the loaded catalogue no longer holds closes it. */
+function paintModelPanel(data = catalogueData()) {
+  if (!el.modelPanelHost) return;
+  const panel = mvState.cat.open ? buildModelPanel(data, mvState.cat.open) : null;
+  if (!panel && mvState.data) mvState.cat.open = null;
+  const node = panel ? renderModelPanel(panel, { doc: document }) : null;
+  // A finished Test answer belongs to the panel that shows it: one opened again starts clean.
+  const shown = panel ? String(panel.id).toLowerCase() : '';
+  for (const [lc, t] of mvState.tests) { if (!t.busy && lc !== shown) mvState.tests.delete(lc); }
+  if (node) el.modelPanelHost.replaceChildren(node);
+  else el.modelPanelHost.replaceChildren();
+  if (node) paintModelTest(shown);
+}
+
+// A Test button this page turned off for a running test (and so turns on again), as opposed to one drawn off.
+const heldTestButtons = new WeakSet();
+/** The panel's Test button and result line from `mvState.tests` (PAN-3), when the panel on screen shows `lc`. */
+function paintModelTest(lc) {
+  const open = mvState.cat.open;
+  if (typeof open !== 'string' || open.toLowerCase() !== lc) return;
+  const t = mvState.tests.get(lc);
+  const btn = el.modelPanelHost?.querySelector('.mdl-act[data-act="test"]');
+  const out = el.modelPanelHost?.querySelector('.mdl-test-result');
+  if (btn && t?.busy && !btn.disabled) { btn.disabled = true; heldTestButtons.add(btn); }
+  if (btn && !t?.busy && heldTestButtons.has(btn)) { btn.disabled = false; heldTestButtons.delete(btn); }
+  if (out && t) {
+    out.textContent = t.text;
+    out.className = `mdl-test-result hint${t.err ? ' err' : ''}`;
+  }
+}
+
+/** The row of `id` in the drawn list: in `engine`'s group when given, else its first (a dataset compare, ignoring case
+ *  as ids do). */
+function modelRowEl(id, engine = '') {
+  if (!el.modelsList || !id) return null;
+  const lc = String(id).toLowerCase();
+  const rows = [...el.modelsList.querySelectorAll('.mdl-grp[data-engine] .mdl-row[data-id]')].filter((n) => n.dataset.id.toLowerCase() === lc);
+  return rows.find((n) => !engine || n.closest('.mdl-grp')?.dataset.engine === engine) || rows[0] || null;
 }
 
 /** Bring an open in-page panel (the share wizard) into view. */
@@ -19658,26 +19751,47 @@ function closeModelEditorDialog() {
   try { mvEditor.lastFocus?.focus(); } catch { /* the opener may be gone */ }
 }
 
-// "Hide built-in models" (#422): one settings key, saved on change. Every picker
-// reads the flag off /api/config, so the refresh below repaints them all.
+// "Hide built-in models" per harness (#422; models-menu P4), saved on change: Claude Code's is the `hideBuiltinModels`
+// key (setup, the CLI, Ask and team policy read it), Codex's and Copilot's are `hideBuiltinEngines`. Every picker reads
+// the flags off /api/config, so the refresh below repaints them all. Hiding closes a side panel on a built-in of that
+// harness: its row leaves the list.
+const BUILTIN_LIST_OF = Object.freeze({ claude: 'predefined', codex: 'codex', copilot: 'copilot' });
 async function saveHideBuiltinModels(cb) {
   const wanted = cb.checked;
+  const engine = cb.dataset.engine || 'claude';
+  const name = engineLabel(engine);
+  const hadFocus = document.activeElement === cb;
   cb.disabled = true;
   try {
     const res = await fetch('/api/settings', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ hideBuiltinModels: wanted }),
+      body: JSON.stringify(engine === 'claude' ? { hideBuiltinModels: wanted } : { hideBuiltinEngines: { [engine]: wanted } }),
     });
     const data = await safeJson(res);
     if (!res.ok) { cb.checked = !wanted; return setModelsMsg(data.error || `HTTP ${res.status}`, 'err'); }
-    setModelsMsg(wanted ? 'Built-in models hidden from every picker. Runs that already use one keep working.' : 'Built-in models shown again.', 'ok');
+    setModelsMsg(wanted ? `${name}'s built-in models hidden from every picker. Runs that already use one keep working.` : `${name}'s built-in models shown again.`, 'ok');
+    if (wanted && openBuiltinOf(engine)) closeModelPanel();
     await refreshModelsEverywhere();
   } catch (e) {
     cb.checked = !wanted;
     setModelsMsg(e.message, 'err');
   } finally {
     cb.disabled = false;
+    // The refresh drew the switch anew, and a browser may drop the focus of a control while it is off: the keyboard
+    // goes back to this harness's switch, unless it moved somewhere else meanwhile.
+    if (hadFocus && (!document.activeElement || document.activeElement === document.body)) {
+      const next = [...(el.modelsList?.querySelectorAll('.mv-hide-builtin[data-engine]') || [])].find((n) => n.dataset.engine === engine);
+      try { next?.focus({ preventScroll: true }); } catch { /* jsdom */ }
+    }
   }
+}
+
+/** Does the side panel show a built-in of `engine` (its row comes from that harness's built-in list)? */
+function openBuiltinOf(engine) {
+  const open = mvState.cat.open;
+  if (!open || buildModelPanel(catalogueData(), open)?.source !== 'builtin') return false;
+  const lc = open.toLowerCase();
+  return (mvState.data?.[BUILTIN_LIST_OF[engine]] || []).some((m) => m && String(m.id).toLowerCase() === lc);
 }
 
 // "Edit a copy" prefill (design §9.6): create-mode editor seeded from a plugin
@@ -19844,6 +19958,12 @@ let lastModelCatalog = []; let lastModelCatalogOk = true;
 /** The Engines card, then the Roles card (each paints on its own). A repaint that a Save of this card did not ask for
  *  (`force`) keeps a card with unsaved rows as it is: another card's Save or a settings-changed broadcast. */
 async function paintEngineSettings(data, { force = false } = {}) {
+  // Every settings read lands here first: the Catalogue's "Default" chip and its group menus follow the default harness.
+  const runEngine = (data && data.runEngine) || null;
+  if (runEngine !== mvState.runEngine) {
+    mvState.runEngine = runEngine;
+    if (mvState.data) renderModelsViewBody();
+  }
   const root = document.getElementById('engine-settings-root');
   if (!root) return;
   let cfg = {}; let cfgOk = true;
@@ -19977,7 +20097,9 @@ async function readModelsView(seq) {
   if (!el.modelsList) return false;
   setModelsMsg('');
   try {
-    const [res, pres] = await Promise.all([fetch('/api/models'), fetch('/api/providers'), loadCredentials()]);
+    // A selected project's team policy decides what its pickers hide (hiddenBuiltins): the catalogue asks for it.
+    const pp = selectedProjectPath();
+    const [res, pres] = await Promise.all([fetch(pp ? `/api/models?projectDir=${encodeURIComponent(pp)}` : '/api/models'), fetch('/api/providers'), loadCredentials()]);
     const [data, pdata] = await Promise.all([safeJson(res), safeJson(pres)]);
     if (seq !== modelsLoadSeq) return modelsLoadNewest.then(() => false);
     // The Providers tab's payload first, so a failed catalogue read still lets that tab draw. A failed read
@@ -20687,26 +20809,33 @@ async function saveModelEditorFlow() {
   await refreshModelsEverywhere();
 }
 
+/** Resolves true once the DELETE went through, else false. The side panel on `id` closes before the reload, so it
+ *  closes even when the reload still lists the id. */
 async function deleteModelFlow(id) {
   let refs = null;
   try {
     const r = await fetch(`/api/models/${encodeURIComponent(id)}/refs`);
-    refs = await safeJson(r);
+    if (r.ok) refs = await safeJson(r);
   } catch { /* preview is best-effort; the confirm still names the model */ }
   const ok = await confirmModal({
     title: refs && refs.predefinedShadow ? 'Remove override' : 'Delete model',
-    message: deleteRefsSummary(id, refs),
+    // A failed preview counts nothing, so it claims no count either way.
+    message: refs ? deleteRefsSummary(id, refs) : `Delete model "${id}"? Jobs that use it will be cleared.`,
     confirmLabel: refs && refs.predefinedShadow ? 'Remove override' : 'Delete',
   });
-  if (!ok) return;
+  if (!ok) return false;
   try {
     const res = await fetch(`/api/models/${encodeURIComponent(id)}`, { method: 'DELETE' });
     const data = await safeJson(res);
-    if (!res.ok) return setModelsMsg(data.error || `HTTP ${res.status}`, 'err');
-    setModelsMsg('Deleted.', 'ok');
+    if (!res.ok) { setModelsMsg(data.error || `HTTP ${res.status}`, 'err'); return false; }
+    // The entry is gone either way; a job clear that failed comes back as `warning`.
+    setModelsMsg(data.warning || 'Deleted.', data.warning ? 'warn' : 'ok');
+    if (typeof mvState.cat.open === 'string' && mvState.cat.open.toLowerCase() === String(id).toLowerCase()) mvState.cat.open = null;
     await refreshModelsEverywhere();
+    return true;
   } catch (e) {
     setModelsMsg(e.message, 'err');
+    return false;
   }
 }
 
@@ -20728,28 +20857,28 @@ async function promoteModelFlow(id) {
 }
 
 // Live connectivity check — explicit user action -> POST /api/models/:id/test
-// (mirrors the chat-test handler). Paints the card's own result line instead
-// of repainting the view, so an open editor survives the round trip.
-async function testModelFlow(btn) {
-  const id = btn.dataset.id;
-  const out = btn.closest('.mv-card')?.querySelector('.mv-test-result');
-  const paint = (text, err) => {
-    if (!out) return;
-    out.textContent = text;
-    out.className = `mv-test-result hint${err ? ' err' : ''}`;
+// (mirrors the chat-test handler). The state lives in `mvState.tests`, so a panel drawn
+// anew meanwhile still shows it; it paints the panel's own Test and result line instead of
+// repainting the view (an open editor survives the round trip), and only while that panel shows `id`.
+async function testModelFlow(id) {
+  const lc = String(id).toLowerCase();
+  if (mvState.tests.get(lc)?.busy) return;                              // one test per model at a time
+  const paint = (text, { busy = false, err = false } = {}) => {
+    // An answer no panel shows is dropped: a panel of this model opened later starts clean.
+    const open = mvState.cat.open;
+    if (!busy && (typeof open !== 'string' || open.toLowerCase() !== lc)) { mvState.tests.delete(lc); return; }
+    mvState.tests.set(lc, { busy, text, err });
+    paintModelTest(lc);
   };
-  btn.disabled = true;
-  paint('Testing…');
+  paint('Testing…', { busy: true });
   try {
     const res = await fetch(`/api/models/${encodeURIComponent(id)}/test`, { method: 'POST' });
     const data = await safeJson(res);
-    if (!res.ok) return paint(`${data.error || `HTTP ${res.status}`}`, true);
+    if (!res.ok) return paint(`${data.error || `HTTP ${res.status}`}`, { err: true });
     if (data.ok) return paint(`Replied: ${data.text}`);
-    paint(`${data.hint || data.message}`, true);
+    paint(`${data.hint || data.message}`, { err: true });
   } catch (e) {
-    paint(`${e.message}`, true);
-  } finally {
-    btn.disabled = false;
+    paint(`${e.message}`, { err: true });
   }
 }
 
@@ -20810,65 +20939,144 @@ if (el.providersList) {
 // (§4.10), and every branch below already finds its own root from the event target.
 function onModelsListChange(ev) {
   const t = ev.target;
-  if (t && t.classList && t.classList.contains('mv-hide-builtin')) saveHideBuiltinModels(t);
+  if (!t || !t.classList) return;
+  if (t.classList.contains('mv-hide-builtin')) saveHideBuiltinModels(t);
+  else if (t.classList.contains('mdl-source')) {
+    mvState.cat.source = t.value || 'any';
+    redrawCatalogue((root) => root.querySelector('.mdl-source'));
+  }
 }
 
-/** The catalog's toolbar: typing narrows, a chip picks a layer, a header folds its group. */
+/** The Catalogue's search: typing narrows; the redrawn field keeps the focus and the caret (renderModelsViewBody). */
 function onModelsToolbar(ev) {
   const t = ev.target;
   if (!t || !t.classList) return;
   if (t.classList.contains('mv-search')) {
-    mvState.query = t.value;
-    const at = t.selectionStart;
+    mvState.cat.query = t.value;
     renderModelsViewBody();
-    const next = el.modelsList && el.modelsList.querySelector('.mv-search');
-    if (next) { next.focus(); try { next.setSelectionRange(at, at); } catch { /* search inputs vary */ } }
   }
 }
+
+/** Redraw the Catalogue, then focus the control `find(list)` names again (the click's own button was drawn anew). */
+function redrawCatalogue(find) {
+  renderModelsViewBody();
+  const next = el.modelsList && find(el.modelsList);
+  try { next?.focus({ preventScroll: true }); } catch { /* jsdom */ }
+}
+
+/** The Catalogue's own buttons: a chip picks a filter, Show all clears every narrowing, a group head folds or unfolds
+ *  its harness, its More opens the group menu, a sub-group's fix goes where the fix is, a row opens its side panel (the
+ *  same row again closes it). */
 function onModelsToolbarClick(t) {
   if (t.classList.contains('filter-chip') && t.closest('.mv-filters')) {
-    mvState.filter = t.dataset.filter || 'all';
-    renderModelsViewBody();
+    const key = t.dataset.filter || 'all';
+    mvState.cat.filter = key;
+    redrawCatalogue((root) => [...root.querySelectorAll('.mv-filters .filter-chip[data-filter]')].find((n) => n.dataset.filter === key));
     return true;
   }
-  if (t.classList.contains('mv-sec-toggle')) {
-    const key = t.dataset.section;
-    if (key) mvState.collapsed = { ...mvState.collapsed, [key]: !mvState.collapsed[key] };
-    renderModelsViewBody();
+  if (t.classList.contains('mdl-show-all')) {
+    showAllModels();
+    redrawCatalogue((root) => root.querySelector('.mv-search'));
+    return true;
+  }
+  const engine = t.closest('.mdl-grp[data-engine]')?.dataset.engine || '';
+  if (t.classList.contains('mdl-grp-toggle') && engine) {
+    const fold = mvState.cat.fold;
+    mvState.cat.fold = { ...fold, [engine]: !(fold[engine] ?? engine !== 'claude') };
+    redrawCatalogue((root) => [...root.querySelectorAll('.mdl-grp[data-engine]')].find((n) => n.dataset.engine === engine)?.querySelector('.mdl-grp-toggle'));
+    return true;
+  }
+  if (t.classList.contains('mdl-grp-more') && engine) {
+    openGroupMenu(t, engine);
+    return true;
+  }
+  if (t.classList.contains('mdl-fix') && t.dataset.row) {
+    // Copilot signs in inside the setup assistant (AC-4.5); a key is set on its Providers row.
+    if (t.dataset.row === 'copilot') openSetup({ entry: 'fix', step: 'access' });
+    else goToProviders(t.dataset.row);
+    return true;
+  }
+  if (t.classList.contains('mdl-row') && t.dataset.id) {
+    const id = t.dataset.id;
+    const open = mvState.cat.open;
+    mvState.cat.open = typeof open === 'string' && open.toLowerCase() === id.toLowerCase() ? null : id;
+    redrawCatalogue(() => modelRowEl(id, engine));
     return true;
   }
   return false;
 }
-function onModelsClick(ev) {
-    const t = ev.target.closest('button');
-    if (!t) return;
-    if (onModelsToolbarClick(t)) return;
-    if (t.classList.contains('mv-edit')) {
-      mvState.editing = (mvState.data && mvState.data.models || []).find((m) => m.id === t.dataset.id) || null;
+
+/** A harness group's More menu (CAT-4): "Default for new runs", ticked on the default, off while not ready or locked. */
+function openGroupMenu(anchor, engine) {
+  const g = buildCatalogue(catalogueData(), mvState.cat).groups.find((x) => x.engine === engine);
+  if (!g) return;
+  openMenu({ doc: document, anchor, align: 'end', label: `More for ${g.name}`, items: [{
+    label: 'Default for new runs', checked: g.isDefault, disabled: !g.canDefault, hint: g.defaultHint,
+    onSelect: () => { void setDefaultRunEngine(engine); },
+  }] });
+}
+
+/** Make `engine` the default for new runs (the user's own `runEngine`), then say so and mark its group. */
+async function setDefaultRunEngine(engine) {
+  try {
+    const res = await fetch('/api/settings', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ runEngine: engine }),
+    });
+    const data = await safeJson(res);
+    if (!res.ok) return setModelsMsg(data.error || `HTTP ${res.status}`, 'err');
+    mvState.runEngine = engine;
+    setModelsMsg(`${engineLabel(engine)} is the default for new runs`, 'ok');
+    renderModelsViewBody();
+  } catch (e) {
+    setModelsMsg(e.message, 'err');
+  }
+}
+
+/** Close the side panel: no open row, an empty host, no row marked; `focusRow` puts the focus on the row it showed. */
+function closeModelPanel({ focusRow = false } = {}) {
+  const id = mvState.cat.open;
+  mvState.cat.open = null;
+  el.modelPanelHost?.replaceChildren();
+  renderModelsViewBody();
+  if (focusRow && id) {
+    try { modelRowEl(id)?.focus({ preventScroll: true }); } catch { /* jsdom */ }
+  }
+}
+
+/** The side panel's buttons (PAN-3, PAN-6). Every action acts on the open row's model, by its own id. */
+function onModelPanelClick(ev) {
+  const t = ev.target.closest('button');
+  if (!t || !el.modelPanelHost.contains(t)) return;
+  if (t.classList.contains('mdl-side-close')) { closeModelPanel({ focusRow: true }); return; }
+  const panel = mvState.cat.open ? buildModelPanel(catalogueData(), mvState.cat.open) : null;
+  if (!panel) return;
+  const id = panel.id;
+  if (t.classList.contains('mdl-copy-id')) void copyFromButton(t, id);
+  else if (t.classList.contains('mdl-use')) location.hash = modelsHash('jobs');
+  else if (t.classList.contains('mdl-act-more')) {
+    openMenu({ doc: document, anchor: t, align: 'end', label: 'More', items: [
+      { label: panel.actions.delLabel, danger: true, onSelect: () => { void deleteModelFlow(id); } },
+    ] });
+  } else if (t.classList.contains('mdl-act')) {
+    const act = t.dataset.act;
+    if (act === 'test') void testModelFlow(id);
+    else if (act === 'edit') {
+      mvState.editing = (mvState.data?.models || []).find((m) => m.id === id) || null;
       mvState.openCreate = false;
       mvState.openShare = false;
       mvState.prefill = null;
       openModelEditorDialog();
-    } else if (t.classList.contains('mv-delete')) {
-      deleteModelFlow(t.dataset.id);
-    } else if (t.classList.contains('mv-promote')) {
-      promoteModelFlow(t.dataset.id);
-    } else if (t.classList.contains('mv-duplicate')) {
-      duplicateModelFlow(t.dataset.id);
-    } else if (t.classList.contains('mv-copy')) {
-      editPluginCopyFlow(t.dataset.plugin, t.dataset.id);
-    } else if (t.classList.contains('mv-test')) {
-      testModelFlow(t);
-    } else if (t.classList.contains('mv-signin')) {
-      const step = setupStepForSignIn(t);   // a Copilot pill signs in inside the setup assistant (AC-4.5)
-      if (step) { openSetup({ entry: 'fix', step }); return; }
-      // The row that holds this model's key: an entry on openrouter.ai is the OpenRouter row's. A plugin card is
-      // looked up among the plugin models (an id can be in both lists).
-      const card = t.closest('[data-id]');
-      const list = card && card.dataset.plugin ? (mvState.data?.plugin || []).filter((x) => x.plugin === card.dataset.plugin) : (mvState.data?.models || []);
-      const m = card ? list.find((x) => x.id === card.dataset.id) : null;
-      goToProviders(providerRowOf(m, mvState.providers) || t.dataset.provider);
-    } else if (t.classList.contains('mvx-export')) {
+    } else if (act === 'duplicate') void duplicateModelFlow(id);
+    else if (act === 'copy') void editPluginCopyFlow(panel.plugin, id);
+    else if (act === 'promote') void promoteModelFlow(id);
+  }
+}
+
+function onModelsClick(ev) {
+    const t = ev.target.closest('button');
+    if (!t) return;
+    if (onModelsToolbarClick(t)) return;
+    if (t.classList.contains('mvx-export')) {
       exportPluginFlow();
     } else if (t.classList.contains('mvx-cancel')) {
       mvState.openShare = false;
@@ -20921,6 +21129,23 @@ function onModelsConnChange(ev) {
 }
 
 el.modelsList?.addEventListener('input', onModelsToolbar);
+el.modelPanelHost?.addEventListener('click', onModelPanelClick);
+// SH-5: Escape closes the Catalogue's side panel, last: an open menu stops its own Escape first (this is the bubble
+// phase), an open dialog owns it, and so do Ask beside the page, the terminal and the guide.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || e.defaultPrevented) return;
+  if (currentModelsTab() !== 'catalogue' || !mvState.cat.open || !el.modelPanelHost?.querySelector('.mdl-side')) return;
+  if (dialogOpen(document)) return;                                    // a pop-up owns Escape
+  if (document.querySelector('.wfv-menu, .group-picker, .label-picker')) return;   // an open menu or picker closes first
+  // Escape typed in a text field (the search) is the field's: the browser clears it (a switch or a button is no field).
+  if (e.target?.matches?.('input:not([type=checkbox]):not([type=radio]), textarea, select')) return;
+  if (e.target?.closest?.('#ask-side')) return;                      // Ask worca beside the page: the chat's Escape
+  if (askPanel?.ownsKey(e)) return;
+  if (e.target?.closest?.('.term-pane')) return;                     // Escape typed in the terminal (vim, less) is the shell's
+  if (document.querySelector('.guide-layer')) return;                // the guide owns Escape
+  e.preventDefault();
+  closeModelPanel({ focusRow: true });
+});
 for (const host of [el.modelsList, el.modelEditorModal]) {
   if (!host) continue;
   host.addEventListener('change', onModelsListChange);
@@ -40210,7 +40435,15 @@ function showView(name, param = '') {
     // tab's Roles and Engines cards); a switch between tabs only shows another panel, so what was typed stays.
     const { tab, rest } = parseModelsParam(param);
     const entry = prevView !== 'models' || !mvState.data;
-    if (prevView !== 'models') providersDrawnKey = '';   // each entry draws the Providers card once
+    if (prevView !== 'models') {
+      providersDrawnKey = '';   // each entry draws the Providers card once
+      // No hook runs on leaving the page: an entry starts with the side panel closed, unless the address names a model
+      // (showModelsTab opens it just below).
+      if (!(tab === 'catalogue' && modelParamId(rest))) {
+        mvState.cat.open = null;
+        el.modelPanelHost?.replaceChildren();
+      }
+    }
     showModelsTab(tab, rest);
     if (entry) {
       // The reveals below use the tab and rest of THIS route; revealModelCard and revealProviderRow check the live
@@ -40224,8 +40457,10 @@ function showView(name, param = '') {
       void loadModelsView().then(() => {
         if (entrySeq !== modelsEntrySeq) return;
         paintProvidersTab();
+        // A reload or a search pick from another page on '#models/model/<id>' opens the panel once the catalogue is here
+        // (only while the address still names it).
         const modelId = tab === 'catalogue' ? modelParamId(rest) : '';
-        if (modelId) revealModelCard(modelId, rest);
+        if (modelId && currentModelsTab() === 'catalogue' && parseHash()[1] === rest) openModelFromAddress(modelId, rest);
         if (tab === 'providers') revealProviderRow(rest);
       });
     }
@@ -40337,18 +40572,18 @@ function showModelsTab(tab, rest) {
   const section = views.find((v) => v.dataset.view === 'models');
   if (!section) return;
   for (const panel of section.querySelectorAll('.mdl-panel[data-tab]')) panel.hidden = panel.dataset.tab !== tab;
-  paintModelsTabs(modelsTabsNav, { active: tab, count: null });
+  paintModelsTabs(modelsTabsNav, { active: tab, count: mvState.count ?? null });
   for (const n of section.querySelectorAll('[data-tab-only]')) n.hidden = n.dataset.tabOnly !== tab;
   // The info-tip bubble lives on <body>: a tip opened on one tab must not float over the next.
   if (tab !== modelsTabShown) hideInfoTip();
   modelsTabShown = tab;
+  // Leaving the Catalogue closes the side panel (SH-6): nothing else redraws its host, so it would show again on return.
+  if (tab !== 'catalogue' && (mvState.cat.open || el.modelPanelHost?.childElementCount)) closeModelPanel();
   if (tab === 'catalogue') {
     const id = modelParamId(rest);
     if (!id) return;
     // A hop to a row inside the open page draws from the loaded catalogue (the narrowing that could hide it cleared).
-    showAllModels();
-    if (mvState.data) renderModelsViewBody();
-    revealModelCard(id, rest);
+    openModelFromAddress(id, rest);
   } else if (tab === 'jobs') {
     if (rest) focusSettingsCard(section, rest);
   } else if (tab === 'providers') {
@@ -40361,19 +40596,32 @@ function modelParamId(param) {
   if (!param.startsWith('model/') || param.length <= 6) return '';
   try { return decodeURIComponent(param.slice(6)); } catch { return ''; }
 }
-// The catalogue's own narrowing can hide the row a pick names: clear its search, chip and just-imported filter and
-// unfold the groups that hold your own, plugin and team-policy models.
+// The catalogue's own narrowing can hide the row a pick names (or "Show all"): clear its search, chip, Source and
+// just-imported filter.
 function showAllModels() {
-  mvState.query = '';
-  mvState.filter = 'all';
+  mvState.cat.query = '';
+  mvState.cat.filter = 'all';
+  mvState.cat.source = 'any';
   mvState.justImported = null;
-  Object.assign(mvState.collapsed, { global: false, plugin: false, policy: false });
 }
-// Still on that address once the catalogue painted: scroll to the row, focus its first button, highlight it.
+// '#models/model/<id>' (a built-in too): every narrowing cleared, the first harness group holding the id unfolded, its
+// side panel open; then the row is scrolled to, focused and highlighted. Built-ins carry no `engine`, so the group
+// comes from the view model, not the model.
+function openModelFromAddress(id, param) {
+  showAllModels();
+  const lc = id.toLowerCase();
+  const g = buildCatalogue(catalogueData(), mvState.cat).groups
+    .find((x) => x.subs.some((s) => s.rows.some((r) => String(r.id).toLowerCase() === lc)));
+  if (g) mvState.cat.fold = { ...mvState.cat.fold, [g.engine]: false };
+  mvState.cat.open = id;
+  if (mvState.data) renderModelsViewBody();
+  revealModelCard(id, param);
+}
+// Still on that address once the catalogue painted: scroll to the row, focus it (the row is the button), highlight it.
 function revealModelCard(id, param) {
   if (currentView() !== 'models' || parseHash()[1] !== param || !el.modelsList) return;
-  const card = [...el.modelsList.querySelectorAll('.mv-card[data-id]')].find((n) => n.dataset.id === id);
-  if (card) markFound(card, card.querySelector('button'));
+  const row = modelRowEl(id);
+  if (row) markFound(row, row);
 }
 // '#models/providers/<copilot|openrouter|openai|anthropic|speech|images|sound>': the provider's row unfolded (never
 // folded) and highlighted, with its sign-in or key field focused, else its first field, else its first button. Only

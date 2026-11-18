@@ -294,7 +294,7 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
     const probes = {
       projectsRoot: '', chat: {}, pipelineCostLimitUsd: '', totalCostLimitUsd: '', costLimitResetPeriod: '', humanRateUsdPerHour: '',
       askMaxTurns: '', askMaxBudgetUsd: '', askWeb: null, smartNaming: null, debugSpawnEnabled: false, keepAwake: true, resumeAfterUsageLimit: false, autoGeneratePrDescription: false, updateCheck: true,
-      titleModel: '', hideBuiltinModels: false, theme: '', uiLevel: '',
+      titleModel: '', hideBuiltinModels: false, hideBuiltinEngines: {}, theme: '', uiLevel: '',
       autoWorkflowModel: '',
       prDescriptionModel: '',
       memoryDefrag: null,
@@ -318,6 +318,7 @@ test('every SETTINGS_POST_KEYS key is exempt from the legacy "no known key clear
       tagDimensions: [],                                     // Settings › Tags › Tag dimensions: [] clears (already clear)
       enforceTags: false,                                    // Settings › Tags › Require mandatory tags: false clears (already clear)
     };
+    for (const k of Object.keys(probes)) assert.ok(SETTINGS_POST_KEYS.includes(k), `${k} is probed but not a POST key: a ${k}-only body would clear root`);
     for (const k of SETTINGS_POST_KEYS) {
       if (k === 'root') continue;
       assert.ok(k in probes, `test probe missing for new key ${k}`);

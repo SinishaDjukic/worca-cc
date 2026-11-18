@@ -2,9 +2,10 @@
 // the body of register() was moved verbatim from ui/server.mjs. Edit it here from now on.
 import { beginCopilotLogin, copilotLogout, copilotModelsForImport, endpointModelsForImport, importCopilotModels, importEndpointModels, patchOpenRouter, patchProvider, patchSpeech, pollCopilotLogin, providersState } from '../../../src/core/bridge/provider-ops.mjs';
 import { providerReadiness } from '../../../src/core/bridge/registry.mjs';
-import { CODEX_BUILTIN_MODELS, COPILOT_BUILTIN_MODELS, EFFORTS, PREDEFINED_MODELS, costUnreliableModelIds, globalModelRefs, promoteCustomModel, removeGlobalModelAndRefs } from '../../../src/core/config.mjs';
+import { CODEX_BUILTIN_MODELS, COPILOT_BUILTIN_MODELS, EFFORTS, PREDEFINED_MODELS, builtinsHidden, costUnreliableModelIds, globalModelRefs, promoteCustomModel, removeGlobalModelAndRefs } from '../../../src/core/config.mjs';
 import { CODEX_EFFORTS, COPILOT_EFFORTS, GOOSE_EFFORTS, OPENCODE_EFFORTS, UPSTREAM_PROVIDERS, maskModelEnvValue, modelEnvRef } from '../../../src/core/model-env.mjs';
-import { testModel } from '../../../src/core/model-test.mjs';
+import { canTestModel, testModel } from '../../../src/core/model-test.mjs';
+import { clearModelUses, modelUses } from '../../../src/core/model-uses.mjs';
 import { listPluginModels, pluginModelSecretStatus } from '../../../src/core/plugin-models.mjs';
 import { policyCatalogModels } from '../../../src/core/policy/cache.mjs';
 import { addGlobalModel, hideBuiltinModels, listGlobalModels, updateGlobalModel } from '../../../src/core/settings.mjs';
@@ -73,6 +74,7 @@ const pluginModelsPayload = () => {
     const status = statusByPlugin.get(m.plugin);
     return {
       id: m.id, label: m.label, efforts: m.efforts, plugin: m.plugin,
+      ...(m.engine ? { engine: m.engine } : {}),   // its harness; the manifest stores none for Claude Code
       env: Object.fromEntries(Object.entries(m.env ?? {}).map(([k, v]) => [
         k, typeof v === 'string' ? maskEnvValue(v) : `(secret: ${v.secret})`,
       ])),
@@ -85,18 +87,27 @@ const pluginModelsPayload = () => {
   });
 };
 
+// Whether the Test button's route takes a row (L20), on a COPY: the exported built-in lists are shared (Codex's and
+// Copilot's are frozen).
+const withTestable = (m) => ({ ...m, testable: canTestModel(m.id) });
+
 app.get('/api/models', (req, res) => {
   const readiness = new Map();
   res.json({
-    models: maskedGlobalModels(), plugin: pluginModelsPayload(), predefined: PREDEFINED_MODELS, efforts: EFFORTS,
-    codex: CODEX_BUILTIN_MODELS, codexEfforts: CODEX_EFFORTS,   // §3.1a: the Codex built-ins group + the editor's Codex efforts
-    copilot: COPILOT_BUILTIN_MODELS, copilotEfforts: COPILOT_EFFORTS,   // the Copilot built-ins group + the editor's Copilot efforts
+    models: maskedGlobalModels().map(withTestable), plugin: pluginModelsPayload().map(withTestable),
+    predefined: PREDEFINED_MODELS.map(withTestable), efforts: EFFORTS,
+    codex: CODEX_BUILTIN_MODELS.map(withTestable), codexEfforts: CODEX_EFFORTS,   // §3.1a: the Codex built-ins group + the editor's Codex efforts
+    copilot: COPILOT_BUILTIN_MODELS.map(withTestable), copilotEfforts: COPILOT_EFFORTS,   // the Copilot built-ins group + the editor's Copilot efforts
     gooseEfforts: GOOSE_EFFORTS,                                 // GOOSE_THINKING_EFFORT values (no Goose built-ins)
     opencodeEfforts: OPENCODE_EFFORTS,                           // OpenCode's --variant values (no OpenCode built-ins)
     hideBuiltinModels: hideBuiltinModels(),   // the Models-view checkbox (#422)
+    // Each harness's hide switch, effective (CAT-8): ?projectDir= adds that project's team default for
+    // Claude Code; without it, the user's choice only (as project-less pickers).
+    hiddenBuiltins: builtinsHidden({ projectDir: resolveProjectDir(req.query.projectDir) }),
     // Team policy catalog entries (team-policy design §8): read-only, env masked like a global's.
-    policy: policyCatalogModels().map((m) => maskedGlobalModel(m, readiness)),
+    policy: policyCatalogModels().map((m) => withTestable(maskedGlobalModel(m, readiness))),
     providers: UPSTREAM_PROVIDERS,
+    uses: modelUses(),   // who uses each model (PAN-6), keyed by the lower-cased id
   });
 });
 
@@ -265,9 +276,13 @@ app.patch('/api/models/:id', async (req, res) => {
 });
 
 // Preview what deleting a global entry would clear (feeds the confirmation
-// dialog; design §4.5). Unknown ids just report empty refs — preview never 400s.
+// dialog; design §4.5, PAN-7). Unknown ids just report empty refs — preview never 400s.
+// `jobs` = the user-level jobs naming it; removing an override of a built-in clears none.
 app.get('/api/models/:id/refs', (req, res) => {
-  res.json(globalModelRefs(req.params.id));
+  const refs = globalModelRefs(req.params.id);
+  const lc = String(req.params.id).trim().toLowerCase();
+  const uses = refs.predefinedShadow ? {} : modelUses({ projects: false });
+  res.json({ ...refs, jobs: Object.hasOwn(uses, lc) ? uses[lc] : [] });   // own keys only: an id may be `constructor`
 });
 
 // Reveal raw env value(s) for the editor's copy button and Show-values toggle.
@@ -286,13 +301,29 @@ app.get('/api/models/:id/env-value', (req, res) => {
 
 app.delete('/api/models/:id', async (req, res) => {
   try {
+    // FIRST: it throws on an unknown id before anything is cleared, and clears the project picks and the
+    // defragment pick. Then every user-level job naming the id (PAN-7), unless the entry only overrode a built-in.
     const result = await removeGlobalModelAndRefs(req.params.id);
-    // Settings › Memory's defragment model went with the entry: open tabs repaint that card (as
+    // The entry is gone from here on, so a retry would only answer "unknown model id": a job clear that fails
+    // still answers 200, counting what it did clear, and says what it could not.
+    let cleared = 0;
+    let warning = null;
+    if (!result.predefinedShadow) {
+      try {
+        cleared = await clearModelUses(req.params.id);
+      } catch (err) {
+        warning = `Deleted, but the jobs that use it could not be cleared: ${err && err.message ? err.message : String(err)}`;
+      }
+    }
+    const clearedJobs = cleared + (result.clearedMemoryDefrag ? 1 : 0);
+    // A cleared pick is a settings change: open tabs repaint their pickers and Settings › Memory (as
     // the Ask remove_model path's settings-changed does).
-    if (result.clearedMemoryDefrag) emitChanged('settings-changed');
-    res.json({ ...result, models: maskedGlobalModels() });
+    if (clearedJobs > 0) emitChanged('settings-changed');
+    res.json({ ...result, clearedJobs, ...(warning ? { warning } : {}), models: maskedGlobalModels() });
   } catch (err) {
-    // Throws only on an unknown id -> client error.
+    // removeGlobalModelAndRefs throws on an unknown id before anything is cleared -> client error. A disk error while
+    // it removes the entry lands here too, after the project and defragment picks may already be cleared; the entry
+    // is still there, so a retry completes the delete.
     return badRequest(res, err && err.message ? err.message : String(err));
   }
 });
@@ -301,10 +332,9 @@ app.post('/api/models/:id/test', async (req, res) => {
   const lc = id.toLowerCase();
   const global = listGlobalModels().find((m) => m.id.toLowerCase() === lc);
   const plugin = global ? null : listPluginModels().find((m) => m.id.toLowerCase() === lc);
-  // A built-in is testable too (#422): the Title-generation card offers it, and
-  // a first-party id with no routing env is exactly the spawn a run would make.
-  const builtin = !global && !plugin && PREDEFINED_MODELS.some((m) => m.id.toLowerCase() === lc);
-  if (!global && !plugin && !builtin) return res.status(404).json({ error: `unknown model id ${JSON.stringify(id)}` });
+  // A global, plugin or team-policy model, or a Claude built-in (#422: the Title-generation card offers it, and a
+  // first-party id with no routing env is exactly the spawn a run would make). Never a Codex or Copilot built-in.
+  if (!canTestModel(id)) return res.status(404).json({ error: `unknown model id ${JSON.stringify(id)}` });
   if (plugin && plugin.secrets.length) {
     // Don't burn a spawn guaranteed to fail — resolveModelEnv drops unset secrets.
     const unset = pluginModelSecretStatus(plugin.plugin)

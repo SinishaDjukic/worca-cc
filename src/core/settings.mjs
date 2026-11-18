@@ -1277,6 +1277,7 @@ export const SETTINGS_POST_KEYS = Object.freeze([
   'resumeAfterUsageLimit',
   'updateCheck',                             // Settings › About: check npm for a newer stable Worca (#841)
   'titleModel', 'hideBuiltinModels',
+  'hideBuiltinEngines',                      // Models › Catalogue: Codex / Copilot hide their built-ins { codex?, copilot? }
   'theme',
   'uiLevel',                                 // interface mode (docs/ui-levels.md)
   'flags',                                   // feature flags { key: bool } (docs/feature-flags.md)
@@ -1653,6 +1654,49 @@ export async function setHideBuiltinModels(input) {
   settings.hideBuiltinModelsChosen = true;
   await persistSettings(settings);
   return { hideBuiltinModels: hideBuiltinModels() };
+}
+
+// `hideBuiltinEngines` is the same switch for the other harnesses that ship built-ins
+// (Models › Catalogue, CAT-8): `{ codex?: true, copilot?: true }`. Only `true` is stored and
+// an empty object is removed. It has no team default (L7): `hideBuiltinModels` keeps Claude
+// Code's meaning for setup, CLI, Ask and team policy.
+const HIDE_BUILTIN_ENGINE_NAMES = Object.freeze(['codex', 'copilot']);
+const hideEnginesMap = (on) => Object.fromEntries(HIDE_BUILTIN_ENGINE_NAMES.filter((e) => on.has(e)).map((e) => [e, true]));
+/** The stored value as `{ <engine>: true }`, or null when it is not one. */
+const storedHideEngines = (v) => (isObj(v) && Object.entries(v).every(([e, on]) => HIDE_BUILTIN_ENGINE_NAMES.includes(e) && on === true)
+  ? hideEnginesMap(new Set(Object.keys(v))) : null);
+
+/** Which harnesses besides Claude Code hide their built-ins: `{ codex?: true, copilot?: true }`, `{}` when none. */
+export function hideBuiltinEngines() {
+  const v = readSettings().hideBuiltinEngines;
+  if (v === undefined) return {};
+  const hidden = storedHideEngines(v);
+  if (hidden) return hidden;
+  console.warn(`[worca] invalid hideBuiltinEngines ${JSON.stringify(v)} — no harness hides its built-ins`);
+  return {};
+}
+
+/**
+ * @throws {Error} unless `input` is `{ codex?: boolean, copilot?: boolean }`. Every message starts with
+ * `hideBuiltinEngines ` so a 400 names that field, never a path under it (settings-errors.mjs).
+ */
+export function assertHideBuiltinEnginesInput(input) {
+  if (!isObj(input)) throw new Error('hideBuiltinEngines must be an object');
+  for (const [engine, on] of Object.entries(input)) {
+    if (!HIDE_BUILTIN_ENGINE_NAMES.includes(engine)) throw new Error(`hideBuiltinEngines must name only ${HIDE_BUILTIN_ENGINE_NAMES.join(' or ')}, not ${JSON.stringify(engine)}`);
+    if (typeof on !== 'boolean') throw new Error(`hideBuiltinEngines must set ${engine} to true or false`);
+  }
+}
+
+/** Merges per harness: `true` stores, `false` deletes; an invalid stored value is replaced. */
+export async function setHideBuiltinEngines(input) {
+  assertHideBuiltinEnginesInput(input);
+  const settings = readSettings();
+  const on = new Set(Object.keys(storedHideEngines(settings.hideBuiltinEngines) || {}));
+  for (const [engine, hide] of Object.entries(input)) { if (hide) on.add(engine); else on.delete(engine); }
+  if (on.size) settings.hideBuiltinEngines = hideEnginesMap(on); else delete settings.hideBuiltinEngines;
+  await persistSettings(settings);
+  return { hideBuiltinEngines: hideBuiltinEngines() };
 }
 
 // ── Theme mode (2026-09-04 dark-mode design §6.1) ────────────────────────────
