@@ -65,7 +65,7 @@
   --green-ink-strong:light-dark(#2C7535,#8FD48F);  /* sidebar Saved figure: 4.79:1 on --line (the spend card's hover fill); --green-ink is 4.48:1 */
   --peach-bg:light-dark(#FCEEDA,#33261A);  --peach:#EFA63C;  --peach-ink:light-dark(#B5751A,#F2B96A);
   --red-bg:light-dark(#FBE3E0,#34201D);    --red:#E76A5A;    --red-ink:light-dark(#C5483A,#F08C7E);
-  --red-ink-strong:light-dark(#B23F33,#F08C7E);   /* red text on a --field panel (the account menu's spend card): 5.3:1 (--red-ink is 4.45:1) */
+  --red-ink-strong:light-dark(#B23F33,#F08C7E);   /* red text on the --panel sheet (the account menu's flat spend card): 5.75:1 */
   --blue-bg:light-dark(#DEEFF7,#1A2A33);   --blue:#5BA6CC;   --blue-ink:light-dark(#3782A8,#86C4E3);
   --blue-ink-strong:light-dark(#2B6A8C,#86C4E3);   /* inline link text at small sizes: 5.9:1 on white (--blue-ink is 3.8:1) */
   --violet-bg:light-dark(#EAE6F8,#262336); --violet:#8C7FD6; --violet-ink:light-dark(#6353B8,#B3A8EE);

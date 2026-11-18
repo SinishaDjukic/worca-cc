@@ -140,7 +140,7 @@ be skipped by forgetting it.
 | Runs counts: the amber Needs-you number (no symbol), else the live count as a grey number | S — each hidden at zero |
 | Chat (the first sidebar row; the app's home) | S |
 | Chat home: Start from a preset chips; "N more…" opens New run below Advanced and Settings › Presets from Advanced | S |
-| The account corner and its menu: Interface mode, Settings, the Away and Keep awake switches, "Signed in as" (a shared identity) | S |
+| The account corner and its menu: the level card, "Signed in as" (a shared identity), the spend card and Usage, the Away and Keep awake switches, Appearance, Interface mode, Settings | S |
 | The spend ring on the avatar and the menu's spend card (with the free-request row) | S — never hidden: a blocked limit turns the ring red and full, and the card and the New pipeline note say until when |
 | Statistics, Workspaces | A |
 | Add-ons: the group label, Marketplace, Connectors | A |
@@ -149,7 +149,7 @@ be skipped by forgetting it.
 | Team metrics, Team policy | E |
 | The level avatar art in the corner (the round art on the account corner and the spend ring's avatar) | all — a level is shown to everyone, whatever the mode |
 | The level tooltip (hover or focus on the corner avatar: the level, its items, a link to Profile) | all |
-| The account-menu level card (above Interface mode) | all |
+| The account-menu level card (the first item of the account menu) | all |
 | Profile (the level section) | all — it has no sidebar entry; it opens from the menu card, the tooltip and the Getting started level line |
 
 Levels are not Interface modes: no level element carries `data-min-level`; Try next / Open links to higher-mode pages open them with the banner.

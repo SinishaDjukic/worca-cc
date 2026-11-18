@@ -8,7 +8,7 @@ import { JSDOM } from 'jsdom';
 import { BUDGET_WARN_AT } from '../ui/public/stats-view.mjs';
 import {
   spendRing, ringDash, spendPeriod, renderSpendCard, RING_R, MINI_R, INNER_R, ringSvg,
-  personInitials, describeAccount, accountLabel, paintAccountCorner, paintIdentityCard, paintAwayRow, renderLevelCard,
+  personInitials, describeAccount, accountLabel, paintAccountCorner, paintIdentityCard, paintAwayRow, paintAppearanceIcon, renderLevelCard,
 } from '../ui/public/account-menu.mjs';
 import { describeAwayRow } from '../src/shared/away-mode/describe.mjs';
 import { createLevelController, levelMenuHtml, LEVEL_SHORT, LEVEL_INFO, UI_LEVELS } from '../ui/public/ui-level.mjs';
@@ -518,7 +518,7 @@ test('renderLevelCard: nothing to show without a level view', () => {
   assert.equal(renderLevelCard({}, { doc }), null);
 });
 
-test('the level card sits directly above Interface mode (R-po-15) and never joins the mode pickers (R-po-1)', async () => {
+test('the level card is the account menu\'s first item and never joins the mode pickers (R-po-1)', async () => {
   const { createWorcaLevelWiring } = await import('../ui/public/worca-level/app-wiring.mjs');
   const dom = new JSDOM(`<!doctype html><html data-level="advanced"><body><div id="acct-menu" role="menu"><div class="msect" role="group">${LEVEL_SHELL}</div></div>` +
     '<div id="mode-modal" class="viewer-modal hidden"><div id="mode-cards"></div><small id="mode-msg" class="hint"></small><button type="button" id="mode-done">Done</button></div></body></html>');
@@ -532,7 +532,7 @@ test('the level card sits directly above Interface mode (R-po-15) and never join
   } finally { globalThis.fetch = realFetch; }
   const card = d.getElementById('acct-level-card');
   assert.equal(d.querySelectorAll('#acct-level-card').length, 1, 'a re-render replaces it, never duplicates');
-  assert.equal(card.nextElementSibling, d.getElementById('acct-lvl'));
+  assert.equal(d.getElementById('acct-menu').firstElementChild, card, 'the first item of the menu, not inside a section');
   const ctl = createLevelController({ doc: d, save: async (l) => ({ ok: true, level: l }) });
   ctl.paint();
   ctl.open(null);
@@ -540,6 +540,22 @@ test('the level card sits directly above Interface mode (R-po-15) and never join
   assert.deepEqual(names('#lvl-menu [data-level-choice]'), ['Simple', 'Advanced', 'Expert']);
   assert.equal(d.querySelectorAll('#mode-cards [data-level-choice]').length, 3);
   for (const host of ['#lvl-menu', '#mode-cards']) assert.doesNotMatch(d.querySelector(host).textContent, /Runner|Hooked|Curious|Council|Worcaholic/, `${host} lists modes only`);
+});
+
+test('paintAppearanceIcon: fills the placeholder from ICONS.appearance, once', () => {
+  const svg = doc.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'mi-ic');
+  paintAppearanceIcon(svg);
+  const circles = svg.querySelectorAll('circle');
+  const paths = svg.querySelectorAll('path');
+  assert.equal(circles.length, 1);
+  assert.equal(circles[0].getAttribute('r'), '8.5');
+  assert.equal(paths.length, 1);
+  assert.deepEqual([paths[0].getAttribute('fill'), paths[0].getAttribute('stroke')], ['currentColor', 'none'], 'the filled half');
+  for (const el of [circles[0], paths[0]]) assert.equal(el.namespaceURI, 'http://www.w3.org/2000/svg', 'SVG nodes, so they render');
+  paintAppearanceIcon(svg);
+  assert.equal(svg.children.length, 2, 'a second call adds nothing');
+  assert.doesNotThrow(() => paintAppearanceIcon(null));
 });
 
 test('the profile route: VIEW_NAMES lists it', () => {

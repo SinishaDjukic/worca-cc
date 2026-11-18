@@ -41,18 +41,23 @@
 /* The menu opens upward from the corner, Interface mode's side menu beside it: two .nav-fly
    popups (side-flyout.mjs keeps them inside the viewport). The menu is one white sheet (the
    popups' --panel, so it stands off the grey sidebar) with 12px corners and 6px of padding
-   round its sections. The spend card and the identity card are inset --field panels with 10px
-   corners; each .msect run of rows sits on the sheet, its 32px rows led by a 16px --ink-2 icon.
-   Between each shown section and the next: 4px, a 1px --line hairline that stops 6px short of
-   the content on both sides, 4px (a card straight after the spend card gets a 6px gap instead).
-   Appearance is one row: its label left, a compact segmented control right. The menu scrolls
-   on a short window. Small grey text is --ink-2; amber and red figures on a card take the
-   -strong inks (--amber-ink and --red-ink fall under 4.5:1 on --field); a row's hover is --hover. */
+   round its sections, top to bottom: the level card (with "Signed in as"), the spend card with
+   Usage, the switches, then the preferences. The level, spend and identity cards are flat on the
+   --panel sheet with 6px 9px of padding, so their text lines up with the rows' 9px icon column;
+   each .msect run of rows sits on the sheet, its 32px rows led by a 16px --ink-2 icon. No headings:
+   between each shown section and the next, 4px, a 1px --line hairline that stops 6px short of the
+   content on both sides, 4px (the identity card straight after the level card gets a 6px gap
+   instead, and Usage straight under the spend card none). Appearance is one row: its icon and
+   label left, a compact segmented control right. The menu scrolls on a short window. Small grey
+   text is --ink-2; amber and red figures on a card take the -strong inks on --panel; a row's
+   hover is --hover. */
 .nav-fly.acct-menu{width:258px;max-height:calc(100vh - 16px);overflow-y:auto;gap:0;padding:6px;}
 .acct-menu > :not([hidden]) ~ :not([hidden]){position:relative;margin-top:9px;}
 .acct-menu > :not([hidden]) ~ :not([hidden])::before{content:"";position:absolute;top:-5px;left:6px;right:6px;height:1px;background:var(--line);}
-.acct-menu > .acct-spend:not([hidden]) + .id-card:not([hidden]){margin-top:6px;}
-.acct-menu > .acct-spend:not([hidden]) + .id-card:not([hidden])::before{content:none;}
+.acct-menu > .wl-card + .id-card:not([hidden]){margin-top:6px;}
+.acct-menu > .wl-card + .id-card:not([hidden])::before{content:none;}
+.acct-menu > .acct-spend:not([hidden]) + .usage-sect:not([hidden]){margin-top:0;}
+.acct-menu > .acct-spend:not([hidden]) + .usage-sect:not([hidden])::before{content:none;}
 .nav-fly.lvl-menu{width:236px;max-height:calc(100vh - 16px);overflow-y:auto;}
 /* The Usage submenu (usage-view.mjs renderUsageMenu): "Limits", then one block per provider (its name and
    "as of" on one line), one row per window: a mini ring, Session / Week / Day, the figure and "resets …".
@@ -69,7 +74,7 @@
 .uw-row[data-tone="warn"] .uw-pct{color:var(--amber-ink-strong);}
 .uw-row[data-tone="over"] .uw-pct{color:var(--red-ink-strong);}
 .uw-reset{justify-self:end;white-space:nowrap;font:400 var(--fs-meta)/1.4 var(--sans);color:var(--ink-2);font-variant-numeric:tabular-nums;}
-.mcard{display:flex;flex-direction:column;padding:10px 12px;border-radius:var(--r-sm);background:var(--field);}
+.mcard{display:flex;flex-direction:column;padding:6px 9px;border-radius:var(--r-sm);}
 .mc-head{display:flex;align-items:center;gap:8px;min-height:24px;margin-bottom:8px;}
 .mini-ring{width:18px;height:18px;flex:none;transform:rotate(-90deg);}
 .mini-ring circle{fill:none;stroke-width:2.6;}
@@ -109,10 +114,11 @@
    .switch at its right edge only shows aria-checked, so it takes no pointer of its own. The label's
    flex:1 pushes the hint and the switch right; the hint sits 10px (the row gap) before the switch. */
 .sw-item .switch{pointer-events:none;}
-/* Appearance at the foot of the menu, one 40px row: the label in the icons' column, then three
-   30px icon segments (System · Light · Dark) on a compact --field track, the picked one raised. */
-.msect.theme-sect{flex-direction:row;align-items:center;justify-content:space-between;gap:10px;height:40px;padding:0 4px 0 9px;}
-.theme-k{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 13px/1.4 var(--sans);color:var(--ink);}
+/* Appearance, the first preferences row, 40px: its 16px --ink-2 icon in the rows' icon column and its
+   label, then three 30px icon segments (System · Light · Dark) on a compact --field track, the picked one raised. */
+.theme-sect{display:flex;align-items:center;gap:10px;height:40px;padding:0 4px 0 9px;}
+.theme-sect > .mi-ic{color:var(--ink-2);}
+.theme-k{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 13px/1.4 var(--sans);color:var(--ink);}
 .theme-seg{display:flex;flex:none;padding:2px;border-radius:var(--r-sm);background:var(--field);}
 .theme-ic{display:flex;flex:none;align-items:center;justify-content:center;width:30px;height:26px;padding:0;border:0;border-radius:var(--r-sm);
   background:transparent;color:var(--ink-2);cursor:pointer;}
@@ -120,9 +126,9 @@
 .theme-ic:hover{color:var(--ink);}
 .theme-ic.on{background:var(--surface);color:var(--ink);box-shadow:var(--knob-shadow);}
 .theme-ic:focus-visible{outline:2px solid var(--ink);outline-offset:-2px;}
-/* The free-request row closes the spend card: a --line-2 rule (--line fades on the --field panel),
+/* The free-request row closes the spend card: a --line rule (the menu's divider token on --panel),
    then the label and the count in the Spent row's type. Alone in the card it needs no rule. */
-.mc-free{height:auto;margin-top:8px;padding:8px 0 0;border-top:1px solid var(--line-2);border-radius:0;}
+.mc-free{height:auto;margin-top:8px;padding:8px 0 0;border-top:1px solid var(--line);border-radius:0;}
 .mc-free:first-child{margin-top:0;padding-top:0;border-top:0;}
 .mc-free:hover{background:transparent;}
 .mc-free .mi-lbl{font-size:12px;color:var(--ink-2);}
