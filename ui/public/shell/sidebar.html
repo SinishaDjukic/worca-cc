@@ -133,13 +133,13 @@
                Opens Settings › General › About; no toast, no modal. Updating is a click on that card, never from here. -->
           <a class="side-update" id="side-update" href="#settings" hidden
              aria-label="Update available" title="Update available"><span class="side-update-dot" aria-hidden="true"></span><span class="side-update-label">Update available</span></a>
-          <!-- The account corner (account-menu.mjs): who is looking (GET /api/whoami), the spend ring
-               (paintBudget) and the away dot. It opens #acct-menu: spend, interface mode, Settings,
-               the Away and Keep awake switches and appearance. -->
-          <button type="button" class="acct" id="side-acct" data-min-level="simple" aria-haspopup="menu" aria-expanded="false" aria-controls="acct-menu"
+          <!-- The account corner (account-menu.mjs): who is looking (GET /api/whoami), the usage rings
+               (usage-view.mjs: outer Session, inner Week or Day) and the away dot. It opens #acct-menu: spend,
+               interface mode, Settings, the Away and Keep awake switches, appearance and Usage. -->
+          <button type="button" class="acct" id="side-acct" data-min-level="simple" data-usage-s="none" data-usage-l="none" aria-haspopup="menu" aria-expanded="false" aria-controls="acct-menu"
                   aria-label="Profile: spend, away mode, interface mode and settings" title="Profile: spend, away mode, interface mode and settings">
             <span class="acct-ring-wrap">
-              <svg class="acct-ring" viewBox="0 0 38 38" aria-hidden="true"><circle class="trk" cx="19" cy="19" r="17.5"></circle><circle class="arc" cx="19" cy="19" r="17.5" stroke-dasharray="0.00 109.96"></circle></svg>
+              <svg class="acct-ring" viewBox="0 0 38 38" aria-hidden="true"><g class="ring-s"><circle class="trk" cx="19" cy="19" r="17.5"></circle><circle class="arc" cx="19" cy="19" r="17.5"></circle></g><g class="ring-l"><circle class="trk" cx="19" cy="19" r="14"></circle><circle class="arc" cx="19" cy="19" r="14"></circle></g></svg>
               <span class="acct-ava" aria-hidden="true">P</span>
               <i class="acct-dot" aria-hidden="true"></i>
             </span>
@@ -207,7 +207,13 @@
               </button>
             </div>
           </div>
+          <!-- Usage, the last section (usage-view.mjs paintUsageRow): the tightest plan-limit window of every
+               provider that reports one; hidden with its section until one does. Opens #usage-menu. -->
+          <div class="msect usage-sect" role="group" hidden>
+            <button type="button" class="mi menu-item" id="acct-usage" role="menuitem" data-min-level="simple" aria-haspopup="menu" aria-expanded="false" aria-controls="usage-menu" hidden></button>
+          </div>
         </div>
         <div class="menu nav-fly lvl-menu" id="lvl-menu" role="menu" aria-label="Interface mode" data-min-level="simple" hidden></div>
+        <div class="menu nav-fly usage-menu" id="usage-menu" role="menu" aria-label="Usage" data-min-level="simple" hidden></div>
       </aside>
 

@@ -6,6 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
+import { readFileSync } from 'node:fs';
 import { checkRows } from './helpers/rows.mjs';
 import { readIndexHtml } from '../src/core/read-index-html.mjs';
 import { readStyleCss } from '../src/core/read-style-css.mjs';
@@ -103,6 +104,8 @@ const ROWS = [
   ['.wm-add-msg', 'workspace-map-css: hidden lines stay hidden'],
   // The account corner's popups and cards (side-flyout.mjs and app.js toggle `hidden`).
   ...['.acct-menu', '.lvl-menu', '.acct-spend', '.id-card'].map((sel) => [sel, 'ui-account-corner: a closed menu, an empty card']),
+  // The Usage section and submenu (usage-view.mjs): no reading, no row, no hairline, no space.
+  ...['.usage-menu', '.usage-sect'].map((sel) => [sel, 'usage rings: a hidden Usage section takes no space']),
   // The top bar's Activity popover and its badge (side-flyout.mjs and activity-menu.mjs toggle `hidden`).
   ...['.activity-pop', '.topnav-badge'].map((sel) => [sel, 'ui-activity-topnav: a closed popover, a zero badge']),
   ['.tsearch-pop', 'ui-topnav-search: the top bar search\'s closed listbox'],
@@ -285,4 +288,16 @@ test('narrow chat run panel: Resume keeps its word, the other bar buttons go ico
   for (const k of ['rd-resume', 'hd-resume']) assert.equal(position(q(k)), 'static', `${k}: the word shows`);
   for (const k of ['rd-pause', 'rd-stop', 'hd-stop']) assert.equal(position(q(k)), 'absolute', `${k}: icon-only`);
   document.body.innerHTML = '';
+});
+
+test('usage rings (account-corner.css): the 24px avatar under an inner ring, theme-free rules, the -strong inks are light-dark pairs', () => {
+  const css = readFileSync(new URL('../ui/public/shell/account-corner.css', import.meta.url), 'utf8');
+  assert.match(css, /\.acct\[data-usage-l\]:not\(\[data-usage-l="none"\]\) \.acct-ava\{width:24px;height:24px;/);
+  const usage = css.split('\n').filter((l) => /usage|uw-|ring-s|ring-l|data-tone="(?:ok|warn|over)"\] > \.mini-ring/.test(l));
+  assert.ok(usage.length >= 10, usage.join('\n'));
+  assert.deepEqual(usage.filter((l) => /\[data-theme|prefers-color-scheme/.test(l)), []);
+  assert.equal(/data-spend[^\n]*acct-ring|\.acct\[data-spend/.test(css), false, 'the avatar has no spend ring rules');
+  const tokens = readFileSync(new URL('../ui/public/shell/self-hosted.css', import.meta.url), 'utf8');
+  assert.match(tokens, /--red-ink-strong:light-dark\(/);
+  assert.match(tokens, /--amber-ink-strong:light-dark\(/);
 });

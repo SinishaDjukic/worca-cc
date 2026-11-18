@@ -405,6 +405,9 @@ The prototype's Break picker plays each case.
   one place, the account menu's Usage and costs side menu; a limit warns before it is spent only in New run, Resume
   and the confirm of a step that starts agent work, and only when the run's estimate does not fit in what is left
   (with no estimate, at the warning line).
+- In dev's look the avatar draws only the session and long-window rings (`ui/public/usage-view.mjs`), each in one
+  tone (`--ink-2`, `--amber` at the warning line, `--red` full at the limit); spend is never a ring there, it lives in
+  the account menu's spend card.
 - Pulse is the panel under its top-bar button, with no page of its own. Every notification setting lives in one
   Settings tab, Notifications.
 
