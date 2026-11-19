@@ -29,10 +29,10 @@
 Each item has a recommendation (**R**) and the alternative(s). Where a task depends on one, the task says "depends on P4-Qn" and is written for the recommendation.
 
 - **P4-Q1. One pull request or two?**
-  - **R: two PRs from this one plan.** 4a = Tasks 1–10 and 16–20 (criteria on examples, the judge, exact checks, spend, trust marks, side by side, Compare by criterion). 4b = Tasks 11–15 and 21–23 (Check the checker, the pair question, a result you liked, suggestions, the trust report, Add from a past run). 4a is useful on its own; 4b needs 4a.
+  - **R: two PRs from this one plan.** 4a = Tasks 1–11 and 17–21 (criteria on examples, the judge, exact checks, spend, trust marks, side by side, Compare by criterion). 4b = Tasks 12–16 and 22–24 (a result you liked, Check the checker, the pair question, suggestions, the trust report, Add from a past run). Task 25 (docs) runs for each; Task 26 is the paid check. 4a is useful on its own; 4b needs 4a.
   - Alternative: one PR (about 25 tasks; slower to review).
 - **P4-Q2. Which AI models can check criteria?**
-  - **R: Claude models from Worca's model catalog only** (the "Checked with" list). Their cost is billed and known; the paid check (Task 25) proves the path once.
+  - **R: Claude models from Worca's model catalog only** (the "Checked with" list). Their cost is billed and known; the paid check (Task 26) proves the path once.
   - Alternative: every harness Requirements can use (`helperCall` already runs Codex, Gemini CLI and others), with "estimated" or "unknown" costs to explain in the UI.
 - **P4-Q3. Which model makes the planted mistakes, the suggested criteria and the clearer words?**
   - **R: the example's checking model** (one choice, one price list, nothing new in Settings). Before an example exists (Add from a past run), the suggested checking model.
@@ -67,7 +67,7 @@ Each item has a recommendation (**R**) and the alternative(s). Where a task depe
 - **P4-Q13. `src/core/db.mjs` is over its size cap** (3135 lines, cap 2811 in `tools/split-by-feature/size-caps.json`).
   - **R: move all workflow-tests DDL (v96–v99) into a new `src/core/workflow-tests/schema.mjs`** (pure strings) in Task 1. db.mjs then shrinks by about 90 lines although it gains the v99 rung.
   - Alternative: put only the v99 DDL there (db.mjs grows by about 6 lines).
-- **P4-Q14. The paid end-to-end check (Task 25).**
+- **P4-Q14. The paid end-to-end check (Task 26).**
   - **R: run it once, controller only, after the user's explicit OK:** Claude Haiku 4.5 as the workflow's model and as the checking model, one "Try it once now" with two criteria, one Check the checker round, one Agree. **Cap: $3.** It goes through Worca's normal model routing; before it runs, the controller names the account that pays (memory: check `~/.worca-cc` model routing, e.g. a Vertex env on the alias, not only the Claude sign-in).
   - Alternative: no paid check before the PR.
 - **P4-Q15. An older test after its criteria changed.**
@@ -87,7 +87,7 @@ The canvas could be read (see below). The UI that no approved board draws is lis
 2. **`totalWindowSpendUsd` is at `src/core/cost-budget.mjs:142`** (outline: `:114`). It now sums four ledgers: runs, Chat, Requirements and **Design** (`designWindowedSpendUsd`, `cost-budget.mjs:132`, with `recordDesignCostDelta` at `:125`). The Design ledger is the pattern to follow: its own table, a record function and a windowed sum in `cost-budget.mjs` (not in `stats.mjs`, which only imports them: `stats.mjs:24`).
 3. **A test try's spend already counts in the limit** through `cost_ledger` (the try is a hidden pipeline, `pipelines.is_test = 1`), and Statistics leaves it out with `NOT_TEST` (`stats.mjs:66`). `budgetWindowSavings` (`stats.mjs:493-507`) subtracts the tries' spend so a test cannot make "Saved" negative; judge spend needs the same subtraction (Task 5).
 4. **A test's own spend is `store.spentOfRun`** (`store.mjs:410`): the runner's cap (`runner.mjs:128`, `:287`, `:294`), "Finish the rest" (`:693`), Compare's cost (`service.mjs:848`) and the Tests list's latest test (`service.mjs:572`) all read it. Adding the judge ledger there (Task 7) makes the cap and every shown cost include judging, with no other change.
-5. **Automatic checks are one array** on the example (`checks`), part of the example fingerprint (`store.mjs:95-104`). The check dialog lists **every** kind in `CHECK_KINDS` (`example-editor.mjs:106-118`), so a new kind shows in the UI as soon as it is added: Task 3 hides the four new kinds from the dialog until Task 18 (after P4-M1).
+5. **Automatic checks are one array** on the example (`checks`), part of the example fingerprint (`store.mjs:95-104`). The check dialog lists **every** kind in `CHECK_KINDS` (`example-editor.mjs:106-118`), so a new kind shows in the UI as soon as it is added: Task 3 hides the four new kinds from the dialog until Task 19 (after P4-M1).
 6. **The judge's mock is ours.** `runClaude` in mock mode runs the mock engine (`claude-runner.mjs:242-243`), which answers with pipeline fixtures, not a judge's JSON. Like `brief-job.mjs:225-227` (`d.mockEnabled()` → `mockBrief`), the judge checks `mockEnabled({})` (and the try's own `mock`) and answers from a pure `mockJudgement` without calling `helperCall`.
 7. **What a workflow writes with** is in each try's pipeline row: `pipelines.stepper` holds the run's manifest, and `manifestModels` (`src/core/broker-routing.mjs:74`) lists every model it names. The "Checked with" suggestion (board 2: "an AI model that this workflow does not use to write") reads it from the workflow's latest tries (Task 10).
 8. **Model ids** are the catalog's (`PREDEFINED_MODELS`, `src/core/config.mjs:96-113`; `listModels()` at `:628`), for example `claude-opus-5-5` labelled "Opus 5.5". `runsOn(m, 'claude')` (`src/shared/connections.mjs:53`) tells which run on Claude Code.
@@ -177,20 +177,20 @@ D1–D85 hold. These continue them. The `(technical)` rows are for the reviewer.
 ## Global Constraints
 
 - **Worktree and branch:** `C:\Users\BRT1BG\worca-cc\worca-cc-tests4`, branch `feat/workflow-tests-part4`, from `3b045d0a8` (Part 3b's head with `dev` merged). Its PR targets `dev` after Part 3 merges; until then, merge `feat/workflow-tests-part3b` in when it moves.
-- **Commits:** one per task (Task 0 and Task 25 have none). Author `TomicaB <tomica.brkovic@yahoo.com>` (`git -c user.name=TomicaB -c user.email=tomica.brkovic@yahoo.com commit …` unless the worktree's config already says so). The message ends with a blank line and `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Never stash, rebase or amend.
+- **Commits:** one per task (Task 0 and Task 26 have none). Author `TomicaB <tomica.brkovic@yahoo.com>` (`git -c user.name=TomicaB -c user.email=tomica.brkovic@yahoo.com commit …` unless the worktree's config already says so). The message ends with a blank line and `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Never stash, rebase or amend.
 - **Upstream:** target `dev`; merge commits only (merge `dev` in, never rebase or force-push); state `npm test` and a smoke run in the PR; name the UI level and update `docs/ui-levels.md`.
 - **Never push or open a pull request without the user's explicit go.**
 - **Run one test file:** `node tools/test.mjs test/<file>.test.mjs` (hermetic home and the no-real-claude guard). About 170 tests already fail on clean `dev` on this laptop: compare with Task 0's baseline before blaming a task, and re-check a masked file on WSL Ubuntu before pushing.
 - **Search:** `git grep` with `timeout 60`; plain recursive grep or ripgrep time out on this repo.
 - **TDD:** every task writes its failing test first, runs it to see it fail, then writes the code.
-- **Paid model calls: none in tests.** Tests inject a fake `helperCall` or run under `WORCA_MOCK=1`. The one paid check is Task 25, controller only, after the user's explicit OK, capped at **$3**, through Worca's normal model routing, with the paying account named first (P4-Q14).
+- **Paid model calls: none in tests.** Tests inject a fake `helperCall` or run under `WORCA_MOCK=1`. The one paid check is Task 26, controller only, after the user's explicit OK, capped at **$3**, through Worca's normal model routing, with the paying account named first (P4-Q14).
 - **Schema:** `SCHEMA_VERSION` becomes **99**. If `dev` takes 99 first, renumber on the merge (the rung, the test file name, `docs/storage.md`).
 - **Size caps:** never raise a cap in `tools/split-by-feature/size-caps.json`. No change to `ui/server.mjs` or `ui/public/app.js`. `src/core/db.mjs` must end the part shorter than it starts (P4-Q13). `service.mjs`, `runner.mjs`, `example-editor.mjs`, `test-compare.mjs` and `tests-app.mjs` stay under 1,000 lines (each task that touches one says how many lines it adds; check with `(Get-Content <file>).Count`).
 - **PR wording (`test/ui-ship-words.test.mjs`):** never "open" as a pull-request verb in any string literal.
 - **UI copy:** plain words (D103); `textContent` only; dialogs through `testDialog` (`ui/public/workflows/test-ui.mjs:148`); badges: green = reliable / met, red = unreliable / not met, amber only "needs you" (Confirm 4 results), grey = waiting or not checked, violet = exact (board 2).
 - **UI follows `docs/design-system.md`** (`test/ui-design-language.test.mjs`, `test/ui-shared-controls.test.mjs`): type steps and radius tokens only, icons from `icons.mjs` inside a button with an `aria-label`, an on/off is a switch.
 - **CSS:** tokens only, never a hex colour; new rules at the end of `ui/public/workflows/workflow-tests.css`; every block closed.
-- **UI tasks start only on approved screens.** Tasks 16, 17, 19 and 20 build what boards 1, 2, 4, 5, 6, 12, 32 and 36 draw and can start at once; their undrawn parts, and Tasks 18, 21, 22 and 23, start only after the user approved the mocks they name (P4-M1–M7). Before a UI task, the controller re-reads its boards (`Artifact` read of the files in "Reading the canvas") and applies any copy change first.
+- **UI tasks start only on approved screens.** Tasks 17, 18, 20 and 21 build what boards 1, 2, 4, 5, 6, 12, 32 and 36 draw and can start at once; their undrawn parts, and Tasks 19, 22, 23 and 24, start only after the user approved the mocks they name (P4-M1–M7). Before a UI task, the controller re-reads its boards (`Artifact` read of the files in "Reading the canvas") and applies any copy change first.
 - **Every UI task runs the design guards** after its own tests: `node tools/test.mjs test/ui-design-language.test.mjs test/ui-shared-controls.test.mjs test/ui-theme-tokens.test.mjs test/css-rules.test.mjs test/ui-ship-words.test.mjs`. Compare `ui-design-language` with Task 0's baseline.
 - **Route errors:** `{ error }` with 400 / 404 / 409 / 422 / 500.
 - **Hidden tries (D21, D22) hold.** A judge call is not a run: no pipeline row, no memory, no notifier.
@@ -204,12 +204,12 @@ D1–D85 hold. These continue them. The `(technical)` rows are for the reviewer.
 2. **The judge call's options** (Task 6). Expect `tools: []`, `systemPromptMode: 'replace'`, `noSessionPersistence: true`, `settingSources: ['project']` without a sign-in in user settings, the model's `modelEnv`, `spawnKind: 'aux'`, and an empty scratch `cwd`.
 3. **Proof** (Task 6). Expect a quote with curly quotes, extra spaces, markdown stars or an ellipsis to be found; a made-up quote not found; one retry; then "not counted".
 4. **Spend** (Tasks 5, 7). Expect judge spend in `budgetStatus().windowSpendUsd`, in `spentOfRun`, in the test's cap, and not in Statistics or "Saved".
-5. **Mock is free** (Tasks 6, 7, 11, 14). Expect no `helperCall` and no ledger row under `WORCA_MOCK=1` or for a mock try.
+5. **Mock is free** (Tasks 6, 7, 13, 14, 15). Expect no `helperCall` and no ledger row under `WORCA_MOCK=1` or for a mock try.
 6. **D14** (Task 8). Expect never "unreliable" below 10 answers; the side rule; a new text or model resets to "confirm".
 7. **Better or worse** (Task 9). Expect an unreliable criterion that differs to leave the example "same" and to be named; a not-checked criterion never to fail a try; Part 2's verdicts untouched in the DB.
 8. **Exact checks** (Task 3). Expect quotes found across spacing and quote marks, list markers and single digits ignored, IBAN and Luhn checked, no false phone numbers on dates.
 9. **Links** (Task 4). Expect private addresses refused, http tried as https, at most 20 links, a 15 s timeout.
-10. **Design guards** (Tasks 16–23): no new `ui-design-language` failure.
+10. **Design guards** (Tasks 17–24): no new `ui-design-language` failure.
 
 ---
 
@@ -258,7 +258,7 @@ D1–D85 hold. These continue them. The `(technical)` rows are for the reviewer.
 | `src/core/workflow-tests/service.mjs` | `saveExample` stores the suggested model; tries read with their criteria (three call sites); `tryChanges` reads through `readTryPatch`. |
 | `ui/routes/workflows/workflow-tests.mjs` | Registers `criteria-routes.mjs`. |
 | `ui/public/workflows/{tests-view,tests-app,example-editor,test-dialogs,test-compare}.mjs`, `workflow-tests.css` | Wiring of the new views. |
-| `docs/storage.md`, `docs/costs.md`, `docs/feature-flags.md`, `docs/ui-levels.md`, `docs/workflows.md`, `docs/changelog/unreleased.md`, `plans/workflow-tests-plan.md` | Task 24. |
+| `docs/storage.md`, `docs/costs.md`, `docs/feature-flags.md`, `docs/ui-levels.md`, `docs/workflows.md`, `docs/changelog/unreleased.md`, `plans/workflow-tests-plan.md` | Task 25. |
 
 ---
 
