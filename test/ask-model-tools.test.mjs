@@ -446,29 +446,4 @@ test('propose provider copilot on a GHE.com tenant: card rows show both fields; 
   r = await propose({ accountType: 'ghe-com' });
   assert.match(r.errors[0], /needs enterpriseHost/);
   assert.match(MODEL_ERRORS.providerSet, /enterpriseHost\?/);
-  assert.match(MODEL_ERRORS.providerSet, /clientId\?/);
-});
-
-test('propose provider copilot clientId on a GHE.com tenant: card row "Client id" before → after; refused when the type is not ghe-com; a change keeps the sign-in', async () => {
-  process.env.HOME = home; process.env.USERPROFILE = home; process.env.WORCA_TEST_ALLOW_HOME_FALLBACK = '1';
-  mkdirSync(join(home, '.worca-cc'), { recursive: true });
-  const file = join(home, '.worca-cc', 'settings.json');
-  const { updateProvider, providerConfig } = await import('../src/core/settings.mjs');
-  const validate = createModelChangeValidator({
-    listGlobalModels: () => [], listPluginModels: () => [], policyModels: () => [], predefined: [],
-    addModel: async (m) => m, updateModel: async () => ({}), updateProvider, providerConfig,
-    providerReadiness: () => ({ ok: true }), modelRefs: () => ({ steps: [], nodes: [] }), envHas: () => true,
-  });
-  const propose = (set) => validate({ kind: 'provider', provider: 'copilot', set });
-  writeFileSync(file, JSON.stringify({ providers: { copilot: { accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com', githubToken: 'gho_x', login: 'octo' } } }));
-  let r = await propose({ clientId: 'Ov23liCUSTOM123' });
-  assert.equal(r.ok, true, JSON.stringify(r.errors));
-  assert.deepEqual(r.card.rows, [{ field: 'Client id', before: null, after: 'Ov23liCUSTOM123' }]);
-  assert.deepEqual(r.card.warnings, [], 'a clientId change does not sign out');
-  r = await propose({ clientId: 'bad id!' });
-  assert.match(r.errors[0], /clientId must be a GitHub App or OAuth app client id/);
-  writeFileSync(file, JSON.stringify({ providers: { copilot: { accountType: 'business' } } }));
-  r = await propose({ clientId: 'Ov23liCUSTOM123' });
-  assert.equal(r.ok, false);
-  assert.match(r.errors[0], /clientId applies only to accountType ghe-com/);
 });

@@ -10,7 +10,7 @@ import {
   copilotHeaders, githubHeaders, copilotApiHost, bodyHasImage, requestInitiator,
   normalizeCopilotModel, catalogEntryForCopilotModel, copilotApiFor, listCopilotModels, copilotUsage, GITHUB_CLIENT_ID,
   copilotAccountHost, copilotGateway,
-  readGithubRefusal, githubReasonText, copilotRefusalText, copilotClientId,
+  readGithubRefusal, githubReasonText, copilotRefusalText,
 } from '../src/core/bridge/providers/copilot.mjs';
 import { checkRows } from './helpers/rows.mjs';
 import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
@@ -423,8 +423,8 @@ test('githubReasonText: message+url, message, url, SSO and empty', () => {
 test('copilotRefusalText: tenant sign-in, bare, github.com, token; never "stored token" / "sign in again"', async () => {
   const reason = { message: 'No seat', url: null, sso: null, notificationId: null };
   const rows = [
-    ['tenant sign-in with a reason', { host: 'acme.ghe.com', status: 403, login: 'octo', github: reason, via: 'sign-in', clientIdHint: true }, [/the sign-in on acme\.ghe\.com worked \(as octo\), but GitHub refused Copilot access \(403\)/, /GitHub says: "No seat"/, /Client id/, /enterprise admin/]],
-    ['bare tenant sign-in', { host: 'acme.ghe.com', status: 403, via: 'sign-in', clientIdHint: true }, [/gave no reason/, /admin/]],
+    ['tenant sign-in with a reason', { host: 'acme.ghe.com', status: 403, login: 'octo', github: reason, via: 'sign-in' }, [/the sign-in on acme\.ghe\.com worked \(as octo\), but GitHub refused Copilot access \(403\)/, /GitHub says: "No seat"/, /enterprise admin/]],
+    ['bare tenant sign-in', { host: 'acme.ghe.com', status: 403, via: 'sign-in' }, [/gave no reason/, /admin/]],
     ['github.com', { host: 'github.com', status: 401, github: reason }, [/Copilot subscription or seat/]],
     ['token', { host: 'acme.ghe.com', status: 403, via: 'token' }, [/for this token on acme\.ghe\.com/]],
   ];
@@ -433,8 +433,8 @@ test('copilotRefusalText: tenant sign-in, bare, github.com, token; never "stored
     for (const re of res) assert.match(text, re, name);
     assert.doesNotMatch(text, /stored token|sign in again/i, name);
   }
-  assert.doesNotMatch(copilotRefusalText({ host: 'github.com', status: 403 }), /Client id/);
-  assert.doesNotMatch(copilotRefusalText({ host: 'acme.ghe.com', status: 403 }), /Client id/);
+  assert.doesNotMatch(copilotRefusalText({ host: 'github.com', status: 403 }), /client id/i);
+  assert.doesNotMatch(copilotRefusalText({ host: 'acme.ghe.com', status: 403 }), /client id/i);
 });
 
 test('copilotToken 401/403: stored-token text (reason appended), structured fields, cache dropped', async () => {
@@ -494,22 +494,15 @@ test('copilotToken refusal log: one line, no token, deduped for 10 minutes, rese
   assert.match(lines.at(-1), /answered 401 with no reason/);
 });
 
-test('device flow client id: custom id on start and poll; default unchanged; copilotClientId', async () => {
+test('device flow on a tenant: the Copilot app client id on start and poll; a refused start names the Copilot app', async () => {
   const bodies = [];
   const f = stub([
     [/device\/code$/, (u, init) => { bodies.push(JSON.parse(init.body)); return jsonRes(200, { device_code: 'dc', user_code: 'AB-12', interval: 5, expires_in: 900 }); }],
     [/access_token$/, (u, init) => { bodies.push(JSON.parse(init.body)); return jsonRes(200, { error: 'authorization_pending' }); }],
   ]);
-  await startDeviceFlow({ fetch: f, enterpriseHost: 'acme.ghe.com', clientId: 'Ov23liCUSTOM123' });
-  await pollDeviceFlow('dc', { fetch: f, enterpriseHost: 'acme.ghe.com', clientId: 'Ov23liCUSTOM123' });
-  assert.deepEqual(bodies.map((b) => b.client_id), ['Ov23liCUSTOM123', 'Ov23liCUSTOM123']);
-  await startDeviceFlow({ fetch: f });
-  assert.equal(bodies.at(-1).client_id, GITHUB_CLIENT_ID);
+  await startDeviceFlow({ fetch: f, enterpriseHost: 'acme.ghe.com' });
+  await pollDeviceFlow('dc', { fetch: f, enterpriseHost: 'acme.ghe.com' });
+  assert.deepEqual(bodies.map((b) => b.client_id), [GITHUB_CLIENT_ID, GITHUB_CLIENT_ID]);
   const bad = stub([[/device\/code$/, () => jsonRes(404, {})]]);
-  await assert.rejects(startDeviceFlow({ fetch: bad, enterpriseHost: 'acme.ghe.com', clientId: 'Ov23liCUSTOM123' }), /client id Ov23liCUSTOM123/);
   await assert.rejects(startDeviceFlow({ fetch: bad, enterpriseHost: 'acme.ghe.com' }), /the GitHub Copilot app/);
-  assert.equal(copilotClientId({ accountType: 'ghe-com', clientId: 'Ov23liCUSTOM123' }), 'Ov23liCUSTOM123');
-  assert.equal(copilotClientId({ accountType: 'individual', clientId: 'Ov23liCUSTOM123' }), GITHUB_CLIENT_ID);
-  assert.equal(copilotClientId({ accountType: 'ghe-com', clientId: 'bad id!' }), GITHUB_CLIENT_ID);
-  assert.equal(copilotClientId(null), GITHUB_CLIENT_ID);
 });

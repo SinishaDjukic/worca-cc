@@ -32,7 +32,7 @@ export const MODEL_ERRORS = Object.freeze({
   secretKey: (where) => `${where} must be a \${VAR} reference to a variable set in worca's environment (or empty to clear) — never the key itself; the user can paste a literal key on the Providers page`,
   secretHeader: (k) => `upstream.headers.${k} looks like a credential — the user sets it in the model editor; use apiKey with a \${VAR} reference instead`,
   provider: `provider must be one of ${UPSTREAM_PROVIDERS.join(', ')}`,
-  providerSet: 'provider needs set: {baseUrl?, apiKey?, maxConcurrent?, accountType?, enterpriseHost?, clientId?}',
+  providerSet: 'provider needs set: {baseUrl?, apiKey?, maxConcurrent?, accountType?, enterpriseHost?}',
   signIn: (k) => `${k} is not settable here — the Copilot sign-in happens on the Providers page, by the user`,
   noChange: 'nothing changes — the settings already say exactly this',
   importIds: `import_copilot needs ids: 1 to ${MAX_IMPORT} Copilot model ids from list_copilot_models`,
@@ -278,8 +278,8 @@ export function createModelChangeValidator(r) {
     const before = r.providerConfig(name);
     let after;
     try { after = await r.updateProvider(name, set, { dryRun: true }); } catch (err) { return { ok: false, errors: [err.message] }; }
-    const fields = ['baseUrl', 'apiKey', 'maxConcurrent', 'accountType', 'enterpriseHost', 'clientId'];
-    const label = { baseUrl: 'Base URL', apiKey: 'API key', maxConcurrent: 'Max concurrent requests', accountType: 'Account type', enterpriseHost: 'GHE.com host', clientId: 'Client id' };
+    const fields = ['baseUrl', 'apiKey', 'maxConcurrent', 'accountType', 'enterpriseHost'];
+    const label = { baseUrl: 'Base URL', apiKey: 'API key', maxConcurrent: 'Max concurrent requests', accountType: 'Account type', enterpriseHost: 'GHE.com host' };
     const shown = (f, v) => (v == null ? null : String(f === 'apiKey' ? maskValue(v) : v));
     const rows = fields
       .map((f) => ({ field: label[f], before: shown(f, before[f]), after: shown(f, after[f]) }))

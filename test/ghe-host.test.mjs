@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  GHE_COM_ACCOUNT_TYPE, normalizeGheHost, gheUrls, gheGatewayFallback, isTenantOrigin, gheTenantOfUrl, gheEgressAllow, isGithubClientId,
+  GHE_COM_ACCOUNT_TYPE, normalizeGheHost, gheUrls, gheGatewayFallback, isTenantOrigin, gheTenantOfUrl, gheEgressAllow,
 } from '../src/core/ghe-host.mjs';
 import { COPILOT_ACCOUNT_TYPES } from '../src/core/model-env.mjs';
 
@@ -53,9 +53,4 @@ test('gheEgressAllow: apex plus subdomains for a valid host, nothing otherwise',
 test('COPILOT_ACCOUNT_TYPES includes GHE_COM_ACCOUNT_TYPE', () => {
   assert.ok(COPILOT_ACCOUNT_TYPES.includes(GHE_COM_ACCOUNT_TYPE));
   assert.equal(GHE_COM_ACCOUNT_TYPE, 'ghe-com');
-});
-
-test('isGithubClientId: 8–64 of letters, digits, . _ -; anything else is false', () => {
-  for (const ok of ['Iv1.b507a08c87ecfe98', 'Ov23liCUSTOM123', 'abcdefgh', 'a'.repeat(64)]) assert.equal(isGithubClientId(ok), true, ok);
-  for (const bad of ['short', 'a'.repeat(65), 'has space1', 'bad id!', '', null, undefined, 12345678]) assert.equal(isGithubClientId(bad), false, String(bad));
 });

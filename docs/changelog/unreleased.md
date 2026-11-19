@@ -7,9 +7,9 @@ them into the next page and empties this file.
 
 **Use GitHub Copilot with a GitHub Enterprise Cloud data-residency tenant.**
 
-The Copilot card has a fourth account type, **GHE.com tenant**, and a **GHE.com host** field for `acme.ghe.com`. Sign-in, models, quota and every request then go to your tenant instead of github.com, and the sign-in link shows the tenant's own address. Changing the host signs you out first, after asking, because a sign-in belongs to one GitHub host. The same works from `worca models set copilot accountType=ghe-com enterpriseHost=…` and from Ask Worca. On a hosted instance with an outbound allow policy, worca lets the tenant through for you; the credential broker trusts a Copilot slot's own tenant gateway. When GitHub signs you in but then refuses Copilot access, the card now says so with GitHub's own reason (no more "stored token — sign in again"), the server log records it, and an optional **Client id** field lets a tenant use an app its enterprise allows.
+The Copilot card has a fourth account type, **GHE.com tenant**, and a **GHE.com host** field for `acme.ghe.com`. Sign-in, models, quota and every request then go to your tenant instead of github.com, and the sign-in link shows the tenant's own address. Changing the host signs you out first, after asking, because a sign-in belongs to one GitHub host. The same works from `worca models set copilot accountType=ghe-com enterpriseHost=…` and from Ask Worca. On a hosted instance with an outbound allow policy, worca lets the tenant through for you; the credential broker trusts a Copilot slot's own tenant gateway. When GitHub signs you in but then refuses Copilot access, the card now says so with GitHub's own reason (no more "stored token — sign in again"), and the server log records it.
 
-Chips: GHE.com tenant account type · host field · sign-in on your tenant · signs out on a host change · broker tenant gateway · egress allow added · honest refusal reason · client id
+Chips: GHE.com tenant account type · host field · sign-in on your tenant · signs out on a host change · broker tenant gateway · egress allow added · honest refusal reason
 
 Read it: [Models › Providers](../models.md#providers)
 

@@ -355,46 +355,6 @@ test('Models is a page of its own: the catalog, the Engines card from GET /api/s
       assert.equal(list().querySelector('.mv-cp-account').value, 'ghe-com');
       assert.ok(calls.includes('PATCH /api/providers/copilot'));
     } },
-    { name: 'Save client id sends {clientId}; a 400 shows the message and keeps the typed id; an empty value clears; Save host body is unchanged', run: async () => {
-      let stored = { connected: false, accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com', githubHost: 'acme.ghe.com', clientId: null, maxConcurrent: 4 };
-      let refuse = true;
-      const res = (body, ok = true, status = 200) => ({ ok, status, json: async () => body });
-      const bodies = [];
-      const { window, doc } = await boot({ routes: {
-        '/api/providers/copilot': () => {
-          if (refuse) return res({ error: 'clientId must be a GitHub App or OAuth app client id (8–64 letters, digits, \'.\', \'_\' or \'-\')' }, false, 400);
-          const last = JSON.parse(bodies.at(-1));
-          stored = { ...stored, clientId: last.clientId || null };
-          return res({ copilot: stored });
-        },
-        '/api/providers': () => res({ copilot: stored }),
-      } });
-      await go(window, 'providers');
-      const inner = window.fetch;
-      globalThis.fetch = window.fetch = (u, opts = {}) => { if (String(u).startsWith('/api/providers/copilot') && opts.method === 'PATCH') bodies.push(opts.body); return inner(u, opts); };
-      const list = () => doc.querySelector('#providers-list');
-      list().querySelector('.mv-cp-clientid').value = ' bad id! ';
-      list().querySelector('.mv-cp-clientid-save').click();
-      await settle();
-      assert.deepEqual(bodies, ['{"clientId":"bad id!"}']);
-      assert.match(list().querySelector('.card-alert').textContent, /Not saved.*clientId must be a GitHub App or OAuth app client id/);
-      assert.equal(list().querySelector('.mv-cp-clientid').value, ' bad id! ', 'the typed id stays');
-      refuse = false;
-      list().querySelector('.mv-cp-clientid').value = 'Iv1.abc12345';
-      list().querySelector('.mv-cp-clientid-save').click();
-      await settle();
-      assert.equal(bodies.at(-1), '{"clientId":"Iv1.abc12345"}');
-      assert.equal(list().querySelector('.mv-cp-clientid').value, 'Iv1.abc12345', 'the stored id shows');
-      list().querySelector('.mv-cp-clientid').value = '';
-      list().querySelector('.mv-cp-clientid-save').click();
-      await settle();
-      assert.equal(bodies.at(-1), '{"clientId":""}');
-      assert.equal(list().querySelector('.mv-cp-clientid').value, '');
-      list().querySelector('.mv-cp-host').value = 'acme.ghe.com';
-      list().querySelector('.mv-cp-host-save').click();
-      await settle();
-      assert.equal(bodies.at(-1), '{"accountType":"ghe-com","enterpriseHost":"acme.ghe.com"}');
-    } },
     { name: 'signed in: changing the host asks first; cancel sends nothing; OK sends the PATCH and says it signed out', run: async () => {
       let stored = { connected: true, login: 'ada', accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com', githubHost: 'acme.ghe.com', maxConcurrent: 4 };
       const res = (body) => ({ ok: true, status: 200, json: async () => body });

@@ -25,14 +25,12 @@ const realFetch = globalThis.fetch;
 const jsonRes = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 let pollState = 'pending';
 let pollToken = 'gho_test';   // the access_token the oauth poll hands out once pollState is 'ok'
-const deviceBodies = [];      // the JSON body of every device-flow request (start and poll)
 let modelsExtra = [];
 const seen = [];   // every non-server URL fetched, in order
 const github = async (url, init = {}) => {
   const u = String(url);
   if (u.startsWith(base)) return realFetch(url, init);
   seen.push(u);
-  if (/login\/(device\/code|oauth\/access_token)$/.test(u)) deviceBodies.push({ url: u, ...JSON.parse(init.body) });
   // A GHE.com tenant (acme.ghe.com): its own device flow, REST host and Copilot gateway.
   if (/^https:\/\/acme\.ghe\.com\/login\/device\/code$/.test(u)) return jsonRes(200, { device_code: 'dc-acme', user_code: 'ACME-0001', verification_uri: 'https://acme.ghe.com/login/device', interval: 1, expires_in: 900 });
   if (/^https:\/\/api\.acme\.ghe\.com\/user$/.test(u)) return jsonRes(200, { login: 'tenant-octo' });
@@ -329,7 +327,7 @@ test('GHE.com sign-in refused by Copilot (403 with error_details): the error nam
   assert.equal((await copilotPatch({ accountType: 'individual' })).status, 200);
 });
 
-test('a bare 403 at sign-in says GitHub gave no reason and points at the admin and the client id', async () => {
+test('a bare 403 at sign-in says GitHub gave no reason and points at the admin', async () => {
   _resetCopilotCache();
   const warn = console.warn; console.warn = () => {};
   let done;
@@ -337,7 +335,7 @@ test('a bare 403 at sign-in says GitHub gave no reason and points at the admin a
   assert.match(done.body.error, /the sign-in on acme\.ghe\.com worked/);
   assert.match(done.body.error, /gave no reason/);
   assert.match(done.body.error, /enterprise admin/);
-  assert.match(done.body.error, /Client id/);
+  assert.doesNotMatch(done.body.error, /client id/i);
   assert.doesNotMatch(done.body.error, /stored token|sign in again/i);
   await assertNothingStored();
   assert.equal((await copilotPatch({ accountType: 'individual' })).status, 200);
@@ -352,30 +350,6 @@ test('a stored token that later gets 401 still says to sign in again', async () 
   try {
     assert.deepEqual(await testProviderConnection('copilot', { fetch: github }), { ok: false, message: 'GitHub rejected the stored token (401) — sign in again' });
   } finally { console.warn = warn; }
-  assert.equal((await post('/api/providers/copilot/logout')).status, 200);
-});
-
-test('client id: PATCH {clientId} is shown in state; the device flow starts and polls with it; a change after begin does not affect the running session; github.com still uses Copilot\'s app', async () => {
-  pollState = 'ok';
-  assert.equal((await copilotPatch({ accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com' })).status, 200);
-  assert.equal((await copilotPatch({ clientId: 'bad id!' })).status, 400);
-  const set = await copilotPatch({ clientId: 'Ov23liCUSTOM123' });
-  assert.equal(set.status, 200, JSON.stringify(set.body));
-  assert.equal(set.body.copilot.clientId, 'Ov23liCUSTOM123');
-  const d0 = deviceBodies.length;
-  const start = await post('/api/providers/copilot/login');
-  assert.equal((await copilotPatch({ clientId: 'Ov23liCHANGED999' })).status, 200);       // changed after begin
-  const done = await jfetch(`/api/providers/copilot/login/${start.body.deviceCode}`, { method: 'POST' });
-  assert.deepEqual(done.body, { ok: true, login: 'tenant-octo' });
-  assert.deepEqual(deviceBodies.slice(d0).map((b) => b.client_id), ['Ov23liCUSTOM123', 'Ov23liCUSTOM123']);
-  assert.equal((await jfetch('/api/providers')).body.copilot.clientId, 'Ov23liCHANGED999');   // the change did not sign out
-  assert.equal((await jfetch('/api/providers')).body.copilot.connected, true);
-  const r = await copilotPatch({ accountType: 'individual' });
-  assert.equal(r.body.copilot.clientId, null);
-  const d1 = deviceBodies.length;
-  const gh = await post('/api/providers/copilot/login');
-  await jfetch(`/api/providers/copilot/login/${gh.body.deviceCode}`, { method: 'POST' });
-  assert.deepEqual(deviceBodies.slice(d1).map((b) => b.client_id), ['Iv1.b507a08c87ecfe98', 'Iv1.b507a08c87ecfe98']);
   assert.equal((await post('/api/providers/copilot/logout')).status, 200);
 });
 
@@ -465,8 +439,6 @@ test('CLI formatters + argv parser + `worca models providers/list` through injec
   assert.equal(formatModelLine({ id: 'claude-opus-4-8', label: 'Opus', custom: false, hidden: true }), 'claude-opus-4-8  (Opus)  built-in  hidden');
   const lines = formatProviders({ copilot: { connected: true, login: 'o', accountType: 'individual', maxConcurrent: 4, quota: { used: 1, entitlement: 5 } }, openai: { configured: false, keySet: true, keySource: 'env', keyRef: '${K}', baseUrl: 'u', maxConcurrent: 8 }, anthropic: { maxConcurrent: 8 } });
   assert.match(lines[0], /connected as @o/);
-  assert.doesNotMatch(lines[0], /clientId=/);
-  assert.match(formatProviders({ copilot: { connected: false, accountType: 'ghe-com', enterpriseHost: 'acme.ghe.com', clientId: 'Iv1.abc12345', maxConcurrent: 4 }, openai: { maxConcurrent: 8 }, anthropic: { maxConcurrent: 8 } })[0], /clientId=Iv1\.abc12345/);
   assert.doesNotMatch(lines[0], /terms=/);
   assert.match(lines[1], /premium requests: 1 \/ 5/);
   assert.match(lines[2], /openai.*key \$\{VAR\} NOT SET \(\$\{K\}\)/);
@@ -525,10 +497,6 @@ test('formatProviders prints host= for a tenant; cmdModels set copilot accountTy
   await assert.rejects(cmdModels(['set', 'copilot', 'accountType=ghe-com'], io), /needs enterpriseHost/);
   assert.equal(await cmdModels(['set', 'copilot', 'accountType=ghe-com', 'enterpriseHost=Acme.ghe.com'], io), 0);
   assert.match(out.join('\n'), /copilot .*account=ghe-com  host=acme\.ghe\.com/);
-  out.length = 0;
-  assert.equal(await cmdModels(['set', 'copilot', 'clientId=Iv1.abc12345'], io), 0);
-  assert.match(out.join('\n'), /host=acme\.ghe\.com  clientId=Iv1\.abc12345/);
-  assert.equal(await cmdModels(['set', 'copilot', 'clientId='], io), 0);
   // The CLI sign-in names the tenant it is signing in to.
   pollState = 'ok'; out.length = 0;
   const begin = await post('/api/providers/copilot/login');

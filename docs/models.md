@@ -267,18 +267,14 @@ Server (`/api/v3`) is not supported, and the Copilot CLI engine keeps its own
 `copilot login --host`. Verify the Copilot app is allowed on your tenant: if
 GitHub refuses the sign-in, the message names the host and asks you to check that.
 
-On a stored GHE.com account the card also shows a **Client id** field (*Save client id*;
-`worca models set copilot clientId=…`; Ask Worca can propose it). Leave it empty for
-Copilot's own app. Set the GitHub App or OAuth app client id your enterprise allows if
-sign-in works but GitHub then refuses Copilot access; the device flow uses it from the
-next sign-in on, and changing it does not sign you out. A *"the sign-in on `<host>` worked,
-but GitHub refused Copilot access"* message means the sign-in succeeded and GitHub's
-Copilot token exchange answered 401/403. It quotes GitHub's own reason (and the
-single-sign-on link when there is one) and is also written to the server log. A missing
-Copilot seat or a policy that blocks this editor is your enterprise admin's to fix;
-the client id is the option when the policy is about the app. Nothing is stored after
-such a refusal, so the next attempt is a fresh sign-in. *"Rejected the stored token —
-sign in again"* is only for a sign-in that was saved and later stopped working.
+A *"the sign-in on `<host>` worked, but GitHub refused Copilot access"* message means
+the sign-in succeeded and GitHub's Copilot token exchange answered 401/403. It quotes
+GitHub's own reason (and the single-sign-on link when there is one) and is also
+written to the server log. A missing Copilot seat or a policy that blocks this editor
+is your enterprise admin's to fix; GitHub's *"enable your managed account for Copilot
+Business"* means the account has no seat. Nothing is stored after such a refusal, so
+the next attempt is a fresh sign-in. *"Rejected the stored token — sign in again"* is
+only for a sign-in that was saved and later stopped working.
 
 **OpenAI-compatible** and **Anthropic-compatible.** A base URL, an API key
 (stored masked, or `${VAR}`), and *Test connection*. A model can override

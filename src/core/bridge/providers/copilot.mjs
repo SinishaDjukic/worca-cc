@@ -17,7 +17,7 @@
 // it through ghe-host.mjs's gheUrls().
 
 import { EFFORTS, REASONING_EFFORT_LEVELS } from '../../model-env.mjs';
-import { GHE_COM_ACCOUNT_TYPE, normalizeGheHost, gheUrls, gheGatewayFallback, isTenantOrigin, isGithubClientId } from '../../ghe-host.mjs';
+import { GHE_COM_ACCOUNT_TYPE, normalizeGheHost, gheUrls, gheGatewayFallback, isTenantOrigin } from '../../ghe-host.mjs';
 
 export const GITHUB_CLIENT_ID = 'Iv1.b507a08c87ecfe98';
 export const GITHUB_SCOPES = 'read:user';
@@ -144,11 +144,6 @@ export function requestInitiator(body) {
   return 'user';
 }
 
-/** The client id the device flow uses: a ghe-com block's own `clientId`, else Copilot's app. Never throws. */
-export function copilotClientId(cfg) {
-  return cfg && cfg.accountType === GHE_COM_ACCOUNT_TYPE && isGithubClientId(cfg.clientId) ? cfg.clientId : GITHUB_CLIENT_ID;
-}
-
 // ── GitHub's refusal of the token exchange ───────────────────────────────────
 
 const REFUSAL_BODY_CAP = 8 * 1024;
@@ -209,16 +204,16 @@ export function githubReasonText(g) {
 /**
  * The text for a Copilot refusal of a credential that is NOT stored (the
  * sign-in poll, a pasted token): never "stored token" / "sign in again".
- * @param {{host:string, status:number, login?:string, github?:object|null, via?:'sign-in'|'token', clientIdHint?:boolean}} p
+ * @param {{host:string, status:number, login?:string, github?:object|null, via?:'sign-in'|'token'}} p
  */
-export function copilotRefusalText({ host, status, login = '', github = null, via = 'sign-in', clientIdHint = false }) {
+export function copilotRefusalText({ host, status, login = '', github = null, via = 'sign-in' }) {
   const lead = via === 'token'
     ? `GitHub refused Copilot access for this token on ${host} (${status})`
     : `the sign-in on ${host} worked${login ? ` (as ${login})` : ''}, but GitHub refused Copilot access (${status})`;
   const reason = githubReasonText(github);
   const step = host === 'github.com'
     ? 'Check that this GitHub account has a Copilot subscription or seat.'
-    : `Ask your enterprise admin to check your Copilot seat and that the Copilot policy allows this editor${clientIdHint ? ', or set a client id your enterprise allows (Providers → GitHub Copilot → Client id)' : ''}.`;
+    : `Ask your enterprise admin to check your Copilot seat and that the Copilot policy allows this editor.`;
   return `${lead}${reason ? `: ${reason}` : ' and gave no reason'}. ${step}`;
 }
 
@@ -227,17 +222,17 @@ export function copilotRefusalText({ host, status, login = '', github = null, vi
 /**
  * Start the GitHub device flow. Returns the code the user types at
  * <host>/login/device plus the poll interval and the `host` it was issued on.
- * @param {{fetch?:typeof fetch, enterpriseHost?:string|null, clientId?:string}} [deps]
+ * @param {{fetch?:typeof fetch, enterpriseHost?:string|null}} [deps]
  */
-export async function startDeviceFlow({ fetch: f = globalThis.fetch, enterpriseHost = null, clientId = GITHUB_CLIENT_ID } = {}) {
+export async function startDeviceFlow({ fetch: f = globalThis.fetch, enterpriseHost = null } = {}) {
   const { host, web } = gheUrls(enterpriseHost);
   const r = await f(`${web}/login/device/code`, {
     method: 'POST', headers: githubHeaders(),
-    body: JSON.stringify({ client_id: clientId, scope: GITHUB_SCOPES }),
+    body: JSON.stringify({ client_id: GITHUB_CLIENT_ID, scope: GITHUB_SCOPES }),
   });
   if (!r.ok) {
     throw new Error(enterpriseHost
-      ? `GitHub device flow could not start on ${host} (${r.status}) — check the host, and that your enterprise allows ${clientId === GITHUB_CLIENT_ID ? 'the GitHub Copilot app' : `the app with client id ${clientId}`}`
+      ? `GitHub device flow could not start on ${host} (${r.status}) — check the host, and that your enterprise allows the GitHub Copilot app`
       : `GitHub device flow could not start (${r.status})`);
   }
   const j = await r.json();
@@ -257,13 +252,13 @@ export async function startDeviceFlow({ fetch: f = globalThis.fetch, enterpriseH
  * approved yet (also for slow_down, with `interval` raised), `{ok:true, token}`
  * once approved, `{error}` when the code expired or was denied.
  * @param {string} deviceCode
- * @param {{fetch?:typeof fetch, enterpriseHost?:string|null, clientId?:string}} [deps]
+ * @param {{fetch?:typeof fetch, enterpriseHost?:string|null}} [deps]
  */
-export async function pollDeviceFlow(deviceCode, { fetch: f = globalThis.fetch, enterpriseHost = null, clientId = GITHUB_CLIENT_ID } = {}) {
+export async function pollDeviceFlow(deviceCode, { fetch: f = globalThis.fetch, enterpriseHost = null } = {}) {
   const { host, web } = gheUrls(enterpriseHost);
   const r = await f(`${web}/login/oauth/access_token`, {
     method: 'POST', headers: githubHeaders(),
-    body: JSON.stringify({ client_id: clientId, device_code: deviceCode, grant_type: 'urn:ietf:params:oauth:grant-type:device_code' }),
+    body: JSON.stringify({ client_id: GITHUB_CLIENT_ID, device_code: deviceCode, grant_type: 'urn:ietf:params:oauth:grant-type:device_code' }),
   });
   const j = await r.json().catch(() => ({}));
   if (j.access_token) return { ok: true, token: j.access_token };

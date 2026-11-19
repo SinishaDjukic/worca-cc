@@ -20,7 +20,7 @@ import {
   startDeviceFlow, pollDeviceFlow, githubLogin, copilotToken, invalidateCopilotToken,
   listCopilotModels, copilotUsage, catalogEntryForCopilotModel, copilotApiFor,
   copilotHeaders, normalizeCopilotModel, copilotCatalogId, copilotAccountHost,
-  copilotClientId, copilotRefusalText,
+  copilotRefusalText,
 } from './providers/copilot.mjs';
 import { keyOptional, providerKeyFor } from './registry.mjs';
 import { listEndpointModels, catalogEntryForEndpointModel, importableModel } from './providers/endpoint.mjs';
@@ -79,19 +79,16 @@ function sweepSessions(now = Date.now()) {
 
 /**
  * Begin a Copilot sign-in (the device flow).
- * The GitHub host (github.com or the GHE.com tenant) and the client id are resolved once and bound to the session
- * (a device code is polled with the id that issued it);
+ * The GitHub host (github.com or the GHE.com tenant) is resolved once and bound to the session;
  * a ghe-com config without a valid host refuses with NO_HOST before any request.
  * @returns {Promise<{deviceCode, userCode, verificationUri, interval, expiresIn, host}>}
  */
 export async function beginCopilotLogin({ fetch: f } = {}) {
   refuseWithBroker('sign in to GitHub Copilot');
-  const cfg = providerConfig('copilot');
-  const enterpriseHost = copilotAccountHost(cfg);
-  const clientId = copilotClientId(cfg);
+  const enterpriseHost = copilotAccountHost(providerConfig('copilot'));
   sweepSessions();
-  const flow = await startDeviceFlow({ fetch: f, enterpriseHost, clientId });
-  sessions.set(flow.deviceCode, { startedAt: Date.now(), expiresAt: Date.now() + Math.min(flow.expiresIn * 1000, SESSION_TTL_MS), interval: flow.interval, enterpriseHost, clientId });
+  const flow = await startDeviceFlow({ fetch: f, enterpriseHost });
+  sessions.set(flow.deviceCode, { startedAt: Date.now(), expiresAt: Date.now() + Math.min(flow.expiresIn * 1000, SESSION_TTL_MS), interval: flow.interval, enterpriseHost });
   return flow;
 }
 
@@ -105,7 +102,7 @@ export async function pollCopilotLogin(deviceCode, { fetch: f } = {}) {
   const s = sessions.get(deviceCode);
   if (!s) return { error: 'unknown or expired sign-in session — start again' };
   const eh = s.enterpriseHost;
-  const r = await pollDeviceFlow(deviceCode, { fetch: f, enterpriseHost: eh, clientId: s.clientId });
+  const r = await pollDeviceFlow(deviceCode, { fetch: f, enterpriseHost: eh });
   if (r.pending) { if (r.interval) s.interval = r.interval; return { pending: true, interval: s.interval }; }
   sessions.delete(deviceCode);
   if (r.error) return { error: r.error };
@@ -117,7 +114,7 @@ export async function pollCopilotLogin(deviceCode, { fetch: f } = {}) {
     await copilotToken(r.token, { fetch: f, force: true, enterpriseHost: eh });
   } catch (err) {
     // Nothing is stored on a refusal; the token was never kept, so it is not a "stored token" that "failed".
-    if (err && err.code === 'AUTH') return { error: copilotRefusalText({ host: eh || 'github.com', status: err.status, login, github: err.github, via: 'sign-in', clientIdHint: !!eh }) };
+    if (err && err.code === 'AUTH') return { error: copilotRefusalText({ host: eh || 'github.com', status: err.status, login, github: err.github, via: 'sign-in' }) };
     return { error: err && err.code === 'EXCHANGE' ? `signed in as ${login || 'GitHub user'}, but the account has no Copilot access — ${err.message}` : (err.message || String(err)) };
   }
   try {
@@ -165,7 +162,6 @@ export async function providersState({ quota = false, fetch: f, person = resolve
     login: c.login || null,
     accountType: c.accountType,
     enterpriseHost: c.enterpriseHost || null,
-    clientId: c.clientId || null,
     githubHost: copilotGithubHost(c),
     maxConcurrent: c.maxConcurrent,
     tokenSource: secretSource(c.githubToken),

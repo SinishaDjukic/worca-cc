@@ -52,7 +52,7 @@ export function createCopilotExchange({ fetchImpl = globalThis.fetch, exchangeUr
         const reason = githubReasonText(github);
         const text = phase === 'stored'
           ? `GitHub refused the sign-in (${res.status}): sign in to Copilot again${reason ? ` (${reason})` : ''}`
-          : copilotRefusalText({ host: githubHost, status: res.status, github, via: phase === 'sign-in' ? 'sign-in' : 'token', clientIdHint: false });
+          : copilotRefusalText({ host: githubHost, status: res.status, github, via: phase === 'sign-in' ? 'sign-in' : 'token' });
         throw Object.assign(new Error(text), { status: res.status, code: 'AUTH', host: githubHost, github });
       }
       const j = await res.json();

@@ -69,8 +69,3 @@ export function gheEgressAllow(host) {
   const h = normalizeGheHost(host);
   return h ? [h, `.${h}`] : [];
 }
-
-/** A GitHub App / OAuth app client id (same rule as the broker's WORCA_BROKER_GITHUB_CLIENT_ID). */
-export function isGithubClientId(s) {
-  return typeof s === 'string' && /^[A-Za-z0-9._-]{8,64}$/.test(s);
-}
