@@ -80,7 +80,7 @@ Each item has a recommendation (**R**) and the alternative(s). Where a task depe
   - **R: back to the approved text** "In your own words, for example "names a goal with a number"." once criteria ship.
   - Alternative: keep Part 2's text.
 - **P4-Q17. Who pays for checking criteria, and which models may check?** The check uses the model's own Worca routing, like a run (D88: `modelEnv: resolveModelEnv(model)`, the credential broker). `runsOn(m, 'claude')` is true for the Claude sign-in **and** for env-routed rows (Vertex, a gateway: `connectionOf` → `{ kind: 'env' }`) and bridged provider rows. So the account that pays may be a cloud account, and a call's cost can come back `billed`, `estimated` or `unknown` (`src/core/helper-call/cost.mjs` `costOfResult`). Before this item, an `unknown` cost booked nothing (`recordTestJudgeCost` skipped $0), so the spending limit would undercount without a word.
-  - **R: every catalog model that runs on Claude Code may check, and "Checked with" names who pays** after each model ("Opus 5.5 · Claude sign-in", "Opus 5.5 · Custom endpoint", "GPT-5 · OpenAI-compatible": `connectionLabel`, `src/shared/connections.mjs:58`). A billed or estimated cost books its amount (`cost_kind` says which). A reply whose cost is `unknown` books a **$0 row with `cost_kind 'unknown'`**, never nothing, and the test's cost and Check the checker's cost line add "· the cost of some checks is not known" (P4-M5, P4-M3). Those calls cannot count in the spending limit; the words say so. Tasks 5, 6, 7, 10, 13–15, 18 and 21 are written for this.
+  - **R: every catalog model that runs on Claude Code may check, and "Checked with" names who pays** after each model, as far as Worca can see (`paysFor`, Task 10): "Worca's credential broker" when the broker is on; the cloud ("Google Vertex AI", "Amazon Bedrock", "Microsoft Foundry") when the model's own env switches it on; the connection otherwise ("Custom endpoint", "OpenAI-compatible": `connectionLabel`, `src/shared/connections.mjs:58`); and for a row that reads as signed in, a cloud or API key set where Worca runs ("Google Vertex AI, set where Worca runs") or in the person's Claude Code settings ("…, set in your Claude Code settings"). Only then "Claude sign-in". **What Worca cannot see:** an `apiKeyHelper`, a managed Claude Code settings file or a gateway inside the person's network can still send a "Claude sign-in" call elsewhere; the "Checked with" hint says "As far as Worca can tell" (P4-M2), and the docs (Task 25) name these cases. A billed or estimated cost books its amount (`cost_kind` says which). A reply whose cost is `unknown` books a **$0 row with `cost_kind 'unknown'`**, never nothing, and the test's cost and Check the checker's cost line add "· the cost of some checks is not known" (P4-M5, P4-M3). Those calls cannot count in the spending limit; the words say so. Tasks 5, 6, 7, 10, 13–15, 18 and 21 are written for this.
   - Alternative A: **Claude sign-in rows only** (`connectionOf(m).kind === 'signin'`, engine `claude`). Every cost is Claude Code's billed figure, but a person whose Claude models all route through a cloud account gets an empty list and cannot use criteria.
   - Alternative B: as R, but a model whose reply came back `unknown` is not offered for checking while a spending limit is set ("Worca cannot count what this model costs, so it cannot keep to your spending limit").
 
@@ -141,7 +141,7 @@ Board 12 also shows criteria the person switched to exact checks, labelled with 
 No approved board draws these. Each is mocked on the evals canvas (Worca design system), approved by the user, and only then built. The words below are this plan's proposals; the approved mock wins.
 
 - **P4-M1. Add an automatic check (boards 24 and 33's dialog) with the Part 4 kinds and Worca's suggestion.** The four new kinds in the "What to check" select under "The result": "Every quote is in the files", "Numbers come from the files", "No personal data", "Links work", each with its P4-C4 hint and a live preview line; none has a field except the "Read from" choice of a project example (Part 3a's Q11) for the first three. Board 10's violet "Worca suggests" box at the top when the dialog was opened from a criterion's "Switch" (with "Switch to an exact check" and "Keep it as a criterion"). States: each kind picked, opened from Switch, a project example.
-- **P4-M2. The editor's criterion rows (boards 2 and 32) in every state.** A new empty row after "Add a criterion" (placeholder "A sentence that is true of a good result"), a row's Remove (an icon button), "Confirm 4 results" (amber, a link), "Needs your answers", "Unreliable" with "Fix it", "Not checked yet" for a criterion on an unsaved example, the "Checked with" select's list (each model with who pays, "Opus 5.5 · Claude sign-in", and "· suggested": P4-Q17), and "A result you liked" when empty ("Add a result you liked": upload a file, or "Use a try's result") and with a project example. Light, dark, 390 px.
+- **P4-M2. The editor's criterion rows (boards 2 and 32) in every state.** A new empty row after "Add a criterion" (placeholder "A sentence that is true of a good result"), a row's Remove (an icon button), "Confirm 4 results" (amber, a link), "Needs your answers", "Unreliable" with "Fix it", "Not checked yet" for a criterion on an unsaved example, the "Checked with" select's list (each model with who pays, "Opus 5.5 · Claude sign-in", "Opus 5.5 · Google Vertex AI, set where Worca runs", and "· suggested"; the hint says "as far as Worca can tell": P4-Q17), and "A result you liked" when empty ("Add a result you liked": upload a file, or "Use a try's result") and with a project example. Light, dark, 390 px.
 - **P4-M3. Check the checker (board 11) states.** While Worca prepares ("Worca is breaking a good result in a few ways…", then "Checking 4 results…"), no good result yet ("Try this example once first, so Worca has a good result to break."), failed (the reason and "Try again"), the spending limit reached, after a "Wrong" (Worca's clearer words, "Use these words and check again", "Keep my words"), done (all 4 answered, "Use this criterion" on), and the cost line with "· the cost of some checks is not known" (P4-Q17).
 - **P4-M4. The trust report (board 13) early states.** No criteria yet, criteria but no answers yet ("Worca needs your answers first: confirm each new criterion."), and tile 1 without colleagues' data (board 13's "people agree with each other 90%" needs Part 5's reviews: the sub-line then reads "of N answers").
 - **P4-M5. Compare (board 5) extras.** The "In short" sentence when a change shows only in unreliable criteria ("v5 differs from v4 on 1 example only in a criterion Worca cannot judge reliably yet: Pricing page A/B test."), the line when criteria changed after the test ("Your criteria changed after this test. Check them on these tries (about $0.40)" with a button), the progress line while a test checks criteria after its last try ("Checking your criteria on earlier tries"), the line for criteria that were not checked on every try of an example (D98, I6: "Not checked on every try, so it does not decide yet: "Names a success metric" in Bulk invoice export." with "Check them on these tries"), the "—" cell in By criterion when a side has no checked try, the notice when "Check them on these tries" ends ("Worca checked your criteria on these tries."), and "· the cost of some checks is not known" after the test's cost (P4-Q17).
@@ -2951,7 +2951,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `listModels()` (`src/core/config.mjs:628`, an array of `{ id, label, … }`), `runsOn` (`src/shared/connections.mjs:53`; it reads a row's `harnesses`, else derives them from its connection, `harnessesOf` `:43-50`), `connectionLabel` (`:58`), `manifestModels` (`src/core/broker-routing.mjs:74`), `findPipelineRowById` (`src/core/artifacts.mjs`).
-- Produces: `claudeModels(catalog) → [{ id, label, pays }]` (`pays` = `connectionLabel(m)`, P4-Q17: who pays for a check with that model), `suggestJudgeModel(models, writers) → { id, label, suggested } | null`, `writerModelsOf(workflowId) → Set<string>`, `judgeModelsView(workflowId, { catalog }) → { models, suggested }`, `checkJudgeModel(model, { catalog })` (throws 400), `withJudgeModel(workflowId, fields, was, { catalog }) → fields`. Route `GET /api/workflows/:id/tests/judge-models`.
+- Produces: `claudeModels(catalog, { envOf, processEnv, userEnv }) → [{ id, label, pays }]` and `paysFor(m, { modelEnv, processEnv, userEnv }) → string` (P4-Q17, review N3: who pays for a check with that model, as far as Worca can see; never "Claude sign-in" when the broker, a cloud switch (`PROVIDER_MODE_ENV_KEYS`, `model-env.mjs:137`) or a key in the model env, the server's environment or the Claude Code user settings routes it), `suggestJudgeModel(models, writers) → { id, label, suggested } | null`, `writerModelsOf(workflowId) → Set<string>`, `judgeModelsView(workflowId, { catalog }) → { models, suggested }`, `checkJudgeModel(model, { catalog })` (throws 400), `withJudgeModel(workflowId, fields, was, { catalog }) → fields`. Route `GET /api/workflows/:id/tests/judge-models`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2998,10 +2998,23 @@ test('withJudgeModel: an example with criteria and no model gets the suggestion;
   assert.equal(claudeModels([{ id: 'gpt-5', label: 'GPT-5', harnesses: ['codex'] }, ...CATALOG]).length, 4);
 });
 
+const quiet = { envOf: () => undefined, processEnv: {}, userEnv: {} };   // nothing routes: the runner's own environment never leaks in
 test('P4-Q17: each model says who pays for a check with it', () => {
   assert.deepEqual(claudeModels([{ id: 'claude-opus-5-5', label: 'Opus 5.5' },
-    { id: 'claude-opus-5-5-vx', label: 'Opus 5.5 (Vertex)', env: { ANTHROPIC_BASE_URL: 'https://gw.example' } }]),
-  [{ id: 'claude-opus-5-5', label: 'Opus 5.5', pays: 'Claude sign-in' }, { id: 'claude-opus-5-5-vx', label: 'Opus 5.5 (Vertex)', pays: 'Custom endpoint' }]);
+    { id: 'claude-opus-5-5-gw', label: 'Opus 5.5 (gateway)', env: { ANTHROPIC_BASE_URL: 'https://gw.example' } }], quiet),
+  [{ id: 'claude-opus-5-5', label: 'Opus 5.5', pays: 'Claude sign-in' }, { id: 'claude-opus-5-5-gw', label: 'Opus 5.5 (gateway)', pays: 'Custom endpoint' }]);
+});
+
+test('N3: a cloud or broker that routes the model is named, never "Claude sign-in"', () => {
+  const row = [{ id: 'claude-opus-5-5', label: 'Opus 5.5' }];
+  const pays = (o) => claudeModels(row, { ...quiet, ...o })[0].pays;
+  assert.equal(pays({ envOf: () => ({ CLAUDE_CODE_USE_VERTEX: '1' }) }), 'Google Vertex AI', 'the model env routes it');
+  assert.equal(pays({ processEnv: { CLAUDE_CODE_USE_BEDROCK: '1' } }), 'Amazon Bedrock, set where Worca runs');
+  assert.equal(pays({ userEnv: { CLAUDE_CODE_USE_VERTEX: 'true' } }), 'Google Vertex AI, set in your Claude Code settings');
+  assert.equal(pays({ processEnv: { ANTHROPIC_API_KEY: 'x' } }), 'an API key set where Worca runs');
+  assert.equal(pays({ processEnv: { WORCA_BROKER_URL: 'http://127.0.0.1:9' } }), "Worca's credential broker");
+  assert.equal(pays({ envOf: () => ({ ANTHROPIC_BASE_URL: 'https://gw.example', CLAUDE_CODE_USE_VERTEX: '0' }), processEnv: { CLAUDE_CODE_USE_VERTEX: '1' } }),
+    'Custom endpoint', 'the model env sends it to an endpoint and turns the cloud off ("0"), so the ambient Vertex switch does not apply');
 });
 ```
 
@@ -3028,6 +3041,10 @@ Expected: FAIL (module not found).
 // does not mark its own work (board 2's hint).
 import { listModels } from '../config.mjs';
 import { runsOn, connectionLabel } from '../../shared/connections.mjs';
+import { resolveModelEnv } from '../config.mjs';
+import { PROVIDER_MODE_ENV_KEYS } from '../model-env.mjs';
+import { brokerEnabled } from '../broker-client.mjs';
+import { readUserSignIn } from '../engines/claude-sign-in.mjs';
 import { manifestModels } from '../broker-routing.mjs';
 import { findPipelineRowById } from '../artifacts.mjs';
 import { getDb, prepare } from '../db.mjs';
@@ -3037,11 +3054,37 @@ const FAMILY = ['opus', 'fable', 'sonnet', 'haiku'];
 const familyOf = (id) => { const i = FAMILY.findIndex((f) => String(id).toLowerCase().includes(`-${f}-`)); return i < 0 ? FAMILY.length : i; };
 const plainId = (id) => String(id || '').toLowerCase().replace(/\[1m\]$/, '');
 
+const CLOUDS = Object.freeze({ CLAUDE_CODE_USE_VERTEX: 'Google Vertex AI', CLAUDE_CODE_USE_BEDROCK: 'Amazon Bedrock', CLAUDE_CODE_USE_FOUNDRY: 'Microsoft Foundry' });
+const isOn = (v) => !!v && v !== '0' && String(v).toLowerCase() !== 'false';   // the CLI reads '0' and 'false' as off (model-env.mjs)
+const cloudIn = (env) => { for (const k of PROVIDER_MODE_ENV_KEYS) if (env && isOn(env[k])) return CLOUDS[k]; return null; };
+const keyIn = (env) => !!env && ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN'].some((k) => typeof env[k] === 'string' && env[k].trim());
+const safeModelEnv = (id) => { try { return resolveModelEnv(id); } catch { return undefined; } };
+const userClaudeEnv = () => { try { const u = readUserSignIn(); return (u && u.env) || {}; } catch { return {}; } };
+
+/** N3 (P4-Q17): who pays for a check with `m`, as far as Worca can see: the broker (it routes every Claude model,
+ *  broker-routing.mjs), a cloud in the model's own env, the model's connection (a custom endpoint, a provider), and for a row
+ *  that reads as signed in, a cloud or key set where Worca runs or in the person's Claude Code settings. Worca cannot see an
+ *  `apiKeyHelper` or managed Claude Code settings; P4-Q17 says so. */
+export function paysFor(m, { modelEnv, processEnv = process.env, userEnv = {} } = {}) {
+  if (brokerEnabled(processEnv)) return "Worca's credential broker";
+  const own = cloudIn(modelEnv);
+  if (own) return own;
+  const label = connectionLabel(m);
+  if (label !== 'Claude sign-in' || (modelEnv && 'ANTHROPIC_BASE_URL' in modelEnv)) return label === 'Claude sign-in' ? 'Custom endpoint' : label;
+  const here = cloudIn(processEnv);
+  if (here) return `${here}, set where Worca runs`;
+  const yours = cloudIn(userEnv);
+  if (yours) return `${yours}, set in your Claude Code settings`;
+  if (keyIn(processEnv)) return 'an API key set where Worca runs';
+  if (keyIn(userEnv)) return 'an API key set in your Claude Code settings';
+  return 'Claude sign-in';
+}
+
 /** P4-Q2, P4-Q17: the catalog's models that run on Claude Code, whatever their connection, as `{ id, label, pays }` in the
- *  catalog's order. `pays` names who pays for a check with it ("Claude sign-in", "Custom endpoint", …). */
-export function claudeModels(catalog) {
+ *  catalog's order. `pays` names who pays for a check with it (`paysFor`). The deps exist for tests. */
+export function claudeModels(catalog, { envOf = safeModelEnv, processEnv = process.env, userEnv = userClaudeEnv() } = {}) {
   return (Array.isArray(catalog) ? catalog : []).filter((m) => m && typeof m.id === 'string' && runsOn(m, 'claude'))
-    .map((m) => ({ id: m.id, label: m.label || m.id, pays: connectionLabel(m) }));
+    .map((m) => ({ id: m.id, label: m.label || m.id, pays: paysFor(m, { modelEnv: envOf(m.id), processEnv, userEnv }) }));
 }
 
 /** D105 (pure): Opus, Fable, Sonnet, Haiku, each newest first; no "(1M)" twin unless there is nothing else; the first not in `writers`. */
@@ -6029,7 +6072,7 @@ Run once for 4a (its parts) and again for 4b (P4-Q1).
 
 - [ ] **Step 1: Docs**
 
-- `docs/costs.md`, after the sentence "A total cost limit counts pipeline and Chat spend over a window …": add "Workflow tests count too: their tries, and the AI checks of your criteria (Check the checker, suggested criteria and clearer words included). Statistics leaves them out."
+- `docs/costs.md`, after the sentence "A total cost limit counts pipeline and Chat spend over a window …": add "Workflow tests count too: their tries, and the AI checks of your criteria (Check the checker, suggested criteria and clearer words included). Statistics leaves them out." Then: "Each model in "Checked with" names who pays for its checks, as far as Worca can tell: the credential broker, a cloud (Vertex, Bedrock, Foundry) or an API key set in the model, where Worca runs or in your Claude Code settings, a custom endpoint, or your Claude sign-in. Worca cannot see an `apiKeyHelper`, managed Claude Code settings or a gateway in your network; with those, a check marked "Claude sign-in" may be billed elsewhere."
 - `docs/feature-flags.md`, the `workflowTests` row: append "Your criteria (Part 4): sentences a good result makes true, checked on every try by an AI model you pick per example (Claude models; the call has no tools and its quote from the result must be found there), exact checks without AI (quotes and numbers from the example's files, no personal data, links work), Check the checker, Compare by criterion and How reliable is Worca's checking. A criterion Worca judges unreliably (after at least 10 of your answers) is shown but never decides better or worse. These checks cost money and count in the spending limit and the test's own cost limit."
 - `docs/ui-levels.md`: a row under the 3b row: "| Behind the flag `workflowTests`, Simple (Part 4): in the example editor, Your criteria with their trust lines and Switch, Checked with, A result you liked; in the check dialog, Every quote is in the files, Numbers come from the files, No personal data, Links work, and Worca's suggestion; in Test a version, Checking your criteria; side by side, Your criteria · checked by Worca with Why, Proof, Agree and Disagree, and the pair question; Compare's By criterion and its checking card; Check the checker; How reliable is Worca's checking and its card on the Tests list; in Use this run as a test example, the result you liked and the suggested criteria | all |"
 - `docs/workflows.md`, the Tests section: a short "Your criteria" paragraph in the same words.
