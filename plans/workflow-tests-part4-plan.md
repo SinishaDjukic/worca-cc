@@ -53,8 +53,10 @@ Each item has a recommendation (**R**) and the alternative(s). Where a task depe
   - **R: one pair question per example per test:** the first finished try of each version, asked in both orders (so the order-swapped test of board 13 has data). With a result you liked the question is "closer to the result you liked", otherwise "better overall". Only for examples that have criteria or a result you liked. It never decides better or worse. Shown above the try tabs on one example side by side (a small move from board 6: needs P4-M6).
   - Alternative A: every try pair (3 tries = 6 calls per example). Alternative B: no pair question in Part 4.
 - **P4-Q9. "Links work".**
-  - **R: build it** with Ask's guarded web transport (`httpsTransport` + `guardedLookup`, `src/core/ask/web-fetch.mjs:183`, `:105`): public addresses only, `http://` tried as `https://`, at most 20 links a result, 15 s each, at most 3 redirects, no cookies, no body read.
-  - Alternative: leave it to a later part (the check makes outbound web calls from Worca itself).
+  - **R: build it** with Ask's guarded web transport (`httpsTransport` + `guardedLookup`, `src/core/ask/web-fetch.mjs:183`, `:105`) and Ask's URL rule on every hop (`web-fetch.mjs:44-48`): https only (`http://` is tried as `https://`), no IP-address host (`https://127.0.0.1/`, `https://[::1]/`, `https://10.0.0.1/` are "Not working" and never dialled), no port but 443, no user name or password, and a host name that resolves to private addresses is refused. At most 20 links a result, 15 s a hop, at most 3 redirects, at most 2 minutes a check (links not reached by then are not checked: "Met · 12 of 31 checked"), no cookies, no body read.
+  - **R, what counts as working:** 2xx, and also 401, 403 and 429 (the site answered but refuses automated visitors; Worca cannot tell more). Alternative: 401, 403 and 429 count as "Not working" (bot blocks then fail good results; some file stores also answer 403 for a missing file).
+  - **R, when Worca gets no answer at all** (no such host, connection refused, timed out): the link is "Not working" when another link of the same result answered; when none answered, Worca may have no internet, so the check shows "Not checked: Worca could not reach these links" (grey) and does not decide. The cost: a result whose only links are all made up shows "Not checked" instead of "Not working". Alternative: every link without an answer is "Not working" (an offline or locked-down Worca then fails every try that has links).
+  - Alternative to the whole item: leave it to a later part (the check makes outbound web calls from Worca itself).
 - **P4-Q10. When does Worca suggest criteria from the note in "Use this run as a test example" (board 3)?**
   - **R: as drawn: when the note box loses focus** with at least 20 characters, once per distinct note, about $0.01 with Haiku and a few cents with Opus. The cost counts in the spending limit.
   - Alternative: a "Suggest criteria" button (needs a mock change).
@@ -122,7 +124,7 @@ Board 12 also shows criteria the person switched to exact checks, labelled with 
 | # | Where | What this plan builds |
 |---|---|---|
 | P4-C1 | Board 2's trust line for each state | Reliable: green "Reliable" + "Worca agrees with people X of N times". Needs your answers (board 32): grey badge + "Worca has N of the 10 answers it needs". Unreliable (board 12): red "Unreliable" + "Agrees with people X of N times. Shown, but does not decide better or worse." + "Fix it". New (board 12's amber): "Confirm 4 results" as a link to Check the checker. Exact: violet "Can be checked exactly, without AI." + "Switch" (or "Can be checked exactly: the result must contain "200"." + "Switch"). The new and unreliable rows in the editor are undrawn: P4-M2. |
-| P4-C2 | "Not checked" cells (undrawn) | "Not checked yet" (no judgement), "Not checked: the try did not finish", "Not checked: the spending limit is reached", "Not checked: the try left no result", "Not checked: Worca's answer could not be read", "Not checked: Worca's proof was not in the result", "Not checked: the check did not run". Grey, never a red or green dot. |
+| P4-C2 | "Not checked" cells (undrawn) | "Not checked yet" (no judgement), "Not checked: the try did not finish", "Not checked: the spending limit is reached", "Not checked: the try left no result", "Not checked: Worca's answer could not be read", "Not checked: Worca's proof was not in the result", "Not checked: the check did not run", and for the links check "Not checked: Worca could not reach these links". Grey, never a red or green dot. |
 | P4-C3 | Board 6's "Why Worca says no for v5:" for a met verdict | "Why Worca says yes for v4:". The proof line ends with "· found in the result" (board 6); a verdict whose proof was not found is not shown as a verdict (P4-C2). |
 | P4-C4 | Board 10's hints for the new exact kinds in the select | "Every quote is in the files": "Each sentence in quotation marks must appear word for word in the example's files or request. Small differences in spacing and quotation marks are ignored." "Numbers come from the files": "Each number in the result must appear in the example's files or request." "No personal data": "No e-mail addresses, phone numbers, bank account or card numbers." "Links work": "Every link in the result opens a real page." (board 10's words). |
 | P4-C5 | The value of the new exact checks side by side | Quotes: "Met", "No quotes" (met) or "Not in the files: "<first, 60 characters>"" + " and N more". Numbers: "Met", "No numbers" (met) or "Not in the files: 60%, 140" (first three) + " and N more". Personal data: "Met" or "Found 1 e-mail address, 2 phone numbers". Links: "Met", "No links" (met), "Met · 20 of 31 checked" or "Not working: <first link, 60 characters>" + " and N more". |
@@ -156,7 +158,7 @@ D1–D85 hold. These continue them. The `(technical)` rows are for the reviewer.
 | D90 | **What the judge reads.** The try's main result (`mainResult`), and for a project try also its diff (the try's `diff-patch.patch`) under a "Changes" heading; together at most 200,000 characters (cut at a line, and the prompt says it was cut). Context: the example's request, the answers it gives Worca, and its text files (UTF-8 files only), at most 100,000 characters. The proof must come from the result (and diff), never from the context. Everything read is data: the prompt puts it in tags and says never to follow instructions inside. |
 | D91 | **When.** A test's own tries: in the try's checking phase, right after its automatic checks, for every try whose run finished (P4-Q5); criteria already judged for that try, text and model are not asked again. After the last try, a criteria phase checks the tries the test reused (and any still missing). Try it once now too. A mock try, and every call while `WORCA_MOCK=1`, uses `mockJudgement`: free, no ledger row. A judge failure never fails a try: the criterion shows "Not checked …" (P4-C2). |
 | D92 | **Spend.** Every model call of Part 4 that cost money writes a `wf_test_judge_ledger` row (purpose `try`, `pair`, `checker`, `suggest` or `reword`). `testJudgeWindowedSpendUsd` joins `totalWindowSpendUsd` and the budget's all-time figure; `budgetWindowSavings` subtracts it like test tries. A test's own judge rows (`test_run_id`) count in `store.spentOfRun`, so in its cap and every cost shown for it. Statistics shows none of it (Part 6's Tests tile will). With the spending limit reached, no call is made ("Not checked: the spending limit is reached"). |
-| D93 | **The exact checks** (pure, no AI; kinds `quotes`, `numbers`, `no-personal`, `links`). Sources = the example's request, its answers and its UTF-8 files.<br>• **quotes:** text in “…”, "…" or «…» of at least 4 words; each part between "…" must be found in the sources (normalised as D89). No quotes: met.<br>• **numbers:** every number in the result (thousands separators and a trailing % dropped; list markers like "1." at a line start and single digits without % ignored) must be among the sources' numbers.<br>• **no-personal:** no e-mail address, no phone number (a "+" or a leading 0 and 9–15 digits), no IBAN (mod-97 checked), no card number (13–19 digits, Luhn checked).<br>• **links** (P4-Q9): every `http(s)` link (markdown or bare, at most 20 checked) answers 2xx after at most 3 redirects, over https, on a public address.<br>The first three may read a file of a project example ("Read from", Part 3a Q11). |
+| D93 | **The exact checks** (pure, no AI; kinds `quotes`, `numbers`, `no-personal`, `links`). Sources = the example's request, its answers and its UTF-8 files.<br>• **quotes:** text in “…”, "…" or «…» of at least 4 words; each part between "…" must be found in the sources (normalised as D89). No quotes: met.<br>• **numbers:** every number in the result (thousands separators and a trailing % dropped; list markers like "1." at a line start and single digits without % ignored) must be among the sources' numbers.<br>• **no-personal:** no e-mail address, no phone number (a "+" or a leading 0 and 9–15 digits), no IBAN (mod-97 checked), no card number (13–19 digits, Luhn checked).<br>• **links** (P4-Q9): every `http(s)` link (markdown or bare, at most 20 checked, none started after 2 minutes) answers 2xx (or 401, 403, 429) after at most 3 redirects, over https on port 443, with a host name (never an IP address) that resolves to public addresses; the URL rule runs before every hop. When no link of the result got any answer, the check is "Not checked" and does not decide (`notChecked`).<br>The first three may read a file of a project example ("Read from", Part 3a Q11). |
 | D94 | **"Can be checked exactly" (board 2).** A pure rule suggests an exact check for a criterion's words: "quot…" → quotes; "numbers … from/in the files/data/notes/interviews" or "makes up no numbers" → numbers; "personal data", "e-mail", "phone number" → no-personal; "link" → links; a number of 2+ digits with "mention/say/state/name" → "Must mention" that number. **Switch** opens the check dialog with the suggestion (P4-M1); the new check keeps the criterion's words as `said` (D99), and the criterion is removed. |
 | D95 | **Trust marks (D14, P4-Q6).** Per workflow, criterion text (`criterionKey`) and model:<br>• **confirm** ("Confirm 4 results", amber): no Check the checker round of it is done. It decides (board 12: "It counts, but you have not confirmed").<br>• **collecting** ("Needs your answers", grey, board 32): a round is done, fewer than 10 answers. It decides.<br>• **reliable** (green): ≥ 10 answers and the P4-Q6 rule holds. It decides.<br>• **unreliable** (red): ≥ 10 answers and the rule fails. Shown, never decides. It becomes reliable again only through new words (a new key: "confirm" again) or new answers.<br>Exact checks are always "Can be checked exactly" and decide like any automatic check. |
 | D96 | **Answers.** Agree / Disagree on a criterion's verdict side by side (board 6), Right / Wrong on a card in Check the checker (board 11), Agree / Disagree on a pair answer. One answer per person per verdict; a later press replaces it; Undo removes it (P4-M6). An answer counts for the verdict's criterion key and model only. Pair answers count for board 13's tests, never for a criterion. |
@@ -208,7 +210,7 @@ D1–D85 hold. These continue them. The `(technical)` rows are for the reviewer.
 6. **D14** (Task 8). Expect never "unreliable" below 10 answers; the side rule; a new text or model resets to "confirm".
 7. **Better or worse** (Task 9). Expect an unreliable criterion that differs to leave the example "same" and to be named; a not-checked criterion never to fail a try; Part 2's verdicts untouched in the DB.
 8. **Exact checks** (Task 3). Expect quotes found across spacing and quote marks, list markers and single digits ignored, IBAN and Luhn checked, no false phone numbers on dates.
-9. **Links** (Task 4). Expect private addresses refused, http tried as https, at most 20 links, a 15 s timeout.
+9. **Links** (Task 4). Expect IP-address hosts and ports other than 443 refused before the transport on every hop (also after a redirect), private host names refused, http tried as https, at most 20 links, a 15 s timeout a hop and 2 minutes a check, and an offline Worca to leave the check "Not checked" (not deciding) rather than failing the try.
 10. **Design guards** (Tasks 17–24): no new `ui-design-language` failure.
 
 ---
@@ -1073,7 +1075,7 @@ and in `CHECK_KIND_LABELS`: `quotes: 'Every quote is in the files', numbers: 'Nu
     if (SOURCE_KINDS.includes(check.kind) && sources === null) sources = readSources(example);
 ```
 then `runCheck(check, { text, files: outcome.files, changes, sources: sources || '' })`.
-4. In the first loop's opening line, send `links` to the later loop with the scripts and commands: `if (check.kind === 'script' || check.kind === 'command' || NETWORK_KINDS.includes(check.kind)) { later.push(i); continue; }`. In the later loop, until Task 4, a `links` check gives `not('Not run: link checks come later')` (Task 4 replaces it).
+4. In the first loop's opening line, send `links` to the later loop with the scripts and commands: `if (check.kind === 'script' || check.kind === 'command' || NETWORK_KINDS.includes(check.kind)) { later.push(i); continue; }`. In the later loop, right after the not-finished check and before the copy-is-gone guard (`result.mjs:276`), until Task 4, a `links` check gives `not('Not run: link checks come later')` (Task 4 replaces it there).
 
 - [ ] **Step 7: Keep the dialog as it is** (`ui/public/workflows/example-editor.mjs:106`)
 
@@ -1101,12 +1103,14 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Files:**
 - Create: `src/core/workflow-tests/link-check.mjs`
-- Modify: `src/core/workflow-tests/result.mjs` (the later loop runs `links`), `src/core/workflow-tests/routes.mjs` (nothing: the default import is used)
-- Test: `test/workflow-test-link-check.test.mjs`
+- Modify: `src/core/workflow-tests/result.mjs` (the later loop runs `links`), `src/shared/workflow-tests/checks.mjs` (`judgeTry`: a check that is `notChecked` does not decide), `src/shared/workflow-tests/compare.mjs` (`missCounts` skips it), `ui/public/workflows/test-compare.mjs` (one line: its cell is grey words), `src/core/workflow-tests/routes.mjs` (nothing: the default import is used)
+- Test: `test/workflow-test-link-check.test.mjs`, `test/ui-workflow-test-compare.test.mjs` (one case more)
 
 **Interfaces:**
-- Consumes: `httpsTransport({ url, signal, headers }) → { status, headers, destroy }` (`src/core/ask/web-fetch.mjs:183`; its default `lookup` is `guardedLookup`, which refuses private and reserved addresses); `linksIn` (Task 3).
-- Produces: `LINKS_MAX = 20`, `LINK_TIMEOUT_MS = 15000`, `checkLinks(text, { transport, timeoutMs, max }) → Promise<{ met, value }>`, `linkWorks(raw, { transport, timeoutMs }) → Promise<boolean>`.
+- Consumes: `httpsTransport({ url, signal, headers }) → { status, headers, destroy }` (`src/core/ask/web-fetch.mjs:183`; its default `lookup` is `guardedLookup`, which refuses host names that resolve to private and reserved addresses); `linksIn` (Task 3).
+- Why a URL rule as well: on the direct path (no proxy) Node never calls `lookup` for an IP-address host, so `guardedLookup` alone would dial `https://127.0.0.1/`. Ask never relies on it either: `checkWebUrl` refuses an IP-address host and any explicit port before the first request and on every redirect (`web-fetch.mjs:44-48`, `:244`, `:257`). `linkUrlOk` is that rule without the allowlist and the data rules.
+- Produces: `LINKS_MAX = 20`, `LINK_TIMEOUT_MS = 15000`, `LINKS_DEADLINE_MS = 120000`, `linkUrlOk(url) → boolean`, `linkState(raw, { transport, timeoutMs }) → Promise<'works' | 'broken' | 'unreached'>`, `checkLinks(text, { transport, timeoutMs, max, deadlineMs, now }) → Promise<{ met, value, notChecked? }>`.
+- A check result may carry `notChecked: true` (with `met: false`): Worca could not run it, and it does not decide (`judgeTry`, `missCounts`). Only `links` sets it today.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1115,8 +1119,9 @@ Create `test/workflow-test-link-check.test.mjs`:
 // test/workflow-test-link-check.test.mjs — "Links work" (plans/workflow-tests-part4-plan.md D93, P4-Q9), with a fake transport.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkLinks, linkWorks, LINKS_MAX } from '../src/core/workflow-tests/link-check.mjs';
+import { checkLinks, linkState, LINKS_MAX } from '../src/core/workflow-tests/link-check.mjs';
 import { checkTry } from '../src/core/workflow-tests/result.mjs';
+import { judgeTry } from '../src/shared/workflow-tests/checks.mjs';
 
 const site = (routes) => {
   const seen = [];
@@ -1129,17 +1134,57 @@ const site = (routes) => {
   return { transport, seen };
 };
 
-test('a link works on 2xx after at most 3 redirects; http is tried as https; private addresses fail', async () => {
+test('a link works on 2xx (or 401, 403, 429) after at most 3 redirects; http is tried as https; a private host name fails', async () => {
   const s = site({ 'https://a.example/x': { status: 301, location: '/y' }, 'https://a.example/y': { status: 200 },
-    'https://b.example/z': { status: 200 }, 'https://in.example/': Object.assign(new Error('refused'), { code: 'EWORCA_BLOCKED' }) });
-  assert.equal(await linkWorks('https://a.example/x', { transport: s.transport }), true);
-  assert.equal(await linkWorks('http://b.example/z', { transport: s.transport }), true);
+    'https://b.example/z': { status: 200 }, 'https://c.example/': { status: 403 },
+    'https://in.example/': Object.assign(new Error('refused'), { code: 'EWORCA_BLOCKED' }) });
+  assert.equal(await linkState('https://a.example/x', { transport: s.transport }), 'works');
+  assert.equal(await linkState('http://b.example/z', { transport: s.transport }), 'works');
   assert.ok(s.seen.includes('https://b.example/z'), 'http became https');
-  assert.equal(await linkWorks('https://in.example/', { transport: s.transport }), false);
-  assert.equal(await linkWorks('https://user:pw@a.example/x', { transport: s.transport }), false, 'no credentials in a link');
+  assert.equal(await linkState('https://c.example/', { transport: s.transport }), 'works', 'P4-Q9: the site answered but refuses bots');
+  assert.equal(await linkState('https://in.example/', { transport: s.transport }), 'broken', 'resolves to a private address');
+  assert.equal(await linkState('https://user:pw@a.example/x', { transport: s.transport }), 'broken', 'no credentials in a link');
   const loop = site({ 'https://l.example/1': { status: 302, location: '/2' }, 'https://l.example/2': { status: 302, location: '/3' },
     'https://l.example/3': { status: 302, location: '/4' }, 'https://l.example/4': { status: 302, location: '/5' } });
-  assert.equal(await linkWorks('https://l.example/1', { transport: loop.transport }), false);
+  assert.equal(await linkState('https://l.example/1', { transport: loop.transport }), 'broken');
+});
+
+test('C1: IP-address hosts and ports other than 443 are refused on every hop, and never dialled', async () => {
+  const s = site({ 'https://a.example/to-ip': { status: 301, location: 'https://127.0.0.1/' },
+    'https://a.example/to-port': { status: 302, location: 'https://a.example:8443/' }, 'https://a.example/ok': { status: 200 } });
+  // 2130706433 is 127.0.0.1 written as one number: the URL parser turns it into the address, so the same rule refuses it.
+  for (const raw of ['https://127.0.0.1/', 'https://[::1]/', 'https://10.0.0.1/', 'https://169.254.169.254/latest/meta-data/',
+    'https://2130706433/', 'https://a.example:8443/', 'http://a.example:8080/']) {
+    assert.equal(await linkState(raw, { transport: s.transport }), 'broken', raw);
+  }
+  assert.deepEqual(s.seen, [], 'the transport was never called');
+  assert.equal(await linkState('https://a.example/to-ip', { transport: s.transport }), 'broken', 'a redirect to an IP-address host');
+  assert.equal(await linkState('https://a.example/to-port', { transport: s.transport }), 'broken', 'a redirect to another port');
+  assert.deepEqual(s.seen, ['https://a.example/to-ip', 'https://a.example/to-port'], 'the redirect targets were never dialled');
+  assert.equal(await linkState('https://a.example:443/ok', { transport: s.transport }), 'works', 'the default port is fine');
+});
+
+test('I12: no answer at all is broken when another link answered, and not checked when none did', async () => {
+  const err = (code) => Object.assign(new Error(code), { code });
+  const down = site({ 'https://a.example/x': err('EAI_AGAIN'), 'https://b.example/y': err('ENOTFOUND') });
+  assert.deepEqual(await checkLinks('https://a.example/x and https://b.example/y', { transport: down.transport }),
+    { met: false, notChecked: true, value: 'Not checked: Worca could not reach these links' });
+  const half = site({ 'https://a.example/x': { status: 200 }, 'https://made-up.example/y': err('ENOTFOUND') });
+  assert.deepEqual(await checkLinks('https://a.example/x and https://made-up.example/y', { transport: half.transport }),
+    { met: false, value: 'Not working: https://made-up.example/y' });
+  const refused = site({ 'https://a.example/x': err('ECONNREFUSED') });
+  assert.deepEqual(await checkLinks('https://127.0.0.1/admin and https://a.example/x', { transport: refused.transport }),
+    { met: false, value: 'Not working: https://127.0.0.1/admin' }, 'a refused link is broken, whatever the network');
+  const hang = ({ signal }) => new Promise((_, reject) => signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))));
+  assert.equal(await linkState('https://slow.example/', { transport: hang, timeoutMs: 10 }), 'unreached', 'a hop that timed out before any answer');
+});
+
+test('M19: checkLinks starts no new link after its overall deadline', async () => {
+  let t = 0;
+  const s = site(Object.fromEntries([1, 2, 3].map((i) => [`https://a.example/${i}`, { status: 200 }])));
+  const slow = async (o) => { t += 60_000; return s.transport(o); };
+  assert.deepEqual(await checkLinks('https://a.example/1 https://a.example/2 https://a.example/3', { transport: slow, now: () => t, deadlineMs: 120_000 }),
+    { met: true, value: 'Met · 2 of 3 checked' });
 });
 
 test('checkLinks: no links, all fine, one broken, and at most 20 checked', async () => {
@@ -1160,6 +1205,37 @@ test('checkTry runs a links check after the try finished, with its own checker',
     outcome, { checkLinks: async () => ({ met: false, value: 'Not working: https://a.example/x' }) });
   assert.deepEqual(v.checks.map((c) => [c.label, c.met, c.value]), [['Every link works', false, 'Not working: https://a.example/x']]);
 });
+
+test('M20: a project try whose copy is gone still runs its links check (it reads only the result)', async () => {
+  const outcome = { facts: { status: 'done', costUsd: 0 }, text: 'See https://a.example/x', files: [], name: 'r.md', source: 'work',
+    project: { checkoutDir: null, touched: [], total: 0 } };
+  const v = await checkTry({ basics: { noError: true, noHelp: false, maxCostUsd: null, maxSentBack: null }, checks: [{ id: 'c_1', kind: 'links' }] },
+    outcome, { checkLinks: async () => ({ met: true, value: 'Met' }) });
+  assert.deepEqual(v.checks.map((c) => [c.met, c.value, !!c.worcaProblem]), [[true, 'Met', false]]);
+});
+
+test('I12: a check Worca could not run does not decide the try', async () => {
+  const outcome = { facts: { status: 'done', costUsd: 0 }, text: 'See https://a.example/x', files: [], name: 'r.md', source: 'work' };
+  const v = await checkTry({ basics: { noError: true, noHelp: false, maxCostUsd: null, maxSentBack: null }, checks: [{ id: 'c_1', kind: 'links' }] },
+    outcome, { checkLinks: async () => ({ met: false, notChecked: true, value: 'Not checked: Worca could not reach these links' }) });
+  assert.equal(v.passed, true);
+  assert.deepEqual(v.checks.map((c) => [c.met, c.notChecked]), [[false, true]]);
+  const basics = { noError: true, noHelp: false, maxCostUsd: null, maxSentBack: null };
+  assert.equal(judgeTry({ basics }, { status: 'done' }, [{ label: 'x', met: false }]).passed, false, 'an ordinary missed check still fails');
+});
+```
+
+Add to `test/ui-workflow-test-compare.test.mjs` (it has `side()` and `boot()`):
+```js
+test('Part 4 (I12): a check Worca could not run shows grey words, never a dot', () => {
+  const s = side();
+  s.tries[1].b = { ...s.tries[1].b, verdict: { ...s.tries[1].b.verdict,
+    checks: [{ label: 'Every link works', met: false, notChecked: true, value: 'Not checked: Worca could not reach these links' }] } };
+  const { root } = boot(renderSideBySide, s, { tryIndex: 1 });
+  const cell = [...root.querySelectorAll('.wft-checked .wft-res')].find((c) => c.textContent === 'Not checked: Worca could not reach these links');
+  assert.ok(cell && cell.classList.contains('is-none'));
+  assert.equal(cell.querySelector('.wft-dot'), null);
+});
 ```
 
 - [ ] **Step 2: Run it to see it fail**
@@ -1171,73 +1247,113 @@ Expected: FAIL (module not found).
 
 ```js
 // src/core/workflow-tests/link-check.mjs — "Links work" (plans/workflow-tests-part4-plan.md D93, P4-Q9). Each link is opened through
-// Ask's guarded transport: https only (http is tried as https), public addresses only (guardedLookup), the proxy env honoured, no
-// cookies, no body read. Never a run's own network: Worca itself makes these calls, at check time.
+// Ask's guarded transport, with Ask's URL rule on every hop (web-fetch.mjs checkWebUrl, without its allowlist and data rules):
+// https only (http is tried as https), no credentials, no IP-address host, no port but 443, and a host name that resolves to
+// public addresses only (guardedLookup). The URL rule is what keeps private addresses out: on the direct path Node never calls
+// `lookup` for an IP-address host. The proxy env is honoured, no cookies, no body read. Worca itself makes these calls, at check time.
+import { isIP } from 'node:net';
 import { httpsTransport } from '../ask/web-fetch.mjs';
 import { linksIn } from '../../shared/workflow-tests/exact-checks.mjs';
 
 export const LINKS_MAX = 20;
 export const LINK_TIMEOUT_MS = 15_000;
+/** M19: one check starts no new link after two minutes (20 links × 4 hops × 15 s would be 20 minutes). */
+export const LINKS_DEADLINE_MS = 120_000;
 const LINK_REDIRECTS = 3;
 const REDIRECT = new Set([301, 302, 303, 307, 308]);
+/** P4-Q9: the site answered but refuses automated visitors; Worca cannot tell more, so the link counts as working. */
+const REFUSES_BOTS = new Set([401, 403, 429]);
+/** No answer at all: the host could not be reached (web-fetch.mjs's UNREACHABLE). A hop that timed out counts too. */
+const UNREACHED = new Set(['ENOTFOUND', 'EAI_AGAIN', 'EAI_FAIL', 'ECONNREFUSED', 'ETIMEDOUT', 'ENETUNREACH', 'EHOSTUNREACH']);
 const HEADERS = Object.freeze({ 'user-agent': 'worca-link-check/1', accept: '*/*' });
 const clip = (s, n = 60) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
-/** Whether one link answers 2xx within `timeoutMs` a hop, after at most 3 redirects. */
-export async function linkWorks(raw, { transport = httpsTransport, timeoutMs = LINK_TIMEOUT_MS } = {}) {
+/** C1: Ask's URL rule for one hop. A URL with credentials, an IP-address host or a port other than 443 is never dialled. */
+export function linkUrlOk(url) {
+  if (url.protocol !== 'https:' || url.username || url.password) return false;
+  if (url.port) return false;                                     // the URL parser drops an explicit :443
+  return !isIP(url.hostname.replace(/^\[|\]$/g, ''));             // also catches 2130706433 and 0x7f.1 (the parser makes them 127.0.0.1)
+}
+
+/** One link: 'works' (2xx, or 401/403/429), 'broken' (any other answer, a refused URL or address, a 4th redirect) or
+ *  'unreached' (the first hop got no answer at all: the host could not be reached, or it timed out). */
+export async function linkState(raw, { transport = httpsTransport, timeoutMs = LINK_TIMEOUT_MS } = {}) {
   let url;
-  try { url = new URL(raw); } catch { return false; }
+  try { url = new URL(raw); } catch { return 'broken'; }
   for (let hop = 0; hop <= LINK_REDIRECTS; hop += 1) {
-    if (url.protocol === 'http:') url = new URL(`https:${url.href.slice('http:'.length)}`);
-    if (url.protocol !== 'https:' || url.username || url.password) return false;
+    if (url.protocol === 'http:') { try { url = new URL(`https:${url.href.slice('http:'.length)}`); } catch { return 'broken'; } }
+    if (!linkUrlOk(url)) return 'broken';                          // before the transport, on every hop
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     let res;
-    try { res = await transport({ url, signal: ctrl.signal, headers: HEADERS }); } catch { return false; } finally { clearTimeout(timer); }
+    try { res = await transport({ url, signal: ctrl.signal, headers: HEADERS }); } catch (e) {
+      // EWORCA_BLOCKED (a host name with a private address) and TLS errors are the link's; a redirect target that no host
+      // answers for is too (the first hop answered, so Worca can reach the web).
+      return hop === 0 && (ctrl.signal.aborted || UNREACHED.has(e && e.code)) ? 'unreached' : 'broken';
+    } finally { clearTimeout(timer); }
     try { res.destroy(); } catch { /* the body is never read */ }
-    if (res.status >= 200 && res.status < 300) return true;
+    if ((res.status >= 200 && res.status < 300) || REFUSES_BOTS.has(res.status)) return 'works';
     const to = res.headers && res.headers.location;
-    if (!REDIRECT.has(res.status) || typeof to !== 'string') return false;
-    try { url = new URL(to, url); } catch { return false; }
+    if (!REDIRECT.has(res.status) || typeof to !== 'string') return 'broken';
+    try { url = new URL(to, url); } catch { return 'broken'; }
   }
-  return false;
+  return 'broken';
 }
 
-/** D93 links: every link of the text works (at most `max` checked, one at a time). */
-export async function checkLinks(text, { transport = httpsTransport, timeoutMs = LINK_TIMEOUT_MS, max = LINKS_MAX } = {}) {
+/** D93 links: every link of the text works (at most `max` checked, one at a time, none started after `deadlineMs`).
+ *  I12: a link no host answered for is broken only when another link of this check got an answer (Worca can reach the web).
+ *  When none did, Worca may have no internet: the check is not checked and does not decide (never the workflow's fault). */
+export async function checkLinks(text, { transport = httpsTransport, timeoutMs = LINK_TIMEOUT_MS, max = LINKS_MAX,
+  deadlineMs = LINKS_DEADLINE_MS, now = Date.now } = {}) {
   const links = linksIn(text);
   if (!links.length) return { met: true, value: 'No links' };
-  const shown = links.slice(0, max);
-  const bad = [];
-  for (const u of shown) if (!(await linkWorks(u, { transport, timeoutMs }))) bad.push(u);
-  if (bad.length) return { met: false, value: `Not working: ${clip(bad[0])}${bad.length > 1 ? ` and ${bad.length - 1} more` : ''}` };
-  return { met: true, value: links.length > max ? `Met · ${max} of ${links.length} checked` : 'Met' };
+  let answered = false;
+  const counted = async (o) => { const r = await transport(o); answered = true; return r; };
+  const until = now() + deadlineMs;
+  const states = [];
+  for (const u of links.slice(0, max)) {
+    if (now() >= until) break;
+    states.push([u, await linkState(u, { transport: counted, timeoutMs })]);
+  }
+  const broken = states.filter(([, s]) => s === 'broken' || (answered && s === 'unreached')).map(([u]) => u);
+  if (!broken.length && states.some(([, s]) => s === 'unreached')) {
+    return { met: false, notChecked: true, value: 'Not checked: Worca could not reach these links' };
+  }
+  if (broken.length) return { met: false, value: `Not working: ${clip(broken[0])}${broken.length > 1 ? ` and ${broken.length - 1} more` : ''}` };
+  return { met: true, value: states.length < links.length ? `Met · ${states.length} of ${links.length} checked` : 'Met' };
 }
 ```
 
 - [ ] **Step 4: Run it in `checkTry`'s later loop** (`src/core/workflow-tests/result.mjs`)
 
-Import `checkLinks as realCheckLinks` from `./link-check.mjs` and default the option to it (`checkLinks = realCheckLinks`). In the later loop, after the not-finished check and before the command branch, replace Task 3's placeholder with:
+Import `checkLinks as realCheckLinks` from `./link-check.mjs` and default the option to it (`checkLinks = realCheckLinks`). In the later loop, right after the not-finished check (`if (outcome.facts.status !== 'done') …`) and **before** the copy-is-gone guard (`if (outcome.project && !cwdDir) …`, `result.mjs:276`), replace Task 3's placeholder with:
 ```js
+    // Part 4 (D93): links reads only the result, so it needs no copy of the project and runs before that guard (M20).
     if (check.kind === 'links') {
       let text = outcome.text;
       if (check.file) text = await readText(outcome, check.file);
       const r = typeof text === 'string' && text.trim() ? await checkLinks(text) : { met: false, value: 'No result' };
-      results[i] = { id: check.id, label, met: r.met, value: r.value };
+      results[i] = { id: check.id, label, met: r.met, value: r.value, ...(r.notChecked ? { notChecked: true } : {}) };
       continue;
     }
 ```
 (`links` never sets `file` today, since it is not a text kind; the branch reads one if a later kind change allows it.)
 
+- [ ] **Step 4b: A check Worca could not run does not decide (I12)**
+
+1. `src/shared/workflow-tests/checks.mjs` `judgeTry`: `passed: basics.every((x) => x.met) && checks.every((c) => c.met || c.notChecked === true),`.
+2. `src/shared/workflow-tests/compare.mjs` `missCounts`: `if (item && !item.met && !item.notChecked) counts.set(…)`.
+3. `ui/public/workflows/test-compare.mjs` `renderSideBySide`'s `cell`, right after `if (!it) { … }`: `if (it.notChecked) { span.classList.add('is-none'); span.textContent = it.value; return span; }` (grey words, never a dot: P4-C2). One line.
+
 - [ ] **Step 5: Run the tests**
 
-Run: `node tools/test.mjs test/workflow-test-link-check.test.mjs test/workflow-test-result.test.mjs test/workflow-test-exact-checks.test.mjs`
+Run: `node tools/test.mjs test/workflow-test-link-check.test.mjs test/workflow-test-result.test.mjs test/workflow-test-exact-checks.test.mjs test/workflow-test-checks.test.mjs test/workflow-test-compare.test.mjs test/ui-workflow-test-compare.test.mjs`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/core/workflow-tests/link-check.mjs src/core/workflow-tests/result.mjs test/workflow-test-link-check.test.mjs
+git add src/core/workflow-tests/link-check.mjs src/core/workflow-tests/result.mjs src/shared/workflow-tests/checks.mjs src/shared/workflow-tests/compare.mjs ui/public/workflows/test-compare.mjs test/workflow-test-link-check.test.mjs test/ui-workflow-test-compare.test.mjs
 git commit -m "feat(workflow-tests): Links work, through Ask's guarded web transport
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
