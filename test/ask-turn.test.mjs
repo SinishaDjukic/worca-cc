@@ -16,7 +16,7 @@ import { createAskTurn, humanErrorText } from '../src/core/ask/turn.mjs';
 import { normalizingOnEvent } from '../src/core/engines/claude-events.mjs';
 import {
   createThread, appendMessage, getMessage, getThread,
-  updateThread, setThreadTitle, deleteThread, addAttachment,
+  updateThread, setThreadTitle, deleteThread, addAttachment, addThreadTotals,
 } from '../src/core/ask/store.mjs';
 import { proposalFor } from './helpers/auto-proposal-fixture.mjs';
 import { scopeRefusalText } from '../src/core/ask/scope.mjs';
@@ -148,6 +148,38 @@ test('a resumed turn books what it added to the session\'s running total, not th
   const totals = getThread(thread.id).totals;
   assert.equal(totals.costUsd, 0.14);
   assert.deepEqual(totals.sessionCost, { sessionId: 'sess-2', usd: 0.02 });
+});
+
+// #1479: --max-budget-usd counts the whole session, earlier turns included (session-host HOST_BUDGET_IS_CUMULATIVE), so
+// a turn that resumes the baseline's session gets the cap plus that total; the resume-fallback retry is a fresh session.
+test('--max-budget-usd on a resumed session is the per-turn cap plus the session\'s booked total (#1479)', async () => {
+  const flagFor = async (resumeSessionId, { dead = false } = {}) => {
+    const thread = createThread();
+    addThreadTotals(thread.id, { costUsd: 0.55, usage: null, sessionCost: { sessionId: 'sess-1', usd: 0.55 } });
+    const user = appendMessage(thread.id, { role: 'user', text: 'q' });
+    const asst = appendMessage(thread.id, { role: 'assistant', text: '', status: 'streaming' });
+    const flags = [];
+    const { turn } = makeTurn({ thread, user, asst }, { resumeSessionId }, {
+      askLimits: () => ({ maxTurns: 7, maxBudgetUsd: 0.5 }),
+      runClaudeImpl: async (opts) => {
+        flags.push(opts.maxBudgetUsd);
+        if (dead && flags.length === 1) {
+          push(opts.onEvent, RESULT({ subtype: 'error_during_execution', is_error: true, total_cost_usd: 0, errors: [`No conversation found with session ID: ${resumeSessionId}`] }));
+          throw new Error(`claude exited with code 1: No conversation found with session ID: ${resumeSessionId}`);
+        }
+        opts.onEvent({ type: 'session', sessionId: 'fresh-sid' });
+        say(opts.onEvent, 'msg_1', 'answer');
+        push(opts.onEvent, RESULT({ session_id: 'fresh-sid', total_cost_usd: 0.01 }));
+        return { text: 'answer', exitCode: 0 };
+      },
+    });
+    await turn.run();
+    return flags;
+  };
+  assert.deepEqual(await flagFor('sess-1'), [1.05], 'the resumed session restores 0.55: the turn still gets its 0.5');
+  assert.deepEqual(await flagFor('sess-1', { dead: true }), [1.05, 0.5], 'the resume-fallback retry runs a fresh session: the raw cap');
+  assert.deepEqual(await flagFor('sess-other'), [0.5], 'a session the baseline does not belong to: the raw cap');
+  assert.deepEqual(await flagFor(null), [0.5], 'a new session: the raw cap');
 });
 
 test('session: the init frame\'s session event does not store the id a second time', async () => {

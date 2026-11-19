@@ -100,7 +100,9 @@ test('askMaxBudgetUsd: a reported cost over the cap stops the turn with the budg
   assert.ok(getMessage(s.asst.id).blocks.some((b) => b.text === 'Stopped: reached the $0.5 per-turn cap (Settings → Chat)'));
 });
 
-test('askMaxBudgetUsd: a result that reports the session\'s running total adds only its share to the turn\'s spend (#1479)', async () => {
+// Defensive only: no locked-down engine flags cumulativeCost today, so these events are hand-made. The real chat cap on a
+// resumed Claude session is the --max-budget-usd flag (ask-turn.test.mjs, #1479).
+test('watchdog (defensive): a result flagged as a session\'s running total adds only its share to the turn\'s spend (#1479)', async () => {
   const s = seed();
   addThreadTotals(s.thread.id, { costUsd: 0.4, usage: null, sessionCost: { sessionId: 'codex:t', usd: 0.4 } });
   const total = (usd) => ({ type: 'result', text: 'x', isError: false, usage: { input_tokens: 1, output_tokens: 1 }, costUsd: usd, cumulativeCost: true, sessionId: 'codex:t' });

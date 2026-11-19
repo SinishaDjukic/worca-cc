@@ -1030,13 +1030,27 @@ class AskTurn extends EventEmitter {
   }
 
   /** The session total the thread last booked (store.mjs addThreadTotals `sessionCost`), read once per turn: every
-   *  attempt's reducer subtracts it from a result of that session (#1479). null for a new thread or a deleted one. */
+   *  attempt's reducer subtracts it from a result of that session (#1479). null for a new thread or a deleted one — and
+   *  for a thread last used before #1479, whose first resumed turn therefore books the session's whole total once (the
+   *  CLI's earlier total was never stored, so it cannot be backfilled); every turn after it books its own share. */
   _costBaseline() {
     if (this._sessionCostBaseline === undefined) {
       try { this._sessionCostBaseline = this.deps.store.getThread?.(this.threadId)?.totals?.sessionCost ?? null; }
       catch { this._sessionCostBaseline = null; }
     }
     return this._sessionCostBaseline;
+  }
+
+  /** The limits an attempt's spawn gets. Claude's --max-budget-usd counts the whole session, earlier turns included
+   *  (session-host.mjs HOST_BUDGET_IS_CUMULATIVE), so an attempt that resumes the session the baseline belongs to gets
+   *  the per-turn cap plus that session's booked total, as session-host `_maxBudgetUsd` does (#1479). The
+   *  resume-fallback retry runs a fresh session and keeps the raw cap. Locked-down engines never read the flag. */
+  _spawnLimits(limitsNow, isRetry) {
+    const cap = limitsNow.maxBudgetUsd;
+    const base = this._costBaseline();
+    if (this.lockedDown || isRetry || cap == null || !this.resumeSessionId || base?.sessionId !== this.resumeSessionId) return limitsNow;
+    if (typeof base.usd !== 'number' || !Number.isFinite(base.usd) || base.usd <= 0) return limitsNow;
+    return { ...limitsNow, maxBudgetUsd: Math.round((cap + base.usd) * 1e6) / 1e6 };
   }
 
   _makeReducer() {
@@ -1389,7 +1403,9 @@ class AskTurn extends EventEmitter {
       return;
     }
     if (e.type === 'result' && Number.isFinite(e.costUsd)) {
-      this._spentUsd += sessionCostDelta(this._watchSeen, e);   // a session's running total adds only its share (#1479)
+      // Defensive only: no locked-down engine flags cumulativeCost today (only Claude's normalizer does, and Claude's cap
+      // is the CLI's own flag, see _spawnLimits). Should one ever report a session's running total, it adds its share (#1479).
+      this._spentUsd += sessionCostDelta(this._watchSeen, e);
       this._lastUsage = e.usage ?? null;
       // An error result is the spend of a turn that already ended (stopped, failed — codex.mjs books it from codex's
       // session file): it is booked, never a reason to stop what has stopped.
@@ -1619,7 +1635,7 @@ class AskTurn extends EventEmitter {
             }
           },
         },
-        limits: limitsNow,
+        limits: this._spawnLimits(limitsNow, isRetry),
         mcpConfigPath,
         scratchDir,
         memoryDir: this.memoryDir,
