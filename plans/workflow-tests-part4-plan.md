@@ -4556,3 +4556,294 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
+## Task 20: UI: the criteria rows side by side, with Agree / Disagree (boards 6, 36; P4-M6 for the rest)
+
+Steps 1–5 build board 6's and board 36's rows and can start at once. Step 6 (after an answer, the "Not checked" rows' look, board 36's Why and Proof) waits for P4-M6. The pair block is Task 24.
+
+**Files:**
+- Create: `ui/public/workflows/criteria-rows.mjs`
+- Modify: `ui/public/workflows/test-compare.mjs` (one group more in "What was checked": about 6 lines), `ui/public/workflows/tests-app.mjs` (the `answer` action), `ui/public/workflows/workflow-tests.css`
+- Test: `test/ui-workflow-test-criteria-rows.test.mjs`
+
+**Interfaces:**
+- Consumes: a try view's `verdict.criteria` (Task 9's `criterionResult` shape), `POST …/judgements/:j/answer` (Task 8).
+- Produces: `criteriaGroup(doc, cur, labels, { once, actions }) → Element[]` (the group title "Your criteria · checked by Worca" and one row per criterion); `actions.answer(judgementId, agree) → Promise<{ answer, trust }>`.
+- Copy (board 6): "Why Worca says no for <version>:" / "Why Worca says yes for <version>:" (P4-C3); "Proof from the result:" and "· found in the result"; the trust line (P4-C1, with "Worca's checking of this criterion is reliable: it agrees with people 19 of 20 times." for reliable); buttons "Agree", "Disagree"; the note "When you disagree, Worca notes it. Over time this shows how far Worca's checking can be trusted."
+
+- [ ] **Step 1: Write the failing test**
+
+Create `test/ui-workflow-test-criteria-rows.test.mjs`:
+```js
+// test/ui-workflow-test-criteria-rows.test.mjs — board 6: a criterion's verdict per version, why, proof, trust, Agree / Disagree.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+import { criteriaGroup } from '../ui/public/workflows/criteria-rows.mjs';
+
+const R = { state: 'reliable', n: 20, agree: 19, decides: true };
+const v = (met, extra = {}) => ({ verdict: { criteria: [{ id: 'k_1', label: 'Names a success metric with a number, and how to measure it', met,
+  value: met === null ? 'Not checked yet' : met ? 'Met' : 'Not met', reason: met ? 'It gives 60% and how it is counted.' : 'No number and no way to measure it.',
+  proof: met ? 'Cut export-related support tickets by 60%' : 'Customers are happier with exporting invoices.', proofFound: met !== null, judgementId: met ? 11 : 12,
+  decides: true, trust: R, ...extra }] } });
+
+test('the group, the cells, why and proof for the version that missed it, the trust line and the answers', async () => {
+  const { document: doc } = new JSDOM('<!doctype html><body></body>').window;
+  const sent = [];
+  const els = criteriaGroup(doc, { n: 2, a: v(true), b: v(false) }, { a: 'v4', b: 'v5 draft' }, { once: false,
+    actions: { answer: async (id, agree) => { sent.push([id, agree]); return { answer: agree, trust: R }; } } });
+  for (const e of els) doc.body.append(e);
+  assert.equal(doc.querySelector('.wft-crow-grp').textContent, 'Your criteria · checked by Worca');
+  const row = doc.querySelector('.wft-crow.is-crit');
+  assert.deepEqual([...row.querySelectorAll('.wft-res-v')].map((x) => x.textContent), ['Met', 'Not met']);
+  const why = row.querySelector('.wft-crit-why');
+  assert.match(why.textContent, /Why Worca says no for v5 draft:[\s\S]*No number and no way to measure it\./);
+  assert.match(why.textContent, /Proof from the result:[\s\S]*"Customers are happier with exporting invoices\."[\s\S]*· found in the result/);
+  assert.match(why.textContent, /Worca's checking of this criterion is reliable: it agrees with people 19 of 20 times\./);
+  why.querySelector('button.wft-disagree').click();
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(sent, [[12, false]]);
+});
+
+test('a criterion that is not checked shows grey words, never a dot, and no answers', () => {
+  const { document: doc } = new JSDOM('<!doctype html><body></body>').window;
+  const els = criteriaGroup(doc, { n: 1, a: null, b: v(null, { judgementId: undefined }) }, { a: null, b: 'Your draft' }, { once: true, actions: {} });
+  for (const e of els) doc.body.append(e);
+  const cell = doc.querySelector('.wft-crow.is-crit .wft-res');
+  assert.ok(cell.classList.contains('is-none'));
+  assert.equal(cell.textContent, 'Not checked yet');
+  assert.equal(doc.querySelector('button.wft-agree'), null);
+});
+```
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: `node tools/test.mjs test/ui-workflow-test-criteria-rows.test.mjs`
+Expected: FAIL (module not found).
+
+- [ ] **Step 3: Write `ui/public/workflows/criteria-rows.mjs`**
+
+```js
+// ui/public/workflows/criteria-rows.mjs — "Your criteria · checked by Worca" in one example side by side (plans/workflow-tests-part4-plan.md
+// Task 20; boards 6 and 36): each criterion's verdict per version, and under the row, for the version whose verdict is shown (the one that
+// missed it, else B): why, the proof Worca found, how far its checking is trusted, and Agree / Disagree (D96).
+import { el, btn } from './test-ui.mjs';
+import { trustLine } from '../../../src/shared/workflow-tests/criteria-text.mjs';
+
+const GROUP = 'Your criteria · checked by Worca';
+const NOTE = 'When you disagree, Worca notes it. Over time this shows how far Worca\'s checking can be trusted.';
+const inSentence = (l) => (l && /^Your /.test(l) ? `your${l.slice(4)}` : l);
+const trustSentence = (t) => (t && t.state === 'reliable' ? `Worca's checking of this criterion is reliable: it agrees with people ${t.agree} of ${t.n} times.` : trustLine(t));
+
+function cell(doc, it, label) {
+  const span = el(doc, 'span', 'wft-res');
+  span.dataset.label = label;
+  if (!it || it.met === null || it.met === undefined) { span.classList.add('is-none'); span.textContent = it ? it.value : '—'; return span; }
+  if (!it.met) span.classList.add('is-bad');
+  const d = el(doc, 'span', `wft-dot ${it.met ? 'ok' : 'no'}`);
+  d.setAttribute('aria-hidden', 'true');
+  span.append(d, el(doc, 'span', 'wft-res-v', it.value));
+  return span;
+}
+
+function whyBlock(doc, it, versionLabel, actions) {
+  const box = el(doc, 'div', `wft-crit-why${it.met ? '' : ' is-bad'}`);
+  const words = el(doc, 'p', '');
+  words.append(el(doc, 'b', '', `Why Worca says ${it.met ? 'yes' : 'no'} for ${inSentence(versionLabel)}: `), doc.createTextNode(`"${it.reason}"`));
+  const proof = el(doc, 'p', '');
+  proof.append(el(doc, 'b', '', 'Proof from the result: '), doc.createTextNode(`"${it.proof}" `), el(doc, 'span', 'hint', '· found in the result'));
+  box.append(words, proof, el(doc, 'p', 'hint', trustSentence(it.trust)));
+  if (it.judgementId && actions.answer) {
+    const acts = el(doc, 'div', 'wft-acts');
+    const send = (agree) => actions.answer(it.judgementId, agree);
+    acts.append(btn(doc, 'Agree', () => send(true), 'btn btn-sm wft-agree'), btn(doc, 'Disagree', () => send(false), 'btn btn-sm wft-disagree'));
+    box.append(acts);
+  }
+  return box;
+}
+
+/** The group title and its rows for try `cur` ({ n, a, b }: the try views); `labels` = { a, b } version labels. */
+export function criteriaGroup(doc, cur, labels, { once = false, actions = {} } = {}) {
+  const ids = [];
+  for (const v of [cur.a, cur.b]) for (const it of (v && v.verdict && v.verdict.criteria) || []) if (!ids.some((x) => x.id === it.id)) ids.push(it);
+  if (!ids.length) return [];
+  const out = [el(doc, 'div', 'wft-crow-grp', GROUP)];
+  const pick = (v, id) => (v && v.verdict ? (v.verdict.criteria || []).find((x) => x.id === id) : null);
+  for (const c of ids) {
+    const row = el(doc, 'div', `wft-crow is-crit${once ? ' is-one' : ''}`);
+    row.append(el(doc, 'span', '', c.label));
+    const A = once ? null : pick(cur.a, c.id);
+    const B = pick(cur.b, c.id);
+    if (!once) row.append(cell(doc, A, `${labels.a} · try ${cur.n}`));
+    row.append(cell(doc, B, `${labels.b} · try ${cur.n}`));
+    // The block explains the version that missed it (board 6: "Why Worca says no for v5"), else B's verdict.
+    const shown = B && B.met === false ? [B, labels.b] : A && A.met === false ? [A, labels.a] : B && B.met === true ? [B, labels.b] : null;
+    if (shown) row.append(whyBlock(doc, shown[0], shown[1], actions));
+    out.push(row);
+  }
+  out.push(el(doc, 'p', 'hint wft-crit-note', NOTE));
+  return out;
+}
+```
+
+- [ ] **Step 4: Wire it**
+
+`test-compare.mjs`, in `renderSideBySide` after the `for (const [title, key] of [['Basics', 'basics'], ['Automatic checks', 'checks']]) { … }` loop and before `scroll.append(inner);`:
+```js
+  // Part 4 (boards 6, 36): Your criteria · checked by Worca.
+  for (const e of criteriaGroup(doc, cur, s.labels, { once, actions: { answer: (id, agree) => actions.answer(id, agree) } })) inner.append(e);
+```
+(import `criteriaGroup` from `./criteria-rows.mjs`). In `tests-app.mjs`'s side-by-side actions add `answer: async (id, agree) => { const r = await wftCall('POST', `${wftBase(wft.workflowId)}/judgements/${id}/answer`, { agree }); if (!r.ok) notify({ tone: 'err', title: r.error }); else wftRefresh(); return r.data; }`. CSS (end of `workflow-tests.css`): `.wft-crit-why` as board 6's box (grid-column 1 / -1, padding, `var(--red-bg)` for `.is-bad`, neutral otherwise), tokens only.
+
+- [ ] **Step 5: Run the tests and the guards**
+
+Run: `node tools/test.mjs test/ui-workflow-test-criteria-rows.test.mjs test/ui-workflow-test-compare.test.mjs test/ui-workflow-test-project-compare.test.mjs`, then the design guards. `test-compare.mjs` stays below 1000 lines.
+Expected: PASS.
+
+- [ ] **Step 6: After P4-M6 is approved**
+
+Build what the mock shows after an answer ("You agreed." / "You disagreed: Worca notes it." with Undo = `agree: null`), the "Not checked" rows, and board 36's Why / Proof with the proof in code font when it comes from the changes. Pin the words in the test first.
+
+- [ ] **Step 7: Commit** (Steps 1–5, then Step 6)
+
+```bash
+git add ui/public/workflows/criteria-rows.mjs ui/public/workflows/test-compare.mjs ui/public/workflows/tests-app.mjs ui/public/workflows/workflow-tests.css test/ui-workflow-test-criteria-rows.test.mjs
+git commit -m "feat(workflow-tests): your criteria side by side, with proof and Agree or Disagree (boards 6, 36)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
+## Task 21: UI: Compare's checking card and "By criterion" (boards 5, 12; P4-M5 for the rest)
+
+Steps 1–5 build boards 5 and 12 and can start at once. Step 6 (the unreliable-only sentence, "Check them on these tries", the progress line) waits for P4-M5.
+
+**Files:**
+- Modify: `ui/public/workflows/test-compare.mjs` (the tabs and the card: about 10 lines), `ui/public/workflows/criteria-pages.mjs` (create: `renderByCriterion`; Tasks 22–23 add pages), `ui/public/workflows/tests-app.mjs` (the tab's read), `ui/public/workflows/workflow-tests.css`
+- Test: `test/ui-workflow-test-by-criterion.test.mjs`
+
+**Interfaces:**
+- Consumes: `GET …/runs/:run/criteria` (Task 11: `{ rows, more, counts, checking }`), `checkingSentence`, `TRUST_BADGE`, `trustLine`, `BY_CRITERION`, `BY_EXAMPLE`, `SEE_BY_CRITERION`.
+- Produces: `renderByCriterion(root, data, { doc, labels }) → void`; Compare's tablist "By example · By criterion" (board 5) and its card "Worca's checking" with "See by criterion" (only when the test has criteria).
+- Copy (board 12): legend title "Can you trust Worca's checking of each criterion?", the three legend lines (Reliable, Confirm 4 results, Unreliable: board 12's words), table head "Criterion", "<A> met", "<B> met", "Worca's checking", "Can be checked exactly", "N more criteria, all met in every try by both versions", the footnote "Rows with a coloured background changed between the versions. If a change shows only in unreliable criteria, Compare says so instead of calling it better or worse." and its link "How Worca tests its own checking" (to the trust report, Task 23).
+
+- [ ] **Step 1: Write the failing test**
+
+Create `test/ui-workflow-test-by-criterion.test.mjs`:
+```js
+// test/ui-workflow-test-by-criterion.test.mjs — board 12: one row per criterion, coloured when it changed and decides.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+import { renderByCriterion } from '../ui/public/workflows/criteria-pages.mjs';
+
+const R = { state: 'reliable', n: 20, agree: 19, decides: true };
+const data = { counts: { total: 3, reliable: 2, unreliable: 1, waiting: 0 }, more: 4, checking: false, rows: [
+  { key: '1|k', label: 'Names a success metric', exampleName: 'Bulk invoice export', exact: false, trust: R, a: { met: 3, of: 3 }, b: { met: 1, of: 3 }, changed: 'worse', unreliableChange: false },
+  { key: '2|k', label: 'Proposes a test within 4 weeks', exampleName: 'Pricing page A/B test', exact: false, trust: { state: 'unreliable', n: 10, agree: 6, decides: false },
+    a: { met: 3, of: 3 }, b: { met: 3, of: 3 }, changed: null, unreliableChange: false },
+  { key: '1|c', label: "Mentions that today's export stops at 200 invoices", exampleName: 'Bulk invoice export', exact: true, trust: { state: 'exact', decides: true },
+    a: { met: 3, of: 3 }, b: { met: 2, of: 3 }, changed: null, unreliableChange: false },
+] };
+
+test('the legend, the rows with their example, counts and trust, and the collapsed line', () => {
+  const { document: doc } = new JSDOM('<!doctype html><div id="r"></div>').window;
+  const root = doc.getElementById('r');
+  renderByCriterion(root, data, { doc, labels: { a: 'v4', b: 'v5' } });
+  assert.match(root.textContent, /Can you trust Worca's checking of each criterion\?/);
+  const rows = [...root.querySelectorAll('.wft-bc-row:not(.is-head)')];
+  assert.equal(rows[0].querySelector('b').textContent, 'Names a success metric');
+  assert.ok(rows[0].classList.contains('is-worse'));
+  assert.deepEqual([...rows[0].querySelectorAll('.wft-bc-n')].map((x) => x.textContent), ['3 of 3', '1 of 3']);
+  assert.match(rows[1].textContent, /Unreliable[\s\S]*Agrees with people 6 of 10 times/);
+  assert.match(rows[2].textContent, /Can be checked exactly/);
+  assert.equal(root.querySelector('.wft-bc-more').textContent, '4 more criteria, all met in every try by both versions');
+});
+```
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: `node tools/test.mjs test/ui-workflow-test-by-criterion.test.mjs`
+Expected: FAIL (module not found).
+
+- [ ] **Step 3: Write `ui/public/workflows/criteria-pages.mjs` (By criterion)**
+
+```js
+// ui/public/workflows/criteria-pages.mjs — Part 4's pages (plans/workflow-tests-part4-plan.md Tasks 21–23): Compare by criterion
+// (board 12), Check the checker (board 11), How reliable is Worca's checking (board 13).
+import { el } from './test-ui.mjs';
+import { TRUST_BADGE, trustLine } from '../../../src/shared/workflow-tests/criteria-text.mjs';
+
+const LEGEND = [
+  ['reliable', 'Worca agrees with people almost every time and catches the mistakes planted on purpose.'],
+  ['confirm', 'New criterion. It counts, but you have not confirmed that Worca judges it right.'],
+  ['unreliable', 'After at least 10 answers, Worca often judges differently from people. It still runs and is shown, but does not decide better or worse until you fix it.'],
+];
+const FOOT = 'Rows with a coloured background changed between the versions. If a change shows only in unreliable criteria, Compare says so instead of calling it better or worse.';
+const nOf = (x) => (x && x.of ? `${x.met} of ${x.of}` : '—');
+function trustCell(doc, r) {
+  const c = el(doc, 'span', 'wft-bc-trust');
+  const [cls, words] = TRUST_BADGE[r.trust ? r.trust.state : 'collecting'] || TRUST_BADGE.collecting;
+  c.append(el(doc, 'span', cls, words));
+  if (r.exact) c.append(el(doc, 'span', 'wft-exact', 'Can be checked exactly'));
+  else if (r.trust && r.trust.state !== 'confirm') c.append(el(doc, 'small', '', trustLine(r.trust)));
+  return c;
+}
+
+/** Board 12. `data` = GET …/runs/:run/criteria. */
+export function renderByCriterion(root, data, { doc, labels, onTrust = null }) {
+  root.replaceChildren();
+  const legend = el(doc, 'section', 'card wft-bc-legend');
+  legend.append(el(doc, 'h2', '', "Can you trust Worca's checking of each criterion?"));
+  const grid = el(doc, 'div', 'wft-bc-legend-grid');
+  for (const [state, words] of LEGEND) { const d = el(doc, 'div', ''); d.append(el(doc, 'span', TRUST_BADGE[state][0], TRUST_BADGE[state][1]), el(doc, 'span', '', words)); grid.append(d); }
+  legend.append(grid);
+  const table = el(doc, 'section', 'card wft-table wft-bc');
+  table.setAttribute('aria-label', 'Results per criterion');
+  const scroll = el(doc, 'div', 'wft-scroll');
+  const inner = el(doc, 'div', 'wft-bc-rows');
+  const head = el(doc, 'div', 'wft-bc-row is-head');
+  head.append(el(doc, 'span', '', 'Criterion'), ...(labels.a ? [el(doc, 'span', '', `${labels.a} met`)] : []), el(doc, 'span', '', `${labels.b} met`), el(doc, 'span', '', "Worca's checking"));
+  inner.append(head);
+  for (const r of data.rows) {
+    const row = el(doc, 'div', `wft-bc-row${r.changed ? ` is-${r.changed}` : ''}`);
+    const name = el(doc, 'span', '');
+    name.append(el(doc, 'b', '', r.label), el(doc, 'span', 'wft-bc-ex', r.exampleName));
+    row.append(name, ...(labels.a ? [el(doc, 'span', 'wft-bc-n', nOf(r.a))] : []), el(doc, 'span', 'wft-bc-n', nOf(r.b)), trustCell(doc, r));
+    inner.append(row);
+  }
+  if (data.more) inner.append(el(doc, 'div', 'wft-bc-row wft-bc-more', `${data.more} more ${data.more === 1 ? 'criterion' : 'criteria'}, all met in every try by both versions`));
+  scroll.append(inner);
+  table.append(scroll);
+  const foot = el(doc, 'p', 'hint', `${FOOT} `);
+  if (onTrust) { const a = el(doc, 'a', '', 'How Worca tests its own checking'); a.href = '#'; a.addEventListener('click', (e) => { e.preventDefault(); onTrust(); }); foot.append(a); }
+  root.append(legend, table, foot);
+}
+```
+
+- [ ] **Step 4: Wire it into Compare**
+
+`test-compare.mjs` `renderCompare`: when `c.criteria` (the controller passes `{ counts }` from `GET …/runs/:run/criteria` beside the compare read) has `counts.total > 0`, render board 5's tablist (`role="tablist"`, two `role="tab"` buttons `BY_EXAMPLE`, `BY_CRITERION`, as the try tabs are built) above the examples table, and board 5's card "Worca's checking" with `checkingSentence(counts)` and a `SEE_BY_CRITERION` link. Picking "By criterion" calls `actions.byCriterion(box)`, which `tests-app.mjs` answers with `renderByCriterion(box, data, { doc, labels, onTrust: () => wftShow('trust') })` after `GET …/runs/:run/criteria`. CSS for `.wft-bc-row` (grid `minmax(0,1fr) 80px 80px 230px`, `.is-worse` `var(--red-bg)`, `.is-better` `var(--green-bg)`), `.wft-exact` (violet pill), tokens only.
+
+Add to the test: a `renderCompare` case with `criteria: { counts: { total: 12, reliable: 10, unreliable: 1, waiting: 1 } }` asserting the tablist and "Worca's checking is reliable for 10 of 12 criteria. 1 unreliable criterion is shown, but does not decide better or worse." (copy the compare fixture from `test/ui-workflow-test-compare.test.mjs`).
+
+- [ ] **Step 5: Run the tests and the guards**
+
+Run: `node tools/test.mjs test/ui-workflow-test-by-criterion.test.mjs test/ui-workflow-test-compare.test.mjs`, then the design guards.
+Expected: PASS.
+
+- [ ] **Step 6: After P4-M5 is approved**
+
+Build Compare's sentence from `notes.unreliableOnly` (Task 9), the line and button "Check them on these tries (about $X)" (`POST …/runs/:run/criteria/check`, then poll `GET …/runs/:run/criteria` every 2 s while `checking`), and the progress line while a test checks criteria after its last try (`runner.criteriaPhaseOf`, added to `progressOf`'s read in `routes.mjs`). Pin the words first.
+
+- [ ] **Step 7: Commit** (Steps 1–5, then Step 6)
+
+```bash
+git add ui/public/workflows/criteria-pages.mjs ui/public/workflows/test-compare.mjs ui/public/workflows/tests-app.mjs ui/public/workflows/workflow-tests.css test/ui-workflow-test-by-criterion.test.mjs
+git commit -m "feat(workflow-tests): Compare by criterion and Worca's checking card (boards 5, 12)
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
