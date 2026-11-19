@@ -140,10 +140,10 @@ Board 12 also shows criteria the person switched to exact checks, labelled with 
 No approved board draws these. Each is mocked on the evals canvas (Worca design system), approved by the user, and only then built. The words below are this plan's proposals; the approved mock wins.
 
 - **P4-M1. Add an automatic check (boards 24 and 33's dialog) with the Part 4 kinds and Worca's suggestion.** The four new kinds in the "What to check" select under "The result": "Every quote is in the files", "Numbers come from the files", "No personal data", "Links work", each with its P4-C4 hint and a live preview line; none has a field except the "Read from" choice of a project example (Part 3a's Q11) for the first three. Board 10's violet "Worca suggests" box at the top when the dialog was opened from a criterion's "Switch" (with "Switch to an exact check" and "Keep it as a criterion"). States: each kind picked, opened from Switch, a project example.
-- **P4-M2. The editor's criterion rows (boards 2 and 32) in every state.** A new empty row after "Add a criterion" (placeholder "A sentence that is true of a good result"), a row's Remove (an icon button), "Confirm 4 results" (amber, a link), "Needs your answers", "Unreliable" with "Fix it", "Not checked yet" for a criterion on an unsaved example, the "Checked with" select's list (Claude models with "· suggested"), and "A result you liked" when empty ("Add a result you liked": upload a file, or "Use a try's result") and with a project example. Light, dark, 390 px.
-- **P4-M3. Check the checker (board 11) states.** While Worca prepares ("Worca is breaking a good result in a few ways…", then "Checking 4 results…"), no good result yet ("Try this example once first, so Worca has a good result to break."), failed (the reason and "Try again"), the spending limit reached, after a "Wrong" (Worca's clearer words, "Use these words and check again", "Keep my words"), and done (all 4 answered, "Use this criterion" on).
+- **P4-M2. The editor's criterion rows (boards 2 and 32) in every state.** A new empty row after "Add a criterion" (placeholder "A sentence that is true of a good result"), a row's Remove (an icon button), "Confirm 4 results" (amber, a link), "Needs your answers", "Unreliable" with "Fix it", "Not checked yet" for a criterion on an unsaved example, the "Checked with" select's list (each model with who pays, "Opus 5.5 · Claude sign-in", and "· suggested": P4-Q17), and "A result you liked" when empty ("Add a result you liked": upload a file, or "Use a try's result") and with a project example. Light, dark, 390 px.
+- **P4-M3. Check the checker (board 11) states.** While Worca prepares ("Worca is breaking a good result in a few ways…", then "Checking 4 results…"), no good result yet ("Try this example once first, so Worca has a good result to break."), failed (the reason and "Try again"), the spending limit reached, after a "Wrong" (Worca's clearer words, "Use these words and check again", "Keep my words"), done (all 4 answered, "Use this criterion" on), and the cost line with "· the cost of some checks is not known" (P4-Q17).
 - **P4-M4. The trust report (board 13) early states.** No criteria yet, criteria but no answers yet ("Worca needs your answers first: confirm each new criterion."), and tile 1 without colleagues' data (board 13's "people agree with each other 90%" needs Part 5's reviews: the sub-line then reads "of N answers").
-- **P4-M5. Compare (board 5) extras.** The "In short" sentence when a change shows only in unreliable criteria ("v5 differs from v4 on 1 example only in a criterion Worca cannot judge reliably yet: Pricing page A/B test."), the line when criteria changed after the test ("Your criteria changed after this test. Check them on these tries (about $0.40)" with a button), and the progress line while a test checks criteria after its last try ("Checking your criteria on earlier tries").
+- **P4-M5. Compare (board 5) extras.** The "In short" sentence when a change shows only in unreliable criteria ("v5 differs from v4 on 1 example only in a criterion Worca cannot judge reliably yet: Pricing page A/B test."), the line when criteria changed after the test ("Your criteria changed after this test. Check them on these tries (about $0.40)" with a button), the progress line while a test checks criteria after its last try ("Checking your criteria on earlier tries"), the line for criteria that were not checked on every try of an example (D98, I6: "Not checked on every try, so it does not decide yet: "Names a success metric" in Bulk invoice export." with "Check them on these tries"), the "—" cell in By criterion when a side has no checked try, the notice when "Check them on these tries" ends ("Worca checked your criteria on these tries."), and "· the cost of some checks is not known" after the test's cost (P4-Q17).
 - **P4-M6. One example side by side (board 6) extras.** After Agree or Disagree ("You agreed." / "You disagreed: Worca notes it." with Undo), the pair question above the try tabs (P4-Q8) with "closer to the result you liked", a "Not checked" row (P4-C2), and board 36's project rows with Why and Proof (the proof quoted from the changes in code font).
 - **P4-M7. Use this run as a test example (board 3 with board 45's labels).** Board 3's "Worca turned your note into criteria" under board 45's "What a good result has · in your own words" field, while suggestions load ("Worca is reading your note…"), none found, and a chip after it was added (ticked, "Added").
 
@@ -167,7 +167,7 @@ D1–D85 hold. These continue them. The `(technical)` rows are for the reviewer.
 | D95 | **Trust marks (D14, P4-Q6).** Per workflow, criterion text (`criterionKey`) and model:<br>• **confirm** ("Confirm 4 results", amber): no Check the checker round of it is done. It decides (board 12: "It counts, but you have not confirmed").<br>• **collecting** ("Needs your answers", grey, board 32): a round is done, fewer than 10 answers. It decides.<br>• **reliable** (green): ≥ 10 answers and the P4-Q6 rule holds. It decides.<br>• **unreliable** (red): ≥ 10 answers and the rule fails. Shown, never decides. It becomes reliable again only through new words (a new key: "confirm" again) or new answers.<br>Exact checks are always "Can be checked exactly" and decide like any automatic check. |
 | D96 | **Answers.** Agree / Disagree on a criterion's verdict side by side (board 6), Right / Wrong on a card in Check the checker (board 11), Agree / Disagree on a pair answer. One answer per person per verdict; a later press replaces it; Undo removes it (P4-M6). An answer counts for the verdict's criterion key and model only. Pair answers count for board 13's tests, never for a criterion. |
 | D97 | **Check the checker (board 11).** One round per criterion, key and model, started by the person (the "Confirm 4 results" link, "Fix it", or "Add a criterion" then Save).<br>• **The good result:** the example's result you liked (text), else the newest passed try of the example, else the past run it came from when the person called it good; none: refused with P4-M3's sentence.<br>• **Planted results:** one model call returns a passage of the result and three broken versions of it, each with a short "how" ("number removed"); each must be found and replaced in the result (D89's search). If it fails or the passage is not found: three deterministic plants (numbers removed from the first paragraph with numbers, a made-up quote added, the first paragraph removed).<br>• **Calls:** the real and the three planted results are judged (4), each asked twice more (8), and each with filler text added (4): 16 judge calls plus the planting call.<br>• **Answers:** the four verdicts get Right / Wrong; when all four are answered the round is done. A "Wrong" offers clearer words (one call, D104; P4-M3).<br>• Rounds run in the background, one at a time per example and criterion; the page polls every 2 s while one is being made. |
-| D98 | **Better or worse with criteria.** Read time only. A try passes when its stored verdict passes (Basics and automatic checks, Part 2) **and** every deciding criterion is met; a criterion that is not checked, or unreliable, does not decide. The pages, Compare's counts, "In short", the luck rule and the Tests list's cells use this status. A second reading with unreliable criteria deciding too finds the examples whose result would change: Compare names them (P4-M5) instead of calling them better or worse. Missed criteria join "missed …" in "In short" (board 5). |
+| D98 | **Better or worse with criteria.** Read time only. A try passes when its stored verdict passes (Basics and automatic checks, Part 2) **and** every deciding criterion is met; a criterion that is not checked, or unreliable, does not decide. **Even checking (review I6):** a criterion decides for an example only when every finished try of that example in the reading (both versions in Compare) has a counted verdict of it; otherwise it decides on neither side for that example, and Compare names it ("not checked on every try", P4-M5) with "Check them on these tries". So a version is never called worse for a criterion the other version's tries were never checked on (reused tries left unchecked after a cap or a stop, a failed call, an unreadable answer or a proof not found on one side only). The cost: one uncounted answer takes that criterion out of that example's decision until it is checked again. The pages, Compare's counts, "In short", the luck rule and the Tests list's cells use this status. A second reading with unreliable criteria deciding too finds the examples whose result would change: Compare names them (P4-M5) instead of calling them better or worse. Missed criteria join "missed …" in "In short" (board 5). |
 | D99 | **Compare by criterion (board 12).** One row per criterion of each compared example, plus each automatic check with `said` (a criterion switched to an exact check, labelled with the person's words and "Can be checked exactly"). Columns: met on A and on B ("X of N" over checked tries), Worca's checking (the trust mark and its line). A row whose two rates differ by at least one try's worth is coloured (green better, red worse) when it decides; rows met in every try by both versions collapse into "N more criteria, all met in every try by both versions". |
 | D100 | **The pair question (P4-Q8).** Blind: "Result 1" and "Result 2", asked in both orders. The same winner both times = that winner; different = "unsure"; "same" both times = a tie. Stored as one judgement row (`purpose 'pair'`, both try ids, `winner` a / b / tie / unsure). With a result you liked, the question is which is closer to it. Never decides. Only for examples with criteria or a result you liked. |
 | D101 | **A result you liked.** `wf_test_liked`, one per example: a text (`kind 'text'`: an uploaded UTF-8 file of at most 2 MB, or a try's or past run's main result) or, for a project example, changes (`kind 'changes'`: the result and its diff, at most 2 MB, named "Changes from the run on <date> · N files"). It is the first choice of Check the checker's good result and the reference of the pair question. It is not part of the fingerprint. |
@@ -212,7 +212,7 @@ D1–D85 hold. These continue them. The `(technical)` rows are for the reviewer.
 4. **Spend** (Tasks 5, 7). Expect judge spend in `budgetStatus().windowSpendUsd`, in `spentOfRun`, in the test's cap, and not in Statistics or "Saved".
 5. **Mock is free** (Tasks 6, 7, 13, 14, 15). Expect no `helperCall` and no ledger row under `WORCA_MOCK=1` or for a mock try.
 6. **D14** (Task 8). Expect never "unreliable" below 10 answers; the side rule; a new text or model resets to "confirm".
-7. **Better or worse** (Task 9). Expect an unreliable criterion that differs to leave the example "same" and to be named; a not-checked criterion never to fail a try; Part 2's verdicts untouched in the DB.
+7. **Better or worse** (Task 9). Expect an unreliable criterion that differs to leave the example "same" and to be named; a not-checked criterion never to fail a try; a criterion checked on one version's tries but not on the other's to decide on neither side (I6) and to be named; Part 2's verdicts untouched in the DB.
 8. **Exact checks** (Task 3). Expect quotes found across spacing and quote marks, list markers and single digits ignored, IBAN and Luhn checked, no false phone numbers on dates.
 9. **Links** (Task 4). Expect IP-address hosts and ports other than 443 refused before the transport on every hop (also after a redirect), private host names refused, http tried as https, at most 20 links, a 15 s timeout a hop and 2 minutes a check, and an offline Worca to leave the check "Not checked" (not deciding) rather than failing the try.
 10. **Design guards** (Tasks 17–24): no new `ui-design-language` failure.
@@ -2313,7 +2313,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Produces (criteria-text.mjs): `TRUST_BADGE` (state → `[class, words]`), `trustLine(trust) → string`.
 - Produces (criteria-store.mjs): `setAnswer(judgementId, { agree: boolean|null, by })`, `answerOf(judgementId, by) → boolean|null`, `answersFor(workflowId, fp, model) → answer[]`, `roundDone(workflowId, fp, model) → boolean`.
 - Produces (criteria-read.mjs): `trustFor(workflowId, fp, model, memo?) → trust`.
-- Produces (criteria-routes.mjs): `CRITERIA_ROUTES` (frozen `{ method, path }` list, every Part 4 route in registration order), `registerCriteriaRoutes(app, { runner, criteriaJudge, deps })`. First route: `POST /api/workflows/:id/tests/judgements/:j/answer` with `{ agree: true | false | null }` → `{ answer, trust }`.
+- Produces (criteria-routes.mjs): `CRITERIA_ROUTES` (frozen `{ method, path }` list, every Part 4 route in registration order), `registerCriteriaRoutes(app, { runner, criteriaJudge, deps })`; inside it, the helpers `wid(req)`, `by(req)`, `judgement(req)` and `exampleOf(req)` (the route's example or 404; Tasks 12–15 and 18 use it). First route: `POST /api/workflows/:id/tests/judgements/:j/answer` with `{ agree: true | false | null }` → `{ answer, trust }`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2585,6 +2585,12 @@ export function registerCriteriaRoutes(app, { runner = null, criteriaJudge = nul
     if (!j || j.workflowId !== wid(req)) throw store.testError(`no answer ${req.params.j}`, 'NOT_FOUND');
     return j;
   };
+  /** The route's example (`:ex`) of this workflow, or 404. Defined here, in 4a, because Task 18 (4a) uses it as well as Tasks 12–15 (4b). */
+  const exampleOf = (req) => {
+    const ex = store.readExample(wid(req), num(req.params.ex, 'example'));
+    if (!ex) throw store.testError(`no example ${req.params.ex}`, 'NOT_FOUND');
+    return ex;
+  };
 
   // D96: Agree / Disagree (and Right / Wrong) on one verdict; null takes it back.
   route('POST', `${W}/judgements/:j/answer`, async (req, res) => {
@@ -2633,8 +2639,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `NOT_CHECKED` (Task 6), `trustFor`, `tryJudgements`, `criterionFp` (Tasks 7, 8), `compareModel` (`compare.mjs:140`).
-- Produces (criteria-verdicts.mjs): `criterionResult(c, j, trust, { finished }) → { id, label, met: boolean|null, value, decides, shadowDecides?, reason?, proof?, proofFound?, judgementId?, pending?, trust }`, `combinedStatus(status, criteria, { all }) → status`, `withCriteria(tries, resultsOf) → tries` (adds `verdict.criteria`, `checksStatus`, `shadowStatus`; leaves a try without criteria as it was), `unreliableOnly(realModel, shadowModel) → [{ id, name }]`.
-- Produces (criteria-read.mjs): `withCriteriaFor(workflowId, tries) → tries`, `compareNotes(input) → { unreliableOnly }`.
+- Produces (criteria-verdicts.mjs): `criterionResult(c, j, trust, { finished }) → { id, label, met: boolean|null, value, decides, shadowDecides?, reason?, proof?, proofFound?, judgementId?, pending?, uneven?, trust }`, `combinedStatus(status, criteria, { all }) → status`, `withCriteria(tries, resultsOf) → tries` (adds `verdict.criteria`, `checksStatus`, `shadowStatus`; a counted criterion that some other finished try of the same example lacks gets `decides: false, shadowDecides: false, uneven: true`, I6; leaves a try without criteria as it was), `unreliableOnly(realModel, shadowModel) → [{ id, name }]`, `notCheckedEverywhere(tries, examples) → [{ id, name, criteria: string[] }]`.
+- Produces (criteria-read.mjs): `withCriteriaFor(workflowId, tries) → tries`, `compareNotes(input) → { unreliableOnly, notChecked }` (`notChecked` = `notCheckedEverywhere`).
 - Service: `compareOf(...)` returns `notes` (Compare's P4-M5 line reads it); `modelInput`, `sideBySide` and `cellOf` read tries through `withCriteriaFor`.
 
 - [ ] **Step 1: Write the failing test**
@@ -2645,7 +2651,7 @@ Create `test/workflow-test-criteria-verdicts.test.mjs`:
 // checked or unreliable criterion never decides; an example that differs only in an unreliable criterion is named, not called worse.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { criterionResult, combinedStatus, withCriteria, unreliableOnly, finishedTry } from '../src/shared/workflow-tests/criteria-verdicts.mjs';
+import { criterionResult, combinedStatus, withCriteria, unreliableOnly, notCheckedEverywhere, finishedTry } from '../src/shared/workflow-tests/criteria-verdicts.mjs';
 import { compareModel } from '../src/shared/workflow-tests/compare.mjs';
 
 const C = { id: 'k_1', text: 'Names a success metric' };
@@ -2695,6 +2701,24 @@ test('withCriteria and Compare: missed criteria are named, unreliable-only diffe
   assert.deepEqual(unreliableOnly(real, shadow), [{ id: 2, name: 'Pricing page A/B test' }]);
   assert.deepEqual(withCriteria([tries[0]], () => null), [tries[0]], 'an example without criteria is untouched');
 });
+
+test('I6: a criterion decides for an example only when every finished try of both versions has a counted verdict', () => {
+  const v = () => ({ facts: { status: 'done' }, basics: [], checks: [] });
+  const tries = [{ id: 1, side: 'a', exampleId: 1, status: 'passed', costUsd: 1, verdict: v() },
+    { id: 2, side: 'b', exampleId: 1, status: 'passed', costUsd: 1, verdict: v() }];
+  const results = { 1: [criterionResult(C, null, reliable)], 2: [criterionResult(C, J(false), reliable)] };   // A reused, never checked
+  const decorated = withCriteria(tries, (t) => results[t.id]);
+  assert.deepEqual(decorated.map((t) => t.status), ['passed', 'passed'], 'B is not failed on a criterion A was never checked on');
+  assert.deepEqual([decorated[1].verdict.criteria[0].uneven, decorated[1].verdict.criteria[0].decides], [true, false]);
+  const input = { examples: [{ id: 1, name: 'Bulk invoice export' }], a: { label: 'v4' }, b: { label: 'v5 draft' }, tries: decorated };
+  assert.deepEqual(compareModel(input).examples.map((r) => r.result), ['same']);
+  assert.deepEqual(notCheckedEverywhere(decorated, input.examples), [{ id: 1, name: 'Bulk invoice export', criteria: ['Names a success metric'] }]);
+  const noProof = withCriteria(tries, (t) => (t.id === 1 ? [criterionResult(C, J(null, { error: 'no-proof' }), reliable)] : results[2]));
+  assert.deepEqual(noProof.map((t) => t.status), ['passed', 'passed'], 'an uncounted answer on one side only does not decide either');
+  const both = withCriteria(tries, (t) => (t.id === 1 ? [criterionResult(C, J(true), reliable)] : results[2]));
+  assert.deepEqual(both.map((t) => t.status), ['passed', 'failed'], 'checked on both sides: it decides');
+  assert.deepEqual(notCheckedEverywhere(both, input.examples), []);
+});
 ```
 
 - [ ] **Step 2: Run it to see it fail**
@@ -2728,14 +2752,38 @@ export function combinedStatus(status, criteria, { all = false } = {}) {
   return (criteria || []).some((c) => c.met === false && (all ? c.shadowDecides : c.decides)) ? 'failed' : 'passed';
 }
 
-/** D98: tries with `verdict.criteria`, `status` (with criteria), `checksStatus` (Part 2's) and `shadowStatus`. `resultsOf(t)` → results | null. */
+const FINISHED = new Set(['passed', 'failed']);
+
+/** D98: tries with `verdict.criteria`, `status` (with criteria), `checksStatus` (Part 2's) and `shadowStatus`. `resultsOf(t)` → results | null.
+ *  I6 (even checking): per example, a criterion that some finished try of the given tries has no counted verdict for (met null) decides
+ *  on none of them (`uneven`), so one version is never failed for a criterion the other version's tries were never checked on. */
 export function withCriteria(tries, resultsOf) {
-  return tries.map((t) => {
-    const criteria = t.verdict ? resultsOf(t) : null;
-    if (!criteria || !criteria.length) return t;
+  const found = tries.map((t) => { const c = t.verdict ? resultsOf(t) : null; return c && c.length ? c : null; });
+  const counted = new Map();   // exampleId → Map(criterion id → counted on every finished try so far)
+  tries.forEach((t, i) => {
+    if (!found[i] || !FINISHED.has(t.status)) return;
+    if (!counted.has(t.exampleId)) counted.set(t.exampleId, new Map());
+    const m = counted.get(t.exampleId);
+    for (const c of found[i]) m.set(c.id, (m.has(c.id) ? m.get(c.id) : true) && c.met !== null);
+  });
+  return tries.map((t, i) => {
+    if (!found[i]) return t;
+    const m = counted.get(t.exampleId);
+    const criteria = found[i].map((c) => (m && m.get(c.id) === false && c.met !== null ? { ...c, decides: false, shadowDecides: false, uneven: true } : c));
     return { ...t, checksStatus: t.status, status: combinedStatus(t.status, criteria), shadowStatus: combinedStatus(t.status, criteria, { all: true }),
       verdict: { ...t.verdict, criteria } };
   });
+}
+
+/** I6, P4-M5: per example, the criteria that were not checked on every finished try (so they decide nothing there), by label. */
+export function notCheckedEverywhere(tries, examples) {
+  const out = [];
+  for (const ex of examples) {
+    const labels = new Set();
+    for (const t of tries) if (t.exampleId === ex.id) for (const c of (t.verdict && t.verdict.criteria) || []) if (c.uneven) labels.add(c.label);
+    if (labels.size) out.push({ id: ex.id, name: ex.name, criteria: [...labels] });
+  }
+  return out;
 }
 
 /** D98, P4-M5: the examples that are "same" now but would differ if unreliable criteria decided. */
@@ -2769,7 +2817,7 @@ Add imports and append:
 ```js
 import * as store from './store.mjs';
 import { compareModel } from '../../shared/workflow-tests/compare.mjs';
-import { criterionResult, withCriteria, unreliableOnly, finishedTry } from '../../shared/workflow-tests/criteria-verdicts.mjs';
+import { criterionResult, withCriteria, unreliableOnly, notCheckedEverywhere, finishedTry } from '../../shared/workflow-tests/criteria-verdicts.mjs';
 
 /** D98: tries as the pages read them: with their criteria (the example's current ones, checked by its current model). */
 export function withCriteriaFor(workflowId, tries) {
@@ -2791,17 +2839,18 @@ export function withCriteriaFor(workflowId, tries) {
 
 /** D98, P4-M5: Compare's notes. `input` = compareModel's input whose tries came through withCriteriaFor. */
 export function compareNotes(input) {
-  if (!input.a) return { unreliableOnly: [] };
+  const notChecked = notCheckedEverywhere(input.tries, input.examples);   // I6
+  if (!input.a) return { unreliableOnly: [], notChecked };
   const shadow = compareModel({ ...input, tries: input.tries.map((t) => (t.shadowStatus ? { ...t, status: t.shadowStatus } : t)) });
-  return { unreliableOnly: unreliableOnly(compareModel(input), shadow) };
+  return { unreliableOnly: unreliableOnly(compareModel(input), shadow), notChecked };
 }
 ```
 
 - [ ] **Step 6: The service reads tries with their criteria** (`src/core/workflow-tests/service.mjs`)
 
 Import `{ withCriteriaFor, compareNotes }` from `./criteria-read.mjs`. Then:
-- `cellOf` (`:469`): `const tries = withCriteriaFor(ex.workflowId, store.latestTriesFor({ workflowId: ex.workflowId, exampleId: ex.id, use }));`
-- `modelInput` (`:484`): `tries: withCriteriaFor(run.workflowId, store.triesOfRun(run.id))`.
+- `cellOf` (`:468`): `const tries = withCriteriaFor(ex.workflowId, store.latestTriesFor({ workflowId: ex.workflowId, exampleId: ex.id, use }));`
+- `modelInput` (`:482`): `tries: withCriteriaFor(run.workflowId, store.triesOfRun(run.id))`.
 - `sideBySide`: `const tries = withCriteriaFor(workflowId, store.triesOfRun(run.id)).filter((t) => t.exampleId === ex.id && FIN.has(t.status));`
 - `compareOf`'s return: add `notes: compareNotes(input),` beside `model: compareModel(input),`.
 
@@ -3426,13 +3475,8 @@ export async function likedFromPipeline(example, pipelineId, { readMain = mainRe
 
 - [ ] **Step 6: The routes**
 
-`criteria-routes.mjs`: append `['PUT', `${W}/examples/:ex/liked`]`, `['DELETE', `${W}/examples/:ex/liked`]` to `CRITERIA_ROUTES`; import `findPipelineRowById` from `../artifacts.mjs` and `likedFromPipeline` from `./criteria-read.mjs`:
+`criteria-routes.mjs`: append `['PUT', `${W}/examples/:ex/liked`]`, `['DELETE', `${W}/examples/:ex/liked`]` to `CRITERIA_ROUTES`; import `findPipelineRowById` from `../artifacts.mjs` and `likedFromPipeline` from `./criteria-read.mjs` (`exampleOf(req)` is Task 8's):
 ```js
-  const exampleOf = (req) => {
-    const ex = store.readExample(wid(req), num(req.params.ex, 'example'));
-    if (!ex) throw store.testError(`no example ${req.params.ex}`, 'NOT_FOUND');
-    return ex;
-  };
   route('PUT', `${W}/examples/:ex/liked`, async (req, res) => {
     const ex = exampleOf(req);
     const b = req.body || {};
@@ -3471,7 +3515,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-## Task 13: Check the checker (D97)
+## Task 13: Check the checker (D97; booking depends on P4-Q17)
 
 **Files:**
 - Create: `src/core/workflow-tests/planted.mjs`, `src/core/workflow-tests/checker.mjs`
@@ -3859,7 +3903,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-## Task 14: The pair question (D100, depends on P4-Q8)
+## Task 14: The pair question (D100, depends on P4-Q8; booking on P4-Q17)
 
 **Files:**
 - Modify: `src/core/workflow-tests/judge-prompt.mjs` (pair prompt and reply), `src/core/workflow-tests/judge.mjs` (`judgePair`), `src/core/workflow-tests/criteria-runner.mjs` (pairs in the criteria phase), `src/core/workflow-tests/criteria-store.mjs` (`pairJudgement`), `src/core/workflow-tests/service.mjs` (`sideBySide` returns `pair`: one line)
@@ -4060,7 +4104,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-## Task 15: Suggested criteria and clearer words (D102, D104, depends on P4-Q3, P4-Q10)
+## Task 15: Suggested criteria and clearer words (D102, D104, depends on P4-Q3, P4-Q10; booking on P4-Q17)
 
 **Files:**
 - Create: `src/core/workflow-tests/suggest.mjs`
@@ -4484,7 +4528,8 @@ Steps 1–5 build what boards 2 and 32 draw (rows with a trust line, "Can be che
 
 **Interfaces:**
 - Consumes: `exactAlternative` (Task 3), `TRUST_BADGE`, `trustLine`, `exactLine` (Tasks 8, 11); `GET …/judge-models` (Task 10).
-- Produces: `renderCriteriaSection(doc, draft, { models, trust, onConfirm, onSwitch, project }) → { el, read() → { criteria, judge } }`. `trust` = `{ [criterionId]: trust }` from `GET …/examples/:ex/criteria` → `{ trust }`. `onConfirm(criterion)` opens Check the checker (Task 22); `onSwitch(criterion, alt)` opens the check dialog with the suggestion (Task 19).
+- Produces: `renderCriteriaSection(doc, draft, { models, trust, onConfirm, onSwitch, project }) → { el, read() → { criteria, judge }, remove(criterion) }`. `trust` = `{ [criterionId]: trust }` from `GET …/examples/:ex/criteria` → `{ trust }`. `onConfirm(criterion)` opens Check the checker (Task 22; while it is null, no confirm link shows); `onSwitch(criterion, alt)` is handled **inside `renderExampleEditor`**, which owns `draft.checks`, `openCheckDialog` and the checks' repaint (review I8): the new check joins `draft.checks` and `remove(criterion)` takes the criterion out of the section's own list, so `value()` never saves it again.
+- Produces (example-editor.mjs): `renderExampleEditor(…, { …, judgeModels, criteriaTrust, onConfirmCriterion })`; `value()` adds `criteria` and `judge`.
 - Copy (boards 2, 32): group "Your criteria"; hint "Write each one as a short sentence that is true of a good result. Worca reads the result, answers yes or no for each sentence, and says why." (project: "Worca reads what changed, …"); buttons "Add a criterion"; field "Checked with"; options "<label> · suggested"; hint "Worca suggests an AI model that this workflow does not use to write, so it does not mark its own work. Changing it starts the trust tests for these criteria again." (board 32 shows it without its last sentence; one hint for both, as board 2 has it).
 
 - [ ] **Step 1: Write the failing test**
@@ -4526,6 +4571,15 @@ test('board 2: each row, its trust line, the exact switch and the checking model
   doc.querySelector('button.wft-add-crit').click();
   assert.equal(doc.querySelectorAll('.wft-crit').length, 3, 'Add a criterion adds an empty row');
   assert.equal(s.read().criteria.length, 3, 'the empty row is sent; the server drops it (D86)');
+  s.remove({ id: 'k_2' });
+  assert.deepEqual(s.read().criteria.map((c) => c.id || ''), ['k_1', ''], 'remove() takes a criterion out by its id (Switch, I8)');
+});
+
+test('without onConfirm (Check the checker not built yet) a new criterion shows no confirm link', () => {
+  const { document: doc } = new JSDOM('<!doctype html><body></body>').window;
+  const s = renderCriteriaSection(doc, draft(), { models: MODELS, trust: { k_1: { state: 'confirm', n: 0, agree: 0, decides: true } } });
+  doc.body.append(s.el);
+  assert.equal([...doc.querySelectorAll('.wft-crit')[0].querySelectorAll('button')].length, 0);
 });
 ```
 
@@ -4547,7 +4601,7 @@ const HINT = 'Write each one as a short sentence that is true of a good result. 
 const HINT_PROJECT = 'Write each one as a short sentence that is true of a good result. Worca reads what changed, answers yes or no for each sentence, and says why.';
 const JUDGE_HINT = 'Worca suggests an AI model that this workflow does not use to write, so it does not mark its own work. Changing it starts the trust tests for these criteria again.';
 
-export function renderCriteriaSection(doc, draft, { models = { models: [], suggested: null }, trust = {}, onConfirm = () => {}, onSwitch = () => {}, project = false } = {}) {
+export function renderCriteriaSection(doc, draft, { models = { models: [], suggested: null }, trust = {}, onConfirm = null, onSwitch = () => {}, project = false } = {}) {
   const list = (draft.criteria || []).map((c) => ({ ...c }));
   let judge = draft.judge || (models.suggested ? { model: models.suggested.id } : null);
   const sect = el(doc, 'div', 'wft-sect wft-crit-sect');
@@ -4572,7 +4626,7 @@ export function renderCriteriaSection(doc, draft, { models = { models: [], sugge
       } else if (t) {
         const [cls, words] = TRUST_BADGE[t.state] || TRUST_BADGE.collecting;
         meta.append(el(doc, 'span', cls, words), doc.createTextNode(trustLine(t)));
-        if (t.state === 'confirm' || t.state === 'unreliable') meta.append(btn(doc, t.state === 'confirm' ? 'Check the checker' : 'Fix it', () => onConfirm(c), 'btn-link'));
+        if (onConfirm && (t.state === 'confirm' || t.state === 'unreliable')) meta.append(btn(doc, t.state === 'confirm' ? 'Check the checker' : 'Fix it', () => onConfirm(c), 'btn-link'));
       }
       row.append(input, meta);
       lines.append(row);
@@ -4594,21 +4648,37 @@ export function renderCriteriaSection(doc, draft, { models = { models: [], sugge
   wrap.append(sel);
   sect.append(el(doc, 'p', 'wft-grp', 'Your criteria'), el(doc, 'p', 'wft-grp-hint', project ? HINT_PROJECT : HINT), lines,
     field(doc, 'Checked with', wrap, { id: 'wft-judge', hint: JUDGE_HINT }));
-  return { el: sect, read: () => ({ criteria: list.map(({ id, text }) => ({ ...(id ? { id } : {}), text: text || '' })), judge }) };
+  /** I8 (Switch): take a criterion out of the section's own list, by its id or (unsaved) by the row object, and repaint. */
+  const remove = (c) => {
+    const i = c ? list.findIndex((x) => x === c || (c.id && x.id === c.id)) : -1;
+    if (i >= 0) { list.splice(i, 1); paint(); }
+  };
+  return { el: sect, remove, read: () => ({ criteria: list.map(({ id, text }) => ({ ...(id ? { id } : {}), text: text || '' })), judge }) };
 }
 ```
 `field(doc, label, control, { id, hint })` is `test-ui.mjs:122`; if its label is not tied to the control by `id`, give the select an `aria-label` "Checked with" instead.
 
 - [ ] **Step 4: Wire it into the editor**
 
-`example-editor.mjs`: import `renderCriteriaSection`; `renderExampleEditor` takes two more options, `judgeModels = { models: [], suggested: null }`, `criteriaTrust = {}` and `onCriterion = { confirm: () => {}, switch: () => {} }`. After `c3.append(sect);`:
+`example-editor.mjs` (about 10 lines): import `renderCriteriaSection` from `./criteria-editor.mjs`; `renderExampleEditor`'s options gain `judgeModels = { models: [], suggested: null }, criteriaTrust = {}, onConfirmCriterion = null` (after `dateText = (s) => s`). After `c3.append(sect);`:
 ```js
-  // Part 4 (boards 2, 32): Your criteria and Checked with, after the automatic checks.
+  // Part 4 (boards 2, 32): Your criteria and Checked with, after the automatic checks. Switch (D94) is handled here, where the
+  // draft's checks live (review I8): the new check joins draft.checks, and the criterion leaves the section's own list.
   const crit = renderCriteriaSection(doc, draft, { models: judgeModels, trust: criteriaTrust, project: !!pick.key,
-    onConfirm: (c) => onCriterion.confirm(c), onSwitch: (c, alt) => onCriterion.switch(c, alt) });
+    onConfirm: onConfirmCriterion,
+    onSwitch: (c, alt) => openCheckDialog({ doc, win, scripts: listed, project: !!pick.key, suggest: { criterion: c, alt },
+      onSave: (nc) => { draft.checks.push(nc); repaintCheckRows(); crit.remove(c); } }) });
   c3.append(crit.el);
 ```
-and in `value()` add `...crit.read(),` to the returned object. In `tests-app.mjs`, where the editor opens (`wftOpenExample`), fetch `GET …/judge-models` and, for a saved example, `GET …/examples/:ex/criteria`, and pass them; `onCriterion.confirm` opens the checker view (Task 22; until then a `notify` "Save the example first" when it is unsaved).
+(Until Task 19, `openCheckDialog` ignores `suggest` and opens on its first kind; saving still switches.) In `value()`, add `...crit.read(),` after `note: …,`.
+
+`tests-app.mjs` (about 8 lines). In `wftOpenExample`, after `const o = await wftCall('GET', wftBase(id));`:
+```js
+    // Part 4 (Task 18): the "Checked with" list, and how far Worca's checking of a saved example's criteria is trusted.
+    const jm = await wftCall('GET', `${wftBase(id)}/judge-models`);
+    const ct = exampleId != null ? await wftCall('GET', `${wftBase(id)}/examples/${exampleId}/criteria`) : null;
+```
+and add to the `wft = { … }` assignment that follows: `judgeModels: jm.ok ? jm.data : { models: [], suggested: null }, criteriaTrust: ct && ct.ok ? ct.data.trust : {},`. In `wftRenderEditor`, add to `renderExampleEditor`'s options: `judgeModels: wft.judgeModels, criteriaTrust: wft.criteriaTrust || {},` (Task 22 adds `onConfirmCriterion`).
 
 `criteria-routes.mjs` (append `['GET', `${W}/examples/:ex/criteria`]`): `route('GET', `${W}/examples/:ex/criteria`, async (req, res) => { const ex = exampleOf(req); res.json({ trust: trustOfExample(ex) }); });` (import `trustOfExample` from `./criteria-read.mjs`).
 
@@ -4628,7 +4698,7 @@ Expected: PASS.
 
 - [ ] **Step 6: After P4-M2 is approved: the undrawn states**
 
-Add, as the approved mock shows them: the placeholder of an empty row ("A sentence that is true of a good result"), Remove (an `iconBtn(doc, 'trash', 'Remove "<text>"', …)` at the row's end), "Not checked yet" for a criterion of an unsaved example (no trust read), and the amber/red rows' link words. Pin each string in the test first (Step 1's pattern), then build.
+Add, as the approved mock shows them: the placeholder of an empty row ("A sentence that is true of a good result"), Remove (an `iconBtn(doc, 'trash', 'Remove "<text>"', () => remove(c))` at the row's end), "Not checked yet" for a criterion of an unsaved example (no trust read), the amber/red rows' link words, and the select's options with who pays (P4-Q17): `${m.label} · ${m.pays}` plus `· suggested` for the suggestion. Pin each string in the test first (Step 1's pattern), then build.
 
 - [ ] **Step 7: Commit** (once for Steps 1–5, once for Step 6)
 
@@ -4646,7 +4716,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 Starts only after the user approved P4-M1.
 
 **Files:**
-- Modify: `ui/public/workflows/example-editor.mjs` (`openCheckDialog`: the four kinds, the suggestion box, `said` kept; Task 3's filter removed), `ui/public/workflows/tests-app.mjs` (`onCriterion.switch`), `ui/public/workflows/workflow-tests.css`
+- Modify: `ui/public/workflows/example-editor.mjs` (`openCheckDialog`: the four kinds, the suggestion box, `said` kept; Task 3's filter removed; about 20 lines), `src/shared/workflow-tests/criteria-text.mjs` (`EXACT_KIND_HINTS`), `ui/public/workflows/workflow-tests.css`. Switch itself is wired in `renderExampleEditor` by Task 18 (I8); `tests-app.mjs` is not touched.
 - Test: `test/ui-workflow-test-exact-dialog.test.mjs`
 
 **Interfaces:**
@@ -4683,6 +4753,27 @@ test('Switch: the dialog opens on the suggestion, says so, and the check keeps t
   assert.deepEqual({ kind: saved.kind, text: saved.text, said: saved.said }, { kind: 'mentions', text: '200', said: "Mentions that today's export stops at 200 invoices" });
 });
 ```
+Add, in the same file (import `renderExampleEditor` too):
+```js
+test('I8: after Switch, value() has the new check with the criterion\'s words, and not the criterion', async () => {
+  const { win, doc } = setup();
+  doc.body.append(Object.assign(doc.createElement('section'), { id: 'root' }));
+  const ex = { id: 4, name: 'Bulk invoice export', request: 'Write the brief.', answers: [], otherwise: 'pick',
+    basics: { noError: true, noHelp: false, maxCostUsd: null, maxSentBack: null }, checks: [], tries: 1, files: [], note: null,
+    criteria: [{ id: 'k_1', text: 'Names a success metric' }, { id: 'k_2', text: "Mentions that today's export stops at 200 invoices" }],
+    judge: { model: 'claude-haiku-4-5' } };
+  const ok = async () => ({ ok: true });
+  const ed = renderExampleEditor(doc.getElementById('root'), ex, { back() {}, save: ok, tryOnce: ok, addFiles: ok, removeFile: ok, stopTest: ok },
+    { doc, win, judgeModels: { models: [{ id: 'claude-haiku-4-5', label: 'Haiku 4.5', pays: 'Claude sign-in' }], suggested: null } });
+  doc.querySelectorAll('.wft-crit')[1].querySelector('button.wft-switch').click();
+  doc.querySelector('.wft-sugg .btn-primary').click();
+  await new Promise((r) => setTimeout(r, 0));
+  const v = ed.value();
+  assert.deepEqual(v.criteria.map((c) => c.id), ['k_1'], 'the switched criterion is not saved again');
+  assert.deepEqual(v.checks.map((c) => [c.kind, c.text, c.said]), [['mentions', '200', "Mentions that today's export stops at 200 invoices"]]);
+  assert.equal(doc.querySelectorAll('.wft-crit').length, 1, 'the section repainted without it');
+});
+```
 (The exact button and box classes follow the approved mock; pin them here first.)
 
 - [ ] **Step 2: Run it to see it fail**
@@ -4692,21 +4783,44 @@ Expected: FAIL.
 
 - [ ] **Step 3: Build it**
 
-In `openCheckDialog`:
-1. Remove Task 3's `&& !PART4_KINDS.includes(k)` from the `resultKinds` filter.
-2. In `paintFields`, the four kinds have no fields; for the three text kinds on a project example, the existing "Read from" choice (3a Q11) applies as for `mentions` (reuse its branch: `if (TEXT_KIND_SET.has(kind.value) || ['quotes', 'numbers', 'no-personal'].includes(kind.value))`); show P4-C4's hint under the select.
-3. A `suggest` option: set `kind.value = suggest.alt.kind` (and the "Must mention" text box to `suggest.alt.text`), and put above the fields:
+1. `src/shared/workflow-tests/criteria-text.mjs` (P4-C4, board 10's words):
 ```js
-    const box = el(doc, 'div', 'wft-sugg');
+/** P4-C4: the hint under "What to check" for each Part 4 exact kind. */
+export const EXACT_KIND_HINTS = Object.freeze({
+  quotes: 'Each sentence in quotation marks must appear word for word in the example\'s files or request. Small differences in spacing and quotation marks are ignored.',
+  numbers: 'Each number in the result must appear in the example\'s files or request.',
+  'no-personal': 'No e-mail addresses, phone numbers, bank account or card numbers.',
+  links: 'Every link in the result opens a real page.',
+});
+```
+2. `example-editor.mjs`: import `PART4_KINDS` (already, Task 3) and `EXACT_KIND_HINTS`. The three text kinds read a project file like the others (3a Q11): `const TEXT_KIND_SET = new Set(['words', 'sections', 'mentions', 'not-mentions', 'quotes', 'numbers', 'no-personal']);` (`:43`).
+3. `openCheckDialog({ doc, win, check = null, scripts = [], project = false, suggest = null, onSave, onRemove = null })`. In the `resultKinds` filter, remove Task 3's `&& !PART4_KINDS.includes(k)`. Replace `kind.value = check ? check.kind : 'words';` with:
+```js
+  kind.value = check ? check.kind : suggest ? suggest.alt.kind : 'words';
+```
+4. In `paintFields`, before the final `} else {` (the script branch):
+```js
+    } else if (PART4_KINDS.includes(kind.value)) {   // D93: no fields; P4-C4's hint
+      fields.append(el(doc, 'p', 'hint wft-ck-kind-hint', EXACT_KIND_HINTS[kind.value]));
+      read = () => ({ kind: kind.value });
+```
+and in the `mentions` branch, give a suggestion its text: `const text = input('wft-ck-text', 'text', c.text ?? (suggest && suggest.alt.kind === kind.value ? suggest.alt.text : ''), { maxLength: 200 });`.
+5. The suggestion box and `said`. Before `return testDialog({`:
+```js
+  let dlg = null;
+  const box = suggest ? el(doc, 'div', 'wft-sugg') : null;
+  if (box) {
     box.append(el(doc, 'span', 'wft-sugg-tag', 'Worca suggests'),
       el(doc, 'span', '', `Your criterion "${suggest.criterion.text}" can be checked exactly. An exact check is free, fast, and gives the same answer every time.`));
     const acts = el(doc, 'div', 'wft-acts');
-    acts.append(btn(doc, 'Switch to an exact check', () => save(), 'btn btn-sm btn-primary'), btn(doc, 'Keep it as a criterion', () => dlg.close(), 'btn btn-sm'));
+    acts.append(btn(doc, 'Switch to an exact check', () => dlg && dlg.okButton.click(), 'btn btn-sm btn-primary'),
+      btn(doc, 'Keep it as a criterion', () => dlg && dlg.close(), 'btn btn-sm'));
     box.append(acts);
+  }
+  // D99: a check made from a criterion keeps its words; an edited check keeps the words it had.
+  const said = suggest ? { said: suggest.criterion.text } : check && check.said ? { said: check.said } : {};
 ```
-(`save()` is the dialog's own save path; `dlg` its `testDialog` handle.)
-4. The saved check: `{ ...nc, ...(suggest ? { said: suggest.criterion.text } : check && check.said ? { said: check.said } : {}) }`.
-5. `tests-app.mjs`: `onCriterion.switch = (c, alt) => openCheckDialog({ …, suggest: { criterion: c, alt }, onSave: (nc) => { draft.checks.push(nc); draft.criteria = draft.criteria.filter((x) => x !== c); repaint(); } })` (through the editor's own repaint hooks; the criterion leaves when the check is added, D94).
+then `dlg = testDialog({ …` (instead of `return testDialog({ …`), with `body: [...(box ? [box] : []), el(doc, 'p', 'hint', …), …]` and, in `onConfirm`, `normaliseCheck({ ...read(), ...said, ...(check && check.id ? { id: check.id } : {}) })`; after the call, `return dlg;`.
 6. CSS for `.wft-sugg` as board 10 draws it (violet wash, its tag), tokens only.
 
 - [ ] **Step 4: Run the tests and the guards**
