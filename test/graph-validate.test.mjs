@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { validateGraph, formatIssue, shellWarningIssue, CANVAS_WARNING_CODES } from '../src/shared/graph/validate.mjs';
 import { portsFnFor } from '../src/shared/graph/ports.mjs';
+import { loadBudget } from './helpers/load-budget.mjs';
 
 // Inline fixture registry (the REAL sidecars arrive in test/helpers/graph-ports.mjs
 // at Task 10 Step 4 and are exercised by the seed drift guard, Task 13).
@@ -673,4 +674,17 @@ test('V33 shell warnings: one warning per script node, counted across its comman
   assert.equal(shellWarningIssue('n1', 0), null);
   assert.equal(shellWarningIssue('n1', 1.5), null);
   assert.deepEqual(shellWarningIssue('n1', 2), { code: 'V33', message: "script node 'n1' has 2 shell warnings", nodeId: 'n1', count: 2 });
+});
+
+test('V33 lints a command text once per validation, however many nodes share it', () => {
+  // A large default copied onto many cards: one lint pass, not one per card (review of #1471).
+  const BIG = 'if [ -f x ]; then\n  echo "hi $(date)"\nfi\n'.repeat(10000) + 'fi\n';
+  const t = ok();
+  for (let i = 0; i < 60; i += 1) t.nodes.push(S(`n_sh${i}`, 'shellLike', { params: { command: BIG } }));
+  const t0 = Date.now();
+  const v33 = V(t).warnings.filter((w) => w.code === 'V33');
+  const ms = Date.now() - t0;
+  assert.equal(v33.length, 60);
+  assert.ok(v33.every((w) => w.count === 1));
+  assert.ok(ms < loadBudget(150), `took ${ms} ms (a lint per card: ~350 ms)`);
 });

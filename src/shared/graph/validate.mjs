@@ -805,6 +805,12 @@ export const RULES = [
   // Shell warnings (shell-lint.mjs): ONE issue per script node, carrying the total across its `command` params
   // (the effective values, sidecar defaults included). A warning only — it never blocks a save.
   { code: 'V33', level: 'W', check({ nodes, portsFor }, add) {
+    // Per call: cards sharing a (large) default command lint it once; nothing outlives the call.
+    const counts = new Map();
+    const countOf = (text) => {
+      if (!counts.has(text)) counts.set(text, lintShell(text).length);
+      return counts.get(text);
+    };
     for (const n of nodes) {
       if (n.kind !== 'script' || !n.key) continue;
       const p = portsFor(n.id);
@@ -814,7 +820,7 @@ export const RULES = [
       if (!commands.length) continue;
       const values = effectiveScriptParams(meta, isObject(n.config) ? n.config : {});
       let count = 0;
-      for (const d of commands) if (typeof values[d.id] === 'string') count += lintShell(values[d.id]).length;
+      for (const d of commands) if (typeof values[d.id] === 'string') count += countOf(values[d.id]);
       const issue = shellWarningIssue(n.id, count);
       if (issue) add(issue.message, { nodeId: n.id, count });
     }

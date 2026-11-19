@@ -13,10 +13,12 @@ export const SHELL_LINT_CODES = Object.freeze([
   'quote-single', 'quote-double', 'backtick', 'quote-ansi', 'subst', 'heredoc',
   'if-open', 'fi-stray', 'do-open', 'done-stray', 'case-open', 'esac-stray']);
 
+// A quote pairs with the next one of its kind, so a quote left open earlier shows up at the LAST one the shell
+// reads: the message names both possibilities instead of pointing at the wrong line with certainty.
 const MESSAGES = Object.freeze({
-  'quote-single': () => "This single quote (') is never closed.",
-  'quote-double': () => 'This double quote (") is never closed.',
-  backtick: () => 'This backtick (`) is never closed.',
+  'quote-single': () => "This single quote (') or an earlier one is never closed.",
+  'quote-double': () => 'This double quote (") or an earlier one is never closed.',
+  backtick: () => 'This backtick (`) or an earlier one is never closed.',
   'quote-ansi': () => 'This $\'…\' quote is never closed.',
   subst: () => 'This $( is never closed with ).',
   heredoc: (word) => `Heredoc <<${word} has no closing ${word} line.`,

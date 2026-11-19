@@ -164,9 +164,13 @@ export function createCodeEditor({
   /** The one innerHTML write. `html` comes from the injected highlighter (or the
    *  escaping default); anything that is not a string falls back to escaped text.
    *  The extra '\n' keeps the last row visible — <pre> swallows one trailing
-   *  newline, which would otherwise scroll the layers out of step. */
+   *  newline, which would otherwise scroll the layers out of step. The scroll is
+   *  mirrored again after the write: a scroll that came before the new text was
+   *  painted was clamped to the old, shorter text and would stay a line behind. */
   function apply(html, text) {
     code.innerHTML = (typeof html === 'string' ? html : escapeHtml(text)) + '\n';
+    pre.scrollTop = ta.scrollTop;
+    pre.scrollLeft = ta.scrollLeft;
   }
 
   async function paint() {

@@ -222,6 +222,20 @@ test('setValue / setLanguage repaint at once; the scroll is mirrored onto the pr
   ed.destroy();
 });
 
+test('a repaint re-syncs the pre to the textarea: a scroll mirrored before the new text was painted is not left behind', async () => {
+  // Typing a new last line scrolls the textarea at once, but the pre only gets that line on the (debounced) paint,
+  // so the browser clamps the mirrored scroll to the old, shorter text (review of #1471).
+  const ed = createCodeEditor({ doc, value: 'a', highlight: async (t) => escapeHtml(t) });
+  const { pre, ta } = parts(ed);
+  ta.scrollTop = 42; ta.scrollLeft = 7;
+  ta.dispatchEvent(new win.Event('scroll', { bubbles: false }));
+  pre.scrollTop = 30; pre.scrollLeft = 0;          // what the browser's clamp leaves
+  ed.setValue('a\nb');
+  await tick();
+  assert.deepEqual([pre.scrollTop, pre.scrollLeft], [42, 7]);
+  ed.destroy();
+});
+
 test('destroy: no more repaints, and a late highlight resolution touches nothing', async () => {
   const gates = [];
   const ed = createCodeEditor({ doc, value: 'a', highlight: (t) => new Promise((r) => gates.push(() => r(`<i>${escapeHtml(t)}</i>`))) });

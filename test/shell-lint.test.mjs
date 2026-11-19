@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { checkRows } from './helpers/rows.mjs';
+import { loadBudget } from './helpers/load-budget.mjs';
 import { lintShell, MAX_SHELL_WARNINGS, SHELL_LINT_CODES } from '../src/shared/shell-lint.mjs';
 
 const DEPLOY = [
@@ -126,7 +127,15 @@ test('lintShell: each of the twelve codes lands on its line, and the defects are
     { name: 'a warning carries a 1-based line, a code and a one-sentence message', run: () => {
       const [w] = lintShell('echo "x');
       assert.deepEqual(Object.keys(w).sort(), ['code', 'line', 'message']);
-      assert.equal(w.message, 'This double quote (") is never closed.');
+      assert.equal(w.message, 'This double quote (") or an earlier one is never closed.');
+    } },
+    { name: 'a quote left open earlier is reported where the shell sees the last one, and the message says so', run: () => {
+      // Line 2's quote is the one left open; to the shell line 4's closes it and line 5's opens a new one — the one reported.
+      const text = "echo ok\necho 'oops\necho fine\necho done'\necho 'x";
+      const [w] = lintShell(text);
+      assert.deepEqual([w.line, w.code], [5, 'quote-single']);
+      assert.match(w.message, /or an earlier one is never closed/);
+      assert.match(lintShell('echo `x')[0].message, /^This backtick \(`\) or an earlier one is never closed\.$/);
     } },
   ]);
 });
@@ -162,7 +171,8 @@ test('lintShell: total, pure, and free of DOM wording', async () => {
       lintShell('do;'.repeat(50000) + 'fi;'.repeat(50000));
       lintShell('if;'.repeat(50000) + 'done;'.repeat(50000));
       lintShell('if;do;'.repeat(30000) + 'then;'.repeat(60000));
-      assert.ok(Date.now() - t0 < 2000);
+      const ms = Date.now() - t0;
+      assert.ok(ms < loadBudget(2000), `took ${ms} ms`);
     } },
   ]);
 });
