@@ -4056,3 +4056,251 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
+## Task 16: The trust report (board 13, D95–D100)
+
+**Files:**
+- Modify: `src/shared/workflow-tests/criteria-report.mjs` (`trustReportModel`), `src/core/workflow-tests/criteria-read.mjs` (`trustReportOf`), `src/core/workflow-tests/criteria-store.mjs` (`latestRounds`, `pairJudgements`, `tryProofCounts`), `src/core/workflow-tests/criteria-routes.mjs` (`GET …/trust`)
+- Test: `test/workflow-test-criteria-report.test.mjs` (two cases), `test/api-workflow-test-criteria.test.mjs` (one case)
+
+**Interfaces:**
+- Produces (criteria-report.mjs): `trustReportModel({ criteria, rounds, pairs, proofs })` where `criteria` = `[{ exampleId, exampleName, criterionId, text, trust }]`, `rounds` = `[{ criterionText, cards: [{ planted, met, answer }], same, padding }]` (each round's view, as Task 13's `view`), `pairs` = `[{ winner, swapped }]`, `proofs` = `{ found, of }` → `{ tiles: { agree: { n, agree }, planted: { caught, of, missedOn: string[] }, trusted: { n, of, unreliable, waiting } }, tests: [{ key, state: 'good'|'bad'|'none', words }] (six, board 13's order), todo: [{ kind: 'fix'|'confirm', exampleId, criterionId, text }], lastAt, costUsd }`.
+- Route: `GET /api/workflows/:id/tests/trust` → that model.
+
+- [ ] **Step 1: Write the failing test** (append to `test/workflow-test-criteria-report.test.mjs`)
+
+```js
+import { trustReportModel } from '../src/shared/workflow-tests/criteria-report.mjs';
+
+test('trustReportModel: board 13\'s tiles, the six tests and what to do', () => {
+  const criteria = [
+    { exampleId: 1, exampleName: 'Bulk', criterionId: 'k_1', text: 'Names a success metric', trust: { state: 'reliable', n: 20, agree: 19, decides: true } },
+    { exampleId: 2, exampleName: 'Pricing', criterionId: 'k_2', text: 'Proposes a test within 4 weeks', trust: { state: 'unreliable', n: 10, agree: 6, decides: false } },
+    { exampleId: 3, exampleName: 'GDPR', criterionId: 'k_3', text: 'Explains the legal reason', trust: { state: 'confirm', n: 0, agree: 0, decides: true } },
+  ];
+  const rounds = [
+    { criterionText: 'Names a success metric', cards: [{ planted: null, met: true }, { planted: 'number removed', met: false }, { planted: 'x', met: false }, { planted: 'y', met: false }],
+      same: { n: 4, of: 4 }, padding: { n: 4, of: 4 } },
+    { criterionText: 'Proposes a test within 4 weeks', cards: [{ planted: null, met: true }, { planted: 'a', met: true }, { planted: 'b', met: true }, { planted: 'c', met: false }],
+      same: { n: 3, of: 4 }, padding: { n: 4, of: 4 } },
+  ];
+  const m = trustReportModel({ criteria, rounds, pairs: [{ winner: 'a', swapped: 'a' }, { winner: 'unsure', swapped: 'b' }], proofs: { found: 214, of: 216 } });
+  assert.deepEqual(m.tiles.agree, { n: 30, agree: 25 });
+  assert.deepEqual(m.tiles.planted, { caught: 4, of: 6, missedOn: ['Proposes a test within 4 weeks'] });
+  assert.deepEqual(m.tiles.trusted, { n: 1, of: 3, unreliable: 1, waiting: 1 });
+  assert.deepEqual(m.tests.map((t) => [t.key, t.state]), [['planted', 'bad'], ['again', 'bad'], ['order', 'bad'], ['longer', 'good'], ['proof', 'bad'], ['people', 'good']]);
+  assert.deepEqual(m.todo.map((x) => [x.kind, x.text]), [['fix', 'Proposes a test within 4 weeks'], ['confirm', 'Explains the legal reason']]);
+});
+```
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: `node tools/test.mjs test/workflow-test-criteria-report.test.mjs`
+Expected: FAIL (`trustReportModel` is not exported).
+
+- [ ] **Step 3: `trustReportModel`** (`criteria-report.mjs`, append)
+
+```js
+const pct = (a, n) => (n ? Math.round((a / n) * 100) : 0);
+/** Board 13. Agreement: people's answers over every criterion (pairs never count, D96). The board's words are in criteria-text.mjs. */
+export function trustReportModel({ criteria = [], rounds = [], pairs = [], proofs = { found: 0, of: 0 }, lastAt = null, costUsd = 0 }) {
+  const n = criteria.reduce((s, c) => s + (c.trust ? c.trust.n : 0), 0);
+  const agree = criteria.reduce((s, c) => s + (c.trust ? c.trust.agree : 0), 0);
+  let caught = 0; let of = 0; const missedOn = [];
+  for (const r of rounds) {
+    const planted = r.cards.filter((c) => c.planted);
+    const miss = planted.filter((c) => c.met === true && c.answer !== true).length;   // met on a planted mistake, unless the person said that is right
+    of += planted.length; caught += planted.length - miss;
+    if (miss) missedOn.push(r.criterionText);
+  }
+  const again = rounds.filter((r) => r.same.n === r.same.of).length;
+  const fooled = rounds.filter((r) => r.padding.n < r.padding.of).length;
+  const pairsSame = pairs.filter((p) => p.winner && p.winner !== 'unsure').length;
+  const count = (s) => criteria.filter((c) => c.trust && c.trust.state === s).length;
+  const state = (ok, any) => (!any ? 'none' : ok ? 'good' : 'bad');
+  const tests = [
+    { key: 'planted', state: state(caught === of, of), caught, of, missedOn },
+    { key: 'again', state: state(again === rounds.length, rounds.length), n: again, of: rounds.length },
+    { key: 'order', state: state(pairsSame === pairs.length, pairs.length), n: pairsSame, of: pairs.length },
+    { key: 'longer', state: state(fooled === 0, rounds.length), fooled },
+    { key: 'proof', state: state(proofs.found === proofs.of, proofs.of), n: proofs.found, of: proofs.of },
+    { key: 'people', state: state(n >= 10 && pct(agree, n) >= 80, n), n, agree, pct: pct(agree, n) },
+  ];
+  const todo = [
+    ...criteria.filter((c) => c.trust && c.trust.state === 'unreliable').map((c) => ({ kind: 'fix', exampleId: c.exampleId, criterionId: c.criterionId, text: c.text })),
+    ...criteria.filter((c) => c.trust && c.trust.state === 'confirm').map((c) => ({ kind: 'confirm', exampleId: c.exampleId, criterionId: c.criterionId, text: c.text })),
+  ];
+  return { tiles: { agree: { n, agree }, planted: { caught, of, missedOn }, trusted: { n: count('reliable'), of: criteria.length, unreliable: count('unreliable'),
+    waiting: count('confirm') + count('collecting') } }, tests, todo, lastAt, costUsd };
+}
+```
+Board 13's words go in `criteria-text.mjs` (append):
+```js
+/** Board 13: each test's title, what it does, and its result line. */
+export const TRUST_TESTS = Object.freeze({
+  planted: ['Planted mistakes', 'Worca breaks good results on purpose, for example removes a number or adds a made-up quote, and checks that it notices.'],
+  again: ['Asked again', 'The same result is checked 3 times. The verdict should not change.'],
+  order: ['Order swapped', 'When Worca picks the better of two results, it sees them in both orders. The winner must not depend on which one comes first.'],
+  longer: ['Longer is not better', 'Filler text is added to a result. A longer result must not get a better verdict.'],
+  proof: ['Proof for every verdict', 'Each verdict must quote the part of the result it is based on. Worca checks that the quote is really there. Verdicts without proof are not counted.'],
+  people: ['Agreement with people', 'From your Agree and Disagree answers and Check the checker.'],
+});
+export function trustTestLine(t) {
+  if (t.state === 'none') return 'Not run yet';
+  if (t.key === 'planted') return t.state === 'good' ? `${t.caught} of ${t.of} caught` : `${t.caught} of ${t.of} caught. Missed on "${t.missedOn.join('", "')}".`;
+  if (t.key === 'again') return `${t.n} of ${t.of} criteria give the same verdict`;
+  if (t.key === 'order') return `Same winner in ${t.n} of ${t.of} pairs`;
+  if (t.key === 'longer') return t.fooled ? `${t.fooled} ${t.fooled === 1 ? 'criterion' : 'criteria'} fooled` : 'No criterion fooled';
+  if (t.key === 'proof') return `${t.n} of ${t.of} verdicts had proof. ${t.of - t.n} ${t.of - t.n === 1 ? 'was' : 'were'} not counted.`;
+  return `${t.pct}% · of ${t.n} answers`;
+}
+```
+(Board 13's test 6 also names "colleagues' blind reviews" and tile 1 "people agree with each other 90%": both need Part 5; P4-M4 decides the words without them.)
+
+- [ ] **Step 4: The read and the route**
+
+`criteria-store.mjs` (append):
+```js
+/** The newest round per criterion key and model in a workflow that is ready or done. */
+export function latestRounds(workflowId) {
+  getDb();
+  return prepare(`SELECT ${R_COLS} FROM wf_test_checker_rounds r WHERE workflow_id = ? AND status IN ('ready', 'done')
+      AND id = (SELECT MAX(id) FROM wf_test_checker_rounds x WHERE x.workflow_id = r.workflow_id AND x.criterion_fp = r.criterion_fp AND x.model = r.model
+      AND x.status IN ('ready', 'done'))`).all(workflowId).map(roundOf);
+}
+export function pairJudgements(workflowId) {
+  getDb();
+  return prepare(`SELECT ${J_COLS} FROM wf_test_judgements WHERE workflow_id = ? AND purpose = 'pair' AND winner IS NOT NULL`).all(workflowId).map(judgementOf);
+}
+export function tryProofCounts(workflowId) {
+  getDb();
+  const r = prepare(`SELECT COUNT(*) AS n, COALESCE(SUM(proof_found), 0) AS f FROM wf_test_judgements WHERE workflow_id = ? AND purpose = 'try'
+      AND (met IS NOT NULL OR error = 'no-proof')`).get(workflowId);
+  return { found: Number(r.f || 0), of: Number(r.n || 0) };
+}
+```
+`criteria-read.mjs` (append; `checker` = the routes' instance, for its `view`):
+```js
+import { trustReportModel } from '../../shared/workflow-tests/criteria-report.mjs';
+export function trustReportOf(workflowId, { checker }) {
+  const memo = new Map();
+  const criteria = store.listExamples(workflowId).flatMap((e) => {
+    const t = trustOfExample(e, memo);
+    return e.criteria.map((c) => ({ exampleId: e.id, exampleName: e.name, criterionId: c.id, text: c.text, trust: t[c.id] }));
+  });
+  const live = new Set(criteria.map((c) => cs.criterionFp(c.text)));
+  const rounds = cs.latestRounds(workflowId).filter((r) => live.has(r.fp)).map((r) => {
+    const v = checker.view(r);
+    return { criterionText: v.criterion, cards: v.cards, same: v.auto.same, padding: v.auto.padding, at: r.finishedAt, cost: v.costUsd };
+  });
+  const pairs = cs.pairJudgements(workflowId).map((j) => ({ winner: j.winner, swapped: j.variant ? j.variant.swapped : null }));
+  const lastAt = rounds.map((r) => r.at).filter(Boolean).sort().at(-1) || null;
+  return trustReportModel({ criteria, rounds, pairs, proofs: cs.tryProofCounts(workflowId), lastAt, costUsd: rounds.reduce((s, r) => s + r.cost, 0) });
+}
+```
+`criteria-routes.mjs`: append `['GET', `${W}/trust`]` and register `route('GET', `${W}/trust`, async (req, res) => res.json(trustReportOf(wid(req), { checker })));`.
+
+API case (append to `test/api-workflow-test-criteria.test.mjs`):
+```js
+test('GET trust: the report of the workflow', async () => {
+  const r = await call('GET', `${WF}/trust`);
+  assert.equal(r.status, 200);
+  assert.equal(r.body.tests.length, 6);
+  assert.equal(r.body.tiles.trusted.of, 1);
+});
+```
+
+- [ ] **Step 5: Run the tests**
+
+Run: `node tools/test.mjs test/workflow-test-criteria-report.test.mjs test/api-workflow-test-criteria.test.mjs test/api-workflow-test-criteria-flag-off.test.mjs`
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/shared/workflow-tests/criteria-report.mjs src/shared/workflow-tests/criteria-text.mjs src/core/workflow-tests/criteria-store.mjs src/core/workflow-tests/criteria-read.mjs src/core/workflow-tests/criteria-routes.mjs test/workflow-test-criteria-report.test.mjs test/api-workflow-test-criteria.test.mjs
+git commit -m "feat(workflow-tests): the trust report model and route
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
+## Task 17: UI: "Your criteria N" on the Tests list and the estimate row (boards 1, 4)
+
+Drawn on approved boards: no mock needed.
+
+**Files:**
+- Modify: `src/core/workflow-tests/service.mjs` (`testsOverview` adds `criteria: ex.criteria.length` on the existing `basics: …, checks: …` line), `ui/public/workflows/tests-view.mjs` (the chip), `ui/public/workflows/test-dialogs.mjs` (the estimate row), `src/core/workflow-tests/routes.mjs` (nothing new: Task 11 put `criteria` on the plan)
+- Test: `test/ui-workflow-test-criteria-list.test.mjs`
+
+**Interfaces:**
+- Consumes: the overview example's `criteria` count; the plan's `criteria`; `estimateOf(...).criteriaUsd` (Task 11).
+- Produces: the chip "Your criteria N" after "Automatic N" (board 1); the row "Checking your criteria · about $0.90" (board 4) after the tries rows, or "cost not known yet" (P4-C6).
+
+- [ ] **Step 1: Write the failing test**
+
+Create `test/ui-workflow-test-criteria-list.test.mjs` (jsdom, as `test/ui-workflow-tests-view.test.mjs` sets up the page; copy its `overview()` fixture builder and `render()` helper):
+```js
+// test/ui-workflow-test-criteria-list.test.mjs — board 1's "Your criteria N" chip; board 4's "Checking your criteria" row.
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { JSDOM } from 'jsdom';
+import { renderTestsPage } from '../ui/public/workflows/tests-view.mjs';
+import { estimateOf } from '../src/shared/workflow-tests/compare.mjs';
+
+const dom = () => new JSDOM('<!doctype html><div id="r"></div>').window;
+const overview = (ex) => ({ workflowId: 'wf', name: 'W', needsProject: false, ctx: {}, draftSameAs: null, columns: [{ use: 'draft', label: 'Your draft · yours' }],
+  examples: [{ id: 1, name: 'Bulk invoice export', hasRequest: true, files: [], fromAt: null, note: null, tries: 3, basics: 3, checks: 2, cells: {}, project: null, ready: true, reason: null, readyText: null, ...ex }],
+  running: null, latest: null, pastRuns: [] });
+
+test('the chips: Basics, Automatic, Your criteria (only when there are some)', () => {
+  const win = dom();
+  const root = win.document.getElementById('r');
+  renderTestsPage(root, overview({ criteria: 3 }), {}, { doc: win.document });
+  assert.deepEqual([...root.querySelectorAll('.wft-kind')].map((k) => k.textContent), ['Basics 3', 'Automatic 2', 'Your criteria 3']);
+  renderTestsPage(root, overview({ criteria: 0 }), {}, { doc: win.document });
+  assert.deepEqual([...root.querySelectorAll('.wft-kind')].map((k) => k.textContent), ['Basics 3', 'Automatic 2']);
+});
+
+test('the estimate carries the checking cost the dialog shows', () => {
+  const e = estimateOf({ a: null, b: { want: 18, reusable: 0, perTryUsd: 0.5 }, perTryMs: 60000, criteria: { perTryUsd: 0.05, pairsUsd: 0 } });
+  assert.equal(Math.round(e.criteriaUsd * 100) / 100, 0.9);
+});
+```
+If `renderTestsPage` needs more actions or options than given here, pass the same ones `test/ui-workflow-tests-view.test.mjs` passes. Add a dialog case to `test/ui-workflow-test-dialogs.test.mjs` the way its estimate cases open `openTestVersionDialog` with a `loadPlan` stub: give the plan `criteria: { perTryUsd: 0.05, pairsUsd: 0 }` and assert a row `.wft-est-row` whose text is "Checking your criteria" + "about $0.90"; with `perTryUsd: null`, "cost not known yet".
+
+- [ ] **Step 2: Run it to see it fail**
+
+Run: `node tools/test.mjs test/ui-workflow-test-criteria-list.test.mjs test/ui-workflow-test-dialogs.test.mjs`
+Expected: FAIL (no "Your criteria" chip; no checking row).
+
+- [ ] **Step 3: The chip** (`tests-view.mjs`, after the `Automatic` line, `:148`)
+
+```js
+    if (e.criteria) kinds.append(el(doc, 'span', 'wft-kind', `Your criteria ${e.criteria}`));   // Part 4, board 1
+```
+and in `service.testsOverview`, on the line `basics: basicsList(ex.basics).length, checks: ex.checks.length,` add `criteria: ex.criteria.length,`.
+
+- [ ] **Step 4: The estimate row** (`test-dialogs.mjs`, after the two tries rows, `:417`)
+
+```js
+      // Part 4 (board 4): checking the criteria of the new tries, and the pair question; P4-C6 when no price is known yet.
+      if (plan.criteria && (e.toRun.a || e.toRun.b)) line('Checking your criteria', e.criteriaUsd === null ? 'cost not known yet' : `about ${fmtUsd(e.criteriaUsd)}`);
+```
+
+- [ ] **Step 5: Run the tests and the design guards**
+
+Run: `node tools/test.mjs test/ui-workflow-test-criteria-list.test.mjs test/ui-workflow-test-dialogs.test.mjs test/ui-workflow-tests-view.test.mjs`, then the design guards (Global Constraints).
+Expected: PASS; no new `ui-design-language` failure.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/core/workflow-tests/service.mjs ui/public/workflows/tests-view.mjs ui/public/workflows/test-dialogs.mjs test/ui-workflow-test-criteria-list.test.mjs test/ui-workflow-test-dialogs.test.mjs
+git commit -m "feat(workflow-tests): Your criteria on the Tests list and the checking cost in Test a version
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
+
+---
+
