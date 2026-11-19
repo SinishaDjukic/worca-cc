@@ -168,7 +168,7 @@ D1–D85 hold. These continue them. The `(technical)` rows are for the reviewer.
 | D95 | **Trust marks (D14, P4-Q6).** Per workflow, criterion text (`criterionKey`) and model:<br>• **confirm** ("Confirm 4 results", amber): no Check the checker round of it is done. It decides (board 12: "It counts, but you have not confirmed").<br>• **collecting** ("Needs your answers", grey, board 32): a round is done, fewer than 10 answers. It decides.<br>• **reliable** (green): ≥ 10 answers and the P4-Q6 rule holds. It decides.<br>• **unreliable** (red): ≥ 10 answers and the rule fails. Shown, never decides. It becomes reliable again only through new words (a new key: "confirm" again) or new answers.<br>Exact checks are always "Can be checked exactly" and decide like any automatic check. |
 | D96 | **Answers.** Agree / Disagree on a criterion's verdict side by side (board 6), Right / Wrong on a card in Check the checker (board 11), Agree / Disagree on a pair answer. One answer per person per verdict; a later press replaces it; Undo removes it (P4-M6). An answer counts for the verdict's criterion key and model only. Pair answers count for board 13's tests, never for a criterion. |
 | D97 | **Check the checker (board 11).** One round per criterion, key and model, started by the person (the "Confirm 4 results" link, "Fix it", or "Add a criterion" then Save).<br>• **The good result:** the example's result you liked (text), else the newest passed try of the example (a real try before a mock one), else the past run it came from when the person called it good; none: refused with P4-M3's sentence. **A good result that came from a mock try** (a mock try's result, or a result you liked kept from one) **is always checked by the mock**, whatever `WORCA_MOCK` says (D91, review I14): Worca never pays to break fixture text.<br>• **Planted results:** one model call returns a passage of the result and three broken versions of it, each with a short "how" ("number removed"); each must be found and replaced in the result (D89's search). If it fails or the passage is not found: three deterministic plants (numbers removed from the first paragraph with numbers, a made-up quote added, the first paragraph removed).<br>• **Calls:** the real and the three planted results are judged (4), each asked twice more (8), and each with filler text added (4): 16 judge calls plus the planting call.<br>• **Answers:** the four verdicts get Right / Wrong; when all four are answered the round is done. A "Wrong" offers clearer words (one call, D104; P4-M3).<br>• Rounds run in the background, one at a time per example and criterion; the page polls every 2 s while one is being made. |
-| D98 | **Better or worse with criteria.** Read time only. A try passes when its stored verdict passes (Basics and automatic checks, Part 2) **and** every deciding criterion is met; a criterion that is not checked, or unreliable, does not decide. **Even checking (review I6):** a criterion decides for an example only when every finished try of that example in the reading (both versions in Compare) has a counted verdict of it; otherwise it decides on neither side for that example, and Compare names it ("not checked on every try", P4-M5) with "Check them on these tries". So a version is never called worse for a criterion the other version's tries were never checked on (reused tries left unchecked after a cap or a stop, a failed call, an unreadable answer or a proof not found on one side only). The cost: one uncounted answer takes that criterion out of that example's decision until it is checked again. The pages, Compare's counts, "In short", the luck rule and the Tests list's cells use this status. A second reading with unreliable criteria deciding too finds the examples whose result would change: Compare names them (P4-M5) instead of calling them better or worse. Missed criteria join "missed …" in "In short" (board 5). |
+| D98 | **Better or worse with criteria.** Read time only. A try passes when its stored verdict passes (Basics and automatic checks, Part 2) **and** every deciding criterion is met; a criterion that is not checked, or unreliable, does not decide. **Even checking (review I6):** a criterion decides for an example only when every finished try of that example in the reading (both versions in Compare; a try whose run did not finish, such as an errored one, has no say: N2) has a counted verdict of it; otherwise it decides on neither side for that example, and Compare names it ("not checked on every try", P4-M5) with "Check them on these tries". So a version is never called worse for a criterion the other version's tries were never checked on (reused tries left unchecked after a cap or a stop, a failed call, an unreadable answer or a proof not found on one side only). The cost: one uncounted answer takes that criterion out of that example's decision until it is checked again. The pages, Compare's counts, "In short", the luck rule and the Tests list's cells use this status. A second reading with unreliable criteria deciding too finds the examples whose result would change: Compare names them (P4-M5) instead of calling them better or worse. Missed criteria join "missed …" in "In short" (board 5). |
 | D99 | **Compare by criterion (board 12).** One row per criterion of each compared example, plus each automatic check with `said` (a criterion switched to an exact check, labelled with the person's words and "Can be checked exactly"). Columns: met on A and on B ("X of N" over checked tries), Worca's checking (the trust mark and its line). A row whose two rates differ by at least one try's worth is coloured (green better, red worse) when it decides; rows met in every try by both versions collapse into "N more criteria, all met in every try by both versions". |
 | D100 | **The pair question (P4-Q8).** Blind: "Result 1" and "Result 2", asked in both orders. The same winner both times = that winner; different = "unsure"; "same" both times = a tie. Stored as one judgement row (`purpose 'pair'`, both try ids, `winner` a / b / tie / unsure). With a result you liked, the question is which is closer to it. Never decides. Only for examples with criteria or a result you liked. |
 | D101 | **A result you liked.** `wf_test_liked`, one per example: a text (`kind 'text'`: an uploaded UTF-8 file of at most 2 MB, or a try's or past run's main result) or, for a project example, changes (`kind 'changes'`: the result and its diff, at most 2 MB, named "Changes from the run on <date> · N files"). It is the first choice of Check the checker's good result and the reference of the pair question. It is not part of the fingerprint. |
@@ -2755,6 +2755,20 @@ test('I6: a criterion decides for an example only when every finished try of bot
   assert.deepEqual(both.map((t) => t.status), ['passed', 'failed'], 'checked on both sides: it decides');
   assert.deepEqual(notCheckedEverywhere(both, input.examples), []);
 });
+
+test('N2: a try whose run did not finish has no say in even checking; the criterion still decides on the finished tries', () => {
+  const done = { facts: { status: 'done' }, basics: [], checks: [] };
+  const errored = { facts: { status: 'error' }, basics: [], checks: [] };
+  const tries = [{ id: 1, side: 'a', exampleId: 1, status: 'failed', costUsd: 1, verdict: errored },
+    ...[2, 3].map((id) => ({ id, side: 'a', exampleId: 1, status: 'passed', costUsd: 1, verdict: done })),
+    ...[4, 5, 6].map((id) => ({ id, side: 'b', exampleId: 1, status: 'passed', costUsd: 1, verdict: done }))];
+  const res = (t) => [t.id === 1 ? criterionResult(C, null, reliable, { finished: false }) : criterionResult(C, J(t.side === 'a'), reliable)];
+  const decorated = withCriteria(tries, res);
+  assert.deepEqual(decorated.map((t) => t.status), ['failed', 'passed', 'passed', 'failed', 'failed', 'failed']);
+  const input = { examples: [{ id: 1, name: 'Bulk invoice export' }], a: { label: 'v4' }, b: { label: 'v5 draft' }, tries: decorated };
+  assert.equal(compareModel(input).examples[0].result, 'worse', 'B misses it on all three finished tries');
+  assert.deepEqual(notCheckedEverywhere(decorated, input.examples), []);
+});
 ```
 
 - [ ] **Step 2: Run it to see it fail**
@@ -2791,13 +2805,14 @@ export function combinedStatus(status, criteria, { all = false } = {}) {
 const FINISHED = new Set(['passed', 'failed']);
 
 /** D98: tries with `verdict.criteria`, `status` (with criteria), `checksStatus` (Part 2's) and `shadowStatus`. `resultsOf(t)` → results | null.
- *  I6 (even checking): per example, a criterion that some finished try of the given tries has no counted verdict for (met null) decides
+ *  I6 (even checking): per example, a criterion that some finished try (finishedTry: its run finished; an errored try is not one, N2)
+ *  of the given tries has no counted verdict for (met null) decides
  *  on none of them (`uneven`), so one version is never failed for a criterion the other version's tries were never checked on. */
 export function withCriteria(tries, resultsOf) {
   const found = tries.map((t) => { const c = t.verdict ? resultsOf(t) : null; return c && c.length ? c : null; });
   const counted = new Map();   // exampleId → Map(criterion id → counted on every finished try so far)
   tries.forEach((t, i) => {
-    if (!found[i] || !FINISHED.has(t.status)) return;
+    if (!found[i] || !FINISHED.has(t.status) || !finishedTry(t)) return;   // N2: a try whose run did not finish has no say
     if (!counted.has(t.exampleId)) counted.set(t.exampleId, new Map());
     const m = counted.get(t.exampleId);
     for (const c of found[i]) m.set(c.id, (m.has(c.id) ? m.get(c.id) : true) && c.met !== null);
@@ -2840,7 +2855,8 @@ function missCounts(list) {
   for (const t of list) {
     const v = t.verdict || {};
     const items = [...(v.basics || []), ...(v.checks || []), ...(v.criteria || []).filter((c) => c.decides)];
-    for (const item of items) if (item && item.met === false) counts.set(item.label, (counts.get(item.label) || 0) + 1);
+    // N5: a check Worca could not run (Task 4's notChecked) is never "missed" either.
+    for (const item of items) if (item && item.met === false && !item.notChecked) counts.set(item.label, (counts.get(item.label) || 0) + 1);
   }
   return counts;
 }
@@ -3115,7 +3131,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Test: `test/workflow-test-criteria-report.test.mjs`, `test/workflow-test-criteria-runner.test.mjs` (one case, I15), `test/api-workflow-test-criteria.test.mjs` (two cases)
 
 **Interfaces:**
-- Produces (criteria-report.mjs): `byCriterionModel({ examples, hasA, tries }) → { rows, more }`, where an example is `{ id, name, criteria: [{ id, text }], trust: { [criterionId]: trust }, checks }` and a row is `{ key, label, exampleName, exact, trust, a: { met, of } | null, b: { met, of }, changed: 'better'|'worse'|null, unreliableChange }`; `checkingCounts(trusts) → { total, reliable, unreliable, waiting }`.
+- Produces (criteria-report.mjs): `byCriterionModel({ examples, hasA, tries }) → { rows, more }`, where an example is `{ id, name, criteria: [{ id, text }], trust: { [criterionId]: trust }, checks }` and a row is `{ key, label, exampleName, exact, trust, a: { met, of } | null, b: { met, of }, changed: 'better'|'worse'|null, unreliableChange, uneven }` (`uneven`: not checked on every finished try, so it decides nothing, as in Compare, N8; P4-M5 words it); `checkingCounts(trusts) → { total, reliable, unreliable, waiting }`.
 - Produces (criteria-text.mjs): `checkingSentence(counts)` (board 5), `listTrustSentence(counts)` (board 1), `exactLine(alt)` (board 2).
 - Produces (criteria-read.mjs): `byCriterionOf(workflowId, run) → { rows, more, counts }`, `checkingOf(workflowId, exampleIds?) → counts`, `judgeCallUsd(model) → number | null`, `criteriaPlanOf(workflowId, exampleIds, { hasA }) → { perTryUsd, pairsUsd } | null`.
 - Produces (compare.mjs): `estimateOf` returns `criteriaUsd` (number, or null when no price is known) and includes it in `usd`.
@@ -3156,6 +3172,11 @@ test('byCriterionModel: changed rows first and coloured only when they decide; a
     ['Proposes a test within 4 weeks', null, true, '1/1', '0/1'],
   ]);
   assert.equal(m.more, 1, "the exact check met everywhere collapses into the 'more' line");
+  // N8: Compare's even checking (I6) holds here too: an uneven criterion is not coloured worse, and is marked.
+  const u = byCriterionModel({ examples: [examples[0]], hasA: true, tries: [
+    t(1, 'a', 1, [{ id: 'k_1', met: true, uneven: true }]), t(2, 'a', 1, [{ id: 'k_1', met: null }]),
+    t(3, 'b', 1, [{ id: 'k_1', met: false, uneven: true }]), t(4, 'b', 1, [{ id: 'k_1', met: false, uneven: true }])] });
+  assert.deepEqual(u.rows.filter((r) => r.label === 'Names a success metric').map((r) => [r.changed, r.unreliableChange, r.uneven]), [[null, false, true]]);
   assert.deepEqual(checkingCounts([R, R, U, { state: 'confirm', decides: true }, { state: 'exact', decides: true }]),
     { total: 5, reliable: 3, unreliable: 1, waiting: 1 });
 });
@@ -3218,14 +3239,16 @@ export function byCriterionModel({ examples = [], hasA = true, tries = [] }) {
         const d = b.met / b.of - a.met / a.of;
         if (Math.abs(d) * Math.min(a.of, b.of) >= 1 - 1e-9) diff = d > 0 ? 'better' : 'worse';   // at least one try's worth
       }
-      const decides = !!(it.trust && it.trust.decides);
+      // N8: a criterion not checked on every finished try (I6's `uneven`) decides nothing here either, as in Compare; the row says so.
+      const uneven = mine.some((t) => { const r = t.verdict ? it.pick(t.verdict) : null; return !!(r && r.uneven); });
+      const decides = !!(it.trust && it.trust.decides) && !uneven;
       rows.push({ key: `${ex.id}|${it.key}`, label: it.label, exampleName: ex.name, exact: it.exact, trust: it.trust, a, b,
-        changed: decides ? diff : null, unreliableChange: !decides && !!diff });
+        changed: decides ? diff : null, unreliableChange: !decides && !uneven && !!diff, uneven });
     }
   }
   const allMet = (r) => r.b.of > 0 && r.b.met === r.b.of && (!r.a || (r.a.of > 0 && r.a.met === r.a.of));
   const plainTrust = (r) => r.trust && (r.trust.state === 'reliable' || r.trust.state === 'exact');
-  const collapsed = (r) => !r.changed && !r.unreliableChange && allMet(r) && plainTrust(r);
+  const collapsed = (r) => !r.changed && !r.unreliableChange && !r.uneven && allMet(r) && plainTrust(r);
   const rank = (r) => (r.changed === 'worse' ? 0 : r.changed === 'better' ? 1 : 2);
   const shown = rows.filter((r) => !collapsed(r)).map((r, i) => ({ r, i })).sort((x, y) => rank(x.r) - rank(y.r) || x.i - y.i).map((x) => x.r);
   return { rows: shown, more: rows.length - shown.length };
