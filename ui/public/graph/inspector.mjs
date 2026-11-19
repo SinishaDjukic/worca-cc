@@ -124,7 +124,7 @@ export function renderNodeInspector(node, { template, portsFn, meta = null, mode
     const chips = h(doc, 'div', 'ins-chiprow');
     chips.append(h(doc, 'span', 'badge', (meta && meta.origin) || 'builtin'), h(doc, 'span', 'chip rt', (meta && meta.runtime) || 'script'));
     body.appendChild(chips);
-    body.appendChild(renderParamsForm(meta, node.config, { doc, editorFor }));
+    body.appendChild(renderParamsForm(meta, node.config, { doc, editorFor, subject: `${(meta && meta.displayName) || node.key || node.id} · ${node.id}` }));
     const ms = Number.isInteger(node.config.timeoutMs) ? node.config.timeoutMs : ((meta && meta.timeoutMs) || DEFAULT_TIMEOUT_MS);
     // Interface mode (docs/ui-levels.md): what the card RUNS is never hidden; per-node tuning and ports are expert.
     const timeout = number(doc, 'ins-timeout', 'timeoutMs', 'Timeout (s)', Math.round(ms / 1000), 1);
