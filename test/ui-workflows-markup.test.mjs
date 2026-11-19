@@ -149,3 +149,21 @@ test('phone width (finding 15): Canvas · Tests · Versions fit in the top-left 
   assert.match(p[0], /clip/);
   assert.doesNotMatch(p[0], /display:none/);
 });
+
+// UI nits #3: at 390 px the switch squeezed the name to one letter ("F"). With the flag on, the switch is compact and the
+// rest of the bar keeps its size, so the name has what is left ("Fix a bu…"); every rule is scoped to the flag, so with the
+// flag off the bar is exactly dev's.
+test('phone width (ui nits #3): with the switch shown the name keeps its room; every rule is scoped to the flag', () => {
+  const F = ':root[data-flags~="workflowTests"]';
+  const p = css.match(/@media \(max-width:480px\)\{:root\[data-flags~="workflowTests"\] [^\n]*\}\}/);
+  assert.ok(p, 'a <=480px rule for the flag');
+  const rules = [...p[0].slice('@media (max-width:480px){'.length).matchAll(/([^{}]+)\{([^}]*)\}/g)].map((m) => [m[1], m[2]]);
+  assert.ok(rules.length >= 5);
+  for (const [sel] of rules) assert.ok(sel.startsWith(`${F} .wfv-tl `), `flag-scoped: ${sel}`);
+  const decl = (sel) => (rules.find(([s]) => s === `${F} .wfv-tl ${sel}`) || [])[1];
+  assert.equal(decl('.wfv-bar > :not(.wfv-name)'), 'flex-shrink:0;', 'only the name gives way');
+  assert.equal(decl('.wfv-name'), 'text-overflow:ellipsis;');
+  assert.equal(decl('.wfv-sep[data-flag]'), 'display:none;', 'no separator before the switch');
+  assert.equal(decl('.wfv-chev'), 'display:none;', 'the Workflows menu button is its icon');
+  assert.match(decl('.wfv-pages button'), /^padding:0 4px;font-size:var\(--fs-meta\);$/);
+});
